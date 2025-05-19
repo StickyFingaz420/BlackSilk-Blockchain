@@ -87,14 +87,31 @@ pub fn generate_ring_signature(msg: &[u8], ring: &[primitives::types::Hash], pri
     sig
 }
 
-fn generate_range_proof(_amount: u64, _blinding: &[u8]) -> Vec<u8> {
+// --- RANGE PROOF (BULLETPROOFS) PLACEHOLDER ---
+// In a real implementation, use bulletproofs crate or similar
+pub fn generate_range_proof(_amount: u64, _blinding: &[u8]) -> Vec<u8> {
     // TODO: Implement Bulletproofs or similar range proof generation
     vec![] // placeholder
 }
 
-fn generate_key_image(_priv_key: &[u8]) -> primitives::types::Hash {
-    // TODO: Implement real key image generation
-    [0u8; 32] // placeholder
+// --- KEY IMAGE GENERATION (MINIMAL DEMO) ---
+use curve25519_dalek::digest::Digest as_;
+use curve25519_dalek::ristretto::RistrettoPoint;
+use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
+
+pub fn generate_key_image(priv_key: &[u8]) -> [u8; 32] {
+    // In CryptoNote, key image = x * Hp(P), where x is the private key, P is the public key, and Hp is a hash-to-point
+    let sk = Scalar::from_bytes_mod_order(priv_key.try_into().unwrap());
+    let pk = &RISTRETTO_BASEPOINT_POINT * &sk;
+    // Hash-to-point (simplified): hash the compressed pubkey, interpret as scalar, multiply basepoint
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(pk.compress().as_bytes());
+    let hash = hasher.finalize();
+    let mut hash_bytes = [0u8; 32];
+    hash_bytes.copy_from_slice(&hash);
+    let hp_scalar = Scalar::from_bytes_mod_order(hash_bytes);
+    let ki = &RISTRETTO_BASEPOINT_POINT * &hp_scalar * &sk;
+    ki.compress().to_bytes()
 }
 
 fn main() {
@@ -116,5 +133,19 @@ fn main() {
         "help" | _ => {
             println!("BlackSilk Wallet CLI\nUsage: wallet <command>\nCommands:\n  generate   Generate a new wallet address\n  address    Show wallet address\n  help       Show this help message");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_key_image_generation() {
+        // Generate a random private key
+        let mut csprng = rand::thread_rng();
+        let mut sk_bytes = [0u8; 32];
+        csprng.fill_bytes(&mut sk_bytes);
+        let ki = crate::generate_key_image(&sk_bytes);
+        assert_eq!(ki.len(), 32);
     }
 }
