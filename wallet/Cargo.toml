@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 node = { path = "../node" }
 primitives = { path = "../primitives" }
+ed25519-dalek = "1.0"
+rand = "0.8"
+hex = "0.4"

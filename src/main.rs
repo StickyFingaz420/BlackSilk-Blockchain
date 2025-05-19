@@ -1,5 +1,17 @@
+use std::env;
+
 fn main() {
-    println!("[BlackSilk] Testnet bootstrap");
-    // For demonstration, start the node
-    node::start_node();
+    let args: Vec<String> = env::args().collect();
+    let port = if let Some(i) = args.iter().position(|a| a == "-p" || a == "--port") {
+        args.get(i + 1).and_then(|p| p.parse().ok()).unwrap_or(node::config::DEFAULT_P2P_PORT)
+    } else {
+        node::config::DEFAULT_P2P_PORT
+    };
+    let connect_addr = if let Some(i) = args.iter().position(|a| a == "--connect") {
+        args.get(i + 1).cloned()
+    } else {
+        None
+    };
+    println!("[BlackSilk] Testnet bootstrap on port {}", port);
+    node::start_node_with_port_and_connect(port, connect_addr);
 }
