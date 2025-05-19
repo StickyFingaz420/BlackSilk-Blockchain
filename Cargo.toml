@@ -4,3 +4,12 @@ members = [
     "wallet",
     "primitives"
 ]
+
+[package]
+name = "BlackSilk"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+node = { path = "node" }
+primitives = { path = "primitives" }
