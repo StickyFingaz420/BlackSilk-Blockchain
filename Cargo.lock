@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "BlackSilk"
+version = "0.1.0"
+dependencies = [
+ "node",
+ "primitives",
+]
+
+[[package]]
 name = "node"
 version = "0.1.0"
 dependencies = [
