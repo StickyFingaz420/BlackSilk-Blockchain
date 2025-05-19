@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use serde::{Serialize, Deserialize};
 use ed25519_dalek::{PublicKey, Signature, Verifier};
+use sha2::Digest;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum P2PMessage {
@@ -593,5 +594,31 @@ mod tests {
     fn it_works() {
         let result = add(2, 2);
         assert_eq!(result, 4);
+    }
+}
+
+#[cfg(test)]
+mod ring_sig_tests {
+    use super::*;
+    use curve25519_dalek::scalar::Scalar;
+    use curve25519_dalek::edwards::EdwardsPoint;
+    use curve25519_dalek::edwards::CompressedEdwardsY;
+    use rand::rngs::OsRng;
+    use sha2::Sha256;
+
+    #[test]
+    fn test_ring_signature_verification_trivial() {
+        // Generate a single keypair
+        let mut csprng = rand::thread_rng();
+        let mut sk_bytes = [0u8; 32];
+        csprng.fill_bytes(&mut sk_bytes);
+        let sk = Scalar::from_bytes_mod_order(sk_bytes);
+        let pk = (EdwardsPoint::mul_base(&sk)).compress().to_bytes();
+        let ring = vec![pk];
+        // Fake signature: c, r = 0
+        let sig = vec![0u8; 64];
+        let msg = b"test message";
+        // Should fail (not a valid signature)
+        assert!(!validate_ring_signature(&ring, &sig, msg));
     }
 }
