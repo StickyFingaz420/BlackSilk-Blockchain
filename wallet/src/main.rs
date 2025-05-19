@@ -1,6 +1,9 @@
 use std::env;
 use rand::rngs::OsRng;
 use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer};
+use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::edwards::EdwardsPoint;
+use sha2::{Digest, Sha256};
 
 fn generate_wallet() -> (PublicKey, SecretKey) {
     let mut csprng = OsRng {};
@@ -13,6 +16,25 @@ fn public_key_to_address(pk: &PublicKey) -> String {
     hex::encode(pk.as_bytes())
 }
 
+struct StealthAddress {
+    public_view: [u8; 32],
+    public_spend: [u8; 32],
+}
+
+fn generate_stealth_address() -> (Scalar, Scalar, StealthAddress) {
+    // Generate random private view/spend keys
+    let mut csprng = OsRng {};
+    let priv_view = Scalar::random(&mut csprng);
+    let priv_spend = Scalar::random(&mut csprng);
+    let pub_view = (&priv_view * &EdwardsPoint::generator()).compress().to_bytes();
+    let pub_spend = (&priv_spend * &EdwardsPoint::generator()).compress().to_bytes();
+    let stealth = StealthAddress {
+        public_view: pub_view,
+        public_spend: pub_spend,
+    };
+    (priv_view, priv_spend, stealth)
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -21,10 +43,9 @@ fn main() {
     }
     match args[1].as_str() {
         "generate" => {
-            let (pk, sk) = generate_wallet();
-            let address = public_key_to_address(&pk);
+            let (_priv_view, _priv_spend, stealth) = generate_stealth_address();
             // TODO: Save keys securely
-            println!("[BlackSilk Wallet] Generated new address: {}", address);
+            println!("[BlackSilk Wallet] Generated new stealth address: view={} spend={}", hex::encode(stealth.public_view), hex::encode(stealth.public_spend));
         }
         "address" => {
             // TODO: Load and show the wallet address

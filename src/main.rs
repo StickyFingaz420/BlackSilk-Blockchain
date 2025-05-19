@@ -13,5 +13,23 @@ fn main() {
         None
     };
     println!("[BlackSilk] Testnet bootstrap on port {}", port);
+    if args.contains(&"send-block".to_string()) {
+        node::cli_send_block();
+        return;
+    }
+    if args.contains(&"send-tx".to_string()) {
+        node::cli_send_transaction();
+        return;
+    }
+    if args.contains(&"save-chain".to_string()) {
+        node::save_chain(&node::Chain::new()); // TODO: use real chain
+        println!("[CLI] Chain saved to disk");
+        return;
+    }
+    if args.contains(&"load-chain".to_string()) {
+        let blocks = node::load_chain();
+        println!("[CLI] Loaded chain: {:?}", blocks);
+        return;
+    }
     node::start_node_with_port_and_connect(port, connect_addr);
 }

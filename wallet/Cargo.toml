@@ -9,3 +9,5 @@ primitives = { path = "../primitives" }
 ed25519-dalek = "1.0"
 rand = "0.8"
 hex = "0.4"
+curve25519-dalek = "3.2"
+sha2 = "0.10"

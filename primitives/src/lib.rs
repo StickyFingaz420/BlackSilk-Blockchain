@@ -28,14 +28,13 @@ use serde::{Serialize, Deserialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionInput {
     pub key_image: types::Hash, // for ring signature
-    pub ring: Vec<types::Hash>, // decoy outputs
-    pub signature: Vec<u8>,     // placeholder for ring signature
+    pub ring_sig: RingSignature,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionOutput {
     pub amount_commitment: types::Hash, // Pedersen commitment
-    pub stealth_address: types::Address,
+    pub stealth_address: StealthAddress,
     pub range_proof: Vec<u8>, // Bulletproofs
 }
 
@@ -48,14 +47,20 @@ pub struct Transaction {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Pow {
+    pub nonce: u64,
+    pub hash: types::Hash,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlockHeader {
     pub version: u16,
     pub prev_hash: types::Hash,
     pub merkle_root: types::Hash,
     pub timestamp: u64,
     pub height: types::BlockHeight,
-    pub nonce: u64,
     pub difficulty: u64,
+    pub pow: Pow,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -75,4 +80,16 @@ impl Block {
     pub fn is_genesis(&self) -> bool {
         self.header.height == 0
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RingSignature {
+    pub ring: Vec<types::Hash>, // decoy public keys
+    pub signature: Vec<u8>,    // placeholder
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StealthAddress {
+    pub public_view: types::Hash,
+    pub public_spend: types::Hash,
 }
