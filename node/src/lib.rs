@@ -604,6 +604,7 @@ mod ring_sig_tests {
     use curve25519_dalek::edwards::EdwardsPoint;
     use curve25519_dalek::edwards::CompressedEdwardsY;
     use rand::rngs::OsRng;
+    use rand::RngCore;
     use sha2::Sha256;
 
     #[test]
@@ -620,5 +621,21 @@ mod ring_sig_tests {
         let msg = b"test message";
         // Should fail (not a valid signature)
         assert!(!validate_ring_signature(&ring, &sig, msg));
+    }
+
+    #[test]
+    fn test_ring_signature_end_to_end() {
+        // Simulate wallet: generate keypair
+        let mut csprng = rand::thread_rng();
+        let mut sk_bytes = [0u8; 32];
+        csprng.fill_bytes(&mut sk_bytes);
+        let sk = curve25519_dalek::scalar::Scalar::from_bytes_mod_order(sk_bytes);
+        let pk = (curve25519_dalek::edwards::EdwardsPoint::mul_base(&sk)).compress().to_bytes();
+        let ring = vec![pk];
+        let msg = b"end-to-end test message";
+        // Generate signature using wallet logic
+        let sig = wallet::generate_ring_signature(msg, &ring, &sk_bytes, 0);
+        // Verify signature using node logic
+        assert!(validate_ring_signature(&ring, &sig, msg));
     }
 }
