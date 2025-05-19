@@ -1,3 +1,4 @@
 fn main() {
-    println!("Hello, world!");
+    println!("[BlackSilk Wallet] CLI wallet for Testnet");
+    // TODO: Implement wallet commands (generate, balance, send, etc.)
 }
