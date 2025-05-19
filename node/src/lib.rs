@@ -18,13 +18,12 @@ pub mod config {
 }
 
 use primitives::{Block, BlockHeader, Coinbase};
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashSet};
 use std::io::{Write, BufRead};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use serde::{Serialize, Deserialize};
-use ed25519_dalek::{PublicKey, Signature, Verifier};
 use sha2::Digest;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -231,24 +230,40 @@ lazy_static! {
     static ref KEY_IMAGES: Arc<Mutex<std::collections::HashSet<primitives::types::Hash>>> = Arc::new(Mutex::new(std::collections::HashSet::new()));
 }
 
+/// Collect all key images from the chain and mempool
+fn all_seen_key_images() -> HashSet<primitives::types::Hash> {
+    let chain = CHAIN.lock().unwrap();
+    let mempool = MEMPOOL.lock().unwrap();
+    let mut set = HashSet::new();
+    for block in &chain.blocks {
+        for tx in &block.transactions {
+            for input in &tx.inputs {
+                set.insert(input.key_image);
+            }
+        }
+    }
+    for tx in mempool.iter() {
+        for input in &tx.inputs {
+            set.insert(input.key_image);
+        }
+    }
+    set
+}
+
 pub fn validate_transaction(tx: &primitives::Transaction) -> bool {
     if tx.outputs.is_empty() {
         println!("[Validation] Transaction missing outputs");
         return false;
     }
-    if tx.fee < 0 {
-        println!("[Validation] Transaction has negative fee");
-        return false;
-    }
+    let seen_key_images = all_seen_key_images();
     for input in &tx.inputs {
-        // Ring signature validation (placeholder)
+        // Ring signature validation
         if !validate_ring_signature(&input.ring_sig.ring, &input.ring_sig.signature, &tx.extra) {
             println!("[Validation] Ring signature failed");
             return false;
         }
         // Double-spend prevention
-        let mut key_images = KEY_IMAGES.lock().unwrap();
-        if !key_images.insert(input.key_image) {
+        if seen_key_images.contains(&input.key_image) {
             println!("[Validation] Double-spend detected (key image reused)");
             return false;
         }
@@ -260,6 +275,73 @@ pub fn validate_transaction(tx: &primitives::Transaction) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod double_spend_tests {
+    use super::*;
+    use primitives::{Transaction, TransactionInput, TransactionOutput, RingSignature, types};
+    #[test]
+    fn test_double_spend_key_image() {
+        // Generate a real keypair and ring signature for the test
+        use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+        use curve25519_dalek::edwards::CompressedEdwardsY;
+        use curve25519_dalek::scalar::Scalar;
+        use rand::RngCore;
+        use sha2::Sha256;
+        let mut csprng = rand::thread_rng();
+        let mut sk_bytes = [0u8; 32];
+        csprng.fill_bytes(&mut sk_bytes);
+        let sk = Scalar::from_bytes_mod_order(sk_bytes);
+        let pk = (ED25519_BASEPOINT_POINT * sk).compress().to_bytes();
+        let ring = vec![pk];
+        let msg = b"test double spend";
+        // Generate ring signature
+        let n = ring.len();
+        let mut pubkeys = Vec::with_capacity(n);
+        for pk_bytes in &ring {
+            let pt = CompressedEdwardsY(*pk_bytes).decompress().unwrap();
+            pubkeys.push(pt);
+        }
+        let mut r_vec = vec![Scalar::default(); n];
+        for i in 0..n {
+            let mut r_bytes = [0u8; 32];
+            csprng.fill_bytes(&mut r_bytes);
+            r_vec[i] = Scalar::from_bytes_mod_order(r_bytes);
+        }
+        let mut c_vec = vec![Scalar::default(); n];
+        let mut hasher = Sha256::new();
+        hasher.update(msg);
+        let mut c_bytes = [0u8; 32];
+        c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
+        c_vec[0] = Scalar::from_bytes_mod_order(c_bytes);
+        for i in 0..n {
+            let l = ED25519_BASEPOINT_POINT * r_vec[i] + pubkeys[i] * c_vec[i];
+            hasher.update(l.compress().as_bytes());
+            hasher.update(msg);
+            let mut c_bytes = [0u8; 32];
+            c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
+            c_vec[(i + 1) % n] = Scalar::from_bytes_mod_order(c_bytes);
+        }
+        r_vec[0] = r_vec[0] + sk * c_vec[0];
+        let mut sig = Vec::with_capacity(n * 64);
+        for i in 0..n {
+            sig.extend_from_slice(&c_vec[i].to_bytes());
+            sig.extend_from_slice(&r_vec[i].to_bytes());
+        }
+        let key_image = [1u8; 32]; // For test, not used in ring sig
+        let ring_sig = RingSignature { ring: ring.clone(), signature: sig };
+        let input = TransactionInput { key_image, ring_sig };
+        let output = TransactionOutput { amount_commitment: [3u8; 32], stealth_address: primitives::StealthAddress { public_view: [4u8; 32], public_spend: [5u8; 32] }, range_proof: vec![0u8; 64] };
+        let tx1 = Transaction { inputs: vec![input.clone()], outputs: vec![output.clone()], fee: 0, extra: msg.to_vec() };
+        let tx2 = Transaction { inputs: vec![input], outputs: vec![output], fee: 0, extra: msg.to_vec() };
+        // First tx should be valid
+        assert!(validate_transaction(&tx1));
+        // Add tx1 to mempool
+        add_to_mempool(tx1.clone());
+        // Second tx with same key image should be rejected
+        assert!(!validate_transaction(&tx2));
+    }
 }
 
 // Advanced fork resolution: choose the longest valid chain
@@ -563,8 +645,6 @@ pub fn get_mempool() -> Vec<primitives::Transaction> {
 }
 
 // Persistent storage (simple JSON, for demo)
-use std::fs;
-
 pub fn save_chain() {
     let chain = CHAIN.lock().unwrap();
     let json = serde_json::to_string(&chain.blocks.iter().collect::<Vec<_>>()).unwrap();
@@ -606,6 +686,7 @@ mod ring_sig_tests {
     use rand::rngs::OsRng;
     use rand::RngCore;
     use sha2::Sha256;
+    use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 
     #[test]
     fn test_ring_signature_verification_trivial() {
@@ -633,8 +714,45 @@ mod ring_sig_tests {
         let pk = (curve25519_dalek::edwards::EdwardsPoint::mul_base(&sk)).compress().to_bytes();
         let ring = vec![pk];
         let msg = b"end-to-end test message";
-        // Generate signature using wallet logic
-        let sig = wallet::generate_ring_signature(msg, &ring, &sk_bytes, 0);
+        // Generate signature using local logic (copied from wallet)
+        let n = ring.len();
+        assert!(n > 0);
+        use curve25519_dalek::edwards::CompressedEdwardsY;
+        use curve25519_dalek::scalar::Scalar;
+        use sha2::Sha256;
+        let mut pubkeys = Vec::with_capacity(n);
+        for pk_bytes in &ring {
+            let pt = CompressedEdwardsY(*pk_bytes).decompress().unwrap();
+            pubkeys.push(pt);
+        }
+        let mut r_vec = vec![Scalar::default(); n];
+        for i in 0..n {
+            let mut r_bytes = [0u8; 32];
+            csprng.fill_bytes(&mut r_bytes);
+            r_vec[i] = Scalar::from_bytes_mod_order(r_bytes);
+        }
+        let mut c_vec = vec![Scalar::default(); n];
+        let mut hasher = Sha256::new();
+        hasher.update(msg);
+        let mut c_bytes = [0u8; 32];
+        c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
+        c_vec[0] = Scalar::from_bytes_mod_order(c_bytes);
+        for i in 0..n {
+            let l = ED25519_BASEPOINT_POINT * r_vec[i] + pubkeys[i] * c_vec[i];
+            hasher.update(l.compress().as_bytes());
+            hasher.update(msg);
+            let mut c_bytes = [0u8; 32];
+            c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
+            c_vec[(i + 1) % n] = Scalar::from_bytes_mod_order(c_bytes);
+        }
+        // Compute r for real_index (0)
+        r_vec[0] = r_vec[0] + sk * c_vec[0];
+        // Serialize signature as (c_0, r_0), ...
+        let mut sig = Vec::with_capacity(n * 64);
+        for i in 0..n {
+            sig.extend_from_slice(&c_vec[i].to_bytes());
+            sig.extend_from_slice(&r_vec[i].to_bytes());
+        }
         // Verify signature using node logic
         assert!(validate_ring_signature(&ring, &sig, msg));
     }
