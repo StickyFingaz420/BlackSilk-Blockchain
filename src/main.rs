@@ -22,13 +22,13 @@ fn main() {
         return;
     }
     if args.contains(&"save-chain".to_string()) {
-        node::save_chain(&node::Chain::new()); // TODO: use real chain
+        node::save_chain();
         println!("[CLI] Chain saved to disk");
         return;
     }
     if args.contains(&"load-chain".to_string()) {
-        let blocks = node::load_chain();
-        println!("[CLI] Loaded chain: {:?}", blocks);
+        node::load_chain();
+        println!("[CLI] Chain loaded from disk");
         return;
     }
     node::start_node_with_port_and_connect(port, connect_addr);

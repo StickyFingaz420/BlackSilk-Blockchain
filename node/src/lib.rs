@@ -18,13 +18,13 @@ pub mod config {
 }
 
 use primitives::{Block, BlockHeader, Coinbase};
-use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::io::{Write, BufRead};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use serde::{Serialize, Deserialize};
+use ed25519_dalek::{PublicKey, Signature, Verifier};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum P2PMessage {
@@ -67,6 +67,10 @@ lazy_static::lazy_static! {
     static ref MEMPOOL: Arc<Mutex<Vec<primitives::Transaction>>> = Arc::new(Mutex::new(Vec::new()));
 }
 
+lazy_static! {
+    static ref CHAIN: Arc<Mutex<Chain>> = Arc::new(Mutex::new(Chain::new()));
+}
+
 pub fn broadcast_message(msg: &P2PMessage) {
     let peers = PEERS.lock().unwrap();
     for peer in peers.iter() {
@@ -95,33 +99,61 @@ fn handle_client(mut stream: TcpStream) {
                     P2PMessage::Pong => {},
                     P2PMessage::Version { .. } => {},
                     P2PMessage::Block(block) => {
-                        println!("[P2P] Received block: height {}", block.header.height);
-                        // Optionally broadcast to other peers
-                        broadcast_message(&P2PMessage::Block(block));
+                        let mut chain = CHAIN.lock().unwrap();
+                        if chain.blocks.back().map_or(true, |b| block.header.prev_hash == b.header.pow.hash) {
+                            if chain.add_block(block.clone()) {
+                                println!("[Chain] Block added");
+                                broadcast_message(&P2PMessage::Block(block));
+                            } else {
+                                println!("[Chain] Block rejected");
+                            }
+                        } else {
+                            println!("[Chain] Block does not extend current chain. Possible fork or reorg needed.");
+                            // TODO: Handle chain reorg (fork resolution)
+                        }
                     },
                     P2PMessage::Transaction(tx) => {
-                        println!("[P2P] Received transaction");
-                        broadcast_message(&P2PMessage::Transaction(tx));
+                        if validate_transaction(&tx) {
+                            add_to_mempool(tx.clone());
+                            broadcast_message(&P2PMessage::Transaction(tx));
+                            println!("[Mempool] Transaction accepted");
+                        } else {
+                            println!("[Mempool] Invalid transaction rejected");
+                        }
                     },
                     P2PMessage::PeerList(peers) => {
                         println!("[P2P] Received peer list: {:?}", peers);
                     },
                     P2PMessage::GetBlocks { from_height } => {
-                        let chain = Chain::new(); // TODO: use real chain
+                        let chain = CHAIN.lock().unwrap();
                         let blocks: Vec<_> = chain.blocks.iter().filter(|b| b.header.height >= from_height).cloned().collect();
                         let _ = send_message(&mut stream, &P2PMessage::Blocks(blocks));
                     },
                     P2PMessage::Blocks(blocks) => {
-                        println!("[P2P] Received {} blocks", blocks.len());
-                        // TODO: add to chain
+                        let mut chain = CHAIN.lock().unwrap();
+                        if blocks.len() > chain.blocks.len() {
+                            drop(chain); // unlock before reorg
+                            maybe_reorg_chain(blocks);
+                        } else {
+                            for block in blocks {
+                                if chain.blocks.back().map_or(true, |b| block.header.prev_hash == b.header.pow.hash) {
+                                    chain.add_block(block);
+                                } else {
+                                    println!("[Chain] Received block does not extend current chain. Fork handling needed.");
+                                }
+                            }
+                        }
                     },
                     P2PMessage::GetMempool => {
                         let mempool = get_mempool();
                         let _ = send_message(&mut stream, &P2PMessage::Mempool(mempool));
                     },
                     P2PMessage::Mempool(txs) => {
-                        println!("[P2P] Received mempool: {} txs", txs.len());
-                        // TODO: add to mempool
+                        for tx in txs {
+                            if validate_transaction(&tx) {
+                                add_to_mempool(tx);
+                            }
+                        }
                     },
                 }
             }
@@ -135,6 +167,122 @@ fn handle_client(mut stream: TcpStream) {
     {
         let mut peers = PEERS.lock().unwrap();
         peers.retain(|s| s.peer_addr().unwrap() != stream.peer_addr().unwrap());
+    }
+}
+
+// Minimal CryptoNote-style ring signature verification
+use curve25519_dalek::edwards::CompressedEdwardsY;
+use curve25519_dalek::edwards::EdwardsPoint;
+use curve25519_dalek::scalar::Scalar;
+use sha2::Sha256;
+
+/// Verifies a minimal CryptoNote-style ring signature.
+/// - `ring`: Vec of public keys (as [u8; 32])
+/// - `sig`: signature bytes (expected: ring.len() pairs of (c, r), each 32 bytes)
+/// - `msg`: message bytes
+pub fn validate_ring_signature(ring: &[primitives::types::Hash], sig: &[u8], msg: &[u8]) -> bool {
+    let n = ring.len();
+    if n == 0 || sig.len() != n * 64 {
+        return false;
+    }
+    // Parse signature: (c_0, r_0), (c_1, r_1), ...
+    let mut c_vec = Vec::with_capacity(n);
+    let mut r_vec = Vec::with_capacity(n);
+    for i in 0..n {
+        let c = Scalar::from_canonical_bytes(sig[i*64..i*64+32].try_into().unwrap());
+        let r = Scalar::from_canonical_bytes(sig[i*64+32..i*64+64].try_into().unwrap());
+        if bool::from(c.is_none()) || bool::from(r.is_none()) {
+            return false;
+        }
+        c_vec.push(c.unwrap());
+        r_vec.push(r.unwrap());
+    }
+    // Parse public keys
+    let mut pubkeys = Vec::with_capacity(n);
+    for pk_bytes in ring {
+        let pt = CompressedEdwardsY(*pk_bytes).decompress();
+        if pt.is_none() {
+            return false;
+        }
+        pubkeys.push(pt.unwrap());
+    }
+    // Recompute challenge chain
+    let mut hasher = Sha256::new();
+    hasher.update(msg);
+    let mut c_bytes = [0u8; 32];
+    c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
+    let mut c = Scalar::from_bytes_mod_order(c_bytes);
+    for i in 0..n {
+        // L_i = r_i*G + c_i*P_i
+        let l = EdwardsPoint::mul_base(&r_vec[i]) + pubkeys[i] * c;
+        // Hash L_i and msg to get next c
+        hasher.update(l.compress().as_bytes());
+        hasher.update(msg);
+        let mut c_bytes = [0u8; 32];
+        c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
+        c = Scalar::from_bytes_mod_order(c_bytes);
+    }
+    // Final challenge should match c_0
+    c == c_vec[0]
+}
+
+lazy_static! {
+    static ref KEY_IMAGES: Arc<Mutex<std::collections::HashSet<primitives::types::Hash>>> = Arc::new(Mutex::new(std::collections::HashSet::new()));
+}
+
+pub fn validate_transaction(tx: &primitives::Transaction) -> bool {
+    if tx.outputs.is_empty() {
+        println!("[Validation] Transaction missing outputs");
+        return false;
+    }
+    if tx.fee < 0 {
+        println!("[Validation] Transaction has negative fee");
+        return false;
+    }
+    for input in &tx.inputs {
+        // Ring signature validation (placeholder)
+        if !validate_ring_signature(&input.ring_sig.ring, &input.ring_sig.signature, &tx.extra) {
+            println!("[Validation] Ring signature failed");
+            return false;
+        }
+        // Double-spend prevention
+        let mut key_images = KEY_IMAGES.lock().unwrap();
+        if !key_images.insert(input.key_image) {
+            println!("[Validation] Double-spend detected (key image reused)");
+            return false;
+        }
+    }
+    for output in &tx.outputs {
+        if !validate_range_proof(&output.range_proof, &output.amount_commitment) {
+            println!("[Validation] Range proof failed");
+            return false;
+        }
+    }
+    true
+}
+
+// Advanced fork resolution: choose the longest valid chain
+pub fn maybe_reorg_chain(new_blocks: Vec<primitives::Block>) {
+    let mut chain = CHAIN.lock().unwrap();
+    if new_blocks.len() > chain.blocks.len() {
+        // Validate all new blocks
+        let mut valid = true;
+        for i in 0..new_blocks.len() {
+            if i > 0 && new_blocks[i].header.prev_hash != new_blocks[i-1].header.pow.hash {
+                valid = false;
+                break;
+            }
+            if !validate_block(&new_blocks[i]) {
+                valid = false;
+                break;
+            }
+        }
+        if valid {
+            println!("[Chain] Reorg: switching to longer chain");
+            chain.blocks = new_blocks.into();
+        } else {
+            println!("[Chain] Reorg failed: received chain is invalid");
+        }
     }
 }
 
@@ -416,17 +564,25 @@ pub fn get_mempool() -> Vec<primitives::Transaction> {
 // Persistent storage (simple JSON, for demo)
 use std::fs;
 
-pub fn save_chain(chain: &Chain) {
+pub fn save_chain() {
+    let chain = CHAIN.lock().unwrap();
     let json = serde_json::to_string(&chain.blocks.iter().collect::<Vec<_>>()).unwrap();
-    let _ = fs::write("chain.json", json);
+    let _ = std::fs::write("chain.json", json);
 }
 
-pub fn load_chain() -> Option<Vec<primitives::Block>> {
-    if let Ok(data) = fs::read_to_string("chain.json") {
-        serde_json::from_str(&data).ok()
-    } else {
-        None
+pub fn load_chain() {
+    if let Ok(data) = std::fs::read_to_string("chain.json") {
+        if let Ok(blocks) = serde_json::from_str::<Vec<primitives::Block>>(&data) {
+            let mut chain = CHAIN.lock().unwrap();
+            chain.blocks = blocks.into();
+        }
     }
+}
+
+pub fn validate_range_proof(_proof: &[u8], _commitment: &primitives::types::Hash) -> bool {
+    // TODO: Implement Bulletproofs or similar range proof validation
+    // For now, always return true as a placeholder
+    true
 }
 
 #[cfg(test)]
