@@ -660,10 +660,286 @@ pub fn load_chain() {
     }
 }
 
-pub fn validate_range_proof(_proof: &[u8], _commitment: &primitives::types::Hash) -> bool {
-    // TODO: Implement Bulletproofs or similar range proof validation
-    // For now, always return true as a placeholder
-    true
+pub fn validate_range_proof(proof: &[u8], commitment: &primitives::types::Hash) -> bool {
+    // Convert proof bytes to RangeProof
+    let range_proof = match bulletproofs::RangeProof::from_bytes(proof) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    
+    // Convert commitment to CompressedRistretto
+    let mut commitment_bytes = [0u8; 32];
+    commitment_bytes.copy_from_slice(commitment);
+    let committed_value = curve25519_dalek::ristretto::CompressedRistretto(commitment_bytes);
+    
+    // Verify the range proof
+    let pc_gens = bulletproofs::PedersenGens::default();
+    let bp_gens = bulletproofs::BulletproofGens::new(64, 1);
+    let mut transcript = merlin::Transcript::new(b"BlackSilkBulletproof");
+    
+    range_proof.verify_single(
+        &bp_gens,
+        &pc_gens,
+        &mut transcript,
+        &committed_value,
+        64,
+    ).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_works() {
+        let result = add(2, 2);
+        assert_eq!(result, 4);
+    }
+}
+
+#[cfg(test)]
+mod ring_sig_tests {
+    use super::*;
+    use curve25519_dalek::scalar::Scalar;
+    use curve25519_dalek::edwards::EdwardsPoint;
+    use curve25519_dalek::edwards::CompressedEdwardsY;
+    use rand::rngs::OsRng;
+    use rand::RngCore;
+    use sha2::Sha256;
+    use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+
+    #[test]
+    fn test_ring_signature_verification_trivial() {
+        // Generate a single keypair
+        let mut csprng = rand::thread_rng();
+        let mut sk_bytes = [0u8; 32];
+        csprng.fill_bytes(&mut sk_bytes);
+        let sk = Scalar::from_bytes_mod_order(sk_bytes);
+        let pk = (EdwardsPoint::mul_base(&sk)).compress().to_bytes();
+        let ring = vec![pk];
+        // Fake signature: c, r = 0
+        let sig = vec![0u8; 64];
+        let msg = b"test message";
+        // Should fail (not a valid signature)
+        assert!(!validate_ring_signature(&ring, &sig, msg));
+    }
+
+    #[test]
+    fn test_ring_signature_end_to_end() {
+        // Simulate wallet: generate keypair
+        let mut csprng = rand::thread_rng();
+        let mut sk_bytes = [0u8; 32];
+        csprng.fill_bytes(&mut sk_bytes);
+        let sk = curve25519_dalek::scalar::Scalar::from_bytes_mod_order(sk_bytes);
+        let pk = (curve25519_dalek::edwards::EdwardsPoint::mul_base(&sk)).compress().to_bytes();
+        let ring = vec![pk];
+        let msg = b"end-to-end test message";
+        // Generate signature using local logic (copied from wallet)
+        let n = ring.len();
+        assert!(n > 0);
+        use curve25519_dalek::edwards::CompressedEdwardsY;
+        use curve25519_dalek::scalar::Scalar;
+        use sha2::Sha256;
+        let mut pubkeys = Vec::with_capacity(n);
+        for pk_bytes in &ring {
+            let pt = CompressedEdwardsY(*pk_bytes).decompress().unwrap();
+            pubkeys.push(pt);
+        }
+        let mut r_vec = vec![Scalar::default(); n];
+        for i in 0..n {
+            let mut r_bytes = [0u8; 32];
+            csprng.fill_bytes(&mut r_bytes);
+            r_vec[i] = Scalar::from_bytes_mod_order(r_bytes);
+        }
+        let mut c_vec = vec![Scalar::default(); n];
+        let mut hasher = Sha256::new();
+        hasher.update(msg);
+        let mut c_bytes = [0u8; 32];
+        c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
+        c_vec[0] = Scalar::from_bytes_mod_order(c_bytes);
+        for i in 0..n {
+            let l = ED25519_BASEPOINT_POINT * r_vec[i] + pubkeys[i] * c_vec[i];
+            hasher.update(l.compress().as_bytes());
+            hasher.update(msg);
+            let mut c_bytes = [0u8; 32];
+            c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
+            c_vec[(i + 1) % n] = Scalar::from_bytes_mod_order(c_bytes);
+        }
+        // Compute r for real_index (0)
+        r_vec[0] = r_vec[0] + sk * c_vec[0];
+        // Serialize signature as (c_0, r_0), ...
+        let mut sig = Vec::with_capacity(n * 64);
+        for i in 0..n {
+            sig.extend_from_slice(&c_vec[i].to_bytes());
+            sig.extend_from_slice(&r_vec[i].to_bytes());
+        }
+        // Verify signature using node logic
+        assert!(validate_ring_signature(&ring, &sig, msg));
+    }
+}
+
+pub struct TorNetworkLayer {
+    hidden_service: Option<tor_client::HiddenService>,
+    onion_address: String,
+}
+
+impl TorNetworkLayer {
+    pub fn new() -> Self {
+        // Initialize Tor client
+        // This is a placeholder - actual implementation would use the tor-client crate
+        Self {
+            hidden_service: None,
+            onion_address: String::new(),
+        }
+    }
+    
+    pub fn start_hidden_service(&mut self, port: u16) -> Result<String, Box<dyn std::error::Error>> {
+        // Start a Tor hidden service that forwards to our local P2P port
+        // Return the .onion address
+        // This is a placeholder implementation
+        self.onion_address = format!("blacksilk{}.onion", rand::random::<u64>());
+        println!("[Tor] Hidden service started at {}", self.onion_address);
+        Ok(self.onion_address.clone())
+    }
+}
+
+pub struct I2PNetworkLayer {
+    destination: Option<String>,
+    b32_address: String,
+}
+
+impl I2PNetworkLayer {
+    pub fn new() -> Self {
+        // Initialize I2P client
+        // This is a placeholder - actual implementation would use an I2P library
+        Self {
+            destination: None,
+            b32_address: String::new(),
+        }
+    }
+    
+    pub fn start_destination(&mut self, port: u16) -> Result<String, Box<dyn std::error::Error>> {
+        // Start an I2P destination that forwards to our local P2P port
+        // Return the base32 address
+        // This is a placeholder implementation
+        self.b32_address = format!("blacksilk{}.b32.i2p", rand::random::<u64>());
+        println!("[I2P] Destination started at {}", self.b32_address);
+        Ok(self.b32_address.clone())
+    }
+}
+
+pub fn pow_hash(header: &BlockHeader) -> primitives::types::Hash {
+    // Placeholder: double SHA256 of header fields (except pow.hash)
+    let mut hasher = Sha256::new();
+    hasher.update(header.version.to_le_bytes());
+    hasher.update(&header.prev_hash);
+    hasher.update(&header.merkle_root);
+    hasher.update(header.timestamp.to_le_bytes());
+    hasher.update(header.height.to_le_bytes());
+    hasher.update(header.pow.nonce.to_le_bytes());
+    hasher.update(header.difficulty.to_le_bytes());
+    let first = hasher.finalize_reset();
+    hasher.update(first);
+    let result = hasher.finalize();
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&result);
+    hash
+}
+
+pub fn mine_block(header: &mut BlockHeader, target: u64) {
+    // Very simple PoW: find nonce so hash as u64 < target
+    for nonce in 0..u64::MAX {
+        header.pow.nonce = nonce;
+        let hash = pow_hash(header);
+        let hash_val = u64::from_le_bytes([hash[0],hash[1],hash[2],hash[3],hash[4],hash[5],hash[6],hash[7]]);
+        if hash_val < target {
+            header.pow.hash = hash;
+            break;
+        }
+    }
+}
+
+pub fn cli_send_block() {
+    let block = Block {
+        header: BlockHeader {
+            version: 1,
+            prev_hash: [1u8; 32],
+            merkle_root: [2u8; 32],
+            timestamp: 1_716_150_001,
+            height: 1,
+            difficulty: 1,
+            pow: primitives::Pow { nonce: 42, hash: [3u8; 32] },
+        },
+        coinbase: Coinbase {
+            reward: 86,
+            to: "test_address".to_string(),
+        },
+        transactions: vec![],
+    };
+    broadcast_message(&P2PMessage::Block(block));
+    println!("[CLI] Test block broadcasted to peers");
+}
+
+pub fn cli_send_transaction() {
+    let tx = primitives::Transaction {
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        extra: b"test tx".to_vec(),
+    };
+    broadcast_message(&P2PMessage::Transaction(tx));
+    println!("[CLI] Test transaction broadcasted to peers");
+}
+
+pub fn add_to_mempool(tx: primitives::Transaction) {
+    let mut mempool = MEMPOOL.lock().unwrap();
+    mempool.push(tx);
+}
+
+pub fn get_mempool() -> Vec<primitives::Transaction> {
+    MEMPOOL.lock().unwrap().clone()
+}
+
+// Persistent storage (simple JSON, for demo)
+pub fn save_chain() {
+    let chain = CHAIN.lock().unwrap();
+    let json = serde_json::to_string(&chain.blocks.iter().collect::<Vec<_>>()).unwrap();
+    let _ = std::fs::write("chain.json", json);
+}
+
+pub fn load_chain() {
+    if let Ok(data) = std::fs::read_to_string("chain.json") {
+        if let Ok(blocks) = serde_json::from_str::<Vec<primitives::Block>>(&data) {
+            let mut chain = CHAIN.lock().unwrap();
+            chain.blocks = blocks.into();
+        }
+    }
+}
+
+pub fn validate_range_proof(proof: &[u8], commitment: &primitives::types::Hash) -> bool {
+    // Convert proof bytes to RangeProof
+    let range_proof = match bulletproofs::RangeProof::from_bytes(proof) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    
+    // Convert commitment to CompressedRistretto
+    let mut commitment_bytes = [0u8; 32];
+    commitment_bytes.copy_from_slice(commitment);
+    let committed_value = curve25519_dalek::ristretto::CompressedRistretto(commitment_bytes);
+    
+    // Verify the range proof
+    let pc_gens = bulletproofs::PedersenGens::default();
+    let bp_gens = bulletproofs::BulletproofGens::new(64, 1);
+    let mut transcript = merlin::Transcript::new(b"BlackSilkBulletproof");
+    
+    range_proof.verify_single(
+        &bp_gens,
+        &pc_gens,
+        &mut transcript,
+        &committed_value,
+        64,
+    ).is_ok()
 }
 
 #[cfg(test)]
