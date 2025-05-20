@@ -11,7 +11,8 @@ members = [
     "node",
     "wallet",
     "primitives",
-    "marketplace/backend"
+    "marketplace/backend",
+    "miner"
 ]
 
 [dependencies]
