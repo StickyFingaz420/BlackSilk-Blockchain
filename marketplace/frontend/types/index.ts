@@ -5,9 +5,48 @@ export interface Listing {
     price: number;
     seller: string;
     images: string[]; // IPFS hashes
-    category: string;
+    category: Category;
+    subcategory: string;
+    tags: string[];
+    condition: ItemCondition;
+    shipping: ShippingOption[];
+    location: string;
+    quantity: number;
     created_at: number;
+    updated_at: number;
     status: ListingStatus;
+    views: number;
+    rating: number;
+    ratings_count: number;
+}
+
+export enum Category {
+    Electronics = 'Electronics',
+    Fashion = 'Fashion',
+    Home = 'Home',
+    Art = 'Art',
+    Collectibles = 'Collectibles',
+    Books = 'Books',
+    Sports = 'Sports',
+    Health = 'Health',
+    Beauty = 'Beauty',
+    Automotive = 'Automotive',
+    Other = 'Other'
+}
+
+export enum ItemCondition {
+    New = 'New',
+    LikeNew = 'Like New',
+    VeryGood = 'Very Good',
+    Good = 'Good',
+    Acceptable = 'Acceptable'
+}
+
+export interface ShippingOption {
+    method: string;
+    price: number;
+    estimated_days: number;
+    regions: string[];
 }
 
 export enum ListingStatus {
@@ -70,4 +109,32 @@ export enum EscrowStatus {
     Released = 'Released',
     Refunded = 'Refunded',
     Disputed = 'Disputed'
+}
+
+export interface SearchFilters {
+    query: string;
+    category?: Category;
+    subcategory?: string;
+    minPrice?: number;
+    maxPrice?: number;
+    condition?: ItemCondition;
+    location?: string;
+    sortBy: SortOption;
+    page: number;
+    limit: number;
+}
+
+export enum SortOption {
+    RecentlyListed = 'recently_listed',
+    PriceLowToHigh = 'price_low_to_high',
+    PriceHighToLow = 'price_high_to_low',
+    MostViewed = 'most_viewed',
+    TopRated = 'top_rated'
+}
+
+export interface CategoryMetadata {
+    category: Category;
+    subcategories: string[];
+    icon: string;
+    count: number;
 } 
