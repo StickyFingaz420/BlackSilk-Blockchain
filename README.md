@@ -79,8 +79,31 @@ blacksilk-node --port 1776
 ### Mining
 
 ```bash
-blacksilk-miner --address YOUR_ADDRESS
+cargo run --release -- -n 192.168.1.100:8000 -a blacks1k... -t 4
 ```
+
+#### Standalone Miner
+
+You can use the standalone miner (`blacksilk-miner`) to mine with multiple PCs on the same network, all mining to a single node.
+
+**Usage:**
+```bash
+cargo run --release --package blacksilk-miner -- \
+  -n NODE_IP:PORT \
+  -a YOUR_WALLET_ADDRESS \
+  -t NUM_THREADS
+```
+
+- `-n` / `--node`: Node address (host:port) to connect to (e.g., `192.168.1.100:8000`)
+- `-a` / `--address`: Your wallet address to receive mining rewards
+- `-t` / `--threads`: Number of mining threads (default: 1, set to number of CPU cores for best performance)
+
+**Example:**
+```bash
+cargo run --release --package blacksilk-miner -- -n 192.168.1.100:8000 -a blacks1k1q2w3e4r5t6y7u8i9o0p -t 4
+```
+
+You can run this command on multiple PCs, all pointing to the same node, to mine cooperatively.
 
 ## Documentation
 

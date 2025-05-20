@@ -11,6 +11,8 @@ use tokio::sync::Mutex;
 use node::escrow as node_escrow;
 use primitives::escrow::{EscrowContract, EscrowStatus};
 use primitives::types::Hash;
+use rocket::serde::{Deserialize as RocketDeserialize, Serialize as RocketSerialize};
+mod stratum;
 
 // Types
 #[derive(Debug, Serialize, Deserialize)]
@@ -62,6 +64,22 @@ pub struct EscrowCreateRequest {
     pub seller: [u8; 32],
     pub arbiter: [u8; 32],
     pub amount: u64,
+}
+
+// Mining API
+#[derive(Debug, RocketSerialize, RocketDeserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct BlockTemplate {
+    pub header: Vec<u8>, // serialized header
+    pub difficulty: u64,
+    pub seed: Vec<u8>,
+    pub coinbase_address: String,
+}
+
+#[derive(Debug, RocketSerialize, RocketDeserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct BlockTemplateRequest {
+    pub address: String,
 }
 
 // State
@@ -200,8 +218,60 @@ fn dispute_escrow_endpoint(req: Json<EscrowActionRequest>) -> Status {
     }
 }
 
+// Mining API
+#[post("/mining/get_block_template", format = "json", data = "<req>")]
+fn get_block_template(req: Json<BlockTemplateRequest>) -> Json<BlockTemplate> {
+    // TODO: Integrate with node's real chain state, mempool, and difficulty
+    // Example structure for real implementation:
+    // let (header, difficulty, seed) = node::get_block_template(&req.address);
+    // Json(BlockTemplate {
+    //     header,
+    //     difficulty,
+    //     seed,
+    //     coinbase_address: req.address.clone(),
+    // })
+
+    // Dummy logic for now:
+    let mut header = vec![0; 80];
+    let addr_bytes = req.address.as_bytes();
+    for (i, b) in addr_bytes.iter().enumerate().take(16) {
+        header[i] = *b;
+    }
+    let difficulty = 1000000; // TODO: Replace with dynamic network difficulty
+    let seed = vec![1; 32];   // TODO: Use real RandomX seed
+    Json(BlockTemplate {
+        header,
+        difficulty,
+        seed,
+        coinbase_address: req.address.clone(),
+    })
+}
+
+#[derive(Debug, RocketSerialize, RocketDeserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct SubmitBlockRequest {
+    pub header: Vec<u8>,
+    pub nonce: u64,
+    pub hash: Vec<u8>,
+}
+
+#[post("/mining/submit_block", format = "json", data = "<req>")]
+fn submit_block(req: Json<SubmitBlockRequest>) -> Status {
+    println!("[Mining] Received mined block: nonce={}, hash={:x?}", req.nonce, req.hash);
+    // TODO: Validate and broadcast block
+    Status::Ok
+}
+
 #[launch]
 fn rocket() -> _ {
+    // Start Stratum server in background
+    tokio::spawn(async {
+        stratum::start_stratum_server().await;
+    });
+    tokio::spawn(async {
+        stratum::payout_loop().await;
+    });
+
     let state = AppState {
         ipfs: IpfsClient::default(),
         listings: Arc::new(Mutex::new(Vec::new())),
@@ -224,5 +294,8 @@ fn rocket() -> _ {
             release_escrow_endpoint,
             refund_escrow_endpoint,
             dispute_escrow_endpoint,
+            // Mining endpoints
+            get_block_template,
+            submit_block,
         ])
 } 
