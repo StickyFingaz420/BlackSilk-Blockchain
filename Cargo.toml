@@ -33,9 +33,9 @@ merlin = "3.0"
 randomx-rs = "0.2"
 
 # Network & P2P
-libp2p = { version = "0.51", features = ["tcp-tokio", "dns-tokio"] }
-tor-client = "0.2"
-i2p = "0.1"
+libp2p = { version = "0.51", features = ["tcp", "dns"] }
+tor_client = "0.0.11"
+# i2p = { git = "https://github.com/eyedeekay/i2p-rs" } # Uncomment and use when ready for I2P integration
 
 # Storage
 rocksdb = "0.20"

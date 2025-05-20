@@ -2,35 +2,90 @@
 
 # BlackSilk Blockchain
 
-A privacy-focused blockchain platform with integrated decentralized marketplace capabilities.
+**Built from scratch**: BlackSilk is a privacy-focused blockchain and decentralized marketplace, designed and implemented from the ground up to provide robust privacy, security, and censorship resistance.
 
-## Overview
+## Project Overview
 
-BlackSilk is a proof-of-work blockchain that prioritizes privacy and censorship resistance through:
-- RandomX (RX/0) mining algorithm optimized for CPU mining
-- Ring signatures and stealth addresses for transaction privacy
-- Confidential Transactions with Bulletproofs
-- Tor/I2P network integration
-- Decentralized marketplace with privacy-preserving features
+BlackSilk is a next-generation, privacy-first blockchain platform with an integrated decentralized marketplace. Inspired by Monero and Silk Road, it leverages advanced cryptography and privacy technologies to enable secure, anonymous commerce. The project is implemented entirely from scratch in Rust, with a modern architecture and extensible design.
+
+Key technologies include:
+- **RandomX Proof-of-Work** for ASIC resistance and fair mining
+- **Ring Signatures, Stealth Addresses, Bulletproofs** for transaction privacy
+- **Tor/I2P Integration** for network anonymity
+- **Smart Escrow Contracts** with 2-of-3 multisig and dispute resolution
+- **IPFS Integration** for decentralized storage
+- **Wallet-based Authentication** (no passwords, no sessions)
+- **Extensible Rust Backend** with PostgreSQL for persistent storage
+- **Next.js Frontend** (scaffolded)
 
 ## Features
 
 - **Privacy First**: Ring signatures, stealth addresses, and confidential transactions ensure complete transaction privacy
 - **CPU Mining**: RandomX proof-of-work algorithm optimized for CPU mining
-- **Block Time**: 2-3 minutes (90-145 seconds)
-- **Initial Reward**: 86 BLK
-- **Halving**: Every 125,000 blocks (50% reduction)
-- **Supply Cap**: 21 million BLK
-- **Tail Emission**: 0.5 BLK per block after cap
 - **Network Privacy**: Full Tor/I2P integration with optional clearnet
 - **Marketplace**: Integrated decentralized marketplace with escrow and IPFS
+- **Wallet-based Authentication**: Ed25519 signature-based login and endpoint protection
+- **Event/Audit Logging**: All escrow actions are logged for transparency and dispute resolution
+
+## Tokenomics
+
+| Parameter         | Value                        |
+|------------------|------------------------------|
+| Block Time       | 120 seconds (2 minutes)      |
+| Initial Reward   | 86 BLK per block             |
+| Halving Interval | Every 125,000 blocks         |
+| Halving Amount   | 50% reduction per halving    |
+| Supply Cap       | 21,000,000 BLK               |
+| Tail Emission    | 0.5 BLK per block (post-cap) |
+| Emission Curve   | Exponential decay, then flat |
+
+### Emission & Halving Schedule
+
+- **Block reward starts at 86 BLK.**
+- **Halving occurs every 125,000 blocks** (~8.6 months at 2 min/block).
+- **After supply cap is reached, tail emission of 0.5 BLK/block continues indefinitely.**
+
+#### Example Halving Table
+
+| Halving # | Block Height | Block Reward (BLK) | Cumulative Supply (approx) |
+|-----------|--------------|--------------------|---------------------------|
+| 0         | 0            | 86                 | 0                         |
+| 1         | 125,000      | 43                 | 10,750,000                |
+| 2         | 250,000      | 21.5               | 14,562,500                |
+| 3         | 375,000      | 10.75              | 16,218,750                |
+| 4         | 500,000      | 5.375              | 17,109,375                |
+| ...       | ...          | ...                | ...                       |
+| N         | ~            | ...                | 21,000,000 (cap)          |
+
+#### Emission Chart (Block Reward vs. Block Height)
+
+```
+Block Reward (BLK)
+|
+| 86 ──────────────┐
+|                  │
+|                  │
+| 43 ──────┐       │
+|          │       │
+| 21.5 ─┐  │       │
+|       │  │       │
+| 10.75│  │       │
+|   ...│  │       │
+|______│__│_______│________________ Block Height
+      125k 250k 375k ...
+
+(Tail emission: 0.5 BLK/block after cap)
+```
+
+- The emission curve follows an exponential decay until the supply cap, then switches to a flat tail emission.
+- This ensures long-term miner incentives and network security.
 
 ## Quick Start
 
 ### Prerequisites
 - Rust 1.70+ with cargo
 - Node.js 18+ (for marketplace frontend)
-- Python 3.9+ (for marketplace backend)
+- PostgreSQL (for backend database)
 - Tor/I2P services (optional)
 
 ### Building from Source
