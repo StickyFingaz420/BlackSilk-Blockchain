@@ -15,10 +15,11 @@ members = [
     "miner"
 ]
 
+# wallet = { path = "./wallet" }
+
 [dependencies]
 primitives = { path = "./primitives" }
 node = { path = "./node" }
-wallet = { path = "./wallet" }
 
 # Core dependencies
 tokio = { version = "1.28", features = ["full"] }

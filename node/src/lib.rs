@@ -22,8 +22,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use serde::{Serialize, Deserialize};
 use sha2::Digest;
-use bulletproofs::{RangeProof, PedersenGens, BulletproofGens};
-use merlin::Transcript;
 use lazy_static::lazy_static;
 use std::fs;
 
@@ -70,6 +68,26 @@ lazy_static::lazy_static! {
 
 lazy_static! {
     static ref CHAIN: Arc<Mutex<Chain>> = Arc::new(Mutex::new(Chain::new()));
+}
+
+lazy_static! {
+    static ref BAN_LIST: Mutex<HashSet<String>> = Mutex::new(load_ban_list());
+}
+
+fn load_ban_list() -> HashSet<String> {
+    if let Ok(data) = fs::read_to_string("bans.json") {
+        if let Ok(list) = serde_json::from_str::<HashSet<String>>(&data) {
+            return list;
+        }
+    }
+    HashSet::new()
+}
+
+fn save_ban_list() {
+    let list = BAN_LIST.lock().unwrap();
+    if let Ok(json) = serde_json::to_string_pretty(&*list) {
+        let _ = fs::write("bans.json", json);
+    }
 }
 
 pub fn broadcast_message(msg: &P2PMessage) {
@@ -694,6 +712,7 @@ mod ring_sig_tests {
 // Placeholder for HiddenService since tor_client does not provide it
 struct HiddenService;
 
+#[allow(dead_code)]
 pub struct TorNetworkLayer {
     hidden_service: Option<HiddenService>,
     onion_address: String,
@@ -709,7 +728,7 @@ impl TorNetworkLayer {
         }
     }
     
-    pub fn start_hidden_service(&mut self, port: u16) -> Result<String, Box<dyn std::error::Error>> {
+    pub fn start_hidden_service(&mut self, _port: u16) -> Result<String, Box<dyn std::error::Error>> {
         // Start a Tor hidden service that forwards to our local P2P port
         // Return the .onion address
         // This is a placeholder implementation
@@ -719,6 +738,7 @@ impl TorNetworkLayer {
     }
 }
 
+#[allow(dead_code)]
 pub struct I2PNetworkLayer {
     destination: Option<String>,
     b32_address: String,
@@ -734,7 +754,7 @@ impl I2PNetworkLayer {
         }
     }
     
-    pub fn start_destination(&mut self, port: u16) -> Result<String, Box<dyn std::error::Error>> {
+    pub fn start_destination(&mut self, _port: u16) -> Result<String, Box<dyn std::error::Error>> {
         // Start an I2P destination that forwards to our local P2P port
         // Return the base32 address
         // This is a placeholder implementation
@@ -824,4 +844,272 @@ pub fn load_chain() {
         }
         Err(e) => println!("[CLI] Failed to read chain.json: {}", e),
     }
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+}
+
+/// Print node status: height, last block hash, peers, mempool size
+pub fn node_status() {
+    let chain = CHAIN.lock().unwrap();
+    let height = chain.blocks.len() as u64 - 1;
+    let last_hash = to_hex(&chain.tip().header.pow.hash);
+    let peers = PEERS.lock().unwrap().len();
+    let mempool = MEMPOOL.lock().unwrap().len();
+    println!("[Status] Height: {} | Last block hash: {}", height, last_hash);
+    println!("[Status] Peers: {} | Mempool txs: {}", peers, mempool);
+}
+
+/// Print node info: network magic, config, version
+pub fn node_info() {
+    println!("[Info] Network magic: 0x{:X}", config::TESTNET_MAGIC);
+    println!("[Info] Default P2P port: {}", config::DEFAULT_P2P_PORT);
+    println!("[Info] Block time (sec): {}", config::BLOCK_TIME_SEC);
+    println!("[Info] Genesis reward: {}", config::GENESIS_REWARD);
+    println!("[Info] Halving interval: {}", config::HALVING_INTERVAL);
+    println!("[Info] Tail emission: {}", config::TAIL_EMISSION);
+    println!("[Info] Supply cap: {}", config::SUPPLY_CAP);
+    println!("[Info] Node version: 0.1.0");
+}
+
+/// Print connected peers
+pub fn node_peers() {
+    let peers = PEERS.lock().unwrap();
+    if peers.is_empty() {
+        println!("[Peers] No peers connected.");
+    } else {
+        for (i, peer) in peers.iter().enumerate() {
+            match peer.peer_addr() {
+                Ok(addr) => println!("[Peers] {}: {}", i + 1, addr),
+                Err(_) => println!("[Peers] {}: <unknown>", i + 1),
+            }
+        }
+    }
+}
+
+/// Print current chain height
+pub fn node_height() {
+    let chain = CHAIN.lock().unwrap();
+    let height = chain.blocks.len() as u64 - 1;
+    println!("[Height] Current chain height: {}", height);
+}
+
+/// Print block details by height or hash
+pub fn node_block(arg: &str) {
+    let chain = CHAIN.lock().unwrap();
+    // Try parse as height
+    if let Ok(height) = arg.parse::<u64>() {
+        if let Some(block) = chain.blocks.iter().find(|b| b.header.height == height) {
+            println!("[Block] Height: {}", block.header.height);
+            println!("[Block] Hash: {}", to_hex(&block.header.pow.hash));
+            println!("[Block] Timestamp: {}", block.header.timestamp);
+            println!("[Block] Tx count: {}", block.transactions.len());
+            println!("[Block] Coinbase to: {} (reward: {})", block.coinbase.to, block.coinbase.reward);
+        } else {
+            println!("[Block] No block at height {}", height);
+        }
+    } else {
+        // Try parse as hash (hex string)
+        let hash_bytes = hex_str_to_bytes(arg);
+        if let Some(block) = chain.blocks.iter().find(|b| b.header.pow.hash == hash_bytes) {
+            println!("[Block] Height: {}", block.header.height);
+            println!("[Block] Hash: {}", to_hex(&block.header.pow.hash));
+            println!("[Block] Timestamp: {}", block.header.timestamp);
+            println!("[Block] Tx count: {}", block.transactions.len());
+            println!("[Block] Coinbase to: {} (reward: {})", block.coinbase.to, block.coinbase.reward);
+        } else {
+            println!("[Block] No block with hash {}", arg);
+        }
+    }
+}
+
+/// Print summary of last 10 blocks
+pub fn node_chain() {
+    let chain = CHAIN.lock().unwrap();
+    let n = chain.blocks.len();
+    let start = if n > 10 { n - 10 } else { 0 };
+    println!("[Chain] Last {} blocks:", n - start);
+    for block in chain.blocks.iter().skip(start) {
+        println!("  Height: {} | Hash: {} | Tx: {} | Time: {}", block.header.height, to_hex(&block.header.pow.hash), block.transactions.len(), block.header.timestamp);
+    }
+}
+
+/// Print all tx hashes in mempool
+pub fn node_mempool() {
+    let mempool = MEMPOOL.lock().unwrap();
+    if mempool.is_empty() {
+        println!("[Mempool] No transactions in mempool.");
+    } else {
+        println!("[Mempool] Transactions:");
+        for (i, tx) in mempool.iter().enumerate() {
+            println!("  {}: {}", i + 1, to_hex(&tx_hash(tx)));
+        }
+    }
+}
+
+/// Print tx details by hash
+pub fn node_tx(arg: &str) {
+    let mempool = MEMPOOL.lock().unwrap();
+    let hash_bytes = hex_str_to_bytes(arg);
+    if let Some(tx) = mempool.iter().find(|tx| tx_hash(tx) == hash_bytes) {
+        println!("[Tx] Hash: {}", to_hex(&tx_hash(tx)));
+        println!("[Tx] Inputs: {} | Outputs: {} | Fee: {}", tx.inputs.len(), tx.outputs.len(), tx.fee);
+    } else {
+        println!("[Tx] No transaction with hash {} in mempool", arg);
+    }
+}
+
+/// Print block template info (header, difficulty, seed)
+pub fn node_get_block_template() {
+    let chain = CHAIN.lock().unwrap();
+    let tip = chain.tip();
+    println!("[Template] Height: {} | Difficulty: {}", tip.header.height + 1, tip.header.difficulty);
+    println!("[Template] Prev hash: {}", to_hex(&tip.header.pow.hash));
+    println!("[Template] Coinbase to: {}", tip.coinbase.to);
+    // For demo, seed is prev hash
+    println!("[Template] Seed: {}", to_hex(&tip.header.pow.hash));
+}
+
+/// Disconnect peer by address
+pub fn node_disconnect(addr: &str) {
+    let mut peers = PEERS.lock().unwrap();
+    let before = peers.len();
+    peers.retain(|peer| match peer.peer_addr() {
+        Ok(a) => a.to_string() != addr,
+        Err(_) => true,
+    });
+    let after = peers.len();
+    if after < before {
+        println!("[Peers] Disconnected peer {}", addr);
+    } else {
+        println!("[Peers] Peer {} not found", addr);
+    }
+}
+
+/// Helper: convert hex string to [u8; 32]
+fn hex_str_to_bytes(s: &str) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    let bytes = s.as_bytes();
+    for i in 0..32 {
+        if i * 2 + 1 < bytes.len() {
+            let hi = bytes[i * 2] as char;
+            let lo = bytes[i * 2 + 1] as char;
+            out[i] = hex_char(hi) << 4 | hex_char(lo);
+        }
+    }
+    out
+}
+fn hex_char(c: char) -> u8 {
+    match c {
+        '0'..='9' => c as u8 - b'0',
+        'a'..='f' => c as u8 - b'a' + 10,
+        'A'..='F' => c as u8 - b'A' + 10,
+        _ => 0,
+    }
+}
+/// Helper: get a fake tx hash (first 32 bytes of extra or zeros)
+fn tx_hash(tx: &primitives::Transaction) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    let n = tx.extra.len().min(32);
+    out[..n].copy_from_slice(&tx.extra[..n]);
+    out
+}
+
+pub fn ban_ip(ip: &str) {
+    let mut list = BAN_LIST.lock().unwrap();
+    if list.insert(ip.to_string()) {
+        save_ban_list();
+        println!("[Ban] Banned IP: {}", ip);
+    } else {
+        println!("[Ban] IP {} is already banned", ip);
+    }
+}
+
+pub fn unban_ip(ip: &str) {
+    let mut list = BAN_LIST.lock().unwrap();
+    if list.remove(ip) {
+        save_ban_list();
+        println!("[Ban] Unbanned IP: {}", ip);
+    } else {
+        println!("[Ban] IP {} was not banned", ip);
+    }
+}
+
+pub fn list_bans() {
+    let list = BAN_LIST.lock().unwrap();
+    if list.is_empty() {
+        println!("[Ban] No banned IPs");
+    } else {
+        println!("[Ban] Banned IPs:");
+        for ip in list.iter() {
+            println!("  - {}", ip);
+        }
+    }
+}
+
+pub fn sync_status() {
+    let chain = CHAIN.lock().unwrap();
+    let peers = PEERS.lock().unwrap();
+    let height = chain.blocks.len() as u64 - 1;
+    let total_blocks = chain.blocks.len();
+    println!("[Sync] Height: {} | Total blocks: {} | Peers: {}", height, total_blocks, peers.len());
+    // يمكن إضافة منطق أكثر تعقيداً لاحقاً (مثلاً مقارنة مع peers)
+}
+
+pub fn prune_chain() {
+    let mut chain = CHAIN.lock().unwrap();
+    let n = chain.blocks.len();
+    if n > 1000 {
+        let keep = chain.blocks.split_off(n - 1000);
+        chain.blocks = keep;
+        println!("[Chain] Pruned, kept last 1000 blocks ({} removed)", n - 1000);
+    } else {
+        println!("[Chain] No pruning needed, chain has {} blocks", n);
+    }
+}
+
+pub fn export_chain(file: &str) {
+    let chain = CHAIN.lock().unwrap();
+    if let Ok(json) = serde_json::to_string_pretty(&chain.blocks) {
+        if fs::write(file, json).is_ok() {
+            println!("[Export] Chain exported to {}", file);
+        } else {
+            println!("[Export] Failed to write to {}", file);
+        }
+    } else {
+        println!("[Export] Failed to serialize chain");
+    }
+}
+
+pub fn import_chain(file: &str) {
+    match fs::read_to_string(file) {
+        Ok(data) => {
+            match serde_json::from_str::<std::collections::VecDeque<Block>>(&data) {
+                Ok(blocks) => {
+                    let mut chain = CHAIN.lock().unwrap();
+                    if !blocks.is_empty() {
+                        chain.blocks = blocks;
+                        println!("[Import] Chain imported from {}", file);
+                    } else {
+                        println!("[Import] File {} contains no blocks", file);
+                    }
+                }
+                Err(e) => println!("[Import] Failed to parse {}: {}", file, e),
+            }
+        }
+        Err(e) => println!("[Import] Failed to read {}: {}", file, e),
+    }
+}
+
+pub fn network_stats() {
+    let peers = PEERS.lock().unwrap();
+    let mempool = MEMPOOL.lock().unwrap();
+    let chain = CHAIN.lock().unwrap();
+    let bans = BAN_LIST.lock().unwrap();
+    println!("[Net] Peers: {}", peers.len());
+    println!("[Net] Mempool txs: {}", mempool.len());
+    println!("[Net] Chain height: {}", chain.blocks.len() as u64 - 1);
+    println!("[Net] Total blocks: {}", chain.blocks.len());
+    println!("[Net] Banned IPs: {}", bans.len());
 }

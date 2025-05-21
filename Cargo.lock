@@ -393,7 +393,6 @@ dependencies = [
  "tor_client",
  "tracing",
  "tracing-subscriber",
- "wallet",
 ]
 
 [[package]]

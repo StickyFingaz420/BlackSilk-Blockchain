@@ -1,5 +1,5 @@
-use clap::Parser;
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use clap::{Parser, Subcommand};
+use std::sync::{Arc, atomic::{AtomicU64, Ordering, AtomicBool}};
 use std::thread;
 use std::time::{Duration, Instant};
 use reqwest::blocking::Client;
@@ -9,26 +9,51 @@ use crossbeam_channel::{bounded, select, tick, Receiver};
 use std::net::TcpStream;
 use std::io::{BufRead, BufReader, Write};
 use hex;
+use std::sync::mpsc::{channel, Sender};
 
 /// BlackSilk Standalone Miner CLI
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
-struct Args {
-    /// Node address (host:port) or Stratum server
-    #[arg(short, long, default_value = "127.0.0.1:1776")]
-    node: String,
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
 
-    /// Wallet address to mine to
-    #[arg(short, long)]
-    address: String,
-
-    /// Number of mining threads
-    #[arg(short, long, default_value_t = 1)]
-    threads: usize,
-
-    /// Use Stratum protocol (pool mining)
-    #[arg(long, default_value_t = false)]
-    stratum: bool,
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Start mining
+    Start {
+        #[arg(short, long, default_value = "127.0.0.1:1776")]
+        node: String,
+        #[arg(short, long)]
+        address: String,
+        #[arg(short, long, default_value_t = 1)]
+        threads: usize,
+        #[arg(long, default_value_t = false)]
+        stratum: bool,
+    },
+    /// Stop mining (placeholder)
+    Stop,
+    /// Show miner status (placeholder)
+    Status,
+    /// Benchmark mining speed (placeholder)
+    Benchmark,
+    /// Set number of threads (placeholder)
+    SetThreads {
+        n: usize,
+    },
+    /// Set mining address (placeholder)
+    SetAddress {
+        addr: String,
+    },
+    /// Set node address (placeholder)
+    SetNode {
+        node: String,
+    },
+    /// Show mining stats (placeholder)
+    Stats,
+    /// Show help
+    Help,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -51,164 +76,245 @@ struct BlockTemplateRequest {
     address: String,
 }
 
+#[derive(Debug)]
+struct Args {
+    node: String,
+    address: String,
+    threads: usize,
+    stratum: bool,
+}
+
+#[derive(Debug, Clone)]
+struct MinerConfig {
+    node: String,
+    address: String,
+    threads: usize,
+}
+
+enum MinerCommand {
+    Stop,
+    SetThreads(usize),
+    SetAddress(String),
+    SetNode(String),
+    Status,
+    Stats,
+    Benchmark,
+}
+
 fn main() {
-    let args = Args::parse();
-    println!("[BlackSilk Miner] Starting miner");
-    println!("Node: {}", args.node);
-    println!("Mining address: {}", args.address);
-    println!("Threads: {}", args.threads);
-    if args.stratum {
-        stratum_mine(&args);
-        return;
+    let cli = Cli::parse();
+    use Commands::*;
+    use MinerCommand::*;
+    let config = Arc::new(Mutex::new(MinerConfig {
+        node: "127.0.0.1:1776".to_string(),
+        address: "".to_string(),
+        threads: 1,
+    }));
+    let (cmd_tx, cmd_rx): (Sender<MinerCommand>, Receiver<MinerCommand>) = channel();
+    let mining_handle = Arc::new(Mutex::new(None));
+
+    match &cli.command {
+        Some(Start { node, address, threads, stratum }) => {
+            {
+                let mut cfg = config.lock().unwrap();
+                cfg.node = node.clone();
+                cfg.address = address.clone();
+                cfg.threads = *threads;
+            }
+            let config_clone = Arc::clone(&config);
+            let cmd_rx_clone = cmd_rx.clone();
+            let mining_handle_clone = Arc::clone(&mining_handle);
+            let handle = std::thread::spawn(move || {
+                run_miner(config_clone, cmd_rx_clone);
+            });
+            *mining_handle.lock().unwrap() = Some(handle);
+            println!("[Miner] Mining started. Use 'stop', 'set-threads', 'set-address', 'set-node', 'status', 'stats', 'benchmark' commands in another terminal.");
+        }
+        Some(Stop) => {
+            let _ = cmd_tx.send(Stop);
+            println!("[Miner] Stop command sent.");
+        }
+        Some(SetThreads { n }) => {
+            let _ = cmd_tx.send(SetThreads(*n));
+            println!("[Miner] Set threads command sent: {}", n);
+        }
+        Some(SetAddress { addr }) => {
+            let _ = cmd_tx.send(SetAddress(addr.clone()));
+            println!("[Miner] Set address command sent: {}", addr);
+        }
+        Some(SetNode { node }) => {
+            let _ = cmd_tx.send(SetNode(node.clone()));
+            println!("[Miner] Set node command sent: {}", node);
+        }
+        Some(Status) => {
+            let _ = cmd_tx.send(Status);
+        }
+        Some(Stats) => {
+            let _ = cmd_tx.send(Stats);
+        }
+        Some(Benchmark) => {
+            let _ = cmd_tx.send(Benchmark);
+        }
+        Some(Help) | None => {
+            println!("BlackSilk Miner CLI - Available commands:");
+            println!("  start --node <ip:port> --address <addr> [--threads <n>] [--stratum]   Start mining");
+            println!("  stop                                                             Stop mining");
+            println!("  status                                                           Show miner status");
+            println!("  benchmark                                                        Benchmark mining speed");
+            println!("  set-threads <n>                                                  Set number of threads");
+            println!("  set-address <addr>                                               Set mining address");
+            println!("  set-node <ip:port>                                               Set node address");
+            println!("  stats                                                            Show mining stats");
+            println!("  help                                                             Show this help message");
+        }
     }
+}
 
-    let client = Client::new();
-    let node_url = format!("http://{}/mining/get_block_template", args.node);
-    let submit_url = format!("http://{}/mining/submit_block", args.node);
-
+fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: Receiver<MinerCommand>) {
+    use MinerCommand::*;
+    let should_stop = Arc::new(AtomicBool::new(false));
     let hashes = Arc::new(AtomicU64::new(0));
     let accepted = Arc::new(AtomicU64::new(0));
     let rejected = Arc::new(AtomicU64::new(0));
+    let mut threads = vec![];
+    let mut last_config = config.lock().unwrap().clone();
 
-    // Setup Ctrl+C handler
-    let (shutdown_tx, shutdown_rx) = bounded::<()>(1);
-    {
-        let shutdown_tx = shutdown_tx.clone();
-        ctrlc::set_handler(move || {
-            let _ = shutdown_tx.send(());
-        }).expect("Error setting Ctrl+C handler");
-    }
-
-    'outer: loop {
-        println!("[Miner] Requesting block template from node...");
-        let req = BlockTemplateRequest {
-            address: args.address.clone(),
-        };
-        let template = match client.post(&node_url).json(&req).send() {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    match resp.json::<BlockTemplate>() {
-                        Ok(t) => t,
-                        Err(e) => {
-                            println!("[Miner] Failed to parse block template: {}", e);
-                            std::thread::sleep(Duration::from_secs(10));
-                            continue;
-                        }
-                    }
-                } else {
-                    println!("[Miner] Node returned error: {}", resp.status());
-                    std::thread::sleep(Duration::from_secs(10));
-                    continue;
-                }
-            }
-            Err(e) => {
-                println!("[Miner] Failed to connect to node: {}", e);
-                std::thread::sleep(Duration::from_secs(10));
-                continue;
-            }
-        };
-        println!("[Miner] Got block template: difficulty={}, header_len={}, seed={:x?}, coinbase_address={}",
-            template.difficulty, template.header.len(), &template.seed[..4], template.coinbase_address);
-
-        hashes.store(0, Ordering::Relaxed);
-        let start = Instant::now();
-        let mut handles = vec![];
-        let found_flag = Arc::new(AtomicU64::new(0));
-        for t in 0..args.threads {
-            let template = template.clone();
+    let mut spawn_miners = |cfg: &MinerConfig| {
+        should_stop.store(false, Ordering::SeqCst);
+        hashes.store(0, Ordering::SeqCst);
+        accepted.store(0, Ordering::SeqCst);
+        rejected.store(0, Ordering::SeqCst);
+        threads.clear();
+        for t in 0..cfg.threads {
+            let cfg = cfg.clone();
+            let should_stop = Arc::clone(&should_stop);
             let hashes = Arc::clone(&hashes);
             let accepted = Arc::clone(&accepted);
             let rejected = Arc::clone(&rejected);
-            let found_flag = Arc::clone(&found_flag);
-            let submit_url = submit_url.clone();
-            let client = client.clone();
-            let thread_id = t;
-            let shutdown_rx = shutdown_rx.clone();
-            handles.push(thread::spawn(move || {
-                let flags = RandomXFlags::default()
-                    | RandomXFlags::FLAG_LARGE_PAGES
-                    | RandomXFlags::FLAG_HARD_AES
-                    | RandomXFlags::FLAG_FULL_MEM;
-                let cache = RandomXCache::new(&template.seed, flags).expect("RandomX cache");
-                let vm = RandomXVM::new(&cache, flags).expect("RandomX VM");
-                let mut header = template.header.clone();
-                let mut nonce = thread_id as u64 * 1_000_000;
+            threads.push(std::thread::spawn(move || {
+                let client = Client::new();
+                let node_url = format!("http://{}/mining/get_block_template", cfg.node);
+                let submit_url = format!("http://{}/mining/submit_block", cfg.node);
                 loop {
-                    if shutdown_rx.try_recv().is_ok() || found_flag.load(Ordering::Relaxed) != 0 {
-                        break;
-                    }
-                    let nonce_bytes = nonce.to_le_bytes();
-                    let len = header.len();
-                    if len >= 8 {
-                        for i in 0..8 { header[len-8+i] = nonce_bytes[i]; }
-                    }
-                    let hash = vm.calculate_hash(&header).expect("RandomX hash");
-                    let hash_val = u64::from_le_bytes(hash[0..8].try_into().unwrap());
-                    hashes.fetch_add(1, Ordering::Relaxed);
-                    if hash_val < template.difficulty {
-                        if found_flag.compare_and_swap(0, 1, Ordering::SeqCst) == 0 {
-                            println!("[Miner] Thread {} found valid nonce: {} (hash={:x?})", thread_id, nonce, &hash[..8]);
+                    if should_stop.load(Ordering::SeqCst) { break; }
+                    let req = BlockTemplateRequest { address: cfg.address.clone() };
+                    let template = match client.post(&node_url).json(&req).send() {
+                        Ok(resp) => {
+                            if resp.status().is_success() {
+                                match resp.json::<BlockTemplate>() {
+                                    Ok(t) => t,
+                                    Err(_) => { std::thread::sleep(Duration::from_secs(2)); continue; }
+                                }
+                            } else { std::thread::sleep(Duration::from_secs(2)); continue; }
+                        }
+                        Err(_) => { std::thread::sleep(Duration::from_secs(2)); continue; }
+                    };
+                    let mut header = template.header.clone();
+                    let mut nonce = t as u64 * 1_000_000;
+                    let flags = RandomXFlags::default()
+                        | RandomXFlags::FLAG_LARGE_PAGES
+                        | RandomXFlags::FLAG_HARD_AES
+                        | RandomXFlags::FLAG_FULL_MEM;
+                    let cache = RandomXCache::new(&template.seed, flags).expect("RandomX cache");
+                    let vm = RandomXVM::new(&cache, flags).expect("RandomX VM");
+                    loop {
+                        if should_stop.load(Ordering::SeqCst) { break; }
+                        let nonce_bytes = nonce.to_le_bytes();
+                        let len = header.len();
+                        if len >= 8 {
+                            for i in 0..8 { header[len-8+i] = nonce_bytes[i]; }
+                        }
+                        let hash = vm.calculate_hash(&header).expect("RandomX hash");
+                        let hash_val = u64::from_le_bytes(hash[0..8].try_into().unwrap());
+                        hashes.fetch_add(1, Ordering::Relaxed);
+                        if hash_val < template.difficulty {
                             let submit_req = SubmitBlockRequest {
                                 header: template.header.clone(),
                                 nonce,
                                 hash: hash.to_vec(),
                             };
-                            match client.post(&submit_url)
-                                .json(&submit_req)
-                                .send() {
+                            match client.post(&submit_url).json(&submit_req).send() {
                                 Ok(resp) => {
                                     if resp.status().is_success() {
-                                        println!("[Miner] Block accepted by node!");
                                         accepted.fetch_add(1, Ordering::Relaxed);
                                     } else {
-                                        println!("[Miner] Block rejected by node: {}", resp.status());
                                         rejected.fetch_add(1, Ordering::Relaxed);
                                     }
                                 }
-                                Err(e) => {
-                                    println!("[Miner] Failed to submit block: {}", e);
-                                    rejected.fetch_add(1, Ordering::Relaxed);
-                                }
+                                Err(_) => { rejected.fetch_add(1, Ordering::Relaxed); }
                             }
+                            break;
                         }
-                        break;
+                        nonce += cfg.threads as u64;
                     }
-                    nonce += args.threads as u64;
                 }
             }));
         }
-        // Print stats every 10s, break if a solution is found or shutdown
-        let ticker = tick(Duration::from_secs(10));
-        loop {
-            select! {
-                recv(ticker) -> _ => {
-                    let elapsed = start.elapsed().as_secs_f64();
+    };
+
+    spawn_miners(&last_config);
+    let mut last_stats = (0u64, 0u64, 0u64);
+    let mut last_time = Instant::now();
+    loop {
+        if let Ok(cmd) = cmd_rx.try_recv() {
+            match cmd {
+                Stop => {
+                    should_stop.store(true, Ordering::SeqCst);
+                    for th in threads.drain(..) { let _ = th.join(); }
+                    println!("[Miner] Mining stopped.");
+                    break;
+                }
+                SetThreads(n) => {
+                    should_stop.store(true, Ordering::SeqCst);
+                    for th in threads.drain(..) { let _ = th.join(); }
+                    config.lock().unwrap().threads = n;
+                    last_config = config.lock().unwrap().clone();
+                    spawn_miners(&last_config);
+                    println!("[Miner] Threads updated: {}", n);
+                }
+                SetAddress(addr) => {
+                    should_stop.store(true, Ordering::SeqCst);
+                    for th in threads.drain(..) { let _ = th.join(); }
+                    config.lock().unwrap().address = addr.clone();
+                    last_config = config.lock().unwrap().clone();
+                    spawn_miners(&last_config);
+                    println!("[Miner] Address updated: {}", addr);
+                }
+                SetNode(node) => {
+                    should_stop.store(true, Ordering::SeqCst);
+                    for th in threads.drain(..) { let _ = th.join(); }
+                    config.lock().unwrap().node = node.clone();
+                    last_config = config.lock().unwrap().clone();
+                    spawn_miners(&last_config);
+                    println!("[Miner] Node updated: {}", node);
+                }
+                Status | Stats => {
+                    let elapsed = last_time.elapsed().as_secs_f64();
                     let h = hashes.load(Ordering::Relaxed);
-                    let hash_rate = h as f64 / elapsed;
                     let acc = accepted.load(Ordering::Relaxed);
                     let rej = rejected.load(Ordering::Relaxed);
-                    println!("[Miner] Hashrate: {:.2} H/s | Accepted: {} | Rejected: {}", hash_rate, acc, rej);
-                    if found_flag.load(Ordering::Relaxed) != 0 {
-                        break;
-                    }
+                    let hashrate = if elapsed > 0.0 { h as f64 / elapsed } else { 0.0 };
+                    let cfg = config.lock().unwrap().clone();
+                    println!("[Miner] Status:");
+                    println!("  Node: {}", cfg.node);
+                    println!("  Address: {}", cfg.address);
+                    println!("  Threads: {}", cfg.threads);
+                    println!("  Hashrate: {:.2} H/s", hashrate);
+                    println!("  Accepted: {} | Rejected: {}", acc, rej);
                 }
-                recv(shutdown_rx) -> _ => {
-                    println!("[Miner] Shutting down...");
-                    break 'outer;
+                Benchmark => {
+                    println!("[Miner] Benchmarking for 10 seconds...");
+                    hashes.store(0, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_secs(10));
+                    let h = hashes.load(Ordering::Relaxed);
+                    println!("[Miner] Benchmark result: {:.2} H/s", h as f64 / 10.0);
                 }
             }
+            last_time = Instant::now();
+            hashes.store(0, Ordering::SeqCst);
         }
-        // Wait for all threads to finish
-        for handle in handles {
-            let _ = handle.join();
-        }
-        if shutdown_rx.try_recv().is_ok() {
-            println!("[Miner] Shutting down...");
-            break;
-        }
-        println!("[Miner] Restarting with new block template...");
+        std::thread::sleep(Duration::from_millis(500));
     }
-    println!("[Miner] Exited cleanly.");
 }
 
 fn stratum_mine(args: &Args) {
