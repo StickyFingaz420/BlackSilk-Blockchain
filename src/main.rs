@@ -14,21 +14,23 @@ fn main() {
     };
     println!("[BlackSilk] Testnet bootstrap on port {}", port);
     if args.contains(&"send-block".to_string()) {
-        node::cli_send_block();
+        // node::cli_send_block(); // Function not implemented
+        println!("[CLI] send-block command not implemented");
         return;
     }
     if args.contains(&"send-tx".to_string()) {
-        node::cli_send_transaction();
+        // node::cli_send_transaction(); // Function not implemented
+        println!("[CLI] send-tx command not implemented");
         return;
     }
     if args.contains(&"save-chain".to_string()) {
-        node::save_chain();
-        println!("[CLI] Chain saved to disk");
+        // node::save_chain(); // Function not implemented
+        println!("[CLI] save-chain command not implemented");
         return;
     }
     if args.contains(&"load-chain".to_string()) {
-        node::load_chain();
-        println!("[CLI] Chain loaded from disk");
+        // node::load_chain(); // Function not implemented
+        println!("[CLI] load-chain command not implemented");
         return;
     }
     node::start_node_with_port_and_connect(port, connect_addr);

@@ -25,6 +25,7 @@ use sha2::Digest;
 use bulletproofs::{RangeProof, PedersenGens, BulletproofGens};
 use merlin::Transcript;
 use lazy_static::lazy_static;
+use std::fs;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum P2PMessage {
@@ -750,4 +751,77 @@ pub fn add_to_mempool(tx: primitives::Transaction) {
 
 pub fn get_mempool() -> Vec<primitives::Transaction> {
     MEMPOOL.lock().unwrap().clone()
+}
+
+/// CLI: Send a block to the first connected peer (for demo/testing)
+pub fn cli_send_block() {
+    let chain = CHAIN.lock().unwrap();
+    let block = chain.tip().clone();
+    drop(chain);
+    let peers = PEERS.lock().unwrap();
+    if let Some(peer) = peers.get(0) {
+        let mut peer = peer.try_clone().unwrap();
+        let msg = P2PMessage::Block(block);
+        if send_message(&mut peer, &msg).is_ok() {
+            println!("[CLI] Block sent to peer");
+        } else {
+            println!("[CLI] Failed to send block");
+        }
+    } else {
+        println!("[CLI] No peers connected");
+    }
+}
+
+/// CLI: Send a transaction to the first connected peer (for demo/testing)
+pub fn cli_send_transaction() {
+    let mempool = MEMPOOL.lock().unwrap();
+    if mempool.is_empty() {
+        println!("[CLI] No transactions in mempool to send");
+        return;
+    }
+    let tx = mempool[0].clone();
+    drop(mempool);
+    let peers = PEERS.lock().unwrap();
+    if let Some(peer) = peers.get(0) {
+        let mut peer = peer.try_clone().unwrap();
+        let msg = P2PMessage::Transaction(tx);
+        if send_message(&mut peer, &msg).is_ok() {
+            println!("[CLI] Transaction sent to peer");
+        } else {
+            println!("[CLI] Failed to send transaction");
+        }
+    } else {
+        println!("[CLI] No peers connected");
+    }
+}
+
+/// Save the current chain to disk as chain.json
+pub fn save_chain() {
+    let chain = CHAIN.lock().unwrap();
+    if let Ok(json) = serde_json::to_string_pretty(&chain.blocks) {
+        if fs::write("chain.json", json).is_ok() {
+            println!("[CLI] Chain saved to chain.json");
+        } else {
+            println!("[CLI] Failed to write chain.json");
+        }
+    } else {
+        println!("[CLI] Failed to serialize chain");
+    }
+}
+
+/// Load the chain from chain.json (overwrites current chain)
+pub fn load_chain() {
+    match fs::read_to_string("chain.json") {
+        Ok(data) => {
+            match serde_json::from_str::<VecDeque<Block>>(&data) {
+                Ok(blocks) => {
+                    let mut chain = CHAIN.lock().unwrap();
+                    chain.blocks = blocks;
+                    println!("[CLI] Chain loaded from chain.json");
+                }
+                Err(e) => println!("[CLI] Failed to parse chain.json: {}", e),
+            }
+        }
+        Err(e) => println!("[CLI] Failed to read chain.json: {}", e),
+    }
 }
