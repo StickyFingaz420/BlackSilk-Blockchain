@@ -53,10 +53,15 @@ pub struct Escrow {
     pub status: String,
 }
 
-#[derive(Clone)]
-struct AppState {
-    db: PgPool,
-    ipfs: Arc<IpfsClient>,
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
+pub struct Review {
+    pub id: i32,
+    pub order_id: String,
+    pub reviewer: String,
+    pub reviewed: String,
+    pub rating: i32,
+    pub comment: Option<String>,
+    pub created_at: i64,
 }
 
 // --- Wallet Auth Middleware ---
@@ -296,6 +301,75 @@ async fn auth_login(
     }
 }
 
+// --- Review Endpoints ---
+use axum::extract::Query;
+use std::collections::HashMap;
+
+async fn get_reviews(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<impl IntoResponse, (StatusCode, &'static str)> {
+    let reviewed = params.get("reviewed");
+    let mut query = "SELECT * FROM reviews".to_string();
+    if let Some(addr) = reviewed {
+        query.push_str(" WHERE reviewed = $1");
+        let reviews = sqlx::query_as::<_, Review>(&query)
+            .bind(addr)
+            .fetch_all(&state.db)
+            .await
+            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "DB error"))?;
+        return Ok(Json(reviews));
+    }
+    let reviews = sqlx::query_as::<_, Review>(&query)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "DB error"))?;
+    Ok(Json(reviews))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReviewInput {
+    pub order_id: String,
+    pub reviewer: String,
+    pub reviewed: String,
+    pub rating: i32,
+    pub comment: Option<String>,
+}
+
+async fn submit_review(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<ReviewInput>,
+) -> Result<impl IntoResponse, (StatusCode, &'static str)> {
+    if input.rating < 1 || input.rating > 5 {
+        return Err((StatusCode::BAD_REQUEST, "Rating must be 1-5"));
+    }
+    let now = chrono::Utc::now().timestamp_millis();
+    let _ = sqlx::query("INSERT INTO reviews (order_id, reviewer, reviewed, rating, comment, created_at) VALUES ($1,$2,$3,$4,$5,$6)")
+        .bind(&input.order_id)
+        .bind(&input.reviewer)
+        .bind(&input.reviewed)
+        .bind(input.rating)
+        .bind(&input.comment)
+        .bind(now)
+        .execute(&state.db)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "DB error"))?;
+    Ok((StatusCode::CREATED, "Review submitted"))
+}
+
+async fn get_reputation(
+    State(state): State<Arc<AppState>>,
+    Path(address): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, &'static str)> {
+    let row = sqlx::query!("SELECT AVG(rating) as avg, COUNT(*) as count FROM reviews WHERE reviewed = $1", address)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "DB error"))?;
+    let avg = row.avg.unwrap_or(0.0);
+    let count = row.count.unwrap_or(0);
+    Ok(Json(serde_json::json!({"address": address, "average": avg, "count": count})))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv().ok();
@@ -314,9 +388,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/mining/submit_block", post(submit_block))
         .route("/auth/challenge", get(auth_challenge))
         .route("/auth/login", post(auth_login))
+        .route("/reviews", get(get_reviews).post(submit_review))
+        .route("/reputation/:address", get(get_reputation))
         .with_state(state);
     println!("Axum server running on http://0.0.0.0:8080");
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
     axum::serve(listener, app.into_make_service()).await?;
     Ok(())
-} 
+}

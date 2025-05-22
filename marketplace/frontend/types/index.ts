@@ -77,7 +77,8 @@ export enum OrderStatus {
 
 export interface User {
     address: string;
-    reputation: number;
+    reputation: number; // Average rating (computed from reviews)
+    ratings_count: number; // Number of reviews
     listings: string[]; // listing IDs
     orders: string[]; // order IDs
     created_at: number;
@@ -137,4 +138,4 @@ export interface CategoryMetadata {
     subcategories: string[];
     icon: string;
     count: number;
-} 
+}

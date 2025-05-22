@@ -182,3 +182,6 @@ mod tests {
         assert!(verify_range_proof(&proof, &commitment));
     }
 }
+
+mod hardware; // Hardware wallet (Ledger/Trezor) integration
+// TODO: Integrate hardware wallet flows in CLI and transaction signing
