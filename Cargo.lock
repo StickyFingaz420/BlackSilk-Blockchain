@@ -710,6 +710,7 @@ dependencies = [
  "ed25519-dalek",
  "i2p",
  "lazy_static",
+ "once_cell",
  "primitives",
  "rand 0.8.5",
  "rand_core 0.6.4",
