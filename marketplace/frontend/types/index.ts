@@ -139,3 +139,14 @@ export interface CategoryMetadata {
     icon: string;
     count: number;
 }
+
+export interface DisputeVote {
+    voter: string; // address
+    vote: boolean; // true = favor buyer, false = favor seller
+}
+
+export interface EscrowDispute {
+    contractId: string;
+    status: string;
+    votes: DisputeVote[];
+}

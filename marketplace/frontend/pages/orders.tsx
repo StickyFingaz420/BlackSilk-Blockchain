@@ -24,6 +24,7 @@ export default function OrdersPage() {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reputation, setReputation] = useState<{ average: number; count: number } | null>(null);
 
   useEffect(() => {
     if (!address) return;
@@ -32,11 +33,13 @@ export default function OrdersPage() {
       fetch(`/api/orders?address=${address}`).then(res => res.json()),
       fetch(`/api/listings?query=&page=1&limit=1000`).then(res => res.json()),
       fetch(`/api/reviews?reviewed=${address}`).then(res => res.json()),
+      fetch(`/api/reputation/${address}`).then(res => res.json()),
     ])
-      .then(([ordersData, listingsData, reviewsData]) => {
+      .then(([ordersData, listingsData, reviewsData, reputationData]) => {
         setOrders(ordersData);
         setListings(listingsData.listings);
         setReviews(reviewsData);
+        setReputation(reputationData);
         setLoading(false);
       })
       .catch(() => {
@@ -51,7 +54,15 @@ export default function OrdersPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(review),
     });
-    // Optionally refetch reviews
+    // Refetch reviews and reputation after submission
+    if (address) {
+      const [reviewsData, reputationData] = await Promise.all([
+        fetch(`/api/reviews?reviewed=${address}`).then(res => res.json()),
+        fetch(`/api/reputation/${address}`).then(res => res.json()),
+      ]);
+      setReviews(reviewsData);
+      setReputation(reputationData);
+    }
   };
 
   if (!address) return <Alert severity="info">Connect your wallet to view your orders.</Alert>;
@@ -63,22 +74,20 @@ export default function OrdersPage() {
   const purchases = orders.filter(o => o.buyer === address);
   const sales = orders.filter(o => o.seller === address);
 
-  const handleReviewSubmit = async (review: Omit<Review, 'id' | 'created_at'>) => {
-    await fetch('/api/reviews', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(review),
-    });
-    // Optionally refetch reviews
-  };
-
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
       <Typography variant="h4" gutterBottom>My Orders</Typography>
       {/* Seller reputation summary */}
       <Box sx={{ mb: 2 }}>
         <Typography variant="subtitle1">Your Reputation</Typography>
-        {/* TODO: Fetch and display average rating and count from /api/reviews?reviewed=address */}
+        {reputation ? (
+          <>
+            <Typography>Average Rating: {reputation.average?.toFixed(2) ?? 'N/A'} / 5</Typography>
+            <Typography>Reviews: {reputation.count ?? 0}</Typography>
+          </>
+        ) : (
+          <Typography color="text.secondary">No reviews yet.</Typography>
+        )}
       </Box>
       {/* Purchases */}
       <Box sx={{ mb: 4 }}>

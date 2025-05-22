@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use primitives::escrow::{EscrowContract, EscrowStatus};
+use primitives::escrow::{DisputeVote, EscrowContract, EscrowStatus};
 use primitives::types::Hash;
 use std::fs;
 use serde::{Serialize, Deserialize};
 use std::time::{SystemTime, UNIX_EPOCH};
+use axum::{Json, extract::{Path, State}};
 
 lazy_static::lazy_static! {
     static ref ESCROW_REGISTRY: Arc<Mutex<HashMap<Hash, EscrowContract>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -157,6 +158,51 @@ pub fn dispute_escrow(contract_id: &Hash, by: Hash) -> bool {
     result
 }
 
+// Start voting on a dispute
+pub async fn start_voting(State(_): State<Arc<()>>, Path(contract_id): Path<Hash>) -> Json<&'static str> {
+    let mut reg = ESCROW_REGISTRY.lock().unwrap();
+    if let Some(contract) = reg.get_mut(&contract_id) {
+        contract.start_voting();
+        save_escrows();
+        log_event("start_voting", &contract_id, None);
+        Json("Voting started")
+    } else {
+        Json("Escrow not found")
+    }
+}
+
+// Submit a vote
+#[derive(serde::Deserialize)]
+pub struct VoteInput {
+    pub voter: Hash,
+    pub vote: bool,
+}
+
+pub async fn submit_vote(State(_): State<Arc<()>>, Path(contract_id): Path<Hash>, Json(input): Json<VoteInput>) -> Json<&'static str> {
+    let mut reg = ESCROW_REGISTRY.lock().unwrap();
+    if let Some(contract) = reg.get_mut(&contract_id) {
+        contract.submit_vote(input.voter, input.vote);
+        save_escrows();
+        log_event("submit_vote", &contract_id, Some(&input.voter));
+        Json("Vote submitted")
+    } else {
+        Json("Escrow not found")
+    }
+}
+
+// Tally votes
+pub async fn tally_votes(State(_): State<Arc<()>>, Path(contract_id): Path<Hash>) -> Json<Option<bool>> {
+    let mut reg = ESCROW_REGISTRY.lock().unwrap();
+    if let Some(contract) = reg.get_mut(&contract_id) {
+        let result = contract.tally_votes();
+        save_escrows();
+        log_event("tally_votes", &contract_id, None);
+        Json(result)
+    } else {
+        Json(None)
+    }
+}
+
 // --- Transaction stubs ---
 fn lock_funds(contract: &EscrowContract) {
     println!("[TX] Locking {} BLK from buyer {:x?} for escrow {:x?}", contract.amount, contract.buyer, contract.contract_id);
@@ -172,4 +218,4 @@ fn refund_funds(contract: &EscrowContract) {
     println!("[TX] Refunding {} BLK to buyer {:x?} for escrow {:x?}", contract.amount, contract.buyer, contract.contract_id);
     // TODO: Implement actual transaction to refund funds
 }
-// --- End transaction stubs --- 
+// --- End transaction stubs ---

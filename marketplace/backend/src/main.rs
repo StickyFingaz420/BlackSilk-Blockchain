@@ -370,6 +370,25 @@ async fn get_reputation(
     Ok(Json(serde_json::json!({"address": address, "average": avg, "count": count})))
 }
 
+// Dispute voting endpoints (proxy to node or implement here)
+use primitives::escrow::Hash;
+use axum::extract::Path;
+
+async fn start_voting(Path(contract_id): Path<String>) -> Json<&'static str> {
+    // TODO: Proxy to node or implement voting logic
+    Json("Voting started (stub)")
+}
+
+async fn submit_vote(Path(contract_id): Path<String>, Json(input): Json<VoteInput>) -> Json<&'static str> {
+    // TODO: Proxy to node or implement voting logic
+    Json("Vote submitted (stub)")
+}
+
+async fn tally_votes(Path(contract_id): Path<String>) -> Json<Option<bool>> {
+    // TODO: Proxy to node or implement voting logic
+    Json(Some(true))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv().ok();
@@ -390,6 +409,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/login", post(auth_login))
         .route("/reviews", get(get_reviews).post(submit_review))
         .route("/reputation/:address", get(get_reputation))
+        .route("/escrow/:contract_id/start_voting", post(start_voting))
+        .route("/escrow/:contract_id/submit_vote", post(submit_vote))
+        .route("/escrow/:contract_id/tally_votes", post(tally_votes))
         .with_state(state);
     println!("Axum server running on http://0.0.0.0:8080");
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
