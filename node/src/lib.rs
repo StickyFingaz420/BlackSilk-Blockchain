@@ -484,7 +484,7 @@ pub fn validate_block(block: &Block) -> bool {
 mod network {
     pub mod privacy;
 }
-use network::privacy::{PrivacyConfig, PrivacyLayer, is_onion_address, is_i2p_address};
+use network::privacy::{PrivacyConfig, is_onion_address, is_i2p_address};
 use std::sync::Once;
 static mut PRIVACY_CONFIG: Option<PrivacyConfig> = None;
 static INIT_PRIVACY: Once = Once::new();
