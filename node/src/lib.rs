@@ -183,12 +183,8 @@ use sha2::Sha256;
 /// - `sig`: signature bytes (expected: ring.len() pairs of (c, r), each 32 bytes)
 /// - `msg`: message bytes
 pub fn validate_ring_signature(ring: &[primitives::types::Hash], sig: &[u8], msg: &[u8]) -> bool {
-    println!("[DEBUG] ring: {:?}", ring);
-    println!("[DEBUG] sig: {:x?}", sig);
-    println!("[DEBUG] msg: {:x?}", msg);
     let n = ring.len();
     if n == 0 || sig.len() != n * 64 {
-        println!("[DEBUG] Invalid signature length");
         return false;
     }
     // Parse signature: (c_0, r_0), (c_1, r_1), ...
@@ -198,45 +194,42 @@ pub fn validate_ring_signature(ring: &[primitives::types::Hash], sig: &[u8], msg
         let c = Scalar::from_canonical_bytes(sig[i*64..i*64+32].try_into().unwrap());
         let r = Scalar::from_canonical_bytes(sig[i*64+32..i*64+64].try_into().unwrap());
         if bool::from(c.is_none()) || bool::from(r.is_none()) {
-            println!("[DEBUG] Invalid c or r at {}", i);
             return false;
         }
         c_vec.push(c.unwrap());
         r_vec.push(r.unwrap());
-        println!("[DEBUG] parsed c[{}]: {:?}", i, c_vec[i]);
-        println!("[DEBUG] parsed r[{}]: {:?}", i, r_vec[i]);
     }
     // Parse public keys
     let mut pubkeys = Vec::with_capacity(n);
-    for (i, pk_bytes) in ring.iter().enumerate() {
+    for pk_bytes in ring {
         let pt = CompressedEdwardsY(*pk_bytes).decompress();
         if pt.is_none() {
-            println!("[DEBUG] Invalid pubkey at {}", i);
             return false;
         }
         pubkeys.push(pt.unwrap());
     }
-    // Recompute challenge chain
+    // Recompute challenge chain, matching generator's order
     let mut hasher = Sha256::new();
+    // L_0 = r_vec[0]*G
+    let l0 = EdwardsPoint::mul_base(&r_vec[0]);
+    hasher.update(l0.compress().as_bytes());
     hasher.update(msg);
     let mut c_bytes = [0u8; 32];
     c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
     let mut c = Scalar::from_bytes_mod_order(c_bytes);
-    println!("[DEBUG] verifier c_0: {:?}", c);
-    for i in 0..n {
-        let l = EdwardsPoint::mul_base(&r_vec[i]) + pubkeys[i] * c;
-        println!("[DEBUG] verifier L_{}: {:?}", i, l.compress().to_bytes());
+    for i in 1..n {
+        let l = EdwardsPoint::mul_base(&r_vec[i]) + pubkeys[i] * c_vec[i-1];
         hasher.update(l.compress().as_bytes());
         hasher.update(msg);
         let mut c_bytes = [0u8; 32];
         c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
         c = Scalar::from_bytes_mod_order(c_bytes);
-        println!("[DEBUG] verifier c_{}: {:?}", (i + 1) % n, c);
+        if c != c_vec[i] {
+            return false;
+        }
     }
-    // Final challenge should match c_0
-    let valid = c == c_vec[0];
-    println!("[DEBUG] verifier final: c == c_0? {}", valid);
-    valid
+    // Final challenge must close the loop: c == c_vec[0]
+    c == c_vec[0]
 }
 
 lazy_static! {

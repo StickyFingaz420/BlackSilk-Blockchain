@@ -10,70 +10,60 @@ use sha2::{Sha256, Digest};
 pub fn generate_ring_signature(msg: &[u8], ring: &[ [u8; 32] ], priv_key: &[u8], real_index: usize) -> Vec<u8> {
     let n = ring.len();
     assert!(n > 0 && real_index < n);
-    let mut csprng = rand::thread_rng();
-    let sk = Scalar::from_bytes_mod_order(priv_key.try_into().unwrap());
+    // Rotate ring so real_index is at 0
+    let mut ring_rot = vec![[0u8; 32]; n];
+    for i in 0..n {
+        ring_rot[i] = ring[(i + real_index) % n];
+    }
     let mut pubkeys = Vec::with_capacity(n);
-    for pk_bytes in ring {
+    for pk_bytes in &ring_rot {
         let pt = CompressedEdwardsY(*pk_bytes).decompress().unwrap();
         pubkeys.push(pt);
     }
-    println!("[DEBUG] priv_key: {:x?}", priv_key);
-    println!("[DEBUG] ring: {:?}", ring);
-    println!("[DEBUG] msg: {:x?}", msg);
-    // Generate random scalars for all except real_index
+    let mut csprng = rand::thread_rng();
+    let sk = Scalar::from_bytes_mod_order(priv_key.try_into().unwrap());
+    // Generate random scalars for all except 0 (real_index)
     let mut r_vec = vec![Scalar::from_bytes_mod_order([0u8; 32]); n];
-    for i in 0..n {
-        if i != real_index {
-            let mut r_bytes = [0u8; 32];
-            csprng.fill_bytes(&mut r_bytes);
-            r_vec[i] = Scalar::from_bytes_mod_order(r_bytes);
-        }
+    for i in 1..n {
+        let mut r_bytes = [0u8; 32];
+        csprng.fill_bytes(&mut r_bytes);
+        r_vec[i] = Scalar::from_bytes_mod_order(r_bytes);
     }
-    // Generate random k for real_index (used to compute r at the end)
+    // Generate random k for real_index (index 0)
     let mut k_bytes = [0u8; 32];
     csprng.fill_bytes(&mut k_bytes);
     let k = Scalar::from_bytes_mod_order(k_bytes);
-    // Compute the challenge chain, starting at (real_index + 1) % n
-    let mut c_vec = vec![Scalar::from_bytes_mod_order([0u8; 32]); n];
+    // Compute c_0 = H(L_0, msg) where L_0 = k*G
     let mut hasher = Sha256::new();
+    let l0 = ED25519_BASEPOINT_POINT * k;
+    hasher.update(l0.compress().as_bytes());
     hasher.update(msg);
     let mut c_bytes = [0u8; 32];
     c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
-    let mut c = Scalar::from_bytes_mod_order(c_bytes);
-    let start = (real_index + 1) % n;
-    c_vec[start] = c;
+    let mut c_vec = vec![Scalar::from_bytes_mod_order([0u8; 32]); n];
+    c_vec[0] = Scalar::from_bytes_mod_order(c_bytes);
     // Forward loop: fill c_vec in ring order
-    for i in 0..n {
-        let idx = (start + i) % n;
-        let l = if idx == real_index {
-            ED25519_BASEPOINT_POINT * k + pubkeys[idx] * c_vec[idx]
-        } else {
-            ED25519_BASEPOINT_POINT * r_vec[idx] + pubkeys[idx] * c_vec[idx]
-        };
+    for i in 1..n {
+        let l = ED25519_BASEPOINT_POINT * r_vec[i] + pubkeys[i] * c_vec[i-1];
         hasher.update(l.compress().as_bytes());
         hasher.update(msg);
         let mut c_bytes = [0u8; 32];
         c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
-        let next_idx = (idx + 1) % n;
-        if next_idx != start {
-            c_vec[next_idx] = Scalar::from_bytes_mod_order(c_bytes);
-        } else {
-            // When we close the ring, c_vec[start] must match the computed value
-            // This is the check the verifier will do
-            break;
-        }
-        c = Scalar::from_bytes_mod_order(c_bytes);
+        c_vec[i] = Scalar::from_bytes_mod_order(c_bytes);
     }
-    // Compute r for real_index: r = k - sk * c_vec[real_index]
-    r_vec[real_index] = k - sk * c_vec[real_index];
-    // Rotate c_vec and r_vec so that index 0 is the verifier's starting point
+    // Compute r for real_index (index 0): r = k - sk * c_vec[0]
+    r_vec[0] = k - sk * c_vec[0];
+    // Serialize signature as (c_0, r_0), (c_1, r_1), ... in rotated ring order
     let mut sig = Vec::with_capacity(n * 64);
     for i in 0..n {
-        let idx = (i + start) % n;
-        sig.extend_from_slice(&c_vec[idx].to_bytes());
-        sig.extend_from_slice(&r_vec[idx].to_bytes());
-        println!("[DEBUG] sig c[{}]: {:?}", i, c_vec[idx]);
-        println!("[DEBUG] sig r[{}]: {:?}", i, r_vec[idx]);
+        sig.extend_from_slice(&c_vec[i].to_bytes());
+        sig.extend_from_slice(&r_vec[i].to_bytes());
     }
-    sig
+    // Rotate signature back so real_index is at the original position
+    let mut sig_final = Vec::with_capacity(n * 64);
+    for i in 0..n {
+        let idx = (i + n - real_index) % n;
+        sig_final.extend_from_slice(&sig[idx * 64..(idx + 1) * 64]);
+    }
+    sig_final
 }
