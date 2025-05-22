@@ -96,3 +96,4 @@ pub struct StealthAddress {
 
 pub mod zkp; // zk-SNARKs and advanced ZKP integration
 pub mod escrow; // Escrow contract and dispute voting
+pub mod ring_sig;

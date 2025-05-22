@@ -2,7 +2,7 @@
 // This version uses only real, available crates and APIs. No stubs or fake types.
 // If you want advanced features, use arti-client for Tor and i2p_client for I2P.
 
-use std::net::SocketAddr;
+// ...existing code...
 
 #[derive(Debug, Clone)]
 pub struct PrivacyConfig {
