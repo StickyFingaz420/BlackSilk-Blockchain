@@ -5,8 +5,7 @@ use std::time::{Duration, Instant};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use randomx_rs::{RandomXCache, RandomXFlag, RandomXVM};
-use crossbeam_channel::{bounded, select, tick, Receiver};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, Sender, Receiver};
 use std::net::TcpStream;
 use std::io::{BufReader, Write, BufRead};
 
@@ -108,7 +107,6 @@ fn main() {
         threads: 1,
     }));
     let (cmd_tx, cmd_rx): (std::sync::mpsc::Sender<MinerCommand>, std::sync::mpsc::Receiver<MinerCommand>) = std::sync::mpsc::channel();
-    let mining_handle = Arc::new(Mutex::new(None));
     use MinerCommand::*;
     match &cli.command {
         Some(Commands::Start { node, address, threads, stratum }) => {
@@ -119,12 +117,9 @@ fn main() {
                 cfg.threads = *threads;
             }
             let config_clone = Arc::clone(&config);
-            let cmd_rx_clone = cmd_rx.clone();
-            let mining_handle_clone = Arc::clone(&mining_handle);
             let handle = std::thread::spawn(move || {
-                run_miner(config_clone, cmd_rx_clone);
+                run_miner(config_clone, cmd_rx);
             });
-            *mining_handle.lock().unwrap() = Some(handle);
             println!("[Miner] Mining started. Use 'stop', 'set-threads', 'set-address', 'set-node', 'status', 'stats', 'benchmark' commands in another terminal.");
         }
         Some(Commands::Stop) => {
@@ -167,7 +162,7 @@ fn main() {
     }
 }
 
-fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: Receiver<MinerCommand>) {
+fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: std::sync::mpsc::Receiver<MinerCommand>) {
     use MinerCommand::*;
     let should_stop = Arc::new(AtomicBool::new(false));
     let hashes = Arc::new(AtomicU64::new(0));
@@ -175,22 +170,27 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: Receiver<MinerCommand>) {
     let rejected = Arc::new(AtomicU64::new(0));
     let mut threads = vec![];
     let mut last_config = config.lock().unwrap().clone();
-
-    // Move threads out of closure to avoid double mutable borrow
-    let threads_ptr = &mut threads;
-    let spawn_miners = |cfg: &MinerConfig| {
+    // Refactor: Remove closure, use a function for spawn_miners to avoid double mutable borrow
+    fn spawn_miners(
+        cfg: &MinerConfig,
+        should_stop: &Arc<AtomicBool>,
+        hashes: &Arc<AtomicU64>,
+        accepted: &Arc<AtomicU64>,
+        rejected: &Arc<AtomicU64>,
+        threads: &mut Vec<std::thread::JoinHandle<()>>,
+    ) {
         should_stop.store(false, Ordering::SeqCst);
         hashes.store(0, Ordering::SeqCst);
         accepted.store(0, Ordering::SeqCst);
         rejected.store(0, Ordering::SeqCst);
-        threads_ptr.clear();
+        threads.clear();
         for t in 0..cfg.threads {
             let cfg = cfg.clone();
-            let should_stop = Arc::clone(&should_stop);
-            let hashes = Arc::clone(&hashes);
-            let accepted = Arc::clone(&accepted);
-            let rejected = Arc::clone(&rejected);
-            threads_ptr.push(std::thread::spawn(move || {
+            let should_stop = Arc::clone(should_stop);
+            let hashes = Arc::clone(hashes);
+            let accepted = Arc::clone(accepted);
+            let rejected = Arc::clone(rejected);
+            threads.push(std::thread::spawn(move || {
                 let client = Client::new();
                 let node_url = format!("http://{}/mining/get_block_template", cfg.node);
                 let submit_url = format!("http://{}/mining/submit_block", cfg.node);
@@ -249,40 +249,39 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: Receiver<MinerCommand>) {
         }
     };
 
-    spawn_miners(&last_config);
-    let mut last_stats = (0u64, 0u64, 0u64);
+    spawn_miners(&last_config, &should_stop, &hashes, &accepted, &rejected, &mut threads);
     let mut last_time = Instant::now();
     loop {
         if let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
                 Stop => {
                     should_stop.store(true, Ordering::SeqCst);
-                    for th in threads_ptr.drain(..) { let _ = th.join(); }
+                    for th in threads.drain(..) { let _ = th.join(); }
                     println!("[Miner] Mining stopped.");
                     break;
                 }
                 SetThreads(n) => {
                     should_stop.store(true, Ordering::SeqCst);
-                    for th in threads_ptr.drain(..) { let _ = th.join(); }
+                    for th in threads.drain(..) { let _ = th.join(); }
                     config.lock().unwrap().threads = n;
                     last_config = config.lock().unwrap().clone();
-                    spawn_miners(&last_config);
+                    spawn_miners(&last_config, &should_stop, &hashes, &accepted, &rejected, &mut threads);
                     println!("[Miner] Threads updated: {}", n);
                 }
                 SetAddress(addr) => {
                     should_stop.store(true, Ordering::SeqCst);
-                    for th in threads_ptr.drain(..) { let _ = th.join(); }
+                    for th in threads.drain(..) { let _ = th.join(); }
                     config.lock().unwrap().address = addr.clone();
                     last_config = config.lock().unwrap().clone();
-                    spawn_miners(&last_config);
+                    spawn_miners(&last_config, &should_stop, &hashes, &accepted, &rejected, &mut threads);
                     println!("[Miner] Address updated: {}", addr);
                 }
                 SetNode(node) => {
                     should_stop.store(true, Ordering::SeqCst);
-                    for th in threads_ptr.drain(..) { let _ = th.join(); }
+                    for th in threads.drain(..) { let _ = th.join(); }
                     config.lock().unwrap().node = node.clone();
                     last_config = config.lock().unwrap().clone();
-                    spawn_miners(&last_config);
+                    spawn_miners(&last_config, &should_stop, &hashes, &accepted, &rejected, &mut threads);
                     println!("[Miner] Node updated: {}", node);
                 }
                 Status | Stats => {
