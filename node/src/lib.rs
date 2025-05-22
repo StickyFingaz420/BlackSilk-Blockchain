@@ -269,8 +269,13 @@ pub fn validate_transaction(tx: &primitives::Transaction) -> bool {
         }
     }
     for output in &tx.outputs {
+        // Enforce confidential amounts: every output must have a valid range proof (Bulletproof)
+        if output.range_proof.is_empty() {
+            println!("[Validation] Output missing range proof (confidential amount required)");
+            return false;
+        }
         if !validate_range_proof(&output.range_proof, &output.amount_commitment) {
-            println!("[Validation] Range proof failed");
+            println!("[Validation] Range proof failed (invalid confidential amount)");
             return false;
         }
     }

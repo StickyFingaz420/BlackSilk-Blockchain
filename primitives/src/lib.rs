@@ -93,3 +93,5 @@ pub struct StealthAddress {
     pub public_view: types::Hash,
     pub public_spend: types::Hash,
 }
+
+pub mod zkp; // zk-SNARKs and advanced ZKP integration
