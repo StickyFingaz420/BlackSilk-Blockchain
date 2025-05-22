@@ -2,7 +2,8 @@
 members = [
     "node",
     "wallet",
-    "primitives"
+    "primitives",
+    "miner"
 ]
 
 [package]

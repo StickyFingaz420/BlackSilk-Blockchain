@@ -1,15 +1,14 @@
 use clap::{Parser, Subcommand};
-use std::sync::{Arc, atomic::{AtomicU64, Ordering, AtomicBool}};
+use std::sync::{Arc, atomic::{AtomicU64, Ordering, AtomicBool}, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use randomx_rs::{RandomXCache, RandomXFlags, RandomXVM};
+use randomx_rs::{RandomXCache, RandomXFlag, RandomXVM};
 use crossbeam_channel::{bounded, select, tick, Receiver};
-use std::net::TcpStream;
-use std::io::{BufRead, BufReader, Write};
-use hex;
 use std::sync::mpsc::{channel, Sender};
+use std::net::TcpStream;
+use std::io::{BufReader, Write, BufRead};
 
 /// BlackSilk Standalone Miner CLI
 #[derive(Parser, Debug)]
@@ -103,18 +102,16 @@ enum MinerCommand {
 
 fn main() {
     let cli = Cli::parse();
-    use Commands::*;
-    use MinerCommand::*;
     let config = Arc::new(Mutex::new(MinerConfig {
         node: "127.0.0.1:1776".to_string(),
         address: "".to_string(),
         threads: 1,
     }));
-    let (cmd_tx, cmd_rx): (Sender<MinerCommand>, Receiver<MinerCommand>) = channel();
+    let (cmd_tx, cmd_rx): (std::sync::mpsc::Sender<MinerCommand>, std::sync::mpsc::Receiver<MinerCommand>) = std::sync::mpsc::channel();
     let mining_handle = Arc::new(Mutex::new(None));
-
+    use MinerCommand::*;
     match &cli.command {
-        Some(Start { node, address, threads, stratum }) => {
+        Some(Commands::Start { node, address, threads, stratum }) => {
             {
                 let mut cfg = config.lock().unwrap();
                 cfg.node = node.clone();
@@ -130,32 +127,32 @@ fn main() {
             *mining_handle.lock().unwrap() = Some(handle);
             println!("[Miner] Mining started. Use 'stop', 'set-threads', 'set-address', 'set-node', 'status', 'stats', 'benchmark' commands in another terminal.");
         }
-        Some(Stop) => {
+        Some(Commands::Stop) => {
             let _ = cmd_tx.send(Stop);
             println!("[Miner] Stop command sent.");
         }
-        Some(SetThreads { n }) => {
-            let _ = cmd_tx.send(SetThreads(*n));
+        Some(Commands::SetThreads { n }) => {
+            let _ = cmd_tx.send(MinerCommand::SetThreads(*n));
             println!("[Miner] Set threads command sent: {}", n);
         }
-        Some(SetAddress { addr }) => {
-            let _ = cmd_tx.send(SetAddress(addr.clone()));
+        Some(Commands::SetAddress { addr }) => {
+            let _ = cmd_tx.send(MinerCommand::SetAddress(addr.clone()));
             println!("[Miner] Set address command sent: {}", addr);
         }
-        Some(SetNode { node }) => {
-            let _ = cmd_tx.send(SetNode(node.clone()));
+        Some(Commands::SetNode { node }) => {
+            let _ = cmd_tx.send(MinerCommand::SetNode(node.clone()));
             println!("[Miner] Set node command sent: {}", node);
         }
-        Some(Status) => {
-            let _ = cmd_tx.send(Status);
+        Some(Commands::Status) => {
+            let _ = cmd_tx.send(MinerCommand::Status);
         }
-        Some(Stats) => {
-            let _ = cmd_tx.send(Stats);
+        Some(Commands::Stats) => {
+            let _ = cmd_tx.send(MinerCommand::Stats);
         }
-        Some(Benchmark) => {
-            let _ = cmd_tx.send(Benchmark);
+        Some(Commands::Benchmark) => {
+            let _ = cmd_tx.send(MinerCommand::Benchmark);
         }
-        Some(Help) | None => {
+        Some(Commands::Help) | None => {
             println!("BlackSilk Miner CLI - Available commands:");
             println!("  start --node <ip:port> --address <addr> [--threads <n>] [--stratum]   Start mining");
             println!("  stop                                                             Stop mining");
@@ -179,19 +176,21 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: Receiver<MinerCommand>) {
     let mut threads = vec![];
     let mut last_config = config.lock().unwrap().clone();
 
-    let mut spawn_miners = |cfg: &MinerConfig| {
+    // Move threads out of closure to avoid double mutable borrow
+    let threads_ptr = &mut threads;
+    let spawn_miners = |cfg: &MinerConfig| {
         should_stop.store(false, Ordering::SeqCst);
         hashes.store(0, Ordering::SeqCst);
         accepted.store(0, Ordering::SeqCst);
         rejected.store(0, Ordering::SeqCst);
-        threads.clear();
+        threads_ptr.clear();
         for t in 0..cfg.threads {
             let cfg = cfg.clone();
             let should_stop = Arc::clone(&should_stop);
             let hashes = Arc::clone(&hashes);
             let accepted = Arc::clone(&accepted);
             let rejected = Arc::clone(&rejected);
-            threads.push(std::thread::spawn(move || {
+            threads_ptr.push(std::thread::spawn(move || {
                 let client = Client::new();
                 let node_url = format!("http://{}/mining/get_block_template", cfg.node);
                 let submit_url = format!("http://{}/mining/submit_block", cfg.node);
@@ -211,12 +210,10 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: Receiver<MinerCommand>) {
                     };
                     let mut header = template.header.clone();
                     let mut nonce = t as u64 * 1_000_000;
-                    let flags = RandomXFlags::default()
-                        | RandomXFlags::FLAG_LARGE_PAGES
-                        | RandomXFlags::FLAG_HARD_AES
-                        | RandomXFlags::FLAG_FULL_MEM;
-                    let cache = RandomXCache::new(&template.seed, flags).expect("RandomX cache");
-                    let vm = RandomXVM::new(&cache, flags).expect("RandomX VM");
+                    // Fix RandomXCache::new and RandomXVM::new argument order and count
+                    let flags = RandomXFlag::default();
+                    let cache = RandomXCache::new(flags, &template.seed).expect("RandomX cache");
+                    let vm = RandomXVM::new(flags, Some(&cache), None).expect("RandomX VM");
                     loop {
                         if should_stop.load(Ordering::SeqCst) { break; }
                         let nonce_bytes = nonce.to_le_bytes();
@@ -260,13 +257,13 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: Receiver<MinerCommand>) {
             match cmd {
                 Stop => {
                     should_stop.store(true, Ordering::SeqCst);
-                    for th in threads.drain(..) { let _ = th.join(); }
+                    for th in threads_ptr.drain(..) { let _ = th.join(); }
                     println!("[Miner] Mining stopped.");
                     break;
                 }
                 SetThreads(n) => {
                     should_stop.store(true, Ordering::SeqCst);
-                    for th in threads.drain(..) { let _ = th.join(); }
+                    for th in threads_ptr.drain(..) { let _ = th.join(); }
                     config.lock().unwrap().threads = n;
                     last_config = config.lock().unwrap().clone();
                     spawn_miners(&last_config);
@@ -274,7 +271,7 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: Receiver<MinerCommand>) {
                 }
                 SetAddress(addr) => {
                     should_stop.store(true, Ordering::SeqCst);
-                    for th in threads.drain(..) { let _ = th.join(); }
+                    for th in threads_ptr.drain(..) { let _ = th.join(); }
                     config.lock().unwrap().address = addr.clone();
                     last_config = config.lock().unwrap().clone();
                     spawn_miners(&last_config);
@@ -282,7 +279,7 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: Receiver<MinerCommand>) {
                 }
                 SetNode(node) => {
                     should_stop.store(true, Ordering::SeqCst);
-                    for th in threads.drain(..) { let _ = th.join(); }
+                    for th in threads_ptr.drain(..) { let _ = th.join(); }
                     config.lock().unwrap().node = node.clone();
                     last_config = config.lock().unwrap().clone();
                     spawn_miners(&last_config);
@@ -366,12 +363,9 @@ fn stratum_mine(args: &Args) {
                         let seed = match hex::decode(seed_hex) { Ok(s) => s, Err(_) => continue };
                         let target = match hex::decode(target_hex) { Ok(t) => t, Err(_) => continue };
                         // --- RandomX mining ---
-                        let flags = randomx_rs::RandomXFlags::default()
-                            | randomx_rs::RandomXFlags::FLAG_LARGE_PAGES
-                            | randomx_rs::RandomXFlags::FLAG_HARD_AES
-                            | randomx_rs::RandomXFlags::FLAG_FULL_MEM;
-                        let cache = randomx_rs::RandomXCache::new(&seed, flags).expect("RandomX cache");
-                        let vm = randomx_rs::RandomXVM::new(&cache, flags).expect("RandomX VM");
+                        let flags = RandomXFlag::default();
+                        let cache = RandomXCache::new(flags, &seed).expect("RandomX cache");
+                        let vm = RandomXVM::new(flags, Some(&cache), None).expect("RandomX VM");
                         let mut found = false;
                         let mut found_nonce = 0u64;
                         let mut found_hash = vec![];
@@ -424,4 +418,4 @@ fn stratum_mine(args: &Args) {
         }
     }
     println!("[Miner] Stratum connection closed.");
-} 
+}
