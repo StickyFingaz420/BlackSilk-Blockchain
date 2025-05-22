@@ -229,4 +229,16 @@ mod tests {
             assert!(layer.is_ok());
         });
     }
-} 
+    
+    #[test]
+    fn test_tor_only_enforcement() {
+        use super::is_onion_address;
+        let privacy = super::PrivacyConfig { tor_only: true, ..super::PrivacyConfig::default() };
+        // Should allow .onion
+        assert!(is_onion_address("abc.onion"));
+        // Should block clearnet
+        assert!(!is_onion_address("1.2.3.4:1776"));
+        // Should block normal domain
+        assert!(!is_onion_address("example.com:1776"));
+    }
+}

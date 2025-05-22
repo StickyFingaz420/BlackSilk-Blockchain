@@ -481,7 +481,32 @@ pub fn validate_block(block: &Block) -> bool {
     true
 }
 
+mod network {
+    pub mod privacy;
+}
+use network::privacy::{PrivacyConfig, PrivacyLayer, is_onion_address, is_i2p_address};
+use std::sync::Once;
+static mut PRIVACY_CONFIG: Option<PrivacyConfig> = None;
+static INIT_PRIVACY: Once = Once::new();
+
+fn get_privacy_config() -> &'static PrivacyConfig {
+    unsafe {
+        INIT_PRIVACY.call_once(|| {
+            PRIVACY_CONFIG = Some(PrivacyConfig {
+                tor_only: true, // Enforce Tor/I2P only
+                ..PrivacyConfig::default()
+            });
+        });
+        PRIVACY_CONFIG.as_ref().unwrap()
+    }
+}
+
 pub fn connect_to_peer(addr: &str) {
+    let privacy = get_privacy_config();
+    if privacy.tor_only && !(is_onion_address(addr) || is_i2p_address(addr)) {
+        println!("[Privacy] Connection to non-Tor/I2P address blocked: {}", addr);
+        return;
+    }
     match TcpStream::connect(addr) {
         Ok(mut stream) => {
             println!("[P2P] Connected to peer {}", addr);
@@ -536,12 +561,19 @@ pub fn connect_to_peer(addr: &str) {
 }
 
 pub fn start_p2p_server(port: u16) {
+    let privacy = get_privacy_config();
     let addr = format!("0.0.0.0:{}", port);
     let listener = TcpListener::bind(&addr).expect("Failed to bind P2P port");
     println!("[P2P] Listening for peers on {}", addr);
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
+                // Check remote address for Tor/I2P enforcement
+                let remote = s.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+                if privacy.tor_only && !(is_onion_address(&remote) || is_i2p_address(&remote)) {
+                    println!("[Privacy] Rejected clearnet connection from {}", remote);
+                    continue;
+                }
                 thread::spawn(|| handle_client(s));
             }
             Err(e) => println!("[P2P] Connection failed: {}", e),

@@ -1,0 +1,13 @@
+# BlackSilk Node - Tor/I2P Privacy Layer Dependencies
+
+This file lists the required dependencies for full Tor/I2P-only enforcement and privacy networking in the BlackSilk node. These dependencies are required for production, not just simulation or stubs.
+
+[dependencies]
+tokio = { version = "1.37", features = ["full"] }
+tor-client = "0.10"
+i2p = "0.2"
+rustls = "0.23"
+rustls-pemfile = "2.0"
+
+# If you need to update, run:
+#   cargo add tokio tor-client i2p rustls rustls-pemfile
