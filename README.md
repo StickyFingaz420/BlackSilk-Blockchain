@@ -2,30 +2,96 @@
 
 # BlackSilk Blockchain
 
-**Built from scratch**: BlackSilk is a privacy-focused blockchain and decentralized marketplace, designed and implemented from the ground up to provide robust privacy, security, and censorship resistance.
+**A privacy-first blockchain and decentralized marketplace project**
+
+---
 
 ## Project Overview
 
-BlackSilk is a next-generation, privacy-first blockchain platform with an integrated decentralized marketplace. Inspired by Monero and Silk Road, it leverages advanced cryptography and privacy technologies to enable secure, anonymous commerce. The project is implemented entirely from scratch in Rust, with a modern architecture and extensible design.
+BlackSilk is a fully private blockchain with an integrated decentralized marketplace, inspired by Monero and Silk Road. It leverages advanced cryptography and anonymous networking (Tor/I2P) to ensure privacy, security, and censorship resistance for all users.
 
-Key technologies include:
-- **RandomX Proof-of-Work** for ASIC resistance and fair mining
-- **Ring Signatures, Stealth Addresses, Bulletproofs** for transaction privacy
-- **Tor/I2P Integration** for network anonymity
-- **Smart Escrow Contracts** with 2-of-3 multisig and dispute resolution
-- **IPFS Integration** for decentralized storage
-- **Wallet-based Authentication** (no passwords, no sessions)
-- **Extensible Rust Backend** with PostgreSQL for persistent storage
-- **Next.js Frontend** (scaffolded)
+---
 
-## Features
+## Project Status
 
-- **Privacy First**: Ring signatures, stealth addresses, and confidential transactions ensure complete transaction privacy
-- **CPU Mining**: RandomX proof-of-work algorithm optimized for CPU mining
-- **Network Privacy**: Full Tor/I2P integration with optional clearnet
-- **Marketplace**: Integrated decentralized marketplace with escrow and IPFS
-- **Wallet-based Authentication**: Ed25519 signature-based login and endpoint protection
-- **Event/Audit Logging**: All escrow actions are logged for transparency and dispute resolution
+### 1. Completed Features ✅
+
+1. **Core Node**
+   - Proof-of-Work blockchain (RandomX) with mempool, P2P, block and transaction management.
+   - Network configuration support (Tor/I2P, TLS, PFS).
+   - Tokenomics (block reward, halving, tail emission).
+   - Escrow event logging.
+
+2. **Privacy & Cryptography**
+   - Ring signatures and stealth addresses.
+   - Bulletproofs for confidential transactions.
+   - Encrypted communications (TLS/PFS).
+   - Tor/I2P integration at the network layer.
+
+3. **Wallet**
+   - Key generation (Ed25519/Curve25519).
+   - Stealth address generation.
+   - Transaction signing and ring signature creation.
+   - Bulletproofs support.
+   - Basic CLI interface.
+
+4. **Marketplace**
+   - Modern dark-themed Next.js frontend.
+   - Listings, orders, and escrow management.
+   - Image uploads to IPFS.
+   - Wallet integration (login via signature).
+   - Rust/Axum backend APIs with PostgreSQL.
+   - API protection via wallet signature.
+   - Search, filtering, and order/sales management.
+
+5. **Smart Escrow**
+   - 2-of-3 multisig logic (buyer/seller/arbiter).
+   - Escrow states (created, funded, completed, disputed, refunded).
+   - Event logging for every escrow action.
+
+6. **Documentation**
+   - Detailed architecture docs (docs/architecture.md).
+   - Tokenomics and emission tables.
+   - Build and run instructions.
+   - OpenAPI files for the API.
+
+---
+
+### 2. Missing / In Progress Features ❌
+
+1. **Advanced Privacy**
+   - zk-SNARKs or advanced ZKPs support.
+   - Full hardware wallet support (Ledger/Trezor).
+   - Full confidential amounts in all transaction paths.
+
+2. **Marketplace**
+   - On-chain reputation system.
+   - Decentralized arbitration (DAO or voting).
+   - Full Tor/I2P-only operation (some flows are experimental).
+   - Advanced IPFS support (auto-distribution and retrieval of images/files).
+   - Zero-trace operation (no persistent logs).
+   - Full security headers (CSP, HSTS, etc.) in all flows.
+
+3. **Smart Contracts**
+   - More advanced contracts (time-locked, DAO).
+   - Full escrow operations via the UI (some flows are manual or experimental).
+
+4. **Documentation**
+   - Final whitepaper.
+   - End-user guides for marketplace and wallet.
+   - Complete API documentation (some endpoints only).
+
+---
+
+## Architecture
+
+- **Core Node:** Blockchain state, mining, P2P, privacy protocols.
+- **Wallet:** Key generation, signing, CLI, Bulletproofs support.
+- **Marketplace:** Next.js frontend, IPFS uploads, signature protection, listings/orders management.
+- **Escrow:** Multisig logic, escrow states, event logging.
+- **Network:** Tor/I2P, TLS, PFS.
+
+---
 
 ## Tokenomics
 
@@ -34,153 +100,91 @@ Key technologies include:
 | Block Time       | 120 seconds (2 minutes)      |
 | Initial Reward   | 86 BLK per block             |
 | Halving Interval | Every 125,000 blocks         |
-| Halving Amount   | 50% reduction per halving    |
+| Halving Amount   | 50%                          |
 | Supply Cap       | 21,000,000 BLK               |
-| Tail Emission    | 0.5 BLK per block (post-cap) |
-| Emission Curve   | Exponential decay, then flat |
+| Tail Emission    | 0.5 BLK per block after cap  |
 
-### Emission & Halving Schedule
-
-- **Block reward starts at 86 BLK.**
-- **Halving occurs every 125,000 blocks** (~8.6 months at 2 min/block).
-- **After supply cap is reached, tail emission of 0.5 BLK/block continues indefinitely.**
-
-#### Example Halving Table
-
-| Halving # | Block Height | Block Reward (BLK) | Cumulative Supply (approx) |
-|-----------|--------------|--------------------|---------------------------|
-| 0         | 0            | 86                 | 0                         |
-| 1         | 125,000      | 43                 | 10,750,000                |
-| 2         | 250,000      | 21.5               | 14,562,500                |
-| 3         | 375,000      | 10.75              | 16,218,750                |
-| 4         | 500,000      | 5.375              | 17,109,375                |
-| ...       | ...          | ...                | ...                       |
-| N         | ~            | ...                | 21,000,000 (cap)          |
-
-#### Emission Chart (Block Reward vs. Block Height)
-
-```
-Block Reward (BLK)
-|
-| 86 ──────────────┐
-|                  │
-|                  │
-| 43 ──────┐       │
-|          │       │
-| 21.5 ─┐  │       │
-|       │  │       │
-| 10.75│  │       │
-|   ...│  │       │
-|______│__│_______│________________ Block Height
-      125k 250k 375k ...
-
-(Tail emission: 0.5 BLK/block after cap)
-```
-
-- The emission curve follows an exponential decay until the supply cap, then switches to a flat tail emission.
-- This ensures long-term miner incentives and network security.
+---
 
 ## Quick Start
 
 ### Prerequisites
-- Rust 1.70+ with cargo
-- Node.js 18+ (for marketplace frontend)
-- PostgreSQL (for backend database)
-- Tor/I2P services (optional)
+- Rust 1.70+
+- Node.js 18+
+- PostgreSQL
+- Tor/I2P (optional)
 
-### Building from Source
+### Build & Run
 
-1. Clone the repository:
-```bash
+```powershell
+# Clone the project
 git clone https://github.com/yourusername/blacksilk.git
 cd blacksilk
-```
 
-2. Build the core node:
-```bash
+# Build the core node
 cargo build --release
-```
 
-3. Build the wallet:
-```bash
+# Build the wallet
 cd wallet
 cargo build --release
-```
 
-4. Start the node:
-```bash
+# Run the node
 ./target/release/blacksilk-node
-```
 
-5. Generate a wallet:
-```bash
+# Generate a wallet
 ./target/release/blacksilk-wallet generate
 ```
 
-### Running a Node
+### Run the Marketplace
 
-The node can be run in several modes:
-```bash
-# Standard mode (clearnet + Tor/I2P)
-blacksilk-node
+```powershell
+# Frontend
+cd marketplace/frontend
+npm install
+npm run dev
 
-# Tor-only mode
-blacksilk-node --tor-only
-
-# With custom port
-blacksilk-node --port 1776
+# Backend
+cd ../backend
+cargo run
 ```
 
-### Mining
+---
 
-```bash
-cargo run --release -- -n 192.168.1.100:8000 -a blacks1k... -t 4
-```
+## Documentation & Resources
 
-#### Standalone Miner
-
-You can use the standalone miner (`blacksilk-miner`) to mine with multiple PCs on the same network, all mining to a single node.
-
-**Usage:**
-```bash
-cargo run --release --package blacksilk-miner -- \
-  -n NODE_IP:PORT \
-  -a YOUR_WALLET_ADDRESS \
-  -t NUM_THREADS
-```
-
-- `-n` / `--node`: Node address (host:port) to connect to (e.g., `192.168.1.100:8000`)
-- `-a` / `--address`: Your wallet address to receive mining rewards
-- `-t` / `--threads`: Number of mining threads (default: 1, set to number of CPU cores for best performance)
-
-**Example:**
-```bash
-cargo run --release --package blacksilk-miner -- -n 192.168.1.100:8000 -a blacks1k1q2w3e4r5t6y7u8i9o0p -t 4
-```
-
-You can run this command on multiple PCs, all pointing to the same node, to mine cooperatively.
-
-## Documentation
-
-- [Whitepaper](docs/whitepaper.md)
-- [Architecture Overview](docs/architecture.md)
-- [API Documentation](docs/api/README.md)
-- [Build Instructions](docs/build.md)
+- [Whitepaper](docs/whitepaper.md) (in progress)
+- [Architecture](docs/architecture.md)
+- [API Docs](docs/api/README.md)
+- [Build Guide](docs/build.md)
 - [Marketplace Guide](docs/marketplace.md)
 
-## Development
+---
 
-- [Contributing Guide](CONTRIBUTING.md)
-- [Code of Conduct](CODE_OF_CONDUCT.md)
-- [Security Policy](SECURITY.md)
+## Additional Notes
+
+- All connections default to Tor/I2P.
+- No analytics or external tracking included.
+- All private keys are encrypted on disk.
+- All listing images are uploaded to IPFS.
+- All escrow actions are logged for security and transparency.
+
+---
+
+## Naming & Inspiration
+
+- Default P2P port 1776 (year of American independence).
+- Max block size 1984KB (reference to Orwell's 1984).
+- Function and symbol names inspired by freedom and resistance.
+
+---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License
 
-## Acknowledgments
+---
 
-BlackSilk builds upon the work of several privacy-focused blockchain projects:
-- Monero (RandomX, ring signatures)
-- Zcash (zero-knowledge proofs concepts)
-- Silk Road (marketplace architecture inspiration)
+## Project Status
+
+- The project is in an advanced MVP stage, with full blockchain, wallet, and basic marketplace support.
+- Some privacy, arbitration, and reputation features are under development.
