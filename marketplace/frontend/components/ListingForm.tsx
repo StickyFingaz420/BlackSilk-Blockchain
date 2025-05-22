@@ -77,7 +77,7 @@ export default function ListingForm({ initialData, onSubmit }: ListingFormProps)
       for (const file of acceptedFiles) {
         // Show a loading indicator if desired
         const cid = await uploadToIPFS(file);
-        uploadedHashes.push(`https://ipfs.io/ipfs/${cid}`);
+        uploadedHashes.push(cid); // Store just the CID, not the gateway URL
       }
       handleChange('images', [...(formData.images || []), ...uploadedHashes]);
     } catch (err) {
@@ -408,4 +408,4 @@ export default function ListingForm({ initialData, onSubmit }: ListingFormProps)
       </Card>
     </form>
   );
-} 
+}

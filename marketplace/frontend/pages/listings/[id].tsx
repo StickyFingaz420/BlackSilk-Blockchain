@@ -15,6 +15,7 @@ import {
 } from '@mui/material';
 import { Listing } from '../../types';
 import { useWallet } from '../../components/WalletProvider';
+import { ipfsUrl } from '../../utils/ipfs';
 
 export default function ListingDetail() {
   const router = useRouter();
@@ -72,12 +73,12 @@ export default function ListingDetail() {
             <CardMedia
               component="img"
               height="320"
-              image={listing.images[0] || '/placeholder.png'}
+              image={listing.images[0] ? ipfsUrl(listing.images[0]) : '/placeholder.png'}
               alt={listing.title}
             />
             <Box sx={{ display: 'flex', gap: 1, mt: 2, flexWrap: 'wrap' }}>
               {listing.images.slice(1).map((img, idx) => (
-                <img key={idx} src={img} alt="" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 4, border: '1px solid #eee' }} />
+                <img key={idx} src={ipfsUrl(img)} alt="" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 4, border: '1px solid #eee' }} />
               ))}
             </Box>
           </Card>
@@ -112,4 +113,4 @@ export default function ListingDetail() {
       </Grid>
     </Container>
   );
-} 
+}

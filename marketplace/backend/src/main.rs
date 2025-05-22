@@ -16,6 +16,8 @@ use async_trait::async_trait;
 use axum::http::StatusCode;
 use axum_macros::debug_handler;
 use tokio::task;
+use axum::middleware::{self, Next};
+use axum::http::{Request, HeaderValue};
 
 // Types
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
@@ -101,9 +103,26 @@ where
 }
 
 // --- IPFS Upload Endpoint ---
-async fn ipfs_upload(State(_state): State<Arc<AppState>>, mut _multipart: Multipart) -> impl IntoResponse {
-    // TODO: Implement IPFS upload using reqwest or a compatible REST client for Send compatibility.
-    (StatusCode::NOT_IMPLEMENTED, "IPFS upload not implemented: use a REST client or web3.storage API.").into_response()
+async fn ipfs_upload(State(state): State<Arc<AppState>>, mut multipart: Multipart) -> impl IntoResponse {
+    use futures_util::stream::StreamExt;
+    let mut cids = Vec::new();
+    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
+        let name = field.name().map(|s| s.to_string()).unwrap_or_default();
+        let file_name = field.file_name().map(|s| s.to_string()).unwrap_or_else(|| name.clone());
+        let data = field.bytes().await;
+        match data {
+            Ok(bytes) => {
+                // Upload to IPFS
+                let res = state.ipfs.add(std::io::Cursor::new(bytes)).await;
+                match res {
+                    Ok(r) => cids.push(r.hash),
+                    Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("IPFS upload failed: {}", e)).into_response(),
+                }
+            },
+            Err(e) => return (StatusCode::BAD_REQUEST, format!("Failed to read file: {}", e)).into_response(),
+        }
+    }
+    (StatusCode::OK, Json(serde_json::json!({"cids": cids}))).into_response()
 }
 
 // Listings Endpoints
@@ -412,9 +431,25 @@ async fn main() -> anyhow::Result<()> {
         .route("/escrow/:contract_id/start_voting", post(start_voting))
         .route("/escrow/:contract_id/submit_vote", post(submit_vote))
         .route("/escrow/:contract_id/tally_votes", post(tally_votes))
+        .layer(middleware::from_fn(security_headers))
         .with_state(state);
     println!("Axum server running on http://0.0.0.0:8080");
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
     axum::serve(listener, app.into_make_service()).await?;
     Ok(())
+}
+
+// Security headers middleware
+async fn security_headers<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
+    let mut res = next.run(req).await;
+    let headers = res.headers_mut();
+    headers.insert("Strict-Transport-Security", HeaderValue::from_static("max-age=63072000; includeSubDomains; preload"));
+    headers.insert("X-Content-Type-Options", HeaderValue::from_static("nosniff"));
+    headers.insert("X-Frame-Options", HeaderValue::from_static("DENY"));
+    headers.insert("Referrer-Policy", HeaderValue::from_static("no-referrer"));
+    headers.insert("Permissions-Policy", HeaderValue::from_static("geolocation=(), microphone=(), camera=()"));
+    headers.insert("Content-Security-Policy", HeaderValue::from_static(
+        "default-src 'self'; img-src 'self' https://ipfs.io data:; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+    ));
+    res
 }
