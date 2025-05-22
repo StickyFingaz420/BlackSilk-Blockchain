@@ -4,6 +4,8 @@ import {
   Container, Typography, Card, CardContent, Button, Box, Grid, Alert, CircularProgress
 } from '@mui/material';
 import { EscrowStatus } from '../../types';
+import DisputeVoting from '../../components/DisputeVoting';
+import { useWallet } from '../../components/WalletProvider';
 
 // For process.env type
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -27,6 +29,8 @@ export default function EscrowPage() {
     pubkey: new Array(32).fill(1), // Replace with real pubkey
     role: 'buyer', // or 'seller' or 'arbiter'
   };
+
+  const { address } = useWallet();
 
   useEffect(() => {
     if (contract_id) fetchEscrow();
@@ -96,6 +100,17 @@ export default function EscrowPage() {
           {error && <Alert sx={{ mt: 2 }} severity="error">{error}</Alert>}
         </CardContent>
       </Card>
+      {/* Show dispute voting if in Disputed or Voting state */}
+      {(escrow.status === 'Disputed' || escrow.status === 'Voting') && address && (
+        <DisputeVoting contractId={escrow.contractId} voter={address} />
+      )}
+      {/* Show voting results if Resolved */}
+      {escrow.status === 'Resolved' && (
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="h6">Dispute Resolved</Typography>
+          {/* Optionally show who won based on tally */}
+        </Box>
+      )}
     </Container>
   );
-} 
+}
