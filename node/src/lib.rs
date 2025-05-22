@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use serde::{Serialize, Deserialize};
 use sha2::Digest;
+use once_cell::sync::OnceCell;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum P2PMessage {
@@ -485,20 +486,15 @@ mod network {
     pub mod privacy;
 }
 use network::privacy::{PrivacyConfig, is_onion_address, is_i2p_address};
-use std::sync::Once;
-static mut PRIVACY_CONFIG: Option<PrivacyConfig> = None;
-static INIT_PRIVACY: Once = Once::new();
+use std::sync::OnceCell;
+
+static PRIVACY_CONFIG: OnceCell<PrivacyConfig> = OnceCell::new();
 
 fn get_privacy_config() -> &'static PrivacyConfig {
-    unsafe {
-        INIT_PRIVACY.call_once(|| {
-            PRIVACY_CONFIG = Some(PrivacyConfig {
-                tor_only: true, // Enforce Tor/I2P only
-                ..PrivacyConfig::default()
-            });
-        });
-        PRIVACY_CONFIG.as_ref().unwrap()
-    }
+    PRIVACY_CONFIG.get_or_init(|| PrivacyConfig {
+        tor_only: true, // Enforce Tor/I2P only
+        ..PrivacyConfig::default()
+    })
 }
 
 pub fn connect_to_peer(addr: &str) {
