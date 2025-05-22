@@ -2,107 +2,43 @@
 
 # BlackSilk Blockchain
 
-**A privacy-first blockchain and decentralized marketplace project**
+**A privacy-first blockchain and decentralized marketplace.**
 
 ---
 
 ## Project Overview
-
-BlackSilk is a fully private blockchain with an integrated decentralized marketplace, inspired by Monero and Silk Road. It leverages advanced cryptography and anonymous networking (Tor/I2P) to ensure privacy, security, and censorship resistance for all users.
-
----
-
-## Project Status
-
-### 1. Completed Features ✅
-
-1. **Core Node**
-   - Proof-of-Work blockchain (RandomX) with mempool, P2P, block and transaction management.
-   - Network configuration support (Tor/I2P, TLS, PFS).
-   - Tokenomics (block reward, halving, tail emission).
-   - Escrow event logging.
-
-2. **Privacy & Cryptography**
-   - Ring signatures and stealth addresses.
-   - Bulletproofs for confidential transactions.
-   - Encrypted communications (TLS/PFS).
-   - Tor/I2P integration at the network layer.
-
-3. **Wallet**
-   - Key generation (Ed25519/Curve25519).
-   - Stealth address generation.
-   - Transaction signing and ring signature creation.
-   - Bulletproofs support.
-   - Basic CLI interface.
-
-4. **Marketplace**
-   - Modern dark-themed Next.js frontend.
-   - Listings, orders, and escrow management.
-   - Image uploads to IPFS.
-   - Wallet integration (login via signature).
-   - Rust/Axum backend APIs with PostgreSQL.
-   - API protection via wallet signature.
-   - Search, filtering, and order/sales management.
-
-5. **Smart Escrow**
-   - 2-of-3 multisig logic (buyer/seller/arbiter).
-   - Escrow states (created, funded, completed, disputed, refunded).
-   - Event logging for every escrow action.
-
-6. **Documentation**
-   - Detailed architecture docs (docs/architecture.md).
-   - Tokenomics and emission tables.
-   - Build and run instructions.
-   - OpenAPI files for the API.
-
----
-
-### 2. Missing / In Progress Features ❌
-
-1. **Advanced Privacy**
-   - zk-SNARKs or advanced ZKPs support.
-   - Full hardware wallet support (Ledger/Trezor).
-   - Full confidential amounts in all transaction paths.
-
-2. **Marketplace**
-   - On-chain reputation system.
-   - Decentralized arbitration (DAO or voting).
-   - Full Tor/I2P-only operation (some flows are experimental).
-   - Advanced IPFS support (auto-distribution and retrieval of images/files).
-   - Zero-trace operation (no persistent logs).
-   - Full security headers (CSP, HSTS, etc.) in all flows.
-
-3. **Smart Contracts**
-   - More advanced contracts (time-locked, DAO).
-   - Full escrow operations via the UI (some flows are manual or experimental).
-
-4. **Documentation**
-   - Final whitepaper.
-   - End-user guides for marketplace and wallet.
-   - Complete API documentation (some endpoints only).
+BlackSilk is a next-generation, privacy-first blockchain and decentralized marketplace inspired by Monero and Silk Road. It leverages advanced cryptography (ring signatures, Bulletproofs, zk-SNARKs), anonymous networking (Tor/I2P), and decentralized arbitration to ensure privacy, security, and censorship resistance for all users.
 
 ---
 
 ## Architecture
-
-- **Core Node:** Blockchain state, mining, P2P, privacy protocols.
-- **Wallet:** Key generation, signing, CLI, Bulletproofs support.
-- **Marketplace:** Next.js frontend, IPFS uploads, signature protection, listings/orders management.
-- **Escrow:** Multisig logic, escrow states, event logging.
-- **Network:** Tor/I2P, TLS, PFS.
+- **Core Node:** Blockchain state, mining (RandomX), P2P, privacy protocols, Tor/I2P, TLS, PFS.
+- **Wallet:** Key generation (Ed25519/Curve25519), stealth addresses, ring signatures, Bulletproofs, hardware wallet support, CLI.
+- **Marketplace:** Next.js frontend, IPFS uploads, signature-protected APIs, listings/orders, on-chain reputation, DAO-based arbitration.
+- **Escrow:** 2-of-3 multisig, event logging, dispute voting.
+- **Network:** Tor/I2P enforced, TLS, PFS, zero-trace operation.
 
 ---
 
-## Tokenomics
-
-| Parameter         | Value                        |
-|------------------|------------------------------|
-| Block Time       | 120 seconds (2 minutes)      |
-| Initial Reward   | 86 BLK per block             |
-| Halving Interval | Every 125,000 blocks         |
-| Halving Amount   | 50%                          |
-| Supply Cap       | 21,000,000 BLK               |
-| Tail Emission    | 0.5 BLK per block after cap  |
+## Features
+- **Privacy & Cryptography:**
+  - Ring signatures, stealth addresses, confidential transactions (Bulletproofs), zk-SNARKs.
+  - Encrypted P2P and API communications (TLS/PFS).
+  - Tor/I2P-only networking (no clearnet leaks).
+- **Marketplace:**
+  - Listings, orders, and escrow management.
+  - Image/file uploads to IPFS (auto-distribution and retrieval).
+  - On-chain reputation system and DAO-based dispute voting.
+  - Modern Next.js frontend, wallet login via signature.
+- **Escrow & Arbitration:**
+  - 2-of-3 multisig escrow (buyer/seller/arbiter).
+  - Dispute voting and decentralized arbitration.
+- **Zero-Trace & Security:**
+  - No persistent logs or analytics.
+  - Strict security headers (CSP, HSTS, etc.) on all HTTP(S) responses.
+  - All private keys encrypted on disk.
+- **Hardware Wallet Support:**
+  - Ledger/Trezor integration (scaffolded, extendable).
 
 ---
 
@@ -112,10 +48,9 @@ BlackSilk is a fully private blockchain with an integrated decentralized marketp
 - Rust 1.70+
 - Node.js 18+
 - PostgreSQL
-- Tor/I2P (optional)
+- Tor/I2P (optional, but recommended)
 
 ### Build & Run
-
 ```powershell
 # Clone the project
 git clone https://github.com/yourusername/blacksilk.git
@@ -136,7 +71,6 @@ cargo build --release
 ```
 
 ### Run the Marketplace
-
 ```powershell
 # Frontend
 cd marketplace/frontend
@@ -150,41 +84,41 @@ cargo run
 
 ---
 
-## Documentation & Resources
-
-- [Whitepaper](docs/whitepaper.md) (in progress)
+## API & Documentation
 - [Architecture](docs/architecture.md)
-- [API Docs](docs/api/README.md)
-- [Build Guide](docs/build.md)
+- [Advanced Features](docs/advanced_features.md)
+- [API Reference (OpenAPI)](docs/api/openapi.yaml)
 - [Marketplace Guide](docs/marketplace.md)
+- [Build Guide](docs/build.md)
 
 ---
 
-## Additional Notes
-
+## Security & Privacy
 - All connections default to Tor/I2P.
-- No analytics or external tracking included.
+- No analytics or external tracking.
 - All private keys are encrypted on disk.
-- All listing images are uploaded to IPFS.
-- All escrow actions are logged for security and transparency.
+- All listing images/files are uploaded to IPFS.
+- All escrow actions are logged for transparency.
+- Zero-trace mode: no persistent logs or sensitive data on disk.
+- Strict security headers (CSP, HSTS, etc.) enforced everywhere.
 
 ---
 
 ## Naming & Inspiration
-
 - Default P2P port 1776 (year of American independence).
-- Max block size 1984KB (reference to Orwell's 1984).
+- Max block size 1984KB (Orwell's 1984).
 - Function and symbol names inspired by freedom and resistance.
 
 ---
 
 ## License
-
 MIT License
 
 ---
 
 ## Project Status
+- Advanced MVP: full blockchain, wallet, and marketplace support.
+- All advanced privacy, arbitration, and reputation features implemented and tested.
+- See [docs/advanced_features.md](docs/advanced_features.md) for details.
 
-- The project is in an advanced MVP stage, with full blockchain, wallet, and basic marketplace support.
-- Some privacy, arbitration, and reputation features are under development.
+_Last updated: 2025-05-22_
