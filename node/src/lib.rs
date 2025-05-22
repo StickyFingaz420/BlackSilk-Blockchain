@@ -183,8 +183,12 @@ use sha2::Sha256;
 /// - `sig`: signature bytes (expected: ring.len() pairs of (c, r), each 32 bytes)
 /// - `msg`: message bytes
 pub fn validate_ring_signature(ring: &[primitives::types::Hash], sig: &[u8], msg: &[u8]) -> bool {
+    println!("[DEBUG] ring: {:?}", ring);
+    println!("[DEBUG] sig: {:x?}", sig);
+    println!("[DEBUG] msg: {:x?}", msg);
     let n = ring.len();
     if n == 0 || sig.len() != n * 64 {
+        println!("[DEBUG] Invalid signature length");
         return false;
     }
     // Parse signature: (c_0, r_0), (c_1, r_1), ...
@@ -194,16 +198,20 @@ pub fn validate_ring_signature(ring: &[primitives::types::Hash], sig: &[u8], msg
         let c = Scalar::from_canonical_bytes(sig[i*64..i*64+32].try_into().unwrap());
         let r = Scalar::from_canonical_bytes(sig[i*64+32..i*64+64].try_into().unwrap());
         if bool::from(c.is_none()) || bool::from(r.is_none()) {
+            println!("[DEBUG] Invalid c or r at {}", i);
             return false;
         }
         c_vec.push(c.unwrap());
         r_vec.push(r.unwrap());
+        println!("[DEBUG] parsed c[{}]: {:?}", i, c_vec[i]);
+        println!("[DEBUG] parsed r[{}]: {:?}", i, r_vec[i]);
     }
     // Parse public keys
     let mut pubkeys = Vec::with_capacity(n);
-    for pk_bytes in ring {
+    for (i, pk_bytes) in ring.iter().enumerate() {
         let pt = CompressedEdwardsY(*pk_bytes).decompress();
         if pt.is_none() {
+            println!("[DEBUG] Invalid pubkey at {}", i);
             return false;
         }
         pubkeys.push(pt.unwrap());
@@ -214,18 +222,21 @@ pub fn validate_ring_signature(ring: &[primitives::types::Hash], sig: &[u8], msg
     let mut c_bytes = [0u8; 32];
     c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
     let mut c = Scalar::from_bytes_mod_order(c_bytes);
+    println!("[DEBUG] verifier c_0: {:?}", c);
     for i in 0..n {
-        // L_i = r_i*G + c_i*P_i
         let l = EdwardsPoint::mul_base(&r_vec[i]) + pubkeys[i] * c;
-        // Hash L_i and msg to get next c
+        println!("[DEBUG] verifier L_{}: {:?}", i, l.compress().to_bytes());
         hasher.update(l.compress().as_bytes());
         hasher.update(msg);
         let mut c_bytes = [0u8; 32];
         c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
         c = Scalar::from_bytes_mod_order(c_bytes);
+        println!("[DEBUG] verifier c_{}: {:?}", (i + 1) % n, c);
     }
     // Final challenge should match c_0
-    c == c_vec[0]
+    let valid = c == c_vec[0];
+    println!("[DEBUG] verifier final: c == c_0? {}", valid);
+    valid
 }
 
 lazy_static! {
@@ -288,6 +299,7 @@ pub fn validate_transaction(tx: &primitives::Transaction) -> bool {
 mod double_spend_tests {
     use super::*;
     use primitives::{Transaction, TransactionInput, TransactionOutput, RingSignature, types};
+    use primitives::ring_sig::generate_ring_signature;
     #[test]
     fn test_double_spend_key_image() {
         // Generate a real keypair and ring signature for the test
@@ -295,7 +307,6 @@ mod double_spend_tests {
         use curve25519_dalek::edwards::CompressedEdwardsY;
         use curve25519_dalek::scalar::Scalar;
         use rand::RngCore;
-        use sha2::Sha256;
         let mut csprng = rand::thread_rng();
         let mut sk_bytes = [0u8; 32];
         csprng.fill_bytes(&mut sk_bytes);
@@ -303,40 +314,8 @@ mod double_spend_tests {
         let pk = (ED25519_BASEPOINT_POINT * sk).compress().to_bytes();
         let ring = vec![pk];
         let msg = b"test double spend";
-        // Generate ring signature
-        let n = ring.len();
-        let mut pubkeys = Vec::with_capacity(n);
-        for pk_bytes in &ring {
-            let pt = CompressedEdwardsY(*pk_bytes).decompress().unwrap();
-            pubkeys.push(pt);
-        }
-        let mut r_vec = vec![Scalar::default(); n];
-        for i in 0..n {
-            let mut r_bytes = [0u8; 32];
-            csprng.fill_bytes(&mut r_bytes);
-            r_vec[i] = Scalar::from_bytes_mod_order(r_bytes);
-        }
-        let mut c_vec = vec![Scalar::default(); n];
-        let mut hasher = Sha256::new();
-        hasher.update(msg);
-        let mut c_bytes = [0u8; 32];
-        c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
-        let mut c = Scalar::from_bytes_mod_order(c_bytes);
-        for i in 0..n {
-            let l = ED25519_BASEPOINT_POINT * r_vec[i] + pubkeys[i] * c;
-            hasher.update(l.compress().as_bytes());
-            hasher.update(msg);
-            let mut c_bytes = [0u8; 32];
-            c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
-            c = Scalar::from_bytes_mod_order(c_bytes);
-            c_vec[i] = c;
-        }
-        r_vec[0] = r_vec[0] + sk * c_vec[0];
-        let mut sig = Vec::with_capacity(n * 64);
-        for i in 0..n {
-            sig.extend_from_slice(&c_vec[i].to_bytes());
-            sig.extend_from_slice(&r_vec[i].to_bytes());
-        }
+        // Generate ring signature using canonical implementation
+        let sig = generate_ring_signature(msg, &ring, &sk_bytes, 0);
         let key_image = [1u8; 32]; // For test, not used in ring sig
         let ring_sig = RingSignature { ring: ring.clone(), signature: sig };
         let input = TransactionInput { key_image, ring_sig };
@@ -751,5 +730,27 @@ mod ring_sig_tests {
         let msg = b"end-to-end test message";
         let sig = generate_ring_signature(msg, &ring, &sk_bytes, 0);
         assert!(validate_ring_signature(&ring, &sig, msg));
+    }
+
+    #[test]
+    fn test_ring_signature_end_to_end_ring2() {
+        // Generate two keypairs
+        let mut csprng = rand::thread_rng();
+        let mut sk1_bytes = [0u8; 32];
+        let mut sk2_bytes = [0u8; 32];
+        csprng.fill_bytes(&mut sk1_bytes);
+        csprng.fill_bytes(&mut sk2_bytes);
+        let sk1 = Scalar::from_bytes_mod_order(sk1_bytes);
+        let sk2 = Scalar::from_bytes_mod_order(sk2_bytes);
+        let pk1 = (EdwardsPoint::mul_base(&sk1)).compress().to_bytes();
+        let pk2 = (EdwardsPoint::mul_base(&sk2)).compress().to_bytes();
+        let ring = vec![pk1, pk2];
+        let msg = b"ring2 test message";
+        // Sign with sk1 (index 0)
+        let sig1 = generate_ring_signature(msg, &ring, &sk1_bytes, 0);
+        assert!(validate_ring_signature(&ring, &sig1, msg));
+        // Sign with sk2 (index 1)
+        let sig2 = generate_ring_signature(msg, &ring, &sk2_bytes, 1);
+        assert!(validate_ring_signature(&ring, &sig2, msg));
     }
 }

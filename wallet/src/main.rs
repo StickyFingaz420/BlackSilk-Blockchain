@@ -1,22 +1,10 @@
 use std::env;
 use rand::rngs::OsRng;
-use ed25519_dalek::{Keypair, PublicKey, SecretKey};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::edwards::{EdwardsPoint, CompressedEdwardsY};
 use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 use rand::RngCore;
 use sha2::{Sha256, Digest};
-
-fn generate_wallet() -> (PublicKey, SecretKey) {
-    let mut csprng = OsRng {};
-    let keypair = Keypair::generate(&mut csprng);
-    (keypair.public, keypair.secret)
-}
-
-fn public_key_to_address(pk: &PublicKey) -> String {
-    // Placeholder: encode as hex
-    hex::encode(pk.as_bytes())
-}
 
 struct StealthAddress {
     public_view: [u8; 32],
