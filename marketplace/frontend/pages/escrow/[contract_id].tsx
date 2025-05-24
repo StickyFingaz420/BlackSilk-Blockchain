@@ -8,7 +8,6 @@ import DisputeVoting from '../../components/DisputeVoting';
 import { useWallet } from '../../components/WalletProvider';
 
 // For process.env type
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 // @ts-ignore
 const API: string = (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) || '';
 
