@@ -51,8 +51,8 @@ fn main() {
     // Start node with provided arguments
     start_node_with_args(
         cli.port,
-        cli.connect,
-        cli.data_dir,
+        cli.connect.get(0).cloned(), // Only pass the first connect address, or None
+        Some(cli.data_dir),
         // You may need to convert NetworkArg to your internal Network type
     );
 }
