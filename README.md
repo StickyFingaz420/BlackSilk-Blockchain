@@ -1,12 +1,3 @@
-<!-- Logo Banner -->
-<p align="center">
-  <img src="assets/images/banner_1600x400.png" alt="BlackSilk Banner" width="100%"/>
-</p>
-
-<!-- Project Icon -->
-<p align="center">
-  <img src="assets/images/icon_256x256.png" alt="BlackSilk Icon" width="128"/>
-</p>
 
 # BlackSilk Blockchain
 
