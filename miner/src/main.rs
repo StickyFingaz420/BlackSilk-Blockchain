@@ -4,7 +4,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use randomx_rs::{RandomXCache, RandomXFlag, RandomXVM};
+mod randomx_ffi;
+use randomx_wrapper::randomx_hash;
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::net::TcpStream;
 use std::io::{BufReader, Write, BufRead};
@@ -145,44 +146,27 @@ fn main() {
             let _ = cmd_tx.send(MinerCommand::Stats);
         }
         Some(Commands::Benchmark) => {
-            // XMRig-style: each thread creates its own RandomXCache and VM with the same flags and seed
-            println!("[Miner] Benchmarking for 60 seconds using all CPU cores and RandomX performance flags (XMRig-style, per-thread cache)...");
+            println!("[Miner] Benchmarking for 60 seconds using all CPU cores and RandomX (FFI, XMRig-style)...");
             let num_threads = num_cpus::get();
             let hashes = Arc::new(AtomicU64::new(0));
             let start = Instant::now();
-            let flags = RandomXFlag::FLAG_LARGE_PAGES | RandomXFlag::FLAG_HARD_AES | RandomXFlag::FLAG_FULL_MEM;
+            let flags = 0x1 | 0x2 | 0x4; // RANDOMX_FLAG_LARGE_PAGES | HARD_AES | FULL_MEM
             let seed = vec![0u8; 32];
             let mut handles = Vec::with_capacity(num_threads);
             for _ in 0..num_threads {
                 let hashes = Arc::clone(&hashes);
-                let flags = flags.clone();
                 let seed = seed.clone();
                 handles.push(std::thread::spawn(move || {
-                    // Try to create cache and VM with all flags, fallback to default if fails
-                    let cache = match RandomXCache::new(flags, &seed) {
-                        Ok(c) => c,
-                        Err(_) => {
-                            // Remove warning: just fallback silently
-                            RandomXCache::new(RandomXFlag::default(), &seed).expect("RandomX cache (default flags)")
-                        }
-                    };
-                    let vm = match RandomXVM::new(flags, Some(&cache), None) {
-                        Ok(v) => v,
-                        Err(_) => {
-                            // Remove warning: just fallback silently
-                            RandomXVM::new(RandomXFlag::default(), Some(&cache), None).expect("RandomX VM (default flags)")
-                        }
-                    };
-                    let mut header = vec![0u8; 80];
+                    let mut output = [0u8; 32];
                     while start.elapsed().as_secs() < 60 {
-                        let _ = vm.calculate_hash(&header).expect("RandomX hash");
+                        unsafe { randomx_hash(flags, &seed, &[0u8; 80], &mut output) };
                         hashes.fetch_add(1, Ordering::Relaxed);
                     }
                 }));
             }
             for h in handles { let _ = h.join(); }
             let total_hashes = hashes.load(Ordering::Relaxed);
-            println!("[Miner] Benchmark result: {:.2} H/s ({} threads, all RandomX flags if available)", total_hashes as f64 / 60.0, num_threads);
+            println!("[Miner] Benchmark result: {:.2} H/s ({} threads, RandomX FFI)", total_hashes as f64 / 60.0, num_threads);
             return;
         }
         Some(Commands::Help) | None => {
@@ -208,7 +192,6 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: std::sync::mpsc::Receiver<
     let rejected = Arc::new(AtomicU64::new(0));
     let mut threads = vec![];
     let mut last_config = config.lock().unwrap().clone();
-    // Refactor: Remove closure, use a function for spawn_miners to avoid double mutable borrow
     fn spawn_miners(
         cfg: &MinerConfig,
         should_stop: &Arc<AtomicBool>,
@@ -248,10 +231,7 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: std::sync::mpsc::Receiver<
                     };
                     let mut header = template.header.clone();
                     let mut nonce = t as u64 * 1_000_000;
-                    // Fix RandomXCache::new and RandomXVM::new argument order and count
-                    let flags = RandomXFlag::default();
-                    let cache = RandomXCache::new(flags, &template.seed).expect("RandomX cache");
-                    let vm = RandomXVM::new(flags, Some(&cache), None).expect("RandomX VM");
+                    let flags = 0x1 | 0x2 | 0x4; // RANDOMX_FLAG_LARGE_PAGES | HARD_AES | FULL_MEM
                     loop {
                         if should_stop.load(Ordering::SeqCst) { break; }
                         let nonce_bytes = nonce.to_le_bytes();
@@ -259,7 +239,8 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: std::sync::mpsc::Receiver<
                         if len >= 8 {
                             for i in 0..8 { header[len-8+i] = nonce_bytes[i]; }
                         }
-                        let hash = vm.calculate_hash(&header).expect("RandomX hash");
+                        let mut hash = [0u8; 32];
+                        unsafe { randomx_hash(flags, &template.seed, &header, &mut hash) };
                         let hash_val = u64::from_le_bytes(hash[0..8].try_into().unwrap());
                         hashes.fetch_add(1, Ordering::Relaxed);
                         if hash_val < template.difficulty {
@@ -346,14 +327,13 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: std::sync::mpsc::Receiver<
                     for _ in 0..num_threads {
                         let hashes = Arc::clone(&hashes);
                         handles.push(std::thread::spawn(move || {
-                            let flags = RandomXFlag::default();
+                            let flags = 0x1 | 0x2 | 0x4; // RANDOMX_FLAG_LARGE_PAGES | HARD_AES | FULL_MEM
                             let seed = vec![0u8; 32];
-                            let cache = RandomXCache::new(flags, &seed).expect("RandomX cache");
-                            let vm = RandomXVM::new(flags, Some(&cache), None).expect("RandomX VM");
-                            let mut header = vec![0u8; 80];
-                            while start.elapsed().as_secs() < 60 {
-                                let _ = vm.calculate_hash(&header).expect("RandomX hash");
+                            loop {
+                                let mut hash = [0u8; 32];
+                                unsafe { randomx_hash(flags, &seed, &[0u8; 80], &mut hash) };
                                 hashes.fetch_add(1, Ordering::Relaxed);
+                                if start.elapsed().as_secs() >= 60 { break; }
                             }
                         }));
                     }
@@ -419,9 +399,7 @@ fn stratum_mine(args: &Args) {
                         let seed = match hex::decode(seed_hex) { Ok(s) => s, Err(_) => continue };
                         let target = match hex::decode(target_hex) { Ok(t) => t, Err(_) => continue };
                         // --- RandomX mining ---
-                        let flags = RandomXFlag::default();
-                        let cache = RandomXCache::new(flags, &seed).expect("RandomX cache");
-                        let vm = RandomXVM::new(flags, Some(&cache), None).expect("RandomX VM");
+                        let flags = 0x1 | 0x2 | 0x4; // RANDOMX_FLAG_LARGE_PAGES | HARD_AES | FULL_MEM
                         let mut found = false;
                         let mut found_nonce = 0u64;
                         let mut found_hash = vec![];
@@ -432,7 +410,8 @@ fn stratum_mine(args: &Args) {
                             if len >= 8 {
                                 for i in 0..8 { header_work[len-8+i] = nonce_bytes[i]; }
                             }
-                            let hash = vm.calculate_hash(&header_work).expect("RandomX hash");
+                            let mut hash = [0u8; 32];
+                            unsafe { randomx_hash(flags, &seed, &header_work, &mut hash) };
                             hashes += 1;
                             // Compare hash to target (as big-endian)
                             if hash[..target.len()] < target[..] {

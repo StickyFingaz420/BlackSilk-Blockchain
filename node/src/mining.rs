@@ -1,9 +1,7 @@
 //! BlackSilk RandomX Mining Implementation
 
 use crate::primitives::{Block, BlockHeader, Pow};
-use randomx_rs::{RandomXCache, RandomXFlags, RandomXVM};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// RandomX configuration
@@ -14,40 +12,40 @@ const RX_PROGRAM_ITERATIONS: u64 = 1 << 8; // 256 iterations
 
 /// RandomX mining context
 pub struct MiningContext {
-    vm: Arc<RandomXVM>,
-    cache: Arc<RandomXCache>,
-    flags: RandomXFlags,
+    // vm: Arc<RandomXVM>,
+    // cache: Arc<RandomXCache>,
+    // flags: RandomXFlags,
 }
 
 impl MiningContext {
     /// Create new mining context
     pub fn new(seed: &[u8]) -> Self {
-        let flags = RandomXFlags::default()
-            | RandomXFlags::FLAG_LARGE_PAGES
-            | RandomXFlags::FLAG_HARD_AES
-            | RandomXFlags::FLAG_FULL_MEM;
+        // let flags = RandomXFlags::default()
+        //     | RandomXFlags::FLAG_LARGE_PAGES
+        //     | RandomXFlags::FLAG_HARD_AES
+        //     | RandomXFlags::FLAG_FULL_MEM;
             
-        let cache = Arc::new(RandomXCache::new(seed, flags).expect("Failed to create RandomX cache"));
-        let vm = Arc::new(RandomXVM::new(cache.clone(), flags).expect("Failed to create RandomX VM"));
+        // let cache = Arc::new(RandomXCache::new(seed, flags).expect("Failed to create RandomX cache"));
+        // let vm = Arc::new(RandomXVM::new(cache.clone(), flags).expect("Failed to create RandomX VM"));
         
         Self {
-            vm,
-            cache,
-            flags,
+            // vm,
+            // cache,
+            // flags,
         }
     }
     
     /// Update mining seed (e.g. on epoch change)
     pub fn update_seed(&mut self, new_seed: &[u8]) {
-        self.cache = Arc::new(RandomXCache::new(new_seed, self.flags).expect("Failed to create RandomX cache"));
-        self.vm = Arc::new(RandomXVM::new(self.cache.clone(), self.flags).expect("Failed to create RandomX VM"));
+        // self.cache = Arc::new(RandomXCache::new(new_seed, self.flags).expect("Failed to create RandomX cache"));
+        // self.vm = Arc::new(RandomXVM::new(self.cache.clone(), self.flags).expect("Failed to create RandomX VM"));
     }
 }
 
 /// Mine a block using RandomX
 pub fn mine_block(
     header: &mut BlockHeader,
-    context: &MiningContext,
+    _context: &MiningContext,
     target: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Prepare block header for hashing
@@ -58,7 +56,8 @@ pub fn mine_block(
         pre_pow[24..32].copy_from_slice(&nonce.to_le_bytes());
         
         // Calculate RandomX hash
-        let hash = context.vm.calculate_hash(&pre_pow)?;
+        // let hash = context.vm.calculate_hash(&pre_pow)?;
+        let hash = pre_pow.clone(); // Placeholder - replace with actual hash calculation
         
         // Check if hash meets target
         if check_pow(&hash, target) {
@@ -73,10 +72,11 @@ pub fn mine_block(
 /// Verify RandomX proof-of-work
 pub fn verify_pow(
     header: &BlockHeader,
-    context: &MiningContext,
+    _context: &MiningContext,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let pre_pow = prepare_header_bytes(header);
-    let hash = context.vm.calculate_hash(&pre_pow)?;
+    // let hash = context.vm.calculate_hash(&pre_pow)?;
+    let hash = pre_pow.clone(); // Placeholder - replace with actual hash calculation
     
     // Verify hash matches stored hash
     if hash != header.pow.hash {
@@ -158,4 +158,4 @@ mod tests {
         
         assert!(!verify_pow(&header, &context).unwrap());
     }
-} 
+}
