@@ -108,7 +108,7 @@ export default function OrdersPage() {
                           <MuiLink underline="hover">{listing?.title || 'Listing'}</MuiLink>
                         </Link>
                       </Typography>
-                      <Typography>Amount: ₿{order.amount}</Typography>
+                      <Typography variant="body2">Amount: {order.amount} BLK</Typography>
                       <Chip label={order.status} color="primary" sx={{ mt: 1, mb: 1 }} />
                       <Typography variant="body2" color="text.secondary">Order ID: {order.id}</Typography>
                       {/* Show ReviewForm if order is completed and not already reviewed */}
@@ -146,7 +146,7 @@ export default function OrdersPage() {
                           <MuiLink underline="hover">{listing?.title || 'Listing'}</MuiLink>
                         </Link>
                       </Typography>
-                      <Typography>Amount: ₿{order.amount}</Typography>
+                      <Typography variant="body2">Amount: {order.amount} BLK</Typography>
                       <Chip label={order.status} color="primary" sx={{ mt: 1, mb: 1 }} />
                       <Typography variant="body2" color="text.secondary">Order ID: {order.id}</Typography>
                     </CardContent>
