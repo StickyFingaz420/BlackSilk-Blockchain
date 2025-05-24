@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+clap = { version = "4.4", features = ["derive"] }
 node = { path = "../node" }
 primitives = { path = "../primitives" }
 ed25519-dalek = "2.1"

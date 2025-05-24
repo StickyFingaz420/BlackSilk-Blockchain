@@ -5,6 +5,8 @@ use curve25519_dalek::edwards::{EdwardsPoint, CompressedEdwardsY};
 use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 use rand::RngCore;
 use sha2::{Sha256, Digest};
+use clap::{Parser};
+use std::path::PathBuf;
 
 struct StealthAddress {
     public_view: [u8; 32],
@@ -128,7 +130,45 @@ pub fn generate_key_image(priv_key: &[u8]) -> [u8; 32] {
     ki.compress().to_bytes()
 }
 
+#[derive(Parser, Debug)]
+#[command(name = "blacksilk-wallet", version, about = "BlackSilk Privacy Wallet")]
+pub struct Cli {
+    /// Data directory for wallet state
+    #[arg(long, default_value = "./wallet_data", value_name = "DIR")]
+    pub data_dir: PathBuf,
+
+    /// Send coins to address (amount: in atomic units)
+    #[arg(long, value_name = "ADDR", requires = "amount")]
+    pub send: Option<String>,
+    #[arg(long, value_name = "AMOUNT", requires = "send")]
+    pub amount: Option<u64>,
+
+    /// Show wallet balance
+    #[arg(long)]
+    pub balance: bool,
+
+    /// Print version info and exit
+    #[arg(long)]
+    pub version: bool,
+}
+
 fn main() {
+    let cli = Cli::parse();
+    if cli.version {
+        println!("BlackSilk Wallet version {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+    // Handle CLI actions (send, balance, etc.)
+    if cli.balance {
+        // Call wallet balance logic
+        println!("[Wallet] Balance: ...");
+        return;
+    }
+    if let (Some(addr), Some(amount)) = (cli.send, cli.amount) {
+        // Call wallet send logic
+        println!("[Wallet] Sending {} to {}", amount, addr);
+        return;
+    }
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         println!("BlackSilk Wallet CLI\nUsage: wallet <command>\nCommands:\n  generate   Generate a new wallet address\n  address    Show wallet address\n  help       Show this help message");

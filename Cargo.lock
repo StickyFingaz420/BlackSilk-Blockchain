@@ -1359,6 +1359,7 @@ dependencies = [
 name = "node"
 version = "0.1.0"
 dependencies = [
+ "clap 4.5.38",
  "curve25519-dalek",
  "ed25519-dalek",
  "i2p",
@@ -2508,6 +2509,7 @@ name = "wallet"
 version = "0.1.0"
 dependencies = [
  "bulletproofs",
+ "clap 4.5.38",
  "curve25519-dalek",
  "ed25519-dalek",
  "hex",
