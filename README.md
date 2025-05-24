@@ -1,6 +1,6 @@
 <!-- Logo -->
 <p align="center">
-  <img src="marketplace/frontend/public/black_silk_logo.png" alt="BlackSilk Logo" width="600"/>
+  <img src="./black_silk_logo.png" alt="BlackSilk Logo" width="600"/>
 </p>
 
 # BlackSilk Blockchain
