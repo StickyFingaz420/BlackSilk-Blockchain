@@ -7,6 +7,11 @@ use rand::RngCore;
 use sha2::{Sha256, Digest};
 use clap::{Parser};
 use std::path::PathBuf;
+use bip39::Mnemonic;
+use base58::{ToBase58};
+use std::fs;
+use std::path::Path;
+use serde::{Deserialize, Serialize};
 
 struct StealthAddress {
     public_view: [u8; 32],
@@ -131,7 +136,7 @@ pub fn generate_key_image(priv_key: &[u8]) -> [u8; 32] {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "blacksilk-wallet", version, about = "BlackSilk Privacy Wallet")]
+#[clap(name = "blacksilk-wallet", version, about = "BlackSilk Privacy Wallet")]
 pub struct Cli {
     /// Data directory for wallet state
     #[arg(long, default_value = "./wallet_data", value_name = "DIR")]
@@ -147,21 +152,167 @@ pub struct Cli {
     #[arg(long)]
     pub balance: bool,
 
-    /// Print version info and exit
+    /// Generate and show a new address, private keys, and mnemonic seed
     #[arg(long)]
-    pub version: bool,
+    pub generate: bool,
+
+    /// Show the mnemonic seed for the current wallet
+    #[arg(long)]
+    pub show_seed: bool,
+
+    /// Show the private keys for the current wallet
+    #[arg(long)]
+    pub show_keys: bool,
+
+    /// Node address to connect for sync (default: 127.0.0.1:8333)
+    #[arg(long, default_value = "127.0.0.1:8333", value_name = "ADDR")]
+    pub node: String,
+}
+
+fn encode_address(public_view: &[u8; 32], public_spend: &[u8; 32]) -> String {
+    let mut data = vec![0x42]; // 0x42 = 'B' for Blk
+    data.extend_from_slice(public_view);
+    data.extend_from_slice(public_spend);
+    let checksum = sha2::Sha256::digest(&sha2::Sha256::digest(&data));
+    data.extend_from_slice(&checksum[0..4]);
+    format!("Blk{}", data.to_base58())
+}
+
+#[derive(Deserialize, Debug)]
+struct Block {
+    height: u64,
+    transactions: Vec<Transaction>,
+}
+
+#[derive(Deserialize, Debug)]
+struct Transaction {
+    outputs: Vec<Output>,
+}
+
+#[derive(Deserialize, Debug)]
+struct Output {
+    public_key: String, // hex-encoded
+    amount: u64,
+}
+
+fn scan_blocks_for_balance(blocks: &[Block], my_pub_view: &[u8; 32], my_pub_spend: &[u8; 32]) -> u64 {
+    // DEMO: Assume output.public_key is hex(pub_view || pub_spend)
+    let mut balance = 0u64;
+    let my_key_hex = format!("{}{}", hex::encode(my_pub_view), hex::encode(my_pub_spend));
+    for block in blocks {
+        for tx in &block.transactions {
+            for out in &tx.outputs {
+                if out.public_key == my_key_hex {
+                    balance += out.amount;
+                }
+            }
+        }
+    }
+    balance
+}
+
+fn sync_with_node(node_addr: &str, last_height: u64, my_pub_view: &[u8; 32], my_pub_spend: &[u8; 32]) -> u64 {
+    let url = format!("http://{}/get_blocks?from_height={}", node_addr, last_height);
+    match reqwest::blocking::get(&url) {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                let text = resp.text().unwrap_or_default();
+                let blocks: Vec<Block> = serde_json::from_str(&text).unwrap_or_default();
+                let balance = scan_blocks_for_balance(&blocks, my_pub_view, my_pub_spend);
+                println!("[Wallet] Synced {} blocks, found balance: {}", blocks.len(), balance);
+                balance
+            } else {
+                println!("[Wallet] Node returned error: {}", resp.status());
+                0
+            }
+        }
+        Err(e) => {
+            println!("[Wallet] Failed to connect to node: {}", e);
+            0
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+struct WalletFile {
+    mnemonic: String,
+    priv_spend: String,
+    priv_view: String,
+    pub_spend: String,
+    pub_view: String,
+    last_height: u64,
+    address: String,
+}
+
+fn save_wallet(path: &Path, wallet: &WalletFile) {
+    let data = serde_json::to_string_pretty(wallet).unwrap();
+    fs::write(path, data).unwrap();
+}
+
+fn load_wallet(path: &Path) -> Option<WalletFile> {
+    let data = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&data).ok()
 }
 
 fn main() {
     let cli = Cli::parse();
-    if cli.version {
-        println!("BlackSilk Wallet version {}", env!("CARGO_PKG_VERSION"));
+    let wallet_path = Path::new(&cli.data_dir).join("wallet.json");
+    if cli.generate {
+        // Generate new wallet and save
+        let mut entropy = [0u8; 32];
+        OsRng.fill_bytes(&mut entropy);
+        let mnemonic = Mnemonic::from_entropy(&entropy).unwrap();
+        let phrase = mnemonic.to_string();
+        let priv_spend = Scalar::from_bytes_mod_order(entropy);
+        let priv_view = Scalar::from_bytes_mod_order(sha2::Sha256::digest(&entropy).into());
+        let pub_spend = (ED25519_BASEPOINT_POINT * priv_spend).compress().to_bytes();
+        let pub_view = (ED25519_BASEPOINT_POINT * priv_view).compress().to_bytes();
+        let address = encode_address(&pub_view, &pub_spend);
+        let wallet = WalletFile {
+            mnemonic: phrase.clone(),
+            priv_spend: hex::encode(priv_spend.to_bytes()),
+            priv_view: hex::encode(priv_view.to_bytes()),
+            pub_spend: hex::encode(pub_spend),
+            pub_view: hex::encode(pub_view),
+            last_height: 0,
+            address: address.clone(),
+        };
+        fs::create_dir_all(&cli.data_dir).ok();
+        save_wallet(&wallet_path, &wallet);
+        println!("[BlackSilk Wallet] Generated new address: {}", address);
+        println!("[BlackSilk Wallet] Private spend key: {}", wallet.priv_spend);
+        println!("[BlackSilk Wallet] Private view key: {}", wallet.priv_view);
+        println!("[BlackSilk Wallet] Mnemonic seed: {}", wallet.mnemonic);
         return;
     }
-    // Handle CLI actions (send, balance, etc.)
+    let wallet = match load_wallet(&wallet_path) {
+        Some(w) => w,
+        None => {
+            println!("[BlackSilk Wallet] No wallet found. Please run with --generate first.");
+            return;
+        }
+    };
+    if cli.show_seed {
+        println!("[BlackSilk Wallet] Mnemonic seed: {}", wallet.mnemonic);
+        return;
+    }
+    if cli.show_keys {
+        println!("[BlackSilk Wallet] Private spend key: {}", wallet.priv_spend);
+        println!("[BlackSilk Wallet] Private view key: {}", wallet.priv_view);
+        return;
+    }
     if cli.balance {
-        // Call wallet balance logic
-        println!("[Wallet] Balance: ...");
+        let pub_view = hex::decode(&wallet.pub_view).unwrap();
+        let pub_spend = hex::decode(&wallet.pub_spend).unwrap();
+        let mut arr_view = [0u8; 32];
+        let mut arr_spend = [0u8; 32];
+        arr_view.copy_from_slice(&pub_view);
+        arr_spend.copy_from_slice(&pub_spend);
+        let last_height = wallet.last_height;
+        let balance = sync_with_node(&cli.node, last_height, &arr_view, &arr_spend);
+        println!("[Wallet] Balance: {}", balance);
+        // Save last synced height if needed
+        // ...
         return;
     }
     if let (Some(addr), Some(amount)) = (cli.send, cli.amount) {
