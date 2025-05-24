@@ -311,7 +311,7 @@ fn send_transaction(node_addr: &str, wallet: &WalletFile, to_address: &str, amou
     let pub_spend = addr_bytes[33..65].try_into().unwrap();
     tx_outputs.push(primitives::TransactionOutput {
         amount_commitment: commitment.to_bytes(),
-        stealth_address: primitives::StealthAddress { pub_view, public_spend: pub_spend },
+        stealth_address: primitives::StealthAddress { public_view: pub_view, public_spend: pub_spend },
         range_proof: range_proof.to_bytes(),
     });
     // التغيير
@@ -322,7 +322,7 @@ fn send_transaction(node_addr: &str, wallet: &WalletFile, to_address: &str, amou
         let pub_spend = arr_spend;
         tx_outputs.push(primitives::TransactionOutput {
             amount_commitment: commitment.to_bytes(),
-            stealth_address: primitives::StealthAddress { pub_view, public_spend: pub_spend },
+            stealth_address: primitives::StealthAddress { public_view: pub_view, public_spend: pub_spend },
             range_proof: range_proof.to_bytes(),
         });
     }
@@ -496,8 +496,12 @@ fn main() {
     match args[1].as_str() {
         "generate" => {
             let (_priv_view, _priv_spend, stealth) = generate_stealth_address();
+            let stealth_address = primitives::StealthAddress {
+                public_view: stealth.public_view,
+                public_spend: stealth.public_spend,
+            };
             // TODO: Save keys securely
-            println!("[BlackSilk Wallet] Generated new stealth address: view={} spend={}", hex::encode(stealth.public_view), hex::encode(stealth.public_spend));
+            println!("[BlackSilk Wallet] Generated new stealth address: view={} spend={}", hex::encode(stealth_address.public_view), hex::encode(stealth_address.public_spend));
         }
         "address" => {
             // TODO: Load and show the wallet address
