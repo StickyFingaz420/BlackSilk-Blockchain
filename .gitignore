@@ -24,16 +24,37 @@ RandomX/*.vcxproj*
 *.tmp
 *.swp
 *.swo
-
-# VSCode
-.vscode/
-
-# Python
-__pycache__/
+*.bak
+*.old
 *.pyc
-
-# Marketplace frontend
-marketplace/frontend/node_modules/
-marketplace/frontend/.next/
-marketplace/frontend/package-lock.json
-marketplace/frontend/tsconfig.json
+*.pyo
+*.pyd
+*.class
+*.exe
+*.dll
+*.so
+*.o
+*.a
+*.out
+*.obj
+*.vs/
+*.vscode/
+*.idea/
+*.env
+.env.*
+# Ignore local config and secrets
+secedit.jfm
+secedit.sdb
+# Ignore npm/yarn/pnpm lock files except root
+**/package-lock.json
+**/yarn.lock
+**/pnpm-lock.yaml
+# Ignore test output
+/coverage/
+**/coverage/
+# Ignore OS junk
+ehthumbs.db
+Icon?
+# Ignore Rust build artifacts
+**/Cargo.lock
+!/Cargo.lock
