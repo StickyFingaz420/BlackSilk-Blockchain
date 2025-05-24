@@ -1,9 +1,17 @@
-<!-- Logo -->
+<!-- Logo Banner -->
 <p align="center">
-  <img src="./black_silk_logo.png" alt="BlackSilk Logo" width="600"/>
+  <img src="assets/images/banner_1600x400.png" alt="BlackSilk Banner" width="100%"/>
+</p>
+
+<!-- Project Icon -->
+<p align="center">
+  <img src="assets/images/icon_256x256.png" alt="BlackSilk Icon" width="128"/>
 </p>
 
 # BlackSilk Blockchain
+
+<!-- Favicon for browser tab (if supported by renderer) -->
+<!-- <link rel="icon" type="image/png" href="assets/images/favicon_32x32 (2).png"> -->
 
 ## Overview
 BlackSilk is a next-generation, privacy-focused blockchain and decentralized marketplace inspired by Monero, Bitcoin, and the Silk Road. It is designed for maximum censorship resistance, privacy, and security, leveraging state-of-the-art cryptography, anonymous networking, and a robust, open-source implementation stack.
@@ -64,6 +72,12 @@ BlackSilk aims to provide a censorship-resistant, privacy-preserving blockchain 
 ---
 
 ## Marketplace Design
+
+<!-- Marketplace header image -->
+<p align="center">
+  <img src="assets/images/header_800x200.png" alt="Marketplace Header" width="600"/>
+</p>
+
 - **Frontend:** Static HTML/JS web app (privacy-centric, e.g. Hugo, Next.js static export). No third-party trackers or analytics.
 - **Backend:** Secure, stateless API servers (Rust/Actix-web, Rocket, or Python/FastAPI) running over Tor/I2P.
 - **Escrow:** Payments use smart escrow contracts (e.g. 2-of-3 multisig) for trustless settlement and dispute resolution.
@@ -203,6 +217,12 @@ Contributions are welcome! Please see `CONTRIBUTING.md` (to be written) for guid
 ---
 
 ## License
+
+<!-- Signature or project mark -->
+<p align="right">
+  <img src="assets/images/signature_300x100.png" alt="BlackSilk Signature" width="200"/>
+</p>
+
 BlackSilk is open-source and released under the MIT License. See `LICENSE` for details.
 
 ---
