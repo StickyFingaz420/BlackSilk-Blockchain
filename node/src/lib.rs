@@ -37,6 +37,7 @@ pub mod config {
 }
 
 /// Network selection
+#[derive(Debug)]
 enum Network {
     Mainnet,
     Testnet,
@@ -55,6 +56,7 @@ use primitives::{Block, BlockHeader, Coinbase};
 use std::collections::{VecDeque, HashSet};
 use std::io::{Write, BufRead};
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use serde::{Serialize, Deserialize};
@@ -462,7 +464,7 @@ pub struct Chain {
 impl Chain {
     pub fn new() -> Self {
         let emission = default_emission();
-        let genesis = Self::genesis_block(&emission);
+        let genesis = Self::genesis_block_with_params(&emission, config::TESTNET_GENESIS_TIMESTAMP);
         let mut blocks = VecDeque::new();
         blocks.push_back(genesis);
         Self { blocks, emission }
@@ -646,7 +648,28 @@ pub fn start_node_with_port_and_connect(port: u16, connect_addr: Option<String>)
         connect_to_peer(&addr);
     }
     start_p2p_server(port);
-    // TODO: Networking, consensus, mining, etc.
+    // TODO: Networking, consensus, mining, إلخ
+}
+
+pub fn start_node_with_args(port: u16, connect_addr: Option<String>, data_dir: Option<PathBuf>) {
+    let network = Network::from_env_or_default();
+    let magic = match network {
+        Network::Mainnet => config::MAINNET_MAGIC,
+        Network::Testnet => config::TESTNET_MAGIC,
+    };
+    if let Some(ref dir) = data_dir {
+        println!("[BlackSilk Node] Using data directory: {}", dir.display());
+        // هنا يمكنك تفعيل منطق تغيير مسار التخزين إذا أردت
+        // مثال: std::env::set_current_dir(dir).unwrap();
+    }
+    println!("[BlackSilk Node] Starting {:?} node on port {} (magic: 0x{:X})", network, port, magic);
+    let chain = Chain::new_for_network(network);
+    println!("[BlackSilk Node] Genesis block height: {}", chain.tip().header.height);
+    if let Some(addr) = connect_addr {
+        connect_to_peer(&addr);
+    }
+    start_p2p_server(port);
+    // TODO: Networking, consensus, mining, إلخ
 }
 
 /// Placeholder for node startup
@@ -660,7 +683,7 @@ pub fn start_node() {
     let chain = Chain::new_for_network(network);
     println!("[BlackSilk Node] Genesis block height: {}", chain.tip().header.height);
     start_p2p_server(port);
-    // TODO: Networking, consensus, mining, etc.
+    // TODO: Networking, consensus, mining, إلخ
 }
 
 pub fn start_node_with_port(port: u16) {
@@ -668,7 +691,7 @@ pub fn start_node_with_port(port: u16) {
     let chain = Chain::new();
     println!("[BlackSilk Node] Genesis block height: {}", chain.tip().header.height);
     start_p2p_server(port);
-    // TODO: Networking, consensus, mining, etc.
+    // TODO: Networking, consensus, mining, إلخ
 }
 
 pub fn pow_hash(header: &BlockHeader) -> primitives::types::Hash {
