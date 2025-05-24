@@ -3,77 +3,36 @@ import Link from 'next/link';
 import Layout from '../components/Layout';
 
 const categories = [
-	{ id: 'software', label: 'Software', icon: '💻' },
-	{ id: 'ebooks', label: 'E-books', icon: '📚' },
-	{ id: 'services', label: 'Services', icon: '🛠️' },
-	{ id: 'physical', label: 'Physical Goods', icon: '📦' },
+	{ id: 'software', label: 'Software' },
+	{ id: 'ebooks', label: 'E-books' },
+	{ id: 'services', label: 'Services' },
+	{ id: 'physical', label: 'Physical Goods' },
 ];
 
 const products = [
-	{
-		id: '1',
-		title: 'Encrypted Messaging App',
-		price: '0.25', // BLK
-		category: 'software',
-		featured: true,
-	},
-	{
-		id: '2',
-		title: 'OpSec Mastery E-book',
-		price: '0.05', // BLK
-		category: 'ebooks',
-		featured: true,
-	},
-	{
-		id: '3',
-		title: 'Anonymous Hosting',
-		price: '0.10', // BLK
-		category: 'services',
-		featured: false,
-	},
-	{
-		id: '4',
-		title: 'Raspberry Pi Privacy Kit',
-		price: '0.30', // BLK
-		category: 'physical',
-		featured: false,
-	},
+	{ id: '1', title: 'Encrypted Messaging App', price: '0.25', category: 'software' },
+	{ id: '2', title: 'OpSec Mastery E-book', price: '0.05', category: 'ebooks' },
+	{ id: '3', title: 'Anonymous Hosting', price: '0.10', category: 'services' },
+	{ id: '4', title: 'Raspberry Pi Privacy Kit', price: '0.30', category: 'physical' },
 ];
 
 function Sidebar() {
 	return (
-		<div>
-			<h2 className="text-lg font-bold mb-4 text-green-500">Categories</h2>
-			<ul className="space-y-2 mb-8">
+		<div className="bg-[#222] border-r border-[#333] min-h-screen p-0 w-56">
+			<div className="p-4 border-b border-[#333] text-green-400 font-bold text-lg tracking-widest text-center">
+				Categories
+			</div>
+			<ul className="py-2 px-2 text-sm text-gray-200">
 				{categories.map(cat => (
-					<li key={cat.id}>
+					<li key={cat.id} className="mb-2">
 						<Link
 							href={`/category/${cat.id}`}
-							className="flex items-center px-2 py-1 rounded hover:bg-[#23232a] transition"
+							className="block px-2 py-1 rounded hover:bg-[#333] hover:text-green-300 transition"
 						>
-							<span className="mr-2 text-xl">{cat.icon}</span>
 							{cat.label}
 						</Link>
 					</li>
 				))}
-			</ul>
-			<h2 className="text-lg font-bold mb-4 text-green-500">Quick Links</h2>
-			<ul className="space-y-2">
-				<li>
-					<Link href="/sell" className="hover:underline">
-						Sell an Item
-					</Link>
-				</li>
-				<li>
-					<Link href="/account" className="hover:underline">
-						My Account
-					</Link>
-				</li>
-				<li>
-					<Link href="/orders" className="hover:underline">
-						My Orders
-					</Link>
-				</li>
 			</ul>
 		</div>
 	);
@@ -83,88 +42,56 @@ export default function Home() {
 	return (
 		<Layout sidebar={<Sidebar />}>
 			<Head>
-				<title>BlackSilk Marketplace</title>
+				<title>BlackSilk Market</title>
 			</Head>
-			<div className="mb-10">
-				<h1 className="text-3xl font-extrabold text-green-500 mb-2">
-					BlackSilk Marketplace
-				</h1>
-				<p className="text-gray-400 mb-6">
-					A simple, private, decentralized market. Inspired by Silk Road.
-				</p>
-			</div>
-			<section className="mb-10">
-				<h2 className="text-xl font-bold mb-4 text-green-400">
-					Featured Products
-				</h2>
-				<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-					{products
-						.filter(p => p.featured)
-						.map(product => (
-							<Link
-								key={product.id}
-								href={`/product/${product.id}`}
-								className="block bg-[#19191c] rounded border border-[#23232a] p-4 hover:bg-[#23232a] transition"
-							>
-								<div className="flex items-center mb-2">
-									<span className="text-2xl mr-3">
+			<div className="max-w-5xl mx-auto mt-8">
+				<div className="mb-8 border-b border-[#333] pb-4 flex items-center gap-4">
+					<span className="text-green-400 font-black text-3xl tracking-tight font-serif">
+						BlackSilk
+					</span>
+					<span className="text-gray-300 text-base font-mono">
+						Welcome to the BlackSilk Market &mdash; All prices in BLK
+					</span>
+				</div>
+				<div className="overflow-x-auto rounded shadow border border-[#333] bg-[#181818]">
+					<table className="min-w-full text-left font-mono text-sm">
+						<thead>
+							<tr className="bg-[#232323] text-green-400">
+								<th className="py-2 px-4 font-bold">Product</th>
+								<th className="py-2 px-4 font-bold">Category</th>
+								<th className="py-2 px-4 font-bold">Price (BLK)</th>
+							</tr>
+						</thead>
+						<tbody>
+							{products.map(product => (
+								<tr
+									key={product.id}
+									className="border-t border-[#333] hover:bg-[#222] transition"
+								>
+									<td className="py-2 px-4">
+										<Link
+											href={`/product/${product.id}`}
+											className="text-green-300 hover:underline"
+										>
+											{product.title}
+										</Link>
+									</td>
+									<td className="py-2 px-4 text-gray-300">
 										{
 											categories.find(c => c.id === product.category)
-												?.icon
+												?.label || product.category
 										}
-									</span>
-									<span className="text-gray-400 text-sm">
-										{
-											categories.find(c => c.id === product.category)
-												?.label
-										}
-									</span>
-								</div>
-								<div className="font-bold text-lg text-white mb-1">
-									{product.title}
-								</div>
-								<div className="text-green-400 font-semibold">
-									{product.price} BLK
-								</div>
-							</Link>
-						))}
+									</td>
+									<td className="py-2 px-4 text-white">{product.price}</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
 				</div>
-			</section>
-			<section>
-				<h2 className="text-xl font-bold mb-4 text-green-400">All Products</h2>
-				<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-					{products.map(product => (
-						<Link
-							key={product.id}
-							href={`/product/${product.id}`}
-							className="block bg-[#19191c] rounded border border-[#23232a] p-4 hover:bg-[#23232a] transition"
-						>
-							<div className="flex items-center mb-2">
-								<span className="text-2xl mr-3">
-									{
-										categories.find(c => c.id === product.category)
-											?.icon
-									}
-								</span>
-								<span className="text-gray-400 text-sm">
-									{
-										categories.find(c => c.id === product.category)
-											?.label
-									}
-								</span>
-							</div>
-							<div className="font-bold text-lg text-white mb-1">
-								{product.title}
-							</div>
-							<div className="text-green-400 font-semibold">
-								{product.price} BLK
-							</div>
-						</Link>
-					))}
+				<div className="mt-8 text-center text-gray-500 text-xs font-mono">
+					BlackSilk is a privacy-first market. All transactions in BLK. Use Tor for
+					maximum anonymity.
 				</div>
-			</section>
-			<div className="mt-12 text-center text-gray-500 text-sm">
-				Privacy first. Decentralized. Inspired by Silk Road.
 			</div>
 		</Layout>
 	);

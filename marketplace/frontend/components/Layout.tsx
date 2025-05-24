@@ -1,12 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 
-const navLinks = [
-  { href: '/sell', label: 'Sell' },
-  { href: '/account', label: 'Account' },
-  { href: '/orders', label: 'Orders' },
-];
-
 export default function Layout({ children, sidebar }: { children: React.ReactNode, sidebar?: React.ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
   useEffect(() => {
@@ -15,32 +9,28 @@ export default function Layout({ children, sidebar }: { children: React.ReactNod
     }
   }, []);
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-[#18181b] via-[#23232a] to-[#101014] text-white font-sans">
-      <header className="bg-[#101014] text-white py-5 px-8 flex items-center justify-between border-b border-[#23232a] shadow-lg relative z-10">
-        <div className="flex items-center space-x-4">
+    <div className="min-h-screen flex flex-col bg-[#181818] text-white font-mono">
+      <header className="bg-[#232323] text-green-400 py-3 px-6 flex items-center justify-between border-b border-[#333] shadow-sm">
+        <div className="flex items-center gap-4">
           <Link href="/">
-            <span className="font-black text-3xl tracking-tight text-green-400 drop-shadow-glow hover:text-green-300 transition">BlackSilk</span>
+            <span className="font-black text-2xl tracking-tight font-serif">BlackSilk</span>
           </Link>
-          <span className="hidden md:inline text-gray-500 text-sm italic ml-4">Decentralized. Private. Inspired by Silk Road.</span>
+          <span className="text-xs text-gray-400 font-mono">Decentralized Silk Road Market</span>
         </div>
-        <nav className="space-x-6 flex items-center">
-          {navLinks.map(link => (
-            <Link key={link.href} href={link.href} className="hover:text-green-400 text-lg font-medium transition">
-              {link.label}
-            </Link>
-          ))}
-          {address && <span className="ml-4 px-2 py-1 bg-green-700 rounded text-xs shadow">{address}</span>}
+        <nav className="space-x-4 flex items-center text-sm">
+          <Link href="/sell" className="hover:text-white transition">Sell</Link>
+          <Link href="/account" className="hover:text-white transition">Account</Link>
+          <Link href="/orders" className="hover:text-white transition">Orders</Link>
+          {address && <span className="ml-4 px-2 py-1 bg-green-900 text-green-200 rounded text-xs">{address}</span>}
         </nav>
       </header>
       <div className="flex flex-1 w-full max-w-7xl mx-auto">
         {sidebar && (
-          <aside className="hidden md:block w-64 bg-[#18181b] border-r border-[#23232a] p-6 pr-2 text-gray-200 min-h-[calc(100vh-120px)]">
-            {sidebar}
-          </aside>
+          <aside className="hidden md:block w-56 bg-[#222] border-r border-[#333] p-0">{sidebar}</aside>
         )}
-        <main className="flex-1 px-2 md:px-8 py-8">{children}</main>
+        <main className="flex-1 px-2 md:px-8 py-8 bg-[#181818]">{children}</main>
       </div>
-      <footer className="bg-[#23232a] text-center py-4 text-gray-500 text-sm border-t border-[#23232a]">
+      <footer className="bg-[#232323] text-center py-4 text-gray-600 text-xs border-t border-[#333]">
         &copy; {new Date().getFullYear()} BlackSilk Marketplace
       </footer>
     </div>
