@@ -5,7 +5,21 @@ use std::time::{Duration, Instant};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 mod randomx_ffi;
+mod randomx_wrapper;
 use randomx_wrapper::randomx_hash;
+// Import all required RandomX FFI functions
+use crate::randomx_ffi::{
+    randomx_alloc_cache,
+    randomx_init_cache,
+    randomx_release_cache, // <-- correct function name
+    randomx_alloc_dataset,
+    randomx_init_dataset,
+    randomx_release_dataset,
+    randomx_dataset_item_count,
+    randomx_create_vm,
+    randomx_destroy_vm,
+    randomx_calculate_hash,
+};
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::net::TcpStream;
 use std::io::{BufReader, Write, BufRead};
@@ -100,6 +114,17 @@ enum MinerCommand {
     Benchmark,
 }
 
+// Newtype wrappers for FFI pointers to make them Send + Sync
+#[derive(Copy, Clone)]
+struct RandomXCachePtr(*mut randomx_ffi::randomx_cache);
+unsafe impl Send for RandomXCachePtr {}
+unsafe impl Sync for RandomXCachePtr {}
+
+#[derive(Copy, Clone)]
+struct RandomXDatasetPtr(*mut randomx_ffi::randomx_dataset);
+unsafe impl Send for RandomXDatasetPtr {}
+unsafe impl Sync for RandomXDatasetPtr {}
+
 fn main() {
     let cli = Cli::parse();
     let config = Arc::new(Mutex::new(MinerConfig {
@@ -150,23 +175,52 @@ fn main() {
             let num_threads = num_cpus::get();
             let hashes = Arc::new(AtomicU64::new(0));
             let start = Instant::now();
-            let flags = 0x1 | 0x2 | 0x4; // RANDOMX_FLAG_LARGE_PAGES | HARD_AES | FULL_MEM
+            let flags = 0x2 | 0x4; // HARD_AES | FULL_MEM (no huge pages)
             let seed = vec![0u8; 32];
+            // Allocate cache and dataset ONCE
+            let cache = unsafe { randomx_alloc_cache(flags) };
+            if cache.is_null() {
+                panic!("Failed to allocate RandomX cache");
+            }
+            unsafe { randomx_init_cache(cache, seed.as_ptr() as *const _, seed.len()) };
+            let dataset = unsafe { randomx_alloc_dataset(flags) };
+            if dataset.is_null() {
+                unsafe { randomx_release_cache(cache) };
+                panic!("Failed to allocate RandomX dataset");
+            }
+            let item_count = unsafe { randomx_dataset_item_count() };
+            unsafe { randomx_init_dataset(dataset, cache, 0, item_count as u32) };
+            // Wrap pointers in Arc for thread safety
+            let cache = Arc::new(RandomXCachePtr(cache));
+            let dataset = Arc::new(RandomXDatasetPtr(dataset));
             let mut handles = Vec::with_capacity(num_threads);
             for _ in 0..num_threads {
                 let hashes = Arc::clone(&hashes);
-                let seed = seed.clone();
+                let cache = Arc::clone(&cache);
+                let dataset = Arc::clone(&dataset);
+                let start = start.clone();
                 handles.push(std::thread::spawn(move || {
+                    let vm = unsafe { randomx_create_vm(flags, cache.0, dataset.0) };
+                    if vm.is_null() {
+                        panic!("Failed to create RandomX VM");
+                    }
                     let mut output = [0u8; 32];
                     while start.elapsed().as_secs() < 60 {
-                        unsafe { randomx_hash(flags, &seed, &[0u8; 80], &mut output) };
+                        unsafe {
+                            randomx_calculate_hash(vm, [0u8; 80].as_ptr() as *const _, 80, output.as_mut_ptr() as *mut _);
+                        }
                         hashes.fetch_add(1, Ordering::Relaxed);
                     }
+                    unsafe { randomx_destroy_vm(vm) };
                 }));
             }
             for h in handles { let _ = h.join(); }
             let total_hashes = hashes.load(Ordering::Relaxed);
             println!("[Miner] Benchmark result: {:.2} H/s ({} threads, RandomX FFI)", total_hashes as f64 / 60.0, num_threads);
+            unsafe {
+                randomx_release_dataset(dataset.0);
+                randomx_release_cache(cache.0);
+            }
             return;
         }
         Some(Commands::Help) | None => {
@@ -205,16 +259,58 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: std::sync::mpsc::Receiver<
         accepted.store(0, Ordering::SeqCst);
         rejected.store(0, Ordering::SeqCst);
         threads.clear();
+        // --- Allocate RandomX cache/dataset ONCE per mining session ---
+        let flags = 0x2 | 0x4; // HARD_AES | FULL_MEM (no huge pages)
+        let mut seed: Option<Vec<u8>> = None;
+        // Fetch a block template to get the seed
+        let client = Client::new();
+        let node_url = format!("http://{}/mining/get_block_template", cfg.node);
+        let req = BlockTemplateRequest { address: cfg.address.clone() };
+        let template = match client.post(&node_url).json(&req).send() {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    match resp.json::<BlockTemplate>() {
+                        Ok(t) => t,
+                        Err(_) => { panic!("Failed to parse block template"); }
+                    }
+                } else { panic!("Failed to get block template"); }
+            }
+            Err(_) => { panic!("Failed to connect to node for block template"); }
+        };
+        seed = Some(template.seed.clone());
+        let seed = seed.unwrap();
+        let cache = unsafe { randomx_alloc_cache(flags) };
+        if cache.is_null() {
+            panic!("Failed to allocate RandomX cache");
+        }
+        unsafe { randomx_init_cache(cache, seed.as_ptr() as *const _, seed.len()) };
+        let dataset = unsafe { randomx_alloc_dataset(flags) };
+        if dataset.is_null() {
+            unsafe { randomx_release_cache(cache) };
+            panic!("Failed to allocate RandomX dataset");
+        }
+        let item_count = unsafe { randomx_dataset_item_count() };
+        unsafe { randomx_init_dataset(dataset, cache, 0, item_count as u32) };
+        // Wrap pointers in Arc for thread safety
+        let cache = Arc::new(RandomXCachePtr(cache));
+        let dataset = Arc::new(RandomXDatasetPtr(dataset));
         for t in 0..cfg.threads {
             let cfg = cfg.clone();
             let should_stop = Arc::clone(should_stop);
             let hashes = Arc::clone(hashes);
             let accepted = Arc::clone(accepted);
             let rejected = Arc::clone(rejected);
+            let cache = Arc::clone(&cache);
+            let dataset = Arc::clone(&dataset);
+            let seed = seed.clone();
             threads.push(std::thread::spawn(move || {
                 let client = Client::new();
                 let node_url = format!("http://{}/mining/get_block_template", cfg.node);
                 let submit_url = format!("http://{}/mining/submit_block", cfg.node);
+                let vm = unsafe { randomx_create_vm(flags, cache.0, dataset.0) };
+                if vm.is_null() {
+                    panic!("Failed to create RandomX VM");
+                }
                 loop {
                     if should_stop.load(Ordering::SeqCst) { break; }
                     let req = BlockTemplateRequest { address: cfg.address.clone() };
@@ -231,7 +327,6 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: std::sync::mpsc::Receiver<
                     };
                     let mut header = template.header.clone();
                     let mut nonce = t as u64 * 1_000_000;
-                    let flags = 0x1 | 0x2 | 0x4; // RANDOMX_FLAG_LARGE_PAGES | HARD_AES | FULL_MEM
                     loop {
                         if should_stop.load(Ordering::SeqCst) { break; }
                         let nonce_bytes = nonce.to_le_bytes();
@@ -240,7 +335,9 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: std::sync::mpsc::Receiver<
                             for i in 0..8 { header[len-8+i] = nonce_bytes[i]; }
                         }
                         let mut hash = [0u8; 32];
-                        unsafe { randomx_hash(flags, &template.seed, &header, &mut hash) };
+                        unsafe {
+                            randomx_calculate_hash(vm, header.as_ptr() as *const _, header.len(), hash.as_mut_ptr() as *mut _);
+                        }
                         let hash_val = u64::from_le_bytes(hash[0..8].try_into().unwrap());
                         hashes.fetch_add(1, Ordering::Relaxed);
                         if hash_val < template.difficulty {
@@ -264,7 +361,14 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: std::sync::mpsc::Receiver<
                         nonce += cfg.threads as u64;
                     }
                 }
+                unsafe { randomx_destroy_vm(vm) };
             }));
+        }
+        // Wait for all threads to finish before releasing dataset/cache
+        while let Some(th) = threads.pop() { let _ = th.join(); }
+        unsafe {
+            randomx_release_dataset(dataset.0);
+            randomx_release_cache(cache.0);
         }
     };
 
@@ -327,7 +431,7 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: std::sync::mpsc::Receiver<
                     for _ in 0..num_threads {
                         let hashes = Arc::clone(&hashes);
                         handles.push(std::thread::spawn(move || {
-                            let flags = 0x1 | 0x2 | 0x4; // RANDOMX_FLAG_LARGE_PAGES | HARD_AES | FULL_MEM
+                            let flags = 0x2 | 0x4; // HARD_AES | FULL_MEM (no huge pages)
                             let seed = vec![0u8; 32];
                             loop {
                                 let mut hash = [0u8; 32];
@@ -399,7 +503,7 @@ fn stratum_mine(args: &Args) {
                         let seed = match hex::decode(seed_hex) { Ok(s) => s, Err(_) => continue };
                         let target = match hex::decode(target_hex) { Ok(t) => t, Err(_) => continue };
                         // --- RandomX mining ---
-                        let flags = 0x1 | 0x2 | 0x4; // RANDOMX_FLAG_LARGE_PAGES | HARD_AES | FULL_MEM
+                        let flags = 0x2 | 0x4; // HARD_AES | FULL_MEM (no huge pages)
                         let mut found = false;
                         let mut found_nonce = 0u64;
                         let mut found_hash = vec![];

@@ -12,11 +12,17 @@ pub unsafe fn randomx_hash(
     input: &[u8],
     output: &mut [u8],
 ) {
-    let cache = randomx_init_cache(flags, seed.as_ptr() as *const c_void, seed.len());
-    assert!(!cache.is_null(), "Failed to create RandomX cache");
-    let vm = randomx_create_vm(flags, cache, ptr::null_mut());
+    // Allocate cache
+    let cache = randomx_alloc_cache(flags as i32);
+    assert!(!cache.is_null(), "Failed to allocate RandomX cache");
+    // Initialize cache with seed
+    randomx_init_cache(cache, seed.as_ptr() as *const c_void, seed.len());
+    // Create VM
+    let vm = randomx_create_vm(flags as i32, cache, ptr::null_mut());
     assert!(!vm.is_null(), "Failed to create RandomX VM");
+    // Calculate hash
     randomx_calculate_hash(vm, input.as_ptr() as *const c_void, input.len(), output.as_mut_ptr() as *mut c_void);
+    // Clean up
     randomx_destroy_vm(vm);
     randomx_release_cache(cache);
 }
