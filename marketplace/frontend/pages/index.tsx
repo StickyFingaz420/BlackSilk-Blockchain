@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import Head from 'next/head'
 import { Container, Grid, Card, Typography, Button, Box, Pagination, Skeleton, Chip } from '@mui/material'
 import { styled } from '@mui/system'
-import { Listing, SearchFilters as SearchFiltersType } from '../types'
+import { Listing, SearchFilters as SearchFiltersType, SortOption } from '../types'
 import AddIcon from '@mui/icons-material/Add'
 import { useRouter } from 'next/router'
 import Link from 'next/link'
@@ -26,7 +26,7 @@ export default function Marketplace() {
   const [totalPages, setTotalPages] = useState(1)
   const [filters, setFilters] = useState<SearchFiltersType>({
     query: '',
-    sortBy: 'recently_listed',
+    sortBy: SortOption.RecentlyListed,
     page: 1,
     limit: 12,
   })
@@ -214,4 +214,4 @@ export default function Marketplace() {
       </main>
     </>
   )
-} 
+}

@@ -15,7 +15,8 @@ import {
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import FilterListIcon from '@mui/icons-material/FilterList';
-import { Category, ItemCondition, SearchFilters, SortOption } from '../types';
+import { Category, ItemCondition, SortOption } from '../types';
+import type { SearchFilters } from '../types';
 
 interface SearchFiltersProps {
   onSearch: (filters: SearchFilters) => void;
@@ -233,4 +234,4 @@ export default function SearchFilters({ onSearch, initialFilters }: SearchFilter
       </Box>
     </Box>
   );
-} 
+}

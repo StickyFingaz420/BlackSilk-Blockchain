@@ -1,1 +1,39 @@
-/target
+# BlackSilk .gitignore
+# Node
+node_modules/
+.next/
+package-lock.json
+
+# Rust
+/target/
+Cargo.lock
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+RandomX/build/
+RandomX/*.sln
+RandomX/*.vcxproj*
+
+# Logs
+*.log
+
+# Misc
+*.tmp
+*.swp
+*.swo
+
+# VSCode
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+
+# Marketplace frontend
+marketplace/frontend/node_modules/
+marketplace/frontend/.next/
+marketplace/frontend/package-lock.json
+marketplace/frontend/tsconfig.json
