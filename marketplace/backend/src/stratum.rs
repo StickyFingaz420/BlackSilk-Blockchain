@@ -29,6 +29,7 @@ struct MinerStats {
     last_hashrate_update: Instant,
     total_difficulty: u64,
     worker_name: String,
+    /// Estimated earnings in BLK (uses current block reward; after supply cap, only fees are paid)
     estimated_earnings: f64,  // in coins
 }
 
@@ -68,7 +69,7 @@ fn update_miner_stats(address: &str, shares: u64, difficulty: u64, is_valid: boo
     
     // Estimate earnings (simplified)
     let network_difficulty = 1000000.0; // TODO: Get from chain
-    let block_reward = 50.0; // TODO: Get from chain
+    let block_reward = 5.0; // Initial block reward (BLK); update if emission changes. See node/src/lib.rs EmissionSchedule.
     let share_value = block_reward * (difficulty as f64 / network_difficulty);
     entry.estimated_earnings += share_value;
 }
@@ -446,4 +447,4 @@ fn validate_share(job: &str, nonce_hex: &str, hash_hex: &str, difficulty: u64) -
         }
     }
     false
-} 
+}

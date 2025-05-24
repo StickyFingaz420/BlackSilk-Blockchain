@@ -21,6 +21,7 @@ BlackSilk is a next-generation, privacy-focused blockchain and decentralized mar
 ## Table of Contents
 - [Project Vision](#project-vision)
 - [Blockchain Architecture](#blockchain-architecture)
+- [Tokenomics](#tokenomics)
 - [Privacy & Cryptography](#privacy--cryptography)
 - [Network Layer & Anonymity](#network-layer--anonymity)
 - [Marketplace Design](#marketplace-design)
@@ -43,12 +44,51 @@ BlackSilk aims to provide a censorship-resistant, privacy-preserving blockchain 
 
 ## Blockchain Architecture
 - **Consensus:** Proof-of-Work (PoW) using Monero’s RandomX RX/0 algorithm, optimized for CPU mining.
-- **Block Time:** Target 90–145 seconds (2–3 minutes).
+- **Block Time:** 120 seconds (2 minutes).
 - **Difficulty Retargeting:** Automatic, to maintain block time window.
-- **Genesis Block Reward:** 86 BLK.
-- **Halving:** Block reward halves every 125,000 blocks (shorter cycle than Bitcoin).
-- **Supply Cap:** 21 million BLK (mirrors Bitcoin’s cap and halving schedule).
-- **Tail Emission:** After 21M BLK, a permanent emission of 0.5 BLK/block (like Monero) to sustain miner incentives and network security.
+- **Genesis Block Reward:** 5 BLK.
+- **Halving:** Block reward halves every 1,051,200 blocks (~4 years).
+- **Supply Cap:** 21 million BLK (mirrors Bitcoin’s cap, but with Monero-style mining).
+- **Tail Emission:** None. After 21M BLK, only transaction fees are paid to miners (no further emission).
+
+---
+
+## Tokenomics
+BlackSilk’s tokenomics are designed for long-term sustainability, fairness, and decentralization:
+
+| Parameter                | Value                        |
+|--------------------------|------------------------------|
+| Initial Block Reward     | 5 BLK                        |
+| Block Time               | 120 seconds (2 minutes)      |
+| Halving Interval         | 1,051,200 blocks (~4 years)  |
+| Supply Cap               | 21,000,000 BLK               |
+| Premine/ICO              | None                         |
+| Emission After Cap       | None (fees only)             |
+| Mining Algorithm         | RandomX (CPU-optimized PoW)  |
+
+### Emission Schedule
+- **No premine, no ICO:** All coins are created through mining.
+- **Halving:** The block reward halves every 1,051,200 blocks (~4 years).
+- **Supply Cap:** Once 21 million BLK are mined, no new coins are created. Miners are then paid only transaction fees.
+- **No tail emission:** Unlike Monero, there is no perpetual emission after the cap.
+
+#### Example Emission Table
+| Era         | Block Height Range      | Block Reward (BLK) | Total Emitted (BLK) |
+|-------------|------------------------|--------------------|---------------------|
+| Era 1       | 0 – 1,051,199          | 5.0                | 5,255,995           |
+| Era 2       | 1,051,200 – 2,102,399  | 2.5                | 7,883,992           |
+| Era 3       | 2,102,400 – 3,153,599  | 1.25               | 9,197,990           |
+| ...         | ...                    | ...                | ...                 |
+| Final Era   | Until 21M cap reached  | (halves each era)  | 21,000,000          |
+
+#### Comparison
+| Feature         | BlackSilk | Bitcoin | Monero |
+|-----------------|-----------|---------|--------|
+| Supply Cap      | 21M BLK   | 21M BTC | Infinite (tail emission) |
+| Block Time      | 120s      | 600s    | 120s   |
+| Halving         | ~4 years  | ~4 years| N/A    |
+| Tail Emission   | No        | No      | Yes    |
+| Mining          | RandomX   | SHA-256 | RandomX|
 
 ---
 
@@ -208,6 +248,28 @@ python3 -m uvicorn app:app --reload
 ### Enabling Tor/I2P
 - Configure Tor/I2P as a service on your system.
 - Set node and wallet to use .onion or I2P addresses in config files.
+
+## Running BlackSilk Node: Testnet & Mainnet
+
+By default, BlackSilk runs in **testnet** mode for development and testing. To run the node on mainnet, set the environment variable `BLACKSILK_NETWORK=mainnet` before starting the node.
+
+### Testnet (default)
+```powershell
+# Windows PowerShell (default: testnet)
+cargo run --release -- -p 1776
+```
+
+### Mainnet
+```powershell
+# Windows PowerShell (mainnet)
+$env:BLACKSILK_NETWORK="mainnet"
+cargo run --release -- -p 1977
+```
+
+- **Testnet magic:** 0x1D670, port 1776
+- **Mainnet magic:** 0xB1A6C, port 1977
+
+You can also use `--connect <peer>` to connect to a specific peer at startup.
 
 ---
 

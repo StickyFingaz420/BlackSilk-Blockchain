@@ -183,4 +183,18 @@ graph TB
 - Decentralized arbitration
 - Enhanced reputation system
 - Automated escrow
-- Mobile applications 
+- Mobile applications
+
+### Emission Schedule & Tokenomics
+BlackSilk’s emission model is designed for fairness and long-term sustainability:
+- **Block Reward:** Starts at 5 BLK per block.
+- **Halving:** Every 1,051,200 blocks (~4 years), the block reward halves.
+- **Supply Cap:** Hard cap of 21,000,000 BLK. No new coins are created after this cap is reached.
+- **No Tail Emission:** After the cap, miners are paid only transaction fees. There is no perpetual emission.
+- **No Premine/ICO:** All coins are distributed via mining.
+- **Dynamic Fees:** After the cap, network security is maintained by transaction fees, which are dynamically adjusted based on network demand and block space.
+
+#### Emission Logic (Code Reference)
+- See `node/src/lib.rs` for the `EmissionSchedule` struct and `block_reward` logic.
+- The emission schedule is enforced at the consensus layer; any block with an invalid reward is rejected.
+- The fee model is designed to be flexible for future upgrades (e.g., EIP-1559-style dynamic fees).

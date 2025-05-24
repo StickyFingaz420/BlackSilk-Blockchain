@@ -1,4 +1,13 @@
 //! BlackSilk Node - Testnet Bootstrap
+//!
+//! BlackSilk Blockchain Tokenomics
+//! - No premine, no ICO. All coins are mined.
+//! - Initial block reward: 5 BLK (atomic units)
+//! - Block time: 120 seconds
+//! - Halving every 1,051,200 blocks (~4 years)
+//! - Supply cap: 21,000,000 BLK
+//! - No tail emission: after cap, miners receive only transaction fees
+//! See README and docs/architecture.md for full details.
 
 #[macro_use]
 extern crate lazy_static;
@@ -9,12 +18,37 @@ pub fn add(left: u64, right: u64) -> u64 {
 
 pub mod config {
     pub const TESTNET_MAGIC: u32 = 0x1D670; // July 26, 1953
+    pub const MAINNET_MAGIC: u32 = 0xB1A6C; // Example: May 24, 2025
     pub const DEFAULT_P2P_PORT: u16 = 1776;
-    pub const BLOCK_TIME_SEC: u64 = 120; // 2 minutes
-    pub const GENESIS_REWARD: u64 = 86; // BLK
-    pub const HALVING_INTERVAL: u64 = 125_000;
-    pub const TAIL_EMISSION: u64 = 50_000_000; // 0.5 BLK in atomic units
-    pub const SUPPLY_CAP: u64 = 21_000_000 * 1_000_000; // 21M BLK, atomic units
+    pub const MAINNET_P2P_PORT: u16 = 1977;
+    /// Block time in seconds (2 minutes)
+    pub const BLOCK_TIME_SEC: u64 = 120;
+    /// Initial block reward in atomic units (5 BLK)
+    pub const GENESIS_REWARD: u64 = 5_000_000;
+    /// Halving interval in blocks (~4 years at 2 min/block)
+    pub const HALVING_INTERVAL: u64 = 1_051_200;
+    /// No tail emission after cap (miners receive only fees after cap)
+    pub const TAIL_EMISSION: u64 = 0;
+    /// Maximum supply: 21 million BLK (in atomic units)
+    pub const SUPPLY_CAP: u64 = 21_000_000 * 1_000_000;
+    // Mainnet genesis timestamp (example)
+    pub const MAINNET_GENESIS_TIMESTAMP: u64 = 1_716_150_000; // May 24, 2025
+    pub const TESTNET_GENESIS_TIMESTAMP: u64 = 1_716_150_000; // May 19, 2025
+}
+
+/// Network selection
+enum Network {
+    Mainnet,
+    Testnet,
+}
+
+impl Network {
+    fn from_env_or_default() -> Self {
+        match std::env::var("BLACKSILK_NETWORK").as_deref() {
+            Ok("mainnet") => Network::Mainnet,
+            _ => Network::Testnet,
+        }
+    }
 }
 
 use primitives::{Block, BlockHeader, Coinbase};
@@ -386,14 +420,16 @@ pub fn maybe_reorg_chain(new_blocks: Vec<primitives::Block>) {
     }
 }
 
+/// Emission schedule for BlackSilk (see README for details)
 pub struct EmissionSchedule {
-    pub genesis_reward: u64,
-    pub halving_interval: u64,
-    pub tail_emission: u64,
-    pub supply_cap: u64,
+    pub genesis_reward: u64,      // Initial block reward (atomic units)
+    pub halving_interval: u64,    // Blocks per halving (~4 years)
+    pub tail_emission: u64,       // Always 0 (no tail emission)
+    pub supply_cap: u64,          // 21M BLK (atomic units)
 }
 
 impl EmissionSchedule {
+    /// Returns the block reward for a given height, enforcing halving and supply cap.
     pub fn block_reward(&self, height: u64) -> u64 {
         let mut reward = self.genesis_reward;
         let mut halvings = height / self.halving_interval;
@@ -431,14 +467,23 @@ impl Chain {
         blocks.push_back(genesis);
         Self { blocks, emission }
     }
-
-    pub fn genesis_block(emission: &EmissionSchedule) -> Block {
+    pub fn new_for_network(network: Network) -> Self {
+        let emission = default_emission();
+        let genesis = match network {
+            Network::Mainnet => Self::genesis_block_with_params(&emission, config::MAINNET_GENESIS_TIMESTAMP),
+            Network::Testnet => Self::genesis_block_with_params(&emission, config::TESTNET_GENESIS_TIMESTAMP),
+        };
+        let mut blocks = VecDeque::new();
+        blocks.push_back(genesis);
+        Self { blocks, emission }
+    }
+    fn genesis_block_with_params(emission: &EmissionSchedule, timestamp: u64) -> Block {
         Block {
             header: BlockHeader {
                 version: 1,
                 prev_hash: [0u8; 32],
-                merkle_root: [0u8; 32], // TODO: real merkle root
-                timestamp: 1_716_150_000, // Example: May 19, 2025
+                merkle_root: [0u8; 32],
+                timestamp,
                 height: 0,
                 difficulty: 1,
                 pow: primitives::Pow { nonce: 0, hash: [0u8; 32] },
@@ -589,8 +634,13 @@ pub fn start_p2p_server(port: u16) {
 }
 
 pub fn start_node_with_port_and_connect(port: u16, connect_addr: Option<String>) {
-    println!("[BlackSilk Node] Starting Testnet node on port {} (magic: 0x{:X})", port, config::TESTNET_MAGIC);
-    let chain = Chain::new();
+    let network = Network::from_env_or_default();
+    let magic = match network {
+        Network::Mainnet => config::MAINNET_MAGIC,
+        Network::Testnet => config::TESTNET_MAGIC,
+    };
+    println!("[BlackSilk Node] Starting {:?} node on port {} (magic: 0x{:X})", network, port, magic);
+    let chain = Chain::new_for_network(network);
     println!("[BlackSilk Node] Genesis block height: {}", chain.tip().header.height);
     if let Some(addr) = connect_addr {
         connect_to_peer(&addr);
@@ -601,10 +651,15 @@ pub fn start_node_with_port_and_connect(port: u16, connect_addr: Option<String>)
 
 /// Placeholder for node startup
 pub fn start_node() {
-    println!("[BlackSilk Node] Starting Testnet node on port {} (magic: 0x{:X})", config::DEFAULT_P2P_PORT, config::TESTNET_MAGIC);
-    let chain = Chain::new();
+    let network = Network::from_env_or_default();
+    let (port, magic) = match network {
+        Network::Mainnet => (config::MAINNET_P2P_PORT, config::MAINNET_MAGIC),
+        Network::Testnet => (config::DEFAULT_P2P_PORT, config::TESTNET_MAGIC),
+    };
+    println!("[BlackSilk Node] Starting {:?} node on port {} (magic: 0x{:X})", network, port, magic);
+    let chain = Chain::new_for_network(network);
     println!("[BlackSilk Node] Genesis block height: {}", chain.tip().header.height);
-    start_p2p_server(config::DEFAULT_P2P_PORT);
+    start_p2p_server(port);
     // TODO: Networking, consensus, mining, etc.
 }
 

@@ -12,7 +12,8 @@ fn main() {
     } else {
         None
     };
-    println!("[BlackSilk] Testnet bootstrap on port {}", port);
+    let network = std::env::var("BLACKSILK_NETWORK").unwrap_or_else(|_| "testnet".to_string());
+    println!("[BlackSilk] Network: {} | Bootstrap on port {}", network, port);
     if args.contains(&"send-block".to_string()) {
         node::cli_send_block();
         return;

@@ -1,6 +1,7 @@
 //! BlackSilk Primitives - Core Types
 
 pub mod types {
+    /// Amount in atomic units (1 BLK = 1_000_000 atomic units). Max supply: 21,000,000 BLK.
     pub type BlkAmount = u64; // atomic units
     pub type BlockHeight = u64;
     pub type Address = String; // placeholder for stealth address

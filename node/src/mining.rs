@@ -1,4 +1,6 @@
 //! BlackSilk RandomX Mining Implementation
+// Block rewards and emission schedule are enforced by the consensus layer (see node/src/lib.rs EmissionSchedule).
+// No premine, no tail emission; all coins are mined, and miners receive only fees after the 21M BLK cap.
 
 use crate::primitives::{Block, BlockHeader, Pow};
 use sha2::{Digest, Sha256};
@@ -157,5 +159,22 @@ mod tests {
         };
         
         assert!(!verify_pow(&header, &context).unwrap());
+    }
+    
+    #[test]
+    fn test_emission_schedule_supply_cap() {
+        let emission = crate::lib::default_emission();
+        let mut total = 0u64;
+        let mut height = 0u64;
+        loop {
+            let reward = emission.block_reward(height);
+            if reward == 0 { break; }
+            total += reward;
+            height += 1;
+            if total > emission.supply_cap {
+                panic!("Emission exceeded supply cap!");
+            }
+        }
+        assert!(total <= emission.supply_cap, "Total emission {} exceeds cap {}", total, emission.supply_cap);
     }
 }
