@@ -145,7 +145,45 @@ fn main() {
             let _ = cmd_tx.send(MinerCommand::Stats);
         }
         Some(Commands::Benchmark) => {
-            let _ = cmd_tx.send(MinerCommand::Benchmark);
+            // XMRig-style: each thread creates its own RandomXCache and VM with the same flags and seed
+            println!("[Miner] Benchmarking for 60 seconds using all CPU cores and RandomX performance flags (XMRig-style, per-thread cache)...");
+            let num_threads = num_cpus::get();
+            let hashes = Arc::new(AtomicU64::new(0));
+            let start = Instant::now();
+            let flags = RandomXFlag::FLAG_LARGE_PAGES | RandomXFlag::FLAG_HARD_AES | RandomXFlag::FLAG_FULL_MEM;
+            let seed = vec![0u8; 32];
+            let mut handles = Vec::with_capacity(num_threads);
+            for _ in 0..num_threads {
+                let hashes = Arc::clone(&hashes);
+                let flags = flags.clone();
+                let seed = seed.clone();
+                handles.push(std::thread::spawn(move || {
+                    // Try to create cache and VM with all flags, fallback to default if fails
+                    let cache = match RandomXCache::new(flags, &seed) {
+                        Ok(c) => c,
+                        Err(_) => {
+                            // Remove warning: just fallback silently
+                            RandomXCache::new(RandomXFlag::default(), &seed).expect("RandomX cache (default flags)")
+                        }
+                    };
+                    let vm = match RandomXVM::new(flags, Some(&cache), None) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            // Remove warning: just fallback silently
+                            RandomXVM::new(RandomXFlag::default(), Some(&cache), None).expect("RandomX VM (default flags)")
+                        }
+                    };
+                    let mut header = vec![0u8; 80];
+                    while start.elapsed().as_secs() < 60 {
+                        let _ = vm.calculate_hash(&header).expect("RandomX hash");
+                        hashes.fetch_add(1, Ordering::Relaxed);
+                    }
+                }));
+            }
+            for h in handles { let _ = h.join(); }
+            let total_hashes = hashes.load(Ordering::Relaxed);
+            println!("[Miner] Benchmark result: {:.2} H/s ({} threads, all RandomX flags if available)", total_hashes as f64 / 60.0, num_threads);
+            return;
         }
         Some(Commands::Help) | None => {
             println!("BlackSilk Miner CLI - Available commands:");
@@ -299,11 +337,30 @@ fn run_miner(config: Arc<Mutex<MinerConfig>>, cmd_rx: std::sync::mpsc::Receiver<
                     println!("  Accepted: {} | Rejected: {}", acc, rej);
                 }
                 Benchmark => {
-                    println!("[Miner] Benchmarking for 10 seconds...");
-                    hashes.store(0, Ordering::SeqCst);
-                    std::thread::sleep(Duration::from_secs(10));
-                    let h = hashes.load(Ordering::Relaxed);
-                    println!("[Miner] Benchmark result: {:.2} H/s", h as f64 / 10.0);
+                    // Multi-threaded benchmark
+                    println!("[Miner] Benchmarking for 60 seconds using all CPU cores...");
+                    let num_threads = num_cpus::get();
+                    let mut handles = Vec::with_capacity(num_threads);
+                    let hashes = Arc::new(AtomicU64::new(0));
+                    let start = Instant::now();
+                    for _ in 0..num_threads {
+                        let hashes = Arc::clone(&hashes);
+                        handles.push(std::thread::spawn(move || {
+                            let flags = RandomXFlag::default();
+                            let seed = vec![0u8; 32];
+                            let cache = RandomXCache::new(flags, &seed).expect("RandomX cache");
+                            let vm = RandomXVM::new(flags, Some(&cache), None).expect("RandomX VM");
+                            let mut header = vec![0u8; 80];
+                            while start.elapsed().as_secs() < 60 {
+                                let _ = vm.calculate_hash(&header).expect("RandomX hash");
+                                hashes.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }));
+                    }
+                    for h in handles { let _ = h.join(); }
+                    let total_hashes = hashes.load(Ordering::Relaxed);
+                    println!("[Miner] Benchmark result: {:.2} H/s ({} threads)", total_hashes as f64 / 60.0, num_threads);
+                    return;
                 }
             }
             last_time = Instant::now();
