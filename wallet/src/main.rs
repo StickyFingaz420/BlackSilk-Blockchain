@@ -12,6 +12,8 @@ use base58::{ToBase58};
 use std::fs;
 use std::path::Path;
 use serde::{Deserialize, Serialize};
+use primitives::{Transaction, TransactionInput, TransactionOutput, Block};
+use itertools::Itertools;
 
 struct StealthAddress {
     public_view: [u8; 32],
@@ -178,32 +180,37 @@ fn encode_address(public_view: &[u8; 32], public_spend: &[u8; 32]) -> String {
     format!("Blk{}", data.to_base58())
 }
 
-#[derive(Deserialize, Debug)]
-struct Block {
-    height: u64,
-    transactions: Vec<Transaction>,
+/// CryptoNote-style output detection: checks if output belongs to this wallet using one-time address recovery
+fn is_output_mine(out: &primitives::TransactionOutput, my_pub_view: &[u8; 32], my_pub_spend: &[u8; 32], my_priv_view: &[u8; 32]) -> bool {
+    // استخدم المفتاح العام من stealth_address
+    let out_pubkey_bytes = out.stealth_address.public_spend;
+    let out_pubkey = CompressedEdwardsY(out_pubkey_bytes).decompress();
+    if out_pubkey.is_none() { return false; }
+    let out_pubkey = out_pubkey.unwrap();
+    let pub_spend = CompressedEdwardsY(*my_pub_spend).decompress();
+    if pub_spend.is_none() { return false; }
+    let pub_spend = pub_spend.unwrap();
+    let candidate = out_pubkey - pub_spend;
+    let priv_view_scalar = Scalar::from_bytes_mod_order(*my_priv_view);
+    let shared_point = candidate * priv_view_scalar;
+    let mut hasher = Sha256::new();
+    hasher.update(shared_point.compress().as_bytes());
+    let hash = hasher.finalize();
+    let mut hash_bytes = [0u8; 32];
+    hash_bytes.copy_from_slice(&hash);
+    let derived_scalar = Scalar::from_bytes_mod_order(hash_bytes);
+    let derived_pubkey = ED25519_BASEPOINT_POINT * derived_scalar + pub_spend;
+    derived_pubkey.compress().to_bytes() == out_pubkey_bytes
 }
 
-#[derive(Deserialize, Debug)]
-struct Transaction {
-    outputs: Vec<Output>,
-}
-
-#[derive(Deserialize, Debug)]
-struct Output {
-    public_key: String, // hex-encoded
-    amount: u64,
-}
-
-fn scan_blocks_for_balance(blocks: &[Block], my_pub_view: &[u8; 32], my_pub_spend: &[u8; 32]) -> u64 {
-    // DEMO: Assume output.public_key is hex(pub_view || pub_spend)
+fn scan_blocks_for_balance(blocks: &[Block], my_pub_view: &[u8; 32], my_pub_spend: &[u8; 32], my_priv_view: &[u8; 32]) -> u64 {
     let mut balance = 0u64;
-    let my_key_hex = format!("{}{}", hex::encode(my_pub_view), hex::encode(my_pub_spend));
     for block in blocks {
         for tx in &block.transactions {
             for out in &tx.outputs {
-                if out.public_key == my_key_hex {
-                    balance += out.amount;
+                if is_output_mine(out, my_pub_view, my_pub_spend, my_priv_view) {
+                    // في testnet: كل مخرج قيمته 1
+                    balance += 1;
                 }
             }
         }
@@ -211,24 +218,156 @@ fn scan_blocks_for_balance(blocks: &[Block], my_pub_view: &[u8; 32], my_pub_spen
     balance
 }
 
-fn sync_with_node(node_addr: &str, last_height: u64, my_pub_view: &[u8; 32], my_pub_spend: &[u8; 32]) -> u64 {
+/// Return all outputs belonging to this wallet (placeholder logic)
+fn get_spendable_outputs<'a>(blocks: &'a [Block], my_pub_view: &[u8; 32], my_pub_spend: &[u8; 32], my_priv_view: &[u8; 32]) -> Vec<&'a primitives::TransactionOutput> {
+    let mut outputs = Vec::new();
+    for block in blocks {
+        for tx in &block.transactions {
+            for out in &tx.outputs {
+                if is_output_mine(out, my_pub_view, my_pub_spend, my_priv_view) {
+                    outputs.push(out);
+                }
+            }
+        }
+    }
+    outputs
+}
+
+/// Select minimal outputs to cover the amount (greedy algorithm)
+fn select_inputs<'a>(outputs: &'a [&primitives::TransactionOutput], amount: u64) -> (Vec<&'a primitives::TransactionOutput>, u64) {
+    let mut selected = Vec::new();
+    let mut total = 0u64;
+    for out in outputs.iter().copied().sorted_by_key(|o| o.amount_commitment).rev() {
+        selected.push(out);
+        total += 1; // في testnet: كل مخرج قيمته 1
+        if total >= amount {
+            break;
+        }
+    }
+    (selected, total)
+}
+
+fn send_transaction(node_addr: &str, wallet: &WalletFile, to_address: &str, amount: u64) -> Result<(), String> {
+    println!("[Wallet] Preparing transaction...");
+    if amount == 0 {
+        return Err("Amount must be greater than zero".to_string());
+    }
+    if to_address.is_empty() {
+        return Err("Destination address is required".to_string());
+    }
+    // Decode keys
+    let pub_view = hex::decode(&wallet.pub_view).map_err(|_| "Invalid pub_view in wallet file")?;
+    let pub_spend = hex::decode(&wallet.pub_spend).map_err(|_| "Invalid pub_spend in wallet file")?;
+    let priv_view = hex::decode(&wallet.priv_view).map_err(|_| "Invalid priv_view in wallet file")?;
+    let mut arr_view = [0u8; 32];
+    let mut arr_spend = [0u8; 32];
+    let mut arr_priv_view = [0u8; 32];
+    arr_view.copy_from_slice(&pub_view);
+    arr_spend.copy_from_slice(&pub_spend);
+    arr_priv_view.copy_from_slice(&priv_view);
+    // Sync blocks and collect spendable outputs
+    let blocks = sync_with_node(node_addr, 0, &arr_view, &arr_spend);
+    let outputs = get_spendable_outputs(&blocks, &arr_view, &arr_spend, &arr_priv_view);
+    let total_balance: u64 = outputs.len() as u64; // كل مخرج قيمته 1
+    if total_balance < amount {
+        return Err(format!("Insufficient balance: have {}, need {}", total_balance, amount));
+    }
+    // Select minimal inputs
+    let (selected, selected_total) = select_inputs(&outputs, amount);
+    if selected_total < amount {
+        return Err("Could not select enough inputs".to_string());
+    }
+    let fee = 1; // ثابت في testnet
+    let change = selected_total - amount - fee;
+    use primitives::ring_sig::generate_ring_signature;
+    use primitives::types::Hash;
+    let priv_spend = hex::decode(&wallet.priv_spend).map_err(|_| "Invalid priv_spend in wallet file")?;
+    let mut arr_priv_spend = [0u8; 32];
+    arr_priv_spend.copy_from_slice(&priv_spend);
+    let mut tx_inputs = Vec::new();
+    for inp in &selected {
+        // استخدم المفتاح العام من stealth_address
+        let ring = vec![inp.stealth_address.public_spend];
+        let ki = generate_key_image(&arr_priv_spend);
+        let msg = b"blacksilk_tx";
+        let ring_sig = generate_ring_signature(msg, &ring, &arr_priv_spend, 0);
+        tx_inputs.push(primitives::TransactionInput {
+            key_image: ki,
+            ring_sig: primitives::RingSignature { ring, signature: ring_sig },
+        });
+    }
+    // --- Build outputs (Pedersen commitment + Bulletproofs) ---
+    use curve25519_dalek::scalar::Scalar;
+    use rand::rngs::OsRng;
+    use bulletproofs::{BulletproofGens, PedersenGens};
+    let mut tx_outputs = Vec::new();
+    let pc_gens = PedersenGens::default();
+    let bp_gens = BulletproofGens::new(64, 1);
+    // المخرج الرئيسي
+    let blinding = Scalar::random(&mut OsRng);
+    let (range_proof, commitment) = generate_range_proof(amount, &blinding);
+    let addr_bytes = base58::FromBase58::from_base58(&to_address[3..]).unwrap();
+    let pub_view = addr_bytes[1..33].try_into().unwrap();
+    let pub_spend = addr_bytes[33..65].try_into().unwrap();
+    tx_outputs.push(primitives::TransactionOutput {
+        amount_commitment: commitment.to_bytes(),
+        stealth_address: primitives::StealthAddress { public_view: pub_view, public_spend: pub_spend },
+        range_proof: range_proof.to_bytes(),
+    });
+    // التغيير
+    if change > 0 {
+        let blinding = Scalar::random(&mut OsRng);
+        let (range_proof, commitment) = generate_range_proof(change, &blinding);
+        let pub_view = arr_view;
+        let pub_spend = arr_spend;
+        tx_outputs.push(primitives::TransactionOutput {
+            amount_commitment: commitment.to_bytes(),
+            stealth_address: primitives::StealthAddress { public_view, public_spend: pub_spend },
+            range_proof: range_proof.to_bytes(),
+        });
+    }
+    let tx = primitives::Transaction {
+        inputs: tx_inputs,
+        outputs: tx_outputs,
+        fee,
+        extra: vec![],
+    };
+    let tx_json = serde_json::to_string(&tx).map_err(|e| format!("Failed to serialize tx: {}", e))?;
+    let url = format!("http://{}/submit_tx", node_addr);
+    let resp = reqwest::blocking::Client::new()
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body(tx_json)
+        .send()
+        .map_err(|e| format!("Failed to send tx: {}", e))?;
+    if resp.status().is_success() {
+        println!("[Wallet] Transaction sent successfully!");
+        Ok(())
+    } else {
+        Err(format!("Node rejected transaction: {}", resp.text().unwrap_or_default()))
+    }
+}
+
+fn sync_with_node(node_addr: &str, last_height: u64, my_pub_view: &[u8; 32], my_pub_spend: &[u8; 32]) -> Vec<Block> {
     let url = format!("http://{}/get_blocks?from_height={}", node_addr, last_height);
     match reqwest::blocking::get(&url) {
         Ok(resp) => {
             if resp.status().is_success() {
                 let text = resp.text().unwrap_or_default();
-                let blocks: Vec<Block> = serde_json::from_str(&text).unwrap_or_default();
-                let balance = scan_blocks_for_balance(&blocks, my_pub_view, my_pub_spend);
-                println!("[Wallet] Synced {} blocks, found balance: {}", blocks.len(), balance);
-                balance
+                let blocks: Vec<Block> = serde_json::from_str(&text).unwrap_or_else(|_| {
+                    eprintln!("[Wallet] Error: Failed to parse blocks from node response");
+                    vec![]
+                });
+                println!("[Wallet] Synced {} blocks", blocks.len());
+                blocks
             } else {
-                println!("[Wallet] Node returned error: {}", resp.status());
-                0
+                eprintln!("[Wallet] Node returned error: {}", resp.status());
+                vec![]
             }
         }
         Err(e) => {
-            println!("[Wallet] Failed to connect to node: {}", e);
-            0
+            eprintln!("[Wallet] Failed to connect to node: {}", e);
+            vec![]
         }
     }
 }
@@ -250,8 +389,20 @@ fn save_wallet(path: &Path, wallet: &WalletFile) {
 }
 
 fn load_wallet(path: &Path) -> Option<WalletFile> {
-    let data = fs::read_to_string(path).ok()?;
-    serde_json::from_str(&data).ok()
+    let data = match fs::read_to_string(path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("[Wallet] Error reading wallet file: {}", e);
+            return None;
+        }
+    };
+    match serde_json::from_str(&data) {
+        Ok(w) => Some(w),
+        Err(e) => {
+            eprintln!("[Wallet] Error parsing wallet file: {}", e);
+            None
+        }
+    }
 }
 
 fn main() {
@@ -302,22 +453,39 @@ fn main() {
         return;
     }
     if cli.balance {
-        let pub_view = hex::decode(&wallet.pub_view).unwrap();
-        let pub_spend = hex::decode(&wallet.pub_spend).unwrap();
+        let pub_view = hex::decode(&wallet.pub_view).unwrap_or_else(|_| {
+            eprintln!("[Wallet] Error: Invalid pub_view in wallet file");
+            std::process::exit(1);
+        });
+        let pub_spend = hex::decode(&wallet.pub_spend).unwrap_or_else(|_| {
+            eprintln!("[Wallet] Error: Invalid pub_spend in wallet file");
+            std::process::exit(1);
+        });
+        let priv_view = hex::decode(&wallet.priv_view).unwrap_or_else(|_| {
+            eprintln!("[Wallet] Error: Invalid priv_view in wallet file");
+            std::process::exit(1);
+        });
         let mut arr_view = [0u8; 32];
         let mut arr_spend = [0u8; 32];
+        let mut arr_priv_view = [0u8; 32];
         arr_view.copy_from_slice(&pub_view);
         arr_spend.copy_from_slice(&pub_spend);
+        arr_priv_view.copy_from_slice(&priv_view);
         let last_height = wallet.last_height;
-        let balance = sync_with_node(&cli.node, last_height, &arr_view, &arr_spend);
+        let balance = scan_blocks_for_balance(
+            &sync_with_node(&cli.node, last_height, &arr_view, &arr_spend),
+            &arr_view,
+            &arr_spend,
+            &arr_priv_view,
+        );
         println!("[Wallet] Balance: {}", balance);
-        // Save last synced height if needed
-        // ...
         return;
     }
     if let (Some(addr), Some(amount)) = (cli.send, cli.amount) {
-        // Call wallet send logic
-        println!("[Wallet] Sending {} to {}", amount, addr);
+        match send_transaction(&cli.node, &wallet, &addr, amount) {
+            Ok(_) => println!("[Wallet] Transaction sent (stub)."),
+            Err(e) => eprintln!("[Wallet] Error sending transaction: {}", e),
+        }
         return;
     }
     let args: Vec<String> = env::args().collect();
