@@ -250,6 +250,7 @@ dependencies = [
  "crossbeam-channel",
  "hex",
  "num_cpus",
+ "rand 0.8.5",
  "randomx-rs",
  "reqwest 0.11.27",
  "serde",
