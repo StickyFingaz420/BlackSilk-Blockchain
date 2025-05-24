@@ -14,7 +14,7 @@ pub unsafe fn randomx_hash(
 ) {
     // Allocate cache
     let cache = randomx_alloc_cache(flags as i32);
-    assert!(!cache.is_null(), "Failed to allocate RandomX cache");
+    assert!(!cache.is_null(), "Failed to allocate RandomX cache (Huge Pages or JIT may not be enabled!)");
     // Initialize cache with seed
     randomx_init_cache(cache, seed.as_ptr() as *const c_void, seed.len());
     // Create VM

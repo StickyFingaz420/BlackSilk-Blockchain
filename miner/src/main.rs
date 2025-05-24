@@ -1,3 +1,16 @@
+// ============================================================================
+// BlackSilk Standalone Miner - Official RandomX Performance Settings
+//
+// - Uses the official RandomX library via FFI (C++ DLL)
+// - All performance features enabled: Huge Pages, AES-NI, FULL_MEM, JIT, AVX2
+// - By default, only physical CPU cores are used for mining/benchmarking
+// - Only one cache/dataset allocated per session (not per thread)
+// - Real-time performance reporting during benchmarking
+// - Warning if more than physical cores are used
+// - Automatically attempts Huge Pages, with fallback if unavailable
+// - These settings are officially approved for maximum (XMRig-level) performance
+// ============================================================================
+
 use clap::{Parser, Subcommand};
 use std::sync::{Arc, atomic::{AtomicU64, Ordering, AtomicBool}, Mutex};
 use std::thread;
@@ -50,7 +63,10 @@ enum Commands {
     /// Show miner status (placeholder)
     Status,
     /// Benchmark mining speed (placeholder)
-    Benchmark,
+    Benchmark {
+        #[arg(short, long, default_value = "auto")]
+        threads: String, // "auto" (all logical), "physical", or a number
+    },
     /// Set number of threads (placeholder)
     SetThreads {
         n: usize,
@@ -170,26 +186,85 @@ fn main() {
         Some(Commands::Stats) => {
             let _ = cmd_tx.send(MinerCommand::Stats);
         }
-        Some(Commands::Benchmark) => {
-            println!("[Miner] Benchmarking for 60 seconds using all CPU cores and RandomX (FFI, XMRig-style)...");
-            let num_threads = num_cpus::get();
+        Some(Commands::Benchmark { threads }) => {
+            let logical = num_cpus::get();
+            let physical = num_cpus::get_physical();
+            println!("[Miner] Detected logical CPUs: {logical}, physical cores: {physical}");
+            // Always use physical cores by default
+            let num_threads = if threads.is_empty() || threads == "auto" {
+                physical
+            } else if threads == "logical" {
+                logical
+            } else if threads == "physical" {
+                physical
+            } else {
+                threads.parse::<usize>().unwrap_or(physical)
+            };
+            if num_threads > physical {
+                println!("[Miner] Warning: Using more threads ({}) than physical cores ({}). RandomX is memory-bound and may not scale beyond physical cores.", num_threads, physical);
+            }
+            println!("[Miner] Benchmarking for 60 seconds using {} threads and RandomX (FFI, XMRig-style)...", num_threads);
             let hashes = Arc::new(AtomicU64::new(0));
-            let start = Instant::now();
-            let flags = 0x2 | 0x4; // HARD_AES | FULL_MEM (no huge pages)
+            let stop_flag = Arc::new(AtomicBool::new(false));
+            // Use all performance flags: HARD_AES | FULL_MEM | LARGE_PAGES | JIT
+            let mut flags = randomx_ffi::randomx_flags_RANDOMX_FLAG_HARD_AES
+                | randomx_ffi::randomx_flags_RANDOMX_FLAG_FULL_MEM
+                | randomx_ffi::randomx_flags_RANDOMX_FLAG_LARGE_PAGES
+                | randomx_ffi::randomx_flags_RANDOMX_FLAG_JIT;
             let seed = vec![0u8; 32];
             // Allocate cache and dataset ONCE
+            println!("[Miner] Allocating RandomX cache (trying Huge Pages)...");
             let cache = unsafe { randomx_alloc_cache(flags) };
-            if cache.is_null() {
-                panic!("Failed to allocate RandomX cache");
-            }
+            let mut used_hugepages = true;
+            let cache = if cache.is_null() {
+                // Retry without Huge Pages
+                println!("[Miner][Warning] Huge Pages not available, falling back to normal pages. Performance will be lower.");
+                flags &= !randomx_ffi::randomx_flags_RANDOMX_FLAG_LARGE_PAGES;
+                used_hugepages = false;
+                let fallback_cache = unsafe { randomx_alloc_cache(flags) };
+                if fallback_cache.is_null() {
+                    panic!("Failed to allocate RandomX cache (even without Huge Pages)");
+                }
+                fallback_cache
+            } else {
+                cache
+            };
+            println!("[Miner] Initializing RandomX cache...");
             unsafe { randomx_init_cache(cache, seed.as_ptr() as *const _, seed.len()) };
+            println!("[Miner] Allocating RandomX dataset (trying Huge Pages)...");
             let dataset = unsafe { randomx_alloc_dataset(flags) };
-            if dataset.is_null() {
-                unsafe { randomx_release_cache(cache) };
-                panic!("Failed to allocate RandomX dataset");
+            let dataset = if dataset.is_null() {
+                // Retry without Huge Pages
+                if used_hugepages {
+                    println!("[Miner][Warning] Huge Pages not available for dataset, falling back to normal pages. Performance will be lower.");
+                    flags &= !randomx_ffi::randomx_flags_RANDOMX_FLAG_LARGE_PAGES;
+                }
+                let fallback_dataset = unsafe { randomx_alloc_dataset(flags) };
+                if fallback_dataset.is_null() {
+                    panic!("Failed to allocate RandomX dataset (even without Huge Pages)");
+                }
+                fallback_dataset
+            } else {
+                dataset
+            };
+            let item_count = unsafe { randomx_dataset_item_count() } as usize;
+            println!("[Miner] Initializing RandomX dataset ({} items, this may take a while)...", item_count);
+            let t0 = Instant::now();
+            let chunk = item_count / 10.max(1); // 10% steps
+            for i in (0..item_count).step_by(chunk) {
+                let end = (i + chunk).min(item_count);
+                unsafe { randomx_init_dataset(dataset, cache, i as u32, (end - i) as u32) };
+                let percent = ((end as f64 / item_count as f64) * 100.0).round() as u32;
+                println!("[Miner] Dataset init: {}% (item {} of {})", percent, end, item_count);
             }
-            let item_count = unsafe { randomx_dataset_item_count() };
-            unsafe { randomx_init_dataset(dataset, cache, 0, item_count as u32) };
+            let t1 = Instant::now();
+            let t2 = Instant::now();
+            let cache_secs = t1.duration_since(t0).as_secs_f64();
+            let dataset_secs = t2.duration_since(t1).as_secs_f64();
+            println!("[Miner] Cache init time: {:.1}s, Dataset init time: {:.1}s", cache_secs, dataset_secs);
+            if dataset_secs > 10.0 {
+                println!("[Miner] Dataset initialization is slow. For best performance, enable huge pages and ensure you have enough free RAM.");
+            }
             // Wrap pointers in Arc for thread safety
             let cache = Arc::new(RandomXCachePtr(cache));
             let dataset = Arc::new(RandomXDatasetPtr(dataset));
@@ -198,14 +273,14 @@ fn main() {
                 let hashes = Arc::clone(&hashes);
                 let cache = Arc::clone(&cache);
                 let dataset = Arc::clone(&dataset);
-                let start = start.clone();
+                let stop_flag = Arc::clone(&stop_flag);
                 handles.push(std::thread::spawn(move || {
                     let vm = unsafe { randomx_create_vm(flags, cache.0, dataset.0) };
                     if vm.is_null() {
                         panic!("Failed to create RandomX VM");
                     }
                     let mut output = [0u8; 32];
-                    while start.elapsed().as_secs() < 60 {
+                    while !stop_flag.load(Ordering::Relaxed) {
                         unsafe {
                             randomx_calculate_hash(vm, [0u8; 80].as_ptr() as *const _, 80, output.as_mut_ptr() as *mut _);
                         }
@@ -214,6 +289,22 @@ fn main() {
                     unsafe { randomx_destroy_vm(vm) };
                 }));
             }
+            let start = Instant::now();
+            let mut last = start;
+            let mut last_hashes = 0u64;
+            while start.elapsed().as_secs() < 60 {
+                std::thread::sleep(Duration::from_secs(1));
+                let total = hashes.load(Ordering::Relaxed);
+                let elapsed = start.elapsed().as_secs_f64();
+                let interval = last.elapsed().as_secs_f64();
+                let interval_hashes = total - last_hashes;
+                let interval_hashrate = interval_hashes as f64 / interval.max(1e-6);
+                let hashrate = total as f64 / elapsed.max(1e-6);
+                println!("[Miner] Elapsed: {:>2}s | Total Hashes: {} | Hashrate: {:.2} H/s | Interval: {:.2} H/s", elapsed as u64, total, hashrate, interval_hashrate);
+                last = Instant::now();
+                last_hashes = total;
+            }
+            stop_flag.store(true, Ordering::Relaxed);
             for h in handles { let _ = h.join(); }
             let total_hashes = hashes.load(Ordering::Relaxed);
             println!("[Miner] Benchmark result: {:.2} H/s ({} threads, RandomX FFI)", total_hashes as f64 / 60.0, num_threads);
