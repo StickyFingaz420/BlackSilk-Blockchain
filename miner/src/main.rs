@@ -20,6 +20,7 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 mod randomx_ffi;
 mod randomx_wrapper;
+mod randomx_dll_check;
 // Do not import randomx_hash here to avoid panic in benchmark
 // Import all required RandomX FFI functions
 use crate::randomx_ffi::{
@@ -138,6 +139,7 @@ unsafe impl Send for RandomXVmPtr {}
 unsafe impl Sync for RandomXVmPtr {}
 
 fn main() {
+    randomx_dll_check::check_randomx_dll();
     let mut cli = Cli::parse();
     // Automatically use all physical CPU threads if --threads is not set by user
     if cli.threads == 1 {
