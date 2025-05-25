@@ -483,12 +483,11 @@ fn try_memory_map_dataset(size: usize) -> Option<*mut std::ffi::c_void> {
     use winapi::um::handleapi::INVALID_HANDLE_VALUE;
     use winapi::um::winnt::{PAGE_READWRITE};
     use winapi::shared::minwindef::DWORD;
-    use winapi::um::winbase::SEC_COMMIT;
     unsafe {
         let mapping = CreateFileMappingW(
             INVALID_HANDLE_VALUE,
             null_mut(),
-            PAGE_READWRITE | SEC_COMMIT,
+            PAGE_READWRITE,
             (size >> 32) as DWORD,
             (size & 0xFFFFFFFF) as DWORD,
             null_mut(),
@@ -500,7 +499,7 @@ fn try_memory_map_dataset(size: usize) -> Option<*mut std::ffi::c_void> {
         if view.is_null() {
             return None;
         }
-        Some(view)
+        Some(view as *mut std::ffi::c_void)
     }
 }
 #[cfg(not(target_os = "windows"))]

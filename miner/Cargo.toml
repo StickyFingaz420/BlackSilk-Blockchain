@@ -22,4 +22,4 @@ hex = "0.4"
 num_cpus = "1.16"
 rand = "0.8"
 rayon = "1.7"
-winapi = { version = "0.3", features = ["libloaderapi"] }
+winapi = { version = "0.3", features = ["libloaderapi", "memoryapi", "handleapi", "winbase"] }
