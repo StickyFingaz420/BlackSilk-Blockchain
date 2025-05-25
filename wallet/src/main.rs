@@ -350,26 +350,36 @@ fn send_transaction(node_addr: &str, wallet: &WalletFile, to_address: &str, amou
 
 fn sync_with_node(node_addr: &str, last_height: u64, my_pub_view: &[u8; 32], my_pub_spend: &[u8; 32]) -> Vec<Block> {
     let url = format!("http://{}/get_blocks?from_height={}", node_addr, last_height);
-    match reqwest::blocking::get(&url) {
-        Ok(resp) => {
-            if resp.status().is_success() {
-                let text = resp.text().unwrap_or_default();
-                let blocks: Vec<Block> = serde_json::from_str(&text).unwrap_or_else(|_| {
-                    eprintln!("[Wallet] Error: Failed to parse blocks from node response");
-                    vec![]
-                });
-                println!("[Wallet] Synced {} blocks", blocks.len());
-                blocks
-            } else {
-                eprintln!("[Wallet] Node returned error: {}", resp.status());
-                vec![]
+    let mut retries = 3;
+
+    while retries > 0 {
+        match reqwest::blocking::get(&url) {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    let text = resp.text().unwrap_or_default();
+                    let blocks: Vec<Block> = serde_json::from_str(&text).unwrap_or_else(|_| {
+                        eprintln!("[Wallet] Error: Failed to parse blocks from node response");
+                        vec![]
+                    });
+                    println!("[Wallet] Synced {} blocks", blocks.len());
+                    return blocks;
+                } else {
+                    eprintln!("[Wallet] Node returned error: {}", resp.status());
+                }
+            }
+            Err(e) => {
+                eprintln!("[Wallet] Failed to connect to node: {}", e);
             }
         }
-        Err(e) => {
-            eprintln!("[Wallet] Failed to connect to node: {}", e);
-            vec![]
+        retries -= 1;
+        if retries > 0 {
+            println!("[Wallet] Retrying... ({} attempts left)", retries);
+            std::thread::sleep(std::time::Duration::from_secs(2));
         }
     }
+
+    eprintln!("[Wallet] All attempts to connect to the node failed.");
+    vec![]
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]

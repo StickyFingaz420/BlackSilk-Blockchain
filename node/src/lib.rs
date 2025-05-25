@@ -561,57 +561,31 @@ pub fn connect_to_peer(addr: &str) {
         println!("[Privacy] Connection to non-Tor/I2P address blocked: {}", addr);
         return;
     }
-    match TcpStream::connect(addr) {
-        Ok(mut stream) => {
-            println!("[P2P] Connected to peer {}", addr);
-            let version = P2PMessage::Version { version: 1, node: "BlackSilkNode".to_string() };
-            let _ = send_message(&mut stream, &version);
-            loop {
-                match read_message(&mut stream) {
-                    Some(msg) => {
-                        println!("[P2P] Received: {:?}", msg);
-                        match msg {
-                            P2PMessage::Ping => { let _ = send_message(&mut stream, &P2PMessage::Pong); },
-                            P2PMessage::Pong => {},
-                            P2PMessage::Version { .. } => {},
-                            P2PMessage::Block(block) => {
-                                println!("[P2P] Received block: height {}", block.header.height);
-                                broadcast_message(&P2PMessage::Block(block));
-                            },
-                            P2PMessage::Transaction(tx) => {
-                                println!("[P2P] Received transaction");
-                                broadcast_message(&P2PMessage::Transaction(tx));
-                            },
-                            P2PMessage::PeerList(peers) => {
-                                println!("[P2P] Received peer list: {:?}", peers);
-                            },
-                            P2PMessage::GetBlocks { from_height } => {
-                                println!("[P2P] Sync request for blocks from height {}", from_height);
-                                // TODO: Handle block synchronization
-                            },
-                            P2PMessage::Blocks(blocks) => {
-                                println!("[P2P] Received blocks: {:?}", blocks);
-                                // TODO: Handle received blocks
-                            },
-                            P2PMessage::GetMempool => {
-                                let mempool = get_mempool();
-                                let _ = send_message(&mut stream, &P2PMessage::Mempool(mempool));
-                            },
-                            P2PMessage::Mempool(transactions) => {
-                                println!("[P2P] Received mempool transactions: {:?}", transactions);
-                                // TODO: Handle received mempool transactions
-                            },
-                        }
-                    }
-                    None => {
-                        println!("[P2P] Disconnected from peer");
-                        break;
-                    }
+
+    let mut retries = 3;
+
+    while retries > 0 {
+        match TcpStream::connect(addr) {
+            Ok(mut stream) => {
+                println!("[P2P] Connected to peer {}", addr);
+                let version = P2PMessage::Version { version: 1, node: "BlackSilkNode".to_string() };
+                if let Err(e) = send_message(&mut stream, &version) {
+                    eprintln!("[P2P] Failed to send version message: {}", e);
                 }
+                return;
+            }
+            Err(e) => {
+                eprintln!("[P2P] Failed to connect to {}: {}", addr, e);
             }
         }
-        Err(e) => println!("[P2P] Failed to connect to {}: {}", addr, e),
+        retries -= 1;
+        if retries > 0 {
+            println!("[P2P] Retrying connection... ({} attempts left)", retries);
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
     }
+
+    println!("[P2P] All attempts to connect to peer {} failed.", addr);
 }
 
 pub fn start_p2p_server(port: u16) {
