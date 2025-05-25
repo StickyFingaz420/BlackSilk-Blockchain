@@ -2,7 +2,7 @@
 // Block rewards and emission schedule are enforced by the consensus layer (see node/src/lib.rs EmissionSchedule).
 // No premine, no tail emission; all coins are mined, and miners receive only fees after the 21M BLK cap.
 
-use primitives::{Block, BlockHeader, Pow};
+use crate::primitives::{Block, BlockHeader, Pow};
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 

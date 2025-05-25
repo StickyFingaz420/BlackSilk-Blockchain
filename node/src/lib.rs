@@ -12,6 +12,8 @@
 #[macro_use]
 extern crate lazy_static;
 
+pub mod http_server;
+
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
 }
@@ -543,8 +545,6 @@ pub fn validate_block(block: &Block) -> bool {
 mod network {
     pub mod privacy;
 }
-pub mod mining;
-pub mod escrow;
 use network::privacy::{PrivacyConfig, is_onion_address, is_i2p_address};
 // use once_cell::sync::OnceCell; (already imported above)
 
@@ -645,6 +645,16 @@ pub fn start_node_with_args(port: u16, connect_addr: Option<String>, data_dir: O
         connect_to_peer(&addr);
     }
     start_p2p_server(port);
+    
+    // Start HTTP API server on port + 1000 (e.g., P2P on 1776, HTTP on 2776)
+    let http_port = port + 1000;
+    println!("[BlackSilk Node] Starting HTTP API server on port {}", http_port);
+    std::thread::spawn(move || {
+        if let Err(e) = http_server::start_http_server_sync(http_port) {
+            eprintln!("[HTTP Server] Error: {}", e);
+        }
+    });
+    
     // TODO: Networking, consensus, mining, إلخ
 }
 

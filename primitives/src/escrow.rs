@@ -2,9 +2,8 @@
 
 use crate::types::Hash;
 use std::collections::HashSet;
-use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EscrowStatus {
     Created,
     Funded,
@@ -15,13 +14,13 @@ pub enum EscrowStatus {
     Resolved,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DisputeVote {
     pub voter: Hash, // public key hash
     pub vote: bool, // true = favor buyer, false = favor seller
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EscrowContract {
     pub contract_id: Hash,
     pub buyer: Hash,    // Public key hash
