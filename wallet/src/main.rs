@@ -348,6 +348,12 @@ fn send_transaction(node_addr: &str, wallet: &WalletFile, to_address: &str, amou
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct GetBlocksResponse {
+    blocks: Vec<Block>,
+    total_height: u64,
+}
+
 fn sync_with_node(node_addr: &str, last_height: u64, my_pub_view: &[u8; 32], my_pub_spend: &[u8; 32]) -> Vec<Block> {
     let url = format!("http://{}/get_blocks?from_height={}", node_addr, last_height);
     let mut retries = 3;
@@ -357,10 +363,19 @@ fn sync_with_node(node_addr: &str, last_height: u64, my_pub_view: &[u8; 32], my_
             Ok(resp) => {
                 if resp.status().is_success() {
                     let text = resp.text().unwrap_or_default();
-                    let blocks: Vec<Block> = serde_json::from_str(&text).unwrap_or_else(|_| {
+                    
+                    // Try to parse as GetBlocksResponse first (new format)
+                    let blocks: Vec<Block> = if let Ok(response) = serde_json::from_str::<GetBlocksResponse>(&text) {
+                        response.blocks
+                    } else if let Ok(blocks) = serde_json::from_str::<Vec<Block>>(&text) {
+                        // Fallback to old format (direct array)
+                        blocks
+                    } else {
                         eprintln!("[Wallet] Error: Failed to parse blocks from node response");
+                        eprintln!("[Wallet] Response: {}", text);
                         vec![]
-                    });
+                    };
+                    
                     println!("[Wallet] Synced {} blocks", blocks.len());
                     return blocks;
                 } else {

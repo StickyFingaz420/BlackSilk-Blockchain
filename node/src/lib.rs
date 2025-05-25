@@ -644,7 +644,10 @@ pub fn start_node_with_args(port: u16, connect_addr: Option<String>, data_dir: O
     if let Some(addr) = connect_addr {
         connect_to_peer(&addr);
     }
-    start_p2p_server(port);
+    // Start P2P server in a separate thread so it doesn't block
+    std::thread::spawn(move || {
+        start_p2p_server(port);
+    });
     
     // Start HTTP API server on port + 1000 (e.g., P2P on 1776, HTTP on 2776)
     let http_port = port + 1000;
@@ -654,6 +657,11 @@ pub fn start_node_with_args(port: u16, connect_addr: Option<String>, data_dir: O
             eprintln!("[HTTP Server] Error: {}", e);
         }
     });
+    
+    // Keep the main thread alive
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
     
     // TODO: Networking, consensus, mining, إلخ
 }

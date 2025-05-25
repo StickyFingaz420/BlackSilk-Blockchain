@@ -16,10 +16,8 @@ tokio = { version = "1.32", features = ["full"] }
 reqwest = { version = "0.11", features = ["json", "blocking"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-randomx-rs = "0.4"
 crossbeam-channel = "0.5"
 hex = "0.4"
 num_cpus = "1.16"
 rand = "0.8"
 rayon = "1.7"
-winapi = { version = "0.3", features = ["libloaderapi", "memoryapi", "handleapi", "winbase"] }

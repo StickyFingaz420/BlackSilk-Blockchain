@@ -1,6 +1,4 @@
 //! Runtime check for RandomX DLL loading and symbol resolution
-use std::ffi::CString;
-use std::ptr;
 
 #[cfg(target_os = "windows")]
 pub fn check_randomx_dll() {

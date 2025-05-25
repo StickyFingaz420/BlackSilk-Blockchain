@@ -43,6 +43,35 @@ pub struct NodeInfoResponse {
     pub difficulty: u64,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct GetBlockTemplateRequest {
+    pub address: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetBlockTemplateResponse {
+    pub header: Vec<u8>,
+    pub difficulty: u64,
+    pub seed: Vec<u8>,
+    pub coinbase_address: String,
+    pub height: u64,
+    pub prev_hash: Vec<u8>,
+    pub timestamp: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SubmitBlockRequest {
+    pub header: Vec<u8>,
+    pub nonce: u64,
+    pub hash: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SubmitBlockResponse {
+    pub success: bool,
+    pub message: String,
+}
+
 /// Simple HTTP server implementation using std library
 pub async fn start_http_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     use std::net::{TcpListener, TcpStream};
@@ -160,6 +189,12 @@ fn handle_http_request(mut stream: TcpStream) -> Result<(), Box<dyn std::error::
         ("GET", "/health") => {
             send_json_response(&mut stream, 200, &serde_json::json!({"status": "ok"}))?;
         }
+        ("POST", "/mining/get_block_template") => {
+            handle_get_block_template(&mut stream, &body)?;
+        }
+        ("POST", "/mining/submit_block") => {
+            handle_submit_block(&mut stream, &body)?;
+        }
         _ => {
             send_error_response(&mut stream, 404, "Not Found")?;
         }
@@ -184,12 +219,21 @@ fn handle_get_blocks(stream: &mut TcpStream, path: &str) -> Result<(), Box<dyn s
         .cloned()
         .collect();
     
-    let response = GetBlocksResponse {
-        total_height: chain.blocks.len() as u64,
-        blocks,
-    };
+    // Check if client expects simple format (for wallet compatibility)
+    let use_simple_format = path.contains("simple=true") || path.contains("wallet=true");
     
-    send_json_response(stream, 200, &response)?;
+    if use_simple_format {
+        // Return just the blocks array for wallet compatibility
+        send_json_response(stream, 200, &blocks)?;
+    } else {
+        // Return full response with metadata
+        let response = GetBlocksResponse {
+            total_height: chain.blocks.len() as u64,
+            blocks,
+        };
+        send_json_response(stream, 200, &response)?;
+    }
+    
     Ok(())
 }
 
@@ -321,4 +365,94 @@ fn parse_query_param(query: &str, param: &str) -> Option<u64> {
         }
     }
     None
+}
+
+fn handle_get_block_template(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    match serde_json::from_slice::<GetBlockTemplateRequest>(body) {
+        Ok(req) => {
+            let chain = CHAIN.lock().unwrap();
+            let mempool = MEMPOOL.lock().unwrap();
+            
+            // Get the latest block
+            let prev_block = chain.blocks.back().unwrap();
+            let height = prev_block.header.height + 1;
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            
+            // Create block template with mempool transactions
+            let header_data = format!("{}:{}:{}:{}", 
+                height, 
+                hex::encode(&prev_block.header.pow.hash), 
+                timestamp, 
+                req.address
+            );
+            
+            // Generate RandomX seed from previous block hash
+            let seed = prev_block.header.pow.hash.to_vec();
+            
+            let response = GetBlockTemplateResponse {
+                header: header_data.as_bytes().to_vec(),
+                difficulty: 1000, // Simple difficulty for testnet
+                seed,
+                coinbase_address: req.address,
+                height,
+                prev_hash: prev_block.header.pow.hash.to_vec(),
+                timestamp,
+            };
+            
+            send_json_response(stream, 200, &response)?;
+        }
+        Err(e) => {
+            let response = serde_json::json!({
+                "success": false,
+                "message": format!("Invalid request format: {}", e)
+            });
+            send_json_response(stream, 400, &response)?;
+        }
+    }
+    
+    Ok(())
+}
+
+fn handle_submit_block(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    match serde_json::from_slice::<SubmitBlockRequest>(body) {
+        Ok(req) => {
+            // Validate the submitted block
+            let hash_hex = hex::encode(&req.hash);
+            
+            // Check if hash meets difficulty (simple check for leading zeros)
+            let difficulty_target = 3; // Require 3 leading zero bytes for testnet
+            let meets_difficulty = req.hash.iter().take(difficulty_target).all(|&b| b == 0);
+            
+            if meets_difficulty {
+                // For now, just acknowledge the block submission
+                // In a full implementation, we would add this block to the chain
+                println!("[Mining] Block submitted successfully! Hash: {}", hash_hex);
+                println!("[Mining] Nonce: {}", req.nonce);
+                
+                let response = SubmitBlockResponse {
+                    success: true,
+                    message: format!("Block accepted with hash: {}", hash_hex),
+                };
+                send_json_response(stream, 200, &response)?;
+            } else {
+                let response = SubmitBlockResponse {
+                    success: false,
+                    message: "Block does not meet difficulty target".to_string(),
+                };
+                send_json_response(stream, 400, &response)?;
+            }
+        }
+        Err(e) => {
+            let response = SubmitBlockResponse {
+                success: false,
+                message: format!("Invalid block format: {}", e),
+            };
+            send_json_response(stream, 400, &response)?;
+        }
+    }
+    
+    Ok(())
 }

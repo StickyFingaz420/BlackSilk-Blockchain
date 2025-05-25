@@ -13,11 +13,13 @@
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use std::sync::{Arc, atomic::{AtomicU64, Ordering, AtomicBool}, Mutex};
+use std::sync::{atomic::{AtomicBool, AtomicU64}, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
+use std::io::Write;
+use rayon::prelude::*;
 mod randomx_ffi;
 mod randomx_wrapper;
 mod randomx_dll_check;
@@ -35,12 +37,7 @@ use crate::randomx_ffi::{
     randomx_destroy_vm,
     randomx_calculate_hash,
 };
-use std::sync::mpsc::{channel, Sender, Receiver};
-use std::net::TcpStream;
-use std::io::{BufReader, Write, BufRead};
 use std::arch::is_x86_feature_detected;
-use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
 
 /// BlackSilk Standalone Miner CLI
 #[derive(Parser, Debug)]
@@ -61,10 +58,6 @@ pub struct Cli {
     /// Data directory for miner state
     #[clap(long, default_value = "./miner_data", value_name = "DIR")]
     pub data_dir: PathBuf,
-
-    /// Print version info and exit
-    #[clap(long)]
-    pub version: bool,
 
     #[clap(subcommand)]
     pub command: Option<Commands>,
@@ -147,10 +140,6 @@ fn main() {
         cli.threads = physical;
         println!("[Miner] Auto-detected physical threads: {}", physical);
     }
-    if cli.version {
-        println!("BlackSilk Miner version {}", env!("CARGO_PKG_VERSION"));
-        return;
-    }
     match &cli.command {
         Some(Commands::Benchmark) => {
             run_benchmark();
@@ -158,12 +147,17 @@ fn main() {
         },
         _ => {}
     }
-    println!("[Miner] Connecting to node: {}", cli.node);
+    
+    // Start mining
     if let Some(addr) = cli.address.as_ref() {
+        println!("[Miner] Connecting to node: {}", cli.node);
         println!("[Miner] Mining to address: {}", addr);
+        println!("[Miner] Threads: {}", cli.threads);
+        start_mining(&cli);
+    } else {
+        println!("[Miner] Error: Mining address required. Use --address <ADDR>");
+        println!("[Miner] Example: --address BlackSilk1234567890abcdef");
     }
-    println!("[Miner] Threads: {}", cli.threads);
-    // TODO: Insert mining logic here, using cli.node, cli.address, cli.threads, cli.data_dir
 }
 
 fn try_randomx_hash(flags: u32, seed: &[u8], input: &[u8], output: &mut [u8]) -> bool {
@@ -279,21 +273,13 @@ fn run_benchmark() {
                             let mut local_input = input;
                             let mut local_output = output;
                             while !stop.load(Ordering::Relaxed) {
-                                unsafe {
-                                    randomx_ffi::randomx_calculate_hash_first(
-                                        vm,
-                                        local_input.as_ptr() as *const std::ffi::c_void,
-                                        local_input.len(),
-                                    );
-                                }
-                                local_input[0] = local_input[0].wrapping_add(1);
-                                for _batch in 0..100 {
+                                for batch in 0..100 {
                                     for _ in 0..10 {
                                         if stop.load(Ordering::Relaxed) {
                                             break;
                                         }
                                         unsafe {
-                                            randomx_ffi::randomx_calculate_hash_next(
+                                            randomx_calculate_hash(
                                                 vm,
                                                 local_input.as_ptr() as *const std::ffi::c_void,
                                                 local_input.len(),
@@ -306,12 +292,6 @@ fn run_benchmark() {
                                     if stop.load(Ordering::Relaxed) {
                                         break;
                                     }
-                                }
-                                unsafe {
-                                    randomx_ffi::randomx_calculate_hash_last(
-                                        vm,
-                                        local_output.as_mut_ptr() as *mut std::ffi::c_void,
-                                    );
                                 }
                                 total_hashes.fetch_add(1, Ordering::Relaxed);
                             }
@@ -505,4 +485,260 @@ fn try_memory_map_dataset(size: usize) -> Option<*mut std::ffi::c_void> {
 #[cfg(not(target_os = "windows"))]
 fn try_memory_map_dataset(_size: usize) -> Option<*mut std::ffi::c_void> {
     None
+}
+
+fn start_mining(cli: &Cli) {
+    let client = Client::new();
+    let node_url = format!("http://{}", cli.node.replace("127.0.0.1:8333", "127.0.0.1:2776"));
+    let address = cli.address.as_ref().unwrap();
+    
+    println!("[Mining] Initializing RandomX for mining...");
+    
+    // Initialize RandomX with safe performance settings for mining
+    let safe_flags = 2; // HARD_AES only (light mode, no dataset required)
+    
+    unsafe {
+        let cache = randomx_alloc_cache(safe_flags as i32);
+        if cache.is_null() {
+            eprintln!("[Mining] Failed to allocate RandomX cache in safe mode");
+            return;
+        }
+        println!("[Mining] RandomX cache allocated in safe mode");
+        
+        // Start mining loop
+        let mut current_seed = Vec::new();
+        let mut template: Option<BlockTemplate> = None;
+        let mut template_time = std::time::Instant::now();
+        
+        loop {
+            // Get new block template every 30 seconds or if we don't have one
+            if template.is_none() || template_time.elapsed() > Duration::from_secs(30) {
+                match get_block_template(&client, &node_url, address) {
+                    Ok(new_template) => {
+                        let seed_changed = current_seed != new_template.seed;
+                        
+                        if seed_changed {
+                            println!("[Mining] New seed detected for next mining round");
+                            current_seed = new_template.seed.clone();
+                        }
+                        
+                        template = Some(new_template);
+                        template_time = std::time::Instant::now();
+                        println!("[Mining] New block template received");
+                    }
+                    Err(e) => {
+                        eprintln!("[Mining] Failed to get block template: {}", e);
+                        thread::sleep(Duration::from_secs(5));
+                        continue;
+                    }
+                }
+            }
+            
+            if let Some(ref tmpl) = template {
+                // Mine the block (each thread creates its own VMs)
+                if let Some(result) = mine_block(tmpl, &[], cli.threads) {
+                    // Submit the block
+                    match submit_block(&client, &node_url, &result) {
+                        Ok(_) => {
+                            println!("[Mining] ✅ Block submitted successfully!");
+                            template = None; // Force getting new template
+                        }
+                        Err(e) => {
+                            eprintln!("[Mining] Failed to submit block: {}", e);
+                        }
+                    }
+                } else {
+                    // No solution found in this round, get new template
+                    template = None;
+                }
+            }
+            
+            thread::sleep(Duration::from_millis(100));
+        }
+        
+        // Cleanup
+        randomx_release_cache(cache);
+    }
+}
+
+fn get_block_template(client: &Client, node_url: &str, address: &str) -> Result<BlockTemplate, Box<dyn std::error::Error>> {
+    let request = BlockTemplateRequest {
+        address: address.to_string(),
+    };
+    
+    let response = client
+        .post(&format!("{}/mining/get_block_template", node_url))
+        .json(&request)
+        .send()?;
+    
+    if !response.status().is_success() {
+        return Err(format!("Node returned error: {}", response.status()).into());
+    }
+    
+    // Parse the response which has additional fields
+    #[derive(Deserialize)]
+    struct NodeBlockTemplate {
+        header: Vec<u8>,
+        difficulty: u64,
+        seed: Vec<u8>,
+        coinbase_address: String,
+        height: u64,
+        prev_hash: Vec<u8>,
+        timestamp: u64,
+    }
+    
+    let node_template: NodeBlockTemplate = response.json()?;
+    
+    // Convert to our format
+    let template = BlockTemplate {
+        header: node_template.header,
+        difficulty: node_template.difficulty,
+        seed: node_template.seed,
+        coinbase_address: node_template.coinbase_address,
+    };
+    
+    Ok(template)
+}
+
+fn mine_block(template: &BlockTemplate, _vms: &[*mut crate::randomx_ffi::randomx_vm], thread_count: usize) -> Option<SubmitBlockRequest> {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+    
+    let found = Arc::new(AtomicBool::new(false));
+    let nonce_counter = Arc::new(AtomicU64::new(0));
+    let start_time = std::time::Instant::now();
+    let mut handles = Vec::new();
+    let (tx, rx) = std::sync::mpsc::channel();
+    
+    println!("[Mining] Starting mining with {} threads (difficulty: {})", thread_count, template.difficulty);
+    
+    // Initialize RandomX for mining threads
+    let safe_flags = 2; // HARD_AES only (light mode)
+    
+    for thread_id in 0..thread_count {
+        let found_clone = found.clone();
+        let nonce_counter_clone = nonce_counter.clone();
+        let template_clone = template.clone();
+        let tx_clone = tx.clone();
+        
+        let handle = thread::spawn(move || {
+            // Each thread creates its own RandomX VM
+            unsafe {
+                // Use safe mode flags for mining in constrained environments
+                let safe_flags = 2; // HARD_AES only (no FULL_MEM to avoid dataset requirement)
+                let cache = randomx_alloc_cache(safe_flags as i32);
+                if cache.is_null() {
+                    eprintln!("[Mining Thread {}] Failed to allocate cache", thread_id);
+                    return;
+                }
+                
+                randomx_init_cache(cache, template_clone.seed.as_ptr() as *const std::ffi::c_void, template_clone.seed.len());
+                
+                // Create VM without dataset (light mode)
+                let vm = randomx_create_vm(safe_flags as i32, cache, std::ptr::null_mut());
+                if vm.is_null() {
+                    randomx_release_cache(cache);
+                    eprintln!("[Mining Thread {}] Failed to create VM", thread_id);
+                    return;
+                }
+                
+                let mut hash_output = [0u8; 32];
+                let thread_offset = thread_id as u64 * 1000000;
+                
+                while !found_clone.load(Ordering::Relaxed) {
+                    let nonce = nonce_counter_clone.fetch_add(1, Ordering::Relaxed) + thread_offset;
+                    
+                    // Create input for hashing (header + nonce)
+                    let mut input = template_clone.header.clone();
+                    input.extend_from_slice(&nonce.to_le_bytes());
+                    
+                    // Calculate RandomX hash
+                    randomx_calculate_hash(vm, input.as_ptr() as *const std::ffi::c_void, input.len(), hash_output.as_mut_ptr() as *mut std::ffi::c_void);
+                    
+                    // Check if hash meets difficulty (simple check for leading zeros)
+                    let difficulty_target = 3; // Require 3 leading zero bytes
+                    let meets_difficulty = hash_output.iter().take(difficulty_target).all(|&b| b == 0);
+                    
+                    if meets_difficulty {
+                        found_clone.store(true, Ordering::Relaxed);
+                        let result = SubmitBlockRequest {
+                            header: template_clone.header.clone(),
+                            nonce,
+                            hash: hash_output.to_vec(),
+                        };
+                        let _ = tx_clone.send(result);
+                        break;
+                    }
+                    
+                    // Print progress every 10000 hashes for thread 0
+                    if thread_id == 0 && nonce % 10000 == 0 {
+                        let elapsed = start_time.elapsed().as_secs();
+                        if elapsed > 0 {
+                            let total_hashes = nonce_counter_clone.load(Ordering::Relaxed) * thread_count as u64;
+                            let hashrate = total_hashes / elapsed;
+                            print!("\r[Mining] Hashrate: {} H/s | Hashes: {} | Time: {}s", hashrate, total_hashes, elapsed);
+                            std::io::stdout().flush().unwrap();
+                        }
+                    }
+                    
+                    // Timeout after 60 seconds to get fresh template
+                    if start_time.elapsed() > Duration::from_secs(60) {
+                        break;
+                    }
+                }
+                
+                // Cleanup thread resources
+                randomx_destroy_vm(vm);
+                randomx_release_cache(cache);
+            }
+        });
+        
+        handles.push(handle);
+    }
+    
+    // Wait for result or timeout
+    let result = rx.recv_timeout(Duration::from_secs(60)).ok();
+    
+    // Signal all threads to stop
+    found.store(true, Ordering::Relaxed);
+    
+    // Wait for all threads to finish
+    for handle in handles {
+        let _ = handle.join();
+    }
+    
+    if result.is_some() {
+        println!("\n[Mining] 🎉 Solution found!");
+    } else {
+        println!("\n[Mining] No solution found in this round, getting new template...");
+    }
+    
+    result
+}
+
+fn submit_block(client: &Client, node_url: &str, block: &SubmitBlockRequest) -> Result<(), Box<dyn std::error::Error>> {
+    let response = client
+        .post(&format!("{}/mining/submit_block", node_url))
+        .json(block)
+        .send()?;
+    
+    if !response.status().is_success() {
+        let error_text = response.text()?;
+        return Err(format!("Failed to submit block: {}", error_text).into());
+    }
+    
+    Ok(())
+}
+
+fn get_best_randomx_flags() -> u32 {
+    let mut flags = 0;
+    flags |= 1; // LARGE_PAGES
+    flags |= 2; // HARD_AES
+    flags |= 4; // FULL_MEM
+    flags |= 8; // JIT
+    if is_x86_feature_detected!("avx2") {
+        flags |= 64; // ARGON2_AVX2
+    }
+    flags
 }
