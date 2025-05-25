@@ -877,8 +877,10 @@ unsafe fn create_optimized_randomx_vm(cache: *mut crate::randomx_ffi::randomx_ca
 
 // Fast difficulty checking optimized for RandomX hashes (XMRig style)
 fn check_difficulty_fast(hash: &[u8; 32], difficulty: u64) -> bool {
-    // For testnet, we're using a simple leading zeros check
-    // In production, this would compare hash value against target
-    let difficulty_target = 3; // Require 3 leading zero bytes for testnet
-    hash.iter().take(difficulty_target).all(|&b| b == 0)
+    // Convert first 8 bytes of hash to u64 and compare against difficulty
+    let hash_val = u64::from_le_bytes([
+        hash[0], hash[1], hash[2], hash[3],
+        hash[4], hash[5], hash[6], hash[7]
+    ]);
+    hash_val < difficulty
 }
