@@ -33,9 +33,9 @@ pub mod config {
     pub const TAIL_EMISSION: u64 = 0;
     /// Maximum supply: 21 million BLK (in atomic units)
     pub const SUPPLY_CAP: u64 = 21_000_000 * 1_000_000;
-    // Mainnet genesis timestamp (example)
-    pub const MAINNET_GENESIS_TIMESTAMP: u64 = 1_716_150_000; // May 24, 2025
-    pub const TESTNET_GENESIS_TIMESTAMP: u64 = 1_716_150_000; // May 19, 2025
+    // Genesis timestamp for both networks
+    pub const MAINNET_GENESIS_TIMESTAMP: u64 = 528_854_400; // October 5, 1986
+    pub const TESTNET_GENESIS_TIMESTAMP: u64 = 528_854_400; // October 5, 1986
 }
 
 /// Network selection

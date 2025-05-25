@@ -394,7 +394,7 @@ fn handle_get_block_template(stream: &mut TcpStream, body: &[u8]) -> Result<(), 
             
             let response = GetBlockTemplateResponse {
                 header: header_data.as_bytes().to_vec(),
-                difficulty: 1000, // Simple difficulty for testnet
+                difficulty: 100, // Lowered difficulty for faster testnet mining
                 seed,
                 coinbase_address: req.address,
                 height,
@@ -422,9 +422,17 @@ fn handle_submit_block(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dy
             // Validate the submitted block
             let hash_hex = hex::encode(&req.hash);
             
-            // Check if hash meets difficulty (simple check for leading zeros)
-            let difficulty_target = 3; // Require 3 leading zero bytes for testnet
-            let meets_difficulty = req.hash.iter().take(difficulty_target).all(|&b| b == 0);
+            // Check if hash meets difficulty (numeric comparison)
+            let hash_val = if req.hash.len() >= 8 {
+                u64::from_le_bytes([
+                    req.hash[0], req.hash[1], req.hash[2], req.hash[3],
+                    req.hash[4], req.hash[5], req.hash[6], req.hash[7]
+                ])
+            } else {
+                u64::MAX
+            };
+            let difficulty_target = 100; // Match the template difficulty
+            let meets_difficulty = hash_val < difficulty_target;
             
             if meets_difficulty {
                 // For now, just acknowledge the block submission
