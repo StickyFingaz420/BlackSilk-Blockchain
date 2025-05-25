@@ -27,10 +27,6 @@ pub struct Cli {
     /// Logging verbosity (error, warn, info, debug, trace)
     #[arg(long, default_value = "info")]
     pub log_level: String,
-
-    /// Print version info and exit
-    #[arg(long)]
-    pub version: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -42,10 +38,7 @@ pub enum NetworkArg {
 
 fn main() {
     let cli = Cli::parse();
-    if cli.version {
-        println!("BlackSilk Node version {}", env!("CARGO_PKG_VERSION"));
-        return;
-    }
+    
     // Set up logging here if needed
     // ...
     // Start node with provided arguments

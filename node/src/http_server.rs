@@ -1,12 +1,11 @@
 //! HTTP API server for BlackSilk node
 //! Provides REST endpoints for wallets and external applications
 
-use std::convert::Infallible;
-use std::net::SocketAddr;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::net::TcpStream;
+use std::io::Write;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use sha2::Digest;
 use primitives::{Block, Transaction};
 use crate::{CHAIN, MEMPOOL, add_to_mempool, validate_transaction};
 
@@ -46,7 +45,6 @@ pub struct NodeInfoResponse {
 
 /// Simple HTTP server implementation using std library
 pub async fn start_http_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    use std::io::prelude::*;
     use std::net::{TcpListener, TcpStream};
     use std::thread;
     
@@ -74,7 +72,6 @@ pub async fn start_http_server(port: u16) -> Result<(), Box<dyn std::error::Erro
 
 /// Synchronous HTTP server startup (blocks current thread)
 pub fn start_http_server_sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    use std::io::prelude::*;
     use std::net::{TcpListener, TcpStream};
     use std::thread;
     
@@ -206,12 +203,12 @@ fn handle_submit_transaction(stream: &mut TcpStream, body: &[u8]) -> Result<(), 
                 
                 // Broadcast to P2P network
                 use crate::{broadcast_message, P2PMessage};
-                broadcast_message(&P2PMessage::Transaction(transaction));
+                broadcast_message(&P2PMessage::Transaction(transaction.clone()));
                 
                 let response = SubmitTransactionResponse {
                     success: true,
                     message: "Transaction accepted".to_string(),
-                    tx_hash: Some(hex::encode(&[0u8; 32])), // Placeholder hash
+                    tx_hash: Some("0x".to_string() + &format!("{:x}", sha2::Sha256::digest(&serde_json::to_vec(&transaction).unwrap_or_default()))),
                 };
                 send_json_response(stream, 200, &response)?;
             } else {
