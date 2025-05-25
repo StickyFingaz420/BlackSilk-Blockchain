@@ -543,6 +543,8 @@ pub fn validate_block(block: &Block) -> bool {
 mod network {
     pub mod privacy;
 }
+pub mod mining;
+pub mod escrow;
 use network::privacy::{PrivacyConfig, is_onion_address, is_i2p_address};
 // use once_cell::sync::OnceCell; (already imported above)
 

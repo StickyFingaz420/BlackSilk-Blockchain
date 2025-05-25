@@ -1,3 +1,5 @@
+mod hardware; // Hardware wallet (Ledger/Trezor) integration
+
 use std::env;
 use rand::rngs::OsRng;
 use curve25519_dalek::scalar::Scalar;
@@ -544,5 +546,4 @@ mod tests {
     }
 }
 
-mod hardware; // Hardware wallet (Ledger/Trezor) integration
 // TODO: Integrate hardware wallet flows in CLI and transaction signing
