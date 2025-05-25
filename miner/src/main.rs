@@ -475,3 +475,35 @@ fn run_benchmark() {
         }
     }
 }
+
+#[cfg(target_os = "windows")]
+fn try_memory_map_dataset(size: usize) -> Option<*mut std::ffi::c_void> {
+    use std::ptr::null_mut;
+    use winapi::um::memoryapi::{CreateFileMappingW, MapViewOfFile, FILE_MAP_ALL_ACCESS};
+    use winapi::um::handleapi::INVALID_HANDLE_VALUE;
+    use winapi::um::winnt::{PAGE_READWRITE};
+    use winapi::shared::minwindef::DWORD;
+    use winapi::um::winbase::SEC_COMMIT;
+    unsafe {
+        let mapping = CreateFileMappingW(
+            INVALID_HANDLE_VALUE,
+            null_mut(),
+            PAGE_READWRITE | SEC_COMMIT,
+            (size >> 32) as DWORD,
+            (size & 0xFFFFFFFF) as DWORD,
+            null_mut(),
+        );
+        if mapping.is_null() {
+            return None;
+        }
+        let view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, size);
+        if view.is_null() {
+            return None;
+        }
+        Some(view)
+    }
+}
+#[cfg(not(target_os = "windows"))]
+fn try_memory_map_dataset(_size: usize) -> Option<*mut std::ffi::c_void> {
+    None
+}
