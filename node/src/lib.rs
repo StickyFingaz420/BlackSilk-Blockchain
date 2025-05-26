@@ -868,7 +868,7 @@ pub fn start_node_with_args(port: u16, connect_addr: Option<String>, data_dir: O
         // مثال: std::env::set_current_dir(dir).unwrap();
     }
     println!("[BlackSilk Node] Starting {:?} node on port {} (magic: 0x{:X})", network, port, magic);
-    let chain = Chain::new_for_network(network);
+    let chain = Chain::new_for_network(network.clone());
     println!("[BlackSilk Node] Genesis block height: {}", chain.tip().header.height);
     if let Some(addr) = connect_addr {
         connect_to_peer(&addr);
@@ -878,12 +878,30 @@ pub fn start_node_with_args(port: u16, connect_addr: Option<String>, data_dir: O
         start_p2p_server(port);
     });
     
-    // Start HTTP API server on port + 1000 (e.g., P2P on 1776, HTTP on 2776)
-    let http_port = port + 1000;
+    // Wait a moment for P2P to start, then start HTTP server
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    
+    // Start HTTP API server on the proper network port
+    let network_ports = network.get_ports();
+    let http_port = network_ports.http;
     println!("[BlackSilk Node] Starting HTTP API server on port {}", http_port);
-    std::thread::spawn(move || {
-        if let Err(e) = http_server::start_http_server_sync(http_port) {
-            eprintln!("[HTTP Server] Error: {}", e);
+    
+    // Force stdout flush
+    use std::io::{self, Write};
+    io::stdout().flush().unwrap();
+    
+    // Start HTTP server in a new thread
+    let _http_handle = std::thread::spawn(move || {
+        println!("[HTTP] HTTP thread starting...");
+        io::stdout().flush().unwrap();
+        
+        match http_server::start_http_server_sync(http_port) {
+            Ok(_) => {
+                println!("[HTTP] HTTP server stopped normally");
+            }
+            Err(e) => {
+                eprintln!("[HTTP] HTTP server failed: {}", e);
+            }
         }
     });
     

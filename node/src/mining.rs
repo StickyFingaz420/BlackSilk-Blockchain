@@ -57,14 +57,21 @@ pub fn mine_block(
         header.pow.nonce = nonce;
         pre_pow[24..32].copy_from_slice(&nonce.to_le_bytes());
         
-        // Calculate RandomX hash
-        // let hash = context.vm.calculate_hash(&pre_pow)?;
-        let hash = pre_pow.clone(); // Placeholder - replace with actual hash calculation
+        // Calculate proper hash for testnet (actual RandomX would be used in production)
+        let mut hasher = Sha256::new();
+        hasher.update(&pre_pow);
+        hasher.update(nonce.to_le_bytes());
+        let hash = hasher.finalize();
         
         // Check if hash meets target
         if check_pow(&hash, target) {
             header.pow.hash.copy_from_slice(&hash);
             return Ok(());
+        }
+        
+        // Add some delay to prevent CPU overload in testnet
+        if nonce % 1000 == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
     
@@ -77,11 +84,15 @@ pub fn verify_pow(
     _context: &MiningContext,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let pre_pow = prepare_header_bytes(header);
-    // let hash = context.vm.calculate_hash(&pre_pow)?;
-    let hash = pre_pow.clone(); // Placeholder - replace with actual hash calculation
+    
+    // Calculate the same hash as mining
+    let mut hasher = Sha256::new();
+    hasher.update(&pre_pow);
+    hasher.update(header.pow.nonce.to_le_bytes());
+    let hash = hasher.finalize();
     
     // Verify hash matches stored hash
-    if hash != header.pow.hash {
+    if hash.as_slice() != header.pow.hash {
         return Ok(false);
     }
     

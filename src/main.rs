@@ -32,5 +32,6 @@ fn main() {
         println!("[CLI] Chain loaded from disk");
         return;
     }
-    node::start_node_with_port_and_connect(port, connect_addr);
+    // Use the full node startup function that includes HTTP server
+    node::start_node_with_args(port, connect_addr, None);
 }
