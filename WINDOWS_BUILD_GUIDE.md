@@ -4,7 +4,42 @@
 
 This guide helps Windows developers resolve the RandomX linking issue in the BlackSilk miner.
 
-### Quick Fix (Recommended)
+## Prerequisites
+
+1. **Visual Studio 2022** (Community, Professional, or Enterprise)
+   - Install "Desktop development with C++" workload
+   - Ensure "CMake tools for Visual Studio" is selected
+2. **Rust** (latest stable version) - Download from https://rustup.rs/
+3. **Git** - Download from https://git-scm.com/
+
+## Quick Fix - Automated (RECOMMENDED)
+
+### Option 1: PowerShell Script
+```powershell
+# Run from BlackSilk root directory in PowerShell as Administrator
+.\build_randomx_windows.ps1
+```
+
+### Option 2: Batch Script
+```cmd
+# Run from BlackSilk root directory in Command Prompt as Administrator
+build_randomx_windows.bat
+```
+
+Both scripts will automatically:
+- Detect Visual Studio 2022
+- Configure and build RandomX with optimal settings
+- Copy `randomx.lib` and `randomx.dll` to the miner directory
+- Prepare everything for Rust compilation
+
+After running either script, build the miner:
+```cmd
+cargo build --release -p blacksilk-miner
+```
+
+## Alternative: Pre-built Libraries
+
+### Quick Fix (If Automated Scripts Fail)
 
 1. **Download pre-built RandomX libraries** from the official releases:
    ```

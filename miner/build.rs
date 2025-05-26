@@ -36,9 +36,26 @@ fn setup_windows_build() {
     }
     
     if !lib_exists {
-        println!("cargo:warning=randomx.lib not found in miner directory");
-        println!("cargo:warning=Windows builds require both randomx.dll and randomx.lib");
-        println!("cargo:warning=Build RandomX using Visual Studio and copy both files to miner/");
+        println!("cargo:warning=");
+        println!("cargo:warning=❌ Windows RandomX Setup Required");
+        println!("cargo:warning=");
+        println!("cargo:warning=🚀 EASIEST SOLUTION: Run the easy build script:");
+        println!("cargo:warning=   .\\easy_build.ps1   (PowerShell)");
+        println!("cargo:warning=");
+        println!("cargo:warning=📋 ALTERNATIVE: Run automated RandomX build:");
+        println!("cargo:warning=   .\\build_randomx_windows.ps1   (PowerShell)");
+        println!("cargo:warning=   or");
+        println!("cargo:warning=   build_randomx_windows.bat      (Command Prompt)");
+        println!("cargo:warning=");
+        println!("cargo:warning=🔧 MANUAL BUILD: Build RandomX with Visual Studio 2022:");
+        println!("cargo:warning=   1. Open 'RandomX' directory");
+        println!("cargo:warning=   2. mkdir build && cd build");
+        println!("cargo:warning=   3. cmake .. -G \"Visual Studio 17 2022\" -A x64");
+        println!("cargo:warning=   4. cmake --build . --config Release");
+        println!("cargo:warning=   5. Copy Release\\randomx.lib and Release\\randomx.dll to miner\\");
+        println!("cargo:warning=");
+        println!("cargo:warning=📖 See EASY_BUILD.md for complete instructions");
+        println!("cargo:warning=");
         
         // Try to find in common build directories
         let possible_paths = [
@@ -46,17 +63,20 @@ fn setup_windows_build() {
             "../RandomX/build/Debug/randomx.lib",
             "RandomX/build/Release/randomx.lib",
             "RandomX/build/Debug/randomx.lib",
+            "../RandomX/vcxproj/x64/Release/randomx.lib",
+            "../RandomX/vcxproj/x64/Debug/randomx.lib",
         ];
         
         for path in &possible_paths {
             if std::path::Path::new(path).exists() {
-                println!("cargo:warning=Found RandomX library at: {}", path);
+                println!("cargo:warning=💡 Found RandomX library at: {}", path);
+                println!("cargo:warning=   You can copy it manually: copy {} randomx.lib", path);
                 println!("cargo:rustc-link-search=native={}", std::path::Path::new(path).parent().unwrap().display());
                 break;
             }
         }
     } else {
-        println!("cargo:warning=Found randomx.lib, proceeding with build");
+        println!("cargo:warning=✅ Found randomx.lib, proceeding with Windows build");
     }
     
     // Link with RandomX as dynamic library
@@ -76,7 +96,7 @@ fn setup_linux_build() {
     let local_dynamic = std::path::Path::new("librandomx.so");
     
     if local_static.exists() {
-        println!("cargo:warning=Found local RandomX static library: librandomx.a");
+        println!("cargo:warning=✅ Found local RandomX static library: librandomx.a");
         // Get absolute path to ensure linker can find it
         let absolute_path = std::fs::canonicalize(".").unwrap();
         println!("cargo:rustc-link-search=native={}", absolute_path.display());
@@ -87,7 +107,7 @@ fn setup_linux_build() {
     }
     
     if local_dynamic.exists() {
-        println!("cargo:warning=Found local RandomX dynamic library: librandomx.so");
+        println!("cargo:warning=✅ Found local RandomX dynamic library: librandomx.so");
         // Get absolute path to ensure linker can find it
         let absolute_path = std::fs::canonicalize(".").unwrap();
         println!("cargo:rustc-link-search=native={}", absolute_path.display());
@@ -105,11 +125,12 @@ fn setup_linux_build() {
     
     for path in &build_paths {
         if std::path::Path::new(path).exists() {
-            println!("cargo:warning=Found RandomX at: {}", path);
+            println!("cargo:warning=✅ Found RandomX at: {}", path);
             let dir = std::path::Path::new(path).parent().unwrap().display();
             println!("cargo:rustc-link-search=native={}", dir);
             if path.ends_with(".a") {
                 println!("cargo:rustc-link-lib=static=randomx");
+                println!("cargo:rustc-link-lib=stdc++");
             } else {
                 println!("cargo:rustc-link-lib=randomx");
             }
@@ -129,9 +150,10 @@ fn setup_linux_build() {
     
     for path in &system_paths {
         if std::path::Path::new(path).exists() {
-            println!("cargo:warning=Found system RandomX at: {}", path);
+            println!("cargo:warning=✅ Found system RandomX at: {}", path);
             if path.ends_with(".a") {
                 println!("cargo:rustc-link-lib=static=randomx");
+                println!("cargo:rustc-link-lib=stdc++");
             } else {
                 println!("cargo:rustc-link-lib=randomx");
             }
@@ -141,8 +163,25 @@ fn setup_linux_build() {
         }
     }
     
+    // If no RandomX library found, provide helpful guidance
+    println!("cargo:warning=");
+    println!("cargo:warning=❌ RandomX library not found!");
+    println!("cargo:warning=");
+    println!("cargo:warning=🚀 EASIEST SOLUTION: Run the easy build script:");
+    println!("cargo:warning=   ./easy_build.sh");
+    println!("cargo:warning=");
+    println!("cargo:warning=🔧 MANUAL SOLUTION: Build RandomX manually:");
+    println!("cargo:warning=   ./setup_randomx.sh");
+    println!("cargo:warning=   OR");
+    println!("cargo:warning=   git clone https://github.com/tevador/RandomX.git");
+    println!("cargo:warning=   cd RandomX && mkdir build && cd build");
+    println!("cargo:warning=   cmake .. && make -j$(nproc)");
+    println!("cargo:warning=   cp librandomx.a ../miner/");
+    println!("cargo:warning=");
+    println!("cargo:warning=📖 See EASY_BUILD.md for complete instructions");
+    
     // Fallback: try to link with RandomX and hope it's in system paths
-    println!("cargo:warning=RandomX library not found, trying system default paths");
+    println!("cargo:warning=⚠️ Attempting fallback linking, may fail");
     println!("cargo:rustc-link-lib=randomx");
     
     // Standard library search paths

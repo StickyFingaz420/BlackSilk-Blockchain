@@ -133,21 +133,42 @@ graph TB
 
 ---
 
-## Build & Usage Instructions
+## 🚀 **Easy Build & Usage Instructions**
 
-### Prerequisites
+### ⚡ **One-Command Build (Recommended)**
+
+**Linux/macOS Users:**
+```bash
+chmod +x easy_build.sh && ./easy_build.sh
+```
+
+**Windows Users:**
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+.\easy_build.ps1
+```
+
+The easy build script automatically:
+- ✅ Installs all dependencies
+- ✅ Builds RandomX library correctly  
+- ✅ Compiles all BlackSilk components
+- ✅ Runs verification tests
+- ✅ Shows you exactly how to start mining!
+
+### 📋 **Manual Build (Advanced Users)**
+
+#### Prerequisites
 - Rust (latest stable)
-- Node.js (for frontend)
 - C++ toolchain (for RandomX miner)
-- Python 3.x (for some backend tools)
-- Tor/I2P (for privacy networking)
+- CMake 3.15+
+- Git
 
-### Build All Components
+#### Build All Components
 ```bash
 # Build the node
 cargo build --release -p node
 
-# Build the miner
+# Build the miner (requires RandomX library)
 cargo build --release -p blacksilk-miner
 
 # Build the wallet
@@ -157,52 +178,69 @@ cargo build --release -p wallet
 cd marketplace/frontend && npm install && npm run build
 ```
 
-### Quick Start Guide
+**Note:** Manual builds require setting up RandomX library first. See `WINDOWS_BUILD_GUIDE.md` for platform-specific instructions.
+
+### 🎯 **Quick Start Guide**
+
+After running the easy build script, you'll have everything ready:
 
 #### 1. Start the BlackSilk Node
 ```bash
-# Testnet mode (recommended for development)
-./target/debug/blacksilk-node --testnet --data-dir ./testnet_data
+# Testnet mode (recommended for development/testing)
+./target/release/blacksilk-node --testnet --data-dir ./testnet_data
 
-# Mainnet mode
-./target/debug/blacksilk-node --data-dir ./mainnet_data
+# Mainnet mode (for live network)
+./target/release/blacksilk-node --data-dir ./mainnet_data
 ```
 
 **Node Features:**
 - HTTP API server (Testnet: port 9333, Mainnet: port 2776)
-- P2P networking (Testnet: port 8333, Mainnet: port 1776)
+- P2P networking (Testnet: port 8333, Mainnet: port 1776)  
 - Privacy layer with Tor support (Testnet: port 10333, Mainnet: port 3776)
 - Professional status display with network statistics
 
 #### 2. Run the Miner
 ```bash
-# Mine to your wallet address
-./target/debug/blacksilk-miner --address BlkfWhEtdVXZiLHZVevMPiw7A8CKZAP9vJQkhkZhNgaUgKhizge6wgb4jgZxCTdHHpxCBsbHPMqgx6krgh3u4VbtAs12vFtzG --threads 2
+# Get optimal thread count for your CPU
+THREADS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
-# For testnet mining (difficulty=1)
-./target/debug/blacksilk-miner --address YOUR_WALLET_ADDRESS --node-url http://127.0.0.1:9333 --threads 2
+# Mine to your wallet address
+./target/release/blacksilk-miner --address YOUR_WALLET_ADDRESS --threads $THREADS
+
+# For testnet mining (easier difficulty=1)
+./target/release/blacksilk-miner --address YOUR_WALLET_ADDRESS --node-url http://127.0.0.1:9333 --threads $THREADS
+
+# Quick benchmark test
+./target/release/blacksilk-miner benchmark
 ```
 
 **Miner Features:**
-- RandomX algorithm with optimized performance flags
-- Real-time hashrate monitoring
+- RandomX algorithm with CPU-optimized performance
+- Real-time hashrate monitoring (~40-400+ H/s depending on CPU)
 - Automatic difficulty adjustment
 - Multi-threaded mining support
+- Graceful shutdown with Ctrl+C
 
 #### 3. Manage Your Wallet
 ```bash
 # Generate new wallet
-./target/debug/wallet --generate
+./target/release/wallet --generate
 
-# Show wallet balance
-./target/debug/wallet --balance
+# Show wallet balance  
+./target/release/wallet --balance
 
-# Show mnemonic seed (backup)
-./target/debug/wallet --show-seed
+# Show mnemonic seed (for backup)
+./target/release/wallet --show-seed
 
 # Show private keys
-./target/debug/wallet --show-keys
+./target/release/wallet --show-keys
 ```
+
+**Wallet Features:**
+- HD wallet with mnemonic seed backup
+- Stealth address generation
+- Ring signature support
+- Transaction history tracking
 
 ### Network Configuration
 
