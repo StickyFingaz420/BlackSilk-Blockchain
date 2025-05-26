@@ -137,14 +137,21 @@ build_randomx() {
 build_blacksilk() {
     echo -e "${YELLOW}🔨 Building BlackSilk components...${NC}"
     
+    # Check for GCC memcmp bug and use clang if needed
+    if gcc --version 2>/dev/null | grep -q "9\."; then
+        echo -e "${YELLOW}⚠️ Detected GCC 9.x (memcmp bug). Using clang compiler...${NC}"
+        export CC=clang
+        export CXX=clang++
+    fi
+    
     # Set optimization flags
     export RUSTFLAGS="-C target-cpu=native"
     
     echo -e "${CYAN}🏗️ Building node...${NC}"
-    cargo build --release -p node
+    cargo build --release --bin BlackSilk
     
     echo -e "${CYAN}⛏️ Building miner...${NC}"
-    cargo build --release -p blacksilk-miner
+    cd miner && cargo build --release && cd ..
     
     echo -e "${CYAN}💰 Building wallet...${NC}"
     cargo build --release -p wallet
@@ -162,7 +169,13 @@ run_tests() {
     
     # Test wallet generation
     echo -e "${CYAN}💰 Testing wallet functionality...${NC}"
-    ./target/release/wallet --help >/dev/null
+    ./target/release/wallet --help >/dev/null && echo -e "${GREEN}✅ Wallet help works${NC}"
+    
+    # Quick wallet generation test
+    echo -e "${CYAN}🔑 Testing wallet generation...${NC}"
+    rm -rf ./test_wallet_verification
+    ./target/release/wallet --generate --data-dir ./test_wallet_verification >/dev/null && echo -e "${GREEN}✅ Wallet generation works${NC}"
+    rm -rf ./test_wallet_verification
     
     echo -e "${GREEN}✅ All tests passed${NC}"
 }
@@ -176,15 +189,15 @@ show_final_instructions() {
     echo -e "${NC}"
     
     echo -e "${CYAN}📁 Built components:${NC}"
-    echo -e "  ✅ ./target/release/blacksilk-node"
-    echo -e "  ✅ ./target/release/blacksilk-miner"
-    echo -e "  ✅ ./target/release/wallet"
+    echo -e "  ✅ ./target/release/BlackSilk (node)"
+    echo -e "  ✅ ./target/release/blacksilk-miner (miner)"
+    echo -e "  ✅ ./target/release/wallet (wallet)"
     echo ""
     
     echo -e "${YELLOW}🚀 Quick Start Commands:${NC}"
     echo ""
     echo -e "${CYAN}1. Start the testnet node (easy mining):${NC}"
-    echo -e "   ./target/release/blacksilk-node --testnet"
+    echo -e "   ./target/release/BlackSilk --testnet"
     echo ""
     echo -e "${CYAN}2. Create a wallet:${NC}"
     echo -e "   ./target/release/wallet --generate"
