@@ -2,11 +2,8 @@
 
 #[cfg(target_os = "windows")]
 pub fn check_randomx_dll() {
-    use std::os::raw::c_void;
     use std::os::windows::ffi::OsStrExt;
-    use std::ffi::OsStr;
-    use std::mem;
-    use std::io::Error;
+    use std::ffi::{OsStr, CString};
     use winapi::um::libloaderapi::{LoadLibraryW, GetProcAddress, FreeLibrary};
     use winapi::shared::minwindef::HMODULE;
 

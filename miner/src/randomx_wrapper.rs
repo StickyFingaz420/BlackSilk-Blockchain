@@ -65,7 +65,7 @@ impl RandomXDataset {
 
     pub fn init(&mut self, cache: &RandomXCache, start_item: u32, item_count: u32) {
         unsafe {
-            randomx_init_dataset(self.ptr, cache.as_ptr(), start_item as u64, item_count as u64);
+            randomx_init_dataset(self.ptr, cache.as_ptr(), start_item as ::std::os::raw::c_ulong, item_count as ::std::os::raw::c_ulong);
         }
     }
 

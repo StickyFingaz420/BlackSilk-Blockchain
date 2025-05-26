@@ -13,7 +13,7 @@
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use std::sync::{atomic::{AtomicBool, AtomicU64}, Arc};
+use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::{Duration, Instant};
 use reqwest::blocking::Client;
@@ -192,7 +192,6 @@ fn run_benchmark() {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use num_cpus;
-    use crate::randomx_ffi::randomx_get_flags;
     println!("[Benchmark] Initializing RandomX (best performance)...");
     println!("[Benchmark] For best performance, build with: set RUSTFLAGS=-C target-cpu=native");
     let threads = num_cpus::get_physical();
