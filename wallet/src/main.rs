@@ -138,6 +138,7 @@ pub fn generate_key_image(priv_key: &[u8]) -> [u8; 32] {
 }
 
 #[derive(Parser, Debug)]
+#[derive(Parser, Debug)]
 #[clap(name = "blacksilk-wallet", version, about = "BlackSilk Privacy Wallet")]
 pub struct Cli {
     /// Data directory for wallet state
