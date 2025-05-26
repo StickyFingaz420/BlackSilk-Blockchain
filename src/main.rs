@@ -3,9 +3,9 @@ use std::env;
 fn main() {
     let args: Vec<String> = env::args().collect();
     let port = if let Some(i) = args.iter().position(|a| a == "-p" || a == "--port") {
-        args.get(i + 1).and_then(|p| p.parse().ok()).unwrap_or(node::config::DEFAULT_P2P_PORT)
+        args.get(i + 1).and_then(|p| p.parse().ok()).unwrap_or(node::config::TESTNET_P2P_PORT)
     } else {
-        node::config::DEFAULT_P2P_PORT
+        node::config::TESTNET_P2P_PORT
     };
     let connect_addr = if let Some(i) = args.iter().position(|a| a == "--connect") {
         args.get(i + 1).cloned()

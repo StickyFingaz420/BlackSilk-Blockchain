@@ -36,7 +36,7 @@ pub mod config {
     
     /// Difficulty adjustment parameters
     pub const DIFFICULTY_ADJUSTMENT_INTERVAL: u64 = 60; // Adjust every 60 blocks (~2 hours)
-    pub const TESTNET_DIFFICULTY: u64 = 1000;           // Very low difficulty for testnet experiments
+    pub const TESTNET_DIFFICULTY: u64 = 1;              // Minimal difficulty for testnet mining
     pub const MAINNET_DIFFICULTY: u64 = 100_000_000;    // Starting mainnet difficulty
     
     /// Initial block reward in atomic units (5 BLK)
