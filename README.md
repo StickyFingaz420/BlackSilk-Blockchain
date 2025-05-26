@@ -148,7 +148,7 @@ graph TB
 cargo build --release -p node
 
 # Build the miner
-cargo build --release -p miner
+cargo build --release -p blacksilk-miner
 
 # Build the wallet
 cargo build --release -p wallet
