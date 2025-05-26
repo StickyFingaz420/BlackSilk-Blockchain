@@ -13,7 +13,8 @@
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use reqwest::blocking::Client;
@@ -93,6 +94,7 @@ struct BlockTemplateRequest {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct Args {
     node: String,
     address: String,
@@ -101,12 +103,14 @@ struct Args {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct MinerConfig {
     node: String,
     address: String,
     threads: usize,
 }
 
+#[allow(dead_code)]
 enum MinerCommand {
     Stop,
     SetThreads(usize),
@@ -163,6 +167,7 @@ fn main() {
     }
 }
 
+#[allow(dead_code)]
 fn try_randomx_hash(flags: u32, seed: &[u8], input: &[u8], output: &mut [u8]) -> bool {
     // Use the wrapper for a single hash (safe and portable)
     unsafe {
@@ -192,6 +197,16 @@ fn run_benchmark() {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use num_cpus;
+    
+    // Set up signal handler for graceful shutdown during benchmark
+    let benchmark_shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_clone = benchmark_shutdown.clone();
+    
+    ctrlc::set_handler(move || {
+        println!("\n[Benchmark] Received shutdown signal, stopping benchmark...");
+        shutdown_clone.store(true, Ordering::Relaxed);
+    }).expect("Error setting Ctrl-C handler");
+    
     println!("[Benchmark] Initializing RandomX (best performance)...");
     println!("[Benchmark] For best performance, build with: set RUSTFLAGS=-C target-cpu=native");
     let threads = num_cpus::get_physical();
@@ -200,7 +215,7 @@ fn run_benchmark() {
     rand::thread_rng().fill_bytes(&mut seed);
     let mut input = [0u8; 76];
     rand::thread_rng().fill_bytes(&mut input);
-    let mut full_flags = get_best_randomx_flags_optimized();
+    let full_flags = get_best_randomx_flags_optimized();
     let fallback_flags = 2 | 4; // HARD_AES | FULL_MEM only
     let duration_secs = 60;
     println!("[Benchmark] RandomX flags: 0x{:X}", full_flags);
@@ -232,9 +247,7 @@ fn run_benchmark() {
                     let start = (i * chunk_size) as u32;
                     let end = ((i + 1) * chunk_size).min(item_count as usize) as u32;
                     if start < end {
-                        unsafe {
-                            randomx_init_dataset(dataset_ptr.0, cache_ptr.0, start as _, (end - start) as _);
-                        }
+                        randomx_init_dataset(dataset_ptr.0, cache_ptr.0, start as _, (end - start) as _);
                     }
                 });
                 let mut vms = vec![];
@@ -257,26 +270,24 @@ fn run_benchmark() {
                             let total_hashes = mining_total_hashes.clone();
                             let stop = mining_stop.clone();
                             let vm_ptr = vms[i];
-                            let mut input = input.clone();
-                            let mut output = [0u8; 32];
+                            let input = input.clone();
+                            let output = [0u8; 32];
                             let RandomXVmPtr(vm_usize) = vm_ptr;
                             let vm = vm_usize as *mut randomx_ffi::randomx_vm;
                             let mut local_input = input;
                             let mut local_output = output;
                             while !stop.load(Ordering::Relaxed) {
-                                for batch in 0..100 {
+                                for _batch in 0..100 {
                                     for _ in 0..10 {
                                         if stop.load(Ordering::Relaxed) {
                                             break;
                                         }
-                                        unsafe {
-                                            randomx_calculate_hash(
-                                                vm,
-                                                local_input.as_ptr() as *const std::ffi::c_void,
-                                                local_input.len(),
-                                                local_output.as_mut_ptr() as *mut std::ffi::c_void,
-                                            );
-                                        }
+                                        randomx_calculate_hash(
+                                            vm,
+                                            local_input.as_ptr() as *const std::ffi::c_void,
+                                            local_input.len(),
+                                            local_output.as_mut_ptr() as *mut std::ffi::c_void,
+                                        );
                                         local_input[0] = local_input[0].wrapping_add(1);
                                         total_hashes.fetch_add(1, Ordering::Relaxed);
                                     }
@@ -287,10 +298,8 @@ fn run_benchmark() {
                                 total_hashes.fetch_add(1, Ordering::Relaxed);
                             }
                             // Destroy VM after mining loop
-                            unsafe {
-                                if !vm.is_null() {
-                                    randomx_destroy_vm(vm);
-                                }
+                            if !vm.is_null() {
+                                randomx_destroy_vm(vm);
                             }
                         });
                     });
@@ -298,8 +307,12 @@ fn run_benchmark() {
                     let mut last = Instant::now();
                     let mut last_hashes = 0u64;
                     for sec in 1..=duration_secs {
+                        if benchmark_shutdown.load(Ordering::Relaxed) {
+                            println!("[Benchmark] Shutdown signal received, stopping benchmark early...");
+                            break;
+                        }
                         std::thread::sleep(Duration::from_secs(1));
-                        let elapsed = start.elapsed().as_secs_f64();
+                        let _elapsed = start.elapsed().as_secs_f64();
                         let hashes = total_hashes.load(Ordering::Relaxed);
                         let hashrate = (hashes - last_hashes) as f64 / (last.elapsed().as_secs_f64());
                         println!("[Benchmark][{}s] Total: {} hashes | {:.2} H/s (current)", sec, hashes, hashrate);
@@ -392,7 +405,7 @@ fn run_benchmark() {
                     std::io::stdout().flush().unwrap();
                     // SAFE MODE mining thread loop
                     while !stop.load(Ordering::Relaxed) {
-                        for batch in 0..100 {
+                        for _batch in 0..100 {
                             for _ in 0..10 {
                                 if stop.load(Ordering::Relaxed) {
                                     break;
@@ -417,8 +430,12 @@ fn run_benchmark() {
             let mut last = Instant::now();
             let mut last_hashes = 0u64;
             for sec in 1..=duration_secs {
+                if benchmark_shutdown.load(Ordering::Relaxed) {
+                    println!("[Benchmark] Shutdown signal received, stopping benchmark early...");
+                    break;
+                }
                 std::thread::sleep(Duration::from_secs(1));
-                let elapsed = start.elapsed().as_secs_f64();
+                let _elapsed = start.elapsed().as_secs_f64();
                 let hashes = total_hashes.load(Ordering::Relaxed);
                 let hashrate = (hashes - last_hashes) as f64 / (last.elapsed().as_secs_f64());
                 println!("[Benchmark][{}s] Total: {} hashes | {:.2} H/s (current)", sec, hashes, hashrate);
@@ -474,11 +491,22 @@ fn try_memory_map_dataset(size: usize) -> Option<*mut std::ffi::c_void> {
     }
 }
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 fn try_memory_map_dataset(_size: usize) -> Option<*mut std::ffi::c_void> {
     None
 }
 
 fn start_mining(cli: &Cli) {
+    // Set up signal handler for graceful shutdown
+    let shutdown_signal = Arc::new(AtomicBool::new(false));
+    let shutdown_clone = shutdown_signal.clone();
+    
+    // Handle Ctrl+C (SIGINT) for graceful shutdown
+    ctrlc::set_handler(move || {
+        println!("\n[Mining] Received shutdown signal, preparing for graceful exit...");
+        shutdown_clone.store(true, Ordering::Relaxed);
+    }).expect("Error setting Ctrl-C handler");
+    
     let client = Client::new();
     let node_url = if cli.node.starts_with("http://") || cli.node.starts_with("https://") {
         cli.node.clone()
@@ -506,6 +534,12 @@ fn start_mining(cli: &Cli) {
         let mut template_time = std::time::Instant::now();
         
         loop {
+            // Check for shutdown signal
+            if shutdown_signal.load(Ordering::Relaxed) {
+                println!("[Mining] Shutdown signal received, breaking from mining loop...");
+                break;
+            }
+            
             // Get new block template every 30 seconds or if we don't have one
             if template.is_none() || template_time.elapsed() > Duration::from_secs(30) {
                 match get_block_template(&client, &node_url, address) {
@@ -551,8 +585,10 @@ fn start_mining(cli: &Cli) {
             thread::sleep(Duration::from_millis(100));
         }
         
-        // Cleanup
+        // Cleanup RandomX resources after mining loop exits
+        println!("[Mining] Cleaning up RandomX resources...");
         randomx_release_cache(cache);
+        println!("[Mining] Cleanup complete, mining stopped gracefully.");
     }
 }
 
@@ -577,8 +613,11 @@ fn get_block_template(client: &Client, node_url: &str, address: &str) -> Result<
         difficulty: u64,
         seed: Vec<u8>,
         coinbase_address: String,
+        #[allow(dead_code)]
         height: u64,
+        #[allow(dead_code)]
         prev_hash: Vec<u8>,
+        #[allow(dead_code)]
         timestamp: u64,
     }
     
@@ -668,7 +707,7 @@ fn mine_block(template: &BlockTemplate, _vms: &[*mut crate::randomx_ffi::randomx
                 }
                 
                 let thread_offset = thread_id as u64 * 100000;
-                let mut batch_start_nonce = thread_offset;
+                let _batch_start_nonce = thread_offset;
                 
                 while !found_clone.load(Ordering::Relaxed) {
                     // Batch processing for better performance
@@ -803,6 +842,7 @@ fn submit_block(client: &Client, node_url: &str, block: &SubmitBlockRequest) -> 
     Ok(())
 }
 
+#[allow(dead_code)]
 fn get_best_randomx_flags() -> u32 {
     let mut flags = 0;
     flags |= 1; // LARGE_PAGES
