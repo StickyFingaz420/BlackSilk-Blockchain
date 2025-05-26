@@ -481,7 +481,11 @@ fn try_memory_map_dataset(_size: usize) -> Option<*mut std::ffi::c_void> {
 
 fn start_mining(cli: &Cli) {
     let client = Client::new();
-    let node_url = format!("http://{}", cli.node.replace("127.0.0.1:8333", "127.0.0.1:2776"));
+    let node_url = if cli.node.starts_with("http://") || cli.node.starts_with("https://") {
+        cli.node.clone()
+    } else {
+        format!("http://{}", cli.node)
+    };
     let address = cli.address.as_ref().unwrap();
     
     println!("[Mining] Initializing RandomX for mining...");

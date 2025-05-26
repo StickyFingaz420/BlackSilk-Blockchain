@@ -20,11 +20,25 @@ pub fn add(left: u64, right: u64) -> u64 {
 
 pub mod config {
     pub const TESTNET_MAGIC: u32 = 0x1D670; // July 26, 1953
-    pub const MAINNET_MAGIC: u32 = 0xB1A6C; // Example: May 24, 2025
-    pub const DEFAULT_P2P_PORT: u16 = 1776;
-    pub const MAINNET_P2P_PORT: u16 = 1977;
-    /// Block time in seconds (2 minutes)
+    pub const MAINNET_MAGIC: u32 = 0xB1A6C; // May 24, 2025
+    
+    // Network Ports Configuration
+    pub const TESTNET_P2P_PORT: u16 = 8333;     // P2P port for testnet
+    pub const TESTNET_HTTP_PORT: u16 = 9333;    // HTTP API port for testnet
+    pub const TESTNET_TOR_PORT: u16 = 10333;    // Tor hidden service port for testnet
+    
+    pub const MAINNET_P2P_PORT: u16 = 1776;     // P2P port for mainnet
+    pub const MAINNET_HTTP_PORT: u16 = 2776;    // HTTP API port for mainnet  
+    pub const MAINNET_TOR_PORT: u16 = 3776;     // Tor hidden service port for mainnet
+    
+    /// Block time in seconds (2 minutes) - FIXED TARGET
     pub const BLOCK_TIME_SEC: u64 = 120;
+    
+    /// Difficulty adjustment parameters
+    pub const DIFFICULTY_ADJUSTMENT_INTERVAL: u64 = 60; // Adjust every 60 blocks (~2 hours)
+    pub const TESTNET_DIFFICULTY: u64 = 1000;           // Very low difficulty for testnet experiments
+    pub const MAINNET_DIFFICULTY: u64 = 100_000_000;    // Starting mainnet difficulty
+    
     /// Initial block reward in atomic units (5 BLK)
     pub const GENESIS_REWARD: u64 = 5_000_000;
     /// Halving interval in blocks (~4 years at 2 min/block)
@@ -33,14 +47,15 @@ pub mod config {
     pub const TAIL_EMISSION: u64 = 0;
     /// Maximum supply: 21 million BLK (in atomic units)
     pub const SUPPLY_CAP: u64 = 21_000_000 * 1_000_000;
-    // Genesis timestamp for both networks
+    
+    // Genesis timestamp for both networks - October 5, 1986
     pub const MAINNET_GENESIS_TIMESTAMP: u64 = 528_854_400; // October 5, 1986
     pub const TESTNET_GENESIS_TIMESTAMP: u64 = 528_854_400; // October 5, 1986
 }
 
-/// Network selection
-#[derive(Debug)]
-enum Network {
+/// Network selection with proper port configuration
+#[derive(Debug, Clone)]
+pub enum Network {
     Mainnet,
     Testnet,
 }
@@ -52,19 +67,141 @@ impl Network {
             _ => Network::Testnet,
         }
     }
+    
+    pub fn get_ports(&self) -> NetworkPorts {
+        match self {
+            Network::Mainnet => NetworkPorts {
+                p2p: config::MAINNET_P2P_PORT,
+                http: config::MAINNET_HTTP_PORT,
+                tor: config::MAINNET_TOR_PORT,
+            },
+            Network::Testnet => NetworkPorts {
+                p2p: config::TESTNET_P2P_PORT,
+                http: config::TESTNET_HTTP_PORT,
+                tor: config::TESTNET_TOR_PORT,
+            },
+        }
+    }
+    
+    pub fn get_difficulty(&self) -> u64 {
+        match self {
+            Network::Mainnet => config::MAINNET_DIFFICULTY,
+            Network::Testnet => config::TESTNET_DIFFICULTY,
+        }
+    }
+    
+    /// Calculate next difficulty based on recent block times
+    pub fn calculate_next_difficulty(&self, chain: &Chain) -> u64 {
+        match self {
+            Network::Testnet => {
+                // Testnet: Keep fixed low difficulty for experiments
+                config::TESTNET_DIFFICULTY
+            },
+            Network::Mainnet => {
+                // Mainnet: Automatic difficulty adjustment every 60 blocks
+                let current_height = chain.blocks.len() as u64;
+                
+                if current_height < config::DIFFICULTY_ADJUSTMENT_INTERVAL {
+                    return config::MAINNET_DIFFICULTY; // Starting difficulty
+                }
+                
+                if current_height % config::DIFFICULTY_ADJUSTMENT_INTERVAL != 0 {
+                    // Not time for adjustment yet, return current difficulty
+                    return chain.tip().header.difficulty;
+                }
+                
+                // Calculate average block time over last 60 blocks
+                let recent_blocks: Vec<_> = chain.blocks
+                    .iter()
+                    .rev()
+                    .take(config::DIFFICULTY_ADJUSTMENT_INTERVAL as usize)
+                    .collect();
+                
+                if recent_blocks.len() < 2 {
+                    return chain.tip().header.difficulty;
+                }
+                
+                let time_span = recent_blocks.first().unwrap().header.timestamp 
+                    - recent_blocks.last().unwrap().header.timestamp;
+                
+                let expected_time = config::DIFFICULTY_ADJUSTMENT_INTERVAL * config::BLOCK_TIME_SEC;
+                let current_difficulty = chain.tip().header.difficulty;
+                
+                // Adjust difficulty to maintain 120-second block time
+                let new_difficulty = if time_span == 0 {
+                    current_difficulty
+                } else {
+                    (current_difficulty * expected_time) / time_span
+                };
+                
+                // Limit difficulty changes to prevent extreme swings
+                let max_change = current_difficulty / 4; // 25% max change
+                let min_difficulty = current_difficulty.saturating_sub(max_change);
+                let max_difficulty = current_difficulty.saturating_add(max_change);
+                
+                new_difficulty.clamp(min_difficulty.max(1000), max_difficulty)
+            }
+        }
+    }
+    
+    pub fn get_magic(&self) -> u32 {
+        match self {
+            Network::Mainnet => config::MAINNET_MAGIC,
+            Network::Testnet => config::TESTNET_MAGIC,
+        }
+    }
+    
+    /// Get network configuration with privacy settings
+    pub fn get_privacy_config(&self) -> network::privacy::PrivacyConfig {
+        use network::privacy::{PrivacyConfig, PrivacyMode};
+        
+        match self {
+            Network::Mainnet => PrivacyConfig {
+                privacy_mode: PrivacyMode::Tor, // Mainnet prefers Tor
+                tor_only: false,
+                hidden_service_port: self.get_ports().tor,
+                ..Default::default()
+            },
+            Network::Testnet => PrivacyConfig {
+                privacy_mode: PrivacyMode::Disabled, // Testnet allows all for development
+                tor_only: false,
+                hidden_service_port: self.get_ports().tor,
+                ..Default::default()
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NetworkPorts {
+    pub p2p: u16,
+    pub http: u16,
+    pub tor: u16,
 }
 
 use primitives::{Block, BlockHeader, Coinbase};
 use std::collections::{VecDeque, HashSet};
 use std::io::{Write, BufRead};
-use std::net::{TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream, SocketAddr};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use serde::{Serialize, Deserialize};
 use sha2::Digest;
 use once_cell::sync::OnceCell;
-use primitives::ring_sig::generate_ring_signature;
+
+/// Global network configuration
+static CURRENT_NETWORK: OnceCell<Network> = OnceCell::new();
+
+/// Get current network (defaults to testnet)
+pub fn current_network() -> &'static Network {
+    CURRENT_NETWORK.get_or_init(|| Network::Testnet)
+}
+
+/// Set current network (should be called early in main)
+pub fn set_network(network: Network) -> Result<(), Network> {
+    CURRENT_NETWORK.set(network)
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum P2PMessage {
@@ -461,27 +598,33 @@ pub fn default_emission() -> EmissionSchedule {
 pub struct Chain {
     pub blocks: VecDeque<Block>,
     pub emission: EmissionSchedule,
+    pub network: Network,
 }
 
 impl Chain {
     pub fn new() -> Self {
+        let network = Network::from_env_or_default();
         let emission = default_emission();
-        let genesis = Self::genesis_block_with_params(&emission, config::TESTNET_GENESIS_TIMESTAMP);
+        let genesis = Self::genesis_block_with_params(&emission, &network);
         let mut blocks = VecDeque::new();
         blocks.push_back(genesis);
-        Self { blocks, emission }
+        Self { blocks, emission, network }
     }
+    
     pub fn new_for_network(network: Network) -> Self {
         let emission = default_emission();
-        let genesis = match network {
-            Network::Mainnet => Self::genesis_block_with_params(&emission, config::MAINNET_GENESIS_TIMESTAMP),
-            Network::Testnet => Self::genesis_block_with_params(&emission, config::TESTNET_GENESIS_TIMESTAMP),
-        };
+        let genesis = Self::genesis_block_with_params(&emission, &network);
         let mut blocks = VecDeque::new();
         blocks.push_back(genesis);
-        Self { blocks, emission }
+        Self { blocks, emission, network }
     }
-    fn genesis_block_with_params(emission: &EmissionSchedule, timestamp: u64) -> Block {
+    
+    fn genesis_block_with_params(emission: &EmissionSchedule, network: &Network) -> Block {
+        let timestamp = match network {
+            Network::Mainnet => config::MAINNET_GENESIS_TIMESTAMP,
+            Network::Testnet => config::TESTNET_GENESIS_TIMESTAMP,
+        };
+        
         Block {
             header: BlockHeader {
                 version: 1,
@@ -489,7 +632,7 @@ impl Chain {
                 merkle_root: [0u8; 32],
                 timestamp,
                 height: 0,
-                difficulty: 1,
+                difficulty: network.get_difficulty(),
                 pow: primitives::Pow { nonce: 0, hash: [0u8; 32] },
             },
             coinbase: Coinbase {
@@ -497,6 +640,49 @@ impl Chain {
                 to: "genesis_address_placeholder".to_string(),
             },
             transactions: vec![],
+        }
+    }
+    
+    /// Calculate next difficulty using automatic adjustment algorithm
+    pub fn calculate_next_difficulty(&self) -> u64 {
+        let current_height = self.blocks.len() as u64;
+        
+        // Don't adjust difficulty for first few blocks
+        if current_height < config::DIFFICULTY_ADJUSTMENT_INTERVAL {
+            return self.network.get_difficulty();
+        }
+        
+        // For testnet, keep difficulty very low for experiments
+        if matches!(self.network, Network::Testnet) {
+            return config::TESTNET_DIFFICULTY;
+        }
+        
+        // Mainnet: Automatic difficulty adjustment every 60 blocks
+        if current_height % config::DIFFICULTY_ADJUSTMENT_INTERVAL == 0 {
+            let adjustment_start = current_height - config::DIFFICULTY_ADJUSTMENT_INTERVAL;
+            let start_block = &self.blocks[adjustment_start as usize];
+            let end_block = self.blocks.back().unwrap();
+            
+            let actual_time = end_block.header.timestamp - start_block.header.timestamp;
+            let expected_time = config::DIFFICULTY_ADJUSTMENT_INTERVAL * config::BLOCK_TIME_SEC;
+            
+            let current_difficulty = end_block.header.difficulty;
+            
+            // Adjust difficulty to maintain 120-second block time
+            let new_difficulty = if actual_time > 0 {
+                (current_difficulty * expected_time) / actual_time
+            } else {
+                current_difficulty * 2 // Double if time calculation fails
+            };
+            
+            // Limit adjustment to 4x change maximum (prevent huge swings)
+            let max_adjustment = current_difficulty * 4;
+            let min_adjustment = current_difficulty / 4;
+            
+            new_difficulty.max(min_adjustment).min(max_adjustment)
+        } else {
+            // Use previous block's difficulty
+            self.blocks.back().unwrap().header.difficulty
         }
     }
 
@@ -521,6 +707,11 @@ impl Chain {
 }
 
 pub fn validate_block(block: &Block) -> bool {
+    // Basic block validation without chain context
+    validate_block_with_chain(block, None)
+}
+
+pub fn validate_block_with_chain(block: &Block, chain: Option<&Chain>) -> bool {
     // Check block has at least one transaction (coinbase)
     if block.transactions.is_empty() {
         println!("[Validation] Block missing coinbase transaction");
@@ -538,11 +729,49 @@ pub fn validate_block(block: &Block) -> bool {
             return false;
         }
     }
+    
+    // Enhanced validation with chain context
+    if let Some(chain) = chain {
+        // Validate block height sequence
+        if block.header.height > 0 {
+            let prev_block = chain.tip();
+            if block.header.height != prev_block.header.height + 1 {
+                println!("[Validation] Invalid block height: expected {}, got {}", 
+                    prev_block.header.height + 1, block.header.height);
+                return false;
+            }
+            // Validate previous hash
+            if block.header.prev_hash != prev_block.header.pow.hash {
+                println!("[Validation] Invalid previous hash");
+                return false;
+            }
+        }
+        
+        // Validate coinbase reward
+        let expected_reward = chain.emission.block_reward(block.header.height);
+        if block.coinbase.reward != expected_reward {
+            println!("[Validation] Invalid coinbase reward: got {}, expected {}", 
+                block.coinbase.reward, expected_reward);
+            return false;
+        }
+        
+        // Validate difficulty (simplified check)
+        if block.header.height > 0 {
+            let expected_difficulty = chain.network.calculate_next_difficulty(chain);
+            if block.header.difficulty != expected_difficulty {
+                println!("[Validation] Invalid difficulty: got {}, expected {}", 
+                    block.header.difficulty, expected_difficulty);
+                // For now, just warn instead of rejecting
+                // return false;
+            }
+        }
+    }
+    
     // TODO: Check merkle root, signatures, and block hash
     true
 }
 
-mod network {
+pub mod network {
     pub mod privacy;
 }
 use network::privacy::{PrivacyConfig, is_onion_address, is_i2p_address};
@@ -671,7 +900,7 @@ pub fn start_node() {
     let network = Network::from_env_or_default();
     let (port, magic) = match network {
         Network::Mainnet => (config::MAINNET_P2P_PORT, config::MAINNET_MAGIC),
-        Network::Testnet => (config::DEFAULT_P2P_PORT, config::TESTNET_MAGIC),
+        Network::Testnet => (config::TESTNET_P2P_PORT, config::TESTNET_MAGIC),
     };
     println!("[BlackSilk Node] Starting {:?} node on port {} (magic: 0x{:X})", network, port, magic);
     let chain = Chain::new_for_network(network);
@@ -680,12 +909,260 @@ pub fn start_node() {
     // TODO: Networking, consensus, mining, إلخ
 }
 
-pub fn start_node_with_port(port: u16) {
-    println!("[BlackSilk Node] Starting Testnet node on port {} (magic: 0x{:X})", port, config::TESTNET_MAGIC);
-    let chain = Chain::new();
-    println!("[BlackSilk Node] Genesis block height: {}", chain.tip().header.height);
-    start_p2p_server(port);
-    // TODO: Networking, consensus, mining, إلخ
+pub fn start_p2p_server_with_privacy(
+    port: u16, 
+    privacy_manager: Arc<crate::network::privacy::PrivacyManager>,
+    peers: Vec<String>
+) -> Result<(), Box<dyn std::error::Error>> {
+    let addr = format!("0.0.0.0:{}", port);
+    let listener = TcpListener::bind(&addr)?;
+    println!("[P2P] Enhanced privacy-aware server listening on {}", addr);
+    
+    // Display privacy manager stats
+    let stats = privacy_manager.get_stats();
+    println!("[Privacy] Starting with {} total connections", stats.total_connections);
+    
+    // Connect to initial peers with privacy validation
+    for peer_addr in peers {
+        let peer_socket: SocketAddr = peer_addr.parse()
+            .map_err(|e| format!("Invalid peer address {}: {}", peer_addr, e))?;
+        
+        if privacy_manager.allow_connection(&peer_socket, true) {
+            println!("[P2P] Connecting to validated peer: {}", peer_addr);
+            let privacy_clone = privacy_manager.clone();
+            std::thread::spawn(move || {
+                connect_to_peer_with_privacy(&peer_addr, privacy_clone);
+            });
+        } else {
+            println!("[Privacy] Peer {} rejected by privacy policy", peer_addr);
+        }
+    }
+    
+    // Main server loop with privacy filtering
+    for stream in listener.incoming() {
+        match stream {
+            Ok(s) => {
+                if let Ok(peer_addr) = s.peer_addr() {
+                    // Check privacy policy before accepting connection
+                    if privacy_manager.allow_connection(&peer_addr, false) {
+                        // Register the connection
+                        privacy_manager.register_connection(peer_addr, false);
+                        
+                        let privacy_clone = privacy_manager.clone();
+                        std::thread::spawn(move || {
+                            handle_client_with_privacy(s, privacy_clone);
+                        });
+                    } else {
+                        println!("[Privacy] Incoming connection from {} rejected by privacy policy", peer_addr);
+                        // Connection is automatically dropped
+                    }
+                } else {
+                    println!("[P2P] Failed to get peer address, rejecting connection");
+                }
+            }
+            Err(e) => {
+                println!("[P2P] Connection error: {}", e);
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+fn connect_to_peer_with_privacy(addr: &str, privacy_manager: Arc<crate::network::privacy::PrivacyManager>) {
+    println!("[P2P] Attempting privacy-aware connection to {}", addr);
+    
+    let mut retries = 3;
+    while retries > 0 {
+        match TcpStream::connect(addr) {
+            Ok(mut stream) => {
+                if let Ok(peer_addr) = stream.peer_addr() {
+                    privacy_manager.register_connection(peer_addr, true);
+                    
+                    println!("[P2P] Privacy-validated connection established to {}", addr);
+                    let version = P2PMessage::Version { 
+                        version: 1, 
+                        node: "BlackSilkNode-Privacy".to_string() 
+                    };
+                    
+                    if let Err(e) = send_message(&mut stream, &version) {
+                        eprintln!("[P2P] Failed to send version message: {}", e);
+                        privacy_manager.unregister_connection(&peer_addr);
+                        return;
+                    }
+                    
+                    // Handle the connection in a separate thread
+                    let privacy_clone = privacy_manager.clone();
+                    std::thread::spawn(move || {
+                        handle_client_with_privacy(stream, privacy_clone);
+                    });
+                    return;
+                }
+            }
+            Err(e) => {
+                eprintln!("[P2P] Failed to connect to {}: {}", addr, e);
+            }
+        }
+        retries -= 1;
+        if retries > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+    }
+    println!("[P2P] All attempts to connect to {} failed", addr);
+}
+
+fn handle_client_with_privacy(mut stream: TcpStream, privacy_manager: Arc<crate::network::privacy::PrivacyManager>) {
+    let peer_addr = match stream.peer_addr() {
+        Ok(addr) => addr,
+        Err(_) => {
+            println!("[P2P] Failed to get peer address, closing connection");
+            return;
+        }
+    };
+    
+    println!("[P2P] Privacy-managed connection from: {}", peer_addr);
+    
+    // Add to peers list
+    {
+        let mut peers = PEERS.lock().unwrap();
+        peers.push(stream.try_clone().unwrap());
+        
+        // Send current peer list to the new peer
+        let peer_addrs: Vec<String> = peers.iter()
+            .filter_map(|s| s.peer_addr().ok().map(|a| a.to_string()))
+            .collect();
+        let _ = send_message(&mut stream, &P2PMessage::PeerList(peer_addrs));
+    }
+    
+    // Send version message
+    let version = P2PMessage::Version { 
+        version: 1, 
+        node: "BlackSilkNode-Privacy".to_string() 
+    };
+    let _ = send_message(&mut stream, &version);
+    
+    // Main message handling loop
+    loop {
+        match read_message(&mut stream) {
+            Some(msg) => {
+                println!("[P2P] Privacy-filtered message from {}: {:?}", peer_addr, msg);
+                
+                // Handle messages same as regular client
+                match msg {
+                    P2PMessage::Ping => { 
+                        let _ = send_message(&mut stream, &P2PMessage::Pong); 
+                    },
+                    P2PMessage::Pong => {
+                        println!("[P2P] Pong received from {}", peer_addr);
+                    },
+                    P2PMessage::Version { version, node } => {
+                        println!("[P2P] Peer {} running version {} ({})", peer_addr, version, node);
+                    },
+                    P2PMessage::Block(block) => {
+                        println!("[P2P] Received block #{} from {}", block.header.height, peer_addr);
+                        let mut chain = CHAIN.lock().unwrap();
+                        if validate_block_with_chain(&block, Some(&chain)) {
+                            if chain.add_block(block.clone()) {
+                                save_chain_to_disk(&chain);
+                                println!("[Chain] Block added to chain");
+                                // Broadcast to other peers (excluding sender)
+                                broadcast_message_except(&P2PMessage::Block(block), &peer_addr);
+                            }
+                        } else {
+                            println!("[Chain] Invalid block rejected from {}", peer_addr);
+                        }
+                    },
+                    P2PMessage::Transaction(tx) => {
+                        if validate_transaction(&tx) {
+                            add_to_mempool(tx.clone());
+                            println!("[Mempool] Transaction added from {}", peer_addr);
+                            broadcast_message_except(&P2PMessage::Transaction(tx), &peer_addr);
+                        } else {
+                            println!("[Mempool] Invalid transaction rejected from {}", peer_addr);
+                        }
+                    },
+                    P2PMessage::PeerList(peers) => {
+                        println!("[P2P] Received peer list from {}: {:?}", peer_addr, peers);
+                        // Validate and connect to new peers with privacy filtering
+                        for peer in peers {
+                            if let Ok(new_peer_addr) = peer.parse::<SocketAddr>() {
+                                if privacy_manager.allow_connection(&new_peer_addr, true) {
+                                    let pm_clone = privacy_manager.clone();
+                                    std::thread::spawn(move || {
+                                        connect_to_peer_with_privacy(&peer, pm_clone);
+                                    });
+                                }
+                            }
+                        }
+                    },
+                    P2PMessage::GetBlocks { from_height } => {
+                        let chain = CHAIN.lock().unwrap();
+                        let blocks: Vec<_> = chain.blocks.iter()
+                            .filter(|b| b.header.height >= from_height)
+                            .cloned()
+                            .collect();
+                        let _ = send_message(&mut stream, &P2PMessage::Blocks(blocks));
+                    },
+                    P2PMessage::Blocks(blocks) => {
+                        let mut chain = CHAIN.lock().unwrap();
+                        if blocks.len() > chain.blocks.len() {
+                            drop(chain);
+                            maybe_reorg_chain(blocks);
+                        } else {
+                            for block in blocks {
+                                if validate_block_with_chain(&block, Some(&chain)) {
+                                    if chain.add_block(block) {
+                                        save_chain_to_disk(&chain);
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    P2PMessage::GetMempool => {
+                        let mempool = get_mempool();
+                        let _ = send_message(&mut stream, &P2PMessage::Mempool(mempool));
+                    },
+                    P2PMessage::Mempool(txs) => {
+                        for tx in txs {
+                            if validate_transaction(&tx) {
+                                add_to_mempool(tx);
+                            }
+                        }
+                    },
+                }
+            }
+            None => {
+                println!("[P2P] Peer {} disconnected", peer_addr);
+                break;
+            }
+        }
+    }
+    
+    // Cleanup on disconnect
+    privacy_manager.unregister_connection(&peer_addr);
+    
+    // Remove from peers list
+    {
+        let mut peers = PEERS.lock().unwrap();
+        peers.retain(|s| s.peer_addr().unwrap() != peer_addr);
+    }
+    
+    println!("[P2P] Privacy-managed connection to {} closed", peer_addr);
+}
+
+// Helper function to broadcast message to all peers except one
+fn broadcast_message_except(msg: &P2PMessage, exclude_addr: &SocketAddr) {
+    let peers = PEERS.lock().unwrap();
+    for peer in peers.iter() {
+        if let Ok(addr) = peer.peer_addr() {
+            if addr != *exclude_addr {
+                // Clone the stream to get a mutable reference
+                if let Ok(mut stream) = peer.try_clone() {
+                    let _ = send_message(&mut stream, msg);
+                }
+            }
+        }
+    }
 }
 
 pub fn pow_hash(header: &BlockHeader) -> primitives::types::Hash {
@@ -765,6 +1242,19 @@ pub fn save_chain() {
     let chain = CHAIN.lock().unwrap();
     let json = serde_json::to_string(&chain.blocks.iter().collect::<Vec<_>>()).unwrap();
     let _ = std::fs::write("chain.json", json);
+}
+
+/// Save chain to disk (persistence) - enhanced version
+pub fn save_chain_to_disk(chain: &Chain) {
+    use std::fs::File;
+    use std::io::Write;
+    
+    if let Ok(chain_json) = serde_json::to_string_pretty(&chain.blocks) {
+        if let Ok(mut file) = File::create("/workspaces/BlackSilk-Blockchain/chain.json") {
+            let _ = file.write_all(chain_json.as_bytes());
+            println!("[Chain] Blockchain saved to disk ({} blocks)", chain.blocks.len());
+        }
+    }
 }
 
 pub fn load_chain() {

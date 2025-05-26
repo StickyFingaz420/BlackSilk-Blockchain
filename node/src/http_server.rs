@@ -3,11 +3,39 @@
 
 use std::collections::HashMap;
 use std::net::TcpStream;
-use std::io::Write;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use primitives::{Block, Transaction};
 use crate::{CHAIN, MEMPOOL, add_to_mempool, validate_transaction};
+
+/// Calculate merkle root for a list of transactions
+fn calculate_merkle_root(transactions: &[Transaction]) -> [u8; 32] {
+    if transactions.is_empty() {
+        return [0; 32]; // Empty merkle root for blocks with no transactions
+    }
+    
+    // For now, simple hash of all transaction data
+    let mut hasher = sha2::Sha256::new();
+    for tx in transactions {
+        if let Ok(tx_bytes) = serde_json::to_vec(tx) {
+            hasher.update(&tx_bytes);
+        }
+    }
+    hasher.finalize().into()
+}
+
+/// Save chain to disk (persistence)
+fn save_chain_to_disk(chain: &crate::Chain) {
+    use std::fs::File;
+    use std::io::Write;
+    
+    if let Ok(chain_json) = serde_json::to_string_pretty(&chain.blocks) {
+        if let Ok(mut file) = File::create("/workspaces/BlackSilk-Blockchain/chain.json") {
+            let _ = file.write_all(chain_json.as_bytes());
+            println!("[Chain] Blockchain saved to disk");
+        }
+    }
+}
 
 /// HTTP request/response types
 #[derive(Serialize, Deserialize)]
@@ -64,6 +92,7 @@ pub struct SubmitBlockRequest {
     pub header: Vec<u8>,
     pub nonce: u64,
     pub hash: Vec<u8>,
+    pub miner_address: Option<String>, // Miner address for coinbase reward
 }
 
 #[derive(Serialize, Deserialize)]
@@ -74,7 +103,7 @@ pub struct SubmitBlockResponse {
 
 /// Simple HTTP server implementation using std library
 pub async fn start_http_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    use std::net::{TcpListener, TcpStream};
+    use std::net::TcpListener;
     use std::thread;
     
     let addr = format!("127.0.0.1:{}", port);
@@ -101,7 +130,7 @@ pub async fn start_http_server(port: u16) -> Result<(), Box<dyn std::error::Erro
 
 /// Synchronous HTTP server startup (blocks current thread)
 pub fn start_http_server_sync(port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    use std::net::{TcpListener, TcpStream};
+    use std::net::TcpListener;
     use std::thread;
     
     let addr = format!("127.0.0.1:{}", port);
@@ -368,10 +397,12 @@ fn parse_query_param(query: &str, param: &str) -> Option<u64> {
 }
 
 fn handle_get_block_template(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::{CHAIN, MEMPOOL, current_network};
+    
     match serde_json::from_slice::<GetBlockTemplateRequest>(body) {
         Ok(req) => {
             let chain = CHAIN.lock().unwrap();
-            let mempool = MEMPOOL.lock().unwrap();
+            let _mempool = MEMPOOL.lock().unwrap();
             
             // Get the latest block
             let prev_block = chain.blocks.back().unwrap();
@@ -380,6 +411,10 @@ fn handle_get_block_template(stream: &mut TcpStream, body: &[u8]) -> Result<(), 
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
+            
+            // Get current network and calculate difficulty
+            let network = current_network();
+            let difficulty = network.calculate_next_difficulty(&chain);
             
             // Create block template with mempool transactions
             let header_data = format!("{}:{}:{}:{}", 
@@ -394,7 +429,7 @@ fn handle_get_block_template(stream: &mut TcpStream, body: &[u8]) -> Result<(), 
             
             let response = GetBlockTemplateResponse {
                 header: header_data.as_bytes().to_vec(),
-                difficulty: 100, // Lowered difficulty for faster testnet mining
+                difficulty, // Use calculated difficulty instead of hardcoded value
                 seed,
                 coinbase_address: req.address,
                 height,
@@ -402,6 +437,7 @@ fn handle_get_block_template(stream: &mut TcpStream, body: &[u8]) -> Result<(), 
                 timestamp,
             };
             
+            println!("[Mining] Block template generated - Height: {}, Difficulty: {}", height, difficulty);
             send_json_response(stream, 200, &response)?;
         }
         Err(e) => {
@@ -417,12 +453,20 @@ fn handle_get_block_template(stream: &mut TcpStream, body: &[u8]) -> Result<(), 
 }
 
 fn handle_submit_block(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::{CHAIN, current_network, broadcast_message, P2PMessage};
+    use primitives::{Block, BlockHeader, Coinbase, Pow};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    
     match serde_json::from_slice::<SubmitBlockRequest>(body) {
         Ok(req) => {
-            // Validate the submitted block
+            // Validate the submitted block solution
             let hash_hex = hex::encode(&req.hash);
             
-            // Check if hash meets difficulty (numeric comparison)
+            // Get current network configuration
+            let network = current_network();
+            let current_difficulty = network.get_difficulty();
+            
+            // Check if hash meets current difficulty
             let hash_val = if req.hash.len() >= 8 {
                 u64::from_le_bytes([
                     req.hash[0], req.hash[1], req.hash[2], req.hash[3],
@@ -431,24 +475,88 @@ fn handle_submit_block(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dy
             } else {
                 u64::MAX
             };
-            let difficulty_target = 100; // Match the template difficulty
-            let meets_difficulty = hash_val < difficulty_target;
+            
+            let meets_difficulty = hash_val < current_difficulty;
             
             if meets_difficulty {
-                // For now, just acknowledge the block submission
-                // In a full implementation, we would add this block to the chain
-                println!("[Mining] Block submitted successfully! Hash: {}", hash_hex);
-                println!("[Mining] Nonce: {}", req.nonce);
+                // CREATE AND ADD REAL BLOCK TO CHAIN
+                let mut chain = CHAIN.lock().unwrap();
                 
-                let response = SubmitBlockResponse {
-                    success: true,
-                    message: format!("Block accepted with hash: {}", hash_hex),
+                // Get the previous block to build on
+                let prev_block = chain.tip();
+                let prev_hash = prev_block.header.pow.hash;
+                let new_height = prev_block.header.height + 1;
+                
+                // Calculate block reward based on emission schedule
+                let block_reward = chain.emission.block_reward(new_height);
+                
+                // Create new block header with validated proof-of-work
+                let block_header = BlockHeader {
+                    version: 1,
+                    prev_hash,
+                    merkle_root: calculate_merkle_root(&[]), // Empty for now (no transactions)
+                    timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+                    height: new_height,
+                    difficulty: current_difficulty,
+                    pow: Pow {
+                        nonce: req.nonce,
+                        hash: req.hash.try_into().unwrap_or([0; 32]),
+                    },
                 };
-                send_json_response(stream, 200, &response)?;
+                
+                // Create coinbase transaction for miner reward
+                let miner_address = req.miner_address
+                    .unwrap_or_else(|| {
+                        // Try to extract from header data (format: height:prev_hash:timestamp:address)
+                        let header_str = String::from_utf8_lossy(&req.header);
+                        let parts: Vec<&str> = header_str.split(':').collect();
+                        if parts.len() >= 4 {
+                            parts[3].to_string()
+                        } else {
+                            "unknown_miner".to_string()
+                        }
+                    });
+                
+                let coinbase = Coinbase {
+                    reward: block_reward,
+                    to: miner_address,
+                };
+                
+                // Create the new block
+                let new_block = Block {
+                    header: block_header,
+                    coinbase,
+                    transactions: vec![], // No user transactions in this block
+                };
+                
+                // Validate and add block to chain
+                if chain.add_block(new_block.clone()) {
+                    // Save chain to disk
+                    save_chain_to_disk(&chain);
+                    
+                    // Broadcast new block to P2P network
+                    drop(chain); // Release lock before broadcast
+                    broadcast_message(&P2PMessage::Block(new_block));
+                    
+                    println!("[Mining] ✅ Block {} created and added to chain! Hash: {}", new_height, hash_hex);
+                    println!("[Mining] Block reward: {} atomic units", block_reward);
+                    
+                    let response = SubmitBlockResponse {
+                        success: true,
+                        message: format!("Block {} accepted and added to chain with hash: {}", new_height, hash_hex),
+                    };
+                    send_json_response(stream, 200, &response)?;
+                } else {
+                    let response = SubmitBlockResponse {
+                        success: false,
+                        message: "Block validation failed".to_string(),
+                    };
+                    send_json_response(stream, 400, &response)?;
+                }
             } else {
                 let response = SubmitBlockResponse {
                     success: false,
-                    message: "Block does not meet difficulty target".to_string(),
+                    message: format!("Block does not meet difficulty target (hash: {}, difficulty: {})", hash_val, current_difficulty),
                 };
                 send_json_response(stream, 400, &response)?;
             }
