@@ -20,7 +20,7 @@ use std::io::Write;
 use rayon::prelude::*;
 
 // Pure Rust RandomX modules (no FFI required)
-mod pure_randomx;
+mod randomx_pro;
 mod randomx_pure_wrapper;
 
 // Use pure Rust RandomX implementation
@@ -187,13 +187,15 @@ fn run_benchmark() {
     let duration_secs = 60;
     
     println!("[Benchmark] RandomX flags: 0x{:X}", flags);
-    print_randomx_diagnostics(flags, (crate::pure_randomx::DATASET_SIZE / 64) as u32);
+    print_randomx_diagnostics(flags, (crate::randomx_pro::RANDOMX_DATASET_SIZE / 64) as u32);
     
     println!("[Benchmark] Initializing RandomX cache...");
-    let cache = crate::pure_randomx::RandomXCache::new(&seed, flags);
+    let mut cache = crate::randomx_pro::RandomXCache::new(flags);
+    cache.init(&seed);
+    let cache = Arc::new(cache);
     
     println!("[Benchmark] Initializing dataset in parallel...");
-    let dataset = crate::pure_randomx::RandomXDataset::new(&cache, threads);
+    let _dataset = crate::randomx_pro::RandomXDataset::new(cache.clone());
     
     println!("[Benchmark] Creating VMs for {} threads...", threads);
     let total_hashes = Arc::new(AtomicU64::new(0));
@@ -207,7 +209,8 @@ fn run_benchmark() {
         (0..threads).into_par_iter().for_each(|_| {
             let total_hashes = mining_total_hashes.clone();
             let stop = mining_stop.clone();
-            let mut vm = crate::pure_randomx::RandomXVM::new(&cache, Some(&dataset), flags);
+            let mut vm = crate::randomx_pro::RandomX::new(flags);
+            vm.init(&seed);
             let mut local_input = input;
             let mut output = [0u8; 32];
             
@@ -217,7 +220,8 @@ fn run_benchmark() {
                         if stop.load(Ordering::Relaxed) {
                             break;
                         }
-                        vm.calculate_hash(&local_input, &mut output);
+                        let hash = vm.calculate_hash(&local_input);
+                        output.copy_from_slice(&hash);
                         local_input[0] = local_input[0].wrapping_add(1);
                         total_hashes.fetch_add(1, Ordering::Relaxed);
                     }
@@ -401,20 +405,23 @@ fn mine_block_pure_rust(template: &BlockTemplate, thread_count: usize, miner_add
     let flags = get_best_randomx_flags_optimized();
     
     // Initialize shared RandomX components
-    let cache = Arc::new(crate::pure_randomx::RandomXCache::new(&template.seed, flags));
-    let dataset = Arc::new(crate::pure_randomx::RandomXDataset::new(&cache, thread_count));
+    let mut cache = crate::randomx_pro::RandomXCache::new(flags);
+    cache.init(&template.seed);
+    let cache = Arc::new(cache);
+    let _dataset = Arc::new(crate::randomx_pro::RandomXDataset::new(cache.clone()));
     
     for thread_id in 0..thread_count {
         let found_clone = found.clone();
         let nonce_counter_clone = nonce_counter.clone();
         let template_clone = template.clone();
         let tx_clone = tx.clone();
-        let cache_clone = cache.clone();
-        let dataset_clone = dataset.clone();
+        let _cache_clone = cache.clone();
+        let _dataset_clone = _dataset.clone();
         let miner_address_clone = miner_address.to_string();
         
         let handle = thread::spawn(move || {
-            let mut vm = crate::pure_randomx::RandomXVM::new(&cache_clone, Some(&dataset_clone), flags);
+            let mut vm = crate::randomx_pro::RandomX::new(flags);
+            vm.init(&template_clone.seed);
             let thread_offset = thread_id as u64 * 100000;
             
             while !found_clone.load(Ordering::Relaxed) {
@@ -425,8 +432,7 @@ fn mine_block_pure_rust(template: &BlockTemplate, thread_count: usize, miner_add
                 input.extend_from_slice(&nonce.to_le_bytes());
                 
                 // Calculate hash using pure Rust implementation
-                let mut hash_output = [0u8; 32];
-                vm.calculate_hash(&input, &mut hash_output);
+                let hash_output = vm.calculate_hash(&input);
                 
                 // Check difficulty
                 if check_difficulty_fast(&hash_output, template_clone.difficulty) {
