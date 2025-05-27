@@ -1,0 +1,18 @@
+   Compiling blacksilk-miner v0.1.0 (/workspaces/BlackSilk-Blockchain/miner)
+warning: blacksilk-miner@0.1.0: ✅ BlackSilk Pure Rust RandomX - No external dependencies required!
+warning: blacksilk-miner@0.1.0: 🚀 Cross-platform compatible build
+error: unexpected closing delimiter: `}`
+   --> miner/src/randomx_pro.rs:668:1
+    |
+612 | impl RandomXCache {
+    |                   - this delimiter might not be properly closed...
+...
+640 |     }
+    |     - ...as it matches this but it has different indentation
+...
+668 | }
+    | ^ unexpected closing delimiter
+
+warning: blacksilk-miner@0.1.0: ✅ BlackSilk Pure Rust RandomX - No external dependencies required!
+warning: blacksilk-miner@0.1.0: 🚀 Cross-platform compatible build
+error: could not compile `blacksilk-miner` (bin "blacksilk-miner") due to 1 previous error

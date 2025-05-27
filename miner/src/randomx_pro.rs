@@ -636,8 +636,6 @@ impl RandomXCache {
         // Initialize cache with Argon2d
         self.argon2d_fill_memory_blocks(key);
     }
-        self.argon2d_fill_memory_blocks(key);
-    }
 
     fn argon2d_fill_memory_blocks(&mut self, key: &[u8]) {
         // Simplified Argon2d implementation

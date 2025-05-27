@@ -190,8 +190,7 @@ fn run_benchmark() {
     print_randomx_diagnostics(flags, (crate::randomx_pro::RANDOMX_DATASET_SIZE / 64) as u32);
     
     println!("[Benchmark] Initializing RandomX cache...");
-    let mut cache = crate::randomx_pro::RandomXCache::new(flags);
-    cache.init(&seed);
+    let cache = crate::randomx_pro::RandomXCache::new(&seed);
     let cache = Arc::new(cache);
     
     println!("[Benchmark] Initializing dataset in parallel...");
@@ -405,8 +404,7 @@ fn mine_block_pure_rust(template: &BlockTemplate, thread_count: usize, miner_add
     let flags = get_best_randomx_flags_optimized();
     
     // Initialize shared RandomX components
-    let mut cache = crate::randomx_pro::RandomXCache::new(flags);
-    cache.init(&template.seed);
+    let cache = crate::randomx_pro::RandomXCache::new(&template.seed);
     let cache = Arc::new(cache);
     let _dataset = Arc::new(crate::randomx_pro::RandomXDataset::new(cache.clone()));
     
