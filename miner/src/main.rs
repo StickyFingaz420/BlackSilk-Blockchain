@@ -86,6 +86,7 @@ struct SubmitBlockRequest {
     header: Vec<u8>,
     nonce: u64,
     hash: Vec<u8>,
+    miner_address: Option<String>, // Add miner address field
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -565,7 +566,7 @@ fn start_mining(cli: &Cli) {
             
             if let Some(ref tmpl) = template {
                 // Mine the block (each thread creates its own VMs)
-                if let Some(result) = mine_block(tmpl, &[], cli.threads) {
+                if let Some(result) = mine_block(tmpl, &[], cli.threads, address) {
                     // Submit the block
                     match submit_block(&client, &node_url, &result) {
                         Ok(_) => {
@@ -635,7 +636,7 @@ fn get_block_template(client: &Client, node_url: &str, address: &str) -> Result<
 }
 
 // XMRig-style optimized mining function with advanced RandomX utilization
-fn mine_block(template: &BlockTemplate, _vms: &[*mut crate::randomx_ffi::randomx_vm], thread_count: usize) -> Option<SubmitBlockRequest> {
+fn mine_block(template: &BlockTemplate, _vms: &[*mut crate::randomx_ffi::randomx_vm], thread_count: usize, miner_address: &str) -> Option<SubmitBlockRequest> {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
     use std::thread;
@@ -681,6 +682,7 @@ fn mine_block(template: &BlockTemplate, _vms: &[*mut crate::randomx_ffi::randomx
         let template_clone = template.clone();
         let tx_clone = tx.clone();
         let shared_cache_clone = shared_cache.clone();
+        let miner_address_clone = miner_address.to_string(); // Clone the address for the thread
         
         let handle = thread::spawn(move || {
             unsafe {
@@ -769,6 +771,7 @@ fn mine_block(template: &BlockTemplate, _vms: &[*mut crate::randomx_ffi::randomx
                                 header: template_clone.header.clone(),
                                 nonce,
                                 hash: hash_outputs[i].to_vec(),
+                                miner_address: Some(miner_address_clone.clone()), // Include miner address
                             };
                             let _ = tx_clone.send(result);
                             break;
