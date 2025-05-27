@@ -13,6 +13,7 @@
 extern crate lazy_static;
 
 pub mod http_server;
+pub mod randomx_verifier;
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
