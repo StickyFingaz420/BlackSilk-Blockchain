@@ -31,7 +31,7 @@ use crate::pure_randomx::*;
 #[clap(name = "blacksilk-miner", version, about = "BlackSilk Standalone Miner")]
 pub struct Cli {
     /// Node address to connect for work
-    #[clap(long, default_value = "127.0.0.1:8333", value_name = "ADDR")]
+    #[clap(long, default_value = "127.0.0.1:9333", value_name = "ADDR")]
     pub node: String,
 
     /// Mining address (where rewards go)
@@ -321,13 +321,23 @@ fn start_mining(cli: &Cli) {
         if let Some(ref tmpl) = template {
             // Mine the block using pure Rust implementation
             if let Some(result) = mine_block_pure_rust(tmpl, cli.threads, address) {
+                // BLOCK FOUND! Add special celebration message
+                println!("\n🎉🎉🎉 BLOCK FOUND! 🎉🎉🎉");
+                println!("🔥 Nonce: {}", result.nonce);
+                println!("💎 Hash: {}", hex::encode(&result.hash));
+                println!("⚡ Submitting to node...\n");
+                
                 // Submit the block
                 match submit_block(&client, &node_url, &result) {
                     Ok(_) => {
-                        println!("[Mining] ✅ Block submitted successfully!");
+                        println!("🚀🚀🚀 VICTORY! BLOCK ACCEPTED BY NODE! 🚀🚀🚀");
+                        println!("✅ Block submitted successfully and verified by RandomX!");
+                        println!("🏆 You just mined a new block on the BlackSilk blockchain!");
+                        println!("💰 Block reward will be sent to: {}\n", address);
                         template = None; // Force getting new template
                     }
                     Err(e) => {
+                        println!("❌ Block submission failed: {}", e);
                         eprintln!("[Mining] Failed to submit block: {}", e);
                     }
                 }

@@ -30,7 +30,7 @@ mod randomx_pure_wrapper;
 #[clap(name = "blacksilk-miner", version, about = "BlackSilk Standalone Miner")]
 pub struct Cli {
     /// Node address to connect for work
-    #[clap(long, default_value = "127.0.0.1:8333", value_name = "ADDR")]
+    #[clap(long, default_value = "127.0.0.1:9333", value_name = "ADDR")]
     pub node: String,
 
     /// Mining address (where rewards go)
@@ -285,6 +285,49 @@ fn start_mining(cli: &Cli) {
     let flags = get_best_randomx_flags_optimized();
     println!("[Mining] Using RandomX flags: 0x{:X}", flags);
     
+    // Global hashrate tracking
+    let total_hashes = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let mining_start_time = std::time::Instant::now();
+    let last_report_time = Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
+    let last_hash_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    
+    // Spawn hashrate reporting thread
+    let hashrate_shutdown = shutdown_signal.clone();
+    let hashrate_total_hashes = total_hashes.clone();
+    let hashrate_last_report = last_report_time.clone();
+    let hashrate_last_count = last_hash_count.clone();
+    
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_secs(10));
+            
+            if hashrate_shutdown.load(Ordering::Relaxed) {
+                break;
+            }
+            
+            let current_hashes = hashrate_total_hashes.load(Ordering::Relaxed);
+            let current_time = std::time::Instant::now();
+            
+            let mut last_time = hashrate_last_report.lock().unwrap();
+            let last_count = hashrate_last_count.load(Ordering::Relaxed);
+            
+            let time_diff = current_time.duration_since(*last_time).as_secs_f64();
+            let hash_diff = current_hashes.saturating_sub(last_count);
+            
+            if time_diff > 0.0 {
+                let current_hashrate = hash_diff as f64 / time_diff;
+                let total_time = current_time.duration_since(mining_start_time).as_secs();
+                let avg_hashrate = if total_time > 0 { current_hashes as f64 / total_time as f64 } else { 0.0 };
+                
+                println!("[Hashrate] Current: {:.2} H/s | Average: {:.2} H/s | Total hashes: {} | Uptime: {}s", 
+                        current_hashrate, avg_hashrate, current_hashes, total_time);
+            }
+            
+            *last_time = current_time;
+            hashrate_last_count.store(current_hashes, Ordering::Relaxed);
+        }
+    });
+    
     // Start mining loop
     let mut current_seed = Vec::new();
     let mut template: Option<BlockTemplate> = None;
@@ -322,7 +365,7 @@ fn start_mining(cli: &Cli) {
         
         if let Some(ref tmpl) = template {
             // Mine the block using pure Rust implementation
-            if let Some(result) = mine_block_pure_rust(tmpl, cli.threads, address) {
+            if let Some(result) = mine_block_pure_rust(tmpl, cli.threads, address, total_hashes.clone()) {
                 // Submit the block
                 match submit_block(&client, &node_url, &result) {
                     Ok(_) => {
@@ -388,7 +431,7 @@ fn get_block_template(client: &Client, node_url: &str, address: &str) -> Result<
 }
 
 // Pure Rust mining function - no FFI dependencies
-fn mine_block_pure_rust(template: &BlockTemplate, thread_count: usize, miner_address: &str) -> Option<SubmitBlockRequest> {
+fn mine_block_pure_rust(template: &BlockTemplate, thread_count: usize, miner_address: &str, global_hash_counter: Arc<std::sync::atomic::AtomicU64>) -> Option<SubmitBlockRequest> {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
     use std::thread;
@@ -416,6 +459,7 @@ fn mine_block_pure_rust(template: &BlockTemplate, thread_count: usize, miner_add
         let _cache_clone = cache.clone();
         let _dataset_clone = _dataset.clone();
         let miner_address_clone = miner_address.to_string();
+        let global_counter_clone = global_hash_counter.clone();
         
         let handle = thread::spawn(move || {
             let mut vm = crate::randomx_pro::RandomX::new(flags);
@@ -431,6 +475,9 @@ fn mine_block_pure_rust(template: &BlockTemplate, thread_count: usize, miner_add
                 
                 // Calculate hash using pure Rust implementation
                 let hash_output = vm.calculate_hash(&input);
+                
+                // Increment global hash counter
+                global_counter_clone.fetch_add(1, Ordering::Relaxed);
                 
                 // Check difficulty
                 if check_difficulty_fast(&hash_output, template_clone.difficulty) {
