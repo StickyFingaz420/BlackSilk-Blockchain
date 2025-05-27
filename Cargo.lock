@@ -1521,6 +1521,7 @@ dependencies = [
 name = "node"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "clap 4.5.38",
  "curve25519-dalek",
  "ed25519-dalek",

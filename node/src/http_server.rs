@@ -469,7 +469,7 @@ fn handle_submit_block(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dy
             let peer_id = req.miner_address.as_deref().unwrap_or("unknown");
             
             // Build the BlockHeader from the submitted data
-            let chain = CHAIN.lock().unwrap();
+            let mut chain = CHAIN.lock().unwrap();
             let prev_block = chain.tip();
             let new_height = prev_block.header.height + 1;
             
@@ -487,7 +487,7 @@ fn handle_submit_block(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dy
                 difficulty: current_difficulty,
                 pow: Pow {
                     nonce: req.nonce,
-                    hash: req.hash.try_into().unwrap_or([0; 32]),
+                    hash: req.hash.clone().try_into().unwrap_or([0; 32]),
                 },
             };
             

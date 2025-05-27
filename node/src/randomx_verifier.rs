@@ -10,7 +10,7 @@
 //! - Suspicious hash detection and peer scoring
 //! - Argon2d cache/dataset validation
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
@@ -71,68 +71,80 @@ pub struct RandomXVerifier {
     peer_scores: Arc<Mutex<HashMap<String, PeerScore>>>,
     /// Verification flags
     flags: RandomXFlags,
-    /// CPU baseline calibration
-    baseline_ms: f64,
+    /// CPU baseline calibration (stored as atomic for thread-safe updates)
+    baseline_ms: Arc<std::sync::atomic::AtomicU64>,
     /// Enable strict timing enforcement
     strict_timing: bool,
+    /// Whether calibration has been performed
+    calibrated: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl RandomXVerifier {
     /// Create new RandomX verifier with CPU-only enforcement
     pub fn new() -> Self {
-        let mut verifier = Self {
+        Self {
             peer_scores: Arc::new(Mutex::new(HashMap::new())),
             flags: RandomXFlags::default(),
-            baseline_ms: RANDOMX_CPU_BASELINE_MS,
+            baseline_ms: Arc::new(std::sync::atomic::AtomicU64::new(
+                (RANDOMX_CPU_BASELINE_MS * 1000.0) as u64 // Store as microseconds for precision
+            )),
             strict_timing: true,
-        };
-        
-        // Calibrate CPU baseline on startup
-        verifier.calibrate_cpu_baseline();
-        verifier
+            calibrated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
     }
     
-    /// Calibrate CPU baseline performance
-    fn calibrate_cpu_baseline(&mut self) {
-        println!("[RandomX] Calibrating CPU baseline performance...");
-        
-        let test_header = BlockHeader {
-            version: 1,
-            prev_hash: [0; 32],
-            merkle_root: [0; 32],
-            timestamp: 0,
-            height: 0,
-            difficulty: 1,
-            pow: Pow { nonce: 12345, hash: [0; 32] },
-        };
-        
-        let mut total_time = 0.0;
-        let samples = 5;
-        
-        for i in 0..samples {
-            let start = Instant::now();
-            let _hash = self.compute_randomx_hash(&test_header, i as u64);
-            let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-            total_time += elapsed;
-            
-            if i == 0 {
-                println!("[RandomX] First hash took {:.2}ms", elapsed);
+    /// Get current baseline in milliseconds
+    fn get_baseline_ms(&self) -> f64 {
+        self.baseline_ms.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1000.0
+    }
+    
+    /// Set baseline in milliseconds
+    fn set_baseline_ms(&self, baseline: f64) {
+        let microseconds = (baseline * 1000.0) as u64;
+        self.baseline_ms.store(microseconds, std::sync::atomic::Ordering::Relaxed);
+    }
+    
+    /// Ensure calibration is performed (lazy initialization)
+    fn ensure_calibrated(&self) {
+        if !self.calibrated.load(std::sync::atomic::Ordering::Relaxed) {
+            // Only calibrate once
+            if self.calibrated.compare_exchange(
+                false, 
+                true, 
+                std::sync::atomic::Ordering::SeqCst, 
+                std::sync::atomic::Ordering::Relaxed
+            ).is_ok() {
+                // We won the race, perform calibration
+                println!("[RandomX] Performing one-time CPU calibration...");
+                let start = Instant::now();
+                
+                let test_header = BlockHeader {
+                    version: 1,
+                    prev_hash: [0; 32],
+                    merkle_root: [0; 32],
+                    timestamp: 0,
+                    height: 0,
+                    difficulty: 1,
+                    pow: Pow { nonce: 12345, hash: [0; 32] },
+                };
+                
+                // Quick calibration with fewer samples to avoid blocking
+                let _hash = self.compute_randomx_hash(&test_header, 12345);
+                let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+                
+                // Update baseline using atomic operation
+                self.set_baseline_ms(elapsed.max(1.0)); // Ensure minimum 1ms baseline
+                
+                println!("[RandomX] CPU calibration complete: {:.2}ms baseline", elapsed);
             }
         }
-        
-        self.baseline_ms = total_time / samples as f64;
-        println!("[RandomX] CPU baseline calibrated: {:.2}ms per hash", self.baseline_ms);
-        
-        // Set thresholds based on calibrated baseline
-        let suspicious_threshold = self.baseline_ms * 0.5;
-        let rejection_threshold = self.baseline_ms * 0.1;
-        
-        println!("[RandomX] Suspicious threshold: < {:.2}ms", suspicious_threshold);
-        println!("[RandomX] Rejection threshold: < {:.2}ms", rejection_threshold);
     }
     
     /// Verify block proof-of-work with CPU-only enforcement
     pub fn verify_block_pow(&self, header: &BlockHeader, peer_id: Option<&str>) -> VerificationResult {
+        // Ensure calibration is done before verification
+        self.ensure_calibrated();
+        
         let start_time = Instant::now();
         
         // Step 1: Re-compute RandomX hash exactly as miner would
@@ -164,7 +176,7 @@ impl RandomXVerifier {
         // Step 4: CPU timing enforcement
         let (is_suspicious, timing_reason) = self.check_cpu_timing(verification_time);
         
-        if self.strict_timing && verification_time < self.baseline_ms * 0.1 {
+        if self.strict_timing && verification_time < self.get_baseline_ms() * 0.1 {
             // Reject blocks computed too fast (likely GPU/ASIC)
             if let Some(peer) = peer_id {
                 self.record_suspicious_behavior(peer, "Extremely fast hash computation");
@@ -176,7 +188,7 @@ impl RandomXVerifier {
                 verification_time_ms: verification_time,
                 is_suspicious: true,
                 reason: format!("Block rejected: hash computed too fast ({:.2}ms vs {:.2}ms baseline) - likely GPU/ASIC", 
-                              verification_time, self.baseline_ms),
+                              verification_time, self.get_baseline_ms()),
             };
         }
         
@@ -468,13 +480,14 @@ impl RandomXVerifier {
     
     /// Check CPU timing for suspicious behavior
     fn check_cpu_timing(&self, verification_time_ms: f64) -> (bool, String) {
-        let suspicious_threshold = self.baseline_ms * 0.5;
-        let ultra_fast_threshold = self.baseline_ms * 0.1;
+        let baseline = self.get_baseline_ms();
+        let suspicious_threshold = baseline * 0.5;
+        let ultra_fast_threshold = baseline * 0.1;
         
         if verification_time_ms < ultra_fast_threshold {
             (true, format!("Extremely fast computation ({:.2}ms) - likely GPU/ASIC", verification_time_ms))
         } else if verification_time_ms < suspicious_threshold {
-            (true, format!("Suspiciously fast computation ({:.2}ms vs {:.2}ms baseline)", verification_time_ms, self.baseline_ms))
+            (true, format!("Suspiciously fast computation ({:.2}ms vs {:.2}ms baseline)", verification_time_ms, baseline))
         } else {
             (false, "Normal timing".to_string())
         }
@@ -603,7 +616,7 @@ impl RandomXVerifier {
                         scores.values().map(|s| s.total_submissions).sum());
         }
         
-        stats.insert("baseline_ms".to_string(), (self.baseline_ms * 100.0) as u32); // Store as centimilliseconds
+        stats.insert("baseline_ms".to_string(), (self.get_baseline_ms() * 100.0) as u32); // Store as centimilliseconds
         stats
     }
 }
