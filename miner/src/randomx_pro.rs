@@ -18,9 +18,8 @@
 
 use sha2::{Sha256, Digest};
 use aes::{Aes128, cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray}};
-use std::arch::x86_64::*;
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
+use std::sync::Arc;
+use rayon::prelude::*;
 
 // RandomX Constants (Official Specification v1.2.1)
 pub const RANDOMX_HASH_SIZE: usize = 32;
@@ -384,10 +383,25 @@ impl RandomXVM {
     }
 
     pub fn execute_program(&mut self, dataset: &RandomXDataset) {
-        for _ in 0..self.config.program_iterations {
-            for instruction in self.program.clone() {
-                self.execute_instruction(instruction, dataset);
+        // Execute multiple iterations with potential parallel processing
+        for iteration in 0..self.config.program_iterations {
+            // Update memory pointers for this iteration  
+            self.ma = (iteration as u32).wrapping_mul(0x9E3779B9) ^ self.reg.r[0] as u32;
+            self.mx = (self.ma % (self.scratchpad.len() as u32 / 8)) * 8;
+            
+            // Execute all instructions in the program
+            for (pc, instruction) in self.program.clone().iter().enumerate() {
+                self.ic = pc;
+                self.execute_instruction(*instruction, dataset);
+                
+                // Periodic scratchpad mixing with dataset
+                if (pc & 15) == 0 {
+                    self.mix_scratchpad_with_dataset(dataset, iteration);
+                }
             }
+            
+            // End-of-iteration processing
+            self.finalize_iteration(dataset, iteration);
         }
     }
 
@@ -400,8 +414,8 @@ impl RandomXVM {
                     .wrapping_add((src_val << shift).wrapping_add(instr.imm as u64));
             },
             OpCode::IADD_M => {
-                let addr = self.get_scratchpad_address(instr.src, instr.imm);
-                let src_val = self.read_scratchpad_u64(addr);
+                let addr = self.get_dataset_address(instr.src, instr.imm);
+                let src_val = self.read_dataset_u64(dataset, addr);
                 self.reg.r[instr.dst as usize] = self.reg.r[instr.dst as usize].wrapping_add(src_val);
             },
             OpCode::ISUB_R => {
@@ -409,8 +423,8 @@ impl RandomXVM {
                 self.reg.r[instr.dst as usize] = self.reg.r[instr.dst as usize].wrapping_sub(src_val);
             },
             OpCode::ISUB_M => {
-                let addr = self.get_scratchpad_address(instr.src, instr.imm);
-                let src_val = self.read_scratchpad_u64(addr);
+                let addr = self.get_dataset_address(instr.src, instr.imm);
+                let src_val = self.read_dataset_u64(dataset, addr);
                 self.reg.r[instr.dst as usize] = self.reg.r[instr.dst as usize].wrapping_sub(src_val);
             },
             OpCode::IMUL_R => {
@@ -418,8 +432,8 @@ impl RandomXVM {
                 self.reg.r[instr.dst as usize] = self.reg.r[instr.dst as usize].wrapping_mul(src_val);
             },
             OpCode::IMUL_M => {
-                let addr = self.get_scratchpad_address(instr.src, instr.imm);
-                let src_val = self.read_scratchpad_u64(addr);
+                let addr = self.get_dataset_address(instr.src, instr.imm);
+                let src_val = self.read_dataset_u64(dataset, addr);
                 self.reg.r[instr.dst as usize] = self.reg.r[instr.dst as usize].wrapping_mul(src_val);
             },
             OpCode::IMULH_R => {
@@ -428,8 +442,8 @@ impl RandomXVM {
                 self.reg.r[instr.dst as usize] = result as u64;
             },
             OpCode::IMULH_M => {
-                let addr = self.get_scratchpad_address(instr.src, instr.imm);
-                let src_val = self.read_scratchpad_u64(addr);
+                let addr = self.get_dataset_address(instr.src, instr.imm);
+                let src_val = self.read_dataset_u64(dataset, addr);
                 let result = ((self.reg.r[instr.dst as usize] as u128) * (src_val as u128)) >> 64;
                 self.reg.r[instr.dst as usize] = result as u64;
             },
@@ -440,8 +454,8 @@ impl RandomXVM {
                 self.reg.r[instr.dst as usize] = result as u64;
             },
             OpCode::ISMULH_M => {
-                let addr = self.get_scratchpad_address(instr.src, instr.imm);
-                let src_val = self.read_scratchpad_u64(addr) as i64;
+                let addr = self.get_dataset_address(instr.src, instr.imm);
+                let src_val = self.read_dataset_u64(dataset, addr) as i64;
                 let dst_val = self.reg.r[instr.dst as usize] as i64;
                 let result = (((dst_val as i128) * (src_val as i128)) >> 64) as i64;
                 self.reg.r[instr.dst as usize] = result as u64;
@@ -460,8 +474,8 @@ impl RandomXVM {
                 self.reg.r[instr.dst as usize] ^= src_val;
             },
             OpCode::IXOR_M => {
-                let addr = self.get_scratchpad_address(instr.src, instr.imm);
-                let src_val = self.read_scratchpad_u64(addr);
+                let addr = self.get_dataset_address(instr.src, instr.imm);
+                let src_val = self.read_dataset_u64(dataset, addr);
                 self.reg.r[instr.dst as usize] ^= src_val;
             },
             OpCode::IROR_R => {
@@ -487,8 +501,8 @@ impl RandomXVM {
                 self.reg.f[instr.dst as usize & 3] += src_val;
             },
             OpCode::FADD_M => {
-                let addr = self.get_scratchpad_address(instr.src, instr.imm);
-                let src_val = self.read_scratchpad_f64(addr);
+                let addr = self.get_dataset_address(instr.src, instr.imm);
+                let src_val = self.read_dataset_f64(dataset, addr);
                 self.reg.f[instr.dst as usize & 3] += src_val;
             },
             OpCode::FSUB_R => {
@@ -496,8 +510,8 @@ impl RandomXVM {
                 self.reg.f[instr.dst as usize & 3] -= src_val;
             },
             OpCode::FSUB_M => {
-                let addr = self.get_scratchpad_address(instr.src, instr.imm);
-                let src_val = self.read_scratchpad_f64(addr);
+                let addr = self.get_dataset_address(instr.src, instr.imm);
+                let src_val = self.read_dataset_f64(dataset, addr);
                 self.reg.f[instr.dst as usize & 3] -= src_val;
             },
             OpCode::FSCAL_R => {
@@ -508,9 +522,9 @@ impl RandomXVM {
                 self.reg.e[instr.dst as usize & 3] *= src_val;
             },
             OpCode::FDIV_M => {
-                let addr = self.get_scratchpad_address(instr.src, instr.imm);
-                let src_val = self.read_scratchpad_f64(addr);
-                if src_val != 0.0 {
+                let addr = self.get_dataset_address(instr.src, instr.imm);
+                let src_val = self.read_dataset_f64(dataset, addr);
+                if src_val != 0.0 && src_val.is_finite() {
                     self.reg.e[instr.dst as usize & 3] /= src_val;
                 }
             },
@@ -547,6 +561,11 @@ impl RandomXVM {
         (addr as usize) & (self.scratchpad.len() - 1)
     }
 
+    fn get_dataset_address(&self, reg: u8, imm: u32) -> usize {
+        let addr = self.reg.r[reg as usize].wrapping_add(imm as u64);
+        (addr as usize) & (RANDOMX_DATASET_SIZE - 1)
+    }
+
     fn read_scratchpad_u64(&self, addr: usize) -> u64 {
         let aligned_addr = addr & !7;
         if aligned_addr + 8 <= self.scratchpad.len() {
@@ -565,8 +584,39 @@ impl RandomXVM {
         }
     }
 
-    fn read_scratchpad_f64(&self, addr: usize) -> f64 {
-        let val = self.read_scratchpad_u64(addr);
+    fn read_dataset_u64(&self, dataset: &RandomXDataset, addr: usize) -> u64 {
+        let aligned_addr = addr & !7;
+        let item_index = aligned_addr / RANDOMX_DATASET_ITEM_SIZE;
+        let item_offset = aligned_addr % RANDOMX_DATASET_ITEM_SIZE;
+        
+        if item_offset + 8 <= RANDOMX_DATASET_ITEM_SIZE {
+            let item = dataset.read_dataset((item_index * RANDOMX_DATASET_ITEM_SIZE) as u64);
+            u64::from_le_bytes([
+                item[item_offset],
+                item[item_offset + 1], 
+                item[item_offset + 2],
+                item[item_offset + 3],
+                item[item_offset + 4],
+                item[item_offset + 5],
+                item[item_offset + 6],
+                item[item_offset + 7],
+            ])
+        } else {
+            // Handle crossing item boundary
+            let item1 = dataset.read_dataset((item_index * RANDOMX_DATASET_ITEM_SIZE) as u64);
+            let item2 = dataset.read_dataset(((item_index + 1) * RANDOMX_DATASET_ITEM_SIZE) as u64);
+            
+            let mut bytes = [0u8; 8];
+            let first_part = RANDOMX_DATASET_ITEM_SIZE - item_offset;
+            bytes[..first_part].copy_from_slice(&item1[item_offset..]);
+            bytes[first_part..].copy_from_slice(&item2[..8 - first_part]);
+            
+            u64::from_le_bytes(bytes)
+        }
+    }
+
+    fn read_dataset_f64(&self, dataset: &RandomXDataset, addr: usize) -> f64 {
+        let val = self.read_dataset_u64(dataset, addr);
         f64::from_bits(val)
     }
 
@@ -589,23 +639,85 @@ impl RandomXVM {
     }
 
     pub fn get_result_hash(&self) -> [u8; 32] {
-        let mut hasher = Sha256::new();
+        // RandomX final hash: AES-encrypt the register state with the key derived from registers
+        let mut result = [0u8; 32];
         
-        // Hash register state
-        for reg in &self.reg.r {
-            hasher.update(&reg.to_le_bytes());
-        }
-        for reg in &self.reg.f {
-            hasher.update(&reg.to_bits().to_le_bytes());
-        }
-        for reg in &self.reg.e {
-            hasher.update(&reg.to_bits().to_le_bytes());
-        }
-        for reg in &self.reg.a {
-            hasher.update(&reg.to_bits().to_le_bytes());
+        // First 128 bits: r[0], r[1]
+        let key1 = [
+            (self.reg.r[0] as u32).to_le_bytes(),
+            ((self.reg.r[0] >> 32) as u32).to_le_bytes(),
+            (self.reg.r[1] as u32).to_le_bytes(), 
+            ((self.reg.r[1] >> 32) as u32).to_le_bytes(),
+        ].concat();
+        
+        // Second 128 bits: r[2], r[3]
+        let key2 = [
+            (self.reg.r[2] as u32).to_le_bytes(),
+            ((self.reg.r[2] >> 32) as u32).to_le_bytes(),
+            (self.reg.r[3] as u32).to_le_bytes(),
+            ((self.reg.r[3] >> 32) as u32).to_le_bytes(),
+        ].concat();
+        
+        // Use AES encryption on register state
+        let aes1 = Aes128::new(GenericArray::from_slice(&key1));
+        let aes2 = Aes128::new(GenericArray::from_slice(&key2));
+        
+        // Encrypt with keys derived from r[4], r[5], r[6], r[7]
+        let mut block1 = [
+            (self.reg.r[4] as u32).to_le_bytes(),
+            ((self.reg.r[4] >> 32) as u32).to_le_bytes(),
+            (self.reg.r[5] as u32).to_le_bytes(),
+            ((self.reg.r[5] >> 32) as u32).to_le_bytes(),
+        ].concat();
+        
+        let mut block2 = [
+            (self.reg.r[6] as u32).to_le_bytes(),
+            ((self.reg.r[6] >> 32) as u32).to_le_bytes(),
+            (self.reg.r[7] as u32).to_le_bytes(),
+            ((self.reg.r[7] >> 32) as u32).to_le_bytes(),
+        ].concat();
+        
+        let mut aes_block1 = GenericArray::from_mut_slice(&mut block1);
+        let mut aes_block2 = GenericArray::from_mut_slice(&mut block2);
+        
+        aes1.encrypt_block(&mut aes_block1);
+        aes2.encrypt_block(&mut aes_block2);
+        
+        result[..16].copy_from_slice(&block1);
+        result[16..].copy_from_slice(&block2);
+        
+        result
+    }
+
+    fn mix_scratchpad_with_dataset(&mut self, dataset: &RandomXDataset, iteration: u32) {
+        // Mix scratchpad data with dataset for memory-hard properties
+        let dataset_addr = ((self.reg.r[0] ^ iteration as u64) % (RANDOMX_DATASET_SIZE as u64 / 64)) * 64;
+        let dataset_data = dataset.read_dataset(dataset_addr);
+        
+        let scratchpad_addr = (self.mx as usize) & (self.scratchpad.len() - 64);
+        
+        // XOR dataset data with scratchpad
+        for i in 0..64.min(self.scratchpad.len() - scratchpad_addr) {
+            self.scratchpad[scratchpad_addr + i] ^= dataset_data[i];
         }
         
-        hasher.finalize().into()
+        // Update memory pointer  
+        self.mx = (self.mx.wrapping_add(64)) % (self.scratchpad.len() as u32);
+    }
+
+    fn finalize_iteration(&mut self, dataset: &RandomXDataset, iteration: u32) {
+        // Final mixing at end of each iteration
+        let mix_addr = ((self.reg.r[0] ^ self.reg.r[1] ^ iteration as u64) % (RANDOMX_DATASET_SIZE as u64 / 64)) * 64;
+        let mix_data = dataset.read_dataset(mix_addr);
+        
+        // Mix with register state
+        for i in 0..8 {
+            let data_chunk = u64::from_le_bytes([
+                mix_data[i * 8], mix_data[i * 8 + 1], mix_data[i * 8 + 2], mix_data[i * 8 + 3],
+                mix_data[i * 8 + 4], mix_data[i * 8 + 5], mix_data[i * 8 + 6], mix_data[i * 8 + 7],
+            ]);
+            self.reg.r[i % 8] ^= data_chunk;
+        }
     }
 }
 
@@ -638,28 +750,85 @@ impl RandomXCache {
     }
 
     fn argon2d_fill_memory_blocks(&mut self, key: &[u8]) {
-        // Simplified Argon2d implementation
+        // Enhanced Argon2d-like implementation with better mixing
+        let block_count = self.memory.len() / 64;
+        
+        // Initial hash with key
         let mut hasher = Sha256::new();
         hasher.update(key);
-        hasher.update(b"RandomX Cache Init");
+        hasher.update(b"RandomX Cache Init v2");
+        hasher.update(&(block_count as u64).to_le_bytes());
         let mut current_hash = hasher.finalize().to_vec();
         
-        for chunk in self.memory.chunks_mut(64) {
-            let len = chunk.len().min(32);
-            chunk[..len].copy_from_slice(&current_hash[..len]);
+        // Fill blocks with iterative hashing and mixing
+        for i in 0..block_count {
+            let block_offset = i * 64;
             
-            // Generate next hash
+            // Generate block data
+            let mut block_data = [0u8; 64];
+            
+            // First 32 bytes from current hash
+            block_data[..32].copy_from_slice(&current_hash);
+            
+            // Second 32 bytes from hash of (current_hash + block_index)
             let mut hasher = Sha256::new();
             hasher.update(&current_hash);
-            current_hash = hasher.finalize().to_vec();
+            hasher.update(&(i as u64).to_le_bytes());
+            let second_hash = hasher.finalize();
+            block_data[32..].copy_from_slice(&second_hash);
             
-            // Fill remaining bytes if chunk is larger than 32
-            if chunk.len() > 32 {
-                let mut hasher = Sha256::new();
-                hasher.update(&current_hash);
-                let second_hash = hasher.finalize();
-                let remaining = chunk.len() - 32;
-                chunk[32..32 + remaining].copy_from_slice(&second_hash[..remaining]);
+            // Apply AES mixing if hardware support available
+            if self.flags & RANDOMX_FLAG_HARD_AES != 0 {
+                self.aes_mix_block(&mut block_data, &current_hash);
+            }
+            
+            // Store block
+            self.memory[block_offset..block_offset + 64].copy_from_slice(&block_data);
+            
+            // Prepare next hash with dependency on previous blocks
+            let mut hasher = Sha256::new();
+            hasher.update(&block_data);
+            if i > 0 {
+                // Add dependency on previous block for memory-hard property
+                let prev_offset = ((i - 1) * 64) % self.memory.len();
+                hasher.update(&self.memory[prev_offset..prev_offset + 32]);
+            }
+            current_hash = hasher.finalize().to_vec();
+        }
+        
+        // Final mixing pass for better randomness
+        self.final_cache_mixing();
+    }
+
+    fn aes_mix_block(&self, block: &mut [u8; 64], key_material: &[u8]) {
+        if key_material.len() >= 16 {
+            let aes = Aes128::new(GenericArray::from_slice(&key_material[..16]));
+            
+            // Mix first 16 bytes
+            let mut aes_block = GenericArray::from_mut_slice(&mut block[..16]);
+            aes.encrypt_block(&mut aes_block);
+            
+            // Mix second 16 bytes with different key
+            if key_material.len() >= 32 {
+                let aes2 = Aes128::new(GenericArray::from_slice(&key_material[16..32]));
+                let mut aes_block2 = GenericArray::from_mut_slice(&mut block[16..32]);
+                aes2.encrypt_block(&mut aes_block2);
+            }
+        }
+    }
+
+    fn final_cache_mixing(&mut self) {
+        // Additional mixing pass for enhanced security
+        let block_count = self.memory.len() / 64;
+        for i in 0..block_count {
+            let block_offset = i * 64;
+            let mix_offset = ((i ^ (i >> 3)) * 64) % self.memory.len();
+            
+            // XOR with data from another location
+            if mix_offset != block_offset && mix_offset + 64 <= self.memory.len() {
+                for j in 0..64 {
+                    self.memory[block_offset + j] ^= self.memory[mix_offset + j];
+                }
             }
         }
     }
@@ -676,43 +845,101 @@ impl RandomXDataset {
     }
 
     fn init(&mut self) {
-        // Initialize dataset from cache
-        for i in 0..(RANDOMX_DATASET_SIZE / RANDOMX_DATASET_ITEM_SIZE) {
-            let item = self.calc_dataset_item(i);
+        // Initialize dataset from cache using parallel processing
+        let item_count = RANDOMX_DATASET_SIZE / RANDOMX_DATASET_ITEM_SIZE;
+        
+        // Create items in parallel
+        let items: Vec<[u8; RANDOMX_DATASET_ITEM_SIZE]> = (0..item_count)
+            .into_par_iter()
+            .map(|i| self.calc_dataset_item(i))
+            .collect();
+        
+        // Copy items to memory
+        for (i, item) in items.iter().enumerate() {
             let offset = i * RANDOMX_DATASET_ITEM_SIZE;
-            self.memory[offset..offset + RANDOMX_DATASET_ITEM_SIZE].copy_from_slice(&item);
+            self.memory[offset..offset + RANDOMX_DATASET_ITEM_SIZE].copy_from_slice(item);
         }
     }
 
     fn calc_dataset_item(&self, item_number: usize) -> [u8; RANDOMX_DATASET_ITEM_SIZE] {
-        // Calculate dataset item using superscalar hash
+        // Enhanced superscalar hash calculation
         let mut result = [0u8; RANDOMX_DATASET_ITEM_SIZE];
         
-        // Use cache data and item number to generate dataset item
         let cache_item_size = 64;
         let cache_items = self.cache.memory.len() / cache_item_size;
         
-        let mut hasher = Sha256::new();
-        hasher.update(&(item_number as u64).to_le_bytes());
+        // Superscalar program execution simulation
+        let mut reg_state = [0u64; 8];
+        reg_state[0] = item_number as u64;
         
-        // Mix in cache data
-        for i in 0..8 {
-            let cache_index = (item_number + i) % cache_items;
+        // Mix with cache data using superscalar-like operations
+        for round in 0..8 {
+            let cache_index = ((item_number + round) ^ (item_number >> 3)) % cache_items;
             let cache_offset = cache_index * cache_item_size;
-            hasher.update(&self.cache.memory[cache_offset..cache_offset + cache_item_size]);
+            
+            // Load cache data as 64-bit integers
+            for i in 0..8 {
+                let data_offset = cache_offset + i * 8;
+                if data_offset + 8 <= self.cache.memory.len() {
+                    let cache_data = u64::from_le_bytes([
+                        self.cache.memory[data_offset],
+                        self.cache.memory[data_offset + 1],
+                        self.cache.memory[data_offset + 2],
+                        self.cache.memory[data_offset + 3],
+                        self.cache.memory[data_offset + 4],
+                        self.cache.memory[data_offset + 5],
+                        self.cache.memory[data_offset + 6],
+                        self.cache.memory[data_offset + 7],
+                    ]);
+                    
+                    // Superscalar-like operations
+                    match round & 3 {
+                        0 => reg_state[i] = reg_state[i].wrapping_add(cache_data),
+                        1 => reg_state[i] = reg_state[i].wrapping_mul(cache_data | 1),
+                        2 => reg_state[i] ^= cache_data.rotate_left(round as u32 & 63),
+                        3 => reg_state[i] = reg_state[i].wrapping_sub(cache_data),
+                        _ => unreachable!(),
+                    }
+                }
+            }
+            
+            // Inter-register mixing
+            for i in 0..8 {
+                reg_state[i] ^= reg_state[(i + 1) % 8].rotate_right((i * 7) as u32 & 63);
+            }
         }
         
-        let hash = hasher.finalize();
-        result[..32].copy_from_slice(&hash);
+        // Convert register state to result
+        for (i, &reg_val) in reg_state.iter().enumerate() {
+            let offset = i * 8;
+            result[offset..offset + 8].copy_from_slice(&reg_val.to_le_bytes());
+        }
         
-        // Second hash for remaining bytes
-        let mut hasher = Sha256::new();
-        hasher.update(&hash);
-        hasher.update(&(item_number as u64).to_be_bytes());
-        let hash2 = hasher.finalize();
-        result[32..].copy_from_slice(&hash2);
+        // Final AES mixing if hardware support available
+        if self.cache.flags & RANDOMX_FLAG_HARD_AES != 0 {
+            self.aes_finalize_dataset_item(&mut result, item_number);
+        }
         
         result
+    }
+
+    fn aes_finalize_dataset_item(&self, item: &mut [u8; RANDOMX_DATASET_ITEM_SIZE], item_number: usize) {
+        // AES-based final mixing for dataset item
+        let key_material = &item[..16];
+        let aes = Aes128::new(GenericArray::from_slice(key_material));
+        
+        // Mix multiple blocks
+        for chunk_idx in 0..4 {
+            let offset = chunk_idx * 16;
+            let mut aes_block = GenericArray::from_mut_slice(&mut item[offset..offset + 16]);
+            
+            // XOR with item number for uniqueness
+            for (i, byte) in aes_block.iter_mut().enumerate() {
+                *byte ^= ((item_number as u64).rotate_left((i * 8) as u32) & 0xFF) as u8;
+            }
+            
+            aes.encrypt_block(&mut aes_block);
+        }
     }
 
     pub fn read_dataset(&self, address: u64) -> [u8; RANDOMX_DATASET_ITEM_SIZE] {
