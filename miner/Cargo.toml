@@ -2,13 +2,10 @@
 name = "blacksilk-miner"
 version = "0.1.0"
 edition = "2021"
+build = "build_pure.rs"
 
 authors = ["BlackSilk Contributors"]
-description = "Standalone miner for BlackSilk blockchain"
-
-[build-dependencies]
-bindgen = "0.69"
-cc = "1.0"
+description = "Standalone miner for BlackSilk blockchain with Pure Rust RandomX"
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
@@ -22,6 +19,8 @@ num_cpus = "1.16"
 rand = "0.8"
 rayon = "1.7"
 ctrlc = "3.4"
+sha2 = "0.10"
+aes = "0.8"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["libloaderapi", "minwindef", "memoryapi", "handleapi", "winnt"] }
