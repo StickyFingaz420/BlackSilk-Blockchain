@@ -20,7 +20,6 @@ use std::io::Write;
 use rayon::prelude::*;
 
 // Pure Rust RandomX modules (no FFI required)
-mod pure_randomx;
 mod randomx;
 
 // Use new comprehensive RandomX implementation
@@ -197,7 +196,7 @@ fn run_benchmark() {
     println!("[Benchmark] Initializing RandomX cache with Argon2d...");
     let cache = RandomXCache::new(&seed);
     
-    println!("[Benchmark] Initializing dataset in parallel...");
+    println!("[Benchmark] Initializing full 2.08 GB dataset...");
     let dataset = RandomXDataset::new(&cache, threads);
     
     println!("[Benchmark] Creating VMs for {} threads...", threads);
@@ -209,28 +208,33 @@ fn run_benchmark() {
     let mining_total_hashes = total_hashes.clone();
     
     let mining_handle = std::thread::spawn(move || {
-        (0..threads).into_par_iter().for_each(|_| {
+        (0..threads).into_par_iter().for_each(|thread_id| {
             let total_hashes = mining_total_hashes.clone();
             let stop = mining_stop.clone();
             let mut vm = RandomXVM::new(&cache, Some(&dataset));
             let mut local_input = input;
-            let mut output = [0u8; 32];
+            local_input[0] = thread_id as u8; // Give each thread unique input
+            
+            println!("[Thread {}] Starting mining loop", thread_id);
+            let mut hash_count = 0u64;
             
             while !stop.load(Ordering::Relaxed) {
-                for _batch in 0..100 {
-                    for _ in 0..10 {
-                        if stop.load(Ordering::Relaxed) {
-                            break;
-                        }
-                        output = vm.calculate_hash(&local_input);
-                        local_input[0] = local_input[0].wrapping_add(1);
-                        total_hashes.fetch_add(1, Ordering::Relaxed);
-                    }
-                    if stop.load(Ordering::Relaxed) {
-                        break;
-                    }
+                if hash_count % 10 == 0 {
+                    println!("[Thread {}] Computing hash #{}", thread_id, hash_count);
+                }
+                
+                let _output = vm.calculate_hash(&local_input);
+                local_input[0] = local_input[0].wrapping_add(1);
+                total_hashes.fetch_add(1, Ordering::Relaxed);
+                hash_count += 1;
+                
+                // Add small delay to avoid overwhelming output
+                if hash_count % 10 == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                 }
             }
+            
+            println!("[Thread {}] Mining loop ended with {} hashes", thread_id, hash_count);
         });
     });
     
@@ -487,8 +491,8 @@ fn mine_block_pure_rust(template: &BlockTemplate, thread_count: usize, miner_add
             while !found_clone.load(Ordering::Relaxed) {
                 let nonce = nonce_counter_clone.fetch_add(1, Ordering::Relaxed) + thread_offset;
                 
-                if nonce % 1000 == 0 {
-                    println!("[Mining] Thread {} processing nonce {}", thread_id, nonce);
+                if nonce % 100 == 0 {
+                    println!("[Mining] Thread {} computing hash #{} (nonce={})", thread_id, nonce - thread_offset, nonce);
                 }
                 
                 // Prepare input with nonce
@@ -496,7 +500,15 @@ fn mine_block_pure_rust(template: &BlockTemplate, thread_count: usize, miner_add
                 input.extend_from_slice(&nonce.to_le_bytes());
                 
                 // Calculate hash using Rust Native RandomX implementation
+                let start_hash = std::time::Instant::now();
                 let hash_output = vm.calculate_hash(&input);
+                let hash_time = start_hash.elapsed();
+                
+                if nonce % 100 == 0 {
+                    println!("[Mining] Thread {} completed hash #{} in {:?} (output: {}...)", 
+                             thread_id, nonce - thread_offset, hash_time, 
+                             hex::encode(&hash_output[..8]));
+                }
                 
                 // Increment global hash counter for hashrate reporting
                 HASH_COUNTER.fetch_add(1, Ordering::Relaxed);

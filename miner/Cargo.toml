@@ -2,7 +2,6 @@
 name = "blacksilk-miner"
 version = "0.1.0"
 edition = "2021"
-build = "build_pure.rs"
 
 authors = ["BlackSilk Contributors"]
 description = "Standalone miner for BlackSilk blockchain with Pure Rust RandomX"

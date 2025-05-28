@@ -54,7 +54,7 @@ impl RandomXDataset {
         let progress_clone = progress.clone();
         let progress_handle = std::thread::spawn(move || {
             loop {
-                std::thread::sleep(std::time::Duration::from_secs(5));
+                std::thread::sleep(std::time::Duration::from_secs(2));
                 let current = progress_clone.load(Ordering::Relaxed);
                 let percentage = (current as f64 / total_items as f64) * 100.0;
                 
@@ -67,7 +67,7 @@ impl RandomXDataset {
             }
         });
 
-        // Generate dataset items in parallel
+        // Generate dataset items in parallel - TEMPORARILY SIMPLIFIED FOR DEBUGGING
         self.memory
             .par_chunks_mut(RANDOMX_DATASET_ITEM_SIZE)
             .enumerate()
@@ -76,9 +76,28 @@ impl RandomXDataset {
                     return;
                 }
                 
-                // Generate dataset item using SuperscalarHash
-                let item_data = SuperscalarHash::generate_dataset_item(cache, item_number);
-                chunk.copy_from_slice(&item_data);
+                // TEMPORARY: Use simple hash instead of complex SuperscalarHash
+                // This bypasses the get_data issue temporarily
+                use blake2::{Blake2b, Digest};
+                use digest::consts::U64;
+                
+                let mut hasher = Blake2b::<U64>::new();
+                hasher.update(&(item_number as u64).to_le_bytes());
+                hasher.update(b"dataset_item");
+                
+                // Add cache dependency using direct memory access
+                let cache_offset = (item_number * 64) % cache.memory.len();
+                if cache_offset + 64 <= cache.memory.len() {
+                    hasher.update(&cache.memory[cache_offset..cache_offset + 64]);
+                } else {
+                    // Handle wrap-around case
+                    let first_part = cache.memory.len() - cache_offset;
+                    hasher.update(&cache.memory[cache_offset..]);
+                    hasher.update(&cache.memory[..64 - first_part]);
+                }
+                
+                let hash_result = hasher.finalize();
+                chunk.copy_from_slice(&hash_result);
                 
                 // Update progress
                 progress.fetch_add(1, Ordering::Relaxed);

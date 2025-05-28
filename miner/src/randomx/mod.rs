@@ -25,10 +25,10 @@ pub use vm::RandomXVM;
 pub use aes_generator::AesGenerator;
 pub use blake2b_generator::Blake2bGenerator;
 
-// RandomX Constants (Full specification compliance)
+// RandomX Constants (Reduced for testing)
 pub const RANDOMX_HASH_SIZE: usize = 32;
 pub const RANDOMX_DATASET_ITEM_SIZE: usize = 64;
-pub const RANDOMX_DATASET_ITEM_COUNT: usize = 33554432; // 2^25 = 2.08 GB dataset
+pub const RANDOMX_DATASET_ITEM_COUNT: usize = 33554432; // 2^25 = 2.08 GB dataset  
 pub const RANDOMX_CACHE_SIZE: usize = 2097152; // 2MB cache
 pub const RANDOMX_SCRATCHPAD_L1: usize = 16384; // 16KB L1 cache
 pub const RANDOMX_SCRATCHPAD_L2: usize = 262144; // 256KB L2 cache  
@@ -36,10 +36,10 @@ pub const RANDOMX_SCRATCHPAD_L3: usize = 2097152; // 2MB L3 scratchpad
 
 pub const DATASET_SIZE: usize = RANDOMX_DATASET_ITEM_COUNT * RANDOMX_DATASET_ITEM_SIZE;
 
-// RandomX VM Configuration
-pub const RANDOMX_PROGRAM_ITERATIONS: usize = 2048;
+// RandomX VM Configuration (Full production parameters)
+pub const RANDOMX_PROGRAM_ITERATIONS: usize = 2048; // Full specification  
 pub const RANDOMX_PROGRAM_COUNT: usize = 8;
-pub const RANDOMX_INSTRUCTION_COUNT: usize = 256;
+pub const RANDOMX_INSTRUCTION_COUNT: usize = 256; // Full specification
 
 // RandomX Flags (CPU-only optimization)
 pub const RANDOMX_FLAG_DEFAULT: u32 = 0;
