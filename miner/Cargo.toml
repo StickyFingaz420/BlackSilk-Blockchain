@@ -9,7 +9,7 @@ description = "Standalone miner for BlackSilk blockchain with Pure Rust RandomX"
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
 tokio = { version = "1.32", features = ["full"] }
-reqwest = { version = "0.11", features = ["json", "blocking"] }
+reqwest = { version = "0.11", features = ["json", "blocking"], default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 crossbeam-channel = "0.5"
