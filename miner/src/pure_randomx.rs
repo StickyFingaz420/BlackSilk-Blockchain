@@ -123,6 +123,7 @@ impl RandomXCache {
             memory: vec![0u8; 2097152], // 2MB cache
             flags,
             initialized: false,
+            key: key.to_vec(),
         };
         cache.init(key);
         cache
@@ -133,16 +134,25 @@ impl RandomXCache {
             return;
         }
 
+        println!("[RandomX] Initializing cache with key length: {}", key.len());
+        
         // Initialize cache using Argon2-like memory-hard function
         let mut hasher = Sha256::new();
         hasher.update(key);
         let initial_hash = hasher.finalize();
 
+        println!("[RandomX] Filling {} byte cache...", self.memory.len());
+        
         // Fill cache memory with derived data
         let mut current_hash = initial_hash.to_vec();
-        for chunk in self.memory.chunks_mut(32) {
+        let total_chunks = self.memory.len() / 32;
+        for (i, chunk) in self.memory.chunks_mut(32).enumerate() {
             let len = chunk.len().min(32);
             chunk[..len].copy_from_slice(&current_hash[..len]);
+            
+            if i % 10000 == 0 {
+                println!("[RandomX] Cache progress: {}/{} chunks", i, total_chunks);
+            }
             
             // Update hash for next iteration
             let mut hasher = Sha256::new();
@@ -151,6 +161,7 @@ impl RandomXCache {
             current_hash = hasher.finalize().to_vec();
         }
 
+        println!("[RandomX] Cache initialization complete!");
         self.initialized = true;
     }
 }
@@ -215,6 +226,11 @@ impl RandomXVM {
             flags,
             scratchpad: vec![0u8; 2097152], // 2MB scratchpad
             registers: [0u64; 8],
+            f_registers: [0.0; 4],
+            e_registers: [0.0; 4],
+            a_registers: [0.0; 4],
+            program: Vec::new(),
+            pc: 0,
         }
     }
 

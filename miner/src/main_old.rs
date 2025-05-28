@@ -10,7 +10,7 @@
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -20,14 +20,10 @@ use std::io::Write;
 use rayon::prelude::*;
 
 // Pure Rust RandomX modules (no FFI required)
-mod pure_randomx;
-mod randomx;
+mod randomx_pro;
+mod randomx_pure_wrapper;
 
-// Use new comprehensive RandomX implementation
-use crate::randomx::*;
-
-// Global hash counter for hashrate reporting
-static HASH_COUNTER: AtomicU64 = AtomicU64::new(0);
+// Use pure Rust RandomX implementation
 
 /// BlackSilk Standalone Miner CLI
 #[derive(Parser, Debug)]
@@ -141,9 +137,8 @@ fn main() {
 
 #[allow(dead_code)]
 fn try_randomx_hash(flags: u32, seed: &[u8], input: &[u8], output: &mut [u8]) -> bool {
-    // Use the new comprehensive Rust Native RandomX implementation
-    let hash = randomx_hash(seed, input);
-    output[..32].copy_from_slice(&hash);
+    // Use the pure Rust implementation
+    crate::randomx_pure_wrapper::randomx_hash(flags, seed, input, output);
     true
 }
 
@@ -188,17 +183,18 @@ fn run_benchmark() {
     let mut input = [0u8; 76];
     rand::thread_rng().fill_bytes(&mut input);
     
-    let flags = get_optimal_flags();
+    let flags = get_best_randomx_flags_optimized();
     let duration_secs = 60;
     
     println!("[Benchmark] RandomX flags: 0x{:X}", flags);
-    print_randomx_diagnostics(flags, (DATASET_SIZE / 64) as u32);
+    print_randomx_diagnostics(flags, (crate::randomx_pro::RANDOMX_DATASET_SIZE / 64) as u32);
     
-    println!("[Benchmark] Initializing RandomX cache with Argon2d...");
-    let cache = RandomXCache::new(&seed);
+    println!("[Benchmark] Initializing RandomX cache...");
+    let cache = crate::randomx_pro::RandomXCache::new(&seed);
+    let cache = Arc::new(cache);
     
     println!("[Benchmark] Initializing dataset in parallel...");
-    let dataset = RandomXDataset::new(&cache, threads);
+    let _dataset = crate::randomx_pro::RandomXDataset::new(cache.clone());
     
     println!("[Benchmark] Creating VMs for {} threads...", threads);
     let total_hashes = Arc::new(AtomicU64::new(0));
@@ -212,7 +208,8 @@ fn run_benchmark() {
         (0..threads).into_par_iter().for_each(|_| {
             let total_hashes = mining_total_hashes.clone();
             let stop = mining_stop.clone();
-            let mut vm = RandomXVM::new(&cache, Some(&dataset));
+            let mut vm = crate::randomx_pro::RandomX::new(flags);
+            vm.init(&seed);
             let mut local_input = input;
             let mut output = [0u8; 32];
             
@@ -222,7 +219,8 @@ fn run_benchmark() {
                         if stop.load(Ordering::Relaxed) {
                             break;
                         }
-                        output = vm.calculate_hash(&local_input);
+                        let hash = vm.calculate_hash(&local_input);
+                        output.copy_from_slice(&hash);
                         local_input[0] = local_input[0].wrapping_add(1);
                         total_hashes.fetch_add(1, Ordering::Relaxed);
                     }
@@ -284,16 +282,18 @@ fn start_mining(cli: &Cli) {
     println!("[Mining] Initializing Pure Rust RandomX for mining...");
     
     // Initialize RandomX with optimal performance settings
-    let flags = get_optimal_flags();
+    let flags = get_best_randomx_flags_optimized();
     println!("[Mining] Using RandomX flags: 0x{:X}", flags);
     
     // Global hashrate tracking
+    let total_hashes = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let mining_start_time = std::time::Instant::now();
     let last_report_time = Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
-    let last_hash_count = Arc::new(AtomicU64::new(0));
+    let last_hash_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
     
     // Spawn hashrate reporting thread
     let hashrate_shutdown = shutdown_signal.clone();
+    let hashrate_total_hashes = total_hashes.clone();
     let hashrate_last_report = last_report_time.clone();
     let hashrate_last_count = last_hash_count.clone();
     
@@ -305,7 +305,7 @@ fn start_mining(cli: &Cli) {
                 break;
             }
             
-            let current_hashes = HASH_COUNTER.load(Ordering::Relaxed);
+            let current_hashes = hashrate_total_hashes.load(Ordering::Relaxed);
             let current_time = std::time::Instant::now();
             
             let mut last_time = hashrate_last_report.lock().unwrap();
@@ -365,24 +365,14 @@ fn start_mining(cli: &Cli) {
         
         if let Some(ref tmpl) = template {
             // Mine the block using pure Rust implementation
-            if let Some(result) = mine_block_pure_rust(tmpl, cli.threads, address) {
-                // BLOCK FOUND! Add special celebration message
-                println!("\n🎉🎉🎉 BLOCK FOUND! 🎉🎉🎉");
-                println!("🔥 Nonce: {}", result.nonce);
-                println!("💎 Hash: {}", hex::encode(&result.hash));
-                println!("⚡ Submitting to node...\n");
-                
+            if let Some(result) = mine_block_pure_rust(tmpl, cli.threads, address, total_hashes.clone()) {
                 // Submit the block
                 match submit_block(&client, &node_url, &result) {
                     Ok(_) => {
-                        println!("🚀🚀🚀 VICTORY! BLOCK ACCEPTED BY NODE! 🚀🚀🚀");
-                        println!("✅ Block submitted successfully and verified by RandomX!");
-                        println!("🏆 You just mined a new block on the BlackSilk blockchain!");
-                        println!("💰 Block reward will be sent to: {}\n", address);
+                        println!("[Mining] ✅ Block submitted successfully!");
                         template = None; // Force getting new template
                     }
                     Err(e) => {
-                        println!("❌ Block submission failed: {}", e);
                         eprintln!("[Mining] Failed to submit block: {}", e);
                     }
                 }
@@ -441,7 +431,7 @@ fn get_block_template(client: &Client, node_url: &str, address: &str) -> Result<
 }
 
 // Pure Rust mining function - no FFI dependencies
-fn mine_block_pure_rust(template: &BlockTemplate, thread_count: usize, miner_address: &str) -> Option<SubmitBlockRequest> {
+fn mine_block_pure_rust(template: &BlockTemplate, thread_count: usize, miner_address: &str, global_hash_counter: Arc<std::sync::atomic::AtomicU64>) -> Option<SubmitBlockRequest> {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
     use std::thread;
@@ -452,54 +442,42 @@ fn mine_block_pure_rust(template: &BlockTemplate, thread_count: usize, miner_add
     let mut handles = Vec::new();
     let (tx, rx) = std::sync::mpsc::channel();
     
-    println!("[Mining] Starting Rust Native RandomX mining with {} threads (difficulty: {})", thread_count, template.difficulty);
+    println!("[Mining] Starting pure Rust mining with {} threads (difficulty: {})", thread_count, template.difficulty);
     
-    let flags = get_optimal_flags();
+    let flags = get_best_randomx_flags_optimized();
     
-    // Initialize shared RandomX components with full 2.08 GB dataset
-    println!("[Mining] Creating RandomX cache with Argon2d (seed length: {})", template.seed.len());
-    let cache = Arc::new(RandomXCache::new(&template.seed));
-    
-    println!("[Mining] Expanding to 2.08 GB dataset using SuperscalarHash...");
-    let dataset = if (flags & RANDOMX_FLAG_FULL_MEM) != 0 {
-        Some(Arc::new(RandomXDataset::new(&cache, thread_count)))
-    } else {
-        None
-    };
-    
-    println!("[Mining] RandomX initialization complete, creating {} mining threads...", thread_count);
+    // Initialize shared RandomX components
+    let cache = crate::randomx_pro::RandomXCache::new(&template.seed);
+    let cache = Arc::new(cache);
+    let _dataset = Arc::new(crate::randomx_pro::RandomXDataset::new(cache.clone()));
     
     for thread_id in 0..thread_count {
         let found_clone = found.clone();
         let nonce_counter_clone = nonce_counter.clone();
         let template_clone = template.clone();
         let tx_clone = tx.clone();
-        let cache_clone = cache.clone();
-        let dataset_clone = dataset.clone();
+        let _cache_clone = cache.clone();
+        let _dataset_clone = _dataset.clone();
         let miner_address_clone = miner_address.to_string();
+        let global_counter_clone = global_hash_counter.clone();
         
         let handle = thread::spawn(move || {
-            println!("[Mining] Thread {} creating RandomX VM...", thread_id);
-            let mut vm = RandomXVM::new(&cache_clone, dataset_clone.as_ref().map(|d| d.as_ref()));
+            let mut vm = crate::randomx_pro::RandomX::new(flags);
+            vm.init(&template_clone.seed);
             let thread_offset = thread_id as u64 * 100000;
-            println!("[Mining] Thread {} started with offset {} (Rust Native RandomX VM ready)", thread_id, thread_offset);
             
             while !found_clone.load(Ordering::Relaxed) {
                 let nonce = nonce_counter_clone.fetch_add(1, Ordering::Relaxed) + thread_offset;
-                
-                if nonce % 1000 == 0 {
-                    println!("[Mining] Thread {} processing nonce {}", thread_id, nonce);
-                }
                 
                 // Prepare input with nonce
                 let mut input = template_clone.header.clone();
                 input.extend_from_slice(&nonce.to_le_bytes());
                 
-                // Calculate hash using Rust Native RandomX implementation
+                // Calculate hash using pure Rust implementation
                 let hash_output = vm.calculate_hash(&input);
                 
-                // Increment global hash counter for hashrate reporting
-                HASH_COUNTER.fetch_add(1, Ordering::Relaxed);
+                // Increment global hash counter
+                global_counter_clone.fetch_add(1, Ordering::Relaxed);
                 
                 // Check difficulty
                 if check_difficulty_fast(&hash_output, template_clone.difficulty) {
@@ -520,7 +498,7 @@ fn mine_block_pure_rust(template: &BlockTemplate, thread_count: usize, miner_add
                     if elapsed > 0 {
                         let total_hashes = nonce_counter_clone.load(Ordering::Relaxed) * thread_count as u64;
                         let hashrate = total_hashes / elapsed;
-                        print!("\r[Mining] Rust Native RandomX: {} H/s | Hashes: {} | Time: {}s", 
+                        print!("\r[Mining] Pure Rust Hashrate: {} H/s | Hashes: {} | Time: {}s", 
                                hashrate, total_hashes, elapsed);
                         std::io::stdout().flush().unwrap();
                     }
@@ -548,9 +526,9 @@ fn mine_block_pure_rust(template: &BlockTemplate, thread_count: usize, miner_add
     }
     
     if result.is_some() {
-        println!("\n[Mining] 🎉 Rust Native RandomX solution found!");
+        println!("\n[Mining] 🎉 Pure Rust solution found!");
     } else {
-        println!("\n[Mining] No solution found in Rust Native RandomX round, getting new template...");
+        println!("\n[Mining] No solution found in pure Rust round, getting new template...");
     }
     
     result
@@ -570,13 +548,24 @@ fn submit_block(client: &Client, node_url: &str, block: &SubmitBlockRequest) -> 
     Ok(())
 }
 
-// Rust Native RandomX flag detection with CPU-only optimization
-fn get_optimal_flags() -> u32 {
-    use crate::randomx::{RANDOMX_FLAG_DEFAULT, RANDOMX_FLAG_HARD_AES, RANDOMX_FLAG_FULL_MEM};
+// Pure Rust RandomX flag detection
+fn get_best_randomx_flags_optimized() -> u32 {
+    let mut flags = 0;
     
-    // For pure Rust implementation, we use default flags
-    // Hardware AES and full memory mode flags
-    RANDOMX_FLAG_DEFAULT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_FULL_MEM
+    // Always try HARD_AES (essential for performance)
+    flags |= 2; // HARD_AES
+    
+    // Try FULL_MEM mode for maximum performance
+    flags |= 4; // FULL_MEM
+    
+    // Add optimized Argon2 if AVX2 is detected
+    if is_x86_feature_detected!("avx2") {
+        flags |= 64; // ARGON2_AVX2
+    } else if is_x86_feature_detected!("ssse3") {
+        flags |= 32; // ARGON2_SSSE3
+    }
+    
+    flags
 }
 
 // Fast difficulty checking optimized for RandomX hashes

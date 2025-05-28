@@ -1,47 +1,59 @@
 //! RandomX CPU-Only Verification Module
 //! 
 //! This module implements the RandomX proof-of-work verification with strict CPU-only enforcement.
-//! It re-runs RandomX exactly as specified and measures resource usage to detect GPU/ASIC mining.
+//! It uses the comprehensive Rust Native RandomX implementation with full CPU timing enforcement,
+//! Argon2d cache generation, SuperscalarHash dataset expansion, and ASIC/GPU mining detection.
 //! 
 //! Key features:
-//! - Full RandomX re-verification on every block submission
-//! - CPU timing enforcement (~1.6ms baseline per hash)
-//! - Memory access pattern validation
-//! - Suspicious hash detection and peer scoring
-//! - Argon2d cache/dataset validation
+//! - Full Rust Native RandomX re-verification on every block submission
+//! - CPU timing enforcement with execution cycle counting
+//! - Memory requirements enforcement (~2.08 GiB dataset + cache)
+//! - Suspicious behavior detection and peer scoring
+//! - Full compliance with RandomX specification
 
 use std::time::Instant;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
-use aes::{Aes128, cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray}};
+use aes::{Aes128, cipher::{BlockEncrypt, KeyInit}};
+use aes::cipher::generic_array::GenericArray;
 
 use primitives::{BlockHeader, Pow};
 
-/// CPU baseline performance constants
-pub const RANDOMX_CPU_BASELINE_MS: f64 = 1.6; // Expected hash time on modern CPU
-pub const RANDOMX_SUSPICIOUS_THRESHOLD: f64 = 0.5; // Flag if < 50% of baseline
-pub const RANDOMX_REJECTION_THRESHOLD: f64 = 0.1; // Reject if < 10% of baseline
+// Import our Rust Native RandomX implementation
+use crate::randomx::{
+    randomx_hash, RandomXCache, RandomXDataset, RandomXVM,
+    RANDOMX_FLAG_DEFAULT, RANDOMX_FLAG_HARD_AES, RANDOMX_FLAG_FULL_MEM,
+    RANDOMX_FLAG_SECURE, RANDOMX_FLAG_ARGON2_AVX2, RANDOMX_FLAG_ARGON2_SSSE3
+};
 
-/// RandomX verification flags
+/// CPU baseline performance constants (updated for Rust Native RandomX)
+pub const RANDOMX_CPU_BASELINE_MS: f64 = 2.5; // Expected hash time with full dataset
+pub const RANDOMX_SUSPICIOUS_THRESHOLD: f64 = 0.4; // Flag if < 40% of baseline
+pub const RANDOMX_REJECTION_THRESHOLD: f64 = 0.1; // Reject if < 10% of baseline
+pub const RANDOMX_MEMORY_REQUIREMENT_GB: f64 = 2.08; // Full dataset memory requirement
+
+/// RandomX verification flags (updated for Rust Native implementation)
 #[derive(Debug, Clone, Copy)]
 pub struct RandomXFlags {
     pub hard_aes: bool,
     pub full_mem: bool,
     pub large_pages: bool,
-    pub jit: bool,
     pub secure: bool,
+    pub argon2_avx2: bool,
+    pub argon2_ssse3: bool,
 }
 
 impl Default for RandomXFlags {
     fn default() -> Self {
         Self {
-            hard_aes: true,  // Use AES-NI when available
-            full_mem: true,  // Use full 2GB dataset
+            hard_aes: true,     // Use AES-NI when available
+            full_mem: true,     // Use full 2.08 GB dataset
             large_pages: false, // Disable by default for compatibility
-            jit: false,      // Pure interpreter mode for security
-            secure: true,    // Enable security checks
+            secure: true,       // Enable security checks
+            argon2_avx2: is_x86_feature_detected!("avx2"),
+            argon2_ssse3: is_x86_feature_detected!("ssse3"),
         }
     }
 }
@@ -223,28 +235,51 @@ impl RandomXVerifier {
         }
     }
     
-    /// Compute RandomX hash exactly as specified
+    /// Compute RandomX hash using Rust Native implementation
     fn compute_randomx_hash(&self, header: &BlockHeader, nonce: u64) -> [u8; 32] {
-        // Step 1: Prepare header bytes
-        let header_bytes = self.prepare_header_bytes(header, nonce);
+        // Prepare input data
+        let mut input = Vec::new();
+        input.extend_from_slice(&header.version.to_le_bytes());
+        input.extend_from_slice(&header.prev_hash);
+        input.extend_from_slice(&header.merkle_root);
+        input.extend_from_slice(&header.timestamp.to_le_bytes());
+        input.extend_from_slice(&header.height.to_le_bytes());
+        input.extend_from_slice(&header.difficulty.to_le_bytes());
+        input.extend_from_slice(&nonce.to_le_bytes());
         
-        // Step 2: Generate RandomX key from block data
-        let randomx_key = self.derive_randomx_key(&header_bytes);
+        // Generate RandomX key from header
+        let mut key = Vec::new();
+        key.extend_from_slice(&header.prev_hash);
+        key.extend_from_slice(&header.height.to_le_bytes());
         
-        // Step 3: Initialize Argon2d cache
-        let cache = self.init_argon2d_cache(&randomx_key);
+        // Use Rust Native RandomX for verification
+        let flags = self.get_native_flags();
+        randomx_hash(&key, &input, flags)
+    }
+    
+    /// Get native RandomX flags for verification
+    fn get_native_flags(&self) -> u32 {
+        let mut flags = RANDOMX_FLAG_DEFAULT;
         
-        // Step 4: Expand dataset from cache (simplified for verification)
-        let dataset_sample = self.sample_dataset(&cache, &header_bytes);
+        if self.flags.hard_aes {
+            flags |= RANDOMX_FLAG_HARD_AES;
+        }
         
-        // Step 5: Initialize scratchpad with Blake2b + AES
-        let scratchpad = self.init_scratchpad(&header_bytes, nonce);
+        if self.flags.full_mem {
+            flags |= RANDOMX_FLAG_FULL_MEM;
+        }
         
-        // Step 6: Execute RandomX VM
-        let final_state = self.execute_randomx_vm(&scratchpad, &dataset_sample, &header_bytes);
+        if self.flags.secure {
+            flags |= RANDOMX_FLAG_SECURE;
+        }
         
-        // Step 7: Final hash computation (AES + Blake2b)
-        self.compute_final_hash(&final_state)
+        if self.flags.argon2_avx2 {
+            flags |= RANDOMX_FLAG_ARGON2_AVX2;
+        } else if self.flags.argon2_ssse3 {
+            flags |= RANDOMX_FLAG_ARGON2_SSSE3;
+        }
+        
+        flags
     }
     
     /// Prepare block header bytes for hashing

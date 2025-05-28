@@ -21,6 +21,10 @@ rayon = "1.7"
 ctrlc = "3.4"
 sha2 = "0.10"
 aes = "0.8"
+argon2 = "0.5"
+blake2 = "0.10"
+digest = "0.10"
+getrandom = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["libloaderapi", "minwindef", "memoryapi", "handleapi", "winnt"] }
