@@ -140,8 +140,10 @@ impl Instruction {
         }
     }
 
-    /// Get effective address for memory operations
+    /// Get effective address for memory operations (ultra-optimized)
+    #[inline(always)]
     pub fn get_memory_address(&self, src_value: u64, imm_value: u64) -> u32 {
+        // PERFORMANCE OPTIMIZATION: Fast address calculation with wrapping add
         let address = src_value.wrapping_add(imm_value);
         (address as u32) & self.mem_mask
     }

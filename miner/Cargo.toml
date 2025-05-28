@@ -27,3 +27,27 @@ getrandom = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["libloaderapi", "minwindef", "memoryapi", "handleapi", "winnt"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+overflow-checks = false
+debug-assertions = false
+strip = true
+
+# Ultra-aggressive CPU optimizations inspired by XMRig
+[profile.release.package."blacksilk-miner"]
+opt-level = 3
+overflow-checks = false
+
+# Force all CPU features for maximum RandomX performance
+[build]
+rustflags = [
+    "-C", "target-cpu=native",
+    "-C", "target-feature=+aes,+sse2,+ssse3,+sse4.1,+sse4.2,+avx,+avx2,+fma,+bmi1,+bmi2,+popcnt,+lzcnt,+adx",
+    "-C", "opt-level=3",
+    "-C", "link-arg=-fuse-ld=lld",
+    "-C", "codegen-units=1"
+]
