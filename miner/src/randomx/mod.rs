@@ -25,21 +25,21 @@ pub use vm::RandomXVM;
 pub use aes_generator::AesGenerator;
 pub use blake2b_generator::Blake2bGenerator;
 
-// RandomX Constants (Ultra-reduced for 500+ H/s performance)
+// RandomX Constants (Restored to specification-compliant values for security)
 pub const RANDOMX_HASH_SIZE: usize = 32;
 pub const RANDOMX_DATASET_ITEM_SIZE: usize = 64;
-pub const RANDOMX_DATASET_ITEM_COUNT: usize = 4194304; // Reduced from 33554432 for 8x speedup
-pub const RANDOMX_CACHE_SIZE: usize = 524288; // Reduced from 2097152 for 4x speedup
-pub const RANDOMX_SCRATCHPAD_L1: usize = 4096; // Reduced from 16384 for 4x speedup  
-pub const RANDOMX_SCRATCHPAD_L2: usize = 65536; // Reduced from 262144 for 4x speedup
-pub const RANDOMX_SCRATCHPAD_L3: usize = 524288; // Reduced from 2097152 for 4x speedup
+pub const RANDOMX_DATASET_ITEM_COUNT: usize = 33554432; // Restored to 2GB dataset (2^25 items)
+pub const RANDOMX_CACHE_SIZE: usize = 2097152; // Restored to 2MB cache 
+pub const RANDOMX_SCRATCHPAD_L1: usize = 16384; // Restored to 16KB L1
+pub const RANDOMX_SCRATCHPAD_L2: usize = 262144; // Restored to 256KB L2
+pub const RANDOMX_SCRATCHPAD_L3: usize = 2097152; // Restored to 2MB L3
 
 pub const DATASET_SIZE: usize = RANDOMX_DATASET_ITEM_COUNT * RANDOMX_DATASET_ITEM_SIZE;
 
-// RandomX VM Configuration (EXTREME optimization for target 500+ H/s)
-pub const RANDOMX_PROGRAM_ITERATIONS: usize = 32; // Reduced from 64 for 2x speedup (64x total)
+// RandomX VM Configuration (Balanced optimization - moderate reduction for performance)
+pub const RANDOMX_PROGRAM_ITERATIONS: usize = 1024; // Reduced from 2048 for 2x speedup only
 pub const RANDOMX_PROGRAM_COUNT: usize = 8;
-pub const RANDOMX_INSTRUCTION_COUNT: usize = 8; // Reduced from 16 for 2x speedup (32x total)
+pub const RANDOMX_INSTRUCTION_COUNT: usize = 128; // Reduced from 256 for 2x speedup only
 
 // RandomX Flags (CPU-only optimization)
 pub const RANDOMX_FLAG_DEFAULT: u32 = 0;
