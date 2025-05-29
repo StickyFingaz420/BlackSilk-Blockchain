@@ -9,7 +9,7 @@ use argon2::{Argon2, Algorithm, Version, Params};
 
 use crate::randomx::{
     RANDOMX_CACHE_SIZE, RANDOMX_ARGON2_ITERATIONS, RANDOMX_ARGON2_LANES, 
-    RANDOMX_ARGON2_SALT
+    RANDOMX_ARGON2_SALT, RANDOMX_FLAG_LARGE_PAGES
 };
 
 /// RandomX Cache with Argon2d generation
@@ -23,14 +23,50 @@ pub struct RandomXCache {
 impl RandomXCache {
     /// Create new RandomX cache with Argon2d initialization
     pub fn new(key: &[u8], flags: u32) -> Self {
+        let memory = if (flags & RANDOMX_FLAG_LARGE_PAGES) != 0 {
+            Self::allocate_huge_pages(RANDOMX_CACHE_SIZE)
+        } else {
+            vec![0u8; RANDOMX_CACHE_SIZE]
+        };
+        
         let mut cache = RandomXCache {
-            memory: vec![0u8; RANDOMX_CACHE_SIZE],
+            memory,
             flags,
             initialized: false,
             key: key.to_vec(),
         };
         cache.init_argon2d(key);
         cache
+    }
+    
+    /// Attempt to allocate memory using huge pages for better performance
+    fn allocate_huge_pages(size: usize) -> Vec<u8> {
+        // For production systems, we would use madvise() with MADV_HUGEPAGE
+        // This is a simplified version that allocates normal pages
+        println!("[RandomX Cache] Attempting huge pages allocation ({} MB)", size / (1024 * 1024));
+        
+        #[cfg(target_os = "linux")]
+        {
+            // Try to allocate aligned memory that's more likely to use huge pages
+            let aligned_size = ((size + 2 * 1024 * 1024 - 1) / (2 * 1024 * 1024)) * (2 * 1024 * 1024);
+            let mut memory = vec![0u8; aligned_size];
+            
+            // Advise kernel to use huge pages if available
+            unsafe {
+                let ptr = memory.as_mut_ptr() as *mut libc::c_void;
+                libc::madvise(ptr, aligned_size, libc::MADV_HUGEPAGE);
+            }
+            
+            memory.resize(size, 0);
+            println!("[RandomX Cache] Huge pages allocation attempted (aligned to {} MB)", aligned_size / (1024 * 1024));
+            memory
+        }
+        
+        #[cfg(not(target_os = "linux"))]
+        {
+            println!("[RandomX Cache] Huge pages not supported on this platform, using regular allocation");
+            vec![0u8; size]
+        }
     }
 
     /// Initialize cache using Argon2d memory-hard function
