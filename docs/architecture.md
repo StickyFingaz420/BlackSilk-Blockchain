@@ -25,11 +25,10 @@ graph TB
         TLS[TLS + PFS]
     end
     
-    subgraph Marketplace
-        API[Backend API]
-        UI[Frontend UI]
-        IPFS[IPFS Storage]
-        ESCROW[Smart Escrow]
+    subgraph Miner
+        MINING[Mining Engine]
+        HASH[RandomX Hashing]
+        CPU[CPU Optimization]
     end
     
     BC --> POW
@@ -46,10 +45,9 @@ graph TB
     P2P --> I2P
     P2P --> TLS
     
-    API --> BC
-    UI --> API
-    API --> IPFS
-    API --> ESCROW
+    MINING --> HASH
+    MINING --> CPU
+    MINING --> BC
 ```
 
 ## Component Details
@@ -57,7 +55,7 @@ graph TB
 ### 1. Core Node (`node/src/`)
 - Blockchain state management
 - Block validation and consensus
-- RandomX proof-of-work mining
+- RandomX proof-of-work verification
 - P2P networking and synchronization
 - Transaction pool management
 - Privacy protocol implementation
@@ -78,27 +76,19 @@ graph TB
 - Stealth address types
 - Bulletproof range proof types
 
-### 4. Network Privacy (`node/src/network/`)
+### 4. Miner (`miner/src/`)
+- RandomX mining implementation
+- CPU-optimized hash computation
+- Mining pool connectivity
+- Performance optimization
+- Block template processing
+
+### 5. Network Privacy (`node/src/network/`)
 - Tor hidden service integration
 - I2P destination management
 - TLS with Perfect Forward Secrecy
 - P2P protocol encryption
 - Network address privacy
-
-### 5. Marketplace Backend (`marketplace/backend/`)
-- RESTful API (FastAPI/Rocket)
-- Listing management
-- Order processing
-- Smart escrow contracts
-- User reputation system
-- IPFS integration
-- Authentication & authorization
-
-### 6. Marketplace Frontend (`marketplace/frontend/`)
-- Static site generation (Next.js)
-- User interface components
-- Wallet integration
-- Search and filtering
 - Order management
 - Responsive design
 - Privacy-preserving analytics
@@ -115,13 +105,12 @@ graph TB
 4. Miners include in blocks
 5. Network reaches consensus
 
-### Marketplace Flow
-1. Seller creates listing (stored in IPFS)
-2. Buyer initiates purchase
-3. Funds locked in smart escrow
-4. Seller confirms shipping
-5. Buyer confirms receipt
-6. Escrow releases funds
+### Mining Flow
+1. Miner requests block template from node
+2. Miner computes RandomX hash with varying nonce
+3. Valid hash submitted to node
+4. Node validates and broadcasts block
+5. Network reaches consensus
 
 ## Security Considerations
 
@@ -139,13 +128,11 @@ graph TB
 - Memory wiping
 - Backup functionality
 
-### Marketplace Security
-- End-to-end encryption
-- No third-party trackers
-- Secure headers
-- Input validation
-- Rate limiting
-- IPFS content verification
+### Miner Security
+- Secure RandomX implementation
+- Memory-safe operations
+- DoS protection
+- Performance isolation
 
 ## Development Guidelines
 
@@ -177,13 +164,13 @@ graph TB
 - zk-SNARKs integration
 - Improved stealth addresses
 - Enhanced network privacy
-- Marketplace anonymity
+- Advanced ring signature schemes
 
-### Marketplace Features
-- Decentralized arbitration
-- Enhanced reputation system
-- Automated escrow
-- Mobile applications
+### Mining Improvements
+- GPU resistance validation
+- ASIC resistance monitoring
+- Performance optimizations
+- Pool mining protocols
 
 ### Emission Schedule & Tokenomics
 BlackSilk’s emission model is designed for fairness and long-term sustainability:

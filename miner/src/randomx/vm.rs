@@ -68,8 +68,10 @@ pub struct RandomXVM {
     pub program: Vec<Instruction>,
     pub pc: usize,
     
-    // Memory access
+    // Memory access (for future use)
+    #[allow(dead_code)]
     cache: *const RandomXCache,
+    #[allow(dead_code)]
     dataset: Option<*const RandomXDataset>,
     
     // CPU timing enforcement
@@ -990,11 +992,17 @@ impl RandomXVM {
     fn execute_program_hyperfast(&mut self) {
         // Execute all 4 instructions with loop unrolling
         if likely(self.program.len() >= 4) {
+            // Create local copies to avoid borrowing conflicts
+            let instr0 = self.program[0].clone();
+            let instr1 = self.program[1].clone();
+            let instr2 = self.program[2].clone();
+            let instr3 = self.program[3].clone();
+            
             // Manual unrolling for 4 instructions
-            self.execute_instruction_inline(&self.program[0]);
-            self.execute_instruction_inline(&self.program[1]);
-            self.execute_instruction_inline(&self.program[2]);
-            self.execute_instruction_inline(&self.program[3]);
+            self.execute_instruction_inline(&instr0);
+            self.execute_instruction_inline(&instr1);
+            self.execute_instruction_inline(&instr2);
+            self.execute_instruction_inline(&instr3);
         }
     }
 

@@ -7,7 +7,6 @@
 
 use crate::randomx::cache::RandomXCache;
 use crate::randomx::aes_generator::AesGenerator;
-use crate::randomx::{RANDOMX_DATASET_ITEM_SIZE, RANDOMX_DATASET_ITEM_COUNT};
 
 /// Superscalar hash instruction types
 #[derive(Clone, Copy, Debug)]

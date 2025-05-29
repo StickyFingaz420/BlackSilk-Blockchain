@@ -6,11 +6,10 @@
 // ============================================================================
 
 use argon2::{Argon2, Algorithm, Version, Params};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::randomx::{
     RANDOMX_CACHE_SIZE, RANDOMX_ARGON2_ITERATIONS, RANDOMX_ARGON2_LANES, 
-    RANDOMX_ARGON2_SALT, RANDOMX_FLAG_ARGON2_AVX2, RANDOMX_FLAG_ARGON2_SSSE3
+    RANDOMX_ARGON2_SALT
 };
 
 /// RandomX Cache with Argon2d generation

@@ -1,7 +1,7 @@
 //! Canonical CryptoNote-style ring signature generation and verification for BlackSilk
 
 use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
-use curve25519_dalek::edwards::{EdwardsPoint, CompressedEdwardsY};
+use curve25519_dalek::edwards::CompressedEdwardsY;
 use curve25519_dalek::scalar::Scalar;
 use rand::RngCore;
 use sha2::{Sha256, Digest};

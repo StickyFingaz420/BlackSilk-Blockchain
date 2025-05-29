@@ -23,7 +23,7 @@ use primitives::{BlockHeader, Pow};
 
 // Import our Rust Native RandomX implementation
 use crate::randomx::{
-    randomx_hash, RandomXCache, RandomXDataset, RandomXVM,
+    randomx_hash,
     RANDOMX_FLAG_DEFAULT, RANDOMX_FLAG_HARD_AES, RANDOMX_FLAG_FULL_MEM,
     RANDOMX_FLAG_SECURE, RANDOMX_FLAG_ARGON2_AVX2, RANDOMX_FLAG_ARGON2_SSSE3
 };
@@ -283,6 +283,7 @@ impl RandomXVerifier {
     }
     
     /// Prepare block header bytes for hashing
+    #[allow(dead_code)]
     fn prepare_header_bytes(&self, header: &BlockHeader, nonce: u64) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&header.version.to_le_bytes());
@@ -296,6 +297,7 @@ impl RandomXVerifier {
     }
     
     /// Derive RandomX key from header data
+    #[allow(dead_code)]
     fn derive_randomx_key(&self, header_bytes: &[u8]) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(header_bytes);
@@ -304,6 +306,7 @@ impl RandomXVerifier {
     }
     
     /// Initialize Argon2d cache (simplified for verification)
+    #[allow(dead_code)]
     fn init_argon2d_cache(&self, key: &[u8; 32]) -> Vec<u8> {
         // Simplified Argon2d cache generation
         let cache_size = 256 * 1024; // 256KB for verification
@@ -328,6 +331,7 @@ impl RandomXVerifier {
     }
     
     /// Sample dataset entries (simplified - full dataset would be 2GB)
+    #[allow(dead_code)]
     fn sample_dataset(&self, cache: &[u8], header_bytes: &[u8]) -> Vec<u8> {
         let sample_size = 64 * 1024; // 64KB sample
         let mut dataset_sample = vec![0u8; sample_size];
@@ -360,6 +364,7 @@ impl RandomXVerifier {
     }
     
     /// Initialize scratchpad with Blake2b + AES
+    #[allow(dead_code)]
     fn init_scratchpad(&self, header_bytes: &[u8], nonce: u64) -> Vec<u8> {
         let scratchpad_size = 2 * 1024; // 2KB for verification (vs 2MB full)
         let mut scratchpad = vec![0u8; scratchpad_size];
@@ -392,6 +397,7 @@ impl RandomXVerifier {
     }
     
     /// Execute RandomX VM (simplified instruction set)
+    #[allow(dead_code)]
     fn execute_randomx_vm(&self, scratchpad: &[u8], dataset: &[u8], header_bytes: &[u8]) -> Vec<u8> {
         let mut vm_state = scratchpad.to_vec();
         let mut registers = [0u64; 8];
@@ -470,6 +476,7 @@ impl RandomXVerifier {
     }
     
     /// Compute final RandomX hash
+    #[allow(dead_code)]
     fn compute_final_hash(&self, vm_state: &[u8]) -> [u8; 32] {
         // AES final mixing
         let mut result = [0u8; 32];
