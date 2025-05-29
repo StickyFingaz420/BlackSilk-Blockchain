@@ -1,6 +1,7 @@
 //! Escrow smart contract for BlackSilk blockchain
 
 use crate::types::Hash;
+use sha2::{Sha256, Digest};
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,8 +34,21 @@ pub struct EscrowContract {
 }
 
 impl EscrowContract {
-    /// Create a new escrow contract
-    pub fn new(contract_id: Hash, buyer: Hash, seller: Hash, arbiter: Hash, amount: u64) -> Self {
+    /// Create a new escrow contract with real cryptographic hashes
+    pub fn new(buyer_pubkey: &[u8], seller_pubkey: &[u8], arbiter_pubkey: &[u8], amount: u64) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(buyer_pubkey);
+        let buyer = hasher.finalize_reset().into();
+
+        hasher.update(seller_pubkey);
+        let seller = hasher.finalize_reset().into();
+
+        hasher.update(arbiter_pubkey);
+        let arbiter = hasher.finalize_reset().into();
+
+        hasher.update(&[buyer, seller, arbiter].concat());
+        let contract_id = hasher.finalize().into();
+
         Self {
             contract_id,
             buyer,
