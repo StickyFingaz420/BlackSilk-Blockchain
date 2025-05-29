@@ -899,3 +899,115 @@ fn run_benchmark() {
     println!();
     println!("{} ✅ Benchmark completed successfully!", "[SUCCESS]".bright_green().bold());
 }
+
+use reqwest::blocking::Client;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GetBlockTemplateResponse {
+    version: String,
+    previous_hash: String,
+    coinbase1: String,
+    coinbase2: String,
+    merkle_branches: Vec<String>,
+    height: u64,
+    nbits: String,
+    ntime: String,
+    target: Vec<u8>,
+    difficulty: u64,
+    seed: Vec<u8>,
+    coinbase_address: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SubmitBlockResponse {
+    status: String,
+    message: String,
+}
+
+/// Fetch a mining job from the node
+fn fetch_job(client: &Client, node_url: &str) -> Option<GetBlockTemplateResponse> {
+    let url = format!("{}/get_block_template", node_url);
+    match client.get(&url).send() {
+        Ok(response) => {
+            if let Ok(job) = response.json::<GetBlockTemplateResponse>() {
+                return Some(job);
+            }
+        }
+        Err(e) => println!("[Miner] Failed to fetch job: {}", e),
+    }
+    None
+}
+
+/// Submit a mined block to the node
+fn submit_block(client: &Client, node_url: &str, block: SubmitBlockRequest) {
+    let url = format!("{}/submit_block", node_url);
+    match client.post(&url).json(&block).send() {
+        Ok(response) => {
+            if let Ok(res) = response.json::<SubmitBlockResponse>() {
+                println!("[Miner] Block submission result: {}", res.message);
+            }
+        }
+        Err(e) => println!("[Miner] Failed to submit block: {}", e),
+    }
+}
+
+/// Start threaded mining
+fn start_mining(node_url: &str, thread_count: usize) {
+    let client = Client::new();
+    let job = Arc::new(Mutex::new(None));
+
+    // Fetch job periodically
+    let job_clone = Arc::clone(&job);
+    thread::spawn(move || {
+        loop {
+            if let Some(new_job) = fetch_job(&client, node_url) {
+                let mut job_lock = job_clone.lock().unwrap();
+                *job_lock = Some(new_job);
+            }
+            thread::sleep(Duration::from_secs(5));
+        }
+    });
+
+    // Start mining threads
+    let mut handles = vec![];
+    for _ in 0..thread_count {
+        let job_clone = Arc::clone(&job);
+        let client_clone = client.clone();
+        let node_url_clone = node_url.to_string();
+
+        let handle = thread::spawn(move || {
+            loop {
+                let job_lock = job_clone.lock().unwrap();
+                if let Some(ref job) = *job_lock {
+                    // Perform mining logic here using RandomX
+                    let mut header = job.header.clone();
+                    let target = job.difficulty;
+
+                    for nonce in 0..u64::MAX {
+                        // Use RandomX to compute hash
+                        let hash = randomx_hash(&header, nonce);
+                        if hash_meets_target(&hash, target) {
+                            let block = SubmitBlockRequest {
+                                header: header.clone(),
+                                nonce,
+                                hash: hash.to_vec(),
+                                miner_address: Some(job.coinbase_address.clone()),
+                            };
+                            submit_block(&client_clone, &node_url_clone, block);
+                            break;
+                        }
+                    }
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+}

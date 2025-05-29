@@ -3,7 +3,9 @@
 // No premine, no tail emission; all coins are mined, and miners receive only fees after the 21M BLK cap.
 
 use crate::primitives::{Block, BlockHeader, Pow};
-use sha2::{Digest, Sha256};
+use crate::randomx::vm::RandomXVM;
+use crate::randomx::cache::RandomXCache;
+use crate::randomx::dataset::RandomXDataset;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// RandomX configuration
@@ -47,34 +49,31 @@ impl MiningContext {
 /// Mine a block using RandomX
 pub fn mine_block(
     header: &mut BlockHeader,
-    _context: &MiningContext,
+    context: &MiningContext,
     target: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Prepare block header for hashing
     let mut pre_pow = prepare_header_bytes(header);
-    
+
     for nonce in 0..u64::MAX {
         header.pow.nonce = nonce;
         pre_pow[24..32].copy_from_slice(&nonce.to_le_bytes());
-        
-        // Calculate proper hash for testnet (actual RandomX would be used in production)
-        let mut hasher = Sha256::new();
-        hasher.update(&pre_pow);
-        hasher.update(nonce.to_le_bytes());
-        let hash = hasher.finalize();
-        
+
+        // Use RandomX VM to compute hash
+        let hash = context.vm.hash(&pre_pow);
+
         // Check if hash meets target
         if check_pow(&hash, target) {
             header.pow.hash.copy_from_slice(&hash);
             return Ok(());
         }
-        
+
         // Add some delay to prevent CPU overload in testnet
         if nonce % 1000 == 0 {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
-    
+
     Err("Mining failed - nonce space exhausted".into())
 }
 
