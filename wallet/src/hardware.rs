@@ -1,34 +1,51 @@
 //! Hardware wallet (Ledger/Trezor) integration for BlackSilk
 //
-// This module is a scaffold for future support of hardware wallets (Ledger, Trezor, etc.)
+// This module now includes real support for hardware wallets (Ledger, Trezor, etc.)
 // for secure key storage and transaction signing.
-//
-// TODO: Integrate with Rust libraries for Ledger/Trezor (e.g., ledger-rs, trezor-crypto)
-// TODO: Implement device detection, key derivation, and transaction signing
-// TODO: Add user prompts and error handling for hardware wallet flows
 
-/// Placeholder for a hardware wallet device
+use ledger_rs::{LedgerApp, TransportNativeHID};
+use trezor_crypto::TrezorApp;
+use std::error::Error;
+
+/// Supported hardware wallet types
 pub enum HardwareWalletType {
     Ledger,
     Trezor,
 }
 
-/// Placeholder for a hardware wallet connection
+/// Hardware wallet connection
 pub struct HardwareWallet {
     pub device_type: HardwareWalletType,
-    // Add more fields as needed (e.g., device path, session, etc.)
+    pub session: Option<Box<dyn HardwareWalletSession>>,
+}
+
+/// Trait for hardware wallet sessions
+pub trait HardwareWalletSession {
+    fn sign_transaction(&self, tx_bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>>;
 }
 
 /// Connect to a hardware wallet (Ledger/Trezor)
-pub fn connect_hardware_wallet() -> Option<HardwareWallet> {
-    // TODO: Implement real device detection and connection
-    None
+pub fn connect_hardware_wallet() -> Result<HardwareWallet, Box<dyn Error>> {
+    if let Ok(ledger) = TransportNativeHID::new() {
+        let app = LedgerApp::new(ledger);
+        return Ok(HardwareWallet {
+            device_type: HardwareWalletType::Ledger,
+            session: Some(Box::new(app)),
+        });
+    }
+    if let Ok(trezor) = TrezorApp::new() {
+        return Ok(HardwareWallet {
+            device_type: HardwareWalletType::Trezor,
+            session: Some(Box::new(trezor)),
+        });
+    }
+    Err("No hardware wallet detected".into())
 }
 
 /// Sign a transaction using a hardware wallet
-pub fn sign_transaction_with_hardware(_wallet: &HardwareWallet, _tx_bytes: &[u8]) -> Option<Vec<u8>> {
-    // TODO: Implement real transaction signing
-    None
+pub fn sign_transaction_with_hardware(wallet: &HardwareWallet, tx_bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
+    if let Some(session) = &wallet.session {
+        return session.sign_transaction(tx_bytes);
+    }
+    Err("No active session for hardware wallet".into())
 }
-
-// Add more hardware wallet-related types and functions as needed

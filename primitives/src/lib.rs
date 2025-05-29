@@ -1,12 +1,37 @@
 //! BlackSilk Primitives - Core Types
 
 pub mod types {
+    use curve25519_dalek::scalar::Scalar;
+    use curve25519_dalek::edwards::CompressedEdwardsY;
+    use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+
     /// Amount in atomic units (1 BLK = 1_000_000 atomic units). Max supply: 21,000,000 BLK.
     pub type BlkAmount = u64; // atomic units
     pub type BlockHeight = u64;
-    pub type Address = String; // placeholder for stealth address
     pub type Hash = [u8; 32];
-    // Add more types as needed
+
+    /// Stealth address structure
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct StealthAddress {
+        pub public_view: [u8; 32],
+        pub public_spend: [u8; 32],
+    }
+
+    impl StealthAddress {
+        /// Generate a new stealth address
+        pub fn generate() -> (Scalar, Scalar, Self) {
+            let mut csprng = rand::thread_rng();
+            let priv_view = Scalar::random(&mut csprng);
+            let priv_spend = Scalar::random(&mut csprng);
+            let pub_view = (ED25519_BASEPOINT_POINT * priv_view).compress().to_bytes();
+            let pub_spend = (ED25519_BASEPOINT_POINT * priv_spend).compress().to_bytes();
+            let stealth = StealthAddress {
+                public_view: pub_view,
+                public_spend: pub_spend,
+            };
+            (priv_view, priv_spend, stealth)
+        }
+    }
 }
 
 pub fn add(left: u64, right: u64) -> u64 {
@@ -87,12 +112,6 @@ impl Block {
 pub struct RingSignature {
     pub ring: Vec<types::Hash>, // decoy public keys
     pub signature: Vec<u8>,    // placeholder
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct StealthAddress {
-    pub public_view: types::Hash,
-    pub public_spend: types::Hash,
 }
 
 pub mod zkp; // zk-SNARKs and advanced ZKP integration

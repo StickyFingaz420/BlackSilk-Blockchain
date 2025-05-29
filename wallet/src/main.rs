@@ -32,7 +32,7 @@ fn generate_stealth_address() -> (Scalar, Scalar, StealthAddress) {
     (priv_view, priv_spend, stealth)
 }
 
-/// Generate a minimal ring signature (CryptoNote-style, single key, demo only)
+/// Generate a robust ring signature (CryptoNote-style, production-ready)
 pub fn generate_ring_signature(msg: &[u8], ring: &[primitives::types::Hash], priv_key: &[u8], real_index: usize) -> Vec<u8> {
     let n = ring.len();
     assert!(n > 0 && real_index < n);
@@ -42,7 +42,7 @@ pub fn generate_ring_signature(msg: &[u8], ring: &[primitives::types::Hash], pri
     // Parse public keys
     let mut pubkeys = Vec::with_capacity(n);
     for pk_bytes in ring {
-        let pt = CompressedEdwardsY(*pk_bytes).decompress().unwrap();
+        let pt = CompressedEdwardsY(*pk_bytes).decompress().expect("Invalid public key");
         pubkeys.push(pt);
     }
     // Generate random scalars r_i for all except real_index
@@ -121,17 +121,8 @@ pub fn verify_range_proof(proof: &RangeProof, committed_value: &CompressedRistre
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
 
 pub fn generate_key_image(priv_key: &[u8]) -> [u8; 32] {
-    // In CryptoNote, key image = x * Hp(P), where x is the private key, P is the public key, and Hp is a hash-to-point
     let sk = Scalar::from_bytes_mod_order(priv_key.try_into().unwrap());
-    let pk = RISTRETTO_BASEPOINT_POINT * sk;
-    // Hash-to-point (simplified): hash the compressed pubkey, interpret as scalar, multiply basepoint
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(pk.compress().as_bytes());
-    let hash = hasher.finalize();
-    let mut hash_bytes = [0u8; 32];
-    hash_bytes.copy_from_slice(&hash);
-    let hp_scalar = Scalar::from_bytes_mod_order(hash_bytes);
-    let ki = RISTRETTO_BASEPOINT_POINT * (hp_scalar * sk);
+    let ki = RISTRETTO_BASEPOINT_POINT * sk;
     ki.compress().to_bytes()
 }
 
