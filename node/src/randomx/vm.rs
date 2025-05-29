@@ -155,6 +155,21 @@ impl RandomXVM {
             self.execution_cycles += instruction.execution_weight() as u64;
         }
     }
+    
+    /// Enforce CPU timing constraints during execution
+    fn enforce_cpu_timing(&mut self) {
+        let elapsed = self.start_time.elapsed();
+        let expected_cycles = (elapsed.as_nanos() as u64) / 10; // ~10ns per cycle estimate
+        
+        // Check if execution is progressing at realistic CPU speed
+        if self.execution_cycles > expected_cycles * 2 {
+            // Running too fast - add artificial delay
+            std::thread::sleep(std::time::Duration::from_nanos(100));
+        }
+        
+        // Update cycle tracking
+        self.execution_cycles += 64; // Base cycle cost for timing check
+    }
 
     /// Execute single RandomX instruction
     fn execute_instruction(&mut self, instr: &Instruction) {
@@ -390,17 +405,6 @@ impl RandomXVM {
         if addr + 8 <= self.scratchpad.len() {
             let bytes = value.to_le_bytes();
             self.scratchpad[addr..addr + 8].copy_from_slice(&bytes);
-        }
-    }
-
-    /// Enforce CPU timing to detect GPU/ASIC mining
-    fn enforce_cpu_timing(&self) {
-        let elapsed_ns = self.start_time.elapsed().as_nanos() as u64;
-        let expected_min_ns = self.execution_cycles * 10; // ~10ns per cycle minimum
-        
-        if elapsed_ns < expected_min_ns {
-            // Suspicious timing - too fast for CPU
-            std::thread::sleep(std::time::Duration::from_nanos(expected_min_ns - elapsed_ns));
         }
     }
 
