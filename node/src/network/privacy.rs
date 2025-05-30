@@ -5,6 +5,12 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use serde::{Serialize, Deserialize};
+use torut::control::{UnauthenticatedConn, TorAuthData};
+use torut::control::AsyncEvent;
+use torut::onion::{TorSecretKeyV3, TorPublicKeyV3};
+use tokio::net::TcpStream;
+use torut::control::ConnError;
+use std::future::Future;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrivacyConfig {
@@ -81,9 +87,9 @@ impl PrivacyManager {
                 return false;
             }
         }
-        
+
         let conn_type = self.detect_connection_type(addr);
-        
+
         match self.config.privacy_mode {
             PrivacyMode::Disabled => true,
             PrivacyMode::Tor => {
@@ -103,7 +109,7 @@ impl PrivacyManager {
             PrivacyMode::MaxPrivacy => {
                 let allowed = matches!(conn_type, ConnectionType::Tor | ConnectionType::I2P);
                 if !allowed {
-                    println!("[Privacy] Rejected clearnet connection in max privacy mode: {}", addr);
+                    println!("[Privacy] Rejected clearnet connection in MaxPrivacy mode: {}", addr);
                 }
                 allowed
             }
@@ -229,16 +235,34 @@ pub fn is_i2p_address(addr: &str) -> bool {
 /// Initialize Tor hidden service (stub - would use arti-client in production)
 pub async fn setup_tor_hidden_service(port: u16) -> Result<String, Box<dyn std::error::Error>> {
     println!("[Privacy] Setting up Tor hidden service on port {}", port);
-    
-    // In production, this would:
-    // 1. Connect to Tor control port
-    // 2. Create ephemeral hidden service
-    // 3. Return the .onion address
-    
-    // For now, return a placeholder address
-    let onion_addr = format!("blacksilk{:04x}.onion", port);
+
+    // Connect to the Tor control port
+    let stream = TcpStream::connect("127.0.0.1:9051").await?;
+    let mut unauth_conn = UnauthenticatedConn::new(stream);
+
+    // Authenticate using Null authentication method
+    unauth_conn.authenticate(&TorAuthData::Null).await?;
+
+    // Convert to an authenticated connection with a no-op handler
+    let mut auth_conn = unauth_conn.into_authenticated::<fn(AsyncEvent<'static>) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ConnError>> + Send>>>().await;
+
+    // Generate a new Tor secret key
+    let secret_key = TorSecretKeyV3::generate();
+
+    // Create an ephemeral hidden service
+    auth_conn.add_onion_v3(
+        &secret_key,
+        false, // detach
+        false, // non-anonymous
+        false, // max_streams_close_circuit
+        None,  // max_num_streams
+        &mut [(port, "127.0.0.1:9050".parse()?)].iter(),
+    ).await?;
+
+    let public_key: TorPublicKeyV3 = secret_key.public();
+    let onion_addr = public_key.get_onion_address().to_string();
     println!("[Privacy] Tor hidden service available at: {}", onion_addr);
-    
+
     Ok(onion_addr)
 }
 
@@ -270,7 +294,8 @@ use std::collections::HashSet;
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+    use std::net::{IpAddr, Ipv4Addr};
+
     #[test]
     fn test_onion_and_i2p_detection() {
         assert!(is_onion_address("abc.onion"));
@@ -295,5 +320,27 @@ mod tests {
         // Test localhost (potential Tor) acceptance
         let localhost_addr = "127.0.0.1:9050".parse().unwrap();
         assert!(manager.allow_connection(&localhost_addr, false));
+    }
+
+    #[test]
+    fn test_max_privacy_mode() {
+        let config = PrivacyConfig {
+            privacy_mode: PrivacyMode::MaxPrivacy,
+            ..Default::default()
+        };
+
+        let manager = PrivacyManager::new(config);
+
+        // Test clearnet rejection in MaxPrivacy mode
+        let clearnet_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)), 8333);
+        assert!(!manager.allow_connection(&clearnet_addr, false));
+
+        // Test Tor acceptance in MaxPrivacy mode
+        let tor_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9050);
+        assert!(manager.allow_connection(&tor_addr, false));
+
+        // Test I2P acceptance in MaxPrivacy mode
+        let i2p_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 4444);
+        assert!(manager.allow_connection(&i2p_addr, false));
     }
 }
