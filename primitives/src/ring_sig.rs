@@ -21,7 +21,7 @@ pub fn generate_ring_signature(msg: &[u8], ring: &[ [u8; 32] ], priv_key: &[u8],
     for i in 0..n {
         if i != real_index {
             let mut r_bytes = [0u8; 32];
-            csprng.fill_bytes(&mut r_bytes);
+            rand::RngCore::fill_bytes(&mut csprng, &mut r_bytes);
             r_vec[i] = Scalar::from_bytes_mod_order(r_bytes);
         }
     }

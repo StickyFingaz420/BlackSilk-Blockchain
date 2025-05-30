@@ -200,7 +200,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use serde::{Serialize, Deserialize};
-use sha2::Digest;
 use once_cell::sync::OnceCell;
 
 /// Global network configuration
@@ -393,8 +392,8 @@ pub fn validate_ring_signature(ring: &[primitives::types::Hash], sig: &[u8], msg
         }
         let l0 = EdwardsPoint::mul_base(&r) + pk.unwrap() * c;
         let mut hasher = Sha256::new();
-        hasher.update(l0.compress().as_bytes());
-        hasher.update(msg);
+        digest::Update::update(&mut hasher, l0.compress().as_bytes());
+        digest::Update::update(&mut hasher, msg);
         let mut c_bytes = [0u8; 32];
         c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
         let c_check = Scalar::from_bytes_mod_order(c_bytes);
@@ -431,8 +430,8 @@ pub fn validate_ring_signature(ring: &[primitives::types::Hash], sig: &[u8], msg
     let mut hasher = Sha256::new();
     let l0 = EdwardsPoint::mul_base(&r_vec[0]);
     println!("[VER] L_0: {:?}", l0.compress().to_bytes());
-    hasher.update(l0.compress().as_bytes());
-    hasher.update(msg);
+    digest::Update::update(&mut hasher, l0.compress().as_bytes());
+    digest::Update::update(&mut hasher, msg);
     let mut c_bytes = [0u8; 32];
     c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
     let mut c = Scalar::from_bytes_mod_order(c_bytes);
@@ -440,8 +439,8 @@ pub fn validate_ring_signature(ring: &[primitives::types::Hash], sig: &[u8], msg
     for i in 1..n {
         let l = EdwardsPoint::mul_base(&r_vec[i]) + pubkeys[i] * c_vec[i];
         println!("[VER] verifier L_{}: {:?}", i, l.compress().to_bytes());
-        hasher.update(l.compress().as_bytes());
-        hasher.update(msg);
+        digest::Update::update(&mut hasher, l.compress().as_bytes());
+        digest::Update::update(&mut hasher, msg);
         let mut c_bytes = [0u8; 32];
         c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
         c = Scalar::from_bytes_mod_order(c_bytes);
@@ -1208,15 +1207,15 @@ fn broadcast_message_except(msg: &P2PMessage, exclude_addr: &SocketAddr) {
 pub fn pow_hash(header: &BlockHeader) -> primitives::types::Hash {
     // Placeholder: double SHA256 of header fields (except pow.hash)
     let mut hasher = Sha256::new();
-    hasher.update(header.version.to_le_bytes());
-    hasher.update(&header.prev_hash);
-    hasher.update(&header.merkle_root);
-    hasher.update(header.timestamp.to_le_bytes());
-    hasher.update(header.height.to_le_bytes());
-    hasher.update(header.pow.nonce.to_le_bytes());
-    hasher.update(header.difficulty.to_le_bytes());
+    digest::Update::update(&mut hasher, &header.version.to_le_bytes());
+    digest::Update::update(&mut hasher, &header.prev_hash);
+    digest::Update::update(&mut hasher, &header.merkle_root);
+    digest::Update::update(&mut hasher, &header.timestamp.to_le_bytes());
+    digest::Update::update(&mut hasher, &header.height.to_le_bytes());
+    digest::Update::update(&mut hasher, &header.pow.nonce.to_le_bytes());
+    digest::Update::update(&mut hasher, &header.difficulty.to_le_bytes());
     let first = hasher.finalize_reset();
-    hasher.update(first);
+    digest::Update::update(&mut hasher, first.as_slice());
     let result = hasher.finalize();
     let mut hash = [0u8; 32];
     hash.copy_from_slice(&result);

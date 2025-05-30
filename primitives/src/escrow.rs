@@ -148,8 +148,8 @@ mod tests {
         let buyer = fake_hash(1);
         let seller = fake_hash(2);
         let arbiter = fake_hash(3);
-        let contract_id = fake_hash(9);
-        let mut contract = EscrowContract::new(contract_id, buyer, seller, arbiter, 1000);
+        let _contract_id = fake_hash(9);
+        let mut contract = EscrowContract::new(&buyer, &seller, &arbiter, 1000);
         assert_eq!(contract.status, EscrowStatus::Created);
         contract.fund(buyer);
         assert_eq!(contract.status, EscrowStatus::Funded);
@@ -166,8 +166,8 @@ mod tests {
         let buyer = fake_hash(1);
         let seller = fake_hash(2);
         let arbiter = fake_hash(3);
-        let contract_id = fake_hash(8);
-        let mut contract = EscrowContract::new(contract_id, buyer, seller, arbiter, 1000);
+        let _contract_id = fake_hash(8);
+        let mut contract = EscrowContract::new(&buyer, &seller, &arbiter, 1000);
         contract.fund(buyer);
         contract.dispute(buyer);
         assert_eq!(contract.status, EscrowStatus::Disputed);
@@ -184,8 +184,8 @@ mod tests {
         let buyer = fake_hash(1);
         let seller = fake_hash(2);
         let arbiter = fake_hash(3);
-        let contract_id = fake_hash(7);
-        let mut contract = EscrowContract::new(contract_id, buyer, seller, arbiter, 1000);
+        let _contract_id = fake_hash(7);
+        let mut contract = EscrowContract::new(&buyer, &seller, &arbiter, 1000);
         contract.fund(buyer);
         contract.dispute(buyer);
         contract.start_voting();

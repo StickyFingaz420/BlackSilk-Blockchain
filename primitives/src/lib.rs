@@ -1,9 +1,15 @@
 //! BlackSilk Primitives - Core Types
 
+#[macro_use]
+extern crate serde;
+
 pub mod types {
     use curve25519_dalek::scalar::Scalar;
-    use curve25519_dalek::edwards::CompressedEdwardsY;
     use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+    use sha2::Sha512;
+    use sha2::Digest;
+    use serde::{Serialize, Deserialize};
+    use curve25519_dalek::digest::Update;
 
     /// Amount in atomic units (1 BLK = 1_000_000 atomic units). Max supply: 21,000,000 BLK.
     pub type BlkAmount = u64; // atomic units
@@ -20,9 +26,9 @@ pub mod types {
     impl StealthAddress {
         /// Generate a new stealth address
         pub fn generate() -> (Scalar, Scalar, Self) {
-            let mut csprng = rand::thread_rng();
-            let priv_view = Scalar::random(&mut csprng);
-            let priv_spend = Scalar::random(&mut csprng);
+            let seed = [42u8; 32];
+            let priv_view = Scalar::from_hash(Sha512::new().chain(seed));
+            let priv_spend = Scalar::from_hash(Sha512::new().chain(seed));
             let pub_view = (ED25519_BASEPOINT_POINT * priv_view).compress().to_bytes();
             let pub_spend = (ED25519_BASEPOINT_POINT * priv_spend).compress().to_bytes();
             let stealth = StealthAddress {
@@ -32,6 +38,8 @@ pub mod types {
             (priv_view, priv_spend, stealth)
         }
     }
+
+    pub type Address = String; // Define Address as a type alias for String
 }
 
 pub fn add(left: u64, right: u64) -> u64 {
@@ -48,8 +56,6 @@ mod tests {
         assert_eq!(result, 4);
     }
 }
-
-use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionInput {
@@ -117,3 +123,7 @@ pub struct RingSignature {
 pub mod zkp; // zk-SNARKs and advanced ZKP integration
 pub mod escrow; // Escrow contract and dispute voting
 pub mod ring_sig;
+
+use crate::types::StealthAddress;
+use rand::rngs::OsRng;
+use rand::RngCore;

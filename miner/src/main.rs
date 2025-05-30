@@ -11,7 +11,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use reqwest::blocking::Client;
@@ -900,11 +900,6 @@ fn run_benchmark() {
     println!("{} ✅ Benchmark completed successfully!", "[SUCCESS]".bright_green().bold());
 }
 
-use reqwest::blocking::Client;
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
-
 #[derive(Debug, Serialize, Deserialize)]
 struct GetBlockTemplateResponse {
     version: String,
@@ -954,6 +949,13 @@ fn submit_block(client: &Client, node_url: &str, block: SubmitBlockRequest) {
     }
 }
 
+/// Defined missing `hash_meets_target` function
+fn hash_meets_target(hash: &[u8], target: u64) -> bool {
+    // Convert hash to a numeric value and compare with target
+    let hash_value = u64::from_le_bytes(hash[0..8].try_into().unwrap());
+    hash_value <= target
+}
+
 /// Start threaded mining
 fn start_mining(node_url: &str, thread_count: usize) {
     let client = Client::new();
@@ -983,12 +985,13 @@ fn start_mining(node_url: &str, thread_count: usize) {
                 let job_lock = job_clone.lock().unwrap();
                 if let Some(ref job) = *job_lock {
                     // Perform mining logic here using RandomX
-                    let mut header = job.header.clone();
+                    let mut header = job.previous_hash.clone();
                     let target = job.difficulty;
 
                     for nonce in 0..u64::MAX {
                         // Use RandomX to compute hash
-                        let hash = randomx_hash(&header, nonce);
+                        let nonce_bytes = nonce.to_le_bytes(); // Defined `nonce_bytes`
+                        let hash = randomx_hash(&header, &nonce_bytes); // Corrected argument types
                         if hash_meets_target(&hash, target) {
                             let block = SubmitBlockRequest {
                                 header: header.clone(),
