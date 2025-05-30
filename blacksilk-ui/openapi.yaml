@@ -1,0 +1,83 @@
+openapi: 3.0.0
+info:
+  title: BlackSilk Node API
+  version: 1.0.0
+  description: API documentation for the BlackSilk decentralized marketplace node.
+servers:
+  - url: https://localhost:3000/api
+    description: Local development server
+paths:
+  /products:
+    get:
+      summary: Get all products
+      parameters:
+        - name: category
+          in: query
+          description: Filter products by category ID
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A list of products
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Product'
+    post:
+      summary: Add a new product
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/NewProduct'
+      responses:
+        '201':
+          description: Product created successfully
+  /products/{id}:
+    get:
+      summary: Get product details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Product details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+components:
+  schemas:
+    Product:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          type: number
+        image:
+          type: string
+          description: IPFS CID of the product image
+    NewProduct:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        price:
+          type: number
+        image:
+          type: string
+          format: binary

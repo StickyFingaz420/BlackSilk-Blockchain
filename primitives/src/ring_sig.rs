@@ -154,4 +154,26 @@ mod tests {
         // Verify the signature
         assert!(!verify_ring_signature(msg, &ring, &sig));
     }
+
+    #[test]
+    fn test_debug_ring_signature() {
+        let msg = b"Debug message";
+        let ring = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
+        let priv_key = [4u8; 32];
+        let real_index = 1;
+
+        // Generate a signature
+        let sig = generate_ring_signature(msg, &ring, &priv_key, real_index);
+
+        // Debugging public key decompression
+        for pk_bytes in &ring {
+            let decompressed = CompressedEdwardsY(*pk_bytes).decompress();
+            println!("Public key {:?} decompressed: {:?}", pk_bytes, decompressed);
+        }
+
+        // Verify the signature
+        let is_valid = verify_ring_signature(msg, &ring, &sig);
+        println!("Signature valid: {:?}", is_valid);
+        assert!(is_valid);
+    }
 }

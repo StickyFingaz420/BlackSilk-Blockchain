@@ -4,6 +4,7 @@
 // for confidential transactions, privacy, and advanced cryptographic features.
 
 use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
+use ark_ec::CurveGroup;
 use ark_groth16::{Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_groth16::r1cs_to_qap::LibsnarkReduction;
 use ark_groth16::verifier::prepare_verifying_key;
@@ -79,8 +80,8 @@ mod tests {
             b_g2_query: vec![],
             h_query: vec![],
             l_query: vec![],
-            beta_g1: G1Projective::zero(),
-            delta_g1: G1Projective::zero(),
+            beta_g1: G1Projective::zero().into_affine(),
+            delta_g1: G1Projective::zero().into_affine(),
             vk: VerifyingKey::default(),
         };
 

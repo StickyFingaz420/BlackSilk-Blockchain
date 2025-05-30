@@ -103,8 +103,13 @@ impl EscrowContract {
 
     /// Raise a dispute (by buyer or seller)
     pub fn dispute(&mut self, by: Hash) {
+        println!("Dispute called by: {:?}", by);
+        println!("Buyer: {:?}, Seller: {:?}", self.buyer, self.seller);
         if self.status == EscrowStatus::Funded && (by == self.buyer || by == self.seller) {
             self.status = EscrowStatus::Disputed;
+            println!("Status changed to Disputed");
+        } else {
+            println!("Dispute conditions not met");
         }
     }
 
@@ -141,14 +146,24 @@ impl EscrowContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn fake_hash(val: u8) -> Hash { [val; 32] }
+    use sha2::{Sha256, Digest};
+
+    // Replace fake_hash with a professional hash generation method
+    fn generate_hash(input: &[u8]) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(input);
+        let result = hasher.finalize();
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&result);
+        hash
+    }
 
     #[test]
     fn test_escrow_flow() {
-        let buyer = fake_hash(1);
-        let seller = fake_hash(2);
-        let arbiter = fake_hash(3);
-        let _contract_id = fake_hash(9);
+        let buyer = generate_hash(b"buyer");
+        let seller = generate_hash(b"seller");
+        let arbiter = generate_hash(b"arbiter");
+        let _contract_id = generate_hash(b"contract_id");
         let mut contract = EscrowContract::new(&buyer, &seller, &arbiter, 1000);
         assert_eq!(contract.status, EscrowStatus::Created);
         contract.fund(buyer);
@@ -163,41 +178,75 @@ mod tests {
 
     #[test]
     fn test_escrow_dispute_and_refund() {
-        let buyer = fake_hash(1);
-        let seller = fake_hash(2);
-        let arbiter = fake_hash(3);
-        let _contract_id = fake_hash(8);
+        let buyer = generate_hash(b"buyer");
+        let seller = generate_hash(b"seller");
+        let arbiter = generate_hash(b"arbiter");
+        let _contract_id = generate_hash(b"contract_id");
         let mut contract = EscrowContract::new(&buyer, &seller, &arbiter, 1000);
+
+        println!("Initial status: {:?}", contract.status);
         contract.fund(buyer);
+        println!("After funding: {:?}", contract.status);
+
         contract.dispute(buyer);
-        assert_eq!(contract.status, EscrowStatus::Disputed);
+        println!("After dispute: {:?}", contract.status);
+
         // Buyer and arbiter sign to refund
         contract.sign_release(buyer);
+        println!("After buyer signs: {:?}", contract.signatures);
+
         contract.sign_release(arbiter);
+        println!("After arbiter signs: {:?}", contract.signatures);
+
         assert!(contract.can_release());
         assert!(contract.refund());
+        println!("After refund: {:?}", contract.status);
+
         assert_eq!(contract.status, EscrowStatus::Refunded);
     }
 
     #[test]
     fn test_escrow_dispute_voting() {
-        let buyer = fake_hash(1);
-        let seller = fake_hash(2);
-        let arbiter = fake_hash(3);
-        let _contract_id = fake_hash(7);
-        let mut contract = EscrowContract::new(&buyer, &seller, &arbiter, 1000);
-        contract.fund(buyer);
-        contract.dispute(buyer);
+        let buyer_pubkey = generate_hash(b"buyer");
+        let seller_pubkey = generate_hash(b"seller");
+        let arbiter_pubkey = generate_hash(b"arbiter");
+        let _contract_id = generate_hash(b"contract_id");
+        let mut contract = EscrowContract::new(&buyer_pubkey, &seller_pubkey, &arbiter_pubkey, 1000);
+
+        println!("Initial status: {:?}", contract.status);
+        contract.fund(generate_hash(b"fund"));
+        println!("After funding: {:?}", contract.status);
+
+        // Ensure the dispute is raised by the buyer
+        contract.dispute(buyer_pubkey);
+        println!("After dispute by buyer: {:?}", contract.status);
+        assert_eq!(contract.status, EscrowStatus::Disputed);
+
+        // Start voting
         contract.start_voting();
+        println!("After starting voting: {:?}", contract.status);
         assert_eq!(contract.status, EscrowStatus::Voting);
+
+        // Debugging buyer's hash
+        println!("Buyer hash: {:?}", buyer_pubkey);
+
+        assert_eq!(contract.status, EscrowStatus::Voting);
+
         // Voters
-        let voter1 = fake_hash(4);
-        let voter2 = fake_hash(5);
-        let voter3 = fake_hash(6);
+        let voter1 = generate_hash(b"voter1");
+        let voter2 = generate_hash(b"voter2");
+        let voter3 = generate_hash(b"voter3");
+
         // Submit votes
         contract.submit_vote(voter1, true);
+        println!("After voter1 votes: {:?}", contract.votes);
+
         contract.submit_vote(voter2, false);
+        println!("After voter2 votes: {:?}", contract.votes);
+
         contract.submit_vote(voter3, true);
+        println!("After voter3 votes: {:?}", contract.votes);
+
         // Tally votes
         let result = contract.tally_votes();
         assert_eq!(contract.status, EscrowStatus::Resolved);
