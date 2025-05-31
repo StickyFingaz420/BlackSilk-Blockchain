@@ -1,5 +1,5 @@
-// Removed unused variable `id` to resolve ESLint error.
-// Ensure `id` is not declared or assigned if unused.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const id = "example";
 
 export default function ProductPage() {
   return <div>Product Page</div>;
