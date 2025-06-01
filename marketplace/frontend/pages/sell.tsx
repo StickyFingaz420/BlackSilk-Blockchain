@@ -19,7 +19,7 @@ import { marketplaceAPI } from '@/lib/api';
 
 export default function SellPage() {
   const router = useRouter();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   
   const [formData, setFormData] = useState({
     title: '',
@@ -165,8 +165,8 @@ export default function SellPage() {
       const imageHashes: string[] = [];
       for (const image of images) {
         const response = await marketplaceAPI.uploadImage(image);
-        if (response.success && response.data) {
-          imageHashes.push(response.data);
+        if (response.success && response.hash) {
+          imageHashes.push(response.hash);
         } else {
           throw new Error('Failed to upload image');
         }
@@ -174,11 +174,21 @@ export default function SellPage() {
 
       // Create product
       const productData = {
-        ...formData,
+        seller: user?.id || '',
+        title: formData.title,
+        description: formData.description,
+        category: formData.category,
+        subcategory: formData.subcategory,
         price: parseFloat(formData.price),
-        quantity_available: parseInt(formData.quantity_available),
-        shipping_price: parseFloat(formData.shipping_price),
-        image_files: imageHashes, // Send IPFS hashes
+        stock: parseInt(formData.quantity_available),
+        shippingPrice: parseFloat(formData.shipping_price),
+        images: imageHashes,
+        shipsFrom: formData.ships_from,
+        shipsTo: formData.ships_to,
+        processingTime: formData.processing_time,
+        isActive: true,
+        stealthRequired: true,
+        escrowRequired: true
       };
 
       const response = await marketplaceAPI.createProduct(productData);

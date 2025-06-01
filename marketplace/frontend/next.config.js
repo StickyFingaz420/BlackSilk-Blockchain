@@ -36,20 +36,6 @@ const nextConfig = {
     NEXT_PUBLIC_IPFS_GATEWAY: process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://ipfs.io',
     NEXT_PUBLIC_TOR_PROXY: process.env.NEXT_PUBLIC_TOR_PROXY || 'socks5://127.0.0.1:9050',
   },
-  // Static generation settings
-  exportPathMap: async function (
-    defaultPathMap,
-    { dev, dir, outDir, distDir, buildId }
-  ) {
-    return {
-      '/': { page: '/' },
-      '/login': { page: '/login' },
-      '/sell': { page: '/sell' },
-      '/category/digital': { page: '/category/[id]', query: { id: 'digital' } },
-      '/category/services': { page: '/category/[id]', query: { id: 'services' } },
-      '/category/physical': { page: '/category/[id]', query: { id: 'physical' } },
-    };
-  },
 };
 
 module.exports = nextConfig;

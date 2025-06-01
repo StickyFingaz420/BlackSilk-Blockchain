@@ -6,9 +6,14 @@ import { ProductCard, NodeStatus, PrivacyIndicator, ShoppingCart } from '../../c
 import { useProducts, useAuth } from '../../hooks';
 import { Product, PrivacyLevel } from '../../types';
 
-const CategoryPage = () => {
+interface CategoryPageProps {
+  category?: string;
+}
+
+const CategoryPage = ({ category }: CategoryPageProps) => {
   const router = useRouter();
   const { id } = router.query;
+  const categoryId = category || id;
   const { user } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,13 +42,13 @@ const CategoryPage = () => {
     }
   };
 
-  const currentCategory = categoryInfo[id as keyof typeof categoryInfo];
+  const currentCategory = categoryInfo[categoryId as keyof typeof categoryInfo];
 
   useEffect(() => {
-    if (id) {
+    if (categoryId) {
       loadCategoryProducts();
     }
-  }, [id, sortBy, sortOrder, priceRange]);
+  }, [categoryId, sortBy, sortOrder, priceRange]);
 
   const loadCategoryProducts = async () => {
     setLoading(true);
@@ -55,7 +60,7 @@ const CategoryPage = () => {
           seller: 'vendor1',
           title: 'Privacy VPN Service - 1 Year',
           description: 'Premium VPN service with no logs, military-grade encryption, and Tor compatibility. Perfect for maintaining privacy while browsing.',
-          category: id as string,
+          category: categoryId as string,
           price: 0.150,
           stock: 50,
           images: ['https://via.placeholder.com/400x300?text=VPN'],
@@ -68,7 +73,7 @@ const CategoryPage = () => {
           seller: 'vendor2',
           title: 'Cryptocurrency Course Bundle',
           description: 'Complete guide to cryptocurrency trading, blockchain technology, and privacy coins. Includes video tutorials and PDF guides.',
-          category: id as string,
+          category: categoryId as string,
           price: 0.075,
           stock: 100,
           images: ['https://via.placeholder.com/400x300?text=Course'],
@@ -81,7 +86,7 @@ const CategoryPage = () => {
           seller: 'vendor3',
           title: 'Hardware Security Key',
           description: 'FIDO2/WebAuthn hardware security key for two-factor authentication. Supports USB-A and NFC.',
-          category: id as string,
+          category: categoryId as string,
           price: 0.025,
           stock: 25,
           images: ['https://via.placeholder.com/400x300?text=Hardware'],
@@ -338,3 +343,35 @@ const CategoryPage = () => {
 };
 
 export default CategoryPage;
+
+// Static generation for export
+export async function getStaticPaths() {
+  // Define the static paths for the categories
+  const paths = [
+    { params: { id: 'digital' } },
+    { params: { id: 'services' } },
+    { params: { id: 'physical' } }
+  ];
+
+  return {
+    paths,
+    fallback: false // Set to false since we know all possible category IDs
+  };
+}
+
+export async function getStaticProps({ params }: { params: { id: string } }) {
+  // Validate that the category exists
+  const validCategories = ['digital', 'services', 'physical'];
+  
+  if (!validCategories.includes(params.id)) {
+    return {
+      notFound: true
+    };
+  }
+
+  return {
+    props: {
+      category: params.id
+    }
+  };
+}

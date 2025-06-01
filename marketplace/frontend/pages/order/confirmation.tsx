@@ -9,7 +9,7 @@ import {
   PrivacyIndicator 
 } from '../../components';
 import { useAuth } from '../../hooks';
-import { Order, EscrowStatus as EscrowStatusEnum, PrivacyLevel } from '../../types';
+import { Order, EscrowStatus as EscrowStatusEnum, OrderStatus, PrivacyLevel } from '../../types';
 
 const OrderConfirmationPage: React.FC = () => {
   const router = useRouter();
@@ -50,22 +50,22 @@ const OrderConfirmationPage: React.FC = () => {
       // For demo purposes, create a mock order
       const mockOrder: Order = {
         id: orderId,
-        buyerId: user?.id || '',
+        buyer: user?.id || '',
+        seller: 'seller_1',
         items: [
           {
             productId: 'prod_1',
+            productTitle: 'Sample Product',
             quantity: 2,
             price: 0.145,
-            sellerId: 'seller_1'
+            seller: 'seller_1'
           }
         ],
         totalAmount: 0.293,
         escrowStatus: EscrowStatusEnum.Pending,
-        deliveryAddress: 'Encrypted delivery address',
-        encryptedNotes: 'Handle with care',
-        shippingMethod: 'standard',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        status: OrderStatus.AwaitingPayment,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
       };
       setOrder(mockOrder);
     } finally {
@@ -88,7 +88,7 @@ const OrderConfirmationPage: React.FC = () => {
       'overnight': 2
     };
     
-    const days = shippingDays[order?.shippingMethod as keyof typeof shippingDays] || 14;
+    const days = shippingDays['standard']; // Default to standard shipping
     const deliveryDate = new Date();
     deliveryDate.setDate(deliveryDate.getDate() + days);
     
@@ -189,7 +189,7 @@ const OrderConfirmationPage: React.FC = () => {
                       <div>
                         <p className="font-medium">Product ID: {item.productId}</p>
                         <p className="text-sm text-gray-400">Quantity: {item.quantity}</p>
-                        <p className="text-sm text-gray-400">Seller: {item.sellerId}</p>
+                        <p className="text-sm text-gray-400">Seller: {item.seller}</p>
                       </div>
                       <div className="text-right">
                         <p className="font-semibold">{item.price} BSK each</p>
@@ -221,7 +221,7 @@ const OrderConfirmationPage: React.FC = () => {
                 <h3 className="font-semibold mb-2">Estimated Delivery</h3>
                 <p className="text-purple-400 font-medium">{getEstimatedDelivery()}</p>
                 <p className="text-sm text-gray-400 mt-1">
-                  Shipping method: {order.shippingMethod.charAt(0).toUpperCase() + order.shippingMethod.slice(1)}
+                  Standard shipping (14 days)
                 </p>
               </div>
             </div>
@@ -231,7 +231,11 @@ const OrderConfirmationPage: React.FC = () => {
               {/* Escrow Status */}
               <div className="bg-gray-800 rounded-lg p-6">
                 <h2 className="text-xl font-semibold mb-4">Escrow Protection</h2>
-                <EscrowStatus status={order.escrowStatus} />
+                <EscrowStatus 
+                  status={order.escrowStatus}
+                  escrowAddress={order.escrowAddress || 'pending...'}
+                  amount={order.totalAmount}
+                />
                 <div className="mt-4 p-4 bg-gray-700 rounded-lg">
                   <h3 className="font-semibold mb-2">How Escrow Works</h3>
                   <ol className="text-sm text-gray-300 space-y-1">
@@ -246,7 +250,7 @@ const OrderConfirmationPage: React.FC = () => {
               {/* Order Tracking */}
               <div className="bg-gray-800 rounded-lg p-6">
                 <h2 className="text-xl font-semibold mb-4">Order Tracking</h2>
-                <OrderTracking orderId={order.id} />
+                <OrderTracking order={order} />
               </div>
 
               {/* Next Steps */}

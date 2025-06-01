@@ -10,7 +10,7 @@ import {
   CommunityWarning 
 } from '../components';
 import { useAuth, useCart } from '../hooks';
-import { Order, EscrowStatus as EscrowStatusEnum, PrivacyLevel } from '../types';
+import { Order, EscrowStatus as EscrowStatusEnum, OrderStatus, PrivacyLevel } from '../types';
 
 const CheckoutPage: React.FC = () => {
   const router = useRouter();
@@ -46,7 +46,8 @@ const CheckoutPage: React.FC = () => {
     try {
       // Create order with escrow
       const orderData: Partial<Order> = {
-        buyerId: user?.id,
+        buyer: user?.id || '',
+        seller: items[0]?.seller || '', // Use first item's seller, or handle multi-vendor orders
         items: items.map(item => ({
           productId: item.productId,
           productTitle: item.title,
@@ -56,9 +57,7 @@ const CheckoutPage: React.FC = () => {
         })),
         totalAmount: total,
         escrowStatus: EscrowStatusEnum.Pending,
-        deliveryAddress: deliveryAddress,
-        encryptedNotes: encryptedNotes,
-        shippingMethod: selectedShipping,
+        status: OrderStatus.AwaitingPayment,
         createdAt: Date.now()
       };
 
