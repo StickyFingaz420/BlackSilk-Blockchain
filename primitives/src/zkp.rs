@@ -10,7 +10,6 @@ use ark_groth16::verifier::prepare_verifying_key;
 use ark_relations::r1cs::ConstraintSynthesizer;
 use ark_snark::SNARK;
 use ark_std::rand::thread_rng;
-use ark_std::Zero;
 
 /// ZKP proof object
 pub struct ZkProof {

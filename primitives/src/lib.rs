@@ -125,5 +125,3 @@ pub mod escrow; // Escrow contract and dispute voting
 pub mod ring_sig;
 
 use crate::types::StealthAddress;
-use rand::rngs::OsRng;
-use rand::RngCore;
