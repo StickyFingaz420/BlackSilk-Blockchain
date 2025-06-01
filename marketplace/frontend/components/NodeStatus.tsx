@@ -2,9 +2,9 @@ import React from 'react';
 import { useNodeStatus } from '../hooks';
 
 export const NodeStatus: React.FC = () => {
-  const { nodeStatus, loading, error } = useNodeStatus();
+  const { nodeInfo, isOnline, isLoading } = useNodeStatus();
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="bg-black/40 border border-amber-800/30 rounded-lg p-4">
         <div className="animate-pulse flex items-center">
@@ -15,7 +15,7 @@ export const NodeStatus: React.FC = () => {
     );
   }
 
-  if (error) {
+  if (!isOnline) {
     return (
       <div className="bg-black/40 border border-red-800/30 rounded-lg p-4">
         <div className="flex items-center">
@@ -29,83 +29,66 @@ export const NodeStatus: React.FC = () => {
     );
   }
 
-  if (!nodeStatus) {
-    return null;
+  if (!nodeInfo) {
+    return (
+      <div className="bg-black/40 border border-yellow-800/30 rounded-lg p-4">
+        <div className="flex items-center">
+          <div className="w-3 h-3 bg-yellow-500 rounded-full mr-3"></div>
+          <div className="text-yellow-400">Node Info Unavailable</div>
+        </div>
+      </div>
+    );
   }
 
-  const getStatusColor = () => {
-    if (nodeStatus.synced) return 'text-green-400';
-    if (nodeStatus.connected) return 'text-yellow-400';
-    return 'text-red-400';
-  };
-
-  const getStatusDot = () => {
-    if (nodeStatus.synced) return 'bg-green-500';
-    if (nodeStatus.connected) return 'bg-yellow-500 animate-pulse';
-    return 'bg-red-500 animate-pulse';
-  };
-
-  const getStatusText = () => {
-    if (nodeStatus.synced) return 'Synchronized';
-    if (nodeStatus.connected) return 'Synchronizing...';
-    return 'Disconnected';
-  };
-
   return (
-    <div className="bg-black/40 border border-amber-800/30 rounded-lg p-4">
-      <div className="flex items-center justify-between">
+    <div className="bg-black/40 border border-green-800/30 rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex items-center">
-          <div className={`w-3 h-3 rounded-full mr-3 ${getStatusDot()}`}></div>
-          <div className={`font-medium ${getStatusColor()}`}>
-            {getStatusText()}
+          <div className="w-3 h-3 bg-green-500 rounded-full mr-3"></div>
+          <div className="font-medium text-green-400">
+            Synchronized
           </div>
         </div>
-        
-        {nodeStatus.synced && (
-          <div className="text-xs text-gray-500">
-            🔒 Privacy Mode
-          </div>
-        )}
+        <div className="text-xs text-gray-500">
+          🔒 Privacy Mode
+        </div>
       </div>
-
-      <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
+      
+      <div className="grid grid-cols-2 gap-4 text-sm">
         <div>
           <div className="text-gray-400">Block Height</div>
-          <div className="text-amber-300 font-mono">
-            {nodeStatus.blockHeight?.toLocaleString() || 'Unknown'}
+          <div className="text-white font-mono">
+            {nodeInfo.chain_height?.toLocaleString() || 'Unknown'}
           </div>
         </div>
-        
         <div>
-          <div className="text-gray-400">Connections</div>
-          <div className="text-amber-300 font-mono">
-            {nodeStatus.connections || 0}
+          <div className="text-gray-400">Peers</div>
+          <div className="text-white font-mono">
+            {nodeInfo.peers || 0}
           </div>
         </div>
-        
         <div>
           <div className="text-gray-400">Hash Rate</div>
-          <div className="text-amber-300 font-mono">
-            {nodeStatus.hashRate ? `${(nodeStatus.hashRate / 1000000).toFixed(2)} MH/s` : 'N/A'}
+          <div className="text-white font-mono">
+            {nodeInfo.hashrate ? `${(nodeInfo.hashrate / 1000000).toFixed(2)} MH/s` : 'N/A'}
           </div>
         </div>
-        
         <div>
           <div className="text-gray-400">Difficulty</div>
-          <div className="text-amber-300 font-mono">
-            {nodeStatus.difficulty ? nodeStatus.difficulty.toExponential(2) : 'N/A'}
+          <div className="text-white font-mono">
+            {nodeInfo.difficulty ? nodeInfo.difficulty.toExponential(2) : 'N/A'}
           </div>
         </div>
       </div>
 
-      {nodeStatus.version && (
-        <div className="mt-3 pt-3 border-t border-amber-800/20">
-          <div className="text-xs text-gray-500 flex justify-between">
-            <span>BlackSilk Node v{nodeStatus.version}</span>
-            <span>Privacy: {nodeStatus.privacyMode ? 'Enhanced' : 'Standard'}</span>
-          </div>
+      <div className="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-400 space-y-1">
+        <div className="flex justify-between">
+          <span>Network: {nodeInfo.network || 'BlackSilk'}</span>
         </div>
-      )}
+        <div className="flex justify-between">
+          <span>Privacy: Enhanced</span>
+        </div>
+      </div>
     </div>
   );
 };

@@ -1,4 +1,11 @@
 // BlackSilk Marketplace Types
+export enum PrivacyLevel {
+  Low = 'Low',
+  Medium = 'Medium',
+  High = 'High',
+  Maximum = 'Maximum'
+}
+
 export interface Product {
   id: string;
   seller: string; // vendor_id mapped to seller for consistency
@@ -97,12 +104,21 @@ export interface Category {
 
 export interface NodeInfo {
   chain_height: number;
-  difficulty: number;
-  hashrate: number;
   peers: number;
-  mempool_size: number;
-  network: string;
+  difficulty: number;
+  hashrate?: number;
+  network?: string;
+  version?: string;
 }
+
+// export interface NodeInfo {
+//   chain_height: number;
+//   difficulty: number;
+//   hashrate: number;
+//   peers: number;
+//   mempool_size: number;
+//   network: string;
+// }
 
 export interface Balance {
   confirmed: number;

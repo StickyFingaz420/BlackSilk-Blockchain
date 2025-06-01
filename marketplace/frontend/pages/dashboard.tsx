@@ -3,7 +3,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { OrderTracking, NodeStatus, PrivacyIndicator, ShoppingCart } from '../components';
 import { useAuth, useOrders, useBalance } from '../hooks';
-import { Order, Product } from '../types';
+import { Order, Product, PrivacyLevel, EscrowStatus, OrderStatus } from '../types';
 
 const DashboardPage = () => {
   const { user, logout } = useAuth();
@@ -39,8 +39,8 @@ const DashboardPage = () => {
           ],
           totalAmount: 0.150,
           escrowAddress: 'BLK1234567890abcdef',
-          escrowStatus: 'funded',
-          status: 'Paid',
+          escrowStatus: EscrowStatus.Funded,
+          status: OrderStatus.Paid,
           createdAt: Date.now() / 1000 - 86400,
           disputeDeadline: Date.now() / 1000 + 604800
         },
@@ -59,8 +59,8 @@ const DashboardPage = () => {
           ],
           totalAmount: 0.075,
           escrowAddress: 'BLK0987654321fedcba',
-          escrowStatus: 'completed',
-          status: 'Completed',
+          escrowStatus: EscrowStatus.Completed,
+          status: OrderStatus.Completed,
           createdAt: Date.now() / 1000 - 172800
         }
       ];
@@ -228,7 +228,7 @@ const DashboardPage = () => {
               </div>
 
               <NodeStatus />
-              <PrivacyIndicator level="enhanced" />
+              <PrivacyIndicator level={PrivacyLevel.High} />
             </div>
 
             {/* Main Content */}

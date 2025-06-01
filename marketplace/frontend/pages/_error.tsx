@@ -1,7 +1,7 @@
 import React from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
-import { NextPageContext } from 'next';
+import { NextPageContext, NextPage } from 'next';
 import { NodeStatus, PrivacyIndicator } from '../components';
 import { PrivacyLevel } from '../types';
 
@@ -11,7 +11,7 @@ interface ErrorProps {
   err?: Error & { statusCode?: number };
 }
 
-const CustomError: React.FC<ErrorProps> = ({ statusCode, hasGetInitialPropsRun, err }) => {
+const CustomError: NextPage<ErrorProps> = ({ statusCode, hasGetInitialPropsRun, err }) => {
   const getErrorMessage = () => {
     switch (statusCode) {
       case 400:

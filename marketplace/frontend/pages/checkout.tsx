@@ -48,17 +48,18 @@ const CheckoutPage: React.FC = () => {
       const orderData: Partial<Order> = {
         buyerId: user?.id,
         items: items.map(item => ({
-          productId: item.product.id,
+          productId: item.productId,
+          productTitle: item.title,
           quantity: item.quantity,
-          price: item.product.price,
-          sellerId: item.product.sellerId
+          price: item.price,
+          seller: item.seller
         })),
         totalAmount: total,
         escrowStatus: EscrowStatusEnum.Pending,
         deliveryAddress: deliveryAddress,
         encryptedNotes: encryptedNotes,
         shippingMethod: selectedShipping,
-        createdAt: new Date().toISOString()
+        createdAt: Date.now()
       };
 
       // In real implementation, this would call the API
@@ -139,19 +140,19 @@ const CheckoutPage: React.FC = () => {
               
               <div className="space-y-4 mb-6">
                 {items.map((item) => (
-                  <div key={`${item.product.id}-${item.quantity}`} className="flex items-center space-x-4">
+                  <div key={`${item.productId}-${item.quantity}`} className="flex items-center space-x-4">
                     <img 
-                      src={item.product.imageUrl} 
-                      alt={item.product.name}
+                      src={item.image || '/placeholder.png'} 
+                      alt={item.title}
                       className="w-16 h-16 object-cover rounded-lg"
                     />
                     <div className="flex-1">
-                      <h3 className="font-medium">{item.product.name}</h3>
+                      <h3 className="font-medium">{item.title}</h3>
                       <p className="text-gray-400">Quantity: {item.quantity}</p>
-                      <p className="text-purple-400">{item.product.price} BSK each</p>
+                      <p className="text-purple-400">{item.price} BSK each</p>
                     </div>
                     <div className="text-right">
-                      <p className="font-semibold">{(item.product.price * item.quantity).toFixed(6)} BSK</p>
+                      <p className="font-semibold">{(item.price * item.quantity).toFixed(6)} BSK</p>
                     </div>
                   </div>
                 ))}
@@ -188,7 +189,7 @@ const CheckoutPage: React.FC = () => {
                 <div className="flex justify-between items-center text-lg font-semibold">
                   <span>Total (including shipping):</span>
                   <span className="text-purple-400">
-                    {(total + shippingOptions.find(opt => opt.id === selectedShipping)?.price || 0).toFixed(6)} BSK
+                    {(total + (shippingOptions.find(opt => opt.id === selectedShipping)?.price ?? 0)).toFixed(6)} BSK
                   </span>
                 </div>
               </div>
@@ -252,7 +253,11 @@ const CheckoutPage: React.FC = () => {
                 {/* Escrow Status Display */}
                 <div className="bg-gray-700 rounded-lg p-4">
                   <h3 className="font-semibold mb-2">Escrow Protection</h3>
-                  <EscrowStatus status={EscrowStatusEnum.Pending} />
+                  <EscrowStatus 
+                    status={EscrowStatusEnum.Pending} 
+                    escrowAddress="pending..."
+                    amount={total + (shippingOptions.find(opt => opt.id === selectedShipping)?.price ?? 0)}
+                  />
                   <p className="text-sm text-gray-400 mt-2">
                     Your payment will be secured in escrow until delivery is confirmed.
                     This protects both buyer and seller.
@@ -293,7 +298,7 @@ const CheckoutPage: React.FC = () => {
                       <span>Processing Order...</span>
                     </div>
                   ) : (
-                    `Place Order (${(total + shippingOptions.find(opt => opt.id === selectedShipping)?.price || 0).toFixed(6)} BSK)`
+                    `Place Order (${(total + (shippingOptions.find(opt => opt.id === selectedShipping)?.price ?? 0)).toFixed(6)} BSK)`
                   )}
                 </button>
               </form>

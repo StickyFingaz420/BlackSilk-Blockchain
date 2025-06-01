@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { marketplaceAPI } from '@/lib/api';
-import { Product, User, Order, NodeInfo, Balance, WebSocketMessage, CartItem, NodeStatus } from '@/types';
+import { Product, User, Order, NodeInfo, Balance, WebSocketMessage, CartItem, NodeStatus, ApiResponse } from '@/types';
 
 // Authentication Hook
 export function useAuth() {
@@ -251,7 +251,7 @@ export function useBalance(publicKey?: string) {
 
     try {
       setIsLoading(true);
-      const response = await marketplaceAPI.getBalance(publicKey);
+      const response: ApiResponse<Balance> = await marketplaceAPI.getBalance(publicKey);
       if (response.success && response.data) {
         setBalance(response.data);
         setError(null);
@@ -410,11 +410,13 @@ export function useCart() {
 
   return {
     cart,
+    items: cart, // Alias for backward compatibility
     addToCart,
     removeFromCart,
     updateQuantity,
     clearCart,
     getTotalAmount,
+    total: getTotalAmount(), // Alias for backward compatibility
     getTotalItems,
     isInCart,
     getCartItem

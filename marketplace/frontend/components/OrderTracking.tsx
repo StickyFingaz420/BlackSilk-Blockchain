@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Order, EscrowStatus } from '../types';
+import { Order, EscrowStatus as EscrowStatusEnum } from '../types';
 
 interface OrderTrackingProps {
   order: Order;
@@ -7,7 +7,7 @@ interface OrderTrackingProps {
 }
 
 export const OrderTracking: React.FC<OrderTrackingProps> = ({ order, onAction }) => {
-  const getStatusColor = (status: EscrowStatus) => {
+  const getStatusColor = (status: EscrowStatusEnum) => {
     switch (status) {
       case 'pending':
         return 'text-yellow-400 bg-yellow-900/20';
@@ -24,7 +24,7 @@ export const OrderTracking: React.FC<OrderTrackingProps> = ({ order, onAction })
     }
   };
 
-  const getStatusIcon = (status: EscrowStatus) => {
+  const getStatusIcon = (status: EscrowStatusEnum) => {
     switch (status) {
       case 'pending':
         return '⏳';
@@ -41,7 +41,7 @@ export const OrderTracking: React.FC<OrderTrackingProps> = ({ order, onAction })
     }
   };
 
-  const getStatusText = (status: EscrowStatus) => {
+  const getStatusText = (status: EscrowStatusEnum) => {
     switch (status) {
       case 'pending':
         return 'Awaiting Payment';
@@ -68,7 +68,7 @@ export const OrderTracking: React.FC<OrderTrackingProps> = ({ order, onAction })
     });
   };
 
-  const getProgressPercentage = (status: EscrowStatus) => {
+  const getProgressPercentage = (status: EscrowStatusEnum) => {
     switch (status) {
       case 'pending':
         return 25;
@@ -222,7 +222,7 @@ export const OrderTracking: React.FC<OrderTrackingProps> = ({ order, onAction })
 
 interface EscrowStatusProps {
   escrowAddress: string;
-  status: EscrowStatus;
+  status: EscrowStatusEnum;
   amount: number;
   disputeDeadline?: number;
   className?: string;

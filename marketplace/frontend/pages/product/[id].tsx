@@ -4,7 +4,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { NodeStatus, PrivacyIndicator, ShoppingCart } from '../../components';
 import { useAuth, useCart } from '../../hooks';
-import { Product, EscrowStatus } from '../../types';
+import { Product, EscrowStatus, PrivacyLevel } from '../../types';
 
 const ProductPage = () => {
   const router = useRouter();
@@ -223,7 +223,7 @@ Installation is simple and setup takes less than 5 minutes. You'll receive your 
             {/* Sidebar */}
             <div className="space-y-6">
               <NodeStatus />
-              <PrivacyIndicator level="enhanced" />
+              <PrivacyIndicator level={PrivacyLevel.High} />
               
               {/* Seller Info */}
               <div className="bg-black/40 border border-amber-800/30 rounded-lg p-4">

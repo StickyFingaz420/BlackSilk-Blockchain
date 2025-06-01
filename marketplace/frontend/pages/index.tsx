@@ -42,7 +42,7 @@ export default function HomePage() {
     { label: 'Active Products', value: products.length, icon: Package },
     { label: 'Network Peers', value: nodeInfo?.peers || 0, icon: Users },
     { label: 'Chain Height', value: nodeInfo?.chain_height || 0, icon: TrendingUp },
-    { label: 'Mempool Size', value: nodeInfo?.mempool_size || 0, icon: Globe },
+    { label: 'Difficulty', value: nodeInfo?.difficulty || 0, icon: Globe },
   ];
 
   return (
@@ -83,8 +83,8 @@ export default function HomePage() {
 
               {/* Status Indicators */}
               <div className="flex items-center space-x-4">
-                <NodeStatus isOnline={isOnline} />
-                <PrivacyIndicator isConnected={isConnected} />
+                <NodeStatus />
+                <PrivacyIndicator />
                 <Link href="/login" className="silk-button-secondary">
                   Login
                 </Link>
@@ -96,7 +96,10 @@ export default function HomePage() {
         {/* Main Content */}
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Community Warning */}
-          <CommunityWarning />
+          <CommunityWarning 
+            onAccept={() => console.log('Accepted')}
+            onDecline={() => console.log('Declined')}
+          />
 
           {/* Hero Section */}
           <div className="text-center py-12">
@@ -140,7 +143,15 @@ export default function HomePage() {
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {categories.map((category) => (
-                <CategoryCard key={category.id} category={category} />
+                <CategoryCard 
+                  key={category.id} 
+                  id={category.id}
+                  name={category.name}
+                  description={category.description}
+                  icon={category.icon}
+                  productCount={category.count}
+                  color="amber"
+                />
               ))}
             </div>
           </section>

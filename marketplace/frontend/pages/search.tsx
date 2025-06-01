@@ -4,7 +4,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { ProductCard, NodeStatus, PrivacyIndicator, ShoppingCart } from '../components';
 import { useAuth } from '../hooks';
-import { Product } from '../types';
+import { Product, PrivacyLevel } from '../types';
 
 const SearchPage = () => {
   const router = useRouter();
@@ -256,7 +256,7 @@ const SearchPage = () => {
             {/* Sidebar Filters */}
             <div className="space-y-6">
               <NodeStatus />
-              <PrivacyIndicator level="enhanced" />
+              <PrivacyIndicator level={PrivacyLevel.High} />
 
               {/* Search Filters */}
               <div className="bg-black/40 border border-amber-800/30 rounded-lg p-6">

@@ -1,11 +1,18 @@
 import React, { useState } from 'react';
 
 interface CommunityWarningProps {
-  onAccept: () => void;
-  onDecline: () => void;
+  onAccept?: () => void;
+  onDecline?: () => void;
+  onDismiss?: () => void;
+  customMessage?: string;
 }
 
-export const CommunityWarning: React.FC<CommunityWarningProps> = ({ onAccept, onDecline }) => {
+export const CommunityWarning: React.FC<CommunityWarningProps> = ({ 
+  onAccept, 
+  onDecline, 
+  onDismiss,
+  customMessage 
+}) => {
   return (
     <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
       <div className="bg-gradient-to-b from-amber-900/20 to-black border border-amber-600/50 rounded-lg max-w-2xl w-full p-8 text-center">
@@ -59,14 +66,14 @@ export const CommunityWarning: React.FC<CommunityWarningProps> = ({ onAccept, on
         
         <div className="flex gap-4">
           <button
-            onClick={onDecline}
+            onClick={onDecline || onDismiss}
             className="flex-1 bg-red-900/50 hover:bg-red-800/50 text-red-300 px-6 py-3 rounded-lg font-semibold transition-colors"
           >
             I Disagree - Exit
           </button>
           
           <button
-            onClick={onAccept}
+            onClick={onAccept || onDismiss}
             className="flex-1 bg-amber-900/50 hover:bg-amber-800/50 text-amber-300 px-6 py-3 rounded-lg font-semibold transition-colors"
           >
             I Agree - Continue

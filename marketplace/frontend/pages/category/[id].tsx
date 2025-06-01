@@ -4,7 +4,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { ProductCard, NodeStatus, PrivacyIndicator, ShoppingCart } from '../../components';
 import { useProducts, useAuth } from '../../hooks';
-import { Product } from '../../types';
+import { Product, PrivacyLevel } from '../../types';
 
 const CategoryPage = () => {
   const router = useRouter();
@@ -199,7 +199,7 @@ const CategoryPage = () => {
               <NodeStatus />
 
               {/* Privacy Status */}
-              <PrivacyIndicator level="enhanced" />
+              <PrivacyIndicator level={PrivacyLevel.High} />
 
               {/* Category Info */}
               <div className={`bg-gradient-to-br ${currentCategory.color} border border-amber-800/30 rounded-lg p-6`}>
