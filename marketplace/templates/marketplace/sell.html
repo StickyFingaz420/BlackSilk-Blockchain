@@ -5,52 +5,186 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sell Product - BlackSilk Marketplace</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f4f4f4; }
-        .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; }
-        .form-group { margin-bottom: 20px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input, textarea, select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
-        textarea { height: 100px; resize: vertical; }
-        .btn { width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
-        .btn:hover { background: #218838; }
-        .back-btn { display: inline-block; padding: 8px 16px; background: #6c757d; color: white; text-decoration: none; border-radius: 4px; margin-bottom: 20px; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            padding: 0; 
+            background: linear-gradient(135deg, #1e1e1e 0%, #2d2d2d 100%);
+            color: #ffffff;
+            min-height: 100vh;
+        }
+        .header {
+            background: rgba(45, 45, 45, 0.95);
+            padding: 20px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 20px;
+        }
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            color: #4CAF50;
+            text-shadow: 0 0 10px rgba(76, 175, 80, 0.3);
+            text-decoration: none;
+        }
+        .container { 
+            max-width: 700px; 
+            margin: 0 auto; 
+            padding: 40px 20px; 
+        }
+        .page-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        .page-header h2 {
+            color: #4CAF50;
+            font-size: 32px;
+            margin: 0;
+            text-shadow: 0 0 10px rgba(76, 175, 80, 0.3);
+        }
+        .form-container {
+            background: rgba(45, 45, 45, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        .form-group { 
+            margin-bottom: 25px; 
+        }
+        label { 
+            display: block; 
+            margin-bottom: 8px; 
+            font-weight: 600; 
+            color: #cccccc;
+            font-size: 14px;
+        }
+        input, textarea, select { 
+            width: 100%; 
+            padding: 14px; 
+            border: 1px solid rgba(255, 255, 255, 0.2); 
+            border-radius: 8px; 
+            box-sizing: border-box;
+            background: rgba(0, 0, 0, 0.3);
+            color: #ffffff;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #4CAF50;
+            box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+        }
+        textarea { 
+            height: 120px; 
+            resize: vertical; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .btn { 
+            width: 100%; 
+            padding: 16px; 
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); 
+            color: white; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 18px; 
+            font-weight: 600;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+        .btn:hover { 
+            background: linear-gradient(135deg, #45a049 0%, #3d8b40 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(76, 175, 80, 0.3);
+        }
+        .back-btn { 
+            display: inline-block; 
+            padding: 12px 24px; 
+            background: rgba(108, 117, 125, 0.8); 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 6px; 
+            margin-bottom: 30px; 
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+        .back-btn:hover {
+            background: rgba(108, 117, 125, 1);
+            transform: translateY(-2px);
+        }
+        .help-text {
+            font-size: 12px;
+            color: #888;
+            margin-top: 5px;
+        }
+        .section-title {
+            color: #4CAF50;
+            font-size: 18px;
+            margin: 0 0 20px 0;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
+    <div class="header">
+        <div class="nav-container">
+            <a href="/" class="logo">🕸️ BlackSilk Marketplace</a>
+        </div>
+    </div>
+    
     <div class="container">
         <a href="/" class="back-btn">← Back to Marketplace</a>
         
-        <h2>Sell a Product</h2>
-        <form action="/sell" method="post">
-            <div class="form-group">
-                <label for="title">Product Title:</label>
-                <input type="text" id="title" name="title" required>
-            </div>
-            <div class="form-group">
-                <label for="description">Description:</label>
-                <textarea id="description" name="description" required></textarea>
-            </div>
-            <div class="form-group">
-                <label for="price">Price (BLK):</label>
-                <input type="number" id="price" name="price" step="0.000001" required>
-            </div>
-            <div class="form-group">
-                <label for="shipping_price">Shipping Cost (BLK):</label>
-                <input type="number" id="shipping_price" name="shipping_price" step="0.000001" required>
-            </div>
-            <div class="form-group">
-                <label for="category">Category:</label>
-                <select id="category" name="category" required>
-                    <option value="">Select a category</option>
-                    <option value="electronics">Electronics</option>
-                    <option value="clothing">Clothing</option>
-                    <option value="books">Books</option>
-                    <option value="digital">Digital Goods</option>
-                    <option value="other">Other</option>
-                </select>
-            </div>
-            <button type="submit" class="btn">List Product</button>
-        </form>
+        <div class="page-header">
+            <h2>🏪 Sell a Product</h2>
+        </div>
+        
+        <div class="form-container">
+            <div class="section-title">📝 Product Information</div>
+            <form action="/sell" method="post">
+                <div class="form-group">
+                    <label for="title">Product Title:</label>
+                    <input type="text" id="title" name="title" required>
+                    <div class="help-text">Choose a clear, descriptive title for your product</div>
+                </div>
+                <div class="form-group">
+                    <label for="description">Description:</label>
+                    <textarea id="description" name="description" required placeholder="Provide detailed information about your product..."></textarea>
+                    <div class="help-text">Include features, condition, specifications, and any important details</div>
+                </div>
+                <div class="form-group">
+                    <label for="price">💰 Price (BLK):</label>
+                    <input type="number" id="price" name="price" step="0.000001" required>
+                    <div class="help-text">Set your price in BlackSilk tokens (BLK)</div>
+                </div>
+                <div class="form-group">
+                    <label for="shipping_price">🚚 Shipping Cost (BLK):</label>
+                    <input type="number" id="shipping_price" name="shipping_price" step="0.000001" required>
+                    <div class="help-text">Include packaging and delivery costs</div>
+                </div>
+                <div class="form-group">
+                    <label for="category">📂 Category:</label>
+                    <select id="category" name="category" required>
+                        <option value="">Select a category</option>
+                        <option value="electronics">📱 Electronics</option>
+                        <option value="clothing">👕 Clothing</option>
+                        <option value="books">📚 Books</option>
+                        <option value="digital">💾 Digital Goods</option>
+                        <option value="other">🔹 Other</option>
+                    </select>
+                    <div class="help-text">Choose the most appropriate category for your product</div>
+                </div>
+                <button type="submit" class="btn">🚀 List Product</button>
+            </form>
+        </div>
     </div>
 </body>
 </html>

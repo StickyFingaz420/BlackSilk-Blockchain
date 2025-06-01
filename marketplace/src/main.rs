@@ -28,6 +28,12 @@ use decentralized_storage::{DecentralizedStorage, MarketplaceData};
 use models::*;
 use escrow_integration::EscrowManager;
 use node_client::NodeClient;
+// Add cryptographic imports for authentication
+use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
+use sha2::{Sha256, Digest};
+use hex;
+use rand::rngs::OsRng;
+use bip39::{Mnemonic, Language, Seed};
 
 // BlackSilk Marketplace - Classic Silk Road Design
 // "Don't be sick" - We maintain community standards
@@ -373,6 +379,179 @@ async fn api_products(
     }
 }
 
+// Authentication handlers
+async fn login_page() -> impl IntoResponse {
+    let template = LoginTemplate {
+        error: None,
+        warning_message: warning_message(),
+    };
+    Html(template.render().unwrap())
+}
+
+async fn auth_private_key(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Form(auth_req): axum::extract::Form<PrivateKeyAuth>,
+) -> impl IntoResponse {
+    match authenticate_with_private_key(&state, &auth_req.private_key).await {
+        Ok(session) => {
+            // Set session cookie and redirect to marketplace
+            let cookie = format!("session={}; Path=/; HttpOnly; Secure; SameSite=Strict", session.session_token);
+            (
+                StatusCode::SEE_OTHER,
+                [("Set-Cookie", cookie.as_str()), ("Location", "/")],
+                "Authentication successful".to_string(),
+            ).into_response()
+        },
+        Err(err) => {
+            let template = LoginTemplate {
+                error: Some(format!("Authentication failed: {}", err)),
+                warning_message: warning_message(),
+            };
+            (StatusCode::UNAUTHORIZED, Html(template.render().unwrap())).into_response()
+        }
+    }
+}
+
+async fn auth_seed_phrase(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Form(auth_req): axum::extract::Form<SeedPhraseAuth>,
+) -> impl IntoResponse {
+    match authenticate_with_seed_phrase(&state, &auth_req.seed_phrase).await {
+        Ok(session) => {
+            // Set session cookie and redirect to marketplace
+            let cookie = format!("session={}; Path=/; HttpOnly; Secure; SameSite=Strict", session.session_token);
+            (
+                StatusCode::SEE_OTHER,
+                [("Set-Cookie", cookie.as_str()), ("Location", "/")],
+                "Authentication successful".to_string(),
+            ).into_response()
+        },
+        Err(err) => {
+            let template = LoginTemplate {
+                error: Some(format!("Authentication failed: {}", err)),
+                warning_message: warning_message(),
+            };
+            (StatusCode::UNAUTHORIZED, Html(template.render().unwrap())).into_response()
+        }
+    }
+}
+
+// Cryptographic authentication functions
+async fn authenticate_with_private_key(
+    state: &AppState,
+    private_key_hex: &str,
+) -> Result<AuthSession> {
+    // Validate hex format
+    if private_key_hex.len() != 64 {
+        return Err(anyhow::anyhow!("Private key must be 64 hex characters"));
+    }
+    
+    let private_key_bytes = hex::decode(private_key_hex)
+        .map_err(|_| anyhow::anyhow!("Invalid hex format"))?;
+        
+    if private_key_bytes.len() != 32 {
+        return Err(anyhow::anyhow!("Private key must be 32 bytes"));
+    }
+    
+    // Create signing key from private key
+    let signing_key = SigningKey::from_bytes(&private_key_bytes.try_into().unwrap());
+    let verifying_key = signing_key.verifying_key();
+    let public_key_bytes = verifying_key.to_bytes().to_vec();
+    
+    // Generate user ID from public key hash
+    let mut hasher = Sha256::new();
+    hasher.update(&public_key_bytes);
+    let user_id_bytes = hasher.finalize();
+    let user_id = Uuid::from_slice(&user_id_bytes[..16])?;
+    
+    // Create or update user account
+    let user = User {
+        id: user_id,
+        public_key: public_key_bytes.clone(),
+        stealth_address: None, // TODO: Generate from key
+        reputation_score: 0.0,
+        total_sales: 0,
+        total_purchases: 0,
+        join_date: chrono::Utc::now(),
+        last_seen: chrono::Utc::now(),
+        is_vendor: false,
+        vendor_bond: None,
+        pgp_key: None,
+        display_name: None,
+    };
+    
+    // Store user data on blockchain
+    state.storage.store_user_data(&user).await?;
+    
+    // Create session
+    let session_token = hex::encode(rand::random::<[u8; 32]>());
+    let session = AuthSession {
+        user_id,
+        public_key: public_key_bytes,
+        session_token,
+        expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
+        created_at: chrono::Utc::now(),
+    };
+    
+    Ok(session)
+}
+
+async fn authenticate_with_seed_phrase(
+    state: &AppState,
+    seed_phrase: &str,
+) -> Result<AuthSession> {
+    // Parse mnemonic
+    let mnemonic = Mnemonic::parse_in(Language::English, seed_phrase.trim())
+        .map_err(|_| anyhow::anyhow!("Invalid seed phrase format"))?;
+        
+    // Generate seed from mnemonic
+    let seed = Seed::new(&mnemonic, ""); // No passphrase
+    let seed_bytes = seed.as_bytes();
+    
+    // Derive private key from seed (using first 32 bytes)
+    let private_key_bytes: [u8; 32] = seed_bytes[..32].try_into().unwrap();
+    let signing_key = SigningKey::from_bytes(&private_key_bytes);
+    let verifying_key = signing_key.verifying_key();
+    let public_key_bytes = verifying_key.to_bytes().to_vec();
+    
+    // Generate user ID from public key hash
+    let mut hasher = Sha256::new();
+    hasher.update(&public_key_bytes);
+    let user_id_bytes = hasher.finalize();
+    let user_id = Uuid::from_slice(&user_id_bytes[..16])?;
+    
+    // Create or update user account
+    let user = User {
+        id: user_id,
+        public_key: public_key_bytes.clone(),
+        stealth_address: None, // TODO: Generate from key
+        reputation_score: 0.0,
+        total_sales: 0,
+        total_purchases: 0,
+        join_date: chrono::Utc::now(),
+        last_seen: chrono::Utc::now(),
+        is_vendor: false,
+        vendor_bond: None,
+        pgp_key: None,
+        display_name: None,
+    };
+    
+    // Store user data on blockchain
+    state.storage.store_user_data(&user).await?;
+    
+    // Create session
+    let session_token = hex::encode(rand::random::<[u8; 32]>());
+    let session = AuthSession {
+        user_id,
+        public_key: public_key_bytes,
+        session_token,
+        expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
+        created_at: chrono::Utc::now(),
+    };
+    
+    Ok(session)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -394,6 +573,9 @@ async fn main() -> Result<()> {
         .route("/api/stats", get(api_stats))
         .route("/api/products", get(api_products))
         .route("/api/products", post(create_product))
+        .route("/login", get(login_page))
+        .route("/auth/private-key", post(auth_private_key))
+        .route("/auth/seed-phrase", post(auth_seed_phrase))
         .nest_service("/static", ServeDir::new("static"))
         .layer(
             CorsLayer::new()
