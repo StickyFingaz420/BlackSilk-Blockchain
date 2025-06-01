@@ -151,7 +151,7 @@ impl DecentralizedStorage {
     /// Retrieve data from the blockchain by transaction hash
     pub async fn get_data_by_hash(&self, tx_hash: &Hash) -> Result<Option<MarketplaceData>> {
         // First check cache
-        let cache_key = format!("{:x}", tx_hash);
+        let cache_key = format!("{}", hex::encode(tx_hash));
         if let Some(data) = self.cache.read().await.get(&cache_key) {
             return Ok(Some(data.clone()));
         }

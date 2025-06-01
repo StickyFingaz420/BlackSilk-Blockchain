@@ -3,12 +3,12 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use primitives::types::{Hash, BlkAmount};
 
-/// User account in the marketplace
+/// User account in the marketplace - identified by cryptographic keys
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
-    pub id: Uuid,
-    pub username: String,
-    pub public_key: Vec<u8>, // For encrypted communications
+    pub id: Uuid, // Derived from public key hash
+    pub public_key: Vec<u8>, // Ed25519 public key (32 bytes)
+    pub stealth_address: Option<String>, // BlackSilk stealth address for payments
     pub reputation_score: f64,
     pub total_sales: u64,
     pub total_purchases: u64,
@@ -17,6 +17,7 @@ pub struct User {
     pub is_vendor: bool,
     pub vendor_bond: Option<BlkAmount>, // Bond paid to become vendor
     pub pgp_key: Option<String>, // PGP public key for secure comms
+    pub display_name: Option<String>, // Optional display name (not for auth)
 }
 
 /// Product listing in the marketplace
@@ -149,4 +150,26 @@ pub struct MarketStats {
     pub active_listings: u64,
     pub successful_transactions: u64,
     pub average_rating: f64,
+}
+
+/// Authentication request using private key
+#[derive(Debug, Deserialize)]
+pub struct PrivateKeyAuth {
+    pub private_key: String, // Hex-encoded private key
+}
+
+/// Authentication request using seed phrase
+#[derive(Debug, Deserialize)]
+pub struct SeedPhraseAuth {
+    pub seed_phrase: String, // Mnemonic seed phrase
+}
+
+/// Authentication session
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthSession {
+    pub user_id: Uuid,
+    pub public_key: Vec<u8>,
+    pub session_token: String,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
 }

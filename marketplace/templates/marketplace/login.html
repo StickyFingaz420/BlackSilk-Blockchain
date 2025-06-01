@@ -3,34 +3,220 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - BlackSilk Marketplace</title>
+    <title>Access BlackSilk Marketplace</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f4f4f4; }
-        .container { max-width: 400px; margin: 50px auto; background: white; padding: 30px; border-radius: 8px; }
-        .form-group { margin-bottom: 20px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
-        .btn { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
-        .btn:hover { background: #0056b3; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+            background: linear-gradient(135deg, #1e1e1e 0%, #2d2d2d 100%);
+            color: #ffffff;
+            min-height: 100vh;
+        }
+        .container { 
+            max-width: 500px; 
+            margin: 50px auto; 
+            background: rgba(45, 45, 45, 0.95); 
+            padding: 40px; 
+            border-radius: 12px; 
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .logo h1 {
+            color: #4CAF50;
+            margin: 0;
+            font-size: 28px;
+            text-shadow: 0 0 10px rgba(76, 175, 80, 0.3);
+        }
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .auth-method {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.2);
+        }
+        .method-title {
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #4CAF50;
+        }
+        .form-group { 
+            margin-bottom: 20px; 
+        }
+        label { 
+            display: block; 
+            margin-bottom: 8px; 
+            font-weight: 500;
+            color: #cccccc;
+        }
+        input, textarea { 
+            width: 100%; 
+            padding: 12px; 
+            border: 1px solid rgba(255, 255, 255, 0.2); 
+            border-radius: 6px; 
+            box-sizing: border-box;
+            background: rgba(0, 0, 0, 0.3);
+            color: #ffffff;
+            font-family: 'Courier New', monospace;
+        }
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: #4CAF50;
+            box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+        }
+        .btn { 
+            width: 100%; 
+            padding: 14px; 
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); 
+            color: white; 
+            border: none; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        .btn:hover { 
+            background: linear-gradient(135deg, #45a049 0%, #3d8b40 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+        }
+        .help-text {
+            font-size: 12px;
+            color: #888;
+            margin-top: 8px;
+        }
+        .security-note {
+            background: rgba(255, 193, 7, 0.1);
+            border: 1px solid rgba(255, 193, 7, 0.3);
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 20px;
+        }
+        .security-note h4 {
+            margin: 0 0 10px 0;
+            color: #FFC107;
+        }
+        .tab-buttons {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #888;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .tab-btn.active {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4CAF50;
+            border-color: #4CAF50;
+        }
+        .tab-btn:first-child {
+            border-radius: 6px 0 0 6px;
+        }
+        .tab-btn:last-child {
+            border-radius: 0 6px 6px 0;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h2>Login to BlackSilk Marketplace</h2>
-        <form action="/login" method="post">
-            <div class="form-group">
-                <label for="username">Username:</label>
-                <input type="text" id="username" name="username" required>
-            </div>
-            <div class="form-group">
-                <label for="password">Password:</label>
-                <input type="password" id="password" name="password" required>
-            </div>
-            <button type="submit" class="btn">Login</button>
-        </form>
-        <p style="text-align: center; margin-top: 20px;">
-            <a href="/register">Don't have an account? Register here</a>
-        </p>
+        <div class="logo">
+            <h1>🕸️ BlackSilk Marketplace</h1>
+        </div>
+        <div class="subtitle">
+            Decentralized • Anonymous • Secure
+        </div>
+
+        <div class="tab-buttons">
+            <div class="tab-btn active" onclick="switchTab('private-key')">Private Key</div>
+            <div class="tab-btn" onclick="switchTab('seed-phrase')">Seed Phrase</div>
+        </div>
+
+        <!-- Private Key Authentication -->
+        <div id="private-key" class="tab-content active">
+            <form action="/auth/private-key" method="post">
+                <div class="method-title">🔐 Private Key Access</div>
+                
+                <div class="form-group">
+                    <label for="private_key">Private Key (Hex):</label>
+                    <input type="password" id="private_key" name="private_key" 
+                           placeholder="Enter your 64-character private key..." 
+                           pattern="[a-fA-F0-9]{64}" required>
+                    <div class="help-text">
+                        Your private key should be 64 hexadecimal characters (32 bytes)
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn">🚀 Access Marketplace</button>
+            </form>
+        </div>
+
+        <!-- Seed Phrase Authentication -->
+        <div id="seed-phrase" class="tab-content">
+            <form action="/auth/seed-phrase" method="post">
+                <div class="method-title">🌱 Seed Phrase Access</div>
+                
+                <div class="form-group">
+                    <label for="seed_phrase">Seed Phrase (12 or 24 words):</label>
+                    <textarea id="seed_phrase" name="seed_phrase" rows="3" 
+                              placeholder="Enter your seed phrase separated by spaces..."
+                              required></textarea>
+                    <div class="help-text">
+                        Enter your 12 or 24-word mnemonic seed phrase
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn">🚀 Access Marketplace</button>
+            </form>
+        </div>
+
+        <div class="security-note">
+            <h4>🛡️ Security Notice</h4>
+            <p>Your private keys and seed phrases are processed locally and never stored on our servers. 
+               Access is validated through cryptographic proof without revealing your credentials.</p>
+            <p><strong>Never share your private keys or seed phrases with anyone!</strong></p>
+        </div>
     </div>
+
+    <script>
+        function switchTab(tabName) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // Remove active class from all tab buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Show selected tab content
+            document.getElementById(tabName).classList.add('active');
+            
+            // Add active class to clicked button
+            event.target.classList.add('active');
+        }
+    </script>
 </body>
 </html>
