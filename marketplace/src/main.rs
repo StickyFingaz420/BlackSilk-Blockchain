@@ -165,12 +165,12 @@ async fn index(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                         description: product.description,
                         category: product.category,
                         subcategory: product.subcategory,
-                        price: product.price.to_atomic() as f64 / 1_000_000.0, // Convert to BLK
+                        price: product.price as f64 / 1_000_000.0, // Convert to BLK
                         currency: "BLK".to_string(),
                         quantity_available: product.quantity_available,
                         ships_from: product.ships_from,
                         ships_to: product.ships_to,
-                        shipping_price: product.shipping_price.to_atomic() as f64 / 1_000_000.0,
+                        shipping_price: product.shipping_price as f64 / 1_000_000.0,
                         processing_time: product.processing_time,
                         created_at: product.created_at,
                         updated_at: product.updated_at,
@@ -223,12 +223,12 @@ async fn category_page(
             description: product.description,
             category: product.category,
             subcategory: product.subcategory,
-            price: product.price.to_atomic() as f64 / 1_000_000.0,
+            price: product.price as f64 / 1_000_000.0,
             currency: "BLK".to_string(),
             quantity_available: product.quantity_available,
             ships_from: product.ships_from,
             ships_to: product.ships_to,
-            shipping_price: product.shipping_price.to_atomic() as f64 / 1_000_000.0,
+            shipping_price: product.shipping_price as f64 / 1_000_000.0,
             processing_time: product.processing_time,
             created_at: product.created_at,
             updated_at: product.updated_at,
@@ -301,11 +301,11 @@ async fn create_product(
         description: req.description,
         category: req.category,
         subcategory: req.subcategory,
-        price: primitives::types::BlkAmount::from_atomic((req.price * 1_000_000.0) as u64),
+        price: (req.price * 1_000_000.0) as u64,
         quantity_available: req.quantity_available,
         ships_from: req.ships_from,
         ships_to: req.ships_to,
-        shipping_price: primitives::types::BlkAmount::from_atomic((req.shipping_price * 1_000_000.0) as u64),
+        shipping_price: (req.shipping_price * 1_000_000.0) as u64,
         processing_time: req.processing_time,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
@@ -334,7 +334,7 @@ async fn api_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             "total_listings": stats.total_listings,
             "online_vendors": stats.online_vendors,
             "total_orders": stats.total_orders,
-            "total_volume": stats.total_volume.to_atomic()
+            "total_volume": stats.total_volume
         })),
         Err(_) => Json(serde_json::json!({
             "error": "Failed to load stats"
@@ -376,7 +376,7 @@ async fn api_products(
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
-    tracing_subscriber::init();
+    tracing_subscriber::fmt::init();
 
     println!("🔒 BlackSilk Marketplace - Decentralized & Private");
     println!("📡 Connecting to BlackSilk node...");

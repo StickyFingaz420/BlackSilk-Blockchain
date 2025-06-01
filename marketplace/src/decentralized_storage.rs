@@ -142,7 +142,7 @@ impl DecentralizedStorage {
         let tx_hash = self.node_client.submit_marketplace_data(data_bytes).await?;
         
         // Cache the data locally for faster access
-        let cache_key = format!("{:x}", Hash::from(data_hash.try_into().unwrap()));
+        let cache_key = format!("{}", hex::encode(Hash::from(data_hash.try_into().unwrap())));
         self.cache.write().await.insert(cache_key, data);
         
         Ok(tx_hash)
@@ -336,7 +336,7 @@ impl DecentralizedStorage {
             total_listings: all_products.len() as u64,
             online_vendors: all_vendors.len() as u64,
             total_orders: all_orders.len() as u64,
-            total_volume: BlkAmount::from_atomic(0), // TODO: Calculate from orders
+            total_volume: 0, // TODO: Calculate from orders
         })
     }
 }
