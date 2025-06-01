@@ -957,15 +957,19 @@ fn hash_meets_target(hash: &[u8], target: u64) -> bool {
 }
 
 /// Start threaded mining
-fn start_mining(node_url: &str, thread_count: usize) {
+fn start_mining_with_threads(node_url: &str, thread_count: usize) {
     let client = Client::new();
     let job = Arc::new(Mutex::new(None));
 
+    // Clone `node_url` to ensure it has a `'static` lifetime
+    let node_url_owned = node_url.to_string();
+
     // Fetch job periodically
     let job_clone = Arc::clone(&job);
+    let client_clone = client.clone(); // Clone `client` to avoid move issues
     thread::spawn(move || {
         loop {
-            if let Some(new_job) = fetch_job(&client, node_url) {
+            if let Some(new_job) = fetch_job(&client_clone, &node_url_owned) {
                 let mut job_lock = job_clone.lock().unwrap();
                 *job_lock = Some(new_job);
             }
@@ -977,24 +981,24 @@ fn start_mining(node_url: &str, thread_count: usize) {
     let mut handles = vec![];
     for _ in 0..thread_count {
         let job_clone = Arc::clone(&job);
-        let client_clone = client.clone();
-        let node_url_clone = node_url.to_string();
+        let client_clone = client.clone(); // Clone `client` for each thread
+        let node_url_clone = node_url.to_string(); // Clone `node_url` for each thread
 
         let handle = thread::spawn(move || {
             loop {
                 let job_lock = job_clone.lock().unwrap();
                 if let Some(ref job) = *job_lock {
                     // Perform mining logic here using RandomX
-                    let mut header = job.previous_hash.clone();
+                    let header = job.previous_hash.clone(); // Removed unnecessary `mut`
                     let target = job.difficulty;
 
                     for nonce in 0..u64::MAX {
                         // Use RandomX to compute hash
-                        let nonce_bytes = nonce.to_le_bytes(); // Defined `nonce_bytes`
-                        let hash = randomx_hash(&header, &nonce_bytes); // Corrected argument types
+                        let nonce_bytes = nonce.to_le_bytes();
+                        let hash = randomx_hash(header.as_bytes(), &nonce_bytes);
                         if hash_meets_target(&hash, target) {
                             let block = SubmitBlockRequest {
-                                header: header.clone(),
+                                header: header.clone().into(),
                                 nonce,
                                 hash: hash.to_vec(),
                                 miner_address: Some(job.coinbase_address.clone()),
@@ -1004,7 +1008,6 @@ fn start_mining(node_url: &str, thread_count: usize) {
                         }
                     }
                 }
-                thread::sleep(Duration::from_millis(100));
             }
         });
         handles.push(handle);
