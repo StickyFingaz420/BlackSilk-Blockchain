@@ -3,8 +3,7 @@
 // This module now includes real integration of zero-knowledge proofs (zk-SNARKs, zk-STARKs, etc.)
 // for confidential transactions, privacy, and advanced cryptographic features.
 
-use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
-use ark_ec::CurveGroup;
+use ark_bls12_381::{Bls12_381, Fr};
 use ark_groth16::{Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_groth16::r1cs_to_qap::LibsnarkReduction;
 use ark_groth16::verifier::prepare_verifying_key;
@@ -39,7 +38,7 @@ pub fn verify_zk_proof(proof: &ZkProof, verifying_key: &VerifyingKey<Bls12_381>)
 }
 
 /// Derive inputs for a zero-knowledge proof based on the circuit
-pub fn derive_inputs<C: ConstraintSynthesizer<Fr>>(circuit: &C) -> Vec<Fr> {
+pub fn derive_inputs<C: ConstraintSynthesizer<Fr>>(_circuit: &C) -> Vec<Fr> {
     // Placeholder: Implement input derivation logic based on the circuit
     vec![]
 }

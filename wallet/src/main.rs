@@ -1546,7 +1546,4 @@ fn handle_privacy(cli: &Cli, action: &PrivacyCommands) {
             println!();
             println!("{}", "╔════════════════════════════════════════════════════════════════╗".bright_cyan());
             println!("{}", "║                     STEALTH ADDRESS                            ║".bright_cyan());
-            println!("{}", "╠════════════════════════════════════════════════════════════════╣".bright_cyan());
-            println!("{}", "║                     ADDRESS:                                  ║".bright_cyan());
-            println!("{}", "║                     <stealth_address>                        ║".bright_cyan());
-            println!("{}", "╚════════════════════════════════════════════════════════════════╝".bright_cyan());
+            println!("{}", "╠════════════════════════════════════════════════════════════════
