@@ -684,6 +684,8 @@ fn send_transaction(node_addr: &str, wallet: &WalletFile, to_address: &str, amou
         outputs: tx_outputs,
         fee,
         extra: vec![],
+        metadata: None,
+        signature: hex::encode(&[0u8; 32]), // Placeholder signature
     };
     let tx_json = serde_json::to_string(&tx).map_err(|e| format!("Failed to serialize tx: {}", e))?;
     let url = format!("http://{}/submit_tx", node_addr);

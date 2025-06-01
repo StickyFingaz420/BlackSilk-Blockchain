@@ -650,8 +650,9 @@ fn handle_marketplace_data_submit(stream: &mut TcpStream, body: &[u8]) -> Result
 
     let request: MarketplaceDataRequest = serde_json::from_slice(body)?;
     
-    // Decode the base64 data
-    let marketplace_data = base64::decode(&request.data)?;
+    // Decode the base64 data using the new API
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    let marketplace_data = STANDARD.decode(&request.data)?;
     
     // Create a special marketplace transaction
     let mut hasher = DefaultHasher::new();
@@ -663,20 +664,14 @@ fn handle_marketplace_data_submit(stream: &mut TcpStream, body: &[u8]) -> Result
     let tx = Transaction {
         inputs: vec![], // No financial inputs for data storage
         outputs: vec![], // No financial outputs for data storage
+        fee: 0, // No fee for data storage
+        extra: vec![], // No extra data
         metadata: Some(format!("MARKETPLACE:{}", request.data)), // Store the base64 data
         signature: format!("data_hash_{}", data_hash), // Use data hash as signature
     };
     
-    // Add to mempool
-    if let Err(e) = add_to_mempool(tx.clone()) {
-        let response = MarketplaceDataResponse {
-            tx_hash: String::new(),
-            success: false,
-            message: format!("Failed to add marketplace data to mempool: {}", e),
-        };
-        send_json_response(stream, 400, &response)?;
-        return Ok(());
-    }
+    // Add to mempool (returns void, so no error handling needed)
+    add_to_mempool(tx.clone());
     
     // Calculate transaction hash
     let tx_bytes = serde_json::to_vec(&tx)?;

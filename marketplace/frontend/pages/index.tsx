@@ -7,7 +7,6 @@ import { ProductCard } from '@/components/ProductCard';
 import { CategoryCard } from '@/components/CategoryCard';
 import { NodeStatus } from '@/components/NodeStatus';
 import { CommunityWarning } from '@/components/CommunityWarning';
-import { PrivacyIndicator } from '@/components/PrivacyIndicator';
 
 export default function HomePage() {
   const { products, isLoading: productsLoading } = useProducts({ limit: 8 });
@@ -82,14 +81,13 @@ export default function HomePage() {
               </nav>
 
               {/* Status Indicators */}
+              {/* Status Indicators */}
               <div className="flex items-center space-x-4">
                 <NodeStatus />
-                <PrivacyIndicator />
                 <Link href="/login" className="silk-button-secondary">
                   Login
                 </Link>
               </div>
-            </div>
           </div>
         </header>
 

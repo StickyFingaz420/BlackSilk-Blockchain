@@ -76,6 +76,8 @@ pub struct Transaction {
     pub outputs: Vec<TransactionOutput>,
     pub fee: types::BlkAmount,
     pub extra: Vec<u8>, // for encrypted memo, etc.
+    pub metadata: Option<String>, // for marketplace data
+    pub signature: String, // transaction signature/hash
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -537,8 +537,8 @@ mod double_spend_tests {
         let ring_sig = RingSignature { ring: ring.clone(), signature: sig };
         let input = TransactionInput { key_image, ring_sig };
         let output = TransactionOutput { amount_commitment: [3u8; 32], stealth_address: primitives::StealthAddress { public_view: [4u8; 32], public_spend: [5u8; 32] }, range_proof: vec![0u8; 64] };
-        let tx1 = Transaction { inputs: vec![input.clone()], outputs: vec![output.clone()], fee: 0, extra: msg.to_vec() };
-        let tx2 = Transaction { inputs: vec![input], outputs: vec![output], fee: 0, extra: msg.to_vec() };
+        let tx1 = Transaction { inputs: vec![input.clone()], outputs: vec![output.clone()], fee: 0, extra: msg.to_vec(), metadata: None, signature: "test_sig1".to_string() };
+        let tx2 = Transaction { inputs: vec![input], outputs: vec![output], fee: 0, extra: msg.to_vec(), metadata: None, signature: "test_sig2".to_string() };
         // First tx should be valid
         assert!(validate_transaction(&tx1));
         // Add tx1 to mempool
@@ -1262,6 +1262,8 @@ pub fn cli_send_transaction() {
         outputs: vec![],
         fee: 0,
         extra: b"test tx".to_vec(),
+        metadata: None,
+        signature: "test_signature".to_string(),
     };
     broadcast_message(&P2PMessage::Transaction(tx));
     println!("[CLI] Test transaction broadcasted to peers");
