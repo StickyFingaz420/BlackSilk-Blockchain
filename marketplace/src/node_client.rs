@@ -369,4 +369,92 @@ impl NodeClient {
             Err(anyhow!("Batch request failed: {}", response.status()))
         }
     }
+
+    /// Submit marketplace data to the blockchain as a special transaction
+    pub async fn submit_marketplace_data(&self, data: Vec<u8>) -> Result<Hash> {
+        let url = format!("{}/api/marketplace/data", self.base_url);
+        
+        let payload = serde_json::json!({
+            "data": base64::encode(&data),
+            "timestamp": chrono::Utc::now().timestamp()
+        });
+
+        let response = self.client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let result: serde_json::Value = response.json().await?;
+            let tx_hash_str = result["tx_hash"].as_str()
+                .ok_or_else(|| anyhow!("Invalid response format"))?;
+            
+            // Convert hex string to Hash
+            let hash_bytes = hex::decode(tx_hash_str)?;
+            if hash_bytes.len() != 32 {
+                return Err(anyhow!("Invalid hash length"));
+            }
+            let mut hash_array = [0u8; 32];
+            hash_array.copy_from_slice(&hash_bytes);
+            Ok(Hash::from(hash_array))
+        } else {
+            Err(anyhow!("Failed to submit marketplace data: {}", response.status()))
+        }
+    }
+
+    /// Get marketplace transaction data by hash
+    pub async fn get_marketplace_transaction(&self, tx_hash: &Hash) -> Result<Option<Vec<u8>>> {
+        let url = format!("{}/api/marketplace/data/{:x}", self.base_url, tx_hash);
+        
+        let response = self.client
+            .get(&url)
+            .send()
+            .await?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        if response.status().is_success() {
+            let result: serde_json::Value = response.json().await?;
+            if let Some(data_str) = result["data"].as_str() {
+                let data = base64::decode(data_str)?;
+                Ok(Some(data))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Err(anyhow!("Failed to get marketplace transaction: {}", response.status()))
+        }
+    }
+
+    /// Get all marketplace transactions from the blockchain
+    pub async fn get_all_marketplace_transactions(&self) -> Result<Vec<Vec<u8>>> {
+        let url = format!("{}/api/marketplace/transactions", self.base_url);
+        
+        let response = self.client
+            .get(&url)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let result: serde_json::Value = response.json().await?;
+            let mut transactions = Vec::new();
+            
+            if let Some(txs) = result["transactions"].as_array() {
+                for tx in txs {
+                    if let Some(data_str) = tx["data"].as_str() {
+                        if let Ok(data) = base64::decode(data_str) {
+                            transactions.push(data);
+                        }
+                    }
+                }
+            }
+            
+            Ok(transactions)
+        } else {
+            Err(anyhow!("Failed to get marketplace transactions: {}", response.status()))
+        }
+    }
 }

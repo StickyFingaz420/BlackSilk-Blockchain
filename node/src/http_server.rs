@@ -50,6 +50,40 @@ pub struct GetBlocksResponse {
     pub total_height: u64,
 }
 
+/// Marketplace data storage endpoints
+#[derive(Serialize, Deserialize)]
+pub struct MarketplaceDataRequest {
+    pub data: String, // Base64 encoded marketplace data
+    pub timestamp: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MarketplaceDataResponse {
+    pub tx_hash: String,
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MarketplaceTransactionResponse {
+    pub data: Option<String>, // Base64 encoded data
+    pub timestamp: Option<i64>,
+    pub block_height: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MarketplaceTransactionsResponse {
+    pub transactions: Vec<MarketplaceTransaction>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MarketplaceTransaction {
+    pub tx_hash: String,
+    pub data: String,
+    pub timestamp: i64,
+    pub block_height: Option<u64>,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct SubmitTransactionRequest {
     pub transaction: Transaction,
@@ -229,6 +263,16 @@ fn handle_http_request(mut stream: TcpStream) -> Result<(), Box<dyn std::error::
         }
         ("POST", "/mining/submit_block") => {
             handle_submit_block(&mut stream, &body)?;
+        }
+        // Marketplace data storage endpoints
+        ("POST", "/api/marketplace/data") => {
+            handle_marketplace_data_submit(&mut stream, &body)?;
+        }
+        ("GET", path) if path.starts_with("/api/marketplace/data/") => {
+            handle_marketplace_data_get(&mut stream, path)?;
+        }
+        ("GET", "/api/marketplace/transactions") => {
+            handle_marketplace_transactions_get(&mut stream)?;
         }
         _ => {
             send_error_response(&mut stream, 404, "Not Found")?;
@@ -597,4 +641,171 @@ fn handle_submit_block(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dy
     }
     
     Ok(())
+}
+
+// Marketplace data storage functions
+fn handle_marketplace_data_submit(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let request: MarketplaceDataRequest = serde_json::from_slice(body)?;
+    
+    // Decode the base64 data
+    let marketplace_data = base64::decode(&request.data)?;
+    
+    // Create a special marketplace transaction
+    let mut hasher = DefaultHasher::new();
+    marketplace_data.hash(&mut hasher);
+    request.timestamp.hash(&mut hasher);
+    let data_hash = hasher.finish();
+    
+    // Create a transaction with marketplace data in metadata
+    let tx = Transaction {
+        inputs: vec![], // No financial inputs for data storage
+        outputs: vec![], // No financial outputs for data storage
+        metadata: Some(format!("MARKETPLACE:{}", request.data)), // Store the base64 data
+        signature: format!("data_hash_{}", data_hash), // Use data hash as signature
+    };
+    
+    // Add to mempool
+    if let Err(e) = add_to_mempool(tx.clone()) {
+        let response = MarketplaceDataResponse {
+            tx_hash: String::new(),
+            success: false,
+            message: format!("Failed to add marketplace data to mempool: {}", e),
+        };
+        send_json_response(stream, 400, &response)?;
+        return Ok(());
+    }
+    
+    // Calculate transaction hash
+    let tx_bytes = serde_json::to_vec(&tx)?;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(&tx_bytes);
+    let tx_hash = hex::encode(hasher.finalize());
+    
+    println!("[Marketplace] 📦 Stored marketplace data with hash: {}", tx_hash);
+    
+    let response = MarketplaceDataResponse {
+        tx_hash,
+        success: true,
+        message: "Marketplace data stored successfully".to_string(),
+    };
+    
+    send_json_response(stream, 200, &response)
+}
+
+fn handle_marketplace_data_get(stream: &mut TcpStream, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // Extract transaction hash from path: /api/marketplace/data/{hash}
+    let hash = path.strip_prefix("/api/marketplace/data/")
+        .ok_or("Invalid path format")?;
+    
+    // Search for the transaction in the blockchain
+    let chain = CHAIN.lock().unwrap();
+    
+    for block in &chain.blocks {
+        for tx in &block.transactions {
+            // Calculate this transaction's hash
+            let tx_bytes = serde_json::to_vec(tx).unwrap_or_default();
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(&tx_bytes);
+            let tx_hash = hex::encode(hasher.finalize());
+            
+            if tx_hash == hash {
+                // Check if this is a marketplace transaction
+                if let Some(metadata) = &tx.metadata {
+                    if metadata.starts_with("MARKETPLACE:") {
+                        let data = metadata.strip_prefix("MARKETPLACE:").unwrap_or("");
+                        let response = MarketplaceTransactionResponse {
+                            data: Some(data.to_string()),
+                            timestamp: Some(block.header.timestamp as i64),
+                            block_height: Some(block.header.height),
+                        };
+                        return send_json_response(stream, 200, &response);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Also check mempool for pending transactions
+    let mempool = MEMPOOL.lock().unwrap();
+    for tx in &*mempool {
+        let tx_bytes = serde_json::to_vec(tx).unwrap_or_default();
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(&tx_bytes);
+        let tx_hash = hex::encode(hasher.finalize());
+        
+        if tx_hash == hash {
+            if let Some(metadata) = &tx.metadata {
+                if metadata.starts_with("MARKETPLACE:") {
+                    let data = metadata.strip_prefix("MARKETPLACE:").unwrap_or("");
+                    let response = MarketplaceTransactionResponse {
+                        data: Some(data.to_string()),
+                        timestamp: None, // Not yet in a block
+                        block_height: None,
+                    };
+                    return send_json_response(stream, 200, &response);
+                }
+            }
+        }
+    }
+    
+    // Transaction not found
+    send_error_response(stream, 404, "Transaction not found")
+}
+
+fn handle_marketplace_transactions_get(stream: &mut TcpStream) -> Result<(), Box<dyn std::error::Error>> {
+    let mut transactions = Vec::new();
+    
+    // Get all marketplace transactions from the blockchain
+    let chain = CHAIN.lock().unwrap();
+    
+    for block in &chain.blocks {
+        for tx in &block.transactions {
+            if let Some(metadata) = &tx.metadata {
+                if metadata.starts_with("MARKETPLACE:") {
+                    let data = metadata.strip_prefix("MARKETPLACE:").unwrap_or("");
+                    
+                    // Calculate transaction hash
+                    let tx_bytes = serde_json::to_vec(tx).unwrap_or_default();
+                    let mut hasher = sha2::Sha256::new();
+                    hasher.update(&tx_bytes);
+                    let tx_hash = hex::encode(hasher.finalize());
+                    
+                    transactions.push(MarketplaceTransaction {
+                        tx_hash,
+                        data: data.to_string(),
+                        timestamp: block.header.timestamp as i64,
+                        block_height: Some(block.header.height),
+                    });
+                }
+            }
+        }
+    }
+    
+    // Also include pending transactions from mempool
+    let mempool = MEMPOOL.lock().unwrap();
+    for tx in &*mempool {
+        if let Some(metadata) = &tx.metadata {
+            if metadata.starts_with("MARKETPLACE:") {
+                let data = metadata.strip_prefix("MARKETPLACE:").unwrap_or("");
+                
+                let tx_bytes = serde_json::to_vec(tx).unwrap_or_default();
+                let mut hasher = sha2::Sha256::new();
+                hasher.update(&tx_bytes);
+                let tx_hash = hex::encode(hasher.finalize());
+                
+                transactions.push(MarketplaceTransaction {
+                    tx_hash,
+                    data: data.to_string(),
+                    timestamp: chrono::Utc::now().timestamp(),
+                    block_height: None, // Not yet in a block
+                });
+            }
+        }
+    }
+    
+    let response = MarketplaceTransactionsResponse { transactions };
+    send_json_response(stream, 200, &response)
 }

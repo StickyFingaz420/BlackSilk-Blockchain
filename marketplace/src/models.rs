@@ -1,11 +1,10 @@
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use primitives::types::{Hash, BlkAmount};
 
 /// User account in the marketplace
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: Uuid,
     pub username: String,
@@ -21,20 +20,20 @@ pub struct User {
 }
 
 /// Product listing in the marketplace
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Product {
     pub id: Uuid,
     pub vendor_id: Uuid,
     pub title: String,
     pub description: String,
     pub category: String,
-    pub subcategory: String,
-    pub price: BlkAmount, // Price in BLK atomic units
+    pub subcategory: Option<String>,
+    pub price: f64, // Price in BLK (for template compatibility)
     pub currency: String, // "BLK"
     pub quantity_available: u32,
     pub ships_from: String,
     pub ships_to: Vec<String>, // JSON array of countries
-    pub shipping_price: BlkAmount,
+    pub shipping_price: f64, // Shipping price in BLK
     pub processing_time: String, // e.g., "1-2 days"
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -45,7 +44,7 @@ pub struct Product {
 }
 
 /// Order in the marketplace
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Order {
     pub id: Uuid,
     pub buyer_id: Uuid,
@@ -63,8 +62,7 @@ pub struct Order {
     pub tracking_number: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "order_status", rename_all = "lowercase")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OrderStatus {
     Pending,     // Order placed, waiting for payment
     Paid,        // Payment received, escrow funded
@@ -76,8 +74,18 @@ pub enum OrderStatus {
     Refunded,    // Money returned to buyer
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum EscrowStatus {
+    Created,     // Escrow contract created
+    Funded,      // Buyer has funded the escrow
+    Released,    // Funds released to vendor
+    Disputed,    // Dispute in progress
+    Refunded,    // Funds returned to buyer
+    Expired,     // Escrow expired
+}
+
 /// Review/feedback system
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Review {
     pub id: Uuid,
     pub order_id: Uuid,
@@ -93,7 +101,7 @@ pub struct Review {
 }
 
 /// Message in the marketplace communication system
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: Uuid,
     pub from_user_id: Uuid,
@@ -106,8 +114,7 @@ pub struct Message {
     pub message_type: MessageType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "message_type", rename_all = "lowercase")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MessageType {
     Order,      // Order-related communication
     Support,    // Customer support
