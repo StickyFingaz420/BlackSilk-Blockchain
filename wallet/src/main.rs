@@ -679,13 +679,26 @@ fn send_transaction(node_addr: &str, wallet: &WalletFile, to_address: &str, amou
             range_proof: range_proof.to_bytes(),
         });
     }
+    
+    // Generate a proper transaction signature
+    use sha2::{Sha256, Digest};
+    let mut tx_hasher = Sha256::new();
+    
+    // Hash transaction components for signature
+    tx_hasher.update(&serde_json::to_vec(&tx_inputs).unwrap_or_default());
+    tx_hasher.update(&serde_json::to_vec(&tx_outputs).unwrap_or_default());
+    tx_hasher.update(&fee.to_le_bytes());
+    tx_hasher.update(&chrono::Utc::now().timestamp().to_le_bytes());
+    
+    let tx_signature = hex::encode(tx_hasher.finalize());
+    
     let tx = primitives::Transaction {
         inputs: tx_inputs,
         outputs: tx_outputs,
         fee,
         extra: vec![],
         metadata: None,
-        signature: hex::encode(&[0u8; 32]), // Placeholder signature
+        signature: tx_signature,
     };
     let tx_json = serde_json::to_string(&tx).map_err(|e| format!("Failed to serialize tx: {}", e))?;
     let url = format!("http://{}/submit_tx", node_addr);

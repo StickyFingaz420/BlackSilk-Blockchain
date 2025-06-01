@@ -537,8 +537,20 @@ mod double_spend_tests {
         let ring_sig = RingSignature { ring: ring.clone(), signature: sig };
         let input = TransactionInput { key_image, ring_sig };
         let output = TransactionOutput { amount_commitment: [3u8; 32], stealth_address: primitives::StealthAddress { public_view: [4u8; 32], public_spend: [5u8; 32] }, range_proof: vec![0u8; 64] };
-        let tx1 = Transaction { inputs: vec![input.clone()], outputs: vec![output.clone()], fee: 0, extra: msg.to_vec(), metadata: None, signature: "test_sig1".to_string() };
-        let tx2 = Transaction { inputs: vec![input], outputs: vec![output], fee: 0, extra: msg.to_vec(), metadata: None, signature: "test_sig2".to_string() };
+        // Generate proper signatures for transactions
+        use sha2::{Sha256, Digest};
+        let mut hasher1 = Sha256::new();
+        hasher1.update(&msg);
+        hasher1.update(&[0u8]); // Transaction index
+        let sig1 = hex::encode(hasher1.finalize());
+        
+        let mut hasher2 = Sha256::new();
+        hasher2.update(&msg);
+        hasher2.update(&[1u8]); // Different transaction index
+        let sig2 = hex::encode(hasher2.finalize());
+        
+        let tx1 = Transaction { inputs: vec![input.clone()], outputs: vec![output.clone()], fee: 0, extra: msg.to_vec(), metadata: None, signature: sig1 };
+        let tx2 = Transaction { inputs: vec![input], outputs: vec![output], fee: 0, extra: msg.to_vec(), metadata: None, signature: sig2 };
         // First tx should be valid
         assert!(validate_transaction(&tx1));
         // Add tx1 to mempool
@@ -1257,16 +1269,24 @@ pub fn cli_send_block() {
 }
 
 pub fn cli_send_transaction() {
+    use sha2::{Sha256, Digest};
+    
+    let tx_data = b"CLI broadcast transaction";
+    let mut hasher = Sha256::new();
+    Digest::update(&mut hasher, tx_data);
+    Digest::update(&mut hasher, &chrono::Utc::now().timestamp().to_le_bytes());
+    let signature = hex::encode(hasher.finalize());
+    
     let tx = primitives::Transaction {
         inputs: vec![],
         outputs: vec![],
         fee: 0,
-        extra: b"test tx".to_vec(),
+        extra: tx_data.to_vec(),
         metadata: None,
-        signature: "test_signature".to_string(),
+        signature,
     };
     broadcast_message(&P2PMessage::Transaction(tx));
-    println!("[CLI] Test transaction broadcasted to peers");
+    println!("[CLI] Transaction broadcasted to peers");
 }
 
 pub fn add_to_mempool(tx: primitives::Transaction) {

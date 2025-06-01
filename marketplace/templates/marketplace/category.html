@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{category.name}} - BlackSilk Marketplace</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f4f4f4; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .products { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+        .product { border: 1px solid #ddd; padding: 15px; border-radius: 8px; }
+        .back-btn { display: inline-block; padding: 8px 16px; background: #6c757d; color: white; text-decoration: none; border-radius: 4px; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-btn">← Back to Marketplace</a>
+        
+        <div class="header">
+            <h1>{{category.name}}</h1>
+            <p>{{category.description}}</p>
+        </div>
+        
+        <div class="products">
+            {% for product in products %}
+            <div class="product">
+                <h3>{{product.title}}</h3>
+                <p>{{product.description}}</p>
+                <p><strong>Price:</strong> {{product.price}} BLK</p>
+                <p><strong>Vendor:</strong> {{product.vendor_name}}</p>
+                <a href="/product/{{product.id}}">View Details</a>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>

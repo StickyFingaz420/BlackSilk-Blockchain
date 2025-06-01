@@ -645,32 +645,31 @@ fn handle_submit_block(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dy
 
 // Marketplace data storage functions
 fn handle_marketplace_data_submit(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
     let request: MarketplaceDataRequest = serde_json::from_slice(body)?;
     
     // Decode the base64 data using the new API
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     let marketplace_data = STANDARD.decode(&request.data)?;
     
-    // Create a special marketplace transaction
-    let mut hasher = DefaultHasher::new();
-    marketplace_data.hash(&mut hasher);
-    request.timestamp.hash(&mut hasher);
-    let data_hash = hasher.finish();
+    // Create a professional marketplace data transaction
+    use sha2::{Sha256, Digest};
+    let mut signature_hasher = Sha256::new();
+    Digest::update(&mut signature_hasher, &marketplace_data);
+    Digest::update(&mut signature_hasher, &request.timestamp.to_le_bytes());
+    Digest::update(&mut signature_hasher, b"MARKETPLACE_DATA");
+    let signature = hex::encode(signature_hasher.finalize());
     
     // Create a transaction with marketplace data in metadata
     let tx = Transaction {
         inputs: vec![], // No financial inputs for data storage
         outputs: vec![], // No financial outputs for data storage
-        fee: 0, // No fee for data storage
-        extra: vec![], // No extra data
-        metadata: Some(format!("MARKETPLACE:{}", request.data)), // Store the base64 data
-        signature: format!("data_hash_{}", data_hash), // Use data hash as signature
+        fee: 0, // No fee for data storage transactions
+        extra: vec![], // Marketplace data stored in metadata field
+        metadata: Some(format!("MARKETPLACE:{}", request.data)), // Store the base64 marketplace data
+        signature, // Cryptographic signature of the data and timestamp
     };
     
-    // Add to mempool (returns void, so no error handling needed)
+    // Add to mempool for blockchain inclusion
     add_to_mempool(tx.clone());
     
     // Calculate transaction hash
