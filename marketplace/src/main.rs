@@ -33,7 +33,7 @@ use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
 use sha2::{Sha256, Digest};
 use hex;
 use rand::rngs::OsRng;
-use bip39::{Mnemonic, Language, Seed};
+use bip39::{Mnemonic, Language};
 
 // BlackSilk Marketplace - Classic Silk Road Design
 // "Don't be sick" - We maintain community standards
