@@ -3,6 +3,7 @@
 
 import { 
   Product, 
+  User, 
   Order, 
   EscrowContract, 
   NodeStatus, 
@@ -11,9 +12,12 @@ import {
   ApiResponse,
   SearchFilters,
   Category,
+  NodeInfo,
   OrderStatus,
   EscrowStatus,
-  OrderItem
+  CartItem,
+  OrderItem,
+  WebSocketMessage
 } from '../types';
 
 export interface BlackSilkNodeConfig {
@@ -28,6 +32,10 @@ export interface NodeInfoResponse {
   height: number;
   peers: number;
   difficulty: number;
+}
+
+export interface SubmitTransactionRequest {
+  transaction: Transaction;
 }
 
 export interface SubmitTransactionResponse {
@@ -116,8 +124,127 @@ export class BlackSilkMarketplaceAPI {
     return await response.json();
   }
 
+  // Authentication methods
+  async login(privateKey: string, recoveryPhrase?: string): Promise<ApiResponse<User>> {
+    try {
+      const credentials = {
+        privateKey,
+        recoveryPhrase,
+        address: this.derivePublicKey(privateKey),
+        timestamp: Date.now()
+      };
+      
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('blacksilk_credentials', JSON.stringify(credentials));
+      }
+
+      const user: User = {
+        id: credentials.address,
+        username: `user_${credentials.address.slice(0, 8)}`,
+        public_key: credentials.address,
+        created_at: new Date().toISOString(),
+        last_login: new Date().toISOString(),
+        is_vendor: false,
+        vendor_rating: 0,
+        total_sales: 0
+      };
+
+      return { success: true, data: user };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Login failed'
+      };
+    }
+  }
+
+  logout(): void {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('blacksilk_credentials');
+    }
+  }
+
+  async searchProducts(query: string, filters?: SearchFilters): Promise<ApiResponse<Product[]>> {
+    try {
+      const productsResult = await this.getProducts(filters);
+      if (productsResult.success && productsResult.data) {
+        const filteredProducts = productsResult.data.filter(product => 
+          product.title.toLowerCase().includes(query.toLowerCase()) ||
+          product.description.toLowerCase().includes(query.toLowerCase()) ||
+          product.category.toLowerCase().includes(query.toLowerCase())
+        );
+        return { success: true, data: filteredProducts };
+      }
+      return { success: false, error: 'Search failed', data: [] };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Search error',
+        data: []
+      };
+    }
+  }
+
+  async getNodeInfo(): Promise<ApiResponse<NodeInfo>> {
+    try {
+      const nodeStatus = await this.getNodeStatus();
+      const nodeInfo: NodeInfo = {
+        chain_height: nodeStatus.blockHeight || 0,
+        peers: nodeStatus.connections || 0,
+        difficulty: nodeStatus.difficulty || 0,
+        hashrate: 0,
+        network: 'BlackSilk',
+        version: nodeStatus.version || 'unknown'
+      };
+      return { success: true, data: nodeInfo };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get node info'
+      };
+    }
+  }
+
+  connectWebSocket(onMessage: (message: WebSocketMessage) => void): WebSocket | null {
+    try {
+      const wsUrl = this.nodeURL.replace('http', 'ws') + '/ws';
+      const ws = new WebSocket(wsUrl);
+      ws.onopen = () => console.log('WebSocket connected to BlackSilk node');
+      ws.onmessage = (event) => {
+        try {
+          const message: WebSocketMessage = JSON.parse(event.data);
+          onMessage(message);
+        } catch (error) {
+          console.error('Failed to parse WebSocket message:', error);
+        }
+      };
+      ws.onerror = (error) => console.error('WebSocket error:', error);
+      ws.onclose = () => console.log('WebSocket disconnected');
+      return ws;
+    } catch (error) {
+      console.error('Failed to connect WebSocket:', error);
+      return null;
+    }
+  }
+
+  async uploadImage(file: File): Promise<{ success: boolean; hash?: string; error?: string }> {
+    try {
+      const hash = await this.uploadToIPFS(file);
+      return { success: true, hash };
+    } catch (error) {
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Upload failed' 
+      };
+    }
+  }
+
+  private derivePublicKey(privateKey: string): string {
+    return privateKey + '_pub';
+  }
+
   // Wallet/Balance Methods
-  async getBalance(address: string): Promise<Balance> {
+  async getBalance(address: string): Promise<ApiResponse<Balance>> {
     try {
       // Get all blocks and calculate balance from transactions
       const blocks = await this.getBlocks(0);
@@ -149,17 +276,26 @@ export class BlackSilkMarketplaceAPI {
         }
       }
 
-      return {
+      const balance: Balance = {
         confirmed: Math.max(0, confirmed),
         unconfirmed,
         locked_in_escrow
       };
+
+      return {
+        success: true,
+        data: balance
+      };
     } catch (error) {
       console.error('Failed to get balance:', error);
       return {
-        confirmed: 0,
-        unconfirmed: 0,
-        locked_in_escrow: 0
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get balance',
+        data: {
+          confirmed: 0,
+          unconfirmed: 0,
+          locked_in_escrow: 0
+        }
       };
     }
   }
@@ -383,13 +519,31 @@ export class BlackSilkMarketplaceAPI {
     }
   }
 
-  async getOrders(userAddress: string): Promise<ApiResponse<Order[]>> {
+  async getOrders(userAddress?: string): Promise<ApiResponse<Order[]>> {
     try {
+      // Get user address from localStorage if not provided
+      let address = userAddress;
+      if (!address && typeof window !== 'undefined') {
+        const credentials = localStorage.getItem('blacksilk_credentials');
+        if (credentials) {
+          const parsed = JSON.parse(credentials);
+          address = parsed.address;
+        }
+      }
+
+      if (!address) {
+        return {
+          success: false,
+          error: 'User address required',
+          data: []
+        };
+      }
+
       // Mock data for now - in real implementation, parse from blockchain
       const mockOrders: Order[] = [
         {
           id: '1',
-          buyer: userAddress,
+          buyer: address,
           seller: 'vendor123',
           items: [
             {
@@ -567,6 +721,12 @@ export class BlackSilkMarketplaceAPI {
     checks.marketplace = checks.node; // Marketplace depends on node
 
     return checks;
+  }
+
+  // Utility methods for key generation
+  private generateAddressFromPrivateKey(privateKey: string): string {
+    // In a real implementation, this would use proper cryptographic derivation
+    return 'BSK' + privateKey.substring(0, 40);
   }
 }
 
