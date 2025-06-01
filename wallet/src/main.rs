@@ -610,14 +610,14 @@ fn send_transaction(node_addr: &str, wallet: &WalletFile, to_address: &str, amou
         return Err("Destination address is required".to_string());
     }
     // Decode keys
-    let pub_view = hex::decode(&wallet.pub_view).map_err(|_| "Invalid pub_view in wallet file")?;
-    let pub_spend = hex::decode(&wallet.pub_spend).map_err(|_| "Invalid pub_spend in wallet file")?;
+    let pub_view: &[u8; 32] = wallet.pub_view.as_bytes().try_into().unwrap();
+    let pub_spend: &[u8; 32] = wallet.pub_spend.as_bytes().try_into().unwrap();
     let priv_view = hex::decode(&wallet.priv_view).map_err(|_| "Invalid priv_view in wallet file")?;
     let mut arr_view = [0u8; 32];
     let mut arr_spend = [0u8; 32];
     let mut arr_priv_view = [0u8; 32];
-    arr_view.copy_from_slice(&pub_view);
-    arr_spend.copy_from_slice(&pub_spend);
+    arr_view.copy_from_slice(&*pub_view);
+    arr_spend.copy_from_slice(&*pub_spend);
     arr_priv_view.copy_from_slice(&priv_view);
     // Sync blocks and collect spendable outputs
     let blocks = sync_with_node(node_addr, 0, &arr_view, &arr_spend);
@@ -714,7 +714,7 @@ fn calculate_wallet_balance(wallet: &WalletFile, node_addr: &str) -> (u64, u64, 
     let spendable_outputs = get_spendable_outputs(&blocks, &wallet.pub_view, &wallet.pub_spend, &wallet.priv_view);
     
     for output in spendable_outputs {
-        confirmed_balance += output.amount;
+        confirmed_balance += u64::from_le_bytes(output.amount_commitment[0..8].try_into().unwrap());
     }
     
     // Check mempool for unconfirmed transactions
@@ -751,7 +751,7 @@ fn get_mempool_balance(node_addr: &str, pub_view: &[u8; 32], pub_spend: &[u8; 32
     for tx in mempool.transactions {
         for output in tx.outputs {
             if is_output_mine(&output, pub_view, pub_spend, &[0u8; 32]) { // Use dummy private view for mempool check
-                unconfirmed += output.amount;
+                unconfirmed += output.amount_commitment;
             }
         }
     }
@@ -1542,8 +1542,37 @@ fn handle_privacy(cli: &Cli, action: &PrivacyCommands) {
     match action {
         PrivacyCommands::Stealth => {
             println!("{} Generating stealth address", "[PRIVACY]".bright_cyan().bold());
-            
+
             println!();
             println!("{}", "╔════════════════════════════════════════════════════════════════╗".bright_cyan());
             println!("{}", "║                     STEALTH ADDRESS                            ║".bright_cyan());
             println!("{}", "╠════════════════════════════════════════════════════════════════╣".bright_cyan());
+            // هنا ضع المحتوى الذي تريده داخل الإطار
+
+            println!("{}", "╚════════════════════════════════════════════════════════════════╝".bright_cyan());
+        } // ← إغلاق match case
+        &PrivacyCommands::Ring { .. } | &PrivacyCommands::ZkProof { .. } | &PrivacyCommands::Verify { .. } => {
+            println!("Handling additional privacy commands");
+        }
+    } // ← إغلاق match
+} // ← إغلاق الدالة
+
+fn handle_hardware(cli: &Cli, action: &HardwareCommands) {
+    // Placeholder implementation
+    println!("Handling hardware commands");
+}
+
+fn handle_address_book(cli: &Cli, action: &AddressBookCommands) {
+    // Placeholder implementation
+    println!("Handling address book commands");
+}
+
+fn handle_settings(cli: &Cli, action: &SettingsCommands) {
+    // Placeholder implementation
+    println!("Handling settings commands");
+}
+
+fn print_wallet_info(cli: &Cli) {
+    // Placeholder implementation
+    println!("Printing wallet info");
+}
