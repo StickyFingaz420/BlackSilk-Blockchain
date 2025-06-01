@@ -374,8 +374,9 @@ impl NodeClient {
     pub async fn submit_marketplace_data(&self, data: Vec<u8>) -> Result<Hash> {
         let url = format!("{}/api/marketplace/data", self.base_url);
         
+        use base64::{Engine as _, engine::general_purpose};
         let payload = serde_json::json!({
-            "data": base64::encode(&data),
+            "data": general_purpose::STANDARD.encode(&data),
             "timestamp": chrono::Utc::now().timestamp()
         });
 
@@ -405,7 +406,7 @@ impl NodeClient {
 
     /// Get marketplace transaction data by hash
     pub async fn get_marketplace_transaction(&self, tx_hash: &Hash) -> Result<Option<Vec<u8>>> {
-        let url = format!("{}/api/marketplace/data/{:x}", self.base_url, tx_hash);
+        let url = format!("{}/api/marketplace/data/{}", self.base_url, hex::encode(tx_hash));
         
         let response = self.client
             .get(&url)
@@ -419,7 +420,8 @@ impl NodeClient {
         if response.status().is_success() {
             let result: serde_json::Value = response.json().await?;
             if let Some(data_str) = result["data"].as_str() {
-                let data = base64::decode(data_str)?;
+                use base64::{Engine as _, engine::general_purpose};
+                let data = general_purpose::STANDARD.decode(data_str)?;
                 Ok(Some(data))
             } else {
                 Ok(None)
@@ -445,7 +447,8 @@ impl NodeClient {
             if let Some(txs) = result["transactions"].as_array() {
                 for tx in txs {
                     if let Some(data_str) = tx["data"].as_str() {
-                        if let Ok(data) = base64::decode(data_str) {
+                        use base64::{Engine as _, engine::general_purpose};
+                        if let Ok(data) = general_purpose::STANDARD.decode(data_str) {
                             transactions.push(data);
                         }
                     }

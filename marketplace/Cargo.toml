@@ -32,6 +32,8 @@ curve25519-dalek = "4.0"
 sha2 = "0.10"
 rand = "0.8"
 base64 = "0.21"
+ed25519-dalek = "2.0"
+bip39 = "2.0"
 
 # Tor integration
 arti-client = "0.11"

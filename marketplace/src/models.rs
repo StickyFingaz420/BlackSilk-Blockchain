@@ -25,6 +25,7 @@ pub struct User {
 pub struct Product {
     pub id: Uuid,
     pub vendor_id: Uuid,
+    pub vendor_name: String, // Add vendor_name field for templates
     pub title: String,
     pub description: String,
     pub category: String,
@@ -126,8 +127,10 @@ pub enum MessageType {
 /// Category structure for marketplace organization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Category {
+    pub id: String, // Category identifier
     pub name: String,
     pub description: String,
+    pub icon: String, // Emoji or icon for the category
     pub subcategories: Vec<Subcategory>,
     pub requires_vendor_verification: bool,
 }

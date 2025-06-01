@@ -111,7 +111,7 @@ pub struct EscrowContractData {
 }
 
 /// Decentralized storage manager using BlackSilk blockchain
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DecentralizedStorage {
     node_client: Arc<NodeClient>,
     cache: Arc<RwLock<HashMap<String, MarketplaceData>>>,
@@ -142,7 +142,7 @@ impl DecentralizedStorage {
         let tx_hash = self.node_client.submit_marketplace_data(data_bytes).await?;
         
         // Cache the data locally for faster access
-        let cache_key = format!("{}", hex::encode(Hash::from(data_hash.try_into().unwrap())));
+        let cache_key = hex::encode(&data_hash);
         self.cache.write().await.insert(cache_key, data);
         
         Ok(tx_hash)
@@ -231,6 +231,26 @@ impl DecentralizedStorage {
         } else {
             Ok(None)
         }
+    }
+
+    /// Store user data in the blockchain (for authentication system)
+    pub async fn store_user_data(&self, user: &crate::models::User) -> Result<()> {
+        // Create a UserProfile from the User for blockchain storage
+        let profile = UserProfile {
+            id: user.id,
+            username: format!("user_{}", user.id), // Generate username from ID
+            public_key: user.public_key.clone(),
+            reputation_score: 0.0,
+            total_sales: 0,
+            total_purchases: 0,
+            join_date: Utc::now(),
+            is_vendor: false,
+            pgp_key: None,
+        };
+
+        let data = MarketplaceData::UserProfile(profile);
+        self.store_data(data).await?;
+        Ok(())
     }
 
     // Product operations
