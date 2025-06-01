@@ -1,0 +1,195 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom Silk Road Classic Styles */
+@import url('https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --silk-black: #0a0a0a;
+  --silk-dark: #1a1a1a;
+  --silk-gray: #2a2a2a;
+  --silk-light: #3a3a3a;
+  --silk-accent: #8b5cf6;
+  --silk-purple: #7c3aed;
+  --silk-gold: #f59e0b;
+  --silk-warning: #ef4444;
+  --silk-success: #10b981;
+  --silk-text: #e5e5e5;
+  --silk-muted: #9ca3af;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  background: var(--silk-black);
+  color: var(--silk-text);
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+body {
+  background-image: 
+    radial-gradient(circle at 20% 80%, rgba(139, 92, 246, 0.1) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(124, 58, 237, 0.1) 0%, transparent 50%),
+    linear-gradient(135deg, var(--silk-black) 0%, var(--silk-dark) 100%);
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--silk-dark);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--silk-gray);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--silk-light);
+}
+
+/* Silk Road UI Components */
+.silk-card {
+  @apply bg-silk-dark border border-silk-gray rounded-lg p-6 shadow-silk;
+  background: linear-gradient(145deg, var(--silk-dark), var(--silk-gray));
+}
+
+.silk-card:hover {
+  @apply shadow-silk-hover border-silk-accent;
+  transform: translateY(-2px);
+  transition: all 0.3s ease;
+}
+
+.silk-button {
+  @apply bg-silk-accent hover:bg-silk-purple text-white font-medium py-2 px-4 rounded-lg;
+  @apply transition-all duration-200 hover:shadow-silk-hover;
+  border: 1px solid transparent;
+}
+
+.silk-button:hover {
+  border-color: var(--silk-purple);
+  transform: translateY(-1px);
+}
+
+.silk-button-secondary {
+  @apply bg-silk-gray hover:bg-silk-light border border-silk-light text-silk-text;
+  @apply font-medium py-2 px-4 rounded-lg transition-all duration-200;
+}
+
+.silk-input {
+  @apply bg-silk-gray border border-silk-light rounded-lg px-4 py-2;
+  @apply text-silk-text placeholder-silk-muted focus:border-silk-accent focus:outline-none;
+  @apply transition-colors duration-200;
+}
+
+.silk-nav {
+  @apply bg-silk-dark/80 backdrop-blur-md border-b border-silk-gray;
+}
+
+.silk-footer {
+  @apply bg-silk-dark border-t border-silk-gray mt-auto;
+}
+
+/* Warning message styling */
+.community-warning {
+  @apply bg-gradient-to-r from-silk-warning/20 to-silk-gold/20;
+  @apply border border-silk-warning/50 rounded-lg p-4 text-center;
+  @apply text-silk-warning font-medium;
+}
+
+/* Privacy indicators */
+.privacy-indicator {
+  @apply inline-flex items-center gap-2 px-3 py-1 rounded-full;
+  @apply bg-silk-success/20 border border-silk-success/50 text-silk-success;
+  @apply text-sm font-medium;
+}
+
+.tor-indicator {
+  @apply inline-flex items-center gap-2 px-3 py-1 rounded-full;
+  @apply bg-silk-purple/20 border border-silk-purple/50 text-silk-purple;
+  @apply text-sm font-medium;
+}
+
+/* Product grid */
+.product-grid {
+  @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6;
+}
+
+/* Category cards */
+.category-card {
+  @apply silk-card hover:border-silk-accent cursor-pointer;
+  @apply flex flex-col items-center text-center p-8;
+}
+
+.category-icon {
+  @apply text-6xl mb-4;
+}
+
+/* Escrow status indicators */
+.escrow-created { @apply text-silk-muted; }
+.escrow-funded { @apply text-silk-gold; }
+.escrow-completed { @apply text-silk-success; }
+.escrow-disputed { @apply text-silk-warning; }
+.escrow-voting { @apply text-silk-purple; }
+
+/* Animation classes */
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-in-out;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { 
+    transform: translateY(20px); 
+    opacity: 0; 
+  }
+  to { 
+    transform: translateY(0); 
+    opacity: 1; 
+  }
+}
+
+/* Loading states */
+.loading-spinner {
+  @apply animate-spin rounded-full h-6 w-6 border-2 border-silk-muted border-t-silk-accent;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+  .silk-card {
+    @apply p-4;
+  }
+  
+  .category-card {
+    @apply p-6;
+  }
+  
+  .category-icon {
+    @apply text-4xl mb-2;
+  }
+}

@@ -1,0 +1,42 @@
+[package]
+name = "blacksilk-marketplace"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Web framework
+axum = "0.7"
+tokio = { version = "1.0", features = ["full"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Templates and UI
+askama = "0.12"
+askama_axum = "0.4"
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"] }
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Cryptography and Privacy
+curve25519-dalek = "4.0"
+sha2 = "0.10"
+rand = "0.8"
+base64 = "0.21"
+
+# Tor integration
+arti-client = "0.11"
+tor-rtcompat = "0.9"
+
+# BlackSilk dependencies
+node = { path = "../node" }
+primitives = { path = "../primitives" }
+
+# Utilities
+clap = { version = "4.0", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+anyhow = "1.0"
