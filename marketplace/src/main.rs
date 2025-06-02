@@ -13,7 +13,6 @@ use askama::Template;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tower_http::{cors::CorsLayer, services::ServeDir};
 use uuid::Uuid;
 use anyhow::Result;
@@ -29,10 +28,9 @@ use models::*;
 use escrow_integration::EscrowManager;
 use node_client::NodeClient;
 // Add cryptographic imports for authentication
-use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
+use ed25519_dalek::SigningKey;
 use sha2::{Sha256, Digest};
 use hex;
-use rand::rngs::OsRng;
 use bip39::{Mnemonic, Language};
 
 // BlackSilk Marketplace - Classic Silk Road Design
@@ -42,7 +40,7 @@ use bip39::{Mnemonic, Language};
 #[template(path = "marketplace/index.html")]
 struct IndexTemplate {
     featured_products: Vec<Product>,
-    categories: Vec<Category>,
+    categories: Vec<MarketplaceCategory>,
     total_listings: u64,
     online_vendors: u64,
     warning_message: String,
@@ -51,7 +49,7 @@ struct IndexTemplate {
 #[derive(Template)]
 #[template(path = "marketplace/category.html")]
 struct CategoryTemplate {
-    category: Category,
+    category: MarketplaceCategory,
     products: Vec<Product>,
     page: u32,
     total_pages: u32,
@@ -167,6 +165,7 @@ async fn index(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                     let template_product = Product {
                         id: product.id,
                         vendor_id: product.vendor_id,
+                        vendor_name: format!("vendor_{}", product.vendor_id.to_string()[..8].to_uppercase()), // Generate vendor name from ID
                         title: product.title,
                         description: product.description,
                         category: product.category,
@@ -201,7 +200,7 @@ async fn index(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         warning_message: warning_message(),
     };
 
-    Html(template.render().unwrap())
+    Html(template.render().unwrap()).into_response()
 }
 
 async fn category_page(
@@ -225,6 +224,7 @@ async fn category_page(
         Product {
             id: product.id,
             vendor_id: product.vendor_id,
+            vendor_name: format!("vendor_{}", product.vendor_id.to_string()[..8].to_uppercase()), // Generate vendor name from ID
             title: product.title,
             description: product.description,
             category: product.category,
@@ -272,7 +272,7 @@ async fn category_page(
         warning_message: warning_message(),
     };
 
-    Html(template.render().unwrap())
+    Html(template.render().unwrap()).into_response()
 }
 
 #[derive(Deserialize)]
@@ -505,8 +505,7 @@ async fn authenticate_with_seed_phrase(
         .map_err(|_| anyhow::anyhow!("Invalid seed phrase format"))?;
         
     // Generate seed from mnemonic
-    let seed = Seed::new(&mnemonic, ""); // No passphrase
-    let seed_bytes = seed.as_bytes();
+    let seed_bytes = mnemonic.to_seed(""); // No passphrase
     
     // Derive private key from seed (using first 32 bytes)
     let private_key_bytes: [u8; 32] = seed_bytes[..32].try_into().unwrap();

@@ -2,7 +2,7 @@
 //! Uses the BlackSilk blockchain node as the primary data layer
 //! All marketplace data is stored on-chain with privacy preservations
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,7 +10,6 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use sha2::{Sha256, Digest};
-use primitives::{Transaction, Block};
 use primitives::types::{Hash, BlkAmount};
 use crate::node_client::NodeClient;
 use crate::models::*;
