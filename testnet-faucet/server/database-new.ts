@@ -88,6 +88,7 @@ export class Database {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           address TEXT NOT NULL UNIQUE,
           reason TEXT,
+          is_active INTEGER DEFAULT 1,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`,
 
@@ -155,32 +156,15 @@ export class Database {
         'CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)'
       ];
 
-      let completed = 0;
-      const total = queries.length + indexes.length;
-
-      const handleComplete = (err?: Error) => {
-        if (err) {
-          logger.error('Database table creation error:', err);
-          reject(err);
-          return;
-        }
-        
-        completed++;
-        if (completed === total) {
+      // Execute table creation queries sequentially
+      this.executeQueriesSequentially(queries)
+        .then(() => this.executeQueriesSequentially(indexes))
+        .then(() => {
           logger.info('Database tables and indexes created successfully');
-          this.insertDefaultConfig().then(resolve).catch(reject);
-        }
-      };
-
-      // Execute table creation queries
-      queries.forEach(query => {
-        this.db!.run(query, handleComplete);
-      });
-
-      // Execute index creation queries
-      indexes.forEach(query => {
-        this.db!.run(query, handleComplete);
-      });
+          return this.insertDefaultConfig();
+        })
+        .then(resolve)
+        .catch(reject);
     });
   }
 
@@ -220,6 +204,29 @@ export class Database {
           }
         );
       });
+    });
+  }
+
+  private async executeQueriesSequentially(queries: string[]): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const executeNext = (index: number) => {
+        if (index >= queries.length) {
+          resolve();
+          return;
+        }
+
+        this.db!.run(queries[index], (err) => {
+          if (err) {
+            logger.error(`Database query error at index ${index}:`, err);
+            logger.error(`Query: ${queries[index]}`);
+            reject(err);
+            return;
+          }
+          executeNext(index + 1);
+        });
+      };
+
+      executeNext(0);
     });
   }
 
@@ -390,7 +397,7 @@ export class Database {
   async canMakeRequest(address: string, ipAddress: string): Promise<boolean> {
     // Check if address is blacklisted
     const blacklisted = await this.get(
-      'SELECT 1 FROM blacklist WHERE address = ? AND is_active = 1',
+      'SELECT 1 FROM blacklist WHERE address = ?',
       [address]
     );
     
@@ -409,18 +416,18 @@ export class Database {
 
   async addToBlacklist(address: string, reason: string): Promise<number> {
     const result = await this.run(
-      'INSERT INTO blacklist (address, reason, is_active, created_at) VALUES (?, ?, 1, datetime(\'now\'))',
+      'INSERT INTO blacklist (address, reason, created_at) VALUES (?, ?, datetime(\'now\'))',
       [address, reason]
     );
     return result.id!;
   }
 
   async removeFromBlacklist(id: number): Promise<void> {
-    await this.run('UPDATE blacklist SET is_active = 0 WHERE id = ?', [id]);
+    await this.run('DELETE FROM blacklist WHERE id = ?', [id]);
   }
 
   async getBlacklist(): Promise<any[]> {
-    return this.query('SELECT * FROM blacklist WHERE is_active = 1 ORDER BY created_at DESC');
+    return this.query('SELECT * FROM blacklist ORDER BY created_at DESC');
   }
 
   async getStats(): Promise<any> {
@@ -431,7 +438,7 @@ export class Database {
       this.get('SELECT COUNT(*) as failedRequests FROM faucet_requests WHERE status = \'failed\''),
       this.get('SELECT COALESCE(SUM(amount), 0) as totalTokensDistributed FROM faucet_requests WHERE status = \'completed\''),
       this.get('SELECT COUNT(*) as uniqueAddresses FROM (SELECT DISTINCT address FROM faucet_requests)'),
-      this.get('SELECT COUNT(*) as blacklistedAddresses FROM blacklist WHERE is_active = 1')
+      this.get('SELECT COUNT(*) as blacklistedAddresses FROM blacklist')
     ]);
 
     return {
