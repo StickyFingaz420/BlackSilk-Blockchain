@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from '@jest/globals';
 import { Database } from '../server/database-new';
-import { FaucetService } from '../server/services/faucet';
+import { FaucetService } from '../server/services/faucet-simple';
 import fs from 'fs';
 import path from 'path';
 
