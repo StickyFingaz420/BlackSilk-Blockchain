@@ -106,7 +106,7 @@ BlackSilk-Blockchain/
 
 1. **Clone the repository:**
 ```bash
-git clone https://github.com/BlackSilkCoin/BlackSilk-Blockchain.git
+git clone https://github.com/StickyFingaz420/BlackSilk-Blockchain.git
 cd BlackSilk-Blockchain
 ```
 
@@ -331,7 +331,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- **GitHub Issues**: [Report bugs and request features](https://github.com/BlackSilkCoin/BlackSilk-Blockchain/issues)
+- **GitHub Issues**: [Report bugs and request features](https://github.com/StickyFingaz420/BlackSilk-Blockchain/issues)
 - **Community Forum**: [Join discussions](https://forum.blacksilkcoin.org)
 - **Email**: support@blacksilkcoin.org
 

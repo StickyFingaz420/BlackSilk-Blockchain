@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  blacksilk-testnet-faucet:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: blacksilk-testnet-faucet
+    ports:
+      - "3003:3003"
+    environment:
+      - NODE_ENV=production
+      - PORT=3003
+      - HOST=0.0.0.0
+      - DATABASE_PATH=/app/data/faucet.db
+      - BLACKSILK_NODE_URL=http://blacksilk-node:18332
+      - FAUCET_AMOUNT=10.0
+      - FAUCET_COOLDOWN_HOURS=24
+      - FAUCET_MAX_DAILY_LIMIT=1000
+      - JWT_SECRET=your-secure-jwt-secret-here
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=secure-admin-password-here
+    volumes:
+      - faucet-data:/app/data
+      - faucet-logs:/app/logs
+    depends_on:
+      - blacksilk-node
+    networks:
+      - blacksilk-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  blacksilk-node:
+    image: blacksilk/blacksilk-core:latest
+    container_name: blacksilk-testnet-node
+    ports:
+      - "18332:18332"
+      - "18333:18333"
+    environment:
+      - NETWORK=testnet
+      - RPC_USER=testnet_user
+      - RPC_PASSWORD=secure_rpc_password
+      - RPC_ALLOW_IP=0.0.0.0/0
+    volumes:
+      - blacksilk-data:/root/.blacksilk
+    networks:
+      - blacksilk-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "blacksilk-cli", "getblockchaininfo"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  nginx:
+    image: nginx:alpine
+    container_name: blacksilk-faucet-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - blacksilk-testnet-faucet
+    networks:
+      - blacksilk-network
+    restart: unless-stopped
+
+volumes:
+  faucet-data:
+    driver: local
+  faucet-logs:
+    driver: local
+  blacksilk-data:
+    driver: local
+
+networks:
+  blacksilk-network:
+    driver: bridge

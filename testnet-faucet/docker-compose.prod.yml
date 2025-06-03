@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  faucet:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: blacksilk-faucet
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/app/data/faucet.db
+      - PORT=3000
+    env_file:
+      - .env
+    volumes:
+      - faucet_data:/app/data
+      - faucet_logs:/app/logs
+    networks:
+      - faucet_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  nginx:
+    image: nginx:1.24-alpine
+    container_name: blacksilk-faucet-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    networks:
+      - faucet_network
+    depends_on:
+      - faucet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional: Add BlackSilk node if running locally
+  blacksilk-node:
+    image: blacksilk/node:latest
+    container_name: blacksilk-node
+    restart: unless-stopped
+    ports:
+      - "8332:8332"
+      - "18332:18332"
+    volumes:
+      - blacksilk_data:/home/blacksilk/.blacksilk
+      - ./blacksilk.conf:/home/blacksilk/.blacksilk/blacksilk.conf:ro
+    networks:
+      - faucet_network
+    environment:
+      - BLACKSILK_TESTNET=1
+    command: blacksilkd -testnet -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0
+    healthcheck:
+      test: ["CMD", "blacksilk-cli", "-testnet", "getblockchaininfo"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 120s
+
+volumes:
+  faucet_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/blacksilk-faucet/data
+  faucet_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/blacksilk-faucet/logs
+  nginx_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/log/nginx
+  blacksilk_data:
+    driver: local
+
+networks:
+  faucet_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
