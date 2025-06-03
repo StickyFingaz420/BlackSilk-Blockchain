@@ -1,7 +1,7 @@
 import axios, { AxiosInstance } from 'axios'
 import crypto from 'crypto'
 import { logger, securityLogger } from '../logger'
-import { query, run, get } from '../database'
+import { Database } from '../database-new'
 import type {
   FaucetRequest,
   FaucetResponse,
@@ -26,8 +26,10 @@ export class FaucetService {
   private isProcessing = false
   private config: AdminConfig
   private networkInfo: NetworkInfo | null = null
+  private db: Database
 
   constructor() {
+    this.db = Database.getInstance();
     this.nodeUrl = process.env.BLACKSILK_NODE_URL || 'http://localhost:19333'
     this.faucetPrivateKey = process.env.FAUCET_PRIVATE_KEY || ''
     this.faucetAddress = process.env.FAUCET_ADDRESS || ''

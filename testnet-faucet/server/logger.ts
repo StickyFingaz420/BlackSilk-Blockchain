@@ -136,3 +136,4 @@ export const initializeLogger = (): void => {
 
 // Log levels: error, warn, info, http, verbose, debug, silly
 export default logger
+export { winston as Logger }

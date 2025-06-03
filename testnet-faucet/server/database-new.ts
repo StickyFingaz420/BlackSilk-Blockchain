@@ -1,16 +1,22 @@
 import sqlite3 from 'sqlite3';
 import path from 'path';
 import fs from 'fs';
-import { Logger } from './logger';
+import { logger } from './logger';
 
 export class Database {
+  private static instance: Database;
   private db: sqlite3.Database | null = null;
-  private logger: Logger;
   private dbPath: string;
 
-  constructor(logger: Logger, dbPath?: string) {
-    this.logger = logger;
+  private constructor(dbPath?: string) {
     this.dbPath = dbPath || process.env.DATABASE_PATH || path.join(process.cwd(), 'data', 'faucet.db');
+  }
+
+  static getInstance(dbPath?: string): Database {
+    if (!Database.instance) {
+      Database.instance = new Database(dbPath);
+    }
+    return Database.instance;
   }
 
   async initialize(): Promise<void> {
@@ -25,17 +31,17 @@ export class Database {
         // Open database connection
         this.db = new sqlite3.Database(this.dbPath, (err) => {
           if (err) {
-            this.logger.error('Failed to open database:', err);
+            logger.error('Failed to open database:', err);
             reject(err);
             return;
           }
           
-          this.logger.info(`Database connected: ${this.dbPath}`);
+          logger.info(`Database connected: ${this.dbPath}`);
           this.createTables().then(resolve).catch(reject);
         });
 
       } catch (error) {
-        this.logger.error('Database initialization error:', error);
+        logger.error('Database initialization error:', error);
         reject(error);
       }
     });
@@ -47,11 +53,12 @@ export class Database {
         // Faucet requests table
         `CREATE TABLE IF NOT EXISTS faucet_requests (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
+          transaction_id TEXT NOT NULL UNIQUE,
           address TEXT NOT NULL,
           amount REAL NOT NULL,
           ip_address TEXT NOT NULL,
           user_agent TEXT,
-          timestamp INTEGER NOT NULL,
+          timestamp INTEGER DEFAULT (strftime('%s', 'now')),
           status TEXT NOT NULL DEFAULT 'pending',
           transaction_hash TEXT,
           error_message TEXT,
@@ -153,14 +160,14 @@ export class Database {
 
       const handleComplete = (err?: Error) => {
         if (err) {
-          this.logger.error('Database table creation error:', err);
+          logger.error('Database table creation error:', err);
           reject(err);
           return;
         }
         
         completed++;
         if (completed === total) {
-          this.logger.info('Database tables and indexes created successfully');
+          logger.info('Database tables and indexes created successfully');
           this.insertDefaultConfig().then(resolve).catch(reject);
         }
       };
@@ -200,14 +207,14 @@ export class Database {
           [key, value],
           (err) => {
             if (err) {
-              this.logger.error(`Failed to insert config ${key}:`, err);
+              logger.error(`Failed to insert config ${key}:`, err);
               reject(err);
               return;
             }
             
             completed++;
             if (completed === total) {
-              this.logger.info('Default configuration inserted');
+              logger.info('Default configuration inserted');
               resolve();
             }
           }
@@ -225,7 +232,7 @@ export class Database {
     return new Promise((resolve, reject) => {
       this.db!.all(sql, params, (err, rows) => {
         if (err) {
-          this.logger.error('Database query error:', { sql, params, error: err });
+          logger.error('Database query error:', { sql, params, error: err });
           reject(err);
         } else {
           resolve(rows as T[]);
@@ -242,7 +249,7 @@ export class Database {
     return new Promise((resolve, reject) => {
       this.db!.run(sql, params, function(err) {
         if (err) {
-          this.logger.error('Database run error:', { sql, params, error: err });
+          logger.error('Database run error:', { sql, params, error: err });
           reject(err);
         } else {
           resolve({ id: this.lastID, changes: this.changes });
@@ -259,7 +266,7 @@ export class Database {
     return new Promise((resolve, reject) => {
       this.db!.get(sql, params, (err, row) => {
         if (err) {
-          this.logger.error('Database get error:', { sql, params, error: err });
+          logger.error('Database get error:', { sql, params, error: err });
           reject(err);
         } else {
           resolve(row as T | undefined);
@@ -282,7 +289,7 @@ export class Database {
           .then(result => {
             this.db!.run('COMMIT', (err) => {
               if (err) {
-                this.logger.error('Transaction commit error:', err);
+                logger.error('Transaction commit error:', err);
                 reject(err);
               } else {
                 resolve(result);
@@ -292,7 +299,7 @@ export class Database {
           .catch(error => {
             this.db!.run('ROLLBACK', (rollbackErr) => {
               if (rollbackErr) {
-                this.logger.error('Transaction rollback error:', rollbackErr);
+                logger.error('Transaction rollback error:', rollbackErr);
               }
               reject(error);
             });
@@ -332,14 +339,111 @@ export class Database {
     return new Promise((resolve, reject) => {
       this.db!.close((err) => {
         if (err) {
-          this.logger.error('Error closing database:', err);
+          logger.error('Error closing database:', err);
           reject(err);
         } else {
-          this.logger.info('Database connection closed');
+          logger.info('Database connection closed');
           this.db = null;
           resolve();
         }
       });
     });
+  }
+
+  // Additional convenience methods
+  async executeQuery<T = any>(sql: string, params: any[] = []): Promise<T[]> {
+    return this.query<T>(sql, params);
+  }
+
+  async createRequest(address: string, amount: number, ipAddress: string): Promise<string> {
+    const transactionId = `faucet_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    await this.run(
+      `INSERT INTO faucet_requests (transaction_id, address, amount, ip_address, status, created_at)
+       VALUES (?, ?, ?, ?, 'pending', datetime('now'))`,
+      [transactionId, address, amount, ipAddress]
+    );
+    
+    return transactionId;
+  }
+
+  async getRequest(transactionId: string): Promise<any> {
+    return this.get(
+      'SELECT * FROM faucet_requests WHERE transaction_id = ?',
+      [transactionId]
+    );
+  }
+
+  async updateRequestStatus(transactionId: string, status: string, transactionHash?: string): Promise<void> {
+    const params = [status, transactionId];
+    let sql = 'UPDATE faucet_requests SET status = ?, updated_at = datetime(\'now\')';
+    
+    if (transactionHash) {
+      sql += ', transaction_hash = ?';
+      params.splice(1, 0, transactionHash);
+    }
+    
+    sql += ' WHERE transaction_id = ?';
+    await this.run(sql, params);
+  }
+
+  async canMakeRequest(address: string, ipAddress: string): Promise<boolean> {
+    // Check if address is blacklisted
+    const blacklisted = await this.get(
+      'SELECT 1 FROM blacklist WHERE address = ? AND is_active = 1',
+      [address]
+    );
+    
+    if (blacklisted) return false;
+
+    // Check rate limiting (24 hours)
+    const recentRequest = await this.get(
+      `SELECT 1 FROM faucet_requests 
+       WHERE (address = ? OR ip_address = ?) 
+       AND created_at > datetime('now', '-24 hours')`,
+      [address, ipAddress]
+    );
+    
+    return !recentRequest;
+  }
+
+  async addToBlacklist(address: string, reason: string): Promise<number> {
+    const result = await this.run(
+      'INSERT INTO blacklist (address, reason, is_active, created_at) VALUES (?, ?, 1, datetime(\'now\'))',
+      [address, reason]
+    );
+    return result.id!;
+  }
+
+  async removeFromBlacklist(id: number): Promise<void> {
+    await this.run('UPDATE blacklist SET is_active = 0 WHERE id = ?', [id]);
+  }
+
+  async getBlacklist(): Promise<any[]> {
+    return this.query('SELECT * FROM blacklist WHERE is_active = 1 ORDER BY created_at DESC');
+  }
+
+  async getStats(): Promise<any> {
+    const stats = await Promise.all([
+      this.get('SELECT COUNT(*) as totalRequests FROM faucet_requests'),
+      this.get('SELECT COUNT(*) as completedRequests FROM faucet_requests WHERE status = \'completed\''),
+      this.get('SELECT COUNT(*) as pendingRequests FROM faucet_requests WHERE status = \'pending\''),
+      this.get('SELECT COUNT(*) as failedRequests FROM faucet_requests WHERE status = \'failed\''),
+      this.get('SELECT COALESCE(SUM(amount), 0) as totalTokensDistributed FROM faucet_requests WHERE status = \'completed\''),
+      this.get('SELECT COUNT(*) as uniqueAddresses FROM (SELECT DISTINCT address FROM faucet_requests)'),
+      this.get('SELECT COUNT(*) as blacklistedAddresses FROM blacklist WHERE is_active = 1')
+    ]);
+
+    return {
+      totalRequests: stats[0]?.totalRequests || 0,
+      completedRequests: stats[1]?.completedRequests || 0,
+      pendingRequests: stats[2]?.pendingRequests || 0,
+      failedRequests: stats[3]?.failedRequests || 0,
+      totalTokensDistributed: stats[4]?.totalTokensDistributed || 0,
+      uniqueAddresses: stats[5]?.uniqueAddresses || 0,
+      blacklistedAddresses: stats[6]?.blacklistedAddresses || 0,
+      successRate: stats[0]?.totalRequests ? 
+        ((stats[1]?.completedRequests || 0) / (stats[0]?.totalRequests || 1) * 100).toFixed(2) : 0
+    };
   }
 }
