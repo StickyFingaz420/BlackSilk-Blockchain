@@ -102,8 +102,8 @@ export class FaucetService {
   }
 
   isValidAddress(address: string): boolean {
-    // Basic BlackSilk address validation
-    // BlackSilk addresses typically start with 'BLK' and have a specific length
+    // BlackSilk testnet address validation
+    // Testnet addresses start with 'tBLK' and have a specific length
     if (!address || typeof address !== 'string') {
       return false;
     }
@@ -111,13 +111,13 @@ export class FaucetService {
     // Remove whitespace and check basic format
     address = address.trim();
     
-    // Check if starts with BLK and has reasonable length (adjust as needed)
-    if (!address.startsWith('BLK') || address.length < 16 || address.length > 64) {
+    // Check if starts with tBLK and has reasonable length (adjust as needed)
+    if (!address.startsWith('tBLK') || address.length < 20 || address.length > 64) {
       return false;
     }
 
     // Check for valid characters (alphanumeric)
-    const validPattern = /^BLK[a-zA-Z0-9]+$/;
+    const validPattern = /^tBLK[a-zA-Z0-9]+$/;
     return validPattern.test(address);
   }
 

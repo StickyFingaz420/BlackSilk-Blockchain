@@ -28,16 +28,16 @@ export default function Home() {
   };
 
   const validateAddress = (addr: string): boolean => {
-    // BlackSilk address validation - must start with BLK and be 26-42 characters
-    if (!addr || addr.length < 26 || addr.length > 42) {
+    // BlackSilk testnet address validation - must start with tBLK and be 28-64 characters
+    if (!addr || addr.length < 28 || addr.length > 64) {
       return false;
     }
-    // Must start with BLK prefix
-    if (!addr.startsWith('BLK')) {
+    // Must start with tBLK prefix
+    if (!addr.startsWith('tBLK')) {
       return false;
     }
     // Check if it contains only valid base58 characters
-    if (!addr.match(/^BLK[1-9A-HJ-NP-Za-km-z]+$/)) {
+    if (!addr.match(/^tBLK[1-9A-HJ-NP-Za-km-z]+$/)) {
       return false;
     }
     return true;
@@ -52,7 +52,7 @@ export default function Home() {
     }
 
     if (!validateAddress(address.trim())) {
-      toast.error('Please enter a valid BlackSilk address (must start with BLK)');
+      toast.error('Please enter a valid BlackSilk testnet address (must start with tBLK)');
       return;
     }
 
@@ -61,7 +61,7 @@ export default function Home() {
     try {
       const requestData: FaucetRequest = {
         address: address.trim(),
-        amount: 10, // Default 10 BSK tokens
+        amount: 10, // Default 10 tBLK tokens
       };
 
       const response = await fetch('/api/faucet', {
@@ -143,12 +143,12 @@ export default function Home() {
                     id="address"
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
-                    placeholder="Enter your BlackSilk testnet address"
+                    placeholder="Enter your BlackSilk testnet address (tBLK...)"
                     className="input-field"
                     disabled={isLoading}
                   />
                   <p className="text-sm text-gray-400 mt-2">
-                    You will receive 10 BSK testnet tokens
+                    You will receive 10 tBLK testnet tokens
                   </p>
                 </div>
 
@@ -187,7 +187,7 @@ export default function Home() {
                   <div className="flex justify-between items-center">
                     <span className="text-gray-300">Amount:</span>
                     <span className="text-white font-semibold">
-                      {lastRequest.amount} BSK
+                      {lastRequest.amount} tBLK
                     </span>
                   </div>
                   
@@ -240,7 +240,7 @@ export default function Home() {
                   <div className="flex justify-between">
                     <span className="text-gray-300">Tokens Distributed:</span>
                     <span className="text-white font-semibold">
-                      {stats.totalTokens?.toLocaleString() || 0} BSK
+                      {stats.totalTokens?.toLocaleString() || 0} tBLK
                     </span>
                   </div>
                   
@@ -275,7 +275,7 @@ export default function Home() {
                 
                 <div>
                   <h4 className="font-medium text-white mb-2">Token Amount</h4>
-                  <p>Each request provides 10 BSK testnet tokens.</p>
+                  <p>Each request provides 10 tBLK testnet tokens.</p>
                 </div>
                 
                 <div>

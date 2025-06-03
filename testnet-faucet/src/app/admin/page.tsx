@@ -363,7 +363,7 @@ export default function AdminDashboard() {
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
                   <span className="text-gray-300">Tokens Distributed:</span>
-                  <span className="text-white font-semibold">{stats.totalTokensDistributed} BSK</span>
+                  <span className="text-white font-semibold">{stats.totalTokensDistributed} tBLK</span>
                 </div>
                 
                 <div className="flex justify-between items-center">
@@ -409,7 +409,7 @@ export default function AdminDashboard() {
                           {request.address}
                         </code>
                       </td>
-                      <td className="py-3 px-4 text-white">{request.amount} BSK</td>
+                      <td className="py-3 px-4 text-white">{request.amount} tBLK</td>
                       <td className="py-3 px-4">
                         <span className={`status-${request.status}`}>
                           {request.status}

@@ -59,7 +59,7 @@ describe('BlackSilk Testnet Faucet', () => {
 
     test('should store and retrieve faucet requests', async () => {
       const requestData = {
-        address: 'BSK1test123456789',
+        address: 'tBLK1test123456789',
         amount: 10,
         ipAddress: '127.0.0.1'
       };
@@ -83,7 +83,7 @@ describe('BlackSilk Testnet Faucet', () => {
 
   describe('Rate Limiting', () => {
     test('should prevent duplicate requests from same address', async () => {
-      const address = 'BSK1test123456789';
+      const address = 'tBLK1test123456789';
       const ipAddress = '127.0.0.1';
 
       // First request should succeed
@@ -99,7 +99,7 @@ describe('BlackSilk Testnet Faucet', () => {
     });
 
     test('should allow requests after rate limit period', async () => {
-      const address = 'BSK1test123456789';
+      const address = 'tBLK1test123456789';
       const ipAddress = '127.0.0.1';
 
       // Create request with past timestamp (simulate expired rate limit)
@@ -120,7 +120,7 @@ describe('BlackSilk Testnet Faucet', () => {
 
   describe('Blacklist Operations', () => {
     test('should block blacklisted addresses', async () => {
-      const address = 'BSK1blacklisted123';
+      const address = 'tBLK1blacklisted123';
       const ipAddress = '127.0.0.1';
 
       // Add to blacklist
@@ -132,7 +132,7 @@ describe('BlackSilk Testnet Faucet', () => {
     });
 
     test('should manage blacklist entries', async () => {
-      const address = 'BSK1blacklisted123';
+      const address = 'tBLK1blacklisted123';
       const reason = 'Test blacklist entry';
 
       // Add to blacklist
@@ -155,7 +155,7 @@ describe('BlackSilk Testnet Faucet', () => {
   describe('Faucet Service', () => {
     test('should process valid token requests', async () => {
       const request = {
-        address: 'BSK1valid123456789',
+        address: 'tBLK1valid123456789',
         amount: 10,
         ipAddress: '127.0.0.1'
       };
@@ -179,8 +179,8 @@ describe('BlackSilk Testnet Faucet', () => {
 
     test('should validate addresses correctly', async () => {
       const validAddresses = [
-        'BSK1qw8k3s7h9p2x4v6n8m0l5j3g1f9d7c2a4s6',
-        'BSK1zx9c8v7b6n4m3k2j1h0g9f8e7d6c5b4a3s2'
+        'tBLK1qw8k3s7h9p2x4v6n8m0l5j3g1f9d7c2a4s6',
+        'tBLK1zx9c8v7b6n4m3k2j1h0g9f8e7d6c5b4a3s2'
       ];
 
       const invalidAddresses = [

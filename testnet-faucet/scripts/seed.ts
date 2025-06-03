@@ -45,11 +45,11 @@ async function seedFaucetRequests(db: Database) {
   logger.info('Seeding sample faucet requests...');
   
   const sampleAddresses = [
-    'BSK1qw8k3s7h9p2x4v6n8m0l5j3g1f9d7c2a4s6',
-    'BSK1zx9c8v7b6n4m3k2j1h0g9f8e7d6c5b4a3s2',
-    'BSK1aq2ws3ed4rf5tg6yh7uj8ik9ol0mp1nq2wr3e',
-    'BSK1sw2de3fr4gt5hy6ju7ki8lo9mp0nq1wr2es3d',
-    'BSK1qaz2wsx3edc4rfv5tgb6yhn7ujm8ik9ol0mp1'
+    'tBLK1qw8k3s7h9p2x4v6n8m0l5j3g1f9d7c2a4s6',
+    'tBLK1zx9c8v7b6n4m3k2j1h0g9f8e7d6c5b4a3s2',
+    'tBLK1aq2ws3ed4rf5tg6yh7uj8ik9ol0mp1nq2wr3e',
+    'tBLK1sw2de3fr4gt5hy6ju7ki8lo9mp0nq1wr2es3d',
+    'tBLK1qaz2wsx3edc4rfv5tgb6yhn7ujm8ik9ol0mp1'
   ];
   
   const statuses = ['completed', 'completed', 'completed', 'pending', 'failed'];
@@ -166,8 +166,8 @@ async function seedBlacklist(db: Database) {
   logger.info('Seeding sample blacklist entries...');
   
   const blacklistEntries = [
-    { address: 'BSK1malicious1address1here1234567890', reason: 'Automated abuse detection' },
-    { address: 'BSK1spam2address2here2345678901234', reason: 'Manual review - excessive requests' }
+    { address: 'tBLK1malicious1address1here1234567890', reason: 'Automated abuse detection' },
+    { address: 'tBLK1spam2address2here2345678901234', reason: 'Manual review - excessive requests' }
   ];
   
   for (const entry of blacklistEntries) {

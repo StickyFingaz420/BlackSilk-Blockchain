@@ -8,7 +8,7 @@ const inter = Inter({ subsets: ['latin'] });
 export const metadata: Metadata = {
   title: 'BlackSilk Testnet Faucet',
   description: 'Get free BlackSilk testnet tokens for development and testing',
-  keywords: 'BlackSilk, testnet, faucet, cryptocurrency, blockchain, BSK tokens',
+  keywords: 'BlackSilk, testnet, faucet, cryptocurrency, blockchain, tBLK tokens',
   authors: [{ name: 'BlackSilk Team' }],
   viewport: 'width=device-width, initial-scale=1',
   robots: 'index, follow',

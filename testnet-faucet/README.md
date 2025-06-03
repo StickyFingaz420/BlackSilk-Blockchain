@@ -206,7 +206,7 @@ POST /api/faucet
 Content-Type: application/json
 
 {
-  "address": "BSK_ADDRESS_HERE",
+  "address": "tBLK_ADDRESS_HERE",
   "amount": 10
 }
 ```
@@ -248,7 +248,7 @@ POST /api/admin/blacklist
 Content-Type: application/json
 
 {
-  "address": "BSK_ADDRESS",
+  "address": "tBLK_ADDRESS",
   "reason": "Abuse detected"
 }
 ```
