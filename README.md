@@ -14,7 +14,8 @@
 
 ## 🚀 Overview
 
-BlackSilk is a next-generation blockchain focused on privacy, decentralization, and CPU-only mining. Built with Rust for maximum performance and security, it features an integrated decentralized marketplace with escrow smart contracts, privacy-enhanced transactions, and RandomX proof-of-work algorithm.
+BlackSilk is a next-generation blockchain focused on privacy, decentralization, and CPU-only mining. Built from scratch with Rust for maximum performance and security, it features an integrated decentralized marketplace with escrow smart contracts, privacy-enhanced transactions, and the RandomX proof-of-work algorithm.
+
 
 ### Key Features
 

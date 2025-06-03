@@ -1,0 +1,214 @@
+version: '3.8'
+
+services:
+  # Test Node 1 (Primary)
+  test-node-1:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.node
+    container_name: blacksilk-test-node-1
+    ports:
+      - "18080:18080"
+      - "18081:18081"
+    environment:
+      - BLACKSILK_NETWORK=regtest
+      - BLACKSILK_P2P_PORT=18080
+      - BLACKSILK_RPC_PORT=18081
+      - BLACKSILK_DATA_DIR=/data
+      - RUST_LOG=debug
+    volumes:
+      - test-node-1-data:/data
+    networks:
+      - blacksilk-test
+    command: >
+      blacksilk-node
+      --network regtest
+      --port 18080
+      --rpc-port 18081
+      --data-dir /data
+      --mining-threads 1
+      --log-level debug
+
+  # Test Node 2 (Secondary)
+  test-node-2:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.node
+    container_name: blacksilk-test-node-2
+    ports:
+      - "18090:18090"
+      - "18091:18091"
+    environment:
+      - BLACKSILK_NETWORK=regtest
+      - BLACKSILK_P2P_PORT=18090
+      - BLACKSILK_RPC_PORT=18091
+      - BLACKSILK_DATA_DIR=/data
+      - RUST_LOG=debug
+    volumes:
+      - test-node-2-data:/data
+    networks:
+      - blacksilk-test
+    depends_on:
+      - test-node-1
+    command: >
+      blacksilk-node
+      --network regtest
+      --port 18090
+      --rpc-port 18091
+      --data-dir /data
+      --connect test-node-1:18080
+      --log-level debug
+
+  # Test Node 3 (Tertiary)
+  test-node-3:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.node
+    container_name: blacksilk-test-node-3
+    ports:
+      - "18100:18100"
+      - "18101:18101"
+    environment:
+      - BLACKSILK_NETWORK=regtest
+      - BLACKSILK_P2P_PORT=18100
+      - BLACKSILK_RPC_PORT=18101
+      - BLACKSILK_DATA_DIR=/data
+      - RUST_LOG=debug
+    volumes:
+      - test-node-3-data:/data
+    networks:
+      - blacksilk-test
+    depends_on:
+      - test-node-1
+    command: >
+      blacksilk-node
+      --network regtest
+      --port 18100
+      --rpc-port 18101
+      --data-dir /data
+      --connect test-node-1:18080
+      --log-level debug
+
+  # Test Marketplace Backend
+  test-marketplace:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.marketplace
+    container_name: blacksilk-test-marketplace
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=test
+      - BLACKSILK_NODE_URL=http://test-node-1:18081
+      - DATABASE_URL=postgresql://test:test@test-postgres:5432/blacksilk_test
+      - IPFS_API_URL=http://test-ipfs:5001
+      - REDIS_URL=redis://test-redis:6379
+    networks:
+      - blacksilk-test
+    depends_on:
+      - test-node-1
+      - test-postgres
+      - test-ipfs
+      - test-redis
+
+  # Test Database
+  test-postgres:
+    image: postgres:15-alpine
+    container_name: blacksilk-test-postgres
+    environment:
+      - POSTGRES_DB=blacksilk_test
+      - POSTGRES_USER=test
+      - POSTGRES_PASSWORD=test
+    volumes:
+      - test-postgres-data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - blacksilk-test
+    ports:
+      - "5433:5432"
+
+  # Test IPFS Node
+  test-ipfs:
+    image: ipfs/kubo:latest
+    container_name: blacksilk-test-ipfs
+    environment:
+      - IPFS_PROFILE=test
+    volumes:
+      - test-ipfs-data:/data/ipfs
+    networks:
+      - blacksilk-test
+    ports:
+      - "4001:4001"
+      - "5001:5001"
+      - "8080:8080"
+
+  # Test Redis
+  test-redis:
+    image: redis:7-alpine
+    container_name: blacksilk-test-redis
+    networks:
+      - blacksilk-test
+    ports:
+      - "6380:6379"
+
+  # Test Monitoring Stack
+  test-prometheus:
+    image: prom/prometheus:latest
+    container_name: blacksilk-test-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/rules:/etc/prometheus/rules:ro
+    networks:
+      - blacksilk-test
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+  # Test Grafana
+  test-grafana:
+    image: grafana/grafana:latest
+    container_name: blacksilk-test-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=test123
+    volumes:
+      - ../monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ../monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    networks:
+      - blacksilk-test
+
+  # Test Load Balancer
+  test-nginx:
+    image: nginx:alpine
+    container_name: blacksilk-test-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - blacksilk-test
+    depends_on:
+      - test-node-1
+      - test-node-2
+      - test-node-3
+      - test-marketplace
+
+volumes:
+  test-node-1-data:
+  test-node-2-data:
+  test-node-3-data:
+  test-postgres-data:
+  test-ipfs-data:
+
+networks:
+  blacksilk-test:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
