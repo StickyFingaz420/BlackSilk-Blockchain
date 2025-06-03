@@ -29,14 +29,18 @@ async function initializeServices() {
 
 // Routes
 app.post('/api/request', async (req, res) => {
+  logger.info('POST /api/request received', { body: req.body, ip: req.ip });
   try {
     const { address, ipAddress } = req.body;
     
     if (!address) {
+      logger.warn('Address missing in request');
       return res.status(400).json({ error: 'Address is required' });
     }
 
+    logger.info('Processing token request', { address, ipAddress: ipAddress || req.ip });
     const result = await faucetService.requestTokens(address, ipAddress || req.ip);
+    logger.info('Token request result', { result });
     res.json(result);
   } catch (error) {
     logger.error('Request error:', error);

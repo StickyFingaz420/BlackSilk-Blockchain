@@ -28,12 +28,16 @@ export default function Home() {
   };
 
   const validateAddress = (addr: string): boolean => {
-    // Basic BlackSilk address validation
-    if (!addr || addr.length < 20 || addr.length > 50) {
+    // BlackSilk address validation - must start with BLK and be 26-42 characters
+    if (!addr || addr.length < 26 || addr.length > 42) {
       return false;
     }
-    // Check if it starts with expected prefixes (customize based on BlackSilk format)
-    if (!addr.match(/^[a-zA-Z0-9]+$/)) {
+    // Must start with BLK prefix
+    if (!addr.startsWith('BLK')) {
+      return false;
+    }
+    // Check if it contains only valid base58 characters
+    if (!addr.match(/^BLK[1-9A-HJ-NP-Za-km-z]+$/)) {
       return false;
     }
     return true;
@@ -48,7 +52,7 @@ export default function Home() {
     }
 
     if (!validateAddress(address.trim())) {
-      toast.error('Please enter a valid BlackSilk address');
+      toast.error('Please enter a valid BlackSilk address (must start with BLK)');
       return;
     }
 
