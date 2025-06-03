@@ -1,0 +1,27 @@
+# BlackSilk Mainnet Bootstrap Nodes
+# Format: <peer_id>@<ip_address>:<port>
+# These are the initial seed nodes for the mainnet network
+
+# Primary seed nodes (maintained by BlackSilk Foundation)
+12D3KooWMainNode1@seed1.blacksilk.io:9334
+12D3KooWMainNode2@seed2.blacksilk.io:9334
+12D3KooWMainNode3@seed3.blacksilk.io:9334
+12D3KooWMainNode4@seed4.blacksilk.io:9334
+12D3KooWMainNode5@seed5.blacksilk.io:9334
+
+# Geographic distribution seed nodes
+12D3KooWMainUS1@us-seed1.blacksilk.io:9334
+12D3KooWMainEU1@eu-seed1.blacksilk.io:9334
+12D3KooWMainAS1@asia-seed1.blacksilk.io:9334
+
+# Community seed nodes (verified and trusted)
+# 12D3KooWCommunity1@community-seed1.example.com:9334
+# 12D3KooWCommunity2@community-seed2.example.com:9334
+
+# Notes:
+# - All seed nodes must be running the exact mainnet release version
+# - Peer IDs are generated automatically when nodes start
+# - IP addresses must be static and highly available (99.9%+ uptime)
+# - Port 9334 is the default P2P port for mainnet
+# - Seed nodes should be distributed across different hosting providers
+# - Regular health checks should be performed on all seed nodes

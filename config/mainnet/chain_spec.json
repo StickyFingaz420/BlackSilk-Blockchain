@@ -1,0 +1,42 @@
+{
+  "network_id": "blacksilk_mainnet",
+  "network_name": "BlackSilk Mainnet",
+  "genesis": {
+    "timestamp": 528854400,
+    "parent_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "difficulty": 100000000,
+    "nonce": 0,
+    "block_time_seconds": 120,
+    "initial_utxos": []
+  },
+  "consensus": {
+    "block_time_seconds": 120,
+    "difficulty_adjustment_window": 60,
+    "halving_interval_blocks": 1051200,
+    "supply_cap_atomic": 21000000000000,
+    "initial_block_reward_atomic": 5000000,
+    "tail_emission_atomic": 0,
+    "coinbase_maturity_blocks": 100,
+    "min_tx_fee_per_byte": 10
+  },
+  "network": {
+    "p2p_port": 9334,
+    "rpc_port": 9333,
+    "tor_port": 9999,
+    "bootnodes": [
+      "12D3KooWMainNode1@seed1.blacksilk.io:9334",
+      "12D3KooWMainNode2@seed2.blacksilk.io:9334",
+      "12D3KooWMainNode3@seed3.blacksilk.io:9334",
+      "12D3KooWMainNode4@seed4.blacksilk.io:9334",
+      "12D3KooWMainNode5@seed5.blacksilk.io:9334"
+    ]
+  },
+  "features": {
+    "privacy_enabled": true,
+    "escrow_contracts": true,
+    "marketplace": true,
+    "zkp_enabled": true
+  },
+  "description": "BlackSilk Mainnet - Privacy-first blockchain with CPU-only mining and decentralized marketplace",
+  "version": "1.0.0"
+}

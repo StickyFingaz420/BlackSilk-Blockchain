@@ -1,0 +1,60 @@
+# BlackSilk Miner Configuration
+# Copy this file to ~/.blacksilk/miner_config.toml and modify as needed
+
+[miner]
+# Node RPC endpoint to connect to
+node_rpc_url = "http://127.0.0.1:19333"
+
+# Number of mining threads (0 = auto-detect CPU cores)
+threads = 0
+
+# Mining reward address (where block rewards will be sent)
+reward_address = ""
+
+# Network to mine on: "testnet" or "mainnet"
+network = "testnet"
+
+# Mining pool URL (leave empty for solo mining)
+pool_url = ""
+
+# Worker name for pool mining
+worker_name = "blacksilk-miner"
+
+[performance]
+# CPU usage limit (1.0 = 100%, 0.5 = 50%)
+cpu_limit = 1.0
+
+# Enable huge pages for better performance
+enable_huge_pages = true
+
+# RandomX dataset allocation mode: "auto", "mmap", "malloc"
+dataset_mode = "auto"
+
+# Refresh RandomX dataset every N blocks (0 = never)
+dataset_refresh_blocks = 2016
+
+[logging]
+# Log level: "trace", "debug", "info", "warn", "error"
+level = "info"
+
+# Log format: "plain", "json"
+format = "plain"
+
+# Log file path (empty = stdout only)
+file_path = ""
+
+# Print hashrate statistics every N seconds
+stats_interval_seconds = 30
+
+[connection]
+# Connection timeout in seconds
+timeout_seconds = 10
+
+# Retry attempts for failed connections
+retry_attempts = 3
+
+# Retry delay in seconds
+retry_delay_seconds = 5
+
+# Keep-alive interval in seconds
+keepalive_seconds = 30

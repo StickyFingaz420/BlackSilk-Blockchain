@@ -1,0 +1,83 @@
+# BlackSilk Node Configuration - Mainnet
+# Copy this file to ~/.blacksilk/node_config.toml and modify as needed
+
+[network]
+# Network listening address for P2P connections
+peer_listen_address = "0.0.0.0:9334"
+
+# RPC server listening address  
+rpc_listen_address = "0.0.0.0:9333"
+
+# Tor proxy listening address (if privacy mode enabled)
+tor_listen_address = "0.0.0.0:9999"
+
+# Maximum number of peer connections
+max_peers = 100
+
+# Enable NAT traversal (UPnP/NAT-PMP)
+enable_nat_traversal = true
+
+# Privacy mode: "clearnet", "tor", "i2p"
+privacy_mode = "clearnet"
+
+[database]
+# Path to blockchain database
+path = "./data/mainnet/chain_db"
+
+# Database pruning mode: "archive", "default", "fast"
+prune_mode = "default"
+
+# Maximum database size in GB (0 = unlimited)
+max_size_gb = 0
+
+[logging]
+# Log level: "trace", "debug", "info", "warn", "error"
+level = "info"
+
+# Log format: "plain", "json"
+format = "json"
+
+# Log file path (empty = stdout only)
+file_path = "./logs/node.log"
+
+# Enable metrics endpoint
+enable_metrics = true
+
+# Metrics listening address
+metrics_address = "127.0.0.1:9615"
+
+[consensus]
+# Path to chain specification file
+genesis_file = "./config/mainnet/chain_spec.json"
+
+# Enable mining on this node
+enable_mining = false
+
+# Mining reward address (if mining enabled)
+mining_reward_address = ""
+
+# Number of mining threads (0 = auto-detect)
+mining_threads = 0
+
+[rpc]
+# Enable HTTP RPC server
+enable_http = true
+
+# Enable WebSocket RPC server  
+enable_ws = true
+
+# CORS allowed origins (restrict in production)
+cors_origins = ["https://wallet.blacksilk.io", "https://explorer.blacksilk.io"]
+
+# RPC request timeout in seconds
+timeout_seconds = 30
+
+[security]
+# Enable transaction pool spam protection
+enable_spam_protection = true
+
+# Maximum transactions per address in mempool
+max_txs_per_address = 50
+
+# Minimum fee per byte in atomic units
+min_fee_per_byte = 10

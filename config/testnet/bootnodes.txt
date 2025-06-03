@@ -1,0 +1,23 @@
+# BlackSilk Testnet Bootstrap Nodes
+# Format: <peer_id>@<ip_address>:<port>
+# These are the initial seed nodes for the testnet network
+
+# Primary seed nodes (maintained by BlackSilk team)
+12D3KooWTestNode1@testnet-seed1.blacksilk.io:19334
+12D3KooWTestNode2@testnet-seed2.blacksilk.io:19334
+12D3KooWTestNode3@testnet-seed3.blacksilk.io:19334
+
+# Community seed nodes (verified and trusted)
+# 12D3KooWCommunity1@community-seed1.example.com:19334
+# 12D3KooWCommunity2@community-seed2.example.com:19334
+
+# Backup seed nodes (for redundancy)
+# 12D3KooWBackup1@backup-seed1.blacksilk.io:19334
+# 12D3KooWBackup2@backup-seed2.blacksilk.io:19334
+
+# Notes:
+# - All seed nodes should be running the latest testnet-compatible version
+# - Peer IDs are generated automatically when nodes start
+# - IP addresses should be static and reachable from the internet
+# - Port 19334 is the default P2P port for testnet
+# - For development, you can add local nodes: 12D3KooWLocal@127.0.0.1:19334

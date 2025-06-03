@@ -1,0 +1,188 @@
+# BlackSilk Network Alerting Rules
+# Critical alerts for BlackSilk blockchain network monitoring
+
+groups:
+  - name: blacksilk.critical
+    rules:
+      # Node Health Alerts
+      - alert: BlackSilkNodeDown
+        expr: up{job="blacksilk-node"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: node
+        annotations:
+          summary: "BlackSilk node {{ $labels.instance }} is down"
+          description: "BlackSilk node {{ $labels.instance }} has been down for more than 1 minute"
+
+      - alert: BlackSilkNodeOutOfSync
+        expr: blacksilk:node_height_lag > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: consensus
+        annotations:
+          summary: "BlackSilk node {{ $labels.instance }} is out of sync"
+          description: "Node {{ $labels.instance }} is {{ $value }} blocks behind the network"
+
+      # Mining Alerts
+      - alert: NetworkHashrateDropped
+        expr: blacksilk:network_hashrate_5m < 1000
+        for: 10m
+        labels:
+          severity: warning
+          component: mining
+        annotations:
+          summary: "Network hashrate critically low"
+          description: "Network hashrate has dropped to {{ $value }} H/s for 10+ minutes"
+
+      - alert: NoBlocksMinedRecently
+        expr: time() - blacksilk_latest_block_timestamp > 600
+        for: 2m
+        labels:
+          severity: critical
+          component: mining
+        annotations:
+          summary: "No blocks mined recently"
+          description: "No blocks have been mined for {{ $value }} seconds (target: 120s)"
+
+      # Network Connectivity
+      - alert: LowPeerCount
+        expr: blacksilk_peers_connected < 3
+        for: 5m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "Low peer count on {{ $labels.instance }}"
+          description: "Node {{ $labels.instance }} has only {{ $value }} peers connected"
+
+      - alert: HighPeerChurn
+        expr: rate(blacksilk_peer_disconnections[5m]) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "High peer churn detected"
+          description: "{{ $value }} peer disconnections per second on {{ $labels.instance }}"
+
+  - name: blacksilk.marketplace
+    rules:
+      # Marketplace Health
+      - alert: MarketplaceAPIDown
+        expr: up{job="blacksilk-marketplace"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: marketplace
+        annotations:
+          summary: "Marketplace API is down"
+          description: "BlackSilk marketplace API has been unreachable for 2+ minutes"
+
+      - alert: HighMarketplaceLatency
+        expr: marketplace_request_duration_seconds{quantile="0.95"} > 2
+        for: 5m
+        labels:
+          severity: warning
+          component: marketplace
+        annotations:
+          summary: "High marketplace API latency"
+          description: "95th percentile latency is {{ $value }}s (threshold: 2s)"
+
+      # Transaction Processing
+      - alert: TxMempoolOverflow
+        expr: blacksilk_mempool_size > 1000
+        for: 5m
+        labels:
+          severity: warning
+          component: transactions
+        annotations:
+          summary: "Transaction mempool overflow"
+          description: "Mempool has {{ $value }} pending transactions (threshold: 1000)"
+
+      - alert: HighTxRejectionRate
+        expr: rate(blacksilk_transactions_rejected[5m]) / rate(blacksilk_transactions_total[5m]) > 0.1
+        for: 3m
+        labels:
+          severity: warning
+          component: transactions
+        annotations:
+          summary: "High transaction rejection rate"
+          description: "{{ $value | humanizePercentage }} of transactions are being rejected"
+
+  - name: blacksilk.security
+    rules:
+      # Security Alerts
+      - alert: SuspiciousMiningActivity
+        expr: blacksilk_suspicious_submissions > 10
+        for: 1m
+        labels:
+          severity: critical
+          component: security
+        annotations:
+          summary: "Suspicious mining submissions detected"
+          description: "{{ $value }} suspicious mining submissions in the last minute"
+
+      - alert: PrivacyModeCompromised
+        expr: blacksilk_clearnet_connections > 0 and blacksilk_privacy_mode == 2
+        for: 1m
+        labels:
+          severity: critical
+          component: privacy
+        annotations:
+          summary: "Privacy mode compromised"
+          description: "Clearnet connections detected while in max privacy mode"
+
+      - alert: TorConnectionsDown
+        expr: blacksilk_tor_connections == 0 and blacksilk_privacy_mode > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: privacy
+        annotations:
+          summary: "No Tor connections available"
+          description: "Node in privacy mode but no Tor connections established"
+
+  - name: blacksilk.performance
+    rules:
+      # Performance Monitoring
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90
+        for: 10m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value }}% for 10+ minutes"
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value }}% for 10+ minutes"
+
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100 < 10
+        for: 5m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Disk space is {{ $value }}% remaining on {{ $labels.mountpoint }}"
+
+      - alert: SlowBlockValidation
+        expr: blacksilk_block_validation_duration_seconds > 5
+        for: 3m
+        labels:
+          severity: warning
+          component: consensus
+        annotations:
+          summary: "Slow block validation"
+          description: "Block validation taking {{ $value }}s (threshold: 5s)"

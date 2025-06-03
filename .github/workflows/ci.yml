@@ -1,0 +1,360 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  release:
+    types: [ published ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Build and test Rust components
+  test:
+    name: Test Rust Components
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+        components: rustfmt, clippy
+    
+    - name: Cache cargo registry
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config libssl-dev
+    
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+    
+    - name: Run clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+    
+    - name: Run unit tests
+      run: cargo test --all --verbose
+    
+    - name: Run doc tests
+      run: cargo test --doc --all
+    
+    - name: Build release binaries
+      run: cargo build --release --all
+
+  # Test marketplace frontend
+  test-frontend:
+    name: Test Marketplace Frontend
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: marketplace/frontend/package-lock.json
+    
+    - name: Install dependencies
+      working-directory: marketplace/frontend
+      run: npm ci
+    
+    - name: Type check
+      working-directory: marketplace/frontend
+      run: npm run type-check
+    
+    - name: Lint code
+      working-directory: marketplace/frontend
+      run: npm run lint
+    
+    - name: Run tests
+      working-directory: marketplace/frontend
+      run: npm run test
+    
+    - name: Build frontend
+      working-directory: marketplace/frontend
+      run: npm run build
+
+  # Integration tests
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [test]
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: blacksilk_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config libssl-dev
+    
+    - name: Build test binaries
+      run: cargo build --release
+    
+    - name: Run smoke test
+      run: |
+        # Start node in background
+        ./target/release/blacksilk-node --network testnet --data-dir ./test-data &
+        NODE_PID=$!
+        
+        # Wait for node to start
+        sleep 10
+        
+        # Test node status
+        curl --fail http://127.0.0.1:19333/status || exit 1
+        
+        # Test wallet creation
+        ./target/release/blacksilk-wallet create --name test-wallet --data-dir ./test-wallet
+        
+        # Test address generation
+        ./target/release/blacksilk-wallet address --wallet test-wallet --data-dir ./test-wallet
+        
+        # Clean up
+        kill $NODE_PID
+        rm -rf ./test-data ./test-wallet
+    
+    - name: Test marketplace backend
+      env:
+        DATABASE_URL: postgresql://test_user:test_password@localhost:5432/blacksilk_test
+      run: |
+        # Run marketplace backend tests
+        cd marketplace
+        cargo test --release
+
+  # Security audit
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+    
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+    
+    - name: Run security audit
+      run: cargo audit
+    
+    - name: Install cargo-deny
+      run: cargo install cargo-deny
+    
+    - name: Check licenses
+      run: cargo deny check licenses
+    
+    - name: Check advisories
+      run: cargo deny check advisories
+
+  # Code coverage
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    needs: [test]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+    
+    - name: Install tarpaulin
+      run: cargo install cargo-tarpaulin
+    
+    - name: Generate coverage report
+      run: cargo tarpaulin --all --out xml --output-dir coverage/
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: coverage/cobertura.xml
+        fail_ci_if_error: true
+
+  # Build release artifacts
+  build-release:
+    name: Build Release Artifacts
+    if: github.event_name == 'release'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            artifact_name: blacksilk-linux
+            asset_name: blacksilk-linux-x86_64.tar.gz
+          - os: macos-latest
+            artifact_name: blacksilk-macos
+            asset_name: blacksilk-macos-x86_64.tar.gz
+          - os: windows-latest
+            artifact_name: blacksilk-windows
+            asset_name: blacksilk-windows-x86_64.zip
+    
+    runs-on: ${{ matrix.os }}
+    needs: [test, integration-test]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+    
+    - name: Install system dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config libssl-dev
+    
+    - name: Install system dependencies (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install openssl pkg-config
+    
+    - name: Build release binaries
+      run: cargo build --release --all
+    
+    - name: Package artifacts (Unix)
+      if: matrix.os != 'windows-latest'
+      run: |
+        mkdir -p release/${{ matrix.artifact_name }}
+        cp target/release/blacksilk-node release/${{ matrix.artifact_name }}/
+        cp target/release/blacksilk-miner release/${{ matrix.artifact_name }}/
+        cp target/release/blacksilk-wallet release/${{ matrix.artifact_name }}/
+        cp target/release/blacksilk-marketplace release/${{ matrix.artifact_name }}/
+        cp README.md GETTING_STARTED.md LICENSE release/${{ matrix.artifact_name }}/
+        cp -r config release/${{ matrix.artifact_name }}/
+        cd release && tar -czf ${{ matrix.asset_name }} ${{ matrix.artifact_name }}
+    
+    - name: Package artifacts (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        mkdir release\${{ matrix.artifact_name }}
+        copy target\release\blacksilk-node.exe release\${{ matrix.artifact_name }}\
+        copy target\release\blacksilk-miner.exe release\${{ matrix.artifact_name }}\
+        copy target\release\blacksilk-wallet.exe release\${{ matrix.artifact_name }}\
+        copy target\release\blacksilk-marketplace.exe release\${{ matrix.artifact_name }}\
+        copy README.md GETTING_STARTED.md LICENSE release\${{ matrix.artifact_name }}\
+        xcopy config release\${{ matrix.artifact_name }}\config\ /E /I
+        cd release && powershell Compress-Archive -Path ${{ matrix.artifact_name }} -DestinationPath ${{ matrix.asset_name }}
+    
+    - name: Upload release assets
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: release/${{ matrix.asset_name }}
+        asset_name: ${{ matrix.asset_name }}
+        asset_content_type: application/octet-stream
+
+  # Build and push Docker images
+  docker:
+    name: Build Docker Images
+    if: github.event_name == 'release' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: [test, integration-test]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: blacksilk/node
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+    
+    - name: Build and push node image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: docker/node.Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max

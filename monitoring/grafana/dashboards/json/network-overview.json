@@ -1,0 +1,220 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "BlackSilk Network Overview",
+    "tags": ["blacksilk", "blockchain", "network"],
+    "style": "dark",
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Network Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "blacksilk_chain_height",
+            "legendFormat": "Block Height"
+          },
+          {
+            "expr": "blacksilk_peers_connected",
+            "legendFormat": "Connected Peers"
+          },
+          {
+            "expr": "blacksilk_mempool_size",
+            "legendFormat": "Pending Transactions"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "displayMode": "list",
+              "orientation": "horizontal"
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "orientation": "auto",
+          "textMode": "auto",
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto"
+        },
+        "pluginVersion": "8.0.0",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Mining Performance",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "blacksilk_network_hashrate",
+            "legendFormat": "Network Hashrate"
+          },
+          {
+            "expr": "blacksilk_mining_difficulty",
+            "legendFormat": "Difficulty"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Hashrate (H/s)",
+            "show": true
+          },
+          {
+            "label": "Difficulty",
+            "show": true
+          }
+        ],
+        "xAxis": {
+          "show": true
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Block Time Distribution",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.5, rate(blacksilk_block_time_seconds_bucket[5m]))",
+            "legendFormat": "Median Block Time"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(blacksilk_block_time_seconds_bucket[5m]))",
+            "legendFormat": "95th Percentile"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Time (seconds)",
+            "show": true,
+            "min": 0,
+            "max": 300
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "Privacy Network Distribution",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "blacksilk_tor_connections",
+            "legendFormat": "Tor Connections"
+          },
+          {
+            "expr": "blacksilk_i2p_connections",
+            "legendFormat": "I2P Connections"
+          },
+          {
+            "expr": "blacksilk_clearnet_connections",
+            "legendFormat": "Clearnet Connections"
+          }
+        ],
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "pieType": "pie",
+          "tooltip": {"mode": "single"},
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "Transaction Volume",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(blacksilk_transactions_total[5m]) * 60",
+            "legendFormat": "Transactions per Minute"
+          },
+          {
+            "expr": "rate(blacksilk_transactions_rejected[5m]) * 60",
+            "legendFormat": "Rejected per Minute"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Transactions/min",
+            "show": true,
+            "min": 0
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "System Resources",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "blacksilk_cpu_usage_percent",
+            "legendFormat": "CPU Usage %"
+          },
+          {
+            "expr": "blacksilk_memory_usage_percent",
+            "legendFormat": "Memory Usage %"
+          },
+          {
+            "expr": "blacksilk_disk_usage_percent",
+            "legendFormat": "Disk Usage %"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Usage %",
+            "show": true,
+            "min": 0,
+            "max": 100
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "templating": {
+      "list": []
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Block Creation",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "changes(blacksilk_chain_height[1m]) > 0",
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "textFormat": "New Block: {{value}}"
+        }
+      ]
+    },
+    "refresh": "5s",
+    "schemaVersion": 30,
+    "version": 1,
+    "links": []
+  }
+}

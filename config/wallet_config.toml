@@ -1,0 +1,92 @@
+# BlackSilk Wallet Configuration
+# Copy this file to ~/.blacksilk/wallet_config.toml and modify as needed
+
+[wallet]
+# Default node RPC URL for blockchain operations
+default_node_url = "http://127.0.0.1:19333"
+
+# Path to store wallet keys and data
+key_storage_path = "~/.blacksilk/wallet_data"
+
+# Network: "testnet" or "mainnet"
+network = "testnet"
+
+# Default transaction fee per byte in atomic units
+default_fee_per_byte = 10
+
+# Default ring size for privacy transactions
+default_ring_size = 11
+
+# Enable stealth addresses by default
+default_stealth_addresses = true
+
+[security]
+# Wallet encryption: "none", "password", "keyfile"
+encryption_mode = "password"
+
+# Key derivation function: "pbkdf2", "scrypt", "argon2"
+kdf = "argon2"
+
+# Number of KDF iterations
+kdf_iterations = 100000
+
+# Auto-lock wallet after N minutes of inactivity (0 = never)
+auto_lock_minutes = 30
+
+# Require password confirmation for transactions above this amount (atomic units)
+confirm_threshold = 1000000
+
+[privacy]
+# Default privacy level: "normal", "high", "maximum"
+default_privacy_level = "high"
+
+# Use Tor for wallet connections
+use_tor = false
+
+# Tor proxy address
+tor_proxy = "127.0.0.1:9050"
+
+# Enable coin control (manual UTXO selection)
+enable_coin_control = true
+
+# Minimum confirmations before spending outputs
+min_confirmations = 10
+
+[sync]
+# Sync mode: "full", "headers", "fast"
+sync_mode = "fast"
+
+# Enable background synchronization
+background_sync = true
+
+# Sync interval in seconds
+sync_interval_seconds = 30
+
+# Maximum blocks to sync per request
+max_blocks_per_request = 100
+
+[display]
+# Currency display unit: "BLK", "mBLK", "atomic"
+display_unit = "BLK"
+
+# Number of decimal places to show
+decimal_places = 6
+
+# Date format for transaction timestamps
+date_format = "%Y-%m-%d %H:%M:%S"
+
+# Show unconfirmed transactions
+show_unconfirmed = true
+
+[backup]
+# Enable automatic backups
+enable_auto_backup = true
+
+# Backup interval in hours
+backup_interval_hours = 24
+
+# Backup directory path
+backup_path = "~/.blacksilk/backups"
+
+# Number of backup files to keep
+max_backup_files = 10

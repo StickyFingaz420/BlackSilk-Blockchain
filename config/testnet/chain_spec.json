@@ -1,0 +1,40 @@
+{
+  "network_id": "blacksilk_testnet",
+  "network_name": "BlackSilk Testnet",
+  "genesis": {
+    "timestamp": 1735689600,
+    "parent_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "difficulty": 1,
+    "nonce": 0,
+    "block_time_seconds": 120,
+    "initial_utxos": []
+  },
+  "consensus": {
+    "block_time_seconds": 120,
+    "difficulty_adjustment_window": 60,
+    "halving_interval_blocks": 210240,
+    "supply_cap_atomic": 21000000000000,
+    "initial_block_reward_atomic": 5000000,
+    "tail_emission_atomic": 0,
+    "coinbase_maturity_blocks": 10,
+    "min_tx_fee_per_byte": 1
+  },
+  "network": {
+    "p2p_port": 19334,
+    "rpc_port": 19333,
+    "tor_port": 19999,
+    "bootnodes": [
+      "12D3KooWTestNode1@testnet-seed1.blacksilk.io:19334",
+      "12D3KooWTestNode2@testnet-seed2.blacksilk.io:19334",
+      "12D3KooWTestNode3@testnet-seed3.blacksilk.io:19334"
+    ]
+  },
+  "features": {
+    "privacy_enabled": true,
+    "escrow_contracts": true,
+    "marketplace": true,
+    "zkp_enabled": true
+  },
+  "description": "BlackSilk Testnet - Privacy-first blockchain with CPU-only mining and decentralized marketplace",
+  "version": "1.0.0-testnet"
+}
