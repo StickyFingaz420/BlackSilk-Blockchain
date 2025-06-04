@@ -32,7 +32,7 @@ export interface Transaction {
 }
 
 export class BlackSilkWallet {
-  private mnemonic: string;
+  private mnemonic: string = '';
   private addresses: string[] = [];
   private currentIndex = 0;
   private network: 'testnet' | 'mainnet';
@@ -84,7 +84,7 @@ export class BlackSilkWallet {
     
     // Generate testnet address with tBLK prefix
     const prefix = this.network === 'testnet' ? 'tBLK' : 'BLK';
-    const address = prefix + addressSeed.toString(CryptoJS.enc.Base58).substring(0, 32);
+    const address = prefix + addressSeed.toString(CryptoJS.enc.Hex).substring(0, 32);
     
     this.addresses.push(address);
     return address;

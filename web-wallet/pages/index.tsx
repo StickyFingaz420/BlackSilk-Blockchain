@@ -1,9 +1,9 @@
 import React, { useEffect } from 'react';
-import Layout from '../../components/Layout';
-import WelcomeScreen from '../../components/WelcomeScreen';
-import CreateWallet from '../../components/CreateWallet';
-import ErrorBoundary from '../../components/ErrorBoundary';
-import { useWalletStore } from '../../lib/store';
+import Layout from '../components/Layout';
+import WelcomeScreen from '../components/WelcomeScreen';
+import CreateWallet from '../components/CreateWallet';
+import ErrorBoundary from '../components/ErrorBoundary';
+import { useWalletStore } from '../lib/store';
 
 export default function Home() {
   const { wallet, currentView, initializeWallet } = useWalletStore();

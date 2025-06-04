@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useWalletStore } from '../lib/store';
-import { EyeIcon, EyeSlashIcon, ClipboardIcon } from '@heroicons/react/24/outline';
+import { Eye, EyeOff, Copy } from 'lucide-react';
 
 export default function CreateWallet() {
   const { createWallet, setView } = useWalletStore();
@@ -76,13 +76,13 @@ export default function CreateWallet() {
                 onClick={() => setShowMnemonic(!showMnemonic)}
                 className="p-1 text-gray-500 hover:text-gray-700"
               >
-                {showMnemonic ? <EyeSlashIcon className="w-5 h-5" /> : <EyeIcon className="w-5 h-5" />}
+                {showMnemonic ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
               <button
                 onClick={copyToClipboard}
                 className="p-1 text-gray-500 hover:text-gray-700"
               >
-                <ClipboardIcon className="w-5 h-5" />
+                <Copy className="w-5 h-5" />
               </button>
             </div>
           </div>

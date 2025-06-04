@@ -110,14 +110,14 @@ build_components() {
     
     # Build node
     info "Building node..."
-    cargo build --release --bin node || {
+    cargo build --release --bin blacksilk-node || {
         error "Failed to build node"
         exit 1
     }
     
     # Build miner
     info "Building miner..."
-    cargo build --release --bin miner || {
+    cargo build --release --bin blacksilk-miner || {
         error "Failed to build miner"
         exit 1
     }
@@ -296,7 +296,7 @@ start_blockchain_node() {
     mkdir -p data/testnet
     
     # Start node in background
-    nohup ./target/release/node \
+    nohup ./target/release/blacksilk-node \
         --config config/testnet/node_config.toml \
         --chain-spec config/testnet/chain_spec.json \
         --data-dir data/testnet \
@@ -330,7 +330,7 @@ start_mining() {
     log "Starting miner..."
     
     # Start miner in background
-    nohup ./target/release/miner \
+    nohup ./target/release/blacksilk-miner \
         --config config/miner_config.toml \
         --node-url http://localhost:$NODE_PORT \
         > logs/miner.log 2>&1 &
