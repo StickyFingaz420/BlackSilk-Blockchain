@@ -1,0 +1,137 @@
+version: '3.8'
+
+services:
+  blacksilk-node:
+    build:
+      context: .
+      dockerfile: docker/node.Dockerfile
+    container_name: blacksilk-node
+    restart: unless-stopped
+    ports:
+      - "19333:19333"  # P2P port
+      - "19334:19334"  # RPC port
+      - "9090:9090"    # Metrics port
+    volumes:
+      - node-data:/data/blacksilk
+      - node-logs:/logs/blacksilk
+      - ./config:/etc/blacksilk/config:ro
+    environment:
+      - RUST_LOG=info
+      - BLACKSILK_NODE_DATA_DIR=/data/blacksilk
+      - BLACKSILK_NODE_LOG_DIR=/logs/blacksilk
+    networks:
+      - blacksilk-network
+    command: [
+      "blacksilk-node",
+      "--testnet",
+      "--data-dir", "/data/blacksilk",
+      "--config", "/etc/blacksilk/config/node_config.toml",
+      "--log-level", "info"
+    ]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  blacksilk-miner:
+    build:
+      context: .
+      dockerfile: docker/miner.Dockerfile
+    container_name: blacksilk-miner
+    restart: unless-stopped
+    depends_on:
+      blacksilk-node:
+        condition: service_healthy
+    volumes:
+      - miner-data:/data/miner
+      - ./config:/etc/blacksilk/config:ro
+    environment:
+      - RUST_LOG=info
+      - BLACKSILK_NODE_URL=http://blacksilk-node:19334
+    networks:
+      - blacksilk-network
+    command: [
+      "blacksilk-miner",
+      "--testnet",
+      "--node-url", "http://blacksilk-node:19334",
+      "--config", "/etc/blacksilk/config/miner_config.toml",
+      "--threads", "2"
+    ]
+
+  blacksilk-wallet:
+    build:
+      context: .
+      dockerfile: docker/wallet.Dockerfile
+    container_name: blacksilk-wallet
+    restart: unless-stopped
+    depends_on:
+      blacksilk-node:
+        condition: service_healthy
+    ports:
+      - "8080:8080"   # Wallet API port
+    volumes:
+      - wallet-data:/data/wallet
+      - ./config:/etc/blacksilk/config:ro
+    environment:
+      - RUST_LOG=info
+      - BLACKSILK_NODE_URL=http://blacksilk-node:19334
+    networks:
+      - blacksilk-network
+    command: [
+      "blacksilk-wallet",
+      "--testnet",
+      "--node-url", "http://blacksilk-node:19334",
+      "--config", "/etc/blacksilk/config/wallet_config.toml",
+      "--api-port", "8080"
+    ]
+
+  blacksilk-marketplace:
+    build:
+      context: .
+      dockerfile: docker/marketplace.Dockerfile
+    container_name: blacksilk-marketplace
+    restart: unless-stopped
+    depends_on:
+      blacksilk-node:
+        condition: service_healthy
+      blacksilk-wallet:
+        condition: service_started
+    ports:
+      - "3000:3000"   # Marketplace web interface
+    volumes:
+      - marketplace-data:/data/marketplace
+      - ./config:/etc/blacksilk/config:ro
+    environment:
+      - RUST_LOG=info
+      - BLACKSILK_NODE_URL=http://blacksilk-node:19334
+      - BLACKSILK_WALLET_URL=http://blacksilk-wallet:8080
+    networks:
+      - blacksilk-network
+    command: [
+      "blacksilk-marketplace",
+      "--testnet",
+      "--node-url", "http://blacksilk-node:19334",
+      "--wallet-url", "http://blacksilk-wallet:8080",
+      "--config", "/etc/blacksilk/config/marketplace_config.toml",
+      "--bind", "0.0.0.0:3000"
+    ]
+
+networks:
+  blacksilk-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  node-data:
+    driver: local
+  node-logs:
+    driver: local
+  miner-data:
+    driver: local
+  wallet-data:
+    driver: local
+  marketplace-data:
+    driver: local

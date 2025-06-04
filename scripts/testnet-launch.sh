@@ -108,26 +108,21 @@ build_components() {
     
     log "Building Rust components..."
     
-    # Build node
-    info "Building node..."
-    cargo build --release --bin blacksilk-node || {
-        error "Failed to build node"
+    # Build all workspace binaries at once
+    info "Building all workspace binaries..."
+    cargo build --release --bins || {
+        error "Failed to build workspace binaries"
         exit 1
     }
     
-    # Build miner
-    info "Building miner..."
-    cargo build --release --bin blacksilk-miner || {
-        error "Failed to build miner"
-        exit 1
-    }
-    
-    # Build wallet
-    info "Building wallet..."
-    cargo build --release --bin wallet || {
-        error "Failed to build wallet"
-        exit 1
-    }
+    # Verify binaries exist
+    for binary in blacksilk-node blacksilk-miner wallet; do
+        if [ ! -f "target/release/$binary" ]; then
+            error "Binary $binary not found after build"
+            exit 1
+        fi
+        info "✓ $binary binary available"
+    done
     
     log "Building Docker images..."
     
