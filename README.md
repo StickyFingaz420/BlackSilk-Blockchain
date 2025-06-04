@@ -165,60 +165,181 @@ BlackSilk-Blockchain/
 
 ### Prerequisites
 
-- **Rust 1.70+** with Cargo
-- **Node.js 18+** (for frontend services)
-- **Docker & Docker Compose** (for monitoring and services)
+- **Rust 1.77+** with Cargo (required for Cargo.lock version 4)
+- **Node.js 18+** and npm (for frontend services)
 - **Git** for version control
+- **Docker & Docker Compose** (optional - for containerized deployment)
 
-### Complete Installation
+### 🔨 Building the Complete BlackSilk Project
 
-1. **Clone the repository:**
+#### 1. Clone and Setup
 ```bash
 git clone https://github.com/StickyFingaz420/BlackSilk-Blockchain.git
 cd BlackSilk-Blockchain
 ```
 
-2. **Build all core components:**
+#### 2. Build All Core Blockchain Components
 ```bash
-cargo build --release
+# Build all Rust binaries in release mode with optimizations
+cargo build --release --bins
+
+# This builds the following components:
+# - BlackSilk (main binary)
+# - blacksilk-node (blockchain node)
+# - blacksilk-miner (CPU miner)
+# - blacksilk-marketplace (decentralized marketplace)
+# - wallet (privacy-enhanced wallet)
 ```
 
-3. **Set up monitoring infrastructure:**
+#### 3. Build Frontend Services
+```bash
+# Build Testnet Faucet (Backend + Frontend)
+cd testnet-faucet
+npm install
+npm run build
+
+# Build Block Explorer
+cd ../block-explorer  
+npm install
+npm run build
+
+# Build Web Wallet Interface
+cd ../web-wallet
+npm install
+npm run build
+
+# Build Marketplace Frontend
+cd ../marketplace/frontend
+npm install
+npm run build
+
+cd ../..  # Return to project root
+```
+
+#### 4. Verify All Binaries
+```bash
+# Check that all core binaries were built
+ls -la target/release/
+# Should show: BlackSilk, blacksilk-node, blacksilk-miner, blacksilk-marketplace, wallet
+```
+
+### 🚀 Launch Instructions
+
+#### Option A: Native Launch (No Docker)
+
+**1. Start the Blockchain Node:**
+```bash
+# Testnet (recommended for development)
+./target/release/blacksilk-node --testnet --config config/testnet/node_config.toml
+
+# Mainnet (production)
+./target/release/blacksilk-node --mainnet --config config/mainnet/node_config.toml
+```
+
+**2. Start the Miner:**
+```bash
+./target/release/blacksilk-miner --testnet --config config/miner_config.toml --threads 2
+```
+
+**3. Start the Wallet:**
+```bash
+./target/release/wallet --testnet --config config/wallet_config.toml --api-port 8080
+```
+
+**4. Start the Marketplace:**
+```bash
+./target/release/blacksilk-marketplace --testnet --config config/marketplace_config.toml --port 3000
+```
+
+**5. Launch Frontend Services:**
+```bash
+# Testnet Faucet (Port 3000)
+cd testnet-faucet && npm run start:server &
+cd testnet-faucet && npm run start &
+
+# Block Explorer (Port 3002)
+cd block-explorer && npm run start &
+
+# Web Wallet (Port 3001)
+cd web-wallet && npm run start &
+```
+
+#### Option B: Docker Deployment
+
+**Build and Launch Complete Testnet:**
+```bash
+# Use updated Docker setup with Rust 1.80
+docker-compose up --build
+
+# Or use the comprehensive launch script
+chmod +x scripts/testnet-launch.sh
+./scripts/testnet-launch.sh
+```
+
+### 🌐 Access Points
+
+After successful launch, access the services at:
+
+- **Blockchain Node RPC**: `http://localhost:19334`
+- **Wallet API**: `http://localhost:8080`
+- **Marketplace**: `http://localhost:3000`
+- **Testnet Faucet**: `http://localhost:3000`
+- **Block Explorer**: `http://localhost:3002`
+- **Web Wallet**: `http://localhost:3001`
+- **Node Metrics**: `http://localhost:9090`
+
+### 🧰 Development Tools
+
+**Build for Development (with debug symbols):**
+```bash
+cargo build --bins  # Debug mode for development
+```
+
+**Run Tests:**
+```bash
+cargo test --all          # Run all Rust tests
+cd testnet-faucet && npm test  # Test faucet
+cd block-explorer && npm test  # Test explorer
+```
+
+**Quick Build & Launch (Recommended):**
+```bash
+# One-command build everything
+./build-full-project.sh
+
+# Interactive launch menu
+./quick-launch.sh
+```
+
+**Set up Monitoring (Optional):**
 ```bash
 chmod +x scripts/setup-monitoring.sh
 ./scripts/setup-monitoring.sh
+# Access: Prometheus (9090), Grafana (3001), AlertManager (9093)
 ```
 
-4. **Start the blockchain node:**
+### 🎯 One-Command Setup
+
+For the fastest way to get BlackSilk running:
+
 ```bash
-# Mainnet
-./target/release/blacksilk-node --mainnet
+# Clone and build everything
+git clone https://github.com/StickyFingaz420/BlackSilk-Blockchain.git
+cd BlackSilk-Blockchain
+./build-full-project.sh
 
-# Testnet
-./target/release/blacksilk-node --testnet
+# Launch with interactive menu
+./quick-launch.sh
 ```
 
-5. **Launch testnet faucet (for development):**
-```bash
-cd testnet-faucet
-npm install
-npm run dev:server &  # Backend on port 3003
-npm run dev &         # Frontend on port 3000
-```
-
-6. **Start block explorer:**
-```bash
-cd block-explorer
-npm install
-npm run dev  # Explorer on port 3002
-```
-
-7. **Access monitoring dashboards:**
-```bash
-# Prometheus: http://localhost:9090
-# Grafana: http://localhost:3001 (admin/blacksilk123)
-# AlertManager: http://localhost:9093
-```
+The `quick-launch.sh` script provides an interactive menu to:
+- 🏗️ Build all components
+- 🚀 Launch testnet node
+- ⛏️ Start mining
+- 🛒 Run full ecosystem
+- 🌐 Start frontend services
+- 📊 Monitor running processes
+- 🛑 Stop all services
 
 ## 🔧 Usage
 
