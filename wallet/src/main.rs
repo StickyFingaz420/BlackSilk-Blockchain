@@ -13,6 +13,17 @@ use serde::{Deserialize, Serialize};
 use itertools::Itertools;
 use colored::*;
 
+// Utility function to convert hex string to 32-byte array
+fn hex_to_32_bytes(hex_str: &str) -> Result<[u8; 32], String> {
+    let bytes = hex::decode(hex_str).map_err(|e| format!("Hex decode error: {}", e))?;
+    if bytes.len() != 32 {
+        return Err(format!("Expected 32 bytes, got {}", bytes.len()));
+    }
+    let mut array = [0u8; 32];
+    array.copy_from_slice(&bytes);
+    Ok(array)
+}
+
 struct StealthAddress {
     public_view: [u8; 32],
     public_spend: [u8; 32],
@@ -718,22 +729,40 @@ fn send_transaction(node_addr: &str, wallet: &WalletFile, to_address: &str, amou
 
 /// Calculate real wallet balance by scanning blockchain
 fn calculate_wallet_balance(wallet: &WalletFile, node_addr: &str) -> (u64, u64, u64) {
+    // Convert hex strings to byte arrays
+    let priv_view = match hex_to_32_bytes(&wallet.priv_view) {
+        Ok(bytes) => bytes,
+        Err(_) => return (0, 0, 0),
+    };
+    let priv_spend = match hex_to_32_bytes(&wallet.priv_spend) {
+        Ok(bytes) => bytes,
+        Err(_) => return (0, 0, 0),
+    };
+    let pub_view = match hex_to_32_bytes(&wallet.pub_view) {
+        Ok(bytes) => bytes,
+        Err(_) => return (0, 0, 0),
+    };
+    let pub_spend = match hex_to_32_bytes(&wallet.pub_spend) {
+        Ok(bytes) => bytes,
+        Err(_) => return (0, 0, 0),
+    };
+
     // Fetch latest blocks from node
-    let blocks = sync_with_node(node_addr, wallet.last_height, &wallet.priv_view, &wallet.priv_spend);
+    let blocks = sync_with_node(node_addr, wallet.last_height, &priv_view, &priv_spend);
     
     let mut confirmed_balance = 0u64;
     let mut unconfirmed_balance = 0u64;
     let locked_balance = 0u64; // Implement based on ring signature maturity
     
     // Scan all blocks for outputs belonging to this wallet
-    let spendable_outputs = get_spendable_outputs(&blocks, &wallet.pub_view, &wallet.pub_spend, &wallet.priv_view);
+    let spendable_outputs = get_spendable_outputs(&blocks, &pub_view, &pub_spend, &priv_view);
     
     for output in spendable_outputs {
         confirmed_balance += u64::from_le_bytes(output.amount_commitment[0..8].try_into().unwrap());
     }
     
     // Check mempool for unconfirmed transactions
-    if let Ok(mempool_balance) = get_mempool_balance(node_addr, &wallet.pub_view, &wallet.pub_spend) {
+    if let Ok(mempool_balance) = get_mempool_balance(node_addr, &pub_view, &pub_spend) {
         unconfirmed_balance = mempool_balance;
     }
     
@@ -766,7 +795,7 @@ fn get_mempool_balance(node_addr: &str, pub_view: &[u8; 32], pub_spend: &[u8; 32
     for tx in mempool.transactions {
         for output in tx.outputs {
             if is_output_mine(&output, pub_view, pub_spend, &[0u8; 32]) { // Use dummy private view for mempool check
-                unconfirmed += output.amount_commitment;
+                unconfirmed += u64::from_le_bytes(output.amount_commitment[0..8].try_into().unwrap());
             }
         }
     }
@@ -1163,6 +1192,22 @@ fn handle_sync(cli: &Cli, force: bool, from_height: Option<u64>) {
         }
     };
     
+    // Convert hex strings to byte arrays
+    let priv_view = match hex_to_32_bytes(&wallet.priv_view) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            println!("{} Invalid private view key: {}", "[ERROR]".bright_red().bold(), e);
+            return;
+        }
+    };
+    let priv_spend = match hex_to_32_bytes(&wallet.priv_spend) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            println!("{} Invalid private spend key: {}", "[ERROR]".bright_red().bold(), e);
+            return;
+        }
+    };
+    
     // Get network height from node
     let network_height = match get_network_height(&cli.node) {
         Ok(height) => height,
@@ -1202,7 +1247,7 @@ fn handle_sync(cli: &Cli, force: bool, from_height: Option<u64>) {
         println!("║ {} Scanning blocks for transactions...                     ║", "🔍".bright_yellow());
         
         // Sync blocks from start_height to network_height
-        let blocks = sync_with_node(&cli.node, start_height, &wallet.priv_view, &wallet.priv_spend);
+        let blocks = sync_with_node(&cli.node, start_height, &priv_view, &priv_spend);
         
         // Update wallet last height
         wallet.last_height = network_height;
