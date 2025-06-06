@@ -19,6 +19,7 @@ pub mod randomx;
 use blake2::{Blake2b, Digest};
 use blake2::digest::Update;
 use digest::consts::U32;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
@@ -248,17 +249,20 @@ fn read_message(stream: &mut TcpStream) -> Option<P2PMessage> {
 }
 
 lazy_static! {
-    static ref PEERS: Arc<Mutex<Vec<TcpStream>>> = Arc::new(Mutex::new(Vec::new()));
+    pub static ref PEERS: Arc<Mutex<Vec<TcpStream>>> = Arc::new(Mutex::new(Vec::new()));
 }
 
 // Transaction pool (mempool)
 lazy_static::lazy_static! {
-    static ref MEMPOOL: Arc<Mutex<Vec<primitives::Transaction>>> = Arc::new(Mutex::new(Vec::new()));
+    pub static ref MEMPOOL: Arc<Mutex<Vec<primitives::Transaction>>> = Arc::new(Mutex::new(Vec::new()));
 }
 
 lazy_static! {
-    static ref CHAIN: Arc<Mutex<Chain>> = Arc::new(Mutex::new(Chain::new()));
+    pub static ref CHAIN: Arc<Mutex<Chain>> = Arc::new(Mutex::new(Chain::new()));
 }
+
+// Global peer counter for tracking active connections
+pub static PEER_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub fn broadcast_message(msg: &P2PMessage) {
     let peers = PEERS.lock().unwrap();
@@ -270,6 +274,10 @@ pub fn broadcast_message(msg: &P2PMessage) {
 
 fn handle_client(mut stream: TcpStream) {
     println!("[P2P] New peer: {}", stream.peer_addr().unwrap());
+    
+    // Increment peer count
+    PEER_COUNT.fetch_add(1, Ordering::Relaxed);
+    
     {
         let mut peers = PEERS.lock().unwrap();
         peers.push(stream.try_clone().unwrap());
@@ -357,6 +365,9 @@ fn handle_client(mut stream: TcpStream) {
         let mut peers = PEERS.lock().unwrap();
         peers.retain(|s| s.peer_addr().unwrap() != stream.peer_addr().unwrap());
     }
+    
+    // Decrement peer count
+    PEER_COUNT.fetch_sub(1, Ordering::Relaxed);
 }
 
 // Minimal CryptoNote-style ring signature verification

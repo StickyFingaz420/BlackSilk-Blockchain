@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 use rayon::prelude::*;
 use colored::*;
+use sha2::{Sha256, Digest};
 
 // Pure Rust RandomX modules (no FFI required)
 mod randomx;
@@ -446,7 +447,7 @@ fn main() {
             if let Some(t) = threads {
                 cli.threads = *t;
             }
-            run_benchmark();
+            run_benchmark(*duration);
             return;
         },
         Some(Commands::Start) => {
@@ -863,16 +864,26 @@ fn start_mining(cli: &Cli) {
     println!();
     println!("{} ✅ Mining started successfully!", "[SUCCESS]".bright_green().bold());
     println!("{} Use 'stats' command to monitor performance", "[INFO]".bright_blue().bold());
+    
+    // Start actual mining if address is provided
+    if let Some(address) = &cli.address {
+        println!("{} Starting mining threads...", "[MINER]".bright_blue().bold());
+        start_mining_with_threads(&cli.node, cli.threads, address);
+    } else {
+        println!("{} No mining address provided - mining simulation only", "[WARNING]".bright_yellow().bold());
+    }
 }
 
-fn run_benchmark() {
+fn run_benchmark(duration_secs: u64) {
+    use std::time::{Instant, Duration};
+    
     println!("{} Running RandomX benchmark...", "[BENCHMARK]".bright_yellow().bold());
     
     println!();
     println!("{}", "╔════════════════════════════════════════════════════════════════╗".bright_yellow());
     println!("{}", "║                    RANDOMX BENCHMARK                          ║".bright_yellow());
     println!("{}", "╠════════════════════════════════════════════════════════════════╣".bright_yellow());
-    println!("║ {} Test Duration: {:>41} ║", "⏱️".bright_blue(), "60 seconds".bright_white());
+    println!("║ {} Test Duration: {:>41} ║", "⏱️".bright_blue(), format!("{} seconds", duration_secs).bright_white());
     println!("║ {} Algorithm: {:>45} ║", "🔧".bright_cyan(), "RandomX".bright_white());
     println!("║ {} Hardware AES: {:>40} ║", "🔐".bright_green(), "Enabled".bright_green());
     println!("║ {} Huge Pages: {:>42} ║", "💾".bright_magenta(), "Enabled".bright_green());
@@ -880,52 +891,119 @@ fn run_benchmark() {
     println!("{}", "╚════════════════════════════════════════════════════════════════╝".bright_yellow());
     
     println!();
-    println!("{} {} Warming up CPU caches...", "🔥".bright_red(), "[1/4]".bright_cyan());
-    println!("{} {} Running hash tests...", "🧪".bright_blue(), "[2/4]".bright_cyan());
-    println!("{} {} Measuring performance...", "📊".bright_green(), "[3/4]".bright_cyan());
+    println!("{} {} Initializing RandomX...", "🔧".bright_cyan(), "[1/4]".bright_cyan());
+    
+    // Initialize RandomX cache and dataset
+    let key = b"BlackSilk_RandomX_Benchmark_Key";
+    let cache = RandomXCache::new(key);
+    let dataset = Some(RandomXDataset::new(&cache, 1));
+    
+    println!("{} {} Warming up CPU caches...", "🔥".bright_red(), "[2/4]".bright_cyan());
+    
+    // Warmup phase with actual RandomX
+    let mut warmup_vm = RandomXVM::new(&cache, dataset.as_ref());
+    let mut warmup_hashes = 0u64;
+    let warmup_start = Instant::now();
+    while warmup_start.elapsed() < Duration::from_secs(1) {
+        let input = format!("warmup_{}", warmup_hashes).into_bytes();
+        let _ = warmup_vm.calculate_hash(&input);
+        warmup_hashes += 1;
+    }
+    
+    println!("{} {} Running RandomX benchmark...", "🧪".bright_blue(), "[3/4]".bright_cyan());
+    
+    // Actual benchmark phase using real RandomX
+    let test_duration = Duration::from_secs(duration_secs);
+    let start_time = Instant::now();
+    let mut hash_count = 0u64;
+    let mut total_memory_accesses = 0u64;
+    
+    // Create dedicated VM for benchmarking
+    let mut benchmark_vm = RandomXVM::new(&cache, dataset.as_ref());
+    
+    while start_time.elapsed() < test_duration {
+        // Use real RandomX hash computation
+        let nonce = hash_count;
+        let input = format!("BlackSilk_RandomX_Test_{}", nonce).into_bytes();
+        
+        // Calculate actual RandomX hash
+        let _hash = benchmark_vm.calculate_hash(&input);
+        
+        // Estimate memory accesses based on RandomX specification
+        total_memory_accesses += 2048; // RandomX program iterations
+        hash_count += 1;
+        
+        // Check every 100 hashes to avoid too frequent time checks
+        if hash_count % 100 == 0 && start_time.elapsed() >= test_duration {
+            break;
+        }
+    }
+    
     println!("{} {} Generating report...", "📋".bright_magenta(), "[4/4]".bright_cyan());
+    
+    let elapsed = start_time.elapsed();
+    let hash_rate = (hash_count as f64) / elapsed.as_secs_f64();
+    let memory_bandwidth = (total_memory_accesses as f64 * 8.0) / (1024.0 * 1024.0 * 1024.0) / elapsed.as_secs_f64(); // GB/s
+    
+    // Calculate CPU efficiency based on hash rate vs theoretical maximum
+    let cpu_efficiency = ((hash_rate / 10000.0) * 100.0).min(100.0); // Assume 10kH/s as 100% theoretical
+    
+    // Estimate power consumption based on hash rate (rough estimation)
+    let estimated_power = (hash_rate / 1000.0 * 75.0) + 50.0; // Base 50W + scaling
+    
+    // Performance score based on hash rate
+    let performance_score = if hash_rate > 5000.0 {
+        "Excellent"
+    } else if hash_rate > 2000.0 {
+        "Good"
+    } else if hash_rate > 500.0 {
+        "Fair"
+    } else {
+        "Poor"
+    };
     
     println!();
     println!("{}", "╔════════════════════════════════════════════════════════════════╗".bright_green());
     println!("{}", "║                    BENCHMARK RESULTS                          ║".bright_green());
     println!("{}", "╠════════════════════════════════════════════════════════════════╣".bright_green());
-    println!("║ {} Hash Rate: {:>45} ║", "⚡".bright_yellow(), "2,347.6 H/s".bright_white());
-    println!("║ {} CPU Efficiency: {:>38} ║", "🖥️".bright_blue(), "94.2%".bright_white());
-    println!("║ {} Memory Bandwidth: {:>34} ║", "💾".bright_cyan(), "15.6 GB/s".bright_white());
-    println!("║ {} Power Consumption: {:>33} ║", "🔋".bright_red(), "125W (est.)".bright_white());
-    println!("║ {} Performance Score: {:>33} ║", "🏆".bright_magenta(), "Excellent".bright_green());
+    println!("║ {} Hash Rate: {:>45} ║", "⚡".bright_yellow(), format!("{:.1} H/s", hash_rate).bright_white());
+    println!("║ {} CPU Efficiency: {:>38} ║", "🖥️".bright_blue(), format!("{:.1}%", cpu_efficiency).bright_white());
+    println!("║ {} Memory Bandwidth: {:>34} ║", "💾".bright_cyan(), format!("{:.1} GB/s", memory_bandwidth).bright_white());
+    println!("║ {} Power Consumption: {:>33} ║", "🔋".bright_red(), format!("{:.0}W (est.)", estimated_power).bright_white());
+    println!("║ {} Performance Score: {:>33} ║", "🏆".bright_magenta(), performance_score.bright_green());
+    println!("║ {} Total Hashes: {:>40} ║", "📊".bright_cyan(), format!("{}", hash_count).bright_white());
+    println!("║ {} Test Duration: {:>39} ║", "⏱️".bright_blue(), format!("{:.1}s", elapsed.as_secs_f64()).bright_white());
     println!("{}", "╚════════════════════════════════════════════════════════════════╝".bright_green());
     
     println!();
-    println!("{} ✅ Benchmark completed successfully!", "[SUCCESS]".bright_green().bold());
+    println!("{} ✅ RandomX benchmark completed successfully!", "[SUCCESS]".bright_green().bold());
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GetBlockTemplateResponse {
-    version: String,
-    previous_hash: String,
-    coinbase1: String,
-    coinbase2: String,
-    merkle_branches: Vec<String>,
-    height: u64,
-    nbits: String,
-    ntime: String,
-    target: Vec<u8>,
+    header: Vec<u8>,
     difficulty: u64,
     seed: Vec<u8>,
     coinbase_address: String,
+    height: u64,
+    prev_hash: Vec<u8>,
+    timestamp: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SubmitBlockResponse {
-    status: String,
+    success: bool,
     message: String,
 }
 
 /// Fetch a mining job from the node
-fn fetch_job(client: &Client, node_url: &str) -> Option<GetBlockTemplateResponse> {
+fn fetch_job(client: &Client, node_url: &str, mining_address: &str) -> Option<GetBlockTemplateResponse> {
     let url = format!("{}/get_block_template", node_url);
-    match client.get(&url).send() {
+    let request = serde_json::json!({
+        "address": mining_address
+    });
+    
+    match client.post(&url).json(&request).send() {
         Ok(response) => {
             if let Ok(job) = response.json::<GetBlockTemplateResponse>() {
                 return Some(job);
@@ -938,7 +1016,7 @@ fn fetch_job(client: &Client, node_url: &str) -> Option<GetBlockTemplateResponse
 
 /// Submit a mined block to the node
 fn submit_block(client: &Client, node_url: &str, block: SubmitBlockRequest) {
-    let url = format!("{}/submit_block", node_url);
+    let url = format!("{}/mining/submit_block", node_url);
     match client.post(&url).json(&block).send() {
         Ok(response) => {
             if let Ok(res) = response.json::<SubmitBlockResponse>() {
@@ -956,20 +1034,32 @@ fn hash_meets_target(hash: &[u8], target: u64) -> bool {
     hash_value <= target
 }
 
-/// Start threaded mining
-fn start_mining_with_threads(node_url: &str, thread_count: usize) {
+/// Start threaded mining using proper RandomX algorithm
+fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address: &str) {
     let client = Client::new();
     let job = Arc::new(Mutex::new(None));
 
     // Clone `node_url` to ensure it has a `'static` lifetime
     let node_url_owned = node_url.to_string();
+    let mining_address_owned = mining_address.to_string();
+
+    // Initialize RandomX once for all threads
+    println!("{} Initializing RandomX with optimal flags...", "[RandomX]".bright_blue().bold());
+    let flags = get_optimal_flags();
+    let key = b"BlackSilk-RandomX-Key-v1"; // Standard RandomX key
+    let cache = RandomXCache::new(key);
+    let dataset = RandomXDataset::new(&cache, 1);
+    let shared_cache = Arc::new(cache);
+    let shared_dataset = Arc::new(dataset);
+    
+    println!("{} RandomX initialization complete!", "[RandomX]".bright_green().bold());
 
     // Fetch job periodically
     let job_clone = Arc::clone(&job);
     let client_clone = client.clone(); // Clone `client` to avoid move issues
     thread::spawn(move || {
         loop {
-            if let Some(new_job) = fetch_job(&client_clone, &node_url_owned) {
+            if let Some(new_job) = fetch_job(&client_clone, &node_url_owned, &mining_address_owned) {
                 let mut job_lock = job_clone.lock().unwrap();
                 *job_lock = Some(new_job);
             }
@@ -977,37 +1067,67 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize) {
         }
     });
 
-    // Start mining threads
+    // Start mining threads with individual RandomX VMs
     let mut handles = vec![];
-    for _ in 0..thread_count {
+    for thread_id in 0..thread_count {
         let job_clone = Arc::clone(&job);
         let client_clone = client.clone(); // Clone `client` for each thread
         let node_url_clone = node_url.to_string(); // Clone `node_url` for each thread
+        let cache_ref = Arc::clone(&shared_cache);
+        let dataset_ref = Arc::clone(&shared_dataset);
 
         let handle = thread::spawn(move || {
+            // Create RandomX VM for this thread
+            let mut vm = RandomXVM::new(&cache_ref, Some(&dataset_ref));
+            
+            println!("{} Thread {} initialized with RandomX VM", "[Miner]".bright_cyan().bold(), thread_id);
+            
             loop {
                 let job_lock = job_clone.lock().unwrap();
                 if let Some(ref job) = *job_lock {
-                    // Perform mining logic here using RandomX
-                    let header = job.previous_hash.clone(); // Removed unnecessary `mut`
+                    // Perform mining logic using proper RandomX algorithm
+                    let header_data = job.header.clone();
                     let target = job.difficulty;
 
                     for nonce in 0..u64::MAX {
-                        // Use RandomX to compute hash
-                        let nonce_bytes = nonce.to_le_bytes();
-                        let hash = randomx_hash(header.as_bytes(), &nonce_bytes);
+                        // Create RandomX input from header and nonce
+                        let mut input = Vec::new();
+                        input.extend_from_slice(&header_data);
+                        input.extend_from_slice(&nonce.to_le_bytes());
+                        
+                        // Generate RandomX key from job data
+                        let mut key_data = Vec::new();
+                        key_data.extend_from_slice(&job.prev_hash);
+                        key_data.extend_from_slice(&job.height.to_le_bytes());
+                        
+                        // Calculate RandomX hash
+                        let hash = randomx_hash(&key_data, &input);
+                        
+                        // Increment hash counter for statistics
+                        HASH_COUNTER.fetch_add(1, Ordering::Relaxed);
+                        
                         if hash_meets_target(&hash, target) {
                             let block = SubmitBlockRequest {
-                                header: header.clone().into(),
+                                header: header_data.clone(),
                                 nonce,
                                 hash: hash.to_vec(),
                                 miner_address: Some(job.coinbase_address.clone()),
                             };
                             submit_block(&client_clone, &node_url_clone, block);
+                            println!("{} Thread {} found block at height {} with nonce {} (RandomX hash: {:x})", 
+                                   "[SUCCESS]".bright_green().bold(), thread_id, job.height, nonce, 
+                                   u64::from_le_bytes(hash[0..8].try_into().unwrap()));
+                            break;
+                        }
+                        
+                        // Check for new job periodically (but more frequently for RandomX)
+                        if nonce % 1000 == 0 {
                             break;
                         }
                     }
                 }
+                drop(job_lock);
+                thread::sleep(Duration::from_millis(100));
             }
         });
         handles.push(handle);

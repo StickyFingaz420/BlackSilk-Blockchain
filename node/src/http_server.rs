@@ -211,6 +211,8 @@ fn handle_http_request(mut stream: TcpStream) -> Result<(), Box<dyn std::error::
     let method = parts[0];
     let path = parts[1];
     
+    println!("[HTTP] Received request: {} {}", method, path);
+    
     // Parse headers to get content length for POST requests
     let mut headers = HashMap::new();
     let mut content_length = 0;
@@ -237,31 +239,51 @@ fn handle_http_request(mut stream: TcpStream) -> Result<(), Box<dyn std::error::
     // Read request body for POST requests
     let mut body = Vec::new();
     if method == "POST" && content_length > 0 {
+        println!("[HTTP] Reading POST body, content_length: {}", content_length);
         body.resize(content_length, 0);
-        std::io::Read::read_exact(&mut reader, &mut body)?;
+        match std::io::Read::read_exact(&mut reader, &mut body) {
+            Ok(_) => {
+                println!("[HTTP] Successfully read {} bytes", body.len());
+            }
+            Err(e) => {
+                println!("[HTTP] Error reading body: {}", e);
+                send_error_response(&mut stream, 400, "Error reading request body")?;
+                return Ok(());
+            }
+        }
+    } else if method == "POST" {
+        println!("[HTTP] POST request with no content-length or content-length = 0");
     }
     
     // Route the request
+    println!("[HTTP] Routing: method='{}', path='{}', body_len={}", method, path, body.len());
     match (method, path) {
         ("GET", path) if path.starts_with("/get_blocks") => {
+            println!("[HTTP] Matched: GET /get_blocks");
             handle_get_blocks(&mut stream, path)?;
         }
         ("POST", "/submit_tx") => {
+            println!("[HTTP] Matched: POST /submit_tx");
             handle_submit_transaction(&mut stream, &body)?;
         }
         ("GET", "/mempool") => {
+            println!("[HTTP] Matched: GET /mempool");
             handle_get_mempool(&mut stream)?;
         }
         ("GET", "/info") => {
+            println!("[HTTP] Matched: GET /info");
             handle_node_info(&mut stream)?;
         }
         ("GET", "/health") => {
+            println!("[HTTP] Matched: GET /health");
             send_json_response(&mut stream, 200, &serde_json::json!({"status": "ok"}))?;
         }
-        ("POST", "/mining/get_block_template") => {
+        ("POST", "/get_block_template") => {
+            println!("[HTTP] Matched: POST /get_block_template");
             handle_get_block_template(&mut stream, &body)?;
         }
-        ("POST", "/mining/submit_block") => {
+        ("POST", "/submit_block") => {
+            println!("[HTTP] Matched: POST /submit_block");
             handle_submit_block(&mut stream, &body)?;
         }
         // Marketplace data storage endpoints
@@ -275,6 +297,7 @@ fn handle_http_request(mut stream: TcpStream) -> Result<(), Box<dyn std::error::
             handle_marketplace_transactions_get(&mut stream)?;
         }
         _ => {
+            println!("[HTTP] No route matched for: {} {}", method, path);
             send_error_response(&mut stream, 404, "Not Found")?;
         }
     }
@@ -368,13 +391,26 @@ fn handle_get_mempool(stream: &mut TcpStream) -> Result<(), Box<dyn std::error::
 }
 
 fn handle_node_info(stream: &mut TcpStream) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::{current_network, PEER_COUNT};
+    
     let chain = CHAIN.lock().unwrap();
+    let current_height = chain.blocks.len() as u64;
+    let network = current_network();
+    let current_difficulty = if current_height > 0 {
+        chain.tip().header.difficulty
+    } else {
+        network.get_difficulty()
+    };
+    
+    // Get peer count from global atomic counter
+    let peer_count = PEER_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+    
     let response = NodeInfoResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        network: std::env::var("BLACKSILK_NETWORK").unwrap_or_else(|_| "testnet".to_string()),
-        height: chain.blocks.len() as u64,
-        peers: 0, // TODO: Get actual peer count
-        difficulty: 1, // TODO: Get actual difficulty
+        network: format!("{:?}", network).to_lowercase(),
+        height: current_height,
+        peers: peer_count,
+        difficulty: current_difficulty,
     };
     
     send_json_response(stream, 200, &response)?;

@@ -665,74 +665,175 @@ fn handle_restart(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
+    use node::{CHAIN, PEER_COUNT};
+    use std::sync::atomic::Ordering;
+    use std::process::Command;
+    
     println!("{}", "╔════════════════════════════════════════════════════════════════╗".bright_blue());
     println!("{}", "║                        NODE STATUS                            ║".bright_blue());
     println!("{}", "╠════════════════════════════════════════════════════════════════╣".bright_blue());
-    println!("║ {} Status: {:>48} ║", "🟢".bright_green(), "RUNNING".bright_green());
-    println!("║ {} Uptime: {:>48} ║", "⏰".bright_blue(), "2h 15m 30s".bright_white());
-    println!("║ {} Block Height: {:>42} ║", "📊".bright_cyan(), "1,234,567".bright_white());
-    println!("║ {} Peers: {:>49} ║", "👥".bright_green(), "42".bright_white());
-    println!("║ {} Sync Status: {:>43} ║", "🔄".bright_blue(), "SYNCED".bright_green());
+    
+    // Check if node daemon is actually running
+    let is_running = Command::new("pgrep")
+        .args(&["-f", "blacksilk-node.*(start|daemon)"])
+        .output()
+        .map(|output| !output.stdout.is_empty())
+        .unwrap_or(false);
+    
+    let (status_icon, status_text, status_color) = if is_running {
+        ("🟢", "RUNNING", colored::Color::Green)
+    } else {
+        ("🔴", "STOPPED", colored::Color::Red)
+    };
+    
+    if is_running {
+        let chain = CHAIN.lock().unwrap();
+        let current_height = chain.blocks.len() as u64;
+        let peer_count = PEER_COUNT.load(Ordering::Relaxed);
+        
+        println!("║ {} Status: {:>48} ║", status_icon, status_text.color(status_color));
+        println!("║ {} Uptime: {:>48} ║", "⏰".bright_blue(), "Active".bright_white());
+        println!("║ {} Block Height: {:>42} ║", "📊".bright_cyan(), format!("{}", current_height).bright_white());
+        println!("║ {} Peers: {:>49} ║", "👥".bright_green(), format!("{}", peer_count).bright_white());
+        println!("║ {} Sync Status: {:>43} ║", "🔄".bright_blue(), "SYNCED".bright_green());
+    } else {
+        println!("║ {} Status: {:>48} ║", status_icon, status_text.color(status_color));
+        println!("║ {} Message: {:>47} ║", "ℹ️".bright_yellow(), "Node daemon not running".bright_yellow());
+        println!("║ {} Command: {:>47} ║", "💡".bright_cyan(), "Use 'daemon' to start".bright_white());
+    }
+    
     println!("{}", "╚════════════════════════════════════════════════════════════════╝".bright_blue());
     Ok(())
 }
 
 fn handle_info(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    use node::{CHAIN, PEER_COUNT, current_network};
+    use std::sync::atomic::Ordering;
+    
     println!("{}", "╔════════════════════════════════════════════════════════════════╗".bright_cyan());
     println!("{}", "║                     BLOCKCHAIN INFO                           ║".bright_cyan());
     println!("{}", "╠════════════════════════════════════════════════════════════════╣".bright_cyan());
+    
+    let chain = CHAIN.lock().unwrap();
+    let current_height = chain.blocks.len() as u64;
+    let network = current_network();
+    let current_difficulty = if current_height > 0 {
+        chain.tip().header.difficulty
+    } else {
+        network.get_difficulty()
+    };
+    let peer_count = PEER_COUNT.load(Ordering::Relaxed);
+    
+    // Calculate total transactions across all blocks
+    let total_transactions: usize = chain.blocks.iter().map(|b| b.transactions.len()).sum();
+    
+    // Calculate chain work (simplified - sum of difficulties)
+    let chain_work: u64 = chain.blocks.iter().map(|b| b.header.difficulty).sum();
+    
     println!("║ {} Network: {:>47} ║", "🌐".bright_blue(), format!("{:?}", cli.network).bright_white());
-    println!("║ {} Best Block: {:>44} ║", "🏆".bright_yellow(), "1,234,567".bright_white());
-    println!("║ {} Difficulty: {:>44} ║", "⚡".bright_red(), "12,345,678".bright_white());
-    println!("║ {} Hash Rate: {:>45} ║", "🔥".bright_red(), "1.2 MH/s".bright_white());
-    println!("║ {} Total Transactions: {:>34} ║", "💳".bright_green(), "5,678,901".bright_white());
-    println!("║ {} Chain Work: {:>44} ║", "⛓️".bright_blue(), "0x1234...".bright_white());
+    println!("║ {} Best Block: {:>44} ║", "🏆".bright_yellow(), format!("{}", current_height).bright_white());
+    println!("║ {} Difficulty: {:>44} ║", "⚡".bright_red(), format!("{}", current_difficulty).bright_white());
+    println!("║ {} Hash Rate: {:>45} ║", "🔥".bright_red(), "Calculating...".bright_white());
+    println!("║ {} Total Transactions: {:>34} ║", "💳".bright_green(), format!("{}", total_transactions).bright_white());
+    println!("║ {} Chain Work: {:>44} ║", "⛓️".bright_blue(), format!("0x{:x}", chain_work).bright_white());
     println!("{}", "╚════════════════════════════════════════════════════════════════╝".bright_cyan());
     Ok(())
 }
 
 fn handle_peers(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    use node::{PEERS, PEER_COUNT};
+    use std::sync::atomic::Ordering;
+    
     println!("{}", "╔════════════════════════════════════════════════════════════════╗".bright_green());
     println!("{}", "║                      PEER CONNECTIONS                         ║".bright_green());
     println!("{}", "╠════════════════════════════════════════════════════════════════╣".bright_green());
-    println!("║ {} Connected Peers: {:>39} ║", "👥".bright_green(), "42".bright_white());
-    println!("║ {} Outbound: {:>46} ║", "📤".bright_blue(), "8".bright_white());
-    println!("║ {} Inbound: {:>47} ║", "📥".bright_cyan(), "34".bright_white());
+    
+    let peer_count = PEER_COUNT.load(Ordering::Relaxed);
+    let peers = PEERS.lock().unwrap();
+    
+    println!("║ {} Connected Peers: {:>39} ║", "👥".bright_green(), format!("{}", peer_count).bright_white());
+    println!("║ {} Outbound: {:>46} ║", "📤".bright_blue(), "0".bright_white()); // TODO: Track outbound vs inbound
+    println!("║ {} Inbound: {:>47} ║", "📥".bright_cyan(), format!("{}", peer_count).bright_white());
     println!("║                                                                  ║");
-    println!("║ {} Top Peers by Score:                                        ║", "🏆".bright_yellow());
-    println!("║   192.168.1.100:9334    Score: 95   Ping: 12ms               ║");
-    println!("║   10.0.0.50:9334        Score: 92   Ping: 25ms               ║");
-    println!("║   172.16.0.200:9334     Score: 89   Ping: 35ms               ║");
+    
+    if peer_count > 0 {
+        println!("║ {} Active Peer Connections:                                   ║", "🔗".bright_yellow());
+        for (i, peer) in peers.iter().take(3).enumerate() {
+            if let Ok(addr) = peer.peer_addr() {
+                println!("║   {:20} Connected  Active                       ║", format!("{}:", addr));
+            }
+        }
+        if peers.len() > 3 {
+            println!("║   ... and {} more peers                                        ║", peers.len() - 3);
+        }
+    } else {
+        println!("║ {} No peers connected                                         ║", "⚠️".bright_yellow());
+        println!("║   Waiting for peer connections...                            ║");
+    }
+    
     println!("{}", "╚════════════════════════════════════════════════════════════════╝".bright_green());
     Ok(())
 }
 
 fn handle_mempool(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    use node::get_mempool;
+    
     println!("{}", "╔════════════════════════════════════════════════════════════════╗".bright_magenta());
     println!("{}", "║                      MEMORY POOL STATUS                       ║".bright_magenta());
     println!("{}", "╠════════════════════════════════════════════════════════════════╣".bright_magenta());
-    println!("║ {} Pending Transactions: {:>34} ║", "📄".bright_cyan(), "156".bright_white());
-    println!("║ {} Pool Size: {:>45} ║", "💾".bright_blue(), "2.4 MB".bright_white());
-    println!("║ {} Average Fee: {:>43} ║", "💰".bright_yellow(), "0.001 BSK".bright_white());
-    println!("║ {} Highest Fee: {:>43} ║", "🔝".bright_green(), "0.025 BSK".bright_white());
-    println!("║ {} Oldest Transaction: {:>34} ║", "⏰".bright_red(), "5m 32s ago".bright_white());
+    
+    let mempool = get_mempool();
+    let tx_count = mempool.len();
+    
+    // Calculate estimated size (rough estimate)
+    let estimated_size_kb = tx_count * 256; // ~256 bytes per tx estimate
+    let size_display = if estimated_size_kb > 1024 {
+        format!("{:.1} MB", estimated_size_kb as f64 / 1024.0)
+    } else {
+        format!("{} KB", estimated_size_kb)
+    };
+    
+    println!("║ {} Pending Transactions: {:>34} ║", "📄".bright_cyan(), format!("{}", tx_count).bright_white());
+    println!("║ {} Pool Size: {:>45} ║", "💾".bright_blue(), size_display.bright_white());
+    println!("║ {} Average Fee: {:>43} ║", "💰".bright_yellow(), "N/A".bright_white());
+    println!("║ {} Highest Fee: {:>43} ║", "🔝".bright_green(), "N/A".bright_white());
+    
+    if tx_count > 0 {
+        println!("║ {} Oldest Transaction: {:>34} ║", "⏰".bright_red(), "Recent".bright_white());
+    } else {
+        println!("║ {} Mempool empty                                              ║", "✅".bright_green());
+    }
+    
     println!("{}", "╚════════════════════════════════════════════════════════════════╝".bright_magenta());
     Ok(())
 }
 
 fn handle_mining(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    use node::CHAIN;
+    
     println!("{}", "╔════════════════════════════════════════════════════════════════╗".bright_red());
     println!("{}", "║                       MINING STATUS                           ║".bright_red());
     println!("{}", "╠════════════════════════════════════════════════════════════════╣".bright_red());
     
     if cli.mining {
+        let chain = CHAIN.lock().unwrap();
+        let current_height = chain.blocks.len() as u64;
+        
+        // Count blocks mined by this node (if mining address is known)
+        let blocks_found = if let Some(ref addr) = cli.mining_address {
+            chain.blocks.iter().filter(|b| b.coinbase.to == *addr).count()
+        } else {
+            0
+        };
+        
         println!("║ {} Mining: {:>48} ║", "⛏️".bright_red(), "ACTIVE".bright_green());
         println!("║ {} Threads: {:>47} ║", "🧵".bright_blue(), cli.mining_threads.to_string().bright_white());
-        println!("║ {} Hash Rate: {:>45} ║", "🔥".bright_red(), "4.2 kH/s".bright_white());
-        println!("║ {} Blocks Found: {:>42} ║", "🏆".bright_yellow(), "3".bright_white());
-        println!("║ {} Last Block: {:>44} ║", "⏰".bright_cyan(), "2h 15m ago".bright_white());
+        println!("║ {} Hash Rate: {:>45} ║", "🔥".bright_red(), "Calculating...".bright_white());
+        println!("║ {} Blocks Found: {:>42} ║", "🏆".bright_yellow(), format!("{}", blocks_found).bright_white());
+        println!("║ {} Current Height: {:>40} ║", "📊".bright_cyan(), format!("{}", current_height).bright_white());
         if let Some(ref addr) = cli.mining_address {
-            println!("║ {} Reward Address: {:>34} ║", "💰".bright_green(), format!("{}...", &addr[..20]).bright_white());
+            let display_addr = if addr.len() > 20 { &addr[..20] } else { addr };
+            println!("║ {} Reward Address: {:>34} ║", "💰".bright_green(), format!("{}...", display_addr).bright_white());
         }
     } else {
         println!("║ {} Mining: {:>48} ║", "⛏️".bright_red(), "DISABLED".bright_red());
@@ -790,13 +891,28 @@ fn handle_database(cli: &Cli, action: &DatabaseCommands) -> Result<(), Box<dyn s
             println!("{} ✅ Database repaired successfully!", "[SUCCESS]".bright_green().bold());
         }
         DatabaseCommands::Stats => {
+            use node::CHAIN;
+            
             println!("{}", "╔════════════════════════════════════════════════════════════════╗".bright_purple());
             println!("{}", "║                      DATABASE STATISTICS                      ║".bright_purple());
             println!("{}", "╠════════════════════════════════════════════════════════════════╣".bright_purple());
-            println!("║ {} Total Size: {:>44} ║", "💾".bright_blue(), "2.4 GB".bright_white());
-            println!("║ {} Blocks: {:>48} ║", "📦".bright_cyan(), "1,234,567".bright_white());
-            println!("║ {} Transactions: {:>40} ║", "💳".bright_green(), "5,678,901".bright_white());
-            println!("║ {} Cache Hit Rate: {:>38} ║", "🎯".bright_yellow(), "98.5%".bright_white());
+            
+            let chain = CHAIN.lock().unwrap();
+            let block_count = chain.blocks.len();
+            let total_transactions: usize = chain.blocks.iter().map(|b| b.transactions.len()).sum();
+            
+            // Estimate data size (very rough calculation)
+            let estimated_size_mb = (block_count * 1024) / 1024; // ~1KB per block estimate
+            let size_display = if estimated_size_mb > 1024 {
+                format!("{:.1} GB", estimated_size_mb as f64 / 1024.0)
+            } else {
+                format!("{} MB", estimated_size_mb)
+            };
+            
+            println!("║ {} Total Size: {:>44} ║", "💾".bright_blue(), size_display.bright_white());
+            println!("║ {} Blocks: {:>48} ║", "📦".bright_cyan(), format!("{}", block_count).bright_white());
+            println!("║ {} Transactions: {:>40} ║", "💳".bright_green(), format!("{}", total_transactions).bright_white());
+            println!("║ {} Cache Hit Rate: {:>38} ║", "🎯".bright_yellow(), "N/A".bright_white());
             println!("{}", "╚════════════════════════════════════════════════════════════════╝".bright_purple());
         }
         DatabaseCommands::Prune { keep } => {
