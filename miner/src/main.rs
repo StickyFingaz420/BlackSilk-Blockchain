@@ -998,15 +998,30 @@ struct SubmitBlockResponse {
 
 /// Fetch a mining job from the node
 fn fetch_job(client: &Client, node_url: &str, mining_address: &str) -> Option<GetBlockTemplateResponse> {
-    let url = format!("{}/get_block_template", node_url);
+    let url = if node_url.starts_with("http://") || node_url.starts_with("https://") {
+        format!("{}/get_block_template", node_url)
+    } else {
+        format!("http://{}/get_block_template", node_url)
+    };
     let request = serde_json::json!({
         "address": mining_address
     });
     
-    match client.post(&url).json(&request).send() {
+    println!("[Miner] Fetching job from: {}", url);
+    
+    match client.post(&url).json(&request).timeout(Duration::from_secs(10)).send() {
         Ok(response) => {
-            if let Ok(job) = response.json::<GetBlockTemplateResponse>() {
-                return Some(job);
+            println!("[Miner] Got response, status: {}", response.status());
+            if response.status().is_success() {
+                match response.json::<GetBlockTemplateResponse>() {
+                    Ok(job) => {
+                        println!("[Miner] Successfully parsed job for height: {}", job.height);
+                        return Some(job);
+                    }
+                    Err(e) => println!("[Miner] Failed to parse job response: {}", e),
+                }
+            } else {
+                println!("[Miner] HTTP error: {}", response.status());
             }
         }
         Err(e) => println!("[Miner] Failed to fetch job: {}", e),
@@ -1016,9 +1031,16 @@ fn fetch_job(client: &Client, node_url: &str, mining_address: &str) -> Option<Ge
 
 /// Submit a mined block to the node
 fn submit_block(client: &Client, node_url: &str, block: SubmitBlockRequest) {
-    let url = format!("{}/mining/submit_block", node_url);
-    match client.post(&url).json(&block).send() {
+    let url = if node_url.starts_with("http://") || node_url.starts_with("https://") {
+        format!("{}/submit_block", node_url)
+    } else {
+        format!("http://{}/submit_block", node_url)
+    };
+    println!("[Miner] Submitting block to: {}", url);
+    
+    match client.post(&url).json(&block).timeout(Duration::from_secs(10)).send() {
         Ok(response) => {
+            println!("[Miner] Submit response status: {}", response.status());
             if let Ok(res) = response.json::<SubmitBlockResponse>() {
                 println!("[Miner] Block submission result: {}", res.message);
             }
@@ -1058,10 +1080,16 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
     let job_clone = Arc::clone(&job);
     let client_clone = client.clone(); // Clone `client` to avoid move issues
     thread::spawn(move || {
+        println!("[Miner] Job fetcher thread started");
         loop {
+            println!("[Miner] Attempting to fetch job...");
             if let Some(new_job) = fetch_job(&client_clone, &node_url_owned, &mining_address_owned) {
+                println!("[Miner] Got new job for height: {}", new_job.height);
                 let mut job_lock = job_clone.lock().unwrap();
                 *job_lock = Some(new_job);
+                drop(job_lock);
+            } else {
+                println!("[Miner] Failed to get job, retrying in 5 seconds...");
             }
             thread::sleep(Duration::from_secs(5));
         }

@@ -3,13 +3,13 @@
 
 [miner]
 # Node RPC endpoint to connect to
-node_rpc_url = "http://127.0.0.1:19333"
+node_rpc_url = "http://127.0.0.1:9333"
 
 # Number of mining threads (0 = auto-detect CPU cores)
 threads = 0
 
 # Mining reward address (where block rewards will be sent)
-reward_address = ""
+reward_address = "BlkfFgF9d56jwvuCWtPRVzUTCD82agJBNBSwGiP2Ru5aQVuqCr5DunGYFuPmMNWSvSDuAZazp8EB1sxi6cqc8frjeKP4hDPRK"
 
 # Network to mine on: "testnet" or "mainnet"
 network = "testnet"
