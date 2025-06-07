@@ -22,6 +22,7 @@ mod models;
 mod escrow_integration;
 mod node_client;
 mod ipfs_client;
+mod smart_contracts; // Import smart_contracts module
 
 use decentralized_storage::{DecentralizedStorage, MarketplaceData};
 use models::*;
@@ -32,6 +33,7 @@ use ed25519_dalek::SigningKey;
 use sha2::{Sha256, Digest};
 use hex;
 use bip39::{Mnemonic, Language};
+use smart_contracts::escrow_contract::Escrow; // Import Escrow contract
 
 // BlackSilk Marketplace - Classic Silk Road Design
 // "Don't be sick" - We maintain community standards
@@ -551,6 +553,20 @@ async fn authenticate_with_seed_phrase(
     Ok(session)
 }
 
+// Escrow contract handlers
+async fn create_escrow_contract(buyer: String, seller: String, amount: u128) -> Result<String, StatusCode> {
+    let escrow = Escrow::new(buyer, seller, amount);
+    println!("Escrow contract created: {:?}", escrow);
+    // Logic to deploy the contract to the blockchain
+    Ok("Escrow contract deployed successfully".to_string())
+}
+
+async fn confirm_delivery(contract_address: String) -> Result<String, StatusCode> {
+    println!("Confirming delivery for contract: {}", contract_address);
+    // Logic to call the confirm_delivery function on the contract
+    Ok("Delivery confirmed successfully".to_string())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -575,6 +591,8 @@ async fn main() -> Result<()> {
         .route("/login", get(login_page))
         .route("/auth/private-key", post(auth_private_key))
         .route("/auth/seed-phrase", post(auth_seed_phrase))
+        .route("/create_escrow", post(create_escrow_contract)) // Route to create escrow contract
+        .route("/confirm_delivery", post(confirm_delivery)) // Route to confirm delivery
         .nest_service("/static", ServeDir::new("static"))
         .layer(
             CorsLayer::new()

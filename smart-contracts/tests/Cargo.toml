@@ -1,0 +1,8 @@
+[package]
+name = "smart_contracts_tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+escrow_contract = { path = "../escrow_contract" }
+marketplace_contract = { path = "../marketplace_contract" }

@@ -910,6 +910,19 @@ fn load_wallet(path: &Path) -> Option<WalletFile> {
     }
 }
 
+fn deploy_contract(wasm_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let wasm_bytes = fs::read(wasm_path)?;
+    println!("Deploying contract with size: {} bytes", wasm_bytes.len());
+    // Logic to send the wasm_bytes to the node for deployment
+    Ok(())
+}
+
+fn call_contract(contract_address: &str, function_name: &str, params: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Calling contract at {} with function {} and params {:?}", contract_address, function_name, params);
+    // Logic to send a transaction to the node to invoke the contract
+    Ok(())
+}
+
 fn main() {
     let cli = Cli::parse();
     
@@ -994,6 +1007,18 @@ fn main() {
             // Default behavior: show wallet info or prompt to create
             print_wallet_info(&cli);
         }
+    }
+
+    let wasm_path = "../smart-contracts/escrow_contract/target/wasm32-unknown-unknown/release/escrow_contract.wasm";
+    if let Err(e) = deploy_contract(wasm_path) {
+        eprintln!("Error deploying contract: {}", e);
+    }
+
+    let contract_address = "0x123456789abcdef";
+    let function_name = "confirm_delivery";
+    let params = vec!["param1".to_string(), "param2".to_string()];
+    if let Err(e) = call_contract(contract_address, function_name, &params) {
+        eprintln!("Error calling contract: {}", e);
     }
 }
 

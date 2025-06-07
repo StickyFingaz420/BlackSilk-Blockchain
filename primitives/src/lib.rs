@@ -127,3 +127,20 @@ pub mod escrow; // Escrow contract and dispute voting
 pub mod ring_sig;
 
 pub use crate::types::StealthAddress;
+
+use curve25519_dalek::ristretto::RistrettoPoint;
+use curve25519_dalek::scalar::Scalar;
+use sha3::Sha3_256;
+
+/// Generate a stealth address
+pub fn generate_stealth_address(view_key: &RistrettoPoint, spend_key: &RistrettoPoint) -> RistrettoPoint {
+    let r = Scalar::random(&mut rand::thread_rng());
+    let R = r * RistrettoPoint::default();
+
+    let mut hasher = Sha3_256::new();
+    hasher.update(R.compress().as_bytes());
+    hasher.update(spend_key.compress().as_bytes());
+    let hash = Scalar::from_hash(hasher);
+
+    hash * RistrettoPoint::default() + spend_key
+}

@@ -4,6 +4,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use colored::*;
+use wasmer::{Instance, Module, Store, imports};
 
 #[derive(Parser, Debug)]
 #[command(name = "blacksilk-node", version, about = "BlackSilk Privacy Blockchain Node")]
@@ -373,7 +374,27 @@ pub enum PrivacyArg {
     MaxPrivacy,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn execute_wasm_contract(wasm_bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let store = Store::default();
+    let module = Module::new(&store, wasm_bytes)?;
+    let import_object = imports! {};
+    let instance = Instance::new(&module, &import_object)?;
+
+    if let Some(start) = instance.exports.get_function("_start").ok() {
+        start.call(&[])?;
+    }
+
+    Ok(())
+}
+
+// Example usage of the Wasm execution function
+fn main() {
+    let wasm_bytes = include_bytes!("../../smart-contracts/escrow_contract/target/wasm32-unknown-unknown/release/escrow_contract.wasm");
+    match execute_wasm_contract(wasm_bytes) {
+        Ok(_) => println!("Wasm contract executed successfully"),
+        Err(e) => eprintln!("Error executing Wasm contract: {}", e),
+    }
+    
     let cli = Cli::parse();
     
     // Print professional startup banner
