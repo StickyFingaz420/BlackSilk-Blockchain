@@ -12,6 +12,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use itertools::Itertools;
 use colored::*;
+mod randomx;
 
 // Utility function to convert hex string to 32-byte array
 fn hex_to_32_bytes(hex_str: &str) -> Result<[u8; 32], String> {
@@ -923,6 +924,11 @@ fn call_contract(contract_address: &str, function_name: &str, params: &[String])
     Ok(())
 }
 
+fn submit_pow(header: &[u8], nonce: u64, target: &[u8]) -> bool {
+    // Simulate interaction with the RandomX-enabled smart contract
+    randomx::validate_pow(header, nonce, target)
+}
+
 fn main() {
     let cli = Cli::parse();
     
@@ -1019,6 +1025,17 @@ fn main() {
     let params = vec!["param1".to_string(), "param2".to_string()];
     if let Err(e) = call_contract(contract_address, function_name, &params) {
         eprintln!("Error calling contract: {}", e);
+    }
+
+    // Example usage: Submit a PoW result
+    let header = b"example_header";
+    let nonce = 42;
+    let target = b"example_target";
+
+    if submit_pow(header, nonce, target) {
+        println!("PoW submission is valid.");
+    } else {
+        println!("PoW submission is invalid.");
     }
 }
 

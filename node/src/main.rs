@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use colored::*;
 use wasmer::{Instance, Module, Store, imports};
+use randomx;
 
 #[derive(Parser, Debug)]
 #[command(name = "blacksilk-node", version, about = "BlackSilk Privacy Blockchain Node")]
@@ -1011,4 +1012,19 @@ fn handle_privacy(cli: &Cli, action: &PrivacyCommands) -> Result<(), Box<dyn std
         }
     }
     Ok(())
+}
+
+fn validate_pow_submission(header: &[u8], nonce: u64, target: &[u8]) -> bool {
+    randomx::validate_pow(header, nonce, target)
+}
+
+// Example usage in the node's block validation logic
+fn validate_block(header: &[u8], nonce: u64, target: &[u8]) -> bool {
+    if validate_pow_submission(header, nonce, target) {
+        println!("Block is valid.");
+        true
+    } else {
+        println!("Block is invalid.");
+        false
+    }
 }
