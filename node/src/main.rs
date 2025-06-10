@@ -7,6 +7,8 @@ use colored::*;
 use wasmer::{Instance, Module, Store, imports};
 use randomx;
 
+mod randomx;
+
 #[derive(Parser, Debug)]
 #[command(name = "blacksilk-node", version, about = "BlackSilk Privacy Blockchain Node")]
 pub struct Cli {
@@ -379,7 +381,7 @@ fn execute_wasm_contract(wasm_bytes: &[u8]) -> Result<(), Box<dyn std::error::Er
     let store = Store::default();
     let module = Module::new(&store, wasm_bytes)?;
     let import_object = imports! {};
-    let instance = Instance::new(&module, &import_object)?;
+    let instance = Instance::new(&mut store, &module, &import_object)?;
 
     if let Some(start) = instance.exports.get_function("_start").ok() {
         start.call(&[])?;

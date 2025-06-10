@@ -1,0 +1,1 @@
+c:\Users\Brega05\Desktop\BlackSilk-Blockchain\smart-contracts\target\wasm32-unknown-unknown\debug\escrow_contract.wasm: c:\Users\Brega05\Desktop\BlackSilk-Blockchain\smart-contracts\escrow_contract\src\lib.rs
