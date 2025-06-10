@@ -384,14 +384,14 @@ fn execute_wasm_contract(wasm_bytes: &[u8]) -> Result<(), Box<dyn std::error::Er
     let instance = Instance::new(&mut store, &module, &import_object)?;
 
     if let Some(start) = instance.exports.get_function("_start").ok() {
-        start.call(&[])?;
+        start.call(&mut store, &[])?;
     }
 
     Ok(())
 }
 
 // Example usage of the Wasm execution function
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wasm_bytes = include_bytes!("../../smart-contracts/escrow_contract/target/wasm32-unknown-unknown/release/escrow_contract.wasm");
     match execute_wasm_contract(wasm_bytes) {
         Ok(_) => println!("Wasm contract executed successfully"),

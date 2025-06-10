@@ -554,6 +554,7 @@ async fn authenticate_with_seed_phrase(
 }
 
 // Escrow contract handlers
+#[axum::debug_handler]
 async fn create_escrow_contract(buyer: String, seller: String, amount: u128) -> Result<String, StatusCode> {
     let escrow = Escrow::new(buyer, seller, amount);
     println!("Escrow contract created: {:?}", escrow);
