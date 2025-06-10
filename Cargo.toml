@@ -1,10 +1,13 @@
 [workspace]
 members = [
-    "node",
     "wallet",
+    "node",
+    "marketplace",
     "primitives",
+    "smart-contracts",
     "miner",
-    "marketplace"
+    "web-wallet",
+    "testnet-faucet"
 ]
 
 [package]

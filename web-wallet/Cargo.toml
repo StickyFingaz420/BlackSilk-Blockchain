@@ -1,0 +1,11 @@
+[package]
+name = "web-wallet"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Add necessary dependencies here
+
+[lib]
+name = "web_wallet"
+path = "src/lib.rs"

@@ -4,7 +4,7 @@ mod tests {
     use crate::{Cli, Commands, PrivacyCommands};
     use clap::Parser;
     use primitives::zkp::{generate_zk_proof, verify_zk_proof};
-    use primitives::zkp::{ProvingKey, VerifyingKey}; // Replace `some_crate` with `primitives::zkp`
+    use primitives::zkp::ark_groth16::data_structures::{ProvingKey, VerifyingKey}; // Import ProvingKey and VerifyingKey directly
     use std::fs;
     use std::path::Path;
 
@@ -22,7 +22,7 @@ mod tests {
 
                 // Generate the proof
                 let result = generate_zk_proof(amount, &proving_key);
-                assert!(result.is_ok());
+                assert!(result.proof.is_some()); // Check if proof is generated
             }
         }
     }

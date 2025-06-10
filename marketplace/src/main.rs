@@ -592,7 +592,7 @@ async fn main() -> Result<()> {
         .route("/login", get(login_page))
         .route("/auth/private-key", post(auth_private_key))
         .route("/auth/seed-phrase", post(auth_seed_phrase))
-        .route("/create_escrow", post(create_escrow_contract)) // Route to create escrow contract
+        .route("/create_escrow", post(create_escrow_contract.into_service())) // Route to create escrow contract
         .route("/confirm_delivery", post(confirm_delivery)) // Route to confirm delivery
         .nest_service("/static", ServeDir::new("static"))
         .layer(
