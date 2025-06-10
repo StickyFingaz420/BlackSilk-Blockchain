@@ -1,11 +1,2 @@
 [workspace]
-
-[lib]
-name = "randomx"
-path = "randomx/src/lib.rs"
-
-[dependencies]
-sha2 = "0.10"
-blake2 = "0.10"
-aes = "0.8"
-rand = "0.8"
+members = ["escrow_contract"]

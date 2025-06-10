@@ -202,6 +202,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use serde::{Serialize, Deserialize};
 use once_cell::sync::OnceCell;
+use primitives::ring_sig::generate_ring_signature;
 
 /// Global network configuration
 static CURRENT_NETWORK: OnceCell<Network> = OnceCell::new();
@@ -551,13 +552,14 @@ mod double_spend_tests {
         // Generate proper signatures for transactions
         use sha2::{Sha256, Digest};
         let mut hasher1 = Sha256::new();
-        hasher1.update(&msg);
-        hasher1.update(&[0u8]); // Transaction index
+        // Disambiguate the `update` method calls
+        sha2::Digest::update(&mut hasher1, &msg);
+        sha2::Digest::update(&mut hasher1, &[0u8]); // Transaction index
         let sig1 = hex::encode(hasher1.finalize());
         
         let mut hasher2 = Sha256::new();
-        hasher2.update(&msg);
-        hasher2.update(&[1u8]); // Different transaction index
+        sha2::Digest::update(&mut hasher2, &msg);
+        sha2::Digest::update(&mut hasher2, &[1u8]); // Different transaction index
         let sig2 = hex::encode(hasher2.finalize());
         
         let tx1 = Transaction { inputs: vec![input.clone()], outputs: vec![output.clone()], fee: 0, extra: msg.to_vec(), metadata: None, signature: sig1 };

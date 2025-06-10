@@ -139,8 +139,8 @@ pub fn generate_stealth_address(view_key: &RistrettoPoint, spend_key: &Ristretto
     let R = r * RistrettoPoint::default();
 
     let mut hasher = Sha512::new();
-    hasher.update(R.compress().as_bytes());
-    hasher.update(spend_key.compress().as_bytes());
+    sha2::Digest::update(&mut hasher, R.compress().as_bytes());
+    sha2::Digest::update(&mut hasher, spend_key.compress().as_bytes());
     let hash = Scalar::from_hash(hasher);
 
     hash * RistrettoPoint::default() + spend_key

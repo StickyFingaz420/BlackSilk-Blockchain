@@ -3,13 +3,15 @@
 // This module now includes real integration of zero-knowledge proofs (zk-SNARKs, zk-STARKs, etc.)
 // for confidential transactions, privacy, and advanced cryptographic features.
 
-use ark_bls12_381::{Bls12_381, Fr};
+use ark_bls12_381::{Bls12_381, Fr, G1Projective};
+use ark_ec::CurveGroup;
 use ark_groth16::{Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_groth16::r1cs_to_qap::LibsnarkReduction;
 use ark_groth16::verifier::prepare_verifying_key;
 use ark_relations::r1cs::ConstraintSynthesizer;
 use ark_snark::SNARK;
 use ark_std::rand::thread_rng;
+use ark_std::Zero;
 
 /// ZKP proof object
 pub struct ZkProof {
