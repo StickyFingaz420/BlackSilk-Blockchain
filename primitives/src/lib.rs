@@ -135,7 +135,7 @@ use sha2::Digest;
 use rand::RngCore;
 
 /// Generate a stealth address
-pub fn generate_stealth_address(view_key: &RistrettoPoint, spend_key: &RistrettoPoint) -> RistrettoPoint {
+pub fn generate_stealth_address(_view_key: &RistrettoPoint, spend_key: &RistrettoPoint) -> RistrettoPoint {
     let mut rng = rand::thread_rng();
     let mut random_bytes = [0u8; 32];
     rng.fill_bytes(&mut random_bytes);

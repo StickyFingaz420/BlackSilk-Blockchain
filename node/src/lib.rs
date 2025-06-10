@@ -202,7 +202,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use serde::{Serialize, Deserialize};
 use once_cell::sync::OnceCell;
-use primitives::ring_sig::generate_ring_signature;
 
 /// Global network configuration
 static CURRENT_NETWORK: OnceCell<Network> = OnceCell::new();
@@ -286,6 +285,7 @@ fn handle_client(mut stream: TcpStream) {
         let peer_addrs: Vec<String> = peers.iter().filter_map(|s| s.peer_addr().ok().map(|a| a.to_string())).collect();
         let _ = send_message(&mut stream, &P2PMessage::PeerList(peer_addrs));
     }
+    let version = P2PMessage::Version { version: 
     let version = P2PMessage::Version { version: 1, node: "BlackSilkNode".to_string() };
     let _ = send_message(&mut stream, &version);
     loop {
