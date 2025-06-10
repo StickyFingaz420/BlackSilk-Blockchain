@@ -132,10 +132,14 @@ use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 use sha2::Sha512;
 use sha2::Digest;
+use rand::RngCore;
 
 /// Generate a stealth address
 pub fn generate_stealth_address(view_key: &RistrettoPoint, spend_key: &RistrettoPoint) -> RistrettoPoint {
-    let r = Scalar::random(&mut rand::thread_rng());
+    let mut rng = rand::thread_rng();
+    let mut random_bytes = [0u8; 32];
+    rng.fill_bytes(&mut random_bytes);
+    let r = Scalar::from_bytes_mod_order(random_bytes);
     let R = r * RistrettoPoint::default();
 
     let mut hasher = Sha512::new();

@@ -37,4 +37,3 @@ colored = "2.0"
 torut = "0.2.1"
 wasmer = "3.0"
 wasm-bindgen = "0.2"
-smart_contracts = { path = "../smart-contracts" }

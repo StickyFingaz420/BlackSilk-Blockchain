@@ -25,4 +25,3 @@ colored = "2.0"
 chrono = "0.4"
 wasm-bindgen = "0.2"
 bincode = "1.3"
-smart_contracts = { path = "../smart-contracts" }
