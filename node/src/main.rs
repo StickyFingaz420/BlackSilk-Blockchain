@@ -5,9 +5,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use colored::*;
 use wasmer::{Instance, Module, Store, imports};
-use randomx;
-
-mod randomx;
+use smart_contracts::randomx::validate_pow;
 
 #[derive(Parser, Debug)]
 #[command(name = "blacksilk-node", version, about = "BlackSilk Privacy Blockchain Node")]
@@ -378,7 +376,7 @@ pub enum PrivacyArg {
 }
 
 fn execute_wasm_contract(wasm_bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-    let store = Store::default();
+    let mut store = Store::default();
     let module = Module::new(&store, wasm_bytes)?;
     let import_object = imports! {};
     let instance = Instance::new(&mut store, &module, &import_object)?;
@@ -1017,7 +1015,7 @@ fn handle_privacy(cli: &Cli, action: &PrivacyCommands) -> Result<(), Box<dyn std
 }
 
 fn validate_pow_submission(header: &[u8], nonce: u64, target: &[u8]) -> bool {
-    randomx::validate_pow(header, nonce, target)
+    validate_pow(header, nonce, target)
 }
 
 // Example usage in the node's block validation logic

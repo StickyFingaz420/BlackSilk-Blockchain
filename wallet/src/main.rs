@@ -14,6 +14,9 @@ use itertools::Itertools;
 use colored::*;
 mod randomx;
 
+// Correctly import `validate_pow` from the `smart-contracts/randomx` module
+use smart_contracts::randomx::validate_pow;
+
 // Utility function to convert hex string to 32-byte array
 fn hex_to_32_bytes(hex_str: &str) -> Result<[u8; 32], String> {
     let bytes = hex::decode(hex_str).map_err(|e| format!("Hex decode error: {}", e))?;
@@ -926,7 +929,7 @@ fn call_contract(contract_address: &str, function_name: &str, params: &[String])
 
 fn submit_pow(header: &[u8], nonce: u64, target: &[u8]) -> bool {
     // Simulate interaction with the RandomX-enabled smart contract
-    randomx::validate_pow(header, nonce, target)
+    validate_pow(header, nonce, target)
 }
 
 fn main() {
@@ -1588,6 +1591,7 @@ fn handle_multisig(cli: &Cli, action: &MultisigCommands) {
             println!("{} Creating multisig wallet", "[MULTISIG]".bright_magenta().bold());
             
             println!();
+
             println!("{}", "╔════════════════════════════════════════════════════════════════╗".bright_magenta());
             println!("{}", "║                   MULTISIG WALLET CREATION                    ║".bright_magenta());
             println!("{}", "╠════════════════════════════════════════════════════════════════╣".bright_magenta());
