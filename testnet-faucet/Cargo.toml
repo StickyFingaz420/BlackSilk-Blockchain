@@ -1,0 +1,11 @@
+[package]
+name = "testnet-faucet"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Add necessary dependencies here
+
+[lib]
+name = "testnet_faucet"
+path = "src/lib.rs"

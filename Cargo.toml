@@ -4,10 +4,12 @@ members = [
     "node",
     "marketplace",
     "primitives",
-    "smart-contracts",
     "miner",
     "web-wallet",
-    "testnet-faucet"
+    "testnet-faucet",
+    "smart-contracts/escrow_contract",
+    "smart-contracts/marketplace_contract",
+    "smart-contracts/randomx",
 ]
 
 [package]

@@ -1,2 +1,14 @@
-[workspace]
-members = ["escrow_contract"]
+[package]
+name = "escrow_contract"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+ink = { version = "3.0.0", default-features = false, features = ["ink-as-dependency"] }
+scale = "2.0.0"
+alloc = "0.1.0"
+core = "0.1.0"
+```
