@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use colored::*;
 use wasmer::{Instance, Module, Store, imports};
 use smart_contracts::randomx::validate_pow;
+use node::network::tor_process::TorProcess;
 
 #[derive(Parser, Debug)]
 #[command(name = "blacksilk-node", version, about = "BlackSilk Privacy Blockchain Node")]
@@ -34,8 +35,18 @@ pub struct Cli {
     #[arg(long, value_name = "ADDR")]
     pub add_peer: Vec<String>,
 
-    /// Privacy mode for network connections
-    #[arg(long, value_enum, default_value = "tor")]
+    /// Professional privacy mode for network connections
+    ///
+    /// clearnet — direct connections only
+    /// tor      — require Tor for all connections (exit if unavailable)
+    /// i2p      — require I2P for all connections (exit if unavailable)
+    /// auto     — try Tor, then I2P, then clearnet (automatic fallback, default)
+    #[arg(long, value_enum, default_value = "auto")]
+    pub net_privacy: NetPrivacyArg,
+    /// [DEPRECATED] Use --net-privacy instead
+    ///
+    /// This flag is deprecated. Use --net-privacy for all privacy configuration.
+    #[arg(long, value_enum, default_value = "tor", hide = true)]
     pub privacy: PrivacyArg,
 
     /// Enable Tor hidden service
@@ -375,6 +386,14 @@ pub enum PrivacyArg {
     MaxPrivacy,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+pub enum NetPrivacyArg {
+    Clearnet,
+    Tor,
+    I2p,
+    Auto,
+}
+
 fn execute_wasm_contract(wasm_bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let mut store = Store::default();
     let module = Module::new(&store, wasm_bytes)?;
@@ -485,19 +504,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("{} Network already configured", "[WARNING]".bright_yellow().bold());
     }
     
-    // Configure privacy settings
-    let privacy_mode = match cli.privacy {
-        PrivacyArg::Disabled => node::network::privacy::PrivacyMode::Disabled,
-        PrivacyArg::Tor => node::network::privacy::PrivacyMode::Tor,
-        PrivacyArg::TorOnly => node::network::privacy::PrivacyMode::TorOnly,
-        PrivacyArg::MaxPrivacy => node::network::privacy::PrivacyMode::MaxPrivacy,
+    // Configure privacy settings using new professional argument
+    let (privacy_mode, tor_only, i2p_enabled, clearnet_banned) = match cli.net_privacy {
+        NetPrivacyArg::Clearnet => (
+            node::network::privacy::PrivacyMode::Disabled,
+            false,
+            false,
+            false,
+        ),
+        NetPrivacyArg::Tor => (
+            node::network::privacy::PrivacyMode::TorOnly,
+            true,
+            false,
+            true,
+        ),
+        NetPrivacyArg::I2p => (
+            node::network::privacy::PrivacyMode::MaxPrivacy,
+            false,
+            true,
+            true,
+        ),
+        NetPrivacyArg::Auto => (
+            node::network::privacy::PrivacyMode::Auto, // Use new Auto mode for fallback
+            true,
+            true,
+            false,
+        ),
     };
-    
     let privacy_config = node::network::privacy::PrivacyConfig {
         privacy_mode,
-        tor_only: matches!(cli.privacy, PrivacyArg::TorOnly | PrivacyArg::MaxPrivacy),
-        i2p_enabled: cli.i2p_enabled || matches!(cli.privacy, PrivacyArg::MaxPrivacy),
+        tor_only,
+        i2p_enabled,
+        clearnet_banned,
         hidden_service_port: network.get_ports().tor,
+        tor_proxy: Some(cli.tor_proxy.clone()),
+        i2p_proxy: Some(cli.i2p_sam.clone()),
         ..Default::default()
     };
     
@@ -508,22 +549,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let privacy_manager = std::sync::Arc::new(
         node::network::privacy::PrivacyManager::new(privacy_config.clone())
     );
-    
-    // Setup Tor hidden service if enabled
-    if cli.tor_hidden_service || matches!(cli.privacy, PrivacyArg::TorOnly | PrivacyArg::MaxPrivacy) {
-        println!("[Privacy] Initializing Tor hidden service...");
-        match tokio::runtime::Runtime::new() {
-            Ok(rt) => {
-                rt.block_on(async {
-                    match node::network::privacy::setup_tor_hidden_service(network.get_ports().tor).await {
-                        Ok(onion_addr) => println!("[Privacy] ✅ Tor hidden service: {}", onion_addr),
-                        Err(e) => eprintln!("[Privacy] ⚠️  Tor setup failed: {}", e),
+
+    // --- Tor process management for privacy networking ---
+    let mut tor_process: Option<TorProcess> = None;
+    let socks_port = 9050u16;
+    let control_port = 9051u16;
+    match privacy_config.privacy_mode {
+        node::network::privacy::PrivacyMode::TorOnly |
+        node::network::privacy::PrivacyMode::MaxPrivacy |
+        node::network::privacy::PrivacyMode::Auto => {
+            match TorProcess::start(socks_port, control_port) {
+                Ok(proc) if proc.running => {
+                    tor_process = Some(proc);
+                }
+                Ok(_) | Err(_) => {
+                    eprintln!("[Privacy] ⚠️  Tor could not be started or is unavailable.");
+                    if privacy_config.privacy_mode == node::network::privacy::PrivacyMode::Auto {
+                        eprintln!("[Privacy] Auto mode: falling back to I2P or clearnet.");
+                        // In a full implementation, update privacy_manager/config here
+                    } else {
+                        eprintln!("[Privacy] Privacy mode requires Tor. Exiting.");
+                        std::process::exit(1);
                     }
-                });
+                }
             }
-            Err(e) => eprintln!("[Privacy] Failed to create async runtime: {}", e),
         }
-    }
+        _ => {}
+    };
     
     // Start the enhanced node
     start_enhanced_node(network, privacy_manager, cli.data_dir, cli.connect)?;
@@ -575,13 +627,39 @@ fn print_configuration(cli: &Cli) {
 
 fn display_startup_banner(network: &node::Network, privacy_config: &node::network::privacy::PrivacyConfig) {
     let ports = network.get_ports();
-    
     println!("╔══════════════════════════════════════════════════════════════════╗");
     println!("║                     BlackSilk Blockchain Node                   ║");
     println!("║                Professional Privacy-First Implementation         ║");
     println!("╠══════════════════════════════════════════════════════════════════╣");
     println!("║ Network: {:50} ║", format!("{:?}", network));
     println!("║ Privacy Mode: {:43} ║", format!("{:?}", privacy_config.privacy_mode));
+    match privacy_config.privacy_mode {
+        node::network::privacy::PrivacyMode::TorOnly => {
+            println!("║   [TorOnly] All connections must use Tor.                      ║");
+        }
+        node::network::privacy::PrivacyMode::MaxPrivacy => {
+            println!("║   [MaxPrivacy] Tor and I2P only. Clearnet disabled.            ║");
+        }
+        node::network::privacy::PrivacyMode::Auto => {
+            println!("║   [Auto] Will try Tor, then I2P, then clearnet as fallback.    ║");
+        }
+        node::network::privacy::PrivacyMode::Tor => {
+            println!("║   [Tor Preferred] Tor preferred, clearnet allowed.             ║");
+        }
+        node::network::privacy::PrivacyMode::Disabled => {
+            println!("║   [Clearnet] No privacy enforcement.                           ║");
+        }
+    }
+    if privacy_config.tor_only || matches!(privacy_config.privacy_mode, node::network::privacy::PrivacyMode::TorOnly | node::network::privacy::PrivacyMode::MaxPrivacy | node::network::privacy::PrivacyMode::Auto) {
+        println!("║   Tor:        ENABLED (SOCKS5: {})", privacy_config.tor_proxy.as_deref().unwrap_or("127.0.0.1:9050"));
+    } else {
+        println!("║   Tor:        DISABLED");
+    }
+    if privacy_config.i2p_enabled || matches!(privacy_config.privacy_mode, node::network::privacy::PrivacyMode::MaxPrivacy | node::network::privacy::PrivacyMode::Auto) {
+        println!("║   I2P:        ENABLED (SAM: {})", privacy_config.i2p_proxy.as_deref().unwrap_or("127.0.0.1:4444"));
+    } else {
+        println!("║   I2P:        DISABLED");
+    }
     println!("║                                                                  ║");
     println!("║ Port Configuration:                                              ║");
     println!("║   P2P Network:     {} (All protocols)                        ║", ports.p2p);

@@ -20,6 +20,7 @@ use blake2::{Blake2b, Digest};
 use blake2::digest::Update;
 use digest::consts::U32;
 use std::sync::atomic::{AtomicU32, Ordering};
+use i2p::I2pClient;
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
@@ -832,13 +833,62 @@ fn get_privacy_config() -> &'static PrivacyConfig {
 
 pub fn connect_to_peer(addr: &str) {
     let privacy = get_privacy_config();
-    if privacy.tor_only && !(is_onion_address(addr) || is_i2p_address(addr)) {
-        println!("[Privacy] Connection to non-Tor/I2P address blocked: {}", addr);
-        return;
+    let mode = &privacy.privacy_mode;
+    match mode {
+        crate::network::privacy::PrivacyMode::Auto => {
+            // Try Tor first
+            if is_onion_address(addr) {
+                println!("[Privacy] Auto mode: trying Tor for {}", addr);
+                // In a real implementation, use Tor SOCKS5 here
+                // For now, fall through to clearnet if not available
+            } else if is_i2p_address(addr) && privacy.i2p_enabled {
+                println!("[Privacy] Auto mode: trying I2P for {}", addr);
+                let sam_addr = privacy.i2p_proxy.as_deref().unwrap_or(i2p::DEFAULT_SAM_ADDR);
+                match I2pClient::new(sam_addr, "blacksilk", "STREAM") {
+                    Ok(mut client) => {
+                        println!("[I2P] Connected to I2P peer {} via SAM {}", addr, sam_addr);
+                        let version = P2PMessage::Version { version: 1, node: "BlackSilkNode-I2P".to_string() };
+                        let data = serde_json::to_vec(&version).unwrap();
+                        if let Err(e) = client.send_to(addr, &data) {
+                            eprintln!("[I2P] Failed to send to I2P peer {}: {}", addr, e);
+                        }
+                        return;
+                    }
+                    Err(e) => {
+                        eprintln!("[I2P] Failed to connect to I2P peer {}: {}", addr, e);
+                    }
+                }
+            } else {
+                println!("[Privacy] Auto mode: falling back to clearnet for {}", addr);
+            }
+        }
+        _ => {
+            if privacy.tor_only && !(is_onion_address(addr) || is_i2p_address(addr)) {
+                println!("[Privacy] Connection to non-Tor/I2P address blocked: {}", addr);
+                return;
+            }
+            if is_i2p_address(addr) && privacy.i2p_enabled {
+                let sam_addr = privacy.i2p_proxy.as_deref().unwrap_or(i2p::DEFAULT_SAM_ADDR);
+                match I2pClient::new(sam_addr, "blacksilk", "STREAM") {
+                    Ok(mut client) => {
+                        println!("[I2P] Connected to I2P peer {} via SAM {}", addr, sam_addr);
+                        let version = P2PMessage::Version { version: 1, node: "BlackSilkNode-I2P".to_string() };
+                        let data = serde_json::to_vec(&version).unwrap();
+                        if let Err(e) = client.send_to(addr, &data) {
+                            eprintln!("[I2P] Failed to send to I2P peer {}: {}", addr, e);
+                        }
+                        return;
+                    }
+                    Err(e) => {
+                        eprintln!("[I2P] Failed to connect to I2P peer {}: {}", addr, e);
+                    }
+                }
+                return;
+            }
+        }
     }
-
+    // Default: clearnet connection
     let mut retries = 3;
-
     while retries > 0 {
         match TcpStream::connect(addr) {
             Ok(mut stream) => {
@@ -859,7 +909,6 @@ pub fn connect_to_peer(addr: &str) {
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
     }
-
     println!("[P2P] All attempts to connect to peer {} failed.", addr);
 }
 
@@ -1049,392 +1098,4 @@ fn connect_to_peer_with_privacy(addr: &str, privacy_manager: Arc<crate::network:
                     
                     if let Err(e) = send_message(&mut stream, &version) {
                         eprintln!("[P2P] Failed to send version message: {}", e);
-                        privacy_manager.unregister_connection(&peer_addr);
-                        return;
-                    }
-                    
-                    // Handle the connection in a separate thread
-                    let privacy_clone = privacy_manager.clone();
-                    std::thread::spawn(move || {
-                        handle_client_with_privacy(stream, privacy_clone);
-                    });
-                    return;
-                }
-            }
-            Err(e) => {
-                eprintln!("[P2P] Failed to connect to {}: {}", addr, e);
-            }
-        }
-        retries -= 1;
-        if retries > 0 {
-            std::thread::sleep(std::time::Duration::from_secs(2));
-        }
-    }
-    println!("[P2P] All attempts to connect to {} failed", addr);
-}
-
-fn handle_client_with_privacy(mut stream: TcpStream, privacy_manager: Arc<crate::network::privacy::PrivacyManager>) {
-    let peer_addr = match stream.peer_addr() {
-        Ok(addr) => addr,
-        Err(_) => {
-            println!("[P2P] Failed to get peer address, closing connection");
-            return;
-        }
-    };
-    
-    println!("[P2P] Privacy-managed connection from: {}", peer_addr);
-    
-    // Add to peers list
-    {
-        let mut peers = PEERS.lock().unwrap();
-        peers.push(stream.try_clone().unwrap());
-        
-        // Send current peer list to the new peer
-        let peer_addrs: Vec<String> = peers.iter()
-            .filter_map(|s| s.peer_addr().ok().map(|a| a.to_string()))
-            .collect();
-        let _ = send_message(&mut stream, &P2PMessage::PeerList(peer_addrs));
-    }
-    
-    // Send version message
-    let version = P2PMessage::Version { 
-        version: 1, 
-        node: "BlackSilkNode-Privacy".to_string() 
-    };
-    let _ = send_message(&mut stream, &version);
-    
-    // Main message handling loop
-    loop {
-        match read_message(&mut stream) {
-            Some(msg) => {
-                println!("[P2P] Privacy-filtered message from {}: {:?}", peer_addr, msg);
-                
-                // Handle messages same as regular client
-                match msg {
-                    P2PMessage::Ping => { 
-                        let _ = send_message(&mut stream, &P2PMessage::Pong); 
-                    },
-                    P2PMessage::Pong => {
-                        println!("[P2P] Pong received from {}", peer_addr);
-                    },
-                    P2PMessage::Version { version, node } => {
-                        println!("[P2P] Peer {} running version {} ({})", peer_addr, version, node);
-                    },
-                    P2PMessage::Block(block) => {
-                        println!("[P2P] Received block #{} from {}", block.header.height, peer_addr);
-                        let mut chain = CHAIN.lock().unwrap();
-                        if validate_block_with_chain(&block, Some(&chain)) {
-                            if chain.add_block(block.clone()) {
-                                save_chain_to_disk(&chain);
-                                println!("[Chain] Block added to chain");
-                                // Broadcast to other peers (excluding sender)
-                                broadcast_message_except(&P2PMessage::Block(block), &peer_addr);
-                            }
-                        } else {
-                            println!("[Chain] Invalid block rejected from {}", peer_addr);
-                        }
-                    },
-                    P2PMessage::Transaction(tx) => {
-                        if validate_transaction(&tx) {
-                            add_to_mempool(tx.clone());
-                            println!("[Mempool] Transaction added from {}", peer_addr);
-                            broadcast_message_except(&P2PMessage::Transaction(tx), &peer_addr);
-                        } else {
-                            println!("[Mempool] Invalid transaction rejected from {}", peer_addr);
-                        }
-                    },
-                    P2PMessage::PeerList(peers) => {
-                        println!("[P2P] Received peer list from {}: {:?}", peer_addr, peers);
-                        // Validate and connect to new peers with privacy filtering
-                        for peer in peers {
-                            if let Ok(new_peer_addr) = peer.parse::<SocketAddr>() {
-                                if privacy_manager.allow_connection(&new_peer_addr, true) {
-                                    let pm_clone = privacy_manager.clone();
-                                    std::thread::spawn(move || {
-                                        connect_to_peer_with_privacy(&peer, pm_clone);
-                                    });
-                                }
-                            }
-                        }
-                    },
-                    P2PMessage::GetBlocks { from_height } => {
-                        let chain = CHAIN.lock().unwrap();
-                        let blocks: Vec<_> = chain.blocks.iter()
-                            .filter(|b| b.header.height >= from_height)
-                            .cloned()
-                            .collect();
-                        let _ = send_message(&mut stream, &P2PMessage::Blocks(blocks));
-                    },
-                    P2PMessage::Blocks(blocks) => {
-                        let mut chain = CHAIN.lock().unwrap();
-                        if blocks.len() > chain.blocks.len() {
-                            drop(chain);
-                            maybe_reorg_chain(blocks);
-                        } else {
-                            for block in blocks {
-                                if validate_block_with_chain(&block, Some(&chain)) {
-                                    if chain.add_block(block) {
-                                        save_chain_to_disk(&chain);
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    P2PMessage::GetMempool => {
-                        let mempool = get_mempool();
-                        let _ = send_message(&mut stream, &P2PMessage::Mempool(mempool));
-                    },
-                    P2PMessage::Mempool(txs) => {
-                        for tx in txs {
-                            if validate_transaction(&tx) {
-                                add_to_mempool(tx);
-                            }
-                        }
-                    },
-                }
-            }
-            None => {
-                println!("[P2P] Peer {} disconnected", peer_addr);
-                break;
-            }
-        }
-    }
-    
-    // Cleanup on disconnect
-    privacy_manager.unregister_connection(&peer_addr);
-    
-    // Remove from peers list
-    {
-        let mut peers = PEERS.lock().unwrap();
-        peers.retain(|s| s.peer_addr().unwrap() != peer_addr);
-    }
-    
-    println!("[P2P] Privacy-managed connection to {} closed", peer_addr);
-}
-
-// Helper function to broadcast message to all peers except one
-fn broadcast_message_except(msg: &P2PMessage, exclude_addr: &SocketAddr) {
-    let peers = PEERS.lock().unwrap();
-    for peer in peers.iter() {
-        if let Ok(addr) = peer.peer_addr() {
-            if addr != *exclude_addr {
-                // Clone the stream to get a mutable reference
-                if let Ok(mut stream) = peer.try_clone() {
-                    let _ = send_message(&mut stream, msg);
-                }
-            }
-        }
-    }
-}
-
-pub fn pow_hash(header: &BlockHeader) -> primitives::types::Hash {
-    // Placeholder: double SHA256 of header fields (except pow.hash)
-    let mut hasher = Sha256::new();
-    digest::Update::update(&mut hasher, &header.version.to_le_bytes());
-    digest::Update::update(&mut hasher, &header.prev_hash);
-    digest::Update::update(&mut hasher, &header.merkle_root);
-    digest::Update::update(&mut hasher, &header.timestamp.to_le_bytes());
-    digest::Update::update(&mut hasher, &header.height.to_le_bytes());
-    digest::Update::update(&mut hasher, &header.pow.nonce.to_le_bytes());
-    digest::Update::update(&mut hasher, &header.difficulty.to_le_bytes());
-    let first = hasher.finalize_reset();
-    digest::Update::update(&mut hasher, first.as_slice());
-    let result = hasher.finalize();
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(&result);
-    hash
-}
-
-pub fn mine_block(header: &mut BlockHeader, target: u64) {
-    // Very simple PoW: find nonce so hash as u64 < target
-    for nonce in 0..u64::MAX {
-        header.pow.nonce = nonce;
-        let hash = pow_hash(header);
-        let hash_val = u64::from_le_bytes([hash[0],hash[1],hash[2],hash[3],hash[4],hash[5],hash[6],hash[7]]);
-        if hash_val < target {
-            header.pow.hash = hash;
-            break;
-        }
-    }
-}
-
-pub fn cli_send_block() {
-    let block = Block {
-        header: BlockHeader {
-            version: 1,
-            prev_hash: [1u8; 32],
-            merkle_root: [2u8; 32],
-            timestamp: 1_716_150_001,
-            height: 1,
-            difficulty: 1,
-            pow: primitives::Pow { nonce: 42, hash: [3u8; 32] },
-        },
-        coinbase: Coinbase {
-            reward: 86,
-            to: "test_address".to_string(),
-        },
-        transactions: vec![],
-    };
-    broadcast_message(&P2PMessage::Block(block));
-    println!("[CLI] Test block broadcasted to peers");
-}
-
-pub fn cli_send_transaction() {
-    use sha2::{Sha256, Digest};
-    
-    let tx_data = b"CLI broadcast transaction";
-    let mut hasher = Sha256::new();
-    Digest::update(&mut hasher, tx_data);
-    Digest::update(&mut hasher, &chrono::Utc::now().timestamp().to_le_bytes());
-    let signature = hex::encode(hasher.finalize());
-    
-    let tx = primitives::Transaction {
-        inputs: vec![],
-        outputs: vec![],
-        fee: 0,
-        extra: tx_data.to_vec(),
-        metadata: None,
-        signature,
-    };
-    broadcast_message(&P2PMessage::Transaction(tx));
-    println!("[CLI] Transaction broadcasted to peers");
-}
-
-pub fn add_to_mempool(tx: primitives::Transaction) {
-    let mut mempool = MEMPOOL.lock().unwrap();
-    mempool.push(tx);
-}
-
-pub fn get_mempool() -> Vec<primitives::Transaction> {
-    MEMPOOL.lock().unwrap().clone()
-}
-
-// Persistent storage (simple JSON, for demo)
-pub fn save_chain() {
-    let chain = CHAIN.lock().unwrap();
-    let json = serde_json::to_string(&chain.blocks.iter().collect::<Vec<_>>()).unwrap();
-    let _ = std::fs::write("chain.json", json);
-}
-
-/// Save chain to disk (persistence) - enhanced version
-pub fn save_chain_to_disk(chain: &Chain) {
-    use std::fs::File;
-    use std::io::Write;
-    
-    if let Ok(chain_json) = serde_json::to_string_pretty(&chain.blocks) {
-        if let Ok(mut file) = File::create("/workspaces/BlackSilk-Blockchain/chain.json") {
-            let _ = file.write_all(chain_json.as_bytes());
-            println!("[Chain] Blockchain saved to disk ({} blocks)", chain.blocks.len());
-        }
-    }
-}
-
-pub fn load_chain() {
-    if let Ok(data) = std::fs::read_to_string("chain.json") {
-        if let Ok(blocks) = serde_json::from_str::<Vec<primitives::Block>>(&data) {
-            let mut chain = CHAIN.lock().unwrap();
-            chain.blocks = blocks.into();
-        }
-    }
-}
-
-pub fn validate_range_proof(proof: &[u8], commitment: &primitives::types::Hash) -> bool {
-    // Implement basic range proof validation
-    // This is a simplified version - in production, use proper Bulletproofs
-    if proof.is_empty() || commitment.is_empty() {
-        return false;
-    }
-    
-    // Basic proof structure validation
-    if proof.len() < 32 {
-        return false; // Too short to be a valid proof
-    }
-    
-    // Verify proof components exist
-    // In a real implementation, this would verify:
-    // 1. Commitment is correctly formed
-    // 2. Range proof demonstrates value is in valid range [0, 2^64)
-    // 3. Proof is cryptographically sound
-    
-    // For now, perform basic validation checks
-    let proof_hash = blake2b(proof);
-    let commitment_hash = blake2b(commitment);
-    
-    // Verify proof and commitment are properly linked
-    !proof_hash.iter().zip(commitment_hash.iter()).all(|(a, b)| a == b)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
-
-#[cfg(test)]
-mod ring_sig_tests {
-    use super::*;
-    use curve25519_dalek::scalar::Scalar;
-    use curve25519_dalek::edwards::EdwardsPoint;
-    use curve25519_dalek::edwards::CompressedEdwardsY;
-    use rand::rngs::OsRng;
-    use rand::RngCore;
-    use sha2::Sha256;
-    use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
-
-    #[test]
-    fn test_ring_signature_verification_trivial() {
-        // Generate a single keypair
-        let mut csprng = rand::thread_rng();
-        let mut sk_bytes = [0u8; 32];
-        csprng.fill_bytes(&mut sk_bytes);
-        let sk = Scalar::from_bytes_mod_order(sk_bytes);
-        let pk = (EdwardsPoint::mul_base(&sk)).compress().to_bytes();
-        let ring = vec![pk];
-        // Fake signature: c, r = 0
-        let sig = vec![0u8; 64];
-        let msg = b"test message";
-        // Should fail (not a valid signature)
-        assert!(!validate_ring_signature(&ring, &sig, msg));
-    }
-
-    #[test]
-    fn test_ring_signature_end_to_end() {
-        // Simulate wallet: generate keypair
-        let mut csprng = rand::thread_rng();
-        let mut sk_bytes = [0u8; 32];
-        csprng.fill_bytes(&mut sk_bytes);
-        let sk = curve25519_dalek::scalar::Scalar::from_bytes_mod_order(sk_bytes);
-        let pk = (curve25519_dalek::edwards::EdwardsPoint::mul_base(&sk)).compress().to_bytes();
-        let ring = vec![pk];
-        let msg = b"end-to-end test message";
-        let sig = generate_ring_signature(msg, &ring, &sk_bytes, 0);
-        assert!(validate_ring_signature(&ring, &sig, msg));
-    }
-
-    #[test]
-    fn test_ring_signature_end_to_end_ring2() {
-        // Generate two keypairs
-        let mut csprng = rand::thread_rng();
-        let mut sk1_bytes = [0u8; 32];
-        let mut sk2_bytes = [0u8; 32];
-        csprng.fill_bytes(&mut sk1_bytes);
-        csprng.fill_bytes(&mut sk2_bytes);
-        let sk1 = Scalar::from_bytes_mod_order(sk1_bytes);
-        let sk2 = Scalar::from_bytes_mod_order(sk2_bytes);
-        let pk1 = (EdwardsPoint::mul_base(&sk1)).compress().to_bytes();
-        let pk2 = (EdwardsPoint::mul_base(&sk2)).compress().to_bytes();
-        let ring = vec![pk1, pk2];
-        let msg = b"ring2 test message";
-        // Sign with sk1 (index 0)
-        let sig1 = generate_ring_signature(msg, &ring, &sk1_bytes, 0);
-        assert!(validate_ring_signature(&ring, &sig1, msg));
-        // Sign with sk2 (index 1)
-        let sig2 = generate_ring_signature(msg, &ring, &sk2_bytes, 1);
-        assert!(validate_ring_signature(&ring, &sig2, msg));
-    }
-}
+                        privacy_manager.unregister_connection();

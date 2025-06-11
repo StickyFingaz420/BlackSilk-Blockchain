@@ -34,3 +34,6 @@ strip = true
 [profile.release.package."blacksilk-miner"]
 opt-level = 3
 overflow-checks = false
+
+[patch.crates-io]
+i2p = { path = "i2p" }

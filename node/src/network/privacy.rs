@@ -29,6 +29,7 @@ pub enum PrivacyMode {
     Tor,          // Tor connections preferred
     TorOnly,      // Only Tor connections allowed
     MaxPrivacy,   // Tor + I2P, no clearnet
+    Auto,         // Try Tor, then I2P, then clearnet (best effort)
 }
 
 impl Default for PrivacyConfig {
@@ -112,6 +113,25 @@ impl PrivacyManager {
                     println!("[Privacy] Rejected clearnet connection in MaxPrivacy mode: {}", addr);
                 }
                 allowed
+            },
+            PrivacyMode::Auto => {
+                // Try Tor first
+                if matches!(conn_type, ConnectionType::Tor) {
+                    println!("[Privacy] Auto mode: using Tor for {}", addr);
+                    return true;
+                }
+                // Then I2P
+                if matches!(conn_type, ConnectionType::I2P) {
+                    println!("[Privacy] Auto mode: using I2P for {}", addr);
+                    return true;
+                }
+                // Then clearnet
+                if matches!(conn_type, ConnectionType::Clearnet) {
+                    println!("[Privacy] Auto mode: falling back to clearnet for {}", addr);
+                    return true;
+                }
+                println!("[Privacy] Auto mode: unknown connection type for {} (rejected)", addr);
+                false
             }
         }
     }
@@ -344,3 +364,5 @@ mod tests {
         assert!(manager.allow_connection(&i2p_addr, false));
     }
 }
+
+pub mod tor_process;
