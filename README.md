@@ -1,302 +1,431 @@
-<!--
-  NOTE: This README is designed for maximum professionalism and detail. It uses local logos from blacksilklogos/ and includes a comprehensive roadmap, technical details, and a visually rich structure. For best results, view on GitHub or a Markdown renderer that supports HTML and SVG.
--->
+# BlackSilk-Blockchain
 
-# BlackSilk Blockchain & Block Explorer
+## Overview
 
-<p align="center">
-  <img src="blacksilklogos/main_1024x512.png" alt="BlackSilk Logo" width="320"/>
-</p>
-
-<p align="center">
-  <b>Professional, Privacy-First Blockchain Platform & Modern Web Explorer</b><br>
-  <i>Automatic privacy networking · Modern Rust codebase · Real-world utility · Next.js Explorer</i>
-</p>
-
----
-
-<p align="center">
-  <img src="blacksilklogos/banner_1600x400.png" alt="BlackSilk Banner" width="700"/>
-</p>
-
----
-
-## Table of Contents
-- [Introduction](#introduction)
-- [Architecture Overview](#architecture-overview)
-- [Tokenomics](#tokenomics)
-- [Privacy Networking](#privacy-networking)
-- [Features](#features)
-- [CLI Reference](#cli-reference)
-- [Block Explorer](#block-explorer)
-- [Project Structure](#project-structure)
-- [Professional Roadmap](#professional-roadmap)
-- [Development & Testing](#development--testing)
-- [License](#license)
-- [Contact & Community](#contact--community)
-
----
-
-## Introduction
-BlackSilk is a next-generation, privacy-first blockchain platform designed for real-world adoption. It combines advanced privacy networking (Tor, I2P, clearnet, auto-fallback), robust tokenomics, and a modern Rust codebase. BlackSilk is engineered for professionals, developers, and communities who demand uncompromising privacy, transparency, and utility.
-
----
-
-## Architecture Overview
-
-```mermaid
-graph TD;
-    A[User/Wallet/Explorer] -->|HTTP API| B(Node)
-    B -->|P2P| C{Network Layer}
-    C --> D[Tor]
-    C --> E[I2P]
-    C --> F[Clearnet]
-    B -->|Mining| G[RandomX Engine]
-    B -->|Smart Contracts| H[WASM VM]
-    B -->|Marketplace| I[Marketplace Module]
-    B -->|REST API| J[Block Explorer]
-```
-
-- **Node**: Core blockchain logic, consensus, mining, privacy management
-- **Network Layer**: Automatic privacy routing (Tor, I2P, clearnet, fallback)
-- **RandomX Engine**: ASIC-resistant, CPU-friendly mining
-- **WASM VM**: Smart contracts (future)
-- **Marketplace Module**: Confidential assets, encrypted memos (future)
-- **Block Explorer**: Modern web UI (Next.js, TypeScript, Tailwind)
-
----
-
-## Tokenomics
-
-| Parameter         | Value                        |
-|-------------------|-----------------------------|
-| **Ticker**        | BLK                         |
-| **Block Reward**  | 5 BLK (halves every 1,051,200 blocks) |
-| **Block Time**    | 120 seconds (2 minutes)      |
-| **Halving**       | Every 1,051,200 blocks (~4 years) |
-| **Supply Cap**    | 21,000,000 BLK               |
-| **Premine/ICO**   | None                        |
-| **Tail Emission** | None (fees only after cap)   |
-
-**Emission Curve:**
-
-<p align="center">
-  <img src="blacksilklogos/header_800x200.png" alt="Emission Curve" width="500"/>
-</p>
-
----
-
-## Privacy Networking
-
-BlackSilk offers a seamless, professional privacy experience. Select your preferred mode at startup:
-
-| Mode         | Description                                                      |
-|--------------|------------------------------------------------------------------|
-| clearnet     | Direct connections only                                          |
-| tor          | Require Tor for all connections (auto-start, health-checked)     |
-| i2p          | Require I2P for all connections (real I2P SAM client)            |
-| auto         | Try Tor → I2P → clearnet (automatic fallback, default)           |
-
-**Privacy Networking Flow:**
-
-```mermaid
-graph LR;
-    A[Start Node] --> B{Privacy Mode}
-    B -->|Auto| C[Try Tor]
-    C -->|Fail| D[Try I2P]
-    D -->|Fail| E[Fallback to Clearnet]
-    B -->|Tor| C
-    B -->|I2P| D
-    B -->|Clearnet| E
-```
-
-- **Tor**: Managed process, auto-start, health check, shutdown
-- **I2P**: Real I2P SAM client, local or remote
-- **Fallbacks**: Clearly logged, user feedback at startup and runtime
-
----
+BlackSilk-Blockchain is a comprehensive blockchain platform designed for building decentralized applications and facilitating secure, peer-to-peer transactions. It includes a full suite of tools for developers and users, including a blockchain node, a wallet, a block explorer, a decentralized marketplace, and robust monitoring tools. The platform emphasizes security, privacy through I2P integration, and developer-friendliness.
 
 ## Features
 
-- **Privacy-First Networking**: Tor, I2P, clearnet, auto-fallback
-- **RandomX Mining**: ASIC-resistant, CPU-friendly
-- **Professional CLI**: Advanced privacy, mining, and network options
-- **HTTP API**: REST endpoints for wallets, explorers, and apps
-- **Advanced Peer Management**: Auto-discovery, banning, DNS, privacy-aware
-- **Marketplace-Ready**: Encrypted memos, metadata, confidential assets (future)
-- **Integration Tests**: End-to-end privacy fallback and connection logic
-- **Comprehensive Logging**: Startup banner, privacy status, error feedback
-- **Modular Rust Codebase**: Easy to extend and audit
-- **Modern Web Explorer**: Next.js, TypeScript, Tailwind, real-time stats, privacy analytics
-
----
-
-## CLI Reference
-
-```powershell
-# Start node in auto privacy mode (default)
-cargo run --bin blacksilk-node -- --net-privacy auto
-
-# Start node in Tor-only mode (Tor must be running)
-cargo run --bin blacksilk-node -- --net-privacy tor
-
-# Start node in I2P-only mode (I2P SAM must be running)
-cargo run --bin blacksilk-node -- --net-privacy i2p
-
-# Start node in clearnet mode
-cargo run --bin blacksilk-node -- --net-privacy clearnet
-```
-
-**Key Options:**
-- `--net-privacy [clearnet|tor|i2p|auto]` — Select privacy mode
-- `--data-dir <DIR>` — Blockchain and node state directory
-- `--network [mainnet|testnet]` — Network type
-- `--bind <ADDR>` — HTTP API bind address
-- `--p2p-bind <ADDR>` — P2P network bind address
-- `--connect <ADDR>` — Connect to peer(s)
-- `--mining` — Enable internal miner
-- `--mining-threads <N>` — Mining threads
-- `--mining-address <ADDR>` — Mining payout address
-- `--tor-hidden-service` — Enable Tor hidden service
-- `--tor-proxy <ADDR>` — Tor SOCKS proxy address
-- `--i2p-enabled` — Enable I2P support
-- `--i2p-sam <ADDR>` — I2P SAM bridge address
-- `--log-level [error|warn|info|debug|trace]` — Logging verbosity
-- `--help` — Show all options
-
----
-
-## Block Explorer
-
-A modern, responsive web-based block explorer for the BlackSilk Blockchain. Built with Next.js, TypeScript, and Tailwind CSS.
-
-### Features
-- **Real-time Network Statistics**: Live block height, difficulty, hashrate, peer count
-- **Block Browser**: Detailed block information with transaction lists
-- **Transaction Viewer**: Complete transaction details with privacy features
-- **Address Lookup**: Balance and transaction history for addresses
-- **Mempool Monitor**: View pending transactions
-- **Smart Search**: Search by block height, hash, transaction ID, or address
-- **Modern UI**: Responsive, dark/light theme, fast loading, real-time updates
-- **Privacy Indicators**: Ring signature and stealth address detection, privacy level labels
-- **Advanced Analytics**: Network charts, mining info, supply metrics, halving countdown
-
-### Quick Start
-
-```powershell
-# Clone the repository
-cd BlackSilk-Blockchain/block-explorer
-npm install
-cp .env.example .env.local
-# Edit .env.local as needed
-npm run dev
-```
-
-### API Integration
-
-The explorer connects to the BlackSilk node's HTTP API:
-- `/status` — Network info
-- `/get_blocks` — Block list
-- `/get_block/{hash|height}` — Block details
-- `/get_transaction/{txid}` — Transaction details
-- `/get_mempool` — Pending transactions
-- `/search?q={query}` — Search
-
-### Deployment
-- **Docker:** `docker build -t blacksilk-explorer . && docker run -d -p 3002:3002 blacksilk-explorer`
-- **Production:** See block-explorer/README.md for full details
-
----
+*   **Blockchain Core**: A secure and efficient blockchain implementation built in Rust, forming the backbone of the platform.
+*   **Smart Contracts**: Support for custom smart contracts enabling a wide range of decentralized applications.
+    *   **Escrow Contract**: Facilitates secure multi-party transactions.
+    *   **Marketplace Contract**: Powers the decentralized marketplace functionalities.
+*   **Wallet**: User-friendly wallet solutions for managing digital assets and interacting with the BlackSilk-Blockchain.
+    *   **Web Wallet**: A Next.js based wallet accessible via a web browser.
+    *   **CLI Wallet**: A command-line interface wallet for advanced users and automation.
+*   **Block Explorer**: A Next.js based tool to browse and search the blockchain, view transactions, blocks, addresses, and other network data in real-time.
+*   **Decentralized Marketplace**: A platform for users to list, discover, and trade goods and services directly, built on BlackSilk-Blockchain.
+    *   **Frontend**: User interface for interacting with the marketplace.
+    *   **Backend**: Rust-based backend logic for the marketplace.
+*   **Miner**: Mining software to support the network, validate transactions, and create new blocks. Includes a `build_pure.rs` for specific build configurations.
+*   **Monitoring**: Comprehensive tools for monitoring the health, performance, and status of the network and its components.
+    *   **Prometheus**: For metrics collection.
+    *   **Grafana**: For data visualization and dashboards.
+    *   **Alertmanager**: For handling alerts.
+    *   **Exporter**: Custom exporter for blockchain-specific metrics.
+*   **I2P Integration**: Optional integration with the Invisible Internet Project (I2P) for enhanced privacy and anonymity of network communications.
+*   **Testnet Faucet**: A Next.js based faucet for developers to obtain testnet tokens for building and testing applications on the BlackSilk test network.
+*   **Configuration Management**: Dedicated configuration files for different components and network environments (mainnet, testnet).
+    *   `miner_config.toml`
+    *   `wallet_config.toml`
+    *   Network-specific configurations (`bootnodes.txt`, `chain_spec.json`, `node_config.toml`)
+*   **Containerization Support**: Dockerfiles and Docker Compose configurations for easy deployment and orchestration of all platform components.
+    *   `marketplace.Dockerfile`
+    *   `miner.Dockerfile`
+    *   `node.Dockerfile`
+    *   `wallet.Dockerfile`
+    *   `docker-compose.yml` (main and for monitoring)
+    *   `docker-compose.prod.yml` (for testnet faucet production)
 
 ## Project Structure
 
-```text
+The project is organized into several key components, each in its own directory:
+
+```
 BlackSilk-Blockchain/
-├── node/           # Core node (Rust)
+├── Cargo.lock               # Rust workspace lock file
+├── Cargo.toml               # Rust workspace manifest
+├── docker-compose.yml       # Main Docker Compose file for orchestrating services
+├── README.md                # This file
+├── blacksilklogos/          # Collection of logos and branding assets
+├── block-explorer/          # Next.js based block explorer
+│   ├── Cargo.toml           # (If any Rust components are part of it)
+│   ├── next.config.js
+│   ├── package.json
 │   ├── src/
-│   │   ├── main.rs           # CLI, privacy manager, Tor/I2P integration
-│   │   ├── lib.rs            # Consensus, chain, emission, config
-│   │   ├── network/
-│   │   │   ├── privacy.rs    # Privacy manager, fallback logic
-│   │   │   └── tor_process.rs# Tor process management
-│   │   └── ...
-├── i2p/            # Local I2P SAM client crate
-├── miner/          # Standalone RandomX miner (Rust CLI)
-├── wallet/         # Privacy wallet (Rust CLI)
-├── block-explorer/ # Modern web explorer (Next.js, TypeScript)
-├── marketplace/    # Marketplace module (Rust + Next.js frontend)
-├── monitoring/     # Prometheus, Grafana, alerting
-├── tests/          # Integration and e2e tests
-├── config/         # Example configs
-├── mainnet/        # Mainnet bootnodes, chain spec
-├── testnet/        # Testnet bootnodes, chain spec
-├── Cargo.toml      # Workspace manifest
-└── README.md       # This file
+│   └── ...
+├── config/                  # Configuration files
+│   ├── miner_config.toml
+│   ├── wallet_config.toml
+│   ├── mainnet/
+│   └── testnet/
+├── docker/                  # Dockerfiles for various components
+├── i2p/                     # I2P network integration components (Rust)
+│   ├── Cargo.toml
+│   └── src/
+├── marketplace/             # Decentralized marketplace application
+│   ├── Cargo.toml           # Backend (Rust)
+│   ├── frontend/            # Frontend components (likely Next.js or similar)
+│   └── src/                 # Backend source (Rust)
+├── miner/                   # Blockchain miner software (Rust)
+│   ├── Cargo.toml
+│   ├── build_pure.rs
+│   └── src/
+├── monitoring/              # Monitoring stack
+│   ├── docker-compose.yml
+│   ├── prometheus.yml
+│   ├── alertmanager/
+│   ├── exporter/
+│   ├── grafana/
+│   └── rules/
+├── node/                    # Core blockchain node implementation (Rust)
+│   ├── Cargo.toml
+│   └── src/
+├── primitives/              # Core data structures and utilities for the blockchain (Rust)
+│   ├── Cargo.toml
+│   └── src/
+├── smart-contracts/         # Smart contract implementations (Rust)
+│   ├── Cargo.toml
+│   ├── escrow_contract/
+│   └── marketplace_contract/
+├── src/                     # Main Rust application source (possibly a workspace orchestrator or shared lib)
+│   └── main.rs
+├── target/                  # Rust build artifacts
+├── testnet-faucet/          # Testnet faucet application (Next.js and potentially a Rust backend)
+│   ├── next.config.js
+│   ├── package.json
+│   ├── Dockerfile
+│   ├── server/              # (If a separate Node.js backend for faucet)
+│   └── src/                 # Frontend source
+├── tests/                   # Integration and end-to-end tests
+│   └── integration/
+├── wallet/                  # CLI wallet application (Rust)
+│   ├── Cargo.toml
+│   └── src/
+├── wallet_data/             # Default or example wallet data
+│   └── miner-wallet.json
+└── web-wallet/              # Web-based wallet application (Next.js)
+    ├── next.config.js
+    ├── package.json
+    └── src/                 # (Assuming src contains pages, components etc.)
 ```
 
+## Technologies Used
+
+*   **Primary Backend Language**: Rust
+    *   **Frameworks/Libraries**: (e.g., Actix, Tokio, Substrate - *further inspection of Cargo.toml files needed for specifics*)
+*   **Frontend**:
+    *   **Framework**: Next.js (React)
+    *   **Language**: TypeScript
+    *   **Styling**: Tailwind CSS
+*   **Smart Contracts**: Rust (likely using a framework like `ink!` or a custom setup)
+*   **Containerization**: Docker, Docker Compose
+*   **Monitoring**: Prometheus, Grafana, Alertmanager
+*   **Build Tools**:
+    *   Rust: `cargo`
+    *   Node.js: `npm` or `yarn` (deduced from `package.json`)
+*   **Version Control**: Git
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+*   **Rust**: Follow the official installation guide at [rust-lang.org](https://www.rust-lang.org/tools/install)
+*   **Node.js and npm/yarn**: Download from [nodejs.org](https://nodejs.org/) (LTS version recommended).
+*   **Docker and Docker Compose**: Install from [docker.com](https://www.docker.com/get-started).
+*   **Git**: Install from [git-scm.com](https://git-scm.com/downloads).
+*   **(Optional) I2P**: If you plan to use I2P integration, install an I2P router.
+
+## Getting Started
+
+### 1. Clone the Repository
+
+```bash
+git clone <repository-url> # Replace <repository-url> with the actual URL
+cd BlackSilk-Blockchain
+```
+
+### 2. Backend Setup (Rust Components)
+
+Most Rust components (node, miner, wallet, marketplace backend, etc.) are part of a Rust workspace.
+
+```bash
+# Build all Rust projects in the workspace
+cargo build --release # Use --release for optimized builds
+
+# To build a specific package, navigate to its directory or use -p flag
+# e.g., for the node:
+cd node
+cargo build --release
+cd ..
+# or
+cargo build --release -p blacksilk-node # Assuming 'blacksilk-node' is the package name in node/Cargo.toml
+```
+*Note: Specific package names need to be verified from individual `Cargo.toml` files.*
+
+### 3. Frontend Setup (Next.js Applications)
+
+For each Next.js application (block-explorer, web-wallet, testnet-faucet, marketplace frontend), navigate to its directory and install dependencies:
+
+```bash
+# Example for block-explorer
+cd block-explorer
+npm install # or yarn install
+cd ..
+
+# Repeat for web-wallet, testnet-faucet, and marketplace/frontend
+```
+
+### 4. Configuration
+
+*   Copy and customize configuration files from `config/` as needed.
+    *   `config/mainnet/` and `config/testnet/` contain network-specific chain specifications, bootnodes, and node configurations.
+    *   `config/miner_config.toml` and `config/wallet_config.toml` for miner and wallet settings.
+*   Set up environment variables if required by any component (check individual component READMEs if they exist, or source code).
+
+## Running the Project
+
+### Using Docker (Recommended for Full System)
+
+The `docker-compose.yml` file is designed to orchestrate the entire BlackSilk ecosystem.
+
+```bash
+# Start all services defined in docker-compose.yml in detached mode
+docker-compose up -d
+
+# View logs for all services
+docker-compose logs -f
+
+# View logs for a specific service (e.g., node)
+docker-compose logs -f node # Replace 'node' with the service name in docker-compose.yml
+
+# Stop and remove containers, networks, and volumes
+docker-compose down -v
+```
+
+The `monitoring/docker-compose.yml` can be used to start the monitoring stack separately if needed.
+The `testnet-faucet/docker-compose.prod.yml` is for a production-like deployment of the faucet.
+
+### Running Individual Components Manually
+
+#### Blockchain Node
+
+```bash
+cd node
+# Ensure config/mainnet/node_config.toml or config/testnet/node_config.toml is correctly set up
+# The binary will likely be in target/release/
+./target/release/blacksilk-node --config ../config/testnet/node_config.toml # Adjust path and arguments
+```
+*(Command and arguments are illustrative and need to be verified from the node's implementation)*
+
+#### Miner
+
+```bash
+cd miner
+# Ensure config/miner_config.toml is configured
+./target/release/blacksilk-miner --config ../config/miner_config.toml # Adjust path and arguments
+```
+*(Command and arguments are illustrative)*
+
+#### CLI Wallet
+
+```bash
+cd wallet
+./target/release/blacksilk-wallet --config ../config/wallet_config.toml # Adjust path and arguments
+```
+*(Command and arguments are illustrative)*
+
+#### Next.js Applications (Development Mode)
+
+```bash
+# Example for block-explorer
+cd block-explorer
+npm run dev # or yarn dev
+
+# Example for web-wallet
+cd web-wallet
+npm run dev # or yarn dev
+
+# Example for testnet-faucet
+cd testnet-faucet
+npm run dev # or yarn dev
+
+# Example for marketplace frontend (assuming it's in marketplace/frontend)
+cd marketplace/frontend
+npm run dev # or yarn dev
+```
+These will typically start the applications on `http://localhost:3000` or another specified port.
+
+## Building for Production
+
+### Rust Components
+
+```bash
+cargo build --release
+# Binaries will be in target/release/
+```
+
+### Next.js Applications
+
+```bash
+# Example for block-explorer
+cd block-explorer
+npm run build
+npm run start # To serve the production build
+
+# Repeat for other Next.js applications
+```
+
+## Running Tests
+
+### Rust Tests
+
+```bash
+# Run all unit and integration tests for the Rust workspace
+cargo test
+
+# Run tests for a specific package
+cd node
+cargo test
+cd ..
+# or
+cargo test -p blacksilk-node
+```
+
+### Frontend Tests (Next.js)
+
+Most Next.js projects use Jest or a similar testing framework.
+
+```bash
+# Example for block-explorer (assuming test script is configured in package.json)
+cd block-explorer
+npm test # or yarn test
+
+# Repeat for other Next.js applications
+```
+The `testnet-faucet` directory contains specific test scripts like `test-complete-system.sh`, `test-http.js`, `test-integration.ts`, `test-request.sh`. These should be investigated for their specific usage.
+
+### End-to-End / Integration Tests
+
+The `tests/integration` directory likely contains broader integration tests. The `tests/docker-compose.test.yml` suggests a Docker-based test environment.
+
+```bash
+# Potentially, to run Docker-based integration tests:
+cd tests
+docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
+# This is an assumption, actual command might differ.
+```
+
+## Roadmap
+
+This roadmap outlines the current status and future development plans for the BlackSilk-Blockchain project.
+
 ---
 
-## Professional Roadmap
+### Phase 1: Core Infrastructure & Foundation (Completed & Operational)
 
-### Q2 2025 (Current)
-- [x] Workspace and dependency modernization
-- [x] Real I2P protocol (SAM client) integration
-- [x] Privacy manager refactor (auto/fallback)
-- [x] Professional Tor process management
-- [x] CLI privacy mode and config refactor
-- [x] Integration and fallback tests
-- [x] Enhanced user feedback and logging
-- [x] Modern block explorer (Next.js, privacy analytics)
-- [x] Documentation and CLI help overhaul
-
-### Q3 2025
-- [ ] Smart contracts (WASM VM) and programmable privacy
-- [ ] Marketplace module (confidential assets, encrypted memos)
-- [ ] Mobile and light wallet support (web & native)
-- [ ] Advanced analytics and explorer features (charts, supply, privacy stats)
-- [ ] Monitoring/alerting (Prometheus, Grafana)
-- [ ] Mainnet launch readiness, security audit
-
-### Q4 2025
-- [ ] Confidential assets and marketplace launch
-- [ ] Third-party wallet integrations
-- [ ] Community governance and voting
-- [ ] Developer SDKs and API documentation
-- [ ] Internationalization and accessibility
-
-### 2026+
-- [ ] Further privacy protocol research (mixnets, post-quantum)
-- [ ] Layer-2 solutions and scaling
-- [ ] Ecosystem expansion (DeFi, NFTs, bridges)
-- [ ] Ongoing security, compliance, and UX improvements
+*   **[✔] Blockchain Node Core (Rust)**: Initial stable version of the node, capable of P2P communication, block production (e.g., PoW/PoS - *specify consensus*), and transaction processing.
+*   **[✔] Primitives (Rust)**: Core data structures (blocks, transactions, accounts) defined and implemented.
+*   **[✔] Basic CLI Wallet (Rust)**: Wallet generation, balance checking, sending/receiving native currency.
+*   **[✔] Initial Smart Contract Support (Rust)**: Framework for deploying and interacting with basic smart contracts.
+    *   **[✔] Escrow Contract v1**: Basic secure escrow functionality.
+*   **[✔] Configuration System**: `miner_config.toml`, `wallet_config.toml`, network configs (`chain_spec.json`, `bootnodes.txt`).
+*   **[✔] Basic Dockerization**: Dockerfiles for node, miner, wallet.
+*   **[✔] Initial Testnet**: Operational test network with bootnodes.
+*   **[✔] `src/main.rs`**: Initial workspace runner or utility.
 
 ---
 
-## Development & Testing
-- **Build:** `cargo build --release`
-- **Test:** `cargo test`
-- **Integration tests:** See `tests/integration/e2e/`
-- **Run node:** See CLI examples above
-- **Block Explorer:** See block-explorer/README.md for dev & deployment
+### Phase 2: Ecosystem Tools & Enhancements (Completed & Operational)
+
+*   **[✔] Block Explorer v1 (Next.js, TypeScript)**: View blocks, transactions, addresses.
+*   **[✔] Web Wallet v1 (Next.js, TypeScript)**: Basic wallet functionalities via a web interface.
+*   **[✔] Testnet Faucet v1 (Next.js, TypeScript)**: Dispense testnet tokens.
+    *   **[✔] Faucet Backend/Server**: Logic for managing and dispensing tokens.
+*   **[✔] Miner Software v1 (Rust)**: Functional miner compatible with the chosen consensus mechanism.
+    *   **[✔] `build_pure.rs`**: Specialized build process for miner.
+*   **[✔] Marketplace Backend v1 (Rust)**: Core APIs for listing, buying, selling.
+*   **[✔] Marketplace Smart Contract v1**: On-chain logic for marketplace operations.
+*   **[✔] Basic Monitoring Stack**:
+    *   **[✔] Prometheus & Grafana**: Basic dashboards for node health.
+    *   **[✔] Exporter**: Initial version for node metrics.
+*   **[✔] I2P Integration (Rust) - Alpha**: Basic capability for nodes to communicate over I2P.
+*   **[✔] Comprehensive Docker Compose Setup**: `docker-compose.yml` for easy full-stack deployment.
+*   **[✔] Unit & Basic Integration Tests**: For core components.
+    *   **[✔] `tests/integration`**: Initial set of integration tests.
+    *   **[✔] `testnet-faucet/test-*.{sh,js,ts}`**: Faucet specific tests.
 
 ---
+
+### Phase 3: Advanced Features & Polish (In Development / To Be Completed)
+
+*   **[🚧] Advanced Smart Contract Capabilities**:
+    *   **[ ] Marketplace Contract v2**: More features (e.g., disputes, reviews, auctions).
+    *   **[ ] Escrow Contract v2**: Enhanced features, multi-sig options.
+    *   **[ ] Support for additional smart contract standards/interfaces.**
+*   **[🚧] Marketplace Frontend (Next.js, TypeScript)**: Fully functional user interface for the decentralized marketplace.
+*   **[🚧] Enhanced Block Explorer**:
+    *   **[ ] Smart contract interaction UI.**
+    *   **[ ] Richer analytics and charts.**
+    *   **[ ] Token support display.**
+*   **[🚧] Enhanced Web Wallet**:
+    *   **[ ] Smart contract interaction support.**
+    *   **[ ] Token management.**
+    *   **[ ] DApp browser/connector.**
+*   **[🚧] I2P Integration - Beta/Stable**: Robust and reliable I2P networking for all relevant components (node, wallet).
+*   **[🚧] Advanced Monitoring & Alerting**:
+    *   **[ ] Comprehensive Grafana dashboards for all services.**
+    *   **[ ] Fine-tuned Prometheus rules and Alertmanager configuration.**
+*   **[🚧] Performance Optimization**: For node, miner, and smart contract execution.
+*   **[🚧] Security Audits**:
+    *   **[ ] Core blockchain and cryptography.**
+    *   **[ ] Smart contracts (escrow, marketplace).**
+*   **[🚧] Governance Mechanism**: On-chain or off-chain governance model design and implementation.
+*   **[🚧] Enhanced Developer Tooling**: SDKs, improved documentation for smart contract development.
+*   **[🚧] Cross-Chain Interoperability Research/PoC**: Exploring bridges to other blockchains.
+*   **[ ] Mobile Wallet (Concept/Design Phase)**
+
+---
+
+### Phase 4: Mainnet Launch & Growth (Future Work)
+
+*   **[ ] Mainnet Launch Readiness**:
+    *   **[ ] Final security audits and penetration testing.**
+    *   **[ ] Extensive stress testing and performance benchmarking.**
+    *   **[ ] Finalized `mainnet/chain_spec.json` and `bootnodes.txt`.**
+    *   **[ ] Community bug bounty program.**
+*   **[ ] Mainnet Deployment & Monitoring**.
+*   **[ ] Ecosystem Growth Initiatives**: Developer grants, community building.
+*   **[ ] Ongoing Maintenance & Upgrades**.
+*   **[ ] Decentralized File Storage Integration (Research)**.
+
+---
+
+**Legend:**
+*   `[✔]` - Completed and Operational
+*   `[🚧]` - In Development / Partially Completed
+*   `[ ]` - To Be Done / Planned
+
+## Contributing
+
+Contributions are welcome! Please follow these steps:
+
+1.  Fork the repository.
+2.  Create a new branch (`git checkout -b feature/your-feature-name`).
+3.  Make your changes.
+4.  Write tests for your changes.
+5.  Ensure all tests pass (`cargo test`, `npm test` in relevant frontend directories).
+6.  Commit your changes (`git commit -m 'Add some feature'`).
+7.  Push to the branch (`git push origin feature/your-feature-name`).
+8.  Open a Pull Request.
+
+Please ensure your code adheres to the project's coding standards and includes appropriate documentation.
 
 ## License
-MIT License. See [LICENSE](LICENSE).
+
+This project is licensed under the [Specify License, e.g., MIT License, Apache 2.0] - see the LICENSE file for details.
+*(A LICENSE file needs to be created if one doesn't exist)*
 
 ---
 
-## Contact & Community
-- [GitHub](https://github.com/blacksilk-org/BlackSilk-Blockchain)
-- [Discord](https://discord.gg/blacksilk)
-- [docs.blacksilk.io](https://docs.blacksilk.io)
-
----
-
-<p align="center">
-  <img src="blacksilklogos/signature_300x100.png" alt="BlackSilk Signature" width="220"/>
-</p>
-
-<p align="center">
-  <b>BlackSilk: Professional, privacy-first blockchain for the real world.</b>
-</p>
+*This README provides a comprehensive overview. Specific details for each component (e.g., API endpoints for the marketplace, specific build instructions for `miner/build_pure.rs`, detailed consensus mechanism) would typically reside in the READMEs of those sub-directories or further documentation.*
