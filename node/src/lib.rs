@@ -285,7 +285,6 @@ fn handle_client(mut stream: TcpStream) {
         let peer_addrs: Vec<String> = peers.iter().filter_map(|s| s.peer_addr().ok().map(|a| a.to_string())).collect();
         let _ = send_message(&mut stream, &P2PMessage::PeerList(peer_addrs));
     }
-    let version = P2PMessage::Version { version: 
     let version = P2PMessage::Version { version: 1, node: "BlackSilkNode".to_string() };
     let _ = send_message(&mut stream, &version);
     loop {
@@ -528,7 +527,6 @@ pub fn validate_transaction(tx: &primitives::Transaction) -> bool {
 mod double_spend_tests {
     use super::*;
     use primitives::{Transaction, TransactionInput, TransactionOutput, RingSignature, types};
-    use primitives::ring_sig::generate_ring_signature;
     #[test]
     fn test_double_spend_key_image() {
         // Generate a real keypair and ring signature for the test
