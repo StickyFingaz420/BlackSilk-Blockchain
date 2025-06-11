@@ -1,15 +1,7 @@
-<!--
-  NOTE: This is a professional, visually-rich README. For best results, ensure the following SVGs exist in docs/assets/:
-    - blacksilk-logo.svg
-    - architecture-diagram.svg
-    - emission-curve.svg
-  You may customize diagrams and branding as needed.
--->
-
 # BlackSilk Blockchain
 
 <p align="center">
-  <img src="docs/assets/blacksilk-logo.svg" alt="BlackSilk Logo" width="180"/>
+  <img src="https://raw.githubusercontent.com/blacksilk-org/BlackSilk-Blockchain/main/docs/assets/blacksilk-logo.svg" alt="BlackSilk Logo" width="180"/>
 </p>
 
 <p align="center">
@@ -20,7 +12,7 @@
 ---
 
 <p align="center">
-  <img src="docs/assets/architecture-diagram.svg" alt="BlackSilk Architecture" width="700"/>
+  <img src="https://raw.githubusercontent.com/blacksilk-org/BlackSilk-Blockchain/main/docs/assets/architecture-diagram.svg" alt="BlackSilk Architecture" width="700"/>
 </p>
 
 ---
@@ -84,7 +76,7 @@ graph TD;
 **Emission Curve:**
 
 <p align="center">
-  <img src="docs/assets/emission-curve.svg" alt="Emission Curve" width="500"/>
+  <img src="https://raw.githubusercontent.com/blacksilk-org/BlackSilk-Blockchain/main/docs/assets/emission-curve.svg" alt="Emission Curve" width="500"/>
 </p>
 
 ---
@@ -135,7 +127,7 @@ graph LR;
 
 ## CLI Reference
 
-```powershell
+```sh
 # Start node in auto privacy mode (default)
 cargo run --bin blacksilk-node -- --net-privacy auto
 
