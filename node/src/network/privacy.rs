@@ -364,5 +364,3 @@ mod tests {
         assert!(manager.allow_connection(&i2p_addr, false));
     }
 }
-
-pub mod tor_process;

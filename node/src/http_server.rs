@@ -17,18 +17,22 @@ lazy_static::lazy_static! {
 
 /// Calculate merkle root for a list of transactions
 fn calculate_merkle_root(transactions: &[Transaction]) -> [u8; 32] {
+    use crate::randomx::{randomx_hash, get_optimal_flags};
     if transactions.is_empty() {
         return [0; 32]; // Empty merkle root for blocks with no transactions
     }
-    
-    // For now, simple hash of all transaction data
-    let mut hasher = sha2::Sha256::new();
+    // Hash each transaction using SHA256, then concatenate
+    let mut tx_hashes = Vec::new();
     for tx in transactions {
         if let Ok(tx_bytes) = serde_json::to_vec(tx) {
-            hasher.update(&tx_bytes);
+            let hash = sha2::Sha256::digest(&tx_bytes);
+            tx_hashes.extend_from_slice(&hash);
         }
     }
-    hasher.finalize().into()
+    // Use RandomX to hash the concatenated transaction hashes
+    let key = b"blacksilk_merkle_root";
+    let flags = get_optimal_flags();
+    randomx_hash(key, &tx_hashes, flags)
 }
 
 /// Save chain to disk (persistence)
@@ -883,17 +887,17 @@ fn handle_contract_deploy(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box
 struct ContractInvokeRequest {
     address: String,
     function: String,
-    params: Vec<wasmer::Value>, // JSON array
+    params: Vec<serde_json::Value>, // JSON array
 }
 #[derive(Serialize, Deserialize)]
 struct ContractInvokeResponse {
-    result: Option<Vec<wasmer::Value>>,
+    result: Option<Vec<serde_json::Value>>,
     success: bool,
     message: String,
 }
 fn handle_contract_invoke(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let req: ContractInvokeRequest = serde_json::from_slice(body)?;
-    match wasm_vm::invoke_contract(&req.address, &req.function, &req.params) {
+    match wasm_vm::invoke_contract_json(&req.address, &req.function, &req.params) {
         Ok(result) => send_json_response(stream, 200, &ContractInvokeResponse {
             result: Some(result),
             success: true,
@@ -914,33 +918,3 @@ fn handle_contract_state_query(stream: &mut TcpStream, path: &str) -> Result<(),
         None => send_json_response(stream, 404, &serde_json::json!({"error": "State not found"})),
     }
 }
-
-use serde::{Serialize, Deserialize};
-
-/// Serializable wrapper for wasmer::Value
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "value")]
-pub enum WasmValue {
-    I32(i32),
-    I64(i64),
-    F32(f32),
-    F64(f64),
-    // Add more as needed
-}
-
-impl From<&wasmer::Value> for WasmValue {
-    fn from(val: &wasmer::Value) -> Self {
-        match val {
-            wasmer::Value::I32(v) => WasmValue::I32(*v),
-            wasmer::Value::I64(v) => WasmValue::I64(*v),
-            wasmer::Value::F32(v) => WasmValue::F32(*v),
-            wasmer::Value::F64(v) => WasmValue::F64(*v),
-            // Add more as needed
-            _ => panic!("Unsupported WASM value type for serialization"),
-        }
-    }
-}
-
-// In contract API endpoints, convert Vec<wasmer::Value> to Vec<WasmValue> before serializing in responses.
-// For example:
-// let result: Option<Vec<WasmValue>> = result_opt.map(|v| v.iter().map(WasmValue::from).collect());

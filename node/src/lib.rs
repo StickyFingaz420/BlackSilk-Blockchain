@@ -22,7 +22,6 @@ use blake2::digest::Update;
 use digest::consts::U32;
 use std::sync::atomic::{AtomicU32, Ordering};
 use i2p::I2pClient;
-use crate::wasm_vm;
 use primitives::{TransactionKind, ContractTx};
 use serde::{Serialize, Deserialize};
 
@@ -205,7 +204,6 @@ use std::net::{TcpListener, TcpStream, SocketAddr};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use serde::{Serialize, Deserialize};
 use once_cell::sync::OnceCell;
 
 /// Global network configuration
@@ -703,19 +701,16 @@ impl Chain {
         for tx in &block.transactions {
             if let TransactionKind::Contract(contract_tx) = &tx.kind {
                 match contract_tx {
-                    ContractTx::Deploy { wasm_code, creator, metadata } => {
-                        // Deploy contract via VM, persist code/state
+                    ContractTx::Deploy { wasm_code, creator, .. } => {
                         let _ = wasm_vm::deploy_contract(wasm_code.clone(), creator.clone());
-                        // TODO: persist contract code/state to disk
                     }
-                    ContractTx::Invoke { contract_address, function, params, caller, metadata } => {
-                        // Deserialize params (assume JSON array of wasmer::Value)
-                        let params_vec: Vec<wasmer::Value> = match serde_json::from_slice(params) {
+                    ContractTx::Invoke { contract_address, function, params, .. } => {
+                        // Deserialize params as Vec<serde_json::Value>
+                        let params_vec: Vec<serde_json::Value> = match serde_json::from_slice(params) {
                             Ok(v) => v,
                             Err(_) => continue,
                         };
-                        let _ = wasm_vm::invoke_contract(contract_address, function, &params_vec);
-                        // TODO: update and persist contract state
+                        let _ = wasm_vm::invoke_contract_json(contract_address, function, &params_vec);
                     }
                 }
             }
@@ -1072,7 +1067,7 @@ fn connect_to_peer_with_privacy(addr: &str, privacy_manager: Arc<crate::network:
                     
                     if let Err(e) = send_message(&mut stream, &version) {
                         eprintln!("[P2P] Failed to send version message: {}", e);
-                        privacy_manager.unregister_connection();
+                        privacy_manager.unregister_connection(&stream.peer_addr().unwrap());
                     } else {
                         // Connection established, wait for messages
                         let _ = handle_client_with_privacy(stream, privacy_manager);
