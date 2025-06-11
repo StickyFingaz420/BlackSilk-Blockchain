@@ -1,15 +1,11 @@
 <!--
-  NOTE: This is a professional, visually-rich README. For best results, ensure the following SVGs exist in docs/assets/:
-    - blacksilk-logo.svg
-    - architecture-diagram.svg
-    - emission-curve.svg
-  You may customize diagrams and branding as needed.
+  NOTE: This README is designed for maximum professionalism and detail. It uses local logos from blacksilklogos/ and includes a comprehensive roadmap, technical details, and a visually rich structure. For best results, view on GitHub or a Markdown renderer that supports HTML and SVG.
 -->
 
 # BlackSilk Blockchain & Block Explorer
 
 <p align="center">
-  <img src="docs/assets/blacksilk-logo.svg" alt="BlackSilk Logo" width="180"/>
+  <img src="blacksilklogos/main_1024x512.png" alt="BlackSilk Logo" width="320"/>
 </p>
 
 <p align="center">
@@ -20,7 +16,7 @@
 ---
 
 <p align="center">
-  <img src="docs/assets/architecture-diagram.svg" alt="BlackSilk Architecture" width="700"/>
+  <img src="blacksilklogos/banner_1600x400.png" alt="BlackSilk Banner" width="700"/>
 </p>
 
 ---
@@ -34,7 +30,7 @@
 - [CLI Reference](#cli-reference)
 - [Block Explorer](#block-explorer)
 - [Project Structure](#project-structure)
-- [Roadmap](#roadmap)
+- [Professional Roadmap](#professional-roadmap)
 - [Development & Testing](#development--testing)
 - [License](#license)
 - [Contact & Community](#contact--community)
@@ -85,7 +81,7 @@ graph TD;
 **Emission Curve:**
 
 <p align="center">
-  <img src="docs/assets/emission-curve.svg" alt="Emission Curve" width="500"/>
+  <img src="blacksilklogos/header_800x200.png" alt="Emission Curve" width="500"/>
 </p>
 
 ---
@@ -131,6 +127,7 @@ graph LR;
 - **Integration Tests**: End-to-end privacy fallback and connection logic
 - **Comprehensive Logging**: Startup banner, privacy status, error feedback
 - **Modular Rust Codebase**: Easy to extend and audit
+- **Modern Web Explorer**: Next.js, TypeScript, Tailwind, real-time stats, privacy analytics
 
 ---
 
@@ -239,24 +236,39 @@ BlackSilk-Blockchain/
 
 ---
 
-## Roadmap
+## Professional Roadmap
 
-### Accomplished
-- Modernized workspace and dependencies
-- Integrated real I2P protocol (SAM client)
-- Refactored privacy manager for auto/fallback
-- Professional Tor process management
-- CLI privacy mode and config refactor
-- Integration and fallback tests
-- Enhanced user feedback and logging
-- Updated documentation and CLI help
+### Q2 2025 (Current)
+- [x] Workspace and dependency modernization
+- [x] Real I2P protocol (SAM client) integration
+- [x] Privacy manager refactor (auto/fallback)
+- [x] Professional Tor process management
+- [x] CLI privacy mode and config refactor
+- [x] Integration and fallback tests
+- [x] Enhanced user feedback and logging
+- [x] Modern block explorer (Next.js, privacy analytics)
+- [x] Documentation and CLI help overhaul
 
-### Pending / Future
-- Smart contracts and programmable privacy (WASM)
-- Marketplace and confidential assets
-- Mobile and light wallet support
-- Advanced analytics and explorer features
-- Further privacy protocol research
+### Q3 2025
+- [ ] Smart contracts (WASM VM) and programmable privacy
+- [ ] Marketplace module (confidential assets, encrypted memos)
+- [ ] Mobile and light wallet support (web & native)
+- [ ] Advanced analytics and explorer features (charts, supply, privacy stats)
+- [ ] Monitoring/alerting (Prometheus, Grafana)
+- [ ] Mainnet launch readiness, security audit
+
+### Q4 2025
+- [ ] Confidential assets and marketplace launch
+- [ ] Third-party wallet integrations
+- [ ] Community governance and voting
+- [ ] Developer SDKs and API documentation
+- [ ] Internationalization and accessibility
+
+### 2026+
+- [ ] Further privacy protocol research (mixnets, post-quantum)
+- [ ] Layer-2 solutions and scaling
+- [ ] Ecosystem expansion (DeFi, NFTs, bridges)
+- [ ] Ongoing security, compliance, and UX improvements
 
 ---
 
@@ -280,6 +292,10 @@ MIT License. See [LICENSE](LICENSE).
 - [docs.blacksilk.io](https://docs.blacksilk.io)
 
 ---
+
+<p align="center">
+  <img src="blacksilklogos/signature_300x100.png" alt="BlackSilk Signature" width="220"/>
+</p>
 
 <p align="center">
   <b>BlackSilk: Professional, privacy-first blockchain for the real world.</b>
