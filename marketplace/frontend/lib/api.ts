@@ -333,9 +333,7 @@ export class BlackSilkMarketplaceAPI {
       const imageHashes: string[] = [];
       if (product.images && product.images.length > 0) {
         for (const imageUrl of product.images) {
-          // If it's a string starting with data: or blob:, treat as file data
           if (typeof imageUrl === 'string' && (imageUrl.startsWith('data:') || imageUrl.startsWith('blob:'))) {
-            // Convert data URL to blob and upload
             const response = await fetch(imageUrl);
             const blob = await response.blob();
             const file = new File([blob], 'image.jpg', { type: blob.type });
@@ -346,28 +344,27 @@ export class BlackSilkMarketplaceAPI {
           }
         }
       }
-
-      // Create product transaction
+      // Create product metadata
+      const productId = this.generateId();
       const productData: Product = {
         ...product,
-        id: this.generateId(),
+        id: productId,
         images: imageHashes,
         createdAt: Date.now(),
       };
-
-      // Create transaction to store product on blockchain
+      // Store product as a transaction with marketplace data in the metadata field
       const transaction: Transaction = {
-        txid: this.generateId(),
+        txid: productId,
         from: product.seller,
         to: product.seller,
         amount: 0,
-        fee: 100, // 1 BLK fee
+        fee: 100,
         timestamp: new Date().toISOString(),
-        confirmations: 0
+        confirmations: 0,
+        // @ts-ignore: metadata is supported by the node and backend, but not in the TS type
+        metadata: JSON.stringify({ type: 'product', data: productData })
       };
-
       const result = await this.submitTransaction(transaction);
-      
       if (result.success) {
         return {
           success: true,
@@ -389,61 +386,46 @@ export class BlackSilkMarketplaceAPI {
 
   async getProducts(filters?: SearchFilters): Promise<ApiResponse<Product[]>> {
     try {
-      // Mock data for now - in real implementation, parse from blockchain
-      const mockProducts: Product[] = [
-        {
-          id: '1',
-          seller: 'vendor123',
-          title: 'Privacy Phone Case',
-          description: 'Faraday cage phone case for maximum privacy',
-          category: 'electronics',
-          price: 50,
-          currency: 'BLK',
-          stock: 10,
-          images: ['ipfs://QmHash1'],
-          createdAt: Date.now() - 86400000,
-          isActive: true,
-          stealthRequired: true,
-          escrowRequired: true
-        },
-        {
-          id: '2',
-          seller: 'vendor456',
-          title: 'Anonymous VPN Service',
-          description: '1-year anonymous VPN subscription',
-          category: 'digital',
-          price: 100,
-          currency: 'BLK',
-          stock: 100,
-          images: ['ipfs://QmHash2'],
-          createdAt: Date.now() - 172800000,
-          isActive: true,
-          stealthRequired: true,
-          escrowRequired: false
-        }
-      ];
-
-      // Apply filters
-      let filteredProducts = mockProducts;
-      
-      if (filters) {
-        if (filters.category) {
-          filteredProducts = filteredProducts.filter(p => p.category === filters.category);
-        }
-        if (filters.min_price !== undefined) {
-          filteredProducts = filteredProducts.filter(p => p.price >= filters.min_price!);
-        }
-        if (filters.max_price !== undefined) {
-          filteredProducts = filteredProducts.filter(p => p.price <= filters.max_price!);
-        }
-        if (filters.vendor) {
-          filteredProducts = filteredProducts.filter(p => p.seller === filters.vendor);
+      // Fetch all blocks and parse product transactions
+      const blocks = await this.getBlocks(0);
+      let products: Product[] = [];
+      for (const block of blocks) {
+        if (block.transactions) {
+          for (const tx of block.transactions) {
+            if (tx.metadata) {
+              try {
+                const meta = JSON.parse(tx.metadata);
+                if (meta.type === 'product') {
+                  const product: Product = {
+                    ...meta.data,
+                    id: meta.data.id || tx.txid,
+                    createdAt: block.timestamp || Date.now(),
+                  };
+                  products.push(product);
+                }
+              } catch {}
+            }
+          }
         }
       }
-
+      // Apply filters
+      if (filters) {
+        if (filters.category) {
+          products = products.filter(p => p.category === filters.category);
+        }
+        if (filters.min_price !== undefined) {
+          products = products.filter(p => p.price >= filters.min_price!);
+        }
+        if (filters.max_price !== undefined) {
+          products = products.filter(p => p.price <= filters.max_price!);
+        }
+        if (filters.vendor) {
+          products = products.filter(p => p.seller === filters.vendor);
+        }
+      }
       return {
         success: true,
-        data: filteredProducts
+        data: products
       };
     } catch (error) {
       return {
