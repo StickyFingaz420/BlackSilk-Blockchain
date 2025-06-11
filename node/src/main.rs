@@ -8,6 +8,7 @@ use wasmer::{Instance, Module, Store, imports};
 use smart_contracts::randomx::validate_pow;
 use node::network::tor_process::TorProcess;
 mod wasm_vm;
+use wasm_vm::{deploy_contract, invoke_contract_with_gas};
 
 #[derive(Parser, Debug)]
 #[command(name = "blacksilk-node", version, about = "BlackSilk Privacy Blockchain Node")]
@@ -418,10 +419,12 @@ pub enum NetPrivacyArg {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    
     // Print professional startup banner
     print_startup_banner();
-    
+    // Load persistent contract registry
+    if let Err(e) = wasm_vm::load_contract_registry() {
+        eprintln!("[WARN] Failed to load contract registry: {}", e);
+    }
     // Handle subcommands first
     match &cli.command {
         Some(Commands::Init { force, genesis_time }) => {
@@ -494,8 +497,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         Some(Commands::InvokeContract { address, function, params }) => {
-            let params_vec: Vec<wasmer::Value> = serde_json::from_str(params)?;
-            let result = invoke_contract(address, function, &params_vec)?;
+            let params_vec: Vec<serde_json::Value> = serde_json::from_str(params)?;
+            // Use a high default gas limit for CLI invocations
+            let result = invoke_contract_with_gas(address, function, &params_vec, 10_000_000)?;
             println!("Contract call result: {:?}", result);
             return Ok(());
         }

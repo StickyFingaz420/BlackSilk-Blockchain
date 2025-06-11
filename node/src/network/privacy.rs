@@ -23,7 +23,7 @@ pub struct PrivacyConfig {
     pub privacy_mode: PrivacyMode, // Privacy enforcement level
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum PrivacyMode {
     Disabled,     // Allow all connections
     Tor,          // Tor connections preferred

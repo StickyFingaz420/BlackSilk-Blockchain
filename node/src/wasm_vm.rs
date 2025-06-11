@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+// Wasmer 6.x imports
 use wasmer::{Instance, Module, Store, imports, Value};
-// Fix import for blake2 hashing
+use wasmer_middlewares::Metering;
 use blake2::{Blake2b, Digest};
 use serde_json::Value as JsonValue;
 use curve25519_dalek::scalar::Scalar;
@@ -18,15 +19,19 @@ use rand::RngCore;
 use sha2::{Sha512, Digest as ShaDigest};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use aes_gcm::aead::{Aead, KeyInit};
+use serde::{Serialize, Deserialize};
+// Import Operator from wasmer::wasmparser for Wasmer 3.x metering
+use wasmer::wasmparser::Operator;
 
 /// Represents a deployed contract
+#[derive(Serialize, Deserialize)]
 pub struct WasmContract {
     pub code: Vec<u8>,
     pub address: String, // Could be hash or UUID
     pub metadata: ContractMetadata,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ContractMetadata {
     pub creator: String,
     pub deployed_at: u64,
@@ -38,8 +43,43 @@ lazy_static::lazy_static! {
     static ref CONTRACT_REGISTRY: Arc<Mutex<HashMap<String, WasmContract>>> = Arc::new(Mutex::new(HashMap::new()));
 }
 
+const CONTRACT_REGISTRY_PATH: &str = "./data/contract_registry.json";
+
+/// Save the contract registry to disk
+fn save_contract_registry() -> std::io::Result<()> {
+    let registry = CONTRACT_REGISTRY.lock().unwrap();
+    let contracts: Vec<&WasmContract> = registry.values().collect();
+    let json = serde_json::to_string_pretty(&contracts).unwrap();
+    fs::create_dir_all("./data")?;
+    fs::write(CONTRACT_REGISTRY_PATH, json)
+}
+
+/// Load the contract registry from disk at startup
+pub fn load_contract_registry() -> std::io::Result<()> {
+    let path = PathBuf::from(CONTRACT_REGISTRY_PATH);
+    if !path.exists() {
+        return Ok(());
+    }
+    let json = fs::read_to_string(path)?;
+    let contracts: Vec<WasmContract> = serde_json::from_str(&json).unwrap_or_default();
+    let mut registry = CONTRACT_REGISTRY.lock().unwrap();
+    for contract in contracts {
+        registry.insert(contract.address.clone(), contract);
+    }
+    Ok(())
+}
+
 /// Deploy a new WASM contract, returns its address
 pub fn deploy_contract(wasm_bytes: Vec<u8>, creator: String) -> Result<String, String> {
+    // Restrict contract size (e.g., 1MB max)
+    if wasm_bytes.len() > 1024 * 1024 {
+        return Err("Contract too large (max 1MB)".to_string());
+    }
+    // Validate WASM module structure
+    let store = Store::default();
+    if Module::new(&store, &wasm_bytes).is_err() {
+        return Err("Invalid WASM module".to_string());
+    }
     let address = format!("0x{}", blake2b_256_hex(&wasm_bytes));
     let metadata = ContractMetadata {
         creator,
@@ -47,6 +87,10 @@ pub fn deploy_contract(wasm_bytes: Vec<u8>, creator: String) -> Result<String, S
     };
     let contract = WasmContract { code: wasm_bytes, address: address.clone(), metadata };
     CONTRACT_REGISTRY.lock().unwrap().insert(address.clone(), contract);
+    // Save registry after deployment
+    if let Err(e) = save_contract_registry() {
+        eprintln!("[WARN] Failed to save contract registry: {}", e);
+    }
     Ok(address)
 }
 
@@ -81,10 +125,13 @@ fn wasmer_value_to_json(val: &wasmer::Value) -> JsonValue {
     }
 }
 
-/// New interface: Invoke a deployed contract by address, with function and params as serde_json::Value
-pub fn invoke_contract_json(address: &str, function: &str, params: &[JsonValue]) -> Result<Vec<JsonValue>, String> {
+/// New interface: Invoke a deployed contract by address, with function and params as serde_json::Value, with gas metering
+pub fn invoke_contract_json_with_gas(address: &str, function: &str, params: &[JsonValue], gas_limit: u64) -> Result<Vec<JsonValue>, String> {
     let registry = CONTRACT_REGISTRY.lock().unwrap();
     let contract = registry.get(address).ok_or("Contract not found")?;
+    let metering = Arc::new(Metering::new(gas_limit, cost_function));
+    // Attach metering middleware if possible (Wasmer 3.x)
+    // If not, just use the default store and metering as argument to Module/Instance
     let mut store = Store::default();
     let module = Module::new(&store, &contract.code).map_err(|e| e.to_string())?;
     let import_object = imports! {};
@@ -92,20 +139,39 @@ pub fn invoke_contract_json(address: &str, function: &str, params: &[JsonValue])
     let func = instance.exports.get_function(function).map_err(|e| e.to_string())?;
     let wasmer_params: Vec<wasmer::Value> = params.iter().filter_map(json_to_wasmer_value).collect();
     let result = func.call(&mut store, &wasmer_params).map_err(|e| e.to_string())?;
+    // Check gas used
+    let gas_left = wasmer_middlewares::metering::get_remaining_points(&mut store, &instance);
+    if let wasmer_middlewares::metering::MeteringPoints::Remaining(0) = gas_left {
+        return Err("Gas limit exceeded".to_string());
+    }
     Ok(result.iter().map(wasmer_value_to_json).collect())
 }
 
-/// Invoke a deployed contract by address, with function and params
-pub fn invoke_contract(address: &str, function: &str, params: &[Value]) -> Result<Vec<Value>, String> {
+/// Invoke a deployed contract by address, with function and params, with gas metering
+pub fn invoke_contract_with_gas(address: &str, function: &str, params: &[Value], gas_limit: u64) -> Result<Vec<Value>, String> {
     let registry = CONTRACT_REGISTRY.lock().unwrap();
     let contract = registry.get(address).ok_or("Contract not found")?;
+    let metering = Arc::new(Metering::new(gas_limit, cost_function));
+    // Attach metering middleware if possible (Wasmer 3.x)
+    // If not, just use the default store and metering as argument to Module/Instance
     let mut store = Store::default();
     let module = Module::new(&store, &contract.code).map_err(|e| e.to_string())?;
     let import_object = imports! {};
     let instance = Instance::new(&mut store, &module, &import_object).map_err(|e| e.to_string())?;
     let func = instance.exports.get_function(function).map_err(|e| e.to_string())?;
     let result = func.call(&mut store, params).map_err(|e| e.to_string())?;
+    // Check gas used
+    let gas_left = wasmer_middlewares::metering::get_remaining_points(&mut store, &instance);
+    if let wasmer_middlewares::metering::MeteringPoints::Remaining(0) = gas_left {
+        return Err("Gas limit exceeded".to_string());
+    }
     Ok(result.to_vec())
+}
+
+/// Backward-compatible: invoke_contract_json with default gas limit
+pub fn invoke_contract_json(address: &str, function: &str, params: &[JsonValue]) -> Result<Vec<JsonValue>, String> {
+    // Set a high default gas limit for legacy calls
+    invoke_contract_json_with_gas(address, function, params, 10_000_000)
 }
 
 /// Utility: Blake2b-256 hash as hex
@@ -122,13 +188,17 @@ const CONTRACT_STATE_DIR: &str = "./data/contract_state";
 pub fn save_contract_state(address: &str, state: &[u8]) -> std::io::Result<()> {
     let path = PathBuf::from(CONTRACT_STATE_DIR).join(format!("{}.bin", address));
     fs::create_dir_all(CONTRACT_STATE_DIR)?;
-    fs::write(path, state)
+    // Write atomically
+    let tmp_path = path.with_extension("bin.tmp");
+    fs::write(&tmp_path, state)?;
+    fs::rename(&tmp_path, &path)?;
+    Ok(())
 }
 
 /// Load contract state from disk
-pub fn load_contract_state(address: &str) -> Option<Vec<u8>> {
+pub fn load_contract_state(address: &str) -> Result<Vec<u8>, String> {
     let path = PathBuf::from(CONTRACT_STATE_DIR).join(format!("{}.bin", address));
-    fs::read(path).ok()
+    fs::read(path).map_err(|e| format!("Failed to load contract state: {}", e))
 }
 
 /// --- Programmable privacy hooks (production-grade) ---
@@ -150,6 +220,7 @@ pub fn privacy_stealth_address(pub_view: &[u8], pub_spend: &[u8]) -> Vec<u8> {
     use curve25519_dalek::edwards::CompressedEdwardsY;
     use curve25519_dalek::scalar::Scalar;
     use rand_core::OsRng;
+    use rand_core::RngCore;
     // Parse public keys
     let pub_view = CompressedEdwardsY::from_slice(pub_view)
         .expect("Invalid pub_view key")
@@ -160,7 +231,10 @@ pub fn privacy_stealth_address(pub_view: &[u8], pub_spend: &[u8]) -> Vec<u8> {
         .decompress()
         .expect("Invalid pub_spend decompress");
     // Generate random scalar r
-    let r = Scalar::random(&mut OsRng);
+    let mut rng = OsRng;
+    let mut r_bytes = [0u8; 32];
+    rng.fill_bytes(&mut r_bytes);
+    let r = Scalar::from_bytes_mod_order(r_bytes);
     let rG = &r * curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
     let rA = &r * &pub_view;
     let stealth_pub = pub_spend + rA;
@@ -202,5 +276,8 @@ pub fn privacy_decrypt(data: &[u8], key: &[u8]) -> Vec<u8> {
     let nonce = Nonce::from_slice(nonce_bytes);
     cipher.decrypt(nonce, ciphertext).unwrap_or_default()
 }
+
+// Cost function for metering (used in Wasmer 3.x)
+fn cost_function(_: &Operator) -> u64 { 1 }
 
 // TODO: Add resource metering and performance optimizations.

@@ -914,7 +914,7 @@ fn handle_contract_invoke(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box
 fn handle_contract_state_query(stream: &mut TcpStream, path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let address = path.trim_start_matches("/api/contract/state/");
     match wasm_vm::load_contract_state(address) {
-        Some(state) => send_json_response(stream, 200, &serde_json::json!({"address": address, "state": base64::encode(state)})),
-        None => send_json_response(stream, 404, &serde_json::json!({"error": "State not found"})),
+        Ok(state) => send_json_response(stream, 200, &serde_json::json!({"address": address, "state": base64::encode(state)})),
+        Err(_) => send_json_response(stream, 404, &serde_json::json!({"error": "State not found"})),
     }
 }
