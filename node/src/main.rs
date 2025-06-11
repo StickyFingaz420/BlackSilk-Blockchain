@@ -5,8 +5,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use colored::*;
 use wasmer::{Instance, Module, Store, imports};
-use smart_contracts::randomx::validate_pow;
-use node::network::tor_process::TorProcess;
+use crate::network::tor_process::TorProcess;
 mod wasm_vm;
 use wasm_vm::{deploy_contract, invoke_contract_with_gas};
 
@@ -498,8 +497,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::InvokeContract { address, function, params }) => {
             let params_vec: Vec<serde_json::Value> = serde_json::from_str(params)?;
-            // Use a high default gas limit for CLI invocations
-            let result = invoke_contract_with_gas(address, function, &params_vec, 10_000_000)?;
+            // Convert serde_json::Value to wasmer::Value
+            let wasmer_params: Vec<wasmer::Value> = params_vec.iter().filter_map(|v| wasm_vm::json_to_wasmer_value(v)).collect();
+            let result = invoke_contract_with_gas(address, function, &wasmer_params, 10_000_000)?;
             println!("Contract call result: {:?}", result);
             return Ok(());
         }
@@ -1111,7 +1111,7 @@ fn handle_privacy(cli: &Cli, action: &PrivacyCommands) -> Result<(), Box<dyn std
 }
 
 fn validate_pow_submission(header: &[u8], nonce: u64, target: &[u8]) -> bool {
-    validate_pow(header, nonce, target)
+    node::randomx_verifier::validate_pow(header, nonce, target)
 }
 
 // Example usage in the node's block validation logic
