@@ -130,6 +130,7 @@ pub use crate::types::StealthAddress;
 
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
 use sha2::Sha512;
 use sha2::Digest;
 use rand::RngCore;
@@ -137,15 +138,26 @@ use rand::RngCore;
 /// Generate a stealth address
 pub fn generate_stealth_address(_view_key: &RistrettoPoint, spend_key: &RistrettoPoint) -> RistrettoPoint {
     let mut rng = rand::thread_rng();
-    let mut random_bytes = [0u8; 32];
-    rng.fill_bytes(&mut random_bytes);
-    let r_scalar = Scalar::from_bytes_mod_order(random_bytes);
-    let r_point = r_scalar * RistrettoPoint::default();
+    let mut random_bytes_for_scalar = [0u8; 32]; // 32 bytes for Scalar::from_bytes_mod_order
+    rng.fill_bytes(&mut random_bytes_for_scalar);
+    let r_scalar = Scalar::from_bytes_mod_order(random_bytes_for_scalar);
+    
+    let r_point = r_scalar * RISTRETTO_BASEPOINT_POINT; // This is R = r*G
 
     let mut hasher = Sha512::new();
-    sha2::Digest::update(&mut hasher, r_point.compress().as_bytes());
-    sha2::Digest::update(&mut hasher, spend_key.compress().as_bytes());
-    let hash = Scalar::from_hash(hasher);
+    hasher.update(r_point.compress().as_bytes()); // r_point is RistrettoPoint, so .compress() is valid
+    hasher.update(spend_key.compress().as_bytes()); // spend_key is &RistrettoPoint
+    let hash_output_array = hasher.finalize(); // GenericArray<u8, U64>
 
-    hash * RistrettoPoint::default() + spend_key
+    // Convert the 64-byte hash output to a scalar
+    // Scalar::from_bytes_mod_order_wide expects a &[u8; 64]
+    let h_scalar = Scalar::from_bytes_mod_order_wide(hash_output_array.as_slice().try_into().expect("Hash output size mismatch"));
+
+    // Calculate the stealth public key: P = H(r*A || B)*G + B
+    // Where A is recipient's view public key (not used here as per original simplified draft)
+    // and B is recipient's spend public key.
+    // The formula used here is H(r*G || B_pub)*G + B_pub, which is a common variant.
+    // Or, if r_point is H(r*view_key)*G, then P = r_point + spend_key
+    // The current formula is P_stealth = h_scalar * G + spend_key
+    (h_scalar * RISTRETTO_BASEPOINT_POINT) + spend_key
 }
