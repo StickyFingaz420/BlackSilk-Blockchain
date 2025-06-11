@@ -8,6 +8,7 @@ use sha2::Digest;
 use primitives::{Block, Transaction};
 use crate::{CHAIN, MEMPOOL, add_to_mempool, validate_transaction};
 use crate::randomx_verifier::RandomXVerifier;
+use crate::wasm_vm;
 
 lazy_static::lazy_static! {
     /// Global RandomX verifier with CPU-only enforcement
@@ -295,6 +296,15 @@ fn handle_http_request(mut stream: TcpStream) -> Result<(), Box<dyn std::error::
         }
         ("GET", "/api/marketplace/transactions") => {
             handle_marketplace_transactions_get(&mut stream)?;
+        }
+        ("POST", "/api/contract/deploy") => {
+            handle_contract_deploy(&mut stream, &body)?;
+        }
+        ("POST", "/api/contract/invoke") => {
+            handle_contract_invoke(&mut stream, &body)?;
+        }
+        ("GET", path) if path.starts_with("/api/contract/state/") => {
+            handle_contract_state_query(&mut stream, path)?;
         }
         _ => {
             println!("[HTTP] No route matched for: {} {}", method, path);
@@ -838,4 +848,68 @@ fn handle_marketplace_transactions_get(stream: &mut TcpStream) -> Result<(), Box
     
     let response = MarketplaceTransactionsResponse { transactions };
     send_json_response(stream, 200, &response)
+}
+
+#[derive(Serialize, Deserialize)]
+struct ContractDeployRequest {
+    wasm_code: Vec<u8>,
+    creator: String,
+    metadata: Option<String>,
+}
+#[derive(Serialize, Deserialize)]
+struct ContractDeployResponse {
+    address: String,
+    success: bool,
+    message: String,
+}
+fn handle_contract_deploy(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let req: ContractDeployRequest = serde_json::from_slice(body)?;
+    match wasm_vm::deploy_contract(req.wasm_code, req.creator) {
+        Ok(address) => send_json_response(stream, 200, &ContractDeployResponse {
+            address,
+            success: true,
+            message: "Contract deployed successfully".to_string(),
+        }),
+        Err(e) => send_json_response(stream, 400, &ContractDeployResponse {
+            address: "".to_string(),
+            success: false,
+            message: e,
+        }),
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct ContractInvokeRequest {
+    address: String,
+    function: String,
+    params: Vec<wasmer::Value>, // JSON array
+}
+#[derive(Serialize, Deserialize)]
+struct ContractInvokeResponse {
+    result: Option<Vec<wasmer::Value>>,
+    success: bool,
+    message: String,
+}
+fn handle_contract_invoke(stream: &mut TcpStream, body: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let req: ContractInvokeRequest = serde_json::from_slice(body)?;
+    match wasm_vm::invoke_contract(&req.address, &req.function, &req.params) {
+        Ok(result) => send_json_response(stream, 200, &ContractInvokeResponse {
+            result: Some(result),
+            success: true,
+            message: "Contract invoked successfully".to_string(),
+        }),
+        Err(e) => send_json_response(stream, 400, &ContractInvokeResponse {
+            result: None,
+            success: false,
+            message: e,
+        }),
+    }
+}
+
+fn handle_contract_state_query(stream: &mut TcpStream, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let address = path.trim_start_matches("/api/contract/state/");
+    match wasm_vm::load_contract_state(address) {
+        Some(state) => send_json_response(stream, 200, &serde_json::json!({"address": address, "state": base64::encode(state)})),
+        None => send_json_response(stream, 404, &serde_json::json!({"error": "State not found"})),
+    }
 }

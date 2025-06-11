@@ -7,6 +7,7 @@ use colored::*;
 use wasmer::{Instance, Module, Store, imports};
 use smart_contracts::randomx::validate_pow;
 use node::network::tor_process::TorProcess;
+mod wasm_vm;
 
 #[derive(Parser, Debug)]
 #[command(name = "blacksilk-node", version, about = "BlackSilk Privacy Blockchain Node")]
@@ -303,6 +304,27 @@ pub enum Commands {
         #[command(subcommand)]
         action: PrivacyCommands,
     },
+    /// Deploy a WASM smart contract
+    DeployContract {
+        /// Path to WASM file
+        #[arg(long, value_name = "FILE")]
+        wasm_file: PathBuf,
+        /// Creator address
+        #[arg(long, value_name = "ADDR")]
+        creator: String,
+    },
+    /// Invoke a deployed contract
+    InvokeContract {
+        /// Contract address
+        #[arg(long, value_name = "ADDR")]
+        address: String,
+        /// Function name
+        #[arg(long, value_name = "FUNC")]
+        function: String,
+        /// Function parameters (as JSON array)
+        #[arg(long, value_name = "PARAMS")]
+        params: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -394,27 +416,7 @@ pub enum NetPrivacyArg {
     Auto,
 }
 
-fn execute_wasm_contract(wasm_bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-    let mut store = Store::default();
-    let module = Module::new(&store, wasm_bytes)?;
-    let import_object = imports! {};
-    let instance = Instance::new(&mut store, &module, &import_object)?;
-
-    if let Some(start) = instance.exports.get_function("_start").ok() {
-        start.call(&mut store, &[])?;
-    }
-
-    Ok(())
-}
-
-// Example usage of the Wasm execution function
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let wasm_bytes = include_bytes!("../../smart-contracts/escrow_contract/target/wasm32-unknown-unknown/release/escrow_contract.wasm");
-    match execute_wasm_contract(wasm_bytes) {
-        Ok(_) => println!("Wasm contract executed successfully"),
-        Err(e) => eprintln!("Error executing Wasm contract: {}", e),
-    }
-    
     let cli = Cli::parse();
     
     // Print professional startup banner
@@ -483,6 +485,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Privacy { action }) => {
             handle_privacy(&cli, action)?;
+            return Ok(());
+        }
+        Some(Commands::DeployContract { wasm_file, creator }) => {
+            let wasm_bytes = std::fs::read(wasm_file)?;
+            let address = deploy_contract(wasm_bytes, creator.clone())?;
+            println!("Contract deployed at address: {}", address);
+            return Ok(());
+        }
+        Some(Commands::InvokeContract { address, function, params }) => {
+            let params_vec: Vec<wasmer::Value> = serde_json::from_str(params)?;
+            let result = invoke_contract(address, function, &params_vec)?;
+            println!("Contract call result: {:?}", result);
             return Ok(());
         }
         None => {

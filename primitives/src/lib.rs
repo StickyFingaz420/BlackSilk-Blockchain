@@ -71,7 +71,31 @@ pub struct TransactionOutput {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ContractTx {
+    Deploy {
+        wasm_code: Vec<u8>,
+        creator: types::Address,
+        metadata: Option<String>,
+    },
+    Invoke {
+        contract_address: types::Address,
+        function: String,
+        params: Vec<u8>, // serialized params (e.g., JSON or bincode)
+        caller: types::Address,
+        metadata: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum TransactionKind {
+    Payment,
+    Contract(ContractTx),
+    // ...future types...
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transaction {
+    pub kind: TransactionKind,
     pub inputs: Vec<TransactionInput>,
     pub outputs: Vec<TransactionOutput>,
     pub fee: types::BlkAmount,

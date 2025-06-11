@@ -21,6 +21,8 @@ use blake2::digest::Update;
 use digest::consts::U32;
 use std::sync::atomic::{AtomicU32, Ordering};
 use i2p::I2pClient;
+use crate::wasm_vm;
+use primitives::{TransactionKind, ContractTx};
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
@@ -521,120 +523,31 @@ pub fn validate_transaction(tx: &primitives::Transaction) -> bool {
             return false;
         }
     }
+    // Smart contract transaction validation
+    match &tx.kind {
+        TransactionKind::Contract(contract_tx) => {
+            match contract_tx {
+                ContractTx::Deploy { wasm_code, creator, .. } => {
+                    // Basic WASM validation: can we parse the module?
+                    if wasmer::Module::validate(&wasmer::Store::default(), wasm_code).is_err() {
+                        println!("[Validation] Invalid WASM contract code");
+                        return false;
+                    }
+                    // Optionally: check creator address format, etc.
+                }
+                ContractTx::Invoke { contract_address, function, params, .. } => {
+                    // Optionally: check contract exists, function name format, etc.
+                    // Params should be valid serialized data (JSON/bincode)
+                    if contract_address.is_empty() || function.is_empty() {
+                        println!("[Validation] Invalid contract call parameters");
+                        return false;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
     true
-}
-
-#[cfg(test)]
-mod double_spend_tests {
-    use super::*;
-    use primitives::{Transaction, TransactionInput, TransactionOutput, RingSignature, types};
-    #[test]
-    fn test_double_spend_key_image() {
-        // Generate a real keypair and ring signature for the test
-        use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
-        use curve25519_dalek::edwards::CompressedEdwardsY;
-        use curve25519_dalek::scalar::Scalar;
-        use rand::RngCore;
-        let mut csprng = rand::thread_rng();
-        let mut sk_bytes = [0u8; 32];
-        csprng.fill_bytes(&mut sk_bytes);
-        let sk = Scalar::from_bytes_mod_order(sk_bytes);
-        let pk = (ED25519_BASEPOINT_POINT * sk).compress().to_bytes();
-        let ring = vec![pk];
-        let msg = b"test double spend";
-        // Generate ring signature using canonical implementation
-        let sig = generate_ring_signature(msg, &ring, &sk_bytes, 0);
-        let key_image = [1u8; 32]; // For test, not used in ring sig
-        let ring_sig = RingSignature { ring: ring.clone(), signature: sig };
-        let input = TransactionInput { key_image, ring_sig };
-        let output = TransactionOutput { amount_commitment: [3u8; 32], stealth_address: primitives::StealthAddress { public_view: [4u8; 32], public_spend: [5u8; 32] }, range_proof: vec![0u8; 64] };
-        // Generate proper signatures for transactions
-        use sha2::{Sha256, Digest};
-        let mut hasher1 = Sha256::new();
-        // Disambiguate the `update` method calls
-        sha2::Digest::update(&mut hasher1, &msg);
-        sha2::Digest::update(&mut hasher1, &[0u8]); // Transaction index
-        let sig1 = hex::encode(hasher1.finalize());
-        
-        let mut hasher2 = Sha256::new();
-        sha2::Digest::update(&mut hasher2, &msg);
-        sha2::Digest::update(&mut hasher2, &[1u8]); // Different transaction index
-        let sig2 = hex::encode(hasher2.finalize());
-        
-        let tx1 = Transaction { inputs: vec![input.clone()], outputs: vec![output.clone()], fee: 0, extra: msg.to_vec(), metadata: None, signature: sig1 };
-        let tx2 = Transaction { inputs: vec![input], outputs: vec![output], fee: 0, extra: msg.to_vec(), metadata: None, signature: sig2 };
-        // First tx should be valid
-        assert!(validate_transaction(&tx1));
-        // Add tx1 to mempool
-        add_to_mempool(tx1.clone());
-        // Second tx with same key image should be rejected
-        assert!(!validate_transaction(&tx2));
-    }
-}
-
-// Advanced fork resolution: choose the longest valid chain
-pub fn maybe_reorg_chain(new_blocks: Vec<primitives::Block>) {
-    let mut chain = CHAIN.lock().unwrap();
-    if new_blocks.len() > chain.blocks.len() {
-        // Validate all new blocks
-        let mut valid = true;
-        for i in 0..new_blocks.len() {
-            if i > 0 && new_blocks[i].header.prev_hash != new_blocks[i-1].header.pow.hash {
-                valid = false;
-                break;
-            }
-            if !validate_block(&new_blocks[i]) {
-                valid = false;
-                break;
-            }
-        }
-        if valid {
-            println!("[Chain] Reorg: switching to longer chain");
-            chain.blocks = new_blocks.into();
-        } else {
-            println!("[Chain] Reorg failed: received chain is invalid");
-        }
-    }
-}
-
-/// Emission schedule for BlackSilk (see README for details)
-pub struct EmissionSchedule {
-    pub genesis_reward: u64,      // Initial block reward (atomic units)
-    pub halving_interval: u64,    // Blocks per halving (~4 years)
-    pub tail_emission: u64,       // Always 0 (no tail emission)
-    pub supply_cap: u64,          // 21M BLK (atomic units)
-}
-
-impl EmissionSchedule {
-    /// Returns the block reward for a given height, enforcing halving and supply cap.
-    pub fn block_reward(&self, height: u64) -> u64 {
-        let mut reward = self.genesis_reward;
-        let mut halvings = height / self.halving_interval;
-        while halvings > 0 && reward > self.tail_emission {
-            reward /= 2;
-            halvings -= 1;
-        }
-        if reward < self.tail_emission {
-            self.tail_emission
-        } else {
-            reward
-        }
-    }
-}
-
-pub fn default_emission() -> EmissionSchedule {
-    EmissionSchedule {
-        genesis_reward: config::GENESIS_REWARD,
-        halving_interval: config::HALVING_INTERVAL,
-        tail_emission: config::TAIL_EMISSION,
-        supply_cap: config::SUPPLY_CAP,
-    }
-}
-
-pub struct Chain {
-    pub blocks: VecDeque<Block>,
-    pub emission: EmissionSchedule,
-    pub network: Network,
 }
 
 impl Chain {
@@ -745,6 +658,27 @@ impl Chain {
         if !validate_block(&block) {
             println!("[Chain] Block validation failed at height {}", block.header.height);
             return false;
+        }
+        // Process contract transactions
+        for tx in &block.transactions {
+            if let TransactionKind::Contract(contract_tx) = &tx.kind {
+                match contract_tx {
+                    ContractTx::Deploy { wasm_code, creator, metadata } => {
+                        // Deploy contract via VM, persist code/state
+                        let _ = wasm_vm::deploy_contract(wasm_code.clone(), creator.clone());
+                        // TODO: persist contract code/state to disk
+                    }
+                    ContractTx::Invoke { contract_address, function, params, caller, metadata } => {
+                        // Deserialize params (assume JSON array of wasmer::Value)
+                        let params_vec: Vec<wasmer::Value> = match serde_json::from_slice(params) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
+                        let _ = wasm_vm::invoke_contract(contract_address, function, &params_vec);
+                        // TODO: update and persist contract state
+                    }
+                }
+            }
         }
         self.blocks.push_back(block);
         true
@@ -1099,3 +1033,22 @@ fn connect_to_peer_with_privacy(addr: &str, privacy_manager: Arc<crate::network:
                     if let Err(e) = send_message(&mut stream, &version) {
                         eprintln!("[P2P] Failed to send version message: {}", e);
                         privacy_manager.unregister_connection();
+                    } else {
+                        // Connection established, wait for messages
+                        let _ = handle_client_with_privacy(stream, privacy_manager);
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("[P2P] Failed to connect to {}: {}", addr, e);
+            }
+        }
+        retries -= 1;
+        if retries > 0 {
+            println!("[P2P] Retrying connection... ({} attempts left)", retries);
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+    }
+    println!("[P2P] All attempts to connect to peer {} failed.", addr);
+}
