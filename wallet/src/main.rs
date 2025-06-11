@@ -708,6 +708,7 @@ fn send_transaction(node_addr: &str, wallet: &WalletFile, to_address: &str, amou
     let tx_signature = hex::encode(tx_hasher.finalize());
     
     let tx = primitives::Transaction {
+        kind: primitives::TransactionKind::Payment,
         inputs: tx_inputs,
         outputs: tx_outputs,
         fee,

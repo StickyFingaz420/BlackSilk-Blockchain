@@ -15,6 +15,7 @@ extern crate lazy_static;
 pub mod http_server;
 pub mod randomx_verifier;
 pub mod randomx;
+pub mod wasm_vm;
 
 use blake2::{Blake2b, Digest};
 use blake2::digest::Update;
@@ -23,6 +24,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use i2p::I2pClient;
 use crate::wasm_vm;
 use primitives::{TransactionKind, ContractTx};
+use serde::{Serialize, Deserialize};
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
@@ -71,7 +73,7 @@ pub mod config {
 }
 
 /// Network selection with proper port configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Network {
     Mainnet,
     Testnet,
@@ -548,6 +550,44 @@ pub fn validate_transaction(tx: &primitives::Transaction) -> bool {
         _ => {}
     }
     true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmissionSchedule {
+    pub genesis_reward: u64,
+    pub halving_interval: u64,
+    pub supply_cap: u64,
+}
+
+impl EmissionSchedule {
+    pub fn block_reward(&self, height: u64) -> u64 {
+        let mut reward = self.genesis_reward;
+        let mut halvings = height / self.halving_interval;
+        for _ in 0..halvings {
+            reward /= 2;
+        }
+        // Enforce no tail emission and supply cap
+        if reward == 0 {
+            return 0;
+        }
+        // Optionally, enforce supply cap logic here if needed
+        reward
+    }
+}
+
+pub fn default_emission() -> EmissionSchedule {
+    EmissionSchedule {
+        genesis_reward: config::GENESIS_REWARD,
+        halving_interval: config::HALVING_INTERVAL,
+        supply_cap: config::SUPPLY_CAP,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Chain {
+    pub blocks: VecDeque<Block>,
+    pub emission: EmissionSchedule,
+    pub network: Network,
 }
 
 impl Chain {
@@ -1051,4 +1091,34 @@ fn connect_to_peer_with_privacy(addr: &str, privacy_manager: Arc<crate::network:
         }
     }
     println!("[P2P] All attempts to connect to peer {} failed.", addr);
+}
+
+/// Add a transaction to the mempool
+pub fn add_to_mempool(tx: primitives::Transaction) {
+    let mut mempool = MEMPOOL.lock().unwrap();
+    mempool.push(tx);
+}
+
+/// Get a copy of the current mempool
+pub fn get_mempool() -> Vec<primitives::Transaction> {
+    let mempool = MEMPOOL.lock().unwrap();
+    mempool.clone()
+}
+
+/// Stub for chain reorg logic
+pub fn maybe_reorg_chain(_blocks: Vec<primitives::Block>) {
+    // TODO: Implement chain reorganization logic
+    println!("[Chain] Reorg logic not yet implemented");
+}
+
+/// Stub for range proof validation
+pub fn validate_range_proof(_proof: &[u8], _commitment: &[u8]) -> bool {
+    // TODO: Implement Bulletproofs or other range proof validation
+    true
+}
+
+/// Stub for privacy-aware client handler
+pub fn handle_client_with_privacy(_stream: std::net::TcpStream, _privacy_manager: std::sync::Arc<crate::network::privacy::PrivacyManager>) -> std::io::Result<()> {
+    // TODO: Implement privacy-aware client handling
+    Ok(())
 }

@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+#[derive(Debug)]
 pub struct Item {
     pub id: u64,
     pub seller: String,

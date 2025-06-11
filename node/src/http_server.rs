@@ -707,6 +707,7 @@ fn handle_marketplace_data_submit(stream: &mut TcpStream, body: &[u8]) -> Result
     
     // Create a transaction with marketplace data in metadata
     let tx = Transaction {
+        kind: primitives::TransactionKind::Payment, // Data-only tx, not a contract
         inputs: vec![], // No financial inputs for data storage
         outputs: vec![], // No financial outputs for data storage
         fee: 0, // No fee for data storage transactions
@@ -913,3 +914,33 @@ fn handle_contract_state_query(stream: &mut TcpStream, path: &str) -> Result<(),
         None => send_json_response(stream, 404, &serde_json::json!({"error": "State not found"})),
     }
 }
+
+use serde::{Serialize, Deserialize};
+
+/// Serializable wrapper for wasmer::Value
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
+pub enum WasmValue {
+    I32(i32),
+    I64(i64),
+    F32(f32),
+    F64(f64),
+    // Add more as needed
+}
+
+impl From<&wasmer::Value> for WasmValue {
+    fn from(val: &wasmer::Value) -> Self {
+        match val {
+            wasmer::Value::I32(v) => WasmValue::I32(*v),
+            wasmer::Value::I64(v) => WasmValue::I64(*v),
+            wasmer::Value::F32(v) => WasmValue::F32(*v),
+            wasmer::Value::F64(v) => WasmValue::F64(*v),
+            // Add more as needed
+            _ => panic!("Unsupported WASM value type for serialization"),
+        }
+    }
+}
+
+// In contract API endpoints, convert Vec<wasmer::Value> to Vec<WasmValue> before serializing in responses.
+// For example:
+// let result: Option<Vec<WasmValue>> = result_opt.map(|v| v.iter().map(WasmValue::from).collect());
