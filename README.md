@@ -6,15 +6,15 @@
   You may customize diagrams and branding as needed.
 -->
 
-# BlackSilk Blockchain
+# BlackSilk Blockchain & Block Explorer
 
 <p align="center">
   <img src="docs/assets/blacksilk-logo.svg" alt="BlackSilk Logo" width="180"/>
 </p>
 
 <p align="center">
-  <b>Professional, Privacy-First Blockchain Platform</b><br>
-  <i>Automatic privacy networking · Modern Rust codebase · Real-world utility</i>
+  <b>Professional, Privacy-First Blockchain Platform & Modern Web Explorer</b><br>
+  <i>Automatic privacy networking · Modern Rust codebase · Real-world utility · Next.js Explorer</i>
 </p>
 
 ---
@@ -32,6 +32,7 @@
 - [Privacy Networking](#privacy-networking)
 - [Features](#features)
 - [CLI Reference](#cli-reference)
+- [Block Explorer](#block-explorer)
 - [Project Structure](#project-structure)
 - [Roadmap](#roadmap)
 - [Development & Testing](#development--testing)
@@ -49,7 +50,7 @@ BlackSilk is a next-generation, privacy-first blockchain platform designed for r
 
 ```mermaid
 graph TD;
-    A[User/Wallet] -->|HTTP API| B(Node)
+    A[User/Wallet/Explorer] -->|HTTP API| B(Node)
     B -->|P2P| C{Network Layer}
     C --> D[Tor]
     C --> E[I2P]
@@ -65,7 +66,7 @@ graph TD;
 - **RandomX Engine**: ASIC-resistant, CPU-friendly mining
 - **WASM VM**: Smart contracts (future)
 - **Marketplace Module**: Confidential assets, encrypted memos (future)
-- **Block Explorer**: Modern web UI (Next.js)
+- **Block Explorer**: Modern web UI (Next.js, TypeScript, Tailwind)
 
 ---
 
@@ -168,6 +169,48 @@ cargo run --bin blacksilk-node -- --net-privacy clearnet
 
 ---
 
+## Block Explorer
+
+A modern, responsive web-based block explorer for the BlackSilk Blockchain. Built with Next.js, TypeScript, and Tailwind CSS.
+
+### Features
+- **Real-time Network Statistics**: Live block height, difficulty, hashrate, peer count
+- **Block Browser**: Detailed block information with transaction lists
+- **Transaction Viewer**: Complete transaction details with privacy features
+- **Address Lookup**: Balance and transaction history for addresses
+- **Mempool Monitor**: View pending transactions
+- **Smart Search**: Search by block height, hash, transaction ID, or address
+- **Modern UI**: Responsive, dark/light theme, fast loading, real-time updates
+- **Privacy Indicators**: Ring signature and stealth address detection, privacy level labels
+- **Advanced Analytics**: Network charts, mining info, supply metrics, halving countdown
+
+### Quick Start
+
+```powershell
+# Clone the repository
+cd BlackSilk-Blockchain/block-explorer
+npm install
+cp .env.example .env.local
+# Edit .env.local as needed
+npm run dev
+```
+
+### API Integration
+
+The explorer connects to the BlackSilk node's HTTP API:
+- `/status` — Network info
+- `/get_blocks` — Block list
+- `/get_block/{hash|height}` — Block details
+- `/get_transaction/{txid}` — Transaction details
+- `/get_mempool` — Pending transactions
+- `/search?q={query}` — Search
+
+### Deployment
+- **Docker:** `docker build -t blacksilk-explorer . && docker run -d -p 3002:3002 blacksilk-explorer`
+- **Production:** See block-explorer/README.md for full details
+
+---
+
 ## Project Structure
 
 ```text
@@ -222,6 +265,7 @@ BlackSilk-Blockchain/
 - **Test:** `cargo test`
 - **Integration tests:** See `tests/integration/e2e/`
 - **Run node:** See CLI examples above
+- **Block Explorer:** See block-explorer/README.md for dev & deployment
 
 ---
 
