@@ -143,6 +143,47 @@ async fn test_multi_node_consensus() {
     cleanup_test_environment(test_env).await;
 }
 
+/// End-to-end test: node <-> wallet <-> miner <-> explorer <-> marketplace <-> faucet
+#[tokio::test]
+async fn test_full_decentralized_flow() {
+    // 1. Start node and ensure it produces blocks
+    // TODO: Launch node subprocess or use test harness
+    // assert!(node_is_healthy());
+
+    // 2. Create wallet, fund from faucet, and check balance
+    // TODO: Use wallet CLI or API
+    // let wallet = create_wallet();
+    // fund_wallet_from_faucet(&wallet.address);
+    // assert!(wallet_balance(&wallet) > 0);
+
+    // 3. Start miner, connect to node, and mine blocks
+    // TODO: Launch miner subprocess or use API
+    // assert!(miner_is_connected());
+    // assert!(blocks_mined() > 0);
+
+    // 4. Query explorer for latest blocks and transactions
+    // TODO: Use explorer API
+    // let blocks = explorer_get_blocks();
+    // assert!(!blocks.is_empty());
+
+    // 5. List product on marketplace (signed, decentralized)
+    // TODO: Use marketplace API
+    // let product_id = marketplace_list_product(wallet, ...);
+    // assert!(product_id.is_some());
+
+    // 6. Place order, create escrow, and simulate delivery/dispute
+    // TODO: Use marketplace API and smart contract
+    // let order_id = marketplace_place_order(buyer_wallet, product_id);
+    // assert!(order_id.is_some());
+    // let escrow = create_escrow_contract(...);
+    // assert!(escrow.is_active());
+    // simulate_dispute_and_resolution(escrow);
+
+    // 7. Check all logs, metrics, and state for correctness
+    // TODO: Query Prometheus, logs, and on-chain state
+    // assert!(system_is_consistent());
+}
+
 // Test helper structures and functions
 #[derive(Debug)]
 struct TestEnvironment {

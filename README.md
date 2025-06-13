@@ -405,3 +405,99 @@ MIT License. See `LICENSE` file.
 > <p align="center" style="color:#00bcd4; font-size:1.2em;">✨ <b>Every milestone is tracked, tested, and reviewed for security, privacy, and performance. For the latest status, see the <a href="#future-enhancements--todos">Future Enhancements</a> section below.</b> ✨</p>
 
 ---
+
+## 🚀 Testnet Deployment & Onboarding Guide
+
+### 1. Running a Node
+```sh
+git clone <repo-url>
+cd BlackSilk-Blockchain
+docker-compose up -d blacksilk-node
+```
+- Edit `config/testnet/node_config.toml` for custom settings.
+- Ensure ports 9333 (RPC), 9334 (P2P), and 9090 (metrics) are open.
+
+### 2. Mining on Testnet
+```sh
+docker-compose up -d blacksilk-miner
+```
+- Set your mining address in `config/miner_config.toml`.
+- Monitor hashrate and blocks found via logs or Prometheus.
+
+### 3. Using the CLI Wallet
+```sh
+cd wallet
+cargo run --release -- --generate-address
+cargo run --release -- --send --to <address> --amount <amt>
+```
+- Import or generate a mnemonic for your testnet wallet.
+- All transactions are privacy-preserving by default.
+
+### 4. Accessing the Web Wallet & Block Explorer
+- Web Wallet: http://localhost:3001
+- Block Explorer: http://localhost:3002
+- Testnet Faucet: http://localhost:3003
+
+### 5. Listing & Buying Products on the Marketplace
+- Marketplace: http://localhost:3000
+- List products, place orders, and use escrow—all on-chain and decentralized.
+- All actions require cryptographic authentication (no admin, no centralization).
+
+### 6. Getting Testnet Coins
+- Visit the faucet and request coins to your testnet address.
+- Faucet is rate-limited to prevent abuse.
+
+### 7. Monitoring & Support
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3001 (monitoring dashboards)
+- Logs: Check Docker logs for each service
+
+---
+
+## 📢 Testnet Launch Announcement (Template)
+
+> **BlackSilk Testnet is Live!**
+>
+> We invite the community to join, mine, transact, and build on the BlackSilk privacy blockchain testnet. All core features are decentralized, privacy-first, and open for real-world testing. No admin, no centralization—just pure cryptography and community.
+>
+> - Run a node, mine, and earn testnet coins
+> - Use the CLI and web wallets
+> - Explore the chain and participate in the decentralized marketplace
+> - Report bugs, suggest features, and help us build the future of privacy tech
+>
+> **Docs, guides, and support:** [GitHub](<repo-url>) | [Discord/Forum link]
+>
+> Let’s build the next generation of privacy together!
+
+---
+
+## 📊 Monitoring, Logging, and Support
+
+### Monitoring
+- **Prometheus** scrapes metrics from all core services (node, miner, marketplace, faucet) at `/metrics` endpoints.
+- **Grafana** dashboards visualize chain health, mining, marketplace activity, and faucet usage.
+- **AlertManager** notifies of critical failures or abnormal activity.
+
+**To start monitoring stack:**
+```sh
+cd monitoring
+docker-compose up -d
+```
+- Prometheus: [http://localhost:9090](http://localhost:9090)
+- Grafana: [http://localhost:3001](http://localhost:3001)
+
+### Logging
+- All services log to stdout (view with `docker logs <service>`)
+- For persistent logs, mount volumes or configure log rotation in Docker Compose
+- Review logs for errors, warnings, and user-reported issues
+
+### Support & Troubleshooting
+- **Support Channel:** Join our [Discord](https://discord.gg/your-invite) or post on [Forum](https://forum.yourproject.org)
+- **FAQ:**
+  - _Node won’t sync?_ Check ports, config, and peer list.
+  - _Wallet not connecting?_ Ensure node is running and RPC is reachable.
+  - _Faucet not working?_ Check faucet logs and rate limits.
+  - _Marketplace issues?_ Ensure all services are up and check logs for errors.
+- For more help, open an issue on [GitHub](<repo-url>) or ask in the support channel.
+
+---
