@@ -2,6 +2,19 @@
 
 ---
 
+<p align="center">
+  <img src="blacksilklogos/main_1024x512.png" alt="BlackSilk Logo" width="400"/>
+</p>
+
+<p align="center">
+  <a href="#protocol-parameters"><img src="https://img.shields.io/badge/Protocol-Privacy--First-blueviolet?style=for-the-badge"/></a>
+  <a href="#build"><img src="https://img.shields.io/badge/Build-Passing-brightgreen?style=for-the-badge"/></a>
+  <a href="#license"><img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge"/></a>
+  <a href="#monitoring--devops"><img src="https://img.shields.io/badge/Monitoring-Prometheus%20%7C%20Grafana-orange?style=for-the-badge"/></a>
+</p>
+
+---
+
 ## Table of Contents
 - [Project Overview](#project-overview)
 - [Architecture](#architecture)
@@ -293,6 +306,19 @@ blacksilk-miner --node-url http://localhost:9334 --threads 4
 - Ongoing: Smart contract language improvements, more ZKP schemes, mobile wallet, advanced privacy features.
 - Known: WASM contract sandboxing, further decentralization of marketplace, UI/UX polish.
 
+## Future Enhancements & TODOs
+
+- Chain reorganization and fork resolution logic
+- Bulletproofs and advanced range proof validation
+- Privacy-aware client handling and advanced Tor/I2P features
+- Hardware wallet import/export and multisig
+- Resource metering and performance optimizations for WASM VM
+- Admin features and configuration validation
+- UI/UX polish and accessibility improvements
+- Mobile wallet and light client support
+- Additional smart contract templates and language support
+- More comprehensive test coverage and fuzzing
+
 ## Contributing
 - See `CONTRIBUTING.md` (to be created).
 - PRs, issues, and feature requests welcome.
@@ -315,3 +341,5 @@ MIT License. See `LICENSE` file.
 ---
 
 > For full technical details, see the source code and per-component READMEs.
+
+---
