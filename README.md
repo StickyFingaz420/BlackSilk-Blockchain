@@ -340,6 +340,68 @@ MIT License. See `LICENSE` file.
 
 ---
 
-> For full technical details, see the source code and per-component READMEs.
+<h2 align="center" style="color:#00bcd4;">🚀 <span style="color:#00bcd4;">BlackSilk Technical Roadmap</span> 🚀</h2>
+
+<table align="center" width="100%">
+  <tr>
+    <th width="30%" style="color:#43a047;">Milestone</th>
+    <th width="20%" style="color:#ff9800;">Status</th>
+    <th width="50%" style="color:#6c63ff;">Details</th>
+  </tr>
+  <tr>
+    <td>🟢 <b>Core Protocol</b></td>
+    <td><span style="color:#43a047;">Complete</span></td>
+    <td>Consensus, mining, emission, privacy, and networking fully implemented and tested.</td>
+  </tr>
+  <tr>
+    <td>🟢 <b>Wallet Suite</b></td>
+    <td><span style="color:#43a047;">Complete</span></td>
+    <td>CLI wallet, stealth addresses, ring signatures, hardware wallet integration, BIP39, and ZKPs.</td>
+  </tr>
+  <tr>
+    <td>🟢 <b>Web Frontends</b></td>
+    <td><span style="color:#43a047;">Complete</span></td>
+    <td>Block explorer, web wallet, and testnet faucet (Next.js, React, Express, Dockerized).</td>
+  </tr>
+  <tr>
+    <td>🟡 <b>Smart Contracts</b></td>
+    <td><span style="color:#ffeb3b;">Beta</span></td>
+    <td>WASM VM, escrow, marketplace contracts. Resource metering and sandboxing in progress.</td>
+  </tr>
+  <tr>
+    <td>🟡 <b>Marketplace Backend</b></td>
+    <td><span style="color:#ffeb3b;">Beta</span></td>
+    <td>Decentralized listings, escrow, IPFS, Axum API. UI/UX and admin features in progress.</td>
+  </tr>
+  <tr>
+    <td>🟢 <b>Monitoring & DevOps</b></td>
+    <td><span style="color:#43a047;">Complete</span></td>
+    <td>Prometheus, Grafana, AlertManager, health checks, Docker Compose orchestration.</td>
+  </tr>
+  <tr>
+    <td>🔵 <b>Advanced Privacy</b></td>
+    <td><span style="color:#2196f3;">Planned</span></td>
+    <td>Enhanced Tor/I2P, privacy-aware clients, advanced ZKPs, and mobile wallet support.</td>
+  </tr>
+  <tr>
+    <td>🔵 <b>Extensibility</b></td>
+    <td><span style="color:#2196f3;">Planned</span></td>
+    <td>Additional smart contract templates, language support, and plugin APIs.</td>
+  </tr>
+  <tr>
+    <td>🔴 <b>Chain Reorg & Fork Handling</b></td>
+    <td><span style="color:#f44336;">In Progress</span></td>
+    <td>Robust fork resolution, chain reorganization, and consensus edge cases.</td>
+  </tr>
+  <tr>
+    <td>🟣 <b>Mobile & Light Clients</b></td>
+    <td><span style="color:#9c27b0;">Planned</span></td>
+    <td>Mobile wallet, light client, and browser extension support.</td>
+  </tr>
+</table>
+
+---
+
+> <p align="center" style="color:#00bcd4; font-size:1.2em;">✨ <b>Every milestone is tracked, tested, and reviewed for security, privacy, and performance. For the latest status, see the <a href="#future-enhancements--todos">Future Enhancements</a> section below.</b> ✨</p>
 
 ---
