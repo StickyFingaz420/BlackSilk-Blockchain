@@ -160,4 +160,26 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
+## Roadmap
+
+### Near Term (Next Release)
+- [ ] CAPTCHA integration
+- [ ] Multi-language support
+- [ ] Advanced analytics dashboard
+- [ ] WebSocket real-time updates
+
+### Medium Term
+- [ ] Multiple token support
+- [ ] Social media verification
+- [ ] API key management
+- [ ] Webhook notifications
+
+### Long Term
+- [ ] Kubernetes deployment
+- [ ] Multi-chain support
+- [ ] Advanced fraud detection
+- [ ] Machine learning abuse detection
+
+---
+
 **BlackSilk Blockchain** – Privacy, performance, and modularity for the next generation of decentralized applications.
