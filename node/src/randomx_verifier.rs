@@ -1014,10 +1014,36 @@ impl RandomXVerifier {
         stats.insert("baseline_ms".to_string(), (self.get_baseline_ms() * 100.0) as u32); // Store as centimilliseconds
         stats
     }
+    
+    /// Validate proof-of-work (real RandomX PoW validation)
+    pub fn validate_pow(header_bytes: &[u8], nonce: u64, target: &[u8]) -> bool {
+        // Deserialize header
+        let header: BlockHeader = match bincode::deserialize(header_bytes) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+        // Set nonce
+        let mut header = header;
+        header.pow.nonce = nonce;
+        // Create verifier
+        let verifier = RandomXVerifier::new();
+        // Compute hash
+        let computed_hash = verifier.compute_randomx_hash(&header, nonce);
+        // Check if hash meets target (target is a 32-byte little-endian value)
+        // Convert both to big-endian for comparison
+        let hash_num = num_bigint::BigUint::from_bytes_be(&computed_hash);
+        let target_num = num_bigint::BigUint::from_bytes_be(target);
+        hash_num <= target_num
+    }
 }
 
 impl Default for RandomXVerifier {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Free function for PoW validation (for use in main.rs and FFI)
+pub fn validate_pow(header_bytes: &[u8], nonce: u64, target: &[u8]) -> bool {
+    RandomXVerifier::validate_pow(header_bytes, nonce, target)
 }

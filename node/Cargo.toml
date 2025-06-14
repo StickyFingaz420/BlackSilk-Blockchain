@@ -38,3 +38,5 @@ torut = "0.2.1"
 wasmer = "3.1.1"
 wasmer-middlewares = "3.1.1"
 i2p = { path = "../i2p" }
+bincode = "1.3"
+num-bigint = "0.4"

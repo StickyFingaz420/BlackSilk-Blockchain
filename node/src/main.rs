@@ -8,6 +8,7 @@ use wasmer::{Instance, Module, Store, imports};
 use crate::network::tor_process::TorProcess;
 mod wasm_vm;
 use wasm_vm::{deploy_contract, invoke_contract_with_gas};
+mod network;
 
 #[derive(Parser, Debug)]
 #[command(name = "blacksilk-node", version, about = "BlackSilk Privacy Blockchain Node")]

@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex};
 // Wasmer 6.x imports
 use wasmer::{Instance, Module, Store, imports, Value};
 use wasmer_middlewares::Metering;
-use wasmer::{Universal, EngineBuilder};
 use blake2::{Blake2b, Digest};
 use serde_json::Value as JsonValue;
 use curve25519_dalek::scalar::Scalar;
@@ -96,7 +95,7 @@ pub fn deploy_contract(wasm_bytes: Vec<u8>, creator: String) -> Result<String, S
 }
 
 /// Convert serde_json::Value to wasmer::Value (only basic types supported)
-fn json_to_wasmer_value(val: &JsonValue) -> Option<wasmer::Value> {
+pub fn json_to_wasmer_value(val: &JsonValue) -> Option<wasmer::Value> {
     match val {
         JsonValue::Number(n) => {
             if let Some(i) = n.as_i64() {
@@ -278,18 +277,15 @@ pub fn privacy_decrypt(data: &[u8], key: &[u8]) -> Vec<u8> {
     cipher.decrypt(nonce, ciphertext).unwrap_or_default()
 }
 
-// Cost function for metering (used in Wasmer 3.x)
-fn cost_function(_: &Operator) -> u64 { 1 }
-
-/// Gas cost function: 1 gas per instruction (customize as needed)
-fn cost_function(_operator: &Operator) -> u64 {
-    1
-}
-
 /// Event logging for contract execution (to be persisted on-chain or in decentralized log)
 pub fn log_contract_event(address: &str, event: &str, details: &str) {
     // In production, emit to on-chain event log or decentralized storage
     println!("[Contract Event] [{}] {}: {}", address, event, details);
+}
+
+/// Gas cost function: 1 gas per instruction (customize as needed)
+fn cost_function(_operator: &Operator) -> u64 {
+    1
 }
 
 /// Execute a WASM contract with robust error handling and event logging
@@ -300,11 +296,10 @@ pub fn execute_contract_with_gas(
     params: &[Value],
     contract_address: &str,
 ) -> Result<Vec<Value>, String> {
+    // Set up metering middleware
     let metering = Metering::new(gas_limit, cost_function);
-    let engine = EngineBuilder::new(Universal::new(wasmer::Singlepass::default()))
-        .push_middleware(metering)
-        .engine();
-    let store = Store::new(&engine);
+    let mut store = Store::default();
+    // Create module
     let module = match Module::new(&store, wasm_bytes) {
         Ok(m) => m,
         Err(e) => {
@@ -313,28 +308,33 @@ pub fn execute_contract_with_gas(
         }
     };
     let import_object = imports! {};
-    let mut instance = match Instance::new(&module, &import_object) {
+    let instance = match Instance::new(&mut store, &module, &import_object) {
         Ok(i) => i,
         Err(e) => {
             log_contract_event(contract_address, "instantiate_failed", &e.to_string());
             return Err(format!("Instance creation failed: {}", e));
         }
     };
+    // Check memory usage (in pages)
     let memory = instance.exports.get_memory("memory").map_err(|e| e.to_string())?;
-    if memory.size().0 > memory_limit {
+    let mem_pages = memory.ty(&store).minimum;
+    if mem_pages > wasmer::Pages(memory_limit) {
         log_contract_event(contract_address, "memory_limit_exceeded", "");
         return Err("Contract exceeds memory limit".to_string());
     }
-    let result = instance.call("main", params);
-    let gas_used = Metering::get_remaining_points(&instance);
-    if gas_used == 0 {
+    // Call the contract's main function
+    let main_func = instance.exports.get_function("main").map_err(|e| e.to_string())?;
+    let result = main_func.call(&mut store, params);
+    // Get remaining gas (points)
+    let gas_left = wasmer_middlewares::metering::get_remaining_points(&mut store, &instance);
+    if matches!(gas_left, wasmer_middlewares::metering::MeteringPoints::Remaining(0)) {
         log_contract_event(contract_address, "gas_limit_exceeded", "");
         return Err("Gas limit exceeded".to_string());
     }
     match result {
         Ok(val) => {
             log_contract_event(contract_address, "executed", "success");
-            Ok(val)
+            Ok(val.to_vec())
         },
         Err(e) => {
             log_contract_event(contract_address, "execution_failed", &e.to_string());
