@@ -1148,6 +1148,7 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
                         let hash = vm.calculate_hash(&input);
                         HASH_COUNTER.fetch_add(1, Ordering::Relaxed);
                         if hash_meets_target(&hash, target) {
+                            println!("[DEBUG] Thread {} found valid nonce {} for height {} (hash: {:x})", thread_id, nonce, job.height, u64::from_le_bytes(hash[0..8].try_into().unwrap()));
                             let submit_req = SubmitBlockRequest {
                                 header: job.header.clone(),
                                 nonce,
