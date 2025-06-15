@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use rayon::prelude::*;
 use colored::*;
 use sha2::Digest;
+use primitives::{Block, BlockHeader, Coinbase};
 
 // Pure Rust RandomX modules (no FFI required)
 mod randomx;
@@ -386,9 +387,7 @@ struct BlockTemplate {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SubmitBlockRequest {
-    header: Vec<u8>,
-    nonce: u64,
-    hash: Vec<u8>,
+    block: Block,
     miner_address: Option<String>,
 }
 
@@ -1026,15 +1025,14 @@ fn fetch_job(client: &Client, node_url: &str, mining_address: &str) -> Option<Ge
 }
 
 /// Submit a mined block to the node
-fn submit_block(client: &Client, node_url: &str, block: SubmitBlockRequest) {
+fn submit_block(client: &Client, node_url: &str, req: SubmitBlockRequest) {
     let url = if node_url.starts_with("http://") || node_url.starts_with("https://") {
         format!("{}/submit_block", node_url)
     } else {
         format!("http://{}/submit_block", node_url)
     };
     println!("[Miner] Submitting block to: {}", url);
-    
-    match client.post(&url).json(&block).timeout(Duration::from_secs(10)).send() {
+    match client.post(&url).json(&req).timeout(Duration::from_secs(10)).send() {
         Ok(response) => {
             println!("[Miner] Submit response status: {}", response.status());
             if let Ok(res) = response.json::<SubmitBlockResponse>() {
@@ -1148,13 +1146,32 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
                         let hash = vm.calculate_hash(&input);
                         HASH_COUNTER.fetch_add(1, Ordering::Relaxed);
                         if hash_meets_target(&hash, target) {
-                            let block = SubmitBlockRequest {
-                                header: header_data.clone(),
-                                nonce,
-                                hash: hash.to_vec(),
+                            let block_header = BlockHeader {
+                                version: 1,
+                                prev_hash: job.prev_hash.clone().try_into().unwrap_or([0; 32]),
+                                merkle_root: [0; 32], // No txs, so empty root
+                                timestamp: job.timestamp,
+                                height: job.height,
+                                difficulty: job.difficulty,
+                                pow: Pow {
+                                    nonce,
+                                    hash: hash.clone().try_into().unwrap_or([0; 32]),
+                                },
+                            };
+                            let coinbase = Coinbase {
+                                reward: 0, // Let node validate and fill in correct reward
+                                to: job.coinbase_address.clone(),
+                            };
+                            let block = Block {
+                                header: block_header,
+                                coinbase,
+                                transactions: vec![],
+                            };
+                            let submit_req = SubmitBlockRequest {
+                                block,
                                 miner_address: Some(job.coinbase_address.clone()),
                             };
-                            submit_block(&client_clone, &node_url_clone, block);
+                            submit_block(&client_clone, &node_url_clone, submit_req);
                             println!("{} Thread {} found block at height {} with nonce {} (RandomX hash: {:x})", 
                                    "[SUCCESS]".bright_green().bold(), thread_id, job.height, nonce, 
                                    u64::from_le_bytes(hash[0..8].try_into().unwrap()));
