@@ -22,8 +22,6 @@ pub mod blake2b_generator;
 pub use cache::RandomXCache;
 pub use dataset::RandomXDataset;
 pub use vm::RandomXVM;
-pub use aes_generator::AesGenerator;
-pub use blake2b_generator::Blake2bGenerator;
 
 // RandomX Constants (Restored to specification-compliant values for security)
 pub const RANDOMX_HASH_SIZE: usize = 32;

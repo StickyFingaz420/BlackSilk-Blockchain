@@ -2,7 +2,7 @@
 //! Handles auto-start, health check, and shutdown of Tor for privacy networking.
 
 use std::process::{Child, Command, Stdio};
-use std::io::{self, Write};
+use std::io::{self};
 use std::net::TcpStream;
 use std::time::Duration;
 use std::thread;

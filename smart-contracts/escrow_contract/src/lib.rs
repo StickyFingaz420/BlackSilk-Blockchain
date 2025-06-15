@@ -84,13 +84,3 @@ impl MultiSigEscrow for Escrow {
         }
     }
 }
-
-fn main() {
-    let mut escrow = Escrow::new("buyer1".to_string(), "seller1".to_string(), 1000);
-    println!("Escrow created: {:?}", escrow);
-
-    match escrow.confirm_delivery() {
-        Ok(_) => println!("Delivery confirmed: {:?}", escrow),
-        Err(e) => println!("Error: {}", e),
-    }
-}

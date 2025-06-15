@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
     use clap::Parser;
-    use primitives::zkp::{generate_zk_proof, verify_zk_proof, ZkProof};
+    use primitives::zkp::ZkProof;
     use ark_groth16::{ProvingKey, VerifyingKey};
-    use std::fs;
-    use std::path::Path;
+    
+    
     use wallet::cli::{Cli, Commands, PrivacyCommands};
 
     struct DummyCircuit;

@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::randomx::cache::RandomXCache;
-use crate::randomx::superscalar::SuperscalarHash;
 use crate::randomx::{RANDOMX_DATASET_ITEM_SIZE, RANDOMX_DATASET_ITEM_COUNT, DATASET_SIZE};
 
 /// RandomX Dataset with full 2.08 GB memory allocation

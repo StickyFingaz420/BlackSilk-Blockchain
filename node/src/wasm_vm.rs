@@ -10,14 +10,8 @@ use wasmer::{Instance, Module, Store, imports, Value};
 use wasmer_middlewares::Metering;
 use blake2::{Blake2b, Digest};
 use serde_json::Value as JsonValue;
-use curve25519_dalek::scalar::Scalar;
-use curve25519_dalek::edwards::CompressedEdwardsY;
-use curve25519_dalek::edwards::EdwardsPoint;
-use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
-use rand::rngs::OsRng;
 use rand::RngCore;
-use sha2::{Sha512, Digest as ShaDigest};
-use aes_gcm::{Aes256Gcm, Key, Nonce};
+use sha2::Digest as ShaDigest;
 use aes_gcm::aead::{Aead, KeyInit};
 use serde::{Serialize, Deserialize};
 // Import Operator from wasmer::wasmparser for Wasmer 3.x metering

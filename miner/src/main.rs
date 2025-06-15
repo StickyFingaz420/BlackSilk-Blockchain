@@ -10,16 +10,15 @@
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use rayon::prelude::*;
 use colored::*;
-use sha2::{Sha256, Digest};
+use sha2::Digest;
 
 // Pure Rust RandomX modules (no FFI required)
 mod randomx;
@@ -639,8 +638,8 @@ fn handle_stats(cli: &Cli) {
     
     let total_shares = stats.shares_accepted + stats.shares_rejected;
     if total_shares > 0 {
-        let acceptance_rate = (stats.shares_accepted as f64 / total_shares as f64 * 100.0);
-        let rejection_rate = (stats.shares_rejected as f64 / total_shares as f64 * 100.0);
+        let acceptance_rate = stats.shares_accepted as f64 / total_shares as f64 * 100.0;
+        let rejection_rate = stats.shares_rejected as f64 / total_shares as f64 * 100.0;
         
         println!("║   Shares Submitted: {:>35} ║", total_shares.to_string().bright_white());
         println!("║   Shares Accepted: {:>36} ║", format!("{} ({:.1}%)", stats.shares_accepted, acceptance_rate).bright_green());
@@ -1106,7 +1105,7 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
 
         let handle = thread::spawn(move || {
             // Create RandomX VM for this thread
-            let mut vm = RandomXVM::new(&cache_ref, Some(&dataset_ref));
+            let vm = RandomXVM::new(&cache_ref, Some(&dataset_ref));
             
             println!("{} Thread {} initialized with RandomX VM", "[Miner]".bright_cyan().bold(), thread_id);
             

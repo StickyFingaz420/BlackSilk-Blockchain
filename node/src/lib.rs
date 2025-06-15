@@ -527,7 +527,7 @@ pub fn validate_transaction(tx: &primitives::Transaction) -> bool {
     match &tx.kind {
         TransactionKind::Contract(contract_tx) => {
             match contract_tx {
-                ContractTx::Deploy { wasm_code, creator, .. } => {
+                ContractTx::Deploy { wasm_code,  .. } => {
                     // Basic WASM validation: can we parse the module?
                     if wasmer::Module::validate(&wasmer::Store::default(), wasm_code).is_err() {
                         println!("[Validation] Invalid WASM contract code");
@@ -535,7 +535,7 @@ pub fn validate_transaction(tx: &primitives::Transaction) -> bool {
                     }
                     // Optionally: check creator address format, etc.
                 }
-                ContractTx::Invoke { contract_address, function, params, .. } => {
+                ContractTx::Invoke { contract_address, function,  .. } => {
                     // Optionally: check contract exists, function name format, etc.
                     // Params should be valid serialized data (JSON/bincode)
                     if contract_address.is_empty() || function.is_empty() {
@@ -560,7 +560,7 @@ pub struct EmissionSchedule {
 impl EmissionSchedule {
     pub fn block_reward(&self, height: u64) -> u64 {
         let mut reward = self.genesis_reward;
-        let mut halvings = height / self.halving_interval;
+        let halvings = height / self.halving_interval;
         for _ in 0..halvings {
             reward /= 2;
         }

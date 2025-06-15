@@ -4,7 +4,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use colored::*;
-use wasmer::{Instance, Module, Store, imports};
 use crate::network::tor_process::TorProcess;
 mod wasm_vm;
 use wasm_vm::{deploy_contract, invoke_contract_with_gas};

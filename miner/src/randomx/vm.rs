@@ -22,9 +22,7 @@ const BLACKSILK_MEMORY_PREFETCH_DISTANCE: usize = 1024;
 const BLACKSILK_UNROLL_FACTOR: usize = 8;
 const BLACKSILK_SIMD_BATCH_SIZE: usize = 4;
 use crate::randomx::{
-    RANDOMX_PROGRAM_ITERATIONS, RANDOMX_PROGRAM_COUNT, RANDOMX_INSTRUCTION_COUNT,
-    RANDOMX_SCRATCHPAD_L1, RANDOMX_SCRATCHPAD_L2, RANDOMX_SCRATCHPAD_L3,
-    RANDOMX_FLAG_HARD_AES, RANDOMX_FLAG_FULL_MEM, RANDOMX_HASH_SIZE
+    RANDOMX_PROGRAM_ITERATIONS, RANDOMX_INSTRUCTION_COUNT, RANDOMX_SCRATCHPAD_L3, RANDOMX_FLAG_FULL_MEM
 };
 
 // Performance optimization hints
@@ -69,9 +67,7 @@ pub struct RandomXVM {
     pub pc: usize,
     
     // Memory access (for future use)
-    #[allow(dead_code)]
     cache: *const RandomXCache,
-    #[allow(dead_code)]
     dataset: Option<*const RandomXDataset>,
     
     // CPU timing enforcement

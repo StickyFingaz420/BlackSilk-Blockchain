@@ -4,7 +4,6 @@ use sha2::{Digest, Sha512};
 use blake2::{Blake2b, Digest as BlakeDigest};
 use aes::Aes256;
 use aes::cipher::{KeyInit, BlockEncrypt};
-use rand::Rng;
 
 /// Validates a RandomX proof-of-work submission.
 ///
@@ -23,7 +22,7 @@ pub fn validate_pow(header: &[u8], nonce: u64, target: &[u8]) -> bool {
     let scratchpad_seed: [u8; 64] = hasher.finalize().into();
 
     let mut scratchpad = [0u8; 2048];
-    let mut aes = Aes256::new_from_slice(&scratchpad_seed[..32]).unwrap();
+    let aes = Aes256::new_from_slice(&scratchpad_seed[..32]).unwrap();
     for chunk in scratchpad.chunks_mut(16) {
         aes.encrypt_block(chunk.into());
     }
