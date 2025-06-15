@@ -12,12 +12,23 @@ use ark_snark::SNARK;
 use ark_std::rand::thread_rng;
 
 /// ZKP proof object
+#[doc = "A zero-knowledge proof object for confidential transactions."]
 pub struct ZkProof {
     pub proof: Proof<Bls12_381>,
     pub inputs: Vec<Fr>,
 }
 
-/// Generate a zero-knowledge proof for a confidential transaction
+/// Generate a zero-knowledge proof for a confidential transaction.
+///
+/// # Arguments
+/// * `circuit` - The constraint system circuit.
+/// * `proving_key` - The Groth16 proving key.
+///
+/// # Returns
+/// A ZkProof object containing the proof and inputs.
+///
+/// # Security Warning
+/// Only use with secure, validated circuits and keys.
 pub fn generate_zk_proof<C: ConstraintSynthesizer<Fr>>(
     circuit: C,
     proving_key: &ProvingKey<Bls12_381>,
@@ -30,19 +41,48 @@ pub fn generate_zk_proof<C: ConstraintSynthesizer<Fr>>(
     }
 }
 
-/// Verify a zero-knowledge proof for a confidential transaction
+/// Verify a zero-knowledge proof for a confidential transaction.
+///
+/// # Arguments
+/// * `proof` - The ZkProof object.
+/// * `verifying_key` - The Groth16 verifying key.
+///
+/// # Returns
+/// `true` if the proof is valid, `false` otherwise.
+///
+/// # Security Warning
+/// Only use with validated keys and proof objects.
 pub fn verify_zk_proof(proof: &ZkProof, verifying_key: &VerifyingKey<Bls12_381>) -> bool {
     let _pvk = prepare_verifying_key(verifying_key);
     Groth16::<Bls12_381, LibsnarkReduction>::verify(verifying_key, &proof.inputs, &proof.proof).is_ok()
 }
 
-/// Derive inputs for a zero-knowledge proof based on the circuit
+/// Derive inputs for a zero-knowledge proof based on the circuit.
+///
+/// # Arguments
+/// * `_circuit` - The constraint system circuit.
+///
+/// # Returns
+/// A vector of field elements as inputs.
+///
+/// # Security Warning
+/// Only use with validated circuits.
 pub fn derive_inputs<C: ConstraintSynthesizer<Fr>>(_circuit: &C) -> Vec<Fr> {
     // Placeholder: Implement input derivation logic based on the circuit
     vec![]
 }
 
-/// Batch verify multiple zero-knowledge proofs
+/// Batch verify multiple zero-knowledge proofs.
+///
+/// # Arguments
+/// * `proofs` - A slice of ZkProof objects.
+/// * `verifying_key` - The Groth16 verifying key.
+///
+/// # Returns
+/// `true` if all proofs are valid, `false` otherwise.
+///
+/// # Security Warning
+/// Only use with validated keys and proof objects.
 pub fn batch_verify_zk_proofs(
     proofs: &[ZkProof],
     verifying_key: &VerifyingKey<Bls12_381>,

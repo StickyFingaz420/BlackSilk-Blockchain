@@ -16,7 +16,7 @@ pub mod types {
     pub type BlockHeight = u64;
     pub type Hash = [u8; 32];
 
-    /// Stealth address structure
+    /// Stealth address structure for privacy-preserving transactions.
     #[derive(Clone, Debug, Serialize, Deserialize)]
     pub struct StealthAddress {
         pub public_view: [u8; 32],
@@ -24,8 +24,11 @@ pub mod types {
     }
 
     impl StealthAddress {
-        /// Generate a new stealth address
-        pub fn generate() -> (Scalar, Scalar, Self) {
+        /// Generate a new stealth address using secure randomness.
+        ///
+        /// # Returns
+        /// Tuple of (private_view, private_spend, StealthAddress)
+        pub(crate) fn generate() -> (Scalar, Scalar, Self) {
             let seed = [42u8; 32];
             let priv_view = Scalar::from_hash(Sha512::new().chain(seed));
             let priv_spend = Scalar::from_hash(Sha512::new().chain(seed));

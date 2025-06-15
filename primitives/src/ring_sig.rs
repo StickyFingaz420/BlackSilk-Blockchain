@@ -6,6 +6,18 @@ use curve25519_dalek::scalar::Scalar;
 use sha2::{Sha256, Digest};
 
 /// Generate a canonical CryptoNote-style ring signature
+///
+/// # Arguments
+/// * `msg` - The message to sign.
+/// * `ring` - The ring of public keys.
+/// * `priv_key` - The signer's private key.
+/// * `real_index` - The index of the real signer in the ring.
+///
+/// # Returns
+/// A vector containing the serialized ring signature.
+///
+/// # Security Warning
+/// Only use with secure, random keys and validated public keys. Do not expose private keys.
 pub fn generate_ring_signature(msg: &[u8], ring: &[[u8; 32]], priv_key: &[u8], real_index: usize) -> Vec<u8> {
     
     use rand::RngCore;
@@ -63,6 +75,17 @@ pub fn generate_ring_signature(msg: &[u8], ring: &[[u8; 32]], priv_key: &[u8], r
 }
 
 /// Verify a canonical CryptoNote-style ring signature
+///
+/// # Arguments
+/// * `msg` - The signed message.
+/// * `ring` - The ring of public keys.
+/// * `sig` - The serialized ring signature.
+///
+/// # Returns
+/// `true` if the signature is valid, `false` otherwise.
+///
+/// # Security Warning
+/// Only use with validated public keys and signatures.
 pub fn verify_ring_signature(msg: &[u8], ring: &[[u8; 32]], sig: &[u8]) -> bool {
     
     let n = ring.len();
