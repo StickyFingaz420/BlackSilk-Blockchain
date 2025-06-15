@@ -387,7 +387,9 @@ struct BlockTemplate {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SubmitBlockRequest {
-    block: Block,
+    header: Vec<u8>,
+    nonce: u64,
+    hash: Vec<u8>,
     miner_address: Option<String>,
 }
 
@@ -1146,29 +1148,10 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
                         let hash = vm.calculate_hash(&input);
                         HASH_COUNTER.fetch_add(1, Ordering::Relaxed);
                         if hash_meets_target(&hash, target) {
-                            let block_header = BlockHeader {
-                                version: 1,
-                                prev_hash: job.prev_hash.clone().try_into().unwrap_or([0; 32]),
-                                merkle_root: [0; 32], // No txs, so empty root
-                                timestamp: job.timestamp,
-                                height: job.height,
-                                difficulty: job.difficulty,
-                                pow: Pow {
-                                    nonce,
-                                    hash: hash.clone().try_into().unwrap_or([0; 32]),
-                                },
-                            };
-                            let coinbase = Coinbase {
-                                reward: 0, // Let node validate and fill in correct reward
-                                to: job.coinbase_address.clone(),
-                            };
-                            let block = Block {
-                                header: block_header,
-                                coinbase,
-                                transactions: vec![],
-                            };
                             let submit_req = SubmitBlockRequest {
-                                block,
+                                header: job.header.clone(),
+                                nonce,
+                                hash: hash.clone(),
                                 miner_address: Some(job.coinbase_address.clone()),
                             };
                             submit_block(&client_clone, &node_url_clone, submit_req);
