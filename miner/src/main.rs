@@ -1072,6 +1072,18 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
     
     println!("{} RandomX initialization complete!", "[RandomX]".bright_green().bold());
 
+    // Hashrate reporting thread
+    thread::spawn(|| {
+        let mut last_count = 0u64;
+        loop {
+            thread::sleep(Duration::from_secs(10));
+            let count = HASH_COUNTER.load(Ordering::Relaxed);
+            let hashrate = (count - last_count) as f64 / 10.0;
+            last_count = count;
+            println!("[Hashrate] {:.2} H/s", hashrate);
+        }
+    });
+
     // Fetch job periodically
     let job_clone = Arc::clone(&job);
     let client_clone = client.clone(); // Clone `client` to avoid move issues
@@ -1083,7 +1095,6 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
                 println!("[Miner] Got new job for height: {}", new_job.height);
                 let mut job_lock = job_clone.lock().unwrap();
                 *job_lock = Some(new_job);
-                drop(job_lock);
             } else {
                 println!("[Miner] Failed to get job, retrying in 5 seconds...");
             }
@@ -1103,33 +1114,38 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
         let handle = thread::spawn(move || {
             // Create RandomX VM for this thread
             let vm = RandomXVM::new(&cache_ref, Some(&dataset_ref));
-            
             println!("{} Thread {} initialized with RandomX VM", "[Miner]".bright_cyan().bold(), thread_id);
-            
+            let mut last_job_height = 0u64;
+            let mut current_job: Option<GetBlockTemplateResponse> = None;
+            let mut nonce = 0u64;
             loop {
+                // Check for new job
                 let job_lock = job_clone.lock().unwrap();
                 if let Some(ref job) = *job_lock {
-                    // Perform mining logic using proper RandomX algorithm
+                    if current_job.as_ref().map(|j| j.height) != Some(job.height) {
+                        // New job detected
+                        current_job = Some(job.clone());
+                        nonce = 0;
+                        println!("[Miner] Thread {}: New job at height {}", thread_id, job.height);
+                    }
+                }
+                drop(job_lock);
+                if let Some(ref job) = current_job {
                     let header_data = job.header.clone();
                     let target = job.difficulty;
-
-                    for nonce in 0..u64::MAX {
-                        // Create RandomX input from header and nonce
+                    let key_data = {
+                        let mut kd = Vec::new();
+                        kd.extend_from_slice(&job.prev_hash);
+                        kd.extend_from_slice(&job.height.to_le_bytes());
+                        kd
+                    };
+                    // Mining loop: keep mining until a new job is detected
+                    for _ in 0..10000 {
                         let mut input = Vec::new();
                         input.extend_from_slice(&header_data);
                         input.extend_from_slice(&nonce.to_le_bytes());
-                        
-                        // Generate RandomX key from job data
-                        let mut key_data = Vec::new();
-                        key_data.extend_from_slice(&job.prev_hash);
-                        key_data.extend_from_slice(&job.height.to_le_bytes());
-                        
-                        // Calculate RandomX hash
                         let hash = randomx_hash(&key_data, &input);
-                        
-                        // Increment hash counter for statistics
                         HASH_COUNTER.fetch_add(1, Ordering::Relaxed);
-                        
                         if hash_meets_target(&hash, target) {
                             let block = SubmitBlockRequest {
                                 header: header_data.clone(),
@@ -1141,22 +1157,17 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
                             println!("{} Thread {} found block at height {} with nonce {} (RandomX hash: {:x})", 
                                    "[SUCCESS]".bright_green().bold(), thread_id, job.height, nonce, 
                                    u64::from_le_bytes(hash[0..8].try_into().unwrap()));
+                            // After submitting, break to check for new job
                             break;
                         }
-                        
-                        // Check for new job periodically (but more frequently for RandomX)
-                        if nonce % 1000 == 0 {
-                            break;
-                        }
+                        nonce = nonce.wrapping_add(1);
                     }
                 }
-                drop(job_lock);
-                thread::sleep(Duration::from_millis(100));
+                thread::sleep(Duration::from_millis(10));
             }
         });
         handles.push(handle);
     }
-
     for handle in handles {
         handle.join().unwrap();
     }
