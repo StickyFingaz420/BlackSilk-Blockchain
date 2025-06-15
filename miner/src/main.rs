@@ -398,7 +398,6 @@ struct BlockTemplateRequest {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 struct Args {
     node: String,
     address: String,
@@ -407,14 +406,12 @@ struct Args {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 struct MinerConfig {
     node: String,
     address: String,
     threads: usize,
 }
 
-#[allow(dead_code)]
 enum MinerCommand {
     Stop,
     SetThreads(usize),

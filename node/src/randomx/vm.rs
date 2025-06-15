@@ -39,9 +39,7 @@ pub struct RandomXVM {
     pub pc: usize,
     
     // Memory access (for future use)
-    #[allow(dead_code)]
     cache: *const RandomXCache,
-    #[allow(dead_code)]
     dataset: Option<*const RandomXDataset>,
     
     // CPU timing enforcement
