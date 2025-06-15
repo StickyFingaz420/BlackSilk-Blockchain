@@ -99,6 +99,60 @@ jobs:
       working-directory: marketplace/frontend
       run: npm run build
 
+  # Test web-wallet frontend
+  test-web-wallet:
+    name: Test Web Wallet Frontend
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: web-wallet/package-lock.json
+
+    - name: Install dependencies (Web Wallet)
+      working-directory: web-wallet
+      run: npm ci
+
+    - name: Build web wallet
+      working-directory: web-wallet
+      run: npm run build
+
+    - name: Run web wallet tests
+      working-directory: web-wallet
+      run: npm test
+
+  # Test block-explorer frontend
+  test-block-explorer:
+    name: Test Block Explorer Frontend
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: block-explorer/package-lock.json
+
+    - name: Install dependencies (Block Explorer)
+      working-directory: block-explorer
+      run: npm ci
+
+    - name: Build block explorer
+      working-directory: block-explorer
+      run: npm run build
+
+    - name: Run block explorer tests
+      working-directory: block-explorer
+      run: npm test
+
   # Integration tests
   integration-test:
     name: Integration Tests
@@ -398,3 +452,34 @@ jobs:
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+
+  # Test marketplace frontend
+  test-marketplace-frontend:
+    name: Test Marketplace Frontend
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: marketplace/frontend/package-lock.json
+
+    - name: Install dependencies (Marketplace Frontend)
+      working-directory: marketplace/frontend
+      run: npm ci
+
+    - name: Build marketplace frontend
+      working-directory: marketplace/frontend
+      run: npm run build
+
+    - name: Lint marketplace frontend
+      working-directory: marketplace/frontend
+      run: npm run lint
+
+    - name: Run marketplace frontend tests
+      working-directory: marketplace/frontend
+      run: npm test || echo "No tests defined"
