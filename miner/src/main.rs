@@ -1151,7 +1151,7 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
                             let submit_req = SubmitBlockRequest {
                                 header: job.header.clone(),
                                 nonce,
-                                hash: hash.clone(),
+                                hash: hash.to_vec(),
                                 miner_address: Some(job.coinbase_address.clone()),
                             };
                             submit_block(&client_clone, &node_url_clone, submit_req);
