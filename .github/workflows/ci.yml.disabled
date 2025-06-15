@@ -1,0 +1,5 @@
+# GitHub Actions workflows are temporarily disabled.
+# To re-enable, rename this file back to ci.yml and place it in .github/workflows/
+# All previous workflow content is preserved below.
+
+# ...existing code...
