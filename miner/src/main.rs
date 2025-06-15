@@ -1046,10 +1046,17 @@ fn submit_block(client: &Client, node_url: &str, req: SubmitBlockRequest) {
 }
 
 /// Defined missing `hash_meets_target` function
-fn hash_meets_target(hash: &[u8], target: u64) -> bool {
-    // Convert hash to a numeric value and compare with target
-    let hash_value = u64::from_le_bytes(hash[0..8].try_into().unwrap());
-    hash_value <= target
+fn hash_meets_target(hash: &[u8], difficulty: u64) -> bool {
+    use num_bigint::BigUint;
+    // Calculate the 256-bit target: max_target / difficulty
+    let max_target = BigUint::from_bytes_be(&[0xFFu8; 32]);
+    let target = if difficulty > 1 {
+        &max_target / difficulty
+    } else {
+        max_target.clone()
+    };
+    let hash_val = BigUint::from_bytes_be(hash);
+    hash_val <= target
 }
 
 /// Start threaded mining using proper RandomX algorithm

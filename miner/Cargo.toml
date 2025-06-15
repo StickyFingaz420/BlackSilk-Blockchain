@@ -26,6 +26,7 @@ blake2 = "0.10"
 digest = "0.10"
 getrandom = "0.2"
 primitives = { path = "../primitives" }
+num-bigint = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["libloaderapi", "minwindef", "memoryapi", "handleapi", "winnt"] }

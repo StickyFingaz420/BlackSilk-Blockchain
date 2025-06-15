@@ -869,6 +869,7 @@ dependencies = [
  "digest 0.10.7",
  "getrandom 0.2.16",
  "hex",
+ "num-bigint",
  "num_cpus",
  "primitives",
  "rand 0.8.5",
