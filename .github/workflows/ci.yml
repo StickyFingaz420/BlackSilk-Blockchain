@@ -171,6 +171,46 @@ jobs:
         cd marketplace
         cargo test --release
 
+  # Test faucet backend
+  test-faucet:
+    name: Test Faucet Backend
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: testnet-faucet/package-lock.json
+
+    - name: Install dependencies (Faucet)
+      working-directory: testnet-faucet
+      run: npm ci
+
+    - name: Set up environment variables
+      run: |
+        echo "NODE_ENV=test" >> $GITHUB_ENV
+        echo "BLACKSILK_RPC_URL=http://localhost:19333" >> $GITHUB_ENV
+        echo "BLACKSILK_RPC_USER=testuser" >> $GITHUB_ENV
+        echo "BLACKSILK_RPC_PASSWORD=testpass" >> $GITHUB_ENV
+        echo "FAUCET_PRIVATE_KEY=testkey" >> $GITHUB_ENV
+        echo "FAUCET_AMOUNT=10" >> $GITHUB_ENV
+        echo "JWT_SECRET=testsecret" >> $GITHUB_ENV
+        echo "ADMIN_USERNAME=admin" >> $GITHUB_ENV
+        echo "ADMIN_PASSWORD=admin123" >> $GITHUB_ENV
+        echo "MOCK_BLOCKCHAIN=true" >> $GITHUB_ENV
+
+    - name: Build faucet backend
+      working-directory: testnet-faucet
+      run: npm run build
+
+    - name: Run faucet backend tests
+      working-directory: testnet-faucet
+      run: npm test
+
   # Security audit
   security-audit:
     name: Security Audit
