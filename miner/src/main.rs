@@ -1144,7 +1144,8 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
                         let mut input = Vec::new();
                         input.extend_from_slice(&header_data);
                         input.extend_from_slice(&nonce.to_le_bytes());
-                        let hash = randomx_hash(&key_data, &input);
+                        // Use the thread's dedicated RandomXVM and shared dataset for hashing
+                        let hash = vm.calculate_hash(&input);
                         HASH_COUNTER.fetch_add(1, Ordering::Relaxed);
                         if hash_meets_target(&hash, target) {
                             let block = SubmitBlockRequest {

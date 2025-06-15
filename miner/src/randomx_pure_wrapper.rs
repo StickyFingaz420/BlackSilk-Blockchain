@@ -9,8 +9,11 @@ pub type randomx_dataset = crate::randomx_pro::RandomXDataset;
 pub type randomx_vm = crate::randomx_pro::RandomX;
 
 // Simple hash function for single use (no VM management needed)
+// WARNING: Do NOT use this function for mining threads! It allocates a new dataset and is only for one-off test hashes.
+// For mining, always use the shared RandomXVM and RandomXDataset from randomx/vm.rs.
 pub fn randomx_hash(flags: u32, seed: &[u8], input: &[u8], output: &mut [u8]) {
-    let mut rx = crate::randomx_pro::RandomX::new(flags);
+    // Only use cache (light mode), never allocate dataset here
+    let mut rx = crate::randomx_pro::RandomX::new(flags & !crate::randomx_pro::RANDOMX_FLAG_FULL_MEM);
     rx.init(seed);
     let hash = rx.calculate_hash(input);
     let output_len = output.len();
