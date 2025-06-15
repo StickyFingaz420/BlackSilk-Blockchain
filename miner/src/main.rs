@@ -975,7 +975,7 @@ fn run_benchmark(duration_secs: u64) {
     println!("{} ✅ RandomX benchmark completed successfully!", "[SUCCESS]".bright_green().bold());
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct GetBlockTemplateResponse {
     header: Vec<u8>,
     difficulty: u64,
@@ -1069,7 +1069,7 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
     let dataset = RandomXDataset::new(&cache, 1);
     let shared_cache = Arc::new(cache);
     let shared_dataset = Arc::new(dataset);
-    
+
     println!("{} RandomX initialization complete!", "[RandomX]".bright_green().bold());
 
     // Hashrate reporting thread
