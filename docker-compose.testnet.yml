@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  blacksilk-node:
+    image: blacksilk/blacksilk-core:latest
+    container_name: blacksilk-testnet-node
+    ports:
+      - "18332:18332" # RPC
+      - "19333:19333" # P2P
+      - "19999:19999" # Tor (optional)
+    environment:
+      - NETWORK=testnet
+      - RPC_USER=testnet_user
+      - RPC_PASSWORD=secure_rpc_password
+      - RPC_ALLOW_IP=0.0.0.0/0
+    volumes:
+      - blacksilk-data:/root/.blacksilk
+      - ./config/testnet/chain_spec.json:/root/.blacksilk/chain_spec.json:ro
+      - ./config/testnet/bootnodes.txt:/root/.blacksilk/bootnodes.txt:ro
+      - ./config/testnet/node_config.toml:/root/.blacksilk/node_config.toml:ro
+    networks:
+      - blacksilk-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "blacksilk-cli", "getblockchaininfo"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Optional: add a miner service if needed
+  # blacksilk-miner:
+  #   image: blacksilk/blacksilk-miner:latest
+  #   container_name: blacksilk-testnet-miner
+  #   environment:
+  #     - NETWORK=testnet
+  #     - NODE_HOST=blacksilk-node
+  #   depends_on:
+  #     - blacksilk-node
+  #   networks:
+  #     - blacksilk-network
+  #   restart: unless-stopped
+
+volumes:
+  blacksilk-data:
+
+networks:
+  blacksilk-network:
+    driver: bridge
