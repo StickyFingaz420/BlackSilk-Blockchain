@@ -1113,7 +1113,7 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
 
         let handle = thread::spawn(move || {
             // Create RandomX VM for this thread
-            let vm = RandomXVM::new(&cache_ref, Some(&dataset_ref));
+            let mut vm = RandomXVM::new(&cache_ref, Some(&dataset_ref));
             println!("{} Thread {} initialized with RandomX VM", "[Miner]".bright_cyan().bold(), thread_id);
             let mut last_job_height = 0u64;
             let mut current_job: Option<GetBlockTemplateResponse> = None;
