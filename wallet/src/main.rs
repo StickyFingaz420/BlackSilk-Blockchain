@@ -7,13 +7,33 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use smart_contracts::validate_pow;
 mod randomx;
+use colored::Colorize;
+use serde::{Serialize, Deserialize};
+use std::{fs, path::Path};
+use base58::ToBase58;
+use itertools::Itertools;
+use bip39::Mnemonic;
 
 // --- RANGE PROOF (BULLETPROOFS) REAL IMPLEMENTATION ---
 // Uses bulletproofs crate for confidential transaction range proofs
 use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
 use curve25519_dalek::ristretto::CompressedRistretto;
 
+/// Converts a hex string to a [u8; 32] array. Returns an error if the input is not valid hex or not 32 bytes.
+pub fn hex_to_32_bytes(s: &str) -> Result<[u8; 32], String> {
+    let bytes = hex::decode(s).map_err(|e| format!("Hex decode error: {}", e))?;
+    if bytes.len() != 32 {
+        return Err(format!("Expected 32 bytes, got {}", bytes.len()));
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Ok(arr)
+}
+
 /// Generate a Bulletproofs range proof for a confidential amount
+///
+/// # Security
+/// This function uses cryptographically secure randomness and should not be modified unless you understand Bulletproofs internals.
 pub fn generate_range_proof(amount: u64, blinding: &Scalar) -> (RangeProof, CompressedRistretto) {
     let pc_gens = PedersenGens::default();
     let bp_gens = BulletproofGens::new(64, 1); // 64-bit range, 1 proof
@@ -30,6 +50,9 @@ pub fn generate_range_proof(amount: u64, blinding: &Scalar) -> (RangeProof, Comp
 }
 
 /// Verify a Bulletproofs range proof for a confidential amount
+///
+/// # Security
+/// Returns true if the proof is valid. Always check this before accepting a confidential transaction.
 pub fn verify_range_proof(proof: &RangeProof, committed_value: &CompressedRistretto) -> bool {
     let pc_gens = PedersenGens::default();
     let bp_gens = BulletproofGens::new(64, 1);
@@ -46,6 +69,10 @@ pub fn verify_range_proof(proof: &RangeProof, committed_value: &CompressedRistre
 // --- KEY IMAGE GENERATION (MINIMAL DEMO) ---
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
 
+/// Generate a key image for a private key (used in ring signatures)
+///
+/// # Security
+/// Key images are privacy-critical. Never share private keys or key images.
 pub fn generate_key_image(priv_key: &[u8]) -> [u8; 32] {
     let sk = Scalar::from_bytes_mod_order(priv_key.try_into().unwrap());
     let ki = RISTRETTO_BASEPOINT_POINT * sk;
