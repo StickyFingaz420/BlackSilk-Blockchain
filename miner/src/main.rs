@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use rayon::prelude::*;
 use colored::*;
 use sha2::Digest;
-use primitives::{Block, BlockHeader, Coinbase};
+use primitives::{Block, BlockHeader, Coinbase, Pow};
 
 // Pure Rust RandomX modules (no FFI required)
 mod randomx;

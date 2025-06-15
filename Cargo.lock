@@ -870,6 +870,7 @@ dependencies = [
  "getrandom 0.2.16",
  "hex",
  "num_cpus",
+ "primitives",
  "rand 0.8.5",
  "rayon",
  "reqwest 0.11.27",
