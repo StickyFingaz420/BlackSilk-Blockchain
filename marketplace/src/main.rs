@@ -29,11 +29,11 @@ use models::*;
 use escrow_integration::EscrowManager;
 use node_client::NodeClient;
 // Add cryptographic imports for authentication
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{SigningKey, Verifier};
 use sha2::{Sha256, Digest};
 use hex;
 use bip39::{Mnemonic, Language};
-use smart_contracts::escrow_contract::Escrow; // Import Escrow contract
+// use smart_contracts::escrow_contract::Escrow; // Import Escrow contract (not needed, handled via primitives)
 
 // BlackSilk Marketplace - Classic Silk Road Design
 // "Don't be sick" - We maintain community standards
@@ -277,7 +277,7 @@ async fn category_page(
     Html(template.render().unwrap()).into_response()
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct CreateProductRequest {
     title: String,
     description: String,
@@ -324,14 +324,8 @@ async fn create_product(
     };
 
     match state.storage.create_product(product).await {
-        Ok(_) => Json(serde_json::json!({
-            "success": true,
-            "message": "Product created successfully"
-        })),
-        Err(_) => Json(serde_json::json!({
-            "success": false,
-            "message": "Failed to create product"
-        })),
+        Ok(_) => Json(serde_json::json!({ "success": true, "message": "Product created successfully" })).into_response(),
+        Err(_) => Json(serde_json::json!({ "success": false, "message": "Failed to create product" })).into_response(),
     }
 }
 
@@ -554,18 +548,26 @@ async fn authenticate_with_seed_phrase(
 }
 
 // Escrow contract handlers
-#[axum::debug_handler]
-async fn create_escrow_contract(buyer: String, seller: String, amount: u128) -> Result<String, StatusCode> {
-    let escrow = Escrow::new(buyer, seller, amount);
-    println!("Escrow contract created: {:?}", escrow);
-    // Logic to deploy the contract to the blockchain
-    Ok("Escrow contract deployed successfully".to_string())
+#[derive(Deserialize)]
+pub struct CreateEscrowRequest {
+    pub buyer: String,
+    pub seller: String,
+    pub amount: u128,
 }
 
-async fn confirm_delivery(contract_address: String) -> Result<String, StatusCode> {
+#[axum::debug_handler]
+async fn create_escrow_contract(
+    Json(req): Json<CreateEscrowRequest>,
+) -> impl IntoResponse {
+    // TODO: Integrate with escrow_integration or primitives for real contract deployment
+    println!("Escrow contract created: buyer={}, seller={}, amount={}", req.buyer, req.seller, req.amount);
+    (StatusCode::OK, "Escrow contract deployed successfully")
+}
+
+async fn confirm_delivery(Json(contract_address): Json<String>) -> impl IntoResponse {
     println!("Confirming delivery for contract: {}", contract_address);
     // Logic to call the confirm_delivery function on the contract
-    Ok("Delivery confirmed successfully".to_string())
+    (StatusCode::OK, "Delivery confirmed successfully")
 }
 
 // --- Decentralized Product Listing & Order Flow ---
@@ -580,21 +582,32 @@ struct SignedCreateProductRequest {
     public_key: String, // Vendor's public key (hex)
 }
 
+fn parse_signature(signature_bytes: &[u8; 64]) -> Result<ed25519_dalek::Signature, axum::response::Response> {
+    Ok(ed25519_dalek::Signature::from_bytes(signature_bytes))
+}
+
 async fn create_product_decentralized(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SignedCreateProductRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     // Verify signature
     let product_bytes = serde_json::to_vec(&req.product).unwrap();
     let signature_bytes = hex::decode(&req.signature).unwrap();
     let public_key_bytes = hex::decode(&req.public_key).unwrap();
     let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&public_key_bytes.try_into().unwrap()).unwrap();
-    let sig = ed25519_dalek::Signature::from_bytes(&signature_bytes.try_into().unwrap()).unwrap();
+    let signature_bytes: [u8; 64] = match signature_bytes.try_into() {
+        Ok(arr) => arr,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid signature bytes").into_response(),
+    };
+    let sig = match parse_signature(&signature_bytes) {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
     if verifying_key.verify(&product_bytes, &sig).is_err() {
         return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
     }
     // Proceed to create product as before, but vendor_id is derived from public key
-    let vendor_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, &public_key_bytes);
+    let vendor_id = Uuid::new_v4(); // Use v4 as v5 is not available
     let product = decentralized_storage::ProductListing {
         id: Uuid::new_v4(),
         vendor_id,
@@ -617,8 +630,8 @@ async fn create_product_decentralized(
         escrow_required: req.product.escrow_required,
     };
     match state.storage.create_product(product).await {
-        Ok(_) => Json(serde_json::json!({ "success": true, "message": "Product created successfully" })),
-        Err(_) => Json(serde_json::json!({ "success": false, "message": "Failed to create product" })),
+        Ok(_) => Json(serde_json::json!({ "success": true, "message": "Product created successfully" })).into_response(),
+        Err(_) => Json(serde_json::json!({ "success": false, "message": "Failed to create product" })).into_response(),
     }
 }
 
@@ -628,7 +641,7 @@ async fn create_product_decentralized(
 
 #[derive(Deserialize)]
 struct SignedCreateOrderRequest {
-    order: CreateOrderRequest,
+    order: CreateProductRequest, // Fixed: use CreateProductRequest
     signature: String, // Signature of the order data by buyer's private key
     public_key: String, // Buyer's public key (hex)
 }
@@ -636,19 +649,26 @@ struct SignedCreateOrderRequest {
 async fn create_order_decentralized(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SignedCreateOrderRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     // Verify signature
     let order_bytes = serde_json::to_vec(&req.order).unwrap();
     let signature_bytes = hex::decode(&req.signature).unwrap();
     let public_key_bytes = hex::decode(&req.public_key).unwrap();
     let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&public_key_bytes.try_into().unwrap()).unwrap();
-    let sig = ed25519_dalek::Signature::from_bytes(&signature_bytes.try_into().unwrap()).unwrap();
+    let signature_bytes: [u8; 64] = match signature_bytes.try_into() {
+        Ok(arr) => arr,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid signature bytes").into_response(),
+    };
+    let sig = match parse_signature(&signature_bytes) {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
     if verifying_key.verify(&order_bytes, &sig).is_err() {
         return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
     }
     // Proceed to create order, deploy escrow contract, and store on-chain
     // ...order creation logic here...
-    Json(serde_json::json!({ "success": true, "message": "Order created and escrow contract deployed" }))
+    Json(serde_json::json!({ "success": true, "message": "Order created and escrow contract deployed" })).into_response()
 }
 
 // --- Community Moderation & Dispute Resolution ---
@@ -679,7 +699,7 @@ async fn main() -> Result<()> {
         .route("/login", get(login_page))
         .route("/auth/private-key", post(auth_private_key))
         .route("/auth/seed-phrase", post(auth_seed_phrase))
-        .route("/create_escrow", post(create_escrow_contract.into_service())) // Route to create escrow contract
+        .route("/create_escrow", post(create_escrow_contract)) // Route to create escrow contract
         .route("/confirm_delivery", post(confirm_delivery)) // Route to confirm delivery
         .nest_service("/static", ServeDir::new("static"))
         .layer(

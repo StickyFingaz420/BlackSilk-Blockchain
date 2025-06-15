@@ -14,22 +14,21 @@ fn main() {
     };
     let network = std::env::var("BLACKSILK_NETWORK").unwrap_or_else(|_| "testnet".to_string());
     println!("[BlackSilk] Network: {} | Bootstrap on port {}", network, port);
+    // The following CLI commands are not implemented, so print a message and exit if used
     if args.contains(&"send-block".to_string()) {
-        node::cli_send_block();
+        println!("[CLI] send-block is not implemented in this build.");
         return;
     }
     if args.contains(&"send-tx".to_string()) {
-        node::cli_send_transaction();
+        println!("[CLI] send-tx is not implemented in this build.");
         return;
     }
     if args.contains(&"save-chain".to_string()) {
-        node::save_chain();
-        println!("[CLI] Chain saved to disk");
+        println!("[CLI] save-chain is not implemented in this build.");
         return;
     }
     if args.contains(&"load-chain".to_string()) {
-        node::load_chain();
-        println!("[CLI] Chain loaded from disk");
+        println!("[CLI] load-chain is not implemented in this build.");
         return;
     }
     // Use the full node startup function that includes HTTP server

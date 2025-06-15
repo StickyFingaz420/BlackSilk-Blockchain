@@ -5,88 +5,101 @@ use curve25519_dalek::edwards::CompressedEdwardsY;
 use curve25519_dalek::scalar::Scalar;
 use sha2::{Sha256, Digest};
 
-/// Generate a robust ring signature (CryptoNote-style, production-ready)
-pub fn generate_ring_signature(msg: &[u8], ring: &[ [u8; 32] ], priv_key: &[u8], real_index: usize) -> Vec<u8> {
+/// Generate a canonical CryptoNote-style ring signature
+pub fn generate_ring_signature(msg: &[u8], ring: &[[u8; 32]], priv_key: &[u8], real_index: usize) -> Vec<u8> {
+    use curve25519_dalek::edwards::EdwardsPoint;
+    use rand::RngCore;
     let n = ring.len();
     assert!(n > 0 && real_index < n);
     let mut csprng = rand::thread_rng();
-    let sk = Scalar::from_bytes_mod_order(priv_key.try_into().unwrap());
+    let sk = Scalar::from_bytes_mod_order(priv_key[..32].try_into().unwrap());
     let mut pubkeys = Vec::with_capacity(n);
     for pk_bytes in ring {
         let pt = CompressedEdwardsY(*pk_bytes).decompress().expect("Invalid public key");
         pubkeys.push(pt);
     }
-    let mut r_vec = vec![Scalar::default(); n];
+    let mut c = vec![Scalar::from(0u64); n];
+    let mut r = vec![Scalar::from(0u64); n];
+    // Step 1: generate random alpha for real_index, random r for all except real_index
+    let mut alpha_bytes = [0u8; 32];
+    csprng.fill_bytes(&mut alpha_bytes);
+    let alpha = Scalar::from_bytes_mod_order(alpha_bytes);
     for i in 0..n {
         if i != real_index {
             let mut r_bytes = [0u8; 32];
-            rand::RngCore::fill_bytes(&mut csprng, &mut r_bytes);
-            r_vec[i] = Scalar::from_bytes_mod_order(r_bytes);
+            csprng.fill_bytes(&mut r_bytes);
+            r[i] = Scalar::from_bytes_mod_order(r_bytes);
         }
     }
-    let mut c_vec = vec![Scalar::default(); n];
+    // Step 2: compute the first challenge after the real index
     let mut hasher = Sha256::new();
+    let mut idx = (real_index + 1) % n;
+    let l = &ED25519_BASEPOINT_POINT * &alpha;
+    hasher.update(l.compress().as_bytes());
     hasher.update(msg);
     let mut c_bytes = [0u8; 32];
     c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
-    c_vec[(real_index + 1) % n] = Scalar::from_bytes_mod_order(c_bytes);
-    for i in (real_index + 1)..(real_index + n) {
-        let idx = i % n;
-        let l = &ED25519_BASEPOINT_POINT * &r_vec[idx] + pubkeys[idx] * c_vec[idx];
+    c[idx] = Scalar::from_bytes_mod_order(c_bytes);
+    // Step 3: propagate challenges and commitments around the ring
+    for _ in 0..n-1 {
+        let l = &ED25519_BASEPOINT_POINT * &r[idx] + pubkeys[idx] * c[idx];
         hasher.update(l.compress().as_bytes());
         hasher.update(msg);
         let mut c_bytes = [0u8; 32];
         c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
-        c_vec[(idx + 1) % n] = Scalar::from_bytes_mod_order(c_bytes);
+        let next_idx = (idx + 1) % n;
+        c[next_idx] = Scalar::from_bytes_mod_order(c_bytes);
+        idx = next_idx;
     }
-    r_vec[real_index] = r_vec[real_index] + sk * c_vec[real_index];
+    // Step 4: compute r for the real index
+    r[real_index] = alpha - sk * c[real_index];
+    // Step 5: output signature as (c_0, r_0, ..., c_{n-1}, r_{n-1})
     let mut sig = Vec::with_capacity(n * 64);
     for i in 0..n {
-        sig.extend_from_slice(&c_vec[i].to_bytes());
-        sig.extend_from_slice(&r_vec[i].to_bytes());
+        sig.extend_from_slice(&c[i].to_bytes());
+        sig.extend_from_slice(&r[i].to_bytes());
     }
     sig
 }
 
-/// Verify a robust ring signature (CryptoNote-style, production-ready)
-pub fn verify_ring_signature(msg: &[u8], ring: &[ [u8; 32] ], sig: &[u8]) -> bool {
+/// Verify a canonical CryptoNote-style ring signature
+pub fn verify_ring_signature(msg: &[u8], ring: &[[u8; 32]], sig: &[u8]) -> bool {
+    use curve25519_dalek::edwards::EdwardsPoint;
     let n = ring.len();
     if sig.len() != n * 64 {
-        return false; // Signature length mismatch
+        return false;
     }
-
     let mut pubkeys = Vec::with_capacity(n);
     for pk_bytes in ring {
         if let Some(pt) = CompressedEdwardsY(*pk_bytes).decompress() {
             pubkeys.push(pt);
         } else {
-            return false; // Invalid public key
+            return false;
         }
     }
-
-    let mut c_vec = Vec::with_capacity(n);
-    let mut r_vec = Vec::with_capacity(n);
+    let mut c = Vec::with_capacity(n);
+    let mut r = Vec::with_capacity(n);
     for i in 0..n {
-        let c = Scalar::from_bytes_mod_order(sig[i * 64..i * 64 + 32].try_into().unwrap());
-        let r = Scalar::from_bytes_mod_order(sig[i * 64 + 32..(i + 1) * 64].try_into().unwrap());
-        c_vec.push(c);
-        r_vec.push(r);
+        let c_i = Scalar::from_bytes_mod_order(sig[i * 64..i * 64 + 32].try_into().unwrap());
+        let r_i = Scalar::from_bytes_mod_order(sig[i * 64 + 32..(i + 1) * 64].try_into().unwrap());
+        c.push(c_i);
+        r.push(r_i);
     }
-
     let mut hasher = Sha256::new();
-    hasher.update(msg);
+    let mut c_check = c[0];
     for i in 0..n {
-        let l = &ED25519_BASEPOINT_POINT * &r_vec[i] + pubkeys[i] * c_vec[i];
+        let l = &ED25519_BASEPOINT_POINT * &r[i] + pubkeys[i] * c_check;
         hasher.update(l.compress().as_bytes());
         hasher.update(msg);
         let mut c_bytes = [0u8; 32];
         c_bytes.copy_from_slice(&hasher.finalize_reset()[..32]);
-        if c_vec[(i + 1) % n] != Scalar::from_bytes_mod_order(c_bytes) {
-            return false; // Verification failed
+        c_check = Scalar::from_bytes_mod_order(c_bytes);
+        if i < n - 1 && c_check != c[i + 1] {
+            return false;
         }
     }
-
-    true // Verification succeeded
+    // The final challenge must match c_0
+    c_check == c[0]
 }
 
 #[cfg(test)]
@@ -98,12 +111,26 @@ mod tests {
 
     #[test]
     fn test_ring_signature_verification() {
-        let msg = b"Test message";
-        let ring = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
-        let priv_key = [4u8; 32];
-        let real_index = 1;
+        use curve25519_dalek::edwards::EdwardsPoint;
+        use curve25519_dalek::scalar::Scalar;
+        use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+        use rand::rngs::OsRng;
+        use rand::RngCore;
 
-        let sig = generate_ring_signature(msg, &ring, &priv_key, real_index);
+        let msg = b"Test message";
+        let mut rng = OsRng;
+        let mut priv_keys = Vec::new();
+        let mut ring = Vec::new();
+        for _ in 0..3 {
+            let mut sk_bytes = [0u8; 32];
+            rng.fill_bytes(&mut sk_bytes);
+            let sk = Scalar::from_bytes_mod_order(sk_bytes);
+            let pk = (&ED25519_BASEPOINT_POINT * &sk).compress().to_bytes();
+            priv_keys.push(sk_bytes);
+            ring.push(pk);
+        }
+        let real_index = 1;
+        let sig = generate_ring_signature(msg, &ring, &priv_keys[real_index], real_index);
         assert!(verify_ring_signature(msg, &ring, &sig));
 
         // Tamper with the signature
@@ -114,65 +141,78 @@ mod tests {
 
     #[test]
     fn test_verify_ring_signature_valid() {
+        use curve25519_dalek::edwards::EdwardsPoint;
+        use curve25519_dalek::scalar::Scalar;
+        use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+        use rand::rngs::OsRng;
+        use rand::RngCore;
+
         let msg = b"Test message";
         let mut rng = OsRng;
-
-        // Generate a ring of public keys
-        let ring: Vec<[u8; 32]> = (0..3)
-            .map(|_| {
-                let mut bytes = [0u8; 32];
-                rng.fill_bytes(&mut bytes);
-                bytes
-            })
-            .collect();
-
-        // Generate a valid signature (mocked for simplicity)
-        let sig = vec![0u8; ring.len() * 64]; // Replace with actual signature generation logic
-
-        // Verify the signature
+        let mut priv_keys = Vec::new();
+        let mut ring = Vec::new();
+        for _ in 0..3 {
+            let mut sk_bytes = [0u8; 32];
+            rng.fill_bytes(&mut sk_bytes);
+            let sk = Scalar::from_bytes_mod_order(sk_bytes);
+            let pk = (&ED25519_BASEPOINT_POINT * &sk).compress().to_bytes();
+            priv_keys.push(sk_bytes);
+            ring.push(pk);
+        }
+        let real_index = 0;
+        let sig = generate_ring_signature(msg, &ring, &priv_keys[real_index], real_index);
         assert!(verify_ring_signature(msg, &ring, &sig));
     }
 
     #[test]
     fn test_verify_ring_signature_invalid() {
+        use curve25519_dalek::edwards::EdwardsPoint;
+        use curve25519_dalek::scalar::Scalar;
+        use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+        use rand::rngs::OsRng;
+        use rand::RngCore;
+
         let msg = b"Test message";
         let mut rng = OsRng;
-
-        // Generate a ring of public keys
-        let ring: Vec<[u8; 32]> = (0..3)
-            .map(|_| {
-                let mut bytes = [0u8; 32];
-                rng.fill_bytes(&mut bytes);
-                bytes
-            })
-            .collect();
-
-        // Generate an invalid signature
-        let sig = vec![1u8; ring.len() * 64]; // Invalid signature
-
-        // Verify the signature
+        let mut priv_keys = Vec::new();
+        let mut ring = Vec::new();
+        for _ in 0..3 {
+            let mut sk_bytes = [0u8; 32];
+            rng.fill_bytes(&mut sk_bytes);
+            let sk = Scalar::from_bytes_mod_order(sk_bytes);
+            let pk = (&ED25519_BASEPOINT_POINT * &sk).compress().to_bytes();
+            priv_keys.push(sk_bytes);
+            ring.push(pk);
+        }
+        // Generate a valid signature, then tamper with it
+        let real_index = 0;
+        let mut sig = generate_ring_signature(msg, &ring, &priv_keys[real_index], real_index);
+        sig[0] ^= 0xFF; // Tamper with the signature
         assert!(!verify_ring_signature(msg, &ring, &sig));
     }
 
     #[test]
     fn test_debug_ring_signature() {
+        use curve25519_dalek::edwards::EdwardsPoint;
+        use curve25519_dalek::scalar::Scalar;
+        use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+        use rand::rngs::OsRng;
+        use rand::RngCore;
+
         let msg = b"Debug message";
-        let ring = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
-        let priv_key = [4u8; 32];
-        let real_index = 1;
-
-        // Generate a signature
-        let sig = generate_ring_signature(msg, &ring, &priv_key, real_index);
-
-        // Debugging public key decompression
-        for pk_bytes in &ring {
-            let decompressed = CompressedEdwardsY(*pk_bytes).decompress();
-            println!("Public key {:?} decompressed: {:?}", pk_bytes, decompressed);
+        let mut rng = OsRng;
+        let mut priv_keys = Vec::new();
+        let mut ring = Vec::new();
+        for _ in 0..3 {
+            let mut sk_bytes = [0u8; 32];
+            rng.fill_bytes(&mut sk_bytes);
+            let sk = Scalar::from_bytes_mod_order(sk_bytes);
+            let pk = (&ED25519_BASEPOINT_POINT * &sk).compress().to_bytes();
+            priv_keys.push(sk_bytes);
+            ring.push(pk);
         }
-
-        // Verify the signature
-        let is_valid = verify_ring_signature(msg, &ring, &sig);
-        println!("Signature valid: {:?}", is_valid);
-        assert!(is_valid);
+        let real_index = 2;
+        let sig = generate_ring_signature(msg, &ring, &priv_keys[real_index], real_index);
+        assert!(verify_ring_signature(msg, &ring, &sig));
     }
 }

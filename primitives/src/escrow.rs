@@ -208,18 +208,20 @@ mod tests {
 
     #[test]
     fn test_escrow_dispute_voting() {
-        let buyer_pubkey = generate_hash(b"buyer");
-        let seller_pubkey = generate_hash(b"seller");
-        let arbiter_pubkey = generate_hash(b"arbiter");
-        let _contract_id = generate_hash(b"contract_id");
+        // Use fixed byte arrays for public keys
+        let buyer_pubkey = [1u8; 32];
+        let seller_pubkey = [2u8; 32];
+        let arbiter_pubkey = [3u8; 32];
+        let _contract_id = [9u8; 32];
         let mut contract = EscrowContract::new(&buyer_pubkey, &seller_pubkey, &arbiter_pubkey, 1000);
 
         println!("Initial status: {:?}", contract.status);
-        contract.fund(generate_hash(b"fund"));
+        let buyer_hash = generate_hash(&buyer_pubkey);
+        contract.fund(buyer_hash);
         println!("After funding: {:?}", contract.status);
 
         // Ensure the dispute is raised by the buyer
-        contract.dispute(buyer_pubkey);
+        contract.dispute(buyer_hash);
         println!("After dispute by buyer: {:?}", contract.status);
         assert_eq!(contract.status, EscrowStatus::Disputed);
 

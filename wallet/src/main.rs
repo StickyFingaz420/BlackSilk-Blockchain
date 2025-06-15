@@ -15,7 +15,7 @@ use colored::*;
 mod randomx;
 
 // Correctly import `validate_pow` from the `smart-contracts/randomx` module
-use smart_contracts::randomx::validate_pow;
+use smart_contracts::validate_pow;
 
 // Utility function to convert hex string to 32-byte array
 fn hex_to_32_bytes(hex_str: &str) -> Result<[u8; 32], String> {

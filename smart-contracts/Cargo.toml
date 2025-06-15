@@ -1,0 +1,11 @@
+[package]
+name = "smart-contracts"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "smart_contracts"
+path = "src/lib.rs"
+
+[dependencies]
+randomx = { path = "randomx" }

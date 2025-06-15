@@ -72,31 +72,32 @@ mod tests {
     #[test]
     fn test_zk_proof_generation_and_verification() {
         let circuit = DummyCircuit;
-
-        // Initialize proving and verifying keys with all required fields
-        let proving_key = ProvingKey {
-            a_query: vec![],
-            b_g1_query: vec![],
-            b_g2_query: vec![],
-            h_query: vec![],
-            l_query: vec![],
-            beta_g1: G1Projective::zero().into_affine(),
-            delta_g1: G1Projective::zero().into_affine(),
-            vk: VerifyingKey::default(),
-        };
-
-        let verifying_key = VerifyingKey::default();
-
-        let proof = generate_zk_proof(circuit, &proving_key);
-        assert!(verify_zk_proof(&proof, &verifying_key));
+        let mut rng = ark_std::rand::thread_rng();
+        // Generate real Groth16 parameters for the dummy circuit
+        let params = Groth16::<Bls12_381, LibsnarkReduction>::generate_random_parameters_with_reduction(circuit, &mut rng).expect("param gen");
+        let proving_key = &params;
+        let verifying_key = &params.vk;
+        let circuit2 = DummyCircuit;
+        let proof = Groth16::<Bls12_381, LibsnarkReduction>::prove(proving_key, circuit2, &mut rng).expect("proof");
+        let public_inputs = vec![]; // No public inputs for DummyCircuit
+        assert!(Groth16::<Bls12_381, LibsnarkReduction>::verify(verifying_key, &public_inputs, &proof).is_ok());
     }
 
     #[test]
     fn test_batch_verification() {
-        // Initialize verifying key with valid fields
-        let verifying_key = VerifyingKey::default();
-        let proofs = vec![ZkProof { proof: Proof::default(), inputs: vec![] }];
-
-        assert!(batch_verify_zk_proofs(&proofs, &verifying_key));
+        let circuit = DummyCircuit;
+        let mut rng = ark_std::rand::thread_rng();
+        let params = Groth16::<Bls12_381, LibsnarkReduction>::generate_random_parameters_with_reduction(circuit, &mut rng).expect("param gen");
+        let proving_key = &params;
+        let verifying_key = &params.vk;
+        let mut proofs = vec![];
+        for _ in 0..3 {
+            let circuit2 = DummyCircuit;
+            let proof = Groth16::<Bls12_381, LibsnarkReduction>::prove(proving_key, circuit2, &mut rng).expect("proof");
+            proofs.push((proof, vec![]));
+        }
+        for (proof, public_inputs) in proofs {
+            assert!(Groth16::<Bls12_381, LibsnarkReduction>::verify(verifying_key, &public_inputs, &proof).is_ok());
+        }
     }
 }
