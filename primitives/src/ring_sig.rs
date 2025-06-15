@@ -7,7 +7,7 @@ use sha2::{Sha256, Digest};
 
 /// Generate a canonical CryptoNote-style ring signature
 pub fn generate_ring_signature(msg: &[u8], ring: &[[u8; 32]], priv_key: &[u8], real_index: usize) -> Vec<u8> {
-    use curve25519_dalek::edwards::EdwardsPoint;
+    
     use rand::RngCore;
     let n = ring.len();
     assert!(n > 0 && real_index < n);
@@ -64,7 +64,7 @@ pub fn generate_ring_signature(msg: &[u8], ring: &[[u8; 32]], priv_key: &[u8], r
 
 /// Verify a canonical CryptoNote-style ring signature
 pub fn verify_ring_signature(msg: &[u8], ring: &[[u8; 32]], sig: &[u8]) -> bool {
-    use curve25519_dalek::edwards::EdwardsPoint;
+    
     let n = ring.len();
     if sig.len() != n * 64 {
         return false;
@@ -105,13 +105,13 @@ pub fn verify_ring_signature(msg: &[u8], ring: &[[u8; 32]], sig: &[u8]) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use curve25519_dalek::scalar::Scalar;
-    use rand::rngs::OsRng;
+    
+    
     use rand::RngCore;
 
     #[test]
     fn test_ring_signature_verification() {
-        use curve25519_dalek::edwards::EdwardsPoint;
+        
         use curve25519_dalek::scalar::Scalar;
         use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
         use rand::rngs::OsRng;
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_verify_ring_signature_valid() {
-        use curve25519_dalek::edwards::EdwardsPoint;
+        
         use curve25519_dalek::scalar::Scalar;
         use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
         use rand::rngs::OsRng;
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn test_verify_ring_signature_invalid() {
-        use curve25519_dalek::edwards::EdwardsPoint;
+        
         use curve25519_dalek::scalar::Scalar;
         use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
         use rand::rngs::OsRng;
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_debug_ring_signature() {
-        use curve25519_dalek::edwards::EdwardsPoint;
+        
         use curve25519_dalek::scalar::Scalar;
         use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
         use rand::rngs::OsRng;

@@ -17,7 +17,8 @@ mod tests {
 
     #[test]
     fn test_generate_zk_proof() {
-        let args = Cli::parse_from(["wallet", "privacy", "zkproof", "--amount", "100"]);
+        // Use positional argument for amount
+        let args = Cli::parse_from(["wallet", "privacy", "zk-proof", "100"]);
         if let Some(Commands::Privacy { action }) = args.command {
             if let PrivacyCommands::ZkProof { amount } = action {
                 assert_eq!(amount, 100);
@@ -36,7 +37,8 @@ mod tests {
 
     #[test]
     fn test_verify_zk_proof() {
-        let args = Cli::parse_from(["wallet", "privacy", "verify", "--proof", "dummy_proof"]);
+        // Pass proof as a positional argument, not as --proof
+        let args = Cli::parse_from(["wallet", "privacy", "verify", "dummy_proof"]);
         if let Some(Commands::Privacy { action }) = args.command {
             if let PrivacyCommands::Verify { proof } = action {
                 assert_eq!(proof, "dummy_proof");
