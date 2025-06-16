@@ -870,6 +870,7 @@ dependencies = [
  "digest 0.10.7",
  "getrandom 0.2.16",
  "hex",
+ "libc",
  "log",
  "memmap2 0.7.1",
  "num-bigint",

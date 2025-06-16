@@ -24,6 +24,8 @@ use core_affinity;
 use zeroize::Zeroize;
 use memmap2::MmapMut;
 use log::{info, warn, error};
+#[cfg(unix)]
+use libc::mlock;
 
 // Pure Rust RandomX modules (no FFI required)
 mod randomx;
@@ -911,27 +913,24 @@ fn hash_meets_target(hash: &[u8], difficulty: u64) -> bool {
 fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address: &str) {
     let client = Client::new();
     let job = Arc::new(Mutex::new(None));
-
-    // Clone `node_url` to ensure it has a `'static` lifetime
     let node_url_owned = node_url.to_string();
     let mining_address_owned = mining_address.to_string();
 
     // Initialize RandomX once for all threads
     println!("{} Initializing RandomX with optimal flags...", "[RandomX]".bright_blue().bold());
     let flags = get_optimal_flags();
-    let key = b"BlackSilk-RandomX-Key-v1"; // Standard RandomX key
+    let key = b"BlackSilk-RandomX-Key-v1";
     let cache = RandomXCache::new(key);
     let dataset = RandomXDataset::new(&cache, 1);
     let shared_cache = Arc::new(cache);
     let shared_dataset = Arc::new(dataset);
-
     println!("{} RandomX initialization complete!", "[RandomX]".bright_green().bold());
 
     // Hashrate reporting thread
-    thread::spawn(|| {
+    std::thread::spawn(|| {
         let mut last_count = 0u64;
         loop {
-            thread::sleep(Duration::from_secs(10));
+            std::thread::sleep(Duration::from_secs(10));
             let count = HASH_COUNTER.load(Ordering::Relaxed);
             let hashrate = (count - last_count) as f64 / 10.0;
             last_count = count;
@@ -939,102 +938,72 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
         }
     });
 
-    // Fetch job periodically
+    // Job fetcher thread
     let job_clone = Arc::clone(&job);
-    let client_clone = client.clone(); // Clone `client` to avoid move issues
-    thread::spawn(move || {
+    let client_clone = client.clone();
+    let node_url_clone = node_url_owned.clone();
+    let mining_address_clone = mining_address_owned.clone();
+    std::thread::spawn(move || {
         println!("[Miner] Job fetcher thread started");
         loop {
-            println!("[Miner] Attempting to fetch job...");
-            if let Some(new_job) = fetch_job(&client_clone, &node_url_owned, &mining_address_owned) {
-                println!("[Miner] Got new job for height: {}", new_job.height);
+            if let Some(new_job) = fetch_job(&client_clone, &node_url_clone, &mining_address_clone) {
                 let mut job_lock = job_clone.lock().unwrap();
                 *job_lock = Some(new_job);
-            } else {
-                println!("[Miner] Failed to get job, retrying in 5 seconds...");
             }
-            thread::sleep(Duration::from_secs(5));
+            std::thread::sleep(Duration::from_secs(5));
         }
     });
 
-    // Pin mining threads to CPU cores for optimal performance
-    let num_threads = num_cpus::get();
-    let cores = core_affinity::get_core_ids().expect("Failed to get core IDs");
+    // Spawn mining threads
     let mut handles = Vec::new();
-    for (i, core_id) in cores.iter().enumerate().take(num_threads) {
-        let core_id = core_id.clone();
+    let cores = core_affinity::get_core_ids();
+    for thread_id in 0..thread_count {
+        let job_ref = Arc::clone(&job);
+        let client_ref = client.clone();
+        let node_url_ref = node_url_owned.clone();
+        let cache_ref = Arc::clone(&shared_cache);
+        let dataset_ref = Arc::clone(&shared_dataset);
+        let core_id = cores.as_ref().and_then(|c| c.get(thread_id).cloned());
         let handle = std::thread::spawn(move || {
-            core_affinity::set_for_current(core_id);
-            // Start mining threads with individual RandomX VMs
-            let mut handles = vec![];
-            for thread_id in 0..thread_count {
-                let job_clone = Arc::clone(&job);
-                let client_clone = client.clone(); // Clone `client` for each thread
-                let node_url_clone = node_url.to_string(); // Clone `node_url` for each thread
-                let cache_ref = Arc::clone(&shared_cache);
-                let dataset_ref = Arc::clone(&shared_dataset);
-
-                let handle = thread::spawn(move || {
-                    // Create RandomX VM for this thread
-                    let mut vm = RandomXVM::new(&cache_ref, Some(&dataset_ref));
-                    println!("{} Thread {} initialized with RandomX VM", "[Miner]".bright_cyan().bold(), thread_id);
-                    let mut last_job_height = 0u64;
-                    let mut current_job: Option<GetBlockTemplateResponse> = None;
-                    let mut nonce = 0u64;
-                    loop {
-                        // Check for new job
-                        let job_lock = job_clone.lock().unwrap();
-                        if let Some(ref job) = *job_lock {
-                            if current_job.as_ref().map(|j| j.height) != Some(job.height) {
-                                // New job detected
-                                current_job = Some(job.clone());
-                                nonce = 0;
-                                println!("[Miner] Thread {}: New job at height {}", thread_id, job.height);
-                            }
-                        }
-                        drop(job_lock);
-                        if let Some(ref job) = current_job {
-                            let header_data = job.header.clone();
-                            let target = job.difficulty;
-                            let key_data = {
-                                let mut kd = Vec::new();
-                                kd.extend_from_slice(&job.prev_hash);
-                                kd.extend_from_slice(&job.height.to_le_bytes());
-                                kd
-                            };
-                            // Mining loop: keep mining until a new job is detected
-                            for _ in 0..10000 {
-                                let mut input = Vec::new();
-                                input.extend_from_slice(&header_data);
-                                input.extend_from_slice(&nonce.to_le_bytes());
-                                // Use the thread's dedicated RandomXVM and shared dataset for hashing
-                                let hash = vm.calculate_hash(&input);
-                                HASH_COUNTER.fetch_add(1, Ordering::Relaxed);
-                                if hash_meets_target(&hash, target) {
-                                    println!("[DEBUG] Thread {} found valid nonce {} for height {} (hash: {:x})", thread_id, nonce, job.height, u64::from_le_bytes(hash[0..8].try_into().unwrap()));
-                                    let submit_req = SubmitBlockRequest {
-                                        header: job.header.clone(),
-                                        nonce,
-                                        hash: hash.to_vec(),
-                                        miner_address: Some(job.coinbase_address.clone()),
-                                    };
-                                    submit_block(&client_clone, &node_url_clone, submit_req);
-                                    println!("{} Thread {} found block at height {} with nonce {} (RandomX hash: {:x})", 
-                                           "[SUCCESS]".bright_green().bold(), thread_id, job.height, nonce, 
-                                           u64::from_le_bytes(hash[0..8].try_into().unwrap()));
-                                    // After submitting, break to check for new job
-                                    break;
-                                }
-                                nonce = nonce.wrapping_add(1);
-                            }
-                        }
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                });
-                handles.push(handle);
+            if let Some(core) = core_id {
+                core_affinity::set_for_current(core);
             }
-            for handle in handles {
-                handle.join().unwrap();
+            let mut vm = RandomXVM::new(&cache_ref, Some(&dataset_ref));
+            let mut last_job_height = 0u64;
+            let mut current_job: Option<GetBlockTemplateResponse> = None;
+            let mut nonce = 0u64;
+            loop {
+                let job_lock = job_ref.lock().unwrap();
+                if let Some(ref job) = *job_lock {
+                    if current_job.as_ref().map(|j| j.height) != Some(job.height) {
+                        current_job = Some(job.clone());
+                        nonce = 0;
+                    }
+                }
+                drop(job_lock);
+                if let Some(ref job) = current_job {
+                    let header_data = job.header.clone();
+                    let target = job.difficulty;
+                    for _ in 0..10000 {
+                        let mut input = Vec::new();
+                        input.extend_from_slice(&header_data);
+                        input.extend_from_slice(&nonce.to_le_bytes());
+                        let hash = vm.calculate_hash(&input);
+                        HASH_COUNTER.fetch_add(1, Ordering::Relaxed);
+                        if hash_meets_target(&hash, target) {
+                            let submit_req = SubmitBlockRequest {
+                                header: job.header.clone(),
+                                nonce,
+                                hash: hash.to_vec(),
+                                miner_address: Some(job.coinbase_address.clone()),
+                            };
+                            submit_block(&client_ref, &node_url_ref, submit_req);
+                            break;
+                        }
+                        nonce = nonce.wrapping_add(1);
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(10));
             }
         });
         handles.push(handle);
@@ -1046,13 +1015,36 @@ fn start_mining_with_threads(node_url: &str, thread_count: usize, mining_address
 
 // Memory locking and zeroization for dataset and cache
 fn lock_and_zeroize_buffer(buf: &mut [u8]) {
+    #[cfg(unix)]
     unsafe {
         let ptr = buf.as_mut_ptr() as *mut libc::c_void;
         let len = buf.len();
-        if libc::mlock(ptr, len) != 0 {
+        if mlock(ptr, len) != 0 {
             warn!("Failed to mlock buffer");
         }
     }
-    // Zeroize on drop
+    // On Windows, mlock is not available; just zeroize
     buf.zeroize();
+}
+
+fn print_startup_banner() {
+    println!("\x1b[96m╔════════════════════════════════════════════════════════════════╗\x1b[0m");
+    println!("\x1b[96m║                    BlackSilk Miner v1.0                      ║\x1b[0m");
+    println!("\x1b[96m║              Professional Privacy Blockchain Miner            ║\x1b[0m");
+    println!("\x1b[96m║          RandomX • CPU-Only • No GPU/ASIC Allowed            ║\x1b[0m");
+    println!("\x1b[96m╚════════════════════════════════════════════════════════════════╝\x1b[0m");
+}
+
+fn run_benchmark(duration: u64) {
+    println!("[BENCHMARK] Running RandomX benchmark for {duration} seconds...");
+    // TODO: Implement actual benchmark logic
+}
+
+fn start_mining(cli: &Cli) {
+    // Use all logical CPUs by default
+    let thread_count = cli.threads;
+    let node_url = &cli.node;
+    let mining_address = cli.address.as_ref().expect("Mining address required");
+    println!("[MINER] Starting mining with {thread_count} threads on node {node_url}...");
+    start_mining_with_threads(node_url, thread_count, mining_address);
 }
