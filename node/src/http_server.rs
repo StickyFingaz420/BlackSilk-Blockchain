@@ -162,7 +162,7 @@ pub async fn start_http_server(port: u16, data_dir: std::path::PathBuf) -> Resul
     use std::thread;
     let addr = format!("127.0.0.1:{}", port);
     let listener = TcpListener::bind(&addr)?;
-    println!('[HTTP] Server listening on http://{}', addr);
+    println!("[HTTP] Server listening on http://{}", addr);
     for stream in listener.incoming() {
         let data_dir = data_dir.clone();
         match stream {
