@@ -77,7 +77,6 @@ impl RandomXCache {
 
         println!("[RandomX Cache] Initializing 2MB cache with Argon2d");
         println!("[RandomX Cache] Key length: {} bytes", key.len());
-        
         // Configure Argon2d with RandomX parameters
         let params = Params::new(
             (RANDOMX_CACHE_SIZE / 1024) as u32, // KB
@@ -85,20 +84,17 @@ impl RandomXCache {
             RANDOMX_ARGON2_LANES,
             Some(RANDOMX_CACHE_SIZE)
         ).expect("Invalid Argon2 parameters");
-
         let argon2 = Argon2::new(
             Algorithm::Argon2d,
             Version::V0x13,
             params
         );
-
         // Generate cache in chunks with progress reporting
         let chunk_size = RANDOMX_CACHE_SIZE / 8; // 8 chunks for progress
         let argon2_output_size = 32; // Argon2d output size in bytes
         for (i, chunk) in self.memory.chunks_mut(chunk_size).enumerate() {
             let mut chunk_key = key.to_vec();
             chunk_key.extend_from_slice(&(i as u32).to_le_bytes());
-
             // Fill the chunk in 32-byte blocks
             let mut offset = 0;
             while offset < chunk.len() {
@@ -109,12 +105,11 @@ impl RandomXCache {
                     &mut output
                 ).expect("Argon2d hash failed");
                 let end = (offset + argon2_output_size).min(chunk.len());
+                // Only copy the available bytes, never request more than 32 from Argon2d
                 chunk[offset..end].copy_from_slice(&output[..(end - offset)]);
-                // Optionally, update chunk_key for each block for more entropy
                 chunk_key = output.clone();
                 offset += argon2_output_size;
             }
-
             let progress_pct = ((i + 1) * 100) / 8;
             println!("[RandomX Cache] Argon2d progress: {}% ({}/8 chunks)", progress_pct, i + 1);
         }
