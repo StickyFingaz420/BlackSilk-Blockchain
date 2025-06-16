@@ -95,19 +95,26 @@ impl RandomXCache {
         for (i, chunk) in self.memory.chunks_mut(chunk_size).enumerate() {
             let mut chunk_key = key.to_vec();
             chunk_key.extend_from_slice(&(i as u32).to_le_bytes());
-            // Fill the chunk in 32-byte blocks
+            // Always ensure chunk_key is at least 8 bytes (Argon2d min), pad if needed
+            if chunk_key.len() < 8 {
+                chunk_key.resize(8, 0);
+            }
             let mut offset = 0;
             while offset < chunk.len() {
-                let mut output = vec![0u8; argon2_output_size];
+                // Always use a 32-byte output buffer
+                let mut output = [0u8; 32];
                 argon2.hash_password_into(
                     &chunk_key,
                     RANDOMX_ARGON2_SALT,
                     &mut output
-                ).expect("Argon2d hash failed");
+                ).expect("Argon2d hash failed: Output buffer must be 32 bytes");
                 let end = (offset + argon2_output_size).min(chunk.len());
-                // Only copy the available bytes, never request more than 32 from Argon2d
-                chunk[offset..end].copy_from_slice(&output[..(end - offset)]);
-                chunk_key = output.clone();
+                let copy_len = end - offset;
+                // Defensive: never copy more than 32 bytes from output
+                assert!(copy_len <= 32, "Attempting to copy more than 32 bytes from Argon2d output");
+                chunk[offset..end].copy_from_slice(&output[..copy_len]);
+                // Always use the full 32-byte output as the next key
+                chunk_key = output.to_vec();
                 offset += argon2_output_size;
             }
             let progress_pct = ((i + 1) * 100) / 8;
