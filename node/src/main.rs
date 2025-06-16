@@ -714,10 +714,13 @@ fn start_enhanced_node(
     
     // Start HTTP API server
     let _privacy_manager_clone = privacy_manager.clone();
-    let http_handle = std::thread::spawn(move || {
-        println!("[HTTP] Starting API server on port {}", ports.http);
-        if let Err(e) = node::http_server::start_http_server_sync(ports.http) {
-            eprintln!("[HTTP] Server error: {}", e);
+    let http_handle = std::thread::spawn({
+        let data_dir = data_dir.clone();
+        move || {
+            println!("[HTTP] Starting API server on port {}", ports.http);
+            if let Err(e) = node::http_server::start_http_server_sync(ports.http, data_dir) {
+                eprintln!("[HTTP] Server error: {}", e);
+            }
         }
     });
     
