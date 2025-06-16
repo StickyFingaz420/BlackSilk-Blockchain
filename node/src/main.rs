@@ -596,6 +596,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     
     // Start the enhanced node
+    // Persist genesis block to disk on startup
+    {
+        use node::CHAIN;
+        let chain = CHAIN.lock().unwrap();
+        node::http_server::save_chain_to_disk(&chain, &cli.data_dir);
+    }
     start_enhanced_node(network, privacy_manager, cli.data_dir, cli.connect)?;
     
     Ok(())

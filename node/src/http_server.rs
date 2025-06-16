@@ -36,7 +36,7 @@ fn calculate_merkle_root(transactions: &[Transaction]) -> [u8; 32] {
 }
 
 /// Save chain to disk (persistence)
-fn save_chain_to_disk(chain: &crate::Chain, data_dir: &std::path::Path) {
+pub fn save_chain_to_disk(chain: &crate::Chain, data_dir: &std::path::Path) {
     use std::fs::{File, create_dir_all};
     use std::io::Write;
     use std::path::Path;
