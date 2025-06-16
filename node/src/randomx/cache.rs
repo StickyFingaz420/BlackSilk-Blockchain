@@ -77,6 +77,7 @@ impl RandomXCache {
 
         println!("[RandomX Cache] Initializing 2MB cache with Argon2d");
         println!("[RandomX Cache] Key length: {} bytes", key.len());
+        println!("[RandomX Cache] Salt length: {} bytes", RANDOMX_ARGON2_SALT.len());
         // Configure Argon2d with RandomX parameters
         let params = Params::new(
             (RANDOMX_CACHE_SIZE / 1024) as u32, // KB
@@ -99,15 +100,25 @@ impl RandomXCache {
             if chunk_key.len() < 8 {
                 chunk_key.resize(8, 0);
             }
+            // Always hash the key to 32 bytes before Argon2d
+            use sha2::{Sha256, Digest};
             let mut offset = 0;
             while offset < chunk.len() {
+                let mut hasher = Sha256::new();
+                hasher.update(&chunk_key);
+                let hashed_key = hasher.finalize();
+                let hashed_key_bytes = hashed_key.as_slice();
                 // Always use a 32-byte output buffer
                 let mut output = [0u8; 32];
-                argon2.hash_password_into(
-                    &chunk_key,
+                println!("[RandomX Cache] Argon2d call: chunk {}, offset {}, key len {}, salt len {}", i, offset, hashed_key_bytes.len(), RANDOMX_ARGON2_SALT.len());
+                let result = argon2.hash_password_into(
+                    hashed_key_bytes,
                     RANDOMX_ARGON2_SALT,
                     &mut output
-                ).expect("Argon2d hash failed: Output buffer must be 32 bytes");
+                );
+                if let Err(e) = result {
+                    panic!("Argon2d hash failed at chunk {} offset {}: {} (key len {}, salt len {}, output size {})", i, offset, e, hashed_key_bytes.len(), RANDOMX_ARGON2_SALT.len(), output.len());
+                }
                 let end = (offset + argon2_output_size).min(chunk.len());
                 let copy_len = end - offset;
                 // Defensive: never copy more than 32 bytes from output
