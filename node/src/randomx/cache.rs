@@ -129,26 +129,32 @@ impl RandomXCache {
     /// Additional Argon2d-based mixing for enhanced security
     fn mix_cache_argon2d(&mut self) {
         println!("[RandomX Cache] Performing Argon2d mixing pass...");
-        
         let mix_iterations = 16;
         let params = Params::new(1024, 1, 1, Some(1024))
             .expect("Invalid mixing parameters");
         let argon2 = Argon2::new(Algorithm::Argon2d, Version::V0x13, params);
-        
+        let argon2_output_size = 32;
         for iteration in 0..mix_iterations {
             for i in (0..self.memory.len()).step_by(1024) {
                 let end = (i + 1024).min(self.memory.len());
                 let chunk = &mut self.memory[i..end];
-                
-                // Mix using Argon2d with reduced parameters
-                let mut mixed = vec![0u8; chunk.len()];
+                let mut offset = 0;
+                let mut chunk_key = chunk.to_vec();
                 let iteration_bytes = (iteration as u32).to_le_bytes();
-                
-                if argon2.hash_password_into(chunk, &iteration_bytes, &mut mixed).is_ok() {
-                    chunk.copy_from_slice(&mixed);
+                chunk_key.extend_from_slice(&iteration_bytes);
+                while offset < chunk.len() {
+                    let mut output = vec![0u8; argon2_output_size];
+                    argon2.hash_password_into(
+                        &chunk_key,
+                        &iteration_bytes,
+                        &mut output
+                    ).expect("Argon2d hash failed in mixing");
+                    let out_end = (offset + argon2_output_size).min(chunk.len());
+                    chunk[offset..out_end].copy_from_slice(&output[..(out_end - offset)]);
+                    chunk_key = output.clone();
+                    offset += argon2_output_size;
                 }
             }
-            
             if iteration % 4 == 0 {
                 println!("[RandomX Cache] Mixing pass: {}/{}", iteration + 1, mix_iterations);
             }
