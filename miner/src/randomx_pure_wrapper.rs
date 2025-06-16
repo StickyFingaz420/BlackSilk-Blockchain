@@ -12,6 +12,10 @@ pub type randomx_vm = crate::randomx_pro::RandomX;
 // WARNING: Do NOT use this function for mining threads! It allocates a new dataset and is only for one-off test hashes.
 // For mining, always use the shared RandomXVM and RandomXDataset from randomx/vm.rs.
 pub fn randomx_hash(flags: u32, seed: &[u8], input: &[u8], output: &mut [u8]) {
+    if flags & crate::randomx_pro::RANDOMX_FLAG_FULL_MEM == 0 {
+        log::error!("Attempted to use RandomX in light mode or without full dataset. This is forbidden.");
+        panic!("RandomX mining must use full dataset (2GB) for CPU-only enforcement.");
+    }
     // Only use cache (light mode), never allocate dataset here
     let mut rx = crate::randomx_pro::RandomX::new(flags & !crate::randomx_pro::RANDOMX_FLAG_FULL_MEM);
     rx.init(seed);

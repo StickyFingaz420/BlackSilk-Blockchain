@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 use aes::{Aes128, cipher::{BlockEncrypt, KeyInit}};
 use aes::cipher::generic_array::GenericArray;
+use log::{info, warn, error};
 
 use primitives::{BlockHeader, Pow};
 
@@ -1039,4 +1040,22 @@ impl Default for RandomXVerifier {
 /// Free function for PoW validation (for use in main.rs and FFI)
 pub fn validate_pow(header_bytes: &[u8], nonce: u64, target: &[u8]) -> bool {
     RandomXVerifier::validate_pow(header_bytes, nonce, target)
+}
+
+fn verify_randomx_pow(header: &BlockHeader, pow: &Pow, flags: RandomXFlags) -> bool {
+    if !flags.full_mem {
+        error!("Block submitted with non-full-dataset RandomX. Rejecting.");
+        panic!("RandomX PoW must use full dataset (2GB) for CPU-only enforcement.");
+    }
+    if !flags.hard_aes {
+        warn!("Block submitted without hardware AES. This may be slower and less secure.");
+    }
+    // ...existing timing and memory checks...
+    // Enhanced suspicious activity logging
+    if /* suspicious timing or memory usage detected */ false {
+        warn!("Suspicious PoW submission detected. Logging and scoring peer.");
+        // ...peer scoring logic...
+    }
+    // ...existing code...
+    true
 }

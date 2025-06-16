@@ -864,11 +864,14 @@ dependencies = [
  "blake2",
  "clap 4.5.40",
  "colored 2.2.0",
+ "core_affinity",
  "crossbeam-channel",
  "ctrlc",
  "digest 0.10.7",
  "getrandom 0.2.16",
  "hex",
+ "log",
+ "memmap2 0.7.1",
  "num-bigint",
  "num_cpus",
  "primitives",
@@ -880,6 +883,7 @@ dependencies = [
  "sha2 0.10.9",
  "tokio",
  "winapi",
+ "zeroize",
 ]
 
 [[package]]
@@ -1213,6 +1217,17 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
+name = "core_affinity"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a034b3a7b624016c6e13f5df875747cc25f884156aad2abd12b6c46797971342"
+dependencies = [
+ "libc",
+ "num_cpus",
+ "winapi",
+]
 
 [[package]]
 name = "corosensei"
@@ -3024,6 +3039,15 @@ dependencies = [
 
 [[package]]
 name = "memmap2"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f49388d20533534cd19360ad3d6a7dadc885944aa802ba3995040c5ec11288c6"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "memmap2"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3f7eed9d3848f8b98834af67102b720745c4ec028fcd0aa0239277e7de374f"
@@ -3154,6 +3178,7 @@ dependencies = [
  "chrono",
  "clap 4.5.40",
  "colored 2.2.0",
+ "core_affinity",
  "curve25519-dalek 4.1.3",
  "digest 0.10.7",
  "ed25519-dalek 2.1.1",
@@ -3161,6 +3186,8 @@ dependencies = [
  "i2p",
  "lazy_static",
  "libc",
+ "log",
+ "memmap2 0.7.1",
  "num-bigint",
  "num_cpus",
  "once_cell",
@@ -3178,6 +3205,7 @@ dependencies = [
  "torut",
  "wasmer",
  "wasmer-middlewares",
+ "zeroize",
 ]
 
 [[package]]
