@@ -131,7 +131,7 @@ impl RandomXCache {
     /// Additional Argon2d-based mixing for enhanced security
     fn mix_cache_argon2d(&mut self) {
         println!("[RandomX Cache] Performing Argon2d mixing pass...");
-        let mix_iterations = 16;
+        let mix_iterations = 4; // Reduced from 16 to 4 for faster init
         let params = Params::new(1024, 1, 1, Some(32))
             .expect("Invalid mixing parameters");
         let argon2 = Argon2::new(Algorithm::Argon2d, Version::V0x13, params);
@@ -144,18 +144,19 @@ impl RandomXCache {
                 let mut chunk_key = chunk.to_vec();
                 let iteration_bytes = (iteration as u32).to_le_bytes();
                 chunk_key.extend_from_slice(&iteration_bytes);
-                // Always hash the key to 32 bytes for Argon2d
                 use sha2::{Sha256, Digest};
+                let mut salt = [0u8; 8];
+                salt[..4].copy_from_slice(&iteration_bytes);
                 while offset < chunk.len() {
                     let hashed_key = Sha256::digest(&chunk_key);
                     let mut output = [0u8; 32];
                     let result = argon2.hash_password_into(
                         &hashed_key,
-                        &iteration_bytes,
+                        &salt,
                         &mut output
                     );
                     if let Err(e) = result {
-                        panic!("Argon2d hash failed in mixing: {} (key len {}, salt len {}, output size {})", e, hashed_key.len(), iteration_bytes.len(), output.len());
+                        panic!("Argon2d hash failed in mixing: {} (key len {}, salt len {}, output size {})", e, hashed_key.len(), salt.len(), output.len());
                     }
                     let out_end = (offset + argon2_output_size).min(chunk.len());
                     chunk[offset..out_end].copy_from_slice(&output[..(out_end - offset)]);
@@ -163,9 +164,7 @@ impl RandomXCache {
                     offset += argon2_output_size;
                 }
             }
-            if iteration % 4 == 0 {
-                println!("[RandomX Cache] Mixing pass: {}/{}", iteration + 1, mix_iterations);
-            }
+            println!("[RandomX Cache] Mixing pass: {}/{}", iteration + 1, mix_iterations);
         }
     }
 

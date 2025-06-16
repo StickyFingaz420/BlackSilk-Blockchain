@@ -432,10 +432,10 @@ fn main() {
     
     // Automatically use all physical CPU threads if --threads is not set by user
     if cli.threads == 1 {
-        let physical = num_cpus::get_physical();
-        cli.threads = physical;
-        println!("{} Auto-detected {} physical CPU threads", 
-                 "[SYSTEM]".bright_blue().bold(), physical);
+        let logical = num_cpus::get();
+        cli.threads = logical;
+        println!("{} Auto-detected {} logical CPU threads", 
+                 "[SYSTEM]".bright_blue().bold(), logical);
     }
     
     // Handle subcommands

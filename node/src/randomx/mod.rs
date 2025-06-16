@@ -51,7 +51,7 @@ pub const RANDOMX_FLAG_ARGON2_SSSE3: u32 = 32;
 pub const RANDOMX_FLAG_ARGON2_AVX2: u32 = 64;
 
 // Argon2d parameters for cache generation
-pub const RANDOMX_ARGON2_ITERATIONS: u32 = 3;
+pub const RANDOMX_ARGON2_ITERATIONS: u32 = 1;
 pub const RANDOMX_ARGON2_LANES: u32 = 1;
 pub const RANDOMX_ARGON2_SALT: &[u8] = b"RandomX\x03";
 
@@ -62,7 +62,7 @@ pub const RANDOMX_ALIGNMENT: usize = 64;
 pub fn randomx_hash(key: &[u8], input: &[u8], flags: u32) -> [u8; 32] {
     let cache = RandomXCache::new(key, flags);
     let dataset = if (flags & RANDOMX_FLAG_FULL_MEM) != 0 {
-        Some(RandomXDataset::new(&cache, 1))
+        Some(RandomXDataset::new(&cache, num_cpus::get()))
     } else {
         None
     };
