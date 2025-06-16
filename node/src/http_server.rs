@@ -568,126 +568,125 @@ fn handle_submit_block(stream: &mut TcpStream, body: &[u8], data_dir: &std::path
     use std::sync::MutexGuard;
     use std::panic;
 
-    // Log entry
     println!("[HTTP] Entered handle_submit_block");
 
-    // Always catch panics and respond with error
     let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-        match serde_json::from_slice::<SubmitBlockRequest>(body) {
-            Ok(req) => {
-                let peer_id = req.miner_address.as_deref().unwrap_or("unknown");
-                // Try to acquire the chain lock, handle poisoning
-                let chain_result = CHAIN.lock();
-                let mut chain: MutexGuard<_> = match chain_result {
-                    Ok(guard) => guard,
-                    Err(poisoned) => {
-                        println!("[ERROR] Chain lock poisoned! Resetting chain state.");
-                        let guard = poisoned.into_inner();
-                        // Optionally, reload chain from disk or reset state here
-                        guard
-                    }
-                };
-                let prev_block = chain.tip();
-                let new_height = prev_block.header.height + 1;
-                let network = current_network();
-                let current_difficulty = network.get_difficulty();
-                let block_header = BlockHeader {
-                    version: 1,
-                    prev_hash: prev_block.header.pow.hash,
-                    merkle_root: calculate_merkle_root(&[]),
-                    timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
-                    height: new_height,
-                    difficulty: current_difficulty,
-                    pow: Pow {
-                        nonce: req.nonce,
-                        hash: req.hash.clone().try_into().unwrap_or([0; 32]),
-                    },
-                };
-                println!("[RandomX] Verifying block submission from peer: {}", peer_id);
-                let verification_result = RANDOMX_VERIFIER.verify_block_pow(&block_header, Some(peer_id));
-                println!("[RandomX] Verification time: {:.2}ms", verification_result.verification_time_ms);
-                if verification_result.is_suspicious {
-                    println!("[RandomX] ⚠️  SUSPICIOUS: {}", verification_result.reason);
-                }
-                if !verification_result.is_valid {
-                    println!("[RandomX] ❌ Block REJECTED: {}", verification_result.reason);
-                    let response = SubmitBlockResponse {
-                        success: false,
-                        message: format!("RandomX verification failed: {}", verification_result.reason),
-                    };
-                    send_json_response(stream, 400, &response)?;
-                    return Ok::<(), Box<dyn std::error::Error>>(());
-                }
-                let hash_val = if req.hash.len() >= 8 {
-                    u64::from_le_bytes([
-                        req.hash[0], req.hash[1], req.hash[2], req.hash[3],
-                        req.hash[4], req.hash[5], req.hash[6], req.hash[7]
-                    ])
-                } else {
-                    u64::MAX
-                };
-                if hash_val >= current_difficulty {
-                    let response = SubmitBlockResponse {
-                        success: false,
-                        message: format!("Block does not meet difficulty target (hash: {}, difficulty: {})", hash_val, current_difficulty),
-                    };
-                    send_json_response(stream, 400, &response)?;
-                    return Ok::<(), Box<dyn std::error::Error>>(());
-                }
-                let block_reward = chain.emission.block_reward(new_height);
-                let miner_address = req.miner_address
-                    .unwrap_or_else(|| {
-                        let header_str = String::from_utf8_lossy(&req.header);
-                        let parts: Vec<&str> = header_str.split(':').collect();
-                        if parts.len() >= 4 {
-                            parts[3].to_string()
-                        } else {
-                            "unknown_miner".to_string()
-                        }
-                    });
-                let coinbase = Coinbase {
-                    reward: block_reward,
-                    to: miner_address.clone(),
-                };
-                let new_block = Block {
-                    header: block_header,
-                    coinbase,
-                    transactions: vec![],
-                };
-                // Validate and add block to chain
-                println!("[HTTP] Adding block to chain...");
-                if chain.add_block(new_block.clone()) {
-                    let hash_hex = hex::encode(&req.hash);
-                    // Save chain to disk
-                    println!("[HTTP] Saving chain to disk...");
-                    save_chain_to_disk(&chain, data_dir);
-                    // Broadcast new block to P2P network
-                    drop(chain);
-                    println!("[HTTP] Broadcasting new block to P2P network...");
-                    broadcast_message(&P2PMessage::Block(new_block));
-                    println!("[Mining] ✅ Block {} created and added to chain! Hash: {}", new_height, hash_hex);
-                    println!("[Mining] Block reward: {} atomic units to {}", block_reward, miner_address);
-                    println!("[RandomX] CPU-only verification PASSED - Block accepted");
-                    let response = SubmitBlockResponse {
-                        success: true,
-                        message: format!("Block {} accepted and added to chain with hash: {} (RandomX verified)", new_height, hash_hex),
-                    };
-                    send_json_response(stream, 200, &response)?;
-                } else {
-                    let response = SubmitBlockResponse {
-                        success: false,
-                        message: "Block validation failed during chain addition".to_string(),
-                    };
-                    send_json_response(stream, 400, &response)?;
-                }
-            }
+        // Step 1: Parse request
+        let req = match serde_json::from_slice::<SubmitBlockRequest>(body) {
+            Ok(r) => r,
             Err(e) => {
                 let response = SubmitBlockResponse {
                     success: false,
                     message: format!("Invalid block format: {}", e),
                 };
                 send_json_response(stream, 400, &response)?;
+                return Ok::<(), Box<dyn std::error::Error>>(());
             }
+        };
+        let peer_id = req.miner_address.as_deref().unwrap_or("unknown");
+        println!("[HTTP] Parsed block submission from peer: {}", peer_id);
+
+        // Step 2: Build block header (need chain tip for prev_hash/height, so get tip under lock, then release)
+        let (prev_hash, prev_height, emission, current_difficulty) = {
+            let chain = CHAIN.lock().unwrap();
+            let prev_block = chain.tip();
+            (
+                prev_block.header.pow.hash,
+                prev_block.header.height,
+                chain.emission.clone(),
+                current_network().get_difficulty(),
+            )
+        };
+        let new_height = prev_height + 1;
+        let block_header = BlockHeader {
+            version: 1,
+            prev_hash,
+            merkle_root: calculate_merkle_root(&[]),
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            height: new_height,
+            difficulty: current_difficulty,
+            pow: Pow {
+                nonce: req.nonce,
+                hash: req.hash.clone().try_into().unwrap_or([0; 32]),
+            },
+        };
+        println!("[RandomX] Verifying block submission from peer: {}", peer_id);
+        // Step 3: RandomX verification (expensive!)
+        let verification_result = RANDOMX_VERIFIER.verify_block_pow(&block_header, Some(peer_id));
+        println!("[RandomX] Verification time: {:.2}ms", verification_result.verification_time_ms);
+        if verification_result.is_suspicious {
+            println!("[RandomX] ⚠️  SUSPICIOUS: {}", verification_result.reason);
+        }
+        if !verification_result.is_valid {
+            println!("[RandomX] ❌ Block REJECTED: {}", verification_result.reason);
+            let response = SubmitBlockResponse {
+                success: false,
+                message: format!("RandomX verification failed: {}", verification_result.reason),
+            };
+            send_json_response(stream, 400, &response)?;
+            return Ok::<(), Box<dyn std::error::Error>>(());
+        }
+        let hash_val = if req.hash.len() >= 8 {
+            u64::from_le_bytes([
+                req.hash[0], req.hash[1], req.hash[2], req.hash[3],
+                req.hash[4], req.hash[5], req.hash[6], req.hash[7]
+            ])
+        } else {
+            u64::MAX
+        };
+        if hash_val >= current_difficulty {
+            let response = SubmitBlockResponse {
+                success: false,
+                message: format!("Block does not meet difficulty target (hash: {}, difficulty: {})", hash_val, current_difficulty),
+            };
+            send_json_response(stream, 400, &response)?;
+            return Ok::<(), Box<dyn std::error::Error>>(());
+        }
+        // Step 4: Build block (coinbase, etc.)
+        let block_reward = emission.block_reward(new_height);
+        let miner_address = req.miner_address
+            .unwrap_or_else(|| {
+                let header_str = String::from_utf8_lossy(&req.header);
+                let parts: Vec<&str> = header_str.split(':').collect();
+                if parts.len() >= 4 {
+                    parts[3].to_string()
+                } else {
+                    "unknown_miner".to_string()
+                }
+            });
+        let coinbase = Coinbase {
+            reward: block_reward,
+            to: miner_address.clone(),
+        };
+        let new_block = Block {
+            header: block_header,
+            coinbase,
+            transactions: vec![],
+        };
+        // Step 5: Lock chain, add block, save, broadcast
+        println!("[HTTP] Adding block to chain...");
+        let mut chain = CHAIN.lock().unwrap();
+        if chain.add_block(new_block.clone()) {
+            let hash_hex = hex::encode(&req.hash);
+            println!("[HTTP] Saving chain to disk...");
+            save_chain_to_disk(&chain, data_dir);
+            drop(chain);
+            println!("[HTTP] Broadcasting new block to P2P network...");
+            broadcast_message(&P2PMessage::Block(new_block));
+            println!("[Mining] ✅ Block {} created and added to chain! Hash: {}", new_height, hash_hex);
+            println!("[Mining] Block reward: {} atomic units to {}", block_reward, miner_address);
+            println!("[RandomX] CPU-only verification PASSED - Block accepted");
+            let response = SubmitBlockResponse {
+                success: true,
+                message: format!("Block {} accepted and added to chain with hash: {} (RandomX verified)", new_height, hash_hex),
+            };
+            send_json_response(stream, 200, &response)?;
+        } else {
+            let response = SubmitBlockResponse {
+                success: false,
+                message: "Block validation failed during chain addition".to_string(),
+            };
+            send_json_response(stream, 400, &response)?;
         }
         Ok(())
     }));

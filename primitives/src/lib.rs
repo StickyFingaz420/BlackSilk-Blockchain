@@ -28,7 +28,7 @@ pub mod types {
         ///
         /// # Returns
         /// Tuple of (private_view, private_spend, StealthAddress)
-        pub(crate) fn generate() -> (Scalar, Scalar, Self) {
+        pub fn generate() -> (Scalar, Scalar, Self) {
             let seed = [42u8; 32];
             let priv_view = Scalar::from_hash(Sha512::new().chain(seed));
             let priv_spend = Scalar::from_hash(Sha512::new().chain(seed));

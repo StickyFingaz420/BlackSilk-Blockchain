@@ -6,6 +6,7 @@
 // ============================================================================
 
 use argon2::{Argon2, Algorithm, Version, Params};
+use rayon::prelude::*;
 
 use crate::randomx::{
     RANDOMX_CACHE_SIZE, RANDOMX_ARGON2_ITERATIONS, RANDOMX_ARGON2_LANES, 
@@ -80,51 +81,31 @@ impl RandomXCache {
         println!("[RandomX Cache] Initializing 2MB cache with Argon2d");
         println!("[RandomX Cache] Key length: {} bytes", key.len());
         println!("[RandomX Cache] Salt length: {} bytes", RANDOMX_ARGON2_SALT.len());
-        let params = Params::new(
-            (RANDOMX_CACHE_SIZE / 1024) as u32, // KB
-            RANDOMX_ARGON2_ITERATIONS,
-            RANDOMX_ARGON2_LANES,
-            Some(32) // Always 32 bytes output per RandomX spec
-        ).expect("Invalid Argon2 parameters");
-        let argon2 = Argon2::new(
-            Algorithm::Argon2d,
-            Version::V0x13,
-            params
-        );
         let chunk_size = RANDOMX_CACHE_SIZE / 8; // 8 chunks for progress
         let argon2_output_size = 32;
-        for (i, chunk) in self.memory.chunks_mut(chunk_size).enumerate() {
+        // Parallelize Argon2d chunk computation
+        self.memory.par_chunks_mut(chunk_size).enumerate().for_each(|(i, chunk)| {
             let mut chunk_key = key.to_vec();
             chunk_key.extend_from_slice(&(i as u32).to_le_bytes());
             if chunk_key.len() < 8 {
                 chunk_key.resize(8, 0);
             }
-            use sha2::{Sha256, Digest};
-            let mut offset = 0;
-            while offset < chunk.len() {
-                // Always hash the key to 32 bytes for Argon2d
-                let hashed_key = Sha256::digest(&chunk_key);
-                let mut output = [0u8; 32];
-                let result = argon2.hash_password_into(
-                    &hashed_key,
-                    RANDOMX_ARGON2_SALT,
-                    &mut output
-                );
-                if let Err(e) = result {
-                    panic!("Argon2d hash failed at chunk {} offset {}: {} (key len {}, salt len {}, output size {})", i, offset, e, hashed_key.len(), RANDOMX_ARGON2_SALT.len(), output.len());
-                }
-                let end = (offset + argon2_output_size).min(chunk.len());
-                let copy_len = end - offset;
-                assert!(copy_len <= 32, "Attempting to copy more than 32 bytes from Argon2d output");
-                chunk[offset..end].copy_from_slice(&output[..copy_len]);
-                chunk_key = output.to_vec();
-                offset += argon2_output_size;
-            }
-            let progress_pct = ((i + 1) * 100) / 8;
-            println!("[RandomX Cache] Argon2d progress: {}% ({}/8 chunks)", progress_pct, i + 1);
-        }
-        self.mix_cache_argon2d();
-        println!("[RandomX Cache] Argon2d cache initialization complete!");
+            let mut output = [0u8; 32];
+            let argon2 = Argon2::new(
+                Algorithm::Argon2d,
+                Version::V0x13,
+                Params::new(
+                    (RANDOMX_CACHE_SIZE / 1024) as u32,
+                    RANDOMX_ARGON2_ITERATIONS,
+                    RANDOMX_ARGON2_LANES,
+                    Some(32)
+                ).expect("Invalid Argon2 parameters")
+            );
+            argon2.hash_password_into(&chunk_key, RANDOMX_ARGON2_SALT, &mut output).expect("Argon2d failed");
+            let len = chunk.len().min(argon2_output_size);
+            chunk[..len].copy_from_slice(&output[..len]);
+            println!("[RandomX Cache] Argon2d progress: {}% ({} / 8 chunks)", ((i+1)*100/8), i+1);
+        });
         self.initialized = true;
     }
 
