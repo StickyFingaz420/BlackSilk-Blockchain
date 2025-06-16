@@ -956,8 +956,8 @@ pub fn start_node_with_args(port: u16, connect_addr: Option<String>, data_dir: O
     let _http_handle = std::thread::spawn(move || {
         println!("[HTTP] HTTP thread starting...");
         io::stdout().flush().unwrap();
-        
-        match http_server::start_http_server_sync(http_port) {
+        let data_dir = data_dir.clone().unwrap_or_else(|| PathBuf::from("./data"));
+        match http_server::start_http_server_sync(http_port, data_dir) {
             Ok(_) => {
                 println!("[HTTP] HTTP server stopped normally");
             }

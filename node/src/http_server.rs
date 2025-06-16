@@ -157,19 +157,18 @@ pub struct SubmitBlockResponse {
 }
 
 /// Simple HTTP server implementation using std library
-pub async fn start_http_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn start_http_server(port: u16, data_dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     use std::net::TcpListener;
     use std::thread;
-    
     let addr = format!("127.0.0.1:{}", port);
     let listener = TcpListener::bind(&addr)?;
-    println!("[HTTP] Server listening on http://{}", addr);
-    
+    println!('[HTTP] Server listening on http://{}', addr);
     for stream in listener.incoming() {
+        let data_dir = data_dir.clone();
         match stream {
             Ok(stream) => {
-                thread::spawn(|| {
-                    if let Err(e) = handle_http_request(stream) {
+                thread::spawn(move || {
+                    if let Err(e) = handle_http_request(stream, &data_dir) {
                         eprintln!("[HTTP] Error handling request: {}", e);
                     }
                 });
@@ -179,7 +178,6 @@ pub async fn start_http_server(port: u16) -> Result<(), Box<dyn std::error::Erro
             }
         }
     }
-    
     Ok(())
 }
 
@@ -197,7 +195,7 @@ pub fn start_http_server_sync(port: u16, data_dir: std::path::PathBuf) -> Result
         match stream {
             Ok(stream) => {
                 thread::spawn(move || {
-                    if let Err(e) = handle_http_request_with_data_dir(stream, &data_dir) {
+                    if let Err(e) = handle_http_request(stream, &data_dir) {
                         eprintln!("[HTTP] Error handling request: {}", e);
                     }
                 });
@@ -211,7 +209,7 @@ pub fn start_http_server_sync(port: u16, data_dir: std::path::PathBuf) -> Result
     Ok(())
 }
 
-fn handle_http_request_with_data_dir(mut stream: TcpStream, data_dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_http_request(mut stream: TcpStream, data_dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::{BufRead, BufReader};
     
     let mut reader = BufReader::new(&stream);
@@ -618,7 +616,7 @@ fn handle_submit_block(stream: &mut TcpStream, body: &[u8], data_dir: &std::path
                         message: format!("RandomX verification failed: {}", verification_result.reason),
                     };
                     send_json_response(stream, 400, &response)?;
-                    return Ok(());
+                    return Ok::<(), Box<dyn std::error::Error>>(());
                 }
                 let hash_val = if req.hash.len() >= 8 {
                     u64::from_le_bytes([
@@ -634,7 +632,7 @@ fn handle_submit_block(stream: &mut TcpStream, body: &[u8], data_dir: &std::path
                         message: format!("Block does not meet difficulty target (hash: {}, difficulty: {})", hash_val, current_difficulty),
                     };
                     send_json_response(stream, 400, &response)?;
-                    return Ok(());
+                    return Ok::<(), Box<dyn std::error::Error>>(());
                 }
                 let block_reward = chain.emission.block_reward(new_height);
                 let miner_address = req.miner_address
