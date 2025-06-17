@@ -3236,6 +3236,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ml-dsa-44"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "more-asserts"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3293,6 +3301,7 @@ dependencies = [
  "libc",
  "log",
  "memmap2 0.7.1",
+ "ml-dsa-44",
  "num-bigint",
  "num_cpus",
  "once_cell",

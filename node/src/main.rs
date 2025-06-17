@@ -325,6 +325,8 @@ pub enum Commands {
         #[arg(long, value_name = "PARAMS")]
         params: String,
     },
+    /// Run ML-DSA-44 deep test
+    MlDsa44Test,
 }
 
 #[derive(Subcommand, Debug)]
@@ -416,6 +418,70 @@ pub enum NetPrivacyArg {
     Auto,
 }
 
+// ML-DSA-44 post-quantum signature scheme demo
+mod ml_dsa_demo {
+    use ml_dsa_44::{Keypair, sign, verify, sign_with_context, verify_with_context};
+
+    pub fn run_all() {
+        println!("\n=== ML-DSA-44 Signature Scheme Deep Test ===");
+        // Key generation (random)
+        let keypair = Keypair::generate().expect("Keypair generation failed");
+        println!("Random keypair generated.");
+
+        // Key generation (deterministic)
+        let seed = [42u8; 32];
+        let keypair2 = Keypair::from_seed(&seed).expect("Deterministic keypair failed");
+        let keypair3 = Keypair::from_seed(&seed).expect("Deterministic keypair failed");
+        assert_eq!(keypair2.public_key.0, keypair3.public_key.0);
+        println!("Deterministic keypair reproducibility OK.");
+
+        // Signing and verification
+        let message = b"Test message for ML-DSA-44";
+        let signature = sign(message, &keypair.secret_key).expect("Signing failed");
+        let is_valid = verify(&signature, message, &keypair.public_key).expect("Verification failed");
+        assert!(is_valid);
+        println!("Basic sign/verify OK.");
+
+        // Context-aware signing
+        let context = b"context-data";
+        let sig_ctx = sign_with_context(message, context, &keypair.secret_key).expect("Context sign failed");
+        let valid_ctx = verify_with_context(&sig_ctx, message, context, &keypair.public_key).expect("Context verify failed");
+        assert!(valid_ctx);
+        println!("Context-aware sign/verify OK.");
+
+        // Error handling: wrong key
+        let wrong_key = Keypair::generate().expect("Keypair generation failed");
+        let invalid = verify(&signature, message, &wrong_key.public_key).expect("Verification failed");
+        assert!(!invalid);
+        println!("Invalid signature detection OK.");
+
+        // Edge case: empty message
+        let sig_empty = sign(b"", &keypair.secret_key).expect("Sign empty failed");
+        let valid_empty = verify(&sig_empty, b"", &keypair.public_key).expect("Verify empty failed");
+        assert!(valid_empty);
+        println!("Empty message sign/verify OK.");
+
+        // Edge case: large message
+        let large_msg = vec![0xAB; 4096];
+        let sig_large = sign(&large_msg, &keypair.secret_key).expect("Sign large failed");
+        let valid_large = verify(&sig_large, &large_msg, &keypair.public_key).expect("Verify large failed");
+        assert!(valid_large);
+        println!("Large message sign/verify OK.");
+
+        // Key serialization/deserialization
+        let pub_bytes = keypair.public_key.0;
+        let sec_bytes = keypair.secret_key.0;
+        let pub2 = ml_dsa_44::PublicKey(pub_bytes);
+        let sec2 = ml_dsa_44::SecretKey(sec_bytes);
+        let sig2 = sign(message, &sec2).expect("Sign after deserialization failed");
+        let valid2 = verify(&sig2, message, &pub2).expect("Verify after deserialization failed");
+        assert!(valid2);
+        println!("Key serialization/deserialization OK.");
+
+        println!("All ML-DSA-44 deep tests passed!\n");
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     // Print professional startup banner
@@ -501,6 +567,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let wasmer_params: Vec<wasmer::Value> = params_vec.iter().filter_map(|v| wasm_vm::json_to_wasmer_value(v)).collect();
             let result = invoke_contract_with_gas(address, function, &wasmer_params, 10_000_000)?;
             println!("Contract call result: {:?}", result);
+            return Ok(());
+        }
+        Some(Commands::MlDsa44Test) => {
+            ml_dsa_demo::run_all();
             return Ok(());
         }
         None => {
