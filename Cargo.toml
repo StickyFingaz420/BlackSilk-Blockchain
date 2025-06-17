@@ -10,7 +10,9 @@ members = [
     "smart-contracts/escrow_contract",
     "smart-contracts/marketplace_contract",
     "smart-contracts/randomx",
+    "pqcrypto",
 ]
+exclude = ["libbitcoinpqc"]
 
 [package]
 name = "BlackSilk"

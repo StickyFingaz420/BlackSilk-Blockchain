@@ -1,0 +1,21 @@
+[package]
+name = "pqcrypto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rand = "0.8"
+sha2 = "0.10"
+libc = "0.2"
+
+[dev-dependencies]
+proptest = "1.4"
+
+[build-dependencies]
+bindgen = "0.69"
+cmake = "0.1"
+
+[lib]
+name = "pqcrypto"
+path = "src/lib.rs"
+crate-type = ["rlib"]
