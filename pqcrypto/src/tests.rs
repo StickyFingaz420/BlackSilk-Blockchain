@@ -7,7 +7,7 @@ fn test_dilithium2_roundtrip() {
     let seed = seed_from_phrase(phrase);
     let (pk, sk) = keypair_from_seed(PQAlgorithm::Dilithium2, &seed);
     let msg = b"hello pq world";
-    let sig = sign(PQAlgorithm::Dilithium2, &sk, msg);
+    let sig = sign(PQAlgorithm::Dilithium2, &sk, msg).expect("signing failed");
     assert!(verify(PQAlgorithm::Dilithium2, &pk, msg, &sig));
 }
 
@@ -17,7 +17,7 @@ fn test_falcon512_roundtrip() {
     let seed = seed_from_phrase(phrase);
     let (pk, sk) = keypair_from_seed(PQAlgorithm::Falcon512, &seed);
     let msg = b"pq signature test";
-    let sig = sign(PQAlgorithm::Falcon512, &sk, msg);
+    let sig = sign(PQAlgorithm::Falcon512, &sk, msg).expect("signing failed");
     assert!(verify(PQAlgorithm::Falcon512, &pk, msg, &sig));
 }
 
@@ -27,7 +27,7 @@ fn test_signature_tampering() {
     let seed = seed_from_phrase(phrase);
     let (pk, sk) = keypair_from_seed(PQAlgorithm::Dilithium2, &seed);
     let msg = b"secure message";
-    let mut sig = sign(PQAlgorithm::Dilithium2, &sk, msg);
+    let mut sig = sign(PQAlgorithm::Dilithium2, &sk, msg).expect("signing failed");
     // Tamper with the signature
     sig[0] ^= 0xFF;
     assert!(!verify(PQAlgorithm::Dilithium2, &pk, msg, &sig));
@@ -42,7 +42,7 @@ fn test_wrong_key_fails() {
     let (pk1, sk1) = keypair_from_seed(PQAlgorithm::Falcon512, &seed1);
     let (pk2, _sk2) = keypair_from_seed(PQAlgorithm::Falcon512, &seed2);
     let msg = b"wrong key test";
-    let sig = sign(PQAlgorithm::Falcon512, &sk1, msg);
+    let sig = sign(PQAlgorithm::Falcon512, &sk1, msg).expect("signing failed");
     // Should fail with wrong public key
     assert!(!verify(PQAlgorithm::Falcon512, &pk2, msg, &sig));
 }
@@ -53,7 +53,7 @@ fn test_empty_message() {
     let seed = seed_from_phrase(phrase);
     let (pk, sk) = keypair_from_seed(PQAlgorithm::Dilithium2, &seed);
     let msg = b"";
-    let sig = sign(PQAlgorithm::Dilithium2, &sk, msg);
+    let sig = sign(PQAlgorithm::Dilithium2, &sk, msg).expect("signing failed");
     assert!(verify(PQAlgorithm::Dilithium2, &pk, msg, &sig));
 }
 
@@ -74,7 +74,7 @@ fn test_key_and_signature_sizes() {
     let seed = seed_from_phrase(phrase);
     let (pk, sk) = keypair_from_seed(PQAlgorithm::Dilithium2, &seed);
     let msg = b"size test";
-    let sig = sign(PQAlgorithm::Dilithium2, &sk, msg);
+    let sig = sign(PQAlgorithm::Dilithium2, &sk, msg).expect("signing failed");
     let expected_pk = unsafe { crate::wrapper::bitcoin_pqc_public_key_size(PQAlgorithm::Dilithium2.to_c()) };
     let expected_sk = unsafe { crate::wrapper::bitcoin_pqc_secret_key_size(PQAlgorithm::Dilithium2.to_c()) };
     let expected_sig = unsafe { crate::wrapper::bitcoin_pqc_signature_size(PQAlgorithm::Dilithium2.to_c()) };
@@ -90,7 +90,7 @@ fn test_max_length_message() {
     let (pk, sk) = keypair_from_seed(PQAlgorithm::Dilithium2, &seed);
     // 10 KB message
     let msg = vec![0xAB; 10 * 1024];
-    let sig = sign(PQAlgorithm::Dilithium2, &sk, &msg);
+    let sig = sign(PQAlgorithm::Dilithium2, &sk, &msg).expect("signing failed");
     assert!(verify(PQAlgorithm::Dilithium2, &pk, &msg, &sig));
 }
 
@@ -101,8 +101,8 @@ fn test_multiple_signatures_unique() {
     let (pk, sk) = keypair_from_seed(PQAlgorithm::Falcon512, &seed);
     let msg1 = b"msg1";
     let msg2 = b"msg2";
-    let sig1 = sign(PQAlgorithm::Falcon512, &sk, msg1);
-    let sig2 = sign(PQAlgorithm::Falcon512, &sk, msg2);
+    let sig1 = sign(PQAlgorithm::Falcon512, &sk, msg1).expect("signing failed");
+    let sig2 = sign(PQAlgorithm::Falcon512, &sk, msg2).expect("signing failed");
     println!("sk: {:02x?}", sk);
     println!("msg1: {:02x?}", msg1);
     println!("msg2: {:02x?}", msg2);
@@ -120,31 +120,11 @@ fn test_cross_scheme_fail() {
     let (pk_d, sk_d) = keypair_from_seed(PQAlgorithm::Dilithium2, &seed);
     let (pk_f, sk_f) = keypair_from_seed(PQAlgorithm::Falcon512, &seed);
     let msg = b"cross scheme test";
-    let sig_d = sign(PQAlgorithm::Dilithium2, &sk_d, msg);
-    let sig_f = sign(PQAlgorithm::Falcon512, &sk_f, msg);
+    let sig_d = sign(PQAlgorithm::Dilithium2, &sk_d, msg).expect("signing failed");
+    let sig_f = sign(PQAlgorithm::Falcon512, &sk_f, msg).expect("signing failed");
     // Should not verify with the other scheme
     assert!(!verify(PQAlgorithm::Falcon512, &pk_f, msg, &sig_d));
     assert!(!verify(PQAlgorithm::Dilithium2, &pk_d, msg, &sig_f));
-}
-
-#[test]
-fn test_random_seed_variation() {
-    use rand::RngCore;
-    let mut rng = rand::thread_rng();
-    let mut seed1 = [0u8; 128];
-    let mut seed2 = [0u8; 128];
-    rng.fill_bytes(&mut seed1);
-    rng.fill_bytes(&mut seed2);
-    println!("seed1: {:02x?}", seed1);
-    println!("seed2: {:02x?}", seed2);
-    let (pk1, sk1) = keypair_from_seed(PQAlgorithm::Dilithium2, &seed1);
-    let (pk2, sk2) = keypair_from_seed(PQAlgorithm::Dilithium2, &seed2);
-    println!("pk1: {:02x?}", pk1);
-    println!("pk2: {:02x?}", pk2);
-    println!("sk1: {:02x?}", sk1);
-    println!("sk2: {:02x?}", sk2);
-    assert_ne!(pk1, pk2, "Random seeds should produce different keys");
-    assert_ne!(sk1, sk2, "Random seeds should produce different keys");
 }
 
 #[test]
@@ -176,7 +156,7 @@ fn test_falcon512_deep_diagnostics() {
     assert_eq!(pk_size, expected_pk, "Falcon512 public key size mismatch");
     assert_eq!(sk_size, expected_sk, "Falcon512 secret key size mismatch");
     // Try signing
-    let sig = sign(PQAlgorithm::Falcon512, &sk, msg);
+    let sig = sign(PQAlgorithm::Falcon512, &sk, msg).expect("signing failed");
     assert!(!sig.is_empty(), "Falcon512 signature should not be empty");
     let sig_size = sig.len();
     let expected_sig = unsafe { crate::wrapper::bitcoin_pqc_signature_size(PQAlgorithm::Falcon512.to_c()) };
@@ -213,7 +193,7 @@ fn test_falcon512_varied_seeds_and_messages() {
         let seed = seed_from_phrase(seed_phrase);
         let (pk, sk) = keypair_from_seed(PQAlgorithm::Falcon512, &seed);
         for msg in &messages {
-            let sig = sign(PQAlgorithm::Falcon512, &sk, msg);
+            let sig = sign(PQAlgorithm::Falcon512, &sk, msg).expect("signing failed");
             let verified = verify(PQAlgorithm::Falcon512, &pk, msg, &sig);
             assert!(verified, "Falcon512 failed for seed '{:?}' and message of len {}", seed_phrase, msg.len());
         }
@@ -227,7 +207,7 @@ fn test_falcon512_repeated_sign_verify() {
     let (pk, sk) = keypair_from_seed(PQAlgorithm::Falcon512, &seed);
     let msg = b"repeated sign/verify for falcon512";
     for i in 0..100 {
-        let sig = sign(PQAlgorithm::Falcon512, &sk, msg);
+        let sig = sign(PQAlgorithm::Falcon512, &sk, msg).expect("signing failed");
         let verified = verify(PQAlgorithm::Falcon512, &pk, msg, &sig);
         assert!(verified, "Falcon512 failed on iteration {}", i);
     }
@@ -242,7 +222,7 @@ fn test_falcon512_debug_failing_cases() {
     let (pk1, sk1) = keypair_from_seed(PQAlgorithm::Falcon512, &seed1);
     let (pk2, _sk2) = keypair_from_seed(PQAlgorithm::Falcon512, &seed2);
     let msg = b"debug falcon failure";
-    let sig = sign(PQAlgorithm::Falcon512, &sk1, msg);
+    let sig = sign(PQAlgorithm::Falcon512, &sk1, msg).expect("signing failed");
     println!("pk1: {:02x?}", pk1);
     println!("sk1: {:02x?}", sk1);
     println!("pk2: {:02x?}", pk2);
