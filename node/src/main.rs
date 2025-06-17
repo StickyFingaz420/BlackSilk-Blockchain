@@ -327,6 +327,8 @@ pub enum Commands {
     },
     /// Run ML-DSA-44 deep test
     MlDsa44Test,
+    /// Run PQCrypto (Dilithium2 & Falcon512) deep test
+    PqcryptoTest,
 }
 
 #[derive(Subcommand, Debug)]
@@ -482,6 +484,53 @@ mod ml_dsa_demo {
     }
 }
 
+mod pqcrypto_demo {
+    use pqcrypto::wrapper::{keypair_from_seed, sign, verify, seed_from_phrase, PQAlgorithm};
+
+    pub fn run_all() {
+        println!("\n=== PQCrypto (Dilithium2 & Falcon512) Deep Test ===");
+        // Dilithium2
+        let phrase = "dilithium2 test phrase";
+        let seed = seed_from_phrase(phrase);
+        let (pk, sk) = keypair_from_seed(PQAlgorithm::Dilithium2, &seed);
+        let msg = b"PQCrypto Dilithium2 message";
+        let sig = sign(PQAlgorithm::Dilithium2, &sk, msg).expect("Dilithium2 sign failed");
+        let valid = verify(PQAlgorithm::Dilithium2, &pk, msg, &sig);
+        assert!(valid);
+        println!("Dilithium2 sign/verify OK.");
+
+        // Falcon512
+        let phrase2 = "falcon512 test phrase";
+        let seed2 = seed_from_phrase(phrase2);
+        let (pk2, sk2) = keypair_from_seed(PQAlgorithm::Falcon512, &seed2);
+        let msg2 = b"PQCrypto Falcon512 message";
+        let sig2 = sign(PQAlgorithm::Falcon512, &sk2, msg2).expect("Falcon512 sign failed");
+        let valid2 = verify(PQAlgorithm::Falcon512, &pk2, msg2, &sig2);
+        assert!(valid2);
+        println!("Falcon512 sign/verify OK.");
+
+        // Cross-check: wrong key
+        let wrong = verify(PQAlgorithm::Falcon512, &pk, msg2, &sig2);
+        assert!(!wrong);
+        println!("Wrong key detection OK.");
+
+        // Edge: empty message
+        let sig_empty = sign(PQAlgorithm::Dilithium2, &sk, b"").expect("Sign empty failed");
+        let valid_empty = verify(PQAlgorithm::Dilithium2, &pk, b"", &sig_empty);
+        assert!(valid_empty);
+        println!("Empty message sign/verify OK.");
+
+        // Edge: large message
+        let large = vec![0xCD; 4096];
+        let sig_large = sign(PQAlgorithm::Falcon512, &sk2, &large).expect("Sign large failed");
+        let valid_large = verify(PQAlgorithm::Falcon512, &pk2, &large, &sig_large);
+        assert!(valid_large);
+        println!("Large message sign/verify OK.");
+
+        println!("All PQCrypto (Dilithium2 & Falcon512) deep tests passed!\n");
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     // Print professional startup banner
@@ -571,6 +620,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::MlDsa44Test) => {
             ml_dsa_demo::run_all();
+            return Ok(());
+        }
+        Some(Commands::PqcryptoTest) => {
+            pqcrypto_demo::run_all();
             return Ok(());
         }
         None => {
