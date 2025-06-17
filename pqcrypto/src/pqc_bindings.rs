@@ -25,4 +25,6 @@ extern "C" {
     pub fn fn_dsa_512_sign(sig: *mut u8, siglen: *mut usize, m: *const u8, mlen: usize, sk: *const u8) -> ::std::os::raw::c_int;
     pub fn ml_dsa_44_verify(sig: *const u8, siglen: usize, m: *const u8, mlen: usize, pk: *const u8) -> ::std::os::raw::c_int;
     pub fn fn_dsa_512_verify(sig: *const u8, siglen: usize, m: *const u8, mlen: usize, pk: *const u8) -> ::std::os::raw::c_int;
+    pub fn ml_dsa_init_random_source(random_data: *const u8, random_data_size: usize);
+    pub fn ml_dsa_restore_original_random();
 }

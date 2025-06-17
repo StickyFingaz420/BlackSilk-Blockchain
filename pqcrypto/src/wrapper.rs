@@ -6,11 +6,6 @@ use std::io::{self, Write};
 // Only include the generated FFI bindings; do not import as a module
 include!(concat!(env!("OUT_DIR"), "/pqc_bindings.rs"));
 
-extern "C" {
-    pub fn ml_dsa_44_sign(sig: *mut u8, siglen: *mut usize, m: *const u8, mlen: usize, sk: *const u8) -> ::std::os::raw::c_int;
-    pub fn fn_dsa_512_sign(sig: *mut u8, siglen: *mut usize, m: *const u8, mlen: usize, sk: *const u8) -> ::std::os::raw::c_int;
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum PQAlgorithm {
     Dilithium2,
@@ -30,6 +25,10 @@ pub fn keypair_from_seed(algo: PQAlgorithm, seed: &[u8]) -> (Vec<u8>, Vec<u8>) {
     unsafe {
         // Ensure seed is at least 128 bytes (C API requirement)
         assert!(seed.len() >= 128, "Seed must be at least 128 bytes");
+        // Set up deterministic random source for ML-DSA-44
+        if let PQAlgorithm::Dilithium2 = algo {
+            ml_dsa_init_random_source(seed.as_ptr(), seed.len());
+        }
         println!("[FFI] keypair_from_seed: algo={:?} seed_ptr={:p} seed[0..8]={:02x?} len={}", algo, seed.as_ptr(), &seed[..seed.len().min(8)], seed.len());
         io::stdout().flush().unwrap();
         let pk_size = bitcoin_pqc_public_key_size(algo.to_c());
@@ -58,6 +57,10 @@ pub fn keypair_from_seed(algo: PQAlgorithm, seed: &[u8]) -> (Vec<u8>, Vec<u8>) {
         println!("[FFI] pk[0..8]={:02x?} sk[0..8]={:02x?}", &pk[..pk.len().min(8)], &sk[..sk.len().min(8)]);
         io::stdout().flush().unwrap();
         bitcoin_pqc_keypair_free(&mut keypair);
+        // Restore random state after keygen for ML-DSA-44
+        if let PQAlgorithm::Dilithium2 = algo {
+            ml_dsa_restore_original_random();
+        }
         (pk, sk)
     }
 }
@@ -85,13 +88,28 @@ pub fn sign(algo: PQAlgorithm, sk: &[u8], msg: &[u8]) -> Result<Vec<u8>, i32> {
                 msg.len(),
                 sk.as_ptr(),
             ),
-            PQAlgorithm::Falcon512 => fn_dsa_512_sign(
-                sig.as_mut_ptr(),
-                &mut siglen,
-                msg.as_ptr(),
-                msg.len(),
-                sk.as_ptr(),
-            ),
+            PQAlgorithm::Falcon512 => {
+                let mut signature = bitcoin_pqc_signature_t {
+                    algorithm: algo.to_c(),
+                    signature: std::ptr::null_mut(),
+                    signature_size: 0,
+                };
+                let ret = bitcoin_pqc_sign(
+                    algo.to_c(),
+                    sk.as_ptr(),
+                    sk.len(),
+                    msg.as_ptr(),
+                    msg.len(),
+                    &mut signature,
+                );
+                if ret == 0 && !signature.signature.is_null() && signature.signature_size > 0 {
+                    let sig_slice = std::slice::from_raw_parts(signature.signature, signature.signature_size);
+                    sig[..sig_slice.len()].copy_from_slice(sig_slice);
+                    siglen = sig_slice.len();
+                    bitcoin_pqc_signature_free(&mut signature);
+                }
+                ret
+            }
         };
         println!("[FFI] sign ret={} siglen={}", ret, siglen);
         io::stdout().flush().unwrap();

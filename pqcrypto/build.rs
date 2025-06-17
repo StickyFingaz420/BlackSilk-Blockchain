@@ -18,6 +18,7 @@ fn main() {
         .clang_arg("-I../libbitcoinpqc/include")
         .clang_arg("-v")
         .allowlist_function("bitcoin_pqc_.*")
+        .allowlist_function("ml_dsa_.*")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .generate()
         .unwrap_or_else(|e| panic!("[build.rs] bindgen failed: {:?}", e));
