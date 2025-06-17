@@ -18,19 +18,32 @@ fn test_all_post_quantum_signatures() {
         // Keypair generation with two different seeds
         let (pk1, sk1) = keypair_from_seed(algo, &seed1);
         let (pk2, sk2) = keypair_from_seed(algo, &seed2);
+        println!("pk1: {:02x?}", pk1);
+        println!("sk1: {:02x?}", sk1);
+        println!("pk2: {:02x?}", pk2);
+        println!("sk2: {:02x?}", sk2);
         // Random seed variation assertions
         if let PQAlgorithm::Dilithium2 = algo {
-            // ML-DSA-44 keygen is deterministic; skip assertion but still run sign/verify
             println!("[INFO] ML-DSA-44 keygen is deterministic; skipping random seed variation assertion");
         } else {
             assert_ne!(pk1, pk2, "Random seeds should produce different keys for {:?}", algo);
             assert_ne!(sk1, sk2, "Random seeds should produce different keys for {:?}", algo);
         }
-        // Test sign/verify for both keypairs
-        for (pk, sk) in [(pk1.clone(), sk1.clone()), (pk2.clone(), sk2.clone())] {
-            let sig = sign(algo, &sk, message).expect("Signing failed");
-            let valid = verify(algo, &pk, message, &sig);
-            assert!(valid, "Signature verification failed for {:?}", algo);
+        // Test sign/verify for both keypairs, with debug output
+        for (i, (pk, sk)) in [(pk1.clone(), sk1.clone()), (pk2.clone(), sk2.clone())].into_iter().enumerate() {
+            println!("[{}] Signing with {:?} sk: {:02x?}", i+1, algo, &sk[..std::cmp::min(16, sk.len())]);
+            match sign(algo, &sk, message) {
+                Ok(sig) => {
+                    println!("[{}] Signature: {:02x?}", i+1, &sig[..std::cmp::min(16, sig.len())]);
+                    let valid = verify(algo, &pk, message, &sig);
+                    println!("[{}] Verification result: {}", i+1, valid);
+                    assert!(valid, "Signature verification failed for {:?}", algo);
+                },
+                Err(e) => {
+                    println!("[{}] Signing failed for {:?} with error code: {}", i+1, algo, e);
+                    panic!("Signing failed: {}", e);
+                }
+            }
         }
     }
 }
