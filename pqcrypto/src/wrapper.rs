@@ -10,6 +10,7 @@ include!(concat!(env!("OUT_DIR"), "/pqc_bindings.rs"));
 pub enum PQAlgorithm {
     Dilithium2,
     Falcon512,
+    SphincsPlus, // SLH-DSA-Shake-128s
 }
 
 impl PQAlgorithm {
@@ -17,6 +18,7 @@ impl PQAlgorithm {
         match self {
             PQAlgorithm::Dilithium2 => bitcoin_pqc_algorithm_t_BITCOIN_PQC_ML_DSA_44,
             PQAlgorithm::Falcon512 => bitcoin_pqc_algorithm_t_BITCOIN_PQC_FN_DSA_512,
+            PQAlgorithm::SphincsPlus => 3, // BITCOIN_PQC_SLH_DSA_SHAKE_128S
         }
     }
 }
@@ -89,6 +91,28 @@ pub fn sign(algo: PQAlgorithm, sk: &[u8], msg: &[u8]) -> Result<Vec<u8>, i32> {
                 sk.as_ptr(),
             ),
             PQAlgorithm::Falcon512 => {
+                let mut signature = bitcoin_pqc_signature_t {
+                    algorithm: algo.to_c(),
+                    signature: std::ptr::null_mut(),
+                    signature_size: 0,
+                };
+                let ret = bitcoin_pqc_sign(
+                    algo.to_c(),
+                    sk.as_ptr(),
+                    sk.len(),
+                    msg.as_ptr(),
+                    msg.len(),
+                    &mut signature,
+                );
+                if ret == 0 && !signature.signature.is_null() && signature.signature_size > 0 {
+                    let sig_slice = std::slice::from_raw_parts(signature.signature, signature.signature_size);
+                    sig[..sig_slice.len()].copy_from_slice(sig_slice);
+                    siglen = sig_slice.len();
+                    bitcoin_pqc_signature_free(&mut signature);
+                }
+                ret
+            },
+            PQAlgorithm::SphincsPlus => {
                 let mut signature = bitcoin_pqc_signature_t {
                     algorithm: algo.to_c(),
                     signature: std::ptr::null_mut(),
