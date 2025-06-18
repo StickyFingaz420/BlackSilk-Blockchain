@@ -19,6 +19,7 @@ num-complex = "0.4"
 pqcrypto-falcon = { version = "0.4.0", default-features = false }
 bs58 = "0.5"
 pqcrypto-traits = { version = "0.3", default-features = false }
+bip39 = "2.0"
 # For property testing and benchmarks
 quickcheck = { version = "1.0", optional = true }
 criterion = { version = "0.5", optional = true }

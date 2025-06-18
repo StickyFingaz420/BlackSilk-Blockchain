@@ -132,12 +132,12 @@ impl ConstantTimeEq for SignatureVec {
 
 /// Keypair struct holding public and secret key, with secure zeroization
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Keypair<const N: usize> {
-    pub public: PublicKey<N>,
-    pub secret: SecretKey<N>,
+pub struct Keypair<const PK: usize, const SK: usize> {
+    pub public: PublicKey<PK>,
+    pub secret: SecretKey<SK>,
 }
 
-impl<const N: usize> Drop for Keypair<N> {
+impl<const PK: usize, const SK: usize> Drop for Keypair<PK, SK> {
     fn drop(&mut self) {
         self.secret.zeroize();
     }
