@@ -13,7 +13,9 @@ use crate::traits::{PublicKey, SecretKey, SignatureError};
 use alloc::string::ToString;
 use sha3::{Digest, Sha3_256, Shake256, digest::{Update, ExtendableOutput, XofReader}};
 use rand_core::{RngCore, CryptoRng};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
+mod mldsa_ntt;
+use mldsa_ntt::{Q, N, ntt, intt, poly_mul, poly_add, poly_sub};
 
 // === ML-DSA-44 Parameter Constants (FIPS 204 Table 2) ===
 pub const MLDSA44_PUBLIC_KEY_SIZE: usize = 1312; // bytes
@@ -21,18 +23,15 @@ pub const MLDSA44_SECRET_KEY_SIZE: usize = 2528; // bytes
 pub const MLDSA44_SIGNATURE_SIZE: usize = 2420; // bytes
 
 /// ML-DSA-44 public key (fixed-size array)
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Zeroize)]
-#[zeroize(drop)]
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct MLDSA44PublicKey(pub [u8; MLDSA44_PUBLIC_KEY_SIZE]);
 
 /// ML-DSA-44 secret key (fixed-size array, zeroizes on drop)
-#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
-#[zeroize(drop)]
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct MLDSA44SecretKey(pub [u8; MLDSA44_SECRET_KEY_SIZE]);
 
 /// ML-DSA-44 signature (fixed-size array)
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Zeroize)]
-#[zeroize(drop)]
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct MLDSA44Signature(pub [u8; MLDSA44_SIGNATURE_SIZE]);
 
 impl MLDSA44PublicKey {
@@ -48,6 +47,12 @@ impl MLDSA44PublicKey {
         let mut arr = [0u8; MLDSA44_PUBLIC_KEY_SIZE];
         arr.copy_from_slice(bytes);
         Some(Self(arr))
+    }
+    /// Extract the seed from the public key (last 32 bytes)
+    pub fn extract_seed(&self) -> [u8; 32] {
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&self.0[MLDSA44_PUBLIC_KEY_SIZE - 32..]);
+        seed
     }
 }
 
@@ -83,40 +88,60 @@ impl MLDSA44Signature {
     }
 }
 
-mod mldsa_ntt;
-use mldsa_ntt::{Q, N, ntt, intt, poly_mul, poly_add, poly_sub};
-
-// TODO: Implement KeyGen, Sign, Verify per FIPS 204.
-
-/// ML-DSA44 expects configurable entropy length (use 32 bytes for now)
-/// This is a scaffold for a pure Rust implementation of ML-DSA44.
-///
-/// TODO: Implement the full ML-DSA44 key generation, signing, and verification in pure Rust.
-/// This requires:
-///   - Module-lattice cryptography
-///   - Polynomial arithmetic
-///   - SHAKE256 for PRNG
-///
-/// For now, this function only handles deterministic seed processing and secure memory.
+/// Deterministic ML-DSA-44 key generation from a 32-byte seed (FIPS 204, pure Rust)
 pub fn generate_keypair_from_seed(seed: &[u8]) -> Result<(MLDSA44PublicKey, MLDSA44SecretKey), SignatureError> {
-    // Hash the seed to 32 bytes using SHA3-256
-    let entropy = Sha3_256::digest(seed);
-    if entropy.len() < 32 {
+    if seed.len() != 32 {
         return Err(SignatureError::Other);
     }
-    let mldsa_seed = &entropy[..32];
-    // --- BEGIN PURE RUST ML-DSA44 IMPLEMENTATION ---
-    // TODO: Implement ML-DSA44 key generation from mldsa_seed
-    // For now, return error until implemented
-    let mut entropy_copy = entropy.to_vec();
-    entropy_copy.zeroize();
-    Err(SignatureError::Other)
-    // --- END PURE RUST ML-DSA44 IMPLEMENTATION ---
+    let mut shake = Shake256::default();
+    shake.update(seed);
+    let mut xof = shake.finalize_xof();
+    // --- Expand s1, s2, and matrix A deterministically from seed ---
+    let mut s1 = [[0u32; N]; 4];
+    let mut s2 = [[0u32; N]; 4];
+    let mut A = [[[0u32; N]; 4]; 4];
+    for l in 0..4 {
+        s1[l] = sample_poly_uniform(&mut xof);
+        s2[l] = sample_poly_uniform(&mut xof);
+    }
+    for i in 0..4 {
+        for j in 0..4 {
+            A[i][j] = sample_poly_uniform(&mut xof);
+        }
+    }
+    // --- Compute t = A·s₁ + q·s₂ (mod q) ---
+    let mut t = [[0u32; N]; 4];
+    let mut s1_ntt = s1;
+    for l in 0..4 {
+        ntt(&mut s1_ntt[l]);
+    }
+    for i in 0..4 {
+        let mut acc = [0u32; N];
+        for j in 0..4 {
+            let mut a_ntt = A[i][j];
+            ntt(&mut a_ntt);
+            let mut prod = [0u32; N];
+            poly_mul(&a_ntt, &s1_ntt[j], &mut prod);
+            poly_add(&acc, &prod, &mut acc);
+        }
+        let mut s2_q = [0u32; N];
+        for k in 0..N {
+            s2_q[k] = (s2[i][k] * Q) % Q;
+        }
+        poly_add(&acc, &s2_q, &mut t[i]);
+        intt(&mut t[i]);
+    }
+    let mut seed_arr = [0u8; 32];
+    seed_arr.copy_from_slice(seed);
+    let pk_bytes = pack_public_key(&t, &seed_arr);
+    let sk_bytes = pack_secret_key(&s1, &s2, &t, &seed_arr);
+    Ok((MLDSA44PublicKey(pk_bytes), MLDSA44SecretKey(sk_bytes)))
 }
 
 /// Pack a vector of 4 polynomials (each N coefficients mod Q) into a byte array for the public key.
 /// FIPS 204 specifies bit packing for efficiency. Here, we pack each coefficient as 23 bits (since Q < 2^23).
-fn pack_public_key(t: &[[u32; N]; 4]) -> [u8; MLDSA44_PUBLIC_KEY_SIZE] {
+/// The seed is appended at the end for matrix A reconstruction.
+fn pack_public_key(t: &[[u32; N]; 4], seed: &[u8; 32]) -> [u8; MLDSA44_PUBLIC_KEY_SIZE] {
     let mut out = [0u8; MLDSA44_PUBLIC_KEY_SIZE];
     let mut bitpos = 0;
     let mut acc: u64 = 0;
@@ -127,7 +152,7 @@ fn pack_public_key(t: &[[u32; N]; 4]) -> [u8; MLDSA44_PUBLIC_KEY_SIZE] {
             acc |= (coeff as u64) << acc_bits;
             acc_bits += 23;
             while acc_bits >= 8 {
-                if out_idx < out.len() {
+                if out_idx < out.len() - 32 {
                     out[out_idx] = (acc & 0xFF) as u8;
                     out_idx += 1;
                 }
@@ -137,9 +162,12 @@ fn pack_public_key(t: &[[u32; N]; 4]) -> [u8; MLDSA44_PUBLIC_KEY_SIZE] {
         }
     }
     // Flush remaining bits
-    if out_idx < out.len() && acc_bits > 0 {
+    if out_idx < out.len() - 32 && acc_bits > 0 {
         out[out_idx] = acc as u8;
+        out_idx += 1;
     }
+    // Append seed at the end
+    out[MLDSA44_PUBLIC_KEY_SIZE - 32..].copy_from_slice(seed);
     out
 }
 
@@ -173,7 +201,7 @@ fn pack_secret_key(s1: &[[u32; N]; 4], s2: &[[u32; N]; 4], t: &[[u32; N]; 4], se
         }
     }
     // Pack t (public key part)
-    let t_bytes = pack_public_key(t);
+    let t_bytes = pack_public_key(t, seed);
     let t_len = t_bytes.len().min(out.len() - idx);
     out[idx..idx + t_len].copy_from_slice(&t_bytes[..t_len]);
     idx += t_len;
@@ -199,6 +227,9 @@ pub fn keygen<R: RngCore + CryptoRng>(rng: &mut R) -> Result<(MLDSA44PublicKey, 
     shake.update(&seed);
     let mut xof = shake.finalize_xof();
     // --- Expand s1, s2, and matrix A ---
+    let mut s1 = [[0u32; N]; 4];
+    let mut s2 = [[0u32; N]; 4];
+    let mut A = [[[0u32; N]; 4]; 4];
     for l in 0..4 {
         s1[l] = sample_poly_uniform(&mut xof);
         s2[l] = sample_poly_uniform(&mut xof);
@@ -235,7 +266,7 @@ pub fn keygen<R: RngCore + CryptoRng>(rng: &mut R) -> Result<(MLDSA44PublicKey, 
         intt(&mut t[i]);
     }
     // --- Pack public and secret keys into fixed-size arrays ---
-    let pk_bytes = pack_public_key(&t);
+    let pk_bytes = pack_public_key(&t, &seed);
     let sk_bytes = pack_secret_key(&s1, &s2, &t, &seed);
     Ok((MLDSA44PublicKey(pk_bytes), MLDSA44SecretKey(sk_bytes)))
 }
@@ -255,9 +286,6 @@ fn sample_poly_uniform(xof: &mut dyn XofReader) -> [u32; N] {
     }
     poly
 }
-
-use sha3::Shake256;
-use rand_core::RngCore;
 
 /// ML-DSA-44 challenge polynomial: sparse, degree N, Hamming weight TAU, coefficients in {-1, 0, 1}
 pub const N: usize = 256;
@@ -388,22 +416,56 @@ fn unpack_signature(bytes: &[u8]) -> ([i8; N], [[u32; N]; 4]) {
 
 /// Verify a signature using ML-DSA-44 public key (per FIPS 204 Algorithm 3)
 pub fn verify(pk: &MLDSA44PublicKey, message: &[u8], sig: &MLDSA44Signature) -> bool {
-    // Step 1: Unpack public key (t)
+    // Step 1: Unpack public key (t) and extract seed
     let (t, _) = unpack_polyvec_4(&pk.0);
+    let seed = pk.extract_seed();
     // Step 2: Unpack signature (c, z)
     let (c, z) = unpack_signature(&sig.0);
     // Step 3: Check z norm bound
     if !check_z_norm(&z) {
         return false;
     }
-    // Step 4: Reconstruct matrix A from public key seed (not available in pk, so skip for now)
-    // In a full implementation, the seed should be included in the public key for A reconstruction.
+    // Step 4: Reconstruct matrix A from public key seed
+    let A = reconstruct_matrix_a(&seed);
     // Step 5: Compute w' = A·z - c·t (mod q)
-    // (Requires A, which needs the seed. For now, skip this check.)
-    // Step 6: Hash w' and message to recompute c', compare to c
-    // (Requires w', so skip for now.)
-    // TODO: Complete full verification when seed is available in pk.
-    true // Placeholder: only norm check for now
+    let mut z_ntt = z;
+    for l in 0..4 {
+        ntt(&mut z_ntt[l]);
+    }
+    let mut w_prime = [[0u32; N]; 4];
+    for i in 0..4 {
+        let mut acc = [0u32; N];
+        for j in 0..4 {
+            let mut a_ntt = A[i][j];
+            ntt(&mut a_ntt);
+            let mut prod = [0u32; N];
+            poly_mul(&a_ntt, &z_ntt[j], &mut prod);
+            poly_add(&acc, &prod, &mut acc);
+        }
+        intt(&mut acc);
+        // Subtract c·t[i] (c is sparse, t is polyvec)
+        for k in 0..N {
+            let mut ct = 0i64;
+            for l in 0..N {
+                ct += (c[l] as i64) * (t[i][l] as i64);
+            }
+            let w_val = (acc[k] as i64 - ct) % (Q as i64);
+            w_prime[i][k] = ((w_val + (Q as i64)) % (Q as i64)) as u32;
+        }
+    }
+    // Step 6: Hash w' and message to recompute c'
+    let mut shake_c = Shake256::default();
+    for i in 0..4 {
+        for &coeff in w_prime[i].iter() {
+            let bytes = coeff.to_le_bytes();
+            shake_c.update(&bytes);
+        }
+    }
+    shake_c.update(message);
+    let mut xof_c = shake_c.finalize_xof();
+    let c_prime = sample_sparse_challenge(&mut xof_c);
+    // Step 7: Compare c' to c
+    c == c_prime
 }
 
 /// Sign a message using ML-DSA-44 secret key (per FIPS 204 Algorithm 2)

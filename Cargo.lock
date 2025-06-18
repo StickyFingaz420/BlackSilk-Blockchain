@@ -3904,6 +3904,7 @@ dependencies = [
  "pqcrypto-falcon",
  "pqcrypto-traits",
  "quickcheck",
+ "rand_core 0.6.4",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -3911,6 +3912,7 @@ dependencies = [
  "subtle",
  "thiserror 1.0.69",
  "zeroize",
+ "zeroize_derive",
 ]
 
 [[package]]
