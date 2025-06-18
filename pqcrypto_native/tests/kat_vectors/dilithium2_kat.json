@@ -1,0 +1,9 @@
+[
+  {
+    "seed": "00000000000000000000000000000000",
+    "msg": "74657374206d657373616765",
+    "expected_pk_hex": null,
+    "expected_sk_hex": null,
+    "expected_sig_hex": null
+  }
+]

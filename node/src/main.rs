@@ -325,10 +325,6 @@ pub enum Commands {
         #[arg(long, value_name = "PARAMS")]
         params: String,
     },
-    /// Run ML-DSA-44 deep test
-    MlDsa44Test,
-    /// Run PQCrypto (Dilithium2 & Falcon512) deep test
-    PqcryptoTest,
 }
 
 #[derive(Subcommand, Debug)]
@@ -420,117 +416,6 @@ pub enum NetPrivacyArg {
     Auto,
 }
 
-// ML-DSA-44 post-quantum signature scheme demo
-mod ml_dsa_demo {
-    use ml_dsa_44::{Keypair, sign, verify, sign_with_context, verify_with_context};
-
-    pub fn run_all() {
-        println!("\n=== ML-DSA-44 Signature Scheme Deep Test ===");
-        // Key generation (random)
-        let keypair = Keypair::generate().expect("Keypair generation failed");
-        println!("Random keypair generated.");
-
-        // Key generation (deterministic)
-        let seed = [42u8; 32];
-        let keypair2 = Keypair::from_seed(&seed).expect("Deterministic keypair failed");
-        let keypair3 = Keypair::from_seed(&seed).expect("Deterministic keypair failed");
-        assert_eq!(keypair2.public_key.0, keypair3.public_key.0);
-        println!("Deterministic keypair reproducibility OK.");
-
-        // Signing and verification
-        let message = b"Test message for ML-DSA-44";
-        let signature = sign(message, &keypair.secret_key).expect("Signing failed");
-        let is_valid = verify(&signature, message, &keypair.public_key).expect("Verification failed");
-        assert!(is_valid);
-        println!("Basic sign/verify OK.");
-
-        // Context-aware signing
-        let context = b"context-data";
-        let sig_ctx = sign_with_context(message, context, &keypair.secret_key).expect("Context sign failed");
-        let valid_ctx = verify_with_context(&sig_ctx, message, context, &keypair.public_key).expect("Context verify failed");
-        assert!(valid_ctx);
-        println!("Context-aware sign/verify OK.");
-
-        // Error handling: wrong key
-        let wrong_key = Keypair::generate().expect("Keypair generation failed");
-        let invalid = verify(&signature, message, &wrong_key.public_key).expect("Verification failed");
-        assert!(!invalid);
-        println!("Invalid signature detection OK.");
-
-        // Edge case: empty message
-        let sig_empty = sign(b"", &keypair.secret_key).expect("Sign empty failed");
-        let valid_empty = verify(&sig_empty, b"", &keypair.public_key).expect("Verify empty failed");
-        assert!(valid_empty);
-        println!("Empty message sign/verify OK.");
-
-        // Edge case: large message
-        let large_msg = vec![0xAB; 4096];
-        let sig_large = sign(&large_msg, &keypair.secret_key).expect("Sign large failed");
-        let valid_large = verify(&sig_large, &large_msg, &keypair.public_key).expect("Verify large failed");
-        assert!(valid_large);
-        println!("Large message sign/verify OK.");
-
-        // Key serialization/deserialization
-        let pub_bytes = keypair.public_key.0;
-        let sec_bytes = keypair.secret_key.0;
-        let pub2 = ml_dsa_44::PublicKey(pub_bytes);
-        let sec2 = ml_dsa_44::SecretKey(sec_bytes);
-        let sig2 = sign(message, &sec2).expect("Sign after deserialization failed");
-        let valid2 = verify(&sig2, message, &pub2).expect("Verify after deserialization failed");
-        assert!(valid2);
-        println!("Key serialization/deserialization OK.");
-
-        println!("All ML-DSA-44 deep tests passed!\n");
-    }
-}
-
-mod pqcrypto_demo {
-    use pqcrypto::wrapper::{keypair_from_seed, sign, verify, seed_from_phrase, PQAlgorithm};
-
-    pub fn run_all() {
-        println!("\n=== PQCrypto (Dilithium2 & Falcon512) Deep Test ===");
-        // Dilithium2
-        let phrase = "dilithium2 test phrase";
-        let seed = seed_from_phrase(phrase);
-        let (pk, sk) = keypair_from_seed(PQAlgorithm::Dilithium2, &seed);
-        let msg = b"PQCrypto Dilithium2 message";
-        let sig = sign(PQAlgorithm::Dilithium2, &sk, msg).expect("Dilithium2 sign failed");
-        let valid = verify(PQAlgorithm::Dilithium2, &pk, msg, &sig);
-        assert!(valid);
-        println!("Dilithium2 sign/verify OK.");
-
-        // Falcon512
-        let phrase2 = "falcon512 test phrase";
-        let seed2 = seed_from_phrase(phrase2);
-        let (pk2, sk2) = keypair_from_seed(PQAlgorithm::Falcon512, &seed2);
-        let msg2 = b"PQCrypto Falcon512 message";
-        let sig2 = sign(PQAlgorithm::Falcon512, &sk2, msg2).expect("Falcon512 sign failed");
-        let valid2 = verify(PQAlgorithm::Falcon512, &pk2, msg2, &sig2);
-        assert!(valid2);
-        println!("Falcon512 sign/verify OK.");
-
-        // Cross-check: wrong key
-        let wrong = verify(PQAlgorithm::Falcon512, &pk, msg2, &sig2);
-        assert!(!wrong);
-        println!("Wrong key detection OK.");
-
-        // Edge: empty message
-        let sig_empty = sign(PQAlgorithm::Dilithium2, &sk, b"").expect("Sign empty failed");
-        let valid_empty = verify(PQAlgorithm::Dilithium2, &pk, b"", &sig_empty);
-        assert!(valid_empty);
-        println!("Empty message sign/verify OK.");
-
-        // Edge: large message
-        let large = vec![0xCD; 4096];
-        let sig_large = sign(PQAlgorithm::Falcon512, &sk2, &large).expect("Sign large failed");
-        let valid_large = verify(PQAlgorithm::Falcon512, &pk2, &large, &sig_large);
-        assert!(valid_large);
-        println!("Large message sign/verify OK.");
-
-        println!("All PQCrypto (Dilithium2 & Falcon512) deep tests passed!\n");
-    }
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     // Print professional startup banner
@@ -616,14 +501,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let wasmer_params: Vec<wasmer::Value> = params_vec.iter().filter_map(|v| wasm_vm::json_to_wasmer_value(v)).collect();
             let result = invoke_contract_with_gas(address, function, &wasmer_params, 10_000_000)?;
             println!("Contract call result: {:?}", result);
-            return Ok(());
-        }
-        Some(Commands::MlDsa44Test) => {
-            ml_dsa_demo::run_all();
-            return Ok(());
-        }
-        Some(Commands::PqcryptoTest) => {
-            pqcrypto_demo::run_all();
             return Ok(());
         }
         None => {

@@ -1,0 +1,1 @@
+Removing all quantum signature, external cryptography, and non-native Rust code as part of workspace cleanup. See git history for previous state.

@@ -1,0 +1,56 @@
+[package]
+name = "pqcrypto_native"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust PQ key generation library for Dilithium, Falcon, ML-DSA."
+
+[dependencies]
+sha2 = "0.10"
+sha3 = "0.10"
+zeroize = { version = "1.7", default-features = false }
+subtle = { version = "2.5", default-features = false }
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64 = "0.21"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+pqcrypto-dilithium = { version = "0.5.0", default-features = false }
+num-complex = "0.4"
+pqcrypto-falcon = { version = "0.4.0", default-features = false }
+bs58 = "0.5"
+pqcrypto-traits = { version = "0.3", default-features = false }
+# For property testing and benchmarks
+quickcheck = { version = "1.0", optional = true }
+criterion = { version = "0.5", optional = true }
+
+[features]
+alloc = []
+std = ["alloc"]
+test = ["quickcheck"]
+bench = ["criterion"]
+property-tests = ["quickcheck"]
+pure = [] # Use pure Rust implementations (default)
+pqclean = [] # (Planned) Use PQClean backend for algorithms
+fuzzing = [] # Enables fuzzing tests
+
+default = ["pure"]
+
+# To select a backend, use:
+#   cargo build --no-default-features --features pqclean
+#   cargo build --features pure
+
+# To enable a feature, use:
+#   cargo test --features property-tests
+#   cargo bench --features bench
+#   cargo build --no-default-features --features alloc
+
+# WASM/no_std support:
+#   cargo build --target wasm32-unknown-unknown --no-default-features --features alloc
+
+[lib]
+name = "pqcrypto_native"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pqgen"
+path = "src/main.rs"

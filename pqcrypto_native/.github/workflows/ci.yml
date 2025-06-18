@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Build (no_std)
+        run: cargo build --no-default-features --features alloc
+      - name: Build (std)
+        run: cargo build --features std
+      - name: Test (default)
+        run: cargo test --features std
+      - name: Test (property)
+        run: cargo test --features "std property-tests"
+      - name: Bench (if enabled)
+        run: cargo bench --features bench || true
+      - name: Check WASM build
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build --target wasm32-unknown-unknown --no-default-features --features alloc
