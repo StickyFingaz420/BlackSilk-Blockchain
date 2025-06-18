@@ -2,9 +2,11 @@
 
 use pqcrypto_native::*;
 use pqcrypto_native::traits::*;
+use std::time::Instant;
 
 #[test]
 fn test_falcon_signature_padding_and_verification() {
+    let start = Instant::now();
     let seed = [7u8; 32];
     let keypair = generate_falcon_keypair_from_seed(&seed).unwrap();
     let message = b"blockchain test message";
@@ -15,4 +17,6 @@ fn test_falcon_signature_padding_and_verification() {
     let mut tampered = padded_sig;
     tampered[0] ^= 0xFF;
     assert!(!falcon_verify_padded(message, &tampered, &keypair.public));
+    let elapsed = start.elapsed();
+    println!("[timing] test_falcon_signature_padding_and_verification: {:?}", elapsed);
 }

@@ -87,3 +87,32 @@ pub fn bip39_mnemonic_to_seed(mnemonic: &str, passphrase: Option<&str>) -> Optio
     out.copy_from_slice(&seed_bytes[..32]);
     Some(out)
 }
+
+/// Generate a Falcon keypair from a BIP39 mnemonic (convenience wrapper)
+/// Returns None if the mnemonic is invalid
+pub fn falcon_keypair_from_mnemonic(mnemonic: &str, passphrase: Option<&str>) -> Option<Keypair<897, 1281>> {
+    let seed = bip39_mnemonic_to_seed(mnemonic, passphrase)?;
+    generate_falcon_keypair_from_seed(&seed).ok()
+}
+
+/// Generate a Dilithium keypair from a BIP39 mnemonic (convenience wrapper)
+/// Returns None if the mnemonic is invalid
+pub fn dilithium_keypair_from_mnemonic(mnemonic: &str, passphrase: Option<&str>) -> Option<Keypair<1312, 2560>> {
+    let seed = bip39_mnemonic_to_seed(mnemonic, passphrase)?;
+    generate_dilithium_keypair_from_seed(&seed).ok()
+}
+
+/// Generate a PQ address from a Falcon public key
+pub fn falcon_address(public: &PublicKey<897>) -> alloc::string::String {
+    crate::wallet::encode_address(public.as_ref())
+}
+
+/// Generate a PQ address from a Dilithium public key
+pub fn dilithium_address(public: &PublicKey<1312>) -> alloc::string::String {
+    crate::wallet::encode_address(public.as_ref())
+}
+
+/// Generate a PQ address from a public key (generic helper)
+pub fn pq_address(pubkey: &[u8]) -> alloc::string::String {
+    crate::wallet::encode_address(pubkey)
+}

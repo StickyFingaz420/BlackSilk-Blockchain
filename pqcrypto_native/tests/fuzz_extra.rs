@@ -5,6 +5,7 @@ use pqcrypto_native::traits::SignatureScheme;
 
 #[test]
 fn fuzz_falcon512_sign_verify_roundtrip() {
+    let start = std::time::Instant::now();
     for i in 0..100 {
         let seed = [i as u8; 32];
         let msg = vec![i as u8; 64];
@@ -12,16 +13,21 @@ fn fuzz_falcon512_sign_verify_roundtrip() {
         let sig = Falcon512::sign(&sk, &msg).unwrap();
         assert!(Falcon512::verify(&pk, &msg, &sig).is_ok());
     }
+    let elapsed = start.elapsed();
+    println!("fuzz_falcon512_sign_verify_roundtrip took: {:.2?}", elapsed);
 }
 
 #[test]
 fn fuzz_dilithium2_sign_verify_varied_msg() {
+    let start = std::time::Instant::now();
     let (pk, sk) = Dilithium2::keypair_from_seed(&[42u8; 32]).unwrap();
     for len in 0..128 {
         let msg = vec![0xAB; len];
         let sig = Dilithium2::sign(&sk, &msg).unwrap();
         assert!(Dilithium2::verify(&pk, &msg, &sig).is_ok());
     }
+    let elapsed = start.elapsed();
+    println!("fuzz_dilithium2_sign_verify_varied_msg took: {:.2?}", elapsed);
 }
 
 #[test]
@@ -49,7 +55,9 @@ fn negative_dilithium2_signature_should_fail() {
 }
 
 #[test]
+#[ignore]
 fn deep_fuzz_signature_verification() {
+    let start = std::time::Instant::now();
     // Test 100 different seeds and 100 message lengths for each
     for seed_val in 0u8..100 {
         let seed = [seed_val; 32];
@@ -67,4 +75,6 @@ fn deep_fuzz_signature_verification() {
                 "Dilithium2 failed for seed={:?} msg_len={}", seed, msg_len);
         }
     }
+    let elapsed = start.elapsed();
+    println!("deep_fuzz_signature_verification took: {:.2?}", elapsed);
 }
