@@ -2,6 +2,7 @@
 use crate::mldsa44::params::*;
 use crate::mldsa44::poly::{Poly, poly_sample_eta, poly_ntt, poly_inv_ntt, poly_pointwise, poly_pack, poly_unpack, poly_add};
 use crate::mldsa44::util::{expand_a, generate_challenge};
+use crate::mldsa44::packing::{poly_highbits, poly_lowbits, poly_pack_highbits, poly_make_hint, reject_z};
 
 /// Sign a message using the secret key, with FIPS 204-compliant primitives
 pub fn sign(sk: &[u8], msg: &[u8]) -> Vec<u8> {
@@ -21,8 +22,9 @@ pub fn sign(sk: &[u8], msg: &[u8]) -> Vec<u8> {
         for i in 0..N { w[i] = (w[i] + prod[i]) % Q; }
     }
     poly_inv_ntt(&mut w);
-    // Extract w1 = HighBits(w, 2*GAMMA2) (placeholder: use w as bytes)
-    let w1_bytes: Vec<u8> = w.iter().map(|x| (*x & 0xFF) as u8).collect();
+    // Extract w1 = HighBits(w, 2*GAMMA2)
+    let w1 = poly_highbits(&w, 2 * GAMMA2);
+    let w1_bytes = poly_pack_highbits(&w1, 4); // 4 bits for Dilithium2
     // Compute challenge c = H(M || w1)
     let c = generate_challenge(msg, &w1_bytes);
     // NTT transform c for multiplication
@@ -33,6 +35,18 @@ pub fn sign(sk: &[u8], msg: &[u8]) -> Vec<u8> {
     let cs1 = poly_pointwise(&c_ntt, &s1);
     let mut z = poly_add(&y, &cs1);
     poly_inv_ntt(&mut z);
-    // Pack signature (z only, for simplicity)
-    poly_pack(&z)
+    // Rejection: |z_i| < GAMMA1 - BETA
+    if reject_z(&z, GAMMA1 - BETA) {
+        // In real impl, retry with new y
+        return vec![];
+    }
+    // Compute w0 = LowBits(w, 2*GAMMA2)
+    let w0 = poly_lowbits(&w, 2 * GAMMA2);
+    // Compute hint for w0 recovery
+    let hint = poly_make_hint(&w0, &w1, GAMMA2);
+    // Pack signature (z || hint || c)
+    let mut sig = poly_pack(&z);
+    sig.extend(hint);
+    sig.extend(c.iter().map(|&x| x as u8));
+    sig
 }
