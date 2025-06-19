@@ -10,7 +10,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use hex::decode;
 
-use crate::mldsa44::{keygen_api, sign_api, verify_api};
+use BlackSilk::mldsa44::{keygen_api, sign_api, verify_api};
 
 /// Parse a NIST-style KAT file into a vector of test cases.
 fn parse_kat_file(path: &str) -> Vec<HashMap<String, Vec<u8>>> {
