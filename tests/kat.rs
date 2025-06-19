@@ -85,10 +85,10 @@ fn test_keygen_kat() {
             let expected_sk = decode(&t.sk).unwrap();
             let (pk, sk) = keygen_api(&seed);
             if pk != expected_pk {
-                eprintln!("PK mismatch at test {}\nExpected: {:02x?}\nActual:   {:02x?}", i, expected_pk, pk);
+                eprintln!("PK mismatch at test {}\nSeed: {}\nExpected PK: {:02x?}\nActual PK:   {:02x?}\nExpected PK (raw): {:?}\nActual PK (raw):   {:?}", i, hex::encode(&seed), expected_pk, pk, expected_pk, pk);
             }
             if sk != expected_sk {
-                eprintln!("SK mismatch at test {}\nExpected: {:02x?}\nActual:   {:02x?}", i, expected_sk, sk);
+                eprintln!("SK mismatch at test {}\nSeed: {}\nExpected SK: {:02x?}\nActual SK:   {:02x?}\nExpected SK (raw): {:?}\nActual SK (raw):   {:?}", i, hex::encode(&seed), expected_sk, sk, expected_sk, sk);
             }
             assert_eq!(pk, expected_pk, "PK mismatch at test {}", i);
             assert_eq!(sk, expected_sk, "SK mismatch at test {}", i);

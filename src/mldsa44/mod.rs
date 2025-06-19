@@ -10,6 +10,7 @@ pub mod sign;
 pub mod verify;
 pub mod keygen;
 pub mod util;
+pub mod keypack;
 
 use crate::mldsa44::keygen::keygen;
 use crate::mldsa44::sign::sign;

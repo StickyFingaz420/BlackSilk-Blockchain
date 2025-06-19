@@ -2,7 +2,8 @@
 //! Implements NTT, polynomial addition, multiplication, reduction, etc.
 
 use crate::mldsa44::params::{N, Q};
-use sha3::{Shake256, digest::{Update, ExtendableOutput, XofReader}};
+use sha3::{Shake256, Shake128};
+use sha3::digest::{Update, ExtendableOutput, XofReader};
 use crate::mldsa44::params::ETA;
 
 /// A polynomial in R_q = Z_q[X]/(X^N + 1)
@@ -185,6 +186,28 @@ pub fn poly_sample_eta(seed: &[u8], nonce: u8) -> Poly {
         }
     }
     poly
+}
+
+/// Sample a polynomial with uniformly random coefficients in [0, Q-1] using SHAKE128(seed|nonce)
+pub fn poly_uniform(seed: &[u8], nonce: u16) -> Poly {
+    let mut out = [0i32; N];
+    let mut shake = Shake128::default();
+    shake.update(seed);
+    shake.update(&[(nonce & 0xFF) as u8, (nonce >> 8) as u8]);
+    let mut xof = shake.finalize_xof();
+    let mut buf = [0u8; 3 * N];
+    xof.read(&mut buf);
+    let mut ctr = 0;
+    let mut pos = 0;
+    while ctr < N && pos + 3 <= buf.len() {
+        let t = ((buf[pos] as u32) | ((buf[pos + 1] as u32) << 8) | ((buf[pos + 2] as u32) << 16)) & 0x7FFFFF;
+        if t < Q as u32 {
+            out[ctr] = t as i32;
+            ctr += 1;
+        }
+        pos += 3;
+    }
+    out
 }
 
 /// Pack polynomial with coefficients in [-ETA, ETA] (ETA=2) into bytes
