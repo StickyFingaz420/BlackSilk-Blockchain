@@ -1,6 +1,6 @@
 //! ML-DSA-44 key generation logic
 use crate::mldsa44::params::*;
-use crate::mldsa44::poly::{Poly, poly_sample_eta, poly_ntt, poly_pointwise, poly_pack};
+use crate::mldsa44::poly::{Poly, poly_sample_eta, poly_ntt, poly_inv_ntt, poly_pointwise, poly_pack, poly_add};
 
 /// Generate a keypair (public key, secret key) using NTT-based primitives
 pub fn keygen(seed: &[u8]) -> (Vec<u8>, Vec<u8>) {

@@ -2,7 +2,7 @@
 use crate::mldsa44::params::*;
 use crate::mldsa44::poly::{Poly, poly_ntt, poly_inv_ntt, poly_pointwise, poly_pack, poly_unpack, poly_add, poly_sub};
 use crate::mldsa44::util::{expand_a, generate_challenge};
-use crate::mldsa44::packing::{poly_highbits, poly_lowbits, poly_unpack_highbits, poly_use_hint, reject_z};
+use crate::mldsa44::packing::{poly_highbits, poly_lowbits, poly_unpack_highbits, poly_use_hint, reject_z, poly_pack_highbits};
 
 /// Verify a signature using the public key, with FIPS 204-compliant primitives
 pub fn verify(pk: &[u8], msg: &[u8], sig: &[u8]) -> bool {

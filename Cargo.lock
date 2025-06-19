@@ -6,8 +6,10 @@ version = 4
 name = "BlackSilk"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "node",
  "primitives",
+ "sha3 0.10.8",
 ]
 
 [[package]]

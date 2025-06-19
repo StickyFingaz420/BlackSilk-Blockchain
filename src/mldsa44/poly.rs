@@ -78,8 +78,8 @@ pub const ZETAS: [i32; 256] = [
 #[inline(always)]
 pub fn montgomery_reduce(a: i64) -> i32 {
     const Q: i32 = 8380417;
-    const QINV: i32 = 4236238847; // -q^{-1} mod 2^32
-    let mut t = (a as i32).wrapping_mul(QINV);
+    const QINV: u32 = 4236238847; // -q^{-1} mod 2^32
+    let mut t = (a as i32).wrapping_mul(QINV as i32);
     t = ((a + (t as i64) * (Q as i64)) >> 32) as i32;
     if t >= Q { t - Q } else if t < 0 { t + Q } else { t }
 }
@@ -167,16 +167,17 @@ pub fn poly_sample_eta(seed: &[u8], nonce: u8) -> Poly {
             let t0 = buf[i] & 0x0F;
             let t1 = buf[i] >> 4;
             i += 1;
+            let eta_i32 = ETA as i32;
             if t0 < 15 {
                 let val = 2 - (t0 as i32 - ((205 * t0 as i32) >> 10) * 5);
-                if val >= -ETA as i32 && val <= ETA as i32 {
+                if val >= -eta_i32 && val <= eta_i32 {
                     poly[ctr] = val;
                     ctr += 1;
                 }
             }
             if t1 < 15 && ctr < N {
                 let val = 2 - (t1 as i32 - ((205 * t1 as i32) >> 10) * 5);
-                if val >= -ETA as i32 && val <= ETA as i32 {
+                if val >= -eta_i32 && val <= eta_i32 {
                     poly[ctr] = val;
                     ctr += 1;
                 }

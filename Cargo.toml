@@ -23,6 +23,7 @@ edition = "2021"
 node = { path = "node" }
 primitives = { path = "primitives" }
 hex = "0.4"
+sha3 = "0.10"
 # Uncomment if you want to use Criterion for benchmarking
 # criterion = "0.3"
 
