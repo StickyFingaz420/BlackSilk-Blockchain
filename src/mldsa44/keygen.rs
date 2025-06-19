@@ -15,6 +15,13 @@ pub fn keygen(seed: &[u8]) -> (Vec<u8>, Vec<u8>) {
     xof.read(&mut rho);
     xof.read(&mut key);
 
+    #[cfg(feature = "debug_kat")]
+    {
+        use hex;
+        println!("DEBUG_KAT: rho: {}", hex::encode(&rho));
+        println!("DEBUG_KAT: key: {}", hex::encode(&key));
+    }
+
     // 2. Sample s1 (L), s2 (K) polynomials
     let mut s1 = [ [0i32; N]; L ];
     let mut s2 = [ [0i32; N]; K ];
@@ -72,11 +79,27 @@ pub fn keygen(seed: &[u8]) -> (Vec<u8>, Vec<u8>) {
     pk.extend_from_slice(&rho);
     pk.extend_from_slice(&pack_t1(&t1));
 
+    #[cfg(feature = "debug_kat")]
+    {
+        use hex;
+        let packed_t1 = pack_t1(&t1);
+        let packed_t0 = pack_t0(&t0);
+        println!("DEBUG_KAT: packed_t1: {}", hex::encode(&packed_t1));
+        println!("DEBUG_KAT: packed_t0: {}", hex::encode(&packed_t0));
+        println!("DEBUG_KAT: pk: {}", hex::encode(&pk));
+    }
+    // 5. Compute tr = H(pk) (optional for KAT)
     let mut tr = [0u8; 48];
     let mut shake_tr = Shake256::default();
     shake_tr.update(&pk);
     let mut xof_tr = shake_tr.finalize_xof();
     xof_tr.read(&mut tr);
+
+    #[cfg(feature = "debug_kat")]
+    {
+        use hex;
+        println!("DEBUG_KAT: tr: {}", hex::encode(&tr));
+    }
 
     // 6. Pack secret key
     let mut sk = Vec::with_capacity(32 + 32 + 48 + 384 + 384 + 1664);
@@ -86,6 +109,12 @@ pub fn keygen(seed: &[u8]) -> (Vec<u8>, Vec<u8>) {
     sk.extend_from_slice(&pack_s1(&s1));
     sk.extend_from_slice(&pack_s2(&s2));
     sk.extend_from_slice(&pack_t0(&t0));
+
+    #[cfg(feature = "debug_kat")]
+    {
+        use hex;
+        println!("DEBUG_KAT: sk: {}", hex::encode(&sk));
+    }
 
     (pk, sk)
 }

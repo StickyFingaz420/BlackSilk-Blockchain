@@ -80,7 +80,7 @@ fn test_keygen_kat() {
     for group in root.testGroups {
         for (i, t) in group.tests.iter().enumerate() {
             // Use zero seed if not present
-            let seed = t.seed.as_ref().map(|s| decode(s).unwrap()).unwrap_or(vec![0u8; 48]);
+            let seed = t.seed.as_ref().map(|s| decode(s).unwrap()).unwrap_or(vec![0u8; 32]);
             let expected_pk = decode(&t.pk).unwrap();
             let expected_sk = decode(&t.sk).unwrap();
             let (pk, sk) = keygen_api(&seed);
