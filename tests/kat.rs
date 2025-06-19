@@ -30,13 +30,13 @@ struct KeyGenRoot {
 
 #[derive(Deserialize, Debug)]
 struct SigGenTest {
-    sk: String,
     msg: String,
     sig: String,
 }
 
 #[derive(Deserialize, Debug)]
 struct SigGenTestGroup {
+    sk: String,
     tests: Vec<SigGenTest>,
 }
 
@@ -47,7 +47,6 @@ struct SigGenRoot {
 
 #[derive(Deserialize, Debug)]
 struct SigVerTest {
-    pk: String,
     msg: String,
     sig: String,
     result: bool,
@@ -55,6 +54,7 @@ struct SigVerTest {
 
 #[derive(Deserialize, Debug)]
 struct SigVerTestGroup {
+    pk: String,
     tests: Vec<SigVerTest>,
 }
 
@@ -75,6 +75,12 @@ fn test_keygen_kat() {
             let expected_pk = decode(&t.pk).unwrap();
             let expected_sk = decode(&t.sk).unwrap();
             let (pk, sk) = keygen_api(&seed);
+            if pk != expected_pk {
+                eprintln!("PK mismatch at test {}\nExpected: {:02x?}\nActual:   {:02x?}", i, expected_pk, pk);
+            }
+            if sk != expected_sk {
+                eprintln!("SK mismatch at test {}\nExpected: {:02x?}\nActual:   {:02x?}", i, expected_sk, sk);
+            }
             assert_eq!(pk, expected_pk, "PK mismatch at test {}", i);
             assert_eq!(sk, expected_sk, "SK mismatch at test {}", i);
         }
@@ -87,8 +93,8 @@ fn test_siggen_kat() {
     let reader = BufReader::new(file);
     let root: SigGenRoot = serde_json::from_reader(reader).expect("JSON parse error");
     for group in root.testGroups {
+        let sk = decode(&group.sk).unwrap();
         for (i, t) in group.tests.iter().enumerate() {
-            let sk = decode(&t.sk).unwrap();
             let msg = decode(&t.msg).unwrap();
             let expected_sig = decode(&t.sig).unwrap();
             let sig = sign_api(&sk, &msg);
@@ -103,8 +109,8 @@ fn test_sigver_kat() {
     let reader = BufReader::new(file);
     let root: SigVerRoot = serde_json::from_reader(reader).expect("JSON parse error");
     for group in root.testGroups {
+        let pk = decode(&group.pk).unwrap();
         for (i, t) in group.tests.iter().enumerate() {
-            let pk = decode(&t.pk).unwrap();
             let msg = decode(&t.msg).unwrap();
             let sig = decode(&t.sig).unwrap();
             let valid = verify_api(&pk, &msg, &sig);
