@@ -48,3 +48,6 @@ overflow-checks = false
 
 [patch.crates-io]
 i2p = { path = "i2p" }
+
+[features]
+debug_kat = []

@@ -58,6 +58,15 @@ pub fn keygen(seed: &[u8]) -> (Vec<u8>, Vec<u8>) {
         t1[i] = hi;
         t0[i] = lo;
     }
+    // Debug: print packed t1 and t0 for first test vector
+    #[cfg(feature = "debug_kat")]
+    {
+        use hex;
+        let packed_t1 = pack_t1(&t1);
+        let packed_t0 = pack_t0(&t0);
+        println!("DEBUG_KAT: packed_t1: {}", hex::encode(&packed_t1));
+        println!("DEBUG_KAT: packed_t0: {}", hex::encode(&packed_t0));
+    }
     // 5. Compute tr = H(pk) (optional for KAT)
     let mut pk = Vec::with_capacity(32 + 1280);
     pk.extend_from_slice(&rho);

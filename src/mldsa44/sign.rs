@@ -78,12 +78,10 @@ pub fn sign(sk: &[u8], msg: &[u8]) -> Vec<u8> {
     hasher.update(&w1_bytes);
     let mut c_hash = [0u8; CTILDE_BYTES];
     hasher.finalize_xof().read(&mut c_hash);
-    // For simplicity, use c_hash bytes as challenge polynomial (should use generate_challenge)
-    let mut c = [0i32; N];
-    for i in 0..N {
-        c[i] = (c_hash[i % c_hash.len()] & 1) as i32; // placeholder, use real challenge
-    }
-    let mut c_ntt = c;
+    // Use reference challenge generation
+    let c_i8 = crate::mldsa44::util::generate_challenge(&mu, &w1_bytes);
+    let mut c_ntt = [0i32; N];
+    for i in 0..N { c_ntt[i] = c_i8[i] as i32; }
     poly_ntt(&mut c_ntt);
     // Compute z = y + c * s1
     let mut z = [[0i32; N]; L];
@@ -108,12 +106,12 @@ pub fn sign(sk: &[u8], msg: &[u8]) -> Vec<u8> {
     for i in 0..K {
         hint.extend(poly_make_hint(&w0[i], &w1[i], GAMMA2));
     }
-    // Pack signature as c || z || h
+    // Pack signature as c || z || h (reference order and sizes)
     let mut sig = Vec::new();
-    sig.extend_from_slice(&c_hash);
+    sig.extend_from_slice(&c_hash); // c
     for i in 0..L {
-        sig.extend(poly_pack(&z[i]));
+        sig.extend(poly_pack(&z[i])); // z
     }
-    sig.extend(hint);
+    sig.extend(hint); // h
     sig
 }

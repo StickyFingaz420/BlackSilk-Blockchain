@@ -1,0 +1,23 @@
+# Instructions to compare Rust and C reference packed t1/t0
+
+1. **Build and run the C reference implementation:**
+   - Clone https://github.com/pq-crystals/dilithium
+   - cd dilithium/ref
+   - make
+   - ./test_vectors2 > c_kat_vectors.txt
+
+2. **Find the packed t1/t0 output for the first test vector in c_kat_vectors.txt.**
+   - Look for lines like: `t1 = ...` and `t0 = ...` (hex or byte arrays)
+
+3. **In this Rust repo:**
+   - Run: `cargo test --test kat --features debug_kat -- --nocapture > rust_kat_debug.log 2>&1`
+   - Open `rust_kat_debug.log` and search for `DEBUG_KAT: packed_t1:` and `DEBUG_KAT: packed_t0:`
+
+4. **Compare the Rust and C outputs byte-for-byte.**
+   - If they differ, check for endianness, bit order, or buffer offset issues in the Rust packing code.
+
+5. **If they match, but PK/SK still mismatches, repeat for the full PK/SK output.**
+
+---
+
+This process will pinpoint where the Rust implementation diverges from the FIPS 204 reference.

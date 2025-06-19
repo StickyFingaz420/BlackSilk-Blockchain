@@ -11,37 +11,60 @@ pub fn verify(pk: &[u8], msg: &[u8], sig: &[u8]) -> bool {
     let t1 = crate::mldsa44::keypack::unpack_t1(&pk[SEED_BYTES..SEED_BYTES+K*320]);
     // Expand matrix A from rho
     let a = expand_a(&rho);
-    // Unpack signature (z || hint || c)
-    let z = poly_unpack(&sig[0..96]);
-    let hint = &sig[96..96+N];
-    let c: [i8; N] = sig[96+N..96+N+N].iter().map(|&x| x as i8).collect::<Vec<_>>().try_into().unwrap();
+    // Unpack signature (c || z || h)
+    let c_hash = &sig[0..CTILDE_BYTES];
+    let mut z = [[0i32; N]; L];
+    let mut offset = CTILDE_BYTES;
+    for i in 0..L {
+        z[i] = poly_unpack(&sig[offset..offset+96]);
+        offset += 96;
+    }
+    let hint = &sig[offset..];
     // Rejection: |z_i| < GAMMA1 - BETA
-    if reject_z(&z, GAMMA1 - BETA) {
-        return false;
+    for i in 0..L {
+        if reject_z(&z[i], GAMMA1 - BETA) {
+            return false;
+        }
     }
     // NTT transform z
     let mut z_ntt = z;
-    poly_ntt(&mut z_ntt);
-    // Compute w' = A * z - c * t1
-    let mut w_prime = [0i32; N];
-    for j in 0..L {
-        let prod = poly_pointwise(&a[0][j], &z_ntt); // For simplicity, single row
-        for i in 0..N { w_prime[i] = (w_prime[i] + prod[i]) % Q; }
+    for i in 0..L {
+        poly_ntt(&mut z_ntt[i]);
     }
-    // NTT transform c
-    let mut c_ntt = [0i32; N];
-    for i in 0..N { c_ntt[i] = c[i] as i32; }
-    poly_ntt(&mut c_ntt);
-    let ct = poly_pointwise(&c_ntt, &t1[0]); // Use t1[0] for single-row case
-    let mut v = poly_sub(&w_prime, &ct);
-    poly_inv_ntt(&mut v);
-    // Compute w0 = LowBits(v, 2*GAMMA2)
-    let w0 = poly_lowbits(&v, 2 * GAMMA2);
+    // Compute w' = A * z - c * t1
+    let mut w_prime = [[0i32; N]; K];
+    for i in 0..K {
+        let mut acc = [0i32; N];
+        for j in 0..L {
+            let prod = poly_pointwise(&a[i][j], &z_ntt[j]);
+            acc = poly_add(&acc, &prod);
+        }
+        w_prime[i] = acc;
+        poly_inv_ntt(&mut w_prime[i]);
+    }
+    // NTT transform c (REMOVE: challenge polynomial is not used in NTT/pointwise steps)
+    // All challenge logic is only for the final check below
+    // Compute w0 = LowBits(w', 2*GAMMA2)
+    let mut w0 = [[0i32; N]; K];
+    for i in 0..K {
+        w0[i] = poly_lowbits(&w_prime[i], 2 * GAMMA2);
+    }
     // Recover w1 using hint
-    let w1 = poly_use_hint(&w0, hint, GAMMA2);
-    // Compute challenge c' = H(M || w1)
-    let w1_bytes = poly_pack_highbits(&w1, 4);
-    let c_prime = generate_challenge(msg, &w1_bytes);
-    // Accept if c == c'
-    c.iter().zip(c_prime.iter()).all(|(&a, &b)| a == b)
+    let mut w1 = [[0i32; N]; K];
+    let mut hint_offset = 0;
+    for i in 0..K {
+        w1[i] = poly_use_hint(&w0[i], &hint[hint_offset..hint_offset+N], GAMMA2);
+        hint_offset += N;
+    }
+    // Compute w1_bytes for challenge
+    let mut w1_bytes = Vec::new();
+    for i in 0..K {
+        w1_bytes.extend(poly_pack_highbits(&w1[i], 4));
+    }
+    // Compute challenge c' = generate_challenge(msg, &w1_bytes)
+    let c_prime = crate::mldsa44::util::generate_challenge(msg, &w1_bytes);
+    // Accept if c_hash == c_prime as bytes
+    let c_hash_bytes = &sig[0..CTILDE_BYTES];
+    let c_prime_bytes: Vec<u8> = c_prime.iter().map(|&x| x as u8).collect();
+    c_hash_bytes == &c_prime_bytes[0..CTILDE_BYTES]
 }

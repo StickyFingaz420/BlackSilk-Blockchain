@@ -13,10 +13,10 @@ pub fn pack_t1(t: &[Poly; K]) -> Vec<u8> {
             let c1 = poly[i + 1] as u16;
             let c2 = poly[i + 2] as u16;
             let c3 = poly[i + 3] as u16;
-            out.push((c0 & 0xFF) as u8);
-            out.push(((c0 >> 8) | ((c1 & 0x3F) << 2)) as u8);
-            out.push(((c1 >> 6) | ((c2 & 0x0F) << 4)) as u8);
-            out.push(((c2 >> 4) | ((c3 & 0x03) << 6)) as u8);
+            out.push((c0 >> 0) as u8);
+            out.push(((c0 >> 8) | (c1 << 2)) as u8);
+            out.push(((c1 >> 6) | (c2 << 4)) as u8);
+            out.push(((c2 >> 4) | (c3 << 6)) as u8);
             out.push((c3 >> 2) as u8);
         }
     }
@@ -30,19 +30,21 @@ pub fn pack_t0(t: &[Poly; K]) -> Vec<u8> {
         for i in (0..N).step_by(8) {
             let mut tvals = [0u16; 8];
             for j in 0..8 {
-                tvals[j] = ((1 << 12) - poly[i + j]) as u16;
+                tvals[j] = (poly[i + j] + (1 << 12)) as u16;
             }
             out.push((tvals[0] & 0xFF) as u8);
             out.push(((tvals[0] >> 8) | ((tvals[1] & 0x1F) << 5)) as u8);
-            out.push(((tvals[1] >> 3) | ((tvals[2] & 0x03) << 10)) as u8);
-            out.push(((tvals[2] >> 2) & 0xFF) as u8);
-            out.push(((tvals[2] >> 10) | ((tvals[3] & 0x7F) << 3)) as u8);
-            out.push(((tvals[3] >> 5) | ((tvals[4] & 0x0F) << 6)) as u8);
+            out.push(((tvals[1] >> 3) & 0xFF) as u8);
+            out.push(((tvals[1] >> 11) | ((tvals[2] & 0x3F) << 2)) as u8);
+            out.push(((tvals[2] >> 6) | ((tvals[3] & 0x7F) << 7)) as u8);
+            out.push(((tvals[3] >> 1) & 0xFF) as u8);
+            out.push(((tvals[3] >> 9) | ((tvals[4] & 0x0F) << 4)) as u8);
             out.push(((tvals[4] >> 4) & 0xFF) as u8);
-            out.push(((tvals[4] >> 12) | ((tvals[5] & 0x3F) << 1)) as u8);
-            out.push(((tvals[5] >> 7) | ((tvals[6] & 0x1F) << 4)) as u8);
-            out.push(((tvals[6] >> 5) | ((tvals[7] & 0x07) << 7)) as u8);
-            out.push(((tvals[7] >> 3) & 0xFF) as u8);
+            out.push(((tvals[4] >> 12) | ((tvals[5] & 0x7F) << 1)) as u8);
+            out.push(((tvals[5] >> 7) | ((tvals[6] & 0x3F) << 6)) as u8);
+            out.push(((tvals[6] >> 2) & 0xFF) as u8);
+            out.push(((tvals[6] >> 10) | ((tvals[7] & 0x1F) << 3)) as u8);
+            out.push(((tvals[7] >> 5) & 0xFF) as u8);
         }
     }
     out
@@ -126,7 +128,8 @@ pub fn unpack_t0(bytes: &[u8]) -> [Poly; K] {
             t[7] = ((b[idx+11] as u32) >> 3) | ((b[idx+12] as u32) << 5);
             t[7] &= 0x1FFF;
             for j in 0..8 {
-                out[k][i+j] = (1 << 12) - t[j] as i32;
+                // Reference: t0[i] = t[j] as i32 - 2^{D-1}
+                out[k][i+j] = t[j] as i32 - (1 << 12);
             }
             idx += 13;
         }
