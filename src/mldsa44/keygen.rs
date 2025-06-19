@@ -51,12 +51,17 @@ pub fn keygen(seed: &[u8]) -> (Vec<u8>, Vec<u8>) {
     }
 
     // 4. Split t into t1 (high bits) and t0 (low bits)
-    // Packing helpers do this
-
+    let mut t1 = [[0i32; N]; K];
+    let mut t0 = [[0i32; N]; K];
+    for i in 0..K {
+        let (hi, lo) = crate::mldsa44::poly::poly_power2round(&t[i]);
+        t1[i] = hi;
+        t0[i] = lo;
+    }
     // 5. Compute tr = H(pk) (optional for KAT)
     let mut pk = Vec::with_capacity(32 + 1280);
     pk.extend_from_slice(&rho);
-    pk.extend_from_slice(&pack_t1(&t));
+    pk.extend_from_slice(&pack_t1(&t1));
 
     let mut tr = [0u8; 48];
     let mut shake_tr = Shake256::default();
@@ -71,7 +76,7 @@ pub fn keygen(seed: &[u8]) -> (Vec<u8>, Vec<u8>) {
     sk.extend_from_slice(&tr);
     sk.extend_from_slice(&pack_s1(&s1));
     sk.extend_from_slice(&pack_s2(&s2));
-    sk.extend_from_slice(&pack_t0(&t));
+    sk.extend_from_slice(&pack_t0(&t0));
 
     (pk, sk)
 }

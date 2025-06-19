@@ -465,7 +465,7 @@ cargo run --release -- --send --to <address> --amount <amt>
 > - Explore the chain and participate in the decentralized marketplace
 > - Report bugs, suggest features, and help us build the future of privacy tech
 >
-> **Docs, guides, and support:** [GitHub](<repo-url>) | [Discord/Forum link]
+> **Docs, guides, and support:** [GitHub](<https://github.com/StickyFingaz420/BlackSilk-Blockchain>) | [[Discord/Forum link](https://discord.gg/5jtxPkwp)]
 >
 > Let’s build the next generation of privacy together!
 
@@ -492,12 +492,12 @@ docker-compose up -d
 - Review logs for errors, warnings, and user-reported issues
 
 ### Support & Troubleshooting
-- **Support Channel:** Join our [Discord](https://discord.gg/5jtxPkwp) or post on [Forum](https://forum.yourproject.org)
+- **Support Channel:** Join our [Discord](https://discord.gg/5jtxPkwp)
 - **FAQ:**
   - _Node won’t sync?_ Check ports, config, and peer list.
   - _Wallet not connecting?_ Ensure node is running and RPC is reachable.
   - _Faucet not working?_ Check faucet logs and rate limits.
   - _Marketplace issues?_ Ensure all services are up and check logs for errors.
-- For more help, open an issue on [GitHub](<repo-url>) or ask in the support channel.
+- For more help, open an issue on [GitHub](<https://github.com/StickyFingaz420/BlackSilk-Blockchain>) or ask in the support channel.
 
 ---

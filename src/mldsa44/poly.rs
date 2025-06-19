@@ -247,3 +247,16 @@ pub fn poly_unpack(bytes: &[u8]) -> Poly {
     }
     r
 }
+
+/// Split a polynomial into t1 (high bits) and t0 (low bits) as per FIPS 204 (D=13)
+pub fn poly_power2round(a: &Poly) -> (Poly, Poly) {
+    let mut t1 = [0i32; N];
+    let mut t0 = [0i32; N];
+    for i in 0..N {
+        // D = 13 for Dilithium2/ML-DSA-44
+        let d = 13;
+        t1[i] = (a[i] + (1 << (d - 1))) >> d;
+        t0[i] = a[i] - (t1[i] << d);
+    }
+    (t1, t0)
+}
