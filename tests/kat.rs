@@ -1,73 +1,114 @@
-// Professional ML-DSA-44 Known-Answer Test Harness for Rust
+// Professional ML-DSA-44 Known-Answer Test Harness for Rust (NIST FIPS 204 JSON KATs)
 //
 // Place this file as: <workspace-root>/tests/kat.rs
-// Requires: hex = "0.4" in Cargo.toml
-// Place your KAT file at <workspace-root>/kats/ml_dsa_44.kat
-// Implement your ML-DSA-44 API in src/mldsa44.rs
+// Requires: serde, serde_json, hex in Cargo.toml
+// Uses official NIST JSON KATs in <workspace-root>/kats/
 
-use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
+use serde::Deserialize;
 use hex::decode;
-
 use BlackSilk::mldsa44::{keygen_api, sign_api, verify_api};
 
-/// Parse a NIST-style KAT file into a vector of test cases.
-fn parse_kat_file(path: &str) -> Vec<HashMap<String, Vec<u8>>> {
-    let file = File::open(path).expect("KAT file not found");
-    let reader = BufReader::new(file);
-    let mut vectors = Vec::new();
-    let mut current = HashMap::new();
+#[derive(Deserialize, Debug)]
+struct KeyGenTest {
+    pk: String,
+    sk: String,
+    // seed is not present in NIST KATs, so make it optional
+    seed: Option<String>,
+}
 
-    for line in reader.lines() {
-        let line = line.expect("Read error");
-        let line = line.trim();
-        if line.is_empty() {
-            if !current.is_empty() {
-                vectors.push(current.clone());
-                current.clear();
-            }
-            continue;
-        }
-        if let Some((key, value)) = line.split_once('=') {
-            let key = key.trim().to_string();
-            let value = value.trim();
-            let value_bytes = decode(value).expect("Hex decode error");
-            current.insert(key, value_bytes);
-        }
-    }
-    if !current.is_empty() {
-        vectors.push(current);
-    }
-    vectors
+#[derive(Deserialize, Debug)]
+struct KeyGenTestGroup {
+    tests: Vec<KeyGenTest>,
+}
+
+#[derive(Deserialize, Debug)]
+struct KeyGenRoot {
+    testGroups: Vec<KeyGenTestGroup>,
+}
+
+#[derive(Deserialize, Debug)]
+struct SigGenTest {
+    sk: String,
+    msg: String,
+    sig: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct SigGenTestGroup {
+    tests: Vec<SigGenTest>,
+}
+
+#[derive(Deserialize, Debug)]
+struct SigGenRoot {
+    testGroups: Vec<SigGenTestGroup>,
+}
+
+#[derive(Deserialize, Debug)]
+struct SigVerTest {
+    pk: String,
+    msg: String,
+    sig: String,
+    result: bool,
+}
+
+#[derive(Deserialize, Debug)]
+struct SigVerTestGroup {
+    tests: Vec<SigVerTest>,
+}
+
+#[derive(Deserialize, Debug)]
+struct SigVerRoot {
+    testGroups: Vec<SigVerTestGroup>,
 }
 
 #[test]
-fn test_mldsa44_kat() {
-    let kat_vectors = parse_kat_file("kats/ml_dsa_44.kat");
-    for (i, vector) in kat_vectors.iter().enumerate() {
-        let seed = &vector["seed"];
-        let msg = &vector["msg"];
-        let expected_pk = &vector["pk"];
-        let expected_sk = &vector["sk"];
-        let expected_sig = &vector["sig"];
-
-        let (pk, sk) = keygen_api(seed);
-        assert_eq!(&pk, expected_pk, "PK mismatch at test {}", i);
-        assert_eq!(&sk, expected_sk, "SK mismatch at test {}", i);
-
-        let sig = sign_api(&sk, msg);
-        assert_eq!(&sig, expected_sig, "SIG mismatch at test {}", i);
-
-        let valid = verify_api(&pk, msg, &sig);
-        assert!(valid, "Signature verification failed at test {}", i);
+fn test_keygen_kat() {
+    let file = File::open("kats/ML-DSA-keyGen-FIPS204.json").expect("KAT file not found");
+    let reader = BufReader::new(file);
+    let root: KeyGenRoot = serde_json::from_reader(reader).expect("JSON parse error");
+    for group in root.testGroups {
+        for (i, t) in group.tests.iter().enumerate() {
+            // Use zero seed if not present
+            let seed = t.seed.as_ref().map(|s| decode(s).unwrap()).unwrap_or(vec![0u8; 48]);
+            let expected_pk = decode(&t.pk).unwrap();
+            let expected_sk = decode(&t.sk).unwrap();
+            let (pk, sk) = keygen_api(&seed);
+            assert_eq!(pk, expected_pk, "PK mismatch at test {}", i);
+            assert_eq!(sk, expected_sk, "SK mismatch at test {}", i);
+        }
     }
-    println!("All KATs passed!");
 }
 
-// --- Example ML-DSA-44 API (to be implemented in your crate) ---
-// pub mod mldsa44 {
-//     pub fn keygen(seed: &[u8]) -> (Vec<u8>, Vec<u8>) { /* ... */ }
-//     pub fn sign(sk: &[u8], msg: &[u8]) -> Vec<u8> { /* ... */ }
-//     pub fn verify(pk: &[u8], msg: &[u8], sig: &[u8]) -> bool { /* ... */ }
-// }
+#[test]
+fn test_siggen_kat() {
+    let file = File::open("kats/ML-DSA-sigGen-FIPS204.json").expect("KAT file not found");
+    let reader = BufReader::new(file);
+    let root: SigGenRoot = serde_json::from_reader(reader).expect("JSON parse error");
+    for group in root.testGroups {
+        for (i, t) in group.tests.iter().enumerate() {
+            let sk = decode(&t.sk).unwrap();
+            let msg = decode(&t.msg).unwrap();
+            let expected_sig = decode(&t.sig).unwrap();
+            let sig = sign_api(&sk, &msg);
+            assert_eq!(sig, expected_sig, "SIG mismatch at test {}", i);
+        }
+    }
+}
+
+#[test]
+fn test_sigver_kat() {
+    let file = File::open("kats/ML-DSA-sigVer-FIPS204.json").expect("KAT file not found");
+    let reader = BufReader::new(file);
+    let root: SigVerRoot = serde_json::from_reader(reader).expect("JSON parse error");
+    for group in root.testGroups {
+        for (i, t) in group.tests.iter().enumerate() {
+            let pk = decode(&t.pk).unwrap();
+            let msg = decode(&t.msg).unwrap();
+            let sig = decode(&t.sig).unwrap();
+            let valid = verify_api(&pk, &msg, &sig);
+            assert_eq!(valid, t.result, "Verify mismatch at test {}", i);
+        }
+    }
+}
