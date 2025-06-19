@@ -13,7 +13,7 @@ pub fn expand_a(rho: &[u8; SEED_BYTES]) -> Vec<Vec<Poly>> {
         for j in 0..L {
             let mut hasher = Shake128::default();
             hasher.update(rho);
-            hasher.update(&[i as u8, j as u8]);
+            hasher.update(&[j as u8, i as u8]);
             let mut xof = hasher.finalize_xof();
             let mut coeffs = [0i32; N];
             let mut filled = 0;

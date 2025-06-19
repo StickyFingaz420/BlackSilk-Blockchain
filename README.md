@@ -492,7 +492,7 @@ docker-compose up -d
 - Review logs for errors, warnings, and user-reported issues
 
 ### Support & Troubleshooting
-- **Support Channel:** Join our [Discord](https://discord.gg/your-invite) or post on [Forum](https://forum.yourproject.org)
+- **Support Channel:** Join our [Discord](https://discord.gg/5jtxPkwp) or post on [Forum](https://forum.yourproject.org)
 - **FAQ:**
   - _Node won’t sync?_ Check ports, config, and peer list.
   - _Wallet not connecting?_ Ensure node is running and RPC is reachable.

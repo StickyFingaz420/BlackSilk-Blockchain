@@ -81,3 +81,55 @@ pub fn pack_s2(s2: &[Poly; K]) -> Vec<u8> {
     }
     out
 }
+
+/// Unpack t1 (high bits of t) for K polynomials (10 bits per coeff, 4 coeffs per 5 bytes)
+pub fn unpack_t1(bytes: &[u8]) -> [Poly; K] {
+    let mut out = [[0i32; N]; K];
+    for k in 0..K {
+        let offset = k * 320;
+        let b = &bytes[offset..offset+320];
+        let mut idx = 0;
+        for i in (0..N).step_by(4) {
+            out[k][i+0] = (((b[idx+0] as u32) | ((b[idx+1] as u32) << 8)) & 0x3FF) as i32;
+            out[k][i+1] = (((b[idx+1] as u32) >> 2 | ((b[idx+2] as u32) << 6)) & 0x3FF) as i32;
+            out[k][i+2] = (((b[idx+2] as u32) >> 4 | ((b[idx+3] as u32) << 4)) & 0x3FF) as i32;
+            out[k][i+3] = (((b[idx+3] as u32) >> 6 | ((b[idx+4] as u32) << 2)) & 0x3FF) as i32;
+            idx += 5;
+        }
+    }
+    out
+}
+
+/// Unpack t0 (low bits of t) for K polynomials (13 bits per coeff, 8 coeffs per 13 bytes)
+pub fn unpack_t0(bytes: &[u8]) -> [Poly; K] {
+    let mut out = [[0i32; N]; K];
+    for k in 0..K {
+        let offset = k * 416;
+        let b = &bytes[offset..offset+416];
+        let mut idx = 0;
+        for i in (0..N).step_by(8) {
+            let mut t = [0u32; 8];
+            t[0] = (b[idx+0] as u32) | ((b[idx+1] as u32) << 8);
+            t[0] &= 0x1FFF;
+            t[1] = ((b[idx+1] as u32) >> 5) | ((b[idx+2] as u32) << 3) | ((b[idx+3] as u32) << 11);
+            t[1] &= 0x1FFF;
+            t[2] = ((b[idx+3] as u32) >> 2) | ((b[idx+4] as u32) << 6);
+            t[2] &= 0x1FFF;
+            t[3] = ((b[idx+4] as u32) >> 7) | ((b[idx+5] as u32) << 1) | ((b[idx+6] as u32) << 9);
+            t[3] &= 0x1FFF;
+            t[4] = ((b[idx+6] as u32) >> 4) | ((b[idx+7] as u32) << 4) | ((b[idx+8] as u32) << 12);
+            t[4] &= 0x1FFF;
+            t[5] = ((b[idx+8] as u32) >> 1) | ((b[idx+9] as u32) << 7);
+            t[5] &= 0x1FFF;
+            t[6] = ((b[idx+9] as u32) >> 6) | ((b[idx+10] as u32) << 2) | ((b[idx+11] as u32) << 10);
+            t[6] &= 0x1FFF;
+            t[7] = ((b[idx+11] as u32) >> 3) | ((b[idx+12] as u32) << 5);
+            t[7] &= 0x1FFF;
+            for j in 0..8 {
+                out[k][i+j] = (1 << 12) - t[j] as i32;
+            }
+            idx += 13;
+        }
+    }
+    out
+}

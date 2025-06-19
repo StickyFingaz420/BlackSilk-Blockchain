@@ -24,10 +24,12 @@ pub fn sign(sk: &[u8], msg: &[u8]) -> Vec<u8> {
         s2[i] = poly_unpack(&sk[offset..offset+96]);
         offset += 96;
     }
+    // Use correct unpacking for t0 (low bits, 13 bits per coeff)
+    let t0_arr = crate::mldsa44::keypack::unpack_t0(&sk[offset..offset+K*416]);
     for i in 0..K {
-        t0[i] = poly_unpack(&sk[offset..offset+416]);
-        offset += 416;
+        t0[i] = t0_arr[i];
     }
+    offset += K*416;
     // Expand matrix A from rho
     let a = expand_a(&rho);
     // Compute mu = SHAKE256(tr || msg)

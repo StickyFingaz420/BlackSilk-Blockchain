@@ -8,7 +8,7 @@ use crate::mldsa44::packing::{poly_highbits, poly_lowbits, poly_unpack_highbits,
 pub fn verify(pk: &[u8], msg: &[u8], sig: &[u8]) -> bool {
     // Unpack public key (assume rho || t1)
     let rho: [u8; SEED_BYTES] = pk[0..SEED_BYTES].try_into().unwrap();
-    let t1 = poly_unpack(&pk[SEED_BYTES..SEED_BYTES+96]);
+    let t1 = crate::mldsa44::keypack::unpack_t1(&pk[SEED_BYTES..SEED_BYTES+K*320]);
     // Expand matrix A from rho
     let a = expand_a(&rho);
     // Unpack signature (z || hint || c)
@@ -32,7 +32,7 @@ pub fn verify(pk: &[u8], msg: &[u8], sig: &[u8]) -> bool {
     let mut c_ntt = [0i32; N];
     for i in 0..N { c_ntt[i] = c[i] as i32; }
     poly_ntt(&mut c_ntt);
-    let ct = poly_pointwise(&c_ntt, &t1);
+    let ct = poly_pointwise(&c_ntt, &t1[0]); // Use t1[0] for single-row case
     let mut v = poly_sub(&w_prime, &ct);
     poly_inv_ntt(&mut v);
     // Compute w0 = LowBits(v, 2*GAMMA2)

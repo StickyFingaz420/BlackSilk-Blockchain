@@ -30,7 +30,7 @@ pub fn keygen(seed: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let mut mat_a = [[ [0i32; N]; L ]; K];
     for i in 0..K {
         for j in 0..L {
-            mat_a[i][j] = crate::mldsa44::poly::poly_uniform(&rho, ((i << 8) + j) as u16);
+            mat_a[i][j] = crate::mldsa44::poly::poly_uniform(&rho, (j + (i << 8)) as u16);
         }
     }
     // NTT transform s1
