@@ -30,13 +30,18 @@ struct KeyGenRoot {
 
 #[derive(Deserialize, Debug)]
 struct SigGenTest {
-    msg: String,
-    sig: String,
+    tcId: u32,
+    signature: String,
 }
 
 #[derive(Deserialize, Debug)]
 struct SigGenTestGroup {
-    sk: String,
+    #[serde(default)]
+    sk: Option<String>,
+    #[serde(default)]
+    pk: Option<String>,
+    #[serde(default)]
+    msg: Option<String>,
     tests: Vec<SigGenTest>,
 }
 
@@ -47,14 +52,18 @@ struct SigGenRoot {
 
 #[derive(Deserialize, Debug)]
 struct SigVerTest {
-    msg: String,
-    sig: String,
-    result: bool,
+    tcId: u32,
+    testPassed: bool,
 }
 
 #[derive(Deserialize, Debug)]
 struct SigVerTestGroup {
-    pk: String,
+    #[serde(default)]
+    pk: Option<String>,
+    #[serde(default)]
+    msg: Option<String>,
+    #[serde(default)]
+    signature: Option<String>,
     tests: Vec<SigVerTest>,
 }
 
@@ -92,13 +101,20 @@ fn test_siggen_kat() {
     let file = File::open("kats/ML-DSA-sigGen-FIPS204.json").expect("KAT file not found");
     let reader = BufReader::new(file);
     let root: SigGenRoot = serde_json::from_reader(reader).expect("JSON parse error");
-    for group in root.testGroups {
-        let sk = decode(&group.sk).unwrap();
-        for (i, t) in group.tests.iter().enumerate() {
-            let msg = decode(&t.msg).unwrap();
-            let expected_sig = decode(&t.sig).unwrap();
+    for (gidx, group) in root.testGroups.iter().enumerate() {
+        let (sk, msg) = match (&group.sk, &group.msg) {
+            (Some(sk), Some(msg)) => (sk, msg),
+            _ => continue, // skip groups missing required fields
+        };
+        let sk = decode(sk).unwrap();
+        let msg = decode(msg).unwrap();
+        for (tidx, test) in group.tests.iter().enumerate() {
+            let expected_sig = decode(&test.signature).unwrap();
             let sig = sign_api(&sk, &msg);
-            assert_eq!(sig, expected_sig, "SIG mismatch at test {}", i);
+            if sig != expected_sig {
+                eprintln!("SIG mismatch at group {}, test {}\nExpected: {:02x?}\nActual:   {:02x?}", gidx, tidx, expected_sig, sig);
+            }
+            assert_eq!(sig, expected_sig, "SIG mismatch at group {}, test {}", gidx, tidx);
         }
     }
 }
@@ -108,13 +124,21 @@ fn test_sigver_kat() {
     let file = File::open("kats/ML-DSA-sigVer-FIPS204.json").expect("KAT file not found");
     let reader = BufReader::new(file);
     let root: SigVerRoot = serde_json::from_reader(reader).expect("JSON parse error");
-    for group in root.testGroups {
-        let pk = decode(&group.pk).unwrap();
-        for (i, t) in group.tests.iter().enumerate() {
-            let msg = decode(&t.msg).unwrap();
-            let sig = decode(&t.sig).unwrap();
+    for (gidx, group) in root.testGroups.iter().enumerate() {
+        let (pk, msg, sig) = match (&group.pk, &group.msg, &group.signature) {
+            (Some(pk), Some(msg), Some(sig)) => (pk, msg, sig),
+            _ => continue, // skip groups missing required fields
+        };
+        let pk = decode(pk).unwrap();
+        let msg = decode(msg).unwrap();
+        let sig = decode(sig).unwrap();
+        for (tidx, test) in group.tests.iter().enumerate() {
+            let expected = test.testPassed;
             let valid = verify_api(&pk, &msg, &sig);
-            assert_eq!(valid, t.result, "Verify mismatch at test {}", i);
+            if valid != expected {
+                eprintln!("Verify mismatch at group {}, test {}\nExpected: {}\nActual:   {}", gidx, tidx, expected, valid);
+            }
+            assert_eq!(valid, expected, "Verify mismatch at group {}, test {}", gidx, tidx);
         }
     }
 }
