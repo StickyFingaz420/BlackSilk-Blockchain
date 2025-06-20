@@ -30,3 +30,20 @@ pub fn sign_api(sk: &[u8], msg: &[u8]) -> Vec<u8> {
 pub fn verify_api(pk: &[u8], msg: &[u8], sig: &[u8]) -> bool {
     verify(pk, msg, sig)
 }
+
+#[cfg(test)]
+mod kat_dump {
+    use super::*;
+    use hex;
+    use crate::mldsa44::params::{PUBLIC_KEY_BYTES, SECRET_KEY_BYTES};
+    #[test]
+    fn dump_pk_sk_allzero_seed() {
+        let seed = [0u8; 32];
+        let (pk, sk) = keygen_api(&seed);
+        println!("PK: {}", hex::encode(&pk));
+        println!("SK: {}", hex::encode(&sk));
+        // Optionally, assert length matches reference
+        assert_eq!(pk.len(), PUBLIC_KEY_BYTES);
+        assert_eq!(sk.len(), SECRET_KEY_BYTES);
+    }
+}
