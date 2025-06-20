@@ -1,0 +1,8 @@
+[package]
+name = "scripts"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "compare_logs"
+path = "src/bin/compare_logs.rs"

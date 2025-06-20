@@ -4,20 +4,25 @@
    - Clone https://github.com/pq-crystals/dilithium
    - cd dilithium/ref
    - make
-   - ./test_vectors2 > c_kat_vectors.txt
+   - ./test_vectors2 > ref-zero.log
 
-2. **Find the packed t1/t0 output for the first test vector in c_kat_vectors.txt.**
-   - Look for lines like: `t1 = ...` and `t0 = ...` (hex or byte arrays)
+2. **Modify the C test vector generator if needed:**
+   - Ensure it uses a fixed all-zero seed for key generation.
+   - Add print statements for all intermediates (rho, key, tr, t1, t0, PK, SK) in the same order/format as the Rust debug output if not already present.
 
 3. **In this Rust repo:**
-   - Run: `cargo test --test kat --features debug_kat -- --nocapture > rust_kat_debug.log 2>&1`
-   - Open `rust_kat_debug.log` and search for `DEBUG_KAT: packed_t1:` and `DEBUG_KAT: packed_t0:`
+   - Run: `cargo test --test kat --features debug_kat -- --nocapture > rust-zero.log 2>&1`
+   - Open `rust-zero.log` and search for `DEBUG_KAT:` lines for all intermediates.
 
-4. **Compare the Rust and C outputs byte-for-byte.**
-   - If they differ, check for endianness, bit order, or buffer offset issues in the Rust packing code.
+4. **Compare the Rust and C outputs:**
+   - Use the Rust comparison tool:
+     `cargo run -p scripts --bin compare_logs -- ref-zero.log rust-zero.log`
+   - The tool will report the first mismatch for debugging.
 
-5. **If they match, but PK/SK still mismatches, repeat for the full PK/SK output.**
+5. **Iterate and fix:**
+   - If outputs differ, check for endianness, bit order, or buffer offset issues in the Rust code.
+   - Fix and repeat until all lines match.
 
 ---
 
-This process will pinpoint where the Rust implementation diverges from the FIPS 204 reference.
+This process will pinpoint where the Rust implementation diverges from the FIPS 204 reference and ensure full compliance.

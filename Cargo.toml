@@ -11,6 +11,7 @@ members = [
     "smart-contracts/marketplace_contract",
     "smart-contracts/randomx",
     "pqcrypto_native",
+    "scripts", # Added scripts for Rust comparison tool
 ]
 exclude = []
 
