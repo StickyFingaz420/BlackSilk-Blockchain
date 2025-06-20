@@ -8,6 +8,7 @@ use sha3::{Shake256, digest::{Update, ExtendableOutput, XofReader}};
 
 /// FIPS 204-compliant signature generation
 pub fn sign(sk: &[u8], msg: &[u8]) -> Vec<u8> {
+    assert_eq!(sk.len(), SECRET_KEY_BYTES, "sign: Secret key length is not correct: got {}, expected {}. First 64 bytes: {:02x?}", sk.len(), SECRET_KEY_BYTES, &sk[..sk.len().min(64)]);
     // Unpack secret key fields
     let rho: [u8; SEED_BYTES] = sk[0..SEED_BYTES].try_into().unwrap();
     let key: [u8; SEED_BYTES] = sk[SEED_BYTES..2*SEED_BYTES].try_into().unwrap();

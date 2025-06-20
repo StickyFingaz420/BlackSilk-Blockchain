@@ -3,6 +3,7 @@
 use BlackSilk::mldsa44::keygen::keygen;
 use BlackSilk::mldsa44::sign::sign;
 use BlackSilk::mldsa44::verify::verify;
+use BlackSilk::mldsa44::params::SECRET_KEY_BYTES;
 use rand::Rng;
 
 fn random_message(len: usize) -> Vec<u8> {
@@ -18,6 +19,11 @@ fn test_sign_verify_random_messages() {
         rand::thread_rng().fill(&mut seed);
         let (pk, sk) = keygen(&seed);
         println!("msg_len: {}, pk_len: {}, sk_len: {}", msg_len, pk.len(), sk.len());
+        if sk.len() != SECRET_KEY_BYTES {
+            println!("DEBUG: seed = {:02x?}", seed);
+            println!("DEBUG: sk = {:02x?}", sk);
+        }
+        assert_eq!(sk.len(), SECRET_KEY_BYTES, "Secret key length is not correct: got {}, expected {}", sk.len(), SECRET_KEY_BYTES);
         let sig = sign(&msg, &sk);
         assert!(verify(&msg, &sig, &pk), "Signature failed for msg_len {}", msg_len);
         // Tamper with signature
