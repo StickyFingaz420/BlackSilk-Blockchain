@@ -12,6 +12,7 @@ members = [
     "smart-contracts/randomx",
     "pqcrypto_native",
     "scripts", # Added scripts for Rust comparison tool
+    "pqsignatures",
 ]
 exclude = []
 

@@ -1,13 +1,13 @@
 # pqsignatures
 
 Production-grade, secure, constant-time Rust post-quantum signature schemes:
-- Dilithium2
-- Falcon512
-- ML-DSA-44
+- Dilithium2 (pure Rust, via crystals-dilithium)
+- Falcon512 (scaffolded, native Rust pending)
+- ML-DSA-44 (scaffolded, native Rust pending)
 
 ## Features
 - Secure key handling (zeroize)
-- Hybrid signature support (classical + PQ)
+- Hybrid signature support (Ed25519 + Dilithium2)
 - Test vectors (KATs) and property-based fuzzing
 - Idiomatic error handling and documentation
 
@@ -18,6 +18,13 @@ let (pk, sk) = Dilithium2::keypair();
 let message = b"hello";
 let sig = Dilithium2::sign(&sk, message);
 assert!(Dilithium2::verify(&pk, message, &sig));
+```
+
+## Hybrid Example
+```rust
+use pqsignatures::{Ed25519Dilithium2Hybrid, HybridSigner};
+// ...generate keys...
+// let hybrid_sig = Ed25519Dilithium2Hybrid::sign_hybrid(&ed_sk, &pq_sk, message);
 ```
 
 ## Security Notes
@@ -32,8 +39,7 @@ assert!(Dilithium2::verify(&pk, message, &sig));
 - Run property-based tests with `cargo test --features fuzzing`.
 
 ## TODO
-- Integrate PQClean or native Rust implementations for each scheme.
-- Add classical signature support for hybrid mode.
+- Integrate pure Rust Falcon512 and ML-DSA-44 when available.
 - Add serialization/deserialization for keys and signatures.
 
 ## License

@@ -1,13 +1,13 @@
 // Placeholder for Dilithium2 implementation
 // In production, use a constant-time, audited implementation or FFI to PQClean
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 use crate::traits::PQSignatureScheme;
+use crystals_dilithium::{self as cd, Dilithium2Keypair, Dilithium2PublicKey, Dilithium2SecretKey, Dilithium2Signature};
 
-pub struct Dilithium2PublicKey([u8; 1312]);
-pub struct Dilithium2SecretKey([u8; 2528]);
-pub struct Dilithium2Signature([u8; 2420]);
+/// Secure wrapper for Dilithium2 secret key
+pub struct SecureDilithium2SecretKey(pub Zeroizing<Dilithium2SecretKey>);
 
-impl Zeroize for Dilithium2SecretKey {
+impl Zeroize for SecureDilithium2SecretKey {
     fn zeroize(&mut self) {
         self.0.zeroize();
     }
@@ -17,17 +17,17 @@ pub struct Dilithium2;
 
 impl PQSignatureScheme for Dilithium2 {
     type PublicKey = Dilithium2PublicKey;
-    type SecretKey = Dilithium2SecretKey;
+    type SecretKey = SecureDilithium2SecretKey;
     type Signature = Dilithium2Signature;
 
     fn keypair() -> (Self::PublicKey, Self::SecretKey) {
-        // TODO: Use PQClean or native Rust implementation
-        unimplemented!("Dilithium2 keypair generation not implemented");
+        let Dilithium2Keypair { public, secret } = cd::keypair();
+        (public, SecureDilithium2SecretKey(Zeroizing::new(secret)))
     }
-    fn sign(_sk: &Self::SecretKey, _message: &[u8]) -> Self::Signature {
-        unimplemented!("Dilithium2 sign not implemented");
+    fn sign(sk: &Self::SecretKey, message: &[u8]) -> Self::Signature {
+        cd::sign(&sk.0, message)
     }
-    fn verify(_pk: &Self::PublicKey, _message: &[u8], _sig: &Self::Signature) -> bool {
-        unimplemented!("Dilithium2 verify not implemented");
+    fn verify(pk: &Self::PublicKey, message: &[u8], sig: &Self::Signature) -> bool {
+        cd::verify(pk, message, sig)
     }
 }
