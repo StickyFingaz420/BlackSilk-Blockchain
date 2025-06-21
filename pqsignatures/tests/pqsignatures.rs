@@ -64,8 +64,11 @@ fn falcon512_negative_tests() {
     // Tamper with signature
     let mut sig_bytes = sig.to_bytes();
     sig_bytes[0] ^= 0xFF;
-    let sig_tampered = falcon_rust::falcon512::Signature::from_bytes(&sig_bytes).unwrap();
-    assert!(!Falcon512::verify(&pk, msg, &sig_tampered), "Tampered signature should not verify");
+    let sig_tampered = falcon_rust::falcon512::Signature::from_bytes(&sig_bytes);
+    match sig_tampered {
+        Ok(sig) => assert!(!Falcon512::verify(&pk, msg, &sig), "Tampered signature should not verify"),
+        Err(_) => (), // If deserialization fails, this is also correct
+    }
     // Wrong public key
     let (pk2, _) = Falcon512::keypair();
     let sig2 = Falcon512::sign(&sk, msg);
