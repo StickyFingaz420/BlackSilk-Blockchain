@@ -1,31 +1,21 @@
-use zeroize::{Zeroize};
 use crate::traits::PQSignatureScheme;
-use crystals_dilithium::dilithium2::{keypair, sign, verify, PublicKey, SecretKey, Signature};
-
-/// Secure wrapper for Dilithium2 secret key
-pub struct SecureDilithium2SecretKey(pub SecretKey);
-
-impl Zeroize for SecureDilithium2SecretKey {
-    fn zeroize(&mut self) {
-        self.0.zeroize();
-    }
-}
+use crystals_dilithium::dilithium2::{Keypair, PublicKey, SecretKey, Signature};
 
 pub struct Dilithium2;
 
 impl PQSignatureScheme for Dilithium2 {
     type PublicKey = PublicKey;
-    type SecretKey = SecureDilithium2SecretKey;
+    type SecretKey = SecretKey;
     type Signature = Signature;
 
     fn keypair() -> (Self::PublicKey, Self::SecretKey) {
-        let (public, secret) = keypair();
-        (public, SecureDilithium2SecretKey(secret))
+        let Keypair { public, secret } = Keypair::generate(None);
+        (public, secret)
     }
     fn sign(sk: &Self::SecretKey, message: &[u8]) -> Self::Signature {
-        sign(&sk.0, message)
+        sk.sign(message)
     }
     fn verify(pk: &Self::PublicKey, message: &[u8], sig: &Self::Signature) -> bool {
-        verify(pk, message, sig)
+        pk.verify(message, sig)
     }
 }

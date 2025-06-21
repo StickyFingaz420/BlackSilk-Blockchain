@@ -1,30 +1,23 @@
 // Falcon512: Pure Rust implementation using falcon-rust
-use zeroize::{Zeroize, Zeroizing};
 use crate::traits::PQSignatureScheme;
-use falcon_rust::falcon512::{keypair, sign, verify, PublicKey, SecretKey, Signature};
-
-/// Secure wrapper for Falcon512 secret key
-pub struct SecureFalcon512SecretKey(pub Zeroizing<SecretKey>);
-
-impl Zeroize for SecureFalcon512SecretKey {
-    fn zeroize(&mut self) {
-        self.0.zeroize();
-    }
-}
+use falcon_rust::falcon512::{keygen, sign, verify, PublicKey, SecretKey, Signature};
+use rand::RngCore;
 
 pub struct Falcon512;
 
 impl PQSignatureScheme for Falcon512 {
     type PublicKey = PublicKey;
-    type SecretKey = SecureFalcon512SecretKey;
+    type SecretKey = SecretKey;
     type Signature = Signature;
 
     fn keypair() -> (Self::PublicKey, Self::SecretKey) {
-        let (public, secret) = keypair();
-        (public, SecureFalcon512SecretKey(Zeroizing::new(secret)))
+        let mut seed = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut seed);
+        let (secret, public) = keygen(seed);
+        (public, secret)
     }
     fn sign(sk: &Self::SecretKey, message: &[u8]) -> Self::Signature {
-        sign(message, &sk.0)
+        sign(message, sk)
     }
     fn verify(pk: &Self::PublicKey, message: &[u8], sig: &Self::Signature) -> bool {
         verify(message, sig, pk)

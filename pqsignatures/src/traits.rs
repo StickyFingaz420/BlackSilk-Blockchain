@@ -1,9 +1,7 @@
-use zeroize::Zeroize;
-
 /// Trait for post-quantum signature schemes
 pub trait PQSignatureScheme {
     type PublicKey;
-    type SecretKey: Zeroize;
+    type SecretKey;
     type Signature;
 
     fn keypair() -> (Self::PublicKey, Self::SecretKey);
