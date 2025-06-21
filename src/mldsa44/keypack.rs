@@ -27,9 +27,11 @@ pub fn pack_t1(t: &[Poly; K]) -> Vec<u8> {
 /// Pack t0 (low bits of t) for K polynomials (bit-exact, 13 bits per coeff)
 pub fn pack_t0(t: &[Poly; K]) -> Vec<u8> {
     let mut out = Vec::with_capacity(K * 416);
-    for poly in t.iter() {
-        // For i in 0..256, pack 8 coeffs per 13 bytes (always covers all 256 coeffs)
+    for (poly_idx, poly) in t.iter().enumerate() {
+        let start_len = out.len();
         for i in (0..N).step_by(8) {
+            // Print group index for debug
+            println!("DEBUG: pack_t0 poly {} group starting at i={}", poly_idx, i);
             let mut tvals = [0u32; 8];
             for j in 0..8 {
                 tvals[j] = ((poly[i + j] + (1 << 12)) as u32) & 0x1FFF;
@@ -48,40 +50,67 @@ pub fn pack_t0(t: &[Poly; K]) -> Vec<u8> {
             out.push(((tvals[6] >> 10) | ((tvals[7] & 0x1F) << 3)) as u8);
             out.push(((tvals[7] >> 5) & 0xFF) as u8);
         }
+        let poly_len = out.len() - start_len;
+        println!("DEBUG: pack_t0 poly {} output len = {}", poly_idx, poly_len);
     }
+    println!("DEBUG: pack_t0 total output len = {}", out.len());
     out
 }
 
-/// Pack s1 (L polynomials, 3 bits per coeff, 8 coeffs per 3 bytes)
+/// Pack s1 (L polynomials, 2 bits per coeff, 4 coeffs per byte)
 pub fn pack_s1(s1: &[Poly; L]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(L * 96);
+    let mut out = Vec::with_capacity(L * 80);
     for poly in s1.iter() {
-        for i in (0..N).step_by(8) {
-            let mut t = [0u8; 8];
-            for j in 0..8 {
-                t[j] = (ETA as i32 - poly[i + j]) as u8;
-            }
-            out.push((t[0] >> 0) | (t[1] << 3) | (t[2] << 6));
-            out.push(((t[2] >> 2) | (t[3] << 1) | (t[4] << 4) | (t[5] << 7)) & 0xFF);
-            out.push(((t[5] >> 1) | (t[6] << 2) | (t[7] << 5)) & 0xFF);
+        let mut poly_bytes = Vec::with_capacity(80);
+        let mut i = 0;
+        while i + 3 < N {
+            let c0 = (poly[i + 0] as u8) & 0x03;
+            let c1 = (poly[i + 1] as u8) & 0x03;
+            let c2 = (poly[i + 2] as u8) & 0x03;
+            let c3 = (poly[i + 3] as u8) & 0x03;
+            poly_bytes.push(c0 | (c1 << 2) | (c2 << 4) | (c3 << 6));
+            i += 4;
         }
+        if i < N {
+            let mut last = 0u8;
+            for j in 0..(N - i) {
+                last |= ((poly[i + j] as u8) & 0x03) << (2 * j);
+            }
+            poly_bytes.push(last);
+        }
+        while poly_bytes.len() < 80 {
+            poly_bytes.push(0);
+        }
+        out.extend_from_slice(&poly_bytes);
     }
     out
 }
 
-/// Pack s2 (K polynomials, 3 bits per coeff, 8 coeffs per 3 bytes)
+/// Pack s2 (K polynomials, 2 bits per coeff, 4 coeffs per byte)
 pub fn pack_s2(s2: &[Poly; K]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(K * 96);
+    let mut out = Vec::with_capacity(K * 80);
     for poly in s2.iter() {
-        for i in (0..N).step_by(8) {
-            let mut t = [0u8; 8];
-            for j in 0..8 {
-                t[j] = (ETA as i32 - poly[i + j]) as u8;
-            }
-            out.push((t[0] >> 0) | (t[1] << 3) | (t[2] << 6));
-            out.push(((t[2] >> 2) | (t[3] << 1) | (t[4] << 4) | (t[5] << 7)) & 0xFF);
-            out.push(((t[5] >> 1) | (t[6] << 2) | (t[7] << 5)) & 0xFF);
+        let mut poly_bytes = Vec::with_capacity(80);
+        let mut i = 0;
+        while i + 3 < N {
+            let c0 = (poly[i + 0] as u8) & 0x03;
+            let c1 = (poly[i + 1] as u8) & 0x03;
+            let c2 = (poly[i + 2] as u8) & 0x03;
+            let c3 = (poly[i + 3] as u8) & 0x03;
+            poly_bytes.push(c0 | (c1 << 2) | (c2 << 4) | (c3 << 6));
+            i += 4;
         }
+        if i < N {
+            let mut last = 0u8;
+            for j in 0..(N - i) {
+                last |= ((poly[i + j] as u8) & 0x03) << (2 * j);
+            }
+            poly_bytes.push(last);
+        }
+        while poly_bytes.len() < 80 {
+            poly_bytes.push(0);
+        }
+        out.extend_from_slice(&poly_bytes);
     }
     out
 }
