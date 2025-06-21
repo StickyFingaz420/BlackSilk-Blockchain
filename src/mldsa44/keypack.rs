@@ -26,10 +26,10 @@ pub fn pack_t1(t: &[Poly; K]) -> Vec<u8> {
 
 /// Pack t0 (low bits of t) for K polynomials (bit-exact, 13 bits per coeff)
 pub fn pack_t0(t: &[Poly; K]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(K * 412);
+    let mut out = Vec::with_capacity(K * 416);
     for poly in t.iter() {
-        // For i in 0..248, pack 8 coeffs per 13 bytes
-        for i in (0..248).step_by(8) {
+        // For i in 0..256, pack 8 coeffs per 13 bytes (always covers all 256 coeffs)
+        for i in (0..N).step_by(8) {
             let mut tvals = [0u32; 8];
             for j in 0..8 {
                 tvals[j] = ((poly[i + j] + (1 << 12)) as u32) & 0x1FFF;
@@ -47,19 +47,6 @@ pub fn pack_t0(t: &[Poly; K]) -> Vec<u8> {
             out.push(((tvals[6] >> 2) & 0xFF) as u8);
             out.push(((tvals[6] >> 10) | ((tvals[7] & 0x1F) << 3)) as u8);
             out.push(((tvals[7] >> 5) & 0xFF) as u8);
-        }
-        // For i = 248, pack last 8 coeffs into 9 bytes
-        let i = 248;
-        let mut tvals = [0u32; 8];
-        for j in 0..8 {
-            tvals[j] = ((poly[i + j] + (1 << 12)) as u32) & 0x1FFF;
-        }
-        let mut acc: u128 = 0;
-        for j in 0..8 {
-            acc |= (tvals[j] as u128) << (13 * j);
-        }
-        for b in 0..9 {
-            out.push(((acc >> (8 * b)) & 0xFF) as u8);
         }
     }
     out

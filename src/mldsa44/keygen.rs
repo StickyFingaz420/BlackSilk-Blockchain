@@ -102,13 +102,20 @@ pub fn keygen(seed: &[u8]) -> (Vec<u8>, Vec<u8>) {
     }
 
     // 6. Pack secret key
+    let packed_s1 = pack_s1(&s1);
+    let packed_s2 = pack_s2(&s2);
+    let packed_t0 = pack_t0(&t0);
+    println!("DEBUG: packed_s1.len() = {}", packed_s1.len());
+    println!("DEBUG: packed_s2.len() = {}", packed_s2.len());
+    println!("DEBUG: packed_t0.len() = {}", packed_t0.len());
     let mut sk = Vec::with_capacity(32 + 32 + 48 + 384 + 384 + 1664);
     sk.extend_from_slice(&rho);
     sk.extend_from_slice(&key);
     sk.extend_from_slice(&tr);
-    sk.extend_from_slice(&pack_s1(&s1));
-    sk.extend_from_slice(&pack_s2(&s2));
-    sk.extend_from_slice(&pack_t0(&t0));
+    sk.extend_from_slice(&packed_s1);
+    sk.extend_from_slice(&packed_s2);
+    sk.extend_from_slice(&packed_t0);
+    println!("DEBUG: sk.len() = {}", sk.len());
 
     #[cfg(feature = "debug_kat")]
     {
