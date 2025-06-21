@@ -108,12 +108,13 @@ pub fn keygen(seed: &[u8]) -> (Vec<u8>, Vec<u8>) {
     println!("DEBUG: packed_s1.len() = {}", packed_s1.len());
     println!("DEBUG: packed_s2.len() = {}", packed_s2.len());
     println!("DEBUG: packed_t0.len() = {}", packed_t0.len());
-    let mut sk = Vec::with_capacity(32 + 32 + 48 + packed_s1.len() + packed_s2.len() + packed_t0.len());
+    let mut sk = Vec::with_capacity(32 + 32 + 48 + 384 + 384 + packed_t0.len());
     sk.extend_from_slice(&rho);
     sk.extend_from_slice(&key);
     sk.extend_from_slice(&tr);
-    sk.extend_from_slice(&packed_s1);
-    sk.extend_from_slice(&packed_s2);
+    // FIPS 204: Only the first 384 bytes of packed_s1 and packed_s2 (4 polys × 96 bytes each)
+    sk.extend_from_slice(&packed_s1[..384]);
+    sk.extend_from_slice(&packed_s2[..384]);
     sk.extend_from_slice(&packed_t0);
     println!("DEBUG: sk.len() = {}", sk.len());
 

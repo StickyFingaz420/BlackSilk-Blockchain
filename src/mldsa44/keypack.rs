@@ -57,60 +57,46 @@ pub fn pack_t0(t: &[Poly; K]) -> Vec<u8> {
     out
 }
 
-/// Pack s1 (L polynomials, 2 bits per coeff, 4 coeffs per byte)
+/// Pack s1 (L polynomials, 3 bits per coeff, 8 coeffs per 3 bytes)
 pub fn pack_s1(s1: &[Poly; L]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(L * 80);
+    let mut out = Vec::with_capacity(L * 96);
     for poly in s1.iter() {
-        let mut poly_bytes = Vec::with_capacity(80);
-        let mut i = 0;
-        while i + 3 < N {
-            let c0 = (poly[i + 0] as u8) & 0x03;
-            let c1 = (poly[i + 1] as u8) & 0x03;
-            let c2 = (poly[i + 2] as u8) & 0x03;
-            let c3 = (poly[i + 3] as u8) & 0x03;
-            poly_bytes.push(c0 | (c1 << 2) | (c2 << 4) | (c3 << 6));
-            i += 4;
-        }
-        if i < N {
-            let mut last = 0u8;
-            for j in 0..(N - i) {
-                last |= ((poly[i + j] as u8) & 0x03) << (2 * j);
+        for i in 0..32 {
+            let idx = i * 8;
+            let mut t = [0u32; 8];
+            for j in 0..8 {
+                t[j] = if idx + j < N {
+                    (ETA as i32 - poly[idx + j]) as u32
+                } else {
+                    0
+                };
             }
-            poly_bytes.push(last);
+            out.push((t[0] | (t[1] << 3) | (t[2] << 6)) as u8);
+            out.push(((t[2] >> 2) | (t[3] << 1) | (t[4] << 4) | (t[5] << 7)) as u8);
+            out.push(((t[5] >> 1) | (t[6] << 2) | (t[7] << 5)) as u8);
         }
-        while poly_bytes.len() < 80 {
-            poly_bytes.push(0);
-        }
-        out.extend_from_slice(&poly_bytes);
     }
     out
 }
 
-/// Pack s2 (K polynomials, 2 bits per coeff, 4 coeffs per byte)
+/// Pack s2 (K polynomials, 3 bits per coeff, 8 coeffs per 3 bytes)
 pub fn pack_s2(s2: &[Poly; K]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(K * 80);
+    let mut out = Vec::with_capacity(K * 96);
     for poly in s2.iter() {
-        let mut poly_bytes = Vec::with_capacity(80);
-        let mut i = 0;
-        while i + 3 < N {
-            let c0 = (poly[i + 0] as u8) & 0x03;
-            let c1 = (poly[i + 1] as u8) & 0x03;
-            let c2 = (poly[i + 2] as u8) & 0x03;
-            let c3 = (poly[i + 3] as u8) & 0x03;
-            poly_bytes.push(c0 | (c1 << 2) | (c2 << 4) | (c3 << 6));
-            i += 4;
-        }
-        if i < N {
-            let mut last = 0u8;
-            for j in 0..(N - i) {
-                last |= ((poly[i + j] as u8) & 0x03) << (2 * j);
+        for i in 0..32 {
+            let idx = i * 8;
+            let mut t = [0u32; 8];
+            for j in 0..8 {
+                t[j] = if idx + j < N {
+                    (ETA as i32 - poly[idx + j]) as u32
+                } else {
+                    0
+                };
             }
-            poly_bytes.push(last);
+            out.push((t[0] | (t[1] << 3) | (t[2] << 6)) as u8);
+            out.push(((t[2] >> 2) | (t[3] << 1) | (t[4] << 4) | (t[5] << 7)) as u8);
+            out.push(((t[5] >> 1) | (t[6] << 2) | (t[7] << 5)) as u8);
         }
-        while poly_bytes.len() < 80 {
-            poly_bytes.push(0);
-        }
-        out.extend_from_slice(&poly_bytes);
     }
     out
 }
