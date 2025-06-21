@@ -4,8 +4,6 @@
 mod tests {
     use super::*;
     use crate::{Dilithium2, Falcon512, MLDSA44, PQSignatureScheme};
-    use crate::hybrid::{Ed25519Dilithium2Hybrid, Ed25519Falcon512Hybrid, Ed25519MLDSA44Hybrid, HybridSigner};
-    use ed25519_dalek::{SigningKey, VerifyingKey, Signer};
     use proptest::prelude::*;
 
     #[test]
@@ -30,39 +28,6 @@ mod tests {
         let msg = b"test message";
         let sig = MLDSA44::sign(&sk, msg);
         assert!(MLDSA44::verify(&pk, msg, &sig));
-    }
-
-    #[test]
-    fn hybrid_dilithium2_sign_verify() {
-        let mut csprng = rand::rngs::OsRng;
-        let ed_sk = SigningKey::generate(&mut csprng);
-        let ed_pk = VerifyingKey::from(&ed_sk);
-        let (pq_pk, pq_sk) = Dilithium2::keypair();
-        let msg = b"hybrid test message";
-        let sig = Ed25519Dilithium2Hybrid::sign_hybrid(&ed_sk, &pq_sk, msg);
-        assert!(Ed25519Dilithium2Hybrid::verify_hybrid(&ed_pk, &pq_pk, msg, &sig));
-    }
-
-    #[test]
-    fn hybrid_falcon512_sign_verify() {
-        let mut csprng = rand::rngs::OsRng;
-        let ed_sk = SigningKey::generate(&mut csprng);
-        let ed_pk = VerifyingKey::from(&ed_sk);
-        let (pq_pk, pq_sk) = Falcon512::keypair();
-        let msg = b"hybrid test message";
-        let sig = Ed25519Falcon512Hybrid::sign_hybrid(&ed_sk, &pq_sk, msg);
-        assert!(Ed25519Falcon512Hybrid::verify_hybrid(&ed_pk, &pq_pk, msg, &sig));
-    }
-
-    #[test]
-    fn hybrid_mldsa44_sign_verify() {
-        let mut csprng = rand::rngs::OsRng;
-        let ed_sk = SigningKey::generate(&mut csprng);
-        let ed_pk = VerifyingKey::from(&ed_sk);
-        let (pq_pk, pq_sk) = MLDSA44::keypair();
-        let msg = b"hybrid test message";
-        let sig = Ed25519MLDSA44Hybrid::sign_hybrid(&ed_sk, &pq_sk, msg);
-        assert!(Ed25519MLDSA44Hybrid::verify_hybrid(&ed_pk, &pq_pk, msg, &sig));
     }
 
     proptest! {

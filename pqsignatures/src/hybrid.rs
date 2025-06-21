@@ -1,5 +1,4 @@
 use zeroize::Zeroize;
-use ed25519_dalek::{SigningKey, VerifyingKey, Signature as Ed25519Signature, Signer, Verifier};
 use crate::traits::HybridSigner;
 use crate::dilithium2::{Dilithium2, SecureDilithium2SecretKey, Dilithium2PublicKey, Dilithium2Signature};
 use crate::falcon512::{Falcon512, Falcon512SecretKey, Falcon512PublicKey, Falcon512Signature};
