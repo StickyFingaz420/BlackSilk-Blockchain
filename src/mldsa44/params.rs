@@ -14,7 +14,7 @@ pub const SEED_BYTES: usize = 32;
 /// Public key size in bytes
 pub const PUBLIC_KEY_BYTES: usize = 1312;
 /// Secret key size in bytes
-pub const SECRET_KEY_BYTES: usize = 2528;
+pub const SECRET_KEY_BYTES: usize = 2544;
 /// Signature size in bytes
 pub const SIGNATURE_BYTES: usize = 2420;
 /// Challenge hash output size
