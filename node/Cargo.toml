@@ -46,3 +46,4 @@ core_affinity = "0.8"
 zeroize = "1.6"
 memmap2 = "0.7"
 pqcrypto_native = { path = "../pqcrypto_native" }
+pqsignatures = { path = "../pqsignatures" }

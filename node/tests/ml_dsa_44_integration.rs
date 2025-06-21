@@ -1,5 +1,5 @@
 // Deep integration tests for ML-DSA-44 Rust wrapper
-use ml_dsa_44::{Keypair, sign, sign_with_context, verify, verify_with_context, constants, PublicKey, SecretKey, Signature, MlDsaError};
+// use ml_dsa_44::{Keypair, sign, sign_with_context, verify, verify_with_context, constants, PublicKey, SecretKey, Signature, MlDsaError};
 
 #[test]
 fn test_random_and_deterministic_keygen() {

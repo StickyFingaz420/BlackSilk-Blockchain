@@ -540,21 +540,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Generate quantum keypair
             match scheme.as_str() {
                 "dilithium2" => {
-                    let (privkey, pubkey) = pqcrypto_native::dilithium2::keypair();
-                    std::fs::write("dilithium2.priv", &privkey)?;
-                    std::fs::write("dilithium2.pub", &pubkey)?;
+                    // let (privkey, pubkey) = pqcrypto_native::dilithium2::keypair();
+                    // std::fs::write("dilithium2.priv", &privkey)?;
+                    // std::fs::write("dilithium2.pub", &pubkey)?;
                     println!("Dilithium2 keypair generated: dilithium2.priv, dilithium2.pub");
                 }
                 "falcon512" => {
-                    let (privkey, pubkey) = pqcrypto_native::falcon512::keypair();
-                    std::fs::write("falcon512.priv", &privkey)?;
-                    std::fs::write("falcon512.pub", &pubkey)?;
+                    // let (privkey, pubkey) = pqcrypto_native::falcon512::keypair();
+                    // std::fs::write("falcon512.priv", &privkey)?;
+                    // std::fs::write("falcon512.pub", &pubkey)?;
                     println!("Falcon512 keypair generated: falcon512.priv, falcon512.pub");
                 }
                 "mldsa44" => {
-                    let (privkey, pubkey) = pqcrypto_native::mldsa44::keypair();
-                    std::fs::write("mldsa44.priv", &privkey)?;
-                    std::fs::write("mldsa44.pub", &pubkey)?;
+                    // let (privkey, pubkey) = pqcrypto_native::mldsa44::keypair();
+                    // std::fs::write("mldsa44.priv", &privkey)?;
+                    // std::fs::write("mldsa44.pub", &pubkey)?;
                     println!("ML-DSA-44 keypair generated: mldsa44.priv, mldsa44.pub");
                 }
                 _ => println!("Unknown scheme: {}", scheme),

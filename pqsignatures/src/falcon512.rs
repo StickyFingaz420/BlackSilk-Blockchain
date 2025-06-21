@@ -24,6 +24,15 @@ impl PQSignatureScheme for Falcon512 {
     }
 }
 
+impl Falcon512 {
+    pub fn public_key_from_bytes(bytes: &[u8]) -> Result<<Self as PQSignatureScheme>::PublicKey, &'static str> {
+        falcon_rust::falcon512::PublicKey::from_bytes(bytes).map_err(|_| "Invalid Falcon512 public key")
+    }
+    pub fn signature_from_bytes(bytes: &[u8]) -> Result<<Self as PQSignatureScheme>::Signature, &'static str> {
+        falcon_rust::falcon512::Signature::from_bytes(bytes).map_err(|_| "Invalid Falcon512 signature")
+    }
+}
+
 // === Porting Plan ===
 // 1. Port Falcon512 parameter constants and polynomial math (FFT, NTT, etc.)
 // 2. Port keygen, sign, and verify routines from PQClean C to idiomatic Rust
