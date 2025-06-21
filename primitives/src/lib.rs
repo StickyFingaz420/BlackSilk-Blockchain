@@ -16,29 +16,85 @@ pub mod types {
     pub type BlockHeight = u64;
     pub type Hash = [u8; 32];
 
+    /// Enum for supported public key types (classical and quantum)
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub enum PublicKey {
+        Ed25519([u8; 32]),
+        Dilithium2(Vec<u8>),
+        Falcon512(Vec<u8>),
+        MLDSA44(Vec<u8>),
+        // Hybrid (classical + quantum)
+        Hybrid {
+            classical: [u8; 32],
+            quantum: Vec<u8>,
+            scheme: QuantumScheme,
+        },
+    }
+
+    /// Enum for quantum signature schemes
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub enum QuantumScheme {
+        Dilithium2,
+        Falcon512,
+        MLDSA44,
+    }
+
     /// Stealth address structure for privacy-preserving transactions.
     #[derive(Clone, Debug, Serialize, Deserialize)]
     pub struct StealthAddress {
-        pub public_view: [u8; 32],
-        pub public_spend: [u8; 32],
+        pub view_key: PublicKey,
+        pub spend_key: PublicKey,
     }
 
     impl StealthAddress {
-        /// Generate a new stealth address using secure randomness.
+        /// Generate a new stealth address (classical, quantum, or hybrid)
         ///
         /// # Returns
         /// Tuple of (private_view, private_spend, StealthAddress)
-        pub fn generate() -> (Scalar, Scalar, Self) {
-            let seed = [42u8; 32];
-            let priv_view = Scalar::from_hash(Sha512::new().chain(seed));
-            let priv_spend = Scalar::from_hash(Sha512::new().chain(seed));
-            let pub_view = (ED25519_BASEPOINT_POINT * priv_view).compress().to_bytes();
-            let pub_spend = (ED25519_BASEPOINT_POINT * priv_spend).compress().to_bytes();
-            let stealth = StealthAddress {
-                public_view: pub_view,
-                public_spend: pub_spend,
-            };
-            (priv_view, priv_spend, stealth)
+        pub fn generate(scheme: Option<QuantumScheme>) -> (Vec<u8>, Vec<u8>, Self) {
+            match scheme {
+                Some(QuantumScheme::Dilithium2) => {
+                    // Generate Dilithium2 keys (placeholder)
+                    let (priv_view, pub_view) = pqcrypto_native::dilithium2::keypair();
+                    let (priv_spend, pub_spend) = pqcrypto_native::dilithium2::keypair();
+                    let stealth = StealthAddress {
+                        view_key: PublicKey::Dilithium2(pub_view),
+                        spend_key: PublicKey::Dilithium2(pub_spend),
+                    };
+                    (priv_view, priv_spend, stealth)
+                }
+                Some(QuantumScheme::Falcon512) => {
+                    let (priv_view, pub_view) = pqcrypto_native::falcon512::keypair();
+                    let (priv_spend, pub_spend) = pqcrypto_native::falcon512::keypair();
+                    let stealth = StealthAddress {
+                        view_key: PublicKey::Falcon512(pub_view),
+                        spend_key: PublicKey::Falcon512(pub_spend),
+                    };
+                    (priv_view, priv_spend, stealth)
+                }
+                Some(QuantumScheme::MLDSA44) => {
+                    let (priv_view, pub_view) = pqcrypto_native::mldsa44::keypair();
+                    let (priv_spend, pub_spend) = pqcrypto_native::mldsa44::keypair();
+                    let stealth = StealthAddress {
+                        view_key: PublicKey::MLDSA44(pub_view),
+                        spend_key: PublicKey::MLDSA44(pub_spend),
+                    };
+                    (priv_view, priv_spend, stealth)
+                }
+                None => {
+                    // Classical Ed25519
+                    let seed = [42u8; 32];
+                    let priv_view = Scalar::from_hash(Sha512::new().chain(seed));
+                    let priv_spend = Scalar::from_hash(Sha512::new().chain(seed));
+                    let pub_view = (ED25519_BASEPOINT_POINT * priv_view).compress().to_bytes();
+                    let pub_spend = (ED25519_BASEPOINT_POINT * priv_spend).compress().to_bytes();
+                    let stealth = StealthAddress {
+                        view_key: PublicKey::Ed25519(pub_view),
+                        spend_key: PublicKey::Ed25519(pub_spend),
+                    };
+                    (priv_view.to_bytes().to_vec(), priv_spend.to_bytes().to_vec(), stealth)
+                }
+            }
         }
     }
 
@@ -77,14 +133,14 @@ pub struct TransactionOutput {
 pub enum ContractTx {
     Deploy {
         wasm_code: Vec<u8>,
-        creator: types::Address,
+        creator: Address, // updated
         metadata: Option<String>,
     },
     Invoke {
-        contract_address: types::Address,
+        contract_address: Address, // updated
         function: String,
         params: Vec<u8>, // serialized params (e.g., JSON or bincode)
-        caller: types::Address,
+        caller: Address, // updated
         metadata: Option<String>,
     },
 }
@@ -104,7 +160,8 @@ pub struct Transaction {
     pub fee: types::BlkAmount,
     pub extra: Vec<u8>, // for encrypted memo, etc.
     pub metadata: Option<String>, // for marketplace data
-    pub signature: String, // transaction signature/hash
+    pub signature: String, // transaction signature/hash (legacy/classical)
+    pub quantum_signature: Option<QuantumSignature>, // quantum signature (optional, for hybrid)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -127,7 +184,7 @@ pub struct BlockHeader {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Coinbase {
     pub reward: types::BlkAmount,
-    pub to: types::Address,
+    pub to: Address, // updated
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -144,9 +201,17 @@ impl Block {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct QuantumSignature {
+    pub ring: Vec<types::Hash>, // decoy public keys
+    pub signature: Vec<u8>,    // placeholder
+    pub quantum: Option<QuantumSignature>, // quantum signature (optional, for hybrid)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RingSignature {
     pub ring: Vec<types::Hash>, // decoy public keys
     pub signature: Vec<u8>,    // placeholder
+    pub quantum: Option<QuantumSignature>, // quantum signature (optional, for hybrid)
 }
 
 pub mod zkp; // zk-SNARKs and advanced ZKP integration

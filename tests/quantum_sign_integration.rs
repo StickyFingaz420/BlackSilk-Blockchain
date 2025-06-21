@@ -58,3 +58,63 @@ fn test_sign_verify_kat_vectors() {
         }
     }
 }
+
+#[test]
+fn test_quantum_address_encoding_decoding() {
+    use primitives::{StealthAddress, PublicKey, QuantumScheme, Address};
+    // Generate Dilithium2 address
+    let (priv_view, pub_view) = pqcrypto_native::dilithium2::keypair();
+    let (priv_spend, pub_spend) = pqcrypto_native::dilithium2::keypair();
+    let stealth = StealthAddress {
+        view_key: PublicKey::Dilithium2(pub_view.clone()),
+        spend_key: PublicKey::Dilithium2(pub_spend.clone()),
+    };
+    let addr = Address { stealth: stealth.clone(), scheme: Some(QuantumScheme::Dilithium2) };
+    let encoded = addr.encode();
+    let decoded = Address::decode(&encoded).expect("decode");
+    // Check roundtrip
+    match (&decoded.stealth.view_key, &stealth.view_key) {
+        (PublicKey::Dilithium2(a), PublicKey::Dilithium2(b)) => assert_eq!(a, b),
+        _ => panic!("View key type mismatch"),
+    }
+    match (&decoded.stealth.spend_key, &stealth.spend_key) {
+        (PublicKey::Dilithium2(a), PublicKey::Dilithium2(b)) => assert_eq!(a, b),
+        _ => panic!("Spend key type mismatch"),
+    }
+}
+
+#[test]
+fn test_hybrid_address_support() {
+    use primitives::{StealthAddress, PublicKey, QuantumScheme, Address};
+    // Generate hybrid address (Ed25519 + Dilithium2)
+    let (priv_view, pub_view) = pqcrypto_native::dilithium2::keypair();
+    let classical_view = [1u8; 32];
+    let hybrid_view = PublicKey::Hybrid {
+        classical: classical_view,
+        quantum: pub_view.clone(),
+        scheme: QuantumScheme::Dilithium2,
+    };
+    let (priv_spend, pub_spend) = pqcrypto_native::dilithium2::keypair();
+    let classical_spend = [2u8; 32];
+    let hybrid_spend = PublicKey::Hybrid {
+        classical: classical_spend,
+        quantum: pub_spend.clone(),
+        scheme: QuantumScheme::Dilithium2,
+    };
+    let stealth = StealthAddress {
+        view_key: hybrid_view,
+        spend_key: hybrid_spend,
+    };
+    let addr = Address { stealth, scheme: Some(QuantumScheme::Dilithium2) };
+    let encoded = addr.encode();
+    let decoded = Address::decode(&encoded).expect("decode");
+    // Check roundtrip
+    match &decoded.stealth.view_key {
+        PublicKey::Hybrid { classical, quantum, scheme } => {
+            assert_eq!(classical, &classical_view);
+            assert_eq!(quantum, &pub_view);
+            assert_eq!(scheme, &QuantumScheme::Dilithium2);
+        },
+        _ => panic!("View key type mismatch"),
+    }
+}

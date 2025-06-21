@@ -325,6 +325,39 @@ pub enum Commands {
         #[arg(long, value_name = "PARAMS")]
         params: String,
     },
+    /// Quantum-safe key generation
+    QuantumKeygen {
+        /// Quantum scheme: dilithium2, falcon512, mldsa44
+        #[arg(long)]
+        scheme: String,
+    },
+    /// Quantum-safe signing
+    QuantumSign {
+        /// Quantum scheme: dilithium2, falcon512, mldsa44
+        #[arg(long)]
+        scheme: String,
+        /// Private key file
+        #[arg(long)]
+        privkey: String,
+        /// Message file
+        #[arg(long)]
+        message: String,
+    },
+    /// Quantum-safe signature verification
+    QuantumVerify {
+        /// Quantum scheme: dilithium2, falcon512, mldsa44
+        #[arg(long)]
+        scheme: String,
+        /// Public key file
+        #[arg(long)]
+        pubkey: String,
+        /// Message file
+        #[arg(long)]
+        message: String,
+        /// Signature file
+        #[arg(long)]
+        signature: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -501,6 +534,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let wasmer_params: Vec<wasmer::Value> = params_vec.iter().filter_map(|v| wasm_vm::json_to_wasmer_value(v)).collect();
             let result = invoke_contract_with_gas(address, function, &wasmer_params, 10_000_000)?;
             println!("Contract call result: {:?}", result);
+            return Ok(());
+        }
+        Some(Commands::QuantumKeygen { scheme }) => {
+            // Generate quantum keypair
+            match scheme.as_str() {
+                "dilithium2" => {
+                    let (privkey, pubkey) = pqcrypto_native::dilithium2::keypair();
+                    std::fs::write("dilithium2.priv", &privkey)?;
+                    std::fs::write("dilithium2.pub", &pubkey)?;
+                    println!("Dilithium2 keypair generated: dilithium2.priv, dilithium2.pub");
+                }
+                "falcon512" => {
+                    let (privkey, pubkey) = pqcrypto_native::falcon512::keypair();
+                    std::fs::write("falcon512.priv", &privkey)?;
+                    std::fs::write("falcon512.pub", &pubkey)?;
+                    println!("Falcon512 keypair generated: falcon512.priv, falcon512.pub");
+                }
+                "mldsa44" => {
+                    let (privkey, pubkey) = pqcrypto_native::mldsa44::keypair();
+                    std::fs::write("mldsa44.priv", &privkey)?;
+                    std::fs::write("mldsa44.pub", &pubkey)?;
+                    println!("ML-DSA-44 keypair generated: mldsa44.priv, mldsa44.pub");
+                }
+                _ => println!("Unknown scheme: {}", scheme),
+            }
+            return Ok(());
+        }
+        Some(Commands::QuantumSign { scheme, privkey, message }) => {
+            let msg = std::fs::read(message)?;
+            let privkey_bytes = std::fs::read(privkey)?;
+            let sig = match scheme.as_str() {
+                "dilithium2" => pqcrypto_native::dilithium2::sign(&msg, &privkey_bytes),
+                "falcon512" => pqcrypto_native::falcon512::sign(&msg, &privkey_bytes),
+                "mldsa44" => pqcrypto_native::mldsa44::sign(&msg, &privkey_bytes),
+                _ => { println!("Unknown scheme: {}", scheme); Vec::new() },
+            };
+            std::fs::write("signature.bin", &sig)?;
+            println!("Signature written to signature.bin");
+            return Ok(());
+        }
+        Some(Commands::QuantumVerify { scheme, pubkey, message, signature }) => {
+            let msg = std::fs::read(message)?;
+            let pubkey_bytes = std::fs::read(pubkey)?;
+            let sig = std::fs::read(signature)?;
+            let valid = match scheme.as_str() {
+                "dilithium2" => pqcrypto_native::dilithium2::verify(&msg, &sig, &pubkey_bytes),
+                "falcon512" => pqcrypto_native::falcon512::verify(&msg, &sig, &pubkey_bytes),
+                "mldsa44" => pqcrypto_native::mldsa44::verify(&msg, &sig, &pubkey_bytes),
+                _ => { println!("Unknown scheme: {}", scheme); false },
+            };
+            println!("Signature valid: {}", valid);
             return Ok(());
         }
         None => {

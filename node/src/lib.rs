@@ -198,6 +198,8 @@ pub struct NetworkPorts {
 }
 
 use primitives::{Block, BlockHeader, Coinbase};
+use primitives::{QuantumSignature};
+use pqcrypto_native;
 use std::collections::{VecDeque, HashSet};
 use std::io::{Write, BufRead};
 use std::net::{TcpListener, TcpStream, SocketAddr};
@@ -511,6 +513,13 @@ pub fn validate_transaction(tx: &primitives::Transaction) -> bool {
             println!("[Validation] Double-spend detected (key image reused)");
             return false;
         }
+        // Quantum signature validation (if present)
+        if let Some(qsig) = &input.ring_sig.quantum {
+            if !validate_quantum_signature(qsig, &tx.extra) {
+                println!("[Validation] Quantum ring signature failed");
+                return false;
+            }
+        }
     }
     for output in &tx.outputs {
         // Enforce confidential amounts: every output must have a valid range proof (Bulletproof)
@@ -523,22 +532,33 @@ pub fn validate_transaction(tx: &primitives::Transaction) -> bool {
             return false;
         }
     }
+    // Quantum transaction signature validation (if present)
+    if let Some(qsig) = &tx.quantum_signature {
+        if !validate_quantum_signature(qsig, &tx.extra) {
+            println!("[Validation] Quantum transaction signature failed");
+            return false;
+        }
+    }
     // Smart contract transaction validation
     match &tx.kind {
         TransactionKind::Contract(contract_tx) => {
             match contract_tx {
-                ContractTx::Deploy { wasm_code,  .. } => {
+                ContractTx::Deploy { wasm_code, creator, .. } => {
                     // Basic WASM validation: can we parse the module?
                     if wasmer::Module::validate(&wasmer::Store::default(), wasm_code).is_err() {
                         println!("[Validation] Invalid WASM contract code");
                         return false;
                     }
-                    // Optionally: check creator address format, etc.
+                    // Check creator address validity
+                    if !validate_address(creator) {
+                        println!("[Validation] Invalid creator address");
+                        return false;
+                    }
                 }
-                ContractTx::Invoke { contract_address, function,  .. } => {
+                ContractTx::Invoke { contract_address, function, .. } => {
                     // Optionally: check contract exists, function name format, etc.
                     // Params should be valid serialized data (JSON/bincode)
-                    if contract_address.is_empty() || function.is_empty() {
+                    if !validate_address(contract_address) || function.is_empty() {
                         println!("[Validation] Invalid contract call parameters");
                         return false;
                     }
@@ -548,6 +568,20 @@ pub fn validate_transaction(tx: &primitives::Transaction) -> bool {
         _ => {}
     }
     true
+}
+
+fn validate_quantum_signature(qsig: &QuantumSignature, msg: &[u8]) -> bool {
+    match qsig {
+        QuantumSignature::Dilithium2 { pk, sig } => {
+            pqcrypto_native::dilithium2::verify(msg, sig, pk).is_ok()
+        }
+        QuantumSignature::Falcon512 { pk, sig } => {
+            pqcrypto_native::falcon512::verify(msg, sig, pk).is_ok()
+        }
+        QuantumSignature::MLDSA44 { pk, sig } => {
+            pqcrypto_native::mldsa44::verify(msg, sig, pk).is_ok()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1116,4 +1150,21 @@ pub fn validate_range_proof(_proof: &[u8], _commitment: &[u8]) -> bool {
 pub fn handle_client_with_privacy(_stream: std::net::TcpStream, _privacy_manager: std::sync::Arc<crate::network::privacy::PrivacyManager>) -> std::io::Result<()> {
     // TODO: Implement privacy-aware client handling
     Ok(())
+}
+
+/// Validate an Address (classical or quantum)
+fn validate_address(addr: &primitives::Address) -> bool {
+    // Example: check encoding, scheme, and key lengths
+    match &addr.stealth {
+        StealthAddress { view_key, spend_key } => {
+            match (view_key, spend_key) {
+                (PublicKey::Ed25519(v), PublicKey::Ed25519(s)) => v.len() == 32 && s.len() == 32,
+                (PublicKey::Dilithium2(v), PublicKey::Dilithium2(s)) => v.len() > 32 && s.len() > 32,
+                (PublicKey::Falcon512(v), PublicKey::Falcon512(s)) => v.len() > 32 && s.len() > 32,
+                (PublicKey::MLDSA44(v), PublicKey::MLDSA44(s)) => v.len() > 32 && s.len() > 32,
+                (PublicKey::Hybrid { .. }, PublicKey::Hybrid { .. }) => true, // Add more checks if needed
+                _ => false,
+            }
+        }
+    }
 }

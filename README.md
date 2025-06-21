@@ -258,6 +258,9 @@ blacksilk-miner --node-url http://localhost:9334 --threads 4
 - Privacy primitives: `privacy_ring_sign`, `privacy_stealth_address`, `privacy_encrypt`, `privacy_decrypt`
 
 ### Cryptography & Privacy APIs
+- Quantum signature: `quantum_keygen`, `quantum_sign`, `quantum_verify` (Dilithium2, Falcon512, ML-DSA-44)
+- Quantum address: `generate_quantum_address`, `encode_address`, `decode_address`
+- Hybrid signature/address migration supported
 - Ring signature: `generate_ring_signature`, `verify_ring_signature`
 - Stealth address: `generate_stealth_address`
 - zk-SNARKs: `generate_zk_proof`, `verify_zk_proof`, `batch_verify_zk_proofs`
@@ -499,5 +502,55 @@ docker-compose up -d
   - _Faucet not working?_ Check faucet logs and rate limits.
   - _Marketplace issues?_ Ensure all services are up and check logs for errors.
 - For more help, open an issue on [GitHub](https://github.com/StickyFingaz420/BlackSilk-Blockchain) or ask in the support channel.
+
+---
+
+# BlackSilk Quantum: Technical Documentation
+
+---
+
+## Quantum Features Overview
+
+BlackSilk Quantum introduces advanced quantum-resistant features:
+- **Quantum Addresses:** Addresses can be generated using Dilithium2, Falcon512, or ML-DSA-44 quantum public keys, or as hybrid (Ed25519 + quantum) addresses. Encoding/decoding is handled automatically.
+- **Quantum Signatures:** Transactions, blocks, and contracts support quantum signatures. Both classical and quantum signatures can be present for hybrid migration.
+- **CLI Quantum Commands:**
+  - `blacksilk-node quantum-keygen --scheme <dilithium2|falcon512|mldsa44>`: Generate a quantum keypair
+  - `blacksilk-node quantum-sign --scheme <...> --privkey <file> --message <file>`: Sign a message
+  - `blacksilk-node quantum-verify --scheme <...> --pubkey <file> --message <file> --signature <file>`: Verify a quantum signature
+- **Contract Support:** Smart contract deployment and invocation accept quantum and hybrid addresses.
+- **Testing:** Quantum address, signature, and contract logic are covered by integration tests.
+
+## Quantum Integration Details
+
+### Node CLI Quantum Commands
+- `blacksilk-node quantum-keygen --scheme <dilithium2|falcon512|mldsa44>` — Generate a new quantum keypair
+- `blacksilk-node quantum-sign --scheme <...> --privkey <file> --message <file>` — Sign a message with a quantum private key
+- `blacksilk-node quantum-verify --scheme <...> --pubkey <file> --message <file> --signature <file>` — Verify a quantum signature
+
+### Wallet CLI Quantum Commands
+- `wallet --generate-quantum-address --scheme <dilithium2|falcon512|mldsa44>` — Generate a new quantum address
+- `wallet --send --to <quantum_address> --amount <amt>` — Send transaction to a quantum address
+- `wallet --import-quantum-mnemonic <mnemonic>` — Import quantum wallet
+
+### Smart Contract Quantum Support
+- Smart contracts can interact with quantum and hybrid addresses.
+- Quantum signatures are supported for contract deployment and invocation.
+
+### Testing
+- Comprehensive tests for quantum address generation, signing, verification, and smart contract interaction.
+- Ensure compatibility and security of quantum features.
+
+---
+
+## Quantum Roadmap
+- **Q1 2024:** Audit and finalize quantum address and signature implementation.
+- **Q2 2024:** Expand quantum features to include advanced ZKP integration and performance optimizations.
+- **Q3 2024:** Community testing and feedback phase for quantum features.
+- **Q4 2024:** Official release of quantum features, including mobile and light client support.
+
+---
+
+> <p align="center" style="color:#00bcd4; font-size:1.2em;">✨ <b>Quantum features are in active development and testing. For the latest status, see the <a href="#quantum-roadmap">Quantum Roadmap</a> section above.</b> ✨</p>
 
 ---
