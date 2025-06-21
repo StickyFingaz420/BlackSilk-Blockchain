@@ -12,7 +12,7 @@ pub const L: usize = 4;
 /// Seed bytes for keygen
 pub const SEED_BYTES: usize = 32;
 /// Public key size in bytes
-pub const PUBLIC_KEY_BYTES: usize = 1312;
+pub const PUBLIC_KEY_BYTES: usize = 928;
 /// Secret key size in bytes
 pub const SECRET_KEY_BYTES: usize = 2544;
 /// Signature size in bytes

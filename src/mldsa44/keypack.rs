@@ -4,21 +4,23 @@
 use crate::mldsa44::params::*;
 use crate::mldsa44::poly::Poly;
 
-/// Pack t1 (high bits of t) for K polynomials (bit-exact, 10 bits per coeff)
+/// Pack t1 (high bits of t) for K polynomials (Dilithium2: 224 bytes per poly, 7 bits per coeff, 256 coeffs)
 pub fn pack_t1(t: &[Poly; K]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(K * 320);
+    let mut out = Vec::with_capacity(K * 224);
     for poly in t.iter() {
-        // C reference packs coefficients in increasing order (0..N)
-        for i in (0..N).step_by(4) {
-            let c0 = (poly[i + 0] as u32) & 0x3FF;
-            let c1 = (poly[i + 1] as u32) & 0x3FF;
-            let c2 = (poly[i + 2] as u32) & 0x3FF;
-            let c3 = (poly[i + 3] as u32) & 0x3FF;
-            out.push((c0 >> 0) as u8);
-            out.push(((c0 >> 8) | (c1 << 2)) as u8);
-            out.push(((c1 >> 6) | (c2 << 4)) as u8);
-            out.push(((c2 >> 4) | (c3 << 6)) as u8);
-            out.push((c3 >> 2) as u8);
+        let mut acc = 0u16;
+        let mut acc_bits = 0;
+        for &coeff in poly.iter().take(N) {
+            acc |= ((coeff as u16) & 0x7F) << acc_bits;
+            acc_bits += 7;
+            while acc_bits >= 8 {
+                out.push((acc & 0xFF) as u8);
+                acc >>= 8;
+                acc_bits -= 8;
+            }
+        }
+        if acc_bits > 0 {
+            out.push(acc as u8);
         }
     }
     out

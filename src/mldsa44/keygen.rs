@@ -75,9 +75,15 @@ pub fn keygen(seed: &[u8]) -> (Vec<u8>, Vec<u8>) {
         println!("DEBUG_KAT: packed_t0: {}", hex::encode(&packed_t0));
     }
     // 5. Compute tr = H(pk) (optional for KAT)
-    let mut pk = Vec::with_capacity(32 + 1280);
+    // FIPS 204: pk = rho (32 bytes) || t1 (896 bytes)
+    let mut pk = Vec::with_capacity(32 + 896);
     pk.extend_from_slice(&rho);
-    pk.extend_from_slice(&pack_t1(&t1));
+    let packed_t1 = pack_t1(&t1);
+    assert_eq!(packed_t1.len(), 896, "pack_t1 output must be 896 bytes for Dilithium2");
+    pk.extend_from_slice(&packed_t1);
+    println!("DEBUG: pk.len() = {}", pk.len());
+    println!("DEBUG: pk[0..32] (rho): {}", hex::encode(&pk[0..32]));
+    println!("DEBUG: pk[32..64] (t1 start): {}", hex::encode(&pk[32..64]));
 
     #[cfg(feature = "debug_kat")]
     {
