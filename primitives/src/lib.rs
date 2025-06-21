@@ -203,14 +203,13 @@ impl Block {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct QuantumSignature {
     pub ring: Vec<types::Hash>, // decoy public keys
-    pub signature: Vec<u8>,    // placeholder
-    pub quantum: Option<QuantumSignature>, // quantum signature (optional, for hybrid)
+    pub signature: Vec<u8>,    // quantum signature bytes
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RingSignature {
     pub ring: Vec<types::Hash>, // decoy public keys
-    pub signature: Vec<u8>,    // placeholder
+    pub signature: Vec<u8>,    // classical signature bytes
     pub quantum: Option<QuantumSignature>, // quantum signature (optional, for hybrid)
 }
 
@@ -218,7 +217,7 @@ pub mod zkp; // zk-SNARKs and advanced ZKP integration
 pub mod escrow; // Escrow contract and dispute voting
 pub mod ring_sig;
 
-pub use crate::types::StealthAddress;
+pub use crate::types::{StealthAddress, Address};
 
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
