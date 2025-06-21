@@ -1,0 +1,24 @@
+[package]
+name = "pqsignatures"
+version = "0.1.0"
+edition = "2021"
+description = "Production-grade, secure, constant-time Rust post-quantum signature schemes (Dilithium2, Falcon512, ML-DSA-44) with hybrid support."
+
+[dependencies]
+zeroize = "1.7"
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+# For property-based testing
+proptest = { version = "1.4", optional = true }
+
+[dev-dependencies]
+proptest = "1.4"
+serde_json = "1.0"
+
+[features]
+fuzzing = ["proptest"]
+
+[lib]
+name = "pqsignatures"
+path = "src/lib.rs"

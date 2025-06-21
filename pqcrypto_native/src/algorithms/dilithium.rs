@@ -50,3 +50,30 @@ mod backend {
 
 #[cfg(any(feature = "pure", feature = "pqclean"))]
 pub use backend::Dilithium2;
+
+use alloc::vec::Vec;
+use crate::traits::SignatureScheme;
+
+// Public keypair() for Dilithium2
+pub fn keypair() -> (Vec<u8>, Vec<u8>) {
+    #[cfg(feature = "pure")]
+    {
+        let (pk, sk) = backend::Dilithium2::keypair_from_seed(&[0u8; 32]).unwrap();
+        (sk.as_ref().to_vec(), pk.as_ref().to_vec())
+    }
+    #[cfg(not(feature = "pure"))]
+    {
+        let (pk, sk) = backend::Dilithium2::keypair_from_seed(&[0u8; 32]).unwrap();
+        (sk.as_ref().to_vec(), pk.as_ref().to_vec())
+    }
+}
+
+// Public verify() for Dilithium2
+pub fn verify(msg: &[u8], sig: &[u8], pk: &[u8]) -> Result<(), ()> {
+    // You may need to adapt this to your actual types
+    // This is a placeholder for the real verification logic
+    // Example:
+    // let pk = ...; let sig = ...; // convert to correct types
+    // Dilithium2::verify(&pk, msg, &sig).map_err(|_| ())
+    unimplemented!("Implement Dilithium2 signature verification here")
+}

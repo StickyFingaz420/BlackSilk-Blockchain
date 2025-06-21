@@ -22,7 +22,7 @@ use blake2::digest::Update;
 use digest::consts::U32;
 use std::sync::atomic::{AtomicU32, Ordering};
 use i2p::I2pClient;
-use primitives::{TransactionKind, ContractTx};
+use primitives::{TransactionKind, ContractTx, StealthAddress, types::PublicKey};
 use serde::{Serialize, Deserialize};
 
 pub fn add(left: u64, right: u64) -> u64 {

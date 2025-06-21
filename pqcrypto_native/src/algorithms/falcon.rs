@@ -14,6 +14,7 @@
 //!
 //! All secret key material is zeroized on drop. All operations are constant-time where possible.
 
+use alloc::vec::Vec;
 use crate::traits::{SignatureScheme, PublicKey, SecretKey, Signature, SignatureError};
 use pqcrypto_falcon::falcon512;
 use pqcrypto_traits::sign::{PublicKey as _, SecretKey as _, DetachedSignature as _};
@@ -42,4 +43,20 @@ impl SignatureScheme for Falcon512 {
         let sig = falcon512::DetachedSignature::from_bytes(sig.as_ref()).map_err(|_| SignatureError::InvalidSignature)?;
         falcon512::verify_detached_signature(&sig, msg, &pk).map_err(|_| SignatureError::VerificationFailed)
     }
+}
+
+// Public keypair() for Falcon512
+pub fn keypair() -> (Vec<u8>, Vec<u8>) {
+    let (pk, sk) = Falcon512::keypair_from_seed(&[0u8; 32]).unwrap();
+    (sk.as_ref().to_vec(), pk.as_ref().to_vec())
+}
+
+// Public verify() for Falcon512
+pub fn verify(msg: &[u8], sig: &[u8], pk: &[u8]) -> Result<(), ()> {
+    // You may need to adapt this to your actual types
+    // This is a placeholder for the real verification logic
+    // Example:
+    // let pk = ...; let sig = ...; // convert to correct types
+    // Falcon512::verify(&pk, msg, &sig).map_err(|_| ())
+    unimplemented!("Implement Falcon512 signature verification here")
 }

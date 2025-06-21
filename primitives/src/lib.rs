@@ -201,9 +201,10 @@ impl Block {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct QuantumSignature {
-    pub ring: Vec<types::Hash>, // decoy public keys
-    pub signature: Vec<u8>,    // quantum signature bytes
+pub enum QuantumSignature {
+    Dilithium2 { pk: Vec<u8>, sig: Vec<u8> },
+    Falcon512 { pk: Vec<u8>, sig: Vec<u8> },
+    MLDSA44 { pk: Vec<u8>, sig: Vec<u8> },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

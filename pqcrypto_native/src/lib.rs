@@ -116,3 +116,7 @@ pub fn dilithium_address(public: &PublicKey<1312>) -> alloc::string::String {
 pub fn pq_address(pubkey: &[u8]) -> alloc::string::String {
     crate::wallet::encode_address(pubkey)
 }
+
+pub use algorithms::dilithium as dilithium2;
+pub use algorithms::falcon as falcon512;
+pub use algorithms::mldsa as mldsa44;

@@ -727,6 +727,7 @@ fn handle_marketplace_data_submit(stream: &mut TcpStream, body: &[u8]) -> Result
         extra: vec![], // Marketplace data stored in metadata field
         metadata: Some(format!("MARKETPLACE:{}", request.data)), // Store the base64 marketplace data
         signature, // Cryptographic signature of the data and timestamp
+        quantum_signature: None, // Add this field for quantum support
     };
     
     // Add to mempool for blockchain inclusion
