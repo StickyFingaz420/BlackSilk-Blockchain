@@ -16,6 +16,7 @@ ark-groth16 = "0.4"
 ark-snark = "0.4"
 ark-relations = "0.4"
 ark-ec = "0.4"
+pqcrypto_native = { path = "../pqcrypto_native" }
 
 [features]
 zkp = [] # Enable zk-SNARKs/advanced ZKP support (future)
