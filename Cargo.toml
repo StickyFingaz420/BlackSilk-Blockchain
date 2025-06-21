@@ -14,7 +14,7 @@ members = [
     "scripts", # Added scripts for Rust comparison tool
     "pqsignatures",
 ]
-exclude = []
+exclude = ["ml-dsa44-standalone"]
 
 [package]
 name = "BlackSilk"

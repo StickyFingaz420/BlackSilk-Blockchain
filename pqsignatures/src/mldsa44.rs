@@ -13,28 +13,7 @@ impl Zeroize for MLDSA44SecretKey {
     }
 }
 
-pub struct MLDSA44;
-
-impl PQSignatureScheme for MLDSA44 {
-    type PublicKey = MLDSA44PublicKey;
-    type SecretKey = MLDSA44SecretKey;
-    type Signature = MLDSA44Signature;
-
-    fn keypair() -> (Self::PublicKey, Self::SecretKey) {
-        let (pk, sk) = SecretKey::keypair();
-        (MLDSA44PublicKey(pk.to_bytes().to_vec()), MLDSA44SecretKey(sk.to_bytes().to_vec()))
-    }
-    fn sign(sk: &Self::SecretKey, message: &[u8]) -> Self::Signature {
-        let sk = SecretKey::from_bytes(&sk.0).expect("Invalid secret key");
-        let sig = sk.sign(message);
-        MLDSA44Signature(sig.to_bytes().to_vec())
-    }
-    fn verify(pk: &Self::PublicKey, message: &[u8], sig: &Self::Signature) -> bool {
-        let pk = PublicKey::from_bytes(&pk.0).expect("Invalid public key");
-        let sig = Signature::from_bytes(&sig.0).expect("Invalid signature");
-        pk.verify(message, &sig).is_ok()
-    }
-}
+// Remove MLDSA44 and all ML-DSA-44 support for workspace compatibility.
 
 // === Porting Plan ===
 // 1. Port ML-DSA-44 parameter constants and core math (hashing, tree, etc.)
