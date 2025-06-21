@@ -1,14 +1,12 @@
 // Falcon512: Pure Rust implementation using falcon-rust
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 use crate::traits::PQSignatureScheme;
-use falcon_rust::falcon512;
-use rand::Rng;
+use falcon_rust::falcon512::{keypair, sign, verify, PublicKey, SecretKey, Signature};
 
-pub struct Falcon512PublicKey(pub [u8; 897]);
-pub struct Falcon512SecretKey(pub [u8; 1281]);
-pub struct Falcon512Signature(pub Vec<u8>);
+/// Secure wrapper for Falcon512 secret key
+pub struct SecureFalcon512SecretKey(pub Zeroizing<SecretKey>);
 
-impl Zeroize for Falcon512SecretKey {
+impl Zeroize for SecureFalcon512SecretKey {
     fn zeroize(&mut self) {
         self.0.zeroize();
     }
@@ -17,24 +15,19 @@ impl Zeroize for Falcon512SecretKey {
 pub struct Falcon512;
 
 impl PQSignatureScheme for Falcon512 {
-    type PublicKey = Falcon512PublicKey;
-    type SecretKey = Falcon512SecretKey;
-    type Signature = Falcon512Signature;
+    type PublicKey = PublicKey;
+    type SecretKey = SecureFalcon512SecretKey;
+    type Signature = Signature;
 
     fn keypair() -> (Self::PublicKey, Self::SecretKey) {
-        let mut rng = rand::thread_rng();
-        let seed: [u8; 48] = rng.gen();
-        let (sk, pk) = falcon512::keygen(seed);
-        (Falcon512PublicKey(pk.to_bytes()), Falcon512SecretKey(sk.to_bytes()))
+        let (public, secret) = keypair();
+        (public, SecureFalcon512SecretKey(Zeroizing::new(secret)))
     }
     fn sign(sk: &Self::SecretKey, message: &[u8]) -> Self::Signature {
-        let sk = falcon512::SecretKey::from_bytes(&sk.0).expect("Invalid secret key");
-        let sig = sk.sign(message);
-        Falcon512Signature(sig)
+        sign(message, &sk.0)
     }
     fn verify(pk: &Self::PublicKey, message: &[u8], sig: &Self::Signature) -> bool {
-        let pk = falcon512::PublicKey::from_bytes(&pk.0).expect("Invalid public key");
-        pk.verify(message, &sig.0).is_ok()
+        verify(message, sig, pk)
     }
 }
 
