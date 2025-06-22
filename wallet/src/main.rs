@@ -352,6 +352,11 @@ pub enum Commands {
         #[command(subcommand)]
         action: SettingsCommands,
     },
+    /// Quantum-resistant features
+    Quantum {
+        #[command(subcommand)]
+        action: QuantumCommands,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -478,6 +483,67 @@ pub enum SettingsCommands {
     },
     /// Reset to defaults
     Reset,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum QuantumCommands {
+    /// Generate quantum-resistant keypair
+    Keygen {
+        /// Algorithm: dilithium2, falcon512, or all
+        #[arg(value_name = "ALG")]
+        alg: String,
+        /// Output file prefix
+        #[arg(long, value_name = "FILE")]
+        out: Option<String>,
+    },
+    /// Sign message with quantum-resistant key
+    Sign {
+        /// Algorithm: dilithium2 or falcon512
+        #[arg(value_name = "ALG")]
+        alg: String,
+        /// Private key file
+        #[arg(value_name = "KEY")]
+        key: String,
+        /// Message file to sign
+        #[arg(value_name = "MESSAGE")]
+        message: String,
+        /// Output signature file
+        #[arg(long, value_name = "FILE")]
+        out: Option<String>,
+    },
+    /// Verify quantum-resistant signature
+    Verify {
+        /// Algorithm: dilithium2 or falcon512
+        #[arg(value_name = "ALG")]
+        alg: String,
+        /// Public key file
+        #[arg(value_name = "KEY")]
+        key: String,
+        /// Message file
+        #[arg(value_name = "MESSAGE")]
+        message: String,
+        /// Signature file
+        #[arg(value_name = "SIGNATURE")]
+        signature: String,
+    },
+    /// Export quantum-resistant key
+    Export {
+        /// Algorithm: dilithium2 or falcon512
+        #[arg(value_name = "ALG")]
+        alg: String,
+        /// Key type: pub or priv
+        #[arg(value_name = "TYPE")]
+        key_type: String,
+        /// Output file
+        #[arg(long, value_name = "FILE")]
+        out: String,
+    },
+    /// Show public key
+    ShowPubkey {
+        /// Algorithm: dilithium2 or falcon512
+        #[arg(value_name = "ALG")]
+        alg: String,
+    },
 }
 
 fn encode_address(public_view: &[u8; 32], public_spend: &[u8; 32]) -> String {
@@ -959,6 +1025,10 @@ fn main() {
         }
         Some(Commands::Settings { action }) => {
             handle_settings(&cli, action);
+            return;
+        }
+        Some(Commands::Quantum { action }) => {
+            handle_quantum(&cli, action);
             return;
         }
         None => {
@@ -1543,7 +1613,7 @@ fn handle_multisig(cli: &Cli, action: &MultisigCommands) {
 
             println!("{}", "╔════════════════════════════════════════════════════════════════╗".bright_magenta());
             println!("{}", "║                   MULTISIG WALLET CREATION                    ║".bright_magenta());
-            println!("{}", "╠════════════════════════════════════════════════════════════════╣".bright_magenta());
+            println!("{}", "╠════════════════════════════════════════════════════════════════════════════════╣".bright_magenta());
             println!("║ {} Required: {:>46} ║", "🔢".bright_yellow(), required.to_string().bright_white());
             println!("║ {} Total: {:>49} ║", "👥".bright_green(), total.to_string().bright_white());
             println!("║ {} Security: {:>46} ║", "🔐".bright_red(), format!("{}/{} signatures required", required, total).bright_white());
@@ -1627,7 +1697,112 @@ fn handle_settings(cli: &Cli, action: &SettingsCommands) {
     println!("Handling settings commands");
 }
 
-fn print_wallet_info(cli: &Cli) {
-    // Placeholder implementation
-    println!("Printing wallet info");
+fn handle_quantum(cli: &Cli, action: &crate::cli::QuantumCommands) {
+    use crate::pqkey::PQKeypair;
+    use pqsignatures::{Dilithium2, Falcon512, PQSignatureScheme};
+    use std::fs;
+    match action {
+        crate::cli::QuantumCommands::Keygen { alg, out } => {
+            match alg.as_str() {
+                "dilithium2" => {
+                    let (pk, sk) = Dilithium2::keypair();
+                    println!("[PQ] Dilithium2 keypair generated.");
+                    if let Some(path) = out {
+                        fs::write(format!("{}_dilithium2_pk.bin", path), pk.to_bytes()).unwrap();
+                        fs::write(format!("{}_dilithium2_sk.bin", path), sk.to_bytes()).unwrap();
+                        println!("[PQ] Keys saved to {}_dilithium2_*.bin", path);
+                    }
+                }
+                "falcon512" => {
+                    let (pk, sk) = Falcon512::keypair();
+                    println!("[PQ] Falcon512 keypair generated.");
+                    if let Some(path) = out {
+                        fs::write(format!("{}_falcon512_pk.bin", path), pk.to_bytes()).unwrap();
+                        fs::write(format!("{}_falcon512_sk.bin", path), sk.to_bytes()).unwrap();
+                        println!("[PQ] Keys saved to {}_falcon512_*.bin", path);
+                    }
+                }
+                "all" => {
+                    let pqkey = PQKeypair::generate();
+                    if let Some(path) = out {
+                        fs::write(format!("{}_dilithium2_pk.bin", path), &pqkey.dilithium2_pk).unwrap();
+                        fs::write(format!("{}_dilithium2_sk.bin", path), &pqkey.dilithium2_sk).unwrap();
+                        fs::write(format!("{}_falcon512_pk.bin", path), &pqkey.falcon512_pk).unwrap();
+                        fs::write(format!("{}_falcon512_sk.bin", path), &pqkey.falcon512_sk).unwrap();
+                        println!("[PQ] All keys saved to {}_*_*.bin", path);
+                    }
+                }
+                _ => println!("[ERROR] Unknown algorithm: {}", alg),
+            }
+        }
+        crate::cli::QuantumCommands::Sign { alg, key, message, out } => {
+            let msg = fs::read(message).expect("Failed to read message file");
+            let sk_bytes = fs::read(key).expect("Failed to read private key file");
+            let sig = match alg.as_str() {
+                "dilithium2" => {
+                    let sk = Dilithium2::secret_key_from_bytes(&sk_bytes).unwrap();
+                    Dilithium2::sign(&sk, &msg).to_vec()
+                }
+                "falcon512" => {
+                    let sk = Falcon512::secret_key_from_bytes(&sk_bytes).unwrap();
+                    Falcon512::signature_to_bytes(&Falcon512::sign(&sk, &msg))
+                }
+                _ => {
+                    println!("[ERROR] Unknown algorithm: {}", alg);
+                    return;
+                }
+            };
+            if let Some(path) = out {
+                fs::write(path, &sig).unwrap();
+                println!("[PQ] Signature written to {}", path);
+            } else {
+                println!("[PQ] Signature (hex): {}", hex::encode(&sig));
+            }
+        }
+        crate::cli::QuantumCommands::Verify { alg, key, message, signature } => {
+            let msg = fs::read(message).expect("Failed to read message file");
+            let pk_bytes = fs::read(key).expect("Failed to read public key file");
+            let sig_bytes = fs::read(signature).expect("Failed to read signature file");
+            let ok = match alg.as_str() {
+                "dilithium2" => {
+                    let pk = Dilithium2::public_key_from_bytes(&pk_bytes).unwrap();
+                    let sig = Dilithium2::signature_from_bytes(&sig_bytes).unwrap();
+                    Dilithium2::verify(&pk, &msg, &sig)
+                }
+                "falcon512" => {
+                    let pk = Falcon512::public_key_from_bytes(&pk_bytes).unwrap();
+                    let sig = Falcon512::signature_from_bytes(&sig_bytes).unwrap();
+                    Falcon512::verify(&pk, &msg, &sig)
+                }
+                _ => {
+                    println!("[ERROR] Unknown algorithm: {}", alg);
+                    return;
+                }
+            };
+            if ok {
+                println!("[PQ] Signature is valid.");
+            } else {
+                println!("[PQ] Signature is INVALID.");
+            }
+        }
+        crate::cli::QuantumCommands::Export { alg, key_type, out } => {
+            let pqkey = PQKeypair::generate(); // In real wallet, load from file
+            match (alg.as_str(), key_type.as_str()) {
+                ("dilithium2", "pub") => fs::write(out, &pqkey.dilithium2_pk).unwrap(),
+                ("dilithium2", "priv") => fs::write(out, &pqkey.dilithium2_sk).unwrap(),
+                ("falcon512", "pub") => fs::write(out, &pqkey.falcon512_pk).unwrap(),
+                ("falcon512", "priv") => fs::write(out, &pqkey.falcon512_sk).unwrap(),
+                _ => println!("[ERROR] Unknown algorithm or key type: {} {}", alg, key_type),
+            }
+            println!("[PQ] Key exported to {}", out);
+        }
+        crate::cli::QuantumCommands::ShowPubkey { alg } => {
+            let pqkey = PQKeypair::generate(); // In real wallet, load from file
+            match alg.as_str() {
+                "dilithium2" => println!("[PQ] Dilithium2 pubkey: {}", hex::encode(&pqkey.dilithium2_pk)),
+                "falcon512" => println!("[PQ] Falcon512 pubkey: {}", hex::encode(&pqkey.falcon512_pk)),
+                _ => println!("[ERROR] Unknown algorithm: {}", alg),
+            }
+        }
+    }
 }

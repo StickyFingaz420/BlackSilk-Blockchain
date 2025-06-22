@@ -167,6 +167,10 @@ pub enum Commands {
         #[command(subcommand)]
         action: SettingsCommands,
     },
+    Quantum {
+        #[command(subcommand)]
+        action: QuantumCommands,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -256,4 +260,51 @@ pub enum SettingsCommands {
         enable: bool,
     },
     Reset,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum QuantumCommands {
+    /// Generate a PQ keypair (Dilithium2, Falcon512, or both)
+    Keygen {
+        #[arg(long, value_name = "ALG", default_value = "all")] // dilithium2|falcon512|all
+        alg: String,
+        #[arg(long, value_name = "OUT")] // output file (optional)
+        out: Option<String>,
+    },
+    /// Sign a message with a PQ private key
+    Sign {
+        #[arg(long, value_name = "ALG")] // dilithium2|falcon512
+        alg: String,
+        #[arg(long, value_name = "KEY")] // private key file
+        key: String,
+        #[arg(long, value_name = "MSG")] // message file
+        message: String,
+        #[arg(long, value_name = "OUT")] // output signature file (optional)
+        out: Option<String>,
+    },
+    /// Verify a PQ signature
+    Verify {
+        #[arg(long, value_name = "ALG")] // dilithium2|falcon512
+        alg: String,
+        #[arg(long, value_name = "KEY")] // public key file
+        key: String,
+        #[arg(long, value_name = "MSG")] // message file
+        message: String,
+        #[arg(long, value_name = "SIG")] // signature file
+        signature: String,
+    },
+    /// Export a PQ public or private key
+    Export {
+        #[arg(long, value_name = "ALG")] // dilithium2|falcon512
+        alg: String,
+        #[arg(long, value_name = "TYPE")] // pub|priv
+        key_type: String,
+        #[arg(long, value_name = "OUT")] // output file
+        out: String,
+    },
+    /// Show the PQ public key (hex/base64)
+    ShowPubkey {
+        #[arg(long, value_name = "ALG")] // dilithium2|falcon512
+        alg: String,
+    },
 }

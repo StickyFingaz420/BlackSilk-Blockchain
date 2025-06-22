@@ -29,6 +29,7 @@
   - [Dockerized Deployment](#dockerized-deployment)
 - [Configuration](#configuration)
 - [CLI/API Usage](#cliapi-usage)
+- [Post-Quantum CLI Usage](wallet/PQCLI.md)
 - [Integration & Dependencies](#integration--dependencies)
 - [Monitoring & DevOps](#monitoring--devops)
 - [Known Limitations & Future Enhancements](#known-limitations--future-enhancements)
