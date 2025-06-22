@@ -565,27 +565,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::QuantumSign { scheme, privkey, message }) => {
             let msg = std::fs::read(message)?;
             let privkey_bytes = std::fs::read(privkey)?;
-            let sig = match scheme.as_str() {
-                "dilithium2" => pqcrypto_native::dilithium2::sign(&msg, &privkey_bytes),
-                "falcon512" => pqcrypto_native::falcon512::sign(&msg, &privkey_bytes),
-                "mldsa44" => pqcrypto_native::mldsa44::sign(&msg, &privkey_bytes),
-                _ => { println!("Unknown scheme: {}", scheme); Vec::new() },
-            };
-            std::fs::write("signature.bin", &sig)?;
-            println!("Signature written to signature.bin");
+            // Legacy PQC code removed: use pqsignatures only
+            println!("QuantumSign is deprecated: use pqsignatures integration only");
             return Ok(());
         }
         Some(Commands::QuantumVerify { scheme, pubkey, message, signature }) => {
             let msg = std::fs::read(message)?;
             let pubkey_bytes = std::fs::read(pubkey)?;
             let sig = std::fs::read(signature)?;
-            let valid = match scheme.as_str() {
-                "dilithium2" => pqcrypto_native::dilithium2::verify(&msg, &sig, &pubkey_bytes),
-                "falcon512" => pqcrypto_native::falcon512::verify(&msg, &sig, &pubkey_bytes),
-                "mldsa44" => pqcrypto_native::mldsa44::verify(&msg, &sig, &pubkey_bytes),
-                _ => { println!("Unknown scheme: {}", scheme); false },
-            };
-            println!("Signature valid: {}", valid);
+            // Legacy PQC code removed: use pqsignatures only
+            println!("QuantumVerify is deprecated: use pqsignatures integration only");
             return Ok(());
         }
         None => {

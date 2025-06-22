@@ -29,7 +29,7 @@ pub fn sign_tx_dilithium2(tx_bytes: &[u8], pqkey: &PQKeypair) -> Vec<u8> {
 /// Sign a transaction with Falcon512
 pub fn sign_tx_falcon512(tx_bytes: &[u8], pqkey: &PQKeypair) -> Vec<u8> {
     let sk = Falcon512::secret_key_from_bytes(&pqkey.falcon512_sk).expect("Invalid Falcon512 SK");
-    Falcon512::sign(&sk, tx_bytes).to_vec()
+    Falcon512::signature_to_bytes(&Falcon512::sign(&sk, tx_bytes))
 }
 
 /// Verify a Dilithium2 signature

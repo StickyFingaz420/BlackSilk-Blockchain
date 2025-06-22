@@ -28,8 +28,20 @@ impl Falcon512 {
     pub fn public_key_from_bytes(bytes: &[u8]) -> Result<<Self as PQSignatureScheme>::PublicKey, &'static str> {
         falcon_rust::falcon512::PublicKey::from_bytes(bytes).map_err(|_| "Invalid Falcon512 public key")
     }
+    pub fn secret_key_from_bytes(bytes: &[u8]) -> Result<<Self as PQSignatureScheme>::SecretKey, &'static str> {
+        falcon_rust::falcon512::SecretKey::from_bytes(bytes).map_err(|_| "Invalid Falcon512 secret key")
+    }
     pub fn signature_from_bytes(bytes: &[u8]) -> Result<<Self as PQSignatureScheme>::Signature, &'static str> {
         falcon_rust::falcon512::Signature::from_bytes(bytes).map_err(|_| "Invalid Falcon512 signature")
+    }
+    pub fn signature_to_bytes(sig: &<Self as PQSignatureScheme>::Signature) -> Vec<u8> {
+        // Falcon512 signatures are 666 bytes (NIST spec). Try to transmute or slice.
+        // If the signature struct is a wrapper over [u8; 666], use unsafe as a fallback.
+        // Replace with a safe API if falcon-rust exposes one in the future.
+        unsafe {
+            let ptr = sig as *const _ as *const u8;
+            std::slice::from_raw_parts(ptr, 666).to_vec()
+        }
     }
 }
 

@@ -13,6 +13,7 @@ use std::{fs, path::Path};
 use base58::ToBase58;
 use itertools::Itertools;
 use bip39::Mnemonic;
+use primitives::types::PublicKey;
 
 // --- RANGE PROOF (BULLETPROOFS) REAL IMPLEMENTATION ---
 // Uses bulletproofs crate for confidential transaction range proofs
@@ -490,8 +491,11 @@ fn encode_address(public_view: &[u8; 32], public_spend: &[u8; 32]) -> String {
 
 /// CryptoNote-style output detection: checks if output belongs to this wallet using one-time address recovery
 fn is_output_mine(out: &primitives::TransactionOutput, _my_pub_view: &[u8; 32], my_pub_spend: &[u8; 32], my_priv_view: &[u8; 32]) -> bool {
-    // استخدم المفتاح العام من stealth_address
-    let out_pubkey_bytes = out.stealth_address.public_spend;
+    // Extract spend_key as [u8; 32] from PublicKey::Ed25519
+    let out_pubkey_bytes = match &out.stealth_address.spend_key {
+        PublicKey::Ed25519(arr) => *arr,
+        _ => return false,
+    };
     let out_pubkey = CompressedEdwardsY(out_pubkey_bytes).decompress();
     if out_pubkey.is_none() { return false; }
     let out_pubkey = out_pubkey.unwrap();
@@ -593,14 +597,17 @@ fn send_transaction(node_addr: &str, wallet: &WalletFile, to_address: &str, amou
     arr_priv_spend.copy_from_slice(&priv_spend);
     let mut tx_inputs = Vec::new();
     for inp in &selected {
-        // استخدم المفتاح العام من stealth_address
-        let ring = vec![inp.stealth_address.public_spend];
+        // Extract spend_key as [u8; 32] from PublicKey::Ed25519
+        let ring = match &inp.stealth_address.spend_key {
+            PublicKey::Ed25519(arr) => vec![*arr],
+            _ => continue,
+        };
         let ki = generate_key_image(&arr_priv_spend);
         let msg = b"blacksilk_tx";
         let ring_sig = generate_ring_signature(msg, &ring, &arr_priv_spend, 0);
         tx_inputs.push(primitives::TransactionInput {
             key_image: ki,
-            ring_sig: primitives::RingSignature { ring, signature: ring_sig },
+            ring_sig: primitives::RingSignature { ring, signature: ring_sig, quantum: None },
         });
     }
     // --- Build outputs (Pedersen commitment + Bulletproofs) ---
@@ -613,23 +620,24 @@ fn send_transaction(node_addr: &str, wallet: &WalletFile, to_address: &str, amou
     // المخرج الرئيسي
     let blinding = Scalar::random(&mut OsRng);
     let (range_proof, commitment) = generate_range_proof(amount, &blinding);
+    // When decoding address, convert [u8; 32] to PublicKey::Ed25519
     let addr_bytes = base58::FromBase58::from_base58(&to_address[3..]).unwrap();
-    let pub_view = addr_bytes[1..33].try_into().unwrap();
-    let pub_spend = addr_bytes[33..65].try_into().unwrap();
+    let pub_view = PublicKey::Ed25519(addr_bytes[1..33].try_into().unwrap());
+    let pub_spend = PublicKey::Ed25519(addr_bytes[33..65].try_into().unwrap());
     tx_outputs.push(primitives::TransactionOutput {
         amount_commitment: commitment.to_bytes(),
-        stealth_address: primitives::StealthAddress { public_view: pub_view, public_spend: pub_spend },
+        stealth_address: primitives::StealthAddress { view_key: pub_view.clone(), spend_key: pub_spend.clone() },
         range_proof: range_proof.to_bytes(),
     });
     // التغيير
     if change > 0 {
         let blinding = Scalar::random(&mut OsRng);
         let (range_proof, commitment) = generate_range_proof(change, &blinding);
-        let pub_view = arr_view;
-        let pub_spend = arr_spend;
+        let pub_view = PublicKey::Ed25519(arr_view);
+        let pub_spend = PublicKey::Ed25519(arr_spend);
         tx_outputs.push(primitives::TransactionOutput {
             amount_commitment: commitment.to_bytes(),
-            stealth_address: primitives::StealthAddress { public_view: pub_view, public_spend: pub_spend },
+            stealth_address: primitives::StealthAddress { view_key: pub_view.clone(), spend_key: pub_spend.clone() },
             range_proof: range_proof.to_bytes(),
         });
     }
@@ -654,6 +662,7 @@ fn send_transaction(node_addr: &str, wallet: &WalletFile, to_address: &str, amou
         extra: vec![],
         metadata: None,
         signature: tx_signature,
+        quantum_signature: None,
     };
     let tx_json = serde_json::to_string(&tx).map_err(|e| format!("Failed to serialize tx: {}", e))?;
     let url = format!("http://{}/submit_tx", node_addr);
