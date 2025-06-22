@@ -656,7 +656,7 @@ fn handle_submit_block(stream: &mut TcpStream, body: &[u8], data_dir: &std::path
             });
         let coinbase = Coinbase {
             reward: block_reward,
-            to: miner_address.clone(),
+            to: primitives::Address::decode(&miner_address).unwrap(),
         };
         let new_block = Block {
             header: block_header,

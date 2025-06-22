@@ -31,12 +31,12 @@ fn test_dump_and_mdump_roundtrip() {
     let import_path = PathBuf::from("wallet_data/test_mimport.json");
     fs::copy(&out_path, &import_path).unwrap();
     let imported_addr = "importedaddr456";
-    let mut dumps: Vec<pqkey::KeyDump> = serde_json::from_str(&json).unwrap();
-    dumps[0].address = imported_addr.to_string();
-    fs::write(&import_path, serde_json::to_string(&dumps).unwrap()).unwrap();
+    let mut entries: Vec<KeyEntry> = serde_json::from_str(&json).unwrap();
+    entries[0].address = imported_addr.to_string();
+    fs::write(&import_path, serde_json::to_string(&KeyStore { keys: entries }).unwrap()).unwrap();
     handle_mimport(&import_path);
-    let imported = load_keypair_by_address(imported_addr).unwrap();
-    assert_eq!(imported.dilithium2_pk, vec![1,2,3,4]);
+    let imported = load_keyentry(imported_addr).unwrap();
+    assert_eq!(imported.dilithium2_pk, bs58::encode(&[1,2,3,4]).into_string());
 
     // Cleanup
     fs::remove_file(&key_path).ok();

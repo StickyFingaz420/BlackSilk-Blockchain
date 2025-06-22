@@ -17,7 +17,7 @@ use primitives::types::PublicKey;
 mod cli;
 mod pqkey;
 use cli::QuantumCommands;
-use pqkey::PQKeypair;
+use pqkey::{PQKeypair, KeyEntry, KeyStore, KEY_DIR, load_keyentry, load_all_keyentries, handle_mdump, handle_mimport};
 
 // --- RANGE PROOF (BULLETPROOFS) REAL IMPLEMENTATION ---
 // Uses bulletproofs crate for confidential transaction range proofs
@@ -1000,11 +1000,11 @@ fn main() {
             return;
         }
         Some(Commands::Mdump { output }) => {
-            handle_mdump(output);
+            pqkey::handle_mdump(output);
             return;
         }
         Some(Commands::Mimport { input }) => {
-            handle_mimport(input);
+            pqkey::handle_mimport(input);
             return;
         }
         None => {
@@ -1787,67 +1787,21 @@ fn print_wallet_info(_cli: &Cli) {
 }
 
 fn handle_dump(address: &str, part: &str) {
-    use pqkey::PQKeypair;
-    if let Some(keypair) = load_keypair_by_address(address) {
+    if let Some(entry) = load_keyentry(address) {
         match part {
-            "address" => println!("{}", address),
-            "public" => println!("{}", hex::encode(&keypair.dilithium2_pk)),
-            "private" => println!("{}", hex::encode(&keypair.dilithium2_sk)),
-            "seed" => println!("[WARN] Seed export not implemented for this keypair."),
+            "address" => println!("{}", entry.address),
+            "public" => {
+                println!("Dilithium2: {}", entry.dilithium2_pk);
+                println!("Falcon512: {}", entry.falcon512_pk);
+            },
+            "private" => {
+                println!("Dilithium2: {}", entry.dilithium2_sk);
+                println!("Falcon512: {}", entry.falcon512_sk);
+            },
+            "seed" => println!("{}", entry.mnemonic),
             _ => eprintln!("Unknown part: {}. Use address|public|private|seed", part),
         }
     } else {
-        eprintln!("Keypair not found for address: {}", address);
-    }
-}
-
-fn handle_mdump(output: &std::path::Path) {
-    use pqkey::PQKeypair;
-    let all = load_all_keypairs();
-    let dumps: Vec<_> = all.iter().map(|(address, kp)| kp.to_keydump(address.clone(), true, false)).collect();
-    match serde_json::to_string_pretty(&dumps) {
-        Ok(json) => {
-            if let Err(e) = fs::write(output, json) {
-                eprintln!("Failed to write mdump: {e}");
-            } else {
-                println!("Exported {} keypairs to {:?}", dumps.len(), output);
-            }
-        }
-        Err(e) => eprintln!("Serialization error: {e}"),
-    }
-}
-
-fn handle_mimport(input: &std::path::Path) {
-    use pqkey::{PQKeypair, KeyDump};
-    match fs::read_to_string(input) {
-        Ok(data) => match serde_json::from_str::<Vec<KeyDump>>(&data) {
-            Ok(list) => {
-                for kd in list {
-                    let address = kd.address.clone();
-                    // Only import if not already present
-                    let path = PathBuf::from(format!("{}/{}.json", KEY_DIR, address));
-                    if path.exists() {
-                        println!("[SKIP] {} already exists", address);
-                        continue;
-                    }
-                    // Only import public/private for now
-                    let kp = PQKeypair {
-                        dilithium2_pk: hex::decode(&kd.public_key).unwrap_or_default(),
-                        dilithium2_sk: kd.private_key.as_ref().and_then(|s| hex::decode(s).ok()).unwrap_or_default(),
-                        falcon512_pk: vec![],
-                        falcon512_sk: vec![],
-                    };
-                    if let Ok(json) = serde_json::to_string_pretty(&kp) {
-                        if let Err(e) = fs::write(&path, json) {
-                            eprintln!("[FAIL] {}: {e}", address);
-                        } else {
-                            println!("[IMPORTED] {}", address);
-                        }
-                    }
-                }
-            }
-            Err(e) => eprintln!("JSON parse error: {e}"),
-        },
-        Err(e) => eprintln!("Failed to read file: {e}"),
+        eprintln!("Key entry not found for address: {}", address);
     }
 }

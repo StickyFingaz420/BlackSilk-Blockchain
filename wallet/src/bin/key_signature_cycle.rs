@@ -3,6 +3,7 @@ use wallet::*;
 use std::fs;
 use std::path::PathBuf;
 use pqsignatures::{Dilithium2, PQSignatureScheme};
+use pqkey::{KeyEntry, KeyStore, KEY_DIR, load_keyentry, load_all_keyentries, handle_mdump, handle_mimport};
 
 fn main() {
     // 1. Keygen (real Dilithium2 keypair)
@@ -31,7 +32,7 @@ fn main() {
     assert!(verified, "Signature verification failed");
 
     // 4. Dump
-    let loaded = load_keypair_by_address(test_address).unwrap();
+    let loaded = load_keyentry(test_address).unwrap();
     assert_eq!(loaded.dilithium2_pk, test_keypair.dilithium2_pk);
 
     // 5. mdump
@@ -44,12 +45,12 @@ fn main() {
     let import_path = PathBuf::from("wallet_data/sigcycle_mimport.json");
     fs::copy(&out_path, &import_path).unwrap();
     let imported_addr = "sigcycleimported";
-    let mut dumps: Vec<wallet::pqkey::KeyDump> = serde_json::from_str(&json).unwrap();
-    dumps[0].address = imported_addr.to_string();
-    fs::write(&import_path, serde_json::to_string(&dumps).unwrap()).unwrap();
+    let mut entries: Vec<KeyEntry> = serde_json::from_str(&json).unwrap();
+    entries[0].address = imported_addr.to_string();
+    fs::write(&import_path, serde_json::to_string(&KeyStore { keys: entries }).unwrap()).unwrap();
     handle_mimport(&import_path);
-    let imported = load_keypair_by_address(imported_addr).unwrap();
-    assert_eq!(imported.dilithium2_pk, test_keypair.dilithium2_pk);
+    let imported = load_keyentry(imported_addr).unwrap();
+    assert_eq!(imported.dilithium2_pk, bs58::encode(&test_keypair.dilithium2_pk).into_string());
 
     // 7. Verify again with imported key
     let pk2 = Dilithium2::public_key_from_bytes(&imported.dilithium2_pk).unwrap();

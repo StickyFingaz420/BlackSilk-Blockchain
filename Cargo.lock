@@ -6730,6 +6730,7 @@ dependencies = [
  "base58",
  "bincode 1.3.3",
  "bip39",
+ "bs58",
  "bulletproofs",
  "chrono",
  "clap 4.5.40",

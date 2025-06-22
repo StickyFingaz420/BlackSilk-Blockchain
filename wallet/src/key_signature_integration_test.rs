@@ -45,12 +45,12 @@ fn test_full_signature_cycle() {
     let import_path = PathBuf::from("wallet_data/sigcycle_mimport.json");
     fs::copy(&out_path, &import_path).unwrap();
     let imported_addr = "sigcycleimported";
-    let mut dumps: Vec<pqkey::KeyDump> = serde_json::from_str(&json).unwrap();
-    dumps[0].address = imported_addr.to_string();
-    fs::write(&import_path, serde_json::to_string(&dumps).unwrap()).unwrap();
+    let mut entries: Vec<KeyEntry> = serde_json::from_str(&json).unwrap();
+    entries[0].address = imported_addr.to_string();
+    fs::write(&import_path, serde_json::to_string(&KeyStore { keys: entries }).unwrap()).unwrap();
     handle_mimport(&import_path);
-    let imported = load_keypair_by_address(imported_addr).unwrap();
-    assert_eq!(imported.dilithium2_pk, test_keypair.dilithium2_pk);
+    let imported = load_keyentry(imported_addr).unwrap();
+    assert_eq!(imported.dilithium2_pk, bs58::encode(&test_keypair.dilithium2_pk).into_string());
 
     // 7. Verify again with imported key
     let pk2 = Dilithium2::public_key_from_bytes(&imported.dilithium2_pk).unwrap();

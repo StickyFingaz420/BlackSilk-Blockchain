@@ -679,7 +679,7 @@ impl Chain {
             },
             coinbase: Coinbase {
                 reward: emission.genesis_reward,
-                to: Self::generate_genesis_address(),
+                to: primitives::Address::decode(&Self::generate_genesis_address()).unwrap(),
             },
             transactions: vec![],
         }
@@ -748,7 +748,7 @@ impl Chain {
             if let TransactionKind::Contract(contract_tx) = &tx.kind {
                 match contract_tx {
                     ContractTx::Deploy { wasm_code, creator, .. } => {
-                        let _ = wasm_vm::deploy_contract(wasm_code.clone(), creator.clone());
+                        let _ = wasm_vm::deploy_contract(wasm_code.clone(), creator.encode());
                     }
                     ContractTx::Invoke { contract_address, function, params, .. } => {
                         // Deserialize params as Vec<serde_json::Value>
@@ -756,7 +756,7 @@ impl Chain {
                             Ok(v) => v,
                             Err(_) => continue,
                         };
-                        let _ = wasm_vm::invoke_contract_json(contract_address, function, &params_vec);
+                        let _ = wasm_vm::invoke_contract_json(&contract_address.encode(), function, &params_vec);
                     }
                 }
             }
