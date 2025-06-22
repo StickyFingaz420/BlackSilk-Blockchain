@@ -17,7 +17,7 @@ pub mod types {
     pub type Hash = [u8; 32];
 
     /// Enum for supported public key types (classical and quantum)
-    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
     pub enum PublicKey {
         Ed25519([u8; 32]),
         Dilithium2(Vec<u8>),
@@ -32,7 +32,7 @@ pub mod types {
     }
 
     /// Enum for quantum signature schemes
-    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
     pub enum QuantumScheme {
         Dilithium2,
         Falcon512,
@@ -40,7 +40,7 @@ pub mod types {
     }
 
     /// Stealth address structure for privacy-preserving transactions.
-    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
     pub struct StealthAddress {
         pub view_key: PublicKey,
         pub spend_key: PublicKey,
@@ -98,7 +98,23 @@ pub mod types {
         }
     }
 
-    pub type Address = String; // Define Address as a type alias for String
+    #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+    pub struct Address {
+        pub stealth: StealthAddress,
+        pub scheme: Option<QuantumScheme>,
+    }
+
+    impl Address {
+        pub fn encode(&self) -> String {
+            // Simple base64 encoding for demo (replace with real encoding as needed)
+            let json = serde_json::to_string(self).unwrap();
+            base64::encode(json)
+        }
+        pub fn decode(s: &str) -> Option<Self> {
+            let json = base64::decode(s).ok().and_then(|bytes| String::from_utf8(bytes).ok())?;
+            serde_json::from_str(&json).ok()
+        }
+    }
 }
 
 pub fn add(left: u64, right: u64) -> u64 {
@@ -218,7 +234,7 @@ pub mod zkp; // zk-SNARKs and advanced ZKP integration
 pub mod escrow; // Escrow contract and dispute voting
 pub mod ring_sig;
 
-pub use crate::types::{StealthAddress, Address};
+pub use crate::types::{StealthAddress, PublicKey, QuantumScheme, Address};
 
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
