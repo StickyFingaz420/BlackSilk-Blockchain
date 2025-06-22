@@ -14,6 +14,10 @@ use base58::ToBase58;
 use itertools::Itertools;
 use bip39::Mnemonic;
 use primitives::types::PublicKey;
+mod cli;
+mod pqkey;
+use cli::QuantumCommands;
+use pqkey::PQKeypair;
 
 // --- RANGE PROOF (BULLETPROOFS) REAL IMPLEMENTATION ---
 // Uses bulletproofs crate for confidential transaction range proofs
@@ -357,6 +361,27 @@ pub enum Commands {
         #[command(subcommand)]
         action: QuantumCommands,
     },
+    /// Dump wallet data
+    Dump {
+        /// Address to dump
+        #[arg(value_name = "ADDRESS")]
+        address: String,
+        /// Part to dump (view, spend, all)
+        #[arg(value_name = "PART")]
+        part: String,
+    },
+    /// Multi-dump all wallet data
+    Mdump {
+        /// Output file for dump
+        #[arg(value_name = "FILE")]
+        output: PathBuf,
+    },
+    /// Multi-import wallet data from file
+    Mimport {
+        /// Input file for import
+        #[arg(value_name = "FILE")]
+        input: PathBuf,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -483,67 +508,6 @@ pub enum SettingsCommands {
     },
     /// Reset to defaults
     Reset,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum QuantumCommands {
-    /// Generate quantum-resistant keypair
-    Keygen {
-        /// Algorithm: dilithium2, falcon512, or all
-        #[arg(value_name = "ALG")]
-        alg: String,
-        /// Output file prefix
-        #[arg(long, value_name = "FILE")]
-        out: Option<String>,
-    },
-    /// Sign message with quantum-resistant key
-    Sign {
-        /// Algorithm: dilithium2 or falcon512
-        #[arg(value_name = "ALG")]
-        alg: String,
-        /// Private key file
-        #[arg(value_name = "KEY")]
-        key: String,
-        /// Message file to sign
-        #[arg(value_name = "MESSAGE")]
-        message: String,
-        /// Output signature file
-        #[arg(long, value_name = "FILE")]
-        out: Option<String>,
-    },
-    /// Verify quantum-resistant signature
-    Verify {
-        /// Algorithm: dilithium2 or falcon512
-        #[arg(value_name = "ALG")]
-        alg: String,
-        /// Public key file
-        #[arg(value_name = "KEY")]
-        key: String,
-        /// Message file
-        #[arg(value_name = "MESSAGE")]
-        message: String,
-        /// Signature file
-        #[arg(value_name = "SIGNATURE")]
-        signature: String,
-    },
-    /// Export quantum-resistant key
-    Export {
-        /// Algorithm: dilithium2 or falcon512
-        #[arg(value_name = "ALG")]
-        alg: String,
-        /// Key type: pub or priv
-        #[arg(value_name = "TYPE")]
-        key_type: String,
-        /// Output file
-        #[arg(long, value_name = "FILE")]
-        out: String,
-    },
-    /// Show public key
-    ShowPubkey {
-        /// Algorithm: dilithium2 or falcon512
-        #[arg(value_name = "ALG")]
-        alg: String,
-    },
 }
 
 fn encode_address(public_view: &[u8; 32], public_spend: &[u8; 32]) -> String {
@@ -1029,6 +993,18 @@ fn main() {
         }
         Some(Commands::Quantum { action }) => {
             handle_quantum(&cli, action);
+            return;
+        }
+        Some(Commands::Dump { address, part }) => {
+            handle_dump(address, part);
+            return;
+        }
+        Some(Commands::Mdump { output }) => {
+            handle_mdump(output);
+            return;
+        }
+        Some(Commands::Mimport { input }) => {
+            handle_mimport(input);
             return;
         }
         None => {
@@ -1613,7 +1589,7 @@ fn handle_multisig(cli: &Cli, action: &MultisigCommands) {
 
             println!("{}", "╔════════════════════════════════════════════════════════════════╗".bright_magenta());
             println!("{}", "║                   MULTISIG WALLET CREATION                    ║".bright_magenta());
-            println!("{}", "╠════════════════════════════════════════════════════════════════════════════════╣".bright_magenta());
+            println!("{}", "╠════════════════════════════════════════════════════════════════╣".bright_magenta());
             println!("║ {} Required: {:>46} ║", "🔢".bright_yellow(), required.to_string().bright_white());
             println!("║ {} Total: {:>49} ║", "👥".bright_green(), total.to_string().bright_white());
             println!("║ {} Security: {:>46} ║", "🔐".bright_red(), format!("{}/{} signatures required", required, total).bright_white());
@@ -1697,12 +1673,11 @@ fn handle_settings(cli: &Cli, action: &SettingsCommands) {
     println!("Handling settings commands");
 }
 
-fn handle_quantum(cli: &Cli, action: &crate::cli::QuantumCommands) {
-    use crate::pqkey::PQKeypair;
+fn handle_quantum(cli: &Cli, action: &QuantumCommands) {
     use pqsignatures::{Dilithium2, Falcon512, PQSignatureScheme};
     use std::fs;
     match action {
-        crate::cli::QuantumCommands::Keygen { alg, out } => {
+        QuantumCommands::Keygen { alg, out } => {
             match alg.as_str() {
                 "dilithium2" => {
                     let (pk, sk) = Dilithium2::keypair();
@@ -1735,7 +1710,7 @@ fn handle_quantum(cli: &Cli, action: &crate::cli::QuantumCommands) {
                 _ => println!("[ERROR] Unknown algorithm: {}", alg),
             }
         }
-        crate::cli::QuantumCommands::Sign { alg, key, message, out } => {
+        QuantumCommands::Sign { alg, key, message, out } => {
             let msg = fs::read(message).expect("Failed to read message file");
             let sk_bytes = fs::read(key).expect("Failed to read private key file");
             let sig = match alg.as_str() {
@@ -1759,7 +1734,7 @@ fn handle_quantum(cli: &Cli, action: &crate::cli::QuantumCommands) {
                 println!("[PQ] Signature (hex): {}", hex::encode(&sig));
             }
         }
-        crate::cli::QuantumCommands::Verify { alg, key, message, signature } => {
+        QuantumCommands::Verify { alg, key, message, signature } => {
             let msg = fs::read(message).expect("Failed to read message file");
             let pk_bytes = fs::read(key).expect("Failed to read public key file");
             let sig_bytes = fs::read(signature).expect("Failed to read signature file");
@@ -1785,7 +1760,7 @@ fn handle_quantum(cli: &Cli, action: &crate::cli::QuantumCommands) {
                 println!("[PQ] Signature is INVALID.");
             }
         }
-        crate::cli::QuantumCommands::Export { alg, key_type, out } => {
+        QuantumCommands::Export { alg, key_type, out } => {
             let pqkey = PQKeypair::generate(); // In real wallet, load from file
             match (alg.as_str(), key_type.as_str()) {
                 ("dilithium2", "pub") => fs::write(out, &pqkey.dilithium2_pk).unwrap(),
@@ -1796,7 +1771,7 @@ fn handle_quantum(cli: &Cli, action: &crate::cli::QuantumCommands) {
             }
             println!("[PQ] Key exported to {}", out);
         }
-        crate::cli::QuantumCommands::ShowPubkey { alg } => {
+        QuantumCommands::ShowPubkey { alg } => {
             let pqkey = PQKeypair::generate(); // In real wallet, load from file
             match alg.as_str() {
                 "dilithium2" => println!("[PQ] Dilithium2 pubkey: {}", hex::encode(&pqkey.dilithium2_pk)),
@@ -1804,5 +1779,75 @@ fn handle_quantum(cli: &Cli, action: &crate::cli::QuantumCommands) {
                 _ => println!("[ERROR] Unknown algorithm: {}", alg),
             }
         }
+    }
+}
+
+fn print_wallet_info(_cli: &Cli) {
+    println!("[INFO] Wallet info display is not yet implemented.");
+}
+
+fn handle_dump(address: &str, part: &str) {
+    use pqkey::PQKeypair;
+    if let Some(keypair) = load_keypair_by_address(address) {
+        match part {
+            "address" => println!("{}", address),
+            "public" => println!("{}", hex::encode(&keypair.dilithium2_pk)),
+            "private" => println!("{}", hex::encode(&keypair.dilithium2_sk)),
+            "seed" => println!("[WARN] Seed export not implemented for this keypair."),
+            _ => eprintln!("Unknown part: {}. Use address|public|private|seed", part),
+        }
+    } else {
+        eprintln!("Keypair not found for address: {}", address);
+    }
+}
+
+fn handle_mdump(output: &std::path::Path) {
+    use pqkey::PQKeypair;
+    let all = load_all_keypairs();
+    let dumps: Vec<_> = all.iter().map(|(address, kp)| kp.to_keydump(address.clone(), true, false)).collect();
+    match serde_json::to_string_pretty(&dumps) {
+        Ok(json) => {
+            if let Err(e) = fs::write(output, json) {
+                eprintln!("Failed to write mdump: {e}");
+            } else {
+                println!("Exported {} keypairs to {:?}", dumps.len(), output);
+            }
+        }
+        Err(e) => eprintln!("Serialization error: {e}"),
+    }
+}
+
+fn handle_mimport(input: &std::path::Path) {
+    use pqkey::{PQKeypair, KeyDump};
+    match fs::read_to_string(input) {
+        Ok(data) => match serde_json::from_str::<Vec<KeyDump>>(&data) {
+            Ok(list) => {
+                for kd in list {
+                    let address = kd.address.clone();
+                    // Only import if not already present
+                    let path = PathBuf::from(format!("{}/{}.json", KEY_DIR, address));
+                    if path.exists() {
+                        println!("[SKIP] {} already exists", address);
+                        continue;
+                    }
+                    // Only import public/private for now
+                    let kp = PQKeypair {
+                        dilithium2_pk: hex::decode(&kd.public_key).unwrap_or_default(),
+                        dilithium2_sk: kd.private_key.as_ref().and_then(|s| hex::decode(s).ok()).unwrap_or_default(),
+                        falcon512_pk: vec![],
+                        falcon512_sk: vec![],
+                    };
+                    if let Ok(json) = serde_json::to_string_pretty(&kp) {
+                        if let Err(e) = fs::write(&path, json) {
+                            eprintln!("[FAIL] {}: {e}", address);
+                        } else {
+                            println!("[IMPORTED] {}", address);
+                        }
+                    }
+                }
+            }
+            Err(e) => eprintln!("JSON parse error: {e}"),
+        },
+        Err(e) => eprintln!("Failed to read file: {e}"),
     }
 }

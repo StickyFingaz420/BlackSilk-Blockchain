@@ -307,4 +307,21 @@ pub enum QuantumCommands {
         #[arg(long, value_name = "ALG")] // dilithium2|falcon512
         alg: String,
     },
+    /// Export a single key (address, public, private, or seed)
+    Dump {
+        #[arg(value_name = "ADDRESS")]
+        address: String,
+        #[arg(value_name = "PART")]
+        part: String, // "public" | "private" | "seed"
+    },
+    /// Mass export all keypairs to a JSON file
+    Mdump {
+        #[arg(value_name = "FILE")]
+        output: PathBuf,
+    },
+    /// Mass import all keypairs from a JSON file
+    Mimport {
+        #[arg(value_name = "FILE")]
+        input: PathBuf,
+    },
 }

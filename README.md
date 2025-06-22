@@ -543,15 +543,3 @@ BlackSilk Quantum introduces advanced quantum-resistant features:
 - Ensure compatibility and security of quantum features.
 
 ---
-
-## Quantum Roadmap
-- **Q1 2024:** Audit and finalize quantum address and signature implementation.
-- **Q2 2024:** Expand quantum features to include advanced ZKP integration and performance optimizations.
-- **Q3 2024:** Community testing and feedback phase for quantum features.
-- **Q4 2024:** Official release of quantum features, including mobile and light client support.
-
----
-
-> <p align="center" style="color:#00bcd4; font-size:1.2em;">✨ <b>Quantum features are in active development and testing. For the latest status, see the <a href="#quantum-roadmap">Quantum Roadmap</a> section above.</b> ✨</p>
-
----

@@ -10,6 +10,14 @@ pub struct PQKeypair {
     pub falcon512_sk: Vec<u8>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct KeyDump {
+    pub address: String,
+    pub public_key: String,
+    pub private_key: Option<String>,
+    pub seed: Option<String>,
+}
+
 impl PQKeypair {
     pub fn generate() -> Self {
         let (dpk, dsk) = Dilithium2::keypair();
@@ -28,5 +36,13 @@ impl PQKeypair {
     pub fn load_from_file(path: &str) -> std::io::Result<Self> {
         let data = std::fs::read(path)?;
         Ok(serde_json::from_slice(&data).unwrap())
+    }
+    pub fn to_keydump(&self, address: String, include_private: bool, include_seed: bool) -> KeyDump {
+        KeyDump {
+            address,
+            public_key: hex::encode(&self.dilithium2_pk), // Example: use Dilithium2 PK
+            private_key: if include_private { Some(hex::encode(&self.dilithium2_sk)) } else { None },
+            seed: if include_seed { Some("seed_placeholder".to_string()) } else { None }, // TODO: real seed if available
+        }
     }
 }
