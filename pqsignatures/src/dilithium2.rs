@@ -1,5 +1,6 @@
 use crate::traits::PQSignatureScheme;
 use crystals_dilithium::dilithium2::{Keypair, PublicKey, SecretKey, Signature};
+use std::convert::TryInto;
 
 pub struct Dilithium2;
 
@@ -22,9 +23,15 @@ impl PQSignatureScheme for Dilithium2 {
 
 impl Dilithium2 {
     pub fn public_key_from_bytes(bytes: &[u8]) -> Result<<Self as PQSignatureScheme>::PublicKey, &'static str> {
-        crystals_dilithium::dilithium2::PublicKey::from_bytes(bytes).map_err(|_| "Invalid Dilithium2 public key")
+        if bytes.len() != 1312 {
+            return Err("Dilithium2 public key must be 1312 bytes");
+        }
+        Ok(crystals_dilithium::dilithium2::PublicKey::from_bytes(bytes.try_into().unwrap()))
     }
     pub fn signature_from_bytes(bytes: &[u8]) -> Result<<Self as PQSignatureScheme>::Signature, &'static str> {
-        crystals_dilithium::dilithium2::Signature::mut_from_bytes(bytes).map_err(|_| "Invalid Dilithium2 signature")
+        if bytes.len() != 2420 {
+            return Err("Dilithium2 signature must be 2420 bytes");
+        }
+        Ok(bytes.try_into().unwrap())
     }
 }

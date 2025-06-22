@@ -25,8 +25,6 @@ use i2p::I2pClient;
 use primitives::{TransactionKind, ContractTx, StealthAddress, types::PublicKey};
 use serde::{Serialize, Deserialize};
 use pqsignatures::{Dilithium2, Falcon512, PQSignatureScheme};
-use crystals_dilithium::dilithium2::{PublicKey as D2PublicKey, Signature as D2Signature};
-use falcon_rust::falcon512::{PublicKey as F512PublicKey, Signature as F512Signature};
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right

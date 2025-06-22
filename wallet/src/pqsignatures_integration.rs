@@ -22,25 +22,26 @@ pub fn falcon512_demo() {
 
 /// Sign a transaction with Dilithium2
 pub fn sign_tx_dilithium2(tx_bytes: &[u8], pqkey: &PQKeypair) -> Vec<u8> {
-    let sk = pqsignatures::dilithium2::SecretKey::from_bytes(&pqkey.dilithium2_sk);
-    Dilithium2::sign(&sk, tx_bytes)
+    let sk = Dilithium2::secret_key_from_bytes(&pqkey.dilithium2_sk).expect("Invalid Dilithium2 SK");
+    Dilithium2::sign(&sk, tx_bytes).to_vec()
 }
 
 /// Sign a transaction with Falcon512
 pub fn sign_tx_falcon512(tx_bytes: &[u8], pqkey: &PQKeypair) -> Vec<u8> {
-    let sk = pqsignatures::falcon512::SecretKey::from_bytes(&pqkey.falcon512_sk).unwrap();
-    Falcon512::sign(&sk, tx_bytes).to_bytes().to_vec()
+    let sk = Falcon512::secret_key_from_bytes(&pqkey.falcon512_sk).expect("Invalid Falcon512 SK");
+    Falcon512::sign(&sk, tx_bytes).to_vec()
 }
 
 /// Verify a Dilithium2 signature
 pub fn verify_tx_dilithium2(tx_bytes: &[u8], sig: &[u8], pqkey: &PQKeypair) -> bool {
-    let pk = pqsignatures::dilithium2::PublicKey::from_bytes(&pqkey.dilithium2_pk);
-    Dilithium2::verify(&pk, tx_bytes, sig)
+    let pk = Dilithium2::public_key_from_bytes(&pqkey.dilithium2_pk).expect("Invalid Dilithium2 PK");
+    let signature = Dilithium2::signature_from_bytes(sig).expect("Invalid Dilithium2 signature");
+    Dilithium2::verify(&pk, tx_bytes, &signature)
 }
 
 /// Verify a Falcon512 signature
 pub fn verify_tx_falcon512(tx_bytes: &[u8], sig: &[u8], pqkey: &PQKeypair) -> bool {
-    let pk = pqsignatures::falcon512::PublicKey::from_bytes(&pqkey.falcon512_pk).unwrap();
-    let sig = pqsignatures::falcon512::Signature::from_bytes(sig).unwrap();
-    Falcon512::verify(&pk, tx_bytes, &sig)
+    let pk = Falcon512::public_key_from_bytes(&pqkey.falcon512_pk).expect("Invalid Falcon512 PK");
+    let signature = Falcon512::signature_from_bytes(sig).expect("Invalid Falcon512 signature");
+    Falcon512::verify(&pk, tx_bytes, &signature)
 }
