@@ -14,6 +14,7 @@ members = [
     "scripts", # Added scripts for Rust comparison tool
     "pqsignatures",
     "ml-dsa-44" # Only keep ml-dsa-44, remove ml-dsa44-standalone
+    "gui-wallet"
 ]
 
 [package]
