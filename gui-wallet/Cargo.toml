@@ -17,5 +17,27 @@ secrecy = "0.8"
 sled = "0.34"
 dirs = "5"
 rpassword = "7"
+qrcode = "0.14"
+image = "0.24"
+iced_aw = "0.7"
+ledger-apdu = "0.5"
+hidapi = "2.4"
+primitives = { path = "../primitives" }
 
-[build-dependencies]
+[package.metadata.bundle]
+icon = [
+    "../blacksilklogos/icon_128x128.png",
+    "../blacksilklogos/icon_256x256.png",
+    "../blacksilklogos/icon_512x512.png"
+]
+
+[package.metadata.winres]
+OriginalFilename = "BlackSilkWallet.exe"
+LegalCopyright = "Copyright © BlackSilk 2024"
+ProductName = "BlackSilk Wallet"
+FileDescription = "BlackSilk Quantum Privacy Wallet"
+Icon = "../blacksilklogos/icon_256x256.png"
+
+[[bin]]
+name = "gui-wallet"
+path = "main.rs"
