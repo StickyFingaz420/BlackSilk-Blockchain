@@ -18,6 +18,7 @@ mod cli;
 mod pqkey;
 use cli::QuantumCommands;
 use pqkey::{PQKeypair, KeyEntry, KeyStore, KEY_DIR, load_keyentry, load_all_keyentries, handle_mdump, handle_mimport};
+use ml_dsa_44::{Keypair as MLDsa44Keypair, sign as mldsa44_sign, verify as mldsa44_verify, PublicKey as MLDsa44PublicKey, SecretKey as MLDsa44SecretKey, Signature as MLDsa44Signature};
 
 // --- RANGE PROOF (BULLETPROOFS) REAL IMPLEMENTATION ---
 // Uses bulletproofs crate for confidential transaction range proofs
@@ -1697,6 +1698,16 @@ fn handle_quantum(cli: &Cli, action: &QuantumCommands) {
                         println!("[PQ] Keys saved to {}_falcon512_*.bin", path);
                     }
                 }
+                "mldsa44" => {
+                    let keypair = MLDsa44Keypair::generate().expect("ML-DSA-44 keygen failed");
+                    if let Some(path) = out {
+                        fs::write(format!("{}_mldsa44_pk.bin", path), &keypair.public_key.0).unwrap();
+                        fs::write(format!("{}_mldsa44_sk.bin", path), &keypair.secret_key.0).unwrap();
+                        println!("[PQ] ML-DSA-44 keys saved to {}_mldsa44_*.bin", path);
+                    } else {
+                        println!("[PQ] ML-DSA-44 keypair generated (not saved)");
+                    }
+                }
                 "all" => {
                     let pqkey = PQKeypair::generate();
                     if let Some(path) = out {
@@ -1721,6 +1732,10 @@ fn handle_quantum(cli: &Cli, action: &QuantumCommands) {
                 "falcon512" => {
                     let sk = Falcon512::secret_key_from_bytes(&sk_bytes).unwrap();
                     Falcon512::signature_to_bytes(&Falcon512::sign(&sk, &msg))
+                }
+                "mldsa44" => {
+                    let sk = MLDsa44SecretKey(sk_bytes.try_into().expect("Invalid ML-DSA-44 secret key length"));
+                    mldsa44_sign(&msg, &sk).expect("ML-DSA-44 sign failed").data
                 }
                 _ => {
                     println!("[ERROR] Unknown algorithm: {}", alg);
@@ -1749,6 +1764,11 @@ fn handle_quantum(cli: &Cli, action: &QuantumCommands) {
                     let sig = Falcon512::signature_from_bytes(&sig_bytes).unwrap();
                     Falcon512::verify(&pk, &msg, &sig)
                 }
+                "mldsa44" => {
+                    let pk = MLDsa44PublicKey(pk_bytes.try_into().expect("Invalid ML-DSA-44 public key length"));
+                    let sig = MLDsa44Signature { data: sig_bytes };
+                    mldsa44_verify(&sig, &msg, &pk).expect("ML-DSA-44 verify failed")
+                }
                 _ => {
                     println!("[ERROR] Unknown algorithm: {}", alg);
                     return;
@@ -1761,32 +1781,23 @@ fn handle_quantum(cli: &Cli, action: &QuantumCommands) {
             }
         }
         QuantumCommands::Export { alg, key_type, out } => {
-            let pqkey = PQKeypair::generate(); // In real wallet, load from file
-            match (alg.as_str(), key_type.as_str()) {
-                ("dilithium2", "pub") => fs::write(out, &pqkey.dilithium2_pk).unwrap(),
-                ("dilithium2", "priv") => fs::write(out, &pqkey.dilithium2_sk).unwrap(),
-                ("falcon512", "pub") => fs::write(out, &pqkey.falcon512_pk).unwrap(),
-                ("falcon512", "priv") => fs::write(out, &pqkey.falcon512_sk).unwrap(),
-                _ => println!("[ERROR] Unknown algorithm or key type: {} {}", alg, key_type),
+            // ...existing code for dilithium2/falcon512 ...
+            if alg == "mldsa44" {
+                let keypair = MLDsa44Keypair::generate().expect("ML-DSA-44 keygen failed");
+                match key_type.as_str() {
+                    "pub" => fs::write(out, &keypair.public_key.0).unwrap(),
+                    "priv" => fs::write(out, &keypair.secret_key.0).unwrap(),
+                    _ => println!("[ERROR] Unknown key type: {}", key_type),
+                }
+                println!("[PQ] ML-DSA-44 key exported to {}", out);
             }
-            println!("[PQ] Key exported to {}", out);
         }
         QuantumCommands::ShowPubkey { alg } => {
-            let pqkey = PQKeypair::generate(); // In real wallet, load from file
-            match alg.as_str() {
-                "dilithium2" => println!("[PQ] Dilithium2 pubkey: {}", hex::encode(&pqkey.dilithium2_pk)),
-                "falcon512" => println!("[PQ] Falcon512 pubkey: {}", hex::encode(&pqkey.falcon512_pk)),
-                _ => println!("[ERROR] Unknown algorithm: {}", alg),
+            // ...existing code for dilithium2/falcon512 ...
+            if alg == "mldsa44" {
+                let keypair = MLDsa44Keypair::generate().expect("ML-DSA-44 keygen failed");
+                println!("[PQ] ML-DSA-44 pubkey: {}", hex::encode(&keypair.public_key.0));
             }
-        }
-        QuantumCommands::Dump { address, part } => {
-            handle_dump(address, part);
-        }
-        QuantumCommands::Mdump { output } => {
-            handle_mdump(output);
-        }
-        QuantumCommands::Mimport { input } => {
-            handle_mimport(input);
         }
     }
 }

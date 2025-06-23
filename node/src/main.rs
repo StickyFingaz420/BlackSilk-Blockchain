@@ -10,6 +10,7 @@ use wasm_vm::{deploy_contract, invoke_contract_with_gas};
 mod network;
 use pqsignatures::PQSignatureScheme;
 use primitives::Address;
+use ml_dsa_44::{Keypair as MLDsa44Keypair, sign as mldsa44_sign, verify as mldsa44_verify, PublicKey as MLDsa44PublicKey, SecretKey as MLDsa44SecretKey, Signature as MLDsa44Signature};
 
 #[derive(Parser, Debug)]
 #[command(name = "blacksilk-node", version, about = "BlackSilk Privacy Blockchain Node")]
@@ -539,7 +540,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         Some(Commands::QuantumKeygen { scheme }) => {
-            // Generate quantum keypair
             match scheme.as_str() {
                 "dilithium2" => {
                     // let (privkey, pubkey) = pqcrypto_native::dilithium2::keypair();
@@ -554,9 +554,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Falcon512 keypair generated: falcon512.priv, falcon512.pub");
                 }
                 "mldsa44" => {
-                    // let (privkey, pubkey) = pqcrypto_native::mldsa44::keypair();
-                    // std::fs::write("mldsa44.priv", &privkey)?;
-                    // std::fs::write("mldsa44.pub", &pubkey)?;
+                    let keypair = MLDsa44Keypair::generate().expect("ML-DSA-44 keygen failed");
+                    std::fs::write("mldsa44.priv", &keypair.secret_key.0).expect("Failed to write mldsa44.priv");
+                    std::fs::write("mldsa44.pub", &keypair.public_key.0).expect("Failed to write mldsa44.pub");
                     println!("ML-DSA-44 keypair generated: mldsa44.priv, mldsa44.pub");
                 }
                 _ => println!("Unknown scheme: {}", scheme),
@@ -564,18 +564,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         Some(Commands::QuantumSign { scheme, privkey, message }) => {
-            let msg = std::fs::read(message)?;
-            let privkey_bytes = std::fs::read(privkey)?;
-            // Legacy PQC code removed: use pqsignatures only
-            println!("QuantumSign is deprecated: use pqsignatures integration only");
+            let msg = std::fs::read(&message)?;
+            let privkey_bytes = std::fs::read(&privkey)?;
+            match scheme.as_str() {
+                "dilithium2" | "falcon512" => {
+                    println!("QuantumSign for {} is deprecated: use pqsignatures integration only", scheme);
+                }
+                "mldsa44" => {
+                    let sk = MLDsa44SecretKey(privkey_bytes.try_into().expect("Invalid ML-DSA-44 secret key length"));
+                    let signature = mldsa44_sign(&msg, &sk).expect("ML-DSA-44 sign failed");
+                    std::fs::write("mldsa44.sig", &signature.data).expect("Failed to write mldsa44.sig");
+                    println!("ML-DSA-44 signature written to mldsa44.sig");
+                }
+                _ => println!("Unknown scheme: {}", scheme),
+            }
             return Ok(());
         }
         Some(Commands::QuantumVerify { scheme, pubkey, message, signature }) => {
-            let msg = std::fs::read(message)?;
-            let pubkey_bytes = std::fs::read(pubkey)?;
-            let sig = std::fs::read(signature)?;
-            // Legacy PQC code removed: use pqsignatures only
-            println!("QuantumVerify is deprecated: use pqsignatures integration only");
+            let msg = std::fs::read(&message)?;
+            let pubkey_bytes = std::fs::read(&pubkey)?;
+            let sig_bytes = std::fs::read(&signature)?;
+            match scheme.as_str() {
+                "dilithium2" | "falcon512" => {
+                    println!("QuantumVerify for {} is deprecated: use pqsignatures integration only", scheme);
+                }
+                "mldsa44" => {
+                    let pk = MLDsa44PublicKey(pubkey_bytes.try_into().expect("Invalid ML-DSA-44 public key length"));
+                    let sig = MLDsa44Signature { data: sig_bytes };
+                    let is_valid = mldsa44_verify(&sig, &msg, &pk).expect("ML-DSA-44 verify failed");
+                    println!("ML-DSA-44 signature valid: {}", is_valid);
+                }
+                _ => println!("Unknown scheme: {}", scheme),
+            }
             return Ok(());
         }
         None => {

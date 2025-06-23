@@ -27,20 +27,6 @@ mod parser;
 use std::process::Command;
 
 fn main() {
-    use std::fs;
-    let c_dir = "ml-dsa-44-c";
-    let mut build = cc::Build::new();
-    for entry in fs::read_dir(c_dir).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if let Some(ext) = path.extension() {
-            if ext == "c" {
-                build.file(path);
-            }
-        }
-    }
-    build.include(c_dir).compile("ml_dsa_ffi");
-
     // Path to the KAT JSON file
     let kat_json = "kats/ML-DSA-sigGen-FIPS204.json";
     if Path::new(kat_json).exists() {
