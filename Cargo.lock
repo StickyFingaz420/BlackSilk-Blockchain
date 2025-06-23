@@ -6,7 +6,9 @@ version = 4
 name = "BlackSilk"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "hex",
+ "ml-dsa-44",
  "node",
  "pqcrypto_native",
  "primitives",
@@ -3305,6 +3307,14 @@ dependencies = [
  "libc",
  "wasi 0.11.1+wasi-snapshot-preview1",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "ml-dsa-44"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "libc",
 ]
 
 [[package]]

@@ -30,16 +30,19 @@
 //! ```rust
 //! use ml_dsa_44::{Keypair, sign, verify};
 //!
-//! // Generate keypair
-//! let keypair = Keypair::generate()?;
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Generate keypair
+//!     let keypair = Keypair::generate()?;
 //!
-//! // Sign message
-//! let message = b"Hello, post-quantum world!";
-//! let signature = sign(message, &keypair.secret_key)?;
+//!     // Sign message
+//!     let message = b"Hello, post-quantum world!";
+//!     let signature = sign(message, &keypair.secret_key)?;
 //!
-//! // Verify signature
-//! let is_valid = verify(&signature, message, &keypair.public_key)?;
-//! assert!(is_valid);
+//!     // Verify signature
+//!     let is_valid = verify(&signature, message, &keypair.public_key)?;
+//!     assert!(is_valid);
+//!     Ok(())
+//! }
 //! ```
 //!
 //! For more, see the README and examples directory.

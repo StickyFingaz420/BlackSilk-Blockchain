@@ -1,0 +1,106 @@
+OUT_DIR = Some(C:\Users\Brega05\Desktop\mldsa44-standalone\target\debug\build\ml-dsa-44-ca824592da52e1c2\out)
+OPT_LEVEL = Some(0)
+TARGET = Some(x86_64-pc-windows-msvc)
+cargo:rerun-if-env-changed=VCINSTALLDIR
+VCINSTALLDIR = None
+cargo:rerun-if-env-changed=VSTEL_MSBuildProjectFullPath
+VSTEL_MSBuildProjectFullPath = None
+cargo:rerun-if-env-changed=VSCMD_ARG_VCVARS_SPECTRE
+VSCMD_ARG_VCVARS_SPECTRE = None
+cargo:rerun-if-env-changed=WindowsSdkDir
+WindowsSdkDir = None
+cargo:rerun-if-env-changed=WindowsSDKVersion
+WindowsSDKVersion = None
+cargo:rerun-if-env-changed=LIB
+LIB = None
+PATH = Some(C:\Users\Brega05\Desktop\mldsa44-standalone\target\debug\deps;C:\Users\Brega05\Desktop\mldsa44-standalone\target\debug;C:\Users\Brega05\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\orant\bin;C:\Program Files\VanDyke Software\Clients\;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\orant\jdk\bin;C:\Program Files\Git\cmd;C:\Program Files\nodejs\;c:\Users\Brega05\AppData\Local\Programs\cursor\resources\app\bin;c:\Users\Brega05\AppData\Local\Programs\cursor\resources\app\bin;C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit\;C:\Program Files\CMake\bin;C:\Program Files\Cloudflare\Cloudflare WARP\;C:\Program Files\Docker\Docker\resources\bin;C:\Users\Brega05\.cargo\bin;C:\Users\Brega05\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\Brega05\AppData\Local\Programs\Python\Python313\;C:\Users\Brega05\AppData\Local\Programs\Python\Launcher\;C:\Users\Brega05\AppData\Local\Microsoft\WindowsApps;C:\Users\Brega05\.dotnet\tools;C:\vcpkg;C:\Users\Brega05\AppData\Local\GitHubDesktop\bin;C:\Users\Brega05\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\Brega05\AppData\Roaming\npm;C:\Users\Brega05\AppData\Local\Programs\cursor\resources\app\bin;C:\Users\Brega05\AppData\Local\Programs\Windsurf\bin;C:\msys64\mingw64\bin;C:\Users\Brega05\AppData\Local\Programs\Ollama;C:\LLVM\bin;;C:\Program Files\JetBrains\RustRover 2025.1.2\bin;;c:\Users\Brega05\.vscode\extensions\ms-python.debugpy-2025.8.0-win32-x64\bundled\scripts\noConfigScripts;c:\Users\Brega05\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\debugCommand;C:\Users\Brega05\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+cargo:rerun-if-env-changed=INCLUDE
+INCLUDE = None
+HOST = Some(x86_64-pc-windows-msvc)
+cargo:rerun-if-env-changed=CC_x86_64-pc-windows-msvc
+CC_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=CC_x86_64_pc_windows_msvc
+CC_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=HOST_CC
+HOST_CC = None
+cargo:rerun-if-env-changed=CC
+CC = None
+cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+CRATE_CC_NO_DEFAULTS = None
+CARGO_CFG_TARGET_FEATURE = Some(cmpxchg16b,fxsr,sse,sse2,sse3)
+DEBUG = Some(true)
+cargo:rerun-if-env-changed=CFLAGS
+CFLAGS = None
+cargo:rerun-if-env-changed=HOST_CFLAGS
+HOST_CFLAGS = None
+cargo:rerun-if-env-changed=CFLAGS_x86_64_pc_windows_msvc
+CFLAGS_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=CFLAGS_x86_64-pc-windows-msvc
+CFLAGS_x86_64-pc-windows-msvc = None
+CARGO_ENCODED_RUSTFLAGS = Some()
+cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-O3'
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-std=c99'
+ntt.c
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-O3'
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-std=c99'
+packing.c
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-O3'
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-std=c99'
+poly.c
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-O3'
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-std=c99'
+polyvec.c
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-O3'
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-std=c99'
+reduce.c
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-O3'
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-std=c99'
+rounding.c
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-O3'
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-std=c99'
+sign.c
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-O3'
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-std=c99'
+symmetric-shake.c
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-O3'
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-std=c99'
+fips202.c
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-O3'
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-std=c99'
+randombytes.c
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-O3'
+cargo:warning=cl : Command line warning D9002 : ignoring unknown option '-std=c99'
+memory_cleanse.c
+cargo:rerun-if-env-changed=AR_x86_64-pc-windows-msvc
+AR_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=AR_x86_64_pc_windows_msvc
+AR_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=HOST_AR
+HOST_AR = None
+cargo:rerun-if-env-changed=AR
+AR = None
+cargo:rerun-if-env-changed=ARFLAGS
+ARFLAGS = None
+cargo:rerun-if-env-changed=HOST_ARFLAGS
+HOST_ARFLAGS = None
+cargo:rerun-if-env-changed=ARFLAGS_x86_64_pc_windows_msvc
+ARFLAGS_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=ARFLAGS_x86_64-pc-windows-msvc
+ARFLAGS_x86_64-pc-windows-msvc = None
+cargo:rustc-link-search=native=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\atlmfc\lib\x64
+cargo:rustc-link-lib=static=ml-dsa-44-clean
+cargo:rustc-link-search=native=C:\Users\Brega05\Desktop\mldsa44-standalone\target\debug\build\ml-dsa-44-ca824592da52e1c2\out
+cargo:rustc-link-lib=static=ml-dsa-44-clean
+cargo:rerun-if-changed=ntt.c
+cargo:rerun-if-changed=packing.c
+cargo:rerun-if-changed=poly.c
+cargo:rerun-if-changed=polyvec.c
+cargo:rerun-if-changed=reduce.c
+cargo:rerun-if-changed=rounding.c
+cargo:rerun-if-changed=sign.c
+cargo:rerun-if-changed=symmetric-shake.c
+cargo:rerun-if-changed=fips202.c
+cargo:rerun-if-changed=randombytes.c
+cargo:rerun-if-changed=memory_cleanse.c
+cargo:rerun-if-changed=c/api.h
