@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Check for NIST KAT files
+        run: |
+          test -f kats/ML-DSA-keyGen-FIPS204.json
+          test -f kats/ML-DSA-sigGen-FIPS204.json
+          test -f kats/ML-DSA-sigVer-FIPS204.json
+      - name: Build workspace
+        run: cargo build --workspace --all-features
+      - name: Run all tests (including ML-DSA-44 KAT)
+        run: cargo test --workspace --all-features

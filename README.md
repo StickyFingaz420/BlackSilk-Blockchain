@@ -15,6 +15,14 @@
 
 ---
 
+## ML-DSA-44 Post-Quantum Signature & NIST KAT Compliance
+
+- The BlackSilk Blockchain fully integrates the ML-DSA-44 post-quantum signature scheme, with deterministic, NIST FIPS 204-compliant Known-Answer Test (KAT) coverage.
+- Official NIST KAT JSONs are included in the `kats/` directory and are run automatically in CI via `tests/kat.rs`.
+- All ML-DSA-44 cryptographic operations (keygen, sign, verify) are tested against the official vectors for full compliance and production security.
+
+---
+
 ## Table of Contents
 - [Project Overview](#project-overview)
 - [Architecture](#architecture)

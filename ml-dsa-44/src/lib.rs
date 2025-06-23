@@ -87,14 +87,63 @@ pub type Result<T> = std::result::Result<T, MlDsaError>;
 #[derive(Clone)]
 pub struct PublicKey(pub [u8; constants::PUBLIC_KEY_BYTES]);
 
+impl PublicKey {
+    /// Returns the public key as a byte slice.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+    /// Constructs a PublicKey from a byte slice.
+    /// Returns an error if the length is incorrect.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != constants::PUBLIC_KEY_BYTES {
+            return Err(MlDsaError::InvalidInput);
+        }
+        let mut arr = [0u8; constants::PUBLIC_KEY_BYTES];
+        arr.copy_from_slice(bytes);
+        Ok(PublicKey(arr))
+    }
+}
+
 /// Secret key (2560 bytes)
 #[derive(Clone)]
 pub struct SecretKey(pub [u8; constants::SECRET_KEY_BYTES]);
+
+impl SecretKey {
+    /// Returns the secret key as a byte slice.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+    /// Constructs a SecretKey from a byte slice.
+    /// Returns an error if the length is incorrect.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != constants::SECRET_KEY_BYTES {
+            return Err(MlDsaError::InvalidInput);
+        }
+        let mut arr = [0u8; constants::SECRET_KEY_BYTES];
+        arr.copy_from_slice(bytes);
+        Ok(SecretKey(arr))
+    }
+}
 
 /// Digital signature (up to 2420 bytes)
 #[derive(Clone)]
 pub struct Signature {
     pub data: Vec<u8>,
+}
+
+impl Signature {
+    /// Returns the signature as a byte slice.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.data
+    }
+    /// Constructs a Signature from a byte slice.
+    /// Returns an error if the length is too large.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() > constants::SIGNATURE_BYTES {
+            return Err(MlDsaError::InvalidInput);
+        }
+        Ok(Signature { data: bytes.to_vec() })
+    }
 }
 
 /// Keypair containing public and secret keys
@@ -104,81 +153,26 @@ pub struct Keypair {
     pub secret_key: SecretKey,
 }
 
-// FFI declarations
-extern "C" {
-    fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_keypair(
-        pk: *mut c_uchar,
-        sk: *mut c_uchar,
-    ) -> c_int;
-
-    fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_keypair_from_fseed(
-        pk: *mut c_uchar,
-        sk: *mut c_uchar,
-        seed: *const c_uchar,
-    ) -> c_int;
-
-    fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_signature(
-        sig: *mut c_uchar,
-        siglen: *mut libc::size_t,
-        m: *const c_uchar,
-        mlen: libc::size_t,
-        sk: *const c_uchar,
-    ) -> c_int;
-
-    fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_signature_ctx(
-        sig: *mut c_uchar,
-        siglen: *mut libc::size_t,
-        m: *const c_uchar,
-        mlen: libc::size_t,
-        ctx: *const c_uchar,
-        ctxlen: libc::size_t,
-        sk: *const c_uchar,
-    ) -> c_int;
-
-    fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_verify(
-        sig: *const c_uchar,
-        siglen: libc::size_t,
-        m: *const c_uchar,
-        mlen: libc::size_t,
-        pk: *const c_uchar,
-    ) -> c_int;
-
-    fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_verify_ctx(
-        sig: *const c_uchar,
-        siglen: libc::size_t,
-        m: *const c_uchar,
-        mlen: libc::size_t,
-        ctx: *const c_uchar,
-        ctxlen: libc::size_t,
-        pk: *const c_uchar,
-    ) -> c_int;
-}
-
 impl Keypair {
-    /// Generate a new keypair using system randomness
+    /// Generate a new keypair using system randomness.
     pub fn generate() -> Result<Self> {
         let mut pk = [0u8; constants::PUBLIC_KEY_BYTES];
         let mut sk = [0u8; constants::SECRET_KEY_BYTES];
-
         let result = unsafe {
             PQCLEAN_MLDSA44_CLEAN_crypto_sign_keypair(pk.as_mut_ptr(), sk.as_mut_ptr())
         };
-
         if result != 0 {
             return Err(MlDsaError::KeyGeneration);
         }
-
         Ok(Keypair {
             public_key: PublicKey(pk),
             secret_key: SecretKey(sk),
         })
     }
-
-    /// Generate keypair from a 32-byte seed (deterministic)
+    /// Generate keypair from a 32-byte seed (deterministic).
     pub fn from_seed(seed: &[u8; constants::SEED_BYTES]) -> Result<Self> {
         let mut pk = [0u8; constants::PUBLIC_KEY_BYTES];
         let mut sk = [0u8; constants::SECRET_KEY_BYTES];
-
         let result = unsafe {
             PQCLEAN_MLDSA44_CLEAN_crypto_sign_keypair_from_fseed(
                 pk.as_mut_ptr(),
@@ -186,11 +180,9 @@ impl Keypair {
                 seed.as_ptr(),
             )
         };
-
         if result != 0 {
             return Err(MlDsaError::KeyGeneration);
         }
-
         Ok(Keypair {
             public_key: PublicKey(pk),
             secret_key: SecretKey(sk),
@@ -198,11 +190,10 @@ impl Keypair {
     }
 }
 
-/// Sign a message with the secret key
+/// Signs a message with the secret key.
 pub fn sign(message: &[u8], secret_key: &SecretKey) -> Result<Signature> {
     let mut sig = vec![0u8; constants::SIGNATURE_BYTES];
     let mut siglen = constants::SIGNATURE_BYTES;
-
     let result = unsafe {
         PQCLEAN_MLDSA44_CLEAN_crypto_sign_signature(
             sig.as_mut_ptr(),
@@ -212,16 +203,14 @@ pub fn sign(message: &[u8], secret_key: &SecretKey) -> Result<Signature> {
             secret_key.0.as_ptr(),
         )
     };
-
     if result != 0 {
         return Err(MlDsaError::Signing);
     }
-
     sig.truncate(siglen);
     Ok(Signature { data: sig })
 }
 
-/// Sign a message with context data
+/// Signs a message with context data.
 pub fn sign_with_context(
     message: &[u8],
     context: &[u8],
@@ -229,7 +218,6 @@ pub fn sign_with_context(
 ) -> Result<Signature> {
     let mut sig = vec![0u8; constants::SIGNATURE_BYTES];
     let mut siglen = constants::SIGNATURE_BYTES;
-
     let result = unsafe {
         PQCLEAN_MLDSA44_CLEAN_crypto_sign_signature_ctx(
             sig.as_mut_ptr(),
@@ -241,16 +229,14 @@ pub fn sign_with_context(
             secret_key.0.as_ptr(),
         )
     };
-
     if result != 0 {
         return Err(MlDsaError::Signing);
     }
-
     sig.truncate(siglen);
     Ok(Signature { data: sig })
 }
 
-/// Verify a signature
+/// Verifies a signature.
 pub fn verify(signature: &Signature, message: &[u8], public_key: &PublicKey) -> Result<bool> {
     let result = unsafe {
         PQCLEAN_MLDSA44_CLEAN_crypto_sign_verify(
@@ -261,11 +247,10 @@ pub fn verify(signature: &Signature, message: &[u8], public_key: &PublicKey) -> 
             public_key.0.as_ptr(),
         )
     };
-
     Ok(result == 0)
 }
 
-/// Verify a signature with context data
+/// Verifies a signature with context data.
 pub fn verify_with_context(
     signature: &Signature,
     message: &[u8],
@@ -283,7 +268,6 @@ pub fn verify_with_context(
             public_key.0.as_ptr(),
         )
     };
-
     Ok(result == 0)
 }
 

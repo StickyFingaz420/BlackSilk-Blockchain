@@ -40,6 +40,7 @@ reqwest = { version = "0.11", features = ["blocking"] }
 [dev-dependencies]
 pqcrypto_native = { path = "pqcrypto_native" }
 ml-dsa-44 = { path = "ml-dsa-44" } # Only use the new ml-dsa-44 FFI-based library
+pqsignatures = { path = "pqsignatures" }
 
 [profile.release]
 opt-level = 3

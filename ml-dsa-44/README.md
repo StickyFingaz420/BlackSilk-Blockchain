@@ -10,6 +10,11 @@ A production-ready, NIST KAT-compliant, deterministic post-quantum signature lib
 - CI with GitHub Actions
 - Ready for research or production
 
+## NIST KAT Compliance
+- This crate includes a professional test harness (`tests/kat.rs`) that runs the official NIST FIPS 204 Known-Answer Tests (KATs) for ML-DSA-44.
+- The `kats/` directory contains the official JSON vectors, and these are checked in CI for full compliance.
+- All cryptographic operations (keygen, sign, verify) are tested against the official vectors for deterministic, production-grade security.
+
 ## Usage
 ```rust
 use ml_dsa_44::{Keypair, sign, verify};

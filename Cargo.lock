@@ -11,6 +11,7 @@ dependencies = [
  "ml-dsa-44",
  "node",
  "pqcrypto_native",
+ "pqsignatures",
  "primitives",
  "rand 0.9.1",
  "reqwest 0.11.27",

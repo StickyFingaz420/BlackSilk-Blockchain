@@ -1,5 +1,5 @@
 fn main() {
-    // C source files based on Makefile
+    // C source files in crate root
     let c_files = [
         "ntt.c",
         "packing.c", 
@@ -14,12 +14,12 @@ fn main() {
         "memory_cleanse.c",
     ];
 
-    // Build C library
+    // Build C library from crate root
     cc::Build::new()
         .files(&c_files)
-        .include("c")
-        .flag("-O3")
-        .flag("-std=c99")
+        .include(".")
+        .flag_if_supported("-O3")
+        .flag_if_supported("-std=c99")
         .compile("ml-dsa-44-clean");
 
     // Tell cargo to link the library
@@ -29,5 +29,5 @@ fn main() {
     for file in &c_files {
         println!("cargo:rerun-if-changed={}", file);
     }
-    println!("cargo:rerun-if-changed=c/api.h");
+    println!("cargo:rerun-if-changed=api.h");
 }
