@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-iced = { version = "0.12", features = ["tokio"] }
+iced = { git = "https://github.com/iced-rs/iced", branch = "master", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "blocking", "rustls-tls"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -19,8 +19,8 @@ dirs = "5"
 rpassword = "7"
 qrcode = "0.14"
 image = "0.24"
-iced_aw = "0.7"
-ledger-apdu = "0.5"
+iced_aw = { git = "https://github.com/iced-rs/iced_aw", branch = "main" }
+ledger-apdu = "0.11.0"
 hidapi = "2.4"
 primitives = { path = "../primitives" }
 
