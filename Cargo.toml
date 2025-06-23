@@ -13,7 +13,7 @@ members = [
     "pqcrypto_native",
     "scripts", # Added scripts for Rust comparison tool
     "pqsignatures",
-    "ml-dsa-44" # Only keep ml-dsa-44, remove ml-dsa44-standalone
+    "ml-dsa-44", # Only keep ml-dsa-44, remove ml-dsa44-standalone
     "gui-wallet"
 ]
 

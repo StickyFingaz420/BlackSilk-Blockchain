@@ -33,7 +33,7 @@ icon = [
 
 [package.metadata.winres]
 OriginalFilename = "BlackSilkWallet.exe"
-LegalCopyright = "Copyright © BlackSilk 2024"
+LegalCopyright = "Copyright © BlackSilk 2025"
 ProductName = "BlackSilk Wallet"
 FileDescription = "BlackSilk Quantum Privacy Wallet"
 Icon = "../blacksilklogos/icon_256x256.png"
