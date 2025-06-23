@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-iced = { git = "https://github.com/iced-rs/iced", branch = "master", features = ["tokio"] }
+iced = { git = "https://github.com/iced-rs/iced", branch = "master", features = ["tokio", "tiny-skia"] }
+iced_renderer = { git = "https://github.com/iced-rs/iced", branch = "master", features = ["tiny-skia"] }
 reqwest = { version = "0.12", features = ["json", "blocking", "rustls-tls"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

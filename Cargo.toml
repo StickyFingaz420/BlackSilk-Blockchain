@@ -1,3 +1,16 @@
+[patch.crates-io]
+# iced_aw = { git = "https://github.com/iced-rs/iced_aw", branch = "main" }
+# iced = { git = "https://github.com/iced-rs/iced", branch = "master" }
+# iced_renderer = { git = "https://github.com/iced-rs/iced", branch = "master" }
+# iced_core = { git = "https://github.com/iced-rs/iced", branch = "master" }
+# iced_futures = { git = "https://github.com/iced-rs/iced", branch = "master" }
+# iced_graphics = { git = "https://github.com/iced-rs/iced", branch = "master" }
+# iced_runtime = { git = "https://github.com/iced-rs/iced", branch = "master" }
+# iced_winit = { git = "https://github.com/iced-rs/iced", branch = "master" }
+# iced_tiny_skia = { git = "https://github.com/iced-rs/iced", branch = "master" }
+# iced_program = { git = "https://github.com/iced-rs/iced", branch = "master" }
+# iced_debug = { git = "https://github.com/iced-rs/iced", branch = "master" }
+
 [workspace]
 members = [
     "wallet",
@@ -56,9 +69,6 @@ strip = true
 [profile.release.package."blacksilk-miner"]
 opt-level = 3
 overflow-checks = false
-
-# [patch.crates-io]
-# signature = "=2.3.0-pre.5"
 
 [features]
 debug_kat = []
