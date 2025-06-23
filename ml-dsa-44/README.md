@@ -24,6 +24,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Workspace Integration
+
+To use ML-DSA-44 in any crate in your workspace:
+
+```rust
+use ml_dsa_44::{Keypair, sign, verify};
+
+fn main() {
+    let keypair = Keypair::generate().expect("Keygen failed");
+    let message = b"Hello, BlackSilk!";
+    let signature = sign(message, &keypair.secret_key).expect("Sign failed");
+    let is_valid = verify(&signature, message, &keypair.public_key).expect("Verify failed");
+    println!("Signature valid: {}", is_valid);
+}
+```
+
+- Add `ml-dsa-44 = { path = "ml-dsa-44" }` to your crate's `Cargo.toml` dependencies.
+- See `tests/integration.rs` for more examples.
+
 ## KAT Testing
 See `tests/kat.rs` and replace the vectors with official NIST KATs for full compliance.
 

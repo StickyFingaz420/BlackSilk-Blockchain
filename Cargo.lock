@@ -3314,6 +3314,7 @@ name = "ml-dsa-44"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "hex",
  "libc",
 ]
 
@@ -3375,6 +3376,7 @@ dependencies = [
  "libc",
  "log",
  "memmap2 0.7.1",
+ "ml-dsa-44",
  "num-bigint",
  "num_cpus",
  "once_cell",
@@ -6751,6 +6753,7 @@ dependencies = [
  "hex",
  "itertools 0.13.0",
  "merlin 3.0.0",
+ "ml-dsa-44",
  "node",
  "pqsignatures",
  "primitives",

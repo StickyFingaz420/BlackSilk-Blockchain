@@ -8,6 +8,7 @@ repository = "https://github.com/mraksoll4/ml-dsa-44-rust"
 
 [dependencies]
 libc = "0.2"
+hex = "0.4"
 
 [build-dependencies]
 cc = "1.0"

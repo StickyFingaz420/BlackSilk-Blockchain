@@ -28,6 +28,7 @@ wasm-bindgen = "0.2"
 bincode = "1.3"
 smart-contracts = { path = "../smart-contracts" }
 pqsignatures = { path = "../pqsignatures" }
+ml-dsa-44 = { path = "../ml-dsa-44" }
 
 [dev-dependencies]
 ark-groth16 = "0.4"
