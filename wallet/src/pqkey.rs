@@ -40,11 +40,6 @@ impl KeyEntry {
     }
 }
 
-//! PQ key management for wallet: Dilithium2 and Falcon512
-use pqsignatures::{Dilithium2, Falcon512, PQSignatureScheme};
-use serde::{Serialize, Deserialize};
-use bip39::{Mnemonic, Language};
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PQKeypair {
     pub dilithium2_pk: Vec<u8>,

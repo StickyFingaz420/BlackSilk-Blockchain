@@ -8,7 +8,7 @@ use std::fs::File;
 use std::io::BufReader;
 use serde::Deserialize;
 use hex::decode;
-use BlackSilk::mldsa44::{keygen_api, sign_api, verify_api};
+use ml_dsa44_standalone::{keygen_api, sign, verify};
 
 #[derive(Deserialize, Debug)]
 struct KeyGenTest {

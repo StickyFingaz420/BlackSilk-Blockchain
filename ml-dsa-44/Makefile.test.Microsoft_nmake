@@ -1,0 +1,22 @@
+!include Makefile.Microsoft_nmake
+
+TEST_EXECUTABLE=test_mldsa44.exe
+TEST_OBJECTS=test_mldsa44.obj
+
+# Заголовки в текущей папке, поэтому убираем -I ..\..\..\common
+CFLAGS=/nologo /O2 /W4 /WX /wd4146
+
+$(TEST_EXECUTABLE): $(TEST_OBJECTS) $(LIBRARY)
+    LINK.EXE /NOLOGO /OUT:$@ $(TEST_OBJECTS) $(LIBRARY) advapi32.lib
+
+test_mldsa44.obj: test_mldsa44.c
+    $(CC) $(CFLAGS) /c test_mldsa44.c
+
+test: $(TEST_EXECUTABLE)
+    $(TEST_EXECUTABLE)
+
+clean_test:
+    -DEL $(TEST_OBJECTS)
+    -DEL $(TEST_EXECUTABLE)
+
+clean_all: clean clean_test

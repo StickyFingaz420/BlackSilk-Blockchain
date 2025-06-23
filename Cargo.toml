@@ -33,7 +33,12 @@ rand = "0.9.1"
 # criterion = "0.3"
 
 [build-dependencies]
+cc = "1.0"
 reqwest = { version = "0.11", features = ["blocking"] }
+
+[dev-dependencies]
+pqcrypto_native = { path = "pqcrypto_native" }
+ml-dsa44-standalone = { path = "ml-dsa44-standalone" }
 
 [profile.release]
 opt-level = 3
@@ -50,7 +55,7 @@ opt-level = 3
 overflow-checks = false
 
 [patch.crates-io]
-i2p = { path = "i2p" }
+signature = "=2.3.0-pre.5"
 
 [features]
 debug_kat = []

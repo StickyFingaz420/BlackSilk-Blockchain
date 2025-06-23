@@ -1,0 +1,21 @@
+[package]
+name = "ml-dsa-44"
+version = "0.1.0"
+edition = "2021"
+description = "Rust wrapper for ML-DSA-44 post-quantum digital signature algorithm"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mraksoll4/ml-dsa-44-rust"
+
+[dependencies]
+libc = "0.2"
+
+[build-dependencies]
+cc = "1.0"
+
+[lib]
+name = "ml_dsa_44"
+path = "src/lib.rs"
+
+[[test]]
+name = "comprehensive"
+path = "tests/comprehensive_test.rs"

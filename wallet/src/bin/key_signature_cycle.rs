@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use pqsignatures::{Dilithium2, PQSignatureScheme};
 use pqkey::{KeyEntry, KeyStore, KEY_DIR, load_keyentry, load_all_keyentries, handle_mdump, handle_mimport};
+use pqkey::PQKeypair;
 
 fn main() {
     // 1. Keygen (real Dilithium2 keypair)
@@ -33,7 +34,7 @@ fn main() {
 
     // 4. Dump
     let loaded = load_keyentry(test_address).unwrap();
-    assert_eq!(loaded.dilithium2_pk, test_keypair.dilithium2_pk);
+    assert_eq!(bs58::decode(&loaded.dilithium2_pk).into_vec().unwrap(), test_keypair.dilithium2_pk);
 
     // 5. mdump
     let out_path = PathBuf::from("wallet_data/sigcycle_mdump.json");
@@ -53,7 +54,7 @@ fn main() {
     assert_eq!(imported.dilithium2_pk, bs58::encode(&test_keypair.dilithium2_pk).into_string());
 
     // 7. Verify again with imported key
-    let pk2 = Dilithium2::public_key_from_bytes(&imported.dilithium2_pk).unwrap();
+    let pk2 = Dilithium2::public_key_from_bytes(&bs58::decode(&imported.dilithium2_pk).into_vec().unwrap()).unwrap();
     let verified2 = pk2.verify(message, &sig);
     println!("Signature verified after import: {}", verified2);
     assert!(verified2, "Signature verification failed after import");

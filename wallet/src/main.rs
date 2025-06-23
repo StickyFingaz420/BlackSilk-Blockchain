@@ -1779,6 +1779,15 @@ fn handle_quantum(cli: &Cli, action: &QuantumCommands) {
                 _ => println!("[ERROR] Unknown algorithm: {}", alg),
             }
         }
+        QuantumCommands::Dump { address, part } => {
+            handle_dump(address, part);
+        }
+        QuantumCommands::Mdump { output } => {
+            handle_mdump(output);
+        }
+        QuantumCommands::Mimport { input } => {
+            handle_mimport(input);
+        }
     }
 }
 

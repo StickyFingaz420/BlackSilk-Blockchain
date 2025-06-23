@@ -9,6 +9,7 @@ mod wasm_vm;
 use wasm_vm::{deploy_contract, invoke_contract_with_gas};
 mod network;
 use pqsignatures::PQSignatureScheme;
+use primitives::Address;
 
 #[derive(Parser, Debug)]
 #[command(name = "blacksilk-node", version, about = "BlackSilk Privacy Blockchain Node")]
@@ -1019,7 +1020,11 @@ fn handle_mining(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         
         // Count blocks mined by this node (if mining address is known)
         let blocks_found = if let Some(ref addr) = cli.mining_address {
-            chain.blocks.iter().filter(|b| b.coinbase.to == *addr).count()
+            if let Some(address_obj) = primitives::Address::decode(addr) {
+                chain.blocks.iter().filter(|b| b.coinbase.to == address_obj).count()
+            } else {
+                0
+            }
         } else {
             0
         };
