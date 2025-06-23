@@ -84,6 +84,11 @@ fn test_keygen_kat() {
             let expected_sk = decode(&t.sk).unwrap();
             let seed_arr: [u8; 32] = seed.as_slice().try_into().expect("Seed must be 32 bytes");
             let keypair = Keypair::from_seed(&seed_arr).expect("Keypair from seed failed");
+            if i == 0 {
+                println!("Test 0 seed: {}", hex::encode(&seed_arr));
+                println!("Test 0 generated PK: {}", hex::encode(keypair.public_key.as_bytes()));
+                println!("Test 0 expected PK:  {}", hex::encode(&expected_pk));
+            }
             assert_eq!(keypair.public_key.as_bytes(), expected_pk.as_slice(), "PK mismatch at test {}", i);
             assert_eq!(keypair.secret_key.as_bytes(), expected_sk.as_slice(), "SK mismatch at test {}", i);
         }

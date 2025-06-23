@@ -1799,6 +1799,15 @@ fn handle_quantum(cli: &Cli, action: &QuantumCommands) {
                 println!("[PQ] ML-DSA-44 pubkey: {}", hex::encode(&keypair.public_key.0));
             }
         }
+        QuantumCommands::Dump { address, part } => {
+            handle_dump(address, part);
+        }
+        QuantumCommands::Mdump { output } => {
+            println!("[PQ] Mass dump not yet implemented. Output: {:?}", output);
+        }
+        QuantumCommands::Mimport { input } => {
+            println!("[PQ] Mass import not yet implemented. Input: {:?}", input);
+        }
     }
 }
 

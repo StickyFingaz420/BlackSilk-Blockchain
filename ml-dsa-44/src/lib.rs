@@ -49,6 +49,17 @@
 
 use std::os::raw::{c_int, c_uchar};
 
+/// FFI declarations for ML-DSA-44 C reference implementation
+#[link(name = "ml-dsa-44-clean", kind = "static")]
+extern "C" {
+    pub fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_keypair(pk: *mut c_uchar, sk: *mut c_uchar) -> c_int;
+    pub fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_keypair_from_fseed(pk: *mut c_uchar, sk: *mut c_uchar, seed: *const c_uchar) -> c_int;
+    pub fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_signature(sig: *mut c_uchar, siglen: *mut usize, m: *const c_uchar, mlen: usize, sk: *const c_uchar) -> c_int;
+    pub fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_signature_ctx(sig: *mut c_uchar, siglen: *mut usize, m: *const c_uchar, mlen: usize, ctx: *const c_uchar, ctxlen: usize, sk: *const c_uchar) -> c_int;
+    pub fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_verify(sig: *const c_uchar, siglen: usize, m: *const c_uchar, mlen: usize, pk: *const c_uchar) -> c_int;
+    pub fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_verify_ctx(sig: *const c_uchar, siglen: usize, m: *const c_uchar, mlen: usize, ctx: *const c_uchar, ctxlen: usize, pk: *const c_uchar) -> c_int;
+}
+
 /// ML-DSA-44 algorithm constants
 pub mod constants {
     pub const PUBLIC_KEY_BYTES: usize = 1312;
