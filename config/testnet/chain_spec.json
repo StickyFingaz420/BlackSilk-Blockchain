@@ -2,39 +2,126 @@
   "network_id": "blacksilk_testnet",
   "network_name": "BlackSilk Testnet",
   "genesis": {
-    "timestamp": 1735689600,
+    "timestamp": null,
     "parent_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-    "difficulty": 1,
-    "nonce": 0,
-    "block_time_seconds": 120,
-    "initial_utxos": []
+    "nonce": null,
+    "difficulty_target": "0x1d00ffff",
+    "block_version": 1,
+    "consensus_version": 1,
+    "network_version": 1
   },
   "consensus": {
-    "block_time_seconds": 120,
-    "difficulty_adjustment_window": 60,
-    "halving_interval_blocks": 210240,
-    "supply_cap_atomic": 21000000000000,
-    "initial_block_reward_atomic": 5000000,
-    "tail_emission_atomic": 0,
-    "coinbase_maturity_blocks": 10,
-    "min_tx_fee_per_byte": 1
+    "pow_algorithm": "randomx",
+    "randomx_config": {
+      "dataset_base_size": 2147483648,
+      "dataset_extra_size": 33554368,
+      "program_size": 256,
+      "program_iterations": 2048,
+      "program_count": 8,
+      "scratchpad_size": 2097152,
+      "superscalar_latency": 170,
+      "argon2_memory": 262144,
+      "argon2_lanes": 4,
+      "argon2_iterations": 3,
+      "cache_accesses": 8
+    },
+    "target_block_time": 120,
+    "difficulty_adjustment_blocks": 2016,
+    "difficulty_adjustment_factor_max": 4,
+    "minimum_difficulty": "0x1d00ffff",
+    "block_reward_schedule": [
+      {
+        "height": 0,
+        "reward": 5000000000
+      },
+      {
+        "height": 2100000,
+        "reward": 2500000000
+      }
+    ],
+    "block_size_limit": 2097152,
+    "block_weight_limit": 4000000,
+    "coinbase_maturity": 100,
+    "max_future_block_time": 7200,
+    "min_tx_fee_rate": 1000
   },
   "network": {
+    "magic_bytes": "0x4255534b",
     "p2p_port": 19334,
     "rpc_port": 19333,
-    "tor_port": 19999,
-    "bootnodes": [
-      "12D3KooWTestNode1@testnet-seed1.blacksilk.io:19334",
-      "12D3KooWTestNode2@testnet-seed2.blacksilk.io:19334",
-      "12D3KooWTestNode3@testnet-seed3.blacksilk.io:19334"
-    ]
+    "onion_port": 19999,
+    "seed_nodes": [],
+    "dns_seeds": [],
+    "peer_protocol_version": 70001,
+    "peer_services": {
+      "network": true,
+      "bloom": true,
+      "witness": true,
+      "network_limited": false
+    },
+    "max_peers": 125,
+    "min_outbound_peers": 8,
+    "max_inbound_peers": 117,
+    "peer_ban_threshold": 100,
+    "peer_ban_time": 86400,
+    "peer_handshake_timeout": 30
   },
-  "features": {
-    "privacy_enabled": true,
-    "escrow_contracts": true,
-    "marketplace": true,
-    "zkp_enabled": true
+  "mempool": {
+    "max_size": 300000000,
+    "max_orphan_transactions": 100,
+    "max_orphan_size": 5000000,
+    "min_relay_fee_rate": 1000,
+    "max_transaction_size": 100000,
+    "replace_by_fee": true,
+    "max_ancestors": 25,
+    "max_ancestor_size": 101000
   },
-  "description": "BlackSilk Testnet - Privacy-first blockchain with CPU-only mining and decentralized marketplace",
-  "version": "1.0.0-testnet"
+  "privacy": {
+    "ring_size_min": 11,
+    "ring_size_max": 256,
+    "mix_rounds": 3,
+    "quantum_signature_schemes": [
+      {
+        "name": "MLDSA44",
+        "enabled": true,
+        "priority": 1
+      },
+      {
+        "name": "Dilithium2",
+        "enabled": true,
+        "priority": 2
+      },
+      {
+        "name": "Falcon512",
+        "enabled": true,
+        "priority": 3
+      }
+    ],
+    "stealth_addresses": true,
+    "confidential_transactions": true,
+    "zero_knowledge_proofs": true
+  },
+  "mining": {
+    "cpu_mining_only": true,
+    "asic_resistance_version": 1,
+    "max_block_weight": 4000000,
+    "max_standard_tx_weight": 400000,
+    "max_block_sigops": 80000,
+    "coinbase_maturity": 100,
+    "witness_scale_factor": 4
+  },
+  "relay": {
+    "max_tx_chain_length": 25,
+    "max_tx_chain_size": 101000,
+    "min_relay_tx_fee": 1000,
+    "max_standard_tx_size": 100000,
+    "dust_relay_fee": 3000
+  },
+  "version": {
+    "protocol": 1,
+    "network": 1,
+    "services": 1,
+    "user_agent": "/BlackSilk:1.0.0/",
+    "min_peer_version": 70001
+  }
 }

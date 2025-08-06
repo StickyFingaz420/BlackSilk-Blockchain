@@ -2,9 +2,45 @@
 name = "randomx"
 version = "0.1.0"
 edition = "2021"
+description = "Pure Rust implementation of the RandomX proof-of-work algorithm"
+license = "MIT"
 
 [dependencies]
+# Cryptographic dependencies
 sha2 = "0.10"
 blake2 = "0.10"
-aes = "0.8"
+aes = { version = "0.8", features = ["hazmat"] }
 rand = "0.8"
+argon2 = "0.5"  # For memory-hard key derivation
+
+# SIMD and CPU feature detection
+cfg-if = "1.0"
+libc = "0.2"
+bitflags = "2.3"
+cupid = "0.6"  # For CPU feature detection
+
+# Memory management
+region = { version = "3.0", optional = true }  # For large pages support
+parking_lot = "0.12"  # High performance locks
+
+# Optional JIT compilation
+cranelift = { version = "0.97", optional = true }
+cranelift-module = { version = "0.97", optional = true }
+cranelift-jit = { version = "0.97", optional = true }
+
+[dev-dependencies]
+criterion = "0.5"
+hex = "0.4"
+proptest = "1.2"
+
+[features]
+default = ["jit", "large_pages"]
+jit = ["cranelift", "cranelift-module", "cranelift-jit"]
+large_pages = ["region"]
+hardware_aes = []
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"

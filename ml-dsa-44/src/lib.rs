@@ -3,10 +3,11 @@
 //! **Module-Lattice-Based Digital Signature Algorithm (ML-DSA-44)**
 //!
 //! ## Overview
-//! ML-DSA-44 is a post-quantum digital signature algorithm designed to be secure against attacks by quantum computers. This Rust library provides a safe, ergonomic interface to the ML-DSA-44 implementation.
+//! ML-DSA-44 is a post-quantum digital signature algorithm designed to be secure against attacks by quantum computers. This Rust library provides an
+//! ergonomic interface to the ML-DSA-44 implementation.
 //!
 //! ## Key Features
-//! - Post-quantum security: Resistant to quantum computer attacks
+//! - Post-quantum security: Resistant to quantum computer attacks 
 //! - Deterministic key generation: Generate keys from seeds for reproducible results
 //! - Context-aware signing: Support for additional context data in signatures
 //! - Memory-safe: Safe Rust API with proper error handling
@@ -48,6 +49,15 @@
 //! For more, see the README and examples directory.
 
 use std::os::raw::{c_int, c_uchar};
+use sha3::{Shake256};
+use sha3::digest::{Update, ExtendableOutput};
+use std::convert::TryInto;
+
+pub mod constants;
+pub mod matrix_ops;
+
+use constants::*;
+use matrix_ops::*;
 
 /// FFI declarations for ML-DSA-44 C reference implementation
 #[link(name = "ml-dsa-44-clean", kind = "static")]
@@ -58,14 +68,6 @@ extern "C" {
     pub fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_signature_ctx(sig: *mut c_uchar, siglen: *mut usize, m: *const c_uchar, mlen: usize, ctx: *const c_uchar, ctxlen: usize, sk: *const c_uchar) -> c_int;
     pub fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_verify(sig: *const c_uchar, siglen: usize, m: *const c_uchar, mlen: usize, pk: *const c_uchar) -> c_int;
     pub fn PQCLEAN_MLDSA44_CLEAN_crypto_sign_verify_ctx(sig: *const c_uchar, siglen: usize, m: *const c_uchar, mlen: usize, ctx: *const c_uchar, ctxlen: usize, pk: *const c_uchar) -> c_int;
-}
-
-/// ML-DSA-44 algorithm constants
-pub mod constants {
-    pub const PUBLIC_KEY_BYTES: usize = 1312;
-    pub const SECRET_KEY_BYTES: usize = 2560;
-    pub const SIGNATURE_BYTES: usize = 2420;
-    pub const SEED_BYTES: usize = 32;
 }
 
 /// Error types for ML-DSA-44 operations
@@ -96,7 +98,7 @@ pub type Result<T> = std::result::Result<T, MlDsaError>;
 
 /// Public key (1312 bytes)
 #[derive(Clone)]
-pub struct PublicKey(pub [u8; constants::PUBLIC_KEY_BYTES]);
+pub struct PublicKey(pub [u8; CRYPTO_PUBLIC_KEY_BYTES]);
 
 impl PublicKey {
     /// Returns the public key as a byte slice.
@@ -106,10 +108,10 @@ impl PublicKey {
     /// Constructs a PublicKey from a byte slice.
     /// Returns an error if the length is incorrect.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() != constants::PUBLIC_KEY_BYTES {
+        if bytes.len() != CRYPTO_PUBLIC_KEY_BYTES {
             return Err(MlDsaError::InvalidInput);
         }
-        let mut arr = [0u8; constants::PUBLIC_KEY_BYTES];
+        let mut arr = [0u8; CRYPTO_PUBLIC_KEY_BYTES];
         arr.copy_from_slice(bytes);
         Ok(PublicKey(arr))
     }
@@ -117,7 +119,7 @@ impl PublicKey {
 
 /// Secret key (2560 bytes)
 #[derive(Clone)]
-pub struct SecretKey(pub [u8; constants::SECRET_KEY_BYTES]);
+pub struct SecretKey(pub [u8; CRYPTO_SECRET_KEY_BYTES]);
 
 impl SecretKey {
     /// Returns the secret key as a byte slice.
@@ -127,10 +129,10 @@ impl SecretKey {
     /// Constructs a SecretKey from a byte slice.
     /// Returns an error if the length is incorrect.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() != constants::SECRET_KEY_BYTES {
+        if bytes.len() != CRYPTO_SECRET_KEY_BYTES {
             return Err(MlDsaError::InvalidInput);
         }
-        let mut arr = [0u8; constants::SECRET_KEY_BYTES];
+        let mut arr = [0u8; CRYPTO_SECRET_KEY_BYTES];
         arr.copy_from_slice(bytes);
         Ok(SecretKey(arr))
     }
@@ -150,7 +152,7 @@ impl Signature {
     /// Constructs a Signature from a byte slice.
     /// Returns an error if the length is too large.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() > constants::SIGNATURE_BYTES {
+        if bytes.len() > CRYPTO_SIGNATURE_BYTES {
             return Err(MlDsaError::InvalidInput);
         }
         Ok(Signature { data: bytes.to_vec() })
@@ -165,10 +167,10 @@ pub struct Keypair {
 }
 
 impl Keypair {
-    /// Generate a new keypair using system randomness.
+    /// Generate a new random keypair.
     pub fn generate() -> Result<Self> {
-        let mut pk = [0u8; constants::PUBLIC_KEY_BYTES];
-        let mut sk = [0u8; constants::SECRET_KEY_BYTES];
+        let mut pk = [0u8; CRYPTO_PUBLIC_KEY_BYTES];
+        let mut sk = [0u8; CRYPTO_SECRET_KEY_BYTES];
         let result = unsafe {
             PQCLEAN_MLDSA44_CLEAN_crypto_sign_keypair(pk.as_mut_ptr(), sk.as_mut_ptr())
         };
@@ -180,20 +182,65 @@ impl Keypair {
             secret_key: SecretKey(sk),
         })
     }
-    /// Generate keypair from a 32-byte seed (deterministic).
+/// Generate keypair from a 32-byte seed (deterministic).
     pub fn from_seed(seed: &[u8; constants::SEED_BYTES]) -> Result<Self> {
-        let mut pk = [0u8; constants::PUBLIC_KEY_BYTES];
-        let mut sk = [0u8; constants::SECRET_KEY_BYTES];
-        let result = unsafe {
-            PQCLEAN_MLDSA44_CLEAN_crypto_sign_keypair_from_fseed(
-                pk.as_mut_ptr(),
-                sk.as_mut_ptr(),
-                seed.as_ptr(),
-            )
-        };
-        if result != 0 {
-            return Err(MlDsaError::KeyGeneration);
-        }
+        // Step 1: Initialize seed buffer and hash with SHAKE-256
+        let mut seedbuf = [0u8; 2 * constants::SEED_BYTES + constants::CRH_BYTES];
+        seedbuf[..constants::SEED_BYTES].copy_from_slice(seed);
+        // Add L,K parameters as in NIST reference
+        seedbuf[constants::SEED_BYTES] = L as u8;
+        seedbuf[constants::SEED_BYTES + 1] = K as u8;
+        // Hash with SHAKE-256
+        let mut shake = Shake256::default();
+        shake.update(&seedbuf[..constants::SEED_BYTES + 2]);
+                shake.finalize_xof_into(&mut seedbuf[SEED_BYTES + 2..]);
+
+        // Step 2: Extract components
+        let (rho, rest) = seedbuf.split_at(constants::SEED_BYTES);
+        let (rhoprime, key) = rest.split_at(constants::CRH_BYTES);
+
+        // Step 3: Initialize matrix A and vectors s1, s2
+        let mut matrix = [[0u8; POLY_BYTES * L]; K];
+        expand_a(&mut matrix, rho);
+
+        let mut s1 = [0u8; POLY_BYTES * L];
+        let mut s2 = [0u8; POLY_BYTES * K];
+        sample_in_ball(&mut s1, rhoprime, 0);
+        sample_in_ball(&mut s2, rhoprime, L);
+
+        // Step 4: Compute t = As1 + s2
+        let mut t = [0u8; POLY_BYTES * K];
+        matrix_multiply(&mut t, &matrix, &s1);
+        add_vectors(&mut t, &s2);
+
+        // Step 5: Pack public and secret keys
+        let mut pk = [0u8; CRYPTO_PUBLIC_KEY_BYTES];
+        let mut sk = [0u8; CRYPTO_SECRET_KEY_BYTES];
+        
+        // Pack public key
+        pk[..constants::SEED_BYTES].copy_from_slice(rho);
+        pack_t1(&mut pk[SEED_BYTES..], &t);
+
+        // Compute tr = H(ρ ‖ t1)
+        let mut tr = [0u8; constants::TR_BYTES];
+        let mut shake = Shake256::default();
+        shake.update(&pk);
+        shake.finalize_xof_into(&mut tr);
+
+        // Pack secret key
+        let mut idx = 0;
+        sk[idx..][..constants::SEED_BYTES].copy_from_slice(rho);
+        idx += constants::SEED_BYTES;
+        sk[idx..][..constants::TR_BYTES].copy_from_slice(&tr);
+        idx += constants::TR_BYTES;
+        sk[idx..][..constants::SEED_BYTES].copy_from_slice(key);
+        idx += constants::SEED_BYTES;
+        pack_t0(&mut sk[idx..][..constants::T0_BYTES], &t);
+        idx += constants::T0_BYTES;
+        pack_s1(&mut sk[idx..][..constants::S1_BYTES], &s1);
+        idx += constants::S1_BYTES;
+        pack_s2(&mut sk[idx..][..constants::S2_BYTES], &s2);
+
         Ok(Keypair {
             public_key: PublicKey(pk),
             secret_key: SecretKey(sk),
@@ -203,8 +250,8 @@ impl Keypair {
 
 /// Signs a message with the secret key.
 pub fn sign(message: &[u8], secret_key: &SecretKey) -> Result<Signature> {
-    let mut sig = vec![0u8; constants::SIGNATURE_BYTES];
-    let mut siglen = constants::SIGNATURE_BYTES;
+    let mut sig = vec![0u8; CRYPTO_SIGNATURE_BYTES];
+    let mut siglen = CRYPTO_SIGNATURE_BYTES;
     let result = unsafe {
         PQCLEAN_MLDSA44_CLEAN_crypto_sign_signature(
             sig.as_mut_ptr(),
@@ -227,8 +274,8 @@ pub fn sign_with_context(
     context: &[u8],
     secret_key: &SecretKey,
 ) -> Result<Signature> {
-    let mut sig = vec![0u8; constants::SIGNATURE_BYTES];
-    let mut siglen = constants::SIGNATURE_BYTES;
+    let mut sig = vec![0u8; CRYPTO_SIGNATURE_BYTES];
+    let mut siglen = CRYPTO_SIGNATURE_BYTES;
     let result = unsafe {
         PQCLEAN_MLDSA44_CLEAN_crypto_sign_signature_ctx(
             sig.as_mut_ptr(),

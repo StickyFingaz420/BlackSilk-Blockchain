@@ -1,0 +1,56 @@
+groups:
+- name: BlackSilk Testnet Alerts
+  rules:
+  - alert: NodeDown
+    expr: up == 0
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Node {{ $labels.instance }} is down"
+      description: "Node has been down for more than 5 minutes"
+
+  - alert: HighBlockTime
+    expr: blacksilk_block_time_seconds > 240
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High block time on {{ $labels.instance }}"
+      description: "Block time is higher than 240 seconds for 10 minutes"
+
+  - alert: LowPeerCount
+    expr: blacksilk_peer_count < 3
+    for: 15m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Low peer count on {{ $labels.instance }}"
+      description: "Node has less than 3 peers for 15 minutes"
+
+  - alert: HighMemoryUsage
+    expr: process_resident_memory_bytes / node_memory_MemTotal_bytes * 100 > 90
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High memory usage on {{ $labels.instance }}"
+      description: "Node is using more than 90% of available memory"
+
+  - alert: ChainStalled
+    expr: increase(blacksilk_block_height[1h]) == 0
+    for: 10m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Chain stalled on {{ $labels.instance }}"
+      description: "No new blocks for more than 1 hour"
+
+  - alert: FaucetLowBalance
+    expr: blacksilk_faucet_balance < 1000000
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Low faucet balance"
+      description: "Testnet faucet balance is running low"
