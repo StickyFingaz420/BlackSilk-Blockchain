@@ -393,8 +393,16 @@ pub fn validate_ring_signature(ring: &[primitives::types::Hash], sig: &[u8], msg
     }
     if n == 1 {
         // Special case: single-member ring
-        let c = Scalar::from_canonical_bytes(sig[0..32].try_into().unwrap());
-        let r = Scalar::from_canonical_bytes(sig[32..64].try_into().unwrap());
+        let sig_array: [u8; 64] = match sig.try_into() {
+            Ok(a) => a,
+            Err(_) => {
+                println!("[VER] Failed to convert signature to array");
+                return false;
+            }
+        };
+        
+        let c = Scalar::from_canonical_bytes(sig_array[0..32].try_into().unwrap_or([0u8; 32]));
+        let r = Scalar::from_canonical_bytes(sig_array[32..64].try_into().unwrap_or([0u8; 32]));
         if bool::from(c.is_none()) || bool::from(r.is_none()) {
             println!("[VER] Invalid c or r for n=1");
             return false;
@@ -421,8 +429,30 @@ pub fn validate_ring_signature(ring: &[primitives::types::Hash], sig: &[u8], msg
     let mut c_vec = Vec::with_capacity(n);
     let mut r_vec = Vec::with_capacity(n);
     for i in 0..n {
-        let c = Scalar::from_canonical_bytes(sig[i*64..i*64+32].try_into().unwrap());
-        let r = Scalar::from_canonical_bytes(sig[i*64+32..i*64+64].try_into().unwrap());
+        let start = i * 64;
+        let end = start + 64;
+        if end > sig.len() {
+            println!("[VER] Invalid signature length at index {}", i);
+            return false;
+        }
+        
+        let c_bytes: [u8; 32] = match sig[start..start+32].try_into() {
+            Ok(a) => a,
+            Err(_) => {
+                println!("[VER] Failed to parse c at {}", i);
+                return false;
+            }
+        };
+        let r_bytes: [u8; 32] = match sig[start+32..end].try_into() {
+            Ok(a) => a,
+            Err(_) => {
+                println!("[VER] Failed to parse r at {}", i);
+                return false;
+            }
+        };
+        
+        let c = Scalar::from_canonical_bytes(c_bytes);
+        let r = Scalar::from_canonical_bytes(r_bytes);
         if bool::from(c.is_none()) || bool::from(r.is_none()) {
             println!("[VER] Invalid c or r at {}", i);
             return false;
@@ -1146,16 +1176,146 @@ pub fn get_mempool() -> Vec<primitives::Transaction> {
     mempool.clone()
 }
 
-/// Stub for chain reorg logic
-pub fn maybe_reorg_chain(_blocks: Vec<primitives::Block>) {
-    // TODO: Implement chain reorganization logic
-    println!("[Chain] Reorg logic not yet implemented");
+/// Chain reorganization: replace the current chain with a heavier fork
+///
+/// Uses Nakamoto consensus: the chain with the most cumulative work wins.
+/// Rolls back transactions from the orphaned chain back to mempool.
+pub fn maybe_reorg_chain(new_blocks: Vec<primitives::Block>) {
+    // Validate new blocks sequence
+    if new_blocks.is_empty() {
+        return;
+    }
+    
+    let mut chain = match CHAIN.lock() {
+        Ok(c) => c,
+        Err(e) => {
+            println!("[Reorg] Failed to lock chain: {}", e);
+            return;
+        }
+    };
+    
+    // Find the common ancestor (fork point)
+    let mut fork_height = 0usize;
+    for (i, new_block) in new_blocks.iter().enumerate() {
+        if i >= chain.blocks.len() {
+            break;
+        }
+        let current_block = &chain.blocks[i];
+        
+        // Blocks must have matching hash at each height (before fork point)
+        if new_block.header.pow.hash != current_block.header.pow.hash {
+            fork_height = i;
+            break;
+        }
+    }
+    
+    // Calculate cumulative work for new chain
+    let new_chain_work: u128 = new_blocks.iter()
+        .map(|b| b.header.difficulty as u128)
+        .sum();
+    
+    // Calculate cumulative work for orphaned blocks
+    let orphaned_work: u128 = chain.blocks.iter()
+        .skip(fork_height)
+        .map(|b| b.header.difficulty as u128)
+        .sum();
+    
+    println!("[Reorg] Fork at height {}: new_work={}, orphaned_work={}", 
+        fork_height, new_chain_work, orphaned_work);
+    
+    // Only reorg if new chain has strictly more work (Nakamoto consensus)
+    if new_chain_work <= orphaned_work {
+        println!("[Reorg] New chain has equal or less work, rejecting reorg");
+        return;
+    }
+    
+    // Perform reorg: rollback to fork point
+    println!("[Reorg] Performing chain reorg from height {} to {}", 
+        fork_height, fork_height + new_blocks.len());
+    
+    // 1. Roll back transactions from orphaned blocks to mempool
+    let mut mempool = match MEMPOOL.lock() {
+        Ok(mp) => mp,
+        Err(e) => {
+            println!("[Reorg] Failed to lock mempool: {}", e);
+            return;
+        }
+    };
+    
+    for orphaned_block in chain.blocks.iter().skip(fork_height) {
+        // Skip coinbase, add regular transactions back to mempool
+        for tx in orphaned_block.transactions.iter().skip(1) {
+            mempool.push(tx.clone());
+            println!("[Reorg] Rolled back tx: {}", tx.signature);
+        }
+    }
+    
+    // 2. Remove orphaned blocks
+    chain.blocks.truncate(fork_height);
+    
+    // 3. Add new blocks
+    for new_block in new_blocks {
+        // Validate the new block before adding
+        if validate_block_with_chain(&new_block, Some(&chain)) {
+            // Remove newly confirmed transactions from mempool
+            for tx in new_block.transactions.iter().skip(1) {
+                mempool.retain(|mempool_tx| mempool_tx.signature != tx.signature);
+            }
+            
+            // Add block to chain
+            let _ = chain.add_block(new_block);
+            println!("[Reorg] Added new block at height {}", chain.tip().header.height);
+        } else {
+            println!("[Reorg] New block failed validation, aborting reorg");
+            return;
+        }
+    }
+    
+    println!("[Reorg] Chain reorg complete. New tip height: {}", chain.tip().header.height);
 }
 
-/// Stub for range proof validation
-pub fn validate_range_proof(_proof: &[u8], _commitment: &[u8]) -> bool {
-    // TODO: Implement Bulletproofs or other range proof validation
-    true
+/// Verify a Bulletproofs range proof for confidential transaction validation
+/// 
+/// This function validates that the amount commitment is within a valid range [0, 2^64).
+/// Used to prevent overflow attacks and ensure amount validity in confidential transactions.
+pub fn validate_range_proof(proof: &[u8], commitment: &[u8]) -> bool {
+    use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
+    use curve25519_dalek::ristretto::CompressedRistretto;
+    
+    // Check proof is not empty
+    if proof.is_empty() || commitment.len() != 32 {
+        return false;
+    }
+    
+    // Attempt to deserialize the proof and commitment
+    let range_proof = match RangeProof::from_bytes(proof) {
+        Ok(p) => p,
+        Err(_) => {
+            println!("[Validation] Failed to deserialize range proof");
+            return false;
+        }
+    };
+    
+    let committed_value = match CompressedRistretto::from_slice(commitment) {
+        Ok(c) => c,
+        Err(_) => {
+            println!("[Validation] Failed to deserialize commitment");
+            return false;
+        }
+    };
+    
+    // Verify the proof
+    let pc_gens = PedersenGens::default();
+    let bp_gens = BulletproofGens::new(64, 1); // 64-bit range, 1 proof
+    let mut transcript = merlin::Transcript::new(b"BlackSilkBulletproof");
+    
+    match range_proof.verify_single(&bp_gens, &pc_gens, &mut transcript, &committed_value, 64) {
+        Ok(_) => true,
+        Err(e) => {
+            println!("[Validation] Range proof verification failed: {}", e);
+            false
+        }
+    }
 }
 
 /// Stub for privacy-aware client handler

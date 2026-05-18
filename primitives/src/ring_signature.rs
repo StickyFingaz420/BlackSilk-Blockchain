@@ -68,7 +68,7 @@ impl RingSignatureBuilder {
                     hasher.update(&self.public_keys[i]);
                 }
                 
-                let challenge = hasher.finalize();
+                let challenge = hasher.finalize().to_vec();
                 let signature = ml_dsa_44::sign(&challenge, &key_pair.secret_key)
                     .map_err(|_| QuantumValidationError::RingSignatureError)?;
 
@@ -76,12 +76,54 @@ impl RingSignatureBuilder {
                 random_values.concat()
             }
             QuantumScheme::Dilithium2 => {
-                // Similar implementation for Dilithium2
-                unimplemented!("Dilithium2 ring signatures not yet implemented")
+                // Dilithium2 ring signature implementation
+                let mut random_values: Vec<Vec<u8>> = Vec::with_capacity(self.ring_size);
+                for _ in 0..self.ring_size {
+                    let mut random = vec![0u8; 64];
+                    rng.fill_bytes(&mut random);
+                    random_values.push(random);
+                }
+
+                // Create ring signature
+                let mut hasher = Keccak256::new();
+                for i in 0..self.ring_size {
+                    if i == self.secret_index {
+                        continue;
+                    }
+                    hasher.update(&random_values[i]);
+                    hasher.update(&self.public_keys[i]);
+                }
+                
+                let challenge = hasher.finalize().to_vec();
+                let signature = pqcrypto_native::dilithium2::sign(&self.secret_key, &challenge);
+                
+                random_values[self.secret_index] = signature.to_vec();
+                random_values.concat()
             }
             QuantumScheme::Falcon512 => {
-                // Similar implementation for Falcon512
-                unimplemented!("Falcon512 ring signatures not yet implemented")
+                // Falcon512 ring signature implementation
+                let mut random_values: Vec<Vec<u8>> = Vec::with_capacity(self.ring_size);
+                for _ in 0..self.ring_size {
+                    let mut random = vec![0u8; 64];
+                    rng.fill_bytes(&mut random);
+                    random_values.push(random);
+                }
+
+                // Create ring signature
+                let mut hasher = Keccak256::new();
+                for i in 0..self.ring_size {
+                    if i == self.secret_index {
+                        continue;
+                    }
+                    hasher.update(&random_values[i]);
+                    hasher.update(&self.public_keys[i]);
+                }
+                
+                let challenge = hasher.finalize().to_vec();
+                let signature = pqcrypto_native::falcon512::sign(&self.secret_key, &challenge);
+                
+                random_values[self.secret_index] = signature.to_vec();
+                random_values.concat()
             }
         };
 
@@ -127,12 +169,22 @@ impl QuantumRingSignature {
                     }
                 }
                 QuantumScheme::Dilithium2 => {
-                    // Implement Dilithium2 verification
-                    unimplemented!("Dilithium2 ring signature verification not yet implemented")
+                    // Verify Dilithium2 signature in the ring
+                    let pk = pqcrypto_native::dilithium2::public_key_from_bytes(pk)
+                        .map_err(|_| QuantumValidationError::InvalidPublicKey)?;
+                    
+                    if !pqcrypto_native::dilithium2::verify(&pk, message, sig_slice) {
+                        return Ok(false);
+                    }
                 }
                 QuantumScheme::Falcon512 => {
-                    // Implement Falcon512 verification
-                    unimplemented!("Falcon512 ring signature verification not yet implemented")
+                    // Verify Falcon512 signature in the ring
+                    let pk = pqcrypto_native::falcon512::public_key_from_bytes(pk)
+                        .map_err(|_| QuantumValidationError::InvalidPublicKey)?;
+                    
+                    if !pqcrypto_native::falcon512::verify(&pk, message, sig_slice) {
+                        return Ok(false);
+                    }
                 }
             }
         }

@@ -41,9 +41,16 @@ const CONTRACT_REGISTRY_PATH: &str = "./data/contract_registry.json";
 
 /// Save the contract registry to disk
 fn save_contract_registry() -> std::io::Result<()> {
-    let registry = CONTRACT_REGISTRY.lock().unwrap();
+    let registry = match CONTRACT_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[WARN] Failed to lock contract registry: {}", e);
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+        }
+    };
     let contracts: Vec<&WasmContract> = registry.values().collect();
-    let json = serde_json::to_string_pretty(&contracts).unwrap();
+    let json = serde_json::to_string_pretty(&contracts)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
     fs::create_dir_all("./data")?;
     fs::write(CONTRACT_REGISTRY_PATH, json)
 }
@@ -55,8 +62,17 @@ pub fn load_contract_registry() -> std::io::Result<()> {
         return Ok(());
     }
     let json = fs::read_to_string(path)?;
-    let contracts: Vec<WasmContract> = serde_json::from_str(&json).unwrap_or_default();
-    let mut registry = CONTRACT_REGISTRY.lock().unwrap();
+    let contracts: Vec<WasmContract> = serde_json::from_str(&json).unwrap_or_else(|e| {
+        eprintln!("[WARN] Failed to deserialize contract registry: {}", e);
+        Vec::new()
+    });
+    let mut registry = match CONTRACT_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[WARN] Failed to lock contract registry: {}", e);
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+        }
+    };
     for contract in contracts {
         registry.insert(contract.address.clone(), contract);
     }
@@ -80,7 +96,13 @@ pub fn deploy_contract(wasm_bytes: Vec<u8>, creator: String) -> Result<String, S
         deployed_at: chrono::Utc::now().timestamp() as u64,
     };
     let contract = WasmContract { code: wasm_bytes, address: address.clone(), metadata };
-    CONTRACT_REGISTRY.lock().unwrap().insert(address.clone(), contract);
+    
+    let mut registry = match CONTRACT_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Failed to lock contract registry: {}", e)),
+    };
+    registry.insert(address.clone(), contract);
+    
     // Save registry after deployment
     if let Err(e) = save_contract_registry() {
         eprintln!("[WARN] Failed to save contract registry: {}", e);
@@ -121,7 +143,10 @@ fn wasmer_value_to_json(val: &wasmer::Value) -> JsonValue {
 
 /// New interface: Invoke a deployed contract by address, with function and params as serde_json::Value, with gas metering
 pub fn invoke_contract_json_with_gas(address: &str, function: &str, params: &[JsonValue], gas_limit: u64) -> Result<Vec<JsonValue>, String> {
-    let registry = CONTRACT_REGISTRY.lock().unwrap();
+    let registry = match CONTRACT_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Failed to lock contract registry: {}", e)),
+    };
     let contract = registry.get(address).ok_or("Contract not found")?;
     let metering = Arc::new(Metering::new(gas_limit, cost_function));
     // Attach metering middleware if possible (Wasmer 3.x)
@@ -143,7 +168,10 @@ pub fn invoke_contract_json_with_gas(address: &str, function: &str, params: &[Js
 
 /// Invoke a deployed contract by address, with function and params, with gas metering
 pub fn invoke_contract_with_gas(address: &str, function: &str, params: &[Value], gas_limit: u64) -> Result<Vec<Value>, String> {
-    let registry = CONTRACT_REGISTRY.lock().unwrap();
+    let registry = match CONTRACT_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Failed to lock contract registry: {}", e)),
+    };
     let contract = registry.get(address).ok_or("Contract not found")?;
     let metering = Arc::new(Metering::new(gas_limit, cost_function));
     // Attach metering middleware if possible (Wasmer 3.x)
@@ -277,12 +305,49 @@ pub fn log_contract_event(address: &str, event: &str, details: &str) {
     println!("[Contract Event] [{}] {}: {}", address, event, details);
 }
 
-/// Gas cost function: 1 gas per instruction (customize as needed)
-fn cost_function(_operator: &Operator) -> u64 {
-    1
+/// Gas cost function: Assign costs to different WASM operations based on execution cost
+/// This prevents DoS attacks by metering expensive operations
+fn cost_function(operator: &Operator) -> u64 {
+    use wasmer::wasmparser::Operator;
+    
+    match operator {
+        // Cheap operations: 1 gas
+        Operator::LocalGet { .. } | Operator::LocalSet { .. } | Operator::GlobalGet { .. } |
+        Operator::GlobalSet { .. } | Operator::I32Const { .. } | Operator::I64Const { .. } |
+        Operator::F32Const { .. } | Operator::F64Const { .. } |
+        Operator::Nop | Operator::Unreachable => 1,
+        
+        // Arithmetic operations: 3 gas
+        Operator::I32Add | Operator::I32Sub | Operator::I32Mul | Operator::I32Div { .. } |
+        Operator::I64Add | Operator::I64Sub | Operator::I64Mul | Operator::I64Div { .. } |
+        Operator::F32Add | Operator::F32Sub | Operator::F32Mul | Operator::F32Div |
+        Operator::F64Add | Operator::F64Sub | Operator::F64Mul | Operator::F64Div => 3,
+        
+        // Memory operations: 5 gas (more expensive)
+        Operator::I32Load { .. } | Operator::I64Load { .. } | Operator::F32Load { .. } |
+        Operator::F64Load { .. } | Operator::I32Store { .. } | Operator::I64Store { .. } |
+        Operator::F32Store { .. } | Operator::F64Store { .. } |
+        Operator::MemorySize { .. } | Operator::MemoryGrow { .. } => 5,
+        
+        // Function calls: 10 gas (control flow is expensive)
+        Operator::Call { .. } | Operator::CallIndirect { .. } => 10,
+        
+        // Branches: 2 gas
+        Operator::Br { .. } | Operator::BrIf { .. } | Operator::If { .. } |
+        Operator::Loop { .. } | Operator::Block { .. } => 2,
+        
+        // Compare operations: 2 gas
+        Operator::I32Eq | Operator::I32Ne | Operator::I32Lt { .. } | Operator::I32Gt { .. } |
+        Operator::I64Eq | Operator::I64Ne | Operator::I64Lt { .. } | Operator::I64Gt { .. } |
+        Operator::F32Eq | Operator::F32Ne | Operator::F32Lt | Operator::F32Gt |
+        Operator::F64Eq | Operator::F64Ne | Operator::F64Lt | Operator::F64Gt => 2,
+        
+        // All other operations: default 1 gas
+        _ => 1,
+    }
 }
 
-/// Execute a WASM contract with robust error handling and event logging
+/// Execute a WASM contract with robust error handling, gas metering, and resource limits
 pub fn execute_contract_with_gas(
     wasm_bytes: &[u8],
     gas_limit: u64,
@@ -290,44 +355,89 @@ pub fn execute_contract_with_gas(
     params: &[Value],
     contract_address: &str,
 ) -> Result<Vec<Value>, String> {
-    // Set up metering middleware
+    // Restrict contract code size (e.g., 5MB max)
+    if wasm_bytes.len() > 5 * 1024 * 1024 {
+        log_contract_event(contract_address, "deploy_failed", "Code size exceeds 5MB limit");
+        return Err("Contract code too large (max 5MB)".to_string());
+    }
+    
+    // Require reasonable gas limit (prevent underflow attacks)
+    if gas_limit < 10_000 {
+        return Err("Gas limit too low (minimum 10,000)".to_string());
+    }
+    if gas_limit > 1_000_000_000 {
+        return Err("Gas limit too high (maximum 1,000,000,000)".to_string());
+    }
+    
+    // Validate memory limit (reasonable range)
+    if memory_limit < 1 || memory_limit > 10_000 {
+        return Err("Invalid memory limit (valid range: 1-10000 pages)".to_string());
+    }
+    
+    // Set up metering middleware for gas control
     let metering = Metering::new(gas_limit, cost_function);
     let mut store = Store::default();
-    // Create module
+    
+    // Create module with size validation
     let module = match Module::new(&store, wasm_bytes) {
         Ok(m) => m,
         Err(e) => {
-            log_contract_event(contract_address, "deploy_failed", &e.to_string());
+            log_contract_event(contract_address, "deploy_failed", &format!("Module creation: {}", e));
             return Err(format!("Module creation failed: {}", e));
         }
     };
+    
     let import_object = imports! {};
     let instance = match Instance::new(&mut store, &module, &import_object) {
         Ok(i) => i,
         Err(e) => {
-            log_contract_event(contract_address, "instantiate_failed", &e.to_string());
+            log_contract_event(contract_address, "instantiate_failed", &format!("Instance creation: {}", e));
             return Err(format!("Instance creation failed: {}", e));
         }
     };
-    // Check memory usage (in pages)
-    let memory = instance.exports.get_memory("memory").map_err(|e| e.to_string())?;
-    let mem_pages = memory.ty(&store).minimum;
-    if mem_pages > wasmer::Pages(memory_limit) {
-        log_contract_event(contract_address, "memory_limit_exceeded", "");
-        return Err("Contract exceeds memory limit".to_string());
+    
+    // Validate and enforce memory limits
+    match instance.exports.get_memory("memory") {
+        Ok(memory) => {
+            let mem_pages = memory.ty(&store).minimum;
+            if mem_pages > wasmer::Pages(memory_limit) {
+                log_contract_event(contract_address, "memory_limit_exceeded", &format!("Required: {} pages, Limit: {} pages", mem_pages.0, memory_limit));
+                return Err(format!("Contract memory usage exceeds limit: {} > {}", mem_pages.0, memory_limit));
+            }
+        }
+        Err(e) => {
+            log_contract_event(contract_address, "memory_access_failed", &e.to_string());
+            return Err(format!("Failed to access contract memory: {}", e));
+        }
     }
-    // Call the contract's main function
-    let main_func = instance.exports.get_function("main").map_err(|e| e.to_string())?;
+    
+    // Call the contract's main function with parameter validation
+    let main_func = match instance.exports.get_function("main") {
+        Ok(f) => f,
+        Err(e) => {
+            log_contract_event(contract_address, "no_main_function", "Contract does not export 'main'");
+            return Err(format!("Contract does not export 'main' function: {}", e));
+        }
+    };
+    
+    // Execute with gas metering
     let result = main_func.call(&mut store, params);
-    // Get remaining gas (points)
+    
+    // Check remaining gas
     let gas_left = wasmer_middlewares::metering::get_remaining_points(&mut store, &instance);
     if matches!(gas_left, wasmer_middlewares::metering::MeteringPoints::Remaining(0)) {
-        log_contract_event(contract_address, "gas_limit_exceeded", "");
-        return Err("Gas limit exceeded".to_string());
+        log_contract_event(contract_address, "gas_limit_exceeded", "Out of gas");
+        return Err("Gas limit exceeded during contract execution".to_string());
     }
+    
+    // Process execution result
     match result {
         Ok(val) => {
-            log_contract_event(contract_address, "executed", "success");
+            let gas_used = gas_limit - match gas_left {
+                wasmer_middlewares::metering::MeteringPoints::Remaining(g) => g,
+                _ => 0,
+            };
+            log_contract_event(contract_address, "executed", &format!("success (gas used: {})", gas_used));
             Ok(val.to_vec())
         },
         Err(e) => {
