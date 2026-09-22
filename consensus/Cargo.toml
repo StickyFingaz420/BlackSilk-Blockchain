@@ -1,0 +1,15 @@
+[package]
+name = "blacksilk-consensus"
+version = "0.1.0"
+edition = "2021"
+description = "BlackSilk header-chain consensus rules: header format, RandomX PoW, LWMA difficulty, timestamps, chain selection"
+
+[lib]
+name = "blacksilk_consensus"
+
+[dependencies]
+blacksilk-randomx = { path = "../randomx" }
+blake2 = "0.10"
+
+[dev-dependencies]
+hex = "0.4"

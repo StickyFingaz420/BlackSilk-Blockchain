@@ -24,6 +24,7 @@ members = [
     "smart-contracts/marketplace_contract",
     "smart-contracts/randomx",
     "randomx", # blacksilk-randomx: the single RandomX implementation for node and miner
+    "consensus", # blacksilk-consensus: header chain rules shared by node and miner
     "pqcrypto_native",
     "scripts", # Added scripts for Rust comparison tool
     "pqsignatures",
