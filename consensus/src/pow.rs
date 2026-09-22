@@ -10,11 +10,12 @@ pub fn check_hash(hash: &Hash, difficulty: u64) -> bool {
     if difficulty == 0 {
         return false;
     }
+    // Multiply limb by limb (least significant first); any carry out of the top
+    // limb means the product reached 2^256.
     let mut carry: u128 = 0;
-    for limb in hash.chunks_exact(8) {
-        let v = u64::from_le_bytes(limb.try_into().unwrap()) as u128;
-        carry = v * difficulty as u128 + carry;
-        carry >>= 64;
+    for limb in hash.as_chunks::<8>().0 {
+        let v = u64::from_le_bytes(*limb) as u128;
+        carry = (v * difficulty as u128 + carry) >> 64;
     }
     carry == 0
 }
@@ -44,7 +45,10 @@ pub struct RandomXPow {
 
 impl RandomXPow {
     pub fn new() -> Self {
-        Self { caches: Mutex::new(Vec::new()), capacity: 2 }
+        Self {
+            caches: Mutex::new(Vec::new()),
+            capacity: 2,
+        }
     }
 
     /// The cache for `seed`, building it (about 0.6 s, 256 MiB) if needed.

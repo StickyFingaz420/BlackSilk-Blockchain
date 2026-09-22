@@ -131,6 +131,44 @@ mode; mining throughput with full mode.
 old implementations (`node/src/randomx*`, `miner/src/randomx*`, `miner/src/pure_randomx.rs`,
 `miner/src/randomx_pro.rs`, `smart-contracts/randomx`). Findings P1–P4 close then.
 
+### R2: Header-chain consensus (`consensus/`, crate `blacksilk-consensus`)
+
+Specification: [`docs/consensus.md`](docs/consensus.md). The crate is pure Rust with no I/O.
+It is the single definition of block validity for node and miner.
+
+| Rule | Design | Replaces finding |
+|---|---|---|
+| Header | fixed 100-byte encoding; id = H(domain ‖ network_id ‖ header) | B3 (node rebuilt the header), network separation |
+| PoW | RandomX(seed, full header) recomputed by every verifier; `h × d < 2^256` | P5 (miner/node mismatch), P6/P7 (timing/heuristic "checks" gone), P8 (inverted targets) |
+| RandomX key | Monero schedule: epoch 2048, lag 64, seed taken from the header's own branch | P10 (per-block key) |
+| Difficulty | LWMA-1 (N = 60, T = 120 s), enforced exactly | P9 (two algorithms, not enforced) |
+| Timestamps | > median of last 11; ≤ now + 360 s (non-permanent) | none (previously no timestamp rules) |
+| Merkle root | domain-separated leaves/nodes, no odd-node duplication | B4 (merkle never checked) |
+| Chain selection | most cumulative work, first-seen on ties; validation independent of best chain | B1/B5 (unchecked P2P blocks, broken reorg) |
+| Reorg | ordered disconnect/connect lists; the branch is fully validated before switching; `mark_invalid` re-selects | B5 |
+
+**Evidence:** `cargo test -p blacksilk-consensus` runs 25 unit tests:
+- header encoding, strictness and id separation
+- `check_hash` boundaries
+- the Monero seed schedule
+- LWMA stability and response, with manipulation and timestamp-attack bounds
+- median-time-past and FTL
+- the Merkle shape and no-duplication property
+- rejection of every invalid field
+- heavier versus equal-work forks, with exact reorg lists
+- arrival-order independence
+- invalidation fallback
+- a branch-aware seed across an epoch boundary
+
+It also runs 2 end-to-end tests with **real RandomX**. A block mined through the miner-side
+flow (template → header → `check_hash`) is accepted by `HeaderChain` + `RandomXPow`, and an
+insufficient-work header is rejected.
+
+**Not yet done:** wiring into the node and miner binaries and deleting the old
+implementations. Neither binary builds on the audit machine yet (toolchain, Phase 1). The
+node's P2P/HTTP layers are also slated for rebuild, so integration happens with that work.
+Genesis headers are provisional until the transaction format exists.
+
 ## Decisions needed before remediation
 
 1. **RandomX implementation:** *decided on a pure-Rust implementation, now done (R1).*

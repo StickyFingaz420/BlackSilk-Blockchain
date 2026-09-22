@@ -24,12 +24,24 @@ pub enum HeaderError {
     /// Parent (or one of its ancestors) was marked invalid.
     InvalidParent,
     BadVersion(u32),
-    BadHeight { expected: u64, got: u64 },
+    BadHeight {
+        expected: u64,
+        got: u64,
+    },
     /// Not after the median-time-past.
-    TimestampTooOld { median_time_past: u64, got: u64 },
+    TimestampTooOld {
+        median_time_past: u64,
+        got: u64,
+    },
     /// Beyond the future time limit of the local clock. Not permanent.
-    TimestampTooFarInFuture { limit: u64, got: u64 },
-    BadDifficulty { expected: u64, got: u64 },
+    TimestampTooFarInFuture {
+        limit: u64,
+        got: u64,
+    },
+    BadDifficulty {
+        expected: u64,
+        got: u64,
+    },
     /// The RandomX hash does not satisfy the header's difficulty.
     InsufficientWork,
 }
@@ -117,9 +129,21 @@ impl HeaderChain {
         let mut entries = HashMap::new();
         entries.insert(
             id,
-            Entry { header: genesis, cumulative: genesis.difficulty as u128, valid: true, seq: 0 },
+            Entry {
+                header: genesis,
+                cumulative: genesis.difficulty as u128,
+                valid: true,
+                seq: 0,
+            },
         );
-        Self { params, pow, entries, children: HashMap::new(), main: vec![id], next_seq: 1 }
+        Self {
+            params,
+            pow,
+            entries,
+            children: HashMap::new(),
+            main: vec![id],
+            next_seq: 1,
+        }
     }
 
     pub fn params(&self) -> &ChainParams {
@@ -127,7 +151,10 @@ impl HeaderChain {
     }
 
     pub fn tip_id(&self) -> Hash {
-        *self.main.last().expect("main chain always contains genesis")
+        *self
+            .main
+            .last()
+            .expect("main chain always contains genesis")
     }
 
     pub fn tip(&self) -> &BlockHeader {
@@ -242,7 +269,10 @@ impl HeaderChain {
         if self.entries.contains_key(&id) {
             return Err(HeaderError::Duplicate);
         }
-        let parent = self.entries.get(&header.prev_id).ok_or(HeaderError::UnknownParent)?;
+        let parent = self
+            .entries
+            .get(&header.prev_id)
+            .ok_or(HeaderError::UnknownParent)?;
         if !parent.valid {
             return Err(HeaderError::InvalidParent);
         }
@@ -251,12 +281,18 @@ impl HeaderChain {
         }
         let expected_height = parent.header.height + 1;
         if header.height != expected_height {
-            return Err(HeaderError::BadHeight { expected: expected_height, got: header.height });
+            return Err(HeaderError::BadHeight {
+                expected: expected_height,
+                got: header.height,
+            });
         }
 
         let mtp = self.median_time_past(header.prev_id);
         if !after_median_time_past(header.timestamp, &[mtp]) {
-            return Err(HeaderError::TimestampTooOld { median_time_past: mtp, got: header.timestamp });
+            return Err(HeaderError::TimestampTooOld {
+                median_time_past: mtp,
+                got: header.timestamp,
+            });
         }
         if !within_future_limit(header.timestamp, now, self.params.future_time_limit) {
             return Err(HeaderError::TimestampTooFarInFuture {
@@ -267,7 +303,10 @@ impl HeaderChain {
 
         let expected = self.required_difficulty(header.prev_id);
         if header.difficulty != expected {
-            return Err(HeaderError::BadDifficulty { expected, got: header.difficulty });
+            return Err(HeaderError::BadDifficulty {
+                expected,
+                got: header.difficulty,
+            });
         }
 
         // Expensive check last.
@@ -316,10 +355,13 @@ impl HeaderChain {
         connected.reverse();
         let fork_height = self.entries[&cur].header.height;
 
-        let disconnected: Vec<Hash> =
-            self.main.drain(fork_height as usize + 1..).rev().collect();
+        let disconnected: Vec<Hash> = self.main.drain(fork_height as usize + 1..).rev().collect();
         self.main.extend_from_slice(&connected);
-        Reorg { fork_height, disconnected, connected }
+        Reorg {
+            fork_height,
+            disconnected,
+            connected,
+        }
     }
 
     /// Marks `id` and all its descendants invalid (e.g. a block body failed
@@ -369,8 +411,6 @@ mod tests {
         }
     }
 
-    const START: u64 = 1_700_000_000;
-
     fn chain() -> HeaderChain {
         HeaderChain::new(ChainParams::regtest(), Arc::new(TestPow))
     }
@@ -415,7 +455,11 @@ mod tests {
         let t = c.template();
         assert_eq!(t.height, 101);
         assert_eq!(t.prev_id, c.tip_id());
-        assert_eq!(t.seed_id, c.params().genesis_id(), "seed is genesis before height 2113");
+        assert_eq!(
+            t.seed_id,
+            c.params().genesis_id(),
+            "seed is genesis before height 2113"
+        );
         let accepted = mine_on(&c, c.tip_id(), 120, 1);
         assert_eq!(accepted.difficulty, t.difficulty);
     }
@@ -424,9 +468,12 @@ mod tests {
     fn rejects_each_invalid_field() {
         let mut c = chain();
         let g = c.tip_id();
-        extend(&mut c, g, 20, 120, 1);
+        // Fast blocks lift the difficulty above 1 (at 1 every hash is valid, so an
+        // insufficient-work header could not be constructed).
+        extend(&mut c, g, 10, 20, 1);
         let tip = c.tip_id();
         let good = mine_on(&c, tip, 120, 1);
+        assert!(good.difficulty > 1);
         let now = good.timestamp;
 
         let mut h = good;
@@ -435,7 +482,10 @@ mod tests {
 
         let mut h = good;
         h.height += 1;
-        assert!(matches!(c.validate(&h, now), Err(HeaderError::BadHeight { .. })));
+        assert!(matches!(
+            c.validate(&h, now),
+            Err(HeaderError::BadHeight { .. })
+        ));
 
         let mut h = good;
         h.prev_id = [0xAB; 32];
@@ -443,7 +493,10 @@ mod tests {
 
         let mut h = good;
         h.timestamp = c.median_time_past(tip);
-        assert!(matches!(c.validate(&h, now), Err(HeaderError::TimestampTooOld { .. })));
+        assert!(matches!(
+            c.validate(&h, now),
+            Err(HeaderError::TimestampTooOld { .. })
+        ));
 
         let h = good;
         let e = c.validate(&h, h.timestamp - 361).unwrap_err();
@@ -452,17 +505,19 @@ mod tests {
 
         let mut h = good;
         h.difficulty += 1;
-        assert!(matches!(c.validate(&h, now), Err(HeaderError::BadDifficulty { .. })));
+        assert!(matches!(
+            c.validate(&h, now),
+            Err(HeaderError::BadDifficulty { .. })
+        ));
 
         // Find a nonce that fails the PoW check at the required difficulty.
         let mut h = good;
         let seed = c.seed_id_for(tip, h.height);
-        loop {
+        let found = (0..100_000).any(|_| {
             h.nonce += 1;
-            if !check_hash(&TestPow.pow_hash(&seed, &h.to_bytes()), h.difficulty) {
-                break;
-            }
-        }
+            !check_hash(&TestPow.pow_hash(&seed, &h.to_bytes()), h.difficulty)
+        });
+        assert!(found);
         assert_eq!(c.validate(&h, now), Err(HeaderError::InsufficientWork));
 
         let id = c.accept(good, now).unwrap().id;
@@ -546,18 +601,24 @@ mod tests {
         }
         // Children of invalid blocks are rejected.
         let child = mine_on(&c, heavy[5], 120, 1);
-        assert_eq!(c.accept(child, u64::MAX / 2), Err(HeaderError::InvalidParent));
+        assert_eq!(
+            c.accept(child, u64::MAX / 2),
+            Err(HeaderError::InvalidParent)
+        );
     }
 
     #[test]
     fn difficulty_tracks_hashrate_over_a_long_chain() {
         let mut c = chain();
         let g = c.tip_id();
-        extend(&mut c, g, 150, 30, 1); // blocks 4x too fast
+        // Timestamps here are synthetic (no real hashrate behind them), so a long
+        // run of fast blocks would raise the difficulty without bound, exactly as
+        // LWMA should. Keep the fast run short so the test miner can keep up.
+        extend(&mut c, g, 8, 30, 1); // blocks 4x too fast
         let fast = c.template().difficulty;
         assert!(fast > 1, "difficulty rose from 1 to {fast}");
         let tip = c.tip_id();
-        extend(&mut c, tip, 150, 480, 1); // then 4x too slow
+        extend(&mut c, tip, 60, 480, 1); // then 4x too slow
         assert!(c.template().difficulty < fast);
     }
 

@@ -25,7 +25,11 @@ pub fn next_difficulty(
     let mut weighted: u128 = 0;
     let mut sum_difficulty: u128 = 0;
     for i in 1..take {
-        let this = if ts[i] as u128 > prev { ts[i] as u128 } else { prev + 1 };
+        let this = if ts[i] as u128 > prev {
+            ts[i] as u128
+        } else {
+            prev + 1
+        };
         let solve_time = (this - prev).min(6 * t);
         prev = this;
         weighted += i as u128 * solve_time;
@@ -76,9 +80,15 @@ mod tests {
     #[test]
     fn responds_to_hashrate_changes() {
         let fast = next(&vec![(T / 2, 10_000); 200]);
-        assert!((19_000..=21_000).contains(&fast), "2x hashrate -> ~2x difficulty: {fast}");
+        assert!(
+            (19_000..=21_000).contains(&fast),
+            "2x hashrate -> ~2x difficulty: {fast}"
+        );
         let slow = next(&vec![(2 * T, 10_000); 200]);
-        assert!((4_750..=5_250).contains(&slow), "half hashrate -> ~half difficulty: {slow}");
+        assert!(
+            (4_750..=5_250).contains(&slow),
+            "half hashrate -> ~half difficulty: {slow}"
+        );
     }
 
     #[test]
