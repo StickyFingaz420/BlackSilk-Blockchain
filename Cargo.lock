@@ -960,6 +960,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "blacksilk-consensus"
+version = "0.1.0"
+dependencies = [
+ "blacksilk-randomx",
+ "blake2",
+ "hex",
+]
+
+[[package]]
 name = "blacksilk-marketplace"
 version = "0.1.0"
 dependencies = [
