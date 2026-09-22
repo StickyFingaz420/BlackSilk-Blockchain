@@ -1,0 +1,16 @@
+[package]
+name = "blacksilk-randomx"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+description = "Pure-Rust, specification-conformant RandomX (v1) proof-of-work, shared by the BlackSilk node and miner"
+
+[lib]
+name = "blacksilk_randomx"
+
+[dependencies]
+blake2 = "0.10"
+aes = { version = "0.8", features = ["hazmat"] }
+
+[dev-dependencies]
+hex = "0.4"

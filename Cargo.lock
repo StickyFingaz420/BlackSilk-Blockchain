@@ -1026,6 +1026,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "blacksilk-randomx"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "blake2",
+ "hex",
+]
+
+[[package]]
 name = "blake2"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
