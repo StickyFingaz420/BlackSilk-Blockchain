@@ -23,6 +23,7 @@ members = [
     "smart-contracts/escrow_contract",
     "smart-contracts/marketplace_contract",
     "smart-contracts/randomx",
+    "randomx", # blacksilk-randomx: the single RandomX implementation for node and miner
     "pqcrypto_native",
     "scripts", # Added scripts for Rust comparison tool
     "pqsignatures",
@@ -64,6 +65,15 @@ panic = "abort"
 overflow-checks = false
 debug-assertions = false
 strip = true
+
+# RandomX is unusably slow unoptimized (256 MiB Argon2 fill, ~16k dataset
+# items per hash), so optimize it and its hash primitives even in dev builds.
+[profile.dev.package.blacksilk-randomx]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+[profile.dev.package.aes]
+opt-level = 3
 
 # Ultra-aggressive CPU optimizations for mining
 [profile.release.package."blacksilk-miner"]
