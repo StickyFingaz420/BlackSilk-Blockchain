@@ -1,0 +1,21 @@
+[package]
+name = "blacksilk-crypto"
+version = "0.1.0"
+edition = "2021"
+description = "BlackSilk transaction cryptography: Ristretto255 primitives, stealth outputs, Janus anchors, CLSAG, Bulletproofs+"
+
+[lib]
+name = "blacksilk_crypto"
+
+[dependencies]
+# Pure Rust, no `unsafe` in the arithmetic we use; audited by Quarkslab (2019).
+curve25519-dalek = { version = "4.1.3", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
+blake2 = "0.10"
+# Traits only: the caller supplies the CSPRNG (the OS RNG in wallets, seeded ChaCha in tests).
+rand_core = { version = "0.6", default-features = false }
+subtle = { version = "2.6", default-features = false }
+zeroize = { version = "1.8", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+rand_chacha = { version = "0.3", default-features = false }
+hex = "0.4"

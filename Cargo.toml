@@ -25,6 +25,8 @@ members = [
     "smart-contracts/randomx",
     "randomx", # blacksilk-randomx: the single RandomX implementation for node and miner
     "consensus", # blacksilk-consensus: header chain rules shared by node and miner
+    "crypto", # blacksilk-crypto: transaction cryptography (CLSAG, BP+, stealth, Janus anchor)
+    "tx", # blacksilk-tx: transaction format, building, validation
     "pqcrypto_native",
     "scripts", # Added scripts for Rust comparison tool
     "pqsignatures",
@@ -74,6 +76,14 @@ opt-level = 3
 [profile.dev.package.blake2]
 opt-level = 3
 [profile.dev.package.aes]
+opt-level = 3
+# Elliptic-curve code is 10-50x slower unoptimized; tests prove and verify
+# hundreds of Bulletproofs+ and CLSAGs.
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+[profile.dev.package.blacksilk-crypto]
+opt-level = 3
+[profile.dev.package.blacksilk-tx]
 opt-level = 3
 
 # Ultra-aggressive CPU optimizations for mining

@@ -131,10 +131,152 @@ mode; mining throughput with full mode.
 old implementations (`node/src/randomx*`, `miner/src/randomx*`, `miner/src/pure_randomx.rs`,
 `miner/src/randomx_pro.rs`, `smart-contracts/randomx`). Findings P1–P4 close then.
 
+### R2: Header-chain consensus (`consensus/`, crate `blacksilk-consensus`)
+
+Specification: [`docs/consensus.md`](docs/consensus.md). The crate is pure Rust with no I/O.
+It is the single definition of block validity for node and miner.
+
+| Rule | Design | Replaces finding |
+|---|---|---|
+| Header | fixed 100-byte encoding; id = H(domain ‖ network_id ‖ header) | B3 (node rebuilt the header), network separation |
+| PoW | RandomX(seed, full header) recomputed by every verifier; `h × d < 2^256` | P5 (miner/node mismatch), P6/P7 (timing/heuristic "checks" gone), P8 (inverted targets) |
+| RandomX key | Monero schedule: epoch 2048, lag 64, seed taken from the header's own branch | P10 (per-block key) |
+| Difficulty | LWMA-1 (N = 60, T = 120 s), enforced exactly | P9 (two algorithms, not enforced) |
+| Timestamps | > median of last 11; ≤ now + 360 s (non-permanent) | none (previously no timestamp rules) |
+| Merkle root | domain-separated leaves/nodes, no odd-node duplication | B4 (merkle never checked) |
+| Chain selection | most cumulative work, first-seen on ties; validation independent of best chain | B1/B5 (unchecked P2P blocks, broken reorg) |
+| Reorg | ordered disconnect/connect lists; the branch is fully validated before switching; `mark_invalid` re-selects | B5 |
+
+**Evidence:** `cargo test -p blacksilk-consensus` runs 25 unit tests:
+- header encoding, strictness and id separation
+- `check_hash` boundaries
+- the Monero seed schedule
+- LWMA stability and response, with manipulation and timestamp-attack bounds
+- median-time-past and FTL
+- the Merkle shape and no-duplication property
+- rejection of every invalid field
+- heavier versus equal-work forks, with exact reorg lists
+- arrival-order independence
+- invalidation fallback
+- a branch-aware seed across an epoch boundary
+
+It also runs 2 end-to-end tests with **real RandomX**. A block mined through the miner-side
+flow (template → header → `check_hash`) is accepted by `HeaderChain` + `RandomXPow`, and an
+insufficient-work header is rejected.
+
+**Not yet done:** wiring into the node and miner binaries and deleting the old
+implementations. Neither binary builds on the audit machine yet (toolchain, Phase 1). The
+node's P2P/HTTP layers are also slated for rebuild, so integration happens with that work.
+Genesis headers are provisional until the transaction format exists.
+
+### R3: Privacy transaction system (`crypto/`, `tx/`; spec `docs/transactions.md`)
+
+The spec was written first, reviewed, and then implemented. The implementation is pure
+Rust with `#![forbid(unsafe_code)]` in both crates, and has no FFI or C. Dependencies:
+- `curve25519-dalek` 4.1.3 (Ristretto255; audited by Quarkslab, 2019)
+- `blake2`
+- `subtle`
+- `zeroize`
+- `rand_core` (traits only; the caller supplies the RNG)
+
+**`blacksilk-crypto`:**
+
+| Module | Content |
+|---|---|
+| `hash` | length-prefixed domain tags, `Hs` (wide reduction), `Hp` (RFC 9496) |
+| `point` | canonical-only points and scalars |
+| `generators` | `G`, `H`, 2×1024 BP+ generators (hash-to-group) |
+| `keys` | seed → `k_s`, `k_v`; uniform `(D, k_v·D)` subaddresses; view-only keys |
+| `stealth` | output creation and scanning, view tags, encrypted amounts |
+| `janus` | Janus anchor |
+| `clsag` | CLSAG, ring 16, key images |
+| `bulletproofs_plus` | aggregated BP+ prover, single-MSM verifier, batch verifier |
+| `nonce` | hedged randomness |
+
+**`blacksilk-tx`:**
+
+| Module | Content |
+|---|---|
+| `codec` | strict minimal varints; bounded counts before allocation |
+| `types` | format, three-part hashing, `sig_message`, weight |
+| `validate` | T1–T11, C1–C4, B1–B7, each with its own error variant; block-wide BP+ batch |
+| `state` | reference chain state with undo |
+| `builder` | transfer and coinbase construction with a self-check; standard fee |
+| `scan` | wallet scanning |
+| `decoy` | Monero gamma picker |
+
+It also adds `HeaderChain::template_on(parent)` to consensus, so a node or miner can
+extend a side branch.
+
+**Evidence:** `cargo test -p blacksilk-crypto -p blacksilk-tx -p blacksilk-consensus` gives
+**132 passing tests**. Clippy reports no warnings, and `cargo fmt --check` is clean.
+
+62 crypto tests:
+- canonical-encoding rejection, including ℓ, p, "negative" and high-bit encodings
+- tag distinctness
+- CLSAG at all 16 positions, with rejection of every modified input
+- linkability (same output, different rings, same key image)
+- the signer refusing wrong secrets
+- key-less forgery
+- nonce separation under a completely broken RNG
+- BP+ for k = 1..16 and boundary amounts
+- the optimized verifier cross-checked against a direct round-by-round verifier written
+  from the paper's equations
+- every single-element proof mutation rejected
+- statement binding
+- malicious-prover forgeries rejected: 2^64 via a non-binary bit, −1, and a negative bit
+- batch detection of any bad proof, and batch weights defeating cancelling errors
+- 12 Janus anchor attack scenarios (spec §12.6)
+
+43 tx tests:
+- one negative test per rule, asserting the exact error
+- **every single-bit flip of a valid transaction's bytes rejected** (2 × ~1.6 k cases)
+- double spends within one block and across blocks, and replay
+- cross-network replay
+- an **inflation attack with valid signatures and balance** (negative output commitment),
+  rejected only by BP+, individually and in the block batch
+- overspend
+- a **Janus probe inside a valid on-chain transaction**, accepted by consensus and refused
+  by the victim's wallet
+- decoder fuzzing: truncations, random corruption, random buffers, oversize, huge counts
+- privacy: uniform output encoding, a uniformly positioned change output, a varying real
+  ring position, outsiders and view-only wallets, unlinkable repeat payments
+- decoy distribution
+- header-chain integration: `tx_root` binding, and a real reorg through `HeaderChain` that
+  undoes a payment, which is then re-mined
+
+**Findings closed by this work (for the new code path):**
+- S1: CLSAG is unforgeable.
+- S2: key images are bound and unique.
+- S3: signatures cover everything.
+- S4: balance plus range proofs.
+- K1: seeds come from a CSPRNG.
+- K2: ring 16 and stealth outputs.
+
+They stay open in the old `node/`, `wallet/` and `primitives/` code until those use the
+new crates.
+
+**Known limits:**
+- There is no external cryptographic review yet, and none of Monero's test vectors apply
+  (Ristretto).
+- The Janus anchor analysis is our own (spec §12.8).
+- Property tests are seeded loops, because `proptest` needs `getrandom` (toolchain,
+  Phase 1).
+- Economics constants are provisional.
+- Performance has not been profiled. The tests prove and verify hundreds of proofs in a
+  few seconds with opt-level 3.
+
+**Next:** block validation integration in the node (the emission schedule and
+`block_reward`), wallet rebuild on `scan`/`builder`/`decoy`, then removal of
+`primitives/src/ring_sig.rs`, `quantum_ring.rs` and the node's old verifier.
+
 ## Decisions needed before remediation
 
 1. **RandomX implementation:** *decided on a pure-Rust implementation, now done (R1).*
-2. **Transaction privacy model.** Correct CryptoNote-style privacy needs
+2. **Transaction privacy model:** *decided on the Monero-based model (CLSAG-16, key images,
+   stealth outputs with view tags, BP+, pseudo-outputs), now specified and implemented (R3).*
+   Original note:
+   Correct CryptoNote-style privacy needs
    linkable ring signatures (CLSAG) with key images, one-time stealth outputs,
    pseudo-output commitments with a balance check, and range proofs, all over a
    single curve. The "quantum ring signature" should be removed and not
