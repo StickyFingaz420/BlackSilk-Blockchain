@@ -1,11 +1,25 @@
 # BlackSilk Testnet Readiness Audit
 
-Status: **NOT testnet-ready.** All Phase 2 findings are closed (see *Finding status
-after R1–R5*), and the P2P network is implemented (R5). Remaining before a public
-testnet:
-- testnet launch configuration (genesis timestamp, seed nodes, deployment);
-- an extended multi-machine soak test;
-- an external cryptographic review of the transaction layer and the Janus anchor. This file tracks the audit defined in `Claude.md`.
+Status: **ready for a controlled multi-machine testnet trial; NOT yet ready for a
+public testnet launch.**
+- All Phase 2 findings are closed (see *Finding status after R1–R6*).
+- The P2P network is implemented (R5).
+- The testnet configuration is final (R6): genesis, seed system and deployment files.
+- Two 3-hour lab-network runs passed every check (R6).
+
+Remaining before a public testnet:
+- the multi-machine procedure in `docs/testnet.md` §7, including a 72-hour run: only
+  one machine was available here;
+- deployed seed nodes, added to the built-in list;
+- the Linux deployment files, run and verified on Linux;
+- an external cryptographic review of the transaction layer and the Janus anchor
+  (required before mainnet).
+
+Smart contracts are specified in `docs/contracts.md`: a draft for approval, **not
+implemented and not part of consensus**. They will activate later, at a fork height or
+with a testnet reset.
+
+This file tracks the audit defined in `Claude.md`.
 Each finding lists where it is, what goes wrong, and its severity. Findings stay
 open until a fix lands **and** a test demonstrates it.
 
@@ -490,7 +504,114 @@ Clippy with `-D warnings` and `fmt --check` are clean.
 - Dandelion++ parameters are Monero's, not re-tuned for BlackSilk.
 - There is no peer-count metric or RPC beyond `/info.peers`.
 
-### Finding status after R1–R5
+### R6: Testnet launch configuration and long-duration testing
+
+**Configuration and deployment:**
+- **Testnet genesis finalized.**
+  - Timestamp 1790121600 (2026-09-23 00:00 UTC).
+  - Id `bbeb1a9f…12909`.
+  - Empty body, no premine.
+  - Pinned by a test, together with regtest's.
+  - The mainnet timestamp remains provisional.
+- **Regtest now uses 10-second blocks**, so a single machine can test hours of chain
+  activity. Every other rule is shared.
+- **Seed and configuration system** (`node/src/config.rs`):
+  - a TOML configuration file, with the command line overriding it and unknown keys
+    rejected;
+  - a built-in seed list per network, deliberately **empty** until real seed hosts
+    exist;
+  - seeds may be host names, resolved with system DNS but refused in `--proxy-only`
+    mode (no DNS leak);
+  - `--connect-only` for fixed topologies;
+  - `--allow-private` for LAN/lab networks.
+- **Deployment** (`deploy/`):
+  - configuration templates: normal, seed, Tor-only, lab/LAN, regtest;
+  - hardened systemd units for the node and miner (unprivileged user, read-only
+    system, `MemoryDenyWriteExecute`, restricted address families);
+  - a multi-stage Docker image that runs as non-root, with the RPC not exposed;
+  - `install-linux.sh` and `check-node.sh`;
+  - `.gitattributes` forces LF line endings.
+- **Documentation:** `docs/testnet.md` covers parameters, running a node, Tor, Docker,
+  mining, seed operation, the **multi-machine test procedure (§7)**, the lab tool,
+  troubleshooting and operator security. The consensus and P2P specs are updated. The
+  old deployment files stay in `legacy/`.
+
+**Lab network tool** (`tools/labnet`, pure Rust):
+- It starts real node and miner processes, and routes every node-to-node link through
+  a proxy that adds latency (80 ms) and jitter (0–60 ms), and can cut links for
+  partitions.
+- Wallets, in process, send transactions through random nodes.
+- It samples heights, tips, mempools, peers and memory every 15 s.
+- At the end it checks:
+  - convergence;
+  - drained mempools;
+  - a late node that joins through one peer, discovers others and syncs;
+  - every wallet restored from its seed against that fresh node matches;
+  - **Σ wallet balances = coins generated**;
+  - no crashes;
+  - no misbehavior disconnects;
+  - no node stuck behind for more than 90 s.
+
+**Findings from the long runs.** Fixed, each with a regression test:
+
+| # | Finding | Fix |
+|---|---|---|
+| L1 | **Honest peers banned each other over hours.** Relaying a transaction that a block had just spent scored as an invalid transaction (+20). This also applied to anything checked against chain state: ring members on another branch, and the signature over them. | `TxError::is_stateless()`: only stateless failures (T1–T11) are penalized or cached. Tests: `relaying_an_already_confirmed_transaction_is_not_penalized`, `stateless_and_contextual_errors_are_distinguished`. |
+| L2 | **Transaction request timeouts banned honest peers.** A node silently ignored `GetTx` for a transaction mined since it was announced; the requester scored +5 per timeout (10 of 14 false bans). | `GetTx` is answered with `NotFound` for every unserved id (uniform, so it reveals nothing about pool contents). `NotFound` moves the request to the next announcer. Transaction timeouts are no longer penalized. Test: `mempool_cannot_be_probed_with_gettx` (extended). |
+| L3 | **Wallet funds stuck as "pending" forever** when a submitted transaction was dropped (its ring members were reorganized away). | Pending spends expire after 20 blocks without confirmation. Safe: a late confirmation is still detected, and reuse is rejected by consensus. Test: `stale_pending_spends_expire_but_late_confirmation_still_counts`. |
+| L4 | Peer table lost on a forced kill (only saved on clean shutdown). | Saved within a minute of any change (R5 smoke test; verified). |
+| L5 | Flaky test: a ping flood can be cut by the rate limit **or** by the slow-reader protection. | Both are counted (`NetStats::slow_disconnects`); the test accepts either defense. |
+
+Two harness bugs were also found and fixed before the final runs:
+- the partitions leaked through discovered addresses (hence `--connect-only`);
+- the stuck detector counted normal propagation with 120 s blocks as "stuck"; it now
+  measures time *continuously behind*.
+
+**Final runs on the fixed code** (Windows, 8 threads, 3 hours each, both concurrent).
+Evidence is in `docs/evidence/labnet-2026-09-23/`: summaries, per-15 s metrics and
+journals. The first runs' summaries, which found L1–L3, are kept in `first-runs/`.
+
+| | Regtest rules (10 s) | **Testnet rules (120 s, D0 = 100)** |
+|---|---|---|
+| Result | **all checks passed** | **all checks passed** |
+| Blocks / partitions | 1121 / 6 (4 min each) | 116 / 3 (8 min each) |
+| Reorganizations (max depth) | 179 (20) | 4 (3) |
+| Transactions submitted | 445 of 448 attempts | 41 of 50 attempts |
+| Transaction failures | 3 × `NotEnoughOutputs` (young chain, before 16 mature coinbases) | 9 × same |
+| Misbehavior disconnects / stuck nodes / crashes | 0 / 0 / 0 | 0 / 0 / 0 |
+| Late joiner | synced, discovered 4 peers | synced, discovered 3 peers |
+| Fresh-node wallet restore | 5 of 5 wallets identical | 5 of 5 identical |
+| Supply | 22438.46150858 BLK generated = held by wallets | 2323.02324589 = held by wallets |
+| Node memory (RSS) | 267 → 275 MB over 1121 blocks | 264 → 266 MB |
+
+Memory grows about 7 KB per block, which is the documented in-memory design (all
+bodies and state in RAM). There is no leak beyond that. Persistent indexes are still
+needed for a long-lived chain (R4 open items).
+
+**Testnet readiness checklist (this phase's acceptance criteria):**
+
+| Criterion | Status |
+|---|---|
+| Multiple nodes join automatically | ✅ Lab: late joiners with one peer discovered 3–4 peers and synced. Release binaries (R5): a node discovered a third node through a peer. **Not yet across machines.** |
+| Mining works across different machines | ⚠️ Mining on two nodes across latency-emulated links: verified. **Different physical machines: not verified.** Only one machine was available. |
+| Transactions propagate correctly | ✅ Lab: 486 transactions through random nodes, Dandelion++ stem then fluff, all confirmed, mempools drained, supply conserved. |
+| Reorganizations under real network conditions | ⚠️ Verified under **emulated** latency, jitter and partitions: 183 reorgs, depth up to 20, all converged, transactions returned and confirmed. Real internet conditions: not verified. |
+| Wallet sync from a fresh node | ✅ Every wallet restored from 24 words against a node synced from scratch matched exactly (both runs). |
+| Long-duration stability | ✅ 2 × 3 hours, concurrent, no crashes, flat memory. A **72-hour** multi-machine run is still required (testnet.md §7 step 7). |
+
+**Verdict:**
+- The software is ready for a **controlled multi-machine testnet trial**, run by the
+  operators following `docs/testnet.md` §7.
+- It is **not declared ready for a public testnet launch** until that trial passes.
+  That means at least 3 machines in 2 networks, including a 72-hour run.
+- Seed nodes must also be deployed and added to the built-in list.
+- The Linux deployment files (systemd, install script, Docker) must be verified on
+  Linux. They were written here but **not executed**, because no Linux environment or
+  Docker was available.
+
+An external cryptographic review remains a mainnet prerequisite.
+
+### Finding status after R1–R6
 
 | Findings | Status | Evidence |
 |---|---|---|
@@ -508,6 +629,10 @@ Clippy with `-D warnings` and `fmt --check` are clean.
 | K1, K2 (shared seed, no stealth/ring) | **Closed** | R3 key/stealth tests, R4 wallet |
 | K3 (Tor inbound rejection) | **Closed:** SOCKS5/Tor outbound, proxy-only mode, onion addresses; inbound through the operator's hidden service. I2P is not yet supported. | R5 |
 | D1–D3 (remote-exec `build.rs`, moving git pins, stray files) | **Closed** | R4 repository changes |
+| L1–L5 (false bans from contextual tx errors and `GetTx` timeouts, stuck pending spends, peer table persistence, flaky flood test) | **Closed** | R6 regression tests; labnet reruns with 0 misbehavior disconnects |
+| Multi-machine testnet trial | **Open:** procedure ready, not yet run | `docs/testnet.md` §7 |
+| Linux deployment files | **Open:** written but not executed | `deploy/` |
+| Seed nodes | **Open:** the built-in list is empty | `node/src/config.rs` |
 
 ## Decisions needed before remediation
 

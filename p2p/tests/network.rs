@@ -423,8 +423,12 @@ async fn malformed_messages_and_floods_are_cut_off() {
         }
     }
     assert!(reader.await.unwrap(), "flooding peer disconnected");
+    // The flooder is cut off either by its rate-limit score or, if the replies
+    // pile up first, by the slow-reader protection (bounded outbox). Both are
+    // intended defenses; which fires first depends on scheduling.
     wait_until("both gone", 5, || {
-        a.net.stats().misbehaving_disconnects == 2
+        let st = a.net.stats();
+        st.peers == 0 && st.misbehaving_disconnects + st.slow_disconnects >= 2
     })
     .await;
 }
@@ -460,12 +464,106 @@ async fn mempool_cannot_be_probed_with_gettx() {
     a.chain.lock().unwrap().submit_tx(tx).unwrap(); // in A's mempool
     w.send(&Message::GetTx(vec![id]).encode()).await.unwrap();
     w.send(&Message::Ping(77).encode()).await.unwrap();
-    // The next reply is the pong: the transaction was not served.
+    // The answer is NotFound, exactly as for a transaction the node never had: the
+    // reply does not reveal the mempool content.
+    let mut not_found = false;
     loop {
         match Message::decode(&r.recv().await.unwrap()).unwrap() {
             Message::Pong(77) => break,
+            Message::NotFound(ids) => {
+                assert_eq!(ids, vec![id]);
+                not_found = true;
+            }
             Message::Tx(_) => panic!("served a transaction that was never announced to this peer"),
             _ => {}
         }
     }
+    assert!(not_found);
+    // Same answer for an id that does not exist at all.
+    w.send(&Message::GetTx(vec![[0x55; 32]]).encode())
+        .await
+        .unwrap();
+    loop {
+        if let Message::NotFound(ids) = Message::decode(&r.recv().await.unwrap()).unwrap() {
+            assert_eq!(ids, vec![[0x55; 32]]);
+            break;
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn connect_only_nodes_do_not_dial_discovered_addresses() {
+    let a = node(20, &[]).await;
+    let b_addr = free_local_addr();
+    let mut cfg = fast_config(&[a.addr]);
+    cfg.listen = Some(b_addr);
+    cfg.public_address = Some(NetAddr::Ip(b_addr));
+    let _b = node_with(21, cfg).await;
+    let an = a.net.clone();
+    wait_until("A learned B", 10, || {
+        let (n, t) = an.stats().known_addresses;
+        n + t >= 1
+    })
+    .await;
+    let mut cfg = fast_config(&[a.addr]);
+    cfg.connect_only = true;
+    let c = node_with(22, cfg).await;
+    wait_until("C connected to A", 10, || c.net.stats().peers >= 1).await;
+    // C learns B's address from A but must not dial it.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let peers = c.net.peers();
+    assert_eq!(peers.len(), 1, "{peers:?}");
+    assert_eq!(peers[0].addr, NetAddr::Ip(a.addr));
+}
+
+/// Regression (lab network finding): relaying a transaction that the node has just
+/// seen confirmed is an honest race, not misbehavior.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn relaying_an_already_confirmed_transaction_is_not_penalized() {
+    let mut a = node(23, &[]).await;
+    a.mine_n(80, 0);
+    let tx = a.payment();
+    let id = tx.hash();
+    a.chain.lock().unwrap().submit_tx(tx.clone()).unwrap();
+    a.mine(0); // confirms it: its key image is now spent
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    w.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+    // The node asks for it (it is no longer in its mempool) ...
+    loop {
+        if let Message::GetTx(ids) = Message::decode(&r.recv().await.unwrap()).unwrap() {
+            assert_eq!(ids, vec![id]);
+            break;
+        }
+    }
+    // ... and gets a transaction that is now invalid only because of chain state.
+    w.send(&Message::Tx(tx.encode()).encode()).await.unwrap();
+    w.send(&Message::Ping(9).encode()).await.unwrap();
+    loop {
+        if let Message::Pong(9) = Message::decode(&r.recv().await.unwrap()).unwrap() {
+            break;
+        }
+    }
+    let peers = a.net.peers();
+    assert_eq!(peers.len(), 1, "still connected");
+    assert_eq!(peers[0].score, 0, "no penalty for a contextual failure");
+    // A stateless-invalid transaction, by contrast, is penalized.
+    let Transaction::Transfer(mut bad) = tx else {
+        unreachable!()
+    };
+    bad.fee += 1; // breaks the balance (stateless rule T9)
+    let bad = Transaction::from(*bad);
+    w.send(&Message::InvTx(vec![bad.hash()]).encode())
+        .await
+        .unwrap();
+    loop {
+        if let Message::GetTx(_) = Message::decode(&r.recv().await.unwrap()).unwrap() {
+            break;
+        }
+    }
+    w.send(&Message::Tx(bad.encode()).encode()).await.unwrap();
+    wait_until("penalized", 5, || {
+        a.net.peers().first().is_some_and(|p| p.score >= 20)
+    })
+    .await;
 }

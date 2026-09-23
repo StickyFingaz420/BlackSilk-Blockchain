@@ -166,10 +166,16 @@ to every peer that does not already have it. A peer that lacks the body asks for
   - This makes the first announcer hard to find by timing (the "diffusion" of
     Dandelion++).
 - **Requesting.** A peer asks for unknown hashes with `GetTx`, from one announcer at a
-  time. A request unanswered within 30 s is retried with another announcer.
+  time.
+  - A `NotFound` answer, or no answer within 30 s, moves the request to the next
+    announcer.
+  - Neither is penalized: transaction relay is best effort.
 - **Serving.** A node serves `GetTx` **only for transactions it has already announced to
-  that peer**. A spy therefore cannot probe the stempool or the mempool for transactions
-  it was never offered.
+  that peer and still has**.
+  - Every other requested hash gets the same `NotFound`, whether the transaction was
+    mined, dropped or never known.
+  - A spy therefore cannot probe the stempool or the mempool for transactions it was
+    never offered.
 
 ## 8. Dandelion++ (stem phase)
 
@@ -184,8 +190,8 @@ Following Fanti et al., "Dandelion++" (SIGMETRICS 2018), as deployed in Monero:
 - **Transactions the node creates or receives by RPC** enter the stem: they are sent as
   `StemTx` to the stem peer mapped to "self".
 - **Receiving a `StemTx`.**
-  - The transaction is validated fully against the current state. Invalid means a
-    violation.
+  - The transaction is validated fully against the current state.
+  - Only a stateless failure is a violation (§10).
   - It is stored in the **stempool**. The stempool is never announced, never served and
     never mined.
   - A relayer forwards it to the stem peer mapped to the sender. A diffuser fluffs it:
@@ -226,6 +232,10 @@ Following Fanti et al., "Dandelion++" (SIGMETRICS 2018), as deployed in Monero:
 - **Groups.** An IPv4 /16, an IPv6 /32, or a single onion address.
 - **Outbound connections.** The node keeps **8 outbound connections**, at most **one per
   group**. Candidates are drawn 50/50 from *tried* and *new*.
+- **Connect-only mode.** With `--connect-only`, outbound connections go only to the
+  configured `--peer` entries: no seeds and no discovered addresses. Inbound
+  connections and address exchange still work. It suits fixed private topologies and
+  lab tests.
 - **Inbound.** At most 64 inbound connections, and at most 2 from any one IP.
 - **Persistence.** The tables and the ban list are saved in the data directory
   (`peers.json`, `bans.json`) within a minute of changing, and on shutdown.
@@ -242,16 +252,26 @@ the connection is dropped.
 | Header with invalid PoW, bad difficulty, bad version or height, invalid parent | 100 |
 | Block whose body is invalid or does not match its header | 100 |
 | `Headers` that do not connect or are not a chain | 20 |
-| Invalid transaction (`Tx`/`StemTx`) | 20 |
+| Transaction invalid by a **stateless** rule (`Tx`/`StemTx`; transactions.md T1–T11) | 20 |
 | Unrequested `Block`/`Tx`, `Pong` without a ping, second `GetAddr` or oversized `Addr` | 10 |
-| Timeout on a requested block or transaction | 5 |
+| Timeout on a requested block or headers | 5 |
 | Rate limit exceeded | 1 per excess message; the message is dropped |
 
 **Not penalized** (honest peers can trigger these):
 - a header rejected only by the future-time rule;
 - a duplicate;
 - an already-known transaction;
-- a transaction that conflicts with the mempool.
+- a transaction that conflicts with the mempool;
+- a transaction invalid only against **our chain state** (contextual rules C1–C4). Its
+  key image may have been spent in a block we saw first, or its ring members may
+  resolve differently on our branch. This is not proof of misbehavior;
+- `NotFound`, or a slow transaction answer.
+
+The lab network found the last two cases as false bans between honest nodes (AUDIT.md
+R6).
+
+A peer that does not read its messages fast enough is disconnected, not banned, when
+its bounded outbox (64 messages) fills up.
 
 **Rate limits** (per peer, token buckets):
 - **Messages:** 50 per second, burst 500.

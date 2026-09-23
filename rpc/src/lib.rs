@@ -30,6 +30,9 @@ pub struct Info {
     /// Connected P2P peers.
     #[serde(default)]
     pub peers: usize,
+    /// Best known header height (ahead of `height` while syncing).
+    #[serde(default)]
+    pub header_height: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

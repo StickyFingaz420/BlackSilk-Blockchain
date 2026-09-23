@@ -111,6 +111,7 @@ async fn info(State(App { chain: s, net }): State<App>) -> Json<rpc::Info> {
         mempool_bytes: m.mempool().bytes(),
         outputs: m.state().output_count(),
         peers,
+        header_height: m.header_height(),
     })
 }
 

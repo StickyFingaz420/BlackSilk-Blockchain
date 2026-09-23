@@ -1,0 +1,9 @@
+# Local regtest node (10-second blocks, difficulty starts at 1, private network).
+network = "regtest"
+data_dir = "./regtest-data"
+rpc_bind = "127.0.0.1:39333"
+log = "info"
+
+[p2p]
+bind = "127.0.0.1:39334"
+builtin_seeds = false

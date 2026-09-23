@@ -360,6 +360,10 @@ impl ChainManager {
                     break;
                 }
             }
+            let depth = self.connected.len() - 1 - fork;
+            if depth > 0 {
+                log::info!("reorganization: disconnecting {depth} block(s) above height {fork}");
+            }
             while self.connected.len() - 1 > fork {
                 let id = self.connected.pop().expect("above genesis");
                 self.generated.pop();

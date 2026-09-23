@@ -11,6 +11,7 @@ members = [
     "node",      # blacksilk-node: the node binary (RPC)
     "miner",     # blacksilk-miner: RandomX miner
     "wallet",    # blacksilk-wallet: CLI wallet
+    "tools/labnet", # blacksilk-labnet: long-duration lab network test
 ]
 # Pre-rebuild code kept for reference only (does not build; see legacy/README.md),
 # and the post-quantum research track.

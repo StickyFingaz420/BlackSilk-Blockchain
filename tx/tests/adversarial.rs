@@ -754,3 +754,30 @@ fn decoder_never_panics_on_garbage() {
         Err(blacksilk_tx::codec::DecodeError::CountOutOfRange { .. })
     ));
 }
+
+#[test]
+fn stateless_and_contextual_errors_are_distinguished() {
+    // Contextual: depend on the chain view (honest relays can hit them).
+    for e in [
+        TxError::UnknownRingMember { input: 0, index: 1 },
+        TxError::RingMemberTooYoung { input: 0, index: 1 },
+        TxError::KeyImageSpent { input: 0 },
+        TxError::InvalidSignature { input: 0 },
+        TxError::DuplicateOneTimeKey { output: 0 },
+    ] {
+        assert!(!e.is_stateless(), "{e:?}");
+    }
+    // Stateless: invalid everywhere, proof of a faulty or malicious sender.
+    for e in [
+        TxError::Unbalanced,
+        TxError::RangeProofInvalid,
+        TxError::KeyImagesNotSorted,
+        TxError::FeeTooLow {
+            fee: 1,
+            required: 2,
+        },
+        TxError::OutputCount(1),
+    ] {
+        assert!(e.is_stateless(), "{e:?}");
+    }
+}

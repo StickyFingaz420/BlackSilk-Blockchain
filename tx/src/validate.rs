@@ -104,6 +104,29 @@ pub enum TxError {
     },
 }
 
+impl TxError {
+    /// Whether the transaction is invalid regardless of chain state (rules T1–T11).
+    ///
+    /// Contextual failures (C1–C4) depend on the node's view of the chain:
+    /// - ring members may not exist yet or be too young on this branch;
+    /// - a key image may have just been spent in a block;
+    /// - the same ring indices resolve to different outputs on another fork, which
+    ///   changes the signature's statement.
+    ///
+    /// An honest peer can relay a transaction that fails them here. Only stateless
+    /// failures prove misbehavior (docs/p2p.md §10).
+    pub fn is_stateless(&self) -> bool {
+        !matches!(
+            self,
+            TxError::UnknownRingMember { .. }
+                | TxError::RingMemberTooYoung { .. }
+                | TxError::KeyImageSpent { .. }
+                | TxError::InvalidSignature { .. }
+                | TxError::DuplicateOneTimeKey { .. }
+        )
+    }
+}
+
 fn strictly_increasing<T: Ord>(items: impl IntoIterator<Item = T>) -> bool {
     let mut prev: Option<T> = None;
     for item in items {

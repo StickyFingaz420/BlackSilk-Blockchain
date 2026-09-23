@@ -1,0 +1,24 @@
+# BlackSilk testnet node reachable only over Tor (docs/p2p.md §11, docs/testnet.md §4.3).
+#
+# torrc:
+#   HiddenServiceDir /var/lib/tor/blacksilk/
+#   HiddenServicePort 29334 127.0.0.1:29334
+# then put the generated hostname in public_address below.
+
+network = "testnet"
+data_dir = "/var/lib/blacksilk/testnet-tor"
+rpc_bind = "127.0.0.1:29333"
+log = "info"
+
+[p2p]
+# Only the hidden service reaches this port; never bind a public interface.
+bind = "127.0.0.1:29334"
+# public_address = "<56 characters>.onion:29334"
+proxy = "127.0.0.1:9050"
+proxy_only = true
+# In proxy-only mode seeds must be IP or .onion addresses (host names would need local DNS).
+peers = []
+seeds = []
+builtin_seeds = false
+max_outbound = 8
+max_inbound = 64

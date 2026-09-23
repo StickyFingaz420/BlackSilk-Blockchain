@@ -19,7 +19,7 @@ All integers are unsigned and little-endian unless stated otherwise.
 | Parameter | Mainnet | Testnet | Regtest |
 |---|---|---|---|
 | `network_id` (u32) | `0x000B1A6C` | `0x0001D670` | `0x00DEB06E` |
-| Target block time `T` | 120 s | 120 s | 120 s |
+| Target block time `T` | 120 s | 120 s | 10 s |
 | Initial difficulty `D0` | 100 000 | 100 | 1 |
 | Difficulty window `N` (LWMA) | 60 | 60 | 60 |
 | Median-time-past window | 11 | 11 | 11 |
@@ -29,9 +29,14 @@ All integers are unsigned and little-endian unless stated otherwise.
 
 The genesis header of each network is a constant in `params.rs`.
 - The genesis body is **empty**: no coinbase, no premine, `tx_root` = 32 zero bytes
-  (blocks.md §3). This is final.
-- The **genesis timestamps are provisional**. The testnet and mainnet genesis headers
-  will be fixed at their launch dates.
+  (blocks.md §3).
+- **Testnet genesis is final**: timestamp `1790121600` (2026-09-23 00:00:00 UTC), id
+  `bbeb1a9fdb16cf416ddb505e8468a16b4308d15307d0a12d9ef4ecfefed12909`.
+- The mainnet genesis timestamp is provisional until its launch date.
+- A test pins the testnet and regtest genesis ids.
+
+Regtest uses 10-second blocks so that local tests cover hours of chain activity
+quickly. Every other rule is the same on all networks.
 
 ## 2. Block header
 
@@ -198,6 +203,6 @@ the CVE-2012-2459 class of duplicate-transaction malleability.
 - The header-level PoW check costs about 0.45 s per header (light mode). Peers that
   send headers with invalid PoW must be penalized by the network layer to limit this
   DoS vector. Faster light-mode hashing is tracked in `AUDIT.md`.
-- Genesis timestamps are provisional until launch (§1).
+- The mainnet genesis timestamp is provisional until launch (§1).
 - Emission, block format and block limits: [`blocks.md`](blocks.md). Transaction
   rules and coinbase maturity: [`transactions.md`](transactions.md).

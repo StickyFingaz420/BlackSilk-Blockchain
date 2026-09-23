@@ -58,6 +58,9 @@ pub struct NetConfig {
     pub seeds: Vec<NetAddr>,
     /// Peers to keep connected to at all times.
     pub connect: Vec<NetAddr>,
+    /// Make outbound connections only to `connect` (no seeds, no discovered
+    /// addresses). Inbound connections and address exchange still work.
+    pub connect_only: bool,
     /// SOCKS5 proxy for outbound connections (e.g. Tor).
     pub proxy: Option<SocketAddr>,
     /// Only connect through the proxy.
@@ -85,6 +88,7 @@ impl NetConfig {
             public_address: None,
             seeds: Vec::new(),
             connect: Vec::new(),
+            connect_only: false,
             proxy: None,
             proxy_only: false,
             max_outbound: 8,
@@ -121,6 +125,8 @@ pub struct NetStats {
     pub known_addresses: (usize, usize),
     /// Peers disconnected for misbehavior since start.
     pub misbehaving_disconnects: u64,
+    /// Peers disconnected because they did not read their messages fast enough.
+    pub slow_disconnects: u64,
 }
 
 struct Peer {
@@ -169,6 +175,7 @@ struct State {
     announced_tip: Hash,
     rng: ChaCha20Rng,
     misbehaving_disconnects: u64,
+    slow_disconnects: u64,
 }
 
 struct Inner {
@@ -239,6 +246,7 @@ impl Network {
             announced_tip: tip,
             rng,
             misbehaving_disconnects: 0,
+            slow_disconnects: 0,
         };
         let inner = Arc::new(Inner {
             chain,
@@ -300,6 +308,7 @@ impl Network {
             banned: st.bans.len(),
             known_addresses: st.addrman.len(),
             misbehaving_disconnects: st.misbehaving_disconnects,
+            slow_disconnects: st.slow_disconnects,
         }
     }
 
@@ -341,6 +350,7 @@ impl Inner {
             // Outbox full: the peer does not read fast enough (or is gone).
             log::debug!("peer {} outbox full; disconnecting", p.addr);
             p.kill.notify_one();
+            st.slow_disconnects += 1;
         }
     }
 
@@ -739,12 +749,16 @@ async fn handle(inner: &Arc<Inner>, peer: PeerId, msg: Message) {
         Message::Block(bytes) => on_block(inner, peer, bytes).await,
         Message::NotFound(ids) => {
             let mut st = inner.state();
+            let now = Instant::now();
             for id in ids {
                 if st.block_requests.get(&id).is_some_and(|(p, _)| *p == peer) {
                     st.block_requests.remove(&id);
                     if let Some(p) = st.peers.get_mut(&peer) {
                         p.blocks_in_flight = p.blocks_in_flight.saturating_sub(1);
                     }
+                }
+                if st.tx_requests.get(&id).is_some_and(|(p, _)| *p == peer) {
+                    retry_tx(inner, &mut st, id, peer, now);
                 }
             }
         }
@@ -1031,25 +1045,52 @@ async fn on_inv_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) {
 }
 
 fn on_get_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) {
-    // Serve only what we announced to this peer (no probing of stempool/mempool).
-    let allowed: Vec<Hash> = {
+    // Serve only what we announced to this peer and still have. Everything else
+    // gets the same `NotFound` answer, so the reply reveals nothing about the
+    // stempool or mempool, and an honest requester can move on immediately.
+    let announced: Vec<(Hash, bool)> = {
         let st = inner.state();
         let Some(p) = st.peers.get(&peer) else { return };
         ids.into_iter()
-            .filter(|id| p.announced_to.contains(id))
+            .map(|id| (id, p.announced_to.contains(&id)))
             .collect()
     };
-    let txs: Vec<Vec<u8>> = {
+    let mut txs = Vec::new();
+    let mut missing = Vec::new();
+    {
         let c = inner.chain();
-        allowed
-            .iter()
-            .filter_map(|id| c.mempool().get(id))
-            .map(|t| Transaction::from(t.clone()).encode())
-            .collect()
-    };
+        for (id, ok) in announced {
+            match c.mempool().get(&id).filter(|_| ok) {
+                Some(t) => txs.push(Transaction::from(t.clone()).encode()),
+                None => missing.push(id),
+            }
+        }
+    }
     let mut st = inner.state();
     for t in txs {
         inner.send(&mut st, peer, Message::Tx(t));
+    }
+    if !missing.is_empty() {
+        inner.send(&mut st, peer, Message::NotFound(missing));
+    }
+}
+
+/// Drops a transaction request that `failed` could not answer and asks the next
+/// announcer, if any.
+fn retry_tx(inner: &Inner, st: &mut State, id: Hash, failed: PeerId, now: Instant) {
+    st.tx_requests.remove(&id);
+    let next = st.tx_announcers.get_mut(&id).and_then(|q| {
+        q.retain(|x| *x != failed);
+        q.front().copied()
+    });
+    match next {
+        Some(n) => {
+            st.tx_requests.insert(id, (n, now));
+            inner.send(st, n, Message::GetTx(vec![id]));
+        }
+        None => {
+            st.tx_announcers.remove(&id);
+        }
     }
 }
 
@@ -1091,13 +1132,18 @@ async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
             }
             inner.announce_tx(id, Some(peer));
         }
-        Ok(Err(MempoolError::Invalid(e))) => {
+        Ok(Err(MempoolError::Invalid(e))) if e.is_stateless() => {
             Inner::reject_cache(&mut inner.state(), id);
             inner.misbehave(
                 peer,
                 score::INVALID_TX,
                 &format!("invalid transaction: {e:?}"),
             );
+        }
+        // Contextual failures (spent key image, ring members on another branch)
+        // can be honest races: drop the transaction without penalty or caching.
+        Ok(Err(MempoolError::Invalid(e))) => {
+            log::debug!("transaction {} not valid here: {e:?}", short(&id));
         }
         Ok(Err(_)) => {}
         Err(e) => log::error!("tx task failed: {e}"),
@@ -1139,11 +1185,14 @@ async fn on_stem_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     let checked = tokio::task::spawn_blocking(move || inner2.chain().check_tx(&tx2)).await;
     match checked {
         Ok(Ok(_)) => stem_or_fluff(inner, tx, id, Source::Peer(peer)).await,
-        Ok(Err(MempoolError::Invalid(e))) => inner.misbehave(
+        Ok(Err(MempoolError::Invalid(e))) if e.is_stateless() => inner.misbehave(
             peer,
             score::INVALID_TX,
             &format!("invalid stem transaction: {e:?}"),
         ),
+        Ok(Err(MempoolError::Invalid(e))) => {
+            log::debug!("stem transaction {} not valid here: {e:?}", short(&id));
+        }
         Ok(Err(_)) => {}
         Err(e) => log::error!("stem task failed: {e}"),
     }
@@ -1317,20 +1366,11 @@ async fn maintenance_loop(inner: Arc<Inner>) {
                 .filter(|(_, (_, t))| now.duration_since(*t) > TX_TIMEOUT)
                 .map(|(id, (p, _))| (*id, *p))
                 .collect();
+            // Transaction relay is best effort: a slow answer is retried with the
+            // next announcer but not penalized (peers answer `NotFound` when they
+            // no longer have the transaction).
             for (id, p) in stale_txs {
-                st.tx_requests.remove(&id);
-                timed_out.push((p, "tx"));
-                // Retry with the next announcer.
-                let next = st.tx_announcers.get_mut(&id).and_then(|q| {
-                    q.retain(|x| *x != p);
-                    q.front().copied()
-                });
-                if let Some(n) = next {
-                    st.tx_requests.insert(id, (n, now));
-                    inner.send(&mut st, n, Message::GetTx(vec![id]));
-                } else {
-                    st.tx_announcers.remove(&id);
-                }
+                retry_tx(&inner, &mut st, id, p, now);
             }
         }
         for (p, what) in timed_out {
@@ -1390,10 +1430,14 @@ fn maintain_outbound(inner: &Arc<Inner>) {
             }
         }
         let outbound = st.peers.values().filter(|p| !p.inbound).count() + st.connecting.len();
-        let mut free = inner
-            .cfg
-            .max_outbound
-            .saturating_sub(outbound + to_connect.len());
+        let mut free = if inner.cfg.connect_only {
+            0
+        } else {
+            inner
+                .cfg
+                .max_outbound
+                .saturating_sub(outbound + to_connect.len())
+        };
         if free > 0 && st.addrman.is_empty() {
             for s in &inner.cfg.seeds {
                 if free == 0 {

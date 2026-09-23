@@ -44,6 +44,8 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 | `node/` | `blacksilk-node` |
 | `miner/` | `blacksilk-miner` |
 | `wallet/` | `blacksilk-wallet` |
+| `tools/labnet/` | long-duration multi-node lab test (latency, partitions, wallet traffic) |
+| `deploy/` | node configuration templates, systemd units, Docker image, install scripts |
 
 Every crate is pure Rust with `#![forbid(unsafe_code)]`. There is no C, no C++ and no
 FFI in the project's own code.
@@ -60,7 +62,12 @@ cargo clippy --workspace --all-targets
 cargo build --release
 ```
 
-## Try it on regtest (local, no network)
+## Testnet
+
+The testnet guide covers parameters, running a node, mining, seed nodes, Tor, Docker
+and systemd, and the multi-machine test procedure: **[docs/testnet.md](docs/testnet.md)**.
+
+## Try it on regtest (local, 10-second blocks)
 
 ```sh
 # 1. Node (RPC on 127.0.0.1:39333)
