@@ -1,0 +1,22 @@
+[package]
+name = "blacksilk-zkvm"
+version = "0.1.0"
+edition = "2021"
+description = "BVM-1: the BlackSilk zero-knowledge virtual machine (RV32IM), reference interpreter and constraint tables (docs/zkvm.md)"
+
+[lib]
+name = "blacksilk_zkvm"
+
+[dependencies]
+blacksilk-crypto = { path = "../crypto" }
+blacksilk-zk = { path = "../zk" }
+p3-field = "=0.7.0"
+p3-baby-bear = "=0.7.0"
+p3-symmetric = "=0.7.0"
+p3-air = "=0.7.0"
+rand_core = { version = "0.6", default-features = false }
+p3-lookup = "=0.7.0"
+p3-matrix = "=0.7.0"
+
+[dev-dependencies]
+rand_chacha = { version = "0.3", default-features = false }

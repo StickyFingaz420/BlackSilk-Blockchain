@@ -1,0 +1,8 @@
+[package]
+name = "blacksilk-zkvm-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Guest SDK for BVM-1 programs (riscv32im-unknown-none-elf): entry point, syscalls, panic handling"
+
+[lib]
+name = "blacksilk_zkvm_sdk"

@@ -1,0 +1,29 @@
+[package]
+name = "zkeval"
+version = "0.0.0"
+edition = "2021"
+[dependencies]
+p3-uni-stark = { version = "0.7", features = ["parallel"] }
+p3-fri = "0.7"
+p3-baby-bear = "0.7"
+p3-goldilocks = "0.7"
+p3-poseidon2 = "0.7"
+p3-air = "0.7"
+p3-matrix = "0.7"
+p3-merkle-tree = "0.7"
+p3-blake3 = "0.7"
+stwo = "2.3"
+halo2_proofs = "0.3.5"
+p3-batch-stark = "0.7"
+p3-lookup = "0.7"
+p3-poseidon2-air = "0.7"
+p3-koala-bear = "0.7"
+p3-symmetric = "0.7"
+p3-challenger = "0.7"
+p3-commit = "0.7"
+p3-dft = "0.7"
+p3-field = "0.7"
+p3-security = "0.7"
+rand = "0.10"
+postcard = { version = "1", features = ["alloc"] }
+[workspace]

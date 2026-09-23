@@ -1,0 +1,36 @@
+[package]
+name = "blacksilk-zk"
+version = "0.1.0"
+edition = "2021"
+description = "BlackSilk zero-knowledge proof layer: parameter set BS-ZK-1 on Plonky3 (hiding FRI STARK over BabyBear^5), proof envelope and hardened verification (docs/zk.md §9)"
+
+[lib]
+name = "blacksilk_zk"
+
+# Plonky3 is pinned exactly: parameters, transcript and proof encoding are consensus
+# (docs/zk.md §9.5). Evaluation and measurements: docs/evidence/px0-2026-09-23/.
+[dependencies]
+p3-field = "=0.7.0"
+p3-baby-bear = "=0.7.0"
+p3-challenger = "=0.7.0"
+p3-commit = "=0.7.0"
+p3-dft = { version = "=0.7.0", features = ["parallel"] }
+p3-fri = "=0.7.0"
+p3-merkle-tree = "=0.7.0"
+p3-symmetric = "=0.7.0"
+p3-matrix = "=0.7.0"
+p3-air = "=0.7.0"
+p3-lookup = "=0.7.0"
+p3-uni-stark = { version = "=0.7.0", features = ["parallel"] }
+p3-batch-stark = "=0.7.0"
+p3-security = "=0.7.0"
+# StdRng (ChaCha12) for the hiding randomness Plonky3 consumes; seeded per proof (§ prover_config).
+rand = { version = "0.10", default-features = false, features = ["std_rng"] }
+rand_core = { version = "0.6", default-features = false }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+serde = { version = "1", default-features = false }
+blacksilk-crypto = { path = "../crypto" }
+zeroize = { version = "1.8", default-features = false }
+
+[dev-dependencies]
+rand_chacha = { version = "0.3", default-features = false }

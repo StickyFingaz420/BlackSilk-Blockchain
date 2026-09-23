@@ -50,6 +50,29 @@ pub mod tags {
     pub const ADDRESS_CHECKSUM: &str = "address/checksum";
     pub const P2P_SESSION: &str = "p2p/session";
     pub const P2P_ADDRMAN: &str = "p2p/addrman";
+    // Contracts (docs/contracts.md).
+    pub const CONTRACT_ID: &str = "contract/id";
+    pub const CONTRACT_CODE: &str = "contract/code";
+    pub const CONTRACT_NOTE_ID: &str = "contract/note-id";
+    pub const CONTRACT_KERNEL: &str = "contract/kernel";
+    pub const CONTRACT_AUTH: &str = "contract/auth";
+    pub const CONTRACT_CLAIM_EQ: &str = "contract/claim-eq";
+    pub const CONTRACT_CLAIM_VAL: &str = "contract/claim-val";
+    pub const CONTRACT_SCOPE: &str = "contract/scope";
+    pub const CONTRACT_MEMBER_ROUND: &str = "contract/member-round";
+    pub const CONTRACT_STATE_KEY: &str = "contract/state-key";
+    pub const CONTRACT_STATE_LEAF: &str = "contract/state-leaf";
+    pub const CONTRACT_STATE_NODE: &str = "contract/state-node";
+    pub const CONTRACT_USER_HASH: &str = "contract/user-hash";
+    pub const INPUT_CONTEXT_CALL: &str = "input-context/call";
+    pub const INPUT_CONTEXT_DEPLOY: &str = "input-context/deploy";
+    pub const TX_CLAIMS: &str = "tx/claims";
+    pub const TX_CALL_SIG_MESSAGE: &str = "tx/call-sig-message";
+    pub const WALLET_CONTRACT_AUTH: &str = "wallet/contract-auth";
+    pub const WALLET_CONTRACT_MEMBER: &str = "wallet/contract-member";
+    // Zero-knowledge layer (docs/zk.md).
+    pub const ZK_PROVER_SEED: &str = "zk/prover-seed";
+    pub const ZKVM_PROGRAM: &str = "zkvm/program";
 
     /// Every tag, for the distinctness test.
     pub const ALL: &[&str] = &[
@@ -87,6 +110,27 @@ pub mod tags {
         ADDRESS_CHECKSUM,
         P2P_SESSION,
         P2P_ADDRMAN,
+        CONTRACT_ID,
+        CONTRACT_CODE,
+        CONTRACT_NOTE_ID,
+        CONTRACT_KERNEL,
+        CONTRACT_AUTH,
+        CONTRACT_CLAIM_EQ,
+        CONTRACT_CLAIM_VAL,
+        CONTRACT_SCOPE,
+        CONTRACT_MEMBER_ROUND,
+        CONTRACT_STATE_KEY,
+        CONTRACT_STATE_LEAF,
+        CONTRACT_STATE_NODE,
+        CONTRACT_USER_HASH,
+        INPUT_CONTEXT_CALL,
+        INPUT_CONTEXT_DEPLOY,
+        TX_CLAIMS,
+        TX_CALL_SIG_MESSAGE,
+        WALLET_CONTRACT_AUTH,
+        WALLET_CONTRACT_MEMBER,
+        ZK_PROVER_SEED,
+        ZKVM_PROGRAM,
     ];
 }
 

@@ -1,0 +1,25 @@
+[package]
+name = "blacksilk-contracts"
+version = "0.1.0"
+edition = "2021"
+description = "BlackSilk confidential contracts: module profile, deterministic Wasm execution, contract state and state root (docs/contracts.md)"
+
+[lib]
+name = "blacksilk_contracts"
+
+[dependencies]
+blacksilk-crypto = { path = "../crypto" }
+# Deterministic Wasm interpreter (no JIT). Pinned exactly: fuel accounting and
+# module acceptance are consensus. 0.38.0 is the newest release covered by an
+# external audit (Runtime Verification, 2024-11, versions 0.36–0.38) and is not
+# affected by the published advisories (CVE-2024-28123: <= 0.31.0;
+# CVE-2025-66627: 0.41.0–1.0.0). See AUDIT.md R7 and docs/contracts.md §16.3.
+wasmi = { version = "=0.38.0", default-features = false, features = ["std"] }
+# The parser wasmi itself uses; our module profile check (§9.1) runs on it too,
+# so both agree on how a module decodes.
+wasmparser = { package = "wasmparser-nostd", version = "=0.100.2", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+wat = "1"
+rand_chacha = { version = "0.3", default-features = false }
+rand_core = { version = "0.6", default-features = false }

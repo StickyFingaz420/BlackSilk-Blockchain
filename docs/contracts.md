@@ -1,9 +1,22 @@
 # BlackSilk Confidential Contracts Specification
 
-Status: **draft v0.1, for approval. Not implemented.** Nothing in this document is
-consensus until it is implemented, tested and activated at a height (§18). Where this
-document states a security property, it is a design goal that the implementation must
-demonstrate with tests; none is verified yet.
+Status: **v0.2: model approved (2026-09-23), implementation in progress.**
+- M1 (cryptography) is implemented and reviewed:
+  [`reviews/contracts-crypto-review.md`](reviews/contracts-crypto-review.md).
+- Nothing in this document is consensus until it is implemented, tested and activated
+  at a height (§18).
+- The zero-knowledge successor is specified in [`zk.md`](zk.md).
+
+Decisions approved on 2026-09-23:
+- anonymous callers;
+- private and public notes;
+- declared money movements;
+- failed calls are invalid and pay no fee;
+- v1 supports BLK only, with confidential tokens in v1.1.
+
+Where this document states a security property, it is a design goal that the
+implementation must demonstrate with tests. Only the M1 properties have been tested so
+far.
 
 Scope:
 - the contract model: code, state, notes and key sets;
@@ -494,17 +507,28 @@ verified before execution. The contract sees only verified statements.
 
 ### 9.1 Module profile (validated at deploy; consensus)
 
-**Engine:** `wasmi` **2.0.0**, pinned exactly (`=2.0.0`), with:
-- `default-features = false`;
-- features `std`, `validate` and `deterministic`;
+**Engine:** `wasmi` **0.38.0**, pinned exactly (`=0.38.0`), with:
+- `default-features = false`, feature `std`;
 - fuel metering on;
-- no `wat`, `simd` or `memory64`.
+- eager compilation;
+- floats disabled in the engine as well;
+- wasmi's strict parsing limits (`EnforcedLimits::strict`).
+
+**Why 0.38.0 and not the newest (2.0.0):**
+- 0.38.0 is the newest release covered by an external audit (Runtime Verification,
+  2024-11, for versions 0.36–0.38).
+- It is not affected by either published advisory:
+  - CVE-2024-28123 affects ≤ 0.31.0;
+  - CVE-2025-66627, a use-after-free on memory growth, affects 0.41.0–1.0.0.
+- 2.0.0 is unaudited.
+- Moving to a newer version is a consensus upgrade (§16.3).
 
 **Allowed Wasm features:** WebAssembly 1.0 (MVP) plus:
 - mutable globals;
 - sign-extension operators;
 - multi-value;
-- bulk-memory (`memory.copy`, `memory.fill` only);
+- bulk-memory. Without passive segments, `memory.init`, `data.drop`, `table.init` and
+  `elem.drop` can only be no-ops or deterministic traps.
 - reference types, limited to one funcref table of ≤ 1 024 entries.
 
 **Forbidden, and rejected at deploy:**
@@ -525,9 +549,13 @@ verified before execution. The contract sees only verified statements.
   maximum is declared.
 - ≤ 1 024 functions, ≤ 1 024 globals, and ≤ 256 locals per function.
 
-The deploy check is our own pass over `wasmparser` output, run *before* wasmi's
-validator. The consensus rule is therefore defined by this list, not by whatever a
-wasmi version happens to accept.
+The deploy check (`contracts/src/profile.rs`) runs on `wasmparser-nostd` 0.100.2, the
+parser inside wasmi 0.38. It has two passes:
+1. full validation with exactly the feature set above;
+2. structural checks for everything else in this section.
+
+Only then is the module compiled by wasmi. The consensus rule is therefore defined by
+this list and its tests, not by whatever an engine version happens to accept.
 
 ### 9.2 Calling convention
 
@@ -584,21 +612,28 @@ not explicitly agree.
 ```
 note record (200 bytes): id 32 ‖ type u8 ‖ policy_len u8 ‖ policy 64 (zero-padded) ‖
                          height u64 ‖ amount u64 (public; 0 for private) ‖
-                         O 32 (private; zero for public) ‖ Cm 32 ‖ index-in-tx u16 ‖ pad 6
+                         O 32 (private; zero for public) ‖ Cm 32 ‖ index-in-tx u16 ‖ pad 20
 claim record (96 bytes): kind u8 ‖ ref_tag u8 ‖ ref_index u16 ‖ ref2_tag u8 ‖ pad 1 ‖
-                         ref2_index u16 ‖ min u64 ‖ max u64 ‖ value u64 ‖ C 32 ‖ pad 16
+                         ref2_index u16 ‖ min u64 ‖ max u64 ‖ value u64 ‖ C 32 ‖
+                         C2 32 (second commitment of an Equal claim; zero otherwise)
 member record (80 bytes): set_id u32 ‖ ring_size u8 ‖ scope_len u8 ‖ pad 2 ‖ scope 32 ‖ tag 32 ‖ pad 8
 ```
 
-The implementation freezes the exact layouts, with SDK types and golden tests, before
-activation.
+Offsets are fixed by `contracts/src/types.rs` and its layout tests. `index-in-tx` is
+the note's position among all consumed (or all created) notes of the transaction.
 
 ### 9.5 Fuel
 
 **Instructions:**
-- Wasm instructions cost wasmi 2.0.0's default fuel schedule (`FuelCosts` defaults),
-  which is part of consensus through the exact version pin (§16.3).
-- Memory growth costs 4 096 fuel per page.
+- Wasm instructions cost wasmi 0.38.0's fuel schedule, which is part of consensus
+  through the exact version pin (§16.3):
+  - 1 unit per executed instruction;
+  - bulk operations (`memory.grow`, `memory.copy`, `memory.fill`) additionally cost 1
+    unit per 64 bytes.
+- **Instantiating** a module, at top level or in a nested call, costs 1 unit per code
+  byte.
+- A golden test pins the exact fuel of a reference call (1 807 units), so any change of
+  engine or costs is detected.
 
 **Host calls:** each costs `100 + 1 per byte copied`, except:
 - `hash`: `2 000 + 10/byte`;
@@ -653,20 +688,29 @@ reorganization:
 
 ### 10.2 State root
 
-The state is committed in a sparse Merkle tree of depth 256:
+The state is committed in a sparse Merkle tree over 256-bit paths, in the "shortcut"
+form of Diem's Jellyfish tree: a single leaf sits at the top of its otherwise empty
+subtree.
 
 ```
 path(contract, type, key) = H32("contract/state-key", contract ‖ u8(type) ‖ key)
   type 0 = key–value entry (key = user key), 1 = note (key = note id),
        2 = key-set member (key = LE32(set) ‖ LE32(index)), 3 = contract (key = empty)
-leaf  = H32("contract/state-leaf", u8(type) ‖ encoded value)
-node  = 0^32                                     if both children are 0^32
-      = H32("contract/state-node", left ‖ right) otherwise
+leaf:
+  type 0: H32("contract/state-leaf", 0 ‖ contract ‖ LE32(len(key)) ‖ key ‖ value)
+  type 1: H32("contract/state-leaf", 1 ‖ note encoding)
+  type 2: H32("contract/state-leaf", 2 ‖ member point)
+  type 3: H32("contract/state-leaf", 3 ‖ code_hash)
+subtree hash (bits of the path taken most significant first):
+  no leaf           0^32
+  exactly one leaf  H32("contract/state-node", 0x01 ‖ path ‖ leaf)
+  two or more       H32("contract/state-node", 0x00 ‖ left ‖ right)
 root of the empty state = 0^32
 ```
 
-- Each update costs 256 hashes.
-- Implementations store only non-empty nodes.
+- An update costs one hash per branch point on its path, about `log2(#leaves)`.
+- The reference implementation (`contracts/src/smt.rs`) caches branch hashes, and is
+  tested against a from-scratch recomputation.
 - The root allows later light-client proofs of contract state (§17).
 
 ### 10.3 Commitment in the block
@@ -902,14 +946,18 @@ They can be recovered from the seed.
 
 ### 16.3 Determinism and the engine dependency
 
-- **Why wasmi is safe to depend on:**
+- **Why wasmi is acceptable to depend on:**
   - It is a pure-Rust interpreter with no JIT, so there is no generated machine code.
-  - It is maintained by wasmi-labs and used by Substrate/Polkadot contracts.
-- **Its internal `unsafe`** (performance paths in the executor) is outside our
-  `forbid(unsafe_code)` rule. It must be reviewed before activation (M2 deliverable:
-  dependency review in AUDIT.md).
+  - It is maintained by wasmi-labs, and used by Substrate/Polkadot and, as a fork, by
+    Stellar's Soroban.
+  - Version 0.38.0 is covered by an external audit and has no known advisory (§9.1).
+- **Its internal `unsafe`** is outside our `forbid(unsafe_code)` rule: 120 occurrences
+  in wasmi 0.38.0's own sources, in executor and memory hot paths. We rely on the
+  external audit for it and have **not** reviewed it line by line. This is recorded as
+  an open item in AUDIT.md R7, and our fuzzing of the engine through the host API is
+  planned for M6.
 - **Consensus pins everything that affects results:**
-  - the version (`=2.0.0`);
+  - the version (`=0.38.0`) and its parser (`wasmparser-nostd =0.100.2`);
   - the feature set;
   - the fuel schedule;
   - the stack limits;

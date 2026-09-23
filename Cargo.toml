@@ -11,6 +11,9 @@ members = [
     "node",      # blacksilk-node: the node binary (RPC)
     "miner",     # blacksilk-miner: RandomX miner
     "wallet",    # blacksilk-wallet: CLI wallet
+    "contracts", # blacksilk-contracts: confidential contracts (Wasm engine, state)
+    "zk",        # blacksilk-zk: zero-knowledge proof layer (Plonky3 STARK, BS-ZK-1)
+    "zkvm",      # blacksilk-zkvm: BVM-1 zero-knowledge virtual machine (RV32IM)
     "tools/labnet", # blacksilk-labnet: long-duration lab network test
 ]
 # Pre-rebuild code kept for reference only (does not build; see legacy/README.md),
@@ -21,7 +24,9 @@ exclude = ["legacy", "research"]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+# Unwind, not abort: the zero-knowledge verifier contains panics from malformed
+# proofs with catch_unwind (zk/src/lib.rs, docs/zkvm.md §10), which abort would defeat.
+panic = "unwind"
 debug-assertions = false
 strip = true
 

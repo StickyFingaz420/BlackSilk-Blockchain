@@ -15,9 +15,12 @@ Remaining before a public testnet:
 - an external cryptographic review of the transaction layer and the Janus anchor
   (required before mainnet).
 
-Smart contracts are specified in `docs/contracts.md`: a draft for approval, **not
-implemented and not part of consensus**. They will activate later, at a fork height or
-with a testnet reset.
+Smart contracts (`docs/contracts.md`, approved model) are being implemented (R7). The
+cryptography (M1) and the engine and state (M2) are done, but they are **not yet part of
+consensus**. Private execution with zero-knowledge proofs is the current priority (R8): the proof
+layer, the VM's execution layer and its core constraint system are done; a compiled Rust
+program has been proven. The Poseidon2 syscall circuit, the kernel and integration remain.
+Contracts will activate later, at a fork height or with a testnet reset.
 
 This file tracks the audit defined in `Claude.md`.
 Each finding lists where it is, what goes wrong, and its severity. Findings stay
@@ -610,6 +613,268 @@ needed for a long-lived chain (R4 open items).
   Docker was available.
 
 An external cryptographic review remains a mainnet prerequisite.
+
+### R7: Confidential contracts: M1 (cryptography) and M2 (engine and state). In progress.
+
+**Specifications:**
+- `docs/contracts.md`, v0.2. The model was approved on 2026-09-23:
+  - anonymous callers;
+  - declared value movements approved by contracts;
+  - private and public notes;
+  - range, equality and reveal claims;
+  - scoped membership;
+  - failed calls are invalid and pay no fee;
+  - BLK only in v1.
+- `docs/zk.md`, v0.1, for review: the zero-knowledge successor (private execution).
+  Nothing in it is implemented.
+
+**Not consensus yet.** No transaction kind, block rule or activation height exists.
+Chain integration is M3.
+
+**M1: cryptography** (`crypto/`). Internal review:
+`docs/reviews/contracts-crypto-review.md`.
+- Tagged Schnorr signatures (`schnorr.rs`) for the balance kernel, auth keys, and
+  equality/reveal claims.
+- Scoped linkable ring signatures (`membership.rs`) for anonymous voting.
+- Range, equality and reveal claims on Pedersen commitments (`claims.rs`); range
+  claims use the existing BP+.
+- 24 new tests. The crypto crate total is 86.
+- **Findings fixed in the design during M1:**
+  - SCH-1: identity key forgeable; rejected.
+  - KER-1/KER-2: kernel re-signable when `e` is public; rule K2 plus a wallet rule.
+  - MEM-1: prover-chosen scope; contracts must fix the scope.
+  - CLM-1: degenerate equality or reveal claims; refused.
+- **Open questions for the external review:** KER-Q1/Q2, MEM-Q1/Q2 and CLM-Q1 (see
+  the review document).
+
+**M2: engine and state** (`contracts/`, crate `blacksilk-contracts`,
+`#![forbid(unsafe_code)]`):
+- **Module profile** (`profile.rs`). It validates with a restricted feature set:
+  - no floats, SIMD, threads, tail calls, memory64, multi-memory, exceptions,
+    extended-const or saturating float conversions;
+  - imports only from `"bs"`, with exact host signatures;
+  - one bounded memory (≤ 2 MiB), and at most one bounded funcref table;
+  - no start function and no passive segments;
+  - required exports;
+  - size and local limits.
+- **Executor** (`exec.rs`):
+  - wasmi with fuel and eager compilation;
+  - 31 host functions;
+  - reads through an overlay, and all effects returned as a diff;
+  - cross-contract calls within the access list, with depth ≤ 4 and reentrancy
+    trapping;
+  - note approval and acceptance checks;
+  - storage accounting and per-contract caps.
+- **State** (`state.rs`, `smt.rs`):
+  - key–value entries, notes, key sets and deduplicated code;
+  - atomic diffs with per-block undo;
+  - sparse-Merkle state root. It is cached, and tested against a from-scratch
+    reference.
+- **Tests:** 29, all passing:
+  - the profile accepts valid modules and rejects 26 kinds of forbidden module;
+  - persistence, and undo restoring the exact root;
+  - determinism across two independent engines, with a **pinned golden fuel count**
+    of 1 807;
+  - out of fuel, abort, storage limit, key and pointer bounds;
+  - note approval and acceptance, the access list, unknown and duplicate notes;
+  - cross-contract calls, depth and reentrancy (including indirect reentrancy);
+  - auth keys, key sets, deploy with init and code-storage accounting;
+  - recursion trapping inside the interpreter, and memory growth capped at the
+    declared maximum;
+  - callee failure propagating, and contracts seeing only their own notes.
+
+**Dependency decision: wasmi `=0.38.0`, not the newest 2.0.0.**
+
+| | 0.38.0 (chosen) | 2.0.0 |
+|---|---|---|
+| External audit | Runtime Verification 2024-11 (0.36–0.38); SRLabs 2023 (0.31) | none |
+| Published advisories | not affected (CVE-2024-28123: ≤ 0.31.0; CVE-2025-66627: 0.41.0–1.0.0) | not affected |
+| `unsafe` occurrences in its own `src/` | 120 | 302 |
+| Custom per-instruction fuel table | no (wasmi's internal schedule, pinned by a golden test) | yes |
+
+We rely on the external audit for wasmi's internal `unsafe`; **we have not reviewed it
+line by line** (open item). The parser is `wasmparser-nostd =0.100.2`, the one wasmi
+0.38 uses, and it also runs the profile check.
+
+**Spec corrections made while implementing:**
+- §9.4 record layouts: the note record said 200 bytes but its fields summed to 186; it
+  is now padded to 200. The claim record now carries a second commitment for Equal
+  claims.
+- §10.2: the sparse Merkle tree is defined in its shortcut form, with O(log n)
+  updates. The original full-depth definition cost 256 hashes per update and O(256)
+  nodes per leaf.
+- §9.5: the fuel schedule is stated as it actually is in wasmi 0.38, plus the
+  instantiation cost.
+
+**Remaining for contracts** (M3–M6, docs/contracts.md §19):
+- chain integration: transaction kinds 2 and 3; the kernel; K/X/KB rules; coinbase v2
+  with `state_root`; activation; mempool and templates; reorg tests;
+- the SDK and 5 example contracts;
+- wallet and RPC;
+- benchmarks, fee calibration, fuzzing, labnet with contract traffic;
+- the external review.
+
+### R8: Zero-knowledge layer (private execution). In progress.
+
+The project owner moved this ahead of contracts M3 (2026-09-23).
+
+**Specifications:**
+- `docs/zk.md` v0.2: architecture and decisions;
+- `docs/zkvm.md` v0.1: the BVM-1 virtual machine;
+- `docs/evidence/px0-2026-09-23/`: measurements.
+
+**Not consensus.** No transaction kind or activation exists yet.
+
+**PX-0 (evaluation, done).** Candidate stacks were measured on this machine, not
+assumed. Decision B was approved by the owner:
+
+| Choice | Result |
+|---|---|
+| Proof system | Plonky3 0.7 (batch STARK, LogUp lookups, hiding FRI and Merkle), pinned exactly |
+| Fields | BabyBear base field with a degree-5 challenge extension |
+| Soundness | ≥ 100 **proven** bits in the Johnson-bound regime; unique-decoding bits also reported |
+| Measured proof sizes | 130–230 KB |
+
+**Findings that changed the design:**
+- BabyBear with a degree-4 extension, a common industry choice, **never reaches 100
+  provable bits** (≤ 97).
+- Proof size is dominated by Merkle paths, not circuit width: conservative
+  unique-decoding parameters would give 260–550 KB.
+- **Rejected stacks:**
+
+  | Stack | Reason |
+  |---|---|
+  | Winterfell | cannot be unpacked on Windows (reserved file name `aux.rs`) |
+  | Stwo | no zero-knowledge mode |
+  | SP1 | core proofs are not zero-knowledge |
+  | RISC Zero | C++ kernels |
+
+- Goldilocks uses inline assembly in its x86-64 reduction; BabyBear's scalar path does
+  not.
+
+**ZK-1: proof layer** (`zk/`, crate `blacksilk-zk`, `forbid(unsafe_code)`, 12 tests):
+- **Parameter set BS-ZK-1:**
+  - blow-up 32, 50 queries, 16 grinding bits, arity 16, final polynomial 2^6;
+  - hiding: 4 random codewords, 4 salt elements per Merkle leaf;
+  - Fiat–Shamir challenger pre-seeded with the parameter id (domain separation).
+- **A test recomputes proven security over the whole shape envelope.** It found
+  that at 2^22 rows the batching term drops below 100 bits above ~2 000 committed
+  columns, and that queries and grinding cannot fix that term. The envelope is
+  therefore limited to 2 000 columns, and a further test proves the limit is binding.
+- **Hiding randomness:**
+  - `ProverConfig` hedges the OS CSPRNG with a witness digest, for every proof;
+  - Plonky3's own tests use fixed seeds, which would silently remove zero knowledge;
+  - `VerifierConfig` cannot prove.
+- **Hardened `verify`:**
+  - table counts and claimed heights are checked before Plonky3 runs (`CommonData`
+    computes `ext_db − is_zk` without a check, and would panic on a crafted 0);
+  - Plonky3 verification runs behind `catch_unwind`. Its README says the verifier may
+    panic on malformed proofs, so the workspace release profile moved from
+    `panic = "abort"` to `panic = "unwind"`.
+- **Strict encoding:** version byte, size cap, no trailing bytes, and canonical
+  re-encoding, so one proof has exactly one encoding.
+- **Tests:**
+  - honest proofs verify (a toy proof is ~111 KB);
+  - wrong public values and wrong transaction binding are rejected;
+  - false statements (a lookup violation, a wrong constraint) are rejected;
+  - forged heights and table counts are rejected;
+  - **402 single-byte mutations are all rejected, with no verifier panic**;
+  - the encoding is strict;
+  - proofs are randomized, even with a broken OS RNG.
+- **Found by testing:** FRI needs every table ≥ 2^6 rows (`MIN_LOG_HEIGHT`). It is now
+  a compile-time relation.
+
+**ZK-2: BVM-1 execution** (`zkvm/`, crate `blacksilk-zkvm`, `forbid(unsafe_code)`,
+25 tests):
+- A strict RV32I + Zmmul decoder and encoder: it rejects EBREAK, CSRs, FENCE.I,
+  compressed encodings, RV64 forms and illegal reserved bits.
+- Our own strict ELF loader: one code segment, up to 4 data segments, layout checks,
+  and every code word decoded at load.
+- The reference interpreter, as the executable specification. It records the witness:
+  - per-cycle steps;
+  - every register and memory access, with previous value and timestamp, for the
+    offline memory argument.
+- Guest SDK (`zkvm/sdk`, `no_std`). Its single `unsafe` block is the `ecall`, which
+  runs inside the VM.
+- **A real Rust guest compiled by rustc/lld runs correctly:** static data, the
+  Poseidon2 syscall, software division. It is a committed fixture, rebuilt by
+  `zkvm/guests/build.sh`.
+
+**Design decisions taken during ZK-2:**
+- **ZK-3a: no hardware division.** DIV and REM are the most intricate circuit; guests
+  divide in software, and the loader rejects division opcodes. rustc lists `zmmul` as
+  an unknown/unstable target feature (LLVM implements it); documented, and consensus
+  is unaffected.
+- **Cycle limit 2^21**, so every timestamp stays below 2^24. The "timestamps strictly
+  increase" check is then three byte-range lookups, with no wrap-around case.
+- `ECALL` reads `a7` and `a0` in the two register slots, so every cycle reads exactly
+  two registers.
+
+**ZK-3: the BVM-1 constraint system** (`zkvm/src/air/`). Core done; the Poseidon2
+syscall circuit is pending.
+
+Eleven tables in one batch STARK:
+
+| Group | Tables |
+|---|---|
+| Byte operations | `BYTE` (2^16-row preprocessed byte pairs: range, AND, OR, XOR) |
+| ALU | `ALU_ADD`, `ALU_BIT`, `ALU_LT` (SLT/SLTU/EQ), `ALU_SHIFT` (5-stage barrel shifter), `ALU_MUL` (8×8-byte convolution) |
+| Program | `PROGRAM` (preprocessed decoded program) |
+| Memory argument | `IMAGE` (preprocessed initial memory and registers), `MEM_INIT` (sorted keys; the endpoints of the offline memory argument) |
+| Execution | `CPU` |
+| Public output | `OUTPUT` (preprocessed from the claimed outputs) |
+
+**Assurance tools built:**
+- **Constraint oracle** (`check.rs`): evaluates the same constraint code the STARK
+  proves, over concrete values, and checks exact bus balance. It records exclusive
+  interactions explicitly, because Plonky3's default for them is a silent no-op.
+- **Incremental mutation checker:** re-evaluates only the rows a mutated cell affects.
+
+**Results:**
+- Every instruction class satisfies the constraints: all ALU operations; loads and
+  stores of every width and signedness; writes to `x0`; branches of every kind;
+  JAL/JALR; LUI/AUIPC; loads from the code segment; READ/WRITE/HALT.
+- **Mutation testing: 419 364 ALU mutations and 37 292 CPU and memory-table
+  mutations. Every single-cell change of every real row is caught.**
+  - The only free cell is the inverse witness of the ALU zero test when the
+    difference is zero, which does not affect the result.
+  - The CPU forces unused columns to zero, so its witness is unique.
+- False ALU results unbalance the bus; a prover lying about a register value is
+  rejected.
+- A real proof verifies, and is rejected for a wrong exit code, output, program or
+  binding.
+- **A Rust program compiled by rustc/lld (insertion sort, multiplication, software
+  division; 11 156 cycles) was proven in zero knowledge and verified.** A forged output
+  was rejected.
+- **Shape check:** 414 constraints, ~1 210 committed columns (the limit is 2 000),
+  **exactly 100 proven bits at the maximum height 2^22** (63 by unique decoding). The
+  margin is **zero** at the maximum height; real traces are far smaller.
+
+**Findings during ZK-3:**
+
+| # | Finding | Resolution |
+|---|---|---|
+| ZK-F1 | **Integration bug:** `blacksilk-zk` committed preprocessed tables with the prover's hiding (salted) configuration, so the verifier's commitment differed and honest proofs failed (`InvalidPowWitness`). | Preprocessed tables are public: both sides commit them with the deterministic setup configuration. Regression test in `zk/tests/proofs.rs`. |
+| ZK-F2 | **Soundness trap:** a 32-bit address or jump target used as a field element could wrap modulo p onto a valid address. | Every computed address and target is range-checked below 2^28 first (zkvm.md §2). |
+| ZK-F3 | The semantics of reading code as data were undefined (the interpreter returned 0). | Code is part of the image, so loads return instruction words; stores must be ≥ `CODE_END` (decision ZK-3b). |
+
+**Open items:**
+- The POSEIDON2 syscall circuit (ZK-3c). Programs using it execute, but cannot be
+  proven yet.
+- **Performance:** proofs are 0.5–0.7 MB and take ~60–90 s even for small programs,
+  dominated by the 2^16-row byte table at blow-up 32.
+- **Security margin:** zero at 2^22 rows. Cap VM table heights below 2^22, or reduce
+  columns.
+- Multi-cell (coordinated) forgery is covered by the soundness arguments, not by the
+  single-cell tests. It is an external-review item.
+
+**Remaining** (none of it is done until tested; nothing here is production-ready
+before external review):
+- **ZK-3c:** the Poseidon2 syscall circuit.
+- **ZK-4:** records, nullifiers and the kernel (private transfers).
+- **ZK-5:** composition of functions and kernel in one batch proof.
+- **ZK-6:** integration with contracts and transactions.
+- Security review document, fuzzing, benchmarks, external audits.
 
 ### Finding status after R1–R6
 

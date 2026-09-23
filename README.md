@@ -27,8 +27,12 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 - **No authenticated peers, no I2P.** P2P encryption stops passive observers, not an
   active man in the middle ([p2p.md §1](docs/p2p.md)). Tor works through its SOCKS5
   proxy; I2P is not supported yet.
-- **No smart contracts or marketplace.** The previous implementations are parked in
-  `legacy/` and will be redesigned for a chain with hidden amounts and recipients.
+- **Smart contracts are in development and not active on any network.** The design
+  covers confidential contracts with anonymous callers and hidden amounts
+  ([contracts.md](docs/contracts.md)). The engine and cryptography are implemented;
+  chain integration is pending. Private execution with zero-knowledge proofs is a
+  design for review ([zk.md](docs/zk.md)). The old marketplace stays parked in
+  `legacy/`.
 
 ## Repository layout
 
@@ -36,9 +40,10 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 |---|---|
 | `randomx/` | RandomX v1 (light and full mode) |
 | `consensus/` | header format, PoW, difficulty, timestamps, chain selection |
-| `crypto/` | Ristretto255 primitives, stealth outputs, Janus anchor, CLSAG, Bulletproofs+ |
+| `crypto/` | Ristretto255 primitives, stealth outputs, Janus anchor, CLSAG, Bulletproofs+, contract signatures and claims |
 | `tx/` | transaction format, validation rules, builder, scanner, decoy selection |
 | `chain/` | blocks, emission, chain manager (reorgs), mempool, block storage, addresses |
+| `contracts/` | confidential contracts: Wasm module profile, deterministic engine, contract state and state root (not yet in consensus) |
 | `p2p/` | peer-to-peer network |
 | `rpc/` | node RPC types and client |
 | `node/` | `blacksilk-node` |
