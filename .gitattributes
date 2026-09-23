@@ -1,0 +1,4 @@
+# Deployment files run on Linux: always LF.
+*.sh text eol=lf
+*.service text eol=lf
+Dockerfile text eol=lf
