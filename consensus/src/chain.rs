@@ -251,15 +251,25 @@ impl HeaderChain {
 
     /// Template for the next block on the best chain.
     pub fn template(&self) -> BlockTemplate {
-        let prev_id = self.tip_id();
-        let height = self.height() + 1;
-        BlockTemplate {
-            height,
-            prev_id,
-            difficulty: self.required_difficulty(prev_id),
-            seed_id: self.seed_id_for(prev_id, height),
-            min_timestamp: self.median_time_past(prev_id) + 1,
+        self.template_on(self.tip_id())
+            .expect("the tip is always known and valid")
+    }
+
+    /// Template for a child of any known, valid header (e.g. to extend a side
+    /// branch). `None` if `parent_id` is unknown or invalid.
+    pub fn template_on(&self, parent_id: Hash) -> Option<BlockTemplate> {
+        let parent = self.entries.get(&parent_id)?;
+        if !parent.valid {
+            return None;
         }
+        let height = parent.header.height + 1;
+        Some(BlockTemplate {
+            height,
+            prev_id: parent_id,
+            difficulty: self.required_difficulty(parent_id),
+            seed_id: self.seed_id_for(parent_id, height),
+            min_timestamp: self.median_time_past(parent_id) + 1,
+        })
     }
 
     /// Validates `header` against its own branch (spec §6). `now` is the local
