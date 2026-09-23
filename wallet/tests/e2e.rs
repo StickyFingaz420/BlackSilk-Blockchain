@@ -268,3 +268,41 @@ fn rpc_rejects_malformed_and_oversized_requests() {
     let r = net.client.submit_block(&[0; 50]).unwrap_err();
     assert!(matches!(r, rpc::RpcError::Status(400, _)));
 }
+
+#[test]
+fn stale_pending_spends_expire_but_late_confirmation_still_counts() {
+    let mut net = Net::start();
+    let mut miner = wallet(7);
+    let bob = wallet(8);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    let before = miner.balance();
+    miner
+        .transfer(&net.client, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    assert!(miner.has_pending());
+    assert!(
+        miner.balance().total < before.total,
+        "pending input not counted"
+    );
+    // 20 blocks that do not include the transaction (coinbase-only, on the tip).
+    for i in 0..20 {
+        let tip = { net.shared.lock().unwrap().tip_id() };
+        net.mine_on(&tip, &miner_addr, 1000 + i);
+    }
+    miner.sync(&net.client).unwrap();
+    assert!(!miner.has_pending(), "expired after 20 blocks");
+    // The transaction was still in the mempool: once mined, the spend is detected.
+    net.mine(&miner_addr);
+    miner.sync(&net.client).unwrap();
+    let mut bob = bob;
+    bob.sync(&net.client).unwrap();
+    assert_eq!(bob.balance().total, COIN);
+    // Miner: 111 rewards (90 + 20 + 1, fees returned) minus the payment.
+    let mut expected = 0u64;
+    for h in 1..=111 {
+        expected += block_reward(h, expected);
+    }
+    assert_eq!(miner.balance().total, expected - COIN);
+}

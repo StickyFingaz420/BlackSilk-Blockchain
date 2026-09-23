@@ -27,6 +27,7 @@ env_logger = { version = "0.8", default-features = false, features = ["humantime
 getrandom = "0.2"
 fs2 = "0.4"
 dirs = "5"
+toml = "0.8"
 
 [dev-dependencies]
 blacksilk-crypto = { path = "../crypto" }

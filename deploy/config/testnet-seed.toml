@@ -1,0 +1,21 @@
+# BlackSilk testnet SEED node (docs/testnet.md §6).
+# A seed is a stable, always-on node with a fixed public address that new nodes use
+# to discover the network. After it has run reliably, add "<host>:29334" to
+# builtin_seeds() in node/src/config.rs.
+
+network = "testnet"
+data_dir = "/var/lib/blacksilk/testnet"
+rpc_bind = "127.0.0.1:29333"
+log = "info"
+
+[p2p]
+bind = "0.0.0.0:29334"
+# REQUIRED for a seed: its stable public address (IP or DNS name the operator controls).
+public_address = "203.0.113.10:29334"
+# Other seeds, so seeds find each other even with empty address tables.
+peers = []
+seeds = []
+builtin_seeds = true
+max_outbound = 8
+# Seeds serve many short connections from newcomers.
+max_inbound = 125

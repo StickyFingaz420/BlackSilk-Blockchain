@@ -1,0 +1,21 @@
+# BlackSilk testnet node: a normal, publicly reachable node.
+#   blacksilk-node --config /etc/blacksilk/node.toml
+# Every key is optional; command-line flags override this file (docs/testnet.md §4).
+
+network = "testnet"
+data_dir = "/var/lib/blacksilk/testnet"
+# The RPC has no authentication: keep it on loopback.
+rpc_bind = "127.0.0.1:29333"
+log = "info"
+
+[p2p]
+# Accept inbound peers on all interfaces (open TCP 29334 in the firewall).
+bind = "0.0.0.0:29334"
+# Advertise this node so others can find it. Leave unset to stay unadvertised.
+# public_address = "203.0.113.10:29334"
+# Peers to stay connected to, and extra seeds (host:port, ip:port or <onion>.onion:port).
+peers = []
+seeds = []
+builtin_seeds = true
+max_outbound = 8
+max_inbound = 64

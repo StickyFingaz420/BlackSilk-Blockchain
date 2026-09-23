@@ -11,7 +11,7 @@
 use crate::node::NodeApi;
 use blacksilk_chain::address::encode_address;
 use blacksilk_chain::block::Block;
-use blacksilk_consensus::{Hash, Network};
+use blacksilk_consensus::{ChainParams, Hash, Network};
 use blacksilk_crypto::keys::{Address, SubaddressIndex, SubaddressTable, WalletKeys};
 use blacksilk_crypto::stealth::ReceivedOutput;
 use blacksilk_crypto::{Point, Scalar};
@@ -31,6 +31,11 @@ use zeroize::Zeroize;
 const KEPT_BLOCK_IDS: usize = 720;
 /// Subaddresses scanned beyond the highest one handed out, per account.
 const LOOKAHEAD: u32 = 50;
+/// A submitted transaction still unconfirmed after this many blocks is presumed
+/// dropped (e.g. its ring members were reorganized away) and its inputs become
+/// spendable again. Safe: if it confirms later, the spend is still detected from
+/// the chain, and reusing an input it spent is rejected by consensus.
+const PENDING_EXPIRY_BLOCKS: u64 = 20;
 
 #[derive(Debug)]
 pub enum WalletError {
@@ -98,6 +103,9 @@ struct StoredOutput {
     spent_height: Option<u64>,
     /// Spent by a transaction we submitted that is not yet confirmed.
     pending: bool,
+    /// Wallet height when that transaction was submitted.
+    #[serde(default)]
+    pending_height: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -400,6 +408,12 @@ impl Wallet {
                 self.block_ids.remove(&first);
             }
         }
+        let synced = self.synced_height;
+        for o in &mut self.outputs {
+            if o.pending && synced >= o.pending_height + PENDING_EXPIRY_BLOCKS {
+                o.pending = false;
+            }
+        }
         Ok(self.synced_height)
     }
 
@@ -440,6 +454,7 @@ impl Wallet {
                 key_image: hex::encode(ki.bytes()),
                 spent_height: None,
                 pending: false,
+                pending_height: 0,
             });
         }
         // Rejected outputs (Janus probes, bogus amounts) are deliberately ignored:
@@ -486,6 +501,11 @@ impl Wallet {
             }
         }
         b
+    }
+
+    /// Whether a submitted transaction is still unconfirmed.
+    pub fn has_pending(&self) -> bool {
+        self.outputs.iter().any(|o| o.pending)
     }
 
     /// Forgets unconfirmed spends (use if a submitted transaction was dropped).
@@ -560,6 +580,7 @@ impl Wallet {
     /// the selection is repeated.
     fn ring_for<R: RngCore + CryptoRng>(
         node: &dyn NodeApi,
+        target_block_time: u64,
         cumulative: &[u64],
         next_height: u64,
         real: u64,
@@ -573,7 +594,7 @@ impl Wallet {
         // Young chains have many too-young coinbase outputs; each round excludes
         // the ones it hit.
         for _ in 0..100 {
-            let ring = select_ring(rng, cumulative, next_height, 120, real, |i| {
+            let ring = select_ring(rng, cumulative, next_height, target_block_time, real, |i| {
                 !excluded.contains(&i)
             })
             .map_err(|e| WalletError::Decoys(format!("{e:?}")))?;
@@ -629,7 +650,8 @@ impl Wallet {
         let mut plans = Vec::with_capacity(inputs.len());
         for &i in &inputs {
             let o = &self.outputs[i];
-            let decoys = Self::ring_for(node, &dist.cumulative, next, o.global_index, rng)?;
+            let target = ChainParams::for_network(self.network).target_block_time;
+            let decoys = Self::ring_for(node, target, &dist.cumulative, next, o.global_index, rng)?;
             plans.push(InputPlan {
                 real: Self::to_spendable(o)?,
                 decoys,
@@ -655,6 +677,7 @@ impl Wallet {
         }
         for &i in &inputs {
             self.outputs[i].pending = true;
+            self.outputs[i].pending_height = self.synced_height;
         }
         // Sanity: the key images we marked are the ones in the transaction.
         if let Transaction::Transfer(t) = &tx {

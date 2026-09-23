@@ -1,0 +1,36 @@
+[Unit]
+Description=BlackSilk RandomX miner (testnet)
+After=blacksilk-node.service
+Requires=blacksilk-node.service
+
+[Service]
+Type=simple
+User=blacksilk
+Group=blacksilk
+# Set BLACKSILK_MINER_ADDRESS in /etc/blacksilk/miner.env (a testnet address from
+# `blacksilk-wallet address`). Full mode needs ~2.3 GiB of RAM; add --light for 256 MiB.
+EnvironmentFile=/etc/blacksilk/miner.env
+ExecStart=/usr/local/bin/blacksilk-miner --node 127.0.0.1:29333 --address ${BLACKSILK_MINER_ADDRESS}
+Restart=on-failure
+RestartSec=10
+Nice=10
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

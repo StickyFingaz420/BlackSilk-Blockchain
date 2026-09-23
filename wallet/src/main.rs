@@ -96,12 +96,7 @@ fn main() {
 }
 
 fn rules_for(w: &Wallet) -> TxRules {
-    let params = match w.network() {
-        blacksilk_consensus::Network::Mainnet => ChainParams::mainnet(),
-        blacksilk_consensus::Network::Testnet => ChainParams::testnet(),
-        blacksilk_consensus::Network::Regtest => ChainParams::regtest(),
-    };
-    TxRules::for_chain(&params)
+    TxRules::for_chain(&ChainParams::for_network(w.network()))
 }
 
 fn run(args: Args) -> Result<(), String> {

@@ -426,8 +426,12 @@ mod tests {
         }
     }
 
+    /// Regtest rules with the testnet/mainnet block time: the timings in these
+    /// tests (e.g. 30 s = "4x too fast") are written for T = 120 s.
     fn chain() -> HeaderChain {
-        HeaderChain::new(ChainParams::regtest(), Arc::new(TestPow))
+        let mut params = ChainParams::regtest();
+        params.target_block_time = 120;
+        HeaderChain::new(params, Arc::new(TestPow))
     }
 
     /// Mines a valid child of `parent` on its branch, `dt` seconds after it.

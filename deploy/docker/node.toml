@@ -1,0 +1,10 @@
+# Node configuration inside the container (see deploy/config/testnet-node.toml).
+network = "testnet"
+data_dir = "/data"
+# Loopback inside the container: use `docker exec <name> blacksilk-wallet ...`.
+rpc_bind = "127.0.0.1:29333"
+log = "info"
+
+[p2p]
+bind = "0.0.0.0:29334"
+builtin_seeds = true

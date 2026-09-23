@@ -1,0 +1,46 @@
+[Unit]
+Description=BlackSilk node (testnet)
+Documentation=https://github.com/StickyFingaz420/BlackSilk-Blockchain/blob/main/docs/testnet.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=blacksilk
+Group=blacksilk
+ExecStart=/usr/local/bin/blacksilk-node --config /etc/blacksilk/node.toml
+# Ctrl-C equivalent: lets the node save its peer table.
+KillSignal=SIGINT
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=8192
+
+# Hardening: the node needs its data directory and the network, nothing else.
+StateDirectory=blacksilk
+ReadWritePaths=/var/lib/blacksilk
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+# Private LAN / lab test network with TESTNET consensus rules (docs/testnet.md §7).
+# Use one copy per machine and adjust addresses. allow_private lets nodes exchange
+# and dial private (10.x, 192.168.x) addresses, which the public testnet refuses.
+
+network = "testnet"
+data_dir = "/var/lib/blacksilk/lab"
+rpc_bind = "127.0.0.1:29333"
+log = "info"
+
+[p2p]
+bind = "0.0.0.0:29334"
+# This machine's LAN address, so other lab nodes can discover it.
+public_address = "192.168.1.10:29334"
+# At least one other lab machine.
+peers = ["192.168.1.11:29334"]
+builtin_seeds = false
+allow_private = true
+max_outbound = 8
+max_inbound = 64
