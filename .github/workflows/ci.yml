@@ -21,6 +21,6 @@ jobs:
         run: cargo test --workspace
       - name: No unsafe code in project crates
         run: |
-          for c in randomx consensus crypto tx chain rpc node miner wallet; do
+          for c in randomx consensus crypto tx chain p2p rpc node miner wallet; do
             grep -rq 'forbid(unsafe_code)' "$c/src" || { echo "$c lacks forbid(unsafe_code)"; exit 1; }
           done

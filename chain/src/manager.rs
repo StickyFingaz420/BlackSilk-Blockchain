@@ -2,18 +2,23 @@
 //! emission, reorganizations, mempool and storage behind one API.
 //!
 //! **Invariant.** The transaction state equals the result of applying the bodies of
-//! `connected[1..]` in order, and `connected` is a prefix of the header chain's best
-//! chain. After every change, [`ChainManager::sync_state`] restores this: it
-//! disconnects back to the fork point and connects forward block by block,
-//! validating each body. A body that fails marks its block invalid in the header
-//! chain, which re-selects the best chain, and the loop repeats.
+//! `connected[1..]` in order. `connected` is the most-work chain whose bodies are all
+//! available: normally a prefix of the header chain's best chain, but it stays on
+//! the current branch while a heavier branch's bodies are still downloading.
+//! After every change, [`ChainManager::sync_state`] restores this: it disconnects
+//! back to the fork point only when the new branch, as far as bodies are available,
+//! has more work, and then connects forward block by block, validating each body.
+//! A body that fails marks its block invalid in the header chain, which re-selects
+//! the best chain, and the loop repeats.
 
 use crate::block::Block;
 use crate::emission::block_reward;
 use crate::mempool::{Mempool, MempoolError, COINBASE_RESERVE};
 use crate::store::BlockStore;
 use blacksilk_consensus::hash::H;
-use blacksilk_consensus::{BlockHeader, ChainParams, Hash, HeaderChain, HeaderError, PowFunction};
+use blacksilk_consensus::{
+    seed_height, BlockHeader, ChainParams, Hash, HeaderChain, HeaderError, PowFunction,
+};
 use blacksilk_tx::params::TxRules;
 use blacksilk_tx::state::MemoryChain;
 use blacksilk_tx::types::{Transaction, Transfer};
@@ -56,6 +61,35 @@ impl CachedPow {
     pub fn preload(&self, header_bytes: &[u8], pow_hash: Hash) {
         let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
         known.insert(Self::key(header_bytes), pow_hash);
+    }
+}
+
+/// One PoW computation: RandomX key (seed block id) and header bytes.
+pub type PowJob = (Hash, [u8; blacksilk_consensus::HEADER_SIZE]);
+
+impl CachedPow {
+    /// Computes and caches the PoW hashes of `jobs` on `threads` threads.
+    pub fn compute_parallel(&self, jobs: &[PowJob], threads: usize) {
+        let todo: Vec<&PowJob> = jobs
+            .iter()
+            .filter(|(_, b)| self.lookup(b).is_none())
+            .collect();
+        if todo.is_empty() {
+            return;
+        }
+        let threads = threads.clamp(1, todo.len());
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|s| {
+            for _ in 0..threads {
+                s.spawn(|| loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((seed, bytes)) = todo.get(i) else {
+                        break;
+                    };
+                    let _ = self.pow_hash(seed, bytes);
+                });
+            }
+        });
     }
 }
 
@@ -254,6 +288,9 @@ impl ChainManager {
             if self.bodies.contains_key(&id) || id == self.params.genesis_id() {
                 return Err(SubmitError::Duplicate);
             }
+            if self.headers.is_valid(&id) == Some(false) {
+                return Err(SubmitError::Header(HeaderError::InvalidParent));
+            }
         } else {
             // Check the body against the header before the header can enter the tree,
             // so a valid header with a garbage body is not stored.
@@ -289,14 +326,39 @@ impl ChainManager {
         })
     }
 
+    /// Height of the last block shared by the connected chain and the best header
+    /// chain.
+    fn fork_height(&self) -> usize {
+        let mut fork = self.connected.len() - 1;
+        while self.headers.main_id_at(fork as u64) != Some(self.connected[fork]) {
+            fork -= 1; // genesis always matches
+        }
+        fork
+    }
+
     /// Restores the invariant (module docs) after the header chain changed.
     fn sync_state(&mut self) {
         let mut returned: Vec<Transaction> = Vec::new();
         loop {
-            // Fork point between the connected chain and the header best chain.
-            let mut fork = self.connected.len() - 1;
-            while self.headers.main_id_at(fork as u64) != Some(self.connected[fork]) {
-                fork -= 1; // genesis always matches
+            let fork = self.fork_height();
+            // How far the best header chain can be connected with the bodies at hand.
+            let mut reachable = fork as u64;
+            while let Some(id) = self.headers.main_id_at(reachable + 1) {
+                if !self.bodies.contains_key(&id) {
+                    break;
+                }
+                reachable += 1;
+            }
+            // Only leave the current chain for one with strictly more work whose bodies
+            // are all available; otherwise keep it (header-first sync may deliver the
+            // other branch's headers long before its bodies).
+            if fork + 1 < self.connected.len() {
+                let reachable_id = self.headers.main_id_at(reachable).expect("best chain");
+                let target_work = self.headers.work(&reachable_id).unwrap_or(0);
+                let current_work = self.headers.work(&self.tip_id()).unwrap_or(0);
+                if target_work <= current_work {
+                    break;
+                }
             }
             while self.connected.len() - 1 > fork {
                 let id = self.connected.pop().expect("above genesis");
@@ -308,14 +370,12 @@ impl ChainManager {
             }
             // Connect forward as far as bodies are available.
             let mut failed = false;
-            for h in fork as u64 + 1..=self.headers.height() {
+            for h in fork as u64 + 1..=reachable {
                 let id = self
                     .headers
                     .main_id_at(h)
                     .expect("height within best chain");
-                let Some(body) = self.bodies.get(&id) else {
-                    break; // body not yet available (header-first sync)
-                };
+                let body = self.bodies.get(&id).expect("checked above");
                 let header = self.headers.header(&id).expect("main chain header");
                 let generated = self.generated();
                 let reward = block_reward(h, generated);
@@ -358,6 +418,169 @@ impl ChainManager {
             let _ = self.mempool.add(tx, &self.state, next, &self.rules);
         }
         self.mempool.revalidate(&self.state, next, &self.rules);
+    }
+
+    // ---- header-first sync (docs/p2p.md §6) ----
+
+    /// Height of the best valid header chain (may exceed [`Self::height`] while
+    /// bodies are downloading).
+    pub fn header_height(&self) -> u64 {
+        self.headers.height()
+    }
+
+    pub fn best_header_id(&self) -> Hash {
+        self.headers.tip_id()
+    }
+
+    pub fn header(&self, id: &Hash) -> Option<&BlockHeader> {
+        self.headers.header(id)
+    }
+
+    /// Whether the header is known and not invalid.
+    pub fn knows_valid_header(&self, id: &Hash) -> bool {
+        self.headers.is_valid(id) == Some(true)
+    }
+
+    pub fn has_body(&self, id: &Hash) -> bool {
+        *id == self.params.genesis_id() || self.bodies.contains_key(id)
+    }
+
+    /// Any stored block (main chain or side branch) with its body.
+    pub fn block(&self, id: &Hash) -> Option<Block> {
+        let header = *self.headers.header(id)?;
+        if *id == self.params.genesis_id() {
+            return Some(Block {
+                header,
+                txs: Vec::new(),
+            });
+        }
+        let txs = self.bodies.get(id)?.clone();
+        Some(Block { header, txs })
+    }
+
+    /// Block locator over the best header chain: the tip, 10 predecessors one by
+    /// one, then exponentially sparser back to genesis (at most 64 ids).
+    pub fn locator(&self) -> Vec<Hash> {
+        let mut out = Vec::new();
+        let mut h = self.headers.height();
+        let mut step = 1u64;
+        loop {
+            out.push(self.headers.main_id_at(h).expect("height on best chain"));
+            if h == 0 || out.len() >= 63 {
+                break;
+            }
+            if out.len() >= 10 {
+                step *= 2;
+            }
+            h = h.saturating_sub(step);
+        }
+        if *out.last().expect("non-empty") != self.params.genesis_id() {
+            out.push(self.params.genesis_id());
+        }
+        out
+    }
+
+    /// Headers of the best chain following the first locator id found on it, up to
+    /// `max`, ending early at `stop`.
+    pub fn headers_after(&self, locator: &[Hash], stop: &Hash, max: usize) -> Vec<BlockHeader> {
+        let start = locator
+            .iter()
+            .find(|id| self.headers.is_on_main(id))
+            .and_then(|id| self.headers.header(id))
+            .map_or(1, |h| h.height + 1);
+        let mut out = Vec::new();
+        let mut h = start;
+        while out.len() < max {
+            let Some(id) = self.headers.main_id_at(h) else {
+                break;
+            };
+            out.push(*self.headers.header(&id).expect("main header"));
+            if id == *stop {
+                break;
+            }
+            h += 1;
+        }
+        out
+    }
+
+    /// Best-chain blocks whose body is missing, lowest first (for download).
+    pub fn missing_bodies(&self, max: usize) -> Vec<(u64, Hash)> {
+        let mut out = Vec::new();
+        let mut h = self.fork_height() as u64 + 1;
+        while out.len() < max {
+            let Some(id) = self.headers.main_id_at(h) else {
+                break;
+            };
+            if !self.bodies.contains_key(&id) {
+                out.push((h, id));
+            }
+            h += 1;
+        }
+        out
+    }
+
+    /// Work to precompute the PoW of a batch of headers (docs/p2p.md §6): the seed
+    /// and bytes of each header, taking seeds from the batch itself where needed.
+    /// `None` if the batch does not extend a known header or is not a chain. Run
+    /// the result with [`CachedPow::compute_parallel`] *without* holding a lock on
+    /// the manager, then accept the headers cheaply.
+    pub fn pow_jobs(&self, headers: &[BlockHeader]) -> Option<(Arc<CachedPow>, Vec<PowJob>)> {
+        let first = headers.first()?;
+        self.headers.header(&first.prev_id)?;
+        let nid = self.params.network_id;
+        let ids: Vec<Hash> = headers.iter().map(|h| h.id(nid)).collect();
+        for i in 1..headers.len() {
+            if headers[i].prev_id != ids[i - 1] || headers[i].height != headers[i - 1].height + 1 {
+                return None;
+            }
+        }
+        let base = first.height;
+        let jobs = headers
+            .iter()
+            .map(|h| {
+                let sh = seed_height(h.height, self.params.seed_epoch, self.params.seed_lag);
+                let seed = if sh >= base {
+                    ids[(sh - base) as usize]
+                } else {
+                    self.headers.seed_id_for(first.prev_id, h.height)
+                };
+                (seed, h.to_bytes())
+            })
+            .collect();
+        Some((self.pow.clone(), jobs))
+    }
+
+    /// Accepts a batch of headers in order. Known headers are skipped. Returns the
+    /// number of new headers, or the index and error of the first rejected one.
+    pub fn accept_headers(
+        &mut self,
+        headers: &[BlockHeader],
+        now: u64,
+    ) -> Result<usize, (usize, HeaderError)> {
+        let mut new = 0;
+        for (i, h) in headers.iter().enumerate() {
+            let id = h.id(self.params.network_id);
+            if self.headers.header(&id).is_some() {
+                if self.headers.is_valid(&id) == Some(false) {
+                    return Err((i, HeaderError::InvalidParent));
+                }
+                continue;
+            }
+            self.headers.accept(*h, now).map_err(|e| (i, e))?;
+            new += 1;
+        }
+        // New headers can make a stored side branch the best available chain.
+        if new > 0 {
+            self.sync_state();
+        }
+        Ok(new)
+    }
+
+    /// Validates a transaction for the next block without adding it (Dandelion
+    /// stem phase, docs/p2p.md §8).
+    pub fn check_tx(&self, tx: &Transaction) -> Result<Hash, MempoolError> {
+        let next = self.height() + 1;
+        self.mempool.check(tx, &self.state, next, &self.rules)
     }
 
     /// Adds a transaction to the mempool (valid for the next block).

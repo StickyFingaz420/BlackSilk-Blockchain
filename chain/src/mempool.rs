@@ -66,6 +66,36 @@ impl Mempool {
         self.entries.contains_key(id)
     }
 
+    /// Validates `tx` for inclusion at `height` without adding it. Returns its id.
+    pub fn check(
+        &self,
+        tx: &Transaction,
+        chain: &impl ChainView,
+        height: u64,
+        rules: &TxRules,
+    ) -> Result<Hash, MempoolError> {
+        let Transaction::Transfer(t) = tx else {
+            return Err(MempoolError::Coinbase);
+        };
+        let id = tx.hash();
+        if self.entries.contains_key(&id) {
+            return Err(MempoolError::AlreadyKnown);
+        }
+        if t.inputs
+            .iter()
+            .any(|i| self.key_images.contains_key(i.key_image.bytes()))
+        {
+            return Err(MempoolError::Conflict);
+        }
+        validate_transfer(t, chain, height, rules).map_err(MempoolError::Invalid)?;
+        Ok(id)
+    }
+
+    /// A pooled transaction by id.
+    pub fn get(&self, id: &Hash) -> Option<&Transfer> {
+        self.entries.get(id).map(|e| &e.tx)
+    }
+
     /// Validates `tx` for inclusion at `height` and adds it.
     pub fn add(
         &mut self,

@@ -402,3 +402,128 @@ fn restart_after_torn_write_recovers_previous_block() {
     assert_eq!(m.height(), 5);
     assert_eq!(m.tip_id(), tip_before_last);
 }
+
+// ---------------------------------------------------------------- header-first sync
+
+/// Two managers: `src` mines, `dst` receives headers first and bodies later.
+fn mined_source(blocks: u64, seed: u64) -> (ChainManager, Vec<Block>) {
+    let mut src = open(Box::<MemoryStore>::default(), Arc::default());
+    let mut miner = Miner::new(seed);
+    let bs = (0..blocks).map(|_| miner.mine_tip(&mut src)).collect();
+    (src, bs)
+}
+
+#[test]
+fn headers_without_bodies_do_not_move_the_state() {
+    let (_, blocks) = mined_source(30, 20);
+    let mut dst = open(Box::<MemoryStore>::default(), Arc::default());
+    let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header).collect();
+    let now = headers.last().unwrap().timestamp;
+    assert_eq!(dst.accept_headers(&headers, now), Ok(30));
+    assert_eq!(dst.header_height(), 30);
+    assert_eq!(dst.height(), 0, "no bodies yet");
+    let missing = dst.missing_bodies(100);
+    assert_eq!(missing.len(), 30);
+    assert_eq!(missing[0].0, 1);
+    // Re-sending the same headers is harmless.
+    assert_eq!(dst.accept_headers(&headers, now), Ok(0));
+    // Bodies arriving out of order connect as soon as the gap closes.
+    for b in blocks.iter().skip(1).rev() {
+        let now = b.header.timestamp;
+        dst.submit_block(b.clone(), now).unwrap();
+    }
+    assert_eq!(dst.height(), 0);
+    dst.submit_block(blocks[0].clone(), blocks[0].header.timestamp)
+        .unwrap();
+    assert_eq!(dst.height(), 30);
+    assert!(dst.missing_bodies(10).is_empty());
+}
+
+#[test]
+fn heavier_header_branch_without_bodies_keeps_the_current_chain() {
+    let mut m = open(Box::<MemoryStore>::default(), Arc::default());
+    let mut miner = Miner::new(21);
+    for _ in 0..5 {
+        miner.mine_tip(&mut m);
+    }
+    let fork = m.headers().main_id_at(2).unwrap();
+    let tip = m.tip_id();
+    // A 5-block side branch from height 2 (heavier: reaches height 7), headers only.
+    let mut parent = fork;
+    let mut side = Vec::new();
+    for i in 0..5 {
+        let t = m.template_on(&parent).unwrap();
+        let b = miner.build(&t, vec![], None, 100 + i);
+        parent = b.id(params().network_id);
+        m.accept_headers(&[b.header], b.header.timestamp).unwrap();
+        side.push(b);
+    }
+    assert_eq!(m.header_height(), 7);
+    assert_eq!(
+        m.tip_id(),
+        tip,
+        "state stays on the chain whose bodies we have"
+    );
+    assert_eq!(m.height(), 5);
+    // Partial bodies with less work than the current tip: still no switch.
+    for b in &side[..2] {
+        m.submit_block(b.clone(), b.header.timestamp).unwrap();
+    }
+    assert_eq!(m.tip_id(), tip);
+    // All bodies: the heavier branch wins.
+    for b in &side[2..] {
+        m.submit_block(b.clone(), b.header.timestamp).unwrap();
+    }
+    assert_eq!(m.height(), 7);
+    assert_eq!(m.tip_id(), side[4].id(params().network_id));
+}
+
+#[test]
+fn locator_and_headers_after() {
+    let (src, blocks) = mined_source(100, 22);
+    let loc = src.locator();
+    assert_eq!(loc[0], src.tip_id());
+    assert_eq!(*loc.last().unwrap(), params().genesis_id());
+    assert!(loc.len() <= 64);
+    // Dense near the tip, then sparse.
+    assert_eq!(loc[1], blocks[98].id(params().network_id));
+    // A peer that knows up to block 40 gets 41.. from us.
+    let peer_locator = vec![blocks[39].id(params().network_id), params().genesis_id()];
+    let hs = src.headers_after(&peer_locator, &[0; 32], 2000);
+    assert_eq!(hs.len(), 60);
+    assert_eq!(hs[0].height, 41);
+    let stop = blocks[49].id(params().network_id);
+    assert_eq!(src.headers_after(&peer_locator, &stop, 2000).len(), 10);
+    assert_eq!(src.headers_after(&peer_locator, &[0; 32], 5).len(), 5);
+    // Unknown locator: from genesis.
+    assert_eq!(src.headers_after(&[[9; 32]], &[0; 32], 2000).len(), 100);
+}
+
+#[test]
+fn pow_jobs_use_seeds_from_the_batch() {
+    use blacksilk_consensus::seed_height;
+    // Long enough to cross the first RandomX key change (2048 + 64).
+    let (src, blocks) = mined_source(2200, 23);
+    let dst = open(Box::<MemoryStore>::default(), Arc::default());
+    let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header).collect();
+    let (_, jobs) = dst.pow_jobs(&headers).expect("extends genesis");
+    for (h, (seed, bytes)) in headers.iter().zip(&jobs) {
+        assert_eq!(bytes, &h.to_bytes());
+        let sh = seed_height(h.height, 2048, 64);
+        assert_eq!(
+            *seed,
+            src.headers().main_id_at(sh).unwrap(),
+            "height {}",
+            h.height
+        );
+    }
+    assert!(
+        jobs.iter().any(|(s, _)| *s != params().genesis_id()),
+        "a key change is covered"
+    );
+    // Not a chain / unknown parent: no jobs.
+    assert!(dst.pow_jobs(&headers[1..]).is_none());
+    let mut broken = headers[..3].to_vec();
+    broken.swap(1, 2);
+    assert!(dst.pow_jobs(&broken).is_none());
+}

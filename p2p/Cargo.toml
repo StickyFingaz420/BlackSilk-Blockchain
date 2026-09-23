@@ -1,0 +1,27 @@
+[package]
+name = "blacksilk-p2p"
+version = "0.1.0"
+edition = "2021"
+description = "BlackSilk peer-to-peer network: encrypted transport, header-first sync, relay, Dandelion++, peer management"
+
+[lib]
+name = "blacksilk_p2p"
+
+[dependencies]
+blacksilk-consensus = { path = "../consensus" }
+blacksilk-crypto = { path = "../crypto" }
+blacksilk-tx = { path = "../tx" }
+blacksilk-chain = { path = "../chain" }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+rand_core = { version = "0.6", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
+getrandom = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hex = "0.4"
+log = "0.4"
+zeroize = "1.8"
+
+[dev-dependencies]
+tempfile = "3"

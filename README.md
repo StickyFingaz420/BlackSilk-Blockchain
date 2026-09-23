@@ -4,8 +4,8 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 
 > **Status: under active rebuild, pre-testnet.** The components below are
 > implemented and tested. The software has **not** had an external security audit,
-> **peer-to-peer networking is not implemented yet**, and it must not be used for
-> anything of value. See [`AUDIT.md`](AUDIT.md) for the full audit and open items.
+> and it must not be used for anything of value. See [`AUDIT.md`](AUDIT.md) for the
+> full audit and open items.
 
 ## What it is
 
@@ -18,13 +18,15 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 | Amount privacy | Pedersen commitments, aggregated Bulletproofs+ | [transactions.md §6–7](docs/transactions.md) |
 | Group | Ristretto255 (prime order) | [transactions.md §1](docs/transactions.md) |
 | Emission | smooth curve to ~21 M BLK, then 0.6 BLK/block tail forever; no premine | [blocks.md §2](docs/blocks.md) |
+| Network | encrypted transport, header-first sync, Dandelion++, eclipse-resistant address manager, peer scoring and bans, SOCKS5/Tor | [p2p.md](docs/p2p.md) |
 
 **What it is not (yet):**
 - **Not post-quantum secure.** No part of the transaction layer resists a quantum
   adversary ([transactions.md §11.6](docs/transactions.md)). Post-quantum work is a
   separate research track (`research/`).
-- **No networking.** A node validates blocks from its local miner only; P2P,
-  Dandelion++ and Tor/I2P are the next phase.
+- **No authenticated peers, no I2P.** P2P encryption stops passive observers, not an
+  active man in the middle ([p2p.md §1](docs/p2p.md)). Tor works through its SOCKS5
+  proxy; I2P is not supported yet.
 - **No smart contracts or marketplace.** The previous implementations are parked in
   `legacy/` and will be redesigned for a chain with hidden amounts and recipients.
 
@@ -37,6 +39,7 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 | `crypto/` | Ristretto255 primitives, stealth outputs, Janus anchor, CLSAG, Bulletproofs+ |
 | `tx/` | transaction format, validation rules, builder, scanner, decoy selection |
 | `chain/` | blocks, emission, chain manager (reorgs), mempool, block storage, addresses |
+| `p2p/` | peer-to-peer network |
 | `rpc/` | node RPC types and client |
 | `node/` | `blacksilk-node` |
 | `miner/` | `blacksilk-miner` |
@@ -76,6 +79,20 @@ blacksilk-wallet -w miner.wallet --node 127.0.0.1:39333 transfer --to <address> 
 ```
 
 For scripted use, set `BLACKSILK_WALLET_PASSWORD` instead of typing the password.
+
+## Joining a network
+
+```sh
+# Connect to known peers (repeatable); addresses are discovered from them.
+blacksilk-node --network testnet --peer <ip>:29334
+
+# Over Tor: all outbound connections through the Tor SOCKS proxy, no clearnet.
+blacksilk-node --network testnet --proxy 127.0.0.1:9050 --proxy-only --peer <onion>.onion:29334
+```
+
+- The node never advertises its own address unless `--public-address` is given.
+- Transactions submitted to the node's RPC are relayed with Dandelion++, not
+  broadcast directly.
 
 ## Security notes
 

@@ -6,6 +6,7 @@ members = [
     "crypto",    # blacksilk-crypto: CLSAG, Bulletproofs+, stealth outputs, Janus anchor
     "tx",        # blacksilk-tx: transaction format, building, validation
     "chain",     # blacksilk-chain: blocks, emission, chain manager, mempool, storage
+    "p2p",       # blacksilk-p2p: peer-to-peer network
     "rpc",       # blacksilk-rpc: node RPC types and client
     "node",      # blacksilk-node: the node binary (RPC)
     "miner",     # blacksilk-miner: RandomX miner

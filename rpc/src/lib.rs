@@ -27,6 +27,9 @@ pub struct Info {
     pub mempool_txs: usize,
     pub mempool_bytes: usize,
     pub outputs: u64,
+    /// Connected P2P peers.
+    #[serde(default)]
+    pub peers: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

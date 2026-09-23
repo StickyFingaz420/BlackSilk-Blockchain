@@ -119,6 +119,13 @@ The transaction state is:
 It is always the result of applying, in order, the bodies of the connected chain's
 blocks `1..tip`.
 
+The **connected chain** is the most-work chain whose bodies are all available.
+- During header-first sync (p2p.md §6) the best *header* chain can be ahead of it, or on
+  another branch.
+- The node leaves its current chain only when the other branch, as far as its bodies
+  have arrived, has strictly more work. A heavier branch whose bodies are still
+  downloading therefore never rolls the state back early.
+
 On a reorganization the node:
 1. disconnects blocks back to the fork point, undoing their state changes in reverse
    order;
@@ -174,7 +181,7 @@ JSON over HTTP/1.1, **bound to `127.0.0.1` by default**. Binary objects are hex 
 | GET | `/info` | network, height, tip id, difficulty, generated supply, mempool size |
 | GET | `/template` | mining template: height, prev id, difficulty, seed id, min timestamp, reward, fees, transactions |
 | POST | `/block` | submit a mined block (`{"hex": …}`) |
-| POST | `/tx` | submit a transaction (`{"hex": …}`) |
+| POST | `/tx` | submit a transaction (`{"hex": …}`); with P2P enabled it enters the Dandelion++ stem (p2p.md §8), otherwise the local mempool |
 | GET | `/blocks?from=h&count=n` | connected blocks with the global index of their first output (n ≤ 100), for wallet scanning |
 | GET | `/distribution?to=h` | cumulative output counts per block, for decoy selection |
 | POST | `/outputs` | output keys and commitments for up to 1 024 global indices, for building rings |

@@ -16,6 +16,7 @@ use axum::{Json, Router};
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{ChainManager, SubmitError};
 use blacksilk_consensus::Network;
+use blacksilk_p2p::Network as P2p;
 use blacksilk_rpc as rpc;
 use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::ChainView;
@@ -24,6 +25,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub type Shared = Arc<Mutex<ChainManager>>;
+
+/// RPC state: the chain, and the P2P network when it runs.
+#[derive(Clone)]
+pub struct App {
+    pub chain: Shared,
+    pub net: Option<P2p>,
+}
 
 pub fn network_name(n: Network) -> &'static str {
     match n {
@@ -68,7 +76,15 @@ fn bad_request(msg: impl Into<String>) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, msg.into())
 }
 
+/// RPC without networking (tests, isolated nodes).
 pub fn router(shared: Shared) -> Router {
+    router_with(App {
+        chain: shared,
+        net: None,
+    })
+}
+
+pub fn router_with(app: App) -> Router {
     Router::new()
         .route("/info", get(info))
         .route("/template", get(template))
@@ -78,10 +94,11 @@ pub fn router(shared: Shared) -> Router {
         .route("/distribution", get(distribution))
         .route("/outputs", post(outputs))
         .layer(DefaultBodyLimit::max(rpc::MAX_REQUEST_BYTES))
-        .with_state(shared)
+        .with_state(app)
 }
 
-async fn info(State(s): State<Shared>) -> Json<rpc::Info> {
+async fn info(State(App { chain: s, net }): State<App>) -> Json<rpc::Info> {
+    let peers = net.map_or(0, |n| n.stats().peers);
     let m = lock(&s);
     Json(rpc::Info {
         network: network_name(m.params().network).to_string(),
@@ -93,10 +110,11 @@ async fn info(State(s): State<Shared>) -> Json<rpc::Info> {
         mempool_txs: m.mempool().len(),
         mempool_bytes: m.mempool().bytes(),
         outputs: m.state().output_count(),
+        peers,
     })
 }
 
-async fn template(State(s): State<Shared>) -> Json<rpc::Template> {
+async fn template(State(App { chain: s, .. }): State<App>) -> Json<rpc::Template> {
     let m = lock(&s);
     let t = m.template();
     Json(rpc::Template {
@@ -125,7 +143,7 @@ fn rejected(error: String) -> rpc::SubmitResult {
 }
 
 async fn submit_block(
-    State(s): State<Shared>,
+    State(App { chain: s, .. }): State<App>,
     Json(p): Json<rpc::HexPayload>,
 ) -> Result<Json<rpc::SubmitResult>, ApiError> {
     let bytes = hex::decode(&p.hex).map_err(|_| bad_request("hex"))?;
@@ -164,14 +182,20 @@ async fn submit_block(
 }
 
 async fn submit_tx(
-    State(s): State<Shared>,
+    State(App { chain: s, net }): State<App>,
     Json(p): Json<rpc::HexPayload>,
 ) -> Result<Json<rpc::SubmitResult>, ApiError> {
     let bytes = hex::decode(&p.hex).map_err(|_| bad_request("hex"))?;
     let tx = Transaction::decode(&bytes).map_err(|e| bad_request(format!("transaction: {e:?}")))?;
-    let result = tokio::task::spawn_blocking(move || lock(&s).submit_tx(tx))
-        .await
-        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // With networking, local transactions enter the Dandelion++ stem (docs/p2p.md §8)
+    // instead of being broadcast from this node directly.
+    let result = match net {
+        Some(n) => n.submit_tx(tx).await,
+        None => tokio::task::spawn_blocking(move || lock(&s).submit_tx(tx))
+            .await
+            .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .map_err(|e| format!("{e:?}")),
+    };
     Ok(Json(match result {
         Ok(id) => rpc::SubmitResult {
             accepted: true,
@@ -179,7 +203,7 @@ async fn submit_tx(
             on_best_chain: None,
             error: None,
         },
-        Err(e) => rejected(format!("{e:?}")),
+        Err(e) => rejected(e),
     }))
 }
 
@@ -190,7 +214,7 @@ struct BlocksQuery {
 }
 
 async fn blocks(
-    State(s): State<Shared>,
+    State(App { chain: s, .. }): State<App>,
     Query(q): Query<BlocksQuery>,
 ) -> Result<Json<rpc::Blocks>, ApiError> {
     if q.count == 0 || q.count > rpc::MAX_BLOCKS_PER_REQUEST {
@@ -220,7 +244,7 @@ struct DistributionQuery {
 }
 
 async fn distribution(
-    State(s): State<Shared>,
+    State(App { chain: s, .. }): State<App>,
     Query(q): Query<DistributionQuery>,
 ) -> Json<rpc::Distribution> {
     let m = lock(&s);
@@ -230,7 +254,7 @@ async fn distribution(
 }
 
 async fn outputs(
-    State(s): State<Shared>,
+    State(App { chain: s, .. }): State<App>,
     Json(req): Json<rpc::OutputsRequest>,
 ) -> Result<Json<rpc::Outputs>, ApiError> {
     if req.indices.len() > rpc::MAX_OUTPUTS_PER_REQUEST {

@@ -1,8 +1,11 @@
 # BlackSilk Testnet Readiness Audit
 
-Status: **NOT testnet-ready.** The critical Phase 2 findings are closed (see *Finding
-status after R1–R4*). The main remaining blocker is peer-to-peer networking, followed by
-an external cryptographic review. This file tracks the audit defined in `Claude.md`.
+Status: **NOT testnet-ready.** All Phase 2 findings are closed (see *Finding status
+after R1–R5*), and the P2P network is implemented (R5). Remaining before a public
+testnet:
+- testnet launch configuration (genesis timestamp, seed nodes, deployment);
+- an extended multi-machine soak test;
+- an external cryptographic review of the transaction layer and the Janus anchor. This file tracks the audit defined in `Claude.md`.
 Each finding lists where it is, what goes wrong, and its severity. Findings stay
 open until a fix lands **and** a test demonstrates it.
 
@@ -392,7 +395,102 @@ regtest:
   is already rewritten (`.github/workflows/ci.yml`: fmt, clippy `-D warnings`, tests,
   `forbid(unsafe_code)` check).
 
-### Finding status after R1–R4
+### R5: Peer-to-peer network (`p2p/`, spec `docs/p2p.md`)
+
+The P2P layer was built from scratch, spec first.
+- Pure Rust, `#![forbid(unsafe_code)]`, no FFI.
+- Dependencies: `tokio`; `aes-gcm` (RustCrypto, already used by the wallet); the
+  project's own Ristretto255 and hashing from `crypto`.
+
+**Design (with its reasons in the spec):**
+
+| Requirement | Implementation |
+|---|---|
+| Privacy-aware transport | Ephemeral Ristretto255 DH, then AES-256-GCM frames with encrypted lengths. The network id is bound into the keys, so there is no plaintext magic. Forward secrecy. |
+| Handshake and version negotiation | `Version`/`Verack` with no user agent, clock or service bits; minimum protocol check; network check; self-connection detection by nonce; 10 s deadline |
+| Peer discovery | seeds, `--peer`, `GetAddr`/`Addr` once per connection, small-batch address relay; own address advertised only with `--public-address` |
+| Eclipse resistance | *new* and *tried* tables, bucketed by `H(secret ‖ group(addr) ‖ group(source))`; outbound diversity of one per /16 (IPv4), /32 (IPv6) or onion; inbound limit 64, at most 2 per IP |
+| Header-first sync | locator; `GetHeaders`/`Headers` (2000 per batch); PoW of a batch computed **in parallel** from seeds taken from the batch; bodies downloaded with 16 in flight per peer and reassigned after a 60 s timeout |
+| Chain sync and reorgs | `ChainManager` now keeps the connected chain on the most-work branch whose **bodies are all available**. A heavier branch known only by headers never rolls the state back early (blocks.md §6). |
+| Block propagation | new tips announced as one-header `Headers`; bodies fetched on demand |
+| Transaction propagation | `InvTx` with per-peer randomized trickle delays; `GetTx` from one announcer at a time with fallback; `GetTx` served **only for transactions announced to that peer** (no mempool probing) |
+| Transaction origin privacy | **Dandelion++**: 10-minute epochs, 2 stem peers, per-source fixed routes, 10 % diffusers, a stempool that is never announced, served or mined, and an embargo timer (10 s + Exp(39 s)). RPC transactions enter the stem. |
+| Scoring and bans | violation scores; disconnect and 24 h IP ban at 100. Tor/proxied peers and loopback peers on regtest are disconnected, not IP-banned. |
+| Spam and flood protection | every list bounded before allocation; 2 MiB frame cap checked after the encrypted length; per-peer token buckets (50 messages/s burst 500, 4 MB/s, 20 txs/s); a bounded outbox (a slow reader is disconnected); cache of recently rejected transactions |
+| Tor | SOCKS5 client (onion names resolved by the proxy); `--proxy-only`, which also does not listen on clearnet by default |
+
+**Evidence:** `cargo test --workspace` gives **213 passed**, 0 failed, 1 ignored.
+Clippy with `-D warnings` and `fmt --check` are clean.
+
+- p2p unit tests (26):
+  - transport:
+    - round trip including a maximum-size frame;
+    - different networks cannot talk;
+    - the ciphertext hides plaintext;
+    - a MITM bit flip is detected;
+    - identity and non-canonical keys rejected;
+    - handshake timeout;
+    - an oversized length rejected before the payload is read;
+  - message codec: round trip, truncation and trailing bytes, limits before
+    allocation, random input;
+  - addresses: parsing, groups, routability, bad encodings;
+  - address manager:
+    - **10 000 attacker addresses from one /16 fill at most one bucket (64 slots)**;
+    - secret-dependent buckets;
+    - persistence, including garbage files;
+  - bans;
+  - token buckets;
+  - Dandelion++: stable routes per epoch; a diffuser fraction of ≈10 % over 2000
+    epochs; stem replacement; embargo mean;
+  - SOCKS5 against a mock proxy (onion sent as a domain name; refusal).
+- p2p multi-node tests over real localhost TCP (9):
+  - propagation along A–B–C;
+  - a fresh node syncs 150 blocks header-first;
+  - **a transaction stems** (it is in B's stempool, not in A's mempool), **then
+    fluffs** to D and is mined everywhere;
+  - partitions join and the heavier chain wins;
+  - **automatic discovery** of a third node through `Addr`;
+  - an invalid header disconnects the peer;
+  - malformed messages and a **700-ping flood** disconnect the peer;
+  - wrong-network and self connections are refused;
+  - **`GetTx` probing of the mempool gets no answer**.
+- chain header-first tests (4):
+  - headers without bodies leave the state untouched;
+  - out-of-order bodies connect once the gap closes;
+  - a heavier branch known only by headers, or with partial bodies, does not
+    reorganize;
+  - locator shape and `headers_after`;
+  - PoW jobs take their seeds from the batch across the first RandomX key change
+    (2200 blocks).
+
+**Smoke test with the release binaries and real RandomX (regtest):**
+- Node A with the miner; B peered to A; C started late, connected only to B.
+- B followed A block by block.
+- C synced 13 blocks header-first in **7 s**, then **discovered A through B's address
+  table and connected to it**.
+- All three had the same tip.
+- After a forced kill, B restarted with the same chain.
+- The address table (`peers.json`) was initially only written on a graceful shutdown.
+  **Found and fixed:** it is now saved within a minute of any change, and the fix was
+  verified with a forced kill.
+
+**Open items:**
+- **No peer authentication.** An active MITM can read or drop a connection
+  (spec §1, §12). A future version could add optional authentication of long-term
+  node keys.
+- Traffic sizes and timing are not padded.
+- The encrypted handshake starts with 32-byte Ristretto points. Unlike BIP 324's
+  ElligatorSwift, these are not uniformly random bytes, so a DPI system can guess that
+  a connection is BlackSilk.
+- **Initial sync speed** is bounded by RandomX light-mode verification (~0.45 s per
+  header, divided by the core count).
+- No compact blocks.
+- I2P is not supported.
+- Built-in seed nodes are empty until testnet launch.
+- Dandelion++ parameters are Monero's, not re-tuned for BlackSilk.
+- There is no peer-count metric or RPC beyond `/info.peers`.
+
+### Finding status after R1–R5
 
 | Findings | Status | Evidence |
 |---|---|---|
@@ -401,14 +499,14 @@ regtest:
 | P1–P4 (fake or duplicated RandomX) | **Closed:** one spec-exact implementation; the copies are deleted | R1 vectors, R4 miner test |
 | P5–P10 (miner/node PoW mismatch, timing checks, inverted targets, difficulty, key schedule) | **Closed:** the miner and node share `consensus` | R2 tests, R4 miner/e2e tests, smoke test |
 | B1–B5 (no PoW/context checks, unminable chain, rebuilt header, unchecked Merkle, broken reorg) | **Closed** | R2, R4 chain tests |
-| B7, B8 (stub P2P handler, broken framing) | **Closed by removal**; P2P is rebuilt in the next phase | — |
+| B7, B8 (stub P2P handler, broken framing) | **Closed:** replaced by the new P2P layer | R5 (35 p2p tests, smoke test) |
 | B6, B9 (unbounded `GetBlocks`, no-op CLI commands) | **Closed by removal**; the RPC bounds every request | R4 e2e `rpc_rejects_malformed_and_oversized_requests` |
 | S1–S4 (forgeable, unlinkable ring signatures; signatures over constants; no balance) | **Closed** | R3 (43 tx tests), R4 e2e |
 | S5 (fake PQ ring) | **Closed:** deleted, not advertised | spec §11.6, README |
 | S6, S8 (C/FFI PQ) | **Closed:** deleted | — |
 | S7 (unaudited PQ crates) | **Parked** in `research/`; not used by any shipped crate | — |
 | K1, K2 (shared seed, no stealth/ring) | **Closed** | R3 key/stealth tests, R4 wallet |
-| K3 (Tor inbound rejection) | **Closed by removal**; Tor/I2P are part of the P2P phase | — |
+| K3 (Tor inbound rejection) | **Closed:** SOCKS5/Tor outbound, proxy-only mode, onion addresses; inbound through the operator's hidden service. I2P is not yet supported. | R5 |
 | D1–D3 (remote-exec `build.rs`, moving git pins, stray files) | **Closed** | R4 repository changes |
 
 ## Decisions needed before remediation
