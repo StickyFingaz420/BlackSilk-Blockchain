@@ -15,6 +15,10 @@ Remaining before a public testnet:
 - an external cryptographic review of the transaction layer and the Janus anchor
   (required before mainnet).
 
+Smart contracts are specified in `docs/contracts.md`: a draft for approval, **not
+implemented and not part of consensus**. They will activate later, at a fork height or
+with a testnet reset.
+
 This file tracks the audit defined in `Claude.md`.
 Each finding lists where it is, what goes wrong, and its severity. Findings stay
 open until a fix lands **and** a test demonstrates it.
