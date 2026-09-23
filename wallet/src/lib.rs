@@ -1,36 +1,35 @@
-pub mod cli;
+//! BlackSilk wallet library: encrypted wallet file, scanning via the node RPC with
+//! reorg handling, coin selection, decoy selection and transfers.
 
-mod pqsignatures_integration;
-pub mod pqkey;
+#![forbid(unsafe_code)]
 
-#[cfg(test)]
-mod tests {
-    use super::pqsignatures_integration;
-    use crate::pqkey::PQKeypair;
-    use crate::pqsignatures_integration::{sign_tx_dilithium2, verify_tx_dilithium2, sign_tx_falcon512, verify_tx_falcon512};
+pub mod file;
+pub mod node;
+pub mod wallet;
 
-    #[test]
-    fn test_dilithium2_integration() {
-        pqsignatures_integration::dilithium2_demo();
-    }
-    #[test]
-    fn test_falcon512_integration() {
-        pqsignatures_integration::falcon512_demo();
-    }
+pub use wallet::{Balance, Wallet, WalletError};
 
-    #[test]
-    fn test_pq_sign_and_verify_dilithium2() {
-        let pqkey = PQKeypair::generate();
-        let tx = b"real transaction bytes";
-        let sig = sign_tx_dilithium2(tx, &pqkey);
-        assert!(verify_tx_dilithium2(tx, &sig, &pqkey));
-    }
+use file::{FileError, KdfParams};
+use std::path::Path;
 
-    #[test]
-    fn test_pq_sign_and_verify_falcon512() {
-        let pqkey = PQKeypair::generate();
-        let tx = b"real transaction bytes";
-        let sig = sign_tx_falcon512(tx, &pqkey);
-        assert!(verify_tx_falcon512(tx, &sig, &pqkey));
-    }
+/// Loads and decrypts a wallet file.
+pub fn load(path: &Path, password: &[u8]) -> Result<Wallet, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut plain = file::decrypt(&bytes, password).map_err(|e| e.to_string())?;
+    let w = Wallet::from_json(&plain).map_err(|e| e.to_string());
+    zeroize::Zeroize::zeroize(&mut plain);
+    w
+}
+
+/// Encrypts and atomically writes a wallet file.
+pub fn save(
+    wallet: &Wallet,
+    path: &Path,
+    password: &[u8],
+    kdf: KdfParams,
+) -> Result<(), FileError> {
+    let mut plain = wallet.to_json();
+    let enc = file::encrypt(&plain, password, kdf);
+    zeroize::Zeroize::zeroize(&mut plain);
+    file::write_atomic(path, &enc?)
 }

@@ -15,8 +15,8 @@ Scope:
 
 Out of scope, and specified separately:
 - header chain: [`consensus.md`](consensus.md)
-- emission schedule, block reward, block weight limit, fee constants: block/economics spec, pending
-- wallet seed format, address string encoding: wallet spec, pending
+- emission schedule, block reward, block weight limit, fee constants: [`blocks.md`](blocks.md)
+- wallet seed words, address strings, wallet file: [`blocks.md`](blocks.md) §10
 - transaction relay (Dandelion++, Tor/I2P): P2P spec, pending
 
 Design basis: the Monero RingCT stack as deployed since 2022 (CLSAG, Bulletproofs+,
@@ -941,14 +941,12 @@ Each part in bytes:
   review.
 - **Decoy selection** (wallet policy, `tx/src/decoy.rs`) uses Monero's gamma parameters,
   which were fitted to Monero's spend-age data. BlackSilk has no spend data of its own yet.
-- **Economics constants are provisional in code:** `PROVISIONAL_FEE_PER_WEIGHT = 20` and
-  `PROVISIONAL_MAX_BLOCK_WEIGHT = 600 000` in `tx/src/params.rs`.
+- **Economics constants** are fixed for v1 in [`blocks.md`](blocks.md) §2 and §5:
+  `FEE_PER_WEIGHT = 20` and `MAX_BLOCK_WEIGHT = 600 000`. A dynamic block weight is
+  future work.
 - **Ring-signature anonymity is statistical** (§11.3, §11.7).
 - **Not post-quantum** (§11.6).
-- **Economics constants are not fixed yet:** `block_reward`, `FEE_PER_WEIGHT`, and the
-  block weight limit (with a dynamic limit later).
-- **Genesis coinbase:** the genesis block needs a coinbase in this format, which finalizes
-  the provisional genesis headers of consensus.md §1.
+- **Genesis** has an empty body and no coinbase ([`blocks.md`](blocks.md) §3).
 
 ## 16. Test plan (acceptance criteria for the implementation)
 

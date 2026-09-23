@@ -126,6 +126,16 @@ impl<'a> Reader<'a> {
         unreachable!("the 10th byte either ends the varint or is rejected")
     }
 
+    /// Advances past `n` bytes (used when an embedded object was decoded separately).
+    pub fn skip(&mut self, n: usize) -> Result<(), DecodeError> {
+        let end = self.pos.checked_add(n).ok_or(DecodeError::UnexpectedEnd)?;
+        if end > self.data.len() {
+            return Err(DecodeError::UnexpectedEnd);
+        }
+        self.pos = end;
+        Ok(())
+    }
+
     pub fn point(&mut self) -> Result<Point, DecodeError> {
         Point::decode(&self.array::<32>()?).ok_or(DecodeError::InvalidPoint)
     }

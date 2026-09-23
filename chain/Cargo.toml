@@ -1,0 +1,21 @@
+[package]
+name = "blacksilk-chain"
+version = "0.1.0"
+edition = "2021"
+description = "BlackSilk blocks, emission, chain manager (header chain + transaction state + reorgs), mempool and block storage"
+
+[lib]
+name = "blacksilk_chain"
+
+[dependencies]
+blacksilk-consensus = { path = "../consensus" }
+blacksilk-crypto = { path = "../crypto" }
+blacksilk-tx = { path = "../tx" }
+rand_core = { version = "0.6", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
+bs58 = "0.5"
+crc32fast = "1.4"
+log = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

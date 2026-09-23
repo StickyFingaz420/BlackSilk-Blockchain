@@ -1,52 +1,34 @@
 [package]
-name = "node"
+name = "blacksilk-node"
 version = "0.1.0"
 edition = "2021"
+description = "BlackSilk node: chain manager, block storage and local RPC"
+
+[lib]
+name = "blacksilk_node"
 
 [[bin]]
 name = "blacksilk-node"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.4", features = ["derive"] }
-primitives = { path = "../primitives" }
-sha2 = "0.10"
+blacksilk-chain = { path = "../chain" }
+blacksilk-consensus = { path = "../consensus" }
+blacksilk-tx = { path = "../tx" }
+blacksilk-rpc = { path = "../rpc" }
+blacksilk-p2p = { path = "../p2p" }
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "query", "tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-lazy_static = "1.4"
-base64 = "0.21"
 hex = "0.4"
-chrono = "0.4"
-ed25519-dalek = "2.1"
-curve25519-dalek = { version = "4.1", default-features = false }
-rand = "0.8"
-rand_core = "0.6"
-tokio = { version = "1.37", features = ["full"] }
-tor_client = "0.0.11"
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
-rustls-pemfile = "2.0"
-once_cell = "1.19"
-aes = "0.8"
-aes-gcm = { version = "0.10", features = ["std"] }
-argon2 = "0.5"
-blake2 = "0.10"
-digest = "0.10"
-rayon = "1.7"
-libc = "0.2"
-colored = "2.0"
-torut = "0.2.1"
-wasmer = "3.1.1"
-wasmer-middlewares = "3.1.1"
-i2p = { path = "../i2p" }
-bincode = "1.3"
-num-bigint = "0.4"
-num_cpus = "1.17"
+clap = { version = "4.5", features = ["derive"] }
 log = "0.4"
-core_affinity = "0.8"
-zeroize = "1.6"
-memmap2 = "0.7"
-pqcrypto_native = { path = "../pqcrypto_native" }
-pqsignatures = { path = "../pqsignatures" }
-ml-dsa-44 = { path = "../ml-dsa-44" }
-bulletproofs = "5.0.0"
-merlin = "3.0.0"
+env_logger = { version = "0.8", default-features = false, features = ["humantime"] }
+getrandom = "0.2"
+fs2 = "0.4"
+dirs = "5"
+
+[dev-dependencies]
+blacksilk-crypto = { path = "../crypto" }
+rand_chacha = { version = "0.3", default-features = false }
+tempfile = "3"

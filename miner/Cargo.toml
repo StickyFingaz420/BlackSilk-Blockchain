@@ -2,36 +2,27 @@
 name = "blacksilk-miner"
 version = "0.1.0"
 edition = "2021"
+description = "BlackSilk RandomX miner (uses the shared consensus and RandomX crates)"
 
-authors = ["BlackSilk Contributors"]
-description = "Standalone miner for BlackSilk blockchain with Pure Rust RandomX"
+[lib]
+name = "blacksilk_miner"
+
+[[bin]]
+name = "blacksilk-miner"
+path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.4", features = ["derive"] }
-tokio = { version = "1.32", features = ["full"] }
-reqwest = { version = "0.11", features = ["json", "blocking"], default-features = false }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-crossbeam-channel = "0.5"
+blacksilk-randomx = { path = "../randomx" }
+blacksilk-consensus = { path = "../consensus" }
+blacksilk-crypto = { path = "../crypto" }
+blacksilk-tx = { path = "../tx" }
+blacksilk-chain = { path = "../chain" }
+blacksilk-rpc = { path = "../rpc" }
+rand_core = { version = "0.6", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
 hex = "0.4"
-num_cpus = "1.16"
-rand = "0.8.5"
-rayon = "1.7"
-ctrlc = "3.4"
-colored = "2.0"
-sha2 = "0.10"
-aes = "0.8"
-argon2 = "0.5"
-blake2 = "0.10"
-digest = "0.10"
-getrandom = "0.2"
-primitives = { path = "../primitives" }
-num-bigint = "0.4"
-core_affinity = "0.8"
-zeroize = "1.6"
-memmap2 = "0.7"
+clap = { version = "4.5", features = ["derive"] }
 log = "0.4"
-libc = "0.2"
-
-[target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["libloaderapi", "minwindef", "memoryapi", "handleapi", "winnt"] }
+env_logger = { version = "0.8", default-features = false, features = ["humantime"] }
+getrandom = "0.2"
+zeroize = "1.8"

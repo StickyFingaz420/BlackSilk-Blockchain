@@ -182,6 +182,11 @@ impl HeaderChain {
         self.main.get(height as usize).copied()
     }
 
+    /// Cumulative work of the chain ending at `id` (genesis included).
+    pub fn work(&self, id: &Hash) -> Option<u128> {
+        self.entries.get(id).map(|e| e.cumulative)
+    }
+
     pub fn is_on_main(&self, id: &Hash) -> bool {
         self.entries
             .get(id)

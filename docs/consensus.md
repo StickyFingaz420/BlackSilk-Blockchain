@@ -27,9 +27,11 @@ All integers are unsigned and little-endian unless stated otherwise.
 | RandomX epoch `E` | 2048 | 2048 | 2048 |
 | RandomX lag `L` | 64 | 64 | 64 |
 
-The genesis header of each network is a constant in `params.rs`. **Genesis
-headers are provisional** until the transaction format (and so the genesis
-coinbase and `tx_root`) is final. They will change once before launch.
+The genesis header of each network is a constant in `params.rs`.
+- The genesis body is **empty**: no coinbase, no premine, `tx_root` = 32 zero bytes
+  (blocks.md §3). This is final.
+- The **genesis timestamps are provisional**. The testnet and mainnet genesis headers
+  will be fixed at their launch dates.
 
 ## 2. Block header
 
@@ -196,6 +198,6 @@ the CVE-2012-2459 class of duplicate-transaction malleability.
 - The header-level PoW check costs about 0.45 s per header (light mode). Peers that
   send headers with invalid PoW must be penalized by the network layer to limit this
   DoS vector. Faster light-mode hashing is tracked in `AUDIT.md`.
-- Genesis headers are provisional (§1).
-- Emission, coinbase maturity, block size and all transaction rules are outside this
-  document.
+- Genesis timestamps are provisional until launch (§1).
+- Emission, block format and block limits: [`blocks.md`](blocks.md). Transaction
+  rules and coinbase maturity: [`transactions.md`](transactions.md).

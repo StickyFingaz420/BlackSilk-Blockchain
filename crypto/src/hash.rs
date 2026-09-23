@@ -47,6 +47,9 @@ pub mod tags {
     pub const TX_SIG_MESSAGE: &str = "tx/sig-message";
     pub const NONCE: &str = "nonce";
     pub const NONCE_STREAM: &str = "nonce/stream";
+    pub const ADDRESS_CHECKSUM: &str = "address/checksum";
+    pub const P2P_SESSION: &str = "p2p/session";
+    pub const P2P_ADDRMAN: &str = "p2p/addrman";
 
     /// Every tag, for the distinctness test.
     pub const ALL: &[&str] = &[
@@ -81,6 +84,9 @@ pub mod tags {
         TX_SIG_MESSAGE,
         NONCE,
         NONCE_STREAM,
+        ADDRESS_CHECKSUM,
+        P2P_SESSION,
+        P2P_ADDRMAN,
     ];
 }
 

@@ -24,11 +24,10 @@ pub const SPENDABLE_AGE: u64 = 10;
 /// Minimum age in blocks of a coinbase output used as a ring member.
 pub const COINBASE_MATURITY: u64 = 60;
 
-/// Fee per weight unit (atomic units). **Provisional** until the economics spec
-/// fixes it (spec §15).
-pub const PROVISIONAL_FEE_PER_WEIGHT: u64 = 20;
-/// Block weight limit. **Provisional** (spec §15); a dynamic limit comes later.
-pub const PROVISIONAL_MAX_BLOCK_WEIGHT: u64 = 600_000;
+/// Fee per weight unit in atomic units (v1 value, docs/blocks.md §5).
+pub const FEE_PER_WEIGHT: u64 = 20;
+/// Block weight limit (v1 fixed value, docs/blocks.md §5); a dynamic limit is future work.
+pub const MAX_BLOCK_WEIGHT: u64 = 600_000;
 
 /// Per-network parameters the transaction rules depend on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,8 +42,8 @@ impl TxRules {
     pub fn for_chain(params: &ChainParams) -> Self {
         Self {
             network_id: params.network_id,
-            fee_per_weight: PROVISIONAL_FEE_PER_WEIGHT,
-            max_block_weight: PROVISIONAL_MAX_BLOCK_WEIGHT,
+            fee_per_weight: FEE_PER_WEIGHT,
+            max_block_weight: MAX_BLOCK_WEIGHT,
         }
     }
 
