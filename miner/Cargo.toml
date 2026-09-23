@@ -1,0 +1,28 @@
+[package]
+name = "blacksilk-miner"
+version = "0.1.0"
+edition = "2021"
+description = "BlackSilk RandomX miner (uses the shared consensus and RandomX crates)"
+
+[lib]
+name = "blacksilk_miner"
+
+[[bin]]
+name = "blacksilk-miner"
+path = "src/main.rs"
+
+[dependencies]
+blacksilk-randomx = { path = "../randomx" }
+blacksilk-consensus = { path = "../consensus" }
+blacksilk-crypto = { path = "../crypto" }
+blacksilk-tx = { path = "../tx" }
+blacksilk-chain = { path = "../chain" }
+blacksilk-rpc = { path = "../rpc" }
+rand_core = { version = "0.6", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
+hex = "0.4"
+clap = { version = "4.5", features = ["derive"] }
+log = "0.4"
+env_logger = { version = "0.8", default-features = false, features = ["humantime"] }
+getrandom = "0.2"
+zeroize = "1.8"

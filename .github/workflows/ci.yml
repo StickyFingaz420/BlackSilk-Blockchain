@@ -2,26 +2,25 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main, rebuild/core]
   pull_request:
-    branches: [ main ]
 
 jobs:
-  build-and-test:
+  test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          override: true
-      - name: Check for NIST KAT files
+          components: clippy, rustfmt
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: No unsafe code in project crates
         run: |
-          test -f kats/ML-DSA-keyGen-FIPS204.json
-          test -f kats/ML-DSA-sigGen-FIPS204.json
-          test -f kats/ML-DSA-sigVer-FIPS204.json
-      - name: Build workspace
-        run: cargo build --workspace --all-features
-      - name: Run all tests (including ML-DSA-44 KAT)
-        run: cargo test --workspace --all-features
+          for c in randomx consensus crypto tx chain rpc node miner wallet; do
+            grep -rq 'forbid(unsafe_code)' "$c/src" || { echo "$c lacks forbid(unsafe_code)"; exit 1; }
+          done

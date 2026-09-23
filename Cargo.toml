@@ -1,71 +1,25 @@
-[patch.crates-io]
-iced = { git = "https://github.com/iced-rs/iced", branch = "master" }
-iced_renderer = { git = "https://github.com/iced-rs/iced", branch = "master" }
-iced_core = { git = "https://github.com/iced-rs/iced", branch = "master" }
-iced_futures = { git = "https://github.com/iced-rs/iced", branch = "master" }
-iced_graphics = { git = "https://github.com/iced-rs/iced", branch = "master" }
-iced_runtime = { git = "https://github.com/iced-rs/iced", branch = "master" }
-iced_winit = { git = "https://github.com/iced-rs/iced", branch = "master" }
-iced_tiny_skia = { git = "https://github.com/iced-rs/iced", branch = "master" }
-iced_program = { git = "https://github.com/iced-rs/iced", branch = "master" }
-iced_debug = { git = "https://github.com/iced-rs/iced", branch = "master" }
-iced_aw = { git = "https://github.com/iced-rs/iced_aw", branch = "main" }
-
 [workspace]
+resolver = "2"
 members = [
-    "wallet",
-    "node",
-    "marketplace",
-    "primitives",
-    "miner",
-    "web-wallet",
-    "testnet-faucet",
-    "smart-contracts/escrow_contract",
-    "smart-contracts/marketplace_contract",
-    "smart-contracts/randomx",
-    "randomx", # blacksilk-randomx: the single RandomX implementation for node and miner
-    "consensus", # blacksilk-consensus: header chain rules shared by node and miner
-    "crypto", # blacksilk-crypto: transaction cryptography (CLSAG, BP+, stealth, Janus anchor)
-    "tx", # blacksilk-tx: transaction format, building, validation
-    "pqcrypto_native",
-    "scripts", # Added scripts for Rust comparison tool
-    "pqsignatures",
-    "ml-dsa-44", # Only keep ml-dsa-44, remove ml-dsa44-standalone
-    "gui-wallet"
+    "randomx",   # blacksilk-randomx: the single RandomX implementation
+    "consensus", # blacksilk-consensus: header-chain rules
+    "crypto",    # blacksilk-crypto: CLSAG, Bulletproofs+, stealth outputs, Janus anchor
+    "tx",        # blacksilk-tx: transaction format, building, validation
+    "chain",     # blacksilk-chain: blocks, emission, chain manager, mempool, storage
+    "rpc",       # blacksilk-rpc: node RPC types and client
+    "node",      # blacksilk-node: the node binary (RPC)
+    "miner",     # blacksilk-miner: RandomX miner
+    "wallet",    # blacksilk-wallet: CLI wallet
 ]
-
-[package]
-name = "BlackSilk"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-node = { path = "node" }
-primitives = { path = "primitives" }
-ml-dsa-44 = { path = "ml-dsa-44" }
-hex = "0.4"
-sha3 = "0.10"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-rand = "0.9.1"
-# Uncomment if you want to use Criterion for benchmarking
-# criterion = "0.3"
-
-[build-dependencies]
-cc = "1.0"
-reqwest = { version = "0.11", features = ["blocking"] }
-
-[dev-dependencies]
-pqcrypto_native = { path = "pqcrypto_native" }
-ml-dsa-44 = { path = "ml-dsa-44" } # Only use the new ml-dsa-44 FFI-based library
-pqsignatures = { path = "pqsignatures" }
+# Pre-rebuild code kept for reference only (does not build; see legacy/README.md),
+# and the post-quantum research track.
+exclude = ["legacy", "research"]
 
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"
-overflow-checks = false
 debug-assertions = false
 strip = true
 
@@ -85,11 +39,6 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.blacksilk-tx]
 opt-level = 3
-
-# Ultra-aggressive CPU optimizations for mining
-[profile.release.package."blacksilk-miner"]
+# Wallet file key derivation (Argon2id) in tests.
+[profile.dev.package.argon2]
 opt-level = 3
-overflow-checks = false
-
-[features]
-debug_kat = []
