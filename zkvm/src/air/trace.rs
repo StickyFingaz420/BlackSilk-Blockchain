@@ -9,7 +9,9 @@ use super::byte::ByteCounter;
 use super::memory::{self, InitRow};
 use super::program::{class, f, fields};
 use super::util::{alu_op, bytes, matrix, REG_BASE};
-use super::{alu_add, alu_bit, alu_lt, alu_mul, alu_shift, cpu, program, Table, MIN_HEIGHT};
+use super::{
+    alu_add, alu_bit, alu_lt, alu_mul, alu_shift, cpu, poseidon, program, Table, MIN_HEIGHT,
+};
 use crate::exec::{image_words, Execution};
 use crate::isa::Op;
 use crate::program::Program;
@@ -20,7 +22,9 @@ use p3_matrix::dense::RowMajorMatrix;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-/// The public part of a BVM-1 statement.
+/// The public part of a BVM-1 statement: the main execution (id 0), any
+/// further executions proven in the same batch (ids 1, 2, …; zkvm.md §6.5),
+/// and the binding shared by all of them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Statement {
     pub program: Arc<Program>,
@@ -28,6 +32,63 @@ pub struct Statement {
     pub output: Vec<u32>,
     /// The caller's transaction binding (zk.md §5.2).
     pub binding: [u8; 32],
+    /// Further executions of the same proof.
+    pub others: Vec<Part>,
+}
+
+/// One further execution of a multi-execution statement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Part {
+    pub program: Arc<Program>,
+    pub exit_code: u32,
+    pub output: Vec<u32>,
+}
+
+/// Most executions one proof may cover (the kernel and four functions,
+/// zk.md §5.1).
+pub const MAX_EXECUTIONS: usize = 5;
+
+/// Tables per extra execution: `PROGRAM, IMAGE, MEM_INIT, CPU, OUTPUT`.
+pub const TABLES_PER_EXTRA: usize = 5;
+/// Tables of a single-execution proof.
+pub const BASE_TABLES: usize = 12;
+
+impl Statement {
+    /// A single-execution statement.
+    pub fn single(
+        program: Arc<Program>,
+        exit_code: u32,
+        output: Vec<u32>,
+        binding: [u8; 32],
+    ) -> Self {
+        Statement {
+            program,
+            exit_code,
+            output,
+            binding,
+            others: Vec::new(),
+        }
+    }
+
+    /// Every execution, main first: `(program, exit code, output)`.
+    pub fn parts(&self) -> Vec<(&Arc<Program>, u32, &Vec<u32>)> {
+        let mut v = vec![(&self.program, self.exit_code, &self.output)];
+        v.extend(
+            self.others
+                .iter()
+                .map(|p| (&p.program, p.exit_code, &p.output)),
+        );
+        v
+    }
+
+    /// Index of execution `e`'s CPU table in [`tables`].
+    pub fn cpu_table(e: usize) -> usize {
+        if e == 0 {
+            4
+        } else {
+            BASE_TABLES + TABLES_PER_EXTRA * (e - 1) + 3
+        }
+    }
 }
 
 /// Reference result of an ALU operation (the ALU tables prove exactly this).
@@ -55,36 +116,60 @@ pub fn image(program: &Program) -> Vec<(u32, u32)> {
 
 /// The tables of a statement, in proof order. Built by prover and verifier
 /// alike from public data only.
+///
+/// Execution 0 uses the single-execution layout; each further execution `e`
+/// appends its own `PROGRAM, IMAGE, MEM_INIT, CPU, OUTPUT` tables. The byte,
+/// ALU and Poseidon2 tables are shared.
+///
+/// # Panics
+/// If the statement has more than [`MAX_EXECUTIONS`] executions.
 pub fn tables(st: &Statement) -> Vec<Table> {
-    vec![
+    assert!(st.others.len() < MAX_EXECUTIONS, "too many executions");
+    let mut v = vec![
         Table::Byte,
-        Table::Program(st.program.clone()),
-        Table::Image(Arc::new(image(&st.program))),
-        Table::MemInit,
-        Table::Cpu,
+        Table::Program(st.program.clone(), 0),
+        Table::Image(Arc::new(image(&st.program)), 0),
+        Table::MemInit(0),
+        Table::Cpu(0),
         Table::AluAdd,
         Table::AluBit,
         Table::AluLt,
         Table::AluShift,
         Table::AluMul,
-        Table::Output(Arc::new(st.output.clone())),
-    ]
+        Table::Output(Arc::new(st.output.clone()), 0),
+        Table::Poseidon2,
+    ];
+    for (i, p) in st.others.iter().enumerate() {
+        let e = i as u32 + 1;
+        v.extend([
+            Table::Program(p.program.clone(), e),
+            Table::Image(Arc::new(image(&p.program)), e),
+            Table::MemInit(e),
+            Table::Cpu(e),
+            Table::Output(Arc::new(p.output.clone()), e),
+        ]);
+    }
+    v
 }
 
 /// Public values per table (only the CPU has any).
 pub fn public_values(st: &Statement) -> Vec<Vec<Val>> {
-    let mut cpu_pv = vec![Val::from_u32(st.program.entry)];
-    cpu_pv.extend(bytes(st.program.code_end()));
-    cpu_pv.extend(bytes(st.exit_code));
-    cpu_pv.push(Val::from_u32(st.output.len() as u32));
-    for chunk in st.binding.chunks(2) {
-        cpu_pv.push(Val::from_u32(
-            u16::from_le_bytes([chunk[0], chunk[1]]) as u32
-        ));
+    let parts = st.parts();
+    let mut out = vec![vec![]; BASE_TABLES + TABLES_PER_EXTRA * st.others.len()];
+    for (e, (program, exit_code, output)) in parts.into_iter().enumerate() {
+        let mut cpu_pv = vec![Val::from_u32(program.entry)];
+        cpu_pv.extend(bytes(program.code_end()));
+        cpu_pv.extend(bytes(exit_code));
+        cpu_pv.push(Val::from_u32(output.len() as u32));
+        // Every execution carries the same binding.
+        for chunk in st.binding.chunks(2) {
+            cpu_pv.push(Val::from_u32(
+                u16::from_le_bytes([chunk[0], chunk[1]]) as u32
+            ));
+        }
+        debug_assert_eq!(cpu_pv.len(), cpu::pv::COUNT);
+        out[Statement::cpu_table(e)] = cpu_pv;
     }
-    debug_assert_eq!(cpu_pv.len(), cpu::pv::COUNT);
-    let mut out = vec![vec![]; 11];
-    out[4] = cpu_pv;
     out
 }
 
@@ -115,11 +200,109 @@ fn diff(ts: u32, prev_ts: u32, counter: &mut ByteCounter) -> [Val; 3] {
     [b[0], b[1], b[2]].map(|x| Val::from_u32(x as u32))
 }
 
-/// Builds all traces for an execution of `st.program`.
+/// Builds all traces for a single-execution statement.
 pub fn build(st: &Statement, exec: &Execution) -> Vec<RowMajorMatrix<Val>> {
-    let prog = &st.program;
-    assert_eq!(exec.exit_code, st.exit_code);
-    assert_eq!(exec.output, st.output);
+    build_multi(st, &[exec])
+}
+
+/// State shared by all executions of a proof: byte-table counts, ALU
+/// requests and Poseidon2 calls.
+struct Shared {
+    counter: ByteCounter,
+    alu: BTreeMap<&'static str, Vec<(u32, u32, u32)>>,
+    p2_calls: Vec<poseidon::Call>,
+}
+
+impl Shared {
+    fn push_alu(&mut self, op: u32, a: u32, b: u32) {
+        let table = match op {
+            alu_op::ADD | alu_op::SUB => "add",
+            alu_op::XOR | alu_op::OR | alu_op::AND => "bit",
+            alu_op::SLT | alu_op::SLTU | alu_op::EQ => "lt",
+            alu_op::SLL | alu_op::SRL | alu_op::SRA => "shift",
+            _ => "mul",
+        };
+        self.alu.entry(table).or_default().push((op, a, b));
+    }
+
+    fn take(&mut self, k: &str) -> Vec<(u32, u32, u32)> {
+        self.alu.remove(k).unwrap_or_default()
+    }
+}
+
+/// The traces of one execution's own tables.
+struct ExecTraces {
+    program: RowMajorMatrix<Val>,
+    image: RowMajorMatrix<Val>,
+    init: RowMajorMatrix<Val>,
+    cpu: RowMajorMatrix<Val>,
+    output: RowMajorMatrix<Val>,
+}
+
+fn dummy(len: usize) -> RowMajorMatrix<Val> {
+    RowMajorMatrix::new(vec![Val::ZERO; len.max(MIN_HEIGHT).next_power_of_two()], 1)
+}
+
+/// Builds all traces of a (possibly multi-execution) statement; `execs[e]`
+/// is the interpreter's witness of execution `e`.
+pub fn build_multi(st: &Statement, execs: &[&Execution]) -> Vec<RowMajorMatrix<Val>> {
+    let parts = st.parts();
+    assert_eq!(parts.len(), execs.len(), "one witness per execution");
+    let mut sh = Shared {
+        counter: ByteCounter::new(),
+        alu: BTreeMap::new(),
+        p2_calls: Vec::new(),
+    };
+    let mut per: Vec<ExecTraces> = parts
+        .into_iter()
+        .zip(execs)
+        .enumerate()
+        .map(|(e, ((program, exit_code, output), exec))| {
+            assert_eq!(exec.exit_code, exit_code);
+            assert_eq!(&exec.output, output);
+            exec_traces(e as u32, program, exec, &mut sh)
+        })
+        .collect();
+
+    let (add, bit, lt, shift, mut mul) = (
+        sh.take("add"),
+        sh.take("bit"),
+        sh.take("lt"),
+        sh.take("shift"),
+        sh.take("mul"),
+    );
+    let t_add = alu_add::trace(&add, &mut sh.counter, MIN_HEIGHT);
+    let t_bit = alu_bit::trace(&bit, &mut sh.counter, MIN_HEIGHT);
+    let t_lt = alu_lt::trace(&lt, &mut sh.counter, MIN_HEIGHT);
+    // Shifts delegate their products to ALU_MUL: build them first.
+    let t_shift = alu_shift::trace(&shift, &mut sh.counter, MIN_HEIGHT, &mut mul);
+    let t_mul = alu_mul::trace(&mul, &mut sh.counter, MIN_HEIGHT);
+    let t_p2 = poseidon::trace(&sh.p2_calls, &mut sh.counter, MIN_HEIGHT);
+    let rest = per.split_off(1);
+    let main = per.pop().expect("the main execution");
+    let mut out = vec![
+        sh.counter.trace(),
+        main.program,
+        main.image,
+        main.init,
+        main.cpu,
+        t_add,
+        t_bit,
+        t_lt,
+        t_shift,
+        t_mul,
+        main.output,
+        t_p2,
+    ];
+    for x in rest {
+        out.extend([x.program, x.image, x.init, x.cpu, x.output]);
+    }
+    out
+}
+
+/// Replays execution `e` against its witness and builds its own tables;
+/// records its ALU requests, byte checks and Poseidon2 calls in `sh`.
+fn exec_traces(e: u32, prog: &Program, exec: &Execution, sh: &mut Shared) -> ExecTraces {
     let img = image(prog);
     let img_map: HashMap<u32, u32> = img.iter().copied().collect();
     // Every key used starts from its image value or zero.
@@ -132,18 +315,6 @@ pub fn build(st: &Statement, exec: &Execution) -> Vec<RowMajorMatrix<Val>> {
         state.entry(key).or_insert((0, 0));
     }
     let mut replay = Replay { state };
-    let mut counter = ByteCounter::new();
-    let mut alu: BTreeMap<&'static str, Vec<(u32, u32, u32)>> = BTreeMap::new();
-    let mut push_alu = |op: u32, a: u32, b: u32| {
-        let table = match op {
-            alu_op::ADD | alu_op::SUB => "add",
-            alu_op::XOR | alu_op::OR | alu_op::AND => "bit",
-            alu_op::SLT | alu_op::SLTU | alu_op::EQ => "lt",
-            alu_op::SLL | alu_op::SRL | alu_op::SRA => "shift",
-            _ => "mul",
-        };
-        alu.entry(table).or_default().push((op, a, b));
-    };
     let mut counts = vec![0u32; prog.code.len()];
     let mut rows = Vec::with_capacity(exec.steps.len());
     let mut out_idx = 0u32;
@@ -174,28 +345,28 @@ pub fn build(st: &Statement, exec: &Execution) -> Vec<RowMajorMatrix<Val>> {
             assert_eq!(prev, val, "register x{idx} diverged at clk {clk}");
             r[col..col + 4].copy_from_slice(&bytes(val));
             r[t_col] = Val::from_u32(pts);
-            r[d_col..d_col + 3].copy_from_slice(&diff(ts(slot), pts, &mut counter));
+            r[d_col..d_col + 3].copy_from_slice(&diff(ts(slot), pts, &mut sh.counter));
         }
         let (a, b) = (s.rs1_val, s.rs2_val);
 
         // pc bytes.
         r[cpu::PB..cpu::PB + 4].copy_from_slice(&bytes(s.pc));
-        counter.word(s.pc);
-        counter.range_bits(s.pc >> 24, 4);
+        sh.counter.word(s.pc);
+        sh.counter.range_bits(s.pc >> 24, 4);
 
         // Addresses.
         let addr_use = is(class::LOAD) || is(class::STORE) || is(class::JALR);
         let mem = is(class::LOAD) || is(class::STORE);
         let addr = a.wrapping_add(imm);
         if addr_use {
-            push_alu(alu_op::ADD, a, imm);
+            sh.push_alu(alu_op::ADD, a, imm);
             r[cpu::S..cpu::S + 4].copy_from_slice(&bytes(addr));
-            counter.range_bits(addr >> 24, 4);
+            sh.counter.range_bits(addr >> 24, 4);
             let s0 = addr & 0xff;
             r[cpu::L0] = Val::from_u32(s0 & 1);
             r[cpu::L1] = Val::from_u32((s0 >> 1) & 1);
             r[cpu::H] = Val::from_u32(s0 >> 2);
-            counter.range_bits(s0 >> 2, 6);
+            sh.counter.range_bits(s0 >> 2, 6);
         }
         let off = addr & 3;
         let mut word_before = 0;
@@ -206,35 +377,35 @@ pub fn build(st: &Statement, exec: &Execution) -> Vec<RowMajorMatrix<Val>> {
             r[cpu::O + off as usize] = Val::ONE;
             let wk = addr / 4;
             r[cpu::WK] = Val::from_u32(wk);
-            push_alu(alu_op::SLTU, addr, 0x1000);
+            sh.push_alu(alu_op::SLTU, addr, 0x1000);
             let (prev, pts) = replay.access(wk, m.word_before, ts(2));
             assert_eq!(prev, m.word_before, "memory diverged at clk {clk}");
             r[cpu::M..cpu::M + 4].copy_from_slice(&bytes(m.word_before));
             r[cpu::TM] = Val::from_u32(pts);
-            r[cpu::DM..cpu::DM + 3].copy_from_slice(&diff(ts(2), pts, &mut counter));
+            r[cpu::DM..cpu::DM + 3].copy_from_slice(&diff(ts(2), pts, &mut sh.counter));
             if is(class::STORE) {
-                push_alu(alu_op::SLTU, addr, code_end);
+                sh.push_alu(alu_op::SLTU, addr, code_end);
                 replay.access(wk, m.word_after, ts(3));
                 r[cpu::N..cpu::N + 4].copy_from_slice(&bytes(m.word_after));
-                counter.word(m.word_after);
+                sh.counter.word(m.word_after);
             }
         }
 
         // The computed value.
         let alu_op_v = get(f::ALU_OP);
         let computed: Option<u32> = if is(class::ALU_RR) {
-            push_alu(alu_op_v, a, b);
+            sh.push_alu(alu_op_v, a, b);
             Some(alu_result(alu_op_v, a, b))
         } else if is(class::ALU_RI) {
-            push_alu(alu_op_v, a, imm);
+            sh.push_alu(alu_op_v, a, imm);
             Some(alu_result(alu_op_v, a, imm))
         } else if is(class::LUI) {
             Some(imm)
         } else if is(class::AUIPC) {
-            push_alu(alu_op::ADD, s.pc, imm);
+            sh.push_alu(alu_op::ADD, s.pc, imm);
             Some(s.pc.wrapping_add(imm))
         } else if is(class::JAL) || is(class::JALR) {
-            push_alu(alu_op::ADD, s.pc, 4);
+            sh.push_alu(alu_op::ADD, s.pc, 4);
             Some(s.pc.wrapping_add(4))
         } else if is(class::LOAD) {
             let v = word_before >> (8 * off);
@@ -254,7 +425,7 @@ pub fn build(st: &Statement, exec: &Execution) -> Vec<RowMajorMatrix<Val>> {
                 };
                 r[cpu::SGN] = Val::from_u32(sign_byte >> 7);
                 r[cpu::SR] = Val::from_u32(sign_byte & 127);
-                counter.range_bits(sign_byte & 127, 7);
+                sh.counter.range_bits(sign_byte & 127, 7);
             }
             Some(val)
         } else if let Some(Syscall::Read { value }) = s.syscall {
@@ -264,7 +435,7 @@ pub fn build(st: &Statement, exec: &Execution) -> Vec<RowMajorMatrix<Val>> {
         };
         if let Some(cv) = computed {
             r[cpu::C..cpu::C + 4].copy_from_slice(&bytes(cv));
-            counter.word(cv);
+            sh.counter.word(cv);
             if x.rd != 0 && x.op != Op::Ecall {
                 assert_eq!(cv, s.rd_val, "computed value diverged at clk {clk}");
             }
@@ -272,7 +443,7 @@ pub fn build(st: &Statement, exec: &Execution) -> Vec<RowMajorMatrix<Val>> {
 
         // Branches.
         if is(class::BRANCH) {
-            push_alu(alu_op_v, a, b);
+            sh.push_alu(alu_op_v, a, b);
             r[cpu::COND] = Val::from_u32(alu_result(alu_op_v, a, b));
         }
 
@@ -284,7 +455,7 @@ pub fn build(st: &Statement, exec: &Execution) -> Vec<RowMajorMatrix<Val>> {
             let (prev, pts) = replay.access(REG_BASE + rd, cv, ts(3));
             r[cpu::CP..cpu::CP + 4].copy_from_slice(&bytes(prev));
             r[cpu::TC] = Val::from_u32(pts);
-            r[cpu::DC..cpu::DC + 3].copy_from_slice(&diff(ts(3), pts, &mut counter));
+            r[cpu::DC..cpu::DC + 3].copy_from_slice(&diff(ts(3), pts, &mut sh.counter));
         }
 
         // Syscalls.
@@ -296,8 +467,38 @@ pub fn build(st: &Statement, exec: &Execution) -> Vec<RowMajorMatrix<Val>> {
                 r[cpu::SWR] = Val::ONE;
                 out_idx += 1;
             }
-            Some(Syscall::Poseidon2 { .. }) => {
-                panic!("the POSEIDON2 syscall is not yet provable (zkvm.md §6, ZK-3c)")
+            Some(Syscall::Poseidon2 { ptr }) => {
+                use p3_symmetric::Permutation;
+                r[cpu::SP2] = Val::ONE;
+                sh.push_alu(alu_op::SLTU, ptr, code_end);
+                sh.push_alu(alu_op::SLTU, ptr, 0x0fff_ffc1);
+                let ts2 = 4 * (clk + 1) + 2;
+                let mut input = [0u32; 16];
+                let mut prev_ts = [0u32; 16];
+                for k in 0..16u32 {
+                    let key = ptr / 4 + k;
+                    let (v, pts) = *replay
+                        .state
+                        .get(&key)
+                        .expect("buffer word starts in the image or at zero");
+                    replay.access(key, v, ts2);
+                    input[k as usize] = v;
+                    prev_ts[k as usize] = pts;
+                }
+                let mut state = input.map(Val::from_u32);
+                blacksilk_zk::config::permutation().permute_mut(&mut state);
+                let output = state.map(|x| x.as_canonical_u32());
+                for k in 0..16u32 {
+                    replay.access(ptr / 4 + k, output[k as usize], ts2 + 1);
+                }
+                sh.p2_calls.push(poseidon::Call {
+                    exec: e,
+                    clk,
+                    ptr,
+                    input,
+                    prev_ts,
+                    output,
+                });
             }
             None => {}
         }
@@ -318,37 +519,11 @@ pub fn build(st: &Statement, exec: &Execution) -> Vec<RowMajorMatrix<Val>> {
         .collect();
     init.sort_unstable_by_key(|x| x.key);
 
-    let take = |alu: &mut BTreeMap<&'static str, Vec<(u32, u32, u32)>>, k: &str| {
-        alu.remove(k).unwrap_or_default()
-    };
-    let (add, bit, lt, shift, mul) = (
-        take(&mut alu, "add"),
-        take(&mut alu, "bit"),
-        take(&mut alu, "lt"),
-        take(&mut alu, "shift"),
-        take(&mut alu, "mul"),
-    );
-    let t_init = memory::init_trace(&init, &mut counter, MIN_HEIGHT);
-    let t_add = alu_add::trace(&add, &mut counter, MIN_HEIGHT);
-    let t_bit = alu_bit::trace(&bit, &mut counter, MIN_HEIGHT);
-    let t_lt = alu_lt::trace(&lt, &mut counter, MIN_HEIGHT);
-    let t_shift = alu_shift::trace(&shift, &mut counter, MIN_HEIGHT);
-    let t_mul = alu_mul::trace(&mul, &mut counter, MIN_HEIGHT);
-    let t_cpu = matrix(rows, cpu::WIDTH, MIN_HEIGHT);
-    let dummy = |len: usize| {
-        RowMajorMatrix::new(vec![Val::ZERO; len.max(MIN_HEIGHT).next_power_of_two()], 1)
-    };
-    vec![
-        counter.trace(),
-        program::trace(prog, &counts, MIN_HEIGHT),
-        dummy(img.len()),
-        t_init,
-        t_cpu,
-        t_add,
-        t_bit,
-        t_lt,
-        t_shift,
-        t_mul,
-        dummy(st.output.len()),
-    ]
+    ExecTraces {
+        program: program::trace(prog, &counts, MIN_HEIGHT),
+        image: dummy(img.len()),
+        init: memory::init_trace(&init, &mut sh.counter, MIN_HEIGHT),
+        cpu: matrix(rows, cpu::WIDTH, MIN_HEIGHT),
+        output: dummy(out_idx as usize),
+    }
 }

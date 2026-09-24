@@ -73,6 +73,11 @@ pub mod tags {
     // Zero-knowledge layer (docs/zk.md).
     pub const ZK_PROVER_SEED: &str = "zk/prover-seed";
     pub const ZKVM_PROGRAM: &str = "zkvm/program";
+    // Private execution record delivery (docs/px.md §6).
+    pub const PX_DELIVERY_VIEW: &str = "px/delivery-view";
+    pub const PX_DELIVERY_KEM: &str = "px/delivery-kem";
+    pub const PX_VIEW_TAG: &str = "px/view-tag";
+    pub const PX_DELIVERY_KEY: &str = "px/delivery-key";
 
     /// Every tag, for the distinctness test.
     pub const ALL: &[&str] = &[
@@ -131,6 +136,10 @@ pub mod tags {
         WALLET_CONTRACT_MEMBER,
         ZK_PROVER_SEED,
         ZKVM_PROGRAM,
+        PX_DELIVERY_VIEW,
+        PX_DELIVERY_KEM,
+        PX_VIEW_TAG,
+        PX_DELIVERY_KEY,
     ];
 }
 

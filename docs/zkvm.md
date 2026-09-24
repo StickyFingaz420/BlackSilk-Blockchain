@@ -1,7 +1,9 @@
 # BVM-1: the BlackSilk zero-knowledge virtual machine
 
-Status: **specification v0.2; core constraint system implemented and tested** (AUDIT.md
-R8). The Poseidon2 syscall circuit is pending. Not consensus.
+Status: **specification v0.3; implemented and tested, including the Poseidon2 syscall
+circuit and multi-execution proofs** (AUDIT.md R8; internal security review
+`docs/reviews/zk-security-review.md`). Not consensus; not production-ready before
+independent review.
 This document is normative:
 - the reference interpreter (`zkvm/src/exec.rs`) and the constraint tables
   (`zkvm/src/air/`) implement exactly what it says;
@@ -171,87 +173,116 @@ in the 31-bit field.
 
 | Table | Kind | One row per | Purpose |
 |---|---|---|---|
-| `PROGRAM` | preprocessed | instruction | `(pc, decoded instruction)`. Its multiplicity column counts executions |
-| `CPU` | main | cycle | Fetch, decode lookup, register and memory accesses, next `pc`. Sends ALU, memory and syscall requests |
-| `ALU_ADD` | main | ADD/SUB/ADDI and address computations | Byte-wise addition with carries |
-| `ALU_BIT` | main | AND/OR/XOR (and immediates) | Byte-wise, via `BYTE` lookups |
-| `ALU_LT` | main | SLT/SLTU/branches | Unsigned or signed comparison by limb subtraction |
-| `ALU_SHIFT` | main | SLL/SRL/SRA | Bit decomposition of the shift amount; byte and bit shifting |
-| `ALU_MUL` | main | MUL/MULH/MULHSU/MULHU | 32×32→64-bit product with limb carries |
-| `MEMORY` | main | access | Consistency of reads and writes (§6.3) |
-| `MEM_INIT` | main | touched address | Initial value of each touched word (program image or 0), sorted |
-| `IMAGE` | preprocessed | image word | `(address, value)` of the program image |
-| `BYTE` | preprocessed | pair `(a, b) ∈ [0,256)²` | `a AND b`, `a OR b`, `a XOR b`; range checks of bytes |
-| `U16` | preprocessed | value in `[0, 2^16)` | 16-bit range checks |
-| `POSEIDON2` | main | permutation | The `POSEIDON2` syscall (the `p3-poseidon2-air` layout) |
-| `IO` | main | input or output word | Private input stream; public output digest |
+| `BYTE` | preprocessed (2^16 rows) | byte pair `(a, b)` | Range checks of byte pairs; `AND`, `OR`, `XOR` of bytes; free multiplicity column |
+| `PROGRAM` | preprocessed | instruction | `(pc, decoded fields)`; free multiplicity column (execution counts) |
+| `IMAGE` | preprocessed | image word | `(key, value)` of code, data and the 32 initial registers |
+| `MEM_INIT` | main | key used | Initial entry `(key, v_init, 0)` and final entry of every key; keys strictly increasing (§6.3) |
+| `CPU` | main | cycle | Fetch, register and memory accesses, next `pc`, syscalls; sends ALU, memory, output and syscall messages |
+| `ALU_ADD` | main | ADD/SUB request | Byte-wise addition with boolean carries |
+| `ALU_BIT` | main | AND/OR/XOR request | Byte-operation lookups |
+| `ALU_LT` | main | SLT/SLTU/EQ request | Signed or unsigned comparison; zero test with an inverse witness |
+| `ALU_SHIFT` | main | SLL/SRL/SRA request | Reduced to one multiplier request by `2^e`, with `2^e` proven as bytes |
+| `ALU_MUL` | main | MUL/MULH/MULHSU/MULHU request | 8×8-byte convolution with range-checked carries |
+| `OUTPUT` | preprocessed | claimed output word | `(index, value)` of the public output |
+| `POSEIDON2` | main | syscall | Plonky3's `Poseidon2Air` (standard constants) unchanged, plus memory access, canonical-encoding checks and the syscall binding |
+
+Words are held as 4 bytes. Registers are memory keys `REG_BASE + r`
+(`REG_BASE = 2^26`); memory word `w` has key `w` (`< 2^26`).
 
 ### 6.2 Buses
 
-| Bus | Kind | Senders → receivers |
+| Bus | Message | Providers → consumers |
 |---|---|---|
-| `program` | lookup | CPU → PROGRAM |
-| `alu` | lookup | CPU → ALU_* (tuple `(op, a, b, result)`) |
-| `memory` | permutation | CPU, POSEIDON2 → MEMORY; MEM_INIT produces and consumes |
-| `byte`, `u16` | lookup | all tables → BYTE, U16 |
-| `syscall` | lookup | CPU → POSEIDON2, IO |
+| `bvm/byte-range`, `bvm/byte-op` | `(x, y)`, `(op, a, b, a op b)` | BYTE → all tables |
+| `bvm/alu` | `(op, a[4], b[4], c[4])` | ALU tables → CPU, ALU_SHIFT |
+| `bvm/program` | `(exec, pc, fields…)` | PROGRAM → CPU |
+| `bvm/image` | `(exec, key, v[4])` | MEM_INIT → IMAGE |
+| `bvm/memory` | `(exec, key, v[4], ts)` | accesses and MEM_INIT, produce (+1) and consume (−1) |
+| `bvm/output` | `(exec, index, v[4])` | CPU → OUTPUT |
+| `bvm/syscall` | `(exec, clk, ptr[4])` | POSEIDON2 → CPU |
+
+**Counts:**
+- Providers whose message contents are witness cells have boolean counts.
+- Free multiplicities occur only on preprocessed providers (`BYTE`, `PROGRAM`).
+- The verifier enforces Plonky3's LogUp bound `Σ weight·height < p`; the largest
+  accepted statement reaches 63% of p (tested).
 
 ### 6.3 Memory argument (offline memory checking)
 
-Every access to address `a` at time `t` consumes the entry `(a, v_prev, t_prev)` and
-produces `(a, v, t)`:
+Every access to key `k` at time `t` consumes `(e, k, v_prev, t_prev)` and produces
+`(e, k, v, t)`, where:
 - `v = v_prev` for reads;
-- `t_prev < t` is enforced by a range check on `t − t_prev − 1`.
+- `t_prev < t` is enforced by a 3-byte range check on `t − t_prev − 1`.
 
-**Endpoints:**
-- `MEM_INIT` produces `(a, v_init, 0)` and consumes `(a, v_final, t_final)` for every
-  touched address.
-- Its rows are **strictly sorted by address** (range-checked positive differences), so
-  each address appears exactly once.
-- `v_init` must equal the `IMAGE` value for image addresses, and 0 for any other
-  address.
-- Registers use a separate address space (a tag column), with the same argument.
+**Endpoints:** `MEM_INIT` produces `(e, k, v_init, 0)` and consumes the final entry of
+every key used.
+- Its rows are strictly sorted by key, with range-checked positive differences below
+  2^27, so each key appears exactly once.
+- `v_init` equals the `IMAGE` value for image keys, and 0 for any other key.
 
-**Timestamps:** `t = 4·(clk + 1) + slot`, so every real access has `t ≥ 4` and
-`t = 0` means "initial value". The slots are:
-- 0: first register read (`rs1`; for `ECALL`, `a7`);
-- 1: second register read (`rs2`; for `ECALL`, `a0`);
-- 2: memory read;
-- 3: register write, or memory write.
+**Timestamps:** `t = 4·(clk + 1) + slot`, so `t = 0` means "initial value". The slots:
 
-**Every cycle reads exactly two registers.** With `clk < 2^21`, every timestamp is
-`< 2^24`. The check `t − t_prev − 1 ∈ [0, 2^24)` therefore needs three byte-range
-lookups, and cannot be satisfied by a wrapped (negative) difference: a negative
-difference is a field element above `p − 2^24`, far outside `[0, 2^24)`.
+| Slot | Access |
+|---|---|
+| 0 | `rs1` read (for `ECALL`: `a7`) |
+| 1 | `rs2` read (for `ECALL`: `a0`) |
+| 2 | memory read; `POSEIDON2` buffer read |
+| 3 | register write, memory write, `POSEIDON2` buffer write |
 
-**Why this is sound:** with every entry produced before it is consumed, the multiset
-equality of the permutation bus forces each read to return the last value written.
-This is the argument of Blum et al. (1991), as used by Jolt and SP1.
+**Why this is sound:**
+- Timestamps increase per key, and the CPU table has at most `MAX_CYCLES = 2^21` rows,
+  so every timestamp is `< 2^24`. The difference check is therefore exact.
+- A balanced bus then forces each read to return the last value written (Blum et al.,
+  1991).
+- The full argument is in the security review, §3.2.
 
-**Implementation risk:** this argument is the most delicate part of the VM. It is
-reviewed separately (R8 review document).
-
-### 6.4 Public values
+### 6.4 Public values (per execution's `CPU` table)
 
 ```
-program_id    8 field elements (the 32-byte program_id as 8 × 4-byte limbs)
-output_digest 8 field elements: Poseidon2 sponge over the output words
-exit_code     1 field element (u32 as 2 × u16)
-binding       8 field elements: the caller's h_tx (zk.md §5.2), absorbed but unconstrained
+entry pc        1 element
+CODE_END        4 bytes
+exit code       4 bytes
+output count    1 element
+binding         16 × 16-bit limbs of the caller's 32-byte h_tx (zk.md §5.2)
 ```
 
-The binding values are in the Fiat–Shamir transcript, so a proof is valid for exactly
-one transaction.
+The program (as the preprocessed `PROGRAM` and `IMAGE` tables) and the claimed outputs
+(the preprocessed `OUTPUT` table) are rebuilt by the verifier from the statement. All
+public values enter the Fiat–Shamir transcript, so a proof is valid for exactly one
+statement and one binding.
+
+### 6.5 Several executions in one proof
+
+A statement may cover up to `MAX_EXECUTIONS = 5` executions: one main execution (id 0)
+and further ones (ids 1…). PX uses one kernel and up to 4 functions.
+- **Own tables per execution:** `PROGRAM`, `IMAGE`, `MEM_INIT`, `CPU` and `OUTPUT`,
+  each with the execution id as a constant.
+- **Shared tables:** `BYTE`, the ALU tables and `POSEIDON2`.
+- **Tags:** every message on the memory, program, image, output and syscall buses
+  begins with the id. So no execution can read another's memory, fetch its code or emit
+  its outputs.
+- **Shared Poseidon2 table:** each `POSEIDON2` row carries its caller's id in a column
+  bound by the syscall lookup.
+- The byte and ALU buses are pure functions of their operands and need no tag.
+- **Binding:** every execution carries the same binding.
+- **Verification:** the verifier rebuilds every execution's tables from the statement
+  (program, exit code, outputs). Dropping, reordering or changing an execution fails.
 
 ---
 
 ## 7. Proof parameters
 
-As zk.md §9.3 (parameter set `BS-ZK-1`):
-- BabyBear with a degree-5 extension;
-- hiding FRI;
-- ≥ 100 bits in the Johnson-bound regime, with the unique-decoding bits also reported;
-- table heights padded to powers of two, `≤ 2^22`.
+As zk.md §9.3, parameter set **BS-ZK-2**:
+- BabyBear with a degree-8 extension;
+- hiding FRI: blow-up 8, 108 queries, 16 grinding bits;
+- over the whole shape envelope, ≥ 123 bits in the Johnson regime and ≥ 105 bits in
+  the unique-decoding regime.
+
+**Height limits:**
+- `BYTE`: 2^16;
+- `CPU`: 2^21 (`MAX_CYCLES`, so the circuit accepts exactly the executions the
+  interpreter allows);
+- every other table: 2^22.
 
 ---
 
@@ -263,12 +294,14 @@ As zk.md §9.3 (parameter set `BS-ZK-1`):
 | **Padded height of each table** (powers of two): roughly how many cycles, memory accesses and Poseidon2 calls the run used | Exact counts within a power-of-two bucket |
 
 **The padded heights leak coarse timing.** A branch on a secret that changes the cycle
-count by a factor of two changes a public height.
-- The SDK provides `pad_to(cycles)`, and contract functions **must** pad to a
-  per-function constant (their declared bucket).
+count across a power of two changes a public height.
+- **Programs must do constant work** in their secrets. The PX kernel does: tests check
+  identical table heights across dummy, real, bridge, user-record and contract-record
+  witnesses (docs/px.md §4.4).
+- Contract functions must follow the same rule for their own secrets.
+- A padding helper in the SDK (spin to a declared cycle bucket) is **not implemented
+  yet**; until it is, function authors must design for constant work.
 - `zk.md` §12.2 lists this under metadata.
-- Tests check that two executions with different secrets but the same bucket produce
-  identically shaped proofs.
 
 **Zero-knowledge:**
 - The hiding FRI commitment scheme needs fresh CSPRNG randomness **for every proof**.
@@ -281,8 +314,8 @@ count by a factor of two changes a public height.
 ## 9. Assurance (acceptance criteria)
 
 1. **Reference interpreter:**
-   - every instruction against hand-computed vectors, including all division and shift
-     edge cases;
+   - every instruction against hand-computed vectors, including all shift and
+     multiplication edge cases (there is no division, decision ZK-3a);
    - every trap condition;
    - determinism (the same run twice gives identical traces).
 2. **Differential testing:** the interpreter against the constraint system on random
@@ -321,6 +354,7 @@ count by a factor of two changes a public height.
     proofs may panic it;
   - the node is built with `panic = "unwind"`, so such a panic becomes a rejected proof,
     not a crash;
-  - the panic is logged and counted, as evidence for an upstream fix.
-- **Parameters:** they come only from the verifier registry (zk.md §9.5), never from the
-  proof.
+  - the panic is returned as a distinct error (`ZkError::VerifierPanicked`); logging
+    and counting it in the node is part of consensus integration.
+- **Parameters:** compiled in (`zk/src/params.rs`), never taken from the proof. The
+  verifier registry of zk.md §9.5 comes with consensus integration.

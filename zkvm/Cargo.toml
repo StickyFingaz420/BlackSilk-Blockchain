@@ -14,9 +14,12 @@ p3-field = "=0.7.0"
 p3-baby-bear = "=0.7.0"
 p3-symmetric = "=0.7.0"
 p3-air = "=0.7.0"
+p3-poseidon2-air = "=0.7.0"
+p3-uni-stark = "=0.7.0"
 rand_core = { version = "0.6", default-features = false }
 p3-lookup = "=0.7.0"
 p3-matrix = "=0.7.0"
 
 [dev-dependencies]
 rand_chacha = { version = "0.3", default-features = false }
+postcard = { version = "1", default-features = false, features = ["alloc"] }

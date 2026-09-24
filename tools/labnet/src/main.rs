@@ -19,6 +19,8 @@
 //! This is not a substitute for multi-machine testing (docs/testnet.md §7). It
 //! exercises the same code paths under controlled latency and partitions.
 
+#![forbid(unsafe_code)]
+
 mod proxy;
 
 use blacksilk_chain::emission::{format_amount, COIN};

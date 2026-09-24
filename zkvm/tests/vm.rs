@@ -1,7 +1,7 @@
 //! End-to-end tests of the BVM-1 constraint system (docs/zkvm.md §9).
 
 use blacksilk_zk::config::Val;
-use blacksilk_zkvm::air::check::{check, MutationChecker};
+use blacksilk_zkvm::air::check::{check, MutationChecker, Violation};
 use blacksilk_zkvm::air::trace::{self, Statement};
 use blacksilk_zkvm::air::{cpu, memory};
 use blacksilk_zkvm::asm::{reg::*, Asm};
@@ -124,6 +124,7 @@ fn statement(asm: &Asm, input: &[u32]) -> (Statement, Vec<p3_matrix::dense::RowM
         exit_code: exec.exit_code,
         output: exec.output.clone(),
         binding: [7; 32],
+        others: Vec::new(),
     };
     let traces = trace::build(&st, &exec);
     (st, traces)
@@ -333,6 +334,7 @@ fn a_compiled_rust_guest_proves_and_verifies() {
         exit_code: 0,
         output: expected.clone(),
         binding: [3; 32],
+        others: Vec::new(),
     };
     let traces = trace::build(&st, &exec);
     assert_eq!(
@@ -346,5 +348,183 @@ fn a_compiled_rust_guest_proves_and_verifies() {
     assert_eq!(prove::verify(&st, &proof), Ok(()));
     let mut forged = st.clone();
     forged.output[0] ^= 1;
+    assert!(prove::verify(&forged, &proof).is_err());
+}
+
+/// Where the proof bytes go (diagnostic; printed with --nocapture).
+#[test]
+fn proof_composition_report() {
+    let mut p = Asm::new(BASE);
+    p.ecall(1).write_reg(A0).halt(0);
+    let program = Arc::new(p.finish().unwrap());
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(5);
+    let (st, proof) = prove::prove(program, &[1], [0; 32], &mut rng).unwrap();
+    let names = [
+        "byte",
+        "program",
+        "image",
+        "mem_init",
+        "cpu",
+        "add",
+        "bit",
+        "lt",
+        "shift",
+        "mul",
+        "output",
+        "poseidon2",
+    ];
+    for (i, inst) in proof.opened_values.instances.iter().enumerate() {
+        let b = &inst.base_opened_values;
+        println!(
+            "{:9} main {:3}  perm {:3}  quotient {:3}  degree_bits {}",
+            names[i],
+            b.trace_local.len(),
+            inst.permutation_local.len(),
+            b.quotient_chunks.iter().map(|c| c.len()).sum::<usize>(),
+            proof.degree_bits[i]
+        );
+    }
+    let total = blacksilk_zk::encode_proof(&proof).len();
+    let opening = postcard::to_allocvec(&proof.opening_proof).unwrap().len();
+    println!("total {total} bytes, of which the FRI/Merkle opening proof is {opening}");
+    assert_eq!(prove::verify(&st, &proof), Ok(()));
+}
+
+/// Two chained `POSEIDON2` calls on one buffer (the second reads the first's
+/// writes), then a load of the result.
+fn poseidon_program() -> Asm {
+    let mut p = Asm::new(BASE);
+    let mut bytes = Vec::new();
+    for k in 0..16u32 {
+        // Includes p − 1 = 0x7800_0000, the largest canonical word.
+        let w = if k == 3 {
+            0x7800_0000
+        } else {
+            k.wrapping_mul(0x0123_4567) % 0x7800_0001
+        };
+        bytes.extend(w.to_le_bytes());
+    }
+    p.data(DATA, bytes, 64);
+    p.li(A0, DATA)
+        .ecall(3)
+        .ecall(3)
+        .li(S0, DATA)
+        .load(Op::Lw, A1, S0, 0)
+        .write_reg(A1)
+        .load(Op::Lw, A1, S0, 60)
+        .write_reg(A1)
+        .halt(0);
+    p
+}
+
+fn native_poseidon2(words: [u32; 16]) -> [u32; 16] {
+    use p3_field::PrimeField32;
+    use p3_symmetric::Permutation;
+    let mut s = words.map(Val::from_u32);
+    blacksilk_zk::config::permutation().permute_mut(&mut s);
+    s.map(|x| x.as_canonical_u32())
+}
+
+#[test]
+fn poseidon2_syscalls_satisfy_the_constraints_and_match_the_native_permutation() {
+    let (st, traces) = statement(&poseidon_program(), &[]);
+    let mut w = [0u32; 16];
+    for (k, x) in w.iter_mut().enumerate() {
+        let k = k as u32;
+        *x = if k == 3 {
+            0x7800_0000
+        } else {
+            k.wrapping_mul(0x0123_4567) % 0x7800_0001
+        };
+    }
+    let out = native_poseidon2(native_poseidon2(w));
+    assert_eq!(st.output, vec![out[0], out[15]]);
+    let v = check(&trace::tables(&st), &traces, &trace::public_values(&st));
+    assert!(v.is_empty(), "{v:?}");
+}
+
+#[test]
+fn every_single_cell_mutation_of_poseidon2_and_its_cpu_rows_is_caught() {
+    use blacksilk_zkvm::air::poseidon;
+    let (st, traces) = statement(&poseidon_program(), &[]);
+    let airs = trace::tables(&st);
+    let public = trace::public_values(&st);
+    let mut m = MutationChecker::new(&airs, &traces, &public);
+    let mut accepted = Vec::new();
+    let mut tried = 0;
+    // The POSEIDON2 rows (both real rows, every column).
+    let (t, w) = (11usize, poseidon::WIDTH);
+    for r in 0..2 {
+        for col in 0..w {
+            for delta in [Val::ONE, -Val::ONE] {
+                tried += 1;
+                if !m.caught(t, r, col, delta) {
+                    accepted.push((t, r, col));
+                }
+            }
+        }
+    }
+    // The CPU rows of the two ECALLs.
+    let cw = cpu::WIDTH;
+    let cpu_rows: Vec<usize> = (0..traces[4].values.len() / cw)
+        .filter(|&r| traces[4].values[r * cw + cpu::SP2] == Val::ONE)
+        .collect();
+    assert_eq!(cpu_rows.len(), 2);
+    for r in cpu_rows {
+        for col in 0..cw {
+            for delta in [Val::ONE, -Val::ONE] {
+                tried += 1;
+                if !m.caught(4, r, col, delta) {
+                    accepted.push((4, r, col));
+                }
+            }
+        }
+    }
+    accepted.dedup();
+    assert!(
+        accepted.is_empty(),
+        "under-constrained cells (table, row, column): {accepted:?}"
+    );
+    println!("{tried} mutations, all caught");
+}
+
+#[test]
+fn a_poseidon2_row_cannot_claim_a_different_digest() {
+    use blacksilk_zkvm::air::poseidon;
+    let (st, mut traces) = statement(&poseidon_program(), &[]);
+    // Claim a different last output word, consistently in the permutation's
+    // output column and the word's memory bytes: only the permutation
+    // constraints can reject it.
+    let w = poseidon::WIDTH;
+    traces[11].values[poseidon::P2_COLS - 1] += Val::ONE;
+    let byte0 = w - 6; // word 15's first output byte
+    traces[11].values[byte0] += Val::ONE;
+    let v = check(&trace::tables(&st), &traces, &trace::public_values(&st));
+    assert!(!v.is_empty());
+    assert!(v
+        .iter()
+        .any(|c| matches!(c, Violation::Constraint { table: 11, .. })));
+}
+
+/// The compiled guest `sum` (which calls `POSEIDON2` through the SDK) proves,
+/// verifies, and its outputs match the interpreter.
+#[test]
+fn a_compiled_guest_using_poseidon2_proves_and_verifies() {
+    let program = Arc::new(
+        blacksilk_zkvm::Program::from_elf(include_bytes!("fixtures/guest-sum.elf")).unwrap(),
+    );
+    let input = [5u32, 10, 20, 30, 40, 50];
+    let exec = run(&program, &input, MAX_CYCLES).unwrap();
+    let mut state = [0u32; 16];
+    for (i, v) in input[1..].iter().enumerate() {
+        state[i] = v % 2_000_000_000;
+    }
+    assert_eq!(exec.output[2], native_poseidon2(state)[0]);
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(9);
+    let (st, proof) = prove::prove(program, &input, [4; 32], &mut rng).unwrap();
+    assert_eq!(st.output, exec.output);
+    assert_eq!(prove::verify(&st, &proof), Ok(()));
+    let mut forged = st.clone();
+    forged.output[2] ^= 1;
     assert!(prove::verify(&forged, &proof).is_err());
 }

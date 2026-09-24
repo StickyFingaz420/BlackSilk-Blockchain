@@ -18,6 +18,7 @@ pub mod byte;
 pub mod check;
 pub mod cpu;
 pub mod memory;
+pub mod poseidon;
 pub mod program;
 pub mod trace;
 pub mod util;
@@ -40,14 +41,16 @@ pub enum Table {
     AluLt,
     AluShift,
     AluMul,
-    /// The committed program.
-    Program(Arc<Program>),
-    /// Image words and initial registers, sorted by key.
-    Image(Arc<Vec<(u32, u32)>>),
-    MemInit,
-    Cpu,
-    /// The claimed public output words.
-    Output(Arc<Vec<u32>>),
+    /// The committed program of execution `.1`.
+    Program(Arc<Program>, u32),
+    /// Image words and initial registers of execution `.1`, sorted by key.
+    Image(Arc<Vec<(u32, u32)>>, u32),
+    MemInit(u32),
+    Cpu(u32),
+    /// The claimed public output words of execution `.1`.
+    Output(Arc<Vec<u32>>, u32),
+    /// Shared by all executions.
+    Poseidon2,
 }
 
 impl BaseAir<Val> for Table {
@@ -59,16 +62,17 @@ impl BaseAir<Val> for Table {
             Table::AluLt => alu_lt::WIDTH,
             Table::AluShift => alu_shift::WIDTH,
             Table::AluMul => alu_mul::WIDTH,
-            Table::Program(_) => program::WIDTH,
-            Table::Image(_) | Table::Output(_) => memory::DUMMY_WIDTH,
-            Table::MemInit => memory::INIT_WIDTH,
-            Table::Cpu => cpu::WIDTH,
+            Table::Program(..) => program::WIDTH,
+            Table::Image(..) | Table::Output(..) => memory::DUMMY_WIDTH,
+            Table::MemInit(_) => memory::INIT_WIDTH,
+            Table::Cpu(_) => cpu::WIDTH,
+            Table::Poseidon2 => poseidon::WIDTH,
         }
     }
 
     fn num_public_values(&self) -> usize {
         match self {
-            Table::Cpu => cpu::pv::COUNT,
+            Table::Cpu(_) => cpu::pv::COUNT,
             _ => 0,
         }
     }
@@ -76,9 +80,9 @@ impl BaseAir<Val> for Table {
     fn preprocessed_trace(&self) -> Option<RowMajorMatrix<Val>> {
         match self {
             Table::Byte => Some(byte::preprocessed()),
-            Table::Program(p) => Some(program::preprocessed(p, MIN_HEIGHT)),
-            Table::Image(w) => Some(memory::image_preprocessed(w, MIN_HEIGHT)),
-            Table::Output(o) => Some(memory::output_preprocessed(o, MIN_HEIGHT)),
+            Table::Program(p, _) => Some(program::preprocessed(p, MIN_HEIGHT)),
+            Table::Image(w, _) => Some(memory::image_preprocessed(w, MIN_HEIGHT)),
+            Table::Output(o, _) => Some(memory::output_preprocessed(o, MIN_HEIGHT)),
             _ => None,
         }
     }
@@ -86,8 +90,8 @@ impl BaseAir<Val> for Table {
     fn preprocessed_width(&self) -> usize {
         match self {
             Table::Byte => byte::PREP_WIDTH,
-            Table::Program(_) => program::PREP_WIDTH,
-            Table::Image(_) | Table::Output(_) => memory::IMAGE_PREP_WIDTH,
+            Table::Program(..) => program::PREP_WIDTH,
+            Table::Image(..) | Table::Output(..) => memory::IMAGE_PREP_WIDTH,
             _ => 0,
         }
     }
@@ -102,11 +106,12 @@ impl<AB: AirBuilder<F = Val> + InteractionBuilder> Air<AB> for Table {
             Table::AluLt => alu_lt::eval(b),
             Table::AluShift => alu_shift::eval(b),
             Table::AluMul => alu_mul::eval(b),
-            Table::Program(_) => program::eval(b),
-            Table::Image(_) => memory::image_eval(b),
-            Table::MemInit => memory::init_eval(b),
-            Table::Cpu => cpu::eval(b),
-            Table::Output(_) => memory::output_eval(b),
+            Table::Program(_, e) => program::eval(b, *e),
+            Table::Image(_, e) => memory::image_eval(b, *e),
+            Table::MemInit(e) => memory::init_eval(b, *e),
+            Table::Cpu(e) => cpu::eval(b, *e),
+            Table::Output(_, e) => memory::output_eval(b, *e),
+            Table::Poseidon2 => poseidon::eval(b),
         }
     }
 }

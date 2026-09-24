@@ -1,22 +1,29 @@
-//! `ALU_SHIFT`: SLL, SRL, SRA by a barrel shifter (zkvm.md §6.1).
+//! `ALU_SHIFT`: SLL, SRL, SRA, reduced to the multiplier (zkvm.md §6.1).
 //!
-//! - `a` is decomposed into 32 boolean bits; the shift amount is the low five
-//!   bits `s0..s4` of `b0` (`b0 = Σ s_j·2^j + 32·hb`, `hb < 8`), as RISC-V
-//!   specifies (only the low 5 bits count).
-//! - Five stages shift right by `2^j` when `s_j = 1`:
-//!   `X_{j+1}[i] = s_j · (X_j[i + 2^j] or fill) + (1 − s_j) · X_j[i]`,
-//!   where `fill` is the sign bit for SRA and 0 otherwise.
-//! - A left shift is a right shift of the bit-reversed input, reversed back.
+//! For a shift amount `s` (the low five bits of `b`, as RISC-V specifies):
 //!
-//! Every stage is a selection between booleans, so every bit, and therefore
-//! every result byte, is boolean-valued and in range by construction.
+//! ```text
+//! SLL(a, s) = MUL(a, 2^s)                      (low 32 bits of the product)
+//! SRL(a, s) = MULHU(a, 2^(32−s))   for s ≥ 1    (high 32 bits, unsigned)
+//! SRA(a, s) = MULHSU(a, 2^(32−s))  for s ≥ 1    (high 32 bits, a signed)
+//! s = 0:      c = a
+//! ```
+//!
+//! The row proves the power of two `P = 2^e` as bytes: with
+//! `e = e_lo + 8·e_hi` (`e_lo` three bits, `e_hi` one-hot over four flags),
+//! byte `k` of `P` is `[k = e_hi] · 2^e_lo`, and
+//! `2^e_lo = Q·(1 + 15·el2)` with the committed `Q = (1 + el0)(1 + 3·el1)`
+//! (keeping every constraint at degree ≤ 3). `z = [s = 0]` is proven with an
+//! inverse witness: `z·s = 0` and `s·inv = real − z`. The product itself is proven by
+//! `ALU_MUL` through one ALU lookup. The shift table therefore contains no
+//! bit-level circuit of its own.
 
 use super::byte::ByteCounter;
-use super::util::{alu_op, bytes, c, matrix, range_bits, range_pair, row, ALU};
+use super::util::{alu_op, bytes, c, matrix, range_bits, range_pair, range_word, row, ALU};
 use blacksilk_zk::config::Val;
 use p3_air::AirBuilder;
-use p3_field::PrimeCharacteristicRing;
-use p3_lookup::InteractionBuilder;
+use p3_field::{Field, PrimeCharacteristicRing};
+use p3_lookup::{Count, InteractionBuilder};
 use p3_matrix::dense::RowMajorMatrix;
 
 const SLL: usize = 0;
@@ -25,14 +32,19 @@ const SRA: usize = 2;
 const A: usize = 3;
 const B: usize = 7;
 const C: usize = 11;
-const ABITS: usize = 15;
-const S: usize = 47;
-const HB: usize = 52;
-const STAGES: usize = 53;
-pub const WIDTH: usize = STAGES + 5 * 32;
+const S: usize = 15; // five bits of the shift amount
+const HB: usize = 20; // b0 >> 5
+const Z: usize = 21; // s = 0
+const EL: usize = 22; // three bits of e_lo
+const EH: usize = 25; // one-hot e_hi (4 flags)
+const P: usize = 29; // bytes of 2^e
+const INV: usize = 33; // s⁻¹ (s ≠ 0)
+const Q: usize = 34; // (1 + el0)(1 + 3·el1)
+pub const WIDTH: usize = 35;
 
 pub fn eval<AB: AirBuilder + InteractionBuilder>(bld: &mut AB) {
     let (r, _) = row(bld);
+    let one = AB::Expr::ONE;
     let (sll, srl, sra) = (r[SLL].clone(), r[SRL].clone(), r[SRA].clone());
     for f in [&sll, &srl, &sra] {
         bld.assert_bool(f.clone());
@@ -40,63 +52,65 @@ pub fn eval<AB: AirBuilder + InteractionBuilder>(bld: &mut AB) {
     let real = sll.clone() + srl.clone() + sra.clone();
     bld.assert_bool(real.clone());
 
-    // Bits of a.
-    let abit: Vec<AB::Expr> = (0..32).map(|i| r[ABITS + i].clone()).collect();
-    for x in &abit {
-        bld.assert_bool(x.clone());
-    }
-    for i in 0..4 {
-        let byte = (0..8).fold(AB::Expr::ZERO, |acc, j| {
-            acc + abit[8 * i + j].clone() * c::<AB>(1 << j)
-        });
-        bld.assert_zero(r[A + i].clone() - byte);
-    }
-    // Shift amount: the low five bits of b0.
+    // s: the low five bits of b0.
     let s: Vec<AB::Expr> = (0..5).map(|j| r[S + j].clone()).collect();
     for x in &s {
         bld.assert_bool(x.clone());
     }
-    let low = (0..5).fold(AB::Expr::ZERO, |acc, j| {
+    let s_val = (0..5).fold(AB::Expr::ZERO, |acc, j| {
         acc + s[j].clone() * c::<AB>(1 << j)
     });
-    bld.assert_zero(r[B].clone() - low - r[HB].clone() * c::<AB>(32));
+    bld.assert_zero(r[B].clone() - s_val.clone() - r[HB].clone() * c::<AB>(32));
     range_bits(bld, r[HB].clone(), 3, real.clone());
     range_pair(bld, r[B + 1].clone(), r[B + 2].clone(), real.clone());
     range_pair(bld, r[B + 3].clone(), AB::Expr::ZERO, real.clone());
+    range_word(bld, &r[A..A + 4], real.clone());
 
-    // Stages.
-    let not_sll = AB::Expr::ONE - sll.clone();
-    let mut x: Vec<AB::Expr> = (0..32)
-        .map(|i| sll.clone() * abit[31 - i].clone() + not_sll.clone() * abit[i].clone())
-        .collect();
-    let fill = sra.clone() * abit[31].clone();
-    for (j, sj) in s.iter().enumerate() {
-        let d = 1usize << j;
-        let next: Vec<AB::Expr> = (0..32).map(|i| r[STAGES + 32 * j + i].clone()).collect();
-        for i in 0..32 {
-            let shifted = if i + d < 32 {
-                x[i + d].clone()
-            } else {
-                fill.clone()
-            };
-            bld.assert_zero(
-                next[i].clone()
-                    - sj.clone() * shifted
-                    - (AB::Expr::ONE - sj.clone()) * x[i].clone(),
-            );
-        }
-        x = next;
+    // z = (s = 0); padding rows have z = 0.
+    let z = r[Z].clone();
+    bld.assert_zero(z.clone() * s_val.clone());
+    bld.assert_zero(s_val.clone() * r[INV].clone() - real.clone() + z.clone());
+
+    // e and 2^e.
+    let el: Vec<AB::Expr> = (0..3).map(|j| r[EL + j].clone()).collect();
+    let eh: Vec<AB::Expr> = (0..4).map(|k| r[EH + k].clone()).collect();
+    for x in el.iter().chain(eh.iter()) {
+        bld.assert_bool(x.clone());
     }
-    // Output (reversed back for SLL) as bytes of c.
-    let y: Vec<AB::Expr> = (0..32)
-        .map(|i| sll.clone() * x[31 - i].clone() + not_sll.clone() * x[i].clone())
-        .collect();
+    let eh_sum = eh.iter().fold(AB::Expr::ZERO, |a, x| a + x.clone());
+    bld.assert_zero(eh_sum - real.clone());
+    let e = (0..3).fold(AB::Expr::ZERO, |acc, j| {
+        acc + el[j].clone() * c::<AB>(1 << j)
+    }) + (0..4).fold(AB::Expr::ZERO, |acc, k| {
+        acc + eh[k].clone() * c::<AB>(8 * k as u32)
+    });
+    let e_expr =
+        sll.clone() * s_val.clone() + (real.clone() - sll.clone()) * (c::<AB>(32) - s_val.clone());
+    bld.assert_zero((one.clone() - z.clone()) * (e.clone() - e_expr));
+    bld.assert_zero(z.clone() * e);
+    let q = r[Q].clone();
+    // Q = (1 + el0)(1 + 3·el1) on real rows, 0 on padding.
+    bld.assert_zero(
+        q.clone() - (real.clone() + el[0].clone()) * (one.clone() + el[1].clone() * c::<AB>(3)),
+    );
+    let pw = q * (one.clone() + el[2].clone() * c::<AB>(15));
+    for k in 0..4 {
+        bld.assert_zero(r[P + k].clone() - eh[k].clone() * pw.clone());
+    }
+
+    // The product (s ≠ 0), or c = a (s = 0).
+    let mul_op = sll.clone() * c::<AB>(alu_op::MUL)
+        + srl.clone() * c::<AB>(alu_op::MULHU)
+        + sra.clone() * c::<AB>(alu_op::MULHSU);
+    let mut q = vec![mul_op];
+    q.extend_from_slice(&r[A..A + 4]);
+    q.extend_from_slice(&r[P..P + 4]);
+    q.extend_from_slice(&r[C..C + 4]);
+    ALU.lookup_key(bld, q, Count::bounded(real.clone() * (one - z.clone()), 1));
     for i in 0..4 {
-        let byte = (0..8).fold(AB::Expr::ZERO, |acc, j| {
-            acc + y[8 * i + j].clone() * c::<AB>(1 << j)
-        });
-        bld.assert_zero(r[C + i].clone() - byte);
+        bld.assert_zero(z.clone() * (r[C + i].clone() - r[A + i].clone()));
     }
+
     let op = sll * c::<AB>(alu_op::SLL) + srl * c::<AB>(alu_op::SRL) + sra * c::<AB>(alu_op::SRA);
     let mut msg = vec![op];
     msg.extend_from_slice(&r[A..A + 12]);
@@ -113,62 +127,74 @@ pub fn result(op: u32, a: u32, b: u32) -> u32 {
     }
 }
 
+/// The multiplier request a shift delegates to, if any.
+pub fn mul_request(op: u32, a: u32, b: u32) -> Option<(u32, u32, u32)> {
+    let s = b & 31;
+    if s == 0 {
+        return None;
+    }
+    Some(match op {
+        alu_op::SLL => (alu_op::MUL, a, 1 << s),
+        alu_op::SRL => (alu_op::MULHU, a, 1 << (32 - s)),
+        alu_op::SRA => (alu_op::MULHSU, a, 1 << (32 - s)),
+        _ => unreachable!("not an ALU_SHIFT op"),
+    })
+}
+
 fn row_for(op: u32, a: u32, b: u32, counter: &mut ByteCounter) -> Vec<Val> {
-    let sll = op == alu_op::SLL;
     let s = b & 31;
     let hb = (b & 0xff) >> 5;
     counter.range_bits(hb, 3);
     counter.range((b >> 8) & 0xff, (b >> 16) & 0xff);
     counter.range(b >> 24, 0);
-    let abits: Vec<u32> = (0..32).map(|i| (a >> i) & 1).collect();
-    let mut x: Vec<u32> = (0..32)
-        .map(|i| if sll { abits[31 - i] } else { abits[i] })
-        .collect();
-    let fill = if op == alu_op::SRA { abits[31] } else { 0 };
-    let mut stages = Vec::with_capacity(160);
-    for j in 0..5 {
-        let d = 1usize << j;
-        let on = (s >> j) & 1 == 1;
-        let next: Vec<u32> = (0..32)
-            .map(|i| {
-                if on {
-                    if i + d < 32 {
-                        x[i + d]
-                    } else {
-                        fill
-                    }
-                } else {
-                    x[i]
-                }
-            })
-            .collect();
-        stages.extend(next.iter().copied());
-        x = next;
-    }
-    let cv = result(op, a, b);
+    counter.word(a);
+    let e = if s == 0 {
+        0
+    } else if op == alu_op::SLL {
+        s
+    } else {
+        32 - s
+    };
+    let pw = 1u32 << (e & 7);
     let mut r = vec![
-        Val::from_bool(sll),
+        Val::from_bool(op == alu_op::SLL),
         Val::from_bool(op == alu_op::SRL),
         Val::from_bool(op == alu_op::SRA),
     ];
     r.extend(bytes(a));
     r.extend(bytes(b));
-    r.extend(bytes(cv));
-    r.extend(abits.iter().map(|x| Val::from_u32(*x)));
+    r.extend(bytes(result(op, a, b)));
     r.extend((0..5).map(|j| Val::from_u32((s >> j) & 1)));
     r.push(Val::from_u32(hb));
-    r.extend(stages.iter().map(|x| Val::from_u32(*x)));
+    r.push(Val::from_bool(s == 0));
+    r.extend((0..3).map(|j| Val::from_u32((e >> j) & 1)));
+    r.extend((0..4).map(|k| Val::from_bool(e >> 3 == k)));
+    r.extend((0..4).map(|k| Val::from_u32(if e >> 3 == k { pw } else { 0 })));
+    r.push(if s == 0 {
+        Val::ZERO
+    } else {
+        Val::from_u32(s).inverse()
+    });
+    r.push(Val::from_u32((1 + (e & 1)) * (1 + 3 * ((e >> 1) & 1))));
     r
 }
 
+/// The trace for shift requests. Appends the multiplier requests the rows
+/// delegate to onto `mul_requests`.
 pub fn trace(
     reqs: &[(u32, u32, u32)],
     counter: &mut ByteCounter,
     min: usize,
+    mul_requests: &mut Vec<(u32, u32, u32)>,
 ) -> RowMajorMatrix<Val> {
     let rows = reqs
         .iter()
-        .map(|&(op, a, b)| row_for(op, a, b, counter))
+        .map(|&(op, a, b)| {
+            if let Some(m) = mul_request(op, a, b) {
+                mul_requests.push(m);
+            }
+            row_for(op, a, b, counter)
+        })
         .collect();
     matrix(rows, WIDTH, min)
 }

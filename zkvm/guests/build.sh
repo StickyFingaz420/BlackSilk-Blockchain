@@ -7,4 +7,8 @@ set -eu
 cd "$(dirname "$0")"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}" cargo build --release
 for g in sum arith; do cp "${CARGO_TARGET_DIR:-target}/riscv32i-unknown-none-elf/release/guest-$g" ../tests/fixtures/guest-$g.elf; done
+# The PX kernel: its program id is pinned in px/src/prove.rs.
+cp "${CARGO_TARGET_DIR:-target}/riscv32i-unknown-none-elf/release/guest-kernel" ../../px/kernel.elf
+# Example contract function used by the unified-proof tests.
+cp "${CARGO_TARGET_DIR:-target}/riscv32i-unknown-none-elf/release/guest-vault" ../../px/tests/fixtures/vault.elf
 echo "fixtures updated"

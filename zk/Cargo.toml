@@ -2,7 +2,7 @@
 name = "blacksilk-zk"
 version = "0.1.0"
 edition = "2021"
-description = "BlackSilk zero-knowledge proof layer: parameter set BS-ZK-1 on Plonky3 (hiding FRI STARK over BabyBear^5), proof envelope and hardened verification (docs/zk.md §9)"
+description = "BlackSilk zero-knowledge proof layer: parameter set BS-ZK-2 on Plonky3 (hiding FRI STARK over BabyBear^8), proof envelope and hardened verification (docs/zk.md §9)"
 
 [lib]
 name = "blacksilk_zk"

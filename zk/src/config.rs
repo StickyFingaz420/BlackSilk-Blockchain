@@ -1,9 +1,9 @@
-//! STARK configuration for BS-ZK-1 (docs/zk.md §9.2–9.3).
+//! STARK configuration for BS-ZK-2 (docs/zk.md §9.2–9.3).
 //!
 //! | Part | Choice |
 //! |---|---|
 //! | Base field | BabyBear, p = 2^31 − 2^27 + 1 |
-//! | Challenge field | degree-5 binomial extension (~154 bits) |
+//! | Challenge field | degree-8 binomial extension (247 bits) |
 //! | Hash | Poseidon2, width 16, standard BabyBear constants |
 //! | Merkle tree | salted leaves (`MerkleTreeHidingMmcs`), 8-element digests |
 //! | PCS | `HidingFriPcs` (zero-knowledge FRI) |

@@ -1,0 +1,9 @@
+[package]
+name = "guest-kernel"
+version = "0.1.0"
+edition = "2021"
+description = "The PX private-transfer kernel as a BVM-1 guest program (docs/px.md §4)"
+
+[dependencies]
+blacksilk-zkvm-sdk = { path = "../../sdk" }
+blacksilk-px-core = { path = "../../../px-core" }

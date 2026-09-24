@@ -2,7 +2,7 @@
 # riscv32im-unknown-none-elf (see .cargo/config.toml), not for the host.
 [workspace]
 resolver = "2"
-members = ["sum", "arith"]
+members = ["sum", "arith", "kernel", "vault"]
 
 [profile.release]
 opt-level = "z"
@@ -11,3 +11,14 @@ codegen-units = 1
 panic = "abort"
 debug = false
 strip = true
+
+# The PX kernel is optimized for speed: its cycle count sets the proof size
+# and proving time (opt-level "z" costs 2.3x the cycles).
+[profile.release.package.guest-kernel]
+opt-level = 2
+
+[profile.release.package.blacksilk-px-core]
+opt-level = 2
+
+[profile.release.package.guest-vault]
+opt-level = 2

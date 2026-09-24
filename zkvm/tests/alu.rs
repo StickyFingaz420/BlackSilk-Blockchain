@@ -110,16 +110,14 @@ fn build(
         &mut counter,
         64,
     );
+    let mut mul_reqs = by(&[alu_op::MUL, alu_op::MULH, alu_op::MULHSU, alu_op::MULHU]);
     let shift = alu_shift::trace(
         &by(&[alu_op::SLL, alu_op::SRL, alu_op::SRA]),
         &mut counter,
         64,
+        &mut mul_reqs,
     );
-    let mul = alu_mul::trace(
-        &by(&[alu_op::MUL, alu_op::MULH, alu_op::MULHSU, alu_op::MULHU]),
-        &mut counter,
-        64,
-    );
+    let mul = alu_mul::trace(&mul_reqs, &mut counter, 64);
     let driver_rows = reqs
         .iter()
         .enumerate()
@@ -219,7 +217,8 @@ fn a_false_alu_claim_leaves_the_bus_unbalanced() {
 
 /// Mutation testing: every cell of every real row of each ALU table, changed
 /// by +1, must produce a violation. Known free witness cells (the inverse
-/// column of `ALU_LT` when its difference is zero) are listed explicitly.
+/// columns of `ALU_LT` and `ALU_SHIFT` when their operand is zero) are listed
+/// explicitly.
 #[test]
 fn every_single_cell_mutation_of_a_real_alu_row_is_caught() {
     let reqs = requests();
@@ -248,6 +247,11 @@ fn every_single_cell_mutation_of_a_real_alu_row_is_caught() {
                     if d_sum == Val::ZERO {
                         continue;
                     }
+                }
+                // ALU_SHIFT column 33 is the inverse of s; it is free when
+                // s = 0 (z = 1, c = a, no product is requested).
+                if t == 4 && col == 33 && tr.values[r * w + 21] == Val::ONE {
+                    continue;
                 }
                 for delta in [Val::ONE, Val::from_u32(256), -Val::ONE] {
                     tried += 1;

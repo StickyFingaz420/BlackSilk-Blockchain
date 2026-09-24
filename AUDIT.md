@@ -18,8 +18,13 @@ Remaining before a public testnet:
 Smart contracts (`docs/contracts.md`, approved model) are being implemented (R7). The
 cryptography (M1) and the engine and state (M2) are done, but they are **not yet part of
 consensus**. Private execution with zero-knowledge proofs is the current priority (R8): the proof
-layer, the VM's execution layer and its core constraint system are done; a compiled Rust
-program has been proven. The Poseidon2 syscall circuit, the kernel and integration remain.
+layer, the VM with its complete constraint system (including the Poseidon2 circuit), and
+the private-transfer kernel (records, nullifiers, commitment tree, record delivery) are
+implemented and tested; a private transfer has been proven and verified end to end. The
+unified proof of contract functions and the kernel is implemented and tested, and the
+internal ZK security review is written (`docs/reviews/zk-security-review.md`). Consensus
+integration remains. **Nothing in the ZK layer is production-ready before independent
+review** (R8).
 Contracts will activate later, at a fork height or with a testnet reset.
 
 This file tracks the audit defined in `Claude.md`.
@@ -720,8 +725,10 @@ The project owner moved this ahead of contracts M3 (2026-09-23).
 
 **Specifications:**
 - `docs/zk.md` v0.2: architecture and decisions;
-- `docs/zkvm.md` v0.1: the BVM-1 virtual machine;
-- `docs/evidence/px0-2026-09-23/`: measurements.
+- `docs/zkvm.md` v0.2: the BVM-1 virtual machine;
+- `docs/px.md` v0.1: records, nullifiers, the transfer kernel, state and delivery;
+- `docs/evidence/px0-2026-09-23/`: measurements;
+- `zk/examples/param_study.rs`: the FRI parameter study.
 
 **Not consensus.** No transaction kind or activation exists yet.
 
@@ -753,8 +760,12 @@ assumed. Decision B was approved by the owner:
   not.
 
 **ZK-1: proof layer** (`zk/`, crate `blacksilk-zk`, `forbid(unsafe_code)`, 12 tests):
-- **Parameter set BS-ZK-1:**
-  - blow-up 32, 50 queries, 16 grinding bits, arity 16, final polynomial 2^6;
+- **Parameter set BS-ZK-2** (replaced BS-ZK-1, finding ZK-F4):
+  - degree-8 challenge extension (247 bits), blow-up 8, 108 queries, 16 grinding
+    bits, arity 16, final polynomial 2^6;
+  - every shape of the envelope (up to 2^22 rows, 4 000 committed columns) reaches
+    **≥ 123 bits in the Johnson regime and ≥ 105 in the unique-decoding regime**
+    (tested); the approved minimum is 100;
   - hiding: 4 random codewords, 4 salt elements per Merkle leaf;
   - Fiat–Shamir challenger pre-seeded with the parameter id (domain separation).
 - **A test recomputes proven security over the whole shape envelope.** It found
@@ -810,19 +821,20 @@ assumed. Decision B was approved by the owner:
 - `ECALL` reads `a7` and `a0` in the two register slots, so every cycle reads exactly
   two registers.
 
-**ZK-3: the BVM-1 constraint system** (`zkvm/src/air/`). Core done; the Poseidon2
-syscall circuit is pending.
+**ZK-3: the BVM-1 constraint system** (`zkvm/src/air/`). Complete, including the
+Poseidon2 syscall circuit (ZK-3c).
 
-Eleven tables in one batch STARK:
+Twelve tables in one batch STARK:
 
 | Group | Tables |
 |---|---|
 | Byte operations | `BYTE` (2^16-row preprocessed byte pairs: range, AND, OR, XOR) |
-| ALU | `ALU_ADD`, `ALU_BIT`, `ALU_LT` (SLT/SLTU/EQ), `ALU_SHIFT` (5-stage barrel shifter), `ALU_MUL` (8×8-byte convolution) |
+| ALU | `ALU_ADD`, `ALU_BIT`, `ALU_LT` (SLT/SLTU/EQ), `ALU_SHIFT` (reduced to one multiplier lookup; 35 columns instead of 213), `ALU_MUL` (8×8-byte convolution) |
 | Program | `PROGRAM` (preprocessed decoded program) |
 | Memory argument | `IMAGE` (preprocessed initial memory and registers), `MEM_INIT` (sorted keys; the endpoints of the offline memory argument) |
 | Execution | `CPU` |
 | Public output | `OUTPUT` (preprocessed from the claimed outputs) |
+| Syscall | `POSEIDON2`: Plonky3's `Poseidon2Air` (standard BabyBear constants) embedded unchanged, plus memory access, canonical-encoding and pointer checks |
 
 **Assurance tools built:**
 - **Constraint oracle** (`check.rs`): evaluates the same constraint code the STARK
@@ -850,6 +862,85 @@ Eleven tables in one batch STARK:
   **exactly 100 proven bits at the maximum height 2^22** (63 by unique decoding). The
   margin is **zero** at the maximum height; real traces are far smaller.
 
+**ZK-3c: the Poseidon2 syscall circuit.**
+- One row per call: the 16 input words are consumed from memory with their previous
+  timestamps, the permutation is proven by the embedded `Poseidon2Air`, and the output
+  words are produced at the call's write slot.
+- Input and output words must be canonical field elements (one encoding per value);
+  the CPU checks that the 64-byte buffer lies in writable memory.
+- **Mutation testing: 2 496 single-cell mutations of the Poseidon2 rows and their CPU
+  rows, all caught.** A consistent forgery of an output (permutation column and memory
+  bytes together) is rejected by the permutation constraints.
+- The AIR's output equals the interpreter's permutation on every call (asserted during
+  trace generation); a compiled Rust guest using the syscall proves and verifies.
+
+**ZK-4: private records and transfers** (`px-core/`, `px/`; spec `docs/px.md`).
+- `Hk` (Poseidon2 sponge, 8-element digests, domain constants), keys from the wallet
+  seed, per-address owner tags, records, nullifiers `Hk(nk ‖ rho ‖ cm)`, and `rho`
+  derived from the transaction's first nullifier (no Faerie Gold).
+- **The transfer kernel is one Rust source** (`px-core`, `no_std`, no dependencies),
+  compiled natively and as the zkVM guest. The proven program is pinned by program id
+  (`px/kernel.id`); the rebuild was byte-identical.
+- 2-in/2-out with dummies; balance in `u128` integers, so no field wrap-around is
+  possible.
+- Consensus state: tree frontier, 100-block root window, nullifier set, containment
+  pool, atomic blocks with exact undo.
+- Record delivery: Ristretto ECDH and ML-KEM-768 (RustCrypto `ml-kem` 0.3.2, pure Rust)
+  combined into a ChaCha20-Poly1305 key bound to the commitment. Recipients accept only
+  records that recompute the commitment.
+- **Tests:**
+  - 20 rejection cases, each failing identically natively and in the zkVM;
+  - constant trace heights across witness shapes;
+  - a deposit and a private payment proven and verified, then rejected under 10
+    statement alterations;
+  - state, tree, delivery and hash tests (docs/px.md §8.3).
+- **Measured:** kernel 18.7k cycles; transfer proof **2.05 MB**; proving ~40 s;
+  verifying 1.4 s.
+
+**ZK-5: unified proof of contract functions and the kernel** (zkvm.md §6.5,
+docs/px.md §7).
+- **Multi-execution proofs:**
+  - one batch STARK proves up to 5 executions;
+  - each execution has its own program, image, memory, CPU and output tables, and every
+    memory, program, image, output and syscall message carries its execution id;
+  - byte, ALU and Poseidon2 tables are shared.
+- **Tests:**
+  - isolation;
+  - statement binding: swapped outputs or programs, altered parts, a dropped or
+    reordered execution;
+  - **11 458 mutations, all caught**, including the Poseidon2 execution column;
+  - a 3-execution proof.
+- **Kernel v2:**
+  - contract-owned records, spent only with the approval of a function of their
+    contract;
+  - outputs specified by functions must match exactly, which stops redirected payouts;
+  - contract state can be created only by its own contract's functions;
+  - function and kernel commit to one transcript `io_hash` (hiding, with a random
+    blind).
+- **Constant work:** both nullifier forms are computed for every input, so user and
+  contract inputs give identical trace heights (tested).
+- **Registry (critical):** the verifier takes a mandatory `registered(contract,
+  program)` check. Without it, anyone could write a "function" that spends another
+  contract's records. Consensus must implement it.
+- **Example contract:** a private hash-locked vault (`zkvm/guests/vault`).
+  - LOCK and CLAIM are proven and verified.
+  - A wrong secret gives no proof.
+  - **12 contract-rule violations**, each rejected identically natively and in the
+    guest.
+  - A transcript mismatch, unregistered programs and altered outputs are refused.
+
+**Internal security review** (`docs/reviews/zk-security-review.md`):
+- the complete assumption list;
+- a coordinated multi-cell forgery analysis: bus by bus from consumer to provider, down
+  to preprocessed and public data; memory consistency; per-row determinism;
+  field-wrap hazards;
+- protocol attacks and privacy;
+- the Pure-Rust and determinism audit: no C/C++ build dependencies, `unsafe` forbidden
+  in every workspace crate except the guest SDK's `ecall`;
+- the required independent reviews.
+
+It is explicitly **not** an independent review.
+
 **Findings during ZK-3:**
 
 | # | Finding | Resolution |
@@ -857,24 +948,33 @@ Eleven tables in one batch STARK:
 | ZK-F1 | **Integration bug:** `blacksilk-zk` committed preprocessed tables with the prover's hiding (salted) configuration, so the verifier's commitment differed and honest proofs failed (`InvalidPowWitness`). | Preprocessed tables are public: both sides commit them with the deterministic setup configuration. Regression test in `zk/tests/proofs.rs`. |
 | ZK-F2 | **Soundness trap:** a 32-bit address or jump target used as a field element could wrap modulo p onto a valid address. | Every computed address and target is range-checked below 2^28 first (zkvm.md §2). |
 | ZK-F3 | The semantics of reading code as data were undefined (the interpreter returned 0). | Code is part of the image, so loads return instruction words; stores must be ≥ `CODE_END` (decision ZK-3b). |
+| ZK-F4 | **Security margin:** BS-ZK-1 had exactly 100 Johnson bits and 63 unique-decoding bits at 2^22 rows. The batching term bound it, so queries and grinding could not help. | BS-ZK-2: degree-8 challenge extension; ≥ 123 / ≥ 105 bits over the envelope (tested). |
+| ZK-F5 | **Found by the oracle:** the redesigned shift table's padding rows violated three constraints, and its `s = 0` flag was a degree-5 product (larger quotient). | Inverse-witness zero test and a committed partial product: every constraint has degree ≤ 3 and holds on padding. The free inverse cell is listed in the mutation test, like `ALU_LT`'s. |
+| ZK-F6 | **Found by the first end-to-end proof:** the Poseidon2 table's padding rows permute a zero state, but their output-byte columns are zero, so honest proofs failed (`OodEvaluationMismatch`). | Word equalities gated by `is_real`; oracle test added. |
+| ZK-F7 | Transfer proofs (~2 MB) exceeded the decoder's 1 MiB cap, so valid proofs would have been rejected from the network. | Cap raised to 4 MiB; the transfer test round-trips the strict encoding under the cap. |
+| ZK-F8 | **Performance:** the size-optimized guest profile made the kernel 141k cycles, and a two-permutation tree node doubled hashing. | Kernel built at opt-level 2, one-permutation tree nodes, lean sponge: 18.7k cycles (7.5×). The Poseidon2 table's interaction columns were cut from 67 to 39 without weakening any check. |
+| ZK-F9 | **Found by the security review:** the CPU table height was bounded by the global 2^22 limit rather than `MAX_CYCLES` (2^21), so the circuit accepted executions twice as long as the interpreter allows (not a forgery: timestamps stay far below p). | CPU tables capped at `MAX_CYCLES`; the LogUp multiplicity bound at the largest accepted statement fell from 84% to 63% of p (tested). |
+| ZK-F10 | **Design gap found while building ZK-5:** a proof shows only that *some* program produced a function's transcript. | Mandatory registry check in the verifier (tested); consensus must implement it. |
 
 **Open items:**
-- The POSEIDON2 syscall circuit (ZK-3c). Programs using it execute, but cannot be
-  proven yet.
-- **Performance:** proofs are 0.5–0.7 MB and take ~60–90 s even for small programs,
-  dominated by the 2^16-row byte table at blow-up 32.
-- **Security margin:** zero at 2^22 rows. Cap VM table heights below 2^22, or reduce
-  columns.
-- Multi-cell (coordinated) forgery is covered by the soundness arguments, not by the
-  single-cell tests. It is an external-review item.
+- **Proof size (main open problem):** ~2 MB per transfer.
+  - Each of the 108 queries opens ~2 400 committed elements.
+  - The parameter study shows that Johnson ≥ 120 alone needs 49–71 queries (−35 to
+    −55%), at the cost of dropping the extra unique-decoding target. **This is a
+    security-policy decision for the owner.**
+  - The architectural fix is aggregation (recursion) or batching many transfers per
+    proof; not done.
+- Multi-cell (coordinated) forgery: argued structurally in the internal security
+  review §3 (single-cell tests cannot show it); independent review required.
 
 **Remaining** (none of it is done until tested; nothing here is production-ready
 before external review):
-- **ZK-3c:** the Poseidon2 syscall circuit.
-- **ZK-4:** records, nullifiers and the kernel (private transfers).
-- **ZK-5:** composition of functions and kernel in one batch proof.
+- Consensus integration: transaction format, contract registry, fees and v1 bridge,
+  persistence, block validation.
+- Verification cost (~1.3–1.5 s per proof; setup commitments recomputed per proof) and
+  relay policy against verification DoS.
 - **ZK-6:** integration with contracts and transactions.
-- Security review document, fuzzing, benchmarks, external audits.
+- Fuzzing, and the independent reviews listed in the security review §9.
 
 ### Finding status after R1–R6
 

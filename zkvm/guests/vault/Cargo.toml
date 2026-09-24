@@ -1,0 +1,9 @@
+[package]
+name = "guest-vault"
+version = "0.1.0"
+edition = "2021"
+description = "Example private contract function: a hash-locked vault (docs/px.md §7.4)"
+
+[dependencies]
+blacksilk-zkvm-sdk = { path = "../../sdk" }
+blacksilk-px-core = { path = "../../../px-core" }

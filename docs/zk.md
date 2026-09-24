@@ -1,8 +1,11 @@
 # BlackSilk Private Execution (PX): Zero-Knowledge Architecture
 
-Status: **v0.2.**
+Status: **v0.3.**
 - PX-0 (evaluation) is complete, and the proof system is **decided**: §9.2, §15.
-- Implementation has started; progress is tracked in AUDIT.md R8.
+- The zkVM, the kernel with private records and nullifiers, and the unified proof of
+  contract functions and kernel are implemented and tested ([`px.md`](px.md); AUDIT.md
+  R8). The internal security review is `reviews/zk-security-review.md`. Nothing is
+  production-ready before independent review.
 - The zkVM is specified in [`zkvm.md`](zkvm.md).
 - Nothing here is consensus until activated.
 
@@ -467,7 +470,7 @@ owner): a STARK on Plonky3 0.7.**
 | Hiding FRI and Merkle commitments | `HidingFriPcs` and `MerkleTreeHidingMmcs` |
 | Security calculator | `p3-security` |
 | Base field | BabyBear |
-| Challenge field | degree-5 extension of BabyBear (~155 bits) |
+| Challenge field | degree-8 extension of BabyBear (247 bits; parameter set BS-ZK-2, which replaced the degree-5 BS-ZK-1, AUDIT.md ZK-F4) |
 | Hashing (Merkle, Fiat–Shamir) | Poseidon2 with the standard constants |
 
 - Only this family meets R3 and R4 together: soundness and zero-knowledge rest on hash
@@ -476,6 +479,8 @@ owner): a STARK on Plonky3 0.7.**
   - proofs of 130–230 KB at the chosen parameters (§9.3);
   - verification in 11–64 ms;
   - proving from 0.1 s for small circuits to minutes for 2^20-row traces.
+  - These were single-table benchmark circuits at BS-ZK-1. The complete zkVM at
+    BS-ZK-2 is much larger; see §11 for its measured costs.
 - **Rejected, with reasons:**
 
   | Candidate | Reason |
@@ -505,6 +510,14 @@ owner): a STARK on Plonky3 0.7.**
   proofs, without migrating records.
 - **The parameter set is code** (`zk/src/params.rs`). A test recomputes its proven
   security for every registered table shape and fails the build below 100 bits.
+- **Current set: BS-ZK-2.**
+  - degree-8 extension, blow-up 8, 108 queries, 16 grinding bits;
+  - over the whole shape envelope (2^22 rows, 4 000 columns): ≥ 123 bits in the
+    Johnson regime (the target is 120, the approved floor 100) **and** ≥ 105 bits in
+    the unique-decoding regime.
+  - The second target is extra conservatism beyond decision B. Dropping it would cut
+    queries by 35–55% (`zk/examples/param_study.rs`). That is an open
+    security-policy decision for the owner.
 - Proof-of-work grinding may contribute at most 20 bits and is counted explicitly.
 - Challenges are drawn from an extension field of ≥ 124 bits.
 - **Fiat–Shamir:** the transcript absorbs the full statement, i.e. all public inputs
@@ -598,8 +611,9 @@ and R5 (pure Rust) together (§15).
 - IO: only through the SDK channel. No host syscalls, no clock, no randomness except
   witness input.
 - **Candidates for PX-0:**
-  - (a) our own minimal zkVM on audited STARK components, with small verifier and full
-    control, but the largest effort;
+  - (a) our own minimal zkVM on established STARK components (their audit status must
+    be verified, not assumed), with small verifier and full control, but the largest
+    effort;
   - (b) adopting an existing pure-Rust RISC-V zkVM, pinned and reviewed, with its
     hiding mode verified.
 
@@ -609,10 +623,24 @@ and R5 (pure Rust) together (§15).
 
 ## 11. Performance model
 
-The targets below were set before PX-0. The measurements are in
-`docs/evidence/px0-2026-09-23/RESULTS.md`. The **proof-size target of 150 KB is
-exceeded**: proofs are 130–230 KB under decision B. §11.1 is therefore normative for
-PX-1: a separate PX weight budget, and prunable proofs.
+The targets below were set before PX-0. The PX-0 measurements are in
+`docs/evidence/px0-2026-09-23/RESULTS.md`.
+
+**Measured on the complete system (BS-ZK-2, this machine; docs/px.md §8): the targets
+are missed by a wide margin.**
+
+| Item | Target | Measured |
+|---|---|---|
+| Private transfer proving | ≤ 15 s | ~40 s |
+| Proof size | ≤ 150 KB | ~2.0 MB (transfer), ~2.5 MB (with one function) |
+| Verification | ≤ 30 ms | ~1.3–1.5 s |
+
+Per-transaction proofs of this size are not viable for a chain. The paths are:
+- the query-policy decision (§9.3);
+- caching setup commitments, for verification;
+- per-block aggregation (PX-4).
+
+Until then, §11.1 is normative, and PX cannot be activated on a public network.
 
 | Item | Target | Why |
 |---|---|---|
@@ -783,7 +811,7 @@ The criteria below are the original gates, kept for the record.
 | Decision | Criteria (all must hold) | Fallback |
 |---|---|---|
 | DR-2 proof family | P1–P6; §11 size and verify targets within 2× | Halo2-IPA; R4 dropped and documented |
-| DR-3 zkVM (own vs adopted) | Hiding verified; verifier specifiable in ≤ ~5 kLOC; audited or auditable; pinned | Own minimal zkVM on audited components |
+| DR-3 zkVM (own vs adopted) | Hiding verified; verifier specifiable in ≤ ~5 kLOC; audited or auditable; pinned | Own minimal zkVM on established components (audit status to be verified) |
 | DR-4 `Hk` | No known attack within the security margin; parameters from the designers | Rescue-Prime Optimized |
 | DR-5 bridge | Default: public amounts with containment | Confidential bridge only after ≥ 2 years of PX operation and audits |
 | DR-6 client proving | 2×2 proving ≤ 15 s on the reference laptop | Smaller circuits or a relaxed target; never delegated proving |

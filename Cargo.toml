@@ -12,8 +12,10 @@ members = [
     "miner",     # blacksilk-miner: RandomX miner
     "wallet",    # blacksilk-wallet: CLI wallet
     "contracts", # blacksilk-contracts: confidential contracts (Wasm engine, state)
-    "zk",        # blacksilk-zk: zero-knowledge proof layer (Plonky3 STARK, BS-ZK-1)
-    "zkvm",      # blacksilk-zkvm: BVM-1 zero-knowledge virtual machine (RV32IM)
+    "zk",        # blacksilk-zk: zero-knowledge proof layer (Plonky3 STARK, BS-ZK-2)
+    "zkvm",      # blacksilk-zkvm: BVM-1 zero-knowledge virtual machine (RV32I + Zmmul)
+    "px-core",   # blacksilk-px-core: PX hash, records and transfer kernel (no_std, shared with the guest)
+    "px",        # blacksilk-px: PX node state, wallet side, record delivery, kernel proofs
     "tools/labnet", # blacksilk-labnet: long-duration lab network test
 ]
 # Pre-rebuild code kept for reference only (does not build; see legacy/README.md),

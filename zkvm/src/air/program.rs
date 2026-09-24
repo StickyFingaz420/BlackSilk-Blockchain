@@ -151,13 +151,15 @@ pub fn preprocessed(program: &Program, min: usize) -> RowMajorMatrix<Val> {
     RowMajorMatrix::new(v, PREP_WIDTH)
 }
 
-pub fn eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB) {
+pub fn eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB, exec: u32) {
     let (m, _) = row(b);
     let (p, _) = prep(b);
     let mult = m[0].clone();
     // Padding rows cannot be looked up.
     b.assert_zero(mult.clone() * (c::<AB>(1) - p[IS_REAL].clone()));
-    PROGRAM.table_entry(b, p[..1 + f::COUNT].to_vec(), mult);
+    let mut msg = vec![c::<AB>(exec)];
+    msg.extend_from_slice(&p[..1 + f::COUNT]);
+    PROGRAM.table_entry(b, msg, mult);
 }
 
 /// Multiplicity column from execution counts per instruction index.

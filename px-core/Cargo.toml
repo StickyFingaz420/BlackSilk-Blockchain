@@ -1,0 +1,13 @@
+[package]
+name = "blacksilk-px-core"
+version = "0.1.0"
+edition = "2021"
+description = "BlackSilk private execution core (no_std): the Hk hash, records, nullifiers and the transfer kernel, shared by nodes, wallets and the kernel guest program"
+
+[lib]
+name = "blacksilk_px_core"
+
+# No dependencies: this crate is compiled both for the host and, inside the
+# kernel guest, for riscv32i-unknown-none-elf. The permutation is supplied by
+# the caller (see `Permutation`).
+[dependencies]

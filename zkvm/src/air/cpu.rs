@@ -28,7 +28,7 @@
 use super::program::{class, f};
 use super::util::{
     alu_op, c, mem_consume, mem_produce, range_bits, range_pair, range_word, row, ALU, OUTPUT,
-    PROGRAM, REG_BASE,
+    PROGRAM, REG_BASE, SYSCALL,
 };
 use p3_air::AirBuilder;
 use p3_field::PrimeCharacteristicRing;
@@ -67,7 +67,8 @@ pub const SH: usize = PB + 4;
 pub const SRD: usize = SH + 1;
 pub const SWR: usize = SRD + 1;
 pub const OUT: usize = SWR + 1;
-pub const WIDTH: usize = OUT + 1;
+pub const SP2: usize = OUT + 1;
+pub const WIDTH: usize = SP2 + 1;
 
 /// Public values of the CPU table.
 pub mod pv {
@@ -98,7 +99,8 @@ fn range_diff<AB: InteractionBuilder>(b: &mut AB, d: &[AB::Expr], count: AB::Exp
     range_pair(b, d[2].clone(), AB::Expr::ZERO, count);
 }
 
-pub fn eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB) {
+pub fn eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB, exec: u32) {
+    let ex = c::<AB>(exec);
     let (r, n) = row(b);
     let pvs: Vec<AB::Expr> = b.public_values().iter().map(|v| (*v).into()).collect();
     let one = AB::Expr::ONE;
@@ -175,7 +177,7 @@ pub fn eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB) {
     }
 
     // ---- decode ----
-    let mut fetch = vec![r[PC].clone()];
+    let mut fetch = vec![ex.clone(), r[PC].clone()];
     fetch.extend((0..f::COUNT).map(fld));
     PROGRAM.lookup_key(b, fetch, Count::bounded(real.clone(), 1));
 
@@ -189,8 +191,15 @@ pub fn eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB) {
         let key = c::<AB>(REG_BASE) + fld(idx);
         let val = v(base);
         let d: Vec<AB::Expr> = (0..3).map(|i| r[d_col + i].clone()).collect();
-        mem_consume(b, key.clone(), &val, r[t_col].clone(), real.clone());
-        mem_produce(b, key, &val, ts(slot), real.clone());
+        mem_consume(
+            b,
+            ex.clone(),
+            key.clone(),
+            &val,
+            r[t_col].clone(),
+            real.clone(),
+        );
+        mem_produce(b, ex.clone(), key, &val, ts(slot), real.clone());
         b.assert_zero(
             real.clone() * (ts(slot) - r[t_col].clone() - one.clone() - diff24::<AB>(&d)),
         );
@@ -201,8 +210,15 @@ pub fn eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB) {
     {
         let key = c::<AB>(REG_BASE) + fld(f::RD);
         let d: Vec<AB::Expr> = (0..3).map(|i| r[DC + i].clone()).collect();
-        mem_consume(b, key.clone(), &v(CP), r[TC].clone(), write.clone());
-        mem_produce(b, key, &cc, ts(3), write.clone());
+        mem_consume(
+            b,
+            ex.clone(),
+            key.clone(),
+            &v(CP),
+            r[TC].clone(),
+            write.clone(),
+        );
+        mem_produce(b, ex.clone(), key, &cc, ts(3), write.clone());
         b.assert_zero(write.clone() * (ts(3) - r[TC].clone() - one.clone() - diff24::<AB>(&d)));
         range_diff(b, &d, write.clone());
         let no_write = one.clone() - write.clone();
@@ -340,12 +356,12 @@ pub fn eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB) {
     {
         let key = r[WK].clone();
         let d: Vec<AB::Expr> = (0..3).map(|i| r[DM + i].clone()).collect();
-        mem_consume(b, key.clone(), &m, r[TM].clone(), mem.clone());
-        mem_produce(b, key.clone(), &m, ts(2), mem.clone());
+        mem_consume(b, ex.clone(), key.clone(), &m, r[TM].clone(), mem.clone());
+        mem_produce(b, ex.clone(), key.clone(), &m, ts(2), mem.clone());
         b.assert_zero(mem.clone() * (ts(2) - r[TM].clone() - one.clone() - diff24::<AB>(&d)));
         range_diff(b, &d, mem.clone());
-        mem_consume(b, key.clone(), &m, ts(2), f_st.clone());
-        mem_produce(b, key, &nn, ts(3), f_st.clone());
+        mem_consume(b, ex.clone(), key.clone(), &m, ts(2), f_st.clone());
+        mem_produce(b, ex.clone(), key, &nn, ts(3), f_st.clone());
         range_word(b, &nn, f_st.clone());
         let no_mem = one.clone() - mem.clone();
         for x in m.iter().chain(d.iter()).chain([&r[TM]]) {
@@ -410,15 +426,46 @@ pub fn eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB) {
     }
 
     // ---- system calls ----
-    for x in [&sh, &srd, &swr] {
+    let sp2 = r[SP2].clone();
+    for x in [&sh, &srd, &swr, &sp2] {
         b.assert_bool(x.clone());
     }
-    b.assert_zero(sh.clone() + srd.clone() + swr.clone() - f_ecall.clone());
-    b.assert_zero(f_ecall.clone() * (a[0].clone() - srd - swr.clone() * c::<AB>(2)));
+    b.assert_zero(sh.clone() + srd.clone() + swr.clone() + sp2.clone() - f_ecall.clone());
+    b.assert_zero(
+        f_ecall.clone()
+            * (a[0].clone() - srd - swr.clone() * c::<AB>(2) - sp2.clone() * c::<AB>(3)),
+    );
+    // POSEIDON2: the 64-byte buffer at a0 must be writable memory:
+    // ptr ≥ CODE_END and ptr < 2^28 − 63 (alignment and < 2^28 are checked by
+    // the POSEIDON2 table, which performs the accesses).
+    let code_end_w: Vec<AB::Expr> = (0..4).map(|i| pvs[pv::CODE_END + i].clone()).collect();
+    let mut q = vec![c::<AB>(alu_op::SLTU)];
+    q.extend(bb.iter().cloned());
+    q.extend(code_end_w);
+    q.extend([
+        AB::Expr::ZERO,
+        AB::Expr::ZERO,
+        AB::Expr::ZERO,
+        AB::Expr::ZERO,
+    ]);
+    ALU.lookup_key(b, q, Count::bounded(sp2.clone(), 1));
+    let mut q = vec![c::<AB>(alu_op::SLTU)];
+    q.extend(bb.iter().cloned());
+    q.extend([c::<AB>(0xc1), c::<AB>(0xff), c::<AB>(0xff), c::<AB>(0x0f)]);
+    q.extend([
+        AB::Expr::ONE,
+        AB::Expr::ZERO,
+        AB::Expr::ZERO,
+        AB::Expr::ZERO,
+    ]);
+    ALU.lookup_key(b, q, Count::bounded(sp2.clone(), 1));
+    let mut call = vec![ex.clone(), r[CLK].clone()];
+    call.extend(bb.iter().cloned());
+    SYSCALL.lookup_key(b, call, Count::bounded(sp2, 1));
     for x in &a[1..] {
         b.assert_zero(f_ecall.clone() * x.clone());
     }
-    let mut out = vec![r[OUT].clone()];
+    let mut out = vec![ex.clone(), r[OUT].clone()];
     out.extend(bb.iter().cloned());
     OUTPUT.table_entry(b, out, swr);
 }

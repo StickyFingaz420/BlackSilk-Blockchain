@@ -50,11 +50,13 @@ pub fn image_preprocessed(words: &[(u32, u32)], min: usize) -> RowMajorMatrix<Va
     matrix(rows, IMAGE_PREP_WIDTH, min)
 }
 
-pub fn image_eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB) {
+pub fn image_eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB, exec: u32) {
     let (m, _) = row(b);
     let (p, _) = prep(b);
     b.assert_zero(m[0].clone());
-    IMAGE.lookup_key(b, p[..5].to_vec(), Count::bounded(p[5].clone(), 1));
+    let mut msg = vec![c::<AB>(exec)];
+    msg.extend_from_slice(&p[..5]);
+    IMAGE.lookup_key(b, msg, Count::bounded(p[5].clone(), 1));
 }
 
 /// Preprocessed `(index, v0..v3, is_real)` rows of the claimed outputs.
@@ -67,11 +69,13 @@ pub fn output_preprocessed(output: &[u32], min: usize) -> RowMajorMatrix<Val> {
     image_preprocessed(&words, min)
 }
 
-pub fn output_eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB) {
+pub fn output_eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB, exec: u32) {
     let (m, _) = row(b);
     let (p, _) = prep(b);
     b.assert_zero(m[0].clone());
-    OUTPUT.lookup_key(b, p[..5].to_vec(), Count::bounded(p[5].clone(), 1));
+    let mut msg = vec![c::<AB>(exec)];
+    msg.extend_from_slice(&p[..5]);
+    OUTPUT.lookup_key(b, msg, Count::bounded(p[5].clone(), 1));
 }
 
 const IS_REAL: usize = 0;
@@ -84,7 +88,8 @@ const II: usize = 15;
 const D: usize = 16;
 pub const INIT_WIDTH: usize = 20;
 
-pub fn init_eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB) {
+pub fn init_eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB, exec: u32) {
+    let ex = c::<AB>(exec);
     let (r, n) = row(b);
     let real = r[IS_REAL].clone();
     b.assert_bool(real.clone());
@@ -121,19 +126,27 @@ pub fn init_eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB) {
     for i in 0..4 {
         b.assert_zero((AB::Expr::ONE - ii.clone()) * r[VI + i].clone());
     }
-    let mut img = vec![r[KEY].clone()];
+    let mut img = vec![ex.clone(), r[KEY].clone()];
     img.extend_from_slice(&r[VI..VI + 4]);
     IMAGE.table_entry(b, img, ii);
 
     // Endpoints of the key's history.
     mem_produce(
         b,
+        ex.clone(),
         r[KEY].clone(),
         &r[VI..VI + 4],
         AB::Expr::ZERO,
         real.clone(),
     );
-    mem_consume(b, r[KEY].clone(), &r[VF..VF + 4], r[TF].clone(), real);
+    mem_consume(
+        b,
+        ex.clone(),
+        r[KEY].clone(),
+        &r[VF..VF + 4],
+        r[TF].clone(),
+        real,
+    );
 }
 
 /// One `MEM_INIT` row: `(key, init, final, final_ts, in_image)`.

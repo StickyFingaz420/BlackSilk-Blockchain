@@ -12,43 +12,53 @@ pub const RANGE: LookupBus<'static> = LookupBus::new("bvm/byte-range");
 pub const BYTE_OP: LookupBus<'static> = LookupBus::new("bvm/byte-op");
 /// ALU requests: `(op, a0..a3, b0..b3, c0..c3)`.
 pub const ALU: LookupBus<'static> = LookupBus::new("bvm/alu");
-/// Instruction fetch: `(pc, decoded fields…)` (see `program::f`).
+/// Instruction fetch: `(exec, pc, decoded fields…)` (see `program::f`).
 pub const PROGRAM: LookupBus<'static> = LookupBus::new("bvm/program");
-/// Initial image: `(key, v0..v3)`, each image word exactly once.
+/// Initial image: `(exec, key, v0..v3)`, each image word exactly once.
 pub const IMAGE: LookupBus<'static> = LookupBus::new("bvm/image");
-/// Public output: `(index, v0..v3)`, each output word exactly once.
+/// Public output: `(exec, index, v0..v3)`, each output word exactly once.
 pub const OUTPUT: LookupBus<'static> = LookupBus::new("bvm/output");
-/// The offline memory argument (zkvm.md §6.3): `(key, v0..v3, ts)`.
+/// Syscalls served by other tables: `(exec, clk, ptr0..ptr3)` for POSEIDON2.
+pub const SYSCALL: LookupBus<'static> = LookupBus::new("bvm/syscall");
+/// The offline memory argument (zkvm.md §6.3): `(exec, key, v0..v3, ts)`.
 /// Producing an entry counts +1, consuming it −1.
+///
+/// **Execution tags.** A proof may cover several executions (zkvm.md §6.5).
+/// Every message on the memory, program, image, output and syscall buses
+/// starts with the execution's id, so no execution can read another's
+/// memory, fetch another's code or emit another's outputs. The ALU and byte
+/// buses are pure functions of their operands and are shared untagged.
 pub const MEMORY: &str = "bvm/memory";
 
 /// Keys of the memory argument: memory words use their word index (< 2^26),
 /// registers `REG_BASE + r`. All keys are < 2^27.
 pub const REG_BASE: u32 = 1 << 26;
 
-/// Produces `(key, v, ts)` on the memory bus `count ∈ {0, 1}` times.
+/// Produces `(exec, key, v, ts)` on the memory bus `count ∈ {0, 1}` times.
 pub fn mem_produce<AB: InteractionBuilder>(
     b: &mut AB,
+    exec: AB::Expr,
     key: AB::Expr,
     v: &[AB::Expr],
     ts: AB::Expr,
     count: AB::Expr,
 ) {
-    let mut msg = vec![key];
+    let mut msg = vec![exec, key];
     msg.extend_from_slice(v);
     msg.push(ts);
     b.push_interaction(MEMORY, msg, Count::bounded(count, 1));
 }
 
-/// Consumes `(key, v, ts)` from the memory bus `count ∈ {0, 1}` times.
+/// Consumes `(exec, key, v, ts)` from the memory bus `count ∈ {0, 1}` times.
 pub fn mem_consume<AB: InteractionBuilder>(
     b: &mut AB,
+    exec: AB::Expr,
     key: AB::Expr,
     v: &[AB::Expr],
     ts: AB::Expr,
     count: AB::Expr,
 ) {
-    let mut msg = vec![key];
+    let mut msg = vec![exec, key];
     msg.extend_from_slice(v);
     msg.push(ts);
     b.push_interaction(MEMORY, msg, Count::bounded(-count, 1));
