@@ -123,6 +123,23 @@ pub fn prove<R: RngCore + CryptoRng>(
     if functions.len() != public.n_fn {
         return Err(TransferError::Shape);
     }
+    // Run every function first (cheap) and check it reports the kernel's
+    // `(io_hash, contract)`, so a mismatched call is refused before any
+    // proving work.
+    for (k, (program, input)) in functions.iter().enumerate() {
+        let exec = blacksilk_zkvm::run(program, input, blacksilk_zkvm::MAX_CYCLES)
+            .map_err(|t| TransferError::Execution(format!("function {k}: {t:?}")))?;
+        if exec.exit_code != 0 {
+            return Err(TransferError::Execution(format!(
+                "function {k} halted with {}",
+                exec.exit_code
+            )));
+        }
+        let (contract, io_hash) = &public.functions[k];
+        if exec.output.len() < 16 || exec.output[..16] != function_prefix(io_hash, contract) {
+            return Err(TransferError::FunctionMismatch(k));
+        }
+    }
     let mut runs: Vec<(Arc<Program>, &[u32])> = vec![(kernel_program(), &words)];
     runs.extend(functions.iter().map(|(p, i)| (p.clone(), i.as_slice())));
     let (st, proof) = blacksilk_zkvm::prove::prove_multi(&runs, h_tx, rng).map_err(prove_error)?;

@@ -20,7 +20,7 @@ members = [
 ]
 # Pre-rebuild code kept for reference only (does not build; see legacy/README.md),
 # and the post-quantum research track.
-exclude = ["legacy", "research"]
+exclude = ["legacy", "research", "third_party"]
 
 [profile.release]
 opt-level = 3
@@ -51,3 +51,10 @@ opt-level = 3
 # Wallet file key derivation (Argon2id) in tests.
 [profile.dev.package.argon2]
 opt-level = 3
+
+# Patched Plonky3 0.7.0 crates (third_party/README.md): a spin-lock deadlock in
+# the hiding commitment code hung the prover (AUDIT.md ZK-F11). Only lock
+# scopes change. Remove when upstream is fixed.
+[patch.crates-io]
+p3-fri = { path = "third_party/p3-fri" }
+p3-merkle-tree = { path = "third_party/p3-merkle-tree" }

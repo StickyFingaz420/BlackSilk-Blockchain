@@ -327,10 +327,13 @@ Everything except the contract id, the selector and `io_hash` stays private. Tes
 
 | Item | Value |
 |---|---|
-| Kernel execution | 18.7k cycles (opt-level "z" gave 141k; hashing path optimized: 7.5×) |
-| Poseidon2 permutations per transfer | ~144 (tree nodes use one permutation each) |
-| Transfer proof | **2.05 MB**, proving ~40 s, verifying 1.4 s |
+| Kernel execution (v2) | 25.0–25.2k cycles; 29.3–29.4k with one function (opt-level "z" gave 141k for v1) |
+| Transfer proof | **2.08 MB**, proving 43.0 s, verifying 1.3 s |
+| Kernel + one function (vault CLAIM) | **2.54 MB**, proving 50.8 s (40-proof stress run: 48.4–51.4 s each) |
 | Record ciphertext | 1,209 bytes per output |
+
+Measured on this machine, idle, one proof at a time, after the prover-hang fix
+(AUDIT.md ZK-F11).
 
 **Proof size is the main open problem.** A single transfer proof is far too large for
 per-transaction use on a chain.

@@ -232,6 +232,8 @@ outputs.
     (`MEM_INIT`);
   - the kernel rebuild was byte-identical, and its program id is pinned.
 - **Pinned versions:** Plonky3 `=0.7.0` (every crate), `ml-kem =0.3.2`.
+- **Patched dependencies:** `p3-fri` and `p3-merkle-tree` 0.7.0, lock scopes only
+  (R-9, `third_party/README.md`).
 
 ## 7. Evidence (tests)
 
@@ -240,7 +242,7 @@ outputs.
 | Proof layer | Honest and false statements; 402 single-byte proof mutations (no verifier panic); strict encoding; randomized proofs; parameter envelope ≥ 123 / ≥ 105 bits |
 | ALU tables | 231 120 single-cell mutations, all caught; false claims unbalance the bus |
 | CPU and memory | 37 616 mutations; every instruction class; lying-prover tests |
-| Poseidon2 | 2 496 mutations; consistent output forgery rejected; AIR output equals the interpreter's |
+| Poseidon2 | 2 500 mutations; consistent output forgery rejected; AIR output equals the interpreter's |
 | Multi-execution | Isolation; statement binding; 11 458 mutations; 3-execution proof |
 | LogUp bound | Largest accepted statement at 63% of p |
 | Kernel | 20 plain and 12 contract rejection cases, identical natively and in the guest; constant trace heights |
@@ -258,6 +260,8 @@ outputs.
 | R-5 | The kernel with one function uses 29.4k of 32 768 CPU rows. A future change that crosses 2^15 for some witnesses only would make heights witness-dependent. | Open: a test asserts identical heights. Before release, add a margin check, or pad the kernel to a fixed cycle count. |
 | R-6 | `io_hash` hiding depends on a fresh uniform blind chosen by the caller. | Documented. Wallet code must sample it with a CSPRNG; the tests do. |
 | R-7 | Poseidon2 is young and used everywhere (A2). | External cryptanalysis review required |
+| R-9 | **Prover liveness: Plonky3's hiding commitments could deadlock** (a spin lock held across rayon work). Found when sequential test runs hung. | Fixed with a minimal patch of `p3-fri` and `p3-merkle-tree` (AUDIT.md ZK-F11, `third_party/README.md`); verified by 40 consecutive proofs. Upstream is unfixed as of 0.7.0. The patch must be re-checked on every Plonky3 upgrade. |
+| R-10 | Proof bytes are not reproducible from a seed: several tables take the shared prover RNG in a scheduling-dependent order. | Harmless for security (the randomness stays fresh). Documented so that no test or document relies on reproducible proof bytes. |
 | R-8 | Plonky3 0.7 is a pre-1.0 library; its audit status has not been verified by us. An earlier comment called `Poseidon2Air` "audited"; the claim was unverified and has been removed. | External implementation review required |
 
 ## 9. Required independent reviews (before any production use)

@@ -868,7 +868,7 @@ Twelve tables in one batch STARK:
   words are produced at the call's write slot.
 - Input and output words must be canonical field elements (one encoding per value);
   the CPU checks that the 64-byte buffer lies in writable memory.
-- **Mutation testing: 2 496 single-cell mutations of the Poseidon2 rows and their CPU
+- **Mutation testing: 2 500 single-cell mutations of the Poseidon2 rows and their CPU
   rows, all caught.** A consistent forgery of an output (permutation column and memory
   bytes together) is rejected by the permutation constraints.
 - The AIR's output equals the interpreter's permutation on every call (asserted during
@@ -894,8 +894,11 @@ Twelve tables in one batch STARK:
   - a deposit and a private payment proven and verified, then rejected under 10
     statement alterations;
   - state, tree, delivery and hash tests (docs/px.md §8.3).
-- **Measured:** kernel 18.7k cycles; transfer proof **2.05 MB**; proving ~40 s;
-  verifying 1.4 s.
+- **Measured** (this machine, idle, sequential, BS-ZK-2, after ZK-F11):
+  - kernel v2: 25.0–25.2k cycles without functions, 29.3–29.4k with one;
+  - transfer proof: **2.08 MB**, proving 43.0 s, verifying 1.3 s;
+  - kernel + one function (vault CLAIM): **2.54 MB**, proving 50.8 s;
+  - a 40-proof stress run: 48.4–51.4 s per kernel + function proof.
 
 **ZK-5: unified proof of contract functions and the kernel** (zkvm.md §6.5,
 docs/px.md §7).
@@ -955,6 +958,8 @@ It is explicitly **not** an independent review.
 | ZK-F8 | **Performance:** the size-optimized guest profile made the kernel 141k cycles, and a two-permutation tree node doubled hashing. | Kernel built at opt-level 2, one-permutation tree nodes, lean sponge: 18.7k cycles (7.5×). The Poseidon2 table's interaction columns were cut from 67 to 39 without weakening any check. |
 | ZK-F9 | **Found by the security review:** the CPU table height was bounded by the global 2^22 limit rather than `MAX_CYCLES` (2^21), so the circuit accepted executions twice as long as the interpreter allows (not a forgery: timestamps stay far below p). | CPU tables capped at `MAX_CYCLES`; the LogUp multiplicity bound at the largest accepted statement fell from 84% to 63% of p (tested). |
 | ZK-F10 | **Design gap found while building ZK-5:** a proof shows only that *some* program produced a function's transcript. | Mandatory registry check in the verifier (tested); consensus must implement it. |
+| ZK-F11 | **Prover hang (Plonky3 bug, found by sequential test runs).** Multi-table proofs could hang forever, depending on thread scheduling. `HidingFriPcs::get_quotient_ldes` (p3-fri 0.7.0) holds a `spin::Mutex` on the PCS randomness across parallel DFTs, and is called for several tables inside a rayon parallel loop. A thread waiting in the DFT can steal another table's task, which then spins on the lock held further up its own stack. `MerkleTreeHidingMmcs::commit` held its lock across the parallel tree build in the same way. **Evidence:** 3 of 3 sequential runs hung (one for 4 hours at full CPU); the span log located the stall in table 4's quotient step. This is a liveness defect (a wallet could hang); soundness and zero knowledge are unaffected. | Patched copies in `third_party/` (`[patch.crates-io]`; documented in `third_party/README.md`): random values are drawn under the lock, which is released before any parallel work; no other change. **Verified:** 40 of 40 consecutive proofs of the unfixed-hang case completed (48.4–51.4 s each), where the unpatched build hung at the second; the sequential test runs pass. Upstream fix not yet available; not reported from here. |
+| ZK-F12 | `px::prove` proved first and checked the function transcripts afterwards, so a mismatched call cost a full proof before being refused. | Function runs are executed and checked in the interpreter before proving; the post-proof checks remain as a second line. |
 
 **Open items:**
 - **Proof size (main open problem):** ~2 MB per transfer.
