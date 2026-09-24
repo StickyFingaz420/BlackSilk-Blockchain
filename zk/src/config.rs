@@ -63,19 +63,29 @@ pub fn permutation() -> Perm {
     default_babybear_poseidon2_16()
 }
 
-/// The Fiat–Shamir challenger, already absorbed the parameter-set identifier,
-/// so transcripts of different parameter sets (or of other Plonky3 users) can
-/// never coincide.
-fn challenger(perm: &Perm) -> Challenger {
+/// The Fiat–Shamir challenger, having absorbed the parameter-set identifier
+/// (so transcripts of different parameter sets, or of other Plonky3 users,
+/// never coincide) and the statement digest.
+///
+/// **Statement digest.** Public data the verifier supplies to the AIRs
+/// itself (periodic columns: programs, images, claimed outputs) is not
+/// committed by Plonky3 and not observed by it. It must enter the transcript
+/// before the first challenge, or a prover could choose it after seeing the
+/// challenges (a "Frozen Heart" weak Fiat–Shamir). Callers pass a digest of
+/// all such data; public values are observed by Plonky3 itself.
+fn challenger(perm: &Perm, statement: &[u8; 32]) -> Challenger {
     let mut c = Challenger::new(perm.clone());
     c.observe(Val::from_u32(params::PARAMS_ID.len() as u32));
     for b in params::PARAMS_ID {
         c.observe(Val::from_u8(*b));
     }
+    for b in statement {
+        c.observe(Val::from_u8(*b));
+    }
     c
 }
 
-fn build(mmcs_seed: [u8; 32], pcs_seed: [u8; 32]) -> ZkConfig {
+fn build(mmcs_seed: [u8; 32], pcs_seed: [u8; 32], statement: &[u8; 32]) -> ZkConfig {
     let perm = permutation();
     let val_mmcs = ValMmcs::new(
         Hash::new(perm.clone()),
@@ -99,7 +109,7 @@ fn build(mmcs_seed: [u8; 32], pcs_seed: [u8; 32]) -> ZkConfig {
         NUM_RANDOM_CODEWORDS,
         StdRng::from_seed(pcs_seed),
     );
-    StarkConfig::new(pcs, challenger(&perm))
+    StarkConfig::new(pcs, challenger(&perm, statement))
 }
 
 /// Configuration for proving. Build a fresh one for every proof.
@@ -110,6 +120,16 @@ impl ProverConfig {
     /// is mixed into the seeds so that a failing OS RNG still gives
     /// unpredictable, statement-specific hiding randomness.
     pub fn new<R: RngCore + CryptoRng>(witness_digest: &[u8; 32], rng: &mut R) -> Self {
+        Self::for_statement(&[0; 32], witness_digest, rng)
+    }
+
+    /// As [`new`](Self::new), bound to `statement` (see the statement digest
+    /// on the challenger). The verifier must use the same digest.
+    pub fn for_statement<R: RngCore + CryptoRng>(
+        statement: &[u8; 32],
+        witness_digest: &[u8; 32],
+        rng: &mut R,
+    ) -> Self {
         let mut fresh = [0u8; 32];
         rng.fill_bytes(&mut fresh);
         let mut wide = Hasher64::new(tags::ZK_PROVER_SEED)
@@ -122,7 +142,7 @@ impl ProverConfig {
         mmcs_seed.copy_from_slice(&wide[..32]);
         pcs_seed.copy_from_slice(&wide[32..]);
         wide.zeroize();
-        let cfg = build(mmcs_seed, pcs_seed);
+        let cfg = build(mmcs_seed, pcs_seed, statement);
         mmcs_seed.zeroize();
         pcs_seed.zeroize();
         Self(cfg)
@@ -144,7 +164,12 @@ impl Default for VerifierConfig {
 
 impl VerifierConfig {
     pub fn new() -> Self {
-        Self(build([0; 32], [0; 32]))
+        Self::for_statement(&[0; 32])
+    }
+
+    /// A verifier bound to `statement` (as [`ProverConfig::for_statement`]).
+    pub fn for_statement(statement: &[u8; 32]) -> Self {
+        Self(build([0; 32], [0; 32], statement))
     }
 
     /// The deterministic configuration used to commit preprocessed (public)

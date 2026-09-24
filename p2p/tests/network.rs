@@ -12,11 +12,13 @@ use blacksilk_p2p::dandelion::DandelionParams;
 use blacksilk_p2p::message::{Message, Version, PROTOCOL_VERSION};
 use blacksilk_p2p::transport::{handshake, FrameReader, FrameWriter};
 use blacksilk_p2p::{NetAddr, NetConfig, Network, SharedChain};
+use blacksilk_px::wallet::{self as pxw, Account};
 use blacksilk_tx::builder::{
     build_coinbase, build_transfer, standard_fee, Decoy, InputPlan, Payment, SpendableOutput,
 };
 use blacksilk_tx::decoy::select_ring;
 use blacksilk_tx::params::{TxRules, COINBASE_MATURITY, SPENDABLE_AGE};
+use blacksilk_tx::px_builder::{build_px, px_standard_fee, PxPlan};
 use blacksilk_tx::scan::scan_block;
 use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::ChainView;
@@ -113,7 +115,7 @@ impl TestNode {
     fn mine(&mut self, nonce: u64) -> Block {
         let mut c = self.chain.lock().unwrap();
         let t = c.template();
-        let fees: u64 = t.txs.iter().map(|t| t.fee).sum();
+        let fees: u64 = t.txs.iter().map(Transaction::fee).sum();
         let cb = build_coinbase(
             t.height,
             &[Payment {
@@ -125,7 +127,7 @@ impl TestNode {
         )
         .unwrap();
         let mut txs = vec![Transaction::Coinbase(cb)];
-        txs.extend(t.txs.iter().cloned().map(Transaction::from));
+        txs.extend(t.txs.iter().cloned());
         let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
         let header = BlockHeader {
             version: HEADER_VERSION,
@@ -152,6 +154,62 @@ impl TestNode {
 
     /// A 1-input transfer from this node's miner wallet to a fresh wallet.
     fn payment(&mut self) -> Transaction {
+        let (plan, rules) = self.input_plan(0);
+        let (dest, _) = WalletKeys::generate(&mut self.rng);
+        let tx = build_transfer(
+            &self.miner,
+            vec![plan],
+            &[Payment {
+                address: dest.address(SubaddressIndex::PRIMARY),
+                amount: 1_000,
+            }],
+            &self.miner.address(SubaddressIndex::PRIMARY),
+            standard_fee(1, 2, &rules),
+            &rules,
+            &mut self.rng,
+        )
+        .unwrap();
+        Transaction::from(tx)
+    }
+
+    /// A PX deposit of `amount` from this node's miner wallet (one proof).
+    fn px_deposit(&mut self, amount: u64) -> Transaction {
+        let fee = px_standard_fee();
+        let (plan, rules) = self.input_plan(amount + fee);
+        let root = self.chain.lock().unwrap().state().px().root();
+        let acct = Account::from_seed(&[5; 32]);
+        let rng = &mut self.rng;
+        let witness = pxw::witness(
+            root,
+            amount,
+            0,
+            [pxw::dummy_input(rng), pxw::dummy_input(rng)],
+            [
+                pxw::output(rng, acct.owner(0), amount),
+                pxw::empty_output(rng),
+            ],
+        );
+        let tx = build_px(
+            PxPlan {
+                keys: Some(&self.miner),
+                inputs: vec![plan],
+                change: Some(self.miner.address(SubaddressIndex::PRIMARY)),
+                payouts: vec![],
+                witness,
+                recipients: [Some(acct.address(0)), None],
+                functions: vec![],
+                fee,
+            },
+            &rules,
+            &mut self.rng,
+        )
+        .unwrap();
+        Transaction::Px(Box::new(tx))
+    }
+
+    /// An input plan for a mature, unspent miner output worth more than
+    /// `min_amount`.
+    fn input_plan(&mut self, min_amount: u64) -> (InputPlan, TxRules) {
         let c = self.chain.lock().unwrap();
         let table = SubaddressTable::new(self.miner.view_keys(), 1, 2);
         let next = c.height() + 1;
@@ -161,6 +219,7 @@ impl TestNode {
             let first = c.state().first_output_at(h).unwrap();
             for o in scan_block(self.miner.view_keys(), &table, &b.txs, h, first).owned {
                 if next >= o.height + COINBASE_MATURITY
+                    && o.received.amount > min_amount
                     && !c.state().is_key_image_spent(&o.key_image(&self.miner))
                 {
                     owned = Some(o);
@@ -198,24 +257,13 @@ impl TestNode {
                 key: state.output(i).unwrap().key,
             })
             .collect();
-        let (dest, _) = WalletKeys::generate(&mut self.rng);
-        let tx = build_transfer(
-            &self.miner,
-            vec![InputPlan {
+        (
+            InputPlan {
                 real: SpendableOutput::from(&owned),
                 decoys,
-            }],
-            &[Payment {
-                address: dest.address(SubaddressIndex::PRIMARY),
-                amount: 1_000,
-            }],
-            &self.miner.address(SubaddressIndex::PRIMARY),
-            standard_fee(1, 2, c.rules()),
-            c.rules(),
-            &mut self.rng,
+            },
+            *c.rules(),
         )
-        .unwrap();
-        Transaction::from(tx)
     }
 }
 
@@ -337,8 +385,9 @@ async fn transactions_travel_the_stem_then_fluff_everywhere() {
     // D mines it; everyone confirms it.
     d.mine(0);
     wait_until("A confirms", 20, || a.height() == 81 && !a.mempool_has(&id)).await;
-    let c_state_has = c.chain.lock().unwrap().height() == 81;
-    assert!(c_state_has);
+    // Blocks spread headers-first over whatever links address exchange made,
+    // so C need not have the block before A does.
+    wait_until("C confirms", 20, || c.height() == 81 && !c.mempool_has(&id)).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -566,4 +615,119 @@ async fn relaying_an_already_confirmed_transaction_is_not_penalized() {
         a.net.peers().first().is_some_and(|p| p.score >= 20)
     })
     .await;
+}
+
+/// A PX transaction (docs/px.md §11) takes the same Dandelion++ path as a
+/// transfer: stem first (not in the origin's mempool), then diffusion; every
+/// node verifies its proof, and once mined all nodes hold the same PX state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
+    let mut a = node(30, &[]).await;
+    a.mine_n(80, 0);
+    let b = node(31, &[a.addr]).await;
+    let c = node(32, &[b.addr]).await;
+    wait_until("all synced", 60, || b.height() == 80 && c.height() == 80).await;
+    a.net.connect(NetAddr::Ip(b.addr));
+    wait_until("A has an outbound stem peer", 10, || {
+        a.net.stats().outbound >= 1
+    })
+    .await;
+
+    let tx = a.px_deposit(5_000_000);
+    let id = tx.hash();
+    let bytes = tx.encode();
+    a.net.submit_tx(tx).await.unwrap();
+    assert!(
+        !a.mempool_has(&id),
+        "PX transactions are stemmed, not broadcast"
+    );
+    wait_until("B received the stem transaction", 20, || {
+        b.net.stempool_contains(&id) || b.mempool_has(&id)
+    })
+    .await;
+    wait_until("C's mempool has the PX transaction", 60, || {
+        c.mempool_has(&id)
+    })
+    .await;
+    // No peer was penalized for relaying it.
+    for n in [&a, &b, &c] {
+        assert!(n.net.peers().iter().all(|p| p.score == 0));
+    }
+    let mut c = c;
+    c.mine(0);
+    wait_until("A and B confirm", 30, || {
+        a.height() == 81 && b.height() == 81 && !a.mempool_has(&id) && !b.mempool_has(&id)
+    })
+    .await;
+    let roots: Vec<_> = [&a, &b, &c]
+        .iter()
+        .map(|n| {
+            let ch = n.chain.lock().unwrap();
+            (ch.state().px().root(), ch.state().px().pool())
+        })
+        .collect();
+    assert!(
+        roots.windows(2).all(|w| w[0] == w[1]),
+        "one PX state everywhere"
+    );
+    assert_eq!(roots[0].1, 5_000_000, "the pool holds the deposit");
+
+    // Relay limits (docs/p2p.md §10). Five peers each stem the (now confirmed)
+    // transaction 4 times: within each peer's share (burst 4), but 20 in
+    // total exceed the node-wide burst of 10. The excess is dropped, and no
+    // peer is penalized for it: an attacker draining the global bucket must
+    // not get honest peers penalized. A sixth peer exceeding its own share
+    // is penalized. (Stem copies that pass the limits fail only on chain
+    // state, a spent nullifier, which is never penalized.)
+    let nid = params().network_id;
+    let before: Vec<_> = b.net.peers().iter().map(|p| p.id).collect();
+    let mut raws = Vec::new();
+    for _ in 0..5 {
+        raws.push(raw_peer(b.addr, nid, true).await);
+    }
+    let (r6, mut w6) = raw_peer(b.addr, nid, true).await;
+    for (_, w) in raws.iter_mut() {
+        for _ in 0..4 {
+            w.send(&Message::StemTx(bytes.clone()).encode())
+                .await
+                .unwrap();
+        }
+    }
+    for _ in 0..8 {
+        w6.send(&Message::StemTx(bytes.clone()).encode())
+            .await
+            .unwrap();
+    }
+    // A ping after the stems: its pong means they were all handled.
+    raws.push((r6, w6));
+    for (i, (r, w)) in raws.iter_mut().enumerate() {
+        w.send(&Message::Ping(100 + i as u64).encode())
+            .await
+            .unwrap();
+        loop {
+            if let Message::Pong(n) = Message::decode(&r.recv().await.unwrap()).unwrap() {
+                if n == 100 + i as u64 {
+                    break;
+                }
+            }
+        }
+    }
+    let scores: Vec<u32> = b
+        .net
+        .peers()
+        .iter()
+        .filter(|p| !before.contains(&p.id))
+        .map(|p| p.score)
+        .collect();
+    assert_eq!(scores.len(), 6);
+    let penalized: Vec<u32> = scores.into_iter().filter(|&s| s > 0).collect();
+    assert_eq!(
+        penalized.len(),
+        1,
+        "only the peer over its own share: {penalized:?}"
+    );
+    assert!(
+        (3..=4).contains(&penalized[0]),
+        "one point per excess message"
+    );
 }

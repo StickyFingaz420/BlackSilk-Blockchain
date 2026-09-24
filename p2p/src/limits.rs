@@ -58,6 +58,9 @@ pub struct PeerLimits {
     pub messages: TokenBucket,
     pub bytes: TokenBucket,
     pub txs: TokenBucket,
+    /// PX and deploy transactions: each costs ~0.2 s to verify
+    /// (docs/px.md §11.5), so their relay is limited separately.
+    pub px: TokenBucket,
 }
 
 impl Default for PeerLimits {
@@ -66,6 +69,7 @@ impl Default for PeerLimits {
             messages: TokenBucket::new(50.0, 500.0),
             bytes: TokenBucket::new(4_000_000.0, 16_000_000.0),
             txs: TokenBucket::new(20.0, 100.0),
+            px: TokenBucket::new(0.2, 4.0),
         }
     }
 }

@@ -2,7 +2,8 @@
 
 Date: 2026-09-24.
 Scope: `zk/`, `zkvm/`, `px-core/`, `px/`, specifications `docs/zk.md`, `docs/zkvm.md`,
-`docs/px.md`.
+`docs/px.md`. Updated the same day for the consensus integration (ZK-6). Companion
+reviews: `privacy-review.md`, `dependency-review.md`, `aggregation-study.md`.
 
 > **This is an internal review by the implementer. It is not an independent review.**
 > It records the arguments, tests and open risks so that independent reviewers can
@@ -195,14 +196,14 @@ outputs.
 | Stale or forged anchor | 100-block root window | state tests |
 | Pool drain after a proof-system break | Containment: `pool ≥ 0` | state tests |
 | Malformed or oversized proofs; verifier panics | Strict decoding, 4 MiB cap, height and count checks before Plonky3, `catch_unwind` | 402 byte mutations: all rejected, no panic |
-| **Denial of service by verification cost** | Each proof costs ~1.3–1.5 s to verify | **Open** (§8 R-3) |
+| **Denial of service by verification cost** | 188 ms per proof (public tables as periodic columns). Per-peer and global PX relay limits; an invalid proof is stateless misbehaviour; the proof is checked last; mempool-verified proofs are not re-verified in blocks | Resolved (§8 R-3); p2p and consensus tests |
 
 ## 5. Privacy
 
 | Channel | Status |
 |---|---|
 | Proof contents | Zero knowledge (A6) |
-| Trace heights (public) | Constant work. Identical heights across dummy, real and bridge witnesses, and across user and contract inputs (tests). Kernel: 25–29k cycles in a 2^15 CPU table (§8 R-5). |
+| Trace heights (public) | **Fixed shapes:** kernel and function budgets, enforced exactly by prover and verifier (zkvm.md §6.6). Constant work in the kernel as a second line (§8 R-5). Full channel analysis: `privacy-review.md` |
 | Which contract and function are called | **Public by design** (program ids, contract ids, selector outputs; zk.md §12.2) |
 | Function transcripts | `io_hash` hides them only if the blind is fresh and uniform. The wallet must sample it with a CSPRNG (§8 R-6). |
 | Contract-record nullifiers | `Hk(contract ‖ rcm ‖ cm)`. Anyone who knows the record's plaintext can recognize its spend. This is inherent to shared contract state; distributing plaintext is the application's job. |
@@ -253,14 +254,14 @@ outputs.
 
 | # | Finding | Status |
 |---|---|---|
-| R-1 | **Function programs must be registered to their contracts.** Without that check, anyone could write a "function" approving the spending of another contract's records. | The registry is a mandatory argument of `prove::verify` (tested). **Consensus must implement it** (contract deploy v2, zk.md §8.3). Open for integration. |
+| R-1 | **Function programs must be registered to their contracts.** Without that check, anyone could write a "function" approving the spending of another contract's records. | The registry is a mandatory argument of `prove::verify`. **Implemented in consensus:** deploys (kind 3) register programs and budgets under a contract id that hashes the payload; PX3 and PX5 use the registry. Tested (`tx/tests/px_consensus.rs`). |
 | R-2 | The CPU table height was bounded by the global 2^22 limit, not by `MAX_CYCLES` (2^21). The circuit accepted longer executions than the interpreter allows. | Fixed: CPU tables are capped at `MAX_CYCLES` (AUDIT.md ZK-F9). The LogUp bound improved from 84% to 63% of p. |
-| R-3 | **Verification costs ~1.3–1.5 s per proof.** The preprocessed tables (the 2^16-row byte table) are recommitted on every verification. | Open: cache the setup commitments per program and table height; gate relay behind cheap checks, fees and rate limits. |
-| R-4 | **Proof size ~2–2.5 MB** | Open (docs/px.md §7; security-policy decision on queries; aggregation) |
-| R-5 | The kernel with one function uses 29.4k of 32 768 CPU rows. A future change that crosses 2^15 for some witnesses only would make heights witness-dependent. | Open: a test asserts identical heights. Before release, add a margin check, or pad the kernel to a fixed cycle count. |
+| R-3 | **Verification costs ~1.3–1.5 s per proof.** The preprocessed tables (the 2^16-row byte table) are recommitted on every verification. | **Resolved:** public tables are periodic columns bound by a statement digest (188 ms; AUDIT.md ZK-F13); relay limits and scoring (ZK-F15); block-level cache (ZK-F18). |
+| R-4 | **Proof size ~2–2.5 MB** | Open (`aggregation-study.md`; security-policy decision on queries; recursion as its own milestone) |
+| R-5 | The kernel with one function uses 29.4k of 32 768 CPU rows. A future change that crosses 2^15 for some witnesses only would make heights witness-dependent. | **Resolved:** fixed budgets per function count (ZK-F14). Heights no longer depend on the witness at all. A test requires ≤ 95% budget use for every tested witness, so a kernel change that eats the margin fails CI instead of leaking. |
 | R-6 | `io_hash` hiding depends on a fresh uniform blind chosen by the caller. | Documented. Wallet code must sample it with a CSPRNG; the tests do. |
 | R-7 | Poseidon2 is young and used everywhere (A2). | External cryptanalysis review required |
-| R-9 | **Prover liveness: Plonky3's hiding commitments could deadlock** (a spin lock held across rayon work). Found when sequential test runs hung. | Fixed with a minimal patch of `p3-fri` and `p3-merkle-tree` (AUDIT.md ZK-F11, `third_party/README.md`); verified by 40 consecutive proofs. Upstream is unfixed as of 0.7.0. The patch must be re-checked on every Plonky3 upgrade. |
+| R-9 | **Prover liveness: Plonky3's hiding commitments could deadlock** (a spin lock held across rayon work). Found when sequential test runs hung. | Fixed with a minimal patch of `p3-fri` and `p3-merkle-tree` (AUDIT.md ZK-F11, `third_party/README.md`); verified by 40 consecutive proofs. Two further sites (`HidingFriPcs::commit` and `p3-dft`'s twiddle caches) hung concurrent proofs and were patched in the same way (ZK-F21). Upstream is unfixed as of 0.7.0. The patch must be re-checked on every Plonky3 upgrade. |
 | R-10 | Proof bytes are not reproducible from a seed: several tables take the shared prover RNG in a scheduling-dependent order. | Harmless for security (the randomness stays fresh). Documented so that no test or document relies on reproducible proof bytes. |
 | R-8 | Plonky3 0.7 is a pre-1.0 library; its audit status has not been verified by us. An earlier comment called `Poseidon2Air` "audited"; the claim was unverified and has been removed. | External implementation review required |
 

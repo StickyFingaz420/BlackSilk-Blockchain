@@ -5,6 +5,7 @@
 
 pub mod file;
 pub mod node;
+pub mod px;
 pub mod wallet;
 
 pub use wallet::{Balance, Wallet, WalletError};

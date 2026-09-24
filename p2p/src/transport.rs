@@ -199,11 +199,15 @@ mod tests {
         let (ra, rb) = tokio::join!(handshake(a, true, 7, T), handshake(b, false, 7, T));
         let (mut ar, mut aw) = ra.unwrap();
         let (mut br, mut bw) = rb.unwrap();
+        // Send and receive concurrently, as peers do: the largest frame is
+        // bigger than the pipe's buffer.
         for msg in [&b"hello"[..], &[0u8; 0][..], &vec![7u8; MAX_FRAME][..]] {
-            aw.send(msg).await.unwrap();
-            assert_eq!(br.recv().await.unwrap(), msg);
-            bw.send(msg).await.unwrap();
-            assert_eq!(ar.recv().await.unwrap(), msg);
+            let (sent, got) = tokio::join!(aw.send(msg), br.recv());
+            sent.unwrap();
+            assert_eq!(got.unwrap(), msg);
+            let (sent, got) = tokio::join!(bw.send(msg), ar.recv());
+            sent.unwrap();
+            assert_eq!(got.unwrap(), msg);
         }
     }
 

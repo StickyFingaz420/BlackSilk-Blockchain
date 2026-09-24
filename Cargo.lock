@@ -243,6 +243,8 @@ version = "0.1.0"
 dependencies = [
  "blacksilk-consensus",
  "blacksilk-crypto",
+ "blacksilk-px",
+ "blacksilk-px-core",
  "blacksilk-tx",
  "bs58",
  "crc32fast",
@@ -356,6 +358,7 @@ dependencies = [
  "blacksilk-chain",
  "blacksilk-consensus",
  "blacksilk-crypto",
+ "blacksilk-px",
  "blacksilk-tx",
  "getrandom 0.2.17",
  "hex",
@@ -417,6 +420,10 @@ version = "0.1.0"
 dependencies = [
  "blacksilk-consensus",
  "blacksilk-crypto",
+ "blacksilk-px",
+ "blacksilk-px-core",
+ "blacksilk-zk",
+ "blacksilk-zkvm",
  "rand_chacha",
  "rand_core 0.6.4",
  "zeroize",
@@ -435,8 +442,11 @@ dependencies = [
  "blacksilk-crypto",
  "blacksilk-miner",
  "blacksilk-node",
+ "blacksilk-px",
+ "blacksilk-px-core",
  "blacksilk-rpc",
  "blacksilk-tx",
+ "blacksilk-zkvm",
  "clap",
  "getrandom 0.2.17",
  "hex",
@@ -1600,8 +1610,6 @@ dependencies = [
 [[package]]
 name = "p3-dft"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4344492a3a2981879411ef31b51b12fb364efeda59b9ac855d7d92559e7b46e8"
 dependencies = [
  "itertools",
  "p3-field",

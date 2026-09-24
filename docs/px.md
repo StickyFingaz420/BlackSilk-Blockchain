@@ -1,6 +1,6 @@
 # PX: private records, nullifiers and the transfer kernel
 
-Status: **v0.2, implemented and tested; not consensus; not production-ready.**
+Status: **v0.3, implemented and tested, integrated into consensus (transaction kinds 2 and 3); not production-ready.**
 - Architecture: [`zk.md`](zk.md) §4–§6.
 - Virtual machine: [`zkvm.md`](zkvm.md).
 - Progress and findings: AUDIT.md R8.
@@ -8,7 +8,8 @@ Status: **v0.2, implemented and tested; not consensus; not production-ready.**
 This document specifies what the code in `px-core/` (crate `blacksilk-px-core`) and
 `px/` (crate `blacksilk-px`) implements: the hash `Hk`, keys, records, nullifiers, the
 commitment tree, the kernel and its proofs, contract records and functions in one
-unified proof (§7), the consensus state, and record delivery. §10 lists what is **not**
+unified proof (§7), the consensus state, record delivery, the consensus integration
+(§11) and privacy guidance (§12). §10 lists what is **not**
 done and what must be reviewed externally before any production use. The internal
 security review is `docs/reviews/zk-security-review.md`.
 
@@ -175,7 +176,23 @@ multi-execution statement:
   (with the precise error). It then checks that the guest's output equals the native
   result.
 
-### 4.4 Constant work (trace-shape privacy)
+### 4.4 Fixed shape (trace-shape privacy)
+
+**Every PX proof has a fixed shape.**
+- The kernel has a public row budget for each function count
+  (`prove::kernel_budget`), and every registered function has its own
+  (§11.2).
+- The prover pads each table to the height its budget implies, and the verifier
+  accepts only exactly that shape (zkvm.md §8).
+- So the table heights and the proof size reveal only which programs ran, never
+  what they did: not the dummies, the record kinds, the positions, the amounts, or
+  a function's execution path or length.
+- An execution that needs more rows than its budget cannot be proven. It fails
+  loudly; it never leaks.
+- A test checks that every tested witness uses at most 95% of each budget, and
+  another that a deposit and a payment have identical shapes.
+
+The constant-work design below remains as defence in depth:
 
 The proof's table heights are public (zkvm.md §8).
 - The kernel is written so that successful executions run the same instructions up to a
@@ -206,14 +223,8 @@ The proof's table heights are public (zkvm.md §8).
 - `apply_block` returns an undo record that restores the previous state exactly.
 - Proofs are verified before these rules. The state sees only verified statements.
 
-**Not yet done:**
-- the transaction format;
-- bridge amounts tied to the v1 side;
-- fees;
-- persistence;
-- block validation wiring.
-
-These belong to the consensus-integration phase (AUDIT.md R8).
+This state is part of the chain state (`blacksilk_tx::state::MemoryChain`, §11.3),
+replayed from the stored blocks on start, with the same per-block undo.
 
 ## 6. Record delivery (`px/src/delivery.rs`)
 
@@ -328,27 +339,32 @@ Everything except the contract id, the selector and `io_hash` stays private. Tes
 | Item | Value |
 |---|---|
 | Kernel execution (v2) | 25.0–25.2k cycles; 29.3–29.4k with one function (opt-level "z" gave 141k for v1) |
-| Transfer proof | **2.08 MB**, proving 43.0 s, verifying 1.3 s |
-| Kernel + one function (vault CLAIM) | **2.54 MB**, proving 50.8 s (40-proof stress run: 48.4–51.4 s each) |
+| Transfer proof | **2.04 MB**, proving ~42 s, **verifying 188 ms** |
+| Kernel + one function (vault CLAIM) | **~2.5 MB**, proving ~51 s (a 40-proof stress run gave 48.4–51.4 s each) |
+| PX transaction (encoded) | ~2.05 MB (bridge-in with one v1 input) |
 | Record ciphertext | 1,209 bytes per output |
 
-Measured on this machine, idle, one proof at a time, after the prover-hang fix
-(AUDIT.md ZK-F11).
+Measured on this machine, idle, one proof at a time.
+
+**Verification cost** was 1.3–1.5 s, 76% of it spent recommitting the public tables
+on every verification. They are now periodic columns the verifier evaluates itself
+(zkvm.md §6.1): 188 ms.
 
 **Proof size is the main open problem.** A single transfer proof is far too large for
-per-transaction use on a chain.
+high-throughput per-transaction use on a chain.
 - **Causes:**
-  - 108 FRI queries, each opening ~2,400 committed elements across 12 tables;
+  - 108 FRI queries, each opening ~2,400 committed elements;
   - the degree-8 challenge extension, needed for the security margin.
 - **Parameter options**, measured by `zk/examples/param_study.rs`:
   - dropping the extra unique-decoding target and keeping Johnson ≥ 120 needs 49–71
     queries (−35% to −55%);
   - a higher blow-up trades prover time for fewer queries.
 
-  This is a security-policy decision for the owner.
-- **Architectural fix:** aggregate the transfers of a block into one proof (recursion),
-  or verify many transfers in one batch proof (ZK-5 already shares tables between
-  executions). This is a future milestone and not claimed here.
+  The owner has kept the conservative parameters (AUDIT.md R8).
+- **Consensus consequence:** blocks carry a separate 8 MiB PX budget (§11.5), room
+  for about four PX transactions per 2-minute block.
+- **Architectural fix:** aggregation (recursion). A design study is in
+  `docs/reviews/aggregation-study.md`; it is not implemented.
 
 ## 9. Security analysis
 
@@ -410,19 +426,113 @@ per-transaction use on a chain.
 
 ## 10. Not production-ready: remaining work and risks
 
-1. **External review (required before any production use):**
+1. **Independent review** (the owner has no external team yet; the internal reviews
+   are `docs/reviews/`):
    - Poseidon2 parameters and the `Hk` constructions;
    - the kernel statement;
-   - the zkVM circuits (AUDIT.md R8);
-   - the hybrid delivery combiner.
-2. **Proof size:** see §8.
-3. **Consensus integration:** transaction format, fees, v1 bridge, persistence, block
-   validation.
-4. **Contract functions, beyond this version:**
-   - the registry in consensus (§7.3);
-   - distributing contract-record plaintext to the parties that need it;
-   - an SDK padding helper for constant-work functions;
-   - more than two functions per transaction.
-5. **Wallet:** note scanning over chain data, witness maintenance for the tree
-   (incremental paths), and backup of per-address state.
-6. **Fuzzing** of the witness decoder and of the delivery `open` function.
+   - the zkVM circuits;
+   - the hybrid delivery combiner;
+   - the consensus rules of §11.
+2. **Proof size and chain capacity:** §8, §11.5.
+3. **Contract tooling:** deploys and function calls exist in consensus and in the
+   libraries (`px_builder`), but not yet as wallet commands. Also missing:
+   distributing contract-record plaintext to the parties that need it, and more
+   than two functions per transaction.
+4. **Wallet:**
+   - The wallet keeps every commitment (32 bytes each) and rebuilds the tree to
+     spend. That is adequate for a testnet; a long-lived chain needs incremental
+     witnesses.
+   - Restoring a wallet finds records only from its restore height.
+5. **Aggregation** (§8).
+
+## 11. Consensus integration (transaction kinds 2 and 3)
+
+### 11.1 PX transaction (kind 2, `tx/src/px.rs`)
+
+```text
+prefix:   version ‖ kind=2 ‖ v1 inputs[0..64] (key image, ring) ‖ hidden outputs[0..16]
+          ‖ payouts[0..16] (clear amount, stealth) ‖ fee ‖ bridge_in ‖ bridge_out
+          ‖ anchor ‖ nullifiers[2] ‖ commitments[2] ‖ ciphertexts[2] (1209 bytes each)
+          ‖ functions[0..2] (contract, program id, io_hash, public output words)
+base:     pseudo-outputs[inputs]
+prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 MiB)
+```
+
+- **v1-side balance.** With `v = fee + bridge_in + Σ payouts − bridge_out`:
+  `Σ pseudo_outs − Σ hidden = v·H`. Without v1 inputs there are no hidden outputs and
+  `v = 0` exactly. Hidden change needs input masks to balance; payouts carry their
+  (already public) amounts in clear, like coinbase outputs.
+- **PX-side balance** is proven by the kernel (§4.1).
+- **Binding:** `h_tx = H32("px/tx-binding", network ‖ prefix hash ‖ base hash)` is
+  the proof's binding. It covers every field except the range proof, the signatures
+  and the proof, and the network.
+- **Signatures.** The v1 inputs' CLSAGs sign a message that also covers the range
+  proof and the proof.
+- **Output context.** The stealth-output context is
+  `H32("input-context/px", nullifiers ‖ key images)`. It is unique because
+  nullifiers never repeat.
+
+### 11.2 Private-contract deploy (kind 3)
+
+- **Format:** a v1 transfer (at least one input, 2–16 outputs) plus a salt and 1–16
+  programs, each an ELF binary of at most 256 KiB with its row budget. The binaries
+  are on chain: verifiers need them to build the statement.
+- **Contract id:** 8 field elements from
+  `H64("px/contract-id", first key image ‖ salt ‖ H32(payload))`. It is unique
+  because key images never repeat.
+- **What it registers:** each program's id and budget under the contract. Entries
+  are immutable, and a registration is usable from the next block.
+- **Signatures** cover the payload.
+
+### 11.3 State and rules (`tx/src/validate.rs`, `tx/src/state.rs`)
+
+| Rule | Meaning |
+|---|---|
+| Structure | Counts, sorting, identity points, range-proof shape, sizes; fee ≥ `PX_FEE_PER_BYTE` × encoded size |
+| Balance | §11.1 (PX); the transfer rule for deploys |
+| C1–C4 | Rings, key images and one-time keys, as for transfers, including payouts |
+| PX1 | The anchor is a root of the last 100 blocks, before this block |
+| PX2 | Nullifiers are unspent and unrepeated across the chain and the block |
+| PX3 | Every called function is a registered program of its contract (registry before this block) |
+| PX4 | The pool stays ≥ 0 through the block, in order |
+| PX5 | The proof verifies with the registered programs and budgets (last; most expensive) |
+| Deploy | The contract id is new in the chain and the block; programs load |
+| Block | Coinbase = reward + all fees; v1 weight ≤ limit; PX and deploy bytes ≤ 8 MiB |
+
+**Chain state.** The state (`MemoryChain`) keeps the PX state, the registry and a
+log of commitments, ciphertexts and nullifiers for wallets, all with exact per-block
+undo. Tests check that a reorganization restores the root and pool exactly.
+
+### 11.4 Wallets and RPC
+
+- Wallets scan whole blocks (`/blocks`) and fetch the complete, ordered commitment
+  list in bulk (`/px/commitments`). The node never learns which records a wallet
+  owns.
+- CLI commands: `px-address`, `px-balance`, `px-deposit`, `px-send`, `px-withdraw`.
+- **Canonical anchor.** Wallets use the root at the most recent height that is a
+  multiple of 16. So the anchor does not reveal when a wallet last synced; a record
+  becomes spendable once that height reaches it.
+
+### 11.5 Capacity, relay and denial of service
+
+| Limit | Value |
+|---|---|
+| PX transaction | ≤ `MAX_PX_TX_SIZE` = 4 MiB proof cap + 256 KiB |
+| Deploy | ≤ 1 MiB |
+| Block PX budget | 8 MiB (about 4 PX transactions); total block ≤ 9.4 MB |
+| Standard PX fee | `PX_FEE_PER_BYTE × MAX_PX_TX_SIZE` for every PX transaction (uniform, §12) |
+| Relay | per peer 0.2 PX transactions/s (burst 4); all peers together 2/s (burst 10) |
+| Invalid proof | Misbehaviour (the statement is branch-independent once PX1 and PX3 pass) |
+| Mempool | PX class capped at 64 MiB with fee-per-byte eviction; proofs verified once on admission; templates keep the pool non-negative in order |
+
+## 12. Privacy guidance for users and wallets
+
+Measured privacy analysis: `docs/reviews/privacy-review.md`.
+
+- **Deposit and withdrawal amounts are public** (containment). Deposit round amounts,
+  wait between deposits and withdrawals, and never withdraw the amount you deposited.
+  The CLI prints this reminder.
+- **Use your own node,** or reach one over Tor. The node sees when you submit a
+  transaction; it learns nothing from your scanning.
+- **Give each counterparty its own PX address** (`px-address --index`). Addresses of
+  one wallet are unlinkable.

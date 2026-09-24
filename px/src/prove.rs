@@ -20,7 +20,7 @@ use blacksilk_px_core::call::function_prefix;
 use blacksilk_px_core::kernel::{self, Public, SliceSource, Witness};
 use blacksilk_px_core::Digest;
 use blacksilk_zk::{Proof, ZkError};
-use blacksilk_zkvm::air::trace::{Part, Statement};
+use blacksilk_zkvm::air::trace::{Budget, Part, Statement};
 use blacksilk_zkvm::prove::ProveError;
 use blacksilk_zkvm::Program;
 use rand_core::{CryptoRng, RngCore};
@@ -38,6 +38,36 @@ pub fn kernel_program() -> Arc<Program> {
     static P: OnceLock<Arc<Program>> = OnceLock::new();
     P.get_or_init(|| Arc::new(Program::from_elf(KERNEL_ELF).expect("the kernel ELF loads")))
         .clone()
+}
+
+/// The kernel's fixed row budget for a transaction calling `n_fn` functions
+/// (zkvm.md §8): every kernel execution with the same `n_fn` has exactly the
+/// same table heights, whatever its witness.
+///
+/// Values are the measured use plus ~6%, rounded up
+/// (`budgets_leave_headroom` checks that every tested witness stays at or
+/// below 95% of each). Changing the kernel changes its program id and
+/// requires re-measuring.
+///
+/// # Panics
+/// If `n_fn > MAX_FN`.
+pub fn kernel_budget(n_fn: usize) -> Budget {
+    let [cycles, keys, add, bit, lt, shift, mul, poseidon] = match n_fn {
+        0 => [26_500, 4_450, 18_300, 1_500, 15_300, 1_450, 1_450, 126],
+        1 => [31_200, 4_500, 21_800, 1_700, 17_900, 1_550, 1_550, 138],
+        2 => [35_600, 4_550, 25_200, 1_900, 20_400, 1_650, 1_650, 151],
+        _ => panic!("at most MAX_FN functions"),
+    };
+    Budget {
+        cycles,
+        keys,
+        add,
+        bit,
+        lt,
+        shift,
+        mul,
+        poseidon,
+    }
 }
 
 /// A called function, as the verifier sees it: its program and the public
@@ -59,6 +89,8 @@ pub enum TransferError {
     FunctionMismatch(usize),
     /// A function run is missing or superfluous.
     Shape,
+    /// An execution needs more rows than its budget in table `.0`.
+    BudgetExceeded(usize),
     Proof(ZkError),
 }
 
@@ -83,18 +115,25 @@ pub fn witness_words(w: &Witness) -> Vec<u32> {
     v
 }
 
-fn statement(public: &Public, calls: &[FunctionCall], h_tx: [u8; 32]) -> Option<Statement> {
-    if calls.len() != public.n_fn {
+fn statement(
+    public: &Public,
+    calls: &[FunctionCall],
+    budgets: &[Budget],
+    h_tx: [u8; 32],
+) -> Option<Statement> {
+    if calls.len() != public.n_fn || budgets.len() != calls.len() {
         return None;
     }
     let mut st = Statement::single(kernel_program(), 0, public_words(public), h_tx);
-    for (call, (contract, io_hash)) in calls.iter().zip(&public.functions) {
+    st.budget = Some(kernel_budget(public.n_fn));
+    for ((call, (contract, io_hash)), budget) in calls.iter().zip(&public.functions).zip(budgets) {
         let mut output = function_prefix(io_hash, contract).to_vec();
         output.extend(&call.outputs);
         st.others.push(Part {
             program: call.program.clone(),
             exit_code: 0,
             output,
+            budget: Some(*budget),
         });
     }
     Some(st)
@@ -103,15 +142,18 @@ fn statement(public: &Public, calls: &[FunctionCall], h_tx: [u8; 32]) -> Option<
 fn prove_error(e: ProveError) -> TransferError {
     match e {
         ProveError::Execution(t) => TransferError::Execution(format!("{t:?}")),
+        ProveError::BudgetExceeded(t) => TransferError::BudgetExceeded(t),
         ProveError::Proof(e) => TransferError::Proof(e),
     }
 }
 
 /// Checks the witness natively, then proves the kernel's execution together
-/// with the function runs `functions[k] = (program, private input)`.
+/// with the function runs `functions[k] = (program, private input, budget)`,
+/// each budget as registered for the program. The proof has the fixed shape
+/// of these budgets.
 pub fn prove<R: RngCore + CryptoRng>(
     w: &Witness,
-    functions: &[(Arc<Program>, Vec<u32>)],
+    functions: &[(Arc<Program>, Vec<u32>, Budget)],
     h_tx: [u8; 32],
     rng: &mut R,
 ) -> Result<(Public, Vec<FunctionCall>, Proof), TransferError> {
@@ -126,7 +168,7 @@ pub fn prove<R: RngCore + CryptoRng>(
     // Run every function first (cheap) and check it reports the kernel's
     // `(io_hash, contract)`, so a mismatched call is refused before any
     // proving work.
-    for (k, (program, input)) in functions.iter().enumerate() {
+    for (k, (program, input, _)) in functions.iter().enumerate() {
         let exec = blacksilk_zkvm::run(program, input, blacksilk_zkvm::MAX_CYCLES)
             .map_err(|t| TransferError::Execution(format!("function {k}: {t:?}")))?;
         if exec.exit_code != 0 {
@@ -141,8 +183,11 @@ pub fn prove<R: RngCore + CryptoRng>(
         }
     }
     let mut runs: Vec<(Arc<Program>, &[u32])> = vec![(kernel_program(), &words)];
-    runs.extend(functions.iter().map(|(p, i)| (p.clone(), i.as_slice())));
-    let (st, proof) = blacksilk_zkvm::prove::prove_multi(&runs, h_tx, rng).map_err(prove_error)?;
+    runs.extend(functions.iter().map(|(p, i, _)| (p.clone(), i.as_slice())));
+    let mut budgets = vec![kernel_budget(public.n_fn)];
+    budgets.extend(functions.iter().map(|(_, _, b)| *b));
+    let (st, proof) = blacksilk_zkvm::prove::prove_shaped(&runs, Some(&budgets), h_tx, rng)
+        .map_err(prove_error)?;
     // Guest and host agree (they are the same source; checked on every proof).
     if st.exit_code != 0 || st.output != public_words(&public) {
         return Err(TransferError::Execution(format!(
@@ -170,21 +215,28 @@ pub fn prove<R: RngCore + CryptoRng>(
     Ok((public, calls, proof))
 }
 
-/// Verifies a PX proof. `registered(contract, program_id)` must say whether
-/// the program is a registered function of the contract (consensus state).
+/// Verifies a PX proof. `registered(contract, program_id)` must return the
+/// program's registered budget if it is a function of the contract, and
+/// `None` otherwise (consensus state). The proof must have exactly the fixed
+/// shape of the kernel's and the functions' budgets.
 pub fn verify(
     public: &Public,
     calls: &[FunctionCall],
     h_tx: [u8; 32],
     proof: &Proof,
-    registered: impl Fn(&Digest, &[u8; 32]) -> bool,
+    registered: impl Fn(&Digest, &[u8; 32]) -> Option<Budget>,
 ) -> Result<(), VerifyError> {
-    let st = statement(public, calls, h_tx).ok_or(VerifyError::Shape)?;
+    if calls.len() != public.n_fn {
+        return Err(VerifyError::Shape);
+    }
+    let mut budgets = Vec::with_capacity(calls.len());
     for (k, call) in calls.iter().enumerate() {
-        if !registered(&public.functions[k].0, &call.program.id()) {
-            return Err(VerifyError::Unregistered(k));
+        match registered(&public.functions[k].0, &call.program.id()) {
+            Some(b) => budgets.push(b),
+            None => return Err(VerifyError::Unregistered(k)),
         }
     }
+    let st = statement(public, calls, &budgets, h_tx).ok_or(VerifyError::Shape)?;
     blacksilk_zkvm::prove::verify(&st, proof).map_err(VerifyError::Proof)
 }
 
@@ -199,5 +251,5 @@ pub fn prove_transfer<R: RngCore + CryptoRng>(
 
 /// Verifies a plain transfer proof (a statement with functions is rejected).
 pub fn verify_transfer(public: &Public, h_tx: [u8; 32], proof: &Proof) -> Result<(), VerifyError> {
-    verify(public, &[], h_tx, proof, |_, _| false)
+    verify(public, &[], h_tx, proof, |_, _| None)
 }

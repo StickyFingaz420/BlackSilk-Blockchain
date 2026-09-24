@@ -24,6 +24,7 @@ pub mod tags {
     pub const SUBADDRESS: &str = "subaddress";
     pub const INPUT_CONTEXT: &str = "input-context";
     pub const INPUT_CONTEXT_COINBASE: &str = "input-context/coinbase";
+    pub const INPUT_CONTEXT_PX: &str = "input-context/px";
     pub const EPHEMERAL: &str = "ephemeral";
     pub const OUTPUT_KEY: &str = "output-key";
     pub const VIEW_TAG: &str = "view-tag";
@@ -73,11 +74,17 @@ pub mod tags {
     // Zero-knowledge layer (docs/zk.md).
     pub const ZK_PROVER_SEED: &str = "zk/prover-seed";
     pub const ZKVM_PROGRAM: &str = "zkvm/program";
+    pub const ZKVM_STATEMENT: &str = "zkvm/statement";
     // Private execution record delivery (docs/px.md §6).
     pub const PX_DELIVERY_VIEW: &str = "px/delivery-view";
     pub const PX_DELIVERY_KEM: &str = "px/delivery-kem";
     pub const PX_VIEW_TAG: &str = "px/view-tag";
     pub const PX_DELIVERY_KEY: &str = "px/delivery-key";
+    pub const PX_TX_BINDING: &str = "px/tx-binding";
+    pub const PX_PROOF: &str = "px/proof";
+    pub const PX_SIG_MESSAGE: &str = "px/sig-message";
+    pub const PX_DEPLOY_PAYLOAD: &str = "px/deploy-payload";
+    pub const PX_CONTRACT_ID: &str = "px/contract-id";
 
     /// Every tag, for the distinctness test.
     pub const ALL: &[&str] = &[
@@ -89,6 +96,7 @@ pub mod tags {
         SUBADDRESS,
         INPUT_CONTEXT,
         INPUT_CONTEXT_COINBASE,
+        INPUT_CONTEXT_PX,
         EPHEMERAL,
         OUTPUT_KEY,
         VIEW_TAG,
@@ -136,10 +144,16 @@ pub mod tags {
         WALLET_CONTRACT_MEMBER,
         ZK_PROVER_SEED,
         ZKVM_PROGRAM,
+        ZKVM_STATEMENT,
         PX_DELIVERY_VIEW,
         PX_DELIVERY_KEM,
         PX_VIEW_TAG,
         PX_DELIVERY_KEY,
+        PX_TX_BINDING,
+        PX_PROOF,
+        PX_SIG_MESSAGE,
+        PX_DEPLOY_PAYLOAD,
+        PX_CONTRACT_ID,
     ];
 }
 

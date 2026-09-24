@@ -234,7 +234,35 @@ process's log.
 | Wallet `insufficient unlocked funds` | Coinbase needs 60 blocks, other outputs 10 |
 | A transfer never confirms | `blacksilk-wallet … clear-pending`, then sync again |
 
-## 10. Security notes for operators
+## 10. Private execution (PX)
+
+**Compatibility.** Builds with PX accept transaction kinds 2 and 3 from genesis
+(px.md §11). Older builds reject blocks that contain them, so the two versions fork.
+Every node on one network must run a PX-capable build; a public PX trial therefore
+starts with a testnet reset (a new network id and genesis), unless an activation
+height is added first.
+
+**Wallet commands:**
+
+| Command | Effect |
+|---|---|
+| `px-address [--index N]` | Shows a PX address. Give each counterparty its own index |
+| `px-balance` | `(total, spendable)` PX balance |
+| `px-deposit --amount A` | v1 funds into PX. **The amount is public** |
+| `px-send --to PXADDR --amount A` | A private payment. Proving takes about a minute |
+| `px-withdraw --to ADDR --amount A` | PX funds to a v1 address. **The amount is public** |
+
+Each PX transaction pays the same standard PX fee, `2 × MAX_PX_TX_SIZE` =
+8 912 896 atomic units (≈ 0.089 BLK), so fees do not fingerprint transactions.
+
+**Spendability.** A received record becomes spendable once the next height that is a
+multiple of 16 is reached (canonical anchor, px.md §11.4).
+
+**Privacy:** px.md §12 and `docs/reviews/privacy-review.md`.
+
+**Capacity:** about 4 PX transactions per block (aggregation-study.md).
+
+## 11. Security notes for operators
 
 - **The RPC must stay on loopback.** It has no authentication, and `/block` and `/tx`
   cost CPU to validate.

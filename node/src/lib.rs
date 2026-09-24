@@ -84,6 +84,9 @@ pub fn router(shared: Shared) -> Router {
     })
 }
 
+// The RPC body limit covers the largest block, hex-encoded.
+const _: () = assert!(rpc::MAX_REQUEST_BYTES >= 2 * blacksilk_chain::block::MAX_BLOCK_BYTES + 1024);
+
 pub fn router_with(app: App) -> Router {
     Router::new()
         .route("/info", get(info))
@@ -93,6 +96,7 @@ pub fn router_with(app: App) -> Router {
         .route("/blocks", get(blocks))
         .route("/distribution", get(distribution))
         .route("/outputs", post(outputs))
+        .route("/px/commitments", get(px_commitments))
         .layer(DefaultBodyLimit::max(rpc::MAX_REQUEST_BYTES))
         .with_state(app)
 }
@@ -129,7 +133,7 @@ async fn template(State(App { chain: s, .. }): State<App>) -> Json<rpc::Template
         txs: t
             .txs
             .into_iter()
-            .map(|tx| hex::encode(Transaction::from(tx).encode()))
+            .map(|tx| hex::encode(tx.encode()))
             .collect(),
     })
 }
@@ -227,16 +231,53 @@ async fn blocks(
     let m = lock(&s);
     let end = q.from.saturating_add(q.count - 1).min(m.height());
     let mut out = Vec::new();
+    let mut bytes = 0usize;
     for h in q.from..=end {
         let block = m.block_at(h).expect("connected height");
+        let hex = hex::encode(block.encode());
+        if !out.is_empty() && bytes + hex.len() > rpc::MAX_BLOCKS_RESPONSE_BYTES {
+            break; // the client continues from the next height
+        }
+        bytes += hex.len();
         out.push(rpc::BlockEntry {
             height: h,
             id: hex::encode(block.id(m.params().network_id)),
             first_output: m.state().first_output_at(h).expect("connected height"),
-            hex: hex::encode(block.encode()),
+            hex,
         });
     }
     Ok(Json(rpc::Blocks { blocks: out }))
+}
+
+#[derive(Deserialize)]
+struct FromQuery {
+    from: u64,
+}
+
+fn digest_hex(d: &[u32; 8]) -> String {
+    hex::encode(blacksilk_tx::px::digest_bytes(d))
+}
+
+async fn px_commitments(
+    State(App { chain: s, .. }): State<App>,
+    Query(q): Query<FromQuery>,
+) -> Json<rpc::PxCommitments> {
+    let m = lock(&s);
+    let records = m.state().px_records(0, u64::MAX);
+    let total = records.len() as u64;
+    let commitments = records
+        .iter()
+        .skip(q.from.min(total) as usize)
+        .take(rpc::MAX_PX_COMMITMENTS_PER_REQUEST as usize)
+        .map(|r| (r.height, digest_hex(&r.commitment)))
+        .collect();
+    Json(rpc::PxCommitments {
+        from: q.from,
+        commitments,
+        total,
+        root: digest_hex(&m.state().px().root()),
+        height: m.height(),
+    })
 }
 
 #[derive(Deserialize)]

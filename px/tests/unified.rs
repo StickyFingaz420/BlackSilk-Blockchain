@@ -12,7 +12,7 @@ use blacksilk_px_core::hash::hash;
 use blacksilk_px_core::kernel::{self, Error, FunctionWitness, Public, SliceSource, Witness};
 use blacksilk_px_core::record::Record;
 use blacksilk_px_core::{Digest, ZERO_DIGEST};
-use blacksilk_zkvm::air::trace::{self, Statement};
+use blacksilk_zkvm::air::trace::{self, Budget, Statement};
 use blacksilk_zkvm::{run, Program, MAX_CYCLES};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -28,9 +28,23 @@ fn vault() -> Arc<Program> {
         .clone()
 }
 
-/// The consensus registry of the test: the vault program belongs to `C`.
-fn registry(contract: &Digest, program: &[u8; 32]) -> bool {
-    *contract == C && *program == vault().id()
+/// The vault's registered row budget: measured use of the larger of LOCK and
+/// CLAIM plus ~6% (checked in `budgets_leave_headroom`).
+const VAULT_BUDGET: Budget = Budget {
+    cycles: 6_000,
+    keys: 2_200,
+    add: 4_300,
+    bit: 200,
+    lt: 3_400,
+    shift: 200,
+    mul: 200,
+    poseidon: 22,
+};
+
+/// The consensus registry of the test: the vault program belongs to `C`,
+/// with `VAULT_BUDGET`.
+fn registry(contract: &Digest, program: &[u8; 32]) -> Option<Budget> {
+    (*contract == C && *program == vault().id()).then_some(VAULT_BUDGET)
 }
 
 fn lock_of(secret: &Digest) -> Digest {
@@ -135,6 +149,12 @@ struct Setup {
 /// Runs LOCK (proven and verified), applies it, and returns the setup for
 /// CLAIM.
 fn locked() -> Setup {
+    locked_with(true)
+}
+
+/// As [`locked`]; without `prove_it`, the LOCK statement comes from the
+/// native kernel (same state, no proof), for tests that only need the setup.
+fn locked_with(prove_it: bool) -> Setup {
     let mut rng = ChaCha20Rng::seed_from_u64(31);
     let mut perm = HostPerm::new();
     let mut state = State::new();
@@ -158,13 +178,19 @@ fn locked() -> Setup {
         ),
         &[fw],
     );
-    let (public, calls, proof) =
-        prove::prove(&w, &[(vault(), input)], [5; 32], &mut rng).expect("LOCK proves");
-    assert_eq!(calls[0].outputs, vec![0]); // the public selector
-    assert_eq!(
-        prove::verify(&public, &calls, [5; 32], &proof, registry),
-        Ok(())
-    );
+    let public = if prove_it {
+        let (public, calls, proof) =
+            prove::prove(&w, &[(vault(), input, VAULT_BUDGET)], [5; 32], &mut rng)
+                .expect("LOCK proves");
+        assert_eq!(calls[0].outputs, vec![0]); // the public selector
+        assert_eq!(
+            prove::verify(&public, &calls, [5; 32], &proof, registry),
+            Ok(())
+        );
+        public
+    } else {
+        native(&w).expect("LOCK is valid")
+    };
     state.apply_block(&[public]).unwrap();
     let recs: Vec<Record> = (0..2)
         .map(|j| wallet::created_record(&public, j, &outs[j]))
@@ -210,7 +236,8 @@ fn lock_then_claim_proves_verifies_and_pays_the_recipient() {
     let (input, w) = claim_witness(&mut s, secret, bob_owner);
     let t = std::time::Instant::now();
     let (public, calls, proof) =
-        prove::prove(&w, &[(vault(), input)], [6; 32], &mut s.rng).expect("CLAIM proves");
+        prove::prove(&w, &[(vault(), input, VAULT_BUDGET)], [6; 32], &mut s.rng)
+            .expect("CLAIM proves");
     let size = blacksilk_zk::encode_proof(&proof).len();
     println!(
         "unified proof (kernel + vault): {size} bytes, {:.1?}",
@@ -227,7 +254,7 @@ fn lock_then_claim_proves_verifies_and_pays_the_recipient() {
 
     // Verification needs the registry: an unregistered program is refused.
     assert_eq!(
-        prove::verify(&public, &calls, [6; 32], &proof, |_, _| false),
+        prove::verify(&public, &calls, [6; 32], &proof, |_, _| None),
         Err(VerifyError::Unregistered(0))
     );
     // The same proof as a plain transfer, or with the function dropped.
@@ -261,7 +288,7 @@ fn a_wrong_secret_cannot_claim() {
     let exec = run(&vault(), &input, MAX_CYCLES).unwrap();
     assert_eq!(exec.exit_code, 2);
     assert!(matches!(
-        prove::prove(&w, &[(vault(), input)], [6; 32], &mut s.rng),
+        prove::prove(&w, &[(vault(), input, VAULT_BUDGET)], [6; 32], &mut s.rng),
         Err(TransferError::Execution(_))
     ));
 }
@@ -396,7 +423,7 @@ fn a_function_transcript_must_match_the_kernel() {
     let mut other = input.clone();
     other[9] ^= 1; // the blind
     assert!(matches!(
-        prove::prove(&w, &[(vault(), other)], [6; 32], &mut s.rng),
+        prove::prove(&w, &[(vault(), other, VAULT_BUDGET)], [6; 32], &mut s.rng),
         Err(TransferError::FunctionMismatch(0))
     ));
     // The kernel's io_hash equals the function's for the matching transcript.
@@ -464,4 +491,75 @@ fn record_kinds_are_not_revealed_by_trace_heights() {
     }
     println!("kernel cycles: {cycles:?}");
     assert_eq!(heights[0], heights[1]);
+}
+
+fn fits(name: &str, used: &Budget, budget: &Budget, errors: &mut Vec<String>) {
+    let pairs = [
+        ("cycles", used.cycles, budget.cycles),
+        ("keys", used.keys, budget.keys),
+        ("add", used.add, budget.add),
+        ("bit", used.bit, budget.bit),
+        ("lt", used.lt, budget.lt),
+        ("shift", used.shift, budget.shift),
+        ("mul", used.mul, budget.mul),
+        ("poseidon", used.poseidon, budget.poseidon),
+    ];
+    for (t, u, b) in pairs {
+        // 95%: headroom against small future changes; a witness can never
+        // leak through the shape, it can only fail to prove.
+        if u * 100 > b * 95 {
+            errors.push(format!("{name}: {t} uses {u} of {b}"));
+        }
+    }
+}
+
+/// Every tested execution uses at most 95% of each budgeted table: the
+/// kernel with 0, 1 and 2 functions (user, contract and dummy inputs), and
+/// both vault functions.
+#[test]
+fn budgets_leave_headroom() {
+    let mut s = locked_with(false);
+    let mut errors = Vec::new();
+    let bob_owner = s.bob.owner(0);
+    let secret = s.secret;
+    let (claim_input, claim_w) = claim_witness(&mut s, secret, bob_owner);
+    // n_fn = 0: a dummy-only bridge-in.
+    let mut plain = claim_w.clone();
+    plain.n_fn = 0;
+    plain.inputs = [
+        wallet::dummy_input(&mut s.rng),
+        wallet::dummy_input(&mut s.rng),
+    ];
+    plain.bridge_in = 500;
+    // n_fn = 2: CLAIM plus a LOCK of the payout into a new vault record.
+    let blind = wallet::random_digest(&mut s.rng);
+    let (lock_input, mut lock_fw) = lock_call(500, lock_of(&secret), 1, blind);
+    lock_fw.spec = [None, lock_fw.spec[1]];
+    let mut two = claim_w.clone();
+    two.outputs[1] = wallet::contract_output(&mut s.rng, C, 500, lock_of(&secret));
+    two.outputs[0].value = 0;
+    two.functions[0].as_mut().unwrap().spec[0]
+        .as_mut()
+        .unwrap()
+        .value = 0;
+    let claim_fw = two.functions[0].unwrap();
+    two = with_functions(two, &[claim_fw, lock_fw]);
+    for (name, w) in [
+        ("kernel n_fn=0", &plain),
+        ("kernel n_fn=1", &claim_w),
+        ("kernel n_fn=2", &two),
+    ] {
+        let public = native(w).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let exec = run(&kernel_program(), &witness_words(w), MAX_CYCLES).unwrap();
+        let used = trace::usage(&kernel_program(), &exec);
+        println!("{name}: {used:?}");
+        fits(name, &used, &prove::kernel_budget(public.n_fn), &mut errors);
+    }
+    for (name, input) in [("vault CLAIM", &claim_input), ("vault LOCK", &lock_input)] {
+        let exec = run(&vault(), input, MAX_CYCLES).unwrap();
+        let used = trace::usage(&vault(), &exec);
+        println!("{name}: {used:?}");
+        fits(name, &used, &VAULT_BUDGET, &mut errors);
+    }
+    assert!(errors.is_empty(), "{errors:#?}");
 }

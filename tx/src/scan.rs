@@ -57,6 +57,22 @@ pub fn scan_transaction(
                 t.outputs.iter().map(|o| o.fields()).collect(),
             )
         }
+        // Hidden change outputs, then clear-amount payouts (as `output_keys`).
+        Transaction::Px(t) => (
+            t.output_context(),
+            t.outputs
+                .iter()
+                .map(|o| o.fields())
+                .chain(t.payouts.iter().map(|o| o.fields()))
+                .collect(),
+        ),
+        Transaction::PxDeploy(t) => {
+            let images: Vec<Point> = t.inputs.iter().map(|i| i.key_image).collect();
+            (
+                transfer_context(&images),
+                t.outputs.iter().map(|o| o.fields()).collect(),
+            )
+        }
     };
     let keys = tx.output_keys();
     let tx_hash = tx.hash();

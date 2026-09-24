@@ -89,6 +89,9 @@ fn a_private_transfer_proves_verifies_and_applies_once() {
     let h_tx = [2; 32];
     let (p1, proof1) = prove_transfer(&w1, h_tx, &mut rng).expect("proves");
     assert_eq!(verify_transfer(&p1, h_tx, &proof1), Ok(()));
+    // Deposit (dummy inputs, bridge-in) and payment (real inputs) have the
+    // same fixed shape: the proof does not reveal which kind it is.
+    assert_eq!(proof0.degree_bits, proof1.degree_bits);
 
     // The proof is bound to every public field and to the transaction.
     let mut bad = Vec::new();

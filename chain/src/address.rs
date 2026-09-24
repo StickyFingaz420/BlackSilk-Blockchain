@@ -64,10 +64,93 @@ pub fn decode_address(network: Network, s: &str) -> Result<Address, AddressError
     Address::from_bytes(&keys).ok_or(AddressError::InvalidKeys)
 }
 
+// ---- PX addresses (docs/px.md §6) ----
+
+/// Length of an encoded PX address payload.
+const PX_PAYLOAD: usize = 1 + 32 + 32 + blacksilk_px::delivery::EK_BYTES + 4;
+
+fn px_tag(network: Network) -> u8 {
+    match network {
+        Network::Mainnet => 0x2b,
+        Network::Testnet => 0x6a,
+        Network::Regtest => 0x4e,
+    }
+}
+
+/// A PX address: `base58(tag ‖ owner ‖ view key ‖ ML-KEM key ‖ checksum)`,
+/// with its own per-network tags (never confused with a v1 address).
+pub fn encode_px_address(network: Network, a: &blacksilk_px::delivery::Address) -> String {
+    let t = px_tag(network);
+    let mut body = Vec::with_capacity(PX_PAYLOAD);
+    body.push(t);
+    body.extend_from_slice(&blacksilk_tx::px::digest_bytes(&a.owner));
+    body.extend_from_slice(&a.view);
+    body.extend_from_slice(&a.ek);
+    let h = h32(tags::ADDRESS_CHECKSUM, &[&body]);
+    body.extend_from_slice(&h[..4]);
+    bs58::encode(body).into_string()
+}
+
+pub fn decode_px_address(
+    network: Network,
+    s: &str,
+) -> Result<blacksilk_px::delivery::Address, AddressError> {
+    let payload = bs58::decode(s.trim())
+        .into_vec()
+        .map_err(|_| AddressError::Base58)?;
+    if payload.len() != PX_PAYLOAD {
+        return Err(AddressError::Length);
+    }
+    let (body, sum) = payload.split_at(PX_PAYLOAD - 4);
+    if h32(tags::ADDRESS_CHECKSUM, &[body])[..4] != *sum {
+        return Err(AddressError::Checksum);
+    }
+    if body[0] != px_tag(network) {
+        return Err(AddressError::WrongNetwork);
+    }
+    let mut owner = [0u32; 8];
+    for (i, x) in owner.iter_mut().enumerate() {
+        *x = u32::from_le_bytes(body[1 + 4 * i..5 + 4 * i].try_into().expect("4 bytes"));
+        if *x >= blacksilk_px_core::P {
+            return Err(AddressError::InvalidKeys);
+        }
+    }
+    let view: [u8; 32] = body[33..65].try_into().expect("32 bytes");
+    if blacksilk_crypto::Point::decode(&view).is_none() {
+        return Err(AddressError::InvalidKeys);
+    }
+    Ok(blacksilk_px::delivery::Address {
+        owner,
+        view,
+        ek: body[65..].to_vec(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use blacksilk_crypto::keys::{SubaddressIndex, WalletKeys};
+
+    #[test]
+    fn px_addresses_round_trip_and_are_separated() {
+        let acct = blacksilk_px::wallet::Account::from_seed(&[3; 32]);
+        let a = acct.address(4);
+        for net in [Network::Mainnet, Network::Testnet, Network::Regtest] {
+            let s = encode_px_address(net, &a);
+            assert_eq!(decode_px_address(net, &s), Ok(a.clone()));
+            // Not a v1 address, and not valid on another network.
+            assert!(decode_address(net, &s).is_err());
+        }
+        let s = encode_px_address(Network::Testnet, &a);
+        assert_eq!(
+            decode_px_address(Network::Mainnet, &s),
+            Err(AddressError::WrongNetwork)
+        );
+        let mut bad = s.clone().into_bytes();
+        let last = bad.len() - 1;
+        bad[last] = if bad[last] == b'2' { b'3' } else { b'2' };
+        assert!(decode_px_address(Network::Testnet, std::str::from_utf8(&bad).unwrap()).is_err());
+    }
 
     #[test]
     fn round_trip_and_network_separation() {

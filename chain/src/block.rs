@@ -5,8 +5,10 @@ use blacksilk_consensus::{BlockHeader, Hash, HEADER_SIZE};
 use blacksilk_tx::codec::{DecodeError as TxDecodeError, Reader, Writer};
 use blacksilk_tx::types::Transaction;
 
-/// Maximum encoded block size.
-pub const MAX_BLOCK_BYTES: usize = 1_000_000;
+/// Maximum encoded block size: the v1 part plus the separate PX byte budget
+/// (docs/px.md §11.5), with room for framing.
+pub const MAX_BLOCK_BYTES: usize =
+    1_000_000 + blacksilk_tx::params::MAX_PX_BLOCK_BYTES as usize + 64 * 1024;
 /// Maximum number of transactions in a block (bounded before allocating).
 pub const MAX_BLOCK_TXS: u64 = 10_000;
 

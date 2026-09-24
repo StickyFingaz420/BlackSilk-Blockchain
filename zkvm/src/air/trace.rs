@@ -34,6 +34,9 @@ pub struct Statement {
     pub binding: [u8; 32],
     /// Further executions of the same proof.
     pub others: Vec<Part>,
+    /// The main execution's row budget. When every execution has one, the
+    /// statement has a **fixed shape** ([`Statement::shape`]).
+    pub budget: Option<Budget>,
 }
 
 /// One further execution of a multi-execution statement.
@@ -42,6 +45,33 @@ pub struct Part {
     pub program: Arc<Program>,
     pub exit_code: u32,
     pub output: Vec<u32>,
+    pub budget: Option<Budget>,
+}
+
+/// Rows an execution may use in each witness-dependent table (zkvm.md §8).
+///
+/// A program's budget is public (fixed per program). With budgets, every
+/// table height is a function of the programs alone, so the public heights
+/// reveal nothing about the execution: not its length, its memory use, its
+/// operation mix or its number of Poseidon2 calls. An execution that needs
+/// more rows than its budget cannot be proven.
+///
+/// `mul` counts `MUL`-family requests including those `ALU_SHIFT` delegates
+/// (every shift by a nonzero amount).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Budget {
+    pub cycles: usize,
+    pub keys: usize,
+    pub add: usize,
+    pub bit: usize,
+    pub lt: usize,
+    pub shift: usize,
+    pub mul: usize,
+    pub poseidon: usize,
+}
+
+fn pow2(n: usize) -> usize {
+    n.max(MIN_HEIGHT).next_power_of_two()
 }
 
 /// Most executions one proof may cover (the kernel and four functions,
@@ -54,7 +84,7 @@ pub const TABLES_PER_EXTRA: usize = 5;
 pub const BASE_TABLES: usize = 12;
 
 impl Statement {
-    /// A single-execution statement.
+    /// A single-execution statement (no budget).
     pub fn single(
         program: Arc<Program>,
         exit_code: u32,
@@ -67,7 +97,61 @@ impl Statement {
             output,
             binding,
             others: Vec::new(),
+            budget: None,
         }
+    }
+
+    /// Every execution's budget, if all have one.
+    pub fn budgets(&self) -> Option<Vec<Budget>> {
+        let mut v = vec![self.budget?];
+        for p in &self.others {
+            v.push(p.budget?);
+        }
+        Some(v)
+    }
+
+    /// The fixed table heights of a statement whose executions all have
+    /// budgets, in [`tables`] order; `None` otherwise. Depends only on the
+    /// programs, their outputs and their budgets (all public).
+    ///
+    /// # Panics
+    /// If some but not all executions have a budget.
+    pub fn shape(&self) -> Option<Vec<usize>> {
+        let has = self.budget.is_some();
+        assert!(
+            self.others.iter().all(|p| p.budget.is_some() == has),
+            "either every execution has a budget or none"
+        );
+        let b = self.budgets()?;
+        let sum = |f: fn(&Budget) -> usize| b.iter().map(f).sum::<usize>();
+        let own = |program: &Program, output: &[u32], bud: &Budget| {
+            [
+                program::height(program, MIN_HEIGHT),
+                pow2(image(program).len()),
+                pow2(bud.keys),
+                pow2(bud.cycles),
+                pow2(output.len()),
+            ]
+        };
+        let main = own(&self.program, &self.output, &b[0]);
+        let mut v = vec![
+            1 << 16,
+            main[0],
+            main[1],
+            main[2],
+            main[3],
+            pow2(sum(|x| x.add)),
+            pow2(sum(|x| x.bit)),
+            pow2(sum(|x| x.lt)),
+            pow2(sum(|x| x.shift)),
+            pow2(sum(|x| x.mul)),
+            main[4],
+            pow2(sum(|x| x.poseidon)),
+        ];
+        for (p, bud) in self.others.iter().zip(&b[1..]) {
+            v.extend(own(&p.program, &p.output, bud));
+        }
+        Some(v)
     }
 
     /// Every execution, main first: `(program, exit code, output)`.
@@ -248,6 +332,10 @@ fn dummy(len: usize) -> RowMajorMatrix<Val> {
 pub fn build_multi(st: &Statement, execs: &[&Execution]) -> Vec<RowMajorMatrix<Val>> {
     let parts = st.parts();
     assert_eq!(parts.len(), execs.len(), "one witness per execution");
+    // Minimum heights: the fixed shape if the statement has one. A table
+    // that outgrows its budget comes out taller; the prover detects that.
+    let shape = st.shape();
+    let min = |t: usize| shape.as_ref().map_or(MIN_HEIGHT, |s| s[t]);
     let mut sh = Shared {
         counter: ByteCounter::new(),
         alu: BTreeMap::new(),
@@ -260,7 +348,9 @@ pub fn build_multi(st: &Statement, execs: &[&Execution]) -> Vec<RowMajorMatrix<V
         .map(|(e, ((program, exit_code, output), exec))| {
             assert_eq!(exec.exit_code, exit_code);
             assert_eq!(&exec.output, output);
-            exec_traces(e as u32, program, exec, &mut sh)
+            let cpu_t = Statement::cpu_table(e);
+            // MEM_INIT precedes CPU in both layouts.
+            exec_traces(e as u32, program, exec, &mut sh, min(cpu_t - 1), min(cpu_t))
         })
         .collect();
 
@@ -271,13 +361,13 @@ pub fn build_multi(st: &Statement, execs: &[&Execution]) -> Vec<RowMajorMatrix<V
         sh.take("shift"),
         sh.take("mul"),
     );
-    let t_add = alu_add::trace(&add, &mut sh.counter, MIN_HEIGHT);
-    let t_bit = alu_bit::trace(&bit, &mut sh.counter, MIN_HEIGHT);
-    let t_lt = alu_lt::trace(&lt, &mut sh.counter, MIN_HEIGHT);
+    let t_add = alu_add::trace(&add, &mut sh.counter, min(5));
+    let t_bit = alu_bit::trace(&bit, &mut sh.counter, min(6));
+    let t_lt = alu_lt::trace(&lt, &mut sh.counter, min(7));
     // Shifts delegate their products to ALU_MUL: build them first.
-    let t_shift = alu_shift::trace(&shift, &mut sh.counter, MIN_HEIGHT, &mut mul);
-    let t_mul = alu_mul::trace(&mul, &mut sh.counter, MIN_HEIGHT);
-    let t_p2 = poseidon::trace(&sh.p2_calls, &mut sh.counter, MIN_HEIGHT);
+    let t_shift = alu_shift::trace(&shift, &mut sh.counter, min(8), &mut mul);
+    let t_mul = alu_mul::trace(&mul, &mut sh.counter, min(9));
+    let t_p2 = poseidon::trace(&sh.p2_calls, &mut sh.counter, min(11));
     let rest = per.split_off(1);
     let main = per.pop().expect("the main execution");
     let mut out = vec![
@@ -297,12 +387,23 @@ pub fn build_multi(st: &Statement, execs: &[&Execution]) -> Vec<RowMajorMatrix<V
     for x in rest {
         out.extend([x.program, x.image, x.init, x.cpu, x.output]);
     }
-    out
+    tables(st)
+        .iter()
+        .zip(out)
+        .map(|(t, m)| super::with_public_columns(t, m))
+        .collect()
 }
 
 /// Replays execution `e` against its witness and builds its own tables;
 /// records its ALU requests, byte checks and Poseidon2 calls in `sh`.
-fn exec_traces(e: u32, prog: &Program, exec: &Execution, sh: &mut Shared) -> ExecTraces {
+fn exec_traces(
+    e: u32,
+    prog: &Program,
+    exec: &Execution,
+    sh: &mut Shared,
+    init_min: usize,
+    cpu_min: usize,
+) -> ExecTraces {
     let img = image(prog);
     let img_map: HashMap<u32, u32> = img.iter().copied().collect();
     // Every key used starts from its image value or zero.
@@ -522,8 +623,43 @@ fn exec_traces(e: u32, prog: &Program, exec: &Execution, sh: &mut Shared) -> Exe
     ExecTraces {
         program: program::trace(prog, &counts, MIN_HEIGHT),
         image: dummy(img.len()),
-        init: memory::init_trace(&init, &mut sh.counter, MIN_HEIGHT),
-        cpu: matrix(rows, cpu::WIDTH, MIN_HEIGHT),
+        init: memory::init_trace(&init, &mut sh.counter, init_min),
+        cpu: matrix(rows, cpu::WIDTH, cpu_min),
         output: dummy(out_idx as usize),
+    }
+}
+
+/// The rows an execution actually uses in each budgeted table: what its
+/// program's [`Budget`] must cover. Used to set budgets from measurements.
+pub fn usage(program: &Program, exec: &Execution) -> Budget {
+    let mut sh = Shared {
+        counter: ByteCounter::new(),
+        alu: BTreeMap::new(),
+        p2_calls: Vec::new(),
+    };
+    exec_traces(0, program, exec, &mut sh, MIN_HEIGHT, MIN_HEIGHT);
+    let mut keys: std::collections::HashSet<u32> =
+        image(program).into_iter().map(|(k, _)| k).collect();
+    for acc in &exec.accesses {
+        keys.insert(match acc.space {
+            crate::exec::Space::Reg => REG_BASE + acc.addr,
+            crate::exec::Space::Mem => acc.addr,
+        });
+    }
+    let n = |k: &str| sh.alu.get(k).map_or(0, |v| v.len());
+    let shifts = sh.alu.get("shift").cloned().unwrap_or_default();
+    let delegated = shifts
+        .iter()
+        .filter(|&&(op, a, b)| alu_shift::mul_request(op, a, b).is_some())
+        .count();
+    Budget {
+        cycles: exec.steps.len(),
+        keys: keys.len(),
+        add: n("add"),
+        bit: n("bit"),
+        lt: n("lt"),
+        shift: n("shift"),
+        mul: n("mul") + delegated,
+        poseidon: sh.p2_calls.len(),
     }
 }

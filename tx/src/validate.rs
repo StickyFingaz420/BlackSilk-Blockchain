@@ -14,13 +14,20 @@
 //! | [`validate_block_transactions`] | B1–B7, plus all T and C with block-wide batching |
 
 use crate::params::*;
+use crate::px::{
+    check_deploy_structure, check_px_balance, check_px_structure, digest_bytes, PxDeploy, PxTx,
+};
 use crate::types::*;
 use blacksilk_crypto::bulletproofs_plus::{self as bpp, BppProof};
-use blacksilk_crypto::clsag::{self, RingMember};
+use blacksilk_crypto::clsag::{self, Clsag, RingMember};
 use blacksilk_crypto::generators::h;
 use blacksilk_crypto::{Point, RistrettoPoint, Scalar};
+use blacksilk_px_core::Digest;
+use blacksilk_zkvm::air::trace::Budget;
+use blacksilk_zkvm::Program;
 use rand_core::{CryptoRng, RngCore};
 use std::collections::HashSet;
+use std::sync::Arc;
 
 /// An output in the chain's global output set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +43,20 @@ pub trait ChainView {
     fn output(&self, global_index: u64) -> Option<OutputRecord>;
     fn is_key_image_spent(&self, key_image: &Point) -> bool;
     fn has_one_time_key(&self, key: &Point) -> bool;
+    // ---- PX (docs/px.md §11) ----
+    /// Whether `anchor` is one of the recent PX tree roots (root window).
+    fn px_is_recent_root(&self, anchor: &Digest) -> bool;
+    fn px_nullifier_spent(&self, nf: &Digest) -> bool;
+    /// The BLK value inside PX.
+    fn px_pool(&self) -> u128;
+    /// The registered function program `program_id` of `contract`, with its
+    /// budget.
+    fn px_function(
+        &self,
+        contract: &Digest,
+        program_id: &[u8; 32],
+    ) -> Option<(Arc<Program>, Budget)>;
+    fn px_contract_exists(&self, contract: &Digest) -> bool;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,6 +123,31 @@ pub enum TxError {
     DuplicateOneTimeKey {
         output: usize,
     },
+    // ---- PX (docs/px.md §11) ----
+    /// PX statement shape (function count, sizes).
+    PxShape,
+    /// A deploy program binary does not load.
+    PxInvalidProgram,
+    /// PX1: the anchor is not a recent tree root.
+    PxUnknownAnchor,
+    /// PX2: a nullifier is spent, or repeated in the transaction or block.
+    PxNullifierSpent {
+        index: usize,
+    },
+    /// PX3: a called function is not a registered program of its contract.
+    PxUnregistered {
+        function: usize,
+    },
+    /// PX4: the pool would go negative.
+    PxPoolUnderflow,
+    /// PX5: the proof does not verify. Checked only after the anchor (PX1)
+    /// and the registrations (PX3) pass; a registered program is fixed by its
+    /// content (the contract id hashes the deploy), so the statement is the
+    /// same on every branch and a failing proof is the sender's fault: it is
+    /// stateless for peer scoring (docs/p2p.md §10).
+    PxProof,
+    /// A deploy's contract id exists already.
+    DuplicateContract,
 }
 
 impl TxError {
@@ -123,6 +169,11 @@ impl TxError {
                 | TxError::KeyImageSpent { .. }
                 | TxError::InvalidSignature { .. }
                 | TxError::DuplicateOneTimeKey { .. }
+                | TxError::PxUnknownAnchor
+                | TxError::PxNullifierSpent { .. }
+                | TxError::PxUnregistered { .. }
+                | TxError::PxPoolUnderflow
+                | TxError::DuplicateContract
         )
     }
 }
@@ -235,7 +286,16 @@ pub fn resolve_rings(
     chain: &impl ChainView,
     height: u64,
 ) -> Result<Vec<[RingMember; RING_SIZE]>, TxError> {
-    tx.inputs
+    resolve_input_rings(&tx.inputs, chain, height)
+}
+
+/// C1 for any list of v1 inputs.
+pub fn resolve_input_rings(
+    inputs: &[Input],
+    chain: &impl ChainView,
+    height: u64,
+) -> Result<Vec<[RingMember; RING_SIZE]>, TxError> {
+    inputs
         .iter()
         .enumerate()
         .map(|(i, input)| {
@@ -271,15 +331,30 @@ pub fn check_signatures(
     rings: &[[RingMember; RING_SIZE]],
     rules: &TxRules,
 ) -> Result<(), TxError> {
-    let message = tx.signature_message(rules.network_id);
-    for (i, ((input, ring), (pseudo, sig))) in tx
-        .inputs
+    check_ring_signatures(
+        &tx.inputs,
+        &tx.pseudo_outs,
+        &tx.signatures,
+        rings,
+        &tx.signature_message(rules.network_id),
+    )
+}
+
+/// C3 for any list of v1 inputs and a signature message.
+pub fn check_ring_signatures(
+    inputs: &[Input],
+    pseudo_outs: &[Point],
+    signatures: &[Clsag],
+    rings: &[[RingMember; RING_SIZE]],
+    message: &Hash,
+) -> Result<(), TxError> {
+    for (i, ((input, ring), (pseudo, sig))) in inputs
         .iter()
         .zip(rings)
-        .zip(tx.pseudo_outs.iter().zip(&tx.signatures))
+        .zip(pseudo_outs.iter().zip(signatures))
         .enumerate()
     {
-        if !clsag::verify(&message, ring, pseudo, &input.key_image, sig) {
+        if !clsag::verify(message, ring, pseudo, &input.key_image, sig) {
             return Err(TxError::InvalidSignature { input: i });
         }
     }
@@ -294,21 +369,162 @@ fn check_uniqueness(
     block_key_images: &mut HashSet<[u8; 32]>,
     block_one_time_keys: &mut HashSet<[u8; 32]>,
 ) -> Result<(), TxError> {
-    for (i, input) in tx.inputs.iter().enumerate() {
+    let keys: Vec<Point> = tx.outputs.iter().map(|o| o.one_time_key).collect();
+    check_uniqueness_of(
+        &tx.inputs,
+        &keys,
+        chain,
+        block_key_images,
+        block_one_time_keys,
+    )
+}
+
+fn check_uniqueness_of(
+    inputs: &[Input],
+    output_keys: &[Point],
+    chain: &impl ChainView,
+    block_key_images: &mut HashSet<[u8; 32]>,
+    block_one_time_keys: &mut HashSet<[u8; 32]>,
+) -> Result<(), TxError> {
+    for (i, input) in inputs.iter().enumerate() {
         if chain.is_key_image_spent(&input.key_image)
             || !block_key_images.insert(*input.key_image.bytes())
         {
             return Err(TxError::KeyImageSpent { input: i });
         }
     }
-    for (j, o) in tx.outputs.iter().enumerate() {
-        if chain.has_one_time_key(&o.one_time_key)
-            || !block_one_time_keys.insert(*o.one_time_key.bytes())
-        {
+    for (j, k) in output_keys.iter().enumerate() {
+        if chain.has_one_time_key(k) || !block_one_time_keys.insert(*k.bytes()) {
             return Err(TxError::DuplicateOneTimeKey { output: j });
         }
     }
     Ok(())
+}
+
+// ---- PX (docs/px.md §11) ----
+
+/// PX1–PX3 against the chain (and, for blocks, the block's earlier
+/// nullifiers): recent anchor, unspent and unrepeated nullifiers, registered
+/// functions.
+fn check_px_state(
+    tx: &PxTx,
+    chain: &impl ChainView,
+    block_nullifiers: &mut HashSet<[u8; 32]>,
+) -> Result<(), TxError> {
+    if !chain.px_is_recent_root(&tx.anchor) {
+        return Err(TxError::PxUnknownAnchor);
+    }
+    for (i, nf) in tx.nullifiers.iter().enumerate() {
+        if chain.px_nullifier_spent(nf) || !block_nullifiers.insert(digest_bytes(nf)) {
+            return Err(TxError::PxNullifierSpent { index: i });
+        }
+    }
+    for (k, f) in tx.functions.iter().enumerate() {
+        if chain.px_function(&f.contract, &f.program_id).is_none() {
+            return Err(TxError::PxUnregistered { function: k });
+        }
+    }
+    Ok(())
+}
+
+/// PX5: the proof verifies for the transaction's statement and binding,
+/// with every function's registered program and budget.
+pub fn check_px_proof(tx: &PxTx, chain: &impl ChainView, rules: &TxRules) -> Result<(), TxError> {
+    let proof = blacksilk_zk::decode_proof(&tx.proof).map_err(|_| TxError::PxProof)?;
+    let mut calls = Vec::with_capacity(tx.functions.len());
+    for (k, f) in tx.functions.iter().enumerate() {
+        let (program, _) = chain
+            .px_function(&f.contract, &f.program_id)
+            .ok_or(TxError::PxUnregistered { function: k })?;
+        calls.push(blacksilk_px::prove::FunctionCall {
+            program,
+            outputs: f.outputs.clone(),
+        });
+    }
+    blacksilk_px::prove::verify(
+        &tx.public(),
+        &calls,
+        tx.binding(rules.network_id),
+        &proof,
+        |contract, id| chain.px_function(contract, id).map(|(_, b)| b),
+    )
+    .map_err(|_| TxError::PxProof)
+}
+
+/// Full validation of one PX transaction for inclusion at `height` (mempool).
+/// The proof, the most expensive check, runs last.
+pub fn validate_px(
+    tx: &PxTx,
+    chain: &impl ChainView,
+    height: u64,
+    rules: &TxRules,
+) -> Result<(), TxError> {
+    validate_px_without_proof(tx, chain, height, rules)?;
+    check_px_proof(tx, chain, rules)
+}
+
+/// Every rule of [`validate_px`] except the proof: for revalidating pooled
+/// transactions whose proof was verified on admission.
+pub fn validate_px_without_proof(
+    tx: &PxTx,
+    chain: &impl ChainView,
+    height: u64,
+    rules: &TxRules,
+) -> Result<(), TxError> {
+    check_px_structure(tx)?;
+    check_px_balance(tx)?;
+    let keys: Vec<Point> = tx.output_keys().iter().map(|k| k.one_time_key).collect();
+    check_uniqueness_of(
+        &tx.inputs,
+        &keys,
+        chain,
+        &mut HashSet::new(),
+        &mut HashSet::new(),
+    )?;
+    check_px_state(tx, chain, &mut HashSet::new())?;
+    if chain.px_pool() + (tx.bridge_in as u128) < (tx.bridge_out as u128) {
+        return Err(TxError::PxPoolUnderflow);
+    }
+    let rings = resolve_input_rings(&tx.inputs, chain, height)?;
+    check_ring_signatures(
+        &tx.inputs,
+        &tx.pseudo_outs,
+        &tx.signatures,
+        &rings,
+        &tx.signature_message(rules.network_id),
+    )?;
+    if let Some(p) = &tx.range_proof {
+        let c: Vec<Point> = tx.outputs.iter().map(|o| o.commitment).collect();
+        if !bpp::verify(p, &c) {
+            return Err(TxError::RangeProofInvalid);
+        }
+    }
+    Ok(())
+}
+
+/// Full validation of one deploy for inclusion at `height` (mempool).
+pub fn validate_deploy(
+    tx: &PxDeploy,
+    chain: &impl ChainView,
+    height: u64,
+    rules: &TxRules,
+) -> Result<(), TxError> {
+    check_deploy_structure(tx, rules)?;
+    let t = tx.as_transfer();
+    check_balance(&t)?;
+    check_uniqueness(&t, chain, &mut HashSet::new(), &mut HashSet::new())?;
+    if chain.px_contract_exists(&tx.contract_id()) {
+        return Err(TxError::DuplicateContract);
+    }
+    let rings = resolve_input_rings(&tx.inputs, chain, height)?;
+    check_ring_signatures(
+        &tx.inputs,
+        &tx.pseudo_outs,
+        &tx.signatures,
+        &rings,
+        &tx.signature_message(rules.network_id),
+    )?;
+    check_range_proof(&t)
 }
 
 /// Full validation of one transfer for inclusion at `height` (mempool use).
@@ -337,6 +553,8 @@ pub fn validate_mempool_tx(
     match tx {
         Transaction::Coinbase(_) => Err(TxError::CoinbaseNotAllowed),
         Transaction::Transfer(t) => validate_transfer(t, chain, height, rules),
+        Transaction::Px(t) => validate_px(t, chain, height, rules),
+        Transaction::PxDeploy(t) => validate_deploy(t, chain, height, rules),
     }
 }
 
@@ -393,6 +611,11 @@ pub enum BlockError {
     },
     /// T10, when block-wide batch verification fails.
     RangeProofBatch,
+    /// The PX and deploy transactions exceed the block's PX byte budget.
+    PxBytesExceeded {
+        bytes: u64,
+        max: u64,
+    },
 }
 
 /// Validates the transactions of a block at `ctx.height` against `chain` (the
@@ -404,6 +627,29 @@ pub fn validate_block_transactions<R: RngCore + CryptoRng>(
     chain: &impl ChainView,
     rules: &TxRules,
     rng: &mut R,
+) -> Result<(), BlockError> {
+    validate_block_transactions_cached(txs, ctx, chain, rules, rng, &|_| false)
+}
+
+/// [`validate_block_transactions`], skipping PX5 for the PX transactions
+/// `proof_verified` vouches for: those whose proof this node has already
+/// verified, under the same rules (in practice, its mempool, which admits
+/// nothing unverified).
+///
+/// **Why this is sound.** The transaction id commits to the proof bytes (the
+/// prunable hash), and the statement is a function of the transaction, the
+/// network and the registry entries of its contracts. Registry entries are
+/// immutable and fixed by the contract id, which hashes the deploy payload
+/// (docs/px.md §11.2); PX3 still checks, here, that they exist. So a proof
+/// that verified once verifies for the same id in any block. Every other
+/// rule is checked in full.
+pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
+    txs: &[Transaction],
+    ctx: &BlockContext,
+    chain: &impl ChainView,
+    rules: &TxRules,
+    rng: &mut R,
+    proof_verified: &dyn Fn(&crate::types::Hash) -> bool,
 ) -> Result<(), BlockError> {
     // B1, B2 and coinbase structure.
     let Some(Transaction::Coinbase(coinbase)) = txs.first() else {
@@ -431,13 +677,25 @@ pub fn validate_block_transactions<R: RngCore + CryptoRng>(
         return Err(BlockError::CoinbaseOutputsNotSorted);
     }
 
+    // Structure (cheap), per kind.
     let mut transfers = Vec::with_capacity(txs.len() - 1);
+    let mut pxs = Vec::new();
+    let mut deploys = Vec::new();
     for (index, tx) in txs.iter().enumerate().skip(1) {
+        let err = |error| BlockError::Tx { index, error };
         match tx {
             Transaction::Coinbase(_) => return Err(BlockError::UnexpectedCoinbase { index }),
             Transaction::Transfer(t) => {
-                check_structure(t, rules).map_err(|error| BlockError::Tx { index, error })?;
-                transfers.push((index, t));
+                check_structure(t, rules).map_err(err)?;
+                transfers.push((index, t.as_ref()));
+            }
+            Transaction::Px(t) => {
+                check_px_structure(t).map_err(err)?;
+                pxs.push((index, t.as_ref()));
+            }
+            Transaction::PxDeploy(t) => {
+                check_deploy_structure(t, rules).map_err(err)?;
+                deploys.push((index, t.as_ref()));
             }
         }
     }
@@ -447,7 +705,7 @@ pub fn validate_block_transactions<R: RngCore + CryptoRng>(
     if blacksilk_consensus::merkle::tx_root(&ids) != ctx.tx_root {
         return Err(BlockError::TxRootMismatch);
     }
-    // B6
+    // B6: v1 weight, and the separate PX byte budget.
     let weight: u128 = txs.iter().map(|t| t.weight() as u128).sum();
     if weight > rules.max_block_weight as u128 {
         return Err(BlockError::WeightExceeded {
@@ -455,8 +713,15 @@ pub fn validate_block_transactions<R: RngCore + CryptoRng>(
             max: rules.max_block_weight,
         });
     }
+    let px_bytes: u64 = txs.iter().map(Transaction::px_bytes).sum();
+    if px_bytes > MAX_PX_BLOCK_BYTES {
+        return Err(BlockError::PxBytesExceeded {
+            bytes: px_bytes,
+            max: MAX_PX_BLOCK_BYTES,
+        });
+    }
     // B3
-    let fees: u128 = transfers.iter().map(|(_, t)| t.fee as u128).sum();
+    let fees: u128 = txs.iter().skip(1).map(|t| t.fee() as u128).sum();
     let allowed = ctx.reward as u128 + fees;
     if coinbase.total() != allowed {
         return Err(BlockError::CoinbaseAmount {
@@ -465,13 +730,28 @@ pub fn validate_block_transactions<R: RngCore + CryptoRng>(
         });
     }
 
-    // T9, then C2/C4 (with B4 via the block-wide sets).
+    // T9 (and its PX and deploy forms).
     for (index, t) in &transfers {
         check_balance(t).map_err(|error| BlockError::Tx {
             index: *index,
             error,
         })?;
     }
+    for (index, t) in &pxs {
+        check_px_balance(t).map_err(|error| BlockError::Tx {
+            index: *index,
+            error,
+        })?;
+    }
+    for (index, t) in &deploys {
+        check_balance(&t.as_transfer()).map_err(|error| BlockError::Tx {
+            index: *index,
+            error,
+        })?;
+    }
+
+    // C2/C4 with B4 via block-wide sets; PX1–PX4 with block-wide nullifiers
+    // and the pool evolving in block order; unique contract ids.
     let mut key_images = HashSet::new();
     let mut one_time_keys = HashSet::new();
     for (j, o) in coinbase.outputs.iter().enumerate() {
@@ -480,39 +760,99 @@ pub fn validate_block_transactions<R: RngCore + CryptoRng>(
             return Err(BlockError::CoinbaseDuplicateOneTimeKey { output: j });
         }
     }
-    for (index, t) in &transfers {
-        check_uniqueness(t, chain, &mut key_images, &mut one_time_keys).map_err(|error| {
-            BlockError::Tx {
-                index: *index,
-                error,
+    let mut nullifiers = HashSet::new();
+    let mut contracts = HashSet::new();
+    let mut pool = chain.px_pool();
+    for (index, tx) in txs.iter().enumerate().skip(1) {
+        let err = |error| BlockError::Tx { index, error };
+        let keys: Vec<Point> = tx.output_keys().iter().map(|k| k.one_time_key).collect();
+        let inputs: &[Input] = match tx {
+            Transaction::Transfer(t) => &t.inputs,
+            Transaction::Px(t) => &t.inputs,
+            Transaction::PxDeploy(t) => &t.inputs,
+            Transaction::Coinbase(_) => unreachable!("checked above"),
+        };
+        check_uniqueness_of(inputs, &keys, chain, &mut key_images, &mut one_time_keys)
+            .map_err(err)?;
+        match tx {
+            Transaction::Px(t) => {
+                check_px_state(t, chain, &mut nullifiers).map_err(err)?;
+                pool = (pool + t.bridge_in as u128)
+                    .checked_sub(t.bridge_out as u128)
+                    .ok_or(BlockError::Tx {
+                        index,
+                        error: TxError::PxPoolUnderflow,
+                    })?;
             }
-        })?;
+            Transaction::PxDeploy(t) => {
+                let id = t.contract_id();
+                if chain.px_contract_exists(&id) || !contracts.insert(digest_bytes(&id)) {
+                    return Err(err(TxError::DuplicateContract));
+                }
+            }
+            _ => {}
+        }
     }
 
     // C1, C3 (expensive).
-    for (index, t) in &transfers {
-        let rings = resolve_rings(t, chain, ctx.height).map_err(|error| BlockError::Tx {
-            index: *index,
-            error,
-        })?;
-        check_signatures(t, &rings, rules).map_err(|error| BlockError::Tx {
-            index: *index,
-            error,
-        })?;
+    for (index, tx) in txs.iter().enumerate().skip(1) {
+        let err = |error| BlockError::Tx { index, error };
+        let (inputs, pseudo, sigs, message): (&[Input], &[Point], &[Clsag], Hash) = match tx {
+            Transaction::Transfer(t) => (
+                &t.inputs,
+                &t.pseudo_outs,
+                &t.signatures,
+                t.signature_message(rules.network_id),
+            ),
+            Transaction::Px(t) => (
+                &t.inputs,
+                &t.pseudo_outs,
+                &t.signatures,
+                t.signature_message(rules.network_id),
+            ),
+            Transaction::PxDeploy(t) => (
+                &t.inputs,
+                &t.pseudo_outs,
+                &t.signatures,
+                t.signature_message(rules.network_id),
+            ),
+            Transaction::Coinbase(_) => unreachable!("checked above"),
+        };
+        let rings = resolve_input_rings(inputs, chain, ctx.height).map_err(err)?;
+        check_ring_signatures(inputs, pseudo, sigs, &rings, &message).map_err(err)?;
     }
 
-    // T10, batched.
-    let commitments: Vec<Vec<Point>> = transfers
-        .iter()
-        .map(|(_, t)| output_commitments(t))
-        .collect();
-    let items: Vec<(&BppProof, &[Point])> = transfers
-        .iter()
-        .zip(&commitments)
-        .map(|((_, t), c)| (&t.range_proof, c.as_slice()))
-        .collect();
+    // T10, batched over every transaction with hidden outputs.
+    let mut proofs: Vec<(&BppProof, Vec<Point>)> = Vec::new();
+    for (_, t) in &transfers {
+        proofs.push((&t.range_proof, output_commitments(t)));
+    }
+    for (_, t) in &pxs {
+        if let Some(p) = &t.range_proof {
+            proofs.push((p, t.outputs.iter().map(|o| o.commitment).collect()));
+        }
+    }
+    for (_, t) in &deploys {
+        proofs.push((
+            &t.range_proof,
+            t.outputs.iter().map(|o| o.commitment).collect(),
+        ));
+    }
+    let items: Vec<(&BppProof, &[Point])> =
+        proofs.iter().map(|(p, c)| (*p, c.as_slice())).collect();
     if !bpp::batch_verify(&items, rng) {
         return Err(BlockError::RangeProofBatch);
+    }
+
+    // PX5: the proofs, last (the most expensive check).
+    for (index, t) in &pxs {
+        if proof_verified(&txs[*index].hash()) {
+            continue;
+        }
+        check_px_proof(t, chain, rules).map_err(|error| BlockError::Tx {
+            index: *index,
+            error,
+        })?;
     }
     Ok(())
 }

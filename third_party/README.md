@@ -4,7 +4,7 @@ These are copies of published crates with a minimal, reviewed change, used throu
 `[patch.crates-io]` in the workspace `Cargo.toml`. Each entry records what changed, why,
 and when to remove it.
 
-## `p3-fri` 0.7.0 and `p3-merkle-tree` 0.7.0 (Plonky3): lock scope in the hiding commitments
+## `p3-fri`, `p3-merkle-tree` and `p3-dft` 0.7.0 (Plonky3): spin locks held across parallel work
 
 **Upstream bug (found here, AUDIT.md ZK-F11): the prover can hang forever.**
 - `HidingFriPcs::get_quotient_ldes` (`p3-fri/src/hiding_pcs.rs`) takes the PCS
@@ -33,9 +33,30 @@ the lock is released before any parallel work. No other line changes.
   is harmless for security (the randomness stays fresh and unpredictable), but no
   document may claim reproducible proof bytes.
 
+**Second round (AUDIT.md ZK-F21): two more sites of the same bug.** Found when the
+full test suite ran the unified-proof tests concurrently: five threads spun at 100% for
+two hours, while each test alone passed in about a minute.
+- `HidingFriPcs::commit` passed its lock guard into `p3-matrix`'s `with_random_cols`,
+  whose row copy is parallel (`par_rows_mut`). So the lock was held across rayon work.
+- `p3-dft`'s `Radix2DitParallel` (the DFT this project uses) computed its twiddle
+  tables under the write lock of a `spin::RwLock`. The computation is itself parallel
+  (`Powers::collect_n` resolves to `BoundedPowers::collect`, which splits across
+  threads from 1,024 elements). The twiddle caches of the other DFTs were checked:
+  - `Radix2DFTSmallBatch`, used by the FRI prover, already computes outside the lock;
+  - `Radix2Dit` and the monty-31 DFT are not used.
+- **Fix:** in `commit`, the random columns are drawn under the lock (same values, same
+  order as `with_random_cols`); the matrix is widened after the lock is released. In
+  `Radix2DitParallel`, each table is computed first and then inserted under the write
+  lock. On a miss, two threads may compute the same deterministic table, and the first
+  insert wins.
+
 **Diff against the published crates:**
-- `p3-fri/src/hiding_pcs.rs`: `get_quotient_ldes`, one block.
+- `p3-fri/src/hiding_pcs.rs`: `get_quotient_ldes` and `commit`, one block each, plus
+  the `p3_maybe_rayon` prelude import.
 - `p3-merkle-tree/src/hiding_mmcs.rs`: `commit`, one block.
+- `p3-dft/src/radix_2_dit_parallel.rs`: `get_or_compute_twiddles`,
+  `get_or_compute_coset_twiddles` and `get_or_compute_inverse_twiddles`, one block
+  each.
 
 `cargo`'s registry copies were taken verbatim (`.cargo_vcs_info.json` and
 `Cargo.toml.orig` removed).

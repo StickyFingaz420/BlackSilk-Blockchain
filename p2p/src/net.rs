@@ -164,6 +164,10 @@ struct State {
     dandelion: Dandelion,
     stempool: HashMap<Hash, StemEntry>,
     stem_key_images: HashMap<[u8; 32], Hash>,
+    /// All peers together: PX verification is expensive, so the node caps the
+    /// PX transactions it accepts from the network per second, whatever the
+    /// number of peers (docs/px.md §11.5).
+    px_global: crate::limits::TokenBucket,
     block_requests: HashMap<Hash, (PeerId, Instant)>,
     tx_requests: HashMap<Hash, (PeerId, Instant)>,
     tx_announcers: HashMap<Hash, VecDeque<PeerId>>,
@@ -235,6 +239,7 @@ impl Network {
             dandelion: Dandelion::new(cfg.dandelion.clone()),
             stempool: HashMap::new(),
             stem_key_images: HashMap::new(),
+            px_global: crate::limits::TokenBucket::new(2.0, 10.0),
             block_requests: HashMap::new(),
             tx_requests: HashMap::new(),
             tx_announcers: HashMap::new(),
@@ -1061,7 +1066,7 @@ fn on_get_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) {
         let c = inner.chain();
         for (id, ok) in announced {
             match c.mempool().get(&id).filter(|_| ok) {
-                Some(t) => txs.push(Transaction::from(t.clone()).encode()),
+                Some(t) => txs.push(t.encode()),
                 None => missing.push(id),
             }
         }
@@ -1096,8 +1101,50 @@ fn retry_tx(inner: &Inner, st: &mut State, id: Hash, failed: PeerId, now: Instan
 
 fn decode_tx(bytes: &[u8]) -> Option<Transaction> {
     match Transaction::decode(bytes) {
-        Ok(t @ Transaction::Transfer(_)) => Some(t),
-        _ => None,
+        Ok(Transaction::Coinbase(_)) | Err(_) => None,
+        Ok(t) => Some(t),
+    }
+}
+
+/// Stem-pool conflict keys: key images, and PX nullifiers.
+fn stem_keys(tx: &Transaction) -> Vec<[u8; 32]> {
+    let mut keys: Vec<[u8; 32]> = tx.key_images().iter().map(|k| *k.bytes()).collect();
+    if let Transaction::Px(t) = tx {
+        keys.extend(t.nullifiers.iter().map(blacksilk_tx::px::digest_bytes));
+    }
+    keys
+}
+
+/// Outcome of charging a PX or deploy transaction to the relay limits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PxRate {
+    Within,
+    /// This peer sent more than its own share.
+    PeerExceeded,
+    /// All peers together are over the node-wide limit. This says nothing
+    /// about this peer, which may be honest (an attacker can drain the
+    /// global bucket), so it is never penalized for it.
+    GlobalExceeded,
+}
+
+/// Charges a received PX or deploy transaction (expensive to verify) to the
+/// peer's PX bucket, then to the node-wide one.
+fn px_rate(inner: &Arc<Inner>, peer: PeerId, tx: &Transaction) -> PxRate {
+    if !matches!(tx, Transaction::Px(_) | Transaction::PxDeploy(_)) {
+        return PxRate::Within;
+    }
+    let mut st = inner.state();
+    let now = Instant::now();
+    let per_peer = match st.peers.get_mut(&peer) {
+        Some(p) => p.limits.px.take(1.0, now),
+        None => false,
+    };
+    if !per_peer {
+        PxRate::PeerExceeded
+    } else if !st.px_global.take(1.0, now) {
+        PxRate::GlobalExceeded
+    } else {
+        PxRate::Within
     }
 }
 
@@ -1118,6 +1165,12 @@ async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     };
     if !requested {
         inner.misbehave(peer, score::UNSOLICITED, "unrequested transaction");
+        return;
+    }
+    // A requested transaction is never penalized for its rate: we asked for
+    // it. Over the limit, it is dropped unverified.
+    if px_rate(inner, peer, &tx) != PxRate::Within {
+        log::debug!("PX transaction {} dropped: relay limit", short(&id));
         return;
     }
     let inner2 = inner.clone();
@@ -1151,10 +1204,8 @@ async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
 }
 
 fn unstem_key_images(st: &mut State, tx: &Transaction) {
-    if let Transaction::Transfer(t) = tx {
-        for i in &t.inputs {
-            st.stem_key_images.remove(i.key_image.bytes());
-        }
+    for k in stem_keys(tx) {
+        st.stem_key_images.remove(&k);
     }
 }
 
@@ -1176,6 +1227,14 @@ async fn on_stem_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
         inner.misbehave(peer, score::INVALID_TX, "stem transaction does not decode");
         return;
     };
+    match px_rate(inner, peer, &tx) {
+        PxRate::Within => {}
+        PxRate::PeerExceeded => {
+            inner.misbehave(peer, score::RATE, "PX stem rate");
+            return;
+        }
+        PxRate::GlobalExceeded => return,
+    }
     let id = tx.hash();
     if inner.state().stempool.contains_key(&id) {
         return;
@@ -1203,16 +1262,12 @@ async fn stem_or_fluff(inner: &Arc<Inner>, tx: Transaction, id: Hash, source: So
     let route = {
         let mut st = inner.state();
         // Conflicts with another stem transaction: first seen wins.
-        if let Transaction::Transfer(t) = &tx {
-            if t.inputs
-                .iter()
-                .any(|i| st.stem_key_images.contains_key(i.key_image.bytes()))
-            {
-                return;
-            }
-            for i in &t.inputs {
-                st.stem_key_images.insert(*i.key_image.bytes(), id);
-            }
+        let keys = stem_keys(&tx);
+        if keys.iter().any(|k| st.stem_key_images.contains_key(k)) {
+            return;
+        }
+        for k in keys {
+            st.stem_key_images.insert(k, id);
         }
         let State { dandelion, rng, .. } = &mut *st;
         let route = dandelion.route(source, rng);

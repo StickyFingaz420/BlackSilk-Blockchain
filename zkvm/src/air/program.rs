@@ -153,7 +153,7 @@ pub fn preprocessed(program: &Program, min: usize) -> RowMajorMatrix<Val> {
 
 pub fn eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB, exec: u32) {
     let (m, _) = row(b);
-    let (p, _) = prep(b);
+    let p = prep(b, WIDTH);
     let mult = m[0].clone();
     // Padding rows cannot be looked up.
     b.assert_zero(mult.clone() * (c::<AB>(1) - p[IS_REAL].clone()));

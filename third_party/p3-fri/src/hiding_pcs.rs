@@ -11,6 +11,7 @@ use p3_matrix::bitrev::{BitReversalPerm, BitReversibleMatrix};
 use p3_matrix::dense::{DenseMatrix, RowMajorMatrix, RowMajorMatrixCow};
 use p3_matrix::horizontally_truncated::HorizontallyTruncated;
 use p3_matrix::row_index_mapped::RowIndexMappedView;
+use p3_maybe_rayon::prelude::*;
 use rand::distr::{Distribution, StandardUniform};
 use rand::{CryptoRng, RngExt, SeedableRng};
 use spin::Mutex;
@@ -121,10 +122,24 @@ where
                         // To generate it, we add `w + 2 * num_random_codewords` columns to the original matrix, then reshape it by setting the width to `w + num_random_codewords`.
                         // All columns are added on the right hand side so, after reshaping, this has the net effect of adding `num_random_codewords` random columns on the right and interleaving the original trace with random rows.
 
-                        let mut random_evaluation = mat.with_random_cols(
-                            mat_width + 2 * self.num_random_codewords,
-                            &mut *self.rng.lock(),
-                        );
+                        // BlackSilk patch (third_party/README.md, AUDIT.md ZK-F21):
+                        // upstream passed the lock guard into `with_random_cols`,
+                        // whose parallel row copy then ran with the spin lock
+                        // held. Draw the random columns under the lock, in the
+                        // order `with_random_cols` draws them (row by row), and
+                        // widen the matrix after releasing it.
+                        let num_cols = mat_width + 2 * self.num_random_codewords;
+                        let random =
+                            RowMajorMatrix::<Val>::rand(&mut *self.rng.lock(), mat.height(), num_cols);
+                        let mut random_evaluation =
+                            RowMajorMatrix::new(Val::zero_vec(mat.height() * (mat_width + num_cols)), mat_width + num_cols);
+                        random_evaluation
+                            .par_rows_mut()
+                            .zip(mat.par_row_slices().zip(random.par_row_slices()))
+                            .for_each(|(row, (old, rand))| {
+                                row[..mat_width].copy_from_slice(old);
+                                row[mat_width..].copy_from_slice(rand);
+                            });
                         random_evaluation.width = mat_width + self.num_random_codewords;
 
                         (domain, random_evaluation)

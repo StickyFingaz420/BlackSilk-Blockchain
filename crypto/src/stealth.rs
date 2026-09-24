@@ -49,6 +49,15 @@ pub fn transfer_context(key_images: &[Point]) -> [u8; 32] {
     h32(tags::INPUT_CONTEXT, &parts)
 }
 
+/// `ctx` of a PX transaction (docs/px.md §11):
+/// `H32("input-context/px", nullifiers ‖ key images)`. Nullifiers never
+/// repeat on chain, so the context is unique even without v1 inputs.
+pub fn px_context(nullifiers: &[[u8; 32]], key_images: &[Point]) -> [u8; 32] {
+    let mut parts: Vec<&[u8]> = nullifiers.iter().map(|n| n.as_slice()).collect();
+    parts.extend(key_images.iter().map(|k| k.bytes().as_slice()));
+    h32(tags::INPUT_CONTEXT_PX, &parts)
+}
+
 /// `ctx` of a coinbase: `H32("input-context/coinbase", LE64(height))`.
 pub fn coinbase_context(height: u64) -> [u8; 32] {
     h32(tags::INPUT_CONTEXT_COINBASE, &[&height.to_le_bytes()])

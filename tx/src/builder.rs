@@ -6,9 +6,7 @@
 
 use crate::params::*;
 use crate::types::*;
-use crate::validate::{
-    check_balance, check_range_proof, check_signatures, check_structure, TxError,
-};
+use crate::validate::{check_balance, check_range_proof, check_structure, TxError};
 use blacksilk_crypto::bulletproofs_plus::{self as bpp, BppError};
 use blacksilk_crypto::clsag::{self, ClsagError, RingMember};
 use blacksilk_crypto::commitment::commit;
@@ -161,6 +159,26 @@ pub fn build_transfer<R: RngCore + CryptoRng>(
     rules: &TxRules,
     rng: &mut R,
 ) -> Result<Transfer, BuildError> {
+    let net = rules.network_id;
+    build_transfer_signing(keys, inputs, payments, change, fee, rules, rng, &|t| {
+        t.signature_message(net)
+    })
+}
+
+/// As [`build_transfer`], signing `message(tx)` instead of the transfer's
+/// own signature message (for transactions that extend a transfer, such as
+/// deploys, whose signatures must also cover their payload).
+#[allow(clippy::too_many_arguments)]
+pub fn build_transfer_signing<R: RngCore + CryptoRng>(
+    keys: &WalletKeys,
+    inputs: Vec<InputPlan>,
+    payments: &[Payment],
+    change: &Address,
+    fee: u64,
+    rules: &TxRules,
+    rng: &mut R,
+    message: &dyn Fn(&Transfer) -> Hash,
+) -> Result<Transfer, BuildError> {
     let n = inputs.len();
     if n == 0 || n > MAX_INPUTS {
         return Err(BuildError::InputCount(n));
@@ -293,7 +311,7 @@ pub fn build_transfer<R: RngCore + CryptoRng>(
     };
 
     // Sign everything except the signatures (spec §4.4).
-    let message = tx.signature_message(rules.network_id);
+    let message = message(&tx);
     for (k, x) in prepared.iter().enumerate() {
         let z = x.plan.real.mask - pseudo_masks[k];
         let (sig, ki) = clsag::sign(
@@ -319,7 +337,14 @@ pub fn build_transfer<R: RngCore + CryptoRng>(
     // Self-check (defence in depth against builder bugs).
     check_structure(&tx, rules).map_err(BuildError::SelfCheck)?;
     check_balance(&tx).map_err(BuildError::SelfCheck)?;
-    check_signatures(&tx, &rings, rules).map_err(BuildError::SelfCheck)?;
+    crate::validate::check_ring_signatures(
+        &tx.inputs,
+        &tx.pseudo_outs,
+        &tx.signatures,
+        &rings,
+        &message,
+    )
+    .map_err(BuildError::SelfCheck)?;
     check_range_proof(&tx).map_err(BuildError::SelfCheck)?;
     Ok(tx)
 }

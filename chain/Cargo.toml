@@ -11,6 +11,8 @@ name = "blacksilk_chain"
 blacksilk-consensus = { path = "../consensus" }
 blacksilk-crypto = { path = "../crypto" }
 blacksilk-tx = { path = "../tx" }
+blacksilk-px = { path = "../px" }
+blacksilk-px-core = { path = "../px-core" }
 rand_core = { version = "0.6", default-features = false }
 rand_chacha = { version = "0.3", default-features = false }
 bs58 = "0.5"

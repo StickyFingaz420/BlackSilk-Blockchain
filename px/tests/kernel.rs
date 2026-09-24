@@ -347,6 +347,7 @@ fn successful_executions_have_identical_trace_heights() {
             output: public_words(&public),
             binding: [0; 32],
             others: Vec::new(),
+            budget: None,
         };
         let h: Vec<usize> = trace::build(&st, &exec)
             .iter()

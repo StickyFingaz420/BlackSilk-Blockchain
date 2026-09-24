@@ -5,6 +5,7 @@
 //! | [`params`] | consensus constants and per-network [`params::TxRules`] |
 //! | [`codec`] | strict canonical encoding |
 //! | [`types`] | transaction format, hashing, weight |
+//! | [`px`] | private-execution transactions and private-contract deploys |
 //! | [`validate`] | stateless, contextual and block-level rules |
 //! | [`state`] | reference in-memory chain state with reorg undo |
 //! | [`builder`] | wallet-side transfer and coinbase construction |
@@ -20,6 +21,8 @@ pub mod builder;
 pub mod codec;
 pub mod decoy;
 pub mod params;
+pub mod px;
+pub mod px_builder;
 pub mod scan;
 pub mod state;
 pub mod types;

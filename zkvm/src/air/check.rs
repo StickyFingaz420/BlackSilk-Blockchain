@@ -75,6 +75,11 @@ impl<'a> AirBuilder for EvalBuilder<'a> {
     fn public_values(&self) -> &[Val] {
         self.public
     }
+
+    fn periodic_values(&self) -> &[Val] {
+        use p3_air::WindowAccess;
+        self.prep.current_slice()
+    }
 }
 
 impl InteractionBuilder for EvalBuilder<'_> {
@@ -150,7 +155,7 @@ where
             )));
             continue;
         }
-        let prep = air.preprocessed_trace();
+        let prep = air.periodic_columns_matrix();
         let pw = prep.as_ref().map_or(0, |p| p.width());
         if let Some(p) = &prep {
             if p.height() != h {
@@ -297,7 +302,7 @@ where
             vec![],
             "baseline must be valid"
         );
-        let preps: Vec<_> = airs.iter().map(|a| a.preprocessed_trace()).collect();
+        let preps: Vec<_> = airs.iter().map(|a| a.periodic_columns_matrix()).collect();
         let mut buses = BTreeMap::new();
         for (t, air) in airs.iter().enumerate() {
             for r in 0..traces[t].height() {
@@ -384,7 +389,7 @@ where
     airs.iter()
         .enumerate()
         .map(|(t, air)| {
-            let prep = air.preprocessed_trace();
+            let prep = air.periodic_columns_matrix();
             let w = traces[t].width();
             let mut b = EvalBuilder {
                 main: RowWindow::from_two_rows(&traces[t].values[..w], &traces[t].values[w..2 * w]),

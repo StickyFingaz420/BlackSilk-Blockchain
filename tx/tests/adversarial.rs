@@ -332,6 +332,28 @@ impl ChainView for KeyExists<'_> {
     fn has_one_time_key(&self, k: &Point) -> bool {
         *k == self.key || self.inner.has_one_time_key(k)
     }
+    fn px_is_recent_root(&self, a: &blacksilk_px_core::Digest) -> bool {
+        self.inner.px_is_recent_root(a)
+    }
+    fn px_nullifier_spent(&self, nf: &blacksilk_px_core::Digest) -> bool {
+        self.inner.px_nullifier_spent(nf)
+    }
+    fn px_pool(&self) -> u128 {
+        self.inner.px_pool()
+    }
+    fn px_function(
+        &self,
+        c: &blacksilk_px_core::Digest,
+        id: &[u8; 32],
+    ) -> Option<(
+        std::sync::Arc<blacksilk_zkvm::Program>,
+        blacksilk_zkvm::air::trace::Budget,
+    )> {
+        self.inner.px_function(c, id)
+    }
+    fn px_contract_exists(&self, c: &blacksilk_px_core::Digest) -> bool {
+        self.inner.px_contract_exists(c)
+    }
 }
 
 #[test]
@@ -743,11 +765,26 @@ fn decoder_never_panics_on_garbage() {
         r.fill_bytes(&mut junk);
         let _ = Transaction::decode(&junk);
     }
-    // Oversized input is refused before parsing.
+    // Oversized input is refused before parsing: anything over the largest
+    // cap before reading a byte, and each kind over its own cap right after
+    // the two header bytes (params.rs).
+    use blacksilk_tx::codec::DecodeError::TooLarge;
+    use blacksilk_tx::params::*;
     assert_eq!(
-        Transaction::decode(&vec![0u8; blacksilk_tx::params::MAX_TX_SIZE + 1]),
-        Err(blacksilk_tx::codec::DecodeError::TooLarge)
+        Transaction::decode(&vec![0u8; MAX_PX_TX_SIZE.max(MAX_DEPLOY_TX_SIZE) + 1]),
+        Err(TooLarge)
     );
+    for (kind, cap) in [
+        (KIND_COINBASE, MAX_TX_SIZE),
+        (KIND_TRANSFER, MAX_TX_SIZE),
+        (KIND_PX, MAX_PX_TX_SIZE),
+        (KIND_PX_DEPLOY, MAX_DEPLOY_TX_SIZE),
+    ] {
+        let mut b = vec![0u8; cap + 1];
+        b[0] = TX_VERSION as u8;
+        b[1] = kind;
+        assert_eq!(Transaction::decode(&b), Err(TooLarge), "kind {kind}");
+    }
     // Huge declared counts are refused before allocation.
     assert!(matches!(
         Transaction::decode(&[1, 1, 0xff, 0xff, 0xff, 0x0f]),

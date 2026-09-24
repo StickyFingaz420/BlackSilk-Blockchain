@@ -79,7 +79,8 @@ txs[n]:     varint length ‖ transaction bytes  transactions.md §4 (strict dec
 ```
 
 - Decoding is strict:
-  - the whole block is at most `MAX_BLOCK_BYTES = 1 000 000`;
+  - the whole block is at most `MAX_BLOCK_BYTES = 1 000 000 + 8 MiB + 64 KiB`: the v1
+    weight limit, the PX byte budget (px.md §11.5), and framing headroom;
   - each transaction's length prefix matches its strict decoding exactly;
   - there are no trailing bytes.
 - The block id is the header id (consensus.md §2). Because the header commits to
@@ -95,7 +96,9 @@ A block `B` at height `h` with parent `P` is valid iff all of the following hold
    `BlockContext { height: h, reward: reward(h), tx_root: B.header.tx_root }`
    (transactions.md §8, rules T, C and B1–B7);
 4. with block weight limit `MAX_BLOCK_WEIGHT = 600 000` and
-   `FEE_PER_WEIGHT = 20 atomic units` (transactions.md §8.4).
+   `FEE_PER_WEIGHT = 20 atomic units` (transactions.md §8.4);
+5. its PX and deploy transactions satisfy px.md §11.3 (PX1–PX5, the pool stays ≥ 0 in
+   block order, contract ids unique) and fit the 8 MiB PX budget.
 
 The v1 limits are fixed values; a dynamic block size is future work.
 
@@ -114,7 +117,10 @@ The transaction state is:
 - the ordered global output set;
 - the set of spent key images;
 - the set of used one-time keys;
-- the running `G`.
+- the running `G`;
+- the PX state (px.md §5): commitment tree, root window, nullifier set, containment
+  pool, the contract registry, and the logs wallets download. Every block's changes
+  have an exact undo.
 
 It is always the result of applying, in order, the bodies of the connected chain's
 blocks `1..tip`.
@@ -140,6 +146,14 @@ Transactions from disconnected blocks return to the mempool if they are still va
 - The mempool accepts a transfer if it is valid for inclusion at `tip + 1`
   (transactions.md `validate_transfer`) and none of its key images appears in another
   pooled transaction (first seen wins; no replacement in v1).
+- PX and deploy transactions are validated in full, proof included, on admission. They
+  conflict on key images, nullifiers and contract ids. They live in a separate class of
+  at most `MEMPOOL_MAX_PX_BYTES = 64 MiB` with the same fee-per-byte eviction.
+  - Their proofs are not re-verified when the pool is revalidated, nor when a block
+    containing them is validated: a sound cache, because the transaction id commits to
+    the proof (`validate_block_transactions_cached`).
+  - Templates add them in fee-per-byte order within the PX budget, simulating the pool
+    so that it never goes negative.
 - It holds at most `MEMPOOL_MAX_BYTES = 50 MB`. When full, a new transaction is accepted
   only if its fee per weight beats the lowest one in the pool, which is evicted.
 - **Block templates** take transactions by descending fee per weight, up to

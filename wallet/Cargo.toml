@@ -17,6 +17,9 @@ blacksilk-crypto = { path = "../crypto" }
 blacksilk-tx = { path = "../tx" }
 blacksilk-chain = { path = "../chain" }
 blacksilk-rpc = { path = "../rpc" }
+blacksilk-px = { path = "../px" }
+blacksilk-px-core = { path = "../px-core" }
+blacksilk-zkvm = { path = "../zkvm" }
 rand_core = { version = "0.6", default-features = false }
 rand_chacha = { version = "0.3", default-features = false }
 serde = { version = "1.0", features = ["derive"] }

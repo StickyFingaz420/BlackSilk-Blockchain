@@ -133,21 +133,22 @@ pub fn seal<R: RngCore + CryptoRng>(
         ml_kem::Key::<Ek>::try_from(to.ek.as_slice()).map_err(|_| SealError::BadAddress)?;
     let ek = Ek::new(&ek_arr).map_err(|_| SealError::BadAddress)?;
 
-    let mut wide = [0u8; 64];
-    rng.fill_bytes(&mut wide);
-    let r = Scalar::from_bytes_mod_order_wide(&wide);
-    let r_pub = (&r * RISTRETTO_BASEPOINT_TABLE).compress().to_bytes();
-    let ss_ec = (r * v).compress().to_bytes();
-    let mut m = [0u8; 32];
-    rng.fill_bytes(&mut m);
-    let (ct, ss_kem) = ek.encapsulate_deterministic(&m.into());
+    // Ephemeral secrets are wiped on drop.
+    let mut wide = zeroize::Zeroizing::new([0u8; 64]);
+    rng.fill_bytes(&mut *wide);
+    let r = zeroize::Zeroizing::new(Scalar::from_bytes_mod_order_wide(&wide));
+    let r_pub = (&*r * RISTRETTO_BASEPOINT_TABLE).compress().to_bytes();
+    let ss_ec = zeroize::Zeroizing::new((*r * v).compress().to_bytes());
+    let mut m = zeroize::Zeroizing::new([0u8; 32]);
+    rng.fill_bytes(&mut *m);
+    let (ct, ss_kem) = ek.encapsulate_deterministic(&(*m).into());
 
-    let k = key(&ss_ec, ss_kem.as_slice(), &r_pub, ct.as_slice(), cm);
+    let k = zeroize::Zeroizing::new(key(&ss_ec, ss_kem.as_slice(), &r_pub, ct.as_slice(), cm));
     let mut plain = zeroize::Zeroizing::new(Vec::with_capacity(PLAIN_BYTES));
     plain.extend_from_slice(&record.value.to_le_bytes());
     plain.extend_from_slice(&digest_bytes(&record.data));
     plain.extend_from_slice(&digest_bytes(&record.rcm));
-    let body = ChaCha20Poly1305::new(&k.into())
+    let body = ChaCha20Poly1305::new(&(*k).into())
         .encrypt(
             &[0u8; 12].into(),
             Payload {
@@ -192,16 +193,16 @@ pub fn open(
     }
     let r_pub: [u8; 32] = c[..32].try_into().ok()?;
     let r = CompressedRistretto(r_pub).decompress()?;
-    let ss_ec = (keys.view * r).compress().to_bytes();
+    let ss_ec = zeroize::Zeroizing::new((keys.view * r).compress().to_bytes());
     if view_tag(&ss_ec, &r_pub) != c[32] {
         return None;
     }
     let ct_bytes = &c[33..33 + KEM_CT_BYTES];
     let ct = ml_kem::Ciphertext::<MlKem768>::try_from(ct_bytes).ok()?;
     let ss_kem = keys.dk.decapsulate(&ct);
-    let k = key(&ss_ec, ss_kem.as_slice(), &r_pub, ct_bytes, cm);
+    let k = zeroize::Zeroizing::new(key(&ss_ec, ss_kem.as_slice(), &r_pub, ct_bytes, cm));
     let plain = zeroize::Zeroizing::new(
-        ChaCha20Poly1305::new(&k.into())
+        ChaCha20Poly1305::new(&(*k).into())
             .decrypt(
                 &[0u8; 12].into(),
                 Payload {

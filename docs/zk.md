@@ -7,7 +7,10 @@ Status: **v0.3.**
   R8). The internal security review is `reviews/zk-security-review.md`. Nothing is
   production-ready before independent review.
 - The zkVM is specified in [`zkvm.md`](zkvm.md).
-- Nothing here is consensus until activated.
+- **Consensus:** PX transactions (kind 2) and private-contract deploys (kind 3) are
+  consensus rules from genesis on every network ([`px.md`](px.md) §11). Running them
+  on the existing testnet needs a reset or an activation height (owner decision;
+  AUDIT.md R8).
 
 This document fixes the architecture, interfaces and security requirements of private
 contract execution.

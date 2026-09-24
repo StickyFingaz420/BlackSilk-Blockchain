@@ -4,7 +4,7 @@
 
 use blacksilk_zk::config::Val;
 use blacksilk_zkvm::air::check::{check, MutationChecker};
-use blacksilk_zkvm::air::trace::{self, Part, Statement};
+use blacksilk_zkvm::air::trace::{self, Budget, Part, Statement};
 use blacksilk_zkvm::air::{cpu, poseidon};
 use blacksilk_zkvm::asm::{reg::*, Asm};
 use blacksilk_zkvm::isa::Op;
@@ -49,6 +49,7 @@ fn statement() -> (Statement, Vec<p3_matrix::dense::RowMajorMatrix<Val>>) {
             program: p,
             exit_code: e.exit_code,
             output: e.output.clone(),
+            budget: None,
         });
     }
     let traces = trace::build_multi(&st, &[&e0, &e1, &e2]);
@@ -187,6 +188,7 @@ fn the_logup_multiplicity_bound_holds_for_the_largest_statement() {
             program: p.clone(),
             exit_code: 0,
             output: vec![],
+            budget: None,
         });
     }
     let tables = trace::tables(&st);
@@ -202,4 +204,109 @@ fn the_logup_multiplicity_bound_holds_for_the_largest_statement() {
         100.0 * sum as f64 / order as f64
     );
     assert!(sum < order, "weight {sum} ≥ p");
+}
+
+/// A program whose work depends on a secret: it loops `n` times (n read from
+/// the private input), hashing each round.
+fn secret_loop() -> Arc<Program> {
+    let mut p = Asm::new(BASE);
+    p.data(DATA, vec![0; 64], 64);
+    p.ecall(1)
+        .imm(Op::Addi, S1, A0, 0)
+        .li(S0, DATA)
+        .label("loop")
+        .branch(Op::Beq, S1, ZERO, "done")
+        .imm(Op::Addi, A0, S0, 0)
+        .ecall(3)
+        .imm(Op::Addi, S1, S1, -1)
+        .jal(ZERO, "loop")
+        .label("done")
+        .load(Op::Lw, A1, S0, 0)
+        .write_reg(A1)
+        .halt(0);
+    Arc::new(p.finish().unwrap())
+}
+
+const LOOP_BUDGET: Budget = Budget {
+    cycles: 1_000,
+    keys: 200,
+    add: 300,
+    bit: 64,
+    lt: 300,
+    shift: 64,
+    mul: 64,
+    poseidon: 100,
+};
+
+/// With a budget, the proof's shape (every table height) is the same
+/// whether the secret loop runs once or 90 times: the heights reveal nothing
+/// about the secret. Without one, they differ.
+#[test]
+fn a_budget_fixes_the_shape_whatever_the_secret() {
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(8);
+    let p = secret_loop();
+    let mut shapes = Vec::new();
+    for n in [1u32, 90] {
+        let (st, proof) = prove::prove_shaped(
+            &[(p.clone(), &[n])],
+            Some(&[LOOP_BUDGET]),
+            [1; 32],
+            &mut rng,
+        )
+        .unwrap();
+        assert_eq!(prove::verify(&st, &proof), Ok(()));
+        shapes.push(proof.degree_bits.clone());
+    }
+    assert_eq!(
+        shapes[0], shapes[1],
+        "budgeted shapes must not depend on the secret"
+    );
+    // Unbudgeted, the same two runs have different shapes (the leak budgets close).
+    let (_, a) = prove::prove_multi(&[(p.clone(), &[1])], [1; 32], &mut rng).unwrap();
+    let (_, b) = prove::prove_multi(&[(p.clone(), &[90])], [1; 32], &mut rng).unwrap();
+    assert_ne!(a.degree_bits, b.degree_bits);
+}
+
+/// An execution beyond its budget cannot be proven; a proof of another shape
+/// does not verify against a budgeted statement.
+#[test]
+fn budgets_are_enforced_by_prover_and_verifier() {
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(9);
+    let p = secret_loop();
+    // 200 rounds need more rows than the budget allows.
+    assert!(matches!(
+        prove::prove_shaped(
+            &[(p.clone(), &[200])],
+            Some(&[LOOP_BUDGET]),
+            [1; 32],
+            &mut rng
+        ),
+        Err(prove::ProveError::BudgetExceeded(_))
+    ));
+    // An unbudgeted proof (execution-sized tables) is rejected for the
+    // budgeted statement.
+    let (st_free, free) = prove::prove_multi(&[(p.clone(), &[3])], [1; 32], &mut rng).unwrap();
+    let mut st_budget = st_free.clone();
+    st_budget.budget = Some(LOOP_BUDGET);
+    assert!(prove::verify(&st_budget, &free).is_err());
+    let (st_b, bud) = prove::prove_shaped(
+        &[(p.clone(), &[3])],
+        Some(&[LOOP_BUDGET]),
+        [1; 32],
+        &mut rng,
+    )
+    .unwrap();
+    assert_eq!(prove::verify(&st_b, &bud), Ok(()));
+    // A statement without budgets accepts any valid shape, including this
+    // padded one; PX statements always carry budgets (px::prove).
+    let mut st_unbudgeted = st_b.clone();
+    st_unbudgeted.budget = None;
+    assert_eq!(prove::verify(&st_unbudgeted, &bud), Ok(()));
+    // A different registered budget changes the shape: rejected.
+    let mut other = st_b.clone();
+    other.budget = Some(Budget {
+        cycles: 5_000,
+        ..LOOP_BUDGET
+    });
+    assert!(prove::verify(&other, &bud).is_err());
 }

@@ -9,7 +9,12 @@
 use serde::{Deserialize, Serialize};
 
 /// Largest request body the node accepts (a maximum-size block in hex, plus JSON).
-pub const MAX_REQUEST_BYTES: usize = 2 * 1_000_000 + 1024;
+/// Largest request body: a hex-encoded block with a full PX budget (the node
+/// asserts this covers `blacksilk_chain::block::MAX_BLOCK_BYTES`).
+pub const MAX_REQUEST_BYTES: usize = 2 * (1_000_000 + 8 * 1024 * 1024 + 64 * 1024) + 4096;
+/// A `/blocks` response stops adding blocks beyond this many hex bytes (at
+/// least one block is always returned), so PX-heavy ranges stay bounded.
+pub const MAX_BLOCKS_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum blocks per `/blocks` request.
 pub const MAX_BLOCKS_PER_REQUEST: u64 = 100;
 /// Maximum indices per `/outputs` request.
@@ -100,6 +105,26 @@ pub struct OutputEntry {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Outputs {
     pub outputs: Vec<OutputEntry>,
+}
+
+/// Most PX commitments per `/px/commitments` response.
+pub const MAX_PX_COMMITMENTS_PER_REQUEST: u64 = 65_536;
+
+/// PX commitments in tree order (docs/px.md §11.4). Wallets fetch them in
+/// bulk, never individually, so the node learns nothing about which records
+/// a wallet owns.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PxCommitments {
+    /// Tree position of the first entry.
+    pub from: u64,
+    /// `(height, commitment hex)` in position order.
+    pub commitments: Vec<(u64, String)>,
+    /// Total commitments on the node's chain.
+    pub total: u64,
+    /// The node's current tree root (hex).
+    pub root: String,
+    /// The node's tip height.
+    pub height: u64,
 }
 
 #[derive(Debug)]
@@ -208,6 +233,10 @@ impl Client {
 
     pub fn distribution(&self, to: u64) -> Result<Distribution, RpcError> {
         self.get(&format!("/distribution?to={to}"))
+    }
+
+    pub fn px_commitments(&self, from: u64) -> Result<PxCommitments, RpcError> {
+        self.get(&format!("/px/commitments?from={from}"))
     }
 
     pub fn outputs(&self, indices: &[u64]) -> Result<Outputs, RpcError> {

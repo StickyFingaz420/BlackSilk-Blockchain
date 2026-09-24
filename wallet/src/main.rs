@@ -6,7 +6,7 @@
 
 #![forbid(unsafe_code)]
 
-use blacksilk_chain::address::decode_address;
+use blacksilk_chain::address::{decode_address, decode_px_address};
 use blacksilk_chain::emission::{format_amount, parse_amount};
 use blacksilk_consensus::ChainParams;
 use blacksilk_rpc::Client;
@@ -66,6 +66,33 @@ enum Cmd {
         #[arg(long)]
         amount: String,
     },
+    /// Show a private (PX) address.
+    PxAddress {
+        #[arg(long, default_value_t = 0)]
+        index: u32,
+    },
+    /// Sync and show the private (PX) balance.
+    PxBalance,
+    /// Move BLK from the v1 (ring-signature) wallet into PX. The deposited
+    /// amount is public.
+    PxDeposit {
+        #[arg(long)]
+        amount: String,
+    },
+    /// Pay a PX address privately (proving takes about a minute).
+    PxSend {
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        amount: String,
+    },
+    /// Move BLK out of PX to a v1 address. The withdrawn amount is public.
+    PxWithdraw {
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        amount: String,
+    },
     /// Show the 24-word seed.
     Seed,
     /// Forget unconfirmed spends (after a transaction was dropped by the network).
@@ -93,6 +120,15 @@ fn main() {
         eprintln!("error: {e}");
         std::process::exit(1);
     }
+}
+
+/// A ChaCha20 RNG seeded from the OS.
+fn os_rng() -> Result<ChaCha20Rng, String> {
+    let mut seed = [0u8; 32];
+    getrandom::getrandom(&mut seed).map_err(|e| format!("OS RNG: {e}"))?;
+    let rng = ChaCha20Rng::from_seed(seed);
+    seed.zeroize();
+    Ok(rng)
 }
 
 fn rules_for(w: &Wallet) -> TxRules {
@@ -172,6 +208,70 @@ fn run(args: Args) -> Result<(), String> {
                         .map_err(|e| e.to_string())?;
                     println!(
                         "sent {} BLK, fee {} BLK",
+                        format_amount(amount),
+                        format_amount(fee)
+                    );
+                    println!("transaction {}", hex::encode(id));
+                    Ok(())
+                })(),
+                Cmd::PxAddress { index } => {
+                    println!("{}", w.px_address(index));
+                    Ok(())
+                }
+                Cmd::PxBalance => w.sync(&client).map_err(|e| e.to_string()).map(|h| {
+                    let (total, spendable) = w.px_balance();
+                    println!("height {h}");
+                    println!("private balance:  {} BLK", format_amount(total));
+                    println!("spendable:        {} BLK", format_amount(spendable));
+                }),
+                Cmd::PxDeposit { amount } => (|| {
+                    let amount = parse_amount(&amount).ok_or("amount: use a number like 1.5")?;
+                    let mut rng = os_rng()?;
+                    let rules = rules_for(&w);
+                    eprintln!("note: deposit and withdrawal amounts are public; prefer round amounts and do not withdraw the amount you deposited (docs/px.md §12).");
+                    println!("proving (about a minute)...");
+                    let (id, fee) = w
+                        .px_deposit(&client, amount, &rules, &mut rng)
+                        .map_err(|e| e.to_string())?;
+                    println!(
+                        "deposited {} BLK, fee {} BLK",
+                        format_amount(amount),
+                        format_amount(fee)
+                    );
+                    println!("transaction {}", hex::encode(id));
+                    Ok(())
+                })(),
+                Cmd::PxSend { to, amount } => (|| {
+                    let dest = decode_px_address(w.network(), &to)
+                        .map_err(|e| format!("PX address: {e:?}"))?;
+                    let amount = parse_amount(&amount).ok_or("amount: use a number like 1.5")?;
+                    let mut rng = os_rng()?;
+                    let rules = rules_for(&w);
+                    println!("proving (about a minute)...");
+                    let (id, fee) = w
+                        .px_send(&client, &dest, amount, &rules, &mut rng)
+                        .map_err(|e| e.to_string())?;
+                    println!(
+                        "sent {} BLK privately, fee {} BLK",
+                        format_amount(amount),
+                        format_amount(fee)
+                    );
+                    println!("transaction {}", hex::encode(id));
+                    Ok(())
+                })(),
+                Cmd::PxWithdraw { to, amount } => (|| {
+                    let dest =
+                        decode_address(w.network(), &to).map_err(|e| format!("address: {e:?}"))?;
+                    let amount = parse_amount(&amount).ok_or("amount: use a number like 1.5")?;
+                    let mut rng = os_rng()?;
+                    let rules = rules_for(&w);
+                    eprintln!("note: withdrawal amounts are public; prefer round amounts and wait between deposits and withdrawals (docs/px.md §12).");
+                    println!("proving (about a minute)...");
+                    let (id, fee) = w
+                        .px_withdraw(&client, &dest, amount, &rules, &mut rng)
+                        .map_err(|e| e.to_string())?;
+                    println!(
+                        "withdrew {} BLK, fee {} BLK",
                         format_amount(amount),
                         format_amount(fee)
                     );

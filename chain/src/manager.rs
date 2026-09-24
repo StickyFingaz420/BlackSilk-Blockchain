@@ -21,8 +21,8 @@ use blacksilk_consensus::{
 };
 use blacksilk_tx::params::TxRules;
 use blacksilk_tx::state::MemoryChain;
-use blacksilk_tx::types::{Transaction, Transfer};
-use blacksilk_tx::validate::{validate_block_transactions, BlockContext, BlockError};
+use blacksilk_tx::types::Transaction;
+use blacksilk_tx::validate::{validate_block_transactions_cached, BlockContext, BlockError};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::collections::HashMap;
@@ -136,7 +136,8 @@ pub struct Template {
     /// `reward(height)`; the coinbase must pay exactly `reward + fees`.
     pub reward: u64,
     pub fees: u64,
-    pub txs: Vec<Transfer>,
+    /// Transactions to include after the coinbase, in order.
+    pub txs: Vec<Transaction>,
 }
 
 pub struct ChainManager {
@@ -388,12 +389,16 @@ impl ChainManager {
                     reward,
                     tx_root: header.tx_root,
                 };
-                match validate_block_transactions(
+                // PX proofs already verified on mempool admission are not
+                // verified again (validate_block_transactions_cached).
+                let mempool = &self.mempool;
+                match validate_block_transactions_cached(
                     body,
                     &ctx,
                     &self.state,
                     &self.rules,
                     &mut self.rng,
+                    &|id| mempool.contains(id),
                 ) {
                     Ok(()) => {
                         self.state.apply_block(body);
@@ -629,10 +634,11 @@ impl ChainManager {
             .template_on(self.tip_id())
             .expect("connected tip is a valid header");
         let reward = block_reward(t.height, self.generated());
-        let txs = self
-            .mempool
-            .select(self.rules.max_block_weight.saturating_sub(COINBASE_RESERVE));
-        let fees = txs.iter().map(|t| t.fee).sum();
+        let txs = self.mempool.select(
+            self.rules.max_block_weight.saturating_sub(COINBASE_RESERVE),
+            blacksilk_tx::validate::ChainView::px_pool(&self.state),
+        );
+        let fees = txs.iter().map(Transaction::fee).sum();
         Template {
             height: t.height,
             prev_id: t.prev_id,

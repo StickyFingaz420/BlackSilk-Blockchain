@@ -52,7 +52,7 @@ pub fn image_preprocessed(words: &[(u32, u32)], min: usize) -> RowMajorMatrix<Va
 
 pub fn image_eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB, exec: u32) {
     let (m, _) = row(b);
-    let (p, _) = prep(b);
+    let p = prep(b, DUMMY_WIDTH);
     b.assert_zero(m[0].clone());
     let mut msg = vec![c::<AB>(exec)];
     msg.extend_from_slice(&p[..5]);
@@ -71,7 +71,7 @@ pub fn output_preprocessed(output: &[u32], min: usize) -> RowMajorMatrix<Val> {
 
 pub fn output_eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB, exec: u32) {
     let (m, _) = row(b);
-    let (p, _) = prep(b);
+    let p = prep(b, DUMMY_WIDTH);
     b.assert_zero(m[0].clone());
     let mut msg = vec![c::<AB>(exec)];
     msg.extend_from_slice(&p[..5]);

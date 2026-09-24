@@ -26,6 +26,10 @@ pub enum DecodeError {
     },
     /// A ring offset delta of 0 (duplicate member) or an index past `u64::MAX`.
     InvalidRingOffsets,
+    /// A field element (PX digests, function outputs) that is not canonical.
+    NonCanonicalField,
+    /// A deploy program binary that does not load.
+    InvalidProgram,
 }
 
 #[derive(Default)]
@@ -84,6 +88,11 @@ pub struct Reader<'a> {
 impl<'a> Reader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         Self { data, pos: 0 }
+    }
+
+    /// The bytes `start..end` of the input.
+    pub fn slice(&self, start: usize, end: usize) -> &'a [u8] {
+        &self.data[start..end]
     }
 
     pub fn position(&self) -> usize {

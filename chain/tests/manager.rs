@@ -59,8 +59,14 @@ impl Miner {
     }
 
     /// Builds a block from a template, with an optional coinbase amount override.
-    fn build(&mut self, t: &Template, txs: Vec<Transfer>, claim: Option<u64>, nonce: u64) -> Block {
-        let fees: u64 = txs.iter().map(|t| t.fee).sum();
+    fn build(
+        &mut self,
+        t: &Template,
+        txs: Vec<Transaction>,
+        claim: Option<u64>,
+        nonce: u64,
+    ) -> Block {
+        let fees: u64 = txs.iter().map(Transaction::fee).sum();
         let amount = claim.unwrap_or(t.reward + fees);
         let cb = build_coinbase(
             t.height,
@@ -73,7 +79,7 @@ impl Miner {
         )
         .unwrap();
         let mut all = vec![Transaction::Coinbase(cb)];
-        all.extend(txs.into_iter().map(Transaction::from));
+        all.extend(txs);
         let ids: Vec<Hash> = all.iter().map(Transaction::hash).collect();
         let header = BlockHeader {
             version: HEADER_VERSION,

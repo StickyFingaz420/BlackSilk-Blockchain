@@ -30,16 +30,16 @@ impl BaseAir<Val> for T {
             T::Driver => DRIVER_WIDTH,
         }
     }
-    fn preprocessed_trace(&self) -> Option<RowMajorMatrix<Val>> {
+    fn num_periodic_columns(&self) -> usize {
         match self {
-            T::Core(t) => t.preprocessed_trace(),
-            T::Driver => None,
+            T::Core(t) => t.num_periodic_columns(),
+            T::Driver => 0,
         }
     }
-    fn preprocessed_width(&self) -> usize {
+    fn periodic_columns(&self) -> std::borrow::Cow<'_, [Vec<Val>]> {
         match self {
-            T::Core(t) => t.preprocessed_width(),
-            T::Driver => 0,
+            T::Core(t) => t.periodic_columns(),
+            T::Driver => std::borrow::Cow::Owned(Vec::new()),
         }
     }
 }
@@ -147,7 +147,15 @@ fn build(
             T::Core(Table::AluMul),
             T::Driver,
         ],
-        vec![counter.trace(), add, bit, lt, shift, mul, driver],
+        vec![
+            blacksilk_zkvm::air::with_public_columns(&Table::Byte, counter.trace()),
+            add,
+            bit,
+            lt,
+            shift,
+            mul,
+            driver,
+        ],
     )
 }
 
@@ -282,12 +290,24 @@ fn alu_tables_prove_and_verify() {
     let (airs, traces) = build(&reqs, None);
     let public = empty_public(airs.len());
     let limits = vec![16; airs.len()];
-    let cfg = ProverConfig::new(&[9; 32], &mut rand_chacha::ChaCha20Rng::seed_from_u64(9));
+    // Bind the public byte table (a periodic column) into the transcript.
+    let digest = blacksilk_zkvm::prove::statement_digest(&[Table::Byte]);
+    let cfg = ProverConfig::for_statement(
+        &digest,
+        &[9; 32],
+        &mut rand_chacha::ChaCha20Rng::seed_from_u64(9),
+    );
     let proof = blacksilk_zk::prove(&cfg, &airs, &traces, &public, &limits).expect("proves");
     let bytes_len = blacksilk_zk::encode_proof(&proof).len();
     println!("ALU proof: {bytes_len} bytes");
     assert_eq!(
-        blacksilk_zk::verify(&VerifierConfig::new(), &airs, &proof, &public, &limits),
+        blacksilk_zk::verify(
+            &VerifierConfig::for_statement(&digest),
+            &airs,
+            &proof,
+            &public,
+            &limits
+        ),
         Ok(())
     );
 }

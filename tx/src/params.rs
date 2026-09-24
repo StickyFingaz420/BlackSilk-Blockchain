@@ -8,6 +8,27 @@ pub use blacksilk_crypto::clsag::RING_SIZE;
 pub const TX_VERSION: u64 = 1;
 pub const KIND_COINBASE: u8 = 0;
 pub const KIND_TRANSFER: u8 = 1;
+/// A private-execution transaction (docs/px.md §11).
+pub const KIND_PX: u8 = 2;
+/// Registration of a private contract and its function programs (docs/px.md §11).
+pub const KIND_PX_DEPLOY: u8 = 3;
+
+/// Largest encoded PX transaction: the proof cap plus the public parts.
+pub const MAX_PX_TX_SIZE: usize = blacksilk_zk::params::MAX_PROOF_BYTES + 256 * 1024;
+/// Largest encoded deploy transaction (program binaries are on chain).
+pub const MAX_DEPLOY_TX_SIZE: usize = 1024 * 1024;
+/// Bytes of PX and deploy transactions a block may carry, beyond the v1 weight
+/// limit (zk.md §11.1: a separate PX budget).
+pub const MAX_PX_BLOCK_BYTES: u64 = 8 * 1024 * 1024;
+/// Fee per encoded byte of PX and deploy transactions (atomic units).
+pub const PX_FEE_PER_BYTE: u64 = 2;
+/// Clear (bridge-out) outputs of one PX transaction.
+pub const MAX_PAYOUTS: usize = 16;
+/// Public output words a function may publish in a PX transaction.
+pub const MAX_FN_OUTPUT_WORDS: usize = 256;
+/// Programs one deploy may register, and the largest program binary.
+pub const MAX_DEPLOY_PROGRAMS: usize = 16;
+pub const MAX_PROGRAM_BYTES: usize = 256 * 1024;
 
 /// T1: maximum encoded transaction size in bytes.
 pub const MAX_TX_SIZE: usize = 100_000;

@@ -125,6 +125,7 @@ fn statement(asm: &Asm, input: &[u32]) -> (Statement, Vec<p3_matrix::dense::RowM
         output: exec.output.clone(),
         binding: [7; 32],
         others: Vec::new(),
+        budget: None,
     };
     let traces = trace::build(&st, &exec);
     (st, traces)
@@ -335,6 +336,7 @@ fn a_compiled_rust_guest_proves_and_verifies() {
         output: expected.clone(),
         binding: [3; 32],
         others: Vec::new(),
+        budget: None,
     };
     let traces = trace::build(&st, &exec);
     assert_eq!(
@@ -527,4 +529,34 @@ fn a_compiled_guest_using_poseidon2_proves_and_verifies() {
     let mut forged = st.clone();
     forged.output[2] ^= 1;
     assert!(prove::verify(&forged, &proof).is_err());
+}
+
+/// The public tables (byte, program, image, output) carry copies of their
+/// public data in main columns; every copied cell is pinned to the
+/// verifier-computed value (zkvm.md §6.1). Changing any copied cell, on
+/// real or padding rows, violates a constraint.
+#[test]
+fn public_column_copies_are_pinned_to_the_statement() {
+    use blacksilk_zkvm::air::{byte, memory, program};
+    let (st, traces) = statement(&kitchen_sink(), &[5]);
+    let airs = trace::tables(&st);
+    let public = trace::public_values(&st);
+    let mut m = MutationChecker::new(&airs, &traces, &public);
+    let mut tried = 0;
+    // (table, first copy column, copies)
+    for (t, off, n) in [
+        (0usize, byte::WIDTH, byte::PREP_WIDTH),
+        (1, program::WIDTH, program::PREP_WIDTH),
+        (2, memory::DUMMY_WIDTH, memory::IMAGE_PREP_WIDTH),
+        (10, memory::DUMMY_WIDTH, memory::IMAGE_PREP_WIDTH),
+    ] {
+        let h = traces[t].values.len() / traces[t].width;
+        for r in [0, 1, h / 2, h - 1] {
+            for c in off..off + n {
+                tried += 1;
+                assert!(m.caught(t, r, c, Val::ONE), "table {t} row {r} column {c}");
+            }
+        }
+    }
+    println!("{tried} public-copy mutations, all caught");
 }

@@ -60,6 +60,10 @@ pub enum Transaction {
     Coinbase(Coinbase),
     /// Boxed: a transfer is ~25x larger than a coinbase.
     Transfer(Box<Transfer>),
+    /// A private-execution transaction (docs/px.md §11).
+    Px(Box<crate::px::PxTx>),
+    /// A private-contract deploy (docs/px.md §11).
+    PxDeploy(Box<crate::px::PxDeploy>),
 }
 
 impl From<Transfer> for Transaction {
@@ -114,6 +118,18 @@ impl CoinbaseOutput {
 }
 
 // ---- encoding ----
+
+pub(crate) fn write_ring_pub(w: &mut Writer, ring: &[u64; RING_SIZE]) {
+    write_ring(w, ring)
+}
+
+pub(crate) fn read_ring_pub(r: &mut Reader<'_>) -> Result<[u64; RING_SIZE], DecodeError> {
+    read_ring(r)
+}
+
+pub(crate) fn read_bpp_pub(r: &mut Reader<'_>, outputs: usize) -> Result<BppProof, DecodeError> {
+    read_bpp(r, outputs)
+}
 
 fn write_ring(w: &mut Writer, ring: &[u64; RING_SIZE]) {
     w.varint(ring[0]);
@@ -367,7 +383,7 @@ impl Transaction {
     /// Strict decoding (rule T1): size limit, version, kind, bounded counts,
     /// canonical points/scalars/varints, well-formed rings, no trailing bytes.
     pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
-        if bytes.len() > MAX_TX_SIZE {
+        if bytes.len() > MAX_PX_TX_SIZE.max(MAX_DEPLOY_TX_SIZE) {
             return Err(DecodeError::TooLarge);
         }
         let mut r = Reader::new(bytes);
@@ -375,9 +391,23 @@ impl Transaction {
         if version != TX_VERSION {
             return Err(DecodeError::UnsupportedVersion(version));
         }
-        let tx = match r.u8()? {
+        let kind = r.u8()?;
+        // PX transactions have their own, larger size caps (params).
+        let cap = match kind {
+            KIND_PX => MAX_PX_TX_SIZE,
+            KIND_PX_DEPLOY => MAX_DEPLOY_TX_SIZE,
+            _ => MAX_TX_SIZE,
+        };
+        if bytes.len() > cap {
+            return Err(DecodeError::TooLarge);
+        }
+        let tx = match kind {
             KIND_COINBASE => Transaction::Coinbase(Coinbase::decode_body(&mut r)?),
             KIND_TRANSFER => Transaction::from(Transfer::decode_body(&mut r)?),
+            KIND_PX => Transaction::Px(Box::new(crate::px::PxTx::decode_body(&mut r)?)),
+            KIND_PX_DEPLOY => {
+                Transaction::PxDeploy(Box::new(crate::px::PxDeploy::decode_body(&mut r)?))
+            }
             k => return Err(DecodeError::UnknownKind(k)),
         };
         r.finish()?;
@@ -393,6 +423,8 @@ impl Transaction {
                 out.extend(t.prunable_bytes());
                 out
             }
+            Transaction::Px(t) => t.encode(),
+            Transaction::PxDeploy(t) => t.encode(),
         }
     }
 
@@ -405,15 +437,54 @@ impl Transaction {
                 h32(tags::TX_PRUNABLE, &[]),
             ),
             Transaction::Transfer(t) => (t.prefix_hash(), t.base_hash(), t.prunable_hash()),
+            Transaction::Px(t) => (t.prefix_hash(), t.base_hash(), t.prunable_hash()),
+            Transaction::PxDeploy(t) => (
+                t.prefix_hash(),
+                h32(tags::TX_BASE, &[&t.base_bytes()]),
+                h32(tags::TX_PRUNABLE, &[&t.prunable_bytes()]),
+            ),
         };
         h32(tags::TX_HASH, &[&prefix, &base, &prunable])
     }
 
+    /// Weight against the v1 block weight limit. PX and deploy transactions
+    /// count against the separate PX byte budget instead ([`Self::px_bytes`]).
     pub fn weight(&self) -> u64 {
         match self {
             Transaction::Coinbase(c) => c.prefix_bytes().len() as u64,
             Transaction::Transfer(t) => t.weight(),
+            Transaction::Px(_) | Transaction::PxDeploy(_) => 0,
         }
+    }
+
+    /// Bytes counted against the block's PX budget (`MAX_PX_BLOCK_BYTES`).
+    pub fn px_bytes(&self) -> u64 {
+        match self {
+            Transaction::Px(t) => t.encoded_len() as u64,
+            Transaction::PxDeploy(t) => t.encoded_len() as u64,
+            _ => 0,
+        }
+    }
+
+    /// The public fee (zero for a coinbase).
+    pub fn fee(&self) -> u64 {
+        match self {
+            Transaction::Coinbase(_) => 0,
+            Transaction::Transfer(t) => t.fee,
+            Transaction::Px(t) => t.fee,
+            Transaction::PxDeploy(t) => t.fee,
+        }
+    }
+
+    /// Key images spent by the transaction's v1 inputs.
+    pub fn key_images(&self) -> Vec<Point> {
+        let inputs: &[Input] = match self {
+            Transaction::Coinbase(_) => &[],
+            Transaction::Transfer(t) => &t.inputs,
+            Transaction::Px(t) => &t.inputs,
+            Transaction::PxDeploy(t) => &t.inputs,
+        };
+        inputs.iter().map(|i| i.key_image).collect()
     }
 
     /// The outputs this transaction adds to the global output set, in order.
@@ -428,6 +499,15 @@ impl Transaction {
                 })
                 .collect(),
             Transaction::Transfer(t) => t
+                .outputs
+                .iter()
+                .map(|o| OutputKey {
+                    one_time_key: o.one_time_key,
+                    commitment: o.commitment,
+                })
+                .collect(),
+            Transaction::Px(t) => t.output_keys(),
+            Transaction::PxDeploy(t) => t
                 .outputs
                 .iter()
                 .map(|o| OutputKey {

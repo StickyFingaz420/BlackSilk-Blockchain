@@ -5,7 +5,6 @@ use crate::addr::NetAddr;
 use blacksilk_chain::block::MAX_BLOCK_BYTES;
 use blacksilk_consensus::{BlockHeader, Hash, HEADER_SIZE};
 use blacksilk_tx::codec::{DecodeError, Reader, Writer};
-use blacksilk_tx::params::MAX_TX_SIZE;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MIN_PROTOCOL_VERSION: u32 = 1;
@@ -16,7 +15,19 @@ pub const MAX_HEADERS: u64 = 2000;
 pub const MAX_BLOCK_REQUEST: u64 = 128;
 pub const MAX_INV: u64 = 500;
 /// Maximum frame payload: a maximum-size block plus framing.
-pub const MAX_FRAME: usize = 2 * 1024 * 1024 + 1024;
+/// Largest frame: a full block (with its PX budget) plus framing.
+pub const MAX_FRAME: usize = MAX_BLOCK_BYTES + 64 * 1024;
+
+/// Largest transaction payload of any kind (PX transactions carry proofs).
+pub const MAX_ANY_TX_SIZE: usize = {
+    let px = blacksilk_tx::params::MAX_PX_TX_SIZE;
+    let deploy = blacksilk_tx::params::MAX_DEPLOY_TX_SIZE;
+    if px > deploy {
+        px
+    } else {
+        deploy
+    }
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Version {
@@ -208,7 +219,7 @@ impl Message {
                 let max = if tag == 9 {
                     MAX_BLOCK_BYTES
                 } else {
-                    MAX_TX_SIZE
+                    MAX_ANY_TX_SIZE
                 };
                 let n = r.count("payload", 1, max as u64)?;
                 let start = r.position();
@@ -335,7 +346,7 @@ mod tests {
         ));
         let mut w = Writer::new();
         w.u8(13);
-        w.varint(MAX_TX_SIZE as u64 + 1);
+        w.varint(MAX_ANY_TX_SIZE as u64 + 1);
         assert!(Message::decode(&w.into_bytes()).is_err());
         let mut w = Writer::new();
         w.u8(5);

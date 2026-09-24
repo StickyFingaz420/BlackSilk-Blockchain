@@ -1,9 +1,10 @@
 # BVM-1: the BlackSilk zero-knowledge virtual machine
 
 Status: **specification v0.3; implemented and tested, including the Poseidon2 syscall
-circuit and multi-execution proofs** (AUDIT.md R8; internal security review
-`docs/reviews/zk-security-review.md`). Not consensus; not production-ready before
-independent review.
+circuit, multi-execution proofs, public tables as periodic columns and fixed
+shapes** (AUDIT.md R8; internal security review
+`docs/reviews/zk-security-review.md`). Used by PX consensus (docs/px.md §11); not
+production-ready before independent review.
 This document is normative:
 - the reference interpreter (`zkvm/src/exec.rs`) and the constraint tables
   (`zkvm/src/air/`) implement exactly what it says;
@@ -173,9 +174,9 @@ in the 31-bit field.
 
 | Table | Kind | One row per | Purpose |
 |---|---|---|---|
-| `BYTE` | preprocessed (2^16 rows) | byte pair `(a, b)` | Range checks of byte pairs; `AND`, `OR`, `XOR` of bytes; free multiplicity column |
-| `PROGRAM` | preprocessed | instruction | `(pc, decoded fields)`; free multiplicity column (execution counts) |
-| `IMAGE` | preprocessed | image word | `(key, value)` of code, data and the 32 initial registers |
+| `BYTE` | public (2^16 rows) | byte pair `(a, b)` | Range checks of byte pairs; `AND`, `OR`, `XOR` of bytes; free multiplicity column |
+| `PROGRAM` | public | instruction | `(pc, decoded fields)`; free multiplicity column (execution counts) |
+| `IMAGE` | public | image word | `(key, value)` of code, data and the 32 initial registers |
 | `MEM_INIT` | main | key used | Initial entry `(key, v_init, 0)` and final entry of every key; keys strictly increasing (§6.3) |
 | `CPU` | main | cycle | Fetch, register and memory accesses, next `pc`, syscalls; sends ALU, memory, output and syscall messages |
 | `ALU_ADD` | main | ADD/SUB request | Byte-wise addition with boolean carries |
@@ -183,8 +184,19 @@ in the 31-bit field.
 | `ALU_LT` | main | SLT/SLTU/EQ request | Signed or unsigned comparison; zero test with an inverse witness |
 | `ALU_SHIFT` | main | SLL/SRL/SRA request | Reduced to one multiplier request by `2^e`, with `2^e` proven as bytes |
 | `ALU_MUL` | main | MUL/MULH/MULHSU/MULHU request | 8×8-byte convolution with range-checked carries |
-| `OUTPUT` | preprocessed | claimed output word | `(index, value)` of the public output |
+| `OUTPUT` | public | claimed output word | `(index, value)` of the public output |
 | `POSEIDON2` | main | syscall | Plonky3's `Poseidon2Air` (standard constants) unchanged, plus memory access, canonical-encoding checks and the syscall binding |
+
+**Public tables are periodic columns (AUDIT.md ZK-F13).**
+- The contents of `BYTE`, `PROGRAM`, `IMAGE` and `OUTPUT` follow from the statement
+  alone. The verifier evaluates them itself as periodic columns (period = table
+  height), instead of verifying commitments to them. Before this change, recommitting
+  them was 76% of verification time.
+- `p3-lookup` cannot use periodic values inside bus messages. So each public table
+  also has main-trace copies of those columns, constrained equal to the periodic
+  values on every row (`air::util::prep`). The messages use the copies.
+- A mutation test changes every copied cell and expects a violation (180 of 180
+  caught).
 
 Words are held as 4 bytes. Registers are memory keys `REG_BASE + r`
 (`REG_BASE = 2^26`); memory word `w` has key `w` (`< 2^26`).
@@ -246,10 +258,20 @@ output count    1 element
 binding         16 × 16-bit limbs of the caller's 32-byte h_tx (zk.md §5.2)
 ```
 
-The program (as the preprocessed `PROGRAM` and `IMAGE` tables) and the claimed outputs
-(the preprocessed `OUTPUT` table) are rebuilt by the verifier from the statement. All
-public values enter the Fiat–Shamir transcript, so a proof is valid for exactly one
-statement and one binding.
+The program (the public `PROGRAM` and `IMAGE` tables) and the claimed outputs (the
+public `OUTPUT` table) are rebuilt by the verifier from the statement.
+
+**Statement digest.** Before any commitment, the challenger absorbs `statement_digest`
+(tag `zkvm/statement`), a hash of every table's periodic columns: the byte table, and
+each execution's program, image and claimed outputs.
+- Plonky3 puts public values into the transcript itself, but not the data the verifier
+  feeds the AIRs as periodic columns; the digest closes that gap.
+- Exit codes and the binding are public values, so they are absorbed by Plonky3.
+- The budgets fix the table heights, which the verifier checks exactly before
+  verifying.
+
+So a proof is valid for exactly one statement and one binding (no Frozen-Heart-style
+statement choice after the fact).
 
 ### 6.5 Several executions in one proof
 
@@ -267,6 +289,26 @@ and further ones (ids 1…). PX uses one kernel and up to 4 functions.
 - **Binding:** every execution carries the same binding.
 - **Verification:** the verifier rebuilds every execution's tables from the statement
   (program, exit code, outputs). Dropping, reordering or changing an execution fails.
+
+### 6.6 Budgets: fixed shapes
+
+A statement may carry a **budget** for each execution:
+
+`Budget { cycles, keys, add, bit, lt, shift, mul, poseidon }`
+
+That is, the rows allowed in the execution's `CPU` and `MEM_INIT` tables, and its
+share of each shared table.
+- **The prover** (`prove_shaped`) pads every table to the height the budgets imply,
+  the next power of two of the sum over executions, at least the FRI minimum. An
+  execution needing more rows returns `BudgetExceeded`; nothing is proven.
+- **The verifier** requires exactly those heights (`Statement::shape`) and rejects any
+  other shape, including a smaller, honest, unpadded one.
+- **Consequence:** the proof's shape, and so its size, is a function of the public
+  statement only (programs and budgets), never of the witness.
+
+PX fixes the kernel budget per function count (`px::prove::kernel_budget`, measured use
+plus about 6%). Every function's budget is registered with its program at deploy time
+(docs/px.md §11.2).
 
 ---
 
@@ -290,18 +332,25 @@ As zk.md §9.3, parameter set **BS-ZK-2**:
 
 | Revealed by a proof | Hidden |
 |---|---|
-| Program id, exit code, output digest (and the output words, when published with the transaction) | Input stream, all registers, memory, control flow, which instructions ran |
-| **Padded height of each table** (powers of two): roughly how many cycles, memory accesses and Poseidon2 calls the run used | Exact counts within a power-of-two bucket |
+| Program ids, exit codes, output digests (and the output words, when published with the transaction); the **budgets**, which are public by registration | Input stream, all registers, memory, control flow, which instructions ran, how many cycles, memory accesses or Poseidon2 calls were used |
 
-**The padded heights leak coarse timing.** A branch on a secret that changes the cycle
-count across a power of two changes a public height.
-- **Programs must do constant work** in their secrets. The PX kernel does: tests check
-  identical table heights across dummy, real, bridge, user-record and contract-record
-  witnesses (docs/px.md §4.4).
-- Contract functions must follow the same rule for their own secrets.
-- A padding helper in the SDK (spin to a declared cycle bucket) is **not implemented
-  yet**; until it is, function authors must design for constant work.
-- `zk.md` §12.2 lists this under metadata.
+**Budgeted statements have a fixed shape (§6.6).**
+- Table heights are fixed by the budgets, so a secret-dependent branch or loop changes
+  nothing public, provided the execution stays within its budget. Past the budget it
+  cannot be proven at all, so a secret can make proving fail (locally, at the
+  prover), but never show in a proof.
+- **Tested:** `zkvm/tests/multi.rs::a_budget_fixes_the_shape_whatever_the_secret` runs
+  a loop 1 and 90 times: the shapes are identical with a budget and differ without
+  one.
+- **This replaces the planned SDK padding helper** (spinning to a cycle bucket). Rows
+  are padded by the prover, so no cycles are wasted, and the guarantee covers every
+  table, not only the CPU.
+- **What function authors must still do:** choose a budget that covers the worst case
+  of every valid input. A function that exceeds its budget for some inputs makes
+  those inputs unprovable. That is a liveness issue, not a leak.
+
+**Unbudgeted statements** (tests and tools only; PX always sets budgets) have
+power-of-two heights sized to the execution, and do leak coarse timing.
 
 **Zero-knowledge:**
 - The hiding FRI commitment scheme needs fresh CSPRNG randomness **for every proof**.

@@ -9,17 +9,30 @@
 //! node (docs/blocks.md §9).
 
 use crate::node::NodeApi;
+use crate::px::PxStore;
+
+/// PX inputs chosen for a spend: the record indices, the kernel's two input
+/// witnesses (dummies fill unused slots), their total value, and the anchor.
+type PxInputs = (
+    Vec<usize>,
+    [blacksilk_px_core::kernel::InputWitness; 2],
+    u64,
+    [u32; 8],
+);
 use blacksilk_chain::address::encode_address;
 use blacksilk_chain::block::Block;
 use blacksilk_consensus::{ChainParams, Hash, Network};
 use blacksilk_crypto::keys::{Address, SubaddressIndex, SubaddressTable, WalletKeys};
 use blacksilk_crypto::stealth::ReceivedOutput;
 use blacksilk_crypto::{Point, Scalar};
+use blacksilk_px::wallet::{self as pxw, Account};
 use blacksilk_tx::builder::{
     build_transfer, standard_fee, BuildError, Decoy, InputPlan, Payment, SpendableOutput,
 };
 use blacksilk_tx::decoy::select_ring;
 use blacksilk_tx::params::{TxRules, COINBASE_MATURITY, MAX_INPUTS, SPENDABLE_AGE};
+use blacksilk_tx::px::PxTx;
+use blacksilk_tx::px_builder::{build_px, px_standard_fee, PxPlan};
 use blacksilk_tx::scan::scan_block;
 use blacksilk_tx::types::{OutputKey, Transaction};
 use rand_core::{CryptoRng, RngCore};
@@ -120,6 +133,9 @@ struct Persisted {
     /// Highest subaddress index handed out, per account.
     issued: BTreeMap<u32, u32>,
     outputs: Vec<StoredOutput>,
+    /// PX state (absent in wallets written before PX).
+    #[serde(default)]
+    px: PxStore,
 }
 
 pub struct Wallet {
@@ -132,6 +148,8 @@ pub struct Wallet {
     block_ids: BTreeMap<u64, Hash>,
     issued: BTreeMap<u32, u32>,
     outputs: Vec<StoredOutput>,
+    px: PxStore,
+    px_account: Account,
 }
 
 impl Drop for Wallet {
@@ -196,6 +214,8 @@ impl Wallet {
             block_ids: BTreeMap::new(),
             issued: BTreeMap::from([(0, 0)]),
             outputs: Vec::new(),
+            px: PxStore::default(),
+            px_account: Account::from_seed(&seed),
         };
         w.rebuild_table();
         w
@@ -287,6 +307,7 @@ impl Wallet {
                 .collect(),
             issued: self.issued.clone(),
             outputs: self.outputs.clone(),
+            px: self.px.clone(),
         };
         serde_json::to_vec(&p).expect("serializable")
     }
@@ -313,6 +334,7 @@ impl Wallet {
             .collect::<Result<_, WalletError>>()?;
         w.issued = p.issued;
         w.outputs = p.outputs;
+        w.px = p.px;
         w.rebuild_table();
         Ok(w)
     }
@@ -339,6 +361,7 @@ impl Wallet {
             }
         }
         self.block_ids.retain(|h, _| *h <= height);
+        self.px.rewind(height);
         self.synced_height = height;
     }
 
@@ -414,10 +437,17 @@ impl Wallet {
                 o.pending = false;
             }
         }
+        for r in &mut self.px.records {
+            if r.pending && synced >= r.pending_height + PENDING_EXPIRY_BLOCKS {
+                r.pending = false;
+            }
+        }
+        self.px.sync_commitments(node, synced)?;
         Ok(self.synced_height)
     }
 
     fn apply_block(&mut self, block: &Block, height: u64, first_output: u64) {
+        self.px.apply_block(&self.px_account, &block.txs, height);
         let report = scan_block(
             self.keys.view_keys(),
             &self.table,
@@ -459,16 +489,13 @@ impl Wallet {
         }
         // Rejected outputs (Janus probes, bogus amounts) are deliberately ignored:
         // they must not be shown or spent (docs/transactions.md §12.5).
+        // Every kind spends v1 outputs through key images: transfers, PX
+        // transactions (bridge-in, fees) and deploys.
         let spent: HashSet<String> = block
             .txs
             .iter()
-            .filter_map(|t| match t {
-                Transaction::Transfer(t) => {
-                    Some(t.inputs.iter().map(|i| hex::encode(i.key_image.bytes())))
-                }
-                _ => None,
-            })
-            .flatten()
+            .flat_map(|t| t.key_images())
+            .map(|ki| hex::encode(ki.bytes()))
             .collect();
         for o in &mut self.outputs {
             if spent.contains(&o.key_image) {
@@ -687,5 +714,244 @@ impl Wallet {
                 .any(|o| o.pending && o.key_image == hex::encode(inp.key_image.bytes()))));
         }
         Ok((tx.hash(), fee))
+    }
+
+    // ---- private execution (docs/px.md §11) ----
+
+    /// The PX address `index`, as a string.
+    pub fn px_address(&mut self, index: u32) -> String {
+        self.px.issued = self.px.issued.max(index);
+        blacksilk_chain::address::encode_px_address(self.network, &self.px_account.address(index))
+    }
+
+    /// PX balance: `(total unspent, spendable now)`.
+    pub fn px_balance(&self) -> (u64, u64) {
+        self.px.balance(self.synced_height)
+    }
+
+    fn submit_px(
+        &mut self,
+        node: &dyn NodeApi,
+        tx: PxTx,
+        v1_inputs: &[usize],
+        records: &[usize],
+    ) -> Result<Hash, WalletError> {
+        let tx = Transaction::Px(Box::new(tx));
+        let result = node.submit_tx(&tx.encode()).map_err(WalletError::Node)?;
+        if !result.accepted {
+            return Err(WalletError::Rejected(result.error.unwrap_or_default()));
+        }
+        for &i in v1_inputs {
+            self.outputs[i].pending = true;
+            self.outputs[i].pending_height = self.synced_height;
+        }
+        for &i in records {
+            self.px.records[i].pending = true;
+            self.px.records[i].pending_height = self.synced_height;
+        }
+        Ok(tx.hash())
+    }
+
+    /// Moves `amount` of v1 funds into PX, to PX address 0. The v1 inputs pay
+    /// the amount and the standard PX fee. Returns the transaction id and the fee.
+    pub fn px_deposit<R: RngCore + CryptoRng>(
+        &mut self,
+        node: &dyn NodeApi,
+        amount: u64,
+        rules: &TxRules,
+        rng: &mut R,
+    ) -> Result<(Hash, u64), WalletError> {
+        self.sync(node)?;
+        let fee = px_standard_fee();
+        let needed = amount
+            .checked_add(fee)
+            .ok_or(WalletError::InsufficientFunds {
+                available: 0,
+                needed: u64::MAX,
+            })?;
+        let next = self.synced_height + 1;
+        let mut candidates: Vec<usize> = (0..self.outputs.len())
+            .filter(|&i| Self::spendable_at(&self.outputs[i], next))
+            .collect();
+        candidates.sort_by_key(|&i| std::cmp::Reverse(self.outputs[i].amount));
+        let mut chosen = Vec::new();
+        let mut sum = 0u128;
+        for &i in &candidates {
+            if sum >= needed as u128 {
+                break;
+            }
+            chosen.push(i);
+            sum += self.outputs[i].amount as u128;
+        }
+        if sum < needed as u128 || chosen.len() > MAX_INPUTS {
+            return Err(WalletError::InsufficientFunds {
+                available: candidates.iter().map(|&i| self.outputs[i].amount).sum(),
+                needed,
+            });
+        }
+        let dist = node
+            .distribution(self.synced_height)
+            .map_err(WalletError::Node)?;
+        let target = ChainParams::for_network(self.network).target_block_time;
+        let mut plans = Vec::with_capacity(chosen.len());
+        for &i in &chosen {
+            let o = &self.outputs[i];
+            let decoys = Self::ring_for(node, target, &dist.cumulative, next, o.global_index, rng)?;
+            plans.push(InputPlan {
+                real: Self::to_spendable(o)?,
+                decoys,
+            });
+        }
+        let root = self
+            .px
+            .tree_at(crate::px::anchor_height(self.synced_height))?
+            .root();
+        let owner = self.px_account.owner(0);
+        let witness = pxw::witness(
+            root,
+            amount,
+            0,
+            [pxw::dummy_input(rng), pxw::dummy_input(rng)],
+            [pxw::output(rng, owner, amount), pxw::empty_output(rng)],
+        );
+        let tx = build_px(
+            PxPlan {
+                keys: Some(&self.keys),
+                inputs: plans,
+                change: Some(self.primary()),
+                payouts: vec![],
+                witness,
+                recipients: [Some(self.px_account.address(0)), None],
+                functions: vec![],
+                fee,
+            },
+            rules,
+            rng,
+        )
+        .map_err(|e| WalletError::Rejected(format!("PX build: {e:?}")))?;
+        let id = self.submit_px(node, tx, &chosen, &[])?;
+        Ok((id, fee))
+    }
+
+    /// The PX inputs for spending `needed`: one or two records, plus a
+    /// dummy when only one is used.
+    fn px_inputs<R: RngCore + CryptoRng>(
+        &mut self,
+        needed: u64,
+        rng: &mut R,
+    ) -> Result<PxInputs, WalletError> {
+        // The canonical anchor (see `px::anchor_height`).
+        let anchor = crate::px::anchor_height(self.synced_height);
+        let chosen = self.px.select(needed, anchor)?;
+        let tree = self.px.tree_at(anchor)?;
+        let mut inputs = Vec::with_capacity(2);
+        let mut total = 0u64;
+        for &i in &chosen {
+            let r = &self.px.records[i];
+            let pos = r.position.expect("spendable records have positions");
+            let owner = self.px_account.owner(r.index);
+            let rec = r.record(owner)?;
+            let path = tree
+                .path(pos)
+                .ok_or_else(|| WalletError::BadNodeData("record outside the tree".into()))?;
+            inputs.push(self.px_account.spend(r.index, &rec, pos, path));
+            total += r.value;
+        }
+        while inputs.len() < 2 {
+            inputs.push(pxw::dummy_input(rng));
+        }
+        let inputs: [_; 2] = inputs.try_into().expect("two inputs");
+        Ok((chosen, inputs, total, tree.root()))
+    }
+
+    /// Pays `amount` privately to a PX address; the fee is paid from PX.
+    pub fn px_send<R: RngCore + CryptoRng>(
+        &mut self,
+        node: &dyn NodeApi,
+        to: &blacksilk_px::delivery::Address,
+        amount: u64,
+        rules: &TxRules,
+        rng: &mut R,
+    ) -> Result<(Hash, u64), WalletError> {
+        self.sync(node)?;
+        let fee = px_standard_fee();
+        let (chosen, inputs, total, root) = self.px_inputs(amount.saturating_add(fee), rng)?;
+        let change = total - amount - fee;
+        let witness = pxw::witness(
+            root,
+            0,
+            fee,
+            inputs,
+            [
+                pxw::output(rng, to.owner, amount),
+                pxw::output(rng, self.px_account.owner(1), change),
+            ],
+        );
+        let tx = build_px(
+            PxPlan {
+                keys: None,
+                inputs: vec![],
+                change: None,
+                payouts: vec![],
+                witness,
+                recipients: [Some(to.clone()), Some(self.px_account.address(1))],
+                functions: vec![],
+                fee,
+            },
+            rules,
+            rng,
+        )
+        .map_err(|e| WalletError::Rejected(format!("PX build: {e:?}")))?;
+        self.px.issued = self.px.issued.max(1);
+        let id = self.submit_px(node, tx, &[], &chosen)?;
+        Ok((id, fee))
+    }
+
+    /// Moves `amount` out of PX to a v1 address (a clear-amount payout); the
+    /// fee is paid from PX.
+    pub fn px_withdraw<R: RngCore + CryptoRng>(
+        &mut self,
+        node: &dyn NodeApi,
+        to: &Address,
+        amount: u64,
+        rules: &TxRules,
+        rng: &mut R,
+    ) -> Result<(Hash, u64), WalletError> {
+        self.sync(node)?;
+        let fee = px_standard_fee();
+        let out = amount.saturating_add(fee);
+        let (chosen, inputs, total, root) = self.px_inputs(out, rng)?;
+        let change = total - out;
+        let witness = pxw::witness(
+            root,
+            0,
+            out,
+            inputs,
+            [
+                pxw::output(rng, self.px_account.owner(1), change),
+                pxw::empty_output(rng),
+            ],
+        );
+        let tx = build_px(
+            PxPlan {
+                keys: None,
+                inputs: vec![],
+                change: None,
+                payouts: vec![Payment {
+                    address: *to,
+                    amount,
+                }],
+                witness,
+                recipients: [Some(self.px_account.address(1)), None],
+                functions: vec![],
+                fee,
+            },
+            rules,
+            rng,
+        )
+        .map_err(|e| WalletError::Rejected(format!("PX build: {e:?}")))?;
+        self.px.issued = self.px.issued.max(1);
+        let id = self.submit_px(node, tx, &[], &chosen)?;
+        Ok((id, fee))
     }
 }

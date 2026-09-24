@@ -87,11 +87,9 @@ impl Wallet {
         self.owned.extend(r.owned);
         let mine: HashSet<Point> = self.owned.iter().map(|o| o.key_image(&self.keys)).collect();
         for tx in txs {
-            if let Transaction::Transfer(t) = tx {
-                for i in &t.inputs {
-                    if mine.contains(&i.key_image) {
-                        self.spent.insert(i.key_image);
-                    }
+            for ki in tx.key_images() {
+                if mine.contains(&ki) {
+                    self.spent.insert(ki);
                 }
             }
         }

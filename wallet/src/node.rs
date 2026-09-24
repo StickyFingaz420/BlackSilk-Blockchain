@@ -8,6 +8,7 @@ pub trait NodeApi {
     fn distribution(&self, to: u64) -> Result<rpc::Distribution, String>;
     fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String>;
     fn submit_tx(&self, tx: &[u8]) -> Result<rpc::SubmitResult, String>;
+    fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String>;
 }
 
 impl NodeApi for rpc::Client {
@@ -22,6 +23,9 @@ impl NodeApi for rpc::Client {
     }
     fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String> {
         rpc::Client::outputs(self, indices).map_err(|e| e.to_string())
+    }
+    fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
+        rpc::Client::px_commitments(self, from).map_err(|e| e.to_string())
     }
     fn submit_tx(&self, tx: &[u8]) -> Result<rpc::SubmitResult, String> {
         rpc::Client::submit_tx(self, tx).map_err(|e| e.to_string())

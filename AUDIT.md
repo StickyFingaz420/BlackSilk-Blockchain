@@ -719,18 +719,30 @@ line by line** (open item). The parser is `wasmparser-nostd =0.100.2`, the one w
 - benchmarks, fee calibration, fuzzing, labnet with contract traffic;
 - the external review.
 
-### R8: Zero-knowledge layer (private execution). In progress.
+### R8: Zero-knowledge layer (private execution). Integrated into consensus; not production-ready.
 
 The project owner moved this ahead of contracts M3 (2026-09-23).
 
 **Specifications:**
-- `docs/zk.md` v0.2: architecture and decisions;
-- `docs/zkvm.md` v0.2: the BVM-1 virtual machine;
-- `docs/px.md` v0.1: records, nullifiers, the transfer kernel, state and delivery;
+- `docs/zk.md` v0.3: architecture and decisions;
+- `docs/zkvm.md` v0.3: the BVM-1 virtual machine, multi-execution proofs and fixed
+  shapes;
+- `docs/px.md` v0.3: records, nullifiers, the transfer kernel, state, delivery,
+  consensus integration (§11) and privacy guidance (§12);
+- internal reviews in `docs/reviews/`:
+  - `zk-security-review.md`;
+  - `privacy-review.md`;
+  - `dependency-review.md`;
+  - `aggregation-study.md`;
 - `docs/evidence/px0-2026-09-23/`: measurements;
 - `zk/examples/param_study.rs`: the FRI parameter study.
 
-**Not consensus.** No transaction kind or activation exists yet.
+**Consensus (ZK-6, 2026-09-24).**
+- Transaction kinds 2 (PX transaction) and 3 (private-contract deploy) are validated
+  by nodes, relayed, mined and applied.
+- No activation height exists: the rules apply from genesis on every network, so
+  running them on the existing testnet needs a reset or an activation height (owner
+  decision; see "Open items").
 
 **PX-0 (evaluation, done).** Candidate stacks were measured on this machine, not
 assumed. Decision B was approved by the owner:
@@ -896,7 +908,8 @@ Twelve tables in one batch STARK:
   - state, tree, delivery and hash tests (docs/px.md §8.3).
 - **Measured** (this machine, idle, sequential, BS-ZK-2, after ZK-F11):
   - kernel v2: 25.0–25.2k cycles without functions, 29.3–29.4k with one;
-  - transfer proof: **2.08 MB**, proving 43.0 s, verifying 1.3 s;
+  - transfer proof: **2.08 MB**, proving 43.0 s, verifying 1.3 s. After ZK-F13 and
+    ZK-F14: **2.04 MB**, proving ~42 s, **verifying 188 ms**;
   - kernel + one function (vault CLAIM): **2.54 MB**, proving 50.8 s;
   - a 40-proof stress run: 48.4–51.4 s per kernel + function proof.
 
@@ -960,26 +973,114 @@ It is explicitly **not** an independent review.
 | ZK-F10 | **Design gap found while building ZK-5:** a proof shows only that *some* program produced a function's transcript. | Mandatory registry check in the verifier (tested); consensus must implement it. |
 | ZK-F11 | **Prover hang (Plonky3 bug, found by sequential test runs).** Multi-table proofs could hang forever, depending on thread scheduling. `HidingFriPcs::get_quotient_ldes` (p3-fri 0.7.0) holds a `spin::Mutex` on the PCS randomness across parallel DFTs, and is called for several tables inside a rayon parallel loop. A thread waiting in the DFT can steal another table's task, which then spins on the lock held further up its own stack. `MerkleTreeHidingMmcs::commit` held its lock across the parallel tree build in the same way. **Evidence:** 3 of 3 sequential runs hung (one for 4 hours at full CPU); the span log located the stall in table 4's quotient step. This is a liveness defect (a wallet could hang); soundness and zero knowledge are unaffected. | Patched copies in `third_party/` (`[patch.crates-io]`; documented in `third_party/README.md`): random values are drawn under the lock, which is released before any parallel work; no other change. **Verified:** 40 of 40 consecutive proofs of the unfixed-hang case completed (48.4–51.4 s each), where the unpatched build hung at the second; the sequential test runs pass. Upstream fix not yet available; not reported from here. |
 | ZK-F12 | `px::prove` proved first and checked the function transcripts afterwards, so a mismatched call cost a full proof before being refused. | Function runs are executed and checked in the interpreter before proving; the post-proof checks remain as a second line. |
+| ZK-F13 | **Verification cost:** 76% of the 1.3–1.5 s verification recommitted the public tables (byte, program, image, output) on every proof. | They are periodic columns the verifier evaluates itself, with constrained main-trace copies (`p3-lookup` cannot carry periodic values in messages). A digest of all verifier-supplied public data (`zkvm/statement`) is absorbed into the Fiat–Shamir challenger before any commitment, which rules out Frozen-Heart-style statement changes. **Verified:** 188 ms per transfer proof; 180 mutations of the copies are all caught; wrong statements are rejected. |
+| ZK-F14 | **Privacy: trace heights leaked execution length** (privacy review P-1). Tables were sized to each execution, so a function's secret-dependent loop changed the proof's shape. | Public budgets for the kernel and every registered function. The prover pads to the budget and the verifier accepts only exactly that shape (`BudgetExceeded` otherwise). Registered budgets are part of the deploy. **Tested:** identical shapes for 1 and 90 secret rounds, with different shapes unbudgeted; budget enforcement; ≤ 95% budget use for every tested witness. |
+| ZK-F15 | **Relay DoS:** invalid PX proofs were classed as stateful rejections, so a peer could make nodes verify garbage proofs for free. Per-peer limits alone scaled with the number of peers. | `PxProof` is stateless misbehaviour: once the anchor (PX1) and registry (PX3) checks pass, the statement does not depend on the receiver's pool. A global PX bucket (2/s, burst 10) sits on top of the per-peer bucket. |
+| ZK-F16 | **Wallet correctness (privacy review P-3):** spent key images were tracked only for transfers. A v1 output spent by a PX deposit or a deploy looked unspent and could be selected again (a rejected transaction, and the same ring member exposed twice). | Key images come from every transaction kind (`Transaction::key_images`) in the wallet and the test harnesses. |
+| ZK-F17 | **Privacy (P-2):** wallets anchored spends at their own sync height, so the anchor fingerprinted when a wallet last synced. | Canonical anchor: the last multiple-of-16 height. Records become spendable once that height reaches them; tested end to end over RPC. |
+| ZK-F18 | **Efficiency:** block validation re-verified every PX proof, although the mempool had already verified it. | `validate_block_transactions_cached` skips PX5 for transactions in the node's mempool. **Sound:** the id commits to the proof bytes, and the statement is fixed by the transaction, the network and immutable registry entries (PX3 is still checked). **Tested:** a block with a corrupted proof is refused, and its id differs from the original's. |
+| ZK-F19 | **Hardening:** the ephemeral secrets of record delivery (ECDH scalar, KEM message, shared secrets, AEAD key) were not wiped after use. | Wrapped in `Zeroizing` in `seal` and `open`. |
+| ZK-F20 | **Network (own review of ZK-F15):** exhausting the *global* PX bucket penalized whichever honest peer relayed next, and a PX transaction we had *requested* (`Tx`) could be penalized as a rate violation. An attacker could use this to get honest peers disconnected. | `px_rate` distinguishes the peer's own bucket from the global one. Only a StemTx over the peer's own share is penalized. Global exhaustion, and every requested `Tx`, is dropped silently. **Tested** over TCP with six peers (see below). Also fixed: the `px-deposit` and `px-withdraw` CLI help wrongly called v1 "transparent-amount". |
+| ZK-F21 | **Prover hang, second round (Plonky3; found by the full test suite).** Concurrent proofs in one process hung forever: five threads spun at 100% for two hours in the unified-proof tests, while each test alone passed in 69 s. Two more places held a `spin` lock across rayon work, as in ZK-F11: `HidingFriPcs::commit` passed its lock guard into `with_random_cols`, whose row copy is parallel, and `p3-dft`'s `Radix2DitParallel` computed its twiddle tables (a parallel computation above 1,024 elements) under a `spin::RwLock` write lock. A thread holding one of these locks could pick up a task that needed the same lock. **Impact:** liveness only. Any process running proofs concurrently could hang: a wallet proving several transactions, or a node verifying while proving. Soundness and zero knowledge are unaffected. | Both patched in `third_party/` (`p3-dft` is a third patched crate): random values are drawn under the lock, and tables are computed before the write lock is taken. The patched Plonky3 code was checked for every other `spin` lock: the FRI prover's small-batch DFT already computes outside its lock, and the other DFTs are not used. `diff -r` against the registry shows exactly the three patched files. **Evidence, stated plainly:** the hang was observed once, and the two lock sites are established from the source code. It could not be reproduced on demand: the build without these patches also passed 2 full concurrent unified runs and 80 concurrent proofs (`zkvm/tests/stress.rs`). So the fix rests on the code analysis, not on a before/after reproduction. **Checked after the fix:** 3 of 3 full concurrent unified runs (300–310 s each), 96 concurrent proofs in `stress.rs`, and the full suite; no hang. The stress test is kept, ignored by default, for every Plonky3 upgrade. |
+
+**ZK-6: consensus integration** (spec `docs/px.md` §11). All of the following is
+implemented, wired into the node and tested:
+- **Transaction formats:** kind 2 (PX) and kind 3 (deploy), with strict canonical
+  codecs and size caps.
+- **Balance:** the v1-side balance, and the PX-side balance proven by the kernel; the
+  uniform standard fee; a separate 8 MiB PX byte budget per block.
+- **State:** the anchor window, nullifier set, containment pool, contract registry
+  (immutable entries fixed by the contract id), and exact per-block undo.
+- **Validation:** the PX rules PX1–PX5 in the mempool and in blocks, including
+  in-order pool simulation and contract-id uniqueness.
+- **Mempool:** a separate PX class; conflicts on key images, nullifiers and contract
+  ids; revalidation after each block without re-proving.
+- **Network:** relay of every kind; Dandelion++ stem conflicts on nullifiers;
+  per-peer and global PX limits.
+- **RPC:** `/px/commitments` for bulk wallet sync.
+- **Wallet:** `px-address`, `px-balance`, `px-deposit`, `px-send` and `px-withdraw`,
+  with persistence, rewind and the canonical anchor.
+
+**Tests:**
+- `tx/tests/px_consensus.rs`:
+  - private payments;
+  - anchors and value creation;
+  - a contract deployed, then used through consensus (LOCK/CLAIM);
+  - tampering, other networks and double spends refused;
+  - a block with a corrupted proof refused.
+- `p2p/tests/network.rs::px_transactions_travel_the_stem_and_confirm_everywhere`: a
+  proven deposit is stemmed, diffused and verified by three nodes over TCP, then mined;
+  all nodes end with one PX state. The same test then floods one node with StemTx PX
+  transactions from six raw peers: exactly the one peer over its own share is
+  penalized (ZK-F20).
+- `wallet/tests/e2e.rs`:
+  - `private_funds_move_over_rpc`: deposit, private payment and withdrawal through the
+    real node and RPC;
+  - `px_records_follow_a_reorganization`: a deposit is reorganized away (balance and
+    records drop to zero, the transaction returns to the pool), then re-mined and
+    spendable again.
+- `wallet/src/px.rs` unit tests: the canonical anchor, spendability under the anchor,
+  input selection, and rewind of records, spends and commitments.
+- `zkvm/tests/stress.rs` (ignored by default): 8 threads proving concurrently
+  (ZK-F21).
+- **Tests corrected after the PX changes** (the product code was right in each case):
+  - `p2p` `transport::frames_round_trip_both_ways` deadlocked once `MAX_FRAME` grew
+    past the test pipe's 4 MiB buffer, because it sent before receiving on one task.
+    It now sends and receives concurrently, as peers do; each connection has its own
+    writer task.
+  - `p2p/tests/network.rs::transactions_travel_the_stem_then_fluff_everywhere`
+    checked node C's height at the instant A confirmed. Blocks spread headers-first
+    over whatever links address exchange made, so it now waits for C.
+  - `tx/tests/adversarial.rs::decoder_never_panics_on_garbage` expected every input
+    over 100 kB to be `TooLarge`. It now checks the absolute cap and each kind's cap.
+
+**Privacy and dependency reviews** (`docs/reviews/privacy-review.md`,
+`dependency-review.md`):
+- Every channel is graded: transaction structure, proof shape and length, timing,
+  contract execution, propagation, scanning, errors.
+- Findings P-1 to P-7: three fixed (ZK-F14, F17, F16), four open and documented.
+- `zk/tests/pins.rs` pins Poseidon2 to a known-answer vector, so a dependency upgrade
+  cannot silently change every PX hash.
+
+**Fuzzing** (pure Rust, seeded and repeatable; `BLACKSILK_FUZZ_ITERS`; not
+coverage-guided):
+
+Campaign of 2026-09-24, release build, `BLACKSILK_FUZZ_ITERS=20000` unless stated.
+Everything passed: no panic, no invariant violation.
+
+| Target | Test | Result |
+|---|---|---|
+| Transaction codec | `tx/tests/fuzz_decode.rs` | 20,000 mutants per seed; 30,588 still decoded, all canonical (decode∘encode is the identity); 25 PX mutants validated in full, all rejected. 123 s |
+| BVM-1 constraints | `zkvm/tests/fuzz.rs::random_programs_satisfy_every_constraint` | 20,000 random programs (every ALU operation, loads and stores of every width, branches, `WRITE`, `POSEIDON2`, `READ`): all halted and satisfied every constraint of every table, with every bus balanced; 2 proven and verified end to end. The generator is built to halt, so traps are not exercised here (the ELF target covers them). 4,284 s |
+| BVM-1 loader | `zkvm/tests/fuzz.rs::mutated_elfs_never_panic_the_loader_or_the_interpreter` | 40,000 mutated ELFs: 21,002 loaded, 1,437 halted. 2 s |
+| PX kernel | `px/tests/fuzz.rs::mutated_witnesses_get_the_same_verdict_natively_and_in_the_guest` | 20,000 mutated witnesses: 7,181 accepted with identical output natively and in the guest, 8,756 rejected identically, 4,063 trapped (short input) |
+| PX delivery | `px/tests/fuzz.rs::mutated_ciphertexts_never_open_and_never_panic` | 20,000 mutated ciphertexts: none opened |
+| P2P messages | `p2p/tests/fuzz_message.rs` | 20,000 mutants and 20,000 random frames; 7,295 mutants still decoded, all canonical |
+| Contract engine | `contracts/tests/fuzz.rs` | 20,000 mutated modules: 1,941 passed the check and deployed, 1,714 called |
+| Block codec | `chain/tests/fuzz_block.rs` | 20,000 mutants; 5,400 still decoded, all canonical |
+
+These are seeded mutation campaigns: repeatable, but not coverage-guided (see "Open items").
 
 **Open items:**
-- **Proof size (main open problem):** ~2 MB per transfer.
-  - Each of the 108 queries opens ~2 400 committed elements.
-  - The parameter study shows that Johnson ≥ 120 alone needs 49–71 queries (−35 to
-    −55%), at the cost of dropping the extra unique-decoding target. **This is a
-    security-policy decision for the owner.**
-  - The architectural fix is aggregation (recursion) or batching many transfers per
-    proof; not done.
-- Multi-cell (coordinated) forgery: argued structurally in the internal security
-  review §3 (single-cell tests cannot show it); independent review required.
-
-**Remaining** (none of it is done until tested; nothing here is production-ready
-before external review):
-- Consensus integration: transaction format, contract registry, fees and v1 bridge,
-  persistence, block validation.
-- Verification cost (~1.3–1.5 s per proof; setup commitments recomputed per proof) and
-  relay policy against verification DoS.
-- **ZK-6:** integration with contracts and transactions.
-- Fuzzing, and the independent reviews listed in the security review §9.
+- **Proof size (main open problem):** ~2 MB per transfer, so about 4 PX transactions
+  per block. Options and costs are in `docs/reviews/aggregation-study.md`:
+  - the query policy (owner decision; unchanged);
+  - opened-width reductions (10–25%, estimated);
+  - recursion (a separate milestone; not viable through BVM-1).
+- **Activation:** no activation height, so the existing testnet needs a reset, or an
+  activation height has to be added (owner decision).
+- **Contract tooling:** no wallet commands for deploys or function calls; contract
+  records have no distribution protocol (privacy review P-4).
+- **Hardening:**
+  - fixed-width proof encoding (P-5);
+  - the standard PX fee as a consensus rule (P-7).
+- **Supply chain:** RustSec advisory check (`cargo audit`); not run here, as the tool
+  is unavailable.
+- **Coverage-guided fuzzing:** needs `cargo-fuzz` and a nightly toolchain, not set
+  up.
+- **Independent reviews:** security review §9; privacy review §4; dependency review
+  §5.
+- Multi-machine testnet trial of the PX flows (labnet).
 
 ### Finding status after R1–R6
 

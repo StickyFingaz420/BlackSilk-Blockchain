@@ -24,6 +24,12 @@ const M_AND: usize = 1;
 const M_OR: usize = 2;
 const M_XOR: usize = 3;
 
+/// The table's public columns (computed once).
+pub fn columns() -> &'static [Vec<Val>] {
+    static C: std::sync::OnceLock<Vec<Vec<Val>>> = std::sync::OnceLock::new();
+    C.get_or_init(|| super::columns(&preprocessed()))
+}
+
 pub fn preprocessed() -> RowMajorMatrix<Val> {
     let mut v = Vec::with_capacity(HEIGHT * PREP_WIDTH);
     for a in 0..256u32 {
@@ -36,7 +42,7 @@ pub fn preprocessed() -> RowMajorMatrix<Val> {
 
 pub fn eval<AB: AirBuilder + InteractionBuilder>(b: &mut AB) {
     let (m, _) = row(b);
-    let (p, _) = prep(b);
+    let p = prep(b, WIDTH);
     let (x, y) = (p[0].clone(), p[1].clone());
     RANGE.table_entry(b, [x.clone(), y.clone()], m[M_RANGE].clone());
     for (op, col, res) in [

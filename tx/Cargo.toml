@@ -10,6 +10,11 @@ name = "blacksilk_tx"
 [dependencies]
 blacksilk-crypto = { path = "../crypto" }
 blacksilk-consensus = { path = "../consensus" }
+# Private execution (PX) transactions: statement, proof verification, state.
+blacksilk-px = { path = "../px" }
+blacksilk-px-core = { path = "../px-core" }
+blacksilk-zkvm = { path = "../zkvm" }
+blacksilk-zk = { path = "../zk" }
 rand_core = { version = "0.6", default-features = false }
 zeroize = { version = "1.8", default-features = false, features = ["alloc"] }
 

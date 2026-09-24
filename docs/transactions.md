@@ -505,8 +505,8 @@ The rules are listed in evaluation order: cheap checks first, elliptic-curve wor
 
 | # | Rule |
 |---|---|
-| T1 | Strict decode (§4); `size ≤ MAX_TX_SIZE = 100 000` bytes; no trailing bytes. |
-| T2 | `version = 1`; `kind ∈ {0, 1}`; a coinbase is only valid as the first tx of a block (B1). |
+| T1 | Strict decode (§4); `size ≤ MAX_TX_SIZE = 100 000` bytes for coinbase and transfer; no trailing bytes. |
+| T2 | `version = 1`; `kind ∈ {0, 1, 2, 3}`; a coinbase is only valid as the first tx of a block (B1). Kinds 2 (PX transaction) and 3 (private-contract deploy) are specified in [`px.md`](px.md) §11, with their own size caps (`MAX_PX_TX_SIZE` = 4 MiB proof cap + 256 KiB; `MAX_DEPLOY_TX_SIZE` = 1 MiB) and rules (PX1–PX5); they reuse T4–T11 and C1–C4 for their v1 inputs and outputs. |
 | T3 | Transfer: `1 ≤ n ≤ 64` inputs, `2 ≤ k ≤ 16` outputs. |
 | T4 | Key images decode, are not the identity, and are strictly increasing (§5.2). |
 | T5 | Each input has exactly 16 ring indices, strictly increasing, with no `u64` overflow. |
@@ -538,7 +538,7 @@ key (the burning bug) impossible even for broken wallets.
 | B3 | `Σ coinbase amounts = block_reward(height) + Σ fees`, exactly (u128 arithmetic). Under-claiming is invalid, so the supply is exactly computable [Δ Monero, which allows ≤]. |
 | B4 | Key images and one-time keys are unique within the block (covered by C2/C4 applied in order). |
 | B5 | `tx_root` equals the Merkle root of the `tx_hash`es in block order (consensus.md §7). |
-| B6 | Block weight ≤ block weight limit (economics spec). |
+| B6 | Block weight ≤ block weight limit (economics spec). PX and deploy transactions have weight 0 and count instead against a separate budget: their encoded bytes sum to at most `MAX_PX_BLOCK_BYTES = 8 MiB` (px.md §11.5). |
 | B7 | Coinbase structure: 1–16 outputs, no identity `O` or `R`, outputs strictly sorted, one-time keys unique (C4). |
 
 ### 8.4 Weight and fee

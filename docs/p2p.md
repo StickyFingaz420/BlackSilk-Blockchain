@@ -73,7 +73,7 @@ frame = AEAD(k_dir, n,   LE32(len))      4 + 16 bytes
 
 - AEAD is AES-256-GCM. The nonce `n` is a 96-bit little-endian message counter that
   starts at 0 and increases by 2 per frame, separately for each direction.
-- `len ≤ MAX_FRAME = 2 MiB + 1 KiB` is checked right after the length decrypts, before
+- `len ≤ MAX_FRAME = MAX_BLOCK_BYTES + 64 KiB` is checked right after the length decrypts, before
   any payload is read.
 - Any decryption failure ends the connection.
 - The counter never wraps: 2^64 frames are unreachable.
@@ -115,12 +115,12 @@ an oversized list is a protocol violation.
 | 6 | `GetHeaders` | `varint n`, `n × id` (locator), `stop id` | n ≤ 64 |
 | 7 | `Headers` | `varint n`, `n × 100-byte header` | n ≤ 2000 |
 | 8 | `GetBlocks` | `varint n`, `n × id` | n ≤ 128 |
-| 9 | `Block` | `varint len`, block bytes | len ≤ 1 MB (blocks.md §4) |
+| 9 | `Block` | `varint len`, block bytes | len ≤ `MAX_BLOCK_BYTES` (blocks.md §4) |
 | 10 | `NotFound` | `varint n`, `n × id` | n ≤ 128 |
 | 11 | `InvTx` | `varint n`, `n × tx hash` | n ≤ 500 |
 | 12 | `GetTx` | `varint n`, `n × tx hash` | n ≤ 500 |
-| 13 | `Tx` | `varint len`, tx bytes | len ≤ 100 kB |
-| 14 | `StemTx` | `varint len`, tx bytes | len ≤ 100 kB (§8) |
+| 13 | `Tx` | `varint len`, tx bytes | len ≤ the cap of the transaction's kind: 100 kB for transfers, `MAX_PX_TX_SIZE` / `MAX_DEPLOY_TX_SIZE` for kinds 2 and 3 (px.md §11.5) |
+| 14 | `StemTx` | `varint len`, tx bytes | as `Tx` (§8) |
 
 `NetAddr` is one of:
 - `0x04 ‖ 4-byte IPv4 ‖ LE16 port`
@@ -277,6 +277,17 @@ its bounded outbox (64 messages) fills up.
 - **Messages:** 50 per second, burst 500.
 - **Bytes:** 4 MB per second, burst 16 MB.
 - **Transactions accepted into the relay path:** 20 per second, burst 100.
+- **PX and deploy transactions** (each costs ~0.2 s to verify): 0.2 per second,
+  burst 4, per peer, **and** 2 per second, burst 10, over all peers together. Excess
+  ones are dropped unverified.
+  - A peer is penalized (1 point) only for exceeding **its own** share with unsolicited
+    `StemTx` messages.
+  - It is never penalized for the node-wide limit, which an attacker can drain, nor
+    for a `Tx` we requested.
+  - Tested: `px_transactions_travel_the_stem_and_confirm_everywhere`.
+- An invalid PX proof counts as a stateless violation (20). Once the anchor and
+  registry checks pass, the proof's statement does not depend on our pool state, so
+  an honest peer never relays one.
 
 **Liveness:**
 - The node pings every 60 s.

@@ -306,3 +306,113 @@ fn stale_pending_spends_expire_but_late_confirmation_still_counts() {
     }
     assert_eq!(miner.balance().total, expected - COIN);
 }
+
+/// Private execution end to end over RPC (docs/px.md §11): deposit into PX,
+/// a private payment, a withdrawal to a v1 address; wallets discover records
+/// by scanning blocks and the bulk commitment list, and their PX state
+/// survives an encrypted save and load.
+#[test]
+fn private_funds_move_over_rpc() {
+    let mut net = Net::start();
+    let mut miner = wallet(11);
+    let mut alice = wallet(12);
+    let mut bob = wallet(13);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+
+    // Deposit: v1 funds into the miner's PX address 0.
+    let deposit = 2 * COIN;
+    let (_, fee) = miner
+        .px_deposit(&net.client, deposit, &net.rules, &mut net.rng)
+        .expect("deposit");
+    net.mine(&miner_addr);
+    miner.sync(&net.client).unwrap();
+    // Spendable once the canonical anchor height reaches the record.
+    assert_eq!(miner.px_balance(), (deposit, 0));
+    net.mine_n(16, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    assert_eq!(miner.px_balance(), (deposit, deposit));
+
+    // Private payment to Alice.
+    let alice_px = alice.px_address(0);
+    let to = blacksilk_chain::address::decode_px_address(Network::Regtest, &alice_px).unwrap();
+    let pay = COIN;
+    miner
+        .px_send(&net.client, &to, pay, &net.rules, &mut net.rng)
+        .expect("private send");
+    net.mine(&miner_addr);
+    net.mine_n(16, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    alice.sync(&net.client).unwrap();
+    assert_eq!(alice.px_balance(), (pay, pay));
+    assert_eq!(miner.px_balance().0, deposit - pay - fee);
+
+    // The PX state survives the encrypted wallet file.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("alice.wallet");
+    let kdf = KdfParams {
+        m_kib: 64,
+        t: 1,
+        p: 1,
+    };
+    save(&alice, &path, b"pw", kdf).unwrap();
+    let mut alice = load(&path, b"pw").unwrap();
+    assert_eq!(alice.px_balance(), (pay, pay));
+
+    // Alice withdraws to Bob's v1 address (clear payout).
+    let out = pay - fee;
+    alice
+        .px_withdraw(&net.client, &bob.primary(), out, &net.rules, &mut net.rng)
+        .expect("withdraw");
+    net.mine(&miner_addr);
+    alice.sync(&net.client).unwrap();
+    bob.sync(&net.client).unwrap();
+    assert_eq!(alice.px_balance(), (0, 0));
+    assert_eq!(bob.balance().total, out);
+}
+
+/// PX records follow a reorganization (docs/px.md §11.4): a deposit's record
+/// disappears with the block that created it, and the wallet's commitment
+/// list is rewound so that its tree root matches the node's again. The
+/// deposit returns to the node's mempool and confirms again.
+#[test]
+fn px_records_follow_a_reorganization() {
+    let mut net = Net::start();
+    let mut miner = wallet(14);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+
+    let deposit = 3 * COIN;
+    miner
+        .px_deposit(&net.client, deposit, &net.rules, &mut net.rng)
+        .expect("deposit");
+    let fork_parent = { net.shared.lock().unwrap().tip_id() };
+    net.mine(&miner_addr); // A91 confirms the deposit
+    miner.sync(&net.client).unwrap();
+    assert_eq!(miner.px_balance().0, deposit);
+
+    // A heavier branch without the deposit replaces A91.
+    let b91 = net.mine_on(&fork_parent, &miner_addr, 1);
+    net.mine_on(&b91, &miner_addr, 1);
+    miner
+        .sync(&net.client)
+        .expect("the rewound tree matches the node's root");
+    assert_eq!(
+        miner.px_balance(),
+        (0, 0),
+        "record rolled back with the reorg"
+    );
+    assert_eq!(
+        net.client.info().unwrap().mempool_txs,
+        1,
+        "deposit back in the mempool"
+    );
+
+    // It confirms again, and becomes spendable at the next canonical anchor.
+    net.mine(&miner_addr);
+    net.mine_n(16, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    assert_eq!(miner.px_balance(), (deposit, deposit));
+}

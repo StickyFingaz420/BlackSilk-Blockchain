@@ -101,13 +101,22 @@ pub fn row<AB: AirBuilder>(b: &AB) -> (Vec<AB::Expr>, Vec<AB::Expr>) {
     )
 }
 
-pub fn prep<AB: AirBuilder>(b: &AB) -> (Vec<AB::Expr>, Vec<AB::Expr>) {
-    use p3_air::WindowAccess;
-    let p = b.preprocessed();
-    (
-        p.current_slice().iter().map(|v| (*v).into()).collect(),
-        p.next_slice().iter().map(|v| (*v).into()).collect(),
-    )
+/// A table's public columns at the current row (zkvm.md §6.1).
+///
+/// The data is a set of periodic columns: the verifier computes it from the
+/// statement and evaluates it itself, so nothing public is committed or
+/// re-committed during verification. Lookup messages cannot read periodic
+/// columns directly (`p3-lookup` does not support them), so the table keeps a
+/// copy in main columns `offset..` and every row constrains the copy to equal
+/// the public value. The returned expressions are the constrained copies.
+pub fn prep<AB: AirBuilder>(b: &mut AB, offset: usize) -> Vec<AB::Expr> {
+    let public: Vec<AB::Expr> = b.periodic_values().iter().map(|v| (*v).into()).collect();
+    let (r, _) = row(b);
+    let copy: Vec<AB::Expr> = r[offset..offset + public.len()].to_vec();
+    for (c, p) in copy.iter().zip(public) {
+        b.assert_zero(c.clone() - p);
+    }
+    copy
 }
 
 pub fn c<AB: AirBuilder>(v: u32) -> AB::Expr {

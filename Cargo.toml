@@ -58,3 +58,4 @@ opt-level = 3
 [patch.crates-io]
 p3-fri = { path = "third_party/p3-fri" }
 p3-merkle-tree = { path = "third_party/p3-merkle-tree" }
+p3-dft = { path = "third_party/p3-dft" }
