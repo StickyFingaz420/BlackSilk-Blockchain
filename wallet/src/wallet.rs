@@ -50,10 +50,17 @@ use zeroize::Zeroize;
 const KEPT_BLOCK_IDS: usize = 720;
 /// Subaddresses scanned beyond the highest one handed out, per account.
 const LOOKAHEAD: u32 = 50;
-/// A submitted transaction still unconfirmed after this many blocks is presumed
-/// dropped (e.g. its ring members were reorganized away) and its inputs become
-/// spendable again. Safe: if it confirms later, the spend is still detected from
-/// the chain, and reusing an input it spent is rejected by consensus.
+/// How long the wallet keeps a submitted transaction (`PendingTx`):
+/// - while it is unconfirmed, it is rebroadcast unchanged every this many
+///   blocks, and its inputs stay reserved until the node rejects it for a
+///   reason other than "already pooled";
+/// - once confirmed, it is kept until its spend is this many blocks deep, so
+///   that a reorganization re-reserves its inputs instead of freeing them.
+///
+/// The inputs are never simply released after a timeout. A transaction that
+/// was relayed but not mined could still be in other nodes' pools, and spending
+/// the same v1 output again with a new ring would let anyone intersect the two
+/// rings and find the real input (docs/reviews/privacy-review.md §3c).
 const PENDING_EXPIRY_BLOCKS: u64 = 20;
 
 #[derive(Debug)]
@@ -73,6 +80,10 @@ pub enum WalletError {
     Decoys(String),
     Build(BuildError),
     Rejected(String),
+    /// The submission failed in transport, so the node may or may not have
+    /// received the transaction. Its inputs stay reserved and it is
+    /// rebroadcast unchanged on later syncs.
+    Uncertain(String),
     Serialization(String),
     /// A contract operation that cannot be carried out (unknown contract,
     /// unregistered program, wrong secret, record not spendable).
@@ -100,6 +111,13 @@ impl std::fmt::Display for WalletError {
             WalletError::Decoys(e) => write!(f, "decoy selection: {e}"),
             WalletError::Build(e) => write!(f, "building the transaction: {e:?}"),
             WalletError::Rejected(e) => write!(f, "node rejected the transaction: {e}"),
+            WalletError::Uncertain(e) => write!(
+                f,
+                "the node may or may not have received the transaction ({e}). Its funds \
+                 stay reserved and `sync` rebroadcasts the same transaction. Do not run \
+                 clear-pending unless you are sure it was never sent: a new transaction \
+                 spending the same funds could reveal which ring member is the real input"
+            ),
             WalletError::Serialization(e) => write!(f, "wallet data: {e}"),
             WalletError::Contract(e) => write!(f, "contract: {e}"),
         }
@@ -131,6 +149,16 @@ struct StoredOutput {
     pending_height: u64,
 }
 
+/// A transaction this wallet submitted, kept until its spend is buried
+/// (`PENDING_EXPIRY_BLOCKS`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PendingTx {
+    /// The encoded transaction (hex), rebroadcast unchanged.
+    tx: String,
+    /// Wallet height of the last (re)broadcast.
+    relayed_height: u64,
+}
+
 #[derive(Serialize, Deserialize)]
 struct Persisted {
     version: u32,
@@ -146,6 +174,9 @@ struct Persisted {
     /// PX state (absent in wallets written before PX).
     #[serde(default)]
     px: PxStore,
+    /// Submitted transactions (absent in wallets written before 2026-09-25).
+    #[serde(default)]
+    pending_txs: Vec<PendingTx>,
 }
 
 pub struct Wallet {
@@ -160,6 +191,7 @@ pub struct Wallet {
     outputs: Vec<StoredOutput>,
     px: PxStore,
     px_account: Account,
+    pending_txs: Vec<PendingTx>,
 }
 
 impl Drop for Wallet {
@@ -226,6 +258,7 @@ impl Wallet {
             outputs: Vec::new(),
             px: PxStore::default(),
             px_account: Account::from_seed(&seed),
+            pending_txs: Vec::new(),
         };
         w.rebuild_table();
         w
@@ -318,6 +351,7 @@ impl Wallet {
             issued: self.issued.clone(),
             outputs: self.outputs.clone(),
             px: self.px.clone(),
+            pending_txs: self.pending_txs.clone(),
         };
         serde_json::to_vec(&p).expect("serializable")
     }
@@ -345,6 +379,7 @@ impl Wallet {
         w.issued = p.issued;
         w.outputs = p.outputs;
         w.px = p.px;
+        w.pending_txs = p.pending_txs;
         w.rebuild_table();
         Ok(w)
     }
@@ -442,16 +477,7 @@ impl Wallet {
             }
         }
         let synced = self.synced_height;
-        for o in &mut self.outputs {
-            if o.pending && synced >= o.pending_height + PENDING_EXPIRY_BLOCKS {
-                o.pending = false;
-            }
-        }
-        for r in &mut self.px.records {
-            if r.pending && synced >= r.pending_height + PENDING_EXPIRY_BLOCKS {
-                r.pending = false;
-            }
-        }
+        self.refresh_pending(node);
         self.px.sync_commitments(node, synced)?;
         self.px.sync_contracts(node, synced)?;
         Ok(self.synced_height)
@@ -546,13 +572,172 @@ impl Wallet {
         self.outputs.iter().any(|o| o.pending)
     }
 
-    /// Forgets unconfirmed spends (use if a submitted transaction was dropped),
-    /// v1 and PX alike.
+    /// Forgets unconfirmed spends and the stored transactions, v1 and PX alike.
+    ///
+    /// Only for a transaction that certainly never left this wallet. If it was
+    /// relayed, spending its v1 inputs again with new rings links the two
+    /// transactions by key image and lets observers intersect the rings.
     pub fn clear_pending(&mut self) {
         for o in &mut self.outputs {
             o.pending = false;
         }
         self.px.clear_pending();
+        self.pending_txs.clear();
+    }
+
+    /// Calls `f(spent_height, pending, pending_height)` for every input of
+    /// `tx` this wallet owns: v1 outputs by key image, PX and contract records
+    /// by nullifier.
+    fn for_each_input(
+        &mut self,
+        tx: &Transaction,
+        mut f: impl FnMut(Option<u64>, &mut bool, &mut u64),
+    ) {
+        let kis: HashSet<String> = tx
+            .key_images()
+            .iter()
+            .map(|k| hex::encode(k.bytes()))
+            .collect();
+        for o in &mut self.outputs {
+            if kis.contains(&o.key_image) {
+                f(o.spent_height, &mut o.pending, &mut o.pending_height);
+            }
+        }
+        if let Transaction::Px(t) = tx {
+            let nfs: HashSet<String> = t.nullifiers.iter().map(crate::px::digest_hex).collect();
+            for r in &mut self.px.records {
+                if nfs.contains(&r.nullifier) {
+                    f(r.spent_height, &mut r.pending, &mut r.pending_height);
+                }
+            }
+            for r in &mut self.px.contract_records {
+                if nfs.contains(&r.nullifier) {
+                    f(r.spent_height, &mut r.pending, &mut r.pending_height);
+                }
+            }
+        }
+    }
+
+    /// Submits `tx`. Its inputs are reserved and the transaction stored
+    /// *before* the request, so a transport failure leaves them reserved
+    /// (`WalletError::Uncertain`). Only a definite refusal releases them.
+    fn submit(&mut self, node: &dyn NodeApi, tx: Transaction) -> Result<Hash, WalletError> {
+        let id = tx.hash();
+        let bytes = tx.encode();
+        let at = self.synced_height;
+        self.for_each_input(&tx, |_, pending, h| {
+            *pending = true;
+            *h = at;
+        });
+        self.pending_txs.push(PendingTx {
+            tx: hex::encode(&bytes),
+            relayed_height: at,
+        });
+        match node.submit_tx(&bytes) {
+            Err(e) => Err(WalletError::Uncertain(e)),
+            Ok(r)
+                if r.accepted
+                    || r.error
+                        .as_deref()
+                        .is_some_and(|e| e.starts_with("AlreadyKnown")) =>
+            {
+                Ok(id)
+            }
+            // Refused by the only node that saw it: nothing was relayed.
+            Ok(r) => {
+                self.forget(&tx);
+                Err(WalletError::Rejected(r.error.unwrap_or_default()))
+            }
+        }
+    }
+
+    /// Drops the stored copy of `tx` and releases its unspent inputs.
+    fn forget(&mut self, tx: &Transaction) {
+        let hex_tx = hex::encode(tx.encode());
+        self.pending_txs.retain(|p| p.tx != hex_tx);
+        self.for_each_input(tx, |spent, pending, _| {
+            if spent.is_none() {
+                *pending = false;
+            }
+        });
+    }
+
+    /// Maintains the stored transactions after a sync (`PENDING_EXPIRY_BLOCKS`).
+    /// Transport errors are ignored here; the next sync retries.
+    fn refresh_pending(&mut self, node: &dyn NodeApi) {
+        let synced = self.synced_height;
+        let mut kept = Vec::new();
+        let mut covered_kis = HashSet::new();
+        let mut covered_nfs = HashSet::new();
+        for mut p in std::mem::take(&mut self.pending_txs) {
+            let Some(tx) = hex::decode(&p.tx)
+                .ok()
+                .and_then(|b| Transaction::decode(&b).ok())
+            else {
+                continue; // unreadable entry: nothing to rebroadcast
+            };
+            let (mut unspent, mut buried) = (false, true);
+            self.for_each_input(&tx, |spent, _, _| match spent {
+                None => {
+                    unspent = true;
+                    buried = false;
+                }
+                Some(h) => buried &= synced >= h + PENDING_EXPIRY_BLOCKS,
+            });
+            if buried {
+                continue;
+            }
+            if unspent {
+                // Re-reserve inputs whose confirmation a reorganization undid.
+                let at = p.relayed_height;
+                self.for_each_input(&tx, |spent, pending, h| {
+                    if spent.is_none() && !*pending {
+                        *pending = true;
+                        *h = at;
+                    }
+                });
+                if synced >= p.relayed_height + PENDING_EXPIRY_BLOCKS {
+                    match node.submit_tx(&tx.encode()) {
+                        Ok(r) if r.accepted || r.already_pooled() => p.relayed_height = synced,
+                        // It can never be mined on this chain: release the inputs.
+                        Ok(r) if r.error.as_deref().is_some_and(|e| e.starts_with("Invalid")) => {
+                            self.for_each_input(&tx, |spent, pending, _| {
+                                if spent.is_none() {
+                                    *pending = false;
+                                }
+                            });
+                            continue;
+                        }
+                        // A full pool or a transport error: retry on a later sync.
+                        _ => {}
+                    }
+                }
+            }
+            covered_kis.extend(tx.key_images().iter().map(|k| hex::encode(k.bytes())));
+            if let Transaction::Px(t) = &tx {
+                covered_nfs.extend(t.nullifiers.iter().map(crate::px::digest_hex));
+            }
+            kept.push(p);
+        }
+        self.pending_txs = kept;
+        // Reservations without a stored transaction come from wallet files
+        // written before transactions were stored: they keep the old expiry.
+        for o in &mut self.outputs {
+            if o.pending
+                && !covered_kis.contains(&o.key_image)
+                && synced >= o.pending_height + PENDING_EXPIRY_BLOCKS
+            {
+                o.pending = false;
+            }
+        }
+        for r in &mut self.px.records {
+            if r.pending
+                && !covered_nfs.contains(&r.nullifier)
+                && synced >= r.pending_height + PENDING_EXPIRY_BLOCKS
+            {
+                r.pending = false;
+            }
+        }
     }
 
     // ---- transfers ----
@@ -710,23 +895,9 @@ impl Wallet {
             rng,
         )
         .map_err(WalletError::Build)?;
-        let tx = Transaction::from(tx);
-        let result = node.submit_tx(&tx.encode()).map_err(WalletError::Node)?;
-        if !result.accepted {
-            return Err(WalletError::Rejected(result.error.unwrap_or_default()));
-        }
-        for &i in &inputs {
-            self.outputs[i].pending = true;
-            self.outputs[i].pending_height = self.synced_height;
-        }
-        // Sanity: the key images we marked are the ones in the transaction.
-        if let Transaction::Transfer(t) = &tx {
-            debug_assert!(t.inputs.iter().all(|inp| self
-                .outputs
-                .iter()
-                .any(|o| o.pending && o.key_image == hex::encode(inp.key_image.bytes()))));
-        }
-        Ok((tx.hash(), fee))
+        let id = self.submit(node, Transaction::from(tx))?;
+        debug_assert!(inputs.iter().all(|&i| self.outputs[i].pending));
+        Ok((id, fee))
     }
 
     // ---- private execution (docs/px.md §11) ----
@@ -742,27 +913,8 @@ impl Wallet {
         self.px.balance(self.synced_height)
     }
 
-    fn submit_px(
-        &mut self,
-        node: &dyn NodeApi,
-        tx: PxTx,
-        v1_inputs: &[usize],
-        records: &[usize],
-    ) -> Result<Hash, WalletError> {
-        let tx = Transaction::Px(Box::new(tx));
-        let result = node.submit_tx(&tx.encode()).map_err(WalletError::Node)?;
-        if !result.accepted {
-            return Err(WalletError::Rejected(result.error.unwrap_or_default()));
-        }
-        for &i in v1_inputs {
-            self.outputs[i].pending = true;
-            self.outputs[i].pending_height = self.synced_height;
-        }
-        for &i in records {
-            self.px.records[i].pending = true;
-            self.px.records[i].pending_height = self.synced_height;
-        }
-        Ok(tx.hash())
+    fn submit_px(&mut self, node: &dyn NodeApi, tx: PxTx) -> Result<Hash, WalletError> {
+        self.submit(node, Transaction::Px(Box::new(tx)))
     }
 
     /// v1 inputs covering `needed` (largest first), with their rings.
@@ -865,7 +1017,8 @@ impl Wallet {
             rng,
         )
         .map_err(|e| WalletError::Rejected(format!("PX build: {e:?}")))?;
-        let id = self.submit_px(node, tx, &chosen, &[])?;
+        let id = self.submit_px(node, tx)?;
+        debug_assert!(chosen.iter().all(|&i| self.outputs[i].pending));
         Ok((id, fee))
     }
 
@@ -939,7 +1092,8 @@ impl Wallet {
         )
         .map_err(|e| WalletError::Rejected(format!("PX build: {e:?}")))?;
         self.px.issued = self.px.issued.max(1);
-        let id = self.submit_px(node, tx, &[], &chosen)?;
+        let id = self.submit_px(node, tx)?;
+        debug_assert!(chosen.iter().all(|&i| self.px.records[i].pending));
         Ok((id, fee))
     }
 
@@ -987,7 +1141,8 @@ impl Wallet {
         )
         .map_err(|e| WalletError::Rejected(format!("PX build: {e:?}")))?;
         self.px.issued = self.px.issued.max(1);
-        let id = self.submit_px(node, tx, &[], &chosen)?;
+        let id = self.submit_px(node, tx)?;
+        debug_assert!(chosen.iter().all(|&i| self.px.records[i].pending));
         Ok((id, fee))
     }
 
@@ -1058,16 +1213,9 @@ impl Wallet {
         .map_err(WalletError::Build)?;
         let contract = deploy.contract_id();
         let fee = deploy.fee;
-        let tx = Transaction::PxDeploy(Box::new(deploy));
-        let result = node.submit_tx(&tx.encode()).map_err(WalletError::Node)?;
-        if !result.accepted {
-            return Err(WalletError::Rejected(result.error.unwrap_or_default()));
-        }
-        for &i in &chosen {
-            self.outputs[i].pending = true;
-            self.outputs[i].pending_height = self.synced_height;
-        }
-        Ok((tx.hash(), contract, fee))
+        let id = self.submit(node, Transaction::PxDeploy(Box::new(deploy)))?;
+        debug_assert!(chosen.iter().all(|&i| self.outputs[i].pending));
+        Ok((id, contract, fee))
     }
 
     /// The registered budget of the reference vault program under `contract`.
@@ -1166,10 +1314,26 @@ impl Wallet {
             ));
         }
         self.px.issued = self.px.issued.max(1);
-        let id = self.submit_px(node, tx, &[], &chosen)?;
+        // Keep the creator's copy first: if the submission's outcome is
+        // uncertain, the record may exist on chain and its opening must not
+        // be lost.
+        let known = self.px.contract_record(&cm).is_some();
         self.px
             .add_contract_record(&record, &cm, RecordSource::Created, None);
-        Ok((id, cm))
+        match self.submit_px(node, tx) {
+            Ok(id) => {
+                debug_assert!(chosen.iter().all(|&i| self.px.records[i].pending));
+                Ok((id, cm))
+            }
+            Err(e) => {
+                // A definite refusal: the record never existed.
+                if matches!(e, WalletError::Rejected(_)) && !known {
+                    let hex_cm = crate::px::digest_hex(&cm);
+                    self.px.contract_records.retain(|r| r.commitment != hex_cm);
+                }
+                Err(e)
+            }
+        }
     }
 
     /// Claims the vault record with commitment `record` with `secret`, paying
@@ -1287,10 +1451,9 @@ impl Wallet {
         .map_err(|e| WalletError::Rejected(format!("PX build: {e:?}")))?;
         self.px.issued = self.px.issued.max(1);
         let records: Vec<usize> = fee_record.into_iter().collect();
-        let id = self.submit_px(node, tx, &v1_chosen, &records)?;
-        let r = &mut self.px.contract_records[k];
-        r.pending = true;
-        r.pending_height = self.synced_height;
+        let id = self.submit_px(node, tx)?;
+        debug_assert!(records.iter().all(|&i| self.px.records[i].pending));
+        debug_assert!(self.px.contract_records[k].pending);
         Ok((id, rec.value))
     }
 

@@ -11,9 +11,11 @@ use blacksilk_node::{router, Shared};
 use blacksilk_rpc::{self as rpc, Client};
 use blacksilk_tx::params::TxRules;
 use blacksilk_wallet::file::KdfParams;
+use blacksilk_wallet::node::NodeApi;
 use blacksilk_wallet::{load, save, Wallet, WalletError};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 
 /// Every hash meets every difficulty (the RandomX path is tested in the consensus
@@ -113,6 +115,72 @@ impl Net {
 
 fn wallet(seed: u8) -> Wallet {
     Wallet::from_seed(Network::Regtest, [seed; 32], 1)
+}
+
+/// How `Flaky` answers a submission.
+#[derive(Clone, Copy)]
+enum Submit {
+    /// Pass it to the node.
+    Forward,
+    /// Pass it to the node, then report a transport failure (the node has it,
+    /// the wallet cannot know).
+    ForwardThenFail,
+    /// Report that the node found it invalid, without passing it on.
+    Invalid,
+}
+
+/// The real client, with submissions answered as `mode` says; counts them.
+struct Flaky<'a> {
+    inner: &'a Client,
+    mode: Submit,
+    submits: Cell<u32>,
+}
+
+impl<'a> Flaky<'a> {
+    fn new(inner: &'a Client, mode: Submit) -> Self {
+        Self {
+            inner,
+            mode,
+            submits: Cell::new(0),
+        }
+    }
+}
+
+impl NodeApi for Flaky<'_> {
+    fn info(&self) -> Result<rpc::Info, String> {
+        NodeApi::info(self.inner)
+    }
+    fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
+        NodeApi::blocks(self.inner, from, count)
+    }
+    fn distribution(&self, to: u64) -> Result<rpc::Distribution, String> {
+        NodeApi::distribution(self.inner, to)
+    }
+    fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String> {
+        NodeApi::outputs(self.inner, indices)
+    }
+    fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
+        NodeApi::px_commitments(self.inner, from)
+    }
+    fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
+        NodeApi::px_contracts(self.inner, from)
+    }
+    fn submit_tx(&self, tx: &[u8]) -> Result<rpc::SubmitResult, String> {
+        self.submits.set(self.submits.get() + 1);
+        match self.mode {
+            Submit::Forward => NodeApi::submit_tx(self.inner, tx),
+            Submit::ForwardThenFail => {
+                NodeApi::submit_tx(self.inner, tx)?;
+                Err("connection reset".into())
+            }
+            Submit::Invalid => Ok(rpc::SubmitResult {
+                accepted: false,
+                id: None,
+                on_best_chain: None,
+                error: Some("Invalid(RingMemberUnknown)".into()),
+            }),
+        }
+    }
 }
 
 #[test]
@@ -220,12 +288,18 @@ fn wallet_follows_a_reorganization() {
     net.mine(&miner_addr); // A91 confirms the payment
     bob.sync(&net.client).unwrap();
     assert_eq!(bob.balance().total, 2 * COIN);
+    miner.sync(&net.client).unwrap();
+    assert!(!miner.has_pending(), "confirmed");
 
     // A heavier branch without the payment replaces A91.
     let b91 = net.mine_on(&fork_parent, &miner_addr, 1);
     net.mine_on(&b91, &miner_addr, 1);
     bob.sync(&net.client).unwrap();
     assert_eq!(bob.balance().total, 0, "payment rolled back with the reorg");
+    // The payer's inputs are reserved again, not released: the payment is
+    // back in the pool, and a new spend of them would use new rings.
+    miner.sync(&net.client).unwrap();
+    assert!(miner.has_pending(), "re-reserved after the reorg");
     assert_eq!(
         net.client.info().unwrap().mempool_txs,
         1,
@@ -270,7 +344,7 @@ fn rpc_rejects_malformed_and_oversized_requests() {
 }
 
 #[test]
-fn stale_pending_spends_expire_but_late_confirmation_still_counts() {
+fn an_unconfirmed_transaction_keeps_its_inputs_and_is_rebroadcast_unchanged() {
     let mut net = Net::start();
     let mut miner = wallet(7);
     let bob = wallet(8);
@@ -278,7 +352,7 @@ fn stale_pending_spends_expire_but_late_confirmation_still_counts() {
     net.mine_n(90, &miner_addr);
     miner.sync(&net.client).unwrap();
     let before = miner.balance();
-    miner
+    let (id, _) = miner
         .transfer(&net.client, &bob.primary(), COIN, &net.rules, &mut net.rng)
         .unwrap();
     assert!(miner.has_pending());
@@ -286,14 +360,25 @@ fn stale_pending_spends_expire_but_late_confirmation_still_counts() {
         miner.balance().total < before.total,
         "pending input not counted"
     );
+    // The node reports a resubmission of a pooled transaction as "already
+    // pooled", which the wallet relies on (rpc::SubmitResult::already_pooled).
+    let bytes = {
+        let m = net.shared.lock().unwrap();
+        m.mempool().get(&id).expect("pooled").encode()
+    };
+    assert!(net.client.submit_tx(&bytes).unwrap().already_pooled());
     // 20 blocks that do not include the transaction (coinbase-only, on the tip).
     for i in 0..20 {
         let tip = { net.shared.lock().unwrap().tip_id() };
         net.mine_on(&tip, &miner_addr, 1000 + i);
     }
-    miner.sync(&net.client).unwrap();
-    assert!(!miner.has_pending(), "expired after 20 blocks");
-    // The transaction was still in the mempool: once mined, the spend is detected.
+    // The wallet rebroadcasts it and keeps the inputs reserved: releasing them
+    // would let a new transaction spend the same output with a new ring.
+    let node = Flaky::new(&net.client, Submit::Forward);
+    miner.sync(&node).unwrap();
+    assert_eq!(node.submits.get(), 1, "rebroadcast once");
+    assert!(miner.has_pending(), "still reserved after 20 blocks");
+    // Once mined, the spend is detected.
     net.mine(&miner_addr);
     miner.sync(&net.client).unwrap();
     let mut bob = bob;
@@ -305,6 +390,77 @@ fn stale_pending_spends_expire_but_late_confirmation_still_counts() {
         expected += block_reward(h, expected);
     }
     assert_eq!(miner.balance().total, expected - COIN);
+    assert!(!miner.has_pending());
+}
+
+#[test]
+fn an_uncertain_submission_keeps_the_inputs_reserved_across_a_restart() {
+    let mut net = Net::start();
+    let mut miner = wallet(9);
+    let mut bob = wallet(10);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    let before = miner.balance();
+    // The node receives the transaction, but the wallet sees a transport error.
+    let node = Flaky::new(&net.client, Submit::ForwardThenFail);
+    let err = miner
+        .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap_err();
+    assert!(matches!(err, WalletError::Uncertain(_)), "{err}");
+    assert!(miner.has_pending(), "inputs stay reserved");
+    assert!(miner.balance().total < before.total);
+    // The reservation and the stored transaction survive a save and load.
+    let dir = std::env::temp_dir().join(format!("bs-uncertain-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("w.bin");
+    let kdf = KdfParams {
+        m_kib: 256,
+        t: 1,
+        p: 1,
+    };
+    save(&miner, &path, b"pw", kdf).unwrap();
+    let mut miner = load(&path, b"pw").unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(miner.has_pending());
+    // It was in fact pooled: it confirms and both wallets see it.
+    net.mine(&miner_addr);
+    miner.sync(&net.client).unwrap();
+    bob.sync(&net.client).unwrap();
+    assert_eq!(bob.balance().total, COIN);
+    assert!(!miner.has_pending());
+}
+
+#[test]
+fn a_stored_transaction_the_node_finds_invalid_releases_its_inputs() {
+    let mut net = Net::start();
+    let mut miner = wallet(11);
+    let bob = wallet(12);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    let before = miner.balance();
+    miner
+        .transfer(&net.client, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    for i in 0..20 {
+        let tip = { net.shared.lock().unwrap().tip_id() };
+        net.mine_on(&tip, &miner_addr, 2000 + i);
+    }
+    // A full pool or a transport error keeps the reservation...
+    miner
+        .sync(&Flaky::new(&net.client, Submit::ForwardThenFail))
+        .unwrap();
+    assert!(miner.has_pending());
+    // ...an invalid verdict releases it: the transaction can never be mined.
+    let node = Flaky::new(&net.client, Submit::Invalid);
+    miner.sync(&node).unwrap();
+    assert_eq!(node.submits.get(), 1);
+    assert!(!miner.has_pending(), "released");
+    assert!(
+        miner.balance().total > before.total,
+        "the 20 new rewards and the released input"
+    );
 }
 
 /// Private execution end to end over RPC (docs/px.md §11): deposit into PX,
@@ -614,4 +770,61 @@ fn a_vault_is_deployed_locked_delivered_shared_and_claimed_over_rpc() {
         .find(|r| r.commitment == digest_hex(&record2))
         .unwrap();
     assert!(r2.spent_height.is_some());
+}
+
+/// A vault lock whose submission outcome is unknown keeps the creator's copy
+/// of the record: the transaction did reach the node, and without the copy the
+/// locked funds could not be opened (docs/reviews/wallet-review.md W-4).
+#[test]
+fn an_uncertain_vault_lock_keeps_the_record_opening() {
+    use blacksilk_px::vault;
+    use blacksilk_tx::px::Registration;
+
+    let mut net = Net::start();
+    let mut alice = wallet(25);
+    let a_addr = alice.primary();
+    net.mine_n(90, &a_addr);
+    alice.sync(&net.client).unwrap();
+    let (_, contract, _) = alice
+        .px_deploy(
+            &net.client,
+            vec![Registration {
+                elf: vault::VAULT_ELF.to_vec(),
+                budget: vault::BUDGET,
+            }],
+            &net.rules,
+            &mut net.rng,
+        )
+        .expect("deploy");
+    net.mine(&a_addr);
+    alice.sync(&net.client).unwrap();
+    alice
+        .px_deposit(&net.client, 3 * COIN, &net.rules, &mut net.rng)
+        .expect("deposit");
+    net.mine_n(17, &a_addr);
+    alice.sync(&net.client).unwrap();
+
+    let secret = blacksilk_px::wallet::random_digest(&mut net.rng);
+    let node = Flaky::new(&net.client, Submit::ForwardThenFail);
+    let err = alice
+        .px_vault_lock(
+            &node,
+            &contract,
+            COIN,
+            &secret,
+            None,
+            &net.rules,
+            &mut net.rng,
+        )
+        .unwrap_err();
+    assert!(matches!(err, WalletError::Uncertain(_)), "{err}");
+    assert_eq!(alice.px_contract_records().len(), 1, "the opening is kept");
+    assert_eq!(alice.px_contract_records()[0].height, None);
+    // The lock was in fact pooled: once mined, the wallet holds a confirmed
+    // record it can open.
+    net.mine(&a_addr);
+    alice.sync(&net.client).unwrap();
+    let r = &alice.px_contract_records()[0];
+    assert!(r.height.is_some(), "confirmed");
+    assert_eq!(r.value, COIN);
 }

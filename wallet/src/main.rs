@@ -160,7 +160,12 @@ enum Cmd {
     },
     /// Show the 24-word seed.
     Seed,
-    /// Forget unconfirmed spends (after a transaction was dropped by the network).
+    /// Forget unconfirmed spends and stored transactions. Only for a
+    /// transaction that certainly never left this wallet: `sync` rebroadcasts
+    /// stored transactions and releases their funds itself when the node
+    /// finds them invalid. Spending the same funds again after a relayed
+    /// transaction links the two by key image and can reveal which ring
+    /// member is the real input.
     ClearPending,
 }
 

@@ -68,6 +68,21 @@ pub struct SubmitResult {
     pub error: Option<String>,
 }
 
+impl SubmitResult {
+    /// Whether a transaction was refused only because the node's pool already
+    /// holds it (`AlreadyKnown`) or another transaction spending the same inputs
+    /// (`Conflict`). Only the owner of the inputs can create either, so for a
+    /// wallet resubmitting its own transaction this means "still pending", not
+    /// "invalid". The node reports mempool errors by their `Debug` names.
+    pub fn already_pooled(&self) -> bool {
+        !self.accepted
+            && self
+                .error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("AlreadyKnown") || e.starts_with("Conflict"))
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlockEntry {
     pub height: u64,
