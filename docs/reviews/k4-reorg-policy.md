@@ -1,7 +1,7 @@
 # K4: reorganization-depth policy (provisional, testnet only)
 
 Status: **provisionally accepted by the owner for the experimental testnet
-(2026-09-25). Not a mainnet decision. Included in the independent review scope.**
+(2026-09-25). Not a mainnet decision. Included in the internal review (review-status.md §3, components 7 and 11) and in the scope kept for a possible future external review.**
 
 ## 1. The policy
 
@@ -59,13 +59,13 @@ Status: **provisionally accepted by the owner for the experimental testnet
 
 ## 5. Open for mainnet
 
-To be decided with testnet data and the reviewer's opinion:
+To be decided with testnet data and the internal review's findings:
 - whether finality needs protection beyond proof-of-work (a limit, checkpoints, or
   none);
 - a bound on in-memory undo data;
 - the wallet's reorganization window.
 
-## 6. Questions for the independent reviewer
+## 6. Questions for the internal review passes (and any future external reviewer)
 
 1. Is "no limit, warn at 10" acceptable for an experimental testnet with little hash
    power, given its purpose?
@@ -74,3 +74,18 @@ To be decided with testnet data and the reviewer's opinion:
    not handle? The code: `tx/src/state.rs::undo_block`; tests:
    `chain/tests/manager.rs`, `wallet/tests/e2e.rs::px_records_follow_a_reorganization`.
 3. What finality mechanism, if any, should mainnet adopt?
+
+## 7. Limitations of this policy (stated plainly)
+
+- **No protection against a hash-power majority.** On a small testnet, anyone renting
+  more CPU than all honest miners combined can rewrite history at will. That is
+  accepted for an experiment with valueless coins; it is not acceptable for mainnet
+  as is.
+- **Monitoring only.** The warning and the counter detect deep reorganizations; they
+  prevent nothing. The response is manual (docs/testnet-incident-response.md).
+- **The counter resets on restart.** `deepest_reorg` covers the time since the node
+  started; logs are the durable record.
+- **Deep reorganizations are tested only on one machine** (labnet, up to 17 blocks;
+  the unit and integration tests). They have not been tested between real machines.
+- **PX state under very deep reorganizations** (many PX blocks disconnected at once) is
+  covered by the undo code and tests with shallow depths only.

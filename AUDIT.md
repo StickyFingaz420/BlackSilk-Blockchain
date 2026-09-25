@@ -1,7 +1,10 @@
 # BlackSilk Testnet Readiness Audit
 
-Status: **ready for a controlled multi-machine testnet trial; NOT yet ready for a
-public testnet launch.**
+Status (2026-09-25): **not ready for the experimental testnet; the reset and the launch
+are on hold** pending the readiness report (docs/testnet-launch-checklist.md).
+**No external audit or independent review has taken place:** every finding and
+conclusion below is internal work (docs/reviews/review-status.md). The status lines
+further down are historical records of each round.
 - All Phase 2 findings are closed (see *Finding status after R1–R6*).
 - The P2P network is implemented (R5).
 - The testnet configuration is final (R6): genesis, seed system and deployment files.
@@ -617,7 +620,7 @@ needed for a long-lived chain (R4 open items).
   Linux. They were written here but **not executed**, because no Linux environment or
   Docker was available.
 
-An external cryptographic review remains a mainnet prerequisite.
+An external cryptographic review was then seen as a mainnet prerequisite. Current policy (2026-09-25): self-reliant internal review; external review may be revisited later (docs/reviews/review-status.md).
 
 ### R7: Confidential contracts: M1 (cryptography) and M2 (engine and state). In progress.
 
@@ -1344,6 +1347,71 @@ reviewer candidates, and a launch checklist (docs/testnet-launch-checklist.md).
   - Not submitted.
 - **Reviewer shortlist:** docs/reviews/reviewer-candidates.md. Nobody has been
   contacted.
+- **Extended contract-engine fuzzing** (Windows 10, 8 logical CPUs, one core per
+  target, nightly-2026-09-24 MSVC, AddressSanitizer, libFuzzer via cargo-fuzz 0.13.2).
+  **The engine under test (`contracts/`, wasmi 0.38) is not integrated into the chain
+  (milestone M3): these results do not cover any consensus path.**
+
+  | Target | Command | Duration | Executions | Coverage at the end | New corpus units | Crashes, panics, timeouts, OOM |
+  |---|---|---|---|---|---|---|
+  | `contract_sequence` (new) | `cargo fuzz run contract_sequence corpus/contract_sequence -- -max_total_time=14400 -timeout=60 -rss_limit_mb=4096 -max_len=4096` | 14,401 s (4 h) | 322,055 (22/s) | 5,475 edges, 16,605 features (corpus replay: 1,396 inputs, 781 after reduction) | 1,306 | **0** (0 artifacts); peak RSS 538 MB |
+  | `wasm_module` (continued) | `-max_total_time=21600 -timeout=60 -rss_limit_mb=4096 -max_len=65536` | 6 h | *recorded when finished* | | | |
+
+  **What `contract_sequence` checks** on every input: identical results from two
+  independent executors (consistency across execution paths); fuel and storage within
+  their limits (resource exhaustion); exact state-root restoration on undoing a block
+  (rollback); replaying the committed diffs into a fresh state gives the same root
+  (recovery); no panic. Sequences mix calls with fuzzed inputs and limits, block ends
+  and undos, against a key-value module and a counter module.
+
+  **Limits:**
+  - 22 executions per second is slow: each input deploys two modules on two executors,
+    so Wasm compilation dominates. Exploration depth is limited. Caching the deployed
+    state per run is a possible improvement.
+  - The corpus was still growing at the end.
+  - Only two fixed modules are exercised as contracts. Arbitrary modules are covered
+    by `wasm_module`, but not in sequences.
+  - A fuzzing campaign is not a proof of absence of bugs.
+
+### R11: Internal review round 1 (2026-09-25/26). Internal; not an external audit.
+
+**Method** (docs/reviews/review-status.md):
+- Four fresh-context review agents examined the ZK configuration, the PX kernel and
+  consensus, the BVM-1 circuits, and the wallet. They were given the code,
+  specifications and objectives, not the author's reasoning.
+- The author verified every accepted finding against the source or by measurement.
+- Full log: docs/reviews/internal-review-log.md.
+
+**Result:**
+- **ZK-F29 (critical, OPEN):** PX proofs are **not zero-knowledge as configured**.
+  Plonky3 0.7.0's batch prover publishes each table's LogUp terminal unblinded. The
+  Program table's terminal depends only on the per-instruction execution counts, and
+  measurement (`px/examples/execution_profile.rs`) shows 33 distinct count vectors
+  over 100 kernel witnesses. A proof reveals at least whether a private payment spends
+  one or two real records, and some amount-dependent information.
+- **ZK-F30 (high, OPEN):** 64-row tables are opened at more points than their hiding
+  randomness covers. The vault's Poseidon2 table is at that minimum.
+- **Both need proof-system changes, which are consensus changes:** owner decision
+  (the options are in the report).
+- **The circuit review found no critical, high or medium soundness issue.**
+- **The PX review found no critical or high issue.** Open medium issues: memory
+  retention of block bodies (PX-F1), and the caller-chosen `rcm` of
+  function-specified outputs (PX-F4, a design question).
+- **Wallet:** W-F1 to W-F6, W-F8 and several low findings were **fixed**, with new
+  tests:
+  - save before sending;
+  - one ring query per input, always containing the real output (an older leak to
+    the node);
+  - no dropping of stored transactions or rings when a node is behind;
+  - a rescan after a reorganization deeper than the kept window;
+  - rings kept even after a refusal;
+  - previous-block linkage checks;
+  - a wallet-file lock;
+  - no panics on a malformed distribution;
+  - contract openings never deleted.
+
+  Open: W-F7 (restore scans account 0 only), W-F13, W-F15, and proof-of-work checks
+  in the wallet.
 
 ### Finding status after R1–R6
 

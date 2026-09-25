@@ -12,7 +12,7 @@ explicit approval:
 
 | Gate | State |
 |---|---|
-| Independent security review completed (docs/reviews/external-review-scope.md, review-package.md) | **Not started** |
+| Internal multi-pass review of the critical components (docs/reviews/review-status.md §3). **External review: none engaged; not a gate** (owner decision 2026-09-25) | **In progress** |
 | CI validated: the workflow run on GitHub, all jobs green | **Passed** for commit `d6534c3` (run 36177083290, 2026-09-25): lint, audit, fuzz-smoke and test all green. To be confirmed again on the release commit |
 | Extended contract-engine fuzzing | **Running:** 6 hours on `wasm_module` and 4 hours on the new `contract_sequence` target (AUDIT.md when finished) |
 | Local reset rehearsal | **Done** 2026-09-25 (§7). To be repeated if the review leads to consensus changes |

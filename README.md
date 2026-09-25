@@ -3,8 +3,10 @@
 A privacy-first proof-of-work cryptocurrency written in pure Rust.
 
 > **Status: under active rebuild, pre-testnet.** The components below are
-> implemented and tested. The software has **not** had an external security audit,
-> and it must not be used for anything of value. See [`AUDIT.md`](AUDIT.md) for the
+> implemented and tested. The software has **not** had an external security audit or
+> any independent review; all security work so far is internal
+> ([`docs/reviews/review-status.md`](docs/reviews/review-status.md)). It must not be used
+> for anything of value. See [`AUDIT.md`](AUDIT.md) for the
 > full audit and open items.
 
 ## What it is

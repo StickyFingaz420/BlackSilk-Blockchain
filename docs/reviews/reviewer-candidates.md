@@ -1,6 +1,8 @@
-# Independent review: reviewer shortlist and recommendation
+# Independent review: reviewer shortlist (future reference only)
 
-Status: **2026-09-25, for the owner's approval.**
+Status: **2026-09-25. Kept for future reference: the owner decided on self-reliant
+review for now (docs/reviews/review-status.md).** Do not contact firms or make
+commitments.
 - **No reviewer has been contacted and no commitment made.** Nothing in the project is
   independently reviewed.
 
@@ -55,7 +57,7 @@ is not proof of no experience: many audits are private.
 - zkSecurity and Cypher Stack also do development work: check for product overlap.
 - Nothing else was found.
 
-## 3. Recommendation (for approval)
+## 3. Recommendation (future reference; not being acted on)
 
 Two engagements, plus one specialist:
 

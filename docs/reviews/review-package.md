@@ -1,11 +1,12 @@
-# Independent security review: package for the reviewer
+# Review package (for internal review passes, and for a future external reviewer)
 
-Status: **prepared 2026-09-25. The review has not started.** Everything referenced
-here is internal work: analysis and tests by the project. It is the starting point
-for the review, not a substitute for it.
+Status: **2026-09-25. No external review has been engaged or completed**
+(docs/reviews/review-status.md). Everything referenced here is internal work. The
+package serves two purposes:
+- it is the brief for the project's internal review passes;
+- it is kept ready in case an external review is commissioned later.
 
-The owner requires this review to be completed **before** the seven-machine testnet
-trial (AUDIT.md R8).
+It is **not** a testnet gate: the owner decided on self-reliant review on 2026-09-25.
 
 ## 1. What to review
 

@@ -41,7 +41,7 @@ Source: zk-security-review.md §2; privacy-review.md §3a.3.
 | Z4 | LogUp buses: multiplicities never wrap modulo p | Z1 | Tested (the largest statement reaches 63% of p) |
 | Z5 | The BVM-1 tables constrain exactly the interpreter's semantics | Z1 for every function and the kernel | Tested (mutation, differential, oracle); **External** |
 | Z6 | The kernel and function programs implement their specifications | Value conservation, contract rules | Tested (per-check rejection tests); **External** |
-| Z7 | Zero knowledge: 4 random codewords and 4 salt elements hide the witness; the prover's randomness is fresh | Every private property of PX | **External.** Parameter sufficiency not established by the project |
+| Z7 | Zero knowledge: 4 random codewords and 4 salt elements hide the witness; the prover's randomness is fresh | Every private property of PX | **BROKEN as configured** (internal review 2026-09-26): the LogUp terminals are published unblinded (ZK-F29, measured leak), and small tables have too little hiding randomness for the number of openings (ZK-F30). **Every privacy claim that depends on Z7 is currently unsupported** |
 | Z8 | The three local Plonky3 patches change only lock scope, not results | Z1 and Z7 | Tested (equivalence test; the upstream suites pass 208/208) |
 | Z9 | The statement digest binds everything the verifier supplies as periodic columns before any commitment (ZK-F13) | Z1 | Tested; **External** |
 | Z10 | Delivery: IND-CCA of the hybrid KEM (Ristretto ECDH with ML-KEM-768, X-Wing-style combiner) and of ChaCha20-Poly1305 with a zero nonce under fresh keys | Record contents in transit | Standard primitives; the combiner is **External** |

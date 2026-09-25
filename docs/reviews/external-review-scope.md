@@ -1,7 +1,8 @@
-# Scope of the independent security review
+# Scope of a future independent security review (reference only)
 
-Status: **scope definition (2026-09-25). No part of BlackSilk's own code has been
-independently reviewed.** Everything in `docs/reviews/` and AUDIT.md is internal
+Status: **kept for future reference (2026-09-25). No external reviewer is engaged and
+none is currently planned** (docs/reviews/review-status.md). No part of BlackSilk's
+own code has been independently reviewed. Everything in `docs/reviews/` and AUDIT.md is internal
 analysis and testing. This document tells an external reviewer what to review, what
 evidence exists, and which questions matter most. It also separates what has had
 outside scrutiny from what rests on internal work only.

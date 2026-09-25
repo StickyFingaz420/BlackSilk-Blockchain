@@ -13,10 +13,10 @@ accepted by the owner).
 
 | # | Gate | Evidence required | State |
 |---|---|---|---|
-| G1 | **Independent security and privacy review** of the five critical areas (review-package.md) | A written report by a qualified external reviewer, at a pinned commit | **Not started.** Candidates: reviewer-candidates.md |
-| G2 | **Findings resolved or accepted** | Every finding recorded in AUDIT.md with its fix and test, or the owner's written acceptance | Not started (depends on G1) |
+| G1 | **Internal multi-pass security and privacy review** of every critical component (review-status.md §3) | The review log (internal-review-log.md) with findings, fixes and tests per component and pass. **No external audit exists; the readiness report must say so** | **In progress. Round 1 done for four components; it found a CRITICAL open privacy issue: the proofs are not zero-knowledge as configured (ZK-F29, ZK-F30). The testnet cannot launch with private transactions until this is fixed or PX is disabled** |
+| G2 | **Findings resolved or accepted** | Every finding recorded in AUDIT.md with its fix and test, or the owner's written acceptance | In progress (depends on G1) |
 | G3 | **CI green on GitHub** | A GitHub Actions run of the release commit, all four jobs passed | **Passed for `d6534c3`** (run 36177083290, all four jobs green). Re-run required for the release commit |
-| G4 | **Consensus and state-management validation** | Full suite; restart rebuild; supply check under labnet; review area 5 | In progress: internal tests pass; independent review pending |
+| G4 | **Consensus and state-management validation** | Full suite; restart rebuild; supply check under labnet; review area 5 | In progress: internal tests pass; internal review passes pending |
 | G5 | **Multi-machine testing** | docs/testnet.md §7 on real machines, including a 72-hour run | Not started (after G1–G3) |
 | G6 | **Reorganization and recovery** | Partitions and reorgs between machines; restart and resync; the K4 policy (docs/consensus.md §8) | In progress: labnet on one machine (reorgs up to depth 17), restart rebuild test; K4 documented |
 | G7 | **Reset and rollback procedures** | A rehearsed reset (reset-plan §7); a written rollback (§6) | In progress: rehearsal done on one machine; rollback written, not rehearsed |
@@ -26,14 +26,14 @@ accepted by the owner).
 | G11 | **Known privacy limitations published** | privacy-review.md P-1 to P-9 and §4 stated in user docs | In progress: documented in the reviews; the user guidance in docs/px.md §12 now covers P-9; a full cross-check of user docs against P-1 to P-9 is pending |
 | G12 | **Genesis and consensus-affecting changes** | reset-plan §2 complete and matching the code; the genesis pin test | In progress: documented; to be re-checked after G2 |
 | G13 | **Operational documentation** | docs/testnet.md (running, mining, monitoring, troubleshooting); seed nodes set | In progress: the seed-node list is empty (AUDIT.md) |
-| G14 | **Rollback and incident-response plan** | Who decides, how nodes are told, how a bad release is withdrawn, how a consensus bug is handled (halt, fix, reset) | **Partially implemented:** docs/testnet-incident-response.md and SECURITY.md written; `/info` now reports `deepest_reorg` and `misbehaving_disconnects`. Missing: named roles and channels, a rehearsal (§8), a supply-audit tool for the real testnet, and GitHub private vulnerability reporting enabled (the owner's setting) |
+| G14 | **Rollback and incident-response plan** | The owner as incident lead; a private reporting route; an operators' channel; severities; pause conditions; emergency release; evidence; communication of known risks; a rehearsal | **Partially implemented:** the procedure is written around the owner (docs/testnet-incident-response.md, SECURITY.md). Awaiting: the owner's approval and choice of channels (§1a); GitHub private vulnerability reporting enabled (the owner's setting); a rehearsal (§8); no automated alerting |
 
 ## Before the owner's final approval
 
 - [ ] Every gate Passed or Accepted, with its evidence linked.
 - [ ] The readiness report states, separately:
   - what is verified internally;
-  - what is independently reviewed;
+  - that **no independent external audit** has taken place (review-status.md);
   - the open risks;
   - what is deferred.
 - [ ] The release commit and binaries are pinned; the CI run of that commit is linked.
