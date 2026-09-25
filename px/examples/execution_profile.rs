@@ -29,7 +29,6 @@ struct Fixture {
     alice: Account,
     tree: Tree,
     user: Vec<(Record, u64)>,
-    vaults: Vec<(Record, u64, Digest)>,
 }
 
 fn fixture() -> Fixture {
@@ -62,13 +61,13 @@ fn fixture() -> Fixture {
             rcm: wallet::random_digest(&mut rng),
         };
         let cm = r.commit(&mut perm);
+        // Vault records are in the tree, as in the proof-length campaign.
         vaults.push((r, tree.append(&mut perm, cm).unwrap(), secret));
     }
     Fixture {
         alice,
         tree,
         user,
-        vaults,
     }
 }
 
