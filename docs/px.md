@@ -569,8 +569,10 @@ Measured privacy analysis: `docs/reviews/privacy-review.md`.
   rebroadcasts it unchanged. If a submission ends with "the node may or may not have
   received the transaction", just `sync` later. `clear-pending` is only for a
   transaction that certainly never left the wallet. A second spend of a v1 input
-  with a new ring shares the key image with the first, and the two rings together
-  can reveal the real input.
+  shares the key image with the first, so the two are linkable. The wallet reuses
+  the first ring so they do not reveal the real input, but these rings are kept in
+  the wallet file only: keep backups of it, because a restore from the seed loses
+  them.
 
 ## 13. Contract tooling and the distribution of contract records
 

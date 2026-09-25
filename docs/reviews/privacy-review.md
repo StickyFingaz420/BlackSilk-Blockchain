@@ -153,7 +153,7 @@ It must **not** learn:
 | P-6 | Dandelion++ stem probing | Open, low; analysed in §3b. Conflict probing needs a valid transaction spending the same record, so only the owner can do it. Replay probing by a stem node needs colluding downstream observers and yields partial route information. Not mitigated further |
 | P-7 | Uniform fees are a wallet convention, not a consensus rule | **Resolved** (2026-09-25): the fee of every PX transaction is exactly `PX_STANDARD_FEE` in consensus. Side effect: fee-per-byte ordering ranks larger PX transactions (contract calls) lower under congestion (docs/px.md §11.5) |
 | P-8 | Contract calls reveal which contract and function ran, and so the timing between related calls (such as a LOCK and its CLAIM) | Inherent: the verifier needs the program. Documented to users (docs/px.md §12); analysed in §3b. Automatic delays and recursion are not implemented |
-| P-9 | The wallet could spend a v1 input again with a new ring after a transaction that had been relayed: after a transport failure, 20 blocks after submitting, or after a reorganization | **Fixed** (2026-09-25, §3c): transactions are stored and rebroadcast unchanged; inputs are released only on an `Invalid` verdict. Residual: a new ring after that verdict (W-5) |
+| P-9 | The wallet could spend a v1 input again with a new ring after a transaction that had been relayed: after a transport failure, 20 blocks after submitting, or after a reorganization | **Fixed** (2026-09-25, §3c): transactions are stored and rebroadcast unchanged; inputs are released only on an `Invalid` verdict; a later spend reuses the stored ring (W-5). Residuals: key-image linkability, and rings lost on a restore from seed |
 
 ## 3a. P-5 in detail: why proof-length variation carries no witness information
 
@@ -437,9 +437,13 @@ Seeing both requires only that both were relayed; neither needs to be mined.
 is no ring. A second transaction spending it is refused as a double spend and is
 linkable anyway.
 
+**Ring reuse (W-5).** A later spend of the same output reuses the stored ring, as far as
+its members survive (wallet-review.md §1a).
+
 **Residual:**
-- After an `Invalid` verdict, a new spend still uses new rings (W-5). Reusing the old
-  ring where possible would close it; not implemented.
+- Two spends of one output stay linkable through the key image; reuse only prevents
+  them from revealing the real input.
+- A wallet restored from its seed has lost the stored rings.
 - Rebroadcasting gives spy nodes another observation of the origin, but only when the
   wallet's node has lost the transaction (W-6).
 

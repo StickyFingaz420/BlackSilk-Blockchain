@@ -72,6 +72,32 @@ pub fn select_ring<R: RngCore>(
     real: u64,
     eligible: impl Fn(u64) -> bool,
 ) -> Result<[u64; RING_SIZE], DecoyError> {
+    select_ring_keeping(
+        rng,
+        cumulative,
+        height,
+        target_block_time,
+        real,
+        &[],
+        eligible,
+    )
+}
+
+/// Like [`select_ring`], but the ring keeps every member of `keep` that is still
+/// usable (old enough, eligible, not `real`, not repeated) and draws only the
+/// rest. Wallets use it to spend an output again with the ring an earlier,
+/// possibly relayed, transaction used: both transactions share the key image,
+/// so the more members the two rings share, the less their intersection
+/// reveals (docs/reviews/wallet-review.md W-5).
+pub fn select_ring_keeping<R: RngCore>(
+    rng: &mut R,
+    cumulative: &[u64],
+    height: u64,
+    target_block_time: u64,
+    real: u64,
+    keep: &[u64],
+    eligible: impl Fn(u64) -> bool,
+) -> Result<[u64; RING_SIZE], DecoyError> {
     // Usable blocks: at least SPENDABLE_AGE deep.
     let Some(last_block) = height.checked_sub(SPENDABLE_AGE) else {
         return Err(DecoyError::NotEnoughOutputs);
@@ -89,6 +115,11 @@ pub fn select_ring<R: RngCore>(
     let t = target_block_time as f64;
 
     let mut ring = vec![real];
+    for &k in keep {
+        if ring.len() < RING_SIZE && k < usable && !ring.contains(&k) && eligible(k) {
+            ring.push(k);
+        }
+    }
     for _ in 0..MAX_ATTEMPTS {
         if ring.len() == RING_SIZE {
             break;
@@ -141,6 +172,31 @@ mod tests {
             assert!(ring.windows(2).all(|w| w[0] < w[1]));
             // Nothing from the last 10 blocks.
             assert!(ring.iter().all(|&i| i < cum[5_000 - 10]));
+        }
+    }
+
+    #[test]
+    fn kept_members_survive_and_only_the_rest_is_drawn() {
+        let mut rng = ChaCha20Rng::seed_from_u64(4);
+        let cum = chain(5_000, 4);
+        let old = select_ring(&mut rng, &cum, 5_000, 120, 7_000, |_| true).unwrap();
+        // All kept: the same ring.
+        let same = select_ring_keeping(&mut rng, &cum, 5_000, 120, 7_000, &old, |_| true).unwrap();
+        assert_eq!(same, old);
+        // Some lost (too young now, ineligible, or equal to the real one):
+        // the usable ones stay, the ring is still valid.
+        let young = cum[5_000 - 5];
+        let mut keep: Vec<u64> = old.iter().copied().filter(|&i| i != 7_000).collect();
+        keep.truncate(10);
+        keep.push(young); // too young
+        keep.push(keep[0]); // repeated
+        let ring = select_ring_keeping(&mut rng, &cum, 5_000, 120, 7_000, &keep, |i| i != keep[1])
+            .unwrap();
+        assert!(ring.contains(&7_000));
+        assert!(ring.windows(2).all(|w| w[0] < w[1]));
+        assert!(!ring.contains(&young) && !ring.contains(&keep[1]));
+        for k in keep.iter().take(10).filter(|&&k| k != keep[1]) {
+            assert!(ring.contains(k), "kept member {k} lost");
         }
     }
 

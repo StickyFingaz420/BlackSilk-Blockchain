@@ -15,7 +15,7 @@ use blacksilk_wallet::node::NodeApi;
 use blacksilk_wallet::{load, save, Wallet, WalletError};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::sync::{Arc, Mutex};
 
 /// Every hash meets every difficulty (the RandomX path is tested in the consensus
@@ -127,6 +127,8 @@ enum Submit {
     ForwardThenFail,
     /// Report that the node found it invalid, without passing it on.
     Invalid,
+    /// Keep it (`Flaky::sent`) and report it accepted, without passing it on.
+    Record,
 }
 
 /// The real client, with submissions answered as `mode` says; counts them.
@@ -134,6 +136,7 @@ struct Flaky<'a> {
     inner: &'a Client,
     mode: Submit,
     submits: Cell<u32>,
+    sent: RefCell<Vec<Vec<u8>>>,
 }
 
 impl<'a> Flaky<'a> {
@@ -142,6 +145,7 @@ impl<'a> Flaky<'a> {
             inner,
             mode,
             submits: Cell::new(0),
+            sent: RefCell::new(Vec::new()),
         }
     }
 }
@@ -167,6 +171,7 @@ impl NodeApi for Flaky<'_> {
     }
     fn submit_tx(&self, tx: &[u8]) -> Result<rpc::SubmitResult, String> {
         self.submits.set(self.submits.get() + 1);
+        self.sent.borrow_mut().push(tx.to_vec());
         match self.mode {
             Submit::Forward => NodeApi::submit_tx(self.inner, tx),
             Submit::ForwardThenFail => {
@@ -178,6 +183,12 @@ impl NodeApi for Flaky<'_> {
                 id: None,
                 on_best_chain: None,
                 error: Some("Invalid(RingMemberUnknown)".into()),
+            }),
+            Submit::Record => Ok(rpc::SubmitResult {
+                accepted: true,
+                id: None,
+                on_best_chain: None,
+                error: None,
             }),
         }
     }
@@ -827,4 +838,117 @@ fn an_uncertain_vault_lock_keeps_the_record_opening() {
     let r = &alice.px_contract_records()[0];
     assert!(r.height.is_some(), "confirmed");
     assert_eq!(r.value, COIN);
+}
+
+/// Key image → ring of every v1 input of an encoded transfer.
+fn rings_of(bytes: &[u8]) -> std::collections::BTreeMap<[u8; 32], [u64; 16]> {
+    use blacksilk_tx::types::Transaction;
+    match Transaction::decode(bytes).unwrap() {
+        Transaction::Transfer(t) => t
+            .inputs
+            .iter()
+            .map(|i| (*i.key_image.bytes(), i.ring))
+            .collect(),
+        other => panic!("not a transfer: {other:?}"),
+    }
+}
+
+/// Spending an output again after an earlier transaction may have been
+/// relayed reuses that transaction's ring, so the two share every member and
+/// their intersection reveals nothing new (docs/reviews/wallet-review.md W-5).
+/// Both ways inputs come free again are covered: `clear-pending`, and an
+/// `Invalid` verdict on the stored transaction.
+#[test]
+fn an_output_spent_again_reuses_its_ring() {
+    let mut net = Net::start();
+    let mut miner = wallet(27);
+    let bob = wallet(28);
+    let mut carol = wallet(26);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    // Carol owns exactly one output, so every spend of hers spends it.
+    miner
+        .transfer(
+            &net.client,
+            &carol.primary(),
+            5 * COIN,
+            &net.rules,
+            &mut net.rng,
+        )
+        .unwrap();
+    net.mine_n(11, &miner_addr);
+    carol.sync(&net.client).unwrap();
+    let spend = |carol: &mut Wallet, net: &mut Net| {
+        let node = Flaky::new(&net.client, Submit::Record);
+        carol
+            .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
+            .unwrap();
+        let rings = rings_of(&node.sent.borrow()[0]);
+        assert_eq!(rings.len(), 1, "her one output");
+        rings
+    };
+
+    // The first spend "leaves" the wallet (recorded, not mined).
+    let first = spend(&mut carol, &mut net);
+    // Freed by clear-pending, spent again: the same ring.
+    carol.clear_pending();
+    let second = spend(&mut carol, &mut net);
+    assert_eq!(first, second, "ring reused after clear-pending");
+
+    // Freed by an Invalid verdict 20 blocks later, spent again: the same ring.
+    for i in 0..20 {
+        let tip = { net.shared.lock().unwrap().tip_id() };
+        net.mine_on(&tip, &miner_addr, 3000 + i);
+    }
+    carol
+        .sync(&Flaky::new(&net.client, Submit::Invalid))
+        .unwrap();
+    assert!(!carol.has_pending(), "released");
+    let third = spend(&mut carol, &mut net);
+    assert_eq!(second, third, "ring reused after the Invalid verdict");
+
+    // The ring survives a save and load.
+    let dir = std::env::temp_dir().join(format!("bs-rings-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("w.bin");
+    let kdf = KdfParams {
+        m_kib: 256,
+        t: 1,
+        p: 1,
+    };
+    save(&carol, &path, b"pw", kdf).unwrap();
+    let mut carol = load(&path, b"pw").unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    carol.clear_pending();
+    let fourth = spend(&mut carol, &mut net);
+    assert_eq!(third, fourth, "ring reused after a restart");
+}
+
+/// A definite refusal by the node means the transaction never left, so its
+/// rings are not recorded: a later spend may draw fresh ones.
+#[test]
+fn a_refused_transaction_does_not_pin_its_rings() {
+    let mut net = Net::start();
+    let mut miner = wallet(29);
+    let bob = wallet(30);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    let node = Flaky::new(&net.client, Submit::Invalid);
+    let err = miner
+        .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap_err();
+    assert!(matches!(err, WalletError::Rejected(_)), "{err}");
+    assert!(!miner.has_pending());
+    let refused = rings_of(&node.sent.borrow()[0]);
+    let node = Flaky::new(&net.client, Submit::Record);
+    miner
+        .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    let next = rings_of(&node.sent.borrow()[0]);
+    let differs = refused
+        .iter()
+        .any(|(k, r)| next.get(k).is_some_and(|n| n != r));
+    assert!(differs, "fresh rings were drawn");
 }
