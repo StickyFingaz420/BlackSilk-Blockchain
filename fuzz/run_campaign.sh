@@ -7,7 +7,7 @@ T="${1:-900}"
 TC="${TOOLCHAIN:-nightly}"
 cd "$(dirname "$0")"
 cargo +"$TC" fuzz build --release --fuzz-dir . || exit 1
-for target in tx_decode block_decode p2p_message zkvm_elf kernel_diff delivery_open wasm_module proof_decode; do
+for target in tx_decode block_decode p2p_message zkvm_elf kernel_diff delivery_open wasm_module contract_sequence proof_decode; do
   case "$target" in
     proof_decode) extra="-max_len=2200000 -rss_limit_mb=4096" ;;
     zkvm_elf) extra="-max_len=32768" ;;

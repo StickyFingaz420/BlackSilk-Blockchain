@@ -154,6 +154,24 @@ fn main() {
     // A contract module.
     put("wasm_module", "counter", &wat::parse_str(MODULE).unwrap());
 
+    // Contract sequences (contract_sequence): call = [op 0, target, len, input.., fuel, storage].
+    let key = [1u8, 2, 3, 4, 5, 6, 7, 8];
+    let mut set_get = vec![0u8, 0, 12, 0];
+    set_get.extend(key);
+    set_get.extend([9, 9, 9, 10, 10]); // value, fuel, storage
+    set_get.push(2); // end the block
+    set_get.extend([0, 0, 9, 2]);
+    set_get.extend(key);
+    set_get.extend([10, 0]); // read it back
+    set_get.extend([0, 1, 0, 10, 10]); // the counter
+    set_get.push(3); // undo the block
+    put("contract_sequence", "set_get_undo", &set_get);
+    put(
+        "contract_sequence",
+        "burn",
+        &[0, 0, 2, 3, 200, 1, 0, 2, 0, 0, 2, 3, 255, 255, 0],
+    );
+
     // A real transfer proof (about 2 MB; proving takes about a minute).
     let (_, proof) = prove_transfer(&w, [1; 32], &mut rng).unwrap();
     put(

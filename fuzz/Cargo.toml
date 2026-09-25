@@ -100,3 +100,10 @@ path = "fuzz_targets/wasm_module.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "contract_sequence"
+path = "fuzz_targets/contract_sequence.rs"
+test = false
+doc = false
+bench = false
