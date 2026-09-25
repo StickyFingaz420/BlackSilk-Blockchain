@@ -140,6 +140,11 @@ pub struct Template {
     pub txs: Vec<Transaction>,
 }
 
+/// Reorganizations at least this deep are logged as warnings. There is no depth
+/// limit: the chain with the most work always wins (docs/consensus.md §8,
+/// docs/reviews/assumptions.md K4).
+pub const DEEP_REORG_WARN_DEPTH: usize = 10;
+
 pub struct ChainManager {
     params: ChainParams,
     rules: TxRules,
@@ -155,6 +160,8 @@ pub struct ChainManager {
     mempool: Mempool,
     store: Box<dyn BlockStore>,
     rng: ChaCha20Rng,
+    /// The deepest reorganization since the manager was opened.
+    deepest_reorg: usize,
 }
 
 impl ChainManager {
@@ -187,6 +194,7 @@ impl ChainManager {
             mempool: Mempool::new(),
             store,
             rng: ChaCha20Rng::from_seed(rng_seed),
+            deepest_reorg: 0,
         };
         let total = stored.len();
         for (i, (pow_hash, bytes)) in stored.into_iter().enumerate() {
@@ -246,6 +254,11 @@ impl ChainManager {
 
     pub fn state(&self) -> &MemoryChain {
         &self.state
+    }
+
+    /// The deepest reorganization (blocks disconnected) since opening.
+    pub fn deepest_reorg(&self) -> usize {
+        self.deepest_reorg
     }
 
     pub fn mempool(&self) -> &Mempool {
@@ -362,7 +375,12 @@ impl ChainManager {
                 }
             }
             let depth = self.connected.len() - 1 - fork;
-            if depth > 0 {
+            self.deepest_reorg = self.deepest_reorg.max(depth);
+            if depth >= DEEP_REORG_WARN_DEPTH {
+                log::warn!(
+                    "reorganization: disconnecting {depth} block(s) above height {fork}.                      A reorganization this deep suggests a network partition or a                      hash-power attack; no depth limit applies"
+                );
+            } else if depth > 0 {
                 log::info!("reorganization: disconnecting {depth} block(s) above height {fork}");
             }
             while self.connected.len() - 1 > fork {

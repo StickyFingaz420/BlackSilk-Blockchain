@@ -298,6 +298,7 @@ fn transactions_survive_reorgs_via_the_mempool() {
     let now = b2.header.timestamp;
     let s = m.submit_block(b2, now).unwrap();
     assert!(s.on_best_chain);
+    assert_eq!(m.deepest_reorg(), 1, "A1 was disconnected");
 
     // The payment is undone and back in the mempool; emission is per height.
     assert!(scan_all(&m, &alice).is_empty());
