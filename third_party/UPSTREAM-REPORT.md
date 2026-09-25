@@ -76,6 +76,6 @@ Either one:
 
 ## Before filing
 
-1. Fill in the downstream results in both drafts (`RERUN_RESULTS`), from the re-run
-   with the final patch.
+1. Done: the downstream results with the final patch are in both drafts (the full
+   suite, 396 tests; 80 concurrent proofs, no hang).
 2. The owner chooses a version and files it; nothing is filed from here.

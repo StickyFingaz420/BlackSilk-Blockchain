@@ -93,7 +93,19 @@ labnet is used), remaining risks and limitations.
 - Record the failure, fix it, and repeat the reset with a new network id. Never reuse
   an id for a different genesis.
 
-## 7. Local rehearsal before the trial
+## 7. Local rehearsal before the trial (done 2026-09-25)
+
+**Result:** passed; evidence in `docs/evidence/labnet-2026-09-25/reset-rehearsal/`.
+- **New identity:** the scratch copy's new testnet identity pinned a new genesis id
+  (`192fad73…bf6`).
+- **The new network:** a 30-minute, 5-node run on it passed every labnet check.
+- **Isolation:** a node of the current identity was refused at every handshake
+  attempt.
+- **Private traffic** was rehearsed separately on regtest
+  (`docs/evidence/labnet-2026-09-25/px-regtest/`: 5 PX transactions under partitions;
+  restored wallets match, private balances included).
+
+The procedure itself:
 
 - Before the seven machines, the procedure is rehearsed on one machine: a scratch copy
   with a new testnet id and genesis time, and a multi-process run with the labnet tool

@@ -992,7 +992,7 @@ It is explicitly **not** an independent review.
 | ZK-F25 | **Documentation errors.** The dependency review said the PX proofs do not use Plonky3's Merkle path pruning; they do (FRI's `open_multi_batch`). `px/src/lib.rs` still said "not consensus yet". | Both corrected. |
 | ZK-F26 | **Wallet: `clear-pending` did not clear PX spends.** Only v1 outputs were unmarked, so PX records of a dropped transaction stayed unspendable until the 20-block expiry. | `clear_pending` also clears PX and contract records, and drops unconfirmed contract records this wallet created (unit-tested). |
 | ZK-F27 | **Wallet: a claimer whose wallet was newer than a contract's deploy could not use the contract.** The wallet learned contracts only from the deploys it scanned, and a new wallet scans from the current height. Found in the contract-wallet review. | The node serves the complete, ordered registration list (`/px/contracts`, backed by a registration log in the chain state with exact reorganization undo). Wallets download it whole, like the commitment list, so the node learns nothing about which contracts a wallet uses. **Tested:** a wallet created after the deploy knows the contract (`wallet/tests/e2e.rs`); the log gains the registration and loses it on undo (`tx/tests/px_consensus.rs`). |
-| ZK-F28 | **Our own ZK-F11 patch was incomplete** (found while preparing the upstream report, by auditing every lock in the patched crates). In `get_quotient_ldes` the patch released the lock before the DFTs, but inside the locked block it still called `with_random_cols`, whose row copy is parallel: the ZK-F21 pattern, still present at one site. So the earlier statement that no `spin` lock is held across rayon work was wrong for this site. | The random columns are drawn sequentially under the lock (`RowMajorMatrix::rand`, in the order `with_random_cols` draws them), and the matrices are widened by a shared helper (`widen`) after the lock is released, with the originals dropped to keep peak memory as upstream. `commit` uses the same helper. **Every** `lock()` in the three patched crates was re-audited: each now does only sequential work. **Tested:** a new unit test shows the result equals `with_random_cols`'s exactly for the same RNG state (proofs unchanged for a seed); upstream's `p3-fri` suite passes with the fix (65 tests, with and without parallelism). |
+| ZK-F28 | **Our own ZK-F11 patch was incomplete** (found while preparing the upstream report, by auditing every lock in the patched crates). In `get_quotient_ldes` the patch released the lock before the DFTs, but inside the locked block it still called `with_random_cols`, whose row copy is parallel: the ZK-F21 pattern, still present at one site. So the earlier statement that no `spin` lock is held across rayon work was wrong for this site. | The random columns are drawn sequentially under the lock (`RowMajorMatrix::rand`, in the order `with_random_cols` draws them), and the matrices are widened by a shared helper (`widen`) after the lock is released, with the originals dropped to keep peak memory as upstream. `commit` uses the same helper. **Every** `lock()` in the three patched crates was re-audited: each now does only sequential work. **Tested:** a new unit test shows the result equals `with_random_cols`'s exactly for the same RNG state (proofs unchanged for a seed); upstream's `p3-fri` suite passes with the fix (65 tests, with and without parallelism). Downstream, with the final patch: the full suite (396 passed, 0 failed) and 80 concurrent proofs on 8 threads without a hang (909 s). |
 
 **ZK-6: consensus integration** (spec `docs/px.md` §11). All of the following is
 implemented, wired into the node and tested:
@@ -1149,6 +1149,41 @@ seeded from real encodings (`fuzz/src/seeds.rs`).
 - **Proof-length evidence** (privacy review §3a):
   - the regression test in `px/tests/proof.rs`;
   - 10 deposit and 10 payment proofs: permutation p = 0.70.
+
+**ZK-8: pre-trial assurance round (2026-09-25, after the owner's review).**
+- **Plonky3 patch:** ZK-F28 fixed our own incomplete ZK-F11 patch.
+  - Every lock in the patched crates was re-audited.
+  - An equivalence test; upstream suites 208/208.
+  - Downstream: the full suite (396 passed) and 80 concurrent proofs without a hang.
+- **Upstream report:** two versions (naming BlackSilk, and anonymous), with patches
+  that apply to v0.7.0, in `third_party/upstream/`. **Not filed:** owner decision.
+- **P-5** (privacy review §3a): a 260-proof campaign over 6 classes and 2 shapes.
+  - Every non-authentication part is byte-identical within each shape.
+  - No class dependence: all pairwise p ≥ 0.49.
+  - Padding options analysed; deferred with the reason recorded.
+  - **Status: supported, independent review pending.**
+- **Query policy:** the rationale and costs are recorded (docs/reviews/query-policy.md);
+  108 queries are kept.
+- **External review:** the scope is defined (docs/reviews/external-review-scope.md).
+  **No part of BlackSilk's own code has been independently reviewed.**
+- **Adversarial tests:**
+  - peers relaying a corrupted-proof or non-standard-fee PX transaction are
+    penalized, and a deposit with a corrupted proof is refused on its signatures,
+    without penalty (`p2p/tests/network.rs::invalid_px_transactions_get_the_relaying_peer_penalized`);
+  - a node restarted from its block file rebuilds the PX state exactly
+    (`chain/tests/manager.rs::restart_rebuilds_the_px_state_exactly`).
+- **Labnet with PX traffic** (5 processes, partitions, 62 min): `checks_passed`;
+  restored wallets match, private balances included; supply conserved
+  (docs/evidence/labnet-2026-09-25/).
+- **Reset rehearsal:** a new identity; a 30-minute testnet-rules run passed; an
+  old-identity node is refused (docs/testnet-reset-plan.md §7).
+- **CI:**
+  - the workflow now runs the tests in release mode, lint over all crates,
+    `cargo audit` and a fuzz smoke job;
+  - the campaign script fails on crash artifacts;
+  - **not yet run:** CI runs on GitHub after a push.
+- **Long coverage-guided fuzzing:** LONGFUZZ_RESULTS
+- **Final full suite** (all ZK-8 changes): **396 passed, 0 failed, 2 ignored (opt-in).**
 
 **Open items:**
 - **Proof size (main open problem):** ~2 MB per transfer, so about 4 PX transactions

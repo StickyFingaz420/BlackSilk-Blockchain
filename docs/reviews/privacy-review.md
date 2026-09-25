@@ -177,7 +177,25 @@ distribution for every witness, and observing it tells nothing about the witness
   other part variable would fail this test.
 - **The spread is small:** 6 transfer proofs with different witnesses were
   2,029,768–2,046,856 bytes (0.84%; `px/examples/proof_lengths.rs`).
-- **The two witness classes are indistinguishable by length:**
+- **Campaign across witness classes and execution paths (2026-09-25; raw data in
+  `docs/evidence/p5-2026-09-25/`):** 260 proofs, the classes interleaved.
+
+  | Shape | Class | n | Mean bytes | sd | Min | Max |
+  |---|---|---|---|---|---|---|
+  | transfer | deposit (two dummy inputs, bridge-in) | 50 | 2,037,703 | 4,349 | 2,026,696 | 2,046,600 |
+  | transfer | payment, two real inputs | 50 | 2,037,612 | 4,132 | 2,028,872 | 2,045,384 |
+  | transfer | payment, one real input and a dummy | 50 | 2,038,051 | 4,587 | 2,026,696 | 2,046,120 |
+  | transfer | withdrawal (bridge-out) | 50 | 2,037,433 | 4,369 | 2,028,072 | 2,049,384 |
+  | vault | LOCK (a user record into a contract record) | 30 | 2,487,709 | 4,559 | 2,479,254 | 2,495,030 |
+  | vault | CLAIM (a contract record paid out) | 30 | 2,488,396 | 4,240 | 2,479,990 | 2,496,278 |
+
+  - **Pairwise tests** (20,000 permutations each, all pairs within a shape): every
+    difference of means is between 91 and 687 bytes, with p = 0.49–0.92. The
+    Kolmogorov–Smirnov p is 0.55–0.97.
+  - **No test indicates a dependence** of length on the class.
+  - **Every** non-authentication part was byte-identical across all 200 transfer
+    proofs and across all 60 vault proofs (asserted by the tool).
+- **Earlier, smaller check (superseded by the campaign):**
   `px/examples/proof_length_distribution.rs`, 10 deposits and 10 payments,
   interleaved: deposits mean 2,037,998 bytes (sd 4,821, range
   2,033,288–2,045,544), payments mean 2,037,218 bytes (sd 4,168, range
@@ -254,11 +272,49 @@ distribution for every witness, and observing it tells nothing about the witness
 
 ### 5. Limitations
 
-- **The measurement is small:** 28 proofs in all (2 in the regression test, 6, and 20). It supports the reasoning but cannot
-  prove it; a subtle dependence of a few bytes would need far more samples to detect.
+- **Statistical power.** With 50 proofs per class and a spread of about 4.4 KB, the
+  tests would detect a class difference in mean length of about 2.5 KB (0.57 standard
+  deviations; 80% power, 5% level). A smaller, systematic dependence would go
+  undetected. The regression test's check, that every non-authentication part is
+  identical, is exact rather than statistical, and it covers everything but the
+  authentication data.
+- **The classes tested:** four transfer paths and two vault functions. Other
+  contracts' functions have other shapes; the argument applies to them by the same
+  reasoning, but they are not measured.
 - **The reasoning is internal:** it has not been independently reviewed (see below).
 - **The length is not constant.** The claim is that it is uninformative, not that it
   is fixed.
+
+### 5a. What proof-length variation could reveal
+
+- **Within one shape, nothing about the witness.**
+  - The varying part is the authentication data, whose size is a function of the
+    query positions.
+  - The positions are recomputable by anyone from the proof itself, so the length
+    reveals nothing that the public proof does not already contain.
+  - Under A1, they are distributed identically for every witness.
+- **Across shapes, which shape was used,** and that is public anyway: the called
+  functions (and so the budgets) are listed in the transaction. A plain transfer
+  (about 2.04 MB) and a vault call (about 2.49 MB) differ by design.
+- **Under a malicious prover (A2):** up to a few bits chosen by the prover, by
+  re-proving until the length matches. That is a covert channel from the prover's own
+  wallet, not a leak of anyone else's data.
+
+### 5b. Stronger mitigations considered
+
+| Option | Effect | Cost | Assessment |
+|---|---|---|---|
+| **Pad to a fixed per-shape length, re-proving on overflow** | Constant length. The target is set above the observed spread (for example mean + 6 sd, about 26 KB or 1.3% above the mean); a proof over it is re-proved with fresh randomness | ~1.3% size (*estimate*); a rare extra proof (probability negligible at 6 sd if the tail is Gaussian, not measured); **a new consensus rule** fixing the proof field's length per shape; a target for every shape, including every contract function's budgets | Practical for the fixed kernel shapes. For arbitrary contracts it needs a per-shape formula, or a target registered with each function |
+| **Pad to the guaranteed worst case** | Constant length, no re-proving | A per-shape bound on distinct authentication nodes, derived from Plonky3's pruning, tree heights and folding schedule, to recheck on every upgrade. Size cost not measured (the worst case is well above typical) | Strongest, but ties consensus to Plonky3 internals |
+| **Unpruned Merkle openings** | Constant structure | Much larger proofs: pruning saves the shared path prefixes of 108 queries | Rejected: proof size is the main open problem |
+| **Pad to fixed buckets** (for example multiples of 64 KB) | Hides most of the spread | Proofs near a bucket edge still vary | Weaker; not recommended |
+
+**Decision for now:** no padding. **Deferred, with this reason:**
+- the evidence (exact identity of every non-authentication part, reasoning from the
+  source, a 260-proof campaign) shows no information in the length;
+- every constant-length option adds a consensus rule and a size cost.
+
+The owner may choose the first option after the independent review.
 
 ### 6. What would increase confidence
 
@@ -266,8 +322,8 @@ distribution for every witness, and observing it tells nothing about the witness
    compute the expected number of distinct authentication nodes, and compare with the
    actual size, proving length = f(shape, Q) proof by proof. Not implemented (it
    needs hooks into Plonky3's verifier).
-2. **A larger statistical campaign:** hundreds of proofs per witness class, several
-   classes, a two-sample distribution test.
+2. **A larger campaign:** the 260-proof campaign above covers six classes. Thousands
+   of proofs per class would detect differences below 1 KB.
 3. **Independent review** of this argument by someone familiar with Plonky3's FRI,
    together with the zero-knowledge review (security review §9).
 4. **A constant length**, if a reviewer requires it: pad every proof to a per-shape
