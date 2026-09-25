@@ -1,31 +1,36 @@
 # Version B (does not name the project). DRAFT, NOT SUBMITTED
 
-**Title:** Deadlock: `spin::Mutex` in `HidingFriPcs` / `MerkleTreeHidingMmcs` held across rayon work
+**Title:** Possible deadlock: `spin::Mutex` in `HidingFriPcs` / `MerkleTreeHidingMmcs` held across rayon work
 
 ## Summary
 
-With the `parallel` feature, proving with the hiding PCS can hang forever, with worker
-threads spinning at 100% CPU and no progress. `HidingFriPcs` (`p3-fri`) and
-`MerkleTreeHidingMmcs` (`p3-merkle-tree`) keep their randomness in a `spin::Mutex` and,
-at three sites, hold it while rayon work runs. The same pattern in `Radix2DitParallel`'s
-twiddle cache was fixed in 0.8.0 (`twiddle_cache.rs`: "A missing table is computed
-outside the lock…"). These are the remaining instances.
+With the `parallel` feature, `HidingFriPcs` (`p3-fri`) and `MerkleTreeHidingMmcs`
+(`p3-merkle-tree`) keep their randomness in a `spin::Mutex`. At three sites they hold
+that lock while rayon work runs. In a downstream project, proving with the hiding PCS
+hung with worker threads spinning at 100% CPU. We believe these sites are the cause.
+
+The same pattern in `Radix2DitParallel`'s twiddle cache was fixed in 0.8.0
+(`twiddle_cache.rs`: "A missing table is computed outside the lock…"). These appear
+to be the remaining instances.
 
 ## Affected components and versions
 
-| Crate | File, function | 0.7.0 | 0.8.0 / `main` (checked 2026-09-25) |
+| Crate | File, function | 0.7.0 | 0.8.0 and `main` (as of 2026-09-25) |
 |---|---|---|---|
-| `p3-fri` | `hiding_pcs.rs`, `commit` | affected | affected |
-| `p3-fri` | `hiding_pcs.rs`, `get_quotient_ldes` | affected | affected |
-| `p3-merkle-tree` | `hiding_mmcs.rs`, `commit` | affected | affected |
-| `p3-dft` | `radix_2_dit_parallel.rs`, twiddle caches | affected | fixed |
+| `p3-fri` | `hiding_pcs.rs`, `commit` | pattern present; hang observed (see Evidence) | pattern present (code inspection only; not built or run) |
+| `p3-fri` | `hiding_pcs.rs`, `get_quotient_ldes` | pattern present; hang observed | pattern present (code inspection only) |
+| `p3-merkle-tree` | `hiding_mmcs.rs`, `commit` | pattern present | pattern present (code inspection only) |
+| `p3-dft` | `radix_2_dit_parallel.rs`, twiddle caches | pattern present | fixed upstream |
 
-## Mechanism
+"Pattern present" means a `spin` lock guard is alive while rayon work runs. It does not
+mean a hang was observed at that site: see "What was observed".
+
+## Mechanism (from the code)
 
 1. A thread holding the lock enters a rayon operation (`par_iter`, `join`) and, while
-   it waits for subtasks, executes other queued tasks.
-2. If such a task, from another table, commitment or concurrent proof, needs the same
-   lock, it spins forever on a lock held further up the same thread's stack.
+   it waits for subtasks, executes other queued tasks (rayon work stealing).
+2. If such a task (from another table, another commitment or a concurrent proof) needs
+   the same lock, it spins on a lock held further up the same thread's stack.
 3. With two locks, two threads can each hold one and spin on the other.
 4. `spin::Mutex` never yields, so the result is full CPU use with no progress.
 
@@ -47,26 +52,55 @@ outside the lock…"). These are the remaining instances.
    self.rng.lock();` is still held when `self.inner.commit(salted_inputs)` builds the
    tree in parallel.
 
-## Evidence (a downstream project: Plonky3 0.7.0, `parallel`, Windows x86_64, 8 threads)
+## Environment
 
-The project proves a batch STARK with lookups over about 12 tables, with the hiding PCS
-and MMCS.
-- **Before any fix:** sequential test runs hung in 3 of 3 runs, one of them for 4
-  hours at full CPU. The span log placed the stall in a table's quotient step.
-- **After fixing sites 2 (partly) and 3:** a full test-suite run with several proofs
-  concurrently in one process hung for 2 hours, with 5 threads at 100%. The remaining
-  sites were found by auditing every lock.
+- Plonky3 0.7.0 (crates.io), feature `parallel`;
+- `rayon` 1.12.0, `spin` 0.12.3;
+- rustc 1.98.1 stable, `x86_64-pc-windows-msvc`, release profile;
+- Windows 10, 8 logical CPUs, rayon's default thread pool;
+- a batch STARK with lookups over about 12 tables, with `HidingFriPcs` and
+  `MerkleTreeHidingMmcs`.
 
-## Limitations of the diagnosis
+**Not tested:** Linux, macOS, other architectures, other thread counts, 0.8.0, `main`.
 
-- The hang depends on scheduling and could not be reproduced on demand afterwards: two
-  full concurrent test runs and 80 concurrent proofs completed on the build without
-  the later fixes.
-- The diagnosis therefore rests on code analysis: each site holds a spin lock across
-  rayon work, which is enough for the deadlock described.
-- No stack trace was captured of the hung process.
-- The independent upstream fix of the identical `p3-dft` pattern supports the
-  analysis.
+## What was observed
+
+These are measurements, not guarantees.
+- **Unmodified 0.7.0:** 3 of 3 runs of the downstream test suite, run sequentially,
+  hung; one hung for 4 hours at full CPU. Instrumented logging placed the stall in the
+  quotient step (`get_quotient_ldes`) of one table.
+- **With `get_quotient_ldes` partly fixed and site 3 fixed:** one run of the full
+  suite, with several proofs concurrently in one process, hung for 2 hours with 5
+  threads at 100% CPU.
+- **Site 1 and the `p3-dft` twiddle cache** were then found by auditing every lock,
+  not by locating a stall in them.
+- **After that hang, the build without the later fixes did not hang again:** 2 full
+  concurrent suite runs and 80 concurrent proofs completed. The hang is
+  scheduling-dependent and we could not reproduce it on demand.
+- No stack trace or debugger dump of a hung process was captured.
+
+## What is inferred, and what is not claimed
+
+- **Inferred from the code:** each listed site holds a spin lock across rayon work.
+  Together with work stealing, that is sufficient for the deadlock above. The upstream
+  0.8.0 fix of the identical `p3-dft` pattern supports this reading.
+- **Not claimed:**
+  - that every hang observed was caused by one specific site;
+  - that the listed sites are the only ones in Plonky3 (we audited the three crates
+    above only);
+  - that the patched code cannot deadlock. The runs without a hang (below) are
+    consistent with the fix but do not prove it: hangs were rare before the fix too.
+
+## Reproducing
+
+There is no deterministic reproducer.
+- **What exposed it here:** many multi-table hiding proofs at the same time in one
+  process, with `parallel` enabled, repeated until one stalls. A stall shows as all
+  rayon workers at 100% CPU with no progress for minutes.
+- **A deterministic test would be better:** in the style of the existing
+  `miss_computes_without_holding_the_lock`, a test could assert that each site's lock
+  is free during its parallel part (for example with `try_lock` from inside a rayon
+  task). We have not written one against upstream.
 
 ## Recommended remediation
 
@@ -74,25 +108,30 @@ Draw all random values while holding the lock, in the same order as today, and d
 **no** parallel work under the lock.
 - In `commit` and `get_quotient_ldes`: draw the random columns with
   `RowMajorMatrix::rand(&mut *rng, h, cols)`, which yields the same values row by
-  row, then append them with a parallel copy after the lock is released.
+  row. Append them with a parallel copy after the lock is released.
 - In `MerkleTreeHidingMmcs::commit`: end the lock's scope before
   `self.inner.commit`.
 
-A patch against 0.7.0 is attached (`hiding-lock-scope-neutral.patch`, with project references removed from the comments). It applies cleanly to
-the v0.7.0 tag; it would be ported to `main` in a pull request.
+A patch against 0.7.0 is attached (`hiding-lock-scope-neutral.patch`). It applies
+cleanly to the v0.7.0 tag. Its code comments are written as downstream notes; a pull
+request would reword them and port the change to `main`. The port has not been done or
+tested.
 
-**Test results with the patch:**
-- Plonky3's own suites pass for `p3-fri` (65 tests), `p3-merkle-tree` (99) and
-  `p3-dft` (44), with and without parallelism;
-- a new unit test, `widen_matches_with_random_cols`, shows the drawn values are
-  identical to `with_random_cols` for the same RNG state, so proofs are unchanged for
-  a seed;
-- downstream, with the final patch: the full downstream test suite passes (396 tests, 0 failures), and 80 proofs running concurrently on 8 threads complete without a hang (909 s).
+## Test results with the patch (0.7.0, the environment above)
 
-A regression test in the style of `miss_computes_without_holding_the_lock` could
-assert that each site's lock is free during the parallel part.
+- Plonky3's own suites pass, with and without `parallel`: `p3-fri` (65 tests),
+  `p3-merkle-tree` (99) and `p3-dft` (44).
+- A new unit test, `widen_matches_with_random_cols`, shows that the patched code
+  produces exactly the matrix `with_random_cols` produces from the same RNG state. So
+  the change does not alter the random values drawn, or their order.
+- Downstream: the full test suite passes, and 80 proofs running concurrently on 8
+  threads completed without a hang (909 s). **No hang observed; this is not a proof
+  that none can occur.**
 
 ## Impact
 
-Liveness only: a prover can hang. Soundness and zero knowledge are unaffected, and
-the proof bytes for a given RNG state are unchanged by the fix.
+- **Liveness:** a prover can hang indefinitely.
+- **Soundness and zero knowledge:** a hang produces no proof, so it cannot produce an
+  invalid one. The patch only moves where the lock is released, and the unit test above
+  shows the drawn randomness is unchanged. We did not analyse other effects beyond
+  that.

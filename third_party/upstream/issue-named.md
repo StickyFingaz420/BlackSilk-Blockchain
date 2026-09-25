@@ -65,6 +65,10 @@ and MMCS.
 - The diagnosis therefore rests on code analysis: each site holds a spin lock across
   rayon work, which is enough for the deadlock described.
 - No stack trace was captured of the hung process.
+- The absence of hangs after the patch (below) is consistent with the fix, but does
+  not prove it: the hang was rare before the fix too.
+- Observed and tested on Windows x86_64 (8 threads) with 0.7.0 only. The patch has not
+  been ported to or tested on 0.8.0 or `main`, nor on other platforms.
 - The independent upstream fix of the identical `p3-dft` pattern supports the
   analysis.
 
@@ -79,14 +83,15 @@ Draw all random values while holding the lock, in the same order as today, and d
   `self.inner.commit`.
 
 A patch against 0.7.0 is attached (`hiding-lock-scope.patch`). It applies cleanly to
-the v0.7.0 tag; it would be ported to `main` in a pull request.
+the v0.7.0 tag. Its code comments are written as downstream notes; a pull request
+would reword them and port the change to `main`.
 
 **Test results with the patch:**
 - Plonky3's own suites pass for `p3-fri` (65 tests), `p3-merkle-tree` (99) and
   `p3-dft` (44), with and without parallelism;
-- a new unit test, `widen_matches_with_random_cols`, shows the drawn values are
-  identical to `with_random_cols` for the same RNG state, so proofs are unchanged for
-  a seed;
+- a new unit test, `widen_matches_with_random_cols`, shows that the patched code
+  produces exactly the matrix `with_random_cols` produces from the same RNG state, so
+  the fix does not change the randomness drawn;
 - downstream, with the final patch: the full downstream test suite passes (396 tests, 0 failures), and 80 proofs running concurrently on 8 threads complete without a hang (909 s).
 
 A regression test in the style of `miss_computes_without_holding_the_lock` could
