@@ -533,3 +533,150 @@ fn pow_jobs_use_seeds_from_the_batch() {
     broken.swap(1, 2);
     assert!(dst.pow_jobs(&broken).is_none());
 }
+
+/// The `nth` mature, unspent output of `from`, with a ring.
+fn plan_nth(m: &ChainManager, from: &WalletKeys, nth: usize, rng: &mut ChaCha20Rng) -> InputPlan {
+    let height = m.height() + 1;
+    let owned = scan_all(m, from)
+        .into_iter()
+        .filter(|o| {
+            let age = if o.coinbase {
+                COINBASE_MATURITY
+            } else {
+                SPENDABLE_AGE
+            };
+            height >= o.height + age && !m.state().is_key_image_spent(&o.key_image(from))
+        })
+        .nth(nth)
+        .expect("a spendable output");
+    let state = m.state();
+    let ring = select_ring(
+        rng,
+        &state.cumulative_outputs(),
+        height,
+        120,
+        owned.global_index,
+        |i| {
+            state.output(i).is_some_and(|r| {
+                let age = if r.coinbase {
+                    COINBASE_MATURITY
+                } else {
+                    SPENDABLE_AGE
+                };
+                height >= r.height + age
+            })
+        },
+    )
+    .unwrap();
+    InputPlan {
+        real: SpendableOutput::from(&owned),
+        decoys: ring
+            .iter()
+            .filter(|&&i| i != owned.global_index)
+            .map(|&i| Decoy {
+                global_index: i,
+                key: state.output(i).unwrap().key,
+            })
+            .collect(),
+    }
+}
+
+/// A node restarted from its block file rebuilds the PX state exactly: the
+/// commitment tree, the pool, the nullifiers, the contract registry and the
+/// registration list wallets download (docs/px.md §11.3, §13.4).
+#[test]
+fn restart_rebuilds_the_px_state_exactly() {
+    use blacksilk_px::wallet::{self as pxw, Account};
+    use blacksilk_tx::px::Registration;
+    use blacksilk_tx::px_builder::{build_deploy, build_px, px_standard_fee, PxPlan};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("blocks.dat");
+    let (tip, root, pool, nullifiers, log, contract) = {
+        let mut m = open(Box::new(FileStore::open(&path).unwrap()), Arc::default());
+        let mut miner = Miner::new(8);
+        for _ in 0..75 {
+            miner.mine_tip(&mut m);
+        }
+        let rules = *m.rules();
+        // A PX deposit (a real proof) and a contract deploy, from two outputs.
+        let amount = 5_000_000;
+        let plan = plan_nth(&m, &miner.keys, 0, &mut miner.rng);
+        let acct = Account::from_seed(&[3; 32]);
+        let rng = &mut miner.rng;
+        let witness = pxw::witness(
+            m.state().px().root(),
+            amount,
+            0,
+            [pxw::dummy_input(rng), pxw::dummy_input(rng)],
+            [
+                pxw::output(rng, acct.owner(0), amount),
+                pxw::empty_output(rng),
+            ],
+        );
+        let primary = miner.keys.address(SubaddressIndex::PRIMARY);
+        let deposit = build_px(
+            PxPlan {
+                keys: Some(&miner.keys),
+                inputs: vec![plan],
+                change: Some(primary),
+                payouts: vec![],
+                witness,
+                recipients: [Some(acct.address(0)), None],
+                functions: vec![],
+                fee: px_standard_fee(),
+            },
+            &rules,
+            &mut miner.rng,
+        )
+        .unwrap();
+        m.submit_tx(Transaction::Px(Box::new(deposit))).unwrap();
+        let plan = plan_nth(&m, &miner.keys, 1, &mut miner.rng);
+        let deploy = build_deploy(
+            &miner.keys,
+            vec![plan],
+            &[Payment {
+                address: primary,
+                amount: 0,
+            }],
+            &primary,
+            [4; 32],
+            vec![Registration {
+                elf: blacksilk_px::vault::VAULT_ELF.to_vec(),
+                budget: blacksilk_px::vault::BUDGET,
+            }],
+            &rules,
+            &mut miner.rng,
+        )
+        .unwrap();
+        let contract = deploy.contract_id();
+        m.submit_tx(Transaction::PxDeploy(Box::new(deploy)))
+            .unwrap();
+        miner.mine_tip(&mut m);
+        let s = m.state();
+        assert_eq!(s.px_pool(), amount as u128, "the deposit is in the block");
+        assert_eq!(s.px_contract_log().len(), 1, "the deploy is in the block");
+        (
+            m.tip_id(),
+            s.px().root(),
+            s.px_pool(),
+            s.px_nullifiers(0, u64::MAX),
+            s.px_contract_log().to_vec(),
+            contract,
+        )
+    };
+
+    let m = open(Box::new(FileStore::open(&path).unwrap()), Arc::default());
+    let s = m.state();
+    assert_eq!(m.tip_id(), tip);
+    assert_eq!(s.px().root(), root);
+    assert_eq!(s.px_pool(), pool);
+    assert_eq!(s.px_nullifiers(0, u64::MAX), nullifiers);
+    assert_eq!(s.px_contract_log(), log.as_slice());
+    assert!(s.px_contract_exists(&contract));
+    assert_eq!(
+        s.px_function(&contract, &blacksilk_px::vault::program().id())
+            .map(|f| f.1),
+        Some(blacksilk_px::vault::BUDGET)
+    );
+}

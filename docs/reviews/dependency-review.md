@@ -65,10 +65,13 @@ Details: `docs/reviews/zk-security-review.md` §6. `unsafe` code:
 ### 3.2 The local patch
 
 - **Files:**
-  - `p3-fri/src/hiding_pcs.rs`: `get_quotient_ldes` (ZK-F11) and `commit` (ZK-F21);
+  - `p3-fri/src/hiding_pcs.rs`: `get_quotient_ldes` (ZK-F11, completed by ZK-F28)
+    and `commit` (ZK-F21), with a shared `widen` helper and its equivalence test;
   - `p3-merkle-tree/src/hiding_mmcs.rs`: `commit` (ZK-F11);
   - `p3-dft/src/radix_2_dit_parallel.rs`: the three twiddle caches (ZK-F21).
-- **Change:** no `spin` lock is held across rayon work any more.
+- **Change:** no `spin` lock is held across rayon work any more. That was first
+  claimed after ZK-F21 and was not yet true: one site remained, fixed in ZK-F28.
+  Every `lock()` in the patched crates was then re-audited.
   - Random values are drawn under the lock, which is then released.
   - Twiddle tables are computed before the write lock is taken.
 - **Audit of the other locks in the Plonky3 code we run:**
@@ -127,8 +130,9 @@ are never part of the node, wallet or miner.
 
 ## 6. Open items
 
-1. **RustSec in CI:** run `cargo audit` on every change to `Cargo.lock` (done by hand
-   above; there is no CI here yet).
+1. **RustSec in CI:** the GitHub Actions workflow (`.github/workflows/ci.yml`) now has
+   an `audit` job, with the reviewed `paste` warning ignored explicitly. It has not
+   run yet: CI runs on GitHub after a push.
 2. **Independent review** of the Plonky3 configuration (hiding mode, lookup argument,
    transcript) as used here, and of the `ml-kem` crate's decapsulation (FIPS 203
    implicit rejection).

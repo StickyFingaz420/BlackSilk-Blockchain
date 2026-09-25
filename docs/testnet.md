@@ -208,14 +208,18 @@ target/release/blacksilk-labnet --bin-dir target/release --out labnet-run \
 - every link goes through a proxy that adds latency and jitter;
 - a miner in each half of the network;
 - wallets sending transactions through random nodes;
-- periodic partitions between the two halves.
+- periodic partitions between the two halves;
+- with `--px-every-mins N`, private (PX) activity every N minutes: a deposit, a private
+  payment or a withdrawal by a random wallet. Each proves for about a minute, during
+  which the harness pauses.
 
 **What it checks at the end:**
 - convergence;
 - drained mempools;
 - a late node that discovers peers and syncs;
-- every wallet restored from its seed against that fresh node shows the same balance;
-- Σ wallet balances equals the coins generated;
+- every wallet restored from its seed against that fresh node shows the same balance,
+  v1 and private;
+- Σ wallet balances (v1 and private) equals the coins generated;
 - no crashes;
 - no misbehavior disconnects between honest nodes.
 

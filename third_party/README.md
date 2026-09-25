@@ -50,9 +50,17 @@ two hours, while each test alone passed in about a minute.
   lock. On a miss, two threads may compute the same deterministic table, and the first
   insert wins.
 
+**Third round (AUDIT.md ZK-F28): the ZK-F11 fix was incomplete.** Inside its locked
+block, `get_quotient_ldes` still called `with_random_cols`, whose row copy is
+parallel. Now the random columns are drawn sequentially under the lock (the same
+values in the same order), and a shared helper `widen` builds the widened matrices
+after the lock is released. A unit test (`widen_matches_with_random_cols`) shows the
+result is identical to `with_random_cols` for the same RNG state. Every `lock()` in
+the three patched crates now does sequential work only.
+
 **Diff against the published crates:**
-- `p3-fri/src/hiding_pcs.rs`: `get_quotient_ldes` and `commit`, one block each, plus
-  the `p3_maybe_rayon` prelude import.
+- `p3-fri/src/hiding_pcs.rs`: `get_quotient_ldes` and `commit`, one block each; the
+  `widen` helper and its unit test; the `p3_maybe_rayon` prelude and `Field` imports.
 - `p3-merkle-tree/src/hiding_mmcs.rs`: `commit`, one block.
 - `p3-dft/src/radix_2_dit_parallel.rs`: `get_or_compute_twiddles`,
   `get_or_compute_coset_twiddles` and `get_or_compute_inverse_twiddles`, one block
@@ -69,7 +77,8 @@ re-running the full test suite and `zkvm/tests/stress.rs`.
 - the three patched files were applied to the v0.7.0 release commit (`fb93826`), whose
   sources equal the crates.io copies;
 - `cargo test` passes for `p3-dft` (44 tests), `p3-merkle-tree` (99) and `p3-fri`
-  (64), with and without rayon parallelism.
+  (65, including the equivalence test added with ZK-F28), with and without rayon
+  parallelism.
 
 **Upstream status (checked 2026-09-25, released 0.8.0 and `main`):**
 - **`p3-dft`: fixed upstream in 0.8.0.** The new `twiddle_cache.rs` computes tables

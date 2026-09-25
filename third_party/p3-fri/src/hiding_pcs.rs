@@ -5,7 +5,7 @@ use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
 use p3_commit::{Mmcs, OpenedValues, Pcs, PolynomialSpace};
 use p3_dft::TwoAdicSubgroupDft;
 use p3_field::coset::TwoAdicMultiplicativeCoset;
-use p3_field::{ExtensionField, TwoAdicField, batch_multiplicative_inverse};
+use p3_field::{ExtensionField, Field, TwoAdicField, batch_multiplicative_inverse};
 use p3_matrix::Matrix;
 use p3_matrix::bitrev::{BitReversalPerm, BitReversibleMatrix};
 use p3_matrix::dense::{DenseMatrix, RowMajorMatrix, RowMajorMatrixCow};
@@ -19,6 +19,23 @@ use tracing::info_span;
 
 use crate::verifier::FriError;
 use crate::{BatchMultiOpening, FriParameters, FriProof, TwoAdicFriPcs};
+
+/// BlackSilk patch (third_party/README.md): `mat` with the columns of `extra`
+/// appended, row by row, the same result as upstream's `with_random_cols` when
+/// `extra` holds the values it would draw. The copy runs in parallel, so the
+/// callers call this only after releasing the RNG lock.
+fn widen<F: Field>(mat: &RowMajorMatrix<F>, extra: &RowMajorMatrix<F>) -> RowMajorMatrix<F> {
+    let (w, e) = (mat.width(), extra.width());
+    assert_eq!(mat.height(), extra.height());
+    let mut out = RowMajorMatrix::new(F::zero_vec(mat.height() * (w + e)), w + e);
+    out.par_rows_mut()
+        .zip(mat.par_row_slices().zip(extra.par_row_slices()))
+        .for_each(|(row, (old, new))| {
+            row[..w].copy_from_slice(old);
+            row[w..].copy_from_slice(new);
+        });
+    out
+}
 
 /// A hiding FRI PCS. Both MMCSs must also be hiding; this is not enforced at compile time so it's
 /// the user's responsibility to configure.
@@ -131,15 +148,7 @@ where
                         let num_cols = mat_width + 2 * self.num_random_codewords;
                         let random =
                             RowMajorMatrix::<Val>::rand(&mut *self.rng.lock(), mat.height(), num_cols);
-                        let mut random_evaluation =
-                            RowMajorMatrix::new(Val::zero_vec(mat.height() * (mat_width + num_cols)), mat_width + num_cols);
-                        random_evaluation
-                            .par_rows_mut()
-                            .zip(mat.par_row_slices().zip(random.par_row_slices()))
-                            .for_each(|(row, (old, rand))| {
-                                row[..mat_width].copy_from_slice(old);
-                                row[mat_width..].copy_from_slice(rand);
-                            });
+                        let mut random_evaluation = widen(&mat, &random);
                         random_evaluation.width = mat_width + self.num_random_codewords;
 
                         (domain, random_evaluation)
@@ -202,30 +211,40 @@ where
             .map(|i| cis[i] * last_chunk_ci_inv)
             .collect_vec();
 
-        // BlackSilk patch (third_party/README.md, AUDIT.md ZK-F11): draw every
-        // random value while holding the RNG lock, then release it *before*
-        // the parallel DFTs below. The prover calls this function for several
-        // tables inside a rayon parallel loop; holding this spin lock across
-        // rayon work let a thread steal another table's task and spin forever
-        // on a lock held further up its own stack. The draws happen in the
-        // same order as upstream, so proofs are unchanged for a given seed.
-        let (randomized_evaluations, mut all_random_values) = {
+        // BlackSilk patch (third_party/README.md, AUDIT.md ZK-F11, ZK-F28): draw
+        // every random value while holding the RNG lock, and do no parallel
+        // work under it. The prover calls this function for several tables
+        // inside a rayon parallel loop; holding this spin lock across rayon
+        // work let a thread steal another table's task and spin forever on a
+        // lock held further up its own stack. Upstream's `with_random_cols`
+        // copies rows in parallel, so the random columns are drawn here (in
+        // the same order it draws them) and the matrices widened after the
+        // lock is released. Proofs are unchanged for a given seed.
+        let (random_cols, mut all_random_values) = {
             let mut rng = self.rng.lock();
-            let randomized_evaluations: Vec<RowMajorMatrix<Val>> = evaluations
-                .into_iter()
-                .map(|mat| mat.with_random_cols(self.num_random_codewords, &mut *rng))
+            let random_cols: Vec<RowMajorMatrix<Val>> = evaluations
+                .iter()
+                .map(|mat| RowMajorMatrix::rand(&mut *rng, mat.height(), self.num_random_codewords))
                 .collect();
             // Add random values to the LDE evaluations as described in https://eprint.iacr.org/2024/1037.pdf.
             // If we have `d` chunks, let q'_i(X) = q_i(X) + v_H_i(X) * t_i(X) where t(X) is random, for 1 <= i < d.
             // q'_d(X) = q_d(X) - v_H_d(X) c_i \sum t_i(X) where c_i is a Lagrange normalization constant.
-            let h = randomized_evaluations[0].height();
-            let w = randomized_evaluations[0].width();
-            let all_random_values = (0..(randomized_evaluations.len() - 1) * h * w)
+            let h = evaluations[0].height();
+            let w = evaluations[0].width() + self.num_random_codewords;
+            let all_random_values = (0..(evaluations.len() - 1) * h * w)
                 .map(|_| rng.random())
                 .chain(core::iter::repeat_n(Val::ZERO, h * w))
                 .collect::<Vec<_>>();
-            (randomized_evaluations, all_random_values)
+            (random_cols, all_random_values)
         };
+        let randomized_evaluations: Vec<RowMajorMatrix<Val>> = evaluations
+            .iter()
+            .zip(&random_cols)
+            .map(|(mat, rand)| widen(mat, rand))
+            .collect();
+        // Keep peak memory as upstream: the unwidened matrices are no longer needed.
+        drop(evaluations);
+        drop(random_cols);
         let h = randomized_evaluations[0].height();
         let w = randomized_evaluations[0].width();
 
@@ -553,6 +572,20 @@ mod tests {
     type Dft = Radix2Dit<Val>;
     type Challenger = DuplexChallenger<Val, Perm, 16, 8>;
     type MyPcs = HidingFriPcs<Val, Dft, ValMmcs, ChallengeMmcs, StdRng>;
+
+    /// BlackSilk patch: drawing the random columns first and widening
+    /// afterwards (outside the RNG lock) gives exactly `with_random_cols`'s
+    /// result for the same RNG state, so proofs are unchanged for a seed.
+    #[test]
+    fn widen_matches_with_random_cols() {
+        for (h, w, n) in [(1, 1, 1), (8, 3, 4), (64, 17, 9), (256, 40, 12)] {
+            let mat = RowMajorMatrix::<Val>::rand(&mut SmallRng::seed_from_u64(h as u64), h, w);
+            let expected = mat.with_random_cols(n, &mut StdRng::seed_from_u64(7));
+            let extra = RowMajorMatrix::<Val>::rand(&mut StdRng::seed_from_u64(7), h, n);
+            let got = widen(&mat, &extra);
+            assert_eq!((got.width, &got.values), (expected.width, &expected.values));
+        }
+    }
 
     type Commitment = <ValMmcs as Mmcs<Val>>::Commitment;
     type Domain = TwoAdicMultiplicativeCoset<Val>;

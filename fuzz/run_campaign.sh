@@ -22,4 +22,11 @@ for target in tx_decode block_decode p2p_message zkvm_elf kernel_diff delivery_o
   echo "exit $?"
 done
 echo "=== artifacts"
-ls -R artifacts 2>/dev/null || echo "none"
+# libFuzzer writes a crash-/leak-/timeout- file for every failure; the exit
+# status above is lost in the pipe, so the artifacts decide.
+if [ -d artifacts ] && [ -n "$(find artifacts -type f)" ]; then
+  find artifacts -type f
+  echo "fuzzing found failures"
+  exit 1
+fi
+echo "none"

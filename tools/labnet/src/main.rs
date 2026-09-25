@@ -70,6 +70,11 @@ struct Args {
     /// regtest (10-second blocks) or testnet (the real testnet rules, 120 s blocks).
     #[arg(long, default_value = "regtest")]
     network: String,
+    /// Private (PX) activity every this many minutes: a deposit, a private
+    /// payment or a withdrawal by a random wallet (docs/px.md). Each proves for
+    /// about a minute, during which the harness loop pauses. 0 disables it.
+    #[arg(long, default_value_t = 0)]
+    px_every_mins: u64,
 }
 
 fn rpc_port(base: u16, i: usize) -> u16 {
@@ -101,6 +106,9 @@ struct Report {
     tx_attempts: u32,
     tx_submitted: u32,
     tx_failures: BTreeMap<String, u32>,
+    px_attempts: u32,
+    px_submitted: u32,
+    px_failures: BTreeMap<String, u32>,
     reorganizations: u32,
     max_reorg_depth: u64,
     misbehavior_disconnects: u32,
@@ -117,9 +125,13 @@ struct Report {
     late_joiner_synced: bool,
     late_joiner_peers: usize,
     fresh_wallet_balances_match: bool,
+    /// Private balances of fresh restores equal the long-running wallets'.
+    fresh_wallet_px_balances_match: bool,
     supply_conserved: bool,
     generated: u64,
     wallet_total: u64,
+    /// Of `wallet_total`, the part held privately (PX records).
+    wallet_px_total: u64,
     proxy_bytes: u64,
     checks_passed: bool,
 }
@@ -360,6 +372,8 @@ fn main() {
     let end = start + Duration::from_secs(a.duration_mins * 60);
     let mut next_sample = start;
     let mut next_tx = start + Duration::from_secs(60);
+    // PX needs mature coinbase outputs first (60 blocks).
+    let mut next_px = start + Duration::from_secs(60 * a.px_every_mins.max(12));
     let mut partition_until: Option<Instant> = None;
     let mut next_partition = start + Duration::from_secs(a.partition_every_mins * 60);
     let mut connected_since = start;
@@ -522,6 +536,59 @@ fn main() {
             // Unconfirmed spends expire inside the wallet (20 blocks); the harness
             // never clears them itself.
         }
+
+        // Private (PX) activity.
+        if a.px_every_mins > 0 && now >= next_px {
+            next_px = now + Duration::from_secs(60 * a.px_every_mins);
+            let from = (rng.next_u32() as usize) % wallets.len();
+            let node = (rng.next_u32() as usize) % n;
+            let mut to = (rng.next_u32() as usize) % wallets.len();
+            if to == from {
+                to = (to + 1) % wallets.len();
+            }
+            let px_dest_str = wallets[to].1.px_address(rng.next_u32() % 3);
+            let px_dest = blacksilk_chain::address::decode_px_address(net, &px_dest_str).unwrap();
+            let v1_dest_str = wallets[to].1.address(0, rng.next_u32() % 4);
+            let v1_dest = blacksilk_chain::address::decode_address(net, &v1_dest_str).unwrap();
+            let fee = blacksilk_tx::px_builder::px_standard_fee();
+            let (name, w) = &mut wallets[from];
+            let name = name.clone();
+            if w.sync(&clients[node]).is_ok() {
+                let (_, spendable) = w.px_balance();
+                let unlocked = w.balance().unlocked;
+                let result = if spendable >= COIN / 2 + fee {
+                    report.px_attempts += 1;
+                    if rng.next_u32() % 3 == 0 {
+                        w.px_withdraw(&clients[node], &v1_dest, COIN / 10, &rules, &mut rng)
+                            .map(|_| "withdraw")
+                    } else {
+                        w.px_send(&clients[node], &px_dest, COIN / 5, &rules, &mut rng)
+                            .map(|_| "send")
+                    }
+                } else if unlocked > 2 * COIN {
+                    report.px_attempts += 1;
+                    w.px_deposit(&clients[node], COIN, &rules, &mut rng)
+                        .map(|_| "deposit")
+                } else {
+                    Ok("none")
+                };
+                match result {
+                    Ok("none") => {}
+                    Ok(kind) => {
+                        report.px_submitted += 1;
+                        log(&mut journal, &format!("px {kind} by {name} via node{node}"));
+                    }
+                    Err(e) => {
+                        let key = format!("{e}").split(':').next().unwrap_or("?").to_string();
+                        *report.px_failures.entry(key).or_insert(0) += 1;
+                        log(
+                            &mut journal,
+                            &format!("px by {name} via node{node} failed: {e}"),
+                        );
+                    }
+                }
+            }
+        }
         std::thread::sleep(Duration::from_millis(200));
     }
     log(&mut journal, "traffic phase over; final checks");
@@ -606,7 +673,9 @@ fn main() {
 
     // Fresh wallets from seed against the late node vs. long-running wallets.
     let mut all_match = true;
+    let mut px_match = true;
     let mut total = 0u64;
+    let mut px_total = 0u64;
     for (name, w) in &mut wallets {
         let _ = w.sync(&clients[0]);
         w.clear_pending();
@@ -615,22 +684,33 @@ fn main() {
             fresh.address(0, i);
         }
         let fresh_ok = fresh.sync(&late_client).is_ok();
+        for i in 0..3 {
+            fresh.px_address(i);
+        }
+        let fresh_ok = fresh_ok && fresh.sync(&late_client).is_ok();
         let (b1, b2) = (w.balance(), fresh.balance());
-        total += b1.total;
+        let (p1, p2) = (w.px_balance().0, fresh.px_balance().0);
+        total += b1.total + p1;
+        px_total += p1;
         let ok = fresh_ok && b1.total == b2.total;
         all_match &= ok;
+        px_match &= fresh_ok && p1 == p2;
         log(
             &mut journal,
             &format!(
-                "{name}: balance {} (fresh restore: {}) {}",
+                "{name}: balance {} (fresh restore: {}), private {} (fresh restore: {}) {}",
                 format_amount(b1.total),
                 format_amount(b2.total),
-                if ok { "OK" } else { "MISMATCH" }
+                format_amount(p1),
+                format_amount(p2),
+                if ok && p1 == p2 { "OK" } else { "MISMATCH" }
             ),
         );
     }
     report.fresh_wallet_balances_match = all_match;
+    report.fresh_wallet_px_balances_match = px_match;
     report.wallet_total = total;
+    report.wallet_px_total = px_total;
     report.supply_conserved = total == report.generated;
     log(
         &mut journal,
@@ -676,6 +756,7 @@ fn main() {
         && report.mempools_drained_at_end
         && report.late_joiner_synced
         && report.fresh_wallet_balances_match
+        && report.fresh_wallet_px_balances_match
         && report.supply_conserved
         && report.misbehavior_disconnects == 0
         && report.stuck_incidents == 0;

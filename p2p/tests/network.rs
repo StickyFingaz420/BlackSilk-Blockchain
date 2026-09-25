@@ -9,6 +9,7 @@ use blacksilk_consensus::merkle::tx_root;
 use blacksilk_consensus::{BlockHeader, ChainParams, Hash, PowFunction, HEADER_VERSION};
 use blacksilk_crypto::keys::{SubaddressIndex, SubaddressTable, WalletKeys};
 use blacksilk_p2p::dandelion::DandelionParams;
+use blacksilk_p2p::limits::score;
 use blacksilk_p2p::message::{Message, Version, PROTOCOL_VERSION};
 use blacksilk_p2p::transport::{handshake, FrameReader, FrameWriter};
 use blacksilk_p2p::{NetAddr, NetConfig, Network, SharedChain};
@@ -730,4 +731,152 @@ async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
         (3..=4).contains(&penalized[0]),
         "one point per excess message"
     );
+}
+
+/// A peer relaying an invalid PX transaction is penalized as misbehaving
+/// when the failure is stateless (AUDIT.md ZK-F15, ZK-F23), and the
+/// transaction is neither pooled nor stemmed further:
+/// - a PX-only transaction (no v1 inputs) with a corrupted proof: `PxProof`;
+/// - the same transaction with a fee that is not the standard fee.
+///
+/// A deposit's v1 ring signatures cover the proof bytes, so corrupting a
+/// deposit's proof breaks a signature first: rejected, but not penalized
+/// (signatures depend on the node's view of ring members: contextual). This
+/// also means nobody can alter the proof of someone else's deposit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn invalid_px_transactions_get_the_relaying_peer_penalized() {
+    use blacksilk_px::delivery;
+    use blacksilk_px::perm::HostPerm;
+    use blacksilk_px::tree::Tree;
+
+    let mut a = node(40, &[]).await;
+    a.mine_n(80, 0);
+    // A deposit to `acct` (larger than the standard fee), mined.
+    let deposit = a.px_deposit(50_000_000);
+    let Transaction::Px(dep) = deposit.clone() else {
+        unreachable!()
+    };
+    a.chain.lock().unwrap().submit_tx(deposit).unwrap();
+    a.mine(0);
+    // `acct` spends it privately: a PX-only transaction (no v1 inputs).
+    let acct = Account::from_seed(&[5; 32]);
+    let fee = px_standard_fee();
+    let entries = a.chain.lock().unwrap().state().px_records(0, u64::MAX);
+    let mut perm = HostPerm::new();
+    let mut tree = Tree::new(&mut perm);
+    for e in &entries {
+        tree.append(&mut perm, e.commitment).unwrap();
+    }
+    let (rec, pos) = entries
+        .iter()
+        .find_map(|e| {
+            let rho = blacksilk_px::core::record::output_rho(&mut perm, &e.nf0, e.slot);
+            delivery::open(
+                &acct.delivery_keys(0),
+                &acct.owner(0),
+                &e.ciphertext,
+                &e.commitment,
+                &rho,
+            )
+            .map(|r| (r, e.position))
+        })
+        .expect("the deposit's record");
+    let rng = &mut a.rng;
+    let witness = pxw::witness(
+        tree.root(),
+        0,
+        fee,
+        [
+            acct.spend(0, &rec, pos, tree.path(pos).unwrap()),
+            pxw::dummy_input(rng),
+        ],
+        [
+            pxw::output(rng, acct.owner(1), rec.value - fee),
+            pxw::empty_output(rng),
+        ],
+    );
+    let rules = TxRules::for_chain(&params());
+    let spend = build_px(
+        PxPlan {
+            keys: None,
+            inputs: vec![],
+            change: None,
+            payouts: vec![],
+            witness,
+            recipients: [Some(acct.address(1)), None],
+            functions: vec![],
+            fee,
+        },
+        &rules,
+        &mut a.rng,
+    )
+    .unwrap();
+
+    let mut bad_proof = spend.clone();
+    let mid = bad_proof.proof.len() / 2;
+    bad_proof.proof[mid] ^= 1;
+    let mut bad_fee = spend.clone();
+    bad_fee.fee += 1;
+    let mut bad_deposit = (*dep).clone();
+    let mid = bad_deposit.proof.len() / 2;
+    bad_deposit.proof[mid] ^= 1;
+    for (what, bad, penalized) in [
+        ("corrupted proof", bad_proof, true),
+        ("non-standard fee", bad_fee, true),
+        ("corrupted deposit proof", bad_deposit, false),
+    ] {
+        let bad = Transaction::Px(Box::new(bad));
+        let id = bad.hash();
+        let verdict = a.chain.lock().unwrap().check_tx(&bad);
+        match what {
+            "corrupted proof" => assert!(
+                matches!(
+                    verdict,
+                    Err(blacksilk_chain::mempool::MempoolError::Invalid(
+                        blacksilk_tx::TxError::PxProof
+                    ))
+                ),
+                "{verdict:?}"
+            ),
+            "non-standard fee" => assert!(
+                matches!(
+                    verdict,
+                    Err(blacksilk_chain::mempool::MempoolError::Invalid(
+                        blacksilk_tx::TxError::PxFeeNotStandard { .. }
+                    ))
+                ),
+                "{verdict:?}"
+            ),
+            _ => assert!(
+                matches!(
+                    verdict,
+                    Err(blacksilk_chain::mempool::MempoolError::Invalid(
+                        blacksilk_tx::TxError::InvalidSignature { .. }
+                            | blacksilk_tx::TxError::KeyImageSpent { .. }
+                    ))
+                ),
+                "{verdict:?}"
+            ),
+        }
+        let (r, mut w) = raw_peer(a.addr, params().network_id, true).await;
+        w.send(&Message::StemTx(bad.encode()).encode())
+            .await
+            .unwrap();
+        if penalized {
+            wait_until(what, 60, || {
+                a.net.peers().iter().any(|p| p.score >= score::INVALID_TX)
+            })
+            .await;
+        } else {
+            // Give the node time to process it; the peer stays unpenalized.
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            assert!(a.net.peers().iter().all(|p| p.score == 0), "{what}");
+        }
+        assert!(
+            !a.mempool_has(&id) && !a.net.stempool_contains(&id),
+            "{what}"
+        );
+        drop((r, w));
+        wait_until("the raw peer is gone", 20, || a.net.peers().is_empty()).await;
+    }
 }
