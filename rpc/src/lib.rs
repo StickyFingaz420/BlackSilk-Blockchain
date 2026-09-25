@@ -38,6 +38,13 @@ pub struct Info {
     /// Best known header height (ahead of `height` while syncing).
     #[serde(default)]
     pub header_height: u64,
+    /// The deepest reorganization since the node started, in blocks
+    /// (docs/reviews/k4-reorg-policy.md).
+    #[serde(default)]
+    pub deepest_reorg: u64,
+    /// Peers disconnected for misbehaviour since the node started.
+    #[serde(default)]
+    pub misbehaving_disconnects: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

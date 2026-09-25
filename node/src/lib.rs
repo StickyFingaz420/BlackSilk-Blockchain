@@ -103,7 +103,7 @@ pub fn router_with(app: App) -> Router {
 }
 
 async fn info(State(App { chain: s, net }): State<App>) -> Json<rpc::Info> {
-    let peers = net.map_or(0, |n| n.stats().peers);
+    let stats = net.map(|n| n.stats());
     let m = lock(&s);
     Json(rpc::Info {
         network: network_name(m.params().network).to_string(),
@@ -115,8 +115,10 @@ async fn info(State(App { chain: s, net }): State<App>) -> Json<rpc::Info> {
         mempool_txs: m.mempool().len(),
         mempool_bytes: m.mempool().bytes(),
         outputs: m.state().output_count(),
-        peers,
+        peers: stats.as_ref().map_or(0, |s| s.peers),
         header_height: m.header_height(),
+        deepest_reorg: m.deepest_reorg() as u64,
+        misbehaving_disconnects: stats.as_ref().map_or(0, |s| s.misbehaving_disconnects),
     })
 }
 

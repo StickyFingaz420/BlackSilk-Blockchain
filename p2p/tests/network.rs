@@ -880,3 +880,71 @@ async fn invalid_px_transactions_get_the_relaying_peer_penalized() {
         wait_until("the raw peer is gone", 20, || a.net.peers().is_empty()).await;
     }
 }
+
+/// Adversarial: a double spend across a partition. A and B share a history;
+/// while apart, each confirms a different spend of the same output. When they
+/// join, the heavier branch wins everywhere: exactly one spend survives, the
+/// other disappears from every pool, a third node agrees, and no honest peer
+/// is penalized for relaying the loser.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_double_spend_across_a_partition_resolves_to_one_spend() {
+    let mut a = node(40, &[]).await;
+    let mut b = node(41, &[]).await;
+    a.mine_n(80, 0);
+    // B gets the same history directly (the partition starts after it).
+    {
+        let ca = a.chain.lock().unwrap();
+        let mut cb = b.chain.lock().unwrap();
+        for h in 1..=ca.height() {
+            let block = ca.block_at(h).unwrap();
+            let now = block.header.timestamp;
+            cb.submit_block(block, now).unwrap();
+        }
+    }
+    assert_eq!(a.tip(), b.tip());
+    // Two spends of the same output (the oldest mature coinbase), to
+    // different payees.
+    let tx1 = a.payment();
+    let tx2 = a.payment();
+    let ki = |t: &Transaction| *t.key_images()[0].bytes();
+    assert_eq!(ki(&tx1), ki(&tx2), "the same output");
+    assert_ne!(tx1.hash(), tx2.hash());
+    a.chain.lock().unwrap().submit_tx(tx1.clone()).unwrap();
+    b.chain.lock().unwrap().submit_tx(tx2.clone()).unwrap();
+    a.mine(1); // A confirms tx1
+    b.mine(2); // B confirms tx2 ...
+    b.mine(2); // ... on a heavier branch
+    assert_ne!(a.tip(), b.tip());
+
+    // The partition heals; a third node joins both.
+    a.net.connect(NetAddr::Ip(b.addr));
+    let c = node(42, &[a.addr, b.addr]).await;
+    wait_until("all on B's branch", 30, || {
+        a.tip() == b.tip() && c.tip() == b.tip()
+    })
+    .await;
+    assert_eq!(a.height(), 82);
+    for n in [&a, &b, &c] {
+        let m = n.chain.lock().unwrap();
+        assert!(
+            m.state().is_key_image_spent(&tx2.key_images()[0]),
+            "the output is spent"
+        );
+        assert!(!m.mempool().contains(&tx1.hash()), "the loser is gone");
+        assert!(!m.mempool().contains(&tx2.hash()), "the winner is mined");
+        // Exactly one of the two spends is in the chain.
+        let mined: Vec<Hash> = (1..=m.height())
+            .flat_map(|h| m.block_at(h).unwrap().txs)
+            .map(|t| t.hash())
+            .filter(|id| *id == tx1.hash() || *id == tx2.hash())
+            .collect();
+        assert_eq!(mined, vec![tx2.hash()]);
+    }
+    assert_eq!(a.chain.lock().unwrap().deepest_reorg(), 1);
+    for n in [&a, &b, &c] {
+        assert!(
+            n.net.peers().iter().all(|p| p.score == 0),
+            "no honest peer penalized"
+        );
+    }
+}
