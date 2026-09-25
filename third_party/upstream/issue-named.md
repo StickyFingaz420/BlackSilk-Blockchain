@@ -1,4 +1,8 @@
-# Version A (names BlackSilk). DRAFT, NOT SUBMITTED
+# Version A (names BlackSilk). NOT FOR SUBMISSION
+
+> The owner chose Version B (issue-anonymous.md) as the only version to prepare for
+> submission (2026-09-25). This file is kept for reference and is not maintained: the
+> corrected wording and evidence are in Version B.
 
 **Title:** Deadlock: `spin::Mutex` in `HidingFriPcs` / `MerkleTreeHidingMmcs` held across rayon work
 

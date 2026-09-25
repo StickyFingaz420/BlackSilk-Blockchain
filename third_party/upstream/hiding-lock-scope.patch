@@ -73,7 +73,7 @@
 +        // lock held further up its own stack. Upstream's `with_random_cols`
 +        // copies rows in parallel, so the random columns are drawn here (in
 +        // the same order it draws them) and the matrices widened after the
-+        // lock is released. Proofs are unchanged for a given seed.
++        // lock is released. The values drawn are unchanged.
 +        let (random_cols, mut all_random_values) = {
 +            let mut rng = self.rng.lock();
 +            let random_cols: Vec<RowMajorMatrix<Val>> = evaluations
@@ -119,7 +119,7 @@
  
 +    /// BlackSilk patch: drawing the random columns first and widening
 +    /// afterwards (outside the RNG lock) gives exactly `with_random_cols`'s
-+    /// result for the same RNG state, so proofs are unchanged for a seed.
++    /// result for the same RNG state: the drawn values and their order are unchanged.
 +    #[test]
 +    fn widen_matches_with_random_cols() {
 +        for (h, w, n) in [(1, 1, 1), (8, 3, 4), (64, 17, 9), (256, 40, 12)] {

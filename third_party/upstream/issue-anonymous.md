@@ -17,7 +17,7 @@ to be the remaining instances.
 
 | Crate | File, function | 0.7.0 | 0.8.0 and `main` (as of 2026-09-25) |
 |---|---|---|---|
-| `p3-fri` | `hiding_pcs.rs`, `commit` | pattern present; hang observed (see Evidence) | pattern present (code inspection only; not built or run) |
+| `p3-fri` | `hiding_pcs.rs`, `commit` | pattern present; hang observed (see "What was observed") | pattern present (code inspection only; not built or run) |
 | `p3-fri` | `hiding_pcs.rs`, `get_quotient_ldes` | pattern present; hang observed | pattern present (code inspection only) |
 | `p3-merkle-tree` | `hiding_mmcs.rs`, `commit` | pattern present | pattern present (code inspection only) |
 | `p3-dft` | `radix_2_dit_parallel.rs`, twiddle caches | pattern present | fixed upstream |
@@ -117,16 +117,26 @@ cleanly to the v0.7.0 tag. Its code comments are written as downstream notes; a 
 request would reword them and port the change to `main`. The port has not been done or
 tested.
 
-## Test results with the patch (0.7.0, the environment above)
+## Test results with the patch
 
-- Plonky3's own suites pass, with and without `parallel`: `p3-fri` (65 tests),
-  `p3-merkle-tree` (99) and `p3-dft` (44).
-- A new unit test, `widen_matches_with_random_cols`, shows that the patched code
-  produces exactly the matrix `with_random_cols` produces from the same RNG state. So
-  the change does not alter the random values drawn, or their order.
-- Downstream: the full test suite passes, and 80 proofs running concurrently on 8
-  threads completed without a hang (909 s). **No hang observed; this is not a proof
-  that none can occur.**
+**The attached patch on a clean v0.7.0 checkout** (tag `v0.7.0`, `fb93826`; the
+patch touches only `p3-fri` and `p3-merkle-tree`; environment as above):
+
+| Suite | Without `p3-maybe-rayon/parallel` | With it |
+|---|---|---|
+| `p3-fri` | 65 passed | 65 passed |
+| `p3-merkle-tree` | 99 passed (1 doc test ignored, as upstream) | 99 passed |
+
+- The patch adds a unit test, `widen_matches_with_random_cols`. It shows that the
+  patched code builds exactly the matrix that `with_random_cols` builds from the same
+  RNG state, so the values drawn and their order are unchanged.
+- **Not claimed:** that proof bytes are reproducible. In multi-table proofs the order in
+  which tables draw randomness depends on scheduling, before and after the patch.
+- **Downstream** (the patch **plus** a backport of the 0.8.0 `p3-dft` twiddle-cache
+  fix, which is not part of the attached patch): the downstream test suite passes, and
+  80 proofs running concurrently on 8 threads completed without a hang (909 s). **No
+  hang observed; this is not proof that none can occur.**
+- `p3-dft` is not in the patch because 0.8.0 already fixed that site upstream.
 
 ## Impact
 
@@ -135,3 +145,18 @@ tested.
   invalid one. The patch only moves where the lock is released, and the unit test above
   shows the drawn randomness is unchanged. We did not analyse other effects beyond
   that.
+
+## Classification of every claim in this report
+
+| Claim | Class |
+|---|---|
+| The three sites hold a `spin` lock guard while rayon work runs (0.7.0) | **Observed** in the source |
+| The same pattern is present at the three sites in 0.8.0 and `main` | **Observed** in the source only; not built or run |
+| Work stealing plus a spin lock held across rayon work can deadlock | **Inferred** from the code and rayon's documented behaviour |
+| The downstream hangs (3 of 3 sequential runs; one concurrent run for 2 hours) | **Observed** |
+| The hangs were caused by these sites | **Inferred**: the stall was located in `get_quotient_ldes` by logging; the other sites by code audit. No stack trace |
+| The patch prevents the deadlock | **Inferred** from the code. No hang in later runs, but the hang was never reproducible on demand, so this is unverified by experiment |
+| The patch does not change the values drawn | **Observed** (the unit test) |
+| The suites pass with the patch on v0.7.0 | **Observed** (the table above) |
+| Soundness and zero knowledge are unaffected | **Inferred**: a hang yields no proof, and the drawn values are unchanged. Not otherwise analysed |
+| Behaviour on platforms other than Windows x86_64 | **Unverified** |
