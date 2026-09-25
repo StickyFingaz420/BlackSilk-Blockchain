@@ -403,8 +403,7 @@ impl PxStore {
         self.commitments.retain(|(h, _)| *h <= height);
     }
 
-    /// Forgets unconfirmed spends, and contract records this wallet created
-    /// in transactions that never confirmed.
+    /// Forgets unconfirmed spends. Contract-record openings are kept.
     pub fn clear_pending(&mut self) {
         for r in &mut self.records {
             r.pending = false;
@@ -412,8 +411,9 @@ impl PxStore {
         for r in &mut self.contract_records {
             r.pending = false;
         }
-        self.contract_records
-            .retain(|r| !(r.source == RecordSource::Created && r.height.is_none()));
+        // Openings are never deleted, even of records whose transaction seems
+        // never to have confirmed: it may have been relayed, and without the
+        // opening its funds could not be recovered (review F14).
     }
 
     /// Fetches new commitments in bulk and resolves record positions. When
@@ -694,7 +694,7 @@ mod tests {
     }
 
     #[test]
-    fn clearing_pending_drops_only_unconfirmed_records_this_wallet_created() {
+    fn clearing_pending_keeps_every_contract_record_opening() {
         let mut s = PxStore {
             contract_records: vec![
                 contract_rec(RecordSource::Created, None, 1),
@@ -710,8 +710,8 @@ mod tests {
             .iter()
             .map(|r| &r.commitment[60..])
             .collect();
-        assert_eq!(cms, ["0002", "0003"]);
-        assert!(!s.contract_records[1].pending);
+        assert_eq!(cms, ["0001", "0002", "0003"]);
+        assert!(s.contract_records.iter().all(|r| !r.pending));
     }
 
     #[test]

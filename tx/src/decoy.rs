@@ -28,6 +28,9 @@ pub enum DecoyError {
     NotEnoughOutputs,
     /// The real output is not in the usable range at this height.
     RealOutputNotUsable,
+    /// The output distribution is empty or decreasing (it comes from a node, so
+    /// it is checked rather than trusted).
+    BadDistribution,
 }
 
 fn uniform01<R: RngCore>(rng: &mut R) -> f64 {
@@ -98,25 +101,13 @@ pub fn select_ring_keeping<R: RngCore>(
     keep: &[u64],
     eligible: impl Fn(u64) -> bool,
 ) -> Result<[u64; RING_SIZE], DecoyError> {
-    // Usable blocks: at least SPENDABLE_AGE deep.
-    let Some(last_block) = height.checked_sub(SPENDABLE_AGE) else {
-        return Err(DecoyError::NotEnoughOutputs);
-    };
-    let last_block = last_block.min(cumulative.len() as u64 - 1) as usize;
-    let usable = cumulative[last_block];
-    if real >= usable || !eligible(real) {
+    let picker = Picker::new(cumulative, height, target_block_time)?;
+    if real >= picker.usable || !eligible(real) {
         return Err(DecoyError::RealOutputNotUsable);
     }
-    if usable < RING_SIZE as u64 {
-        return Err(DecoyError::NotEnoughOutputs);
-    }
-    let blocks = (last_block + 1) as f64;
-    let average_output_time = target_block_time as f64 * blocks / usable as f64;
-    let t = target_block_time as f64;
-
     let mut ring = vec![real];
     for &k in keep {
-        if ring.len() < RING_SIZE && k < usable && !ring.contains(&k) && eligible(k) {
+        if ring.len() < RING_SIZE && k < picker.usable && !ring.contains(&k) && eligible(k) {
             ring.push(k);
         }
     }
@@ -124,25 +115,10 @@ pub fn select_ring_keeping<R: RngCore>(
         if ring.len() == RING_SIZE {
             break;
         }
-        let mut x = gamma(rng, GAMMA_SHAPE, GAMMA_SCALE).exp();
-        let lock = SPENDABLE_AGE as f64 * t;
-        if x > lock {
-            x -= lock;
-        } else {
-            x = uniform01(rng) * RECENT_SPEND_WINDOW_BLOCKS * t;
-        }
-        let back = (x / average_output_time) as u64;
-        if back >= usable {
-            continue;
-        }
-        let target = usable - 1 - back;
-        // The block containing `target`, then a uniform output inside it.
-        let block = cumulative.partition_point(|&c| c <= target);
-        let start = if block == 0 { 0 } else { cumulative[block - 1] };
-        let end = cumulative[block];
-        let pick = start + rng.next_u64() % (end - start);
-        if !ring.contains(&pick) && eligible(pick) {
-            ring.push(pick);
+        if let Some(pick) = picker.pick(rng) {
+            if !ring.contains(&pick) && eligible(pick) {
+                ring.push(pick);
+            }
         }
     }
     if ring.len() < RING_SIZE {
@@ -150,6 +126,102 @@ pub fn select_ring_keeping<R: RngCore>(
     }
     ring.sort_unstable();
     Ok(ring.try_into().expect("exactly RING_SIZE members"))
+}
+
+/// Up to `count` distinct candidate decoys drawn from the same distribution as
+/// [`select_ring`], none of them in `exclude`, all usable at `height`.
+///
+/// Wallets fetch a whole pool of candidates and the real output in **one**
+/// node request, then choose decoys from the pool locally. Repeated requests
+/// that each contained the real output would reveal it to the node by
+/// intersection (docs/reviews/wallet-review.md F2).
+pub fn draw_candidates<R: RngCore>(
+    rng: &mut R,
+    cumulative: &[u64],
+    height: u64,
+    target_block_time: u64,
+    count: usize,
+    exclude: &[u64],
+) -> Result<Vec<u64>, DecoyError> {
+    let picker = Picker::new(cumulative, height, target_block_time)?;
+    let mut out: Vec<u64> = Vec::with_capacity(count);
+    for _ in 0..MAX_ATTEMPTS {
+        if out.len() == count {
+            break;
+        }
+        if let Some(pick) = picker.pick(rng) {
+            if !out.contains(&pick) && !exclude.contains(&pick) {
+                out.push(pick);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The number of outputs usable as ring members at `height` (those at least
+/// `SPENDABLE_AGE` blocks deep).
+pub fn usable_outputs(cumulative: &[u64], height: u64) -> Result<u64, DecoyError> {
+    Ok(Picker::new(cumulative, height, 1)?.usable)
+}
+
+/// The gamma picker over a checked output distribution.
+struct Picker<'a> {
+    cumulative: &'a [u64],
+    usable: u64,
+    average_output_time: f64,
+    t: f64,
+}
+
+impl<'a> Picker<'a> {
+    fn new(cumulative: &'a [u64], height: u64, target_block_time: u64) -> Result<Self, DecoyError> {
+        if cumulative.is_empty() || cumulative.windows(2).any(|w| w[0] > w[1]) {
+            return Err(DecoyError::BadDistribution);
+        }
+        // Usable blocks: at least SPENDABLE_AGE deep.
+        let Some(last_block) = height.checked_sub(SPENDABLE_AGE) else {
+            return Err(DecoyError::NotEnoughOutputs);
+        };
+        let last_block = last_block.min(cumulative.len() as u64 - 1) as usize;
+        let usable = cumulative[last_block];
+        if usable < RING_SIZE as u64 {
+            return Err(DecoyError::NotEnoughOutputs);
+        }
+        let blocks = (last_block + 1) as f64;
+        Ok(Self {
+            cumulative: &cumulative[..=last_block],
+            usable,
+            average_output_time: target_block_time as f64 * blocks / usable as f64,
+            t: target_block_time as f64,
+        })
+    }
+
+    /// One draw; `None` if it falls outside the chain or on an empty block.
+    fn pick<R: RngCore>(&self, rng: &mut R) -> Option<u64> {
+        let mut x = gamma(rng, GAMMA_SHAPE, GAMMA_SCALE).exp();
+        let lock = SPENDABLE_AGE as f64 * self.t;
+        if x > lock {
+            x -= lock;
+        } else {
+            x = uniform01(rng) * RECENT_SPEND_WINDOW_BLOCKS * self.t;
+        }
+        let back = (x / self.average_output_time) as u64;
+        if back >= self.usable {
+            return None;
+        }
+        let target = self.usable - 1 - back;
+        // The block containing `target`, then a uniform output inside it.
+        let block = self.cumulative.partition_point(|&c| c <= target);
+        let start = if block == 0 {
+            0
+        } else {
+            self.cumulative[block - 1]
+        };
+        let end = *self.cumulative.get(block)?;
+        if end <= start {
+            return None;
+        }
+        Some(start + rng.next_u64() % (end - start))
+    }
 }
 
 #[cfg(test)]
@@ -198,6 +270,46 @@ mod tests {
         for k in keep.iter().take(10).filter(|&&k| k != keep[1]) {
             assert!(ring.contains(k), "kept member {k} lost");
         }
+    }
+
+    #[test]
+    fn a_bad_distribution_is_an_error_not_a_panic() {
+        let mut rng = ChaCha20Rng::seed_from_u64(5);
+        assert_eq!(
+            select_ring(&mut rng, &[], 100, 120, 0, |_| true),
+            Err(DecoyError::BadDistribution)
+        );
+        let decreasing: Vec<u64> = (0..200).rev().collect();
+        assert_eq!(
+            draw_candidates(&mut rng, &decreasing, 150, 120, 10, &[]),
+            Err(DecoyError::BadDistribution)
+        );
+        // Flat stretches (blocks without outputs) are fine.
+        let mut flat = chain(3_000, 3);
+        for c in flat.iter_mut().skip(1_000).take(500) {
+            *c = 3_000;
+        }
+        let mut last = 0;
+        for c in flat.iter_mut() {
+            *c = (*c).max(last);
+            last = *c;
+        }
+        assert!(select_ring(&mut rng, &flat, 3_000, 120, 30, |_| true).is_ok());
+    }
+
+    #[test]
+    fn candidates_are_distinct_usable_and_not_excluded() {
+        let mut rng = ChaCha20Rng::seed_from_u64(6);
+        let cum = chain(5_000, 4);
+        let usable = usable_outputs(&cum, 5_000).unwrap();
+        let exclude = [7_000u64, 7_001];
+        let c = draw_candidates(&mut rng, &cum, 5_000, 120, 60, &exclude).unwrap();
+        assert_eq!(c.len(), 60);
+        let mut sorted = c.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 60, "distinct");
+        assert!(c.iter().all(|i| *i < usable && !exclude.contains(i)));
     }
 
     #[test]

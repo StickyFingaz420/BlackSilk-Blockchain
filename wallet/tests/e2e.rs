@@ -137,6 +137,14 @@ struct Flaky<'a> {
     mode: Submit,
     submits: Cell<u32>,
     sent: RefCell<Vec<Vec<u8>>>,
+    /// Every `/outputs` request, in order.
+    queries: RefCell<Vec<Vec<u64>>>,
+    /// Report at most this height (a node behind the wallet).
+    height_cap: Option<u64>,
+    /// At submission, read this wallet file (password `pw`) and record
+    /// whether it already holds the reservation.
+    check_file: Option<std::path::PathBuf>,
+    saved_before_submit: Cell<Option<bool>>,
 }
 
 impl<'a> Flaky<'a> {
@@ -146,13 +154,22 @@ impl<'a> Flaky<'a> {
             mode,
             submits: Cell::new(0),
             sent: RefCell::new(Vec::new()),
+            queries: RefCell::new(Vec::new()),
+            height_cap: None,
+            check_file: None,
+            saved_before_submit: Cell::new(None),
         }
     }
 }
 
 impl NodeApi for Flaky<'_> {
     fn info(&self) -> Result<rpc::Info, String> {
-        NodeApi::info(self.inner)
+        let mut i = NodeApi::info(self.inner)?;
+        if let Some(cap) = self.height_cap {
+            i.height = i.height.min(cap);
+            i.header_height = i.header_height.min(cap);
+        }
+        Ok(i)
     }
     fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
         NodeApi::blocks(self.inner, from, count)
@@ -161,6 +178,7 @@ impl NodeApi for Flaky<'_> {
         NodeApi::distribution(self.inner, to)
     }
     fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String> {
+        self.queries.borrow_mut().push(indices.to_vec());
         NodeApi::outputs(self.inner, indices)
     }
     fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
@@ -172,6 +190,10 @@ impl NodeApi for Flaky<'_> {
     fn submit_tx(&self, tx: &[u8]) -> Result<rpc::SubmitResult, String> {
         self.submits.set(self.submits.get() + 1);
         self.sent.borrow_mut().push(tx.to_vec());
+        if let Some(path) = &self.check_file {
+            let on_disk = load(path, b"pw").map(|w| w.has_pending()).unwrap_or(false);
+            self.saved_before_submit.set(Some(on_disk));
+        }
         match self.mode {
             Submit::Forward => NodeApi::submit_tx(self.inner, tx),
             Submit::ForwardThenFail => {
@@ -925,10 +947,11 @@ fn an_output_spent_again_reuses_its_ring() {
     assert_eq!(third, fourth, "ring reused after a restart");
 }
 
-/// A definite refusal by the node means the transaction never left, so its
-/// rings are not recorded: a later spend may draw fresh ones.
+/// A refusal does not unpin the rings: the node's answer cannot be verified
+/// (a node could claim "Invalid" and relay anyway), and reusing a ring that
+/// never became public costs nothing (docs/reviews/wallet-review.md, review F5).
 #[test]
-fn a_refused_transaction_does_not_pin_its_rings() {
+fn a_refused_transaction_still_pins_its_rings() {
     let mut net = Net::start();
     let mut miner = wallet(29);
     let bob = wallet(30);
@@ -940,15 +963,154 @@ fn a_refused_transaction_does_not_pin_its_rings() {
         .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
         .unwrap_err();
     assert!(matches!(err, WalletError::Rejected(_)), "{err}");
-    assert!(!miner.has_pending());
+    assert!(!miner.has_pending(), "the inputs are released");
     let refused = rings_of(&node.sent.borrow()[0]);
     let node = Flaky::new(&net.client, Submit::Record);
     miner
         .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
         .unwrap();
     let next = rings_of(&node.sent.borrow()[0]);
-    let differs = refused
-        .iter()
-        .any(|(k, r)| next.get(k).is_some_and(|n| n != r));
-    assert!(differs, "fresh rings were drawn");
+    for (k, r) in &refused {
+        if let Some(n) = next.get(k) {
+            assert_eq!(n, r, "the ring is reused");
+        }
+    }
+}
+
+/// The node never learns which ring member is real from the wallet's
+/// queries: every `/outputs` request contains the real output, and there is
+/// exactly one request per input (review F2).
+#[test]
+fn ring_queries_never_single_out_the_real_input() {
+    let mut net = Net::start();
+    let mut miner = wallet(31);
+    let bob = wallet(32);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    let node = Flaky::new(&net.client, Submit::Record);
+    miner
+        .transfer(&node, &bob.primary(), 3 * COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    let rings = rings_of(&node.sent.borrow()[0]);
+    let queries = node.queries.borrow();
+    assert_eq!(queries.len(), rings.len(), "one request per input");
+    for ring in rings.values() {
+        // The request for this ring contains all 16 members.
+        assert!(
+            queries.iter().any(|q| ring.iter().all(|i| q.contains(i))),
+            "a request contains the whole ring, the real input included"
+        );
+    }
+}
+
+/// A node behind the wallet makes it rewind, but it must not forget its
+/// stored transactions or rings; once the node catches up, the inputs are
+/// reserved again (review F3).
+#[test]
+fn a_node_behind_the_wallet_does_not_make_it_forget_its_transactions() {
+    let mut net = Net::start();
+    let mut miner = wallet(33);
+    let bob = wallet(34);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    let node = Flaky::new(&net.client, Submit::Record);
+    miner
+        .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    let first = rings_of(&node.sent.borrow()[0]);
+    assert!(miner.has_pending());
+    // A node far behind: the wallet rewinds below every input.
+    let mut behind = Flaky::new(&net.client, Submit::Forward);
+    behind.height_cap = Some(5);
+    miner.sync(&behind).unwrap();
+    assert_eq!(miner.synced_height(), 5);
+    // Caught up: the stored transaction is still there, its inputs reserved.
+    miner.sync(&net.client).unwrap();
+    assert!(miner.has_pending(), "reserved again");
+    miner.clear_pending();
+    let node = Flaky::new(&net.client, Submit::Record);
+    miner
+        .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    let again = rings_of(&node.sent.borrow()[0]);
+    for (k, r) in &first {
+        if let Some(n) = again.get(k) {
+            assert_eq!(n, r, "the ring survived the rewind");
+        }
+    }
+}
+
+/// Save-before-send: with autosave, a transaction whose outcome is unknown
+/// is already on disk with its reservation, without any later save (review F1).
+#[test]
+fn the_wallet_is_saved_before_a_transaction_leaves_it() {
+    let mut net = Net::start();
+    let mut miner = wallet(35);
+    let bob = wallet(36);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    let dir = std::env::temp_dir().join(format!("bs-autosave-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("w.bin");
+    let kdf = KdfParams {
+        m_kib: 256,
+        t: 1,
+        p: 1,
+    };
+    miner.set_autosave(&path, b"pw", kdf);
+    let mut node = Flaky::new(&net.client, Submit::ForwardThenFail);
+    node.check_file = Some(path.clone());
+    let err = miner
+        .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap_err();
+    assert!(matches!(err, WalletError::Uncertain(_)));
+    assert_eq!(
+        node.saved_before_submit.get(),
+        Some(true),
+        "on disk, reserved, when the transaction was handed to the node"
+    );
+    // As if the process had been killed now: only what is on disk remains.
+    drop(miner);
+    let on_disk = load(&path, b"pw").unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(
+        on_disk.has_pending(),
+        "the reservation was saved before sending"
+    );
+}
+
+/// A reorganization deeper than the wallet's 720 kept block ids makes it
+/// rescan from its restore height; before the fix it was taken for a fresh
+/// wallet and kept outputs of the abandoned branch (review F4).
+#[test]
+fn a_reorganization_deeper_than_the_kept_window_rescans() {
+    let mut net = Net::start();
+    let mut miner = wallet(37);
+    let other = wallet(38);
+    let miner_addr = miner.primary();
+    net.mine_n(20, &miner_addr);
+    let fork_parent = { net.shared.lock().unwrap().tip_id() };
+    net.mine_n(740, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    assert_eq!(miner.synced_height(), 760);
+    // A heavier branch from height 20, paying someone else.
+    let mut tip = fork_parent;
+    for i in 0..741 {
+        tip = net.mine_on(&tip, &other.primary(), 10_000 + i);
+    }
+    assert_eq!(net.client.info().unwrap().height, 761);
+    miner.sync(&net.client).unwrap();
+    assert_eq!(miner.synced_height(), 761);
+    let mut expected = 0u64;
+    for h in 1..=20 {
+        expected += block_reward(h, expected);
+    }
+    assert_eq!(
+        miner.balance().total,
+        expected,
+        "only the first 20 rewards remain"
+    );
 }

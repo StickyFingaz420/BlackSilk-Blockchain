@@ -33,8 +33,7 @@ use blacksilk_px_core::{Digest, ZERO_DIGEST};
 use blacksilk_tx::builder::{
     build_transfer, standard_fee, BuildError, Decoy, InputPlan, Payment, SpendableOutput,
 };
-use blacksilk_tx::decoy::select_ring_keeping;
-use blacksilk_tx::params::{TxRules, COINBASE_MATURITY, MAX_INPUTS, SPENDABLE_AGE};
+use blacksilk_tx::params::{TxRules, COINBASE_MATURITY, MAX_INPUTS, RING_SIZE, SPENDABLE_AGE};
 use blacksilk_tx::px::{PxTx, Registration};
 use blacksilk_tx::px_builder::{
     build_deploy, build_px, deploy_fee, px_standard_fee, FunctionRun, PxPlan,
@@ -62,6 +61,10 @@ const LOOKAHEAD: u32 = 50;
 /// the same v1 output again with a new ring would let anyone intersect the two
 /// rings and find the real input (docs/reviews/privacy-review.md §3c).
 const PENDING_EXPIRY_BLOCKS: u64 = 20;
+/// Stored transactions and rings are kept until their spend is this deep: the
+/// wallet's reorganization window (`KEPT_BLOCK_IDS`). K4 allows deeper
+/// reorganizations, but beyond this window the wallet rescans anyway.
+const RING_RETENTION_BLOCKS: u64 = KEPT_BLOCK_IDS as u64;
 
 #[derive(Debug)]
 pub enum WalletError {
@@ -217,9 +220,19 @@ pub struct Wallet {
     /// Decoys of the ring last submitted for each key image: reused when the
     /// output is spent again (docs/reviews/wallet-review.md W-5).
     rings: BTreeMap<String, Vec<RingMember>>,
-    /// Rings of the transaction being built, recorded in `rings` only once it
-    /// is submitted (not on a definite refusal).
+    /// Rings of the transaction being built, recorded in `rings` when it is
+    /// submitted.
     staged_rings: Vec<(String, Vec<RingMember>)>,
+    /// Where `submit` saves the wallet before a transaction leaves it
+    /// (`set_autosave`).
+    autosave: Option<AutoSave>,
+}
+
+/// The wallet file to save to before a submission (docs/reviews/wallet-review.md F1).
+struct AutoSave {
+    path: std::path::PathBuf,
+    password: zeroize::Zeroizing<Vec<u8>>,
+    kdf: crate::file::KdfParams,
 }
 
 impl Drop for Wallet {
@@ -289,6 +302,7 @@ impl Wallet {
             pending_txs: Vec::new(),
             rings: BTreeMap::new(),
             staged_rings: Vec::new(),
+            autosave: None,
         };
         w.rebuild_table();
         w
@@ -446,11 +460,18 @@ impl Wallet {
     /// the node's, and rewinds to the fork point. Returns the new synced height.
     pub fn sync(&mut self, node: &dyn NodeApi) -> Result<u64, WalletError> {
         let info = self.check_network(node)?;
+        if info.header_height > info.height {
+            return Err(WalletError::Node(format!(
+                "the node is still synchronizing ({} of {} blocks); try again later",
+                info.height, info.header_height
+            )));
+        }
         // Reorg detection: walk back from our tip until our block id matches the node's.
+        let fresh = self.block_ids.is_empty();
         while self.synced_height >= self.restore_height && self.synced_height > 0 {
             let Some(ours) = self.block_ids.get(&self.synced_height).copied() else {
-                if self.block_ids.is_empty() {
-                    break; // fresh wallet
+                if fresh {
+                    break;
                 }
                 // Fork deeper than the kept window: rescan from the restore height.
                 let h = self.restore_height.saturating_sub(1);
@@ -497,6 +518,15 @@ impl Wallet {
                     return Err(WalletError::BadNodeData(format!(
                         "block {from} does not match its id"
                     )));
+                }
+                // Each block must extend the one before it (review F6). Proof of
+                // work is not checked here: a wallet must trust its node for that.
+                if let Some(prev) = self.block_ids.get(&(entry.height - 1)) {
+                    if block.header.prev_id != *prev {
+                        return Err(WalletError::BadNodeData(format!(
+                            "block {from} does not extend the previous block"
+                        )));
+                    }
                 }
                 self.apply_block(&block, entry.height, entry.first_output);
                 self.block_ids.insert(entry.height, id);
@@ -618,6 +648,32 @@ impl Wallet {
         self.pending_txs.clear();
     }
 
+    /// Makes every submission save the wallet to `path` **before** the
+    /// transaction is sent, and again after the node's answer. If the first save
+    /// fails, nothing is sent. Without it, a crash between sending and the
+    /// caller's save would lose the reservation, the stored transaction and
+    /// its rings.
+    pub fn set_autosave(
+        &mut self,
+        path: &std::path::Path,
+        password: &[u8],
+        kdf: crate::file::KdfParams,
+    ) {
+        self.autosave = Some(AutoSave {
+            path: path.to_path_buf(),
+            password: zeroize::Zeroizing::new(password.to_vec()),
+            kdf,
+        });
+    }
+
+    fn persist(&self) -> Result<(), WalletError> {
+        match &self.autosave {
+            Some(a) => crate::save(self, &a.path, &a.password, a.kdf)
+                .map_err(|e| WalletError::Serialization(format!("saving the wallet: {e}"))),
+            None => Ok(()),
+        }
+    }
+
     /// Calls `f(spent_height, pending, pending_height)` for every input of
     /// `tx` this wallet owns: v1 outputs by key image, PX and contract records
     /// by nullifier.
@@ -658,6 +714,10 @@ impl Wallet {
         let id = tx.hash();
         let bytes = tx.encode();
         let at = self.synced_height;
+        // Record everything before the transaction can leave: its reservation,
+        // the stored copy, and its rings. Rings are kept even if the node then
+        // refuses: reusing a ring that never became public costs nothing, and
+        // the node's answer cannot be verified (review F5).
         self.for_each_input(&tx, |_, pending, h| {
             *pending = true;
             *h = at;
@@ -666,32 +726,40 @@ impl Wallet {
             tx: hex::encode(&bytes),
             relayed_height: at,
         });
-        let staged = std::mem::take(&mut self.staged_rings);
-        let result = node.submit_tx(&bytes);
-        let refused = matches!(&result, Ok(r) if !r.accepted
-            && !r.error.as_deref().is_some_and(|e| e.starts_with("AlreadyKnown")));
-        if !refused {
-            // It may be public now: its rings are the ones to reuse.
-            let kis: HashSet<String> = tx
-                .key_images()
-                .iter()
-                .map(|k| hex::encode(k.bytes()))
-                .collect();
-            for (ki, ring) in staged {
-                if kis.contains(&ki) {
-                    self.rings.insert(ki, ring);
-                }
+        let kis: HashSet<String> = tx
+            .key_images()
+            .iter()
+            .map(|k| hex::encode(k.bytes()))
+            .collect();
+        for (ki, ring) in std::mem::take(&mut self.staged_rings) {
+            if kis.contains(&ki) {
+                self.rings.insert(ki, ring);
             }
         }
-        match result {
+        if let Err(e) = self.persist() {
+            // Not sent: undo the reservation.
+            self.forget(&tx);
+            return Err(e);
+        }
+        let result = match node.submit_tx(&bytes) {
             Err(e) => Err(WalletError::Uncertain(e)),
-            Ok(_) if !refused => Ok(id),
-            // Refused by the only node that saw it: nothing was relayed.
+            Ok(r)
+                if r.accepted
+                    || r.error
+                        .as_deref()
+                        .is_some_and(|e| e.starts_with("AlreadyKnown")) =>
+            {
+                Ok(id)
+            }
+            // Refused by the only node that saw it (as far as we can tell).
             Ok(r) => {
                 self.forget(&tx);
                 Err(WalletError::Rejected(r.error.unwrap_or_default()))
             }
-        }
+        };
+        // Best effort: the state that matters was saved before sending.
+        let _ = self.persist();
+        result
     }
 
     /// Drops the stored copy of `tx` and releases its unspent inputs.
@@ -719,15 +787,21 @@ impl Wallet {
             else {
                 continue; // unreadable entry: nothing to rebroadcast
             };
-            let (mut unspent, mut buried) = (false, true);
-            self.for_each_input(&tx, |spent, _, _| match spent {
-                None => {
-                    unspent = true;
-                    buried = false;
+            // Kept until every input is known spent and buried. Inputs the
+            // wallet does not currently see (a node behind the wallet, a
+            // rewind) do not count as buried (review F3).
+            let (mut found, mut unspent, mut buried) = (false, false, true);
+            self.for_each_input(&tx, |spent, _, _| {
+                found = true;
+                match spent {
+                    None => {
+                        unspent = true;
+                        buried = false;
+                    }
+                    Some(h) => buried &= synced >= h + RING_RETENTION_BLOCKS,
                 }
-                Some(h) => buried &= synced >= h + PENDING_EXPIRY_BLOCKS,
             });
-            if buried {
+            if found && buried {
                 continue;
             }
             if unspent {
@@ -765,13 +839,15 @@ impl Wallet {
         self.pending_txs = kept;
         // A ring is needed while its output may still be spent again: until the
         // spend is buried, or while a stored transaction still spends it.
+        // Only rings of outputs known to be spent and buried beyond the
+        // wallet's reorganization window are dropped (review F3, F9).
         let outputs = &self.outputs;
         self.rings.retain(|ki, _| {
             covered_kis.contains(ki)
-                || outputs.iter().any(|o| {
+                || !outputs.iter().any(|o| {
                     o.key_image == *ki
                         && o.spent_height
-                            .is_none_or(|h| synced < h + PENDING_EXPIRY_BLOCKS)
+                            .is_some_and(|h| synced >= h + RING_RETENTION_BLOCKS)
                 })
         });
         // Reservations without a stored transaction come from wallet files
@@ -854,86 +930,6 @@ impl Wallet {
         })
     }
 
-    /// Picks 15 decoys for `real` and fetches their keys. Every member of `keep`
-    /// that is still usable is kept; only the rest is drawn. Candidates that turn
-    /// out to be coinbase outputs younger than the coinbase maturity are excluded
-    /// and the selection is repeated.
-    #[allow(clippy::too_many_arguments)]
-    fn ring_for<R: RngCore + CryptoRng>(
-        node: &dyn NodeApi,
-        target_block_time: u64,
-        cumulative: &[u64],
-        next_height: u64,
-        real: u64,
-        keep: &[Decoy],
-        rng: &mut R,
-    ) -> Result<Vec<Decoy>, WalletError> {
-        let kept: BTreeMap<u64, &Decoy> = keep.iter().map(|d| (d.global_index, d)).collect();
-        let keep_indices: Vec<u64> = kept.keys().copied().collect();
-        let mut excluded: HashSet<u64> = HashSet::new();
-        let coinbase_limit = next_height
-            .checked_sub(COINBASE_MATURITY)
-            .and_then(|h| cumulative.get(h as usize).copied())
-            .unwrap_or(0);
-        // Young chains have many too-young coinbase outputs; each round excludes
-        // the ones it hit.
-        for _ in 0..100 {
-            let ring = select_ring_keeping(
-                rng,
-                cumulative,
-                next_height,
-                target_block_time,
-                real,
-                &keep_indices,
-                |i| !excluded.contains(&i),
-            )
-            .map_err(|e| WalletError::Decoys(format!("{e:?}")))?;
-            let reused: Vec<Decoy> = ring
-                .iter()
-                .filter_map(|i| kept.get(i).map(|d| **d))
-                .collect();
-            let decoy_indices: Vec<u64> = ring
-                .iter()
-                .copied()
-                .filter(|&i| i != real && !kept.contains_key(&i))
-                .collect();
-            if decoy_indices.is_empty() {
-                return Ok(reused);
-            }
-            let fetched = node
-                .outputs(&decoy_indices)
-                .map_err(WalletError::Node)?
-                .outputs;
-            if fetched.len() != decoy_indices.len() {
-                return Err(WalletError::BadNodeData("wrong number of outputs".into()));
-            }
-            let mut ok = true;
-            let mut decoys = Vec::with_capacity(15);
-            for (o, &i) in fetched.iter().zip(&decoy_indices) {
-                if o.index != i {
-                    return Err(WalletError::BadNodeData("output index mismatch".into()));
-                }
-                if o.coinbase && i >= coinbase_limit {
-                    excluded.insert(i);
-                    ok = false;
-                }
-                decoys.push(Decoy {
-                    global_index: i,
-                    key: OutputKey {
-                        one_time_key: point(&o.one_time_key)?,
-                        commitment: point(&o.commitment)?,
-                    },
-                });
-            }
-            if ok {
-                decoys.extend(reused);
-                decoys.sort_by_key(|d| d.global_index);
-                return Ok(decoys);
-            }
-        }
-        Err(WalletError::Decoys("could not find eligible decoys".into()))
-    }
-
     /// Builds, submits and records a transfer of `amount` to `to`. Change goes to
     /// the primary address. Returns the transaction id and the fee.
     pub fn transfer<R: RngCore + CryptoRng>(
@@ -1003,7 +999,10 @@ impl Wallet {
             chosen.push(i);
             sum += self.outputs[i].amount as u128;
         }
-        if sum < needed as u128 || chosen.len() > MAX_INPUTS {
+        if chosen.len() > MAX_INPUTS {
+            return Err(WalletError::TooManyInputs);
+        }
+        if sum < needed as u128 {
             return Err(WalletError::InsufficientFunds {
                 available: candidates.iter().map(|&i| self.outputs[i].amount).sum(),
                 needed,
@@ -1013,9 +1012,17 @@ impl Wallet {
         Ok((chosen, plans))
     }
 
-    /// Rings for the v1 outputs `chosen`. An output spent before in a
-    /// submitted transaction gets that ring again, as far as its members still
-    /// exist unchanged; the rings are staged for `submit`.
+    /// Rings for the v1 outputs `chosen`, staged for `submit`.
+    ///
+    /// Privacy of the node queries (docs/reviews/wallet-review.md F2): for each
+    /// input the wallet makes **one** `/outputs` request, containing the real
+    /// output, the members of any ring stored for it, and a pool of fresh
+    /// candidates, in random order. Decoys are then chosen locally. A request
+    /// without the real output, or several requests that all contain it, would
+    /// single it out.
+    ///
+    /// An output spent before in a submitted transaction gets that ring again
+    /// (W-5), as far as its members still exist unchanged.
     fn plans_for<R: RngCore + CryptoRng>(
         &mut self,
         node: &dyn NodeApi,
@@ -1026,28 +1033,110 @@ impl Wallet {
         let dist = node
             .distribution(self.synced_height)
             .map_err(WalletError::Node)?;
+        let cumulative = &dist.cumulative;
         let target = ChainParams::for_network(self.network).target_block_time;
+        let decoy_err = |e| WalletError::Decoys(format!("{e:?}"));
+        let usable = blacksilk_tx::decoy::usable_outputs(cumulative, next).map_err(decoy_err)?;
         let coinbase_limit = next
             .checked_sub(COINBASE_MATURITY)
-            .and_then(|h| dist.cumulative.get(h as usize).copied())
+            .and_then(|h| cumulative.get(h as usize).copied())
             .unwrap_or(0);
         let mut plans = Vec::with_capacity(chosen.len());
         let mut staged = Vec::with_capacity(chosen.len());
         for &i in chosen {
             let o = &self.outputs[i];
-            let keep = match self.rings.get(&o.key_image) {
-                Some(members) => Self::surviving(node, members, coinbase_limit)?,
-                None => Vec::new(),
+            let real = o.global_index;
+            if real >= usable {
+                return Err(WalletError::Decoys("output not yet usable".into()));
+            }
+            // Stored members that can still be ring members (indices are dense:
+            // below `usable` every index exists).
+            let stored: Vec<&RingMember> = self
+                .rings
+                .get(&o.key_image)
+                .map(|m| {
+                    m.iter()
+                        .filter(|m| m.index < usable && m.index != real)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let need = (RING_SIZE - 1).saturating_sub(stored.len());
+            let mut exclude: Vec<u64> = stored.iter().map(|m| m.index).collect();
+            exclude.push(real);
+            let pool = if need == 0 {
+                Vec::new()
+            } else {
+                blacksilk_tx::decoy::draw_candidates(
+                    rng,
+                    cumulative,
+                    next,
+                    target,
+                    (4 * need).max(32),
+                    &exclude,
+                )
+                .map_err(decoy_err)?
             };
-            let decoys = Self::ring_for(
-                node,
-                target,
-                &dist.cumulative,
-                next,
-                o.global_index,
-                &keep,
-                rng,
-            )?;
+            // One request: real, stored members and the pool, shuffled.
+            let mut query: Vec<u64> = pool.clone();
+            query.extend(stored.iter().map(|m| m.index));
+            query.push(real);
+            shuffle(&mut query, rng);
+            let fetched = node.outputs(&query).map_err(WalletError::Node)?.outputs;
+            if fetched.len() != query.len()
+                || fetched.iter().zip(&query).any(|(f, i)| f.index != *i)
+            {
+                return Err(WalletError::BadNodeData(
+                    "outputs do not match the request".into(),
+                ));
+            }
+            let by_index: BTreeMap<u64, &blacksilk_rpc::OutputEntry> =
+                fetched.iter().map(|f| (f.index, f)).collect();
+            // The node must agree on our own output.
+            let own = by_index[&real];
+            if own.one_time_key != o.one_time_key || own.commitment != o.commitment {
+                return Err(WalletError::BadNodeData(
+                    "the node disagrees on our output".into(),
+                ));
+            }
+            let mature =
+                |f: &blacksilk_rpc::OutputEntry| !(f.coinbase && f.index >= coinbase_limit);
+            // Stored members: kept only if unchanged and still eligible.
+            let mut decoys: Vec<Decoy> = Vec::with_capacity(RING_SIZE - 1);
+            for m in &stored {
+                let f = by_index[&m.index];
+                if f.one_time_key == m.one_time_key && f.commitment == m.commitment && mature(f) {
+                    decoys.push(Decoy {
+                        global_index: m.index,
+                        key: OutputKey {
+                            one_time_key: point(&m.one_time_key)?,
+                            commitment: point(&m.commitment)?,
+                        },
+                    });
+                }
+            }
+            // The rest: a random subset of the eligible pool.
+            let mut eligible: Vec<&blacksilk_rpc::OutputEntry> = pool
+                .iter()
+                .map(|i| by_index[i])
+                .filter(|f| mature(f))
+                .collect();
+            shuffle(&mut eligible, rng);
+            for f in eligible {
+                if decoys.len() == RING_SIZE - 1 {
+                    break;
+                }
+                decoys.push(Decoy {
+                    global_index: f.index,
+                    key: OutputKey {
+                        one_time_key: point(&f.one_time_key)?,
+                        commitment: point(&f.commitment)?,
+                    },
+                });
+            }
+            if decoys.len() < RING_SIZE - 1 {
+                return Err(WalletError::Decoys("not enough eligible decoys".into()));
+            }
+            decoys.sort_by_key(|d| d.global_index);
             staged.push((
                 o.key_image.clone(),
                 decoys.iter().map(RingMember::of).collect(),
@@ -1059,53 +1148,6 @@ impl Wallet {
         }
         self.staged_rings = staged;
         Ok(plans)
-    }
-
-    /// The members of a stored ring that still exist with the same keys. After
-    /// a reorganization an index can belong to another output, or to none.
-    fn surviving(
-        node: &dyn NodeApi,
-        members: &[RingMember],
-        coinbase_limit: u64,
-    ) -> Result<Vec<Decoy>, WalletError> {
-        let indices: Vec<u64> = members.iter().map(|m| m.index).collect();
-        let fetched: Vec<Option<blacksilk_rpc::OutputEntry>> = match node.outputs(&indices) {
-            Ok(o) if o.outputs.len() == indices.len() => o.outputs.into_iter().map(Some).collect(),
-            Ok(_) => return Err(WalletError::BadNodeData("wrong number of outputs".into())),
-            // Some index no longer exists: ask one by one.
-            Err(e) if e.contains("HTTP 404") => {
-                let mut v = Vec::with_capacity(indices.len());
-                for &i in &indices {
-                    v.push(match node.outputs(&[i]) {
-                        Ok(o) => o.outputs.into_iter().next(),
-                        Err(e) if e.contains("HTTP 404") => None,
-                        Err(e) => return Err(WalletError::Node(e)),
-                    });
-                }
-                v
-            }
-            Err(e) => return Err(WalletError::Node(e)),
-        };
-        let mut out = Vec::new();
-        for (m, f) in members.iter().zip(fetched) {
-            let Some(f) = f else { continue };
-            // A coinbase member must still be mature: a reorganization can
-            // shorten the chain.
-            if f.index == m.index
-                && f.one_time_key == m.one_time_key
-                && f.commitment == m.commitment
-                && !(f.coinbase && m.index >= coinbase_limit)
-            {
-                out.push(Decoy {
-                    global_index: m.index,
-                    key: OutputKey {
-                        one_time_key: point(&m.one_time_key)?,
-                        commitment: point(&m.commitment)?,
-                    },
-                });
-            }
-        }
-        Ok(out)
     }
 
     /// Moves `amount` of v1 funds into PX, to PX address 0. The v1 inputs pay
@@ -1632,5 +1674,13 @@ impl Wallet {
         Err(WalletError::Contract(
             "not a share addressed to this wallet".into(),
         ))
+    }
+}
+
+/// Fisher–Yates shuffle with the wallet's CSPRNG.
+fn shuffle<T, R: RngCore>(v: &mut [T], rng: &mut R) {
+    for i in (1..v.len()).rev() {
+        let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+        v.swap(i, j);
     }
 }

@@ -229,8 +229,24 @@ fn digest_arg(what: &str, s: &str) -> Result<Digest, String> {
     digest_from_hex(s.trim()).map_err(|e| format!("{what}: {e}"))
 }
 
+/// An exclusive lock on `<wallet>.lock`, held for the whole command, so two
+/// processes never work on one wallet file (review F8).
+fn lock_wallet(path: &std::path::Path) -> Result<std::fs::File, String> {
+    let lock_path = path.with_extension("lock");
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|e| format!("{}: {e}", lock_path.display()))?;
+    f.try_lock()
+        .map_err(|_| format!("{} is in use by another wallet process", path.display()))?;
+    Ok(f)
+}
+
 fn run(args: Args) -> Result<(), String> {
     let client = Client::new(&args.node);
+    let _lock = lock_wallet(&args.wallet)?;
     let kdf = KdfParams::default();
     match args.cmd {
         Cmd::Create { network } => {
@@ -273,6 +289,8 @@ fn run(args: Args) -> Result<(), String> {
         cmd => {
             let mut pw = password(false)?;
             let mut w = load(&args.wallet, &pw)?;
+            // Save before any transaction leaves the wallet (review F1).
+            w.set_autosave(&args.wallet, &pw, kdf);
             let result = match cmd {
                 Cmd::Address { account, index } => {
                     println!("{}", w.address(account, index));
@@ -301,7 +319,7 @@ fn run(args: Args) -> Result<(), String> {
                         .transfer(&client, &dest, amount, &rules, &mut rng)
                         .map_err(|e| e.to_string())?;
                     println!(
-                        "sent {} BLK, fee {} BLK",
+                        "submitted {} BLK, fee {} BLK",
                         format_amount(amount),
                         format_amount(fee)
                     );
@@ -346,7 +364,7 @@ fn run(args: Args) -> Result<(), String> {
                         .px_send(&client, &dest, amount, &rules, &mut rng)
                         .map_err(|e| e.to_string())?;
                     println!(
-                        "sent {} BLK privately, fee {} BLK",
+                        "submitted {} BLK privately, fee {} BLK",
                         format_amount(amount),
                         format_amount(fee)
                     );

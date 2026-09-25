@@ -134,7 +134,7 @@ pub fn decrypt(file: &[u8], password: &[u8]) -> Result<Vec<u8>, FileError> {
 
 /// Writes `bytes` to `path` atomically (temp file, fsync, rename).
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), FileError> {
-    let tmp = path.with_extension("tmp");
+    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
     {
         let mut f = std::fs::File::create(&tmp).map_err(FileError::Io)?;
         f.write_all(bytes).map_err(FileError::Io)?;
