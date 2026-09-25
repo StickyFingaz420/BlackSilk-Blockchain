@@ -167,7 +167,7 @@ review is asked to confirm or refute. The unresolved ones:
 - Proof size is ~2 MB, so about 4 PX transactions fit per block (aggregation-study.md).
 - The reference vault is a demonstration contract: no timeout, no refund, not
   trustless (docs/px.md §13.4).
-- CI exists but has not run yet (it runs on GitHub after a push).
+- CI passes on GitHub (first run 2026-09-25, commit `d6534c3`). It is not a substitute for this review.
 - There is no reorg-depth limit or checkpoint, by policy (docs/consensus.md §8; assumptions.md K4).
 - The P-6 and P-8 residual risks are analysed in privacy-review.md §3b and not
   mitigated further.

@@ -50,7 +50,7 @@ Each item carries one of the report classifications.
 |---|---|---|
 | 1 | Independent security review (docs/reviews/review-package.md) | **Not implemented:** not started; needs the owner to engage a reviewer |
 | 2 | Resolve the review's findings, then re-run the suite, the fuzzing and the rehearsal | **Blocked** on 1 |
-| 3 | CI running on GitHub, all jobs green | **Partially implemented:** hardened and pushed 2026-09-25; it had never run before. Results of the first run go into AUDIT.md |
+| 3 | CI running on GitHub, all jobs green | **Complete and verified** for commit `d6534c3` (run 36177083290). It must stay green up to the release commit. CI does not replace review |
 | 4 | Extended contract-engine fuzzing | **Partially implemented:** runs in progress (AUDIT.md when finished) |
 | 5 | Reorg-depth policy (assumptions.md K4) | **Complete but awaiting independent review:** no limit, a warning at 10 blocks, deepest reorg tracked (docs/consensus.md §8). Owner may revise; mainnet revisits limits or checkpoints |
 | 6 | Multi-node adversarial tests: a malicious peer sending valid-looking but conflicting PX transactions across a partition; a deep reorg across PX deposits and withdrawals | **Partially implemented:** the single-node and two-node cases are tested; labnet reorgs up to depth 17 with PX traffic |
@@ -61,7 +61,7 @@ Each item carries one of the report classifications.
 | 11 | Wallet error handling (clear messages for node errors, rejected transactions, insufficient private funds, stale anchors) | **Complete but awaiting independent review** (docs/reviews/wallet-review.md): four findings fixed, including two high privacy issues (W-1, W-2: re-spending an input with a new ring). Open: W-5 (ring reuse), friendlier messages |
 | 12 | Documentation of every genesis-affecting change | **Complete but awaiting independent review:** docs/testnet-reset-plan.md §2 |
 | 13 | Launch checklist and rollback plan | **Partially implemented:** reset plan §4–§6. A single checklist for the day, with named owners per step, is still to be written |
-| 14 | Cross-platform determinism (Linux, ARM64) | **Not implemented:** Linux comes with the first CI run |
+| 14 | Cross-platform determinism (Linux, ARM64) | **Partially implemented:** the full suite passes on Linux x86_64 in CI. There is no cross-platform comparison of identical hashes or roots, and no ARM64 |
 | 15 | Dandelion++ parameters for BlackSilk's network size (assumptions.md N4) | **Deferred:** needs testnet measurements |
 | 16 | Plonky3 anonymous report | **Complete but awaiting approval:** not submitted |
 | 17 | Contracts beyond the vault; transparent-contract chain integration (M3) | **Deferred** |

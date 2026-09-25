@@ -13,7 +13,7 @@ explicit approval:
 | Gate | State |
 |---|---|
 | Independent security review completed (docs/reviews/external-review-scope.md, review-package.md) | **Not started** |
-| CI validated: the workflow run on GitHub, all jobs green | **In progress.** Until 2026-09-25 GitHub showed **0 runs** of the workflow on any branch. The workflow was then hardened (actions pinned to commit SHAs, toolchains pinned, read-only token) and pushed; the first run's results go into AUDIT.md |
+| CI validated: the workflow run on GitHub, all jobs green | **Passed** for commit `d6534c3` (run 36177083290, 2026-09-25): lint, audit, fuzz-smoke and test all green. To be confirmed again on the release commit |
 | Extended contract-engine fuzzing | **Running:** 6 hours on `wasm_module` and 4 hours on the new `contract_sequence` target (AUDIT.md when finished) |
 | Local reset rehearsal | **Done** 2026-09-25 (§7). To be repeated if the review leads to consensus changes |
 

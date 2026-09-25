@@ -1243,7 +1243,23 @@ seeded from real encodings (`fuzz/src/seeds.rs`).
   - the no-`unsafe` check: every listed crate forbids `unsafe`;
   - `cargo audit --ignore RUSTSEC-2024-0436`: exit 0 (323 dependencies).
 
-  **Not yet passed in GitHub Actions.**
+  **Not yet passed in GitHub Actions** at that point.
+- **First GitHub Actions run** (after the owner enabled Actions):
+  - run 36177083290, commit `d6534c3`, `ubuntu-latest`, 2026-09-25 19:01–20:00 UTC;
+  - **all four jobs passed:**
+
+    | Job | Time |
+    |---|---|
+    | lint (fmt, clippy `-D warnings`, no-`unsafe` check) | 53 s |
+    | audit (`cargo-audit` 0.22.2) | 2.5 min |
+    | fuzz-smoke (nightly-2026-09-24, 2 min per target, ASan) | 24 min |
+    | test (release, full workspace) | 59 min |
+
+  - **Limitation:** the results were read from the run's status API; the job logs
+    need authentication and were not inspected. So test counts on Linux are not
+    recorded.
+  - This is the first evidence from a second platform (Linux x86_64) for
+    assumptions K5 and I3. It is not a review.
 
 **Wallet error-handling review** (docs/reviews/wallet-review.md). Findings:
 - **W-1 (high, privacy):** after a transport failure the inputs were not reserved, so

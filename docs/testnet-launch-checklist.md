@@ -15,7 +15,7 @@ accepted by the owner).
 |---|---|---|---|
 | G1 | **Independent security and privacy review** of the five critical areas (review-package.md) | A written report by a qualified external reviewer, at a pinned commit | **Not started.** Candidates: reviewer-candidates.md |
 | G2 | **Findings resolved or accepted** | Every finding recorded in AUDIT.md with its fix and test, or the owner's written acceptance | Not started (depends on G1) |
-| G3 | **CI green on GitHub** | A GitHub Actions run of the release commit, all four jobs passed | **Blocked:** Actions is disabled for the repository (0 runs; the Actions page returns 404) |
+| G3 | **CI green on GitHub** | A GitHub Actions run of the release commit, all four jobs passed | **Passed for `d6534c3`** (run 36177083290, all four jobs green). Re-run required for the release commit |
 | G4 | **Consensus and state-management validation** | Full suite; restart rebuild; supply check under labnet; review area 5 | In progress: internal tests pass; independent review pending |
 | G5 | **Multi-machine testing** | docs/testnet.md §7 on real machines, including a 72-hour run | Not started (after G1–G3) |
 | G6 | **Reorganization and recovery** | Partitions and reorgs between machines; restart and resync; the K4 policy (docs/consensus.md §8) | In progress: labnet on one machine (reorgs up to depth 17), restart rebuild test; K4 documented |
