@@ -1182,7 +1182,26 @@ seeded from real encodings (`fuzz/src/seeds.rs`).
     `cargo audit` and a fuzz smoke job;
   - the campaign script fails on crash artifacts;
   - **not yet run:** CI runs on GitHub after a push.
-- **Long coverage-guided fuzzing:** LONGFUZZ_RESULTS
+- **Long coverage-guided fuzzing:** campaign of 2026-09-25, AddressSanitizer on, continuing from the first campaign's
+  corpus. **All 8 targets: 386,839,603 executions in 10.5 hours, 0 crashes, 0
+  artifacts.**
+
+  | Target | Time | Executions | New units |
+  |---|---|---|---|
+  | `kernel_diff` | 2 h | 429,700 | 564 |
+  | `proof_decode` | 2 h | 280,957 | 3,049 |
+  | `tx_decode` | 1.5 h | 35,567,646 | 765 |
+  | `zkvm_elf` | 1.5 h | 5,012,866 | 1,023 |
+  | `delivery_open` | 1 h | 11,837,636 | 0 (saturated: without the keys, inputs stop at the view tag or the AEAD) |
+  | `wasm_module` | 1 h | 16,789,244 | 10,048 |
+  | `block_decode` | 45 min | 130,060,974 | 313 |
+  | `p2p_message` | 45 min | 186,860,580 | 74 |
+
+  **Limits:**
+  - still modest for the slowest targets (the kernel differential, and 2 MB proofs);
+  - the contract engine was still finding new coverage at the end, so it merits
+    longer runs;
+  - not a proof of absence of bugs.
 - **Final full suite** (all ZK-8 changes): **396 passed, 0 failed, 2 ignored (opt-in).**
 
 **Open items:**
