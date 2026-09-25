@@ -64,11 +64,7 @@ fn fixture() -> Fixture {
         // Vault records are in the tree, as in the proof-length campaign.
         vaults.push((r, tree.append(&mut perm, cm).unwrap(), secret));
     }
-    Fixture {
-        alice,
-        tree,
-        user,
-    }
+    Fixture { alice, tree, user }
 }
 
 fn transfer_witness(f: &Fixture, class: &str, k: usize, rng: &mut ChaCha20Rng) -> Witness {
