@@ -107,6 +107,39 @@ pub struct Outputs {
     pub outputs: Vec<OutputEntry>,
 }
 
+/// Most registrations per `/px/contracts` response.
+pub const MAX_PX_CONTRACTS_PER_REQUEST: u64 = 1_024;
+
+/// A registered function program: its id (hex) and row budget
+/// (`cycles, keys, add, bit, lt, shift, mul, poseidon`).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PxProgramEntry {
+    pub id: String,
+    pub budget: [usize; 8],
+}
+
+/// A private-contract registration (docs/px.md §13.4).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PxContractEntry {
+    pub height: u64,
+    pub id: String,
+    pub programs: Vec<PxProgramEntry>,
+}
+
+/// Every contract registration, in block order. Wallets download the whole
+/// list, never a single contract, so the node learns nothing about which
+/// contracts a wallet uses.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PxContracts {
+    /// Index of the first entry.
+    pub from: u64,
+    pub contracts: Vec<PxContractEntry>,
+    /// Total registrations on the node's chain.
+    pub total: u64,
+    /// The node's tip height.
+    pub height: u64,
+}
+
 /// Most PX commitments per `/px/commitments` response.
 pub const MAX_PX_COMMITMENTS_PER_REQUEST: u64 = 65_536;
 
@@ -237,6 +270,10 @@ impl Client {
 
     pub fn px_commitments(&self, from: u64) -> Result<PxCommitments, RpcError> {
         self.get(&format!("/px/commitments?from={from}"))
+    }
+
+    pub fn px_contracts(&self, from: u64) -> Result<PxContracts, RpcError> {
+        self.get(&format!("/px/contracts?from={from}"))
     }
 
     pub fn outputs(&self, indices: &[u64]) -> Result<Outputs, RpcError> {

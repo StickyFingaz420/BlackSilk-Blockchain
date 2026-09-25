@@ -1,6 +1,6 @@
 # PX: private records, nullifiers and the transfer kernel
 
-Status: **v0.3, implemented and tested, integrated into consensus (transaction kinds 2 and 3); not production-ready.**
+Status: **v0.4, implemented and tested, integrated into consensus (transaction kinds 2 and 3), with contract tooling and record distribution (§13); not production-ready.**
 - Architecture: [`zk.md`](zk.md) §4–§6.
 - Virtual machine: [`zkvm.md`](zkvm.md).
 - Progress and findings: AUDIT.md R8.
@@ -9,7 +9,8 @@ This document specifies what the code in `px-core/` (crate `blacksilk-px-core`) 
 `px/` (crate `blacksilk-px`) implements: the hash `Hk`, keys, records, nullifiers, the
 commitment tree, the kernel and its proofs, contract records and functions in one
 unified proof (§7), the consensus state, record delivery, the consensus integration
-(§11) and privacy guidance (§12). §10 lists what is **not**
+(§11), privacy guidance (§12), and contract tooling with the distribution of contract
+records (§13). §10 lists what is **not**
 done and what must be reviewed externally before any production use. The internal
 security review is `docs/reviews/zk-security-review.md`.
 
@@ -191,6 +192,15 @@ multi-execution statement:
   loudly; it never leaks.
 - A test checks that every tested witness uses at most 95% of each budget, and
   another that a deposit and a payment have identical shapes.
+- **Byte length** (privacy review P-5). Field elements are always 4 bytes (Plonky3
+  writes them fixed-width), so values never change the length. What varies is the
+  Merkle opening proof: FRI opens its queries with pruned paths, and the number of
+  distinct nodes depends on where the queries land. The query positions are public
+  (every verifier recomputes them from the proof) and are drawn by Fiat–Shamir over
+  hiding commitments, so they are distributed identically for every witness.
+  - **Measured:** 6 transfer proofs of different witnesses were 2,029,768–2,046,856
+    bytes (a 0.84% spread).
+  - Everything outside the opening proof was 129,898 bytes in each.
 
 The constant-work design below remains as defence in depth:
 
@@ -206,9 +216,9 @@ The proof's table heights are public (zkvm.md §8).
 - All table heights were identical within each group (tests
   `successful_executions_have_identical_trace_heights` and
   `record_kinds_are_not_revealed_by_trace_heights`).
-- **Margin:** the largest table (CPU, 2^15 rows) is 90% full with one function. A
-  future change must keep all witnesses on one side of the power of two (security
-  review R-5).
+- **Margin:** fixed budgets (above) made heights independent of the witness, which
+  resolved security review R-5. `budgets_leave_headroom` keeps every tested witness at
+  or below 95% of each budget.
 
 ## 5. Consensus state (`px/src/state.rs`)
 
@@ -228,13 +238,18 @@ replayed from the stored blocks on start, with the same per-block undo.
 
 ## 6. Record delivery (`px/src/delivery.rs`)
 
-Each output carries its record encrypted to the recipient's address. The ciphertext is
-1,209 bytes:
+Each output carries its record encrypted to an address. The ciphertext is 1,241 bytes:
 
 ```text
-R (32) ‖ view tag (1) ‖ ML-KEM-768 ciphertext (1088) ‖ ChaCha20-Poly1305(value ‖ data ‖ rcm) (72 + 16)
+R (32) ‖ view tag (1) ‖ ML-KEM-768 ciphertext (1088) ‖ ChaCha20-Poly1305(contract ‖ value ‖ data ‖ rcm) (104 + 16)
 key = H32("px/delivery-key", r·V ‖ ss_kem ‖ R ‖ ct_kem ‖ cm)       AAD = cm, nonce 0 (fresh key)
 ```
+
+- **User records** (`contract = 0`) go to their owner's address.
+- **Contract records** (`contract ≠ 0`, owner 0) go to the party that will act on them
+  (§13).
+- The plaintext has one length for both kinds, so the ciphertext does not reveal the
+  kind.
 
 **Address:** the owner tag, a Ristretto view key `V`, and an ML-KEM-768 encapsulation
 key (1,184 bytes). All three are derived per address from `sk`; addresses of one
@@ -245,8 +260,13 @@ and ML-KEM-768. The KEM is RustCrypto `ml-kem` 0.3.2 (pure Rust, FIPS 203), pinn
 exactly.
 
 **Acceptance** (Janus principle, transactions.md §12): the recipient accepts a record
-only if it recomputes the on-chain commitment with its own owner tag and the
-transaction's `rho`. A probe with inconsistent contents is ignored.
+only if it recomputes the on-chain commitment with the transaction's `rho` and:
+- for a user record, its own owner tag;
+- for a contract record, owner 0 and the decrypted contract.
+
+A probe with inconsistent contents is ignored, and the record kind cannot be
+misrepresented: a user record presented as a contract record, or the reverse, fails
+the commitment check (tested).
 
 **Scanning:** one scalar multiplication per output and wallet address, then a view-tag
 check that filters about 255 of every 256 outputs.
@@ -315,8 +335,8 @@ the contract's program: otherwise anyone could write a function that approves sp
 another contract's records.
 - `prove::verify` therefore takes `registered(contract, program_id)` as a **mandatory**
   argument. The tests check that an unregistered program is refused.
-- Consensus must answer it from the contract deploy data (zk.md §8.3). That is part of
-  the consensus-integration phase.
+- Consensus answers it from the deploy data (§11.2): PX3 checks registration, and PX5
+  verifies with the registered programs and budgets (`tx/src/validate.rs`).
 
 ### 7.4 Example: a private hash-locked vault (`zkvm/guests/vault`)
 
@@ -339,10 +359,10 @@ Everything except the contract id, the selector and `io_hash` stays private. Tes
 | Item | Value |
 |---|---|
 | Kernel execution (v2) | 25.0–25.2k cycles; 29.3–29.4k with one function (opt-level "z" gave 141k for v1) |
-| Transfer proof | **2.04 MB**, proving ~42 s, **verifying 188 ms** |
+| Transfer proof | **2.04 MB** (6 proofs: 2,029,768–2,046,856 bytes), proving ~42 s, **verifying 188 ms** |
 | Kernel + one function (vault CLAIM) | **~2.5 MB**, proving ~51 s (a 40-proof stress run gave 48.4–51.4 s each) |
 | PX transaction (encoded) | ~2.05 MB (bridge-in with one v1 input) |
-| Record ciphertext | 1,209 bytes per output |
+| Record ciphertext | 1,241 bytes per output |
 
 Measured on this machine, idle, one proof at a time.
 
@@ -434,10 +454,10 @@ high-throughput per-transaction use on a chain.
    - the hybrid delivery combiner;
    - the consensus rules of §11.
 2. **Proof size and chain capacity:** §8, §11.5.
-3. **Contract tooling:** deploys and function calls exist in consensus and in the
-   libraries (`px_builder`), but not yet as wallet commands. Also missing:
-   distributing contract-record plaintext to the parties that need it, and more
-   than two functions per transaction.
+3. **Contract tooling:** deploys, calls and record distribution are implemented for
+   the reference vault (§13). Contracts other than the vault need their own
+   host-side helpers (the equivalent of `px::vault`) before the wallet can call them.
+   At most two functions per transaction.
 4. **Wallet:**
    - The wallet keeps every commitment (32 bytes each) and rebuilds the tree to
      spend. That is adequate for a testnet; a long-lived chain needs incremental
@@ -452,7 +472,7 @@ high-throughput per-transaction use on a chain.
 ```text
 prefix:   version ‖ kind=2 ‖ v1 inputs[0..64] (key image, ring) ‖ hidden outputs[0..16]
           ‖ payouts[0..16] (clear amount, stealth) ‖ fee ‖ bridge_in ‖ bridge_out
-          ‖ anchor ‖ nullifiers[2] ‖ commitments[2] ‖ ciphertexts[2] (1209 bytes each)
+          ‖ anchor ‖ nullifiers[2] ‖ commitments[2] ‖ ciphertexts[2] (1241 bytes each)
           ‖ functions[0..2] (contract, program id, io_hash, public output words)
 base:     pseudo-outputs[inputs]
 prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 MiB)
@@ -488,7 +508,7 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
 
 | Rule | Meaning |
 |---|---|
-| Structure | Counts, sorting, identity points, range-proof shape, sizes; fee ≥ `PX_FEE_PER_BYTE` × encoded size |
+| Structure | Counts, sorting, identity points, range-proof shape, sizes. PX transactions: fee **exactly** `PX_STANDARD_FEE`. Deploys: fee ≥ `PX_FEE_PER_BYTE` × encoded size |
 | Balance | §11.1 (PX); the transfer rule for deploys |
 | C1–C4 | Rings, key images and one-time keys, as for transfers, including payouts |
 | PX1 | The anchor is a root of the last 100 blocks, before this block |
@@ -505,10 +525,14 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 
 ### 11.4 Wallets and RPC
 
-- Wallets scan whole blocks (`/blocks`) and fetch the complete, ordered commitment
-  list in bulk (`/px/commitments`). The node never learns which records a wallet
-  owns.
-- CLI commands: `px-address`, `px-balance`, `px-deposit`, `px-send`, `px-withdraw`.
+- Wallets scan whole blocks (`/blocks`) and fetch, whole and in order:
+  - the commitment list (`/px/commitments`);
+  - the contract-registration list (`/px/contracts`: height, contract id, program
+    ids and budgets).
+
+  The node never learns which records a wallet owns or which contracts it uses.
+- CLI commands: `px-address`, `px-balance`, `px-deposit`, `px-send`, `px-withdraw`, and
+  the contract commands of §13.4.
 - **Canonical anchor.** Wallets use the root at the most recent height that is a
   multiple of 16. So the anchor does not reveal when a wallet last synced; a record
   becomes spendable once that height reaches it.
@@ -519,9 +543,9 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 |---|---|
 | PX transaction | ≤ `MAX_PX_TX_SIZE` = 4 MiB proof cap + 256 KiB |
 | Deploy | ≤ 1 MiB |
-| Block PX budget | 8 MiB (about 4 PX transactions); total block ≤ 9.4 MB |
-| Standard PX fee | `PX_FEE_PER_BYTE × MAX_PX_TX_SIZE` for every PX transaction (uniform, §12) |
-| Relay | per peer 0.2 PX transactions/s (burst 4); all peers together 2/s (burst 10) |
+| Block PX budget | 8 MiB (about 4 PX transactions); total block ≤ `MAX_BLOCK_BYTES` = 1,000,000 + 8 MiB + 64 KiB = 9,454,144 bytes |
+| PX fee | Exactly `PX_STANDARD_FEE = PX_FEE_PER_BYTE × MAX_PX_TX_SIZE` = 8,912,896 atomic units, a consensus rule (§12). It covers the per-byte fee of any PX transaction. Consequence: every PX transaction pays the same, so the mempool's fee-per-byte ordering ranks larger ones (contract calls, ~2.5 MB) below plain transfers (~2 MB) when the PX budget is congested |
+| Relay | PX and deploy transactions together: per peer 0.2/s (burst 4); all peers together 2/s (burst 10) |
 | Invalid proof | Misbehaviour (the statement is branch-independent once PX1 and PX3 pass) |
 | Mempool | PX class capped at 64 MiB with fee-per-byte eviction; proofs verified once on admission; templates keep the pool non-negative in order |
 
@@ -536,3 +560,174 @@ Measured privacy analysis: `docs/reviews/privacy-review.md`.
   transaction; it learns nothing from your scanning.
 - **Give each counterparty its own PX address** (`px-address --index`). Addresses of
   one wallet are unlinkable.
+- **Contract calls reveal the contract, the program and the function's public
+  outputs** (for the vault: LOCK or CLAIM). The time between a LOCK and its CLAIM is
+  visible to anyone watching that contract.
+- **The fee is the same for every PX transaction** (consensus), so it reveals nothing.
+
+## 13. Contract tooling and the distribution of contract records
+
+### 13.1 The problem
+
+A contract record (`contract = C`, owner 0) is spent through a function of `C` that
+approves it. Whoever calls that function must know the record's opening: its value,
+data, `rho` and `rcm`, and its tree position. Unlike a user record, its opening is not
+tied to anyone's key, so the protocol must say who receives it.
+
+### 13.2 On-chain delivery to a designated party
+
+- **Every output carries one ciphertext** (§6). For a contract output, the caller
+  addresses it to the party that will act on the record: for a vault, the claimer.
+  With no counterparty, it goes to the caller's own address.
+- **The creator keeps a copy** of every contract record it creates, whoever the
+  addressee is.
+- **Recipients find contract records by ordinary scanning.** The same trial decryption
+  as for payments is used: no new message, no node query, the same cost.
+- **Spends are seen by every holder.** A contract record's nullifier,
+  `Hk(NULLIFIER_CONTRACT, contract ‖ rcm ‖ cm)`, depends only on the opening
+  (`px_core::record::contract_nullifier`, checked against the kernel's). Every holder
+  sees when the record is consumed.
+
+### 13.3 Off-chain sharing (`px/src/share.rs`)
+
+When more parties need a record than the one on-chain addressee, a holder shares it:
+
+```text
+share = version (1) ‖ cm (32) ‖ rho (32) ‖ delivery ciphertext to the recipient's PX address
+```
+
+- The sealing is the hybrid encryption of §6. Only the addressee can open a share, and
+  the share is bound to `cm`.
+- The recipient accepts it only if the record recomputes `cm`, and counts it as
+  confirmed only once `cm` is in the chain's commitment list. So a share can describe
+  only a real, existing record.
+- Only contract records can be imported. User records are received on chain and are
+  spendable only by their owner.
+
+### 13.4 Wallet (`wallet/src/px.rs`, `wallet/src/wallet.rs`)
+
+**Contract index.** The wallet downloads the chain's complete registration list
+(`/px/contracts`, paged, in block order) up to its scanned height, like every other
+wallet.
+- A wallet created after a deploy knows the contract too. The first version indexed
+  deploys only while scanning, so a wallet newer than the deploy could not claim;
+  that was found in review and fixed.
+- To call a contract, the wallet uses the budget registered on chain and checks that
+  its program is registered to that contract.
+- The node is trusted for the list's availability, as for blocks. A false entry can
+  only make the wallet build a transaction that consensus refuses (PX3, PX5).
+- On a reorganization, entries above the fork are dropped and fetched again.
+
+**Contract records** are kept apart from the wallet's funds: never counted in the
+balance, never selected to pay. Their lifecycle:
+
+| Source | Confirmed when | On a reorganization above it |
+|---|---|---|
+| Received (its ciphertext was addressed to this wallet) | its block is scanned | dropped; rescanning finds it again |
+| Created (by this wallet) | its commitment appears in the chain's list | kept, as unconfirmed (the wallet holds the opening) |
+| Imported (a share) | its commitment appears in the chain's list | kept, as unconfirmed |
+
+- `clear-pending` also drops unconfirmed records this wallet created in transactions
+  that never confirmed.
+- A contract record is spendable once confirmed at or below the canonical anchor (§11.4).
+
+**Commands:**
+
+| Command | What it does |
+|---|---|
+| `px-deploy --vault` or `--program F.elf --budget c,k,a,b,l,s,m,p` (repeatable) | Registers a contract, paid with v1 funds, so the deployer is hidden behind ring signatures. Prints the contract id |
+| `px-contracts` | Lists deployed contracts and their programs (marks the vault) |
+| `px-records` | Lists the contract records this wallet holds, with status and source |
+| `px-vault-lock --contract C --amount A [--secret S] [--deliver-to PXADDR]` | Locks PX funds in a vault record under `Hk(LOCK, S)`, delivering the record to the claimer. The fee is paid from PX. Prints the secret if it was generated |
+| `px-vault-claim --record CM --secret S [--to PXADDR]` | Claims a vault record, paying its value privately. The fee is paid from one PX record, or else from v1 funds, so a claimer without PX funds can claim |
+| `px-share --record CM --to PXADDR` / `px-import --share HEX` | Off-chain sharing (§13.3) |
+
+**The reference vault** (`px/src/vault.rs`, program pinned in `px/vault.elf` and
+`px/vault.id`) is a **demonstration contract. It is not production-ready and not
+trustless**:
+
+| Limitation | Consequence |
+|---|---|
+| **No timeout** | A vault stays claimable forever |
+| **No refund** | The value never returns to the locker except by claiming with the secret |
+| **The locker knows the secret** | The locker can claim too; whoever holds the secret and the record's opening can claim |
+| **Not a trustless swap** | A hash-time-locked contract needs a timelock and a refund function; this vault has neither |
+
+The wallet prints this warning on every `px-vault-lock`, and the command help says
+the same.
+
+**Recovery after restoring a wallet from its seed:**
+
+| Contract record | Recovered from the seed? |
+|---|---|
+| Received (its ciphertext was addressed to this wallet) at or after the restore height | Yes, by scanning |
+| Received before the restore height | No: restore from an earlier height, or ask a holder for a share |
+| Created by this wallet and addressed to itself (the default) | Yes, as a received record |
+| Created by this wallet and addressed to another party | **No:** the creator's copy lives only in the wallet file. Keep the file, or have the other party share the record back |
+| Imported from a share | No: import the share again |
+
+Contracts themselves (their registrations) are always recovered: the wallet
+downloads the whole registration list.
+
+### 13.4.1 Host-side helpers for other contracts
+
+The wallet can call a contract only through a host-side helper like `px::vault`.
+Writing one for a new contract requires:
+1. **A function program** (a RISC-V ELF built with the zkVM SDK) that:
+   - reads its private input;
+   - checks the contract's rules;
+   - writes `io_hash ‖ contract` (`px_core::call::function_prefix`) and then its
+     public outputs.
+   It must approve only records of its own contract and specify outputs through
+   `Call` (docs/px.md §7.2).
+2. **A row budget** that covers the worst case of every valid input, with headroom.
+   - Measure it: `trace::usage`, as in `px/tests/unified.rs::budgets_leave_headroom`.
+   - An execution over budget cannot be proven: a liveness failure for that input,
+     never a leak.
+3. **Pinning:** commit the ELF and its program id (as `px/vault.id`) and test that
+   they match. A rebuild with another compiler changes the id.
+4. **Host helpers** that produce, for each call:
+   - the function's input words;
+   - the kernel's `FunctionWitness`, with the **same** approvals, output
+     specifications and blind as the function computes. If they differ, the proof
+     cannot be built (`FunctionMismatch`), because the kernel and the function
+     commit to the same `io_hash`.
+   - The blind must come from a CSPRNG (security review R-6).
+5. **Wallet operations** (as `px_vault_lock` and `px_vault_claim`) that:
+   - choose inputs and outputs;
+   - address contract outputs to the right party (§13.2);
+   - keep the creator's copy;
+   - pay the standard fee.
+6. **Tests:** the rule violations natively and in the guest, a proof end to end, and
+   the budget headroom.
+
+Deploying registers the program and its budget (`px-deploy --program --budget`).
+Deploying alone does not make a contract callable from the wallet: steps 4 and 5 are
+code.
+
+### 13.5 Tests
+
+- `px/tests/delivery.rs`:
+  - contract records reach only their addressee;
+  - the record kind cannot be misrepresented;
+  - shares open only for their addressee, and any change is refused.
+- `px/tests/unified.rs`:
+  - the vault program id is pinned;
+  - the claim's nullifier equals `contract_nullifier`.
+- `wallet/src/px.rs` unit tests:
+  - rewinds keep created and imported records;
+  - `clear-pending` drops only unconfirmed created records;
+  - contract records are never funds.
+- `wallet/tests/e2e.rs::a_vault_is_deployed_locked_delivered_shared_and_claimed_over_rpc`,
+  through a real node:
+  1. deploy;
+  2. lock delivered to Bob;
+  3. Bob receives the record by scanning;
+  4. Alice shares it with Carol, who imports it (Bob cannot open Carol's share);
+  5. a wrong secret is refused before proving;
+  6. Bob claims with the fee paid from v1 funds;
+  7. all three wallets see the record consumed;
+  8. a second claim is refused;
+  9. Bob then locks half of his new PX funds for himself and claims them with the fee
+     paid from a PX record: his v1 balance is untouched, and his PX balance ends at
+     exactly 1 BLK minus the two fees.

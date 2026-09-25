@@ -1,32 +1,39 @@
 # Proof size, aggregation and verification cost: design study
 
-Status: **study (2026-09-24). Nothing in §3 is implemented.** It records what was
-measured, what was estimated (marked *estimate*), and what the options cost, so that
-the owner can decide with evidence. Security parameters are unchanged: BS-ZK-2, 108
-queries (AUDIT.md R8).
+Status: **study (2026-09-24; measured decomposition 2026-09-25). Nothing in §3 is
+implemented.** It records what was measured, what was estimated (marked *estimate*),
+and what the options cost, so that the owner can decide with evidence. Security
+parameters are unchanged: BS-ZK-2, 108 queries (AUDIT.md R8).
 
 ## 1. Where the bytes go (transfer proof, 2.04 MB)
 
-**Measured:**
-- about 2,400 committed elements opened per query;
-- 108 queries;
-- a degree-8 challenge extension.
+**Measured** (`px/examples/proof_breakdown.rs`: postcard sizes of each part of a
+2,035,432-byte transfer proof):
 
-**Decomposition** (*estimate*, from the proof structure):
+| Part | Bytes | Share |
+|---|---|---|
+| Opened rows of the committed trace matrices at the query positions: four committed rounds, one small (3.1%) and three large (18.8–19.8% each) | 1,230,124 | **60.4%** |
+| Authentication of those rows: hiding salts 206,068 and pruned Merkle paths 170,120 | 376,188 | **18.5%** |
+| FRI folding: authentication 202,296 and sibling values 76,904, over 8 layers (arities 2, …, 16) | 279,200 | **13.7%** |
+| Out-of-domain openings | 129,353 | 6.4% |
+| Hiding-polynomial openings, commitments, FRI roots, final polynomial | 20,109 | 1.0% |
+| Envelope (version byte, lengths) | 458 | 0.0% |
 
-| Part | Approx. size |
-|---|---|
-| Opened trace, lookup and quotient values: 108 × ~2,400 × 4 B | ~1.0 MB |
-| Merkle paths for the trace trees (~4 trees × ~20 levels × 32 B per query) | ~0.3 MB |
-| FRI commit-phase openings (~20 rounds of paths and extension siblings per query) | ~0.7 MB |
-| Commitments, out-of-domain evaluations, final polynomial, grinding | < 0.1 MB |
+The earlier estimate put FRI folding at ~0.7 MB. Measured, it is 0.28 MB: the opened
+rows dominate.
 
-Proof size therefore scales with:
-- **queries** (linearly; a security-policy decision);
-- **opened width** (linearly; engineering);
-- **log(trace length)**, through the paths.
+**What this means:**
+- **Queries:** everything except the out-of-domain openings and commitments (about 92%
+  of the proof) scales linearly with the number of queries.
+- **Opened width:** 60% scales linearly with the number of committed columns opened
+  per query.
+- **Hiding salts:** 10.1% of the proof. They make the Merkle leaves hiding (zero
+  knowledge); their length is a security parameter.
+- **Byte length:** it varies by less than 1% between proofs of one shape, and only in
+  the pruned paths (privacy review P-5).
 
-It does not scale with the amount of computation proven, beyond the logarithm.
+Proof size does not scale with the amount of computation proven, beyond the logarithm
+through the paths.
 
 ## 2. Verification cost (done)
 
@@ -42,8 +49,10 @@ It does not scale with the amount of computation proven, beyond the logarithm.
 - invalid proofs are penalised as stateless misbehaviour;
 - the proof runs last in validation.
 
-A flooding peer can make a node verify at most 2 proofs per second on average, about
-0.4 s of CPU per second, whatever the number of peers.
+Through relay, a flooding peer can make a node verify at most 2 proofs per second on
+average (bursts of 10), about 0.4 s of CPU per second, whatever the number of peers.
+Proofs in a received block that are not in the node's mempool are verified outside
+these buckets, but a block must carry valid proof-of-work.
 
 ## 3. Options for smaller proofs
 
@@ -70,7 +79,13 @@ smaller proofs. **Candidates** (*estimates*):
 - dropping main-trace copies of periodic columns once `p3-lookup` supports periodic
   values in messages (upstream).
 
-**Expected gain:** 10–25% (*estimate*). Each change touches soundness-critical AIR
+**Expected gain:** 10–25% (*estimate*), acting on the 60% of the proof that is opened
+rows (§1).
+
+**Salts** (10.1%, §1): the hiding MMCS appends random salt elements to every leaf. A
+shorter salt would shrink the proof, but it lowers the statistical hiding of the
+leaves. It is a zero-knowledge parameter and needs the same analysis and owner
+decision as the query count; not changed. Each change touches soundness-critical AIR
 code and needs the full mutation and forgery-analysis cycle
 (docs/reviews/zk-security-review.md §3).
 

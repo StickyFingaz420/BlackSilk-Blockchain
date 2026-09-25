@@ -1,11 +1,14 @@
 //! Record delivery: only the addressed recipient opens a ciphertext, every
 //! tampering is detected, and records inconsistent with the commitment are
-//! refused (docs/px.md §6).
+//! refused (docs/px.md §6). Contract records reach the party they are
+//! addressed to, and openings can be shared off chain (§13).
 
 use blacksilk_px::delivery::{open, seal, SealError, CIPHERTEXT_BYTES};
 use blacksilk_px::perm::HostPerm;
+use blacksilk_px::share::{open_share, seal_share, SHARE_BYTES};
 use blacksilk_px::wallet::{self, Account};
 use blacksilk_px_core::record::Record;
+use blacksilk_px_core::{Digest, ZERO_DIGEST};
 use rand_chacha::rand_core::SeedableRng;
 
 fn setup() -> (rand_chacha::ChaCha20Rng, Account, Account) {
@@ -114,4 +117,99 @@ fn malformed_addresses_are_refused() {
     let mut addr = bob.address(0);
     addr.view = [0xff; 32];
     assert_eq!(seal(&mut rng, &addr, &rec, &cm), Err(SealError::BadAddress));
+}
+
+const CONTRACT: Digest = [0x100, 1, 2, 3, 4, 5, 6, 7];
+
+fn contract_record(rng: &mut rand_chacha::ChaCha20Rng, value: u64) -> Record {
+    Record {
+        owner: ZERO_DIGEST,
+        contract: CONTRACT,
+        asset: ZERO_DIGEST,
+        value,
+        data: [7; 8],
+        rho: wallet::random_digest(rng),
+        rcm: wallet::random_digest(rng),
+    }
+}
+
+/// A contract record (owner 0) is delivered to whichever address its creator
+/// chose; it opens there, as a contract record, and nowhere else. Its
+/// ciphertext has the same length as a user record's.
+#[test]
+fn contract_records_reach_the_addressed_party() {
+    let (mut rng, bob, eve) = setup();
+    let rec = contract_record(&mut rng, 500);
+    let cm = rec.commit(&mut HostPerm::new());
+    let to = bob.address(2);
+    let c = seal(&mut rng, &to, &rec, &cm).unwrap();
+    assert_eq!(c.len(), CIPHERTEXT_BYTES);
+    let got = open(&bob.delivery_keys(2), &to.owner, &c, &cm, &rec.rho).unwrap();
+    assert_eq!(got, rec);
+    assert_eq!((got.owner, got.contract), (ZERO_DIGEST, CONTRACT));
+    assert_eq!(
+        open(&bob.delivery_keys(3), &bob.owner(3), &c, &cm, &rec.rho),
+        None
+    );
+    assert_eq!(
+        open(&eve.delivery_keys(2), &eve.owner(2), &c, &cm, &rec.rho),
+        None
+    );
+}
+
+/// The record kind is bound by the commitment: a sender cannot present a user
+/// record as a contract record, or a contract record as the recipient's own.
+#[test]
+fn the_record_kind_cannot_be_misrepresented() {
+    let (mut rng, bob, _) = setup();
+    let to = bob.address(0);
+    let keys = bob.delivery_keys(0);
+    // A user record, claimed to be a contract record.
+    let user = Record::plain(to.owner, 5, [0; 8], wallet::random_digest(&mut rng), [3; 8]);
+    let cm = user.commit(&mut HostPerm::new());
+    let mut probe = user;
+    probe.contract = CONTRACT;
+    let c = seal(&mut rng, &to, &probe, &cm).unwrap();
+    assert_eq!(open(&keys, &to.owner, &c, &cm, &user.rho), None);
+    // A contract record, claimed to be a user record of the recipient.
+    let rec = contract_record(&mut rng, 9);
+    let cm = rec.commit(&mut HostPerm::new());
+    let mut probe = rec;
+    probe.contract = ZERO_DIGEST;
+    let c = seal(&mut rng, &to, &probe, &cm).unwrap();
+    assert_eq!(open(&keys, &to.owner, &c, &cm, &rec.rho), None);
+}
+
+/// Off-chain sharing: only the addressee opens a share, which yields the
+/// record and its commitment; any change is refused.
+#[test]
+fn shared_openings_reach_only_their_addressee() {
+    let (mut rng, bob, eve) = setup();
+    let rec = contract_record(&mut rng, 77);
+    let cm = rec.commit(&mut HostPerm::new());
+    let to = eve.address(5);
+    let share = seal_share(&mut rng, &to, &rec, &cm).unwrap();
+    assert_eq!(share.len(), SHARE_BYTES);
+    assert_eq!(
+        open_share(&eve.delivery_keys(5), &to.owner, &share),
+        Some((rec, cm))
+    );
+    assert_eq!(
+        open_share(&bob.delivery_keys(5), &bob.owner(5), &share),
+        None
+    );
+    // Version, commitment, rho, ciphertext and length are all checked.
+    for pos in [0, 1, 40, 70, SHARE_BYTES - 1] {
+        let mut t = share.clone();
+        t[pos] ^= 1;
+        assert_eq!(
+            open_share(&eve.delivery_keys(5), &to.owner, &t),
+            None,
+            "byte {pos}"
+        );
+    }
+    assert_eq!(
+        open_share(&eve.delivery_keys(5), &to.owner, &share[..SHARE_BYTES - 1]),
+        None
+    );
 }

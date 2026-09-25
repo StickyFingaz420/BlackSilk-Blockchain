@@ -449,11 +449,6 @@ impl PxTx {
         let images: Vec<Point> = self.inputs.iter().map(|i| i.key_image).collect();
         blacksilk_crypto::stealth::px_context(&nfs, &images)
     }
-
-    /// The minimum fee: [`PX_FEE_PER_BYTE`] per encoded byte.
-    pub fn min_fee(&self) -> u64 {
-        (self.encoded_len() as u64).saturating_mul(PX_FEE_PER_BYTE)
-    }
 }
 
 // ---- deploy ----
@@ -681,12 +676,10 @@ pub fn check_px_structure(tx: &PxTx) -> Result<(), TxError> {
     if size > MAX_PX_TX_SIZE {
         return Err(TxError::TooLarge { size });
     }
-    let required = tx.min_fee();
-    if tx.fee < required {
-        return Err(TxError::FeeTooLow {
-            fee: tx.fee,
-            required,
-        });
+    // One fee for every PX transaction. It covers the per-byte fee of any
+    // PX transaction, since none exceeds MAX_PX_TX_SIZE.
+    if tx.fee != PX_STANDARD_FEE {
+        return Err(TxError::PxFeeNotStandard { fee: tx.fee });
     }
     Ok(())
 }

@@ -12,9 +12,9 @@
 //! 5. sign the v1 inputs over the message that includes the proof;
 //! 6. self-check the result.
 //!
-//! **Fee.** Every PX transaction pays [`px_standard_fee`], the per-byte fee
-//! of the largest possible PX transaction: the fee reveals nothing about the
-//! transaction's shape.
+//! **Fee.** Every PX transaction pays exactly [`PX_STANDARD_FEE`], a
+//! consensus rule: the fee reveals nothing about the transaction's shape or
+//! the wallet that built it.
 
 use crate::builder::{BuildError, Decoy, InputPlan, Payment};
 use crate::params::*;
@@ -40,9 +40,9 @@ use rand_core::{CryptoRng, RngCore};
 use std::sync::Arc;
 use zeroize::Zeroize;
 
-/// The fee every PX transaction pays.
+/// The fee every PX transaction pays ([`PX_STANDARD_FEE`], a consensus rule).
 pub fn px_standard_fee() -> u64 {
-    PX_FEE_PER_BYTE * MAX_PX_TX_SIZE as u64
+    PX_STANDARD_FEE
 }
 
 /// A function call to prove with the kernel.
@@ -68,7 +68,9 @@ pub struct PxPlan<'a> {
     /// The kernel witness. Its `bridge_in`/`bridge_out` must balance the v1
     /// side with the fee (module docs of `crate::px`).
     pub witness: Witness,
-    /// The PX delivery address of each output slot; `None` for an empty slot.
+    /// The PX delivery address of each output slot: the owner's address for a
+    /// user record, the party that will act on it for a contract record;
+    /// `None` for an empty slot.
     pub recipients: [Option<delivery::Address>; 2],
     pub functions: Vec<FunctionRun>,
     pub fee: u64,
@@ -157,7 +159,10 @@ pub fn build_px<R: RngCore + CryptoRng>(
         };
         let address = match &plan.recipients[j] {
             Some(a) => {
-                if a.owner != out.owner {
+                // A user record goes to its owner's address. A contract
+                // record (owner 0) goes to the party that will act on it
+                // (docs/px.md §13).
+                if out.contract == blacksilk_px_core::ZERO_DIGEST && a.owner != out.owner {
                     return Err(PxBuildError::Recipient(j));
                 }
                 a.clone()
@@ -383,9 +388,22 @@ pub fn build_px<R: RngCore + CryptoRng>(
     Ok(tx)
 }
 
+/// The fee of a deploy with `inputs` v1 inputs and `outputs` outputs that
+/// registers `programs`: the per-byte fee of an upper bound of its encoded
+/// size.
+pub fn deploy_fee(inputs: usize, outputs: usize, programs: &[crate::px::Registration]) -> u64 {
+    let payload: usize = 32
+        + 10
+        + programs
+            .iter()
+            .map(|p| p.elf.len() + 10 + 80)
+            .sum::<usize>();
+    PX_FEE_PER_BYTE * (crate::builder::max_weight(inputs, outputs) + payload as u64 + 64)
+}
+
 /// Builds a signed deploy registering `programs` (binary, budget), paid from
-/// `inputs` with `payments` and change like a transfer. The fee is the
-/// per-byte fee of an upper bound of the encoded size.
+/// `inputs` with `payments` and change like a transfer. The fee is
+/// [`deploy_fee`].
 #[allow(clippy::too_many_arguments)]
 pub fn build_deploy<R: RngCore + CryptoRng>(
     keys: &WalletKeys,
@@ -397,15 +415,7 @@ pub fn build_deploy<R: RngCore + CryptoRng>(
     rules: &TxRules,
     rng: &mut R,
 ) -> Result<crate::px::PxDeploy, BuildError> {
-    let payload: usize = 32
-        + 10
-        + programs
-            .iter()
-            .map(|p| p.elf.len() + 10 + 80)
-            .sum::<usize>();
-    let outputs = payments.len() + 1;
-    let fee =
-        PX_FEE_PER_BYTE * (crate::builder::max_weight(inputs.len(), outputs) + payload as u64 + 64);
+    let fee = deploy_fee(inputs.len(), payments.len() + 1, &programs);
     let view = |t: &Transfer| crate::px::PxDeploy {
         inputs: t.inputs.clone(),
         outputs: t.outputs.clone(),

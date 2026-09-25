@@ -1,5 +1,5 @@
 # Guest programs for BVM-1. A separate workspace: they build for
-# riscv32im-unknown-none-elf (see .cargo/config.toml), not for the host.
+# riscv32i-unknown-none-elf with zmmul (see .cargo/config.toml), not for the host.
 [workspace]
 resolver = "2"
 members = ["sum", "arith", "kernel", "vault"]

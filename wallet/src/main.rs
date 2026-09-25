@@ -9,11 +9,16 @@
 use blacksilk_chain::address::{decode_address, decode_px_address};
 use blacksilk_chain::emission::{format_amount, parse_amount};
 use blacksilk_consensus::ChainParams;
+use blacksilk_px::vault;
+use blacksilk_px_core::Digest;
 use blacksilk_rpc::Client;
 use blacksilk_tx::params::TxRules;
+use blacksilk_tx::px::Registration;
 use blacksilk_wallet::file::KdfParams;
+use blacksilk_wallet::px::{digest_from_hex, digest_hex, RecordSource};
 use blacksilk_wallet::wallet::{network_name, parse_network};
 use blacksilk_wallet::{load, save, Wallet};
+use blacksilk_zkvm::air::trace::Budget;
 use clap::{Parser, Subcommand};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -93,6 +98,66 @@ enum Cmd {
         #[arg(long)]
         amount: String,
     },
+    /// Register a private contract, paid with v1 funds (the deployer stays
+    /// hidden behind ring signatures). Its programs are public.
+    PxDeploy {
+        /// Register the reference hash-locked vault (px/vault.elf), a
+        /// demonstration contract: no timeout, no refund, not trustless.
+        #[arg(long)]
+        vault: bool,
+        /// A function program (RISC-V ELF); repeat for several.
+        #[arg(long)]
+        program: Vec<PathBuf>,
+        /// Its row budget, one per --program:
+        /// cycles,keys,add,bit,lt,shift,mul,poseidon.
+        #[arg(long)]
+        budget: Vec<String>,
+    },
+    /// List the private contracts deployed on chain.
+    PxContracts,
+    /// List the contract records this wallet holds.
+    PxRecords,
+    /// Lock PX funds in a record of the DEMONSTRATION vault under a secret.
+    /// Not a trustless swap: no timeout, no refund, and you (the locker) also
+    /// know the secret, so you can claim too (docs/px.md §13.4).
+    PxVaultLock {
+        /// The vault contract id.
+        #[arg(long)]
+        contract: String,
+        #[arg(long)]
+        amount: String,
+        /// The secret, 64 hex characters; generated and printed if omitted.
+        #[arg(long)]
+        secret: Option<String>,
+        /// PX address of the party that will claim: the record is delivered
+        /// to it. Default: this wallet (it keeps a copy either way).
+        #[arg(long)]
+        deliver_to: Option<String>,
+    },
+    /// Claim a record of the demonstration vault with its secret, paying its
+    /// value privately.
+    PxVaultClaim {
+        /// The vault record's commitment (from px-records).
+        #[arg(long)]
+        record: String,
+        #[arg(long)]
+        secret: String,
+        /// PX address to pay. Default: this wallet.
+        #[arg(long)]
+        to: Option<String>,
+    },
+    /// Share a contract record with a PX address (prints the sealed share).
+    PxShare {
+        #[arg(long)]
+        record: String,
+        #[arg(long)]
+        to: String,
+    },
+    /// Import a contract record shared with this wallet.
+    PxImport {
+        #[arg(long)]
+        share: String,
+    },
     /// Show the 24-word seed.
     Seed,
     /// Forget unconfirmed spends (after a transaction was dropped by the network).
@@ -133,6 +198,31 @@ fn os_rng() -> Result<ChaCha20Rng, String> {
 
 fn rules_for(w: &Wallet) -> TxRules {
     TxRules::for_chain(&ChainParams::for_network(w.network()))
+}
+
+fn parse_budget(s: &str) -> Result<Budget, String> {
+    let v: Vec<usize> = s
+        .split(',')
+        .map(|x| x.trim().parse::<usize>())
+        .collect::<Result<_, _>>()
+        .map_err(|_| format!("budget {s:?}: eight comma-separated numbers"))?;
+    let [cycles, keys, add, bit, lt, shift, mul, poseidon]: [usize; 8] = v
+        .try_into()
+        .map_err(|_| format!("budget {s:?}: eight comma-separated numbers"))?;
+    Ok(Budget {
+        cycles,
+        keys,
+        add,
+        bit,
+        lt,
+        shift,
+        mul,
+        poseidon,
+    })
+}
+
+fn digest_arg(what: &str, s: &str) -> Result<Digest, String> {
+    digest_from_hex(s.trim()).map_err(|e| format!("{what}: {e}"))
 }
 
 fn run(args: Args) -> Result<(), String> {
@@ -276,6 +366,155 @@ fn run(args: Args) -> Result<(), String> {
                         format_amount(fee)
                     );
                     println!("transaction {}", hex::encode(id));
+                    Ok(())
+                })(),
+                Cmd::PxDeploy {
+                    vault: with_vault,
+                    program,
+                    budget,
+                } => (|| {
+                    if program.len() != budget.len() {
+                        return Err("give one --budget per --program".to_string());
+                    }
+                    let mut programs = Vec::new();
+                    if with_vault {
+                        programs.push(Registration {
+                            elf: vault::VAULT_ELF.to_vec(),
+                            budget: vault::BUDGET,
+                        });
+                    }
+                    for (path, b) in program.iter().zip(&budget) {
+                        let elf =
+                            std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+                        programs.push(Registration {
+                            elf,
+                            budget: parse_budget(b)?,
+                        });
+                    }
+                    if programs.is_empty() {
+                        return Err("nothing to deploy: use --vault or --program".into());
+                    }
+                    let mut rng = os_rng()?;
+                    let rules = rules_for(&w);
+                    let (id, contract, fee) = w
+                        .px_deploy(&client, programs, &rules, &mut rng)
+                        .map_err(|e| e.to_string())?;
+                    println!("contract {}", digest_hex(&contract));
+                    println!("fee {} BLK", format_amount(fee));
+                    println!("transaction {}", hex::encode(id));
+                    println!("usable from the block after it confirms");
+                    Ok(())
+                })(),
+                Cmd::PxContracts => w.sync(&client).map_err(|e| e.to_string()).map(|_| {
+                    let vault_id = hex::encode(vault::program().id());
+                    for c in w.px_contracts() {
+                        println!("contract {} (height {})", c.id, c.height);
+                        for p in &c.programs {
+                            let tag = if p.id == vault_id { " (vault)" } else { "" };
+                            println!("  program {}{tag}", p.id);
+                        }
+                    }
+                }),
+                Cmd::PxRecords => w.sync(&client).map_err(|e| e.to_string()).map(|_| {
+                    for r in w.px_contract_records() {
+                        let status = match (r.height, r.spent_height, r.pending) {
+                            (_, Some(h), _) => format!("spent at {h}"),
+                            (_, None, true) => "claim pending".to_string(),
+                            (None, None, false) => "unconfirmed".to_string(),
+                            (Some(h), None, false) => format!("confirmed at {h}"),
+                        };
+                        let source = match r.source {
+                            RecordSource::Received { index } => {
+                                format!("received at PX address {index}")
+                            }
+                            RecordSource::Created => "created here".to_string(),
+                            RecordSource::Imported => "imported".to_string(),
+                        };
+                        println!(
+                            "record {}\n  contract {}\n  value {} BLK, {status}, {source}",
+                            r.commitment,
+                            r.contract,
+                            format_amount(r.value)
+                        );
+                    }
+                }),
+                Cmd::PxVaultLock {
+                    contract,
+                    amount,
+                    secret,
+                    deliver_to,
+                } => (|| {
+                    let contract = digest_arg("contract", &contract)?;
+                    let amount = parse_amount(&amount).ok_or("amount: use a number like 1.5")?;
+                    let mut rng = os_rng()?;
+                    let (secret, generated) = match secret {
+                        Some(s) => (digest_arg("secret", &s)?, false),
+                        None => (blacksilk_px::wallet::random_digest(&mut rng), true),
+                    };
+                    let to = deliver_to
+                        .map(|a| {
+                            decode_px_address(w.network(), &a)
+                                .map_err(|e| format!("PX address: {e:?}"))
+                        })
+                        .transpose()?;
+                    let rules = rules_for(&w);
+                    eprintln!("warning: the vault is a DEMONSTRATION contract, not a trustless swap: no timeout, no refund, and you (the locker) also know the secret. Whoever learns the secret and the record can claim it (docs/px.md §13.4).");
+                    eprintln!("note: if you deliver the record to someone else, your own copy lives only in this wallet file; restoring from the seed will not recover it.");
+                    println!("proving (about a minute)...");
+                    let (id, record) = w
+                        .px_vault_lock(
+                            &client,
+                            &contract,
+                            amount,
+                            &secret,
+                            to.as_ref(),
+                            &rules,
+                            &mut rng,
+                        )
+                        .map_err(|e| e.to_string())?;
+                    if generated {
+                        println!("secret {}", digest_hex(&secret));
+                    }
+                    println!("record {}", digest_hex(&record));
+                    println!("transaction {}", hex::encode(id));
+                    Ok(())
+                })(),
+                Cmd::PxVaultClaim { record, secret, to } => (|| {
+                    let record = digest_arg("record", &record)?;
+                    let secret = digest_arg("secret", &secret)?;
+                    let to = to
+                        .map(|a| {
+                            decode_px_address(w.network(), &a)
+                                .map_err(|e| format!("PX address: {e:?}"))
+                        })
+                        .transpose()?;
+                    let mut rng = os_rng()?;
+                    let rules = rules_for(&w);
+                    println!("proving (about a minute)...");
+                    let (id, value) = w
+                        .px_vault_claim(&client, &record, &secret, to.as_ref(), &rules, &mut rng)
+                        .map_err(|e| e.to_string())?;
+                    println!("claimed {} BLK privately", format_amount(value));
+                    println!("transaction {}", hex::encode(id));
+                    Ok(())
+                })(),
+                Cmd::PxShare { record, to } => (|| {
+                    let record = digest_arg("record", &record)?;
+                    let to = decode_px_address(w.network(), &to)
+                        .map_err(|e| format!("PX address: {e:?}"))?;
+                    let mut rng = os_rng()?;
+                    let shared = w
+                        .px_share(&record, &to, &mut rng)
+                        .map_err(|e| e.to_string())?;
+                    eprintln!("note: the share reveals the record only to that address; send it over any channel.");
+                    println!("{}", hex::encode(shared));
+                    Ok(())
+                })(),
+                Cmd::PxImport { share } => (|| {
+                    let bytes = hex::decode(share.trim()).map_err(|_| "share: not hex")?;
+                    let cm = w.px_import(&bytes).map_err(|e| e.to_string())?;
+                    w.sync(&client).map_err(|e| e.to_string())?;
+                    println!("imported record {}", digest_hex(&cm));
                     Ok(())
                 })(),
                 Cmd::Seed => {

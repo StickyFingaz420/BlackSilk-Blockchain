@@ -251,9 +251,21 @@ height is added first.
 | `px-deposit --amount A` | v1 funds into PX. **The amount is public** |
 | `px-send --to PXADDR --amount A` | A private payment. Proving takes about a minute |
 | `px-withdraw --to ADDR --amount A` | PX funds to a v1 address. **The amount is public** |
+| `px-deploy --vault` (or `--program F.elf --budget …`) | Registers a private contract, paid with v1 funds |
+| `px-contracts` / `px-records` | Deployed contracts / contract records this wallet holds |
+| `px-vault-lock --contract C --amount A [--secret S] [--deliver-to PXADDR]` | Locks PX funds in the reference vault under a secret; the record goes to the claimer |
+| `px-vault-claim --record CM --secret S [--to PXADDR]` | Claims a vault record privately; the fee comes from PX or v1 funds |
+| `px-share --record CM --to PXADDR` / `px-import --share HEX` | Shares a contract record off chain / imports one |
 
-Each PX transaction pays the same standard PX fee, `2 × MAX_PX_TX_SIZE` =
-8 912 896 atomic units (≈ 0.089 BLK), so fees do not fingerprint transactions.
+Contract tooling is described in px.md §13. **The reference vault is a demonstration
+contract: not production-ready and not trustless.** It has no timeout and no refund,
+the locker also knows the secret (and can claim), and it is not a trustless swap. A
+record the locker delivers to someone else is kept only in the locker's wallet file
+and is not recovered by restoring from the seed (px.md §13.4).
+
+Every PX transaction pays exactly the standard PX fee, a consensus rule:
+`2 × MAX_PX_TX_SIZE` = 8 912 896 atomic units (≈ 0.089 BLK). So fees do not
+fingerprint transactions or wallets.
 
 **Spendability.** A received record becomes spendable once the next height that is a
 multiple of 16 is reached (canonical anchor, px.md §11.4).

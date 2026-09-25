@@ -99,6 +99,18 @@ pub fn nullifier<P: Permutation>(perm: &mut P, nk: &Digest, rho: &Digest, cm: &D
     hash(perm, domain::NULLIFIER, &[nk, rho, cm])
 }
 
+/// The nullifier of a contract record: `Hk(NULLIFIER_CONTRACT, contract ‖ rcm
+/// ‖ cm)`, as the kernel computes it (`kernel.rs`). It depends only on the
+/// opening, so every holder of the opening sees when the record is consumed.
+pub fn contract_nullifier<P: Permutation>(
+    perm: &mut P,
+    contract: &Digest,
+    rcm: &Digest,
+    cm: &Digest,
+) -> Digest {
+    hash(perm, domain::NULLIFIER_CONTRACT, &[contract, rcm, cm])
+}
+
 /// `rho` of output `j`, derived from the transaction's first nullifier.
 pub fn output_rho<P: Permutation>(perm: &mut P, nf0: &Digest, j: u32) -> Digest {
     hash(perm, domain::RHO, &[nf0, &[j]])

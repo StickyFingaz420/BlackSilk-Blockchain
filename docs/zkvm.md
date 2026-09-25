@@ -19,7 +19,7 @@ functions §7.
 
 | # | Goal |
 |---|---|
-| V1 | Contract authors write **ordinary Rust**, compiled for `riscv32im-unknown-none-elf` with the BlackSilk SDK. No circuit knowledge is needed. |
+| V1 | Contract authors write **ordinary Rust**, compiled for `riscv32i-unknown-none-elf` with the `zmmul` extension (§3) and the BlackSilk SDK. No circuit knowledge is needed. |
 | V2 | **One** fixed constraint system, audited once, proves *every* program. Contract code never becomes constraints (zk.md §3). |
 | V3 | **Deterministic:** every program has exactly one valid execution for given inputs, fully specified here. No floating point, no undefined behavior, no host-dependent results. |
 | V4 | **Zero-knowledge:** a proof reveals only the program id, the public output digest, the exit code and the padded trace sizes (§8). |
@@ -276,7 +276,7 @@ statement choice after the fact).
 ### 6.5 Several executions in one proof
 
 A statement may cover up to `MAX_EXECUTIONS = 5` executions: one main execution (id 0)
-and further ones (ids 1…). PX uses one kernel and up to 4 functions.
+and further ones (ids 1…). PX uses one kernel and at most 2 functions (`MAX_FN`).
 - **Own tables per execution:** `PROGRAM`, `IMAGE`, `MEM_INIT`, `CPU` and `OUTPUT`,
   each with the execution id as a constant.
 - **Shared tables:** `BYTE`, the ALU tables and `POSEIDON2`.
@@ -403,7 +403,9 @@ power-of-two heights sized to the execution, and do leak coarse timing.
     proofs may panic it;
   - the node is built with `panic = "unwind"`, so such a panic becomes a rejected proof,
     not a crash;
-  - the panic is returned as a distinct error (`ZkError::VerifierPanicked`); logging
-    and counting it in the node is part of consensus integration.
+  - the panic is returned as a distinct error (`ZkError::VerifierPanicked`). Consensus
+    rejects the transaction like any invalid proof (`TxError::PxProof`) and logs a
+    warning (`tx/src/validate.rs::check_px_proof`).
 - **Parameters:** compiled in (`zk/src/params.rs`), never taken from the proof. The
-  verifier registry of zk.md §9.5 comes with consensus integration.
+  verifier registry of zk.md §9.5 is a design, not implemented: one verifier exists,
+  pinned by the proof's version byte.

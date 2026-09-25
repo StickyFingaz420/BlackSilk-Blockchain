@@ -25,10 +25,7 @@ use blacksilk_zkvm::Program;
 use common::*;
 use std::sync::Arc;
 
-const VAULT_ELF: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../px/tests/fixtures/vault.elf"
-));
+const VAULT_ELF: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../px/vault.elf"));
 const VAULT_BUDGET: Budget = Budget {
     cycles: 6_000,
     keys: 2_200,
@@ -230,19 +227,23 @@ fn private_payments_through_consensus() {
         &mut net.rng,
     )
     .expect("payment builds");
-    // Tampering is detected: any public change breaks the proof binding.
-    let mut t2 = pay.clone();
-    t2.bridge_out += 1;
-    t2.fee += 1;
-    assert_eq!(
-        validate_mempool_tx(
-            &Transaction::Px(Box::new(t2)),
-            &net.chain,
-            net.height(),
-            &net.rules
-        ),
-        Err(TxError::PxProof)
-    );
+    // The fee is exactly the standard fee (privacy review P-7): a higher or
+    // lower one is refused before the proof is even looked at.
+    for delta in [1i64, -1] {
+        let mut t2 = pay.clone();
+        t2.fee = (t2.fee as i64 + delta) as u64;
+        t2.bridge_out = (t2.bridge_out as i64 + delta) as u64; // keeps v1 balanced
+        assert_eq!(
+            validate_mempool_tx(
+                &Transaction::Px(Box::new(t2.clone())),
+                &net.chain,
+                net.height(),
+                &net.rules
+            ),
+            Err(TxError::PxFeeNotStandard { fee: t2.fee })
+        );
+    }
+    // Tampering is detected: any other public change breaks the proof binding.
     let mut t3 = pay.clone();
     t3.ciphertexts[0][100] ^= 1;
     assert_eq!(
@@ -456,7 +457,26 @@ fn a_private_contract_is_deployed_and_used_through_consensus() {
         validate_mempool_tx(&dtx, &net.chain, net.height(), &net.rules),
         Ok(())
     );
-    px_block(&mut net, vec![dtx.clone()]).expect("deploy block");
+    let deploy_block = vec![net.coinbase(dtx.fee()), dtx.clone()];
+    net.submit(deploy_block.clone(), &mut [])
+        .expect("deploy block");
+    assert!(net.chain.px_contract_exists(&contract));
+    // The registration list wallets download (`/px/contracts`) gains the
+    // contract, and a reorganization removes it again exactly.
+    let deploy_height = net.height() - 1;
+    assert_eq!(
+        net.chain.px_contract_log().last(),
+        Some(&(deploy_height, contract))
+    );
+    let log_len = net.chain.px_contract_log().len();
+    assert!(net.chain.undo_block());
+    assert!(!net.chain.px_contract_exists(&contract));
+    assert_eq!(net.chain.px_contract_log().len(), log_len - 1);
+    net.chain.apply_block(&deploy_block);
+    assert_eq!(
+        net.chain.px_contract_log().last(),
+        Some(&(deploy_height, contract))
+    );
     assert!(net.chain.px_contract_exists(&contract));
     assert_eq!(
         net.chain.px_function(&contract, &vault.id()).map(|f| f.1),

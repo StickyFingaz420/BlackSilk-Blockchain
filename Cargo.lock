@@ -386,8 +386,10 @@ dependencies = [
  "p3-baby-bear",
  "p3-field",
  "p3-symmetric",
+ "postcard",
  "rand_chacha",
  "rand_core 0.6.4",
+ "serde",
  "zeroize",
 ]
 
@@ -424,6 +426,7 @@ dependencies = [
  "blacksilk-px-core",
  "blacksilk-zk",
  "blacksilk-zkvm",
+ "log",
  "rand_chacha",
  "rand_core 0.6.4",
  "zeroize",

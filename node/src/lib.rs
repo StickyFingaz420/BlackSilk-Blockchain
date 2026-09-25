@@ -97,6 +97,7 @@ pub fn router_with(app: App) -> Router {
         .route("/distribution", get(distribution))
         .route("/outputs", post(outputs))
         .route("/px/commitments", get(px_commitments))
+        .route("/px/contracts", get(px_contracts))
         .layer(DefaultBodyLimit::max(rpc::MAX_REQUEST_BYTES))
         .with_state(app)
 }
@@ -276,6 +277,45 @@ async fn px_commitments(
         commitments,
         total,
         root: digest_hex(&m.state().px().root()),
+        height: m.height(),
+    })
+}
+
+async fn px_contracts(
+    State(App { chain: s, .. }): State<App>,
+    Query(q): Query<FromQuery>,
+) -> Json<rpc::PxContracts> {
+    let m = lock(&s);
+    let state = m.state();
+    let log = state.px_contract_log();
+    let total = log.len() as u64;
+    let contracts = log
+        .iter()
+        .skip(q.from.min(total) as usize)
+        .take(rpc::MAX_PX_CONTRACTS_PER_REQUEST as usize)
+        .map(|(height, id)| rpc::PxContractEntry {
+            height: *height,
+            id: digest_hex(id),
+            programs: state
+                .px_contract(id)
+                .unwrap_or(&[])
+                .iter()
+                .map(|f| {
+                    let b = f.budget;
+                    rpc::PxProgramEntry {
+                        id: hex::encode(f.program_id),
+                        budget: [
+                            b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
+                        ],
+                    }
+                })
+                .collect(),
+        })
+        .collect();
+    Json(rpc::PxContracts {
+        from: q.from,
+        contracts,
+        total,
         height: m.height(),
     })
 }

@@ -9,7 +9,7 @@
 //! node (docs/blocks.md §9).
 
 use crate::node::NodeApi;
-use crate::px::PxStore;
+use crate::px::{ContractRecord, KnownContract, PxStore, RecordSource};
 
 /// PX inputs chosen for a spend: the record indices, the kernel's two input
 /// witnesses (dummies fill unused slots), their total value, and the anchor.
@@ -25,14 +25,20 @@ use blacksilk_consensus::{ChainParams, Hash, Network};
 use blacksilk_crypto::keys::{Address, SubaddressIndex, SubaddressTable, WalletKeys};
 use blacksilk_crypto::stealth::ReceivedOutput;
 use blacksilk_crypto::{Point, Scalar};
+use blacksilk_px::perm::HostPerm;
 use blacksilk_px::wallet::{self as pxw, Account};
+use blacksilk_px::{delivery, share, vault};
+use blacksilk_px_core::record::{output_rho, Record};
+use blacksilk_px_core::{Digest, ZERO_DIGEST};
 use blacksilk_tx::builder::{
     build_transfer, standard_fee, BuildError, Decoy, InputPlan, Payment, SpendableOutput,
 };
 use blacksilk_tx::decoy::select_ring;
 use blacksilk_tx::params::{TxRules, COINBASE_MATURITY, MAX_INPUTS, SPENDABLE_AGE};
-use blacksilk_tx::px::PxTx;
-use blacksilk_tx::px_builder::{build_px, px_standard_fee, PxPlan};
+use blacksilk_tx::px::{PxTx, Registration};
+use blacksilk_tx::px_builder::{
+    build_deploy, build_px, deploy_fee, px_standard_fee, FunctionRun, PxPlan,
+};
 use blacksilk_tx::scan::scan_block;
 use blacksilk_tx::types::{OutputKey, Transaction};
 use rand_core::{CryptoRng, RngCore};
@@ -68,6 +74,9 @@ pub enum WalletError {
     Build(BuildError),
     Rejected(String),
     Serialization(String),
+    /// A contract operation that cannot be carried out (unknown contract,
+    /// unregistered program, wrong secret, record not spendable).
+    Contract(String),
 }
 
 impl std::fmt::Display for WalletError {
@@ -92,6 +101,7 @@ impl std::fmt::Display for WalletError {
             WalletError::Build(e) => write!(f, "building the transaction: {e:?}"),
             WalletError::Rejected(e) => write!(f, "node rejected the transaction: {e}"),
             WalletError::Serialization(e) => write!(f, "wallet data: {e}"),
+            WalletError::Contract(e) => write!(f, "contract: {e}"),
         }
     }
 }
@@ -443,6 +453,7 @@ impl Wallet {
             }
         }
         self.px.sync_commitments(node, synced)?;
+        self.px.sync_contracts(node, synced)?;
         Ok(self.synced_height)
     }
 
@@ -535,11 +546,13 @@ impl Wallet {
         self.outputs.iter().any(|o| o.pending)
     }
 
-    /// Forgets unconfirmed spends (use if a submitted transaction was dropped).
+    /// Forgets unconfirmed spends (use if a submitted transaction was dropped),
+    /// v1 and PX alike.
     pub fn clear_pending(&mut self) {
         for o in &mut self.outputs {
             o.pending = false;
         }
+        self.px.clear_pending();
     }
 
     // ---- transfers ----
@@ -752,23 +765,13 @@ impl Wallet {
         Ok(tx.hash())
     }
 
-    /// Moves `amount` of v1 funds into PX, to PX address 0. The v1 inputs pay
-    /// the amount and the standard PX fee. Returns the transaction id and the fee.
-    pub fn px_deposit<R: RngCore + CryptoRng>(
-        &mut self,
+    /// v1 inputs covering `needed` (largest first), with their rings.
+    fn v1_plans<R: RngCore + CryptoRng>(
+        &self,
         node: &dyn NodeApi,
-        amount: u64,
-        rules: &TxRules,
+        needed: u64,
         rng: &mut R,
-    ) -> Result<(Hash, u64), WalletError> {
-        self.sync(node)?;
-        let fee = px_standard_fee();
-        let needed = amount
-            .checked_add(fee)
-            .ok_or(WalletError::InsufficientFunds {
-                available: 0,
-                needed: u64::MAX,
-            })?;
+    ) -> Result<(Vec<usize>, Vec<InputPlan>), WalletError> {
         let next = self.synced_height + 1;
         let mut candidates: Vec<usize> = (0..self.outputs.len())
             .filter(|&i| Self::spendable_at(&self.outputs[i], next))
@@ -789,12 +792,24 @@ impl Wallet {
                 needed,
             });
         }
+        let plans = self.plans_for(node, &chosen, rng)?;
+        Ok((chosen, plans))
+    }
+
+    /// Rings for the v1 outputs `chosen`.
+    fn plans_for<R: RngCore + CryptoRng>(
+        &self,
+        node: &dyn NodeApi,
+        chosen: &[usize],
+        rng: &mut R,
+    ) -> Result<Vec<InputPlan>, WalletError> {
+        let next = self.synced_height + 1;
         let dist = node
             .distribution(self.synced_height)
             .map_err(WalletError::Node)?;
         let target = ChainParams::for_network(self.network).target_block_time;
         let mut plans = Vec::with_capacity(chosen.len());
-        for &i in &chosen {
+        for &i in chosen {
             let o = &self.outputs[i];
             let decoys = Self::ring_for(node, target, &dist.cumulative, next, o.global_index, rng)?;
             plans.push(InputPlan {
@@ -802,6 +817,27 @@ impl Wallet {
                 decoys,
             });
         }
+        Ok(plans)
+    }
+
+    /// Moves `amount` of v1 funds into PX, to PX address 0. The v1 inputs pay
+    /// the amount and the standard PX fee. Returns the transaction id and the fee.
+    pub fn px_deposit<R: RngCore + CryptoRng>(
+        &mut self,
+        node: &dyn NodeApi,
+        amount: u64,
+        rules: &TxRules,
+        rng: &mut R,
+    ) -> Result<(Hash, u64), WalletError> {
+        self.sync(node)?;
+        let fee = px_standard_fee();
+        let needed = amount
+            .checked_add(fee)
+            .ok_or(WalletError::InsufficientFunds {
+                available: 0,
+                needed: u64::MAX,
+            })?;
+        let (chosen, plans) = self.v1_plans(node, needed, rng)?;
         let root = self
             .px
             .tree_at(crate::px::anchor_height(self.synced_height))?
@@ -953,5 +989,349 @@ impl Wallet {
         self.px.issued = self.px.issued.max(1);
         let id = self.submit_px(node, tx, &[], &chosen)?;
         Ok((id, fee))
+    }
+
+    // ---- private contracts (docs/px.md §13) ----
+
+    /// Contracts deployed on chain, as indexed while scanning.
+    pub fn px_contracts(&self) -> &[KnownContract] {
+        &self.px.contracts
+    }
+
+    /// Contract records whose openings this wallet holds.
+    pub fn px_contract_records(&self) -> &[ContractRecord] {
+        &self.px.contract_records
+    }
+
+    /// Registers `programs` as a new private contract, paid with v1 funds (the
+    /// deployer is hidden behind ring signatures). Returns the transaction id,
+    /// the contract id and the fee. The contract is usable from the block
+    /// after the deploy confirms.
+    pub fn px_deploy<R: RngCore + CryptoRng>(
+        &mut self,
+        node: &dyn NodeApi,
+        programs: Vec<Registration>,
+        rules: &TxRules,
+        rng: &mut R,
+    ) -> Result<(Hash, Digest, u64), WalletError> {
+        self.sync(node)?;
+        // Two outputs (the transfer minimum): change, and a zero-value output
+        // to this wallet.
+        let next = self.synced_height + 1;
+        let mut candidates: Vec<usize> = (0..self.outputs.len())
+            .filter(|&i| Self::spendable_at(&self.outputs[i], next))
+            .collect();
+        candidates.sort_by_key(|&i| std::cmp::Reverse(self.outputs[i].amount));
+        let mut chosen = Vec::new();
+        let mut sum = 0u128;
+        let mut fee = deploy_fee(1, 2, &programs);
+        for &i in &candidates {
+            chosen.push(i);
+            sum += self.outputs[i].amount as u128;
+            fee = deploy_fee(chosen.len(), 2, &programs);
+            if sum >= fee as u128 || chosen.len() >= MAX_INPUTS {
+                break;
+            }
+        }
+        if sum < fee as u128 {
+            return Err(WalletError::InsufficientFunds {
+                available: candidates.iter().map(|&i| self.outputs[i].amount).sum(),
+                needed: fee,
+            });
+        }
+        let plans = self.plans_for(node, &chosen, rng)?;
+        let mut salt = [0u8; 32];
+        rng.fill_bytes(&mut salt);
+        let deploy = build_deploy(
+            &self.keys,
+            plans,
+            &[Payment {
+                address: self.primary(),
+                amount: 0,
+            }],
+            &self.primary(),
+            salt,
+            programs,
+            rules,
+            rng,
+        )
+        .map_err(WalletError::Build)?;
+        let contract = deploy.contract_id();
+        let fee = deploy.fee;
+        let tx = Transaction::PxDeploy(Box::new(deploy));
+        let result = node.submit_tx(&tx.encode()).map_err(WalletError::Node)?;
+        if !result.accepted {
+            return Err(WalletError::Rejected(result.error.unwrap_or_default()));
+        }
+        for &i in &chosen {
+            self.outputs[i].pending = true;
+            self.outputs[i].pending_height = self.synced_height;
+        }
+        Ok((tx.hash(), contract, fee))
+    }
+
+    /// The registered budget of the reference vault program under `contract`.
+    fn vault_budget(
+        &self,
+        contract: &Digest,
+    ) -> Result<blacksilk_zkvm::air::trace::Budget, WalletError> {
+        self.px
+            .registered(contract, &vault::program().id())
+            .ok_or_else(|| {
+                WalletError::Contract(
+                    "not a known vault contract (unknown id, not yet confirmed, or the vault program is not registered to it)".into(),
+                )
+            })
+    }
+
+    /// Locks `amount` of this wallet's PX funds in a new record of the vault
+    /// `contract`, under `Hk(LOCK, secret)`. The record's ciphertext goes to
+    /// `deliver_to` (the party that will claim it) or to this wallet; this
+    /// wallet keeps its own copy either way. The fee is paid from PX. Returns
+    /// the transaction id and the vault record's commitment.
+    #[allow(clippy::too_many_arguments)]
+    pub fn px_vault_lock<R: RngCore + CryptoRng>(
+        &mut self,
+        node: &dyn NodeApi,
+        contract: &Digest,
+        amount: u64,
+        secret: &Digest,
+        deliver_to: Option<&delivery::Address>,
+        rules: &TxRules,
+        rng: &mut R,
+    ) -> Result<(Hash, Digest), WalletError> {
+        self.sync(node)?;
+        let budget = self.vault_budget(contract)?;
+        let fee = px_standard_fee();
+        let needed = amount
+            .checked_add(fee)
+            .ok_or(WalletError::InsufficientFunds {
+                available: 0,
+                needed: u64::MAX,
+            })?;
+        let (chosen, inputs, total, root) = self.px_inputs(needed, rng)?;
+        let lock = vault::lock_of(secret);
+        let blind = pxw::random_digest(rng);
+        let (input, fw) = vault::lock_call(contract, amount, &lock, 0, &blind);
+        let vault_out = pxw::contract_output(rng, *contract, amount, lock);
+        let mut witness = pxw::witness(
+            root,
+            0,
+            fee,
+            inputs,
+            [
+                vault_out.clone(),
+                pxw::output(rng, self.px_account.owner(1), total - needed),
+            ],
+        );
+        witness.n_fn = 1;
+        witness.functions[0] = Some(fw);
+        let to = deliver_to
+            .cloned()
+            .unwrap_or_else(|| self.px_account.address(0));
+        let tx = build_px(
+            PxPlan {
+                keys: None,
+                inputs: vec![],
+                change: None,
+                payouts: vec![],
+                witness,
+                recipients: [Some(to), Some(self.px_account.address(1))],
+                functions: vec![FunctionRun {
+                    program: vault::program(),
+                    input,
+                    budget,
+                }],
+                fee,
+            },
+            rules,
+            rng,
+        )
+        .map_err(|e| WalletError::Rejected(format!("PX build: {e:?}")))?;
+        // This wallet's copy of the new vault record.
+        let rho = output_rho(&mut HostPerm::new(), &tx.nullifiers[0], 0);
+        let record = Record {
+            owner: ZERO_DIGEST,
+            contract: *contract,
+            asset: ZERO_DIGEST,
+            value: amount,
+            data: lock,
+            rho,
+            rcm: vault_out.rcm,
+        };
+        let cm = tx.commitments[0];
+        if record.commit(&mut HostPerm::new()) != cm {
+            return Err(WalletError::Contract(
+                "vault record does not match its commitment".into(),
+            ));
+        }
+        self.px.issued = self.px.issued.max(1);
+        let id = self.submit_px(node, tx, &[], &chosen)?;
+        self.px
+            .add_contract_record(&record, &cm, RecordSource::Created, None);
+        Ok((id, cm))
+    }
+
+    /// Claims the vault record with commitment `record` with `secret`, paying
+    /// its value to `to` (a PX address) or to this wallet. The fee is paid
+    /// from one of this wallet's PX records, or else from v1 funds. Returns
+    /// the transaction id and the claimed value.
+    #[allow(clippy::too_many_arguments)]
+    pub fn px_vault_claim<R: RngCore + CryptoRng>(
+        &mut self,
+        node: &dyn NodeApi,
+        record: &Digest,
+        secret: &Digest,
+        to: Option<&delivery::Address>,
+        rules: &TxRules,
+        rng: &mut R,
+    ) -> Result<(Hash, u64), WalletError> {
+        self.sync(node)?;
+        let anchor = crate::px::anchor_height(self.synced_height);
+        let k = self
+            .px
+            .contract_record(record)
+            .ok_or_else(|| WalletError::Contract("unknown vault record".into()))?;
+        let stored = &self.px.contract_records[k];
+        if !stored.spendable_at(anchor) {
+            return Err(WalletError::Contract(
+                "vault record not spendable yet (unconfirmed, above the anchor, pending or spent)"
+                    .into(),
+            ));
+        }
+        let rec = stored.record()?;
+        let pos = stored.position.expect("spendable records have positions");
+        if vault::lock_of(secret) != rec.data {
+            return Err(WalletError::Contract(
+                "wrong secret for this vault record".into(),
+            ));
+        }
+        let budget = self.vault_budget(&rec.contract)?;
+        let fee = px_standard_fee();
+        let tree = self.px.tree_at(anchor)?;
+        let path = tree
+            .path(pos)
+            .ok_or_else(|| WalletError::BadNodeData("record outside the tree".into()))?;
+        let vault_in = pxw::contract_input(rng, &rec, pos, path);
+        let recipient = to.cloned().unwrap_or_else(|| self.px_account.address(0));
+        let blind = pxw::random_digest(rng);
+        let (input, fw) = vault::claim_call(&rec, secret, &recipient.owner, 0, 0, &blind);
+        let payout = pxw::output(rng, recipient.owner, rec.value);
+
+        // The fee: one PX record of this wallet if one covers it, else v1.
+        let single = self
+            .px
+            .select(fee, anchor)
+            .ok()
+            .filter(|picked| picked.len() == 1);
+        let (fee_input, second_out, second_to, bridge_out, fee_record, v1) = match single {
+            Some(picked) => {
+                let i = picked[0];
+                let r = &self.px.records[i];
+                let p = r.position.expect("spendable records have positions");
+                let owner = self.px_account.owner(r.index);
+                let user = r.record(owner)?;
+                let path = tree
+                    .path(p)
+                    .ok_or_else(|| WalletError::BadNodeData("record outside the tree".into()))?;
+                let change = pxw::output(rng, self.px_account.owner(1), r.value - fee);
+                (
+                    self.px_account.spend(r.index, &user, p, path),
+                    change,
+                    Some(self.px_account.address(1)),
+                    fee,
+                    Some(i),
+                    None,
+                )
+            }
+            None => {
+                let (chosen, plans) = self.v1_plans(node, fee, rng)?;
+                (
+                    pxw::dummy_input(rng),
+                    pxw::empty_output(rng),
+                    None,
+                    0,
+                    None,
+                    Some((chosen, plans)),
+                )
+            }
+        };
+        let mut witness = pxw::witness(
+            tree.root(),
+            0,
+            bridge_out,
+            [vault_in, fee_input],
+            [payout, second_out],
+        );
+        witness.n_fn = 1;
+        witness.functions[0] = Some(fw);
+        let (v1_chosen, v1_plans) = v1.unwrap_or_default();
+        let tx = build_px(
+            PxPlan {
+                keys: (!v1_plans.is_empty()).then_some(&self.keys),
+                inputs: v1_plans,
+                change: (!v1_chosen.is_empty()).then(|| self.primary()),
+                payouts: vec![],
+                witness,
+                recipients: [Some(recipient), second_to],
+                functions: vec![FunctionRun {
+                    program: vault::program(),
+                    input,
+                    budget,
+                }],
+                fee,
+            },
+            rules,
+            rng,
+        )
+        .map_err(|e| WalletError::Rejected(format!("PX build: {e:?}")))?;
+        self.px.issued = self.px.issued.max(1);
+        let records: Vec<usize> = fee_record.into_iter().collect();
+        let id = self.submit_px(node, tx, &v1_chosen, &records)?;
+        let r = &mut self.px.contract_records[k];
+        r.pending = true;
+        r.pending_height = self.synced_height;
+        Ok((id, rec.value))
+    }
+
+    /// The opening of contract record `record`, sealed to `to` for sharing
+    /// off chain (`blacksilk_px::share`).
+    pub fn px_share<R: RngCore + CryptoRng>(
+        &self,
+        record: &Digest,
+        to: &delivery::Address,
+        rng: &mut R,
+    ) -> Result<Vec<u8>, WalletError> {
+        let k = self
+            .px
+            .contract_record(record)
+            .ok_or_else(|| WalletError::Contract("unknown contract record".into()))?;
+        let rec = self.px.contract_records[k].record()?;
+        share::seal_share(rng, to, &rec, record)
+            .map_err(|_| WalletError::Contract("the recipient address does not decode".into()))
+    }
+
+    /// Imports a shared contract-record opening addressed to one of this
+    /// wallet's PX addresses. It counts as confirmed once its commitment is
+    /// found on chain (the next sync). Returns its commitment.
+    pub fn px_import(&mut self, shared: &[u8]) -> Result<Digest, WalletError> {
+        for index in 0..=self.px.issued.saturating_add(crate::px::PX_LOOKAHEAD) {
+            let keys = self.px_account.delivery_keys(index);
+            let owner = self.px_account.owner(index);
+            let Some((rec, cm)) = share::open_share(&keys, &owner, shared) else {
+                continue;
+            };
+            if rec.contract == ZERO_DIGEST {
+                return Err(WalletError::Contract(
+                    "only contract records can be imported".into(),
+                ));
+            }
+            self.px
+                .add_contract_record(&rec, &cm, RecordSource::Imported, None);
+            return Ok(cm);
+        }
+        Err(WalletError::Contract(
+            "not a share addressed to this wallet".into(),
+        ))
     }
 }

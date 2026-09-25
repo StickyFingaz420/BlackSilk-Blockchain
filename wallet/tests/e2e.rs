@@ -416,3 +416,202 @@ fn px_records_follow_a_reorganization() {
     miner.sync(&net.client).unwrap();
     assert_eq!(miner.px_balance(), (deposit, deposit));
 }
+
+/// Private contracts end to end (docs/px.md §13): the reference vault is
+/// deployed, Alice locks funds in it for Bob (the record's ciphertext goes to
+/// Bob), shares the opening with Carol off chain, and Bob, who holds no PX
+/// funds, claims with the secret, paying the fee from v1 funds. Every holder
+/// of the opening sees the record consumed.
+#[test]
+fn a_vault_is_deployed_locked_delivered_shared_and_claimed_over_rpc() {
+    use blacksilk_px::vault;
+    use blacksilk_tx::px::Registration;
+    use blacksilk_wallet::px::{digest_hex, RecordSource};
+
+    let mut net = Net::start();
+    let mut alice = wallet(21);
+    let mut bob = wallet(22);
+    let mut carol = wallet(23);
+    let a_addr = alice.primary();
+    net.mine_n(90, &a_addr);
+    alice.sync(&net.client).unwrap();
+
+    // Alice deploys the vault (v1 funds) and pays Bob v1 funds for his fee.
+    let (_, contract, _) = alice
+        .px_deploy(
+            &net.client,
+            vec![Registration {
+                elf: vault::VAULT_ELF.to_vec(),
+                budget: vault::BUDGET,
+            }],
+            &net.rules,
+            &mut net.rng,
+        )
+        .expect("deploy");
+    net.mine(&a_addr);
+    alice.sync(&net.client).unwrap();
+    let known = alice
+        .px_contracts()
+        .iter()
+        .find(|c| c.id == digest_hex(&contract))
+        .expect("the deployed contract is indexed");
+    assert_eq!(known.programs[0].id, hex::encode(vault::program().id()));
+    // A wallet created after the deploy (scanning from a later height) still
+    // knows the contract: the registration list is downloaded whole.
+    let tip = net.client.info().unwrap().height;
+    let mut late = Wallet::from_seed(Network::Regtest, [24; 32], tip + 1);
+    late.sync(&net.client).unwrap();
+    assert!(late
+        .px_contracts()
+        .iter()
+        .any(|c| c.id == digest_hex(&contract) && c.programs == known.programs));
+    alice
+        .transfer(&net.client, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .expect("v1 payment to Bob");
+    net.mine(&a_addr);
+
+    // Alice moves funds into PX.
+    alice.sync(&net.client).unwrap();
+    alice
+        .px_deposit(&net.client, 3 * COIN, &net.rules, &mut net.rng)
+        .expect("deposit");
+    net.mine(&a_addr);
+    net.mine_n(16, &a_addr);
+    alice.sync(&net.client).unwrap();
+
+    // LOCK 1 BLK for Bob: the record is delivered to Bob's PX address.
+    let secret = blacksilk_px::wallet::random_digest(&mut net.rng);
+    let bob_px =
+        blacksilk_chain::address::decode_px_address(Network::Regtest, &bob.px_address(0)).unwrap();
+    let (_, record) = alice
+        .px_vault_lock(
+            &net.client,
+            &contract,
+            COIN,
+            &secret,
+            Some(&bob_px),
+            &net.rules,
+            &mut net.rng,
+        )
+        .expect("lock");
+    assert_eq!(alice.px_contract_records()[0].height, None, "unconfirmed");
+    net.mine(&a_addr);
+    net.mine_n(16, &a_addr);
+    alice.sync(&net.client).unwrap();
+    bob.sync(&net.client).unwrap();
+    let hex_record = digest_hex(&record);
+    let mine = &alice.px_contract_records()[0];
+    assert_eq!(
+        (&mine.commitment, mine.source, mine.value),
+        (&hex_record, RecordSource::Created, COIN)
+    );
+    assert!(mine.height.is_some() && mine.position.is_some());
+    let got = &bob.px_contract_records()[0];
+    assert_eq!(
+        (&got.commitment, got.source, got.value),
+        (&hex_record, RecordSource::Received { index: 0 }, COIN)
+    );
+    // Contract records are not the holder's funds.
+    assert_eq!(bob.px_balance(), (0, 0));
+
+    // Alice shares the opening with Carol, who imports it.
+    let carol_px =
+        blacksilk_chain::address::decode_px_address(Network::Regtest, &carol.px_address(0))
+            .unwrap();
+    let shared = alice
+        .px_share(&record, &carol_px, &mut net.rng)
+        .expect("share");
+    assert!(
+        bob.px_import(&shared).is_err(),
+        "a share opens only for its addressee"
+    );
+    carol.sync(&net.client).unwrap();
+    assert_eq!(carol.px_import(&shared).expect("import"), record);
+    carol.sync(&net.client).unwrap();
+    let theirs = &carol.px_contract_records()[0];
+    assert_eq!(theirs.source, RecordSource::Imported);
+    assert!(theirs.height.is_some(), "confirmed by the commitment list");
+
+    // A wrong secret is refused before any proving.
+    let wrong = blacksilk_px::wallet::random_digest(&mut net.rng);
+    assert!(matches!(
+        bob.px_vault_claim(&net.client, &record, &wrong, None, &net.rules, &mut net.rng),
+        Err(WalletError::Contract(_))
+    ));
+
+    // Bob claims to his own PX address; he has no PX funds, so the fee is
+    // paid from his v1 funds.
+    let (_, value) = bob
+        .px_vault_claim(
+            &net.client,
+            &record,
+            &secret,
+            None,
+            &net.rules,
+            &mut net.rng,
+        )
+        .expect("claim");
+    assert_eq!(value, COIN);
+    net.mine(&a_addr);
+    net.mine_n(16, &a_addr);
+    for w in [&mut alice, &mut bob, &mut carol] {
+        w.sync(&net.client).unwrap();
+        let r = &w.px_contract_records()[0];
+        assert!(r.spent_height.is_some(), "every holder sees the claim");
+    }
+    assert_eq!(bob.px_balance(), (COIN, COIN));
+    assert!(bob.balance().total < COIN, "the fee came from v1 funds");
+    // A spent vault cannot be claimed again.
+    assert!(matches!(
+        bob.px_vault_claim(
+            &net.client,
+            &record,
+            &secret,
+            None,
+            &net.rules,
+            &mut net.rng
+        ),
+        Err(WalletError::Contract(_))
+    ));
+
+    // Bob now holds PX funds: he locks half of them in a vault for himself and
+    // claims it, the claim's fee paid from a PX record (not from v1).
+    let fee = blacksilk_tx::px_builder::px_standard_fee();
+    let second = blacksilk_px::wallet::random_digest(&mut net.rng);
+    let (_, record2) = bob
+        .px_vault_lock(
+            &net.client,
+            &contract,
+            COIN / 2,
+            &second,
+            None,
+            &net.rules,
+            &mut net.rng,
+        )
+        .expect("second lock");
+    net.mine(&a_addr);
+    net.mine_n(16, &a_addr);
+    bob.sync(&net.client).unwrap();
+    let v1_before = bob.balance().total;
+    bob.px_vault_claim(
+        &net.client,
+        &record2,
+        &second,
+        None,
+        &net.rules,
+        &mut net.rng,
+    )
+    .expect("claim with the fee from PX");
+    net.mine(&a_addr);
+    net.mine_n(16, &a_addr);
+    bob.sync(&net.client).unwrap();
+    assert_eq!(bob.balance().total, v1_before, "no v1 funds used");
+    // COIN − (lock fee) − (claim fee): the vault's value came back.
+    assert_eq!(bob.px_balance(), (COIN - 2 * fee, COIN - 2 * fee));
+    let r2 = bob
+        .px_contract_records()
+        .iter()
+        .find(|r| r.commitment == digest_hex(&record2))
+        .unwrap();
+    assert!(r2.spent_height.is_some());
+}

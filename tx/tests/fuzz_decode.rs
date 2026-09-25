@@ -111,11 +111,7 @@ fn every_mutant_decodes_canonically_or_fails_cleanly() {
         &payer.primary(),
         [1; 32],
         vec![Registration {
-            elf: include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../px/tests/fixtures/vault.elf"
-            ))
-            .to_vec(),
+            elf: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../px/vault.elf")).to_vec(),
             budget: Budget {
                 cycles: 6_000,
                 keys: 2_200,

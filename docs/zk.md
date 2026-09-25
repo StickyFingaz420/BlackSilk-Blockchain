@@ -8,9 +8,8 @@ Status: **v0.3.**
   production-ready before independent review.
 - The zkVM is specified in [`zkvm.md`](zkvm.md).
 - **Consensus:** PX transactions (kind 2) and private-contract deploys (kind 3) are
-  consensus rules from genesis on every network ([`px.md`](px.md) §11). Running them
-  on the existing testnet needs a reset or an activation height (owner decision;
-  AUDIT.md R8).
+  consensus rules from genesis on every network ([`px.md`](px.md) §11). The owner has
+  approved a testnet reset for the final trial (AUDIT.md R8).
 
 This document fixes the architecture, interfaces and security requirements of private
 contract execution.
@@ -154,8 +153,8 @@ and learns only what the function deliberately makes public.
 ### 4.1 Field and hash (see DR-2, DR-4)
 
 `F` is the proof system's base field. `Hk(domain, …)` is the arithmetization-friendly
-hash, with a distinct domain constant per use. A **digest** is 4 elements of `F`
-(≥ 124 bits) or more, as fixed by DR-4; a 256-bit digest is the default target.
+hash, with a distinct domain constant per use. A **digest** is 8 elements of `F`
+(about 248 bits; px.md §2).
 
 ### 4.2 Keys and addresses (PX)
 
@@ -198,7 +197,7 @@ field element in a small field.
 
 ```
 user record:      nf = Hk("px/nf",          nk ‖ rho ‖ cm)
-contract record:  nf = Hk("px/nf-contract", contract ‖ psi ‖ cm)       psi: secret seed in data[0..2]
+contract record:  nf = Hk("px/nf-contract", contract ‖ rcm ‖ cm)
 rho of output j  = Hk("px/rho", nf_0 ‖ j)                             nf_0: first nullifier of the tx
 ```
 
@@ -208,8 +207,9 @@ rho of output j  = Hk("px/rho", nf_0 ‖ j)                             nf_0: fi
 - A shared nullifier is the Zcash "Faerie Gold" attack: a sender makes two payments
   with the same `rho`, and the recipient can spend only one of them.
 - Including `cm` in the nullifier makes it unique even if `rho` were reused.
-- Without `nk` (users) or `psi` (contract records), a nullifier cannot be linked to its
-  commitment (PRF security of `Hk`).
+- Without `nk` (users) or `rcm` (contract records), a nullifier cannot be linked to its
+  commitment (PRF security of `Hk`). A contract record's nullifier is computable by
+  everyone who holds its opening (px.md §13).
 
 ### 4.5 Commitment tree and roots
 
@@ -234,8 +234,8 @@ rho of output j  = Hk("px/rho", nf_0 ‖ j)                             nf_0: fi
   - **ECDH on Ristretto255.** This is the v1 stealth derivation, giving view tags and
     subaddress identification.
   - **ML-KEM-768** (FIPS 203) to a per-address key.
-  - The symmetric key is `Hk`-derived from both shared secrets. The AEAD is
-    ChaCha20-Poly1305.
+  - The symmetric key is derived from both shared secrets with the tagged BLAKE2
+    hash `H32("px/delivery-key", …)` (px.md §6). The AEAD is ChaCha20-Poly1305.
 - Consequence: record contents stay confidential against a future quantum adversary,
   who would have to break ML-KEM as well.
 
@@ -251,7 +251,15 @@ rho of output j  = Hk("px/rho", nf_0 ‖ j)                             nf_0: fi
 
 ## 5. PX transaction
 
-### 5.1 Format (kind 4; sketch, fixed in PX-1)
+### 5.1 Format (design sketch; **superseded** by px.md §11.1)
+
+As implemented:
+- the transaction is kind 2;
+- there is no `px_version` field (the proof carries its own version byte);
+- at most 2 functions;
+- the fee is exactly `PX_STANDARD_FEE`.
+
+The sketch below is kept as the design record.
 
 ```
 Prefix
@@ -289,11 +297,10 @@ PX side:    Σ value(inputs) + bridge_in = Σ value(outputs) + bridge_out       
 pool:       px_pool' = px_pool + bridge_in − bridge_out ≥ 0                      (consensus)
 ```
 
-- Fees are paid on the v1 side only.
-- A transaction that only moves value inside PX still needs a fee source. Recommended:
-  a PX-internal fee, i.e. `bridge_out` to the miner as a public v1 output,
-  indistinguishable in amount from the standard fee bucket. The exact design is fixed
-  in PX-1.
+- **As implemented** (px.md §11.1, §11.5):
+  - a PX-funded transaction pays its fee through `bridge_out`, into the block reward;
+  - every PX transaction's fee is exactly `PX_STANDARD_FEE` (a consensus rule), so the
+    fee identifies neither the transaction nor the wallet.
 
 ---
 
@@ -340,18 +347,19 @@ Globally:
    function proof for `(program_id_k, io_hash_k)` verifies (recursion, §9.4).
 8. **Binding.** `h_tx` is a public input of the final proof (§5.2).
 
-**Fixed shape:** `N_IN = N_OUT = 2` for plain transfers; a 4×4 variant is allowed for
-function calls. Every transaction of one shape looks identical apart from its public
-inputs.
+**Fixed shape:** `N_IN = N_OUT = 2` for every transaction, with or without functions
+(the 4×4 variant considered here was not implemented). Every transaction of one shape
+looks identical apart from its public inputs.
 
 ### 6.4 Arithmetic safety (the most error-prone part)
 
 - In a 31-bit or 64-bit field, a sum of 64-bit values wraps modulo `p`. Wrap-around is
   the classic ZK inflation bug.
-- Every `value` is therefore decomposed into four 16-bit limbs, each range-checked by
-  lookup.
-- Sums are computed limb-wise with explicit carries, and each carry is range-checked.
-  The final comparison is limb-by-limb.
+- **As implemented:** the kernel is a program in the zkVM, so it sums values with
+  ordinary `u128` integer instructions, which the zkVM proves exactly. No field
+  arithmetic is involved and no wrap is possible (px.md §4.1; the wrap case is
+  tested). The limb decomposition planned here was for a hand-written circuit and was
+  not needed.
 - For **every** constraint in the kernel, a negative test builds a witness that
   violates only that constraint and asserts that proving fails or verification
   rejects (§13).
@@ -402,6 +410,12 @@ The transcript `(inputs digest, approved, created, public outputs)` is hashed in
 
 ## 8. Integration with the contract VM
 
+**Status: design only, not implemented.**
+- Proof facts (§8.1), their Wasm host interface and the combined atomicity (§8.2) do
+  not exist in the code.
+- The deploy that was implemented is px.md §11.2: kind 3, program binaries on chain.
+  It is not the §8.3 design below.
+
 ### 8.1 Proof facts (v1 claim kinds 128–255)
 
 - contracts.md §8 reserves claim kinds 128–255 for proof systems. Kind `128` is
@@ -426,8 +440,8 @@ state of one contract therefore change together or not at all.
 ### 8.3 Contract deploy v2
 
 A deploy transaction version 2 adds `programs[]: (program_id, verifier_id)`, up to 16.
-- Program images are **not** stored on chain; only their ids are. Code is published
-  off-chain with reproducible builds.
+- (Design; not what was implemented. The implemented deploy stores the program
+  binaries on chain, because verifiers need them to build the statement: px.md §11.2.)
 - Wasm public code and private programs share the contract id, so one contract has
   both public and private functions.
 - v1 contracts are unchanged; they simply have no private functions.
@@ -538,15 +552,18 @@ owner): a STARK on Plonky3 0.7.**
 - They are connected by LogUp buses:
   - function IO flows to the kernel over an IO bus;
   - no recursion is needed.
-- The verifier reconstructs each program's preprocessed commitment from the program
-  image registered on chain, cached by program id.
+- The verifier rebuilds each program's public tables from the program image
+  registered on chain, as periodic columns bound by a statement digest (zkvm.md §6.1).
 - The chain sees one proof per transaction.
 - Recursion (verifying proofs inside proofs) stays available for later aggregation, but
   is not on the critical path.
 - Per-block aggregation of transaction proofs by miners is an optimization for later
   (PX-4). It changes nothing in the transaction format.
 
-### 9.5 Verifier registry (R9)
+### 9.5 Verifier registry (R9; **design, not implemented**)
+
+Only one verifier exists, pinned by the proof's version byte and `px/kernel.id`. This
+registry is the planned upgrade path.
 
 ```
 verifier_id → { proof system version, parameters, kernel program id,
@@ -570,8 +587,11 @@ verifier_id → { proof system version, parameters, kernel program id,
 | Rescue-Prime Optimized | Conservative algebraic margins | Slower |
 | Blake3 / Blake2 in-circuit | Conservative, well studied | 10–50× more constraints |
 
-**Recommendation:** Poseidon2 with the designers' 128-bit parameters plus extra rounds
-as a safety margin (to be fixed in PX-0 after reviewing current cryptanalysis). `Hk` is
+**Recommendation at design time:** Poseidon2 with the designers' 128-bit parameters
+plus extra rounds as a safety margin. **Outcome (DR-4, px.md §2):** no extra rounds.
+`Hk` uses the standard instance, because the proof system already depends on it; a
+stronger `Hk` alone would not raise the security of the whole system. External
+cryptanalysis review remains required. `Hk` is
 what makes records, nullifiers and the tree binding, so it is **the hardest-to-change
 component**. A later `Hk` change means a new tree with a migration (records spent from
 the old tree and re-created in the new one). Choosing conservatively matters more here
@@ -634,16 +654,18 @@ are missed by a wide margin.**
 
 | Item | Target | Measured |
 |---|---|---|
-| Private transfer proving | ≤ 15 s | ~40 s |
+| Private transfer proving | ≤ 15 s | ~42 s |
 | Proof size | ≤ 150 KB | ~2.0 MB (transfer), ~2.5 MB (with one function) |
-| Verification | ≤ 30 ms | ~1.3–1.5 s |
+| Verification | ≤ 30 ms | 188 ms (was 1.3–1.5 s before ZK-F13) |
 
 Per-transaction proofs of this size are not viable for a chain. The paths are:
 - the query-policy decision (§9.3);
-- caching setup commitments, for verification;
 - per-block aggregation (PX-4).
 
-Until then, §11.1 is normative, and PX cannot be activated on a public network.
+Verification caching is done (periodic columns, the block-level cache). The chain
+carries PX under a separate 8 MiB block budget (px.md §11.5), about 4 PX transactions
+per block. The owner has approved a testnet reset for the final trial. A production
+network is out of scope until proof size is solved (aggregation-study.md).
 
 | Item | Target | Why |
 |---|---|---|
@@ -662,8 +684,8 @@ Until then, §11.1 is normative, and PX cannot be activated on a public network.
   2. smaller final proofs (more FRI queries traded for a larger blow-up; §9.3 bounds
      still apply);
   3. per-block aggregation (PX-4).
-- The block weight rule change is a consensus decision taken in PX-1, with measured
-  sizes.
+- **As implemented:** a separate PX byte budget of 8 MiB per block (option 1), with
+  the exact standard fee (px.md §11.5).
 
 ### 11.2 State growth
 
@@ -706,7 +728,7 @@ Until then, §11.1 is normative, and PX cannot be activated on a public network.
 | Record owners, contents, amounts | New commitments; ciphertexts (uniform length) |
 | Function inputs and private state | Which contract and function were called; public outputs |
 | Links between one wallet's addresses | Bridge amounts and the pool total (containment) |
-| | Transaction time, size, shape; fees (standard buckets) |
+| | Transaction time, size, shape; the fee (the same for every PX transaction) |
 
 **Bridge amounts are a linking vector:** an unusual deposit amount followed by an equal
 withdrawal. Wallet policy:
@@ -791,9 +813,9 @@ reconsider.
 
 | Decision | Result | Evidence |
 |---|---|---|
-| DR-2 proof family | STARK on Plonky3 0.7, BabyBear^5, Johnson-bound ≥ 100 bits | `docs/evidence/px0-2026-09-23/RESULTS.md` §1–2 |
+| DR-2 proof family | STARK on Plonky3 0.7, BabyBear; the challenge field became BabyBear^8 with BS-ZK-2 (≥ 123 bits Johnson, ≥ 105 unique decoding; AUDIT.md ZK-F4) | `docs/evidence/px0-2026-09-23/RESULTS.md` §1–2 |
 | DR-3 zkVM | Our own BVM-1 (zkvm.md): adopted zkVMs failed zero-knowledge (SP1) or pure Rust (RISC Zero) | RESULTS.md §3 |
-| DR-4 `Hk` | Poseidon2 over BabyBear, width 16, standard constants. The same permutation is used for Merkle hashing and Fiat–Shamir. Whether to add safety rounds is an open question for the external review. | §9.6 |
+| DR-4 `Hk` | Poseidon2 over BabyBear, width 16, standard constants, no extra rounds (px.md §2). The same permutation is used for Merkle hashing and Fiat–Shamir. The external review may revisit this. | §9.6 |
 | DR-5 bridge | Public amounts with containment (unchanged) | §12.2 |
 | DR-6 client proving | Small circuits prove in 0.1–3 s; 2^16-row traces take 10–45 s. Further tuning in PX-1 | RESULTS.md §2 |
 | DR-7 delivery | Unchanged (hybrid ML-KEM); decided in PX-1 | |
@@ -827,7 +849,8 @@ Each decision is recorded in this document, with the measurements as evidence in
 
 ## 16. Open questions
 
-1. **Fees for purely internal PX transactions** without revealing the payer (§5.3).
+1. ~~Fees for purely internal PX transactions~~ **Resolved:** paid through
+   `bridge_out`, with the exact standard fee (§5.3).
 2. **Address format with ML-KEM keys:** 1 184-byte public keys make addresses long
    (DR-7).
 3. **Private contract state** (PX-3): record-based state (UTXO-style, concurrency by

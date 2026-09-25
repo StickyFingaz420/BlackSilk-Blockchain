@@ -25,3 +25,5 @@ zeroize = "1.8"
 
 [dev-dependencies]
 rand_chacha = { version = "0.3", default-features = false }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+serde = "1"

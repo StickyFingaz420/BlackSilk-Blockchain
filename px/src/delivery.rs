@@ -19,6 +19,12 @@
 //! only if it recomputes the on-chain commitment exactly, with its own owner
 //! tag. A ciphertext whose contents disagree with `cm` (a probe) is ignored.
 //!
+//! **Contract records** (docs/px.md §13). The plaintext carries the record's
+//! contract (zero for a user record). A contract record has owner 0, so it is
+//! opened without the recipient's owner tag: the caller that creates it
+//! addresses it to the party that will act on it. The same commitment check
+//! applies, so a recipient only ever accepts a real record.
+//!
 //! **Scanning.** The one-byte view tag, from `ss_ec`, lets a wallet skip ~255
 //! of 256 foreign outputs after one scalar multiplication per address. Keys
 //! are per address (unlinkable addresses), so scanning costs one scalar
@@ -28,7 +34,7 @@
 
 use blacksilk_crypto::hash::{h32, h64, tags};
 use blacksilk_px_core::record::Record;
-use blacksilk_px_core::{Digest, P};
+use blacksilk_px_core::{Digest, P, ZERO_DIGEST};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::ChaCha20Poly1305;
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
@@ -39,8 +45,10 @@ use rand_core::{CryptoRng, RngCore};
 
 pub const EK_BYTES: usize = 1184;
 pub const KEM_CT_BYTES: usize = 1088;
-/// Plaintext: value (8) ‖ data (32) ‖ rcm (32).
-pub const PLAIN_BYTES: usize = 72;
+/// Plaintext: contract (32) ‖ value (8) ‖ data (32) ‖ rcm (32). The same
+/// length for user and contract records, so the ciphertext does not reveal
+/// the kind.
+pub const PLAIN_BYTES: usize = 104;
 pub const TAG_BYTES: usize = 16;
 /// Encoded ciphertext: `R ‖ view tag ‖ ct_kem ‖ body`.
 pub const CIPHERTEXT_BYTES: usize = 32 + 1 + KEM_CT_BYTES + PLAIN_BYTES + TAG_BYTES;
@@ -145,6 +153,7 @@ pub fn seal<R: RngCore + CryptoRng>(
 
     let k = zeroize::Zeroizing::new(key(&ss_ec, ss_kem.as_slice(), &r_pub, ct.as_slice(), cm));
     let mut plain = zeroize::Zeroizing::new(Vec::with_capacity(PLAIN_BYTES));
+    plain.extend_from_slice(&digest_bytes(&record.contract));
     plain.extend_from_slice(&record.value.to_le_bytes());
     plain.extend_from_slice(&digest_bytes(&record.data));
     plain.extend_from_slice(&digest_bytes(&record.rcm));
@@ -180,7 +189,8 @@ fn digest_from(b: &[u8]) -> Option<Digest> {
 
 /// Tries to open output ciphertext `c` with commitment `cm` and nullifier-
 /// derived `rho`, as the address with `keys` and owner tag `owner`. Returns the
-/// record only if it recomputes `cm`.
+/// record only if it recomputes `cm`: a user record paid to `owner`, or a
+/// contract record (`contract ≠ 0`, owner 0) addressed to this address.
 pub fn open(
     keys: &DeliveryKeys,
     owner: &Digest,
@@ -212,10 +222,26 @@ pub fn open(
             )
             .ok()?,
     );
-    let value = u64::from_le_bytes(plain[..8].try_into().ok()?);
-    let data = digest_from(&plain[8..40])?;
-    let rcm = digest_from(&plain[40..72])?;
-    let record = Record::plain(*owner, value, data, *rho, rcm);
+    if plain.len() != PLAIN_BYTES {
+        return None;
+    }
+    let contract = digest_from(&plain[..32])?;
+    let value = u64::from_le_bytes(plain[32..40].try_into().ok()?);
+    let data = digest_from(&plain[40..72])?;
+    let rcm = digest_from(&plain[72..104])?;
+    let record = Record {
+        owner: if contract == ZERO_DIGEST {
+            *owner
+        } else {
+            ZERO_DIGEST
+        },
+        contract,
+        asset: ZERO_DIGEST,
+        value,
+        data,
+        rho: *rho,
+        rcm,
+    };
     let mut perm = crate::perm::HostPerm::new();
     (record.commit(&mut perm) == *cm).then_some(record)
 }

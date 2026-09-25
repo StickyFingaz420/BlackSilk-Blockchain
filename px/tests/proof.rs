@@ -92,6 +92,17 @@ fn a_private_transfer_proves_verifies_and_applies_once() {
     // Deposit (dummy inputs, bridge-in) and payment (real inputs) have the
     // same fixed shape: the proof does not reveal which kind it is.
     assert_eq!(proof0.degree_bits, proof1.degree_bits);
+    // Byte length (privacy review P-5): every part of the proof has the same
+    // encoded length for both witnesses, except the pruned Merkle paths,
+    // whose size depends only on where the (public) query positions fall.
+    // A Plonky3 change that makes any other part variable fails here.
+    let (fixed0, paths0) = length_parts(&proof0);
+    let (fixed1, paths1) = length_parts(&proof1);
+    assert_eq!(fixed0, fixed1, "witness-independent parts");
+    println!(
+        "pruned paths: {paths0} and {paths1} bytes; everything else {} bytes",
+        fixed0.iter().sum::<usize>()
+    );
 
     // The proof is bound to every public field and to the transaction.
     let mut bad = Vec::new();
@@ -120,6 +131,45 @@ fn a_private_transfer_proves_verifies_and_applies_once() {
         Some(StateError::DoubleSpend(p1.nullifiers[0]))
     );
     assert_eq!(state.pool(), 1000);
+}
+
+fn size<T: serde::Serialize + ?Sized>(x: &T) -> usize {
+    postcard::to_allocvec(x).unwrap().len()
+}
+
+/// The encoded sizes of every part of a proof except its Merkle
+/// authentication data (in a fixed order), and the total size of that data:
+/// the pruned paths of the input openings and the FRI layers' openings.
+fn length_parts(proof: &blacksilk_zk::Proof) -> (Vec<usize>, usize) {
+    let (random, fri) = &proof.opening_proof;
+    let mut fixed = vec![
+        size(&proof.commitments),
+        size(&proof.opened_values),
+        size(&proof.degree_bits),
+        size(random),
+        size(&fri.commit_phase_commits),
+        size(&fri.commit_pow_witnesses),
+        size(&fri.final_poly),
+        size(&fri.query_pow_witness),
+    ];
+    let mut paths = 0;
+    for batch in &fri.input_openings {
+        let (salts, pruned) = &batch.opening_proof;
+        fixed.push(size(&batch.opened_values));
+        fixed.push(size(salts));
+        paths += size(pruned);
+    }
+    for step in &fri.commit_phase_openings {
+        fixed.push(size(&step.log_arity));
+        fixed.push(size(&step.sibling_values));
+        paths += size(&step.opening_proof);
+    }
+    // Everything not listed (version byte, envelope, any other field) must be
+    // witness-independent too.
+    let total = blacksilk_zk::encode_proof(proof).len();
+    let rest = total - fixed.iter().sum::<usize>() - paths;
+    fixed.push(rest);
+    (fixed, paths)
 }
 
 #[test]

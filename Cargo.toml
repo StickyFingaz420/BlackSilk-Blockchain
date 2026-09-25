@@ -20,7 +20,7 @@ members = [
 ]
 # Pre-rebuild code kept for reference only (does not build; see legacy/README.md),
 # and the post-quantum research track.
-exclude = ["legacy", "research", "third_party"]
+exclude = ["legacy", "research", "third_party", "fuzz"]
 
 [profile.release]
 opt-level = 3
@@ -52,9 +52,9 @@ opt-level = 3
 [profile.dev.package.argon2]
 opt-level = 3
 
-# Patched Plonky3 0.7.0 crates (third_party/README.md): a spin-lock deadlock in
-# the hiding commitment code hung the prover (AUDIT.md ZK-F11). Only lock
-# scopes change. Remove when upstream is fixed.
+# Patched Plonky3 0.7.0 crates (third_party/README.md): spin locks held across
+# rayon work could hang the prover (AUDIT.md ZK-F11, ZK-F21). Only lock scopes
+# change. p3-dft is fixed upstream in 0.8.0; p3-fri and p3-merkle-tree are not.
 [patch.crates-io]
 p3-fri = { path = "third_party/p3-fri" }
 p3-merkle-tree = { path = "third_party/p3-merkle-tree" }

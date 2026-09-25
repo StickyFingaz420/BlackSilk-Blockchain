@@ -6,9 +6,9 @@ use blacksilk_px::perm::HostPerm;
 use blacksilk_px::prove::{self, kernel_program, witness_words, TransferError, VerifyError};
 use blacksilk_px::state::State;
 use blacksilk_px::tree::Tree;
+use blacksilk_px::vault;
 use blacksilk_px::wallet::{self, Account};
 use blacksilk_px_core::call::OutSpec;
-use blacksilk_px_core::hash::hash;
 use blacksilk_px_core::kernel::{self, Error, FunctionWitness, Public, SliceSource, Witness};
 use blacksilk_px_core::record::Record;
 use blacksilk_px_core::{Digest, ZERO_DIGEST};
@@ -16,30 +16,17 @@ use blacksilk_zkvm::air::trace::{self, Budget, Statement};
 use blacksilk_zkvm::{run, Program, MAX_CYCLES};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-const LOCK_DOMAIN: u32 = 0x5641_0001;
 const C: Digest = [0x100, 1, 2, 3, 4, 5, 6, 7];
 const OTHER: Digest = [0x200, 1, 2, 3, 4, 5, 6, 7];
 
-fn vault() -> Arc<Program> {
-    static P: OnceLock<Arc<Program>> = OnceLock::new();
-    P.get_or_init(|| Arc::new(Program::from_elf(include_bytes!("fixtures/vault.elf")).unwrap()))
-        .clone()
-}
+// The reference vault contract (`blacksilk_px::vault`), under contract id `C`.
+const VAULT_BUDGET: Budget = vault::BUDGET;
 
-/// The vault's registered row budget: measured use of the larger of LOCK and
-/// CLAIM plus ~6% (checked in `budgets_leave_headroom`).
-const VAULT_BUDGET: Budget = Budget {
-    cycles: 6_000,
-    keys: 2_200,
-    add: 4_300,
-    bit: 200,
-    lt: 3_400,
-    shift: 200,
-    mul: 200,
-    poseidon: 22,
-};
+fn vault() -> Arc<Program> {
+    vault::program()
+}
 
 /// The consensus registry of the test: the vault program belongs to `C`,
 /// with `VAULT_BUDGET`.
@@ -48,37 +35,12 @@ fn registry(contract: &Digest, program: &[u8; 32]) -> Option<Budget> {
 }
 
 fn lock_of(secret: &Digest) -> Digest {
-    hash(&mut HostPerm::new(), LOCK_DOMAIN, &[secret])
-}
-
-fn words(parts: &[&[u32]]) -> Vec<u32> {
-    parts.concat()
+    vault::lock_of(secret)
 }
 
 /// LOCK: the function's input and the kernel's view of its transcript.
 fn lock_call(value: u64, lock: Digest, j: usize, blind: Digest) -> (Vec<u32>, FunctionWitness) {
-    let input = words(&[
-        &[0],
-        &C,
-        &blind,
-        &[value as u32, (value >> 32) as u32],
-        &lock,
-        &[j as u32],
-    ]);
-    let mut spec = [None; 2];
-    spec[j] = Some(OutSpec {
-        owner: ZERO_DIGEST,
-        contract: C,
-        value,
-        data: lock,
-    });
-    let fw = FunctionWitness {
-        contract: C,
-        blind,
-        approve: [false; 2],
-        spec,
-    };
-    (input, fw)
+    vault::lock_call(&C, value, &lock, j, &blind)
 }
 
 /// CLAIM of vault record `rec` (input slot `i`) to `recipient` (output `j`).
@@ -90,34 +52,13 @@ fn claim_call(
     j: usize,
     blind: Digest,
 ) -> (Vec<u32>, FunctionWitness) {
-    let input = words(&[
-        &[1],
-        &C,
-        &blind,
-        &[rec.value as u32, (rec.value >> 32) as u32],
-        &rec.data,
-        &rec.rho,
-        &rec.rcm,
-        &secret,
-        &recipient,
-        &[i as u32, j as u32],
-    ]);
-    let mut approve = [false; 2];
-    approve[i] = true;
-    let mut spec = [None; 2];
-    spec[j] = Some(OutSpec {
-        owner: recipient,
-        contract: ZERO_DIGEST,
-        value: rec.value,
-        data: [0; 8],
-    });
-    let fw = FunctionWitness {
-        contract: C,
-        blind,
-        approve,
-        spec,
-    };
-    (input, fw)
+    vault::claim_call(rec, &secret, &recipient, i, j, &blind)
+}
+
+#[test]
+fn the_vault_program_id_is_pinned() {
+    let id: String = vault().id().iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(id, vault::VAULT_PROGRAM_ID.trim());
 }
 
 fn with_functions(mut w: Witness, fns: &[FunctionWitness]) -> Witness {
@@ -246,6 +187,17 @@ fn lock_then_claim_proves_verifies_and_pays_the_recipient() {
     assert_eq!(
         prove::verify(&public, &calls, [6; 32], &proof, registry),
         Ok(())
+    );
+    // The claim publishes the vault record's contract nullifier, which any
+    // holder of the opening computes (wallets track spends with it).
+    assert_eq!(
+        public.nullifiers[0],
+        blacksilk_px_core::record::contract_nullifier(
+            &mut HostPerm::new(),
+            &C,
+            &s.vault_rec.rcm,
+            &s.vault_rec.commit(&mut HostPerm::new())
+        )
     );
     // Bob receives the vault's value.
     let bob_rec = wallet::created_record(&public, 0, &w.outputs[0]);

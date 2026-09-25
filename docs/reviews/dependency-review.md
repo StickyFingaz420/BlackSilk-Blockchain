@@ -1,13 +1,14 @@
 # Dependency and cryptographic-library review
 
-Status: **internal review (2026-09-24), not an independent audit.**
+Status: **internal review (2026-09-24; RustSec check and corrections 2026-09-25), not an
+independent audit.**
 
 **Scope.** Every third-party crate that security-critical or consensus-critical code
 depends on: what it is used for, how it is pinned, what `unsafe` or native code it
 brings, and the risk of upgrading it.
 
-**Not available here:** `cargo audit` and `cargo deny` are not installed, and this
-machine has no advisory database. Checking against RustSec is an open item (§5).
+**RustSec:** `cargo audit` against the current advisory database found no
+vulnerabilities (§5).
 
 ## 1. Pure Rust
 
@@ -74,8 +75,11 @@ Details: `docs/reviews/zk-security-review.md` §6. `unsafe` code:
   - `Radix2DFTSmallBatch` (FRI prover) already computes outside its lock;
   - `Radix2Dit`, the monty-31 DFT and the goldilocks MDS are not used.
 - **Verified:** `diff -r` against the registry copies shows exactly these three files.
-  The rest of `third_party/` is verbatim upstream 0.7.0, including upstream's Merkle
-  path-pruning module, which the PX proofs do not use.
+  The rest of `third_party/` is verbatim upstream 0.7.0.
+- **Correction (2026-09-25):** an earlier version of this section said the PX proofs do
+  not use upstream's Merkle path pruning. They do: FRI in 0.7.0 opens every query batch
+  through `open_multi_batch`, whose multiproof is pruned. That is the only source of
+  proof-length variation (privacy review P-5).
 - **Evidence and removal criteria:** `third_party/README.md` and AUDIT.md ZK-F11 and
   ZK-F21.
 
@@ -106,13 +110,29 @@ Details: `docs/reviews/zk-security-review.md` §6. `unsafe` code:
   reproducible proofs.
 - **Builds:** the kernel guest rebuild was byte-identical; its program id is pinned.
 
-## 5. Open items
+## 5. RustSec advisory check (2026-09-25)
 
-1. **RustSec check:** run `cargo audit` (or `cargo deny check advisories`) against a
-   current advisory database before the testnet trial, and add it to CI.
+`cargo audit` 0.22.2, advisory database of 2026-09-24 (commit `593df8c`, 1,269
+advisories), over the whole `Cargo.lock` (319 crates):
+
+| Result | Crate | Advisory | Assessment |
+|---|---|---|---|
+| **0 vulnerabilities** | | | |
+| 1 warning: unmaintained | `paste` 1.0.15 | RUSTSEC-2024-0436 | A proc macro used by Plonky3 (`p3-field` and others) at compile time only. It adds no code to any binary and handles no untrusted input. It cannot be removed without changing Plonky3. Recheck on the next Plonky3 upgrade |
+
+**Test-only tooling.** Coverage-guided fuzzing (`fuzz/`, AUDIT.md "Fuzzing") links
+LLVM's libFuzzer, which is C++, through `libfuzzer-sys`. It is only in the fuzz
+binaries, which are built separately (their own workspace, a nightly toolchain) and
+are never part of the node, wallet or miner.
+
+## 6. Open items
+
+1. **RustSec in CI:** run `cargo audit` on every change to `Cargo.lock` (done by hand
+   above; there is no CI here yet).
 2. **Independent review** of the Plonky3 configuration (hiding mode, lookup argument,
    transcript) as used here, and of the `ml-kem` crate's decapsulation (FIPS 203
    implicit rejection).
-3. **Upstream report** of ZK-F11: the owner decides.
+3. **Upstream report** of ZK-F11 and ZK-F21: drafted in `third_party/UPSTREAM-REPORT.md`
+   for the owner to file.
 4. **Duplicate major versions** (`getrandom` 0.2/0.3, `spin` 0.9/0.12) are harmless
    but should converge when dependents allow.

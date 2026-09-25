@@ -46,6 +46,8 @@ pub struct MemoryChain {
     blocks: Vec<BlockUndo>,
     px: PxState,
     registry: HashMap<Digest, Vec<RegisteredFunction>>,
+    /// `(height, contract id)` of every registration, in block order.
+    px_contract_log: Vec<(u64, Digest)>,
     px_records: Vec<PxRecordEntry>,
     /// `(height, nullifier)` in block order.
     px_nullifiers: Vec<(u64, Digest)>,
@@ -130,6 +132,12 @@ impl MemoryChain {
         self.registry.get(contract).map(|v| v.as_slice())
     }
 
+    /// Every registration `(height, contract id)`, in block order (for
+    /// wallets, which download the whole list).
+    pub fn px_contract_log(&self) -> &[(u64, Digest)] {
+        &self.px_contract_log
+    }
+
     /// Applies an already validated block at [`Self::next_height`]. Returns the
     /// global index of its first output.
     ///
@@ -179,6 +187,7 @@ impl MemoryChain {
                         })
                         .collect();
                     self.registry.insert(id, functions);
+                    self.px_contract_log.push((height, id));
                     contracts.push(id);
                 }
                 _ => {}
@@ -226,6 +235,8 @@ impl MemoryChain {
         for c in &undo.contracts {
             self.registry.remove(c);
         }
+        let kept = self.px_contract_log.len() - undo.contracts.len();
+        self.px_contract_log.truncate(kept);
         self.px_records.truncate(undo.px_records);
         self.px_nullifiers.truncate(undo.px_nullifiers);
         true

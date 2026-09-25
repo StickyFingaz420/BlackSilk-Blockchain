@@ -9,7 +9,7 @@
 
 use blacksilk_zk::config::{ProverConfig, Val, VerifierConfig};
 use blacksilk_zk::params::{self, ProofShape};
-use blacksilk_zk::{decode_proof, encode_proof, prove, verify, Proof, ZkError};
+use blacksilk_zk::{decode_proof, encode_proof, prove, verify, Proof, ZkError, PROOF_VERSION};
 use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
 use p3_field::{PrimeCharacteristicRing, PrimeField32};
 use p3_lookup::{InteractionBuilder, LookupBus};
@@ -272,9 +272,12 @@ fn encoding_is_strict() {
     let (proof, _) = honest_proof(6);
     let bytes = encode_proof(&proof);
     assert!(matches!(decode_proof(&[]), Err(ZkError::Encoding(_))));
-    let mut v2 = bytes.clone();
-    v2[0] = 2;
-    assert!(matches!(decode_proof(&v2), Err(ZkError::Encoding(_))));
+    // Unknown versions are refused.
+    for version in [0, PROOF_VERSION + 1] {
+        let mut other = bytes.clone();
+        other[0] = version;
+        assert!(matches!(decode_proof(&other), Err(ZkError::Encoding(_))));
+    }
     let mut trailing = bytes.clone();
     trailing.push(0);
     assert!(matches!(decode_proof(&trailing), Err(ZkError::Encoding(_))));
@@ -296,6 +299,14 @@ fn proofs_are_randomized() {
     let (a, pv) = honest_proof(7);
     let (b, _) = honest_proof(8);
     assert_ne!(encode_proof(&a), encode_proof(&b));
+    // Field elements are fixed-width, so values never change the length.
+    // What varies is the number of distinct Merkle nodes in the pruned query
+    // paths, a function of the public query positions (privacy review P-5).
+    println!(
+        "two proofs of one statement: {} and {} bytes",
+        encode_proof(&a).len(),
+        encode_proof(&b).len()
+    );
     let v = VerifierConfig::new();
     assert!(verify(&v, &AIRS, &a, &pv, &LIMITS).is_ok());
     assert!(verify(&v, &AIRS, &b, &pv, &LIMITS).is_ok());

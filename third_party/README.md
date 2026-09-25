@@ -61,8 +61,24 @@ two hours, while each test alone passed in about a minute.
 `cargo`'s registry copies were taken verbatim (`.cargo_vcs_info.json` and
 `Cargo.toml.orig` removed).
 
-**Remove when:** upstream Plonky3 releases a fix. Then the exact pins move to that
-version, after re-running the full test suite and the stress harness.
+**Remove when:** upstream Plonky3 releases a fix for each site (for `p3-dft`, 0.8.0
+already has one; see below). Then the exact pins move to that version, after
+re-running the full test suite and `zkvm/tests/stress.rs`.
 
-**To report upstream:** the maintainers have not been notified from here. The project
-owner decides whether and how to report it.
+**Tested against upstream's own suites (2026-09-25):**
+- the three patched files were applied to the v0.7.0 release commit (`fb93826`), whose
+  sources equal the crates.io copies;
+- `cargo test` passes for `p3-dft` (44 tests), `p3-merkle-tree` (99) and `p3-fri`
+  (64), with and without rayon parallelism.
+
+**Upstream status (checked 2026-09-25, released 0.8.0 and `main`):**
+- **`p3-dft`: fixed upstream in 0.8.0.** The new `twiddle_cache.rs` computes tables
+  outside the lock, with a comment describing the same mechanism and a test
+  (`miss_computes_without_holding_the_lock`). That independently confirms the
+  diagnosis. This patch can go on the upgrade to 0.8.0.
+- **`p3-fri` and `p3-merkle-tree`: not fixed.** 0.8.0 still holds the lock in all
+  three places.
+
+**To report upstream:** a ready-to-file issue is drafted in `UPSTREAM-REPORT.md`
+(public GitHub issue; Plonky3 has no security policy, and this is a liveness defect).
+It has not been filed: the project owner decides.

@@ -22,6 +22,11 @@ pub const MAX_DEPLOY_TX_SIZE: usize = 1024 * 1024;
 pub const MAX_PX_BLOCK_BYTES: u64 = 8 * 1024 * 1024;
 /// Fee per encoded byte of PX and deploy transactions (atomic units).
 pub const PX_FEE_PER_BYTE: u64 = 2;
+/// The fee of every PX transaction, exactly (docs/px.md §11.5): the per-byte
+/// fee of the largest possible PX transaction. A uniform fee reveals nothing
+/// about the transaction or the wallet that built it (privacy review P-7).
+/// Deploys pay per byte: their size is public anyway.
+pub const PX_STANDARD_FEE: u64 = PX_FEE_PER_BYTE * MAX_PX_TX_SIZE as u64;
 /// Clear (bridge-out) outputs of one PX transaction.
 pub const MAX_PAYOUTS: usize = 16;
 /// Public output words a function may publish in a PX transaction.

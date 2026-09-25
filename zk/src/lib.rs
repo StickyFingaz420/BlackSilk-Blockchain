@@ -162,6 +162,11 @@ pub fn verify<A: ProvableAir>(
 }
 
 /// Encodes a proof: `PROOF_VERSION ‖ postcard(proof)`.
+///
+/// Field elements are always 4 bytes (Plonky3 writes them as fixed-width
+/// arrays in binary formats), so values never change the length. A proof's
+/// length varies only with the number of distinct Merkle nodes in its pruned
+/// query paths, a function of the public query positions (docs/zk.md §9.6).
 pub fn encode_proof(proof: &Proof) -> Vec<u8> {
     let mut out = vec![PROOF_VERSION];
     out.extend(postcard::to_allocvec(proof).expect("proof serialization cannot fail"));

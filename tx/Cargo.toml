@@ -16,6 +16,7 @@ blacksilk-px-core = { path = "../px-core" }
 blacksilk-zkvm = { path = "../zkvm" }
 blacksilk-zk = { path = "../zk" }
 rand_core = { version = "0.6", default-features = false }
+log = "0.4"
 zeroize = { version = "1.8", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]

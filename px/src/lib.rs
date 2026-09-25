@@ -7,18 +7,23 @@
 //!   set, pool balance) with block application and undo;
 //! - [`wallet`]: keys from the wallet seed, record creation, witnesses;
 //! - [`delivery`]: hybrid (Ristretto + ML-KEM-768) record encryption;
-//! - [`prove`]: proving and verifying transfers with the kernel program.
+//! - [`prove`]: proving and verifying transfers with the kernel program;
+//! - [`vault`]: the reference private contract (a hash-locked vault), host
+//!   side;
+//! - [`share`]: sharing a record's opening off chain, sealed to an address.
 //!
-//! **Not consensus yet.** Nothing here is wired into block validation; that is
-//! a later phase (AUDIT.md R8).
+//! Consensus uses [`state`] and [`prove`] through `blacksilk-tx` (transaction
+//! kinds 2 and 3, docs/px.md §11).
 
 #![forbid(unsafe_code)]
 
 pub mod delivery;
 pub mod perm;
 pub mod prove;
+pub mod share;
 pub mod state;
 pub mod tree;
+pub mod vault;
 pub mod wallet;
 
 pub use blacksilk_px_core as core;

@@ -9,6 +9,7 @@ pub trait NodeApi {
     fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String>;
     fn submit_tx(&self, tx: &[u8]) -> Result<rpc::SubmitResult, String>;
     fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String>;
+    fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String>;
 }
 
 impl NodeApi for rpc::Client {
@@ -26,6 +27,9 @@ impl NodeApi for rpc::Client {
     }
     fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
         rpc::Client::px_commitments(self, from).map_err(|e| e.to_string())
+    }
+    fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
+        rpc::Client::px_contracts(self, from).map_err(|e| e.to_string())
     }
     fn submit_tx(&self, tx: &[u8]) -> Result<rpc::SubmitResult, String> {
         rpc::Client::submit_tx(self, tx).map_err(|e| e.to_string())

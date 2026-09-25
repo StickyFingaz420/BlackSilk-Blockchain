@@ -126,6 +126,11 @@ pub enum TxError {
     // ---- PX (docs/px.md §11) ----
     /// PX statement shape (function count, sizes).
     PxShape,
+    /// A PX transaction's fee differs from `PX_STANDARD_FEE` (a fee that
+    /// would fingerprint its wallet; privacy review P-7).
+    PxFeeNotStandard {
+        fee: u64,
+    },
     /// A deploy program binary does not load.
     PxInvalidProgram,
     /// PX1: the anchor is not a recent tree root.
@@ -448,7 +453,25 @@ pub fn check_px_proof(tx: &PxTx, chain: &impl ChainView, rules: &TxRules) -> Res
         &proof,
         |contract, id| chain.px_function(contract, id).map(|(_, b)| b),
     )
-    .map_err(|_| TxError::PxProof)
+    .map_err(|e| {
+        // A malformed proof that panics Plonky3's verifier is contained
+        // (zkvm.md §10) and rejected like any invalid proof. It may point at a
+        // verifier bug, so operators see it.
+        if matches!(
+            e,
+            blacksilk_px::prove::VerifyError::Proof(blacksilk_zk::ZkError::VerifierPanicked)
+        ) {
+            log::warn!(
+                "a PX proof made the verifier panic (contained, rejected); binding {}",
+                hex_id(&tx.binding(rules.network_id))
+            );
+        }
+        TxError::PxProof
+    })
+}
+
+fn hex_id(h: &[u8; 32]) -> String {
+    h.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Full validation of one PX transaction for inclusion at `height` (mempool).

@@ -183,7 +183,7 @@ outputs.
 | Value from dummies; dummy contract records | `DummyWithValue`, `DummyContract` | rejection cases |
 | Burn a victim's record with a dummy nullifier | Needs the victim's `nk` (`nk = Hk(NK, sk)` of the witness) or an `Hk` collision | Construction |
 | **Spend a contract record without its contract** | A function of that contract must approve the exact commitment | `no function`, `approve only dummy` cases |
-| **Rogue function claiming another contract** | The verifier checks that each function's program is registered to its contract (a mandatory argument of `prove::verify`) | `Unregistered` test; **consensus must implement the registry** (§8 R-1) |
+| **Rogue function claiming another contract** | The verifier checks that each function's program is registered to its contract (a mandatory argument of `prove::verify`) | `Unregistered` test; consensus implements the registry (PX3, PX5; §8 R-1) |
 | Function approving foreign or dummy inputs | `ApprovalMismatch` | cases |
 | Caller redirecting a function's payout, or changing its amount | Outputs a function specifies must match exactly | `redirect`, `amount` cases |
 | Forged contract state (a contract output without its function) | `Unauthorized` | `forge contract output` |
@@ -206,7 +206,7 @@ outputs.
 | Trace heights (public) | **Fixed shapes:** kernel and function budgets, enforced exactly by prover and verifier (zkvm.md §6.6). Constant work in the kernel as a second line (§8 R-5). Full channel analysis: `privacy-review.md` |
 | Which contract and function are called | **Public by design** (program ids, contract ids, selector outputs; zk.md §12.2) |
 | Function transcripts | `io_hash` hides them only if the blind is fresh and uniform. The wallet must sample it with a CSPRNG (§8 R-6). |
-| Contract-record nullifiers | `Hk(contract ‖ rcm ‖ cm)`. Anyone who knows the record's plaintext can recognize its spend. This is inherent to shared contract state; distributing plaintext is the application's job. |
+| Contract-record nullifiers | `Hk(contract ‖ rcm ‖ cm)`. Anyone who knows the record's plaintext can recognize its spend. This is inherent to shared contract state. Plaintexts are distributed by the protocol of docs/px.md §13 (designated delivery, the creator's copy, sealed shares). |
 | Bridge amounts | Public by design (containment); wallet policy in zk.md §12.2 |
 | Record delivery | Hybrid encryption; per-address keys; uniform ciphertext length |
 | Prover timing | Local only (the prover's machine) |
@@ -233,8 +233,8 @@ outputs.
     (`MEM_INIT`);
   - the kernel rebuild was byte-identical, and its program id is pinned.
 - **Pinned versions:** Plonky3 `=0.7.0` (every crate), `ml-kem =0.3.2`.
-- **Patched dependencies:** `p3-fri` and `p3-merkle-tree` 0.7.0, lock scopes only
-  (R-9, `third_party/README.md`).
+- **Patched dependencies:** `p3-fri`, `p3-merkle-tree` and `p3-dft` 0.7.0, lock scopes
+  only (R-9, `third_party/README.md`).
 
 ## 7. Evidence (tests)
 
@@ -248,7 +248,7 @@ outputs.
 | LogUp bound | Largest accepted statement at 63% of p |
 | Kernel | 20 plain and 12 contract rejection cases, identical natively and in the guest; constant trace heights |
 | Proofs | Deposit, payment, LOCK and CLAIM proven and verified; rejected under statement alterations, unregistered programs, a wrong shape |
-| State, tree, delivery, hash | docs/px.md §8.3 |
+| State, tree, delivery, hash | docs/px.md §9.3 |
 
 ## 8. Findings of this review
 
@@ -259,9 +259,9 @@ outputs.
 | R-3 | **Verification costs ~1.3–1.5 s per proof.** The preprocessed tables (the 2^16-row byte table) are recommitted on every verification. | **Resolved:** public tables are periodic columns bound by a statement digest (188 ms; AUDIT.md ZK-F13); relay limits and scoring (ZK-F15); block-level cache (ZK-F18). |
 | R-4 | **Proof size ~2–2.5 MB** | Open (`aggregation-study.md`; security-policy decision on queries; recursion as its own milestone) |
 | R-5 | The kernel with one function uses 29.4k of 32 768 CPU rows. A future change that crosses 2^15 for some witnesses only would make heights witness-dependent. | **Resolved:** fixed budgets per function count (ZK-F14). Heights no longer depend on the witness at all. A test requires ≤ 95% budget use for every tested witness, so a kernel change that eats the margin fails CI instead of leaking. |
-| R-6 | `io_hash` hiding depends on a fresh uniform blind chosen by the caller. | Documented. Wallet code must sample it with a CSPRNG; the tests do. |
+| R-6 | `io_hash` hiding depends on a fresh uniform blind chosen by the caller. | **Satisfied in the wallet:** every contract call's blind comes from `px::wallet::random_digest` over the wallet's OS-seeded ChaCha20 (`wallet/src/wallet.rs`, `px_vault_lock` and `px_vault_claim`); the tests do the same. Other callers must do the same. |
 | R-7 | Poseidon2 is young and used everywhere (A2). | External cryptanalysis review required |
-| R-9 | **Prover liveness: Plonky3's hiding commitments could deadlock** (a spin lock held across rayon work). Found when sequential test runs hung. | Fixed with a minimal patch of `p3-fri` and `p3-merkle-tree` (AUDIT.md ZK-F11, `third_party/README.md`); verified by 40 consecutive proofs. Two further sites (`HidingFriPcs::commit` and `p3-dft`'s twiddle caches) hung concurrent proofs and were patched in the same way (ZK-F21). Upstream is unfixed as of 0.7.0. The patch must be re-checked on every Plonky3 upgrade. |
+| R-9 | **Prover liveness: Plonky3's hiding commitments could deadlock** (a spin lock held across rayon work). Found when sequential test runs hung. | Fixed with a minimal patch of `p3-fri` and `p3-merkle-tree` (AUDIT.md ZK-F11, `third_party/README.md`); verified by 40 consecutive proofs. Two further sites (`HidingFriPcs::commit` and `p3-dft`'s twiddle caches) hung concurrent proofs and were patched in the same way (ZK-F21). Upstream: the `p3-dft` site is fixed in 0.8.0; the hiding-commitment sites are not (third_party/README.md). The patch must be re-checked on every Plonky3 upgrade. |
 | R-10 | Proof bytes are not reproducible from a seed: several tables take the shared prover RNG in a scheduling-dependent order. | Harmless for security (the randomness stays fresh). Documented so that no test or document relies on reproducible proof bytes. |
 | R-8 | Plonky3 0.7 is a pre-1.0 library; its audit status has not been verified by us. An earlier comment called `Poseidon2Air` "audited"; the claim was unverified and has been removed. | External implementation review required |
 

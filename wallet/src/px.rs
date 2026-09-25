@@ -12,6 +12,23 @@
 //!
 //! **Tree.** The wallet keeps every commitment in order to build
 //! authentication paths, and checks its root against the node's.
+//!
+//! **Contracts** (docs/px.md §13). Deploys are public. The wallet downloads
+//! the complete, ordered list of registrations (`/px/contracts`), like every
+//! other wallet, so it knows contracts deployed before its restore height too,
+//! and the node learns nothing about which contracts it uses. Contract
+//! records are kept apart from the wallet's own funds: they are spent only
+//! with a function of their contract, never selected to pay, and never
+//! counted in the balance. The wallet learns a contract record in one of
+//! three ways:
+//! - **received:** its creator addressed the record's ciphertext to one of
+//!   this wallet's PX addresses;
+//! - **created:** this wallet built the transaction that creates it;
+//! - **imported:** another holder shared the opening off chain
+//!   (`blacksilk_px::share`).
+//!
+//! Created and imported records are confirmed by finding their commitment in
+//! the chain's commitment list; received ones by the block they arrive in.
 
 use crate::node::NodeApi;
 use crate::wallet::WalletError;
@@ -19,10 +36,11 @@ use blacksilk_px::delivery;
 use blacksilk_px::perm::HostPerm;
 use blacksilk_px::tree::Tree;
 use blacksilk_px::wallet::Account;
-use blacksilk_px_core::record::{nullifier, output_rho, Record};
-use blacksilk_px_core::{Digest, P};
+use blacksilk_px_core::record::{contract_nullifier, nullifier, output_rho, Record};
+use blacksilk_px_core::{Digest, P, ZERO_DIGEST};
 use blacksilk_tx::px::digest_bytes;
 use blacksilk_tx::types::Transaction;
+use blacksilk_zkvm::air::trace::Budget;
 use serde::{Deserialize, Serialize};
 
 /// PX addresses scanned beyond the highest issued index.
@@ -40,11 +58,11 @@ pub fn anchor_height(synced: u64) -> u64 {
     synced - synced % ANCHOR_INTERVAL
 }
 
-pub(crate) fn digest_hex(d: &Digest) -> String {
+pub fn digest_hex(d: &Digest) -> String {
     hex::encode(digest_bytes(d))
 }
 
-pub(crate) fn digest_from_hex(s: &str) -> Result<Digest, WalletError> {
+pub fn digest_from_hex(s: &str) -> Result<Digest, WalletError> {
     let b = hex::decode(s).map_err(|_| WalletError::Serialization("digest hex".into()))?;
     if b.len() != 32 {
         return Err(WalletError::Serialization("digest length".into()));
@@ -91,6 +109,111 @@ impl StoredRecord {
     }
 }
 
+/// A program registered by a deploy: its id (hex) and row budget.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KnownProgram {
+    pub id: String,
+    /// `cycles, keys, add, bit, lt, shift, mul, poseidon`.
+    pub budget: [usize; 8],
+}
+
+impl KnownProgram {
+    pub fn budget(&self) -> Budget {
+        let [cycles, keys, add, bit, lt, shift, mul, poseidon] = self.budget;
+        Budget {
+            cycles,
+            keys,
+            add,
+            bit,
+            lt,
+            shift,
+            mul,
+            poseidon,
+        }
+    }
+}
+
+/// A deployed contract, from the chain's registration list.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KnownContract {
+    pub id: String,
+    pub height: u64,
+    pub programs: Vec<KnownProgram>,
+}
+
+/// How the wallet learned a contract record.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RecordSource {
+    /// Its ciphertext was addressed to this PX address index.
+    Received { index: u32 },
+    /// This wallet created it.
+    Created,
+    /// Shared with this wallet off chain.
+    Imported,
+}
+
+/// A contract record whose opening the wallet holds (docs/px.md §13).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContractRecord {
+    pub contract: String,
+    pub commitment: String,
+    pub value: u64,
+    pub data: String,
+    pub rho: String,
+    pub rcm: String,
+    /// The contract nullifier (`contract_nullifier`).
+    pub nullifier: String,
+    /// Height of the block that created it; `None` until seen on chain.
+    pub height: Option<u64>,
+    pub position: Option<u64>,
+    pub spent_height: Option<u64>,
+    /// Consumed by a submitted, unconfirmed transaction.
+    pub pending: bool,
+    pub pending_height: u64,
+    pub source: RecordSource,
+}
+
+impl ContractRecord {
+    pub fn new(record: &Record, cm: &Digest, source: RecordSource, height: Option<u64>) -> Self {
+        let nf = contract_nullifier(&mut HostPerm::new(), &record.contract, &record.rcm, cm);
+        ContractRecord {
+            contract: digest_hex(&record.contract),
+            commitment: digest_hex(cm),
+            value: record.value,
+            data: digest_hex(&record.data),
+            rho: digest_hex(&record.rho),
+            rcm: digest_hex(&record.rcm),
+            nullifier: digest_hex(&nf),
+            height,
+            position: None,
+            spent_height: None,
+            pending: false,
+            pending_height: 0,
+            source,
+        }
+    }
+
+    pub fn record(&self) -> Result<Record, WalletError> {
+        Ok(Record {
+            owner: ZERO_DIGEST,
+            contract: digest_from_hex(&self.contract)?,
+            asset: ZERO_DIGEST,
+            value: self.value,
+            data: digest_from_hex(&self.data)?,
+            rho: digest_from_hex(&self.rho)?,
+            rcm: digest_from_hex(&self.rcm)?,
+        })
+    }
+
+    /// Unspent, not pending, and in the tree at or below the `anchor` height.
+    pub fn spendable_at(&self, anchor: u64) -> bool {
+        self.spent_height.is_none()
+            && !self.pending
+            && self.position.is_some()
+            && self.height.is_some_and(|h| h <= anchor)
+    }
+}
+
 /// The persisted PX state.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PxStore {
@@ -99,17 +222,110 @@ pub struct PxStore {
     pub records: Vec<StoredRecord>,
     /// Highest PX address index handed out.
     pub issued: u32,
+    /// Every contract deployed on chain.
+    #[serde(default)]
+    pub contracts: Vec<KnownContract>,
+    /// Contract records whose openings the wallet holds.
+    #[serde(default)]
+    pub contract_records: Vec<ContractRecord>,
 }
 
 impl PxStore {
-    /// Records the PX outputs paid to `account` and the spends of its
-    /// records in a block at `height`.
+    /// Downloads new entries of the chain's registration list, up to the
+    /// wallet's scanned height. Like the commitment list, the whole list is
+    /// fetched in order, so the node learns nothing about the wallet.
+    pub fn sync_contracts(&mut self, node: &dyn NodeApi, synced: u64) -> Result<(), WalletError> {
+        loop {
+            let from = self.contracts.len() as u64;
+            let resp = node.px_contracts(from).map_err(WalletError::Node)?;
+            if resp.from != from {
+                return Err(WalletError::BadNodeData("contract range".into()));
+            }
+            let mut added = 0;
+            for c in resp.contracts {
+                if c.height > synced {
+                    return Ok(());
+                }
+                digest_from_hex(&c.id)?;
+                self.contracts.push(KnownContract {
+                    id: c.id,
+                    height: c.height,
+                    programs: c
+                        .programs
+                        .into_iter()
+                        .map(|p| KnownProgram {
+                            id: p.id,
+                            budget: p.budget,
+                        })
+                        .collect(),
+                });
+                added += 1;
+            }
+            if added == 0 || self.contracts.len() as u64 >= resp.total {
+                return Ok(());
+            }
+        }
+    }
+
+    /// The budget of `program` if it is registered to `contract`.
+    pub fn registered(&self, contract: &Digest, program: &[u8; 32]) -> Option<Budget> {
+        let id = digest_hex(contract);
+        let pid = hex::encode(program);
+        self.contracts
+            .iter()
+            .find(|c| c.id == id)?
+            .programs
+            .iter()
+            .find(|p| p.id == pid)
+            .map(KnownProgram::budget)
+    }
+
+    /// Adds a contract record unless it is already known; a known one that
+    /// was not yet confirmed takes `height`.
+    pub fn add_contract_record(
+        &mut self,
+        record: &Record,
+        cm: &Digest,
+        source: RecordSource,
+        height: Option<u64>,
+    ) {
+        let hex_cm = digest_hex(cm);
+        if let Some(r) = self
+            .contract_records
+            .iter_mut()
+            .find(|r| r.commitment == hex_cm)
+        {
+            if r.height.is_none() {
+                r.height = height;
+            }
+            return;
+        }
+        self.contract_records
+            .push(ContractRecord::new(record, cm, source, height));
+    }
+
+    /// The contract record with commitment `cm`.
+    pub fn contract_record(&self, cm: &Digest) -> Option<usize> {
+        let hex_cm = digest_hex(cm);
+        self.contract_records
+            .iter()
+            .position(|r| r.commitment == hex_cm)
+    }
+
+    /// Records the PX outputs paid to `account`, the contract records
+    /// addressed to it, and the spends of both, in a block at `height`.
     pub fn apply_block(&mut self, account: &Account, txs: &[Transaction], height: u64) {
         let mut perm = HostPerm::new();
         for tx in txs {
             let Transaction::Px(t) = tx else { continue };
             let nfs: Vec<String> = t.nullifiers.iter().map(digest_hex).collect();
             for r in &mut self.records {
+                if nfs.contains(&r.nullifier) {
+                    r.spent_height = Some(height);
+                    r.pending = false;
+                }
+            }
+            for r in &mut self.contract_records {
                 if nfs.contains(&r.nullifier) {
                     r.spent_height = Some(height);
                     r.pending = false;
@@ -123,6 +339,17 @@ impl PxStore {
                     let Some(rec) = delivery::open(&keys, &owner, ct, cm, &rho) else {
                         continue;
                     };
+                    if rec.contract != ZERO_DIGEST {
+                        // A contract record addressed to this wallet.
+                        self.add_contract_record(
+                            &rec,
+                            cm,
+                            RecordSource::Received { index },
+                            Some(height),
+                        );
+                        self.issued = self.issued.max(index);
+                        break;
+                    }
                     let hex_cm = digest_hex(cm);
                     if self.records.iter().any(|r| r.commitment == hex_cm) {
                         break;
@@ -149,7 +376,9 @@ impl PxStore {
         }
     }
 
-    /// Forgets everything learned above `height`.
+    /// Forgets everything learned above `height`. Contract records the
+    /// wallet created or imported are kept (it still holds their openings),
+    /// as unconfirmed.
     pub fn rewind(&mut self, height: u64) {
         self.records.retain(|r| r.height <= height);
         for r in &mut self.records {
@@ -157,7 +386,34 @@ impl PxStore {
                 r.spent_height = None;
             }
         }
+        self.contracts.retain(|c| c.height <= height);
+        self.contract_records.retain(|r| {
+            !(matches!(r.source, RecordSource::Received { .. })
+                && r.height.is_some_and(|h| h > height))
+        });
+        for r in &mut self.contract_records {
+            if r.height.is_some_and(|h| h > height) {
+                r.height = None;
+                r.position = None;
+            }
+            if r.spent_height.is_some_and(|h| h > height) {
+                r.spent_height = None;
+            }
+        }
         self.commitments.retain(|(h, _)| *h <= height);
+    }
+
+    /// Forgets unconfirmed spends, and contract records this wallet created
+    /// in transactions that never confirmed.
+    pub fn clear_pending(&mut self) {
+        for r in &mut self.records {
+            r.pending = false;
+        }
+        for r in &mut self.contract_records {
+            r.pending = false;
+        }
+        self.contract_records
+            .retain(|r| !(r.source == RecordSource::Created && r.height.is_none()));
     }
 
     /// Fetches new commitments in bulk and resolves record positions. When
@@ -200,6 +456,21 @@ impl PxStore {
                     .iter()
                     .position(|(_, c)| *c == r.commitment)
                     .map(|p| p as u64);
+            }
+        }
+        // Contract records: a created or imported one is confirmed here, by
+        // its commitment in the chain's list.
+        for r in &mut self.contract_records {
+            if r.position.is_none() {
+                if let Some((p, (h, _))) = self
+                    .commitments
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (_, c))| *c == r.commitment)
+                {
+                    r.position = Some(p as u64);
+                    r.height.get_or_insert(*h);
+                }
             }
         }
         Ok(())
@@ -361,5 +632,97 @@ mod tests {
         assert_eq!(s.records.len(), 1);
         assert_eq!(s.records[0].spent_height, None, "the spend at 21 is undone");
         assert_eq!(s.commitments, vec![(10, "a".to_string())]);
+    }
+
+    fn contract_rec(source: RecordSource, height: Option<u64>, n: u64) -> ContractRecord {
+        ContractRecord {
+            contract: format!("{:064x}", 7),
+            commitment: format!("{n:064x}"),
+            value: 100 + n,
+            data: String::new(),
+            rho: String::new(),
+            rcm: String::new(),
+            nullifier: format!("{:064x}", n + 5_000),
+            height,
+            position: height.map(|h| h * 2),
+            spent_height: None,
+            pending: false,
+            pending_height: 0,
+            source,
+        }
+    }
+
+    fn known(height: u64) -> KnownContract {
+        KnownContract {
+            id: format!("{height:064x}"),
+            height,
+            programs: vec![],
+        }
+    }
+
+    #[test]
+    fn a_rewind_keeps_the_contract_records_the_wallet_holds_openings_for() {
+        let mut s = PxStore {
+            contracts: vec![known(5), known(25)],
+            contract_records: vec![
+                contract_rec(RecordSource::Received { index: 0 }, Some(20), 1),
+                contract_rec(RecordSource::Created, Some(20), 2),
+                contract_rec(RecordSource::Imported, Some(10), 3),
+                contract_rec(RecordSource::Created, None, 4),
+            ],
+            ..Default::default()
+        };
+        s.contract_records[2].spent_height = Some(18);
+        s.rewind(15);
+        // A received record leaves with its block (rescanning finds it again).
+        let cms: Vec<&str> = s
+            .contract_records
+            .iter()
+            .map(|r| &r.commitment[60..])
+            .collect();
+        assert_eq!(cms, ["0002", "0003", "0004"]);
+        // A created one stays, unconfirmed, with no position.
+        assert_eq!(
+            (s.contract_records[0].height, s.contract_records[0].position),
+            (None, None)
+        );
+        // An older one keeps its confirmation; a spend above the fork is undone.
+        assert_eq!(s.contract_records[1].height, Some(10));
+        assert_eq!(s.contract_records[1].spent_height, None);
+        // Deploys above the fork are forgotten.
+        assert_eq!(s.contracts, vec![known(5)]);
+    }
+
+    #[test]
+    fn clearing_pending_drops_only_unconfirmed_records_this_wallet_created() {
+        let mut s = PxStore {
+            contract_records: vec![
+                contract_rec(RecordSource::Created, None, 1),
+                contract_rec(RecordSource::Imported, None, 2),
+                contract_rec(RecordSource::Created, Some(3), 3),
+            ],
+            ..Default::default()
+        };
+        s.contract_records[2].pending = true;
+        s.clear_pending();
+        let cms: Vec<&str> = s
+            .contract_records
+            .iter()
+            .map(|r| &r.commitment[60..])
+            .collect();
+        assert_eq!(cms, ["0002", "0003"]);
+        assert!(!s.contract_records[1].pending);
+    }
+
+    #[test]
+    fn contract_records_are_never_counted_or_selected_as_funds() {
+        let s = PxStore {
+            contract_records: vec![contract_rec(RecordSource::Created, Some(1), 1)],
+            ..Default::default()
+        };
+        assert_eq!(s.balance(32), (0, 0));
+        assert!(s.select(1, 32).is_err());
+        assert!(s.contract_records[0].spendable_at(16));
+        assert!(!s.contract_records[0].spendable_at(0), "above the anchor");
     }
 }

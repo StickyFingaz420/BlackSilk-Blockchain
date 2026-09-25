@@ -1,0 +1,102 @@
+# Coverage-guided fuzzing (cargo-fuzz / libFuzzer), AUDIT.md "Fuzzing".
+# Needs a nightly toolchain: `cargo +nightly fuzz run <target>`.
+# libFuzzer is C++ test tooling linked only into these fuzz binaries; nothing
+# here is part of the node, wallet or miner (docs/reviews/dependency-review.md).
+[package]
+name = "blacksilk-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+blacksilk-consensus = { path = "../consensus" }
+blacksilk-crypto = { path = "../crypto" }
+blacksilk-tx = { path = "../tx" }
+blacksilk-chain = { path = "../chain" }
+blacksilk-p2p = { path = "../p2p" }
+blacksilk-zk = { path = "../zk" }
+blacksilk-zkvm = { path = "../zkvm" }
+blacksilk-px = { path = "../px" }
+blacksilk-px-core = { path = "../px-core" }
+blacksilk-contracts = { path = "../contracts" }
+rand_chacha = { version = "0.3", default-features = false }
+wat = "1"
+
+# Its own workspace, so it never affects the main build.
+[workspace]
+members = ["."]
+
+# The same patched Plonky3 crates as the main workspace (third_party/README.md).
+[patch.crates-io]
+p3-fri = { path = "../third_party/p3-fri" }
+p3-merkle-tree = { path = "../third_party/p3-merkle-tree" }
+p3-dft = { path = "../third_party/p3-dft" }
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "seeds"
+path = "src/seeds.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "tx_decode"
+path = "fuzz_targets/tx_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "block_decode"
+path = "fuzz_targets/block_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "p2p_message"
+path = "fuzz_targets/p2p_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proof_decode"
+path = "fuzz_targets/proof_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "zkvm_elf"
+path = "fuzz_targets/zkvm_elf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kernel_diff"
+path = "fuzz_targets/kernel_diff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "delivery_open"
+path = "fuzz_targets/delivery_open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wasm_module"
+path = "fuzz_targets/wasm_module.rs"
+test = false
+doc = false
+bench = false
