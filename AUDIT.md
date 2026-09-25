@@ -1270,6 +1270,9 @@ not implemented). Privacy review §3c (P-9).
 - the new `an_uncertain_vault_lock_keeps_the_record_opening`: passed (120 s);
 - `-p blacksilk-chain`: 23 passed (202 s), including the new `deepest_reorg`
   assertion.
+- **Full workspace suite** (`cargo test --release --workspace --no-fail-fast`, commit
+  `f18cab6`): **399 passed, 0 failed, 2 ignored** (the opt-in RandomX full mode and
+  stress tests), in 2,482 s; 3 more tests than before (the new wallet tests).
 
 **Privacy review §3b** (P-6, P-8, query positions, proof size), the assumptions
 register (docs/reviews/assumptions.md), the review package with the expertise per area,
