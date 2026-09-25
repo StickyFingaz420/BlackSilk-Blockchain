@@ -28,7 +28,7 @@ docs/testnet-reset-plan.md §0.
 | P2P, Dandelion++ | ✅ | ✅ | ✅ | — | — | — | Labnet on one machine only; P-6 (privacy-review §3b) |
 | Node and RPC | ✅ | ✅ | ◐ | — | — | — | Reviewed as part of R4 |
 | Miner | ✅ | ✅ | ✅ | — | — | — | AUDIT.md R4 |
-| Wallet, v1 | ✅ | ✅ | ✅ | — | — | — | Error handling reviewed (wallet-review.md); W-5 open |
+| Wallet, v1 | ✅ | ✅ | ✅ | — | — | — | Error handling reviewed (wallet-review.md); W-5 fixed with residuals |
 | ZK proof system configuration (BS-ZK-2, Plonky3 0.7.0 with 3 patches) | ✅ | ✅ | ✅ | — | — | — | Critical review area 2 |
 | BVM-1 zkVM circuits | ✅ | ✅ | ✅ | — | — | — | Critical review area 3 |
 | PX kernel, records, `Hk` | ✅ | ✅ | ✅ | — | — | — | Critical review areas 1 and 4 |
@@ -58,9 +58,9 @@ Each item carries one of the report classifications.
 | 8 | Recovery, restart, reorg and reset tests on real machines | **Partially implemented:** restart rebuild (one node) and the reset rehearsal (one machine) |
 | 9 | Partition tests between real machines | **Partially implemented:** simulated only (labnet proxy) |
 | 10 | Supply and private-state consistency under long runs | **Partially implemented:** checked by labnet (62 min, 5 processes); a 72-hour run is required by docs/testnet.md §7 step 7 |
-| 11 | Wallet error handling (clear messages for node errors, rejected transactions, insufficient private funds, stale anchors) | **Complete but awaiting independent review** (docs/reviews/wallet-review.md): four findings fixed, including two high privacy issues (W-1, W-2: re-spending an input with a new ring). Open: W-5 (ring reuse), friendlier messages |
+| 11 | Wallet error handling (clear messages for node errors, rejected transactions, insufficient private funds, stale anchors) | **Complete but awaiting independent review** (docs/reviews/wallet-review.md): W-1 to W-5 fixed, including two high privacy issues (W-1, W-2); W-5 by ring reuse, with residuals. Open: friendlier messages |
 | 12 | Documentation of every genesis-affecting change | **Complete but awaiting independent review:** docs/testnet-reset-plan.md §2 |
-| 13 | Launch checklist and rollback plan | **Partially implemented:** reset plan §4–§6. A single checklist for the day, with named owners per step, is still to be written |
+| 13 | Launch checklist and rollback plan | **Partially implemented:** docs/testnet-launch-checklist.md (14 gates) and docs/testnet-incident-response.md (roles, severities, signals, procedures, evidence, release rollback). Not rehearsed; roles not named |
 | 14 | Cross-platform determinism (Linux, ARM64) | **Partially implemented:** the full suite passes on Linux x86_64 in CI. There is no cross-platform comparison of identical hashes or roots, and no ARM64 |
 | 15 | Dandelion++ parameters for BlackSilk's network size (assumptions.md N4) | **Deferred:** needs testnet measurements |
 | 16 | Plonky3 anonymous report | **Complete but awaiting approval:** not submitted |

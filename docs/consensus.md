@@ -187,7 +187,9 @@ the CVE-2012-2459 class of duplicate-transaction malleability.
 - If a block is later found invalid by body or transaction validation, the node marks it
   invalid. That block and all its descendants are excluded, and the best chain is
   re-selected among the remaining valid tips (possibly a reorg).
-- **Reorganization depth (node policy, 2026-09-25): no limit and no checkpoints.** The
+- **Reorganization depth: PROVISIONAL testnet policy** (accepted by the owner for the
+  experimental testnet on 2026-09-25; not a mainnet decision; analysis in
+  docs/reviews/k4-reorg-policy.md). **No limit and no checkpoints.** The
   chain with the most work wins at any depth, so honest nodes always converge. The
   cost is that an attacker with more hash power can rewrite any amount of history
   (assumptions.md K1, K4). Reorganizations of `DEEP_REORG_WARN_DEPTH` = 10 blocks or

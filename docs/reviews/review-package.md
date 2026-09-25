@@ -22,6 +22,7 @@ The scope, priorities and the claims to confirm or refute are in
 | 6 | Record delivery and contract-record distribution | High |
 | 7 | Privacy and metadata, including P-5 (proof length) | High |
 | 8 | Wallet PX and contract code | Medium |
+| 9 | K4 reorganization-depth policy (provisional, testnet) | High |
 
 ### 1.1 The five critical areas and the expertise each needs
 
@@ -118,6 +119,7 @@ cargo audit
 | ZK security review, attack table | docs/reviews/zk-security-review.md |
 | Privacy review, every channel; P-5 in detail (§3a); P-6, P-8, query positions, proof size (§3b) | docs/reviews/privacy-review.md |
 | Every assumption, with its status | docs/reviews/assumptions.md |
+| K4 policy and its analysis | docs/reviews/k4-reorg-policy.md |
 | Wallet error handling; P-9 (re-spending with a new ring) | docs/reviews/wallet-review.md; privacy-review.md §3c |
 | Reviewer candidates and selection criteria | docs/reviews/reviewer-candidates.md |
 | Dependencies, patches, supply chain | docs/reviews/dependency-review.md, third_party/README.md |

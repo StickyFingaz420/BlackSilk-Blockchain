@@ -1303,6 +1303,48 @@ reviewer candidates, and a launch checklist (docs/testnet-launch-checklist.md).
 - Limits and checkpoints were rejected for now (a permanent-split risk, and central
   trust); they remain open for mainnet.
 
+### R10: Hardening round 2 (2026-09-25). Internal; not independently reviewed.
+
+- **W-5, ring reuse** (docs/reviews/wallet-review.md §1a):
+  - the wallet stores the decoys of every submitted ring under the key image, and a
+    later spend of the same output reuses them;
+  - each member is re-verified by index and keys, and for age and coinbase maturity;
+    only lost members are redrawn (`tx::decoy::select_ring_keeping`);
+  - a definite refusal does not pin the ring.
+
+  Residuals: two spends of one output stay linkable through the key image; a restore
+  from the seed loses the stored rings. Tests: `an_output_spent_again_reuses_its_ring`
+  (after `clear-pending`, after an `Invalid` verdict, and after a restart),
+  `a_refused_transaction_does_not_pin_its_rings`, and the decoy unit test.
+- **K4** is documented as a **provisional testnet policy**, accepted by the owner:
+  - analysis in docs/reviews/k4-reorg-policy.md;
+  - review area 9 added;
+  - `/info` now reports `deepest_reorg` and `misbehaving_disconnects`.
+- **Rollback and incident response:** docs/testnet-incident-response.md and
+  SECURITY.md. Not rehearsed; roles not named. Also corrected docs/testnet.md, which
+  still told users to run `clear-pending` for a transfer that never confirms.
+- **Adversarial multi-node test** `a_double_spend_across_a_partition_resolves_to_one_spend`
+  (p2p). Two nodes confirm conflicting spends of one output while partitioned. After
+  healing, all three nodes hold only the heavier branch's spend, the loser is gone
+  from every pool, and no honest peer is penalized.
+- **Plonky3 dependency check** (dependency-review.md §5a):
+  - Of the five published advisories, none applies to the 0.7.0 configuration. Three
+    were fixed long before v0.7.0 (checked with GitHub's compare API).
+    `MultiField32Challenger` is not used. `PaddingFreeSponge` is used, but only with
+    inputs whose length the verifier fixes (`check_widths`).
+  - **The only published Plonky3 audit (Least Authority, 2024) covered the non-hiding
+    protocol:** the hiding mode used here has no published audit.
+- **Plonky3 report, Version B:**
+  - Every claim is classified as observed, inferred or unverified.
+  - The attached patch was re-tested on a clean v0.7.0 checkout: it applies cleanly;
+    `p3-fri` 65 and `p3-merkle-tree` 99 tests pass, with and without parallelism.
+  - An overstated comment ("proofs are unchanged for a given seed") was corrected in
+    the patch and in our vendored copy. What is shown is that the drawn values are
+    unchanged.
+  - Not submitted.
+- **Reviewer shortlist:** docs/reviews/reviewer-candidates.md. Nobody has been
+  contacted.
+
 ### Finding status after R1–R6
 
 | Findings | Status | Evidence |

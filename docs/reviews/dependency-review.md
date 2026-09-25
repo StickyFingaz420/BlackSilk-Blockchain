@@ -128,6 +128,23 @@ LLVM's libFuzzer, which is C++, through `libfuzzer-sys`. It is only in the fuzz
 binaries, which are built separately (their own workspace, a nightly toolchain) and
 are never part of the node, wallet or miner.
 
+## 5a. Plonky3 security advisories (checked 2026-09-25)
+
+**Source:** the GitHub advisory database for Plonky3/Plonky3, read through the API. Each
+fix was checked against the v0.7.0 tag with GitHub's compare API ("ahead" means the tag
+contains the fix).
+
+| Advisory | Severity | Issue | Applies to our 0.7.0 configuration? |
+|---|---|---|---|
+| GHSA-vrmm-4mm5-38vm (2025-01) | High | Opened values missing from the transcript | **No.** The fix `b5ec4d9` is in v0.7.0 (933 commits earlier) |
+| GHSA-m23j-cj9m-ppg9 (2025-03) | High | Missing size checks in the FRI verifier | **No.** The fix `367f761` is in v0.7.0 (855 commits earlier) |
+| GHSA-f69f-5fx9-w9r9 (2025-06) | High | Missing final-polynomial degree check; unrandomized roll-in | **No.** The fix `e784f44` is in v0.7.0 (764 commits earlier) |
+| GHSA-3g92-f9ch-qjcm (2026-04) | Low | `PaddingFreeSponge` is not collision-resistant across different input lengths | **We use it** (`zk/src/config.rs`: the Merkle leaf hash). The advisory states it is collision-resistant when the number of hashed elements is fixed in advance, and the 0.7.0 verifiers enforce exactly that: `MerkleTreeHidingMmcs::verify_batch` and the inner `verify_batch` call `check_widths` against the verifier-known dimensions (salted widths included), so every leaf input has a fixed length. Our shapes are public and fixed (P-1). `Hk` is our own sponge, with the length in the capacity. **Assessed not exploitable here; an item for the reviewer (area 2)** |
+| GHSA-vj64-rjf3-w3v7 / CVE-2026-46654 (2026-05) | High | `MultiField32Challenger` transcript malleability | **No.** We use `DuplexChallenger` over BabyBear, not `MultiField32Challenger`, and the listed affected versions are < 0.4.3 and < 0.5.3 |
+
+**Limitation:** this covers published advisories only. It says nothing about unreported
+bugs, and the hiding mode has no published audit (external-review-scope.md §3).
+
 ## 6. Open items
 
 1. **RustSec in CI:** the GitHub Actions workflow (`.github/workflows/ci.yml`) now has

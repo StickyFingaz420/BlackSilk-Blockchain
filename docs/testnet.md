@@ -236,7 +236,8 @@ process's log.
 | `… is in use by another node` | Another node uses the same data directory |
 | Wallet `WrongNetwork` | Wallet and node on different networks |
 | Wallet `insufficient unlocked funds` | Coinbase needs 60 blocks, other outputs 10 |
-| A transfer never confirms | `blacksilk-wallet … clear-pending`, then sync again |
+| A transfer never confirms | Run `sync` again later: the wallet rebroadcasts the same transaction every 20 blocks and releases its funds itself if the node finds it invalid. Use `clear-pending` only if the transaction certainly never left the wallet (docs/px.md §12) |
+| `WARN … reorganization: disconnecting N block(s)` | A reorganization of 10 or more blocks: follow docs/testnet-incident-response.md |
 
 ## 10. Private execution (PX)
 

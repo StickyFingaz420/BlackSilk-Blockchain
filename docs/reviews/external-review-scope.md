@@ -25,7 +25,8 @@ outside scrutiny from what rests on internal work only.
 | 5 | PX consensus rules (PX1–PX5, fee, registry, pool, block budget, mempool cache) | **Internal only** | Critical |
 | 6 | Record delivery (hybrid ECDH and ML-KEM combiner) and contract-record distribution | ML-KEM, ChaCha20-Poly1305, Ristretto: public scrutiny. The combiner as built: **internal only** | High |
 | 7 | Metadata and privacy leakage (all channels, including P-5 proof length) | **Internal only** | High |
-| 8 | Wallet PX and contract code (keys, anchors, selection, delivery, recovery) | **Internal only** | Medium |
+| 8 | Wallet PX and contract code (keys, anchors, selection, delivery, recovery), submission handling and ring reuse (W-1 to W-5) | **Internal only** | Medium |
+| 9 | K4: the provisional reorganization-depth policy (no limit, no checkpoints, warn at 10) and PX state under deep reorganizations | **Internal only** | High |
 
 ## 2. Areas in detail
 
@@ -135,7 +136,16 @@ outside scrutiny from what rests on internal work only.
   - blinds from a CSPRNG (R-6);
   - no secret in logs or errors;
   - reorganization handling;
-  - encrypted persistence.
+  - encrypted persistence;
+  - submission handling: inputs are never spent again with new rings while an
+    earlier spend may be public; stored rings are reused (docs/reviews/wallet-review.md
+    W-1 to W-5).
+
+### 2.9 Reorganization-depth policy K4 (high)
+- **Files:** `chain/src/manager.rs` (`sync_state`), `tx/src/state.rs` (`undo_block`),
+  docs/consensus.md §8, docs/reviews/k4-reorg-policy.md.
+- **Questions:** k4-reorg-policy.md §6. Is the provisional testnet policy acceptable,
+  is PX state undone correctly at any depth, and what should mainnet adopt?
 
 ## 3. What has had outside scrutiny (not as used here)
 
@@ -145,7 +155,8 @@ outside scrutiny from what rests on internal work only.
 | ML-KEM-768 | FIPS 203 standard. The RustCrypto `ml-kem` 0.3.2 implementation is unaudited as far as we know |
 | ChaCha20-Poly1305, BLAKE2 | Standards; RustCrypto implementations widely used |
 | curve25519-dalek | Widely deployed; its audit history is not claimed here |
-| Plonky3 | Public code; no audit verified |
+| Plonky3 | One published audit: Least Authority for Polygon, completed 2024-07-18, updated 2024-11-07. Its scope is described as "a non-hiding STARK protocol" (https://leastauthority.com/blog/audit-of-plonky3/, read 2026-09-25). So **the hiding (zero-knowledge) mode this project relies on, including `HidingFriPcs` and `MerkleTreeHidingMmcs`, has no published audit.** The pinned 0.7.0 is also about two years newer than the audited code. Security advisories: docs/reviews/dependency-review.md §5a |
+| Poseidon2 over 31-bit fields | Public cryptanalysis exists (for example ePrint 2023/537, 2026/306); no published result specific to BabyBear width 16 was found (2026-09-25). The Ethereum Foundation's Poseidon Cryptanalysis Initiative targets 31-bit, width-16 instances (KoalaBear) |
 | RandomX | Published algorithm; our Rust implementation is internal (AUDIT.md R1) |
 
 ## 4. Deliverables requested from the reviewer
