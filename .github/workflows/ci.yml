@@ -5,17 +5,29 @@ on:
     branches: [main, rebuild/core]
   pull_request:
 
+# The jobs only read the repository; the token gets no write access.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
+# Third-party actions are pinned to full commit SHAs (verified 2026-09-25):
+# - actions/checkout 11d5960a326750d5838078e36cf38b85af677262 = tag v4 = v4.4.0
+# - dtolnay/rust-toolchain 02cb101ec7c40f2c49e1d9714d64511d8e1b74de = branch master
+# Toolchains and tools are pinned to the versions used for the local evidence
+# (docs/reviews/review-package.md §3).
 jobs:
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
           components: clippy, rustfmt
       - name: Format
         run: |
@@ -35,8 +47,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
       - name: Test (release)
         run: cargo test --release --workspace --no-fail-fast
 
@@ -45,10 +61,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Audit
         # RUSTSEC-2024-0436 (paste, unmaintained, compile-time only via Plonky3)
         # is reviewed in dependency-review.md §5.
@@ -59,12 +79,18 @@ jobs:
   fuzz-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      TOOLCHAIN: nightly-2026-09-24
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: nightly-2026-09-24
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: Seeds
-        run: cd fuzz && cargo run --release --bin seeds
+        run: cd fuzz && cargo +"$TOOLCHAIN" run --release --bin seeds
       - name: Fuzz every target for 2 minutes
-        run: TOOLCHAIN=nightly ./fuzz/run_campaign.sh 120
+        run: ./fuzz/run_campaign.sh 120
