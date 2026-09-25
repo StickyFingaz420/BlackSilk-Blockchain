@@ -564,6 +564,13 @@ Measured privacy analysis: `docs/reviews/privacy-review.md`.
   outputs** (for the vault: LOCK or CLAIM). The time between a LOCK and its CLAIM is
   visible to anyone watching that contract.
 - **The fee is the same for every PX transaction** (consensus), so it reveals nothing.
+- **Never spend the same funds twice after a transaction may have been relayed**
+  (privacy-review.md §3c, P-9). The wallet keeps every submitted transaction and
+  rebroadcasts it unchanged. If a submission ends with "the node may or may not have
+  received the transaction", just `sync` later. `clear-pending` is only for a
+  transaction that certainly never left the wallet. A second spend of a v1 input
+  with a new ring shares the key image with the first, and the two rings together
+  can reveal the real input.
 
 ## 13. Contract tooling and the distribution of contract records
 

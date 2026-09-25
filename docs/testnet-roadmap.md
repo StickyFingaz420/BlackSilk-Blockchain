@@ -22,13 +22,13 @@ docs/testnet-reset-plan.md §0.
 | Component | L1 | L2 | L3 | L4 | L5 | L6 | Notes |
 |---|---|---|---|---|---|---|---|
 | RandomX PoW (pure-Rust port) | ✅ | ✅ | ✅ | — | — | — | Reference vectors; full mode opt-in test (AUDIT.md R1) |
-| Consensus: difficulty, timestamps, chain selection | ✅ | ✅ | ✅ | — | — | — | No reorg-depth policy (assumptions.md K4) |
+| Consensus: difficulty, timestamps, chain selection | ✅ | ✅ | ✅ | — | — | — | No reorg-depth limit, by documented policy; deep reorgs warned (assumptions.md K4) |
 | v1 transactions (CLSAG, BP+, stealth outputs) | ✅ | ✅ | ✅ | — | — | — | AUDIT.md R3 |
 | Chain manager, storage, mempool | ✅ | ✅ | ✅ | — | — | — | Restart rebuild tested; not tested against disk corruption |
 | P2P, Dandelion++ | ✅ | ✅ | ✅ | — | — | — | Labnet on one machine only; P-6 (privacy-review §3b) |
 | Node and RPC | ✅ | ✅ | ◐ | — | — | — | Reviewed as part of R4 |
 | Miner | ✅ | ✅ | ✅ | — | — | — | AUDIT.md R4 |
-| Wallet, v1 | ✅ | ✅ | ✅ | — | — | — | Error handling spot-checked, not systematically reviewed |
+| Wallet, v1 | ✅ | ✅ | ✅ | — | — | — | Error handling reviewed (wallet-review.md); W-5 open |
 | ZK proof system configuration (BS-ZK-2, Plonky3 0.7.0 with 3 patches) | ✅ | ✅ | ✅ | — | — | — | Critical review area 2 |
 | BVM-1 zkVM circuits | ✅ | ✅ | ✅ | — | — | — | Critical review area 3 |
 | PX kernel, records, `Hk` | ✅ | ✅ | ✅ | — | — | — | Critical review areas 1 and 4 |
@@ -52,13 +52,13 @@ Each item carries one of the report classifications.
 | 2 | Resolve the review's findings, then re-run the suite, the fuzzing and the rehearsal | **Blocked** on 1 |
 | 3 | CI running on GitHub, all jobs green | **Partially implemented:** hardened and pushed 2026-09-25; it had never run before. Results of the first run go into AUDIT.md |
 | 4 | Extended contract-engine fuzzing | **Partially implemented:** runs in progress (AUDIT.md when finished) |
-| 5 | Reorg-depth policy (assumptions.md K4) | **Not implemented:** needs an owner decision (none, a warning, or a limit with operator override) |
+| 5 | Reorg-depth policy (assumptions.md K4) | **Complete but awaiting independent review:** no limit, a warning at 10 blocks, deepest reorg tracked (docs/consensus.md §8). Owner may revise; mainnet revisits limits or checkpoints |
 | 6 | Multi-node adversarial tests: a malicious peer sending valid-looking but conflicting PX transactions across a partition; a deep reorg across PX deposits and withdrawals | **Partially implemented:** the single-node and two-node cases are tested; labnet reorgs up to depth 17 with PX traffic |
 | 7 | Real multi-machine tests (docs/testnet.md §7) | **Not implemented:** after the review, with approval |
 | 8 | Recovery, restart, reorg and reset tests on real machines | **Partially implemented:** restart rebuild (one node) and the reset rehearsal (one machine) |
 | 9 | Partition tests between real machines | **Partially implemented:** simulated only (labnet proxy) |
 | 10 | Supply and private-state consistency under long runs | **Partially implemented:** checked by labnet (62 min, 5 processes); a 72-hour run is required by docs/testnet.md §7 step 7 |
-| 11 | Wallet error handling (clear messages for node errors, rejected transactions, insufficient private funds, stale anchors) | **Partially implemented:** error types exist; not systematically reviewed for users |
+| 11 | Wallet error handling (clear messages for node errors, rejected transactions, insufficient private funds, stale anchors) | **Complete but awaiting independent review** (docs/reviews/wallet-review.md): four findings fixed, including two high privacy issues (W-1, W-2: re-spending an input with a new ring). Open: W-5 (ring reuse), friendlier messages |
 | 12 | Documentation of every genesis-affecting change | **Complete but awaiting independent review:** docs/testnet-reset-plan.md §2 |
 | 13 | Launch checklist and rollback plan | **Partially implemented:** reset plan §4–§6. A single checklist for the day, with named owners per step, is still to be written |
 | 14 | Cross-platform determinism (Linux, ARM64) | **Not implemented:** Linux comes with the first CI run |

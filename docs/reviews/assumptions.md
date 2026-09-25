@@ -80,7 +80,7 @@ Source: docs/consensus.md, docs/blocks.md.
 | K1 | An honest majority of RandomX hash power | Chain immutability, double-spend resistance | Standard PoW assumption. A small testnet is easy to out-mine |
 | K2 | RandomX is CPU-oriented and memory-hard as designed; the pure-Rust port matches the reference exactly | PoW validity agreement between nodes | Tested (the reference hash vectors `hash_1a`–`hash_1e`; full mode opt-in); the port is **External** if in scope (v1) |
 | K3 | Node clocks are roughly correct (within the 360 s future limit) | Timestamp rules, difficulty | Standard; not enforced beyond the rules |
-| K4 | **No reorg-depth limit or checkpoint exists.** consensus.md §8 calls them node policy, but the node implements none. Any valid heavier chain is accepted, however deep | — | **Open.** A decision is needed before the testnet (roadmap) |
+| K4 | **No reorg-depth limit or checkpoint** (policy adopted for the testnet 2026-09-25, open to the owner's revision; docs/consensus.md §8): the most-work chain wins at any depth. Reorganizations of 10 blocks or more are logged as warnings and the deepest is tracked | Convergence of honest nodes | **Documented and accepted for the testnet.** Deep rewrites are possible for a hash-power majority (K1). A limit or checkpoints remain open for mainnet |
 | K5 | Consensus arithmetic is deterministic across platforms (integers; RandomX floating point emulated exactly) | Nodes agree | Tested on Windows x86_64 only. The CI workflow runs the suite on Linux x86_64, but it has not run yet |
 
 ## 6. Implementation and operations
@@ -97,8 +97,8 @@ Source: docs/consensus.md, docs/blocks.md.
 
 1. **Z1, Z2, Z3, Z5–Z7, Z9, Z10 and P1:** the independent review (review-package.md
    §5).
-2. **K4:** decide on a reorg-depth policy for the testnet (for example, a warning plus
-   operator confirmation above a depth), or document that none is intended.
+2. **K4:** documented and accepted for the testnet (no limit; a warning at 10 blocks).
+   Revisit for mainnet with testnet data.
 3. **N4:** re-tune the Dandelion++ parameters after measuring the testnet's size.
 4. **K5 and I3:** a second platform. The first CI run covers Linux x86_64. There is no cross-platform comparison of the same hashes and roots yet (ARM64 if
    available).

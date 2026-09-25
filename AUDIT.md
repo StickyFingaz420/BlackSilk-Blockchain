@@ -1220,6 +1220,70 @@ seeded from real encodings (`fuzz/src/seeds.rs`).
   §6.
 - Multi-machine testnet trial of the PX flows (labnet), as the final stage.
 
+### R9: Pre-testnet hardening round (2026-09-25). Internal; not independently reviewed.
+
+**CI**
+- **GitHub Actions has never run for this repository.** The workflow is registered and
+  active, but GitHub reports 0 runs on any branch, and the repository's Actions page
+  returns 404. Actions appears to be disabled in the repository settings; enabling it
+  is the owner's action (a repository security setting).
+- **Workflow hardened** (commit `3b6a0b2`):
+  - actions pinned to full commit SHAs, verified against the upstream tags and
+    branches;
+  - `persist-credentials: false`;
+  - a read-only token;
+  - toolchains pinned to the evidence's versions (1.98.1, nightly-2026-09-24);
+  - `cargo-audit` and `cargo-fuzz` versions pinned.
+- **Two latent bugs fixed** that would have failed the first run:
+  - `fuzz/run_campaign.sh` was not executable in git;
+  - the fuzz job called `cargo +nightly` with a dated toolchain.
+- **Checked locally only** (Windows):
+  - `cargo fmt --check`, workspace and fuzz: clean;
+  - `cargo clippy --workspace --all-targets -- -D warnings`: 0 warnings;
+  - the no-`unsafe` check: every listed crate forbids `unsafe`;
+  - `cargo audit --ignore RUSTSEC-2024-0436`: exit 0 (323 dependencies).
+
+  **Not yet passed in GitHub Actions.**
+
+**Wallet error-handling review** (docs/reviews/wallet-review.md). Findings:
+- **W-1 (high, privacy):** after a transport failure the inputs were not reserved, so
+  a retry re-spent a v1 output with a new ring, and the two rings could be intersected
+  to find the real input.
+- **W-2 (high, privacy):** reserved inputs were released after 20 blocks while the
+  transaction was still pooled.
+- **W-3 (medium):** a reorganization released the inputs of a confirmed spend.
+- **W-4 (medium, funds):** an uncertain vault lock lost the record's opening.
+
+**The fix, in the wallet only, with no consensus change:**
+- submitted transactions are stored and their inputs reserved before sending;
+- stored transactions are rebroadcast unchanged, never rebuilt;
+- inputs are released only on an `Invalid` verdict or an explicit `clear-pending`;
+- a transport failure returns the new `WalletError::Uncertain`;
+- the RPC gains `SubmitResult::already_pooled`.
+
+**Open:** W-5, spending again with a new ring after an `Invalid` verdict (ring reuse
+not implemented). Privacy review §3c (P-9).
+
+**Tests** (Windows, release, run locally):
+- `-p blacksilk-wallet -p blacksilk-rpc`: 10 unit and 10 e2e tests passed (740 s),
+  including the new and changed tests;
+- the new `an_uncertain_vault_lock_keeps_the_record_opening`: passed (120 s);
+- `-p blacksilk-chain`: 23 passed (202 s), including the new `deepest_reorg`
+  assertion.
+
+**Privacy review §3b** (P-6, P-8, query positions, proof size), the assumptions
+register (docs/reviews/assumptions.md), the review package with the expertise per area,
+reviewer candidates, and a launch checklist (docs/testnet-launch-checklist.md).
+
+**K4, reorganization depth:**
+- Policy for the testnet: no limit and no checkpoints. The most-work chain wins at any
+  depth (docs/consensus.md §8).
+- Reorganizations of 10 blocks or more are logged as warnings;
+  `ChainManager::deepest_reorg` tracks the deepest.
+- This adds monitoring only; chain selection is unchanged.
+- Limits and checkpoints were rejected for now (a permanent-split risk, and central
+  trust); they remain open for mainnet.
+
 ### Finding status after R1–R6
 
 | Findings | Status | Evidence |

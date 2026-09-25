@@ -118,6 +118,8 @@ cargo audit
 | ZK security review, attack table | docs/reviews/zk-security-review.md |
 | Privacy review, every channel; P-5 in detail (§3a); P-6, P-8, query positions, proof size (§3b) | docs/reviews/privacy-review.md |
 | Every assumption, with its status | docs/reviews/assumptions.md |
+| Wallet error handling; P-9 (re-spending with a new ring) | docs/reviews/wallet-review.md; privacy-review.md §3c |
+| Reviewer candidates and selection criteria | docs/reviews/reviewer-candidates.md |
 | Dependencies, patches, supply chain | docs/reviews/dependency-review.md, third_party/README.md |
 | Query policy and the security calculator | docs/reviews/query-policy.md; `zk/src/params.rs` |
 | Proof size and aggregation | docs/reviews/aggregation-study.md |
@@ -158,7 +160,7 @@ review is asked to confirm or refute. The unresolved ones:
   the project has examined them.
 - **P1:** P-5, supported by our measurement and reasoning only.
 - **P4 and N4:** they depend on user behaviour and on untuned Dandelion++ parameters.
-- **K4:** there is no reorg-depth policy.
+- **K4:** no reorg-depth limit (a documented policy): a hash-power majority can rewrite history.
 
 ## 6. Known limitations (not findings)
 
@@ -166,7 +168,7 @@ review is asked to confirm or refute. The unresolved ones:
 - The reference vault is a demonstration contract: no timeout, no refund, not
   trustless (docs/px.md §13.4).
 - CI exists but has not run yet (it runs on GitHub after a push).
-- There is no reorg-depth limit or checkpoint (assumptions.md K4).
+- There is no reorg-depth limit or checkpoint, by policy (docs/consensus.md §8; assumptions.md K4).
 - The P-6 and P-8 residual risks are analysed in privacy-review.md §3b and not
   mitigated further.
 - The wallet keeps every commitment. Contract records addressed to a wallet before its

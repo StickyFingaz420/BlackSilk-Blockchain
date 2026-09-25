@@ -153,6 +153,7 @@ It must **not** learn:
 | P-6 | Dandelion++ stem probing | Open, low; analysed in §3b. Conflict probing needs a valid transaction spending the same record, so only the owner can do it. Replay probing by a stem node needs colluding downstream observers and yields partial route information. Not mitigated further |
 | P-7 | Uniform fees are a wallet convention, not a consensus rule | **Resolved** (2026-09-25): the fee of every PX transaction is exactly `PX_STANDARD_FEE` in consensus. Side effect: fee-per-byte ordering ranks larger PX transactions (contract calls) lower under congestion (docs/px.md §11.5) |
 | P-8 | Contract calls reveal which contract and function ran, and so the timing between related calls (such as a LOCK and its CLAIM) | Inherent: the verifier needs the program. Documented to users (docs/px.md §12); analysed in §3b. Automatic delays and recursion are not implemented |
+| P-9 | The wallet could spend a v1 input again with a new ring after a transaction that had been relayed: after a transport failure, 20 blocks after submitting, or after a reorganization | **Fixed** (2026-09-25, §3c): transactions are stored and rebroadcast unchanged; inputs are released only on an `Invalid` verdict. Residual: a new ring after that verdict (W-5) |
 
 ## 3a. P-5 in detail: why proof-length variation carries no witness information
 
@@ -407,6 +408,40 @@ Status of every item here: **internal analysis; awaiting independent review.**
   - So the size adds no information beyond the public function list.
 - **Deploys:** their size is public and reveals the programs' sizes. The programs are
   on chain anyway.
+
+## 3c. P-9: re-spending an input after a relayed transaction (2026-09-25)
+
+Status: **fixed in the reference wallet, except for a documented residual; internal
+analysis, awaiting independent review.** Details: docs/reviews/wallet-review.md
+W-1 to W-6.
+
+**The channel.** A v1 input is spent under a key image, which is the same in every
+transaction spending that output. If a wallet spends one output in two transactions
+with **different rings**, anyone who sees both learns that they spend the same output.
+The real input is then in the intersection of the two rings, often a single member.
+Seeing both requires only that both were relayed; neither needs to be mined.
+
+**How the wallet could do it before this fix:**
+- after a transport failure while submitting;
+- 20 blocks after submitting, while the transaction was still pooled;
+- after a reorganization undid the transaction's confirmation.
+
+**The rule now:**
+- a submitted transaction is stored and its inputs reserved *before* it is sent;
+- it is rebroadcast **unchanged**, never rebuilt;
+- its inputs are released only when the node answers `Invalid` (it can never be
+  mined on this chain), or when the user runs `clear-pending`, which warns against
+  this.
+
+**PX records** are not exposed to this: a record's nullifier is deterministic and there
+is no ring. A second transaction spending it is refused as a double spend and is
+linkable anyway.
+
+**Residual:**
+- After an `Invalid` verdict, a new spend still uses new rings (W-5). Reusing the old
+  ring where possible would close it; not implemented.
+- Rebroadcasting gives spy nodes another observation of the origin, but only when the
+  wallet's node has lost the transaction (W-6).
 
 ## 4. What is not claimed
 
