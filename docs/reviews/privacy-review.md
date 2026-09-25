@@ -150,9 +150,9 @@ It must **not** learn:
 | P-3 | **Wallets marked spent v1 key images only for transfers**, so a v1 output spent by a PX deposit or a deploy stayed "unspent" in the wallet and could be selected again. The result was a rejected transaction and a correctness bug, with a privacy side effect: a retry reveals the same ring member twice | Key images are collected from every transaction kind (`Transaction::key_images`) in wallets and test harnesses |
 | P-4 | No contract-record distribution protocol | **Resolved** (2026-09-25): designated on-chain delivery, the creator's copy, off-chain sealed shares; wallet commands and an end-to-end test (docs/px.md §13) |
 | P-5 | Proof length is not constant | **Supported by measurement and reasoning; independent review pending** (§3a, 2026-09-25). The earlier text blamed a varint encoding of field elements. That was wrong: they are fixed-width. A fixed-width codec was built and measured: it gained nothing and made proofs 4% larger, so it was reverted. The remaining variation (0.84% measured) comes only from pruned Merkle paths, a function of the public query positions, distributed identically for every witness. A constant length would need padding each proof to a per-shape worst case computed from Plonky3's pruned format, which costs size and is fragile across upgrades, for no privacy gain. Not done; reconsider if a reviewer disagrees |
-| P-6 | Dandelion++ stem probing with known nullifiers | Open, low; inherent to the design. It needs a nullifier the prober already knows, which means its own transaction or one it relayed on the stem |
+| P-6 | Dandelion++ stem probing | Open, low; analysed in §3b. Conflict probing needs a valid transaction spending the same record, so only the owner can do it. Replay probing by a stem node needs colluding downstream observers and yields partial route information. Not mitigated further |
 | P-7 | Uniform fees are a wallet convention, not a consensus rule | **Resolved** (2026-09-25): the fee of every PX transaction is exactly `PX_STANDARD_FEE` in consensus. Side effect: fee-per-byte ordering ranks larger PX transactions (contract calls) lower under congestion (docs/px.md §11.5) |
-| P-8 | Contract calls reveal which contract and function ran, and so the timing between related calls (such as a LOCK and its CLAIM) | Inherent: the verifier needs the program. Documented to users (docs/px.md §12) |
+| P-8 | Contract calls reveal which contract and function ran, and so the timing between related calls (such as a LOCK and its CLAIM) | Inherent: the verifier needs the program. Documented to users (docs/px.md §12); analysed in §3b. Automatic delays and recursion are not implemented |
 
 ## 3a. P-5 in detail: why proof-length variation carries no witness information
 
@@ -329,6 +329,84 @@ The owner may choose the first option after the independent review.
 4. **A constant length**, if a reviewer requires it: pad every proof to a per-shape
    worst case. That costs about 1–2% of the proof (*estimate*: roughly the measured spread) and a bound derived from Plonky3's
    pruned format.
+
+## 3b. P-6, P-8, query positions and proof size: detailed analysis (2026-09-25)
+
+Status of every item here: **internal analysis; awaiting independent review.**
+
+### P-6: probing the Dandelion++ stem
+
+**What the code does** (`p2p/src/net.rs`):
+- A stem transaction is **fully validated** (`check_tx`, proof included) before any
+  stem bookkeeping.
+- Stem conflicts are keyed by key images **and** PX nullifiers (`stem_keys`, line
+  1110): the first transaction seen wins, later conflicting ones are dropped silently.
+- A stem transaction the node already holds (the same id) is dropped silently.
+- Stem transactions are never served to `GetTx`
+  (`p2p/tests/network.rs::mempool_cannot_be_probed_with_gettx`).
+
+**Two probing forms:**
+
+| Form | Who can do it | What it can learn |
+|---|---|---|
+| **Conflict probing:** send a different transaction with the same nullifier or key image | Only someone who can make a *valid* transaction spending the same record: its owner. An invalid one is rejected before the conflict check | The owner learns where its own transaction is on the stem. That is not information about anyone else |
+| **Replay probing:** resend an identical stem transaction to other nodes | Any node that received it on its stem path | Whether a node already holds it, but only indirectly: a node without it relays it onward, and the prober must see that downstream relay (for example by also controlling the next stem hop). This can help a coalition of spy nodes reconstruct part of a stem path |
+
+**Mitigations in place:**
+- per-epoch stem routes;
+- embargo timers;
+- silent drops, with no reply that differs between "have" and "have not";
+- no `GetTx` for the stem.
+
+**Assessment:**
+- **Low.** Replay probing is a known property of Dandelion++. It needs several
+  colluding nodes on the stem path and yields partial route information, not the
+  origin.
+- Network-level adversaries (an ISP, a global passive observer) are outside what
+  Dandelion++ protects against (§4).
+- Users who need more should submit over Tor (docs/px.md §12).
+- **Not mitigated further.** No cheap, sound change was identified; randomized
+  re-stemming of replays would change the Dandelion++ analysis and needs review first.
+
+### P-8: which contract and function ran, and the timing of related calls
+
+- A call reveals the contract id, the program id, and the function's declared public
+  outputs. For the vault, the selector: LOCK or CLAIM. The verifier needs the program,
+  so this is **inherent** to per-transaction proofs with public programs.
+- **Timing:** an observer watching one contract sees when calls happen, so it can pair
+  a LOCK with the next CLAIM when the contract is used rarely. The canonical anchor
+  (§3 P-2) makes a new record spendable only at the next multiple-of-16 height, which
+  blurs this slightly.
+- **Guidance** (docs/px.md §12): wait a random time between related calls.
+- **Mitigations not implemented:**
+  - automatic random submission delays in the wallet (a usability trade-off, possible
+    later);
+  - hiding the program behind recursion (aggregation-study.md §3.3; a separate
+    milestone).
+
+### Query positions
+
+- **What they are:** the 108 FRI positions are drawn from the Fiat–Shamir challenger
+  and are recomputable by anyone from the proof. They are public.
+- **Witness information:** none, under A1 (§3a). They are uniform, whatever the
+  witness.
+- **Linking two proofs:** every proof uses fresh hiding randomness (OS CSPRNG, hedged
+  with the witness), so the transcripts and positions of two proofs are independent,
+  even for the same wallet and the same statement shape. Tested indirectly:
+  `zk/tests/proofs.rs::proofs_are_randomized` (two proofs of one statement differ).
+- **What positions determine:** only the byte length of the Merkle authentication data
+  (§3a).
+
+### Proof size
+
+- **Within a shape:** see §3a. No dependence on the witness was found; not constant.
+- **Across shapes:** the size reveals the shape.
+  - Plain transfer: about 2.04 MB. One vault call: about 2.49 MB.
+  - A shape is fixed by the kernel's function count and the registered budgets of the
+    called functions, all public in the transaction.
+  - So the size adds no information beyond the public function list.
+- **Deploys:** their size is public and reveals the programs' sizes. The programs are
+  on chain anyway.
 
 ## 4. What is not claimed
 

@@ -5,6 +5,21 @@ reset and the seven-machine trial separately (AUDIT.md R8). The testnet is a
 functional trial, not evidence of production readiness
 (docs/reviews/external-review-scope.md §5).
 
+## 0. Gates before execution (owner decision, 2026-09-25)
+
+The plan is approved in principle. It is executed only after **all** of these, and an
+explicit approval:
+
+| Gate | State |
+|---|---|
+| Independent security review completed (docs/reviews/external-review-scope.md, review-package.md) | **Not started** |
+| CI validated: the workflow run on GitHub, all jobs green | **In progress.** Until 2026-09-25 GitHub showed **0 runs** of the workflow on any branch. The workflow was then hardened (actions pinned to commit SHAs, toolchains pinned, read-only token) and pushed; the first run's results go into AUDIT.md |
+| Extended contract-engine fuzzing | **Running:** 6 hours on `wasm_module` and 4 hours on the new `contract_sequence` target (AUDIT.md when finished) |
+| Local reset rehearsal | **Done** 2026-09-25 (§7). To be repeated if the review leads to consensus changes |
+
+The seven-machine trial follows only after the owner approves the final readiness
+report.
+
 ## 1. Why a reset
 
 The current testnet (genesis 2026-09-23, network id `0x0001_D670`) runs the v1 rules.
