@@ -1355,7 +1355,7 @@ reviewer candidates, and a launch checklist (docs/testnet-launch-checklist.md).
   | Target | Command | Duration | Executions | Coverage at the end | New corpus units | Crashes, panics, timeouts, OOM |
   |---|---|---|---|---|---|---|
   | `contract_sequence` (new) | `cargo fuzz run contract_sequence corpus/contract_sequence -- -max_total_time=14400 -timeout=60 -rss_limit_mb=4096 -max_len=4096` | 14,401 s (4 h) | 322,055 (22/s) | 5,475 edges, 16,605 features (corpus replay: 1,396 inputs, 781 after reduction) | 1,306 | **0** (0 artifacts); peak RSS 538 MB |
-  | `wasm_module` (continued) | `-max_total_time=21600 -timeout=60 -rss_limit_mb=4096 -max_len=65536` | 6 h | *recorded when finished* | | | |
+  | `wasm_module` (continued from the 10,348-unit corpus) | `cargo fuzz run wasm_module corpus/wasm_module -- -max_total_time=21600 -timeout=60 -rss_limit_mb=4096 -max_len=65536` | 21,602 s (6 h) | 52,261,561 (2,419/s) | 17,365 edges, 35,774 features (corpus replay: 15,765 inputs, 6,309 after reduction) | 7,088 | **0** (0 artifacts); peak RSS 664 MB |
 
   **What `contract_sequence` checks** on every input: identical results from two
   independent executors (consistency across execution paths); fuel and storage within
@@ -1368,7 +1368,11 @@ reviewer candidates, and a launch checklist (docs/testnet-launch-checklist.md).
   - 22 executions per second is slow: each input deploys two modules on two executors,
     so Wasm compilation dominates. Exploration depth is limited. Caching the deployed
     state per run is a possible improvement.
-  - The corpus was still growing at the end.
+  - Both corpora were still growing at the end (7,088 and 1,306 new units), so neither
+    target is saturated.
+  - `wasm_module` checks that, for arbitrary bytes, the module check, deployment and
+    one fuel-bounded call never panic. It checks no results and runs no sequences
+    (that is `contract_sequence`).
   - Only two fixed modules are exercised as contracts. Arbitrary modules are covered
     by `wasm_module`, but not in sequences.
   - A fuzzing campaign is not a proof of absence of bugs.
@@ -1390,7 +1394,9 @@ reviewer candidates, and a launch checklist (docs/testnet-launch-checklist.md).
   over 100 kernel witnesses. A proof reveals at least whether a private payment spends
   one or two real records, and some amount-dependent information.
 - **ZK-F30 (high, OPEN):** 64-row tables are opened at more points than their hiding
-  randomness covers. The vault's Poseidon2 table is at that minimum.
+  randomness covers. (Corrected 2026-09-26: Poseidon2 is shared by all executions,
+  so the vault does not create a 64-row table; the smallest witness table in a
+  transfer was 128 rows.)
 - **Both need proof-system changes, which are consensus changes:** owner decision
   (the options are in the report).
 - **The circuit review found no critical, high or medium soundness issue.**
