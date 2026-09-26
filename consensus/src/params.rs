@@ -32,8 +32,10 @@ pub struct ChainParams {
     pub genesis: BlockHeader,
 }
 
-/// Testnet genesis time: 2026-09-23 00:00:00 UTC (final for testnet v1).
-pub const TESTNET_GENESIS_TIME: u64 = 1_790_121_600;
+/// Testnet genesis time: 2026-09-26 00:00:00 UTC (testnet v2, reset with the PX
+/// rules, parameter set BS-ZK-2 and the terminal blinding; docs/testnet-reset-plan.md). Testnet v1:
+/// 2026-09-23, network id `0x0001_D670`.
+pub const TESTNET_GENESIS_TIME: u64 = 1_790_380_800;
 /// Mainnet genesis time: **provisional** until the mainnet launch date is fixed.
 pub const MAINNET_GENESIS_TIME: u64 = 1_830_297_600;
 
@@ -51,7 +53,9 @@ impl ChainParams {
     pub fn testnet() -> Self {
         Self::base(
             Network::Testnet,
-            0x0001_D670,
+            // v2 (2026-09-26). v1 was 0x0001_D670; 0x0001_D671 was used by the
+            // 2026-09-25 local reset rehearsal. Never reuse an id for another genesis.
+            0x0001_D672,
             100,
             TESTNET_GENESIS_TIME,
             120,
@@ -128,7 +132,7 @@ mod tests {
     }
 
     const TESTNET_GENESIS_ID: &str =
-        "bbeb1a9fdb16cf416ddb505e8468a16b4308d15307d0a12d9ef4ecfefed12909";
+        "6556f92dee4df050cfb113a2b4ba234794274854b69f7c8a39755ec7a66b037d";
     const REGTEST_GENESIS_ID: &str =
         "087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7";
 

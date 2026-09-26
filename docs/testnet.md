@@ -13,9 +13,9 @@ current readiness status is in [AUDIT.md](../AUDIT.md).
 
 | | Testnet | Regtest (local only) |
 |---|---|---|
-| Network id | `0x0001D670` | `0x00DEB06E` |
-| Genesis time | 2026-09-23 00:00:00 UTC (`1790121600`) | `1700000000` |
-| Genesis id | `bbeb1a9fdb16cf416ddb505e8468a16b4308d15307d0a12d9ef4ecfefed12909` | `087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7` |
+| Network id | `0x0001D672` (testnet v2; v1 was `0x0001D670`) | `0x00DEB06E` |
+| Genesis time | 2026-09-26 00:00:00 UTC (`1790380800`) | `1700000000` |
+| Genesis id | `6556f92dee4df050cfb113a2b4ba234794274854b69f7c8a39755ec7a66b037d` | `087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7` |
 | Genesis body | empty, no premine | empty |
 | Block time | 120 s | 10 s |
 | Starting difficulty | 100 | 1 |

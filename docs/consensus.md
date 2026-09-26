@@ -18,7 +18,7 @@ All integers are unsigned and little-endian unless stated otherwise.
 
 | Parameter | Mainnet | Testnet | Regtest |
 |---|---|---|---|
-| `network_id` (u32) | `0x000B1A6C` | `0x0001D670` | `0x00DEB06E` |
+| `network_id` (u32) | `0x000B1A6C` | `0x0001D672` | `0x00DEB06E` |
 | Target block time `T` | 120 s | 120 s | 10 s |
 | Initial difficulty `D0` | 100 000 | 100 | 1 |
 | Difficulty window `N` (LWMA) | 60 | 60 | 60 |
@@ -30,8 +30,11 @@ All integers are unsigned and little-endian unless stated otherwise.
 The genesis header of each network is a constant in `params.rs`.
 - The genesis body is **empty**: no coinbase, no premine, `tx_root` = 32 zero bytes
   (blocks.md §3).
-- **Testnet genesis is final**: timestamp `1790121600` (2026-09-23 00:00:00 UTC), id
-  `bbeb1a9fdb16cf416ddb505e8468a16b4308d15307d0a12d9ef4ecfefed12909`.
+- **Testnet v2 genesis** (the planned reset, identity fixed 2026-09-26: PX rules from height 0, parameter set
+  BS-ZK-2 with terminal blinding): timestamp `1790380800` (2026-09-26 00:00:00 UTC), network id `0x0001D672`,
+  genesis id `6556f92dee4df050cfb113a2b4ba234794274854b69f7c8a39755ec7a66b037d`.
+  Testnet v1 was `0x0001D670` at `1790121600`, genesis id `bbeb1a9f…`. The id
+  `0x0001D671` was used only by the 2026-09-25 local reset rehearsal.
 - The mainnet genesis timestamp is provisional until its launch date.
 - A test pins the testnet and regtest genesis ids.
 

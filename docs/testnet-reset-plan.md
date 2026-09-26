@@ -1,7 +1,10 @@
-# Testnet reset plan (for the owner's approval; NOT executed)
+# Testnet reset plan (approved; NOT yet executed on the testnet machines)
 
-Status: **plan (2026-09-25). No reset has been performed.** The owner approves the
-reset and the seven-machine trial separately (AUDIT.md R8). The testnet is a
+Status: **the owner approved the reset on 2026-09-26** for the confirmed consensus
+parameters (BS-ZK-2 with terminal blinding and minimum height 2^8). The new identity
+is fixed in the code (§3). The reset itself runs on the operators' machines; until they
+report it, **no reset has been performed**. The owner approves the seven-machine trial
+separately (AUDIT.md R8). The testnet is a
 functional trial, not evidence of production readiness
 (docs/reviews/external-review-scope.md §5).
 
@@ -14,15 +17,16 @@ explicit approval:
 |---|---|
 | Internal multi-pass review of the critical components (docs/reviews/review-status.md §3). **External review: none engaged; not a gate** (owner decision 2026-09-25) | **In progress** |
 | CI validated: the workflow run on GitHub, all jobs green | **Passed** for commit `d6534c3` (run 36177083290, 2026-09-25): lint, audit, fuzz-smoke and test all green. To be confirmed again on the release commit |
-| Extended contract-engine fuzzing | **Running:** 6 hours on `wasm_module` and 4 hours on the new `contract_sequence` target (AUDIT.md when finished) |
-| Local reset rehearsal | **Done** 2026-09-25 (§7). To be repeated if the review leads to consensus changes |
+| Extended contract-engine fuzzing | **Done:** 6 hours on `wasm_module` and 4 hours on `contract_sequence`, 0 crashes (AUDIT.md) |
+| Local reset rehearsal | **Done for v2** on 2026-09-26 (§7a): passed, isolation confirmed. The 2026-09-25 rehearsal (§7) predates the blinding |
+| Internal review of the ZK changes | Rounds 2–4 done (internal-review-log.md) |
 
 The seven-machine trial follows only after the owner approves the final readiness
 report.
 
 ## 1. Why a reset
 
-The current testnet (genesis 2026-09-23, network id `0x0001_D670`) runs the v1 rules.
+The testnet v1 (genesis 2026-09-23, network id `0x0001_D670`) runs the v1 rules.
 The builds under review add consensus rules that apply **from genesis**, with no
 activation height. Old and new nodes would fork at the first block containing a PX
 transaction or deploy, and every other difference below. A clean chain avoids a mixed
@@ -42,6 +46,8 @@ Every item is intentional, active from height 0, and specified in the linked sec
 | 6 | The proof system: BS-ZK-2 (108 queries, degree-8 extension), proof version 1, statement digest, fixed shapes and budgets | zk.md §9; zkvm.md §6 | ZK-F4, F13, F14 |
 | 7 | The pinned kernel program id (`px/kernel.id`) | px.md §4.3 | — |
 | 8 | Poseidon2 `Hk` (a known-answer pin) and all PX domains | px.md §2 | — |
+| 9 | Terminal blinding: 9 blinding columns in every table, the `bvm/blind` bus and the `Blind` table (changes every proof's tables and shapes) | docs/reviews/terminal-blinding.md | ZK-F29 |
+| 10 | Minimum table height 2^8 (`MIN_LOG_HEIGHT`), enforced by the verifier | zk.md §9.3; zk-coverage.md | ZK-F30 |
 
 **Not consensus, but in the new builds:**
 - the `/px/contracts` RPC (ZK-F27);
@@ -50,14 +56,14 @@ Every item is intentional, active from height 0, and specified in the linked sec
 - the reference vault program (`px/vault.id`), which is registered by a deploy, not
   built into consensus.
 
-## 3. The identity change (proposed, not applied)
+## 3. The identity change (applied in the code, 2026-09-26)
 
-| Item | Now | Proposed |
+| Item | v1 | v2 |
 |---|---|---|
-| `ChainParams::testnet()` network id (`consensus/src/params.rs`) | `0x0001_D670` | `0x0001_D671` (any new value; it separates the networks at the P2P handshake and in every block id) |
-| `TESTNET_GENESIS_TIME` | 2026-09-23 00:00 UTC | the chosen launch time |
-| `TESTNET_GENESIS_ID` (the pinned test in `consensus/src/params.rs`) | `bbeb1a9f…` | recomputed from the two values above; the test pins it |
-| docs/testnet.md §1 | the old id and time | updated |
+| `ChainParams::testnet()` network id (`consensus/src/params.rs`) | `0x0001_D670` | **`0x0001_D672`**. `0x0001_D671` was used by the 2026-09-25 rehearsal and is never reused |
+| `TESTNET_GENESIS_TIME` | 2026-09-23 00:00 UTC | **2026-09-26 00:00 UTC** (`1790380800`) |
+| `TESTNET_GENESIS_ID` (pinned by a test in `consensus/src/params.rs`) | `bbeb1a9f…` | **`6556f92dee4df050cfb113a2b4ba234794274854b69f7c8a39755ec7a66b037d`** |
+| docs/testnet.md §1, docs/consensus.md | v1 | updated |
 | Seed-node list | as deployed | the same hosts, restarted on the new build |
 
 With a new network id, old nodes fail the handshake with new ones
@@ -107,6 +113,18 @@ labnet is used), remaining risks and limitations.
   needed.
 - Record the failure, fix it, and repeat the reset with a new network id. Never reuse
   an id for a different genesis.
+
+## 7a. Local rehearsal of the v2 identity (done 2026-09-26)
+
+**Result:** passed; evidence in `docs/evidence/labnet-2026-09-26/`.
+- **The v2 network:** a 30-minute, 5-node run under the testnet rules passed every
+  labnet check.
+- **Isolation:** a v1 node (`b4262e1`) was refused at all 14 handshake attempts.
+- **Private traffic:** a 62-minute regtest run with the same build passed: 6 PX
+  transactions, 115 reorganizations, and restored wallets matching (private balances
+  included).
+- **Next:** the seven-device validation (docs/testnet-v2-validation.md), run by the
+  operators.
 
 ## 7. Local rehearsal before the trial (done 2026-09-25)
 

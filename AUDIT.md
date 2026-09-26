@@ -1452,13 +1452,82 @@ proper subfield). This holds under two conditions:
 - **Internal review round 2: done** (internal-review-log.md). There was no soundness
   break and no hiding gap. Three tests were shown to be vacuous or
   non-discriminating (T1–T3); they are corrected. The column envelope is raised to
-  6,000 (S2; security unchanged at 123/105 bits). **Open:** the FRI mask uses 4
-  base-field random codewords (Z2, under Z7).
+  6,000 (S2; security unchanged at 123/105 bits). Finding Z2 (the FRI mask) was
+  later withdrawn as an analysis error (round 3, R13).
 - **P-5 re-run: done** (docs/evidence/p5-2026-09-26/).
   - Non-authentication parts are constant per shape: 1,811,565 B and 2,359,622 B.
   - No significant class dependence: minimum p = 0.071 over 14 tests, lower than
     before but within chance.
 - **Full suite after the round-2 fixes:** 422 passed, 0 failed, 2 ignored.
+
+### R13: The FRI mask episode, internal review round 3, and the testnet v2 identity (2026-09-26). Internal; no external audit.
+
+**What happened (an analysis error, recorded in full in internal-review-log.md, round 3):**
+- Round 2's finding Z2 claimed that the hiding FRI mask was made of the 4 per-matrix
+  random codewords, which would span only half the degree-8 extension.
+- The author accepted Z2 without tracing how Plonky3 builds the mask. The owner
+  approved 8 codewords (BS-ZK-3) on that premise, and the change was implemented and
+  measured.
+- Round 3 showed from the source that Plonky3 commits a separate mask polynomial `R`
+  per table, with the extension degree's extra columns. BS-ZK-2's mask already
+  spanned the extension. Z2 is withdrawn.
+- **Owner decision (Option A):** revert to 4 codewords and keep BS-ZK-2. The 8-codeword
+  change was never committed.
+
+**What changed relative to R12** (the parameter set stays BS-ZK-2 with 4 codewords):
+- `zk/src/params.rs`:
+  - a new `const` assertion of eq. (17), `2·(8 + 108) = 232 ≤ 256`, checked in every
+    build;
+  - the header now says the verifier pins none of the hiding randomness (R3-6).
+- **New checks of the mask `R`:**
+  - a real proof commits one `R` per table, 12 columns wide at every query
+    (`zkvm/tests/vm.rs`). The verifier already checks `R`'s presence, public width and
+    height; the test adds the hidden width;
+  - a vendored `p3-fri` test of `R`'s width and height, under upstream's test
+    configuration. It runs only in the manual upstream checkout.
+- **Committed-column envelope (round 4, M3):** the count now comes from a real proof.
+  - The widest statement commits 4,999 base columns (the earlier estimate was 4,984),
+    inside the 6,000 envelope.
+  - Security is unchanged: 123 and 105 bits, tested up to 65,536 columns.
+  - A malicious proof can pad hidden columns (the verifier does not pin them), but
+    `MAX_PROOF_BYTES` caps any accepted proof at 15,709 batched columns
+    (`MAX_ADVERSARIAL_COLUMNS`), which the params test covers.
+- **Documentation:**
+  - zero knowledge is claimed only as **statistical** and conditional, never perfect
+    (docs/reviews/zk-coverage.md);
+  - it records the Appendix A leakage of lookup arguments, and why the published
+    theorem does not directly cover a multi-table, mixed-height, LogUp-based,
+    multi-phase system.
+- **Testnet v2 identity** (for the reset approved by the owner):
+  - network id `0x0001D672`;
+  - genesis time 2026-09-26 00:00:00 UTC;
+  - genesis id `6556f92d…` (docs/consensus.md; pinned by a test).
+
+**Measured (8 vs 4 codewords, before the revert):** the 8-codeword variant cost about
++10–13% in proof size, proving time and peak memory. Option A has the 4-codeword
+costs.
+
+**Validation of Option A:**
+- **Full suite:** 423 passed, 0 failed, 2 ignored. The changed zkvm tests were re-run
+  after round 4 and pass.
+- **Benchmark** (`px/examples/proof_bench.rs`, 2 × 5 proofs of each kind, idle):
+  | | Transfer | Vault |
+  |---|---|---|
+  | Size | 2,178,213–2,180,408 B | 2,687,952–2,688,822 B |
+  | Proving | 44.6–45.2 s | 52.7–53.0 s |
+  | Verification | 0.207–0.212 s | 0.254–0.265 s |
+
+  Peak memory 3,771 MB.
+- **P-5 campaign** (docs/evidence/p5-2026-09-26b/, 260 proofs):
+  - the non-authentication parts are constant per shape (1,811,565 B and
+    2,359,622 B);
+  - no significant class dependence: p ranges from 0.107 to 0.965 over 14 tests.
+- **Internal review round 4:** 3 medium and 8 low findings, all fixed
+  (internal-review-log.md).
+- **Local reset rehearsal of v2:** passed, v1 isolated; PX regtest run passed
+  (docs/evidence/labnet-2026-09-26/).
+- **The seven-device validation (docs/testnet-v2-validation.md) has not been run.**
+  It is for the operators.
 
 ### Finding status after R1–R6
 
