@@ -66,6 +66,14 @@ the three patched crates now does sequential work only.
   `get_or_compute_coset_twiddles` and `get_or_compute_inverse_twiddles`, one block
   each.
 
+- `p3-fri/src/hiding_pcs.rs` also has a **test-only** addition (2026-09-26, internal
+  review round 3): `randomization_polynomial_spans_the_extension_at_each_table_height`
+  checks that the FRI mask `R` has exactly `NUM_RANDOM_CODEWORDS` + the extension
+  degree columns and one matrix at each table height, under upstream's test
+  configuration (2 codewords, degree-4 extension). It changes no library code.
+  `third_party` is outside the workspace, so this test (like upstream's suites) runs
+  only in the manual upstream checkout described below, not in our suite or CI.
+
 `cargo`'s registry copies were taken verbatim (`.cargo_vcs_info.json` and
 `Cargo.toml.orig` removed).
 

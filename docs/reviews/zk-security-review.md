@@ -35,7 +35,7 @@ reviews: `privacy-review.md`, `dependency-review.md`, `aggregation-study.md`.
 | A3 | LogUp: an unbalanced bus passes with negligible probability over the 247-bit challenge field, provided multiplicities do not wrap modulo p | Plonky3's verifier enforces `Σ weight · height < p`. The largest accepted statement reaches 63% of p (test `the_logup_multiplicity_bound_holds_for_the_largest_statement`). | Holds |
 | A4 | The BVM-1 tables constrain exactly the interpreter's semantics | Constraint oracle, mutation testing, differential tests, proofs (§7) | Structural argument §3; external review |
 | A5 | The kernel and function programs implement their specifications | One Rust source for native and guest; per-check rejection tests | External review |
-| A6 | Zero knowledge: the hiding FRI (4 random codewords) and salted Merkle leaves (4 elements) hide the witness; prover randomness is fresh | Plonky3's hiding construction; `ProverConfig` hedges the OS RNG with a witness digest | Sufficiency of the parameters is an external-review item |
+| A6 | **Statistical** zero knowledge: the hiding FRI (a separate mask `R` per table, 4 random codewords per matrix), salted Merkle leaves (4 elements) and the terminal blinding hide the witness; prover randomness is fresh | Plonky3's hiding construction (ePrint 2024/1037); `ProverConfig` hedges the OS RNG with a witness digest; per-table conditions checked (docs/reviews/zk-coverage.md) | Not proven for the system as a whole; open items in zk-coverage.md §3 |
 | A7 | Delivery: IND-CCA of the hybrid KEM (Ristretto ECDH and ML-KEM-768) and of ChaCha20-Poly1305 | Standard assumptions; RustCrypto `ml-kem` 0.3.2 | Wallet-side only |
 
 ## 3. Coordinated (multi-cell) forgery analysis

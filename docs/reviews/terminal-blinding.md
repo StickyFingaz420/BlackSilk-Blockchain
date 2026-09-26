@@ -70,21 +70,27 @@ Code: `zkvm/src/air/util.rs` (`blind_consume`, `blind_provide`), `zkvm/src/air/m
     observer can compute the blinding term and invert it to recover the values.
   - That is harmless: the values are independent per table and carry no witness
     data.
-- **C2:** the hiding PCS keeps the committed columns, the blinding columns included,
-  hidden at the opened points. This is the remaining part of assumption Z7, and needs
-  enough random rows for the number of openings. With the minimum height 2^8 (256
-  random rows) against 108 queries plus 2 out-of-domain points, the counting argument
-  of ZK-F30 is satisfied with margin. This is a counting argument, not a proof about
-  Plonky3's hiding PCS.
-  - **It covers the per-column openings only** (internal review round 2, Z2).
-  - The FRI commit-phase openings are masked with `NUM_RANDOM_CODEWORDS = 4`
-    base-field random codewords combined with extension-field powers: a
-    4-dimensional base-field subspace of the degree-8 extension. That is the same
-    pattern §3 "Width" rejects for the blinding values.
-  - Whether this suffices needs a simulator argument (cf. ePrint 2024/1037), which
-    the project has not made.
-  - **OPEN** (assumptions.md Z7). A remedy would be 8 or more random codewords; that
-    changes proofs, so it is an owner decision.
+- **C2:** the hiding PCS keeps the committed columns (the blinding columns included)
+  hidden, **statistically**. For BS-ZK-2 each table meets the per-table conditions of
+  the published construction (docs/reviews/zk-coverage.md); the construction as a
+  whole does not directly cover our system:
+  - witness randomization, ePrint 2024/1037 §4.2 eq. (17): `2·(e·n_F + n_D) ≤ h ≤ |H|`,
+    i.e. **2·(8 + 108) = 232 ≤ 256**, the minimum height. A `const` assertion checks
+    the inequality in every build; the prover and the verifier enforce the minimum
+    height (`zk/src/lib.rs`);
+  - the FRI mask (Protocol 2, Lemma 2): Plonky3 commits a separate randomization
+    polynomial `R` per table with `EXTENSION_DEGREE` extra columns, so `R` spans the
+    extension. The verifier checks `R`'s presence, public width and height; a test
+    checks its full committed width. Upstream calls it "only statistically ZK".
+  - Correction: internal review round 2 (Z2) held that the mask was the 4 per-matrix
+    random codewords and spanned only half the extension. That premise was wrong and
+    Z2 is withdrawn (internal-review-log.md, round 3).
+  - Earlier versions of this note gave "108 queries plus 2 out-of-domain points" or
+    124 openings. Those counts were wrong: the paper counts each extension-field
+    point e times, and the factor 2 accounts for the translate by `g`.
+  - What remains open (multiple tables of mixed heights, the Appendix A leakage of
+    LogUp arguments, multi-phase traces, Plonky3 matching the paper, and others) is
+    listed in zk-coverage.md §3.
 - **Width.** With only 4 random values, `fp` would reach a 4-dimensional subspace. An
   observer could then test hypotheses by solving a linear system. Eight values (the
   extension degree) are needed, and used.
@@ -190,7 +196,8 @@ See §8 (measured before and after on the same machine).
 - **S1:** the Blind table's height limit is now the minimum height (`prove::limits`),
   so an unshaped proof cannot claim a 2^22-row Blind table.
 - **S2:** the widest PX statement (kernel plus two functions, 23 tables) commits
-  4,984 columns, counted conservatively. That is above the former analysis envelope
+  4,984 columns by an estimate (4,999 measured on a real proof in round 4, M3). That
+  is above the former analysis envelope
   of 4,000, and about 4,560 of them predate blinding.
   - `MAX_COMMITTED_COLUMNS` is raised to 6,000.
   - The security calculator still gives 123 bits (Johnson) and 105 bits (unique

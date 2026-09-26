@@ -53,7 +53,8 @@ outside scrutiny from what rests on internal work only.
   1. knowledge soundness at BS-ZK-2: ≥ 123 bits (Johnson) and ≥ 105 (unique decoding)
      over the shape envelope, as computed by our calculator;
   2. **zero knowledge of the hiding mode** (`HidingFriPcs`, `MerkleTreeHidingMmcs`),
-     including whether 4 random codewords and 4 salt elements suffice;
+     including the open items of docs/reviews/zk-coverage.md §3 (statistical, not
+     perfect, zero knowledge);
   3. the Fiat–Shamir transcript: domain separation (`PARAMS_ID`), and the statement
      digest absorbed before any commitment (ZK-F13);
   4. the LogUp bound (63% of p);

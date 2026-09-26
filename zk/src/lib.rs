@@ -2,7 +2,7 @@
 //!
 //! Everything a BlackSilk zero-knowledge proof depends on lives here:
 //! - [`params`]: parameter set BS-ZK-2 and its proven security;
-//! - [`config`]: the Plonky3 configuration (hiding FRI STARK over BabyBear^5);
+//! - [`config`]: the Plonky3 configuration (hiding FRI STARK over BabyBear, degree-8 extension);
 //! - [`prove`] / [`verify`]: batch proving and hardened verification;
 //! - [`encode_proof`] / [`decode_proof`]: the strict wire format.
 //!

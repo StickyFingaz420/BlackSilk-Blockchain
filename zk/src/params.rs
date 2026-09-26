@@ -11,8 +11,17 @@
 //! exactly 100 Johnson bits and 63 unique-decoding bits at the largest shape
 //! and was replaced (AUDIT.md R8, finding ZK-F4).
 //!
-//! Changing any constant here changes the proof format and soundness: it is a
-//! new parameter set (a new verifier-registry entry), never an in-place edit.
+//! Changing any constant here changes the proof format, its soundness or its
+//! zero knowledge: it is a new parameter set (a new verifier-registry entry),
+//! never an in-place edit. The verifier does **not** enforce every constant:
+//! it pins none of the hiding randomness (`NUM_RANDOM_CODEWORDS`, the random
+//! rows, the hidden columns of `R`, the quotient randomizers), and the number
+//! of hidden columns is bounded only by `MAX_PROOF_BYTES`. A prover that
+//! skimps weakens only its own proof's hiding. A prover that **pads** adds
+//! FRI-batched columns, which enter the soundness bound; each costs at least
+//! 4 bytes per query, so `MAX_PROOF_BYTES` caps a proof at
+//! `MAX_ADVERSARIAL_COLUMNS`, and the security targets are tested up to that
+//! cap (internal review rounds 3 and 4).
 
 use p3_security::fri::FriRegime;
 use p3_uni_stark::{ProvenSecurity, StarkSecurityParams};
@@ -35,8 +44,16 @@ pub const COMMIT_POW_BITS: usize = 0;
 
 /// Random codewords added by the hiding FRI commitment per committed matrix
 /// (Plonky3 `HidingFriPcs`), and salt elements per Merkle leaf
-/// (`MerkleTreeHidingMmcs`). Values from Plonky3's zero-knowledge tests; their
-/// sufficiency is an external-review item (R8).
+/// (`MerkleTreeHidingMmcs`).
+///
+/// The paper's FRI mask `R` (ePrint 2024/1037, Protocol 2) is **not** these
+/// codewords. Plonky3 commits a separate randomization polynomial per table
+/// (`get_opt_randomization_poly_commitment`) with `NUM_RANDOM_CODEWORDS +
+/// EXTENSION_DEGREE` base-field columns, which spans the extension field
+/// whatever this value is. These per-matrix codewords are additional masking.
+/// (An internal analysis wrongly treated them as `R`, and the value was briefly
+/// raised to 8; reverted after internal review round 3, see
+/// docs/reviews/internal-review-log.md.)
 pub const NUM_RANDOM_CODEWORDS: usize = 4;
 pub const MERKLE_SALT_ELEMS: usize = 4;
 
@@ -55,14 +72,18 @@ pub const TARGET_JOHNSON_BITS: usize = 120;
 
 /// Largest table height (log2) any proof may claim; bounds verifier work.
 pub const MAX_LOG_HEIGHT: usize = 22;
-/// Largest number of committed columns (main + lookup + quotient chunks, summed
-/// over all tables) a proof shape may have. The security guarantees are
-/// computed (and tested) up to this bound; shapes must be checked against it.
+/// Largest number of committed base-field columns (main, lookup, quotient
+/// chunks, the randomization polynomial `R` and the hidden random codewords,
+/// summed over all tables) an honest proof shape may have. The security
+/// guarantees are computed (and tested) up to this bound and beyond, up to
+/// [`MAX_ADVERSARIAL_COLUMNS`]; honest shapes are checked against it.
 ///
 /// Raised from 4,000 on 2026-09-26: the widest PX statement (kernel plus two
-/// functions, 23 tables) commits 4,984 columns counted conservatively
-/// (`zkvm/tests/multi.rs::the_widest_multi_execution_shape_stays_in_the_envelope`),
-/// about 4,560 of them before terminal blinding. The envelope was checked only
+/// functions, 23 tables) commits 4,999 base columns, measured on a real proof
+/// with the hidden codewords and `R` included
+/// (`zkvm/tests/multi.rs::the_widest_multi_execution_shape_stays_in_the_envelope`;
+/// internal review round 4, M3). The security figures do not change up to at
+/// least 65,536 columns (tested). The envelope was checked only
 /// for single executions before (internal review round 2, S2).
 pub const MAX_COMMITTED_COLUMNS: usize = 6_000;
 /// Smallest table height (log2). FRI must fold every committed polynomial at
@@ -74,6 +95,13 @@ pub const MIN_LOG_HEIGHT: usize = 8;
 /// Largest encoded proof accepted from the network. A BVM-1 transfer proof
 /// is ~2 MB (AUDIT.md R8); the widest shape of the envelope stays below this.
 pub const MAX_PROOF_BYTES: usize = 4 << 20;
+
+/// Upper bound on the FRI-batched columns of any proof the verifier accepts,
+/// honest or not: the verifier does not pin the hidden columns, but every
+/// committed base-field column is opened at every query as a 4-byte element,
+/// so padding beyond the envelope is limited by [`MAX_PROOF_BYTES`].
+pub const MAX_ADVERSARIAL_COLUMNS: usize =
+    MAX_COMMITTED_COLUMNS + MAX_PROOF_BYTES / (4 * NUM_QUERIES);
 
 pub const fn fri_regime() -> FriRegime {
     FriRegime {
@@ -95,7 +123,8 @@ pub struct ProofShape {
     pub constraints: usize,
     /// Maximum constraint degree of any table.
     pub max_degree: usize,
-    /// Total committed columns: main, permutation (lookup) and quotient chunks.
+    /// Total committed base-field columns: main, permutation (lookup), quotient
+    /// chunks, `R` and the hidden random codewords.
     pub committed_columns: usize,
     /// log2 of the tallest table.
     pub log_height: usize,
@@ -132,6 +161,14 @@ pub fn security(shape: &ProofShape) -> Security {
 /// (quotient must fit the LDE: `degree ≤ 2^LOG_BLOWUP`).
 pub const MAX_CONSTRAINT_DEGREE: usize = 1 << LOG_BLOWUP;
 
+// Witness randomization (docs/reviews/zk-coverage.md), checked in every build:
+// every table has enough randomizer degrees of freedom for the bound of
+// ePrint 2024/1037 §4.2, eq. (17): 2·(e·n_F + n_D) ≤ h ≤ |H|. Here n_F = 1
+// (one out-of-domain point; the factor 2 accounts for its translate by g),
+// n_D is the number of FRI queries, and h = |H| (Plonky3 adds one random row
+// per trace row). So 2·(8 + 108) = 232 ≤ 2^MIN_LOG_HEIGHT = 256.
+const _: () = assert!(2 * (EXTENSION_DEGREE + NUM_QUERIES) <= 1 << MIN_LOG_HEIGHT);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,7 +185,14 @@ mod tests {
         for log_height in MIN_LOG_HEIGHT..=MAX_LOG_HEIGHT {
             for constraints in [1usize, 100, 1_000, 5_000] {
                 for max_degree in [1usize, 3, 5, MAX_CONSTRAINT_DEGREE] {
-                    for committed_columns in [1usize, 100, 1_000, MAX_COMMITTED_COLUMNS] {
+                    for committed_columns in [
+                        1usize,
+                        100,
+                        1_000,
+                        MAX_COMMITTED_COLUMNS,
+                        MAX_ADVERSARIAL_COLUMNS,
+                        65_536,
+                    ] {
                         let s = security(&ProofShape {
                             constraints,
                             max_degree,

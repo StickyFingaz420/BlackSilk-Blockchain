@@ -527,9 +527,16 @@ owner): a STARK on Plonky3 0.7.**
   proofs, without migrating records.
 - **The parameter set is code** (`zk/src/params.rs`). A test recomputes its proven
   security for every registered table shape and fails the build below 100 bits.
-- **Current set: BS-ZK-2.**
+- **Current set: BS-ZK-2.** Minimum table height 2^8 since 2026-09-26, so that
+  2·(e·n_F + n_D) = 2·(8 + 108) = 232 ≤ 256 (ePrint 2024/1037 §4.2, eq. 17; a `const`
+  assertion checks it in every build). Hiding: 4 random codewords per committed matrix,
+  4 salt elements per Merkle leaf, and a separate FRI mask polynomial per table that
+  spans the extension. The result is **statistical** zero knowledge under the open
+  items of docs/reviews/zk-coverage.md; it is not perfect and not proven for the whole
+  system. (An 8-codeword variant, BS-ZK-3, was built on a wrong premise and reverted
+  before any commit; internal-review-log.md, round 3.)
   - degree-8 extension, blow-up 8, 108 queries, 16 grinding bits;
-  - over the whole shape envelope (2^22 rows, 4 000 columns): ≥ 123 bits in the
+  - over the whole shape envelope (2^22 rows, 6 000 columns): ≥ 123 bits in the
     Johnson regime (the target is 120, the approved floor 100) **and** ≥ 105 bits in
     the unique-decoding regime.
   - The second target is extra conservatism beyond decision B. Dropping it would cut

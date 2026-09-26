@@ -692,6 +692,36 @@ mod tests {
         <MyPcs as Pcs<Challenge, Challenger>>::verify(pcs, claims, proof, challenger)
     }
 
+    /// BlackSilk addition (test only): the randomization polynomial `R` that
+    /// masks the FRI batch (ePrint 2024/1037, Protocol 2) is one matrix per
+    /// table domain, `NUM_RANDOM_CODEWORDS + Challenge::DIMENSION` base-field
+    /// columns wide (so it spans the extension field whatever the number of
+    /// per-matrix codewords), at that domain's height (before the blow-up).
+    #[test]
+    fn randomization_polynomial_spans_the_extension_at_each_table_height() {
+        use p3_commit::Mmcs;
+        let (pcs, _, _, _) = make_fixture();
+        let domains: Vec<Domain> = [4usize, 6, 9]
+            .iter()
+            .map(|&log| {
+                <MyPcs as Pcs<Challenge, Challenger>>::natural_domain_for_degree(&pcs, 1 << log)
+            })
+            .collect();
+        let (_, data) = <MyPcs as Pcs<Challenge, Challenger>>::get_opt_randomization_poly_commitment(
+            &pcs,
+            domains.iter().copied(),
+        )
+        .expect("zero knowledge");
+        let mats = pcs.inner.mmcs.get_matrices(&data);
+        assert_eq!(mats.len(), domains.len(), "one R per table domain");
+        let blowup = 1 << pcs.inner.fri.log_blowup;
+        let dim = <Challenge as p3_field::BasedVectorSpace<Val>>::DIMENSION;
+        for (m, d) in mats.iter().zip(&domains) {
+            assert_eq!(m.width(), NUM_RANDOM_CODEWORDS + dim, "R's width");
+            assert_eq!(m.height(), d.size() * blowup, "R at the table's height");
+        }
+    }
+
     #[test]
     fn valid_proof_passes() {
         // Baseline: an unmodified proof verifies, so the mismatch tests below

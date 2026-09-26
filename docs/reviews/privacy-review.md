@@ -5,11 +5,14 @@
 > - ZK-F30: small tables had too little hiding randomness.
 >
 > Both are **fixed in code** by terminal blinding and a minimum height of 2^8
-> (terminal-blinding.md; AUDIT.md R12). The fix still awaits the second internal
-> review and the P-5 re-run.
+> (terminal-blinding.md; AUDIT.md R12, R13). Internal reviews 2 to 4 are done
+> (internal-review-log.md). P-5 was re-run on the blinded layout
+> and on the final Option A build (docs/evidence/p5-2026-09-26/, p5-2026-09-26b/).
 >
-> Zero knowledge still rests on Plonky3's hiding PCS as configured, which the project
-> has not proven (assumptions.md Z7, Z11–Z13). No part of this is independently
+> The claim is **statistical** zero knowledge, conditional on the open items of
+> zk-coverage.md §3; perfect zero knowledge is not claimed. It rests on Plonky3's
+> hiding PCS as configured, which the project has not proven (assumptions.md Z7,
+> Z11–Z13). No part of this is independently
 > audited.
 
 Status: **internal review (2026-09-24, updated 2026-09-25 for contract tooling, record
@@ -165,8 +168,8 @@ It must **not** learn:
 | P-6 | Dandelion++ stem probing | Open, low; analysed in §3b. Conflict probing needs a valid transaction spending the same record, so only the owner can do it. Replay probing by a stem node needs colluding downstream observers and yields partial route information. Not mitigated further |
 | P-7 | Uniform fees are a wallet convention, not a consensus rule | **Resolved** (2026-09-25): the fee of every PX transaction is exactly `PX_STANDARD_FEE` in consensus. Side effect: fee-per-byte ordering ranks larger PX transactions (contract calls) lower under congestion (docs/px.md §11.5) |
 | P-8 | Contract calls reveal which contract and function ran, and so the timing between related calls (such as a LOCK and its CLAIM) | Inherent: the verifier needs the program. Documented to users (docs/px.md §12); analysed in §3b. Automatic delays and recursion are not implemented |
-| P-10 | **The proofs reveal the kernel's execution profile** (ZK-F29): each table's LogUp terminal is published unblinded, and the Program table's terminal is a function of the per-instruction execution counts alone. Measured: 33 distinct count vectors over 100 witnesses; one real input vs two real inputs are always distinguishable, and counts vary with amounts and keys | **Fixed in code** (R12, terminal blinding in our circuits; owner-approved). Hiding up to ~2^−124 under Z7/Z12. Awaiting internal review round 2; consensus-affecting (needs the testnet reset) |
-| P-11 | **Small tables may leak through the openings** (ZK-F30): with a 64-row table, about 104–110 opened points exceed its 64 random rows. Correction: Poseidon2 is shared, so the vault does not create a 64-row table; the smallest witness table in a transfer was 128 rows (a margin of about 18) | **Fixed in code** (R12): minimum table height 2^8. Rests on the counting argument (Z13) |
+| P-10 | **The proofs reveal the kernel's execution profile** (ZK-F29): each table's LogUp terminal is published unblinded, and the Program table's terminal is a function of the per-instruction execution counts alone. Measured: 33 distinct count vectors over 100 witnesses; one real input vs two real inputs are always distinguishable, and counts vary with amounts and keys | **Fixed in code** (R12, terminal blinding in our circuits; owner-approved). Hiding up to ~2^−124 under Z7/Z12. Reviewed internally in rounds 2–4; consensus-affecting (testnet reset to v2) |
+| P-11 | **Small tables may leak through the openings** (ZK-F30): with a 64-row table, about 104–110 opened points exceed its 64 random rows. Correction: Poseidon2 is shared, so the vault does not create a 64-row table; the smallest witness table in a transfer was 128 rows. (The "margin of about 18" stated here earlier was wrong: the bound is 232 openings, ePrint 2024/1037 eq. 17, so 128 rows did not suffice.) | **Fixed in code** (R12): minimum table height 2^8, and 232 ≤ 256 (Z13, checked in every build) |
 | P-9 | The wallet could spend a v1 input again with a new ring after a transaction that had been relayed: after a transport failure, 20 blocks after submitting, or after a reorganization | **Fixed** (2026-09-25, §3c): transactions are stored and rebroadcast unchanged; inputs are released only on an `Invalid` verdict; a later spend reuses the stored ring (W-5). Residuals: key-image linkability, and rings lost on a restore from seed |
 
 ## 3a. P-5 in detail: why proof-length variation carries no witness information

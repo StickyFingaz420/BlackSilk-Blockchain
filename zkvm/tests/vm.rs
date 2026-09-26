@@ -271,10 +271,24 @@ fn a_small_program_proves_and_verifies_and_statements_are_bound() {
     }
 }
 
-/// The VM's actual proof shape must stay inside the BS-ZK-1 envelope and
-/// reach ≥ 100 proven bits (docs/zk.md §9.3). Committed columns are counted
-/// conservatively: main + preprocessed + one extension column (5 base
-/// columns) per bus interaction, plus quotient chunks of the maximum degree.
+/// Base-field columns a proof commits and FRI batches: the widths of the rows
+/// opened at the first query, over every opening round (`R`, main, quotient
+/// chunks, preprocessed, lookup), hidden random codewords included. This is
+/// exact, where counting from the AIRs would have to predict Plonky3's
+/// quotient-chunk count (internal review round 4, M3).
+fn committed_columns(proof: &blacksilk_zk::Proof) -> usize {
+    proof
+        .opening_proof
+        .1
+        .input_openings
+        .iter()
+        .map(|round| round.opened_values[0].iter().map(Vec::len).sum::<usize>())
+        .sum()
+}
+
+/// The VM's actual proof shape must stay inside the envelope of the parameter
+/// set and reach ≥ 100 proven bits (docs/zk.md §9.3). Committed columns are
+/// measured on a real proof (`committed_columns`).
 #[test]
 fn the_vm_shape_meets_the_security_floor() {
     use blacksilk_zk::params::{self, ProofShape};
@@ -283,12 +297,9 @@ fn the_vm_shape_meets_the_security_floor() {
     let sh = shapes(&trace::tables(&st), &traces, &trace::public_values(&st));
     let constraints: usize = sh.iter().map(|s| s.constraints).sum();
     let max_degree = 5; // the CPU's next-pc constraint (degree 5) is the highest
-    let quotient_chunks = sh.len() * (max_degree - 1) * params::EXTENSION_DEGREE;
-    let columns: usize = sh
-        .iter()
-        .map(|s| s.main_width + s.prep_width + params::EXTENSION_DEGREE * s.interactions)
-        .sum::<usize>()
-        + quotient_chunks;
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(12);
+    let (_, proof) = prove::prove(st.program.clone(), &[5], st.binding, &mut rng).unwrap();
+    let columns = committed_columns(&proof);
     let shape = ProofShape {
         constraints,
         max_degree,
@@ -558,4 +569,49 @@ fn public_column_copies_are_pinned_to_the_statement() {
         }
     }
     println!("{tried} public-copy mutations, all caught");
+}
+
+/// Additional safety check (not a substitute for the formal argument,
+/// docs/reviews/zk-coverage.md): a real proof is made in zero-knowledge mode
+/// and commits one randomization polynomial `R` per table (the FRI mask of
+/// ePrint 2024/1037, Protocol 2), with the full committed width
+/// `NUM_RANDOM_CODEWORDS + EXTENSION_DEGREE` at every query.
+///
+/// The verifier itself rejects a missing `R` or a public `R` opening other than
+/// `EXTENSION_DEGREE` wide, and fixes `R`'s height (it checks `R` on each table's
+/// extended trace domain). It does not pin the hidden codewords, which this
+/// test does for our prover.
+#[test]
+fn every_table_commits_a_full_extension_randomization_polynomial() {
+    use blacksilk_zk::params::{EXTENSION_DEGREE, NUM_QUERIES, NUM_RANDOM_CODEWORDS};
+    let mut p = Asm::new(BASE);
+    p.ecall(1).write_reg(A0).halt(0);
+    let program = Arc::new(p.finish().unwrap());
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(8);
+    let (st, proof) = prove::prove(program, &[1], [0; 32], &mut rng).unwrap();
+    assert!(proof.commitments.random.is_some(), "R is committed");
+    let tables = trace::tables(&st).len();
+    assert_eq!(proof.opened_values.instances.len(), tables);
+    for (t, inst) in proof.opened_values.instances.iter().enumerate() {
+        let r = inst
+            .base_opened_values
+            .random
+            .as_ref()
+            .unwrap_or_else(|| panic!("table {t} has no R"));
+        assert_eq!(r.len(), EXTENSION_DEGREE, "table {t}");
+    }
+    // Opening round 0 of the batch prover is `R` (p3-batch-stark 0.7.0,
+    // `prover.rs`): one matrix per table in every query's opened rows.
+    let r_round = &proof.opening_proof.1.input_openings[0].opened_values;
+    assert_eq!(r_round.len(), NUM_QUERIES);
+    for (q, rows) in r_round.iter().enumerate() {
+        assert_eq!(rows.len(), tables, "query {q}");
+        for (t, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row.len(),
+                NUM_RANDOM_CODEWORDS + EXTENSION_DEGREE,
+                "query {q}, table {t}"
+            );
+        }
+    }
 }

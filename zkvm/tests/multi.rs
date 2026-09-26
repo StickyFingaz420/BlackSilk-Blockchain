@@ -311,10 +311,28 @@ fn budgets_are_enforced_by_prover_and_verifier() {
     assert!(prove::verify(&other, &bud).is_err());
 }
 
+/// Base-field columns a proof commits and FRI batches: the widths of the rows
+/// opened at the first query, over every opening round (`R`, main, quotient
+/// chunks, preprocessed, lookup), hidden random codewords included (as in
+/// `vm.rs`; internal review round 4, M3).
+fn committed_columns(proof: &blacksilk_zk::Proof) -> usize {
+    proof
+        .opening_proof
+        .1
+        .input_openings
+        .iter()
+        .map(|round| round.opened_values[0].iter().map(Vec::len).sum::<usize>())
+        .sum()
+}
+
 /// The widest statement PX can produce (the kernel plus `MAX_FN` = 2
 /// functions: 3 executions, 23 tables with the Blind table) stays inside the
 /// envelope the security figures are computed for (review round 2, S2).
-/// Counted as `vm.rs::the_vm_shape_meets_the_security_floor` counts.
+/// Table widths do not depend on the programs. Quotient-chunk counts follow
+/// each table's constraint degree, which Plonky3 derives symbolically and which
+/// is largest when periodic columns span the whole table, as they do here. So
+/// a 3-execution proof has the widest committed width; it is measured on a
+/// real proof.
 #[test]
 fn the_widest_multi_execution_shape_stays_in_the_envelope() {
     use blacksilk_zk::params::{self, ProofShape};
@@ -325,12 +343,20 @@ fn the_widest_multi_execution_shape_stays_in_the_envelope() {
     let sh = shapes(&airs, &traces, &trace::public_values(&st));
     let constraints: usize = sh.iter().map(|s| s.constraints).sum();
     let max_degree = 5;
-    let quotient_chunks = sh.len() * (max_degree - 1) * params::EXTENSION_DEGREE;
-    let columns: usize = sh
-        .iter()
-        .map(|s| s.main_width + s.prep_width + params::EXTENSION_DEGREE * s.interactions)
-        .sum::<usize>()
-        + quotient_chunks;
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(13);
+    let (proven, proof) = prove::prove_multi(
+        &[
+            (program(5), &[10, 11]),
+            (program(6), &[20, 21]),
+            (program(7), &[30, 31]),
+        ],
+        st.binding,
+        &mut rng,
+    )
+    .unwrap();
+    assert_eq!(proof.opened_values.instances.len(), 23);
+    assert_eq!(prove::verify(&proven, &proof), Ok(()));
+    let columns = committed_columns(&proof);
     let shape = ProofShape {
         constraints,
         max_degree,

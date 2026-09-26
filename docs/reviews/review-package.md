@@ -30,7 +30,7 @@ The scope, priorities and the claims to confirm or refute are in
 | # | Area | Main question | Expertise | Code |
 |---|---|---|---|---|
 | 1 | Poseidon2 and `Hk` | Are the parameters (BabyBear, width 16, standard rounds) and our domain-separated uses sound for collision and preimage resistance at ~124 bits? | Symmetric cryptanalysis (arithmetization-oriented hashes) | `px-core/src/hash.rs`, `px-core/src/record.rs`, `zkvm/src/air/poseidon.rs` |
-| 2 | Plonky3 as configured, and the three patches | Is BS-ZK-2 sound at the claimed bits across the envelope, and zero-knowledge with 4 random codewords and 4 salt elements? Do the patches only change lock scope? | STARK/FRI proof systems; Rust concurrency for the patches | `zk/src/config.rs`, `zk/src/params.rs`, `third_party/` |
+| 2 | Plonky3 as configured, and the three patches | Is BS-ZK-2 sound at the claimed bits across the envelope, and statistically zero-knowledge as configured (a separate FRI mask per table, 4 random codewords, 4 salt elements, terminal blinding; docs/reviews/zk-coverage.md)? Do the patches only change lock scope? | STARK/FRI proof systems; Rust concurrency for the patches | `zk/src/config.rs`, `zk/src/params.rs`, `third_party/` |
 | 3 | BVM-1 zkVM circuits | Do the 11 tables and their buses constrain exactly the interpreter's semantics, with no under-constrained column? | Arithmetization and circuit auditing (AIR, LogUp) | `zkvm/src/air/`, docs/zkvm.md |
 | 4 | PX kernel and function binding | Does the kernel conserve value, and can a function approve or specify anything outside its own contract (`io_hash`)? | Protocol design, ZK application auditing | `px-core/src/{kernel,call}.rs`, `px/src/prove.rs`, docs/px.md |
 | 5 | PX consensus rules | Do the node rules (nullifiers, anchors, the fee rule, the deploy registry, reorg undo) match the kernel's statement, with no double-spend or inflation path? | Blockchain consensus and state management | `tx/src/px.rs`, `tx/src/validate.rs`, `tx/src/state.rs`, `chain/` |
@@ -138,10 +138,12 @@ cargo audit
 ## 5. Where the project itself is least certain
 
 These are the questions where outside judgement matters most:
-1. **Zero knowledge of Plonky3's hiding mode as configured:** 4 random codewords and
-   4 salt elements. We rely on it for every private property.
+1. **Zero knowledge of Plonky3's hiding mode as configured**, which the project claims
+   only as statistical and conditional (zk-coverage.md §3: many tables of mixed
+   heights, the leakage of LogUp arguments, multi-phase traces). We rely on it for
+   every private property.
 2. **The security calculator** behind "≥ 123 / ≥ 105 bits", and whether the envelope
-   bounds (2^22 rows, 4,000 columns) are enforced everywhere the verifier sees a
+   bounds (2^22 rows, 6,000 columns) are enforced everywhere the verifier sees a
    shape.
 3. **Poseidon2 over BabyBear, width 16, with the standard round numbers,** used for
    both the proof system and every PX commitment and nullifier (no extra rounds,
