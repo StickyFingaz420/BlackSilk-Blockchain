@@ -75,6 +75,26 @@ against the source, or by a test or measurement, before accepting it. The
   - F15: the restore height is taken from the node;
   - F16: wrong error message. **Fixed.**
 
+## Round 2 (2026-09-26): terminal blinding (commit dfa82bf)
+
+**Reviewer:** a fresh-context agent. It had the code and the design, but not the
+author's test results. **No soundness break and no gap in the terminal hiding were
+found.** Findings, each verified by the author:
+
+| # | Finding | Verified | Status |
+|---|---|---|---|
+| T1 (medium) | The "consistent with every hypothesis" test succeeds for any published value, unblinded included (`fp` is a bijection): it is not evidence of hiding | Yes (algebra) | **Fixed in the docs and the test name.** Hiding rests on the argument; new test `every_table_of_a_real_proof_is_blinded_with_fresh_values` checks that blinding is applied on the real proving path |
+| T2 (medium) | The unbalanced-bus test broke a local ALU constraint, and in debug builds never produced a proof | Yes | **Fixed.** A pure bus imbalance (the oracle confirms only bus balances fail); in release a proof is produced and rejected by the terminal-sum check |
+| T3 (medium) | The stand-in test used a 13-element tuple on the 8-wide blinding bus; Plonky3 panics before proving, so the proof check never ran | Yes | **Fixed.** Well-formed 8-element provisions; a proof is produced and rejected |
+| T4, T5 (low) | Only the Program table's terminal was checked; no tests for `real = 2` or dirty padding in the Blind table | Yes | **Fixed.** Tests added |
+| S1 (low) | The Blind table's height limit was 2^22 in unshaped proofs | Yes | **Fixed.** Limited to the minimum height |
+| S2 (medium) | The widest PX statement commits 4,984 columns, beyond the 4,000-column analysis envelope; about 4,560 predate blinding | **Measured** | **Fixed.** Envelope raised to 6,000; the security bits are unchanged (123/105); new envelope test for 3 executions |
+| Z1 (info) | The note's condition "blinding values never revealed" is false for tables with public sums (harmless) | Yes | **Fixed** (the condition is restated) |
+| **Z2 (medium, open)** | Plonky3's FRI mask uses 4 base-field random codewords: a 4-dimensional subspace of the degree-8 extension, the pattern rejected for the blinding width. The per-column counting argument does not cover commit-phase openings | Source: yes; impact: **not established** | **OPEN**, added to Z7. A remedy (8 or more codewords) changes proofs: owner decision |
+| Z3 (low) | Fail-open: zero blinding satisfies every constraint; a proving path that skipped randomization would leak | Yes | **Mitigated by a test**; making the builder take the RNG is a hardening option |
+| Z4 (low) | The new domain tag was missing from the tag-uniqueness list | Yes | **Fixed** |
+| Z5 (info) | The blinding RNG state is not zeroized | Yes | Accepted (the values are in the traces anyway) |
+
 ## What this round did not cover
 
 - `isa.rs` (the decoder);

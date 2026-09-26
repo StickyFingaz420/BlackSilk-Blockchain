@@ -26,6 +26,7 @@ use blacksilk_zkvm::prove::{self, limits, statement_digest};
 use blacksilk_zkvm::{run, MAX_CYCLES};
 use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing};
 use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::Matrix;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::sync::Arc;
@@ -131,16 +132,31 @@ fn explain(
     hypothesis: &RowMajorMatrix<Val>,
     published: Challenge,
 ) -> Option<[Val; BLIND_VALUES]> {
-    let ch = &obs.challenges[PROGRAM];
+    explain_table(obs, PROGRAM, air, hypothesis, &[], published)
+}
+
+/// As [`explain`], for table `t` with public values `pv`. Because the
+/// fingerprint map is a bijection, blinding values reproducing `published`
+/// **always** exist (review round 2, T1): this recovers them, it is not a
+/// test of hiding. Used to check which values a real proof used.
+fn explain_table(
+    obs: &Observer,
+    t: usize,
+    air: &Table,
+    hypothesis: &RowMajorMatrix<Val>,
+    pv: &[Val],
+    published: Challenge,
+) -> Option<[Val; BLIND_VALUES]> {
+    let ch = &obs.challenges[t];
     // The blinding lookup is the table's last: its (bus offset, combiner).
     let (prefix, beta) = (ch[ch.len() - 2], ch[ch.len() - 1]);
-    let t0 = obs.terminal(PROGRAM, air, hypothesis, &[]).unwrap();
+    let t0 = obs.terminal(t, air, hypothesis, pv).unwrap();
     // fp(r) = Σ_j r_j β^(7−j) (Horner, the last element on β^0); the first
     // row consumes once, contributing σ/(prefix − fp(r)). Find σ from the
     // gadget itself with a probe.
     let probe = [Val::ONE; BLIND_VALUES];
     let t_probe = obs
-        .terminal(PROGRAM, air, &with_values(hypothesis, &probe), &[])
+        .terminal(t, air, &with_values(hypothesis, &probe), pv)
         .unwrap();
     let fp = |r: &[Val; BLIND_VALUES]| -> Challenge {
         r.iter()
@@ -166,8 +182,8 @@ fn explain(
         std::array::from_fn(|j| beta.exp_u64((BLIND_VALUES - 1 - j) as u64));
     let r = solve(&basis, target)?;
     // Check it end to end with the gadget.
-    let t = obs.terminal(PROGRAM, air, &with_values(hypothesis, &r), &[])?;
-    (t == published).then_some(r)
+    let got = obs.terminal(t, air, &with_values(hypothesis, &r), pv)?;
+    (got == published).then_some(r)
 }
 
 #[test]
@@ -205,8 +221,13 @@ fn an_observer_reads_the_input_from_an_unblinded_proof() {
     assert_ne!(published, h1, "input 1 is rejected: the leak");
 }
 
+/// On a blinded proof the observer's direct test matches no hypothesis. The
+/// second half (blinding values explaining each hypothesis) always succeeds
+/// by the bijection argument, blinded or not (review round 2, T1): it checks
+/// the algebra, and is **not** evidence of hiding. Hiding rests on the
+/// argument in terminal-blinding.md §3 and on the randomness checks below.
 #[test]
-fn a_blinded_proof_is_consistent_with_every_hypothesis() {
+fn a_blinded_proof_matches_no_hypothesis_directly() {
     let prog = branching();
     let mut rng = ChaCha20Rng::seed_from_u64(11);
     let (st, proof) = prove::prove(prog.clone(), &[0], [9; 32], &mut rng).unwrap();
@@ -348,23 +369,41 @@ fn the_selector_admits_exactly_one_message_per_table() {
     assert!(rejected(&airs, &b, &public));
 }
 
+/// A **pure** bus imbalance: one ALU_ADD row claims a different but
+/// internally consistent addition (`a0` and `c0` both + 1), so every local
+/// constraint holds and only bus balances fail. With random blinding, the
+/// release prover produces a proof, and the verifier must reject it through
+/// the global terminal sum: the blinding bus cannot absorb the imbalance.
 #[test]
 fn blinding_cannot_hide_an_unbalanced_real_bus() {
-    // A false ALU result leaves the ALU bus unbalanced. Whatever blinding
-    // values the prover commits to (before the challenges exist), the proof
-    // does not verify: the blinding bus has its own offset, so its terms
-    // cannot cancel the ALU imbalance except at roots of a nonzero rational
-    // function (negligible over the extension field).
+    use blacksilk_zkvm::air::check::Violation;
     let prog = branching();
     let (st, traces) = statement_and_traces(&prog, 0);
     let airs = trace::tables(&st);
     let public = trace::public_values(&st);
-    // The ALU_ADD table's first real row: bump its result's low byte.
     let add = 5;
+    let w = traces[add].width;
+    // alu_add layout: ADD, SUB flags, a0..a3 (2..6), b0..b3, c0..c3 (10..14).
+    let row = (0..traces[add].height())
+        .find(|&r| {
+            let v = &traces[add].values[r * w..(r + 1) * w];
+            v[0] == Val::ONE
+                && p3_field::PrimeField32::as_canonical_u32(&v[2]) < 255
+                && p3_field::PrimeField32::as_canonical_u32(&v[10]) < 255
+        })
+        .expect("an ADD row with room in its low bytes");
     let mut bad = traces.clone();
-    let c0 = 10; // ADD, SUB flags, a0..a3, b0..b3, then c0 (alu_add layout)
-    bad[add].values[c0] += Val::ONE;
-    assert!(rejected(&airs, &bad, &public));
+    bad[add].values[row * w + 2] += Val::ONE;
+    bad[add].values[row * w + 10] += Val::ONE;
+    let v = check(&airs, &bad, &public);
+    assert!(!v.is_empty());
+    assert!(
+        v.iter().all(|x| matches!(
+            x,
+            Violation::Unbalanced { .. } | Violation::LocalUnbalanced { .. }
+        )),
+        "only bus balances fail: {v:?}"
+    );
     for seed in 0..3u64 {
         let mut t = bad.clone();
         trace::randomize_blinding(&mut t, &mut ChaCha20Rng::seed_from_u64(seed));
@@ -373,13 +412,73 @@ fn blinding_cannot_hide_an_unbalanced_real_bus() {
         let proof = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             blacksilk_zk::prove(&cfg, &airs, &t, &public, &limits(&airs))
         }));
-        if let Ok(Ok(p)) = proof {
-            assert!(
-                prove::verify(&st, &p).is_err(),
-                "seed {seed}: forged proof verified"
-            );
+        if cfg!(debug_assertions) {
+            // Plonky3's debug checker refuses to prove it: nothing to verify.
+            assert!(!matches!(proof, Ok(Ok(_))), "debug prover accepted it");
+            continue;
         }
+        let p = proof
+            .expect("the release prover does not check balances")
+            .expect("a proof is produced");
+        let err = prove::verify(&st, &p).expect_err("seed {seed}: the forged proof verified");
+        assert!(
+            format!("{err:?}").contains("TerminalSum"),
+            "rejected by the terminal sum, got {err:?}"
+        );
     }
+}
+
+/// On the real `prove` path, **every** table's first row carries nonzero
+/// blinding values, fresh per proof. Recovered from the published terminals
+/// with the true witness (possible in a test; for tables with public sums an
+/// observer can do the same, which is harmless: the values carry no witness
+/// data). A prover path that skipped randomization would fail here.
+#[test]
+fn every_table_of_a_real_proof_is_blinded_with_fresh_values() {
+    let prog = branching();
+    let (_, truth) = statement_and_traces(&prog, 0);
+    let mut seen: Vec<Vec<[Val; BLIND_VALUES]>> = Vec::new();
+    for seed in [31u64, 32] {
+        let mut rng = ChaCha20Rng::seed_from_u64(seed);
+        let (st, proof) = prove::prove(prog.clone(), &[0], [9; 32], &mut rng).unwrap();
+        let airs = trace::tables(&st);
+        let public = trace::public_values(&st);
+        let obs = Observer::new(
+            &VerifierConfig::for_statement(&statement_digest(&airs)),
+            &airs,
+            &proof,
+            &public,
+        );
+        let blind = airs.len() - 1;
+        let mut per = Vec::new();
+        for t in 0..blind {
+            let published = proof.lookup_terminals[t].as_ref().unwrap().0;
+            let v = explain_table(&obs, t, &airs[t], &truth[t], &public[t], published)
+                .unwrap_or_else(|| panic!("table {t}: no blinding values"));
+            assert!(
+                v.iter().any(|x| *x != Val::ZERO),
+                "table {t} is not blinded"
+            );
+            per.push(v);
+        }
+        seen.push(per);
+    }
+    for (t, (a, b)) in seen[0].iter().zip(&seen[1]).enumerate() {
+        assert_ne!(a, b, "table {t}: the same blinding values in two proofs");
+    }
+}
+
+#[test]
+fn the_blind_table_rejects_non_boolean_rows_and_dirty_padding() {
+    let (airs, traces, public) = honest();
+    let blind = traces.len() - 1;
+    let n = traces.len() - 1;
+    let mut a = traces.clone();
+    a[blind].values[0] = Val::TWO; // real = 2
+    assert!(rejected(&airs, &a, &public));
+    let mut b = traces.clone();
+    b[blind].values[n * BLIND_WIDTH + 3] = Val::ONE; // padding row, nonzero value
+    assert!(rejected(&airs, &b, &public));
 }
 
 // ---- randomness ----

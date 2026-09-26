@@ -145,6 +145,7 @@ pub mod tags {
         WALLET_CONTRACT_AUTH,
         WALLET_CONTRACT_MEMBER,
         ZK_PROVER_SEED,
+        ZK_BLIND_SEED,
         ZKVM_PROGRAM,
         ZKVM_STATEMENT,
         PX_DELIVERY_VIEW,

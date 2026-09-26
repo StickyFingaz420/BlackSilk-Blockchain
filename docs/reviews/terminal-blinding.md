@@ -61,26 +61,53 @@ Code: `zkvm/src/air/util.rs` (`blind_consume`, `blind_provide`), `zkvm/src/air/m
    - So an observer learns nothing about any individual `S_T`.
 
 **Conditions (not proven here):**
-- **C1:** the blinding values are uniform and never revealed: the seed derivation,
-  ChaCha20, and the OS RNG.
+- **C1:** the blinding values of every table **whose real sum depends on the
+  witness** are uniform and unknown to the observer (the seed derivation, ChaCha20,
+  and the OS RNG).
+  - Corrected after internal review round 2 (Z1): the earlier wording said "never
+    revealed", which is not true for every table.
+  - For tables whose real sum is public (the Image, Output and Byte tables), an
+    observer can compute the blinding term and invert it to recover the values.
+  - That is harmless: the values are independent per table and carry no witness
+    data.
 - **C2:** the hiding PCS keeps the committed columns, the blinding columns included,
   hidden at the opened points. This is the remaining part of assumption Z7, and needs
   enough random rows for the number of openings. With the minimum height 2^8 (256
   random rows) against 108 queries plus 2 out-of-domain points, the counting argument
   of ZK-F30 is satisfied with margin. This is a counting argument, not a proof about
   Plonky3's hiding PCS.
+  - **It covers the per-column openings only** (internal review round 2, Z2).
+  - The FRI commit-phase openings are masked with `NUM_RANDOM_CODEWORDS = 4`
+    base-field random codewords combined with extension-field powers: a
+    4-dimensional base-field subspace of the degree-8 extension. That is the same
+    pattern §3 "Width" rejects for the blinding values.
+  - Whether this suffices needs a simulator argument (cf. ePrint 2024/1037), which
+    the project has not made.
+  - **OPEN** (assumptions.md Z7). A remedy would be 8 or more random codewords; that
+    changes proofs, so it is an owner decision.
 - **Width.** With only 4 random values, `fp` would reach a 4-dimensional subspace. An
   observer could then test hypotheses by solving a linear system. Eight values (the
   extension degree) are needed, and used.
 
-**Tested empirically:**
-- **`a_blinded_proof_is_consistent_with_every_hypothesis`:** on a real blinded proof,
-  the observer's direct test matches neither hypothesis. For **each** hypothesis the
-  test constructs blinding values that reproduce the published terminal exactly,
-  checked with the real LogUp gadget.
-- **`the_same_input_proven_twice_publishes_unrelated_program_terminals`:** two proofs
-  of one witness are explained by different blinding values.
-- **`blinding_values_are_fresh_nonzero_and_keep_the_bus_balanced`.**
+**What the tests show (corrected after internal review round 2, T1):**
+- **The leak without blinding:**
+  `an_observer_reads_the_input_from_an_unblinded_proof`. The observer's transcript
+  replay reproduces all 13 published terminals exactly and reads the input.
+- **Blinding is applied, and freshly, on the real proving path:**
+  - `every_table_of_a_real_proof_is_blinded_with_fresh_values`: every table's
+    blinding values, recovered from real proofs, are nonzero and differ between
+    proofs;
+  - `the_same_input_proven_twice_publishes_unrelated_program_terminals`;
+  - `blinding_values_are_fresh_nonzero_and_keep_the_bus_balanced`.
+- **Not evidence of hiding:**
+  - `a_blinded_proof_matches_no_hypothesis_directly` only shows the values are
+    nonzero.
+  - Its reconstruction of blinding values for every hypothesis **always** succeeds,
+    blinded or not, because `fp` is a bijection. The earlier version of this note
+    wrongly presented it as empirical evidence.
+- **Hiding therefore rests on the argument above (points 1 to 3) and on C1 and C2,
+  not on tests.** A statistical test of hiding would test the random generator, not
+  the construction.
 
 ## 4. Why it is sound
 
@@ -112,8 +139,17 @@ Code: `zkvm/src/air/util.rs` (`blind_consume`, `blind_provide`), `zkvm/src/air/m
 | `a_duplicated_blinding_message_is_rejected` | an extra provision |
 | `an_altered_blinding_value_on_either_side_is_rejected` | one side's value changed |
 | `the_selector_admits_exactly_one_message_per_table` | a second consumption (even with a matching provision); none on the first row |
-| `blinding_cannot_hide_an_unbalanced_real_bus` | a false ALU result with random blinding: no proof verifies, over 3 seeds |
-| `alu.rs::a_blinding_bus_message_cannot_stand_in_for_an_alu_result` | a false ALU claim "covered" by the same tuple on the blinding bus: rejected by the oracle, and no proof verifies |
+| `blinding_cannot_hide_an_unbalanced_real_bus` | A **pure** bus imbalance (an ALU row with a different but internally consistent addition; the oracle confirms only bus balances fail), with random blinding over 3 seeds. In release builds a proof **is produced** and the verifier rejects it with the terminal-sum error. Debug builds cannot produce it (Plonky3's debug checker), and the test says so explicitly |
+| `alu.rs::a_blinding_bus_message_cannot_stand_in_for_an_alu_result` | A false ALU claim plus well-formed (8-element) extra provisions on the blinding bus. Only bus balances fail; in release a proof is produced and rejected by the terminal sum |
+| `the_blind_table_rejects_non_boolean_rows_and_dirty_padding` | `real = 2`; a nonzero value in a padding row |
+
+**Earlier versions of these two tests were vacuous** (internal review round 2, T2 and
+T3):
+- the first broke a local ALU constraint rather than a bus;
+- the second used a 13-element tuple on an 8-wide bus, which Plonky3 refuses with a
+  panic before any proof exists.
+
+Neither ever reached the verifier. Both are corrected as above.
 
 **Mutation tests** now include every blinding column; every mutation is caught.
 
@@ -136,6 +172,32 @@ Code: `zkvm/src/air/util.rs` (`blind_consume`, `blind_provide`), `zkvm/src/air/m
 ## 6. Costs
 
 See §8 (measured before and after on the same machine).
+
+## 6a. Fail-open risk (internal review round 2, Z3)
+
+- All-zero blinding values satisfy every constraint, and `trace::build` /
+  `build_multi` produce zero-blinded traces (for the oracle and tests). A proving
+  path that skipped `randomize_blinding` would produce valid proofs that leak again,
+  and no verifier could tell.
+- Today only `prove::prove_shaped` calls the prover, and it randomizes.
+- The guard is a test: `every_table_of_a_real_proof_is_blinded_with_fresh_values`
+  fails if the real proving path leaves any table unblinded.
+- **Hardening option, not done:** make the trace builder take the RNG, so that a
+  zero-blinded trace cannot be proven by accident.
+
+## 6b. Envelope (internal review round 2, S1 and S2)
+
+- **S1:** the Blind table's height limit is now the minimum height (`prove::limits`),
+  so an unshaped proof cannot claim a 2^22-row Blind table.
+- **S2:** the widest PX statement (kernel plus two functions, 23 tables) commits
+  4,984 columns, counted conservatively. That is above the former analysis envelope
+  of 4,000, and about 4,560 of them predate blinding.
+  - `MAX_COMMITTED_COLUMNS` is raised to 6,000.
+  - The security calculator still gives 123 bits (Johnson) and 105 bits (unique
+    decoding) across the whole envelope
+    (`zk::params::tests::every_shape_within_limits_meets_both_security_targets`), and
+    for this shape (`zkvm/tests/multi.rs::the_widest_multi_execution_shape_stays_in_the_envelope`).
+  - It is an analysis bound; verifiers do not enforce it.
 
 ## 7. What this does not address
 
@@ -168,10 +230,13 @@ See §8 (measured before and after on the same machine).
 
 **Consequences:**
 - Blocks hold about 3.8 transfer proofs instead of about 4.1 (8 MiB PX budget).
-- Both proofs remain far below the 4 MiB proof limit.
-- The P-5 constants in privacy-review.md §3a (non-authentication parts of 1,663,016 B
-  and 2,148,177 B) describe the unblinded layout. **The P-5 campaign must be re-run
-  after adoption.**
+- The P-5 constants of the unblinded layout (non-authentication parts of 1,663,016 B
+  and 2,148,177 B) are superseded.
+  - The campaign was re-run on this layout on 2026-09-26
+    (docs/evidence/p5-2026-09-26/): 1,811,565 B and 2,359,622 B, constant per shape.
+  - No significant class dependence (minimum p = 0.071 over 14 tests).
+- Both proofs remain far below the 4 MiB proof limit for the measured shapes. The
+  two-function worst case is not measured.
 
 **Tests** (same machine):
 - `zkvm/tests/blinding.rs`: 9 passed.

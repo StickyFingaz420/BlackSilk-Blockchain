@@ -58,7 +58,13 @@ pub const MAX_LOG_HEIGHT: usize = 22;
 /// Largest number of committed columns (main + lookup + quotient chunks, summed
 /// over all tables) a proof shape may have. The security guarantees are
 /// computed (and tested) up to this bound; shapes must be checked against it.
-pub const MAX_COMMITTED_COLUMNS: usize = 4_000;
+///
+/// Raised from 4,000 on 2026-09-26: the widest PX statement (kernel plus two
+/// functions, 23 tables) commits 4,984 columns counted conservatively
+/// (`zkvm/tests/multi.rs::the_widest_multi_execution_shape_stays_in_the_envelope`),
+/// about 4,560 of them before terminal blinding. The envelope was checked only
+/// for single executions before (internal review round 2, S2).
+pub const MAX_COMMITTED_COLUMNS: usize = 6_000;
 /// Smallest table height (log2). FRI must fold every committed polynomial at
 /// least once before the final polynomial: `MIN_LOG_HEIGHT + 1 (zero-knowledge
 /// padding) > LOG_FINAL_POLY_LEN` (Plonky3 `p3-fri` prover assertion). The

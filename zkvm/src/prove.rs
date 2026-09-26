@@ -34,6 +34,9 @@ pub fn limits(airs: &[Table]) -> Vec<usize> {
         .map(|t| match t {
             Table::Byte => 16,
             Table::Cpu(_) => MAX_CYCLES.trailing_zeros() as usize,
+            // The Blind table holds at most one row per other table (at most
+            // 32): it never needs more than the minimum height.
+            Table::Blind => params::MIN_LOG_HEIGHT,
             _ => params::MAX_LOG_HEIGHT,
         })
         .collect()

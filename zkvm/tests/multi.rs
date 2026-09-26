@@ -310,3 +310,38 @@ fn budgets_are_enforced_by_prover_and_verifier() {
     });
     assert!(prove::verify(&other, &bud).is_err());
 }
+
+/// The widest statement PX can produce (the kernel plus `MAX_FN` = 2
+/// functions: 3 executions, 23 tables with the Blind table) stays inside the
+/// envelope the security figures are computed for (review round 2, S2).
+/// Counted as `vm.rs::the_vm_shape_meets_the_security_floor` counts.
+#[test]
+fn the_widest_multi_execution_shape_stays_in_the_envelope() {
+    use blacksilk_zk::params::{self, ProofShape};
+    use blacksilk_zkvm::air::check::shapes;
+    let (st, traces) = statement();
+    let airs = trace::tables(&st);
+    assert_eq!(airs.len(), 23);
+    let sh = shapes(&airs, &traces, &trace::public_values(&st));
+    let constraints: usize = sh.iter().map(|s| s.constraints).sum();
+    let max_degree = 5;
+    let quotient_chunks = sh.len() * (max_degree - 1) * params::EXTENSION_DEGREE;
+    let columns: usize = sh
+        .iter()
+        .map(|s| s.main_width + s.prep_width + params::EXTENSION_DEGREE * s.interactions)
+        .sum::<usize>()
+        + quotient_chunks;
+    let shape = ProofShape {
+        constraints,
+        max_degree,
+        committed_columns: columns,
+        log_height: params::MAX_LOG_HEIGHT,
+    };
+    let sec = params::security(&shape);
+    println!("3 executions: {columns} committed columns, {constraints} constraints; {sec:?}");
+    assert!(
+        columns <= params::MAX_COMMITTED_COLUMNS,
+        "{columns} committed columns exceed the envelope"
+    );
+    assert!(sec.johnson_bits >= params::MIN_PROVEN_BITS, "{sec:?}");
+}

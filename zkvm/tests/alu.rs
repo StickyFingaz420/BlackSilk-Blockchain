@@ -20,18 +20,20 @@ use rand_chacha::rand_core::SeedableRng;
 enum T {
     Core(Table),
     Driver,
-    /// Provides every row's 13-element tuple on the **blinding** bus: an
-    /// attempt to stand in for ALU results through the blinding mechanism.
+    /// Provides extra 8-element messages (from the driver's tuples) on the
+    /// **blinding** bus: an attempt to absorb a false ALU claim there.
     Rogue,
 }
 
 const DRIVER_WIDTH: usize = 14;
+const ROGUE_WIDTH: usize = 9;
 
 impl BaseAir<Val> for T {
     fn width(&self) -> usize {
         match self {
             T::Core(t) => t.width(),
-            T::Driver | T::Rogue => DRIVER_WIDTH,
+            T::Driver => DRIVER_WIDTH,
+            T::Rogue => ROGUE_WIDTH,
         }
     }
     fn num_periodic_columns(&self) -> usize {
@@ -60,9 +62,9 @@ impl<AB: AirBuilder<F = Val> + InteractionBuilder> Air<AB> for T {
             }
             T::Rogue => {
                 let (r, _) = row(b);
-                let real = r[13].clone();
+                let real = r[8].clone();
                 b.assert_bool(real.clone());
-                BLIND.table_entry(b, r[..13].to_vec(), real);
+                BLIND.table_entry(b, r[..8].to_vec(), real);
             }
         }
     }
@@ -329,22 +331,34 @@ fn alu_tables_prove_and_verify() {
     );
 }
 
-/// A false ALU claim cannot be covered by a message on the blinding bus: the
-/// buses have distinct offsets in every fingerprint, so a tuple provided on
-/// the blinding bus never balances one consumed on the ALU bus.
+/// A false ALU claim cannot be absorbed through the blinding bus: a rogue
+/// table adds well-formed (8-element) provisions on it. Every table's local
+/// constraints hold; only the ALU and blinding buses are unbalanced, and they
+/// have distinct offsets, so the release prover produces a proof that the
+/// verifier rejects on the terminal sum.
 #[test]
 fn a_blinding_bus_message_cannot_stand_in_for_an_alu_result() {
+    use p3_matrix::Matrix;
     let reqs: Vec<_> = requests().into_iter().step_by(3).collect();
     let lie = (0usize, 12345u32);
     let (mut airs, mut traces) = build(&reqs, Some(lie));
-    // The driver's rows, provided again on the blinding bus by a rogue table.
     let driver = traces[6].clone();
+    let rows: Vec<Vec<Val>> = (0..driver.height())
+        .map(|r| {
+            let d = &driver.values[r * DRIVER_WIDTH..(r + 1) * DRIVER_WIDTH];
+            let mut v = d[..8].to_vec();
+            v.push(d[13]); // real
+            v
+        })
+        .collect();
     airs.push(T::Rogue);
-    traces.push(driver);
+    traces.push(matrix(rows, ROGUE_WIDTH, MIN_HEIGHT));
     let public = empty_public(airs.len());
+    let v = check(&airs, &traces, &public);
+    assert!(!v.is_empty());
     assert!(
-        !check(&airs, &traces, &public).is_empty(),
-        "the oracle rejects it"
+        v.iter().all(|x| matches!(x, Violation::Unbalanced { .. })),
+        "only bus balances fail: {v:?}"
     );
     let limits = vec![16; airs.len()];
     let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(77);
@@ -352,11 +366,15 @@ fn a_blinding_bus_message_cannot_stand_in_for_an_alu_result() {
     let proof = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         blacksilk_zk::prove(&cfg, &airs, &traces, &public, &limits)
     }));
-    if let Ok(Ok(p)) = proof {
-        let v = VerifierConfig::for_statement(&[0; 32]);
-        assert!(
-            blacksilk_zk::verify(&v, &airs, &p, &public, &limits).is_err(),
-            "a proof using the blinding bus as a stand-in verified"
-        );
+    if cfg!(debug_assertions) {
+        assert!(!matches!(proof, Ok(Ok(_))), "debug prover accepted it");
+        return;
     }
+    let p = proof
+        .expect("the release prover does not check balances")
+        .expect("a proof is produced");
+    let v = VerifierConfig::for_statement(&[0; 32]);
+    let err = blacksilk_zk::verify(&v, &airs, &p, &public, &limits)
+        .expect_err("a proof absorbing a false claim through the blinding bus verified");
+    assert!(format!("{err:?}").contains("TerminalSum"), "got {err:?}");
 }
