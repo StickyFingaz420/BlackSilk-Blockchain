@@ -63,7 +63,7 @@ pub const MAX_COMMITTED_COLUMNS: usize = 4_000;
 /// least once before the final polynomial: `MIN_LOG_HEIGHT + 1 (zero-knowledge
 /// padding) > LOG_FINAL_POLY_LEN` (Plonky3 `p3-fri` prover assertion). The
 /// verifier rejects smaller claimed heights before Plonky3 sees them.
-pub const MIN_LOG_HEIGHT: usize = 6;
+pub const MIN_LOG_HEIGHT: usize = 8;
 
 /// Largest encoded proof accepted from the network. A BVM-1 transfer proof
 /// is ~2 MB (AUDIT.md R8); the widest shape of the envelope stays below this.

@@ -20,6 +20,47 @@ pub const IMAGE: LookupBus<'static> = LookupBus::new("bvm/image");
 pub const OUTPUT: LookupBus<'static> = LookupBus::new("bvm/output");
 /// Syscalls served by other tables: `(exec, clk, ptr0..ptr3)` for POSEIDON2.
 pub const SYSCALL: LookupBus<'static> = LookupBus::new("bvm/syscall");
+/// Terminal blinding (finding ZK-F29, docs/reviews/terminal-blinding.md): every
+/// table consumes, on its first row, one message of [`BLIND_VALUES`] random
+/// field elements; the [`crate::air::Table::Blind`] table provides them.
+pub const BLIND: LookupBus<'static> = LookupBus::new("bvm/blind");
+/// Random field elements per blinding message. Eight, the extension degree:
+/// the message's fingerprint is linear in them and must reach every value of
+/// the extension field, or the possible offsets would form a subspace an
+/// observer could test hypotheses against.
+pub const BLIND_VALUES: usize = 8;
+/// Columns appended to every blinded table: a selector, then the values.
+pub const BLIND_WIDTH: usize = 1 + BLIND_VALUES;
+
+/// The blinding columns of a table, at `offset..offset + BLIND_WIDTH`: the
+/// selector is 1 on the first row and 0 on every other row, the values are 0
+/// on every other row (no free cells), and the first row consumes its values
+/// from the blinding bus once.
+pub fn blind_consume<AB: InteractionBuilder>(b: &mut AB, offset: usize) {
+    let (r, n) = row(b);
+    let sel = r[offset].clone();
+    b.when_first_row().assert_one(sel.clone());
+    for v in &n[offset..offset + BLIND_WIDTH] {
+        b.when_transition().assert_zero(v.clone());
+    }
+    let values: Vec<AB::Expr> = r[offset + 1..offset + BLIND_WIDTH].to_vec();
+    BLIND.lookup_key(b, values, Count::bounded(sel, 1));
+}
+
+/// The Blind table: rows `(real, v0..v7)`, each real row providing its
+/// values once. Its own terminal is the sum of the blinding offsets alone.
+pub fn blind_provide<AB: InteractionBuilder>(b: &mut AB) {
+    let (r, _) = row(b);
+    let real = r[0].clone();
+    b.assert_bool(real.clone());
+    // Padding rows hold zeros (no free cells).
+    for v in &r[1..BLIND_WIDTH] {
+        b.assert_zero((AB::Expr::ONE - real.clone()) * v.clone());
+    }
+    let values: Vec<AB::Expr> = r[1..BLIND_WIDTH].to_vec();
+    BLIND.table_entry(b, values, real);
+}
+
 /// The offline memory argument (zkvm.md §6.3): `(exec, key, v0..v3, ts)`.
 /// Producing an entry counts +1, consuming it −1.
 ///

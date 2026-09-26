@@ -7,7 +7,7 @@ use blacksilk_px::wallet::{self, Account};
 use rand_chacha::rand_core::SeedableRng;
 use std::time::Instant;
 
-const NAMES: [&str; 12] = [
+const NAMES: [&str; 13] = [
     "byte",
     "program",
     "image",
@@ -20,6 +20,7 @@ const NAMES: [&str; 12] = [
     "mul",
     "output",
     "poseidon2",
+    "blind",
 ];
 
 fn main() {

@@ -156,6 +156,25 @@ pub fn prove_shaped<R: RngCore + CryptoRng>(
     let wide = witness.finalize();
     let mut digest = [0u8; 32];
     digest.copy_from_slice(&wide[..32]);
+    // Terminal blinding (ZK-F29): fresh random values, from the OS RNG hedged
+    // with the witness digest as for the proof's other randomness.
+    let mut traces = traces;
+    {
+        use rand_chacha::rand_core::SeedableRng;
+        let mut fresh = [0u8; 32];
+        rng.fill_bytes(&mut fresh);
+        let mut h =
+            blacksilk_crypto::hash::Hasher64::new(blacksilk_crypto::hash::tags::ZK_BLIND_SEED);
+        h.update(&digest);
+        h.update(&fresh);
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&h.finalize()[..32]);
+        let mut blind_rng = rand_chacha::ChaCha20Rng::from_seed(seed);
+        trace::randomize_blinding(&mut traces, &mut blind_rng);
+        use zeroize::Zeroize;
+        seed.zeroize();
+        fresh.zeroize();
+    }
     let cfg = ProverConfig::for_statement(&statement_digest(&airs), &digest, rng);
     let proof = blacksilk_zk::prove(&cfg, &airs, &traces, &public, &limits(&airs))
         .map_err(ProveError::Proof)?;

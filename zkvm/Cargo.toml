@@ -19,7 +19,10 @@ p3-uni-stark = "=0.7.0"
 rand_core = { version = "0.6", default-features = false }
 p3-lookup = "=0.7.0"
 p3-matrix = "=0.7.0"
+# Terminal blinding (ZK-F29): a seeded stream for the blinding values, and
+# erasure of the seed. Both are already in the dependency tree.
+rand_chacha = { version = "0.3", default-features = false }
+zeroize = { version = "1.8", default-features = false }
 
 [dev-dependencies]
-rand_chacha = { version = "0.3", default-features = false }
 postcard = { version = "1", default-features = false, features = ["alloc"] }

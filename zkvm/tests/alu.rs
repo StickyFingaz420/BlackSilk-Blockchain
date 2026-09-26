@@ -5,10 +5,11 @@
 //! correct results; the byte table must balance all range and byte-op lookups.
 
 use blacksilk_zk::config::{ProverConfig, Val, VerifierConfig};
-use blacksilk_zkvm::air::byte::{self, ByteCounter};
+use blacksilk_zkvm::air::byte::ByteCounter;
 use blacksilk_zkvm::air::check::{check, MutationChecker, Violation};
-use blacksilk_zkvm::air::util::{alu_op, bytes, matrix, row, ALU};
-use blacksilk_zkvm::air::{alu_add, alu_bit, alu_lt, alu_mul, alu_shift, Table};
+use blacksilk_zkvm::air::trace::{blind_trace, with_blinding};
+use blacksilk_zkvm::air::util::{alu_op, bytes, matrix, row, ALU, BLIND};
+use blacksilk_zkvm::air::{alu_add, alu_bit, alu_lt, alu_mul, alu_shift, Table, MIN_HEIGHT};
 use p3_air::{Air, AirBuilder, BaseAir};
 use p3_field::PrimeCharacteristicRing;
 use p3_lookup::{Count, InteractionBuilder};
@@ -19,6 +20,9 @@ use rand_chacha::rand_core::SeedableRng;
 enum T {
     Core(Table),
     Driver,
+    /// Provides every row's 13-element tuple on the **blinding** bus: an
+    /// attempt to stand in for ALU results through the blinding mechanism.
+    Rogue,
 }
 
 const DRIVER_WIDTH: usize = 14;
@@ -27,19 +31,19 @@ impl BaseAir<Val> for T {
     fn width(&self) -> usize {
         match self {
             T::Core(t) => t.width(),
-            T::Driver => DRIVER_WIDTH,
+            T::Driver | T::Rogue => DRIVER_WIDTH,
         }
     }
     fn num_periodic_columns(&self) -> usize {
         match self {
             T::Core(t) => t.num_periodic_columns(),
-            T::Driver => 0,
+            T::Driver | T::Rogue => 0,
         }
     }
     fn periodic_columns(&self) -> std::borrow::Cow<'_, [Vec<Val>]> {
         match self {
             T::Core(t) => t.periodic_columns(),
-            T::Driver => std::borrow::Cow::Owned(Vec::new()),
+            T::Driver | T::Rogue => std::borrow::Cow::Owned(Vec::new()),
         }
     }
 }
@@ -53,6 +57,12 @@ impl<AB: AirBuilder<F = Val> + InteractionBuilder> Air<AB> for T {
                 let real = r[13].clone();
                 b.assert_bool(real.clone());
                 ALU.lookup_key(b, r[..13].to_vec(), Count::bounded(real, 1));
+            }
+            T::Rogue => {
+                let (r, _) = row(b);
+                let real = r[13].clone();
+                b.assert_bool(real.clone());
+                BLIND.table_entry(b, r[..13].to_vec(), real);
             }
         }
     }
@@ -99,25 +109,25 @@ fn build(
             .filter(|r| set.contains(&r.0))
             .collect()
     };
-    let add = alu_add::trace(&by(&[alu_op::ADD, alu_op::SUB]), &mut counter, 64);
+    let add = alu_add::trace(&by(&[alu_op::ADD, alu_op::SUB]), &mut counter, MIN_HEIGHT);
     let bit = alu_bit::trace(
         &by(&[alu_op::XOR, alu_op::OR, alu_op::AND]),
         &mut counter,
-        64,
+        MIN_HEIGHT,
     );
     let lt = alu_lt::trace(
         &by(&[alu_op::SLT, alu_op::SLTU, alu_op::EQ]),
         &mut counter,
-        64,
+        MIN_HEIGHT,
     );
     let mut mul_reqs = by(&[alu_op::MUL, alu_op::MULH, alu_op::MULHSU, alu_op::MULHU]);
     let shift = alu_shift::trace(
         &by(&[alu_op::SLL, alu_op::SRL, alu_op::SRA]),
         &mut counter,
-        64,
+        MIN_HEIGHT,
         &mut mul_reqs,
     );
-    let mul = alu_mul::trace(&mul_reqs, &mut counter, 64);
+    let mul = alu_mul::trace(&mul_reqs, &mut counter, MIN_HEIGHT);
     let driver_rows = reqs
         .iter()
         .enumerate()
@@ -136,7 +146,7 @@ fn build(
             r
         })
         .collect();
-    let driver = matrix(driver_rows, DRIVER_WIDTH, 64);
+    let driver = matrix(driver_rows, DRIVER_WIDTH, MIN_HEIGHT);
     (
         vec![
             T::Core(Table::Byte),
@@ -146,15 +156,21 @@ fn build(
             T::Core(Table::AluShift),
             T::Core(Table::AluMul),
             T::Driver,
+            T::Core(Table::Blind),
         ],
+        // The core tables carry blinding columns; the test driver does not.
         vec![
-            blacksilk_zkvm::air::with_public_columns(&Table::Byte, counter.trace()),
-            add,
-            bit,
-            lt,
-            shift,
-            mul,
+            with_blinding(blacksilk_zkvm::air::with_public_columns(
+                &Table::Byte,
+                counter.trace(),
+            )),
+            with_blinding(add),
+            with_blinding(bit),
+            with_blinding(lt),
+            with_blinding(shift),
+            with_blinding(mul),
             driver,
+            blind_trace(6),
         ],
     )
 }
@@ -280,7 +296,8 @@ fn every_single_cell_mutation_of_a_real_alu_row_is_caught() {
 #[test]
 fn byte_table_multiplicities_must_match() {
     let (airs, mut traces) = build(&requests(), None);
-    traces[0].values[5 * byte::WIDTH] += Val::ONE; // range multiplicity of pair (0, 5)
+    let w = traces[0].width;
+    traces[0].values[5 * w] += Val::ONE; // range multiplicity of pair (0, 5)
     assert!(!check(&airs, &traces, &empty_public(airs.len())).is_empty());
 }
 
@@ -310,4 +327,36 @@ fn alu_tables_prove_and_verify() {
         ),
         Ok(())
     );
+}
+
+/// A false ALU claim cannot be covered by a message on the blinding bus: the
+/// buses have distinct offsets in every fingerprint, so a tuple provided on
+/// the blinding bus never balances one consumed on the ALU bus.
+#[test]
+fn a_blinding_bus_message_cannot_stand_in_for_an_alu_result() {
+    let reqs: Vec<_> = requests().into_iter().step_by(3).collect();
+    let lie = (0usize, 12345u32);
+    let (mut airs, mut traces) = build(&reqs, Some(lie));
+    // The driver's rows, provided again on the blinding bus by a rogue table.
+    let driver = traces[6].clone();
+    airs.push(T::Rogue);
+    traces.push(driver);
+    let public = empty_public(airs.len());
+    assert!(
+        !check(&airs, &traces, &public).is_empty(),
+        "the oracle rejects it"
+    );
+    let limits = vec![16; airs.len()];
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(77);
+    let cfg = ProverConfig::for_statement(&[0; 32], &[0; 32], &mut rng);
+    let proof = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        blacksilk_zk::prove(&cfg, &airs, &traces, &public, &limits)
+    }));
+    if let Ok(Ok(p)) = proof {
+        let v = VerifierConfig::for_statement(&[0; 32]);
+        assert!(
+            blacksilk_zk::verify(&v, &airs, &p, &public, &limits).is_err(),
+            "a proof using the blinding bus as a stand-in verified"
+        );
+    }
 }

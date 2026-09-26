@@ -2,8 +2,8 @@
 
 use blacksilk_zk::config::Val;
 use blacksilk_zkvm::air::check::{check, MutationChecker, Violation};
+use blacksilk_zkvm::air::cpu;
 use blacksilk_zkvm::air::trace::{self, Statement};
-use blacksilk_zkvm::air::{cpu, memory};
 use blacksilk_zkvm::asm::{reg::*, Asm};
 use blacksilk_zkvm::isa::Op;
 use blacksilk_zkvm::{prove, run, MAX_CYCLES};
@@ -176,12 +176,11 @@ fn every_single_cell_mutation_of_real_cpu_and_memory_rows_is_caught() {
     let mut m = MutationChecker::new(&airs, &traces, &public);
     let mut accepted = Vec::new();
     let mut tried = 0;
-    // (table index, is_real column, width)
-    for (t, real_col, w) in [
-        (4usize, cpu::IS_REAL, cpu::WIDTH),
-        (3, 0, memory::INIT_WIDTH),
-    ] {
+    // (table index, is_real column); every column is mutated, the blinding
+    // columns included.
+    for (t, real_col) in [(4usize, cpu::IS_REAL), (3, 0)] {
         let tr = &traces[t];
+        let w = tr.width;
         let rows = tr.values.len() / w;
         for r in 0..rows {
             if tr.values[r * w + real_col] != Val::ONE {
@@ -374,6 +373,7 @@ fn proof_composition_report() {
         "mul",
         "output",
         "poseidon2",
+        "blind",
     ];
     for (i, inst) in proof.opened_values.instances.iter().enumerate() {
         let b = &inst.base_opened_values;
@@ -447,7 +447,6 @@ fn poseidon2_syscalls_satisfy_the_constraints_and_match_the_native_permutation()
 
 #[test]
 fn every_single_cell_mutation_of_poseidon2_and_its_cpu_rows_is_caught() {
-    use blacksilk_zkvm::air::poseidon;
     let (st, traces) = statement(&poseidon_program(), &[]);
     let airs = trace::tables(&st);
     let public = trace::public_values(&st);
@@ -455,7 +454,7 @@ fn every_single_cell_mutation_of_poseidon2_and_its_cpu_rows_is_caught() {
     let mut accepted = Vec::new();
     let mut tried = 0;
     // The POSEIDON2 rows (both real rows, every column).
-    let (t, w) = (11usize, poseidon::WIDTH);
+    let (t, w) = (11usize, traces[11].width);
     for r in 0..2 {
         for col in 0..w {
             for delta in [Val::ONE, -Val::ONE] {
@@ -467,7 +466,7 @@ fn every_single_cell_mutation_of_poseidon2_and_its_cpu_rows_is_caught() {
         }
     }
     // The CPU rows of the two ECALLs.
-    let cw = cpu::WIDTH;
+    let cw = traces[4].width;
     let cpu_rows: Vec<usize> = (0..traces[4].values.len() / cw)
         .filter(|&r| traces[4].values[r * cw + cpu::SP2] == Val::ONE)
         .collect();

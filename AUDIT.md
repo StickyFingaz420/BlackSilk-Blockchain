@@ -1419,6 +1419,38 @@ reviewer candidates, and a launch checklist (docs/testnet-launch-checklist.md).
   Open: W-F7 (restore scans account 0 only), W-F13, W-F15, and proof-of-work checks
   in the wallet.
 
+### R12: Terminal blinding, the fix for ZK-F29 and ZK-F30 (2026-09-26). Internal; no external audit.
+
+**Design** (approved by the owner; docs/reviews/terminal-blinding.md):
+- Every table consumes one message of 8 random field elements on a dedicated bus,
+  `bvm/blind`, on its first row. A new last table, `Blind`, provides them.
+- The minimum table height is raised to 2^8.
+- Only our circuit code changes; Plonky3 is unchanged.
+- Consensus-affecting: it takes effect only with the testnet reset (owner decision).
+
+**Hiding:** each published terminal is independent of its table's real sum, up to a
+statistical distance of about **2^−124** (the chance that the challenge lies in a
+proper subfield). This holds under two conditions:
+- the blinding values are uniform and secret;
+- the hiding PCS hides the committed columns (the rest of Z7).
+
+**Soundness:** it rests on Plonky3's bus separation and LogUp soundness (C/U).
+
+**Tests:**
+- `zkvm/tests/blinding.rs` (9 tests): the observer reads the input from an unblinded
+  proof; on a blinded proof, **every** hypothesis is explained exactly by some
+  blinding values; plus missing, duplicated and altered messages, selector abuse, an
+  unbalanced real bus, and randomness;
+- `alu.rs::a_blinding_bus_message_cannot_stand_in_for_an_alu_result`;
+- mutation tests cover every blinding column;
+- full suite: 419 passed, 0 failed.
+
+**Cost:** transfer proofs +7.1% in size (2,034,920 to 2,179,111 B); proving
+42.0 → 45.7 s; verification 0.195 → 0.209 s.
+
+**Follow-ups:** a second internal review of the new code; the P-5 campaign on the new
+layout.
+
 ### Finding status after R1–R6
 
 | Findings | Status | Evidence |

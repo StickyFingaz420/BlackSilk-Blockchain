@@ -115,7 +115,7 @@ fn prover(seed: u64) -> ProverConfig {
 }
 
 fn honest_proof(seed: u64) -> (Proof, Vec<Vec<Val>>) {
-    let (traces, pv) = witness(3, 64, 256);
+    let (traces, pv) = witness(3, 256, 512);
     let proof = prove(&prover(seed), &AIRS, &traces, &pv, &LIMITS).expect("honest proof");
     (proof, pv)
 }
@@ -176,9 +176,9 @@ fn false_statements_cannot_be_proven() {
     // the produced proof must not verify.
     let v = VerifierConfig::new();
     let cases: Vec<Witness> = vec![
-        witness(200, 64, 256), // 200..263 runs past the 256-entry table
+        witness(400, 256, 512), // 400..655 runs past the 512-entry table
         {
-            let (mut t, pv) = witness(3, 64, 256);
+            let (mut t, pv) = witness(3, 256, 512);
             t[0].values[1] += Val::ONE; // sq of row 0
             (t, pv)
         },
@@ -311,7 +311,7 @@ fn proofs_are_randomized() {
     assert!(verify(&v, &AIRS, &a, &pv, &LIMITS).is_ok());
     assert!(verify(&v, &AIRS, &b, &pv, &LIMITS).is_ok());
     // The witness digest alone (a broken OS RNG) still changes the proof.
-    let (traces, pv) = witness(3, 64, 256);
+    let (traces, pv) = witness(3, 256, 512);
     struct Zero;
     impl rand_core::RngCore for Zero {
         fn next_u32(&mut self) -> u32 {
@@ -374,7 +374,7 @@ mod preprocessed {
         Table,
     }
 
-    const N: usize = 64;
+    const N: usize = 256;
 
     impl<F: p3_field::Field> BaseAir<F> for P {
         fn width(&self) -> usize {

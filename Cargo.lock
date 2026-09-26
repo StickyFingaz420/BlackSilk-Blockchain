@@ -507,6 +507,7 @@ dependencies = [
  "postcard",
  "rand_chacha",
  "rand_core 0.6.4",
+ "zeroize",
 ]
 
 [[package]]

@@ -81,10 +81,13 @@ pub enum Table {
     Output(Arc<Vec<u32>>, u32),
     /// Shared by all executions.
     Poseidon2,
+    /// Provides every other table's blinding message (ZK-F29); always last.
+    Blind,
 }
 
-impl BaseAir<Val> for Table {
-    fn width(&self) -> usize {
+impl Table {
+    /// Width without the blinding columns.
+    fn base_width(&self) -> usize {
         match self {
             Table::Byte => byte::WIDTH + byte::PREP_WIDTH,
             Table::AluAdd => alu_add::WIDTH,
@@ -97,7 +100,16 @@ impl BaseAir<Val> for Table {
             Table::MemInit(_) => memory::INIT_WIDTH,
             Table::Cpu(_) => cpu::WIDTH,
             Table::Poseidon2 => poseidon::WIDTH,
+            Table::Blind => 0,
         }
+    }
+}
+
+impl BaseAir<Val> for Table {
+    /// Every table ends with the blinding columns (`util::BLIND_WIDTH`): the
+    /// Blind table's rows, or another table's first-row blinding message.
+    fn width(&self) -> usize {
+        self.base_width() + util::BLIND_WIDTH
     }
 
     fn num_public_values(&self) -> usize {
@@ -147,6 +159,10 @@ impl<AB: AirBuilder<F = Val> + InteractionBuilder> Air<AB> for Table {
             Table::Cpu(e) => cpu::eval(b, *e),
             Table::Output(_, e) => memory::output_eval(b, *e),
             Table::Poseidon2 => poseidon::eval(b),
+            Table::Blind => util::blind_provide(b),
+        }
+        if !matches!(self, Table::Blind) {
+            util::blind_consume(b, self.base_width());
         }
     }
 }

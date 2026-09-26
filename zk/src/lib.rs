@@ -205,3 +205,91 @@ pub fn decode_proof(bytes: &[u8]) -> Result<Proof, ZkError> {
     }
     Ok(proof)
 }
+
+/// **Analysis only** (not used by proving or verification): what an outside
+/// observer can compute about a proof's lookup terminals (finding ZK-F29).
+///
+/// [`Observer::new`] replays the verifier's Fiat–Shamir transcript up to the
+/// lookup challenges, from public data only. [`Observer::terminal`] computes
+/// the LogUp terminal a given trace of table `i` would produce under those
+/// challenges, exactly as the prover computes the value it publishes. A test
+/// can then check whether a published terminal is explained by a hypothesis.
+#[doc(hidden)]
+pub mod analysis {
+    use super::config::{Challenge, Val, VerifierConfig, ZkConfig};
+    use super::{Proof, ProvableAir};
+    use p3_batch_stark::{BatchTranscript, ProverData};
+    use p3_lookup::{LogUpGadget, LookupProtocol, Lookups};
+    use p3_matrix::dense::RowMajorMatrix;
+    use p3_uni_stark::StarkGenericConfig;
+
+    pub struct Observer {
+        lookups: Vec<Lookups<Val>>,
+        /// Per table: one `(bus offset, combiner)` pair per lookup, in the
+        /// table's lookup order.
+        pub challenges: Vec<Vec<Challenge>>,
+    }
+
+    impl Observer {
+        pub fn new<A: ProvableAir>(
+            cfg: &VerifierConfig,
+            airs: &[A],
+            proof: &Proof,
+            public: &[Vec<Val>],
+        ) -> Self {
+            let inner = cfg.inner();
+            let data = ProverData::from_airs_and_degrees(inner, airs, &proof.degree_bits);
+            let common = data.common;
+            let mut t = BatchTranscript::<ZkConfig>::new(inner.initialise_challenger());
+            t.observe_instance_count(airs.len());
+            for (i, air) in airs.iter().enumerate() {
+                let db = proof.degree_bits[i];
+                let chunks = proof.opened_values.instances[i]
+                    .base_opened_values
+                    .quotient_chunks
+                    .len();
+                t.observe_instance_binding(db, db - 1, p3_air::BaseAir::<Val>::width(air), chunks);
+            }
+            t.observe_main(&proof.commitments.main, public);
+            let widths: Vec<usize> = (0..airs.len())
+                .map(|i| {
+                    common
+                        .preprocessed
+                        .as_ref()
+                        .and_then(|g| g.instances[i].as_ref().map(|m| m.width))
+                        .unwrap_or(0)
+                })
+                .collect();
+            t.observe_preprocessed(&widths, common.preprocessed.as_ref());
+            let challenges = t.sample_perm_challenges(&common.lookups, &LogUpGadget::new());
+            Self {
+                lookups: common.lookups,
+                challenges,
+            }
+        }
+
+        /// The terminal of table `i` for `trace` (its full main trace).
+        pub fn terminal<A: ProvableAir>(
+            &self,
+            i: usize,
+            air: &A,
+            trace: &RowMajorMatrix<Val>,
+            public: &[Val],
+        ) -> Option<Challenge> {
+            let pre = p3_air::BaseAir::<Val>::preprocessed_trace(air);
+            let (_, t) = LogUpGadget::new().generate_permutation::<ZkConfig>(
+                trace,
+                &pre,
+                public,
+                self.lookups[i].as_ref(),
+                &self.challenges[i],
+            );
+            t.map(|t| t.0)
+        }
+    }
+
+    const _: fn() = || {
+        fn is_config<C: StarkGenericConfig>() {}
+        is_config::<ZkConfig>();
+    };
+}

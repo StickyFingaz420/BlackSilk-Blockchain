@@ -8,7 +8,7 @@
 use super::byte::ByteCounter;
 use super::memory::{self, InitRow};
 use super::program::{class, f, fields};
-use super::util::{alu_op, bytes, matrix, REG_BASE};
+use super::util::{alu_op, bytes, matrix, BLIND_VALUES, BLIND_WIDTH, REG_BASE};
 use super::{
     alu_add, alu_bit, alu_lt, alu_mul, alu_shift, cpu, poseidon, program, Table, MIN_HEIGHT,
 };
@@ -19,6 +19,7 @@ use crate::Syscall;
 use blacksilk_zk::config::Val;
 use p3_field::{PrimeCharacteristicRing, PrimeField32};
 use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::Matrix;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -151,6 +152,7 @@ impl Statement {
         for (p, bud) in self.others.iter().zip(&b[1..]) {
             v.extend(own(&p.program, &p.output, bud));
         }
+        v.push(MIN_HEIGHT); // the Blind table
         Some(v)
     }
 
@@ -233,13 +235,15 @@ pub fn tables(st: &Statement) -> Vec<Table> {
             Table::Output(Arc::new(p.output.clone()), e),
         ]);
     }
+    v.push(Table::Blind);
     v
 }
 
 /// Public values per table (only the CPU has any).
 pub fn public_values(st: &Statement) -> Vec<Vec<Val>> {
     let parts = st.parts();
-    let mut out = vec![vec![]; BASE_TABLES + TABLES_PER_EXTRA * st.others.len()];
+    // One entry per table, the Blind table included.
+    let mut out = vec![vec![]; BASE_TABLES + TABLES_PER_EXTRA * st.others.len() + 1];
     for (e, (program, exit_code, output)) in parts.into_iter().enumerate() {
         let mut cpu_pv = vec![Val::from_u32(program.entry)];
         cpu_pv.extend(bytes(program.code_end()));
@@ -387,11 +391,79 @@ pub fn build_multi(st: &Statement, execs: &[&Execution]) -> Vec<RowMajorMatrix<V
     for x in rest {
         out.extend([x.program, x.image, x.init, x.cpu, x.output]);
     }
-    tables(st)
+    let tabs = tables(st);
+    let mut traces: Vec<RowMajorMatrix<Val>> = tabs
         .iter()
         .zip(out)
-        .map(|(t, m)| super::with_public_columns(t, m))
-        .collect()
+        .map(|(t, m)| with_blinding(super::with_public_columns(t, m)))
+        .collect();
+    traces.push(blind_trace(tabs.len() - 1));
+    traces
+}
+
+/// Appends a table's blinding columns: selector 1 on the first row, 0
+/// elsewhere, and all-zero values. The prover replaces the values with random
+/// ones ([`randomize_blinding`]); tests and the constraint oracle may keep
+/// the zeros, which satisfy the same constraints.
+pub fn with_blinding(m: RowMajorMatrix<Val>) -> RowMajorMatrix<Val> {
+    let (h, w) = (m.height(), m.width());
+    let mut v = Vec::with_capacity(h * (w + BLIND_WIDTH));
+    for r in 0..h {
+        v.extend_from_slice(&m.values[r * w..(r + 1) * w]);
+        v.push(if r == 0 { Val::ONE } else { Val::ZERO });
+        v.extend(std::iter::repeat_n(Val::ZERO, BLIND_VALUES));
+    }
+    RowMajorMatrix::new(v, w + BLIND_WIDTH)
+}
+
+/// The Blind table for `n` blinded tables: row `t` provides table `t`'s
+/// message (all zeros until [`randomize_blinding`]).
+pub fn blind_trace(n: usize) -> RowMajorMatrix<Val> {
+    let h = pow2(n);
+    let mut v = vec![Val::ZERO; h * BLIND_WIDTH];
+    for t in 0..n {
+        v[t * BLIND_WIDTH] = Val::ONE;
+    }
+    RowMajorMatrix::new(v, BLIND_WIDTH)
+}
+
+/// Adds blinding to a hand-assembled set of tables (tests): the blinding
+/// columns on every trace, and the Blind table last.
+pub fn blinded(
+    mut airs: Vec<Table>,
+    traces: Vec<RowMajorMatrix<Val>>,
+) -> (Vec<Table>, Vec<RowMajorMatrix<Val>>) {
+    let n = traces.len();
+    let mut traces: Vec<RowMajorMatrix<Val>> = traces.into_iter().map(with_blinding).collect();
+    traces.push(blind_trace(n));
+    airs.push(Table::Blind);
+    (airs, traces)
+}
+
+/// Replaces every blinding message with fresh uniformly random field
+/// elements, in the blinded table's first row and in the Blind table's
+/// matching row, so the bus stays balanced. `traces` is [`build_multi`]'s
+/// output (the Blind table last).
+pub fn randomize_blinding<R: rand_core::RngCore>(traces: &mut [RowMajorMatrix<Val>], rng: &mut R) {
+    let n = traces.len() - 1;
+    for t in 0..n {
+        let values: Vec<Val> = (0..BLIND_VALUES).map(|_| uniform(rng)).collect();
+        let w = traces[t].width();
+        traces[t].values[w - BLIND_VALUES..w].copy_from_slice(&values);
+        let row = t * BLIND_WIDTH;
+        traces[n].values[row + 1..row + BLIND_WIDTH].copy_from_slice(&values);
+    }
+}
+
+/// A uniformly random field element (rejection sampling on 31 bits).
+fn uniform<R: rand_core::RngCore>(rng: &mut R) -> Val {
+    use p3_field::PrimeField32;
+    loop {
+        let x = rng.next_u32() & 0x7fff_ffff;
+        if x < Val::ORDER_U32 {
+            return Val::from_u32(x);
+        }
+    }
 }
 
 /// Replays execution `e` against its witness and builds its own tables;

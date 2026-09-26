@@ -73,6 +73,8 @@ pub mod tags {
     pub const WALLET_CONTRACT_MEMBER: &str = "wallet/contract-member";
     // Zero-knowledge layer (docs/zk.md).
     pub const ZK_PROVER_SEED: &str = "zk/prover-seed";
+    /// Seed of the lookup-terminal blinding values (ZK-F29).
+    pub const ZK_BLIND_SEED: &str = "zk/blind-seed";
     pub const ZKVM_PROGRAM: &str = "zkvm/program";
     pub const ZKVM_STATEMENT: &str = "zkvm/statement";
     // Private execution record delivery (docs/px.md §6).
