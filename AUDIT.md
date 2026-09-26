@@ -1448,8 +1448,17 @@ proper subfield). This holds under two conditions:
 **Cost:** transfer proofs +7.1% in size (2,034,920 to 2,179,111 B); proving
 42.0 → 45.7 s; verification 0.195 → 0.209 s.
 
-**Follow-ups:** a second internal review of the new code; the P-5 campaign on the new
-layout.
+**Follow-ups:**
+- **Internal review round 2: done** (internal-review-log.md). There was no soundness
+  break and no hiding gap. Three tests were shown to be vacuous or
+  non-discriminating (T1–T3); they are corrected. The column envelope is raised to
+  6,000 (S2; security unchanged at 123/105 bits). **Open:** the FRI mask uses 4
+  base-field random codewords (Z2, under Z7).
+- **P-5 re-run: done** (docs/evidence/p5-2026-09-26/).
+  - Non-authentication parts are constant per shape: 1,811,565 B and 2,359,622 B.
+  - No significant class dependence: minimum p = 0.071 over 14 tests, lower than
+    before but within chance.
+- **Full suite after the round-2 fixes:** 422 passed, 0 failed, 2 ignored.
 
 ### Finding status after R1–R6
 

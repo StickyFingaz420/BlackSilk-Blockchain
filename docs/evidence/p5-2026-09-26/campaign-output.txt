@@ -1,0 +1,14 @@
+transfer/deposit: n 50, mean 2178951, sd 4139, min 2166482, max 2187122
+transfer/pay2: n 50, mean 2178622, sd 4296, min 2167250, max 2185778
+transfer/pay1: n 50, mean 2178465, sd 4654, min 2170642, max 2188786
+transfer/withdraw: n 50, mean 2179352, sd 4353, min 2167410, max 2186898
+transfer: deposit vs pay2: mean difference 330 bytes, p(mean) = 0.699, KS 0.120, p(KS) = 0.864
+transfer: deposit vs pay1: mean difference 486 bytes, p(mean) = 0.588, KS 0.160, p(KS) = 0.508
+transfer: deposit vs withdraw: mean difference 401 bytes, p(mean) = 0.635, KS 0.220, p(KS) = 0.142
+transfer: pay2 vs pay1: mean difference 156 bytes, p(mean) = 0.866, KS 0.140, p(KS) = 0.685
+transfer: pay2 vs withdraw: mean difference 730 bytes, p(mean) = 0.401, KS 0.160, p(KS) = 0.481
+transfer: pay1 vs withdraw: mean difference 886 bytes, p(mean) = 0.332, KS 0.240, p(KS) = 0.083
+vault/lock: n 30, mean 2687868, sd 3990, min 2675888, max 2695600
+vault/claim: n 30, mean 2688960, sd 3750, min 2680784, max 2696176
+vault: lock vs claim: mean difference 1092 bytes, p(mean) = 0.286, KS 0.333, p(KS) = 0.071
+every proof of each shape had the same non-authentication length
