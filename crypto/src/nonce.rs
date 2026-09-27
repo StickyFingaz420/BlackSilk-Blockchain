@@ -4,8 +4,9 @@
 //! and Schnorr nonces, Bulletproofs+ blinding values, PX delivery `r` and
 //! ML-KEM coins, PX throwaway delivery keys) come from a [`HedgedRng`]. The
 //! exact secrets and context of each call site, and what is still not hedged
-//! (the membership nonce's context, R2-C5; the PX witness randomness; the
-//! per-process miner secret, R2-C4), are listed in docs/transactions.md §10.
+//! (the membership nonce's context, R2-C5; contract-output `rcm` and function
+//! blinds in the wallet vault flows; the per-process miner secret, R2-C4), are
+//! listed in docs/transactions.md §10.
 //!
 //! ```text
 //! seed    = H64("nonce", LE64(#secrets) ‖ (LE64(len) ‖ secret)… ‖
