@@ -1202,7 +1202,8 @@ impl ChainManager {
     /// stem phase, docs/p2p.md §8).
     pub fn check_tx(&self, tx: &Transaction) -> Result<Hash, MempoolError> {
         let next = self.height() + 1;
-        self.mempool.check(tx, &self.state, next, &self.rules_at(next))
+        self.mempool
+            .check(tx, &self.state, next, &self.rules_at(next))
     }
 
     /// Adds a transaction to the mempool (valid for the next block).

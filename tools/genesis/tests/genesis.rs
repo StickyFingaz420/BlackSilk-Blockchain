@@ -30,7 +30,10 @@ fn known_answer_bitcoin_block_0() {
         hex(&nonce_preimage_digest(i.network_id, 0, &i.btc_hash)),
         KAT_DIGEST
     );
-    assert_eq!(derive_genesis_nonce(i.network_id, 0, &i.btc_hash), KAT_NONCE);
+    assert_eq!(
+        derive_genesis_nonce(i.network_id, 0, &i.btc_hash),
+        KAT_NONCE
+    );
     // The nonce is the first 8 digest bytes, little-endian.
     let d = parse_beacon_hex(KAT_DIGEST).unwrap();
     assert_eq!(KAT_NONCE, u64::from_le_bytes(d[..8].try_into().unwrap()));
@@ -66,7 +69,11 @@ fn every_input_changes_the_nonce() {
     for byte in 0..32 {
         let mut b = i.btc_hash;
         b[byte] ^= 1;
-        assert_ne!(derive_genesis_nonce(i.network_id, 0, &b), base, "byte {byte}");
+        assert_ne!(
+            derive_genesis_nonce(i.network_id, 0, &b),
+            base,
+            "byte {byte}"
+        );
     }
 }
 
@@ -102,7 +109,10 @@ fn all_genesis_fields_are_fixed() {
 fn used_network_ids_are_refused() {
     assert_eq!(check_network_id(V3_NETWORK_ID_PLACEHOLDER), Ok(()));
     for (id, _) in NETWORK_ID_REGISTRY {
-        assert_eq!(check_network_id(*id), Err(GenesisError::NetworkIdReused(*id)));
+        assert_eq!(
+            check_network_id(*id),
+            Err(GenesisError::NetworkIdReused(*id))
+        );
         let mut i = kat_inputs();
         i.network_id = *id;
         assert_eq!(build(&i), Err(GenesisError::NetworkIdReused(*id)));

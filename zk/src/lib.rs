@@ -186,7 +186,10 @@ pub fn verify<A: ProvableAir>(
 /// until the final height `LOG_BLOWUP + LOG_FINAL_POLY_LEN`, stopping at every
 /// input height on the way.
 pub fn honest_fri_schedule(degree_bits: &[usize]) -> Vec<usize> {
-    let mut heights: Vec<usize> = degree_bits.iter().map(|db| db + params::LOG_BLOWUP).collect();
+    let mut heights: Vec<usize> = degree_bits
+        .iter()
+        .map(|db| db + params::LOG_BLOWUP)
+        .collect();
     heights.sort_unstable_by(|a, b| b.cmp(a));
     heights.dedup();
     let log_final = params::LOG_BLOWUP + params::LOG_FINAL_POLY_LEN;
@@ -233,7 +236,11 @@ fn check_fri_schedule(proof: &Proof) -> Result<(), ZkError> {
     if ok {
         Ok(())
     } else {
-        let got: Vec<u8> = fri.commit_phase_openings.iter().map(|o| o.log_arity).collect();
+        let got: Vec<u8> = fri
+            .commit_phase_openings
+            .iter()
+            .map(|o| o.log_arity)
+            .collect();
         Err(ZkError::Invalid(format!(
             "FRI folding schedule {got:?} is not the canonical {expected:?}"
         )))
@@ -365,7 +372,10 @@ mod schedule_tests {
                 visited.push(visited.last().unwrap() - a);
             }
             for db in &dbs {
-                assert!(visited.contains(&(db + params::LOG_BLOWUP)), "{dbs:?} {s:?}");
+                assert!(
+                    visited.contains(&(db + params::LOG_BLOWUP)),
+                    "{dbs:?} {s:?}"
+                );
             }
             // The order of the tables does not matter.
             let mut rev = dbs.clone();

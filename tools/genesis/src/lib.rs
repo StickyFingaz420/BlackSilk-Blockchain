@@ -154,7 +154,9 @@ pub fn derive_genesis_nonce(network_id: u32, btc_height: u64, beacon: &[u8; 32])
 /// The full 32-byte digest behind the nonce (printed for manual checks with
 /// `b2sum -l 256`).
 pub fn nonce_preimage_digest(network_id: u32, btc_height: u64, beacon: &[u8; 32]) -> Hash {
-    H::new().chain(&nonce_preimage(network_id, btc_height, beacon)).finish()
+    H::new()
+        .chain(&nonce_preimage(network_id, btc_height, beacon))
+        .finish()
 }
 
 /// The exact bytes hashed for the nonce: 26 + 4 + 8 + 32 = 70 bytes.
@@ -218,7 +220,8 @@ pub fn build(inputs: &GenesisInputs) -> Result<Genesis, GenesisError> {
     if inputs.difficulty == 0 {
         return Err(GenesisError::Difficulty);
     }
-    let nonce_digest = nonce_preimage_digest(inputs.network_id, inputs.btc_height, &inputs.btc_hash);
+    let nonce_digest =
+        nonce_preimage_digest(inputs.network_id, inputs.btc_height, &inputs.btc_hash);
     let header = BlockHeader {
         version: V3.epoch_at(0).header_version,
         height: 0,
@@ -283,7 +286,11 @@ pub fn report(inputs: &GenesisInputs, g: &Genesis) -> String {
         d = h.difficulty,
         bh = inputs.btc_height,
         bhash = hex(&inputs.btc_hash),
-        pre = hex(&nonce_preimage(inputs.network_id, inputs.btc_height, &inputs.btc_hash)),
+        pre = hex(&nonce_preimage(
+            inputs.network_id,
+            inputs.btc_height,
+            &inputs.btc_hash
+        )),
         dig = hex(&g.nonce_digest),
         nonce = h.nonce,
         v = h.version,

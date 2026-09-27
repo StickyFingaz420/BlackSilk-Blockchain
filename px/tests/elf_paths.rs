@@ -69,10 +69,16 @@ fn the_detector_finds_a_source_path() {
     let mut elf = vec![0u8; 16];
     elf.extend_from_slice(b"C:\\Users\\dev\\BlackSilk\\px-core\\src\\hash.rs");
     elf.push(0);
-    let found: Vec<String> = strings(&elf, 6).into_iter().filter(|s| path_like(s)).collect();
+    let found: Vec<String> = strings(&elf, 6)
+        .into_iter()
+        .filter(|s| path_like(s))
+        .collect();
     assert_eq!(found.len(), 1);
     let mut unix = vec![1u8; 3];
     unix.extend_from_slice(b"/home/ci/work/px-core/src/hash.rs");
     assert!(strings(&unix, 6).iter().any(|s| path_like(s)));
-    assert!(strings(b"\x00a\\c/d\x00", 6).is_empty(), "short code-byte runs are ignored");
+    assert!(
+        strings(b"\x00a\\c/d\x00", 6).is_empty(),
+        "short code-byte runs are ignored"
+    );
 }

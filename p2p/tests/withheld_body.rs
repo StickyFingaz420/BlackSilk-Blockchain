@@ -158,9 +158,15 @@ type RawWriter = FrameWriter<WriteHalf<TcpStream>>;
 /// A hand-driven peer claiming a chain of `height` blocks.
 async fn raw_peer_at(addr: SocketAddr, network_id: u32, height: u64) -> (RawReader, RawWriter) {
     let s = TcpStream::connect(addr).await.unwrap();
-    let (mut r, mut w) = handshake(s, true, network_id, &params().genesis_id(), Duration::from_secs(5))
-        .await
-        .unwrap();
+    let (mut r, mut w) = handshake(
+        s,
+        true,
+        network_id,
+        &params().genesis_id(),
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
     let v = Version {
         protocol: PROTOCOL_VERSION,
         network: network_id,

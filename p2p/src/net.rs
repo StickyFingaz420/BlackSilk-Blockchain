@@ -417,8 +417,8 @@ impl Network {
                 let c = lock_or_exit(&chain, "chain");
                 (c.tip_id(), c.params().genesis_id())
             })
-                .await
-                .map_err(std::io::Error::other)?
+            .await
+            .map_err(std::io::Error::other)?
         };
         let state = State {
             peers: HashMap::new(),
@@ -965,12 +965,12 @@ async fn run_connection<S>(
     let genesis = inner.genesis_id;
     let (mut reader, mut writer) =
         match handshake(stream, !inbound, nid, &genesis, HANDSHAKE_TIMEOUT).await {
-        Ok(x) => x,
-        Err(e) => {
-            log::debug!("{addr}: transport handshake failed: {e}");
-            return;
-        }
-    };
+            Ok(x) => x,
+            Err(e) => {
+                log::debug!("{addr}: transport handshake failed: {e}");
+                return;
+            }
+        };
     // Version exchange.
     let nonce = {
         let mut st = inner.state();

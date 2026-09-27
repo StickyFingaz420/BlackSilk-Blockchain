@@ -389,7 +389,10 @@ fn a_block_over_the_deploy_budget_is_invalid() {
     let block = |net: &mut TestNet, ds: &[&PxDeploy]| {
         let fees: u64 = ds.iter().map(|d| d.fee).sum();
         let mut txs = vec![net.coinbase(fees)];
-        txs.extend(ds.iter().map(|d| Transaction::PxDeploy(Box::new((*d).clone()))));
+        txs.extend(
+            ds.iter()
+                .map(|d| Transaction::PxDeploy(Box::new((*d).clone()))),
+        );
         txs
     };
     let both = block(&mut net, &[&d0, &d1]);

@@ -117,7 +117,11 @@ impl Miner {
     }
 
     /// A block with exactly `txs` on the tip (not from the pool).
-    fn mine_with(&mut self, m: &mut ChainManager, txs: Vec<Transaction>) -> Result<Hash, SubmitError> {
+    fn mine_with(
+        &mut self,
+        m: &mut ChainManager,
+        txs: Vec<Transaction>,
+    ) -> Result<Hash, SubmitError> {
         let t = m.template_on(&m.tip_id()).unwrap();
         let b = self.build(&t, txs);
         let now = b.header.timestamp;
@@ -129,7 +133,8 @@ impl Miner {
         let t = m.template();
         let b = self.build(&t, t.txs.clone());
         let now = b.header.timestamp;
-        m.submit_block(b.clone(), now).expect("the template's block connects");
+        m.submit_block(b.clone(), now)
+            .expect("the template's block connects");
         b
     }
 }
@@ -287,12 +292,18 @@ fn a_no_op_activation_flushes_the_pool_and_switches_the_branch() {
 
     // A block below the activation still validates under the old rules: a
     // side branch from A - 2 holding the old-branch transaction at A - 1.
-    let fork_parent = m.block_at(ACTIVATION - 2).unwrap().header.id(m.params().network_id);
+    let fork_parent = m
+        .block_at(ACTIVATION - 2)
+        .unwrap()
+        .header
+        .id(m.params().network_id);
     let t = m.template_on(&fork_parent).unwrap();
     assert_eq!(t.height, ACTIVATION - 1);
     let side = miner.build(&t, vec![pooled]);
     let now = side.header.timestamp;
-    let s = m.submit_block(side, now).expect("valid under the first epoch's rules");
+    let s = m
+        .submit_block(side, now)
+        .expect("valid under the first epoch's rules");
     assert!(!s.on_best_chain, "less work than the main chain");
 }
 

@@ -60,7 +60,10 @@ fn run(args: &[String]) -> Result<String, String> {
             let expected = parse_beacon_hex(get(&flags, "expected-id")?)
                 .map_err(|_| "--expected-id must be 64 hex characters")?;
             match verify(&inputs, &expected) {
-                Ok(g) => Ok(format!("{}OK: the genesis id matches\n", report(&inputs, &g))),
+                Ok(g) => Ok(format!(
+                    "{}OK: the genesis id matches\n",
+                    report(&inputs, &g)
+                )),
                 Err(e) => {
                     let detail = build(&inputs)
                         .map(|g| report(&inputs, &g))

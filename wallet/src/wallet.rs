@@ -2441,7 +2441,9 @@ mod tests {
 
         // The node of the wallet's chain: accepted.
         let mut w = wallet();
-        assert!(w.check_network(&GenesisNode(Some(hex::encode(ours)))).is_ok());
+        assert!(w
+            .check_network(&GenesisNode(Some(hex::encode(ours))))
+            .is_ok());
         // Same network name and id, another genesis: refused.
         let other = hex::encode([0xAB; 32]);
         match w.sync(&GenesisNode(Some(other.clone()))) {
@@ -2479,7 +2481,10 @@ mod tests {
         let e = Wallet::from_json(&serde_json::to_vec(&json).unwrap())
             .err()
             .unwrap();
-        assert!(e.to_string().contains("predates the genesis binding"), "{e}");
+        assert!(
+            e.to_string().contains("predates the genesis binding"),
+            "{e}"
+        );
         // Also with the older file version and derivation (a pre-v3 file).
         json["version"] = 1.into();
         json["derivation"] = 1.into();
