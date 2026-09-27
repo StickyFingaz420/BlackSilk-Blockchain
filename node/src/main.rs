@@ -10,7 +10,7 @@ use blacksilk_chain::store::FileStore;
 use blacksilk_consensus::{ChainParams, RandomXPow};
 use blacksilk_node::fingerprint::{self, consensus_fingerprint, BUILD_COMMIT};
 use blacksilk_node::serve::{self, RpcSettings};
-use blacksilk_node::{halt_message, watch_store, App};
+use blacksilk_node::{halt_exit_code, halt_message, watch_store, App};
 use blacksilk_p2p::{NetConfig, Network as P2p};
 use blacksilk_tx::params::TxRules;
 use clap::{CommandFactory, FromArgMatches};
@@ -48,13 +48,26 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&cfg.log))
         .format_timestamp_millis()
         .init();
-    if let Err(e) = run(cfg) {
-        log::error!("{e}");
-        std::process::exit(1);
+    if let Err(stop) = run(cfg) {
+        log::error!("{}", stop.message);
+        std::process::exit(stop.code);
     }
 }
 
-fn run(cfg: Config) -> Result<(), String> {
+/// Why the node stopped with an error, and its exit status: 1, or
+/// `HALT_EXIT_CODE` when a validated block failed to apply (RTW1B-4).
+struct Stop {
+    code: i32,
+    message: String,
+}
+
+impl From<String> for Stop {
+    fn from(message: String) -> Self {
+        Self { code: 1, message }
+    }
+}
+
+fn run(cfg: Config) -> Result<(), Stop> {
     let network = cfg.network;
     let params = ChainParams::for_network(network);
     // Refuse to start on parameters the consensus code was not written for.
@@ -211,8 +224,11 @@ fn run(cfg: Config) -> Result<(), String> {
             n.save();
         }
         if failed.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(halt_message(&watched));
+            return Err(Stop {
+                code: halt_exit_code(&watched),
+                message: halt_message(&watched),
+            });
         }
-        served
+        Ok(served?)
     })
 }

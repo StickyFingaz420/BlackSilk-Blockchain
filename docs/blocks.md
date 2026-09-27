@@ -133,9 +133,12 @@ panicking; block validation rejects every block that would fail to apply (for ex
 B8, the PX tree capacity). A block that passed validation and still fails to apply is
 therefore a bug in this node: the manager halts (`ChainManager::halted`), logs the
 block, does **not** mark it invalid, connects nothing more and refuses every further
-block (`SubmitError::Halted`), and the node stops. A restart replays the store and tries
-the block again (docs/reviews/v3-consensus-changes.md#tree-capacity; dossier 48 F48-5:
-never auto-invalidate).
+block (`SubmitError::Halted`), and the node stops with exit status 65
+(`HALT_EXIT_CODE`, node/src/lib.rs; other failures exit 1). A restart replays the store
+and tries the block again; a real apply bug fails the same way again, so the systemd
+unit does not restart on status 65 (`RestartPreventExitStatus`, docs/testnet.md §4.2)
+(docs/reviews/v3-consensus-changes.md#tree-capacity; dossier 48 F48-5: never
+auto-invalidate).
 
 There is no set of used one-time keys: output one-time keys may repeat across
 transactions (transactions.md §8.2; removed for the v3 genesis,

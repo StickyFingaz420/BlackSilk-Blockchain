@@ -8,6 +8,23 @@ use blacksilk_tx::validate::{validate_block_transactions_cached, BlockContext, B
 use std::cmp::Reverse;
 
 impl ChainManager {
+    /// Whether the manager halted because a block that passed validation
+    /// failed to apply ([`Self::halted`] names it). Unlike a failed block
+    /// store, this is deterministic: a restart replays the store into the
+    /// same failure, so the node exits with its own status and a supervisor
+    /// must not restart it in a loop (RTW1B-4; docs/testnet.md).
+    pub fn apply_halted(&self) -> bool {
+        self.apply_failed.is_some()
+    }
+
+    /// Tests only: makes the next block application fail after validation
+    /// (`MemoryChain::fail_next_apply_for_tests`), so that the manager halts.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn fail_next_apply_for_tests(&mut self) {
+        self.state.fail_next_apply_for_tests();
+    }
+
     pub(super) fn work(&self, id: &Hash) -> u128 {
         self.headers.work(id).expect("known header")
     }
@@ -228,7 +245,8 @@ impl ChainManager {
                             // Never `invalidate` here: the block is valid by
                             // the rules; the node is at fault (F48-5).
                             log::error!(
-                                "block {} at height {h} passed validation but failed to                                  apply ({e:?}); halting without marking it invalid",
+                                "block {} at height {h} passed validation but failed to \
+                                 apply ({e:?}); halting without marking it invalid",
                                 hex(&id)
                             );
                             self.apply_failed = Some((id, h, format!("{e:?}")));

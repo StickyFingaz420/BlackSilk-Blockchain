@@ -429,6 +429,7 @@ mod tests {
         assert_eq!(m.headers.is_valid(&ids[1]), Some(true));
         let reason = m.halted().expect("halted");
         assert!(reason.contains(&hex(&ids[1])), "{reason}");
+        assert!(m.apply_halted() && !m.store_failed(), "an apply halt");
         assert!(matches!(
             m.submit_block(blocks[2].clone(), NOW),
             Err(SubmitError::Halted)
@@ -439,7 +440,7 @@ mod tests {
         // Restart: the store holds blocks 1 and 2 (block 3 was refused);
         // replay applies block 2 this time.
         let mut m = open_file().unwrap();
-        assert!(m.halted().is_none());
+        assert!(m.halted().is_none() && !m.apply_halted());
         assert_eq!(m.height(), 2);
         assert_eq!(m.tip_id(), ids[1]);
         m.submit_block(blocks[2].clone(), NOW).unwrap();
