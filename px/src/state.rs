@@ -363,4 +363,67 @@ mod tests {
         s.undo(u);
         assert!(same(&s, &before), "undo is exact at capacity");
     }
+
+    /// RT-W1b: deep reorganizations across capacity. From 12 free leaves,
+    /// 800 blocks (random 0-3 transfers each, anchors anywhere in the
+    /// window, so the window evicts and the tree fills; later blocks keep
+    /// trying to append and fail with `TreeFull`) are applied; then every
+    /// block is undone, one by one, back to the start, each step compared
+    /// with a clone taken before the block. Replaying the same accepted
+    /// blocks reaches the same full root.
+    #[test]
+    fn deep_reorg_across_capacity_is_exact() {
+        let cap = crate::tree::CAPACITY;
+        let start = State::with_uniform_tree_for_tests(cap - 12, d(9), 1 << 40);
+        let mut s = start.clone();
+        let mut rng = ChaCha20Rng::seed_from_u64(0xB8);
+        let mut stack: Vec<(Undo, State)> = Vec::new();
+        let mut accepted: Vec<Vec<Public>> = Vec::new();
+        let (mut full_refused, mut n) = (0, 1_000u64);
+        for _ in 0..800 {
+            let k = (rng.next_u64() % 4) as usize;
+            let block: Vec<Public> = (0..k)
+                .map(|_| {
+                    n += 4;
+                    Public {
+                        anchor: s.roots[(rng.next_u64() % s.roots.len() as u64) as usize],
+                        nullifiers: [d(n), d(n + 1)],
+                        commitments: [d(n + 2), d(n + 3)],
+                        bridge_in: 1,
+                        bridge_out: 0,
+                        n_fn: 0,
+                        functions: [([0; 8], [0; 8]); MAX_FN],
+                    }
+                })
+                .collect();
+            let before = s.clone();
+            match s.apply_block(&block) {
+                Ok(u) => {
+                    stack.push((u, before));
+                    accepted.push(block);
+                }
+                Err(StateError::TreeFull) => {
+                    assert!(same(&s, &before));
+                    full_refused += 1;
+                }
+                Err(e) => panic!("{e:?}"),
+            }
+        }
+        assert_eq!(s.free_leaves(), 0, "the tree filled");
+        assert!(full_refused > 50, "{full_refused}");
+        let full_root = s.root();
+        let full_state = s.clone();
+        let depth = stack.len();
+        assert!(depth > ROOT_WINDOW + 50, "the window evicted ({depth})");
+        while let Some((u, before)) = stack.pop() {
+            s.undo(u);
+            assert!(same(&s, &before), "undo {} of {depth}", depth - stack.len());
+        }
+        assert!(same(&s, &start), "back to the start");
+        for b in &accepted {
+            s.apply_block(b).unwrap();
+        }
+        assert!(same(&s, &full_state), "replay reaches the same state");
+        assert_eq!(s.root(), full_root);
+    }
 }

@@ -83,7 +83,10 @@ pub const MAX_BLOCK_WEIGHT: u64 = 600_000;
 /// hidden outputs) has no range proof. Golden values for every shape:
 /// `tx/tests/data/max_weight.txt`, from the independent
 /// `tools/vectors/max_weight.py`.
-pub fn max_weight(inputs: usize, outputs: usize) -> u64 {
+///
+/// A `const fn`, so that bounds built on it are checked at compile time
+/// (below: the PX fee covers the largest PX v1 part).
+pub const fn max_weight(inputs: usize, outputs: usize) -> u64 {
     let varint_max = 10u64;
     let n = inputs as u64;
     let k = outputs as u64;
@@ -94,7 +97,7 @@ pub fn max_weight(inputs: usize, outputs: usize) -> u64 {
         + varint_max
         + k * (32 + 32 + 1 + 32 + 8 + 16)
         + varint_max;
-    let bp = bpp::proof_len(outputs).unwrap_or(0) as u64;
+    let bp = bpp_proof_len(outputs);
     let size = prefix + 32 * n + bp + n * blacksilk_crypto::clsag::CLSAG_BYTES as u64;
     let m = outputs.next_power_of_two() as u64;
     if m <= 2 {
@@ -103,6 +106,25 @@ pub fn max_weight(inputs: usize, outputs: usize) -> u64 {
         size + (320 * m).saturating_sub(bp) * 4 / 5
     }
 }
+
+/// `bpp::proof_len(outputs)`, or 0 where it is `None` (no range proof: 0 or
+/// more than `bpp::MAX_OUTPUTS` outputs), as a `const fn`:
+/// `32 × (6 + 2 × rounds)` with `rounds = log2(BITS × outputs.next_power_of_two())`.
+/// Equal to the crypto crate's function for every count
+/// (`bpp_proof_len_matches_the_crypto_crate`).
+const fn bpp_proof_len(outputs: usize) -> u64 {
+    if outputs == 0 || outputs > bpp::MAX_OUTPUTS {
+        return 0;
+    }
+    let rounds = (bpp::BITS * outputs.next_power_of_two()).trailing_zeros() as u64;
+    32 * (6 + 2 * rounds)
+}
+
+// R12-2: the uniform PX fee pays for the v1 part of every PX transaction at
+// the v1 rate (its block weight is `max_weight(n_in, n_out)`), so it needs no
+// per-shape component, which would fingerprint the input count
+// (docs/reviews/v3-consensus-changes.md#r12-2).
+const _: () = assert!(max_weight(MAX_INPUTS, MAX_OUTPUTS) * FEE_PER_WEIGHT <= PX_STANDARD_FEE);
 
 /// The PX verifiers this crate implements (`consensus::schedule::Epoch::verifier_id`).
 pub const SUPPORTED_VERIFIERS: &[u32] = &[blacksilk_consensus::schedule::VERIFIER_PX_1];
@@ -204,5 +226,28 @@ impl TxRules {
     /// #exact-v1-fee).
     pub fn standard_fee(&self, inputs: usize, outputs: usize) -> Option<u64> {
         self.min_fee(max_weight(inputs, outputs))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RTW1B-9: the `const` range-proof length used by `max_weight` equals
+    /// the crypto crate's `proof_len` (0 where it is `None`) for every
+    /// output count, valid or not; the golden `max_weight` rows are checked
+    /// in tests/max_weight_vectors.rs.
+    #[test]
+    fn bpp_proof_len_matches_the_crypto_crate() {
+        for k in 0..=4 * bpp::MAX_OUTPUTS {
+            assert_eq!(
+                bpp_proof_len(k),
+                bpp::proof_len(k).unwrap_or(0) as u64,
+                "{k}"
+            );
+        }
+        // Evaluated at compile time.
+        const LARGEST: u64 = max_weight(MAX_INPUTS, MAX_OUTPUTS);
+        assert_eq!(LARGEST, 57_439);
     }
 }
