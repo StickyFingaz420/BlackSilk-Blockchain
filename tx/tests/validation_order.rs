@@ -696,6 +696,7 @@ fn every_error_variant_is_classified() {
         PxInvalidProgram,
         PxDuplicateOutputKey { output: 0 },
         PxNullifierRepeated,
+        PxDuplicateProgram { program: 1 },
         PxProof,
     ];
     let contextual = [
@@ -717,8 +718,8 @@ fn every_error_variant_is_classified() {
         assert!(!e.is_stateless(), "{e:?}");
     }
     // `is_stateless` is an exhaustive match, so a new variant cannot compile
-    // unclassified; these lists cover all 33 variants.
-    assert_eq!(stateless.len() + contextual.len(), 33);
+    // unclassified; these lists cover all 34 variants.
+    assert_eq!(stateless.len() + contextual.len(), 34);
 }
 
 // ------------------------------------------------------------------ differential validity

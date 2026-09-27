@@ -752,6 +752,15 @@ pub fn check_deploy_structure(tx: &PxDeploy, rules: &TxRules) -> Result<(), TxEr
             required,
         });
     }
-    tx.load_programs()?;
+    let programs = tx.load_programs()?;
+    // R5-7: the registry answers `(contract, program id)` with the first
+    // match, so a repeated program would be unreachable. Ids of the loaded
+    // programs are compared: different ELF files can load to one program.
+    let mut ids = std::collections::HashSet::with_capacity(programs.len());
+    for (i, (program, _)) in programs.iter().enumerate() {
+        if !ids.insert(program.id()) {
+            return Err(TxError::PxDuplicateProgram { program: i });
+        }
+    }
     Ok(())
 }
