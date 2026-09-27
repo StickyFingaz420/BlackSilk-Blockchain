@@ -1,0 +1,12 @@
+assertion `left == right` failed: a 12 MiB /tx body was read and parsed
+  left: Some(400)
+ right: Some(413)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    demo_oversized_tx_body_is_refused
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.09s
+
+error: test failed, to rerun pass `-p blacksilk-node --test rpc_security`

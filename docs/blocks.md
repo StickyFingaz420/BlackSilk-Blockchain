@@ -386,27 +386,100 @@ payload = pow_hash (32) ‖ block bytes
 ## 9. Node RPC (interface, not consensus)
 
 JSON over HTTP/1.1, **bound to `127.0.0.1` by default**. Binary objects are hex strings.
+The route list is `blacksilk_node::ROUTES` (`node/src/lib.rs`).
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/info` | network, height, tip id, difficulty, generated supply, mempool size |
-| GET | `/template` | mining template: height, prev id, difficulty, seed id, min timestamp, reward, fees, transactions |
-| POST | `/block` | submit a mined block (`{"hex": …}`) |
-| POST | `/tx` | submit a transaction (`{"hex": …}`); with P2P enabled it enters the Dandelion++ stem (p2p.md §8), otherwise the local mempool |
-| GET | `/blocks?from=h&count=n` | connected blocks with the global index of their first output (n ≤ 100), for wallet scanning |
-| GET | `/distribution?to=h` | cumulative output counts per block, for decoy selection |
-| POST | `/outputs` | output keys and commitments for up to 1 024 global indices, for building rings |
+| Method | Path | Purpose | Class | Body limit |
+|---|---|---|---|---|
+| GET | `/info` | network, height, tip id, difficulty, generated supply, mempool size, identity (genesis id, consensus fingerprint, commit, version) | read | none |
+| GET | `/template` | mining template: height, prev id, difficulty, seed id, min timestamp, reward, fees, transactions | bulk | none |
+| POST | `/block` | submit a mined block (`{"hex": …}`); admission rule §9.2 | block | `rpc::MAX_REQUEST_BYTES` (a maximum-size block in hex) |
+| POST | `/tx` | submit a transaction (`{"hex": …}`); with P2P enabled it enters the Dandelion++ stem (p2p.md §8), otherwise the local mempool | submit | `guard::MAX_TX_BODY_BYTES` (the largest transaction of any kind in hex) |
+| GET | `/blocks?from=h&count=n` | connected blocks with the global index of their first output (n ≤ 100, at most 64 MiB of hex), for wallet scanning | bulk | none |
+| GET | `/distribution?to=h` | cumulative output counts per block, for decoy selection | read | none |
+| POST | `/outputs` | output keys and commitments for up to 1 024 global indices | read | `guard::MAX_OUTPUTS_BODY_BYTES` |
+| GET | `/px/commitments?from=f&limit=l` | a page of PX commitments in tree order (px.md §11.4) | read | none |
+| GET | `/px/contracts?from=f` | contract registrations in block order (at most 1 024 per page) | read | none |
 
-**Privacy of the RPC.** A wallet that uses someone else's node reveals to that node:
-- which block ranges it scans (weak);
-- **which ring members it fetches**. The real input is among them, so an operator who
-  sees the same wallet fetch the same ring twice, or fetch a ring and then relay the
-  transaction, can narrow down the real input.
+The PX endpoints are bulk-only: there is no lookup of a single record, contract or ring.
 
-Wallets should use their own node. Where they cannot, they should fetch decoys in larger
-randomized batches (future work). The RPC must never be exposed publicly without
-authentication, because `/block` and `/tx` accept arbitrary input and validation costs
-CPU.
+### 9.1 Access control and limits (policy)
+
+A guard (`node/src/guard.rs`) runs in front of every route, and in front of unknown paths,
+before routing. In order:
+
+1. **Host.** The `Host` header, and the authority of an absolute-form request target,
+   must name `localhost`, an address in `127.0.0.0/8`, `[::1]`, the exact non-loopback
+   address the RPC is bound to, or a name listed by the operator (for example an onion
+   service name). Anything else, including `0.0.0.0`, `[::]` and every other name, is
+   refused with `403`; a missing or repeated `Host` with `400`. This refuses DNS
+   rebinding: a rebinding page always sends its own host name.
+2. **Browsers.** A request with an `Origin` or any `Sec-Fetch-*` header is refused with
+   `403`. The node's clients (miner, wallet, curl) send none of them; browsers send at
+   least one on requests to loopback (W3C Fetch Metadata). There is no CORS support. This
+   also stops cross-site no-cors GETs, which need no rebinding.
+3. **Credential.** The node's RPC (`blacksilk_node::serve::run`) writes 32 random bytes as
+   64 lowercase hex digits to `<data dir>/rpc.cookie` at every start (written to a
+   temporary file and renamed; a stale file is replaced) and removes it at a clean
+   shutdown. Every request, `/info` included, must carry
+   `Authorization: Bearer <cookie>`; there is no unauthenticated endpoint. The comparison
+   is constant-time (`subtle`). A failure is answered `401` after 250 ms. Clients take
+   `--rpc-cookie <path>` or the `BLACKSILK_RPC_COOKIE` environment variable
+   (`rpc::Client::with_cookie_file`, `with_cookie_option`). Routers built with
+   `blacksilk_node::router` or `router_with` (tests, embedded use) have no credential but
+   all other checks. The `blacksilk-node` binary is switched from `router_with` to
+   `serve::run` in a separate change to `node/src/main.rs`.
+   - **Unix:** the cookie is created with mode 0600.
+   - **Windows:** the cookie inherits its directory's permissions. The default data
+     directory is under the user's `%APPDATA%`, readable only by that user and
+     administrators. Setting an ACL would need FFI, so a data directory outside the user
+     profile only gets a warning. This is an accepted limitation.
+   - The cookie keeps out other local users and web pages. It does not keep out malware
+     running as the same user.
+4. **Content type and body.** A `POST` must be `application/json` (`415` otherwise). Its
+   body is read by the guard, up to the route's limit (`413`) and within 60 s (`408`).
+   Other methods carry no body (`413`).
+5. **Admission.** Each class has a fixed number of concurrent requests: read 4, bulk 2,
+   submit 2, block 1, long poll 16 (`guard::Limits`). A request that finds its class full
+   is answered `503` with `Retry-After: 1` at once, instead of waiting on a blocking thread
+   for the chain lock. Clients retry with backoff.
+
+The serve loop (`node/src/serve.rs`) adds connection limits: at most 64 open
+connections (a connection beyond them is closed at once), a 10 s limit to receive a
+request head, which also closes idle kept-alive connections, and a 16 KiB request head
+(`431` beyond it). Shutdown lets in-flight requests finish within 10 s.
+
+All of this is policy. It is not a claim that the RPC is safe to expose: keep it on
+loopback, or reach it over SSH, a VPN or Tor. The connection is plaintext HTTP, so on
+any other path the cookie and every request are visible.
+
+### 9.2 `/block` admission
+
+`/block` is for the local miner. Before any proof of work or storage, under a brief
+chain lock, a block is refused (`accepted: false`, no PoW computed, nothing stored)
+unless:
+- its parent is the connected tip or one of its last `RPC_BLOCK_MAX_DEPTH` = 8
+  ancestors, and its height follows the parent's (`NotNearTip`);
+- its RandomX seed is the tip's or the next block's (`StaleSeed`), so an RPC client
+  cannot make the node build the cache of another seed.
+
+Within that depth the seed block lies on the connected chain and the parent is above the
+P2P low-work threshold (p2p.md §6), so the rule is stricter than the P2P header gate.
+Blocks of any other shape arrive over P2P, under that gate. The block's RandomX hash is
+then computed outside the chain lock, and the submission hits the PoW cache.
+
+### 9.3 Privacy of the RPC
+
+A wallet that uses someone else's node reveals to that node, and over plaintext HTTP to
+anyone on the path:
+- its IP address;
+- where it starts scanning (`/blocks?from=`), which approximates its birthday;
+- that a send is imminent: `/distribution` is fetched just before `/tx`;
+- the transaction itself, together with its IP address. The node stems it, so the
+  network does not learn the origin, but that node's operator does.
+
+Ring members come from the wallet's own output index; `/outputs` is used once, to fill
+the missing range of that index in fixed pages, not per ring. Wallets should use their
+own node.
 
 ## 10. Wallet formats (interface, not consensus)
 

@@ -4,8 +4,9 @@
 //! The hold is a stalled block append on the block-submission path
 //! (`chain/tests/support/stall.rs`); nothing in the node is instrumented.
 //! Numbering follows the Stage 0 assignment: L4 here is the dossier's L5, L5
-//! the dossier's L6 (see `p2p/tests/liveness.rs`). Both fail on the current
-//! code and are ignored until Stage 1 (`-- --ignored` runs them).
+//! the dossier's L6 (see `p2p/tests/liveness.rs`). L4 fails until Stage 1 (34's
+//! snapshot) and is ignored (`-- --ignored` runs it). L5 passes since the RPC
+//! admission classes (36 W2, `node/src/guard.rs`) and runs by default.
 
 #[path = "../../chain/tests/support/stall.rs"]
 mod stall;
@@ -141,19 +142,18 @@ fn control_info_answers_within_100_ms_without_a_hold() {
     }
 }
 
-/// The RPC concurrency cap Stage 1 (item 1d) is to add (the dossier's
-/// example value); requests beyond it are refused (503), not queued on
-/// blocking threads.
+/// The RPC concurrency cap of Stage 1 (item 1d; the dossier's example
+/// value); requests beyond it are refused (503), not queued on blocking
+/// threads. The admission classes (`node/src/guard.rs`) allow at most 9.
 const RPC_CHAIN_CAP: usize = 16;
 const BURST: usize = 1000;
 
 /// L5 (F34-6; dossier L6): a burst of 1,000 `/info` requests during a hold
 /// starts at most [`RPC_CHAIN_CAP`] blocking threads, and every request is
-/// answered (200 or 503) once the hold ends. Today each request parks one
-/// blocking thread on the chain lock, up to tokio's default of 512, which
-/// the P2P tasks share.
+/// answered (200 or 503) once the hold ends. Before the admission classes,
+/// each request parked one blocking thread on the chain lock, up to tokio's
+/// default of 512, which the P2P tasks share.
 #[test]
-#[ignore = "fails until Stage 1 (34)"]
 fn l5_an_rpc_burst_during_a_hold_stays_within_the_blocking_thread_cap() {
     let s = serve();
     assert_eq!(get(s.addr, "/info", Duration::from_secs(5)), Some(200));
