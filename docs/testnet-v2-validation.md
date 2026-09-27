@@ -29,6 +29,12 @@ docs/testnet-launch-checklist.md.
 
 ## 1. Identity every device must show
 
+> **Superseded (2026-09-27).** The v2 identity below is retired (the node refuses
+> `--network testnet` until the v3 genesis, docs/testnet.md). For v3, every device
+> compares the full genesis id, the consensus fingerprint and the build commit
+> printed by `blacksilk-node --version`, the start-up log and `/info`
+> (docs/testnet.md §2.1), not a genesis prefix.
+
 | Item | Value |
 |---|---|
 | Commit | the release commit announced by the owner. Every device records `git rev-parse HEAD` |

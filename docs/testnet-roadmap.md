@@ -71,4 +71,4 @@ Each item carries one of the report classifications.
 | 15 | Dandelion++ parameters for BlackSilk's network size (assumptions.md N4) | **Deferred:** needs testnet measurements |
 | 16 | Plonky3 anonymous report | **Complete but awaiting approval:** not submitted |
 | 17 | Contracts beyond the vault; transparent-contract chain integration (M3) | **Deferred** |
-| 18 | Proof size (about 2.2 MB transfer, 2.7 MB vault call; ~4 PX transactions per block) | **Deferred:** aggregation-study.md |
+| 18 | Proof size (about 2.2 MB transfer, 2.7 MB vault call; 3 PX transactions per block) | **Deferred:** aggregation-study.md |

@@ -1,19 +1,29 @@
 //! The network manager (docs/p2p.md): connections, handshake, message handling,
 //! header-first sync, block and transaction relay, Dandelion++, peer management.
 //!
-//! Concurrency rule: the chain lock (`ChainManager`) and the network state lock are
-//! never held at the same time, and neither is held across an `.await`. CPU-heavy
-//! work (PoW, block and transaction validation) runs on blocking threads.
+//! Concurrency rules:
+//! - the chain lock (`ChainManager`) and the network state lock are never held
+//!   at the same time, and neither is held across an `.await`;
+//! - the chain lock is never taken on an async worker thread: every access goes
+//!   through a blocking thread (`Inner::with_chain`, `spawn_blocking`), so a
+//!   long lock hold elsewhere never stalls pings, reads or accepts (R8-1);
+//! - block bodies are connected by the block worker in bounded steps
+//!   (`submit_block_in_steps`), releasing the chain lock in between;
+//! - a poisoned chain or state lock stops the node (`lock_or_exit`).
 
 use crate::addr::NetAddr;
 use crate::addrman::{AddrMan, BanList};
 use crate::dandelion::{exponential, Dandelion, DandelionParams, PeerId, Route, Source};
 use crate::limits::{score, PeerLimits, BAN_SECS, BAN_THRESHOLD};
-use crate::message::{Message, Version, MAX_HEADERS, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION};
+use crate::message::{
+    is_known_type, Message, Version, MAX_HEADERS, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION,
+};
 use crate::socks5;
 use crate::transport::{handshake, FrameReader, FrameWriter, TransportError};
-use blacksilk_chain::block::Block;
-use blacksilk_chain::manager::{ChainManager, SubmitError};
+use blacksilk_chain::block::{Block, MAX_BLOCK_BYTES};
+use blacksilk_chain::manager::{
+    submit_block_in_steps, ChainManager, SubmitError, SYNC_STEP_BLOCKS,
+};
 use blacksilk_chain::mempool::MempoolError;
 use blacksilk_consensus::{BlockHeader, Hash, HeaderChain, HeaderError};
 use blacksilk_tx::types::Transaction;
@@ -31,6 +41,31 @@ use tokio::sync::{mpsc, Notify};
 
 pub type SharedChain = Arc<Mutex<ChainManager>>;
 
+/// Exit status of a node whose chain or network-state lock was poisoned by a
+/// panic (the same as `blacksilk_node::POISONED_EXIT_CODE`).
+pub const POISONED_EXIT_CODE: i32 = 70;
+
+/// Locks `m`, or stops the process if a panic poisoned it (R10-2). A panic
+/// while holding the chain lock can leave the manager half-updated (a block
+/// applied to the state without being connected, for example); continuing
+/// would relay and build on that state. The block store is append-only and a
+/// restart replays it deterministically, so the node exits instead, with
+/// [`POISONED_EXIT_CODE`], for the supervisor to restart it.
+pub fn lock_or_exit<'a, T>(m: &'a Mutex<T>, what: &str) -> MutexGuard<'a, T> {
+    match m.lock() {
+        Ok(guard) => guard,
+        Err(_) => fatal(&format!("{what} lock poisoned by a panic")),
+    }
+}
+
+/// Logs `why` and exits with [`POISONED_EXIT_CODE`].
+fn fatal(why: &str) -> ! {
+    log::error!("{why}; stopping (restart to recover: the block store is replayed)");
+    // Also without a logger (tests, embedders): the exit must not be silent.
+    eprintln!("blacksilk-p2p: {why}; exiting with status {POISONED_EXIT_CODE}");
+    std::process::exit(POISONED_EXIT_CODE)
+}
+
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(180);
@@ -39,9 +74,28 @@ const PONG_TIMEOUT: Duration = Duration::from_secs(30);
 const BLOCK_TIMEOUT: Duration = Duration::from_secs(60);
 const TX_TIMEOUT: Duration = Duration::from_secs(30);
 const HEADERS_TIMEOUT: Duration = Duration::from_secs(60);
+/// Block requests in flight per peer (count cap). A block counts from its
+/// request until it has been processed (connected or rejected), so the queue
+/// of the block worker is bounded by the peers' windows.
 const BLOCKS_IN_FLIGHT: usize = 16;
+/// Bytes in flight per peer (R8-9): headers carry no body size, so each
+/// request is charged `MAX_BLOCK_BYTES`; at most this many bytes' worth of
+/// blocks are requested from one peer at a time (3 maximum-size blocks), so a
+/// peer on a slow link is not asked for more than it can deliver before the
+/// block timeout. One block is always allowed.
+pub const BLOCK_WINDOW_BYTES: usize = 32 * 1024 * 1024;
 const SERVE_BLOCKS_PER_REQUEST: usize = 16;
+/// Control messages queued per peer (everything except `Block`).
 const OUTBOX: usize = 64;
+/// `Block` frames queued per peer; control messages are sent first (R8-11).
+const BULK_OUTBOX: usize = 2 * SERVE_BLOCKS_PER_REQUEST;
+/// Unrequested blocks queued for the block worker, node-wide. Every one is
+/// penalized, and only those whose header we accepted are processed; beyond
+/// this they are dropped unread (honest peers send only requested blocks).
+const UNREQUESTED_QUEUE: usize = 8;
+/// Frames of unknown message types skipped between `Version` and `Verack`
+/// (a later protocol version may negotiate features there).
+const HANDSHAKE_UNKNOWN_FRAMES: usize = 8;
 const RECENT_REJECTS: usize = 10_000;
 const ANNOUNCED_CAP: usize = 50_000;
 /// Address table and bans are saved at most this often, and only when changed
@@ -118,6 +172,8 @@ pub struct PeerInfo {
     pub inbound: bool,
     pub height: u64,
     pub score: u32,
+    /// The peer's `Version.protocol`.
+    pub protocol: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -144,7 +200,11 @@ struct Peer {
     addr: NetAddr,
     inbound: bool,
     proxied: bool,
+    protocol: u32,
+    /// Control messages; sent before anything queued in `bulk`.
     out: mpsc::Sender<Message>,
+    /// `Block` frames.
+    bulk: mpsc::Sender<Message>,
     kill: Arc<Notify>,
     relay_txs: bool,
     height: u64,
@@ -159,7 +219,10 @@ struct Peer {
     ping: Option<(u64, Instant)>,
     last_ping: Instant,
     last_recv: Instant,
+    /// Blocks requested from this peer and not yet processed, and the bytes
+    /// charged for them (`MAX_BLOCK_BYTES` each, `BLOCK_WINDOW_BYTES`).
     blocks_in_flight: usize,
+    bytes_in_flight: usize,
     headers_requested: Option<Instant>,
     /// When a single header consumed an outstanding `GetHeaders` (it may be a
     /// tip announcement racing the real reply), the request time: one
@@ -231,6 +294,24 @@ struct State {
     ctx_rejects_tip: Hash,
     tx_verifications: u64,
     px_global_drops: u64,
+    /// Unrequested blocks in the block worker's queue (`UNREQUESTED_QUEUE`).
+    unrequested_queued: usize,
+    /// Ids of blocks received and waiting for, or under, processing by the
+    /// block worker: not requested again meanwhile.
+    blocks_queued: HashSet<Hash>,
+}
+
+/// A block waiting for the block worker.
+struct BlockJob {
+    peer: PeerId,
+    block: Block,
+    /// Requested from `peer` (it holds a place in the peer's window until
+    /// processed); otherwise unrequested (processed only if its header is
+    /// known, `UNREQUESTED_QUEUE`).
+    requested: bool,
+    /// A request that timed out and was answered late: not in the window any
+    /// more, but not unsolicited either.
+    late: bool,
 }
 
 /// A header batch waiting for the header worker, with its sender's address
@@ -266,9 +347,15 @@ fn remember(set: &mut HashSet<Hash>, ids: impl IntoIterator<Item = Hash>) {
 struct Inner {
     chain: SharedChain,
     cfg: NetConfig,
+    /// The chain's genesis id, bound into the session keys (R15-3).
+    genesis_id: Hash,
     /// To the header worker (`header_worker`): batches are verified there, one
     /// at a time, never on a peer's read loop.
     header_queue: mpsc::UnboundedSender<HeaderBatch>,
+    /// To the block worker (`block_worker`): bodies are validated and
+    /// connected there, never on a peer's read loop. Bounded by the peers'
+    /// request windows plus `UNREQUESTED_QUEUE`.
+    block_queue: mpsc::UnboundedSender<BlockJob>,
     state: Mutex<State>,
     next_id: AtomicU64,
     local_addr: Option<SocketAddr>,
@@ -324,7 +411,15 @@ impl Network {
             None => None,
         };
         let local_addr = listener.as_ref().and_then(|l| l.local_addr().ok());
-        let tip = chain.lock().unwrap_or_else(|e| e.into_inner()).tip_id();
+        let (tip, genesis_id) = {
+            let chain = chain.clone();
+            tokio::task::spawn_blocking(move || {
+                let c = lock_or_exit(&chain, "chain");
+                (c.tip_id(), c.params().genesis_id())
+            })
+                .await
+                .map_err(std::io::Error::other)?
+        };
         let state = State {
             peers: HashMap::new(),
             addrman,
@@ -355,12 +450,17 @@ impl Network {
             ctx_rejects_tip: [0; 32],
             tx_verifications: 0,
             px_global_drops: 0,
+            unrequested_queued: 0,
+            blocks_queued: HashSet::new(),
         };
         let (header_queue, header_rx) = mpsc::unbounded_channel();
+        let (block_queue, block_rx) = mpsc::unbounded_channel();
         let inner = Arc::new(Inner {
             chain,
             cfg,
+            genesis_id,
             header_queue,
+            block_queue,
             state: Mutex::new(state),
             next_id: AtomicU64::new(1),
             local_addr,
@@ -370,6 +470,7 @@ impl Network {
         }
         tokio::spawn(maintenance_loop(inner.clone()));
         tokio::spawn(header_worker(inner.clone(), header_rx));
+        tokio::spawn(block_worker(inner.clone(), block_rx));
         Ok(Network { inner })
     }
 
@@ -380,11 +481,11 @@ impl Network {
     /// Submits a locally created transaction: validated, then sent into the
     /// Dandelion++ stem (docs/p2p.md §8).
     pub async fn submit_tx(&self, tx: Transaction) -> Result<Hash, String> {
-        let inner = self.inner.clone();
         let tx2 = tx.clone();
-        let id = tokio::task::spawn_blocking(move || inner.chain().check_tx(&tx2))
+        let id = self
+            .inner
+            .with_chain(move |c| c.check_tx(&tx2))
             .await
-            .map_err(|e| e.to_string())?
             .map_err(|e| format!("{e:?}"))?;
         stem_or_fluff(&self.inner, tx, id, Source::Local).await;
         Ok(id)
@@ -404,6 +505,7 @@ impl Network {
                 inbound: p.inbound,
                 height: p.height,
                 score: p.score,
+                protocol: p.protocol,
             })
             .collect()
     }
@@ -443,11 +545,30 @@ impl Network {
 
 impl Inner {
     fn state(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        lock_or_exit(&self.state, "network state")
     }
 
+    /// The chain lock. Only on blocking threads (`with_chain`, the header and
+    /// block workers' blocking tasks), never on an async worker.
     fn chain(&self) -> MutexGuard<'_, ChainManager> {
-        self.chain.lock().unwrap_or_else(|e| e.into_inner())
+        lock_or_exit(&self.chain, "chain")
+    }
+
+    /// Runs `f` under the chain lock on a blocking thread, so an async worker
+    /// never waits for the lock (R8-1). A panic in `f` poisoned the lock: the
+    /// node stops, as `lock_or_exit` would on the next access. A task
+    /// cancelled because the runtime is shutting down never resolves (the
+    /// caller is being dropped too).
+    async fn with_chain<T: Send + 'static>(
+        self: &Arc<Self>,
+        f: impl FnOnce(&mut ChainManager) -> T + Send + 'static,
+    ) -> T {
+        let inner = self.clone();
+        match tokio::task::spawn_blocking(move || f(&mut inner.chain())).await {
+            Ok(t) => t,
+            Err(e) if e.is_panic() => fatal(&format!("chain task failed: {e}")),
+            Err(_) => std::future::pending().await,
+        }
     }
 
     fn save(&self) {
@@ -463,9 +584,16 @@ impl Inner {
         }
     }
 
+    /// Queues `msg` for `peer`: `Block` frames in the bulk outbox, everything
+    /// else in the control outbox, which the writer drains first (R8-11).
     fn send(&self, st: &mut State, peer: PeerId, msg: Message) {
         let Some(p) = st.peers.get(&peer) else { return };
-        if p.out.try_send(msg).is_err() {
+        let queue = if matches!(msg, Message::Block(_)) {
+            &p.bulk
+        } else {
+            &p.out
+        };
+        if queue.try_send(msg).is_err() {
             // Outbox full: the peer does not read fast enough (or is gone).
             log::debug!("peer {} outbox full; disconnecting", p.addr);
             p.kill.notify_one();
@@ -558,10 +686,6 @@ impl Inner {
                 .is_none_or(|&n| n < self.cfg.max_per_ip.max(1))
     }
 
-    fn locator(&self) -> Vec<Hash> {
-        self.chain().locator()
-    }
-
     /// `peer` sent a header whose version no epoch of this node's schedule
     /// uses (`HeaderError::UnknownUpgrade`): not scored, since the peer may run
     /// a newer release that is right. Logged at WARN once per peer, so that the
@@ -586,16 +710,33 @@ impl Inner {
     }
 
     /// Asks `peer` for headers after our best header chain.
-    fn request_headers(&self, peer: PeerId) {
-        self.request_headers_after(peer, None);
+    async fn request_headers(self: &Arc<Self>, peer: PeerId) {
+        self.request_headers_after(peer, None).await;
     }
 
     /// Asks `peer` for headers. With `from`, the locator starts at that header
     /// (the last one of the batch the peer just sent), then continues with our
     /// best chain: the peer continues where it stopped even when its branch is
     /// not (yet) our best chain, as for a fork deeper than one batch.
-    fn request_headers_after(&self, peer: PeerId, from: Option<Hash>) {
-        let mut locator = self.locator();
+    ///
+    /// At most one `GetHeaders` is outstanding per peer: if another task (the
+    /// maintenance loop, the header worker) already asked, this does nothing
+    /// (the second reply would arrive unsolicited). The request is marked
+    /// outstanding, under the same lock as that check, before the locator is
+    /// read on a blocking thread.
+    async fn request_headers_after(self: &Arc<Self>, peer: PeerId, from: Option<Hash>) {
+        {
+            let mut st = self.state();
+            match st.peers.get_mut(&peer) {
+                Some(p) if p.headers_requested.is_none() => {
+                    p.headers_requested = Some(Instant::now());
+                    p.headers_grace = None;
+                    p.headers_pending = false;
+                }
+                _ => return,
+            }
+        }
+        let mut locator = self.with_chain(|c| c.locator()).await;
         if let Some(id) = from {
             locator.retain(|h| *h != id);
             locator.insert(0, id);
@@ -821,8 +962,9 @@ async fn run_connection<S>(
 {
     let nid = inner.cfg.network_id;
     // The session keys also bind the genesis id (R15-3).
-    let genesis = inner.chain().params().genesis_id();
-    let (mut reader, mut writer) = match handshake(stream, !inbound, nid, &genesis, HANDSHAKE_TIMEOUT).await {
+    let genesis = inner.genesis_id;
+    let (mut reader, mut writer) =
+        match handshake(stream, !inbound, nid, &genesis, HANDSHAKE_TIMEOUT).await {
         Ok(x) => x,
         Err(e) => {
             log::debug!("{addr}: transport handshake failed: {e}");
@@ -836,10 +978,9 @@ async fn run_connection<S>(
         st.local_nonces.insert(n);
         n
     };
-    let (height, tip) = {
-        let c = inner.chain();
-        (c.header_height(), c.best_header_id())
-    };
+    let (height, tip) = inner
+        .with_chain(|c| (c.header_height(), c.best_header_id()))
+        .await;
     let ours = Version {
         protocol: PROTOCOL_VERSION,
         network: nid,
@@ -871,9 +1012,24 @@ async fn run_connection<S>(
             .send(&Message::Verack.encode())
             .await
             .map_err(|e| e.to_string())?;
-        match recv_msg(&mut reader, HANDSHAKE_TIMEOUT).await? {
-            Message::Verack => Ok(theirs),
-            other => Err(format!("expected verack, got {}", other.kind())),
+        // A later protocol version may send messages of types we do not
+        // know before its `Verack` (feature negotiation): skipped.
+        let mut skipped = 0;
+        loop {
+            let frame = tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.recv())
+                .await
+                .map_err(|_| "timeout".to_string())?
+                .map_err(|e| e.to_string())?;
+            if frame.first().is_some_and(|&t| !is_known_type(t))
+                && skipped < HANDSHAKE_UNKNOWN_FRAMES
+            {
+                skipped += 1;
+                continue;
+            }
+            return match Message::decode(&frame).map_err(|e| format!("decode: {e:?}"))? {
+                Message::Verack => Ok(theirs),
+                other => Err(format!("expected verack, got {}", other.kind())),
+            };
         }
     }
     .await;
@@ -888,6 +1044,7 @@ async fn run_connection<S>(
 
     // Register.
     let (tx_out, rx_out) = mpsc::channel::<Message>(OUTBOX);
+    let (tx_bulk, rx_bulk) = mpsc::channel::<Message>(BULK_OUTBOX);
     let kill = Arc::new(Notify::new());
     let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
     {
@@ -925,7 +1082,9 @@ async fn run_connection<S>(
                 addr: addr.clone(),
                 inbound,
                 proxied,
+                protocol: theirs.protocol,
                 out: tx_out,
+                bulk: tx_bulk,
                 kill: kill.clone(),
                 relay_txs: theirs.relay_txs,
                 height: theirs.height,
@@ -941,6 +1100,7 @@ async fn run_connection<S>(
                 last_ping: now,
                 last_recv: now,
                 blocks_in_flight: 0,
+                bytes_in_flight: 0,
                 headers_requested: None,
                 headers_grace: None,
                 headers_busy: false,
@@ -954,12 +1114,12 @@ async fn run_connection<S>(
         if inbound { "inbound" } else { "outbound" },
         theirs.height
     );
-    let writer_task = tokio::spawn(write_loop(writer, rx_out));
+    let writer_task = tokio::spawn(write_loop(writer, rx_out, rx_bulk));
     if !inbound {
         inner.send_now(id, Message::GetAddr);
     }
     if theirs.height > height {
-        inner.request_headers(id);
+        inner.request_headers(id).await;
     }
 
     // Read loop.
@@ -987,6 +1147,25 @@ async fn run_connection<S>(
                 };
                 if over {
                     inner.misbehave(id, score::RATE, "rate limit");
+                    continue;
+                }
+                // A message type of a later protocol version (P0-8): ignored,
+                // not penalized, but charged against the byte budget like
+                // any unsolicited message (and the message budget above).
+                if frame.first().is_some_and(|&t| !is_known_type(t)) {
+                    let over = {
+                        let mut st = inner.state();
+                        let now = Instant::now();
+                        match st.peers.get_mut(&id) {
+                            Some(p) => !p.limits.bytes.take(frame.len() as f64, now),
+                            None => break,
+                        }
+                    };
+                    if over {
+                        inner.misbehave(id, score::RATE, "byte rate limit");
+                    } else {
+                        log::debug!("{addr}: ignored a message of unknown type {}", frame[0]);
+                    }
                     continue;
                 }
                 let msg = match Message::decode(&frame) {
@@ -1043,11 +1222,21 @@ async fn run_connection<S>(
     });
 }
 
+/// Sends a peer's queued messages: control messages (pongs, headers, relay)
+/// strictly before queued `Block` frames, so a pong never waits behind a
+/// batch of blocks (R8-11). A frame already being written is not interrupted.
 async fn write_loop<W: AsyncWrite + Unpin>(
     mut writer: FrameWriter<W>,
-    mut rx: mpsc::Receiver<Message>,
+    mut control: mpsc::Receiver<Message>,
+    mut bulk: mpsc::Receiver<Message>,
 ) {
-    while let Some(msg) = rx.recv().await {
+    loop {
+        let msg = tokio::select! {
+            biased;
+            m = control.recv() => m,
+            m = bulk.recv() => m,
+        };
+        let Some(msg) = msg else { break };
         if writer.send(&msg.encode()).await.is_err() {
             break;
         }
@@ -1109,22 +1298,20 @@ async fn handle(inner: &Arc<Inner>, peer: PeerId, msg: Message) {
         Message::Addr(addrs) => on_addr(inner, peer, addrs),
         Message::GetHeaders { locator, stop } => {
             let headers = inner
-                .chain()
-                .headers_after(&locator, &stop, MAX_HEADERS as usize);
+                .with_chain(move |c| c.headers_after(&locator, &stop, MAX_HEADERS as usize))
+                .await;
             inner.send_now(peer, Message::Headers(headers));
         }
-        Message::Headers(headers) => on_headers(inner, peer, headers),
-        Message::GetBlocks(ids) => on_get_blocks(inner, peer, ids),
-        Message::Block(bytes) => on_block(inner, peer, bytes).await,
+        Message::Headers(headers) => on_headers(inner, peer, headers).await,
+        Message::GetBlocks(ids) => on_get_blocks(inner, peer, ids).await,
+        Message::Block(bytes) => on_block(inner, peer, bytes),
         Message::NotFound(ids) => {
             let mut st = inner.state();
             let now = Instant::now();
             for id in ids {
                 if st.block_requests.get(&id).is_some_and(|(p, _)| *p == peer) {
                     st.block_requests.remove(&id);
-                    if let Some(p) = st.peers.get_mut(&peer) {
-                        p.blocks_in_flight = p.blocks_in_flight.saturating_sub(1);
-                    }
+                    release_block_slot(&mut st, peer);
                 }
                 if st.tx_requests.get(&id).is_some_and(|(p, _)| *p == peer) {
                     retry_tx(inner, &mut st, id, peer, now);
@@ -1132,7 +1319,7 @@ async fn handle(inner: &Arc<Inner>, peer: PeerId, msg: Message) {
             }
         }
         Message::InvTx(ids) => on_inv_tx(inner, peer, ids).await,
-        Message::GetTx(ids) => on_get_tx(inner, peer, ids),
+        Message::GetTx(ids) => on_get_tx(inner, peer, ids).await,
         Message::Tx(bytes) => on_tx(inner, peer, bytes).await,
         Message::StemTx(bytes) => on_stem_tx(inner, peer, bytes).await,
     }
@@ -1206,11 +1393,15 @@ fn in_grace(grace: Option<Instant>, now: Instant) -> bool {
 /// Receives a `Headers` message on the peer's read loop. Only cheap checks run
 /// here; the batch is verified by the header worker, so the read loop keeps
 /// answering pings however long the proof of work takes (docs/p2p.md §6).
-fn on_headers(inner: &Arc<Inner>, peer: PeerId, headers: Vec<BlockHeader>) {
+async fn on_headers(inner: &Arc<Inner>, peer: PeerId, headers: Vec<BlockHeader>) {
     let nid = inner.cfg.network_id;
     // Only needed for an empty reply; read before the state lock (the two
     // locks are never held together).
-    let ours = headers.is_empty().then(|| inner.chain().header_height());
+    let ours = if headers.is_empty() {
+        Some(inner.with_chain(|c| c.header_height()).await)
+    } else {
+        None
+    };
     let penalty = {
         let mut st = inner.state();
         let room = st
@@ -1339,9 +1530,21 @@ async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<Header
         let last_height = headers.last().map_or(0, |h| h.height);
         let inner2 = inner.clone();
         let addr = batch.addr.clone();
-        let outcome =
-            tokio::task::spawn_blocking(move || verify_headers(&inner2, peer, &addr, &headers))
-                .await;
+        // Our header height after the batch is read on the same blocking
+        // thread, so the peer's claimed height is corrected below under the
+        // same state lock that ends `headers_busy`: the maintenance loop
+        // never sees the peer idle with its stale (higher) height, which
+        // would ask it again (R8-15 request loops).
+        let result = tokio::task::spawn_blocking(move || {
+            let outcome = verify_headers(&inner2, peer, &addr, &headers);
+            let ours = inner2.chain().header_height();
+            (outcome, ours)
+        })
+        .await;
+        let (outcome, ours) = match result {
+            Ok((outcome, ours)) => (Ok(outcome), ours),
+            Err(e) => (Err(e), 0),
+        };
         let pending = {
             let mut st = inner.state();
             st.header_queue_len = st.header_queue_len.saturating_sub(1);
@@ -1355,6 +1558,26 @@ async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<Header
             match st.peers.get_mut(&peer) {
                 Some(p) => {
                     p.headers_busy = false;
+                    match &outcome {
+                        Ok(HeaderOutcome::Accepted { last, advanced, .. }) => {
+                            p.height = p.height.max(*last);
+                            if !advanced && batch.solicited {
+                                // A solicited reply that taught us nothing:
+                                // do not ask this peer again every tick.
+                                p.height = p.height.min(ours.max(*last));
+                            }
+                        }
+                        Ok(HeaderOutcome::LowWork) if batch.solicited => {
+                            p.height = p.height.min(ours);
+                        }
+                        // After relaying headers of a block whose body is
+                        // invalid, the peer is not asked again until it
+                        // announces a new tip (`on_header_error`).
+                        Ok(HeaderOutcome::Failed(HeaderError::InvalidParent)) => {
+                            p.height = p.height.min(ours);
+                        }
+                        _ => {}
+                    }
                     std::mem::take(&mut p.headers_pending)
                 }
                 None => false,
@@ -1362,40 +1585,23 @@ async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<Header
         };
         match outcome {
             Ok(HeaderOutcome::Accepted {
-                last,
-                last_id,
-                advanced,
+                last_id, advanced, ..
             }) => {
-                let ours = (!advanced && batch.solicited).then(|| inner.chain().header_height());
-                if let Some(p) = inner.state().peers.get_mut(&peer) {
-                    p.height = p.height.max(last);
-                    if let Some(ours) = ours {
-                        // A solicited reply that taught us nothing: do not
-                        // ask this peer again every tick.
-                        p.height = p.height.min(ours.max(last));
-                    }
-                }
                 if full && advanced {
-                    inner.request_headers_after(peer, Some(last_id));
+                    inner.request_headers_after(peer, Some(last_id)).await;
                 } else if pending {
-                    inner.request_headers(peer);
+                    inner.request_headers(peer).await;
                 }
             }
             Ok(HeaderOutcome::LowWork) => {
                 log::debug!(
                     "peer {peer}: {count} headers up to height {last_height} do not beat our best chain; dropped"
                 );
-                if batch.solicited {
-                    let ours = inner.chain().header_height();
-                    if let Some(p) = inner.state().peers.get_mut(&peer) {
-                        p.height = p.height.min(ours);
-                    }
-                }
                 // Not re-requested because of this batch. Headers the peer
                 // sent meanwhile (e.g. the child that makes an equal-work
                 // rival heavier) are asked for again.
                 if pending {
-                    inner.request_headers(peer);
+                    inner.request_headers(peer).await;
                 }
             }
             Ok(HeaderOutcome::Unconnected) => {
@@ -1407,20 +1613,17 @@ async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<Header
                         "headers do not connect",
                     );
                 }
-                inner.request_headers(peer);
+                inner.request_headers(peer).await;
             }
             Ok(HeaderOutcome::Failed(e)) => {
-                on_header_error(&inner, &batch, e, last_height, pending)
+                on_header_error(&inner, &batch, e, last_height, pending).await
             }
             Ok(HeaderOutcome::Abandoned) => {}
-            Err(e) => {
-                log::error!("header task failed: {e}");
-                if pending {
-                    inner.request_headers(peer);
-                }
-            }
+            // `verify_headers` takes the chain lock: a panic there poisoned it.
+            Err(e) if e.is_panic() => fatal(&format!("header task failed: {e}")),
+            Err(_) => return, // the runtime is shutting down
         }
-        schedule_downloads(&inner);
+        schedule_downloads(&inner).await;
     }
 }
 
@@ -1589,7 +1792,7 @@ fn verify_headers(
 ///
 /// Headers that arrived from the peer meanwhile (`pending`) are asked for
 /// again whenever the peer is not penalized.
-fn on_header_error(
+async fn on_header_error(
     inner: &Arc<Inner>,
     batch: &HeaderBatch,
     e: HeaderError,
@@ -1600,23 +1803,21 @@ fn on_header_error(
     match e {
         HeaderError::Duplicate | HeaderError::TimestampTooFarInFuture { .. } => {
             if pending {
-                inner.request_headers(peer);
+                inner.request_headers(peer).await;
             }
         }
-        HeaderError::UnknownParent => inner.request_headers(peer),
+        HeaderError::UnknownParent => inner.request_headers(peer).await,
         HeaderError::UnknownUpgrade { version } => inner.warn_unknown_upgrade(peer, version),
         HeaderError::InvalidParent => {
             log::info!(
                 "peer {peer} relays headers (up to height {last_height}) descending from a block with an invalid body"
             );
-            let ours = inner.chain().header_height();
-            if let Some(p) = inner.state().peers.get_mut(&peer) {
-                p.height = p.height.min(ours);
-            }
+            // Its claimed height was lowered to ours by the header worker.
             if pending {
-                inner.request_headers(peer);
+                inner.request_headers(peer).await;
             }
         }
+
         e => inner.misbehave_departed(
             batch,
             score::INVALID_HEADER,
@@ -1625,29 +1826,44 @@ fn on_header_error(
     }
 }
 
-fn on_get_blocks(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) {
-    let (found, missing): (Vec<Block>, Vec<Hash>) = {
-        let c = inner.chain();
-        let mut found = Vec::new();
-        let mut missing = Vec::new();
-        for id in ids {
-            match c.block(&id) {
-                Some(b) if found.len() < SERVE_BLOCKS_PER_REQUEST => found.push(b),
-                _ => missing.push(id),
+async fn on_get_blocks(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) {
+    // Copied and encoded under the lock on a blocking thread; queued after.
+    let (found, missing): (Vec<Vec<u8>>, Vec<Hash>) = inner
+        .with_chain(move |c| {
+            let mut found = Vec::new();
+            let mut missing = Vec::new();
+            for id in ids {
+                match c.block(&id) {
+                    Some(b) if found.len() < SERVE_BLOCKS_PER_REQUEST => found.push(b.encode()),
+                    _ => missing.push(id),
+                }
             }
-        }
-        (found, missing)
-    };
+            (found, missing)
+        })
+        .await;
     let mut st = inner.state();
     for b in found {
-        inner.send(&mut st, peer, Message::Block(b.encode()));
+        inner.send(&mut st, peer, Message::Block(b));
     }
     if !missing.is_empty() {
         inner.send(&mut st, peer, Message::NotFound(missing));
     }
 }
 
-async fn on_block(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
+/// Frees one place in `peer`'s block request window (`BLOCKS_IN_FLIGHT`,
+/// `BLOCK_WINDOW_BYTES`): the request was answered and processed, answered
+/// `NotFound`, or timed out.
+fn release_block_slot(st: &mut State, peer: PeerId) {
+    if let Some(p) = st.peers.get_mut(&peer) {
+        p.blocks_in_flight = p.blocks_in_flight.saturating_sub(1);
+        p.bytes_in_flight = p.bytes_in_flight.saturating_sub(MAX_BLOCK_BYTES);
+    }
+}
+
+/// Receives a `Block` on the peer's read loop: decoded and matched against
+/// our requests here, then handed to the block worker, so the read loop keeps
+/// answering pings however long the block takes to connect (R8-1).
+fn on_block(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     let block = match Block::decode(&bytes) {
         Ok(b) => b,
         Err(e) => {
@@ -1660,67 +1876,129 @@ async fn on_block(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
         }
     };
     let id = block.id(inner.cfg.network_id);
-    let requested = {
+    let job = {
         let mut st = inner.state();
-        let req = st.block_requests.get(&id).is_some_and(|(p, _)| *p == peer);
-        if req {
+        let requested = st.block_requests.get(&id).is_some_and(|(p, _)| *p == peer);
+        if requested {
+            // Out of the timeout sweep; its window place is freed once the
+            // block worker has processed it.
             st.block_requests.remove(&id);
-            if let Some(p) = st.peers.get_mut(&peer) {
-                p.blocks_in_flight = p.blocks_in_flight.saturating_sub(1);
-            }
         }
         let late = st.late_blocks.get(&id).is_some_and(|(p, _)| *p == peer);
         if late {
             st.late_blocks.remove(&id);
         }
-        req || late
-    };
-    if !requested {
-        inner.misbehave(peer, score::UNSOLICITED, "unrequested block");
-        // Only a block whose header we already accepted (so it passed the
-        // header gate, `worth_verifying`) is worth storing, e.g. a requested
-        // block arriving after its timeout. Any other unrequested body, for
-        // instance of a free low-work branch, is dropped before it is hashed
-        // or written (R1-C1).
-        if inner.chain().header(&id).is_none() {
-            return;
-        }
-    }
-    let inner2 = inner.clone();
-    let result =
-        tokio::task::spawn_blocking(move || inner2.chain().submit_block(block, unix_now())).await;
-    match result {
-        Ok(Ok(_)) | Ok(Err(SubmitError::Duplicate)) => {}
-        Ok(Err(SubmitError::BodyMismatch)) => {
-            inner.misbehave(peer, score::INVALID_BLOCK, "body does not match header")
-        }
-        Ok(Err(SubmitError::Body(e))) => {
-            inner.misbehave(peer, score::INVALID_BLOCK, &format!("invalid block: {e:?}"))
-        }
-        Ok(Err(SubmitError::Header(e))) => match e {
-            // `InvalidParent`: the parent's body was found invalid, possibly
-            // after we requested this block (a race), so it is not the
-            // sender's fault; an unrequested block was already charged above.
-            HeaderError::Duplicate
-            | HeaderError::TimestampTooFarInFuture { .. }
-            | HeaderError::InvalidParent => {}
-            HeaderError::UnknownParent => inner.request_headers(peer),
-            HeaderError::UnknownUpgrade { version } => inner.warn_unknown_upgrade(peer, version),
-            e => inner.misbehave(
+        let unrequested = !requested && !late;
+        if unrequested && st.unrequested_queued >= UNREQUESTED_QUEUE {
+            None
+        } else {
+            if unrequested {
+                st.unrequested_queued += 1;
+            }
+            st.blocks_queued.insert(id);
+            Some(BlockJob {
                 peer,
-                score::INVALID_HEADER,
-                &format!("invalid block header: {e}"),
-            ),
-        },
-        Ok(Err(SubmitError::Store(e))) => log::error!("block store: {e}"),
-        Err(e) => log::error!("block task failed: {e}"),
+                block,
+                requested,
+                late,
+            })
+        }
+    };
+    let solicited = job.as_ref().is_some_and(|j| j.requested || j.late);
+    if !solicited {
+        inner.misbehave(peer, score::UNSOLICITED, "unrequested block");
     }
-    schedule_downloads(inner);
+    if let Some(job) = job {
+        if inner.block_queue.send(job).is_err() {
+            log::error!("block worker stopped: block dropped");
+        }
+    }
 }
 
-/// Requests missing best-chain bodies from peers that have them (docs/p2p.md §6).
-fn schedule_downloads(inner: &Arc<Inner>) {
-    let missing = inner.chain().missing_bodies(256);
+/// Validates and connects received blocks, one at a time, in arrival order
+/// (docs/p2p.md §6). Each block is connected through the bounded API
+/// (`submit_block_in_steps`): at most `SYNC_STEP_BLOCKS` block validations
+/// per chain-lock hold, so the gap-filling block of a long download does not
+/// hold the lock while hundreds of waiting descendants connect.
+async fn block_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<BlockJob>) {
+    while let Some(job) = rx.recv().await {
+        let BlockJob {
+            peer,
+            block,
+            requested,
+            late,
+        } = job;
+        let unrequested = !requested && !late;
+        let id = block.id(inner.cfg.network_id);
+        let inner2 = inner.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            // Only a block whose header we already accepted (so it passed
+            // the header gate, `worth_verifying`) is worth storing, e.g. a
+            // requested block arriving after its timeout. Any other
+            // unrequested body, for instance of a free low-work branch, is
+            // dropped before it is hashed or written (R1-C1).
+            if unrequested && inner2.chain().header(&id).is_none() {
+                return None;
+            }
+            Some(submit_block_in_steps(
+                || inner2.chain(),
+                block,
+                unix_now(),
+                SYNC_STEP_BLOCKS,
+            ))
+        })
+        .await;
+        {
+            let mut st = inner.state();
+            if requested {
+                release_block_slot(&mut st, peer);
+            }
+            if unrequested {
+                st.unrequested_queued = st.unrequested_queued.saturating_sub(1);
+            }
+            st.blocks_queued.remove(&id);
+        }
+        match result {
+            Ok(None) | Ok(Some(Ok(_))) | Ok(Some(Err(SubmitError::Duplicate))) => {}
+            Ok(Some(Err(SubmitError::BodyMismatch))) => {
+                inner.misbehave(peer, score::INVALID_BLOCK, "body does not match header")
+            }
+            Ok(Some(Err(SubmitError::Body(e)))) => {
+                inner.misbehave(peer, score::INVALID_BLOCK, &format!("invalid block: {e:?}"))
+            }
+            Ok(Some(Err(SubmitError::Header(e)))) => match e {
+                // `InvalidParent`: the parent's body was found invalid,
+                // possibly after we requested this block (a race), so it is
+                // not the sender's fault; an unrequested block was already
+                // charged on arrival.
+                HeaderError::Duplicate
+                | HeaderError::TimestampTooFarInFuture { .. }
+                | HeaderError::InvalidParent => {}
+                HeaderError::UnknownParent => inner.request_headers(peer).await,
+                HeaderError::UnknownUpgrade { version } => {
+                    inner.warn_unknown_upgrade(peer, version)
+                }
+                e => inner.misbehave(
+                    peer,
+                    score::INVALID_HEADER,
+                    &format!("invalid block header: {e}"),
+                ),
+            },
+            Ok(Some(Err(SubmitError::Store(e)))) => log::error!("block store: {e}"),
+            // The task holds the chain lock: a panic there poisoned it.
+            Err(e) if e.is_panic() => fatal(&format!("block task failed: {e}")),
+            Err(_) => return, // the runtime is shutting down
+        }
+        schedule_downloads(&inner).await;
+    }
+}
+
+/// Requests missing best-chain bodies from peers that have them (docs/p2p.md
+/// §6), within each peer's window: `BLOCKS_IN_FLIGHT` blocks and
+/// `BLOCK_WINDOW_BYTES` (each request charged `MAX_BLOCK_BYTES`), at least
+/// one block.
+async fn schedule_downloads(inner: &Arc<Inner>) {
+    let missing = inner.with_chain(|c| c.missing_bodies(256)).await;
     if missing.is_empty() {
         return;
     }
@@ -1728,20 +2006,23 @@ fn schedule_downloads(inner: &Arc<Inner>) {
     let now = Instant::now();
     let mut batches: HashMap<PeerId, Vec<Hash>> = HashMap::new();
     for (height, id) in missing {
-        if st.block_requests.contains_key(&id) {
+        if st.block_requests.contains_key(&id) || st.blocks_queued.contains(&id) {
             continue;
         }
+
         let candidates: Vec<PeerId> = st
             .peers
             .iter()
-            .filter(|(_, p)| p.height >= height && p.blocks_in_flight < BLOCKS_IN_FLIGHT)
+            .filter(|(_, p)| p.height >= height && window_has_room(p))
             .map(|(id, _)| *id)
             .collect();
         if candidates.is_empty() {
             break;
         }
         let pick = candidates[(st.rng.next_u64() % candidates.len() as u64) as usize];
-        st.peers.get_mut(&pick).expect("candidate").blocks_in_flight += 1;
+        let p = st.peers.get_mut(&pick).expect("candidate");
+        p.blocks_in_flight += 1;
+        p.bytes_in_flight += MAX_BLOCK_BYTES;
         st.block_requests.insert(id, (pick, now));
         batches.entry(pick).or_default().push(id);
     }
@@ -1750,14 +2031,20 @@ fn schedule_downloads(inner: &Arc<Inner>) {
     }
 }
 
+/// Whether another block may be requested from `p` (`schedule_downloads`).
+fn window_has_room(p: &Peer) -> bool {
+    p.blocks_in_flight == 0
+        || (p.blocks_in_flight < BLOCKS_IN_FLIGHT
+            && p.bytes_in_flight + MAX_BLOCK_BYTES <= BLOCK_WINDOW_BYTES)
+}
+
 async fn on_inv_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) {
-    let (known, tip): (Vec<bool>, Hash) = {
-        let c = inner.chain();
-        (
-            ids.iter().map(|id| c.mempool().contains(id)).collect(),
-            c.tip_id(),
-        )
-    };
+    let (ids, known, tip): (Vec<Hash>, Vec<bool>, Hash) = inner
+        .with_chain(move |c| {
+            let known = ids.iter().map(|id| c.mempool().contains(id)).collect();
+            (ids, known, c.tip_id())
+        })
+        .await;
     let mut request = Vec::new();
     {
         let mut st = inner.state();
@@ -1796,7 +2083,7 @@ async fn on_inv_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) {
     }
 }
 
-fn on_get_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) {
+async fn on_get_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) {
     // Serve only what we announced to this peer and still have. Everything else
     // gets the same `NotFound` answer, so the reply reveals nothing about the
     // stempool or mempool, and an honest requester can move on immediately.
@@ -1807,17 +2094,20 @@ fn on_get_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) {
             .map(|id| (id, p.announced_to.contains(&id)))
             .collect()
     };
-    let mut txs = Vec::new();
-    let mut missing = Vec::new();
-    {
-        let c = inner.chain();
-        for (id, ok) in announced {
-            match c.mempool().get(&id).filter(|_| ok) {
-                Some(t) => txs.push(t.encode()),
-                None => missing.push(id),
+    let (txs, missing) = inner
+        .with_chain(move |c| {
+            let mut txs = Vec::new();
+            let mut missing = Vec::new();
+            for (id, ok) in announced {
+                match c.mempool().get(&id).filter(|_| ok) {
+                    Some(t) => txs.push(t.encode()),
+                    None => missing.push(id),
+                }
             }
-        }
-    }
+            (txs, missing)
+        })
+        .await;
+
     let mut st = inner.state();
     for t in txs {
         inner.send(&mut st, peer, Message::Tx(t));
@@ -1899,8 +2189,11 @@ fn ctx_reject(st: &mut State, id: Hash, tip: Hash) {
 ///    again is penalized);
 /// 2. the peer's signature budget is charged one token per v1 input (one
 ///    CLSAG verification each), and a PX or deploy transaction its PX share;
-/// 3. a transaction already in the mempool, or that failed a contextual rule
-///    at the current tip, is dropped unverified;
+/// 3. a transaction already in the mempool, one that conflicts with a pooled
+///    transaction (same key image, nullifier, contract id or output key; the
+///    pool keeps the first seen, so it would be refused after verification),
+///    or one that failed a contextual rule at the current tip, is dropped
+///    unverified;
 /// 4. cheap checks: PX structure and balance (stateless), then the contextual
 ///    rules an extension can change (key images, one-time keys, PX anchor,
 ///    nullifiers, registry, pool, contract id);
@@ -1911,7 +2204,13 @@ fn ctx_reject(st: &mut State, id: Hash, tip: Hash) {
 /// `stem`: an unsolicited `StemTx` (rate excesses are penalized) rather than a
 /// `Tx` we requested (never penalized for its rate: we asked for it; over a
 /// limit it is dropped unverified). Returns whether to verify.
-fn admit_tx(inner: &Arc<Inner>, peer: PeerId, tx: &Transaction, id: Hash, stem: bool) -> bool {
+async fn admit_tx(
+    inner: &Arc<Inner>,
+    peer: PeerId,
+    tx: &Transaction,
+    id: Hash,
+    stem: bool,
+) -> bool {
     let now = Instant::now();
     let px = is_px(tx);
     let over = {
@@ -1942,31 +2241,50 @@ fn admit_tx(inner: &Arc<Inner>, peer: PeerId, tx: &Transaction, id: Hash, stem: 
         }
         return false;
     }
-    let (tip, pooled) = {
-        let c = inner.chain();
-        (c.tip_id(), c.mempool().contains(&id))
-    };
+    let tx = Arc::new(tx.clone());
+    let tx2 = tx.clone();
+    let (tip, pooled, conflict) = inner
+        .with_chain(move |c| {
+            let pool = c.mempool();
+            (c.tip_id(), pool.contains(&id), pool.conflicts(&tx2))
+        })
+        .await;
     // Already pooled (a replay): nothing to verify, no budget spent (SX2).
+    // A conflict with a pooled transaction would be refused after
+    // verification (first seen wins): dropped now, before the node-wide PX
+    // token. Not penalized: the conflicting transaction may be an honest
+    // double spend that lost a race.
     if pooled || ctx_rejected(&inner.state(), &id, &tip) {
         return false;
     }
-    let cheap = {
-        let c = inner.chain();
-        // The cheap stateless rules first, as in full validation: a
-        // transaction that breaks one is penalized whatever its context.
-        use blacksilk_tx::{px, validate};
-        let rules = c.next_rules();
-        let stateless = match tx {
-            Transaction::Coinbase(_) => Err(blacksilk_tx::TxError::CoinbaseNotAllowed),
-            Transaction::Transfer(t) => {
-                validate::check_structure(t, &rules).and_then(|_| validate::check_balance(t))
-            }
-            Transaction::Px(t) => px::check_px_structure(t).and_then(|_| px::check_px_balance(t)),
-            Transaction::PxDeploy(t) => px::check_deploy_structure(t, &rules)
-                .and_then(|_| validate::check_balance(&t.as_transfer())),
-        };
-        stateless.and_then(|_| blacksilk_tx::validate::revalidate_after_extension(tx, c.state()))
-    };
+    if conflict {
+        log::debug!(
+            "transaction {} conflicts with a pooled one; dropped",
+            short(&id)
+        );
+        return false;
+    }
+    let cheap = inner
+        .with_chain(move |c| {
+            // The cheap stateless rules first, as in full validation: a
+            // transaction that breaks one is penalized whatever its context.
+            use blacksilk_tx::{px, validate};
+            let rules = c.next_rules();
+            let stateless = match &*tx {
+                Transaction::Coinbase(_) => Err(blacksilk_tx::TxError::CoinbaseNotAllowed),
+                Transaction::Transfer(t) => {
+                    validate::check_structure(t, &rules).and_then(|_| validate::check_balance(t))
+                }
+                Transaction::Px(t) => {
+                    px::check_px_structure(t).and_then(|_| px::check_px_balance(t))
+                }
+                Transaction::PxDeploy(t) => px::check_deploy_structure(t, &rules)
+                    .and_then(|_| validate::check_balance(&t.as_transfer())),
+            };
+            stateless
+                .and_then(|_| blacksilk_tx::validate::revalidate_after_extension(&tx, c.state()))
+        })
+        .await;
     if let Err(e) = cheap {
         if e.is_stateless() {
             Inner::reject_cache(&mut inner.state(), id);
@@ -2009,10 +2327,9 @@ const SIGNATURE_BURIAL: u64 = 60;
 /// Whether an `InvalidSignature` for an input with ring `ring` proves the
 /// sender relayed an invalid transaction: every ring member is at least
 /// `SIGNATURE_BURIAL` blocks below our tip.
-fn provably_invalid_signature(inner: &Inner, ring: Option<&Vec<u64>>) -> bool {
+fn provably_invalid_signature(c: &ChainManager, ring: Option<&Vec<u64>>) -> bool {
     use blacksilk_tx::validate::ChainView;
     let Some(ring) = ring else { return false };
-    let c = inner.chain();
     let tip = c.height();
     !ring.is_empty()
         && ring.iter().all(|&i| {
@@ -2022,35 +2339,42 @@ fn provably_invalid_signature(inner: &Inner, ring: Option<&Vec<u64>>) -> bool {
         })
 }
 
-/// A relayed transaction failed full verification at tip `tip`. Stateless
-/// failures, and signatures that fail over deeply buried ring members, prove
-/// misbehavior: penalized and remembered for good. Other (contextual) failures
-/// can be honest races: not penalized, and not verified again at this tip.
+/// Whether the verification failure `e` of a transaction whose inputs have
+/// rings `rings` proves that its relayer broke the rules: a stateless
+/// failure, or a signature that fails over deeply buried ring members. Runs
+/// under the chain lock, with the verification (same tip).
+fn proven_invalid(c: &ChainManager, rings: &[Vec<u64>], e: &MempoolError) -> bool {
+    match e {
+        MempoolError::Invalid(e) => {
+            // Near an activation, proofs and signatures made for the
+            // neighbouring rule set fail honestly
+            // (`validate::ACTIVATION_GRACE_BLOCKS`).
+            let next = c.height() + 1;
+            let near = blacksilk_tx::validate::near_activation(c.params(), next);
+            e.is_stateless_at(c.params(), next)
+                || match e {
+                    blacksilk_tx::TxError::InvalidSignature { input } if !near => {
+                        provably_invalid_signature(c, rings.get(*input))
+                    }
+                    _ => false,
+                }
+        }
+        _ => false,
+    }
+}
+
+/// A relayed transaction failed full verification at tip `tip`. Proven
+/// failures (`proven_invalid`) are penalized and remembered for good. Other
+/// (contextual) failures can be honest races: not penalized, and not
+/// verified again at this tip.
 fn on_invalid_tx(
     inner: &Arc<Inner>,
     peer: PeerId,
     id: Hash,
-    rings: &[Vec<u64>],
     tip: Hash,
     e: blacksilk_tx::TxError,
+    proven: bool,
 ) {
-    // Near an activation, proofs and signatures made for the neighbouring
-    // rule set fail honestly (`validate::ACTIVATION_GRACE_BLOCKS`).
-    let (stateless, near) = {
-        let c = inner.chain();
-        let next = c.height() + 1;
-        (
-            e.is_stateless_at(c.params(), next),
-            blacksilk_tx::validate::near_activation(c.params(), next),
-        )
-    };
-    let proven = stateless
-        || match e {
-            blacksilk_tx::TxError::InvalidSignature { input } if !near => {
-                provably_invalid_signature(inner, rings.get(input))
-            }
-            _ => false,
-        };
     if proven {
         Inner::reject_cache(&mut inner.state(), id);
         inner.misbehave(
@@ -2083,19 +2407,21 @@ async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
         inner.misbehave(peer, score::UNSOLICITED, "unrequested transaction");
         return;
     }
-    if !admit_tx(inner, peer, &tx, id, false) {
+    if !admit_tx(inner, peer, &tx, id, false).await {
         return;
     }
     let rings = input_rings(&tx);
-    let inner2 = inner.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        let mut c = inner2.chain();
-        (c.tip_id(), c.submit_tx(tx))
-    })
-    .await;
+    let result = inner
+        .with_chain(move |c| {
+            let tip = c.tip_id();
+            let r = c.submit_tx(tx);
+            let proven = r.as_ref().is_err_and(|e| proven_invalid(c, &rings, e));
+            (tip, r, proven)
+        })
+        .await;
     inner.state().tx_verifications += 1;
     match result {
-        Ok((_, Ok(_))) => {
+        (_, Ok(_), _) => {
             {
                 let mut st = inner.state();
                 if let Some(e) = st.stempool.remove(&id) {
@@ -2104,9 +2430,10 @@ async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
             }
             inner.announce_tx(id, Some(peer));
         }
-        Ok((tip, Err(MempoolError::Invalid(e)))) => on_invalid_tx(inner, peer, id, &rings, tip, e),
-        Ok((_, Err(_))) => {}
-        Err(e) => log::error!("tx task failed: {e}"),
+        (tip, Err(MempoolError::Invalid(e)), proven) => {
+            on_invalid_tx(inner, peer, id, tip, e, proven)
+        }
+        (_, Err(_), _) => {}
     }
 }
 
@@ -2148,23 +2475,25 @@ async fn on_stem_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
             return;
         }
     }
-    if !admit_tx(inner, peer, &tx, id, true) {
+    if !admit_tx(inner, peer, &tx, id, true).await {
         return;
     }
     let rings = input_rings(&tx);
-    let inner2 = inner.clone();
     let tx2 = tx.clone();
-    let checked = tokio::task::spawn_blocking(move || {
-        let c = inner2.chain();
-        (c.tip_id(), c.check_tx(&tx2))
-    })
-    .await;
+    let checked = inner
+        .with_chain(move |c| {
+            let r = c.check_tx(&tx2);
+            let proven = r.as_ref().is_err_and(|e| proven_invalid(c, &rings, e));
+            (c.tip_id(), r, proven)
+        })
+        .await;
     inner.state().tx_verifications += 1;
     match checked {
-        Ok((_, Ok(_))) => stem_or_fluff(inner, tx, id, Source::Peer(peer)).await,
-        Ok((tip, Err(MempoolError::Invalid(e)))) => on_invalid_tx(inner, peer, id, &rings, tip, e),
-        Ok((_, Err(_))) => {}
-        Err(e) => log::error!("stem task failed: {e}"),
+        (_, Ok(_), _) => stem_or_fluff(inner, tx, id, Source::Peer(peer)).await,
+        (tip, Err(MempoolError::Invalid(e)), proven) => {
+            on_invalid_tx(inner, peer, id, tip, e, proven)
+        }
+        (_, Err(_), _) => {}
     }
 }
 
@@ -2250,15 +2579,13 @@ async fn fluff(inner: &Arc<Inner>, id: Hash, except: Option<PeerId>) {
         e
     };
     let Some(entry) = entry else { return };
-    let inner2 = inner.clone();
-    let result = tokio::task::spawn_blocking(move || inner2.chain().submit_tx(entry.tx)).await;
+    let result = inner.with_chain(move |c| c.submit_tx(entry.tx)).await;
     match result {
-        Ok(Ok(_)) | Ok(Err(MempoolError::AlreadyKnown)) => {
+        Ok(_) | Err(MempoolError::AlreadyKnown) => {
             log::debug!("fluff tx {}", short(&id));
             inner.announce_tx(id, except);
         }
-        Ok(Err(e)) => log::debug!("fluffing {} failed: {e:?}", short(&id)),
-        Err(e) => log::error!("fluff task failed: {e}"),
+        Err(e) => log::debug!("fluffing {} failed: {e:?}", short(&id)),
     }
 }
 
@@ -2297,11 +2624,9 @@ async fn maintenance_loop(inner: Arc<Inner>) {
         }
 
         // Announce a new tip.
-        let tip = {
-            let c = inner.chain();
-            let id = c.tip_id();
-            (id, *c.tip_header())
-        };
+        let (tip, header_height_now) = inner
+            .with_chain(|c| ((c.tip_id(), *c.tip_header()), c.header_height()))
+            .await;
         {
             let mut st = inner.state();
             if st.announced_tip != tip.0 {
@@ -2319,7 +2644,6 @@ async fn maintenance_loop(inner: Arc<Inner>) {
         }
 
         // Trickled announcements, pings, timeouts.
-        let header_height_now = inner.chain().header_height();
         let mut timed_out = Vec::new();
         {
             let mut st = inner.state();
@@ -2361,9 +2685,7 @@ async fn maintenance_loop(inner: Arc<Inner>) {
                 .collect();
             for (id, p) in stale_blocks {
                 st.block_requests.remove(&id);
-                if let Some(peer) = st.peers.get_mut(&p) {
-                    peer.blocks_in_flight = peer.blocks_in_flight.saturating_sub(1);
-                }
+                release_block_slot(&mut st, p);
                 st.late_blocks.insert(id, (p, now));
                 timed_out.push((p, "block"));
             }
@@ -2391,7 +2713,7 @@ async fn maintenance_loop(inner: Arc<Inner>) {
 
         // Keep syncing from peers that are ahead, and ask again peers whose
         // headers were dropped while the queue was full, once it has room.
-        let header_height = inner.chain().header_height();
+        let header_height = header_height_now;
         let behind: Vec<PeerId> = {
             let st = inner.state();
             st.peers
@@ -2406,9 +2728,9 @@ async fn maintenance_loop(inner: Arc<Inner>) {
                 .collect()
         };
         for p in behind {
-            inner.request_headers(p);
+            inner.request_headers(p).await;
         }
-        schedule_downloads(&inner);
+        schedule_downloads(&inner).await;
 
         // Outbound connections.
         if now.duration_since(last_outbound) > Duration::from_secs(2) {
@@ -2543,6 +2865,47 @@ mod tests {
             remember(&mut set, [id]);
             assert!(set.len() <= ANNOUNCED_CAP + 1);
         }
+    }
+
+    /// R8-11: control messages queued behind block frames are written first.
+    #[tokio::test]
+    async fn control_messages_overtake_queued_block_frames() {
+        let (a, b) = tokio::io::duplex(1 << 16);
+        let t = Duration::from_secs(5);
+        let (ours, theirs) = tokio::join!(
+            handshake(a, true, 7, &[3; 32], t),
+            handshake(b, false, 7, &[3; 32], t)
+        );
+        let ((_, writer), (mut reader, _)) = (ours.unwrap(), theirs.unwrap());
+        let (control_tx, control_rx) = mpsc::channel(OUTBOX);
+        let (bulk_tx, bulk_rx) = mpsc::channel(BULK_OUTBOX);
+        for i in 0..4u8 {
+            bulk_tx.try_send(Message::Block(vec![i; 1000])).unwrap();
+        }
+        control_tx.try_send(Message::Pong(9)).unwrap();
+        control_tx.try_send(Message::Ping(10)).unwrap();
+        let task = tokio::spawn(write_loop(writer, control_rx, bulk_rx));
+        let mut got = Vec::new();
+        for _ in 0..6 {
+            got.push(Message::decode(&reader.recv().await.unwrap()).unwrap());
+        }
+        assert_eq!(got[0], Message::Pong(9));
+        assert_eq!(got[1], Message::Ping(10));
+        assert!(got[2..]
+            .iter()
+            .enumerate()
+            .all(|(i, m)| *m == Message::Block(vec![i as u8; 1000])));
+        drop((control_tx, bulk_tx));
+        task.await.unwrap();
+    }
+
+    /// R8-9: the byte window, not the count, limits maximum-size blocks
+    /// (3 in flight per peer; `p2p/tests/network.rs` checks it on the wire).
+    #[test]
+    fn the_byte_window_is_the_binding_limit() {
+        let allowed = BLOCK_WINDOW_BYTES / MAX_BLOCK_BYTES;
+        assert_eq!(allowed, 3);
+        assert!(allowed < BLOCKS_IN_FLIGHT);
     }
 
     #[test]

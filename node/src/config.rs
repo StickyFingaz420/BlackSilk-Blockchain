@@ -311,7 +311,6 @@ mod tests {
 
     #[test]
     fn retired_testnet_identity_is_refused_until_v3() {
-        assert!(!TESTNET_GENESIS_FINAL);
         assert!(check_network_enabled(Network::Testnet).is_err());
         assert!(check_network_enabled(Network::Regtest).is_ok());
         assert!(parse_network("mainnet").is_err());

@@ -175,7 +175,7 @@ review is asked to confirm or refute. The unresolved ones:
 
 ## 6. Known limitations (not findings)
 
-- Proof size is about 2.2 MB (transfer) and 2.7 MB (vault call), so about 4 PX
+- Proof size is about 2.2 MB (transfer) and 2.7 MB (vault call), so 3 PX
   transactions fit per block (aggregation-study.md). The widest shape (kernel plus two
   functions) has not been measured against `MAX_PROOF_BYTES` (4 MiB); an unmeasured
   estimate is about 3.0–3.3 MB.

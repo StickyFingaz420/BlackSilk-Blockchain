@@ -241,6 +241,50 @@ pub struct ChainManager {
     store_failures: u32,
     /// The block store failed persistently: no block is accepted any more.
     store_failed: bool,
+    /// Blocks ready to complete (body kept, parent complete), lowest body
+    /// arrival first. Drained by [`ChainManager::sync_step`] (and at once by
+    /// [`ChainManager::submit_block`]).
+    ready: BinaryHeap<Reverse<(u64, Hash)>>,
+    /// The completed block whose `sync_state` stopped at the connect budget
+    /// (its children are released when it finishes).
+    syncing: Option<Hash>,
+    /// Mempool effects of a drain in progress, applied when it ends.
+    sync_outcome: SyncOutcome,
+}
+
+/// Blocks validated and connected per lock hold by the bounded API
+/// ([`ChainManager::submit_block_bounded`], [`ChainManager::sync_step`]):
+/// the P2P layer releases the chain lock between steps (docs/p2p.md §6).
+pub const SYNC_STEP_BLOCKS: usize = 8;
+
+/// Submits `block` through the bounded API, taking the chain lock with `lock`
+/// once per step (at most `budget` block validations each) and releasing it
+/// in between, so readers and other writers get the lock while a long batch
+/// of downloaded blocks connects. The final verdict is the one
+/// [`ChainManager::submit_block`] would return: the chain reaches the same
+/// state, only the lock is released between steps.
+pub fn submit_block_in_steps<'a>(
+    lock: impl Fn() -> std::sync::MutexGuard<'a, ChainManager>,
+    block: Block,
+    now: u64,
+    budget: usize,
+) -> Result<Submitted, SubmitError> {
+    let first = lock().submit_block_bounded(block, now, budget)?;
+    if !first.body_kept {
+        return Ok(first);
+    }
+    loop {
+        // The standard mutex is not fair: a yield alone lets this loop take the
+        // lock again before a waiting reader (RPC, P2P) is scheduled, which was
+        // observed on Windows. A short sleep hands the lock to waiters; a batch
+        // of 256 blocks is at most 32 steps, so the cost is negligible next to
+        // validating the blocks.
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let mut c = lock();
+        if c.sync_step(budget) {
+            return c.verdict(first.id, first.height);
+        }
+    }
 }
 
 /// Consecutive failed block writes after which the store counts as failed
@@ -294,6 +338,9 @@ impl ChainManager {
             deepest_reorg: 0,
             store_failures: 0,
             store_failed: false,
+            ready: BinaryHeap::new(),
+            syncing: None,
+            sync_outcome: SyncOutcome::default(),
         };
         let total = stored.len() as u64;
         manager.replay(stored)?;
@@ -403,7 +450,7 @@ impl ChainManager {
             }
         }
         let now = block.header.timestamp; // the future-time rule was checked on arrival
-        match self.submit_inner(block, now, false) {
+        match self.submit_inner(block, now, false, usize::MAX) {
             // Deterministic outcomes of the original processing: a body found
             // invalid, and descendants of blocks found invalid.
             Ok(_) | Err(SubmitError::Body(_)) | Err(SubmitError::Duplicate) => Ok(Replayed::Done),
@@ -512,7 +559,58 @@ impl ChainManager {
 
     /// Accepts a block from the local miner or (later) the network.
     pub fn submit_block(&mut self, block: Block, now: u64) -> Result<Submitted, SubmitError> {
-        self.submit_inner(block, now, true)
+        self.submit_inner(block, now, true, usize::MAX)
+    }
+
+    /// [`Self::submit_block`] that validates and connects at most `budget`
+    /// blocks in this call (the block itself and descendants it releases, or
+    /// blocks queued by earlier bounded calls, which go first). If work is
+    /// left ([`Self::sync_pending`]), the caller continues with
+    /// [`Self::sync_step`], releasing the lock in between, and reads the
+    /// final verdict with [`Self::verdict`]; [`submit_block_in_steps`] does
+    /// all of this. Until then the returned `on_best_chain` may be stale and
+    /// a body failure is not reported yet.
+    ///
+    /// The result is the same as with [`Self::submit_block`]: blocks complete
+    /// in the same order (lowest body arrival first, a block queued while a
+    /// drain is in progress waits for everything that arrived before it), and
+    /// the connected chain is interrupted only at a tip with at least the
+    /// work it had when that sync began (never midway through a
+    /// reorganization, before the new branch outweighs the old tip).
+    pub fn submit_block_bounded(
+        &mut self,
+        block: Block,
+        now: u64,
+        budget: usize,
+    ) -> Result<Submitted, SubmitError> {
+        self.submit_inner(block, now, true, budget)
+    }
+
+    /// Continues the drain started by [`Self::submit_block_bounded`]: at most
+    /// `budget` block validations. Returns true when nothing is left (the
+    /// mempool then received the drain's effects).
+    pub fn sync_step(&mut self, budget: usize) -> bool {
+        self.drain_ready(budget)
+    }
+
+    /// Whether completed blocks still wait to be connected (a bounded drain
+    /// is in progress).
+    pub fn sync_pending(&self) -> bool {
+        self.syncing.is_some() || !self.ready.is_empty()
+    }
+
+    /// The verdict on a block submitted earlier (`id` at `height`), once no
+    /// drain is pending: as [`Self::submit_block`] reports it.
+    pub fn verdict(&self, id: Hash, height: u64) -> Result<Submitted, SubmitError> {
+        if let Some(e) = self.invalid.get(&id) {
+            return Err(SubmitError::Body(*e));
+        }
+        Ok(Submitted {
+            id,
+            height,
+            on_best_chain: self.connected.get(height as usize) == Some(&id),
+            body_kept: true,
+        })
     }
 
     fn submit_inner(
@@ -520,6 +618,7 @@ impl ChainManager {
         block: Block,
         now: u64,
         persist: bool,
+        budget: usize,
     ) -> Result<Submitted, SubmitError> {
         if persist && self.store_failed {
             return Err(SubmitError::Store(io::Error::other(
@@ -594,36 +693,51 @@ impl ChainManager {
         // Completion: this block if its parent is complete, then every
         // descendant whose body is already here, lowest arrival index first
         // (the order `replay` releases them in). The state is synced after
-        // each single completion, as in replay.
-        let mut outcome = SyncOutcome::default();
+        // each single completion, as in replay. A block whose parent is still
+        // queued (a bounded drain in progress) is released with the parent's
+        // other children when the parent completes, as if the drain had
+        // finished before it arrived.
         if self.complete.contains_key(&block.header.prev_id) {
-            let mut ready = BinaryHeap::from([Reverse((seq, id))]);
-            while let Some(Reverse((_, x))) = ready.pop() {
-                if self.headers.is_valid(&x) != Some(true) {
-                    continue; // an ancestor was found invalid meanwhile
+            self.ready.push(Reverse((seq, id)));
+        }
+        self.drain_ready(budget);
+        self.verdict(id, height)
+    }
+
+    /// Completes queued blocks (`ready`), lowest body arrival first, syncing
+    /// the state after each completion, with at most `budget` block
+    /// validations. Returns true when the queue is empty; the mempool then
+    /// receives the effects of the whole drain (`finish_sync`), once.
+    fn drain_ready(&mut self, mut budget: usize) -> bool {
+        let mut outcome = std::mem::take(&mut self.sync_outcome);
+        loop {
+            if let Some(x) = self.syncing {
+                if !self.sync_state(&mut outcome, &mut budget) {
+                    self.sync_outcome = outcome;
+                    return false;
                 }
-                self.mark_complete(x);
-                self.sync_state(&mut outcome);
+                self.syncing = None;
                 if !self.complete.contains_key(&x) {
                     continue; // found invalid (or a descendant of an invalid block)
                 }
                 for c in self.children.get(&x).into_iter().flatten() {
                     if let Some(&s) = self.body_seq.get(c) {
-                        ready.push(Reverse((s, *c)));
+                        self.ready.push(Reverse((s, *c)));
                     }
                 }
+                continue;
             }
+            let Some(Reverse((_, x))) = self.ready.pop() else {
+                break;
+            };
+            if self.headers.is_valid(&x) != Some(true) {
+                continue; // an ancestor was found invalid meanwhile
+            }
+            self.mark_complete(x);
+            self.syncing = Some(x);
         }
         self.finish_sync(outcome);
-        if let Some(e) = self.invalid.get(&id) {
-            return Err(SubmitError::Body(*e));
-        }
-        Ok(Submitted {
-            id,
-            height,
-            on_best_chain: self.connected.get(height as usize) == Some(&id),
-            body_kept: true,
-        })
+        true
     }
 
     /// Records a header just accepted by the header chain.
@@ -754,11 +868,20 @@ impl ChainManager {
     /// connects the target's branch block by block, validating each body. A
     /// body that fails is marked invalid with its descendants, the target is
     /// recomputed, and the loop repeats (possibly reconnecting the old chain).
-    fn sync_state(&mut self, outcome: &mut SyncOutcome) {
+    ///
+    /// **Budget.** Each block validation takes one unit of `budget`. With the
+    /// budget spent, the method returns false before the next validation, but
+    /// only at a tip with at least the work the connected tip had when this
+    /// call began: a reorganization is never left with a lighter tip than
+    /// before. Calling it again continues from the current connected chain
+    /// (now a prefix of the target's branch), exactly where the loop stopped.
+    /// Returns true once the connected tip is the target.
+    fn sync_state(&mut self, outcome: &mut SyncOutcome, budget: &mut usize) -> bool {
+        let floor = self.work(&self.tip_id());
         loop {
             let target = self.best_complete;
             if target == self.tip_id() {
-                return;
+                return true;
             }
             debug_assert!(self.work(&target) > self.work(&self.tip_id()));
             // The target's branch back to the connected chain.
@@ -797,6 +920,10 @@ impl ChainManager {
                 }
             }
             for id in path {
+                if *budget == 0 && self.work(&self.tip_id()) >= floor {
+                    return false;
+                }
+                *budget = budget.saturating_sub(1);
                 let body = self.bodies.get(&id).expect("complete blocks have bodies");
                 let header = self.headers.header(&id).expect("known header");
                 let h = header.height;
@@ -1151,4 +1278,181 @@ impl ChainManager {
 
 fn hex(id: &Hash) -> String {
     id.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    //! The bounded submission API (`submit_block_bounded`, `sync_step`):
+    //! same final chain as `submit_block`, bounded work per call, never a
+    //! lighter tip mid-reorganization.
+    use super::*;
+    use crate::store::MemoryStore;
+    use blacksilk_consensus::merkle::tx_root;
+    use blacksilk_consensus::HEADER_VERSION;
+    use blacksilk_crypto::keys::{SubaddressIndex, WalletKeys};
+    use blacksilk_tx::builder::{build_coinbase, Payment};
+
+    struct ZeroPow;
+    impl PowFunction for ZeroPow {
+        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            [0; 32]
+        }
+    }
+
+    fn open() -> ChainManager {
+        let p = ChainParams::regtest();
+        ChainManager::open(
+            p.clone(),
+            TxRules::for_chain(&p),
+            Arc::new(ZeroPow),
+            Box::<MemoryStore>::default(),
+            [3; 32],
+        )
+        .unwrap()
+    }
+
+    /// `n` blocks on `parent`, submitted to `m`; `nonce` tells branches apart.
+    fn branch(m: &mut ChainManager, parent: Hash, n: usize, nonce: u64) -> Vec<Block> {
+        let mut rng = ChaCha20Rng::seed_from_u64(nonce);
+        let (keys, _) = WalletKeys::generate(&mut rng);
+        let genesis_time = m.params().genesis.timestamp;
+        let mut prev = parent;
+        let mut out = Vec::new();
+        for _ in 0..n {
+            let t = m.template_on(&prev).unwrap();
+            let cb = build_coinbase(
+                t.height,
+                &[Payment {
+                    address: keys.address(SubaddressIndex::PRIMARY),
+                    amount: t.reward,
+                }],
+                &keys.hedge_secret(),
+                &mut rng,
+            )
+            .unwrap();
+            let txs = vec![Transaction::Coinbase(cb)];
+            let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+            let header = BlockHeader {
+                version: HEADER_VERSION,
+                height: t.height,
+                prev_id: prev,
+                timestamp: t.min_timestamp.max(genesis_time + 120 * t.height),
+                difficulty: t.difficulty,
+                tx_root: tx_root(&ids),
+                nonce,
+            };
+            let b = Block { header, txs };
+            m.submit_block(b.clone(), b.header.timestamp).unwrap();
+            prev = b.id(m.params().network_id);
+            out.push(b);
+        }
+        out
+    }
+
+    const NOW: u64 = u64::MAX / 2;
+
+    fn same_chain(a: &ChainManager, b: &ChainManager) {
+        assert_eq!(a.tip_id(), b.tip_id());
+        assert_eq!(a.height(), b.height());
+        assert_eq!(a.generated(), b.generated());
+        assert_eq!(a.state().output_count(), b.state().output_count());
+        assert_eq!(a.connected, b.connected);
+        assert_eq!(a.best_complete, b.best_complete);
+        assert_eq!(a.deepest_reorg(), b.deepest_reorg());
+        assert!(!b.sync_pending());
+    }
+
+    /// The gap-filling body of a header-first download releases 39 waiting
+    /// descendants. Bounded, each call validates at most `budget` blocks; a
+    /// body arriving mid-drain waits for the drain, as if it had arrived
+    /// after it; the final chain equals the unbounded one.
+    #[test]
+    fn bounded_submission_reaches_the_unbounded_result_in_bounded_steps() {
+        let mut src = open();
+        let genesis = src.tip_id();
+        let blocks = branch(&mut src, genesis, 41, 1);
+        let headers: Vec<BlockHeader> = blocks[..40].iter().map(|b| b.header).collect();
+        let (mut full, mut bounded) = (open(), open());
+        for m in [&mut full, &mut bounded] {
+            m.accept_headers(&headers, NOW).unwrap();
+            for b in blocks[1..40].iter().rev() {
+                let s = m.submit_block(b.clone(), NOW).unwrap();
+                assert!(!s.on_best_chain, "waits for its parent");
+            }
+        }
+        full.submit_block(blocks[0].clone(), NOW).unwrap();
+        full.submit_block(blocks[40].clone(), NOW).unwrap();
+        assert_eq!(full.height(), 41);
+
+        let budget = 3;
+        let first = bounded
+            .submit_block_bounded(blocks[0].clone(), NOW, budget)
+            .unwrap();
+        assert_eq!(bounded.height(), 3, "exactly `budget` blocks connected");
+        assert!(bounded.sync_pending());
+        // Block 41 (header unknown so far) arrives mid-drain.
+        let late = bounded
+            .submit_block_bounded(blocks[40].clone(), NOW, budget)
+            .unwrap();
+        assert_eq!(bounded.height(), 3 + budget as u64);
+        let mut steps = 0;
+        loop {
+            let before = bounded.height();
+            let done = bounded.sync_step(budget);
+            assert!(bounded.height() - before <= budget as u64);
+            steps += 1;
+            if done {
+                break;
+            }
+        }
+        assert!(steps >= 10, "{steps} steps");
+        same_chain(&full, &bounded);
+        assert!(
+            bounded
+                .verdict(first.id, first.height)
+                .unwrap()
+                .on_best_chain
+        );
+        assert!(bounded.verdict(late.id, late.height).unwrap().on_best_chain);
+    }
+
+    /// A heavier branch (14 blocks) replaces a connected one (10 blocks),
+    /// released by its gap-filling first body. With a budget of one block per
+    /// call, the drain stops only at tips at least as heavy as the old tip,
+    /// and ends on the same chain as the unbounded reorganization.
+    #[test]
+    fn a_bounded_reorganization_never_stops_on_a_lighter_tip() {
+        let mut src = open();
+        let genesis = src.tip_id();
+        let a = branch(&mut src, genesis, 10, 1);
+        let b = branch(&mut src, genesis, 14, 2);
+        let (mut full, mut bounded) = (open(), open());
+        for m in [&mut full, &mut bounded] {
+            for blk in &a {
+                m.submit_block(blk.clone(), NOW).unwrap();
+            }
+            assert_eq!(m.height(), 10);
+            let hs: Vec<BlockHeader> = b.iter().map(|x| x.header).collect();
+            m.accept_headers(&hs, NOW).unwrap();
+            for blk in b[1..].iter().rev() {
+                m.submit_block(blk.clone(), NOW).unwrap();
+            }
+            assert_eq!(m.height(), 10);
+        }
+        full.submit_block(b[0].clone(), NOW).unwrap();
+        assert_eq!(full.height(), 14);
+
+        let old_work = bounded.work(&bounded.tip_id());
+        bounded.submit_block_bounded(b[0].clone(), NOW, 1).unwrap();
+        let mut done = !bounded.sync_pending();
+        let mut stops = 0;
+        while !done {
+            stops += 1;
+            assert!(bounded.work(&bounded.tip_id()) >= old_work, "lighter tip");
+            done = bounded.sync_step(1);
+        }
+        assert!(stops >= 2, "the drain was interrupted ({stops})");
+        same_chain(&full, &bounded);
+        assert_eq!(bounded.deepest_reorg(), 10);
+    }
 }

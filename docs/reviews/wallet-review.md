@@ -57,6 +57,40 @@ work, not an independent audit.
 - **No wallet Tor/SOCKS support.** Reach a remote node over an SSH tunnel, a VPN or a
   local Tor forwarder.
 
+## 1c. Round 3 (internal, 2026-09-27): decoys, ring queries, merging, PX keys
+
+Internal work, not an independent audit. No consensus change.
+
+| # | Finding | Status |
+|---|---|---|
+| R3-1 | Coinbase maturity was applied after the decoy draw, so young decoys almost vanished on a young chain | **Fixed.** Eligibility is applied inside the picker: a uniform eligible output of the drawn block, else of an age-proportional window around it (`w = clamp(depth/4, 9, 720)`), else a new draw. Measured on a synthetic 3-day chain: decoys younger than 60 blocks went from 3.4 % to 17.8 % (target 20.6 %). The real input spent at 12 blocks was the newest member in 89.8 % of rings before and 51.5 % after (target 62.4 %). Cost: on a coinbase-only chain, decoys 60–69 blocks deep are 12.9 % instead of 6.0 %. docs/transactions.md §11.3.1 |
+| I3 §3.9 / F2 | `/outputs` requests carried a superset of every ring, the real input included | **Fixed.** Local output index (`wallet/src/index.rs`), stored in the wallet file. Rings make no node request. Outputs below the restore height are backfilled once, as the whole range in consecutive pages of 1,024. Tests: `rings_are_built_without_asking_the_node_about_outputs`, `a_late_restore_backfills_older_outputs_once` (e2e), `the_backfill_fetches_the_whole_missing_range_in_fixed_pages` |
+| R3-13 | Outputs of one transaction could be spent together | **Fixed.** Selection takes one output per source transaction first; it co-spends only when necessary, and then warns. Test `outputs_of_one_transaction_are_not_spent_together_unless_needed` |
+| R11-W2 / I2-R1 | No PX viewing hierarchy | **Implemented as PX key derivation 2** (docs/px.md §3.1): per-range `dk_k` and `ivk_k`, a `RangeViewKey` (full view of one range) and an `IncomingViewKey` (receipts only, no `nk`). This is library API only: no CLI export and no watch-only scanner |
+| R11-W3 | Seed and file have no version | **Partly done.** The wallet file records the PX derivation (file version 2; version-1 files migrate as derivation 1, unchanged). **Not done:** the 24 words still carry no version, network or birthday. `restore --px-derivation 1` is needed for pre-2026-09-27 seeds that hold PX funds |
+
+**Residuals of round 3:**
+- **Guess-newest is reduced, not removed.** A real input spent 12 blocks after receipt
+  is still the newest member in about half the rings on the test chain. The gamma
+  target itself gives about 62 %. Sparse young transfers attract many young draws. Coinbase-dominated
+  rings (R3-3) are unchanged.
+- **Index size and trust.** The index takes 146 hex characters per output in the
+  wallet JSON, about 150 MB per million outputs, rewritten on every save. It should
+  move to an append-only side file before large chains. Backfilled entries come from
+  the node unverified (as `/outputs` answers did before). A reorganization below the
+  restore height, which the wallet cannot see, would make them stale, and the node
+  would then reject the transaction.
+- **Seed format v1 (design, not implemented).** 26 words from the BIP-39 list, 11 bits
+  each: 256-bit entropy, a 5-bit version, a 2-bit network, a 10-bit monthly birthday
+  and a 13-bit checksum over all of them. Keys derive from
+  `H("blacksilk/seed/v1" ‖ network ‖ entropy)`. The different word count stops
+  BIP-39 wallets accepting it. Changing it needs docs/blocks.md §10 and the restore
+  UX, so it is left for a separate change before a public testnet.
+- **Range allocation.** Every address in use lies in range 0. Allocating one range per
+  period, with the change branch inside it, is policy still to write.
+- **R11-W4** (spend authority equals proving) is unchanged. `ak` stays `Hk(AK, sk)`,
+  because the kernel fixes it.
+
 ## 1a. W-5 in detail: ring reuse
 
 **Precedent:** Monero's wallet ring database (`ringdb`), introduced so that an output

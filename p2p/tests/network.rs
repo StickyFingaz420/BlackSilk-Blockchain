@@ -627,9 +627,11 @@ async fn invalid_header_gets_the_peer_disconnected() {
 async fn malformed_messages_and_floods_are_cut_off() {
     let a = node(17, &[]).await;
     let nid = params().network_id;
-    // Undecodable message (valid encryption).
+    // Undecodable message of a known type (valid encryption): a `Ping`
+    // with 3 of its 8 nonce bytes. (Unknown types are ignored, see
+    // `unknown_message_types_are_ignored_but_charged`.)
     let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
-    w.send(&[0xee, 1, 2, 3]).await.unwrap();
+    w.send(&[2, 1, 2, 3]).await.unwrap();
     assert!(closes_within(&mut r, 5).await);
     // Flood: 700 pings in a burst exceed the 500-message budget; each excess
     // message costs 1 point, so the peer is cut off at 100 points.
@@ -2208,4 +2210,345 @@ async fn replaying_a_pooled_transaction_costs_no_verification() {
     let st = a.net.stats();
     assert_eq!(st.tx_verifications, 0, "replays are not verified");
     assert!(a.net.peers().iter().all(|p| p.score == 0));
+}
+
+// ------------------------------------------------ P2P hardening, part 3 (A24)
+
+/// Whether the chain lock can be taken, read on a blocking thread (the test
+/// never waits for the chain lock on a runtime worker it shares with the node).
+async fn height_of(chain: &SharedChain) -> u64 {
+    let c = chain.clone();
+    tokio::task::spawn_blocking(move || c.lock().unwrap().height())
+        .await
+        .unwrap()
+}
+
+/// Sends a ping and returns how long its pong took (`None`: none within `secs`).
+async fn pong_latency(r: &mut RawReader, w: &mut RawWriter, nonce: u64, secs: f64) -> Option<f64> {
+    let start = std::time::Instant::now();
+    w.send(&Message::Ping(nonce).encode()).await.ok()?;
+    recv_until(r, secs, |m| matches!(m, Message::Pong(n) if *n == nonce)).await?;
+    Some(start.elapsed().as_secs_f64())
+}
+
+/// P0-7 (R8-1, R10-5): no runtime worker waits for the chain lock. While
+/// another thread holds it for 3 s (as a long block connection or reorg
+/// would), two peers' `GetHeaders` wait for it, and the maintenance loop
+/// too, yet a third peer's ping is answered at once. Before the fix, with
+/// two runtime workers, both were blocked inside `inner.chain()` and the pong
+/// came after the lock was released.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pings_are_answered_while_the_chain_lock_is_held() {
+    let a = node(90, &[]).await;
+    let nid = params().network_id;
+    let (mut r1, mut w1) = raw_peer(a.addr, nid, true).await;
+    let (_r2, mut w2) = raw_peer(a.addr, nid, true).await;
+    let (mut r3, mut w3) = raw_peer(a.addr, nid, true).await;
+    assert!(pong_latency(&mut r3, &mut w3, 1, 5.0).await.is_some());
+
+    let (held_tx, held_rx) = tokio::sync::oneshot::channel();
+    let chain = a.chain.clone();
+    let holder = std::thread::spawn(move || {
+        let _guard = chain.lock().unwrap();
+        held_tx.send(()).unwrap();
+        std::thread::sleep(Duration::from_secs(3));
+    });
+    held_rx.await.unwrap();
+    let get_headers = Message::GetHeaders {
+        locator: vec![params().genesis_id()],
+        stop: [0; 32],
+    }
+    .encode();
+    w1.send(&get_headers).await.unwrap();
+    w2.send(&get_headers).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    for n in 2..6 {
+        let t = pong_latency(&mut r3, &mut w3, n, 2.5)
+            .await
+            .expect("pong while the chain lock is held");
+        assert!(t < 1.0, "pong {n} took {t:.2} s");
+    }
+    assert!(!holder.is_finished(), "the lock was still held");
+    holder.join().unwrap();
+    assert!(
+        recv_until(&mut r1, 5.0, |m| matches!(m, Message::Headers(_)))
+            .await
+            .is_some(),
+        "the waiting request is answered once the lock is free"
+    );
+}
+
+/// P0-7: a long batch of downloaded blocks connects in bounded steps, off the
+/// read loops. A peer serves 120 bodies but withholds the first until it has
+/// sent all the others; its arrival releases 119 waiting blocks at once.
+/// Another peer's pings are answered promptly throughout, a thread taking the
+/// chain lock repeatedly sees intermediate heights (the lock is released
+/// between steps), and the node ends on the same tip without penalizing
+/// anyone. Coinbase-only blocks connect fast (the drain takes a fraction of a
+/// second here), so the lock-release check, not the pong latency, is what
+/// fails if the batch is connected in one hold.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pings_are_answered_while_a_long_batch_of_blocks_connects() {
+    const N: u64 = 120;
+    let mut src = node(91, &[]).await;
+    src.mine_n(N, 0);
+    let (headers, bodies): (Vec<BlockHeader>, Vec<Block>) = {
+        let c = src.chain.lock().unwrap();
+        (1..=N)
+            .map(|h| {
+                let b = c.block_at(h).unwrap();
+                (b.header, b)
+            })
+            .unzip()
+    };
+    let nid = params().network_id;
+    let first = headers[0].id(nid);
+    let by_id: std::collections::HashMap<Hash, Block> =
+        bodies.into_iter().map(|b| (b.id(nid), b)).collect();
+
+    let b = node(92, &[]).await;
+    let (mut r, mut w) = raw_peer_at(b.addr, nid, true, N).await;
+    let (released_tx, released_rx) = tokio::sync::oneshot::channel();
+    let progress = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let progress2 = progress.clone();
+    // The serving peer: headers, bodies (the first one last), pongs.
+    tokio::spawn(async move {
+        let mut served = 0;
+        let mut first_asked = false;
+        let mut released = Some(released_tx);
+        while let Ok(frame) = r.recv().await {
+            let mut replies = Vec::new();
+            match Message::decode(&frame) {
+                Ok(Message::GetHeaders { locator, .. }) => {
+                    replies.push(Message::Headers(serve_headers(&headers, &locator)))
+                }
+                Ok(Message::GetBlocks(ids)) => {
+                    for id in ids {
+                        if id == first {
+                            first_asked = true;
+                        } else {
+                            served += 1;
+                            progress2.store(served, std::sync::atomic::Ordering::SeqCst);
+                            replies.push(Message::Block(by_id[&id].encode()));
+                        }
+                    }
+                }
+                Ok(Message::Ping(n)) => replies.push(Message::Pong(n)),
+                _ => {}
+            }
+            if first_asked && served >= N - 1 {
+                if let Some(tx) = released.take() {
+                    replies.push(Message::Block(by_id[&first].encode()));
+                    let _ = tx.send(());
+                }
+            }
+            for m in replies {
+                if w.send(&m.encode()).await.is_err() {
+                    return;
+                }
+            }
+        }
+    });
+    // Another peer pings the node throughout.
+    let (mut pr, mut pw) = raw_peer(b.addr, nid, true).await;
+    let chain_busy = |c: &SharedChain| c.try_lock().map(|c| c.height()).ok();
+    // An observer takes the chain lock over and over while the batch
+    // connects: it sees intermediate heights only if the lock is released
+    // between steps (one hold for the whole batch shows 0, then 120).
+    let observer = {
+        let chain = b.chain.clone();
+        std::thread::spawn(move || {
+            let mut seen = std::collections::BTreeSet::new();
+            let deadline = std::time::Instant::now() + Duration::from_secs(120);
+            loop {
+                let h = chain.lock().unwrap().height();
+                seen.insert(h);
+                if h == N || std::time::Instant::now() > deadline {
+                    return seen;
+                }
+                std::thread::sleep(Duration::from_micros(200));
+            }
+        })
+    };
+    match tokio::time::timeout(Duration::from_secs(60), released_rx).await {
+        Ok(r) => r.expect("the serving peer is alive"),
+        Err(_) => panic!(
+            "served {} bodies; height {:?}; peers {:?}",
+            progress.load(std::sync::atomic::Ordering::SeqCst),
+            chain_busy(&b.chain),
+            b.net.peers()
+        ),
+    }
+    let start = std::time::Instant::now();
+    let mut worst: f64 = 0.0;
+    let mut n = 100;
+    while height_of(&b.chain).await < N {
+        let Some(t) = pong_latency(&mut pr, &mut pw, n, 5.0).await else {
+            panic!(
+                "no pong {n} after {:?}: stats {:?}, peers {:?}, height {:?}",
+                start.elapsed(),
+                b.net.stats(),
+                b.net.peers(),
+                chain_busy(&b.chain)
+            );
+        };
+        worst = worst.max(t);
+        n += 1;
+        // Within the 50 messages per second budget.
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        assert!(start.elapsed() < Duration::from_secs(60), "sync stalled");
+    }
+    let connect = start.elapsed();
+    println!(
+        "{N} blocks connected in {:.2} s; worst pong latency {worst:.3} s over {} pings",
+        connect.as_secs_f64(),
+        n - 100
+    );
+    assert!(worst < 1.0, "worst pong latency {worst:.2} s");
+    let seen = observer.join().unwrap();
+    println!("intermediate heights seen by the observer: {seen:?}");
+    // Every step connects exactly `SYNC_STEP_BLOCKS` (8) blocks here.
+    let between: Vec<u64> = seen.iter().copied().filter(|&h| h > 0 && h < N).collect();
+    assert!(
+        !between.is_empty() && between.iter().all(|h| h % 8 == 0),
+        "the lock was released between steps of 8 blocks: {seen:?}"
+    );
+
+    assert_eq!(b.tip(), src.tip());
+
+    assert_eq!(b.net.peers().iter().map(|p| p.score).max(), Some(0));
+}
+
+/// P0-6 (R8-9): a peer is asked for at most `BLOCK_WINDOW_BYTES` worth of
+/// blocks at a time (each charged `MAX_BLOCK_BYTES`: 3 blocks), even with 20
+/// bodies missing and the count cap at 16. A body arriving frees its place.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn blocks_in_flight_per_peer_are_bounded_by_bytes() {
+    use blacksilk_chain::block::MAX_BLOCK_BYTES;
+    use blacksilk_p2p::net::BLOCK_WINDOW_BYTES;
+    let window = (BLOCK_WINDOW_BYTES / MAX_BLOCK_BYTES).max(1);
+    assert_eq!(window, 3);
+    let a = node(93, &[]).await;
+    let nid = params().network_id;
+    let branch = header_branch(20, 120, 0);
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 20).await;
+    let mut asked = std::collections::HashSet::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while tokio::time::Instant::now() < deadline {
+        let Ok(Ok(frame)) = tokio::time::timeout_at(deadline, r.recv()).await else {
+            break;
+        };
+        match Message::decode(&frame).unwrap() {
+            Message::GetHeaders { locator, .. } => {
+                let reply = Message::Headers(serve_headers(&branch, &locator));
+                w.send(&reply.encode()).await.unwrap();
+            }
+            Message::GetBlocks(ids) => asked.extend(ids),
+            Message::Ping(n) => w.send(&Message::Pong(n).encode()).await.unwrap(),
+            _ => {}
+        }
+    }
+    assert_eq!(asked.len(), window, "blocks requested and unanswered");
+    // A `NotFound` frees the places: the next ones are requested.
+    w.send(&Message::NotFound(asked.iter().copied().collect()).encode())
+        .await
+        .unwrap();
+    let more = recv_until(&mut r, 5.0, |m| matches!(m, Message::GetBlocks(_)))
+        .await
+        .expect("more requested");
+    let Message::GetBlocks(ids) = more else {
+        unreachable!()
+    };
+    assert!(!ids.is_empty() && ids.len() <= window);
+}
+
+/// P0-8 (R8-14): a message of a type this version does not know (a later
+/// protocol's) is ignored without penalty, but counts against the message
+/// budget: a flood of them is still cut off.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn unknown_message_types_are_ignored_but_charged() {
+    let a = node(94, &[]).await;
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    let unknown: Vec<Vec<u8>> = vec![vec![15], vec![0xee, 1, 2, 3], vec![200; 5000]];
+    send_and_sync(&mut r, &mut w, &unknown, 1).await;
+    let peers = a.net.peers();
+    assert_eq!(peers.len(), 1, "still connected");
+    assert_eq!(peers[0].score, 0, "not penalized");
+    // 700 unknown frames exceed the 500-message burst: 1 point per excess.
+    let reader = tokio::spawn(async move { closes_within(&mut r, 10).await });
+    for _ in 0..700 {
+        if w.send(&[0x77, 0]).await.is_err() {
+            break;
+        }
+    }
+    assert!(reader.await.unwrap(), "flood of unknown messages cut off");
+    wait_until("flooder counted", 5, || {
+        a.net.stats().misbehaving_disconnects >= 1
+    })
+    .await;
+}
+
+/// P0-8: a `Version` with extension bytes after its known fields, and
+/// messages of unknown types before `Verack` (feature negotiation of a later
+/// protocol version), complete the handshake; the peer's protocol number is
+/// recorded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_extended_version_and_unknown_handshake_messages_are_accepted() {
+    let a = node(95, &[]).await;
+    let nid = params().network_id;
+    let s = TcpStream::connect(a.addr).await.unwrap();
+    let (mut r, mut w) = handshake(s, true, nid, &params().genesis_id(), Duration::from_secs(5))
+        .await
+        .unwrap();
+    let mut v = Message::Version(Version {
+        protocol: PROTOCOL_VERSION + 1,
+        network: nid,
+        nonce: 0x1234,
+        height: 0,
+        tip: [0; 32],
+        listen: None,
+        relay_txs: true,
+    })
+    .encode();
+    v.extend_from_slice(&[0x05, 0xaa, 0xbb, 0xcc]);
+    w.send(&v).await.unwrap();
+    let Message::Version(theirs) = Message::decode(&r.recv().await.unwrap()).unwrap() else {
+        panic!("expected version");
+    };
+    assert_eq!(theirs.protocol, PROTOCOL_VERSION);
+    w.send(&[0x30, 1]).await.unwrap(); // e.g. a future "send compact blocks"
+    w.send(&Message::Verack.encode()).await.unwrap();
+    assert!(matches!(
+        Message::decode(&r.recv().await.unwrap()).unwrap(),
+        Message::Verack
+    ));
+    send_and_sync(&mut r, &mut w, &[], 7).await;
+    wait_until("registered", 5, || a.net.peers().len() == 1).await;
+    let p = &a.net.peers()[0];
+    assert_eq!((p.protocol, p.score), (PROTOCOL_VERSION + 1, 0));
+}
+
+/// Mempool conflict query: a relayed transaction that conflicts with a pooled
+/// one (the same output spent) is dropped before verification, and so
+/// before the node-wide PX token for PX transactions (docs/p2p.md §10). It
+/// is not penalized: it may be an honest double spend that lost a race.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_transaction_conflicting_with_the_pool_is_not_verified() {
+    let mut a = node(96, &[]).await;
+    a.mine_n(80, 0);
+    let tx1 = a.payment();
+    let tx2 = a.payment(); // the same output
+    assert_ne!(tx1.hash(), tx2.hash());
+    a.chain.lock().unwrap().submit_tx(tx1.clone()).unwrap();
+    assert!(a.chain.lock().unwrap().mempool().conflicts(&tx2));
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(&mut r, &mut w, &[Message::StemTx(tx2.encode()).encode()], 1).await;
+    let st = a.net.stats();
+    assert_eq!(st.tx_verifications, 0, "the conflict is not verified");
+    assert_eq!(st.px_global_drops, 0);
+    assert!(!a.net.stempool_contains(&tx2.hash()));
+    assert_eq!(a.net.peers()[0].score, 0);
+    assert!(a.mempool_has(&tx1.hash()) && !a.mempool_has(&tx2.hash()));
 }

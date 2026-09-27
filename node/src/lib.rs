@@ -16,7 +16,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use blacksilk_chain::block::Block;
-use blacksilk_chain::manager::{ChainManager, SubmitError};
+use blacksilk_chain::manager::{
+    submit_block_in_steps, ChainManager, SubmitError, SYNC_STEP_BLOCKS,
+};
 use blacksilk_consensus::Network;
 use blacksilk_p2p::Network as P2p;
 use blacksilk_rpc as rpc;
@@ -55,6 +57,8 @@ pub fn default_rpc_port(n: Network) -> u16 {
 
 /// Exit status of a node whose chain lock was poisoned.
 pub const POISONED_EXIT_CODE: i32 = 70;
+// The P2P layer stops the node the same way (it cannot depend on this crate).
+const _: () = assert!(POISONED_EXIT_CODE == blacksilk_p2p::POISONED_EXIT_CODE);
 
 fn lock(shared: &Shared) -> MutexGuard<'_, ChainManager> {
     // A panic while holding the lock can leave the manager half-updated (a block
@@ -122,6 +126,21 @@ fn bad_request(msg: impl Into<String>) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, msg.into())
 }
 
+fn internal(e: tokio::task::JoinError) -> ApiError {
+    ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+}
+
+/// Runs `f` under the chain lock on a blocking thread: an RPC handler never
+/// waits for the lock on an async worker, which the P2P tasks share (R10-5).
+async fn with_chain<T: Send + 'static>(
+    s: Shared,
+    f: impl FnOnce(&ChainManager) -> T + Send + 'static,
+) -> Result<T, ApiError> {
+    tokio::task::spawn_blocking(move || f(&lock(&s)))
+        .await
+        .map_err(internal)
+}
+
 /// RPC without networking (tests, isolated nodes).
 pub fn router(shared: Shared) -> Router {
     router_with(App {
@@ -148,10 +167,13 @@ pub fn router_with(app: App) -> Router {
         .with_state(app)
 }
 
-async fn info(State(App { chain: s, net }): State<App>) -> Json<rpc::Info> {
+async fn info(State(App { chain: s, net }): State<App>) -> Result<Json<rpc::Info>, ApiError> {
     let stats = net.map(|n| n.stats());
-    let m = lock(&s);
-    Json(rpc::Info {
+    with_chain(s, move |m| info_of(m, stats)).await.map(Json)
+}
+
+fn info_of(m: &ChainManager, stats: Option<blacksilk_p2p::NetStats>) -> rpc::Info {
+    rpc::Info {
         network: network_name(m.params().network).to_string(),
         network_id: m.params().network_id,
         height: m.height(),
@@ -171,13 +193,15 @@ async fn info(State(App { chain: s, net }): State<App>) -> Json<rpc::Info> {
         ))),
         build_commit: Some(fingerprint::BUILD_COMMIT.to_string()),
         version: Some(fingerprint::VERSION.to_string()),
-    })
+    }
 }
 
-async fn template(State(App { chain: s, .. }): State<App>) -> Json<rpc::Template> {
-    let m = lock(&s);
-    let t = m.template();
-    Json(rpc::Template {
+async fn template(
+    State(App { chain: s, .. }): State<App>,
+) -> Result<Json<rpc::Template>, ApiError> {
+    // Only the template is built under the lock; hex encoding follows.
+    let t = with_chain(s, |m| m.template()).await?;
+    Ok(Json(rpc::Template {
         height: t.height,
         prev_id: hex::encode(t.prev_id),
         difficulty: t.difficulty,
@@ -191,7 +215,7 @@ async fn template(State(App { chain: s, .. }): State<App>) -> Json<rpc::Template
             .into_iter()
             .map(|tx| hex::encode(tx.encode()))
             .collect(),
-    })
+    }))
 }
 
 fn rejected(error: String) -> rpc::SubmitResult {
@@ -209,14 +233,15 @@ async fn submit_block(
 ) -> Result<Json<rpc::SubmitResult>, ApiError> {
     let bytes = hex::decode(&p.hex).map_err(|_| bad_request("hex"))?;
     let block = Block::decode(&bytes).map_err(|e| bad_request(format!("block: {e:?}")))?;
-    // Validation (RandomX, CLSAG, BP+) is CPU-bound: keep it off the async workers.
+    // Validation (RandomX, CLSAG, BP+) is CPU-bound: keep it off the async
+    // workers, and connect in bounded steps (a block that releases many
+    // waiting descendants does not hold the chain lock for all of them).
     let result = tokio::task::spawn_blocking(move || {
-        let mut m = lock(&s);
-        let r = m.submit_block(block, now());
-        (r, m.height())
+        let r = submit_block_in_steps(|| lock(&s), block, now(), SYNC_STEP_BLOCKS);
+        (r, lock(&s).height())
     })
     .await
-    .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(internal)?;
     Ok(Json(match result {
         (Ok(sub), height) => {
             log::info!(
@@ -254,7 +279,7 @@ async fn submit_tx(
         Some(n) => n.submit_tx(tx).await,
         None => tokio::task::spawn_blocking(move || lock(&s).submit_tx(tx))
             .await
-            .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .map_err(internal)?
             .map_err(|e| format!("{e:?}")),
     };
     Ok(Json(match result {
@@ -284,24 +309,27 @@ async fn blocks(
             rpc::MAX_BLOCKS_PER_REQUEST
         )));
     }
-    let m = lock(&s);
-    let end = q.from.saturating_add(q.count - 1).min(m.height());
-    let mut out = Vec::new();
-    let mut bytes = 0usize;
-    for h in q.from..=end {
-        let block = m.block_at(h).expect("connected height");
-        let hex = hex::encode(block.encode());
-        if !out.is_empty() && bytes + hex.len() > rpc::MAX_BLOCKS_RESPONSE_BYTES {
-            break; // the client continues from the next height
+    let out = with_chain(s, move |m| {
+        let end = q.from.saturating_add(q.count - 1).min(m.height());
+        let mut out = Vec::new();
+        let mut bytes = 0usize;
+        for h in q.from..=end {
+            let block = m.block_at(h).expect("connected height");
+            let hex = hex::encode(block.encode());
+            if !out.is_empty() && bytes + hex.len() > rpc::MAX_BLOCKS_RESPONSE_BYTES {
+                break; // the client continues from the next height
+            }
+            bytes += hex.len();
+            out.push(rpc::BlockEntry {
+                height: h,
+                id: hex::encode(block.id(m.params().network_id)),
+                first_output: m.state().first_output_at(h).expect("connected height"),
+                hex,
+            });
         }
-        bytes += hex.len();
-        out.push(rpc::BlockEntry {
-            height: h,
-            id: hex::encode(block.id(m.params().network_id)),
-            first_output: m.state().first_output_at(h).expect("connected height"),
-            hex,
-        });
-    }
+        out
+    })
+    .await?;
     Ok(Json(rpc::Blocks { blocks: out }))
 }
 
@@ -398,24 +426,29 @@ async fn px_commitments(
 ) -> Result<Json<rpc::PxCommitments>, ApiError> {
     // The lock is held only to copy the requested page; hex encoding and
     // serialization happen after it is released.
-    let page = {
-        let m = lock(&s);
+    let page = with_chain(s, move |m| {
         PxPage::take(m.state(), m.height(), q.from, q.limit)
-    };
+    })
+    .await?;
     Ok(Json(page.map_err(bad_request)?.render()))
 }
 
 async fn px_contracts(
     State(App { chain: s, .. }): State<App>,
     Query(q): Query<FromQuery>,
-) -> Json<rpc::PxContracts> {
-    let m = lock(&s);
+) -> Result<Json<rpc::PxContracts>, ApiError> {
+    with_chain(s, move |m| px_contracts_page(m, q.from))
+        .await
+        .map(Json)
+}
+
+fn px_contracts_page(m: &ChainManager, from: u64) -> rpc::PxContracts {
     let state = m.state();
     let log = state.px_contract_log();
     let total = log.len() as u64;
     let contracts = log
         .iter()
-        .skip(q.from.min(total) as usize)
+        .skip(from.min(total) as usize)
         .take(rpc::MAX_PX_CONTRACTS_PER_REQUEST as usize)
         .map(|(height, id)| rpc::PxContractEntry {
             height: *height,
@@ -436,12 +469,12 @@ async fn px_contracts(
                 .collect(),
         })
         .collect();
-    Json(rpc::PxContracts {
-        from: q.from,
+    rpc::PxContracts {
+        from,
         contracts,
         total,
         height: m.height(),
-    })
+    }
 }
 
 #[derive(Deserialize)]
@@ -452,11 +485,14 @@ struct DistributionQuery {
 async fn distribution(
     State(App { chain: s, .. }): State<App>,
     Query(q): Query<DistributionQuery>,
-) -> Json<rpc::Distribution> {
-    let m = lock(&s);
-    let mut cumulative = m.state().cumulative_outputs();
-    cumulative.truncate(q.to.saturating_add(1) as usize);
-    Json(rpc::Distribution { cumulative })
+) -> Result<Json<rpc::Distribution>, ApiError> {
+    let cumulative = with_chain(s, move |m| {
+        let mut cumulative = m.state().cumulative_outputs();
+        cumulative.truncate(q.to.saturating_add(1) as usize);
+        cumulative
+    })
+    .await?;
+    Ok(Json(rpc::Distribution { cumulative }))
 }
 
 async fn outputs(
@@ -469,21 +505,24 @@ async fn outputs(
             rpc::MAX_OUTPUTS_PER_REQUEST
         )));
     }
-    let m = lock(&s);
-    let mut out = Vec::with_capacity(req.indices.len());
-    for &i in &req.indices {
-        let rec = m
-            .state()
-            .output(i)
-            .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, format!("output {i}")))?;
-        out.push(rpc::OutputEntry {
-            index: i,
-            one_time_key: hex::encode(rec.key.one_time_key.bytes()),
-            commitment: hex::encode(rec.key.commitment.bytes()),
-            height: rec.height,
-            coinbase: rec.coinbase,
-        });
-    }
+    let out = with_chain(s, move |m| {
+        let mut out = Vec::with_capacity(req.indices.len());
+        for &i in &req.indices {
+            let rec = m
+                .state()
+                .output(i)
+                .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, format!("output {i}")))?;
+            out.push(rpc::OutputEntry {
+                index: i,
+                one_time_key: hex::encode(rec.key.one_time_key.bytes()),
+                commitment: hex::encode(rec.key.commitment.bytes()),
+                height: rec.height,
+                coinbase: rec.coinbase,
+            });
+        }
+        Ok(out)
+    })
+    .await??;
     Ok(Json(rpc::Outputs { outputs: out }))
 }
 

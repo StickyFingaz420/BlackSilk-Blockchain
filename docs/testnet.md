@@ -295,6 +295,78 @@ public launch, run this procedure on at least **3 machines in 2 different networ
 
 Record the results in AUDIT.md, in the testnet-readiness section.
 
+### 7.1 Supply audit (closed trial only)
+
+v1 amounts are hidden and spends are unlinkable, so nobody can compute the
+circulating supply from the chain. In a closed trial where **every** wallet is kept,
+the sum of all wallets can be compared with the chain's emission: an end-to-end
+inflation check (validation item V14; review R15-7). On a public network it is
+impossible, because not every wallet can be collected.
+
+**Rules for the trial:**
+- Every wallet that receives coins is part of the set, **miner payout wallets
+  included**. Do not delete, re-create or "clean up" any wallet during the trial. One
+  lost wallet makes the check impossible (its value shows as a positive difference).
+- Pay only addresses of wallets in the set.
+- Back up every wallet file (and its password) at the start.
+
+**Procedure (at the end, and once in the middle):**
+1. Stop all miners and wait until every node reports the same `tip`.
+2. Collect every wallet file on one machine with a synchronized node. Passwords go in
+   per-wallet files (one password per file, deleted afterwards) or are typed at the
+   prompts.
+3. Build the tool from the trial commit, then run it with every wallet listed:
+
+   ```sh
+   cargo build --release -p blacksilk-supply-audit
+   blacksilk-supply-audit --node 127.0.0.1:29333 \
+       --wallet miner-a.wallet --password-file miner-a.pw \
+       --wallet miner-b.wallet --password-file miner-b.pw \
+       ... \
+       --expect-complete --json > supply-audit-<height>.json
+   ```
+
+   Run it again without `--json` for the readable form. `--height H` audits at an
+   earlier block (for example the height agreed for the mid-trial check); wallets are
+   rewound to it in memory.
+4. Record the JSON output, the node's `/info` and the `git` commit of the build as
+   evidence. The run passes when the exit code is 0 and `total_difference` is 0.
+
+**What it does.** It syncs each wallet in memory to one block `H` (the node's height by
+default), refuses to compare unless every wallet ends on the same block id as the node,
+and checks that this block is still on the node's chain at the end. It never writes
+wallet files unless `--save` is given, and never submits or rebroadcasts a
+transaction. It also scans blocks `1..=H` itself and checks, from public fields:
+`generated` against the emission formula (and the node's `/info` when `H` is the tip),
+`Σ coinbase = generated + Σ fees` (fees go to miners, none are burned), and the PX pool
+`Σ bridge_in − Σ bridge_out`, which stays ≥ 0 block by block.
+
+**What it compares:**
+- `v1_difference = generated − px_pool − Σ v1` and `px_difference = px_pool − Σ PX`.
+- Counted: outputs and PX records **unspent on chain at `H`**, each once even when
+  two wallets know it (duplicates are reported). Immature coinbase, outputs younger
+  than 10 blocks and outputs reserved by an unconfirmed transaction are counted (they
+  exist on chain) and shown separately. The change of an unconfirmed transaction is not
+  counted (it does not exist yet); the mempool plays no role. PX contract records count
+  once their commitment is on chain.
+
+**Reading the result (exit code):**
+- `0`, all differences zero: the listed wallets account for every coin.
+- `3` (with `--expect-complete`), positive difference: value is held outside the set.
+  Expected causes: a wallet missing from the list (the difference is exactly its
+  holdings), a payment to an address nobody in the set owns, a payment to a subaddress
+  beyond a wallet's scan window, or an output a wallet rejects as malformed.
+- `2`, alarm: a chain check failed, or the wallets hold **more** than the chain
+  created. Treat it as a possible inflation bug: halt and follow
+  docs/testnet-incident-response.md.
+- `1`: the audit could not run (wrong password, node still synchronizing, wallets on
+  different blocks, a reorganization during the run). Fix the cause and rerun.
+
+**Limitations.** The PX part is tested only with an empty pool: the automated test
+(`cargo test -p blacksilk-supply-audit`) does no PX proving. The audit trusts the
+node for proof of work, like the wallet. It is a functional check of the trial, not
+proof that the supply is sound in general.
+
 ## 8. Lab network tool (single machine)
 
 ```sh
@@ -383,7 +455,7 @@ multiple of 16 is reached (canonical anchor, px.md §11.4).
 
 **Privacy:** px.md §12 and `docs/reviews/privacy-review.md`.
 
-**Capacity:** about 4 PX transactions per block (aggregation-study.md).
+**Capacity:** 3 PX transactions per block (4 × 2.18 MB exceeds the 8 MiB budget) (aggregation-study.md).
 
 ## 11. Security notes for operators
 
@@ -475,6 +547,15 @@ always uses a new network id; never reuse one for a different genesis.
 
 ### 12.6 Known limitations that affect operators
 
+- **Proof of work gives no honest-majority guarantee against outsiders.** The PoW is
+  exactly Monero's RandomX (`rx/0`). Stock JIT miners (for example xmrig) and rented
+  `rx/0` hash rate are roughly 50–100× faster per core than the project's safe-Rust
+  miner, and the no-`unsafe` policy rules out a JIT here. Anyone who points such a
+  miner at the network can out-mine all honest devices and reorganize the chain.
+  The controlled trial relies on its peers being configured by hand and on no one
+  doing this; its PoW security is nominal (reviews R1-C2, R15-2). The mainnet choice
+  (standard RandomX, a BlackSilk-specific configuration, or an optional reviewed JIT
+  miner) is an open owner decision.
 - Every block body and its undo data stay in memory (PX-F1, PX-F2); memory grows with
   the chain.
 - Every restart re-validates every block, including every PX proof (PX-F3).

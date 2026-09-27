@@ -198,6 +198,18 @@ impl Mempool {
         dropped
     }
 
+    /// Whether `tx` shares a conflict key ([`conflict_keys`]) with a pooled
+    /// transaction other than itself: [`Self::add`] would refuse it with
+    /// [`MempoolError::Conflict`] (first seen wins). Read-only and cheap (no
+    /// validation): the P2P layer drops such a transaction before verifying it
+    /// or charging the node-wide PX relay budget (docs/p2p.md §10).
+    pub fn conflicts(&self, tx: &Transaction) -> bool {
+        let id = tx.hash();
+        conflict_keys(tx)
+            .iter()
+            .any(|k| self.keys.get(k).is_some_and(|holder| *holder != id))
+    }
+
     fn cap(class: Class) -> usize {
         match class {
             Class::V1 => MEMPOOL_MAX_BYTES,
@@ -642,6 +654,32 @@ mod tests {
             vec![deposit, withdraw],
             "deposit first, then 3 + 4 - 5"
         );
+    }
+
+    /// `conflicts` answers what `add` would say about conflicts, without
+    /// changing the pool: a pooled transaction is not its own conflict, a
+    /// rival sharing one nullifier is, and a disjoint one is not.
+    #[test]
+    fn the_conflict_query_matches_admission() {
+        let mut m = Mempool::new();
+        let a = px(1, 1000, 10, 0, 0);
+        assert!(!m.conflicts(&a), "empty pool");
+        add(&mut m, a.clone()).unwrap();
+        assert!(
+            !m.conflicts(&a),
+            "a pooled transaction is not its own conflict"
+        );
+        let mut rival = px(1, 900, 99, 0, 0);
+        if let Transaction::Px(t) = &mut rival {
+            t.nullifiers[0] = [5; 8];
+        }
+        assert!(m.conflicts(&rival));
+        let other = px(3, 1000, 10, 0, 0);
+        assert!(!m.conflicts(&other));
+        let (len, bytes) = (m.len(), m.bytes());
+        assert_eq!(add(&mut m, rival), Err(MempoolError::Conflict));
+        assert_eq!((m.len(), m.bytes()), (len, bytes));
+        add(&mut m, other).unwrap();
     }
 
     /// A connected block removes its transactions and every pooled transaction

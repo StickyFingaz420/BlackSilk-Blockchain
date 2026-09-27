@@ -1005,31 +1005,72 @@ fn a_refused_transaction_still_pins_its_rings() {
     }
 }
 
-/// The node never learns which ring member is real from the wallet's
-/// queries: every `/outputs` request contains the real output, and there is
-/// exactly one request per input (review F2).
+/// The node never learns anything about rings from the wallet's queries
+/// (review I3 §3.9): ring members come from the local output index, so a
+/// wallet that scanned the chain from the start makes no `/outputs` request
+/// at all, and the node accepts the rings it builds.
 #[test]
-fn ring_queries_never_single_out_the_real_input() {
+fn rings_are_built_without_asking_the_node_about_outputs() {
     let mut net = Net::start();
     let mut miner = wallet(31);
-    let bob = wallet(32);
+    let mut bob = wallet(32);
     let miner_addr = miner.primary();
     net.mine_n(90, &miner_addr);
     miner.sync(&net.client).unwrap();
-    let node = Flaky::new(&net.client, Submit::Record);
+    let node = Flaky::new(&net.client, Submit::Forward);
     miner
         .transfer(&node, &bob.primary(), 3 * COIN, &net.rules, &mut net.rng)
         .unwrap();
-    let rings = rings_of(&node.sent.borrow()[0]);
-    let queries = node.queries.borrow();
-    assert_eq!(queries.len(), rings.len(), "one request per input");
-    for ring in rings.values() {
-        // The request for this ring contains all 16 members.
-        assert!(
-            queries.iter().any(|q| ring.iter().all(|i| q.contains(i))),
-            "a request contains the whole ring, the real input included"
-        );
+    assert!(node.queries.borrow().is_empty(), "no /outputs request");
+    assert_eq!(node.submits.get(), 1);
+    net.mine(&miner_addr);
+    bob.sync(&net.client).unwrap();
+    assert_eq!(bob.balance().total, 3 * COIN, "the node accepted the rings");
+
+    // After a save and load the index is still complete.
+    let mut miner = Wallet::from_json(&miner.to_json()).unwrap();
+    let node = Flaky::new(&net.client, Submit::Forward);
+    miner
+        .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    assert!(node.queries.borrow().is_empty(), "no /outputs request");
+}
+
+/// A wallet restored at a later height backfills the outputs it never
+/// scanned once: the whole range below its first scanned block, in
+/// consecutive pages that do not depend on what it spends. Later transfers
+/// make no request.
+#[test]
+fn a_late_restore_backfills_older_outputs_once() {
+    let mut net = Net::start();
+    let mut miner = wallet(34);
+    let bob = wallet(35);
+    let miner_addr = miner.primary();
+    net.mine_n(40, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    let first = net.client.distribution(40).unwrap().cumulative[40];
+    // Coinbases from block 41 on are this wallet's; it starts scanning there.
+    let mut late = Wallet::from_seed(Network::Regtest, [36; 32], 41);
+    net.mine_n(80, &late.primary());
+    late.sync(&net.client).unwrap();
+    let node = Flaky::new(&net.client, Submit::Forward);
+    late.transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    {
+        let queries = node.queries.borrow();
+        assert_eq!(queries.len(), 1, "one page covers {first} outputs");
+        assert_eq!(queries[0], (0..first).collect::<Vec<u64>>());
     }
+    net.mine(&miner_addr);
+    late.sync(&net.client).unwrap();
+    let node = Flaky::new(&net.client, Submit::Forward);
+    late.transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    assert!(node.queries.borrow().is_empty(), "backfilled once");
+    net.mine(&miner_addr);
+    let mut bob = bob;
+    bob.sync(&net.client).unwrap();
+    assert_eq!(bob.balance().total, 2 * COIN, "the node accepted both");
 }
 
 /// A node behind the wallet makes it rewind, but it must not forget its

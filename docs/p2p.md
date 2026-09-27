@@ -87,7 +87,7 @@ Both sides send `Version` as their first frame and answer the other's `Version` 
 
 ```
 Version {
-  protocol:  u32        currently 1; peers below MIN_PROTOCOL (1) are disconnected
+  protocol:  u32        currently 2 (below); peers below MIN_PROTOCOL (1) are disconnected
   network:   u32        must equal ours (defence in depth; §3 already separates networks)
   nonce:     u64        random per connection; equal to one of our own nonces = self-connection
   height:    u64        best header height (a hint for sync, not trusted)
@@ -100,6 +100,32 @@ Version {
 - There is deliberately **no user agent, no timestamp and no service bits**. Each would
   fingerprint software versions or clocks.
 - The handshake must complete within **10 s**, or the connection is closed.
+
+### 4.1 Protocol versions and extensibility (P0-8, R8-14)
+
+| `protocol` | Meaning |
+|---|---|
+| 1 | Original protocol: an unknown message type or extra bytes after `relay_txs` were protocol violations (100 points, a ban). |
+| 2 | Unknown message types are ignored (§5), and `Version` may carry **extension bytes** after `relay_txs`, which are ignored. Every known message's wire format is unchanged. |
+
+Changed on 2026-09-27, before any launch: `PROTOCOL_VERSION` went from 1 to 2, and a
+v2 node accepts a v1 node's `Version` unchanged (`MIN_PROTOCOL_VERSION` stays 1). A v1
+node would reject a v2 node's `Version` only if it carried extension bytes; v2 sends
+none.
+
+How a later version (v3) adds a feature without splitting the network:
+- **New `Version` fields** are appended after `relay_txs`, in order. A decoder reads the
+  fields it knows and ignores the rest, so old nodes still complete the handshake.
+- **New message types** are sent only to peers whose `protocol` is at least the version
+  that defines them. Older v2 peers ignore them anyway (§5), so a mistake costs
+  bandwidth, not a ban.
+- **Negotiation** may use messages of new types between `Version` and `Verack`: a v2
+  node skips up to 8 frames of unknown types there.
+- No feature bitfield was added: with nothing to negotiate yet it would only be a
+  constant, and each bit set later would fingerprint software versions. The protocol
+  number carries the same information for features every node of a version supports.
+  A v3 that needs optional per-node features can append one; that is the fingerprint
+  trade-off to decide then.
 
 ## 5. Messages
 
@@ -129,7 +155,11 @@ an oversized list is a protocol violation.
 - `0x06 ‖ 16-byte IPv6 ‖ LE16 port`
 - `0x0a ‖ 56-byte Tor v3 host (base32, without ".onion") ‖ LE16 port`
 
-Unknown message types are violations.
+**Unknown message types** (above 14) are ignored, not penalized, since protocol 2
+(§4.1). They still count against the peer's message and byte budgets (§10), so a flood
+of them is cut off like any other. Inside a known type, decoding stays strict:
+a malformed known message (bad length, bad flag, a list over its limit, trailing bytes)
+is a violation (100 points). The only exception is `Version`'s extension area (§4.1).
 
 ## 6. Header-first synchronization
 
@@ -216,17 +246,46 @@ Unknown message types are violations.
      header is already in our header tree (it passed the work gate), e.g. a requested
      block that arrives after its timeout. Any other unrequested body is dropped
      before it is hashed or written: a free low-work branch cannot fill the disk.
-   - At most **16** are in flight per peer, and only from peers whose announced height
-     covers them.
+   - **Window per peer (R8-9):** at most **16** blocks and **32 MiB** in flight, and
+     only from peers whose announced height covers them. Headers carry no body size,
+     so each request is charged the maximum block size (`MAX_BLOCK_BYTES`, about
+     9.45 MB): **3 blocks** per peer in practice (at least one is always allowed).
+     Before 2026-09-27 the window was 16 blocks, up to 151 MB, which a peer on a
+     home connection could not deliver within the 60 s timeout. The cost is a lower
+     download rate for small blocks (3 per round trip per peer); a v3 inventory
+     message with body sizes would lift it.
+   - A block counts in its peer's window from the request until it has been
+     **processed** (connected or rejected), not merely received, so the block
+     worker's queue is bounded by the windows.
    - A node serves at most 16 blocks per `GetBlocks`; the rest are answered with
      `NotFound`.
    - A request unanswered within **60 s** is reassigned to another peer. It is not
      penalized (before 2026-09-27: 5 points), and the block arriving late from the
      peer we asked is accepted as an answer, not as an unsolicited block, for another
-     60 s (R8-9). The in-flight window counts blocks, not bytes (open).
+     60 s (R8-9).
 5. **Connecting.** Bodies go through the chain manager (blocks.md §5–§6). It connects
    them in order, validates each, and reorganizes when a heavier branch completes. The
    network layer never decides validity.
+   - **Where.** The peer's read loop only decodes the block and matches it against our
+     requests; a single **block worker** validates and connects bodies, one at a time,
+     in arrival order. The read loop keeps answering pings however long a block
+     takes. Unrequested blocks (penalized, §10) wait there too, at most 8 node-wide;
+     beyond that they are dropped unread.
+   - **Bounded lock holds (P0-7, R8-1).** The body that fills a gap can release
+     hundreds of downloaded descendants at once. The worker connects them in steps of
+     at most **8** block validations per chain-lock hold
+     (`ChainManager::submit_block_in_steps`), releasing the lock in between, so the
+     header worker, transaction relay and the RPC get it. Results are unchanged:
+     blocks complete in the same order (lowest body arrival first), a body arriving
+     during a drain waits for it, and a reorganization is never paused on a tip
+     lighter than the one it replaces. The mempool receives the drain's effects once,
+     at its end. Tested: `bounded_submission_reaches_the_unbounded_result_in_bounded_steps`,
+     `a_bounded_reorganization_never_stops_on_a_lighter_tip` (chain) and
+     `pings_are_answered_while_a_long_batch_of_blocks_connects` (p2p).
+   - Between steps, readers see intermediate tips of the drain (each a valid,
+     heavier-or-equal connected chain). Node policy that depends on the tip (the
+     low-work body rule, blocks.md §8) sees them too; it can only keep more bodies,
+     never fewer.
 
 **New blocks** are announced with a `Headers` message holding the one new header, sent
 to every peer that does not already have it. A peer that lacks the body asks for it with
@@ -360,7 +419,7 @@ dropped.
 
 | Violation | Score |
 |---|---|
-| Undecryptable or malformed frame, unknown type, list over its limit | 100 |
+| Undecryptable frame, malformed known message, list over its limit | 100 |
 | Header with invalid PoW, bad difficulty, bad version or height, a timestamp not after the median-time-past | 100 |
 | Block whose body is invalid or does not match its header | 100 |
 | `Headers` that do not connect or are not a chain | 20 |
@@ -392,17 +451,19 @@ dropped.
   neighbouring rule set's branch id (`TxError::is_stateless_at`);
 - a duplicate;
 - an already-known transaction;
-- a transaction that conflicts with the mempool;
+- a transaction that conflicts with the mempool (dropped before verification, step 3
+  below);
+- a message of an unknown type (§5; it still counts against the rate limits);
 - a transaction invalid only against **our chain state** (contextual rules C1–C4). Its
   key image may have been spent in a block we saw first, or its ring members may
   resolve differently on our branch. This is not proof of misbehavior. Exception:
-  an invalid signature whose ring members are all at least **10 blocks** below our
-  tip. Those members resolve to the same outputs on every branch we could plausibly
-  reorganize to, so the signature fails for every honest node: it is penalized
-  (20) and remembered. Before 2026-09-27 it was never penalized nor cached, so
-  garbage CLSAGs over real rings cost ~3 ms of CPU per input, under the chain lock,
-  for free and forever (tx review H1). A node on a fork deeper than 10 blocks may
-  penalize an honest relayer (20 points, not a ban);
+  an invalid signature whose ring members are all at least **60 blocks** below our
+  tip (`SIGNATURE_BURIAL`, the coinbase maturity). Those members resolve to the same
+  outputs on every branch we could plausibly reorganize to, so the signature fails
+  for every honest node: it is penalized (20) and remembered. Before 2026-09-27 it
+  was never penalized nor cached, so garbage CLSAGs over real rings cost ~3 ms of CPU
+  per input, under the chain lock, for free and forever (tx review H1). A node on a
+  fork deeper than 60 blocks may penalize an honest relayer (20 points, not a ban);
 - `NotFound`, or a slow answer to a request for a transaction, a block or headers
   (a peer whose headers request timed out is not asked again until it announces a
   new tip).
@@ -411,7 +472,11 @@ The lab network found the last two cases as false bans between honest nodes (AUD
 R6).
 
 A peer that does not read its messages fast enough is disconnected, not banned, when
-its bounded outbox (64 messages) fills up.
+its bounded outbox fills up. Each peer has two outboxes (R8-11): **control** (64
+messages: pongs, headers, addresses, transaction relay, requests) and **bulk** (32
+`Block` frames). The writer sends every queued control message before the next block
+frame, so a pong or a stem transaction never waits behind a batch of blocks (a frame
+already being written is finished first).
 
 **Rate limits** (per peer, token buckets):
 - **Messages:** 50 per second, burst 500.
@@ -419,9 +484,8 @@ its bounded outbox (64 messages) fills up.
   initiative**.
   - Answers to our own requests are exempt: a block we requested from that peer and
     are still waiting for, and headers while our `GetHeaders` is outstanding.
-  - Their volume is already bounded by our requests: 16 blocks of at most
-    `MAX_BLOCK_BYTES` (about 9.45 MB) in flight, and one header batch (at most
-    200 kB).
+  - Their volume is already bounded by our requests: the block window (§6: 32 MiB
+    per peer) and one header batch (at most 200 kB).
   - Before 2026-09-27 requested blocks were charged too. During a sync of large (PX)
     blocks the node dropped the blocks it had asked for, penalized the honest sender,
     and re-requested them after a timeout.
@@ -436,7 +500,12 @@ its bounded outbox (64 messages) fills up.
   3. an id already in our mempool (a replay, SX2), or one that failed a
      contextual rule **at our current tip**, is dropped unverified: the same bytes are verified again only after the tip changes
      (the cache holds at most 10 000 ids and is emptied when the tip changes).
-     `InvTx` announcements of such ids are not requested either;
+     `InvTx` announcements of such ids are not requested either. A transaction that
+     **conflicts** with a pooled one (same key image, PX nullifier, contract id or
+     output key, `Mempool::conflicts`) is dropped here too, unpenalized: the pool
+     keeps the first seen, so it would be refused after verification anyway. Before
+     2026-09-27 such a PX transaction passed the cheap checks and took a node-wide PX
+     token (step 5) first;
   4. cheap checks: the stateless structure and balance rules (penalized), then the
      contextual rules a chain extension can change: key images, one-time keys, PX
      anchor, nullifiers, registry, pool, contract id (not penalized, cached as in 3);
@@ -462,6 +531,19 @@ its bounded outbox (64 messages) fills up.
 **Liveness:**
 - The node pings every 60 s.
 - A connection is closed after 180 s without any message, or when a pong is 30 s late.
+- **The chain lock is never taken on an async worker thread** (P0-7, R8-1, R10-5).
+  Every P2P handler and every RPC handler that reads or changes the chain runs that
+  part on a blocking thread (`spawn_blocking`); the async workers only wait for the
+  result. A long lock hold (a reorganization, a block with PX proofs, a drain step)
+  delays only the requests that need the chain; pings, reads, accepts and handshakes
+  of other peers keep flowing. Tested: `pings_are_answered_while_the_chain_lock_is_held`.
+- **A poisoned lock stops the node** (P0-9, R10-2). A panic while holding the chain
+  lock can leave the manager half-updated. The node then exits with status 70
+  (`POISONED_EXIT_CODE`, the same in the P2P layer and the RPC) instead of relaying
+  and building on that state; systemd (`Restart=on-failure`) or the operator restarts
+  it, and the replay of the append-only block store rebuilds a consistent state. The
+  same holds for the network state lock, and for a panic inside a blocking chain task.
+
 
 ## 11. Tor, I2P and proxies
 
@@ -505,18 +587,26 @@ its bounded outbox (64 messages) fills up.
   - A batch whose sender left before verification is only pre-checked: a sender
     whose batch would fail only the proof of work is not banned (it paid the real
     work of every header before the failing one).
-- **Block bodies are validated on the peer's read loop** (off the async executor,
-  on a blocking thread, but the connection waits for it): a peer sending large
-  valid-looking blocks slows only its own connection, and pings are answered
-  afterwards. Moving block processing to a worker like headers is open (M5).
-- **Mempool conflicts before the PX token.** A PX transaction that conflicts with a
-  *pooled* one (same key image or nullifier, different id) still passes the cheap
-  checks and consumes a node-wide PX token before `check_tx` rejects it. Closing
-  this needs a public conflict query on `Mempool` (chain crate). Mined-transaction
-  replays and exact duplicates are rejected before the token.
-- **Transaction verification runs under the chain lock**, one relayed transaction
-  at a time per connection; the admission checks (§10) bound what an attacker can
-  make it verify, but there is no bounded verification worker yet.
+- **One global chain lock.** Handlers no longer take it on async workers (§10), and
+  block connection is bounded per hold (§6), but every chain access still
+  serializes on it. Open:
+  - A *single* block still holds the lock for its whole validation (up to ~3.4 s
+    for a full block with 3 PX proofs not seen in the mempool), and a
+    reorganization is not paused before its new branch outweighs the old tip.
+  - PoW of a block whose header we never saw is computed under the lock (R8-1c),
+    and relayed transactions are verified under it, one per connection at a time
+    (R8-1d: stateless verification outside the lock is open).
+  - Requests that need the chain (headers, blocks, transactions of a peer) wait
+    for the lock on a blocking thread. Tokio's blocking pool is large (512
+    threads), and each connection has at most one such request at a time, so the
+    waiters are bounded by the number of connections.
+- **Block worker.** Bodies of all peers are connected by one worker, in arrival
+  order: a peer's large valid blocks delay other peers' blocks, not their pings.
+  Block-download timeouts still use a fixed 60 s (no per-size or head-of-queue
+  timer, R8-9); they are not penalized.
+- **Header worker head-of-line blocking** (R8-15): a single-header tip announcement
+  waits behind a full 2000-header batch; no priority lane yet.
+
 - **Tor inbound.** Every inbound connection through a hidden service comes from
   127.0.0.1, so they share the per-IP limits (2 connections, 2 queued header
   batches) and a ban of one bans all of them.

@@ -47,7 +47,7 @@ blow-up 8, 16 grinding bits) finds that:
 | **Proof size** | About 92% of a 2.04 MB transfer proof scales linearly with the queries (aggregation-study.md §1): opened rows 60.4%, authentication 18.5%, FRI folding 13.7%. Each query costs about 17 KB |
 | **Verification** | Linear in the queries for the FRI part; 183–188 ms per transfer proof today |
 | **Proving** | Barely affected: proving time is dominated by commitments and DFTs, not by opening queries |
-| **Chain capacity** | About 4 PX transactions per block under the 8 MiB PX budget |
+| **Chain capacity** | 3 PX transactions per block (corrected 2026-09-27: 4 × 2.18 MB exceeds 8 MiB) under the 8 MiB PX budget |
 
 **Alternatives measured** (same blow-up; sizes *estimated* from the 92% linear part):
 

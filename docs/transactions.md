@@ -633,6 +633,7 @@ Security relies on the following. Nothing else is assumed.
   | PX payout and change anchors, pseudo-output masks | PX hedge secret (required), plus `k_s` with v1 inputs | `px/v2`: network id, `ctx` (nullifiers and key images), fee, bridge-in, bridge-out, both output commitments, each ring, each payout, change address ‖ `LE64(change)` | full |
   | PX delivery `r` and ML-KEM coins `m` | sender's PX hedge secret (required; `seal` refuses an empty or all-zero one) | `px/delivery/hedge/v1`: recipient owner tag, `V`, the whole `ek`, `cm`, contract, `LE64(value)`, data, `rcm`, `rho` (which fixes the output index) | full |
   | PX throwaway delivery key (empty slot) | PX hedge secret | `px/throwaway/v1`: the slot's commitment, `LE64(slot)` | full |
+  | PX witness randomness: `rcm` of each user output; every field of each dummy input (`sk`, `d`, `rho`, `rcm`, position, path); owner of each empty slot; unused `sk`, `d` of contract inputs | PX hedge secret (required), plus `k_s` with v1 inputs | one stream per value, label `px/witness/rcm/v1`, `px/witness/dummy/v1`, `px/witness/empty-owner/v1` or `px/witness/contract-key/v1`, then `LE64(slot)`; the witness statement: anchor, bridge-in, bridge-out, each input (`"dummy"`, or the spent record's contract ‖ value ‖ data ‖ `rho` ‖ `rcm` ‖ position), each output (`"empty"`, or owner ‖ contract ‖ value ‖ data), each function (contract ‖ blind ‖ approve and spec flags); then the rest of the transaction: network id, fee, each ring, each payout, change address, each function run (program id ‖ private input). `build_px` re-derives these before running the kernel (`blacksilk_px::wallet::hedge_witness`) | full, except contract-output `rcm` and function blinds (below) |
   | Membership (bLSAG) nonce | `x` | `"membership"`, `m`, `B`, `P[π]` | **not full** (R2-C5) |
 
   The PX hedge secret is `blacksilk_px::wallet::Account::hedge_secret` (the PX spend secret
@@ -652,11 +653,21 @@ Security relies on the following. Nothing else is assumed.
   - *Membership nonce (R2-C5).* The context lacks the ring and the tag; with a constant RNG
     two signatures over different rings leak `x`. Unreachable today (contracts are not
     integrated); must be fixed before any integration.
-  - *PX witness randomness.* Output `rcm`, dummy inputs (key, `rho`, `rcm`, path) and
-    empty-slot owners (`blacksilk_px::wallet::{output, dummy_input, empty_output}`) come
-    from the caller's RNG directly. Under a broken RNG they are predictable, which could
-    let an observer recognise dummy inputs or empty slots, or test guesses of a record's
-    contents against `cm`. Open item.
+  - *Contract-output `rcm` and function blinds.* `build_px` keeps the `rcm` of a contract
+    output (the caller keeps that record's opening, e.g. the wallet's vault lock) and the
+    function `blind` (it is also in the function's private input). Both still come from
+    the caller's RNG (`blacksilk_px::wallet::{contract_output, random_digest}` in the
+    wallet's vault flows). Under a broken RNG an observer could test guesses of a contract
+    record's contents against its `cm`, or of a function's inputs and outputs against its
+    `io_hash`. Open item; the fix is to derive them in the wallet with the same kind of
+    hedge before the witness is assembled. The user-output, dummy-input, empty-slot and
+    contract-input values were hedged on 2026-09-27; before that they came from the
+    caller's RNG directly (`blacksilk_px::wallet::{output, dummy_input, empty_output}`,
+    which still draw placeholders that `build_px` replaces). Tests (no proving):
+    `broken_rng_*`, `working_rng_values_are_fresh`, `hedged_rcm_is_uniform_over_the_field`,
+    `the_kernel_accepts_a_hedged_witness` in px/src/wallet.rs, and
+    `broken_rng_witness_randomness_is_bound_to_the_whole_transaction` in
+    tx/src/px_builder.rs.
   - *Other RNG uses* are outside this table: decoy selection (not secret, but predictable
     under a broken RNG), key and seed generation, the wallet file's salt and nonce, and the
     STARK prover's randomness (derived with a witness digest; reviewed separately).
@@ -740,6 +751,69 @@ Security relies on the following. Nothing else is assumed.
 | Fee fingerprinting | Wallets must pay the *standard fee* `min_fee(max_weight(n_in, n_out))` (`tx::builder::standard_fee`), so equal shapes pay equal fees. Not consensus. |
 | Input/output count fingerprinting | Wallets should default to 2 outputs; consolidation transactions remain visible. |
 | Timing and IP correlation | P2P layer (Dandelion++; outbound Tor for the node; no I2P). Out of scope here. |
+
+#### 11.3.1 Wallet decoy selection (`tx/src/decoy.rs`, `wallet/src/wallet.rs`; wallet policy)
+
+**Age draw.** Monero's gamma picker: `x = exp(Gamma(19.28, 1/1.61))` seconds, shifted
+by the 10-block spendable age (or uniform in `[0, 15·T)` below it), converted to an
+output index with the chain's average output time, then to the block `b` holding that
+index.
+
+**Eligibility inside the draw (review R3-1, 2026-09-27).** The picker chooses a uniform
+*eligible* output of block `b`. If `b` has none, it takes a uniform eligible output of
+the neighbourhood `b ± w`, where `w = clamp(depth / 4, 9, 720)` blocks. If that has
+none either, the draw is discarded and made again. Eligible means old enough and, for
+coinbase outputs, 60 blocks deep; outputs already in the ring do not count.
+
+An unbounded "nearest eligible block" rule was tried and rejected. On a chain of
+coinbase-only blocks (the first days of a testnet) it moved every young draw onto the
+first mature blocks. The bounded window keeps that pile-up to draws from 51–59 blocks
+deep. Test `no_pile_up_at_the_maturity_boundary` measures the share of decoys 60–69
+blocks deep on such a chain: 12.9 % with the window, 6.0 % with discard-and-redraw.
+This is a known, bounded bias; the test's bound is 2.5 times. Before this change the draw ignored eligibility and the wallet discarded
+immature coinbase picks and drew again at any age. On a young chain, where most
+outputs 10–59 blocks deep are immature coinbase outputs, that removed nearly all young
+decoys, so a real input spent soon after receipt was usually the newest ring member.
+
+**Measured** (`young_decoys_survive_coinbase_maturity`, fixed seed, 2,000 rings per
+variant). The synthetic chain has 2,160 blocks (3 days at 2 min), one coinbase output
+per block, a two-output transfer every 18th block, and a real input spent 12 blocks
+after it was mined:
+
+| Variant | Decoys younger than 60 blocks | Real input is the newest member |
+|---|---|---|
+| Target: the same draws with every output eligible | 20.6 % | 62.4 % |
+| Before: discard ineligible picks and redraw | 3.4 % | 89.8 % |
+| After: eligibility inside the draw | 17.8 % | 51.5 % |
+
+The test requires the young fraction to be within 0.05 of the target, and the
+newest-member fraction to be at most 0.05 above it. **Limits:**
+- The real input spent 12 blocks after receipt is *still* the newest member in about
+  half the rings. Even at the target it is newest in most rings, because the gamma
+  distribution puts little mass 10–12 blocks deep. The fix restores the distribution;
+  it does not beat it.
+- Where eligible young outputs are sparse, the few that exist absorb the young draws.
+  The same young transfer outputs then appear in many rings, the real input's sibling
+  (the change of the same transaction) included. That is why "after" is below the
+  target for newest-member.
+- Coinbase-dominated rings (R3-3) are unchanged.
+- The parameters are Monero's, not fitted to BlackSilk spend data (§15).
+
+**Ring members are resolved locally (review I3 §3.9).** The wallet indexes every
+output of every block it scans (`wallet/src/index.rs`: key, commitment, height,
+coinbase flag) and builds rings from that index. It makes no `/outputs` request per
+ring. The previous single request per input contained the real input among the
+candidates, so the node could intersect it with the ring on chain. Outputs older than
+the wallet's restore height are fetched **once**, as the whole range `0 .. start` in
+consecutive pages of 1,024. Those requests depend on the restore height only, not on
+what is spent. The node still serves the output distribution (one request for the
+synced height), which reveals nothing about the ring.
+
+**Merge avoidance (review R3-13).** When no single output covers a payment, input
+selection first takes at most one output per source transaction. Outputs stored
+without their transaction, from older wallet files, are grouped by block. Only if that
+cannot cover the amount does it fall back to plain largest-first, and it then warns
+that the transaction spends outputs of one source together.
 
 ### 11.4 Janus attack (subaddress linking) [Δ Monero]
 

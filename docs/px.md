@@ -88,6 +88,66 @@ rho'_j  = Hk(RHO, nf_0 ‖ j)                          output j of a transfer
   Their nullifier is `Hk(NULLIFIER_CONTRACT, contract ‖ rcm ‖ cm)`.
 - `asset = 0` everywhere (BLK only in this version); the kernel fixes it.
 
+### 3.1 Wallet key derivation: versions and the viewing hierarchy (not consensus)
+
+The kernel takes `sk` and `d` as witnesses. It derives `ak` and `nk` from `sk` and never
+recomputes `d`. How a wallet derives `d_i` and the delivery keys of address `i` is
+therefore wallet policy, and it is versioned (`blacksilk_px::wallet::Derivation`,
+reviews R11-W2, R11-W3 and I2-R1):
+
+```text
+all versions:  sk, nk = Hk(NK, sk), ak = Hk(AK, sk), owner_i = Hk(OWNER, ak ‖ nk ‖ d_i)
+
+derivation 1 (flat; wallets created before 2026-09-27)
+  d_i                = Hk(DIVERSIFIER, sk ‖ i_lo16 ‖ i_hi16)
+  delivery keys of i = DeliveryKeys::derive(sk, i)
+
+derivation 2 (hierarchical by index range; the default for new wallets)
+  dk     = Hk(DIV_KEY, sk)                   ivk   = Hk(IVK, sk)
+  k      = i >> 16                            (range k holds indexes k·2^16 .. (k+1)·2^16)
+  dk_k   = Hk(DIV_RANGE, dk ‖ k_lo16 ‖ k_hi16)
+  ivk_k  = Hk(IVK_RANGE, ivk ‖ k_lo16 ‖ k_hi16)
+  d_i    = Hk(DIVERSIFIER_V2, dk_k ‖ i_lo16 ‖ i_hi16)
+  delivery keys of i = DeliveryKeys::derive(ivk_k, i)
+```
+
+The derivation-2 domains are wallet-side constants in their own block
+(`blacksilk_px::wallet::key_domain`, `0x0050_5A01..05`). They are kept apart from the
+consensus domains (`0x0050_5801..0A`). A future consensus domain must not reuse that
+block.
+
+**Disclosure** under derivation 2 (library API; there is no CLI export or watch-only
+scanner yet):
+
+| Package | Contents | Sees | Cannot |
+|---|---|---|---|
+| `RangeViewKey` (`Account::range_view(k)`, `Wallet::px_range_view`) | `ak, nk, dk_k, ivk_k` | Records received in range `k` **and their spends** (`nk`) | Spend (needs a preimage of `ak`); see other ranges |
+| `IncomingViewKey` (`RangeViewKey::incoming(n)`) | `ivk_k` and the owner tags of the first `n` addresses of range `k` | Records received at those addresses | See spends (no `nk`); derive further addresses |
+
+Security requirement (I2-F2): a `RangeViewKey` holder can recompute owner tags. A
+program that accepts "these records are mine" from owner tags alone, without proof of
+`sk`, would let every such holder act as the owner. Such programs must be rejected at
+design review.
+
+**Versioning and migration.**
+- The wallet file stores the derivation. Version-1 files (no field) are read as
+  derivation 1 and keep their addresses. Derivation-2 wallets are written as file
+  version 2, which older wallets refuse rather than deriving the wrong PX addresses.
+- The v1 (CLSAG) keys do not depend on the derivation.
+- **The 24-word seed does not record the derivation.** `restore` defaults to 2. A seed
+  from a wallet created before 2026-09-27 that held PX funds must be restored with
+  `--px-derivation 1`.
+- **Not done (design only, R11-W3):** a seed format that carries the version, a
+  network and a birthday; per-period range allocation (every address used today lies
+  in range 0); a separate authorization key (R11-W4, consensus). See
+  docs/reviews/wallet-review.md, round 3.
+
+Tests: `px/src/wallet.rs` `derivation_tests`: V1 is unchanged; V2 keeps `sk`, `ak` and
+`nk`; range views derive their range only; a record opens with the incoming view; and
+the native kernel accepts a V2 spend and rejects one with the wrong derivation's `d`.
+No proof is generated in these tests. Also `wallet/src/wallet.rs`
+`wallet_files_keep_their_px_key_derivation`.
+
 ## 4. The transfer kernel
 
 ### 4.1 Statement
@@ -410,7 +470,7 @@ high-throughput per-transaction use on a chain.
 
   The owner has kept the conservative parameters (AUDIT.md R8).
 - **Consensus consequence:** blocks carry a separate 8 MiB PX budget (§11.5), room
-  for about four PX transactions per 2-minute block.
+  for three PX transactions per 2-minute block (4 × 2.18 MB exceeds 8 MiB).
 - **Architectural fix:** aggregation (recursion). A design study is in
   `docs/reviews/aggregation-study.md`; it is not implemented.
 
@@ -585,7 +645,7 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 | Deploy | ≤ 1 MiB |
 | Deploy fee | Exactly the standard v1 fee of its transfer shape plus `DEPLOY_FEE_PER_BYTE` = 50 per payload byte (the vault: ~0.007 BLK; 1 MiB: ~0.52 BLK). A function of public data, so no wallet fingerprint |
 | Block deploy budget | `MAX_DEPLOY_BLOCK_BYTES` = 1 MiB of deploys per block, inside the 8 MiB PX budget. A block rule (`BlockError::DeployBytesExceeded`, testnet v3 rule set); templates respect it (reviews/v3-upgrade-mechanism.md §7.2, §8) |
-| Block PX budget | 8 MiB (about 4 PX transactions); total block ≤ `MAX_BLOCK_BYTES` = 1,000,000 + 8 MiB + 64 KiB = 9,454,144 bytes |
+| Block PX budget | 8 MiB (3 PX transactions at measured proof sizes); total block ≤ `MAX_BLOCK_BYTES` = 1,000,000 + 8 MiB + 64 KiB = 9,454,144 bytes |
 | PX fee | Exactly `PX_STANDARD_FEE = PX_FEE_PER_BYTE × MAX_PX_TX_SIZE` = 8,912,896 atomic units, a consensus rule (§12). It covers the per-byte fee of any PX transaction. Consequence: every PX transaction pays the same, so the mempool's fee-per-byte ordering ranks larger ones (contract calls, ~2.5 MB) below plain transfers (~2 MB) when the PX budget is congested |
 | Relay | PX and deploy transactions together: per peer 0.2/s (burst 4); all peers together 2/s (burst 10) |
 | Invalid proof | Misbehaviour (the statement is branch-independent once PX1 and PX3 pass). Across a scheduled activation the binding changes, so near an activation an honest peer can relay a proof for the previous epoch; see reviews/v3-upgrade-mechanism.md §2.4 |
