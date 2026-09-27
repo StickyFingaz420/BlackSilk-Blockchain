@@ -1,9 +1,21 @@
 //! Block storage (docs/blocks.md §8): an append-only log of accepted blocks.
 //!
 //! ```text
+//! file    = file header ‖ record*
+//! header  = "BSBH" ‖ LE32 version (1) ‖ LE32 network_id ‖ genesis_id (32)
+//!           ‖ LE32 crc32(the 44 bytes before)                        (48 bytes)
 //! record  = "BSB1" ‖ LE32 length ‖ LE32 crc32(payload) ‖ payload
 //! payload = pow_hash (32) ‖ block bytes
 //! ```
+//!
+//! **Network identity** ([`BlockStore::bind`], called by the chain manager
+//! before `load`): a new store is created with the file header; an existing
+//! one is refused if it names another network or genesis ("wrong network data
+//! directory"), so a store left over from an earlier testnet is detected
+//! instead of being replayed into (and silently orphaned by) a new genesis.
+//! Stores written before 2026-09-27 have no file header (format version 0,
+//! records from offset 0). They are accepted as they are, with a warning, and
+//! stay headerless (nothing is rewritten); their network cannot be verified.
 //!
 //! **Failure behaviour** (docs/blocks.md §8):
 //! - A record is durable when `append` returns (`sync_data`).
@@ -28,6 +40,11 @@ use std::path::{Path, PathBuf};
 
 const MAGIC: &[u8; 4] = b"BSB1";
 const RECORD_HEADER: usize = 12;
+const FILE_MAGIC: &[u8; 4] = b"BSBH";
+/// Current `blocks.dat` format version (0 = legacy file without a header).
+pub const FORMAT_VERSION: u32 = 1;
+/// Length of the file header.
+pub const FILE_HEADER: usize = 48;
 /// Upper bound on a record payload (32-byte PoW hash plus a maximum-size block).
 const MAX_PAYLOAD: usize = 32 + crate::block::MAX_BLOCK_BYTES;
 
@@ -40,6 +57,14 @@ pub trait BlockStore: Send {
     fn append(&mut self, pow_hash: &Hash, block: &[u8]) -> io::Result<()>;
     /// All stored blocks in insertion order.
     fn load(&mut self) -> io::Result<Vec<StoredBlock>>;
+    /// Binds the store to a network before `load`: a new store records the
+    /// network id and genesis id; an existing store naming another network or
+    /// genesis is refused (`InvalidData`). The default accepts anything (a
+    /// store without an identity).
+    fn bind(&mut self, network_id: u32, genesis_id: &Hash) -> io::Result<()> {
+        let _ = (network_id, genesis_id);
+        Ok(())
+    }
     /// Whether the store has failed permanently (a failed append could not be
     /// undone): every further append fails until the node restarts.
     fn failed(&self) -> bool {
@@ -51,9 +76,22 @@ pub trait BlockStore: Send {
 #[derive(Default)]
 pub struct MemoryStore {
     records: Vec<StoredBlock>,
+    identity: Option<(u32, Hash)>,
 }
 
 impl BlockStore for MemoryStore {
+    fn bind(&mut self, network_id: u32, genesis_id: &Hash) -> io::Result<()> {
+        match self.identity {
+            Some(id) if id != (network_id, *genesis_id) => Err(corrupt(
+                "memory store belongs to another network or genesis".into(),
+            )),
+            _ => {
+                self.identity = Some((network_id, *genesis_id));
+                Ok(())
+            }
+        }
+    }
+
     fn append(&mut self, pow_hash: &Hash, block: &[u8]) -> io::Result<()> {
         self.records.push((*pow_hash, block.to_vec()));
         Ok(())
@@ -70,6 +108,8 @@ pub struct FileStore {
     file: File,
     /// A failed append could not be undone: refuse further appends.
     poisoned: bool,
+    /// Format version found or written by `bind` (0: legacy or not bound).
+    version: u32,
     /// Test hooks: fail the next append after writing this many bytes, and
     /// fail the truncation that undoes it.
     #[cfg(test)]
@@ -93,6 +133,7 @@ impl FileStore {
             path,
             file,
             poisoned: false,
+            version: 0,
             #[cfg(test)]
             fail_after: None,
             #[cfg(test)]
@@ -166,6 +207,41 @@ impl FileStore {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// The format version: [`FORMAT_VERSION`] for a store with a file header,
+    /// 0 for a legacy headerless store (or before [`BlockStore::bind`]).
+    pub fn format_version(&self) -> u32 {
+        self.version
+    }
+}
+
+/// The file header for a network.
+fn encode_file_header(network_id: u32, genesis_id: &Hash) -> [u8; FILE_HEADER] {
+    let mut h = [0u8; FILE_HEADER];
+    h[..4].copy_from_slice(FILE_MAGIC);
+    h[4..8].copy_from_slice(&FORMAT_VERSION.to_le_bytes());
+    h[8..12].copy_from_slice(&network_id.to_le_bytes());
+    h[12..44].copy_from_slice(genesis_id);
+    let crc = crc32fast::hash(&h[..44]);
+    h[44..].copy_from_slice(&crc.to_le_bytes());
+    h
+}
+
+/// Length of a valid file header at the start of `data` (0 if there is none:
+/// a legacy store). Records start there.
+fn header_len(data: &[u8]) -> usize {
+    if data.len() >= FILE_HEADER
+        && &data[..4] == FILE_MAGIC
+        && crc32fast::hash(&data[..44]).to_le_bytes() == data[44..48]
+    {
+        FILE_HEADER
+    } else {
+        0
+    }
+}
+
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 fn corrupt(msg: String) -> io::Error {
@@ -173,6 +249,64 @@ fn corrupt(msg: String) -> io::Error {
 }
 
 impl BlockStore for FileStore {
+    /// Writes the file header into a new (empty) store, or checks an existing
+    /// one. A torn header (a crash while the store was created, so no record
+    /// follows) is written again. A headerless store is a legacy store: it is
+    /// accepted unchanged, with a warning.
+    fn bind(&mut self, network_id: u32, genesis_id: &Hash) -> io::Result<()> {
+        let expected = encode_file_header(network_id, genesis_id);
+        let mut head = Vec::with_capacity(FILE_HEADER);
+        self.file.seek(SeekFrom::Start(0))?;
+        (&mut self.file)
+            .take(FILE_HEADER as u64)
+            .read_to_end(&mut head)?;
+        if head.len() < FILE_HEADER && expected.starts_with(&head) {
+            // New store, or its header write was torn: nothing else is in it.
+            self.file.set_len(0)?;
+            self.file.seek(SeekFrom::Start(0))?;
+            self.file.write_all(&expected)?;
+            self.file.sync_all()?;
+            self.version = FORMAT_VERSION;
+            return Ok(());
+        }
+        if !head.starts_with(FILE_MAGIC) {
+            log::warn!(
+                "{}: legacy block store without a file header (format 0); its network \
+                 cannot be verified. It is used as it is",
+                self.path.display()
+            );
+            self.version = 0;
+            return Ok(());
+        }
+        if header_len(&head) != FILE_HEADER {
+            return Err(corrupt(format!(
+                "{}: damaged file header",
+                self.path.display()
+            )));
+        }
+        let version = u32::from_le_bytes(head[4..8].try_into().expect("4 bytes"));
+        if version != FORMAT_VERSION {
+            return Err(corrupt(format!(
+                "{}: unsupported block store format version {version}",
+                self.path.display()
+            )));
+        }
+        let net = u32::from_le_bytes(head[8..12].try_into().expect("4 bytes"));
+        if head[8..44] != expected[8..44] {
+            return Err(corrupt(format!(
+                "{}: wrong network data directory: this block store belongs to network \
+                 id {net:#010x} with genesis {}, but the node runs network id \
+                 {network_id:#010x} with genesis {}. Use a separate data directory \
+                 for each network (or remove the store of an old network)",
+                self.path.display(),
+                hex(&head[12..44]),
+                hex(genesis_id)
+            )));
+        }
+        self.version = FORMAT_VERSION;
+        Ok(())
+    }
+
     fn append(&mut self, pow_hash: &Hash, block: &[u8]) -> io::Result<()> {
         let record = encode_record(pow_hash, block);
         if self.poisoned {
@@ -210,7 +344,7 @@ impl BlockStore for FileStore {
         self.file.seek(SeekFrom::Start(0))?;
         self.file.read_to_end(&mut data)?;
         let mut out = Vec::new();
-        let mut pos = 0usize;
+        let mut pos = header_len(&data);
         while pos < data.len() {
             match parse_record(&data[pos..]) {
                 Ok((payload, used)) => {
@@ -267,7 +401,7 @@ fn encode_record(pow_hash: &Hash, block: &[u8]) -> Vec<u8> {
 
 /// Length of the longest prefix of `data` made of valid records.
 fn valid_prefix(data: &[u8]) -> usize {
-    let mut pos = 0usize;
+    let mut pos = header_len(data);
     while pos < data.len() {
         match parse_record(&data[pos..]) {
             Ok((_, used)) => pos += used,
@@ -606,5 +740,137 @@ mod tests {
             0,
             "nothing more to repair"
         );
+    }
+
+    // ------------------------------------------------------------ file header
+
+    const NET: u32 = 0x0001_D672;
+    const GENESIS: Hash = [0x42; 32];
+
+    /// A new store starts with the file header; it reopens under the same
+    /// network with every record, and refuses another network or genesis
+    /// without touching the file.
+    #[test]
+    fn a_new_store_is_bound_to_its_network() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.dat");
+        {
+            let mut s = FileStore::open(&path).unwrap();
+            s.bind(NET, &GENESIS).unwrap();
+            assert_eq!(s.format_version(), FORMAT_VERSION);
+            assert!(s.load().unwrap().is_empty());
+            fill(&mut s, 3);
+        }
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..FILE_HEADER], &encode_file_header(NET, &GENESIS));
+        let mut s = FileStore::open(&path).unwrap();
+        s.bind(NET, &GENESIS).unwrap();
+        let recs = s.load().unwrap();
+        assert_eq!(recs.len(), 3);
+        assert_eq!(recs[2], ([2; 32], vec![2; 12]));
+
+        for (net, genesis) in [(NET + 1, GENESIS), (NET, [0x43; 32])] {
+            let err = FileStore::open(&path)
+                .unwrap()
+                .bind(net, &genesis)
+                .unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+            assert!(err.to_string().contains("wrong network data directory"));
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "nothing changed");
+    }
+
+    /// A store written before the file header existed (format 0) is accepted
+    /// as it is and stays headerless: records load, appends continue.
+    #[test]
+    fn a_legacy_headerless_store_is_accepted_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.dat");
+        {
+            let mut s = FileStore::open(&path).unwrap();
+            fill(&mut s, 3); // never bound: the legacy layout
+        }
+        let legacy = std::fs::read(&path).unwrap();
+        assert_eq!(&legacy[..4], MAGIC);
+        let mut s = FileStore::open(&path).unwrap();
+        s.bind(NET, &GENESIS).unwrap();
+        assert_eq!(s.format_version(), 0);
+        assert_eq!(s.load().unwrap().len(), 3);
+        s.append(&[9; 32], b"new").unwrap();
+        let now = std::fs::read(&path).unwrap();
+        assert_eq!(&now[..legacy.len()], &legacy[..], "nothing rewritten");
+        let mut s = FileStore::open(&path).unwrap();
+        s.bind(NET + 1, &GENESIS).unwrap(); // a legacy store cannot be checked
+        assert_eq!(s.load().unwrap().len(), 4);
+    }
+
+    /// A damaged header is refused (fail safe); a header torn while the store
+    /// was being created (no record after it) is written again; a torn record
+    /// after a good header is truncated as usual; repair keeps the header.
+    #[test]
+    fn damaged_and_torn_file_headers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.dat");
+        {
+            let mut s = FileStore::open(&path).unwrap();
+            s.bind(NET, &GENESIS).unwrap();
+            fill(&mut s, 2);
+        }
+        let good = std::fs::read(&path).unwrap();
+        let mut bad = good.clone();
+        bad[20] ^= 1; // inside the genesis id
+        std::fs::write(&path, &bad).unwrap();
+        let err = FileStore::open(&path)
+            .unwrap()
+            .bind(NET, &GENESIS)
+            .unwrap_err();
+        assert!(err.to_string().contains("damaged file header"));
+        // Unsupported version (with a valid checksum).
+        let mut v2 = good.clone();
+        v2[4..8].copy_from_slice(&2u32.to_le_bytes());
+        let crc = crc32fast::hash(&v2[..44]);
+        v2[44..48].copy_from_slice(&crc.to_le_bytes());
+        std::fs::write(&path, &v2).unwrap();
+        let err = FileStore::open(&path)
+            .unwrap()
+            .bind(NET, &GENESIS)
+            .unwrap_err();
+        assert!(err.to_string().contains("version 2"));
+
+        // Torn header on creation.
+        for cut in [1, 4, 30, FILE_HEADER - 1] {
+            std::fs::write(&path, &good[..cut]).unwrap();
+            let mut s = FileStore::open(&path).unwrap();
+            s.bind(NET, &GENESIS).unwrap();
+            assert!(s.load().unwrap().is_empty());
+            assert_eq!(std::fs::read(&path).unwrap(), &good[..FILE_HEADER]);
+        }
+
+        // A torn last record after the header.
+        std::fs::write(&path, &good[..good.len() - 3]).unwrap();
+        let mut s = FileStore::open(&path).unwrap();
+        s.bind(NET, &GENESIS).unwrap();
+        assert_eq!(s.load().unwrap().len(), 1);
+        drop(s);
+
+        // Mid-file corruption after the header: repair keeps header and prefix.
+        std::fs::write(&path, &good).unwrap();
+        let mut bytes = good.clone();
+        bytes[FILE_HEADER + RECORD_HEADER + 3] ^= 0xff; // first record's payload
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(FileStore::open(&path).unwrap().load().is_err());
+        FileStore::repair(&path, 5).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), &good[..FILE_HEADER]);
+        let mut s = FileStore::open(&path).unwrap();
+        s.bind(NET, &GENESIS).unwrap();
+        assert!(s.load().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_memory_store_is_bound_too() {
+        let mut s = MemoryStore::default();
+        s.bind(NET, &GENESIS).unwrap();
+        s.bind(NET, &GENESIS).unwrap();
+        assert!(s.bind(NET, &[0; 32]).is_err());
     }
 }
