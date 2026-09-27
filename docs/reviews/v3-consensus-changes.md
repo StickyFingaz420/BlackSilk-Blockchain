@@ -478,7 +478,7 @@ fails: a block whose only weight beyond its coinbase is a valid 1-input deploy v
 (`max_weight(1, 2) = 1 723`) exceeds. `a_px_transactions_v1_inputs_count_toward_the_weight_limit`
 fails: a block with a 64-input PX transaction passes B6 under a limit of `coinbase +
 50 000` (`max_weight(64, 0)` is larger) and fails only later.
-Run on the parent commit `00df709`: `a deploy's CLSAG escaped the weight limit: Ok(())`
+Run on the parent commit `87c83ff`: `a deploy's CLSAG escaped the weight limit: Ok(())`
 and `64 CLSAGs escaped the weight limit: Err(Tx { index: 1, error: Unbalanced })` (the
 block got as far as the balance check; B6 did not see the 64 inputs).
 
