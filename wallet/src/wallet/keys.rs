@@ -59,9 +59,26 @@ impl Wallet {
         w
     }
 
+    /// Refuses a network whose genesis is not final
+    /// (`ChainParams::genesis_is_final`), as the node refuses to run one: a
+    /// wallet created or restored for it would belong to no chain that can
+    /// launch. Regtest always is final.
+    fn check_network_enabled(network: Network) -> Result<(), WalletError> {
+        if ChainParams::for_network(network).genesis_is_final() {
+            Ok(())
+        } else {
+            Err(WalletError::Serialization(format!(
+                "the {} genesis is not final yet (the network is disabled until its v3 genesis                  is final); use regtest",
+                network_name(network)
+            )))
+        }
+    }
+
     /// A new wallet from the OS CSPRNG. Scanning starts at `restore_height`
-    /// (the current chain height for a brand new wallet).
+    /// (the current chain height for a brand new wallet). Refused for a
+    /// network whose genesis is not final.
     pub fn generate(network: Network, restore_height: u64) -> Result<Self, WalletError> {
+        Self::check_network_enabled(network)?;
         let mut seed = [0u8; 32];
         getrandom::getrandom(&mut seed)
             .map_err(|e| WalletError::Serialization(format!("OS RNG: {e}")))?;
@@ -99,27 +116,25 @@ impl Wallet {
     /// A wallet from its 24-word seed with PX key derivation `derivation`.
     /// The words do not record the derivation (docs/px.md §3.1): a seed from
     /// a wallet created before derivation 2 must be restored with 1, or its
-    /// PX records are not found. The v1 funds are found either way.
+    /// PX records are not found. The v1 funds are found either way. Refused
+    /// for a network whose genesis is not final.
     pub fn from_mnemonic_with(
         network: Network,
         words: &str,
         restore_height: u64,
         derivation: Derivation,
     ) -> Result<Self, WalletError> {
+        Self::check_network_enabled(network)?;
         let m = bip39::Mnemonic::parse_normalized(words.trim())
             .map_err(|e| WalletError::Serialization(format!("mnemonic: {e}")))?;
         let mut entropy = m.to_entropy();
-        let seed: [u8; 32] = entropy
-            .as_slice()
-            .try_into()
-            .map_err(|_| WalletError::Serialization("mnemonic must have 24 words".into()))?;
+        let seed: Result<[u8; 32], _> = entropy.as_slice().try_into();
         entropy.zeroize();
-        Ok(Self::from_seed_with(
-            network,
-            seed,
-            restore_height,
-            derivation,
-        ))
+        let mut seed =
+            seed.map_err(|_| WalletError::Serialization("mnemonic must have 24 words".into()))?;
+        let w = Self::from_seed_with(network, seed, restore_height, derivation);
+        seed.zeroize();
+        Ok(w)
     }
 
     pub fn network(&self) -> Network {
@@ -172,7 +187,7 @@ impl Wallet {
     }
 
     /// `next_block_rules`, for a build that was given `given`: those must be
-    /// rules of this wallet's network (any epoch; only the network is
+    /// rules of this wallet's chain (any epoch; the network and genesis ids are
     /// checked). Warns when an upgrade activates within
     /// `ACTIVATION_GRACE_BLOCKS` of the next block: the transaction is then
     /// valid only if it is mined before the upgrade.
@@ -182,6 +197,15 @@ impl Wallet {
             return Err(WalletError::WrongNetwork {
                 wallet: network_name(self.network).into(),
                 node: format!("network id {:#010x}", given.network_id),
+            });
+        }
+        // The network id is not enough: rules of another genesis of the same
+        // network would sign for a chain this wallet does not follow
+        // (RTW1-5).
+        if given.genesis_id != rules.genesis_id || rules.genesis_id != self.genesis_id {
+            return Err(WalletError::WrongGenesis {
+                wallet: hex::encode(self.genesis_id),
+                node: hex::encode(given.genesis_id),
             });
         }
         self.warn_near_activation(self.synced_height + 1, "this transaction");
@@ -326,5 +350,42 @@ impl Wallet {
 
     pub fn primary(&self) -> Address {
         self.keys.address(SubaddressIndex::PRIMARY)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RTW1-5: rules handed to a build must be those of the wallet's chain,
+    /// its genesis included, not only its network id.
+    #[test]
+    fn rules_of_another_genesis_are_refused() {
+        let mut w = Wallet::from_seed(Network::Regtest, [7; 32], 1);
+        let ours = w.next_block_rules();
+        assert!(w.next_rules(&ours).is_ok());
+        let mut other = ours;
+        other.genesis_id = [0xAB; 32];
+        assert!(matches!(
+            w.next_rules(&other),
+            Err(WalletError::WrongGenesis { .. })
+        ));
+    }
+
+    /// A wallet is created or restored only for a network whose genesis is
+    /// final (`ChainParams::genesis_is_final`), as the node refuses to run
+    /// one that is not. Regtest always is.
+    #[test]
+    fn create_and_restore_need_a_final_genesis() {
+        let words = Wallet::from_seed(Network::Regtest, [7; 32], 1).mnemonic();
+        for n in [Network::Regtest, Network::Testnet, Network::Mainnet] {
+            let fin = ChainParams::for_network(n).genesis_is_final();
+            assert_eq!(Wallet::generate(n, 1).is_ok(), fin, "{n:?}");
+            assert_eq!(Wallet::from_mnemonic(n, &words, 1).is_ok(), fin, "{n:?}");
+            if !fin {
+                let e = Wallet::generate(n, 1).err().unwrap().to_string();
+                assert!(e.contains("not final"), "{e}");
+            }
+        }
     }
 }

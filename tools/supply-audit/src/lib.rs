@@ -497,6 +497,30 @@ pub struct Entry {
 /// fully synchronized and at or above it. The audit is refused unless every
 /// wallet ends at the same block id as the node, and that block is still on
 /// the node's chain at the end.
+/// This build's parameters for the node's network. Refused: an unknown
+/// network, a network whose genesis is not final
+/// (`ChainParams::genesis_is_final`; the node and the wallet refuse those
+/// too; regtest always is), and a network id that differs from this build's.
+fn node_params(info: &rpc::Info) -> Result<ChainParams, String> {
+    let network = parse_network(&info.network)
+        .ok_or_else(|| format!("unknown network {:?}", info.network))?;
+    let params = ChainParams::for_network(network);
+    if !params.genesis_is_final() {
+        return Err(format!(
+            "the {} genesis is not final yet (the network is disabled until its v3 genesis \
+             is final); use regtest",
+            info.network
+        ));
+    }
+    if params.network_id != info.network_id {
+        return Err(format!(
+            "the node's network id {:#x} is not {}'s {:#x}",
+            info.network_id, info.network, params.network_id
+        ));
+    }
+    Ok(params)
+}
+
 pub fn audit(
     node: &dyn NodeApi,
     wallets: &mut [Entry],
@@ -512,15 +536,8 @@ pub fn audit(
             info.height, info.header_height
         ));
     }
-    let network = parse_network(&info.network)
-        .ok_or_else(|| format!("unknown network {:?}", info.network))?;
-    let params = ChainParams::for_network(network);
-    if params.network_id != info.network_id {
-        return Err(format!(
-            "the node's network id {:#x} is not {}'s {:#x}",
-            info.network_id, info.network, params.network_id
-        ));
-    }
+    let params = node_params(&info)?;
+    let network = params.network;
     let genesis = params.genesis_id();
     if let Some(g) = &info.genesis_id {
         if *g != hex::encode(genesis) {
@@ -699,6 +716,41 @@ mod tests {
             total_difference: v1 + px,
             chain_failures: failures,
         }
+    }
+
+    fn info(network: &str, network_id: u32) -> rpc::Info {
+        serde_json::from_value(serde_json::json!({
+            "network": network,
+            "network_id": network_id,
+            "height": 0,
+            "tip": "",
+            "difficulty": 1,
+            "generated": 0,
+            "mempool_txs": 0,
+            "mempool_bytes": 0,
+            "outputs": 0,
+        }))
+        .unwrap()
+    }
+
+    /// The audit builds rules only for a network whose genesis is final, as
+    /// the node and the wallet do. Regtest is exempt.
+    #[test]
+    fn only_a_final_genesis_is_audited() {
+        use blacksilk_consensus::Network;
+        for (name, n) in [
+            ("regtest", Network::Regtest),
+            ("testnet", Network::Testnet),
+            ("mainnet", Network::Mainnet),
+        ] {
+            let p = ChainParams::for_network(n);
+            let r = node_params(&info(name, p.network_id));
+            assert_eq!(r.is_ok(), p.genesis_is_final(), "{name}");
+            if let Err(e) = r {
+                assert!(e.contains("not final"), "{e}");
+            }
+        }
+        assert!(node_params(&info("regtest", 1)).is_err(), "wrong id");
     }
 
     #[test]

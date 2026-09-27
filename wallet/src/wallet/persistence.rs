@@ -6,6 +6,7 @@ use super::{
 };
 use crate::index::OutputIndex;
 use crate::px::{PxStore, PX_GAP_LIMIT, PX_MAX_INDEX_AHEAD};
+use blacksilk_consensus::ChainParams;
 use blacksilk_crypto::{Point, Scalar};
 use blacksilk_px::wallet::Derivation;
 use serde::{Deserialize, Serialize};
@@ -160,12 +161,26 @@ impl Wallet {
                     .into(),
             )
         })?)?;
+        // A file written for another genesis of the same network (a release
+        // candidate, a rehearsal, a retired identity) is refused: this build
+        // would sign for its own genesis while the file names another, and a
+        // node of either chain would see the key images and rings of
+        // transactions built for the wrong chain (RTW1-5).
+        let ours = ChainParams::for_network(network).genesis_id();
+        if genesis_id != ours {
+            return Err(WalletError::Serialization(format!(
+                "the wallet file belongs to another genesis ({}) than this build's {} ({}); \
+                 use a build of that chain, or restore the seed (mnemonic) into a new \
+                 wallet file",
+                hex::encode(genesis_id),
+                network_name(network),
+                hex::encode(ours)
+            )));
+        }
         let mut seed = h32(&p.seed.0)?;
         let mut w = Self::from_seed_with(network, seed, p.restore_height, derivation);
         seed.zeroize();
-        // The recorded id, not this build's: a file written for another
-        // genesis stays bound to it, and the node check refuses the mismatch.
-        w.genesis_id = genesis_id;
+        debug_assert_eq!(w.genesis_id, genesis_id);
         w.index = p.output_index;
         w.synced_height = p.synced_height;
         w.block_ids = p
@@ -179,6 +194,9 @@ impl Wallet {
         w.pending_txs = p.pending_txs;
         w.rings = p.rings;
         w.stale_txs = p.stale_txs;
+        // Files written before RTW1-4 hold one record per key image, all
+        // credited: a no-op for them.
+        w.elect_credited();
         w.repair_windows();
         w.rebuild_table();
         Ok(w)
@@ -251,5 +269,32 @@ impl Wallet {
                 .map_err(|e| WalletError::Serialization(format!("saving the wallet: {e}"))),
             None => Ok(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blacksilk_consensus::Network;
+
+    /// RTW1-5 (red team RT-W1): a wallet file bound to another genesis than
+    /// this build's (same network name and id: a release candidate, a
+    /// rehearsal or a retired identity) is refused at load, before any
+    /// transaction can be built for it. Before the fix it loaded with the
+    /// file's genesis id and this build's parameters, and would sign for
+    /// this build's genesis after checking only the network id.
+    #[test]
+    fn a_file_bound_to_another_genesis_is_refused_at_load() {
+        let w = Wallet::from_seed(Network::Regtest, [7; 32], 1);
+        assert_eq!(w.genesis_id(), ChainParams::regtest().genesis_id());
+        assert!(Wallet::from_json(&w.to_json()).is_ok());
+        let mut json: serde_json::Value = serde_json::from_slice(&w.to_json()).unwrap();
+        json["genesis_id"] = serde_json::Value::String(hex::encode([0xAB; 32]));
+        let e = Wallet::from_json(&serde_json::to_vec(&json).unwrap())
+            .err()
+            .expect("refused");
+        let msg = e.to_string();
+        assert!(msg.contains("another genesis"), "{msg}");
+        assert!(msg.contains(&hex::encode([0xAB; 32])), "{msg}");
     }
 }

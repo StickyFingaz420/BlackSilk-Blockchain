@@ -10,7 +10,8 @@ use blacksilk_chain::block::Block;
 use blacksilk_crypto::stealth::ReceivedOutput;
 use blacksilk_tx::params::{COINBASE_MATURITY, SPENDABLE_AGE};
 use blacksilk_tx::scan::scan_block;
-use std::collections::HashSet;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 
 impl Wallet {
     // ---- sync ----
@@ -40,7 +41,9 @@ impl Wallet {
         Ok(info)
     }
 
-    /// Removes everything learned from blocks above `height`.
+    /// Removes everything learned from blocks above `height`. A record
+    /// credited for its key image that goes with them hands the credit back
+    /// to a duplicate below the fork (RTW1-4).
     fn rewind(&mut self, height: u64) {
         self.outputs.retain(|o| o.height <= height);
         for o in &mut self.outputs {
@@ -48,6 +51,7 @@ impl Wallet {
                 o.spent_height = None;
             }
         }
+        self.elect_credited();
         self.block_ids.retain(|h, _| *h <= height);
         self.index.rewind(height);
         self.px.rewind(height);
@@ -191,34 +195,26 @@ impl Wallet {
                 // spent. The Janus check makes this unreachable on a valid
                 // chain except for a hash collision (a copy in another
                 // transaction has another input context), so this is defence
-                // in depth, e.g. against a dishonest node. Keep the LARGEST
+                // in depth, e.g. against a dishonest node. Every such output
+                // is kept, unchanged, and one is credited: the LARGEST
                 // amount, then the lowest global index (Monero's rule; a
-                // small early copy never displaces a large genuine output).
-                if let Some(held) = self.outputs.iter_mut().find(|s| s.key_image == key_image) {
-                    let better = amount > held.amount
-                        || (amount == held.amount && o.global_index < held.global_index);
+                // small early copy never displaces a large genuine output;
+                // `elect_credited`). Records are never rewritten in place,
+                // so a rewind of the credited one's block credits the one
+                // below the fork again (RTW1-4). The key image's spent and
+                // reserved state is shared by all of them.
+                let sibling = self.outputs.iter().find(|s| s.key_image == key_image);
+                let (spent_height, pending, pending_height) = sibling
+                    .map_or((None, false, 0), |s| {
+                        (s.spent_height, s.pending, s.pending_height)
+                    });
+                let duplicate = sibling.map(|s| s.global_index);
+                if let Some(held) = duplicate {
                     self.warnings.push(format!(
-                        "outputs {} and {} share a key image: only the {} is credited \
-                         (docs/transactions.md §12.5)",
-                        held.global_index,
+                        "outputs {held} and {} share a key image: only one of them is \
+                         credited (docs/transactions.md §12.5)",
                         o.global_index,
-                        if better { "second" } else { "first" }
                     ));
-                    if better {
-                        // The key image's spent state is the held one's.
-                        held.global_index = o.global_index;
-                        held.height = height;
-                        held.coinbase = o.coinbase;
-                        held.account = subaddress.account;
-                        held.index = subaddress.index;
-                        held.amount = amount;
-                        held.one_time_key = hex::encode(o.key.one_time_key.bytes());
-                        held.commitment = hex::encode(o.key.commitment.bytes());
-                        held.mask = hex::encode(mask.as_bytes());
-                        held.offset = hex::encode(output_key_offset.as_bytes());
-                        held.tx = Some(hex::encode(o.tx_hash));
-                    }
-                    continue;
                 }
                 self.outputs.push(StoredOutput {
                     global_index: o.global_index,
@@ -232,10 +228,11 @@ impl Wallet {
                     mask: hex::encode(mask.as_bytes()),
                     offset: hex::encode(output_key_offset.as_bytes()),
                     key_image,
-                    spent_height: None,
-                    pending: false,
-                    pending_height: 0,
+                    spent_height,
+                    pending,
+                    pending_height,
                     tx: Some(hex::encode(o.tx_hash)),
+                    credited: duplicate.is_none(),
                 });
                 grew |= self.note_used(subaddress.account, subaddress.index);
             }
@@ -243,6 +240,7 @@ impl Wallet {
                 break;
             }
         }
+        self.elect_credited();
         // Rejected outputs (Janus probes, bogus amounts) are deliberately ignored:
         // they must not be shown or spent (docs/transactions.md §12.5).
         // Every kind spends v1 outputs through key images: transfers, PX
@@ -261,13 +259,59 @@ impl Wallet {
         }
     }
 
+    /// Elects, for every key image held more than once, the record that is
+    /// credited: the largest amount, then the lowest global index (RTW1-4).
+    /// The stored ring of such a key image (W-5) loses every member carrying
+    /// its one-time key: the credited record may be one of them now, and a
+    /// reused ring must never carry the same one-time key at two positions.
+    pub(super) fn elect_credited(&mut self) {
+        // key image -> (amount, global index) of the best record so far.
+        let mut best: HashMap<&str, (u64, u64)> = HashMap::new();
+        // key image -> one-time key, for key images held more than once.
+        let mut duplicated: HashMap<&str, &str> = HashMap::new();
+        for o in &self.outputs {
+            let (amount, index) = (o.amount, o.global_index);
+            match best.entry(&o.key_image) {
+                Entry::Vacant(e) => {
+                    e.insert((amount, index));
+                }
+                Entry::Occupied(mut e) => {
+                    duplicated.insert(&o.key_image, &o.one_time_key);
+                    let (held_amount, held_index) = *e.get();
+                    if amount > held_amount || (amount == held_amount && index < held_index) {
+                        e.insert((amount, index));
+                    }
+                }
+            }
+        }
+        let credited: HashSet<(&str, u64)> =
+            best.iter().map(|(k, &(_, index))| (*k, index)).collect();
+        let credited: Vec<bool> = self
+            .outputs
+            .iter()
+            .map(|o| credited.contains(&(o.key_image.as_str(), o.global_index)))
+            .collect();
+        let duplicated: Vec<(String, String)> = duplicated
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+        for (o, c) in self.outputs.iter_mut().zip(credited) {
+            o.credited = c;
+        }
+        for (key_image, one_time_key) in duplicated {
+            if let Some(ring) = self.rings.get_mut(&key_image) {
+                ring.retain(|m| m.one_time_key != one_time_key);
+            }
+        }
+    }
+
     pub(super) fn spendable_at(o: &StoredOutput, next_height: u64) -> bool {
         let age = if o.coinbase {
             COINBASE_MATURITY
         } else {
             SPENDABLE_AGE
         };
-        o.spent_height.is_none() && !o.pending && next_height >= o.height + age
+        o.credited && o.spent_height.is_none() && !o.pending && next_height >= o.height + age
     }
 
     pub fn balance(&self) -> Balance {
@@ -276,7 +320,7 @@ impl Wallet {
         for o in self
             .outputs
             .iter()
-            .filter(|o| o.spent_height.is_none() && !o.pending)
+            .filter(|o| o.credited && o.spent_height.is_none() && !o.pending)
         {
             b.total += o.amount;
             if Self::spendable_at(o, next) {
@@ -290,7 +334,8 @@ impl Wallet {
     /// audit (tools/supply-audit). Read-only: no secret material (masks,
     /// seeds, record openings) is included, only amounts and public ids.
     ///
-    /// - v1: every owned output, spent or not, with its confirmation state.
+    /// - v1: every owned output, spent or not, with its confirmation state;
+    ///   of outputs sharing a key image, only the credited one.
     /// - PX: every plain record, and every contract record that is on chain
     ///   (`height` known). Contract records created or imported but never
     ///   confirmed are left out: they hold no value on chain.
@@ -298,6 +343,7 @@ impl Wallet {
         let outputs = self
             .outputs
             .iter()
+            .filter(|o| o.credited)
             .map(|o| HeldOutput {
                 global_index: o.global_index,
                 height: o.height,
@@ -447,11 +493,21 @@ mod tests {
         );
     }
 
+    /// The records credited for their key image.
+    fn credited(w: &Wallet) -> Vec<(u64, u64)> {
+        w.outputs
+            .iter()
+            .filter(|o| o.credited)
+            .map(|o| (o.global_index, o.amount))
+            .collect()
+    }
+
     /// Defence in depth (F13-6, F17-2, RT-10): outputs that pass the scan but
     /// share a key image (here two outputs of one transaction with the same
     /// one-time key and different amounts, which consensus rejects but a
     /// dishonest node can serve) are credited once: the LARGEST amount, then
-    /// the lowest global index. A spend of that key image spends it.
+    /// the lowest global index. Both are kept (RTW1-4). A spend of that key
+    /// image spends it.
     #[test]
     fn one_output_is_credited_per_key_image_the_largest_then_the_lowest_index() {
         for (amounts, kept) in [
@@ -473,25 +529,29 @@ mod tests {
                     .collect(),
             };
             w.apply_block(&block(5, vec![Transaction::Coinbase(bad)]), 5, 0);
-            assert_eq!(w.outputs.len(), 1, "{amounts:?}: credited once");
-            assert_eq!(w.outputs[0].global_index, kept, "{amounts:?}");
-            assert_eq!(w.outputs[0].amount, amounts[kept as usize]);
+            assert_eq!(w.outputs.len(), 2, "{amounts:?}: both kept");
+            assert_eq!(
+                credited(&w),
+                vec![(kept, amounts[kept as usize])],
+                "{amounts:?}: credited once"
+            );
             assert_eq!(w.balance().total, amounts[kept as usize]);
+            assert_eq!(w.holdings().outputs.len(), 1, "audited once");
             assert_eq!(w.take_warnings().len(), 1, "a local diagnostic");
             // The key image is spent: nothing is left.
             let ki = stored_key_image(&w.outputs[0]);
             w.apply_block(&block(6, vec![spend(ki)]), 6, 2);
-            assert_eq!(w.outputs[0].spent_height, Some(6));
+            assert!(w.outputs.iter().all(|o| o.spent_height == Some(6)));
             assert_eq!(w.balance().total, 0);
         }
     }
 
     /// The same across two scans of the chain (a copy that somehow passes
     /// the scan in a later block, e.g. after a hash collision): a larger
-    /// later output replaces the credited one, a smaller one is ignored; the
-    /// spent state of the key image is kept.
+    /// later output is credited instead, a smaller one is not; the spent and
+    /// reserved state of the key image is shared by every record.
     #[test]
-    fn a_later_duplicate_replaces_the_credited_output_only_if_larger() {
+    fn a_later_duplicate_is_credited_only_if_larger() {
         let mut rng = ChaCha20Rng::seed_from_u64(3);
         let mut w = wallet();
         let honest = pay_wallet(&w, 5, 300, &mut rng);
@@ -505,20 +565,114 @@ mod tests {
         // The same block served twice at two positions (a dishonest node).
         w.apply_block(&block(5, vec![Transaction::Coinbase(with(300))]), 5, 10);
         w.apply_block(&block(5, vec![Transaction::Coinbase(with(100))]), 5, 20);
-        assert_eq!(w.outputs.len(), 1);
-        assert_eq!((w.outputs[0].global_index, w.outputs[0].amount), (10, 300));
+        assert_eq!(credited(&w), vec![(10, 300)]);
+        // Reserved by a submitted spend: a larger duplicate stays reserved.
+        w.outputs[0].pending = true;
+        w.outputs[0].pending_height = 5;
+        w.outputs[1].pending = true;
+        w.outputs[1].pending_height = 5;
         w.apply_block(&block(5, vec![Transaction::Coinbase(with(800))]), 5, 30);
-        assert_eq!(w.outputs.len(), 1);
-        assert_eq!((w.outputs[0].global_index, w.outputs[0].amount), (30, 800));
+        assert_eq!(credited(&w), vec![(30, 800)]);
+        assert!(w.outputs.iter().all(|o| o.pending && o.pending_height == 5));
+        assert_eq!(w.balance().total, 0, "reserved");
+        for o in &mut w.outputs {
+            o.pending = false;
+        }
         assert_eq!(w.balance().total, 800);
+        // Only the credited record can be chosen to spend.
+        let spendable: Vec<u64> = w
+            .outputs
+            .iter()
+            .filter(|o| Wallet::spendable_at(o, 1_000))
+            .map(|o| o.global_index)
+            .collect();
+        assert_eq!(spendable, vec![30]);
+        // Every record and the credit survive a save and load; files written
+        // before the flag (one record per key image) load as credited.
+        let loaded = Wallet::from_json(&w.to_json()).unwrap();
+        assert_eq!(loaded.outputs.len(), 3);
+        assert_eq!(credited(&loaded), vec![(30, 800)]);
+        let mut json: serde_json::Value = serde_json::from_slice(&w.to_json()).unwrap();
+        let outputs = json["outputs"].as_array_mut().unwrap();
+        outputs.retain(|o| o["global_index"] == 30);
+        outputs[0].as_object_mut().unwrap().remove("credited");
+        let old = Wallet::from_json(&serde_json::to_vec(&json).unwrap()).unwrap();
+        assert_eq!(credited(&old), vec![(30, 800)]);
         let _ = w.take_warnings();
         // Spent, then a larger duplicate: still spent.
         let ki = stored_key_image(&w.outputs[0]);
         w.apply_block(&block(6, vec![spend(ki)]), 6, 40);
         w.apply_block(&block(5, vec![Transaction::Coinbase(with(900))]), 5, 50);
-        assert_eq!(w.outputs.len(), 1);
-        assert_eq!(w.outputs[0].amount, 900);
-        assert_eq!(w.outputs[0].spent_height, Some(6));
+        assert_eq!(credited(&w), vec![(50, 900)]);
+        assert!(w.outputs.iter().all(|o| o.spent_height == Some(6)));
         assert_eq!(w.balance().total, 0);
+    }
+
+    /// RTW1-4 (red team RT-W1): a larger duplicate in a later block is
+    /// credited instead of the earlier output, and a rewind below the later
+    /// block brings the earlier output back. Before the fix the duplicate
+    /// replaced the held record in place (height and global index), so the
+    /// rewind dropped the only record and the genuine output, still on chain
+    /// below the fork, stayed invisible until a restore from the seed.
+    #[test]
+    fn a_rewind_below_a_replacing_duplicate_keeps_the_displaced_output() {
+        let mut rng = ChaCha20Rng::seed_from_u64(4);
+        let mut w = wallet();
+        let honest = pay_wallet(&w, 5, 300, &mut rng);
+        let with = |amount: u64| Coinbase {
+            height: 5,
+            outputs: vec![CoinbaseOutput {
+                amount,
+                ..honest.outputs[0].clone()
+            }],
+        };
+        w.apply_block(&block(5, vec![Transaction::Coinbase(with(300))]), 5, 10);
+        w.synced_height = 5;
+        w.apply_block(&block(7, vec![Transaction::Coinbase(with(800))]), 7, 30);
+        w.synced_height = 7;
+        assert_eq!(w.balance().total, 800, "the larger duplicate is credited");
+        w.rewind(6);
+        assert_eq!(
+            w.balance().total,
+            300,
+            "output 10 at height 5 is still on chain"
+        );
+        assert_eq!(credited(&w), vec![(10, 300)]);
+    }
+
+    /// RTW1-4: once a key image is held twice, its stored ring (W-5, reused
+    /// by the next spend of that key image) loses every member carrying the
+    /// shared one-time key, so the real input's key never appears at a
+    /// second position of the reused ring. Other members are kept.
+    #[test]
+    fn a_reused_ring_never_carries_the_credited_key_twice() {
+        let mut rng = ChaCha20Rng::seed_from_u64(5);
+        let mut w = wallet();
+        let honest = pay_wallet(&w, 5, 300, &mut rng);
+        let with = |amount: u64| Coinbase {
+            height: 5,
+            outputs: vec![CoinbaseOutput {
+                amount,
+                ..honest.outputs[0].clone()
+            }],
+        };
+        w.apply_block(&block(5, vec![Transaction::Coinbase(with(300))]), 5, 10);
+        let key = w.outputs[0].one_time_key.clone();
+        let other = hex::encode([0x11; 32]);
+        let member = |index: u64, k: &str| super::super::RingMember {
+            index,
+            one_time_key: k.to_owned(),
+            commitment: other.clone(),
+        };
+        // A ring submitted for output 10 whose decoys include output 30,
+        // which later turns out to carry the same one-time key.
+        w.rings.insert(
+            w.outputs[0].key_image.clone(),
+            vec![member(3, &other), member(30, &key)],
+        );
+        w.apply_block(&block(7, vec![Transaction::Coinbase(with(800))]), 7, 30);
+        assert_eq!(credited(&w), vec![(30, 800)]);
+        let ring = &w.rings[&w.outputs[0].key_image];
+        assert_eq!(ring.iter().map(|m| m.index).collect::<Vec<_>>(), vec![3]);
     }
 }
