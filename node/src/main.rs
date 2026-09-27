@@ -18,7 +18,9 @@ use std::sync::{Arc, Mutex};
 
 fn main() {
     let args = Args::parse();
-    let cfg = match Config::resolve(args) {
+    let cfg = match Config::resolve(args)
+        .and_then(|c| config::check_network_enabled(c.network).map(|()| c))
+    {
         Ok(c) => c,
         Err(e) => {
             eprintln!("configuration error: {e}");

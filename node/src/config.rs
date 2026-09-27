@@ -143,6 +143,23 @@ pub struct P2pConfig {
     pub allow_private: bool,
 }
 
+/// The testnet v2 identity (`0x0001D672`) is retired: this tree already enforces a
+/// rule v2 builds do not (canonical PX proofs, `zk::decode_proof`), so the two would
+/// fork on the first rewritten proof. The testnet stays disabled until the v3 genesis
+/// is generated at launch (docs/testnet.md), when this becomes `true`.
+pub const TESTNET_GENESIS_FINAL: bool = false;
+
+/// Refuses to run a network whose identity is not final (called at start-up).
+pub fn check_network_enabled(n: Network) -> Result<(), String> {
+    match n {
+        Network::Testnet if !TESTNET_GENESIS_FINAL => Err(
+            "the testnet is disabled until its v3 genesis is final (v2 is retired);              use --network regtest"
+                .into(),
+        ),
+        _ => Ok(()),
+    }
+}
+
 pub fn parse_network(s: &str) -> Result<Network, String> {
     match s {
         "testnet" => Ok(Network::Testnet),
@@ -291,6 +308,14 @@ pub async fn resolve_seeds(entries: &[String], proxy_only: bool) -> Result<Vec<N
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn retired_testnet_identity_is_refused_until_v3() {
+        assert!(!TESTNET_GENESIS_FINAL);
+        assert!(check_network_enabled(Network::Testnet).is_err());
+        assert!(check_network_enabled(Network::Regtest).is_ok());
+        assert!(parse_network("mainnet").is_err());
+    }
     use super::*;
 
     fn args(v: &[&str]) -> Args {
