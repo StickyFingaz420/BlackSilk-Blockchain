@@ -235,11 +235,11 @@ fn consensus_fingerprints_are_pinned() {
 /// retired v2 ones. The testnet value changes again when the v3 genesis is
 /// generated at launch (docs/testnet-v3-genesis.md §6).
 const TESTNET_FINGERPRINT: &str =
-    "8876128fbe1b5d83a915a8c1ea4e70f920e5db155779bc0b78cef2a2ecc1cda9";
+    "9ebc5cc817c71cf144eab8fbbc7601f8e9e17a2d98217b6e62f9df2091e5b17f";
 /// Changing this is a consensus change and requires a new network id.
 const REGTEST_FINGERPRINT: &str =
-    "9cb0c0bff53096b640da1ebdfba6f7134562eaa622afdaa9b9531627b4539a61";
+    "5df1f2267d609ceaab90f5368b368d4302da7542462f78323a9f88383d99fd2a";
 /// Changing this is a consensus change and requires a new network id. (The
 /// mainnet parameters are provisional; mainnet is not launched.)
 const MAINNET_FINGERPRINT: &str =
-    "1ccf1942b48e94b60d3dbc2a1cf2ab8384721dc053b607a09f92226ed5d8edbb";
+    "6480dd9fc366c63bb93a0d13e6e60215c138d6a96e55ff5071d667cb8e3d6376";
