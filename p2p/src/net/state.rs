@@ -59,10 +59,10 @@ pub(super) struct Peer {
     pub(super) headers_busy: bool,
     /// Headers arrived while `headers_busy`; ask again once the batch is done.
     pub(super) headers_pending: bool,
-    /// The peer sent a header of a version above every version this node's
-    /// schedule knows (`HeaderError::UnknownUpgrade`) and the operator was
-    /// warned once for it.
-    pub(super) warned_upgrade: bool,
+    /// Headers of a version above every version this node's schedule knows,
+    /// with valid proof of work (`HeaderError::UnknownUpgrade`), this peer
+    /// sent (RT-1; [`UNKNOWN_UPGRADE_DISCONNECT`]).
+    pub(super) unknown_upgrades: u32,
 }
 
 pub(super) struct StemEntry {
@@ -123,6 +123,51 @@ pub(super) struct State {
     /// Ids of blocks received and waiting for, or under, processing by the
     /// block worker: not requested again meanwhile.
     pub(super) blocks_queued: HashSet<Hash>,
+    /// Peers that reported a newer consensus version (RT-1).
+    pub(super) upgrades: UpgradeReports,
+}
+
+/// A peer is disconnected (never banned) after this many headers of an unknown
+/// version with valid proof of work (RT-1): it may be right, but this node
+/// cannot use its chain, and its slot is better given to a peer it can.
+pub(super) const UNKNOWN_UPGRADE_DISCONNECT: u32 = 3;
+
+/// The operator is warned that an upgrade may be needed only once this many
+/// distinct peers sent a header of an unknown version with valid proof of work,
+/// or once such a header extends a branch with at least our best work (RT-1): a
+/// single peer cannot trigger the warning cheaply.
+pub(super) const UNKNOWN_UPGRADE_WARN_PEERS: usize = 2;
+
+/// Reports of headers of an unknown (newer) version with valid proof of work.
+#[derive(Default)]
+pub(super) struct UpgradeReports {
+    reporters: HashSet<PeerId>,
+    warned: bool,
+}
+
+/// What to do after one report ([`UpgradeReports::report`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct UpgradeVerdict {
+    /// Warn the operator (at most once per run).
+    pub(super) warn: bool,
+    /// Disconnect the reporting peer, without a ban.
+    pub(super) disconnect: bool,
+}
+
+impl UpgradeReports {
+    /// Records a report by `peer`, whose `count`-th it is. `heavy`: the header
+    /// extends a branch that, with its work, reaches our best chain's work.
+    pub(super) fn report(&mut self, peer: PeerId, count: u32, heavy: bool) -> UpgradeVerdict {
+        if !self.warned && self.reporters.len() < UNKNOWN_UPGRADE_WARN_PEERS {
+            self.reporters.insert(peer);
+        }
+        let warn = !self.warned && (heavy || self.reporters.len() >= UNKNOWN_UPGRADE_WARN_PEERS);
+        self.warned |= warn;
+        UpgradeVerdict {
+            warn,
+            disconnect: count >= UNKNOWN_UPGRADE_DISCONNECT,
+        }
+    }
 }
 
 /// A block waiting for the block worker.
@@ -238,5 +283,44 @@ impl Inner {
     pub(super) fn send_now(&self, peer: PeerId, msg: Message) {
         let mut st = self.state();
         self.send(&mut st, peer, msg);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RT-1: one peer never triggers the operator warning, however often it
+    /// reports; a second distinct peer does, once. A report on a branch that
+    /// reaches our best work warns at once. The reporting peer is disconnected
+    /// at its third report.
+    #[test]
+    fn upgrade_reports_warn_past_a_threshold_and_disconnect_after_n() {
+        let mut r = UpgradeReports::default();
+        let quiet = |disconnect| UpgradeVerdict {
+            warn: false,
+            disconnect,
+        };
+        assert_eq!(r.report(1, 1, false), quiet(false));
+        assert_eq!(r.report(1, 2, false), quiet(false));
+        assert_eq!(r.report(1, UNKNOWN_UPGRADE_DISCONNECT, false), quiet(true));
+        assert_eq!(
+            r.report(2, 1, false),
+            UpgradeVerdict {
+                warn: true,
+                disconnect: false
+            }
+        );
+        // Once per run.
+        assert_eq!(r.report(3, 1, true), quiet(false));
+
+        let mut r = UpgradeReports::default();
+        assert_eq!(
+            r.report(9, 1, true),
+            UpgradeVerdict {
+                warn: true,
+                disconnect: false
+            }
+        );
     }
 }

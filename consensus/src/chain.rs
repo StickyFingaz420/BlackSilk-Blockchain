@@ -34,6 +34,13 @@ pub enum HeaderError {
     /// sender probably runs a newer release (an upgrade this node lacks). Not
     /// permanent, and not the sender's fault: the network layer should warn
     /// the operator instead of penalizing the peer (R1-C10).
+    ///
+    /// [`HeaderChain::validate`] returns it only for a header whose height is
+    /// right and whose proof of work meets the difficulty this node requires
+    /// at that position (RT-1): with junk proof of work the verdict is
+    /// `InsufficientWork`. [`HeaderChain::precheck_batch`] computes no proof of
+    /// work, so there it is unconfirmed: the caller must confirm the header
+    /// with `validate` before treating it as benign.
     UnknownUpgrade {
         version: u32,
     },
@@ -330,6 +337,15 @@ impl HeaderChain {
         let expected_version = self.params.epoch_at(expected_height).header_version;
         if header.version != expected_version {
             if header.version > self.params.schedule.max_header_version() {
+                // A newer release may change any other rule, but not the
+                // height: a wrong one is invalid under every version.
+                if header.height != expected_height {
+                    return Err(HeaderError::BadHeight {
+                        expected: expected_height,
+                        got: header.height,
+                    });
+                }
+                // Unconfirmed until `validate` checks the proof of work (RT-1).
                 return Err(HeaderError::UnknownUpgrade {
                     version: header.version,
                 });
@@ -492,15 +508,34 @@ impl HeaderChain {
             .entries
             .get(&header.prev_id)
             .ok_or(HeaderError::UnknownParent)?;
-        self.check_rules(header, &self.stored_context(header.prev_id, parent), now)?;
+        let context = self.stored_context(header.prev_id, parent);
+        if let Err(e) = self.check_rules(header, &context, now) {
+            if let HeaderError::UnknownUpgrade { .. } = e {
+                // RT-1: the benign verdict costs real work. The difficulty is the
+                // one this node requires here, whatever the header claims, so a
+                // header claiming difficulty 1 cannot buy it cheaply. A future
+                // proof-of-work change would make this node see
+                // `InsufficientWork`; it must upgrade then anyway.
+                if !self.pow_meets(header, context.child_difficulty) {
+                    return Err(HeaderError::InsufficientWork);
+                }
+            }
+            return Err(e);
+        }
 
         // Expensive check last.
-        let seed = self.seed_id_for(header.prev_id, header.height);
-        let pow_hash = self.pow.pow_hash(&seed, &header.to_bytes());
-        if !check_hash(&pow_hash, header.difficulty) {
+        if !self.pow_meets(header, header.difficulty) {
             return Err(HeaderError::InsufficientWork);
         }
         Ok(id)
+    }
+
+    /// Whether the RandomX hash of `header`, under the seed of its parent's
+    /// branch at its height, meets `difficulty`.
+    fn pow_meets(&self, header: &BlockHeader, difficulty: u64) -> bool {
+        let seed = self.seed_id_for(header.prev_id, header.height);
+        let pow_hash = self.pow.pow_hash(&seed, &header.to_bytes());
+        check_hash(&pow_hash, difficulty)
     }
 
     /// Validates and stores `header`, switching the best chain if it now has the
@@ -781,6 +816,7 @@ mod tests {
 
         let mut h = good;
         h.version = 2;
+        let h = grind(&c, h, h.difficulty, true); // RT-1: real work
         let e = c.validate(&h, now).unwrap_err();
         assert_eq!(e, HeaderError::UnknownUpgrade { version: 2 });
         assert!(!e.is_permanent());
@@ -923,6 +959,47 @@ mod tests {
         assert!(matches!(
             c.validate(&h, now),
             Err(HeaderError::TimestampTooFarInFuture { .. })
+        ));
+    }
+
+    /// RT-1: a header of a version above every version the schedule knows is
+    /// `UnknownUpgrade` (not penalized) only if its proof of work meets the
+    /// difficulty this node requires at that position. With junk proof of work it
+    /// is `InsufficientWork` (permanent, penalized), so the benign verdict cannot
+    /// be had for free.
+    #[test]
+    fn unknown_upgrade_needs_valid_proof_of_work() {
+        let (c, good) = chain_above_one();
+        let now = good.timestamp;
+        let mut newer = good;
+        newer.version = 7;
+        let junk = grind(&c, newer, good.difficulty, false);
+        let e = c.validate(&junk, now).unwrap_err();
+        assert_eq!(e, HeaderError::InsufficientWork);
+        assert!(e.is_permanent());
+        let real = grind(&c, newer, good.difficulty, true);
+        let e = c.validate(&real, now).unwrap_err();
+        assert_eq!(e, HeaderError::UnknownUpgrade { version: 7 });
+        assert!(!e.is_permanent());
+        // The work must be real at the difficulty this node requires, whatever
+        // difficulty the header claims.
+        let mut cheap = newer;
+        cheap.difficulty = 1;
+        let cheap = grind(&c, cheap, good.difficulty, false);
+        assert_eq!(c.validate(&cheap, now), Err(HeaderError::InsufficientWork));
+        // A known-but-wrong version stays a permanent `BadVersion`, without PoW.
+        let mut old = junk;
+        old.version = 0;
+        assert!(matches!(
+            c.validate(&old, now),
+            Err(HeaderError::BadVersion { .. })
+        ));
+        // A wrong height is invalid under any version: `BadHeight`, no PoW.
+        let mut lying = real;
+        lying.height += 1;
+        assert!(matches!(
+            c.validate(&lying, now),
+            Err(HeaderError::BadHeight { .. })
         ));
     }
 
@@ -1106,7 +1183,20 @@ mod tests {
                 for h in &batch[..k] {
                     seq.accept(*h, now).unwrap();
                 }
-                assert_eq!(seq.validate(&batch[k], now), Err(e), "{what} at {k}");
+                let verdict = seq.validate(&batch[k], now);
+                if let HeaderError::UnknownUpgrade { .. } = e {
+                    // Unconfirmed in the pre-check (no PoW); `validate`
+                    // confirms it with the proof of work (RT-1).
+                    let real = seq.pow_meets(&batch[k], seq.required_difficulty(batch[k].prev_id));
+                    let want = if real {
+                        e
+                    } else {
+                        HeaderError::InsufficientWork
+                    };
+                    assert_eq!(verdict, Err(want), "{what} at {k}");
+                } else {
+                    assert_eq!(verdict, Err(e), "{what} at {k}");
+                }
             }
         }
         // The future-time limit, with the batch's own clock.

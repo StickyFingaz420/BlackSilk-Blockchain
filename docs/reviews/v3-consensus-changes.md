@@ -281,3 +281,92 @@ override). Dossier 40 F40-2 (Medium).
 15. **Review status.** Internal; the derivation is the tool's, moved and cross-checked by
     the unchanged tool tests.
 
+---
+
+## rt1-unknown-upgrade-pow: UnknownUpgrade only for headers with real proof of work
+
+Owner: W1-CB-A. Decisions: "Agent 50" RT-1 (adopted: `UnknownUpgrade` only for PoW-valid
+headers; disconnect without a ban after N; operator warning only past a peer or work
+threshold).
+
+1. **Problem.** `check_rules` returned `UnknownUpgrade` for any header whose version
+   exceeded the schedule's maximum, before proof of work. P2P does not penalize it and
+   warned the operator once per peer. So a peer could stream unknown-version headers at
+   zero hash cost, never be scored, keep its slot, and make any single inbound connection
+   raise an "upgrade needed" warning (a social-engineering lever) (dossier 50 RT-1,
+   Medium).
+2. **Demonstrated failure.** On base `32054d4`, `chain::tests::unknown_upgrade_needs_valid_proof_of_work`
+   failed: a newer-version header with junk proof of work returned
+   `left: UnknownUpgrade { version: 7 }, right: InsufficientWork`.
+3. **Prior art.** Bitcoin Core warns about unknown rules only from PoW-valid blocks of its
+   own chain and only past a signalling threshold (`WarningBitsConditionChecker`, PR
+   #16713); it never warns from one peer's unverified header.
+4. **Alternatives.** Penalize every unknown version (breaks the upgrade signal of honest
+   newer peers); keep it free but rate-limit (still free spam and a single-peer warning).
+5. **Affected components.**
+   - `consensus/src/chain.rs`: an unknown version is `BadHeight` if the height is wrong,
+     else `UnknownUpgrade` from `check_rules` (unconfirmed); `validate` then checks the
+     RandomX hash against the difficulty this node requires at that position (not the
+     header's claimed difficulty) and returns `InsufficientWork` if it fails.
+     `precheck_batch` (no PoW) reports it unconfirmed; the doc of
+     `HeaderError::UnknownUpgrade` says so.
+   - `p2p/src/net/headers.rs` (`verify_headers`): the unconfirmed header is included in
+     the `worth_verifying` gate, hashed off the chain lock after its prefix, and
+     classified by `validate`; `note_unknown_upgrade` replaces the per-peer warning.
+   - `p2p/src/net/state.rs`: `Peer::unknown_upgrades`, `State::upgrades`
+     (`UpgradeReports`), `UNKNOWN_UPGRADE_DISCONNECT = 3`, `UNKNOWN_UPGRADE_WARN_PEERS = 2`.
+   - `p2p/src/net/blocks.rs`: the block path uses `note_unknown_upgrade` (its header is
+     already PoW-confirmed by `validate`). `p2p/src/net.rs`, `conn.rs`: field init.
+6. **Activation.** Node policy with the v3 rule set; the final verdict (header rejected)
+   is unchanged.
+7. **Compatibility.** No validity change: every such header was and is rejected. Only the
+   error class of an unknown-version header with junk PoW (now permanent), and scoring,
+   change. If a future upgrade changes the proof of work, old nodes see
+   `InsufficientWork` for the new headers; they must upgrade then anyway.
+8. **Reorg, wallet, mining and P2P implications.**
+   - P2P: an unknown-version header costs the sender real work at our difficulty. A peer
+     sending 3 of them is disconnected, never banned. The operator is warned once, when
+     2 distinct peers reported one or one extends a branch reaching our best work. An
+     unknown-version header on a low-work branch fails `worth_verifying` first (no hash,
+     no warning).
+   - Cost to us: one RandomX hash per unknown-version header that passes the work gate,
+     the same as any other well-formed header.
+   - No reorg, wallet or mining effect.
+9. **Vectors.** `header_check_order_vectors` (F-05 section) and the RT-1 tests below.
+10. **Tests.**
+    - `consensus/src/chain.rs`: `unknown_upgrade_needs_valid_proof_of_work` (junk PoW:
+      `InsufficientWork`, permanent; real PoW: `UnknownUpgrade`, not permanent; a header
+      claiming difficulty 1 still needs the required work; a known wrong version stays
+      `BadVersion`; a wrong height is `BadHeight`). `rejects_each_invalid_field` now grinds
+      its unknown-version header to real work. `precheck_agrees_with_sequential_validation_and_computes_no_pow`
+      states the confirmation: the pre-check's `UnknownUpgrade` is confirmed by `validate`
+      to `UnknownUpgrade` or `InsufficientWork` exactly as the PoW decides.
+    - `p2p/src/net/state.rs`: `upgrade_reports_warn_past_a_threshold_and_disconnect_after_n`.
+    - `p2p/tests/network.rs`: `unknown_version_headers_need_real_proof_of_work` (junk PoW
+      at the end of a requested batch: the peer is penalized and disconnected, the prefix
+      stored; real PoW as tip announcements: score 0, still connected after 2, disconnected
+      at the 3rd without a penalty or a ban).
+11. **Suite results.** Final branch state (all six items), release, `--locked`, Windows x86_64,
+    rustc 1.98.1, PX-proving tests skipped (`restart_rebuilds_the_px_state_exactly`,
+    `px_transactions_travel_the_stem_and_confirm_everywhere`,
+    `invalid_px_transactions_get_the_relaying_peer_penalized`):
+    - `blacksilk-consensus`: 71 passed (lib 50, golden 17, lwma_warm 2, randomx 2).
+    - `blacksilk-daa-sim`: 37 passed. `blacksilk-genesis`: 10 passed.
+    - `blacksilk-node`: 40 passed, 2 ignored.
+    - `blacksilk-p2p`: 82 passed, 4 ignored, 2 skipped (PX).
+    - `blacksilk-chain`: 111 passed, **1 failed** (`revalidation.rs`
+      `a_shorter_heavier_reorg_makes_a_ring_member_immature`, the DAA-dependent
+      construction explained in the daa-lwma75-warm section, step 11), 2 ignored,
+      1 skipped (PX).
+    - `cargo clippy --locked -p blacksilk-{consensus,daa-sim,genesis,node,p2p,chain}
+      --all-targets -- -D warnings`: clean. `cargo fmt --all -- --check`: clean.
+12. **Open review points.**
+    - `docs/p2p.md` §6 still describes the per-peer warning; it was on branch w1-tx-a's
+      file list, so it is not edited here (one paragraph for the coordinator: the §11
+      rules of docs/consensus.md, as updated here).
+    - The thresholds (3 reports, 2 peers) are policy constants; 30/31 may tune them.
+    - The warning is not rate-limited beyond "once per run".
+13. **Identity impact.** None.
+14. **Documentation.** `docs/consensus.md` §6 item 1 and §11 (network-layer rules), in
+    this change.
+15. **Review status.** Internal; implements the red team's fix (a)–(c).

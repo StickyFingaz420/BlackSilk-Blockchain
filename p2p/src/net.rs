@@ -154,6 +154,7 @@ impl Network {
             px_global_drops: 0,
             unrequested_queued: 0,
             blocks_queued: HashSet::new(),
+            upgrades: Default::default(),
         };
         let (header_queue, header_rx) = mpsc::unbounded_channel();
         let (block_queue, block_rx) = mpsc::unbounded_channel();

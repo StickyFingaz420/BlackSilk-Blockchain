@@ -246,7 +246,12 @@ A header `B` whose parent `P` is known and not invalid is valid iff, in this ord
 
 1. `B.version == epoch_at(P.height + 1).header_version` (§11). A version above every
    version of the schedule is `UnknownUpgrade`, which is **not permanent** (the sender
-   probably runs a newer release). Any other mismatch is `BadVersion`, permanent.
+   probably runs a newer release), but only if the height is right and the header's
+   RandomX hash meets the difficulty this node requires at that position (RT-1: the
+   benign verdict costs real work). Otherwise it is `BadHeight` or
+   `InsufficientWork`, both permanent. The batch pre-check computes no PoW, so there
+   `UnknownUpgrade` is unconfirmed until full validation. Any other mismatch is
+   `BadVersion`, permanent.
 2. `B.height == P.height + 1`
 3. `B.difficulty == next_difficulty(P's branch)` (§4)
 4. Median-time-past (§5 rule 1)
@@ -381,8 +386,12 @@ What the epoch fixes:
   Only `1` exists. A test checks that every scheduled id is implemented.
 
 **Rules for the network layer and the pool:**
-- `UnknownUpgrade` is not the peer's fault: warn the operator ("a newer consensus
-  version is in use") and do not penalize the peer.
+- `UnknownUpgrade` (confirmed with PoW, §6) is not the peer's fault: do not penalize
+  the peer. Disconnect it without a ban after 3 such headers. Warn the operator ("a
+  newer consensus version is in use") only once at least 2 distinct peers sent one, or
+  one extends a branch that reaches our best chain's work: a single peer cannot raise
+  the warning cheaply (RT-1). A header of an unknown version with junk PoW is
+  `InsufficientWork` and penalized.
 - Validate a block at height `h` with the transaction rules of `epoch_at(h)`
   (`TxRules::at_height`).
 - When the next height crosses an activation (`Schedule::activation_in`), flush the

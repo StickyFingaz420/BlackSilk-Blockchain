@@ -3,7 +3,7 @@
 
 use super::blocks::schedule_downloads;
 use super::fatal;
-use super::state::{unix_now, HeaderBatch, Inner, State};
+use super::state::{unix_now, HeaderBatch, Inner, State, UNKNOWN_UPGRADE_DISCONNECT};
 use crate::addr::NetAddr;
 use crate::dandelion::PeerId;
 use crate::limits::score;
@@ -43,24 +43,46 @@ impl Inner {
     }
 
     /// `peer` sent a header whose version no epoch of this node's schedule
-    /// uses (`HeaderError::UnknownUpgrade`): not scored, since the peer may run
-    /// a newer release that is right. Logged at WARN once per peer, so that the
-    /// operator learns an upgrade may be needed.
-    pub(super) fn warn_unknown_upgrade(&self, peer: PeerId, version: u32) {
-        let first = {
+    /// uses, with valid proof of work (`HeaderError::UnknownUpgrade`, confirmed
+    /// by `validate`; RT-1). Not scored, since the peer may run a newer release
+    /// that is right. After [`UNKNOWN_UPGRADE_DISCONNECT`] such headers the peer
+    /// is disconnected without a ban. The operator is warned once, and only
+    /// past a peer-count or work threshold (`state::UNKNOWN_UPGRADE_WARN_PEERS`;
+    /// `heavy`: the header's branch reaches our best chain's work).
+    pub(super) fn note_unknown_upgrade(&self, peer: PeerId, version: u32, heavy: bool) {
+        let (verdict, addr) = {
             let mut st = self.state();
-            match st.peers.get_mut(&peer) {
-                Some(p) if !p.warned_upgrade => {
-                    p.warned_upgrade = true;
-                    true
+            let Some(p) = st.peers.get_mut(&peer) else {
+                return;
+            };
+            p.unknown_upgrades = p.unknown_upgrades.saturating_add(1);
+            let (count, addr) = (p.unknown_upgrades, p.addr.clone());
+            let verdict = st.upgrades.report(peer, count, heavy);
+            if verdict.disconnect {
+                if let Some(p) = st.peers.get(&peer) {
+                    p.kill.notify_one();
                 }
-                _ => false,
             }
+            (verdict, addr)
         };
-        if first {
+        log::info!(
+            "peer {addr} sent a header of unknown version {version} with valid proof of work"
+        );
+        if verdict.disconnect {
+            log::info!(
+                "disconnecting peer {addr} (not banned): {UNKNOWN_UPGRADE_DISCONNECT} headers \
+                 of an unknown consensus version"
+            );
+        }
+        if verdict.warn {
             log::warn!(
-                "peer {peer} is on a newer consensus version (header version {version}); \
-                 this node may need an upgrade"
+                "peers are on a newer consensus version (header version {version} with valid \
+                 proof of work{}); this node may need an upgrade",
+                if heavy {
+                    ", on a branch with at least our best chain's work"
+                } else {
+                    ", from several peers"
+                }
             );
         }
     }
@@ -237,6 +259,17 @@ fn penalized(e: &HeaderError) -> bool {
             | HeaderError::UnknownParent
             | HeaderError::UnknownUpgrade { .. }
     )
+}
+
+/// Whether `header` (of an unknown version, proof of work confirmed) extends a
+/// branch that, with the work this node requires of it, reaches our best
+/// chain's work (RT-1's work threshold for the operator warning).
+fn reaches_best_work(hc: &HeaderChain, header: &BlockHeader) -> bool {
+    let Some(parent_work) = hc.work(&header.prev_id) else {
+        return false;
+    };
+    let required = hc.template_on(header.prev_id).map_or(0, |t| t.difficulty);
+    parent_work + required as u128 >= hc.best_work()
 }
 
 /// Verifies header batches one at a time (docs/p2p.md §6):
@@ -457,13 +490,18 @@ fn verify_headers(
             Ok(()) => headers.len(),
             Err((i, _)) => *i,
         };
+        // A header of an unknown version is unconfirmed after the pre-check
+        // (no proof of work yet): it is hashed with the batch, if the batch is
+        // worth it, and only then classified (RT-1).
+        let unknown = matches!(&checked, Err((_, HeaderError::UnknownUpgrade { .. })));
+        let worth_end = if unknown { good_end + 1 } else { good_end };
         // Headers we already have (a prefix: a stored header cannot follow
         // an unstored one) cost nothing more.
         let start = headers[..good_end]
             .iter()
             .position(|h| c.header(&h.id(nid)).is_none())
             .unwrap_or(good_end);
-        let worth = worth_verifying(c.headers(), &headers[start..good_end], full);
+        let worth = worth_verifying(c.headers(), &headers[start..worth_end], full);
         (checked, start..good_end, worth)
     };
     let precheck_error = match checked {
@@ -478,6 +516,7 @@ fn verify_headers(
     if !worth {
         return HeaderOutcome::LowWork;
     }
+    let unknown_at = fresh_range.end;
     let fresh = &headers[fresh_range];
     let chunk = inner.cfg.pow_threads.max(1);
     let mut new = 0;
@@ -495,7 +534,29 @@ fn verify_headers(
             Err((_, e)) => return HeaderOutcome::Failed(e),
         }
     }
-    if let Some(e) = precheck_error {
+    if let Some(HeaderError::UnknownUpgrade { .. }) = precheck_error {
+        // The unknown-version header's parent is now stored: hash it off the
+        // chain lock, then let `validate` classify it (RT-1). Junk proof of work
+        // is `InsufficientWork` (penalized); real work is `UnknownUpgrade`.
+        let one = &headers[unknown_at..=unknown_at];
+        let Some((pow, jobs)) = inner.chain().pow_jobs(one) else {
+            return HeaderOutcome::Unconnected;
+        };
+        pow.compute_parallel(&jobs, 1);
+        let mut c = inner.chain();
+        match c.accept_headers(one, now) {
+            Err((_, e)) => {
+                if let HeaderError::UnknownUpgrade { version } = e {
+                    let heavy = reaches_best_work(c.headers(), &one[0]);
+                    drop(c);
+                    inner.note_unknown_upgrade(peer, version, heavy);
+                }
+                return HeaderOutcome::Failed(e);
+            }
+            // Not reached: a header of an unknown version is never valid.
+            Ok(n) => new += n,
+        }
+    } else if let Some(e) = precheck_error {
         return HeaderOutcome::Failed(e);
     }
     let last = headers.last().expect("a batch is not empty");
@@ -516,9 +577,12 @@ fn verify_headers(
 ///   not penalized; we stop asking it for headers until it announces again.
 /// - `Duplicate` and `TimestampTooFarInFuture` are not permanent.
 /// - `UnknownUpgrade`: the header's version is above every version this
-///   node's schedule knows, so the peer probably runs a newer release and may
-///   be right. It is not penalized; the operator is warned once per peer
-///   (docs/consensus.md §11, docs/p2p.md §6).
+///   node's schedule knows, and its proof of work is real (RT-1: with junk
+///   proof of work it is `InsufficientWork`), so the peer probably runs a newer
+///   release and may be right. It is not penalized; `verify_headers` counts it
+///   (disconnect without a ban after `UNKNOWN_UPGRADE_DISCONNECT`) and warns
+///   the operator only past the peer or work threshold (docs/consensus.md §11,
+///   docs/p2p.md §6).
 /// - Every other failure is a header that breaks the rules: the peer relayed
 ///   it without checking, and is penalized.
 ///
@@ -539,7 +603,9 @@ async fn on_header_error(
             }
         }
         HeaderError::UnknownParent => inner.request_headers(peer).await,
-        HeaderError::UnknownUpgrade { version } => inner.warn_unknown_upgrade(peer, version),
+        // Counted (and the operator warned past the thresholds) by
+        // `verify_headers`, once its proof of work was confirmed (RT-1).
+        HeaderError::UnknownUpgrade { .. } => {}
         HeaderError::InvalidParent => {
             log::info!(
                 "peer {peer} relays headers (up to height {last_height}) descending from a block with an invalid body"

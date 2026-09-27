@@ -185,8 +185,9 @@ pub(super) async fn block_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRecei
                 | HeaderError::TimestampTooFarInFuture { .. }
                 | HeaderError::InvalidParent => {}
                 HeaderError::UnknownParent => inner.request_headers(peer).await,
+                // Confirmed with proof of work by `validate` (RT-1).
                 HeaderError::UnknownUpgrade { version } => {
-                    inner.warn_unknown_upgrade(peer, version)
+                    inner.note_unknown_upgrade(peer, version, false)
                 }
                 e => inner.misbehave(
                     peer,
