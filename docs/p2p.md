@@ -209,6 +209,31 @@ is a violation (100 points). The only exception is `Version`'s extension area (Â
        block), valid headers cost an attacker nothing, but each cost ~0.45 s of
        RandomX to verify and would be stored forever. Such a branch claims ~1 work
        per header, far below the threshold once our difficulty is above ~2.
+   - **Headers of an unknown version (RT-1, RTW1-1).** A header whose version is above
+     every version of this node's schedule (`HeaderError::UnknownUpgrade`) passes the
+     pre-check unconfirmed: its difficulty is never checked, since a newer release
+     may change that rule. So:
+     - **Charged the required difficulty.** The work gate counts it at the difficulty
+       this node requires at its position (`HeaderChain::required_difficulty_after`),
+       never the difficulty it claims. Before this rule a header anchored at genesis
+       and claiming `u64::MAX` passed the gate and was hashed.
+     - **Live RandomX keys only.** It is hashed only if its RandomX key (on its own
+       branch) is the key of our next block or the next key after it, the two keys
+       the node keeps built. Under any other key it is dropped unhashed, so it cannot
+       make the node build and evict a RandomX cache.
+     - **Classified by its proof of work.** Otherwise it is hashed after the batch's
+       valid prefix and checked against the required difficulty: junk proof of work
+       is `InsufficientWork` (penalized); real work is `UnknownUpgrade`, not scored.
+       A peer is disconnected, never banned, after 3 of them on one connection.
+       Either way nothing past it is usable: the peer's claimed height is lowered to
+       ours.
+     - **Operator warning.** The node warns once per run that it may need an upgrade.
+       A report counts toward the warning only if it comes from an **outbound** peer
+       and the header's branch reaches the anti-DoS threshold at the required
+       difficulty. The warning needs 2 such reporters, or one whose header reaches
+       our best chain's work. Reporters are counted by network group (by whole
+       address in `allow_private` mode), not by connection, so reconnecting does not
+       count twice; at most 2 are remembered. Inbound peers never trigger it.
    - **Unrequested headers** must be a single tip announcement. A longer unrequested
      batch is not verified at all, and costs the sender 10 points.
      - A single header that arrives while our `GetHeaders` is outstanding may be a

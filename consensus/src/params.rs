@@ -170,7 +170,10 @@ impl ChainParams {
     ///   Bitcoin's and Monero's 2 h, beyond which LWMA-family coins were exploited
     ///   (zawy12 issue #30). The LWMA recommendation `FTL ≤ N·T/20` is not
     ///   required: regtest keeps 360 s at T = 10 s (docs/consensus.md §5).
-    /// - The RandomX key epoch is a power of two and the lag is below it.
+    /// - The RandomX key epoch is a power of two and `1 ≤ lag < epoch`. With
+    ///   `lag ≥ 1` a block's key is strictly older than its parent
+    ///   (`height - seed_height > lag`); a lag of 0 would let the key be the
+    ///   parent itself, known only once the parent exists (RTW1-10).
     /// - `D0 ≥ 1`, and the genesis header is well formed: height 0, zero parent
     ///   and body root, difficulty `D0`, the first epoch's header version, and
     ///   the nonce derived from the committed beacon ([`Self::genesis_spec`]): a
@@ -201,7 +204,10 @@ impl ChainParams {
         if self.future_time_limit == 0 || self.future_time_limit > MAX_FUTURE_TIME_LIMIT {
             return Err(ParamsError::FutureTimeLimit(self.future_time_limit));
         }
-        if !self.seed_epoch.is_power_of_two() || self.seed_lag >= self.seed_epoch {
+        if !self.seed_epoch.is_power_of_two()
+            || self.seed_lag == 0
+            || self.seed_lag >= self.seed_epoch
+        {
             return Err(ParamsError::SeedSchedule {
                 epoch: self.seed_epoch,
                 lag: self.seed_lag,
@@ -260,7 +266,8 @@ pub enum ParamsError {
     MedianWindow(usize),
     /// The future time limit is 0 or above [`MAX_FUTURE_TIME_LIMIT`].
     FutureTimeLimit(u64),
-    /// The RandomX key epoch is not a power of two, or the lag is not below it.
+    /// The RandomX key epoch is not a power of two, or the lag is 0 or not
+    /// below it.
     SeedSchedule { epoch: u64, lag: u64 },
     /// `D0 = 0`.
     InitialDifficultyZero,
@@ -332,7 +339,7 @@ mod tests {
     #[test]
     fn check_refuses_each_broken_invariant() {
         type Edit = fn(&mut ChainParams);
-        let cases: [(Edit, ParamsError); 17] = [
+        let cases: [(Edit, ParamsError); 18] = [
             (|p| p.target_block_time = 1, ParamsError::TargetTooSmall(1)),
             (|p| p.target_block_time = 0, ParamsError::TargetTooSmall(0)),
             (
@@ -361,6 +368,13 @@ mod tests {
                 ParamsError::SeedSchedule {
                     epoch: 2047,
                     lag: 64,
+                },
+            ),
+            (
+                |p| p.seed_lag = 0,
+                ParamsError::SeedSchedule {
+                    epoch: 2048,
+                    lag: 0,
                 },
             ),
             (

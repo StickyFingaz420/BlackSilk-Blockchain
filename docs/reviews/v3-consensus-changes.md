@@ -862,3 +862,96 @@ threshold).
 14. **Documentation.** `docs/consensus.md` §6 item 1 and §11 (network-layer rules), in
     this change.
 15. **Review status.** Internal; implements the red team's fix (a)–(c).
+
+### Follow-up (RTW1-1)
+
+Owner: FX-RTW1-1. Red-team findings RTW1-1 (Medium) and RTW1-10 (Info) against the RT-1
+change above. Internal review, not an audit.
+
+1. **Problem.** `check_rules` returns `UnknownUpgrade` before the difficulty rule, so an
+   unknown-version header's claimed difficulty is never checked, yet `worth_verifying`
+   summed it. An unknown-version header anchored at an old parent (genesis) claiming
+   `difficulty = u64::MAX` passed the anti-DoS work gate and was RandomX-hashed. The
+   same trick could force RandomX cache builds for old seed epochs (`RandomXPow` keeps
+   two), and a second connection from the same attacker, inbound, could trip the "node
+   may need an upgrade" warning. RTW1-10: `ChainParams::check` accepted `seed_lag = 0`,
+   and `HeaderChain::new` could only panic on bad parameters.
+2. **Demonstrated failure** (tests written first, run on base `2985a50`):
+   - `p2p/tests/network.rs::a_deep_fork_unknown_version_header_claiming_max_difficulty_is_not_hashed`
+     failed with `the claimed difficulty bought a hash`, `left: 1, right: 0` (the red
+     team's `rtw1_unknown_version_bypasses_the_work_gate`, inverted).
+   - `an_old_epoch_unknown_version_header_triggers_no_cache_build` failed with `an
+     old-epoch key was hashed`, `left: 1, right: 0` (a fork 101 blocks below a tip of
+     2200, inside the anti-DoS window, whose key is genesis while the current key is
+     block 2048).
+3. **Prior art.** Bitcoin Core's anti-DoS header work threshold counts only work it
+   computes itself; its unknown-rules warning uses its own chain's blocks, not one
+   peer's unverified headers (as in the RT-1 section).
+4. **Alternatives.** Reject unknown-version headers whose claimed difficulty differs
+   from ours (rejected: a newer release may change the difficulty rule, which is why
+   the difficulty is not checked); drop unknown-version headers entirely (rejected:
+   loses the upgrade signal RT-1 kept).
+5. **Affected components.**
+   - `consensus/src/chain.rs`: `HeaderChain::required_difficulty_after(anchor, branch)`
+     (the difficulty required of a child of a pre-checked, possibly unstored branch; no
+     proof of work); `HeaderChain::try_new` returning `Result<_, ParamsError>`, with
+     `new` its panicking wrapper for compiled-in parameters.
+   - `consensus/src/params.rs`: `check` requires `1 ≤ seed_lag < seed_epoch`
+     (`ParamsError::SeedSchedule`).
+   - `p2p/src/net/headers.rs` (`verify_headers`): the unknown-version header enters the
+     work gate at the required difficulty (a); it is hashed only if its RandomX key on
+     its own branch is the key of our next block or the next key after it
+     (`seed_is_live`), otherwise it is dropped unhashed (c). `UpgradeWork` replaces
+     `reaches_best_work`: the required-difficulty work reaches the anti-DoS threshold
+     (`threshold`) and our best work (`heavy`). A failed `UnknownUpgrade` lowers the
+     peer's claimed height to ours (nothing past it is usable).
+   - `p2p/src/net/state.rs`: `UpgradeReports` counts a report toward the warning only
+     if it comes from an outbound peer and passes the threshold (b). Reporters are keyed
+     by `upgrade_reporter_key` (network group; whole address with `allow_private`), not
+     by connection; at most `UNKNOWN_UPGRADE_WARN_PEERS` (2) keys are held.
+   - `p2p/src/net/blocks.rs`: the block path counts toward the disconnect only (it is
+     not reached in practice: no unknown-version header is ever stored, so no such
+     block is requested or kept). `p2p/src/net.rs`: `Network::upgrade_warned`.
+6. **Activation.** Node policy; the `seed_lag` check is a parameter invariant that every
+   built-in network already meets (lag 64).
+7. **Compatibility.** No validity change: no header or block changes verdict, and no
+   built-in parameter set changes. Only which unknown-version headers are hashed, and
+   which reports count toward the warning, change.
+8. **Reorg, wallet, mining and P2P implications.**
+   - P2P: an unknown-version header costs its sender the work this node requires at
+     its position, and is hashed only under a live key. An unknown-version header on a
+     fork behind a key switch is never hashed or reported, even if honest.
+   - The warning now needs outbound reporters: a node with only inbound peers is never
+     warned. Two outbound peers in one network group count once.
+   - No reorg, wallet or mining effect.
+9. **Vectors.** The regression tests below.
+10. **Tests.**
+    - `p2p/tests/network.rs`: `a_deep_fork_unknown_version_header_claiming_max_difficulty_is_not_hashed`,
+      `an_old_epoch_unknown_version_header_triggers_no_cache_build` (zero pow calls:
+      the pow function is where `RandomXPow` builds a cache; the same header on the
+      tip is hashed once), `only_distinct_outbound_reporters_trigger_the_upgrade_warning`
+      (3 inbound reporters from distinct addresses, on the tip and on a near fork:
+      hashed, not scored, no warning; one outbound reporter reconnecting: no warning;
+      a second outbound reporter: warning).
+    - `p2p/src/net/state.rs`: `upgrade_reports_warn_past_a_threshold_and_disconnect_after_n`
+      (rewritten: keys, reconnects, non-qualifying heavy reports, the bound),
+      `upgrade_reporters_are_keyed_by_group`.
+    - `consensus/src/chain.rs`: `required_difficulty_after_matches_the_stored_branch`,
+      `try_new_reports_invalid_parameters`; `consensus/src/params.rs`:
+      `check_refuses_each_broken_invariant` gains `seed_lag = 0`.
+    - The RT-1 tests pass unchanged (`unknown_version_headers_need_real_proof_of_work`,
+      `unknown_upgrade_needs_valid_proof_of_work`).
+11. **Suite results.** See the commit message of this change (exact command and counts).
+12. **Open review points.**
+    - `docs/p2p.md` §10 ("the first per peer is logged at WARN") and `docs/consensus.md`
+      §11 (the warning's peer threshold) predate RTW1-1 and were outside this item's
+      file list; `docs/p2p.md` §6 is current.
+    - `ChainManager::open` (`chain/src/manager/replay.rs`) still calls
+      `HeaderChain::new` with caller-supplied parameters; the node checks them at start
+      (`node/src/main.rs`). Moving `open` to `try_new` belongs to the chain owners.
+    - Keying by network group lets two honest outbound peers in one /16 count once; an
+      attacker holding outbound slots in two groups can still raise the warning, with
+      real work at our required difficulty inside the anti-DoS window.
+13. **Identity impact.** None.
+14. **Documentation.** `docs/p2p.md` §6 ("Headers of an unknown version"), in this change.
+15. **Review status.** Internal; implements the red team's fix (a)–(c) and RTW1-10.

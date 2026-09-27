@@ -3,12 +3,14 @@
 
 use super::blocks::schedule_downloads;
 use super::fatal;
-use super::state::{unix_now, HeaderBatch, Inner, State, UNKNOWN_UPGRADE_DISCONNECT};
+use super::state::{
+    unix_now, upgrade_reporter_key, HeaderBatch, Inner, State, UNKNOWN_UPGRADE_DISCONNECT,
+};
 use crate::addr::NetAddr;
 use crate::dandelion::PeerId;
 use crate::limits::score;
 use crate::message::{Message, MAX_HEADERS};
-use blacksilk_consensus::{BlockHeader, Hash, HeaderChain, HeaderError};
+use blacksilk_consensus::{seed_height, BlockHeader, Hash, HeaderChain, HeaderError};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -47,9 +49,10 @@ impl Inner {
     /// by `validate`; RT-1). Not scored, since the peer may run a newer release
     /// that is right. After [`UNKNOWN_UPGRADE_DISCONNECT`] such headers the peer
     /// is disconnected without a ban. The operator is warned once, and only
-    /// past a peer-count or work threshold (`state::UNKNOWN_UPGRADE_WARN_PEERS`;
-    /// `heavy`: the header's branch reaches our best chain's work).
-    pub(super) fn note_unknown_upgrade(&self, peer: PeerId, version: u32, heavy: bool) {
+    /// past a peer-count or work threshold (`state::UNKNOWN_UPGRADE_WARN_PEERS`,
+    /// `UpgradeWork::heavy`), counting only reports from outbound peers whose
+    /// header passes the anti-DoS work threshold (RTW1-1, `UpgradeReports`).
+    pub(super) fn note_unknown_upgrade(&self, peer: PeerId, version: u32, work: UpgradeWork) {
         let (verdict, addr) = {
             let mut st = self.state();
             let Some(p) = st.peers.get_mut(&peer) else {
@@ -57,7 +60,9 @@ impl Inner {
             };
             p.unknown_upgrades = p.unknown_upgrades.saturating_add(1);
             let (count, addr) = (p.unknown_upgrades, p.addr.clone());
-            let verdict = st.upgrades.report(peer, count, heavy);
+            let qualifying = (!p.inbound && work.threshold)
+                .then(|| upgrade_reporter_key(&addr, self.cfg.allow_private));
+            let verdict = st.upgrades.report(qualifying, count, work.heavy);
             if verdict.disconnect {
                 if let Some(p) = st.peers.get(&peer) {
                     p.kill.notify_one();
@@ -78,10 +83,10 @@ impl Inner {
             log::warn!(
                 "peers are on a newer consensus version (header version {version} with valid \
                  proof of work{}); this node may need an upgrade",
-                if heavy {
+                if work.heavy {
                     ", on a branch with at least our best chain's work"
                 } else {
-                    ", from several peers"
+                    ", from several outbound peers"
                 }
             );
         }
@@ -261,15 +266,58 @@ fn penalized(e: &HeaderError) -> bool {
     )
 }
 
-/// Whether `header` (of an unknown version, proof of work confirmed) extends a
-/// branch that, with the work this node requires of it, reaches our best
-/// chain's work (RT-1's work threshold for the operator warning).
-fn reaches_best_work(hc: &HeaderChain, header: &BlockHeader) -> bool {
-    let Some(parent_work) = hc.work(&header.prev_id) else {
-        return false;
-    };
-    let required = hc.template_on(header.prev_id).map_or(0, |t| t.difficulty);
-    parent_work + required as u128 >= hc.best_work()
+/// The work of the branch an unknown-version header (proof of work confirmed,
+/// parent stored) extends, counted with the difficulty this node requires of
+/// it, never the difficulty it claims (RTW1-1).
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct UpgradeWork {
+    /// It reaches `anti_dos_threshold`: the report may count toward the
+    /// operator warning (if its sender is an outbound peer).
+    pub(super) threshold: bool,
+    /// It reaches our best chain's work: a qualifying report warns at once.
+    pub(super) heavy: bool,
+}
+
+impl UpgradeWork {
+    fn of(hc: &HeaderChain, header: &BlockHeader) -> Self {
+        let (Some(parent_work), Some(t)) =
+            (hc.work(&header.prev_id), hc.template_on(header.prev_id))
+        else {
+            return Self::default();
+        };
+        let work = parent_work + t.difficulty as u128;
+        Self {
+            threshold: work >= anti_dos_threshold(hc),
+            heavy: work >= hc.best_work(),
+        }
+    }
+}
+
+/// Whether `seed` is the RandomX key of the next block on our best chain, or
+/// the key after it once the block holding it exists: the two keys
+/// `RandomXPow` keeps built. An unknown-version header under any other key is
+/// never hashed, so it cannot make the node build (and evict) a cache
+/// (RTW1-1 (c)).
+fn seed_is_live(hc: &HeaderChain, seed: &Hash) -> bool {
+    let p = hc.params();
+    let next = hc.height() + 1;
+    [next, next + p.seed_epoch]
+        .into_iter()
+        .any(|h| hc.main_id_at(seed_height(h, p.seed_epoch, p.seed_lag)) == Some(*seed))
+}
+
+/// The RandomX key of `headers[i]`, on its own branch: `headers` is a linked
+/// batch whose first header's parent is stored, one height below it (as
+/// `ChainManager::pow_jobs` computes it).
+fn batch_seed(hc: &HeaderChain, headers: &[BlockHeader], i: usize) -> Hash {
+    let p = hc.params();
+    let (first, h) = (&headers[0], &headers[i]);
+    let sh = seed_height(h.height, p.seed_epoch, p.seed_lag);
+    if sh >= first.height {
+        headers[(sh - first.height) as usize].id(p.network_id)
+    } else {
+        hc.seed_id_for(first.prev_id, h.height)
+    }
 }
 
 /// Verifies header batches one at a time (docs/p2p.md §6):
@@ -339,6 +387,11 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
                         // invalid, the peer is not asked again until it
                         // announces a new tip (`on_header_error`).
                         Ok(HeaderOutcome::Failed(HeaderError::InvalidParent)) => {
+                            p.height = p.height.min(ours);
+                        }
+                        // Nothing past an unknown-version header is usable,
+                        // hashed or not (RTW1-1): not asked again every tick.
+                        Ok(HeaderOutcome::Failed(HeaderError::UnknownUpgrade { .. })) => {
                             p.height = p.height.min(ours);
                         }
                         _ => {}
@@ -419,7 +472,9 @@ fn anti_dos_threshold(hc: &HeaderChain) -> u128 {
 /// the first one's parent stored) are worth their proof of work: RandomX
 /// hashes are spent only on headers that can make a chain competitive with
 /// our best one (docs/p2p.md §6). The difficulties are the required ones (the
-/// pre-check passed), so the sums below are the work the headers claim.
+/// pre-check passed, and the caller replaced the unchecked difficulty of an
+/// unknown-version header by the required one, RTW1-1), so the sums below are
+/// the work this node would count for the headers.
 ///
 /// - The batch's claimed tip work reaches `anti_dos_threshold` (our best
 ///   work minus that of our last 144 blocks): verify. This covers every
@@ -480,7 +535,7 @@ fn verify_headers(
         return HeaderOutcome::Abandoned;
     }
     let nid = inner.cfg.network_id;
-    let (checked, fresh_range, worth) = {
+    let (checked, fresh_range, worth, hash_unknown) = {
         let c = inner.chain();
         if c.header(&headers[0].prev_id).is_none() {
             return HeaderOutcome::Unconnected;
@@ -492,17 +547,36 @@ fn verify_headers(
         };
         // A header of an unknown version is unconfirmed after the pre-check
         // (no proof of work yet): it is hashed with the batch, if the batch is
-        // worth it, and only then classified (RT-1).
-        let unknown = matches!(&checked, Err((_, HeaderError::UnknownUpgrade { .. })));
-        let worth_end = if unknown { good_end + 1 } else { good_end };
+        // worth it, and only then classified (RT-1). Its claimed difficulty
+        // was never checked, so it is charged the difficulty this node
+        // requires at its position (RTW1-1 (a)); under a RandomX key that is
+        // not live it is never hashed (RTW1-1 (c)).
+        let hc = c.headers();
+        let required = match &checked {
+            Err((i, HeaderError::UnknownUpgrade { .. }))
+                if seed_is_live(hc, &batch_seed(hc, headers, *i)) =>
+            {
+                hc.required_difficulty_after(headers[0].prev_id, &headers[..*i])
+            }
+            _ => None,
+        };
         // Headers we already have (a prefix: a stored header cannot follow
         // an unstored one) cost nothing more.
         let start = headers[..good_end]
             .iter()
             .position(|h| c.header(&h.id(nid)).is_none())
             .unwrap_or(good_end);
-        let worth = worth_verifying(c.headers(), &headers[start..worth_end], full);
-        (checked, start..good_end, worth)
+        let worth = match required {
+            Some(difficulty) => {
+                let mut charged = headers[start..=good_end].to_vec();
+                if let Some(unknown) = charged.last_mut() {
+                    unknown.difficulty = difficulty;
+                }
+                worth_verifying(hc, &charged, full)
+            }
+            None => worth_verifying(hc, &headers[start..good_end], full),
+        };
+        (checked, start..good_end, worth, required.is_some())
     };
     let precheck_error = match checked {
         // A violation the sender is banned for: no hash for its batch.
@@ -534,7 +608,7 @@ fn verify_headers(
             Err((_, e)) => return HeaderOutcome::Failed(e),
         }
     }
-    if let Some(HeaderError::UnknownUpgrade { .. }) = precheck_error {
+    if let (Some(HeaderError::UnknownUpgrade { .. }), true) = (&precheck_error, hash_unknown) {
         // The unknown-version header's parent is now stored: hash it off the
         // chain lock, then let `validate` classify it (RT-1). Junk proof of work
         // is `InsufficientWork` (penalized); real work is `UnknownUpgrade`.
@@ -547,9 +621,9 @@ fn verify_headers(
         match c.accept_headers(one, now) {
             Err((_, e)) => {
                 if let HeaderError::UnknownUpgrade { version } = e {
-                    let heavy = reaches_best_work(c.headers(), &one[0]);
+                    let work = UpgradeWork::of(c.headers(), &one[0]);
                     drop(c);
-                    inner.note_unknown_upgrade(peer, version, heavy);
+                    inner.note_unknown_upgrade(peer, version, work);
                 }
                 return HeaderOutcome::Failed(e);
             }

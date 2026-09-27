@@ -8,7 +8,7 @@
 use crate::difficulty::next_difficulty;
 use crate::hash::Hash;
 use crate::header::BlockHeader;
-use crate::params::ChainParams;
+use crate::params::{ChainParams, ParamsError};
 use crate::pow::{check_hash, seed_height, PowFunction};
 use crate::timestamp::{after_median_time_past, median, within_future_limit};
 use std::collections::HashMap;
@@ -155,15 +155,24 @@ pub struct HeaderChain {
 }
 
 impl HeaderChain {
-    /// A header chain holding only the genesis of `params`.
+    /// A header chain holding only the genesis of `params`, for compiled-in
+    /// parameters ([`ChainParams::for_network`] and its variants). Parameters
+    /// from anywhere else go through [`Self::try_new`].
     ///
     /// # Panics
     /// If `params` break an invariant of [`ChainParams::check`]: consensus code
     /// never runs on parameters it was not written for.
     pub fn new(params: ChainParams, pow: Arc<dyn PowFunction>) -> Self {
-        if let Err(e) = params.check() {
-            panic!("invalid chain parameters: {e}");
+        match Self::try_new(params, pow) {
+            Ok(chain) => chain,
+            Err(e) => panic!("invalid chain parameters: {e}"),
         }
+    }
+
+    /// A header chain holding only the genesis of `params`, or the invariant of
+    /// [`ChainParams::check`] they break (RTW1-10).
+    pub fn try_new(params: ChainParams, pow: Arc<dyn PowFunction>) -> Result<Self, ParamsError> {
+        params.check()?;
         let genesis = params.genesis;
         let id = genesis.id(params.network_id);
         let mut entries = HashMap::new();
@@ -176,14 +185,14 @@ impl HeaderChain {
                 seq: 0,
             },
         );
-        Self {
+        Ok(Self {
             params,
             pow,
             entries,
             children: HashMap::new(),
             main: vec![id],
             next_seq: 1,
-        }
+        })
     }
 
     pub fn params(&self) -> &ChainParams {
@@ -317,6 +326,51 @@ impl HeaderChain {
             seed_id: self.seed_id_for(parent_id, height),
             min_timestamp: self.median_time_past(parent_id) + 1,
         })
+    }
+
+    /// The difficulty this node requires of a child of `branch`'s last header,
+    /// or of `anchor` if `branch` is empty. `branch` is a linked run of headers
+    /// descending from the stored, valid header `anchor`; a stored prefix is
+    /// allowed. Unstored headers count with their own difficulty, so they must
+    /// have passed [`Self::precheck_batch`] (their difficulty is then the
+    /// required one). No proof of work is computed.
+    ///
+    /// The network layer charges a header whose claimed difficulty is not
+    /// checked (an unknown version, RTW1-1) this difficulty instead. `None` if
+    /// `anchor` is unknown or invalid, or `branch` is not linked to it.
+    pub fn required_difficulty_after(&self, anchor: Hash, branch: &[BlockHeader]) -> Option<u64> {
+        let nid = self.params.network_id;
+        let stored = branch
+            .iter()
+            .position(|h| !self.entries.contains_key(&h.id(nid)))
+            .unwrap_or(branch.len());
+        let parent_id = match stored {
+            0 => anchor,
+            n => branch[n - 1].id(nid),
+        };
+        let parent = self.entries.get(&parent_id)?;
+        if !parent.valid || branch.first().is_some_and(|h| h.prev_id != anchor) {
+            return None;
+        }
+        let fresh = &branch[stored..];
+        if fresh.is_empty() {
+            return Some(self.required_difficulty(parent_id));
+        }
+        let mut work = parent.cumulative;
+        let mut prev = parent_id;
+        let mut overlay = Vec::with_capacity(fresh.len());
+        for h in fresh {
+            if h.prev_id != prev {
+                return None;
+            }
+            prev = h.id(nid);
+            work += h.difficulty as u128;
+            overlay.push((prev, h.timestamp, work));
+        }
+        Some(
+            self.overlay_context(fresh, fresh.len(), &overlay)
+                .child_difficulty,
+        )
     }
 
     /// Every header rule except proof of work, given the parent's context. The
@@ -1010,6 +1064,66 @@ mod tests {
         let mut params = ChainParams::regtest();
         params.target_block_time = 1;
         HeaderChain::new(params, Arc::new(TestPow));
+    }
+
+    /// RTW1-10: `try_new` reports the broken invariant instead of panicking.
+    #[test]
+    fn try_new_reports_invalid_parameters() {
+        let mut params = ChainParams::regtest();
+        params.seed_lag = 0;
+        let e = HeaderChain::try_new(params, Arc::new(TestPow)).err();
+        assert_eq!(
+            e,
+            Some(ParamsError::SeedSchedule {
+                epoch: 2048,
+                lag: 0
+            })
+        );
+        assert!(HeaderChain::try_new(ChainParams::regtest(), Arc::new(TestPow)).is_ok());
+    }
+
+    /// RTW1-1: the difficulty required after an unstored (pre-checked) branch
+    /// is the one the chain requires once the branch is stored, with or
+    /// without a stored prefix; an unknown anchor or a break is `None`.
+    #[test]
+    fn required_difficulty_after_matches_the_stored_branch() {
+        // Above difficulty 1, so the fast side branch moves it.
+        let at_100 = || {
+            let mut params = ChainParams::regtest();
+            params.target_block_time = 120;
+            params.initial_difficulty = 100;
+            params.genesis.difficulty = 100;
+            HeaderChain::new(params, Arc::new(TestPow))
+        };
+        let mut c = at_100();
+        let g = c.tip_id();
+        let main = extend(&mut c, g, 40, 120, 1);
+        let mut d = at_100();
+        assert_eq!(extend(&mut d, g, 40, 120, 1), main);
+        let side = extend(&mut d, main[19], 30, 5, 2);
+        let branch: Vec<BlockHeader> = side.iter().map(|id| *d.header(id).unwrap()).collect();
+        let want = |k: usize| {
+            let parent = if k == 0 { main[19] } else { side[k - 1] };
+            Some(d.template_on(parent).unwrap().difficulty)
+        };
+        for k in 0..=branch.len() {
+            assert_eq!(c.required_difficulty_after(main[19], &branch[..k]), want(k));
+        }
+        let all: Vec<_> = (0..=branch.len()).map(want).collect();
+        assert!(
+            all.iter().any(|w| *w != all[0]),
+            "the branch moves the difficulty"
+        );
+        for h in &branch[..10] {
+            c.accept(*h, u64::MAX / 2).unwrap();
+        }
+        for k in 0..=branch.len() {
+            assert_eq!(c.required_difficulty_after(main[19], &branch[..k]), want(k));
+        }
+        assert_eq!(c.required_difficulty_after([7; 32], &[]), None);
+        assert_eq!(c.required_difficulty_after(main[18], &branch[..3]), None);
+        let gap = [branch[11], branch[13]];
+        assert_eq!(c.required_difficulty_after(side[10], &gap), None);
     }
 
     #[test]
