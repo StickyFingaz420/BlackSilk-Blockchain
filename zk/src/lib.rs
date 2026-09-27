@@ -15,6 +15,11 @@
 
 #![forbid(unsafe_code)]
 
+// The verifier contains panics from malformed proofs with `catch_unwind`. Built with
+// `panic = "abort"`, one malformed proof would crash every such node instead.
+#[cfg(not(panic = "unwind"))]
+compile_error!("blacksilk-zk must be built with panic = \"unwind\"");
+
 pub mod config;
 pub mod params;
 
