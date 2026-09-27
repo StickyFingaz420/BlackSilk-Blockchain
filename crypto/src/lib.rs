@@ -39,6 +39,7 @@ pub mod nonce;
 pub mod point;
 pub mod schnorr;
 pub mod stealth;
+pub mod wordlist;
 
 pub use curve25519_dalek::ristretto::RistrettoPoint;
 pub use curve25519_dalek::scalar::Scalar;

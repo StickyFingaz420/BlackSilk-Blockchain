@@ -71,6 +71,12 @@ pub mod tags {
     pub const TX_CALL_SIG_MESSAGE: &str = "tx/call-sig-message";
     pub const WALLET_CONTRACT_AUTH: &str = "wallet/contract-auth";
     pub const WALLET_CONTRACT_MEMBER: &str = "wallet/contract-member";
+    // Wallet seed and derived wallet keys (docs/blocks.md §10, docs/px.md
+    // §3.1, dossier 37). Not consensus.
+    pub const SEED_MASTER: &str = "seed/master/v1";
+    pub const WALLET_HEDGE_KEY: &str = "wallet/hedge-key/v1";
+    pub const PX_WALLET_HEDGE_KEY: &str = "px/wallet/hedge-key/v1";
+    pub const PX_WALLET_VAULT_SECRET: &str = "px/wallet/vault-secret/v1";
     // Zero-knowledge layer (docs/zk.md).
     pub const ZK_PROVER_SEED: &str = "zk/prover-seed";
     /// Seed of the lookup-terminal blinding values (ZK-F29).
@@ -144,6 +150,10 @@ pub mod tags {
         TX_CALL_SIG_MESSAGE,
         WALLET_CONTRACT_AUTH,
         WALLET_CONTRACT_MEMBER,
+        SEED_MASTER,
+        WALLET_HEDGE_KEY,
+        PX_WALLET_HEDGE_KEY,
+        PX_WALLET_VAULT_SECRET,
         ZK_PROVER_SEED,
         ZK_BLIND_SEED,
         ZKVM_PROGRAM,

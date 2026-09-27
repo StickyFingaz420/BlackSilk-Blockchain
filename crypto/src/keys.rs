@@ -188,10 +188,18 @@ impl WalletKeys {
         output_key_offset + self.subaddress_spend_secret(idx)
     }
 
-    /// Secret bytes used to hedge the wallet's randomness (spec §10): the spend
-    /// secret. Only pass them to [`crate::nonce::HedgedRng`], and zeroize them after.
+    /// The hedge key that keys the wallet's hedged randomness (spec §10):
+    /// `hk_v1 = H32("wallet/hedge-key/v1", k_s)`. It is derived from the spend
+    /// secret only (a signer holding `k_s` computes it; a view-key holder
+    /// cannot), and it is not `k_s` itself, so whatever the hedge absorbs
+    /// next to attacker-influenced context concerns a key that authorizes
+    /// nothing. Only pass it to [`crate::nonce::HedgedRng`], and zeroize it
+    /// after.
     pub fn hedge_secret(&self) -> [u8; 32] {
-        self.spend.to_bytes()
+        let mut k = self.spend.to_bytes();
+        let hk = crate::hash::h32(tags::WALLET_HEDGE_KEY, &[&k]);
+        k.zeroize();
+        hk
     }
 }
 
@@ -251,6 +259,33 @@ impl SubaddressTable {
 mod tests {
     use super::*;
     use crate::nonce::test_rng::seeded;
+
+    /// K2 (dossier 37 §3.2): the hedge key is derived from the spend key,
+    /// never the spend key itself. Failed on 2a69556 (it was `k_s`).
+    #[test]
+    fn hedge_key_is_not_the_spend_key() {
+        let k = WalletKeys::from_seed(&[1; 32]);
+        assert_ne!(k.hedge_secret(), k.spend.to_bytes());
+        // The spec formula, computed with raw BLAKE2b-256.
+        use blake2::digest::consts::U32;
+        use blake2::{Blake2b, Digest};
+        let tag = b"BlackSilk/v1/wallet/hedge-key/v1";
+        let mut h = Blake2b::<U32>::new();
+        h.update([tag.len() as u8]);
+        h.update(tag);
+        h.update(k.spend.to_bytes());
+        let expected: [u8; 32] = h.finalize().into();
+        assert_eq!(k.hedge_secret(), expected);
+        // Different wallets, different keys; the same wallet, the same key.
+        assert_ne!(
+            k.hedge_secret(),
+            WalletKeys::from_seed(&[2; 32]).hedge_secret()
+        );
+        assert_eq!(
+            k.hedge_secret(),
+            WalletKeys::from_seed(&[1; 32]).hedge_secret()
+        );
+    }
 
     #[test]
     fn address_structure() {
