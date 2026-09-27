@@ -356,7 +356,9 @@ fn toy_shape_meets_the_security_floor() {
         committed_columns: 16,
         log_height: 8,
     });
-    assert!(s.johnson_bits >= params::MIN_PROVEN_BITS, "{s:?}");
+    // Both floors (25 W4 / R4-12): the Johnson target and unique decoding.
+    assert!(s.johnson_bits >= params::TARGET_JOHNSON_BITS, "{s:?}");
+    assert!(s.unique_decoding_bits >= params::MIN_PROVEN_BITS, "{s:?}");
     // Keep the value visible in test logs.
     let _ = Val::ORDER_U32;
 }
@@ -369,9 +371,22 @@ mod preprocessed {
     use p3_matrix::dense::RowMajorMatrix;
 
     #[derive(Clone, Copy, Debug)]
-    enum P {
+    pub(super) enum P {
         Counter,
         Table,
+    }
+
+    /// A proof of the preprocessed statement below, with its AIRs.
+    pub(super) fn proof(seed: u64) -> (Proof, [P; 2]) {
+        let airs = [P::Counter, P::Table];
+        let counter = RowMajorMatrix::new((0..N as u32).map(|i| Val::from_u32(i / 2)).collect(), 1);
+        let mut mult = vec![Val::ZERO; N];
+        for i in 0..N {
+            mult[i / 2] += Val::ONE;
+        }
+        let traces = vec![counter, RowMajorMatrix::new(mult, 1)];
+        let proof = prove(&prover(seed), &airs, &traces, &[vec![], vec![]], &LIMITS).unwrap();
+        (proof, airs)
     }
 
     const N: usize = 256;
@@ -553,4 +568,189 @@ fn a_non_canonical_fri_schedule_is_refused() {
         Err(ZkError::Invalid(e)) => assert!(e.contains("not the canonical"), "{e}"),
         r => panic!("expected the schedule rule to refuse it, got {r:?}"),
     }
+}
+
+// ------------------------------------------------ canonical shape (v3 rules)
+
+/// The number of hidden values at every point of every hidden-opening round.
+fn hidden_counts(proof: &Proof) -> Vec<Vec<Vec<usize>>> {
+    proof
+        .opening_proof
+        .0
+        .iter()
+        .map(|round| {
+            round
+                .iter()
+                .map(|m| m.iter().map(Vec::len).collect())
+                .collect()
+        })
+        .collect()
+}
+
+/// Every position (round, matrix, point) of the hidden openings.
+fn hidden_positions(proof: &Proof) -> Vec<(usize, usize, usize)> {
+    let mut out = Vec::new();
+    for (r, round) in proof.opening_proof.0.iter().enumerate() {
+        for (m, matrix) in round.iter().enumerate() {
+            for p in 0..matrix.len() {
+                out.push((r, m, p));
+            }
+        }
+    }
+    out
+}
+
+fn reencode(p: &Proof) -> Result<Proof, ZkError> {
+    decode_proof(&encode_proof(p))
+}
+
+/// Index of the preprocessed opening round when a proof has one: after the
+/// mask `R`, main and quotient rounds (p3-batch-stark 0.7.0).
+const PREPROCESSED_ROUND: usize = 3;
+
+/// 22 W2 = 26 ZP-7 = 24 I2: honest proofs carry exactly
+/// `NUM_RANDOM_CODEWORDS` hidden values at every point of every opening round,
+/// except the preprocessed round (committed with zero columns), which carries
+/// none; and every Merkle cap has one root (F24-2).
+#[test]
+fn honest_proofs_have_the_canonical_hidden_openings_and_caps() {
+    let n = params::NUM_RANDOM_CODEWORDS;
+    // Without preprocessed tables: R, main, quotient, permutation.
+    let (plain, _) = honest_proof(30);
+    let counts = hidden_counts(&plain);
+    assert_eq!(counts.len(), 4, "R, main, quotient, permutation");
+    assert!(
+        counts.iter().flatten().flatten().all(|&c| c == n),
+        "{counts:?}"
+    );
+    // With a preprocessed table: R, main, quotient, preprocessed, permutation.
+    let (pre, _) = preprocessed::proof(31);
+    let counts = hidden_counts(&pre);
+    assert_eq!(
+        counts.len(),
+        5,
+        "R, main, quotient, preprocessed, permutation"
+    );
+    for (r, round) in counts.iter().enumerate() {
+        let expected = if r == PREPROCESSED_ROUND { 0 } else { n };
+        assert!(
+            round.iter().flatten().all(|&c| c == expected),
+            "round {r}: {round:?}"
+        );
+    }
+    for p in [&plain, &pre] {
+        let c = &p.commitments;
+        assert_eq!(c.main.num_roots(), 1);
+        assert_eq!(c.quotient_chunks.num_roots(), 1);
+        assert_eq!(c.permutation.as_ref().unwrap().num_roots(), 1);
+        assert_eq!(c.random.as_ref().unwrap().num_roots(), 1);
+        assert!(p
+            .opening_proof
+            .1
+            .commit_phase_commits
+            .iter()
+            .all(|c| c.num_roots() == 1));
+        assert!(reencode(p).is_ok());
+    }
+}
+
+/// One hidden value more or fewer at any single position, of an honest proof
+/// with and of one without a preprocessed round, is refused at decode. So is a
+/// preprocessed round carrying codewords, and a round too many or too few.
+#[test]
+fn every_hidden_opening_count_mutation_is_refused() {
+    let v = VerifierConfig::new();
+    let (plain, pv) = honest_proof(32);
+    let (pre, pre_airs) = preprocessed::proof(33);
+    let mut tried = 0;
+    for proof in [&plain, &pre] {
+        for (r, m, p) in hidden_positions(proof) {
+            let mut more = reencode(proof).unwrap();
+            let point = &mut more.opening_proof.0[r][m][p];
+            point.push(point.last().copied().unwrap_or_default());
+            assert!(
+                matches!(reencode(&more), Err(ZkError::Encoding(_))),
+                "one more at {r}/{m}/{p}"
+            );
+            let mut fewer = reencode(proof).unwrap();
+            if fewer.opening_proof.0[r][m][p].pop().is_some() {
+                assert!(
+                    matches!(reencode(&fewer), Err(ZkError::Encoding(_))),
+                    "one fewer at {r}/{m}/{p}"
+                );
+            }
+            tried += 1;
+        }
+    }
+    // The preprocessed round carrying codewords, as if it were an ordinary one.
+    let mut filled = reencode(&pre).unwrap();
+    for matrix in &mut filled.opening_proof.0[PREPROCESSED_ROUND] {
+        for point in matrix {
+            point.resize(params::NUM_RANDOM_CODEWORDS, Default::default());
+        }
+    }
+    assert!(matches!(reencode(&filled), Err(ZkError::Encoding(_))));
+    // A round too many or too few.
+    let mut extra = reencode(&plain).unwrap();
+    let copy = extra.opening_proof.0[0].clone();
+    extra.opening_proof.0.push(copy);
+    assert!(matches!(reencode(&extra), Err(ZkError::Encoding(_))));
+    let mut missing = reencode(&plain).unwrap();
+    missing.opening_proof.0.pop();
+    assert!(matches!(reencode(&missing), Err(ZkError::Encoding(_))));
+    // The honest proofs still decode and verify.
+    assert_eq!(
+        verify(&v, &AIRS, &reencode(&plain).unwrap(), &pv, &LIMITS),
+        Ok(())
+    );
+    assert_eq!(
+        verify(
+            &v,
+            &pre_airs,
+            &reencode(&pre).unwrap(),
+            &[vec![], vec![]],
+            &LIMITS
+        ),
+        Ok(())
+    );
+    println!("{tried} hidden-opening positions mutated (+1 and -1), all refused");
+}
+
+/// A Merkle cap with a root count other than 1 (cap height 0), in any
+/// commitment of the proof, is refused at decode (F24-2, Plonky3 #2277).
+#[test]
+fn every_merkle_cap_root_count_mutation_is_refused() {
+    let (proof, _) = honest_proof(34);
+    let fri_rounds = proof.opening_proof.1.commit_phase_commits.len();
+    assert!(fri_rounds > 0);
+    let mut tried = 0;
+    for count in [0usize, 2, 3] {
+        // The four batch commitments, then every FRI commit-phase commitment.
+        for which in 0..4 + fri_rounds {
+            let mut p = reencode(&proof).unwrap();
+            let c = &mut p.commitments;
+            let slot = match which {
+                0 => &mut c.main,
+                1 => c.permutation.as_mut().unwrap(),
+                2 => &mut c.quotient_chunks,
+                3 => c.random.as_mut().unwrap(),
+                i => &mut p.opening_proof.1.commit_phase_commits[i - 4],
+            };
+            let root = slot.roots()[0];
+            *slot = cap_with_roots(&vec![root; count]);
+            assert!(
+                matches!(reencode(&p), Err(ZkError::Encoding(_))),
+                "{count} roots in commitment {which}"
+            );
+            tried += 1;
+        }
+    }
+    println!("{tried} cap mutations, all refused");
+}
+
+/// A Merkle cap with the given roots, including counts `MerkleCap::new`
+/// refuses (not a power of two): `MerkleCap` serializes as its root vector
+/// (its marker field is empty), and its derived `Deserialize` takes any count.
+fn cap_with_roots<T: serde::de::DeserializeOwned>(roots: &[[Val; 8]]) -> T {
+    postcard::from_bytes(&postcard::to_allocvec(roots).unwrap()).unwrap()
 }

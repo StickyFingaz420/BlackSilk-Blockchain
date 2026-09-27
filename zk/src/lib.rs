@@ -1,7 +1,7 @@
 //! BlackSilk zero-knowledge proof layer (docs/zk.md §9, docs/zkvm.md §7, §10).
 //!
 //! Everything a BlackSilk zero-knowledge proof depends on lives here:
-//! - [`params`]: parameter set BS-ZK-2 and its proven security;
+//! - [`params`]: parameter set BS-ZK-3 and its proven security;
 //! - [`config`]: the Plonky3 configuration (hiding FRI STARK over BabyBear, degree-8 extension);
 //! - [`prove`] / [`verify`]: batch proving and hardened verification;
 //! - [`encode_proof`] / [`decode_proof`]: the strict wire format.
@@ -23,7 +23,7 @@ compile_error!("blacksilk-zk must be built with panic = \"unwind\"");
 pub mod config;
 pub mod params;
 
-use config::{ProverConfig, Val, VerifierConfig, ZkConfig};
+use config::{ProverConfig, ProverZkConfig, Val, VerifierConfig, ZkConfig};
 use p3_air::Air;
 use p3_batch_stark::{prove_batch, verify_batch, ProverData, StarkInstance};
 use p3_lookup::folder::{ProverConstraintFolderWithLookups, VerifierConstraintFolderWithLookups};
@@ -58,7 +58,7 @@ pub enum ZkError {
 /// Bounds every AIR type must satisfy to be proven (Plonky3 batch prover).
 pub trait ProvableAir:
     Air<InteractionSymbolicBuilder<Val, config::Challenge>>
-    + for<'a> Air<ProverConstraintFolderWithLookups<'a, ZkConfig>>
+    + for<'a> Air<ProverConstraintFolderWithLookups<'a, ProverZkConfig>>
     + for<'a> Air<VerifierConstraintFolderWithLookups<'a, ZkConfig>>
     + for<'a> Air<p3_air::DebugConstraintBuilder<'a, Val, config::Challenge>>
     + Clone
@@ -67,7 +67,7 @@ pub trait ProvableAir:
 
 impl<A> ProvableAir for A where
     A: Air<InteractionSymbolicBuilder<Val, config::Challenge>>
-        + for<'a> Air<ProverConstraintFolderWithLookups<'a, ZkConfig>>
+        + for<'a> Air<ProverConstraintFolderWithLookups<'a, ProverZkConfig>>
         + for<'a> Air<VerifierConstraintFolderWithLookups<'a, ZkConfig>>
         + for<'a> Air<p3_air::DebugConstraintBuilder<'a, Val, config::Challenge>>
         + Clone
@@ -115,10 +115,21 @@ pub fn prove<A: ProvableAir>(
     let instances = StarkInstance::new_multiple(airs, &refs, public);
     // Preprocessed tables (programs, the byte table) are public. They are
     // committed with the deterministic setup configuration, exactly as the
-    // verifier recomputes them; committing them with the prover's hiding
-    // configuration would salt the commitment and desynchronize the transcript.
-    let data = ProverData::from_instances(VerifierConfig::setup().inner(), &instances);
-    Ok(prove_batch(cfg.inner(), &instances, &data))
+    // verifier recomputes them (`VerifierConfig::setup`, same seeds);
+    // committing them with the prover's hiding configuration would salt the
+    // commitment and desynchronize the transcript.
+    let data = ProverData::from_instances(&config::prover_setup(), &instances);
+    let p = prove_batch(cfg.inner(), &instances, &data);
+    // The prover's configuration differs from `ZkConfig` only in how its
+    // challenger grinds (config::ProverChallenger); the proof types coincide
+    // field by field.
+    Ok(Proof {
+        commitments: p.commitments,
+        opened_values: p.opened_values,
+        opening_proof: p.opening_proof,
+        lookup_terminals: p.lookup_terminals,
+        degree_bits: p.degree_bits,
+    })
 }
 
 /// Verifies `proof` against `airs` and `public`. `max_log_heights[i]` bounds the
@@ -308,11 +319,54 @@ pub fn decode_proof(bytes: &[u8]) -> Result<Proof, ZkError> {
 ///   `None` is expected (Plonky3 #2256 for `preprocessed_next`). An honest
 ///   proof never opens an empty column set: `Some(empty)` is rejected.
 ///
+/// - **Hidden random-codeword openings** (22 W2 = 26 ZP-7 = 24 I2). The
+///   hiding PCS carries, per opening round, matrix and point, the openings of
+///   the matrix's random codewords beside the proof. The 0.7.0 verifier checks
+///   only how they nest (rounds, matrices, points) and appends whatever is
+///   there, so a prover could choose any number of hidden columns: a proof
+///   length channel and padding up to `MAX_PROOF_BYTES`, or a wallet that
+///   silently drops its own hiding (Plonky3 0.8 pins the count). The rule:
+///   the hidden rounds are exactly the proof's opening rounds (the mask `R`,
+///   main, quotient, the preprocessed round if the proof opens preprocessed
+///   columns, the permutation round if it has one), and every point of every
+///   matrix carries exactly `NUM_RANDOM_CODEWORDS` values, except in the
+///   preprocessed round. Preprocessed (public) tables are committed with zero
+///   columns instead of random codewords (`HidingFriPcs::commit_preprocessing`),
+///   so that round carries none. Whether it exists is read from the proof (an
+///   instance opens `preprocessed_local`), and where it sits is Plonky3's
+///   `Pcs::PREPROCESSED_TRACE_IDX`; the verifier then checks both against the
+///   AIRs.
+/// - **Merkle caps** (F24-2; Plonky3 #2277). `MerkleCap` deserializes any
+///   number of roots, and the 0.7.0 MMCS verifier compares only the root the
+///   cap height selects (with cap height 0, root 0), while the challenger
+///   observes all of them: a prover could append roots. Every commitment (the
+///   four batch commitments and every FRI commit-phase commitment) must have
+///   exactly one root.
+///
 /// **Consensus:** this narrows the set of valid PX proof encodings. Every
 /// honestly generated proof is unaffected (tests); a proof rewritten by a
 /// third party is refused. Part of the testnet v3 rule set.
 fn check_canonical_form(proof: &Proof) -> Result<(), ZkError> {
     use p3_field::PrimeCharacteristicRing;
+    // Merkle caps: exactly one root each (cap height 0).
+    let c = &proof.commitments;
+    let caps = [
+        Some(&c.main),
+        c.permutation.as_ref(),
+        Some(&c.quotient_chunks),
+        c.random.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .chain(&proof.opening_proof.1.commit_phase_commits);
+    for (i, cap) in caps.enumerate() {
+        if cap.num_roots() != 1 {
+            return Err(ZkError::Encoding(format!(
+                "commitment {i} has {} Merkle cap roots, not 1",
+                cap.num_roots()
+            )));
+        }
+    }
     if params::COMMIT_POW_BITS == 0
         && proof
             .opening_proof
@@ -336,6 +390,51 @@ fn check_canonical_form(proof: &Proof) -> Result<(), ZkError> {
             return Err(ZkError::Encoding(format!(
                 "instance {i}: present but empty optional opening"
             )));
+        }
+    }
+    check_hidden_openings(proof)
+}
+
+/// The hidden random-codeword openings rule of [`check_canonical_form`].
+fn check_hidden_openings(proof: &Proof) -> Result<(), ZkError> {
+    let preprocessed = proof
+        .opened_values
+        .instances
+        .iter()
+        .any(|i| i.base_opened_values.preprocessed_local.is_some());
+    let c = &proof.commitments;
+    // The opening rounds of a batch proof (p3-batch-stark 0.7.0 prover): the
+    // mask `R`, main, quotient, preprocessed (if any), permutation (if any).
+    let rounds = usize::from(c.random.is_some())
+        + 2
+        + usize::from(preprocessed)
+        + usize::from(c.permutation.is_some());
+    let hidden = &proof.opening_proof.0;
+    if hidden.len() != rounds {
+        return Err(ZkError::Encoding(format!(
+            "{} hidden opening rounds, the proof has {rounds}",
+            hidden.len()
+        )));
+    }
+    let preprocessed_round = <config::Pcs as p3_commit::Pcs<
+        config::Challenge,
+        config::Challenger,
+    >>::PREPROCESSED_TRACE_IDX;
+    for (r, round) in hidden.iter().enumerate() {
+        let expected = if preprocessed && r == preprocessed_round {
+            0
+        } else {
+            params::NUM_RANDOM_CODEWORDS
+        };
+        for (m, matrix) in round.iter().enumerate() {
+            for (p, point) in matrix.iter().enumerate() {
+                if point.len() != expected {
+                    return Err(ZkError::Encoding(format!(
+                        "round {r}, matrix {m}, point {p}: {} hidden values, not {expected}",
+                        point.len()
+                    )));
+                }
+            }
         }
     }
     Ok(())

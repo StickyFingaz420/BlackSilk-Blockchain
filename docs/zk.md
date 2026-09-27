@@ -481,9 +481,9 @@ A deploy transaction version 2 adds `programs[]: (program_id, verifier_id)`, up 
 | P1 | Transparent (R3). |
 | P2 | Zero-knowledge (hiding) mode, not just succinctness. Many STARK stacks optimize for succinctness only, so hiding must be verified per candidate. |
 | P3 | Composition of kernel and function proofs (§9.4): by cross-table lookups in one batch proof (chosen), or by recursion. |
-| P4 | Soundness ≥ 100 bits by **proven** bounds for the chosen parameters (§9.3), plus ≥ 128-bit collision resistance of the hash. **As implemented, the hash part is not met:** an 8-element Poseidon2 digest over BabyBear gives about 123.6 bits of collision resistance (`COLLISION_BITS` = 123 in `zk/src/params.rs`), and the soundness figures of §9.3 are computed with 123. |
+| P4 | Soundness ≥ 100 bits by **proven** bounds for the chosen parameters (§9.3), plus ≥ 128-bit collision resistance of the hash. **As implemented, the hash part is not met:** the Merkle commitments give about 122 bits (`COLLISION_BITS` in `zk/src/params.rs`, from the extractability bound of ePrint 2026/089, Theorem 3; §9.3), and the soundness figures of §9.3 are computed with it. |
 | P5 | Pure-Rust prover and verifier, with a small, specifiable verifier. |
-| P6 | Plausible post-quantum security for both soundness and zero-knowledge (R4). |
+| P6 | Plausible post-quantum security for both soundness and zero-knowledge (R4). **As implemented:** both rest on hash functions only (no discrete logarithms); quantum soundness is **not quantified** by a proof, and the figures in §9.3 are labelled heuristic estimates. |
 
 ### 9.2 Candidates (DR-2)
 
@@ -504,7 +504,7 @@ owner): a STARK on Plonky3 0.7.**
 | Hiding FRI and Merkle commitments | `HidingFriPcs` and `MerkleTreeHidingMmcs` |
 | Security calculator | `p3-security` |
 | Base field | BabyBear |
-| Challenge field | degree-8 extension of BabyBear (247 bits; parameter set BS-ZK-2, which replaced the degree-5 BS-ZK-1, AUDIT.md ZK-F4) |
+| Challenge field | degree-8 extension of BabyBear (247 bits; parameter sets BS-ZK-2 and BS-ZK-3, which replaced the degree-5 BS-ZK-1, AUDIT.md ZK-F4) |
 | Hashing (Merkle, Fiat–Shamir) | Poseidon2 with the standard constants |
 
 - Only this family meets R3 and R4 together: soundness and zero-knowledge rest on hash
@@ -544,31 +544,76 @@ owner): a STARK on Plonky3 0.7.**
   proofs, without migrating records.
 - **The parameter set is code** (`zk/src/params.rs`). A test
   (`every_shape_within_limits_meets_both_security_targets`) recomputes the proven
-  security over a grid of the whole envelope (heights 2^8 to 2^22, up to 5,000
-  constraints, degrees up to 8, and 1 to 65,536 batched columns, including
-  `MAX_ADVERSARIAL_COLUMNS` = 15,709). It fails unless **every** point reaches ≥ 120
-  bits in the Johnson regime **and** ≥ 100 bits in the unique-decoding regime. It is a
-  test, so it fails the test suite, not the build; `const` assertions check only the
-  parameter relations (such as eq. 17 below).
+  security with `p3-security` 0.7.0 over a grid of the whole envelope (trace heights
+  2^8 to 2^22, i.e. committed degree bits 9 to 23, since zero knowledge doubles the
+  committed size; up to 5,000 constraints, degrees up to 8, and 1 to 65,536 batched
+  columns, including `MAX_ADVERSARIAL_COLUMNS`). It fails unless **every** point
+  reaches `TARGET_JOHNSON_BITS` (120) in the Johnson regime **and** `MIN_PROVEN_BITS`
+  (100) in the unique-decoding regime, and it pins which term binds: the low-degree
+  test's query phase in unique decoding, the commitment term `COLLISION_BITS` in the
+  Johnson regime. Until v3 the calculator was fed the pre-ZK height (R4-01); the
+  figures did not change. It is a test, so it fails the test suite, not the build;
+  `const` assertions check the parameter relations (eqs. 16 and 17 below, and that the
+  largest evaluation domain, 2^(22+1+3) = 2^26, stays ≤ 2^27, where query positions
+  sampled from BabyBear elements are uniform).
+- **Independent recomputation** (`zk/tests/soundness_calc.rs`): closed-form bounds
+  written out in the test (ethSTARK, BCIKS20, BCHKS25, LogUp), sharing no code with
+  `p3-security`, over the same grid. It agrees within one bit in unique decoding and
+  exactly in the Johnson regime, and it bounds the terms `p3-security` does not model
+  for a batch STARK (LogUp; the DEEP union over up to 32 tables; per-round commit
+  errors of the real folding schedule): all ≥ 200 bits. The Johnson regime's algebraic
+  bound is ≥ 150 bits both with BCHKS25 and with the peer-reviewed BCIKS20 bound alone,
+  so the commitment term binds by a wide margin. Evidence class: computed and tested;
+  not a proof, and not independent review.
+- **Headline (BS-ZK-3):** about **105 bits proven** in the unique-decoding regime
+  (**89.7 statistical + 16 grinding**: the 108 queries at rate 1/8 give the
+  statistical part, and the 16 bits of query grinding are computational, counted
+  against an adversary's Poseidon2 budget); the Johnson regime is **hash-bound at
+  ≈ 122 bits** (`COLLISION_BITS`). The figures are pinned by
+  `zk/tests/soundness_calc.rs::headline_figures_at_the_largest_shape`.
+  - **The commitment term** `COLLISION_BITS` = 122 is our evaluation of ePrint
+    2026/089 (Coratger, Khovratovich, Mennink, Wagner, ACM CCS 2026), **Theorem 3**:
+    extractability of the Plonky3 Merkle tree with an overwrite-sponge leaf hash on
+    the node permutation, (4q² + 2q)/(|H| − 1) with |H| = p^8, reaches 1 at
+    q ≈ 2^122.6. The 122.6 is our evaluation, not the paper's figure. The adaptation
+    to BlackSilk's tree (salted leaves; fixed topology and matrix dimensions from the
+    proof shape) is argued, not proven, and the property claimed is extractability,
+    not binding. It replaces the generic 8-element birthday figure (123), which the
+    paper shows does not apply to the node compression alone.
+  - **Not modelled by `p3-security`:** LogUp, the multi-table DEEP union and
+    mixed-height FRI inputs. The first two are bounded by the independent calculator;
+    mixed-height FRI has no published analysis (it is covered only by the per-round
+    commit bound, an assumption).
 - **Batched-function count (internal review):** the calculator is given one batched
   function per committed column. Plonky3 batches each (column, opening point) pair
   with its own power of the FRI batching challenge, and trace and permutation columns
   are opened at both ζ and g·ζ, so the true count can reach about twice the columns.
   The worst case, 2 × 15,709 = 31,418, is still below the 65,536 the test covers, so
   the figures below hold for it.
-- **Current set: BS-ZK-2.** Minimum table height 2^8 since 2026-09-26, so that
-  2·(e·n_F + n_D) = 2·(8 + 108) = 232 ≤ 256 (ePrint 2024/1037 §4.2, eq. 17; a `const`
-  assertion checks it in every build). Hiding: 4 random codewords per committed matrix,
-  4 salt elements per Merkle leaf, and a separate FRI mask polynomial per table that
-  spans the extension. The result is **statistical** zero knowledge under the open
-  items of docs/reviews/zk-coverage.md; it is not perfect and not proven for the whole
-  system. (An 8-codeword variant, BS-ZK-3, was built on a wrong premise and reverted
-  before any commit; internal-review-log.md, round 3.)
+- **Current set: BS-ZK-3** (testnet v3; the normative proof format and verifier
+  rules are in docs/proof-system.md). Minimum table height 2^8, so that the
+  witness-randomization bound of ePrint 2024/1037 §4.2, eq. 17, holds with **both**
+  opening points counted, as Plonky3 0.8's hiding budget counts them:
+  2·(n_D + e·n_F) = 2·(108 + 8·2) = 248 ≤ 256 (the query ceiling at this height is
+  112). Eq. 16 (n_F + n_D ≤ h_p) holds as well. Both are `const` assertions in
+  `zk/src/params.rs`, checked in every build. Hiding: `NUM_RANDOM_CODEWORDS` = the
+  extension degree (8) random codewords per committed matrix, 4 salt elements per
+  Merkle leaf, and a separate FRI mask polynomial per table that spans the extension.
+  - **Why 8 codewords (decision F24-1):** Plonky3 0.8 (PR #2100) requires at least
+    the extension degree per committed matrix, in prover and verifier, "to mask
+    extension-field batching". BS-ZK-2 used 4 on the internal argument that the mask
+    polynomial already spans the extension (internal-review-log.md, round 3). No
+    written proof supports either position, so the upstream rule is adopted at the v3
+    reset (docs/reviews/v3-consensus-changes.md, "BS-ZK-3"). The name BS-ZK-3 had
+    earlier been used for a local 8-codeword build that was reverted before any
+    commit; no proof under that build was ever published.
+  - The zero-knowledge claim is **statistical and conditional** under the open items
+    of docs/reviews/zk-coverage.md, and computational in practice (§12.1); it is not
+    perfect and not proven for the whole system.
   - degree-8 extension, blow-up 8, 108 queries, 16 grinding bits;
-  - over the whole shape envelope (2^22 rows, 6 000 columns): ≥ 123 bits in the
-    Johnson regime (the target is 120, the approved floor 100) **and** ≥ 105 bits in
-    the unique-decoding regime.
-  - The second target is extra conservatism beyond decision B. Dropping it would cut
+  - over the whole shape envelope: the headline figures above (Johnson target 120,
+    approved floor 100; unique-decoding floor 100).
+  - The unique-decoding floor is extra conservatism beyond decision B. Dropping it would cut
     queries by 35–55% (`zk/examples/param_study.rs`). That is an open
     security-policy decision for the owner.
 - Proof-of-work grinding may contribute at most 20 bits and is counted explicitly.
@@ -576,7 +621,7 @@ owner): a STARK on Plonky3 0.7.**
 - **Fiat–Shamir:** the transcript absorbs the full statement before any challenge.
   This is the lesson of Frozen Heart (2022), as for BP+ in transactions.md §7. **As
   implemented** (`zk/src/config.rs`, `challenger`):
-  - first the parameter-set identifier `PARAMS_ID` (`BlackSilk/zk/BS-ZK-2`, with its
+  - first the parameter-set identifier `PARAMS_ID` (`zk/src/params.rs`, with its
     length), then the 32-byte **statement digest**, both before any commitment. The
     digest hashes first the **circuit tag** `CIRCUIT_ID`
     (`BlackSilk/zkvm/BVM-1/circuit/v1`, `zkvm/src/prove.rs`; R4-11, testnet v3),
@@ -584,14 +629,27 @@ owner): a STARK on Plonky3 0.7.**
     outputs). The tag names the constraint system: a proof made for one circuit
     revision does not verify under another, even with the same parameter set,
     programs and table widths. Program ids do not imply it: they commit to the guest
-    programs, not to the AIRs;
+    programs, not to the AIRs. The tag is tied to the AIRs mechanically:
+    `zkvm/tests/circuit_fingerprint.rs` pins a digest of every table's constraint
+    evaluations at seeded points, widths, table order and height limits next to
+    `CIRCUIT_ID`, so an AIR change that does not bump the tag fails the suite
+    (docs/proof-system.md §3);
   - then Plonky3 observes the public values (which carry the binding `h_tx`, zkvm.md
     §6.4), the instance data and every prover message.
   - There is no verifier id in the transcript: the verifier registry is a design only
     (§9.5). The parameter set is identified by `PARAMS_ID`.
-- **Quantum ROM:** security of BCS-compiled IOPs in the QROM is known in principle
-  (Chiesa, Manohar and Spooner, 2019). Parameters are sized with the quantum bound
-  noted separately.
+- **Quantum adversaries (estimates, not proofs).** BCS-compiled IOPs with
+  round-by-round soundness are secure in the quantum random-oracle model in principle
+  (Chiesa, Manohar and Spooner, TCC 2019, ePrint 2019/834), with a bound that degrades
+  roughly quadratically in the number of oracle queries. **No BlackSilk parameter is
+  sized by a quantum bound, and no quantum figure has been proven or computed from
+  that theorem.** Heuristic estimates only, from generic quantum speed-ups: about
+  **53 bits** in the unique-decoding regime (a Grover-style halving of about 105) and
+  about **82 bits** against the Merkle commitments (a BHT-style collision search,
+  |H|^(1/3) with |H| = p^8, ignoring its memory cost). These are labelled estimates
+  (dossier 25 §3.6), not security claims. (Until v3 this item said the parameters
+  were "sized with the quantum bound noted separately"; no such bound existed, and
+  the sentence is withdrawn.)
 
 ### 9.4 Composition and recursion
 
@@ -702,7 +760,10 @@ The targets below were set before PX-0. The PX-0 measurements are in
 
 **Measured on the complete system (BS-ZK-2 with terminal blinding and minimum height
 2^8; `px/examples/proof_bench.rs`, 2 × 5 proofs of each kind, idle, one development
-machine; AUDIT.md R13): the targets are missed by a wide margin.**
+machine; AUDIT.md R13): the targets are missed by a wide margin.** BS-ZK-3 (8 random
+codewords) has not been re-measured on PX proofs yet; on the small toy proofs of
+`zk/tests/toy_measure.rs` it added about 8–13 % bytes (record in
+docs/reviews/v3-consensus-changes.md, "BS-ZK-3").
 
 | Item | Target | Measured: transfer | Measured: vault call (one function) |
 |---|---|---|---|
@@ -766,10 +827,28 @@ of scope until proof size is solved (aggregation-study.md).
 
 ## 12. Security analysis
 
+**Security headline (BS-ZK-3; figures and caveats in §9.3):** about **105 bits proven**
+soundness (**89.7 statistical + 16 grinding**, unique-decoding regime); the Johnson
+regime is **hash-bound at ≈ 122 bits** (the Merkle commitments); zero knowledge is
+**statistical and conditional** (reviews/zk-coverage.md §3), and **computational in
+practice**, because the masks are PRG outputs. None of this is a claim that BlackSilk is
+secure or perfectly zero-knowledge; it is internal engineering work, not an audit.
+
 ### 12.1 Assumptions (complete list)
 
 1. **Proof system:** knowledge soundness and (statistical, conditional; reviews/zk-coverage.md) zero knowledge of the chosen IOP, compiled
-   with Fiat–Shamir in the (Q)ROM, with the parameters of §9.3.
+   with Fiat–Shamir in the ROM, with the parameters of §9.3 (quantum: §9.3, estimates
+   only).
+   - **Zero knowledge is computational in practice.** "Statistical" describes the IOP
+     with ideal randomness. The deployed prover draws every mask (random codewords,
+     random rows, quotient randomizers, Merkle salts, terminal blinding) from
+     ChaCha-based PRGs (`StdRng`, i.e. ChaCha12, and ChaCha20) seeded per proof from the
+     OS generator hedged with a witness digest (`zk/src/config.rs`,
+     `zkvm/src/prove.rs`). The guarantee therefore holds against observers who cannot
+     distinguish these PRG outputs from random (and under the conditions of
+     zk-coverage.md §3).
+   - **Soundness** counts 16 bits of proof-of-work grinding, which are computational
+     (an adversary's Poseidon2 budget), on top of 89.7 statistical bits.
 2. **`Hk`:** collision resistance, preimage resistance, and PRF security when keyed
    (nullifiers). This is the key PX assumption.
 3. **Encryption:** IND-CCA security of the hybrid KEM (secure if either ECDH/DDH or
@@ -808,7 +887,7 @@ reconsider.
 | Zero-knowledge bug | Private data leaks from proofs | Cannot be undone for published proofs. Hence the ZK-mode verification in PX-0 and the internal review of the hiding construction (reviews/zk-coverage.md, reviews/terminal-blinding.md). **No simulatability tests exist:** statistical tests on hiding randomness would test only the RNG (terminal-blinding.md §3). What exists: a test that two proofs of one statement differ, the fixed-shape tests, and the P-5 proof-length campaign. |
 | `Hk` weakness | Collisions: double spends or fake records | Containment; migration to a new tree with a new `Hk` (§9.6) |
 | KEM break | Contents readable | Hybrid: both ECDH and ML-KEM must fail |
-| Quantum adversary | v1 layer broken (transactions.md §11.6) | PX soundness and zero-knowledge are hash-based; record contents stay protected by ML-KEM; the bridge's v1 side is exposed like all of v1 |
+| Quantum adversary | v1 layer broken (transactions.md §11.6) | PX soundness and zero-knowledge are hash-based; their quantum security is not quantified by a proof (heuristic estimates in §9.3: about 53 bits unique decoding, about 82 bits for the commitments); record contents stay protected by ML-KEM; the bridge's v1 side is exposed like all of v1 |
 
 ---
 
