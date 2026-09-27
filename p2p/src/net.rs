@@ -820,7 +820,9 @@ async fn run_connection<S>(
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let nid = inner.cfg.network_id;
-    let (mut reader, mut writer) = match handshake(stream, !inbound, nid, HANDSHAKE_TIMEOUT).await {
+    // The session keys also bind the genesis id (R15-3).
+    let genesis = inner.chain().params().genesis_id();
+    let (mut reader, mut writer) = match handshake(stream, !inbound, nid, &genesis, HANDSHAKE_TIMEOUT).await {
         Ok(x) => x,
         Err(e) => {
             log::debug!("{addr}: transport handshake failed: {e}");

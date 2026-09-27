@@ -2,9 +2,14 @@
 //!
 //! ```text
 //! initiator → responder: A = a·G      responder → initiator: B = b·G   (Ristretto255)
-//! S = a·B = b·A;  k = H64("p2p/session", LE32(network_id) ‖ A ‖ B ‖ S)
+//! S = a·B = b·A;  k = H64("p2p/session", LE32(network_id) ‖ genesis_id ‖ A ‖ B ‖ S)
 //! frame = AES-256-GCM(k_dir, n, LE32(len)) ‖ AES-256-GCM(k_dir, n+1, payload)
 //! ```
+//!
+//! The genesis id binds the session to one chain, not only one network id: a
+//! node of the same network id on another genesis (a release candidate, a
+//! rehearsal, a retired identity) derives other keys, and its first frame fails
+//! to decrypt (R15-3).
 //!
 //! Ephemeral keys give forward secrecy. No magic bytes or version travel in the
 //! clear. Peers are *not* authenticated: this protects against passive observers,
@@ -112,11 +117,13 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
 }
 
 /// Runs the key exchange on `stream` and returns the two encrypted halves.
-/// `initiator` is the side that opened the connection.
+/// `initiator` is the side that opened the connection. Both sides must use
+/// the same `network_id` and `genesis_id` (the chain's genesis block id).
 pub async fn handshake<S>(
     mut stream: S,
     initiator: bool,
     network_id: u32,
+    genesis_id: &[u8; 32],
     timeout: Duration,
 ) -> Result<(FrameReader<ReadHalf<S>>, FrameWriter<WriteHalf<S>>), TransportError>
 where
@@ -162,6 +169,7 @@ where
         tags::P2P_SESSION,
         &[
             &network_id.to_le_bytes(),
+            genesis_id,
             a.bytes(),
             b.bytes(),
             shared.bytes(),
@@ -192,11 +200,13 @@ mod tests {
     use tokio::io::duplex;
 
     const T: Duration = Duration::from_secs(5);
+    /// A genesis id for the tests.
+    const G: [u8; 32] = [0x6E; 32];
 
     #[tokio::test]
     async fn frames_round_trip_both_ways() {
         let (a, b) = duplex(1 << 22);
-        let (ra, rb) = tokio::join!(handshake(a, true, 7, T), handshake(b, false, 7, T));
+        let (ra, rb) = tokio::join!(handshake(a, true, 7, &G, T), handshake(b, false, 7, &G, T));
         let (mut ar, mut aw) = ra.unwrap();
         let (mut br, mut bw) = rb.unwrap();
         // Send and receive concurrently, as peers do: the largest frame is
@@ -214,7 +224,23 @@ mod tests {
     #[tokio::test]
     async fn different_networks_cannot_talk() {
         let (a, b) = duplex(1 << 16);
-        let (ra, rb) = tokio::join!(handshake(a, true, 1, T), handshake(b, false, 2, T));
+        let (ra, rb) = tokio::join!(handshake(a, true, 1, &G, T), handshake(b, false, 2, &G, T));
+        let (_, mut aw) = ra.unwrap();
+        let (mut br, _) = rb.unwrap();
+        aw.send(b"version").await.unwrap();
+        assert!(matches!(br.recv().await, Err(TransportError::Decrypt)));
+    }
+
+    /// R15-3: the same network id on another genesis (a release candidate,
+    /// a rehearsal, a retired identity) cannot talk either.
+    #[tokio::test]
+    async fn different_genesis_ids_cannot_talk() {
+        let (a, b) = duplex(1 << 16);
+        let other = [0x6F; 32];
+        let (ra, rb) = tokio::join!(
+            handshake(a, true, 1, &G, T),
+            handshake(b, false, 1, &other, T)
+        );
         let (_, mut aw) = ra.unwrap();
         let (mut br, _) = rb.unwrap();
         aw.send(b"version").await.unwrap();
@@ -244,7 +270,7 @@ mod tests {
             frame[4 + TAG + 3] ^= 1;
             m2w.write_all(&frame).await.unwrap();
         });
-        let (ra, rb) = tokio::join!(handshake(a, true, 1, T), handshake(b, false, 1, T));
+        let (ra, rb) = tokio::join!(handshake(a, true, 1, &G, T), handshake(b, false, 1, &G, T));
         let (_, mut aw) = ra.unwrap();
         let (mut br, _) = rb.unwrap();
         aw.send(b"secret-data").await.unwrap();
@@ -256,27 +282,27 @@ mod tests {
     async fn bad_keys_and_silence_are_rejected() {
         // Identity key.
         let (a, mut b) = duplex(1 << 16);
-        let hs = tokio::spawn(handshake(a, true, 1, T));
+        let hs = tokio::spawn(handshake(a, true, 1, &G, T));
         let mut k = [0u8; 32];
         b.read_exact(&mut k).await.unwrap();
         b.write_all(&[0u8; 32]).await.unwrap();
         assert!(matches!(hs.await.unwrap(), Err(TransportError::BadKey)));
         // Non-canonical key.
         let (a, mut b) = duplex(1 << 16);
-        let hs = tokio::spawn(handshake(a, true, 1, T));
+        let hs = tokio::spawn(handshake(a, true, 1, &G, T));
         b.read_exact(&mut k).await.unwrap();
         b.write_all(&[0xff; 32]).await.unwrap();
         assert!(matches!(hs.await.unwrap(), Err(TransportError::BadKey)));
         // Silent peer.
         let (a, _b) = duplex(1 << 16);
-        let r = handshake(a, true, 1, Duration::from_millis(100)).await;
+        let r = handshake(a, true, 1, &G, Duration::from_millis(100)).await;
         assert!(matches!(r, Err(TransportError::Timeout)));
     }
 
     #[tokio::test]
     async fn oversized_length_is_rejected_before_reading_payload() {
         let (a, b) = duplex(1 << 16);
-        let (ra, rb) = tokio::join!(handshake(a, true, 1, T), handshake(b, false, 1, T));
+        let (ra, rb) = tokio::join!(handshake(a, true, 1, &G, T), handshake(b, false, 1, &G, T));
         let (_, mut aw) = ra.unwrap();
         let (mut br, _) = rb.unwrap();
         // Forge a frame header claiming a huge length with the sender's own cipher.

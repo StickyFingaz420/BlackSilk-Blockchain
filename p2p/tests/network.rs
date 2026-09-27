@@ -318,7 +318,7 @@ async fn try_raw_handshake(
     relay_txs: bool,
     height: u64,
 ) -> Option<(RawReader, RawWriter)> {
-    let (mut r, mut w) = handshake(s, true, network_id, Duration::from_secs(5))
+    let (mut r, mut w) = handshake(s, true, network_id, &params().genesis_id(), Duration::from_secs(5))
         .await
         .ok()?;
     let v = Version {
@@ -656,13 +656,31 @@ async fn wrong_network_and_self_connections_are_refused() {
     let a = node(18, &[]).await;
     // Different network id: the first frame does not decrypt.
     let s = TcpStream::connect(a.addr).await.unwrap();
-    let (mut r, mut w) = handshake(s, true, params().network_id + 1, Duration::from_secs(5))
+    let (mut r, mut w) = handshake(s, true, params().network_id + 1, &params().genesis_id(), Duration::from_secs(5))
         .await
         .unwrap();
     let _ = w.send(&Message::Verack.encode()).await;
     assert!(
         r.recv().await.is_err(),
         "no valid frame from a node of another network"
+    );
+    // Same network id, another genesis (R15-3): refused the same way.
+    let s = TcpStream::connect(a.addr).await.unwrap();
+    let mut other_genesis = params().genesis_id();
+    other_genesis[0] ^= 1;
+    let (mut r, mut w) = handshake(
+        s,
+        true,
+        params().network_id,
+        &other_genesis,
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
+    let _ = w.send(&Message::Verack.encode()).await;
+    assert!(
+        r.recv().await.is_err(),
+        "no valid frame from a node of another genesis"
     );
     // Self connection.
     a.net.connect(NetAddr::Ip(a.addr));
@@ -2161,7 +2179,7 @@ async fn an_onion_address_is_not_advertised_over_clearnet() {
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     a.net.connect(NetAddr::Ip(l.local_addr().unwrap()));
     let (s, _) = l.accept().await.unwrap();
-    let (mut r, _w) = handshake(s, false, nid, Duration::from_secs(5))
+    let (mut r, _w) = handshake(s, false, nid, &params().genesis_id(), Duration::from_secs(5))
         .await
         .unwrap();
     let Message::Version(v) = Message::decode(&r.recv().await.unwrap()).unwrap() else {

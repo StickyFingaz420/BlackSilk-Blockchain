@@ -89,6 +89,13 @@ pub enum WalletError {
         wallet: String,
         node: String,
     },
+    /// The node runs the wallet's network (same name) on another chain: its
+    /// genesis id differs from the one recorded in the wallet file, or it does
+    /// not report one (R15-3). Hex ids; `node` is empty when not reported.
+    WrongGenesis {
+        wallet: String,
+        node: String,
+    },
     /// The node sent data inconsistent with itself (bad block encoding or id).
     BadNodeData(String),
     InsufficientFunds {
@@ -125,6 +132,17 @@ impl std::fmt::Display for WalletError {
             WalletError::WrongNetwork { wallet, node } => {
                 write!(f, "wallet is for {wallet} but the node runs {node}")
             }
+            WalletError::WrongGenesis { wallet, node } if node.is_empty() => write!(
+                f,
+                "the node does not report its genesis id; this wallet belongs to the chain \
+                 with genesis {wallet} and cannot check that the node follows it"
+            ),
+            WalletError::WrongGenesis { wallet, node } => write!(
+                f,
+                "the node follows another chain (genesis {node}) than this wallet \
+                 (genesis {wallet}); use a node of this wallet's chain, or restore the \
+                 seed into a new wallet file for that chain"
+            ),
             WalletError::BadNodeData(e) => write!(f, "inconsistent data from node: {e}"),
             WalletError::InsufficientFunds { available, needed } => write!(
                 f,
@@ -244,10 +262,20 @@ impl<'de> Deserialize<'de> for SecretString {
     }
 }
 
+/// The wallet file format version. Version 2 (testnet v3) records the genesis
+/// id of the wallet's chain (R15-3); version 1 files predate it and are
+/// refused: they belong to a retired chain, and their seed is restored into a
+/// new file instead.
+const PERSISTED_VERSION: u32 = 2;
+
 #[derive(Serialize, Deserialize)]
 struct Persisted {
     version: u32,
     network: String,
+    /// The genesis id (hex) of the chain the wallet was created for. Absent
+    /// in version 1 files.
+    #[serde(default)]
+    genesis_id: Option<String>,
     seed: SecretString,
     restore_height: u64,
     synced_height: u64,
@@ -269,6 +297,11 @@ struct Persisted {
 
 pub struct Wallet {
     network: Network,
+    /// The genesis id of the wallet's chain: recorded in the file and
+    /// compared with the node's at every sync (R15-3). A node of the same
+    /// network name on another genesis (a release candidate, a rehearsal, a
+    /// retired identity) is refused.
+    genesis_id: Hash,
     seed: [u8; 32],
     keys: WalletKeys,
     table: SubaddressTable,
@@ -353,10 +386,13 @@ pub struct Balance {
 
 impl Wallet {
     /// A wallet from a 32-byte seed. `restore_height` is where scanning starts.
+    /// The wallet belongs to the chain whose genesis this build defines for
+    /// `network`.
     pub fn from_seed(network: Network, seed: [u8; 32], restore_height: u64) -> Self {
         let keys = WalletKeys::from_seed(&seed);
         let mut w = Self {
             network,
+            genesis_id: ChainParams::for_network(network).genesis_id(),
             seed,
             table: SubaddressTable::default(),
             keys,
@@ -424,6 +460,11 @@ impl Wallet {
 
     pub fn network(&self) -> Network {
         self.network
+    }
+
+    /// The genesis id of the wallet's chain.
+    pub fn genesis_id(&self) -> Hash {
+        self.genesis_id
     }
 
     pub fn synced_height(&self) -> u64 {
@@ -552,8 +593,9 @@ impl Wallet {
 
     pub fn to_json(&self) -> Vec<u8> {
         let p = Persisted {
-            version: 1,
+            version: PERSISTED_VERSION,
             network: network_name(self.network).into(),
+            genesis_id: Some(hex::encode(self.genesis_id)),
             seed: SecretString(Zeroizing::new(hex::encode(self.seed))),
             restore_height: self.restore_height,
             synced_height: self.synced_height,
@@ -574,7 +616,14 @@ impl Wallet {
     pub fn from_json(bytes: &[u8]) -> Result<Self, WalletError> {
         let p: Persisted =
             serde_json::from_slice(bytes).map_err(|e| WalletError::Serialization(e.to_string()))?;
-        if p.version != 1 {
+        if p.version == 1 {
+            return Err(WalletError::Serialization(
+                "wallet file version 1 predates the genesis binding and belongs to a retired \
+                 chain; restore its seed (mnemonic) into a new wallet file"
+                    .into(),
+            ));
+        }
+        if p.version != PERSISTED_VERSION {
             return Err(WalletError::Serialization(format!(
                 "unsupported version {}",
                 p.version
@@ -582,9 +631,17 @@ impl Wallet {
         }
         let network = parse_network(&p.network)
             .ok_or_else(|| WalletError::Serialization("network".into()))?;
+        let genesis_id = h32(
+            p.genesis_id
+                .as_deref()
+                .ok_or_else(|| WalletError::Serialization("genesis id missing".into()))?,
+        )?;
         let mut seed = h32(&p.seed.0)?;
         let mut w = Self::from_seed(network, seed, p.restore_height);
         seed.zeroize();
+        // The recorded id, not this build's: a file written for another
+        // genesis stays bound to it, and the node check refuses the mismatch.
+        w.genesis_id = genesis_id;
         w.synced_height = p.synced_height;
         w.block_ids = p
             .block_ids
@@ -653,6 +710,18 @@ impl Wallet {
                 wallet: network_name(self.network).into(),
                 node: info.network,
             });
+        }
+        // The same network name is not enough: a release candidate, a
+        // rehearsal or a retired identity uses it too (R15-3).
+        let ours = hex::encode(self.genesis_id);
+        match &info.genesis_id {
+            Some(g) if g.eq_ignore_ascii_case(&ours) => {}
+            other => {
+                return Err(WalletError::WrongGenesis {
+                    wallet: ours,
+                    node: other.clone().unwrap_or_default(),
+                })
+            }
         }
         Ok(info)
     }
@@ -2022,6 +2091,111 @@ mod tests {
         Wallet::from_seed(Network::Regtest, [7; 32], 1)
     }
 
+    /// A regtest node that reports `genesis` and nothing else (R15-3 tests).
+    struct GenesisNode(Option<String>);
+
+    impl NodeApi for GenesisNode {
+        fn info(&self) -> Result<rpc::Info, String> {
+            Ok(rpc::Info {
+                network: "regtest".into(),
+                network_id: ChainParams::regtest().network_id,
+                height: 0,
+                tip: String::new(),
+                difficulty: 1,
+                generated: 0,
+                mempool_txs: 0,
+                mempool_bytes: 0,
+                outputs: 0,
+                peers: 0,
+                header_height: 0,
+                deepest_reorg: 0,
+                misbehaving_disconnects: 0,
+                genesis_id: self.0.clone(),
+                consensus_fingerprint: None,
+                build_commit: None,
+                version: None,
+            })
+        }
+        fn blocks(&self, _: u64, _: u64) -> Result<rpc::Blocks, String> {
+            Ok(rpc::Blocks { blocks: vec![] })
+        }
+        fn distribution(&self, _: u64) -> Result<rpc::Distribution, String> {
+            Err("not used".into())
+        }
+        fn outputs(&self, _: &[u64]) -> Result<rpc::Outputs, String> {
+            Err("not used".into())
+        }
+        fn submit_tx(&self, _: &[u8]) -> Result<rpc::SubmitResult, String> {
+            Err("not used".into())
+        }
+        fn px_commitments(&self, _: u64) -> Result<rpc::PxCommitments, String> {
+            Err("not used".into())
+        }
+        fn px_contracts(&self, _: u64) -> Result<rpc::PxContracts, String> {
+            Err("not used".into())
+        }
+    }
+
+    /// R15-3: the wallet file records the genesis id of its chain, and a node
+    /// of the same network name on another genesis (or reporting none) is
+    /// refused before anything is read from it.
+    #[test]
+    fn the_wallet_is_bound_to_its_genesis() {
+        let ours = ChainParams::regtest().genesis_id();
+        let w = wallet();
+        assert_eq!(w.genesis_id(), ours);
+        // Recorded in the file and restored from it.
+        let json: serde_json::Value = serde_json::from_slice(&w.to_json()).unwrap();
+        assert_eq!(json["genesis_id"], hex::encode(ours));
+        assert_eq!(json["version"], PERSISTED_VERSION);
+        assert_eq!(Wallet::from_json(&w.to_json()).unwrap().genesis_id(), ours);
+
+        // The node of the wallet's chain: accepted.
+        let mut w = wallet();
+        assert!(w.check_network(&GenesisNode(Some(hex::encode(ours)))).is_ok());
+        // Same network name and id, another genesis: refused.
+        let other = hex::encode([0xAB; 32]);
+        match w.sync(&GenesisNode(Some(other.clone()))) {
+            Err(WalletError::WrongGenesis { wallet, node }) => {
+                assert_eq!(wallet, hex::encode(ours));
+                assert_eq!(node, other);
+            }
+            r => panic!("expected WrongGenesis, got {r:?}"),
+        }
+        // A node that does not report a genesis id: refused.
+        assert!(matches!(
+            w.sync(&GenesisNode(None)),
+            Err(WalletError::WrongGenesis { node, .. }) if node.is_empty()
+        ));
+
+        // A file written for another genesis stays bound to it after loading
+        // with this build, and this build's node is refused.
+        let mut json: serde_json::Value = serde_json::from_slice(&w.to_json()).unwrap();
+        json["genesis_id"] = serde_json::Value::String(other.clone());
+        let mut foreign = Wallet::from_json(&serde_json::to_vec(&json).unwrap()).unwrap();
+        assert_eq!(hex::encode(foreign.genesis_id()), other);
+        assert!(matches!(
+            foreign.sync(&GenesisNode(Some(hex::encode(ours)))),
+            Err(WalletError::WrongGenesis { .. })
+        ));
+    }
+
+    /// Version 1 files (before the genesis binding) and files without a
+    /// genesis id are refused, not silently bound to this build's genesis.
+    #[test]
+    fn files_without_a_genesis_id_are_refused() {
+        let w = wallet();
+        let mut json: serde_json::Value = serde_json::from_slice(&w.to_json()).unwrap();
+        json["version"] = 1.into();
+        let e = Wallet::from_json(&serde_json::to_vec(&json).unwrap())
+            .err()
+            .unwrap();
+        assert!(e.to_string().contains("predates the genesis binding"), "{e}");
+        let mut json: serde_json::Value = serde_json::from_slice(&w.to_json()).unwrap();
+        json.as_object_mut().unwrap().remove("genesis_id");
+        assert!(Wallet::from_json(&serde_json::to_vec(&json).unwrap()).is_err());
+    }
+
     fn scanned(w: &Wallet, account: u32, index: u32) -> bool {
         let a = w.keys.address(SubaddressIndex::new(account, index));
         w.table.lookup(a.spend().bytes()).is_some()
@@ -2269,7 +2443,7 @@ mod tests {
                 header_height: 0,
                 deepest_reorg: 0,
                 misbehaving_disconnects: 0,
-                genesis_id: None,
+                genesis_id: Some(hex::encode(ChainParams::regtest().genesis_id())),
                 consensus_fingerprint: None,
                 build_commit: None,
                 version: None,
