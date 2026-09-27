@@ -4,7 +4,8 @@ target = "riscv32i-unknown-none-elf"
 
 [target.riscv32i-unknown-none-elf]
 # Static, non-PIE; the default lld layout starts above the 4 KiB null guard.
+# --strip-all: no symbol table (path-dependent crate hashes), README.md.
 # build.sh is the single source of these flags (GUEST_FLAGS) and fails if this
-# line differs from them. A plain `cargo build` here is not the reproducible
-# build: that one also fixes the build path (build.sh, README.md).
-rustflags = ["-C", "relocation-model=static", "-C", "target-feature=+zmmul"]
+# line differs from them. A plain `cargo build` here gives the same bytes as
+# build.sh with the pinned rustc (rust-toolchain.toml).
+rustflags = ["-C", "relocation-model=static", "-C", "target-feature=+zmmul", "-C", "link-arg=--strip-all"]

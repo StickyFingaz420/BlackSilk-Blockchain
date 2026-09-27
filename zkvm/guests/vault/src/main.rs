@@ -27,6 +27,12 @@ impl Permutation for Syscall {
     fn permute(&mut self, state: &mut [u32; 16]) {
         sdk::poseidon2(state);
     }
+
+    // An invalid Hk input halts like a panic (exit code 1), without a
+    // panic's source location in the program (R15-6).
+    fn invalid_input(&mut self) -> ! {
+        sdk::halt(1)
+    }
 }
 
 fn digest() -> Digest {

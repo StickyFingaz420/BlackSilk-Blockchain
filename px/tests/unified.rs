@@ -419,12 +419,11 @@ fn a_contract_output_with_an_owner_is_rejected() {
             .exit_code
     };
     assert_eq!(guest(&ok), 0);
-    // PX-F5 is a kernel change: until px/kernel.elf is rebuilt from this
-    // source (the platform-neutral rebuild, which changes the kernel id), the
-    // pinned guest is the old kernel, which ACCEPTS the burning output. This
-    // is the mutation evidence that the rule is new; the rebuild turns this
-    // assertion into the native/guest agreement.
-    assert_eq!(guest(&bad), 0, "the pre-F5 kernel accepts it");
+    // The pinned guest (rebuilt with PX-F5) agrees with the native kernel.
+    // Before the rebuild the pinned pre-F5 kernel accepted `bad` with exit
+    // code 0 (this assertion read `assert_eq!(guest(&bad), 0)` in the PX-F5
+    // commit): the rule is new.
+    assert_eq!(guest(&bad), Error::ContractOutputOwner.exit_code());
 }
 
 /// A function whose transcript differs from the kernel's (another blind, an

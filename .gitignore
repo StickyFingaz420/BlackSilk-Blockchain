@@ -64,3 +64,6 @@ Icon?
 
 # Claude Code local state and agent worktrees
 .claude/
+
+# The guest build's target directory (zkvm/guests/build.sh builds in place)
+/zkvm/guests/target/

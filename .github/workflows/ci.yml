@@ -129,12 +129,17 @@ jobs:
         run: cargo test --locked --release -p blacksilk-randomx -- --ignored --nocapture
 
   # The consensus-pinned guest programs rebuild from source to their pinned
-  # program ids and to the committed bytes (zkvm/guests/README.md). Windows:
-  # the build runs at the canonical Windows path, where reproduce.sh stages a
-  # copy of the guest sources (the runner's checkout is elsewhere).
+  # program ids and to the committed bytes (zkvm/guests/README.md), on Windows
+  # and Linux: the build is path-independent (stripped, no located panics;
+  # R15-6), so both hosts must reproduce the same kernel.id from their own
+  # checkout paths.
   guests:
     if: github.event_name != 'schedule'
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -148,6 +153,7 @@ jobs:
         shell: bash
         run: bash zkvm/guests/reproduce.sh
       - name: RandomX reference vectors on Windows (cross-platform check)
+        if: runner.os == 'Windows'
         run: cargo test --locked --release -p blacksilk-randomx
 
   # RustSec advisory database (docs/reviews/dependency-review.md §5), for the
