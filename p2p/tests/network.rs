@@ -4,6 +4,7 @@
 
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::ChainManager;
+use blacksilk_chain::mempool::MempoolError;
 use blacksilk_chain::store::MemoryStore;
 use blacksilk_consensus::merkle::tx_root;
 use blacksilk_consensus::{
@@ -25,6 +26,7 @@ use blacksilk_tx::px_builder::{build_px, px_standard_fee, PxPlan};
 use blacksilk_tx::scan::scan_block;
 use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::ChainView;
+use blacksilk_tx::TxError;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::net::SocketAddr;
@@ -303,9 +305,21 @@ async fn raw_peer_at(
     height: u64,
 ) -> (RawReader, RawWriter) {
     let s = TcpStream::connect(addr).await.unwrap();
+    try_raw_handshake(s, network_id, relay_txs, height)
+        .await
+        .expect("handshake")
+}
+
+/// The raw peer's handshake on an open stream; `None` if the node drops it.
+async fn try_raw_handshake(
+    s: TcpStream,
+    network_id: u32,
+    relay_txs: bool,
+    height: u64,
+) -> Option<(RawReader, RawWriter)> {
     let (mut r, mut w) = handshake(s, true, network_id, Duration::from_secs(5))
         .await
-        .unwrap();
+        .ok()?;
     let v = Version {
         protocol: PROTOCOL_VERSION,
         network: network_id,
@@ -315,17 +329,69 @@ async fn raw_peer_at(
         listen: None,
         relay_txs,
     };
-    w.send(&Message::Version(v).encode()).await.unwrap();
-    assert!(matches!(
-        Message::decode(&r.recv().await.unwrap()).unwrap(),
-        Message::Version(_)
-    ));
-    w.send(&Message::Verack.encode()).await.unwrap();
-    assert!(matches!(
-        Message::decode(&r.recv().await.unwrap()).unwrap(),
-        Message::Verack
-    ));
-    (r, w)
+    w.send(&Message::Version(v).encode()).await.ok()?;
+    let m = Message::decode(&r.recv().await.ok()?).ok()?;
+    if !matches!(m, Message::Version(_)) {
+        return None;
+    }
+    w.send(&Message::Verack.encode()).await.ok()?;
+    let m = Message::decode(&r.recv().await.ok()?).ok()?;
+    matches!(m, Message::Verack).then_some((r, w))
+}
+
+/// A TCP connection to `addr` from the loopback address `src` (127.0.0.0/8
+/// gives tests many distinct source IPs).
+async fn connect_from(src: [u8; 4], addr: SocketAddr) -> std::io::Result<TcpStream> {
+    let sock = tokio::net::TcpSocket::new_v4()?;
+    sock.bind(SocketAddr::from((src, 0)))?;
+    sock.connect(addr).await
+}
+
+/// A raw peer connecting from the loopback address `src`.
+async fn raw_peer_from(
+    src: [u8; 4],
+    addr: SocketAddr,
+    network_id: u32,
+    height: u64,
+) -> Option<(RawReader, RawWriter)> {
+    let s = connect_from(src, addr).await.ok()?;
+    try_raw_handshake(s, network_id, true, height).await
+}
+
+/// What an honest peer holding `branch` (on genesis) answers to `locator`:
+/// the headers after the first locator entry it knows, at most 2000.
+fn serve_headers(branch: &[BlockHeader], locator: &[Hash]) -> Vec<BlockHeader> {
+    let nid = params().network_id;
+    let from = locator
+        .iter()
+        .find_map(|id| {
+            if *id == params().genesis_id() {
+                return Some(0);
+            }
+            branch.iter().position(|h| h.id(nid) == *id).map(|i| i + 1)
+        })
+        .unwrap_or(0);
+    branch[from..branch.len().min(from + 2000)].to_vec()
+}
+
+/// Answers every `GetHeaders` from the node as an honest peer holding
+/// `branch` (headers only) would, until the connection closes.
+fn serve_branch(mut r: RawReader, mut w: RawWriter, branch: Vec<BlockHeader>) {
+    tokio::spawn(async move {
+        while let Ok(frame) = r.recv().await {
+            let reply = match Message::decode(&frame) {
+                Ok(Message::GetHeaders { locator, .. }) => {
+                    Message::Headers(serve_headers(&branch, &locator))
+                }
+                // Headers only: bodies are "not found" (no timeout penalty).
+                Ok(Message::GetBlocks(ids)) => Message::NotFound(ids),
+                _ => continue,
+            };
+            if w.send(&reply.encode()).await.is_err() {
+                break;
+            }
+        }
+    });
 }
 
 /// Reads messages until one matches `want`; `None` if the connection closes or
@@ -391,6 +457,15 @@ impl PowFunction for CountingPow {
         } else {
             [0; 32]
         }
+    }
+}
+
+/// `CountingPow` that also takes `ms` milliseconds per hash.
+struct SlowCountingPow(u64, CountingPow);
+impl PowFunction for SlowCountingPow {
+    fn pow_hash(&self, key: &Hash, blob: &[u8]) -> Hash {
+        std::thread::sleep(Duration::from_millis(self.0));
+        self.1.pow_hash(key, blob)
     }
 }
 
@@ -766,12 +841,10 @@ async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
     assert_eq!(roots[0].1, 5_000_000, "the pool holds the deposit");
 
     // Relay limits (docs/p2p.md §10). Five peers each stem the (now confirmed)
-    // transaction 4 times: within each peer's share (burst 4), but 20 in
-    // total exceed the node-wide burst of 10. The excess is dropped, and no
-    // peer is penalized for it: an attacker draining the global bucket must
-    // not get honest peers penalized. A sixth peer exceeding its own share
-    // is penalized. (Stem copies that pass the limits fail only on chain
-    // state, a spent nullifier, which is never penalized.)
+    // transaction 4 times: within each peer's share (burst 4). Every copy
+    // fails the cheap contextual check (a spent nullifier) before the
+    // node-wide PX token is taken, and no peer is penalized for it. A sixth
+    // peer exceeding its own share is penalized.
     let nid = params().network_id;
     let before: Vec<_> = b.net.peers().iter().map(|p| p.id).collect();
     let mut raws = Vec::new();
@@ -831,10 +904,10 @@ async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
 /// - a PX-only transaction (no v1 inputs) with a corrupted proof: `PxProof`;
 /// - the same transaction with a fee that is not the standard fee.
 ///
-/// A deposit's v1 ring signatures cover the proof bytes, so corrupting a
-/// deposit's proof breaks a signature first: rejected, but not penalized
-/// (signatures depend on the node's view of ring members: contextual). This
-/// also means nobody can alter the proof of someone else's deposit.
+/// A deposit's v1 ring signatures cover the proof bytes, so nobody can alter
+/// the proof of someone else's deposit. Here the deposit is already mined,
+/// so the altered copy fails on its spent key image first: contextual, not
+/// penalized.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn invalid_px_transactions_get_the_relaying_peer_penalized() {
     use blacksilk_px::delivery;
@@ -1301,15 +1374,29 @@ async fn pings_are_answered_while_a_header_batch_is_verified() {
 }
 
 /// A peer that disconnects before its batch is verified is still charged: the
-/// verdict comes from the header worker after the peer has left.
+/// verdict comes from the header worker after the peer has left. Its batch
+/// waits behind another peer's (slow) batch; when its turn comes, the sender is
+/// gone, so only the cheap pre-check runs: the rule violation is found and
+/// charged, and none of its headers is hashed or stored.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_peer_that_leaves_before_its_bad_batch_is_verified_is_still_charged() {
     let mut cfg = fast_config(&[]);
     cfg.pow_threads = 1;
     let a = node_with_pow(46, cfg, Arc::new(SlowPow(20))).await;
     let nid = params().network_id;
-    // 100 valid headers (2 s of proof of work), then one that breaks a rule.
-    let mut batch = header_branch(101, 120, 0);
+    // An honest batch that keeps the header worker busy for 4 to 6 s (more
+    // on a loaded machine).
+    let (mut r1, mut w1) = raw_peer_at(a.addr, nid, true, 200).await;
+    assert!(
+        recv_until(&mut r1, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    w1.send(&Message::Headers(header_branch(200, 120, 0)).encode())
+        .await
+        .unwrap();
+    // 100 valid headers, then one that breaks a rule.
+    let mut batch = header_branch(101, 120, 5);
     batch[100].difficulty += 5;
     let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 1000).await;
     assert!(
@@ -1317,18 +1404,786 @@ async fn a_peer_that_leaves_before_its_bad_batch_is_verified_is_still_charged() 
             .await
             .is_some()
     );
-    w.send(&Message::Headers(batch).encode()).await.unwrap();
+    w.send(&Message::Headers(batch.clone()).encode())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
     drop((r, w));
-    wait_until("peer gone", 5, || a.net.stats().peers == 0).await;
+    wait_until("peer gone", 5, || a.net.stats().peers == 1).await;
     assert_eq!(a.net.stats().misbehaving_disconnects, 0, "not yet verified");
-    wait_until("charged after leaving", 20, || {
+    wait_until("charged after leaving", 120, || {
         a.net.stats().misbehaving_disconnects == 1
     })
     .await;
-    assert_eq!(
-        a.chain.lock().unwrap().header_height(),
-        100,
-        "the valid prefix is kept"
+    let c = a.chain.lock().unwrap();
+    assert!(
+        c.header(&batch[0].id(nid)).is_none(),
+        "nothing of a banned sender's batch is stored"
     );
+    assert_eq!(c.header_height(), 200, "the honest batch is kept");
+}
+
+// ------------------------------------------ P2P hardening round 2 (review items)
+
+fn hashed(pow: &CountingPow) -> usize {
+    pow.0.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// H1: the header queue is bounded per origin and in total, and batches of
+/// senders that left are only pre-checked (never hashed). Junk peers
+/// reconnecting from many source addresses while the worker is busy cannot
+/// grow the queue past `2 x (max_inbound + max_outbound)`, and an honest
+/// peer's batch is processed promptly after the busy batch. Before the fix
+/// every departed sender's batch stayed queued and was fully verified
+/// (here 2000 hashes each), starving honest header sync.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_header_queue_is_bounded_across_reconnects() {
+    let mut cfg = fast_config(&[]);
+    cfg.allow_private = false; // per-IP limits apply to loopback
+    cfg.max_inbound = 4;
+    cfg.max_outbound = 4;
+    cfg.pow_threads = 1;
+    let cap = 2 * (cfg.max_inbound + cfg.max_outbound);
+    let pow = Arc::new(SlowCountingPow(20, CountingPow::default()));
+    let a = node_with_pow(47, cfg, pow.clone()).await;
+    let nid = params().network_id;
+    // A slow honest batch occupies the worker (300 x 20-30 ms).
+    let (mut r0, mut w0) = raw_peer_from([127, 0, 0, 1], a.addr, nid, 300)
+        .await
+        .unwrap();
+    assert!(
+        recv_until(&mut r0, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    w0.send(&Message::Headers(header_branch(300, 120, 0)).encode())
+        .await
+        .unwrap();
+    // 40 junk peers from 20 source IPs (two each), each sending a full batch
+    // that only the PoW would reject, then leaving.
+    let junk = Message::Headers(header_branch(2000, 120, BAD_NONCE)).encode();
+    let mut most = 0;
+    for i in 0..40u8 {
+        let src = [127, 0, 1, 1 + i / 2];
+        let Some((mut r, mut w)) = raw_peer_from(src, a.addr, nid, 10_000).await else {
+            continue;
+        };
+        if recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_none()
+        {
+            continue;
+        }
+        w.send(&junk).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop((r, w));
+        most = most.max(a.net.header_queue_len());
+    }
+    assert!(most <= cap, "queue grew to {most} (cap {cap})");
+    assert!(most >= 3, "the flood did queue batches ({most})");
+    // An honest peer from another address, with more headers.
+    let honest = header_branch(400, 120, 0);
+    let (r, w) = raw_peer_from([127, 0, 0, 2], a.addr, nid, 400)
+        .await
+        .unwrap();
+    serve_branch(r, w, honest);
+    wait_until("the busy batch is verified", 120, || {
+        a.chain.lock().unwrap().header_height() >= 300
+    })
+    .await;
+    let t = std::time::Instant::now();
+    wait_until("the honest batch is verified", 40, || {
+        a.chain.lock().unwrap().header_height() == 400
+    })
+    .await;
+    assert!(
+        t.elapsed() < Duration::from_secs(30),
+        "honest sync waited {:?}",
+        t.elapsed()
+    );
+    assert_eq!(
+        hashed(&pow.1),
+        0,
+        "no junk header of a departed sender was hashed"
+    );
+    wait_until("queue drained", 10, || a.net.header_queue_len() == 0).await;
+}
+
+/// H2: concurrent handshakes cannot bypass `max_per_ip` or `max_inbound`:
+/// connections still in their handshake count against both limits at accept
+/// time, and the limits are re-checked at registration. Before the fix only
+/// registered peers were counted, so all these connections were accepted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_handshakes_respect_the_inbound_limits() {
+    let nid = params().network_id;
+    async fn flood(addr: SocketAddr, n: usize) -> usize {
+        let nid = params().network_id;
+        // All TCP connections first (accepted by the node), then all the
+        // handshakes at once: none is registered when the others arrive.
+        let mut streams = Vec::new();
+        for _ in 0..n {
+            streams.push(TcpStream::connect(addr).await.unwrap());
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let tasks: Vec<_> = streams
+            .into_iter()
+            .map(|s| tokio::spawn(try_raw_handshake(s, nid, true, 0)))
+            .collect();
+        let mut ok = Vec::new();
+        for t in tasks {
+            if let Some(p) = t.await.unwrap() {
+                ok.push(p);
+            }
+        }
+        let n = ok.len();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        drop(ok);
+        n
+    }
+    // Per IP (loopback counts as one IP when `allow_private` is off).
+    let mut cfg = fast_config(&[]);
+    cfg.allow_private = false;
+    cfg.max_per_ip = 2;
+    cfg.max_inbound = 16;
+    let a = node_with(48, cfg).await;
+    let n = flood(a.addr, 10).await;
+    assert!(n <= 2, "{n} handshakes completed from one IP");
+    assert!(a.net.stats().peers <= 2);
+    // In total.
+    let mut cfg = fast_config(&[]);
+    cfg.max_inbound = 3;
+    let b = node_with(49, cfg).await;
+    let n = flood(b.addr, 10).await;
+    assert!(n <= 3, "{n} inbound handshakes completed (max 3)");
+    wait_until("slots freed", 5, || b.net.stats().peers == 0).await;
+    // Slots are released: new peers are accepted again.
+    let _p = raw_peer(b.addr, nid, true).await;
+    wait_until("accepted again", 5, || b.net.stats().peers == 1).await;
+}
+
+/// Accepts `headers` into the node's header chain directly (test setup).
+fn give_headers(node: &TestNode, headers: &[BlockHeader]) {
+    let mut c = node.chain.lock().unwrap();
+    for part in headers.chunks(500) {
+        c.accept_headers(part, u64::MAX / 2).unwrap();
+    }
+}
+
+/// Item 3 (consensus review H2, R1-C1): headers whose claimed work stays
+/// below the anti-DoS threshold (our best work minus that of our last 144
+/// blocks) are not hashed or stored. After LWMA is driven to difficulty 1,
+/// such headers cost an attacker nothing but ~0.45 s of RandomX each to
+/// verify, and would be stored forever. Dropped without penalty; the peer is
+/// not asked again every tick. Headers extending our best chain, and a
+/// near-tip competitor, are still verified.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn low_work_header_branches_are_not_hashed() {
+    let pow = Arc::new(CountingPow::default());
+    let a = node_with_pow(50, fast_config(&[]), pow.clone()).await;
+    let nid = params().network_id;
+    // Our best chain: 300 fast blocks, so the difficulty rose above 1.
+    let ours = header_branch(310, 1, 0);
+    give_headers(&a, &ours[..300]);
+    let (threshold, best, tip_difficulty) = {
+        let c = a.chain.lock().unwrap();
+        let hc = c.headers();
+        let at = hc.main_id_at(300 - 144).unwrap();
+        (hc.work(&at).unwrap(), hc.best_work(), hc.tip().difficulty)
+    };
+    // A difficulty-1 side branch from genesis, 2000 headers long (full
+    // batch): work 2001, below the threshold, and less than half our work
+    // per height.
+    let cheap = header_branch(2000, 120, BAD_NONCE);
+    assert!(cheap.iter().all(|h| h.difficulty == 1));
+    assert!(2001 < threshold, "threshold {threshold}");
+    assert!(2 * 2000 < best - 1 + 1700 * tip_difficulty as u128);
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 10_000).await;
+    assert!(
+        recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    w.send(&Message::Headers(cheap.clone()).encode())
+        .await
+        .unwrap();
+    let asked_again = recv_until(&mut r, 2.0, |m| matches!(m, Message::GetHeaders { .. }))
+        .await
+        .is_some();
+    assert!(
+        !asked_again,
+        "a peer whose branch is low-work is not re-asked"
+    );
+    assert_eq!(hashed(&pow), 0, "no RandomX hash for the cheap branch");
+    {
+        let c = a.chain.lock().unwrap();
+        assert!(c.header(&cheap[0].id(nid)).is_none(), "nothing stored");
+        assert_eq!(c.header_height(), 300);
+    }
+    let peers = a.net.peers();
+    assert_eq!(peers.len(), 1);
+    assert_eq!(peers[0].score, 0, "no penalty for a low-work branch");
+    // A tip announcement extending our chain is verified, and so is a
+    // competing block at our height (its work is far above the threshold):
+    // the node tracks near-tip forks.
+    w.send(&Message::Headers(vec![ours[300]]).encode())
+        .await
+        .unwrap();
+    wait_until("the extending header is stored", 5, || {
+        a.chain.lock().unwrap().header_height() == 301
+    })
+    .await;
+    let mut rival = ours[300];
+    rival.nonce = 99;
+    w.send(&Message::Headers(vec![rival]).encode())
+        .await
+        .unwrap();
+    w.send(&Message::Ping(5).encode()).await.unwrap();
+    assert!(recv_until(&mut r, 5.0, |m| matches!(m, Message::Pong(5)))
+        .await
+        .is_some());
+    wait_until("the rival is stored", 5, || {
+        a.chain.lock().unwrap().header(&rival.id(nid)).is_some()
+    })
+    .await;
+    // An honest peer with a heavier chain still syncs.
+    let (r2, w2) = raw_peer_at(a.addr, nid, true, 310).await;
+    serve_branch(r2, w2, ours.clone());
+    wait_until("honest headers synced", 10, || {
+        a.chain.lock().unwrap().header_height() == 310
+    })
+    .await;
+    assert_eq!(a.net.stats().misbehaving_disconnects, 0);
+}
+
+/// Item 3 (cont.): a competing branch heavier than ours but forking more than
+/// one batch (2000 headers) back still syncs. Its first full batch is below
+/// the anti-DoS threshold, but has as much work per height as our chain, so
+/// it is verified; the node then asks for more from the batch's last header
+/// (not from its own best chain, which would return the same batch forever).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_heavier_fork_deeper_than_one_batch_syncs() {
+    let a = node(51, &[]).await;
+    let nid = params().network_id;
+    give_headers(&a, &header_branch(2500, 120, 0));
+    let theirs = header_branch(3000, 120, 7);
+    let (r, w) = raw_peer_at(a.addr, nid, true, 3000).await;
+    serve_branch(r, w, theirs.clone());
+    wait_until("switched to the heavier branch", 240, || {
+        a.chain.lock().unwrap().best_header_id() == theirs[2999].id(nid)
+    })
+    .await;
+    assert_eq!(a.net.peers()[0].score, 0);
+}
+
+/// M3: a one-header tip announcement that arrives while our `GetHeaders` is
+/// outstanding must not turn the real multi-header reply into an
+/// "unrequested batch" (+10 and dropped).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_tip_announcement_racing_a_headers_reply_is_not_penalized() {
+    let a = node(52, &[]).await;
+    let nid = params().network_id;
+    let branch = header_branch(10, 120, 0);
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 10).await;
+    assert!(
+        recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    w.send(&Message::Headers(vec![branch[0]]).encode())
+        .await
+        .unwrap();
+    w.send(&Message::Headers(branch.clone()).encode())
+        .await
+        .unwrap();
+    serve_branch(r, w, branch);
+    wait_until("synced", 10, || {
+        a.chain.lock().unwrap().header_height() == 10
+    })
+    .await;
+    assert_eq!(a.net.peers()[0].score, 0, "the reply was not unsolicited");
+}
+
+/// M1: when the peer we asked for a transaction disconnects, the request
+/// moves to the next announcer at once, not after the 30 s timeout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_transaction_request_moves_on_when_its_peer_leaves() {
+    let a = node(53, &[]).await;
+    let nid = params().network_id;
+    let id = [0x77; 32];
+    let (mut rx, mut wx) = raw_peer(a.addr, nid, true).await;
+    wx.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+    assert!(recv_until(
+        &mut rx,
+        5.0,
+        |m| matches!(m, Message::GetTx(ids) if ids == &vec![id])
+    )
+    .await
+    .is_some());
+    let (mut ry, mut wy) = raw_peer(a.addr, nid, true).await;
+    wy.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+    wy.send(&Message::Ping(3).encode()).await.unwrap();
+    assert!(recv_until(&mut ry, 5.0, |m| matches!(m, Message::Pong(3)))
+        .await
+        .is_some());
+    drop((rx, wx));
+    assert!(
+        recv_until(
+            &mut ry,
+            3.0,
+            |m| matches!(m, Message::GetTx(ids) if ids == &vec![id])
+        )
+        .await
+        .is_some(),
+        "the second announcer is asked when the first leaves"
+    );
+}
+
+/// L1, L2: a peer that answers our `GetHeaders` with headers we already have
+/// (a full batch), or with nothing, is not asked again in a loop. Before the
+/// fix a known full batch triggered an immediate re-request, and a peer
+/// claiming a higher chain was asked every tick.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn non_advancing_header_replies_do_not_cause_a_request_loop() {
+    let a = node(54, &[]).await;
+    let nid = params().network_id;
+    let known = header_branch(2000, 120, 0);
+    give_headers(&a, &known);
+    for reply in [known, vec![]] {
+        let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 1_000_000).await;
+        let mut asked = 0;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        while let Ok(Some(_)) = tokio::time::timeout_at(
+            deadline,
+            recv_until(&mut r, 3.0, |m| matches!(m, Message::GetHeaders { .. })),
+        )
+        .await
+        {
+            asked += 1;
+            w.send(&Message::Headers(reply.clone()).encode())
+                .await
+                .unwrap();
+        }
+        assert_eq!(asked, 1, "asked {asked} times ({} headers)", reply.len());
+    }
+    assert!(a.net.peers().iter().all(|p| p.score == 0));
+}
+
+/// L4, L5: banning an IP disconnects every live connection from it, and the
+/// ban list is saved soon after it changes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_ban_disconnects_every_connection_from_the_ip_and_is_saved() {
+    let dir = std::env::temp_dir().join(format!("bs-p2p-ban-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut cfg = fast_config(&[]);
+    cfg.allow_private = false; // loopback is banned like any address
+    cfg.data_dir = Some(dir.clone());
+    let a = node_with(55, cfg).await;
+    let nid = params().network_id;
+    let (mut r1, _w1) = raw_peer(a.addr, nid, true).await;
+    let (mut r2, mut w2) = raw_peer(a.addr, nid, true).await;
+    wait_until("registered", 5, || a.net.stats().peers == 2).await;
+    let bad = BlockHeader {
+        version: HEADER_VERSION,
+        height: 1,
+        prev_id: params().genesis_id(),
+        timestamp: params().genesis.timestamp + 120,
+        difficulty: 999_999,
+        tx_root: [0; 32],
+        nonce: 0,
+    };
+    w2.send(&Message::Headers(vec![bad]).encode())
+        .await
+        .unwrap();
+    assert!(closes_within(&mut r2, 5).await, "the offender is cut off");
+    assert!(
+        closes_within(&mut r1, 5).await,
+        "the other connection from the banned IP is cut off"
+    );
+    wait_until("no peers", 5, || a.net.stats().peers == 0).await;
+    assert_eq!(a.net.stats().banned, 1);
+    let path = dir.join("bans.json");
+    wait_until("bans.json saved", 15, || {
+        std::fs::read_to_string(&path).is_ok_and(|s| s.contains("127.0.0.1"))
+    })
+    .await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// M4 (privacy): a transaction created while the node has no stem peer (e.g.
+/// right after startup) is held, not broadcast: inbound peers, possibly
+/// spies, do not learn it from its origin. It enters the stem as soon as an
+/// outbound peer exists. Before the fix it was fluffed at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_local_transaction_waits_for_a_stem_peer() {
+    let mut cfg = fast_config(&[]);
+    cfg.dandelion.embargo_base = Duration::from_secs(60);
+    let mut a = node_with(56, cfg).await;
+    a.mine_n(80, 0);
+    let b = node(57, &[]).await;
+    {
+        let ca = a.chain.lock().unwrap();
+        let mut cb = b.chain.lock().unwrap();
+        for h in 1..=ca.height() {
+            let block = ca.block_at(h).unwrap();
+            let now = block.header.timestamp;
+            cb.submit_block(block, now).unwrap();
+        }
+    }
+    let nid = params().network_id;
+    let (mut spy, _spy_w) = raw_peer(a.addr, nid, true).await;
+    wait_until("spy registered", 5, || a.net.stats().peers == 1).await;
+    let tx = a.payment();
+    let id = tx.hash();
+    a.net.submit_tx(tx).await.unwrap();
+    assert!(a.net.stempool_contains(&id), "held in the stempool");
+    assert!(
+        recv_until(&mut spy, 1.5, |m| matches!(m, Message::InvTx(_)))
+            .await
+            .is_none(),
+        "not announced to the inbound peer"
+    );
+    assert!(!a.mempool_has(&id), "not broadcast");
+    // An outbound peer appears: the transaction goes into the stem.
+    a.net.connect(NetAddr::Ip(b.addr));
+    wait_until("B received it", 10, || {
+        b.net.stempool_contains(&id) || b.mempool_has(&id)
+    })
+    .await;
+}
+
+// ------------------------------------ transaction relay hardening (tx review)
+
+/// Sends `msgs`, then a ping, and waits for its pong: every message before it
+/// has been handled.
+async fn send_and_sync(r: &mut RawReader, w: &mut RawWriter, msgs: &[Vec<u8>], nonce: u64) {
+    for m in msgs {
+        w.send(m).await.unwrap();
+    }
+    w.send(&Message::Ping(nonce).encode()).await.unwrap();
+    assert!(
+        recv_until(r, 10.0, |m| matches!(m, Message::Pong(n) if *n == nonce))
+            .await
+            .is_some(),
+        "pong {nonce}"
+    );
+}
+
+fn as_transfer(tx: &Transaction) -> blacksilk_tx::types::Transfer {
+    match tx {
+        Transaction::Transfer(t) => (**t).clone(),
+        _ => unreachable!(),
+    }
+}
+
+/// tx review H1: a transfer with garbage CLSAGs over real, deeply buried ring
+/// members fails only at the signature check, which used to count as
+/// contextual: no penalty, no reject cache, re-sendable forever at ~3 ms of
+/// CPU per input under the chain lock. A ring member 10 or more blocks deep
+/// resolves to the same output on every plausible branch, so such a failure
+/// is the sender's fault: penalized, remembered, never verified again. An
+/// honest transaction still flows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn invalid_signatures_over_buried_rings_are_penalized_once_verified() {
+    let mut a = node(60, &[]).await;
+    a.mine_n(80, 0);
+    let tx1 = a.payment();
+    let tx2 = a.payment();
+    let mut bad = as_transfer(&tx1);
+    bad.signatures = as_transfer(&tx2).signatures; // valid CLSAGs, wrong message
+    let bad = Transaction::from(bad);
+    assert!(matches!(
+        a.chain.lock().unwrap().check_tx(&bad),
+        Err(MempoolError::Invalid(TxError::InvalidSignature { .. }))
+    ));
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    let stem = Message::StemTx(bad.encode()).encode();
+    send_and_sync(&mut r, &mut w, std::slice::from_ref(&stem), 1).await;
+    assert_eq!(a.net.peers()[0].score, score::INVALID_TX);
+    assert_eq!(a.net.stats().tx_verifications, 1);
+    // Sent again: penalized again, without a second verification.
+    send_and_sync(&mut r, &mut w, &[stem], 2).await;
+    assert_eq!(a.net.peers()[0].score, 2 * score::INVALID_TX);
+    assert_eq!(a.net.stats().tx_verifications, 1, "not verified again");
+    // An honest peer's valid transaction is accepted.
+    let (mut r2, mut w2) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(
+        &mut r2,
+        &mut w2,
+        &[Message::StemTx(tx1.encode()).encode()],
+        3,
+    )
+    .await;
+    let id = tx1.hash();
+    wait_until("the honest transaction is pooled", 10, || {
+        a.mempool_has(&id)
+    })
+    .await;
+    let scores: Vec<u32> = a.net.peers().iter().map(|p| p.score).collect();
+    assert!(scores.contains(&0), "{scores:?}");
+}
+
+/// A transfer with one ring index changed to an output that does not exist
+/// (on our chain): a contextual failure (C1).
+fn unknown_ring_member(tx: &Transaction, k: u64) -> Transaction {
+    let mut t = as_transfer(tx);
+    let n = t.inputs[0].ring.len();
+    t.inputs[0].ring[n - 1] = 1_000_000 + k;
+    Transaction::from(t)
+}
+
+/// tx review H1 (b): a transaction that fails a contextual rule is not
+/// penalized, but the same bytes are not verified again until our tip
+/// changes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn contextual_rejects_are_not_reverified_at_the_same_tip() {
+    let mut a = node(61, &[]).await;
+    a.mine_n(80, 0);
+    let tx = a.payment();
+    let bad = unknown_ring_member(&tx, 0);
+    assert!(matches!(
+        a.chain.lock().unwrap().check_tx(&bad),
+        Err(MempoolError::Invalid(TxError::UnknownRingMember { .. }))
+    ));
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    let stem = Message::StemTx(bad.encode()).encode();
+    send_and_sync(&mut r, &mut w, &[stem.clone(), stem.clone()], 1).await;
+    assert_eq!(a.net.stats().tx_verifications, 1, "verified once");
+    // Announced by inv: not even requested at this tip.
+    w.send(&Message::InvTx(vec![bad.hash()]).encode())
+        .await
+        .unwrap();
+    w.send(&Message::Ping(2).encode()).await.unwrap();
+    let got = recv_until(&mut r, 5.0, |m| {
+        matches!(m, Message::GetTx(_) | Message::Pong(2))
+    })
+    .await;
+    assert!(matches!(got, Some(Message::Pong(2))), "{got:?}");
+    // A new tip: verified again.
+    a.mine(0);
+    send_and_sync(&mut r, &mut w, &[stem], 3).await;
+    assert_eq!(a.net.stats().tx_verifications, 2);
+    assert_eq!(a.net.peers()[0].score, 0, "contextual: never penalized");
+}
+
+/// tx review H1 (a): the signature budget is charged per v1 input before any
+/// verification; a peer over it is rate-limited, and its excess
+/// transactions are not verified.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_signature_budget_is_charged_before_verification() {
+    let mut cfg = fast_config(&[]);
+    cfg.peer_limits.inputs = blacksilk_p2p::limits::TokenBucket::new(0.001, 2.0);
+    let mut a = node_with(62, cfg).await;
+    a.mine_n(80, 0);
+    let tx = a.payment();
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    let msgs: Vec<Vec<u8>> = (0..3)
+        .map(|k| Message::StemTx(unknown_ring_member(&tx, k).encode()).encode())
+        .collect();
+    send_and_sync(&mut r, &mut w, &msgs, 1).await;
+    assert_eq!(
+        a.net.stats().tx_verifications,
+        2,
+        "the third was not verified"
+    );
+    assert_eq!(a.net.peers()[0].score, score::RATE);
+}
+
+/// A PX-only transaction with a random anchor: well formed, fails PX1 (a
+/// cheap, contextual check).
+fn junk_anchor_px(k: u32) -> Transaction {
+    let fee = px_standard_fee();
+    Transaction::Px(Box::new(blacksilk_tx::px::PxTx {
+        inputs: vec![],
+        outputs: vec![],
+        payouts: vec![],
+        fee,
+        bridge_in: 0,
+        bridge_out: fee,
+        anchor: [k + 1, 7, 7, 7, 7, 7, 7, 7],
+        nullifiers: [[k + 1, 1, 0, 0, 0, 0, 0, 0], [k + 1, 2, 0, 0, 0, 0, 0, 0]],
+        commitments: [[0; 8]; 2],
+        ciphertexts: [
+            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
+            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
+        ],
+        functions: vec![],
+        pseudo_outs: vec![],
+        range_proof: None,
+        signatures: vec![],
+        proof: vec![1, 2, 3],
+    }))
+}
+
+/// tx review M2: the node-wide PX relay token is taken only after the cheap
+/// checks. PX transactions with a random anchor from several peers, beyond
+/// the node-wide burst (10), are rejected cheaply and leave the budget
+/// intact for honest PX. Before the fix they drained it (the excess counted
+/// as `px_global_drops`), censoring honest PX relay for free.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn junk_anchor_px_floods_do_not_drain_the_px_relay_budget() {
+    let a = node(63, &[]).await;
+    let nid = params().network_id;
+    let t = junk_anchor_px(0);
+    let decoded = Transaction::decode(&t.encode()).expect("decodes");
+    assert!(matches!(
+        a.chain.lock().unwrap().check_tx(&decoded),
+        Err(MempoolError::Invalid(TxError::PxUnknownAnchor))
+    ));
+    for peer in 0..6u32 {
+        let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+        let msgs: Vec<Vec<u8>> = (0..4)
+            .map(|i| Message::StemTx(junk_anchor_px(peer * 4 + i).encode()).encode())
+            .collect();
+        send_and_sync(&mut r, &mut w, &msgs, peer as u64).await;
+        assert_eq!(a.net.peers().iter().map(|p| p.score).max(), Some(0));
+        drop((r, w));
+    }
+    let st = a.net.stats();
+    assert_eq!(st.px_global_drops, 0, "the node-wide PX budget is intact");
+    assert_eq!(st.tx_verifications, 0, "rejected by the cheap checks");
+}
+
+/// R1-C1 (bodies): an unrequested block whose header we never accepted is
+/// dropped before it is hashed or stored (a free low-work branch could
+/// otherwise fill the disk, ~10 blocks per peer identity). Before the fix it
+/// was penalized (10) but still submitted and connected.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unrequested_block_of_an_unknown_header_is_not_stored() {
+    let a = node(64, &[]).await;
+    let mut other = node(65, &[]).await;
+    let block = other.mine(0);
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(
+        &mut r,
+        &mut w,
+        &[Message::Block(block.encode()).encode()],
+        1,
+    )
+    .await;
+    assert_eq!(a.net.peers()[0].score, score::UNSOLICITED);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let c = a.chain.lock().unwrap();
+    assert_eq!(c.height(), 0);
+    assert!(c.header(&block.id(nid)).is_none(), "not stored");
+}
+
+/// R8-7: a stem transaction that conflicts with one already in the stempool
+/// (first seen wins) is dropped before any verification: valid double-spend
+/// variants cost nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn conflicting_stem_transactions_are_not_verified() {
+    let mut cfg = fast_config(&[]);
+    cfg.dandelion.embargo_base = Duration::from_secs(60);
+    let mut a = node_with(66, cfg).await;
+    a.mine_n(80, 0);
+    let b = node(67, &[]).await;
+    a.net.connect(NetAddr::Ip(b.addr));
+    wait_until("A has an outbound stem peer", 10, || {
+        a.net.stats().outbound >= 1
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await; // an epoch with a stem
+    let tx1 = a.payment();
+    let tx2 = a.payment(); // the same output
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(&mut r, &mut w, &[Message::StemTx(tx1.encode()).encode()], 1).await;
+    assert!(a.net.stempool_contains(&tx1.hash()), "stemmed, embargoed");
+    assert_eq!(a.net.stats().tx_verifications, 1);
+    send_and_sync(&mut r, &mut w, &[Message::StemTx(tx2.encode()).encode()], 2).await;
+    assert_eq!(
+        a.net.stats().tx_verifications,
+        1,
+        "the conflict is not verified"
+    );
+    assert!(!a.net.stempool_contains(&tx2.hash()));
+    assert_eq!(a.net.peers().iter().map(|p| p.score).max(), Some(0));
+}
+
+/// I3-1: an `InvTx` for a transaction in our stempool gets the same answer
+/// as one for an unknown transaction (a `GetTx`), and does not end the stem.
+/// Before the fix the node sent no request and fluffed at once: a stempool
+/// membership oracle that also let a spy end any stem at will.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn announcing_a_stem_transaction_neither_reveals_nor_fluffs_it() {
+    let mut cfg = fast_config(&[]);
+    cfg.dandelion.embargo_base = Duration::from_secs(60);
+    let mut a = node_with(68, cfg).await;
+    a.mine_n(80, 0);
+    let b = node(69, &[]).await;
+    a.net.connect(NetAddr::Ip(b.addr));
+    wait_until("A has an outbound stem peer", 10, || {
+        a.net.stats().outbound >= 1
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let tx = a.payment();
+    let id = tx.hash();
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(&mut r, &mut w, &[Message::StemTx(tx.encode()).encode()], 1).await;
+    assert!(a.net.stempool_contains(&id));
+    let (mut rs, mut ws) = raw_peer(a.addr, nid, true).await;
+    ws.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+    assert!(
+        recv_until(
+            &mut rs,
+            5.0,
+            |m| matches!(m, Message::GetTx(ids) if ids == &vec![id])
+        )
+        .await
+        .is_some(),
+        "requested like any unknown transaction"
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(a.net.stempool_contains(&id), "still in the stem");
+    assert!(!a.mempool_has(&id), "not fluffed by an announcement");
+}
+
+/// I3-2: an onion public address is not advertised on a clearnet connection
+/// (it would link the node's onion and IP identities).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_onion_address_is_not_advertised_over_clearnet() {
+    let onion = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion:9999";
+    let mut cfg = fast_config(&[]);
+    cfg.public_address = Some(NetAddr::parse(onion).unwrap());
+    let a = node_with(70, cfg).await;
+    let nid = params().network_id;
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    a.net.connect(NetAddr::Ip(l.local_addr().unwrap()));
+    let (s, _) = l.accept().await.unwrap();
+    let (mut r, _w) = handshake(s, false, nid, Duration::from_secs(5))
+        .await
+        .unwrap();
+    let Message::Version(v) = Message::decode(&r.recv().await.unwrap()).unwrap() else {
+        panic!("expected version");
+    };
+    assert_eq!(v.listen, None, "the onion address stays off clearnet");
+}
+
+/// SX2: replaying a transaction that is already in our mempool (from many
+/// connections) costs no verification and no relay budget: it is dropped
+/// before any of them. (A mined PX transaction replayed is rejected by the
+/// cheap nullifier check before the node-wide PX token, see
+/// `junk_anchor_px_floods_do_not_drain_the_px_relay_budget` for that order.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn replaying_a_pooled_transaction_costs_no_verification() {
+    let mut a = node(71, &[]).await;
+    a.mine_n(80, 0);
+    let tx = a.payment();
+    a.chain.lock().unwrap().submit_tx(tx.clone()).unwrap();
+    let nid = params().network_id;
+    let stem = Message::StemTx(tx.encode()).encode();
+    for i in 0..5u64 {
+        let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+        send_and_sync(&mut r, &mut w, &[stem.clone(), stem.clone()], i).await;
+    }
+    let st = a.net.stats();
+    assert_eq!(st.tx_verifications, 0, "replays are not verified");
+    assert!(a.net.peers().iter().all(|p| p.score == 0));
 }
