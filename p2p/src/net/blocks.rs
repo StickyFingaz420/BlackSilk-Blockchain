@@ -2,6 +2,7 @@
 //! download scheduling.
 
 use super::fatal;
+use super::headers::UpgradeWork;
 use super::state::{unix_now, BlockJob, Inner, Peer, State};
 use crate::dandelion::PeerId;
 use crate::limits::score;
@@ -185,9 +186,13 @@ pub(super) async fn block_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRecei
                 | HeaderError::TimestampTooFarInFuture { .. }
                 | HeaderError::InvalidParent => {}
                 HeaderError::UnknownParent => inner.request_headers(peer).await,
-                // Confirmed with proof of work by `validate` (RT-1).
+                // Confirmed with proof of work by `validate` (RT-1). Counted
+                // toward the disconnect only, never toward the operator
+                // warning: no header gate ran on it (RTW1-1). Not reached in
+                // practice: a block is processed only if requested or its
+                // header is stored, and no unknown-version header is stored.
                 HeaderError::UnknownUpgrade { version } => {
-                    inner.note_unknown_upgrade(peer, version, false)
+                    inner.note_unknown_upgrade(peer, version, UpgradeWork::default())
                 }
                 e => inner.misbehave(
                     peer,

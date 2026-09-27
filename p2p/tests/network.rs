@@ -8,7 +8,7 @@ use blacksilk_chain::mempool::MempoolError;
 use blacksilk_chain::store::MemoryStore;
 use blacksilk_consensus::merkle::tx_root;
 use blacksilk_consensus::{
-    BlockHeader, ChainParams, Hash, HeaderChain, PowFunction, HEADER_VERSION,
+    seed_height, BlockHeader, ChainParams, Hash, HeaderChain, PowFunction, HEADER_VERSION,
 };
 use blacksilk_crypto::keys::{SubaddressIndex, SubaddressTable, WalletKeys};
 use blacksilk_p2p::dandelion::DandelionParams;
@@ -318,9 +318,21 @@ async fn try_raw_handshake(
     relay_txs: bool,
     height: u64,
 ) -> Option<(RawReader, RawWriter)> {
+    try_raw_handshake_as(s, true, network_id, relay_txs, height).await
+}
+
+/// The raw peer's handshake, as the side that opened the connection
+/// (`initiator`) or the side that accepted it.
+async fn try_raw_handshake_as(
+    s: TcpStream,
+    initiator: bool,
+    network_id: u32,
+    relay_txs: bool,
+    height: u64,
+) -> Option<(RawReader, RawWriter)> {
     let (mut r, mut w) = handshake(
         s,
-        true,
+        initiator,
         network_id,
         &params().genesis_id(),
         Duration::from_secs(5),
@@ -2673,4 +2685,183 @@ async fn a_transaction_conflicting_with_the_pool_is_not_verified() {
     assert!(!a.net.stempool_contains(&tx2.hash()));
     assert_eq!(a.net.peers()[0].score, 0);
     assert!(a.mempool_has(&tx1.hash()) && !a.mempool_has(&tx2.hash()));
+}
+
+// ------------------------------------------------ RTW1-1: the RT-1 work gate
+
+/// Sends `headers` as one message and waits until the node's header worker
+/// has verified it (the batch is queued before the pong is sent). Returns the
+/// PoW evaluations it cost.
+async fn headers_and_settle(
+    node: &TestNode,
+    pow: &CountAllPow,
+    r: &mut RawReader,
+    w: &mut RawWriter,
+    headers: Vec<BlockHeader>,
+    nonce: u64,
+) -> usize {
+    let hashes = || pow.0.load(std::sync::atomic::Ordering::SeqCst);
+    let before = hashes();
+    send_and_sync(r, w, &[Message::Headers(headers).encode()], nonce).await;
+    wait_until("header batch verified", 10, || {
+        node.net.header_queue_len() == 0
+    })
+    .await;
+    hashes() - before
+}
+
+/// RTW1-1: an unknown-version header's claimed difficulty is never checked
+/// (`check_rules` returns `UnknownUpgrade` before the difficulty rule), so the
+/// anti-DoS gate charges it the difficulty this node requires at its position.
+/// A header anchored at genesis (a deep, low-work fork) claiming `u64::MAX`
+/// is dropped before any RandomX hash, like the same header with a known
+/// version and its honest difficulty.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_deep_fork_unknown_version_header_claiming_max_difficulty_is_not_hashed() {
+    let pow = Arc::new(CountAllPow::default());
+    let a = node_with_pow(61, fast_config(&[]), pow.clone()).await;
+    let nid = params().network_id;
+    give_headers(&a, &header_branch(300, 1, 0));
+    let g = params().genesis;
+    let deep = |version, difficulty| BlockHeader {
+        version,
+        height: 1,
+        prev_id: g.id(nid),
+        timestamp: g.timestamp + 120,
+        difficulty,
+        tx_root: [0; 32],
+        nonce: 77,
+    };
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    wait_until("registered", 5, || a.net.stats().peers == 1).await;
+    let honest = deep(HEADER_VERSION, params().initial_difficulty);
+    let known_low = headers_and_settle(&a, &pow, &mut r, &mut w, vec![honest], 1).await;
+    let claimed = deep(HEADER_VERSION + 6, u64::MAX);
+    let unknown_max = headers_and_settle(&a, &pow, &mut r, &mut w, vec![claimed], 2).await;
+    assert_eq!(known_low, 0);
+    assert_eq!(unknown_max, 0, "the claimed difficulty bought a hash");
+    assert_eq!(a.net.peers()[0].score, 0);
+    assert!(!a.net.upgrade_warned());
+}
+
+/// A raw peer the node dials: `a` connects to `l`, the raw side accepts.
+async fn dialed_raw_peer(a: &TestNode, l: &tokio::net::TcpListener) -> (RawReader, RawWriter) {
+    let outbound = a.net.stats().outbound;
+    a.net.connect(NetAddr::Ip(l.local_addr().unwrap()));
+    let (s, _) = l.accept().await.unwrap();
+    let rw = try_raw_handshake_as(s, false, params().network_id, true, 0)
+        .await
+        .expect("handshake");
+    wait_until("registered", 5, || a.net.stats().outbound == outbound + 1).await;
+    rw
+}
+
+/// RTW1-1 (b): only outbound peers count toward the "node may need an
+/// upgrade" warning, each once however often it reconnects. Inbound peers
+/// from distinct addresses, even on a branch reaching our best work, never
+/// trigger it; their headers are still hashed and not scored (RT-1). A second
+/// distinct outbound reporter does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn only_distinct_outbound_reporters_trigger_the_upgrade_warning() {
+    let pow = Arc::new(CountAllPow::default());
+    let a = node_with_pow(63, fast_config(&[]), pow.clone()).await;
+    let nid = params().network_id;
+    let ours = header_branch(300, 1, 0);
+    give_headers(&a, &ours);
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &ours {
+        g.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let newer = |parent: Hash, nonce| {
+        let t = g.template_on(parent).unwrap();
+        let prev = g.header(&parent).unwrap();
+        BlockHeader {
+            version: HEADER_VERSION + 6,
+            height: t.height,
+            prev_id: parent,
+            timestamp: t.min_timestamp.max(prev.timestamp + 1),
+            difficulty: t.difficulty,
+            tx_root: [0; 32],
+            nonce,
+        }
+    };
+    let tip = g.tip_id();
+    // Within the anti-DoS window, below our best work.
+    let fork = g.main_id_at(295).unwrap();
+
+    for (k, last) in [2u8, 3, 4].into_iter().enumerate() {
+        let k = k as u64;
+        let (mut r, mut w) = raw_peer_from([127, 0, 0, last], a.addr, nid, 0)
+            .await
+            .expect("inbound peer");
+        let on_tip =
+            headers_and_settle(&a, &pow, &mut r, &mut w, vec![newer(tip, 10 + k)], 1).await;
+        let on_fork =
+            headers_and_settle(&a, &pow, &mut r, &mut w, vec![newer(fork, 20 + k)], 2).await;
+        assert_eq!((on_tip, on_fork), (1, 1), "hashed");
+    }
+    assert!(!a.net.upgrade_warned(), "inbound reporters never warn");
+    assert!(a.net.peers().iter().all(|p| p.score == 0));
+
+    let l1 = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    for k in 0..2u64 {
+        let (mut r, mut w) = dialed_raw_peer(&a, &l1).await;
+        let cost = headers_and_settle(&a, &pow, &mut r, &mut w, vec![newer(fork, 30 + k)], 3).await;
+        assert_eq!(cost, 1);
+        drop((r, w));
+        wait_until("disconnected", 5, || a.net.stats().outbound == 0).await;
+    }
+    assert!(!a.net.upgrade_warned(), "a reconnect is the same reporter");
+
+    let l2 = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (mut r, mut w) = dialed_raw_peer(&a, &l2).await;
+    let cost = headers_and_settle(&a, &pow, &mut r, &mut w, vec![newer(fork, 40)], 4).await;
+    assert_eq!(cost, 1);
+    assert!(a.net.upgrade_warned(), "two distinct outbound reporters");
+}
+
+/// RTW1-1 (c): an unknown-version header whose RandomX key is neither the
+/// current nor the next key of our best chain is never hashed, so it cannot
+/// make the node build (and evict) a RandomX cache. A pow call is where
+/// `RandomXPow` builds a cache, so zero pow calls means no cache build. The
+/// fork below is within the anti-DoS window (it passes the work gate at the
+/// required difficulty) but its key is genesis, the previous epoch's; the same
+/// header on the tip (the current key) is hashed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_old_epoch_unknown_version_header_triggers_no_cache_build() {
+    let pow = Arc::new(CountAllPow::default());
+    let a = node_with_pow(62, fast_config(&[]), pow.clone()).await;
+    let nid = params().network_id;
+    let ours = header_branch(2200, 1, 0);
+    give_headers(&a, &ours);
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &ours {
+        g.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let p = params();
+    let key = |height| seed_height(height, p.seed_epoch, p.seed_lag);
+    assert_eq!(key(2201), 2048, "the current key");
+    let newer = |parent: Hash| {
+        let t = g.template_on(parent).unwrap();
+        let prev = g.header(&parent).unwrap();
+        BlockHeader {
+            version: HEADER_VERSION + 6,
+            height: t.height,
+            prev_id: parent,
+            timestamp: t.min_timestamp.max(prev.timestamp + 1),
+            difficulty: t.difficulty,
+            tx_root: [0; 32],
+            nonce: 5,
+        }
+    };
+    let old = newer(g.main_id_at(2099).unwrap());
+    assert_eq!(key(old.height), 0, "the previous epoch's key");
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    wait_until("registered", 5, || a.net.stats().peers == 1).await;
+    let old_cost = headers_and_settle(&a, &pow, &mut r, &mut w, vec![old], 1).await;
+    let tip = newer(g.tip_id());
+    let tip_cost = headers_and_settle(&a, &pow, &mut r, &mut w, vec![tip], 2).await;
+    assert_eq!(old_cost, 0, "an old-epoch key was hashed");
+    assert_eq!(tip_cost, 1, "the current key is hashed");
+    assert_eq!(a.net.peers()[0].score, 0);
 }

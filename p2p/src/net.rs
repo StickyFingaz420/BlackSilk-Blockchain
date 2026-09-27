@@ -240,6 +240,12 @@ impl Network {
         self.inner.state().header_queue_len
     }
 
+    /// Whether the operator was warned that peers run a newer consensus
+    /// version (once per run; RT-1, RTW1-1, docs/p2p.md §6).
+    pub fn upgrade_warned(&self) -> bool {
+        self.inner.state().upgrades.warned()
+    }
+
     /// Persists the address table and ban list.
     pub fn save(&self) {
         self.inner.save();

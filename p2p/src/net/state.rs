@@ -133,16 +133,37 @@ pub(super) struct State {
 pub(super) const UNKNOWN_UPGRADE_DISCONNECT: u32 = 3;
 
 /// The operator is warned that an upgrade may be needed only once this many
-/// distinct peers sent a header of an unknown version with valid proof of work,
-/// or once such a header extends a branch with at least our best work (RT-1): a
-/// single peer cannot trigger the warning cheaply.
+/// distinct reporters sent a header of an unknown version with valid proof of
+/// work, or once such a header extends a branch with at least our best work
+/// (RT-1). Only qualifying reports count (RTW1-1, [`UpgradeReports`]): a single
+/// attacker cannot trigger the warning cheaply, nor by reconnecting.
 pub(super) const UNKNOWN_UPGRADE_WARN_PEERS: usize = 2;
 
 /// Reports of headers of an unknown (newer) version with valid proof of work.
+///
+/// A report qualifies for the operator warning only if it comes from an
+/// OUTBOUND peer (one this node chose) and the header's branch passes the
+/// anti-DoS work threshold at the difficulty this node requires (RTW1-1).
+/// Qualifying reporters are keyed by [`upgrade_reporter_key`], never by
+/// connection, so reconnecting does not count twice. At most
+/// [`UNKNOWN_UPGRADE_WARN_PEERS`] keys are ever held.
 #[derive(Default)]
 pub(super) struct UpgradeReports {
-    reporters: HashSet<PeerId>,
+    reporters: HashSet<Vec<u8>>,
     warned: bool,
+}
+
+/// The identity a qualifying upgrade report is counted under: the peer's
+/// network group (IPv4 /16, IPv6 /32, the onion address), or, when private
+/// addresses are allowed (local test networks, where every peer shares one
+/// group), the whole address. An outbound peer reconnects to the address this
+/// node dialed, so the key survives reconnects.
+pub(super) fn upgrade_reporter_key(addr: &NetAddr, allow_private: bool) -> Vec<u8> {
+    if allow_private {
+        addr.to_string().into_bytes()
+    } else {
+        addr.group()
+    }
 }
 
 /// What to do after one report ([`UpgradeReports::report`]).
@@ -155,18 +176,36 @@ pub(super) struct UpgradeVerdict {
 }
 
 impl UpgradeReports {
-    /// Records a report by `peer`, whose `count`-th it is. `heavy`: the header
-    /// extends a branch that, with its work, reaches our best chain's work.
-    pub(super) fn report(&mut self, peer: PeerId, count: u32, heavy: bool) -> UpgradeVerdict {
+    /// Records a report from a peer whose `count`-th it is (on this
+    /// connection). `qualifying`: the reporter's key if the report counts
+    /// toward the warning (see [`UpgradeReports`]), else `None`. `heavy`: the
+    /// header extends a branch that, with the work this node requires of it,
+    /// reaches our best chain's work; it warns at once, but only for a
+    /// qualifying report.
+    pub(super) fn report(
+        &mut self,
+        qualifying: Option<Vec<u8>>,
+        count: u32,
+        heavy: bool,
+    ) -> UpgradeVerdict {
+        let disconnect = count >= UNKNOWN_UPGRADE_DISCONNECT;
+        let Some(key) = qualifying else {
+            return UpgradeVerdict {
+                warn: false,
+                disconnect,
+            };
+        };
         if !self.warned && self.reporters.len() < UNKNOWN_UPGRADE_WARN_PEERS {
-            self.reporters.insert(peer);
+            self.reporters.insert(key);
         }
         let warn = !self.warned && (heavy || self.reporters.len() >= UNKNOWN_UPGRADE_WARN_PEERS);
         self.warned |= warn;
-        UpgradeVerdict {
-            warn,
-            disconnect: count >= UNKNOWN_UPGRADE_DISCONNECT,
-        }
+        UpgradeVerdict { warn, disconnect }
+    }
+
+    /// Whether the operator was warned (once per run).
+    pub(super) fn warned(&self) -> bool {
+        self.warned
     }
 }
 
@@ -290,37 +329,67 @@ impl Inner {
 mod tests {
     use super::*;
 
-    /// RT-1: one peer never triggers the operator warning, however often it
-    /// reports; a second distinct peer does, once. A report on a branch that
-    /// reaches our best work warns at once. The reporting peer is disconnected
-    /// at its third report.
+    /// RT-1 and RTW1-1: one reporter never triggers the operator warning,
+    /// however often it reports or reconnects (same key); a second distinct
+    /// qualifying reporter does, once. A qualifying report on a branch that
+    /// reaches our best work warns at once. Non-qualifying reports (inbound, or
+    /// below the work threshold) never warn, even heavy ones, and add no key.
+    /// The reporting connection is disconnected at its third report.
     #[test]
     fn upgrade_reports_warn_past_a_threshold_and_disconnect_after_n() {
-        let mut r = UpgradeReports::default();
+        let key = |n: u8| Some(vec![n]);
         let quiet = |disconnect| UpgradeVerdict {
             warn: false,
             disconnect,
         };
-        assert_eq!(r.report(1, 1, false), quiet(false));
-        assert_eq!(r.report(1, 2, false), quiet(false));
-        assert_eq!(r.report(1, UNKNOWN_UPGRADE_DISCONNECT, false), quiet(true));
+        let loud = UpgradeVerdict {
+            warn: true,
+            disconnect: false,
+        };
+        let mut r = UpgradeReports::default();
+        assert_eq!(r.report(key(1), 1, false), quiet(false));
+        assert_eq!(r.report(key(1), 2, false), quiet(false));
         assert_eq!(
-            r.report(2, 1, false),
-            UpgradeVerdict {
-                warn: true,
-                disconnect: false
-            }
+            r.report(key(1), UNKNOWN_UPGRADE_DISCONNECT, false),
+            quiet(true)
         );
+        // Reconnected: a new connection, the same key.
+        assert_eq!(r.report(key(1), 1, false), quiet(false));
+        // Inbound or low-work reporters, many of them, heavy or not.
+        for _ in 0..10 {
+            assert_eq!(r.report(None, 1, true), quiet(false));
+        }
+        assert_eq!(r.report(None, 3, false), quiet(true));
+        assert!(!r.warned());
+        assert_eq!(r.report(key(2), 1, false), loud);
+        assert!(r.warned());
         // Once per run.
-        assert_eq!(r.report(3, 1, true), quiet(false));
+        assert_eq!(r.report(key(3), 1, true), quiet(false));
+        assert_eq!(r.reporters.len(), UNKNOWN_UPGRADE_WARN_PEERS, "bounded");
 
         let mut r = UpgradeReports::default();
+        assert_eq!(r.report(key(9), 1, true), loud);
+    }
+
+    /// RTW1-1: reporters are keyed by network group on the public network, by
+    /// the whole address with `allow_private`; the port never makes a public
+    /// reporter new.
+    #[test]
+    fn upgrade_reporters_are_keyed_by_group() {
+        let a = NetAddr::parse("1.2.3.4:5").unwrap();
+        let b = NetAddr::parse("1.2.9.9:6").unwrap();
+        let c = NetAddr::parse("1.3.3.4:5").unwrap();
         assert_eq!(
-            r.report(9, 1, true),
-            UpgradeVerdict {
-                warn: true,
-                disconnect: false
-            }
+            upgrade_reporter_key(&a, false),
+            upgrade_reporter_key(&b, false)
+        );
+        assert_ne!(
+            upgrade_reporter_key(&a, false),
+            upgrade_reporter_key(&c, false)
+        );
+        assert_ne!(
+            upgrade_reporter_key(&a, true),
+            upgrade_reporter_key(&b, true)
         );
     }
 }
