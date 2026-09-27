@@ -17,6 +17,7 @@ members = [
     "px-core",   # blacksilk-px-core: PX hash, records and transfer kernel (no_std, shared with the guest)
     "px",        # blacksilk-px: PX node state, wallet side, record delivery, kernel proofs
     "tools/labnet", # blacksilk-labnet: long-duration lab network test
+    "tools/genesis", # blacksilk-genesis: beacon-derived genesis construction and verification
 ]
 # Pre-rebuild code kept for reference only (does not build; see legacy/README.md),
 # and the post-quantum research track.

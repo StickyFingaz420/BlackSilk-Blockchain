@@ -47,7 +47,7 @@ jobs:
         # with the attribute itself; a mention in a comment does not count.
         run: |
           for c in randomx consensus crypto tx chain p2p rpc node miner wallet \
-                   contracts zk zkvm px-core px tools/labnet; do
+                   contracts zk zkvm px-core px tools/labnet tools/genesis; do
             roots=0
             for f in "$c/src/lib.rs" "$c/src/main.rs" "$c"/src/bin/*.rs; do
               [ -f "$f" ] || continue

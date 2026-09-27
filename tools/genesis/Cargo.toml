@@ -1,0 +1,16 @@
+[package]
+name = "blacksilk-genesis"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic, reproducible construction and verification of a BlackSilk genesis block from a Bitcoin block-hash beacon (docs/testnet-v3-genesis.md)"
+publish = false
+
+[lib]
+name = "blacksilk_genesis"
+
+[[bin]]
+name = "blacksilk-genesis"
+path = "src/main.rs"
+
+[dependencies]
+blacksilk-consensus = { path = "../../consensus" }
