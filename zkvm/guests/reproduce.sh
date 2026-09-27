@@ -1,43 +1,56 @@
 #!/usr/bin/env bash
-# Rebuilds the consensus-pinned guest programs from source and checks their
-# program ids against the pinned ones (zkvm/guests/README.md):
+# Rebuilds the consensus-pinned guest programs from source and checks them
+# against the pinned ones (zkvm/guests/README.md):
 #   guest-kernel -> px/kernel.elf, id in px/kernel.id (consensus, px.md §4.3)
 #   guest-vault  -> px/vault.elf,  id in px/vault.id  (the reference contract)
-# Exits non-zero if an id differs. CI runs it (.github/workflows/ci.yml).
+# Checks, for each: the rebuilt program id equals the pinned id, the committed
+# ELF's id equals the pinned id, and the rebuilt ELF is byte-identical
+# (sha256) to the committed one. Exits non-zero on any mismatch. CI runs it
+# (.github/workflows/ci.yml, job `guests`).
 #
-# Requirements (README): a Windows host (the pinned binaries embed a Windows
-# source path, see README), rustc 1.98.1 with the riscv32i-unknown-none-elf
-# target (rust-toolchain.toml installs both), Git Bash.
+# Requirements (README): a Windows host with Git Bash (the pinned binaries
+# embed a Windows source path), rustc 1.98.1 with the riscv32i-unknown-none-elf
+# target (rust-toolchain.toml installs both). The toolchain check, the
+# environment check and the flags live in build.sh, sourced here.
 set -euo pipefail
-here="$(cd "$(dirname "$0")" && pwd)"
-root="$(cd "$here/../.." && pwd)"
-# The absolute source path the pinned binaries were built at. Panic messages of
-# px-core embed it, so it is part of the program's data and of its id.
-canonical='C:\Users\Home 01\Desktop\BlackSilk\BlackSilk-Blockchain'
-# This checkout's path as rustc sees it (Windows form, backslashes).
-native="$(cd "$root" && pwd -W 2>/dev/null || pwd)"
-native="${native//\//\\}"
-sep=$'\x1f'
-# The flags of .cargo/config.toml plus the path remapping (for the guest build
-# only; the host build of the id tool below must not see them).
-flags="-Crelocation-model=static${sep}-Ctarget-feature=+zmmul${sep}--remap-path-prefix=${native}=${canonical}"
-target="${CARGO_TARGET_DIR:-$here/target}"
-(cd "$here" && CARGO_ENCODED_RUSTFLAGS="$flags" CARGO_TARGET_DIR="$target"   cargo build --release --locked -p guest-kernel -p guest-vault)
-out="$target/riscv32i-unknown-none-elf/release"
-ids="$(cd "$root" && cargo run --quiet --release -p blacksilk-zkvm --example program_id -- \
-  "$out/guest-kernel" "$out/guest-vault")"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=build.sh
+source "$here/build.sh"
+root="$guest_root"
+
+guest_build guest-kernel guest-vault
+
+# The id tool is a host build: it must not see the guest flags (guest_build
+# sets them only for its own cargo call).
+ids="$(cd "$root" && cargo run --locked --quiet --release -p blacksilk-zkvm --example program_id -- \
+  "$GUEST_OUT/guest-kernel" "$GUEST_OUT/guest-vault" "$root/px/kernel.elf" "$root/px/vault.elf")"
 echo "$ids"
-kernel="$(echo "$ids" | sed -n 1p | cut -d' ' -f1)"
-vault="$(echo "$ids" | sed -n 2p | cut -d' ' -f1)"
+id_of() { echo "$ids" | sed -n "${1}p" | cut -d' ' -f1; }
+sha_of() { sha256sum "$1" | cut -d' ' -f1; }
+
 status=0
-if [ "$kernel" = "$(tr -d '[:space:]' < "$root/px/kernel.id")" ]; then
-  echo "kernel: reproduced (matches px/kernel.id)"
-else
-  echo "kernel: MISMATCH with px/kernel.id"; status=1
-fi
-if [ "$vault" = "$(tr -d '[:space:]' < "$root/px/vault.id")" ]; then
-  echo "vault: reproduced (matches px/vault.id)"
-else
-  echo "vault: MISMATCH with px/vault.id"; status=1
-fi
+check() {
+  local name="$1" rebuilt_id="$2" committed_id="$3" rebuilt="$4" committed="$5" pinned
+  pinned="$(tr -d '[:space:]' < "$root/px/$name.id")"
+  if [ "$rebuilt_id" = "$pinned" ]; then
+    echo "$name: rebuilt id reproduced (matches px/$name.id)"
+  else
+    echo "$name: rebuilt id MISMATCH with px/$name.id"; status=1
+  fi
+  if [ "$committed_id" != "$pinned" ]; then
+    echo "$name: committed px/$name.elf id MISMATCH with px/$name.id"; status=1
+  fi
+  local a b
+  a="$(sha_of "$rebuilt")"
+  b="$(sha_of "$committed")"
+  echo "$name: sha256 rebuilt $a"
+  echo "$name: sha256 px/$name.elf $b"
+  if [ "$a" = "$b" ]; then
+    echo "$name: rebuilt ELF byte-identical to px/$name.elf"
+  else
+    echo "$name: rebuilt ELF bytes DIFFER from px/$name.elf"; status=1
+  fi
+}
+check kernel "$(id_of 1)" "$(id_of 3)" "$GUEST_OUT/guest-kernel" "$root/px/kernel.elf"
+check vault "$(id_of 2)" "$(id_of 4)" "$GUEST_OUT/guest-vault" "$root/px/vault.elf"
 exit $status

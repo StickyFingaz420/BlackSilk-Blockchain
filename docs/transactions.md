@@ -1,7 +1,9 @@
 # BlackSilk Transaction Specification
 
 Status: **v1, implemented** by `blacksilk-crypto` (`crypto/`) and `blacksilk-tx` (`tx/`).
-Not yet externally reviewed (§15). This document is normative: wallets, nodes and miners
+Not externally reviewed; no external review is engaged or planned (owner decision
+2026-09-25, reviews/review-status.md; §15). The PX transaction kinds 2 and 3 are
+specified in [`px.md`](px.md) §11. This document is normative: wallets, nodes and miners
 must follow exactly these rules. Where this document and the code disagree, that is a bug.
 
 Scope:
@@ -17,7 +19,8 @@ Out of scope, and specified separately:
 - header chain: [`consensus.md`](consensus.md)
 - emission schedule, block reward, block weight limit, fee constants: [`blocks.md`](blocks.md)
 - wallet seed words, address strings, wallet file: [`blocks.md`](blocks.md) §10
-- transaction relay (Dandelion++, Tor/I2P): P2P spec, pending
+- transaction relay (Dandelion++, outbound Tor through SOCKS5; I2P is not supported):
+  [`p2p.md`](p2p.md)
 
 Design basis: the Monero RingCT stack as deployed since 2022 (CLSAG, Bulletproofs+,
 view tags), with a small number of deliberate changes. Each change is marked
@@ -32,8 +35,11 @@ All integers are unsigned and little-endian unless stated otherwise.
 ### 1.1 Group: Ristretto255 [Δ Monero]
 
 All public keys, key images and commitments are elements of the **Ristretto255** group
-(RFC 9496), built on Curve25519. Implementation: `curve25519-dalek` 4.x (pure Rust, no
-`unsafe` in our code, audited by Quarkslab in 2019).
+(RFC 9496), built on Curve25519. Implementation: `curve25519-dalek` 4.1.3 (pure Rust;
+no `unsafe` in our code, though the crate itself uses some). A 2019 third-party audit
+of the dalek libraries is reported elsewhere (reviews/reviewer-candidates.md); the
+crate's README does not mention one and we have not verified it, so no audit of this
+dependency is claimed (reviews/dependency-review.md §2).
 
 - `ℓ = 2^252 + 27742317777372353535851937790883648493`: the prime group order.
 - `G`: the Ristretto255 base point.
@@ -427,7 +433,7 @@ ring_bytes = P[0] ‖ … ‖ P[15] ‖ Cr[0] ‖ … ‖ Cr[15]
 μC  = Hs("clsag/agg-C", ring_bytes ‖ I ‖ D ‖ C')
 W   = μP·I + μC·D               aggregated key image
 
-α ← hedged nonce (§10)
+α ← hedged nonce (§10; stream bound to the whole transcript, see "CLSAG nonces" there)
 c[π+1] = Hs("clsag/round", ring_bytes ‖ C' ‖ m ‖ α·G ‖ α·Hπ)
 for i = π+1, …, π−1 (mod 16):
     s[i] ← hedged random scalar
@@ -448,8 +454,10 @@ The signature is valid iff the final `c[16]` equals `c0`.
 
 Chung, Han, Ju, Kim, Seo, *"Bulletproofs+: Shorter Proofs for a Privacy-Enhanced
 Distributed Ledger"*, IACR ePrint 2020/735, aggregated range proof (§4 and Fig. 3,
-weighted inner-product argument of Fig. 1). Monero has used BP+ since 2022 (v15). It was
-audited by Cypher Stack (Feickert, 2022).
+weighted inner-product argument of Fig. 1). Monero has used BP+ since 2022 (v15);
+Monero's design was reviewed by Cypher Stack (Feickert, 2022), as reported by the
+Monero project and not verified by us. That review does not cover this
+implementation, which no one outside the project has reviewed.
 
 **Statement:** for the output commitments `V_0..V_{k−1}` (the `Cm_j`), each commits to an
 amount in `[0, 2^64)`.
@@ -560,6 +568,16 @@ min_fee(w)  = w · FEE_PER_WEIGHT                                  (constant: ec
 - A transaction that conflicts with the mempool on any key image is rejected (first seen
   wins; no replace-by-fee in v1).
 - Transactions must pass T1–T11 and C1–C4 against `best height + 1`.
+- Order: every stateless rule (T1–T11, including the range proof T10, and the PX
+  structure rules) runs before any contextual rule (C1–C4, PX1–PX4); the PX proof
+  (PX5) runs last. A transaction that breaks a stateless rule therefore always gets
+  a stateless error, which is what peer scoring penalizes (p2p.md §10), and costs no
+  chain lookup. A PX transaction repeating a one-time key between its hidden outputs
+  and payouts, or with two equal nullifiers, gets a stateless error
+  (`PxDuplicateOutputKey`, `PxNullifierRepeated`); such a transaction also fails C4
+  or PX2 on every chain. The order and these variants decide only which error an
+  invalid transaction gets, never whether a transaction or block is valid. The
+  classification of every error is documented on `TxError::is_stateless`.
 - On reorg, disconnected transactions return to the mempool if still valid.
 
 ---
@@ -583,8 +601,8 @@ Security relies on the following. Nothing else is assumed.
 
 ## 10. Randomness and secret handling (implementation requirements)
 
-- **Hedged randomness.** Every secret random value (anchor, pseudo-output masks, CLSAG `α`
-  and `s[i]`, BP+ blinding values) comes from a hedged stream:
+- **Hedged randomness.** The secret random values listed in the table below come from a
+  hedged stream:
 
   ```
   seed    = H64("nonce", LE64(#secrets) ‖ (LE64(len) ‖ secret)… ‖
@@ -592,18 +610,89 @@ Security relies on the following. Nothing else is assumed.
   value_i = H64("nonce/stream", seed ‖ LE64(i))      (reduced mod ℓ for scalars)
   ```
 
-  The secrets are the spend key (transfers, anchors), `p` and `z` (CLSAG), or the amounts
-  and masks (BP+). The context contains the input context or signed message, the ring and
-  commitments, and a purpose label.
+  The context starts with a purpose label and then lists the inputs of the statement
+  being signed, proved or built. Variable-length lists are preceded by their count.
   - If the OS RNG is good, values are uniformly random.
-  - If it is broken, values are still unpredictable to anyone without the secret key, and
-    never repeat for different messages.
+  - If it is broken, values are still unpredictable to anyone without the secret, and
+    they differ for two statements that differ in anything the context binds. For an
+    identical statement they repeat (a deterministic rebuild), which is safe.
   - Nonce reuse, which leaks the spend key in Schnorr-type signatures, is therefore
-    excluded.
+    excluded wherever the context binds the full statement (all rows marked "full").
+
+  | Values | Secrets | Context (after the label) | Bound |
+  |---|---|---|---|
+  | CLSAG `α`, `s[i]` | `p`, `z` | see below (`clsag/nonce/v2`) | full |
+  | BP+ blinding values | every amount ‖ mask | `"bp+"`, every commitment | full (statement = f(witness)) |
+  | Schnorr nonce | `k` | `"schnorr"`, tag, `K`, `m` | full |
+  | Transfer anchors, pseudo-output masks | spend key `k_s` | `transfer/v2`: network id, `H(key images)`, fee, each ring (members in global-index order: `LE64(index) ‖ O ‖ C`), each payment (address ‖ `LE64(amount)`), change address ‖ `LE64(change)`, caller payload (a deploy's salt and programs) | full |
+  | Coinbase anchors | miner-supplied secret | `coinbase/v2`: `ctx(height)`, each payout (address ‖ `LE64(amount)`) | full, but see R2-C4 below |
+  | PX payout and change anchors, pseudo-output masks | PX hedge secret (required), plus `k_s` with v1 inputs | `px/v2`: network id, `ctx` (nullifiers and key images), fee, bridge-in, bridge-out, both output commitments, each ring, each payout, change address ‖ `LE64(change)` | full |
+  | PX delivery `r` and ML-KEM coins `m` | sender's PX hedge secret (required; `seal` refuses an empty or all-zero one) | `px/delivery/hedge/v1`: recipient owner tag, `V`, the whole `ek`, `cm`, contract, `LE64(value)`, data, `rcm`, `rho` (which fixes the output index) | full |
+  | PX throwaway delivery key (empty slot) | PX hedge secret | `px/throwaway/v1`: the slot's commitment, `LE64(slot)` | full |
+  | Membership (bLSAG) nonce | `x` | `"membership"`, `m`, `B`, `P[π]` | **not full** (R2-C5) |
+
+  The PX hedge secret is `blacksilk_px::wallet::Account::hedge_secret` (the PX spend secret
+  `sk`) in the wallet. `build_px` refuses an all-zero one (`PxBuildError::NoHedgeSecret`);
+  before 2026-09-27 it silently hedged with 32 zero bytes when there were no v1 inputs
+  (R2-C3), and delivery used the raw RNG (R2-C2). The old transfer context was only
+  `"transfer" ‖ H(key images)` (R2-C1): a rebuild over the same inputs with another amount,
+  recipient or fee reused anchors and pseudo-output masks under a broken RNG, which leaked
+  amount deltas. Test: `broken_rng_transfers_over_the_same_inputs_share_no_output_secrets`
+  (tx/tests/privacy.rs); delivery tests `broken_rng_*` in px/src/delivery.rs. All of this is
+  wallet-side: validators check none of these derivations, and no encoding changes.
+
+  **Not hedged (known, accepted or open):**
+  - *Coinbase secret (R2-C4, accepted limitation).* The miner draws its hedge secret once
+    per process from the OS RNG, the same source as the stream's fresh bytes. If the OS
+    RNG fails, both fail, and coinbase outputs become linkable to a known payout address.
+  - *Membership nonce (R2-C5).* The context lacks the ring and the tag; with a constant RNG
+    two signatures over different rings leak `x`. Unreachable today (contracts are not
+    integrated); must be fixed before any integration.
+  - *PX witness randomness.* Output `rcm`, dummy inputs (key, `rho`, `rcm`, path) and
+    empty-slot owners (`blacksilk_px::wallet::{output, dummy_input, empty_output}`) come
+    from the caller's RNG directly. Under a broken RNG they are predictable, which could
+    let an observer recognise dummy inputs or empty slots, or test guesses of a record's
+    contents against `cm`. Open item.
+  - *Other RNG uses* are outside this table: decoy selection (not secret, but predictable
+    under a broken RNG), key and seed generation, the wallet file's salt and nonce, and the
+    STARK prover's randomness (derived with a witness digest; reviewed separately).
+- **CLSAG nonces (§6.1).** `α` is the first value of the stream and the simulated
+  responses `s[i]` are the following ones, in ring order from `π+1`. The stream is:
+
+  ```
+  secrets = [ p, z ]                                   (32-byte canonical scalars)
+  context = [ "clsag/nonce/v2", m, C', I, D, LE64(π),
+              P[0] ‖ … ‖ P[15], Cr[0] ‖ … ‖ Cr[15] ]
+  ```
+
+  So any change of the signed statement (a ring member `P[i]` or `Cr[i]`, ring order,
+  `C'`, `I`, `D`, `m` or `π`) changes every nonce, even with a constant RNG. The label
+  separates this stream from every other use of the hedge.
+
+  *Change of 2026-09-27 (internal review round 5, finding F2, low severity, defence in
+  depth).* The previous context was `["clsag", m, C', P[π]]`: it did not contain the
+  decoys. After a reorg the same transaction (same global indices, so the same `m`) can be
+  re-signed over a ring whose decoys resolve to different outputs. With a completely
+  broken RNG this reused `α` while `μP`, `μC` and `c[π]` changed. Each such pair gives one
+  linear equation `s₁[π] − s₂[π] = (c₂μP₂ − c₁μP₁)·p + (c₂μC₂ − c₁μC₁)·z`, so three
+  signatures reveal `p` from public data (the regression test
+  `pre_f2_derivation_leaks_the_spend_key_and_fix_prevents_it` performs this recovery on
+  the old derivation). The change is wallet-side only: the verifier, the signature
+  format, key images and all hash tags used in verification are unchanged, so every
+  signature valid before is valid now and vice versa. With a good RNG the output is still
+  uniform: adding public context to the hashed input cannot remove the 32 fresh CSPRNG
+  bytes' entropy (the hash is modelled as a random oracle on the whole input). `π` is in
+  the context but never leaves the hash. The test `nonce_and_signature_test_vector` pins
+  the derivation.
 - **No other randomness sources:** no `rand::thread_rng` seeded from time, no fixed seeds
   outside tests, no `SmallRng` in any code path. The crypto crates take the RNG as an
   explicit `CryptoRng + RngCore` parameter. Tests use a seeded ChaCha20 RNG.
-- Secret scalars and keys are zeroized on drop (`zeroize`). Secret-dependent operations
+- Secret scalars and keys are zeroized on drop or after use (`zeroize`), **best effort**:
+  `Scalar` is `Copy`, so copies made by arithmetic are not tracked. The builder wipes its
+  output masks, mask sums, pseudo-output masks and one-time secrets; the BP+ prover wipes
+  its final-round nonces `r_`, `s_`, `δ`, `η` and the folded witness `a0`, `b0`. The
+  `Debug` output of `CreatedOutput`, `ReceivedOutput` and `SpendableOutput` redacts the
+  mask and output-key offset. Secret-dependent operations
   use constant-time dalek arithmetic. Variable-time multi-scalar multiplication is used
   **only on public data** (verification).
 - The consensus crates contain no `unsafe` (`#![forbid(unsafe_code)]`), no FFI and no C.
@@ -632,7 +721,8 @@ Security relies on the following. Nothing else is assumed.
   who can compute `I`; everyone else sees an unlinkable tag.
 - Coinbase amounts and the miner's one-time keys. The miner's address is not public.
 - The network origin of a transaction, unless the P2P layer hides it (Dandelion++, and
-  Tor/I2P; P2P spec).
+  a node running over Tor; p2p.md). I2P is not supported. The wallet itself has no Tor
+  or TLS support and talks plaintext HTTP to its node, so it should use its own node.
 
 ### 11.3 Known deanonymization techniques and mitigations
 
@@ -645,7 +735,7 @@ Security relies on the following. Nothing else is assumed.
 | Wallet fingerprinting via `extra`, `unlock_time`, payment IDs, output order, extra tx keys | Removed by format (§4.1, §5.2, §2.2). |
 | Fee fingerprinting | Wallets must pay the *standard fee* `min_fee(max_weight(n_in, n_out))` (`tx::builder::standard_fee`), so equal shapes pay equal fees. Not consensus. |
 | Input/output count fingerprinting | Wallets should default to 2 outputs; consolidation transactions remain visible. |
-| Timing and IP correlation | P2P layer (Dandelion++, Tor/I2P). Out of scope here. |
+| Timing and IP correlation | P2P layer (Dandelion++; outbound Tor for the node; no I2P). Out of scope here. |
 
 ### 11.4 Janus attack (subaddress linking) [Δ Monero]
 
@@ -867,8 +957,8 @@ voids Theorem 1.
 - It does not stop linkage through other channels: amounts, timing, IP addresses, or
   asking the victim.
 - The construction and the analysis above are BlackSilk's own. They follow the idea of
-  the Jamtis "Janus anchor" proposed for Monero, but have **not been peer-reviewed**. They
-  are listed for external review (§15).
+  the Jamtis "Janus anchor" proposed for Monero, but have **not been peer-reviewed**.
+  They would be a first item if an external reviewer were engaged (§15).
 
 ---
 
@@ -895,7 +985,7 @@ voids Theorem 1.
 | Referencing unconfirmed or very recent outputs | Spendable age of 10, coinbase maturity 60 (§5.3). |
 | Weak Fiat–Shamir in range proofs | The transcript absorbs the statement and all prover messages (§7). |
 | Cross-network replay | `network_id` in `sig_message`. |
-| Verification DoS | Bounded sizes (T1, T3, ring = 16). Cheap checks run first. A transaction's verification cost is bounded by about 64 CLSAGs and one BP+ with `N ≤ 1024`. Peers relaying invalid transactions are penalized (P2P spec). |
+| Verification DoS | Bounded sizes (T1, T3, ring = 16). Cheap checks run first. A transaction's verification cost is bounded by about 64 CLSAGs and one BP+ with `N ≤ 1024`. Peers relaying **stateless-invalid** transactions (§8.1) are penalized (p2p.md §10). Signature checks are contextual (they need the ring members from the chain), so relays of transactions with invalid signatures are **not** penalized: an open defect (N-11, docs/reviews/completion-readiness-2026-09-26.md). |
 | Arithmetic overflow in fees, indices, amounts | Checked arithmetic in decoding and summation (T5, T8, B3). |
 | Tx-hash collision between coinbases | `height` is in the coinbase prefix. |
 
@@ -933,12 +1023,15 @@ Each part in bytes:
 
 ## 15. Known limitations and open items
 
-- **No external audit yet.** CLSAG and BP+ are implemented from the papers and from
-  Monero's audited design, in pure Rust. Because of Δ1 no official test vectors exist. The
-  test plan (§16) compensates with adversarial and property testing, but it does not
-  replace an external cryptographic review before mainnet.
-- **The Janus anchor (Δ4)** is our construction. Its analysis (§12.4) needs external
-  review.
+- **No external audit.** CLSAG and BP+ are implemented from the papers and from
+  Monero's design (externally reviewed for Monero, as reported by that project; not
+  this implementation), in pure Rust. Because of Δ1 no official test vectors exist.
+  The test plan (§16) compensates with adversarial and property testing, which is not
+  a substitute for a cryptographic review. By the owner's decision of 2026-09-25, no
+  external review is engaged or currently required (reviews/review-status.md); this
+  layer would be an item if a reviewer were engaged.
+- **The Janus anchor (Δ4)** is our construction. Its analysis (§12.4) has been
+  reviewed only internally.
 - **Decoy selection** (wallet policy, `tx/src/decoy.rs`) uses Monero's gamma parameters,
   which were fitted to Monero's spend-age data. BlackSilk has no spend data of its own yet.
 - **Economics constants** are fixed for v1 in [`blocks.md`](blocks.md) §2 and §5:
@@ -984,8 +1077,9 @@ Each part in bytes:
    - Signature-coverage test: flipping any single prefix, base or BP+ byte invalidates
      the transaction.
 6. **Property tests** over random wallets, amounts and ring positions. These are seeded
-   randomized loops, not `proptest`: its default features need `getrandom`, which does
-   not build on the current audit toolchain (AUDIT.md Phase 1).
+   randomized loops, not `proptest`. (The original reason, that `getrandom` did not
+   build on the GNU toolchain, was resolved in R4 by moving to MSVC, AUDIT.md Phase 1;
+   the seeded loops were kept.)
 7. **Integration** with `blacksilk-consensus`: blocks whose `tx_root` commits to real
    transactions, a reorg deeper than 10 returning transactions to the mempool, and
    coinbase maturity.

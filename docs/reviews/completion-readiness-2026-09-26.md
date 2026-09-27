@@ -1,5 +1,10 @@
 # BlackSilk Development Completion & Testnet Readiness Report
 
+> **Snapshot of `5e667bd`; several P0 items were addressed afterwards — see AUDIT.md
+> R14.** (Banner added 2026-09-27. The hardening round from `7826289` onward changed
+> P2P, storage, the mempool, reproducibility and the RandomX evidence; the text below
+> is unchanged and describes the state at `5e667bd`.)
+
 **Date:** 2026-09-26. **Commit reviewed:** `5e667bd` (branch `rebuild/core`).
 
 **Status of this report:** internal work only.

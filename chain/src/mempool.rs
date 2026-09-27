@@ -45,8 +45,9 @@ pub const COINBASE_RESERVE: u64 = 3_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MempoolError {
     AlreadyKnown,
-    /// A key image, PX nullifier or contract id is already used by another
-    /// pooled transaction (first seen wins).
+    /// A key image, PX nullifier, contract id or output one-time key is
+    /// already used by another pooled transaction (first seen wins, whatever
+    /// the fee: there is no replacement).
     Conflict,
     Coinbase,
     Invalid(TxError),
@@ -101,8 +102,13 @@ fn class_of(tx: &Transaction) -> Class {
 }
 
 /// The conflict keys of a transaction: what it spends or registers (key
-/// images, nullifiers, a contract id) and the one-time keys of every output it
-/// creates, including PX payouts, deploy outputs and coinbase outputs.
+/// images, PX nullifiers, a deploy's contract id) and the one-time key of every
+/// output it adds to the global output set (hidden PX outputs and payouts,
+/// deploy outputs and coinbase outputs included).
+///
+/// Output keys come from [`Transaction::output_keys`], the list block
+/// validation checks rule C4 on (`validate_block_transactions_cached`), so the
+/// pool cannot cover fewer outputs than consensus does.
 pub fn conflict_keys(tx: &Transaction) -> Vec<ConflictKey> {
     use ConflictKind::*;
     let mut keys: Vec<ConflictKey> = tx
@@ -110,22 +116,18 @@ pub fn conflict_keys(tx: &Transaction) -> Vec<ConflictKey> {
         .iter()
         .map(|k| (KeyImage, *k.bytes()))
         .collect();
-    let outputs: Vec<[u8; 32]> = match tx {
-        Transaction::Coinbase(c) => c.outputs.iter().map(|o| *o.one_time_key.bytes()).collect(),
-        Transaction::Transfer(t) => t.outputs.iter().map(|o| *o.one_time_key.bytes()).collect(),
+    match tx {
         Transaction::Px(t) => {
             keys.extend(t.nullifiers.iter().map(|n| (Nullifier, digest_bytes(n))));
-            t.output_keys()
-                .iter()
-                .map(|k| *k.one_time_key.bytes())
-                .collect()
         }
-        Transaction::PxDeploy(t) => {
-            keys.push((ContractId, digest_bytes(&t.contract_id())));
-            t.outputs.iter().map(|o| *o.one_time_key.bytes()).collect()
-        }
-    };
-    keys.extend(outputs.into_iter().map(|k| (OutputKey, k)));
+        Transaction::PxDeploy(t) => keys.push((ContractId, digest_bytes(&t.contract_id()))),
+        Transaction::Coinbase(_) | Transaction::Transfer(_) => {}
+    }
+    keys.extend(
+        tx.output_keys()
+            .iter()
+            .map(|k| (OutputKey, *k.one_time_key.bytes())),
+    );
     keys
 }
 
@@ -605,5 +607,485 @@ mod tests {
         assert!(!m.contains(&b));
         assert_eq!(m.bytes(), 0);
         assert!(m.keys.is_empty());
+    }
+
+    // ------------------------------------------------ output one-time keys (F1)
+    //
+    // Synthetic transactions: only their conflict keys, fee and size matter to
+    // the pool. Validation (signatures, proofs, rule C4 against the chain) is
+    // exercised with real transactions in chain/tests/mempool_conflicts.rs.
+
+    use blacksilk_crypto::bulletproofs_plus::BppProof;
+    use blacksilk_crypto::clsag::{Clsag, RING_SIZE};
+    use blacksilk_crypto::{Point, RistrettoPoint, Scalar};
+    use blacksilk_tx::px::PxDeploy;
+    use blacksilk_tx::types::{Coinbase, CoinbaseOutput, Input, Output, Transfer};
+    use rand_chacha::rand_core::{RngCore, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
+    use std::collections::{HashMap, HashSet};
+
+    /// A valid, non-identity group element numbered `n`: `(n + 1)·G`.
+    fn pt(n: u64) -> Point {
+        Point::from_point(RistrettoPoint::mul_base(&Scalar::from(n + 1)))
+    }
+
+    fn output(k: u64) -> Output {
+        Output {
+            one_time_key: pt(k),
+            ephemeral: pt(1_000_000),
+            view_tag: 0,
+            commitment: pt(1_000_001),
+            enc_amount: [0; 8],
+            enc_anchor: [0; 16],
+        }
+    }
+
+    fn payout(k: u64) -> CoinbaseOutput {
+        CoinbaseOutput {
+            one_time_key: pt(k),
+            ephemeral: pt(1_000_000),
+            view_tag: 0,
+            amount: 1,
+            enc_anchor: [0; 16],
+        }
+    }
+
+    fn input(key_image: u64) -> Input {
+        Input {
+            key_image: pt(key_image),
+            ring: [0; RING_SIZE],
+        }
+    }
+
+    fn bpp() -> BppProof {
+        BppProof {
+            a: pt(7),
+            a1: pt(7),
+            b: pt(7),
+            r1: Scalar::ZERO,
+            s1: Scalar::ZERO,
+            d1: Scalar::ZERO,
+            l: vec![],
+            r: vec![],
+        }
+    }
+
+    fn clsag() -> Clsag {
+        Clsag {
+            c0: Scalar::ZERO,
+            s: [Scalar::ZERO; RING_SIZE],
+            d: pt(7),
+        }
+    }
+
+    /// A synthetic v1 transfer spending key images `images` and creating
+    /// outputs with one-time keys `outs`.
+    fn transfer(images: &[u64], outs: &[u64], fee: u64) -> Transaction {
+        Transaction::from(Transfer {
+            inputs: images.iter().map(|&k| input(k)).collect(),
+            outputs: outs.iter().map(|&k| output(k)).collect(),
+            fee,
+            pseudo_outs: images.iter().map(|_| pt(9)).collect(),
+            range_proof: bpp(),
+            signatures: images.iter().map(|_| clsag()).collect(),
+        })
+    }
+
+    /// `px(n, ..)` with hidden outputs `outs` and payouts `payouts`.
+    fn px_out(n: u32, outs: &[u64], payouts: &[u64], fee: u64) -> Transaction {
+        let mut tx = px(n, 100, fee, 0, 0);
+        if let Transaction::Px(t) = &mut tx {
+            t.outputs = outs.iter().map(|&k| output(k)).collect();
+            t.payouts = payouts.iter().map(|&k| payout(k)).collect();
+        }
+        tx
+    }
+
+    fn deploy(image: u64, outs: &[u64], salt: u8, fee: u64) -> Transaction {
+        Transaction::PxDeploy(Box::new(PxDeploy {
+            inputs: vec![input(image)],
+            outputs: outs.iter().map(|&k| output(k)).collect(),
+            fee,
+            salt: [salt; 32],
+            programs: vec![],
+            pseudo_outs: vec![pt(9)],
+            range_proof: bpp(),
+            signatures: vec![clsag()],
+        }))
+    }
+
+    fn coinbase(outs: &[u64]) -> Transaction {
+        Transaction::from(Coinbase {
+            height: 1,
+            outputs: outs.iter().map(|&k| payout(k)).collect(),
+        })
+    }
+
+    /// The pool's invariants: every entry's keys are its conflict keys; no two
+    /// entries share one; the key map holds exactly the entries' keys; the
+    /// byte counts are the sums of the entry sizes.
+    fn assert_invariants(m: &Mempool) {
+        let mut owner: HashMap<ConflictKey, Hash> = HashMap::new();
+        let mut bytes = [0usize; 2];
+        for (id, e) in &m.entries {
+            assert_eq!(e.keys, conflict_keys(&e.tx));
+            assert_eq!(*id, e.tx.hash());
+            for k in &e.keys {
+                if let Some(other) = owner.insert(*k, *id) {
+                    assert_eq!(other, *id, "two pooled transactions share {k:?}");
+                }
+            }
+            bytes[Mempool::slot(e.class)] += e.size;
+        }
+        assert_eq!(m.bytes, bytes);
+        assert_eq!(m.bytes(), bytes[0] + bytes[1]);
+        assert_eq!(m.keys, owner, "key map = keys of the pooled entries");
+    }
+
+    /// No two selected transactions share a conflict key.
+    fn assert_disjoint(txs: &[Transaction]) {
+        let mut seen = HashSet::new();
+        for tx in txs {
+            for k in conflict_keys(tx) {
+                assert!(seen.insert(k), "template shares {k:?}");
+            }
+        }
+    }
+
+    /// The conflict keys before the F1 fix: no output one-time keys.
+    fn legacy_conflict_keys(tx: &Transaction) -> Vec<ConflictKey> {
+        conflict_keys(tx)
+            .into_iter()
+            .filter(|(kind, _)| *kind != ConflictKind::OutputKey)
+            .collect()
+    }
+
+    /// Output keys of every kind of transaction are conflict keys: transfer
+    /// outputs, PX hidden outputs and payouts, deploy outputs, coinbase
+    /// outputs; the same list consensus checks C4 on.
+    #[test]
+    fn every_output_one_time_key_is_a_conflict_key() {
+        let out_keys = |tx: &Transaction| -> Vec<[u8; 32]> {
+            conflict_keys(tx)
+                .into_iter()
+                .filter(|(k, _)| *k == ConflictKind::OutputKey)
+                .map(|(_, b)| b)
+                .collect()
+        };
+        for tx in [
+            transfer(&[1], &[10, 11], 5),
+            px_out(1, &[10], &[11], 5),
+            deploy(1, &[10, 11], 0, 5),
+            coinbase(&[10, 11]),
+        ] {
+            let consensus: Vec<[u8; 32]> = tx
+                .output_keys()
+                .iter()
+                .map(|k| *k.one_time_key.bytes())
+                .collect();
+            assert_eq!(out_keys(&tx), consensus);
+            assert_eq!(consensus, vec![*pt(10).bytes(), *pt(11).bytes()]);
+        }
+        let d = deploy(3, &[10, 11], 0, 5);
+        assert!(conflict_keys(&d).contains(&(ConflictKind::KeyImage, *pt(3).bytes())));
+        assert!(conflict_keys(&d)
+            .iter()
+            .any(|(k, _)| *k == ConflictKind::ContractId));
+    }
+
+    /// Two transactions sharing only an output one-time key conflict, in
+    /// every combination of kinds, whatever the fee; first seen wins.
+    #[test]
+    fn a_shared_output_key_is_a_conflict_across_all_kinds() {
+        type Maker = fn(u64, u64) -> Transaction;
+        let makers: [(&str, Maker); 4] = [
+            ("transfer", |salt, k| {
+                transfer(&[100 + salt], &[k, 500 + salt], 10)
+            }),
+            ("px output", |salt, k| {
+                px_out(salt as u32 * 2 + 1_000, &[k], &[], 10)
+            }),
+            ("px payout", |salt, k| {
+                px_out(salt as u32 * 2 + 2_000, &[], &[k], 10)
+            }),
+            ("deploy", |salt, k| {
+                deploy(200 + salt, &[k, 600 + salt], salt as u8, 10)
+            }),
+        ];
+        for (a_name, a) in &makers {
+            for (b_name, b) in &makers {
+                let mut m = Mempool::new();
+                let first = a(1, 42);
+                let first_id = add(&mut m, first).unwrap();
+                let mut second = b(2, 42);
+                // A far higher fee does not replace the first.
+                match &mut second {
+                    Transaction::Transfer(t) => t.fee = u64::MAX / 4,
+                    Transaction::Px(t) => t.fee = u64::MAX / 4,
+                    Transaction::PxDeploy(t) => t.fee = u64::MAX / 4,
+                    Transaction::Coinbase(_) => unreachable!(),
+                }
+                assert_eq!(
+                    add(&mut m, second),
+                    Err(MempoolError::Conflict),
+                    "{a_name} then {b_name}"
+                );
+                assert_eq!(m.len(), 1);
+                assert!(m.contains(&first_id));
+                // Without the shared key, the same kind of transaction is admitted.
+                add(&mut m, b(2, 43)).unwrap();
+                assert_invariants(&m);
+            }
+        }
+    }
+
+    /// Namespaces: an output one-time key with the same bytes as another
+    /// pooled transaction's key image (or a nullifier digest, or a contract
+    /// id) does not conflict with it. Consensus keeps key images and one-time
+    /// keys in separate sets too.
+    #[test]
+    fn equal_bytes_in_different_namespaces_do_not_conflict() {
+        let mut m = Mempool::new();
+        // Key image pt(5); then transactions whose output key is pt(5) (a
+        // transfer) and pt(6), the key image of a pooled deploy (a PX payout).
+        add(&mut m, transfer(&[5], &[10, 11], 10)).unwrap();
+        add(&mut m, deploy(6, &[12, 13], 0, 10)).unwrap();
+        add(&mut m, transfer(&[7], &[5, 14], 10)).unwrap();
+        add(&mut m, px_out(40, &[], &[6], 10)).unwrap();
+        assert!(m
+            .keys
+            .contains_key(&(ConflictKind::KeyImage, *pt(5).bytes())));
+        assert!(m
+            .keys
+            .contains_key(&(ConflictKind::OutputKey, *pt(5).bytes())));
+        assert_eq!(m.len(), 4);
+        assert_invariants(&m);
+        assert_eq!(m.select(u64::MAX, 0).len(), 4);
+        // ...while the same kind conflicts.
+        assert_eq!(
+            add(&mut m, transfer(&[5], &[30, 31], 10)),
+            Err(MempoolError::Conflict),
+            "key image vs key image"
+        );
+        assert_eq!(
+            add(&mut m, transfer(&[8], &[5, 32], 10)),
+            Err(MempoolError::Conflict),
+            "output key vs output key"
+        );
+    }
+
+    /// Before the fix (conflict keys without output keys) two transactions
+    /// sharing an output key were both pooled and both selected: every
+    /// template, and every block built from it, broke C4. With the fix the
+    /// second is refused.
+    #[test]
+    fn without_output_keys_both_would_be_pooled_and_selected() {
+        let a = transfer(&[1], &[42, 50], 10);
+        let b = transfer(&[2], &[42, 51], 10);
+        let mut old = Mempool::new();
+        for tx in [a.clone(), b.clone()] {
+            let keys = legacy_conflict_keys(&tx);
+            assert!(!keys.iter().any(|k| old.keys.contains_key(k)));
+            old.insert(tx.hash(), tx, keys).unwrap();
+        }
+        let sel = old.select(u64::MAX, 0);
+        assert_eq!(sel.len(), 2, "the old pool selected both");
+        let shared: HashSet<_> = sel[0]
+            .output_keys()
+            .iter()
+            .map(|k| k.one_time_key)
+            .collect();
+        assert!(
+            sel[1]
+                .output_keys()
+                .iter()
+                .any(|k| shared.contains(&k.one_time_key)),
+            "a block holding both violates C4"
+        );
+
+        let mut new = Mempool::new();
+        add(&mut new, a).unwrap();
+        assert_eq!(add(&mut new, b), Err(MempoolError::Conflict));
+    }
+
+    /// Defence in depth: if the invariant is broken (both inserted past
+    /// `precheck`), `select` still returns only one of a conflicting pair, the
+    /// better-paying one (then the first seen), in every template.
+    #[test]
+    fn select_skips_a_conflicting_entry_when_the_invariant_is_broken() {
+        for (fee_a, fee_b, winner) in [(10, 10, 0), (10, 99, 1), (99, 10, 0)] {
+            let a = transfer(&[1], &[42, 50], fee_a);
+            let b = transfer(&[2], &[42, 51], fee_b);
+            let other = transfer(&[3], &[60, 61], 5);
+            let mut m = Mempool::new();
+            for tx in [a.clone(), b.clone(), other.clone()] {
+                let keys = conflict_keys(&tx);
+                m.insert(tx.hash(), tx, keys).unwrap();
+            }
+            let sel = m.select(u64::MAX, 0);
+            assert_disjoint(&sel);
+            let ids: Vec<Hash> = sel.iter().map(Transaction::hash).collect();
+            assert_eq!(sel.len(), 2, "one of the pair and the unrelated one");
+            assert!(ids.contains(&other.hash()));
+            let expected = if winner == 0 { a.hash() } else { b.hash() };
+            assert!(ids.contains(&expected), "fees {fee_a}/{fee_b}");
+        }
+    }
+
+    /// A connected block removes every pooled transaction sharing an output
+    /// key with it, the coinbase's outputs included.
+    #[test]
+    fn a_block_output_key_evicts_the_pooled_transaction_holding_it() {
+        let mut m = Mempool::new();
+        let t = add(&mut m, transfer(&[1], &[42, 50], 10)).unwrap();
+        let p = add(&mut m, px_out(3, &[], &[43], 10)).unwrap();
+        let d = add(&mut m, deploy(4, &[44, 51], 0, 10)).unwrap();
+        let keep = add(&mut m, transfer(&[2], &[60, 61], 10)).unwrap();
+        // The coinbase reuses the transfer's key, a block transfer the PX
+        // payout's, a block PX the deploy's.
+        m.remove_block(&[
+            coinbase(&[42, 90]),
+            transfer(&[20], &[43, 91], 1),
+            px_out(500, &[44], &[], 1),
+        ]);
+        assert!(!m.contains(&t) && !m.contains(&p) && !m.contains(&d));
+        assert!(m.contains(&keep));
+        assert_invariants(&m);
+    }
+
+    /// Eviction for room never admits a conflicting transaction: the conflict
+    /// check comes first, whatever the fee.
+    #[test]
+    fn a_full_pool_does_not_evict_for_a_conflicting_transaction() {
+        let mut m = Mempool::new();
+        let size = 1024 * 1024;
+        fill(&mut m, 0, size, 1);
+        let victim = add(&mut m, px_out(3_000_001, &[], &[42], 1)).unwrap();
+        let before: Vec<Hash> = m.entries.keys().copied().collect();
+        let mut rich = px_out(3_000_003, &[], &[42], u64::MAX / 4);
+        if let Transaction::Px(t) = &mut rich {
+            t.proof = vec![1; size];
+        }
+        assert_eq!(add(&mut m, rich), Err(MempoolError::Conflict));
+        assert!(m.contains(&victim));
+        assert!(before.iter().all(|id| m.contains(id)), "nothing evicted");
+        assert_invariants(&m);
+    }
+
+    /// A random synthetic transaction drawn from a small key space, so that
+    /// conflicts (and equal bytes across namespaces) are frequent.
+    fn random_tx(rng: &mut ChaCha20Rng) -> Transaction {
+        let mut small = |n: u64| rng.next_u64() % n;
+        let fee = 1 + small(1_000);
+        let mut outs: Vec<u64> = (0..2 + small(2)).map(|_| small(60)).collect();
+        outs.sort_unstable();
+        outs.dedup();
+        match small(4) {
+            0 | 1 => {
+                let mut images: Vec<u64> = (0..1 + small(2)).map(|_| small(60)).collect();
+                images.sort_unstable();
+                images.dedup();
+                transfer(&images, &outs, fee)
+            }
+            2 => {
+                let split = small(outs.len() as u64 + 1) as usize;
+                // Even seeds: `px(n)` nullifiers are (n, .., 1) and (n, .., 2).
+                px_out(small(30) as u32, &outs[..split], &outs[split..], fee)
+            }
+            _ => deploy(small(60), &outs, small(3) as u8, fee),
+        }
+    }
+
+    /// Randomized: 2 000 operations (add, remove, remove_block, select) on
+    /// synthetic transactions with overlapping keys. After each, the pool's
+    /// invariants hold; admission refuses exactly the conflicting and known
+    /// transactions; a block removes exactly its transactions and those
+    /// sharing a key with it; every selection has pairwise-distinct keys.
+    #[test]
+    fn randomized_operations_keep_the_conflict_invariants() {
+        let mut rng = ChaCha20Rng::seed_from_u64(0xF1);
+        let mut m = Mempool::new();
+        let (mut admitted, mut conflicts, mut blocks_removed) = (0, 0, 0);
+        for step in 0..2_000 {
+            match rng.next_u64() % 10 {
+                0..=5 => {
+                    let tx = random_tx(&mut rng);
+                    let id = tx.hash();
+                    let expected = if m.contains(&id) {
+                        Err(MempoolError::AlreadyKnown)
+                    } else if conflict_keys(&tx).iter().any(|k| m.keys.contains_key(k)) {
+                        Err(MempoolError::Conflict)
+                    } else {
+                        Ok(id)
+                    };
+                    let r = add(&mut m, tx);
+                    assert_eq!(r, expected, "step {step}");
+                    match r {
+                        Ok(_) => admitted += 1,
+                        Err(MempoolError::Conflict) => conflicts += 1,
+                        _ => {}
+                    }
+                }
+                6 => {
+                    let ids: Vec<Hash> = m.entries.keys().copied().collect();
+                    if !ids.is_empty() {
+                        let id = ids[(rng.next_u64() % ids.len() as u64) as usize];
+                        assert!(m.remove(&id).is_some());
+                        assert!(!m.contains(&id));
+                    }
+                }
+                7 => {
+                    // A block: a coinbase, some pooled transactions and some
+                    // foreign ones (which may share keys with pooled ones).
+                    let mut block =
+                        vec![coinbase(&[rng.next_u64() % 60, 60 + rng.next_u64() % 60])];
+                    let ids: Vec<Hash> = m.entries.keys().copied().collect();
+                    for _ in 0..rng.next_u64() % 3 {
+                        if !ids.is_empty() {
+                            let id = ids[(rng.next_u64() % ids.len() as u64) as usize];
+                            block.push(m.get(&id).unwrap().clone());
+                        }
+                    }
+                    for _ in 0..rng.next_u64() % 3 {
+                        block.push(random_tx(&mut rng));
+                    }
+                    let block_keys: HashSet<ConflictKey> =
+                        block.iter().flat_map(conflict_keys).collect();
+                    let block_ids: HashSet<Hash> = block.iter().map(Transaction::hash).collect();
+                    let expected: HashSet<Hash> = m
+                        .entries
+                        .iter()
+                        .filter(|(id, e)| {
+                            !block_ids.contains(*id)
+                                && !e.keys.iter().any(|k| block_keys.contains(k))
+                        })
+                        .map(|(id, _)| *id)
+                        .collect();
+                    let before = m.len();
+                    m.remove_block(&block);
+                    blocks_removed += before - m.len();
+                    let after: HashSet<Hash> = m.entries.keys().copied().collect();
+                    assert_eq!(after, expected, "step {step}");
+                }
+                _ => {
+                    let max_weight = if rng.next_u64() % 2 == 0 {
+                        u64::MAX
+                    } else {
+                        rng.next_u64() % 20_000
+                    };
+                    let sel = m.select(max_weight, (rng.next_u64() % 10).into());
+                    assert_disjoint(&sel);
+                    assert!(sel.iter().all(|tx| m.contains(&tx.hash())));
+                    if max_weight == u64::MAX {
+                        assert_eq!(sel.len(), m.len(), "no budget, no pool: all selected");
+                    }
+                }
+            }
+            assert_invariants(&m);
+        }
+        // The run exercised every path.
+        assert!(admitted > 100, "{admitted}");
+        assert!(conflicts > 100, "{conflicts}");
+        assert!(blocks_removed > 20, "{blocks_removed}");
     }
 }

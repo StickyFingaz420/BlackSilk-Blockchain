@@ -162,15 +162,22 @@ pub struct PxContracts {
     pub height: u64,
 }
 
-/// Most PX commitments per `/px/commitments` response.
-pub const MAX_PX_COMMITMENTS_PER_REQUEST: u64 = 65_536;
+/// Largest `limit` a `/px/commitments` request may ask for.
+pub const MAX_PX_COMMITMENTS_PER_REQUEST: u64 = 4096;
 
-/// PX commitments in tree order (docs/px.md §11.4). Wallets fetch them in
-/// bulk, never individually, so the node learns nothing about which records
-/// a wallet owns.
+/// Page size of a `/px/commitments` request without `limit`.
+pub const DEFAULT_PX_COMMITMENTS_PER_REQUEST: u64 = 1024;
+
+/// A page of PX commitments in tree order (docs/px.md §11.4), answering
+/// `GET /px/commitments?from=F&limit=L` (both optional: `from` defaults to 0,
+/// `limit` to [`DEFAULT_PX_COMMITMENTS_PER_REQUEST`] and is at most
+/// [`MAX_PX_COMMITMENTS_PER_REQUEST`]). Wallets fetch every page in order,
+/// never individual commitments, so the node learns nothing about which
+/// records a wallet owns.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PxCommitments {
-    /// Tree position of the first entry.
+    /// Tree position of the first entry (the request's `from`, echoed even
+    /// when it is past the end and the page is empty).
     pub from: u64,
     /// `(height, commitment hex)` in position order.
     pub commitments: Vec<(u64, String)>,
@@ -180,6 +187,10 @@ pub struct PxCommitments {
     pub root: String,
     /// The node's tip height.
     pub height: u64,
+    /// The `from` of the next page, or `None` when this page reaches `total`.
+    /// Absent in responses of nodes older than this field.
+    #[serde(default)]
+    pub next: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -290,8 +301,14 @@ impl Client {
         self.get(&format!("/distribution?to={to}"))
     }
 
+    /// A page of the default size starting at `from`.
     pub fn px_commitments(&self, from: u64) -> Result<PxCommitments, RpcError> {
         self.get(&format!("/px/commitments?from={from}"))
+    }
+
+    /// A page of at most `limit` commitments starting at `from`.
+    pub fn px_commitments_page(&self, from: u64, limit: u64) -> Result<PxCommitments, RpcError> {
+        self.get(&format!("/px/commitments?from={from}&limit={limit}"))
     }
 
     pub fn px_contracts(&self, from: u64) -> Result<PxContracts, RpcError> {
@@ -311,4 +328,23 @@ impl Client {
 /// Parses a 32-byte hex id.
 pub fn parse_hash(s: &str) -> Option<[u8; 32]> {
     hex::decode(s).ok()?.try_into().ok()
+}
+
+const _: () = assert!(
+    DEFAULT_PX_COMMITMENTS_PER_REQUEST >= 1
+        && DEFAULT_PX_COMMITMENTS_PER_REQUEST <= MAX_PX_COMMITMENTS_PER_REQUEST
+);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A response without `next` (from a node older than the field) decodes.
+    #[test]
+    fn px_commitments_without_next_decodes() {
+        let json = r#"{"from":0,"commitments":[[1,"ab"]],"total":1,"root":"00","height":3}"#;
+        let r: PxCommitments = serde_json::from_str(json).unwrap();
+        assert_eq!(r.next, None);
+        assert_eq!(r.commitments, vec![(1, "ab".to_string())]);
+    }
 }

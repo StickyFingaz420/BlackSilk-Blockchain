@@ -8,7 +8,7 @@ mod config;
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::store::FileStore;
 use blacksilk_consensus::{ChainParams, RandomXPow};
-use blacksilk_node::{router_with, App};
+use blacksilk_node::{router_with, watch_store, App, STORE_FAILED_EXIT};
 use blacksilk_p2p::{NetConfig, Network as P2p};
 use blacksilk_tx::params::TxRules;
 use clap::Parser;
@@ -18,7 +18,9 @@ use std::sync::{Arc, Mutex};
 
 fn main() {
     let args = Args::parse();
-    let cfg = match Config::resolve(args) {
+    let cfg = match Config::resolve(args)
+        .and_then(|c| config::check_network_enabled(c.network).map(|()| c))
+    {
         Ok(c) => c,
         Err(e) => {
             eprintln!("configuration error: {e}");
@@ -46,11 +48,16 @@ fn run(cfg: Config) -> Result<(), String> {
 
     let store_path = data_dir.join("blocks.dat");
     if cfg.repair_store {
+        log::warn!(
+            "--repair-store given: {} is checked, and everything from its first damaged \
+             record on is moved aside (remove the flag after this run)",
+            store_path.display()
+        );
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
         match FileStore::repair(&store_path, now).map_err(|e| format!("repair: {e}"))? {
-            0 => log::info!("{}: no damage found", store_path.display()),
+            0 => log::warn!("{}: no damage found, nothing moved", store_path.display()),
             n => log::warn!(
                 "{}: {n} bytes set aside; the node resyncs them",
                 store_path.display()
@@ -77,7 +84,9 @@ fn run(cfg: Config) -> Result<(), String> {
     .map_err(|e| {
         if e.kind() == std::io::ErrorKind::InvalidData {
             format!(
-                "block store: {e}. If this reports a corrupt record followed by valid data,                  restart once with --repair-store (docs/testnet.md §9)"
+                "block store: {e}. If this reports a corrupt record followed by valid data, \
+                 back up the data directory and restart once with --repair-store \
+                 (docs/testnet.md §9)"
             )
         } else {
             format!("block store: {e}")
@@ -136,19 +145,33 @@ fn run(cfg: Config) -> Result<(), String> {
             .await
             .map_err(|e| format!("bind {bind}: {e}"))?;
         log::info!("RPC listening on http://{bind}");
+        // A node whose block store failed accepts no block but would keep
+        // downloading bodies: stop it, so that a restart recovers
+        // deterministically (docs/blocks.md §8).
+        let store_failed = watch_store(shared.clone(), std::time::Duration::from_secs(2));
         let app = App {
             chain: shared,
             net: net.clone(),
         };
+        let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let failed_flag = failed.clone();
         let served = axum::serve(listener, router_with(app))
-            .with_graceful_shutdown(async {
-                let _ = tokio::signal::ctrl_c().await;
-                log::info!("shutting down");
+            .with_graceful_shutdown(async move {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => log::info!("shutting down"),
+                    Ok(()) = store_failed => {
+                        failed_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                        log::error!("{STORE_FAILED_EXIT}; shutting down");
+                    }
+                }
             })
             .await
             .map_err(|e| e.to_string());
         if let Some(n) = net {
             n.save();
+        }
+        if failed.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(STORE_FAILED_EXIT.to_string());
         }
         served
     })

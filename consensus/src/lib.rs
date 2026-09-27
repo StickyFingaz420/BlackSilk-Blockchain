@@ -14,6 +14,11 @@
 
 #![forbid(unsafe_code)]
 
+// Consensus decoding and arithmetic assume 64-bit `usize` (lengths, counts and
+// weights must convert identically on every node).
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("BlackSilk supports 64-bit targets only");
+
 pub mod chain;
 pub mod difficulty;
 pub mod hash;

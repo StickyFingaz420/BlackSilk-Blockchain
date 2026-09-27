@@ -42,14 +42,16 @@ fn get(b: &[u8]) -> Option<Digest> {
     Some(d)
 }
 
-/// Seals `record`, committed as `cm`, to `to`.
+/// Seals `record`, committed as `cm`, to `to`. `hedge_secret` is the
+/// sender's secret for the hedged ephemeral values ([`delivery::seal`]).
 pub fn seal_share<R: RngCore + CryptoRng>(
     rng: &mut R,
+    hedge_secret: &[u8],
     to: &Address,
     record: &Record,
     cm: &Digest,
 ) -> Result<Vec<u8>, SealError> {
-    let ct = delivery::seal(rng, to, record, cm)?;
+    let ct = delivery::seal(rng, hedge_secret, to, record, cm)?;
     let mut out = Vec::with_capacity(SHARE_BYTES);
     out.push(SHARE_VERSION);
     put(&mut out, cm);

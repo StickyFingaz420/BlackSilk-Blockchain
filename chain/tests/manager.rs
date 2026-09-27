@@ -21,6 +21,7 @@ use blacksilk_tx::types::{Transaction, Transfer};
 use blacksilk_tx::validate::{BlockError, ChainView};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -535,6 +536,45 @@ fn pow_jobs_use_seeds_from_the_batch() {
     assert!(dst.pow_jobs(&broken).is_none());
 }
 
+/// A batch whose first header does not sit at its parent's height + 1 gets no
+/// jobs. Before 2026-09-27 a far height on a known parent looked its seed up
+/// beyond the parent's branch and panicked (index out of bounds) through
+/// this public API.
+#[test]
+fn pow_jobs_reject_a_height_gap() {
+    let (src, blocks) = mined_source(3, 24);
+    let mut far = blocks[0].header;
+    far.height = 5_000; // seed height 4096, far above the parent (genesis)
+    assert!(src.pow_jobs(&[far]).is_none());
+    let mut gap = blocks[2].header;
+    gap.height += 1;
+    assert!(src.pow_jobs(&[gap]).is_none());
+    // A well-formed batch still gets jobs.
+    assert!(src.pow_jobs(&[blocks[2].header]).is_some());
+}
+
+/// The PoW cache is keyed by the RandomX key as well as the header bytes: a
+/// hash computed under one seed is never returned for another.
+#[test]
+fn the_pow_cache_key_includes_the_seed() {
+    use blacksilk_chain::manager::CachedPow;
+    let pow = Arc::new(ZeroPow::default());
+    let cache = CachedPow::new(pow.clone());
+    let bytes = [5u8; blacksilk_consensus::HEADER_SIZE];
+    let (seed_a, seed_b) = ([1u8; 32], [2u8; 32]);
+    cache.pow_hash(&seed_a, &bytes);
+    assert_eq!(pow.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(cache.lookup(&seed_a, &bytes), Some([0; 32]));
+    assert_eq!(cache.lookup(&seed_b, &bytes), None, "wrong seed misses");
+    cache.pow_hash(&seed_b, &bytes);
+    assert_eq!(pow.calls.load(Ordering::SeqCst), 2, "recomputed for seed b");
+    cache.pow_hash(&seed_a, &bytes);
+    assert_eq!(pow.calls.load(Ordering::SeqCst), 2, "seed a still cached");
+    // compute_parallel skips only jobs cached under their own seed.
+    cache.compute_parallel(&[(seed_a, bytes), ([3u8; 32], bytes)], 2);
+    assert_eq!(pow.calls.load(Ordering::SeqCst), 3);
+}
+
 /// The `nth` mature, unspent output of `from`, with a ring.
 fn plan_nth(m: &ChainManager, from: &WalletKeys, nth: usize, rng: &mut ChaCha20Rng) -> InputPlan {
     let height = m.height() + 1;
@@ -626,6 +666,7 @@ fn restart_rebuilds_the_px_state_exactly() {
                 recipients: [Some(acct.address(0)), None],
                 functions: vec![],
                 fee: px_standard_fee(),
+                hedge_secret: [0x5e; 32],
             },
             &rules,
             &mut miner.rng,
@@ -1095,11 +1136,67 @@ fn mine_real(
     out
 }
 
+/// The RandomX key a block at `height` must use on `branch`, computed from the
+/// test's own knowledge of the branch (`branch[k]` = id of its block at height
+/// k), independently of the header chain: genesis up to height 20, the
+/// branch's block 16 from 21, its block 32 from 37 (epoch 16, lag 4).
+fn expected_seed(branch: &HashMap<u64, Hash>, genesis: Hash, height: u64) -> Hash {
+    match height {
+        0..=20 => genesis,
+        21..=36 => branch[&16],
+        _ => branch[&32],
+    }
+}
+
+/// Reference light-mode RandomX hashes of `headers` (with their expected
+/// seeds), one RandomX cache per distinct seed.
+fn reference_hashes(jobs: &[(Hash, BlockHeader)]) -> HashMap<(Hash, HeaderBytes), Hash> {
+    let mut out = HashMap::new();
+    let mut seeds: Vec<Hash> = jobs.iter().map(|(s, _)| *s).collect();
+    seeds.sort();
+    seeds.dedup();
+    for seed in seeds {
+        let cache = blacksilk_randomx::Cache::new(&seed);
+        let mut vm = blacksilk_randomx::Vm::light(&cache);
+        for (s, h) in jobs.iter().filter(|(s, _)| *s == seed) {
+            let bytes = h.to_bytes();
+            out.insert((*s, bytes), vm.hash(&bytes));
+        }
+    }
+    out
+}
+
+type HeaderBytes = [u8; blacksilk_consensus::HEADER_SIZE];
+
+/// Every header of `jobs` has a cached PoW hash under its expected seed, equal
+/// to the reference RandomX hash. A manager that validated (or replayed) a
+/// header under any other key would have cached it under that key instead.
+fn assert_pow_under_expected_seeds(
+    m: &ChainManager,
+    jobs: &[(Hash, BlockHeader)],
+    reference: &HashMap<(Hash, HeaderBytes), Hash>,
+    what: &str,
+) {
+    for (seed, h) in jobs {
+        let bytes = h.to_bytes();
+        assert_eq!(
+            m.pow_cache().lookup(seed, &bytes),
+            Some(reference[&(*seed, bytes)]),
+            "{what}: height {}",
+            h.height
+        );
+    }
+}
+
 /// The RandomX key switch, with real RandomX (light verification): blocks on
 /// either side of the switch verify; a restart replays across it; a fresh node
 /// syncs the headers across it; and a heavier branch that forks before the
 /// seed block, so that its blocks after the switch use a different key, wins
 /// a reorganization and is itself verified with its own key.
+///
+/// At regtest difficulty 1 any hash passes, so passing validation alone would
+/// not detect a wrong key. Every header's cached PoW hash is therefore checked
+/// against a reference RandomX hash under the key the test expects.
 #[test]
 fn the_randomx_key_switch_works_across_sync_restart_and_reorg() {
     let p = short_epoch_params();
@@ -1120,6 +1217,17 @@ fn the_randomx_key_switch_works_across_sync_restart_and_reorg() {
         assert_eq!(seed(37), id(32));
         (blocks, m.tip_id())
     };
+    let main_ids: HashMap<u64, Hash> = main
+        .iter()
+        .map(|b| (b.header.height, b.id(p.network_id)))
+        .collect();
+    let main_jobs: Vec<(Hash, BlockHeader)> = main
+        .iter()
+        .map(|b| {
+            let h = b.header;
+            (expected_seed(&main_ids, genesis, h.height), h)
+        })
+        .collect();
 
     // Restart: the store replays across both switches.
     let started = std::time::Instant::now();
@@ -1134,6 +1242,9 @@ fn the_randomx_key_switch_works_across_sync_restart_and_reorg() {
     let headers: Vec<BlockHeader> = main.iter().map(|b| b.header).collect();
     let started = std::time::Instant::now();
     let (pow, jobs) = fresh.pow_jobs(&headers).unwrap();
+    for ((seed, _), (expected, h)) in jobs.iter().zip(&main_jobs) {
+        assert_eq!(seed, expected, "pow_jobs seed at height {}", h.height);
+    }
     pow.compute_parallel(&jobs, 4);
     fresh
         .accept_headers(&headers, headers.last().unwrap().timestamp)
@@ -1163,18 +1274,45 @@ fn the_randomx_key_switch_works_across_sync_restart_and_reorg() {
     assert_ne!(side16, main[15].id(p.network_id));
     assert!(fresh.deepest_reorg() >= 30);
 
+    // Reference hashes under the expected keys: the side branch shares main's
+    // blocks up to height 10 and has its own from 11.
+    let mut side_ids: HashMap<u64, Hash> = main_ids
+        .iter()
+        .filter(|(h, _)| **h <= 10)
+        .map(|(h, id)| (*h, *id))
+        .collect();
+    side_ids.extend(side.iter().map(|b| (b.header.height, b.id(p.network_id))));
+    assert_eq!(side_ids[&16], side16);
+    let side_jobs: Vec<(Hash, BlockHeader)> = side
+        .iter()
+        .map(|b| {
+            let h = b.header;
+            (expected_seed(&side_ids, genesis, h.height), h)
+        })
+        .collect();
+    assert!(side_jobs.iter().any(|(s, _)| *s == side_ids[&32]));
+    let all_jobs: Vec<(Hash, BlockHeader)> = main_jobs.iter().chain(&side_jobs).copied().collect();
+    let started = std::time::Instant::now();
+    let reference = reference_hashes(&all_jobs);
+    println!("reference hashes (5 keys): {:.1?}", started.elapsed());
+    assert_pow_under_expected_seeds(&fresh, &main_jobs, &reference, "fresh node, main");
+    assert_pow_under_expected_seeds(&fresh, &side_jobs, &reference, "fresh node, branch");
+
     // The original node receives the branch's blocks and reorganizes too.
     let mut m = open_real(&p, Box::new(FileStore::open(&path).unwrap()));
+    assert_pow_under_expected_seeds(&m, &main_jobs, &reference, "replayed main");
     for b in &side {
         let _ = m.submit_block(b.clone(), b.header.timestamp);
     }
     assert_eq!(m.tip_id(), side_tip);
+    assert_pow_under_expected_seeds(&m, &side_jobs, &reference, "received branch");
     drop(m);
-    // ...and restarts onto it.
+    // ...and restarts onto it, trusting its stored hashes under the right keys.
     let m = open_real(&p, Box::new(FileStore::open(&path).unwrap()));
     assert_eq!(
         m.tip_id(),
         side_tip,
         "restart after a reorg across the key switch"
     );
+    assert_pow_under_expected_seeds(&m, &all_jobs, &reference, "replay after the reorg");
 }

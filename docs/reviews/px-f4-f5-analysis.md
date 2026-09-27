@@ -31,7 +31,8 @@ Spending a record requires its full opening (`rcm` included): the spender rebuil
 There are two kinds of output:
 - **User records** (`contract = 0`) are spent with the owner's key.
 - **Contract records** (`contract ≠ 0`) have no key: they are spent by calling a
-  function of the contract that approves them. Anyone with the opening can make that
+  function of the contract that approves them. Anyone with the opening, and with
+  whatever else that function checks (for the vault, the secret), can make that
   call.
 
 ## 2. PX-F4: who determines the randomness (`rcm`) of contract outputs?
@@ -73,7 +74,7 @@ delivers it (a correct ciphertext or an off-chain share, docs/px.md §13).
 | Option | What changes | Advantages | Disadvantages |
 |---|---|---|---|
 | **A. Keep; document** | Nothing (docs) | No consensus change; privacy unchanged | Multi-party contracts cannot be safe against a griefing caller; contract authors must know it |
-| **B. The function fixes `rcm`** | `OutSpec` gains `rcm`; `io_hash` covers it; the kernel checks it; function programs output it (the vault too) | The function can derive `rcm` from data every authorized party knows (for the vault, from the secret), so openings need no delivery, and a caller cannot make state unopenable. Privacy is kept if the function derives `rcm` from secret material | Kernel, call format, vault program, wallet and prover change; new kernel and vault ids; a contract that derives `rcm` from **public** data would make its records' commitments guessable (a privacy trap for contract authors, to be documented and linted) |
+| **B. The function fixes `rcm`** | `OutSpec` gains `rcm`; `io_hash` covers it; the kernel checks it; function programs output it (the vault too) | A caller can no longer make a record unopenable by withholding or garbling `rcm`: the function can derive it from data the authorized parties know (for the vault, from the secret). **It does not remove the need for delivery in general:** an opening also needs `value` and `data`, which the function specifies privately, so parties still learn them from the ciphertext, a share, or shared knowledge; for payouts to a third party that does not know the function's inputs, B helps only if the contract derives `rcm` (and value) from something the payee knows (correction, internal review round 5, 2026-09-27). Privacy is kept if the function derives `rcm` from secret material | Kernel, call format, vault program, wallet and prover change; new kernel and vault ids; a contract that derives `rcm` from **public** data would make its records' commitments guessable (a privacy trap for contract authors, to be documented and linted) |
 | **C. The kernel derives `rcm`** (e.g. `Hk(RCM, nf_0 ‖ j ‖ spec)`) | Kernel only | No delivery needed | **Rejected: breaks privacy.** `nf_0` is public, so `cm` becomes a deterministic function of `(owner, contract, value, data)`, and low-entropy values can be brute-forced from `cm` |
 | **D. Prove the ciphertext** (verifiable encryption of the opening to a specified key) | Kernel proves the delivery encryption | Delivery guaranteed | ML-KEM and ChaCha20 inside the zkVM: very large proofs and proving time; research-level; not feasible now |
 
@@ -168,6 +169,14 @@ funds entrusted to a buggy contract.
 - It is reproducible today, on a Windows host with path remapping, and CI checks it.
 - A platform-neutral kernel changes the data segment and so the id: also a kernel
   change.
+
+## 4a. A related footgun (information)
+
+The kernel does not tie an approved contract input's value to the outputs a function
+specifies: a function that approves a contract record without specifying outputs
+covering its value lets the caller take that value. Like PX-F5 this is a contract-author
+responsibility (the vault is correct: CLAIM pays exactly the record value), to be stated
+in the contract-author documentation.
 
 ## 5. Summary for the decision
 

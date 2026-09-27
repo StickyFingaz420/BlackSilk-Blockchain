@@ -2,7 +2,11 @@
 //!
 //! The builder derives every secret random value (Janus anchors, pseudo-output
 //! masks, signature and proof nonces) from a [`HedgedRng`] keyed with the wallet's
-//! spend secret (spec §10). It then re-validates its own result before returning.
+//! spend secret (spec §10). The anchor and pseudo-output-mask stream is bound to
+//! the whole transfer being built ([`HedgeContext`]): network, key images, every
+//! ring (global indices and keys), fee, every payment (address, amount), the
+//! change address and amount, and any caller payload. It then re-validates its
+//! own result before returning.
 
 use crate::params::*;
 use crate::types::*;
@@ -20,8 +24,9 @@ use blacksilk_crypto::{Point, RistrettoPoint, Scalar};
 use rand_core::{CryptoRng, RngCore};
 use zeroize::Zeroize;
 
-/// An owned output the wallet wants to spend.
-#[derive(Clone, Debug)]
+/// An owned output the wallet wants to spend. Its `Debug` output redacts the
+/// output-key offset and the mask.
+#[derive(Clone)]
 pub struct SpendableOutput {
     pub global_index: u64,
     pub key: OutputKey,
@@ -29,6 +34,19 @@ pub struct SpendableOutput {
     pub output_key_offset: Scalar,
     pub amount: u64,
     pub mask: Scalar,
+}
+
+impl core::fmt::Debug for SpendableOutput {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SpendableOutput")
+            .field("global_index", &self.global_index)
+            .field("key", &self.key)
+            .field("subaddress", &self.subaddress)
+            .field("output_key_offset", &"<redacted>")
+            .field("amount", &self.amount)
+            .field("mask", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Drop for SpendableOutput {
@@ -129,6 +147,83 @@ pub fn standard_fee(inputs: usize, outputs: usize, rules: &TxRules) -> u64 {
         .expect("bounded shapes cannot overflow")
 }
 
+/// The context of a wallet hedge stream (spec §10): a purpose label followed
+/// by every input of the statement being built. Each item is length-prefixed
+/// by [`HedgedRng`]; variable-length lists are preceded by their count, so the
+/// encoding is unambiguous.
+pub(crate) struct HedgeContext {
+    items: Vec<Vec<u8>>,
+}
+
+impl HedgeContext {
+    pub(crate) fn new(label: &[u8]) -> Self {
+        Self {
+            items: vec![label.to_vec()],
+        }
+    }
+
+    pub(crate) fn push(&mut self, item: &[u8]) -> &mut Self {
+        self.items.push(item.to_vec());
+        self
+    }
+
+    pub(crate) fn push_u64(&mut self, v: u64) -> &mut Self {
+        self.push(&v.to_le_bytes())
+    }
+
+    /// The rings of `inputs`, in order: each ring's members sorted by global
+    /// index, as `LE64(global index) ‖ one-time key ‖ commitment`.
+    pub(crate) fn rings<'a>(
+        &mut self,
+        inputs: impl ExactSizeIterator<Item = &'a InputPlan>,
+    ) -> &mut Self {
+        self.push_u64(inputs.len() as u64);
+        for plan in inputs {
+            let mut members: Vec<Decoy> = plan.decoys.clone();
+            members.push(Decoy {
+                global_index: plan.real.global_index,
+                key: plan.real.key,
+            });
+            members.sort_by_key(|m| m.global_index);
+            let mut ring = Vec::with_capacity(members.len() * 72);
+            for m in &members {
+                ring.extend_from_slice(&m.global_index.to_le_bytes());
+                ring.extend_from_slice(m.key.one_time_key.bytes());
+                ring.extend_from_slice(m.key.commitment.bytes());
+            }
+            self.items.push(ring);
+        }
+        self
+    }
+
+    /// `payments`, in order, as `address ‖ LE64(amount)`.
+    pub(crate) fn payments(&mut self, payments: &[Payment]) -> &mut Self {
+        self.push_u64(payments.len() as u64);
+        for p in payments {
+            self.output(&p.address, p.amount);
+        }
+        self
+    }
+
+    /// One output: `address ‖ LE64(amount)`.
+    pub(crate) fn output(&mut self, address: &Address, amount: u64) -> &mut Self {
+        let mut item = address.to_bytes().to_vec();
+        item.extend_from_slice(&amount.to_le_bytes());
+        self.items.push(item);
+        self
+    }
+
+    /// The hedge stream keyed with `secrets` over this context.
+    pub(crate) fn stream<R: RngCore + CryptoRng>(
+        &self,
+        secrets: &[&[u8]],
+        rng: &mut R,
+    ) -> HedgedRng {
+        let items: Vec<&[u8]> = self.items.iter().map(Vec::as_slice).collect();
+        HedgedRng::new(secrets, &items, rng)
+    }
+}
+
 /// Creates one output with a hedged anchor, retrying in the negligible `r = 0` case.
 fn make_output(
     hedge: &mut HedgedRng,
@@ -160,14 +255,16 @@ pub fn build_transfer<R: RngCore + CryptoRng>(
     rng: &mut R,
 ) -> Result<Transfer, BuildError> {
     let net = rules.network_id;
-    build_transfer_signing(keys, inputs, payments, change, fee, rules, rng, &|t| {
+    build_transfer_signing(keys, inputs, payments, change, fee, rules, rng, &[], &|t| {
         t.signature_message(net)
     })
 }
 
 /// As [`build_transfer`], signing `message(tx)` instead of the transfer's
 /// own signature message (for transactions that extend a transfer, such as
-/// deploys, whose signatures must also cover their payload).
+/// deploys, whose signatures must also cover their payload). `payload` is
+/// that extension's content (or a digest of it): it is bound into the hedge
+/// context, so two different payloads never share anchors or masks.
 #[allow(clippy::too_many_arguments)]
 pub fn build_transfer_signing<R: RngCore + CryptoRng>(
     keys: &WalletKeys,
@@ -177,6 +274,7 @@ pub fn build_transfer_signing<R: RngCore + CryptoRng>(
     fee: u64,
     rules: &TxRules,
     rng: &mut R,
+    payload: &[u8],
     message: &dyn Fn(&Transfer) -> Hash,
 ) -> Result<Transfer, BuildError> {
     let n = inputs.len();
@@ -224,8 +322,20 @@ pub fn build_transfer_signing<R: RngCore + CryptoRng>(
     let key_images: Vec<Point> = prepared.iter().map(|x| x.key_image).collect();
     let ctx = transfer_context(&key_images);
 
+    // The hedge binds the whole statement being built (spec §10), so a
+    // rebuild over the same inputs with any other payment, amount, fee, ring
+    // or change never reuses an anchor or pseudo-output mask, even with a
+    // broken RNG.
     let mut secret = keys.hedge_secret();
-    let mut hedge = HedgedRng::new(&[&secret], &[b"transfer", &ctx], rng);
+    let mut hedge = HedgeContext::new(b"transfer/v2")
+        .push(&rules.network_id.to_le_bytes())
+        .push(&ctx)
+        .push_u64(fee)
+        .rings(prepared.iter().map(|x| &x.plan))
+        .payments(payments)
+        .output(change, change_amount)
+        .push(payload)
+        .stream(&[&secret], rng);
     secret.zeroize();
 
     // Outputs, sorted by one-time key (spec §5.2).
@@ -239,7 +349,9 @@ pub fn build_transfer_signing<R: RngCore + CryptoRng>(
 
     // Range proof over the outputs, in order.
     let amounts: Vec<u64> = created.iter().map(|o| o.amount).collect();
-    let masks: Vec<Scalar> = created.iter().map(|o| o.mask).collect();
+    // Output masks and their sums are wiped on drop (best effort).
+    let masks: zeroize::Zeroizing<Vec<Scalar>> =
+        zeroize::Zeroizing::new(created.iter().map(|o| o.mask).collect());
     let (range_proof, commitments) =
         bpp::prove(&amounts, &masks, rng).map_err(BuildError::RangeProof)?;
     debug_assert!(commitments
@@ -248,10 +360,10 @@ pub fn build_transfer_signing<R: RngCore + CryptoRng>(
         .all(|(c, o)| *c == o.commitment));
 
     // Pseudo-outputs: Σ z_k = Σ y_j (spec §6).
-    let mask_sum: Scalar = masks.iter().sum();
+    let mask_sum = zeroize::Zeroizing::new(masks.iter().sum::<Scalar>());
     let mut pseudo_masks: Vec<Scalar> = (0..n - 1).map(|_| hedge.scalar()).collect();
-    let partial: Scalar = pseudo_masks.iter().sum();
-    pseudo_masks.push(mask_sum - partial);
+    let partial = zeroize::Zeroizing::new(pseudo_masks.iter().sum::<Scalar>());
+    pseudo_masks.push(*mask_sum - *partial);
     let pseudo_outs: Vec<Point> = prepared
         .iter()
         .zip(&pseudo_masks)
@@ -333,6 +445,9 @@ pub fn build_transfer_signing<R: RngCore + CryptoRng>(
     for z in &mut pseudo_masks {
         z.zeroize();
     }
+    for o in &mut created {
+        o.mask.zeroize();
+    }
 
     // Self-check (defence in depth against builder bugs).
     check_structure(&tx, rules).map_err(BuildError::SelfCheck)?;
@@ -362,7 +477,10 @@ pub fn build_coinbase<R: RngCore + CryptoRng>(
         return Err(BuildError::PaymentCount(payouts.len()));
     }
     let ctx = coinbase_context(height);
-    let mut hedge = HedgedRng::new(&[hedge_secret], &[b"coinbase", &ctx], rng);
+    let mut hedge = HedgeContext::new(b"coinbase/v2")
+        .push(&ctx)
+        .payments(payouts)
+        .stream(&[hedge_secret], rng);
     let mut outputs: Vec<CoinbaseOutput> = payouts
         .iter()
         .map(|p| {

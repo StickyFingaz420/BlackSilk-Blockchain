@@ -93,7 +93,8 @@ pub enum OutputKind {
 }
 
 /// A newly created output plus the opening the sender needs (amount and mask).
-#[derive(Clone, Debug)]
+/// Its `Debug` output redacts the mask.
+#[derive(Clone)]
 pub struct CreatedOutput {
     pub one_time_key: Point,
     pub ephemeral: Point,
@@ -105,6 +106,21 @@ pub struct CreatedOutput {
     pub enc_anchor: [u8; ANCHOR_BYTES],
     pub amount: u64,
     pub mask: Scalar,
+}
+
+impl core::fmt::Debug for CreatedOutput {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CreatedOutput")
+            .field("one_time_key", &self.one_time_key)
+            .field("ephemeral", &self.ephemeral)
+            .field("view_tag", &self.view_tag)
+            .field("commitment", &self.commitment)
+            .field("enc_amount", &self.enc_amount)
+            .field("enc_anchor", &self.enc_anchor)
+            .field("amount", &self.amount)
+            .field("mask", &"<redacted>")
+            .finish()
+    }
 }
 
 /// Builds an output paying `amount` to `address` (spec §3.2).
@@ -168,14 +184,26 @@ pub struct OutputFields<'a> {
     pub enc_anchor: &'a [u8; ANCHOR_BYTES],
 }
 
-/// A received output with everything needed to spend it later.
-#[derive(Clone, Debug)]
+/// A received output with everything needed to spend it later. Its `Debug`
+/// output redacts the mask and the output-key offset.
+#[derive(Clone)]
 pub struct ReceivedOutput {
     pub subaddress: SubaddressIndex,
     pub amount: u64,
     pub mask: Scalar,
     /// `x`; the one-time secret is `x + d(a,i)` (`WalletKeys::one_time_secret`).
     pub output_key_offset: Scalar,
+}
+
+impl core::fmt::Debug for ReceivedOutput {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ReceivedOutput")
+            .field("subaddress", &self.subaddress)
+            .field("amount", &self.amount)
+            .field("mask", &"<redacted>")
+            .field("output_key_offset", &"<redacted>")
+            .finish()
+    }
 }
 
 /// Why a recognized output was refused. A wallet must treat refused outputs
@@ -322,6 +350,42 @@ pub(crate) mod tests {
             // The mask opens the commitment.
             assert_eq!(commit(amount, &r.mask), *o.commitment.point());
         }
+    }
+
+    /// R2-C10: `{:?}` of a created or received output never prints the mask
+    /// or the output-key offset.
+    #[test]
+    fn debug_output_redacts_secrets() {
+        let mut rng = seeded(12);
+        let (w, _) = WalletKeys::generate(&mut rng);
+        let table = SubaddressTable::new(w.view_keys(), 1, 1);
+        let ctx = [3u8; 32];
+        let o = create_output(
+            &w.address(SubaddressIndex::PRIMARY),
+            77,
+            &ctx,
+            &random_anchor(&mut rng),
+            OutputKind::Transfer,
+        )
+        .unwrap();
+        let got = scan_output(
+            w.view_keys(),
+            &table,
+            &ctx,
+            &fields(&o, OutputKind::Transfer),
+        );
+        let r = got.owned().expect("owned");
+        let created = format!("{o:?}");
+        let received = format!("{r:?}");
+        let outcome = format!("{got:?}");
+        for secret in [&o.mask, &r.mask, &r.output_key_offset] {
+            let inner = format!("{secret:?}");
+            for text in [&created, &received, &outcome] {
+                assert!(!text.contains(&inner), "{text}");
+            }
+        }
+        assert!(created.contains("<redacted>"));
+        assert!(received.contains("<redacted>"));
     }
 
     #[test]

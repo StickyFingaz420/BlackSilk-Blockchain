@@ -1,36 +1,48 @@
-# BlackSilk Testnet Readiness Audit
+# BlackSilk Testnet Readiness Audit (internal findings log)
 
-Status (2026-09-25): **not ready for the experimental testnet; the reset and the launch
-are on hold** pending the readiness report (docs/testnet-launch-checklist.md).
-**No external audit or independent review has taken place:** every finding and
-conclusion below is internal work (docs/reviews/review-status.md). The status lines
-further down are historical records of each round.
-- All Phase 2 findings are closed (see *Finding status after R1–R6*).
-- The P2P network is implemented (R5).
-- The testnet configuration is final (R6): genesis, seed system and deployment files.
-- Two 3-hour lab-network runs passed every check (R6).
+**What this file is:** the project's internal findings and remediation log. Despite
+its title it is **not an external audit**. No external audit or independent review has
+taken place, none is engaged, and none is currently planned (owner decision
+2026-09-25, docs/reviews/review-status.md). Every finding and conclusion below is
+internal work. The status lines further down are historical records of each round.
 
-Remaining before a public testnet:
+Status (2026-09-27): **not ready for the experimental testnet.**
+- **Trial authorization:** the v2 identity is approved and fixed in code. The
+  seven-device trial is **not** authorized until the owner approves the readiness
+  report after the hardening round (docs/reviews/completion-readiness-2026-09-26.md
+  §6). Gates: docs/testnet-launch-checklist.md.
+- **Hardening round in progress:** from commit `7826289` onward (P2P, storage,
+  mempool, reproducibility, RandomX full-mode evidence). It is recorded in **R14**
+  (being written); until then, `7826289` is a work-in-progress commit that its own
+  message marks as not yet reviewed.
+- **Private execution (PX) is integrated into consensus** (R8): transaction kinds 2 and
+  3 are rules from genesis. Zero knowledge is claimed only as statistical and
+  conditional (docs/reviews/zk-coverage.md). Nothing in the ZK layer is
+  production-ready.
+- **Testnet v2 genesis** (R13; network id `0x0001D672`, genesis `6556f92d…`) replaces
+  the v1 configuration that R6 called final. The v2 reset has been rehearsed on one
+  machine only; the seven-device validation (docs/testnet-v2-validation.md) has not
+  been run.
+- Earlier milestones, as recorded at the time: all Phase 2 findings closed (see
+  *Finding status after R1–R6*); P2P implemented (R5); two 3-hour lab-network runs
+  passed every check (R6).
+
+Remaining before a public testnet (beyond the launch checklist's gates):
 - the multi-machine procedure in `docs/testnet.md` §7, including a 72-hour run: only
   one machine was available here;
-- deployed seed nodes, added to the built-in list;
-- the Linux deployment files, run and verified on Linux;
-- an external cryptographic review of the transaction layer and the Janus anchor
-  (required before mainnet).
+- seed nodes: the built-in list is empty; the trial uses explicit `--peer` lists;
+- the Linux deployment files, run and verified on Linux.
 
-Smart contracts (`docs/contracts.md`, approved model) are being implemented (R7). The
-cryptography (M1) and the engine and state (M2) are done, but they are **not yet part of
-consensus**. Private execution with zero-knowledge proofs is the current priority (R8): the proof
-layer, the VM with its complete constraint system (including the Poseidon2 circuit), and
-the private-transfer kernel (records, nullifiers, commitment tree, record delivery) are
-implemented and tested; a private transfer has been proven and verified end to end. The
-unified proof of contract functions and the kernel is implemented and tested, and the
-internal ZK security review is written (`docs/reviews/zk-security-review.md`). Consensus
-integration remains. **Nothing in the ZK layer is production-ready before independent
-review** (R8).
-Contracts will activate later, at a fork height or with a testnet reset.
+External review is **not** a requirement or a testnet gate (owner decision
+2026-09-25). A cryptographic review of the transaction layer, the Janus anchor and the
+ZK layer would be the first items if a reviewer were ever engaged
+(docs/reviews/external-review-scope.md, kept for reference only).
 
-This file tracks the audit defined in `Claude.md`.
+The Wasm confidential contracts (`docs/contracts.md`, R7): the cryptography (M1) and
+the engine and state (M2) are implemented, but they are **not part of consensus** and
+not integrated into the chain (docs/reviews/contracts-completion-assessment.md).
+
+This file tracks the internal review defined in `Claude.md`.
 Each finding lists where it is, what goes wrong, and its severity. Findings stay
 open until a fix lands **and** a test demonstrates it.
 
@@ -207,7 +219,7 @@ Genesis headers are provisional until the transaction format exists.
 
 The spec was written first, reviewed, and then implemented. The implementation is pure
 Rust with `#![forbid(unsafe_code)]` in both crates, and has no FFI or C. Dependencies:
-- `curve25519-dalek` 4.1.3 (Ristretto255; audited by Quarkslab, 2019)
+- `curve25519-dalek` 4.1.3 (Ristretto255; an external audit is reported elsewhere, not verified by us)
 - `blake2`
 - `subtle`
 - `zeroize`
@@ -294,8 +306,10 @@ new crates.
 - There is no external cryptographic review yet, and none of Monero's test vectors apply
   (Ristretto).
 - The Janus anchor analysis is our own (spec §12.8).
-- Property tests are seeded loops, because `proptest` needs `getrandom` (toolchain,
-  Phase 1).
+- Property tests are seeded loops. They were written that way because `proptest` needs
+  `getrandom`, which the Phase 1 GNU toolchain could not build. On the current MSVC
+  toolchain `getrandom` builds (it is already in `Cargo.lock` and the workspace
+  compiles), so `proptest` is now possible; it has not been added yet (T-4, 2026-09-27).
 - Economics constants are provisional.
 - Performance has not been profiled. The tests prove and verify hundreds of proofs in a
   few seconds with opt-level 3.

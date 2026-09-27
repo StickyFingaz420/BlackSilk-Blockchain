@@ -109,22 +109,34 @@ impl MemoryChain {
         &self.px
     }
 
-    /// PX output records created at heights `from..=to` (for wallets).
+    /// Number of PX output records (= commitments appended to the tree).
+    pub fn px_record_count(&self) -> u64 {
+        self.px_records.len() as u64
+    }
+
+    /// At most `limit` PX output records starting at record index (= tree
+    /// position) `from`, borrowed: nothing is copied. Empty when `from` is at
+    /// or past the end. This is what the RPC pages over; its cost is
+    /// proportional to the slice, not to the chain.
+    pub fn px_record_slice(&self, from: u64, limit: usize) -> &[PxRecordEntry] {
+        let len = self.px_records.len();
+        let start = usize::try_from(from).map_or(len, |f| f.min(len));
+        let end = start.saturating_add(limit).min(len);
+        &self.px_records[start..end]
+    }
+
+    /// PX output records created at heights `from..=to` (for wallets and
+    /// tests). Records are in block order, so the range is found by binary
+    /// search; only the matching records are cloned.
     pub fn px_records(&self, from: u64, to: u64) -> Vec<PxRecordEntry> {
-        self.px_records
-            .iter()
-            .filter(|r| r.height >= from && r.height <= to)
-            .cloned()
-            .collect()
+        let (start, end) = height_range(&self.px_records, |r| r.height, from, to);
+        self.px_records[start..end].to_vec()
     }
 
     /// Nullifiers published at heights `from..=to` (for wallets).
     pub fn px_nullifiers(&self, from: u64, to: u64) -> Vec<(u64, Digest)> {
-        self.px_nullifiers
-            .iter()
-            .filter(|(h, _)| *h >= from && *h <= to)
-            .copied()
-            .collect()
+        let (start, end) = height_range(&self.px_nullifiers, |(h, _)| *h, from, to);
+        self.px_nullifiers[start..end].to_vec()
     }
 
     /// The registered functions of a contract.
@@ -243,6 +255,15 @@ impl MemoryChain {
     }
 }
 
+/// The index range of the entries of `log` (sorted by height, as every log in
+/// [`MemoryChain`] is: entries are appended in block order and removed from the
+/// end) with a height in `from..=to`.
+fn height_range<T>(log: &[T], height: impl Fn(&T) -> u64, from: u64, to: u64) -> (usize, usize) {
+    let start = log.partition_point(|e| height(e) < from);
+    let end = log.partition_point(|e| height(e) <= to).max(start);
+    (start, end)
+}
+
 impl ChainView for MemoryChain {
     fn output(&self, global_index: u64) -> Option<OutputRecord> {
         self.outputs
@@ -284,5 +305,123 @@ impl ChainView for MemoryChain {
 
     fn px_contract_exists(&self, contract: &Digest) -> bool {
         self.registry.contains_key(contract)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::px::PxTx;
+
+    /// A PX transaction that the state accepts (`apply_block` trusts that the
+    /// block was validated, so no proof is needed): two fresh nullifiers,
+    /// anchored at the current root, two commitments.
+    fn synthetic_px(chain: &MemoryChain, tag: u32) -> Transaction {
+        Transaction::Px(Box::new(PxTx {
+            inputs: vec![],
+            outputs: vec![],
+            payouts: vec![],
+            fee: 0,
+            bridge_in: 0,
+            bridge_out: 0,
+            anchor: chain.px().root(),
+            nullifiers: [[tag, 1, 0, 0, 0, 0, 0, 0], [tag, 2, 0, 0, 0, 0, 0, 0]],
+            commitments: [[tag, 3, 0, 0, 0, 0, 0, 0], [tag, 4, 0, 0, 0, 0, 0, 0]],
+            ciphertexts: [vec![tag as u8; 3], vec![tag as u8; 4]],
+            functions: vec![],
+            pseudo_outs: vec![],
+            range_proof: None,
+            signatures: vec![],
+            proof: vec![],
+        }))
+    }
+
+    /// Blocks 0..=4 with 0, 1, 2, 0, 1 PX transactions: 8 records, two at
+    /// height 1, four at height 2, two at height 4.
+    fn chain() -> MemoryChain {
+        let mut c = MemoryChain::new();
+        let mut tag = 1;
+        for n in [0, 1, 2, 0, 1] {
+            let mut txs = Vec::new();
+            for _ in 0..n {
+                txs.push(synthetic_px(&c, tag));
+                tag += 1;
+            }
+            c.apply_block(&txs);
+        }
+        c
+    }
+
+    #[test]
+    fn record_slice_pages_the_record_log() {
+        let c = chain();
+        let all = c.px_records(0, u64::MAX);
+        assert_eq!(c.px_record_count(), 8);
+        assert_eq!(all.len(), 8);
+        for (i, r) in all.iter().enumerate() {
+            assert_eq!(r.position, i as u64, "records are in tree order");
+        }
+        // Paging with every limit reassembles the full list.
+        for limit in 1..=9 {
+            let mut paged = Vec::new();
+            let mut from = 0;
+            loop {
+                let page = c.px_record_slice(from, limit);
+                if page.is_empty() {
+                    break;
+                }
+                assert!(page.len() <= limit);
+                paged.extend_from_slice(page);
+                from += page.len() as u64;
+            }
+            assert_eq!(paged, all, "limit {limit}");
+        }
+        // Bounds.
+        assert_eq!(c.px_record_slice(3, 2), &all[3..5]);
+        assert_eq!(c.px_record_slice(7, 100), &all[7..]);
+        assert!(c.px_record_slice(8, 10).is_empty());
+        assert!(c.px_record_slice(u64::MAX, usize::MAX).is_empty());
+        assert!(c.px_record_slice(2, 0).is_empty());
+        assert_eq!(c.px_record_slice(0, usize::MAX), &all[..]);
+    }
+
+    #[test]
+    fn height_ranges_match_a_linear_filter() {
+        let c = chain();
+        let all = c.px_records(0, u64::MAX);
+        let nfs = c.px_nullifiers(0, u64::MAX);
+        assert_eq!(nfs.len(), 8);
+        for from in 0..7 {
+            for to in 0..7 {
+                let want: Vec<_> = all
+                    .iter()
+                    .filter(|r| r.height >= from && r.height <= to)
+                    .cloned()
+                    .collect();
+                assert_eq!(c.px_records(from, to), want, "{from}..={to}");
+                let want: Vec<_> = nfs
+                    .iter()
+                    .filter(|(h, _)| *h >= from && *h <= to)
+                    .copied()
+                    .collect();
+                assert_eq!(c.px_nullifiers(from, to), want, "{from}..={to}");
+            }
+        }
+        assert_eq!(c.px_records(2, 2).len(), 4);
+        assert!(c.px_records(5, 1).is_empty());
+    }
+
+    #[test]
+    fn undo_shrinks_the_record_log() {
+        let mut c = chain();
+        let kept = c.px_records(0, 2);
+        assert_eq!(kept.len(), 6);
+        assert!(c.undo_block()); // height 4: two records
+        assert_eq!(c.px_record_count(), 6);
+        assert!(c.px_record_slice(6, 10).is_empty());
+        assert!(c.undo_block()); // height 3: none
+        assert_eq!(c.px_record_slice(0, 10), &kept[..]);
+        assert!(c.undo_block()); // height 2: four
+        assert_eq!(c.px_record_count(), 2);
     }
 }

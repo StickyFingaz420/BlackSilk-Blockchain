@@ -29,9 +29,14 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex};
 
-/// PoW wrapper that remembers every computed hash, keyed by the header bytes (which
-/// determine the RandomX key through `prev_id`). It lets the node store PoW hashes
+/// PoW wrapper that remembers every computed hash, keyed by the RandomX key
+/// (seed block id) **and** the header bytes. It lets the node store PoW hashes
 /// with blocks and skip recomputing RandomX when replaying its own store.
+///
+/// The seed is part of the key so that a hash computed under one seed (for
+/// example by [`ChainManager::pow_jobs`] from a peer's batch) is never reused
+/// where header validation derives a different seed: that lookup misses and
+/// the hash is computed again under the right key.
 pub struct CachedPow {
     inner: Arc<dyn PowFunction>,
     known: Mutex<HashMap<Hash, Hash>>,
@@ -45,22 +50,25 @@ impl CachedPow {
         }
     }
 
-    fn key(header_bytes: &[u8]) -> Hash {
+    fn key(seed: &Hash, header_bytes: &[u8]) -> Hash {
         H::new()
-            .chain(b"BlackSilk/pow-cache")
+            .chain(b"BlackSilk/pow-cache/v2")
+            .chain(seed)
             .chain(header_bytes)
             .finish()
     }
 
-    pub fn lookup(&self, header_bytes: &[u8]) -> Option<Hash> {
+    /// The cached PoW hash of `header_bytes` under the RandomX key `seed`.
+    pub fn lookup(&self, seed: &Hash, header_bytes: &[u8]) -> Option<Hash> {
         let known = self.known.lock().unwrap_or_else(|e| e.into_inner());
-        known.get(&Self::key(header_bytes)).copied()
+        known.get(&Self::key(seed, header_bytes)).copied()
     }
 
-    /// Trusts `pow_hash` for `header_bytes` (only for blocks from the node's own store).
-    pub fn preload(&self, header_bytes: &[u8], pow_hash: Hash) {
+    /// Trusts `pow_hash` for `header_bytes` under `seed` (only for blocks from
+    /// the node's own store, with the seed derived from the stored parent).
+    pub fn preload(&self, seed: &Hash, header_bytes: &[u8], pow_hash: Hash) {
         let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
-        known.insert(Self::key(header_bytes), pow_hash);
+        known.insert(Self::key(seed, header_bytes), pow_hash);
     }
 }
 
@@ -72,7 +80,7 @@ impl CachedPow {
     pub fn compute_parallel(&self, jobs: &[PowJob], threads: usize) {
         let todo: Vec<&PowJob> = jobs
             .iter()
-            .filter(|(_, b)| self.lookup(b).is_none())
+            .filter(|(seed, b)| self.lookup(seed, b).is_none())
             .collect();
         if todo.is_empty() {
             return;
@@ -95,11 +103,11 @@ impl CachedPow {
 
 impl PowFunction for CachedPow {
     fn pow_hash(&self, seed: &Hash, header_bytes: &[u8]) -> Hash {
-        if let Some(h) = self.lookup(header_bytes) {
+        if let Some(h) = self.lookup(seed, header_bytes) {
             return h;
         }
         let h = self.inner.pow_hash(seed, header_bytes);
-        self.preload(header_bytes, h);
+        self.preload(seed, header_bytes, h);
         h
     }
 }
@@ -115,6 +123,14 @@ pub enum SubmitError {
     /// block is now marked invalid.
     Body(BlockError),
     Store(io::Error),
+}
+
+/// Outcome of replaying one stored block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Replayed {
+    Done,
+    /// Refused as a descendant of an invalid block (its header is not kept).
+    InvalidParent,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,7 +178,17 @@ pub struct ChainManager {
     rng: ChaCha20Rng,
     /// The deepest reorganization since the manager was opened.
     deepest_reorg: usize,
+    /// Consecutive failed appends (reset by a successful one).
+    store_failures: u32,
+    /// The block store failed persistently: no block is accepted any more.
+    store_failed: bool,
 }
+
+/// Consecutive failed block writes after which the store counts as failed
+/// ([`ChainManager::store_failed`]). A single failure is undone by the store
+/// and the block is downloaded again; repeated ones mean a full or failing
+/// disk, where continuing would only re-download bodies forever.
+pub const STORE_FAILURE_LIMIT: u32 = 3;
 
 impl ChainManager {
     /// Opens the chain: replays every stored block, then returns the manager.
@@ -195,12 +221,40 @@ impl ChainManager {
             store,
             rng: ChaCha20Rng::from_seed(rng_seed),
             deepest_reorg: 0,
+            store_failures: 0,
+            store_failed: false,
         };
-        // Blocks are stored in arrival order, and bodies arrive in any order
-        // during header-first sync. A block is replayed once its parent is
-        // known; one that arrived before its parent waits for it.
+        manager.replay(stored)?;
+        Ok(manager)
+    }
+
+    /// Replays the stored blocks.
+    ///
+    /// Blocks are stored in body arrival order, and bodies arrive in any order
+    /// during header-first sync. A block is replayed once its parent is known;
+    /// one stored before its parent waits for it. Blocks released together
+    /// (the waiting children of a block just replayed) are replayed in storage
+    /// order (lowest stored index first).
+    ///
+    /// **Tie-breaking after a restart.** Between branches of equal work the
+    /// header chain keeps the one it saw first. After a restart "first" means
+    /// replay order, which follows storage (body arrival) order, not the order
+    /// in which headers originally arrived. So a node may come back on a
+    /// different one of two equal-work tips than it had before the restart; the
+    /// next block on either branch resolves it as usual (docs/blocks.md §8).
+    fn replay(&mut self, stored: Vec<crate::store::StoredBlock>) -> io::Result<()> {
+        use std::cmp::Reverse;
+        use std::collections::{BinaryHeap, HashSet};
         let total = stored.len();
-        let mut waiting: HashMap<Hash, Vec<(usize, Block)>> = HashMap::new();
+        // Blocks waiting for their parent, by parent id: stored indices.
+        let mut waiting: HashMap<Hash, Vec<usize>> = HashMap::new();
+        // Decoded blocks not yet replayed, by stored index.
+        let mut pending: HashMap<usize, (Hash, Block)> = HashMap::new();
+        // Blocks refused as descendants of an invalid block. Their headers are
+        // not in the header chain, so their own descendants are refused too
+        // (without this, a child would fail with `UnknownParent` and stop the
+        // node from starting, or be counted as an orphan to download again).
+        let mut invalid_desc: HashSet<Hash> = HashSet::new();
         for (i, (pow_hash, bytes)) in stored.into_iter().enumerate() {
             let block = Block::decode(&bytes).map_err(|e| {
                 io::Error::new(
@@ -208,26 +262,35 @@ impl ChainManager {
                     format!("stored block {i} does not decode: {e:?}"),
                 )
             })?;
-            manager.pow.preload(&block.header.to_bytes(), pow_hash);
-            if manager.headers.header(&block.header.prev_id).is_none() {
-                waiting
-                    .entry(block.header.prev_id)
-                    .or_default()
-                    .push((i, block));
+            let prev = block.header.prev_id;
+            pending.insert(i, (pow_hash, block));
+            if self.headers.header(&prev).is_none() && !invalid_desc.contains(&prev) {
+                waiting.entry(prev).or_default().push(i);
                 continue;
             }
-            let mut ready = vec![(i, block)];
-            while let Some((i, block)) = ready.pop() {
-                let id = block.id(manager.params.network_id);
-                manager.replay_one(i, total, block)?;
+            let mut ready = BinaryHeap::from([Reverse(i)]);
+            while let Some(Reverse(j)) = ready.pop() {
+                let (pow_hash, block) = pending.remove(&j).expect("pending block");
+                let id = block.id(self.params.network_id);
+                if invalid_desc.contains(&block.header.prev_id)
+                    || self.replay_one(j, total, pow_hash, block)? == Replayed::InvalidParent
+                {
+                    invalid_desc.insert(id);
+                }
                 if let Some(children) = waiting.remove(&id) {
-                    ready.extend(children);
+                    ready.extend(children.into_iter().map(Reverse));
                 }
             }
         }
+        if !invalid_desc.is_empty() {
+            log::info!(
+                "{} stored block(s) descend from blocks found invalid and were not replayed",
+                invalid_desc.len()
+            );
+        }
         // Blocks whose parent was never stored (for example, the parent's write
-        // failed): nothing can be built on them. They are dropped from memory,
-        // not from the file, and the node downloads them again.
+        // failed): nothing can be built on them yet. They are dropped from
+        // memory, not from the file, and the node downloads them again.
         let orphans: usize = waiting.values().map(Vec::len).sum();
         if orphans > 0 {
             log::warn!(
@@ -235,24 +298,53 @@ impl ChainManager {
                  they will be downloaded again"
             );
         }
-        Ok(manager)
+        Ok(())
     }
 
     /// Replays one stored block whose parent is known.
-    fn replay_one(&mut self, i: usize, total: usize, block: Block) -> io::Result<()> {
+    fn replay_one(
+        &mut self,
+        i: usize,
+        total: usize,
+        pow_hash: Hash,
+        block: Block,
+    ) -> io::Result<Replayed> {
+        // The stored PoW hash is trusted under the seed derived from the stored
+        // parent, exactly as header validation derives it. A header whose height
+        // does not follow its parent's is rejected before PoW (no preload needed,
+        // and `seed_id_for` needs a consistent height).
+        let header = &block.header;
+        if let Some(parent) = self.headers.header(&header.prev_id) {
+            if header.height == parent.height + 1 {
+                let seed = self.headers.seed_id_for(header.prev_id, header.height);
+                self.pow.preload(&seed, &header.to_bytes(), pow_hash);
+            }
+        }
         let now = block.header.timestamp; // the future-time rule was checked on arrival
         match self.submit_inner(block, now, false) {
             // Deterministic outcomes of the original processing: a body found
             // invalid, and descendants of blocks found invalid.
-            Ok(_)
-            | Err(SubmitError::Body(_))
-            | Err(SubmitError::Duplicate)
-            | Err(SubmitError::Header(HeaderError::InvalidParent)) => Ok(()),
+            Ok(_) | Err(SubmitError::Body(_)) | Err(SubmitError::Duplicate) => Ok(Replayed::Done),
+            Err(SubmitError::Header(HeaderError::InvalidParent)) => Ok(Replayed::InvalidParent),
             Err(e) => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("stored block {i} of {total} rejected on replay: {e:?}"),
             )),
         }
+    }
+
+    /// Whether the block store failed persistently: a write failed and could
+    /// not be undone, or [`STORE_FAILURE_LIMIT`] writes in a row failed. No
+    /// block is accepted any more ([`SubmitError::Store`]), and the state does
+    /// not change. The node must stop; a restart truncates any torn tail and
+    /// resumes from the last stored block (docs/blocks.md §8).
+    pub fn store_failed(&self) -> bool {
+        self.store_failed
+    }
+
+    /// The PoW cache shared with the header chain (tests and diagnostics).
+    pub fn pow_cache(&self) -> &Arc<CachedPow> {
+        &self.pow
     }
 
     pub fn params(&self) -> &ChainParams {
@@ -328,6 +420,11 @@ impl ChainManager {
         now: u64,
         persist: bool,
     ) -> Result<Submitted, SubmitError> {
+        if persist && self.store_failed {
+            return Err(SubmitError::Store(io::Error::other(
+                "the block store failed; no block is accepted until the node restarts",
+            )));
+        }
         let id = block.id(self.params.network_id);
         if self.headers.header(&id).is_some() {
             if self.bodies.contains_key(&id) || id == self.params.genesis_id() {
@@ -350,13 +447,28 @@ impl ChainManager {
             return Err(SubmitError::BodyMismatch);
         }
         if persist {
-            let pow_hash = self
-                .pow
-                .lookup(&block.header.to_bytes())
-                .expect("accepted headers have a cached PoW hash");
-            self.store
-                .append(&pow_hash, &block.encode())
-                .map_err(SubmitError::Store)?;
+            // The header is in the tree, so its seed is defined; the hash is
+            // cached from header validation (computed again only if not).
+            let header_bytes = block.header.to_bytes();
+            let seed = self
+                .headers
+                .seed_id_for(block.header.prev_id, block.header.height);
+            let pow_hash = self.pow.pow_hash(&seed, &header_bytes);
+            if let Err(e) = self.store.append(&pow_hash, &block.encode()) {
+                self.store_failures += 1;
+                if self.store.failed() || self.store_failures >= STORE_FAILURE_LIMIT {
+                    if !self.store_failed {
+                        log::error!(
+                            "block store failed ({} write failure(s) in a row, last: {e}); \
+                             no further blocks are accepted",
+                            self.store_failures
+                        );
+                    }
+                    self.store_failed = true;
+                }
+                return Err(SubmitError::Store(e));
+            }
+            self.store_failures = 0;
         }
         let height = block.header.height;
         self.bodies.insert(id, block.txs);
@@ -412,7 +524,9 @@ impl ChainManager {
             self.deepest_reorg = self.deepest_reorg.max(depth);
             if depth >= DEEP_REORG_WARN_DEPTH {
                 log::warn!(
-                    "reorganization: disconnecting {depth} block(s) above height {fork}.                      A reorganization this deep suggests a network partition or a                      hash-power attack; no depth limit applies"
+                    "reorganization: disconnecting {depth} block(s) above height {fork}. \
+                     A reorganization this deep suggests a network partition or a \
+                     hash-power attack; no depth limit applies"
                 );
             } else if depth > 0 {
                 log::info!("reorganization: disconnecting {depth} block(s) above height {fork}");
@@ -589,7 +703,13 @@ impl ChainManager {
     /// the manager, then accept the headers cheaply.
     pub fn pow_jobs(&self, headers: &[BlockHeader]) -> Option<(Arc<CachedPow>, Vec<PowJob>)> {
         let first = headers.first()?;
-        self.headers.header(&first.prev_id)?;
+        let parent = self.headers.header(&first.prev_id)?;
+        // Seeds below the batch are looked up on the parent's branch, which is
+        // only defined for heights up to the parent's (a height gap would walk
+        // past genesis and panic).
+        if first.height != parent.height + 1 {
+            return None;
+        }
         let nid = self.params.network_id;
         let ids: Vec<Hash> = headers.iter().map(|h| h.id(nid)).collect();
         for i in 1..headers.len() {
@@ -613,8 +733,6 @@ impl ChainManager {
         Some((self.pow.clone(), jobs))
     }
 
-    /// Accepts a batch of headers in order. Known headers are skipped. Returns the
-    /// number of new headers, or the index and error of the first rejected one.
     /// Checks a linked batch of headers with every rule except proof of work,
     /// without storing anything (`HeaderChain::precheck_batch`). Run before
     /// any RandomX work on a peer's batch.
@@ -626,28 +744,37 @@ impl ChainManager {
         self.headers.precheck_batch(headers, now)
     }
 
+    /// Accepts a batch of headers in order. Known headers are skipped. Returns the
+    /// number of new headers, or the index and error of the first rejected one.
+    /// Headers before a rejected one stay accepted, and the state is brought up
+    /// to date with them either way.
     pub fn accept_headers(
         &mut self,
         headers: &[BlockHeader],
         now: u64,
     ) -> Result<usize, (usize, HeaderError)> {
         let mut new = 0;
+        let mut result = Ok(());
         for (i, h) in headers.iter().enumerate() {
             let id = h.id(self.params.network_id);
             if self.headers.header(&id).is_some() {
                 if self.headers.is_valid(&id) == Some(false) {
-                    return Err((i, HeaderError::InvalidParent));
+                    result = Err((i, HeaderError::InvalidParent));
+                    break;
                 }
                 continue;
             }
-            self.headers.accept(*h, now).map_err(|e| (i, e))?;
+            if let Err(e) = self.headers.accept(*h, now) {
+                result = Err((i, e));
+                break;
+            }
             new += 1;
         }
         // New headers can make a stored side branch the best available chain.
         if new > 0 {
             self.sync_state();
         }
-        Ok(new)
+        result.map(|()| new)
     }
 
     /// Validates a transaction for the next block without adding it (Dandelion

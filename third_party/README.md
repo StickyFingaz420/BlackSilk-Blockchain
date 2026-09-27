@@ -25,7 +25,9 @@ and when to remove it.
 - With the patch: see AUDIT.md ZK-F11 for the stress-test result.
 
 **Change:** in both functions, the random values are drawn while the lock is held, and
-the lock is released before any parallel work. No other line changes.
+the lock is released before any parallel work. (This first round changed nothing
+else; the later rounds below add more. The complete list of differences from the
+published crates is under "Diff against the published crates".)
 - Within each call, the values are drawn in the same order as upstream, and are used in
   the same way. Soundness and zero knowledge are unaffected.
 - Upstream and patched alike, concurrent calls for different tables take the lock in a
@@ -58,9 +60,14 @@ after the lock is released. A unit test (`widen_matches_with_random_cols`) shows
 result is identical to `with_random_cols` for the same RNG state. Every `lock()` in
 the three patched crates now does sequential work only.
 
-**Diff against the published crates:**
-- `p3-fri/src/hiding_pcs.rs`: `get_quotient_ldes` and `commit`, one block each; the
-  `widen` helper and its unit test; the `p3_maybe_rayon` prelude and `Field` imports.
+**Diff against the published crates** (re-checked 2026-09-27 with
+`diff -r --strip-trailing-cr` against the registry's 0.7.0 copies; only these three
+source files differ, apart from upstream's `Cargo.lock`, `.cargo_vcs_info.json` and
+`Cargo.toml.orig`, which were removed):
+- `p3-fri/src/hiding_pcs.rs`: `get_quotient_ldes` and `commit`, one block each (the
+  `get_quotient_ldes` block also moves upstream's comment on the random values and
+  drops the unwidened matrices early, to keep peak memory as upstream); the `widen`
+  helper and its unit test; the `p3_maybe_rayon` prelude and `Field` imports.
 - `p3-merkle-tree/src/hiding_mmcs.rs`: `commit`, one block.
 - `p3-dft/src/radix_2_dit_parallel.rs`: `get_or_compute_twiddles`,
   `get_or_compute_coset_twiddles` and `get_or_compute_inverse_twiddles`, one block

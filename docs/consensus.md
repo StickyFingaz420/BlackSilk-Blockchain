@@ -69,9 +69,12 @@ the block body, and to `difficulty` so that a block's work is explicit.
 `blacksilk-randomx` crate. This is the only PoW implementation in the project.
 
 **Input:** `pow_hash = RandomX(key = seed_id(height), input = header_bytes)`.
-The whole 100-byte header, including the nonce, is the input. The PoW hash is
-**not** stored anywhere: every verifier recomputes it. The PoW hash and the block id
-are different values.
+The whole 100-byte header, including the nonce, is the input. The PoW hash is not
+part of the header or of any block data sent to peers: every node recomputes it for
+headers it receives. The node does cache it in its **local** block store and, at
+restart, trusts the stored value for blocks read from its own file instead of
+recomputing RandomX (blocks.md §8). The PoW hash and the block id are different
+values.
 
 **Validity:** interpret `pow_hash` as a 256-bit little-endian integer `h`. The block
 satisfies difficulty `d` iff `h × d < 2^256` (Monero's `check_hash`). A difficulty of
@@ -98,8 +101,16 @@ Why:
 - An epoch of 2048 blocks (~2.8 days) keeps the key changing often enough that no
   precomputation or ASIC dataset can be reused for long.
 - The lag of 64 blocks means the next key is known about 2 hours before it takes
-  effect. Miners and nodes can prepare the new dataset in time, and a shallow reorg
-  cannot change the key under active miners.
+  effect, so miners and nodes *could* prepare the new dataset in time, and a shallow
+  reorg cannot change the key under active miners.
+  - **As implemented, the miner does not prepare ahead:** it frees the old dataset and
+    builds the new one when the node's template shows the new key, and does not hash
+    meanwhile. Measured (2026-09-27, one machine): about 179 s with 8 threads under
+    load, 1,217–1,219 s with 1 thread. Nodes verify in light mode and only need a new
+    256 MiB cache (about 0.6 s).
+  - The first switch is at height 2113 (then 4161, …). The switch has been exercised
+    only in a test with a short epoch (16 blocks, lag 4, `chain/tests/manager.rs`),
+    not at 2113 with the network parameters.
 - The seed block must be looked up **on the header's own branch**. On a fork deeper
   than the lag, the two branches can use different keys.
 
@@ -144,6 +155,15 @@ rejected only by rule 2 must not be marked invalid; it may be accepted later. `F
 is deliberately much shorter than Bitcoin's or Monero's 2 hours, because LWMA reacts
 to timestamps within a few blocks: `FTL ≤ N·T/20` as recommended for LWMA. Nodes
 must not adjust their clocks from peer time by more than `FTL/2`.
+
+On regtest (`T` = 10 s) the recommendation gives `N·T/20` = 30 s, but regtest keeps
+`FTL` = 360 s like the other networks. Regtest is a local test network, so this is
+accepted; its difficulty is more sensitive to manipulated timestamps than the
+testnet's.
+
+Operators must keep their clocks synchronised (NTP): a node more than about 6 minutes
+behind refuses honest blocks for that long, and a miner more than about 6 minutes
+ahead mines blocks the others refuse (docs/testnet.md §12.2).
 
 ## 6. Header validation
 
@@ -212,7 +232,14 @@ the CVE-2012-2459 class of duplicate-transaction malleability.
 
 - All consensus arithmetic uses integers, except inside RandomX. RandomX's
   floating-point rounding modes are emulated exactly in software, so its output is
-  bit-identical on every CPU and compiler.
+  **designed** to be bit-identical on every CPU and compiler. **Verified** only on
+  x86_64: the official vectors pass on Windows (locally) and the test suite on Linux
+  (CI). There is no ARM64 run and no cross-platform comparison of identical chain
+  hashes (assumptions.md K5).
+- **RandomX full mode** (what the miner uses) agreed with light mode (what nodes
+  verify with) in local runs on 2026-09-25 and 2026-09-27: all 5 official hash vectors
+  in full mode plus 1,024 random inputs. Its CI job (`randomx-full`, Linux) has not
+  yet run on GitHub.
 - The only input not derived from chain data is the local clock (§5 rule 2), which is
   treated as non-final.
 

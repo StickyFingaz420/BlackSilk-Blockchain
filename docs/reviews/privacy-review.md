@@ -30,6 +30,8 @@ could reveal more than the protocol intends:
 
 **Grading.** Each channel is marked:
 - **Closed** (by construction, with the test that shows it);
+- **Supported** (measured and argued, but not by construction; rests on stated
+  assumptions and internal review only, e.g. P-5);
 - **Inherent** (public by design, documented to users);
 - **Open** (a known residual risk).
 
@@ -79,8 +81,8 @@ It must **not** learn:
 |---|---|---|
 | Table heights (the proof's shape) | **Closed.** The kernel and every registered function have public budgets; the prover pads to them and the verifier accepts exactly that shape. Before this change, heights leaked a function's execution length (for example, how many loop rounds a secret took) | `zkvm/tests/multi.rs::a_budget_fixes_the_shape_whatever_the_secret` (the shapes differ unbudgeted and are identical budgeted); `budgets_are_enforced_by_prover_and_verifier`; `px/tests/unified.rs::record_kinds_are_not_revealed_by_trace_heights`; `px/tests/kernel.rs::successful_executions_have_identical_trace_heights` |
 | Budget exhaustion | **Closed.** An over-budget execution cannot be proven: the prover returns `BudgetExceeded` and nothing is broadcast. The kernel budgets exceed measured use by about 6%; a test requires ≤ 95% use for every tested witness | `px/tests/unified.rs::budgets_leave_headroom` |
-| Proof byte length | **Closed; measured; not constant.** Field elements are written fixed-width (Plonky3 serializes them as 4-byte arrays in binary formats), so values never change the length. The length varies only in the Merkle opening proof, whose pruned query paths contain fewer nodes where queries share ancestors. The query positions are public (every verifier recomputes them from the proof), drawn by Fiat–Shamir over hiding commitments, so their distribution is the same for every witness. See P-5 | `px/examples/proof_lengths.rs`: 6 transfer proofs with different witnesses, 2,029,768–2,046,856 bytes (0.84% spread); the non-opening part was 129,898 bytes in all six |
-| Opened values | Zero knowledge of Plonky3's hiding FRI (`HidingFriPcs`, `MerkleTreeHidingMmcs`) | assumption A-ZK, docs/reviews/zk-security-review.md §2; independent review required |
+| Proof byte length | **Supported (not closed); measured; not constant.** Field elements are written fixed-width (Plonky3 serializes them as 4-byte arrays in binary formats), so values never change the length. The length varies only in the Merkle opening proof, whose pruned query paths contain fewer nodes where queries share ancestors. The query positions are public (every verifier recomputes them from the proof), drawn by Fiat–Shamir over hiding commitments, so their distribution is the same for every witness. See P-5 | Current layout (docs/evidence/p5-2026-09-26b/, 260 proofs): the non-authentication parts are byte-identical within each shape, 1,811,565 B (transfer) and 2,359,622 B (vault); 14 pairwise tests between witness classes give p from 0.107 to 0.965, none significant. (Earlier figures in this row, 0.84% spread and a 129,898-byte non-opening part, described older layouts) |
+| Opened values | **Statistical zero knowledge, conditional** (zk-coverage.md §3): Plonky3's hiding FRI (`HidingFriPcs`, `MerkleTreeHidingMmcs`) with terminal blinding and the minimum height of 2^8 | assumption A-ZK, docs/reviews/zk-security-review.md §2; assumptions.md Z7. Internal review only; no external review is engaged (owner decision 2026-09-25) |
 | Public outputs of functions | **Inherent**, and chosen by the contract author: whatever a function writes to its public output is public. Transcripts bound to the kernel (`io_hash`) are hiding (a random blind) | docs/px.md §7.2 |
 | Kernel control flow | Constant work: both nullifier forms, both record kinds and every output check run for every input | `successful_executions_have_identical_trace_heights` |
 
@@ -88,7 +90,7 @@ It must **not** learn:
 
 | Item | Status | Notes |
 |---|---|---|
-| Proving time | Local to the wallet; proportional to the fixed shape (about 42 s transfer, 51 s with a function) | Not observable remotely, except through the submission time (below) |
+| Proving time | Local to the wallet; proportional to the fixed shape (44.6–45.2 s transfer, 52.7–53.0 s with the vault function; AUDIT.md R13) | Not observable remotely, except through the submission time (below) |
 | Verification time at nodes | No secrets are involved: the verifier's inputs are public | A remote timing probe learns nothing private |
 | Submission time vs. receipt time | **Open (user behaviour).** Spending a record right after receiving it links the two in time. The canonical anchor makes a record spendable only after the next multiple-of-16 height, which blurs this slightly but does not prevent it | docs/px.md §12 |
 | Wallet sync timing | Every wallet downloads the same data (all blocks, all commitments) | §2.6 |
@@ -125,7 +127,7 @@ It must **not** learn:
 |---|---|---|
 | Origin of a transaction | PX and deploy transactions take the same Dandelion++ stem as v1 transfers (stem conflicts keyed by key images **and** nullifiers) | `p2p/src/net.rs::stem_keys`; `p2p/tests/network.rs` |
 | Relay volume | PX relays are rate-limited per peer (0.2/s, burst 4) and globally (2/s, burst 10). Honest traffic is below both. Under a flood, a node delays PX relays, which does not reveal an origin | `p2p/src/net.rs::px_rate` |
-| Submission through a remote node | **Inherent.** The node sees the submitter's IP. Users are told to run their own node or use Tor | docs/px.md §12 |
+| Submission through a remote node | **Inherent.** The node sees the submitter's IP, and the wallet's RPC traffic is plaintext HTTP: the wallet has **no Tor or TLS support**, so it cannot reach a remote node over Tor. Users should run their own node (which can itself connect to peers over Tor) | docs/px.md §12 (its "or reach one over Tor" does not work with the current wallet) |
 | Stem probing | **Open, low (P-6).** A peer that already knows a nullifier (its own transaction) can test whether a node holds a conflicting stem transaction. This is the known Dandelion++ property and needs knowledge of the spent record | docs/p2p.md §8 |
 
 ### 2.6 Wallet scanning
@@ -164,7 +166,7 @@ It must **not** learn:
 | P-2 | **The anchor revealed the wallet's sync time.** The wallet used the tip root at its sync height, so the anchor told observers how recent the wallet's view was, a per-wallet fingerprint | Canonical anchor: the last multiple-of-16 height. Wallets in the same window share one anchor |
 | P-3 | **Wallets marked spent v1 key images only for transfers**, so a v1 output spent by a PX deposit or a deploy stayed "unspent" in the wallet and could be selected again. The result was a rejected transaction and a correctness bug, with a privacy side effect: a retry reveals the same ring member twice | Key images are collected from every transaction kind (`Transaction::key_images`) in wallets and test harnesses |
 | P-4 | No contract-record distribution protocol | **Resolved** (2026-09-25): designated on-chain delivery, the creator's copy, off-chain sealed shares; wallet commands and an end-to-end test (docs/px.md §13) |
-| P-5 | Proof length is not constant | **Supported by measurement and reasoning; independent review pending** (§3a, 2026-09-25). The earlier text blamed a varint encoding of field elements. That was wrong: they are fixed-width. A fixed-width codec was built and measured: it gained nothing and made proofs 4% larger, so it was reverted. The remaining variation (0.84% measured) comes only from pruned Merkle paths, a function of the public query positions, distributed identically for every witness. A constant length would need padding each proof to a per-shape worst case computed from Plonky3's pruned format, which costs size and is fragile across upgrades, for no privacy gain. Not done; reconsider if a reviewer disagrees |
+| P-5 | Proof length is not constant | **Supported by measurement and reasoning; internal review only** (§3a; updated 2026-09-27). The earlier text blamed a varint encoding of field elements. That was wrong: they are fixed-width. A fixed-width codec was built and measured: it gained nothing and made proofs 4% larger, so it was reverted. The remaining variation (transfer proofs 2,164,978–2,190,610 B on the current layout, docs/evidence/p5-2026-09-26b/) comes only from pruned Merkle paths, a function of the public query positions, distributed identically for every witness. A constant length would need padding each proof to a per-shape worst case computed from Plonky3's pruned format, which costs size and is fragile across upgrades, for no privacy gain. Not done; the owner may reconsider |
 | P-6 | Dandelion++ stem probing | Open, low; analysed in §3b. Conflict probing needs a valid transaction spending the same record, so only the owner can do it. Replay probing by a stem node needs colluding downstream observers and yields partial route information. Not mitigated further |
 | P-7 | Uniform fees are a wallet convention, not a consensus rule | **Resolved** (2026-09-25): the fee of every PX transaction is exactly `PX_STANDARD_FEE` in consensus. Side effect: fee-per-byte ordering ranks larger PX transactions (contract calls) lower under congestion (docs/px.md §11.5) |
 | P-8 | Contract calls reveal which contract and function ran, and so the timing between related calls (such as a LOCK and its CLAIM) | Inherent: the verifier needs the program. Documented to users (docs/px.md §12); analysed in §3b. Automatic delays and recursion are not implemented |
@@ -175,7 +177,14 @@ It must **not** learn:
 ## 3a. P-5 in detail: why proof-length variation carries no witness information
 
 Status: **supported by measurement and reasoning; not independently verified.** The
-claim is kept open for external review (§4).
+claim stays "supported", not "closed": it rests on internal work only. No external
+review is engaged (owner decision 2026-09-25); it would be an item if one were (§4).
+
+**Current evidence (2026-09-26, final layout; docs/evidence/p5-2026-09-26b/):** 260
+proofs; the non-authentication parts are byte-identical within each shape (1,811,565 B
+transfer, 2,359,622 B vault); 14 pairwise tests (7 pairs × 2 statistics) give p from
+0.107 to 0.965, none below the multiple-comparison threshold 0.05/14 ≈ 0.0036. The
+older measurements below are kept as the record.
 
 ### Claim
 
@@ -192,9 +201,13 @@ distribution for every witness, and observing it tells nothing about the witness
   components except the Merkle authentication data (pruned input paths, and the FRI
   layers' openings) have identical encoded lengths. Both were 1,663,016 bytes; the
   authentication data was 369,024 and 378,752 bytes. A Plonky3 change that made any
-  other part variable would fail this test.
+  other part variable would fail this test. (These byte counts are from the layout
+  before terminal blinding; the current constant parts are 1,811,565 B and
+  2,359,622 B, below.)
 - **The spread is small:** 6 transfer proofs with different witnesses were
-  2,029,768–2,046,856 bytes (0.84%; `px/examples/proof_lengths.rs`).
+  2,029,768–2,046,856 bytes (0.84%; `px/examples/proof_lengths.rs`; pre-blinding
+  layout). On the current layout, 200 transfer proofs spanned 2,164,978–2,190,610 B
+  (about 1.2%).
 - **Campaign across witness classes and execution paths (2026-09-25; raw data in
   `docs/evidence/p5-2026-09-25/`):** 260 proofs, the classes interleaved.
 
@@ -226,6 +239,14 @@ distribution for every witness, and observing it tells nothing about the witness
     minimum near 0.07 is expected by chance). But these p-values are lower than the
     previous campaign's, so "all p ≥ 0.49" no longer describes the current layout.
   - The conclusion is unchanged, with the same power limits: no dependence detected.
+- **Re-run on the final Option A build (2026-09-26; `docs/evidence/p5-2026-09-26b/`;
+  the current evidence):**
+  - 260 proofs; the same constant non-authentication parts, 1,811,565 B (transfer)
+    and 2,359,622 B (vault);
+  - class means 2,177,855–2,179,372 B (transfer) and 2,688,368–2,689,750 B (vault);
+  - p(mean) 0.107–0.898 and p(KS) 0.172–0.965 over 14 tests, so p ranges from 0.107
+    to 0.965; none is significant at 0.05/14. The previous run's lowest p (0.071) is
+    0.282 here, consistent with chance.
 - **Earlier, smaller check (superseded by the campaign):**
   `px/examples/proof_length_distribution.rs`, 10 deposits and 10 payments,
   interleaved: deposits mean 2,037,998 bytes (sd 4,821, range
@@ -303,7 +324,7 @@ distribution for every witness, and observing it tells nothing about the witness
 
 ### 5. Limitations
 
-- **Statistical power.** With 50 proofs per class and a spread of about 4.4 KB, the
+- **Statistical power.** With 50 proofs per class and a spread of about 4.4 KB (4.4–5.3 KB on the current layout), the
   tests would detect a class difference in mean length of about 2.5 KB (0.57 standard
   deviations; 80% power, 5% level). A smaller, systematic dependence would go
   undetected. The regression test's check, that every non-authentication part is
@@ -326,7 +347,7 @@ distribution for every witness, and observing it tells nothing about the witness
   - Under A1, they are distributed identically for every witness.
 - **Across shapes, which shape was used,** and that is public anyway: the called
   functions (and so the budgets) are listed in the transaction. A plain transfer
-  (about 2.04 MB) and a vault call (about 2.49 MB) differ by design.
+  (about 2.18 MB) and a vault call (about 2.69 MB) differ by design.
 - **Under a malicious prover (A2):** up to a few bits chosen by the prover, by
   re-proving until the length matches. That is a covert channel from the prover's own
   wallet, not a leak of anyone else's data.
@@ -345,7 +366,8 @@ distribution for every witness, and observing it tells nothing about the witness
   source, a 260-proof campaign) shows no information in the length;
 - every constant-length option adds a consensus rule and a size cost.
 
-The owner may choose the first option after the independent review.
+The owner may choose the first option at any time; no external review is engaged to
+inform it.
 
 ### 6. What would increase confidence
 
@@ -356,14 +378,16 @@ The owner may choose the first option after the independent review.
 2. **A larger campaign:** the 260-proof campaign above covers six classes. Thousands
    of proofs per class would detect differences below 1 KB.
 3. **Independent review** of this argument by someone familiar with Plonky3's FRI,
-   together with the zero-knowledge review (security review §9).
-4. **A constant length**, if a reviewer requires it: pad every proof to a per-shape
+   together with the zero-knowledge review (security review §9). This would be an
+   item if a reviewer were engaged; none is (owner decision 2026-09-25). Meanwhile:
+   further internal review passes.
+4. **A constant length**, if the owner decides so: pad every proof to a per-shape
    worst case. That costs about 1–2% of the proof (*estimate*: roughly the measured spread) and a bound derived from Plonky3's
    pruned format.
 
 ## 3b. P-6, P-8, query positions and proof size: detailed analysis (2026-09-25)
 
-Status of every item here: **internal analysis; awaiting independent review.**
+Status of every item here: **internal analysis; no external review is engaged (owner decision 2026-09-25).**
 
 ### P-6: probing the Dandelion++ stem
 
@@ -395,7 +419,9 @@ Status of every item here: **internal analysis; awaiting independent review.**
   origin.
 - Network-level adversaries (an ISP, a global passive observer) are outside what
   Dandelion++ protects against (§4).
-- Users who need more should submit over Tor (docs/px.md §12).
+- Users who need more should run their own node and connect it to peers over Tor
+  (the node supports an outbound SOCKS5 proxy; the wallet has no Tor support).
+  docs/px.md §12.
 - **Not mitigated further.** No cheap, sound change was identified; randomized
   re-stemming of replays would change the Dandelion++ analysis and needs review first.
 
@@ -432,7 +458,7 @@ Status of every item here: **internal analysis; awaiting independent review.**
 
 - **Within a shape:** see §3a. No dependence on the witness was found; not constant.
 - **Across shapes:** the size reveals the shape.
-  - Plain transfer: about 2.04 MB. One vault call: about 2.49 MB.
+  - Plain transfer: about 2.18 MB. One vault call: about 2.69 MB (AUDIT.md R13).
   - A shape is fixed by the kernel's function count and the registered budgets of the
     called functions, all public in the transaction.
   - So the size adds no information beyond the public function list.
@@ -442,7 +468,7 @@ Status of every item here: **internal analysis; awaiting independent review.**
 ## 3c. P-9: re-spending an input after a relayed transaction (2026-09-25)
 
 Status: **fixed in the reference wallet, except for a documented residual; internal
-analysis, awaiting independent review.** Details: docs/reviews/wallet-review.md
+analysis; no external review is engaged.** Details: docs/reviews/wallet-review.md
 W-1 to W-6.
 
 **The channel.** A v1 input is spent under a key image, which is the same in every

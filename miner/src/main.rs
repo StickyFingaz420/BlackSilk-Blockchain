@@ -84,7 +84,6 @@ fn run(args: Args) -> Result<(), String> {
     seed.zeroize();
 
     let mut pow: Option<PowContext> = None;
-    let mut nonce_start = rand_core::RngCore::next_u64(&mut rng);
     loop {
         let template = match client.template() {
             Ok(t) => t,
@@ -107,6 +106,11 @@ fn run(args: Args) -> Result<(), String> {
         }
         let block = build_block(&template, &payout, &hedge, now(), &mut rng)
             .map_err(|e| format!("bad template: {e:?}"))?;
+        // A fresh random nonce start for every template: a start kept and counted
+        // up across templates would let anyone sort block nonces and cluster
+        // every block, and so every coinbase output, by miner. Each template has
+        // a fresh coinbase, so its header differs and restarting loses nothing.
+        let nonce_start = rand_core::RngCore::next_u64(&mut rng);
 
         // Stop the search after `refresh` seconds to pick up a newer template.
         let stop = Arc::new(AtomicBool::new(false));
@@ -126,7 +130,6 @@ fn run(args: Args) -> Result<(), String> {
         let (found, hashes) = search(ctx, &block.header, nonce_start, threads, u64::MAX, &stop);
         stop.store(true, Ordering::Relaxed);
         let _ = timer.join();
-        nonce_start = nonce_start.wrapping_add(hashes);
         log::debug!(
             "{hashes} hashes in {:.1?} ({:.1} H/s)",
             started.elapsed(),

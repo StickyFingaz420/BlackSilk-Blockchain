@@ -9,7 +9,7 @@ name = "blacksilk_consensus"
 
 [dependencies]
 blacksilk-randomx = { path = "../randomx" }
-blake2 = "0.10"
+blake2 = "=0.10.6"
 
 [dev-dependencies]
 hex = "0.4"
