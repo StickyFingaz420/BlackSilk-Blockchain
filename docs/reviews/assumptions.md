@@ -1,6 +1,6 @@
 # Assumptions register
 
-Status: **internal, 2026-09-25. Not independently reviewed.** One place listing every
+Status: **internal, 2026-09-25; updated 2026-09-27. Not independently reviewed.** One place listing every
 assumption that BlackSilk's security, privacy or correctness depends on. It shows what
 each assumption protects, where it is argued, and whether anything checks it.
 
@@ -14,7 +14,10 @@ has a bug.
   proof.
 - **Argued:** a written argument, no test that could fail.
 - **Unverified:** relied on; neither tested nor argued here.
-- **External:** an item for the independent review (review-package.md).
+- **External:** beyond what the project can establish itself; it would be an item for
+  an external reviewer if one were engaged (review-package.md). None is engaged or
+  planned, and this is not a requirement or a testnet gate (owner decision
+  2026-09-25, review-status.md). Until then these items rest on internal work only.
 
 ## 1. Cryptography: v1 layer (ring signatures, amounts, addresses)
 
@@ -35,9 +38,9 @@ Source: zk-security-review.md §2; privacy-review.md §3a.3.
 
 | # | Assumption | Protects | Status |
 |---|---|---|---|
-| Z1 | Knowledge soundness of the Plonky3 0.7 batch STARK (LogUp, hiding FRI) at BS-ZK-2 in the random-oracle model: ≥ 123 bits (Johnson), ≥ 105 bits (unique decoding) over the whole envelope | No forged PX proof (no inflation, no theft) | Tested (the bounds are computed per shape); **External** (the calculator and Plonky3 itself) |
+| Z1 | Knowledge soundness of the Plonky3 0.7 batch STARK (LogUp, hiding FRI) at BS-ZK-2 in the random-oracle model: ≥ 123 bits (Johnson), ≥ 105 bits (unique decoding) over the whole envelope | No forged PX proof (no inflation, no theft) | Tested (the bounds are computed over the envelope up to 65,536 batched columns, which covers the worst case of about 2 × 15,709 = 31,418 batched functions, zk.md §9.3); **External** (the calculator and Plonky3 itself) |
 | Z2 | The Poseidon2 duplex challenger acts as a random oracle (Fiat–Shamir) | Z1; also the uniformity of query positions (privacy A1) | Standard in the literature; **External** |
-| Z3 | Poseidon2 over BabyBear, width 16, standard round numbers: 124-bit collision and preimage resistance | Merkle trees, transcript, every `Hk` commitment and nullifier | **External. Young primitive; first review item** |
+| Z3 | Poseidon2 over BabyBear, width 16, standard round numbers: about 123-bit collision resistance of an 8-element digest (8 · log2 p / 2 ≈ 123.6; `COLLISION_BITS` = 123) and preimage resistance | Merkle trees, transcript, every `Hk` commitment and nullifier | **External. Young primitive; first review item** |
 | Z4 | LogUp buses: multiplicities never wrap modulo p | Z1 | Tested (the largest statement reaches 63% of p) |
 | Z5 | The BVM-1 tables constrain exactly the interpreter's semantics | Z1 for every function and the kernel | Tested (mutation, differential, oracle); **External** |
 | Z6 | The kernel and function programs implement their specifications | Value conservation, contract rules | Tested (per-check rejection tests); **External** |
@@ -55,7 +58,7 @@ Source: privacy-review.md §1–§3b.
 
 | # | Assumption | Protects | Status |
 |---|---|---|---|
-| P1 | Proof-length variation depends only on the public query positions, which are uniform whatever the witness (P-5) | Proof size reveals nothing about the witness | Tested (campaign, all pairwise p ≥ 0.49) and argued (§3a); **External.** Supported, awaiting independent review |
+| P1 | Proof-length variation depends only on the public query positions, which are uniform whatever the witness (P-5) | Proof size reveals nothing about the witness | **Supported, not closed:** tested and argued (privacy-review.md §3a). Current evidence (docs/evidence/p5-2026-09-26b/, the final layout): the non-authentication parts are constant per shape (1,811,565 B transfer, 2,359,622 B vault); 260 proofs, 14 pairwise tests with p from 0.107 to 0.965, none significant at 0.05/14. Only large effects are detectable. **External** (internal review only) |
 | P2 | Plonky3's proof layout is as in 0.7.0: only pruned Merkle paths vary | P1 | Tested (a regression test pins the constant parts) |
 | P3 | The honest prover publishes the first proof it computes. A malicious wallet can re-prove to encode bits in the length: a covert channel from its own wallet | P1 | Argued; a wallet that leaks has easier channels |
 | P4 | Users follow the timing and amount guidance (round amounts, random waits between related operations) | Deposit/withdrawal linkage; P-8 call timing | **Unverified:** depends on users (docs/px.md §12) |
@@ -69,9 +72,9 @@ Source: docs/p2p.md §1, §12.
 
 | # | Assumption | Protects | Status |
 |---|---|---|---|
-| N1 | A node has at least one honest outbound peer (not eclipsed) | Correct chain view, transaction propagation | Argued (bucketed address manager, network-group diversity); not tested against a real Sybil attack |
-| N2 | There is no global passive adversary, and users who need more protection use Tor or I2P | Transaction origin | **Explicit non-goal** (p2p.md §1) |
-| N3 | Transport encryption only stops passive reading. Peers are not authenticated, so an active MITM can read or drop traffic | Content confidentiality against passive observers | Explicit limitation |
+| N1 | A node has at least one honest outbound peer (not eclipsed) | Correct chain view, transaction propagation | Argued (bucketed address manager, network-group diversity); not tested against a real Sybil attack. Open defects weaken it: N-4 (unbounded pre-handshake connections), N-5 (exact-IP bans), N-9 (no inbound eviction) (completion-readiness-2026-09-26.md) |
+| N2 | There is no global passive adversary, and users who need more protection run their node over Tor (outbound SOCKS5; I2P is **not** supported; the wallet has no Tor or TLS support, so it must use a local node) | Transaction origin | **Explicit non-goal** (p2p.md §1). Inbound Tor has a known defect (N-6: all inbound Tor peers share 127.0.0.1; testnet.md §4.3) |
+| N3 | Transport encryption only stops passive reading. Peers are not authenticated, so an active MITM can read or drop traffic, inject invalid messages so that the victim bans the impersonated peer's IP, and eclipse a node whose connections it controls | Content confidentiality against passive observers | Explicit limitation |
 | N4 | Dandelion++ parameters tuned for Monero are adequate for BlackSilk's network size | Origin privacy | **Unverified** (p2p.md §12) |
 
 ## 5. Consensus and mining
@@ -81,10 +84,10 @@ Source: docs/consensus.md, docs/blocks.md.
 | # | Assumption | Protects | Status |
 |---|---|---|---|
 | K1 | An honest majority of RandomX hash power | Chain immutability, double-spend resistance | Standard PoW assumption. A small testnet is easy to out-mine |
-| K2 | RandomX is CPU-oriented and memory-hard as designed; the pure-Rust port matches the reference exactly | PoW validity agreement between nodes | Tested (the reference hash vectors `hash_1a`–`hash_1e`; full mode opt-in); the port is **External** if in scope (v1) |
-| K3 | Node clocks are roughly correct (within the 360 s future limit) | Timestamp rules, difficulty | Standard; not enforced beyond the rules |
+| K2 | RandomX is CPU-oriented and memory-hard as designed; the pure-Rust port matches the reference exactly | PoW validity agreement between nodes | Tested: the reference hash vectors `hash_1a`–`hash_1e` in light mode; in full mode, all 5 vectors plus full/light agreement on 1,024 random inputs, run locally 2026-09-25 and 2026-09-27 (opt-in test; the `randomx-full` CI job has not yet run on GitHub). The seed-key switch is exercised only with a short test epoch (16/4), not at height 2113. The port is **External** if in scope (v1) |
+| K3 | Node clocks are roughly correct (within the 360 s future limit) | Timestamp rules, difficulty | Standard; not enforced beyond the rules. Operators are told to run NTP (testnet.md §12.2) |
 | K4 | **No reorg-depth limit or checkpoint** (**provisional testnet policy**, accepted by the owner 2026-09-25; not a mainnet decision; docs/reviews/k4-reorg-policy.md): the most-work chain wins at any depth. Reorganizations of 10 blocks or more are logged as warnings and the deepest is tracked | Convergence of honest nodes | **Documented and accepted for the testnet.** Deep rewrites are possible for a hash-power majority (K1). A limit or checkpoints remain open for mainnet |
-| K5 | Consensus arithmetic is deterministic across platforms (integers; RandomX floating point emulated exactly) | Nodes agree | Tested on Windows x86_64, and the full suite passes on Linux x86_64 in CI (2026-09-25). No cross-platform comparison of identical outputs |
+| K5 | Consensus arithmetic is deterministic across platforms (integers; RandomX floating point emulated exactly) | Nodes agree | Designed to be. Tested on Windows x86_64, and the full suite passes on Linux x86_64 in CI (2026-09-25). No ARM64, and no cross-platform comparison of identical outputs |
 
 ## 6. Implementation and operations
 
@@ -92,14 +95,15 @@ Source: docs/consensus.md, docs/blocks.md.
 |---|---|---|---|
 | I1 | The pinned dependencies are what they claim (Plonky3 `=0.7.0`, `ml-kem =0.3.2`, `wasmi =0.38.0`, others through `Cargo.lock`) | Everything | `cargo audit`: 0 vulnerabilities, 1 unmaintained (`paste`); dependency-review.md |
 | I2 | The OS CSPRNG works (hedged where it matters: C5, Z7) | Keys, proof randomness | Standard; hedging bounds a failure |
-| I3 | `wasmi` executes deterministically with exact fuel metering on every platform | Transparent-contract consensus | Tested (fuzzing: determinism across two executors, same platform); cross-platform untested |
+| I3 | `wasmi` executes deterministically with exact fuel metering on every platform | Transparent-contract consensus (not integrated; not in consensus) | Tested (fuzzing: determinism across two executor instances in one process); cross-platform untested |
 | I4 | The wallet host is not compromised | Keys and every private property | Explicit non-goal |
 | I5 | Rust's memory safety holds: the project's own `unsafe` is minimal and reviewed; the dependencies' `unsafe` is trusted | Memory safety | dependency-review.md; not audited line by line |
 
 ## 7. Open items
 
-1. **Z1, Z2, Z3, Z5–Z7, Z9, Z10 and P1:** the independent review (review-package.md
-   §5).
+1. **Z1, Z2, Z3, Z5–Z7, Z9, Z10 and P1:** internal review only. They would be the
+   first items for an external reviewer if one were engaged (review-package.md §5);
+   none is (owner decision 2026-09-25).
 2. **K4:** documented and accepted for the testnet (no limit; a warning at 10 blocks).
    Revisit for mainnet with testnet data.
 3. **N4:** re-tune the Dandelion++ parameters after measuring the testnet's size.
