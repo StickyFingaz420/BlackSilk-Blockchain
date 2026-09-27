@@ -335,6 +335,8 @@ dependencies = [
  "blacksilk-consensus",
  "blacksilk-crypto",
  "blacksilk-p2p",
+ "blacksilk-px",
+ "blacksilk-randomx",
  "blacksilk-rpc",
  "blacksilk-tx",
  "clap",

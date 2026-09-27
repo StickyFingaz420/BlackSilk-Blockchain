@@ -45,6 +45,20 @@ pub struct Info {
     /// Peers disconnected for misbehaviour since the node started.
     #[serde(default)]
     pub misbehaving_disconnects: u64,
+    /// The full genesis id (hex). Operators compare it across devices.
+    /// Optional so that clients decode nodes that predate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genesis_id: Option<String>,
+    /// The node's consensus fingerprint for its network (hex; see
+    /// `blacksilk_node::fingerprint`). Nodes with different fingerprints fork.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consensus_fingerprint: Option<String>,
+    /// The git commit the node was built from, or `unknown`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_commit: Option<String>,
+    /// The node crate version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -346,5 +360,30 @@ mod tests {
         let r: PxCommitments = serde_json::from_str(json).unwrap();
         assert_eq!(r.next, None);
         assert_eq!(r.commitments, vec![(1, "ab".to_string())]);
+    }
+
+    /// `/info` from a node older than the identity fields decodes, and the
+    /// fields round-trip when present.
+    #[test]
+    fn info_identity_fields_are_optional() {
+        let old = r#"{"network":"testnet","network_id":1,"height":2,"tip":"00","difficulty":3,
+            "generated":4,"mempool_txs":0,"mempool_bytes":0,"outputs":5}"#;
+        let i: Info = serde_json::from_str(old).unwrap();
+        assert_eq!(i.genesis_id, None);
+        assert_eq!(i.consensus_fingerprint, None);
+        assert_eq!(i.build_commit, None);
+        assert_eq!(i.version, None);
+        // Absent fields are not serialized as null.
+        assert!(!serde_json::to_string(&i).unwrap().contains("genesis_id"));
+
+        let new = Info {
+            genesis_id: Some("aa".into()),
+            consensus_fingerprint: Some("bb".into()),
+            build_commit: Some("cc".into()),
+            version: Some("0.1.0".into()),
+            ..i
+        };
+        let back: Info = serde_json::from_str(&serde_json::to_string(&new).unwrap()).unwrap();
+        assert_eq!(back, new);
     }
 }

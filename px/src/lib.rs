@@ -10,7 +10,8 @@
 //! - [`prove`]: proving and verifying transfers with the kernel program;
 //! - [`vault`]: the reference private contract (a hash-locked vault), host
 //!   side;
-//! - [`share`]: sharing a record's opening off chain, sealed to an address.
+//! - [`share`]: sharing a record's opening off chain, sealed to an address;
+//! - [`fingerprint`]: the consensus manifest and its PX-side entries.
 //!
 //! Consensus uses [`state`] and [`prove`] through `blacksilk-tx` (transaction
 //! kinds 2 and 3, docs/px.md §11).
@@ -18,6 +19,7 @@
 #![forbid(unsafe_code)]
 
 pub mod delivery;
+pub mod fingerprint;
 pub mod perm;
 pub mod prove;
 pub mod share;

@@ -8,6 +8,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod fingerprint;
+
 use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -163,6 +165,12 @@ async fn info(State(App { chain: s, net }): State<App>) -> Json<rpc::Info> {
         header_height: m.header_height(),
         deepest_reorg: m.deepest_reorg() as u64,
         misbehaving_disconnects: stats.as_ref().map_or(0, |s| s.misbehaving_disconnects),
+        genesis_id: Some(fingerprint::hex(&m.params().genesis_id())),
+        consensus_fingerprint: Some(fingerprint::hex(&fingerprint::consensus_fingerprint(
+            m.params().network,
+        ))),
+        build_commit: Some(fingerprint::BUILD_COMMIT.to_string()),
+        version: Some(fingerprint::VERSION.to_string()),
     })
 }
 
