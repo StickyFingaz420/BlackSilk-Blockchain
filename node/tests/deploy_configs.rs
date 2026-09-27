@@ -233,12 +233,16 @@ fn consensus_fingerprints_are_pinned() {
 /// kernel and vault ids, with the testnet's genesis and network id still the
 /// retired v2 ones. The testnet value changes again when the v3 genesis is
 /// generated at launch (docs/testnet-v3-genesis.md §6).
+///
+/// All three re-pinned for the v3 difficulty rule (`chain.difficulty_window`
+/// 60 -> 75; docs/reviews/v3-consensus-changes.md, section daa-lwma75-warm).
+/// The rule id itself enters the manifest with fingerprint v3 (owner 40).
 const TESTNET_FINGERPRINT: &str =
-    "8876128fbe1b5d83a915a8c1ea4e70f920e5db155779bc0b78cef2a2ecc1cda9";
+    "68569e723b41cb2f515244e453e3900cb02d3b111a5682bf21ddbe7cacdbc4f1";
 /// Changing this is a consensus change and requires a new network id.
 const REGTEST_FINGERPRINT: &str =
-    "9cb0c0bff53096b640da1ebdfba6f7134562eaa622afdaa9b9531627b4539a61";
+    "ff75dab1831e7764984b518d0f37126129b8b42b5745918ddc9dc117a6cca62c";
 /// Changing this is a consensus change and requires a new network id. (The
 /// mainnet parameters are provisional; mainnet is not launched.)
 const MAINNET_FINGERPRINT: &str =
-    "1ccf1942b48e94b60d3dbc2a1cf2ab8384721dc053b607a09f92226ed5d8edbb";
+    "76c4c8303d4f18f69e85e536d32c07549c03f86d287b743b7446845ccc8c837b";

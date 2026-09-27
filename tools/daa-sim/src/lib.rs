@@ -30,5 +30,5 @@ pub mod scenarios;
 pub mod selection;
 pub mod sim;
 
-pub use rules::{candidates, Asert, DifficultyRule, FnRule, Lwma, RiseCap};
+pub use rules::{candidates, Asert, ConsensusV3, DifficultyRule, FnRule, Lwma, RiseCap};
 pub use sim::Branch;

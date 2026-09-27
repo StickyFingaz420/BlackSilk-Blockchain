@@ -11,7 +11,8 @@ const SEED: u64 = 0xF1;
 const TRIALS: usize = 1_000;
 const CHUNK: usize = 50;
 
-/// The consensus rule: `blacksilk_consensus::difficulty::next_difficulty`, N = 60.
+/// The pre-v3 consensus rule (LWMA-60, step 1; `rules::legacy_next`), on which
+/// 03-F1 was found.
 const CURRENT: Lwma = Lwma { window: 60 };
 
 fn race_rate(q: f64, z: usize, stamping: Stamping) -> Rate {

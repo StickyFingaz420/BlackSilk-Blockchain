@@ -176,7 +176,7 @@ mod tests {
             assert_eq!(p.target_block_time, TARGET);
             assert_eq!(p.future_time_limit, FTL);
             assert_eq!(p.median_time_window, MTP_WINDOW);
-            assert_eq!(p.difficulty_window, 60);
+            assert_eq!(p.difficulty_window, 75);
         }
     }
 

@@ -30,6 +30,7 @@ pub mod schedule;
 pub mod timestamp;
 
 pub use chain::{Accepted, BlockTemplate, HeaderChain, HeaderError, Reorg};
+pub use difficulty::DIFFICULTY_RULE_ID;
 pub use hash::Hash;
 pub use header::{BlockHeader, HEADER_SIZE, HEADER_VERSION, NONCE_OFFSET};
 pub use params::{ChainParams, Network};

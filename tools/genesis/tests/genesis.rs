@@ -179,6 +179,12 @@ fn starting_difficulty_from_measured_hash_rate() {
 /// R15 §4.1: block 1 arrives 7 200 s after `T_g`. LWMA caps the solve time at
 /// 6T, so block 2's difficulty is ⌊100·120·2 / (2·720)⌋ = 16, and honest
 /// 120 s blocks bring it back up within the window.
+///
+/// Under the v3 rule (N = 75, counted clock step T/2, warm-up 11) the climb is
+/// additive: a block of difficulty d takes 120·d/100 s here, below the step
+/// while d < 50, so each counts one step and the difficulty rises by 8 per
+/// block: 24, 32, 40, 48, 56 (values from tools/vectors/lwma_warm.py). D0 / 2 is
+/// reached at the fifth block after the gap (k = 4).
 #[test]
 fn genesis_to_launch_gap_is_absorbed_by_lwma() {
     let p = ChainParams::testnet();
@@ -195,13 +201,16 @@ fn genesis_to_launch_gap_is_absorbed_by_lwma() {
     // to at least D0 / 2 within one window of on-target blocks.
     let mut d = d2;
     let mut reached = None;
+    let mut climb = Vec::new();
     for k in 0..n as u64 {
         ts.push(ts.last().unwrap() + t * d / d0.max(1)); // a block of difficulty d takes d/D0 of T
         cd.push(cd.last().unwrap() + d as u128);
         d = next_difficulty(&ts, &cd, t, n, d0);
+        climb.push(d);
         if reached.is_none() && d >= d0 / 2 {
             reached = Some(k);
         }
     }
-    assert!(reached.is_some(), "difficulty stayed at {d}");
+    assert_eq!(reached, Some(4), "difficulty stayed at {d}");
+    assert_eq!(climb[..5], [24, 32, 40, 48, 56]);
 }

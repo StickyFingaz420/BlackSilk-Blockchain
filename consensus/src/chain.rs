@@ -250,9 +250,10 @@ impl HeaderChain {
         out
     }
 
-    /// Difficulty required for a child of `parent_id` (spec §4).
+    /// Difficulty required for a child of `parent_id` (spec §4), from the
+    /// parent's last `ChainParams::difficulty_ancestors` blocks.
     fn required_difficulty(&self, parent_id: Hash) -> u64 {
-        let recent = self.recent(parent_id, self.params.difficulty_window + 1);
+        let recent = self.recent(parent_id, self.params.difficulty_ancestors());
         let ts: Vec<u64> = recent.iter().map(|e| e.header.timestamp).collect();
         let cd: Vec<u128> = recent.iter().map(|e| e.cumulative).collect();
         next_difficulty(
@@ -430,7 +431,10 @@ impl HeaderChain {
         i: usize,
         overlay: &[(Hash, u64, u128)],
     ) -> Context {
-        let need = (self.params.difficulty_window + 1).max(self.params.median_time_window);
+        let need = self
+            .params
+            .difficulty_ancestors()
+            .max(self.params.median_time_window);
         // Newest first.
         let mut ts: Vec<u64> = Vec::with_capacity(need);
         let mut cd: Vec<u128> = Vec::with_capacity(need);
@@ -450,7 +454,7 @@ impl HeaderChain {
         ts.reverse();
         cd.reverse();
         let mtp_from = ts.len().saturating_sub(self.params.median_time_window);
-        let diff_from = ts.len().saturating_sub(self.params.difficulty_window + 1);
+        let diff_from = ts.len().saturating_sub(self.params.difficulty_ancestors());
         Context {
             height: headers[i - 1].height,
             valid: true,
@@ -966,7 +970,7 @@ mod tests {
 
     /// The batch pre-check reaches the verdict of sequential validation for
     /// every rule it checks, at every position, across the LWMA window
-    /// (150 > 61 headers), and computes no proof of work at all.
+    /// and its warm-up (150 > 87 headers), and computes no proof of work at all.
     #[test]
     fn precheck_agrees_with_sequential_validation_and_computes_no_pow() {
         let headers = branch(150, 3);
@@ -986,7 +990,7 @@ mod tests {
             ("difficulty down", |h| h.difficulty -= 1),
             ("timestamp too old", |h| h.timestamp = 0),
         ];
-        for k in [0usize, 1, 10, 59, 60, 61, 62, 100, 149] {
+        for k in [0usize, 1, 10, 11, 12, 74, 75, 76, 77, 86, 87, 88, 100, 149] {
             for (what, m) in mutations {
                 let mut batch = headers.clone();
                 m(&mut batch[k]);

@@ -1,5 +1,6 @@
 //! Per-network consensus parameters (spec §1).
 
+use crate::difficulty::{difficulty_ancestors, DIFFICULTY_WINDOW};
 use crate::hash::Hash;
 use crate::header::BlockHeader;
 use crate::schedule::{Epoch, Schedule, V3};
@@ -20,7 +21,7 @@ pub struct ChainParams {
     pub target_block_time: u64,
     /// Difficulty of the genesis block and of block 1 (`D0`).
     pub initial_difficulty: u64,
-    /// LWMA window `N`.
+    /// LWMA window `N` (the rule: `crate::difficulty`).
     pub difficulty_window: usize,
     /// Median-time-past window.
     pub median_time_window: usize,
@@ -104,7 +105,7 @@ impl ChainParams {
             network_id,
             target_block_time,
             initial_difficulty,
-            difficulty_window: 60,
+            difficulty_window: DIFFICULTY_WINDOW,
             median_time_window: 11,
             future_time_limit: 360,
             seed_epoch: 2048,
@@ -121,6 +122,13 @@ impl ChainParams {
 
     pub fn genesis_id(&self) -> Hash {
         self.genesis.id(self.network_id)
+    }
+
+    /// Ancestors (ending with the parent) a child's required difficulty is
+    /// computed from: the LWMA window plus the counted clock's warm-up
+    /// ([`difficulty_ancestors`]). The single count every caller uses.
+    pub fn difficulty_ancestors(&self) -> usize {
+        difficulty_ancestors(self.difficulty_window)
     }
 }
 
