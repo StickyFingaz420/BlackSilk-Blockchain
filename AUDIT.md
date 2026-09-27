@@ -219,7 +219,7 @@ Genesis headers are provisional until the transaction format exists.
 
 The spec was written first, reviewed, and then implemented. The implementation is pure
 Rust with `#![forbid(unsafe_code)]` in both crates, and has no FFI or C. Dependencies:
-- `curve25519-dalek` 4.1.3 (Ristretto255; audited by Quarkslab, 2019)
+- `curve25519-dalek` 4.1.3 (Ristretto255; an external audit is reported elsewhere, not verified by us)
 - `blake2`
 - `subtle`
 - `zeroize`
