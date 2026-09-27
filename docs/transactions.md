@@ -427,7 +427,7 @@ ring_bytes = P[0] ‖ … ‖ P[15] ‖ Cr[0] ‖ … ‖ Cr[15]
 μC  = Hs("clsag/agg-C", ring_bytes ‖ I ‖ D ‖ C')
 W   = μP·I + μC·D               aggregated key image
 
-α ← hedged nonce (§10)
+α ← hedged nonce (§10; stream bound to the whole transcript, see "CLSAG nonces" there)
 c[π+1] = Hs("clsag/round", ring_bytes ‖ C' ‖ m ‖ α·G ‖ α·Hπ)
 for i = π+1, …, π−1 (mod 16):
     s[i] ← hedged random scalar
@@ -593,13 +593,43 @@ Security relies on the following. Nothing else is assumed.
   ```
 
   The secrets are the spend key (transfers, anchors), `p` and `z` (CLSAG), or the amounts
-  and masks (BP+). The context contains the input context or signed message, the ring and
-  commitments, and a purpose label.
+  and masks (BP+). The context starts with a purpose label and must contain every public
+  input of the statement being signed or proved (input context or signed message, ring,
+  commitments).
   - If the OS RNG is good, values are uniformly random.
   - If it is broken, values are still unpredictable to anyone without the secret key, and
-    never repeat for different messages.
+    never repeat for two different statements, because every input of the statement is
+    in the context.
   - Nonce reuse, which leaks the spend key in Schnorr-type signatures, is therefore
     excluded.
+- **CLSAG nonces (§6.1).** `α` is the first value of the stream and the simulated
+  responses `s[i]` are the following ones, in ring order from `π+1`. The stream is:
+
+  ```
+  secrets = [ p, z ]                                   (32-byte canonical scalars)
+  context = [ "clsag/nonce/v2", m, C', I, D, LE64(π),
+              P[0] ‖ … ‖ P[15], Cr[0] ‖ … ‖ Cr[15] ]
+  ```
+
+  So any change of the signed statement (a ring member `P[i]` or `Cr[i]`, ring order,
+  `C'`, `I`, `D`, `m` or `π`) changes every nonce, even with a constant RNG. The label
+  separates this stream from every other use of the hedge.
+
+  *Change of 2026-09-27 (internal review round 5, finding F2, low severity, defence in
+  depth).* The previous context was `["clsag", m, C', P[π]]`: it did not contain the
+  decoys. After a reorg the same transaction (same global indices, so the same `m`) can be
+  re-signed over a ring whose decoys resolve to different outputs. With a completely
+  broken RNG this reused `α` while `μP`, `μC` and `c[π]` changed. Each such pair gives one
+  linear equation `s₁[π] − s₂[π] = (c₂μP₂ − c₁μP₁)·p + (c₂μC₂ − c₁μC₁)·z`, so three
+  signatures reveal `p` from public data (the regression test
+  `pre_f2_derivation_leaks_the_spend_key_and_fix_prevents_it` performs this recovery on
+  the old derivation). The change is wallet-side only: the verifier, the signature
+  format, key images and all hash tags used in verification are unchanged, so every
+  signature valid before is valid now and vice versa. With a good RNG the output is still
+  uniform: adding public context to the hashed input cannot remove the 32 fresh CSPRNG
+  bytes' entropy (the hash is modelled as a random oracle on the whole input). `π` is in
+  the context but never leaves the hash. The test `nonce_and_signature_test_vector` pins
+  the derivation.
 - **No other randomness sources:** no `rand::thread_rng` seeded from time, no fixed seeds
   outside tests, no `SmallRng` in any code path. The crypto crates take the RNG as an
   explicit `CryptoRng + RngCore` parameter. Tests use a seeded ChaCha20 RNG.

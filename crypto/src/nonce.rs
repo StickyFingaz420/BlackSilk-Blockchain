@@ -14,6 +14,12 @@
 //!   who does not know the secrets. They also differ whenever the context (the
 //!   signed message, ring, outputs…) differs. So a nonce is never reused for two
 //!   different challenges, which is what leaks the key in Schnorr-type schemes.
+//!
+//! The last guarantee holds only for what the caller puts in the context. A
+//! caller must bind every input of the statement it proves or signs, plus a
+//! purpose label as the first context item. CLSAG binds its full transcript
+//! (label `clsag/nonce/v2`, `m`, `C'`, `I`, `D`, `π`, all `P[i]` and `Cr[i]`),
+//! see `clsag::nonce_stream` (internal review round 5, finding F2).
 
 use crate::hash::{tags, Hasher64};
 use curve25519_dalek::scalar::Scalar;
@@ -149,5 +155,36 @@ mod tests {
         let c = HedgedRng::new(&[b"ab"], &[b"c"], &mut ZeroRng).scalar();
         assert_ne!(a, b);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn purpose_labels_separate_streams() {
+        let labels: [&[u8]; 4] = [b"clsag/nonce/v2", b"clsag", b"transfer", b"coinbase"];
+        let out: Vec<Scalar> = labels
+            .iter()
+            .map(|l| HedgedRng::new(&[b"k"], &[l, b"m"], &mut ZeroRng).scalar())
+            .collect();
+        for i in 0..out.len() {
+            for j in i + 1..out.len() {
+                assert_ne!(out[i], out[j], "{i} vs {j}");
+            }
+        }
+    }
+
+    /// Pins the seed and stream construction (constant RNG, fixed inputs).
+    #[test]
+    fn stream_test_vector() {
+        let mut h = HedgedRng::new(
+            &[b"secret-1", b"secret-2"],
+            &[b"label", b"ctx"],
+            &mut ZeroRng,
+        );
+        let s0 = hex::encode(h.scalar().to_bytes());
+        let b1 = hex::encode(h.bytes16());
+        assert_eq!(
+            s0,
+            "eefc9e99c62f4cd0cd544960184a961c707b541a99cb1812a084eff164961a09"
+        );
+        assert_eq!(b1, "a5b069fc6447cc3a661be9716abe9ce4");
     }
 }
