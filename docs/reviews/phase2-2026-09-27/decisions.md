@@ -627,3 +627,19 @@
   - NEVER report stem state: a stem transaction answers `unknown` (F36-11).
   - `expired` is added only with 12's recently-expired set.
 - **Wiring:** the binary switches to `serve::run` (cookie auth plus connection limits), with `--rpc-allow-host`, in the miner, labnet, check-node.sh and testnet docs, as ONE follow-up owner (W2-36b). This is a launch blocker until done.
+
+## Labnet deep reorgs (INV-REORG), Lead decisions 2026-09-27
+- **Root cause:** regtest D0 = 1 combined with the v3 DAA's bounded rise. D stays at 1 for 76 blocks after the genesis gap, and equal-work lockstep mining gives deep equal-height splits. No sync, lock, RPC gate or template bug. The seedrun "stuck node" was a labnet detector false positive, now fixed (StuckDetector).
+- **Regtest D0:** UNCHANGED. Regtest serves deterministic tests; D = 1 is intended there.
+- **Labnet:** a warm-up phase (single miner until D is near equilibrium), with warm-up reorgs reported separately. Reorg metrics count only after warm-up. Owner 09. Runs shorter than about 10 minutes are not evidence.
+- **Testnet D0: GENESIS GATE (F40-12 raised to P0).** D0 must be measured on reference hardware against the expected launch hash rate before the beacon is committed. Under v3 a 100× under-estimate takes about 197 blocks to ramp (pre-v3: 81). Document the ramp in docs/testnet.md.
+
+## RT-W1b (CB-B1b red team), Lead decisions 2026-09-27
+- **Verdicts:** T8 ACCEPT; expiry/guard ACCEPT WITH CHANGES; R12-2 ACCEPT; tree capacity ACCEPT.
+- **RTW1B-1:** the recently-expired guard applies ONLY on the local origination path (`/tx` and wallet submit). Peer relay and stem admit normally, so no Dandelion black hole forms. Fix the docs/blocks.md claim.
+- **RTW1B-2:** 33 W2 (originated set: never re-originate a forgotten local transaction) and 38 W4 (wallet rebroadcast redesign) are raised to the FRONT of Wave 2. No privacy claims about labnet or testnet until both land.
+- **RTW1B-3:** templates rank deploys by the v1-part rate (`standard_fee / weight`); program-byte fees do not buy priority. Fix the docs sentence.
+- **RTW1B-4:** a halt gets its own exit code, with `RestartPreventExitStatus` in the systemd unit.
+- **RTW1B-5, 7, 8, 9:** fix (readmit keeps the guard entry on Err; halt log string; cfg-gate `with_px_state`; `max_weight` as a const fn with a const assert).
+- **RTW1B-6:** a fee-grace window is required before any fee-changing epoch (none in v3). Logged for the schedule.
+- **Owner:** FX-RTW1B, after FX-RTW1-TW frees the mempool and p2p admission files.
