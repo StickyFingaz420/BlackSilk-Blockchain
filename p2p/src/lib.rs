@@ -23,4 +23,6 @@ pub mod socks5;
 pub mod transport;
 
 pub use addr::NetAddr;
-pub use net::{NetConfig, NetStats, Network, PeerInfo, SharedChain};
+pub use net::{
+    lock_or_exit, NetConfig, NetStats, Network, PeerInfo, SharedChain, POISONED_EXIT_CODE,
+};
