@@ -139,12 +139,12 @@ fn reorg_undo_restores_state() {
     let h = net.height();
     net.mine(vec![tx.clone()], &mut []).unwrap();
     assert!(net.chain.is_key_image_spent(&tx.inputs[0].key_image));
-    assert!(net.chain.has_one_time_key(&tx.outputs[0].one_time_key));
+    assert!(holds_output_key(&net.chain, &tx.outputs[0].one_time_key));
     // Disconnect: the spend and its outputs disappear, the tx is valid again.
     assert!(net.chain.undo_block());
     assert_eq!(net.chain.output_count(), outputs_before);
     assert!(!net.chain.is_key_image_spent(&tx.inputs[0].key_image));
-    assert!(!net.chain.has_one_time_key(&tx.outputs[0].one_time_key));
+    assert!(!holds_output_key(&net.chain, &tx.outputs[0].one_time_key));
     assert_eq!(validate_transfer(&tx, &net.chain, h, &net.rules), Ok(()));
 }
 

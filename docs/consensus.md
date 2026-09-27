@@ -289,7 +289,8 @@ What the epoch fixes:
 - **Header version** (§6 rule 1). The genesis header carries the version of epoch 0,
   so the genesis ids of §1 are unchanged.
 - **Branch id.** Every transaction signature message and the PX proof binding `h_tx`
-  commit to `LE32(network_id) ‖ LE32(branch_id)` (transactions.md §4.4, px.md §11.1).
+  commit to `LE32(network_id) ‖ LE32(branch_id) ‖ genesis_id` (transactions.md §4.4,
+  px.md §11.1).
   A transaction signed or proved in one epoch is invalid in every other.
 - **Verifier id.** It names the PX verifier (kernel, parameter set and kernel budgets).
   Only `1` exists. A test checks that every scheduled id is implemented.

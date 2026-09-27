@@ -141,7 +141,10 @@ fn transactions_follow_the_best_chain_through_a_reorg() {
         !node.net.chain.is_key_image_spent(&tx.inputs[0].key_image),
         "payment undone"
     );
-    assert!(!node.net.chain.has_one_time_key(&tx.outputs[0].one_time_key));
+    assert!(!holds_output_key(
+        &node.net.chain,
+        &tx.outputs[0].one_time_key
+    ));
 
     // The payment is valid again on the new best chain and can be re-mined.
     let h = node.net.chain.next_height();

@@ -184,6 +184,42 @@ impl Wallet {
                     mask,
                     output_key_offset,
                 } = o.received;
+                let key_image = hex::encode(ki.bytes());
+                // One credited output per key image (docs/transactions.md
+                // §12.5, D8 option B): two outputs with the same one-time
+                // key share the key image, and only one of them can ever be
+                // spent. The Janus check makes this unreachable on a valid
+                // chain except for a hash collision (a copy in another
+                // transaction has another input context), so this is defence
+                // in depth, e.g. against a dishonest node. Keep the LARGEST
+                // amount, then the lowest global index (Monero's rule; a
+                // small early copy never displaces a large genuine output).
+                if let Some(held) = self.outputs.iter_mut().find(|s| s.key_image == key_image) {
+                    let better = amount > held.amount
+                        || (amount == held.amount && o.global_index < held.global_index);
+                    self.warnings.push(format!(
+                        "outputs {} and {} share a key image: only the {} is credited \
+                         (docs/transactions.md §12.5)",
+                        held.global_index,
+                        o.global_index,
+                        if better { "second" } else { "first" }
+                    ));
+                    if better {
+                        // The key image's spent state is the held one's.
+                        held.global_index = o.global_index;
+                        held.height = height;
+                        held.coinbase = o.coinbase;
+                        held.account = subaddress.account;
+                        held.index = subaddress.index;
+                        held.amount = amount;
+                        held.one_time_key = hex::encode(o.key.one_time_key.bytes());
+                        held.commitment = hex::encode(o.key.commitment.bytes());
+                        held.mask = hex::encode(mask.as_bytes());
+                        held.offset = hex::encode(output_key_offset.as_bytes());
+                        held.tx = Some(hex::encode(o.tx_hash));
+                    }
+                    continue;
+                }
                 self.outputs.push(StoredOutput {
                     global_index: o.global_index,
                     height,
@@ -195,7 +231,7 @@ impl Wallet {
                     commitment: hex::encode(o.key.commitment.bytes()),
                     mask: hex::encode(mask.as_bytes()),
                     offset: hex::encode(output_key_offset.as_bytes()),
-                    key_image: hex::encode(ki.bytes()),
+                    key_image,
                     spent_height: None,
                     pending: false,
                     pending_height: 0,
@@ -301,5 +337,188 @@ impl Wallet {
             outputs,
             px_records,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blacksilk_consensus::{BlockHeader, Network, HEADER_VERSION};
+    use blacksilk_crypto::keys::SubaddressIndex;
+    use blacksilk_crypto::Point;
+    use blacksilk_tx::builder::{build_coinbase, Payment};
+    use blacksilk_tx::types::{Coinbase, CoinbaseOutput, Input, Transaction, Transfer};
+    use rand_chacha::rand_core::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
+
+    fn wallet() -> Wallet {
+        Wallet::from_seed(Network::Regtest, [7; 32], 1)
+    }
+
+    fn block(height: u64, txs: Vec<Transaction>) -> Block {
+        Block {
+            header: BlockHeader {
+                version: HEADER_VERSION,
+                height,
+                prev_id: [0; 32],
+                timestamp: 0,
+                difficulty: 1,
+                tx_root: [0; 32],
+                nonce: 0,
+            },
+            txs,
+        }
+    }
+
+    /// An honest coinbase at `height` paying `amount` to the wallet.
+    fn pay_wallet(w: &Wallet, height: u64, amount: u64, rng: &mut ChaCha20Rng) -> Coinbase {
+        build_coinbase(
+            height,
+            &[Payment {
+                address: w.keys.address(SubaddressIndex::PRIMARY),
+                amount,
+            }],
+            &[9; 32],
+            rng,
+        )
+        .unwrap()
+    }
+
+    /// A transaction spending `key_image` (only its key images and outputs
+    /// matter to `apply_block`).
+    fn spend(key_image: Point) -> Transaction {
+        Transaction::from(Transfer {
+            inputs: vec![Input {
+                key_image,
+                ring: [0; blacksilk_tx::params::RING_SIZE],
+            }],
+            outputs: vec![],
+            fee: 0,
+            pseudo_outs: vec![],
+            range_proof: blacksilk_crypto::bulletproofs_plus::BppProof {
+                a: key_image,
+                a1: key_image,
+                b: key_image,
+                r1: blacksilk_crypto::Scalar::ZERO,
+                s1: blacksilk_crypto::Scalar::ZERO,
+                d1: blacksilk_crypto::Scalar::ZERO,
+                l: vec![],
+                r: vec![],
+            },
+            signatures: vec![],
+        })
+    }
+
+    fn stored_key_image(o: &StoredOutput) -> Point {
+        let b: [u8; 32] = hex::decode(&o.key_image).unwrap().try_into().unwrap();
+        Point::decode(&b).unwrap()
+    }
+
+    /// D8 option B (dossier 50 §5.1 test 3): a copy of the wallet's output,
+    /// mined BEFORE the genuine output, with the same one-time key and a
+    /// larger amount. The copy's input context differs, so the Janus check
+    /// refuses it; the genuine output is credited, once, whatever the order
+    /// and the amounts. The copy stays in the output index (it is a chain
+    /// output, and may be a decoy: never filtered, F13-7).
+    #[test]
+    fn a_copy_mined_before_the_genuine_output_is_not_credited() {
+        let mut rng = ChaCha20Rng::seed_from_u64(1);
+        let mut w = wallet();
+        let genuine = pay_wallet(&w, 2, 1_000, &mut rng);
+        let copy = Coinbase {
+            height: 1,
+            outputs: vec![CoinbaseOutput {
+                amount: 1_000_000,
+                ..genuine.outputs[0].clone()
+            }],
+        };
+        w.apply_block(&block(1, vec![Transaction::Coinbase(copy)]), 1, 0);
+        assert!(w.outputs.is_empty(), "the copy is not credited");
+        w.apply_block(&block(2, vec![Transaction::Coinbase(genuine)]), 2, 1);
+        assert_eq!(w.outputs.len(), 1);
+        assert_eq!(w.outputs[0].global_index, 1);
+        assert_eq!(w.outputs[0].amount, 1_000);
+        assert_eq!(w.balance().total, 1_000);
+        // Both chain outputs are indexed (decoy candidates).
+        assert!(w.index.get(0).is_some() && w.index.get(1).is_some());
+        assert_eq!(
+            w.index.get(0).unwrap().one_time_key,
+            w.index.get(1).unwrap().one_time_key
+        );
+    }
+
+    /// Defence in depth (F13-6, F17-2, RT-10): outputs that pass the scan but
+    /// share a key image (here two outputs of one transaction with the same
+    /// one-time key and different amounts, which consensus rejects but a
+    /// dishonest node can serve) are credited once: the LARGEST amount, then
+    /// the lowest global index. A spend of that key image spends it.
+    #[test]
+    fn one_output_is_credited_per_key_image_the_largest_then_the_lowest_index() {
+        for (amounts, kept) in [
+            ([500u64, 7_000u64], 1u64), // the larger comes second
+            ([7_000, 500], 0),          // the larger comes first
+            ([900, 900], 0),            // equal: the lowest index
+        ] {
+            let mut rng = ChaCha20Rng::seed_from_u64(2);
+            let mut w = wallet();
+            let honest = pay_wallet(&w, 5, 1, &mut rng);
+            let bad = Coinbase {
+                height: 5,
+                outputs: amounts
+                    .iter()
+                    .map(|&amount| CoinbaseOutput {
+                        amount,
+                        ..honest.outputs[0].clone()
+                    })
+                    .collect(),
+            };
+            w.apply_block(&block(5, vec![Transaction::Coinbase(bad)]), 5, 0);
+            assert_eq!(w.outputs.len(), 1, "{amounts:?}: credited once");
+            assert_eq!(w.outputs[0].global_index, kept, "{amounts:?}");
+            assert_eq!(w.outputs[0].amount, amounts[kept as usize]);
+            assert_eq!(w.balance().total, amounts[kept as usize]);
+            assert_eq!(w.take_warnings().len(), 1, "a local diagnostic");
+            // The key image is spent: nothing is left.
+            let ki = stored_key_image(&w.outputs[0]);
+            w.apply_block(&block(6, vec![spend(ki)]), 6, 2);
+            assert_eq!(w.outputs[0].spent_height, Some(6));
+            assert_eq!(w.balance().total, 0);
+        }
+    }
+
+    /// The same across two scans of the chain (a copy that somehow passes
+    /// the scan in a later block, e.g. after a hash collision): a larger
+    /// later output replaces the credited one, a smaller one is ignored; the
+    /// spent state of the key image is kept.
+    #[test]
+    fn a_later_duplicate_replaces_the_credited_output_only_if_larger() {
+        let mut rng = ChaCha20Rng::seed_from_u64(3);
+        let mut w = wallet();
+        let honest = pay_wallet(&w, 5, 300, &mut rng);
+        let with = |amount: u64| Coinbase {
+            height: 5,
+            outputs: vec![CoinbaseOutput {
+                amount,
+                ..honest.outputs[0].clone()
+            }],
+        };
+        // The same block served twice at two positions (a dishonest node).
+        w.apply_block(&block(5, vec![Transaction::Coinbase(with(300))]), 5, 10);
+        w.apply_block(&block(5, vec![Transaction::Coinbase(with(100))]), 5, 20);
+        assert_eq!(w.outputs.len(), 1);
+        assert_eq!((w.outputs[0].global_index, w.outputs[0].amount), (10, 300));
+        w.apply_block(&block(5, vec![Transaction::Coinbase(with(800))]), 5, 30);
+        assert_eq!(w.outputs.len(), 1);
+        assert_eq!((w.outputs[0].global_index, w.outputs[0].amount), (30, 800));
+        assert_eq!(w.balance().total, 800);
+        let _ = w.take_warnings();
+        // Spent, then a larger duplicate: still spent.
+        let ki = stored_key_image(&w.outputs[0]);
+        w.apply_block(&block(6, vec![spend(ki)]), 6, 40);
+        w.apply_block(&block(5, vec![Transaction::Coinbase(with(900))]), 5, 50);
+        assert_eq!(w.outputs.len(), 1);
+        assert_eq!(w.outputs[0].amount, 900);
+        assert_eq!(w.outputs[0].spent_height, Some(6));
+        assert_eq!(w.balance().total, 0);
     }
 }

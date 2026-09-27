@@ -256,3 +256,9 @@ impl TestNet {
         .expect("build")
     }
 }
+
+/// Whether some output on `chain` carries the one-time key `key` (there may
+/// be several: one-time keys are not unique across transactions, D8 option B).
+pub fn holds_output_key(chain: &MemoryChain, key: &Point) -> bool {
+    (0..chain.output_count()).any(|i| chain.output(i).is_some_and(|r| r.key.one_time_key == *key))
+}

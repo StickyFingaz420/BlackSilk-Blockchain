@@ -682,10 +682,13 @@ pub fn check_px_structure(tx: &PxTx) -> Result<(), TxError> {
         return Err(TxError::OutputsNotSorted);
     }
     // Hidden outputs and payouts are sorted separately, so a key shared by
-    // the two lists is not caught above. C4 rejects such a transaction on
-    // every chain (its own second key collides with its first), so this
-    // check changes no verdict; it reports the error as stateless. `output`
-    // indexes `output_keys()` (hidden outputs, then payouts), as C4 does.
+    // the two lists is not caught above. This check is the only rule that
+    // rejects it: one-time keys are distinct within a transaction, never
+    // required unique across transactions (D8 option B,
+    // docs/reviews/v3-consensus-changes.md §1). It must never be dropped: it
+    // is what the wallet-side burning-bug argument rests on
+    // (docs/transactions.md §3.1). `output` indexes `output_keys()` (hidden
+    // outputs, then payouts).
     let mut seen = std::collections::HashSet::with_capacity(keys.len());
     for (j, (otk, _)) in keys.iter().enumerate() {
         if !seen.insert(*otk.bytes()) {
@@ -703,6 +706,7 @@ pub fn check_px_structure(tx: &PxTx) -> Result<(), TxError> {
     if tx.signatures.len() != n {
         return Err(TxError::SignatureCount);
     }
+    crate::validate::check_aux_images(&tx.signatures)?;
     match (&tx.range_proof, k) {
         (None, 0) => {}
         (Some(p), k) if k > 0 => {

@@ -454,7 +454,7 @@ dropped.
 - a transaction that conflicts with the mempool (dropped before verification, step 3
   below);
 - a message of an unknown type (§5; it still counts against the rate limits);
-- a transaction invalid only against **our chain state** (contextual rules C1–C4). Its
+- a transaction invalid only against **our chain state** (contextual rules C1–C3). Its
   key image may have been spent in a block we saw first, or its ring members may
   resolve differently on our branch. This is not proof of misbehavior. Exception:
   an invalid signature whose ring members are all at least **60 blocks** below our
@@ -501,13 +501,13 @@ already being written is finished first).
      contextual rule **at our current tip**, is dropped unverified: the same bytes are verified again only after the tip changes
      (the cache holds at most 10 000 ids and is emptied when the tip changes).
      `InvTx` announcements of such ids are not requested either. A transaction that
-     **conflicts** with a pooled one (same key image, PX nullifier, contract id or
-     output key, `Mempool::conflicts`) is dropped here too, unpenalized: the pool
+     **conflicts** with a pooled one (same key image, PX nullifier or contract id,
+     `Mempool::conflicts`; output keys never conflict) is dropped here too, unpenalized: the pool
      keeps the first seen, so it would be refused after verification anyway. Before
      2026-09-27 such a PX transaction passed the cheap checks and took a node-wide PX
      token (step 5) first;
   4. cheap checks: the stateless structure and balance rules (penalized), then the
-     contextual rules a chain extension can change: key images, one-time keys, PX
+     contextual rules a chain extension can change: key images, PX
      anchor, nullifiers, registry, pool, contract id (not penalized, cached as in 3);
   5. for PX and deploys, the node-wide PX token (below);
   6. full verification: ring signatures, range proofs, PX proof.

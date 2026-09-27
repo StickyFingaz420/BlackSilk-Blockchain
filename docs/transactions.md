@@ -181,7 +181,24 @@ coinbase:  ctx = H32("input-context/coinbase", LE64(height))
 Key images are unique on chain (§8.2), and so are coinbase heights. So two outputs in
 different transactions never share derivation inputs, even if a wallet's RNG fails
 completely. This prevents Monero's 2018 "burning bug" (two outputs with the same one-time
-key, only one of which is spendable) by construction. §8.2 C4 adds a consensus backstop.
+key, only one of which is spendable) by construction, at the recipient's wallet:
+
+**Lemma 2 (burning-bug resistance without a ledger rule).** On a valid chain, a wallet
+that runs §3.3 step 5 accepts at most one output per one-time key `O`, except with
+probability about `q²/2^252` for `q` hash queries (random-oracle model).
+- *Sketch.* Two accepted outputs with the same `O` pay the same owned `D`, so they have
+  the same `x`; equal `x` with different `S` is an `Hs` collision, so `S`, hence `R`,
+  hence `r` are equal. Then `Hs("ephemeral", anchor₁ ‖ ctx₁ ‖ D ‖ C) =
+  Hs("ephemeral", anchor₂ ‖ ctx₂ ‖ D ‖ C)`: an `Hs` collision if `ctx₁ ≠ ctx₂`. If
+  `ctx₁ = ctx₂`, both outputs are in one transaction (ctx is unique per transaction on
+  a chain), which the within-transaction rules exclude (T6, B7, `PxDuplicateOutputKey`).
+- *It rests on:* the within-transaction distinctness of one-time keys, which must never
+  be dropped; ctx uniqueness (C2, PX2, one coinbase per height); and the wallet running
+  step 5. It is an internal argument over BlackSilk's own Janus construction, the same
+  shape as Carrot's burning-bug argument; it has not been externally reviewed.
+
+There is **no chain-wide uniqueness rule on `O`** (the former rule C4 was removed for the
+v3 genesis, §8.2). A wallet also credits at most one output per key image (§12.5).
 
 ### 3.2 Sending to `(D, C)` [Δ Monero: per-output ephemeral key and Janus anchor]
 
@@ -329,7 +346,8 @@ tx_hash       = H32("tx/hash", prefix_hash ‖ base_hash ‖ prunable_hash)
 bp_hash       = H32("tx/bp", bp_plus bytes)
 
 sig_message   = H32("tx/sig-message",
-                    LE32(network_id) ‖ LE32(branch_id) ‖ prefix_hash ‖ base_hash ‖ bp_hash)
+                    domain ‖ prefix_hash ‖ base_hash ‖ bp_hash)
+domain        = LE32(network_id) ‖ LE32(branch_id) ‖ genesis_id           (40 bytes)
 ```
 
 - `tx_hash` is the transaction id. It is the leaf of the block's `tx_root` (consensus.md
@@ -347,6 +365,11 @@ sig_message   = H32("tx/sig-message",
   next block height. The reference wallet records the branch id of each stored
   transaction and never rebroadcasts one into another epoch: it releases its inputs and
   asks the user to send the payment again (reviews/v3-upgrade-mechanism.md §10).
+- `genesis_id` is the chain's genesis block id (consensus.md §1, `ChainParams::genesis_id`).
+  A signature is valid on one chain only: not on a rehearsal, release-candidate or
+  retired chain that shares the network id and branch id (red-team RT-14,
+  reviews/v3-consensus-changes.md §3). Without it, replay between such chains was
+  blocked only by chain state (ring indices and PX anchors that almost surely differ).
 
 ---
 
@@ -427,7 +450,9 @@ Ristretto removes the cofactor handling.
 - ring `P[0..16)` and `Cr[0..16)`: the `(O, Cm)` of the members
 - pseudo-output `C'`
 - message `m = sig_message`
-- secret index `π`, with `p·G = P[π]` and `z·G = Cr[π] − C'`
+- secret index `π`, with `p·G = P[π]` and `z·G = Cr[π] − C'`, and `z ≠ 0` (a signer
+  refuses `z = 0`: it gives `D = identity`, which verification rejects, and `C' = Cr[π]`,
+  which reveals the real input)
 
 ```
 Hπ  = Hp("key-image", P[π])
@@ -450,7 +475,7 @@ s[π] = α − c[π]·(μP·p + μC·z)
 signature = (c0 = c[0], s[0..16), D)
 ```
 
-**Verification:** decode every point and scalar (§1.1) and reject `I = identity`.
+**Verification:** decode every point and scalar (§1.1) and reject `I = identity` and `D = identity`.
 Recompute `μP`, `μC` and `W`, then run the loop for `i = 0..15` starting from `c[0] = c0`.
 The signature is valid iff the final `c[16]` equals `c0`.
 
@@ -520,16 +545,16 @@ The rules are listed in evaluation order: cheap checks first, elliptic-curve wor
 | # | Rule |
 |---|---|
 | T1 | Strict decode (§4); `size ≤ MAX_TX_SIZE = 100 000` bytes for coinbase and transfer; no trailing bytes. |
-| T2 | `version = 1`; `kind ∈ {0, 1, 2, 3}`; a coinbase is only valid as the first tx of a block (B1). Kinds 2 (PX transaction) and 3 (private-contract deploy) are specified in [`px.md`](px.md) §11, with their own size caps (`MAX_PX_TX_SIZE` = 4 MiB proof cap + 256 KiB; `MAX_DEPLOY_TX_SIZE` = 1 MiB) and rules (PX1–PX5); they reuse T4–T11 and C1–C4 for their v1 inputs and outputs. |
+| T2 | `version = 1`; `kind ∈ {0, 1, 2, 3}`; a coinbase is only valid as the first tx of a block (B1). Kinds 2 (PX transaction) and 3 (private-contract deploy) are specified in [`px.md`](px.md) §11, with their own size caps (`MAX_PX_TX_SIZE` = 4 MiB proof cap + 256 KiB; `MAX_DEPLOY_TX_SIZE` = 1 MiB) and rules (PX1–PX5); they reuse T4–T11 and C1–C3 for their v1 inputs and outputs. |
 | T3 | Transfer: `1 ≤ n ≤ 64` inputs, `2 ≤ k ≤ 16` outputs. |
 | T4 | Key images decode, are not the identity, and are strictly increasing (§5.2). |
 | T5 | Each input has exactly 16 ring indices, strictly increasing, with no `u64` overflow. |
-| T6 | Every `O` and `R` decodes and is not the identity. Every `Cm` decodes. `O`s are strictly increasing. |
+| T6 | Every `O` and `R` decodes and is not the identity. Every `Cm` decodes. `O`s are strictly increasing, so the one-time keys of a transaction are distinct (the only one-time-key uniqueness rule: keys may repeat across transactions, §8.2). |
 | T7 | Exactly `n` pseudo-outputs; each decodes. |
 | T8 | `fee ≥ min_fee(weight)`; fee arithmetic is checked and never overflows (§8.4). |
 | T9 | Balance: `Σ C'_k − Σ Cm_j − fee·H = identity`. |
 | T10 | BP+: length matches `k`, all elements decode, all scalars canonical, proof verifies (§7). |
-| T11 | Exactly `n` CLSAGs; all scalars canonical, all `D` decode. |
+| T11 | Exactly `n` CLSAGs; all scalars canonical, all `D` decode and are not the identity (a signature with `z = 0`, so `C' = Cr[π]`, which would reveal the real input; Monero's "bad auxiliary key image" rule). |
 
 ### 8.2 Contextual (against the chain state at the block's parent)
 
@@ -538,10 +563,25 @@ The rules are listed in evaluation order: cheap checks first, elliptic-curve wor
 | C1 | Every ring index refers to an existing output that satisfies the age rules (§5.3). |
 | C2 | No key image is already spent on chain, or earlier in the same block. |
 | C3 | Each CLSAG verifies (§6.1) over the resolved ring, its `C'_k`, its `I`, and `sig_message`. |
-| C4 | No output's `O` already exists on chain or earlier in the same block (global one-time-key uniqueness) [Δ Monero]. |
+| C4 | *Removed for the v3 genesis* (reviews/v3-consensus-changes.md §1). There is no rule relating an output's `O` to the chain or to other transactions of the block: one-time keys may repeat across transactions. |
 
-C4 costs one index lookup per output. It makes a second, unspendable copy of a one-time
-key (the burning bug) impossible even for broken wallets.
+**Why there is no C4.** `O` is public as soon as its transaction is relayed, and a sender
+chooses its outputs' keys freely. The former C4 ("no output's `O` already exists on chain
+or earlier in the same block") therefore let anyone who saw a pending transaction (a
+Dandelion stem relay, a miner, any well-connected node) invalidate it for good, for one
+fee, by getting a transaction carrying a copy of one of its keys mined first; a first-seen
+rule on output keys in the mempool kept the same veto as policy. What C4 was meant to
+prevent, the burning bug, is prevented at the recipient without it (§3.1, Lemma 2):
+- one-time keys are distinct **within** every transaction (T6 for transfers and deploys,
+  B7 for coinbases, the list sorts and `PxDuplicateOutputKey` for PX, px.md §11.3);
+- the Janus check refuses a copy placed in another transaction (another `ctx`);
+- a wallet credits at most one output per key image (§12.5).
+
+A copy of `O` cannot be spent by its creator (spending needs `p`), cannot block the
+owner's output (C2 applies to the key image `I = p·Hp(O)`, one per `O` however many
+copies exist), and is a decoy known to its creator like any output it owns. This is
+Monero's ledger model (no output-key rule at all) plus Carrot's within-transaction rule
+(Carrot §4.3).
 
 ### 8.3 Block-level
 
@@ -550,10 +590,30 @@ key (the burning bug) impossible even for broken wallets.
 | B1 | The first transaction is a coinbase; no other transaction is. |
 | B2 | Coinbase `height` equals the block height. |
 | B3 | `Σ coinbase amounts = block_reward(height) + Σ fees`, exactly (u128 arithmetic). Under-claiming is invalid, so the supply is exactly computable [Δ Monero, which allows ≤]. |
-| B4 | Key images and one-time keys are unique within the block (covered by C2/C4 applied in order). |
+| B4 | Key images are unique within the block (C2 applied in order), and so are PX nullifiers (PX2) and contract ids. One-time keys may repeat across the block's transactions (§8.2). |
 | B5 | `tx_root` equals the Merkle root of the `tx_hash`es in block order (consensus.md §7). |
 | B6 | Block weight ≤ block weight limit (economics spec). PX and deploy transactions have weight 0 and count instead against a separate budget: their encoded bytes sum to at most `MAX_PX_BLOCK_BYTES = 8 MiB` (px.md §11.5), and the deploys' bytes to at most `MAX_DEPLOY_BLOCK_BYTES = 1 MiB` of it (testnet v3). |
-| B7 | Coinbase structure: 1–16 outputs, no identity `O` or `R`, outputs strictly sorted, one-time keys unique (C4). |
+| B7 | Coinbase structure: 1–16 outputs, no identity `O` or `R`, outputs strictly sorted (so its one-time keys are distinct; they may repeat keys of other transactions or the chain, §8.2). |
+
+**Evaluation order of block validation** (`validate_block_transactions_cached`; policy,
+not consensus: every rule is a pure check, so the order decides only which error an
+invalid block reports and how much work precedes it, never the verdict):
+
+| Step | Checks | Cost |
+|---|---|---|
+| 1 | B1, B2, B7 (coinbase) | trivial |
+| 2 | Per-transaction structure: T1, T3–T8, T10 shape, T11 (including `D ≠ identity`), PX and deploy structure | cheap |
+| 3 | B5, B6, B3 | hashing, sums |
+| 4 | T9 balances (every kind) | one multi-scalar sum per transaction |
+| 5 | PX proofs decoded strictly (PX5, first step), unless already verified by this node | a few ms per proof |
+| 6 | C2, PX1–PX4, contract ids, in block order; then each decoded PX proof's table shape against its statement (PX5, second step) | lookups |
+| 7 | C1: every ring of the block resolved | lookups |
+| 8 | T10: one Bulletproofs+ batch over the block | below one CLSAG input per proof |
+| 9 | C3: every CLSAG | 2–4 ms per input |
+| 10 | PX5: every PX proof not already verified, on the decoded proof | about 0.2 s per proof |
+
+A block of PX transactions with valid ring signatures and malformed proofs is therefore
+rejected with no CLSAG verified (dossier 10 F10-2; `tx/tests/block_pipeline.rs`).
 
 ### 8.4 Weight and fee
 
@@ -573,15 +633,16 @@ min_fee(w)  = w · FEE_PER_WEIGHT                                  (constant: ec
 
 - A transaction that conflicts with the mempool on any key image is rejected (first seen
   wins; no replace-by-fee in v1).
-- Transactions must pass T1–T11 and C1–C4 against `best height + 1`.
+- Transactions must pass T1–T11 and C1–C3 against `best height + 1`.
 - Order: every stateless rule (T1–T11, including the range proof T10, and the PX
-  structure rules) runs before any contextual rule (C1–C4, PX1–PX4); the PX proof
+  structure rules) runs before any contextual rule (C1–C3, PX1–PX4); the PX proof
   (PX5) runs last. A transaction that breaks a stateless rule therefore always gets
   a stateless error, which is what peer scoring penalizes (p2p.md §10), and costs no
   chain lookup. A PX transaction repeating a one-time key between its hidden outputs
   and payouts, or with two equal nullifiers, gets a stateless error
-  (`PxDuplicateOutputKey`, `PxNullifierRepeated`); such a transaction also fails C4
-  or PX2 on every chain. The order and these variants decide only which error an
+  (`PxDuplicateOutputKey`, `PxNullifierRepeated`). `PxDuplicateOutputKey` is the only
+  rule rejecting such a key repeat (there is no C4); two equal nullifiers would also
+  fail PX2 on every chain. The order and these variants decide only which error an
   invalid transaction gets, never whether a transaction or block is valid. The
   classification of every error is documented on `TxError::is_stateless`.
 - On reorg, disconnected transactions return to the mempool if still valid.
@@ -989,6 +1050,24 @@ such outputs separately in `ScanReport::rejected` for exactly that purpose, and 
 A wallet that reacts to rejected outputs gives the adversary back the linkage bit, and
 voids Theorem 1.
 
+**The anchor check is also the burning-bug defence.** There is no chain-wide uniqueness
+rule on one-time keys (§8.2), so a wallet that skips step 5 of §3.3 can be made to
+credit a copy of one of its outputs placed in another transaction. Third-party wallets
+without the check are not supported: they are open to the Janus attack anyway.
+
+A wallet must also:
+- **credit at most one output per key image.** Outputs with the same `O` share the key
+  image `I`, and only one of them can ever be spent. Should two outputs pass the scan with
+  the same `I` (unreachable on a valid chain for a wallet running step 5, §3.1 Lemma 2;
+  possible with a dishonest node), keep the one with the **largest amount**, then the
+  **lowest global index**, and record the event only in a local diagnostic log. Keeping
+  the first seen instead would let a small early copy displace a large genuine output.
+  Reference: `Wallet::apply_block` (wallet/src/wallet/sync.rs).
+- **not filter outputs that share a one-time key out of decoy selection.** The wallet
+  cannot tell a copy from the genuine output; excluding both would make the genuine one
+  a never-decoy, and its later spend would be identified. Unfiltered, a copy is a decoy
+  its creator knows, like any output the creator owns.
+
 ### 12.6 Attack scenarios and tests
 
 | # | Scenario | Expected | Test |
@@ -1060,11 +1139,12 @@ voids Theorem 1.
 | Attack | Defense |
 |---|---|
 | Key-image torsion double spend (Monero 2017) | Prime-order group: `I` has exactly one representation (§1.1). |
-| Burning bug (Monero 2018) | Input-context binding (§3.1) plus the global `O` uniqueness rule (C4). |
+| Burning bug (Monero 2018) | Input-context binding and the recipient's anchor check (§3.1 Lemma 2, §3.3 step 5), one-time keys distinct within every transaction (T6, B7, `PxDuplicateOutputKey`), and one credited output per key image (§12.5). No ledger rule (§8.2). |
+| Front-running veto with a copied `O` | No rule relates `O` to the chain or to other transactions (§8.2), so a mined or pooled copy of a pending transaction's key leaves that transaction valid. |
 | Ring member duplication or out-of-range reference | Strictly increasing indices (T5), existence and age checks (C1). |
 | Referencing unconfirmed or very recent outputs | Spendable age of 10, coinbase maturity 60 (§5.3). |
 | Weak Fiat–Shamir in range proofs | The transcript absorbs the statement and all prover messages (§7). |
-| Cross-network replay | `network_id` in `sig_message`. |
+| Cross-network and cross-chain replay | `network_id`, `branch_id` and `genesis_id` in `sig_message` and in the PX binding `h_tx` (§4.4). |
 | Verification DoS | Bounded sizes (T1, T3, ring = 16). Cheap checks run first. A transaction's verification cost is bounded by about 64 CLSAGs and one BP+ with `N ≤ 1024`. Peers relaying **stateless-invalid** transactions (§8.1) are penalized (p2p.md §10). Signature checks are contextual (they need the ring members from the chain), so relays of transactions with invalid signatures are **not** penalized: an open defect (N-11, docs/reviews/completion-readiness-2026-09-26.md). |
 | Arithmetic overflow in fees, indices, amounts | Checked arithmetic in decoding and summation (T5, T8, B3). |
 | Tx-hash collision between coinbases | `height` is in the coinbase prefix. |
@@ -1094,7 +1174,7 @@ Each part in bytes:
 | Δ2 | Primary address uses the same form `(D, k_v·D)` as subaddresses | One output format; no "additional tx keys" fingerprint | Not Monero-compatible |
 | Δ3 | Per-output ephemeral key `R` | Uniform transactions | +32 B per output; 2× scan cost for 2-output transactions |
 | Δ4 | Encrypted 16-byte Janus anchor | Defeats Janus with the view key alone | +16 B per output; novel, needs review |
-| Δ5 | Input-context binding; global `O` uniqueness | Burning bug impossible | One index lookup per output |
+| Δ5 | Input-context binding; one-time keys distinct within a transaction (Carrot §4.3), none across transactions (Monero has neither rule) | Burning bug prevented at the recipient by construction | none (no key set is kept) |
 | Δ6 | No `extra`, `unlock_time` or payment IDs; sorted outputs | Removes the main fingerprinting vectors | Fewer app features (no arbitrary data on chain) |
 | Δ7 | Exact coinbase amount (not ≤) | Exact supply accounting | none |
 | Δ8 | Limits: ≤ 64 inputs, 2–16 outputs, 100 kB transactions | Bounded verification cost | Large sweeps need several transactions |
@@ -1142,6 +1222,8 @@ Each part in bytes:
    - Two signatures by the same key produce equal key images.
    - Different keys produce different key images.
    - A signature with a wrong commitment secret fails.
+   - `z = 0` is refused by the signer, and a signature with `D = identity` is rejected
+     (pinned vector `reject.d_identity`, crypto/tests/vectors/clsag.txt).
 4. **BP+**
    - Prove/verify for `k = 1..16`, including the amounts 0 and `2^64 − 1`.
    - The honest prover refuses out-of-range values.
@@ -1150,7 +1232,7 @@ Each part in bytes:
    - Batch verification detects one bad proof among many.
 5. **Transactions**
    - Build → serialize → deserialize → validate.
-   - One negative test per rule T1–T11, C1–C4 and B1–B7. Each constructs a violating
+   - One negative test per rule T1–T11, C1–C3 and B1–B7. Each constructs a violating
      transaction and asserts the specific error.
    - Inflation attempt: outputs exceeding inputs with a forged range proof, rejected.
    - Double spend within a transaction, a block and the chain, all rejected.

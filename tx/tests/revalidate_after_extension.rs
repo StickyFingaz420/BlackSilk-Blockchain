@@ -3,9 +3,12 @@
 //!
 //! The mempool re-checks pooled transactions after a plain extension with
 //! [`revalidate_after_extension`] instead of full validation. The function
-//! must re-check exactly the rules an extension can change: C2 key images, C4
-//! one-time keys, PX1 (anchor window), PX2 (nullifiers), PX3 (registered
-//! functions), PX4 (the pool) and a deploy's contract id. Each test below
+//! must re-check exactly the rules an extension can change: C2 key images,
+//! PX1 (anchor window), PX2 (nullifiers), PX3 (registered functions), PX4
+//! (the pool) and a deploy's contract id. (Output one-time keys are not
+//! related to the chain by any rule since D8 option B: the chain view has no
+//! query for them, and chain/tests/revalidation.rs shows a mined copy of a
+//! pooled key leaving the transaction valid.) Each test below
 //! starts from a state in which the transaction passes, changes ONE piece of
 //! state the way a connected block would, and asserts the specific error; and
 //! for state changes an extension makes that must not matter, that the verdict
@@ -43,7 +46,6 @@ type Registry = HashMap<([u8; 32], [u8; 32]), (Arc<Program>, Budget)>;
 #[derive(Default)]
 struct MockChain {
     key_images: HashSet<[u8; 32]>,
-    one_time_keys: HashSet<[u8; 32]>,
     recent_roots: HashSet<[u8; 32]>,
     nullifiers: HashSet<[u8; 32]>,
     pool: u128,
@@ -57,9 +59,6 @@ impl ChainView for MockChain {
     }
     fn is_key_image_spent(&self, key_image: &Point) -> bool {
         self.key_images.contains(key_image.bytes())
-    }
-    fn has_one_time_key(&self, key: &Point) -> bool {
-        self.one_time_keys.contains(key.bytes())
     }
     fn px_is_recent_root(&self, anchor: &Digest) -> bool {
         self.recent_roots.contains(&digest_bytes(anchor))
@@ -87,9 +86,6 @@ impl ChainView for MockChain {
 impl MockChain {
     fn spend_key_image(&mut self, k: &Point) {
         self.key_images.insert(*k.bytes());
-    }
-    fn add_one_time_key(&mut self, k: &Point) {
-        self.one_time_keys.insert(*k.bytes());
     }
     fn register(&mut self, contract: Digest, program_id: [u8; 32]) {
         self.contracts.insert(digest_bytes(&contract));
@@ -233,9 +229,8 @@ fn base_chain() -> MockChain {
     c.recent_roots.insert(digest_bytes(&ANCHOR));
     c.register(CONTRACT, PROGRAM_ID);
     c.pool = 1_000;
-    // Unrelated history: other key images, keys, nullifiers.
+    // Unrelated history: other key images and nullifiers.
     c.spend_key_image(&pt(1));
-    c.add_one_time_key(&pt(2));
     c.nullifiers.insert(digest_bytes(&[99; 8]));
     c
 }
@@ -362,30 +357,6 @@ fn a_contract_deployed_on_chain_makes_the_pooled_deploy_a_duplicate() {
     );
 }
 
-/// C4 for every kind of pooled output: transfer outputs, PX hidden outputs,
-/// PX payouts (indexed after the hidden outputs) and deploy outputs.
-#[test]
-fn a_pooled_output_key_appearing_on_chain_is_detected() {
-    let cases: Vec<(Transaction, u64, usize)> = vec![
-        (tx_transfer(), 200, 0),
-        (tx_transfer(), 201, 1),
-        (tx_px(0, 0), 400, 0),
-        (tx_px(0, 0), 401, 1), // payout: after the one hidden output
-        (tx_deploy(), 600, 0),
-        (tx_deploy(), 601, 1),
-    ];
-    for (tx, key, output) in cases {
-        let mut c = base_chain();
-        assert_eq!(revalidate_after_extension(&tx, &c), Ok(()));
-        c.add_one_time_key(&pt(key));
-        assert_eq!(
-            revalidate_after_extension(&tx, &c),
-            Err(TxError::DuplicateOneTimeKey { output }),
-            "key {key}"
-        );
-    }
-}
-
 /// C2 for every kind with ring inputs.
 #[test]
 fn a_key_image_becoming_spent_is_detected() {
@@ -426,7 +397,7 @@ fn registered_functions_stay_registered_as_the_registry_grows() {
     );
 }
 
-/// A normal extension: new unrelated key images, one-time keys, nullifiers,
+/// A normal extension: new unrelated key images, nullifiers,
 /// roots (the pooled anchor still in the window), contracts and pool inflow.
 /// Nothing a pooled transaction depends on changes, so every verdict stays Ok.
 #[test]
@@ -435,7 +406,6 @@ fn an_unrelated_extension_changes_nothing() {
     assert_all_ok(&c, "before");
     for n in 0..50u64 {
         c.spend_key_image(&pt(10_000 + n));
-        c.add_one_time_key(&pt(20_000 + n));
         c.nullifiers.insert(digest_bytes(&[n as u32 + 1000; 8]));
         c.recent_roots.insert(digest_bytes(&[n as u32 + 2000; 8]));
         c.register([n as u32 + 3000; 8], [n as u8; 32]);

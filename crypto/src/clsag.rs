@@ -53,6 +53,11 @@ pub enum ClsagError {
     WrongSpendSecret,
     /// `z·G ≠ Cr[π] − C'`: the pseudo-output does not match the real input.
     WrongCommitmentSecret,
+    /// `z = 0`: the pseudo-output equals the real member's commitment, so
+    /// `D` would be the identity (rejected by `verify`) and `C' = Cr[π]`
+    /// would reveal the real input (dossier 15 W1). The builder draws
+    /// pseudo-output masks at random, so this is a wallet bug.
+    ZeroCommitmentSecret,
 }
 
 /// `Hp("key-image", P)`.
@@ -226,6 +231,9 @@ fn sign_with(
     if RistrettoPoint::mul_base(commitment_secret) != offset {
         return Err(ClsagError::WrongCommitmentSecret);
     }
+    if bool::from(commitment_secret.ct_eq(&Scalar::ZERO)) {
+        return Err(ClsagError::ZeroCommitmentSecret);
+    }
 
     let hp_real = key_image_base(&real.one_time_key);
     let key_image = Point::from_point(spend_secret * hp_real);
@@ -266,7 +274,10 @@ pub fn verify(
     key_image: &Point,
     sig: &Clsag,
 ) -> bool {
-    if key_image.is_identity() {
+    // `I ≠ identity` (the linking tag) and `D ≠ identity` (the auxiliary
+    // image, as Monero's "bad auxiliary key image" check and monero-oxide's
+    // `InvalidD`; dossier 15 W1). An honest `D` is `z·Hp(P[π])` with `z ≠ 0`.
+    if key_image.is_identity() || sig.d.is_identity() {
         return false;
     }
     let t = Transcript::new(ring, pseudo_out, key_image, &sig.d, message);
@@ -497,6 +508,31 @@ mod tests {
         // ...and a forged signature (made for the honest pseudo-out) does not verify.
         let (sig, ki) = sign_fixture(&f, &mut rng);
         assert!(!verify(&f.message, &f.ring, &inflated, &ki, &sig));
+    }
+
+    /// Finding C1 (dossier 15 W1): `z = 0` (the pseudo-output equals the real
+    /// member's commitment) would give `D = identity` and reveal the real
+    /// input; `sign` refuses it, and `verify` rejects `D = identity`.
+    #[test]
+    fn a_zero_commitment_secret_is_refused() {
+        let mut rng = seeded(207);
+        let f = fixture(&mut rng, 5);
+        let real_commitment = f.ring[5].commitment;
+        let r = sign(
+            &f.message,
+            &f.ring,
+            &real_commitment,
+            5,
+            &f.p,
+            &Scalar::ZERO,
+            &mut rng,
+        );
+        assert_eq!(r.map(|_| ()), Err(ClsagError::ZeroCommitmentSecret));
+        // Honest signatures are unaffected; an identity `D` never verifies.
+        let (mut sig, ki) = sign_fixture(&f, &mut rng);
+        assert!(verify(&f.message, &f.ring, &f.pseudo_out, &ki, &sig));
+        sig.d = Point::from_point(RistrettoPoint::default());
+        assert!(!verify(&f.message, &f.ring, &f.pseudo_out, &ki, &sig));
     }
 
     /// Forgery attempt without any secret: random responses never verify.

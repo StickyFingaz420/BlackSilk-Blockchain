@@ -26,7 +26,9 @@ use blacksilk_tx::params::{
 };
 use blacksilk_tx::px::PxTx;
 use blacksilk_tx::types::{Coinbase, CoinbaseOutput, Transaction};
-use blacksilk_tx::validate::{validate_block_transactions, BlockContext, BlockError, TxError};
+use blacksilk_tx::validate::{
+    validate_block_transactions, BlockContext, BlockError, ChainView, TxError,
+};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::sync::Arc;
@@ -277,10 +279,13 @@ fn b7_a_coinbase_repeating_a_one_time_key_is_rejected() {
     env.accept(vec![cb]);
 }
 
-/// B4/C4 against the chain: a coinbase key equal to an existing output key.
+/// D8 option B (docs/reviews/v3-consensus-changes.md §1): a coinbase key
+/// equal to an existing output key is valid. It was invalid under the former
+/// rule C4 (`CoinbaseDuplicateOneTimeKey`). The replayed output is a second
+/// output with the same key at a new global index; the owner's wallet credits
+/// at most one of them (docs/transactions.md §12.5).
 #[test]
-#[ignore = "D8 option B removes this rule"]
-fn b4_a_coinbase_key_already_on_chain_is_rejected() {
+fn b4_a_coinbase_key_already_on_chain_is_valid() {
     let mut env = Env::new();
     let first = env.honest_coinbase();
     env.accept(vec![first.clone()]);
@@ -295,16 +300,21 @@ fn b4_a_coinbase_key_already_on_chain_is_rejected() {
             ..first.outputs[0].clone()
         }],
     };
-    assert_eq!(
-        env.reject(vec![Transaction::Coinbase(replay)]),
-        BlockError::CoinbaseDuplicateOneTimeKey { output: 0 }
-    );
+    env.accept(vec![Transaction::Coinbase(replay)]);
+    let key = first.outputs[0].one_time_key;
+    let copies = (0..env.m.state().output_count())
+        .filter(|&i| env.m.state().output(i).unwrap().key.one_time_key == key)
+        .count();
+    assert_eq!(copies, 2);
 }
 
-/// B4/C4 within the block: a later transaction reusing a coinbase key.
+/// D8 option B: a later transaction of the same block reusing a coinbase key
+/// is not a block error. Here the transaction is a PX transaction with a
+/// payout carrying the coinbase's key; the block fails only at that
+/// transaction's own later rule (its padding proof does not decode), never at
+/// a key-uniqueness rule (`DuplicateOneTimeKey` under the former C4).
 #[test]
-#[ignore = "D8 option B removes this rule"]
-fn b4_a_coinbase_key_reused_in_the_same_block_is_rejected() {
+fn b4_a_coinbase_key_reused_in_the_same_block_is_not_a_uniqueness_error() {
     let mut env = Env::new();
     let reward = env.reward();
     let cb = env.coinbase(1, reward + PX_STANDARD_FEE);
@@ -321,7 +331,7 @@ fn b4_a_coinbase_key_reused_in_the_same_block_is_rejected() {
         ]),
         BlockError::Tx {
             index: 1,
-            error: TxError::DuplicateOneTimeKey { output: 0 },
+            error: TxError::PxProof,
         }
     );
 }
@@ -444,12 +454,18 @@ fn b6_px_bytes_are_capped_at_the_px_budget() {
             max: MAX_PX_BLOCK_BYTES,
         }
     );
-    // Exactly MAX passes the budget and fails only at a later, contextual
-    // rule of the first PX transaction (its anchor is not a recent root).
+    // Exactly MAX passes the budget and fails only at a later rule of the
+    // first PX transaction (its padding proof does not decode).
     let at = px_block(&mut env, &[half, half]);
     let px: u64 = at.iter().map(Transaction::px_bytes).sum();
     assert_eq!(px, MAX_PX_BLOCK_BYTES);
-    assert!(matches!(env.reject(at), BlockError::Tx { index: 1, .. }));
+    assert_eq!(
+        env.reject(at),
+        BlockError::Tx {
+            index: 1,
+            error: TxError::PxProof
+        }
+    );
 }
 
 // ---------------------------------------------------------------- decoding boundaries

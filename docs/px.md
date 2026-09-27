@@ -572,9 +572,9 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
   (already public) amounts in clear, like coinbase outputs.
 - **PX-side balance** is proven by the kernel (§4.1).
 - **Binding:** `h_tx = H32("px/tx-binding", LE32(network_id) ‖ LE32(branch_id) ‖
-  prefix hash ‖ base hash)` is the proof's binding. It covers every field except the
-  range proof, the signatures and the proof, plus the network and the epoch's branch id
-  (consensus.md §11). `h_tx` is a public input of the proof (it enters the CPU tables'
+  genesis_id ‖ prefix hash ‖ base hash)` is the proof's binding. It covers every field
+  except the range proof, the signatures and the proof, plus the network, the epoch's
+  branch id (consensus.md §11) and the chain's genesis id (RT-14, transactions.md §4.4). `h_tx` is a public input of the proof (it enters the CPU tables'
   public values and the transcript, never a guest's input), so the domain changes
   every proof but not the kernel or any program id.
 - **Signatures.** The v1 inputs' CLSAGs sign a message that also covers the range
@@ -601,7 +601,7 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
 |---|---|
 | Structure | Counts, sorting, identity points, range-proof shape, sizes. PX transactions: fee **exactly** `PX_STANDARD_FEE`. Deploys: fee **exactly** `deploy_fee(n, k, programs) = FEE_PER_WEIGHT × max_weight(n, k) + DEPLOY_FEE_PER_BYTE × payload length` (`DeployFeeNotExact`; v3 candidate, R5-1/R6 TX-4) |
 | Balance | §11.1 (PX); the transfer rule for deploys |
-| C1–C4 | Rings, key images and one-time keys, as for transfers, including payouts |
+| C1–C3 | Rings and key images, as for transfers. One-time keys (hidden outputs and payouts together) are distinct within the transaction (stateless: the sort of each list, and `PxDuplicateOutputKey` between them) but may repeat across transactions and the chain (transactions.md §8.2) |
 | PX1 | The anchor is a root of the last 100 blocks, before this block |
 | PX2 | Nullifiers are unspent and unrepeated across the chain and the block |
 | PX3 | Every called function is a registered program of its contract (registry before this block) |

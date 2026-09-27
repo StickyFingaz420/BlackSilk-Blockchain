@@ -6,18 +6,21 @@
 //! - **PX** (PX transactions and deploys): fee per byte, bounded by
 //!   [`MEMPOOL_MAX_PX_BYTES`], selected against the block's PX byte budget.
 //!
-//! Conflicts are first-seen-wins, whatever the fee, on four kinds of key, each
-//! in its own namespace ([`ConflictKind`]): key images, PX nullifiers, deploy
-//! contract ids, and **output one-time keys**. Two pooled transactions never
-//! share any of them, so no block template holds two transactions a block
-//! could not hold together (rules C2 and C4, PX2, the contract registry).
+//! Conflicts are first-seen-wins, whatever the fee, on three kinds of key,
+//! each in its own namespace ([`ConflictKind`]): key images, PX nullifiers and
+//! deploy contract ids. Two pooled transactions never share any of them, so
+//! no block template holds two transactions a block could not hold together
+//! (rules C2, PX2, the contract registry).
 //!
-//! Output one-time keys are chosen by the sender and consensus requires them to
-//! be unique (C4). Before 2026-09-27 they were not conflict keys: an attacker
-//! could pool two valid transactions sharing an output key, every template
-//! then held both, and every block built from it was invalid (a chain stall at
-//! the cost of two unpaid fees). `select` also re-checks uniqueness as a second
-//! line of defence; it is not a substitute for admission.
+//! **Output one-time keys are not conflict keys.** Consensus does not require
+//! them to be unique across transactions (D8 option B,
+//! docs/reviews/v3-consensus-changes.md §1): a key is public once its
+//! transaction is relayed, and a first-seen rule on it would let anyone who
+//! sees a pending transaction delay it with a copy of one of its keys (the
+//! policy form of the front-running veto the consensus rule had). Two pooled
+//! transactions sharing an output key are both valid, together, in any block.
+//! `select` re-checks the conflict keys as a second line of defence; it is not
+//! a substitute for admission.
 //!
 //! **PX proofs are verified once, on admission.** After a block, pooled PX
 //! transactions are revalidated against the new state (anchor, nullifiers,
@@ -45,9 +48,9 @@ pub const COINBASE_RESERVE: u64 = 3_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MempoolError {
     AlreadyKnown,
-    /// A key image, PX nullifier, contract id or output one-time key is
-    /// already used by another pooled transaction (first seen wins, whatever
-    /// the fee: there is no replacement).
+    /// A key image, PX nullifier or contract id is already used by another
+    /// pooled transaction (first seen wins, whatever the fee: there is no
+    /// replacement).
     Conflict,
     Coinbase,
     Invalid(TxError),
@@ -74,14 +77,13 @@ struct Entry {
 }
 
 /// The namespace of a conflict key. The same 32 bytes in two namespaces are
-/// different keys: an output one-time key is chosen freely by its sender, and
-/// must not be able to block, say, a key image with the same bytes.
+/// different keys: a key image never conflicts with a nullifier digest or a
+/// contract id that happens to have the same bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ConflictKind {
     KeyImage,
     Nullifier,
     ContractId,
-    OutputKey,
 }
 
 pub type ConflictKey = (ConflictKind, [u8; 32]);
@@ -101,14 +103,10 @@ fn class_of(tx: &Transaction) -> Class {
     }
 }
 
-/// The conflict keys of a transaction: what it spends or registers (key
-/// images, PX nullifiers, a deploy's contract id) and the one-time key of every
-/// output it adds to the global output set (hidden PX outputs and payouts,
-/// deploy outputs and coinbase outputs included).
-///
-/// Output keys come from [`Transaction::output_keys`], the list block
-/// validation checks rule C4 on (`validate_block_transactions_cached`), so the
-/// pool cannot cover fewer outputs than consensus does.
+/// The conflict keys of a transaction: what it spends or registers, the
+/// things consensus allows only once (key images, C2; PX nullifiers, PX2; a
+/// deploy's contract id). Output one-time keys are not among them (module
+/// docs).
 pub fn conflict_keys(tx: &Transaction) -> Vec<ConflictKey> {
     use ConflictKind::*;
     let mut keys: Vec<ConflictKey> = tx
@@ -123,11 +121,6 @@ pub fn conflict_keys(tx: &Transaction) -> Vec<ConflictKey> {
         Transaction::PxDeploy(t) => keys.push((ContractId, digest_bytes(&t.contract_id()))),
         Transaction::Coinbase(_) | Transaction::Transfer(_) => {}
     }
-    keys.extend(
-        tx.output_keys()
-            .iter()
-            .map(|k| (OutputKey, *k.one_time_key.bytes())),
-    );
     keys
 }
 
@@ -172,7 +165,7 @@ impl Mempool {
     /// Makes `rules` the pool's rule set. If the pool was validated under
     /// another signature domain (an activation between the old and the new
     /// next height, in either direction), every entry is dropped and their
-    /// conflict keys (key images, nullifiers, contract ids, output keys) are
+    /// conflict keys (key images, nullifiers, contract ids) are
     /// released. Returns the number dropped.
     ///
     /// A flush, not a revalidation: every signature message and the PX
@@ -345,8 +338,8 @@ impl Mempool {
 
     /// Removes the transactions of a newly connected block, and any pooled
     /// transaction that shares a conflict key with it (a spent key image or
-    /// nullifier, a registered contract, or an output one-time key the block
-    /// created, coinbase included).
+    /// nullifier, a registered contract). A pooled transaction whose output
+    /// one-time key the block also created stays: it is still valid.
     pub fn remove_block(&mut self, txs: &[Transaction]) {
         for tx in txs {
             self.remove(&tx.hash());
@@ -703,11 +696,12 @@ mod tests {
         assert!(m.keys.is_empty());
     }
 
-    // ------------------------------------------------ output one-time keys (F1)
+    // ------------------------------------------------ output one-time keys (D8)
     //
     // Synthetic transactions: only their conflict keys, fee and size matter to
-    // the pool. Validation (signatures, proofs, rule C4 against the chain) is
-    // exercised with real transactions in chain/tests/mempool_conflicts.rs.
+    // the pool. Validation (signatures, proofs) of transactions sharing output
+    // keys is exercised with real transactions in
+    // chain/tests/mempool_conflicts.rs.
 
     use blacksilk_crypto::bulletproofs_plus::BppProof;
     use blacksilk_crypto::clsag::{Clsag, RING_SIZE};
@@ -846,39 +840,20 @@ mod tests {
         }
     }
 
-    /// The conflict keys before the F1 fix: no output one-time keys.
-    fn legacy_conflict_keys(tx: &Transaction) -> Vec<ConflictKey> {
-        conflict_keys(tx)
-            .into_iter()
-            .filter(|(kind, _)| *kind != ConflictKind::OutputKey)
-            .collect()
-    }
-
-    /// Output keys of every kind of transaction are conflict keys: transfer
-    /// outputs, PX hidden outputs and payouts, deploy outputs, coinbase
-    /// outputs; the same list consensus checks C4 on.
+    /// Output one-time keys are not conflict keys, for any kind: a
+    /// transaction's conflict keys are its key images, nullifiers and
+    /// contract id only (D8 option B).
     #[test]
-    fn every_output_one_time_key_is_a_conflict_key() {
-        let out_keys = |tx: &Transaction| -> Vec<[u8; 32]> {
-            conflict_keys(tx)
-                .into_iter()
-                .filter(|(k, _)| *k == ConflictKind::OutputKey)
-                .map(|(_, b)| b)
-                .collect()
-        };
-        for tx in [
-            transfer(&[1], &[10, 11], 5),
-            px_out(1, &[10], &[11], 5),
-            deploy(1, &[10, 11], 0, 5),
-            coinbase(&[10, 11]),
+    fn output_one_time_keys_are_not_conflict_keys() {
+        for (tx, expected) in [
+            (transfer(&[1], &[10, 11], 5), 1),
+            (px_out(1, &[10], &[11], 5), 2),
+            (deploy(1, &[10, 11], 0, 5), 2),
+            (coinbase(&[10, 11]), 0),
         ] {
-            let consensus: Vec<[u8; 32]> = tx
-                .output_keys()
-                .iter()
-                .map(|k| *k.one_time_key.bytes())
-                .collect();
-            assert_eq!(out_keys(&tx), consensus);
-            assert_eq!(consensus, vec![*pt(10).bytes(), *pt(11).bytes()]);
+            let keys = conflict_keys(&tx);
+            assert_eq!(keys.len(), expected, "{keys:?}");
+            assert_eq!(tx.output_keys().len(), 2);
         }
         let d = deploy(3, &[10, 11], 0, 5);
         assert!(conflict_keys(&d).contains(&(ConflictKind::KeyImage, *pt(3).bytes())));
@@ -887,10 +862,10 @@ mod tests {
             .any(|(k, _)| *k == ConflictKind::ContractId));
     }
 
-    /// Two transactions sharing only an output one-time key conflict, in
-    /// every combination of kinds, whatever the fee; first seen wins.
+    /// Two transactions sharing only an output one-time key are both pooled,
+    /// in every combination of kinds and fees, and both selected.
     #[test]
-    fn a_shared_output_key_is_a_conflict_across_all_kinds() {
+    fn a_shared_output_key_is_not_a_conflict_across_all_kinds() {
         type Maker = fn(u64, u64) -> Transaction;
         let makers: [(&str, Maker); 4] = [
             ("transfer", |salt, k| {
@@ -909,34 +884,31 @@ mod tests {
         for (a_name, a) in &makers {
             for (b_name, b) in &makers {
                 let mut m = Mempool::new();
-                let first = a(1, 42);
-                let first_id = add(&mut m, first).unwrap();
+                let first = add(&mut m, a(1, 42)).unwrap();
                 let mut second = b(2, 42);
-                // A far higher fee does not replace the first.
                 match &mut second {
                     Transaction::Transfer(t) => t.fee = u64::MAX / 4,
                     Transaction::Px(t) => t.fee = u64::MAX / 4,
                     Transaction::PxDeploy(t) => t.fee = u64::MAX / 4,
                     Transaction::Coinbase(_) => unreachable!(),
                 }
-                assert_eq!(
-                    add(&mut m, second),
-                    Err(MempoolError::Conflict),
-                    "{a_name} then {b_name}"
-                );
-                assert_eq!(m.len(), 1);
-                assert!(m.contains(&first_id));
-                // Without the shared key, the same kind of transaction is admitted.
-                add(&mut m, b(2, 43)).unwrap();
+                let second =
+                    add(&mut m, second).unwrap_or_else(|e| panic!("{a_name} then {b_name}: {e:?}"));
+                assert_eq!(m.len(), 2);
+                let sel: Vec<Hash> = m
+                    .select(u64::MAX, 0)
+                    .iter()
+                    .map(Transaction::hash)
+                    .collect();
+                assert!(sel.contains(&first) && sel.contains(&second));
                 assert_invariants(&m);
             }
         }
     }
 
-    /// Namespaces: an output one-time key with the same bytes as another
-    /// pooled transaction's key image (or a nullifier digest, or a contract
-    /// id) does not conflict with it. Consensus keeps key images and one-time
-    /// keys in separate sets too.
+    /// Namespaces: bytes equal across kinds of key never conflict (a key
+    /// image and a nullifier digest, say); an output key equal to a pooled
+    /// key image is not a conflict key at all.
     #[test]
     fn equal_bytes_in_different_namespaces_do_not_conflict() {
         let mut m = Mempool::new();
@@ -949,57 +921,17 @@ mod tests {
         assert!(m
             .keys
             .contains_key(&(ConflictKind::KeyImage, *pt(5).bytes())));
-        assert!(m
-            .keys
-            .contains_key(&(ConflictKind::OutputKey, *pt(5).bytes())));
         assert_eq!(m.len(), 4);
         assert_invariants(&m);
         assert_eq!(m.select(u64::MAX, 0).len(), 4);
-        // ...while the same kind conflicts.
+        // ...while the same kind conflicts, and output keys never do.
         assert_eq!(
             add(&mut m, transfer(&[5], &[30, 31], 10)),
             Err(MempoolError::Conflict),
             "key image vs key image"
         );
-        assert_eq!(
-            add(&mut m, transfer(&[8], &[5, 32], 10)),
-            Err(MempoolError::Conflict),
-            "output key vs output key"
-        );
-    }
-
-    /// Before the fix (conflict keys without output keys) two transactions
-    /// sharing an output key were both pooled and both selected: every
-    /// template, and every block built from it, broke C4. With the fix the
-    /// second is refused.
-    #[test]
-    fn without_output_keys_both_would_be_pooled_and_selected() {
-        let a = transfer(&[1], &[42, 50], 10);
-        let b = transfer(&[2], &[42, 51], 10);
-        let mut old = Mempool::new();
-        for tx in [a.clone(), b.clone()] {
-            let keys = legacy_conflict_keys(&tx);
-            assert!(!keys.iter().any(|k| old.keys.contains_key(k)));
-            old.insert(tx.hash(), tx, keys).unwrap();
-        }
-        let sel = old.select(u64::MAX, 0);
-        assert_eq!(sel.len(), 2, "the old pool selected both");
-        let shared: HashSet<_> = sel[0]
-            .output_keys()
-            .iter()
-            .map(|k| k.one_time_key)
-            .collect();
-        assert!(
-            sel[1]
-                .output_keys()
-                .iter()
-                .any(|k| shared.contains(&k.one_time_key)),
-            "a block holding both violates C4"
-        );
-
-        let mut new = Mempool::new();
-        add(&mut new, a).unwrap();
-        assert_eq!(add(&mut new, b), Err(MempoolError::Conflict));
+        add(&mut m, transfer(&[8], &[5, 32], 10)).expect("output key vs output key");
+        assert_eq!(m.len(), 5);
     }
 
     /// Defence in depth: if the invariant is broken (both inserted past
@@ -1008,9 +940,10 @@ mod tests {
     #[test]
     fn select_skips_a_conflicting_entry_when_the_invariant_is_broken() {
         for (fee_a, fee_b, winner) in [(10, 10, 0), (10, 99, 1), (99, 10, 0)] {
+            // The same key image, different outputs.
             let a = transfer(&[1], &[42, 50], fee_a);
-            let b = transfer(&[2], &[42, 51], fee_b);
-            let other = transfer(&[3], &[60, 61], 5);
+            let b = transfer(&[1], &[43, 51], fee_b);
+            let other = transfer(&[3], &[42, 61], 5);
             let mut m = Mempool::new();
             for tx in [a.clone(), b.clone(), other.clone()] {
                 let keys = conflict_keys(&tx);
@@ -1026,15 +959,15 @@ mod tests {
         }
     }
 
-    /// A connected block removes every pooled transaction sharing an output
-    /// key with it, the coinbase's outputs included.
+    /// A connected block creating the output keys of pooled transactions
+    /// (the coinbase's outputs included) evicts none of them: they are still
+    /// valid.
     #[test]
-    fn a_block_output_key_evicts_the_pooled_transaction_holding_it() {
+    fn a_block_creating_a_pooled_output_key_evicts_nothing() {
         let mut m = Mempool::new();
         let t = add(&mut m, transfer(&[1], &[42, 50], 10)).unwrap();
         let p = add(&mut m, px_out(3, &[], &[43], 10)).unwrap();
         let d = add(&mut m, deploy(4, &[44, 51], 0, 10)).unwrap();
-        let keep = add(&mut m, transfer(&[2], &[60, 61], 10)).unwrap();
         // The coinbase reuses the transfer's key, a block transfer the PX
         // payout's, a block PX the deploy's.
         m.remove_block(&[
@@ -1042,8 +975,8 @@ mod tests {
             transfer(&[20], &[43, 91], 1),
             px_out(500, &[44], &[], 1),
         ]);
-        assert!(!m.contains(&t) && !m.contains(&p) && !m.contains(&d));
-        assert!(m.contains(&keep));
+        assert!(m.contains(&t) && m.contains(&p) && m.contains(&d));
+        assert_eq!(m.len(), 3);
         assert_invariants(&m);
     }
 
@@ -1056,7 +989,8 @@ mod tests {
         fill(&mut m, 0, size, 1);
         let victim = add(&mut m, px_out(3_000_001, &[], &[42], 1)).unwrap();
         let before: Vec<Hash> = m.entries.keys().copied().collect();
-        let mut rich = px_out(3_000_003, &[], &[42], u64::MAX / 4);
+        // The same nullifiers, another payout.
+        let mut rich = px_out(3_000_001, &[], &[43], u64::MAX / 4);
         if let Transaction::Px(t) = &mut rich {
             t.proof = vec![1; size];
         }
