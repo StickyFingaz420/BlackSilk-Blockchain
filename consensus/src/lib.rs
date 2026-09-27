@@ -51,7 +51,6 @@ mod tests {
     /// host's order: the header of docs/consensus.md §2 field by field.
     #[test]
     fn consensus_encodings_are_explicit_little_endian() {
-        assert!(cfg!(target_endian = "little"));
         let h = crate::BlockHeader {
             version: 0x0403_0201,
             height: 0x0c0b_0a09_0807_0605,
