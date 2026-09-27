@@ -104,6 +104,11 @@ Plonky3 0.7.0 verifier leaves unbound (`check_canonical_form`, applied by
 |---|---|---|
 | C1 | While `COMMIT_POW_BITS = 0`, every commit-phase grinding witness is zero | 0.7.0 accepts any unabsorbed witness at 0 bits (upstream fix #2106): a relayer could rewrite it and change the transaction id |
 | C2 | No optional opening (`trace_next`, `preprocessed_local`, `preprocessed_next`, `random`) is present but empty | 0.7.0 compares lengths only, so `Some([])` passes where `None` is expected (upstream fix #2256) |
+| C3 | Every Merkle cap has exactly one root: the `main`, `permutation`, `quotient_chunks` and `random` commitments and every FRI commit-phase commitment | `MerkleCap` deserializes any root count and 0.7.0 compares only root 0 while the transcript absorbs all (upstream fix #2277; F24-2) |
+| C4 | The hidden random-codeword openings (`opening_proof.0`) have exactly one round per opening round of the proof (the mask `R`, main, quotient, preprocessed if any instance opens `preprocessed_local`, permutation if the `permutation` commitment is present), and every point of every matrix carries exactly `NUM_RANDOM_CODEWORDS` values, except the preprocessed round (at Plonky3's `Pcs::PREPROCESSED_TRACE_IDX`), which carries none | 0.7.0 checks only the nesting and appends whatever is there: without the rule the hidden width is prover-chosen (padding up to `MAX_PROOF_BYTES`, a proof-length channel, silent loss of hiding); preprocessed tables are committed with zero columns, not random codewords (22 W2 = 26 ZP-7 = 24 I2) |
+
+C3 and C4 are part of the v3 rule set (reviews/v3-consensus-changes.md, "Canonical
+proof shape"). Plonky3 0.8 enforces both itself.
 
 ---
 
@@ -132,6 +137,8 @@ zkVM statements with a fixed shape (every PX statement) additionally require eac
 | R1–R4 | `zk/src/params.rs` (`const` assertions) | compile time |
 | D1–D5 | `zk/src/lib.rs` `decode_proof` | `zk/tests/proofs.rs` `encoding_is_strict`, `byte_mutations_never_verify_and_never_panic_the_caller`; `zk/tests/field_mutations.rs`; fuzz target `proof_decode` |
 | C1–C2 | `zk/src/lib.rs` `check_canonical_form` | `zk/tests/proofs.rs` `unbound_proof_fields_cannot_be_rewritten` |
+| C3 | `zk/src/lib.rs` `check_canonical_form` | `zk/tests/proofs.rs` `honest_proofs_have_the_canonical_hidden_openings_and_caps`, `every_merkle_cap_root_count_mutation_is_refused` |
+| C4 | `zk/src/lib.rs` `check_hidden_openings` | `zk/tests/proofs.rs` `honest_proofs_have_the_canonical_hidden_openings_and_caps`, `every_hidden_opening_count_mutation_is_refused` (every position, +1 and −1, with and without a preprocessed round) |
 | V1–V2 | `zk/src/lib.rs` `verify` | `claimed_heights_and_table_counts_are_checked_first` |
 | V3 | `zk/src/lib.rs` `check_fri_schedule` | `honest_proofs_use_the_canonical_fri_schedule`, `a_non_canonical_fri_schedule_is_refused`, `schedule_tests::*`, `px/tests/fri_schedule.rs` |
 | V4–V5 | `zk/src/lib.rs` `verify` | `zk/tests/proofs.rs` (all), `zkvm/tests/*`, PX consensus tests |

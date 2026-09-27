@@ -91,3 +91,72 @@ Owner: W1-CB-B3 (zk). Decisions: "Agent 24" F24-1 (adopt 8), "Agent 25", "Agent 
     §11 (not yet re-measured on PX proofs); `docs/proof-system.md` §2.
 15. **Review status.** Implemented and tested by W1-CB-B3; red-team review (agent 50)
     pending.
+
+---
+
+## Canonical proof shape: exact hidden openings and one root per Merkle cap
+
+Owner: W1-CB-B3 (zk). Items 22 W2 = 26 ZP-7 = 24 I2 (merged into one rule by the
+decisions for agents 22, 24 and 26) and F24-2. Decision "Agent 50": the preprocessed-round
+exception is derived from the proof structure; mutation tests at every position.
+
+1. **Problem.** Two proof fields are still prover-chosen under Plonky3 0.7.0.
+   (a) The hidden random-codeword openings (`opening_proof.0`, per round, matrix and
+   point): `HidingFriPcs::verify` checks only how they nest and appends whatever values
+   are present, so a prover picks the hidden width. That gives a second padding channel up
+   to `MAX_PROOF_BYTES` (a valid proof of maximal verification cost), a proof-length
+   fingerprint of the proving implementation, and lets a buggy wallet drop its own hiding
+   silently. (b) `MerkleCap` derives `Deserialize` with any root count; the 0.7.0 MMCS
+   verifier compares only root 0 (cap height 0) while the challenger absorbs all roots,
+   so a prover can append roots to any commitment (about 31 bytes of free data per root).
+   Neither is third-party malleability (both change the transcript), but each breaks "one
+   honest proof, one encoding, a length fixed by the shape".
+2. **Demonstrated failure.** The new tests fail on the parent commit (73372e9, without
+   the rule): `every_hidden_opening_count_mutation_is_refused` (a proof with one more
+   hidden value at round 0 decodes) and `every_merkle_cap_root_count_mutation_is_refused`
+   (a cap with 0 roots decodes): `test result: FAILED. 3 passed; 2 failed` (log
+   `C:/bszkeval/t-w1-zk/item2-before.log`).
+3. **Prior art.** Plonky3 0.8 pins the hidden count
+   (`HidingRandomOpeningValueCountMismatch`, 0 for a preprocessed round) and fixes
+   `MerkleCap` deserialization (PR #2277); ZIP 244 and BIP 141 on proof malleability and
+   transaction ids (BlackSilk keeps proofs inside the id, so it needs one encoding).
+4. **Alternatives.** Leave both open and bound them by `MAX_PROOF_BYTES` (status quo,
+   R3-6); or pin at decode time (chosen: O(proof) structural checks before any
+   expensive work).
+5. **Affected components.** `zk/src/lib.rs` (`check_canonical_form`, new
+   `check_hidden_openings`), called by `decode_proof`, hence by every consensus path that
+   decodes a PX proof (`tx/src/validate.rs`); no change to Plonky3 or to `verify`.
+6. **Activation.** v3 genesis base rule.
+7. **Compatibility.** Honest proofs from this code base are unaffected (they carry
+   exactly `NUM_RANDOM_CODEWORDS` hidden values per point, none in the preprocessed round,
+   and one root per cap). A proof from another prover implementation that uses another
+   codeword count or cap height is refused.
+8. **Reorg, wallet, mining, P2P.** A wrong expected count would reject honest proofs (a
+   liveness split); mitigated by the honest-proof tests on both round structures. The
+   derivation: the preprocessed round exists iff an instance opens `preprocessed_local`,
+   and its position is Plonky3's `Pcs::PREPROCESSED_TRACE_IDX`; the Plonky3 verifier then
+   checks the preprocessed widths against the AIRs, so a proof cannot move the exception.
+   PX statements have no Plonky3-preprocessed tables (zkVM public data are periodic
+   columns), so for PX every point carries `NUM_RANDOM_CODEWORDS`. Relay and mempool
+   refuse such proofs at decode, as blocks do.
+9. **Vectors.** The toy proofs of `zk/tests/proofs.rs`: 4 hidden rounds without, 5 with
+   a preprocessed table (round 3 empty).
+10. **Tests** (`zk/tests/proofs.rs`): `honest_proofs_have_the_canonical_hidden_openings_and_caps`;
+    `every_hidden_opening_count_mutation_is_refused` (every position of two proofs,
+    +1 and −1: 38 positions; a preprocessed round filled with codewords; a round too
+    many and too few; the honest proofs still verify);
+    `every_merkle_cap_root_count_mutation_is_refused` (0, 2 and 3 roots in each of the
+    four batch commitments and every FRI commitment: 18 mutations).
+11. **Suite results.** `cargo test --release -p blacksilk-zk --test proofs`: 15 passed,
+    0 failed (log `C:/bszkeval/t-w1-zk/item2-after.log`). PX consensus tests, which decode
+    real PX proofs through this rule, are run by the coordinator after merge.
+12. **Open review points.** (i) Run the PX suites (`tx px_consensus`, `px proof`,
+    `unified`) to confirm honest PX proofs pass the rule; (ii) the adversarial
+    verifier-cost measurement (ZK-F4 / F22-3) should now use an invalid proof, since a
+    valid padded one is refused; (iii) at a Plonky3 0.8 migration keep both rules as
+    belt and braces.
+13. **Identity impact.** Rule-set change only; no constant or fingerprint entry changes.
+14. **Documentation.** `docs/proof-system.md` §5 (C3, C4) and §7; `zk/src/params.rs`
+    module text (the count is now pinned).
+15. **Review status.** Implemented and tested by W1-CB-B3; red-team review (agent 50)
+    pending.

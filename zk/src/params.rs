@@ -16,15 +16,16 @@
 //!
 //! Changing any constant here changes the proof format, its soundness or its
 //! zero knowledge: it is a new parameter set (a new verifier-registry entry),
-//! never an in-place edit. The verifier does **not** enforce every constant:
-//! it pins none of the hiding randomness (`NUM_RANDOM_CODEWORDS`, the random
-//! rows, the hidden columns of `R`, the quotient randomizers), and the number
-//! of hidden columns is bounded only by `MAX_PROOF_BYTES`. A prover that
-//! skimps weakens only its own proof's hiding. A prover that **pads** adds
-//! FRI-batched columns, which enter the soundness bound; each costs at least
-//! 4 bytes per query, so `MAX_PROOF_BYTES` caps a proof at
-//! `MAX_ADVERSARIAL_COLUMNS`, and the security targets are tested up to that
-//! cap (internal review rounds 3 and 4).
+//! never an in-place edit. The verifier cannot check the hiding randomness
+//! itself (the random codewords, the random rows, the hidden columns of `R`,
+//! the quotient randomizers): a prover that uses bad randomness weakens only
+//! its own proof's hiding. Since the v3 rule set it does pin the **number** of
+//! hidden values, `NUM_RANDOM_CODEWORDS` per opened point (canonical form,
+//! `crate::decode_proof`), so a proof can no longer be padded with extra
+//! hidden columns. Before that rule, padding was bounded only by
+//! `MAX_PROOF_BYTES`: each FRI-batched column costs at least 4 bytes per
+//! query, hence `MAX_ADVERSARIAL_COLUMNS`, up to which the security targets
+//! are still tested as a margin (internal review rounds 3 and 4).
 
 use p3_security::fri::FriRegime;
 use p3_uni_stark::{ProvenSecurity, StarkSecurityParams};
@@ -113,9 +114,11 @@ pub const MIN_LOG_HEIGHT: usize = 8;
 pub const MAX_PROOF_BYTES: usize = 4 << 20;
 
 /// Upper bound on the FRI-batched columns of any proof the verifier accepts,
-/// honest or not: the verifier does not pin the hidden columns, but every
+/// honest or not, without relying on the v3 hidden-count rule: every
 /// committed base-field column is opened at every query as a 4-byte element,
-/// so padding beyond the envelope is limited by [`MAX_PROOF_BYTES`].
+/// so padding beyond the envelope is limited by [`MAX_PROOF_BYTES`]. With the
+/// rule, the committed width is a function of the shape; this bound is kept
+/// as a margin for the security figures.
 pub const MAX_ADVERSARIAL_COLUMNS: usize =
     MAX_COMMITTED_COLUMNS + MAX_PROOF_BYTES / (4 * NUM_QUERIES);
 
