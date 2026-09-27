@@ -483,7 +483,7 @@ A deploy transaction version 2 adds `programs[]: (program_id, verifier_id)`, up 
 | P3 | Composition of kernel and function proofs (§9.4): by cross-table lookups in one batch proof (chosen), or by recursion. |
 | P4 | Soundness ≥ 100 bits by **proven** bounds for the chosen parameters (§9.3), plus ≥ 128-bit collision resistance of the hash. **As implemented, the hash part is not met:** the Merkle commitments give about 122 bits (`COLLISION_BITS` in `zk/src/params.rs`, from the extractability bound of ePrint 2026/089, Theorem 3; §9.3), and the soundness figures of §9.3 are computed with it. |
 | P5 | Pure-Rust prover and verifier, with a small, specifiable verifier. |
-| P6 | Plausible post-quantum security for both soundness and zero-knowledge (R4). |
+| P6 | Plausible post-quantum security for both soundness and zero-knowledge (R4). **As implemented:** both rest on hash functions only (no discrete logarithms); quantum soundness is **not quantified** by a proof, and the figures in §9.3 are labelled heuristic estimates. |
 
 ### 9.2 Candidates (DR-2)
 
@@ -638,9 +638,18 @@ owner): a STARK on Plonky3 0.7.**
     §6.4), the instance data and every prover message.
   - There is no verifier id in the transcript: the verifier registry is a design only
     (§9.5). The parameter set is identified by `PARAMS_ID`.
-- **Quantum ROM:** security of BCS-compiled IOPs in the QROM is known in principle
-  (Chiesa, Manohar and Spooner, 2019). Parameters are sized with the quantum bound
-  noted separately.
+- **Quantum adversaries (estimates, not proofs).** BCS-compiled IOPs with
+  round-by-round soundness are secure in the quantum random-oracle model in principle
+  (Chiesa, Manohar and Spooner, TCC 2019, ePrint 2019/834), with a bound that degrades
+  roughly quadratically in the number of oracle queries. **No BlackSilk parameter is
+  sized by a quantum bound, and no quantum figure has been proven or computed from
+  that theorem.** Heuristic estimates only, from generic quantum speed-ups: about
+  **53 bits** in the unique-decoding regime (a Grover-style halving of about 105) and
+  about **82 bits** against the Merkle commitments (a BHT-style collision search,
+  |H|^(1/3) with |H| = p^8, ignoring its memory cost). These are labelled estimates
+  (dossier 25 §3.6), not security claims. (Until v3 this item said the parameters
+  were "sized with the quantum bound noted separately"; no such bound existed, and
+  the sentence is withdrawn.)
 
 ### 9.4 Composition and recursion
 
@@ -818,10 +827,28 @@ of scope until proof size is solved (aggregation-study.md).
 
 ## 12. Security analysis
 
+**Security headline (BS-ZK-3; figures and caveats in §9.3):** about **105 bits proven**
+soundness (**89.7 statistical + 16 grinding**, unique-decoding regime); the Johnson
+regime is **hash-bound at ≈ 122 bits** (the Merkle commitments); zero knowledge is
+**statistical and conditional** (reviews/zk-coverage.md §3), and **computational in
+practice**, because the masks are PRG outputs. None of this is a claim that BlackSilk is
+secure or perfectly zero-knowledge; it is internal engineering work, not an audit.
+
 ### 12.1 Assumptions (complete list)
 
 1. **Proof system:** knowledge soundness and (statistical, conditional; reviews/zk-coverage.md) zero knowledge of the chosen IOP, compiled
-   with Fiat–Shamir in the (Q)ROM, with the parameters of §9.3.
+   with Fiat–Shamir in the ROM, with the parameters of §9.3 (quantum: §9.3, estimates
+   only).
+   - **Zero knowledge is computational in practice.** "Statistical" describes the IOP
+     with ideal randomness. The deployed prover draws every mask (random codewords,
+     random rows, quotient randomizers, Merkle salts, terminal blinding) from
+     ChaCha-based PRGs (`StdRng`, i.e. ChaCha12, and ChaCha20) seeded per proof from the
+     OS generator hedged with a witness digest (`zk/src/config.rs`,
+     `zkvm/src/prove.rs`). The guarantee therefore holds against observers who cannot
+     distinguish these PRG outputs from random (and under the conditions of
+     zk-coverage.md §3).
+   - **Soundness** counts 16 bits of proof-of-work grinding, which are computational
+     (an adversary's Poseidon2 budget), on top of 89.7 statistical bits.
 2. **`Hk`:** collision resistance, preimage resistance, and PRF security when keyed
    (nullifiers). This is the key PX assumption.
 3. **Encryption:** IND-CCA security of the hybrid KEM (secure if either ECDH/DDH or
@@ -860,7 +887,7 @@ reconsider.
 | Zero-knowledge bug | Private data leaks from proofs | Cannot be undone for published proofs. Hence the ZK-mode verification in PX-0 and the internal review of the hiding construction (reviews/zk-coverage.md, reviews/terminal-blinding.md). **No simulatability tests exist:** statistical tests on hiding randomness would test only the RNG (terminal-blinding.md §3). What exists: a test that two proofs of one statement differ, the fixed-shape tests, and the P-5 proof-length campaign. |
 | `Hk` weakness | Collisions: double spends or fake records | Containment; migration to a new tree with a new `Hk` (§9.6) |
 | KEM break | Contents readable | Hybrid: both ECDH and ML-KEM must fail |
-| Quantum adversary | v1 layer broken (transactions.md §11.6) | PX soundness and zero-knowledge are hash-based; record contents stay protected by ML-KEM; the bridge's v1 side is exposed like all of v1 |
+| Quantum adversary | v1 layer broken (transactions.md §11.6) | PX soundness and zero-knowledge are hash-based; their quantum security is not quantified by a proof (heuristic estimates in §9.3: about 53 bits unique decoding, about 82 bits for the commitments); record contents stay protected by ML-KEM; the bridge's v1 side is exposed like all of v1 |
 
 ---
 

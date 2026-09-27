@@ -70,7 +70,10 @@ Owner: W1-CB-B3 (zk). Decisions: "Agent 24" F24-1 (adopt 8), "Agent 25", "Agent 
     - `px` `consensus_fingerprint`: **fails as expected** (the pinned digest; update with
       the v3 network identity, owner 40).
     - Toy proofs (`toy_measure`, 5 proofs per shape, three interleaved runs of each
-      binary on a machine shared with other builds, so times are noisy):
+      binary; machine: 4-core/8-thread i7-6700, 16 GB, Windows 10, rustc 1.98.1,
+      release profile; binaries built from 7163f12 (4 codewords) and from this change;
+      the machine was shared with other agents' builds, so times are noisy; raw output
+      `C:/bszkeval/t-w1-zk/toy-measure-item1.log`):
 
       | Shape | BS-ZK-2 size | BS-ZK-3 size | BS-ZK-2 prove | BS-ZK-3 prove | BS-ZK-2 verify | BS-ZK-3 verify |
       |---|---|---|---|---|---|---|
