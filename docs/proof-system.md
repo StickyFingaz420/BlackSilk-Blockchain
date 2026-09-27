@@ -152,6 +152,10 @@ proof shape"). Plonky3 0.8 enforces both itself.
 | V5 | a panic inside Plonky3 is caught (`catch_unwind`; builds must use `panic = "unwind"`, enforced by `compile_error!`) | `VerifierPanicked` |
 
 Consensus paths decode with `decode_proof` first, so §4–§5 always apply before §6.
+`verify` does **not** re-check §5: called on a proof object that did not come from
+`decode_proof`, it accepts what Plonky3 0.7.0 accepts, including rewrites C1 and C2
+exist to refuse (the advisory suite asserts this, so an upstream change is noticed).
+Every caller that takes proof bytes from outside must decode them with `decode_proof`.
 zkVM statements with a fixed shape (every PX statement) additionally require each table's
 `degree_bits` to equal the shape's (`zkvm::prove::verify`, zkvm.md §6.6).
 
@@ -170,5 +174,7 @@ zkVM statements with a fixed shape (every PX statement) additionally require eac
 | V1–V2 | `zk/src/lib.rs` `verify` | `claimed_heights_and_table_counts_are_checked_first` |
 | V3 | `zk/src/lib.rs` `check_fri_schedule` | `honest_proofs_use_the_canonical_fri_schedule`, `a_non_canonical_fri_schedule_is_refused`, `schedule_tests::*`, `px/tests/fri_schedule.rs` |
 | V4–V5 | `zk/src/lib.rs` `verify` | `zk/tests/proofs.rs` (all), `zkvm/tests/*`, PX consensus tests |
+| Upstream fixes after 0.7.0 | C1 (#2106), C2 (#2256), V3 (#2033), C3 (#2277) | `zk/tests/upstream_advisories.rs`: every commit-phase witness rewritten (0.7.0 alone accepts; decode refuses) and the query witness (verify refuses); the #2256 panic case (`preprocessed_next = Some([])` on a preprocessed table) refused at decode and contained by a direct `verify` (`VerifierPanicked`); an empty `preprocessed_local` (0.7.0 alone accepts; decode refuses); swapped fold arities; 2- and 3-root caps |
+| Patched crates | `third_party/p3-{dft,fri,merkle-tree}` | `zk/tests/upstream_advisories.rs::third_party_patched_crates_are_pinned` (digest of every tracked file, line ends normalized) |
 | Circuit identity | `zkvm/src/prove.rs` `CIRCUIT_ID`; `zkvm/src/air/check.rs` `fingerprint` | `zkvm/tests/circuit_fingerprint.rs` (pinned digest; every single mutation of any table, a table swap and an execution-id change alter it; independent of programs); `zkvm/tests/circuit_id.rs` |
 | Grinding policy (prover) | `zk/src/config.rs` `ProverChallenger`, `smallest_pow_witness` | `zk/tests/grinding.rs`: `the_prover_grinds_the_smallest_valid_nonce`, `proofs_do_not_depend_on_the_thread_count`, `upstream_grinding_witness_depends_on_the_thread_count` (the leak), `proofs_from_the_upstream_grinding_prover_still_verify` |
