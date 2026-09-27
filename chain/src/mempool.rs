@@ -98,6 +98,11 @@ struct Entry {
     size: usize,
     /// v1 weight, or PX bytes: the unit of the class's fee rate.
     cost: u64,
+    /// Block weight (`Transaction::weight`, B6): a transfer's, or the v1
+    /// part of a PX or deploy transaction (R12-2).
+    weight: u64,
+    /// Bytes against the block's PX budget (`Transaction::px_bytes`).
+    px_bytes: u64,
     seq: u64,
     /// Conflict keys (`conflict_keys`).
     keys: Vec<ConflictKey>,
@@ -123,6 +128,14 @@ impl Entry {
     fn rate_cmp(&self, other: &Entry) -> std::cmp::Ordering {
         (self.tx.fee() as u128 * other.cost as u128)
             .cmp(&(other.tx.fee() as u128 * self.cost as u128))
+    }
+
+    /// Fee per block-weight unit, compared without division: the order of
+    /// transfers and deploys in templates, which compete for the same weight
+    /// (one unit, no cross-unit comparison).
+    fn weight_rate_cmp(&self, other: &Entry) -> std::cmp::Ordering {
+        (self.tx.fee() as u128 * other.weight as u128)
+            .cmp(&(other.tx.fee() as u128 * self.weight as u128))
     }
 }
 
@@ -381,11 +394,14 @@ impl Mempool {
             Class::V1 => tx.weight(),
             Class::Px => tx.px_bytes(),
         };
+        let (weight, px_bytes) = (tx.weight(), tx.px_bytes());
         let entry = Entry {
             tx,
             class,
             size,
             cost,
+            weight,
+            px_bytes,
             seq: self.next_seq,
             keys,
             admitted,
@@ -494,11 +510,21 @@ impl Mempool {
         }
     }
 
-    /// Transactions for a block template, highest fee rate first (then first
-    /// seen): v1 transactions up to `max_weight`, PX transactions up to the
-    /// PX byte budget. `pool` is the PX pool before the block: PX transactions
-    /// are taken only while the pool, evolving in block order, stays
-    /// non-negative (each was admitted against the chain's pool alone).
+    /// Transactions for a block template. Every candidate is charged against
+    /// the block weight budget `max_weight` (`Transaction::weight`: a
+    /// transfer's weight, or the v1 part of a PX or deploy transaction,
+    /// R12-2), and PX and deploy transactions also against the PX byte budget
+    /// (deploys also against the deploy sub-budget): a template never breaks
+    /// B6 (docs/reviews/v3-consensus-changes.md#r12-2).
+    ///
+    /// Order: PX transactions first (by fee per PX byte, then first seen;
+    /// their fee is uniform), so v1 congestion cannot keep one with v1 inputs
+    /// out; then transfers and deploys, which compete for the same weight, by
+    /// fee per weight, then first seen. No two units are compared.
+    ///
+    /// `pool` is the PX pool before the block: PX transactions are taken
+    /// only while the pool, evolving in block order, stays non-negative (each
+    /// was admitted against the chain's pool alone).
     ///
     /// Defence in depth: a transaction sharing a conflict key with one already
     /// selected is skipped (and logged). Admission already guarantees that no
@@ -506,12 +532,16 @@ impl Mempool {
     /// invariant is broken; it keeps a broken invariant from making every
     /// template invalid.
     pub fn select(&self, max_weight: u64, mut pool: u128) -> Vec<Transaction> {
-        let mut entries: Vec<&Entry> = self.entries.values().collect();
-        entries.sort_by(|a, b| b.rate_cmp(a).then(a.seq.cmp(&b.seq)));
+        let (mut px_first, mut rest): (Vec<&Entry>, Vec<&Entry>) = self
+            .entries
+            .values()
+            .partition(|e| matches!(e.tx, Transaction::Px(_)));
+        px_first.sort_by(|a, b| b.rate_cmp(a).then(a.seq.cmp(&b.seq)));
+        rest.sort_by(|a, b| b.weight_rate_cmp(a).then(a.seq.cmp(&b.seq)));
         let (mut weight, mut px, mut deploy) = (0u64, 0u64, 0u64);
         let mut out = Vec::new();
         let mut used: std::collections::HashSet<ConflictKey> = std::collections::HashSet::new();
-        for e in entries {
+        for e in px_first.into_iter().chain(rest) {
             if e.keys.iter().any(|k| used.contains(k)) {
                 log::warn!(
                     "mempool: transaction {} conflicts with one already in the template; skipped",
@@ -519,38 +549,37 @@ impl Mempool {
                 );
                 continue;
             }
-            let before = out.len();
-            match e.class {
-                Class::V1 if weight + e.cost <= max_weight => {
-                    weight += e.cost;
-                    out.push(e.tx.clone());
-                }
-                Class::Px if px + e.cost <= MAX_PX_BLOCK_BYTES => {
-                    match &e.tx {
-                        Transaction::Px(t) => {
-                            match (pool + t.bridge_in as u128).checked_sub(t.bridge_out as u128) {
-                                Some(p) => pool = p,
-                                None => continue,
-                            }
-                        }
-                        // Deploys also fit the block's deploy sub-budget
-                        // (`MAX_DEPLOY_BLOCK_BYTES`, a block rule).
-                        Transaction::PxDeploy(_) => {
-                            if deploy + e.cost > MAX_DEPLOY_BLOCK_BYTES {
-                                continue;
-                            }
-                            deploy += e.cost;
-                        }
-                        _ => {}
+            // Both budgets, for every kind.
+            let Some(w) = weight.checked_add(e.weight).filter(|w| *w <= max_weight) else {
+                continue;
+            };
+            let Some(p) = px
+                .checked_add(e.px_bytes)
+                .filter(|p| *p <= MAX_PX_BLOCK_BYTES)
+            else {
+                continue;
+            };
+            match &e.tx {
+                Transaction::Px(t) => {
+                    match (pool + t.bridge_in as u128).checked_sub(t.bridge_out as u128) {
+                        Some(next) => pool = next,
+                        None => continue,
                     }
-                    px += e.cost;
-                    out.push(e.tx.clone());
+                }
+                // Deploys also fit the block's deploy sub-budget
+                // (`MAX_DEPLOY_BLOCK_BYTES`, a block rule).
+                Transaction::PxDeploy(_) => {
+                    if deploy + e.px_bytes > MAX_DEPLOY_BLOCK_BYTES {
+                        continue;
+                    }
+                    deploy += e.px_bytes;
                 }
                 _ => {}
             }
-            if out.len() > before {
-                used.extend(e.keys.iter().copied());
-            }
+            weight = w;
+            px = p;
+            out.push(e.tx.clone());
+            used.extend(e.keys.iter().copied());
         }
         out
     }
@@ -1307,6 +1336,128 @@ mod tests {
             }
             _ => deploy(small(60), &outs, small(3) as u8, fee),
         }
+    }
+
+    /// `px(n, bytes, ..)` spending v1 key images `images` (R12-2: its v1
+    /// part weighs `max_weight(images.len(), 0)`).
+    fn px_in(n: u32, bytes: usize, images: &[u64], fee: u64) -> Transaction {
+        let mut tx = px(n, bytes, fee, 0, 0);
+        if let Transaction::Px(t) = &mut tx {
+            t.inputs = images.iter().map(|&k| input(k)).collect();
+            t.pseudo_outs = images.iter().map(|_| pt(9)).collect();
+            t.signatures = images.iter().map(|_| clsag()).collect();
+        }
+        tx
+    }
+
+    /// R12-2 (a′): a template never exceeds the weight budget (which PX and
+    /// deploy transactions with v1 inputs now take from), the PX byte
+    /// budget, the deploy sub-budget or the pool, over random pools of every
+    /// kind and random budgets; and the total weight is the block rule's own
+    /// sum (`Transaction::weight`, B6).
+    #[test]
+    fn templates_respect_both_budgets_for_every_kind() {
+        let mut rng = ChaCha20Rng::seed_from_u64(0x122);
+        let mut weight_bound_hit = 0;
+        for round in 0..60 {
+            let mut m = Mempool::new();
+            let mut image = 1_000u64 * (round + 1);
+            for i in 0..40u32 {
+                let fee = 1 + rng.next_u64() % 100_000;
+                let n_in = 1 + (rng.next_u64() % 64) as usize;
+                let images: Vec<u64> = (0..n_in as u64).map(|j| image + j).collect();
+                image += 64;
+                let tx = match rng.next_u64() % 5 {
+                    0 => transfer(&images[..1], &[image, image + 1], fee),
+                    1 => px_in(
+                        2 * i + 1,
+                        1 + (rng.next_u64() % 400_000) as usize,
+                        &images,
+                        fee,
+                    ),
+                    2 => px(
+                        2 * i + 1,
+                        1 + (rng.next_u64() % 400_000) as usize,
+                        fee,
+                        0,
+                        0,
+                    ),
+                    3 => big_deploy(image, i as u8, (rng.next_u64() % 200_000) as usize, fee),
+                    _ => {
+                        let mut d = deploy(image, &[image + 1, image + 2], i as u8, fee);
+                        if let Transaction::PxDeploy(t) = &mut d {
+                            t.inputs = images.iter().map(|&k| input(k)).collect();
+                        }
+                        d
+                    }
+                };
+                let _ = add(&mut m, tx);
+            }
+            let max_weight = rng.next_u64() % 400_000;
+            let pool = u128::from(rng.next_u64() % 1_000);
+            let sel = m.select(max_weight, pool);
+            let weight: u64 = sel.iter().map(Transaction::weight).sum();
+            let px: u64 = sel.iter().map(Transaction::px_bytes).sum();
+            let deploys: u64 = sel
+                .iter()
+                .filter(|t| matches!(t, Transaction::PxDeploy(_)))
+                .map(Transaction::px_bytes)
+                .sum();
+            assert!(
+                weight <= max_weight,
+                "round {round}: {weight} > {max_weight}"
+            );
+            assert!(px <= MAX_PX_BLOCK_BYTES, "round {round}");
+            assert!(deploys <= MAX_DEPLOY_BLOCK_BYTES, "round {round}");
+            let mut p = pool;
+            for t in &sel {
+                if let Transaction::Px(t) = t {
+                    p = (p + t.bridge_in as u128)
+                        .checked_sub(t.bridge_out as u128)
+                        .expect("pool");
+                }
+            }
+            assert_disjoint(&sel);
+            // Something with weight was left out for lack of weight.
+            if m.entries.values().any(|e| {
+                e.weight > 0
+                    && !sel.iter().any(|t| t.hash() == e.tx.hash())
+                    && weight + e.weight > max_weight
+            }) {
+                weight_bound_hit += 1;
+            }
+        }
+        assert!(
+            weight_bound_hit > 30,
+            "the weight budget bound ({weight_bound_hit})"
+        );
+    }
+
+    /// PX transactions come first: under v1 congestion (transfers paying far
+    /// more per weight filling the budget), a PX transaction with 64 v1
+    /// inputs still gets its weight.
+    #[test]
+    fn px_with_v1_inputs_are_selected_under_v1_congestion() {
+        let mut m = Mempool::new();
+        let images: Vec<u64> = (0..64).collect();
+        let heavy = add(&mut m, px_in(1, 100_000, &images, 10)).unwrap();
+        let w = blacksilk_tx::params::max_weight(64, 0);
+        for k in 0..200u64 {
+            add(
+                &mut m,
+                transfer(&[1_000 + k], &[5_000 + 2 * k, 5_001 + 2 * k], 1 << 40),
+            )
+            .unwrap();
+        }
+        let budget = 100_000;
+        let sel = m.select(budget, 0);
+        assert!(sel.iter().any(|t| t.hash() == heavy), "the PX transaction");
+        let total: u64 = sel.iter().map(Transaction::weight).sum();
+        assert!(total <= budget && total >= w);
+        assert!(sel.len() > 1, "transfers fill the rest");
+        // Its weight counts: with less than its v1 part left, it is out.
+        let sel = m.select(w - 1, 0);
+        assert!(!sel.iter().any(|t| t.hash() == heavy));
     }
 
     /// Randomized: 2 000 operations (add, remove, remove_block, select) on

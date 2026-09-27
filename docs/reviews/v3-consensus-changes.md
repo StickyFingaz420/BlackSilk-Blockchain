@@ -450,3 +450,105 @@ admission height after a reorganization disconnects a block carrying it, then mi
   redesign (W4) must not re-inject before `relayed + 2 160 + 30`.
 - The recently-expired set is bounded by what expires within 30 blocks, which the pool
   caps bound; it is not persisted (neither is the pool).
+
+---
+
+<a id="r12-2"></a>
+
+## R12-2 (a′): the v1 part of PX and deploy transactions counts toward the block weight
+
+Decision: decisions.md, Agent 14 "R12-2: option (a′) is accepted provisionally", Agent 10
+"R12-2: 14's option (a′) and 10's option (a) are the same rule … Adopted for the v3
+genesis", Agent 50 "R12-2 (a′): `Mempool::select` charges PX and deploys against BOTH
+budgets, in the SAME commit". Dossiers 14 §3.1 (FE-1, FE-6) and 10 §3.1 (F10-1). Work
+item CB-B1b item 3.
+
+**1. Problem.** `Transaction::weight` was 0 for PX and deploy transactions, so their v1
+inputs (up to 64 each, one 16-member CLSAG per input) were metered only by the PX byte
+budget. A valid block could carry about 2 530 CLSAGs (a full v1 lane, 1 MiB of 64-input
+deploys, three 64-input PX transactions) against about 886 for the v1 lane alone: about
+5–10 s of single-threaded verification under the chain lock per block, with fees
+recycled to a miner stuffing its own block (dossier 14 §3.1, dossier 10 §3.1; figures
+are estimates from 2–4 ms per CLSAG).
+
+**2. Demonstrated failure** (tests first):
+`tx/tests/px_v1_weight.rs::a_block_over_the_weight_limit_through_a_deploys_v1_part_is_rejected`
+fails: a block whose only weight beyond its coinbase is a valid 1-input deploy validates
+(`Ok(())`) under a weight limit of `coinbase + 1 000`, which the deploy's v1 part
+(`max_weight(1, 2) = 1 723`) exceeds. `a_px_transactions_v1_inputs_count_toward_the_weight_limit`
+fails: a block with a 64-input PX transaction passes B6 under a limit of `coinbase +
+50 000` (`max_weight(64, 0)` is larger) and fails only later.
+Run on the parent commit `00df709`: `a deploy's CLSAG escaped the weight limit: Ok(())`
+and `64 CLSAGs escaped the weight limit: Err(Tx { index: 1, error: Unbalanced })` (the
+block got as far as the balance check; B6 did not see the 64 inputs).
+
+**3. Prior art.** Bitcoin meters signature operations separately (BIP 141 sigop cost
+≤ 80 000; BIP 54 per-transaction sigops). Monero has no separate lane: every byte of a
+transaction counts toward block weight, so ring signatures are always paid in weight.
+Zcash ZIP-317 prices by logical actions. The common principle: every verification
+resource falls under a consensus meter (dossier 14 §3.1).
+
+**4. Alternatives.** (a) charge only the v1 bytes of PX/deploy transactions to the
+weight and only the rest to the PX budget (a new byte partition to specify and test;
+rejected for (a′)'s simplicity); (b) a separate `MAX_BLOCK_INPUTS` counter (a third
+template dimension, not tied to fees); (c) a lower per-transaction input cap (does not
+bound the block); (d) accept (another reset later).
+
+**5. Affected components.**
+- `tx/src/types.rs`: `Transaction::weight` of a PX or deploy transaction with `n > 0`
+  v1 inputs and `k` hidden outputs is `max_weight(n, k)` (the exact-fee function,
+  tx/src/params.rs); 0 without inputs. `px_bytes` is unchanged (the full encoded
+  length), so the v1 bytes count in both budgets (at most about 57 KB of the 8 MiB PX
+  lane per 64-input transaction).
+- `tx/src/validate.rs`: none in logic; B6 already sums `Transaction::weight` for every
+  transaction, before any cryptography (doc comments only).
+- `chain/src/mempool.rs` (`Mempool::select`, same commit): every candidate is charged
+  against the weight budget, PX and deploys also against the PX budget (and deploys the
+  deploy sub-budget); the order is PX transactions first (their fee is uniform), then
+  transfers and deploys by fee per weight (the same unit for both, no cross-unit
+  comparison; FE-6).
+- The PX fee stays exactly `PX_STANDARD_FEE`: `FEE_PER_WEIGHT × max_weight(64, 16) =
+  1 148 780 ≤ PX_STANDARD_FEE = 8 912 896`, so the fixed fee covers the v1 part of any
+  PX transaction and stays uniform (no per-shape component, which would fingerprint the
+  input count). A deploy's fee already pays `FEE_PER_WEIGHT × max_weight(n, k)` for its
+  v1 part, exactly its new weight at the v1 rate.
+
+**6. Activation.** v3 genesis base rule set, from genesis. After launch it would be a
+tightening (activation height).
+
+**7. Compatibility.** No encoding, id or signature change. Blocks whose v1 weight plus
+PX/deploy v1 parts exceed `MAX_BLOCK_WEIGHT` become invalid; no honest template
+produces one (the template test below). The fingerprint's constant list does not see
+the rule: agent 40 adds weight samples (`weight` of PX 0-in, 1-in/0-out, 64-in/16-out,
+deploy 1-in/2-out, 64-in/2-out) to the manifest.
+
+**8. Reorg, wallet, mining and P2P implications.** Reorg: none (a pure block sum).
+Wallet: nothing changes (fees are unchanged). Mining: templates charge both budgets; PX
+transactions come first, so v1 congestion cannot keep a PX transaction with v1 inputs
+out (it needs at most 57 439 weight of the 597 000). P2P: none.
+
+**9. Vectors.** `Transaction::weight` of PX 0-in (0), PX 1-in/0-out (841), PX
+64-in/16-out (57 439), deploy 1-in/2-out (1 723), deploy 64-in/2-out (52 123): each
+equals the `max_weight` row of `tx/tests/data/max_weight.txt` (independent script).
+Boundary: a block at exactly the weight limit with a deploy contributing is valid; one
+unit lower is `WeightExceeded`.
+
+**10. Regression tests.** `tx/tests/px_v1_weight.rs`: the two demonstrations; the
+weight vectors; the boundary (limit exact and −1, with a real deploy);
+`every_clsag_is_paid_for_in_the_weight_meter` (weight ≥ 656 per input for random
+transfers and ≥ 800 per input for PX and deploys, so a valid block holds at most
+⌊600 000 / 656⌋ = 914 v1 inputs across all kinds); `the_px_fee_covers_the_largest_px_v1_part`.
+`chain/src/mempool.rs`: `templates_respect_both_budgets_for_every_kind` (randomized:
+synthetic pools of transfers, PX with and without inputs and deploys, random budgets;
+every template's total weight, PX bytes, deploy bytes and pool stay within bounds),
+`px_with_v1_inputs_are_selected_under_v1_congestion`, and the updated selection tests.
+
+**11. Suite results.** In the commit message and the CB-B1b final report.
+
+**12. Open review points.**
+- "Final only after agent 10's worst-block benchmark and the red-team review"
+  (decisions, Agent 14): the benchmark (dossier 10 item 3) has not been run in this
+  change; the expected bound is about 914 CLSAGs plus 3 PX proofs per valid block.
+- The invalid-block worst case (F10-2) is closed separately by early proof decoding
+  (docs/transactions.md §8.3); this rule also bounds it through B6.
+- Agent 40: weight samples in the fingerprint manifest.

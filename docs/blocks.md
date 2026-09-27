@@ -96,7 +96,9 @@ A block `B` at height `h` with parent `P` is valid iff all of the following hold
    `BlockContext { height: h, reward: reward(h), tx_root: B.header.tx_root }`
    (transactions.md §8, rules T, C and B1–B7);
 4. with block weight limit `MAX_BLOCK_WEIGHT = 600 000` and
-   `FEE_PER_WEIGHT = 20 atomic units` (transactions.md §8.4);
+   `FEE_PER_WEIGHT = 20 atomic units` (transactions.md §8.4); the v1 part of a PX or
+   deploy transaction with `n > 0` inputs weighs `max_weight(n, k)` against it
+   (transactions.md B6, R12-2);
 5. its PX and deploy transactions satisfy px.md §11.3 (PX1–PX5, the pool stays ≥ 0 in
    block order, contract ids unique) and fit the 8 MiB PX budget.
 
@@ -209,8 +211,8 @@ Transactions from disconnected blocks return to the mempool if they are still va
   - Their proofs are not re-verified when the pool is revalidated, nor when a block
     containing them is validated: a sound cache, because the transaction id commits to
     the proof (`validate_block_transactions_cached`).
-  - Templates add them in fee-per-byte order within the PX budget, simulating the pool
-    so that it never goes negative.
+  - Templates add PX transactions first, in fee-per-byte order within the PX budget,
+    simulating the pool so that it never goes negative.
 - It holds at most `MEMPOOL_MAX_BYTES = 50 MB`. When a class is full, a new transaction
   is accepted only by evicting **strictly** cheaper entries of its class (fee per
   weight, or per byte for PX), cheapest and then newest first.
@@ -220,8 +222,14 @@ Transactions from disconnected blocks return to the mempool if they are still va
     transaction was refused in the end.
   - One sort per admission, not one scan per victim: a flood of small entries cannot
     make admission quadratic (`eviction_under_a_flood_stays_fast`).
-- **Block templates** take transactions by descending fee per weight, up to
-  `MAX_BLOCK_WEIGHT − COINBASE_RESERVE` with `COINBASE_RESERVE = 3 000`.
+- **Block templates** charge every transaction against the weight budget
+  `MAX_BLOCK_WEIGHT − COINBASE_RESERVE` (`COINBASE_RESERVE = 3 000`), including the v1
+  part of PX and deploy transactions (R12-2), and PX and deploy transactions also
+  against the PX budget and deploys against the deploy sub-budget, so a template never
+  breaks B6. Order: PX transactions first (their fee is uniform; v1 congestion cannot
+  keep one with v1 inputs out), then transfers and deploys by descending fee per weight
+  (one unit for both; no fee per byte is compared with a fee per weight). Tested with
+  randomized pools of every kind (`templates_respect_both_budgets_for_every_kind`).
 - **Expiry** (`MEMPOOL_EXPIRY_BLOCKS = 2 160`, about 3 days at 120 s, Monero's pool
   lifetime). A transaction leaves the pool once the next block's height reaches the
   height it was admitted for plus 2 160, whatever its kind, deploys included (one value

@@ -1017,7 +1017,10 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
     if blacksilk_consensus::merkle::tx_root(&ids) != ctx.tx_root {
         return Err(BlockError::TxRootMismatch);
     }
-    // B6: v1 weight, and the separate PX byte budget.
+    // B6: the block weight (transfers, and the v1 part of PX and deploy
+    // transactions: `Transaction::weight`, R12-2), and the separate PX byte
+    // budget. Before any cryptography, so a block stuffed with CLSAGs costs
+    // a sum here, not a verification.
     let weight: u128 = txs.iter().map(|t| t.weight() as u128).sum();
     if weight > rules.max_block_weight as u128 {
         return Err(BlockError::WeightExceeded {

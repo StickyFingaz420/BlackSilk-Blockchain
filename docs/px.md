@@ -608,7 +608,7 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
 | PX4 | The pool stays ≥ 0 through the block, in order |
 | PX5 | The proof verifies with the registered programs and budgets (last; most expensive) |
 | Deploy | Every budget is provable: `cycles ≤ MAX_CYCLES` (2^21), `keys ≤ 2^22`, and each ALU and Poseidon2 field plus the kernel's `kernel_budget(1)` share ≤ 2^22 (stateless, `PxBudgetTooLarge`; R7-5). Programs load, and their program ids are pairwise distinct (stateless, `PxDuplicateProgram`; R5-7). The contract id is new in the chain and the block |
-| Block | Coinbase = reward + all fees; v1 weight ≤ limit; PX and deploy bytes ≤ 8 MiB |
+| Block | Coinbase = reward + all fees; block weight ≤ limit, where the v1 part of a PX or deploy transaction with `n > 0` inputs weighs `max_weight(n, k)` (transactions.md B6; R12-2); PX and deploy bytes ≤ 8 MiB |
 
 **Chain state.** The state (`MemoryChain`) keeps the PX state, the registry and a
 log of commitments, ciphertexts and nullifiers for wallets, all with exact per-block
@@ -649,7 +649,8 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 | PX fee | Exactly `PX_STANDARD_FEE = PX_FEE_PER_BYTE × MAX_PX_TX_SIZE` = 8,912,896 atomic units, a consensus rule (§12). It covers the per-byte fee of any PX transaction. Consequence: every PX transaction pays the same, so the mempool's fee-per-byte ordering ranks larger ones (contract calls, ~2.5 MB) below plain transfers (~2 MB) when the PX budget is congested |
 | Relay | PX and deploy transactions together: per peer 0.2/s (burst 4); all peers together 2/s (burst 10) |
 | Invalid proof | Misbehaviour (the statement is branch-independent once PX1 and PX3 pass). Across a scheduled activation the binding changes, so near an activation an honest peer can relay a proof for the previous epoch; see reviews/v3-upgrade-mechanism.md §2.4 |
-| Mempool | PX class capped at 64 MiB with fee-per-byte eviction; proofs verified once on admission; templates keep the pool non-negative in order |
+| Block weight | A PX or deploy transaction with v1 inputs also takes `max_weight(n, k)` of the 600 000 block weight (R12-2): its CLSAGs are metered like a transfer's. The fixed PX fee covers it (`FEE_PER_WEIGHT × max_weight(64, 16)` = 1,148,780 ≤ `PX_STANDARD_FEE`), so the PX fee stays uniform; a deploy's fee already pays exactly that weight at the v1 rate |
+| Mempool | PX class capped at 64 MiB with fee-per-byte eviction; proofs verified once on admission; templates take PX transactions first, charge every transaction against both the weight and the PX budgets, and keep the pool non-negative in order |
 
 ## 12. Privacy guidance for users and wallets
 
