@@ -18,15 +18,15 @@ mod transfer;
 
 use crate::index::OutputIndex;
 use crate::px::{AddressKeys, PxStore};
+use crate::seed::{Seed, SeedError};
 use blacksilk_consensus::{ChainParams, Hash, Network};
 use blacksilk_crypto::keys::{SubaddressTable, WalletKeys};
-use blacksilk_px::wallet::{Account, Derivation};
+use blacksilk_px::wallet::Account;
 use blacksilk_tx::builder::{BuildError, Decoy};
 use blacksilk_tx::params::MAX_INPUTS;
 pub use contracts::check_vault_deploy;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use zeroize::Zeroize;
 
 /// Block ids kept for reorg detection.
 const KEPT_BLOCK_IDS: usize = 720;
@@ -66,6 +66,11 @@ const PENDING_EXPIRY_BLOCKS: u64 = 20;
 /// wallet's reorganization window (`KEPT_BLOCK_IDS`). K4 allows deeper
 /// reorganizations, but beyond this window the wallet rescans anyway.
 const RING_RETENTION_BLOCKS: u64 = KEPT_BLOCK_IDS as u64;
+
+/// The PX account this wallet uses (docs/px.md §3.1). Accounts are hardened
+/// children of the seed's PX root (`blacksilk_px::wallet::Account::account`);
+/// the scanner and the record store hold one account today.
+pub const PX_ACCOUNT: u32 = 0;
 
 #[derive(Debug)]
 pub enum WalletError {
@@ -108,6 +113,9 @@ pub enum WalletError {
         needed: u32,
         height: u64,
     },
+    /// Seed words that were refused (never echoed), or a seed of another
+    /// network than the one asked for.
+    Seed(SeedError),
     /// An address index too far beyond the highest one that has received
     /// funds (`GAP_LIMIT`, `MAX_INDEX_AHEAD` and their PX counterparts).
     AddressIndex {
@@ -160,13 +168,14 @@ impl std::fmt::Display for WalletError {
             ),
             WalletError::Serialization(e) => write!(f, "wallet data: {e}"),
             WalletError::Contract(e) => write!(f, "contract: {e}"),
+            WalletError::Seed(e) => write!(f, "seed: {e}"),
             WalletError::EpochChanged {
                 built_for,
                 needed,
                 height,
             } => write!(
                 f,
-                "a consensus upgrade activated while the transaction was being built: it was                  signed for branch {built_for:#010x}, and block {height} needs branch                  {needed:#010x}. Nothing was sent and no funds were reserved; run the                  command again"
+                "a consensus upgrade activated while the transaction was being built: it was signed for branch {built_for:#010x}, and block {height} needs branch {needed:#010x}. Nothing was sent and no funds were reserved; run the command again"
             ),
             WalletError::AddressIndex {
                 index,
@@ -307,9 +316,9 @@ pub struct Wallet {
     /// network name on another genesis (a release candidate, a rehearsal, a
     /// retired identity) is refused.
     genesis_id: Hash,
-    seed: [u8; 32],
-    /// PX key derivation of this wallet (docs/px.md §3.1).
-    derivation: Derivation,
+    /// The seed (format v1, docs/blocks.md §10): every key derives from its
+    /// `master`. Wiped when dropped.
+    seed: Seed,
     /// Every v1 output seen (`crate::index`).
     index: OutputIndex,
     keys: WalletKeys,
@@ -320,6 +329,7 @@ pub struct Wallet {
     issued: BTreeMap<u32, u32>,
     outputs: Vec<StoredOutput>,
     px: PxStore,
+    /// PX account `PX_ACCOUNT` of the seed (docs/px.md §3.1).
     px_account: Account,
     pending_txs: Vec<PendingTx>,
     /// Decoys of the ring last submitted for each key image: reused when the
@@ -342,12 +352,6 @@ struct AutoSave {
     path: std::path::PathBuf,
     password: zeroize::Zeroizing<Vec<u8>>,
     kdf: crate::file::KdfParams,
-}
-
-impl Drop for Wallet {
-    fn drop(&mut self) {
-        self.seed.zeroize();
-    }
 }
 
 pub fn network_name(n: Network) -> &'static str {
@@ -712,10 +716,11 @@ mod tests {
     fn the_mnemonic_round_trips_without_reallocating() {
         let w = wallet();
         let m = w.mnemonic();
-        assert_eq!(m.split(' ').count(), 24);
+        assert_eq!(m.split(' ').count(), crate::seed::SEED_WORDS);
         assert!(m.capacity() == 256, "written into the preallocated buffer");
         let r = Wallet::from_mnemonic(Network::Regtest, &m, 1).unwrap();
-        assert_eq!(r.seed, w.seed);
+        assert_eq!(*r.seed.master(), *w.seed.master());
+        assert_eq!(r.mnemonic(), m);
     }
 
     #[test]
@@ -896,7 +901,7 @@ mod tests {
         // Lock: the safe vault passes the check and stops at the funds (this
         // wallet has none); the others are refused as contracts.
         let lock = |w: &mut Wallet, c: &Digest, rng: &mut ChaCha20Rng| {
-            w.px_vault_lock(&node, c, 1, &secret, None, &rules, rng)
+            w.px_vault_lock(&node, c, 1, Some(&secret), None, &rules, rng)
         };
         assert!(matches!(
             lock(&mut w, &good, &mut rng),
@@ -1118,46 +1123,40 @@ mod tests {
         assert!(w.set_chain_params(ChainParams::regtest()).is_ok());
     }
 
-    /// Existing wallet files keep their PX addresses (derivation 1); new
-    /// wallets use derivation 2, recorded in a version-2 file.
+    /// Wallet files are version 3 (seed format v1). Files of versions 1 and
+    /// 2 (24-word seeds, PX derivation 1) and unknown versions are refused;
+    /// the seed's birthday survives a save and load.
     #[test]
-    fn wallet_files_keep_their_px_key_derivation() {
-        let mut new = wallet();
-        assert_eq!(new.derivation(), Derivation::V2);
-        assert!(new.px_range_view(0).is_some());
-        let mut old = Wallet::from_seed_with(Network::Regtest, [7; 32], 1, Derivation::V1);
-        assert!(old.px_range_view(0).is_none());
-        let (new_px, old_px) = (new.px_address(0), old.px_address(0));
-        assert_ne!(new_px, old_px, "the derivation changes PX addresses");
-        assert_eq!(new.primary(), old.primary(), "but not the v1 keys");
+    fn wallet_files_are_version_3_and_older_ones_are_refused() {
+        let mut w = Wallet::from_seed(Network::Regtest, [7; 32], (5 << 14) + 1);
+        let json: serde_json::Value = serde_json::from_slice(&w.to_json()).unwrap();
+        assert_eq!(json["version"], 3);
+        assert_eq!(json["seed_version"], 1);
+        assert_eq!(json["birthday"], 5);
+        assert!(json.get("derivation").is_none());
+        let mut loaded = Wallet::from_json(&w.to_json()).unwrap();
+        assert_eq!(loaded.birthday(), 5);
+        assert_eq!(loaded.mnemonic(), w.mnemonic());
+        assert_eq!(loaded.px_address(0), w.px_address(0));
 
-        // A file written before the derivation and the index existed.
-        let mut json: serde_json::Value = serde_json::from_slice(&old.to_json()).unwrap();
-        assert_eq!(json["version"], 1);
-        let fields = json.as_object_mut().unwrap();
-        fields.remove("derivation");
-        fields.remove("output_index");
-        let bytes = serde_json::to_vec(&json).unwrap();
-        let mut loaded = Wallet::from_json(&bytes).unwrap();
-        assert_eq!(loaded.derivation(), Derivation::V1);
-        assert_eq!(loaded.px_address(0), old_px);
-
-        let json: serde_json::Value = serde_json::from_slice(&new.to_json()).unwrap();
-        assert_eq!(json["version"], 2);
-        let mut loaded = Wallet::from_json(&new.to_json()).unwrap();
-        assert_eq!(loaded.derivation(), Derivation::V2);
-        assert_eq!(loaded.px_address(0), new_px);
-
-        // Inconsistent or unknown versions are refused.
-        for (version, derivation) in [(1, 2), (2, 1), (3, 2), (2, 9)] {
-            let mut json: serde_json::Value = serde_json::from_slice(&new.to_json()).unwrap();
+        for version in [1, 2] {
+            let mut json = json.clone();
             json["version"] = version.into();
-            json["derivation"] = derivation.into();
-            let bytes = serde_json::to_vec(&json).unwrap();
-            assert!(
-                Wallet::from_json(&bytes).is_err(),
-                "version {version}, derivation {derivation}"
-            );
+            json["derivation"] = version.into();
+            let e = Wallet::from_json(&serde_json::to_vec(&json).unwrap())
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(e.contains("no longer supported"), "{e}");
         }
+        let mut other = json.clone();
+        other["version"] = 4.into();
+        assert!(Wallet::from_json(&serde_json::to_vec(&other).unwrap()).is_err());
+        let mut other = json.clone();
+        other["seed_version"] = 2.into();
+        assert!(Wallet::from_json(&serde_json::to_vec(&other).unwrap()).is_err());
+        let mut other = json;
+        other.as_object_mut().unwrap().remove("birthday");
+        assert!(Wallet::from_json(&serde_json::to_vec(&other).unwrap()).is_err());
     }
 }

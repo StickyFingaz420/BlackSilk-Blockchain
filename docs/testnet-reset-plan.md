@@ -83,8 +83,9 @@ With a new network id, old nodes fail the handshake with new ones
    list is empty (docs/testnet.md §6, §7, §12).
 5. **Wallets:**
    - create **new** wallet files;
-   - an existing seed may be restored on the new network (`restore --restore-height 1`),
-     but old testnet coins do not exist there;
+   - 24-word seeds of earlier wallets cannot be restored: the wallet reads only the
+     27-word seed format v1 (docs/blocks.md §10). A 27-word testnet seed may be restored
+     (`restore --restore-height 1`), but old testnet coins do not exist there;
    - do not point an old wallet file at the new network: it would try to reconcile a
      chain that no longer exists.
 6. **Mining:** start the miners, and let the chain pass coinbase maturity (60 blocks)

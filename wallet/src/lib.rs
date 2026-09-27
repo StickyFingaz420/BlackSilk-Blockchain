@@ -7,6 +7,7 @@ pub mod file;
 pub mod index;
 pub mod node;
 pub mod px;
+pub mod seed;
 pub mod wallet;
 
 pub use wallet::{Balance, Wallet, WalletError};

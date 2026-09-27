@@ -168,8 +168,9 @@ hash, with a distinct domain constant per use. A **digest** is 8 elements of `F`
 
 ### 4.2 Keys and addresses (PX)
 
-All PX keys derive from the existing wallet seed (transactions.md §2.1), so one set of
-24 words recovers everything:
+All PX keys derive from the wallet's `master` secret (blocks.md §10, px.md §3.1), so
+one set of 27 seed words recovers every key. The formulas below are the original
+sketch; px.md §3.1 is normative:
 
 ```
 sk      = Hk("px/sk", seed)                            spend secret (digest)

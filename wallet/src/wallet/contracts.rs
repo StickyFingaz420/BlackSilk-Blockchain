@@ -110,7 +110,11 @@ impl Wallet {
     }
 
     /// Locks `amount` of this wallet's PX funds in a new record of the vault
-    /// `contract`, under `Hk(LOCK, secret)`. The record's ciphertext goes to
+    /// `contract`, under `Hk(LOCK, secret)`. Without a `secret`, the wallet
+    /// derives one from its keys and the vault record's `rho`
+    /// (`px_vault_secret_for`, docs/px.md §13.4), recoverable from the seed.
+    /// Either way the secret is stored with the record before sending
+    /// (`px_vault_secret`). The record's ciphertext goes to
     /// `deliver_to` (the party that will claim it) or to this wallet; this
     /// wallet keeps its own copy either way. The fee is paid from PX. Returns
     /// the transaction id and the vault record's commitment.
@@ -124,7 +128,7 @@ impl Wallet {
         node: &dyn NodeApi,
         contract: &Digest,
         amount: u64,
-        secret: &Digest,
+        secret: Option<&Digest>,
         deliver_to: Option<&delivery::Address>,
         rules: &TxRules,
         rng: &mut R,
@@ -140,6 +144,11 @@ impl Wallet {
                 needed: u64::MAX,
             })?;
         let (chosen, inputs, total, root) = self.px_inputs(needed, rng)?;
+        let derived = match secret {
+            Some(_) => None,
+            None => Some(self.px_vault_secret_for_lock(contract, &inputs[0])?),
+        };
+        let secret = secret.or(derived.as_deref()).expect("given or derived");
         let lock = vault::lock_of(secret);
         let blind = pxw::random_digest(rng);
         let (input, fw) = vault::lock_call(contract, amount, &lock, 0, &blind);
@@ -194,6 +203,13 @@ impl Wallet {
         if record.commit(&mut HostPerm::new()) != cm {
             return Err(WalletError::Contract(
                 "vault record does not match its commitment".into(),
+            ));
+        }
+        // A derived secret must be the one a restore re-derives from the
+        // record (its `rho` follows from the first nullifier).
+        if derived.is_some() && *self.px_vault_secret_for(contract, &rho) != *secret {
+            return Err(WalletError::Contract(
+                "the derived vault secret does not match the vault record".into(),
             ));
         }
         self.px.issued = self.px.issued.max(1);
@@ -362,11 +378,18 @@ impl Wallet {
             .contract_record(record)
             .ok_or_else(|| WalletError::Contract("unknown contract record".into()))?;
         let r = &self.px.contract_records[k];
-        let hex = r.secret.as_deref().ok_or_else(|| {
-            WalletError::Contract(
+        let Some(hex) = r.secret.as_deref() else {
+            // A lock of this wallet found again after a restore: its derived
+            // secret (docs/px.md §13.4).
+            let rec = r.record()?;
+            let derived = self.px_vault_secret_for(&rec.contract, &rec.rho);
+            if vault::lock_of(&derived) == rec.data {
+                return Ok(derived);
+            }
+            return Err(WalletError::Contract(
                 "no secret stored for this record (not locked by this wallet)".into(),
-            )
-        })?;
+            ));
+        };
         let secret = Zeroizing::new(crate::px::digest_from_hex(hex)?);
         if vault::lock_of(&secret) != r.record()?.data {
             return Err(WalletError::Contract(

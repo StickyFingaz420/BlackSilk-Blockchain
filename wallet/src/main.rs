@@ -46,24 +46,27 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Create a new wallet (prints the 24-word seed once; write it down).
+    /// Create a new wallet (prints the 27-word seed once; write it down).
     Create {
         #[arg(long, default_value = "testnet")]
         network: String,
+        /// The chain height now, recorded in the seed as its birthday
+        /// (restore scans from there). Default: the node's height; without a
+        /// reachable node this option is required. A lower value only makes
+        /// a restore scan longer; a higher one makes it miss funds.
+        #[arg(long)]
+        birthday_height: Option<u64>,
     },
-    /// Restore a wallet from its 24-word seed.
+    /// Restore a wallet from its 27-word seed (docs/blocks.md §10).
     Restore {
-        #[arg(long, default_value = "testnet")]
-        network: String,
-        /// First block to scan.
-        #[arg(long, default_value_t = 1)]
-        restore_height: u64,
-        /// PX key derivation (docs/px.md §3.1): 2 for wallets created by
-        /// this version, 1 for seeds of wallets created before 2026-09-27
-        /// (their PX records are found only with 1). v1 funds are found
-        /// either way.
-        #[arg(long, default_value_t = 2)]
-        px_derivation: u32,
+        /// The seed's network, checked against the words. Default: the
+        /// network the words name.
+        #[arg(long)]
+        network: Option<String>,
+        /// First block to scan. Default: the start of the seed's birthday
+        /// epoch.
+        #[arg(long)]
+        restore_height: Option<u64>,
     },
     /// Show an address (a fresh subaddress per counterparty is recommended).
     Address {
@@ -153,7 +156,8 @@ enum Cmd {
         /// The secret, 64 hex characters. RISKY: a command-line argument is
         /// kept in shell history and visible to other local users in the
         /// process list; prefer --secret-file or --secret-prompt. Without any
-        /// of the three, a secret is generated.
+        /// of the three, the wallet derives the secret from its keys and the
+        /// vault record (recoverable from the seed; docs/px.md §13.4).
         #[arg(long, conflicts_with_all = ["secret_file", "secret_prompt"])]
         secret: Option<String>,
         /// Read the secret (64 hex characters) from this file.
@@ -162,7 +166,7 @@ enum Cmd {
         /// Ask for the secret on the terminal (not echoed).
         #[arg(long)]
         secret_prompt: bool,
-        /// Write a generated secret to this new file (owner-only on Unix)
+        /// Write a derived secret to this new file (owner-only on Unix)
         /// instead of printing it.
         #[arg(long, conflicts_with_all = ["secret", "secret_file", "secret_prompt"])]
         secret_out: Option<PathBuf>,
@@ -212,7 +216,7 @@ enum Cmd {
         #[arg(long)]
         share: String,
     },
-    /// Show the 24-word seed.
+    /// Show the 27-word seed.
     Seed,
     /// Forget unconfirmed spends and stored transactions. Meant for a
     /// transaction that certainly never left this wallet: `sync` rebroadcasts
@@ -365,20 +369,36 @@ fn run(args: Args) -> Result<(), String> {
     let _lock = lock_wallet(&args.wallet)?;
     let kdf = KdfParams::default();
     match args.cmd {
-        Cmd::Create { network } => {
+        Cmd::Create {
+            network,
+            birthday_height,
+        } => {
             let net = parse_network(&network).ok_or("unknown network")?;
             if args.wallet.exists() {
                 return Err(format!("{} already exists", args.wallet.display()));
             }
-            // Start scanning at the current height when the node is reachable.
-            let start = client.info().map(|i| i.height + 1).unwrap_or(1);
+            // The chain height now: the seed's birthday, and where scanning
+            // starts. Never guessed: a wrong birthday makes a restore miss
+            // funds (review W-F15).
+            let height = match birthday_height {
+                Some(h) => h,
+                None => client.info().map(|i| i.height).map_err(|e| {
+                    format!(
+                        "cannot read the chain height from the node ({e}); it becomes the \
+                         seed's birthday. Start the node, or give --birthday-height with the \
+                         current height (lower is safe, higher misses funds)"
+                    )
+                })?,
+            };
+            let start = height + 1;
             let mut pw = password(true)?;
             let mut w = Wallet::generate(net, start).map_err(|e| e.to_string())?;
             let primary = w.address(0, 0);
             save(&w, &args.wallet, &pw, kdf).map_err(|e| e.to_string())?;
             pw.zeroize();
             println!(
-                "Wallet created ({}). Write down these 24 words; they are the only backup:\n",
+                "Wallet created ({}). Write down these 27 words; they are the only backup of \
+                 the keys:\n",
                 network_name(net)
             );
             println!("{}\n", w.mnemonic().as_str());
@@ -387,33 +407,26 @@ fn run(args: Args) -> Result<(), String> {
         Cmd::Restore {
             network,
             restore_height,
-            px_derivation,
         } => {
-            let net = parse_network(&network).ok_or("unknown network")?;
-            let derivation = blacksilk_px::wallet::Derivation::from_number(px_derivation)
-                .ok_or("unknown PX key derivation (1 or 2)")?;
+            let net = network
+                .map(|n| parse_network(&n).ok_or("unknown network"))
+                .transpose()?;
             if args.wallet.exists() {
                 return Err(format!("{} already exists", args.wallet.display()));
             }
             let mut words =
-                rpassword::prompt_password("24-word seed: ").map_err(|e| e.to_string())?;
-            let w = Wallet::from_mnemonic_with(net, &words, restore_height, derivation)
-                .map_err(|e| e.to_string());
+                rpassword::prompt_password("27-word seed: ").map_err(|e| e.to_string())?;
+            let w = Wallet::restore(&words, net, restore_height).map_err(|e| e.to_string());
             words.zeroize();
             let w = w?;
             let mut pw = password(true)?;
             save(&w, &args.wallet, &pw, kdf).map_err(|e| e.to_string())?;
             pw.zeroize();
             println!(
-                "Wallet restored with PX key derivation {px_derivation}; run `sync` to scan \
-                 from block {restore_height}."
+                "Wallet restored ({}); run `sync` to scan from block {}.",
+                network_name(w.network()),
+                w.synced_height() + 1
             );
-            if px_derivation != 1 {
-                println!(
-                    "If this seed comes from a wallet created before 2026-09-27 and it held \
-                     PX funds, restore again with --px-derivation 1."
-                );
-            }
         }
         cmd => {
             let mut pw = password(false)?;
@@ -641,22 +654,11 @@ fn run(args: Args) -> Result<(), String> {
                     let contract = digest_arg("contract", &contract)?;
                     let amount = parse_amount(&amount).ok_or("amount: use a number like 1.5")?;
                     let mut rng = os_rng()?;
-                    let (secret, generated) =
-                        match read_secret(secret, secret_file, secret_prompt)? {
-                            Some(s) => (Zeroizing::new(s), false),
-                            None => (
-                                Zeroizing::new(blacksilk_px::wallet::random_digest(&mut rng)),
-                                true,
-                            ),
-                        };
-                    // Write a generated secret out before anything is sent:
-                    // the funds are claimable only with it. (The wallet file
-                    // keeps a copy too, saved before sending.)
-                    if generated {
-                        if let Some(path) = &secret_out {
-                            write_secret_file(path, &secret)?;
-                        }
-                    }
+                    // `None`: the wallet derives the secret; it is stored in
+                    // the wallet file before anything is sent and can be
+                    // re-derived from the seed (docs/px.md §13.4).
+                    let given = read_secret(secret, secret_file, secret_prompt)?.map(Zeroizing::new);
+                    let derived = given.is_none();
                     let to = deliver_to
                         .map(|a| {
                             decode_px_address(w.network(), &a)
@@ -667,22 +669,11 @@ fn run(args: Args) -> Result<(), String> {
                     eprintln!("warning: the vault is a DEMONSTRATION contract, not a trustless swap: no timeout, no refund, and you (the locker) also know the secret. Whoever learns the secret and the record can claim it (docs/px.md §13.4).");
                     eprintln!("note: if you deliver the record to someone else, your own copy lives only in this wallet file; restoring from the seed will not recover it.");
                     println!("proving (about a minute)...");
-                    let show_secret = || {
-                        if generated {
-                            match &secret_out {
-                                Some(path) => println!("secret written to {}", path.display()),
-                                None => println!(
-                                    "secret {}",
-                                    Zeroizing::new(digest_hex(&secret)).as_str()
-                                ),
-                            }
-                        }
-                    };
                     let (id, record) = match w.px_vault_lock(
                         &client,
                         &contract,
                         amount,
-                        &secret,
+                        given.as_deref(),
                         to.as_ref(),
                         &rules,
                         &mut rng,
@@ -691,14 +682,25 @@ fn run(args: Args) -> Result<(), String> {
                         Err(e @ WalletError::Uncertain(_)) => {
                             // The lock may still be mined: the secret must not
                             // be lost (review R11-W1). The wallet file holds
-                            // it as well.
-                            show_secret();
+                            // it, saved before sending.
                             eprintln!("note: the secret is stored in the wallet file; `px-records` lists the record and `px-vault-secret --record <commitment>` shows its secret.");
                             return Err(e.to_string());
                         }
                         Err(e) => return Err(e.to_string()),
                     };
-                    show_secret();
+                    if derived {
+                        let secret = w.px_vault_secret(&record).map_err(|e| e.to_string())?;
+                        match &secret_out {
+                            Some(path) => {
+                                write_secret_file(path, &secret)?;
+                                println!("secret written to {}", path.display());
+                            }
+                            None => println!(
+                                "secret {}",
+                                Zeroizing::new(digest_hex(&secret)).as_str()
+                            ),
+                        }
+                    }
                     println!("record {}", digest_hex(&record));
                     println!("transaction {}", hex::encode(id));
                     Ok(())

@@ -65,7 +65,7 @@ ideally.
 ## 3. Keys, records, nullifiers
 
 ```text
-sk      = Hk(SK, seed as sixteen 16-bit limbs)       from the 32-byte wallet seed
+sk      = the spend secret of a PX account           wallet-side derivation, §3.1
 nk      = Hk(NK, sk)            ak = Hk(AK, sk)
 d_i     = Hk(DIVERSIFIER, sk ‖ i_lo16 ‖ i_hi16)      address i
 owner_i = Hk(OWNER, ak ‖ nk ‖ d_i)
@@ -88,65 +88,73 @@ rho'_j  = Hk(RHO, nf_0 ‖ j)                          output j of a transfer
   Their nullifier is `Hk(NULLIFIER_CONTRACT, contract ‖ rcm ‖ cm)`.
 - `asset = 0` everywhere (BLK only in this version); the kernel fixes it.
 
-### 3.1 Wallet key derivation: versions and the viewing hierarchy (not consensus)
+### 3.1 Wallet key derivation and the viewing hierarchy (not consensus)
 
 The kernel takes `sk` and `d` as witnesses. It derives `ak` and `nk` from `sk` and never
-recomputes `d`. How a wallet derives `d_i` and the delivery keys of address `i` is
-therefore wallet policy, and it is versioned (`blacksilk_px::wallet::Derivation`,
-reviews R11-W2, R11-W3 and I2-R1):
+recomputes `d`. How a wallet derives `sk`, `d_i` and the delivery keys of address `i` is
+therefore wallet policy (reviews R11-W2, R11-W3, I2-R1; dossier 37). Seed format v1
+(blocks.md §10) fixes exactly one derivation:
 
 ```text
-all versions:  sk, nk = Hk(NK, sk), ak = Hk(AK, sk), owner_i = Hk(OWNER, ak ‖ nk ‖ d_i)
-
-derivation 1 (flat; wallets created before 2026-09-27)
-  d_i                = Hk(DIVERSIFIER, sk ‖ i_lo16 ‖ i_hi16)
-  delivery keys of i = DeliveryKeys::derive(sk, i)
-
-derivation 2 (hierarchical by index range; the default for new wallets)
-  dk     = Hk(DIV_KEY, sk)                   ivk   = Hk(IVK, sk)
-  k      = i >> 16                            (range k holds indexes k·2^16 .. (k+1)·2^16)
-  dk_k   = Hk(DIV_RANGE, dk ‖ k_lo16 ‖ k_hi16)
-  ivk_k  = Hk(IVK_RANGE, ivk ‖ k_lo16 ‖ k_hi16)
-  d_i    = Hk(DIVERSIFIER_V2, dk_k ‖ i_lo16 ‖ i_hi16)
-  delivery keys of i = DeliveryKeys::derive(ivk_k, i)
+root   = Hk(SK, master as sixteen LE 16-bit limbs)    master: blocks.md §10
+sk_a   = Hk(SK_ACCOUNT, root ‖ a_lo16 ‖ a_hi16)        hardened PX account a
+nk = Hk(NK, sk_a)   ak = Hk(AK, sk_a)   owner_i = Hk(OWNER, ak ‖ nk ‖ d_i)
+dk     = Hk(DIV_KEY, sk_a)                ivk   = Hk(IVK, sk_a)
+k      = i >> 16                          (range k holds indexes k·2^16 .. (k+1)·2^16)
+dk_k   = Hk(DIV_RANGE, dk ‖ k_lo16 ‖ k_hi16)
+ivk_k  = Hk(IVK_RANGE, ivk ‖ k_lo16 ‖ k_hi16)
+d_i    = Hk(DIVERSIFIER_V2, dk_k ‖ i_lo16 ‖ i_hi16)
+delivery keys of i = DeliveryKeys::derive(ivk_k, i)
+hk_px  = H32("px/wallet/hedge-key/v1", sk_a as eight LE32 limbs)   hedge key (transactions.md §10)
 ```
 
-The derivation-2 domains are wallet-side constants in their own block
-(`blacksilk_px::wallet::key_domain`, `0x0050_5A01..05`). They are kept apart from the
-consensus domains (`0x0050_5801..0A`). A future consensus domain must not reuse that
-block.
+- **Accounts are hardened** (`Account::account`): `sk_a` needs `root`, and `root`
+  never enters a witness. A prover given the witness of account `a` learns `sk_a`
+  only, not the other accounts. Accounts have unrelated `nk`, so spend visibility does
+  not cross accounts. The wallet uses account 0 only; more accounts are a later
+  wallet feature (the scanner and the record store hold one account today).
+- **Ranges inside an account are not a spend boundary.** `nk` is account-wide: a
+  `RangeViewKey` holder who learns the opening of a record of another range of the
+  same account (for example from the payer who created it) computes its nullifier and
+  sees its spend (dossier 37 F37-3). Every address the wallet hands out today lies in
+  range 0, so `range_view(0)` covers the whole account.
+- The domains are wallet-side constants in their own block
+  (`blacksilk_px::wallet::key_domain`, `0x0050_5A01..06`), apart from the consensus
+  domains (`0x0050_5801..0A`). A future consensus domain must not reuse that block.
 
-**Disclosure** under derivation 2 (library API; there is no CLI export or watch-only
-scanner yet):
+**Disclosure** (library API; there is no CLI export or watch-only scanner yet):
 
 | Package | Contents | Sees | Cannot |
 |---|---|---|---|
-| `RangeViewKey` (`Account::range_view(k)`, `Wallet::px_range_view`) | `ak, nk, dk_k, ivk_k` | Records received in range `k` **and their spends** (`nk`) | Spend (needs a preimage of `ak`); see other ranges |
-| `IncomingViewKey` (`RangeViewKey::incoming(n)`) | `ivk_k` and the owner tags of the first `n` addresses of range `k` | Records received at those addresses | See spends (no `nk`); derive further addresses |
+| `RangeViewKey` (`Account::range_view(k)`, `Wallet::px_range_view`) | `ak, nk, dk_k, ivk_k` | Records received in range `k` **and their spends** (`nk`); spends of any record of the account whose opening it learns elsewhere | Spend (needs a preimage of `ak`); derive the addresses of other ranges |
+| `IncomingViewKey` (`RangeViewKey::incoming(n)`) | `ivk_k` and the owner tags of the first `n` addresses of range `k` | **Every record sent to any address of range `k`** (all 2^16): `ivk_k` derives the delivery keys of the whole range, so it decrypts value, data and `rcm` of each, and fully accepts contract records at any of them. The owner tags only limit which *user* records it accepts as the wallet's | See spends (no `nk`); spend |
+
+The `IncomingViewKey` is range-wide, not address-scoped (dossier 37 F37-2). An
+address-scoped incoming package (per-address delivery secrets, without `ivk_k`) is
+planned (K4, P1). Until then, give an `IncomingViewKey` only to someone allowed to see
+the whole range.
 
 Security requirement (I2-F2): a `RangeViewKey` holder can recompute owner tags. A
 program that accepts "these records are mine" from owner tags alone, without proof of
 `sk`, would let every such holder act as the owner. Such programs must be rejected at
 design review.
 
-**Versioning and migration.**
-- The wallet file stores the derivation. Version-1 files (no field) are read as
-  derivation 1 and keep their addresses. Derivation-2 wallets are written as file
-  version 2, which older wallets refuse rather than deriving the wrong PX addresses.
-- The v1 (CLSAG) keys do not depend on the derivation.
-- **The 24-word seed does not record the derivation.** `restore` defaults to 2. A seed
-  from a wallet created before 2026-09-27 that held PX funds must be restored with
-  `--px-derivation 1`.
-- **Not done (design only, R11-W3):** a seed format that carries the version, a
-  network and a birthday; per-period range allocation (every address used today lies
-  in range 0); a separate authorization key (R11-W4, consensus). See
-  docs/reviews/wallet-review.md, round 3.
+**Removed at the v3 reset:** the flat derivation 1 (`d_i = Hk(DIVERSIFIER, sk ‖ i)`,
+delivery keys from `sk`), the 24-word seed and wallet files of versions 1 and 2. No
+v3-chain wallet used them. `blacksilk_px::wallet::Derivation::V1` stays in the px
+library, where its own tests and tools use it; the wallet never derives with it.
 
-Tests: `px/src/wallet.rs` `derivation_tests`: V1 is unchanged; V2 keeps `sk`, `ak` and
-`nk`; range views derive their range only; a record opens with the incoming view; and
-the native kernel accepts a V2 spend and rejects one with the wrong derivation's `d`.
-No proof is generated in these tests. Also `wallet/src/wallet.rs`
-`wallet_files_keep_their_px_key_derivation`.
+**Not done:** per-period range allocation (every address used today lies in range 0);
+multiple PX accounts in the wallet; a separate authorization key (R11-W4, consensus).
+
+Tests:
+- `px/src/wallet.rs` `derivation_tests`: V2 keeps `sk`, `ak` and `nk`; range views
+  derive their range only; a record opens with the incoming view; the native kernel
+  accepts a V2 spend and rejects one with the wrong derivation's `d` (no proof is
+  generated); accounts are unrelated and hardened; the hedge key is not `sk`.
+- `wallet/tests/seed_vectors.rs`: seed words, `master`, `k_s`, `k_v`, `hk_v1`, `root`,
+  `sk_0`, `sk_1`, `nk`, `ak`, `hk_px`, owner tags and the vault secret against the
+  independent script `tools/vectors/seed_v1.py`.
 
 ## 4. The transfer kernel
 
@@ -786,16 +794,33 @@ So a contract is only as trustworthy as the least trustworthy of its programs.
 - **For any other contract:** read every program of the contract, not only the one
   you intend to call, before putting funds under it.
 
-**Vault secrets are kept in the wallet file (review R11-W1).** `px-vault-lock` stores
-the secret with the record's opening, and `submit` saves the wallet **before** the
-transaction is sent. A lock whose submission ends "may or may not have received" can
-still be mined; the demonstration vault has no refund, so losing a generated secret
-would lock the funds for good.
-- `px-vault-secret --record CM [--out FILE]` shows the stored secret. `px-records`
-  marks the records that have one.
-- On an uncertain submission, `px-vault-lock` prints a generated secret anyway.
-- The secret is in the encrypted wallet file only: a restore from the seed does not
-  recover it. Keep backups of the file, or use `--secret-out FILE`.
+**Vault secrets are derived, and kept in the wallet file (review R11-W1; dossier 37
+K6).** Without a secret option, `px-vault-lock` derives the secret deterministically:
+
+```text
+secret = H32("px/wallet/vault-secret/v1", hk_px ‖ u8 network ‖ contract ‖ rho_vault)
+         as eight limbs LE32(secret[4j..4j+4]) mod 2^30        (240 bits, canonical)
+rho_vault = Hk(RHO, nf_0 ‖ 0)       the vault record's own rho (§3)
+```
+
+`contract` and `rho_vault` enter as eight LE32 limbs each. `nf_0` is the nullifier of
+the lock's first input, a real funding record (a lock whose first input would be a
+dummy is refused), so `rho_vault` is unique on chain and known before proving. The
+secret is unpredictable without `hk_px` and reveals nothing about it. `network` is the
+seed's network code (blocks.md §10).
+- The wallet stores the secret with the record's opening, and `submit` saves the
+  wallet **before** the transaction is sent. A lock whose submission ends "may or may
+  not have received" can still be mined; the demonstration vault has no refund, so
+  losing the secret would lock the funds for good.
+- **Restore recovers it** for a vault record the wallet holds the opening of (a lock
+  delivered to itself): the wallet re-derives the candidate from the record's `rho` and
+  keeps it when `Hk(LOCK, candidate)` matches. A lock delivered to someone else leaves
+  no opening in a restored wallet, so its secret is not recovered that way (the
+  claimer has the record; the locker keeps the wallet file).
+- A secret given with `--secret-file`, `--secret-prompt` or `--secret` is used as is
+  and is recoverable from the wallet file only.
+- `px-vault-secret --record CM [--out FILE]` shows the stored (or re-derived) secret.
+  `px-records` marks the records that have one.
 
 **Commands:**
 
@@ -804,7 +829,7 @@ would lock the funds for good.
 | `px-deploy --vault` or `--program F.elf --budget c,k,a,b,l,s,m,p` (repeatable) | Registers a contract, paid with v1 funds, so the deployer is hidden behind ring signatures. Prints the contract id. `--vault` deploys the vault alone |
 | `px-contracts` | Lists deployed contracts and their programs (marks the vault; warns about contracts not usable as a vault) |
 | `px-records` | Lists the contract records this wallet holds, with status and source |
-| `px-vault-lock --contract C --amount A [--secret-file F \| --secret-prompt \| --secret S \| --secret-out F] [--deliver-to PXADDR]` | Locks PX funds in a vault record under `Hk(LOCK, S)`, delivering the record to the claimer. The fee is paid from PX. Without a secret option it generates one and prints it (or writes it to the `--secret-out` file) |
+| `px-vault-lock --contract C --amount A [--secret-file F \| --secret-prompt \| --secret S \| --secret-out F] [--deliver-to PXADDR]` | Locks PX funds in a vault record under `Hk(LOCK, S)`, delivering the record to the claimer. The fee is paid from PX. Without a secret option it derives one (above) and prints it after sending (or writes it to the `--secret-out` file) |
 | `px-vault-claim --record CM [--secret-file F \| --secret S] [--to PXADDR]` | Claims a vault record, paying its value privately; asks for the secret unless a file or `--secret` is given. The fee is paid from one PX record, or else from v1 funds, so a claimer without PX funds can claim |
 | `px-vault-secret --record CM [--out F]` | Shows the secret of a vault record this wallet locked |
 
@@ -896,6 +921,9 @@ code.
     before any proof; the plain vault passes the check;
   - `deploys_mixing_the_vault_with_other_programs_are_refused`;
   - `a_stored_vault_secret_survives_a_save_and_load` (R11-W1).
+- `wallet/src/wallet/keys.rs` unit tests (K6): `a_restored_wallet_recovers_its_vault_secret`,
+  `vault_secrets_are_deterministic_and_bound_to_the_record`,
+  `a_derived_vault_secret_needs_a_funded_first_input`.
 - `wallet/tests/e2e.rs::an_uncertain_vault_lock_keeps_the_record_opening` also reloads
   the autosaved file after the uncertain submission and recovers the secret from it.
 - `wallet/tests/e2e.rs::a_vault_is_deployed_locked_delivered_shared_and_claimed_over_rpc`,
