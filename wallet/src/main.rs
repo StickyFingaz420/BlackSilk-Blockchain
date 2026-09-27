@@ -54,6 +54,12 @@ enum Cmd {
         /// First block to scan.
         #[arg(long, default_value_t = 1)]
         restore_height: u64,
+        /// PX key derivation (docs/px.md §3.1): 2 for wallets created by
+        /// this version, 1 for seeds of wallets created before 2026-09-27
+        /// (their PX records are found only with 1). v1 funds are found
+        /// either way.
+        #[arg(long, default_value_t = 2)]
+        px_derivation: u32,
     },
     /// Show an address (a fresh subaddress per counterparty is recommended).
     Address {
@@ -371,20 +377,33 @@ fn run(args: Args) -> Result<(), String> {
         Cmd::Restore {
             network,
             restore_height,
+            px_derivation,
         } => {
             let net = parse_network(&network).ok_or("unknown network")?;
+            let derivation = blacksilk_px::wallet::Derivation::from_number(px_derivation)
+                .ok_or("unknown PX key derivation (1 or 2)")?;
             if args.wallet.exists() {
                 return Err(format!("{} already exists", args.wallet.display()));
             }
             let mut words =
                 rpassword::prompt_password("24-word seed: ").map_err(|e| e.to_string())?;
-            let w = Wallet::from_mnemonic(net, &words, restore_height).map_err(|e| e.to_string());
+            let w = Wallet::from_mnemonic_with(net, &words, restore_height, derivation)
+                .map_err(|e| e.to_string());
             words.zeroize();
             let w = w?;
             let mut pw = password(true)?;
             save(&w, &args.wallet, &pw, kdf).map_err(|e| e.to_string())?;
             pw.zeroize();
-            println!("Wallet restored; run `sync` to scan from block {restore_height}.");
+            println!(
+                "Wallet restored with PX key derivation {px_derivation}; run `sync` to scan \
+                 from block {restore_height}."
+            );
+            if px_derivation != 1 {
+                println!(
+                    "If this seed comes from a wallet created before 2026-09-27 and it held \
+                     PX funds, restore again with --px-derivation 1."
+                );
+            }
         }
         cmd => {
             let mut pw = password(false)?;
@@ -730,6 +749,10 @@ fn run(args: Args) -> Result<(), String> {
                 }
                 Cmd::Create { .. } | Cmd::Restore { .. } => unreachable!(),
             };
+            // Warnings raised by the command (e.g. co-spent outputs, R3-13).
+            for warning in w.take_warnings() {
+                eprintln!("warning: {warning}");
+            }
             // Persist whatever was learned (sync progress, pending spends), even on error.
             save(&w, &args.wallet, &pw, kdf).map_err(|e| e.to_string())?;
             pw.zeroize();

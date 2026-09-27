@@ -88,6 +88,66 @@ rho'_j  = Hk(RHO, nf_0 ‖ j)                          output j of a transfer
   Their nullifier is `Hk(NULLIFIER_CONTRACT, contract ‖ rcm ‖ cm)`.
 - `asset = 0` everywhere (BLK only in this version); the kernel fixes it.
 
+### 3.1 Wallet key derivation: versions and the viewing hierarchy (not consensus)
+
+The kernel takes `sk` and `d` as witnesses. It derives `ak` and `nk` from `sk` and never
+recomputes `d`. How a wallet derives `d_i` and the delivery keys of address `i` is
+therefore wallet policy, and it is versioned (`blacksilk_px::wallet::Derivation`,
+reviews R11-W2, R11-W3 and I2-R1):
+
+```text
+all versions:  sk, nk = Hk(NK, sk), ak = Hk(AK, sk), owner_i = Hk(OWNER, ak ‖ nk ‖ d_i)
+
+derivation 1 (flat; wallets created before 2026-09-27)
+  d_i                = Hk(DIVERSIFIER, sk ‖ i_lo16 ‖ i_hi16)
+  delivery keys of i = DeliveryKeys::derive(sk, i)
+
+derivation 2 (hierarchical by index range; the default for new wallets)
+  dk     = Hk(DIV_KEY, sk)                   ivk   = Hk(IVK, sk)
+  k      = i >> 16                            (range k holds indexes k·2^16 .. (k+1)·2^16)
+  dk_k   = Hk(DIV_RANGE, dk ‖ k_lo16 ‖ k_hi16)
+  ivk_k  = Hk(IVK_RANGE, ivk ‖ k_lo16 ‖ k_hi16)
+  d_i    = Hk(DIVERSIFIER_V2, dk_k ‖ i_lo16 ‖ i_hi16)
+  delivery keys of i = DeliveryKeys::derive(ivk_k, i)
+```
+
+The derivation-2 domains are wallet-side constants in their own block
+(`blacksilk_px::wallet::key_domain`, `0x0050_5A01..05`). They are kept apart from the
+consensus domains (`0x0050_5801..0A`). A future consensus domain must not reuse that
+block.
+
+**Disclosure** under derivation 2 (library API; there is no CLI export or watch-only
+scanner yet):
+
+| Package | Contents | Sees | Cannot |
+|---|---|---|---|
+| `RangeViewKey` (`Account::range_view(k)`, `Wallet::px_range_view`) | `ak, nk, dk_k, ivk_k` | Records received in range `k` **and their spends** (`nk`) | Spend (needs a preimage of `ak`); see other ranges |
+| `IncomingViewKey` (`RangeViewKey::incoming(n)`) | `ivk_k` and the owner tags of the first `n` addresses of range `k` | Records received at those addresses | See spends (no `nk`); derive further addresses |
+
+Security requirement (I2-F2): a `RangeViewKey` holder can recompute owner tags. A
+program that accepts "these records are mine" from owner tags alone, without proof of
+`sk`, would let every such holder act as the owner. Such programs must be rejected at
+design review.
+
+**Versioning and migration.**
+- The wallet file stores the derivation. Version-1 files (no field) are read as
+  derivation 1 and keep their addresses. Derivation-2 wallets are written as file
+  version 2, which older wallets refuse rather than deriving the wrong PX addresses.
+- The v1 (CLSAG) keys do not depend on the derivation.
+- **The 24-word seed does not record the derivation.** `restore` defaults to 2. A seed
+  from a wallet created before 2026-09-27 that held PX funds must be restored with
+  `--px-derivation 1`.
+- **Not done (design only, R11-W3):** a seed format that carries the version, a
+  network and a birthday; per-period range allocation (every address used today lies
+  in range 0); a separate authorization key (R11-W4, consensus). See
+  docs/reviews/wallet-review.md, round 3.
+
+Tests: `px/src/wallet.rs` `derivation_tests`: V1 is unchanged; V2 keeps `sk`, `ak` and
+`nk`; range views derive their range only; a record opens with the incoming view; and
+the native kernel accepts a V2 spend and rejects one with the wrong derivation's `d`.
+No proof is generated in these tests. Also `wallet/src/wallet.rs`
+`wallet_files_keep_their_px_key_derivation`.
+
 ## 4. The transfer kernel
 
 ### 4.1 Statement

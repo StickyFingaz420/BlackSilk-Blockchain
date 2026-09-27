@@ -737,6 +737,69 @@ Security relies on the following. Nothing else is assumed.
 | Input/output count fingerprinting | Wallets should default to 2 outputs; consolidation transactions remain visible. |
 | Timing and IP correlation | P2P layer (Dandelion++; outbound Tor for the node; no I2P). Out of scope here. |
 
+#### 11.3.1 Wallet decoy selection (`tx/src/decoy.rs`, `wallet/src/wallet.rs`; wallet policy)
+
+**Age draw.** Monero's gamma picker: `x = exp(Gamma(19.28, 1/1.61))` seconds, shifted
+by the 10-block spendable age (or uniform in `[0, 15·T)` below it), converted to an
+output index with the chain's average output time, then to the block `b` holding that
+index.
+
+**Eligibility inside the draw (review R3-1, 2026-09-27).** The picker chooses a uniform
+*eligible* output of block `b`. If `b` has none, it takes a uniform eligible output of
+the neighbourhood `b ± w`, where `w = clamp(depth / 4, 9, 720)` blocks. If that has
+none either, the draw is discarded and made again. Eligible means old enough and, for
+coinbase outputs, 60 blocks deep; outputs already in the ring do not count.
+
+An unbounded "nearest eligible block" rule was tried and rejected. On a chain of
+coinbase-only blocks (the first days of a testnet) it moved every young draw onto the
+first mature blocks. The bounded window keeps that pile-up to draws from 51–59 blocks
+deep. Test `no_pile_up_at_the_maturity_boundary` measures the share of decoys 60–69
+blocks deep on such a chain: 12.9 % with the window, 6.0 % with discard-and-redraw.
+This is a known, bounded bias; the test's bound is 2.5 times. Before this change the draw ignored eligibility and the wallet discarded
+immature coinbase picks and drew again at any age. On a young chain, where most
+outputs 10–59 blocks deep are immature coinbase outputs, that removed nearly all young
+decoys, so a real input spent soon after receipt was usually the newest ring member.
+
+**Measured** (`young_decoys_survive_coinbase_maturity`, fixed seed, 2,000 rings per
+variant). The synthetic chain has 2,160 blocks (3 days at 2 min), one coinbase output
+per block, a two-output transfer every 18th block, and a real input spent 12 blocks
+after it was mined:
+
+| Variant | Decoys younger than 60 blocks | Real input is the newest member |
+|---|---|---|
+| Target: the same draws with every output eligible | 20.6 % | 62.4 % |
+| Before: discard ineligible picks and redraw | 3.4 % | 89.8 % |
+| After: eligibility inside the draw | 17.8 % | 51.5 % |
+
+The test requires the young fraction to be within 0.05 of the target, and the
+newest-member fraction to be at most 0.05 above it. **Limits:**
+- The real input spent 12 blocks after receipt is *still* the newest member in about
+  half the rings. Even at the target it is newest in most rings, because the gamma
+  distribution puts little mass 10–12 blocks deep. The fix restores the distribution;
+  it does not beat it.
+- Where eligible young outputs are sparse, the few that exist absorb the young draws.
+  The same young transfer outputs then appear in many rings, the real input's sibling
+  (the change of the same transaction) included. That is why "after" is below the
+  target for newest-member.
+- Coinbase-dominated rings (R3-3) are unchanged.
+- The parameters are Monero's, not fitted to BlackSilk spend data (§15).
+
+**Ring members are resolved locally (review I3 §3.9).** The wallet indexes every
+output of every block it scans (`wallet/src/index.rs`: key, commitment, height,
+coinbase flag) and builds rings from that index. It makes no `/outputs` request per
+ring. The previous single request per input contained the real input among the
+candidates, so the node could intersect it with the ring on chain. Outputs older than
+the wallet's restore height are fetched **once**, as the whole range `0 .. start` in
+consecutive pages of 1,024. Those requests depend on the restore height only, not on
+what is spent. The node still serves the output distribution (one request for the
+synced height), which reveals nothing about the ring.
+
+**Merge avoidance (review R3-13).** When no single output covers a payment, input
+selection first takes at most one output per source transaction. Outputs stored
+without their transaction, from older wallet files, are grouped by block. Only if that
+cannot cover the amount does it fall back to plain largest-first, and it then warns
+that the transaction spends outputs of one source together.
+
 ### 11.4 Janus attack (subaddress linking) [Δ Monero]
 
 Defeated by the Janus anchor. It has a dedicated section: §12.
