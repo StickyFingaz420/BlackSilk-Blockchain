@@ -199,6 +199,10 @@ struct State {
     tx_announcers: HashMap<Hash, VecDeque<PeerId>>,
     recent_rejects: VecDeque<Hash>,
     recent_rejects_set: HashSet<Hash>,
+    /// Block requests that timed out, kept for another `BLOCK_TIMEOUT`: the
+    /// block arriving late from the peer we asked is an answer, not an
+    /// unsolicited block (R8-9).
+    late_blocks: HashMap<Hash, (PeerId, Instant)>,
     local_nonces: HashSet<u64>,
     connecting: HashSet<NetAddr>,
     last_attempt: HashMap<NetAddr, Instant>,
@@ -330,6 +334,7 @@ impl Network {
             tx_announcers: HashMap::new(),
             recent_rejects: VecDeque::new(),
             recent_rejects_set: HashSet::new(),
+            late_blocks: HashMap::new(),
             local_nonces: HashSet::new(),
             connecting: HashSet::new(),
             last_attempt: HashMap::new(),
@@ -1042,10 +1047,10 @@ fn requested_by_us(inner: &Inner, peer: PeerId, msg: &Message) -> bool {
         return false;
     };
     let id = header.id(inner.cfg.network_id);
-    inner
-        .state()
-        .block_requests
+    let st = inner.state();
+    st.block_requests
         .get(&id)
+        .or_else(|| st.late_blocks.get(&id))
         .is_some_and(|(p, _)| *p == peer)
 }
 
@@ -1628,7 +1633,11 @@ async fn on_block(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
                 p.blocks_in_flight = p.blocks_in_flight.saturating_sub(1);
             }
         }
-        req
+        let late = st.late_blocks.get(&id).is_some_and(|(p, _)| *p == peer);
+        if late {
+            st.late_blocks.remove(&id);
+        }
+        req || late
     };
     if !requested {
         inner.misbehave(peer, score::UNSOLICITED, "unrequested block");
@@ -2258,6 +2267,7 @@ async fn maintenance_loop(inner: Arc<Inner>) {
         }
 
         // Trickled announcements, pings, timeouts.
+        let header_height_now = inner.chain().header_height();
         let mut timed_out = Vec::new();
         {
             let mut st = inner.state();
@@ -2286,6 +2296,9 @@ async fn maintenance_loop(inner: Arc<Inner>) {
                 {
                     p.headers_requested = None;
                     timed_out.push((pid, "headers"));
+                    // Not asked again every tick; asked again when it
+                    // announces a new tip.
+                    p.height = p.height.min(header_height_now);
                 }
             }
             let stale_blocks: Vec<(Hash, PeerId)> = st
@@ -2299,8 +2312,11 @@ async fn maintenance_loop(inner: Arc<Inner>) {
                 if let Some(peer) = st.peers.get_mut(&p) {
                     peer.blocks_in_flight = peer.blocks_in_flight.saturating_sub(1);
                 }
+                st.late_blocks.insert(id, (p, now));
                 timed_out.push((p, "block"));
             }
+            st.late_blocks
+                .retain(|_, (_, t)| now.duration_since(*t) <= BLOCK_TIMEOUT);
             let stale_txs: Vec<(Hash, PeerId)> = st
                 .tx_requests
                 .iter()
@@ -2314,8 +2330,11 @@ async fn maintenance_loop(inner: Arc<Inner>) {
                 retry_tx(&inner, &mut st, id, p, now);
             }
         }
+        // A timeout is not misbehavior: a large block on a slow link, or a
+        // busy honest peer, times out too (R8-9). The request moves to another
+        // peer; the late answer is still accepted without penalty.
         for (p, what) in timed_out {
-            inner.misbehave(p, score::TIMEOUT, &format!("{what} request timed out"));
+            log::debug!("peer {p}: {what} request timed out");
         }
 
         // Keep syncing from peers that are ahead, and ask again peers whose

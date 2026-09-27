@@ -218,8 +218,10 @@ Unknown message types are violations.
      covers them.
    - A node serves at most 16 blocks per `GetBlocks`; the rest are answered with
      `NotFound`.
-   - A request unanswered within **60 s** is reassigned to another peer and counts as a
-     minor violation.
+   - A request unanswered within **60 s** is reassigned to another peer. It is not
+     penalized (before 2026-09-27: 5 points), and the block arriving late from the
+     peer we asked is accepted as an answer, not as an unsolicited block, for another
+     60 s (R8-9). The in-flight window counts blocks, not bytes (open).
 5. **Connecting.** Bodies go through the chain manager (blocks.md §5–§6). It connects
    them in order, validates each, and reorganizes when a heavier branch completes. The
    network layer never decides validity.
@@ -364,7 +366,6 @@ dropped.
 | Transaction invalid by a **stateless** rule (`Tx`/`StemTx`; transactions.md T1–T11), or with an invalid ring signature over ring members all ≥ 10 blocks deep | 20 |
 | A `StemTx` already proven invalid, sent again | 20 |
 | Unrequested `Block`/`Tx`, `Pong` without a ping, second `GetAddr` or oversized `Addr` | 10 |
-| Timeout on a requested block or headers | 5 |
 | Rate limit exceeded | 1 per excess message; the message is dropped |
 
 **Not penalized** (honest peers can trigger these):
@@ -393,7 +394,9 @@ dropped.
   garbage CLSAGs over real rings cost ~3 ms of CPU per input, under the chain lock,
   for free and forever (tx review H1). A node on a fork deeper than 10 blocks may
   penalize an honest relayer (20 points, not a ban);
-- `NotFound`, or a slow transaction answer.
+- `NotFound`, or a slow answer to a request for a transaction, a block or headers
+  (a peer whose headers request timed out is not asked again until it announces a
+  new tip).
 
 The lab network found the last two cases as false bans between honest nodes (AUDIT.md
 R6).
