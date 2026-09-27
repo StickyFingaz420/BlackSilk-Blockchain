@@ -2087,7 +2087,11 @@ async fn conflicting_stem_transactions_are_not_verified() {
     cfg.dandelion.embargo_base = Duration::from_secs(60);
     let mut a = node_with(66, cfg).await;
     a.mine_n(80, 0);
-    let b = node(67, &[]).await;
+    // B stems back through its own outbound link, with a long embargo, so it
+    // does not fluff the relayed transaction during the test.
+    let mut bcfg = fast_config(&[a.addr]);
+    bcfg.dandelion.embargo_base = Duration::from_secs(60);
+    let b = node_with(67, bcfg).await;
     a.net.connect(NetAddr::Ip(b.addr));
     wait_until("A has an outbound stem peer", 10, || {
         a.net.stats().outbound >= 1
@@ -2121,7 +2125,13 @@ async fn announcing_a_stem_transaction_neither_reveals_nor_fluffs_it() {
     cfg.dandelion.embargo_base = Duration::from_secs(60);
     let mut a = node_with(68, cfg).await;
     a.mine_n(80, 0);
-    let b = node(69, &[]).await;
+    // B also stems through its own outbound link to A, with the same long
+    // embargo: without a stem route B would fluff the relayed transaction at
+    // once and announce it back, and A's honest request to B would race the
+    // announcement under test (seen on Linux CI).
+    let mut bcfg = fast_config(&[a.addr]);
+    bcfg.dandelion.embargo_base = Duration::from_secs(60);
+    let b = node_with(69, bcfg).await;
     a.net.connect(NetAddr::Ip(b.addr));
     wait_until("A has an outbound stem peer", 10, || {
         a.net.stats().outbound >= 1
