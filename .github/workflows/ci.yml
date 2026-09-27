@@ -42,7 +42,7 @@ env:
 jobs:
   lint:
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -76,7 +76,7 @@ jobs:
   # The PX proofs make the suite far too slow unoptimized: tests run in release.
   test:
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -101,7 +101,7 @@ jobs:
   #   p2p:   network.rs's two px_* / invalid_px_* tests
   overflow:
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
       CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
@@ -134,7 +134,7 @@ jobs:
   # light mode (what nodes verify with), on Linux; the developers' runs are on
   # Windows, so this is also a cross-platform check of the same vectors.
   randomx-full:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -160,7 +160,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, ubuntu-24.04-arm]
+        os: [windows-latest, ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -187,7 +187,7 @@ jobs:
   # RustSec advisory database (docs/reviews/dependency-review.md §5), for the
   # main workspace and the separate fuzz workspace.
   audit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -211,7 +211,7 @@ jobs:
   # and the *-sys name check cargo-deny cannot express. Weekly too: new
   # advisories and yanks do not need a push.
   deny:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -240,7 +240,7 @@ jobs:
   # The SHAs come in through env, never interpolated into the script.
   gates:
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       GATE_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
@@ -266,7 +266,7 @@ jobs:
   # separately.
   fuzz-smoke:
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
       TOOLCHAIN: nightly-2026-09-24
