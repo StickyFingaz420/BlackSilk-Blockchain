@@ -1,0 +1,242 @@
+//! Shared network state: the per-peer record, the state behind the network
+//! lock, worker jobs, and `Inner` lock access and message sending.
+
+use super::config::NetConfig;
+use super::{fatal, lock_or_exit, SharedChain};
+use crate::addr::NetAddr;
+use crate::addrman::{AddrMan, BanList};
+use crate::dandelion::{Dandelion, PeerId};
+use crate::limits::PeerLimits;
+use crate::message::Message;
+use blacksilk_chain::block::Block;
+use blacksilk_chain::manager::ChainManager;
+use blacksilk_consensus::{BlockHeader, Hash};
+use blacksilk_tx::types::Transaction;
+use rand_chacha::ChaCha20Rng;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::{mpsc, Notify};
+
+pub(super) struct Peer {
+    pub(super) addr: NetAddr,
+    pub(super) inbound: bool,
+    pub(super) proxied: bool,
+    pub(super) protocol: u32,
+    /// Control messages; sent before anything queued in `bulk`.
+    pub(super) out: mpsc::Sender<Message>,
+    /// `Block` frames.
+    pub(super) bulk: mpsc::Sender<Message>,
+    pub(super) kill: Arc<Notify>,
+    pub(super) relay_txs: bool,
+    pub(super) height: u64,
+    pub(super) score: u32,
+    pub(super) limits: PeerLimits,
+    pub(super) answered_getaddr: bool,
+    pub(super) received_addr_batch: bool,
+    pub(super) inv_queue: Vec<Hash>,
+    pub(super) next_inv: Instant,
+    pub(super) announced_to: HashSet<Hash>,
+    pub(super) known_txs: HashSet<Hash>,
+    pub(super) ping: Option<(u64, Instant)>,
+    pub(super) last_ping: Instant,
+    pub(super) last_recv: Instant,
+    /// Blocks requested from this peer and not yet processed, and the bytes
+    /// charged for them (`MAX_BLOCK_BYTES` each, `BLOCK_WINDOW_BYTES`).
+    pub(super) blocks_in_flight: usize,
+    pub(super) bytes_in_flight: usize,
+    pub(super) headers_requested: Option<Instant>,
+    /// When a single header consumed an outstanding `GetHeaders` (it may be a
+    /// tip announcement racing the real reply), the request time: one
+    /// multi-header batch arriving within `HEADERS_TIMEOUT` of it still counts
+    /// as solicited (docs/p2p.md §6).
+    pub(super) headers_grace: Option<Instant>,
+    /// A header batch from this peer is queued for, or under, verification by
+    /// the header worker. At most one per peer: the queue is bounded by the
+    /// number of peers, and the peer is not asked for more headers meanwhile.
+    pub(super) headers_busy: bool,
+    /// Headers arrived while `headers_busy`; ask again once the batch is done.
+    pub(super) headers_pending: bool,
+    /// The peer sent a header of a version above every version this node's
+    /// schedule knows (`HeaderError::UnknownUpgrade`) and the operator was
+    /// warned once for it.
+    pub(super) warned_upgrade: bool,
+}
+
+pub(super) struct StemEntry {
+    pub(super) tx: Transaction,
+    pub(super) embargo: Instant,
+    /// A local transaction created while there was no stem peer: held here
+    /// (not broadcast) until a stem route exists, or until the embargo fires
+    /// (docs/p2p.md §8).
+    pub(super) awaiting_stem: bool,
+}
+
+pub(super) struct State {
+    pub(super) peers: HashMap<PeerId, Peer>,
+    pub(super) addrman: AddrMan,
+    pub(super) bans: BanList,
+    pub(super) dandelion: Dandelion,
+    pub(super) stempool: HashMap<Hash, StemEntry>,
+    pub(super) stem_key_images: HashMap<[u8; 32], Hash>,
+    /// All peers together: PX verification is expensive, so the node caps the
+    /// PX transactions it accepts from the network per second, whatever the
+    /// number of peers (docs/px.md §11.5).
+    pub(super) px_global: crate::limits::TokenBucket,
+    pub(super) block_requests: HashMap<Hash, (PeerId, Instant)>,
+    pub(super) tx_requests: HashMap<Hash, (PeerId, Instant)>,
+    pub(super) tx_announcers: HashMap<Hash, VecDeque<PeerId>>,
+    pub(super) recent_rejects: VecDeque<Hash>,
+    pub(super) recent_rejects_set: HashSet<Hash>,
+    /// Block requests that timed out, kept for another `BLOCK_TIMEOUT`: the
+    /// block arriving late from the peer we asked is an answer, not an
+    /// unsolicited block (R8-9).
+    pub(super) late_blocks: HashMap<Hash, (PeerId, Instant)>,
+    pub(super) local_nonces: HashSet<u64>,
+    pub(super) connecting: HashSet<NetAddr>,
+    pub(super) last_attempt: HashMap<NetAddr, Instant>,
+    pub(super) announced_tip: Hash,
+    pub(super) rng: ChaCha20Rng,
+    pub(super) misbehaving_disconnects: u64,
+    pub(super) slow_disconnects: u64,
+    /// The ban list changed since it was last saved.
+    pub(super) bans_dirty: bool,
+    /// Inbound connections accepted but not yet registered (handshake in
+    /// progress), in total and per IP: counted against `max_inbound` and
+    /// `max_per_ip` like registered peers.
+    pub(super) handshaking: usize,
+    pub(super) handshaking_ip: HashMap<IpAddr, usize>,
+    /// Header batches queued for, or under, verification: in total and per
+    /// sender origin (`queue_key`). Bounded (docs/p2p.md §6).
+    pub(super) header_queue_len: usize,
+    pub(super) header_queue_origin: HashMap<NetAddr, usize>,
+    /// Transactions that failed a contextual rule at tip `ctx_rejects_tip`
+    /// (not verified again until the tip changes; bounded).
+    pub(super) ctx_rejects: HashSet<Hash>,
+    pub(super) ctx_rejects_tip: Hash,
+    pub(super) tx_verifications: u64,
+    pub(super) px_global_drops: u64,
+    /// Unrequested blocks in the block worker's queue (`UNREQUESTED_QUEUE`).
+    pub(super) unrequested_queued: usize,
+    /// Ids of blocks received and waiting for, or under, processing by the
+    /// block worker: not requested again meanwhile.
+    pub(super) blocks_queued: HashSet<Hash>,
+}
+
+/// A block waiting for the block worker.
+pub(super) struct BlockJob {
+    pub(super) peer: PeerId,
+    pub(super) block: Block,
+    /// Requested from `peer` (it holds a place in the peer's window until
+    /// processed); otherwise unrequested (processed only if its header is
+    /// known, `UNREQUESTED_QUEUE`).
+    pub(super) requested: bool,
+    /// A request that timed out and was answered late: not in the window any
+    /// more, but not unsolicited either.
+    pub(super) late: bool,
+}
+
+/// A header batch waiting for the header worker, with its sender's address
+/// (a sender that disconnects before its batch is verified is still banned).
+pub(super) struct HeaderBatch {
+    pub(super) peer: PeerId,
+    pub(super) addr: NetAddr,
+    pub(super) proxied: bool,
+    /// An answer to our `GetHeaders` (not a tip announcement).
+    pub(super) solicited: bool,
+    pub(super) headers: Vec<BlockHeader>,
+}
+
+pub(super) struct Inner {
+    pub(super) chain: SharedChain,
+    pub(super) cfg: NetConfig,
+    /// The chain's genesis id, bound into the session keys (R15-3).
+    pub(super) genesis_id: Hash,
+    /// To the header worker (`header_worker`): batches are verified there, one
+    /// at a time, never on a peer's read loop.
+    pub(super) header_queue: mpsc::UnboundedSender<HeaderBatch>,
+    /// To the block worker (`block_worker`): bodies are validated and
+    /// connected there, never on a peer's read loop. Bounded by the peers'
+    /// request windows plus `UNREQUESTED_QUEUE`.
+    pub(super) block_queue: mpsc::UnboundedSender<BlockJob>,
+    pub(super) state: Mutex<State>,
+    pub(super) next_id: AtomicU64,
+    pub(super) local_addr: Option<SocketAddr>,
+}
+
+pub(super) fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+pub(super) fn short(h: &Hash) -> String {
+    hex::encode(&h[..6])
+}
+
+impl Inner {
+    pub(super) fn state(&self) -> MutexGuard<'_, State> {
+        lock_or_exit(&self.state, "network state")
+    }
+
+    /// The chain lock. Only on blocking threads (`with_chain`, the header and
+    /// block workers' blocking tasks), never on an async worker.
+    pub(super) fn chain(&self) -> MutexGuard<'_, ChainManager> {
+        lock_or_exit(&self.chain, "chain")
+    }
+
+    /// Runs `f` under the chain lock on a blocking thread, so an async worker
+    /// never waits for the lock (R8-1). A panic in `f` poisoned the lock: the
+    /// node stops, as `lock_or_exit` would on the next access. A task
+    /// cancelled because the runtime is shutting down never resolves (the
+    /// caller is being dropped too).
+    pub(super) async fn with_chain<T: Send + 'static>(
+        self: &Arc<Self>,
+        f: impl FnOnce(&mut ChainManager) -> T + Send + 'static,
+    ) -> T {
+        let inner = self.clone();
+        match tokio::task::spawn_blocking(move || f(&mut inner.chain())).await {
+            Ok(t) => t,
+            Err(e) if e.is_panic() => fatal(&format!("chain task failed: {e}")),
+            Err(_) => std::future::pending().await,
+        }
+    }
+
+    pub(super) fn save(&self) {
+        let Some(dir) = &self.cfg.data_dir else {
+            return;
+        };
+        let st = self.state();
+        if let Err(e) = st.addrman.save(&dir.join("peers.json")) {
+            log::warn!("saving peers.json: {e}");
+        }
+        if let Err(e) = st.bans.save(&dir.join("bans.json")) {
+            log::warn!("saving bans.json: {e}");
+        }
+    }
+
+    /// Queues `msg` for `peer`: `Block` frames in the bulk outbox, everything
+    /// else in the control outbox, which the writer drains first (R8-11).
+    pub(super) fn send(&self, st: &mut State, peer: PeerId, msg: Message) {
+        let Some(p) = st.peers.get(&peer) else { return };
+        let queue = if matches!(msg, Message::Block(_)) {
+            &p.bulk
+        } else {
+            &p.out
+        };
+        if queue.try_send(msg).is_err() {
+            // Outbox full: the peer does not read fast enough (or is gone).
+            log::debug!("peer {} outbox full; disconnecting", p.addr);
+            p.kill.notify_one();
+            st.slow_disconnects += 1;
+        }
+    }
+
+    pub(super) fn send_now(&self, peer: PeerId, msg: Message) {
+        let mut st = self.state();
+        self.send(&mut st, peer, msg);
+    }
+}

@@ -1,0 +1,10 @@
+# Move-only commits that `git blame` should skip.
+# Use: git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (and `git blame -C -C` to follow the moved lines into their new files).
+
+# p2p: split net.rs into net/ submodules (S1, move-only)
+165c999248dc2130f6e1d1429a841f8c04e8ba28
+# chain: split manager.rs into manager/ submodules (S1, move-only)
+7cb82a0056417ef339d69724d1c62ec525e976fe
+# wallet: split wallet.rs into wallet/ submodules (S1, move-only)
+97f3c96a30f175226e189cc01c2884072807ac4f

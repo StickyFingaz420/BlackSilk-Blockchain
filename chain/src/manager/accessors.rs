@@ -1,0 +1,138 @@
+//! Read-only accessors: parameters, rules, the connected tip, state, mempool,
+//! headers and stored blocks.
+
+use super::pow_cache::CachedPow;
+use super::ChainManager;
+use crate::block::Block;
+use crate::mempool::Mempool;
+use blacksilk_consensus::{BlockHeader, ChainParams, Hash, HeaderChain};
+use blacksilk_tx::params::TxRules;
+use blacksilk_tx::state::MemoryChain;
+use blacksilk_tx::validate::BlockError;
+use std::sync::Arc;
+
+impl ChainManager {
+    /// The PoW cache shared with the header chain (tests and diagnostics).
+    pub fn pow_cache(&self) -> &Arc<CachedPow> {
+        &self.pow
+    }
+
+    pub fn params(&self) -> &ChainParams {
+        &self.params
+    }
+
+    /// The rules passed to [`Self::open`]: the first epoch's. Blocks and pool
+    /// transactions are validated with [`Self::rules_at`] their height, which
+    /// differs from these after an activation (docs/consensus.md §11).
+    pub fn rules(&self) -> &TxRules {
+        &self.rules
+    }
+
+    /// The transaction rules of a block at `height`: `TxRules::at_height`
+    /// (the epoch's network and branch ids), with the fee and weight limits
+    /// given to [`Self::open`].
+    pub fn rules_at(&self, height: u64) -> TxRules {
+        TxRules {
+            fee_per_weight: self.rules.fee_per_weight,
+            max_block_weight: self.rules.max_block_weight,
+            ..TxRules::at_height(&self.params, height)
+        }
+    }
+
+    /// The rules a transaction is admitted under now: those of the next block.
+    pub fn next_rules(&self) -> TxRules {
+        self.rules_at(self.height() + 1)
+    }
+
+    /// Height of the connected tip.
+    pub fn height(&self) -> u64 {
+        (self.connected.len() - 1) as u64
+    }
+
+    pub fn tip_id(&self) -> Hash {
+        *self.connected.last().expect("genesis is always connected")
+    }
+
+    pub fn tip_header(&self) -> &BlockHeader {
+        self.headers
+            .header(&self.tip_id())
+            .expect("connected blocks have headers")
+    }
+
+    /// Coins generated so far on the connected chain (fees excluded).
+    pub fn generated(&self) -> u64 {
+        *self.generated.last().expect("non-empty")
+    }
+
+    pub fn state(&self) -> &MemoryChain {
+        &self.state
+    }
+
+    /// The deepest reorganization (blocks disconnected) since opening.
+    pub fn deepest_reorg(&self) -> usize {
+        self.deepest_reorg
+    }
+
+    pub fn mempool(&self) -> &Mempool {
+        &self.mempool
+    }
+
+    pub fn headers(&self) -> &HeaderChain {
+        &self.headers
+    }
+
+    /// The connected block at `height`.
+    pub fn block_at(&self, height: u64) -> Option<Block> {
+        let id = self.connected.get(height as usize)?;
+        let header = *self.headers.header(id)?;
+        let txs = if height == 0 {
+            Vec::new()
+        } else {
+            self.bodies.get(id)?.clone()
+        };
+        Some(Block { header, txs })
+    }
+
+    /// Why a block was rejected when connecting, if it was.
+    pub fn invalid_reason(&self, id: &Hash) -> Option<&BlockError> {
+        self.invalid.get(id)
+    }
+
+    // ---- header-first sync (docs/p2p.md §6) ----
+
+    /// Height of the best valid header chain (may exceed [`Self::height`] while
+    /// bodies are downloading).
+    pub fn header_height(&self) -> u64 {
+        self.headers.height()
+    }
+
+    pub fn best_header_id(&self) -> Hash {
+        self.headers.tip_id()
+    }
+
+    pub fn header(&self, id: &Hash) -> Option<&BlockHeader> {
+        self.headers.header(id)
+    }
+
+    /// Whether the header is known and not invalid.
+    pub fn knows_valid_header(&self, id: &Hash) -> bool {
+        self.headers.is_valid(id) == Some(true)
+    }
+
+    pub fn has_body(&self, id: &Hash) -> bool {
+        *id == self.params.genesis_id() || self.bodies.contains_key(id)
+    }
+
+    /// Any stored block (main chain or side branch) with its body.
+    pub fn block(&self, id: &Hash) -> Option<Block> {
+        let header = *self.headers.header(id)?;
+        if *id == self.params.genesis_id() {
+            return Some(Block {
+                header,
+                txs: Vec::new(),
+            });
+        }
+        let txs = self.bodies.get(id)?.clone();
+        Some(Block { header, txs })
+    }
+}
