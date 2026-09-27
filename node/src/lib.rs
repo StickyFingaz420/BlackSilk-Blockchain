@@ -81,13 +81,25 @@ fn lock(shared: &Shared) -> MutexGuard<'_, ChainManager> {
 pub const STORE_FAILED_EXIT: &str = "block store write failed: free disk space / check the disk, \
      then restart the node; it resumes from the last stored block (docs/testnet.md §9)";
 
-/// Resolves once the chain's block store has failed persistently
-/// ([`ChainManager::store_failed`]), checked every `period` on a plain thread.
-/// A node whose store failed accepts no block but would keep downloading
-/// bodies; the caller shuts it down so that a restart recovers
-/// deterministically (the load truncates a torn tail).
+/// Resolves once the chain manager has halted ([`ChainManager::halted`]):
+/// its block store failed persistently, or a block that passed validation
+/// failed to apply. Checked every `period` on a plain thread. A halted node
+/// accepts no block but would keep downloading bodies; the caller shuts it
+/// down so that a restart recovers deterministically (the load truncates a
+/// torn tail and replays the store).
 pub fn watch_store(shared: Shared, period: Duration) -> tokio::sync::oneshot::Receiver<()> {
-    poll_until(period, move || lock(&shared).store_failed())
+    poll_until(period, move || lock(&shared).halted().is_some())
+}
+
+/// Why the node stopped, once [`watch_store`] resolved: the manager's
+/// reason, with the operator instructions for a failed store.
+pub fn halt_message(shared: &Shared) -> String {
+    let c = lock(shared);
+    if c.store_failed() {
+        STORE_FAILED_EXIT.to_string()
+    } else {
+        c.halted().unwrap_or_else(|| STORE_FAILED_EXIT.to_string())
+    }
 }
 
 /// Resolves the returned receiver once `check` returns true, polling every

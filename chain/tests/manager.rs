@@ -902,15 +902,15 @@ fn the_mempool_admits_only_valid_transactions() {
         m.submit_tx(Transaction::from(tampered)),
         Err(MempoolError::Invalid(_))
     ));
-    // Below the minimum fee (the builder refuses to sign such a transaction,
-    // so the fee is lowered after signing): the fee rule rejects it before
-    // the signatures are checked.
+    // Not the exact standard fee (the builder refuses to sign such a
+    // transaction, so the fee is changed after signing): the fee rule (T8)
+    // rejects it before the signatures are checked.
     let mut cheap = transfer_nth(&m, &miner.keys, &alice, 1, fee, &mut rng);
     cheap.fee = 1;
     assert!(matches!(
         m.submit_tx(Transaction::from(cheap)),
         Err(MempoolError::Invalid(
-            blacksilk_tx::validate::TxError::FeeTooLow { .. }
+            blacksilk_tx::validate::TxError::FeeNotExact { .. }
         ))
     ));
     assert!(m.mempool().is_empty(), "nothing admitted");

@@ -201,6 +201,9 @@ pub(super) async fn block_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRecei
                 ),
             },
             Ok(Some(Err(SubmitError::Store(e)))) => log::error!("block store: {e}"),
+            // The node halted on its own fault, not the peer's
+            // (`ChainManager::halted`); the node shuts down.
+            Ok(Some(Err(SubmitError::Halted))) => {}
             // The task holds the chain lock: a panic there poisoned it.
             Err(e) if e.is_panic() => fatal(&format!("block task failed: {e}")),
             Err(_) => return, // the runtime is shutting down

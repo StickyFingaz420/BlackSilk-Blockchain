@@ -81,6 +81,9 @@ impl ChainView for MockChain {
     fn px_contract_exists(&self, contract: &Digest) -> bool {
         self.contracts.contains(&digest_bytes(contract))
     }
+    fn px_tree_size(&self) -> u64 {
+        0
+    }
 }
 
 impl MockChain {

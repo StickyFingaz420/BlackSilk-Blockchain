@@ -23,7 +23,7 @@
 //! | [`resolve_rings`] | C1 |
 //! | [`check_signatures`] | C3 |
 //! | [`validate_transfer`] | all of T and C (mempool) |
-//! | [`validate_block_transactions`] | B1–B7, plus all T and C with block-wide batching |
+//! | [`validate_block_transactions`] | B1–B8, plus all T and C with block-wide batching |
 
 use crate::params::*;
 use crate::px::{
@@ -68,6 +68,8 @@ pub trait ChainView {
         program_id: &[u8; 32],
     ) -> Option<(Arc<Program>, Budget)>;
     fn px_contract_exists(&self, contract: &Digest) -> bool;
+    /// Leaves in the PX commitment tree (at most `px::tree::CAPACITY`).
+    fn px_tree_size(&self) -> u64;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,11 +102,14 @@ pub enum TxError {
     OutputsNotSorted,
     /// T7.
     PseudoOutCount,
-    /// T8.
-    FeeTooLow {
+    /// T8: the fee differs from the standard fee of the transaction's shape,
+    /// `TxRules::standard_fee(n_in, n_out)`, which every transfer pays
+    /// exactly (docs/reviews/v3-consensus-changes.md#exact-v1-fee).
+    FeeNotExact {
         fee: u64,
         required: u64,
     },
+    /// T8: the standard fee overflows (unreachable with the v3 constants).
     WeightOverflow,
     /// T9.
     Unbalanced,
@@ -166,6 +171,10 @@ pub enum TxError {
     PxProof,
     /// A deploy's contract id exists already.
     DuplicateContract,
+    /// The PX commitment tree cannot take the transaction's output
+    /// commitments (B8 for a mempool transaction). Contextual: the tree may
+    /// have room on another branch.
+    PxTreeFull,
     /// A PX transaction repeats a one-time key between its hidden outputs
     /// and its payouts (`output` indexes `PxTx::output_keys`). The only rule
     /// that rejects such a repeat: one-time keys are distinct within every
@@ -214,7 +223,7 @@ impl TxError {
     /// | `RingNotIncreasing` | T5 | stateless | the ring's index list itself |
     /// | `OutputKeyIdentity`, `EphemeralIdentity`, `OutputsNotSorted` | T6 | stateless | the transaction's own outputs (also catches a one-time key repeated within a transfer, deploy, or a PX transaction's hidden outputs or payouts) |
     /// | `PseudoOutCount` | T7 | stateless | counts |
-    /// | `FeeTooLow`, `WeightOverflow` | T8 | stateless | fee vs. weight or size, fixed by the transaction and the network's constant rules |
+    /// | `FeeNotExact`, `WeightOverflow` | T8 | stateless | the fee vs. the standard fee of the shape, fixed by the transaction and the network's constant rules |
     /// | `Unbalanced` | T9 | stateless | commitments and amounts in the transaction |
     /// | `RangeProofShape`, `RangeProofInvalid` | T10 | stateless | the proof and the transaction's own commitments |
     /// | `SignatureCount` | T11 | stateless | counts |
@@ -228,6 +237,7 @@ impl TxError {
     /// | `PxNullifierSpent` | PX2 | contextual | spent on this branch or earlier in this block |
     /// | `PxUnregistered` | PX3 | contextual | the contract may be deployed on another branch or later |
     /// | `PxPoolUnderflow` | PX4 | contextual | the pool depends on the branch |
+    /// | `PxTreeFull` | B8 | contextual | the tree size depends on the branch |
     /// | `PxProof` | PX5 | stateless | checked only after PX1 and PX3 pass; registered programs are fixed by the contract id, so the statement is the same on every branch |
     /// | `DuplicateContract` | deploy | contextual | the same deploy may be on this branch and not on another |
     ///
@@ -256,7 +266,7 @@ impl TxError {
             | TxError::EphemeralIdentity { .. }
             | TxError::OutputsNotSorted
             | TxError::PseudoOutCount
-            | TxError::FeeTooLow { .. }
+            | TxError::FeeNotExact { .. }
             | TxError::WeightOverflow
             | TxError::Unbalanced
             | TxError::RangeProofShape
@@ -280,6 +290,7 @@ impl TxError {
             | TxError::PxNullifierSpent { .. }
             | TxError::PxUnregistered { .. }
             | TxError::PxPoolUnderflow
+            | TxError::PxTreeFull
             | TxError::DuplicateContract => false,
         }
     }
@@ -310,6 +321,33 @@ pub fn check_aux_images(signatures: &[Clsag]) -> Result<(), TxError> {
 
 /// Cheap structural rules: T1, T3–T8, T10 (shape) and T11.
 pub fn check_structure(tx: &Transfer, rules: &TxRules) -> Result<(), TxError> {
+    check_shape(tx)?;
+    check_fee(tx, rules)
+}
+
+/// T8: the fee is exactly the standard fee of the transaction's shape,
+/// `rules.standard_fee(n_in, n_out) = FEE_PER_WEIGHT × max_weight(n_in, n_out)`
+/// (docs/transactions.md §8.4). The fee is then a function of the public
+/// shape alone, as PX and deploy fees are, so it identifies no wallet
+/// (docs/reviews/v3-consensus-changes.md#exact-v1-fee). `max_weight` bounds
+/// the actual weight, so the fee also covers `min_fee(weight)`.
+pub fn check_fee(tx: &Transfer, rules: &TxRules) -> Result<(), TxError> {
+    let required = rules
+        .standard_fee(tx.inputs.len(), tx.outputs.len())
+        .ok_or(TxError::WeightOverflow)?;
+    if tx.fee != required {
+        return Err(TxError::FeeNotExact {
+            fee: tx.fee,
+            required,
+        });
+    }
+    Ok(())
+}
+
+/// [`check_structure`] without the fee rule (T8): T1, T3–T7, T10 (shape) and
+/// T11. For the v1 part of a deploy, whose fee has its own exact rule
+/// (`px::check_deploy_structure`).
+pub fn check_shape(tx: &Transfer) -> Result<(), TxError> {
     let n = tx.inputs.len();
     let k = tx.outputs.len();
     if n == 0 || n > MAX_INPUTS {
@@ -361,14 +399,6 @@ pub fn check_structure(tx: &Transfer, rules: &TxRules) -> Result<(), TxError> {
     let size = tx.encoded_len();
     if size > MAX_TX_SIZE {
         return Err(TxError::TooLarge { size });
-    }
-    // T8
-    let required = rules.min_fee(tx.weight()).ok_or(TxError::WeightOverflow)?;
-    if tx.fee < required {
-        return Err(TxError::FeeTooLow {
-            fee: tx.fee,
-            required,
-        });
     }
     Ok(())
 }
@@ -530,6 +560,20 @@ fn check_px_state(
     Ok(())
 }
 
+/// Leaves the PX commitment tree has left: `CAPACITY − size`.
+fn px_free_leaves(chain: &impl ChainView) -> u64 {
+    blacksilk_px::tree::CAPACITY.saturating_sub(chain.px_tree_size())
+}
+
+/// B8 for one transaction (mempool): its output commitments, one leaf each,
+/// fit in the PX commitment tree.
+fn check_px_capacity(tx: &PxTx, chain: &impl ChainView) -> Result<(), TxError> {
+    if tx.commitments.len() as u64 > px_free_leaves(chain) {
+        return Err(TxError::PxTreeFull);
+    }
+    Ok(())
+}
+
 /// PX5: the proof verifies for the transaction's statement and binding,
 /// with every function's registered program and budget.
 pub fn check_px_proof(tx: &PxTx, chain: &impl ChainView, rules: &TxRules) -> Result<(), TxError> {
@@ -654,6 +698,7 @@ pub fn validate_px_without_proof(
     if chain.px_pool() + (tx.bridge_in as u128) < (tx.bridge_out as u128) {
         return Err(TxError::PxPoolUnderflow);
     }
+    check_px_capacity(tx, chain)?;
     let rings = resolve_input_rings(&tx.inputs, chain, height)?;
     check_ring_signatures(
         &tx.inputs,
@@ -732,6 +777,7 @@ pub fn validate_mempool_tx(
 /// - PX1-PX3: the anchor window moves, nullifiers get spent (the registry
 ///   only grows);
 /// - PX4, the pool, which new blocks change;
+/// - B8, the tree capacity, which new blocks use up;
 /// - a deploy's contract id (the same contract may have been deployed).
 ///
 /// Every other rule is unchanged by an extension:
@@ -759,7 +805,7 @@ pub fn revalidate_after_extension(tx: &Transaction, chain: &impl ChainView) -> R
             if chain.px_pool() + (t.bridge_in as u128) < (t.bridge_out as u128) {
                 return Err(TxError::PxPoolUnderflow);
             }
-            Ok(())
+            check_px_capacity(t, chain)
         }
         Transaction::PxDeploy(t) => {
             check_key_images(&t.inputs, chain, &mut HashSet::new())?;
@@ -902,10 +948,18 @@ pub enum BlockError {
         bytes: u64,
         max: u64,
     },
+    /// B8: the block's PX output commitments (`leaves`, one per commitment)
+    /// do not fit in the `free` leaves the PX commitment tree has left
+    /// (`CAPACITY − size`; testnet v3 rule set,
+    /// docs/reviews/v3-consensus-changes.md#tree-capacity).
+    PxTreeFull {
+        leaves: u64,
+        free: u64,
+    },
 }
 
 /// Validates the transactions of a block at `ctx.height` against `chain` (the
-/// state after the parent block). Checks B1–B7 and every T/C rule, cheap
+/// state after the parent block). Checks B1–B8 and every T/C rule, cheap
 /// first (docs/transactions.md §8.3): structure, B5, B6, B3, balances, PX
 /// proof decoding, C2 and PX1–PX4 with each PX proof's shape, every ring
 /// (C1), one Bulletproofs+ batch (T10), the CLSAGs (C3), and the PX proofs
@@ -995,7 +1049,10 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
     if blacksilk_consensus::merkle::tx_root(&ids) != ctx.tx_root {
         return Err(BlockError::TxRootMismatch);
     }
-    // B6: v1 weight, and the separate PX byte budget.
+    // B6: the block weight (transfers, and the v1 part of PX and deploy
+    // transactions: `Transaction::weight`, R12-2), and the separate PX byte
+    // budget. Before any cryptography, so a block stuffed with CLSAGs costs
+    // a sum here, not a verification.
     let weight: u128 = txs.iter().map(|t| t.weight() as u128).sum();
     if weight > rules.max_block_weight as u128 {
         return Err(BlockError::WeightExceeded {
@@ -1023,6 +1080,15 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
             bytes: deploy_bytes,
             max: MAX_DEPLOY_BLOCK_BYTES,
         });
+    }
+    // B8: the block's PX output commitments, one tree leaf each, fit in the
+    // PX commitment tree (testnet v3; docs/reviews/v3-consensus-changes.md
+    // #tree-capacity). `MemoryChain::apply_block` fails exactly past this
+    // bound, so a valid block always applies.
+    let leaves: u64 = pxs.iter().map(|(_, t)| t.commitments.len() as u64).sum();
+    let free = px_free_leaves(chain);
+    if leaves > free {
+        return Err(BlockError::PxTreeFull { leaves, free });
     }
     // B3
     let fees: u128 = txs.iter().skip(1).map(|t| t.fee() as u128).sum();

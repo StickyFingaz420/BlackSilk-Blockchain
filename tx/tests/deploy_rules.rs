@@ -64,7 +64,7 @@ fn deploy(net: &mut TestNet, programs: Vec<Registration>) -> PxDeploy {
 fn check_after(net: &TestNet, d: &PxDeploy, f: impl Fn(&mut PxDeploy)) -> Result<(), TxError> {
     let mut x = d.clone();
     f(&mut x);
-    x.fee = x.required_fee();
+    x.fee = x.required_fee(&net.rules);
     check_deploy_structure(&x, &net.rules)
 }
 
@@ -269,11 +269,11 @@ fn the_deploy_fee_is_the_standard_transfer_fee_plus_the_payload_rate() {
     let d = deploy(&mut net, vec![vault()]);
     assert_eq!((d.inputs.len(), d.outputs.len()), (1, 2));
     assert_eq!(d.fee, expected_fee(1, 2, &d.programs));
-    assert_eq!(d.fee, d.required_fee());
-    assert_eq!(d.fee, deploy_fee(1, 2, &d.programs));
+    assert_eq!(d.fee, d.required_fee(&net.rules));
+    assert_eq!(d.fee, deploy_fee(1, 2, &d.programs, &rules()));
     // The transfer part pays exactly what a standard transfer of the shape pays.
     assert_eq!(
-        deploy_fee(1, 2, &[]) - DEPLOY_FEE_PER_BYTE * 33,
+        deploy_fee(1, 2, &[], &rules()) - DEPLOY_FEE_PER_BYTE * 33,
         standard_fee(1, 2, &net.rules)
     );
     // Above the pre-v3 minimum (2 per encoded byte), and above the v1 rate
@@ -288,7 +288,7 @@ fn the_deploy_fee_is_the_standard_transfer_fee_plus_the_payload_rate() {
         budget: VAULT_BUDGET,
     };
     let four = vec![big.clone(), big.clone(), big.clone(), big];
-    let max_fee = deploy_fee(1, 2, &four);
+    let max_fee = deploy_fee(1, 2, &four, &rules());
     assert!((52_000_000..54_000_000).contains(&max_fee), "{max_fee}");
 }
 
@@ -296,12 +296,12 @@ fn the_deploy_fee_is_the_standard_transfer_fee_plus_the_payload_rate() {
 fn only_the_exact_deploy_fee_is_valid() {
     let mut net = TestNet::new(36, 80);
     let d = deploy(&mut net, vec![vault()]);
-    let required = d.required_fee();
+    let required = d.required_fee(&net.rules);
     for fee in [0, 1, required - 1, required + 1, 2 * required, u64::MAX] {
         let mut x = d.clone();
         x.fee = fee;
         // The required fee does not depend on the fee (no fixed point).
-        assert_eq!(x.required_fee(), required);
+        assert_eq!(x.required_fee(&net.rules), required);
         assert_eq!(
             check_deploy_structure(&x, &net.rules),
             Err(TxError::DeployFeeNotExact { fee, required }),
@@ -325,15 +325,15 @@ fn the_payload_pays_per_byte_and_the_shape_pays_the_v1_rate() {
             budget: VAULT_BUDGET,
         },
     ];
-    let with = deploy_fee(1, 2, &two);
-    let without = deploy_fee(1, 2, &one);
+    let with = deploy_fee(1, 2, &two, &rules());
+    let without = deploy_fee(1, 2, &one, &rules());
     assert_eq!(with, expected_fee(1, 2, &two));
     assert!(with - without > DEPLOY_FEE_PER_BYTE * other_elf().len() as u64);
     for (n, k) in [(1, 2), (2, 2), (1, 16), (64, 16)] {
-        assert_eq!(deploy_fee(n, k, &one), expected_fee(n, k, &one));
+        assert_eq!(deploy_fee(n, k, &one, &rules()), expected_fee(n, k, &one));
     }
-    assert!(deploy_fee(2, 2, &one) > deploy_fee(1, 2, &one));
-    assert!(deploy_fee(1, 3, &one) > deploy_fee(1, 2, &one));
+    assert!(deploy_fee(2, 2, &one, &rules()) > deploy_fee(1, 2, &one, &rules()));
+    assert!(deploy_fee(1, 3, &one, &rules()) > deploy_fee(1, 2, &one, &rules()));
 }
 
 // ------------------------------------------------------------------ R5-1 block rule

@@ -287,13 +287,19 @@ The proof's table heights are public (zkvm.md §8).
 
 | Component | Rule |
 |---|---|
-| Tree | Append-only frontier: 32 digests plus the size. Commitments are appended in block order, two per transfer. |
+| Tree | Append-only frontier: 32 digests plus the size. Commitments are appended in block order, one leaf per output commitment (two per transfer today). Capacity `CAPACITY = 2^32` leaves: a block whose commitments would exceed it is invalid (B8, transactions.md §8.3; testnet v3). The append that fills the tree keeps the full root, which the frontier returns at `size = CAPACITY` (21-D; below capacity every root is unchanged). Once full, the tree takes no more PX outputs until a new-tree epoch is designed. |
 | Root window | The roots after each of the last 100 blocks (initially the empty-tree root). A transfer's anchor must be one of them. Anchors never refer to a state inside the current block. |
 | Nullifier set | A nullifier can appear once, ever: across blocks, within a block, and within a transfer. |
 | Pool | `pool' = pool + bridge_in − bridge_out ≥ 0`, applied in order, as `u128`. Even a complete proof-system break cannot withdraw more than was deposited (containment, zk.md §4.7). |
 
 - Blocks apply atomically: one bad transfer leaves the state untouched.
-- `apply_block` returns an undo record that restores the previous state exactly.
+- `apply_block` returns an undo record that restores the previous state exactly. The
+  record keeps only what it cannot recompute (21-F): the frontier before the block if
+  the block appended (boxed), the root the block's own root pushed out of the window,
+  the pool and the inserted nullifiers; under 100 bytes for a block without PX
+  transfers, instead of about 4.2 KB for every block. A seeded property test compares
+  it with a full clone of the state over random apply, failed-apply and undo sequences
+  (`compact_undo_equals_the_full_clone_reference`).
 - Proofs are verified before these rules. The state sees only verified statements.
 
 This state is part of the chain state (`blacksilk_tx::state::MemoryChain`, §11.3),
@@ -599,16 +605,17 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
 
 | Rule | Meaning |
 |---|---|
-| Structure | Counts, sorting, identity points, range-proof shape, sizes. PX transactions: fee **exactly** `PX_STANDARD_FEE`. Deploys: fee **exactly** `deploy_fee(n, k, programs) = FEE_PER_WEIGHT × max_weight(n, k) + DEPLOY_FEE_PER_BYTE × payload length` (`DeployFeeNotExact`; v3 candidate, R5-1/R6 TX-4) |
+| Structure | Counts, sorting, identity points, range-proof shape, sizes. PX transactions: fee **exactly** `PX_STANDARD_FEE`. Deploys: fee **exactly** `deploy_fee(n, k, programs) = standard_fee(n, k) + DEPLOY_FEE_PER_BYTE × payload length`, where `standard_fee(n, k) = FEE_PER_WEIGHT × max_weight(n, k)` is the exact fee of a transfer of the shape (transactions.md T8, §8.4; `TxRules::standard_fee`, one function for both) (`DeployFeeNotExact`; v3 candidate, R5-1/R6 TX-4) |
 | Balance | §11.1 (PX); the transfer rule for deploys |
 | C1–C3 | Rings and key images, as for transfers. One-time keys (hidden outputs and payouts together) are distinct within the transaction (stateless: the sort of each list, and `PxDuplicateOutputKey` between them) but may repeat across transactions and the chain (transactions.md §8.2) |
 | PX1 | The anchor is a root of the last 100 blocks, before this block |
 | PX2 | Nullifiers are unspent and unrepeated across the chain and the block |
 | PX3 | Every called function is a registered program of its contract (registry before this block) |
 | PX4 | The pool stays ≥ 0 through the block, in order |
+| B8 (capacity) | The block's PX output commitments, one tree leaf each, fit in the `2^32 − size` leaves left (`BlockError::PxTreeFull`); for a mempool transaction, contextual `TxError::PxTreeFull`. Checked with the byte budgets, before any cryptography. Templates never exceed it |
 | PX5 | The proof verifies with the registered programs and budgets (last; most expensive) |
 | Deploy | Every budget is provable: `cycles ≤ MAX_CYCLES` (2^21), `keys ≤ 2^22`, and each ALU and Poseidon2 field plus the kernel's `kernel_budget(1)` share ≤ 2^22 (stateless, `PxBudgetTooLarge`; R7-5). Programs load, and their program ids are pairwise distinct (stateless, `PxDuplicateProgram`; R5-7). The contract id is new in the chain and the block |
-| Block | Coinbase = reward + all fees; v1 weight ≤ limit; PX and deploy bytes ≤ 8 MiB |
+| Block | Coinbase = reward + all fees; block weight ≤ limit, where the v1 part of a PX or deploy transaction with `n > 0` inputs weighs `max_weight(n, k)` (transactions.md B6; R12-2); PX and deploy bytes ≤ 8 MiB |
 
 **Chain state.** The state (`MemoryChain`) keeps the PX state, the registry and a
 log of commitments, ciphertexts and nullifiers for wallets, all with exact per-block
@@ -649,7 +656,8 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 | PX fee | Exactly `PX_STANDARD_FEE = PX_FEE_PER_BYTE × MAX_PX_TX_SIZE` = 8,912,896 atomic units, a consensus rule (§12). It covers the per-byte fee of any PX transaction. Consequence: every PX transaction pays the same, so the mempool's fee-per-byte ordering ranks larger ones (contract calls, ~2.5 MB) below plain transfers (~2 MB) when the PX budget is congested |
 | Relay | PX and deploy transactions together: per peer 0.2/s (burst 4); all peers together 2/s (burst 10) |
 | Invalid proof | Misbehaviour (the statement is branch-independent once PX1 and PX3 pass). Across a scheduled activation the binding changes, so near an activation an honest peer can relay a proof for the previous epoch; see reviews/v3-upgrade-mechanism.md §2.4 |
-| Mempool | PX class capped at 64 MiB with fee-per-byte eviction; proofs verified once on admission; templates keep the pool non-negative in order |
+| Block weight | A PX or deploy transaction with v1 inputs also takes `max_weight(n, k)` of the 600 000 block weight (R12-2): its CLSAGs are metered like a transfer's. The fixed PX fee covers it (`FEE_PER_WEIGHT × max_weight(64, 16)` = 1,148,780 ≤ `PX_STANDARD_FEE`), so the PX fee stays uniform; a deploy's fee already pays exactly that weight at the v1 rate |
+| Mempool | PX class capped at 64 MiB with fee-per-byte eviction; proofs verified once on admission; templates take PX transactions first, charge every transaction against both the weight and the PX budgets, and keep the pool non-negative in order |
 
 ## 12. Privacy guidance for users and wallets
 

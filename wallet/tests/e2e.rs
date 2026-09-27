@@ -1497,3 +1497,50 @@ fn a_transaction_is_not_sent_across_an_activation_it_was_not_built_for() {
         .unwrap();
     assert_eq!(net.client.info().unwrap().mempool_txs, 1);
 }
+
+/// The wallet always pays the exact v1 fee (T8,
+/// docs/reviews/v3-consensus-changes.md#exact-v1-fee): for a single-input and
+/// a many-input transfer, the fee it reports and the fee of the pooled
+/// transaction are `TxRules::standard_fee(n_in, n_out)` of the transaction's
+/// own shape, and the node admits and mines both.
+#[test]
+fn the_wallet_pays_the_exact_v1_fee_for_every_shape() {
+    let mut net = Net::start();
+    let mut miner = wallet(40);
+    let bob = wallet(41);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    let mut shapes = Vec::new();
+    for amount in [COIN, miner.balance().unlocked / 2] {
+        let (id, fee) = miner
+            .transfer(
+                &net.client,
+                &bob.primary(),
+                amount,
+                &net.rules,
+                &mut net.rng,
+            )
+            .unwrap();
+        let tx = {
+            let m = net.shared.lock().unwrap();
+            m.mempool().get(&id).expect("pooled").clone()
+        };
+        let blacksilk_tx::types::Transaction::Transfer(t) = tx else {
+            panic!("a transfer");
+        };
+        let (n, k) = (t.inputs.len(), t.outputs.len());
+        assert_eq!(fee, t.fee);
+        assert_eq!(
+            Some(t.fee),
+            net.rules.standard_fee(n, k),
+            "shape ({n}, {k})"
+        );
+        shapes.push(n);
+        net.mine(&miner_addr);
+        assert_eq!(net.client.info().unwrap().mempool_txs, 0, "mined");
+        miner.sync(&net.client).unwrap();
+    }
+    assert_eq!(shapes[0], 1);
+    assert!(shapes[1] > 1, "{shapes:?}");
+}

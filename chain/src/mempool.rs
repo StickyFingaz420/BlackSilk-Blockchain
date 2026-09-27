@@ -22,6 +22,13 @@
 //! `select` re-checks the conflict keys as a second line of defence; it is not
 //! a substitute for admission.
 //!
+//! **Expiry.** A transaction leaves the pool [`MEMPOOL_EXPIRY_BLOCKS`] after
+//! the height it was admitted for, whatever its kind, and is then refused
+//! again for [`RECENTLY_EXPIRED_BLOCKS`] ([`MempoolError::Expired`]), so that
+//! no node re-injects it while other nodes still expire it (a re-injection
+//! would mark its origin). A transaction returned by a disconnected block is
+//! pooled again regardless ([`Mempool::readmit`]).
+//!
 //! **PX proofs are verified once, on admission.** After a block, pooled PX
 //! transactions are revalidated against the new state (anchor, nullifiers,
 //! registry, pool, rings) without re-verifying the proof, which depends only
@@ -44,6 +51,21 @@ pub const MEMPOOL_MAX_BYTES: usize = 50_000_000;
 pub const MEMPOOL_MAX_PX_BYTES: usize = 64 * 1024 * 1024;
 /// Weight reserved for the coinbase in block templates.
 pub const COINBASE_RESERVE: u64 = 3_000;
+/// A pooled transaction expires once the next block's height reaches its
+/// admission height plus this many blocks (about 3 days at 120 s, Monero's
+/// `CRYPTONOTE_MEMPOOL_TX_LIVETIME`). The same value for every kind, deploys
+/// included (decisions, Agent 38): a per-kind expiry would itself tell kinds
+/// apart. PX transactions leave earlier anyway, when their anchor leaves the
+/// 100-block root window. Policy; see [`Mempool::expire`].
+pub const MEMPOOL_EXPIRY_BLOCKS: u64 = 2_160;
+/// Blocks during which a transaction this node expired is refused again
+/// ([`MempoolError::Expired`]): on `/tx`, on relay and on the stem. Every
+/// honest node expires a transaction within the same few blocks (it was
+/// admitted network-wide within seconds), so within this window no node
+/// re-injects it, and a wallet's re-submission cannot mark its node as the
+/// origin to a stem peer that still pools it (dossier 38 §3.4, Monero's
+/// `m_timed_out_transactions`).
+pub const RECENTLY_EXPIRED_BLOCKS: u64 = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MempoolError {
@@ -57,6 +79,11 @@ pub enum MempoolError {
     /// The pool is full and the fee rate does not beat the cheapest entry of
     /// the same class.
     FeeTooLowForFullPool,
+    /// This node expired the transaction less than
+    /// [`RECENTLY_EXPIRED_BLOCKS`] blocks ago ([`MEMPOOL_EXPIRY_BLOCKS`]);
+    /// it is not admitted, relayed or stemmed again until then. Policy: the
+    /// transaction may still be valid, and no peer is penalized for it.
+    Expired,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,9 +98,17 @@ struct Entry {
     size: usize,
     /// v1 weight, or PX bytes: the unit of the class's fee rate.
     cost: u64,
+    /// Block weight (`Transaction::weight`, B6): a transfer's, or the v1
+    /// part of a PX or deploy transaction (R12-2).
+    weight: u64,
+    /// Bytes against the block's PX budget (`Transaction::px_bytes`).
+    px_bytes: u64,
     seq: u64,
     /// Conflict keys (`conflict_keys`).
     keys: Vec<ConflictKey>,
+    /// The height the transaction was admitted for (the next block's height
+    /// at admission); it expires [`MEMPOOL_EXPIRY_BLOCKS`] later.
+    admitted: u64,
 }
 
 /// The namespace of a conflict key. The same 32 bytes in two namespaces are
@@ -93,6 +128,14 @@ impl Entry {
     fn rate_cmp(&self, other: &Entry) -> std::cmp::Ordering {
         (self.tx.fee() as u128 * other.cost as u128)
             .cmp(&(other.tx.fee() as u128 * self.cost as u128))
+    }
+
+    /// Fee per block-weight unit, compared without division: the order of
+    /// transfers and deploys in templates, which compete for the same weight
+    /// (one unit, no cross-unit comparison).
+    fn weight_rate_cmp(&self, other: &Entry) -> std::cmp::Ordering {
+        (self.tx.fee() as u128 * other.weight as u128)
+            .cmp(&(other.tx.fee() as u128 * self.weight as u128))
     }
 }
 
@@ -133,6 +176,10 @@ pub struct Mempool {
     /// The signature domain (network and branch ids) every pooled transaction
     /// was validated under; `None` before the first admission.
     domain: Option<SigDomain>,
+    /// Transactions this node expired: id -> the height they expired at.
+    /// Refused while `height < expired_at + RECENTLY_EXPIRED_BLOCKS`
+    /// ([`MempoolError::Expired`]); forgotten afterwards ([`Self::expire`]).
+    expired: HashMap<Hash, u64>,
 }
 
 impl Mempool {
@@ -217,7 +264,14 @@ impl Mempool {
         }
     }
 
-    fn precheck(&self, tx: &Transaction) -> Result<(Hash, Vec<ConflictKey>), MempoolError> {
+    /// Cheap admission checks, before any validation: not a coinbase, not
+    /// pooled, not expired here recently (for inclusion at `height`), no
+    /// conflict key in use.
+    fn precheck(
+        &self,
+        tx: &Transaction,
+        height: u64,
+    ) -> Result<(Hash, Vec<ConflictKey>), MempoolError> {
         if tx.is_coinbase() {
             return Err(MempoolError::Coinbase);
         }
@@ -225,11 +279,24 @@ impl Mempool {
         if self.entries.contains_key(&id) {
             return Err(MempoolError::AlreadyKnown);
         }
+        if self.recently_expired(&id, height) {
+            return Err(MempoolError::Expired);
+        }
         let keys = conflict_keys(tx);
         if keys.iter().any(|k| self.keys.contains_key(k)) {
             return Err(MempoolError::Conflict);
         }
         Ok((id, keys))
+    }
+
+    /// Whether this node expired `id` fewer than [`RECENTLY_EXPIRED_BLOCKS`]
+    /// blocks before `height` (the height a transaction would be admitted
+    /// for). After a reorganization to a lower height the window lasts
+    /// longer, never shorter.
+    pub fn recently_expired(&self, id: &Hash, height: u64) -> bool {
+        self.expired
+            .get(id)
+            .is_some_and(|&at| height < at.saturating_add(RECENTLY_EXPIRED_BLOCKS))
     }
 
     /// Validates `tx` for inclusion at `height` without adding it. Returns its id.
@@ -240,7 +307,7 @@ impl Mempool {
         height: u64,
         rules: &TxRules,
     ) -> Result<Hash, MempoolError> {
-        let (id, _) = self.precheck(tx)?;
+        let (id, _) = self.precheck(tx, height)?;
         validate_mempool_tx(tx, chain, height, rules).map_err(MempoolError::Invalid)?;
         Ok(id)
     }
@@ -248,6 +315,12 @@ impl Mempool {
     /// A pooled transaction by id.
     pub fn get(&self, id: &Hash) -> Option<&Transaction> {
         self.entries.get(id).map(|e| &e.tx)
+    }
+
+    /// The height a pooled transaction was admitted for; it expires
+    /// [`MEMPOOL_EXPIRY_BLOCKS`] later.
+    pub fn admitted_at(&self, id: &Hash) -> Option<u64> {
+        self.entries.get(id).map(|e| e.admitted)
     }
 
     /// Validates `tx` for inclusion at `height` and adds it.
@@ -261,9 +334,51 @@ impl Mempool {
         // Under other rules than the pool's, the pool is flushed first
         // (`enter_rules`): it never mixes transactions of two rule sets.
         self.enter_rules(rules);
-        let (id, keys) = self.precheck(&tx)?;
+        let (id, keys) = self.precheck(&tx, height)?;
         validate_mempool_tx(&tx, chain, height, rules).map_err(MempoolError::Invalid)?;
-        self.insert(id, tx, keys)
+        self.insert(id, tx, keys, height)
+    }
+
+    /// [`Self::add`] for a transaction of a block this node disconnected (a
+    /// reorganization returns it to the pool). It is not refused as recently
+    /// expired: it was on the best chain, so it is no re-injection by its
+    /// origin, and it is not relayed from here. It is pooled with a fresh
+    /// admission height (`height`), so it gets a full expiry window again,
+    /// and it leaves the recently-expired set.
+    pub fn readmit(
+        &mut self,
+        tx: Transaction,
+        chain: &impl ChainView,
+        height: u64,
+        rules: &TxRules,
+    ) -> Result<Hash, MempoolError> {
+        self.expired.remove(&tx.hash());
+        self.add(tx, chain, height, rules)
+    }
+
+    /// Expires every transaction admitted at least [`MEMPOOL_EXPIRY_BLOCKS`]
+    /// before `height` (the next block's height): it is removed with its
+    /// conflict keys and remembered as recently expired, and refused again
+    /// until `height + RECENTLY_EXPIRED_BLOCKS`. Transactions remembered
+    /// that long are forgotten. Returns the number expired.
+    ///
+    /// The count is from this node's admission height, the same for every
+    /// kind (policy, not consensus: no expiry field exists in transactions,
+    /// whose value would fingerprint the wallet).
+    pub fn expire(&mut self, height: u64) -> usize {
+        self.expired
+            .retain(|_, at| height < at.saturating_add(RECENTLY_EXPIRED_BLOCKS));
+        let old: Vec<Hash> = self
+            .entries
+            .iter()
+            .filter(|(_, e)| height >= e.admitted.saturating_add(MEMPOOL_EXPIRY_BLOCKS))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &old {
+            self.remove(id);
+            self.expired.insert(*id, height);
+        }
+        old.len()
     }
 
     fn insert(
@@ -271,6 +386,7 @@ impl Mempool {
         id: Hash,
         tx: Transaction,
         keys: Vec<ConflictKey>,
+        admitted: u64,
     ) -> Result<Hash, MempoolError> {
         let class = class_of(&tx);
         let size = tx.encode().len();
@@ -278,13 +394,17 @@ impl Mempool {
             Class::V1 => tx.weight(),
             Class::Px => tx.px_bytes(),
         };
+        let (weight, px_bytes) = (tx.weight(), tx.px_bytes());
         let entry = Entry {
             tx,
             class,
             size,
             cost,
+            weight,
+            px_bytes,
             seq: self.next_seq,
             keys,
+            admitted,
         };
         // Make room if needed by evicting strictly cheaper entries of the class,
         // cheapest (then newest) first. The victims are chosen before anything
@@ -390,24 +510,40 @@ impl Mempool {
         }
     }
 
-    /// Transactions for a block template, highest fee rate first (then first
-    /// seen): v1 transactions up to `max_weight`, PX transactions up to the
-    /// PX byte budget. `pool` is the PX pool before the block: PX transactions
-    /// are taken only while the pool, evolving in block order, stays
-    /// non-negative (each was admitted against the chain's pool alone).
+    /// Transactions for a block template. Every candidate is charged against
+    /// the block weight budget `max_weight` (`Transaction::weight`: a
+    /// transfer's weight, or the v1 part of a PX or deploy transaction,
+    /// R12-2), and PX and deploy transactions also against the PX byte budget
+    /// (deploys also against the deploy sub-budget): a template never breaks
+    /// B6 (docs/reviews/v3-consensus-changes.md#r12-2).
+    ///
+    /// Order: PX transactions first (by fee per PX byte, then first seen;
+    /// their fee is uniform), so v1 congestion cannot keep one with v1 inputs
+    /// out; then transfers and deploys, which compete for the same weight, by
+    /// fee per weight, then first seen. No two units are compared.
+    ///
+    /// `pool` is the PX pool before the block: PX transactions are taken
+    /// only while the pool, evolving in block order, stays non-negative (each
+    /// was admitted against the chain's pool alone). `px_leaves` is the room
+    /// left in the PX commitment tree: PX transactions are taken only while
+    /// their output commitments, one leaf each, fit (B8).
     ///
     /// Defence in depth: a transaction sharing a conflict key with one already
     /// selected is skipped (and logged). Admission already guarantees that no
     /// two pooled transactions share one, so this never fires unless that
     /// invariant is broken; it keeps a broken invariant from making every
     /// template invalid.
-    pub fn select(&self, max_weight: u64, mut pool: u128) -> Vec<Transaction> {
-        let mut entries: Vec<&Entry> = self.entries.values().collect();
-        entries.sort_by(|a, b| b.rate_cmp(a).then(a.seq.cmp(&b.seq)));
-        let (mut weight, mut px, mut deploy) = (0u64, 0u64, 0u64);
+    pub fn select(&self, max_weight: u64, mut pool: u128, px_leaves: u64) -> Vec<Transaction> {
+        let (mut px_first, mut rest): (Vec<&Entry>, Vec<&Entry>) = self
+            .entries
+            .values()
+            .partition(|e| matches!(e.tx, Transaction::Px(_)));
+        px_first.sort_by(|a, b| b.rate_cmp(a).then(a.seq.cmp(&b.seq)));
+        rest.sort_by(|a, b| b.weight_rate_cmp(a).then(a.seq.cmp(&b.seq)));
+        let (mut weight, mut px, mut deploy, mut leaves) = (0u64, 0u64, 0u64, 0u64);
         let mut out = Vec::new();
         let mut used: std::collections::HashSet<ConflictKey> = std::collections::HashSet::new();
-        for e in entries {
+        for e in px_first.into_iter().chain(rest) {
             if e.keys.iter().any(|k| used.contains(k)) {
                 log::warn!(
                     "mempool: transaction {} conflicts with one already in the template; skipped",
@@ -415,38 +551,42 @@ impl Mempool {
                 );
                 continue;
             }
-            let before = out.len();
-            match e.class {
-                Class::V1 if weight + e.cost <= max_weight => {
-                    weight += e.cost;
-                    out.push(e.tx.clone());
-                }
-                Class::Px if px + e.cost <= MAX_PX_BLOCK_BYTES => {
-                    match &e.tx {
-                        Transaction::Px(t) => {
-                            match (pool + t.bridge_in as u128).checked_sub(t.bridge_out as u128) {
-                                Some(p) => pool = p,
-                                None => continue,
-                            }
-                        }
-                        // Deploys also fit the block's deploy sub-budget
-                        // (`MAX_DEPLOY_BLOCK_BYTES`, a block rule).
-                        Transaction::PxDeploy(_) => {
-                            if deploy + e.cost > MAX_DEPLOY_BLOCK_BYTES {
-                                continue;
-                            }
-                            deploy += e.cost;
-                        }
-                        _ => {}
+            // Both budgets, for every kind.
+            let Some(w) = weight.checked_add(e.weight).filter(|w| *w <= max_weight) else {
+                continue;
+            };
+            let Some(p) = px
+                .checked_add(e.px_bytes)
+                .filter(|p| *p <= MAX_PX_BLOCK_BYTES)
+            else {
+                continue;
+            };
+            match &e.tx {
+                Transaction::Px(t) => {
+                    let l = leaves + t.commitments.len() as u64;
+                    if l > px_leaves {
+                        continue;
                     }
-                    px += e.cost;
-                    out.push(e.tx.clone());
+                    match (pool + t.bridge_in as u128).checked_sub(t.bridge_out as u128) {
+                        Some(next) => pool = next,
+                        None => continue,
+                    }
+                    leaves = l;
+                }
+                // Deploys also fit the block's deploy sub-budget
+                // (`MAX_DEPLOY_BLOCK_BYTES`, a block rule).
+                Transaction::PxDeploy(_) => {
+                    if deploy + e.px_bytes > MAX_DEPLOY_BLOCK_BYTES {
+                        continue;
+                    }
+                    deploy += e.px_bytes;
                 }
                 _ => {}
             }
-            if out.len() > before {
-                used.extend(e.keys.iter().copied());
-            }
+            weight = w;
+            px = p;
+            out.push(e.tx.clone());
+            used.extend(e.keys.iter().copied());
         }
         out
     }
@@ -487,8 +627,120 @@ mod tests {
     }
 
     fn add(m: &mut Mempool, tx: Transaction) -> Result<Hash, MempoolError> {
-        let (id, keys) = m.precheck(&tx)?;
-        m.insert(id, tx, keys)
+        add_at(m, tx, 0)
+    }
+
+    /// `add` for inclusion at `height` (the admission height).
+    fn add_at(m: &mut Mempool, tx: Transaction, height: u64) -> Result<Hash, MempoolError> {
+        let (id, keys) = m.precheck(&tx, height)?;
+        m.insert(id, tx, keys, height)
+    }
+
+    /// Expiry (policy): a transaction admitted for height `a` stays pooled
+    /// while the next height is below `a + MEMPOOL_EXPIRY_BLOCKS`, and is
+    /// removed at exactly that height, with its conflict keys and bytes,
+    /// whatever its kind. Each entry counts from its own admission height.
+    #[test]
+    fn a_transaction_expires_exactly_at_its_admission_height_plus_the_expiry() {
+        let mut m = Mempool::new();
+        let a = 100;
+        let kinds = [
+            px(1, 1000, 10, 0, 0),
+            transfer(&[5], &[10, 11], 10),
+            deploy(6, &[12, 13], 0, 10),
+        ];
+        let ids: Vec<Hash> = kinds
+            .iter()
+            .map(|tx| add_at(&mut m, tx.clone(), a).unwrap())
+            .collect();
+        // A later admission expires later.
+        let late = add_at(&mut m, px(3, 1000, 10, 0, 0), a + 7).unwrap();
+        assert_eq!(m.expire(a + MEMPOOL_EXPIRY_BLOCKS - 1), 0);
+        assert_eq!(m.len(), 4);
+        assert_eq!(m.expire(a + MEMPOOL_EXPIRY_BLOCKS), 3, "every kind expires");
+        assert!(ids.iter().all(|id| !m.contains(id)));
+        assert!(m.contains(&late));
+        assert_invariants(&m);
+        // The conflict keys are free: another transaction spending the same
+        // key image is admitted.
+        add_at(
+            &mut m,
+            transfer(&[5], &[20, 21], 10),
+            a + MEMPOOL_EXPIRY_BLOCKS + 1,
+        )
+        .unwrap();
+        assert_eq!(m.expire(a + 7 + MEMPOOL_EXPIRY_BLOCKS), 1);
+        assert!(!m.contains(&late));
+        assert_invariants(&m);
+    }
+
+    /// The recently-expired guard: an expired transaction is refused with
+    /// `Expired` (before its conflict keys or anything else are looked at)
+    /// for exactly `RECENTLY_EXPIRED_BLOCKS` blocks, then admitted again and
+    /// forgotten. Only that transaction: another one spending the same key
+    /// images is not refused by the guard.
+    #[test]
+    fn an_expired_transaction_is_refused_for_the_guard_window_only() {
+        let mut m = Mempool::new();
+        let tx = transfer(&[5], &[10, 11], 10);
+        let id = add_at(&mut m, tx.clone(), 0).unwrap();
+        let e = MEMPOOL_EXPIRY_BLOCKS;
+        assert_eq!(m.expire(e), 1);
+        for h in e..e + RECENTLY_EXPIRED_BLOCKS {
+            assert!(m.recently_expired(&id, h));
+            assert_eq!(m.precheck(&tx, h).map(|_| ()), Err(MempoolError::Expired));
+        }
+        let rebuilt = transfer(&[5], &[30, 31], 10);
+        let other = add_at(&mut m, rebuilt, e + 1).unwrap();
+        m.remove(&other).unwrap();
+        let end = e + RECENTLY_EXPIRED_BLOCKS;
+        assert!(!m.recently_expired(&id, end));
+        m.expire(end);
+        assert!(m.expired.is_empty(), "forgotten after the window");
+        assert_eq!(add_at(&mut m, tx, end), Ok(id));
+        // Admitted again: it expires a full window after the new admission.
+        assert_eq!(m.expire(end + e - 1), 0);
+        assert_eq!(m.expire(end + e), 1);
+    }
+
+    /// Reorganizations: after the tip moves down, expiry counts from the
+    /// admission height against the new (lower) height, so nothing expires
+    /// early, and the guard lasts longer, never shorter. A transaction
+    /// returned by a disconnected block (`readmit`) is pooled even while it
+    /// is recently expired, with a fresh admission height.
+    #[test]
+    fn expiry_and_the_guard_follow_the_height_across_reorganizations() {
+        let mut m = Mempool::new();
+        let e = MEMPOOL_EXPIRY_BLOCKS;
+        let a = add_at(&mut m, px(1, 1000, 10, 0, 0), 50).unwrap();
+        let b_tx = px(3, 1000, 10, 0, 0);
+        let b = add_at(&mut m, b_tx.clone(), 10).unwrap();
+        assert_eq!(m.expire(10 + e), 1, "b expires");
+        assert!(m.contains(&a));
+        // A reorganization lowers the next height by 20 blocks: a is not
+        // expired early, b stays refused past its original window.
+        assert_eq!(m.expire(10 + e - 20), 0);
+        assert!(m.contains(&a));
+        assert!(m.recently_expired(&b, 10 + e + RECENTLY_EXPIRED_BLOCKS - 21));
+        assert_eq!(
+            m.precheck(&b_tx, 10 + e - 19).map(|_| ()),
+            Err(MempoolError::Expired)
+        );
+        // b was meanwhile mined on the other branch and that block is
+        // disconnected: the returned transaction is admitted again, with a
+        // fresh admission height, and leaves the guard.
+        let chain = blacksilk_tx::state::MemoryChain::new();
+        let rules = TxRules::at_height(&blacksilk_consensus::ChainParams::regtest(), 0);
+        // (A synthetic transaction fails validation; the guard is what is
+        // tested here: `readmit` gets past it to validation.)
+        assert!(matches!(
+            m.readmit(b_tx.clone(), &chain, 10 + e - 19, &rules),
+            Err(MempoolError::Invalid(_))
+        ));
+        assert!(!m.recently_expired(&b, 10 + e - 19));
+        assert_eq!(add_at(&mut m, b_tx, 10 + e - 19), Ok(b));
+        assert_eq!(m.expire(10 + e - 19 + e - 1), 1, "a expires, b does not");
+        assert!(m.contains(&b) && !m.contains(&a));
     }
 
     /// Fills the PX class as far as it goes with entries of `size` proof
@@ -526,7 +778,7 @@ mod tests {
             height: 1,
             outputs: vec![],
         });
-        assert_eq!(m.precheck(&cb).map(|_| ()), Err(MempoolError::Coinbase));
+        assert_eq!(m.precheck(&cb, 0).map(|_| ()), Err(MempoolError::Coinbase));
         // Removing it frees its conflict keys.
         m.remove(&id).unwrap();
         assert!(m.is_empty());
@@ -615,7 +867,7 @@ mod tests {
         let tie_first = add(&mut m, px(30, 1000, 30, 0, 0)).unwrap();
         let tie_second = add(&mut m, px(40, 1000, 30, 0, 0)).unwrap();
         let order: Vec<Hash> = m
-            .select(u64::MAX, 0)
+            .select(u64::MAX, 0, u64::MAX)
             .iter()
             .map(Transaction::hash)
             .collect();
@@ -626,7 +878,7 @@ mod tests {
         for n in 0..4 {
             add(&mut m, px(100 + 2 * n, 3 * 1024 * 1024, 1_000, 0, 0)).unwrap();
         }
-        let sel = m.select(u64::MAX, 0);
+        let sel = m.select(u64::MAX, 0, u64::MAX);
         assert_eq!(sel.len(), 2);
         assert!(sel.iter().map(Transaction::px_bytes).sum::<u64>() <= MAX_PX_BLOCK_BYTES);
 
@@ -634,11 +886,11 @@ mod tests {
         // deposit selected before it covers it.
         let mut m = Mempool::new();
         let withdraw = add(&mut m, px(200, 1000, 90, 0, 5)).unwrap();
-        let sel = m.select(u64::MAX, 3);
+        let sel = m.select(u64::MAX, 3, u64::MAX);
         assert!(sel.is_empty(), "would make the pool negative");
         let deposit = add(&mut m, px(202, 1000, 95, 4, 0)).unwrap();
         let sel: Vec<Hash> = m
-            .select(u64::MAX, 3)
+            .select(u64::MAX, 3, u64::MAX)
             .iter()
             .map(Transaction::hash)
             .collect();
@@ -896,7 +1148,7 @@ mod tests {
                     add(&mut m, second).unwrap_or_else(|e| panic!("{a_name} then {b_name}: {e:?}"));
                 assert_eq!(m.len(), 2);
                 let sel: Vec<Hash> = m
-                    .select(u64::MAX, 0)
+                    .select(u64::MAX, 0, u64::MAX)
                     .iter()
                     .map(Transaction::hash)
                     .collect();
@@ -923,7 +1175,7 @@ mod tests {
             .contains_key(&(ConflictKind::KeyImage, *pt(5).bytes())));
         assert_eq!(m.len(), 4);
         assert_invariants(&m);
-        assert_eq!(m.select(u64::MAX, 0).len(), 4);
+        assert_eq!(m.select(u64::MAX, 0, u64::MAX).len(), 4);
         // ...while the same kind conflicts, and output keys never do.
         assert_eq!(
             add(&mut m, transfer(&[5], &[30, 31], 10)),
@@ -947,9 +1199,9 @@ mod tests {
             let mut m = Mempool::new();
             for tx in [a.clone(), b.clone(), other.clone()] {
                 let keys = conflict_keys(&tx);
-                m.insert(tx.hash(), tx, keys).unwrap();
+                m.insert(tx.hash(), tx, keys, 0).unwrap();
             }
-            let sel = m.select(u64::MAX, 0);
+            let sel = m.select(u64::MAX, 0, u64::MAX);
             assert_disjoint(&sel);
             let ids: Vec<Hash> = sel.iter().map(Transaction::hash).collect();
             assert_eq!(sel.len(), 2, "one of the pair and the unrelated one");
@@ -1025,7 +1277,7 @@ mod tests {
         }
         // PX transactions at a lower fee rate still fill the PX lane.
         let small = add(&mut m, px(500, 3 * 1024 * 1024, 10, 0, 0)).unwrap();
-        let sel = m.select(u64::MAX, 0);
+        let sel = m.select(u64::MAX, 0, u64::MAX);
         let deploy_bytes: u64 = sel
             .iter()
             .filter(|t| matches!(t, Transaction::PxDeploy(_)))
@@ -1090,6 +1342,150 @@ mod tests {
                 px_out(small(30) as u32, &outs[..split], &outs[split..], fee)
             }
             _ => deploy(small(60), &outs, small(3) as u8, fee),
+        }
+    }
+
+    /// `px(n, bytes, ..)` spending v1 key images `images` (R12-2: its v1
+    /// part weighs `max_weight(images.len(), 0)`).
+    fn px_in(n: u32, bytes: usize, images: &[u64], fee: u64) -> Transaction {
+        let mut tx = px(n, bytes, fee, 0, 0);
+        if let Transaction::Px(t) = &mut tx {
+            t.inputs = images.iter().map(|&k| input(k)).collect();
+            t.pseudo_outs = images.iter().map(|_| pt(9)).collect();
+            t.signatures = images.iter().map(|_| clsag()).collect();
+        }
+        tx
+    }
+
+    /// R12-2 (a′): a template never exceeds the weight budget (which PX and
+    /// deploy transactions with v1 inputs now take from), the PX byte
+    /// budget, the deploy sub-budget or the pool, over random pools of every
+    /// kind and random budgets; and the total weight is the block rule's own
+    /// sum (`Transaction::weight`, B6).
+    #[test]
+    fn templates_respect_both_budgets_for_every_kind() {
+        let mut rng = ChaCha20Rng::seed_from_u64(0x122);
+        let mut weight_bound_hit = 0;
+        for round in 0..60 {
+            let mut m = Mempool::new();
+            let mut image = 1_000u64 * (round + 1);
+            for i in 0..40u32 {
+                let fee = 1 + rng.next_u64() % 100_000;
+                let n_in = 1 + (rng.next_u64() % 64) as usize;
+                let images: Vec<u64> = (0..n_in as u64).map(|j| image + j).collect();
+                image += 64;
+                let tx = match rng.next_u64() % 5 {
+                    0 => transfer(&images[..1], &[image, image + 1], fee),
+                    1 => px_in(
+                        2 * i + 1,
+                        1 + (rng.next_u64() % 400_000) as usize,
+                        &images,
+                        fee,
+                    ),
+                    2 => px(
+                        2 * i + 1,
+                        1 + (rng.next_u64() % 400_000) as usize,
+                        fee,
+                        0,
+                        0,
+                    ),
+                    3 => big_deploy(image, i as u8, (rng.next_u64() % 200_000) as usize, fee),
+                    _ => {
+                        let mut d = deploy(image, &[image + 1, image + 2], i as u8, fee);
+                        if let Transaction::PxDeploy(t) = &mut d {
+                            t.inputs = images.iter().map(|&k| input(k)).collect();
+                        }
+                        d
+                    }
+                };
+                let _ = add(&mut m, tx);
+            }
+            let max_weight = rng.next_u64() % 400_000;
+            let pool = u128::from(rng.next_u64() % 1_000);
+            let sel = m.select(max_weight, pool, u64::MAX);
+            let weight: u64 = sel.iter().map(Transaction::weight).sum();
+            let px: u64 = sel.iter().map(Transaction::px_bytes).sum();
+            let deploys: u64 = sel
+                .iter()
+                .filter(|t| matches!(t, Transaction::PxDeploy(_)))
+                .map(Transaction::px_bytes)
+                .sum();
+            assert!(
+                weight <= max_weight,
+                "round {round}: {weight} > {max_weight}"
+            );
+            assert!(px <= MAX_PX_BLOCK_BYTES, "round {round}");
+            assert!(deploys <= MAX_DEPLOY_BLOCK_BYTES, "round {round}");
+            let mut p = pool;
+            for t in &sel {
+                if let Transaction::Px(t) = t {
+                    p = (p + t.bridge_in as u128)
+                        .checked_sub(t.bridge_out as u128)
+                        .expect("pool");
+                }
+            }
+            assert_disjoint(&sel);
+            // Something with weight was left out for lack of weight.
+            if m.entries.values().any(|e| {
+                e.weight > 0
+                    && !sel.iter().any(|t| t.hash() == e.tx.hash())
+                    && weight + e.weight > max_weight
+            }) {
+                weight_bound_hit += 1;
+            }
+        }
+        assert!(
+            weight_bound_hit > 30,
+            "the weight budget bound ({weight_bound_hit})"
+        );
+    }
+
+    /// PX transactions come first: under v1 congestion (transfers paying far
+    /// more per weight filling the budget), a PX transaction with 64 v1
+    /// inputs still gets its weight.
+    #[test]
+    fn px_with_v1_inputs_are_selected_under_v1_congestion() {
+        let mut m = Mempool::new();
+        let images: Vec<u64> = (0..64).collect();
+        let heavy = add(&mut m, px_in(1, 100_000, &images, 10)).unwrap();
+        let w = blacksilk_tx::params::max_weight(64, 0);
+        for k in 0..200u64 {
+            add(
+                &mut m,
+                transfer(&[1_000 + k], &[5_000 + 2 * k, 5_001 + 2 * k], 1 << 40),
+            )
+            .unwrap();
+        }
+        let budget = 100_000;
+        let sel = m.select(budget, 0, u64::MAX);
+        assert!(sel.iter().any(|t| t.hash() == heavy), "the PX transaction");
+        let total: u64 = sel.iter().map(Transaction::weight).sum();
+        assert!(total <= budget && total >= w);
+        assert!(sel.len() > 1, "transfers fill the rest");
+        // Its weight counts: with less than its v1 part left, it is out.
+        let sel = m.select(w - 1, 0, u64::MAX);
+        assert!(!sel.iter().any(|t| t.hash() == heavy));
+    }
+
+    /// B8 in templates: PX transactions are taken only while their output
+    /// commitments fit in the tree's free leaves, whatever their fee order.
+    #[test]
+    fn templates_never_exceed_the_free_leaves() {
+        let mut m = Mempool::new();
+        for n in 0..6u32 {
+            add(&mut m, px(2 * n + 1, 1_000, 1_000, 0, 0)).unwrap();
+        }
+        for free in 0..=13u64 {
+            let sel = m.select(u64::MAX, 0, free);
+            let leaves: u64 = sel
+                .iter()
+                .map(|t| match t {
+                    Transaction::Px(t) => t.commitments.len() as u64,
+                    _ => 0,
+                })
+                .sum();
+            assert!(leaves <= free, "free {free}: {leaves}");
+            assert_eq!(sel.len() as u64, (free / 2).min(6), "free {free}");
         }
     }
 
@@ -1170,7 +1566,7 @@ mod tests {
                     } else {
                         rng.next_u64() % 20_000
                     };
-                    let sel = m.select(max_weight, (rng.next_u64() % 10).into());
+                    let sel = m.select(max_weight, (rng.next_u64() % 10).into(), u64::MAX);
                     assert_disjoint(&sel);
                     assert!(sel.iter().all(|tx| m.contains(&tx.hash())));
                     if max_weight == u64::MAX {

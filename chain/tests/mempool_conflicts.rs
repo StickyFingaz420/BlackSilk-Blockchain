@@ -536,9 +536,10 @@ fn a_block_holding_two_transactions_sharing_an_output_key_is_valid() {
     assert!(w.m.mempool().is_empty());
 }
 
-/// Copying any output key of a pending honest transaction, at the same or a
-/// hundred times the fee, changes nothing for the victim: every copy is
-/// pooled, one block confirms them all, and the recipient is credited once.
+/// Copying any output key of a pending honest transaction, twice per key (at
+/// the standard fee: T8 admits no other, so no copy can outbid the victim),
+/// changes nothing for the victim: every copy is pooled, one block confirms
+/// them all, and the recipient is credited once.
 #[test]
 fn copies_of_a_pending_output_key_are_pooled_and_the_victim_confirms() {
     let mut w = world(Box::<MemoryStore>::default(), 3);
@@ -547,7 +548,7 @@ fn copies_of_a_pending_output_key_are_pooled_and_the_victim_confirms() {
     let hid = w.m.submit_tx(h.clone()).unwrap();
     let mut copies = Vec::new();
     for (i, victim_key) in out_keys(&h).into_iter().enumerate() {
-        for (j, f) in [fee, 100 * fee].into_iter().enumerate() {
+        for (j, f) in [fee, fee].into_iter().enumerate() {
             let x = forge(
                 &w.m,
                 &w.attacker.keys,
@@ -631,7 +632,7 @@ fn copies_never_stall_block_production() {
             &w.attacker.keys,
             0,
             &[out_keys(&h)[round % 2], random_point(&mut w.rng)],
-            50 * fee,
+            fee,
             &mut w.rng,
         );
         let k = random_point(&mut w.rng);
@@ -648,7 +649,7 @@ fn copies_never_stall_block_production() {
             &w.attacker.keys,
             2,
             &[k, random_point(&mut w.rng)],
-            9 * fee,
+            fee,
             &mut w.rng,
         );
         let order: Vec<&Transaction> = if round % 2 == 0 {
@@ -788,7 +789,7 @@ fn copying_a_pooled_deploys_output_key_changes_nothing() {
             &w.attacker.keys,
             i,
             &[k, random_point(&mut w.rng)],
-            100 * fee,
+            fee,
             &mut w.rng,
         );
         w.m.submit_tx(x).unwrap();
@@ -800,8 +801,9 @@ fn copying_a_pooled_deploys_output_key_changes_nothing() {
 }
 
 /// Key images still conflict (C2): of two transactions spending the same
-/// output, the first seen is kept, whatever the fee, and the other is
-/// refused on the stem and the fluff paths.
+/// output, the first seen is kept (both pay the standard fee: T8 leaves no
+/// fee to outbid with), and the other is refused on the stem and the fluff
+/// paths.
 #[test]
 fn a_second_spend_of_a_key_image_is_still_refused() {
     let mut w = world(Box::<MemoryStore>::default(), 2);
@@ -819,7 +821,7 @@ fn a_second_spend_of_a_key_image_is_still_refused() {
         &w.attacker.keys,
         0,
         &[random_point(&mut w.rng), random_point(&mut w.rng)],
-        100 * fee,
+        fee,
         &mut w.rng,
     );
     assert_eq!(first.key_images(), second.key_images());

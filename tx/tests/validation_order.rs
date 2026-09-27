@@ -338,6 +338,10 @@ impl ChainView for View<'_> {
         self.tick();
         self.inner.px_contract_exists(c)
     }
+    fn px_tree_size(&self) -> u64 {
+        self.tick();
+        self.inner.px_tree_size()
+    }
 }
 
 fn random_point(r: &mut ChaCha20Rng) -> Point {
@@ -718,7 +722,7 @@ fn every_error_variant_is_classified() {
         EphemeralIdentity { output: 0 },
         OutputsNotSorted,
         PseudoOutCount,
-        FeeTooLow {
+        FeeNotExact {
             fee: 0,
             required: 1,
         },
@@ -750,6 +754,7 @@ fn every_error_variant_is_classified() {
         PxNullifierSpent { index: 0 },
         PxUnregistered { function: 0 },
         PxPoolUnderflow,
+        PxTreeFull,
         DuplicateContract,
     ];
     for e in stateless {
@@ -759,8 +764,8 @@ fn every_error_variant_is_classified() {
         assert!(!e.is_stateless(), "{e:?}");
     }
     // `is_stateless` is an exhaustive match, so a new variant cannot compile
-    // unclassified; these lists cover all 36 variants.
-    assert_eq!(stateless.len() + contextual.len(), 36);
+    // unclassified; these lists cover all 37 variants.
+    assert_eq!(stateless.len() + contextual.len(), 37);
 }
 
 // ------------------------------------------------------------------ differential validity

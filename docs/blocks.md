@@ -96,7 +96,9 @@ A block `B` at height `h` with parent `P` is valid iff all of the following hold
    `BlockContext { height: h, reward: reward(h), tx_root: B.header.tx_root }`
    (transactions.md §8, rules T, C and B1–B7);
 4. with block weight limit `MAX_BLOCK_WEIGHT = 600 000` and
-   `FEE_PER_WEIGHT = 20 atomic units` (transactions.md §8.4);
+   `FEE_PER_WEIGHT = 20 atomic units` (transactions.md §8.4); the v1 part of a PX or
+   deploy transaction with `n > 0` inputs weighs `max_weight(n, k)` against it
+   (transactions.md B6, R12-2);
 5. its PX and deploy transactions satisfy px.md §11.3 (PX1–PX5, the pool stays ≥ 0 in
    block order, contract ids unique) and fit the 8 MiB PX budget.
 
@@ -125,6 +127,15 @@ The transaction state is:
 - the PX state (px.md §5): commitment tree, root window, nullifier set, containment
   pool, the contract registry, and the logs wallets download. Every block's changes
   have an exact undo.
+
+Applying a block (`MemoryChain::apply_block`) is atomic and returns an error instead of
+panicking; block validation rejects every block that would fail to apply (for example
+B8, the PX tree capacity). A block that passed validation and still fails to apply is
+therefore a bug in this node: the manager halts (`ChainManager::halted`), logs the
+block, does **not** mark it invalid, connects nothing more and refuses every further
+block (`SubmitError::Halted`), and the node stops. A restart replays the store and tries
+the block again (docs/reviews/v3-consensus-changes.md#tree-capacity; dossier 48 F48-5:
+never auto-invalidate).
 
 There is no set of used one-time keys: output one-time keys may repeat across
 transactions (transactions.md §8.2; removed for the v3 genesis,
@@ -209,8 +220,8 @@ Transactions from disconnected blocks return to the mempool if they are still va
   - Their proofs are not re-verified when the pool is revalidated, nor when a block
     containing them is validated: a sound cache, because the transaction id commits to
     the proof (`validate_block_transactions_cached`).
-  - Templates add them in fee-per-byte order within the PX budget, simulating the pool
-    so that it never goes negative.
+  - Templates add PX transactions first, in fee-per-byte order within the PX budget,
+    simulating the pool so that it never goes negative.
 - It holds at most `MEMPOOL_MAX_BYTES = 50 MB`. When a class is full, a new transaction
   is accepted only by evicting **strictly** cheaper entries of its class (fee per
   weight, or per byte for PX), cheapest and then newest first.
@@ -220,10 +231,43 @@ Transactions from disconnected blocks return to the mempool if they are still va
     transaction was refused in the end.
   - One sort per admission, not one scan per victim: a flood of small entries cannot
     make admission quadratic (`eviction_under_a_flood_stays_fast`).
-- **Block templates** take transactions by descending fee per weight, up to
-  `MAX_BLOCK_WEIGHT − COINBASE_RESERVE` with `COINBASE_RESERVE = 3 000`.
+- **Block templates** charge every transaction against the weight budget
+  `MAX_BLOCK_WEIGHT − COINBASE_RESERVE` (`COINBASE_RESERVE = 3 000`), including the v1
+  part of PX and deploy transactions (R12-2), and PX and deploy transactions also
+  against the PX budget and deploys against the deploy sub-budget, so a template never
+  breaks B6. Order: PX transactions first (their fee is uniform; v1 congestion cannot
+  keep one with v1 inputs out), then transfers and deploys by descending fee per weight
+  (one unit for both; no fee per byte is compared with a fee per weight). Tested with
+  randomized pools of every kind (`templates_respect_both_budgets_for_every_kind`).
+- **Expiry** (`MEMPOOL_EXPIRY_BLOCKS = 2 160`, about 3 days at 120 s, Monero's pool
+  lifetime). A transaction leaves the pool once the next block's height reaches the
+  height it was admitted for plus 2 160, whatever its kind, deploys included (one value
+  for every kind, so the expiry tells no kinds apart; PX transactions leave earlier when
+  their anchor leaves the 100-block root window). It is counted from this node's
+  admission height: there is no expiry field in transactions (a per-wallet value would
+  fingerprint the wallet; Zcash's ZIP 203 field is rejected for that reason).
+  - **Recently-expired guard** (`RECENTLY_EXPIRED_BLOCKS = 30`). For 30 blocks after
+    expiring a transaction, the node refuses that transaction (by id) on `/tx`, on
+    relay and on the stem, with `MempoolError::Expired`, and does not stem or relay it
+    (no peer is penalized: the transaction may be valid). Honest nodes admitted it
+    within seconds of each other, so they expire it within the same few blocks; while
+    any of them still pools it, none re-injects it. Without the guard, a wallet
+    resubmitting its pending transaction at the block its own node expires it would
+    re-stem it to a peer that still pools it, marking the node as the origin (dossier
+    38 §3.4; Monero's `m_timed_out_transactions`). Another transaction spending the
+    same inputs is not refused by the guard.
+  - After a reorganization to a lower height, expiry and the guard count against the
+    new height: nothing expires early, and the guard lasts longer, never shorter.
+  - A transaction returned by a disconnected block is pooled again even inside the
+    guard window, with a fresh admission height (`Mempool::readmit`): it was on the
+    best chain, so this is no re-injection by its origin.
+  - Tested: `chain/src/mempool.rs` unit tests (expiry at exactly 2 160 for every kind,
+    the guard window at both ends, reorganizations) and
+    `chain/tests/mempool_expiry.rs` (through the chain manager, with a real transfer:
+    expiry, `Expired` on the fluff and stem paths, and the return by a reorganization).
 - After every change of the connected chain, the pool:
   - removes confirmed transactions and every pooled transaction conflicting with them;
+  - expires transactions pooled for 2 160 blocks (above);
   - re-adds transactions from disconnected blocks;
   - re-validates against the new tip, dropping what no longer validates:
     - **after a reorganization** (any block disconnected), every rule except PX proofs,
@@ -248,8 +292,9 @@ Transactions from disconnected blocks return to the mempool if they are still va
   - Tested: two nodes, one with the transactions pooled and one without, reach the same
     state from the same block, and both reject a tampered copy
     (`mempool_contents_never_change_a_blocks_verdict`).
-- **Not implemented:** expiry of old entries; per-peer or per-source limits beyond the
-  byte caps and the P2P rate limits.
+- **Not implemented:** per-peer or per-source limits beyond the byte caps and the P2P
+  rate limits; pool re-announcement with backoff and the wallet-side rebroadcast
+  redesign (dossier 38 W4, W4n; owners 33/30 and 38).
 
 ## 8. Storage (node)
 

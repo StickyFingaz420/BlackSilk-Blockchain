@@ -76,6 +76,9 @@ impl ChainManager {
                 "the block store failed; no block is accepted until the node restarts",
             )));
         }
+        if self.apply_failed.is_some() {
+            return Err(SubmitError::Halted);
+        }
         let id = block.id(self.params.network_id);
         if self.headers.header(&id).is_some() {
             if self.bodies.contains_key(&id) || id == self.params.genesis_id() {
@@ -382,5 +385,60 @@ mod tests {
         assert!(stops >= 2, "the drain was interrupted ({stops})");
         same_chain(&full, &bounded);
         assert_eq!(bounded.deepest_reorg(), 10);
+    }
+
+    /// A block that passes validation but fails to apply (injected fault:
+    /// validation rejects every block that would really fail) halts the
+    /// manager. It is not marked invalid and not connected; every further
+    /// block is refused with `Halted`; `halted()` names it. After a restart
+    /// the stored block is replayed and connects.
+    #[test]
+    fn an_apply_failure_after_validation_halts_without_invalidating() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.dat");
+        let open_file = || {
+            let p = ChainParams::regtest();
+            ChainManager::open(
+                p.clone(),
+                TxRules::for_chain(&p),
+                Arc::new(ZeroPow),
+                Box::new(crate::store::FileStore::open(&path).unwrap()),
+                [3; 32],
+            )
+        };
+        let mut src = open();
+        let genesis = src.tip_id();
+        let blocks = branch(&mut src, genesis, 3, 1);
+        let ids: Vec<Hash> = blocks
+            .iter()
+            .map(|b| b.id(src.params().network_id))
+            .collect();
+
+        let mut m = open_file().unwrap();
+        m.submit_block(blocks[0].clone(), NOW).unwrap();
+        assert!(m.halted().is_none());
+        m.state.fail_next_apply_for_tests();
+        let s = m.submit_block(blocks[1].clone(), NOW).unwrap();
+        assert!(!s.on_best_chain, "not connected");
+        assert_eq!(m.height(), 1);
+        assert!(m.invalid.is_empty(), "never marked invalid");
+        assert_eq!(m.headers.is_valid(&ids[1]), Some(true));
+        let reason = m.halted().expect("halted");
+        assert!(reason.contains(&hex(&ids[1])), "{reason}");
+        assert!(matches!(
+            m.submit_block(blocks[2].clone(), NOW),
+            Err(SubmitError::Halted)
+        ));
+        assert_eq!(m.height(), 1);
+        drop(m);
+
+        // Restart: the store holds blocks 1 and 2 (block 3 was refused);
+        // replay applies block 2 this time.
+        let mut m = open_file().unwrap();
+        assert!(m.halted().is_none());
+        assert_eq!(m.height(), 2);
+        assert_eq!(m.tip_id(), ids[1]);
+        m.submit_block(blocks[2].clone(), NOW).unwrap();
+        assert_eq!(m.height(), 3);
     }
 }

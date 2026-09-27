@@ -551,7 +551,7 @@ The rules are listed in evaluation order: cheap checks first, elliptic-curve wor
 | T5 | Each input has exactly 16 ring indices, strictly increasing, with no `u64` overflow. |
 | T6 | Every `O` and `R` decodes and is not the identity. Every `Cm` decodes. `O`s are strictly increasing, so the one-time keys of a transaction are distinct (the only one-time-key uniqueness rule: keys may repeat across transactions, §8.2). |
 | T7 | Exactly `n` pseudo-outputs; each decodes. |
-| T8 | `fee ≥ min_fee(weight)`; fee arithmetic is checked and never overflows (§8.4). |
+| T8 | `fee = standard_fee(n, k) = min_fee(max_weight(n, k))` **exactly**, for `n` inputs and `k` outputs (§8.4; `FeeNotExact`). Since `max_weight(n, k) ≥ weight`, this implies `fee ≥ min_fee(weight)`. Fee arithmetic is checked and never overflows. Testnet v3 rule set (reviews/v3-consensus-changes.md#exact-v1-fee). |
 | T9 | Balance: `Σ C'_k − Σ Cm_j − fee·H = identity`. |
 | T10 | BP+: length matches `k`, all elements decode, all scalars canonical, proof verifies (§7). |
 | T11 | Exactly `n` CLSAGs; all scalars canonical, all `D` decode and are not the identity (a signature with `z = 0`, so `C' = Cr[π]`, which would reveal the real input; Monero's "bad auxiliary key image" rule). |
@@ -592,8 +592,9 @@ Monero's ledger model (no output-key rule at all) plus Carrot's within-transacti
 | B3 | `Σ coinbase amounts = block_reward(height) + Σ fees`, exactly (u128 arithmetic). Under-claiming is invalid, so the supply is exactly computable [Δ Monero, which allows ≤]. |
 | B4 | Key images are unique within the block (C2 applied in order), and so are PX nullifiers (PX2) and contract ids. One-time keys may repeat across the block's transactions (§8.2). |
 | B5 | `tx_root` equals the Merkle root of the `tx_hash`es in block order (consensus.md §7). |
-| B6 | Block weight ≤ block weight limit (economics spec). PX and deploy transactions have weight 0 and count instead against a separate budget: their encoded bytes sum to at most `MAX_PX_BLOCK_BYTES = 8 MiB` (px.md §11.5), and the deploys' bytes to at most `MAX_DEPLOY_BLOCK_BYTES = 1 MiB` of it (testnet v3). |
+| B6 | Block weight ≤ block weight limit (economics spec). A PX or deploy transaction with `n > 0` v1 inputs and `k` hidden outputs weighs `max_weight(n, k)` (§8.4), the weight bound of its v1 part, so its CLSAGs are paid in the same meter as a transfer's; without v1 inputs it weighs 0 (testnet v3, reviews/v3-consensus-changes.md#r12-2). PX and deploy transactions also count, in full, against a separate budget: their encoded bytes sum to at most `MAX_PX_BLOCK_BYTES = 8 MiB` (px.md §11.5), and the deploys' bytes to at most `MAX_DEPLOY_BLOCK_BYTES = 1 MiB` of it (testnet v3). A valid block therefore holds at most ⌊600 000 / 656⌋ = 914 v1 inputs of all kinds. |
 | B7 | Coinbase structure: 1–16 outputs, no identity `O` or `R`, outputs strictly sorted (so its one-time keys are distinct; they may repeat keys of other transactions or the chain, §8.2). |
+| B8 | PX tree capacity: the block's PX output commitments, one leaf each, fit in the PX commitment tree (`size + leaves ≤ 2^32`, px.md §5; `BlockError::PxTreeFull`). Testnet v3 (reviews/v3-consensus-changes.md#tree-capacity). Validation is a superset of every condition under which applying a block fails, so a valid block always applies. |
 
 **Evaluation order of block validation** (`validate_block_transactions_cached`; policy,
 not consensus: every rule is a pure check, so the order decides only which error an
@@ -603,7 +604,7 @@ invalid block reports and how much work precedes it, never the verdict):
 |---|---|---|
 | 1 | B1, B2, B7 (coinbase) | trivial |
 | 2 | Per-transaction structure: T1, T3–T8, T10 shape, T11 (including `D ≠ identity`), PX and deploy structure | cheap |
-| 3 | B5, B6, B3 | hashing, sums |
+| 3 | B5, B6, B8, B3 | hashing, sums |
 | 4 | T9 balances (every kind) | one multi-scalar sum per transaction |
 | 5 | PX proofs decoded strictly (PX5, first step), unless already verified by this node | a few ms per proof |
 | 6 | C2, PX1–PX4, contract ids, in block order; then each decoded PX proof's table shape against its statement (PX5, second step) | lookups |
@@ -622,9 +623,26 @@ bp_clawback = 0                                                  if M ≤ 2
             = (320·M − bp_size) · 4 / 5                          otherwise
 weight      = tx_size + bp_clawback
 min_fee(w)  = w · FEE_PER_WEIGHT                                  (constant: economics spec)
+
+max_weight(n, k) = weight of a transfer with n inputs and k outputs whose every
+                   varint (version, counts, the 16 ring entries per input, fee)
+                   takes its 10-byte maximum, with bp_size = 0 and M = 1 when k = 0
+standard_fee(n, k) = min_fee(max_weight(n, k))                    (T8: the exact fee)
 ```
 
 - 320 bytes is half the size of a 2-output proof.
+- **Exact fee (T8).** Every transfer pays exactly `standard_fee(n, k)`, a function of
+  its public shape alone, as PX and deploy fees already are (px.md §11.3). A fee that
+  depends on the wallet (a third-party wallet's own rounding, a "priority" multiple, a
+  buggy fee computation) would otherwise single out that wallet and, through the change
+  output, its later real inputs (Monero's non-standard-fee clusters; dossier 38 §3.7).
+  There is no priority fee; congestion is handled by mempool policy (§8.5). The rule
+  is `TxRules::standard_fee` (tx/src/params.rs), so a later epoch could allow fee
+  tiers there. `max_weight` is pinned for every shape (`n = 1..64`, `k = 0..16`) in
+  `tx/tests/data/max_weight.txt`, generated by the independent
+  `tools/vectors/max_weight.py`; for example `max_weight(1, 2) = 1 723`, so a
+  1-input, 2-output transfer pays 34 460 atomic units. A property test checks
+  `max_weight(n, k) ≥ weight` for every valid shape (`tx/tests/max_weight_vectors.rs`).
 - The clawback charges aggregated proofs for their verification cost, which is linear in
   `M`, rather than for their logarithmic size. This is Monero's formula.
 - Fees are plain `u64`. Sums of fees use `u128`.
@@ -646,6 +664,8 @@ min_fee(w)  = w · FEE_PER_WEIGHT                                  (constant: ec
   invalid transaction gets, never whether a transaction or block is valid. The
   classification of every error is documented on `TxError::is_stateless`.
 - On reorg, disconnected transactions return to the mempool if still valid.
+- A pooled transaction expires 2 160 blocks after the height it was admitted for, and
+  the node then refuses it again for 30 blocks (`Expired`); blocks.md §7.
 
 ---
 
@@ -811,7 +831,7 @@ Security relies on the following. Nothing else is assumed.
 | Decoy selection bias, e.g. "newest member is real" | Wallets **must** use Monero's gamma-distribution decoy selection, over output age measured in blocks × `T`. The 10-block spendable age removes the most identifiable newest outputs. Not enforceable by consensus. |
 | Eve–Alice–Eve (an adversary sends to and later receives from the victim) | Inherent to ring signatures: the adversary knows the ring member it created. Mitigated only by larger anonymity sets (§11.7). |
 | Wallet fingerprinting via `extra`, `unlock_time`, payment IDs, output order, extra tx keys | Removed by format (§4.1, §5.2, §2.2). |
-| Fee fingerprinting | Wallets must pay the *standard fee* `min_fee(max_weight(n_in, n_out))` (`tx::builder::standard_fee`), so equal shapes pay equal fees. Not consensus. |
+| Fee fingerprinting | Removed by consensus: every fee is a function of public data. A transfer pays exactly the *standard fee* `min_fee(max_weight(n_in, n_out))` (T8, §8.4), a PX transaction exactly `PX_STANDARD_FEE`, a deploy exactly its shape and payload fee (px.md §11.3). Equal shapes pay equal fees, and no fee carries timing or wallet information. |
 | Input/output count fingerprinting | Wallets should default to 2 outputs; consolidation transactions remain visible. |
 | Timing and IP correlation | P2P layer (Dandelion++; outbound Tor for the node; no I2P). Out of scope here. |
 

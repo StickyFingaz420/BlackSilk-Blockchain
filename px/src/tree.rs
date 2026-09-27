@@ -7,8 +7,10 @@
 //! - [`Tree`]: every node, for wallets and tests; it also produces
 //!   authentication paths.
 //!
-//! Both compute the same root; a test checks it for every size up to 300 and
-//! for sparse sizes near powers of two.
+//! Both compute the same root; tests check it for every size up to 300
+//! (including 255 and 256), for trees of equal leaves up to 300, and, for
+//! the frontier, at capacity: the append that fills the tree keeps the full
+//! root (`the_last_append_keeps_the_full_root`).
 
 use blacksilk_px_core::hash::node;
 use blacksilk_px_core::kernel::TREE_DEPTH;
@@ -35,6 +37,11 @@ pub fn empty_roots<P: Permutation>(perm: &mut P) -> [Digest; TREE_DEPTH + 1] {
 pub struct Frontier {
     size: u64,
     branch: [Digest; TREE_DEPTH],
+    /// The root of the full tree, kept by the append that filled it
+    /// (`size == CAPACITY`). `root` cannot fold it from `branch`: every bit
+    /// of `CAPACITY` below `TREE_DEPTH` is 0, so the fold would give the
+    /// empty tree's root (dossier 21 F21-1, fix 21-D). `None` below capacity.
+    full_root: Option<Digest>,
 }
 
 impl Default for Frontier {
@@ -42,6 +49,7 @@ impl Default for Frontier {
         Frontier {
             size: 0,
             branch: [ZERO_DIGEST; TREE_DEPTH],
+            full_root: None,
         }
     }
 }
@@ -65,11 +73,41 @@ impl Frontier {
             }
             cur = node(perm, &self.branch[h], &cur);
         }
+        if pos == CAPACITY - 1 {
+            // Every bit of `pos` was 1: the loop folded the whole path, and
+            // `cur` is the root of the now full tree.
+            self.full_root = Some(cur);
+        }
         self.size += 1;
         Ok(pos)
     }
 
+    /// A frontier of `size` leaves that are all equal to `leaf` (tests only:
+    /// a tree near [`CAPACITY`] cannot be built by appending). Every
+    /// complete subtree of height `h` of such a tree has the same root
+    /// `full[h]`, so `branch[h] = full[h]` at every height.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn uniform_for_tests<P: Permutation>(perm: &mut P, leaf: Digest, size: u64) -> Self {
+        assert!(size <= CAPACITY);
+        let mut branch = [ZERO_DIGEST; TREE_DEPTH];
+        let mut cur = leaf;
+        for b in branch.iter_mut() {
+            *b = cur;
+            cur = node(perm, &cur, &cur);
+        }
+        Frontier {
+            size,
+            branch,
+            // `cur` is now the root of the full tree of equal leaves.
+            full_root: (size == CAPACITY).then_some(cur),
+        }
+    }
+
     pub fn root<P: Permutation>(&self, perm: &mut P, empty: &[Digest; TREE_DEPTH + 1]) -> Digest {
+        if let Some(full) = self.full_root {
+            return full;
+        }
         let mut cur = ZERO_DIGEST;
         for (h, e) in empty.iter().enumerate().take(TREE_DEPTH) {
             cur = if (self.size >> h) & 1 == 1 {
@@ -212,5 +250,68 @@ mod tests {
             }
         }
         assert_eq!(t.path(300), None);
+    }
+
+    /// `full[h]`: the root of a complete subtree of height `h` whose leaves
+    /// all equal `l`.
+    fn uniform_roots(perm: &mut HostPerm, l: Digest) -> [Digest; TREE_DEPTH + 1] {
+        let mut full = [l; TREE_DEPTH + 1];
+        for h in 0..TREE_DEPTH {
+            full[h + 1] = node(perm, &full[h], &full[h]);
+        }
+        full
+    }
+
+    /// The test-only uniform frontier is the frontier of `size` equal leaves:
+    /// it agrees with the full tree built by appending them, at every size up
+    /// to 300, and keeps agreeing after further appends.
+    #[test]
+    fn a_uniform_frontier_matches_the_tree_of_equal_leaves() {
+        let mut perm = HostPerm::new();
+        let empty = empty_roots(&mut perm);
+        let l = leaf(5);
+        let mut t = Tree::new(&mut perm);
+        for size in 0..300u64 {
+            let mut f = Frontier::uniform_for_tests(&mut perm, l, size);
+            assert_eq!(f.size(), size);
+            assert_eq!(f.root(&mut perm, &empty), t.root(), "size {size}");
+            let mut t2 = t.clone();
+            f.append(&mut perm, leaf(9)).unwrap();
+            t2.append(&mut perm, leaf(9)).unwrap();
+            assert_eq!(f.root(&mut perm, &empty), t2.root(), "size {size} + 1");
+            t.append(&mut perm, l).unwrap();
+        }
+    }
+
+    /// 21-D (dossier 21 F21-1): the append that fills the tree keeps the full
+    /// root. Before the fix, `root()` at `size == CAPACITY` folded the
+    /// all-zero size bits and returned the empty tree's root. After that
+    /// append, the tree is full.
+    #[test]
+    fn the_last_append_keeps_the_full_root() {
+        let mut perm = HostPerm::new();
+        let empty = empty_roots(&mut perm);
+        let l = leaf(3);
+        let full = uniform_roots(&mut perm, l);
+        let mut f = Frontier::uniform_for_tests(&mut perm, l, CAPACITY - 2);
+        assert_eq!(f.append(&mut perm, l), Ok(CAPACITY - 2));
+        assert_ne!(f.root(&mut perm, &empty), full[TREE_DEPTH]);
+        assert_eq!(f.append(&mut perm, l), Ok(CAPACITY - 1));
+        assert_eq!(f.size(), CAPACITY);
+        let root = f.root(&mut perm, &empty);
+        assert_ne!(root, empty[TREE_DEPTH], "not the empty tree's root");
+        assert_eq!(root, full[TREE_DEPTH]);
+        assert_eq!(f.append(&mut perm, l), Err(TreeFull));
+        assert_eq!(f.root(&mut perm, &empty), full[TREE_DEPTH], "unchanged");
+        // The last leaf differs from the others: the root is its path's fold.
+        let mut g = Frontier::uniform_for_tests(&mut perm, l, CAPACITY - 1);
+        let last = leaf(4);
+        g.append(&mut perm, last).unwrap();
+        let mut path = [ZERO_DIGEST; TREE_DEPTH];
+        path.copy_from_slice(&full[..TREE_DEPTH]);
+        assert_eq!(
+            g.root(&mut perm, &empty),
+            root_from_path(&mut perm, last, CAPACITY - 1, &path)
+        );
     }
 }

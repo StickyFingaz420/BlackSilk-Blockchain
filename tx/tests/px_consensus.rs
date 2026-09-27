@@ -359,7 +359,7 @@ fn private_payments_through_consensus() {
         &mut net.rng,
     )
     .expect("the undone block is valid again");
-    net.chain.apply_block(&all2);
+    net.chain.apply_block(&all2).unwrap();
     assert_eq!((net.chain.px().root(), net.chain.px_pool()), (root, pool));
 }
 
@@ -476,7 +476,7 @@ fn a_private_contract_is_deployed_and_used_through_consensus() {
     assert!(net.chain.undo_block());
     assert!(!net.chain.px_contract_exists(&contract));
     assert_eq!(net.chain.px_contract_log().len(), log_len - 1);
-    net.chain.apply_block(&deploy_block);
+    net.chain.apply_block(&deploy_block).unwrap();
     assert_eq!(
         net.chain.px_contract_log().last(),
         Some(&(deploy_height, contract))

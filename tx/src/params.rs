@@ -1,6 +1,7 @@
 //! Consensus constants of the transaction layer (spec §4, §5.3, §8).
 
 use blacksilk_consensus::ChainParams;
+use blacksilk_crypto::bulletproofs_plus as bpp;
 
 pub use blacksilk_crypto::clsag::RING_SIZE;
 
@@ -71,6 +72,37 @@ pub const COINBASE_MATURITY: u64 = 60;
 pub const FEE_PER_WEIGHT: u64 = 20;
 /// Block weight limit (v1 fixed value, docs/blocks.md §5); a dynamic limit is future work.
 pub const MAX_BLOCK_WEIGHT: u64 = 600_000;
+
+/// The weight of a transfer with `inputs` inputs and `outputs` outputs with
+/// every varint at its 10-byte maximum (docs/transactions.md §8.4): an upper
+/// bound on the weight of every transfer of that shape.
+///
+/// A consensus function: it defines the exact v1 fee (T8,
+/// [`TxRules::standard_fee`]) and the v1 part of the exact deploy fee
+/// (`px::deploy_fee`). `outputs = 0` (the v1 part of a PX transaction without
+/// hidden outputs) has no range proof. Golden values for every shape:
+/// `tx/tests/data/max_weight.txt`, from the independent
+/// `tools/vectors/max_weight.py`.
+pub fn max_weight(inputs: usize, outputs: usize) -> u64 {
+    let varint_max = 10u64;
+    let n = inputs as u64;
+    let k = outputs as u64;
+    let prefix = varint_max
+        + 1
+        + varint_max
+        + n * (32 + RING_SIZE as u64 * varint_max)
+        + varint_max
+        + k * (32 + 32 + 1 + 32 + 8 + 16)
+        + varint_max;
+    let bp = bpp::proof_len(outputs).unwrap_or(0) as u64;
+    let size = prefix + 32 * n + bp + n * blacksilk_crypto::clsag::CLSAG_BYTES as u64;
+    let m = outputs.next_power_of_two() as u64;
+    if m <= 2 {
+        size
+    } else {
+        size + (320 * m).saturating_sub(bp) * 4 / 5
+    }
+}
 
 /// The PX verifiers this crate implements (`consensus::schedule::Epoch::verifier_id`).
 pub const SUPPORTED_VERIFIERS: &[u32] = &[blacksilk_consensus::schedule::VERIFIER_PX_1];
@@ -159,5 +191,18 @@ impl TxRules {
     /// `min_fee(w) = w · FEE_PER_WEIGHT`; `None` on overflow (no fee can pay it).
     pub fn min_fee(&self, weight: u64) -> Option<u64> {
         weight.checked_mul(self.fee_per_weight)
+    }
+
+    /// The fee a transfer with `inputs` inputs and `outputs` outputs pays,
+    /// exactly (T8, docs/transactions.md §8.4): `min_fee(max_weight(inputs,
+    /// outputs))`. Also the v1 part of the exact deploy fee. `None` on
+    /// overflow.
+    ///
+    /// The one place the v1 fee rule is defined: an epoch that allows fee
+    /// tiers later (R-FEE1) changes it here, per `TxRules`, and validation,
+    /// wallets and deploys follow (reviews/v3-consensus-changes.md
+    /// #exact-v1-fee).
+    pub fn standard_fee(&self, inputs: usize, outputs: usize) -> Option<u64> {
+        self.min_fee(max_weight(inputs, outputs))
     }
 }

@@ -75,6 +75,9 @@ impl ChainView for Counting<'_> {
     fn px_contract_exists(&self, c: &Digest) -> bool {
         self.inner.px_contract_exists(c)
     }
+    fn px_tree_size(&self) -> u64 {
+        self.inner.px_tree_size()
+    }
 }
 
 /// A PX transaction spending the miner's output `real` into the PX pool

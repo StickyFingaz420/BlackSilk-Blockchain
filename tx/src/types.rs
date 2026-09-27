@@ -379,6 +379,17 @@ impl Coinbase {
     }
 }
 
+/// The block weight of the v1 part of a PX or deploy transaction with
+/// `inputs` v1 inputs and `outputs` hidden outputs: `max_weight(inputs,
+/// outputs)`, or 0 without inputs ([`Transaction::weight`]).
+fn v1_part_weight(inputs: usize, outputs: usize) -> u64 {
+    if inputs == 0 {
+        0
+    } else {
+        crate::params::max_weight(inputs, outputs)
+    }
+}
+
 impl Transaction {
     /// Strict decoding (rule T1): size limit, version, kind, bounded counts,
     /// canonical points/scalars/varints, well-formed rings, no trailing bytes.
@@ -447,13 +458,20 @@ impl Transaction {
         h32(tags::TX_HASH, &[&prefix, &base, &prunable])
     }
 
-    /// Weight against the v1 block weight limit. PX and deploy transactions
-    /// count against the separate PX byte budget instead ([`Self::px_bytes`]).
+    /// Weight against the block weight limit (B6).
+    ///
+    /// A PX or deploy transaction with `n > 0` v1 inputs and `k` hidden
+    /// outputs weighs `max_weight(n, k)`, the weight bound of a transfer of
+    /// its v1 part's shape: its CLSAGs are paid for in the same meter as a
+    /// transfer's (R12-2 (a′), docs/reviews/v3-consensus-changes.md#r12-2).
+    /// Without v1 inputs it weighs 0. Its encoded bytes also count, in full,
+    /// against the PX byte budget ([`Self::px_bytes`]).
     pub fn weight(&self) -> u64 {
         match self {
             Transaction::Coinbase(c) => c.prefix_bytes().len() as u64,
             Transaction::Transfer(t) => t.weight(),
-            Transaction::Px(_) | Transaction::PxDeploy(_) => 0,
+            Transaction::Px(t) => v1_part_weight(t.inputs.len(), t.outputs.len()),
+            Transaction::PxDeploy(t) => v1_part_weight(t.inputs.len(), t.outputs.len()),
         }
     }
 

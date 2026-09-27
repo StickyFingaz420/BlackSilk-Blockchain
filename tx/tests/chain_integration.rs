@@ -36,7 +36,7 @@ impl Node {
         let params = ChainParams::regtest();
         let mut net = TestNet::new(seed, 0);
         // Genesis: provisional, no transactions (consensus.md §1, tx_root = 0).
-        net.chain.apply_block(&[]);
+        net.chain.apply_block(&[]).unwrap();
         Self {
             headers: HeaderChain::new(params, Arc::new(ZeroPow)),
             bodies: HashMap::new(),
@@ -101,7 +101,7 @@ impl Node {
                     &self.net.rules,
                     &mut self.net.rng,
                 )?;
-                let first = self.net.chain.apply_block(&body);
+                let first = self.net.chain.apply_block(&body).unwrap();
                 let height = h.height;
                 self.net.miner.observe(&body, height, first);
             }

@@ -134,7 +134,16 @@ impl ChainManager {
     /// before. Calling it again continues from the current connected chain
     /// (now a prefix of the target's branch), exactly where the loop stopped.
     /// Returns true once the connected tip is the target.
+    ///
+    /// **Apply failure.** A body that passed validation but fails to apply
+    /// (`MemoryChain::apply_block`; validation is a superset of every apply
+    /// failure, so this is a bug) halts the manager: the block is not marked
+    /// invalid and not connected, nothing is connected any more, and the
+    /// method returns true (`ChainManager::halted`; the node stops).
     pub(super) fn sync_state(&mut self, outcome: &mut SyncOutcome, budget: &mut usize) -> bool {
+        if self.apply_failed.is_some() {
+            return true;
+        }
         let floor = self.work(&self.tip_id());
         loop {
             let target = self.best_complete;
@@ -209,12 +218,23 @@ impl ChainManager {
                     &mut self.rng,
                     &|id| same_rules && mempool.contains(id),
                 ) {
-                    Ok(()) => {
-                        self.state.apply_block(body);
-                        self.connected.push(id);
-                        self.generated.push(generated + reward);
-                        self.mempool.remove_block(body);
-                    }
+                    Ok(()) => match self.state.apply_block(body) {
+                        Ok(_) => {
+                            self.connected.push(id);
+                            self.generated.push(generated + reward);
+                            self.mempool.remove_block(body);
+                        }
+                        Err(e) => {
+                            // Never `invalidate` here: the block is valid by
+                            // the rules; the node is at fault (F48-5).
+                            log::error!(
+                                "block {} at height {h} passed validation but failed to                                  apply ({e:?}); halting without marking it invalid",
+                                hex(&id)
+                            );
+                            self.apply_failed = Some((id, h, format!("{e:?}")));
+                            return true;
+                        }
+                    },
                     Err(e) => {
                         self.invalidate(id, e);
                         break;
@@ -224,8 +244,9 @@ impl ChainManager {
         }
     }
 
-    /// Mempool: returns transactions from disconnected blocks, then drops
-    /// anything no longer valid at the new tip.
+    /// Mempool: expires transactions pooled for `MEMPOOL_EXPIRY_BLOCKS`,
+    /// returns transactions from disconnected blocks, then drops anything no
+    /// longer valid at the new tip.
     ///
     /// When the next block's rules differ from those the pool was validated
     /// under (the tip crossed an activation, in either direction), the pool is
@@ -245,8 +266,16 @@ impl ChainManager {
                 self.params.epoch_at(next).name
             );
         }
+        // Expiry (policy, `MEMPOOL_EXPIRY_BLOCKS` from each admission
+        // height), before the returned transactions come back: those are
+        // pooled with a fresh admission height, even if this node expired
+        // them recently (`Mempool::readmit`).
+        let expired = self.mempool.expire(next);
+        if expired > 0 {
+            log::info!("mempool: {expired} transaction(s) expired at height {next}");
+        }
         for tx in outcome.returned {
-            let _ = self.mempool.add(tx, &self.state, next, &rules);
+            let _ = self.mempool.readmit(tx, &self.state, next, &rules);
         }
         self.mempool
             .revalidate(&self.state, next, &rules, outcome.reorganized);

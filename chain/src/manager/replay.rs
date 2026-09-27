@@ -31,9 +31,12 @@ impl ChainManager {
         let genesis_id = params.genesis_id();
         let genesis_work = headers.work(&genesis_id).expect("genesis");
         let mut state = MemoryChain::new();
-        state.apply_block(&[]); // genesis: empty body (docs/blocks.md §3)
-                                // A store written for another network or genesis is refused before
-                                // any record is read (docs/blocks.md §8).
+        // Genesis: an empty body (docs/blocks.md §3), which always applies.
+        state
+            .apply_block(&[])
+            .map_err(|e| io::Error::other(format!("genesis state: {e:?}")))?;
+        // A store written for another network or genesis is refused before
+        // any record is read (docs/blocks.md §8).
         store.bind(params.network_id, &genesis_id)?;
         let stored = store.load()?;
         let mut manager = Self {
@@ -60,12 +63,20 @@ impl ChainManager {
             deepest_reorg: 0,
             store_failures: 0,
             store_failed: false,
+            apply_failed: None,
             ready: BinaryHeap::new(),
             syncing: None,
             sync_outcome: SyncOutcome::default(),
         };
         let total = stored.len() as u64;
         manager.replay(stored)?;
+        // A stored block that validates but does not apply stops the node at
+        // start-up, as it would live (`halted`); it is not marked invalid.
+        if manager.apply_failed.is_some() {
+            if let Some(reason) = manager.halted() {
+                return Err(io::Error::other(reason));
+            }
+        }
         // Bodies kept from now on are numbered by their index in the store.
         manager.next_body_seq = total;
         Ok(manager)
@@ -177,6 +188,9 @@ impl ChainManager {
             // invalid, and descendants of blocks found invalid.
             Ok(_) | Err(SubmitError::Body(_)) | Err(SubmitError::Duplicate) => Ok(Replayed::Done),
             Err(SubmitError::Header(HeaderError::InvalidParent)) => Ok(Replayed::InvalidParent),
+            Err(SubmitError::Halted) => Err(io::Error::other(
+                self.halted().unwrap_or_else(|| "halted".into()),
+            )),
             Err(e) => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("stored block {i} of {total} rejected on replay: {e:?}"),
@@ -191,5 +205,24 @@ impl ChainManager {
     /// resumes from the last stored block (docs/blocks.md §8).
     pub fn store_failed(&self) -> bool {
         self.store_failed
+    }
+
+    /// Why the node must stop, if it must: the block store failed
+    /// ([`Self::store_failed`]), or applying a block that passed validation
+    /// failed. The latter is a bug (validation rejects every block that
+    /// would fail to apply, docs/blocks.md §6): the block stays valid and
+    /// unconnected, nothing is accepted any more, and the node stops naming
+    /// it. A restart replays the store and tries the block again; it is
+    /// never marked invalid automatically.
+    pub fn halted(&self) -> Option<String> {
+        if let Some((id, height, e)) = &self.apply_failed {
+            return Some(format!(
+                "applying block {} at height {height}, which passed validation, failed: {e}; \
+                 the node stops (the block is not marked invalid; report this, it is a bug)",
+                super::hex(id)
+            ));
+        }
+        self.store_failed
+            .then(|| "the block store failed (see the earlier errors)".to_string())
     }
 }

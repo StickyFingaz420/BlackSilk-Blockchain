@@ -10,7 +10,7 @@
 
 use crate::params::*;
 use crate::types::*;
-use crate::validate::{check_balance, check_range_proof, check_structure, TxError};
+use crate::validate::{check_balance, check_fee, check_range_proof, check_shape, TxError};
 use blacksilk_crypto::bulletproofs_plus::{self as bpp, BppError};
 use blacksilk_crypto::clsag::{self, ClsagError, RingMember};
 use blacksilk_crypto::commitment::commit;
@@ -116,34 +116,15 @@ pub enum BuildError {
     SelfCheck(TxError),
 }
 
-/// Upper bound on the weight of a transfer with this shape (all varints at their
-/// maximum length). Used for the standard fee.
-pub fn max_weight(inputs: usize, outputs: usize) -> u64 {
-    let varint_max = 10u64;
-    let n = inputs as u64;
-    let k = outputs as u64;
-    let prefix = varint_max
-        + 1
-        + varint_max
-        + n * (32 + RING_SIZE as u64 * varint_max)
-        + varint_max
-        + k * (32 + 32 + 1 + 32 + 8 + 16)
-        + varint_max;
-    let bp = bpp::proof_len(outputs).unwrap_or(0) as u64;
-    let size = prefix + 32 * n + bp + n * clsag::CLSAG_BYTES as u64;
-    let m = outputs.next_power_of_two() as u64;
-    if m <= 2 {
-        size
-    } else {
-        size + (320 * m).saturating_sub(bp) * 4 / 5
-    }
-}
+/// Re-exported from [`crate::params`], where the consensus function lives.
+pub use crate::params::max_weight;
 
-/// The standard fee for a shape: `min_fee(max_weight)`. All wallets using it pay
-/// identical fees for identical shapes, which removes fee fingerprinting (spec §11.3).
+/// The standard fee for a shape, which every transfer pays exactly (T8,
+/// [`TxRules::standard_fee`]). All wallets pay identical fees for identical
+/// shapes, so the fee is no fingerprint (spec §11.3).
 pub fn standard_fee(inputs: usize, outputs: usize, rules: &TxRules) -> u64 {
     rules
-        .min_fee(max_weight(inputs, outputs))
+        .standard_fee(inputs, outputs)
         .expect("bounded shapes cannot overflow")
 }
 
@@ -243,8 +224,10 @@ fn make_output(
 /// Builds a signed transfer paying `payments`, with the remainder to `change`.
 ///
 /// A change output is always created, even with amount 0, so every transfer has
-/// at least 2 outputs (spec §8.1 T3). The fee must be at least the minimum for
-/// the resulting weight; [`standard_fee`] always is.
+/// at least 2 outputs (spec §8.1 T3). The fee must be exactly the standard fee
+/// of the shape, [`standard_fee`]`(inputs, payments + 1)` (T8); any other fee
+/// is refused ([`BuildError::SelfCheck`]) before the transaction leaves the
+/// builder.
 pub fn build_transfer<R: RngCore + CryptoRng>(
     keys: &WalletKeys,
     inputs: Vec<InputPlan>,
@@ -255,9 +238,11 @@ pub fn build_transfer<R: RngCore + CryptoRng>(
     rng: &mut R,
 ) -> Result<Transfer, BuildError> {
     let net = rules.domain();
-    build_transfer_signing(keys, inputs, payments, change, fee, rules, rng, &[], &|t| {
+    let tx = build_transfer_signing(keys, inputs, payments, change, fee, rules, rng, &[], &|t| {
         t.signature_message(net)
-    })
+    })?;
+    check_fee(&tx, rules).map_err(BuildError::SelfCheck)?;
+    Ok(tx)
 }
 
 /// As [`build_transfer`], signing `message(tx)` instead of the transfer's
@@ -449,8 +434,9 @@ pub fn build_transfer_signing<R: RngCore + CryptoRng>(
         o.mask.zeroize();
     }
 
-    // Self-check (defence in depth against builder bugs).
-    check_structure(&tx, rules).map_err(BuildError::SelfCheck)?;
+    // Self-check (defence in depth against builder bugs). The fee rule is
+    // the caller's: a transfer's exact fee (`build_transfer`), or a deploy's.
+    check_shape(&tx).map_err(BuildError::SelfCheck)?;
     check_balance(&tx).map_err(BuildError::SelfCheck)?;
     crate::validate::check_ring_signatures(
         &tx.inputs,
