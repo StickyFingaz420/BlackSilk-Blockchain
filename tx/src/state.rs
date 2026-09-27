@@ -42,7 +42,6 @@ pub struct RegisteredFunction {
 pub struct MemoryChain {
     outputs: Vec<OutputRecord>,
     key_images: HashSet<[u8; 32]>,
-    one_time_keys: HashSet<[u8; 32]>,
     blocks: Vec<BlockUndo>,
     px: PxState,
     registry: HashMap<Digest, Vec<RegisteredFunction>>,
@@ -205,7 +204,6 @@ impl MemoryChain {
                 _ => {}
             }
             for key in tx.output_keys() {
-                self.one_time_keys.insert(*key.one_time_key.bytes());
                 self.outputs.push(OutputRecord {
                     key,
                     height,
@@ -235,9 +233,9 @@ impl MemoryChain {
         let Some(undo) = self.blocks.pop() else {
             return false;
         };
-        for rec in self.outputs.drain(undo.first_output..) {
-            self.one_time_keys.remove(rec.key.one_time_key.bytes());
-        }
+        // Outputs are records by global index; one-time keys may repeat
+        // across them (D8 option B), and no key set is kept.
+        self.outputs.truncate(undo.first_output);
         for ki in &undo.key_images {
             self.key_images.remove(ki);
         }
@@ -273,10 +271,6 @@ impl ChainView for MemoryChain {
 
     fn is_key_image_spent(&self, key_image: &Point) -> bool {
         self.key_images.contains(key_image.bytes())
-    }
-
-    fn has_one_time_key(&self, key: &Point) -> bool {
-        self.one_time_keys.contains(key.bytes())
     }
 
     fn px_is_recent_root(&self, anchor: &Digest) -> bool {

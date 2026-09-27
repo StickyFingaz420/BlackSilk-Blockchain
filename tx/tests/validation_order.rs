@@ -85,9 +85,15 @@ mod old {
                 return Err(TxError::KeyImageSpent { input: i });
             }
         }
+        // Adapted for D8 option B (docs/reviews/v3-consensus-changes.md §1):
+        // the chain-wide one-time-key rule C4 is gone from consensus and from
+        // this reference alike (the chain view has no query for it). The
+        // part of it that remains a rule, a repeat within the transaction,
+        // is kept here, reported with the variant that names it today (the
+        // old code returned the removed `DuplicateOneTimeKey`).
         for (j, k) in output_keys.iter().enumerate() {
-            if chain.has_one_time_key(k) || !block_one_time_keys.insert(*k.bytes()) {
-                return Err(TxError::DuplicateOneTimeKey { output: j });
+            if !block_one_time_keys.insert(*k.bytes()) {
+                return Err(TxError::PxDuplicateOutputKey { output: j });
             }
         }
         Ok(())
@@ -270,11 +276,10 @@ mod old {
 }
 
 /// A chain view that counts every query, optionally opens the PX side (any
-/// anchor is recent, the pool is large) and adds one existing one-time key.
+/// anchor is recent, the pool is large).
 struct View<'a> {
     inner: &'a MemoryChain,
     px_open: bool,
-    extra_key: Option<Point>,
     queries: Cell<usize>,
     ring_lookups: Cell<usize>,
 }
@@ -284,7 +289,6 @@ impl<'a> View<'a> {
         Self {
             inner,
             px_open: false,
-            extra_key: None,
             queries: Cell::new(0),
             ring_lookups: Cell::new(0),
         }
@@ -309,10 +313,6 @@ impl ChainView for View<'_> {
     fn is_key_image_spent(&self, k: &Point) -> bool {
         self.tick();
         self.inner.is_key_image_spent(k)
-    }
-    fn has_one_time_key(&self, k: &Point) -> bool {
-        self.tick();
-        Some(*k) == self.extra_key || self.inner.has_one_time_key(k)
     }
     fn px_is_recent_root(&self, a: &Digest) -> bool {
         self.tick();
@@ -537,11 +537,15 @@ fn px_output_and_payout_sharing_a_key_is_stateless() {
         Err(TxError::PxDuplicateOutputKey { output: k })
     );
     assert_eq!(view.queries.get(), 0);
-    // Formerly C4 (contextual), at the same index of `output_keys()`.
+    // Formerly caught only by C4 (contextual, after the chain queries), at
+    // the same index of `output_keys()`; since D8 option B removed C4, this
+    // stateless rule is the only one rejecting the repeat.
+    let old_view = View::px_open(&net.chain);
     assert_eq!(
-        old::validate_px_without_proof(&tx, &View::px_open(&net.chain), net.height(), &net.rules),
-        Err(TxError::DuplicateOneTimeKey { output: k })
+        old::validate_px_without_proof(&tx, &old_view, net.height(), &net.rules),
+        Err(TxError::PxDuplicateOutputKey { output: k })
     );
+    assert!(old_view.queries.get() > 0);
     // Blocks reject it too, now with the stateless error.
     let tx = Transaction::Px(Box::new(tx));
     let txs = vec![net.coinbase(tx.fee()), tx];
@@ -709,7 +713,6 @@ fn every_error_variant_is_classified() {
         RingMemberTooYoung { input: 0, index: 0 },
         KeyImageSpent { input: 0 },
         InvalidSignature { input: 0 },
-        DuplicateOneTimeKey { output: 0 },
         PxUnknownAnchor,
         PxNullifierSpent { index: 0 },
         PxUnregistered { function: 0 },
@@ -723,8 +726,8 @@ fn every_error_variant_is_classified() {
         assert!(!e.is_stateless(), "{e:?}");
     }
     // `is_stateless` is an exhaustive match, so a new variant cannot compile
-    // unclassified; these lists cover all 36 variants.
-    assert_eq!(stateless.len() + contextual.len(), 36);
+    // unclassified; these lists cover all 35 variants.
+    assert_eq!(stateless.len() + contextual.len(), 35);
 }
 
 // ------------------------------------------------------------------ differential validity
@@ -734,7 +737,6 @@ fn every_error_variant_is_classified() {
 enum ViewKind {
     Plain,
     PxOpen,
-    ExtraKey,
 }
 
 struct Entry {
@@ -849,12 +851,6 @@ fn corpus(net: &mut TestNet, seed: u64) -> Vec<Entry> {
         &|x| x.outputs[0].enc_anchor[0] ^= 1,
         Plain,
     );
-    v("existing one-time key (C4)", &|_| {}, ExtraKey);
-    v(
-        "existing one-time key + bad range proof",
-        &|x| x.range_proof.d1 += Scalar::ONE,
-        ExtraKey,
-    );
     let mut t2b = t2.clone();
     t2b.signatures[1].s[0] += Scalar::ONE;
     out.push(entry("2-in second signature bad", t2b, Plain));
@@ -942,19 +938,13 @@ struct Verdicts {
     block_ok: bool,
 }
 
-fn verdicts(net: &mut TestNet, e: &Entry, extra_key: Point) -> Verdicts {
+fn verdicts(net: &mut TestNet, e: &Entry) -> Verdicts {
     let cb = net.coinbase(e.tx.fee());
     let txs = vec![cb, e.tx.clone()];
     let ctx = net.context(&txs);
-    let mk = || {
-        let mut v = match e.view {
-            ViewKind::PxOpen => View::px_open(&net.chain),
-            _ => View::new(&net.chain),
-        };
-        if matches!(e.view, ViewKind::ExtraKey) {
-            v.extra_key = Some(extra_key);
-        }
-        v
+    let mk = || match e.view {
+        ViewKind::PxOpen => View::px_open(&net.chain),
+        ViewKind::Plain => View::new(&net.chain),
     };
     let h = net.height();
     let rules = net.rules;
@@ -989,10 +979,6 @@ fn verdicts(net: &mut TestNet, e: &Entry, extra_key: Point) -> Verdicts {
 fn verdicts_are_unchanged_over_a_corpus_on_two_chain_states() {
     let mut net = TestNet::new(9, 80);
     let entries = corpus(&mut net, 900);
-    let extra_key = match &entries[0].tx {
-        Transaction::Transfer(t) => t.outputs[1].one_time_key,
-        _ => unreachable!(),
-    };
     let mut valid = 0;
     let mut invalid = 0;
     for state in 0..2 {
@@ -1006,7 +992,7 @@ fn verdicts_are_unchanged_over_a_corpus_on_two_chain_states() {
             net.mine(vec![(**t).clone()], &mut []).unwrap();
         }
         for e in &entries {
-            let v = verdicts(&mut net, e, extra_key);
+            let v = verdicts(&mut net, e);
             let new_ok = v.new_err.is_none();
             println!(
                 "state {state} {:<45} new {:<48} old_ok {:<5} block_ok {}",

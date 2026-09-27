@@ -234,6 +234,11 @@ impl Wallet {
             .and_then(|h| cumulative.get(h as usize).copied())
             .unwrap_or(0);
         let index = &self.index;
+        // Eligibility depends on position and maturity only. Outputs sharing
+        // a one-time key with another output (allowed since D8 option B) are
+        // NOT filtered out (dossier 13 F13-7): the wallet cannot tell a copy
+        // from the genuine output, and excluding both would make the genuine
+        // one a never-decoy whose later spend is then identified.
         let eligible = |i: u64| {
             i < usable
                 && index

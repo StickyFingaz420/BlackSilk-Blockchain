@@ -317,56 +317,25 @@ fn c3_signatures() {
     );
 }
 
-struct KeyExists<'a> {
-    inner: &'a blacksilk_tx::state::MemoryChain,
-    key: Point,
-}
-
-impl ChainView for KeyExists<'_> {
-    fn output(&self, i: u64) -> Option<OutputRecord> {
-        self.inner.output(i)
-    }
-    fn is_key_image_spent(&self, k: &Point) -> bool {
-        self.inner.is_key_image_spent(k)
-    }
-    fn has_one_time_key(&self, k: &Point) -> bool {
-        *k == self.key || self.inner.has_one_time_key(k)
-    }
-    fn px_is_recent_root(&self, a: &blacksilk_px_core::Digest) -> bool {
-        self.inner.px_is_recent_root(a)
-    }
-    fn px_nullifier_spent(&self, nf: &blacksilk_px_core::Digest) -> bool {
-        self.inner.px_nullifier_spent(nf)
-    }
-    fn px_pool(&self) -> u128 {
-        self.inner.px_pool()
-    }
-    fn px_function(
-        &self,
-        c: &blacksilk_px_core::Digest,
-        id: &[u8; 32],
-    ) -> Option<(
-        std::sync::Arc<blacksilk_zkvm::Program>,
-        blacksilk_zkvm::air::trace::Budget,
-    )> {
-        self.inner.px_function(c, id)
-    }
-    fn px_contract_exists(&self, c: &blacksilk_px_core::Digest) -> bool {
-        self.inner.px_contract_exists(c)
-    }
-}
-
+/// D8 option B: there is no rule C4 any more. A transfer whose output key
+/// already exists on chain (here a coinbase output carrying it, mined first)
+/// stays valid and is mined; the chain then holds both outputs.
 #[test]
-fn c4_one_time_keys_are_unique() {
-    let (net, tx, _) = setup(16);
-    let view = KeyExists {
-        inner: &net.chain,
-        key: tx.outputs[1].one_time_key,
+fn a_one_time_key_already_on_chain_does_not_invalidate_a_transfer() {
+    let (mut net, tx, _) = setup(16);
+    let key = tx.outputs[1].one_time_key;
+    let Transaction::Coinbase(mut cb) = net.coinbase(0) else {
+        unreachable!()
     };
-    assert_eq!(
-        validate_transfer(&tx, &view, net.height(), &net.rules),
-        Err(TxError::DuplicateOneTimeKey { output: 1 })
-    );
+    cb.outputs[0].one_time_key = key;
+    net.submit(vec![Transaction::Coinbase(cb)], &mut [])
+        .expect("a coinbase copying a pending key is valid");
+    assert_eq!(validate(&net, &tx), Ok(()));
+    net.mine(vec![tx], &mut []).expect("the transfer is mined");
+    let copies = (0..net.chain.output_count())
+        .filter(|&i| net.chain.output(i).unwrap().key.one_time_key == key)
+        .count();
+    assert_eq!(copies, 2);
 }
 
 // ---------------------------------------------------------------- attacks with valid keys
@@ -800,7 +769,6 @@ fn stateless_and_contextual_errors_are_distinguished() {
         TxError::RingMemberTooYoung { input: 0, index: 1 },
         TxError::KeyImageSpent { input: 0 },
         TxError::InvalidSignature { input: 0 },
-        TxError::DuplicateOneTimeKey { output: 0 },
     ] {
         assert!(!e.is_stateless(), "{e:?}");
     }

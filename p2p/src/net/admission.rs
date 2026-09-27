@@ -72,12 +72,12 @@ fn ctx_reject(st: &mut State, id: Hash, tip: Hash) {
 /// 2. the peer's signature budget is charged one token per v1 input (one
 ///    CLSAG verification each), and a PX or deploy transaction its PX share;
 /// 3. a transaction already in the mempool, one that conflicts with a pooled
-///    transaction (same key image, nullifier, contract id or output key; the
+///    transaction (same key image, nullifier or contract id; the
 ///    pool keeps the first seen, so it would be refused after verification),
 ///    or one that failed a contextual rule at the current tip, is dropped
 ///    unverified;
 /// 4. cheap checks: PX structure and balance (stateless), then the contextual
-///    rules an extension can change (key images, one-time keys, PX anchor,
+///    rules an extension can change (key images, PX anchor,
 ///    nullifiers, registry, pool, contract id);
 /// 5. only then the node-wide PX token: transactions that fail the cheap
 ///    checks (e.g. a random PX anchor) never consume it, so they cannot

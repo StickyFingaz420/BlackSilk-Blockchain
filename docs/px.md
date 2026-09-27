@@ -601,7 +601,7 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
 |---|---|
 | Structure | Counts, sorting, identity points, range-proof shape, sizes. PX transactions: fee **exactly** `PX_STANDARD_FEE`. Deploys: fee **exactly** `deploy_fee(n, k, programs) = FEE_PER_WEIGHT × max_weight(n, k) + DEPLOY_FEE_PER_BYTE × payload length` (`DeployFeeNotExact`; v3 candidate, R5-1/R6 TX-4) |
 | Balance | §11.1 (PX); the transfer rule for deploys |
-| C1–C4 | Rings, key images and one-time keys, as for transfers, including payouts |
+| C1–C3 | Rings and key images, as for transfers. One-time keys (hidden outputs and payouts together) are distinct within the transaction (stateless: the sort of each list, and `PxDuplicateOutputKey` between them) but may repeat across transactions and the chain (transactions.md §8.2) |
 | PX1 | The anchor is a root of the last 100 blocks, before this block |
 | PX2 | Nullifiers are unspent and unrepeated across the chain and the block |
 | PX3 | Every called function is a registered program of its contract (registry before this block) |

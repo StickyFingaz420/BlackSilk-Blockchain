@@ -22,7 +22,7 @@
 
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{ChainManager, Template};
-use blacksilk_chain::mempool::{conflict_keys, ConflictKind, Mempool, MempoolError};
+use blacksilk_chain::mempool::{conflict_keys, Mempool};
 use blacksilk_chain::store::{BlockStore, MemoryStore};
 use blacksilk_consensus::merkle::tx_root;
 use blacksilk_consensus::{BlockHeader, ChainParams, Hash, PowFunction, HEADER_VERSION};
@@ -335,12 +335,15 @@ fn forge_with_output_key(
 // ------------------------------------------------------------------ extension
 
 /// A pooled transfer `victim` whose output one-time key is created by a
-/// different, valid transaction `forged` in a newly connected block. The two
-/// share no key image; their only common conflict key is that output key.
-/// Only `revalidate_after_extension` (C4) can notice, and the pool's
-/// extension path drops `victim` without any help from `remove_block`.
+/// different, valid transaction `forged` (the attacker's copy) in a newly
+/// connected block. The two share no key image and no conflict key: output
+/// keys are neither unique on chain nor conflict keys (D8 option B,
+/// docs/reviews/v3-consensus-changes.md §1). Under the former rule C4 the
+/// extension check dropped `victim` here, a front-running veto for one fee;
+/// now it stays valid, on the extension path, in full validation, in both
+/// pools, and it confirms.
 #[test]
-fn an_output_key_created_by_another_transaction_is_caught_by_the_extension_check() {
+fn an_output_key_copied_by_another_mined_transaction_leaves_the_victim_valid() {
     let mut m = open();
     let mut attacker = Miner::new(301);
     let mut miner = Miner::new(302);
@@ -371,21 +374,22 @@ fn an_output_key_created_by_another_transaction_is_caught_by_the_extension_check
     for tx in [&victim, &control, &forged] {
         assert_eq!(validate_mempool_tx(tx, m.state(), next, m.rules()), Ok(()));
     }
-    // `forged` and `victim` share exactly one conflict key: the output key.
+    // `forged` and `victim` share no conflict key: not the key image, and
+    // output keys are not conflict keys.
     let a: HashSet<_> = conflict_keys(&victim).into_iter().collect();
     let b: HashSet<_> = conflict_keys(&forged).into_iter().collect();
-    let shared: Vec<_> = a.intersection(&b).copied().collect();
-    assert_eq!(shared, vec![(ConflictKind::OutputKey, *key.bytes())]);
+    assert!(a.is_disjoint(&b));
+    assert!(out_keys_of(&forged).contains(&key));
     assert!(conflict_keys(&control)
         .iter()
         .all(|k| !b.contains(k) && !a.contains(k)));
 
-    // The manager's pool refuses the forger (first seen wins on output keys).
+    // The manager's pool admits all three.
     m.submit_tx(victim.clone()).unwrap();
     m.submit_tx(control.clone()).unwrap();
-    assert_eq!(m.submit_tx(forged.clone()), Err(MempoolError::Conflict));
+    m.submit_tx(forged.clone()).unwrap();
 
-    // An isolated pool holding both pooled transactions.
+    // An isolated pool holding the victim and the control.
     let mut pool = Mempool::new();
     pool.add(victim.clone(), m.state(), next, m.rules())
         .unwrap();
@@ -399,42 +403,37 @@ fn an_output_key_created_by_another_transaction_is_caught_by_the_extension_check
     assert!(m.submit_block(blk, now).unwrap().on_best_chain);
     let next = m.height() + 1;
 
-    // The extension check changes its verdict for `victim` only.
-    let j = v
-        .outputs
-        .iter()
-        .position(|o| o.one_time_key == key)
-        .unwrap();
-    assert_eq!(
-        revalidate_after_extension(&victim, m.state()),
-        Err(TxError::DuplicateOneTimeKey { output: j })
-    );
-    assert_eq!(revalidate_after_extension(&control, m.state()), Ok(()));
-    // It agrees with full validation.
-    assert_eq!(
-        validate_mempool_tx(&victim, m.state(), next, m.rules()),
-        Err(TxError::DuplicateOneTimeKey { output: j })
-    );
-    assert_eq!(
-        validate_mempool_tx(&control, m.state(), next, m.rules()),
-        Ok(())
-    );
+    // The extension check keeps both, and agrees with full validation.
+    for tx in [&victim, &control] {
+        assert_eq!(revalidate_after_extension(tx, m.state()), Ok(()));
+        assert_eq!(validate_mempool_tx(tx, m.state(), next, m.rules()), Ok(()));
+    }
 
     // The isolated pool: no `remove_block`, only the extension path.
-    assert!(pool.contains(&victim.hash()));
     pool.revalidate(m.state(), next, m.rules(), false);
-    assert!(
-        !pool.contains(&victim.hash()),
-        "dropped by revalidate_after_extension"
-    );
+    assert!(pool.contains(&victim.hash()));
     assert!(pool.contains(&control.hash()));
-    assert_eq!(pool.len(), 1);
+    assert_eq!(pool.len(), 2);
 
-    // The manager's own pool also lost it (there, `remove_block` already
-    // removes it through the shared output-key conflict key, before
-    // `revalidate` runs).
-    assert!(!m.mempool().contains(&victim.hash()));
+    // The manager's own pool (`remove_block`, then `revalidate`) kept them,
+    // and the next block confirms them.
+    assert!(m.mempool().contains(&victim.hash()));
     assert!(m.mempool().contains(&control.hash()));
+    assert_eq!(m.mempool().len(), 2);
+    let t = m.template();
+    assert_eq!(t.txs.len(), 2);
+    let blk = miner.build(&t, t.txs.clone(), None);
+    let now = blk.header.timestamp;
+    assert!(m.submit_block(blk, now).unwrap().on_best_chain);
+    assert!(m.mempool().is_empty());
+    assert!(m.state().is_key_image_spent(&v.inputs[0].key_image));
+    // Alice holds both payments; the copy (an output with her payment's key
+    // but not built for her) is not credited.
+    assert_eq!(scan_all(&m, &alice).len(), 2);
+}
+
+fn out_keys_of(tx: &Transaction) -> Vec<Point> {
+    tx.output_keys().iter().map(|k| k.one_time_key).collect()
 }
 
 /// A plain extension of coinbase-only blocks and of a block with an unrelated

@@ -6,7 +6,7 @@
 //! **Mempool order.** The single-transaction entry points
 //! ([`validate_transfer`], [`validate_deploy`], [`validate_px`]) run every
 //! stateless rule (structure, balance, range proof) before any contextual
-//! one (C1–C4, PX1–PX4). A transaction invalid for a stateless reason is
+//! one (C1–C3, PX1–PX4). A transaction invalid for a stateless reason is
 //! therefore reported with a stateless error ([`TxError::is_stateless`]),
 //! whatever else is wrong with it, and costs no ring resolution or CLSAG
 //! verification. The order changes only *which* error an invalid
@@ -54,7 +54,6 @@ pub struct OutputRecord {
 pub trait ChainView {
     fn output(&self, global_index: u64) -> Option<OutputRecord>;
     fn is_key_image_spent(&self, key_image: &Point) -> bool;
-    fn has_one_time_key(&self, key: &Point) -> bool;
     // ---- PX (docs/px.md §11) ----
     /// Whether `anchor` is one of the recent PX tree roots (root window).
     fn px_is_recent_root(&self, anchor: &Digest) -> bool;
@@ -131,10 +130,6 @@ pub enum TxError {
     InvalidSignature {
         input: usize,
     },
-    /// C4.
-    DuplicateOneTimeKey {
-        output: usize,
-    },
     // ---- PX (docs/px.md §11) ----
     /// PX statement shape (function count, sizes).
     PxShape,
@@ -167,9 +162,10 @@ pub enum TxError {
     /// A deploy's contract id exists already.
     DuplicateContract,
     /// A PX transaction repeats a one-time key between its hidden outputs
-    /// and its payouts (`output` indexes `PxTx::output_keys`). Such a
-    /// transaction also fails C4 on every chain; this variant reports it as
-    /// the stateless fault it is.
+    /// and its payouts (`output` indexes `PxTx::output_keys`). The only rule
+    /// that rejects such a repeat: one-time keys are distinct within every
+    /// transaction, but not across transactions (D8 option B,
+    /// docs/transactions.md §8.1 T6).
     PxDuplicateOutputKey {
         output: usize,
     },
@@ -211,7 +207,7 @@ impl TxError {
     /// | `InputCount`, `OutputCount` | T3 | stateless | counts |
     /// | `KeyImageIdentity`, `KeyImagesNotSorted` | T4 | stateless | the transaction's own key images (also catches a key image repeated within it) |
     /// | `RingNotIncreasing` | T5 | stateless | the ring's index list itself |
-    /// | `OutputKeyIdentity`, `EphemeralIdentity`, `OutputsNotSorted` | T6 | stateless | the transaction's own outputs (also catches a one-time key repeated within a transfer or deploy) |
+    /// | `OutputKeyIdentity`, `EphemeralIdentity`, `OutputsNotSorted` | T6 | stateless | the transaction's own outputs (also catches a one-time key repeated within a transfer, deploy, or a PX transaction's hidden outputs or payouts) |
     /// | `PseudoOutCount` | T7 | stateless | counts |
     /// | `FeeTooLow`, `WeightOverflow` | T8 | stateless | fee vs. weight or size, fixed by the transaction and the network's constant rules |
     /// | `Unbalanced` | T9 | stateless | commitments and amounts in the transaction |
@@ -220,9 +216,8 @@ impl TxError {
     /// | `UnknownRingMember`, `RingMemberTooYoung` | C1 | contextual | the output may exist, or be old enough, on another branch or later |
     /// | `KeyImageSpent` | C2 | contextual | spent on this branch (or earlier in this block), possibly not on another |
     /// | `InvalidSignature` | C3 | contextual | see below |
-    /// | `DuplicateOneTimeKey` | C4 | contextual | the colliding output is on this branch or earlier in this block; repeats within one transaction are caught first by T6 or `PxDuplicateOutputKey` |
     /// | `PxShape`, `PxFeeNotStandard`, `PxInvalidProgram`, `PxBudgetTooLarge`, `DeployFeeNotExact` | PX structure | stateless | the transaction alone |
-    /// | `PxDuplicateOutputKey`, `PxNullifierRepeated`, `PxDuplicateProgram` | PX structure | stateless | a repeat within the transaction |
+    /// | `PxDuplicateOutputKey`, `PxNullifierRepeated`, `PxDuplicateProgram` | PX structure | stateless | a repeat within the transaction (a one-time key shared by a hidden output and a payout) |
     /// | `PxUnknownAnchor` | PX1 | contextual | the root window moves; the anchor may be recent on another branch |
     /// | `PxNullifierSpent` | PX2 | contextual | spent on this branch or earlier in this block |
     /// | `PxUnregistered` | PX3 | contextual | the contract may be deployed on another branch or later |
@@ -274,7 +269,6 @@ impl TxError {
             | TxError::RingMemberTooYoung { .. }
             | TxError::KeyImageSpent { .. }
             | TxError::InvalidSignature { .. }
-            | TxError::DuplicateOneTimeKey { .. }
             | TxError::PxUnknownAnchor
             | TxError::PxNullifierSpent { .. }
             | TxError::PxUnregistered { .. }
@@ -467,41 +461,26 @@ pub fn check_ring_signatures(
     Ok(())
 }
 
-/// C2 and C4 against the chain (and, for blocks, what earlier transactions of the
-/// same block already used).
-fn check_uniqueness(
-    tx: &Transfer,
-    chain: &impl ChainView,
-    block_key_images: &mut HashSet<[u8; 32]>,
-    block_one_time_keys: &mut HashSet<[u8; 32]>,
-) -> Result<(), TxError> {
-    let keys: Vec<Point> = tx.outputs.iter().map(|o| o.one_time_key).collect();
-    check_uniqueness_of(
-        &tx.inputs,
-        &keys,
-        chain,
-        block_key_images,
-        block_one_time_keys,
-    )
-}
-
-fn check_uniqueness_of(
+/// C2 against the chain (and, for blocks, the key images earlier transactions
+/// of the same block already spent).
+///
+/// There is no chain-wide or block-wide rule on output one-time keys (D8
+/// option B, docs/reviews/v3-consensus-changes.md §1): a key is public once
+/// its transaction is relayed, so such a rule let anyone invalidate a pending
+/// transaction by getting a copy of one of its keys mined first. One-time
+/// keys are distinct within each transaction (stateless: T6 and B7 through
+/// the strict sort, `PxDuplicateOutputKey`); wallets credit at most one
+/// output per key image (docs/transactions.md §12.5).
+fn check_key_images(
     inputs: &[Input],
-    output_keys: &[Point],
     chain: &impl ChainView,
     block_key_images: &mut HashSet<[u8; 32]>,
-    block_one_time_keys: &mut HashSet<[u8; 32]>,
 ) -> Result<(), TxError> {
     for (i, input) in inputs.iter().enumerate() {
         if chain.is_key_image_spent(&input.key_image)
             || !block_key_images.insert(*input.key_image.bytes())
         {
             return Err(TxError::KeyImageSpent { input: i });
-        }
-    }
-    for (j, k) in output_keys.iter().enumerate() {
-        if chain.has_one_time_key(k) || !block_one_time_keys.insert(*k.bytes()) {
-            return Err(TxError::DuplicateOneTimeKey { output: j });
         }
     }
     Ok(())
@@ -605,14 +584,7 @@ pub fn validate_px_without_proof(
         }
     }
     // Contextual.
-    let keys: Vec<Point> = tx.output_keys().iter().map(|k| k.one_time_key).collect();
-    check_uniqueness_of(
-        &tx.inputs,
-        &keys,
-        chain,
-        &mut HashSet::new(),
-        &mut HashSet::new(),
-    )?;
+    check_key_images(&tx.inputs, chain, &mut HashSet::new())?;
     check_px_state(tx, chain, &mut HashSet::new())?;
     if chain.px_pool() + (tx.bridge_in as u128) < (tx.bridge_out as u128) {
         return Err(TxError::PxPoolUnderflow);
@@ -640,7 +612,7 @@ pub fn validate_deploy(
     check_balance(&t)?;
     check_range_proof(&t)?;
     // Contextual.
-    check_uniqueness(&t, chain, &mut HashSet::new(), &mut HashSet::new())?;
+    check_key_images(&tx.inputs, chain, &mut HashSet::new())?;
     if chain.px_contract_exists(&tx.contract_id()) {
         return Err(TxError::DuplicateContract);
     }
@@ -666,7 +638,7 @@ pub fn validate_transfer(
     check_balance(tx)?;
     check_range_proof(tx)?;
     // Contextual.
-    check_uniqueness(tx, chain, &mut HashSet::new(), &mut HashSet::new())?;
+    check_key_images(&tx.inputs, chain, &mut HashSet::new())?;
     let rings = resolve_rings(tx, chain, height)?;
     check_signatures(tx, &rings, rules)
 }
@@ -691,7 +663,7 @@ pub fn validate_mempool_tx(
 /// connected, none disconnected) since it last passed [`validate_mempool_tx`].
 ///
 /// Only the rules whose verdict an extension can change are checked:
-/// - C2 key images and C4 one-time keys (a new block may use them);
+/// - C2 key images (a new block may spend them);
 /// - PX1-PX3: the anchor window moves, nullifiers get spent (the registry
 ///   only grows);
 /// - PX4, the pool, which new blocks change;
@@ -702,7 +674,10 @@ pub fn validate_mempool_tx(
 ///   transaction alone;
 /// - ring members resolve to the same outputs, because outputs are only
 ///   appended, so C1 existence and C3 signatures are unchanged;
-/// - C1 maturity only improves as the height grows.
+/// - C1 maturity only improves as the height grows;
+/// - output one-time keys: no rule relates them to the chain (D8 option B),
+///   so a block creating the same key as a pooled transaction changes
+///   nothing.
 ///
 /// After a reorganization, [`validate_mempool_tx`] must be used again. So
 /// must it across an activation: signatures (C3) and the PX proof commit to
@@ -712,18 +687,9 @@ pub fn validate_mempool_tx(
 pub fn revalidate_after_extension(tx: &Transaction, chain: &impl ChainView) -> Result<(), TxError> {
     match tx {
         Transaction::Coinbase(_) => Err(TxError::CoinbaseNotAllowed),
-        Transaction::Transfer(t) => {
-            check_uniqueness(t, chain, &mut HashSet::new(), &mut HashSet::new())
-        }
+        Transaction::Transfer(t) => check_key_images(&t.inputs, chain, &mut HashSet::new()),
         Transaction::Px(t) => {
-            let keys: Vec<Point> = t.output_keys().iter().map(|k| k.one_time_key).collect();
-            check_uniqueness_of(
-                &t.inputs,
-                &keys,
-                chain,
-                &mut HashSet::new(),
-                &mut HashSet::new(),
-            )?;
+            check_key_images(&t.inputs, chain, &mut HashSet::new())?;
             check_px_state(t, chain, &mut HashSet::new())?;
             if chain.px_pool() + (t.bridge_in as u128) < (t.bridge_out as u128) {
                 return Err(TxError::PxPoolUnderflow);
@@ -731,12 +697,7 @@ pub fn revalidate_after_extension(tx: &Transaction, chain: &impl ChainView) -> R
             Ok(())
         }
         Transaction::PxDeploy(t) => {
-            check_uniqueness(
-                &t.as_transfer(),
-                chain,
-                &mut HashSet::new(),
-                &mut HashSet::new(),
-            )?;
+            check_key_images(&t.inputs, chain, &mut HashSet::new())?;
             if chain.px_contract_exists(&t.contract_id()) {
                 return Err(TxError::DuplicateContract);
             }
@@ -842,10 +803,9 @@ pub enum BlockError {
     CoinbaseEphemeralIdentity {
         output: usize,
     },
+    /// Also catches a one-time key repeated within the coinbase (the only
+    /// one-time-key uniqueness rule for coinbases, D8 option B).
     CoinbaseOutputsNotSorted,
-    CoinbaseDuplicateOneTimeKey {
-        output: usize,
-    },
     /// B3.
     CoinbaseAmount {
         claimed: u128,
@@ -858,7 +818,8 @@ pub enum BlockError {
         weight: u128,
         max: u64,
     },
-    /// A transfer broke a T or C rule (B4 duplicates surface here as C2/C4).
+    /// A transaction broke a T, C or PX rule (B4 duplicates surface here as
+    /// C2, PX2 or `DuplicateContract`).
     Tx {
         index: usize,
         error: TxError,
@@ -1024,30 +985,23 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
         })?;
     }
 
-    // C2/C4 with B4 via block-wide sets; PX1–PX4 with block-wide nullifiers
-    // and the pool evolving in block order; unique contract ids.
+    // C2 with B4 via a block-wide set; PX1–PX4 with block-wide nullifiers
+    // and the pool evolving in block order; unique contract ids. Output
+    // one-time keys may repeat across the block's transactions and the chain
+    // (D8 option B; `check_key_images`).
     let mut key_images = HashSet::new();
-    let mut one_time_keys = HashSet::new();
-    for (j, o) in coinbase.outputs.iter().enumerate() {
-        if chain.has_one_time_key(&o.one_time_key) || !one_time_keys.insert(*o.one_time_key.bytes())
-        {
-            return Err(BlockError::CoinbaseDuplicateOneTimeKey { output: j });
-        }
-    }
     let mut nullifiers = HashSet::new();
     let mut contracts = HashSet::new();
     let mut pool = chain.px_pool();
     for (index, tx) in txs.iter().enumerate().skip(1) {
         let err = |error| BlockError::Tx { index, error };
-        let keys: Vec<Point> = tx.output_keys().iter().map(|k| k.one_time_key).collect();
         let inputs: &[Input] = match tx {
             Transaction::Transfer(t) => &t.inputs,
             Transaction::Px(t) => &t.inputs,
             Transaction::PxDeploy(t) => &t.inputs,
             Transaction::Coinbase(_) => unreachable!("checked above"),
         };
-        check_uniqueness_of(inputs, &keys, chain, &mut key_images, &mut one_time_keys)
-            .map_err(err)?;
+        check_key_images(inputs, chain, &mut key_images).map_err(err)?;
         match tx {
             Transaction::Px(t) => {
                 check_px_state(t, chain, &mut nullifiers).map_err(err)?;

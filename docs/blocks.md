@@ -116,11 +116,15 @@ The v1 limits are fixed values; a dynamic block size is future work.
 The transaction state is:
 - the ordered global output set;
 - the set of spent key images;
-- the set of used one-time keys;
 - the running `G`;
 - the PX state (px.md §5): commitment tree, root window, nullifier set, containment
   pool, the contract registry, and the logs wallets download. Every block's changes
   have an exact undo.
+
+There is no set of used one-time keys: output one-time keys may repeat across
+transactions (transactions.md §8.2; removed for the v3 genesis,
+reviews/v3-consensus-changes.md §1). Outputs are records by global index, so two
+outputs with the same key are two records.
 
 It is always the result of applying, in order, the bodies of the connected chain's
 blocks `1..tip`.
@@ -175,29 +179,25 @@ Transactions from disconnected blocks return to the mempool if they are still va
   pooled transaction (first seen wins, whatever the fee; no replacement in v1).
 - **Conflict keys** (`mempool::conflict_keys`), each kind in its own namespace, so equal
   bytes of two kinds never conflict:
-  - key images (C2), PX nullifiers (PX2), deploy contract ids;
-  - **output one-time keys** (C4) of every output the transaction adds to the global
-    output set: transfer and deploy outputs, PX hidden outputs and payouts. The list is
-    `Transaction::output_keys`, the one block validation checks C4 on.
-  - Why output keys: they are chosen by the sender, and C4 requires them to be unique
-    within a block too. Before 2026-09-27 (F1) the pool checked C4 only against the
-    chain. Two valid transactions sharing an output key (an attacker's own, or a copy of
-    a pending honest transaction's key) were both pooled and both selected; every block
-    built from the template was invalid (`DuplicateOneTimeKey`), a chain stall for the
-    cost of two fees that are never paid.
+  - key images (C2), PX nullifiers (PX2), deploy contract ids.
+  - **Output one-time keys are not conflict keys.** Consensus does not require them to
+    be unique across transactions (transactions.md §8.2; the former rule C4 was removed
+    for the v3 genesis, reviews/v3-consensus-changes.md §1). A key is public once its
+    transaction is relayed; under C4 anyone who saw a pending transaction could get a
+    copy of one of its keys mined or pooled first, for one fee, and the victim's
+    transaction was invalid on that branch for good. A first-seen rule on output keys
+    in the pool would keep that veto as policy, so there is none: a copy and its victim
+    are both pooled, both selected, and both valid in one block.
   - A connected block removes every pooled transaction sharing any conflict key with
-    it, its coinbase outputs included.
+    it.
   - Templates skip a transaction sharing a conflict key with one already selected, and
     log it. Admission already prevents it; this only keeps a broken invariant from
     making every template invalid.
-  - Tested with forged, fully valid transactions with chosen output keys, across fees,
-    arrival orders, reorganizations and restarts (`chain/tests/mempool_conflicts.rs`),
-    and with synthetic transactions of every kind plus a randomized invariant test
+  - Tested with forged, fully valid transactions with chosen output keys, including
+    verbatim copies mined before their victim, across fees, arrival orders,
+    reorganizations and restarts (`chain/tests/mempool_conflicts.rs`), and with
+    synthetic transactions of every kind plus a randomized invariant test
     (`mempool.rs` unit tests).
-  - Not prevented, and not a pool matter: whoever sees a pending transaction can get a
-    transaction copying one of its output keys **mined** first (by their own mining,
-    or by reaching most pools first). The victim's transaction is then invalid under
-    C4; its inputs stay unspent and the wallet must rebuild it with new output keys.
 - PX and deploy transactions are validated in full, proof included, on admission. They
   live in a separate class of at most `MEMPOOL_MAX_PX_BYTES = 64 MiB` with the same
   fee-per-byte eviction.
@@ -224,7 +224,7 @@ Transactions from disconnected blocks return to the mempool if they are still va
     - **after a reorganization** (any block disconnected), every rule except PX proofs,
       because ring members may now resolve to different outputs;
     - **after a plain extension**, only the rules an extension can change
-      (`revalidate_after_extension`): key images, one-time keys, the PX anchor window,
+      (`revalidate_after_extension`): key images, the PX anchor window,
       nullifiers, the registry and the pool, and deploy contract ids.
       - Structure, balance and proofs belong to the transaction alone.
       - Outputs are only appended, so rings resolve to the same outputs and signatures
