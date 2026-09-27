@@ -444,6 +444,7 @@ The route list is `blacksilk_node::ROUTES` (`node/src/lib.rs`).
 | POST | `/outputs` | output keys and commitments for up to 1 024 global indices | read | `guard::MAX_OUTPUTS_BODY_BYTES` |
 | GET | `/px/commitments?from=f&limit=l` | a page of PX commitments in tree order (px.md §11.4) | read | none |
 | GET | `/px/contracts?from=f` | contract registrations in block order (at most 1 024 per page) | read | none |
+| GET | `/tx/status?id=<hex>` | `{"status":"pooled"}` (in this node's mempool), `{"status":"confirmed","height":h}` (in a connected block) or `{"status":"unknown"}`. A transaction still in this node's Dandelion++ stem answers `unknown`: the stem state is never reported (F36-11) | read | none |
 
 The PX endpoints are bulk-only: there is no lookup of a single record, contract or ring.
 
@@ -471,8 +472,9 @@ before routing. In order:
    `--rpc-cookie <path>` or the `BLACKSILK_RPC_COOKIE` environment variable
    (`rpc::Client::with_cookie_file`, `with_cookie_option`). Routers built with
    `blacksilk_node::router` or `router_with` (tests, embedded use) have no credential but
-   all other checks. The `blacksilk-node` binary is switched from `router_with` to
-   `serve::run` in a separate change to `node/src/main.rs`.
+   all other checks. The `blacksilk-node` binary serves its RPC only through `serve::run`
+   (`node/tests/node_binary.rs`); extra host names come from `--rpc-allow-host` or
+   `rpc_allow_hosts`.
    - **Unix:** the cookie is created with mode 0600.
    - **Windows:** the cookie inherits its directory's permissions. The default data
      directory is under the user's `%APPDATA%`, readable only by that user and

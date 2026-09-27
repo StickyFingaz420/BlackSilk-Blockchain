@@ -3,7 +3,7 @@
 //! Precedence: command line > configuration file > defaults. Lists (peers,
 //! seeds) from the file and the command line are combined.
 
-use blacksilk_consensus::Network;
+use blacksilk_consensus::{ChainParams, Network};
 use blacksilk_p2p::NetAddr;
 use clap::Parser;
 use serde::Deserialize;
@@ -35,9 +35,14 @@ pub struct Args {
     /// Data directory (default: the OS data dir, e.g. %APPDATA%\BlackSilk\<network>).
     #[arg(long)]
     pub data_dir: Option<PathBuf>,
-    /// RPC listen address. Loopback by default; the RPC has no authentication.
+    /// RPC listen address. Loopback by default: every request needs the
+    /// node's cookie (<data dir>/rpc.cookie), but the RPC is plaintext HTTP.
     #[arg(long)]
     pub rpc_bind: Option<SocketAddr>,
+    /// Extra host name the RPC answers to besides loopback and its bound
+    /// address, e.g. an onion service name (repeatable).
+    #[arg(long = "rpc-allow-host")]
+    pub rpc_allow_hosts: Vec<String>,
     /// P2P listen address (default 0.0.0.0:<p2p port>; none with --proxy-only).
     #[arg(long)]
     pub p2p_bind: Option<SocketAddr>,
@@ -92,6 +97,8 @@ struct FileConfig {
     network: Option<String>,
     data_dir: Option<PathBuf>,
     rpc_bind: Option<SocketAddr>,
+    #[serde(default)]
+    rpc_allow_hosts: Vec<String>,
     log: Option<String>,
     #[serde(default)]
     p2p: FileP2p,
@@ -123,6 +130,9 @@ pub struct Config {
     pub network: Network,
     pub data_dir: PathBuf,
     pub rpc_bind: SocketAddr,
+    /// Host names the RPC guard accepts besides loopback and the bound
+    /// address (file and command line combined).
+    pub rpc_allow_hosts: Vec<String>,
     pub log: String,
     pub p2p: Option<P2pConfig>,
     pub repair_store: bool,
@@ -143,20 +153,19 @@ pub struct P2pConfig {
     pub allow_private: bool,
 }
 
-/// The testnet v2 identity (`0x0001D672`) is retired: this tree already enforces a
-/// rule v2 builds do not (canonical PX proofs, `zk::decode_proof`), so the two would
-/// fork on the first rewritten proof. The testnet stays disabled until the v3 genesis
-/// is generated at launch (docs/testnet.md), when this becomes `true`.
-pub const TESTNET_GENESIS_FINAL: bool = false;
-
-/// Refuses to run a network whose identity is not final (called at start-up).
+/// Refuses to run a network whose genesis is not final (called at start-up).
+/// Finality is consensus's [`ChainParams::genesis_is_final`]: regtest always,
+/// testnet and mainnet only once their beacon is committed. The testnet v2
+/// identity (`0x0001D672`) is retired, and the testnet stays disabled until
+/// the v3 genesis is final (docs/testnet.md).
 pub fn check_network_enabled(n: Network) -> Result<(), String> {
-    match n {
-        Network::Testnet if !TESTNET_GENESIS_FINAL => Err(
-            "the testnet is disabled until its v3 genesis is final (v2 is retired); use --network regtest"
-                .into(),
-        ),
-        _ => Ok(()),
+    if ChainParams::for_network(n).genesis_is_final() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the {} is disabled until its v3 genesis is final (v2 is retired); use --network regtest",
+            network_name(n)
+        ))
     }
 }
 
@@ -207,6 +216,21 @@ impl Config {
         let rpc_bind = args.rpc_bind.or(file.rpc_bind).unwrap_or_else(|| {
             SocketAddr::from(([127, 0, 0, 1], blacksilk_node::default_rpc_port(network)))
         });
+        let mut rpc_allow_hosts = file.rpc_allow_hosts;
+        rpc_allow_hosts.extend(args.rpc_allow_hosts);
+        for h in &rpc_allow_hosts {
+            let name = h.trim().trim_end_matches('.');
+            let valid = !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-');
+            if !valid {
+                return Err(format!(
+                    "rpc allow host {h:?}: a host name without port (letters, digits, '.', '-')"
+                ));
+            }
+        }
+        rpc_allow_hosts.dedup();
         let log = args.log.or(file.log).unwrap_or_else(|| "info".into());
 
         let f = file.p2p;
@@ -267,6 +291,7 @@ impl Config {
             network,
             data_dir,
             rpc_bind,
+            rpc_allow_hosts,
             log,
             p2p,
             repair_store: args.repair_store,
@@ -314,6 +339,40 @@ mod tests {
         assert!(check_network_enabled(Network::Testnet).is_err());
         assert!(check_network_enabled(Network::Regtest).is_ok());
         assert!(parse_network("mainnet").is_err());
+        // The node's gate is consensus's finality, for every network.
+        for n in [Network::Mainnet, Network::Testnet, Network::Regtest] {
+            assert_eq!(
+                check_network_enabled(n).is_ok(),
+                ChainParams::for_network(n).genesis_is_final()
+            );
+        }
+    }
+
+    #[test]
+    fn rpc_allow_hosts_from_file_and_command_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.toml");
+        std::fs::write(
+            &path,
+            "network = \"regtest\"\nrpc_allow_hosts = [\"a.onion\"]\n",
+        )
+        .unwrap();
+        let p = path.to_str().unwrap();
+        let c = Config::resolve(args(&["--config", p, "--rpc-allow-host", "node.lan"])).unwrap();
+        assert_eq!(c.rpc_allow_hosts, vec!["a.onion", "node.lan"]);
+        assert!(Config::resolve(args(&[]))
+            .unwrap()
+            .rpc_allow_hosts
+            .is_empty());
+        for bad in ["node.lan:80", "", "a b", "[::1]"] {
+            assert!(
+                Config::resolve(args(&["--rpc-allow-host", bad])).is_err(),
+                "{bad:?}"
+            );
+        }
+        // Unknown keys are still refused.
+        std::fs::write(&path, "rpc_allow_host = [\"a.onion\"]\n").unwrap();
+        assert!(Config::resolve(args(&["--config", p])).is_err());
     }
     use super::*;
 

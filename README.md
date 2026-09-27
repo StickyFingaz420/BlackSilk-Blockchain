@@ -139,7 +139,8 @@ blacksilk-node --network testnet --proxy 127.0.0.1:9050 --proxy-only --peer <oni
 
 ## Security notes
 
-- The node RPC has no authentication and binds to loopback by default. Do not expose
+- The node RPC requires the node's cookie (`<data dir>/rpc.cookie`), but it is plaintext
+  HTTP and binds to loopback by default. Do not expose
   it.
 - A wallet using someone else's node reveals which ring members it fetches, and its
   RPC traffic is plaintext (the wallet has no Tor or TLS support). Use your own node

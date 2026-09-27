@@ -6,10 +6,11 @@ use blacksilk_chain::address::decode_address;
 use blacksilk_chain::emission::format_amount;
 use blacksilk_consensus::Network;
 use blacksilk_miner::{build_block, search, PowContext};
-use blacksilk_rpc::{parse_hash, Client};
+use blacksilk_rpc::{parse_hash, Client, RpcError};
 use clap::Parser;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -21,6 +22,11 @@ struct Args {
     /// Node RPC address.
     #[arg(long, default_value = "127.0.0.1:29333")]
     node: String,
+    /// The node's RPC cookie: `rpc.cookie` in the node's data directory
+    /// (docs/blocks.md §9.1). Default: the file named by
+    /// BLACKSILK_RPC_COOKIE, if set.
+    #[arg(long)]
+    rpc_cookie: Option<PathBuf>,
     /// Address that receives block rewards.
     #[arg(long)]
     address: String,
@@ -80,9 +86,39 @@ fn main() {
     }
 }
 
+/// A client for `node` that sends the cookie read from `cookie` (else from
+/// BLACKSILK_RPC_COOKIE) with every request.
+fn connect(node: &str, cookie: Option<&Path>) -> Result<Client, String> {
+    Client::try_new(node)
+        .and_then(|c| c.with_cookie_option(cookie))
+        .map_err(|e| e.to_string())
+}
+
+/// After a `401` the node has probably restarted with a new cookie: read it
+/// again.
+fn reconnect_on_401(e: &RpcError, client: &mut Client, args: &Args) {
+    if !matches!(e, RpcError::Status(401, _)) {
+        return;
+    }
+    match connect(&args.node, args.rpc_cookie.as_deref()) {
+        Ok(c) => {
+            *client = c;
+            log::info!("RPC credential refused; cookie read again");
+        }
+        Err(e) => log::warn!("{e}"),
+    }
+}
+
 fn run(args: Args) -> Result<(), String> {
-    let client = Client::new(&args.node);
-    let info = client.info().map_err(|e| e.to_string())?;
+    let mut client = connect(&args.node, args.rpc_cookie.as_deref())?;
+    let info = client.info().map_err(|e| match e {
+        RpcError::Status(401, _) => format!(
+            "{e}: the node requires its RPC cookie; pass --rpc-cookie <node data dir>/{} or set {}",
+            blacksilk_rpc::COOKIE_FILE,
+            blacksilk_rpc::COOKIE_ENV
+        ),
+        e => e.to_string(),
+    })?;
     let net = network(&info.network).ok_or("unknown network reported by node")?;
     let payout = decode_address(net, &args.address)
         .map_err(|e| format!("--address is not a valid {} address: {e:?}", info.network))?;
@@ -109,6 +145,7 @@ fn run(args: Args) -> Result<(), String> {
         let template = match client.template() {
             Ok(t) => t,
             Err(e) => {
+                reconnect_on_401(&e, &mut client, &args);
                 log::warn!("{e}; retrying in 5 s");
                 std::thread::sleep(Duration::from_secs(5));
                 continue;
@@ -172,7 +209,10 @@ fn run(args: Args) -> Result<(), String> {
                     template.height,
                     r.error.unwrap_or_default()
                 ),
-                Err(e) => log::warn!("submitting block {}: {e}", template.height),
+                Err(e) => {
+                    log::warn!("submitting block {}: {e}", template.height);
+                    reconnect_on_401(&e, &mut client, &args);
+                }
             }
         }
     }

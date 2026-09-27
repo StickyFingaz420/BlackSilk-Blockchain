@@ -9,7 +9,8 @@ use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::store::FileStore;
 use blacksilk_consensus::{ChainParams, RandomXPow};
 use blacksilk_node::fingerprint::{self, consensus_fingerprint, BUILD_COMMIT};
-use blacksilk_node::{halt_message, router_with, watch_store, App};
+use blacksilk_node::serve::{self, RpcSettings};
+use blacksilk_node::{halt_message, watch_store, App};
 use blacksilk_p2p::{NetConfig, Network as P2p};
 use blacksilk_tx::params::TxRules;
 use clap::{CommandFactory, FromArgMatches};
@@ -129,9 +130,15 @@ fn run(cfg: Config) -> Result<(), String> {
     let bind = cfg.rpc_bind;
     if !bind.ip().is_loopback() {
         log::warn!(
-            "RPC bound to non-loopback {bind}: it has no authentication; do not expose it publicly"
+            "RPC bound to non-loopback {bind}: it is plaintext HTTP, so anyone on the path can \
+             read its cookie and every request; keep it on loopback or reach it over SSH, a VPN \
+             or Tor (docs/testnet.md §11)"
         );
     }
+    let rpc_settings = RpcSettings {
+        allow_hosts: cfg.rpc_allow_hosts.clone(),
+        ..RpcSettings::default()
+    };
     let shared = Arc::new(Mutex::new(manager));
     let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     runtime.block_on(async move {
@@ -185,18 +192,18 @@ fn run(cfg: Config) -> Result<(), String> {
         let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let failed_flag = failed.clone();
         let reason = watched.clone();
-        let served = axum::serve(listener, router_with(app))
-            .with_graceful_shutdown(async move {
-                tokio::select! {
-                    _ = tokio::signal::ctrl_c() => log::info!("shutting down"),
-                    Ok(()) = store_failed => {
-                        failed_flag.store(true, std::sync::atomic::Ordering::SeqCst);
-                        log::error!("{}; shutting down", halt_message(&reason));
-                    }
+        // The authenticated RPC: a fresh cookie in the data directory,
+        // connection limits, and the guard (docs/blocks.md §9.1).
+        let served = serve::run(listener, app, &data_dir, rpc_settings, async move {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => log::info!("shutting down"),
+                Ok(()) = store_failed => {
+                    failed_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                    log::error!("{}; shutting down", halt_message(&reason));
                 }
-            })
-            .await
-            .map_err(|e| e.to_string());
+            }
+        })
+        .await;
         if let Some(n) = net {
             n.save();
         }
