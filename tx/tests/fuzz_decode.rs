@@ -205,7 +205,8 @@ fn every_mutant_decodes_canonically_or_fails_cleanly() {
                                 .take(16)
                                 .collect();
                             panic!(
-                                "a mutated PX transaction validated (malleability):                                  lengths {} vs {}, first differing offsets {diff:?}",
+                                "a mutated PX transaction validated (malleability): \
+                                 lengths {} vs {}, first differing offsets {diff:?}",
                                 m.len(),
                                 seed.len()
                             );

@@ -207,7 +207,10 @@ impl Wallet {
                     });
                     let id = hex::encode(tx.hash());
                     self.warnings.push(format!(
-                        "transaction {id} was built for consensus branch {built_for:#010x}, but                          block {} needs branch {next_branch:#010x} (an upgrade): it can never be                          mined as it is. It was not rebroadcast and its funds are released;                          send the payment again",
+                        "transaction {id} was built for consensus branch {built_for:#010x}, but \
+                         block {} needs branch {next_branch:#010x} (an upgrade): it can never be \
+                         mined as it is. It was not rebroadcast and its funds are released; \
+                         send the payment again",
                         synced + 1
                     ));
                     self.stale_txs.retain(|s| s.id != id);

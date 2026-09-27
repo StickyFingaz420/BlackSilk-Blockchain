@@ -7,7 +7,7 @@
 //! bulk). It never asks the node about a specific record, position or
 //! nullifier, so the node cannot tell which records are the wallet's.
 //!
-//! **Keys.** PX keys derive from the same 24-word seed as the v1 keys
+//! **Keys.** PX keys derive from the same 27-word seed (format v1) as the v1 keys
 //! (domain-separated, `blacksilk_px::wallet::Account`).
 //!
 //! **Tree.** The wallet keeps every commitment in order to build
