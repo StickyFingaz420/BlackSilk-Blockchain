@@ -9,8 +9,8 @@ name = "blacksilk_crypto"
 
 [dependencies]
 # Pure Rust, no `unsafe` in the arithmetic we use; audited by Quarkslab (2019).
-curve25519-dalek = { version = "4.1.3", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
-blake2 = "0.10"
+curve25519-dalek = { version = "=4.1.3", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
+blake2 = "=0.10.6"
 # Traits only: the caller supplies the CSPRNG (the OS RNG in wallets, seeded ChaCha in tests).
 rand_core = { version = "0.6", default-features = false }
 subtle = { version = "2.6", default-features = false }
