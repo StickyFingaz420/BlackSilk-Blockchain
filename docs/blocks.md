@@ -144,11 +144,36 @@ Transactions from disconnected blocks return to the mempool if they are still va
 ## 7. Mempool (policy, not consensus)
 
 - The mempool accepts a transfer if it is valid for inclusion at `tip + 1`
-  (transactions.md `validate_transfer`) and none of its key images appears in another
-  pooled transaction (first seen wins; no replacement in v1).
+  (transactions.md `validate_transfer`) and none of its conflict keys appears in another
+  pooled transaction (first seen wins, whatever the fee; no replacement in v1).
+- **Conflict keys** (`mempool::conflict_keys`), each kind in its own namespace, so equal
+  bytes of two kinds never conflict:
+  - key images (C2), PX nullifiers (PX2), deploy contract ids;
+  - **output one-time keys** (C4) of every output the transaction adds to the global
+    output set: transfer and deploy outputs, PX hidden outputs and payouts. The list is
+    `Transaction::output_keys`, the one block validation checks C4 on.
+  - Why output keys: they are chosen by the sender, and C4 requires them to be unique
+    within a block too. Before 2026-09-27 (F1) the pool checked C4 only against the
+    chain. Two valid transactions sharing an output key (an attacker's own, or a copy of
+    a pending honest transaction's key) were both pooled and both selected; every block
+    built from the template was invalid (`DuplicateOneTimeKey`), a chain stall for the
+    cost of two fees that are never paid.
+  - A connected block removes every pooled transaction sharing any conflict key with
+    it, its coinbase outputs included.
+  - Templates skip a transaction sharing a conflict key with one already selected, and
+    log it. Admission already prevents it; this only keeps a broken invariant from
+    making every template invalid.
+  - Tested with forged, fully valid transactions with chosen output keys, across fees,
+    arrival orders, reorganizations and restarts (`chain/tests/mempool_conflicts.rs`),
+    and with synthetic transactions of every kind plus a randomized invariant test
+    (`mempool.rs` unit tests).
+  - Not prevented, and not a pool matter: whoever sees a pending transaction can get a
+    transaction copying one of its output keys **mined** first (by their own mining,
+    or by reaching most pools first). The victim's transaction is then invalid under
+    C4; its inputs stay unspent and the wallet must rebuild it with new output keys.
 - PX and deploy transactions are validated in full, proof included, on admission. They
-  conflict on key images, nullifiers and contract ids. They live in a separate class of
-  at most `MEMPOOL_MAX_PX_BYTES = 64 MiB` with the same fee-per-byte eviction.
+  live in a separate class of at most `MEMPOOL_MAX_PX_BYTES = 64 MiB` with the same
+  fee-per-byte eviction.
   - Their proofs are not re-verified when the pool is revalidated, nor when a block
     containing them is validated: a sound cache, because the transaction id commits to
     the proof (`validate_block_transactions_cached`).
