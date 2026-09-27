@@ -589,6 +589,26 @@ Monero's ledger model (no output-key rule at all) plus Carrot's within-transacti
 | B6 | Block weight ≤ block weight limit (economics spec). PX and deploy transactions have weight 0 and count instead against a separate budget: their encoded bytes sum to at most `MAX_PX_BLOCK_BYTES = 8 MiB` (px.md §11.5), and the deploys' bytes to at most `MAX_DEPLOY_BLOCK_BYTES = 1 MiB` of it (testnet v3). |
 | B7 | Coinbase structure: 1–16 outputs, no identity `O` or `R`, outputs strictly sorted (so its one-time keys are distinct; they may repeat keys of other transactions or the chain, §8.2). |
 
+**Evaluation order of block validation** (`validate_block_transactions_cached`; policy,
+not consensus: every rule is a pure check, so the order decides only which error an
+invalid block reports and how much work precedes it, never the verdict):
+
+| Step | Checks | Cost |
+|---|---|---|
+| 1 | B1, B2, B7 (coinbase) | trivial |
+| 2 | Per-transaction structure: T1, T3–T8, T10 shape, T11 (including `D ≠ identity`), PX and deploy structure | cheap |
+| 3 | B5, B6, B3 | hashing, sums |
+| 4 | T9 balances (every kind) | one multi-scalar sum per transaction |
+| 5 | PX proofs decoded strictly (PX5, first step), unless already verified by this node | a few ms per proof |
+| 6 | C2, PX1–PX4, contract ids, in block order; then each decoded PX proof's table shape against its statement (PX5, second step) | lookups |
+| 7 | C1: every ring of the block resolved | lookups |
+| 8 | T10: one Bulletproofs+ batch over the block | below one CLSAG input per proof |
+| 9 | C3: every CLSAG | 2–4 ms per input |
+| 10 | PX5: every PX proof not already verified, on the decoded proof | about 0.2 s per proof |
+
+A block of PX transactions with valid ring signatures and malformed proofs is therefore
+rejected with no CLSAG verified (dossier 10 F10-2; `tx/tests/block_pipeline.rs`).
+
 ### 8.4 Weight and fee
 
 ```

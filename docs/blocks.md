@@ -102,6 +102,11 @@ A block `B` at height `h` with parent `P` is valid iff all of the following hold
 
 The v1 limits are fixed values; a dynamic block size is future work.
 
+Body validation runs its checks cheap-first (transactions.md §8.3, "Evaluation order"):
+malformed PX proofs are found before any ring is resolved or any CLSAG verified, and
+the range-proof batch runs before the CLSAGs. The order changes only which error an
+invalid block reports, never its validity.
+
 **Header-first processing.**
 - A header is accepted into the header tree as soon as it is valid (item 1). Its body is
   validated when the block is about to be connected to the best chain.

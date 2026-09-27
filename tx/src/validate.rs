@@ -533,7 +533,22 @@ fn check_px_state(
 /// PX5: the proof verifies for the transaction's statement and binding,
 /// with every function's registered program and budget.
 pub fn check_px_proof(tx: &PxTx, chain: &impl ChainView, rules: &TxRules) -> Result<(), TxError> {
-    let proof = blacksilk_zk::decode_proof(&tx.proof).map_err(|_| TxError::PxProof)?;
+    let proof = decode_px_proof(tx)?;
+    check_px_proof_decoded(tx, chain, rules, &proof)
+}
+
+/// PX5, first step: the proof bytes decode strictly (`blacksilk_zk::decode_proof`:
+/// size, version, canonical encoding). Stateless and cheap next to any
+/// signature or proof verification.
+pub fn decode_px_proof(tx: &PxTx) -> Result<blacksilk_zk::Proof, TxError> {
+    blacksilk_zk::decode_proof(&tx.proof).map_err(|_| TxError::PxProof)
+}
+
+/// The registered function calls of `tx` (PX3 must hold).
+fn px_calls(
+    tx: &PxTx,
+    chain: &impl ChainView,
+) -> Result<Vec<blacksilk_px::prove::FunctionCall>, TxError> {
     let mut calls = Vec::with_capacity(tx.functions.len());
     for (k, f) in tx.functions.iter().enumerate() {
         let (program, _) = chain
@@ -544,11 +559,43 @@ pub fn check_px_proof(tx: &PxTx, chain: &impl ChainView, rules: &TxRules) -> Res
             outputs: f.outputs.clone(),
         });
     }
+    Ok(calls)
+}
+
+/// PX5, second step: a decoded proof has exactly the table shape of the
+/// transaction's statement with the registered budgets (no cryptography;
+/// `blacksilk_px::prove::check_shape`). Needs PX3 to hold. A proof failing
+/// it fails [`check_px_proof_decoded`] too.
+pub fn check_px_proof_shape(
+    tx: &PxTx,
+    chain: &impl ChainView,
+    rules: &TxRules,
+    proof: &blacksilk_zk::Proof,
+) -> Result<(), TxError> {
+    let calls = px_calls(tx, chain)?;
+    blacksilk_px::prove::check_shape(
+        &tx.public(),
+        &calls,
+        tx.binding(rules.domain()),
+        proof,
+        |contract, id| chain.px_function(contract, id).map(|(_, b)| b),
+    )
+    .map_err(|_| TxError::PxProof)
+}
+
+/// PX5 on an already decoded proof ([`decode_px_proof`]).
+pub fn check_px_proof_decoded(
+    tx: &PxTx,
+    chain: &impl ChainView,
+    rules: &TxRules,
+    proof: &blacksilk_zk::Proof,
+) -> Result<(), TxError> {
+    let calls = px_calls(tx, chain)?;
     blacksilk_px::prove::verify(
         &tx.public(),
         &calls,
         tx.binding(rules.domain()),
-        &proof,
+        proof,
         |contract, id| chain.px_function(contract, id).map(|(_, b)| b),
     )
     .map_err(|e| {
@@ -858,8 +905,12 @@ pub enum BlockError {
 }
 
 /// Validates the transactions of a block at `ctx.height` against `chain` (the
-/// state after the parent block). Checks B1–B7 and every T/C rule. All
-/// Bulletproofs+ of the block are batch-verified at the end (spec §7).
+/// state after the parent block). Checks B1–B7 and every T/C rule, cheap
+/// first (docs/transactions.md §8.3): structure, B5, B6, B3, balances, PX
+/// proof decoding, C2 and PX1–PX4 with each PX proof's shape, every ring
+/// (C1), one Bulletproofs+ batch (T10), the CLSAGs (C3), and the PX proofs
+/// (PX5) last. The order decides only which error an invalid block reports,
+/// never whether it is valid: every rule is a pure check.
 pub fn validate_block_transactions<R: RngCore + CryptoRng>(
     txs: &[Transaction],
     ctx: &BlockContext,
@@ -1003,14 +1054,32 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
         })?;
     }
 
+    // PX5, first step: decode every proof this node has not verified yet
+    // (stateless, a few milliseconds per proof), before any ring or signature
+    // work, so costless faults (an empty or garbage proof) never cost a CLSAG
+    // (dossier 10 F10-2). The decoded proof is kept for PX5 itself.
+    let mut decoded: Vec<Option<blacksilk_zk::Proof>> = Vec::with_capacity(pxs.len());
+    for (index, t) in &pxs {
+        decoded.push(if proof_verified(&ids[*index]) {
+            None
+        } else {
+            Some(decode_px_proof(t).map_err(|error| BlockError::Tx {
+                index: *index,
+                error,
+            })?)
+        });
+    }
+
     // C2 with B4 via a block-wide set; PX1–PX4 with block-wide nullifiers
     // and the pool evolving in block order; unique contract ids. Output
     // one-time keys may repeat across the block's transactions and the chain
-    // (D8 option B; `check_key_images`).
+    // (D8 option B; `check_key_images`). Once PX3 holds, a decoded proof must
+    // have its statement's exact shape (PX5, second step; no cryptography).
     let mut key_images = HashSet::new();
     let mut nullifiers = HashSet::new();
     let mut contracts = HashSet::new();
     let mut pool = chain.px_pool();
+    let mut px_slot = 0;
     for (index, tx) in txs.iter().enumerate().skip(1) {
         let err = |error| BlockError::Tx { index, error };
         let inputs: &[Input] = match tx {
@@ -1029,6 +1098,10 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
                         index,
                         error: TxError::PxPoolUnderflow,
                     })?;
+                if let Some(proof) = &decoded[px_slot] {
+                    check_px_proof_shape(t, chain, rules, proof).map_err(err)?;
+                }
+                px_slot += 1;
             }
             Transaction::PxDeploy(t) => {
                 let id = t.contract_id();
@@ -1040,9 +1113,10 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
         }
     }
 
-    // C1, C3 (expensive).
+    // C1: every ring of the block is resolved (cheap lookups) before the
+    // first CLSAG is verified.
+    let mut signed = Vec::with_capacity(txs.len() - 1);
     for (index, tx) in txs.iter().enumerate().skip(1) {
-        let err = |error| BlockError::Tx { index, error };
         let (inputs, pseudo, sigs, message): (&[Input], &[Point], &[Clsag], Hash) = match tx {
             Transaction::Transfer(t) => (
                 &t.inputs,
@@ -1064,11 +1138,13 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
             ),
             Transaction::Coinbase(_) => unreachable!("checked above"),
         };
-        let rings = resolve_input_rings(inputs, chain, ctx.height).map_err(err)?;
-        check_ring_signatures(inputs, pseudo, sigs, &rings, &message).map_err(err)?;
+        let rings = resolve_input_rings(inputs, chain, ctx.height)
+            .map_err(|error| BlockError::Tx { index, error })?;
+        signed.push((index, inputs, pseudo, sigs, message, rings));
     }
 
-    // T10, batched over every transaction with hidden outputs.
+    // T10, batched over every transaction with hidden outputs: stateless,
+    // and cheaper per proof than one CLSAG input, so it runs before them.
     let mut proofs: Vec<(&BppProof, Vec<Point>)> = Vec::new();
     for (_, t) in &transfers {
         proofs.push((&t.range_proof, output_commitments(t)));
@@ -1090,15 +1166,25 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
         return Err(BlockError::RangeProofBatch);
     }
 
-    // PX5: the proofs, last (the most expensive check).
-    for (index, t) in &pxs {
-        if proof_verified(&txs[*index].hash()) {
-            continue;
-        }
-        check_px_proof(t, chain, rules).map_err(|error| BlockError::Tx {
-            index: *index,
-            error,
+    // C3 (expensive).
+    for (index, inputs, pseudo, sigs, message, rings) in &signed {
+        check_ring_signatures(inputs, pseudo, sigs, rings, message).map_err(|error| {
+            BlockError::Tx {
+                index: *index,
+                error,
+            }
         })?;
+    }
+
+    // PX5: the proofs, last (the most expensive check), on the proofs decoded
+    // above; those `proof_verified` vouches for are skipped.
+    for ((index, t), proof) in pxs.iter().zip(&decoded) {
+        if let Some(proof) = proof {
+            check_px_proof_decoded(t, chain, rules, proof).map_err(|error| BlockError::Tx {
+                index: *index,
+                error,
+            })?;
+        }
     }
     Ok(())
 }

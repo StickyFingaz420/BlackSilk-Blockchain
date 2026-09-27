@@ -311,7 +311,7 @@ fn b4_a_coinbase_key_already_on_chain_is_valid() {
 /// D8 option B: a later transaction of the same block reusing a coinbase key
 /// is not a block error. Here the transaction is a PX transaction with a
 /// payout carrying the coinbase's key; the block fails only at that
-/// transaction's own later rule (its anchor is not a recent root), never at
+/// transaction's own later rule (its padding proof does not decode), never at
 /// a key-uniqueness rule (`DuplicateOneTimeKey` under the former C4).
 #[test]
 fn b4_a_coinbase_key_reused_in_the_same_block_is_not_a_uniqueness_error() {
@@ -331,7 +331,7 @@ fn b4_a_coinbase_key_reused_in_the_same_block_is_not_a_uniqueness_error() {
         ]),
         BlockError::Tx {
             index: 1,
-            error: TxError::PxUnknownAnchor,
+            error: TxError::PxProof,
         }
     );
 }
@@ -454,12 +454,18 @@ fn b6_px_bytes_are_capped_at_the_px_budget() {
             max: MAX_PX_BLOCK_BYTES,
         }
     );
-    // Exactly MAX passes the budget and fails only at a later, contextual
-    // rule of the first PX transaction (its anchor is not a recent root).
+    // Exactly MAX passes the budget and fails only at a later rule of the
+    // first PX transaction (its padding proof does not decode).
     let at = px_block(&mut env, &[half, half]);
     let px: u64 = at.iter().map(Transaction::px_bytes).sum();
     assert_eq!(px, MAX_PX_BLOCK_BYTES);
-    assert!(matches!(env.reject(at), BlockError::Tx { index: 1, .. }));
+    assert_eq!(
+        env.reject(at),
+        BlockError::Tx {
+            index: 1,
+            error: TxError::PxProof
+        }
+    );
 }
 
 // ---------------------------------------------------------------- decoding boundaries

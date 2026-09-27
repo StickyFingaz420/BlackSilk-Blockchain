@@ -240,6 +240,48 @@ pub fn verify(
     blacksilk_zkvm::prove::verify(&st, proof).map_err(VerifyError::Proof)
 }
 
+/// The cheap part of [`verify`], no cryptography: the statement exists
+/// (function count, registrations) and `proof` has exactly its table shape
+/// (the degree bits of every table). A proof failing this fails [`verify`]
+/// with the same kind of error, so running it first changes only when a bad
+/// proof is found (block validation runs it before any ring signature,
+/// dossier 10 F10-2).
+pub fn check_shape(
+    public: &Public,
+    calls: &[FunctionCall],
+    h_tx: [u8; 32],
+    proof: &Proof,
+    registered: impl Fn(&Digest, &[u8; 32]) -> Option<Budget>,
+) -> Result<(), VerifyError> {
+    if calls.len() != public.n_fn {
+        return Err(VerifyError::Shape);
+    }
+    let mut budgets = Vec::with_capacity(calls.len());
+    for (k, call) in calls.iter().enumerate() {
+        match registered(&public.functions[k].0, &call.program.id()) {
+            Some(b) => budgets.push(b),
+            None => return Err(VerifyError::Unregistered(k)),
+        }
+    }
+    let st = statement(public, calls, &budgets, h_tx).ok_or(VerifyError::Shape)?;
+    // Every execution has a budget here, so the statement has a fixed shape.
+    let shape = st.shape().ok_or(VerifyError::Shape)?;
+    // `degree_bits` is log2(height) + 1 under zero knowledge (as in
+    // `blacksilk_zkvm::prove::verify`).
+    let ok = proof.degree_bits.len() == shape.len()
+        && shape
+            .iter()
+            .zip(&proof.degree_bits)
+            .all(|(&h, &db)| db == h.trailing_zeros() as usize + 1);
+    if ok {
+        Ok(())
+    } else {
+        Err(VerifyError::Proof(ZkError::Shape(
+            "proof shape differs from the statement's".into(),
+        )))
+    }
+}
+
 /// Proves a plain transfer (no functions).
 pub fn prove_transfer<R: RngCore + CryptoRng>(
     w: &Witness,
