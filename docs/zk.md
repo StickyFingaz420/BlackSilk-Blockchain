@@ -543,15 +543,15 @@ owner): a STARK on Plonky3 0.7.**
   unique-decoding parameters, ≥ 100 bits with about 128 queries and 2–3× larger
   proofs, without migrating records.
 - **The parameter set is code** (`zk/src/params.rs`). A test
-  (`every_shape_within_limits_meets_both_security_targets`) recomputes the proven
-  security with `p3-security` 0.7.0 over a grid of the whole envelope (trace heights
+  (`every_shape_within_limits_meets_both_security_targets`) recomputes the security
+  figures with `p3-security` 0.7.0 over a grid of the whole envelope (trace heights
   2^8 to 2^22, i.e. committed degree bits 9 to 23, since zero knowledge doubles the
   committed size; up to 5,000 constraints, degrees up to 8, and 1 to 65,536 batched
   columns, including `MAX_ADVERSARIAL_COLUMNS`). It fails unless **every** point
   reaches `TARGET_JOHNSON_BITS` (120) in the Johnson regime **and** `MIN_PROVEN_BITS`
-  (100) in the unique-decoding regime, and it pins which term binds: the low-degree
-  test's query phase in unique decoding, the commitment term `COLLISION_BITS` in the
-  Johnson regime. Until v3 the calculator was fed the pre-ZK height (R4-01); the
+  (100) in the unique-decoding regime, and it pins which term limits each figure: the
+  low-degree test's query phase in unique decoding, the commitment term
+  `COLLISION_BITS` in the Johnson regime. Until v3 the calculator was fed the pre-ZK height (R4-01); the
   figures did not change. It is a test, so it fails the test suite, not the build;
   `const` assertions check the parameter relations (eqs. 16 and 17 below, and that the
   largest evaluation domain, 2^(22+1+3) = 2^26, stays ≤ 2^27, where query positions
@@ -563,9 +563,10 @@ owner): a STARK on Plonky3 0.7.**
   for a batch STARK (LogUp; the DEEP union over up to 32 tables; per-round commit
   errors of the real folding schedule): all ≥ 200 bits. The Johnson regime's algebraic
   bound is ≥ 150 bits both with BCHKS25 and with the peer-reviewed BCIKS20 bound alone,
-  so the commitment term binds by a wide margin. Evidence class: computed and tested;
-  not a proof, and not independent review.
-- **Headline (BS-ZK-3):** about **105 bits proven** in the unique-decoding regime
+  so the commitment term is the limiting one by a wide margin. Evidence class:
+  computed and tested; not a proof, and not independent review.
+- **Headline (BS-ZK-3):** about **105 bits**, computed (not proven) under the
+  assumptions of this section (§9.3), in the unique-decoding regime
   (**89.7 statistical + 16 grinding**: the 108 queries at rate 1/8 give the
   statistical part, and the 16 bits of query grinding are computational, counted
   against an adversary's Poseidon2 budget); the Johnson regime is **hash-bound at
@@ -631,7 +632,8 @@ owner): a STARK on Plonky3 0.7.**
     programs and table widths. Program ids do not imply it: they commit to the guest
     programs, not to the AIRs. The tag is tied to the AIRs mechanically:
     `zkvm/tests/circuit_fingerprint.rs` pins a digest of every table's constraint
-    evaluations at seeded points, widths, table order and height limits next to
+    evaluations at seeded points, widths, table order, fixed and public-column
+    contents of reference statements, next-row sets and height limits next to
     `CIRCUIT_ID`, so an AIR change that does not bump the tag fails the suite
     (docs/proof-system.md §3);
   - then Plonky3 observes the public values (which carry the binding `h_tx`, zkvm.md
@@ -827,9 +829,10 @@ of scope until proof size is solved (aggregation-study.md).
 
 ## 12. Security analysis
 
-**Security headline (BS-ZK-3; figures and caveats in §9.3):** about **105 bits proven**
-soundness (**89.7 statistical + 16 grinding**, unique-decoding regime); the Johnson
-regime is **hash-bound at ≈ 122 bits** (the Merkle commitments); zero knowledge is
+**Security headline (BS-ZK-3; figures and caveats in §9.3):** about **105 bits** of
+soundness, computed (not proven) under the assumptions of §9.3 (**89.7 statistical +
+16 grinding**, unique-decoding regime); the Johnson regime is **hash-bound at
+≈ 122 bits** (the Merkle commitments); zero knowledge is
 **statistical and conditional** (reviews/zk-coverage.md §3), and **computational in
 practice**, because the masks are PRG outputs. None of this is a claim that BlackSilk is
 secure or perfectly zero-knowledge; it is internal engineering work, not an audit.
@@ -915,8 +918,8 @@ reconsider.
    wrong parameters, proof reuse across transactions. All must be rejected.
 6. **Fuzzing:** decoders, verifier inputs, zkVM programs.
 7. **Soundness parameter calculator** in the repository, with tests: it recomputes the
-   proven security bits from the parameters (`zk/src/params.rs`; there is no registry
-   yet), and a test fails unless every shape of the envelope reaches ≥ 120 Johnson
+   security bits from the parameters with proven bounds only (`zk/src/params.rs`;
+   there is no registry yet), and a test fails unless every shape of the envelope reaches ≥ 120 Johnson
    bits and ≥ 100 unique-decoding bits (§9.3).
 8. **External review (original plan; not a current requirement):** the design asked
    for two independent audits (cryptographic design, and implementation) before
@@ -958,7 +961,7 @@ reconsider.
 
 | Decision | Result | Evidence |
 |---|---|---|
-| DR-2 proof family | STARK on Plonky3 0.7, BabyBear; the challenge field became BabyBear^8 with BS-ZK-2 (≥ 123 bits Johnson, ≥ 105 unique decoding; AUDIT.md ZK-F4) | `docs/evidence/px0-2026-09-23/RESULTS.md` §1–2 |
+| DR-2 proof family | STARK on Plonky3 0.7, BabyBear; the challenge field became BabyBear^8 with BS-ZK-2 (AUDIT.md ZK-F4; its "≥ 123 bits Johnson" figure is superseded: the current set and its computed figures are in §9.3) | `docs/evidence/px0-2026-09-23/RESULTS.md` §1–2 |
 | DR-3 zkVM | Our own BVM-1 (zkvm.md): adopted zkVMs failed zero-knowledge (SP1) or pure Rust (RISC Zero) | RESULTS.md §3 |
 | DR-4 `Hk` | Poseidon2 over BabyBear, width 16, standard constants, no extra rounds (px.md §2). The same permutation is used for Merkle hashing and Fiat–Shamir. Not reviewed outside the project; a reviewer, if one were engaged, might revisit it. | §9.6 |
 | DR-5 bridge | Public amounts with containment (unchanged) | §12.2 |

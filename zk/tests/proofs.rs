@@ -463,7 +463,8 @@ mod preprocessed {
 /// proof (the proof bytes are part of a transaction id). Plonky3 0.7.0 does
 /// not bind the commit-phase grinding witnesses at `COMMIT_POW_BITS = 0`, nor
 /// distinguish an absent optional opening from a present empty one:
-/// `decode_proof` rejects both rewrites (internal review round 5, M1/M2).
+/// `decode_proof` rejects both rewrites (internal review round 5, M1/M2), and
+/// so does `verify` on the rewritten struct (RTW1 defence in depth).
 #[test]
 fn unbound_proof_fields_cannot_be_rewritten() {
     use p3_field::PrimeCharacteristicRing;
@@ -477,15 +478,14 @@ fn unbound_proof_fields_cannot_be_rewritten() {
         .iter()
         .all(|w| *w == Val::ZERO));
 
-    // A rewritten grinding witness: the 0.7.0 verifier still accepts it (the
-    // flaw), and the decoder refuses it (the fix).
+    // A rewritten grinding witness: the 0.7.0 verifier alone accepts it (the
+    // flaw); the decoder and `verify` refuse it (the fix, rule C1).
     let mut rewritten = decode_proof(&encode_proof(&proof)).unwrap();
     rewritten.opening_proof.1.commit_pow_witnesses[0] = Val::from_u32(12345);
-    assert_eq!(
+    assert!(matches!(
         verify(&v, &AIRS, &rewritten, &pv, &LIMITS),
-        Ok(()),
-        "Plonky3 0.7.0 does not bind the witness (if this fails, upstream fixed it: keep the decoder check anyway)"
-    );
+        Err(ZkError::Encoding(_))
+    ));
     let bytes = encode_proof(&rewritten);
     assert_ne!(bytes, encode_proof(&proof), "a different encoding");
     assert!(matches!(decode_proof(&bytes), Err(ZkError::Encoding(_))));
@@ -497,6 +497,10 @@ fn unbound_proof_fields_cannot_be_rewritten() {
     o.preprocessed_next = Some(vec![]);
     assert!(matches!(
         decode_proof(&encode_proof(&empty)),
+        Err(ZkError::Encoding(_))
+    ));
+    assert!(matches!(
+        verify(&v, &AIRS, &empty, &pv, &LIMITS),
         Err(ZkError::Encoding(_))
     ));
 
@@ -714,6 +718,70 @@ fn every_hidden_opening_count_mutation_is_refused() {
         Ok(())
     );
     println!("{tried} hidden-opening positions mutated (+1 and -1), all refused");
+}
+
+/// RTW1 defence in depth: `verify` itself applies the canonical-form rules,
+/// so a non-canonical proof struct (built by mutating a decoded proof, never
+/// passing through `decode_proof`) is refused with `ZkError::Encoding` for
+/// every rule: a hidden-opening count, a filled preprocessed round, a missing
+/// hidden round, a Merkle cap root count, a commit-phase witness and a
+/// present-but-empty opening. The honest proofs still verify.
+#[test]
+fn verify_itself_refuses_non_canonical_proofs() {
+    let v = VerifierConfig::new();
+    let (plain, pv) = honest_proof(34);
+    let (pre, pre_airs) = preprocessed::proof(35);
+    let pre_pv = [vec![], vec![]];
+    assert_eq!(verify(&v, &AIRS, &plain, &pv, &LIMITS), Ok(()));
+    assert_eq!(verify(&v, &pre_airs, &pre, &pre_pv, &LIMITS), Ok(()));
+    let refused = |p: &Proof, preprocessed: bool, what: &str| {
+        let r = if preprocessed {
+            verify(&v, &pre_airs, p, &pre_pv, &LIMITS)
+        } else {
+            verify(&v, &AIRS, p, &pv, &LIMITS)
+        };
+        assert!(matches!(r, Err(ZkError::Encoding(_))), "{what}: {r:?}");
+    };
+    // One hidden value more at every position, one fewer at the first.
+    let mut tried = 0;
+    for (proof, is_pre) in [(&plain, false), (&pre, true)] {
+        for (r, m, p) in hidden_positions(proof) {
+            let mut more = reencode(proof).unwrap();
+            let point = &mut more.opening_proof.0[r][m][p];
+            point.push(point.last().copied().unwrap_or_default());
+            refused(&more, is_pre, "one more hidden value");
+            tried += 1;
+        }
+        let mut fewer = reencode(proof).unwrap();
+        assert!(fewer.opening_proof.0[0][0][0].pop().is_some());
+        refused(&fewer, is_pre, "one fewer hidden value");
+    }
+    // The preprocessed round filled with codewords; a hidden round missing.
+    let mut filled = reencode(&pre).unwrap();
+    for matrix in &mut filled.opening_proof.0[PREPROCESSED_ROUND] {
+        for point in matrix {
+            point.resize(params::NUM_RANDOM_CODEWORDS, Default::default());
+        }
+    }
+    refused(&filled, true, "filled preprocessed round");
+    let mut missing = reencode(&plain).unwrap();
+    missing.opening_proof.0.pop();
+    refused(&missing, false, "missing hidden round");
+    // Two roots in the main commitment's cap.
+    let mut caps = reencode(&plain).unwrap();
+    let root = caps.commitments.main.roots()[0];
+    caps.commitments.main = cap_with_roots(&[root, root]);
+    refused(&caps, false, "two cap roots");
+    // A non-zero commit-phase witness; a present-but-empty opening.
+    let mut witness = reencode(&plain).unwrap();
+    witness.opening_proof.1.commit_pow_witnesses[0] = Val::ONE;
+    refused(&witness, false, "commit-phase witness");
+    let mut empty = reencode(&plain).unwrap();
+    empty.opened_values.instances[0]
+        .base_opened_values
+        .preprocessed_local = Some(vec![]);
+    refused(&empty, false, "present-but-empty opening");
+    println!("{tried} hidden positions and 6 other rules: verify refuses all");
 }
 
 /// A Merkle cap with a root count other than 1 (cap height 0), in any

@@ -162,10 +162,14 @@ fn pr_2106_every_commit_phase_witness_rewrite_is_refused() {
         for value in [1u32, 12_345, 2_013_265_920] {
             let mut r = copy(&p);
             r.opening_proof.1.commit_pow_witnesses[i] = Val::from_u32(value);
-            assert_eq!(
-                verify(&v, &airs, &r, &pv, &LIMITS),
-                Ok(()),
-                "0.7.0 binds commit witness {i}: upstream changed, keep rule C1 anyway"
+            // 0.7.0 alone accepts it (why rule C1 exists); `verify` applies
+            // rule C1 itself (RTW1 defence in depth).
+            assert!(
+                matches!(
+                    verify(&v, &airs, &r, &pv, &LIMITS),
+                    Err(ZkError::Encoding(_))
+                ),
+                "witness {i} = {value} verified"
             );
             assert!(
                 matches!(decode_proof(&encode_proof(&r)), Err(ZkError::Encoding(_))),
@@ -213,16 +217,15 @@ fn pr_2256_present_but_empty_preprocessed_openings_are_refused() {
         decode_proof(&encode_proof(&r)),
         Err(ZkError::Encoding(_))
     ));
+    // `verify` applies rule C2 before Plonky3 runs (RTW1 defence in depth),
+    // so the upstream panic is not reached.
     let e = verify_refuses(&airs, &r, &pv, "#2256 preprocessed_next = Some([])");
     println!("#2256 direct verify: {e:?}");
-    assert!(
-        matches!(e, ZkError::VerifierPanicked | ZkError::Invalid(_)),
-        "{e:?}"
-    );
+    assert!(matches!(e, ZkError::Encoding(_)), "{e:?}");
     // `preprocessed_local = Some([])` on the table without preprocessing: the
     // 0.7.0 verifier alone accepts it (an unbound field, so a relayer could
-    // change a transaction id), and only the decoder refuses it. Hence the
-    // rule that consensus paths decode before they verify.
+    // change a transaction id). The decoder refuses it, and so does `verify`
+    // (rule C2 applied again); consensus paths still decode before they verify.
     let mut r = copy(&p);
     let o = &mut r.opened_values.instances[0].base_opened_values;
     assert!(o.preprocessed_local.is_none());
@@ -231,11 +234,10 @@ fn pr_2256_present_but_empty_preprocessed_openings_are_refused() {
         decode_proof(&encode_proof(&r)),
         Err(ZkError::Encoding(_))
     ));
-    assert_eq!(
+    assert!(matches!(
         verify(&VerifierConfig::new(), &airs, &r, &pv, &LIMITS),
-        Ok(()),
-        "0.7.0 binds an empty preprocessed_local: upstream changed, keep rule C2 anyway"
-    );
+        Err(ZkError::Encoding(_))
+    ));
 }
 
 /// Plonky3 #2033 (fold schedule derived, not read from the proof). 0.7.0

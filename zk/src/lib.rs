@@ -1,7 +1,7 @@
 //! BlackSilk zero-knowledge proof layer (docs/zk.md §9, docs/zkvm.md §7, §10).
 //!
 //! Everything a BlackSilk zero-knowledge proof depends on lives here:
-//! - [`params`]: parameter set BS-ZK-3 and its proven security;
+//! - [`params`]: the parameter set and its computed security figures;
 //! - [`config`]: the Plonky3 configuration (hiding FRI STARK over BabyBear, degree-8 extension);
 //! - [`prove`] / [`verify`]: batch proving and hardened verification;
 //! - [`encode_proof`] / [`decode_proof`]: the strict wire format.
@@ -9,6 +9,9 @@
 //! **Hardening** (zkvm.md §10). [`verify`] never trusts the proof's own shape:
 //! - it checks table counts and claimed heights against the caller's limits
 //!   before any expensive work;
+//! - it applies the canonical-form rules of [`decode_proof`] to the proof
+//!   struct itself (defence in depth: a caller holding a `Proof` that did not
+//!   come from `decode_proof` gets the same verdict);
 //! - it runs the Plonky3 verifier behind `catch_unwind`, because Plonky3
 //!   documents that malformed proofs may panic it. Nodes must be built with
 //!   `panic = "unwind"` for this to take effect (workspace release profile).
@@ -134,6 +137,11 @@ pub fn prove<A: ProvableAir>(
 
 /// Verifies `proof` against `airs` and `public`. `max_log_heights[i]` bounds the
 /// height the proof may claim for table `i` (in addition to the global limit).
+///
+/// The canonical-form rules of [`decode_proof`] are checked here too (RTW1
+/// defence in depth), so a non-canonical `Proof` built in memory is refused
+/// with [`ZkError::Encoding`] even when the caller skipped `decode_proof`.
+/// Consensus paths decode first, so their verdicts are unchanged.
 pub fn verify<A: ProvableAir>(
     cfg: &VerifierConfig,
     airs: &[A],
@@ -165,6 +173,7 @@ pub fn verify<A: ProvableAir>(
             });
         }
     }
+    check_canonical_form(proof)?;
     check_fri_schedule(proof)?;
     let result = catch_unwind(AssertUnwindSafe(|| {
         // Same deterministic setup as the prover (see `prove`): a fresh setup
