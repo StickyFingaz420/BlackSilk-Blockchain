@@ -774,8 +774,11 @@ impl BlockStore for FlakyStore {
         }
         self.inner.append(pow_hash, block)
     }
-    fn load(&mut self) -> std::io::Result<Vec<blacksilk_chain::store::StoredBlock>> {
+    fn load(&mut self) -> std::io::Result<Vec<blacksilk_chain::store::Record>> {
         self.inner.load()
+    }
+    fn bind(&mut self, identity: &blacksilk_chain::store::StoreIdentity) -> std::io::Result<()> {
+        self.inner.bind(identity)
     }
 }
 

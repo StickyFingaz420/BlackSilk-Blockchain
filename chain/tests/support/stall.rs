@@ -18,7 +18,7 @@
 
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{submit_block_in_steps, ChainManager, SYNC_STEP_BLOCKS};
-use blacksilk_chain::store::{BlockStore, MemoryStore, StoredBlock};
+use blacksilk_chain::store::{BlockStore, Marker, MemoryStore, Record, StoreIdentity, StoredBlock};
 use blacksilk_consensus::merkle::tx_root;
 use blacksilk_consensus::{BlockHeader, Hash, HEADER_VERSION};
 use blacksilk_crypto::keys::{SubaddressIndex, WalletKeys};
@@ -143,12 +143,16 @@ impl BlockStore for SlowStore {
         Ok(())
     }
 
-    fn load(&mut self) -> io::Result<Vec<StoredBlock>> {
+    fn append_marker(&mut self, marker: &Marker) -> io::Result<()> {
+        self.inner.append_marker(marker)
+    }
+
+    fn load(&mut self) -> io::Result<Vec<Record>> {
         self.inner.load()
     }
 
-    fn bind(&mut self, network_id: u32, genesis_id: &Hash) -> io::Result<()> {
-        self.inner.bind(network_id, genesis_id)
+    fn bind(&mut self, identity: &StoreIdentity) -> io::Result<()> {
+        self.inner.bind(identity)
     }
 }
 

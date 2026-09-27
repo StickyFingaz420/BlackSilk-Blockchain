@@ -4,7 +4,7 @@ use super::pow_cache::CachedPow;
 use super::{ChainManager, Replayed, SubmitError, SyncOutcome};
 use crate::block::Block;
 use crate::mempool::Mempool;
-use crate::store::BlockStore;
+use crate::store::{BlockStore, InvalidOrigin, Marker, Record, StoreIdentity, StoredBlock};
 use blacksilk_consensus::{ChainParams, Hash, HeaderChain, HeaderError, PowFunction};
 use blacksilk_tx::params::TxRules;
 use blacksilk_tx::state::MemoryChain;
@@ -35,10 +35,11 @@ impl ChainManager {
         state
             .apply_block(&[])
             .map_err(|e| io::Error::other(format!("genesis state: {e:?}")))?;
-        // A store written for another network or genesis is refused before
-        // any record is read (docs/blocks.md §8).
-        store.bind(params.network_id, &genesis_id)?;
-        let stored = store.load()?;
+        // A store written for another network or genesis, or in a format this
+        // build does not read, is refused before any record is read
+        // (docs/blocks.md §8).
+        store.bind(&StoreIdentity::of(&params))?;
+        let stored = blocks_of(store.load()?)?;
         let mut manager = Self {
             params,
             rules,
@@ -77,7 +78,8 @@ impl ChainManager {
                 return Err(io::Error::other(reason));
             }
         }
-        // Bodies kept from now on are numbered by their index in the store.
+        // Bodies kept from now on are numbered by their index among the
+        // store's block records.
         manager.next_body_seq = total;
         Ok(manager)
     }
@@ -106,7 +108,7 @@ impl ChainManager {
     /// live only when downloaded again, but a later replay releases the older
     /// copy as soon as the parent is replayed. This can only change which of
     /// two equal-work tips is kept.
-    fn replay(&mut self, stored: Vec<crate::store::StoredBlock>) -> io::Result<()> {
+    fn replay(&mut self, stored: Vec<StoredBlock>) -> io::Result<()> {
         let total = stored.len();
         // Blocks waiting for their parent, by parent id: stored indices.
         let mut waiting: HashMap<Hash, Vec<usize>> = HashMap::new();
@@ -225,4 +227,43 @@ impl ChainManager {
         self.store_failed
             .then(|| "the block store failed (see the earlier errors)".to_string())
     }
+}
+
+/// The stored blocks, in storage order, from the records of the store
+/// (docs/blocks.md §8). Markers do not change the chain a replay reaches in
+/// this build:
+/// - a checkpoint (own-store validation evidence, for a later build) is not
+///   trusted: every stored block is validated in full;
+/// - an invalid marker holding the node's own verdict is redundant: the block
+///   is validated again and gets the same deterministic verdict;
+/// - an invalid marker set by the operator must be honoured, and this build
+///   cannot apply one, so the store is refused rather than risk connecting a
+///   block the operator ruled out.
+fn blocks_of(records: Vec<Record>) -> io::Result<Vec<StoredBlock>> {
+    let mut blocks = Vec::with_capacity(records.len());
+    let (mut checkpoints, mut verdicts) = (0usize, 0usize);
+    for record in records {
+        match record {
+            Record::Block(b) => blocks.push(b),
+            Record::Marker(Marker::Checkpoint(_)) => checkpoints += 1,
+            Record::Marker(Marker::Invalid(m)) => match m.origin {
+                InvalidOrigin::Verdict => verdicts += 1,
+                InvalidOrigin::Operator => {
+                    return Err(io::Error::other(format!(
+                        "the block store marks block {} invalid by operator request, and \
+                         this build cannot apply such a marker; run a build that supports \
+                         it, or move the store aside and resync",
+                        super::hex(&m.id)
+                    )))
+                }
+            },
+        }
+    }
+    if checkpoints + verdicts > 0 {
+        log::info!(
+            "block store: {checkpoints} checkpoint(s) not trusted and {verdicts} invalid \
+             marker(s) re-checked: every stored block is validated in full"
+        );
+    }
+    Ok(blocks)
 }

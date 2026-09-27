@@ -227,12 +227,21 @@ docker exec bs blacksilk-wallet -w /data/me.wallet create --network testnet
 
 | File | Content |
 |---|---|
-| `blocks.dat` | append-only block log; the node replays it at start (blocks.md §8) |
+| `blocks.dat` | append-only block log (format 2: bound to the network id and genesis); the node replays it at start (blocks.md §8) |
 | `peers.json` | address table (p2p.md §9) |
 | `bans.json` | banned IPs and their expiry |
 | `LOCK` | prevents two nodes from sharing the directory |
 
-To resync from scratch, stop the node and delete `blocks.dat`.
+To resync from scratch, stop the node and move `blocks.dat` aside (or delete it).
+
+Use a separate data directory for each network. The default data directory is the same
+for every testnet generation, so after a reset the node finds the old store there: a
+store of another network or genesis is refused ("wrong network data directory"), and so
+are stores written before the v3 store format, which are never migrated: a store
+without a file header ("format 0", written before 2026-09-27) on testnet or mainnet, and
+a "format version 1" store on any network. In each case the node starts only after
+`blocks.dat` is moved aside; it then resyncs from its peers. Regtest still reads a
+format 0 store as it is.
 
 ## 5. Mining
 
@@ -436,6 +445,10 @@ process's log.
 | `SubmitError::Store` in the log, node still running | A single failed block write, undone; the block is downloaded again. Repeated failures stop the node (row above) |
 | `N stored block(s) without a stored parent were not replayed` at start | After a failed write: harmless, the node downloads them again |
 | `N stored block(s) descend from blocks found invalid` at start | Harmless: blocks refused before the restart are refused again |
+| `block store: … wrong network data directory` at start | The data directory holds another network's (or an old testnet's) store. Use a separate data directory per network, or move `blocks.dat` aside to resync (§4.5) |
+| `block store: … format 0, no file header` or `… format version 1` at start | A store from before the v3 store format; it is never migrated. Stop the node, move `blocks.dat` aside and start again to resync (§4.5). `--repair-store` does not apply |
+| `block store: … damaged file header` or `… not a block store` at start | The first 48 bytes of `blocks.dat` are damaged, or the file is something else. Back up the data directory, move `blocks.dat` aside and resync |
+| `block store: … record at offset … is not valid` or `… unknown record type` at start | A record with a correct checksum that this build cannot read: the store was written by a newer build (run that build) or is corrupt. Nothing is truncated; back up the data directory, then move `blocks.dat` aside to resync |
 
 ## 10. Private execution (PX)
 
@@ -563,6 +576,11 @@ same time; idle figures are to be re-measured.
   data directory, then start once with `--repair-store` (§9, blocks.md §8).
 - **A full or failing disk:** free space or replace the disk, then restart (§9).
 - **Resync from scratch:** stop the node, move `blocks.dat` aside, start again.
+- **A halt that repeats at every start** (`applying block … which passed validation,
+  failed`): the stored block fails to apply again because the replay rebuilds the same
+  state (blocks.md §8). Keep the data directory and report the block id
+  (docs/testnet-incident-response.md); resyncing reaches the same block. An operator
+  override (`--invalidate-block`) is planned, not implemented.
 
 ### 12.5 Testnet reset
 

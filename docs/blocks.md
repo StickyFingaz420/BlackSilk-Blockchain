@@ -298,29 +298,58 @@ Transactions from disconnected blocks return to the mempool if they are still va
 
 ## 8. Storage (node)
 
-Blocks are stored in an append-only file `blocks.dat` in the node's data directory.
+Blocks are stored in an append-only log of typed records, `blocks.dat` in the node's
+data directory (format 2, `chain/src/store.rs`).
 
 ```
 file    = file header ‖ record*
-header  = magic "BSBH" ‖ LE32 version (1) ‖ LE32 network_id ‖ genesis_id (32)
+header  = magic "BSBH" ‖ LE32 version (2) ‖ LE32 network_id ‖ genesis_id (32)
           ‖ LE32 crc32(the 44 bytes before)                          (48 bytes)
-record  = magic "BSB1" ‖ LE32 length ‖ LE32 crc32(payload) ‖ payload
-payload = pow_hash (32) ‖ block bytes
+record  = magic "BSR2" ‖ LE32 n ‖ LE32 crc32(LE32 n ‖ body) ‖ body   (n = |body|)
+body    = type (1) ‖ payload
+  0x01 block       payload = pow_hash (32) ‖ block bytes
+  0x02 invalid     payload = block id (32) ‖ origin (1: verdict, 2: operator)
+                             ‖ LE16 k ‖ reason (k ≤ 256 bytes, UTF-8)
+  0x81 checkpoint  payload = tip id (32) ‖ LE64 height ‖ state digest (32)
+                             ‖ consensus fingerprint (32) ‖ LE16 k ‖ build commit (k ≤ 64, UTF-8)
 ```
 
+- **Record types.** A type with bit 7 set is *advisory*: ignoring it never changes the
+  chain a replay reaches, so a build that does not know it skips it. Any other unknown
+  type is refused (the store was written by a newer build whose records this one cannot
+  honour). A record whose checksum holds but whose body is not a valid record of its
+  type is refused too, wherever it is; it is never skipped and never truncated as a
+  torn tail. The format was fixed before the v3 freeze so that v3 stores never migrate;
+  new record types are added with new type codes.
+  - **What this build writes:** block records only. Invalid markers and checkpoints are
+    defined for the invalid-marker / `--invalidate-block` work (S5) and the own-store
+    validation checkpoints (S7), which are not implemented yet. On replay a checkpoint
+    is not trusted (every stored block is validated in full), a verdict marker is
+    redundant (the block is validated again and gets the same deterministic verdict),
+    and an operator marker, which this build cannot apply, makes the store refused
+    rather than ignored (`chain/src/manager/replay.rs::blocks_of`).
 - **Network identity** (added 2026-09-27, R10-3). A new store is created with the file
   header. At startup (`BlockStore::bind`, before any record is read) a store naming
   another network id or genesis is refused with "wrong network data directory", so a
   store left over from an earlier testnet (for example a v2 store after the v3 reset)
   is detected instead of being replayed into a new genesis and silently orphaned. A
-  damaged header or an unknown format version is refused too (fail safe); a header torn
-  while the store was being created (no record after it) is written again.
-  - **Legacy stores** written before 2026-09-27 have no header (format 0: records from
-    offset 0). They are accepted as they are, with a warning that their network cannot
-    be verified, and stay headerless: nothing is rewritten, appends continue in the
-    legacy layout. Only new stores get the header. Tested in `store.rs`
-    (`a_new_store_is_bound_to_its_network`, `a_legacy_headerless_store_is_accepted_unchanged`,
-    `damaged_and_torn_file_headers`) and `fork_choice.rs::a_store_of_another_network_is_refused`.
+  damaged header, a file that is not a block store, or an unknown format version is
+  refused too (fail safe), with nothing changed; a header torn while the store was
+  being created (no record after it) is written again.
+  - **Older formats are never migrated.** Format 0 (no file header; every store written
+    before 2026-09-27, so every one belongs to a network from before the v3 reset) is
+    refused on testnet and mainnet (F35-1): its network cannot be verified, and
+    accepting it would append the v3 chain after an old network's orphaned blocks. The
+    error says to move `blocks.dat` aside and resync. On regtest it is still read and
+    appended to as it is (block records only, in its own `"BSB1"` layout, never
+    rewritten), with a warning. Format 1 (file header, untyped `"BSB1"` records; stores
+    of pre-freeze labnet runs) is refused on every network with the same advice.
+  - Tested in `store.rs` (`a_new_store_is_bound_to_its_network`,
+    `a_legacy_headerless_store_is_refused_except_on_regtest`,
+    `damaged_torn_and_foreign_file_headers`, `unknown_and_malformed_records`) and
+    `chain/tests/store_format.rs` (the chain manager refuses format 0 on testnet and
+    mainnet, format 1 everywhere, another network or genesis; regtest still reads format
+    0).
 - **What is stored:** every block whose header was accepted and whose body passes the
   low-work policy below (main chain and side branches). The record is written and
   flushed (`fsync`) *before* the block is applied, so a crash cannot lose an applied
@@ -353,6 +382,16 @@ payload = pow_hash (32) ‖ block bytes
   passed full header validation, including PoW, and the CRC detects corruption. Bodies
   are fully re-validated during replay, so a stored block with an invalid body is
   rejected again deterministically.
+  - **Halts persist across restarts without a record.** A block that passed validation
+    but fails to apply (for example the PX tree-capacity check; a bug by §6's rule)
+    halts the node and is not marked invalid. Nothing about it is written to the store:
+    the block record is already there, and replay rebuilds exactly the state the node
+    had, so applying it fails again and `ChainManager::open` refuses to start, naming
+    the block. A halt caused by a transient fault (tested with an injected one-shot
+    failure, `an_apply_failure_after_validation_halts_without_invalidating`) connects on
+    the next start. A persistent halt needs an operator decision (`--invalidate-block`,
+    S5, not implemented yet). Until then the node cannot pass that block: report it
+    (moving the store aside only resyncs to the same block).
 - **Replay order.** Records are in arrival order, and bodies arrive in any order during
   header-first sync (up to 16 in flight, from several peers). A block is replayed once
   its parent is known; one stored before its parent waits for it. Blocks released
@@ -370,7 +409,12 @@ payload = pow_hash (32) ‖ block bytes
     they never influence the connected chain (§6). So the tip, including every
     equal-work tie, the state, `G`, the PX state and the nullifiers are the same after
     a restart as before it (`fork_choice.rs::replay_reproduces_live_fork_choice_exactly`:
-    16 random delivery orders of a tree with five equal-work tips, two restarts each).
+    16 random delivery orders of a tree with five equal-work tips, two restarts each;
+    `store_format.rs::replay_reaches_the_state_of_a_fresh_sync`: a fresh sync, a
+    restart after every block and a store holding markers reach one identical state,
+    PX state included, over a reorganization and an invalid body; coinbase-only blocks,
+    so the PX record and nullifier logs stay empty there and PX transactions are covered
+    by `manager.rs::restart_rebuilds_the_px_state_exactly`).
     Before, the live node broke ties by first *header* seen and a restart by first
     *body* stored, so it could come back on the other tip.
   - Remaining exception: a stored block whose parent was never stored in the same
@@ -394,15 +438,23 @@ payload = pow_hash (32) ‖ block bytes
     with `block store write failed: free disk space / check the disk, then restart the
     node`, instead of staying up while re-downloading bodies it cannot store. A restart
     truncates any torn tail and resumes from the last stored block.
-  - Tested with injected failures (`store.rs` tests, `chain/tests/storage_recovery.rs`:
-    a crash at every byte of the last record, a full disk, a failure during a
-    reorganization, restarts after each). A real full disk has not been tested.
+  - Tested with injected failures (`store.rs` tests, `chain/tests/storage_recovery.rs`,
+    `chain/tests/store_format.rs`): a crash at every byte of the whole store, file
+    header and markers included (store level and chain-manager level), a write failing
+    after every byte count of every record type with and without a working undo, a
+    full disk, a failure during a reorganization, restarts after each. A real full
+    disk has not been tested.
 - **Corruption:**
   - **Damaged tail** (a crash mid-write): truncated away with a warning. Damage counts
     as the tail only if **no** valid record starts anywhere after it.
   - **Damage followed by any valid record** is real corruption, not a crash. The node
     refuses to start rather than silently drop blocks (fail safe). The check is linear:
-    each later position holding the magic is parsed at most once.
+    each later position holding the magic is parsed at most once. Every single-bit
+    flip anywhere in a store is either refused or, inside the last record, cut back to
+    an exact prefix of the records written (`store.rs::every_single_bit_flip_is_refused_or_cut_to_an_exact_prefix`);
+    the checksum covers the record length too. The record decoder is exercised with
+    random bytes (`random_bytes_never_panic_and_allocate_within_the_input`): no panic,
+    and nothing is allocated beyond the bytes read.
   - A torn last block whose data happens to contain a complete record-shaped byte
     string (block data is partly user-chosen) is also refused, since it cannot be told
     apart from corruption; the repair below recovers it without losing any valid
@@ -415,7 +467,10 @@ payload = pow_hash (32) ‖ block bytes
     `blocks.dat.damaged-<unix time>` (synced to disk before the store is truncated),
     the store is truncated there, and the node downloads the dropped blocks again.
     Valid records after the damage are not salvaged (they are in the set-aside file).
-    A missing store (fresh data directory) is "nothing to repair".
+    A missing store (fresh data directory) is "nothing to repair". Repair handles format
+    2 and regtest format 0 stores only; it refuses a damaged file header or another
+    format version and changes nothing (the operator moves the store aside and
+    resyncs).
 - **Known limitations** (acceptable for a controlled testnet; to be measured in the
   trial):
   - every block body and every block's undo data stays in memory (PX-F1, PX-F2);

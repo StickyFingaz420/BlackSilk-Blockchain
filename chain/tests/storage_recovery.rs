@@ -4,7 +4,7 @@
 
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{ChainManager, SubmitError, Template, STORE_FAILURE_LIMIT};
-use blacksilk_chain::store::{BlockStore, FileStore, StoredBlock};
+use blacksilk_chain::store::{BlockStore, FileStore, Record, StoreIdentity};
 use blacksilk_consensus::merkle::tx_root;
 use blacksilk_consensus::{BlockHeader, ChainParams, Hash, PowFunction, HEADER_VERSION};
 use blacksilk_crypto::keys::{SubaddressIndex, WalletKeys};
@@ -140,8 +140,11 @@ impl BlockStore for FailingStore {
         }
         self.inner.append(pow_hash, block)
     }
-    fn load(&mut self) -> std::io::Result<Vec<StoredBlock>> {
+    fn load(&mut self) -> std::io::Result<Vec<Record>> {
         self.inner.load()
+    }
+    fn bind(&mut self, identity: &StoreIdentity) -> std::io::Result<()> {
+        self.inner.bind(identity)
     }
     fn failed(&self) -> bool {
         self.poisoned
