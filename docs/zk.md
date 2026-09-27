@@ -938,6 +938,7 @@ Each decision is recorded in this document, with the measurements as evidence in
 | Penumbra | Shielded pool plus public batch execution | General private functions |
 | RISC Zero, SP1 | RISC-V zkVMs in Rust on STARKs | Used (or reproduced) as the execution layer, with a kernel on top and a spec-derived verifier |
 | Monero FCMP++ | Full-chain membership on Curve25519 cycles | PX reaches full-set anonymity with hash-based proofs instead |
+| Neptune Cash | A live proof-of-work chain with STARK-based private transactions, post-quantum privacy, hidden lock scripts, custom tokens and transactions merged per block | Close prior art for hash-based PQ privacy on PoW: BlackSilk differs in its ring-signature v1 layer, the fixed kernel over a RISC-V zkVM, and contract records, not in being hash-based or PoW |
 
 **What we believe is new** is the combination:
 - a Monero-lineage ring layer whose contract model and proof facts are shared with a
@@ -947,4 +948,5 @@ Each decision is recorded in this document, with the measurements as evidence in
 - hybrid post-quantum record delivery with Janus-style commitment checks.
 
 As in contracts.md §3, "new" is our belief; no one outside the project has checked the
-prior art.
+prior art. Neptune Cash (above) already combines STARK privacy, post-quantum
+assumptions and proof of work, so none of these points is claimed as a first.
