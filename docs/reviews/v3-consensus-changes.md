@@ -258,3 +258,108 @@ tests (fresh proofs over the new `h_tx`) are run by the coordinator after the me
 
 **12. Open review points.** Agent 40's rule-revision list should record the domain
 layout change (the fingerprint's constant list cannot see it).
+
+---
+
+<a id="exact-v1-fee"></a>
+
+## Exact v1 fee (T8): `fee = FEE_PER_WEIGHT × max_weight(n_in, n_out)`
+
+Decision: agent 38 W8, "Exact v1 fee (W8), DECIDED for the v3 genesis" (decisions.md,
+Agent 38); dossiers 38 §3.7, 14 §3.4 (FE-4) and 11 (F11-7). Work item CB-B1b item 1.
+
+**1. Problem.** T8 required `fee ≥ min_fee(weight)`. The official wallet pays exactly
+`standard_fee(n, k) = min_fee(max_weight(n, k))`, but any other amount was valid, so a
+third-party wallet's own fee computation, a "priority" multiple or a buggy fee singled
+out its wallet on chain and, through the change output, its later real inputs. v1 was
+the only kind whose fee was a free field: PX fees (`PX_STANDARD_FEE`) and deploy fees
+(`deploy_fee`) were already exact.
+
+**2. Demonstrated failure** (test first, on the base commit `f1fc15a`):
+`tx/tests/exact_fee.rs::a_transfer_not_paying_exactly_the_standard_fee_is_rejected`
+fails: signed, balanced 1-input 2-output transfers paying 34 461, 34 459 and 68 920
+atomic units (standard 34 460) are all accepted, by `validate_transfer` and in a block:
+`accepted (fee, mempool, block): [(34461, Ok(()), Ok(())), (34459, Ok(()), Ok(())),
+(68920, Ok(()), Ok(()))]`.
+
+**3. Prior art.** Monero: non-standard fees cluster by wallet implementation (Rucknium,
+Monero non-standard fees: about 10 % of transactions, five or more clusters; 62 %
+positive predictive value for the real input created by a same-fingerprint transaction);
+monero#5711 proposes consensus fee discretization; research-lab#70 shows that
+high-precision fees leak creation time. Zcash ZIP-317 prices by public shape (logical
+actions). Sources: dossier 38 §3.7, dossier 14 §8.
+
+**4. Alternatives.** Keep "≥" and document the fingerprint (rejected by the decision);
+fee tiers `{1, 4, 20} × standard` (R-FEE1: ≤ 1.6 bits, keeps a priority escape; possible
+later as a relaxation by activation, through `TxRules::standard_fee`); a dynamic,
+anchor-indexed fee (P3 mainnet design, dossier 14 §3.6).
+
+**5. Affected components.**
+- `tx/src/params.rs`: `max_weight` moves here from the wallet builder (it is a
+  consensus function; F11-7) and `TxRules::standard_fee(n, k) = min_fee(max_weight(n, k))`
+  is the single definition of the v1 fee rule.
+- `tx/src/validate.rs`: `check_structure` = `check_shape` (T1, T3–T7, T10 shape, T11) +
+  `check_fee` (T8 exact); `TxError::FeeTooLow` becomes `TxError::FeeNotExact { fee,
+  required }` (stateless, as before).
+- `tx/src/px.rs`: `deploy_fee(n, k, programs, rules)` takes `&TxRules` and uses
+  `rules.standard_fee` for its v1 part (was the constant `FEE_PER_WEIGHT`; FE-5);
+  `check_deploy_structure` checks the transfer shape with `check_shape` (no more
+  "relaxed rules with a zero fee rate" hack); `PxDeploy::required_fee(rules)`.
+- `tx/src/builder.rs`, `tx/src/px_builder.rs`: `build_transfer` refuses a non-standard fee
+  (self-check); `build_transfer_signing` self-checks the shape only (its callers own the
+  fee rule); `build_deploy` passes the real rules.
+- `wallet/src/wallet/contracts.rs`: `deploy_fee(…, &rules)`.
+- **Deploys.** The same rule already applied: a deploy's fee was exact
+  (`DeployFeeNotExact`) with its v1 part `FEE_PER_WEIGHT × max_weight(n, k)`. The v1
+  part is now computed by the same `TxRules::standard_fee`, so one function governs both.
+  PX transactions keep `PX_STANDARD_FEE` (which exceeds the v1 fee of any PX v1 part).
+
+**6. Activation.** v3 genesis base rule set, from genesis; no `Epoch` field. After launch
+this would be a tightening (needs an activation height); relaxing it to tiers later is an
+activation through `TxRules`.
+
+**7. Compatibility.** No encoding, id, signature-message or `h_tx` change. Every
+transaction the official wallet builds is unchanged (it already paid exactly the standard
+fee). Only transfers with another fee change verdict (valid to invalid). No pinned
+vector changes. The fingerprint's constant list does not change (`FEE_PER_WEIGHT` is
+unchanged); the rule change belongs in agent 40's rule-revision list.
+
+**8. Reorg, wallet, mining and P2P implications.** Reorgs: none (a stateless rule).
+Wallet: `standard_fee` is unchanged; a wallet that computed another fee now gets
+`BuildError::SelfCheck(FeeNotExact)` before signing leaves the builder. Mining and the
+mempool: v1 fee rates now differ only by the ratio `max_weight / weight` of a shape, so
+honest users cannot outbid; congestion is policy (eviction, expiry; dossier 12 P4). P2P:
+`FeeNotExact` is stateless, so relaying such a transaction is penalized as `FeeTooLow`
+was. Tests that paid "a hundred times the fee" to show that fees do not matter
+(`chain/tests/mempool_conflicts.rs`) now pay the standard fee: no other fee is valid.
+
+**9. Vectors.** `tx/tests/data/max_weight.txt`: `max_weight(n, k)` and the exact fee for
+every `n = 1..64`, `k = 0..16` (1 088 rows; `k = 0, 1` are PX v1-part shapes), generated
+by the independent, standard-library Python script `tools/vectors/max_weight.py`
+(derived from the spec layout, §4.1, §4.2, §7, §8.4, not from the Rust code; `--check`
+compares). Anchors: `max_weight(1, 2) = 1 723` (fee 34 460), `max_weight(64, 16) =
+57 439`, `max_weight(1, 0) = 841`. (Dossier 14 quoted 57 449 for `(64, 16)`; the
+spec-derived value is 57 439, and the Rust function agrees with the script.)
+
+**10. Regression tests.**
+- `tx/tests/exact_fee.rs`: the demonstration; `a_non_standard_fee_is_a_stateless_fee_not_exact`
+  (mempool and block, error and class); `the_builder_refuses_a_non_standard_fee`;
+  `the_deploy_fee_uses_the_same_standard_fee_function` (a doubled fee rate moves the
+  transfer fee and the deploy's v1 part together).
+- `tx/tests/max_weight_vectors.rs`: the golden table; a property test that
+  `max_weight(n, k) ≥ weight` for random and extreme encodings (ring entries and fee
+  over the whole `u64` range, 10-byte varints) of every valid shape (3 840 cases).
+- `tx/tests/adversarial.rs::t8_fee` (every non-standard fee, `FeeNotExact`), `t9_balance`
+  (a raised fee is caught by T8 first; T9 alone still rejects it).
+- `wallet/tests/e2e.rs::the_wallet_pays_the_exact_v1_fee_for_every_shape` (1-input and
+  many-input transfers over RPC; the pooled fee equals `TxRules::standard_fee`).
+
+**11. Suite results.** In the commit message and the CB-B1b final report.
+
+**12. Open review points.**
+- Red team (50) reviews the rule and the claim that no honest wallet path produces a
+  non-standard fee (the wallet uses `standard_fee`, deploys `deploy_fee`, PX
+  `PX_STANDARD_FEE`).
+- Agent 40: add the rule revision and weight samples to the fingerprint manifest.
+- `TxError::is_stateless` treats `FeeNotExact` as stateless; if a later epoch changes
+  `fee_per_weight`, it becomes height-dependent near the activation (F11-3; P2 item).

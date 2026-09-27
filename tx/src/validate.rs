@@ -100,11 +100,14 @@ pub enum TxError {
     OutputsNotSorted,
     /// T7.
     PseudoOutCount,
-    /// T8.
-    FeeTooLow {
+    /// T8: the fee differs from the standard fee of the transaction's shape,
+    /// `TxRules::standard_fee(n_in, n_out)`, which every transfer pays
+    /// exactly (docs/reviews/v3-consensus-changes.md#exact-v1-fee).
+    FeeNotExact {
         fee: u64,
         required: u64,
     },
+    /// T8: the standard fee overflows (unreachable with the v3 constants).
     WeightOverflow,
     /// T9.
     Unbalanced,
@@ -214,7 +217,7 @@ impl TxError {
     /// | `RingNotIncreasing` | T5 | stateless | the ring's index list itself |
     /// | `OutputKeyIdentity`, `EphemeralIdentity`, `OutputsNotSorted` | T6 | stateless | the transaction's own outputs (also catches a one-time key repeated within a transfer, deploy, or a PX transaction's hidden outputs or payouts) |
     /// | `PseudoOutCount` | T7 | stateless | counts |
-    /// | `FeeTooLow`, `WeightOverflow` | T8 | stateless | fee vs. weight or size, fixed by the transaction and the network's constant rules |
+    /// | `FeeNotExact`, `WeightOverflow` | T8 | stateless | the fee vs. the standard fee of the shape, fixed by the transaction and the network's constant rules |
     /// | `Unbalanced` | T9 | stateless | commitments and amounts in the transaction |
     /// | `RangeProofShape`, `RangeProofInvalid` | T10 | stateless | the proof and the transaction's own commitments |
     /// | `SignatureCount` | T11 | stateless | counts |
@@ -256,7 +259,7 @@ impl TxError {
             | TxError::EphemeralIdentity { .. }
             | TxError::OutputsNotSorted
             | TxError::PseudoOutCount
-            | TxError::FeeTooLow { .. }
+            | TxError::FeeNotExact { .. }
             | TxError::WeightOverflow
             | TxError::Unbalanced
             | TxError::RangeProofShape
@@ -310,6 +313,33 @@ pub fn check_aux_images(signatures: &[Clsag]) -> Result<(), TxError> {
 
 /// Cheap structural rules: T1, T3–T8, T10 (shape) and T11.
 pub fn check_structure(tx: &Transfer, rules: &TxRules) -> Result<(), TxError> {
+    check_shape(tx)?;
+    check_fee(tx, rules)
+}
+
+/// T8: the fee is exactly the standard fee of the transaction's shape,
+/// `rules.standard_fee(n_in, n_out) = FEE_PER_WEIGHT × max_weight(n_in, n_out)`
+/// (docs/transactions.md §8.4). The fee is then a function of the public
+/// shape alone, as PX and deploy fees are, so it identifies no wallet
+/// (docs/reviews/v3-consensus-changes.md#exact-v1-fee). `max_weight` bounds
+/// the actual weight, so the fee also covers `min_fee(weight)`.
+pub fn check_fee(tx: &Transfer, rules: &TxRules) -> Result<(), TxError> {
+    let required = rules
+        .standard_fee(tx.inputs.len(), tx.outputs.len())
+        .ok_or(TxError::WeightOverflow)?;
+    if tx.fee != required {
+        return Err(TxError::FeeNotExact {
+            fee: tx.fee,
+            required,
+        });
+    }
+    Ok(())
+}
+
+/// [`check_structure`] without the fee rule (T8): T1, T3–T7, T10 (shape) and
+/// T11. For the v1 part of a deploy, whose fee has its own exact rule
+/// (`px::check_deploy_structure`).
+pub fn check_shape(tx: &Transfer) -> Result<(), TxError> {
     let n = tx.inputs.len();
     let k = tx.outputs.len();
     if n == 0 || n > MAX_INPUTS {
@@ -361,14 +391,6 @@ pub fn check_structure(tx: &Transfer, rules: &TxRules) -> Result<(), TxError> {
     let size = tx.encoded_len();
     if size > MAX_TX_SIZE {
         return Err(TxError::TooLarge { size });
-    }
-    // T8
-    let required = rules.min_fee(tx.weight()).ok_or(TxError::WeightOverflow)?;
-    if tx.fee < required {
-        return Err(TxError::FeeTooLow {
-            fee: tx.fee,
-            required,
-        });
     }
     Ok(())
 }

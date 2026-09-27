@@ -60,11 +60,11 @@ impl Wallet {
         candidates.sort_by_key(|&i| std::cmp::Reverse(self.outputs[i].amount));
         let mut chosen = Vec::new();
         let mut sum = 0u128;
-        let mut fee = deploy_fee(1, 2, &programs);
+        let mut fee = deploy_fee(1, 2, &programs, &rules);
         for &i in &candidates {
             chosen.push(i);
             sum += self.outputs[i].amount as u128;
-            fee = deploy_fee(chosen.len(), 2, &programs);
+            fee = deploy_fee(chosen.len(), 2, &programs, &rules);
             if sum >= fee as u128 || chosen.len() >= MAX_INPUTS {
                 break;
             }

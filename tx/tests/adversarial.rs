@@ -183,20 +183,23 @@ fn t11_an_identity_auxiliary_image_is_a_stateless_fault() {
 #[test]
 fn t8_fee() {
     let (net, tx, _) = setup(7);
-    // The standard fee is an upper bound, so it is above the exact minimum.
-    let required = net.rules.min_fee(tx.weight()).unwrap();
-    assert!(tx.fee >= required);
-    // One unit below the minimum for the actual weight (checked before balance).
-    let mut t = tx.clone();
-    t.fee = required - 1;
-    let exact = net.rules.min_fee(t.weight()).unwrap();
-    assert_eq!(
-        validate(&net, &t),
-        Err(TxError::FeeTooLow {
-            fee: required - 1,
-            required: exact
-        })
-    );
+    // The standard fee is an upper bound, so it is above the minimum for the
+    // actual weight; it is also the only valid fee (exact v1 fee).
+    let standard = standard_fee(1, 2, &net.rules);
+    assert_eq!(tx.fee, standard);
+    assert!(tx.fee >= net.rules.min_fee(tx.weight()).unwrap());
+    // Any other fee fails T8 (checked before balance).
+    for fee in [0, 1, standard - 1, standard + 1, u64::MAX] {
+        let mut t = tx.clone();
+        t.fee = fee;
+        assert_eq!(
+            validate(&net, &t),
+            Err(TxError::FeeNotExact {
+                fee,
+                required: standard
+            })
+        );
+    }
     // The standard fee covers the real weight of every shape.
     for n in [1usize, 2, 16, 64] {
         for k in [2usize, 3, 16] {
@@ -220,10 +223,15 @@ fn t9_balance() {
     let mut t = tx.clone();
     t.outputs[0].commitment = Point::from_point(t.outputs[0].commitment.point() - h());
     assert_eq!(validate(&net, &t), Err(TxError::Unbalanced));
-    // Raising the fee without changing commitments breaks balance.
+    // Raising the fee without changing commitments breaks balance (T9 alone:
+    // in full validation the exact-fee rule T8 fails first).
     let mut t = tx.clone();
     t.fee += 1;
-    assert_eq!(validate(&net, &t), Err(TxError::Unbalanced));
+    assert_eq!(check_balance(&t), Err(TxError::Unbalanced));
+    assert!(matches!(
+        validate(&net, &t),
+        Err(TxError::FeeNotExact { .. })
+    ));
 }
 
 #[test]
@@ -811,7 +819,7 @@ fn stateless_and_contextual_errors_are_distinguished() {
         TxError::Unbalanced,
         TxError::RangeProofInvalid,
         TxError::KeyImagesNotSorted,
-        TxError::FeeTooLow {
+        TxError::FeeNotExact {
             fee: 1,
             required: 2,
         },

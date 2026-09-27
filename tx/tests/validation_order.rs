@@ -718,7 +718,7 @@ fn every_error_variant_is_classified() {
         EphemeralIdentity { output: 0 },
         OutputsNotSorted,
         PseudoOutCount,
-        FeeTooLow {
+        FeeNotExact {
             fee: 0,
             required: 1,
         },

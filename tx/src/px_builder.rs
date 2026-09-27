@@ -548,9 +548,15 @@ pub fn build_px<R: RngCore + CryptoRng>(
 }
 
 /// The fee of a deploy with `inputs` v1 inputs and `outputs` outputs that
-/// registers `programs`: exactly [`crate::px::deploy_fee`], a consensus rule.
-pub fn deploy_fee(inputs: usize, outputs: usize, programs: &[crate::px::Registration]) -> u64 {
-    crate::px::deploy_fee(inputs, outputs, programs)
+/// registers `programs`, under `rules`: exactly [`crate::px::deploy_fee`], a
+/// consensus rule.
+pub fn deploy_fee(
+    inputs: usize,
+    outputs: usize,
+    programs: &[crate::px::Registration],
+    rules: &TxRules,
+) -> u64 {
+    crate::px::deploy_fee(inputs, outputs, programs, rules)
 }
 
 /// Builds a signed deploy registering `programs` (binary, budget), paid from
@@ -567,7 +573,7 @@ pub fn build_deploy<R: RngCore + CryptoRng>(
     rules: &TxRules,
     rng: &mut R,
 ) -> Result<crate::px::PxDeploy, BuildError> {
-    let fee = deploy_fee(inputs.len(), payments.len() + 1, &programs);
+    let fee = deploy_fee(inputs.len(), payments.len() + 1, &programs, rules);
     let view = |t: &Transfer| crate::px::PxDeploy {
         inputs: t.inputs.clone(),
         outputs: t.outputs.clone(),
@@ -579,12 +585,8 @@ pub fn build_deploy<R: RngCore + CryptoRng>(
         signatures: Vec::new(),
     };
     let net = rules.domain();
-    // The v1 part pays the per-byte fee, not the weight fee.
-    let relaxed = TxRules {
-        fee_per_weight: 0,
-        ..*rules
-    };
     // The deploy payload (salt, programs) is bound into the hedge context.
+    // The fee rule checked at the end is the deploy's own exact fee.
     let payload = crate::px::deploy_payload_bytes(&salt, &programs);
     let t = crate::builder::build_transfer_signing(
         keys,
@@ -592,7 +594,7 @@ pub fn build_deploy<R: RngCore + CryptoRng>(
         payments,
         change,
         fee,
-        &relaxed,
+        rules,
         rng,
         &payload,
         &|t| view(t).signature_message(net),

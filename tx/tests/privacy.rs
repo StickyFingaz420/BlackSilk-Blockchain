@@ -238,10 +238,29 @@ fn broken_rng_transfers_over_the_same_inputs_share_no_output_secrets() {
         Transaction::from(base.clone()).encode(),
         Transaction::from(build(&alice, 1000, fee)).encode()
     );
+    // Another fee: T8 admits only the standard fee, so `build_transfer`
+    // refuses it; the hedge must still bind the fee for callers that sign
+    // their own statement (deploys pay a payload-dependent fee).
+    let net_domain = net.rules.domain();
+    let other_fee = blacksilk_tx::builder::build_transfer_signing(
+        &miner.keys,
+        plans.clone(),
+        &[Payment {
+            address: alice.primary(),
+            amount: 1000,
+        }],
+        &miner.primary(),
+        fee + 1,
+        &net.rules,
+        &mut ConstRng,
+        &[],
+        &|t| t.signature_message(net_domain),
+    )
+    .expect("build");
     for (what, other) in [
         ("amount", build(&alice, 1001, fee)),
         ("recipient", build(&bob, 1000, fee)),
-        ("fee", build(&alice, 1000, fee + 1)),
+        ("fee", other_fee),
     ] {
         assert!(
             public(&base).is_disjoint(&public(&other)),

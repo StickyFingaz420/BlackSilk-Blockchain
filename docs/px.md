@@ -599,7 +599,7 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
 
 | Rule | Meaning |
 |---|---|
-| Structure | Counts, sorting, identity points, range-proof shape, sizes. PX transactions: fee **exactly** `PX_STANDARD_FEE`. Deploys: fee **exactly** `deploy_fee(n, k, programs) = FEE_PER_WEIGHT × max_weight(n, k) + DEPLOY_FEE_PER_BYTE × payload length` (`DeployFeeNotExact`; v3 candidate, R5-1/R6 TX-4) |
+| Structure | Counts, sorting, identity points, range-proof shape, sizes. PX transactions: fee **exactly** `PX_STANDARD_FEE`. Deploys: fee **exactly** `deploy_fee(n, k, programs) = standard_fee(n, k) + DEPLOY_FEE_PER_BYTE × payload length`, where `standard_fee(n, k) = FEE_PER_WEIGHT × max_weight(n, k)` is the exact fee of a transfer of the shape (transactions.md T8, §8.4; `TxRules::standard_fee`, one function for both) (`DeployFeeNotExact`; v3 candidate, R5-1/R6 TX-4) |
 | Balance | §11.1 (PX); the transfer rule for deploys |
 | C1–C3 | Rings and key images, as for transfers. One-time keys (hidden outputs and payouts together) are distinct within the transaction (stateless: the sort of each list, and `PxDuplicateOutputKey` between them) but may repeat across transactions and the chain (transactions.md §8.2) |
 | PX1 | The anchor is a root of the last 100 blocks, before this block |
