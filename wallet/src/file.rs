@@ -8,7 +8,9 @@
 //!
 //! - The plaintext is the wallet JSON. It contains the seed, so it is secret.
 //! - A fresh salt and nonce are drawn from the OS RNG on every save.
-//! - Files are replaced atomically: written to `*.tmp`, fsynced, then renamed.
+//! - Files are replaced atomically: written to `*.tmp<pid>`, fsynced, then
+//!   renamed; on Unix the directory is fsynced too, and the file is created
+//!   owner-only (0600).
 //! - The KDF parameters are stored in the header, so they can be raised later
 //!   without breaking old files.
 
@@ -132,15 +134,65 @@ pub fn decrypt(file: &[u8], password: &[u8]) -> Result<Vec<u8>, FileError> {
         .map_err(|_| FileError::Decrypt)
 }
 
-/// Writes `bytes` to `path` atomically (temp file, fsync, rename).
-pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), FileError> {
-    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+/// Opens `path` for writing, creating it if needed. On Unix a new file is
+/// created readable and writable by its owner only (0600), whatever the umask.
+/// On Windows it inherits the directory's access control list.
+pub fn open_private(path: &Path, truncate: bool) -> std::io::Result<std::fs::File> {
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create(true).truncate(truncate);
+    #[cfg(unix)]
     {
-        let mut f = std::fs::File::create(&tmp).map_err(FileError::Io)?;
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+    }
+    o.open(path)
+}
+
+/// Creates `path`, which must not exist, owner-only on Unix (as `open_private`).
+pub fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+    }
+    o.open(path)
+}
+
+/// Writes `bytes` to `path` atomically: a temporary file (owner-only on
+/// Unix), fsync, rename, and on Unix an fsync of the directory so that the
+/// rename itself survives a crash.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), FileError> {
+    let tmp = tmp_path(path);
+    // A leftover from a crashed run may have other permissions; the mode
+    // applies only to a file this call creates.
+    match std::fs::remove_file(&tmp) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(FileError::Io(e)),
+    }
+    {
+        let mut f = open_private(&tmp, true).map_err(FileError::Io)?;
         f.write_all(bytes).map_err(FileError::Io)?;
         f.sync_all().map_err(FileError::Io)?;
     }
-    std::fs::rename(&tmp, path).map_err(FileError::Io)
+    std::fs::rename(&tmp, path).map_err(FileError::Io)?;
+    #[cfg(unix)]
+    {
+        let dir = match path.parent() {
+            Some(d) if !d.as_os_str().is_empty() => d,
+            _ => Path::new("."),
+        };
+        std::fs::File::open(dir)
+            .and_then(|d| d.sync_all())
+            .map_err(FileError::Io)?;
+    }
+    Ok(())
+}
+
+fn tmp_path(path: &Path) -> std::path::PathBuf {
+    path.with_extension(format!("tmp{}", std::process::id()))
 }
 
 #[cfg(test)]
@@ -182,8 +234,32 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("w.wallet");
         write_atomic(&p, b"one").unwrap();
+        // A stale temporary file (a crashed save) is replaced, not appended to.
+        std::fs::write(tmp_path(&p), b"stale stale stale").unwrap();
         write_atomic(&p, b"two").unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), b"two");
-        assert!(!p.with_extension("tmp").exists());
+        // No temporary file is left behind. (The old check looked for
+        // `w.tmp`, a name that is never used: the real one is `w.tmp<pid>`.)
+        assert!(!tmp_path(&p).exists());
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["w.wallet"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wallet_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("w.wallet");
+        write_atomic(&p, b"one").unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let l = dir.path().join("w.lock");
+        open_private(&l, false).unwrap();
+        let mode = std::fs::metadata(&l).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 }

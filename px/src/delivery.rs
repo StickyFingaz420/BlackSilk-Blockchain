@@ -5,11 +5,34 @@
 //! - ECDH on Ristretto255 with the address's view key: `ss_ec = r·V`;
 //! - ML-KEM-768 (FIPS 203) to the address's encapsulation key: `ss_kem`.
 //!
-//! The AEAD key is `H32("px/delivery-key", ss_ec ‖ ss_kem ‖ R ‖ ct_kem ‖ cm)`,
-//! a combiner over both secrets and both ciphertexts (as in X-Wing), bound to
-//! the output's commitment `cm`. The body is ChaCha20-Poly1305 with `cm` as
-//! associated data. Every key is fresh (new `r` and new KEM randomness), so
-//! the nonce is zero.
+//! The AEAD key is `H32("px/delivery-key", ss_ec ‖ ss_kem ‖ R ‖ ct_kem ‖ cm)`:
+//! a hash of both shared secrets and both ciphertexts (the ephemeral `R` and
+//! the KEM ciphertext), bound to the output's commitment `cm`. The body is
+//! ChaCha20-Poly1305 with `cm` as associated data. Every key is fresh (new `r`
+//! and new KEM randomness), so the nonce is zero.
+//!
+//! **This is not the X-Wing combiner**, and its security argument must not be
+//! borrowed from X-Wing. X-Wing (draft-connolly-cfrg-xwing-kem) hashes
+//! `ss_M ‖ ss_X ‖ ct_X ‖ pk_X ‖ label`: it includes the recipient's classical
+//! public key `pk_X`. Generic hybrid combiners also bind the KEM public key
+//! (a hash of `ek`). This combiner hashes both ciphertexts but neither the
+//! recipient's view key `V` nor `H(ek)`. Why that is acceptable here
+//! (docs/px.md §6): every key is used once, for one body whose tag and
+//! associated data bind `cm`, and the recipient accepts a record only if it
+//! recomputes `cm`. Adding `V` and `H(ek)` to the hash is a recorded,
+//! non-blocking hardening. It changes the wire format (the key of every
+//! ciphertext), so it needs a coordinated upgrade.
+//!
+//! **Key separation (limits).** The delivery keys of an address derive from
+//! the PX spend secret `sk` and the index alone:
+//! - there is no view/spend separation: no view key from which a scanning
+//!   (watch-only) wallet could derive the delivery keys of every address
+//!   without `sk`. Exporting one address's delivery keys would not give
+//!   `sk` (the derivation is one-way), but no wallet mode does this, and such
+//!   keys would not see spends (nullifiers need `nk`);
+//! - the derivation does not include the network: one seed gives the same PX
+//!   keys (and owner tags) on every network. Address encodings differ per
+//!   network; the keys do not.
 //!
 //! **Hedged randomness** (docs/transactions.md §10). The sender's ephemeral
 //! scalar `r` and the ML-KEM encapsulation coins `m` are not drawn from the

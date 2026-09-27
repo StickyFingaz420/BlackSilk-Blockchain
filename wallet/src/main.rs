@@ -17,13 +17,13 @@ use blacksilk_tx::px::Registration;
 use blacksilk_wallet::file::KdfParams;
 use blacksilk_wallet::px::{digest_from_hex, digest_hex, RecordSource};
 use blacksilk_wallet::wallet::{network_name, parse_network};
-use blacksilk_wallet::{load, save, Wallet};
+use blacksilk_wallet::{load, save, Wallet, WalletError};
 use blacksilk_zkvm::air::trace::Budget;
 use clap::{Parser, Subcommand};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::path::PathBuf;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Parser)]
 #[command(name = "blacksilk-wallet", version, about = "BlackSilk wallet")]
@@ -31,7 +31,9 @@ struct Args {
     /// Wallet file.
     #[arg(long, short)]
     wallet: PathBuf,
-    /// Node RPC address.
+    /// Node RPC address: host:port or http://host:port. Plain HTTP only
+    /// (https:// is refused); use your own node, or reach a remote one over an
+    /// SSH tunnel, a VPN or Tor. Proxy environment variables are ignored.
     #[arg(long, default_value = "127.0.0.1:29333")]
     node: String,
     #[command(subcommand)]
@@ -59,6 +61,11 @@ enum Cmd {
         account: u32,
         #[arg(long, default_value_t = 0)]
         index: u32,
+        /// Allow an index more than 1,000 beyond the highest one that has
+        /// received funds (up to 10,000). Every index up to it is derived at
+        /// every load and scanned for.
+        #[arg(long)]
+        force: bool,
     },
     /// Scan new blocks.
     Sync,
@@ -75,6 +82,11 @@ enum Cmd {
     PxAddress {
         #[arg(long, default_value_t = 0)]
         index: u32,
+        /// Allow an index more than 1,000 beyond the highest PX address that
+        /// has received a record (up to 2,000). Every scanned PX address
+        /// costs time for every PX output on chain.
+        #[arg(long)]
+        force: bool,
     },
     /// Sync and show the private (PX) balance.
     PxBalance,
@@ -102,8 +114,10 @@ enum Cmd {
     /// hidden behind ring signatures). Its programs are public.
     PxDeploy {
         /// Register the reference hash-locked vault (px/vault.elf), a
-        /// demonstration contract: no timeout, no refund, not trustless.
-        #[arg(long)]
+        /// demonstration contract: no timeout, no refund, not trustless. It
+        /// is deployed alone: any other program of the same contract could
+        /// spend the vault's records without the secret.
+        #[arg(long, conflicts_with_all = ["program", "budget"])]
         vault: bool,
         /// A function program (RISC-V ELF); repeat for several.
         #[arg(long)]
@@ -126,25 +140,55 @@ enum Cmd {
         contract: String,
         #[arg(long)]
         amount: String,
-        /// The secret, 64 hex characters; generated and printed if omitted.
-        #[arg(long)]
+        /// The secret, 64 hex characters. RISKY: a command-line argument is
+        /// kept in shell history and visible to other local users in the
+        /// process list; prefer --secret-file or --secret-prompt. Without any
+        /// of the three, a secret is generated.
+        #[arg(long, conflicts_with_all = ["secret_file", "secret_prompt"])]
         secret: Option<String>,
+        /// Read the secret (64 hex characters) from this file.
+        #[arg(long, conflicts_with = "secret_prompt")]
+        secret_file: Option<PathBuf>,
+        /// Ask for the secret on the terminal (not echoed).
+        #[arg(long)]
+        secret_prompt: bool,
+        /// Write a generated secret to this new file (owner-only on Unix)
+        /// instead of printing it.
+        #[arg(long, conflicts_with_all = ["secret", "secret_file", "secret_prompt"])]
+        secret_out: Option<PathBuf>,
         /// PX address of the party that will claim: the record is delivered
         /// to it. Default: this wallet (it keeps a copy either way).
         #[arg(long)]
         deliver_to: Option<String>,
     },
     /// Claim a record of the demonstration vault with its secret, paying its
-    /// value privately.
+    /// value privately. The secret is asked for on the terminal unless
+    /// --secret-file or --secret is given.
     PxVaultClaim {
         /// The vault record's commitment (from px-records).
         #[arg(long)]
         record: String,
+        /// The secret, 64 hex characters. RISKY: kept in shell history and
+        /// visible in the process list; prefer --secret-file or the prompt.
+        #[arg(long, conflicts_with = "secret_file")]
+        secret: Option<String>,
+        /// Read the secret (64 hex characters) from this file.
         #[arg(long)]
-        secret: String,
+        secret_file: Option<PathBuf>,
         /// PX address to pay. Default: this wallet.
         #[arg(long)]
         to: Option<String>,
+    },
+    /// Show the secret of a vault record this wallet locked (stored in the
+    /// wallet file before the lock was sent).
+    PxVaultSecret {
+        /// The vault record's commitment (from px-records).
+        #[arg(long)]
+        record: String,
+        /// Write it to this new file (owner-only on Unix) instead of
+        /// printing it.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// Share a contract record with a PX address (prints the sealed share).
     PxShare {
@@ -225,19 +269,55 @@ fn parse_budget(s: &str) -> Result<Budget, String> {
     })
 }
 
+/// A digest from hex. The error never echoes the input (it may be a secret).
 fn digest_arg(what: &str, s: &str) -> Result<Digest, String> {
     digest_from_hex(s.trim()).map_err(|e| format!("{what}: {e}"))
 }
 
+/// A vault secret from, in order: the command line (risky: shell history and
+/// the process list), a file, or a hidden prompt. `None` if none is asked for.
+/// Copies held by this function are wiped; clap's copy of a command-line
+/// argument cannot be.
+fn read_secret(
+    arg: Option<String>,
+    file: Option<PathBuf>,
+    prompt: bool,
+) -> Result<Option<Digest>, String> {
+    let text: Zeroizing<String> = if let Some(s) = arg {
+        eprintln!("warning: a secret given with --secret stays in shell history and is visible in the process list; prefer --secret-file or the prompt.");
+        Zeroizing::new(s)
+    } else if let Some(path) = file {
+        Zeroizing::new(
+            std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?,
+        )
+    } else if prompt {
+        Zeroizing::new(
+            rpassword::prompt_password("Vault secret (64 hex characters): ")
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        return Ok(None);
+    };
+    digest_arg("secret", &text).map(Some)
+}
+
+/// Writes a vault secret (hex) to `path`, a new file, owner-only on Unix.
+fn write_secret_file(path: &std::path::Path, secret: &Digest) -> Result<(), String> {
+    use std::io::Write;
+    let hex = Zeroizing::new(digest_hex(secret));
+    blacksilk_wallet::file::create_private(path)
+        .and_then(|mut f| {
+            f.write_all(hex.as_bytes())?;
+            f.sync_all()
+        })
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// An exclusive lock on `<wallet>.lock`, held for the whole command, so two
-/// processes never work on one wallet file (review F8).
+/// processes never work on one wallet file (review F8). Owner-only on Unix.
 fn lock_wallet(path: &std::path::Path) -> Result<std::fs::File, String> {
     let lock_path = path.with_extension("lock");
-    let f = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&lock_path)
+    let f = blacksilk_wallet::file::open_private(&lock_path, false)
         .map_err(|e| format!("{}: {e}", lock_path.display()))?;
     f.try_lock()
         .map_err(|_| format!("{} is in use by another wallet process", path.display()))?;
@@ -245,7 +325,7 @@ fn lock_wallet(path: &std::path::Path) -> Result<std::fs::File, String> {
 }
 
 fn run(args: Args) -> Result<(), String> {
-    let client = Client::new(&args.node);
+    let client = Client::try_new(&args.node).map_err(|e| e.to_string())?;
     let _lock = lock_wallet(&args.wallet)?;
     let kdf = KdfParams::default();
     match args.cmd {
@@ -265,7 +345,7 @@ fn run(args: Args) -> Result<(), String> {
                 "Wallet created ({}). Write down these 24 words; they are the only backup:\n",
                 network_name(net)
             );
-            println!("{}\n", w.mnemonic());
+            println!("{}\n", w.mnemonic().as_str());
             println!("Primary address: {primary}");
         }
         Cmd::Restore {
@@ -289,13 +369,25 @@ fn run(args: Args) -> Result<(), String> {
         cmd => {
             let mut pw = password(false)?;
             let mut w = load(&args.wallet, &pw)?;
+            for warning in w.take_warnings() {
+                eprintln!("warning: {warning}");
+            }
             // Save before any transaction leaves the wallet (review F1).
             w.set_autosave(&args.wallet, &pw, kdf);
             let result = match cmd {
-                Cmd::Address { account, index } => {
-                    println!("{}", w.address(account, index));
-                    Ok(())
-                }
+                Cmd::Address {
+                    account,
+                    index,
+                    force,
+                } => w
+                    .try_address(account, index, force)
+                    .map_err(|e| e.to_string())
+                    .map(|a| {
+                        if !w.found_by_restore(account, index) {
+                            eprintln!("note: a wallet restored from the seed scans account 0 only, and only {} subaddresses beyond the highest one that has received funds; it will not find payments to this address by itself. Keep the wallet file backed up.", blacksilk_wallet::wallet::LOOKAHEAD);
+                        }
+                        println!("{a}");
+                    }),
                 Cmd::Sync => w
                     .sync(&client)
                     .map(|h| println!("synced to height {h}"))
@@ -326,10 +418,15 @@ fn run(args: Args) -> Result<(), String> {
                     println!("transaction {}", hex::encode(id));
                     Ok(())
                 })(),
-                Cmd::PxAddress { index } => {
-                    println!("{}", w.px_address(index));
-                    Ok(())
-                }
+                Cmd::PxAddress { index, force } => w
+                    .try_px_address(index, force)
+                    .map_err(|e| e.to_string())
+                    .map(|a| {
+                        if !w.px_found_by_restore(index) {
+                            eprintln!("note: a wallet restored from the seed scans only {} PX addresses beyond the highest one that has received a record; it will not find records sent to this address by itself. Keep the wallet file backed up.", blacksilk_wallet::px::PX_LOOKAHEAD);
+                        }
+                        println!("{a}");
+                    }),
                 Cmd::PxBalance => w.sync(&client).map_err(|e| e.to_string()).map(|h| {
                     let (total, spendable) = w.px_balance();
                     println!("height {h}");
@@ -435,6 +532,13 @@ fn run(args: Args) -> Result<(), String> {
                             let tag = if p.id == vault_id { " (vault)" } else { "" };
                             println!("  program {}{tag}", p.id);
                         }
+                        // A contract's trust boundary is its whole program
+                        // set (docs/px.md §13.4).
+                        if c.programs.iter().any(|p| p.id == vault_id) {
+                            if let Err(e) = blacksilk_wallet::px::vault_check(c) {
+                                println!("  WARNING: not usable as a vault: {e}");
+                            }
+                        }
                     }
                 }),
                 Cmd::PxRecords => w.sync(&client).map_err(|e| e.to_string()).map(|_| {
@@ -452,8 +556,13 @@ fn run(args: Args) -> Result<(), String> {
                             RecordSource::Created => "created here".to_string(),
                             RecordSource::Imported => "imported".to_string(),
                         };
+                        let secret = if r.secret.is_some() {
+                            " (secret stored: px-vault-secret)"
+                        } else {
+                            ""
+                        };
                         println!(
-                            "record {}\n  contract {}\n  value {} BLK, {status}, {source}",
+                            "record {}\n  contract {}\n  value {} BLK, {status}, {source}{secret}",
                             r.commitment,
                             r.contract,
                             format_amount(r.value)
@@ -464,15 +573,30 @@ fn run(args: Args) -> Result<(), String> {
                     contract,
                     amount,
                     secret,
+                    secret_file,
+                    secret_prompt,
+                    secret_out,
                     deliver_to,
                 } => (|| {
                     let contract = digest_arg("contract", &contract)?;
                     let amount = parse_amount(&amount).ok_or("amount: use a number like 1.5")?;
                     let mut rng = os_rng()?;
-                    let (secret, generated) = match secret {
-                        Some(s) => (digest_arg("secret", &s)?, false),
-                        None => (blacksilk_px::wallet::random_digest(&mut rng), true),
-                    };
+                    let (secret, generated) =
+                        match read_secret(secret, secret_file, secret_prompt)? {
+                            Some(s) => (Zeroizing::new(s), false),
+                            None => (
+                                Zeroizing::new(blacksilk_px::wallet::random_digest(&mut rng)),
+                                true,
+                            ),
+                        };
+                    // Write a generated secret out before anything is sent:
+                    // the funds are claimable only with it. (The wallet file
+                    // keeps a copy too, saved before sending.)
+                    if generated {
+                        if let Some(path) = &secret_out {
+                            write_secret_file(path, &secret)?;
+                        }
+                    }
                     let to = deliver_to
                         .map(|a| {
                             decode_px_address(w.network(), &a)
@@ -483,27 +607,52 @@ fn run(args: Args) -> Result<(), String> {
                     eprintln!("warning: the vault is a DEMONSTRATION contract, not a trustless swap: no timeout, no refund, and you (the locker) also know the secret. Whoever learns the secret and the record can claim it (docs/px.md §13.4).");
                     eprintln!("note: if you deliver the record to someone else, your own copy lives only in this wallet file; restoring from the seed will not recover it.");
                     println!("proving (about a minute)...");
-                    let (id, record) = w
-                        .px_vault_lock(
-                            &client,
-                            &contract,
-                            amount,
-                            &secret,
-                            to.as_ref(),
-                            &rules,
-                            &mut rng,
-                        )
-                        .map_err(|e| e.to_string())?;
-                    if generated {
-                        println!("secret {}", digest_hex(&secret));
-                    }
+                    let show_secret = || {
+                        if generated {
+                            match &secret_out {
+                                Some(path) => println!("secret written to {}", path.display()),
+                                None => println!(
+                                    "secret {}",
+                                    Zeroizing::new(digest_hex(&secret)).as_str()
+                                ),
+                            }
+                        }
+                    };
+                    let (id, record) = match w.px_vault_lock(
+                        &client,
+                        &contract,
+                        amount,
+                        &secret,
+                        to.as_ref(),
+                        &rules,
+                        &mut rng,
+                    ) {
+                        Ok(r) => r,
+                        Err(e @ WalletError::Uncertain(_)) => {
+                            // The lock may still be mined: the secret must not
+                            // be lost (review R11-W1). The wallet file holds
+                            // it as well.
+                            show_secret();
+                            eprintln!("note: the secret is stored in the wallet file; `px-records` lists the record and `px-vault-secret --record <commitment>` shows its secret.");
+                            return Err(e.to_string());
+                        }
+                        Err(e) => return Err(e.to_string()),
+                    };
+                    show_secret();
                     println!("record {}", digest_hex(&record));
                     println!("transaction {}", hex::encode(id));
                     Ok(())
                 })(),
-                Cmd::PxVaultClaim { record, secret, to } => (|| {
+                Cmd::PxVaultClaim {
+                    record,
+                    secret,
+                    secret_file,
+                    to,
+                } => (|| {
                     let record = digest_arg("record", &record)?;
-                    let secret = digest_arg("secret", &secret)?;
+                    let secret = Zeroizing::new(
+                        read_secret(secret, secret_file, true)?.expect("the prompt is the default"),
+                    );
                     let to = to
                         .map(|a| {
                             decode_px_address(w.network(), &a)
@@ -518,6 +667,18 @@ fn run(args: Args) -> Result<(), String> {
                         .map_err(|e| e.to_string())?;
                     println!("claimed {} BLK privately", format_amount(value));
                     println!("transaction {}", hex::encode(id));
+                    Ok(())
+                })(),
+                Cmd::PxVaultSecret { record, out } => (|| {
+                    let record = digest_arg("record", &record)?;
+                    let secret = w.px_vault_secret(&record).map_err(|e| e.to_string())?;
+                    match out {
+                        Some(path) => {
+                            write_secret_file(&path, &secret)?;
+                            println!("secret written to {}", path.display());
+                        }
+                        None => println!("{}", Zeroizing::new(digest_hex(&secret)).as_str()),
+                    }
                     Ok(())
                 })(),
                 Cmd::PxShare { record, to } => (|| {
@@ -540,7 +701,7 @@ fn run(args: Args) -> Result<(), String> {
                     Ok(())
                 })(),
                 Cmd::Seed => {
-                    println!("{}", w.mnemonic());
+                    println!("{}", w.mnemonic().as_str());
                     Ok(())
                 }
                 Cmd::ClearPending => {
