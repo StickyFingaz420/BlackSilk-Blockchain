@@ -19,6 +19,11 @@
 
 #![forbid(unsafe_code)]
 
+// Without SSE2, x86 f64 arithmetic runs on the x87 FPU with 80-bit intermediates:
+// double rounding would change hashes silently.
+#[cfg(all(target_arch = "x86", not(target_feature = "sse2")))]
+compile_error!("RandomX requires SSE2 f64 arithmetic on x86");
+
 mod aes_gen;
 mod argon2d;
 mod config;

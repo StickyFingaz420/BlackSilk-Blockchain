@@ -162,15 +162,22 @@ pub struct PxContracts {
     pub height: u64,
 }
 
-/// Most PX commitments per `/px/commitments` response.
-pub const MAX_PX_COMMITMENTS_PER_REQUEST: u64 = 65_536;
+/// Largest `limit` a `/px/commitments` request may ask for.
+pub const MAX_PX_COMMITMENTS_PER_REQUEST: u64 = 4096;
 
-/// PX commitments in tree order (docs/px.md §11.4). Wallets fetch them in
-/// bulk, never individually, so the node learns nothing about which records
-/// a wallet owns.
+/// Page size of a `/px/commitments` request without `limit`.
+pub const DEFAULT_PX_COMMITMENTS_PER_REQUEST: u64 = 1024;
+
+/// A page of PX commitments in tree order (docs/px.md §11.4), answering
+/// `GET /px/commitments?from=F&limit=L` (both optional: `from` defaults to 0,
+/// `limit` to [`DEFAULT_PX_COMMITMENTS_PER_REQUEST`] and is at most
+/// [`MAX_PX_COMMITMENTS_PER_REQUEST`]). Wallets fetch every page in order,
+/// never individual commitments, so the node learns nothing about which
+/// records a wallet owns.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PxCommitments {
-    /// Tree position of the first entry.
+    /// Tree position of the first entry (the request's `from`, echoed even
+    /// when it is past the end and the page is empty).
     pub from: u64,
     /// `(height, commitment hex)` in position order.
     pub commitments: Vec<(u64, String)>,
@@ -180,6 +187,10 @@ pub struct PxCommitments {
     pub root: String,
     /// The node's tip height.
     pub height: u64,
+    /// The `from` of the next page, or `None` when this page reaches `total`.
+    /// Absent in responses of nodes older than this field.
+    #[serde(default)]
+    pub next: Option<u64>,
 }
 
 // ---- response-size caps (client side) ----
@@ -201,7 +212,16 @@ pub const MAX_BLOCKS_RESPONSE_LIMIT: usize = MAX_BLOCKS_RESPONSE_BYTES + 1024 * 
 /// `/px/commitments`: at most `MAX_PX_COMMITMENTS_PER_REQUEST` entries of under
 /// 96 bytes (a height and 64 hex digits), with a 2x margin.
 pub const MAX_PX_COMMITMENTS_RESPONSE_BYTES: usize =
-    MAX_PX_COMMITMENTS_PER_REQUEST as usize * 192 + 64 * 1024;
+    MAX_PX_COMMITMENTS_PER_REQUEST as usize * PX_COMMITMENT_ENTRY_RESPONSE_BYTES + 64 * 1024;
+/// One `/px/commitments` entry, with a 2x margin.
+pub const PX_COMMITMENT_ENTRY_RESPONSE_BYTES: usize = 192;
+
+/// A page of at most `limit` entries (the node clamps `limit` to
+/// `MAX_PX_COMMITMENTS_PER_REQUEST`; a larger page is refused either way).
+fn px_commitments_cap(limit: u64) -> usize {
+    limit.clamp(1, MAX_PX_COMMITMENTS_PER_REQUEST) as usize * PX_COMMITMENT_ENTRY_RESPONSE_BYTES
+        + 64 * 1024
+}
 /// `/px/contracts`: at most `MAX_PX_CONTRACTS_PER_REQUEST` registrations of at
 /// most 16 programs (`tx::params::MAX_DEPLOY_PROGRAMS`) of under 320 bytes
 /// each, with a 2x margin.
@@ -451,10 +471,19 @@ impl Client {
         self.get(&format!("/distribution?to={to}"), distribution_cap(to))
     }
 
+    /// A page of the default size starting at `from`.
     pub fn px_commitments(&self, from: u64) -> Result<PxCommitments, RpcError> {
         self.get(
             &format!("/px/commitments?from={from}"),
             MAX_PX_COMMITMENTS_RESPONSE_BYTES,
+        )
+    }
+
+    /// A page of at most `limit` commitments starting at `from`.
+    pub fn px_commitments_page(&self, from: u64, limit: u64) -> Result<PxCommitments, RpcError> {
+        self.get(
+            &format!("/px/commitments?from={from}&limit={limit}"),
+            px_commitments_cap(limit),
         )
     }
 
@@ -481,11 +510,25 @@ pub fn parse_hash(s: &str) -> Option<[u8; 32]> {
     hex::decode(s).ok()?.try_into().ok()
 }
 
+const _: () = assert!(
+    DEFAULT_PX_COMMITMENTS_PER_REQUEST >= 1
+        && DEFAULT_PX_COMMITMENTS_PER_REQUEST <= MAX_PX_COMMITMENTS_PER_REQUEST
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    /// A response without `next` (from a node older than the field) decodes.
+    #[test]
+    fn px_commitments_without_next_decodes() {
+        let json = r#"{"from":0,"commitments":[[1,"ab"]],"total":1,"root":"00","height":3}"#;
+        let r: PxCommitments = serde_json::from_str(json).unwrap();
+        assert_eq!(r.next, None);
+        assert_eq!(r.commitments, vec![(1, "ab".to_string())]);
+    }
 
     /// Serves one connection: reads the request head, then writes `head`
     /// followed by `body_len` bytes of `b'x'`, then closes.
@@ -643,8 +686,18 @@ mod tests {
             total: u64::MAX,
             root: "f".repeat(64),
             height: u64::MAX,
+            next: Some(u64::MAX),
         };
         assert!(2 * serde_json::to_vec(&page).unwrap().len() <= MAX_PX_COMMITMENTS_RESPONSE_BYTES);
+        assert_eq!(
+            px_commitments_cap(u64::MAX),
+            MAX_PX_COMMITMENTS_RESPONSE_BYTES
+        );
+        let small = PxCommitments {
+            commitments: vec![(u64::MAX, "f".repeat(64)); 16],
+            ..page
+        };
+        assert!(2 * serde_json::to_vec(&small).unwrap().len() <= px_commitments_cap(16));
         // A full /px/contracts page: 16 programs per contract.
         let program = PxProgramEntry {
             id: "f".repeat(64),

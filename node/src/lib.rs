@@ -18,11 +18,12 @@ use blacksilk_chain::manager::{ChainManager, SubmitError};
 use blacksilk_consensus::Network;
 use blacksilk_p2p::Network as P2p;
 use blacksilk_rpc as rpc;
+use blacksilk_tx::state::MemoryChain;
 use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::ChainView;
 use serde::Deserialize;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub type Shared = Arc<Mutex<ChainManager>>;
 
@@ -50,11 +51,54 @@ pub fn default_rpc_port(n: Network) -> u16 {
     }
 }
 
+/// Exit status of a node whose chain lock was poisoned.
+pub const POISONED_EXIT_CODE: i32 = 70;
+
 fn lock(shared: &Shared) -> MutexGuard<'_, ChainManager> {
-    // A panic while holding the lock leaves the manager in a state produced by
-    // complete operations only (sync_state runs to completion or panics before
-    // mutating); continuing is preferable to taking the node down.
-    shared.lock().unwrap_or_else(|e| e.into_inner())
+    // A panic while holding the lock can leave the manager half-updated (a block
+    // applied to the state but not to the tip, for example). Continuing would
+    // serve and build on that state, so the node stops instead: the block store
+    // is append-only and a restart replays it deterministically.
+    match shared.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            log::error!("chain state lock poisoned by a panic; stopping (restart to recover)");
+            std::process::exit(POISONED_EXIT_CODE)
+        }
+    }
+}
+
+/// The message the node exits with when its block store failed.
+pub const STORE_FAILED_EXIT: &str = "block store write failed: free disk space / check the disk, \
+     then restart the node; it resumes from the last stored block (docs/testnet.md §9)";
+
+/// Resolves once the chain's block store has failed persistently
+/// ([`ChainManager::store_failed`]), checked every `period` on a plain thread.
+/// A node whose store failed accepts no block but would keep downloading
+/// bodies; the caller shuts it down so that a restart recovers
+/// deterministically (the load truncates a torn tail).
+pub fn watch_store(shared: Shared, period: Duration) -> tokio::sync::oneshot::Receiver<()> {
+    poll_until(period, move || lock(&shared).store_failed())
+}
+
+/// Resolves the returned receiver once `check` returns true, polling every
+/// `period`. The thread ends when the receiver is dropped.
+fn poll_until(
+    period: Duration,
+    check: impl Fn() -> bool + Send + 'static,
+) -> tokio::sync::oneshot::Receiver<()> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || loop {
+        if tx.is_closed() {
+            return;
+        }
+        if check() {
+            let _ = tx.send(());
+            return;
+        }
+        std::thread::sleep(period);
+    });
+    rx
 }
 
 fn now() -> u64 {
@@ -261,26 +305,95 @@ fn digest_hex(d: &[u32; 8]) -> String {
     hex::encode(blacksilk_tx::px::digest_bytes(d))
 }
 
+#[derive(Deserialize)]
+struct PxCommitmentsQuery {
+    from: Option<u64>,
+    limit: Option<u64>,
+}
+
+/// A page of the PX commitment list, copied out of the state: only the
+/// requested entries (height and 32-byte digest each), never the record log
+/// or its ciphertexts.
+struct PxPage {
+    from: u64,
+    /// `(height, commitment)`; a PX digest is eight field words.
+    entries: Vec<(u64, [u32; 8])>,
+    total: u64,
+    root: [u32; 8],
+    height: u64,
+}
+
+impl PxPage {
+    /// Validates the query and copies the page. Cost is proportional to the
+    /// page, so the caller may hold the chain lock around it.
+    fn take(
+        state: &MemoryChain,
+        height: u64,
+        from: Option<u64>,
+        limit: Option<u64>,
+    ) -> Result<Self, String> {
+        let from = from.unwrap_or(0);
+        let limit = limit.unwrap_or(rpc::DEFAULT_PX_COMMITMENTS_PER_REQUEST);
+        if limit == 0 || limit > rpc::MAX_PX_COMMITMENTS_PER_REQUEST {
+            return Err(format!(
+                "limit must be 1..={}",
+                rpc::MAX_PX_COMMITMENTS_PER_REQUEST
+            ));
+        }
+        let entries = state
+            .px_record_slice(from, limit as usize)
+            .iter()
+            .map(|r| (r.height, r.commitment))
+            .collect();
+        Ok(Self {
+            from,
+            entries,
+            total: state.px_record_count(),
+            root: state.px().root(),
+            height,
+        })
+    }
+
+    fn render(self) -> rpc::PxCommitments {
+        let end = self.from.saturating_add(self.entries.len() as u64);
+        rpc::PxCommitments {
+            from: self.from,
+            commitments: self
+                .entries
+                .iter()
+                .map(|(h, c)| (*h, digest_hex(c)))
+                .collect(),
+            total: self.total,
+            root: digest_hex(&self.root),
+            height: self.height,
+            next: (end < self.total).then_some(end),
+        }
+    }
+}
+
+/// The `/px/commitments` answer for `from` and `limit` (both optional, as in
+/// the query string) on `state` at tip `height`; `Err` is the HTTP 400
+/// message. Exposed for tests: the RPC handler is exactly this.
+pub fn px_commitments_page(
+    state: &MemoryChain,
+    height: u64,
+    from: Option<u64>,
+    limit: Option<u64>,
+) -> Result<rpc::PxCommitments, String> {
+    PxPage::take(state, height, from, limit).map(PxPage::render)
+}
+
 async fn px_commitments(
     State(App { chain: s, .. }): State<App>,
-    Query(q): Query<FromQuery>,
-) -> Json<rpc::PxCommitments> {
-    let m = lock(&s);
-    let records = m.state().px_records(0, u64::MAX);
-    let total = records.len() as u64;
-    let commitments = records
-        .iter()
-        .skip(q.from.min(total) as usize)
-        .take(rpc::MAX_PX_COMMITMENTS_PER_REQUEST as usize)
-        .map(|r| (r.height, digest_hex(&r.commitment)))
-        .collect();
-    Json(rpc::PxCommitments {
-        from: q.from,
-        commitments,
-        total,
-        root: digest_hex(&m.state().px().root()),
-        height: m.height(),
-    })
+    Query(q): Query<PxCommitmentsQuery>,
+) -> Result<Json<rpc::PxCommitments>, ApiError> {
+    // The lock is held only to copy the requested page; hex encoding and
+    // serialization happen after it is released.
+    let page = {
+        let m = lock(&s);
+        PxPage::take(m.state(), m.height(), q.from, q.limit)
+    };
+    Ok(Json(page.map_err(bad_request)?.render()))
 }
 
 async fn px_contracts(
@@ -363,4 +476,31 @@ async fn outputs(
         });
     }
     Ok(Json(rpc::Outputs { outputs: out }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// The store watcher fires once the check turns true, not before.
+    #[test]
+    fn poll_until_fires_when_the_check_turns_true() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let f = flag.clone();
+        let mut rx = poll_until(Duration::from_millis(5), move || f.load(Ordering::SeqCst));
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(rx.try_recv().is_err(), "not fired while the check is false");
+        flag.store(true, Ordering::SeqCst);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match rx.try_recv() {
+                Ok(()) => break,
+                Err(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5))
+                }
+                Err(e) => panic!("watcher did not fire: {e:?}"),
+            }
+        }
+    }
 }

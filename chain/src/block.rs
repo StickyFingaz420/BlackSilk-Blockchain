@@ -63,7 +63,8 @@ impl Block {
             .map_err(BlockDecodeError::Framing)?;
         let mut txs = Vec::with_capacity(n.min(1024));
         for index in 0..n {
-            let len = r.varint().map_err(BlockDecodeError::Framing)? as usize;
+            let len = usize::try_from(r.varint().map_err(BlockDecodeError::Framing)?)
+                .map_err(|_| BlockDecodeError::Framing(TxDecodeError::UnexpectedEnd))?;
             let start = r.position();
             let end = start
                 .checked_add(len)

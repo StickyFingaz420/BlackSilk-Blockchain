@@ -63,7 +63,8 @@ outside scrutiny from what rests on internal work only.
   - mutation tests (231,120 ALU; 37,616 CPU and memory; 2,500 Poseidon2; 180
     public-copy);
   - 402 proof-byte mutations;
-  - upstream's own suites pass with the patches (207 tests).
+  - upstream's own suites pass with the patches (208 tests: 44 `p3-dft`, 99
+    `p3-merkle-tree`, 65 `p3-fri`; third_party/README.md).
 - **Not verified:** any audit of Plonky3 itself.
 
 ### 2.3 BVM-1 circuits (critical)
@@ -72,7 +73,9 @@ outside scrutiny from what rests on internal work only.
   - the AIR constrains exactly the interpreter's semantics: every instruction, memory
     consistency, the syscalls, public tables as periodic columns with constrained
     copies;
-  - budgets fix the shape.
+  - budgets fix the shape;
+  - terminal blinding (the `BLIND` table and the `bvm/blind` bus) hides the LogUp
+    terminals, and the minimum height of 2^8 is enforced (terminal-blinding.md).
 - **Internal evidence:**
   - the mutation tests;
   - 20,000 random programs satisfying every constraint;
@@ -156,8 +159,8 @@ outside scrutiny from what rests on internal work only.
 | Poseidon2 permutation design | Published (Grassi, Khovratovich, Schofnegger 2023); ongoing public cryptanalysis |
 | ML-KEM-768 | FIPS 203 standard. The RustCrypto `ml-kem` 0.3.2 implementation is unaudited as far as we know |
 | ChaCha20-Poly1305, BLAKE2 | Standards; RustCrypto implementations widely used |
-| curve25519-dalek | Widely deployed; its audit history is not claimed here |
-| Plonky3 | One published audit: Least Authority for Polygon, completed 2024-07-18, updated 2024-11-07. Its scope is described as "a non-hiding STARK protocol" (https://leastauthority.com/blog/audit-of-plonky3/, read 2026-09-25). So **the hiding (zero-knowledge) mode this project relies on, including `HidingFriPcs` and `MerkleTreeHidingMmcs`, has no published audit.** The pinned 0.7.0 is also about two years newer than the audited code. Security advisories: docs/reviews/dependency-review.md §5a |
+| curve25519-dalek | Widely deployed. A 2019 third-party audit of the dalek libraries is reported (reviewer-candidates.md), but the crate's README does not mention it and we have not verified it; no audit is claimed here |
+| Plonky3 | One published audit is reported: Least Authority for Polygon, completed 2024-07-18, updated 2024-11-07, its scope described as "a non-hiding STARK protocol" (https://leastauthority.com/blog/audit-of-plonky3/, read 2026-09-25). The Plonky3 crates' READMEs do not mention it, and we have not read or verified the report. So **the hiding (zero-knowledge) mode this project relies on, including `HidingFriPcs` and `MerkleTreeHidingMmcs`, has no published audit.** The pinned 0.7.0 is also about two years newer than the audited code. Security advisories: docs/reviews/dependency-review.md §5a |
 | Poseidon2 over 31-bit fields | Public cryptanalysis exists (for example ePrint 2023/537, 2026/306); no published result specific to BabyBear width 16 was found (2026-09-25). The Ethereum Foundation's Poseidon Cryptanalysis Initiative targets 31-bit, width-16 instances (KoalaBear) |
 | RandomX | Published algorithm; our Rust implementation is internal (AUDIT.md R1) |
 

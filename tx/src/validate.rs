@@ -3,6 +3,18 @@
 //! Rules are evaluated cheap-first. Each rule has its own error variant, so tests
 //! can assert that an invalid transaction fails for the intended reason.
 //!
+//! **Mempool order.** The single-transaction entry points
+//! ([`validate_transfer`], [`validate_deploy`], [`validate_px`]) run every
+//! stateless rule (structure, balance, range proof) before any contextual
+//! one (C1–C4, PX1–PX4). A transaction invalid for a stateless reason is
+//! therefore reported with a stateless error ([`TxError::is_stateless`]),
+//! whatever else is wrong with it, and costs no ring resolution or CLSAG
+//! verification. The order changes only *which* error an invalid
+//! transaction gets, never *whether* it is valid: every rule is a pure check
+//! and a transaction is valid iff all pass. The PX proof (PX5) runs last: it
+//! needs PX3's registered programs and is the most expensive check. Block
+//! validation keeps its own order, with the range proofs batched.
+//!
 //! | Function | Rules |
 //! |---|---|
 //! | [`check_structure`] | T1, T3–T8, T10 (shape), T11 |
@@ -135,7 +147,8 @@ pub enum TxError {
     PxInvalidProgram,
     /// PX1: the anchor is not a recent tree root.
     PxUnknownAnchor,
-    /// PX2: a nullifier is spent, or repeated in the transaction or block.
+    /// PX2: a nullifier is spent, or used earlier in the block (a repeat
+    /// within the transaction is [`TxError::PxNullifierRepeated`]).
     PxNullifierSpent {
         index: usize,
     },
@@ -153,33 +166,101 @@ pub enum TxError {
     PxProof,
     /// A deploy's contract id exists already.
     DuplicateContract,
+    /// A PX transaction repeats a one-time key between its hidden outputs
+    /// and its payouts (`output` indexes `PxTx::output_keys`). Such a
+    /// transaction also fails C4 on every chain; this variant reports it as
+    /// the stateless fault it is.
+    PxDuplicateOutputKey {
+        output: usize,
+    },
+    /// A PX transaction's two nullifiers are equal. It also fails PX2 on
+    /// every chain; this variant reports it as stateless.
+    PxNullifierRepeated,
 }
 
 impl TxError {
-    /// Whether the transaction is invalid regardless of chain state (rules T1–T11).
+    /// Whether the transaction is invalid regardless of chain state: on every
+    /// branch, at every height. Only such failures prove that the sender (or
+    /// the peer relaying it) misbehaved (docs/p2p.md §10). A **contextual**
+    /// failure depends on the node's view of the chain and could pass on
+    /// another branch or later, so an honest peer can relay it.
     ///
-    /// Contextual failures (C1–C4) depend on the node's view of the chain:
-    /// - ring members may not exist yet or be too young on this branch;
-    /// - a key image may have just been spent in a block;
-    /// - the same ring indices resolve to different outputs on another fork, which
-    ///   changes the signature's statement.
+    /// The match is exhaustive: a new variant must be classified here.
     ///
-    /// An honest peer can relay a transaction that fails them here. Only stateless
-    /// failures prove misbehavior (docs/p2p.md §10).
+    /// | Variant | Rule | Class | Why |
+    /// |---|---|---|---|
+    /// | `TooLarge` | T1 | stateless | the encoded size is a function of the transaction |
+    /// | `CoinbaseNotAllowed` | T2 | stateless | a coinbase is never a mempool transaction |
+    /// | `InputCount`, `OutputCount` | T3 | stateless | counts |
+    /// | `KeyImageIdentity`, `KeyImagesNotSorted` | T4 | stateless | the transaction's own key images (also catches a key image repeated within it) |
+    /// | `RingNotIncreasing` | T5 | stateless | the ring's index list itself |
+    /// | `OutputKeyIdentity`, `EphemeralIdentity`, `OutputsNotSorted` | T6 | stateless | the transaction's own outputs (also catches a one-time key repeated within a transfer or deploy) |
+    /// | `PseudoOutCount` | T7 | stateless | counts |
+    /// | `FeeTooLow`, `WeightOverflow` | T8 | stateless | fee vs. weight or size, fixed by the transaction and the network's constant rules |
+    /// | `Unbalanced` | T9 | stateless | commitments and amounts in the transaction |
+    /// | `RangeProofShape`, `RangeProofInvalid` | T10 | stateless | the proof and the transaction's own commitments |
+    /// | `SignatureCount` | T11 | stateless | counts |
+    /// | `UnknownRingMember`, `RingMemberTooYoung` | C1 | contextual | the output may exist, or be old enough, on another branch or later |
+    /// | `KeyImageSpent` | C2 | contextual | spent on this branch (or earlier in this block), possibly not on another |
+    /// | `InvalidSignature` | C3 | contextual | see below |
+    /// | `DuplicateOneTimeKey` | C4 | contextual | the colliding output is on this branch or earlier in this block; repeats within one transaction are caught first by T6 or `PxDuplicateOutputKey` |
+    /// | `PxShape`, `PxFeeNotStandard`, `PxInvalidProgram` | PX structure | stateless | the transaction alone |
+    /// | `PxDuplicateOutputKey`, `PxNullifierRepeated` | PX structure | stateless | a repeat within the transaction |
+    /// | `PxUnknownAnchor` | PX1 | contextual | the root window moves; the anchor may be recent on another branch |
+    /// | `PxNullifierSpent` | PX2 | contextual | spent on this branch or earlier in this block |
+    /// | `PxUnregistered` | PX3 | contextual | the contract may be deployed on another branch or later |
+    /// | `PxPoolUnderflow` | PX4 | contextual | the pool depends on the branch |
+    /// | `PxProof` | PX5 | stateless | checked only after PX1 and PX3 pass; registered programs are fixed by the contract id, so the statement is the same on every branch |
+    /// | `DuplicateContract` | deploy | contextual | the same deploy may be on this branch and not on another |
+    ///
+    /// **Why `InvalidSignature` stays contextual.** A ring names its members
+    /// by global output index, and C3 verifies the CLSAG over the outputs
+    /// those indices resolve to on *this* branch. On another branch (after a
+    /// reorganization, or for a peer that has not seen ours) the same index
+    /// can name a different output, so a signature that verifies on the
+    /// sender's branch fails here although the sender is honest. Penalizing
+    /// it would let a reorganization split honest peers. The cost of garbage
+    /// signatures is bounded by the P2P layer (rate limits and accounting of
+    /// contextual failures), not by this classification. The mempool paths
+    /// run every stateless check, including the range proof, before any ring
+    /// is resolved (module docs), so a transaction that is invalid for a
+    /// stateless reason always gets the stateless error.
     pub fn is_stateless(&self) -> bool {
-        !matches!(
-            self,
+        match self {
+            TxError::TooLarge { .. }
+            | TxError::CoinbaseNotAllowed
+            | TxError::InputCount(_)
+            | TxError::OutputCount(_)
+            | TxError::KeyImageIdentity { .. }
+            | TxError::KeyImagesNotSorted
+            | TxError::RingNotIncreasing { .. }
+            | TxError::OutputKeyIdentity { .. }
+            | TxError::EphemeralIdentity { .. }
+            | TxError::OutputsNotSorted
+            | TxError::PseudoOutCount
+            | TxError::FeeTooLow { .. }
+            | TxError::WeightOverflow
+            | TxError::Unbalanced
+            | TxError::RangeProofShape
+            | TxError::RangeProofInvalid
+            | TxError::SignatureCount
+            | TxError::PxShape
+            | TxError::PxFeeNotStandard { .. }
+            | TxError::PxInvalidProgram
+            | TxError::PxDuplicateOutputKey { .. }
+            | TxError::PxNullifierRepeated
+            | TxError::PxProof => true,
             TxError::UnknownRingMember { .. }
-                | TxError::RingMemberTooYoung { .. }
-                | TxError::KeyImageSpent { .. }
-                | TxError::InvalidSignature { .. }
-                | TxError::DuplicateOneTimeKey { .. }
-                | TxError::PxUnknownAnchor
-                | TxError::PxNullifierSpent { .. }
-                | TxError::PxUnregistered { .. }
-                | TxError::PxPoolUnderflow
-                | TxError::DuplicateContract
-        )
+            | TxError::RingMemberTooYoung { .. }
+            | TxError::KeyImageSpent { .. }
+            | TxError::InvalidSignature { .. }
+            | TxError::DuplicateOneTimeKey { .. }
+            | TxError::PxUnknownAnchor
+            | TxError::PxNullifierSpent { .. }
+            | TxError::PxUnregistered { .. }
+            | TxError::PxPoolUnderflow
+            | TxError::DuplicateContract => false,
+        }
     }
 }
 
@@ -494,8 +575,16 @@ pub fn validate_px_without_proof(
     height: u64,
     rules: &TxRules,
 ) -> Result<(), TxError> {
+    // Stateless (the transaction alone), cheap to expensive.
     check_px_structure(tx)?;
     check_px_balance(tx)?;
+    if let Some(p) = &tx.range_proof {
+        let c: Vec<Point> = tx.outputs.iter().map(|o| o.commitment).collect();
+        if !bpp::verify(p, &c) {
+            return Err(TxError::RangeProofInvalid);
+        }
+    }
+    // Contextual.
     let keys: Vec<Point> = tx.output_keys().iter().map(|k| k.one_time_key).collect();
     check_uniqueness_of(
         &tx.inputs,
@@ -515,14 +604,7 @@ pub fn validate_px_without_proof(
         &tx.signatures,
         &rings,
         &tx.signature_message(rules.network_id),
-    )?;
-    if let Some(p) = &tx.range_proof {
-        let c: Vec<Point> = tx.outputs.iter().map(|o| o.commitment).collect();
-        if !bpp::verify(p, &c) {
-            return Err(TxError::RangeProofInvalid);
-        }
-    }
-    Ok(())
+    )
 }
 
 /// Full validation of one deploy for inclusion at `height` (mempool).
@@ -532,9 +614,12 @@ pub fn validate_deploy(
     height: u64,
     rules: &TxRules,
 ) -> Result<(), TxError> {
+    // Stateless (the transaction alone), cheap to expensive.
     check_deploy_structure(tx, rules)?;
     let t = tx.as_transfer();
     check_balance(&t)?;
+    check_range_proof(&t)?;
+    // Contextual.
     check_uniqueness(&t, chain, &mut HashSet::new(), &mut HashSet::new())?;
     if chain.px_contract_exists(&tx.contract_id()) {
         return Err(TxError::DuplicateContract);
@@ -546,8 +631,7 @@ pub fn validate_deploy(
         &tx.signatures,
         &rings,
         &tx.signature_message(rules.network_id),
-    )?;
-    check_range_proof(&t)
+    )
 }
 
 /// Full validation of one transfer for inclusion at `height` (mempool use).
@@ -557,12 +641,14 @@ pub fn validate_transfer(
     height: u64,
     rules: &TxRules,
 ) -> Result<(), TxError> {
+    // Stateless (the transaction alone), cheap to expensive.
     check_structure(tx, rules)?;
     check_balance(tx)?;
+    check_range_proof(tx)?;
+    // Contextual.
     check_uniqueness(tx, chain, &mut HashSet::new(), &mut HashSet::new())?;
     let rings = resolve_rings(tx, chain, height)?;
-    check_signatures(tx, &rings, rules)?;
-    check_range_proof(tx)
+    check_signatures(tx, &rings, rules)
 }
 
 /// Mempool entry point: any decoded transaction. Coinbases are only valid as the

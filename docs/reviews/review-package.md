@@ -1,6 +1,6 @@
 # Review package (for internal review passes, and for a future external reviewer)
 
-Status: **2026-09-25. No external review has been engaged or completed**
+Status: **2026-09-25, updated 2026-09-27. No external review has been engaged or completed**
 (docs/reviews/review-status.md). Everything referenced here is internal work. The
 package serves two purposes:
 - it is the brief for the project's internal review passes;
@@ -31,7 +31,7 @@ The scope, priorities and the claims to confirm or refute are in
 |---|---|---|---|---|
 | 1 | Poseidon2 and `Hk` | Are the parameters (BabyBear, width 16, standard rounds) and our domain-separated uses sound for collision and preimage resistance at ~124 bits? | Symmetric cryptanalysis (arithmetization-oriented hashes) | `px-core/src/hash.rs`, `px-core/src/record.rs`, `zkvm/src/air/poseidon.rs` |
 | 2 | Plonky3 as configured, and the three patches | Is BS-ZK-2 sound at the claimed bits across the envelope, and statistically zero-knowledge as configured (a separate FRI mask per table, 4 random codewords, 4 salt elements, terminal blinding; docs/reviews/zk-coverage.md)? Do the patches only change lock scope? | STARK/FRI proof systems; Rust concurrency for the patches | `zk/src/config.rs`, `zk/src/params.rs`, `third_party/` |
-| 3 | BVM-1 zkVM circuits | Do the 11 tables and their buses constrain exactly the interpreter's semantics, with no under-constrained column? | Arithmetization and circuit auditing (AIR, LogUp) | `zkvm/src/air/`, docs/zkvm.md |
+| 3 | BVM-1 zkVM circuits | Do the 13 table kinds (12 plus the `BLIND` table; 13 to 23 tables per proof) and their buses, including the terminal-blinding bus `bvm/blind`, constrain exactly the interpreter's semantics, with no under-constrained column? | Arithmetization and circuit auditing (AIR, LogUp) | `zkvm/src/air/`, docs/zkvm.md |
 | 4 | PX kernel and function binding | Does the kernel conserve value, and can a function approve or specify anything outside its own contract (`io_hash`)? | Protocol design, ZK application auditing | `px-core/src/{kernel,call}.rs`, `px/src/prove.rs`, docs/px.md |
 | 5 | PX consensus rules | Do the node rules (nullifiers, anchors, the fee rule, the deploy registry, reorg undo) match the kernel's statement, with no double-spend or inflation path? | Blockchain consensus and state management | `tx/src/px.rs`, `tx/src/validate.rs`, `tx/src/state.rs`, `chain/` |
 
@@ -54,9 +54,10 @@ outputs, P2P), which AUDIT.md R1–R6 cover, and the transparent contract engine
 
 - **Repository:** `https://github.com/StickyFingaz420/BlackSilk-Blockchain`, branch
   `rebuild/core`.
-- **Commit:** the owner fixes the exact commit when the review starts. At the time of
-  writing, the newest reviewed state is `3f6ebb2` plus the drafts in
-  `third_party/upstream/`.
+- **Commit:** the owner fixes the exact commit when a review starts. The newest
+  internally reviewed code is `5e667bd` (internal review rounds 1–4 and the gap
+  analysis of completion-readiness-2026-09-26.md; `87278ac` added only that report);
+  the hardening round from `7826289` onward is under internal review (AUDIT.md R14).
 - **Toolchain:** Rust stable 1.98.1 (MSVC on Windows; any tier-1 host). The fuzz crate
   uses nightly.
 - **Pinned dependencies:**
@@ -90,7 +91,8 @@ cd fuzz && cargo run --release --bin seeds && ./run_campaign.sh 900
 cargo audit
 ```
 
-**Recorded results** (2026-09-25).
+**Recorded results** (2026-09-25; rows marked 2026-09-26 or 2026-09-27 were updated
+then).
 - **Environment** for every row unless stated: Windows 10 Pro 19045, x86_64, 8
   logical CPUs, Rust 1.98.1 MSVC, release build. Fuzzing: nightly MSVC with
   AddressSanitizer.
@@ -98,16 +100,16 @@ cargo audit
 
 | Evidence | Command | Duration | Result | Limitations |
 |---|---|---|---|---|
-| Full test suite | `cargo test --release --workspace --no-fail-fast` | 30–40 min | 396 passed, 0 failed, 2 ignored (opt-in) | One platform. Tests encode our own understanding of the specs |
-| RandomX full mode | `cargo test --release -p blacksilk-randomx -- --ignored` | 129 s | Full mode equals light mode | Reference vectors cover the light-mode path; one machine |
+| Full test suite | `cargo test --release --workspace --no-fail-fast` | 30–40 min | 2026-09-26 (AUDIT.md R13): 423 passed, 0 failed, 2 ignored (opt-in). The hardening round adds tests (about 450 in total at `7826289`) | One platform. Tests encode our own understanding of the specs |
+| RandomX full mode | `cargo test --release -p blacksilk-randomx -- --ignored --nocapture` | 2026-09-27: dataset build about 179 s per key with 8 threads, under load | 2026-09-25 and 2026-09-27: all 5 official vectors in full mode, and full/light agreement on 1,024 random inputs; full mode about 100 ms per hash per thread, light about 750 ms (under load: the full suite ran at the same time; idle figures to be re-measured) | One machine. The CI job `randomx-full` has not yet run on GitHub |
 | Concurrency stress | `BLACKSILK_STRESS_ROUNDS=10 … --test stress -- --ignored` | 909 s | 80 concurrent proofs, no hang | No hang observed is not proof that none can occur (ZK-F21 was not reproducible on demand) |
 | Upstream Plonky3 suites with the patches | `cargo test` in the patched crates (third_party/README.md) | not recorded | 208 of 208 pass | Upstream tests were not written for concurrency hangs |
 | Security parameters | `cargo run --release -p blacksilk-zk --example param_study` | < 1 min | ≥ 123 bits (Johnson), ≥ 105 (unique decoding) | Our calculator: review area 2 |
-| Proof sizes and timings | `cargo run --release -p blacksilk-px --example proof_breakdown` | a few minutes | Transfer ~2.04 MB, ~42 s to prove, ~0.19 s to verify | One machine |
-| P-5 campaign | `… --example proof_length_campaign -- 50 30 out.csv` | not recorded (260 proofs at ~42–55 s each) | Non-authentication parts byte-identical per shape; all pairwise p ≥ 0.49 | 260 proofs detect only large effects; privacy-review §3a.5 |
+| Proof sizes and timings | `cargo run --release -p blacksilk-px --example proof_bench` | 2 × 5 proofs of each kind, idle | 2026-09-26 (AUDIT.md R13): transfer 2,178,213–2,180,408 B, 44.6–45.2 s to prove, 0.207–0.212 s to verify; vault 2,687,952–2,688,822 B, 52.7–53.0 s, 0.254–0.265 s; peak memory 3,771 MB | One machine. The widest shape (kernel plus two functions) is not measured |
+| P-5 campaign | `… --example proof_length_campaign -- 50 30 out.csv` | 13,493 s (2026-09-26, docs/evidence/p5-2026-09-26b/) | 260 proofs. Non-authentication parts byte-identical per shape (1,811,565 B transfer, 2,359,622 B vault); 14 pairwise tests, p from 0.107 to 0.965, none significant | 260 proofs detect only large effects; privacy-review §3a.5 |
 | Coverage-guided fuzzing, first campaign | `fuzz/run_campaign.sh 900` | 15 min per target | 144,432,805 executions, 0 crashes | Short for the slow targets |
 | Coverage-guided fuzzing, long campaign | per target, AUDIT.md ZK-8 | 10.5 h total | 386,839,603 executions, 0 crashes | Slow targets reached < 0.5 M executions |
-| Contract-engine fuzzing, extended | `wasm_module` 6 h and `contract_sequence` 4 h | 10 h | Recorded in AUDIT.md when finished | — |
+| Contract-engine fuzzing, extended | `wasm_module` 6 h and `contract_sequence` 4 h | 10 h | 0 crashes (AUDIT.md) | Determinism is checked between two executor instances in one process only |
 | Multi-process network with PX | `blacksilk-labnet … --px-every-mins 4` (docs/evidence/labnet-2026-09-25) | 62 min | `checks_passed`; supply conserved; restored wallets match | One machine, 5 processes, simulated latency |
 | Reset rehearsal | the same, `--network testnet`, new identity | 30 min | `checks_passed`; an old-identity node is refused | No transactions (coinbase maturity) |
 | Supply chain | `cargo audit` | < 1 min | 0 vulnerabilities; 1 unmaintained (`paste`) | Advisory database only; no code review of dependencies |
@@ -116,7 +118,7 @@ cargo audit
 
 | Topic | Where |
 |---|---|
-| Findings and fixes, chronologically | AUDIT.md R8, ZK-F1 to ZK-F28 |
+| Findings and fixes, chronologically | AUDIT.md R8 to R13 (ZK-F1 to ZK-F30), R14 (hardening round, being written) |
 | ZK security review, attack table | docs/reviews/zk-security-review.md |
 | Privacy review, every channel; P-5 in detail (§3a); P-6, P-8, query positions, proof size (§3b) | docs/reviews/privacy-review.md |
 | Every assumption, with its status | docs/reviews/assumptions.md |
@@ -137,14 +139,18 @@ cargo audit
 
 ## 5. Where the project itself is least certain
 
-These are the questions where outside judgement matters most:
+These are the questions where outside judgement would matter most, if a reviewer
+were engaged (none is; meanwhile they are the priorities of the internal passes):
 1. **Zero knowledge of Plonky3's hiding mode as configured**, which the project claims
    only as statistical and conditional (zk-coverage.md §3: many tables of mixed
    heights, the leakage of LogUp arguments, multi-phase traces). We rely on it for
    every private property.
 2. **The security calculator** behind "≥ 123 / ≥ 105 bits", and whether the envelope
-   bounds (2^22 rows, 6,000 columns) are enforced everywhere the verifier sees a
-   shape.
+   bounds (2^22 rows, 6,000 honest columns, 15,709 adversarial columns under
+   `MAX_PROOF_BYTES`) are enforced everywhere the verifier sees a shape. The
+   calculator counts one batched function per column; with two opening points the true
+   count can reach about twice that (31,418), still inside the 65,536 the test covers
+   (zk.md §9.3).
 3. **Poseidon2 over BabyBear, width 16, with the standard round numbers,** used for
    both the proof system and every PX commitment and nullifier (no extra rounds,
    decision DR-4).
@@ -169,10 +175,15 @@ review is asked to confirm or refute. The unresolved ones:
 
 ## 6. Known limitations (not findings)
 
-- Proof size is ~2 MB, so about 4 PX transactions fit per block (aggregation-study.md).
+- Proof size is about 2.2 MB (transfer) and 2.7 MB (vault call), so about 4 PX
+  transactions fit per block (aggregation-study.md). The widest shape (kernel plus two
+  functions) has not been measured against `MAX_PROOF_BYTES` (4 MiB); an unmeasured
+  estimate is about 3.0–3.3 MB.
 - The reference vault is a demonstration contract: no timeout, no refund, not
   trustless (docs/px.md §13.4).
-- CI passes on GitHub (first run 2026-09-25, commit `d6534c3`). It is not a substitute for this review.
+- CI passes on GitHub (first run 2026-09-25, commit `d6534c3`; later commits through
+  `87278ac`, runs #69–#74). `7826289` is unpushed, and its new jobs `guests` and
+  `randomx-full` have never run on GitHub. CI is not a substitute for review.
 - There is no reorg-depth limit or checkpoint, by policy (docs/consensus.md §8; assumptions.md K4).
 - The P-6 and P-8 residual risks are analysed in privacy-review.md §3b and not
   mitigated further.

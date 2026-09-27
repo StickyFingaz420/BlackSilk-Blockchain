@@ -2,10 +2,15 @@
 
 **For:** the owner and the operators of the seven testnet devices.
 
-**Status:** the reset was approved by the owner on 2026-09-26 (docs/testnet-reset-plan.md).
-- The identity is fixed in the code and was rehearsed locally (§0).
+**Status (2026-09-27):** the v2 identity is approved and fixed in code, and was
+rehearsed locally (§0). The seven-device trial is **not** authorized until the owner
+approves the readiness report after the hardening round
+(docs/reviews/completion-readiness-2026-09-26.md §6). Gates:
+docs/testnet-launch-checklist.md.
 - **The validation below has not been run.** Only the operators can run it, on their
-  own devices.
+  own devices, once the trial is authorized.
+- Operator requirements (hardware, clock, network, recovery, known limitations):
+  docs/testnet.md §12.
 - Nothing here is evidence until an operator reports it, together with the evidence
   listed in §4.
 - The testnet is a functional trial. It is not evidence of production readiness, and
@@ -37,7 +42,8 @@ Follow docs/testnet-reset-plan.md §4. In short:
 1. stop the old node and miner;
 2. build the release commit (docs/testnet.md §2);
 3. move the old data directory aside (keep it for rollback);
-4. start the seed or first node, then the others;
+4. start the first node (A), then the others with `--peer` pointing to A: there are no
+   seed nodes (the built-in seed list is empty);
 5. create **new** wallet files;
 6. start the miners.
 
@@ -65,8 +71,8 @@ records **who ran it, when, on which devices, and the result**.
 | V12 | Restart and recovery | Stop one node uncleanly (kill), restart it on the same data directory | It resumes, reaches the tip, and reports the same `tip` and `generated` (`/info`) and the same `root` and `total` (`/px/commitments`) as the others |
 | V13 | Wallet recovery | Restore each wallet from its 24 words against H (`restore --network testnet`) | v1 and private balances equal the original wallet's |
 | V14 | Supply | At the end, sum all wallet balances (v1 and PX) | Equal to `generated` in `/info`, with every miner's wallet included. Fees return to miners, so nothing is left over. Only if every wallet on the network takes part |
-| V15 | Stability | Keep everything running ≥ 72 h | No crash; memory flat; all nodes on one tip; no verifier-panic warnings |
-| V16 | Resources | Record proof verification (node log) and each node's memory while PX transactions arrive | No hang; verification of a PX transaction takes well under a second; memory stays flat (no growth across hours) |
+| V15 | Stability | Keep everything running ≥ 72 h; record each node's resident memory (RSS) against its chain height at least hourly | No crash; all nodes on one tip; no verifier-panic warnings. **Memory is not expected to stay flat:** every block body and its undo data stay in memory (PX-F1, PX-F2), about 7 KB per v1 block and up to about 8 MiB per full PX block. Fail only on growth that the chain's growth does not explain |
+| V16 | Resources | Record proof verification (node log) and each node's RSS against height while PX transactions arrive | No hang; verification of a PX transaction takes well under a second (measured 0.21–0.27 s on the development machine); memory growth tracks the blocks received (as V15) |
 
 **If a check fails:**
 - stop and record the failure;

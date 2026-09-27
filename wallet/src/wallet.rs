@@ -1458,6 +1458,7 @@ impl Wallet {
                 recipients: [Some(self.px_account.address(0)), None],
                 functions: vec![],
                 fee,
+                hedge_secret: self.px_account.hedge_secret(),
             },
             rules,
             rng,
@@ -1532,6 +1533,7 @@ impl Wallet {
                 recipients: [Some(to.clone()), Some(self.px_account.address(1))],
                 functions: vec![],
                 fee,
+                hedge_secret: self.px_account.hedge_secret(),
             },
             rules,
             rng,
@@ -1581,6 +1583,7 @@ impl Wallet {
                 recipients: [Some(self.px_account.address(1)), None],
                 functions: vec![],
                 fee,
+                hedge_secret: self.px_account.hedge_secret(),
             },
             rules,
             rng,
@@ -1734,6 +1737,7 @@ impl Wallet {
                     budget,
                 }],
                 fee,
+                hedge_secret: self.px_account.hedge_secret(),
             },
             rules,
             rng,
@@ -1890,6 +1894,7 @@ impl Wallet {
                     budget,
                 }],
                 fee,
+                hedge_secret: self.px_account.hedge_secret(),
             },
             rules,
             rng,
@@ -1938,7 +1943,8 @@ impl Wallet {
             .contract_record(record)
             .ok_or_else(|| WalletError::Contract("unknown contract record".into()))?;
         let rec = self.px.contract_records[k].record()?;
-        share::seal_share(rng, to, &rec, record)
+        let secret = zeroize::Zeroizing::new(self.px_account.hedge_secret());
+        share::seal_share(rng, secret.as_slice(), to, &rec, record)
             .map_err(|_| WalletError::Contract("the recipient address does not decode".into()))
     }
 
@@ -2284,6 +2290,7 @@ mod tests {
                 total: 0,
                 root: digest_hex(&PxStore::default().tree().unwrap().root()),
                 height: 0,
+                next: None,
             })
         }
         fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {

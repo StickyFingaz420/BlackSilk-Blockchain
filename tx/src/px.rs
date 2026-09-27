@@ -453,17 +453,22 @@ impl PxTx {
 
 // ---- deploy ----
 
+/// The encoded payload of a deploy (salt and programs).
+pub(crate) fn deploy_payload_bytes(salt: &[u8; 32], programs: &[Registration]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.bytes(salt);
+    w.varint(programs.len() as u64);
+    for p in programs {
+        w.varint(p.elf.len() as u64);
+        w.bytes(&p.elf);
+        write_budget(&mut w, &p.budget);
+    }
+    w.into_bytes()
+}
+
 impl PxDeploy {
     fn payload_bytes(&self) -> Vec<u8> {
-        let mut w = Writer::new();
-        w.bytes(&self.salt);
-        w.varint(self.programs.len() as u64);
-        for p in &self.programs {
-            w.varint(p.elf.len() as u64);
-            w.bytes(&p.elf);
-            write_budget(&mut w, &p.budget);
-        }
-        w.into_bytes()
+        deploy_payload_bytes(&self.salt, &self.programs)
     }
 
     pub fn prefix_bytes(&self) -> Vec<u8> {
@@ -565,12 +570,21 @@ impl PxDeploy {
     /// The contract id: 8 canonical field elements from
     /// `H64("px/contract-id", first key image ‖ salt ‖ payload hash)`. Key
     /// images never repeat, so neither do contract ids.
+    ///
+    /// Total: a deploy without inputs (which `decode` never produces, and
+    /// which is invalid by T3) takes the identity encoding (32 zero bytes) in
+    /// place of the first key image instead of panicking. T4 forbids an
+    /// identity key image, so no valid deploy hashes the same preimage, and
+    /// the id of every deploy with inputs is unchanged. Callers such as
+    /// mempool conflict keys may run before validation.
     pub fn contract_id(&self) -> Digest {
+        const NO_INPUT: [u8; 32] = [0; 32];
         let payload = h32(tags::PX_DEPLOY_PAYLOAD, &[&self.payload_bytes()]);
-        let wide = h64(
-            tags::PX_CONTRACT_ID,
-            &[self.inputs[0].key_image.bytes(), &self.salt, &payload],
-        );
+        let first_image = self
+            .inputs
+            .first()
+            .map_or(&NO_INPUT, |i| i.key_image.bytes());
+        let wide = h64(tags::PX_CONTRACT_ID, &[first_image, &self.salt, &payload]);
         let mut d = [0u32; 8];
         for (i, x) in d.iter_mut().enumerate() {
             let v = u64::from_le_bytes(wide[8 * i..8 * i + 8].try_into().expect("8 bytes"));
@@ -652,6 +666,22 @@ pub fn check_px_structure(tx: &PxTx) -> Result<(), TxError> {
         || !strictly_increasing(tx.payouts.iter().map(|o| o.one_time_key))
     {
         return Err(TxError::OutputsNotSorted);
+    }
+    // Hidden outputs and payouts are sorted separately, so a key shared by
+    // the two lists is not caught above. C4 rejects such a transaction on
+    // every chain (its own second key collides with its first), so this
+    // check changes no verdict; it reports the error as stateless. `output`
+    // indexes `output_keys()` (hidden outputs, then payouts), as C4 does.
+    let mut seen = std::collections::HashSet::with_capacity(keys.len());
+    for (j, (otk, _)) in keys.iter().enumerate() {
+        if !seen.insert(*otk.bytes()) {
+            return Err(TxError::PxDuplicateOutputKey { output: j });
+        }
+    }
+    // The same for the two nullifiers, which PX2 rejects on every chain when
+    // they are equal.
+    if tx.nullifiers[0] == tx.nullifiers[1] {
+        return Err(TxError::PxNullifierRepeated);
     }
     if tx.pseudo_outs.len() != n {
         return Err(TxError::PseudoOutCount);

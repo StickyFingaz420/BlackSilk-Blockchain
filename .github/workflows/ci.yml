@@ -4,6 +4,11 @@ on:
   push:
     branches: [main, rebuild/core]
   pull_request:
+  # Weekly: new RustSec advisories and the RandomX full-mode vectors do not
+  # depend on a push (only the `audit` and `randomx-full` jobs run).
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
 
 # The jobs only read the repository; the token gets no write access.
 permissions:
@@ -16,9 +21,11 @@ env:
 # - actions/checkout 11d5960a326750d5838078e36cf38b85af677262 = tag v4 = v4.4.0
 # - dtolnay/rust-toolchain 02cb101ec7c40f2c49e1d9714d64511d8e1b74de = branch master
 # Toolchains and tools are pinned to the versions used for the local evidence
-# (docs/reviews/review-package.md §3).
+# (docs/reviews/review-package.md §3). Every cargo build uses --locked: the
+# committed Cargo.lock files are what was reviewed.
 jobs:
   lint:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -34,16 +41,25 @@ jobs:
           cargo fmt --all --check
           (cd fuzz && cargo fmt --check)
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: No unsafe code in project crates
+        # Every crate root (lib.rs, main.rs, src/bin/*.rs) must start a line
+        # with the attribute itself; a mention in a comment does not count.
         run: |
           for c in randomx consensus crypto tx chain p2p rpc node miner wallet \
                    contracts zk zkvm px-core px tools/labnet; do
-            grep -rq 'forbid(unsafe_code)' "$c/src" || { echo "$c lacks forbid(unsafe_code)"; exit 1; }
+            roots=0
+            for f in "$c/src/lib.rs" "$c/src/main.rs" "$c"/src/bin/*.rs; do
+              [ -f "$f" ] || continue
+              roots=$((roots + 1))
+              grep -q '^#!\[forbid(unsafe_code)\]' "$f" || { echo "$f lacks #![forbid(unsafe_code)]"; exit 1; }
+            done
+            [ "$roots" -gt 0 ] || { echo "$c: no crate root found"; exit 1; }
           done
 
   # The PX proofs make the suite far too slow unoptimized: tests run in release.
   test:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
@@ -54,7 +70,47 @@ jobs:
         with:
           toolchain: "1.98.1"
       - name: Test (release)
-        run: cargo test --release --workspace --no-fail-fast
+        run: cargo test --locked --release --workspace --no-fail-fast
+
+  # The release profile has overflow checks and debug assertions off. This job
+  # runs the non-PX crates' tests optimized but with both on (and without LTO,
+  # to keep the build short), so an arithmetic overflow in consensus, crypto,
+  # chain or network code fails a test instead of wrapping silently.
+  # Skipped: the tests that build PX proofs (they take hours with checks on;
+  # the `test` job runs them):
+  #   tx:    px_consensus.rs (all three tests) and fuzz_decode.rs's
+  #          every_mutant_decodes_canonically_or_fails_cleanly
+  #   chain: manager.rs's restart_rebuilds_the_px_state_exactly
+  #   p2p:   network.rs's two px_* / invalid_px_* tests
+  overflow:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
+      CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "true"
+      CARGO_PROFILE_RELEASE_LTO: "off"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
+      - name: Test with overflow checks and debug assertions (release, non-PX)
+        run: |
+          cargo test --locked --release --no-fail-fast \
+            -p blacksilk-randomx -p blacksilk-consensus -p blacksilk-crypto \
+            -p blacksilk-tx -p blacksilk-chain -p blacksilk-p2p \
+            -p blacksilk-contracts -p blacksilk-px-core -p blacksilk-miner \
+            -p blacksilk-node -- \
+            --skip private_payments_through_consensus \
+            --skip value_cannot_be_created_and_anchors_must_be_recent \
+            --skip a_private_contract_is_deployed_and_used_through_consensus \
+            --skip every_mutant_decodes_canonically_or_fails_cleanly \
+            --skip restart_rebuilds_the_px_state_exactly \
+            --skip px_transactions_travel_the_stem_and_confirm_everywhere \
+            --skip invalid_px_transactions_get_the_relaying_peer_penalized
 
   # RandomX full mode (the miner's default) against the official vectors and
   # light mode (what nodes verify with), on Linux; the developers' runs are on
@@ -70,12 +126,14 @@ jobs:
         with:
           toolchain: "1.98.1"
       - name: Full mode vectors and full/light agreement (about 2.3 GiB RAM)
-        run: cargo test --release -p blacksilk-randomx -- --ignored --nocapture
+        run: cargo test --locked --release -p blacksilk-randomx -- --ignored --nocapture
 
   # The consensus-pinned guest programs rebuild from source to their pinned
-  # program ids (zkvm/guests/README.md). Windows: the pinned kernel embeds a
-  # Windows source path, which the script remaps from the runner's checkout.
+  # program ids and to the committed bytes (zkvm/guests/README.md). Windows:
+  # the build runs at the canonical Windows path, where reproduce.sh stages a
+  # copy of the guest sources (the runner's checkout is elsewhere).
   guests:
+    if: github.event_name != 'schedule'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -86,13 +144,14 @@ jobs:
         with:
           toolchain: "1.98.1"
           targets: riscv32i-unknown-none-elf
-      - name: Rebuild px/kernel.elf and px/vault.elf and compare their ids
+      - name: Rebuild px/kernel.elf and px/vault.elf and compare ids and bytes
         shell: bash
         run: bash zkvm/guests/reproduce.sh
       - name: RandomX reference vectors on Windows (cross-platform check)
-        run: cargo test --release -p blacksilk-randomx
+        run: cargo test --locked --release -p blacksilk-randomx
 
-  # RustSec advisory database (docs/reviews/dependency-review.md §5).
+  # RustSec advisory database (docs/reviews/dependency-review.md §5), for the
+  # main workspace and the separate fuzz workspace.
   audit:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -108,11 +167,16 @@ jobs:
       - name: Audit
         # RUSTSEC-2024-0436 (paste, unmaintained, compile-time only via Plonky3)
         # is reviewed in dependency-review.md §5.
-        run: cargo audit --ignore RUSTSEC-2024-0436
+        run: |
+          cargo audit --ignore RUSTSEC-2024-0436
+          cargo audit --file fuzz/Cargo.lock --ignore RUSTSEC-2024-0436
 
   # Coverage-guided fuzzing smoke run (AUDIT.md "Coverage-guided fuzzing"):
-  # a short run of every target; long campaigns run separately.
+  # a short run of every target with debug assertions; the script fails if a
+  # target crashes, does not run, or executes no inputs. Long campaigns run
+  # separately.
   fuzz-smoke:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -127,6 +191,6 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: Seeds
-        run: cd fuzz && cargo +"$TOOLCHAIN" run --release --bin seeds
+        run: cd fuzz && cargo +"$TOOLCHAIN" run --locked --release --bin seeds
       - name: Fuzz every target for 2 minutes
-        run: ./fuzz/run_campaign.sh 120
+        run: bash fuzz/run_campaign.sh 120
