@@ -335,3 +335,74 @@ fn the_payload_pays_per_byte_and_the_shape_pays_the_v1_rate() {
     assert!(deploy_fee(2, 2, &one) > deploy_fee(1, 2, &one));
     assert!(deploy_fee(1, 3, &one) > deploy_fee(1, 2, &one));
 }
+
+// ------------------------------------------------------------------ R5-1 block rule
+
+/// A valid, signed deploy from the miner's `nth` spendable output.
+fn deploy_from(net: &mut TestNet, nth: usize, programs: Vec<Registration>, salt: u8) -> PxDeploy {
+    let miner = net.miner_clone();
+    let real = miner.spendable(net.height())[nth].clone();
+    let plan = net.plan(&real);
+    let rules = net.rules;
+    build_deploy(
+        &miner.keys,
+        vec![plan],
+        &[Payment {
+            address: miner.primary(),
+            amount: 1,
+        }],
+        &miner.primary(),
+        [salt; 32],
+        programs,
+        &rules,
+        &mut net.rng,
+    )
+    .expect("deploy builds")
+}
+
+/// `elf` padded with trailing zeros (ignored by the loader) to the largest
+/// program size.
+fn padded(elf: &[u8]) -> Registration {
+    let mut v = elf.to_vec();
+    v.resize(MAX_PROGRAM_BYTES, 0);
+    Registration {
+        elf: v,
+        budget: VAULT_BUDGET,
+    }
+}
+
+/// The block's deploy bytes are capped at `MAX_DEPLOY_BLOCK_BYTES`: two
+/// valid deploys of two maximal programs each exceed it together, and each
+/// fits on its own (`BlockError::DeployBytesExceeded`).
+#[test]
+fn a_block_over_the_deploy_budget_is_invalid() {
+    use blacksilk_tx::validate::validate_block_transactions;
+    use blacksilk_tx::BlockError;
+    let mut net = TestNet::new(37, 80);
+    let programs = || vec![padded(VAULT_ELF), padded(&other_elf())];
+    let d0 = deploy_from(&mut net, 0, programs(), 1);
+    let d1 = deploy_from(&mut net, 1, programs(), 2);
+    let size = |d: &PxDeploy| Transaction::PxDeploy(Box::new(d.clone())).px_bytes();
+    assert!(size(&d0) <= MAX_DEPLOY_BLOCK_BYTES);
+    assert!(size(&d0) + size(&d1) > MAX_DEPLOY_BLOCK_BYTES);
+
+    let block = |net: &mut TestNet, ds: &[&PxDeploy]| {
+        let fees: u64 = ds.iter().map(|d| d.fee).sum();
+        let mut txs = vec![net.coinbase(fees)];
+        txs.extend(ds.iter().map(|d| Transaction::PxDeploy(Box::new((*d).clone()))));
+        txs
+    };
+    let both = block(&mut net, &[&d0, &d1]);
+    let ctx = net.context(&both);
+    let r = validate_block_transactions(&both, &ctx, &net.chain, &net.rules, &mut net.rng);
+    assert_eq!(
+        r,
+        Err(BlockError::DeployBytesExceeded {
+            bytes: size(&d0) + size(&d1),
+            max: MAX_DEPLOY_BLOCK_BYTES
+        })
+    );
+    // Either one alone is a valid block.
+    let one = block(&mut net, &[&d1]);
+    net.submit(one, &mut []).expect("one deploy fits");
+}

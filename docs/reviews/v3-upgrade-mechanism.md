@@ -376,3 +376,29 @@ per block. The byte cap bounds the rate; a burn would add an emission rule.
 `px_builder::deploy_fee` must return `px::deploy_fee` exactly. Its current value (an
 upper bound of `2 × size`) is refused by the new rule. This candidate makes that
 one-line delegation so that the branch builds and tests run; see the report.
+
+---
+
+## 8. Integration of §2.4 (V3-B)
+
+The §2.4 items, done on the candidate branch by V3-B. Every one is a no-op with a
+single epoch (every built-in network).
+
+| Owner | Done |
+|---|---|
+| `p2p/src/net.rs` | `HeaderError::UnknownUpgrade` is not penalized, in header batches (`penalized`, `on_header_error`) and in blocks (`on_block`). The first one per peer is logged at WARN ("peer … is on a newer consensus version (header version N); this node may need an upgrade"). Not done: disconnecting after K such headers, and an operator alert counting distinct peers. |
+| `chain/src/manager.rs` | Blocks are validated with `rules_at(h)` (`TxRules::at_height` for the block's height, with the fee and weight limits given to `open`). Pool admission and templates use the next block's rules. **The PX proof cache is gated by the rule set:** `validate_block_transactions_cached` skips PX5 for a pooled transaction only when the pool was validated under the block's own signature domain. Without the gate, a PX transaction without v1 inputs (no CLSAG, so C3 cannot catch it) proven for the old branch and still pooled would pass block `A` on nodes that pooled it and fail on the others: a consensus split. |
+| `chain/src/mempool.rs` | The pool records the signature domain it was validated under (`validated_under`). `enter_rules` flushes it when the domain changes, in either direction (an activation, or a reorganization back across one); `add` and `revalidate` call it first, and the manager logs the flush. Templates offer transactions only when the pool's domain is the template height's, and respect the deploy sub-budget `MAX_DEPLOY_BLOCK_BYTES` inside the PX lane. |
+| `tx/src/validate.rs` | Block rule: `BlockError::DeployBytesExceeded` when a block's deploy bytes exceed `MAX_DEPLOY_BLOCK_BYTES` (**consensus**). `revalidate_between(tx, chain, height, from, rules)`: the extension-only check within an epoch, full validation (PX proof included) when the domains differ. `revalidate_after_extension` documents that it is not valid across an activation. |
+| `PxProof` classification | `TxError::is_stateless_at(params, height)`: `PxProof` is contextual when `height` is within `ACTIVATION_GRACE_BLOCKS` = **N = 60** blocks of an activation, on either side (`near_activation`). P2P also stops treating `InvalidSignature` over buried rings as proof of misbehaviour in that window. Why 60: about 2 h at 120 s; covers peers behind or ahead of the activation block and transactions proven shortly before it; the same depth p2p already treats as final (`SIGNATURE_BURIAL`). P2P scoring only. |
+| `node/`, `miner/` | `chain::Template.version` and `rpc::Template.version` (serde default 1 for older nodes) carry the epoch's header version; the miner builds headers with it. |
+| Tests | `chain/tests/activation.rs` (regtest two-epoch no-op activation at the manager level: flush at `A − 1`, old-branch transactions refused in the pool and in block `A`, new-branch ones refused before and mined at `A`, blocks below `A` still valid under the old rules, a reorganization across `A` re-admits returned transactions only under the new rules); `chain/src/mempool.rs` unit tests (flush, deploy sub-budget in templates); `tx/tests/upgrade.rs` (`revalidate_between`, the grace window); `tx/tests/deploy_rules.rs` (the block deploy budget); `p2p/src/net.rs` (`unknown_upgrades_are_not_penalized`). |
+
+**Not done (wallet owner):** build with `at_height(params, synced_height + 1)` and
+refuse to broadcast across an activation before re-signing (and re-proving PX). The
+wallet still uses `TxRules::for_chain`, which panics on a multi-epoch schedule: a
+tripwire until then.
+
+## 9. R2-C6 feed-forward: decision data (V3-B, not implemented)
+
+See §9 data below (filled by measurement).

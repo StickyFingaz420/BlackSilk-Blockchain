@@ -172,6 +172,10 @@ struct Peer {
     headers_busy: bool,
     /// Headers arrived while `headers_busy`; ask again once the batch is done.
     headers_pending: bool,
+    /// The peer sent a header of a version above every version this node's
+    /// schedule knows (`HeaderError::UnknownUpgrade`) and the operator was
+    /// warned once for it.
+    warned_upgrade: bool,
 }
 
 struct StemEntry {
@@ -558,6 +562,29 @@ impl Inner {
         self.chain().locator()
     }
 
+    /// `peer` sent a header whose version no epoch of this node's schedule
+    /// uses (`HeaderError::UnknownUpgrade`): not scored, since the peer may run
+    /// a newer release that is right. Logged at WARN once per peer, so that the
+    /// operator learns an upgrade may be needed.
+    fn warn_unknown_upgrade(&self, peer: PeerId, version: u32) {
+        let first = {
+            let mut st = self.state();
+            match st.peers.get_mut(&peer) {
+                Some(p) if !p.warned_upgrade => {
+                    p.warned_upgrade = true;
+                    true
+                }
+                _ => false,
+            }
+        };
+        if first {
+            log::warn!(
+                "peer {peer} is on a newer consensus version (header version {version}); \
+                 this node may need an upgrade"
+            );
+        }
+    }
+
     /// Asks `peer` for headers after our best header chain.
     fn request_headers(&self, peer: PeerId) {
         self.request_headers_after(peer, None);
@@ -916,6 +943,7 @@ async fn run_connection<S>(
                 headers_grace: None,
                 headers_busy: false,
                 headers_pending: false,
+                warned_upgrade: false,
             },
         );
     }
@@ -1282,6 +1310,7 @@ fn penalized(e: &HeaderError) -> bool {
             | HeaderError::TimestampTooFarInFuture { .. }
             | HeaderError::InvalidParent
             | HeaderError::UnknownParent
+            | HeaderError::UnknownUpgrade { .. }
     )
 }
 
@@ -1549,6 +1578,10 @@ fn verify_headers(
 ///   (it may not have downloaded it yet, or its sender withholds it), so it is
 ///   not penalized; we stop asking it for headers until it announces again.
 /// - `Duplicate` and `TimestampTooFarInFuture` are not permanent.
+/// - `UnknownUpgrade`: the header's version is above every version this
+///   node's schedule knows, so the peer probably runs a newer release and may
+///   be right. It is not penalized; the operator is warned once per peer
+///   (docs/consensus.md §11, docs/p2p.md §6).
 /// - Every other failure is a header that breaks the rules: the peer relayed
 ///   it without checking, and is penalized.
 ///
@@ -1569,6 +1602,7 @@ fn on_header_error(
             }
         }
         HeaderError::UnknownParent => inner.request_headers(peer),
+        HeaderError::UnknownUpgrade { version } => inner.warn_unknown_upgrade(peer, version),
         HeaderError::InvalidParent => {
             log::info!(
                 "peer {peer} relays headers (up to height {last_height}) descending from a block with an invalid body"
@@ -1669,6 +1703,7 @@ async fn on_block(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
             | HeaderError::TimestampTooFarInFuture { .. }
             | HeaderError::InvalidParent => {}
             HeaderError::UnknownParent => inner.request_headers(peer),
+            HeaderError::UnknownUpgrade { version } => inner.warn_unknown_upgrade(peer, version),
             e => inner.misbehave(
                 peer,
                 score::INVALID_HEADER,
@@ -1918,13 +1953,14 @@ fn admit_tx(inner: &Arc<Inner>, peer: PeerId, tx: &Transaction, id: Hash, stem: 
         // The cheap stateless rules first, as in full validation: a
         // transaction that breaks one is penalized whatever its context.
         use blacksilk_tx::{px, validate};
+        let rules = c.next_rules();
         let stateless = match tx {
             Transaction::Coinbase(_) => Err(blacksilk_tx::TxError::CoinbaseNotAllowed),
             Transaction::Transfer(t) => {
-                validate::check_structure(t, c.rules()).and_then(|_| validate::check_balance(t))
+                validate::check_structure(t, &rules).and_then(|_| validate::check_balance(t))
             }
             Transaction::Px(t) => px::check_px_structure(t).and_then(|_| px::check_px_balance(t)),
-            Transaction::PxDeploy(t) => px::check_deploy_structure(t, c.rules())
+            Transaction::PxDeploy(t) => px::check_deploy_structure(t, &rules)
                 .and_then(|_| validate::check_balance(&t.as_transfer())),
         };
         stateless.and_then(|_| blacksilk_tx::validate::revalidate_after_extension(tx, c.state()))
@@ -1996,9 +2032,19 @@ fn on_invalid_tx(
     tip: Hash,
     e: blacksilk_tx::TxError,
 ) {
-    let proven = e.is_stateless()
+    // Near an activation, proofs and signatures made for the neighbouring
+    // rule set fail honestly (`validate::ACTIVATION_GRACE_BLOCKS`).
+    let (stateless, near) = {
+        let c = inner.chain();
+        let next = c.height() + 1;
+        (
+            e.is_stateless_at(c.params(), next),
+            blacksilk_tx::validate::near_activation(c.params(), next),
+        )
+    };
+    let proven = stateless
         || match e {
-            blacksilk_tx::TxError::InvalidSignature { input } => {
+            blacksilk_tx::TxError::InvalidSignature { input } if !near => {
                 provably_invalid_signature(inner, rings.get(input))
             }
             _ => false,
@@ -2506,5 +2552,18 @@ mod tests {
             queue_key(&a),
             queue_key(&NetAddr::parse("1.2.3.5:5").unwrap())
         );
+    }
+
+    /// A header from a newer release (a version no epoch of the schedule
+    /// uses) is not scored; a bad version the schedule does know is.
+    #[test]
+    fn unknown_upgrades_are_not_penalized() {
+        assert!(!penalized(&HeaderError::UnknownUpgrade { version: 9 }));
+        assert!(penalized(&HeaderError::BadVersion {
+            expected: 1,
+            got: 0
+        }));
+        assert!(!penalized(&HeaderError::Duplicate));
+        assert!(penalized(&HeaderError::InsufficientWork));
     }
 }

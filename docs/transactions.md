@@ -550,7 +550,7 @@ key (the burning bug) impossible even for broken wallets.
 | B3 | `Σ coinbase amounts = block_reward(height) + Σ fees`, exactly (u128 arithmetic). Under-claiming is invalid, so the supply is exactly computable [Δ Monero, which allows ≤]. |
 | B4 | Key images and one-time keys are unique within the block (covered by C2/C4 applied in order). |
 | B5 | `tx_root` equals the Merkle root of the `tx_hash`es in block order (consensus.md §7). |
-| B6 | Block weight ≤ block weight limit (economics spec). PX and deploy transactions have weight 0 and count instead against a separate budget: their encoded bytes sum to at most `MAX_PX_BLOCK_BYTES = 8 MiB` (px.md §11.5). |
+| B6 | Block weight ≤ block weight limit (economics spec). PX and deploy transactions have weight 0 and count instead against a separate budget: their encoded bytes sum to at most `MAX_PX_BLOCK_BYTES = 8 MiB` (px.md §11.5), and the deploys' bytes to at most `MAX_DEPLOY_BLOCK_BYTES = 1 MiB` of it (testnet v3). |
 | B7 | Coinbase structure: 1–16 outputs, no identity `O` or `R`, outputs strictly sorted, one-time keys unique (C4). |
 
 ### 8.4 Weight and fee

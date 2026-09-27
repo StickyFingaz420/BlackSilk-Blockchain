@@ -579,7 +579,7 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 | PX transaction | ≤ `MAX_PX_TX_SIZE` = 4 MiB proof cap + 256 KiB |
 | Deploy | ≤ 1 MiB |
 | Deploy fee | Exactly the standard v1 fee of its transfer shape plus `DEPLOY_FEE_PER_BYTE` = 50 per payload byte (the vault: ~0.007 BLK; 1 MiB: ~0.52 BLK). A function of public data, so no wallet fingerprint |
-| Block deploy budget | `MAX_DEPLOY_BLOCK_BYTES` = 1 MiB of deploys per block, inside the 8 MiB PX budget. **Defined but not yet enforced**: the check belongs in `validate_block_transactions` (reviews/v3-upgrade-mechanism.md §7.2) |
+| Block deploy budget | `MAX_DEPLOY_BLOCK_BYTES` = 1 MiB of deploys per block, inside the 8 MiB PX budget. A block rule (`BlockError::DeployBytesExceeded`, testnet v3 rule set); templates respect it (reviews/v3-upgrade-mechanism.md §7.2, §8) |
 | Block PX budget | 8 MiB (about 4 PX transactions); total block ≤ `MAX_BLOCK_BYTES` = 1,000,000 + 8 MiB + 64 KiB = 9,454,144 bytes |
 | PX fee | Exactly `PX_STANDARD_FEE = PX_FEE_PER_BYTE × MAX_PX_TX_SIZE` = 8,912,896 atomic units, a consensus rule (§12). It covers the per-byte fee of any PX transaction. Consequence: every PX transaction pays the same, so the mempool's fee-per-byte ordering ranks larger ones (contract calls, ~2.5 MB) below plain transfers (~2 MB) when the PX budget is congested |
 | Relay | PX and deploy transactions together: per peer 0.2/s (burst 4); all peers together 2/s (burst 10) |

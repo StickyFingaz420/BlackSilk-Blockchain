@@ -381,6 +381,13 @@ dropped.
     break the header rules are penalized as before.
   - After such a relay we stop asking that peer for headers until it announces a new
     tip;
+- a header whose version is above every version of this node's schedule
+  (`HeaderError::UnknownUpgrade`, docs/consensus.md §11): the peer probably runs a
+  newer release. The first per peer is logged at WARN ("this node may need an
+  upgrade");
+- within `ACTIVATION_GRACE_BLOCKS` (60) of an activation height, on either side, a
+  transaction whose PX proof or ring signature fails: it may be bound to the
+  neighbouring rule set's branch id (`TxError::is_stateless_at`);
 - a duplicate;
 - an already-known transaction;
 - a transaction that conflicts with the mempool;

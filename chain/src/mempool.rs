@@ -27,7 +27,7 @@
 //! denial-of-service lever.
 
 use blacksilk_consensus::Hash;
-use blacksilk_tx::params::{TxRules, MAX_PX_BLOCK_BYTES};
+use blacksilk_tx::params::{SigDomain, TxRules, MAX_DEPLOY_BLOCK_BYTES, MAX_PX_BLOCK_BYTES};
 use blacksilk_tx::px::digest_bytes;
 use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::{
@@ -137,6 +137,9 @@ pub struct Mempool {
     keys: HashMap<ConflictKey, Hash>,
     bytes: [usize; 2],
     next_seq: u64,
+    /// The signature domain (network and branch ids) every pooled transaction
+    /// was validated under; `None` before the first admission.
+    domain: Option<SigDomain>,
 }
 
 impl Mempool {
@@ -159,6 +162,40 @@ impl Mempool {
 
     pub fn contains(&self, id: &Hash) -> bool {
         self.entries.contains_key(id)
+    }
+
+    /// The signature domain the pooled transactions were validated under.
+    pub fn validated_under(&self) -> Option<SigDomain> {
+        self.domain
+    }
+
+    /// Makes `rules` the pool's rule set. If the pool was validated under
+    /// another signature domain (an activation between the old and the new
+    /// next height, in either direction), every entry is dropped and their
+    /// conflict keys (key images, nullifiers, contract ids, output keys) are
+    /// released. Returns the number dropped.
+    ///
+    /// A flush, not a revalidation: every signature message and the PX
+    /// binding `h_tx` commit to the branch id, so every pooled v1 or deploy
+    /// signature and every pooled PX proof fails under the new domain. A full
+    /// revalidation would reach the same verdict after verifying each of them
+    /// again (docs/reviews/v3-upgrade-mechanism.md §2.5).
+    pub fn enter_rules(&mut self, rules: &TxRules) -> usize {
+        let domain = rules.domain();
+        if self.domain == Some(domain) {
+            return 0;
+        }
+        let dropped = if self.domain.is_some() {
+            let n = self.entries.len();
+            self.entries.clear();
+            self.keys.clear();
+            self.bytes = [0, 0];
+            n
+        } else {
+            0
+        };
+        self.domain = Some(domain);
+        dropped
     }
 
     fn cap(class: Class) -> usize {
@@ -216,6 +253,9 @@ impl Mempool {
         height: u64,
         rules: &TxRules,
     ) -> Result<Hash, MempoolError> {
+        // Under other rules than the pool's, the pool is flushed first
+        // (`enter_rules`): it never mixes transactions of two rule sets.
+        self.enter_rules(rules);
         let (id, keys) = self.precheck(&tx)?;
         validate_mempool_tx(&tx, chain, height, rules).map_err(MempoolError::Invalid)?;
         self.insert(id, tx, keys)
@@ -315,6 +355,10 @@ impl Mempool {
     /// are (`revalidate_after_extension`): a full re-check of a full pool
     /// (about 6.8 ms per transfer, measured) would take minutes per block
     /// under the chain lock, a denial-of-service lever.
+    ///
+    /// Across an activation (`rules` in another signature domain than the
+    /// pool's) the extension-only check is not enough, since signatures and
+    /// PX proofs change verdict: the pool is flushed ([`Self::enter_rules`]).
     pub fn revalidate(
         &mut self,
         chain: &impl ChainView,
@@ -322,6 +366,7 @@ impl Mempool {
         rules: &TxRules,
         after_reorg: bool,
     ) {
+        self.enter_rules(rules);
         let stale: Vec<Hash> = self
             .entries
             .iter()
@@ -354,7 +399,7 @@ impl Mempool {
     pub fn select(&self, max_weight: u64, mut pool: u128) -> Vec<Transaction> {
         let mut entries: Vec<&Entry> = self.entries.values().collect();
         entries.sort_by(|a, b| b.rate_cmp(a).then(a.seq.cmp(&b.seq)));
-        let (mut weight, mut px) = (0u64, 0u64);
+        let (mut weight, mut px, mut deploy) = (0u64, 0u64, 0u64);
         let mut out = Vec::new();
         let mut used: std::collections::HashSet<ConflictKey> = std::collections::HashSet::new();
         for e in entries {
@@ -372,11 +417,22 @@ impl Mempool {
                     out.push(e.tx.clone());
                 }
                 Class::Px if px + e.cost <= MAX_PX_BLOCK_BYTES => {
-                    if let Transaction::Px(t) = &e.tx {
-                        match (pool + t.bridge_in as u128).checked_sub(t.bridge_out as u128) {
-                            Some(p) => pool = p,
-                            None => continue,
+                    match &e.tx {
+                        Transaction::Px(t) => {
+                            match (pool + t.bridge_in as u128).checked_sub(t.bridge_out as u128) {
+                                Some(p) => pool = p,
+                                None => continue,
+                            }
                         }
+                        // Deploys also fit the block's deploy sub-budget
+                        // (`MAX_DEPLOY_BLOCK_BYTES`, a block rule).
+                        Transaction::PxDeploy(_) => {
+                            if deploy + e.cost > MAX_DEPLOY_BLOCK_BYTES {
+                                continue;
+                            }
+                            deploy += e.cost;
+                        }
+                        _ => {}
                     }
                     px += e.cost;
                     out.push(e.tx.clone());
@@ -969,6 +1025,75 @@ mod tests {
         assert_eq!(add(&mut m, rich), Err(MempoolError::Conflict));
         assert!(m.contains(&victim));
         assert!(before.iter().all(|id| m.contains(id)), "nothing evicted");
+        assert_invariants(&m);
+    }
+
+    /// A synthetic deploy of about `bytes` encoded bytes (one program of
+    /// that size).
+    fn big_deploy(image: u64, salt: u8, bytes: usize, fee: u64) -> Transaction {
+        let mut d = deploy(image, &[1_000 + image, 2_000 + image], salt, fee);
+        if let Transaction::PxDeploy(t) = &mut d {
+            t.programs = vec![blacksilk_tx::px::Registration {
+                elf: vec![salt; bytes],
+                budget: blacksilk_px::vault::BUDGET,
+            }];
+        }
+        d
+    }
+
+    /// R5-1: templates respect the block's deploy sub-budget
+    /// (`MAX_DEPLOY_BLOCK_BYTES`) inside the PX byte budget, and fill the
+    /// rest of the PX budget with PX transactions.
+    #[test]
+    fn selection_respects_the_deploy_sub_budget() {
+        let mut m = Mempool::new();
+        // Three deploys of 400 KB: only two fit the 1 MiB deploy budget.
+        for n in 0..3u64 {
+            add(&mut m, big_deploy(10 + n, n as u8, 400_000, 1_000_000)).unwrap();
+        }
+        // PX transactions at a lower fee rate still fill the PX lane.
+        let small = add(&mut m, px(500, 3 * 1024 * 1024, 10, 0, 0)).unwrap();
+        let sel = m.select(u64::MAX, 0);
+        let deploy_bytes: u64 = sel
+            .iter()
+            .filter(|t| matches!(t, Transaction::PxDeploy(_)))
+            .map(Transaction::px_bytes)
+            .sum();
+        assert_eq!(
+            sel.iter()
+                .filter(|t| matches!(t, Transaction::PxDeploy(_)))
+                .count(),
+            2
+        );
+        assert!(deploy_bytes <= MAX_DEPLOY_BLOCK_BYTES);
+        assert!(sel.iter().map(Transaction::px_bytes).sum::<u64>() <= MAX_PX_BLOCK_BYTES);
+        assert!(sel.iter().any(|t| t.hash() == small));
+    }
+
+    /// An activation between two validations flushes the pool and releases
+    /// every conflict key; the same rules again keep it.
+    #[test]
+    fn a_new_signature_domain_flushes_the_pool() {
+        let p = blacksilk_consensus::ChainParams::regtest();
+        let r0 = TxRules::at_height(&p, 0);
+        let r1 = TxRules {
+            branch_id: r0.branch_id + 1,
+            ..r0
+        };
+        let mut m = Mempool::new();
+        assert_eq!(m.enter_rules(&r0), 0, "the first rules flush nothing");
+        assert_eq!(m.validated_under(), Some(r0.domain()));
+        add(&mut m, px(1, 1000, 10, 0, 0)).unwrap();
+        add(&mut m, transfer(&[5], &[10, 11], 10)).unwrap();
+        assert_eq!(m.enter_rules(&r0), 0);
+        assert_eq!(m.len(), 2);
+        assert_eq!(m.enter_rules(&r1), 2);
+        assert!(m.is_empty());
+        assert_eq!(m.bytes(), 0);
+        assert!(m.keys.is_empty());
+        assert_eq!(m.validated_under(), Some(r1.domain()));
+        // The keys are free again.
+        add(&mut m, px(1, 1000, 10, 0, 0)).unwrap();
         assert_invariants(&m);
     }
 

@@ -106,6 +106,7 @@ impl Net {
             difficulty: t.difficulty,
             seed_id: hex::encode(t.seed_id),
             min_timestamp: t.min_timestamp,
+            version: t.version,
             reward: t.reward,
             fees: 0,
             txs: vec![],

@@ -233,3 +233,65 @@ fn transactions_signed_for_the_old_branch_are_invalid_after_activation() {
     );
     net.mine(vec![new_tx], &mut []).unwrap();
 }
+
+/// `revalidate_between`: within one epoch it is the extension-only check;
+/// across the activation it validates in full, so a pooled transaction of
+/// the old branch fails with `InvalidSignature` (which the extension-only
+/// check would miss).
+#[test]
+fn revalidation_across_the_activation_is_a_full_validation() {
+    use blacksilk_tx::validate::{revalidate_after_extension, revalidate_between};
+    use blacksilk_tx::Transaction;
+    let p = upgrading_regtest();
+    let old = TxRules::at_height(&p, ACTIVATION - 1);
+    let new = TxRules::at_height(&p, ACTIVATION);
+    let mut net = TestNet::new(25, 80);
+    net.rules = old;
+    let mut r = rng(26);
+    let alice = Wallet::new(&mut r);
+    let tx = Transaction::from(net.pay(&net.miner_clone(), &[(alice.primary(), 1000)]));
+    let h = net.height();
+    // Same epoch: the extension check, which passes.
+    assert_eq!(revalidate_between(&tx, &net.chain, h, &old, &old), Ok(()));
+    // The extension-only check cannot see the new branch id...
+    assert_eq!(revalidate_after_extension(&tx, &net.chain), Ok(()));
+    // ...the cross-activation one does.
+    assert_eq!(
+        revalidate_between(&tx, &net.chain, ACTIVATION, &old, &new),
+        Err(TxError::InvalidSignature { input: 0 })
+    );
+}
+
+/// The grace window: a `PxProof` failure is contextual within
+/// `ACTIVATION_GRACE_BLOCKS` of an activation (either side) and stateless
+/// elsewhere; with the built-in one-epoch schedules it is always stateless.
+#[test]
+fn px_proof_failures_are_contextual_near_an_activation() {
+    use blacksilk_tx::validate::{near_activation, ACTIVATION_GRACE_BLOCKS as N};
+    let p = upgrading_regtest();
+    let e = TxError::PxProof;
+    assert!(e.is_stateless());
+    for (h, near) in [
+        (0, false),
+        (ACTIVATION - N - 1, false),
+        (ACTIVATION - N, true),
+        (ACTIVATION - 1, true),
+        (ACTIVATION, true),
+        (ACTIVATION + N - 1, true),
+        (ACTIVATION + N, false),
+        (u64::MAX, false),
+    ] {
+        assert_eq!(near_activation(&p, h), near, "height {h}");
+        assert_eq!(e.is_stateless_at(&p, h), !near, "height {h}");
+    }
+    // Other failures keep their class.
+    assert!(TxError::PxShape.is_stateless_at(&p, ACTIVATION));
+    assert!(!TxError::PxUnknownAnchor.is_stateless_at(&p, 0));
+    for n in [Network::Mainnet, Network::Testnet, Network::Regtest] {
+        let q = ChainParams::for_network(n);
+        for h in [0, 1, 1_000, u64::MAX] {
+            assert!(!near_activation(&q, h));
+            assert!(e.is_stateless_at(&q, h));
+        }
+    }
+}

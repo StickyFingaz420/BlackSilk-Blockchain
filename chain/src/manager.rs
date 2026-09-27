@@ -166,6 +166,9 @@ pub struct Template {
     pub difficulty: u64,
     pub seed_id: Hash,
     pub min_timestamp: u64,
+    /// The header version the block must carry: that of the epoch at
+    /// `height` (docs/consensus.md §11).
+    pub version: u32,
     /// `reward(height)`; the coinbase must pay exactly `reward + fees`.
     pub reward: u64,
     pub fees: u64,
@@ -430,8 +433,27 @@ impl ChainManager {
         &self.params
     }
 
+    /// The rules passed to [`Self::open`]: the first epoch's. Blocks and pool
+    /// transactions are validated with [`Self::rules_at`] their height, which
+    /// differs from these after an activation (docs/consensus.md §11).
     pub fn rules(&self) -> &TxRules {
         &self.rules
+    }
+
+    /// The transaction rules of a block at `height`: `TxRules::at_height`
+    /// (the epoch's network and branch ids), with the fee and weight limits
+    /// given to [`Self::open`].
+    pub fn rules_at(&self, height: u64) -> TxRules {
+        TxRules {
+            fee_per_weight: self.rules.fee_per_weight,
+            max_block_weight: self.rules.max_block_weight,
+            ..TxRules::at_height(&self.params, height)
+        }
+    }
+
+    /// The rules a transaction is admitted under now: those of the next block.
+    pub fn next_rules(&self) -> TxRules {
+        self.rules_at(self.height() + 1)
     }
 
     /// Height of the connected tip.
@@ -785,16 +807,22 @@ impl ChainManager {
                     reward,
                     tx_root: header.tx_root,
                 };
+                // The rules of the block's own height (its epoch's branch id).
+                let rules = self.rules_at(h);
                 // PX proofs already verified on mempool admission are not
-                // verified again (validate_block_transactions_cached).
+                // verified again (validate_block_transactions_cached), but only
+                // when the pool's transactions were verified under this
+                // block's rules: across an activation a pooled proof is bound
+                // to the previous branch id and vouches for nothing here.
                 let mempool = &self.mempool;
+                let same_rules = mempool.validated_under() == Some(rules.domain());
                 match validate_block_transactions_cached(
                     body,
                     &ctx,
                     &self.state,
-                    &self.rules,
+                    &rules,
                     &mut self.rng,
-                    &|id| mempool.contains(id),
+                    &|id| same_rules && mempool.contains(id),
                 ) {
                     Ok(()) => {
                         self.state.apply_block(body);
@@ -813,13 +841,30 @@ impl ChainManager {
 
     /// Mempool: returns transactions from disconnected blocks, then drops
     /// anything no longer valid at the new tip.
+    ///
+    /// When the next block's rules differ from those the pool was validated
+    /// under (the tip crossed an activation, in either direction), the pool is
+    /// flushed first (`Mempool::enter_rules`): every pooled signature and PX
+    /// proof commits to the old branch id and would fail (docs/consensus.md
+    /// §11; docs/reviews/v3-upgrade-mechanism.md §2.5). Returned transactions
+    /// are then admitted under the new rules, which refuses those of the old
+    /// branch.
     fn finish_sync(&mut self, outcome: SyncOutcome) {
         let next = self.height() + 1;
+        let rules = self.rules_at(next);
+        let flushed = self.mempool.enter_rules(&rules);
+        if flushed > 0 {
+            log::info!(
+                "rule set {} active from height {next}: {flushed} pooled transaction(s) \
+                 signed or proven for the previous rule set dropped",
+                self.params.epoch_at(next).name
+            );
+        }
         for tx in outcome.returned {
-            let _ = self.mempool.add(tx, &self.state, next, &self.rules);
+            let _ = self.mempool.add(tx, &self.state, next, &rules);
         }
         self.mempool
-            .revalidate(&self.state, next, &self.rules, outcome.reorganized);
+            .revalidate(&self.state, next, &rules, outcome.reorganized);
     }
 
     // ---- header-first sync (docs/p2p.md §6) ----
@@ -1030,13 +1075,14 @@ impl ChainManager {
     /// stem phase, docs/p2p.md §8).
     pub fn check_tx(&self, tx: &Transaction) -> Result<Hash, MempoolError> {
         let next = self.height() + 1;
-        self.mempool.check(tx, &self.state, next, &self.rules)
+        self.mempool.check(tx, &self.state, next, &self.rules_at(next))
     }
 
     /// Adds a transaction to the mempool (valid for the next block).
     pub fn submit_tx(&mut self, tx: Transaction) -> Result<Hash, MempoolError> {
         let next = self.height() + 1;
-        self.mempool.add(tx, &self.state, next, &self.rules)
+        let rules = self.rules_at(next);
+        self.mempool.add(tx, &self.state, next, &rules)
     }
 
     /// `G(h)`: coins generated by blocks `1..h`. Rewards depend only on height, so
@@ -1062,6 +1108,7 @@ impl ChainManager {
             difficulty: t.difficulty,
             seed_id: t.seed_id,
             min_timestamp: t.min_timestamp,
+            version: t.version,
             reward: block_reward(t.height, self.generated_before(t.height)),
             fees: 0,
             txs: Vec::new(),
@@ -1075,10 +1122,18 @@ impl ChainManager {
             .template_on(self.tip_id())
             .expect("connected tip is a valid header");
         let reward = block_reward(t.height, self.generated());
-        let txs = self.mempool.select(
-            self.rules.max_block_weight.saturating_sub(COINBASE_RESERVE),
-            blacksilk_tx::validate::ChainView::px_pool(&self.state),
-        );
+        let rules = self.rules_at(t.height);
+        // The pool holds only transactions validated under the next block's
+        // rules (`finish_sync` flushes it at an activation); checked here too,
+        // so that a template never offers transactions of another rule set.
+        let txs = if self.mempool.validated_under() == Some(rules.domain()) {
+            self.mempool.select(
+                rules.max_block_weight.saturating_sub(COINBASE_RESERVE),
+                blacksilk_tx::validate::ChainView::px_pool(&self.state),
+            )
+        } else {
+            Vec::new()
+        };
         let fees = txs.iter().map(Transaction::fee).sum();
         Template {
             height: t.height,
@@ -1086,6 +1141,7 @@ impl ChainManager {
             difficulty: t.difficulty,
             seed_id: t.seed_id,
             min_timestamp: t.min_timestamp,
+            version: t.version,
             reward,
             fees,
             txs,

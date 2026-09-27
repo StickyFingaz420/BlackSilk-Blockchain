@@ -704,8 +704,11 @@ pub fn validate_mempool_tx(
 ///   appended, so C1 existence and C3 signatures are unchanged;
 /// - C1 maturity only improves as the height grows.
 ///
-/// After a reorganization, [`validate_mempool_tx`] must be used again. Policy
-/// only: blocks are always validated in full (`validate_block_transactions`).
+/// After a reorganization, [`validate_mempool_tx`] must be used again. So
+/// must it across an activation: signatures (C3) and the PX proof commit to
+/// the epoch's branch id, so an extension crossing an activation changes
+/// their verdict ([`revalidate_between`] handles both cases). Policy only:
+/// blocks are always validated in full (`validate_block_transactions`).
 pub fn revalidate_after_extension(tx: &Transaction, chain: &impl ChainView) -> Result<(), TxError> {
     match tx {
         Transaction::Coinbase(_) => Err(TxError::CoinbaseNotAllowed),
@@ -738,6 +741,73 @@ pub fn revalidate_after_extension(tx: &Transaction, chain: &impl ChainView) -> R
                 return Err(TxError::DuplicateContract);
             }
             Ok(())
+        }
+    }
+}
+
+/// [`revalidate_after_extension`] that is also correct across an activation:
+/// the transaction last passed validation for a height whose rules were
+/// `from`, and is re-checked for inclusion at `height` under `rules`. When the
+/// signature domains differ (an activation lies between the two heights, in
+/// either direction), every signature message and the PX binding changed, so
+/// the transaction is validated in full, PX proof included; otherwise only
+/// the rules an extension can change are checked. Policy only, like
+/// `revalidate_after_extension` (the node's pool flushes at an activation
+/// instead, `blacksilk_chain::mempool::Mempool::enter_rules`).
+pub fn revalidate_between(
+    tx: &Transaction,
+    chain: &impl ChainView,
+    height: u64,
+    from: &TxRules,
+    rules: &TxRules,
+) -> Result<(), TxError> {
+    if from.domain() != rules.domain() {
+        validate_mempool_tx(tx, chain, height, rules)
+    } else {
+        revalidate_after_extension(tx, chain)
+    }
+}
+
+/// Blocks on either side of an activation height within which a failing PX
+/// proof or ring signature is not taken as proof of misbehaviour (P2P scoring
+/// only; consensus is unchanged).
+///
+/// **N = 60** (about two hours at 120-second blocks):
+/// - before an activation, a peer already past it on its branch (or ahead of
+///   us by a few blocks) relays transactions bound to the new branch id, which
+///   fail here honestly;
+/// - after it, transactions proven or signed shortly before (a PX proof takes
+///   about 45 s) are still relayed by peers that have not yet seen the
+///   activation block, or that are on a branch below it;
+/// - 60 blocks is the depth `SIGNATURE_BURIAL` (p2p) already treats as final,
+///   and far beyond the 10-block depth that only warns (`DEEP_REORG_WARN_DEPTH`).
+///
+/// The cost: for 2N blocks around each activation, garbage proofs and
+/// signatures cost the sender only the per-peer rate limits, as any
+/// contextual failure does.
+pub const ACTIVATION_GRACE_BLOCKS: u64 = 60;
+
+/// Whether `height` is within [`ACTIVATION_GRACE_BLOCKS`] of an activation
+/// (`A - N <= height < A + N` for some epoch after the first). Always false
+/// with a single epoch.
+pub fn near_activation(params: &blacksilk_consensus::ChainParams, height: u64) -> bool {
+    params.schedule.epochs().iter().skip(1).any(|e| {
+        let a = e.activation_height;
+        height.saturating_add(ACTIVATION_GRACE_BLOCKS) >= a
+            && height < a.saturating_add(ACTIVATION_GRACE_BLOCKS)
+    })
+}
+
+impl TxError {
+    /// [`TxError::is_stateless`] for a transaction checked for inclusion at
+    /// `height`: a `PxProof` failure within [`ACTIVATION_GRACE_BLOCKS`] of an
+    /// activation is contextual, because the proof's binding `h_tx` commits
+    /// to a branch id and an honest proof made for the neighbouring rule set
+    /// fails here. With a single epoch this equals `is_stateless`.
+    pub fn is_stateless_at(&self, params: &blacksilk_consensus::ChainParams, height: u64) -> bool {
+        match self {
+            TxError::PxProof if near_activation(params, height) => false,
+            e => e.is_stateless(),
         }
     }
 }
@@ -797,6 +867,12 @@ pub enum BlockError {
     RangeProofBatch,
     /// The PX and deploy transactions exceed the block's PX byte budget.
     PxBytesExceeded {
+        bytes: u64,
+        max: u64,
+    },
+    /// The deploys exceed the block's deploy sub-budget
+    /// (`MAX_DEPLOY_BLOCK_BYTES`, R5-1; testnet v3 rule set).
+    DeployBytesExceeded {
         bytes: u64,
         max: u64,
     },
@@ -902,6 +978,20 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
         return Err(BlockError::PxBytesExceeded {
             bytes: px_bytes,
             max: MAX_PX_BLOCK_BYTES,
+        });
+    }
+    // Deploys register permanent state and outrank PX transactions per byte:
+    // their encoded bytes have their own cap inside the PX budget, so a block
+    // always keeps room for PX transactions (R5-1).
+    let deploy_bytes: u64 = txs
+        .iter()
+        .filter(|t| matches!(t, Transaction::PxDeploy(_)))
+        .map(Transaction::px_bytes)
+        .sum();
+    if deploy_bytes > MAX_DEPLOY_BLOCK_BYTES {
+        return Err(BlockError::DeployBytesExceeded {
+            bytes: deploy_bytes,
+            max: MAX_DEPLOY_BLOCK_BYTES,
         });
     }
     // B3

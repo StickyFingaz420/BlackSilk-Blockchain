@@ -30,8 +30,9 @@ pub const PX_FEE_PER_BYTE: u64 = 2;
 /// docs/reviews/v3-upgrade-mechanism.md §7).
 pub const DEPLOY_FEE_PER_BYTE: u64 = 50;
 /// Encoded deploy bytes one block may carry, within `MAX_PX_BLOCK_BYTES`
-/// (R5-1). A block rule: it belongs in `validate_block_transactions`, which
-/// does not enforce it yet (docs/reviews/v3-upgrade-mechanism.md §7.2).
+/// (R5-1). A block rule (`BlockError::DeployBytesExceeded` in
+/// `validate_block_transactions`); block templates respect it
+/// (docs/reviews/v3-upgrade-mechanism.md §7.2).
 pub const MAX_DEPLOY_BLOCK_BYTES: u64 = 1024 * 1024;
 /// The fee of every PX transaction, exactly (docs/px.md §11.5): the per-byte
 /// fee of the largest possible PX transaction. A uniform fee reveals nothing

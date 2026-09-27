@@ -68,10 +68,18 @@ pub struct Template {
     pub difficulty: u64,
     pub seed_id: String,
     pub min_timestamp: u64,
+    /// The header version of the block (that of the epoch at `height`). A
+    /// node that does not send it serves the first epoch's version, 1.
+    #[serde(default = "first_header_version")]
+    pub version: u32,
     pub reward: u64,
     pub fees: u64,
     /// Encoded transfers to include after the coinbase, in order.
     pub txs: Vec<String>,
+}
+
+fn first_header_version() -> u32 {
+    1
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

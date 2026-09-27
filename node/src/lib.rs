@@ -183,6 +183,7 @@ async fn template(State(App { chain: s, .. }): State<App>) -> Json<rpc::Template
         difficulty: t.difficulty,
         seed_id: hex::encode(t.seed_id),
         min_timestamp: t.min_timestamp,
+        version: t.version,
         reward: t.reward,
         fees: t.fees,
         txs: t
