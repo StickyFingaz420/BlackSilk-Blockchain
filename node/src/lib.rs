@@ -51,11 +51,21 @@ pub fn default_rpc_port(n: Network) -> u16 {
     }
 }
 
+/// Exit status of a node whose chain lock was poisoned.
+pub const POISONED_EXIT_CODE: i32 = 70;
+
 fn lock(shared: &Shared) -> MutexGuard<'_, ChainManager> {
-    // A panic while holding the lock leaves the manager in a state produced by
-    // complete operations only (sync_state runs to completion or panics before
-    // mutating); continuing is preferable to taking the node down.
-    shared.lock().unwrap_or_else(|e| e.into_inner())
+    // A panic while holding the lock can leave the manager half-updated (a block
+    // applied to the state but not to the tip, for example). Continuing would
+    // serve and build on that state, so the node stops instead: the block store
+    // is append-only and a restart replays it deterministically.
+    match shared.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            log::error!("chain state lock poisoned by a panic; stopping (restart to recover)");
+            std::process::exit(POISONED_EXIT_CODE)
+        }
+    }
 }
 
 /// The message the node exits with when its block store failed.
