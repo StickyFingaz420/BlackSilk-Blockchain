@@ -63,6 +63,22 @@ pub enum SubmitError {
     Halted,
 }
 
+/// The error inside the `io::Error` that [`ChainManager::open`] returns when
+/// a stored block that passes validation fails to apply during replay: the
+/// same deterministic halt as [`SubmitError::Halted`], found at start-up.
+/// Callers find it with `io::Error::get_ref` and a downcast, so that the node
+/// exits with its halt status instead of a generic failure (RTW1B-4).
+#[derive(Debug)]
+pub struct ApplyHalt(pub String);
+
+impl std::fmt::Display for ApplyHalt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ApplyHalt {}
+
 /// Outcome of replaying one stored block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Replayed {

@@ -132,3 +132,25 @@ fn an_apply_failure_exits_with_the_halt_status_the_unit_does_not_restart() {
         "the unit must list the halt status"
     );
 }
+
+/// The same halt found at start-up: `ChainManager::open` returns the replay's
+/// apply failure as an `ApplyHalt` inside its `io::Error`, and the node maps
+/// it to `HALT_EXIT_CODE` (src/main.rs), so a restart loop also stops there.
+/// Any other open error (a corrupt store, a foreign network) keeps status 1.
+#[test]
+fn an_apply_failure_found_at_start_up_exits_with_the_halt_status() {
+    use blacksilk_chain::manager::ApplyHalt;
+    use blacksilk_node::open_exit_code;
+    use std::io;
+
+    let halt = io::Error::other(ApplyHalt("block 00ab at height 7 failed to apply".into()));
+    assert_eq!(open_exit_code(&halt), HALT_EXIT_CODE);
+    assert_eq!(halt.to_string(), "block 00ab at height 7 failed to apply");
+    for other in [
+        io::Error::new(io::ErrorKind::InvalidData, "corrupt record"),
+        io::Error::other("store of another network"),
+        io::Error::from(io::ErrorKind::NotFound),
+    ] {
+        assert_eq!(open_exit_code(&other), 1, "{other}");
+    }
+}

@@ -102,6 +102,17 @@ pub fn halt_exit_code(shared: &Shared) -> i32 {
     }
 }
 
+/// The exit status for an error from [`ChainManager::open`]:
+/// [`HALT_EXIT_CODE`] when replay hit the same deterministic apply failure
+/// ([`blacksilk_chain::manager::ApplyHalt`]), so that a restart loop stops at
+/// start-up too; 1 otherwise.
+pub fn open_exit_code(e: &std::io::Error) -> i32 {
+    match e.get_ref() {
+        Some(inner) if inner.is::<blacksilk_chain::manager::ApplyHalt>() => HALT_EXIT_CODE,
+        _ => 1,
+    }
+}
+
 /// Resolves once the chain manager has halted ([`ChainManager::halted`]):
 /// its block store failed persistently, or a block that passed validation
 /// failed to apply. Checked every `period` on a plain thread. A halted node

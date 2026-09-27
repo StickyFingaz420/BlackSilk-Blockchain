@@ -75,7 +75,7 @@ impl ChainManager {
         // start-up, as it would live (`halted`); it is not marked invalid.
         if manager.apply_failed.is_some() {
             if let Some(reason) = manager.halted() {
-                return Err(io::Error::other(reason));
+                return Err(io::Error::other(super::ApplyHalt(reason)));
             }
         }
         // Bodies kept from now on are numbered by their index among the

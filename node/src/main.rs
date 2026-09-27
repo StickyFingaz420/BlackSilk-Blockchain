@@ -10,7 +10,7 @@ use blacksilk_chain::store::FileStore;
 use blacksilk_consensus::{ChainParams, RandomXPow};
 use blacksilk_node::fingerprint::{self, consensus_fingerprint, BUILD_COMMIT};
 use blacksilk_node::serve::{self, RpcSettings};
-use blacksilk_node::{halt_exit_code, halt_message, watch_store, App};
+use blacksilk_node::{halt_exit_code, halt_message, open_exit_code, watch_store, App};
 use blacksilk_p2p::{NetConfig, Network as P2p};
 use blacksilk_tx::params::TxRules;
 use clap::{CommandFactory, FromArgMatches};
@@ -126,7 +126,7 @@ fn run(cfg: Config) -> Result<(), Stop> {
         seed,
     )
     .map_err(|e| {
-        if e.kind() == std::io::ErrorKind::InvalidData {
+        let message = if e.kind() == std::io::ErrorKind::InvalidData {
             format!(
                 "block store: {e}. If this reports a corrupt record followed by valid data, \
                  back up the data directory and restart once with --repair-store \
@@ -134,6 +134,10 @@ fn run(cfg: Config) -> Result<(), Stop> {
             )
         } else {
             format!("block store: {e}")
+        };
+        Stop {
+            code: open_exit_code(&e),
+            message,
         }
     })?;
     log::info!(

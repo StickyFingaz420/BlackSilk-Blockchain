@@ -181,10 +181,9 @@ when a block that passed validation failed to apply (a bug in the node, blocks.m
 and 1 on any other error (a failed block store included). The node unit restarts on
 failure but not on 65 (`RestartPreventExitStatus=65`): a restart replays into the same
 failure. The constants are `HALT_EXIT_CODE` and `POISONED_EXIT_CODE` in
-`node/src/lib.rs`. Known gap: if the node is started again by hand after a 65, the
-replay reaches the same block at start-up and currently exits 1, which the unit does
-restart every 10 s; stop the unit (`systemctl stop blacksilk-node`) and report the
-block the log names (§9).
+`node/src/lib.rs`. If the node is started again by hand after a 65, the replay reaches
+the same block at start-up and exits 65 again (`open_exit_code`), so the unit still
+does not loop; report the block the log names (§9).
 Never expose port 29333 (§11).
 
 **RPC credential.** At every start the node writes a fresh random credential to
