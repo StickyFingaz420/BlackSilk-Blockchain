@@ -27,6 +27,13 @@ All integers are unsigned and little-endian unless stated otherwise.
 | RandomX epoch `E` | 2048 | 2048 | 2048 |
 | RandomX lag `L` | 64 | 64 | 64 |
 
+**Parameter invariants** (`ChainParams::check`, enforced when a `HeaderChain` is
+built and at node start-up): `2 ≤ T < 2^51`; `N ≥ 1` and `T·N·(N+1) < 2^64` (§4's
+`u128` bound); `1 ≤` median-time-past window `≤ 11` (the counted clock's warm-up);
+`1 ≤ FTL ≤ 7200 s`; `E` a power of two and `L < E`; `D0 ≥ 1`; the genesis header has
+height 0, zero parent and `tx_root`, difficulty `D0` and the first epoch's header
+version. The schedule table is validated when it is built (§11).
+
 The genesis header of each network is a constant in `params.rs`.
 - The genesis body is **empty**: no coinbase, no premine, `tx_root` = 32 zero bytes
   (blocks.md §3).
@@ -166,7 +173,8 @@ Exact semantics a second implementation must match:
 
 - All arithmetic is unsigned 128-bit with truncating division. The largest
   intermediate is `S·T·(n+1)`, below `n·2^64·T·(n+1)`; it fits whenever
-  `T·N·(N+1) < 2^64` (at `N = 75`: `T < 2^51`), which holds for every network.
+  `T·N·(N+1) < 2^64` (at `N = 75`: `T < 2^51`), which `ChainParams::check`
+  requires (§1).
   The counted clock stays below `max(t) + (N + 11)·step`.
 - Near genesis (`|A| < 87`) the warm-up starts at the oldest ancestor, and with
   `|A| ≤ N + 1` there is no warm-up at all (`from = w0 = 0`). During the first `N`

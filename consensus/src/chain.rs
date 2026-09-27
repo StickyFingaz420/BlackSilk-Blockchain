@@ -148,7 +148,15 @@ pub struct HeaderChain {
 }
 
 impl HeaderChain {
+    /// A header chain holding only the genesis of `params`.
+    ///
+    /// # Panics
+    /// If `params` break an invariant of [`ChainParams::check`]: consensus code
+    /// never runs on parameters it was not written for.
     pub fn new(params: ChainParams, pow: Arc<dyn PowFunction>) -> Self {
+        if let Err(e) = params.check() {
+            panic!("invalid chain parameters: {e}");
+        }
         let genesis = params.genesis;
         let id = genesis.id(params.network_id);
         let mut entries = HashMap::new();
@@ -828,6 +836,15 @@ mod tests {
         let id = c.accept(good, now).unwrap().id;
         assert_eq!(c.accept(good, now), Err(HeaderError::Duplicate));
         assert_eq!(c.tip_id(), id);
+    }
+
+    /// Consensus code never runs on parameters that break an invariant.
+    #[test]
+    #[should_panic(expected = "invalid chain parameters: TargetTooSmall(1)")]
+    fn a_header_chain_refuses_invalid_parameters() {
+        let mut params = ChainParams::regtest();
+        params.target_block_time = 1;
+        HeaderChain::new(params, Arc::new(TestPow));
     }
 
     #[test]
