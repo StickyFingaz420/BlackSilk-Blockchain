@@ -629,7 +629,11 @@ owner): a STARK on Plonky3 0.7.**
     outputs). The tag names the constraint system: a proof made for one circuit
     revision does not verify under another, even with the same parameter set,
     programs and table widths. Program ids do not imply it: they commit to the guest
-    programs, not to the AIRs;
+    programs, not to the AIRs. The tag is tied to the AIRs mechanically:
+    `zkvm/tests/circuit_fingerprint.rs` pins a digest of every table's constraint
+    evaluations at seeded points, widths, table order and height limits next to
+    `CIRCUIT_ID`, so an AIR change that does not bump the tag fails the suite
+    (docs/proof-system.md §3);
   - then Plonky3 observes the public values (which carry the binding `h_tx`, zkvm.md
     §6.4), the instance data and every prover message.
   - There is no verifier id in the transcript: the verifier registry is a design only

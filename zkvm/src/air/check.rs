@@ -419,3 +419,175 @@ where
         })
         .collect()
 }
+
+/// Domain tag of [`fingerprint`].
+const FINGERPRINT_TAG: &str = "zkvm/circuit-fingerprint";
+
+/// The builder of [`fingerprint`]: evaluates a table's `eval` on given values
+/// and records, in order, every constraint's value and every interaction
+/// (bus, message, count and its weight bound; exclusive branches with their
+/// flags).
+pub struct FingerprintBuilder<'a> {
+    main: RowWindow<'a, Val>,
+    prep: RowWindow<'a, Val>,
+    public: &'a [Val],
+    first: Val,
+    last: Val,
+    transition: Val,
+    out: Vec<u8>,
+}
+
+impl FingerprintBuilder<'_> {
+    fn record(&mut self, kind: u8, values: impl IntoIterator<Item = Val>) {
+        let values: Vec<Val> = values.into_iter().collect();
+        self.out.push(kind);
+        self.out
+            .extend_from_slice(&(values.len() as u32).to_le_bytes());
+        for v in values {
+            self.out
+                .extend_from_slice(&v.as_canonical_u32().to_le_bytes());
+        }
+    }
+
+    fn record_bus(&mut self, name: &str) {
+        self.out.push(b'B');
+        self.out
+            .extend_from_slice(&(name.len() as u32).to_le_bytes());
+        self.out.extend_from_slice(name.as_bytes());
+    }
+}
+
+impl<'a> AirBuilder for FingerprintBuilder<'a> {
+    type F = Val;
+    type Expr = Val;
+    type Var = Val;
+    type PreprocessedWindow = RowWindow<'a, Val>;
+    type MainWindow = RowWindow<'a, Val>;
+    type PublicVar = Val;
+    type PeriodicVar = Val;
+
+    fn main(&self) -> Self::MainWindow {
+        self.main
+    }
+
+    fn preprocessed(&self) -> &Self::PreprocessedWindow {
+        &self.prep
+    }
+
+    fn is_first_row(&self) -> Val {
+        self.first
+    }
+
+    fn is_last_row(&self) -> Val {
+        self.last
+    }
+
+    fn is_transition(&self) -> Val {
+        self.transition
+    }
+
+    fn assert_zero<I: Into<Val>>(&mut self, x: I) {
+        let v = x.into();
+        self.record(b'C', [v]);
+    }
+
+    fn public_values(&self) -> &[Val] {
+        self.public
+    }
+
+    fn periodic_values(&self) -> &[Val] {
+        use p3_air::WindowAccess;
+        self.prep.current_slice()
+    }
+}
+
+impl InteractionBuilder for FingerprintBuilder<'_> {
+    fn push_interaction<E: Into<Val>>(
+        &mut self,
+        bus_name: &str,
+        fields: impl IntoIterator<Item = E>,
+        count: impl Into<Count<Val>>,
+    ) {
+        let (c, weight) = count.into().into_parts();
+        self.record_bus(bus_name);
+        self.record(b'I', fields.into_iter().map(Into::into));
+        self.record(b'N', [c, Val::from_u32(weight)]);
+    }
+
+    fn push_local_interaction(&mut self, tuples: impl IntoIterator<Item = (Vec<Val>, Count<Val>)>) {
+        for (fields, count) in tuples {
+            let (c, weight) = count.into_parts();
+            self.record(b'L', fields);
+            self.record(b'N', [c, Val::from_u32(weight)]);
+        }
+    }
+
+    fn push_exclusive_interaction(
+        &mut self,
+        bus_name: &str,
+        branches: impl IntoIterator<Item = (Val, Count<Val>, Vec<Val>)>,
+    ) {
+        self.record_bus(bus_name);
+        for (flag, count, fields) in branches {
+            let (c, weight) = count.into_parts();
+            self.record(b'X', [flag, c, Val::from_u32(weight)]);
+            self.record(b'I', fields);
+        }
+    }
+}
+
+/// A digest of the constraint system `airs` (23 W2, 22 W4): the circuit
+/// fingerprint that `zkvm/tests/circuit_fingerprint.rs` pins next to
+/// `prove::CIRCUIT_ID`.
+///
+/// For every table, in order, it hashes the table's index, width, periodic
+/// and preprocessed widths and public-value count, then evaluates its `eval`
+/// at `points` pseudo-random points (a ChaCha20 stream from `seed`: random
+/// `local` and `next` rows, periodic values, public values and random values
+/// of the first-row, last-row and transition selectors) and hashes every
+/// constraint value and every interaction the evaluation produces. A change
+/// to any constraint polynomial, bus, message, count, selector use, width or
+/// table order changes the digest except with probability about
+/// (degree / p) per point (Schwartz–Zippel), so an AIR edit cannot pass
+/// unnoticed. It does not depend on the programs, images or outputs a
+/// statement carries (their periodic values are replaced by random ones).
+pub fn fingerprint<A>(airs: &[A], seed: u64, points: usize) -> [u8; 32]
+where
+    A: for<'a> Air<FingerprintBuilder<'a>> + BaseAir<Val>,
+{
+    use rand_chacha::rand_core::{RngCore, SeedableRng};
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(seed);
+    let mut random =
+        |n: usize| -> Vec<Val> { (0..n).map(|_| Val::from_u32(rng.next_u32())).collect() };
+    let mut h = blacksilk_crypto::hash::Hasher64::new(FINGERPRINT_TAG);
+    h.update(&(airs.len() as u64).to_le_bytes());
+    h.update(&(points as u64).to_le_bytes());
+    for (t, air) in airs.iter().enumerate() {
+        let (w, pw) = (air.width(), air.num_periodic_columns());
+        let npv = air.num_public_values();
+        for n in [t, w, pw, air.preprocessed_width(), npv] {
+            h.update(&(n as u64).to_le_bytes());
+        }
+        for _ in 0..points {
+            let (cur, next, pc, pn, public) =
+                (random(w), random(w), random(pw), random(pw), random(npv));
+            let s = random(3);
+            let mut b = FingerprintBuilder {
+                main: RowWindow::from_two_rows(&cur, &next),
+                prep: RowWindow::from_two_rows(&pc, &pn),
+                public: &public,
+                first: s[0],
+                last: s[1],
+                transition: s[2],
+                out: Vec::new(),
+            };
+            air.eval(&mut b);
+            h.update(&(b.out.len() as u64).to_le_bytes());
+            h.update(&b.out);
+        }
+    }
+    let wide = h.finalize();
+    let mut d = [0u8; 32];
+    d.copy_from_slice(&wide[..32]);
+    d
+}

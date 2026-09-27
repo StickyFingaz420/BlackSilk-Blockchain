@@ -83,6 +83,14 @@ whole envelope; the binding terms are pinned (query phase; commitment term
   commitment. For zkVM proofs the statement digest is `zkvm::prove::statement_digest`,
   whose first input is `CIRCUIT_ID` (zk.md §9.3, zkvm.md §7). After that, the transcript
   is Plonky3 0.7.0's `p3-batch-stark` transcript unchanged.
+- **Circuit identity.** `CIRCUIT_ID` names the BVM-1 constraint system. The circuit
+  digest (`zkvm::air::check::fingerprint` over the table lists of 1 to `MAX_EXECUTIONS`
+  executions, with the height limits and the blinding width) is pinned next to it in
+  `zkvm/tests/circuit_fingerprint.rs` (`REVISIONS`). **Procedure:** any change to an AIR,
+  a bus, a width, the table order or a limit changes the digest; the same commit must
+  bump `CIRCUIT_ID` and append the new (id, digest) pair. An existing pair is never
+  edited. The v3 changes to the parameter set and canonical form (BS-ZK-3, §5) do not
+  touch the AIRs, so `CIRCUIT_ID` is unchanged by them.
 - **Prover randomness** (not checkable by a verifier): hedged seeds, OS randomness mixed
   with a witness digest, fresh per proof (`ProverConfig::for_statement`).
 - **Prover policy, grinding** (not a verifier rule): the prover's challenger
@@ -162,4 +170,5 @@ zkVM statements with a fixed shape (every PX statement) additionally require eac
 | V1–V2 | `zk/src/lib.rs` `verify` | `claimed_heights_and_table_counts_are_checked_first` |
 | V3 | `zk/src/lib.rs` `check_fri_schedule` | `honest_proofs_use_the_canonical_fri_schedule`, `a_non_canonical_fri_schedule_is_refused`, `schedule_tests::*`, `px/tests/fri_schedule.rs` |
 | V4–V5 | `zk/src/lib.rs` `verify` | `zk/tests/proofs.rs` (all), `zkvm/tests/*`, PX consensus tests |
+| Circuit identity | `zkvm/src/prove.rs` `CIRCUIT_ID`; `zkvm/src/air/check.rs` `fingerprint` | `zkvm/tests/circuit_fingerprint.rs` (pinned digest; every single mutation of any table, a table swap and an execution-id change alter it; independent of programs); `zkvm/tests/circuit_id.rs` |
 | Grinding policy (prover) | `zk/src/config.rs` `ProverChallenger`, `smallest_pow_witness` | `zk/tests/grinding.rs`: `the_prover_grinds_the_smallest_valid_nonce`, `proofs_do_not_depend_on_the_thread_count`, `upstream_grinding_witness_depends_on_the_thread_count` (the leak), `proofs_from_the_upstream_grinding_prover_still_verify` |
