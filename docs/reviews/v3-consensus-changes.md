@@ -215,3 +215,69 @@ Owner: W1-CB-A. Decisions: "Agent 01" (F-05 reorder accepted before the freeze).
 14. **Documentation.** `docs/consensus.md` §6 (the order and why it does not change
     validity), in this change.
 15. **Review status.** Internal; the validity-invariance argument is the conjunction.
+
+---
+
+## genesis-beacon: the genesis nonce is derived in consensus from a committed beacon
+
+Owner: W1-CB-A. Decisions: "Agent 40" (nonce derived in consensus from the committed
+beacon; `GenesisSpec`/`Beacon`; `genesis_is_final()`; no pasted nonce, no runtime
+override). Dossier 40 F40-2 (Medium).
+
+1. **Problem.** `ChainParams::base` hard-coded `nonce: 0`, and the ceremony tool printed
+   a `TESTNET_GENESIS_NONCE` constant to paste into consensus code at launch: the final
+   commit would have been a structural consensus edit under time pressure, and nothing
+   tied a pasted nonce to its announced beacon (F40-2).
+2. **Demonstrated failure.** Source-level: `params.rs` had no place for a beacon, and
+   `tools/genesis::rust_constants` emitted a nonce constant. No test could assert
+   "testnet nonce == derive(beacon)" (R15 §4.4 test 2 did not exist).
+3. **Prior art.** Zcash's genesis carries public not-before data and `chainparams.cpp`
+   asserts the genesis hash; Ethereum Frontier derived its genesis from an announced
+   script plus a public block hash (dossier 40 §3 P1).
+4. **Alternatives.** Paste the nonce plus a test that recomputes it (two values that can
+   disagree until the test runs); a runtime `--genesis-beacon` flag (rejected by the
+   decision: any operator could run a private genesis under the real id).
+5. **Affected components.**
+   - New `consensus/src/genesis.rs`: `NONCE_DOMAIN`, `nonce_preimage`,
+     `nonce_preimage_digest`, `derive_genesis_nonce`, `parse_display_hex`, `Beacon`,
+     `GenesisSpec` (`nonce`, `is_final`, `header`).
+   - `consensus/src/params.rs`: `TESTNET_BEACON = None`, `MAINNET_BEACON = None`;
+     `base()` builds the genesis from the spec; `ChainParams::genesis_spec()`,
+     `genesis_is_final()`; `check()` refuses a nonce that disagrees with the beacon.
+   - `tools/genesis`: re-exports the consensus derivation (its own copy removed), builds
+     its header through `GenesisSpec`, and `rust_constants` now prints the
+     `TESTNET_BEACON` value to commit, never a nonce constant.
+6. **Activation.** Genesis construction only; no validity rule.
+7. **Compatibility.** No beacon is committed on any network, so every nonce stays 0 and
+   the testnet (v2, retired), regtest and mainnet genesis ids are byte-identical
+   (`genesis_ids_are_pinned`, `genesis_ids_golden` unchanged).
+8. **Reorg, wallet, mining and P2P implications.** None now. At launch the final commit
+   changes `TESTNET_BEACON` (and the network id, genesis time and D0 per
+   docs/testnet-v3-genesis.md) and the pinned ids and fingerprints.
+9. **Vectors.** The tool's known answer (Bitcoin block 0, H = 0, id `0x0001D673`: digest
+   `3c437d97…`, nonce `0x351e3bcf977d433c`, independently recomputed in Python by
+   dossier 40) now also pinned in consensus (`genesis::tests::known_answer_bitcoin_block_0`).
+10. **Tests.** `genesis::tests`: known answer, preimage layout, strict display hex, nonce
+    from a dummy beacon (every input moves it; finality follows the beacon; a local
+    network needs none). `params::tests`: `genesis_finality_follows_the_committed_beacon`,
+    `a_committed_beacon_derives_the_nonce` (dummy beacon, test only),
+    `check_refuses_each_broken_invariant` (a pasted nonce). `tools/genesis`: all 10
+    existing tests pass through the consensus derivation; `rust_constants` emits a beacon,
+    no nonce constant, and the tool's header equals `GenesisSpec::header`.
+11. **Suite results.** `-p blacksilk-consensus` lib 49 passed; `-p blacksilk-genesis` 10
+    passed. Wider suites: see the RT-1 section.
+12. **Open review points.**
+    - Not wired in this branch (outside the "consensus and tools/genesis" scope of the
+      assignment): `node/src/config.rs` still gates the testnet on its own
+      `TESTNET_GENESIS_FINAL = false`; it should call `ChainParams::genesis_is_final()`
+      (40 item 3), as should the wallet, miner, supply-audit and labnet (F40-5).
+    - The tool's registry semantics, the reserved test-vector id and the rehearsal range
+      (F40-1, F40-11) are 40's item 2 and unchanged here.
+    - No final genesis is generated; the dummy beacon exists only in tests.
+13. **Identity impact.** None now (ids unchanged). The final commit is data-only:
+    `TESTNET_BEACON: None -> Some(..)` plus the announced constants and pins.
+14. **Documentation.** `docs/consensus.md` §1 (genesis construction and finality), in
+    this change.
+15. **Review status.** Internal; the derivation is the tool's, moved and cross-checked by
+    the unchanged tool tests.
+

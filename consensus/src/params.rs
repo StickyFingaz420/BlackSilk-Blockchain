@@ -1,6 +1,7 @@
 //! Per-network consensus parameters (spec §1).
 
 use crate::difficulty::{difficulty_ancestors, DIFFICULTY_WARMUP, DIFFICULTY_WINDOW};
+use crate::genesis::{Beacon, GenesisSpec};
 use crate::hash::Hash;
 use crate::header::BlockHeader;
 use crate::schedule::{Epoch, Schedule, V3};
@@ -42,6 +43,15 @@ pub struct ChainParams {
 pub const TESTNET_GENESIS_TIME: u64 = 1_790_380_800;
 /// Mainnet genesis time: **provisional** until the mainnet launch date is fixed.
 pub const MAINNET_GENESIS_TIME: u64 = 1_830_297_600;
+
+/// The committed beacon of the testnet genesis (docs/testnet-v3-genesis.md). `None`
+/// until the launch: the genesis nonce is then 0 and the network is **not final**
+/// ([`ChainParams::genesis_is_final`]). The final commit changes exactly this
+/// `None` to `Some(Beacon { .. })` (plus the pinned ids): the nonce is derived in
+/// [`crate::genesis`], never pasted, and there is no runtime override.
+pub const TESTNET_BEACON: Option<Beacon> = None;
+/// The committed beacon of the mainnet genesis. `None`: not final.
+pub const MAINNET_BEACON: Option<Beacon> = None;
 
 impl ChainParams {
     pub fn mainnet() -> Self {
@@ -89,17 +99,11 @@ impl ChainParams {
         target_block_time: u64,
     ) -> Self {
         // The genesis body is empty (blocks.md §3): tx_root is the root of the empty
-        // list, and there is no coinbase and no premine.
+        // list, and there is no coinbase and no premine. The nonce comes from the
+        // network's committed beacon (none yet on any network: nonce 0).
         let schedule = V3;
-        let genesis = BlockHeader {
-            version: schedule.epoch_at(0).header_version,
-            height: 0,
-            prev_id: [0; 32],
-            timestamp: genesis_time,
-            difficulty: initial_difficulty,
-            tx_root: [0; 32],
-            nonce: 0,
-        };
+        let genesis = genesis_spec(network, network_id, genesis_time, initial_difficulty)
+            .header(schedule.epoch_at(0).header_version);
         Self {
             network,
             network_id,
@@ -122,6 +126,24 @@ impl ChainParams {
 
     pub fn genesis_id(&self) -> Hash {
         self.genesis.id(self.network_id)
+    }
+
+    /// The genesis specification of these parameters: their network id, genesis
+    /// time and `D0`, and the network's committed beacon.
+    pub fn genesis_spec(&self) -> GenesisSpec {
+        genesis_spec(
+            self.network,
+            self.network_id,
+            self.genesis.timestamp,
+            self.initial_difficulty,
+        )
+    }
+
+    /// Whether this network's genesis is final: regtest always is; testnet and
+    /// mainnet only once their beacon is committed. Binaries must refuse a
+    /// network whose genesis is not final.
+    pub fn genesis_is_final(&self) -> bool {
+        self.genesis_spec().is_final()
     }
 
     /// Ancestors (ending with the parent) a child's required difficulty is
@@ -150,7 +172,9 @@ impl ChainParams {
     ///   required: regtest keeps 360 s at T = 10 s (docs/consensus.md §5).
     /// - The RandomX key epoch is a power of two and the lag is below it.
     /// - `D0 ≥ 1`, and the genesis header is well formed: height 0, zero parent
-    ///   and body root, difficulty `D0`, and the first epoch's header version.
+    ///   and body root, difficulty `D0`, the first epoch's header version, and
+    ///   the nonce derived from the committed beacon ([`Self::genesis_spec`]): a
+    ///   pasted nonce that disagrees with its beacon is refused.
     ///   The schedule's own ordering is checked when it is built
     ///   ([`Schedule::new`]).
     pub fn check(&self) -> Result<(), ParamsError> {
@@ -192,10 +216,28 @@ impl ChainParams {
             || g.tx_root != [0; 32]
             || g.difficulty != self.initial_difficulty
             || g.version != self.epoch_at(0).header_version
+            || g.nonce != self.genesis_spec().nonce()
         {
             return Err(ParamsError::Genesis);
         }
         Ok(())
+    }
+}
+
+/// The genesis specification of `network` with the given fields and the
+/// network's committed beacon.
+fn genesis_spec(network: Network, network_id: u32, timestamp: u64, difficulty: u64) -> GenesisSpec {
+    let (needs_beacon, beacon) = match network {
+        Network::Mainnet => (true, MAINNET_BEACON),
+        Network::Testnet => (true, TESTNET_BEACON),
+        Network::Regtest => (false, None),
+    };
+    GenesisSpec {
+        network_id,
+        timestamp,
+        difficulty,
+        needs_beacon,
+        beacon,
     }
 }
 
@@ -238,6 +280,46 @@ impl std::error::Error for ParamsError {}
 mod tests {
     use super::*;
 
+    /// No network has a committed beacon yet: testnet and mainnet are not final,
+    /// regtest needs none. Their genesis ids (pinned above) are unchanged by the
+    /// beacon plumbing because the nonce stays 0 without a beacon.
+    #[test]
+    fn genesis_finality_follows_the_committed_beacon() {
+        assert!(!ChainParams::testnet().genesis_is_final());
+        assert!(!ChainParams::mainnet().genesis_is_final());
+        assert!(ChainParams::regtest().genesis_is_final());
+        for n in [Network::Mainnet, Network::Testnet, Network::Regtest] {
+            let p = ChainParams::for_network(n);
+            assert_eq!(p.genesis.nonce, 0);
+            assert_eq!(p.genesis_spec().header(p.genesis.version), p.genesis);
+        }
+    }
+
+    /// With a (dummy, test-only) committed beacon the genesis nonce is the
+    /// derivation of that beacon, the network becomes final, and `check`
+    /// accepts exactly that nonce. No real genesis is generated here.
+    #[test]
+    fn a_committed_beacon_derives_the_nonce() {
+        let mut p = ChainParams::testnet();
+        let spec = GenesisSpec {
+            beacon: Some(Beacon {
+                btc_height: 900_000,
+                btc_hash_display: [0x5A; 32],
+            }),
+            ..p.genesis_spec()
+        };
+        assert!(spec.is_final());
+        let g = spec.header(p.genesis.version);
+        assert_eq!(
+            g.nonce,
+            crate::genesis::derive_genesis_nonce(p.network_id, 900_000, &[0x5A; 32])
+        );
+        // These parameters commit no beacon, so that genesis is refused: the
+        // nonce cannot be set apart from the constant beacon.
+        p.genesis = g;
+        assert_eq!(p.check(), Err(ParamsError::Genesis));
+    }
+
     #[test]
     fn every_network_passes_the_check() {
         for n in [Network::Mainnet, Network::Testnet, Network::Regtest] {
@@ -250,7 +332,7 @@ mod tests {
     #[test]
     fn check_refuses_each_broken_invariant() {
         type Edit = fn(&mut ChainParams);
-        let cases: [(Edit, ParamsError); 16] = [
+        let cases: [(Edit, ParamsError); 17] = [
             (|p| p.target_block_time = 1, ParamsError::TargetTooSmall(1)),
             (|p| p.target_block_time = 0, ParamsError::TargetTooSmall(0)),
             (
@@ -299,6 +381,11 @@ mod tests {
             (|p| p.genesis.height = 1, ParamsError::Genesis),
             (|p| p.genesis.tx_root = [1; 32], ParamsError::Genesis),
             (|p| p.genesis.version += 1, ParamsError::Genesis),
+            // A pasted nonce (no beacon is committed, so the nonce must be 0).
+            (
+                |p| p.genesis.nonce = 0x351e_3bcf_977d_433c,
+                ParamsError::Genesis,
+            ),
         ];
         for (edit, want) in cases {
             let mut p = ChainParams::testnet();

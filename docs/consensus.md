@@ -34,7 +34,16 @@ built and at node start-up): `2 ≤ T < 2^51`; `N ≥ 1` and `T·N·(N+1) < 2^64
 height 0, zero parent and `tx_root`, difficulty `D0` and the first epoch's header
 version. The schedule table is validated when it is built (§11).
 
-The genesis header of each network is a constant in `params.rs`.
+The genesis header of each network is built in `params.rs` from a `GenesisSpec`
+(`consensus/src/genesis.rs`): network id, timestamp, `D0`, and the network's
+committed beacon (`TESTNET_BEACON`, `MAINNET_BEACON`). The nonce is **derived** from
+the beacon, `LE64(H("BlackSilk/genesis-nonce/v1" ‖ LE32(network_id) ‖ LE64(btc_height)
+‖ btc_hash_display)[0..8])` (docs/testnet-v3-genesis.md §2), or 0 while no beacon is
+committed. There is no nonce constant and no runtime override; `ChainParams::check`
+refuses a genesis whose nonce disagrees with the beacon. A testnet or mainnet genesis
+without a committed beacon is **not final** (`ChainParams::genesis_is_final`); regtest
+needs no beacon. No beacon is committed yet on any network, so every nonce is 0 and
+the genesis ids below are unchanged.
 - The genesis body is **empty**: no coinbase, no premine, `tx_root` = 32 zero bytes
   (blocks.md §3).
 - **Testnet v2 genesis** (the planned reset, identity fixed 2026-09-26: PX rules from height 0, parameter set

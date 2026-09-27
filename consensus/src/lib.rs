@@ -29,6 +29,7 @@ compile_error!("BlackSilk supports little-endian targets only (untested on big-e
 
 pub mod chain;
 pub mod difficulty;
+pub mod genesis;
 pub mod hash;
 pub mod header;
 pub mod merkle;

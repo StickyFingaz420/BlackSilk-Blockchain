@@ -160,6 +160,11 @@ fn generate_and_verify() {
     assert!(r.contains(&hex(&g.id)) && r.contains(&g.header.nonce.to_string()));
     let c = rust_constants(&i, &g);
     assert!(c.contains(&hex(&g.id)) && c.contains(&format!("{:#018x}", g.header.nonce)));
+    // The committed value is the beacon, never a nonce constant.
+    assert!(c.contains("pub const TESTNET_BEACON: Option<Beacon> = Some(Beacon {"));
+    assert!(!c.contains("GENESIS_NONCE"));
+    // The tool and consensus build the same genesis from the same beacon.
+    assert_eq!(spec(&i).header(HEADER_VERSION), g.header);
 }
 
 /// The starting difficulty from a measured honest hash rate errs low (SX1):

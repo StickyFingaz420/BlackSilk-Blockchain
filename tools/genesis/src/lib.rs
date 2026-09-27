@@ -20,18 +20,22 @@
 //! field carrying entropy, and the tests pin every other field so that no edit
 //! can move entropy elsewhere.
 //!
-//! This crate builds and checks a genesis. It does not change any network's
-//! parameters: the final constants are pasted into `consensus/src/params.rs`
-//! at launch, with the owner.
+//! The derivation itself lives in consensus (`blacksilk_consensus::genesis`), so
+//! the tool and the compiled chain parameters cannot disagree. This crate builds
+//! and checks a genesis. It does not change any network's parameters: at launch
+//! the owner commits the network's beacon (`TESTNET_BEACON` in
+//! `consensus/src/params.rs`), and the node derives the nonce from it.
 
 #![forbid(unsafe_code)]
 
-use blacksilk_consensus::hash::{Hash, H};
+use blacksilk_consensus::genesis::{Beacon, GenesisSpec};
+use blacksilk_consensus::hash::Hash;
 use blacksilk_consensus::schedule::V3;
 use blacksilk_consensus::BlockHeader;
 
-/// The domain string of the nonce derivation.
-pub const NONCE_DOMAIN: &[u8] = b"BlackSilk/genesis-nonce/v1";
+pub use blacksilk_consensus::genesis::{
+    derive_genesis_nonce, nonce_preimage, nonce_preimage_digest, NONCE_DOMAIN,
+};
 
 /// **PLACEHOLDER** network id for testnet v3. The final id is chosen at launch
 /// (docs/testnet-v3-genesis.md §3) and must pass [`check_network_id`]. Nothing
@@ -144,31 +148,6 @@ pub fn parse_beacon_hex(s: &str) -> Result<[u8; 32], GenesisError> {
     Ok(out)
 }
 
-/// `LE64(Blake2b-256(NONCE_DOMAIN ‖ LE32(network_id) ‖ LE64(btc_height) ‖ beacon)[0..8])`,
-/// with `beacon` the block hash in display order ([`parse_beacon_hex`]).
-pub fn derive_genesis_nonce(network_id: u32, btc_height: u64, beacon: &[u8; 32]) -> u64 {
-    let d = nonce_preimage_digest(network_id, btc_height, beacon);
-    u64::from_le_bytes(d[..8].try_into().expect("8 bytes"))
-}
-
-/// The full 32-byte digest behind the nonce (printed for manual checks with
-/// `b2sum -l 256`).
-pub fn nonce_preimage_digest(network_id: u32, btc_height: u64, beacon: &[u8; 32]) -> Hash {
-    H::new()
-        .chain(&nonce_preimage(network_id, btc_height, beacon))
-        .finish()
-}
-
-/// The exact bytes hashed for the nonce: 26 + 4 + 8 + 32 = 70 bytes.
-pub fn nonce_preimage(network_id: u32, btc_height: u64, beacon: &[u8; 32]) -> Vec<u8> {
-    let mut p = Vec::with_capacity(NONCE_DOMAIN.len() + 44);
-    p.extend_from_slice(NONCE_DOMAIN);
-    p.extend_from_slice(&network_id.to_le_bytes());
-    p.extend_from_slice(&btc_height.to_le_bytes());
-    p.extend_from_slice(beacon);
-    p
-}
-
 /// Starting difficulty `D0` from the measured honest hash rate, in
 /// milli-hashes per second, and the target block time: the expected work of
 /// one block at that rate, divided by [`STARTING_DIFFICULTY_MARGIN`] (err
@@ -222,20 +201,26 @@ pub fn build(inputs: &GenesisInputs) -> Result<Genesis, GenesisError> {
     }
     let nonce_digest =
         nonce_preimage_digest(inputs.network_id, inputs.btc_height, &inputs.btc_hash);
-    let header = BlockHeader {
-        version: V3.epoch_at(0).header_version,
-        height: 0,
-        prev_id: [0; 32],
-        timestamp: inputs.timestamp,
-        difficulty: inputs.difficulty,
-        tx_root: [0; 32],
-        nonce: u64::from_le_bytes(nonce_digest[..8].try_into().expect("8 bytes")),
-    };
+    let header: BlockHeader = spec(inputs).header(V3.epoch_at(0).header_version);
     Ok(Genesis {
         header,
         nonce_digest,
         id: header.id(inputs.network_id),
     })
+}
+
+/// The consensus genesis specification of `inputs`, with the beacon committed.
+pub fn spec(inputs: &GenesisInputs) -> GenesisSpec {
+    GenesisSpec {
+        network_id: inputs.network_id,
+        timestamp: inputs.timestamp,
+        difficulty: inputs.difficulty,
+        needs_beacon: true,
+        beacon: Some(Beacon {
+            btc_height: inputs.btc_height,
+            btc_hash_display: inputs.btc_hash,
+        }),
+    }
 }
 
 /// [`build`], refusing a timestamp later than `now` (R15-4: the timestamp is
@@ -300,23 +285,31 @@ pub fn report(inputs: &GenesisInputs, g: &Genesis) -> String {
     )
 }
 
-/// The Rust constants to paste into `consensus/src/params.rs` (and the pinned
-/// id test) at launch.
+/// The values the final commit sets in `consensus/src/params.rs` (and the pinned
+/// id test) at launch. There is no nonce constant: consensus derives the nonce
+/// from the committed beacon; it is printed as a comment for cross-checking only.
 pub fn rust_constants(inputs: &GenesisInputs, g: &Genesis) -> String {
+    let bytes: Vec<String> = inputs
+        .btc_hash
+        .iter()
+        .map(|b| format!("{b:#04x}"))
+        .collect();
     format!(
-        "// Testnet genesis, built by tools/genesis (docs/testnet-v3-genesis.md).\n\
-         pub const TESTNET_NETWORK_ID: u32 = {nid:#010x};\n\
-         pub const TESTNET_GENESIS_TIME: u64 = {ts};\n\
-         pub const TESTNET_INITIAL_DIFFICULTY: u64 = {d};\n\
-         pub const BTC_BEACON_HEIGHT: u64 = {bh};\n\
-         pub const BTC_BEACON_HASH_HEX: &str =\n    \"{bhash}\";\n\
-         pub const TESTNET_GENESIS_NONCE: u64 = {nonce:#018x};\n\
+        "// Testnet genesis inputs, built by tools/genesis (docs/testnet-v3-genesis.md).\n\
+         // network id {nid:#010x}, genesis time {ts}, D0 {d}\n\
+         // beacon: Bitcoin block {bh}, hash (display order) {bhash}\n\
+         pub const TESTNET_BEACON: Option<Beacon> = Some(Beacon {{\n\
+         \x20   btc_height: {bh},\n\
+         \x20   btc_hash_display: [{arr}],\n\
+         }});\n\
+         // derived nonce (not a constant; cross-check only): {nonce:#018x}\n\
          const TESTNET_GENESIS_ID: &str =\n    \"{id}\";\n",
         nid = inputs.network_id,
         ts = inputs.timestamp,
         d = inputs.difficulty,
         bh = inputs.btc_height,
         bhash = hex(&inputs.btc_hash),
+        arr = bytes.join(", "),
         nonce = g.header.nonce,
         id = hex(&g.id),
     )
