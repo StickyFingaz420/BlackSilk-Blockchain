@@ -613,8 +613,12 @@ invalid block reports and how much work precedes it, never the verdict):
 | 9 | C3: every CLSAG | 2–4 ms per input |
 | 10 | PX5: every PX proof not already verified, on the decoded proof | about 0.2 s per proof |
 
-A block of PX transactions with valid ring signatures and malformed proofs is therefore
-rejected with no CLSAG verified (dossier 10 F10-2; `tx/tests/block_pipeline.rs`).
+A block of PX transactions whose proofs are malformed (they fail decoding in step 5 or
+the table shape in step 6) is therefore rejected with no ring resolved and no CLSAG
+verified, whatever its ring signatures (dossier 10 F10-2; `tx/tests/block_pipeline.rs`).
+This covers malformed proofs only: a well-formed proof that does not verify (for
+instance a valid proof replayed in another transaction, whose binding then differs)
+passes steps 5 and 6 and costs every check up to step 10.
 
 ### 8.4 Weight and fee
 
@@ -652,11 +656,20 @@ standard_fee(n, k) = min_fee(max_weight(n, k))                    (T8: the exact
 - A transaction that conflicts with the mempool on any key image is rejected (first seen
   wins; no replace-by-fee in v1).
 - Transactions must pass T1–T11 and C1–C3 against `best height + 1`.
-- Order: every stateless rule (T1–T11, including the range proof T10, and the PX
-  structure rules) runs before any contextual rule (C1–C3, PX1–PX4); the PX proof
-  (PX5) runs last. A transaction that breaks a stateless rule therefore always gets
-  a stateless error, which is what peer scoring penalizes (p2p.md §10), and costs no
-  chain lookup. A PX transaction repeating a one-time key between its hidden outputs
+- Order: every stateless rule (T1–T11, including the range proof T10, the PX
+  structure rules and the strict decoding of the PX proof, PX5's first step) runs
+  before any contextual rule (C1–C3, PX1–PX4). Once PX1–PX4 pass, the PX proof's table
+  shape is checked against its statement (PX5's second step, which needs PX3's
+  registered budgets), before any ring is resolved (C1); the proof's verification
+  runs last. This is the block path's order (§8.3), applied to every
+  single-transaction path: mempool admission, P2P relay, RPC submission and
+  re-admission after a reorganization (`validate_px`; red team RTW1-2, before which
+  these paths verified the CLSAG before looking at the proof). A transaction that
+  breaks a stateless rule therefore always gets a stateless error, which is what peer
+  scoring penalizes (p2p.md §10), and costs no chain lookup. A malformed proof gets
+  `PxProof` whatever its signatures: one failing decoding costs no chain lookup and no
+  range proof, one failing the shape no ring lookup and no CLSAG. A well-formed proof
+  that does not verify still costs every check up to the verification. A PX transaction repeating a one-time key between its hidden outputs
   and payouts, or with two equal nullifiers, gets a stateless error
   (`PxDuplicateOutputKey`, `PxNullifierRepeated`). `PxDuplicateOutputKey` is the only
   rule rejecting such a key repeat (there is no C4); two equal nullifiers would also

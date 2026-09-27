@@ -532,11 +532,14 @@ already being written is finished first).
      keeps the first seen, so it would be refused after verification anyway. Before
      2026-09-27 such a PX transaction passed the cheap checks and took a node-wide PX
      token (step 5) first;
-  4. cheap checks: the stateless structure and balance rules (penalized), then the
-     contextual rules a chain extension can change: key images, PX
-     anchor, nullifiers, registry, pool, contract id (not penalized, cached as in 3);
+  4. cheap checks: the stateless structure and balance rules and, for PX, the
+     proof's strict decoding (penalized), then the contextual rules a chain
+     extension can change: key images, PX anchor, nullifiers, registry, pool,
+     contract id (not penalized, cached as in 3), then, for PX, the proof's table
+     shape against its registered functions (penalized as `PxProof`);
   5. for PX and deploys, the node-wide PX token (below);
-  6. full verification: ring signatures, range proofs, PX proof.
+  6. full verification: ring signatures, range proofs, PX proof. The PX proof is
+     decoded and shape-checked again there, before any ring (transactions.md §8.5).
 - **PX and deploy transactions** (each costs ~0.2 s to verify): 0.2 per second,
   burst 4, per peer, **and** 2 per second, burst 10, over all peers together. Excess
   ones are dropped unverified.
@@ -548,11 +551,25 @@ already being written is finished first).
     `StemTx` messages.
   - It is never penalized for the node-wide limit, which an attacker can drain, nor
     for a `Tx` we requested.
+  - A malformed proof (one that fails decoding or shape) is caught in step 4, so it
+    never takes the node-wide token. Before red team RTW1-2 the proof was not
+    looked at until step 6: a PX transaction with a garbage proof and a garbage
+    ring signature over young ring members passed step 4, took the token, cost the
+    ring lookups, the range proof and a CLSAG, and was rejected with the contextual
+    (unpenalized) `InvalidSignature`; the red team estimated that about 10 Sybil
+    peers could starve honest PX relay that way, unpenalized.
   - Tested: `px_transactions_travel_the_stem_and_confirm_everywhere`,
-    `junk_anchor_px_floods_do_not_drain_the_px_relay_budget`.
+    `junk_anchor_px_floods_do_not_drain_the_px_relay_budget`,
+    `a_garbage_px_proof_is_penalized_before_the_px_token_and_any_signature`.
 - An invalid PX proof counts as a stateless violation (20). Once the anchor and
   registry checks pass, the proof's statement does not depend on our pool state, so
-  an honest peer never relays one.
+  an honest peer never relays one. Exception: within `ACTIVATION_GRACE_BLOCKS` of a
+  scheduled activation, a proof failure (in step 4 or 6) is contextual
+  (`TxError::is_stateless_at`).
+- A well-formed proof that does not verify (for instance a valid proof replayed in
+  another transaction) passes step 4, takes the node-wide token and costs every
+  check up to the proof verification before it is penalized: the per-peer PX share
+  and the penalty bound that cost, not the cheap stage.
 
 **Liveness:**
 - The node pings every 60 s.

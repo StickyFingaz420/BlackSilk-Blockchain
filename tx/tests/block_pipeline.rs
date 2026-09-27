@@ -27,8 +27,8 @@ use blacksilk_tx::scan::OwnedOutput;
 use blacksilk_tx::state::MemoryChain;
 use blacksilk_tx::types::{Input, Transaction};
 use blacksilk_tx::validate::{
-    validate_block_transactions_cached, validate_px_without_proof, BlockError, ChainView,
-    OutputRecord, TxError,
+    validate_block_transactions_cached, validate_mempool_tx, validate_px,
+    validate_px_without_proof, BlockError, ChainView, OutputRecord, TxError,
 };
 use blacksilk_zkvm::air::trace::Budget;
 use blacksilk_zkvm::Program;
@@ -201,5 +201,62 @@ fn malformed_px_proofs_are_rejected_before_any_clsag() {
             0,
             "case {case}: no ring resolved, no CLSAG verified"
         );
+    }
+}
+
+/// RTW1-2 (red team RT-W1): the mempool path ([`validate_px`], used by the
+/// mempool, P2P admission, RPC submit and re-admission after a
+/// reorganization) decodes the proof before any ring is resolved, like the
+/// block path. A PX transaction with a malformed proof is rejected with the
+/// stateless `PxProof` after zero ring lookups (hence zero CLSAG
+/// verifications), whether its CLSAG is valid or garbage. Before the fix it
+/// resolved the ring and verified the CLSAG first, and a garbage CLSAG was
+/// reported as the contextual (never penalized) `InvalidSignature`.
+#[test]
+fn the_mempool_path_decodes_the_proof_before_any_ring_or_clsag() {
+    let mut net = TestNet::new(31, 90);
+    let height = net.height();
+    let owned: Vec<OwnedOutput> = net
+        .miner
+        .spendable(height)
+        .into_iter()
+        .take(4)
+        .cloned()
+        .collect();
+    let garbage: Vec<Vec<u8>> = vec![
+        vec![],
+        vec![blacksilk_zk::PROOF_VERSION],
+        vec![blacksilk_zk::PROOF_VERSION, 0xFF, 0xFF, 1],
+        vec![0xA5; 4096],
+    ];
+    for (case, (o, proof)) in owned.iter().zip(garbage).enumerate() {
+        let px = px_spend(&mut net, o, 7 + case as u32, proof);
+        // Valid but for its proof.
+        let view = Counting::new(&net.chain);
+        assert_eq!(
+            validate_px_without_proof(&px, &view, height, &net.rules),
+            Ok(())
+        );
+        let mut bad_sig = px.clone();
+        bad_sig.signatures[0].c0 += blacksilk_crypto::Scalar::ONE;
+        for (what, tx) in [("valid CLSAG", px), ("garbage CLSAG", bad_sig)] {
+            let view = Counting::new(&net.chain);
+            let got = validate_px(&tx, &view, height, &net.rules);
+            assert_eq!(got, Err(TxError::PxProof), "case {case}, {what}");
+            assert!(got.unwrap_err().is_stateless(), "penalized by relays");
+            assert_eq!(
+                view.ring_lookups.get(),
+                0,
+                "case {case}, {what}: no ring resolved, no CLSAG verified"
+            );
+            let view = Counting::new(&net.chain);
+            let tx = Transaction::Px(Box::new(tx));
+            assert_eq!(
+                validate_mempool_tx(&tx, &view, height, &net.rules),
+                Err(TxError::PxProof),
+                "case {case}, {what}"
+            );
+            assert_eq!(view.ring_lookups.get(), 0);
+        }
     }
 }

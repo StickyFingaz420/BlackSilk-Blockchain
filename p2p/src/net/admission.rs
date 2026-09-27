@@ -76,12 +76,13 @@ fn ctx_reject(st: &mut State, id: Hash, tip: Hash) {
 ///    pool keeps the first seen, so it would be refused after verification),
 ///    or one that failed a contextual rule at the current tip, is dropped
 ///    unverified;
-/// 4. cheap checks: PX structure and balance (stateless), then the contextual
-///    rules an extension can change (key images, PX anchor,
-///    nullifiers, registry, pool, contract id);
+/// 4. cheap checks: structure and balance (stateless), and a PX proof's
+///    decoding (stateless), then the contextual rules an extension can change
+///    (key images, PX anchor, nullifiers, registry, pool, contract id), then
+///    a PX proof's shape against its registered functions;
 /// 5. only then the node-wide PX token: transactions that fail the cheap
-///    checks (e.g. a random PX anchor) never consume it, so they cannot
-///    starve honest PX relay.
+///    checks (e.g. a random PX anchor, or a garbage proof, penalized as
+///    `PxProof`) never consume it, so they cannot starve honest PX relay.
 ///
 /// `stem`: an unsolicited `StemTx` (rate excesses are penalized) rather than a
 /// `Tx` we requested (never penalized for its rate: we asked for it; over a
@@ -150,25 +151,41 @@ async fn admit_tx(
         .with_chain(move |c| {
             // The cheap stateless rules first, as in full validation: a
             // transaction that breaks one is penalized whatever its context.
+            // A PX proof is decoded with them (a few milliseconds, far below
+            // the verification it gates) and shape-checked once its
+            // functions are known to be registered, so a malformed proof
+            // never reaches the node-wide PX token, a ring or a CLSAG
+            // (RTW1-2).
             use blacksilk_tx::{px, validate};
             let rules = c.next_rules();
+            let mut proof = None;
             let stateless = match &*tx {
                 Transaction::Coinbase(_) => Err(blacksilk_tx::TxError::CoinbaseNotAllowed),
                 Transaction::Transfer(t) => {
                     validate::check_structure(t, &rules).and_then(|_| validate::check_balance(t))
                 }
-                Transaction::Px(t) => {
-                    px::check_px_structure(t).and_then(|_| px::check_px_balance(t))
-                }
+                Transaction::Px(t) => px::check_px_structure(t)
+                    .and_then(|_| px::check_px_balance(t))
+                    .and_then(|_| validate::decode_px_proof(t))
+                    .map(|p| proof = Some(p)),
                 Transaction::PxDeploy(t) => px::check_deploy_structure(t, &rules)
                     .and_then(|_| validate::check_balance(&t.as_transfer())),
             };
-            stateless
-                .and_then(|_| blacksilk_tx::validate::revalidate_after_extension(&tx, c.state()))
+            let r = stateless
+                .and_then(|_| validate::revalidate_after_extension(&tx, c.state()))
+                .and_then(|_| match (&*tx, &proof) {
+                    (Transaction::Px(t), Some(p)) => {
+                        validate::check_px_proof_shape(t, c.state(), &rules, p)
+                    }
+                    _ => Ok(()),
+                });
+            // Near an activation a proof made for the neighbouring rule set
+            // fails honestly: contextual then (`is_stateless_at`).
+            r.map_err(|e| (e, e.is_stateless_at(c.params(), c.height() + 1)))
         })
         .await;
-    if let Err(e) = cheap {
-        if e.is_stateless() {
+    if let Err((e, stateless)) = cheap {
+        if stateless {
             Inner::reject_cache(&mut inner.state(), id);
             inner.misbehave(
                 peer,
