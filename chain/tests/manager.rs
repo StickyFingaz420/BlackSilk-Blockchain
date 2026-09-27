@@ -484,6 +484,14 @@ fn heavier_header_branch_without_bodies_keeps_the_current_chain() {
     }
     assert_eq!(m.height(), 7);
     assert_eq!(m.tip_id(), side[4].id(params().network_id));
+    // Mining continues on the tip after the side branch took over.
+    let t = m.template();
+    assert_eq!(t.prev_id, side[4].id(params().network_id));
+    let next = miner.mine_tip(&mut m);
+    assert_eq!(m.height(), 8);
+    assert_eq!(m.tip_id(), next.id(params().network_id));
+    assert_eq!(m.headers().tip_id(), m.tip_id());
+    assert!(m.missing_bodies(10).is_empty());
 }
 
 #[test]
@@ -666,6 +674,7 @@ fn restart_rebuilds_the_px_state_exactly() {
                 recipients: [Some(acct.address(0)), None],
                 functions: vec![],
                 fee: px_standard_fee(),
+                hedge_secret: [0x5e; 32],
             },
             &rules,
             &mut miner.rng,

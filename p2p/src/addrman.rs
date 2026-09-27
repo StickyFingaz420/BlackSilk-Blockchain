@@ -267,11 +267,28 @@ impl BanList {
         std::fs::rename(tmp, path)
     }
 
+    /// A missing file is an empty list. An existing one that cannot be read
+    /// or parsed is logged: starting without its bans is a visible event,
+    /// not a silent one.
     pub fn load(path: &Path) -> Self {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Self::default(),
+            Err(e) => {
+                log::warn!(
+                    "{}: cannot read ({e}); starting without bans",
+                    path.display()
+                );
+                return Self::default();
+            }
+        };
+        serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+            log::warn!(
+                "{}: cannot parse ({e}); starting without bans",
+                path.display()
+            );
+            Self::default()
+        })
     }
 }
 

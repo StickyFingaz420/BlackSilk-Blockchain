@@ -42,7 +42,9 @@ impl Default for DandelionParams {
         Self {
             epoch_min: Duration::from_secs(9 * 60),
             epoch_max: Duration::from_secs(11 * 60),
-            fluff_probability: 0.1,
+            // Monero's pair: q = 0.2 with a 39 s mean embargo (PR #7025);
+            // the embargo was tuned for this q (R3-4).
+            fluff_probability: 0.2,
             stem_peers: 2,
             embargo_base: Duration::from_secs(10),
             embargo_mean: Duration::from_secs(39),
@@ -191,7 +193,7 @@ mod tests {
             t += Duration::from_secs(12 * 60);
         }
         let frac = diffuser as f64 / n as f64;
-        assert!((0.07..0.13).contains(&frac), "{frac}");
+        assert!((0.17..0.23).contains(&frac), "{frac}");
     }
 
     #[test]

@@ -61,6 +61,19 @@ impl Account {
         Account { sk, keys }
     }
 
+    /// Secret bytes that key the wallet's hedged randomness on the PX side
+    /// (record delivery, PX transaction building; docs/transactions.md §10):
+    /// the spend secret, little-endian. Only pass them to
+    /// `blacksilk_crypto::nonce::HedgedRng` (directly or through
+    /// [`crate::delivery::seal`]), and zeroize them after.
+    pub fn hedge_secret(&self) -> [u8; 32] {
+        let mut b = [0u8; 32];
+        for (i, x) in self.sk.iter().enumerate() {
+            b[4 * i..4 * i + 4].copy_from_slice(&x.to_le_bytes());
+        }
+        b
+    }
+
     pub fn keys(&self) -> &Keys {
         &self.keys
     }

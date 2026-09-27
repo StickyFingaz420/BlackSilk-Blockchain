@@ -9,7 +9,10 @@
 //! node (docs/blocks.md §9).
 
 use crate::node::NodeApi;
-use crate::px::{ContractRecord, KnownContract, PxStore, RecordSource};
+use crate::px::{
+    AddressKeys, ContractRecord, KnownContract, PxStore, RecordSource, PX_GAP_LIMIT, PX_LOOKAHEAD,
+    PX_MAX_INDEX_AHEAD,
+};
 
 /// PX inputs chosen for a spend: the record indices, the kernel's two input
 /// witnesses (dummies fill unused slots), their total value, and the anchor.
@@ -43,12 +46,25 @@ use blacksilk_tx::types::{OutputKey, Transaction};
 use rand_core::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 /// Block ids kept for reorg detection.
 const KEPT_BLOCK_IDS: usize = 720;
-/// Subaddresses scanned beyond the highest one handed out, per account.
-const LOOKAHEAD: u32 = 50;
+/// Subaddresses scanned beyond the highest one handed out or found, per
+/// account. The window grows while scanning: an output found at index `i`
+/// raises the account's `issued` to `i` (a gap-limit scan), so a wallet
+/// restored from its seed finds subaddresses up to this far beyond the last
+/// one that was paid.
+pub const LOOKAHEAD: u32 = 50;
+/// Subaddress indexes handed out beyond the highest one that has received
+/// funds (per account) without an explicit override (docs/reviews/wallet-review.md
+/// M-1). Every index up to the highest handed out, plus `LOOKAHEAD`, is
+/// derived at every load and scanned for.
+pub const GAP_LIMIT: u32 = 1_000;
+/// Absolute ceiling above the highest subaddress index that has received
+/// funds, even with the override. Wallet files holding more (written by older
+/// versions, which had no limit) are clamped when loaded.
+pub const MAX_INDEX_AHEAD: u32 = 10_000;
 /// How long the wallet keeps a submitted transaction (`PendingTx`):
 /// - while it is unconfirmed, it is rebroadcast unchanged every this many
 ///   blocks, and its inputs stay reserved until the node rejects it for a
@@ -91,6 +107,15 @@ pub enum WalletError {
     /// A contract operation that cannot be carried out (unknown contract,
     /// unregistered program, wrong secret, record not spendable).
     Contract(String),
+    /// An address index too far beyond the highest one that has received
+    /// funds (`GAP_LIMIT`, `MAX_INDEX_AHEAD` and their PX counterparts).
+    AddressIndex {
+        index: u32,
+        /// The highest index allowed now.
+        limit: u32,
+        /// Whether the override was given (then `limit` is the hard ceiling).
+        forced: bool,
+    },
 }
 
 impl std::fmt::Display for WalletError {
@@ -123,6 +148,24 @@ impl std::fmt::Display for WalletError {
             ),
             WalletError::Serialization(e) => write!(f, "wallet data: {e}"),
             WalletError::Contract(e) => write!(f, "contract: {e}"),
+            WalletError::AddressIndex {
+                index,
+                limit,
+                forced: false,
+            } => write!(
+                f,
+                "address index {index} is too far beyond the highest index that has received \
+                 funds (at most {limit} now): every index up to it would be scanned for on \
+                 every sync. Use a lower index, or --force if you really need it"
+            ),
+            WalletError::AddressIndex {
+                index,
+                limit,
+                forced: true,
+            } => write!(
+                f,
+                "address index {index} is beyond the hard limit ({limit}) even with --force"
+            ),
         }
     }
 }
@@ -181,11 +224,31 @@ impl RingMember {
     }
 }
 
+/// A secret string (the hex seed in the wallet JSON), wiped when dropped.
+///
+/// This covers the wallet's own copy only. Not covered: the JSON text itself
+/// (zeroized by `crate::load`/`crate::save`, but `serde_json` may reallocate
+/// its output buffer while writing, leaving earlier copies in freed memory),
+/// and copies the allocator or the OS keep (swap, core dumps).
+struct SecretString(Zeroizing<String>);
+
+impl Serialize for SecretString {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for SecretString {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        String::deserialize(d).map(|s| SecretString(Zeroizing::new(s)))
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct Persisted {
     version: u32,
     network: String,
-    seed: String,
+    seed: SecretString,
     restore_height: u64,
     synced_height: u64,
     /// Recent block ids (height → id) for reorg detection.
@@ -226,6 +289,10 @@ pub struct Wallet {
     /// Where `submit` saves the wallet before a transaction leaves it
     /// (`set_autosave`).
     autosave: Option<AutoSave>,
+    /// PX delivery keys derived so far (memory only).
+    px_keys: AddressKeys,
+    /// Problems found and repaired when loading (`take_warnings`).
+    warnings: Vec<String>,
 }
 
 /// The wallet file to save to before a submission (docs/reviews/wallet-review.md F1).
@@ -262,7 +329,8 @@ fn h32(s: &str) -> Result<[u8; 32], WalletError> {
     hex::decode(s)
         .ok()
         .and_then(|v| v.try_into().ok())
-        .ok_or_else(|| WalletError::Serialization(format!("bad hex field {s:?}")))
+        // The value is not echoed: the field may be secret (the seed, masks).
+        .ok_or_else(|| WalletError::Serialization("bad 32-byte hex field".into()))
 }
 
 fn point(s: &str) -> Result<Point, WalletError> {
@@ -303,6 +371,8 @@ impl Wallet {
             rings: BTreeMap::new(),
             staged_rings: Vec::new(),
             autosave: None,
+            px_keys: AddressKeys::default(),
+            warnings: Vec::new(),
         };
         w.rebuild_table();
         w
@@ -321,10 +391,19 @@ impl Wallet {
 
     /// The seed as a 24-word BIP-39 mnemonic (the words encode the 32-byte seed
     /// directly; see docs/blocks.md §10).
-    pub fn mnemonic(&self) -> String {
-        bip39::Mnemonic::from_entropy(&self.seed)
-            .expect("32 bytes is valid BIP-39 entropy")
-            .to_string()
+    ///
+    /// The result is wiped when dropped, and written into a buffer large
+    /// enough that it is never reallocated (no stray partial copies). The
+    /// intermediate `bip39::Mnemonic` (word indices) is not zeroized: the
+    /// crate's `zeroize` feature is not enabled in this build.
+    pub fn mnemonic(&self) -> Zeroizing<String> {
+        use std::fmt::Write;
+        let m =
+            bip39::Mnemonic::from_entropy(&self.seed).expect("32 bytes is valid BIP-39 entropy");
+        // 24 words of at most 8 letters and 23 spaces: 215 bytes.
+        let mut s = Zeroizing::new(String::with_capacity(256));
+        write!(s, "{m}").expect("writing to a String cannot fail");
+        s
     }
 
     pub fn from_mnemonic(
@@ -352,26 +431,117 @@ impl Wallet {
     }
 
     fn rebuild_table(&mut self) {
-        let mut table = SubaddressTable::default();
-        for (&account, &issued) in &self.issued {
-            for i in 0..=issued.saturating_add(LOOKAHEAD) {
-                table.insert(self.keys.view_keys(), SubaddressIndex::new(account, i));
-            }
+        self.table = SubaddressTable::default();
+        let issued: Vec<(u32, u32)> = self.issued.iter().map(|(&a, &i)| (a, i)).collect();
+        for (account, i) in issued {
+            self.extend_window(account, None, i);
         }
-        self.table = table;
     }
 
-    /// Address string for `(account, index)`, extending the scan window as needed.
-    pub fn address(&mut self, account: u32, index: u32) -> String {
-        let issued = self.issued.entry(account).or_insert(0);
-        if index > *issued {
-            *issued = index;
-            self.rebuild_table();
+    /// Adds to the scan table the indexes that raising `account`'s issued
+    /// index from `from` (`None`: a new account) to `to` brings into the
+    /// window `0..=issued + LOOKAHEAD`.
+    fn extend_window(&mut self, account: u32, from: Option<u32>, to: u32) {
+        let start = match from {
+            None => 0,
+            Some(f) => match f.saturating_add(LOOKAHEAD).checked_add(1) {
+                Some(s) => s,
+                None => return,
+            },
+        };
+        for i in start..=to.saturating_add(LOOKAHEAD) {
+            self.table
+                .insert(self.keys.view_keys(), SubaddressIndex::new(account, i));
         }
-        encode_address(
+    }
+
+    /// The highest subaddress index of `account` that has received funds.
+    fn used_index(&self, account: u32) -> Option<u32> {
+        self.outputs
+            .iter()
+            .filter(|o| o.account == account)
+            .map(|o| o.index)
+            .max()
+    }
+
+    /// Records that `(account, index)` received funds: the account's window
+    /// moves so that it stays `LOOKAHEAD` ahead of it (gap-limit scan, review
+    /// M-2). Returns whether the window grew.
+    fn note_used(&mut self, account: u32, index: u32) -> bool {
+        let current = self.issued.get(&account).copied();
+        if current.is_some_and(|c| c >= index) {
+            return false;
+        }
+        self.issued.insert(account, index);
+        self.extend_window(account, current, index);
+        true
+    }
+
+    /// The highest index allowed to be handed out now, relative to the highest
+    /// used one (`base`).
+    fn index_limit(base: Option<u32>, gap: u32, hard: u32, force: bool) -> u32 {
+        base.unwrap_or(0)
+            .saturating_add(if force { hard } else { gap })
+    }
+
+    /// The address string for `(account, index)`, extending the scan window
+    /// to cover it (a new account included).
+    ///
+    /// Refused (`WalletError::AddressIndex`) when `index` is more than
+    /// `GAP_LIMIT` beyond the highest index of the account that has received
+    /// funds, unless `force`; and beyond `MAX_INDEX_AHEAD` in any case. Each
+    /// index in the window costs a derivation at every load and a table entry,
+    /// so an unbounded index would make the wallet file unusable (review M-1).
+    /// Indexes up to the highest already handed out are always allowed.
+    ///
+    /// A wallet restored from the seed scans account 0 only, `LOOKAHEAD`
+    /// beyond the last index found (`found_by_restore`).
+    pub fn try_address(
+        &mut self,
+        account: u32,
+        index: u32,
+        force: bool,
+    ) -> Result<String, WalletError> {
+        let current = self.issued.get(&account).copied();
+        if current.is_none_or(|c| index > c) {
+            let base = self.used_index(account);
+            let limit = Self::index_limit(base, GAP_LIMIT, MAX_INDEX_AHEAD, force);
+            if index > limit {
+                return Err(WalletError::AddressIndex {
+                    index,
+                    limit,
+                    forced: force,
+                });
+            }
+            self.issued
+                .insert(account, current.map_or(index, |c| c.max(index)));
+            self.extend_window(account, current, index);
+        }
+        Ok(encode_address(
             self.network,
             &self.keys.address(SubaddressIndex::new(account, index)),
-        )
+        ))
+    }
+
+    /// `try_address` without the override.
+    ///
+    /// # Panics
+    /// If `index` is beyond the gap limit (see `try_address`).
+    pub fn address(&mut self, account: u32, index: u32) -> String {
+        self.try_address(account, index, false)
+            .unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// Whether a wallet restored from the seed now would find payments to
+    /// `(account, index)` by itself: it scans account 0 only, and only
+    /// `LOOKAHEAD` beyond the highest index found.
+    pub fn found_by_restore(&self, account: u32, index: u32) -> bool {
+        account == 0 && index <= self.used_index(0).unwrap_or(0).saturating_add(LOOKAHEAD)
+    }
+
+    /// Problems found and repaired when the wallet was loaded, for the user.
+    pub fn take_warnings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.warnings)
     }
 
     pub fn primary(&self) -> Address {
@@ -384,7 +554,7 @@ impl Wallet {
         let p = Persisted {
             version: 1,
             network: network_name(self.network).into(),
-            seed: hex::encode(self.seed),
+            seed: SecretString(Zeroizing::new(hex::encode(self.seed))),
             restore_height: self.restore_height,
             synced_height: self.synced_height,
             block_ids: self
@@ -412,7 +582,7 @@ impl Wallet {
         }
         let network = parse_network(&p.network)
             .ok_or_else(|| WalletError::Serialization("network".into()))?;
-        let mut seed = h32(&p.seed)?;
+        let mut seed = h32(&p.seed.0)?;
         let mut w = Self::from_seed(network, seed, p.restore_height);
         seed.zeroize();
         w.synced_height = p.synced_height;
@@ -426,8 +596,52 @@ impl Wallet {
         w.px = p.px;
         w.pending_txs = p.pending_txs;
         w.rings = p.rings;
+        w.repair_windows();
         w.rebuild_table();
         Ok(w)
+    }
+
+    /// Brings loaded scan windows within the limits (review M-1, M-2):
+    /// - an issued index beyond `MAX_INDEX_AHEAD` above the highest used one
+    ///   (possible in files of older versions, which had no limit) is clamped,
+    ///   with a warning, instead of deriving billions of keys at every load;
+    /// - an index that received funds but lies above `issued` (older versions
+    ///   did not move the window when scanning) raises `issued`.
+    fn repair_windows(&mut self) {
+        let mut used: BTreeMap<u32, u32> = BTreeMap::new();
+        for o in &self.outputs {
+            let u = used.entry(o.account).or_insert(o.index);
+            *u = (*u).max(o.index);
+        }
+        for (&account, issued) in self.issued.iter_mut() {
+            let base = used.get(&account).copied();
+            let cap = Self::index_limit(base, GAP_LIMIT, MAX_INDEX_AHEAD, true);
+            if *issued > cap {
+                self.warnings.push(format!(
+                    "account {account}: the scan window reached subaddress {issued}, beyond the \
+                     limit of {cap}; it was reduced to {cap}. Payments to subaddresses above \
+                     {cap} will not be found"
+                ));
+                *issued = cap;
+            }
+        }
+        for (account, u) in used {
+            let issued = self.issued.entry(account).or_insert(u);
+            *issued = (*issued).max(u);
+        }
+        let base = self.px.used_index();
+        let cap = Self::index_limit(base, PX_GAP_LIMIT, PX_MAX_INDEX_AHEAD, true);
+        if self.px.issued > cap {
+            self.warnings.push(format!(
+                "the PX scan window reached address {}, beyond the limit of {cap}; it was \
+                 reduced to {cap}. Records sent to PX addresses above {cap} will not be found",
+                self.px.issued
+            ));
+            self.px.issued = cap;
+        }
+        if let Some(u) = base {
+            self.px.issued = self.px.issued.max(u);
+        }
     }
 
     // ---- sync ----
@@ -546,45 +760,56 @@ impl Wallet {
     }
 
     fn apply_block(&mut self, block: &Block, height: u64, first_output: u64) {
-        self.px.apply_block(&self.px_account, &block.txs, height);
-        let report = scan_block(
-            self.keys.view_keys(),
-            &self.table,
-            &block.txs,
-            height,
-            first_output,
-        );
-        for o in report.owned {
-            let ki = o.key_image(&self.keys);
-            if self
-                .outputs
-                .iter()
-                .any(|s| s.global_index == o.global_index)
-            {
-                continue;
-            }
-            let ReceivedOutput {
-                subaddress,
-                amount,
-                mask,
-                output_key_offset,
-            } = o.received;
-            self.outputs.push(StoredOutput {
-                global_index: o.global_index,
+        self.px
+            .apply_block(&mut self.px_keys, &self.px_account, &block.txs, height);
+        // Gap-limit scan (review M-2): an output found near the edge of the
+        // window moves the window, and the block is scanned again with it, so
+        // later outputs of the same block (and later blocks) are found too.
+        loop {
+            let report = scan_block(
+                self.keys.view_keys(),
+                &self.table,
+                &block.txs,
                 height,
-                coinbase: o.coinbase,
-                account: subaddress.account,
-                index: subaddress.index,
-                amount,
-                one_time_key: hex::encode(o.key.one_time_key.bytes()),
-                commitment: hex::encode(o.key.commitment.bytes()),
-                mask: hex::encode(mask.as_bytes()),
-                offset: hex::encode(output_key_offset.as_bytes()),
-                key_image: hex::encode(ki.bytes()),
-                spent_height: None,
-                pending: false,
-                pending_height: 0,
-            });
+                first_output,
+            );
+            let mut grew = false;
+            for o in report.owned {
+                if self
+                    .outputs
+                    .iter()
+                    .any(|s| s.global_index == o.global_index)
+                {
+                    continue;
+                }
+                let ki = o.key_image(&self.keys);
+                let ReceivedOutput {
+                    subaddress,
+                    amount,
+                    mask,
+                    output_key_offset,
+                } = o.received;
+                self.outputs.push(StoredOutput {
+                    global_index: o.global_index,
+                    height,
+                    coinbase: o.coinbase,
+                    account: subaddress.account,
+                    index: subaddress.index,
+                    amount,
+                    one_time_key: hex::encode(o.key.one_time_key.bytes()),
+                    commitment: hex::encode(o.key.commitment.bytes()),
+                    mask: hex::encode(mask.as_bytes()),
+                    offset: hex::encode(output_key_offset.as_bytes()),
+                    key_image: hex::encode(ki.bytes()),
+                    spent_height: None,
+                    pending: false,
+                    pending_height: 0,
+                });
+                grew |= self.note_used(subaddress.account, subaddress.index);
+            }
+            if !grew {
+                break;
+            }
         }
         // Rejected outputs (Janus probes, bogus amounts) are deliberately ignored:
         // they must not be shown or spent (docs/transactions.md §12.5).
@@ -963,10 +1188,53 @@ impl Wallet {
 
     // ---- private execution (docs/px.md §11) ----
 
-    /// The PX address `index`, as a string.
+    /// The PX address `index`, as a string, extending the scan window to it.
+    ///
+    /// Refused (`WalletError::AddressIndex`) beyond `PX_GAP_LIMIT` above the
+    /// highest PX address that has received a record, unless `force`, and
+    /// beyond `PX_MAX_INDEX_AHEAD` in any case: every scanned PX address costs
+    /// a scalar multiplication for every PX output on chain (review M-1).
+    pub fn try_px_address(&mut self, index: u32, force: bool) -> Result<String, WalletError> {
+        if index > self.px.issued {
+            let limit = Self::index_limit(
+                self.px.used_index(),
+                PX_GAP_LIMIT,
+                PX_MAX_INDEX_AHEAD,
+                force,
+            );
+            if index > limit {
+                return Err(WalletError::AddressIndex {
+                    index,
+                    limit,
+                    forced: force,
+                });
+            }
+            self.px.issued = index;
+        }
+        Ok(blacksilk_chain::address::encode_px_address(
+            self.network,
+            &self.px_account.address(index),
+        ))
+    }
+
+    /// `try_px_address` without the override.
+    ///
+    /// # Panics
+    /// If `index` is beyond the gap limit (see `try_px_address`).
     pub fn px_address(&mut self, index: u32) -> String {
-        self.px.issued = self.px.issued.max(index);
-        blacksilk_chain::address::encode_px_address(self.network, &self.px_account.address(index))
+        self.try_px_address(index, false)
+            .unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// Whether a wallet restored from the seed now would find records sent to
+    /// PX address `index` by itself (`PX_LOOKAHEAD` beyond the highest found).
+    pub fn px_found_by_restore(&self, index: u32) -> bool {
+        index
+            <= self
+                .px
+                .used_index()
+                .unwrap_or(0)
+                .saturating_add(PX_LOOKAHEAD)
     }
 
     /// PX balance: `(total unspent, spendable now)`.
@@ -1190,6 +1458,7 @@ impl Wallet {
                 recipients: [Some(self.px_account.address(0)), None],
                 functions: vec![],
                 fee,
+                hedge_secret: self.px_account.hedge_secret(),
             },
             rules,
             rng,
@@ -1264,6 +1533,7 @@ impl Wallet {
                 recipients: [Some(to.clone()), Some(self.px_account.address(1))],
                 functions: vec![],
                 fee,
+                hedge_secret: self.px_account.hedge_secret(),
             },
             rules,
             rng,
@@ -1313,6 +1583,7 @@ impl Wallet {
                 recipients: [Some(self.px_account.address(1)), None],
                 functions: vec![],
                 fee,
+                hedge_secret: self.px_account.hedge_secret(),
             },
             rules,
             rng,
@@ -1347,6 +1618,7 @@ impl Wallet {
         rules: &TxRules,
         rng: &mut R,
     ) -> Result<(Hash, Digest, u64), WalletError> {
+        check_vault_deploy(&programs)?;
         self.sync(node)?;
         // Two outputs (the transfer minimum): change, and a zero-value output
         // to this wallet.
@@ -1396,18 +1668,14 @@ impl Wallet {
         Ok((id, contract, fee))
     }
 
-    /// The registered budget of the reference vault program under `contract`.
+    /// The budget of the reference vault under `contract`, if the contract is
+    /// a vault this wallet can safely use: the vault program alone, with the
+    /// reference budget (`PxStore::vault_budget`, reviews P-1 and P-2).
     fn vault_budget(
         &self,
         contract: &Digest,
     ) -> Result<blacksilk_zkvm::air::trace::Budget, WalletError> {
-        self.px
-            .registered(contract, &vault::program().id())
-            .ok_or_else(|| {
-                WalletError::Contract(
-                    "not a known vault contract (unknown id, not yet confirmed, or the vault program is not registered to it)".into(),
-                )
-            })
+        self.px.vault_budget(contract)
     }
 
     /// Locks `amount` of this wallet's PX funds in a new record of the vault
@@ -1469,6 +1737,7 @@ impl Wallet {
                     budget,
                 }],
                 fee,
+                hedge_secret: self.px_account.hedge_secret(),
             },
             rules,
             rng,
@@ -1498,6 +1767,9 @@ impl Wallet {
         let known = self.px.contract_record(&cm).is_some();
         self.px
             .add_contract_record(&record, &cm, RecordSource::Created, None);
+        // And the secret: `submit` saves the wallet before sending, so it is
+        // on disk before the lock can exist on chain (review R11-W1).
+        self.px.set_secret(&cm, secret);
         match self.submit_px(node, tx) {
             Ok(id) => {
                 debug_assert!(chosen.iter().all(|&i| self.px.records[i].pending));
@@ -1622,6 +1894,7 @@ impl Wallet {
                     budget,
                 }],
                 fee,
+                hedge_secret: self.px_account.hedge_secret(),
             },
             rules,
             rng,
@@ -1633,6 +1906,28 @@ impl Wallet {
         debug_assert!(records.iter().all(|&i| self.px.records[i].pending));
         debug_assert!(self.px.contract_records[k].pending);
         Ok((id, rec.value))
+    }
+
+    /// The secret of vault record `record`, if this wallet locked it (stored
+    /// before the lock was sent). Checked against the record's lock.
+    pub fn px_vault_secret(&self, record: &Digest) -> Result<Zeroizing<Digest>, WalletError> {
+        let k = self
+            .px
+            .contract_record(record)
+            .ok_or_else(|| WalletError::Contract("unknown contract record".into()))?;
+        let r = &self.px.contract_records[k];
+        let hex = r.secret.as_deref().ok_or_else(|| {
+            WalletError::Contract(
+                "no secret stored for this record (not locked by this wallet)".into(),
+            )
+        })?;
+        let secret = Zeroizing::new(crate::px::digest_from_hex(hex)?);
+        if vault::lock_of(&secret) != r.record()?.data {
+            return Err(WalletError::Contract(
+                "the stored secret does not open this record".into(),
+            ));
+        }
+        Ok(secret)
     }
 
     /// The opening of contract record `record`, sealed to `to` for sharing
@@ -1648,7 +1943,8 @@ impl Wallet {
             .contract_record(record)
             .ok_or_else(|| WalletError::Contract("unknown contract record".into()))?;
         let rec = self.px.contract_records[k].record()?;
-        share::seal_share(rng, to, &rec, record)
+        let secret = zeroize::Zeroizing::new(self.px_account.hedge_secret());
+        share::seal_share(rng, secret.as_slice(), to, &rec, record)
             .map_err(|_| WalletError::Contract("the recipient address does not decode".into()))
     }
 
@@ -1656,10 +1952,9 @@ impl Wallet {
     /// wallet's PX addresses. It counts as confirmed once its commitment is
     /// found on chain (the next sync). Returns its commitment.
     pub fn px_import(&mut self, shared: &[u8]) -> Result<Digest, WalletError> {
-        for index in 0..=self.px.issued.saturating_add(crate::px::PX_LOOKAHEAD) {
-            let keys = self.px_account.delivery_keys(index);
-            let owner = self.px_account.owner(index);
-            let Some((rec, cm)) = share::open_share(&keys, &owner, shared) else {
+        for index in 0..=self.px.issued.saturating_add(PX_LOOKAHEAD) {
+            let (keys, owner) = self.px_keys.get(&self.px_account, index);
+            let Some((rec, cm)) = share::open_share(keys, owner, shared) else {
                 continue;
             };
             if rec.contract == ZERO_DIGEST {
@@ -1677,10 +1972,445 @@ impl Wallet {
     }
 }
 
+/// Refuses a deploy that registers the reference vault next to other programs,
+/// or with a budget other than `vault::BUDGET`: the wallet would refuse to use
+/// such a contract as a vault (`PxStore::vault_budget`, reviews P-1, P-2), and
+/// a contract's records can be spent by any of its programs.
+pub fn check_vault_deploy(programs: &[Registration]) -> Result<(), WalletError> {
+    let vault_id = vault::program().id();
+    let mut has_vault = false;
+    for r in programs {
+        let id = blacksilk_zkvm::Program::from_elf(&r.elf)
+            .map_err(|e| WalletError::Contract(format!("a program does not load: {e:?}")))?
+            .id();
+        if id == vault_id {
+            has_vault = true;
+            if r.budget != vault::BUDGET {
+                return Err(WalletError::Contract(
+                    "the vault must be registered with its reference budget (vault::BUDGET)".into(),
+                ));
+            }
+        }
+    }
+    if has_vault && programs.len() > 1 {
+        return Err(WalletError::Contract(
+            "the vault must be deployed alone: any other program of the same contract could \
+             spend the vault's records without the secret (docs/px.md §13.4)"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Fisher–Yates shuffle with the wallet's CSPRNG.
 fn shuffle<T, R: RngCore>(v: &mut [T], rng: &mut R) {
     for i in (1..v.len()).rev() {
         let j = (rng.next_u64() % (i as u64 + 1)) as usize;
         v.swap(i, j);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::px::{digest_hex, KnownProgram};
+    use blacksilk_rpc as rpc;
+    use rand_chacha::rand_core::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
+
+    fn wallet() -> Wallet {
+        Wallet::from_seed(Network::Regtest, [7; 32], 1)
+    }
+
+    fn scanned(w: &Wallet, account: u32, index: u32) -> bool {
+        let a = w.keys.address(SubaddressIndex::new(account, index));
+        w.table.lookup(a.spend().bytes()).is_some()
+    }
+
+    #[test]
+    fn subaddress_indexes_beyond_the_gap_limit_need_the_override() {
+        let mut w = wallet();
+        assert!(w.try_address(0, GAP_LIMIT, false).is_ok());
+        // Nothing has been received: the base stays 0, whatever was issued.
+        assert!(matches!(
+            w.try_address(0, GAP_LIMIT + 1, false),
+            Err(WalletError::AddressIndex {
+                limit: GAP_LIMIT,
+                forced: false,
+                ..
+            })
+        ));
+        // Anything up to the highest handed out stays available.
+        assert!(w.try_address(0, 17, false).is_ok());
+        // The override reaches the hard ceiling, never beyond.
+        assert!(w.try_address(0, MAX_INDEX_AHEAD, true).is_ok());
+        assert!(scanned(&w, 0, MAX_INDEX_AHEAD + LOOKAHEAD));
+        assert!(!scanned(&w, 0, MAX_INDEX_AHEAD + LOOKAHEAD + 1));
+        assert!(matches!(
+            w.try_address(0, MAX_INDEX_AHEAD + 1, true),
+            Err(WalletError::AddressIndex { forced: true, .. })
+        ));
+        assert!(w.try_address(0, u32::MAX, true).is_err());
+        // The window is extended incrementally: exactly issued + LOOKAHEAD + 1.
+        assert_eq!(w.table.len(), (MAX_INDEX_AHEAD + LOOKAHEAD + 1) as usize);
+    }
+
+    #[test]
+    fn the_limit_follows_the_highest_index_that_received_funds() {
+        let mut w = wallet();
+        w.outputs.push(StoredOutput {
+            global_index: 0,
+            height: 1,
+            coinbase: false,
+            account: 0,
+            index: 4_000,
+            amount: 1,
+            one_time_key: String::new(),
+            commitment: String::new(),
+            mask: String::new(),
+            offset: String::new(),
+            key_image: String::new(),
+            spent_height: None,
+            pending: false,
+            pending_height: 0,
+        });
+        assert!(w.try_address(0, 4_000 + GAP_LIMIT, false).is_ok());
+        assert!(w.try_address(0, 4_001 + GAP_LIMIT, false).is_err());
+        // Another account has its own base.
+        assert!(w.try_address(1, GAP_LIMIT + 1, false).is_err());
+    }
+
+    #[test]
+    fn a_new_account_is_scanned_from_index_zero_at_once() {
+        // L-1: the first address of a new account used to be added to
+        // `issued` without extending the scan table until the next load.
+        let mut w = wallet();
+        assert!(!scanned(&w, 3, 0));
+        w.try_address(3, 0, false).unwrap();
+        assert!(scanned(&w, 3, 0));
+        assert!(scanned(&w, 3, LOOKAHEAD));
+        assert!(!scanned(&w, 3, LOOKAHEAD + 1));
+        // The same as a freshly loaded wallet.
+        let loaded = Wallet::from_json(&w.to_json()).unwrap();
+        assert_eq!(loaded.table.len(), w.table.len());
+    }
+
+    #[test]
+    fn finding_funds_moves_the_window() {
+        let mut w = wallet();
+        assert!(!scanned(&w, 0, 95));
+        assert!(w.note_used(0, 45));
+        assert_eq!(w.issued[&0], 45);
+        assert!(scanned(&w, 0, 95));
+        assert!(!scanned(&w, 0, 96));
+        assert!(!w.note_used(0, 30), "below the window's issued index");
+    }
+
+    #[test]
+    fn absurd_scan_windows_in_old_files_are_clamped_on_load() {
+        // M-1: a file whose issued index is huge must load quickly, not derive
+        // billions of keys.
+        let mut w = wallet();
+        w.issued.insert(0, u32::MAX);
+        w.issued.insert(2, 3_000_000_000);
+        w.px.issued = u32::MAX;
+        let json = w.to_json();
+        let t = std::time::Instant::now();
+        let mut loaded = Wallet::from_json(&json).unwrap();
+        let took = t.elapsed();
+        eprintln!("load with two clamped accounts: {took:?}");
+        assert_eq!(loaded.issued[&0], MAX_INDEX_AHEAD);
+        assert_eq!(loaded.issued[&2], MAX_INDEX_AHEAD);
+        assert_eq!(loaded.px.issued, PX_MAX_INDEX_AHEAD);
+        let warnings = loaded.take_warnings();
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert!(loaded.take_warnings().is_empty());
+        assert!(took < std::time::Duration::from_secs(60));
+    }
+
+    #[test]
+    fn old_files_with_funds_above_the_window_raise_it_on_load() {
+        // M-2 migration: older versions never moved `issued` when scanning.
+        let mut w = wallet();
+        w.outputs.push(StoredOutput {
+            global_index: 0,
+            height: 1,
+            coinbase: false,
+            account: 0,
+            index: 40,
+            amount: 1,
+            one_time_key: String::new(),
+            commitment: String::new(),
+            mask: String::new(),
+            offset: String::new(),
+            key_image: String::new(),
+            spent_height: None,
+            pending: false,
+            pending_height: 0,
+        });
+        let loaded = Wallet::from_json(&w.to_json()).unwrap();
+        assert_eq!(loaded.issued[&0], 40);
+        assert!(scanned(&loaded, 0, 90));
+    }
+
+    #[test]
+    fn px_address_indexes_beyond_the_gap_limit_need_the_override() {
+        let mut w = wallet();
+        assert!(w.try_px_address(PX_GAP_LIMIT, false).is_ok());
+        assert!(w.try_px_address(PX_GAP_LIMIT + 1, false).is_err());
+        assert!(w.try_px_address(PX_MAX_INDEX_AHEAD, true).is_ok());
+        assert_eq!(w.px.issued, PX_MAX_INDEX_AHEAD);
+        assert!(w.try_px_address(PX_MAX_INDEX_AHEAD + 1, true).is_err());
+        assert!(w.try_px_address(3, false).is_ok());
+        assert_eq!(w.px.issued, PX_MAX_INDEX_AHEAD);
+    }
+
+    #[test]
+    fn secrets_stay_out_of_error_messages() {
+        let secret = "5ec2e7".repeat(10);
+        let e = h32(&secret).unwrap_err().to_string();
+        assert!(!e.contains("5ec2e7"), "{e}");
+        let mut json: serde_json::Value = serde_json::from_slice(&wallet().to_json()).unwrap();
+        json["seed"] = serde_json::Value::String(secret.clone());
+        let e = Wallet::from_json(&serde_json::to_vec(&json).unwrap())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(!e.contains("5ec2e7"), "{e}");
+    }
+
+    #[test]
+    fn the_mnemonic_round_trips_without_reallocating() {
+        let w = wallet();
+        let m = w.mnemonic();
+        assert_eq!(m.split(' ').count(), 24);
+        assert!(m.capacity() == 256, "written into the preallocated buffer");
+        let r = Wallet::from_mnemonic(Network::Regtest, &m, 1).unwrap();
+        assert_eq!(r.seed, w.seed);
+    }
+
+    #[test]
+    fn deploys_mixing_the_vault_with_other_programs_are_refused() {
+        let vault = Registration {
+            elf: vault::VAULT_ELF.to_vec(),
+            budget: vault::BUDGET,
+        };
+        let other = Registration {
+            elf: include_bytes!("../../zkvm/tests/fixtures/guest-sum.elf").to_vec(),
+            budget: vault::BUDGET,
+        };
+        assert!(check_vault_deploy(std::slice::from_ref(&vault)).is_ok());
+        assert!(check_vault_deploy(std::slice::from_ref(&other)).is_ok());
+        assert!(check_vault_deploy(&[vault.clone(), other.clone()]).is_err());
+        assert!(check_vault_deploy(&[other, vault.clone()]).is_err());
+        let odd = Registration {
+            budget: blacksilk_zkvm::air::trace::Budget {
+                cycles: vault::BUDGET.cycles * 2,
+                ..vault::BUDGET
+            },
+            ..vault
+        };
+        assert!(check_vault_deploy(&[odd]).is_err());
+    }
+
+    #[test]
+    fn a_stored_vault_secret_survives_a_save_and_load() {
+        // R11-W1: the secret of a lock this wallet created is kept in the
+        // encrypted file (px_vault_lock stores it before `submit` saves).
+        let secret = [21, 22, 23, 24, 25, 26, 27, 28];
+        let record = Record {
+            owner: ZERO_DIGEST,
+            contract: [1, 0, 0, 0, 0, 0, 0, 0],
+            asset: ZERO_DIGEST,
+            value: 10,
+            data: vault::lock_of(&secret),
+            rho: [2, 0, 0, 0, 0, 0, 0, 0],
+            rcm: [3, 0, 0, 0, 0, 0, 0, 0],
+        };
+        let cm = record.commit(&mut HostPerm::new());
+        let mut w = wallet();
+        w.px.add_contract_record(&record, &cm, RecordSource::Created, None);
+        assert!(w.px_vault_secret(&cm).is_err(), "nothing stored yet");
+        w.px.set_secret(&cm, &secret);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("w.wallet");
+        let fast = crate::file::KdfParams {
+            m_kib: 256,
+            t: 1,
+            p: 1,
+        };
+        crate::save(&w, &path, b"pw", fast).unwrap();
+        drop(w);
+        let loaded = crate::load(&path, b"pw").unwrap();
+        assert_eq!(*loaded.px_vault_secret(&cm).unwrap(), secret);
+        assert!(loaded.px_vault_secret(&[9; 8]).is_err(), "unknown record");
+        // A stored secret that does not open the record is reported.
+        let mut bad = loaded;
+        bad.px.contract_records[0].secret = Some(digest_hex(&[1; 8]));
+        assert!(bad.px_vault_secret(&cm).is_err());
+    }
+
+    /// A node at height 0 with an empty PX tree and the given registrations.
+    struct Registry(Vec<rpc::PxContractEntry>);
+
+    impl NodeApi for Registry {
+        fn info(&self) -> Result<rpc::Info, String> {
+            Ok(rpc::Info {
+                network: "regtest".into(),
+                network_id: 0,
+                height: 0,
+                tip: String::new(),
+                difficulty: 1,
+                generated: 0,
+                mempool_txs: 0,
+                mempool_bytes: 0,
+                outputs: 0,
+                peers: 0,
+                header_height: 0,
+                deepest_reorg: 0,
+                misbehaving_disconnects: 0,
+                genesis_id: None,
+                consensus_fingerprint: None,
+                build_commit: None,
+                version: None,
+            })
+        }
+        fn blocks(&self, _: u64, _: u64) -> Result<rpc::Blocks, String> {
+            Ok(rpc::Blocks { blocks: vec![] })
+        }
+        fn distribution(&self, _: u64) -> Result<rpc::Distribution, String> {
+            Err("not used".into())
+        }
+        fn outputs(&self, _: &[u64]) -> Result<rpc::Outputs, String> {
+            Err("not used".into())
+        }
+        fn submit_tx(&self, _: &[u8]) -> Result<rpc::SubmitResult, String> {
+            Err("must not be reached".into())
+        }
+        fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
+            Ok(rpc::PxCommitments {
+                from,
+                commitments: vec![],
+                total: 0,
+                root: digest_hex(&PxStore::default().tree().unwrap().root()),
+                height: 0,
+                next: None,
+            })
+        }
+        fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
+            Ok(rpc::PxContracts {
+                from,
+                contracts: self.0.iter().skip(from as usize).cloned().collect(),
+                total: self.0.len() as u64,
+                height: 0,
+            })
+        }
+    }
+
+    fn entry(
+        contract: &Digest,
+        programs: &[(String, blacksilk_zkvm::air::trace::Budget)],
+    ) -> rpc::PxContractEntry {
+        rpc::PxContractEntry {
+            height: 0,
+            id: digest_hex(contract),
+            programs: programs
+                .iter()
+                .map(|(id, b)| {
+                    let p = KnownProgram {
+                        id: id.clone(),
+                        budget: [
+                            b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
+                        ],
+                    };
+                    rpc::PxProgramEntry {
+                        id: p.id,
+                        budget: p.budget,
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn vault_lock_and_claim_refuse_unsafe_contracts_before_proving() {
+        let vault_id = hex::encode(vault::program().id());
+        let good = [1, 0, 0, 0, 0, 0, 0, 0];
+        let mixed = [2, 0, 0, 0, 0, 0, 0, 0];
+        let odd = [3, 0, 0, 0, 0, 0, 0, 0];
+        let node = Registry(vec![
+            entry(&good, &[(vault_id.clone(), vault::BUDGET)]),
+            // P-1: Bob's contract: the vault and a backdoor.
+            entry(
+                &mixed,
+                &[
+                    (vault_id.clone(), vault::BUDGET),
+                    ("ab".repeat(32), vault::BUDGET),
+                ],
+            ),
+            // P-2: the vault alone with a budget too small for CLAIM.
+            entry(
+                &odd,
+                &[(
+                    vault_id,
+                    blacksilk_zkvm::air::trace::Budget {
+                        cycles: 64,
+                        ..vault::BUDGET
+                    },
+                )],
+            ),
+        ]);
+        let rules = TxRules::for_chain(&ChainParams::regtest());
+        let mut rng = ChaCha20Rng::seed_from_u64(1);
+        let secret = [5, 6, 7, 8, 9, 10, 11, 12];
+        let mut w = wallet();
+        // Lock: the safe vault passes the check and stops at the funds (this
+        // wallet has none); the others are refused as contracts.
+        let lock = |w: &mut Wallet, c: &Digest, rng: &mut ChaCha20Rng| {
+            w.px_vault_lock(&node, c, 1, &secret, None, &rules, rng)
+        };
+        assert!(matches!(
+            lock(&mut w, &good, &mut rng),
+            Err(WalletError::InsufficientFunds { .. })
+        ));
+        for c in [&mixed, &odd] {
+            assert!(matches!(
+                lock(&mut w, c, &mut rng),
+                Err(WalletError::Contract(_))
+            ));
+        }
+        // Claim: a record of each contract, delivered to this wallet.
+        let mut perm = HostPerm::new();
+        let mut cms = Vec::new();
+        for (i, c) in [good, mixed, odd].iter().enumerate() {
+            let record = Record {
+                owner: ZERO_DIGEST,
+                contract: *c,
+                asset: ZERO_DIGEST,
+                value: 10,
+                data: vault::lock_of(&secret),
+                rho: [i as u32 + 1, 0, 0, 0, 0, 0, 0, 0],
+                rcm: [i as u32 + 7, 0, 0, 0, 0, 0, 0, 0],
+            };
+            let cm = record.commit(&mut perm);
+            w.px.add_contract_record(&record, &cm, RecordSource::Received { index: 0 }, Some(0));
+            w.px.contract_records.last_mut().unwrap().position = Some(i as u64);
+            cms.push(cm);
+        }
+        let claim = |w: &mut Wallet, cm: &Digest, rng: &mut ChaCha20Rng| {
+            w.px_vault_claim(&node, cm, &secret, None, &rules, rng)
+        };
+        // The safe vault passes the check and stops later (this fake record
+        // is not in the node's empty tree).
+        assert!(matches!(
+            claim(&mut w, &cms[0], &mut rng),
+            Err(WalletError::BadNodeData(_))
+        ));
+        for cm in &cms[1..] {
+            assert!(matches!(
+                claim(&mut w, cm, &mut rng),
+                Err(WalletError::Contract(_))
+            ));
+        }
     }
 }

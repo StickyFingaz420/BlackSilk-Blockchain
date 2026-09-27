@@ -1,0 +1,10 @@
+# Build context of deploy/docker/Dockerfile (`docker build -f deploy/docker/Dockerfile .`):
+# only the sources. Build outputs, history, fuzzing data and local agent state
+# stay out of the image context.
+**/target/
+.git/
+.claude/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/
+fuzz/logs/

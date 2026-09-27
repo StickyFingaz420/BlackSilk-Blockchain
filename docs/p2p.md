@@ -155,22 +155,73 @@ Unknown message types are violations.
      fails the proof of work costs at most one chunk of hashes beyond its last valid
      header, and the sender is banned. Before 2026-09-27 every header of a batch was
      hashed first: up to 2000 × 0.45 s ≈ 900 CPU-seconds per junk message.
+   - **No hash for a sender about to be banned.** If the pre-check finds a violation
+     the sender is penalized for, the batch is rejected before any hash, and nothing
+     of it is stored. Only failures that are not the sender's fault (a future
+     timestamp, a descendant of an invalid body) keep the valid prefix.
+   - **Known headers are skipped.** Headers already stored cost nothing more: a peer
+     replaying known headers causes no hashing.
+   - **Work gate (anti-DoS, R1-C1).** After the pre-check, the cumulative work the
+     batch *claims* is exact: the difficulties are the required ones. RandomX hashes
+     are spent only if one of these holds:
+     - the batch's claimed tip work is at least
+       `threshold = best_work − work(our last 144 blocks)`, i.e. the work of our best
+       chain 144 blocks below its tip. Every extension of our best chain and every
+       near-tip competitor passes;
+     - the message is a **full** batch (2000) whose work per height is at least half
+       of our best chain's over the same heights (our tip difficulty above our tip).
+       This lets a heavier fork deeper than one batch sync, batch by batch.
+     - Otherwise the batch is dropped: no hash, nothing stored, no penalty, and the
+       peer is not asked again because of it.
+     - Why: once LWMA is driven to difficulty 1 (timestamps 6T apart from an old
+       block), valid headers cost an attacker nothing, but each cost ~0.45 s of
+       RandomX to verify and would be stored forever. Such a branch claims ~1 work
+       per header, far below the threshold once our difficulty is above ~2.
    - **Unrequested headers** must be a single tip announcement. A longer unrequested
      batch is not verified at all, and costs the sender 10 points.
+     - A single header that arrives while our `GetHeaders` is outstanding may be a
+       tip announcement that crossed our request. It answers the request, but one
+       multi-header batch arriving within 60 s of the request still counts as
+       solicited (the real reply). Before 2026-09-27 that reply cost the honest
+       sender 10 points and was dropped.
    - **At most one batch per peer** is queued or being verified. The peer is not asked
      for more headers meanwhile; headers arriving from it in that time are dropped,
-     and the node asks again once the batch is done.
-   - A sender that disconnects before its batch is verified is still charged. A
-     violation worth a ban bans its address.
-   - If a full batch (2000) arrived, the node asks the same peer for more.
+     and the node asks again once the batch is done (whatever its outcome, unless the
+     peer was penalized).
+   - **Bounded queue.** At most `max_per_ip` batches per sender IP (onion peers: per
+     address; not enforced in `allow_private` mode, like the connection limit) and
+     `2 × (max_inbound + max_outbound)` in total are queued. When full, the headers
+     are dropped and the peer is asked again once there is room. Before 2026-09-27
+     the batches of departed senders stayed queued without bound: an attacker
+     reconnecting (or rotating IPs) could queue batch after batch and starve honest
+     header sync behind the single worker.
+   - **Departed or banned senders.** A batch whose sender left is only pre-checked:
+     a violation worth a ban still bans its address, but no RandomX hash is spent on
+     it. A batch whose sender's IP is banned is skipped. A sender that leaves while
+     its batch is being hashed stops the hashing at the next chunk.
+   - **Asking for more.** If a full batch (2000) added headers, or ended on a stored
+     branch that is not our best chain, the node asks the same peer for more, with a
+     locator that starts at the batch's last header (then our best chain). A fork
+     deeper than one batch therefore continues where it stopped; a locator of our
+     best chain alone would return the same first batch forever.
+   - **Non-advancing replies.** An empty answer, or a solicited batch that adds
+     nothing, lowers the peer's claimed height to ours, so it is not asked again
+     every tick (it is asked again when it announces a new tip). Before 2026-09-27 a
+     peer claiming a higher chain and replaying known headers caused a request loop.
 4. **Bodies.** The node requests `GetBlocks` for best-chain blocks whose body it lacks,
    starting just above the connected tip.
+   - An **unrequested** block costs its sender 10 points and is stored only if its
+     header is already in our header tree (it passed the work gate), e.g. a requested
+     block that arrives after its timeout. Any other unrequested body is dropped
+     before it is hashed or written: a free low-work branch cannot fill the disk.
    - At most **16** are in flight per peer, and only from peers whose announced height
      covers them.
    - A node serves at most 16 blocks per `GetBlocks`; the rest are answered with
      `NotFound`.
-   - A request unanswered within **60 s** is reassigned to another peer and counts as a
-     minor violation.
+   - A request unanswered within **60 s** is reassigned to another peer. It is not
+     penalized (before 2026-09-27: 5 points), and the block arriving late from the
+     peer we asked is accepted as an answer, not as an unsolicited block, for another
+     60 s (R8-9). The in-flight window counts blocks, not bytes (open).
 5. **Connecting.** Bodies go through the chain manager (blocks.md §5–§6). It connects
    them in order, validates each, and reorganizes when a heavier branch completes. The
    network layer never decides validity.
@@ -188,9 +239,17 @@ to every peer that does not already have it. A peer that lacks the body asks for
     Dandelion++).
 - **Requesting.** A peer asks for unknown hashes with `GetTx`, from one announcer at a
   time.
-  - A `NotFound` answer, or no answer within 30 s, moves the request to the next
-    announcer.
+  - A `NotFound` answer, no answer within 30 s, or the peer disconnecting moves the
+    request to the next announcer (on disconnect at once).
   - Neither is penalized: transaction relay is best effort.
+  - The per-peer sets of announced and known transaction ids are capped (50 000;
+    cleared when exceeded: forgetting only costs a redundant announcement).
+- **Stem transactions stay private.** An `InvTx` for a transaction in our stempool
+  is answered exactly like one for an unknown transaction (a `GetTx`), and does not
+  end its stem. Before 2026-09-27 the node sent no request and fluffed at once: a
+  stempool-membership oracle that also let a spy end any stem at will (I3-1). If
+  the transaction really is in fluff, it arrives and enters the mempool, which ends
+  its embargo.
 - **Serving.** A node serves `GetTx` **only for transactions it has already announced to
   that peer and still has**.
   - Every other requested hash gets the same `NotFound`, whether the transaction was
@@ -200,19 +259,32 @@ to every peer that does not already have it. A peer that lacks the body asks for
 
 ## 8. Dandelion++ (stem phase)
 
-Following Fanti et al., "Dandelion++" (SIGMETRICS 2018), as deployed in Monero:
+Following Fanti et al., "Dandelion++" (SIGMETRICS 2018), with Monero's parameters
+(fluff probability 20 % with a 39 s mean embargo, Monero PR #7025):
 
 - **Epochs.** Time is divided into epochs of about 10 minutes (random length, 9–11
   minutes). In each epoch a node:
   - picks **2 stem peers** at random among its outbound peers;
   - maps each inbound peer, and itself, to one of the two stem peers at random, so each
     source's stem route stays fixed for the epoch;
-  - is a *diffuser* with probability **10 %**, otherwise a *relayer*.
+  - is a *diffuser* with probability **20 %**, otherwise a *relayer* (expected stem
+    length 5). Before 2026-09-27 it was 10 %, which Monero pairs with a longer
+    embargo (R3-4). The embargo's 10 s base is ours, not Monero's: it keeps a stem
+    peer's first forward from racing the embargo.
 - **Transactions the node creates or receives by RPC** enter the stem: they are sent as
   `StemTx` to the stem peer mapped to "self".
+  - If there is no stem peer yet (no outbound connection, e.g. right after startup),
+    the transaction is **held** in the stempool, not broadcast, and sent into the
+    stem as soon as an outbound peer exists. If none appears before its embargo
+    fires, it is fluffed then. Before 2026-09-27 it was fluffed at once, showing
+    every connected (inbound) spy where it came from.
 - **Receiving a `StemTx`.**
-  - The transaction is validated fully against the current state.
-  - Only a stateless failure is a violation (§10).
+  - One that conflicts with a stem transaction (a shared key image or nullifier) is
+    dropped first, before any verification: first seen wins, and valid
+    double-spend variants cost nothing (R8-7).
+  - The transaction goes through the relay admission checks (§10), then is
+    validated fully against the current state.
+  - Only a proven failure is a violation (§10).
   - It is stored in the **stempool**. The stempool is never announced, never served and
     never mined.
   - A relayer forwards it to the stem peer mapped to the sender. A diffuser fluffs it:
@@ -222,8 +294,8 @@ Following Fanti et al., "Dandelion++" (SIGMETRICS 2018), as deployed in Monero:
   - If the transaction has not been seen in fluff (announced by a peer, or included in a
     block) before the timer fires, the node fluffs it itself.
   - This guarantees delivery if a stem peer is malicious or offline.
-- **Stem failures.** If the stem peer is missing or has no connection, the transaction is
-  fluffed immediately.
+- **Stem failures.** A relayed stem transaction with no stem peer to forward it to is
+  fluffed immediately (the node's own transactions are held instead, see above).
 
 **Limitations.**
 - Dandelion++ gives statistical origin privacy against spy nodes that control a fraction
@@ -241,6 +313,11 @@ Following Fanti et al., "Dandelion++" (SIGMETRICS 2018), as deployed in Monero:
   few (≤ 10) and routable.
 - **Own address.** A node advertises its own address (`Version.listen`) only when the
   operator sets `--public-address`, so private nodes are not revealed.
+  - An onion address is advertised only over Tor (proxied outbound connections, and
+    inbound ones from loopback, i.e. through the hidden service); a clearnet address
+    only over clearnet. A dual-homed configuration logs a warning at startup. Before
+    2026-09-27 an onion address was sent to clearnet peers too, linking the node's
+    two identities (I3-2).
 - **Address manager.** Addresses live in two tables, *new* (heard of) and *tried*
   (successfully connected).
   - Each table is split into buckets. The bucket is
@@ -252,20 +329,32 @@ Following Fanti et al., "Dandelion++" (SIGMETRICS 2018), as deployed in Monero:
     older entry in *new*, and in *tried* keeps the entry that connected more recently.
 - **Groups.** An IPv4 /16, an IPv6 /32, or a single onion address.
 - **Outbound connections.** The node keeps **8 outbound connections**, at most **one per
-  group**. Candidates are drawn 50/50 from *tried* and *new*.
+  group**, also among the addresses picked in the same round (before 2026-09-27 two
+  picks of one round could share a group, R8-4). Candidates are drawn 50/50 from
+  *tried* and *new*.
+- **Seeds** are dialed when the address table is empty, and also when no outbound
+  connection is up (every known address may be stale or hostile), each seed at most
+  every 30 s (R8-13).
 - **Connect-only mode.** With `--connect-only`, outbound connections go only to the
   configured `--peer` entries: no seeds and no discovered addresses. Inbound
   connections and address exchange still work. It suits fixed private topologies and
   lab tests.
 - **Inbound.** At most 64 inbound connections, and at most 2 from any one IP.
+  - Connections still in their handshake count against both limits when a new one
+    is accepted, and the limits (and bans) are checked again, atomically, when the
+    peer is registered. Before 2026-09-27 only registered peers were counted, so
+    concurrent handshakes bypassed both limits.
 - **Persistence.** The tables and the ban list are saved in the data directory
-  (`peers.json`, `bans.json`) within a minute of changing, and on shutdown.
+  (`peers.json`, `bans.json`) within a minute of changing, and on shutdown. The ban
+  list is saved whenever a ban was added (not only when its size changed). An
+  existing `bans.json` that cannot be read or parsed is logged as a warning.
 
 ## 10. Misbehavior, limits and bans
 
 Each connection has a misbehavior score. At **100** the peer is disconnected and its IP
-banned for **24 h**. Tor peers all share one exit IP, so for proxied or onion peers only
-the connection is dropped.
+banned for **24 h**. Every other live connection from that IP is disconnected too.
+Tor peers all share one exit IP, so for proxied or onion peers only the connection is
+dropped.
 
 | Violation | Score |
 |---|---|
@@ -274,9 +363,9 @@ the connection is dropped.
 | Block whose body is invalid or does not match its header | 100 |
 | `Headers` that do not connect or are not a chain | 20 |
 | Unrequested `Headers` with more than one header | 10 |
-| Transaction invalid by a **stateless** rule (`Tx`/`StemTx`; transactions.md T1–T11) | 20 |
+| Transaction invalid by a **stateless** rule (`Tx`/`StemTx`; transactions.md T1–T11), or with an invalid ring signature over ring members all ≥ 60 blocks deep | 20 |
+| A `StemTx` already proven invalid, sent again | 20 |
 | Unrequested `Block`/`Tx`, `Pong` without a ping, second `GetAddr` or oversized `Addr` | 10 |
-| Timeout on a requested block or headers | 5 |
 | Rate limit exceeded | 1 per excess message; the message is dropped |
 
 **Not penalized** (honest peers can trigger these):
@@ -297,8 +386,17 @@ the connection is dropped.
 - a transaction that conflicts with the mempool;
 - a transaction invalid only against **our chain state** (contextual rules C1–C4). Its
   key image may have been spent in a block we saw first, or its ring members may
-  resolve differently on our branch. This is not proof of misbehavior;
-- `NotFound`, or a slow transaction answer.
+  resolve differently on our branch. This is not proof of misbehavior. Exception:
+  an invalid signature whose ring members are all at least **10 blocks** below our
+  tip. Those members resolve to the same outputs on every branch we could plausibly
+  reorganize to, so the signature fails for every honest node: it is penalized
+  (20) and remembered. Before 2026-09-27 it was never penalized nor cached, so
+  garbage CLSAGs over real rings cost ~3 ms of CPU per input, under the chain lock,
+  for free and forever (tx review H1). A node on a fork deeper than 10 blocks may
+  penalize an honest relayer (20 points, not a ban);
+- `NotFound`, or a slow answer to a request for a transaction, a block or headers
+  (a peer whose headers request timed out is not asked again until it announces a
+  new tip).
 
 The lab network found the last two cases as false bans between honest nodes (AUDIT.md
 R6).
@@ -319,14 +417,35 @@ its bounded outbox (64 messages) fills up.
     blocks the node dropped the blocks it had asked for, penalized the honest sender,
     and re-requested them after a timeout.
 - **Transactions accepted into the relay path:** 20 per second, burst 100.
+- **Ring signatures:** 50 per second, burst 500. A relayed transaction (`Tx` or
+  `StemTx`) costs one token per v1 input (one CLSAG verification each): a 64-input
+  transaction costs 64, not 1. Charged before any verification; a `StemTx` over
+  the budget costs 1 point, a requested `Tx` over it is dropped unverified.
+- **Admission order** of a relayed transaction, cheapest first:
+  1. an id already proven invalid is dropped;
+  2. the signature budget and, for PX, the peer's PX share are charged;
+  3. an id already in our mempool (a replay, SX2), or one that failed a
+     contextual rule **at our current tip**, is dropped unverified: the same bytes are verified again only after the tip changes
+     (the cache holds at most 10 000 ids and is emptied when the tip changes).
+     `InvTx` announcements of such ids are not requested either;
+  4. cheap checks: the stateless structure and balance rules (penalized), then the
+     contextual rules a chain extension can change: key images, one-time keys, PX
+     anchor, nullifiers, registry, pool, contract id (not penalized, cached as in 3);
+  5. for PX and deploys, the node-wide PX token (below);
+  6. full verification: ring signatures, range proofs, PX proof.
 - **PX and deploy transactions** (each costs ~0.2 s to verify): 0.2 per second,
   burst 4, per peer, **and** 2 per second, burst 10, over all peers together. Excess
   ones are dropped unverified.
+  - The node-wide token is taken only after the cheap checks (step 5 above). Before
+    2026-09-27 it was taken first, so ~10 connections sending PX transactions with a
+    random anchor (rejected cheaply, contextual, unpenalized) drained it and
+    censored honest PX relay for free (tx review M2).
   - A peer is penalized (1 point) only for exceeding **its own** share with unsolicited
     `StemTx` messages.
   - It is never penalized for the node-wide limit, which an attacker can drain, nor
     for a `Tx` we requested.
-  - Tested: `px_transactions_travel_the_stem_and_confirm_everywhere`.
+  - Tested: `px_transactions_travel_the_stem_and_confirm_everywhere`,
+    `junk_anchor_px_floods_do_not_drain_the_px_relay_budget`.
 - An invalid PX proof counts as a stateless violation (20). Once the anchor and
   registry checks pass, the proof's statement does not depend on our pool state, so
   an honest peer never relays one.
@@ -355,14 +474,43 @@ its bounded outbox (64 messages) fills up.
 - PoW verification of headers costs about 0.45 s per header in RandomX light mode.
   Parallel verification divides this by the number of cores. Initial sync of a long
   chain is still slow until RandomX gets faster (AUDIT.md R1).
-- **Cheap valid-PoW headers.** Headers that satisfy every rule, including proof of
-  work at a low difficulty (early testnet), are valid and stored. A side branch mined
-  from genesis at low difficulty costs its miner little.
-  - There is no minimum-chain-work rule and no pruning of side branches
-    (consensus.md §8, policy K4).
-  - Bodies of such blocks are stored before they are validated (the completion
-    report's N-2).
-  - Both are open.
+- **Cheap valid-PoW headers (R1-C1), partly closed.** The work gate (§6) keeps
+  free low-work branches from being hashed or stored, and unrequested bodies of
+  unknown headers are dropped (§6.4). Open:
+  - **No minimum chain work.** While our own best work is small (initial sync, or
+    a chain shorter than 144 blocks) the threshold is small too, and a peer can
+    feed a low-work branch that is hashed and stored. A hard-coded
+    `MIN_CHAIN_WORK` would need a headers *presync* (download without storing,
+    count the claimed work, re-download once it clears the minimum, as Bitcoin
+    Core since PR #25717): not implemented.
+  - The full-batch density rule lets a peer whose hash rate per header is at least
+    half of ours feed side branches deeper than one batch; that costs real work.
+  - No pruning of stored side branches (consensus.md §8, policy K4); `HeaderChain`
+    and the PoW cache still grow with every stored header.
+  - **RandomX seed pinning** (the best chain's cache never evicted by side-branch
+    seeds) is in the consensus crate, not here; the work gate removes the free
+    trigger (headers of free branches are no longer hashed).
+  - Bodies of stored side branches can still be stored before they are validated
+    (the completion report's N-2), by an unrequested block whose header passed the
+    gate.
+  - A batch whose sender left before verification is only pre-checked: a sender
+    whose batch would fail only the proof of work is not banned (it paid the real
+    work of every header before the failing one).
+- **Block bodies are validated on the peer's read loop** (off the async executor,
+  on a blocking thread, but the connection waits for it): a peer sending large
+  valid-looking blocks slows only its own connection, and pings are answered
+  afterwards. Moving block processing to a worker like headers is open (M5).
+- **Mempool conflicts before the PX token.** A PX transaction that conflicts with a
+  *pooled* one (same key image or nullifier, different id) still passes the cheap
+  checks and consumes a node-wide PX token before `check_tx` rejects it. Closing
+  this needs a public conflict query on `Mempool` (chain crate). Mined-transaction
+  replays and exact duplicates are rejected before the token.
+- **Transaction verification runs under the chain lock**, one relayed transaction
+  at a time per connection; the admission checks (§10) bound what an attacker can
+  make it verify, but there is no bounded verification worker yet.
+- **Tor inbound.** Every inbound connection through a hidden service comes from
+  127.0.0.1, so they share the per-IP limits (2 connections, 2 queued header
+  batches) and a ban of one bans all of them.
 - There is no compact-block relay; a full block is sent once per peer that lacks it.
-- Dandelion++'s parameters follow Monero. They have not been re-tuned for BlackSilk's
-  network size.
+- Dandelion++'s parameters follow Monero (q = 0.2, 39 s mean embargo), plus a 10 s
+  embargo base. They have not been re-tuned for BlackSilk's network size.

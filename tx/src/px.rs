@@ -452,7 +452,7 @@ impl PxTx {
 
 /// The deploy payload: salt, program count, and each program's length, ELF
 /// bytes and budget.
-fn encode_payload(salt: &[u8; 32], programs: &[Registration]) -> Vec<u8> {
+pub(crate) fn deploy_payload_bytes(salt: &[u8; 32], programs: &[Registration]) -> Vec<u8> {
     let mut w = Writer::new();
     w.bytes(salt);
     w.varint(programs.len() as u64);
@@ -473,7 +473,7 @@ fn encode_payload(salt: &[u8; 32], programs: &[Registration]) -> Vec<u8> {
 /// shape; the payload pays per byte. Neither term depends on the fee itself,
 /// and every input is public, so the fee reveals nothing about the wallet.
 pub fn deploy_fee(inputs: usize, outputs: usize, programs: &[Registration]) -> u64 {
-    let payload = encode_payload(&[0; 32], programs).len() as u64;
+    let payload = deploy_payload_bytes(&[0; 32], programs).len() as u64;
     FEE_PER_WEIGHT
         .saturating_mul(crate::builder::max_weight(inputs, outputs))
         .saturating_add(DEPLOY_FEE_PER_BYTE.saturating_mul(payload))
@@ -481,7 +481,7 @@ pub fn deploy_fee(inputs: usize, outputs: usize, programs: &[Registration]) -> u
 
 impl PxDeploy {
     fn payload_bytes(&self) -> Vec<u8> {
-        encode_payload(&self.salt, &self.programs)
+        deploy_payload_bytes(&self.salt, &self.programs)
     }
 
     pub fn prefix_bytes(&self) -> Vec<u8> {

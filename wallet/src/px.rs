@@ -43,8 +43,42 @@ use blacksilk_tx::types::Transaction;
 use blacksilk_zkvm::air::trace::Budget;
 use serde::{Deserialize, Serialize};
 
-/// PX addresses scanned beyond the highest issued index.
+/// PX addresses scanned beyond the highest issued index. The window grows as
+/// records are found (a record at index `i` raises `issued` to `i`), so a
+/// restored wallet finds addresses up to this far beyond the last one paid.
 pub const PX_LOOKAHEAD: u32 = 20;
+
+/// PX addresses handed out beyond the highest one that has received a record,
+/// without an explicit override (docs/reviews/wallet-review.md M-1). Every
+/// scanned address costs one scalar multiplication per PX output on chain.
+pub const PX_GAP_LIMIT: u32 = 1_000;
+
+/// Absolute ceiling above the highest PX address that has received a record,
+/// even with the override. Wallet files holding more (written by older
+/// versions) are clamped when loaded.
+pub const PX_MAX_INDEX_AHEAD: u32 = 2_000;
+
+/// Delivery keys and owner tags of PX addresses `0..n`, derived on first use
+/// and kept in memory only, so scanning does not re-derive an ML-KEM key pair
+/// per address and per output. Never persisted; the secret parts are
+/// zeroized on drop (`DeliveryKeys`).
+#[derive(Default)]
+pub struct AddressKeys {
+    keys: Vec<(delivery::DeliveryKeys, Digest)>,
+}
+
+impl AddressKeys {
+    /// The keys and owner tag of address `index` of `account`. The cache must
+    /// be used with one account only.
+    pub fn get(&mut self, account: &Account, index: u32) -> (&delivery::DeliveryKeys, &Digest) {
+        while self.keys.len() <= index as usize {
+            let i = self.keys.len() as u32;
+            self.keys.push((account.delivery_keys(i), account.owner(i)));
+        }
+        let (k, o) = &self.keys[index as usize];
+        (k, o)
+    }
+}
 
 /// Wallets anchor spends at the most recent height that is a multiple of
 /// this, so every wallet transacting in the same window uses the same anchor
@@ -171,6 +205,13 @@ pub struct ContractRecord {
     pub pending: bool,
     pub pending_height: u64,
     pub source: RecordSource,
+    /// For a vault record this wallet locked: the secret (hex), stored in the
+    /// encrypted wallet file before the lock is sent, so it survives a
+    /// submission whose outcome is uncertain (review R11-W1). The record
+    /// holds only `Hk(LOCK, secret)`; without the secret its value is locked
+    /// for good (the demonstration vault has no refund).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
 }
 
 impl ContractRecord {
@@ -190,6 +231,7 @@ impl ContractRecord {
             pending: false,
             pending_height: 0,
             source,
+            secret: None,
         }
     }
 
@@ -280,6 +322,69 @@ impl PxStore {
             .map(KnownProgram::budget)
     }
 
+    /// The budget to call the reference vault under `contract` with, if the
+    /// contract is a vault the wallet can safely use (docs/px.md §13.4):
+    /// - **its registered program set is exactly the vault.** A contract
+    ///   record's nullifier depends only on its opening, and any program
+    ///   registered to the contract can approve spending it. A contract that
+    ///   registers the vault next to another program lets that program take
+    ///   the vault's records without the secret, so a claimer who deploys
+    ///   `{vault, backdoor}` and asks to be paid through it could take the
+    ///   funds without the secret (review P-1);
+    /// - **its budget is exactly `vault::BUDGET`.** A budget that fits LOCK but
+    ///   not CLAIM would lock funds for good; any other budget would also
+    ///   make its proofs stand out (review P-2).
+    pub fn vault_budget(&self, contract: &Digest) -> Result<Budget, WalletError> {
+        let id = digest_hex(contract);
+        let c = self.contracts.iter().find(|c| c.id == id).ok_or_else(|| {
+            WalletError::Contract(
+                "unknown contract (wrong id, or its deploy is not yet confirmed)".into(),
+            )
+        })?;
+        vault_check(c)
+    }
+}
+
+/// Whether `c` is a vault contract the wallet can use: the vault program
+/// alone, with the reference budget (`PxStore::vault_budget`).
+pub fn vault_check(c: &KnownContract) -> Result<Budget, WalletError> {
+    let vault_id = hex::encode(blacksilk_px::vault::program().id());
+    let Some(p) = c.programs.iter().find(|p| p.id == vault_id) else {
+        return Err(WalletError::Contract(
+            "the vault program is not registered to this contract".into(),
+        ));
+    };
+    if c.programs.len() != 1 {
+        return Err(WalletError::Contract(format!(
+            "this contract registers {} other program(s) besides the vault; any of them can \
+             spend the contract's records without the secret, so the wallet refuses vault \
+             operations on it (docs/px.md §13.4)",
+            c.programs.len() - 1
+        )));
+    }
+    let budget = p.budget();
+    if budget != blacksilk_px::vault::BUDGET {
+        return Err(WalletError::Contract(
+            "this contract registers the vault with a non-standard budget; a budget that does \
+             not cover CLAIM would lock funds for good, so the wallet refuses it"
+                .into(),
+        ));
+    }
+    Ok(budget)
+}
+
+impl PxStore {
+    /// The highest PX address index that has received a record (a payment or
+    /// a contract record addressed to it), if any.
+    pub fn used_index(&self) -> Option<u32> {
+        let paid = self.records.iter().map(|r| r.index);
+        let received = self.contract_records.iter().filter_map(|r| match r.source {
+            RecordSource::Received { index } => Some(index),
+            _ => None,
+        });
+        paid.chain(received).max()
+    }
+
     /// Adds a contract record unless it is already known; a known one that
     /// was not yet confirmed takes `height`.
     pub fn add_contract_record(
@@ -304,6 +409,13 @@ impl PxStore {
             .push(ContractRecord::new(record, cm, source, height));
     }
 
+    /// Stores the vault secret of the known contract record `cm`.
+    pub fn set_secret(&mut self, cm: &Digest, secret: &Digest) {
+        if let Some(k) = self.contract_record(cm) {
+            self.contract_records[k].secret = Some(digest_hex(secret));
+        }
+    }
+
     /// The contract record with commitment `cm`.
     pub fn contract_record(&self, cm: &Digest) -> Option<usize> {
         let hex_cm = digest_hex(cm);
@@ -314,7 +426,13 @@ impl PxStore {
 
     /// Records the PX outputs paid to `account`, the contract records
     /// addressed to it, and the spends of both, in a block at `height`.
-    pub fn apply_block(&mut self, account: &Account, txs: &[Transaction], height: u64) {
+    pub fn apply_block(
+        &mut self,
+        keys: &mut AddressKeys,
+        account: &Account,
+        txs: &[Transaction],
+        height: u64,
+    ) {
         let mut perm = HostPerm::new();
         for tx in txs {
             let Transaction::Px(t) = tx else { continue };
@@ -333,10 +451,11 @@ impl PxStore {
             }
             for (j, (cm, ct)) in t.commitments.iter().zip(&t.ciphertexts).enumerate() {
                 let rho = output_rho(&mut perm, &t.nullifiers[0], j as u32);
+                // The window is re-read for every output: a record found at
+                // index `i` raises `issued`, extending it for the next one.
                 for index in 0..=self.issued.saturating_add(PX_LOOKAHEAD) {
-                    let keys = account.delivery_keys(index);
-                    let owner = account.owner(index);
-                    let Some(rec) = delivery::open(&keys, &owner, ct, cm, &rho) else {
+                    let (dk, owner) = keys.get(account, index);
+                    let Some(rec) = delivery::open(dk, owner, ct, cm, &rho) else {
                         continue;
                     };
                     if rec.contract != ZERO_DIGEST {
@@ -649,6 +768,7 @@ mod tests {
             pending: false,
             pending_height: 0,
             source,
+            secret: None,
         }
     }
 
@@ -712,6 +832,102 @@ mod tests {
             .collect();
         assert_eq!(cms, ["0001", "0002", "0003"]);
         assert!(s.contract_records.iter().all(|r| !r.pending));
+    }
+
+    fn vault_contract(programs: Vec<KnownProgram>) -> KnownContract {
+        KnownContract {
+            id: digest_hex(&[9, 0, 0, 0, 0, 0, 0, 0]),
+            height: 1,
+            programs,
+        }
+    }
+
+    fn vault_program(budget: Budget) -> KnownProgram {
+        let b = budget;
+        KnownProgram {
+            id: hex::encode(blacksilk_px::vault::program().id()),
+            budget: [
+                b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
+            ],
+        }
+    }
+
+    #[test]
+    fn vault_operations_need_the_vault_alone_with_the_reference_budget() {
+        use blacksilk_px::vault::BUDGET;
+        let contract = [9, 0, 0, 0, 0, 0, 0, 0];
+        let other = KnownProgram {
+            id: "ab".repeat(32),
+            budget: [1_000; 8],
+        };
+        let mut s = PxStore::default();
+        // Unknown contract.
+        assert!(s.vault_budget(&contract).is_err());
+        // The vault alone, with the reference budget: accepted.
+        s.contracts = vec![vault_contract(vec![vault_program(BUDGET)])];
+        assert_eq!(s.vault_budget(&contract).unwrap(), BUDGET);
+        // P-1: the vault next to another program (either order) is refused:
+        // that program could spend the vault's records without the secret.
+        for programs in [
+            vec![vault_program(BUDGET), other.clone()],
+            vec![other.clone(), vault_program(BUDGET)],
+        ] {
+            s.contracts = vec![vault_contract(programs)];
+            let e = s.vault_budget(&contract).unwrap_err().to_string();
+            assert!(e.contains("other program"), "{e}");
+        }
+        // No vault at all.
+        s.contracts = vec![vault_contract(vec![other])];
+        assert!(s
+            .vault_budget(&contract)
+            .unwrap_err()
+            .to_string()
+            .contains("not registered"));
+        // P-2: any budget other than the reference one is refused, smaller
+        // (CLAIM might not fit: funds locked for good) or larger (fingerprint).
+        for budget in [
+            Budget {
+                cycles: BUDGET.cycles - 1,
+                ..BUDGET
+            },
+            Budget {
+                poseidon: BUDGET.poseidon + 1,
+                ..BUDGET
+            },
+        ] {
+            s.contracts = vec![vault_contract(vec![vault_program(budget)])];
+            let e = s.vault_budget(&contract).unwrap_err().to_string();
+            assert!(e.contains("non-standard budget"), "{e}");
+        }
+    }
+
+    #[test]
+    fn the_used_index_counts_payments_and_contract_records_received() {
+        let mut s = PxStore::default();
+        assert_eq!(s.used_index(), None);
+        s.records.push(record(1, 1, None));
+        s.records[0].index = 7;
+        assert_eq!(s.used_index(), Some(7));
+        // Created and imported records say nothing about the wallet's addresses.
+        s.contract_records
+            .push(contract_rec(RecordSource::Created, None, 1));
+        s.contract_records
+            .push(contract_rec(RecordSource::Imported, None, 2));
+        assert_eq!(s.used_index(), Some(7));
+        s.contract_records
+            .push(contract_rec(RecordSource::Received { index: 12 }, None, 3));
+        assert_eq!(s.used_index(), Some(12));
+    }
+
+    #[test]
+    fn cached_address_keys_match_fresh_derivation() {
+        let account = Account::from_seed(&[5; 32]);
+        let mut cache = AddressKeys::default();
+        for i in [3u32, 0, 7, 3] {
+            let (dk, owner) = cache.get(&account, i);
+            assert_eq!(*owner, account.owner(i));
+            assert_eq!(dk.address(*owner), account.address(i));
+        }
     }
 
     #[test]

@@ -153,7 +153,7 @@ pub const TESTNET_GENESIS_FINAL: bool = false;
 pub fn check_network_enabled(n: Network) -> Result<(), String> {
     match n {
         Network::Testnet if !TESTNET_GENESIS_FINAL => Err(
-            "the testnet is disabled until its v3 genesis is final (v2 is retired);              use --network regtest"
+            "the testnet is disabled until its v3 genesis is final (v2 is retired); use --network regtest"
                 .into(),
         ),
         _ => Ok(()),

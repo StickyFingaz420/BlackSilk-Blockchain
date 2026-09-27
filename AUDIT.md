@@ -306,8 +306,10 @@ new crates.
 - There is no external cryptographic review yet, and none of Monero's test vectors apply
   (Ristretto).
 - The Janus anchor analysis is our own (spec §12.8).
-- Property tests are seeded loops, because `proptest` needs `getrandom` (toolchain,
-  Phase 1).
+- Property tests are seeded loops. They were written that way because `proptest` needs
+  `getrandom`, which the Phase 1 GNU toolchain could not build. On the current MSVC
+  toolchain `getrandom` builds (it is already in `Cargo.lock` and the workspace
+  compiles), so `proptest` is now possible; it has not been added yet (T-4, 2026-09-27).
 - Economics constants are provisional.
 - Performance has not been profiled. The tests prove and verify hundreds of proofs in a
   few seconds with opt-level 3.

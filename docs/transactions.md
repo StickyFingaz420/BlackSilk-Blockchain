@@ -605,8 +605,8 @@ Security relies on the following. Nothing else is assumed.
 
 ## 10. Randomness and secret handling (implementation requirements)
 
-- **Hedged randomness.** Every secret random value (anchor, pseudo-output masks, CLSAG `α`
-  and `s[i]`, BP+ blinding values) comes from a hedged stream:
+- **Hedged randomness.** The secret random values listed in the table below come from a
+  hedged stream:
 
   ```
   seed    = H64("nonce", LE64(#secrets) ‖ (LE64(len) ‖ secret)… ‖
@@ -614,16 +614,52 @@ Security relies on the following. Nothing else is assumed.
   value_i = H64("nonce/stream", seed ‖ LE64(i))      (reduced mod ℓ for scalars)
   ```
 
-  The secrets are the spend key (transfers, anchors), `p` and `z` (CLSAG), or the amounts
-  and masks (BP+). The context starts with a purpose label and must contain every public
-  input of the statement being signed or proved (input context or signed message, ring,
-  commitments).
+  The context starts with a purpose label and then lists the inputs of the statement
+  being signed, proved or built. Variable-length lists are preceded by their count.
   - If the OS RNG is good, values are uniformly random.
-  - If it is broken, values are still unpredictable to anyone without the secret key, and
-    never repeat for two different statements, because every input of the statement is
-    in the context.
+  - If it is broken, values are still unpredictable to anyone without the secret, and
+    they differ for two statements that differ in anything the context binds. For an
+    identical statement they repeat (a deterministic rebuild), which is safe.
   - Nonce reuse, which leaks the spend key in Schnorr-type signatures, is therefore
-    excluded.
+    excluded wherever the context binds the full statement (all rows marked "full").
+
+  | Values | Secrets | Context (after the label) | Bound |
+  |---|---|---|---|
+  | CLSAG `α`, `s[i]` | `p`, `z` | see below (`clsag/nonce/v2`) | full |
+  | BP+ blinding values | every amount ‖ mask | `"bp+"`, every commitment | full (statement = f(witness)) |
+  | Schnorr nonce | `k` | `"schnorr"`, tag, `K`, `m` | full |
+  | Transfer anchors, pseudo-output masks | spend key `k_s` | `transfer/v2`: network id, `H(key images)`, fee, each ring (members in global-index order: `LE64(index) ‖ O ‖ C`), each payment (address ‖ `LE64(amount)`), change address ‖ `LE64(change)`, caller payload (a deploy's salt and programs) | full |
+  | Coinbase anchors | miner-supplied secret | `coinbase/v2`: `ctx(height)`, each payout (address ‖ `LE64(amount)`) | full, but see R2-C4 below |
+  | PX payout and change anchors, pseudo-output masks | PX hedge secret (required), plus `k_s` with v1 inputs | `px/v2`: network id, `ctx` (nullifiers and key images), fee, bridge-in, bridge-out, both output commitments, each ring, each payout, change address ‖ `LE64(change)` | full |
+  | PX delivery `r` and ML-KEM coins `m` | sender's PX hedge secret (required; `seal` refuses an empty or all-zero one) | `px/delivery/hedge/v1`: recipient owner tag, `V`, the whole `ek`, `cm`, contract, `LE64(value)`, data, `rcm`, `rho` (which fixes the output index) | full |
+  | PX throwaway delivery key (empty slot) | PX hedge secret | `px/throwaway/v1`: the slot's commitment, `LE64(slot)` | full |
+  | Membership (bLSAG) nonce | `x` | `"membership"`, `m`, `B`, `P[π]` | **not full** (R2-C5) |
+
+  The PX hedge secret is `blacksilk_px::wallet::Account::hedge_secret` (the PX spend secret
+  `sk`) in the wallet. `build_px` refuses an all-zero one (`PxBuildError::NoHedgeSecret`);
+  before 2026-09-27 it silently hedged with 32 zero bytes when there were no v1 inputs
+  (R2-C3), and delivery used the raw RNG (R2-C2). The old transfer context was only
+  `"transfer" ‖ H(key images)` (R2-C1): a rebuild over the same inputs with another amount,
+  recipient or fee reused anchors and pseudo-output masks under a broken RNG, which leaked
+  amount deltas. Test: `broken_rng_transfers_over_the_same_inputs_share_no_output_secrets`
+  (tx/tests/privacy.rs); delivery tests `broken_rng_*` in px/src/delivery.rs. All of this is
+  wallet-side: validators check none of these derivations, and no encoding changes.
+
+  **Not hedged (known, accepted or open):**
+  - *Coinbase secret (R2-C4, accepted limitation).* The miner draws its hedge secret once
+    per process from the OS RNG, the same source as the stream's fresh bytes. If the OS
+    RNG fails, both fail, and coinbase outputs become linkable to a known payout address.
+  - *Membership nonce (R2-C5).* The context lacks the ring and the tag; with a constant RNG
+    two signatures over different rings leak `x`. Unreachable today (contracts are not
+    integrated); must be fixed before any integration.
+  - *PX witness randomness.* Output `rcm`, dummy inputs (key, `rho`, `rcm`, path) and
+    empty-slot owners (`blacksilk_px::wallet::{output, dummy_input, empty_output}`) come
+    from the caller's RNG directly. Under a broken RNG they are predictable, which could
+    let an observer recognise dummy inputs or empty slots, or test guesses of a record's
+    contents against `cm`. Open item.
+  - *Other RNG uses* are outside this table: decoy selection (not secret, but predictable
+    under a broken RNG), key and seed generation, the wallet file's salt and nonce, and the
+    STARK prover's randomness (derived with a witness digest; reviewed separately).
 - **CLSAG nonces (§6.1).** `α` is the first value of the stream and the simulated
   responses `s[i]` are the following ones, in ring order from `π+1`. The stream is:
 
@@ -655,7 +691,12 @@ Security relies on the following. Nothing else is assumed.
 - **No other randomness sources:** no `rand::thread_rng` seeded from time, no fixed seeds
   outside tests, no `SmallRng` in any code path. The crypto crates take the RNG as an
   explicit `CryptoRng + RngCore` parameter. Tests use a seeded ChaCha20 RNG.
-- Secret scalars and keys are zeroized on drop (`zeroize`). Secret-dependent operations
+- Secret scalars and keys are zeroized on drop or after use (`zeroize`), **best effort**:
+  `Scalar` is `Copy`, so copies made by arithmetic are not tracked. The builder wipes its
+  output masks, mask sums, pseudo-output masks and one-time secrets; the BP+ prover wipes
+  its final-round nonces `r_`, `s_`, `δ`, `η` and the folded witness `a0`, `b0`. The
+  `Debug` output of `CreatedOutput`, `ReceivedOutput` and `SpendableOutput` redacts the
+  mask and output-key offset. Secret-dependent operations
   use constant-time dalek arithmetic. Variable-time multi-scalar multiplication is used
   **only on public data** (verification).
 - The consensus crates contain no `unsafe` (`#![forbid(unsafe_code)]`), no FFI and no C.

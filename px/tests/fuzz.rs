@@ -108,7 +108,7 @@ fn mutated_ciphertexts_never_open_and_never_panic() {
     let rho = wallet::random_digest(&mut rng);
     let rec = Record::plain(addr.owner, 5, [0; 8], rho, wallet::random_digest(&mut rng));
     let cm = rec.commit(&mut HostPerm::new());
-    let c = delivery::seal(&mut rng, &addr, &rec, &cm).unwrap();
+    let c = delivery::seal(&mut rng, &[0x5e; 32], &addr, &rec, &cm).unwrap();
     assert!(delivery::open(&keys, &addr.owner, &c, &cm, &rho).is_some());
     let n = iters(3000);
     for _ in 0..n {

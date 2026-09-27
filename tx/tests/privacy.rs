@@ -169,3 +169,83 @@ fn repeated_payments_are_unlinkable_on_chain() {
     let ki = alice.owned[0].key_image(&alice.keys);
     assert!(!fields(&t2).contains(ki.bytes()));
 }
+
+/// A "CSPRNG" that always outputs the same byte: a completely broken RNG.
+struct ConstRng;
+impl rand_core::RngCore for ConstRng {
+    fn next_u32(&mut self) -> u32 {
+        0x4242_4242
+    }
+    fn next_u64(&mut self) -> u64 {
+        0x4242_4242_4242_4242
+    }
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        dest.fill(0x42)
+    }
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        dest.fill(0x42);
+        Ok(())
+    }
+}
+impl rand_core::CryptoRng for ConstRng {}
+
+/// R2-C1: with a broken (constant) RNG, two transfers over the same inputs
+/// that differ only in a payment amount, a recipient or the fee share no
+/// output key, ephemeral key, commitment or pseudo-output: the hedge context
+/// binds the whole statement, not only the key images. The same statement
+/// rebuilt gives the same transfer (deterministic, which is safe).
+#[test]
+fn broken_rng_transfers_over_the_same_inputs_share_no_output_secrets() {
+    use blacksilk_tx::builder::{build_transfer, standard_fee, InputPlan, Payment};
+    let mut net = TestNet::new(61, 80);
+    let alice = Wallet::new(&mut rng(62));
+    let bob = Wallet::new(&mut rng(63));
+    let miner = net.miner_clone();
+    let real = miner.spendable(net.height())[0].clone();
+    let plans: Vec<InputPlan> = vec![net.plan(&real)];
+    let fee = standard_fee(1, 2, &net.rules);
+    let build = |to: &Wallet, amount: u64, fee: u64| {
+        build_transfer(
+            &miner.keys,
+            plans.clone(),
+            &[Payment {
+                address: to.primary(),
+                amount,
+            }],
+            &miner.primary(),
+            fee,
+            &net.rules,
+            &mut ConstRng,
+        )
+        .expect("build")
+    };
+    let public = |t: &Transfer| -> HashSet<[u8; 32]> {
+        t.outputs
+            .iter()
+            .flat_map(|o| {
+                [
+                    *o.one_time_key.bytes(),
+                    *o.ephemeral.bytes(),
+                    *o.commitment.bytes(),
+                ]
+            })
+            .chain(t.pseudo_outs.iter().map(|p| *p.bytes()))
+            .collect()
+    };
+    let base = build(&alice, 1000, fee);
+    // Deterministic for an identical statement.
+    assert_eq!(
+        Transaction::from(base.clone()).encode(),
+        Transaction::from(build(&alice, 1000, fee)).encode()
+    );
+    for (what, other) in [
+        ("amount", build(&alice, 1001, fee)),
+        ("recipient", build(&bob, 1000, fee)),
+        ("fee", build(&alice, 1000, fee + 1)),
+    ] {
+        assert!(
+            public(&base).is_disjoint(&public(&other)),
+            "{what}: a public value repeats"
+        );
+    }
+}

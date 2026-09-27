@@ -2,14 +2,26 @@
 //! emission, reorganizations, mempool and storage behind one API.
 //!
 //! **Invariant.** The transaction state equals the result of applying the bodies of
-//! `connected[1..]` in order. `connected` is the most-work chain whose bodies are all
-//! available: normally a prefix of the header chain's best chain, but it stays on
-//! the current branch while a heavier branch's bodies are still downloading.
-//! After every change, [`ChainManager::sync_state`] restores this: it disconnects
-//! back to the fork point only when the new branch, as far as bodies are available,
-//! has more work, and then connects forward block by block, validating each body.
-//! A body that fails marks its block invalid in the header chain, which re-selects
-//! the best chain, and the loop repeats.
+//! `connected[1..]` in order, and the connected tip is the *connection target*
+//! (docs/blocks.md §6): the most-work valid header whose own body and every
+//! ancestor's body are available ("body-complete"). Between equal-work
+//! candidates the connected tip stays; otherwise the candidate that became
+//! complete first wins.
+//!
+//! The header chain's best chain (`HeaderChain::main_id_at`) is only a download
+//! and locator guide: a heavier header branch whose bodies are withheld never
+//! holds the connected chain back (before 2026-09-27 it did: the state only
+//! followed the header-best chain, so a bodiless header tying the tip stalled
+//! block production for good).
+//!
+//! **Determinism.** The target depends only on the sequence of *kept* bodies
+//! (which is the storage order), never on the order in which headers arrived:
+//! a block becomes complete when its body is kept and its parent is complete,
+//! and blocks completed together (descendants waiting for a parent) complete in
+//! body-arrival order. [`ChainManager::sync_state`] runs after each single
+//! completion. Replay (`replay`) releases stored blocks in exactly this order
+//! and also syncs after each one, so live processing and every restart pass
+//! through the same sequence of states.
 
 use crate::block::Block;
 use crate::emission::block_reward;
@@ -25,7 +37,8 @@ use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::{validate_block_transactions_cached, BlockContext, BlockError};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::io;
 use std::sync::{Arc, Mutex};
 
@@ -139,6 +152,10 @@ pub struct Submitted {
     pub height: u64,
     /// Whether the block is now part of the connected best chain.
     pub on_best_chain: bool,
+    /// Whether the body was stored and kept. `false` only for a low-work
+    /// side-branch body refused by node policy ([`LOW_WORK_MARGIN_BLOCKS`]);
+    /// its header was accepted (not a consensus rejection).
+    pub body_kept: bool,
 }
 
 /// Everything a miner needs to build the next block (docs/blocks.md §9 `/template`).
@@ -161,6 +178,29 @@ pub struct Template {
 /// docs/reviews/assumptions.md K4).
 pub const DEEP_REORG_WARN_DEPTH: usize = 10;
 
+/// Node policy (not consensus), docs/blocks.md §8: a body is stored and kept
+/// only if its block's cumulative work is at least the connected tip's work
+/// minus this many blocks at the tip's difficulty, or if the block lies on the
+/// path to a header tip with more work than the connected tip (a candidate the
+/// node downloads bodies for, [`ChainManager::missing_bodies`]). Anything else
+/// is a cheap low-work side branch (for example a child of an early,
+/// low-difficulty block) whose body would otherwise be stored forever. The
+/// margin covers locally mined side branches up to this depth; reorganizations
+/// arriving from the network come header-first and are candidates, so no
+/// honest reorganization of any depth is refused.
+pub const LOW_WORK_MARGIN_BLOCKS: u128 = 100;
+
+/// Transactions and flags collected while the connected chain moves, applied to
+/// the mempool once at the end ([`ChainManager::finish_sync`]).
+#[derive(Default)]
+struct SyncOutcome {
+    /// Transactions of disconnected blocks.
+    returned: Vec<Transaction>,
+    /// Whether any block was disconnected (the mempool then re-checks every
+    /// rule; a reorganization of coinbase-only blocks returns nothing).
+    reorganized: bool,
+}
+
 pub struct ChainManager {
     params: ChainParams,
     rules: TxRules,
@@ -172,6 +212,22 @@ pub struct ChainManager {
     /// `generated[h]` = coins created by blocks `1..=h` of the connected chain.
     generated: Vec<u64>,
     bodies: HashMap<Hash, Vec<Transaction>>,
+    /// Body arrival order of every kept body (equal to its index in the store
+    /// for bodies kept in this session; see `replay`).
+    body_seq: HashMap<Hash, u64>,
+    next_body_seq: u64,
+    /// Header tree children (every header enters through this manager).
+    children: HashMap<Hash, Vec<Hash>>,
+    /// Valid headers without a valid child, by cumulative work.
+    leaves: BTreeSet<(u128, Hash)>,
+    /// Body-complete valid blocks: id -> completion order. Contains genesis
+    /// and every connected block.
+    complete: HashMap<Hash, u64>,
+    /// The same blocks ordered by (work, earliest completion).
+    complete_order: BTreeSet<(u128, Reverse<u64>, Hash)>,
+    next_complete_seq: u64,
+    /// The connection target (module docs).
+    best_complete: Hash,
     invalid: HashMap<Hash, BlockError>,
     mempool: Mempool,
     store: Box<dyn BlockStore>,
@@ -204,8 +260,12 @@ impl ChainManager {
         let pow = Arc::new(CachedPow::new(pow));
         let headers = HeaderChain::new(params.clone(), pow.clone());
         let genesis_id = params.genesis_id();
+        let genesis_work = headers.work(&genesis_id).expect("genesis");
         let mut state = MemoryChain::new();
         state.apply_block(&[]); // genesis: empty body (docs/blocks.md §3)
+                                // A store written for another network or genesis is refused before
+                                // any record is read (docs/blocks.md §8).
+        store.bind(params.network_id, &genesis_id)?;
         let stored = store.load()?;
         let mut manager = Self {
             params,
@@ -216,6 +276,14 @@ impl ChainManager {
             connected: vec![genesis_id],
             generated: vec![0],
             bodies: HashMap::new(),
+            body_seq: HashMap::new(),
+            next_body_seq: 0,
+            children: HashMap::new(),
+            leaves: BTreeSet::from([(genesis_work, genesis_id)]),
+            complete: HashMap::from([(genesis_id, 0)]),
+            complete_order: BTreeSet::from([(genesis_work, Reverse(0), genesis_id)]),
+            next_complete_seq: 1,
+            best_complete: genesis_id,
             invalid: HashMap::new(),
             mempool: Mempool::new(),
             store,
@@ -224,7 +292,10 @@ impl ChainManager {
             store_failures: 0,
             store_failed: false,
         };
+        let total = stored.len() as u64;
         manager.replay(stored)?;
+        // Bodies kept from now on are numbered by their index in the store.
+        manager.next_body_seq = total;
         Ok(manager)
     }
 
@@ -236,15 +307,23 @@ impl ChainManager {
     /// (the waiting children of a block just replayed) are replayed in storage
     /// order (lowest stored index first).
     ///
-    /// **Tie-breaking after a restart.** Between branches of equal work the
-    /// header chain keeps the one it saw first. After a restart "first" means
-    /// replay order, which follows storage (body arrival) order, not the order
-    /// in which headers originally arrived. So a node may come back on a
-    /// different one of two equal-work tips than it had before the restart; the
-    /// next block on either branch resolves it as usual (docs/blocks.md §8).
+    /// **Same result as live processing.** A replayed block's parent was
+    /// replayed before it, so each block becomes body-complete as it is
+    /// replayed, and the manager syncs after each one. Live processing
+    /// completes blocks in the same order: a body completes on arrival if its
+    /// parent is complete, and otherwise when its parent completes, siblings
+    /// released together going lowest arrival index first (`submit_inner`).
+    /// Headers that arrived without bodies are not replayed, and they never
+    /// influence the connected chain (module docs), so the replayed tip, state
+    /// and tie-breaks equal the live ones (docs/blocks.md §8).
+    ///
+    /// One exception: a stored block whose parent was never stored in the same
+    /// session (a failed parent write, or a parent body refused by the
+    /// low-work policy) is dropped from memory after a restart and completes
+    /// live only when downloaded again, but a later replay releases the older
+    /// copy as soon as the parent is replayed. This can only change which of
+    /// two equal-work tips is kept.
     fn replay(&mut self, stored: Vec<crate::store::StoredBlock>) -> io::Result<()> {
-        use std::cmp::Reverse;
-        use std::collections::{BinaryHeap, HashSet};
         let total = stored.len();
         // Blocks waiting for their parent, by parent id: stored indices.
         let mut waiting: HashMap<Hash, Vec<usize>> = HashMap::new();
@@ -442,9 +521,24 @@ impl ChainManager {
             self.headers
                 .accept(block.header, now)
                 .map_err(SubmitError::Header)?;
+            self.header_added(id, block.header.prev_id);
         }
         if block.compute_tx_root() != block.header.tx_root {
             return Err(SubmitError::BodyMismatch);
+        }
+        let height = block.header.height;
+        // Replay keeps every stored body: the policy was applied on arrival.
+        if persist && !self.keeps_body(&id) {
+            log::debug!(
+                "low-work side-branch body {} at height {height} not kept",
+                hex(&id)
+            );
+            return Ok(Submitted {
+                id,
+                height,
+                on_best_chain: false,
+                body_kept: false,
+            });
         }
         if persist {
             // The header is in the tree, so its seed is defined; the hash is
@@ -470,9 +564,35 @@ impl ChainManager {
             }
             self.store_failures = 0;
         }
-        let height = block.header.height;
+        let seq = self.next_body_seq;
+        self.next_body_seq += 1;
         self.bodies.insert(id, block.txs);
-        self.sync_state();
+        self.body_seq.insert(id, seq);
+
+        // Completion: this block if its parent is complete, then every
+        // descendant whose body is already here, lowest arrival index first
+        // (the order `replay` releases them in). The state is synced after
+        // each single completion, as in replay.
+        let mut outcome = SyncOutcome::default();
+        if self.complete.contains_key(&block.header.prev_id) {
+            let mut ready = BinaryHeap::from([Reverse((seq, id))]);
+            while let Some(Reverse((_, x))) = ready.pop() {
+                if self.headers.is_valid(&x) != Some(true) {
+                    continue; // an ancestor was found invalid meanwhile
+                }
+                self.mark_complete(x);
+                self.sync_state(&mut outcome);
+                if !self.complete.contains_key(&x) {
+                    continue; // found invalid (or a descendant of an invalid block)
+                }
+                for c in self.children.get(&x).into_iter().flatten() {
+                    if let Some(&s) = self.body_seq.get(c) {
+                        ready.push(Reverse((s, *c)));
+                    }
+                }
+            }
+        }
+        self.finish_sync(outcome);
         if let Some(e) = self.invalid.get(&id) {
             return Err(SubmitError::Body(*e));
         }
@@ -480,7 +600,118 @@ impl ChainManager {
             id,
             height,
             on_best_chain: self.connected.get(height as usize) == Some(&id),
+            body_kept: true,
         })
+    }
+
+    /// Records a header just accepted by the header chain.
+    fn header_added(&mut self, id: Hash, prev: Hash) {
+        self.children.entry(prev).or_default().push(id);
+        if let Some(w) = self.headers.work(&prev) {
+            self.leaves.remove(&(w, prev));
+        }
+        let w = self.work(&id);
+        self.leaves.insert((w, id));
+    }
+
+    fn work(&self, id: &Hash) -> u128 {
+        self.headers.work(id).expect("known header")
+    }
+
+    /// The ancestor of `id` (inclusive) at `height`, walking back.
+    fn ancestor_at(&self, mut id: Hash, height: u64) -> Option<Hash> {
+        loop {
+            let h = self.headers.header(&id)?;
+            if h.height == height {
+                return Some(id);
+            }
+            if h.height < height {
+                return None;
+            }
+            id = h.prev_id;
+        }
+    }
+
+    /// Low-work policy ([`LOW_WORK_MARGIN_BLOCKS`]): whether the body of the
+    /// (known, valid) block `id` is kept.
+    fn keeps_body(&self, id: &Hash) -> bool {
+        let tip_work = self.work(&self.tip_id());
+        let margin = LOW_WORK_MARGIN_BLOCKS * self.tip_header().difficulty as u128;
+        if self.work(id) >= tip_work.saturating_sub(margin) {
+            return true;
+        }
+        // On the path to a heavier header tip: its bodies are downloaded.
+        if self.headers.best_work() > tip_work && self.headers.is_on_main(id) {
+            return true;
+        }
+        let height = self.headers.header(id).expect("known").height;
+        let main_tip = self.headers.tip_id();
+        self.leaves
+            .range((tip_work + 1, [0u8; 32])..)
+            .filter(|(_, leaf)| *leaf != main_tip)
+            .any(|(_, leaf)| self.ancestor_at(*leaf, height) == Some(*id))
+    }
+
+    /// Marks the valid block `id` (body kept, parent complete) complete. A
+    /// block with strictly more work than the current target becomes the
+    /// target, so among equal-work blocks the one completed first stays.
+    fn mark_complete(&mut self, id: Hash) {
+        let seq = self.next_complete_seq;
+        self.next_complete_seq += 1;
+        let w = self.work(&id);
+        self.complete.insert(id, seq);
+        self.complete_order.insert((w, Reverse(seq), id));
+        if w > self.work(&self.best_complete) {
+            self.best_complete = id;
+        }
+    }
+
+    /// Recomputes the target after blocks left the complete set: the most
+    /// work; among equal work the connected tip if it is one of them (no
+    /// flapping), else the one completed first.
+    fn recompute_target(&mut self) {
+        let &(w, _, id) = self
+            .complete_order
+            .last()
+            .expect("genesis is always complete");
+        let tip = self.tip_id();
+        self.best_complete = if self.work(&tip) == w { tip } else { id };
+    }
+
+    /// A body failed validation: marks the block and its descendants invalid,
+    /// drops them from the complete set, the leaves and memory, and
+    /// recomputes the target.
+    fn invalidate(&mut self, id: Hash, e: BlockError) {
+        log::warn!(
+            "block {} at height {} is invalid: {e:?}",
+            hex(&id),
+            self.headers.header(&id).map_or(0, |h| h.height)
+        );
+        self.invalid.insert(id, e);
+        self.headers.mark_invalid(&id);
+        let mut stack = vec![id];
+        while let Some(x) = stack.pop() {
+            let w = self.work(&x);
+            if let Some(seq) = self.complete.remove(&x) {
+                self.complete_order.remove(&(w, Reverse(seq), x));
+            }
+            self.leaves.remove(&(w, x));
+            self.bodies.remove(&x);
+            self.body_seq.remove(&x);
+            if let Some(kids) = self.children.get(&x) {
+                stack.extend_from_slice(kids);
+            }
+        }
+        // The parent becomes a leaf if none of its children is valid any more.
+        let prev = self.headers.header(&id).expect("known").prev_id;
+        let has_valid_child = self
+            .children
+            .get(&prev)
+            .is_some_and(|k| k.iter().any(|c| self.headers.is_valid(c) == Some(true)));
+        if !has_valid_child {
+            self.leaves.insert((self.work(&prev), prev));
+        }
+        self.recompute_target();
     }
 
     /// Height of the last block shared by the connected chain and the best header
@@ -493,33 +724,36 @@ impl ChainManager {
         fork
     }
 
-    /// Restores the invariant (module docs) after the header chain changed.
-    fn sync_state(&mut self) {
-        let mut returned: Vec<Transaction> = Vec::new();
-        // Whether any block was disconnected (the mempool then re-checks every
-        // rule; a reorganization of coinbase-only blocks returns nothing).
-        let mut reorganized = false;
+    /// Restores the invariant (module docs): moves the connected chain to the
+    /// target. The target always has more work than the connected tip when
+    /// they differ (`mark_complete`, `recompute_target`), so the chain is only
+    /// ever left for a heavier one. From the fork point (the target's last
+    /// ancestor on the connected chain) it disconnects the old blocks, then
+    /// connects the target's branch block by block, validating each body. A
+    /// body that fails is marked invalid with its descendants, the target is
+    /// recomputed, and the loop repeats (possibly reconnecting the old chain).
+    fn sync_state(&mut self, outcome: &mut SyncOutcome) {
         loop {
-            let fork = self.fork_height();
-            // How far the best header chain can be connected with the bodies at hand.
-            let mut reachable = fork as u64;
-            while let Some(id) = self.headers.main_id_at(reachable + 1) {
-                if !self.bodies.contains_key(&id) {
-                    break;
-                }
-                reachable += 1;
+            let target = self.best_complete;
+            if target == self.tip_id() {
+                return;
             }
-            // Only leave the current chain for one with strictly more work whose bodies
-            // are all available; otherwise keep it (header-first sync may deliver the
-            // other branch's headers long before its bodies).
-            if fork + 1 < self.connected.len() {
-                let reachable_id = self.headers.main_id_at(reachable).expect("best chain");
-                let target_work = self.headers.work(&reachable_id).unwrap_or(0);
-                let current_work = self.headers.work(&self.tip_id()).unwrap_or(0);
-                if target_work <= current_work {
-                    break;
+            debug_assert!(self.work(&target) > self.work(&self.tip_id()));
+            // The target's branch back to the connected chain.
+            let mut path = Vec::new();
+            let mut cur = target;
+            let fork = loop {
+                let h = self
+                    .headers
+                    .header(&cur)
+                    .expect("complete blocks have headers");
+                if self.connected.get(h.height as usize) == Some(&cur) {
+                    break h.height as usize;
                 }
-            }
+                path.push(cur);
+                cur = h.prev_id;
+            };
+            path.reverse();
             let depth = self.connected.len() - 1 - fork;
             self.deepest_reorg = self.deepest_reorg.max(depth);
             if depth >= DEEP_REORG_WARN_DEPTH {
@@ -532,23 +766,18 @@ impl ChainManager {
                 log::info!("reorganization: disconnecting {depth} block(s) above height {fork}");
             }
             while self.connected.len() - 1 > fork {
-                reorganized = true;
+                outcome.reorganized = true;
                 let id = self.connected.pop().expect("above genesis");
                 self.generated.pop();
                 assert!(self.state.undo_block());
                 if let Some(body) = self.bodies.get(&id) {
-                    returned.extend(body.iter().skip(1).cloned());
+                    outcome.returned.extend(body.iter().skip(1).cloned());
                 }
             }
-            // Connect forward as far as bodies are available.
-            let mut failed = false;
-            for h in fork as u64 + 1..=reachable {
-                let id = self
-                    .headers
-                    .main_id_at(h)
-                    .expect("height within best chain");
-                let body = self.bodies.get(&id).expect("checked above");
-                let header = self.headers.header(&id).expect("main chain header");
+            for id in path {
+                let body = self.bodies.get(&id).expect("complete blocks have bodies");
+                let header = self.headers.header(&id).expect("known header");
+                let h = header.height;
                 let generated = self.generated();
                 let reward = block_reward(h, generated);
                 let ctx = BlockContext {
@@ -574,27 +803,23 @@ impl ChainManager {
                         self.mempool.remove_block(body);
                     }
                     Err(e) => {
-                        log::warn!("block {} at height {h} is invalid: {e:?}", hex(&id));
-                        self.invalid.insert(id, e);
-                        self.bodies.remove(&id);
-                        self.headers.mark_invalid(&id);
-                        failed = true;
+                        self.invalidate(id, e);
                         break;
                     }
                 }
             }
-            if !failed {
-                break;
-            }
         }
-        // Mempool: return transactions from disconnected blocks, then drop anything
-        // no longer valid at the new tip.
+    }
+
+    /// Mempool: returns transactions from disconnected blocks, then drops
+    /// anything no longer valid at the new tip.
+    fn finish_sync(&mut self, outcome: SyncOutcome) {
         let next = self.height() + 1;
-        for tx in returned {
+        for tx in outcome.returned {
             let _ = self.mempool.add(tx, &self.state, next, &self.rules);
         }
         self.mempool
-            .revalidate(&self.state, next, &self.rules, reorganized);
+            .revalidate(&self.state, next, &self.rules, outcome.reorganized);
     }
 
     // ---- header-first sync (docs/p2p.md §6) ----
@@ -680,19 +905,45 @@ impl ChainManager {
         out
     }
 
-    /// Best-chain blocks whose body is missing, lowest first (for download).
+    /// Blocks whose body is missing on the way to every valid header tip with
+    /// more work than the connected tip, lowest height first (for download).
+    /// The header-best chain is scanned forward from its fork with the
+    /// connected chain; any other heavier tip (a competing branch, for example
+    /// while the header-best one's bodies are withheld) is walked back to its
+    /// last body-complete ancestor. Equal-work tips are not listed: they could
+    /// not replace the connected tip (ties keep it).
     pub fn missing_bodies(&self, max: usize) -> Vec<(u64, Hash)> {
+        let tip_work = self.work(&self.tip_id());
         let mut out = Vec::new();
-        let mut h = self.fork_height() as u64 + 1;
-        while out.len() < max {
-            let Some(id) = self.headers.main_id_at(h) else {
-                break;
-            };
-            if !self.bodies.contains_key(&id) {
-                out.push((h, id));
+        if self.headers.best_work() > tip_work {
+            let mut h = self.fork_height() as u64 + 1;
+            while out.len() < max {
+                let Some(id) = self.headers.main_id_at(h) else {
+                    break;
+                };
+                if !self.bodies.contains_key(&id) {
+                    out.push((h, id));
+                }
+                h += 1;
             }
-            h += 1;
         }
+        let main_tip = self.headers.tip_id();
+        let mut seen: HashSet<Hash> = out.iter().map(|&(_, id)| id).collect();
+        for &(_, leaf) in self.leaves.range((tip_work + 1, [0u8; 32])..) {
+            if leaf == main_tip {
+                continue;
+            }
+            let mut cur = leaf;
+            while !self.complete.contains_key(&cur) {
+                let header = self.headers.header(&cur).expect("valid header");
+                if !self.bodies.contains_key(&cur) && seen.insert(cur) {
+                    out.push((header.height, cur));
+                }
+                cur = header.prev_id;
+            }
+        }
+        out.sort_by_key(|&(h, _)| h);
+        out.truncate(max);
         out
     }
 
@@ -746,8 +997,7 @@ impl ChainManager {
 
     /// Accepts a batch of headers in order. Known headers are skipped. Returns the
     /// number of new headers, or the index and error of the first rejected one.
-    /// Headers before a rejected one stay accepted, and the state is brought up
-    /// to date with them either way.
+    /// Headers before a rejected one stay accepted.
     pub fn accept_headers(
         &mut self,
         headers: &[BlockHeader],
@@ -768,12 +1018,11 @@ impl ChainManager {
                 result = Err((i, e));
                 break;
             }
+            self.header_added(id, h.prev_id);
             new += 1;
         }
-        // New headers can make a stored side branch the best available chain.
-        if new > 0 {
-            self.sync_state();
-        }
+        // Headers never change the connected chain: its target depends only on
+        // bodies (module docs). New headers only add bodies to download.
         result.map(|()| new)
     }
 

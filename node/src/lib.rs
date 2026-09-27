@@ -8,6 +8,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod fingerprint;
+
 use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -18,6 +20,7 @@ use blacksilk_chain::manager::{ChainManager, SubmitError};
 use blacksilk_consensus::Network;
 use blacksilk_p2p::Network as P2p;
 use blacksilk_rpc as rpc;
+use blacksilk_tx::state::MemoryChain;
 use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::ChainView;
 use serde::Deserialize;
@@ -50,11 +53,21 @@ pub fn default_rpc_port(n: Network) -> u16 {
     }
 }
 
+/// Exit status of a node whose chain lock was poisoned.
+pub const POISONED_EXIT_CODE: i32 = 70;
+
 fn lock(shared: &Shared) -> MutexGuard<'_, ChainManager> {
-    // A panic while holding the lock leaves the manager in a state produced by
-    // complete operations only (sync_state runs to completion or panics before
-    // mutating); continuing is preferable to taking the node down.
-    shared.lock().unwrap_or_else(|e| e.into_inner())
+    // A panic while holding the lock can leave the manager half-updated (a block
+    // applied to the state but not to the tip, for example). Continuing would
+    // serve and build on that state, so the node stops instead: the block store
+    // is append-only and a restart replays it deterministically.
+    match shared.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            log::error!("chain state lock poisoned by a panic; stopping (restart to recover)");
+            std::process::exit(POISONED_EXIT_CODE)
+        }
+    }
 }
 
 /// The message the node exits with when its block store failed.
@@ -152,6 +165,12 @@ async fn info(State(App { chain: s, net }): State<App>) -> Json<rpc::Info> {
         header_height: m.header_height(),
         deepest_reorg: m.deepest_reorg() as u64,
         misbehaving_disconnects: stats.as_ref().map_or(0, |s| s.misbehaving_disconnects),
+        genesis_id: Some(fingerprint::hex(&m.params().genesis_id())),
+        consensus_fingerprint: Some(fingerprint::hex(&fingerprint::consensus_fingerprint(
+            m.params().network,
+        ))),
+        build_commit: Some(fingerprint::BUILD_COMMIT.to_string()),
+        version: Some(fingerprint::VERSION.to_string()),
     })
 }
 
@@ -294,26 +313,95 @@ fn digest_hex(d: &[u32; 8]) -> String {
     hex::encode(blacksilk_tx::px::digest_bytes(d))
 }
 
+#[derive(Deserialize)]
+struct PxCommitmentsQuery {
+    from: Option<u64>,
+    limit: Option<u64>,
+}
+
+/// A page of the PX commitment list, copied out of the state: only the
+/// requested entries (height and 32-byte digest each), never the record log
+/// or its ciphertexts.
+struct PxPage {
+    from: u64,
+    /// `(height, commitment)`; a PX digest is eight field words.
+    entries: Vec<(u64, [u32; 8])>,
+    total: u64,
+    root: [u32; 8],
+    height: u64,
+}
+
+impl PxPage {
+    /// Validates the query and copies the page. Cost is proportional to the
+    /// page, so the caller may hold the chain lock around it.
+    fn take(
+        state: &MemoryChain,
+        height: u64,
+        from: Option<u64>,
+        limit: Option<u64>,
+    ) -> Result<Self, String> {
+        let from = from.unwrap_or(0);
+        let limit = limit.unwrap_or(rpc::DEFAULT_PX_COMMITMENTS_PER_REQUEST);
+        if limit == 0 || limit > rpc::MAX_PX_COMMITMENTS_PER_REQUEST {
+            return Err(format!(
+                "limit must be 1..={}",
+                rpc::MAX_PX_COMMITMENTS_PER_REQUEST
+            ));
+        }
+        let entries = state
+            .px_record_slice(from, limit as usize)
+            .iter()
+            .map(|r| (r.height, r.commitment))
+            .collect();
+        Ok(Self {
+            from,
+            entries,
+            total: state.px_record_count(),
+            root: state.px().root(),
+            height,
+        })
+    }
+
+    fn render(self) -> rpc::PxCommitments {
+        let end = self.from.saturating_add(self.entries.len() as u64);
+        rpc::PxCommitments {
+            from: self.from,
+            commitments: self
+                .entries
+                .iter()
+                .map(|(h, c)| (*h, digest_hex(c)))
+                .collect(),
+            total: self.total,
+            root: digest_hex(&self.root),
+            height: self.height,
+            next: (end < self.total).then_some(end),
+        }
+    }
+}
+
+/// The `/px/commitments` answer for `from` and `limit` (both optional, as in
+/// the query string) on `state` at tip `height`; `Err` is the HTTP 400
+/// message. Exposed for tests: the RPC handler is exactly this.
+pub fn px_commitments_page(
+    state: &MemoryChain,
+    height: u64,
+    from: Option<u64>,
+    limit: Option<u64>,
+) -> Result<rpc::PxCommitments, String> {
+    PxPage::take(state, height, from, limit).map(PxPage::render)
+}
+
 async fn px_commitments(
     State(App { chain: s, .. }): State<App>,
-    Query(q): Query<FromQuery>,
-) -> Json<rpc::PxCommitments> {
-    let m = lock(&s);
-    let records = m.state().px_records(0, u64::MAX);
-    let total = records.len() as u64;
-    let commitments = records
-        .iter()
-        .skip(q.from.min(total) as usize)
-        .take(rpc::MAX_PX_COMMITMENTS_PER_REQUEST as usize)
-        .map(|r| (r.height, digest_hex(&r.commitment)))
-        .collect();
-    Json(rpc::PxCommitments {
-        from: q.from,
-        commitments,
-        total,
-        root: digest_hex(&m.state().px().root()),
-        height: m.height(),
-    })
+    Query(q): Query<PxCommitmentsQuery>,
+) -> Result<Json<rpc::PxCommitments>, ApiError> {
+    // The lock is held only to copy the requested page; hex encoding and
+    // serialization happen after it is released.
+    let page = {
+        let m = lock(&s);
+        PxPage::take(m.state(), m.height(), q.from, q.limit)
+    };
+    Ok(Json(page.map_err(bad_request)?.render()))
 }
 
 async fn px_contracts(
