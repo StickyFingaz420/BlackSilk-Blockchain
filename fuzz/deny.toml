@@ -1,0 +1,90 @@
+# cargo-deny policy for the separate fuzz workspace (S1, dossier 44). The main
+# workspace's policy is ../deny.toml; this one differs only where the fuzz
+# harness needs it: libFuzzer (C++, built by cc) is allowed here, and only as
+# the harness's own dependency. Nothing in this workspace enters a product
+# build. CI: .github/workflows/ci.yml, job `deny`. Run locally, in fuzz/:
+#   cargo deny --locked check
+
+[graph]
+# The fuzz campaigns run on Linux x86_64 only (fuzz/run_campaign.sh, CI).
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+
+[advisories]
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "paste 1.0.15 is unmaintained (archived), not vulnerable; compile-time proc macro reached only through Plonky3 (see ../deny.toml)" },
+]
+
+[licenses]
+# ../deny.toml's list for this graph, plus NCSA (libFuzzer, part of LLVM).
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "MIT",
+    "NCSA",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.93
+unused-allowed-license = "allow"
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+
+# ../deny.toml's native-code bans. libfuzzer-sys and cc are the exceptions:
+# each is allowed only as the direct dependency of the named wrapper.
+deny = [
+    { crate = "libfuzzer-sys", wrappers = ["blacksilk-fuzz"], reason = "C++ libFuzzer: the fuzz harness only" },
+    { crate = "cc", wrappers = ["libfuzzer-sys"], reason = "builds libFuzzer; nothing else may compile C/C++" },
+    { crate = "cmake", reason = "drives a C/C++ build" },
+    { crate = "bindgen", reason = "generates FFI bindings to C headers" },
+    { crate = "pkg-config", reason = "locates system C libraries" },
+    { crate = "vcpkg", reason = "locates system C libraries" },
+    { crate = "openssl", reason = "binds the OpenSSL C library" },
+    { crate = "openssl-sys", reason = "binds the OpenSSL C library" },
+    { crate = "native-tls", reason = "binds the platform C TLS library" },
+    { crate = "ring", reason = "contains C and assembly" },
+    { crate = "aws-lc-sys", reason = "binds the AWS-LC C library" },
+    { crate = "aws-lc-rs", reason = "binds the AWS-LC C library" },
+    { crate = "libz-sys", reason = "binds zlib (C)" },
+    { crate = "zstd-sys", reason = "binds zstd (C)" },
+    { crate = "bzip2-sys", reason = "binds bzip2 (C)" },
+    { crate = "lzma-sys", reason = "binds liblzma (C)" },
+    { crate = "libsqlite3-sys", reason = "binds SQLite (C)" },
+    { crate = "secp256k1-sys", reason = "binds libsecp256k1 (C)" },
+    { crate = "blst", reason = "C and assembly" },
+    { crate = "randomx-rs", reason = "binds the C++ RandomX" },
+]
+
+# Today's duplicates in fuzz/Cargo.lock (cargo deny check bans, 2026-09-27),
+# the same splits as in ../deny.toml; exact versions only. The fuzz lock
+# resolves some versions differently from the main lock (SC-5).
+skip = [
+    { crate = "block-buffer@0.10.4", reason = "RustCrypto 0.10 generation (SC-6)" },
+    { crate = "crypto-common@0.1.7", reason = "RustCrypto 0.10 generation (SC-6)" },
+    { crate = "digest@0.10.7", reason = "RustCrypto 0.10 generation (SC-6)" },
+    { crate = "cpufeatures@0.2.17", reason = "RustCrypto 0.10 generation (SC-6)" },
+    { crate = "chacha20@0.9.1", reason = "chacha20poly1305 0.10 vs rand 0.10's chacha20 0.10 (SC-6)" },
+    { crate = "rand_core@0.6.4", reason = "rand_core 0.6 (workspace crates, curve25519-dalek 4) vs 0.10 (rand 0.10, ml-kem) (SC-6)" },
+    { crate = "hashbrown@0.14.5", reason = "wasmi 0.38 (contracts) uses 0.14; indexmap and Plonky3 use 0.17" },
+    { crate = "spin@0.9.9", reason = "wasmi 0.38 (contracts) uses 0.9; Plonky3 0.7 uses 0.12" },
+    { crate = "syn@2.0.119", reason = "proc-macro crates on syn 2 and syn 3; compile time only" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

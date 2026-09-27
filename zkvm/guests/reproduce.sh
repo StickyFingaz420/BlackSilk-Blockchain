@@ -26,7 +26,7 @@ ids="$(cd "$root" && cargo run --locked --quiet --release -p blacksilk-zkvm --ex
   "$GUEST_OUT/guest-kernel" "$GUEST_OUT/guest-vault" "$root/px/kernel.elf" "$root/px/vault.elf")"
 echo "$ids"
 id_of() { echo "$ids" | sed -n "${1}p" | cut -d' ' -f1; }
-sha_of() { sha256sum "$1" | cut -d' ' -f1; }
+sha_of() { guest_sha256 "$1"; }
 
 status=0
 check() {
