@@ -2,3 +2,8 @@
 *.sh text eol=lf
 *.service text eol=lf
 Dockerfile text eol=lf
+
+# Consensus-pinned artifacts (zkvm/guests/README.md): never converted.
+# The ELFs are binary; the program id files keep their exact committed bytes.
+*.elf binary
+*.id -text
