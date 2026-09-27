@@ -1881,7 +1881,7 @@ fn as_transfer(tx: &Transaction) -> blacksilk_tx::types::Transfer {
 /// tx review H1: a transfer with garbage CLSAGs over real, deeply buried ring
 /// members fails only at the signature check, which used to count as
 /// contextual: no penalty, no reject cache, re-sendable forever at ~3 ms of
-/// CPU per input under the chain lock. A ring member 10 or more blocks deep
+/// CPU per input under the chain lock. A ring member 60 or more blocks deep
 /// resolves to the same output on every plausible branch, so such a failure
 /// is the sender's fault: penalized, remembered, never verified again. An
 /// honest transaction still flows.
@@ -1891,6 +1891,8 @@ async fn invalid_signatures_over_buried_rings_are_penalized_once_verified() {
     a.mine_n(80, 0);
     let tx1 = a.payment();
     let tx2 = a.payment();
+    // Bury every ring member at least SIGNATURE_BURIAL (60) blocks deep.
+    a.mine_n(61, 0);
     let mut bad = as_transfer(&tx1);
     bad.signatures = as_transfer(&tx2).signatures; // valid CLSAGs, wrong message
     let bad = Transaction::from(bad);

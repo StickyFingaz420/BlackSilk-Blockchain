@@ -1961,8 +1961,12 @@ fn admit_tx(inner: &Arc<Inner>, peer: PeerId, tx: &Transaction, id: Hash, stem: 
 
 /// Ring members this deep below our tip resolve to the same outputs on every
 /// branch we could plausibly reorganize to, so a signature that fails over
-/// them fails for every honest node too (docs/p2p.md §10).
-const SIGNATURE_BURIAL: u64 = 10;
+/// them fails for every honest node too (docs/p2p.md §10). Far beyond the
+/// reorganization depth that only warns (`DEEP_REORG_WARN_DEPTH` = 10): a
+/// reorganization this deep would penalize honest relays, so the margin is
+/// wide (the coinbase maturity). Spam over younger rings still pays the
+/// per-peer input budget.
+const SIGNATURE_BURIAL: u64 = 60;
 
 /// Whether an `InvalidSignature` for an input with ring `ring` proves the
 /// sender relayed an invalid transaction: every ring member is at least

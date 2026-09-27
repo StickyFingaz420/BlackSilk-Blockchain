@@ -363,7 +363,7 @@ dropped.
 | Block whose body is invalid or does not match its header | 100 |
 | `Headers` that do not connect or are not a chain | 20 |
 | Unrequested `Headers` with more than one header | 10 |
-| Transaction invalid by a **stateless** rule (`Tx`/`StemTx`; transactions.md T1–T11), or with an invalid ring signature over ring members all ≥ 10 blocks deep | 20 |
+| Transaction invalid by a **stateless** rule (`Tx`/`StemTx`; transactions.md T1–T11), or with an invalid ring signature over ring members all ≥ 60 blocks deep | 20 |
 | A `StemTx` already proven invalid, sent again | 20 |
 | Unrequested `Block`/`Tx`, `Pong` without a ping, second `GetAddr` or oversized `Addr` | 10 |
 | Rate limit exceeded | 1 per excess message; the message is dropped |

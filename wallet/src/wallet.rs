@@ -2269,6 +2269,10 @@ mod tests {
                 header_height: 0,
                 deepest_reorg: 0,
                 misbehaving_disconnects: 0,
+                genesis_id: None,
+                consensus_fingerprint: None,
+                build_commit: None,
+                version: None,
             })
         }
         fn blocks(&self, _: u64, _: u64) -> Result<rpc::Blocks, String> {

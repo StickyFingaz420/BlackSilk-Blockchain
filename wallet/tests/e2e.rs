@@ -87,6 +87,17 @@ impl Net {
 
     /// Mines a coinbase-only block on an arbitrary parent (to build a fork).
     fn mine_on(&mut self, parent: &Hash, to: &Address, nonce: u64) -> Hash {
+        self.mine_on_block(parent, to, nonce).0
+    }
+
+    /// As [`Net::mine_on`], also returning the block (to re-submit a body the
+    /// node refused as low-work, as the P2P layer re-requests it).
+    fn mine_on_block(
+        &mut self,
+        parent: &Hash,
+        to: &Address,
+        nonce: u64,
+    ) -> (Hash, blacksilk_chain::block::Block) {
         let mut m = self.shared.lock().unwrap();
         let t = m.template_on(parent).unwrap();
         let rt = rpc::Template {
@@ -109,7 +120,8 @@ impl Net {
         .unwrap();
         b.header.nonce = nonce;
         let now = b.header.timestamp;
-        m.submit_block(b, now).unwrap().id
+        let id = m.submit_block(b.clone(), now).unwrap().id;
+        (id, b)
     }
 }
 
@@ -1113,9 +1125,36 @@ fn a_reorganization_deeper_than_the_kept_window_rescans() {
     assert_eq!(miner.synced_height(), 760);
     // A heavier branch from height 20, paying someone else.
     let mut tip = fork_parent;
+    let mut branch = Vec::new();
     for i in 0..741 {
-        tip = net.mine_on(&tip, &other.primary(), 10_000 + i);
+        let (id, b) = net.mine_on_block(&tip, &other.primary(), 10_000 + i);
+        tip = id;
+        branch.push(b);
     }
+    // The branch's early bodies were refused while it was far lighter than the
+    // tip (low-work policy, docs/blocks.md §8). Once its headers are heavier the
+    // node wants them again (`missing_bodies`); deliver them as a peer would.
+    let mut rounds = 0;
+    loop {
+        let wanted = { net.shared.lock().unwrap().missing_bodies(256) };
+        if wanted.is_empty() {
+            break;
+        }
+        rounds += 1;
+        assert!(rounds < 100, "missing bodies do not converge");
+        for b in &branch {
+            let id = b.header.id(net.rules.network_id);
+            if wanted.iter().any(|(_, w)| *w == id) {
+                let now = b.header.timestamp;
+                net.shared
+                    .lock()
+                    .unwrap()
+                    .submit_block(b.clone(), now)
+                    .unwrap();
+            }
+        }
+    }
+    assert!(rounds > 0, "the refused bodies are requested again");
     assert_eq!(net.client.info().unwrap().height, 761);
     miner.sync(&net.client).unwrap();
     assert_eq!(miner.synced_height(), 761);
