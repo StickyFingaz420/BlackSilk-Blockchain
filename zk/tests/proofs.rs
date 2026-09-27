@@ -488,3 +488,69 @@ fn unbound_proof_fields_cannot_be_rewritten() {
     // The honest proof is unaffected.
     assert!(decode_proof(&encode_proof(&proof)).is_ok());
 }
+
+/// R4-02: the p3-fri prover folds with exactly `honest_fri_schedule` of the
+/// proof's degree bits, for equal table heights and for every gap between
+/// them from 1 to 5 log steps (one to two folding rounds between inputs).
+#[test]
+fn honest_proofs_use_the_canonical_fri_schedule() {
+    let v = VerifierConfig::new();
+    for (i, (n, range)) in [
+        (256, 256),
+        (256, 512),
+        (256, 1 << 10),
+        (256, 1 << 11),
+        (256, 1 << 12),
+        (256, 1 << 13),
+        (1 << 12, 1 << 12),
+        (1 << 10, 1 << 13),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (traces, pv) = witness(0, n, range);
+        let proof = prove(&prover(100 + i as u64), &AIRS, &traces, &pv, &LIMITS).unwrap();
+        let got: Vec<usize> = proof
+            .opening_proof
+            .1
+            .commit_phase_openings
+            .iter()
+            .map(|o| o.log_arity as usize)
+            .collect();
+        assert_eq!(
+            got,
+            blacksilk_zk::honest_fri_schedule(&proof.degree_bits),
+            "heights {n} and {range}"
+        );
+        assert_eq!(verify(&v, &AIRS, &proof, &pv, &LIMITS), Ok(()));
+    }
+}
+
+/// R4-02: a proof whose folding schedule differs from the canonical one is
+/// refused before the Plonky3 verifier runs. With both tables at 2^12 rows the
+/// FRI input height is 16 and the final height 9: the canonical schedule is
+/// [4, 3]; [3, 4] also reaches 9 in two rounds, and without the rule a prover
+/// could choose it.
+#[test]
+fn a_non_canonical_fri_schedule_is_refused() {
+    let (traces, pv) = witness(0, 1 << 12, 1 << 12);
+    let proof = prove(&prover(200), &AIRS, &traces, &pv, &LIMITS).unwrap();
+    let v = VerifierConfig::new();
+    assert_eq!(verify(&v, &AIRS, &proof, &pv, &LIMITS), Ok(()));
+    let arities = |p: &Proof| -> Vec<u8> {
+        p.opening_proof
+            .1
+            .commit_phase_openings
+            .iter()
+            .map(|o| o.log_arity)
+            .collect()
+    };
+    assert_eq!(arities(&proof), vec![4, 3]);
+    let mut swapped = decode_proof(&encode_proof(&proof)).unwrap();
+    swapped.opening_proof.1.commit_phase_openings[0].log_arity = 3;
+    swapped.opening_proof.1.commit_phase_openings[1].log_arity = 4;
+    match verify(&v, &AIRS, &swapped, &pv, &LIMITS) {
+        Err(ZkError::Invalid(e)) => assert!(e.contains("not the canonical"), "{e}"),
+        r => panic!("expected the schedule rule to refuse it, got {r:?}"),
+    }
+}

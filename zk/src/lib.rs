@@ -154,6 +154,7 @@ pub fn verify<A: ProvableAir>(
             });
         }
     }
+    check_fri_schedule(proof)?;
     let result = catch_unwind(AssertUnwindSafe(|| {
         // Same deterministic setup as the prover (see `prove`): a fresh setup
         // configuration, so the preprocessed commitment never depends on the
@@ -169,6 +170,73 @@ pub fn verify<A: ProvableAir>(
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => Err(ZkError::Invalid(format!("{e:?}"))),
         Err(_) => Err(ZkError::VerifierPanicked),
+    }
+}
+
+/// The FRI folding schedule (log2 of each commit-phase round's arity) that
+/// the honest prover uses for a proof whose tables have `degree_bits`.
+///
+/// Every FRI input of a table with degree bits `db` (its main trace, the
+/// hiding PCS's random columns, its randomized quotient chunks, its
+/// preprocessed columns and its lookup columns) lies on a domain of size
+/// `2^db` (p3-batch-stark 0.7.0 `commitments_with_opening_points`), so the
+/// distinct input log-heights are `{db_i + LOG_BLOWUP}`. From the largest,
+/// each round folds by `p3_fri::compute_log_arity_for_round` (the function
+/// the p3-fri prover's commit phase calls, `third_party/p3-fri/src/config.rs`)
+/// until the final height `LOG_BLOWUP + LOG_FINAL_POLY_LEN`, stopping at every
+/// input height on the way.
+pub fn honest_fri_schedule(degree_bits: &[usize]) -> Vec<usize> {
+    let mut heights: Vec<usize> = degree_bits.iter().map(|db| db + params::LOG_BLOWUP).collect();
+    heights.sort_unstable_by(|a, b| b.cmp(a));
+    heights.dedup();
+    let log_final = params::LOG_BLOWUP + params::LOG_FINAL_POLY_LEN;
+    let mut schedule = Vec::new();
+    let Some(&start) = heights.first() else {
+        return schedule;
+    };
+    let mut current = start;
+    while current > log_final {
+        // The prover peeks the next input not yet rolled in: the largest
+        // height below the current one.
+        let next = heights.iter().copied().find(|&h| h < current);
+        let arity =
+            p3_fri::compute_log_arity_for_round(current, next, log_final, params::MAX_LOG_ARITY);
+        schedule.push(arity);
+        current -= arity;
+    }
+    schedule
+}
+
+/// R4-02 (canonical folding schedule). The Plonky3 0.7.0 FRI verifier takes
+/// the per-round folding arities from the proof. It checks that they are in
+/// `1..=MAX_LOG_ARITY`, that they sum to the right total, and that every input
+/// height is reached, but a prover holding the witness may still split the
+/// arity differently between input heights and get another valid proof of the
+/// same statement. This is not third-party malleability (only a witness holder
+/// can re-prove; the SX1 cross-review corrected the earlier rationale), but it
+/// is a second valid encoding that nothing needs. The rule: the schedule must
+/// be exactly [`honest_fri_schedule`] of the proof's degree bits.
+///
+/// **Consensus (testnet v3 rule set):** a proof with any other schedule is
+/// invalid. Honest proofs are unaffected: the p3-fri prover derives its
+/// schedule with the same function from the same heights (tests cover every
+/// consensus shape).
+fn check_fri_schedule(proof: &Proof) -> Result<(), ZkError> {
+    let expected = honest_fri_schedule(&proof.degree_bits);
+    let fri = &proof.opening_proof.1;
+    let ok = fri.commit_phase_openings.len() == expected.len()
+        && fri
+            .commit_phase_openings
+            .iter()
+            .zip(&expected)
+            .all(|(o, &a)| o.log_arity as usize == a);
+    if ok {
+        Ok(())
+    } else {
+        let got: Vec<u8> = fri.commit_phase_openings.iter().map(|o| o.log_arity).collect();
+        Err(ZkError::Invalid(format!(
+            "FRI folding schedule {got:?} is not the canonical {expected:?}"
+        )))
     }
 }
 
@@ -264,6 +332,59 @@ fn check_canonical_form(proof: &Proof) -> Result<(), ZkError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod schedule_tests {
+    use super::*;
+
+    /// The schedule is well formed for every set of degree bits a proof may
+    /// have (1 to 32 tables, each `MIN_LOG_HEIGHT + 1 ..= MAX_LOG_HEIGHT + 1`):
+    /// arities in `1..=MAX_LOG_ARITY`, summing to the fold from the largest
+    /// input height to the final height, and stopping at every input height.
+    #[test]
+    fn honest_schedules_are_well_formed() {
+        let lo = params::MIN_LOG_HEIGHT + 1;
+        let hi = params::MAX_LOG_HEIGHT + 1;
+        let log_final = params::LOG_BLOWUP + params::LOG_FINAL_POLY_LEN;
+        // Every subset of the allowed degree bits (15 values: 2^15 sets).
+        let range: Vec<usize> = (lo..=hi).collect();
+        for mask in 1u32..(1 << range.len()) {
+            let dbs: Vec<usize> = range
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| mask & (1 << i) != 0)
+                .map(|(_, &d)| d)
+                .collect();
+            let s = honest_fri_schedule(&dbs);
+            let top = dbs.iter().max().unwrap() + params::LOG_BLOWUP;
+            assert_eq!(s.iter().sum::<usize>(), top - log_final, "{dbs:?}");
+            assert!(s.iter().all(|&a| (1..=params::MAX_LOG_ARITY).contains(&a)));
+            let mut visited = vec![top];
+            for a in &s {
+                visited.push(visited.last().unwrap() - a);
+            }
+            for db in &dbs {
+                assert!(visited.contains(&(db + params::LOG_BLOWUP)), "{dbs:?} {s:?}");
+            }
+            // The order of the tables does not matter.
+            let mut rev = dbs.clone();
+            rev.reverse();
+            assert_eq!(honest_fri_schedule(&rev), s);
+        }
+    }
+
+    #[test]
+    fn known_schedules() {
+        // One table of 2^8 rows: input height 12, final 9.
+        assert_eq!(honest_fri_schedule(&[9]), vec![3]);
+        // 2^12 rows: 16 -> 12 -> 9.
+        assert_eq!(honest_fri_schedule(&[13]), vec![4, 3]);
+        assert_eq!(honest_fri_schedule(&[13, 13, 9]), vec![4, 3]);
+        // Heights 17 and 12: 17 -> 13 -> 12 -> 9.
+        assert_eq!(honest_fri_schedule(&[14, 9]), vec![4, 1, 3]);
+        assert_eq!(honest_fri_schedule(&[]), Vec::<usize>::new());
+    }
 }
 
 /// **Analysis only** (not used by proving or verification): what an outside

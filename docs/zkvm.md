@@ -443,7 +443,14 @@ power-of-two heights sized to the execution, and do leak coarse timing.
 
 - **Before verification:**
   - the proof bytes are size-checked (≤ `MAX_PROOF_BYTES`) and strictly decoded;
-  - every claimed table height is checked against its limit.
+  - every claimed table height is checked against its limit;
+  - **canonical FRI folding schedule** (R4-02, testnet v3 rule set): the per-round
+    folding arities the proof carries must equal `zk::honest_fri_schedule` of its
+    degree bits, the schedule the p3-fri prover derives with
+    `compute_log_arity_for_round`. Plonky3 0.7.0 takes the arities from the proof and
+    accepts any split between input heights; only a witness holder could produce
+    another split (it is not relayer malleability), but it is a second valid proof
+    of the same statement that nothing needs.
 - **During verification:**
   - the Plonky3 verifier is run behind `catch_unwind`; its README warns that malformed
     proofs may panic it;
