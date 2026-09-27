@@ -233,15 +233,28 @@ payload = pow_hash (32) ‖ block bytes
   so a crash cannot lose an applied block.
 - **Startup:** the node replays the file through the same code path as live blocks. For
   headers from its own file it uses the stored PoW hash instead of recomputing RandomX
-  (about 0.45 s per header). Records are written only for headers that passed full
-  header validation, including PoW, and the CRC detects corruption. Bodies are fully
-  re-validated during replay, so a stored block with an invalid body is rejected again
-  deterministically.
+  (about 0.45 s per header). The stored hash is trusted only under the RandomX key
+  derived from the stored parent, exactly as header validation derives it: the PoW
+  cache is keyed by (seed, header bytes). Records are written only for headers that
+  passed full header validation, including PoW, and the CRC detects corruption. Bodies
+  are fully re-validated during replay, so a stored block with an invalid body is
+  rejected again deterministically.
 - **Replay order.** Records are in arrival order, and bodies arrive in any order during
   header-first sync (up to 16 in flight, from several peers). A block is replayed once
-  its parent is known; one stored before its parent waits for it.
+  its parent is known; one stored before its parent waits for it. Blocks released
+  together (the waiting children of the block just replayed) replay in storage order.
   - A stored block whose parent was never stored (the parent's write failed) is not
     replayed. It stays in the file, and the node downloads it again.
+  - Descendants of a block found invalid are refused again on replay, including ones
+    stored before it (header-first sync). Fixed 2026-09-27: before, such a grandchild
+    stopped the node from starting (`UnknownParent`), and the log counted such blocks
+    as orphans to download again.
+  - **Tie-breaking after a restart (accepted limitation).** Between branches of equal
+    work the node keeps the one it saw first. After a restart "first" is replay order,
+    which follows body storage order, not the order in which headers arrived. A node
+    can therefore come back on the other of two equal-work tips; the next block on
+    either branch resolves it as usual. No consensus rule depends on it
+    (`storage_recovery.rs::siblings_stored_before_their_parent_replay_in_storage_order`).
   - Fixed 2026-09-27. Before, a node that had received bodies out of order refused to
     restart (`chain/tests/manager.rs::restart_after_out_of_order_body_arrival_replays_the_store`).
 - **A failed write** (disk full, I/O error) is undone: the file is truncated back to
@@ -252,19 +265,35 @@ payload = pow_hash (32) ‖ block bytes
   - So no record ever follows damaged bytes, and a node is never left unable to restart
     by a failed write. Before 2026-09-27 the partial record stayed in place, and the
     next block written after it made the whole store refuse to load.
-  - Tested with injected failures (`store.rs` tests,
-    `a_failed_block_write_during_sync_is_recoverable`). A real full disk has not been
-    tested.
+  - **Fail safe.** When a write fails and cannot be undone, or 3 writes in a row fail
+    (`STORE_FAILURE_LIMIT`: a full or failing disk), the chain manager marks the store
+    failed (`ChainManager::store_failed`) and refuses every further block before
+    looking at it: no header or state change. The node checks this every 2 s and exits
+    with `block store write failed: free disk space / check the disk, then restart the
+    node`, instead of staying up while re-downloading bodies it cannot store. A restart
+    truncates any torn tail and resumes from the last stored block.
+  - Tested with injected failures (`store.rs` tests, `chain/tests/storage_recovery.rs`:
+    a crash at every byte of the last record, a full disk, a failure during a
+    reorganization, restarts after each). A real full disk has not been tested.
 - **Corruption:**
-  - **Damaged tail** (a crash mid-write): truncated away with a warning. A damaged
-    record counts as the tail unless a run of valid records follows it **to the end of
-    the file**. This check keeps a record-shaped byte string inside a torn block's data
-    (partly user-chosen) from passing for later data.
-  - **Damage followed by valid records** is real corruption, not a crash. The node
-    refuses to start rather than silently drop blocks.
-  - The operator repairs it with `blacksilk-node --repair-store` (one run). Everything
-    from the first damaged record on is moved to `blocks.dat.damaged-<unix time>`, the
-    store is truncated there, and the node downloads the dropped blocks again.
+  - **Damaged tail** (a crash mid-write): truncated away with a warning. Damage counts
+    as the tail only if **no** valid record starts anywhere after it.
+  - **Damage followed by any valid record** is real corruption, not a crash. The node
+    refuses to start rather than silently drop blocks (fail safe). The check is linear:
+    each later position holding the magic is parsed at most once.
+  - A torn last block whose data happens to contain a complete record-shaped byte
+    string (block data is partly user-chosen) is also refused, since it cannot be told
+    apart from corruption; the repair below recovers it without losing any valid
+    record. Accepted trade-off: it needs a crash during exactly that block's write.
+    (From 2026-09-27 until the fix the same day, a rule that required valid records to
+    reach the end of the file accepted this case, but a mid-file bit flip plus a torn
+    tail then silently truncated every block after the flip, in quadratic time.)
+  - The operator repairs it with `blacksilk-node --repair-store` (one run; logged as a
+    warning). Everything from the first damaged record on is moved to
+    `blocks.dat.damaged-<unix time>` (synced to disk before the store is truncated),
+    the store is truncated there, and the node downloads the dropped blocks again.
+    Valid records after the damage are not salvaged (they are in the set-aside file).
+    A missing store (fresh data directory) is "nothing to repair".
 - **Known limitations** (acceptable for a controlled testnet; to be measured in the
   trial):
   - every block body and every block's undo data stays in memory (PX-F1, PX-F2);

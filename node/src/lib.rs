@@ -22,7 +22,7 @@ use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::ChainView;
 use serde::Deserialize;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub type Shared = Arc<Mutex<ChainManager>>;
 
@@ -55,6 +55,39 @@ fn lock(shared: &Shared) -> MutexGuard<'_, ChainManager> {
     // complete operations only (sync_state runs to completion or panics before
     // mutating); continuing is preferable to taking the node down.
     shared.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The message the node exits with when its block store failed.
+pub const STORE_FAILED_EXIT: &str = "block store write failed: free disk space / check the disk, \
+     then restart the node; it resumes from the last stored block (docs/testnet.md §9)";
+
+/// Resolves once the chain's block store has failed persistently
+/// ([`ChainManager::store_failed`]), checked every `period` on a plain thread.
+/// A node whose store failed accepts no block but would keep downloading
+/// bodies; the caller shuts it down so that a restart recovers
+/// deterministically (the load truncates a torn tail).
+pub fn watch_store(shared: Shared, period: Duration) -> tokio::sync::oneshot::Receiver<()> {
+    poll_until(period, move || lock(&shared).store_failed())
+}
+
+/// Resolves the returned receiver once `check` returns true, polling every
+/// `period`. The thread ends when the receiver is dropped.
+fn poll_until(
+    period: Duration,
+    check: impl Fn() -> bool + Send + 'static,
+) -> tokio::sync::oneshot::Receiver<()> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || loop {
+        if tx.is_closed() {
+            return;
+        }
+        if check() {
+            let _ = tx.send(());
+            return;
+        }
+        std::thread::sleep(period);
+    });
+    rx
 }
 
 fn now() -> u64 {
@@ -363,4 +396,31 @@ async fn outputs(
         });
     }
     Ok(Json(rpc::Outputs { outputs: out }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// The store watcher fires once the check turns true, not before.
+    #[test]
+    fn poll_until_fires_when_the_check_turns_true() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let f = flag.clone();
+        let mut rx = poll_until(Duration::from_millis(5), move || f.load(Ordering::SeqCst));
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(rx.try_recv().is_err(), "not fired while the check is false");
+        flag.store(true, Ordering::SeqCst);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match rx.try_recv() {
+                Ok(()) => break,
+                Err(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5))
+                }
+                Err(e) => panic!("watcher did not fire: {e:?}"),
+            }
+        }
+    }
 }

@@ -245,6 +245,7 @@ dependencies = [
  "blacksilk-crypto",
  "blacksilk-px",
  "blacksilk-px-core",
+ "blacksilk-randomx",
  "blacksilk-tx",
  "bs58",
  "crc32fast",
