@@ -125,18 +125,45 @@ The transaction state is:
 It is always the result of applying, in order, the bodies of the connected chain's
 blocks `1..tip`.
 
-The **connected chain** is the most-work chain whose bodies are all available.
+The **connected chain** is the most-work chain whose bodies are all available. Its tip
+is the *connection target*: the most-work valid header whose own body and every
+ancestor's body have been kept ("body-complete"; `chain/src/manager.rs`).
 - During header-first sync (p2p.md §6) the best *header* chain can be ahead of it, or on
-  another branch.
-- The node leaves its current chain only when the other branch, as far as its bodies
-  have arrived, has strictly more work. A heavier branch whose bodies are still
-  downloading therefore never rolls the state back early.
+  another branch. The header-best chain only guides downloads and the block locator;
+  it never decides the connected chain.
+- The node leaves its current chain only for a body-complete block with strictly more
+  work. A heavier branch whose bodies are still downloading therefore never rolls the
+  state back early, and one whose bodies are **withheld** never holds the chain back.
+- **Ties.** Between equal-work candidates the connected tip stays (no flapping).
+  Otherwise the candidate that became body-complete first wins. A block becomes
+  complete when its body is kept and its parent is complete; blocks waiting for a
+  parent complete, when it arrives, in body arrival order. The choice therefore depends
+  only on the order in which bodies were kept, which is the storage order, so a restart
+  reproduces it exactly (§8).
+- Fixed 2026-09-27 (A10-H1). Before, the state only followed the header-best chain,
+  where a tie keeps the first header seen. An attacker who announced a header B1 on
+  the tip and withheld its body tied the local miner's next block A1; A1 was never
+  connected, templates stayed on the old tip, and block production stalled for good
+  (more generally: any bodiless branch with at least the tip's work plus one block).
+  Tested by `chain/tests/fork_choice.rs` and, over TCP with an attacker peer that
+  announces a header and never serves the body, `p2p/tests/withheld_body.rs` (which
+  fails on the old code).
+- Downloads (`ChainManager::missing_bodies`) cover the path to every valid header tip
+  with strictly more work than the connected tip, not only the header-best one, so a
+  competing heavier branch is fetched while the header-best one's bodies are withheld.
+  Equal-work tips are not fetched: they cannot replace the connected tip.
 
 On a reorganization the node:
-1. disconnects blocks back to the fork point, undoing their state changes in reverse
-   order;
-2. connects the new branch block by block, validating each body against the state
+1. finds the fork point (the target's last ancestor on the connected chain);
+2. disconnects blocks back to it, undoing their state changes in reverse order;
+3. connects the target's branch block by block, validating each body against the state
    before it.
+
+If a body fails, the block and its descendants are marked invalid (header chain
+included) and dropped from the candidates; the target is recomputed (the most work
+among the remaining complete blocks, the connected tip on a tie) and the loop repeats,
+reconnecting the old chain if it is again the best. The state is synced after every
+single block that becomes complete, live and on replay alike.
 
 Transactions from disconnected blocks return to the mempool if they are still valid
 (§7).
@@ -224,13 +251,50 @@ Transactions from disconnected blocks return to the mempool if they are still va
 Blocks are stored in an append-only file `blocks.dat` in the node's data directory.
 
 ```
-record = magic "BSB1" ‖ LE32 length ‖ LE32 crc32(payload) ‖ payload
+file    = file header ‖ record*
+header  = magic "BSBH" ‖ LE32 version (1) ‖ LE32 network_id ‖ genesis_id (32)
+          ‖ LE32 crc32(the 44 bytes before)                          (48 bytes)
+record  = magic "BSB1" ‖ LE32 length ‖ LE32 crc32(payload) ‖ payload
 payload = pow_hash (32) ‖ block bytes
 ```
 
-- **What is stored:** every block whose header was accepted (main chain and side
-  branches). The record is written and flushed (`fsync`) *before* the block is applied,
-  so a crash cannot lose an applied block.
+- **Network identity** (added 2026-09-27, R10-3). A new store is created with the file
+  header. At startup (`BlockStore::bind`, before any record is read) a store naming
+  another network id or genesis is refused with "wrong network data directory", so a
+  store left over from an earlier testnet (for example a v2 store after the v3 reset)
+  is detected instead of being replayed into a new genesis and silently orphaned. A
+  damaged header or an unknown format version is refused too (fail safe); a header torn
+  while the store was being created (no record after it) is written again.
+  - **Legacy stores** written before 2026-09-27 have no header (format 0: records from
+    offset 0). They are accepted as they are, with a warning that their network cannot
+    be verified, and stay headerless: nothing is rewritten, appends continue in the
+    legacy layout. Only new stores get the header. Tested in `store.rs`
+    (`a_new_store_is_bound_to_its_network`, `a_legacy_headerless_store_is_accepted_unchanged`,
+    `damaged_and_torn_file_headers`) and `fork_choice.rs::a_store_of_another_network_is_refused`.
+- **What is stored:** every block whose header was accepted and whose body passes the
+  low-work policy below (main chain and side branches). The record is written and
+  flushed (`fsync`) *before* the block is applied, so a crash cannot lose an applied
+  block.
+- **Low-work bodies (node policy, not consensus; added 2026-09-27, R10-1).** A body is
+  stored and kept only if its block's cumulative work is at least the connected tip's
+  minus `LOW_WORK_MARGIN_BLOCKS` = 100 blocks at the tip's difficulty, or if the block
+  is on the path to a header tip with more work than the connected tip (exactly the
+  bodies `missing_bodies` requests). Otherwise the header is accepted but the body is
+  neither stored nor kept (`Submitted::body_kept == false`). Before, every side-branch
+  body was appended before any validation, so cheap children of early, low-difficulty
+  blocks (testnet: difficulty 100) could be stored forever.
+  - Honest reorganizations of any depth arrive header-first from the network and are
+    candidates, so they are never refused, including a heavier branch that is not the
+    header-best one. The margin covers locally mined side branches (a miner extending a
+    fork up to 100 blocks deep, block by block). Near the tip the difficulty is about
+    the current one, so each junk body the policy still keeps costs about one real
+    block of work. (The margin was meant to be about 6 blocks; existing tests mine
+    locally side branches up to 60 blocks deep block by block, which a 6-block margin
+    would refuse. 100 keeps them working; a smaller margin is a later tuning decision.)
+  - The refusal is reported as `Ok` with `body_kept: false`, not as a new
+    `SubmitError` variant: the P2P layer's exhaustive match on `SubmitError` would
+    otherwise need a change in `p2p/src/net.rs`. The P2P layer only accepts requested
+    blocks without penalty, and requested ones are always kept.
 - **Startup:** the node replays the file through the same code path as live blocks. For
   headers from its own file it uses the stored PoW hash instead of recomputing RandomX
   (about 0.45 s per header). The stored hash is trusted only under the RandomX key
@@ -249,12 +313,20 @@ payload = pow_hash (32) ‖ block bytes
     stored before it (header-first sync). Fixed 2026-09-27: before, such a grandchild
     stopped the node from starting (`UnknownParent`), and the log counted such blocks
     as orphans to download again.
-  - **Tie-breaking after a restart (accepted limitation).** Between branches of equal
-    work the node keeps the one it saw first. After a restart "first" is replay order,
-    which follows body storage order, not the order in which headers arrived. A node
-    can therefore come back on the other of two equal-work tips; the next block on
-    either branch resolves it as usual. No consensus rule depends on it
-    (`storage_recovery.rs::siblings_stored_before_their_parent_replay_in_storage_order`).
+  - **Replay equals live processing** (since 2026-09-27). Each replayed block becomes
+    body-complete as it is replayed, and the state is synced after each one, exactly as
+    live processing syncs after each completion; blocks released together complete in
+    storage order in both. Headers that arrived without bodies are not replayed, and
+    they never influence the connected chain (§6). So the tip, including every
+    equal-work tie, the state, `G`, the PX state and the nullifiers are the same after
+    a restart as before it (`fork_choice.rs::replay_reproduces_live_fork_choice_exactly`:
+    16 random delivery orders of a tree with five equal-work tips, two restarts each).
+    Before, the live node broke ties by first *header* seen and a restart by first
+    *body* stored, so it could come back on the other tip.
+  - Remaining exception: a stored block whose parent was never stored in the same
+    session (a failed write) is dropped after a restart and completes live only when
+    downloaded again, while a later replay releases the older copy as soon as the
+    parent is replayed. This can only change which of two equal-work tips is kept.
   - Fixed 2026-09-27. Before, a node that had received bodies out of order refused to
     restart (`chain/tests/manager.rs::restart_after_out_of_order_body_arrival_replays_the_store`).
 - **A failed write** (disk full, I/O error) is undone: the file is truncated back to
@@ -301,7 +373,8 @@ payload = pow_hash (32) ‖ block bytes
     body validation, including every PX proof (about 0.2 s each; PX-F3). Only RandomX
     is skipped;
   - there are no indexes and no pruning;
-  - side-branch blocks and blocks with invalid bodies stay in the file.
+  - side-branch blocks within the low-work margin, candidates' blocks, and blocks with
+    invalid bodies stay in the file.
   - Startup time and memory therefore grow with the chain. A store with bodies on disk,
     indexes and a verified-state checkpoint is post-trial work.
 

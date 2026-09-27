@@ -190,6 +190,13 @@ the CVE-2012-2459 class of duplicate-transaction malleability.
 - If a block is later found invalid by body or transaction validation, the node marks it
   invalid. That block and all its descendants are excluded, and the best chain is
   re-selected among the remaining valid tips (possibly a reorg).
+- **Header-best chain vs. connected chain.** The rules above select the best *header*
+  chain. The node's transaction state follows the most-work valid chain whose bodies
+  are all available (blocks.md §6): a header chain whose bodies are missing or withheld
+  cannot hold it back, and between equal-work body-complete tips the connected one
+  stays (else the one completed first). The two agree whenever the header-best chain's
+  bodies are available. This is node behaviour, not a validity rule: which blocks are
+  valid and which chain has the most work are unchanged (A10-H1, 2026-09-27).
 - **Reorganization depth: PROVISIONAL testnet policy** (accepted by the owner for the
   experimental testnet on 2026-09-25; not a mainnet decision; analysis in
   docs/reviews/k4-reorg-policy.md). **No limit and no checkpoints.** The

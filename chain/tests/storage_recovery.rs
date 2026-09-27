@@ -419,10 +419,12 @@ fn replay_skips_descendants_of_an_invalid_block_stored_before_it() {
 }
 
 /// Blocks stored before their parent are replayed in storage order once the
-/// parent arrives. Between equal-work siblings the header chain keeps the one
-/// seen first, so after a restart the tip is the sibling whose **body** was
-/// stored first, which may differ from the one whose **header** arrived first
-/// before the restart (accepted limitation, docs/blocks.md §8).
+/// parent arrives. Between equal-work siblings the one that became
+/// body-complete first is kept, and siblings released together complete in
+/// body arrival order, live and on replay alike: the tip is the sibling whose
+/// **body** was stored first, whichever **header** arrived first (docs/blocks.md
+/// §6, §8). Before 2026-09-27 the live node kept the first *header* seen, so a
+/// restart could come back on the other sibling.
 #[test]
 fn siblings_stored_before_their_parent_replay_in_storage_order() {
     let dir = tempfile::tempdir().unwrap();
@@ -447,7 +449,7 @@ fn siblings_stored_before_their_parent_replay_in_storage_order() {
         m.submit_block(blocks[4].clone(), blocks[4].header.timestamp)
             .unwrap();
         assert_eq!(m.height(), 6);
-        assert_eq!(m.tip_id(), id(&b), "live: first header seen wins");
+        assert_eq!(m.tip_id(), id(&a), "live: first stored body wins");
         (a, b)
     };
     let m = open_file(&path);
