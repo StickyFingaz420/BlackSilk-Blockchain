@@ -6,6 +6,7 @@
 //! | [`message`] | §4–§5 | protocol messages, strict bounded codec |
 //! | [`addr`] | §5, §9 | IPv4/IPv6/Tor v3 addresses, network groups, routability |
 //! | [`addrman`] | §9 | bucketed address manager, ban list |
+//! | [`addrman_gate`] | §9 | per-peer admission and freshness of received addresses |
 //! | [`dandelion`] | §8 | Dandelion++ epochs, routes, embargo |
 //! | [`limits`] | §10 | token buckets, misbehavior scores |
 //! | [`socks5`] | §11 | SOCKS5 client for Tor |
@@ -15,6 +16,7 @@
 
 pub mod addr;
 pub mod addrman;
+pub mod addrman_gate;
 pub mod dandelion;
 pub mod limits;
 pub mod message;

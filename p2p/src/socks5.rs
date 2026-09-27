@@ -110,7 +110,9 @@ mod tests {
 
     #[tokio::test]
     async fn onion_names_go_to_the_proxy() {
-        let onion = NetAddr::parse(&format!("{}.onion:29334", "a".repeat(56))).unwrap();
+        // A valid Tor v3 name (torproject.org's).
+        let host = "2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid";
+        let onion = NetAddr::parse(&format!("{host}.onion:29334")).unwrap();
         let (proxy, h) = mock_proxy(true).await;
         let mut s = connect(proxy, &onion).await.unwrap();
         s.write_all(b"ping").await.unwrap();
@@ -119,10 +121,7 @@ mod tests {
         assert_eq!(&b, b"ping");
         let req = h.await.unwrap();
         assert_eq!(req[3], 3, "domain-name address type (no local DNS)");
-        assert_eq!(
-            &req[5..5 + 62],
-            format!("{}.onion", "a".repeat(56)).as_bytes()
-        );
+        assert_eq!(&req[5..5 + 62], format!("{host}.onion").as_bytes());
         assert_eq!(&req[req.len() - 2..], &29334u16.to_be_bytes());
     }
 
@@ -131,7 +130,8 @@ mod tests {
         let (proxy, h) = mock_proxy(false).await;
         let r = connect(
             proxy,
-            &NetAddr::parse(&format!("{}.onion:1", "b".repeat(56))).unwrap(),
+            &NetAddr::parse("duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion:1")
+                .unwrap(),
         )
         .await;
         assert!(r.is_err());
