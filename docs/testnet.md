@@ -518,7 +518,7 @@ multiple of 16 is reached (canonical anchor, px.md §11.4).
   (p2p.md §1). An active man in the middle can also inject invalid messages under the
   peer's address, so that the victim bans the impersonated peer's IP for 24 hours, and
   can eclipse a node whose connections it controls.
-- **Treat the testnet wallet file and its 24 words like real keys.** Keys reused on a
+- **Treat the testnet wallet file and its 27 seed words like real keys.** Keys reused on a
   future mainnet would be exposed.
 
 ## 12. Operator requirements and procedures
@@ -571,7 +571,7 @@ same time; idle figures are to be re-measured.
 
 ### 12.4 Backup and recovery
 
-- **Back up the whole data directory and every wallet file,** not only the 24 words.
+- **Back up the whole data directory and every wallet file,** not only the 27 seed words.
   Restoring from the seed does **not** recover:
   - the stored rings of pending or earlier spends (docs/reviews/wallet-review.md,
     W-5 residual): a later spend of the same output may then use a new ring, which the
@@ -579,6 +579,9 @@ same time; idle figures are to be re-measured.
   - contract records this wallet created and delivered to someone else (the
     creator's copy lives only in the wallet file, px.md §13.4);
   - contract records addressed to the wallet before its restore height.
+  - the secrets of vault locks made with `--secret`, `--secret-file` or
+    `--secret-prompt` (a derived secret is recovered for a vault record the wallet holds,
+    px.md §13.4).
 - **A crash or power loss:** restart the node on the same data directory. A torn last
   record is truncated automatically; the node then re-validates every stored block,
   including every PX proof (about 0.2 s each), so restarts become slower as the chain

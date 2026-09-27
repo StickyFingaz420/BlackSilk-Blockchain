@@ -129,15 +129,19 @@ A wallet has two independent secret scalars:
 - `k_s`: the spend key. It authorizes spending.
 - `k_v`: the view key. It detects incoming outputs and decrypts amounts.
 
-Public spend key: `K_s = k_s·G`. Both keys derive from a 32-byte seed drawn from a
-CSPRNG:
+Public spend key: `K_s = k_s·G`. Both keys derive from the wallet's 32-byte `master`
+secret, which the seed words define (blocks.md §10: `master` hashes 256 bits of CSPRNG
+entropy with the seed version and the network):
 
 ```
-k_s = Hs("wallet/spend-key", seed)      k_v = Hs("wallet/view-key", seed)
+k_s = Hs("wallet/spend-key", master)      k_v = Hs("wallet/view-key", master)
 ```
 
-There is no default or fixed seed (fixes audit finding K1). The mnemonic encoding of the
-seed is defined in the wallet spec.
+There is no default or fixed seed (fixes audit finding K1). The seed format (27 words,
+version, network, birthday, check words) is specified in blocks.md §10.
+
+The wallet's hedge key (§10) is derived from the spend key, never from view material:
+`hk_v1 = H32("wallet/hedge-key/v1", k_s)` (`WalletKeys::hedge_secret`).
 
 ### 2.2 Addresses and subaddresses [Δ Monero]
 
@@ -731,16 +735,20 @@ Security relies on the following. Nothing else is assumed.
   | CLSAG `α`, `s[i]` | `p`, `z` | see below (`clsag/nonce/v2`) | full |
   | BP+ blinding values | every amount ‖ mask | `"bp+"`, every commitment | full (statement = f(witness)) |
   | Schnorr nonce | `k` | `"schnorr"`, tag, `K`, `m` | full |
-  | Transfer anchors, pseudo-output masks | spend key `k_s` | `transfer/v2`: network id, `H(key images)`, fee, each ring (members in global-index order: `LE64(index) ‖ O ‖ C`), each payment (address ‖ `LE64(amount)`), change address ‖ `LE64(change)`, caller payload (a deploy's salt and programs) | full |
+  | Transfer anchors, pseudo-output masks | hedge key `hk_v1` (from `k_s`, §2.1) | `transfer/v2`: network id, `H(key images)`, fee, each ring (members in global-index order: `LE64(index) ‖ O ‖ C`), each payment (address ‖ `LE64(amount)`), change address ‖ `LE64(change)`, caller payload (a deploy's salt and programs) | full |
   | Coinbase anchors | miner-supplied secret | `coinbase/v2`: `ctx(height)`, each payout (address ‖ `LE64(amount)`) | full, but see R2-C4 below |
-  | PX payout and change anchors, pseudo-output masks | PX hedge secret (required), plus `k_s` with v1 inputs | `px/v2`: network id, `ctx` (nullifiers and key images), fee, bridge-in, bridge-out, both output commitments, each ring, each payout, change address ‖ `LE64(change)` | full |
+  | PX payout and change anchors, pseudo-output masks | PX hedge secret (required), plus `hk_v1` with v1 inputs | `px/v2`: network id, `ctx` (nullifiers and key images), fee, bridge-in, bridge-out, both output commitments, each ring, each payout, change address ‖ `LE64(change)` | full |
   | PX delivery `r` and ML-KEM coins `m` | sender's PX hedge secret (required; `seal` refuses an empty or all-zero one) | `px/delivery/hedge/v1`: recipient owner tag, `V`, the whole `ek`, `cm`, contract, `LE64(value)`, data, `rcm`, `rho` (which fixes the output index) | full |
   | PX throwaway delivery key (empty slot) | PX hedge secret | `px/throwaway/v1`: the slot's commitment, `LE64(slot)` | full |
-  | PX witness randomness: `rcm` of each user output; every field of each dummy input (`sk`, `d`, `rho`, `rcm`, position, path); owner of each empty slot; unused `sk`, `d` of contract inputs | PX hedge secret (required), plus `k_s` with v1 inputs | one stream per value, label `px/witness/rcm/v1`, `px/witness/dummy/v1`, `px/witness/empty-owner/v1` or `px/witness/contract-key/v1`, then `LE64(slot)`; the witness statement: anchor, bridge-in, bridge-out, each input (`"dummy"`, or the spent record's contract ‖ value ‖ data ‖ `rho` ‖ `rcm` ‖ position), each output (`"empty"`, or owner ‖ contract ‖ value ‖ data), each function (contract ‖ blind ‖ approve and spec flags); then the rest of the transaction: network id, fee, each ring, each payout, change address, each function run (program id ‖ private input). `build_px` re-derives these before running the kernel (`blacksilk_px::wallet::hedge_witness`) | full, except contract-output `rcm` and function blinds (below) |
+  | PX witness randomness: `rcm` of each user output; every field of each dummy input (`sk`, `d`, `rho`, `rcm`, position, path); owner of each empty slot; unused `sk`, `d` of contract inputs | PX hedge secret (required), plus `hk_v1` with v1 inputs | one stream per value, label `px/witness/rcm/v1`, `px/witness/dummy/v1`, `px/witness/empty-owner/v1` or `px/witness/contract-key/v1`, then `LE64(slot)`; the witness statement: anchor, bridge-in, bridge-out, each input (`"dummy"`, or the spent record's contract ‖ value ‖ data ‖ `rho` ‖ `rcm` ‖ position), each output (`"empty"`, or owner ‖ contract ‖ value ‖ data), each function (contract ‖ blind ‖ approve and spec flags); then the rest of the transaction: network id, fee, each ring, each payout, change address, each function run (program id ‖ private input). `build_px` re-derives these before running the kernel (`blacksilk_px::wallet::hedge_witness`) | full, except contract-output `rcm` and function blinds (below) |
   | Membership (bLSAG) nonce | `x` | `"membership"`, `m`, `B`, `P[π]` | **not full** (R2-C5) |
 
-  The PX hedge secret is `blacksilk_px::wallet::Account::hedge_secret` (the PX spend secret
-  `sk`) in the wallet. `build_px` refuses an all-zero one (`PxBuildError::NoHedgeSecret`);
+  The hedge secrets are derived hedge keys, not the spend secrets themselves (dossier 37
+  K2): `WalletKeys::hedge_secret` is `hk_v1 = H32("wallet/hedge-key/v1", k_s)` and the PX
+  hedge secret `blacksilk_px::wallet::Account::hedge_secret` is
+  `hk_px = H32("px/wallet/hedge-key/v1", sk as eight LE32 limbs)`. Both come from spend
+  material only (a view-key holder cannot predict them) and confine anything the hedge
+  absorbs to a key that authorizes nothing. `build_px` refuses an all-zero one (`PxBuildError::NoHedgeSecret`);
   before 2026-09-27 it silently hedged with 32 zero bytes when there were no v1 inputs
   (R2-C3), and delivery used the raw RNG (R2-C2). The old transfer context was only
   `"transfer" ‖ H(key images)` (R2-C1): a rebuild over the same inputs with another amount,

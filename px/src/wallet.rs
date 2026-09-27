@@ -44,6 +44,8 @@ pub mod key_domain {
     pub const IVK_RANGE: u32 = BASE + 4;
     /// `d_i = Hk(DIVERSIFIER_V2, dk_k ‖ i)`.
     pub const DIVERSIFIER_V2: u32 = BASE + 5;
+    /// `sk_a = Hk(SK_ACCOUNT, root ‖ a)`: hardened PX account `a`.
+    pub const SK_ACCOUNT: u32 = BASE + 6;
 }
 
 /// How a wallet derives its PX addresses from `sk` (docs/px.md §3.1).
@@ -207,10 +209,18 @@ impl RangeViewKey {
 }
 
 /// Incoming-only viewing key of one address range (review I2-F3):
-/// `(ivk_k, owner tags of the disclosed addresses)`. It finds and opens the
-/// records received at those addresses. It has no `nk`, so it cannot compute
-/// nullifiers or see spends, and it cannot derive further addresses (no
-/// `ak`, `nk` or `dk_k`). Sensitive: zeroized on drop, never printed.
+/// `(ivk_k, owner tags of the disclosed addresses)`.
+///
+/// **It discloses the whole range, not only the listed addresses** (dossier
+/// 37 F37-2): `ivk_k` derives the delivery keys of every one of the 2^16
+/// addresses of range `k`, so its holder can decrypt every record sent to
+/// any of them (value, data, `rcm`) and fully accept contract records at any
+/// of them. The owner tags only limit which *user* records it accepts as the
+/// wallet's. It has no `nk`, so it cannot compute nullifiers or see spends,
+/// and no `ak`, `nk` or `dk_k`, so it cannot compute owner tags of unlisted
+/// addresses or spend. Give it only to someone allowed to see the whole
+/// range; an address-scoped package is planned (K4). Sensitive: zeroized on
+/// drop, never printed.
 #[derive(Clone)]
 pub struct IncomingViewKey {
     pub range: u32,
@@ -260,9 +270,30 @@ impl Account {
         for (i, l) in limbs.iter_mut().enumerate() {
             *l = u16::from_le_bytes([seed[2 * i], seed[2 * i + 1]]) as u32;
         }
-        let mut perm = HostPerm::new();
-        let sk = hash(&mut perm, domain::SK, &[&limbs]);
+        let sk = hash(&mut HostPerm::new(), domain::SK, &[&limbs]);
         zeroize::Zeroize::zeroize(&mut limbs);
+        Self::from_sk(sk, derivation)
+    }
+
+    /// The hardened PX account `a` of this root (docs/px.md §3.1):
+    /// `sk_a = Hk(SK_ACCOUNT, sk ‖ a_lo16 ‖ a_hi16)`, with derivation 2.
+    ///
+    /// A wallet spends from its accounts, never from the root: the root's
+    /// `sk` then never enters a witness, and the witness of one account
+    /// (for example, handed to a prover) says nothing about the others.
+    /// Accounts have unrelated `ak`, `nk` and addresses. Wallet policy only:
+    /// the kernel reads `sk` per input.
+    pub fn account(&self, a: u32) -> Account {
+        let sk = hash(
+            &mut HostPerm::new(),
+            key_domain::SK_ACCOUNT,
+            &[&self.sk, &split(a)],
+        );
+        Self::from_sk(sk, Derivation::V2)
+    }
+
+    fn from_sk(sk: Digest, derivation: Derivation) -> Account {
+        let mut perm = HostPerm::new();
         let keys = Keys::derive(&mut perm, &sk);
         let (dk, ivk) = match derivation {
             Derivation::V1 => (ZERO_DIGEST, ZERO_DIGEST),
@@ -311,17 +342,21 @@ impl Account {
         }
     }
 
-    /// Secret bytes that key the wallet's hedged randomness on the PX side
+    /// The hedge key that keys the wallet's hedged randomness on the PX side
     /// (record delivery, PX transaction building; docs/transactions.md §10):
-    /// the spend secret, little-endian. Only pass them to
-    /// `blacksilk_crypto::nonce::HedgedRng` (directly or through
-    /// [`crate::delivery::seal`]), and zeroize them after.
+    /// `hk_px = H32("px/wallet/hedge-key/v1", sk as eight LE32 limbs)`.
+    /// Derived from the spend secret only, and not the spend secret itself
+    /// (dossier 37 K2). Only pass it to `blacksilk_crypto::nonce::HedgedRng`
+    /// (directly or through [`crate::delivery::seal`]), and zeroize it after.
     pub fn hedge_secret(&self) -> [u8; 32] {
         let mut b = [0u8; 32];
         for (i, x) in self.sk.iter().enumerate() {
             b[4 * i..4 * i + 4].copy_from_slice(&x.to_le_bytes());
         }
-        b
+        let hk =
+            blacksilk_crypto::hash::h32(blacksilk_crypto::hash::tags::PX_WALLET_HEDGE_KEY, &[&b]);
+        zeroize::Zeroize::zeroize(&mut b);
+        hk
     }
 
     pub fn keys(&self) -> &Keys {
@@ -971,6 +1006,53 @@ mod derivation_tests {
     use rand_chacha::ChaCha20Rng;
 
     const SEED: [u8; 32] = [7; 32];
+
+    /// K2 (dossier 37 §3.2): the PX hedge key is derived from `sk`, never
+    /// `sk` itself. Failed on 2a69556 (it was `sk`).
+    #[test]
+    fn px_hedge_key_is_not_the_spend_key() {
+        let a = Account::from_seed_with(&SEED, Derivation::V2);
+        let mut raw = [0u8; 32];
+        for (i, x) in a.sk.iter().enumerate() {
+            raw[4 * i..4 * i + 4].copy_from_slice(&x.to_le_bytes());
+        }
+        assert_ne!(a.hedge_secret(), raw);
+        assert_eq!(
+            a.hedge_secret(),
+            blacksilk_crypto::hash::h32("px/wallet/hedge-key/v1", &[&raw])
+        );
+        // Accounts have their own hedge keys.
+        assert_ne!(a.account(0).hedge_secret(), a.hedge_secret());
+        assert_ne!(a.account(0).hedge_secret(), a.account(1).hedge_secret());
+    }
+
+    /// Accounts are hardened children: `sk_a = Hk(SK_ACCOUNT, sk ‖ a)`, with
+    /// unrelated keys and addresses, all derivation 2.
+    #[test]
+    fn accounts_are_hardened_and_unrelated() {
+        let root = Account::from_seed_with(&SEED, Derivation::V2);
+        let (a0, a1) = (root.account(0), root.account(1));
+        let expected = hash(
+            &mut HostPerm::new(),
+            key_domain::SK_ACCOUNT,
+            &[&root.sk, &[1, 0]],
+        );
+        assert_eq!(a1.sk, expected);
+        assert_eq!(a1.keys, Keys::derive(&mut HostPerm::new(), &expected));
+        assert_eq!(a0.derivation(), Derivation::V2);
+        for (x, y) in [(&root, &a0), (&root, &a1), (&a0, &a1)] {
+            assert_ne!(x.sk, y.sk);
+            assert_ne!(x.keys.nk, y.keys.nk);
+            assert_ne!(x.keys.ak, y.keys.ak);
+            assert_ne!(x.owner(0), y.owner(0));
+        }
+        // Account 2^16 + 1 differs from account 1 (both halves are hashed).
+        assert_ne!(root.account(0x1_0001).sk, a1.sk);
+        // Deterministic.
+        assert_eq!(root.account(1).sk, a1.sk);
+        // The V1 root keeps its spend key (the accounts only derive from it).
+        assert_eq!(Account::from_seed(&SEED).sk, root.sk);
+    }
 
     /// V1 is exactly the original flat derivation (existing wallets keep
     /// their addresses).

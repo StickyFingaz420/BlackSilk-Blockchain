@@ -106,7 +106,7 @@ seed list is empty, and nodes are joined with explicit `--peer` addresses.
 # 1. Node (RPC on 127.0.0.1:39333)
 blacksilk-node --network regtest --data-dir ./regtest-data
 
-# 2. Wallet (prints a 24-word seed and the primary address)
+# 2. Wallet (prints a 27-word seed and the primary address)
 blacksilk-wallet -w miner.wallet --node 127.0.0.1:39333 create --network regtest
 
 # 3. Miner (light mode needs 256 MiB; full mode needs 2 GiB)
@@ -145,7 +145,7 @@ blacksilk-node --network testnet --proxy 127.0.0.1:9050 --proxy-only --peer <oni
 - A wallet using someone else's node reveals which ring members it fetches, and its
   RPC traffic is plaintext (the wallet has no Tor or TLS support). Use your own node
   ([blocks.md §9](docs/blocks.md)).
-- Wallet files are encrypted with Argon2id and AES-256-GCM. The 24 words recover the
+- Wallet files are encrypted with Argon2id and AES-256-GCM. The 27 seed words recover the
   keys and on-chain funds, but not everything: the stored rings of pending spends and
   contract records this wallet created for others live only in the wallet file. Back
   up the wallet file as well ([docs/testnet.md](docs/testnet.md), operator section).

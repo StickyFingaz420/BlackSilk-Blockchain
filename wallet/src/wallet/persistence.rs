@@ -6,14 +6,20 @@ use super::{
 };
 use crate::index::OutputIndex;
 use crate::px::{PxStore, PX_GAP_LIMIT, PX_MAX_INDEX_AHEAD};
+use crate::seed::{Seed, SEED_VERSION};
 use blacksilk_consensus::ChainParams;
 use blacksilk_crypto::{Point, Scalar};
-use blacksilk_px::wallet::Derivation;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use zeroize::{Zeroize, Zeroizing};
 
-/// A secret string (the hex seed in the wallet JSON), wiped when dropped.
+/// The wallet-file format version. Version 3 stores a format-v1 seed
+/// (docs/blocks.md §10). Versions 1 and 2 held a raw 32-byte seed (the
+/// 24-word format) and a PX derivation; they were removed at the v3 reset
+/// and are refused.
+const FILE_VERSION: u32 = 3;
+
+/// A secret string (the hex seed entropy in the wallet JSON), wiped when dropped.
 ///
 /// This covers the wallet's own copy only. Not covered: the JSON text itself
 /// (zeroized by `crate::load`/`crate::save`, but `serde_json` may reallocate
@@ -42,7 +48,13 @@ struct Persisted {
     /// are refused.
     #[serde(default)]
     genesis_id: Option<String>,
+    /// The seed's entropy (hex).
     seed: SecretString,
+    /// The seed format version (`crate::seed::SEED_VERSION`).
+    seed_version: u8,
+    /// The seed's birthday (docs/blocks.md §10), so the words can be shown
+    /// again.
+    birthday: u16,
     restore_height: u64,
     synced_height: u64,
     /// Recent block ids (height → id) for reorg detection.
@@ -59,10 +71,6 @@ struct Persisted {
     /// Decoys of the ring last submitted for each key image (W-5).
     #[serde(default)]
     rings: BTreeMap<String, Vec<RingMember>>,
-    /// The PX key derivation (`blacksilk_px::wallet::Derivation`). Absent in
-    /// files written before 2026-09-27, which are version 1: `1`.
-    #[serde(default)]
-    derivation: Option<u32>,
     /// Every v1 output seen, for local ring-member resolution (absent in
     /// older files: rebuilt by the next sync and a backfill).
     #[serde(default)]
@@ -71,18 +79,6 @@ struct Persisted {
     /// files written before 2026-09-27).
     #[serde(default)]
     stale_txs: Vec<StaleTx>,
-}
-
-/// The wallet-file format version for a wallet with PX derivation `d`.
-/// Version 2 adds the PX key derivation (`derivation`); version 1 files are
-/// read as derivation 1, and derivation-1 wallets are still written as
-/// version 1. A version-2 file is refused by older wallets, which would
-/// otherwise derive the wrong PX addresses from it.
-fn file_version(d: Derivation) -> u32 {
-    match d {
-        Derivation::V1 => 1,
-        Derivation::V2 => 2,
-    }
 }
 
 pub(super) fn h32(s: &str) -> Result<[u8; 32], WalletError> {
@@ -106,12 +102,13 @@ impl Wallet {
     // ---- persistence ----
     pub fn to_json(&self) -> Vec<u8> {
         let p = Persisted {
-            version: file_version(self.derivation),
-            derivation: Some(self.derivation.number()),
+            version: FILE_VERSION,
             output_index: self.index.clone(),
             network: network_name(self.network).into(),
             genesis_id: Some(hex::encode(self.genesis_id)),
-            seed: SecretString(Zeroizing::new(hex::encode(self.seed))),
+            seed: SecretString(Zeroizing::new(hex::encode(self.seed().entropy()))),
+            seed_version: SEED_VERSION,
+            birthday: self.seed().birthday(),
             restore_height: self.restore_height,
             synced_height: self.synced_height,
             block_ids: self
@@ -130,25 +127,36 @@ impl Wallet {
     }
 
     pub fn from_json(bytes: &[u8]) -> Result<Self, WalletError> {
+        // The version first: older files lack the seed fields.
+        #[derive(Deserialize)]
+        struct Version {
+            version: u32,
+        }
+        let v: Version =
+            serde_json::from_slice(bytes).map_err(|e| WalletError::Serialization(e.to_string()))?;
+        match v.version {
+            FILE_VERSION => {}
+            1 | 2 => {
+                return Err(WalletError::Serialization(format!(
+                    "wallet file version {} (24-word seed) is no longer supported: the 24-word \
+                     format and PX derivation 1 were removed at the v3 reset. Create a new wallet",
+                    v.version
+                )))
+            }
+            n => {
+                return Err(WalletError::Serialization(format!(
+                    "unsupported wallet file version {n}"
+                )))
+            }
+        }
         let p: Persisted =
             serde_json::from_slice(bytes).map_err(|e| WalletError::Serialization(e.to_string()))?;
-        // Files without a derivation predate it: derivation 1.
-        let derivation = Derivation::from_number(p.derivation.unwrap_or(1));
-        let derivation = match (p.version, derivation) {
-            (1 | 2, Some(d)) if file_version(d) == p.version => d,
-            (1 | 2, _) => {
-                return Err(WalletError::Serialization(format!(
-                    "wallet file version {} with PX key derivation {:?}",
-                    p.version, p.derivation
-                )))
-            }
-            _ => {
-                return Err(WalletError::Serialization(format!(
-                    "unsupported version {}",
-                    p.version
-                )))
-            }
-        };
+        if p.seed_version != SEED_VERSION {
+            return Err(WalletError::Serialization(format!(
+                "unsupported seed version {}",
+                p.seed_version
+            )));
+        }
         let network = parse_network(&p.network)
             .ok_or_else(|| WalletError::Serialization("network".into()))?;
         // Files without a genesis id predate the binding (R15-3) and belong
@@ -177,9 +185,10 @@ impl Wallet {
                 hex::encode(ours)
             )));
         }
-        let mut seed = h32(&p.seed.0)?;
-        let mut w = Self::from_seed_with(network, seed, p.restore_height, derivation);
-        seed.zeroize();
+        let mut entropy = h32(&p.seed.0)?;
+        let seed = Seed::new(entropy, network, p.birthday);
+        entropy.zeroize();
+        let mut w = Self::from_file_seed(seed, p.restore_height);
         debug_assert_eq!(w.genesis_id, genesis_id);
         w.index = p.output_index;
         w.synced_height = p.synced_height;
@@ -199,6 +208,9 @@ impl Wallet {
         w.elect_credited();
         w.repair_windows();
         w.rebuild_table();
+        // Derived vault secrets of held records the file does not have yet
+        // (a restored wallet that found its own locks, docs/px.md §13.4).
+        w.recover_vault_secrets();
         Ok(w)
     }
 
