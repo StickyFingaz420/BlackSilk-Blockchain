@@ -44,15 +44,32 @@ pub fn limits(airs: &[Table]) -> Vec<usize> {
 
 const _: () = assert!(MAX_CYCLES.is_power_of_two());
 
-/// The digest of every public column of every table of a statement: the
-/// programs, images, claimed outputs and the byte table, exactly as the
-/// verifier supplies them to the AIRs (periodic columns). It is absorbed into
-/// the Fiat–Shamir transcript before any challenge (`blacksilk_zk::config`),
-/// so none of this data can be chosen after the challenges.
+/// The circuit tag (R4-11): names the BVM-1 constraint system (the AIRs of
+/// `crate::air`, their buses and the table layout). It is absorbed at the
+/// start of the Fiat–Shamir transcript, right after the parameter set's
+/// `PARAMS_ID` (as the first input of [`statement_digest`]), so a proof made
+/// for one circuit revision never verifies under another, even when the
+/// parameter set, the programs and the table widths are unchanged.
+///
+/// It is not implied by the program ids: those commit to the guest programs
+/// (the kernel, the functions), which the statement digest already binds as
+/// periodic columns, not to the constraints the verifier evaluates. A change
+/// to any AIR, bus or table order must change this tag (and is a consensus
+/// change).
+pub const CIRCUIT_ID: &[u8] = b"BlackSilk/zkvm/BVM-1/circuit/v1";
+
+/// The digest of the circuit tag and of every public column of every table of
+/// a statement: the programs, images, claimed outputs and the byte table,
+/// exactly as the verifier supplies them to the AIRs (periodic columns). It is
+/// absorbed into the Fiat–Shamir transcript before any challenge
+/// (`blacksilk_zk::config`), so none of this data can be chosen after the
+/// challenges.
 pub fn statement_digest(airs: &[Table]) -> [u8; 32] {
     use p3_air::BaseAir;
     use p3_field::PrimeField32;
     let mut h = blacksilk_crypto::hash::Hasher64::new(blacksilk_crypto::hash::tags::ZKVM_STATEMENT);
+    h.update(&(CIRCUIT_ID.len() as u64).to_le_bytes());
+    h.update(CIRCUIT_ID);
     h.update(&(airs.len() as u64).to_le_bytes());
     for (t, air) in airs.iter().enumerate() {
         let cols = air.periodic_columns();

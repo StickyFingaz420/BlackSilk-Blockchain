@@ -577,9 +577,14 @@ owner): a STARK on Plonky3 0.7.**
   This is the lesson of Frozen Heart (2022), as for BP+ in transactions.md §7. **As
   implemented** (`zk/src/config.rs`, `challenger`):
   - first the parameter-set identifier `PARAMS_ID` (`BlackSilk/zk/BS-ZK-2`, with its
-    length), then the 32-byte **statement digest** (zkvm.md §6.4: every table's
-    periodic columns, i.e. programs, images and claimed outputs), both before any
-    commitment;
+    length), then the 32-byte **statement digest**, both before any commitment. The
+    digest hashes first the **circuit tag** `CIRCUIT_ID`
+    (`BlackSilk/zkvm/BVM-1/circuit/v1`, `zkvm/src/prove.rs`; R4-11, testnet v3),
+    then every table's periodic columns (zkvm.md §6.4: programs, images and claimed
+    outputs). The tag names the constraint system: a proof made for one circuit
+    revision does not verify under another, even with the same parameter set,
+    programs and table widths. Program ids do not imply it: they commit to the guest
+    programs, not to the AIRs;
   - then Plonky3 observes the public values (which carry the binding `h_tx`, zkvm.md
     §6.4), the instance data and every prover message.
   - There is no verifier id in the transcript: the verifier registry is a design only
