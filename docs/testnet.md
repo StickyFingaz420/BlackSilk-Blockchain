@@ -46,6 +46,79 @@ cargo build --release -p blacksilk-node -p blacksilk-miner -p blacksilk-wallet
 
 The binaries are in `target/release/`. Everything is pure Rust; no C compiler is needed.
 
+### 2.1 Operator check: identity (every device, before the trial)
+
+Nodes built from different commits can agree on the genesis and still follow
+different rules. They connect, and then fork on the first block that uses the
+difference. Every crate version is `0.1.0`, so the version number alone does
+not identify a build. Before the trial, **every device** compares three values
+with the ones the release announcement publishes:
+
+- the **genesis id** (full, 64 hex digits);
+- the **consensus fingerprint** of the network (full, 64 hex digits);
+- the **build commit**.
+
+Where to read them:
+
+- `blacksilk-node --version` prints the commit and, for every network, the
+  fingerprint (the first 16 hex digits, then the full value) and the genesis id.
+  `blacksilk-node -V` prints only the version and commit.
+- The start-up log prints `blacksilk-node <version> commit <commit>`, then
+  `<network>: genesis <id>, consensus fingerprint <fingerprint>`.
+- The RPC `/info` returns `genesis_id`, `consensus_fingerprint`, `build_commit`
+  and `version`. `deploy/scripts/check-node.sh` prints them.
+- `blacksilk-miner --version` and `blacksilk-wallet --version` print the version
+  and commit (see the limitation below).
+
+Pass: all three values are identical on every device, and they match the
+announcement. On any difference, stop. Do not start or keep mining until
+the builds match.
+
+**What the fingerprint covers.** It is a domain-separated hash
+(`BlackSilk/v1/node/consensus-fingerprint/v1`, BLAKE2b) of a canonical,
+length-prefixed encoding of the following consensus constants
+(`node/src/fingerprint.rs`, `px/src/fingerprint.rs`):
+
+- every `ChainParams` field, the genesis block bytes and id, and `TxRules`;
+- the header, transaction, block and emission constants, and emission samples;
+- the RandomX configuration;
+- the BS-ZK-2 parameters and `PROOF_VERSION`;
+- the BVM-1 limits;
+- the PX kernel constants and hash domains;
+- the kernel and vault program ids.
+
+`node/tests/deploy_configs.rs` pins one value per network. Changing one is a
+consensus change and needs a new network id. Pinned values at the time of
+writing:
+
+| Network | Consensus fingerprint |
+|---|---|
+| testnet | `e7b898636c53173d1417108b82fb4314c9e999ba80f072844b60d3a1f602478f` |
+| regtest | `d56ea868280b03510b713ba2fef36cf353f5f35fa4fb2260e1e13acd779ac38f` |
+
+Limits of the check:
+
+- **The fingerprint covers constants, not rule code.** A fix that changes
+  validation logic without changing a constant leaves the fingerprint unchanged,
+  and only the commit tells the two builds apart. So compare the commit as well.
+- **The RandomX entries are copies.** They are the RandomX v1 values, because
+  `blacksilk-randomx` does not export its configuration. The crate's official
+  test vectors pin its behaviour.
+- **There is no dirty flag.** The node reads the commit from `.git` directly
+  (`node/build.rs`, without running `git`). It does not detect uncommitted
+  changes. Build the trial binaries from a clean checkout of the announced
+  commit.
+- **A build without `.git` reports `commit unknown`.** This covers Docker (the
+  `.dockerignore` excludes `.git`) and source archives. To record the commit,
+  set `BLACKSILK_BUILD_COMMIT` in the build environment. A non-empty value
+  always wins, so a release script can pass, for example,
+  `BLACKSILK_BUILD_COMMIT=$(git describe --always --dirty)`. The Dockerfile
+  does not forward the variable yet (it needs an `ARG BLACKSILK_BUILD_COMMIT`
+  before `cargo build`).
+- **The miner and wallet have no build script.** They report a commit only when
+  `BLACKSILK_BUILD_COMMIT` is set at build time. Otherwise they report
+  `unknown`.
+
 ## 3. Quick start (one machine)
 
 ```sh

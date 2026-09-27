@@ -8,16 +8,32 @@ mod config;
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::store::FileStore;
 use blacksilk_consensus::{ChainParams, RandomXPow};
+use blacksilk_node::fingerprint::{self, consensus_fingerprint, BUILD_COMMIT};
 use blacksilk_node::{router_with, watch_store, App, STORE_FAILED_EXIT};
 use blacksilk_p2p::{NetConfig, Network as P2p};
 use blacksilk_tx::params::TxRules;
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 use config::{network_name, resolve_seeds, Args, Config};
 use fs2::FileExt;
 use std::sync::{Arc, Mutex};
 
+/// Parses the command line. `-V` prints the version and commit; `--version`
+/// adds the consensus fingerprint and genesis id of every network, which
+/// operators compare before joining a network (docs/testnet.md).
+fn parse_args() -> Args {
+    // clap takes `'static` strings; this runs once per process.
+    let long: &'static str = Box::leak(fingerprint::version_text().into_boxed_str());
+    let short: &'static str =
+        Box::leak(format!("{} (commit {BUILD_COMMIT})", fingerprint::VERSION).into_boxed_str());
+    let matches = Args::command()
+        .version(short)
+        .long_version(long)
+        .get_matches();
+    Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
+}
+
 fn main() {
-    let args = Args::parse();
+    let args = parse_args();
     let cfg = match Config::resolve(args)
         .and_then(|c| config::check_network_enabled(c.network).map(|()| c))
     {
@@ -67,12 +83,19 @@ fn run(cfg: Config) -> Result<(), String> {
     let store = FileStore::open(&store_path).map_err(|e| e.to_string())?;
     let mut seed = [0u8; 32];
     getrandom::getrandom(&mut seed).map_err(|e| format!("OS RNG: {e}"))?;
+    // The node's identity. Every device of a network must show the same
+    // genesis and fingerprint; the commit tells builds apart (docs/testnet.md).
     log::info!(
-        "{}: loading {} (genesis {})",
-        network_name(network),
-        data_dir.display(),
-        hex::encode(&params.genesis_id()[..8])
+        "blacksilk-node {} commit {BUILD_COMMIT}",
+        fingerprint::VERSION
     );
+    log::info!(
+        "{}: genesis {}, consensus fingerprint {}",
+        network_name(network),
+        hex::encode(params.genesis_id()),
+        hex::encode(consensus_fingerprint(network))
+    );
+    log::info!("{}: loading {}", network_name(network), data_dir.display());
     let started = std::time::Instant::now();
     let manager = ChainManager::open(
         params.clone(),

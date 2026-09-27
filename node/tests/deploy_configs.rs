@@ -192,109 +192,48 @@ fn a_typo_in_a_config_is_an_error() {
     }
 }
 
-/// The chain-level consensus constants: network ids, genesis, difficulty and
-/// time rules, the RandomX key schedule, the transaction and PX size and fee
-/// rules, block limits and the emission curve. (`px/tests/consensus_fingerprint.rs`
-/// pins the proof system, the zkVM and the PX kernel id; `blacksilk-px` cannot
-/// reach these.)
+/// The consensus fingerprint of every network
+/// (`blacksilk_node::fingerprint::consensus_fingerprint`): the chain parameters
+/// and genesis, the transaction, block and emission rules, the RandomX
+/// configuration, and the PX side (proof system, zkVM, kernel and vault ids;
+/// `px/tests/consensus_fingerprint.rs` pins that part on its own). The test
+/// pins the value the node computes at run time, prints in `--version` and
+/// the start-up log, and serves in `/info`.
 ///
-/// **Changing any of these is a consensus change and requires a new network
-/// id.** Update the pinned digest only in the same commit as the new id.
+/// **Changing any of these digests is a consensus change and requires a new
+/// network id.** Update a pinned digest only in the same commit as the new id.
 #[test]
-fn chain_level_consensus_constants_are_pinned() {
-    use blacksilk_chain::{block, emission};
-    use blacksilk_tx::params as tx;
-    use std::fmt::Write;
-
-    let mut s = String::new();
-    let mut add = |name: &str, value: &dyn std::fmt::Debug| {
-        writeln!(s, "{name} = {value:?}").unwrap();
-    };
-    for p in [ChainParams::testnet(), ChainParams::regtest()] {
-        let n = format!("{:?}", p.network);
-        add(&format!("{n}.network_id"), &p.network_id);
-        add(&format!("{n}.target_block_time"), &p.target_block_time);
-        add(&format!("{n}.initial_difficulty"), &p.initial_difficulty);
-        add(&format!("{n}.difficulty_window"), &p.difficulty_window);
-        add(&format!("{n}.median_time_window"), &p.median_time_window);
-        add(&format!("{n}.future_time_limit"), &p.future_time_limit);
-        add(&format!("{n}.seed_epoch"), &p.seed_epoch);
-        add(&format!("{n}.seed_lag"), &p.seed_lag);
-        add(&format!("{n}.genesis"), &p.genesis.to_bytes());
-        add(&format!("{n}.genesis_id"), &p.genesis_id());
-        let r = tx::TxRules::for_chain(&p);
-        add(
-            &format!("{n}.rules"),
-            &(r.network_id, r.fee_per_weight, r.max_block_weight),
+fn consensus_fingerprints_are_pinned() {
+    use blacksilk_node::fingerprint::{consensus_fingerprint, hex, manifest};
+    for (network, pinned) in [
+        (Network::Testnet, TESTNET_FINGERPRINT),
+        (Network::Regtest, REGTEST_FINGERPRINT),
+        (Network::Mainnet, MAINNET_FINGERPRINT),
+    ] {
+        assert_eq!(
+            hex(&consensus_fingerprint(network)),
+            pinned,
+            "{network:?}: a consensus constant changed (this is a consensus change and requires \
+             a new network id); current values:\n{}",
+            manifest(network).render()
         );
     }
-    add("consensus.HEADER_SIZE", &blacksilk_consensus::HEADER_SIZE);
-    add(
-        "consensus.HEADER_VERSION",
-        &blacksilk_consensus::HEADER_VERSION,
-    );
-    add("tx.TX_VERSION", &tx::TX_VERSION);
-    add(
-        "tx.KINDS",
-        &[
-            tx::KIND_COINBASE,
-            tx::KIND_TRANSFER,
-            tx::KIND_PX,
-            tx::KIND_PX_DEPLOY,
-        ],
-    );
-    add("tx.RING_SIZE", &tx::RING_SIZE);
-    add("tx.MAX_TX_SIZE", &tx::MAX_TX_SIZE);
-    add("tx.MAX_INPUTS", &tx::MAX_INPUTS);
-    add("tx.MIN_OUTPUTS", &tx::MIN_OUTPUTS);
-    add("tx.MAX_OUTPUTS", &tx::MAX_OUTPUTS);
-    add("tx.MIN_COINBASE_OUTPUTS", &tx::MIN_COINBASE_OUTPUTS);
-    add("tx.MAX_COINBASE_OUTPUTS", &tx::MAX_COINBASE_OUTPUTS);
-    add("tx.SPENDABLE_AGE", &tx::SPENDABLE_AGE);
-    add("tx.COINBASE_MATURITY", &tx::COINBASE_MATURITY);
-    add("tx.FEE_PER_WEIGHT", &tx::FEE_PER_WEIGHT);
-    add("tx.MAX_BLOCK_WEIGHT", &tx::MAX_BLOCK_WEIGHT);
-    add("tx.MAX_PX_TX_SIZE", &tx::MAX_PX_TX_SIZE);
-    add("tx.MAX_DEPLOY_TX_SIZE", &tx::MAX_DEPLOY_TX_SIZE);
-    add("tx.MAX_PX_BLOCK_BYTES", &tx::MAX_PX_BLOCK_BYTES);
-    add("tx.PX_FEE_PER_BYTE", &tx::PX_FEE_PER_BYTE);
-    add("tx.PX_STANDARD_FEE", &tx::PX_STANDARD_FEE);
-    add("tx.MAX_PAYOUTS", &tx::MAX_PAYOUTS);
-    add("tx.MAX_FN_OUTPUT_WORDS", &tx::MAX_FN_OUTPUT_WORDS);
-    add("tx.MAX_DEPLOY_PROGRAMS", &tx::MAX_DEPLOY_PROGRAMS);
-    add("tx.MAX_PROGRAM_BYTES", &tx::MAX_PROGRAM_BYTES);
-    add("chain.MAX_BLOCK_BYTES", &block::MAX_BLOCK_BYTES);
-    add("chain.MAX_BLOCK_TXS", &block::MAX_BLOCK_TXS);
-    add("emission.COIN", &emission::COIN);
-    add("emission.MONEY_SUPPLY", &emission::MONEY_SUPPLY);
-    add("emission.EMISSION_SPEED", &emission::EMISSION_SPEED);
-    add("emission.TAIL_REWARD", &emission::TAIL_REWARD);
-    // The curve itself, at a few points (height, coins generated before it).
-    let curve: Vec<u64> = [
-        (0, 0),
-        (1, 0),
-        (2, emission::block_reward(1, 0)),
-        (1_000, 1_000 * emission::COIN),
-        (1, emission::MONEY_SUPPLY - emission::COIN),
-        (1, emission::MONEY_SUPPLY),
-    ]
-    .iter()
-    .map(|&(h, g)| emission::block_reward(h, g))
-    .collect();
-    add("emission.block_reward samples", &curve);
-
-    let mut h = blacksilk_crypto::hash::Hasher64::new("test/consensus-fingerprint");
-    h.update(s.as_bytes());
-    let digest: String = h.finalize()[..32]
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    assert_eq!(
-        digest, CHAIN_LEVEL_DIGEST,
-        "a consensus constant changed (this is a consensus change and requires a new network id); \
-         current values:\n{s}"
-    );
+    // Every network's own parameters are in its fingerprint.
+    for n in [Network::Testnet, Network::Regtest, Network::Mainnet] {
+        let text = manifest(n).render();
+        let p = ChainParams::for_network(n);
+        assert!(text.contains(&format!("chain.network_id = {}", p.network_id)));
+        assert!(text.contains(&hex(&p.genesis_id())));
+    }
 }
 
-/// Changing any of these is a consensus change and requires a new network id.
-const CHAIN_LEVEL_DIGEST: &str = "adec553ac756c7d2e19b5023f67c5d18cb60c143022b8a367f1407dffeccc20b";
+/// Changing this is a consensus change and requires a new network id.
+const TESTNET_FINGERPRINT: &str =
+    "e7b898636c53173d1417108b82fb4314c9e999ba80f072844b60d3a1f602478f";
+/// Changing this is a consensus change and requires a new network id.
+const REGTEST_FINGERPRINT: &str =
+    "d56ea868280b03510b713ba2fef36cf353f5f35fa4fb2260e1e13acd779ac38f";
+/// Changing this is a consensus change and requires a new network id. (The
+/// mainnet parameters are provisional; mainnet is not launched.)
+const MAINNET_FINGERPRINT: &str =
+    "a2dc1a58c8434369f28c8bbb2d782293de06cadf2f9e9613e381e82d243bc141";

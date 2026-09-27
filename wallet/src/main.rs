@@ -228,8 +228,28 @@ fn password(confirm: bool) -> Result<Vec<u8>, String> {
     Ok(p.into_bytes())
 }
 
+/// The build commit, from the `BLACKSILK_BUILD_COMMIT` build-time environment
+/// variable. Unlike the node (node/build.rs reads `.git`), this crate has no
+/// build script, so a build without the variable reports `unknown`; the
+/// release procedure sets it (docs/testnet.md, operator checks).
+const BUILD_COMMIT: &str = match option_env!("BLACKSILK_BUILD_COMMIT") {
+    Some(c) => c,
+    None => "unknown",
+};
+
+/// Parses the command line with a `--version` that includes the commit.
+fn parse_args() -> Args {
+    use clap::{CommandFactory, FromArgMatches};
+    // clap takes a `'static` string; this runs once per process.
+    let version: &'static str = Box::leak(
+        format!("{} (commit {BUILD_COMMIT})", env!("CARGO_PKG_VERSION")).into_boxed_str(),
+    );
+    let matches = Args::command().version(version).get_matches();
+    Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
+}
+
 fn main() {
-    if let Err(e) = run(Args::parse()) {
+    if let Err(e) = run(parse_args()) {
         eprintln!("error: {e}");
         std::process::exit(1);
     }

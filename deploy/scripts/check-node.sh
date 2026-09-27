@@ -7,6 +7,9 @@ INFO="$(curl -fsS "http://$RPC/info")" || { echo "CRITICAL: RPC $RPC unreachable
 field() { echo "$INFO" | sed -n "s/.*\"$1\":\([^,}]*\).*/\1/p" | tr -d '"'; }
 HEIGHT="$(field height)"; HEADERS="$(field header_height)"; PEERS="$(field peers)"
 echo "network=$(field network) height=$HEIGHT headers=$HEADERS peers=$PEERS mempool=$(field mempool_txs) tip=$(field tip | cut -c1-16)"
+# Identity: compare these, in full, across every device (docs/testnet.md §2.1).
+# A node older than these fields prints them empty.
+echo "genesis=$(field genesis_id) fingerprint=$(field consensus_fingerprint) commit=$(field build_commit) version=$(field version)"
 STATUS=0
 [ "${PEERS:-0}" -ge 1 ] || { echo "WARNING: no peers"; STATUS=1; }
 if [ -n "$HEADERS" ] && [ "$HEADERS" -gt $((HEIGHT + 10)) ]; then
