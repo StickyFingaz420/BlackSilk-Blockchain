@@ -8,11 +8,28 @@
 //! x = exp(Gamma(shape 19.28, scale 1/1.61))            seconds of age
 //! x = x − 10·T if x > 10·T, else uniform in [0, 15·T)  (spendable-age shift)
 //! i = x / average_output_time                           outputs back from the newest usable one
-//! pick the block containing that output, then a uniform output within the block
+//! b = the block containing output i, at depth D         (the drawn age)
+//! pick a uniform ELIGIBLE output of block b; if b has none, a uniform
+//! eligible output of the blocks b ± w, w = clamp(D / 4, 9, 720);
+//! if those have none either, discard the draw
 //! ```
 //!
+//! **Eligibility is applied inside the draw** (docs/transactions.md §11.3.1,
+//! review R3-1). Coinbase outputs need 60 blocks, so on a young chain most
+//! outputs 10–59 blocks deep are ineligible. Rejecting them *after* the draw
+//! and drawing again from scratch moves all of that age mass to older ages:
+//! decoys younger than 60 blocks almost vanish, and a real input spent soon
+//! after it was received becomes the newest ring member. Choosing among the
+//! eligible outputs of the drawn age's neighbourhood keeps the age
+//! distribution wherever eligible outputs of that age exist.
+//!
+//! The neighbourhood is proportional to the age and bounded. An unbounded
+//! "nearest eligible block" rule was rejected: on a chain of coinbase-only
+//! blocks it moved every young draw onto the few blocks just past the 60-block
+//! maturity, a pile-up that would itself mark rings.
+//!
 //! Floating point is fine here: this is wallet policy, and every choice is
-//! re-checked by consensus (C1).
+//! re-checked by consensus (C1). Given the RNG, the ring is deterministic.
 
 use crate::params::{RING_SIZE, SPENDABLE_AGE};
 use rand_core::RngCore;
@@ -21,6 +38,12 @@ const GAMMA_SHAPE: f64 = 19.28;
 const GAMMA_SCALE: f64 = 1.0 / 1.61;
 const RECENT_SPEND_WINDOW_BLOCKS: f64 = 15.0;
 const MAX_ATTEMPTS: usize = 100_000;
+/// Half-width of the neighbourhood searched when the drawn block has no
+/// eligible output: a quarter of the drawn depth, at least
+/// `NEIGHBOURHOOD_MIN_BLOCKS` and at most `NEIGHBOURHOOD_MAX_BLOCKS` each way.
+pub const NEIGHBOURHOOD_MIN_BLOCKS: usize = 9;
+pub const NEIGHBOURHOOD_MAX_BLOCKS: usize = 720;
+const NEIGHBOURHOOD_DEPTH_DIVISOR: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DecoyError {
@@ -64,9 +87,10 @@ fn gamma<R: RngCore>(rng: &mut R, shape: f64, scale: f64) -> f64 {
 ///
 /// `cumulative[h]` is the number of outputs in blocks `0..=h` of the current chain
 /// (`MemoryChain::cumulative_outputs`). `eligible(i)` must return whether output
-/// `i` satisfies the consensus age rule for `height` (it matters for coinbase
-/// outputs, which need 60 blocks). Returns 16 strictly increasing global indices
-/// containing `real`.
+/// `i` may be a ring member at `height` (it matters for coinbase outputs, which
+/// need 60 blocks). The picker only ever chooses eligible outputs, at the age
+/// it drew or next to it (see the module documentation). Returns 16 strictly
+/// increasing global indices containing `real`.
 pub fn select_ring<R: RngCore>(
     rng: &mut R,
     cumulative: &[u64],
@@ -115,10 +139,10 @@ pub fn select_ring_keeping<R: RngCore>(
         if ring.len() == RING_SIZE {
             break;
         }
-        if let Some(pick) = picker.pick(rng) {
-            if !ring.contains(&pick) && eligible(pick) {
-                ring.push(pick);
-            }
+        // Members already chosen do not count as available: a draw next to
+        // them moves on to the nearest other eligible output of that age.
+        if let Some(pick) = picker.pick(rng, &|i| eligible(i) && !ring.contains(&i)) {
+            ring.push(pick);
         }
     }
     if ring.len() < RING_SIZE {
@@ -126,36 +150,6 @@ pub fn select_ring_keeping<R: RngCore>(
     }
     ring.sort_unstable();
     Ok(ring.try_into().expect("exactly RING_SIZE members"))
-}
-
-/// Up to `count` distinct candidate decoys drawn from the same distribution as
-/// [`select_ring`], none of them in `exclude`, all usable at `height`.
-///
-/// Wallets fetch a whole pool of candidates and the real output in **one**
-/// node request, then choose decoys from the pool locally. Repeated requests
-/// that each contained the real output would reveal it to the node by
-/// intersection (docs/reviews/wallet-review.md F2).
-pub fn draw_candidates<R: RngCore>(
-    rng: &mut R,
-    cumulative: &[u64],
-    height: u64,
-    target_block_time: u64,
-    count: usize,
-    exclude: &[u64],
-) -> Result<Vec<u64>, DecoyError> {
-    let picker = Picker::new(cumulative, height, target_block_time)?;
-    let mut out: Vec<u64> = Vec::with_capacity(count);
-    for _ in 0..MAX_ATTEMPTS {
-        if out.len() == count {
-            break;
-        }
-        if let Some(pick) = picker.pick(rng) {
-            if !out.contains(&pick) && !exclude.contains(&pick) {
-                out.push(pick);
-            }
-        }
-    }
-    Ok(out)
 }
 
 /// The number of outputs usable as ring members at `height` (those at least
@@ -195,8 +189,15 @@ impl<'a> Picker<'a> {
         })
     }
 
-    /// One draw; `None` if it falls outside the chain or on an empty block.
-    fn pick<R: RngCore>(&self, rng: &mut R) -> Option<u64> {
+    /// The global indices of the outputs of usable block `b`.
+    fn block_range(&self, b: usize) -> std::ops::Range<u64> {
+        let start = if b == 0 { 0 } else { self.cumulative[b - 1] };
+        start..self.cumulative[b]
+    }
+
+    /// The block at the age the gamma distribution draws; `None` if that age
+    /// lies beyond the start of the chain.
+    fn draw_block<R: RngCore>(&self, rng: &mut R) -> Option<usize> {
         let mut x = gamma(rng, GAMMA_SHAPE, GAMMA_SCALE).exp();
         let lock = SPENDABLE_AGE as f64 * self.t;
         if x > lock {
@@ -209,24 +210,49 @@ impl<'a> Picker<'a> {
             return None;
         }
         let target = self.usable - 1 - back;
-        // The block containing `target`, then a uniform output inside it.
-        let block = self.cumulative.partition_point(|&c| c <= target);
-        let start = if block == 0 {
-            0
-        } else {
-            self.cumulative[block - 1]
+        Some(self.cumulative.partition_point(|&c| c <= target))
+    }
+
+    /// A uniform eligible output of blocks `blocks`, if any.
+    fn uniform_in<R: RngCore>(
+        &self,
+        rng: &mut R,
+        blocks: std::ops::RangeInclusive<usize>,
+        eligible: &impl Fn(u64) -> bool,
+    ) -> Option<u64> {
+        let candidates = || {
+            blocks
+                .clone()
+                .flat_map(|x| self.block_range(x))
+                .filter(|&i| eligible(i))
         };
-        let end = *self.cumulative.get(block)?;
-        if end <= start {
+        let count = candidates().count() as u64;
+        if count == 0 {
             return None;
         }
-        Some(start + rng.next_u64() % (end - start))
+        candidates().nth((rng.next_u64() % count) as usize)
+    }
+
+    /// One draw: a uniform eligible output of the drawn block or, if it has
+    /// none, of its neighbourhood (see the module documentation). `None` if
+    /// the age falls outside the chain or nothing eligible lies near it.
+    fn pick<R: RngCore>(&self, rng: &mut R, eligible: &impl Fn(u64) -> bool) -> Option<u64> {
+        let b = self.draw_block(rng)?;
+        if let Some(i) = self.uniform_in(rng, b..=b, eligible) {
+            return Some(i);
+        }
+        let last = self.cumulative.len() - 1;
+        let depth = last - b + SPENDABLE_AGE as usize;
+        let w = (depth / NEIGHBOURHOOD_DEPTH_DIVISOR)
+            .clamp(NEIGHBOURHOOD_MIN_BLOCKS, NEIGHBOURHOOD_MAX_BLOCKS);
+        self.uniform_in(rng, b.saturating_sub(w)..=(b + w).min(last), eligible)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::params::COINBASE_MATURITY;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha20Rng;
 
@@ -245,6 +271,29 @@ mod tests {
             // Nothing from the last 10 blocks.
             assert!(ring.iter().all(|&i| i < cum[5_000 - 10]));
         }
+    }
+
+    #[test]
+    fn the_same_rng_gives_the_same_ring() {
+        let cum = chain(3_000, 3);
+        let odd = |i: u64| i % 3 != 1;
+        let a = select_ring(
+            &mut ChaCha20Rng::seed_from_u64(9),
+            &cum,
+            3_000,
+            120,
+            30,
+            odd,
+        );
+        let b = select_ring(
+            &mut ChaCha20Rng::seed_from_u64(9),
+            &cum,
+            3_000,
+            120,
+            30,
+            odd,
+        );
+        assert_eq!(a, b);
     }
 
     #[test]
@@ -281,7 +330,7 @@ mod tests {
         );
         let decreasing: Vec<u64> = (0..200).rev().collect();
         assert_eq!(
-            draw_candidates(&mut rng, &decreasing, 150, 120, 10, &[]),
+            select_ring(&mut rng, &decreasing, 150, 120, 0, |_| true),
             Err(DecoyError::BadDistribution)
         );
         // Flat stretches (blocks without outputs) are fine.
@@ -295,21 +344,6 @@ mod tests {
             last = *c;
         }
         assert!(select_ring(&mut rng, &flat, 3_000, 120, 30, |_| true).is_ok());
-    }
-
-    #[test]
-    fn candidates_are_distinct_usable_and_not_excluded() {
-        let mut rng = ChaCha20Rng::seed_from_u64(6);
-        let cum = chain(5_000, 4);
-        let usable = usable_outputs(&cum, 5_000).unwrap();
-        let exclude = [7_000u64, 7_001];
-        let c = draw_candidates(&mut rng, &cum, 5_000, 120, 60, &exclude).unwrap();
-        assert_eq!(c.len(), 60);
-        let mut sorted = c.clone();
-        sorted.sort_unstable();
-        sorted.dedup();
-        assert_eq!(sorted.len(), 60, "distinct");
-        assert!(c.iter().all(|i| *i < usable && !exclude.contains(i)));
     }
 
     #[test]
@@ -333,6 +367,12 @@ mod tests {
             select_ring(&mut rng, &cum, 100, 120, 199, |_| true),
             Err(DecoyError::RealOutputNotUsable),
             "real output is too young"
+        );
+        // Fewer than 16 eligible outputs in the whole chain.
+        let cum = chain(200, 2);
+        assert_eq!(
+            select_ring(&mut rng, &cum, 200, 120, 0, |i| i < 10),
+            Err(DecoyError::NotEnoughOutputs)
         );
     }
 
@@ -369,5 +409,206 @@ mod tests {
             / n as f64;
         let expected = GAMMA_SHAPE * GAMMA_SCALE; // ≈ 11.98
         assert!((mean - expected).abs() < 0.1, "{mean}");
+    }
+
+    /// A young chain (review R3-1): 3 days at 2 minutes, one coinbase output
+    /// per block and a two-output transfer every 18th block (40 transfers a
+    /// day), plus the transfer whose first output is the real input, spent 12
+    /// blocks after it was mined.
+    struct YoungChain {
+        cumulative: Vec<u64>,
+        /// Height of the block the spend goes into.
+        height: u64,
+        real: u64,
+    }
+
+    impl YoungChain {
+        const BLOCKS: u64 = 2_160;
+        const REAL_DEPTH: u64 = 12;
+
+        fn new() -> Self {
+            let height = Self::BLOCKS;
+            let real_block = height - Self::REAL_DEPTH;
+            let mut cumulative = Vec::with_capacity(Self::BLOCKS as usize);
+            let mut total = 0;
+            for h in 0..Self::BLOCKS {
+                total += 1; // the coinbase output comes first in its block
+                if h % 18 == 5 || h == real_block {
+                    total += 2;
+                }
+                cumulative.push(total);
+            }
+            let real = cumulative[real_block as usize - 1] + 1;
+            Self {
+                cumulative,
+                height,
+                real,
+            }
+        }
+
+        fn block_of(&self, i: u64) -> u64 {
+            self.cumulative.partition_point(|&c| c <= i) as u64
+        }
+
+        fn is_coinbase(&self, i: u64) -> bool {
+            let b = self.block_of(i) as usize;
+            i == if b == 0 { 0 } else { self.cumulative[b - 1] }
+        }
+
+        /// The consensus rule: a coinbase output needs 60 blocks.
+        fn mature(&self, i: u64) -> bool {
+            !self.is_coinbase(i) || self.height >= self.block_of(i) + COINBASE_MATURITY
+        }
+
+        fn depth(&self, i: u64) -> u64 {
+            self.height - self.block_of(i)
+        }
+    }
+
+    /// The selection before R3-1: the draw ignores eligibility, an ineligible
+    /// pick is thrown away and the next draw starts from scratch.
+    fn reject_after_draw(rng: &mut ChaCha20Rng, c: &YoungChain) -> [u64; RING_SIZE] {
+        let picker = Picker::new(&c.cumulative, c.height, 120).unwrap();
+        let mut ring = vec![c.real];
+        while ring.len() < RING_SIZE {
+            if let Some(p) = picker.pick(rng, &|_| true) {
+                if c.mature(p) && !ring.contains(&p) {
+                    ring.push(p);
+                }
+            }
+        }
+        ring.try_into().unwrap()
+    }
+
+    /// (fraction of decoys younger than 60 blocks, fraction of rings whose
+    /// newest member is the real input).
+    fn measure(c: &YoungChain, rings: &[[u64; RING_SIZE]]) -> (f64, f64) {
+        let (mut young, mut decoys, mut newest) = (0u64, 0u64, 0u64);
+        for ring in rings {
+            let mut real_is_newest = true;
+            for &i in ring.iter().filter(|&&i| i != c.real) {
+                decoys += 1;
+                if c.depth(i) < COINBASE_MATURITY {
+                    young += 1;
+                }
+                if c.depth(i) <= YoungChain::REAL_DEPTH {
+                    real_is_newest = false;
+                }
+            }
+            newest += real_is_newest as u64;
+        }
+        (
+            young as f64 / decoys as f64,
+            newest as f64 / rings.len() as f64,
+        )
+    }
+
+    /// R3-1: on a young chain dominated by immature coinbase outputs, decoys
+    /// younger than 60 blocks occur about as often as the gamma distribution
+    /// says (the target: the same draws with every output eligible), instead
+    /// of almost never. Fixed seed, 2,000 rings per variant.
+    ///
+    /// Tolerance: the young fraction must be within 0.05 (absolute) of the
+    /// target. The measured values are printed (`--nocapture`); they are
+    /// recorded in docs/transactions.md §11.3.1.
+    #[test]
+    fn young_decoys_survive_coinbase_maturity() {
+        const RINGS: usize = 2_000;
+        let c = YoungChain::new();
+        let mut rng = ChaCha20Rng::seed_from_u64(0x5231);
+        let draw = |rng: &mut ChaCha20Rng, eligible: &dyn Fn(u64) -> bool| {
+            (0..RINGS)
+                .map(|_| select_ring(rng, &c.cumulative, c.height, 120, c.real, eligible).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let target = draw(&mut rng, &|_| true);
+        let after = draw(&mut rng, &|i| c.mature(i));
+        let before: Vec<_> = (0..RINGS)
+            .map(|_| reject_after_draw(&mut rng, &c))
+            .collect();
+        for ring in &after {
+            assert!(ring.iter().all(|&i| c.mature(i)), "only eligible members");
+        }
+        let (target_young, target_newest) = measure(&c, &target);
+        let (after_young, after_newest) = measure(&c, &after);
+        let (before_young, before_newest) = measure(&c, &before);
+        println!(
+            "decoys < 60 blocks: target {target_young:.3}, before {before_young:.3}, \
+             after {after_young:.3}; real (12 blocks) is the newest member: target \
+             {target_newest:.3}, before {before_newest:.3}, after {after_newest:.3}"
+        );
+        assert!(
+            (after_young - target_young).abs() <= 0.05,
+            "after {after_young} vs target {target_young}"
+        );
+        assert!(
+            before_young < target_young / 2.0,
+            "the defect is reproduced"
+        );
+        assert!(after_newest < before_newest);
+        // The gamma distribution itself puts little mass 10–12 blocks deep, so
+        // even the target leaves the real input newest in most rings (§11.3.1).
+        // After the fix it is at most slightly worse than the target. It can
+        // be lower, because sparse young transfers (the real input's sibling
+        // among them) absorb nearby draws.
+        assert!(
+            after_newest <= target_newest + 0.05,
+            "after {after_newest} vs target {target_newest}"
+        );
+    }
+
+    /// On a chain of coinbase-only blocks nothing younger than 60 blocks is
+    /// eligible. Draws 51–59 blocks deep reach the first mature blocks through
+    /// their neighbourhood, so decoys 60–69 blocks deep are about twice as
+    /// frequent as with discarding and redrawing (measured 0.129 vs 0.060).
+    /// This is the accepted cost of the minimum window (§11.3.1). The bound
+    /// here, 2.5 times, catches a return to the unbounded nearest-block rule,
+    /// which moved every young draw there.
+    #[test]
+    fn no_pile_up_at_the_maturity_boundary() {
+        let height = 400u64;
+        let cum = chain(height, 1); // output i is the coinbase of block i
+        let mature = |i: u64| height >= i + COINBASE_MATURITY;
+        let picker = Picker::new(&cum, height, 120).unwrap();
+        let mut rng = ChaCha20Rng::seed_from_u64(0x60);
+        let boundary = |i: u64| (60..70).contains(&(height - i));
+        let share = |picks: &[u64]| {
+            picks.iter().filter(|&&i| boundary(i)).count() as f64 / picks.len() as f64
+        };
+        let mut after = Vec::new();
+        let mut before = Vec::new();
+        while after.len() < 20_000 {
+            if let Some(i) = picker.pick(&mut rng, &mature) {
+                after.push(i);
+            }
+        }
+        while before.len() < 20_000 {
+            if let Some(i) = picker.pick(&mut rng, &|_| true).filter(|&i| mature(i)) {
+                before.push(i);
+            }
+        }
+        let (a, b) = (share(&after), share(&before));
+        println!("decoys 60-69 blocks deep: before {b:.3}, after {a:.3}");
+        assert!(after.iter().all(|&i| mature(i)));
+        assert!(a <= 2.5 * b, "pile-up: {a} vs {b}");
+    }
+
+    /// A draw that lands on a block without eligible outputs is served from
+    /// its neighbourhood, and never returns an ineligible output.
+    #[test]
+    fn an_ineligible_block_is_replaced_from_its_neighbourhood() {
+        let c = YoungChain::new();
+        let picker = Picker::new(&c.cumulative, c.height, 120).unwrap();
+        let mut rng = ChaCha20Rng::seed_from_u64(77);
+        let only_transfers = |i: u64| !c.is_coinbase(i);
+        for _ in 0..2_000 {
+            if let Some(p) = picker.pick(&mut rng, &only_transfers) {
+                assert!(!c.is_coinbase(p));
+            }
+        }
+        // Everything ineligible: every draw fails, none panics.
+        for _ in 0..100 {
+            assert_eq!(picker.pick(&mut rng, &|_| false), None);
+        }
     }
 }

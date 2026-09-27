@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 pub mod file;
+pub mod index;
 pub mod node;
 pub mod px;
 pub mod wallet;

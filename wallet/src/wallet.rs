@@ -8,6 +8,7 @@
 //! hide payments or lie about decoys; that is why wallets should use their own
 //! node (docs/blocks.md §9).
 
+use crate::index::{IndexedOutput, OutputIndex};
 use crate::node::NodeApi;
 use crate::px::{
     AddressKeys, ContractRecord, KnownContract, PxStore, RecordSource, PX_GAP_LIMIT, PX_LOOKAHEAD,
@@ -29,14 +30,14 @@ use blacksilk_crypto::keys::{Address, SubaddressIndex, SubaddressTable, WalletKe
 use blacksilk_crypto::stealth::ReceivedOutput;
 use blacksilk_crypto::{Point, Scalar};
 use blacksilk_px::perm::HostPerm;
-use blacksilk_px::wallet::{self as pxw, Account};
+use blacksilk_px::wallet::{self as pxw, Account, Derivation};
 use blacksilk_px::{delivery, share, vault};
 use blacksilk_px_core::record::{output_rho, Record};
 use blacksilk_px_core::{Digest, ZERO_DIGEST};
 use blacksilk_tx::builder::{
     build_transfer, standard_fee, BuildError, Decoy, InputPlan, Payment, SpendableOutput,
 };
-use blacksilk_tx::params::{TxRules, COINBASE_MATURITY, MAX_INPUTS, RING_SIZE, SPENDABLE_AGE};
+use blacksilk_tx::params::{TxRules, COINBASE_MATURITY, MAX_INPUTS, SPENDABLE_AGE};
 use blacksilk_tx::px::{PxTx, Registration};
 use blacksilk_tx::px_builder::{
     build_deploy, build_px, deploy_fee, px_standard_fee, FunctionRun, PxPlan,
@@ -193,6 +194,21 @@ struct StoredOutput {
     /// Wallet height when that transaction was submitted.
     #[serde(default)]
     pending_height: u64,
+    /// Hash of the transaction that created it (absent in wallet files
+    /// written before 2026-09-27; the block height stands in for it then).
+    #[serde(default)]
+    tx: Option<String>,
+}
+
+impl StoredOutput {
+    /// What identifies its source for merge avoidance (review R3-13): the
+    /// creating transaction, or the block for outputs stored without it.
+    fn source(&self) -> String {
+        match &self.tx {
+            Some(t) => t.clone(),
+            None => format!("block {}", self.height),
+        }
+    }
 }
 
 /// A transaction this wallet submitted, kept until its spend is buried
@@ -265,11 +281,35 @@ struct Persisted {
     /// Decoys of the ring last submitted for each key image (W-5).
     #[serde(default)]
     rings: BTreeMap<String, Vec<RingMember>>,
+    /// The PX key derivation (`blacksilk_px::wallet::Derivation`). Absent in
+    /// files written before 2026-09-27, which are version 1: `1`.
+    #[serde(default)]
+    derivation: Option<u32>,
+    /// Every v1 output seen, for local ring-member resolution (absent in
+    /// older files: rebuilt by the next sync and a backfill).
+    #[serde(default)]
+    output_index: OutputIndex,
+}
+
+/// The wallet-file format version for a wallet with PX derivation `d`.
+/// Version 2 adds the PX key derivation (`derivation`); version 1 files are
+/// read as derivation 1, and derivation-1 wallets are still written as
+/// version 1. A version-2 file is refused by older wallets, which would
+/// otherwise derive the wrong PX addresses from it.
+fn file_version(d: Derivation) -> u32 {
+    match d {
+        Derivation::V1 => 1,
+        Derivation::V2 => 2,
+    }
 }
 
 pub struct Wallet {
     network: Network,
     seed: [u8; 32],
+    /// PX key derivation of this wallet (docs/px.md §3.1).
+    derivation: Derivation,
+    /// Every v1 output seen (`crate::index`).
+    index: OutputIndex,
     keys: WalletKeys,
     table: SubaddressTable,
     restore_height: u64,
@@ -396,12 +436,26 @@ pub struct HeldRecord {
 }
 
 impl Wallet {
-    /// A wallet from a 32-byte seed. `restore_height` is where scanning starts.
+    /// A wallet from a 32-byte seed, with the latest PX key derivation.
+    /// `restore_height` is where scanning starts.
     pub fn from_seed(network: Network, seed: [u8; 32], restore_height: u64) -> Self {
+        Self::from_seed_with(network, seed, restore_height, Derivation::LATEST)
+    }
+
+    /// A wallet from a 32-byte seed with PX key derivation `derivation`
+    /// (docs/px.md §3.1). The v1 keys do not depend on it.
+    pub fn from_seed_with(
+        network: Network,
+        seed: [u8; 32],
+        restore_height: u64,
+        derivation: Derivation,
+    ) -> Self {
         let keys = WalletKeys::from_seed(&seed);
         let mut w = Self {
             network,
             seed,
+            derivation,
+            index: OutputIndex::default(),
             table: SubaddressTable::default(),
             keys,
             restore_height,
@@ -410,7 +464,7 @@ impl Wallet {
             issued: BTreeMap::from([(0, 0)]),
             outputs: Vec::new(),
             px: PxStore::default(),
-            px_account: Account::from_seed(&seed),
+            px_account: Account::from_seed_with(&seed, derivation),
             pending_txs: Vec::new(),
             rings: BTreeMap::new(),
             staged_rings: Vec::new(),
@@ -450,10 +504,24 @@ impl Wallet {
         s
     }
 
+    /// A wallet from its 24-word seed, with the latest PX key derivation.
     pub fn from_mnemonic(
         network: Network,
         words: &str,
         restore_height: u64,
+    ) -> Result<Self, WalletError> {
+        Self::from_mnemonic_with(network, words, restore_height, Derivation::LATEST)
+    }
+
+    /// A wallet from its 24-word seed with PX key derivation `derivation`.
+    /// The words do not record the derivation (docs/px.md §3.1): a seed from
+    /// a wallet created before derivation 2 must be restored with 1, or its
+    /// PX records are not found. The v1 funds are found either way.
+    pub fn from_mnemonic_with(
+        network: Network,
+        words: &str,
+        restore_height: u64,
+        derivation: Derivation,
     ) -> Result<Self, WalletError> {
         let m = bip39::Mnemonic::parse_normalized(words.trim())
             .map_err(|e| WalletError::Serialization(format!("mnemonic: {e}")))?;
@@ -463,11 +531,29 @@ impl Wallet {
             .try_into()
             .map_err(|_| WalletError::Serialization("mnemonic must have 24 words".into()))?;
         entropy.zeroize();
-        Ok(Self::from_seed(network, seed, restore_height))
+        Ok(Self::from_seed_with(
+            network,
+            seed,
+            restore_height,
+            derivation,
+        ))
     }
 
     pub fn network(&self) -> Network {
         self.network
+    }
+
+    /// The PX key derivation of this wallet.
+    pub fn derivation(&self) -> Derivation {
+        self.derivation
+    }
+
+    /// The full viewing key of PX address range `range` (addresses
+    /// `range·2^16 ..`), for an auditor or a watch-only service: it sees the
+    /// records received in that range and their spends, and cannot spend.
+    /// `None` under derivation 1. Sensitive; there is no CLI export yet.
+    pub fn px_range_view(&self, range: u32) -> Option<pxw::RangeViewKey> {
+        self.px_account.range_view(range)
     }
 
     pub fn synced_height(&self) -> u64 {
@@ -596,7 +682,9 @@ impl Wallet {
 
     pub fn to_json(&self) -> Vec<u8> {
         let p = Persisted {
-            version: 1,
+            version: file_version(self.derivation),
+            derivation: Some(self.derivation.number()),
+            output_index: self.index.clone(),
             network: network_name(self.network).into(),
             seed: SecretString(Zeroizing::new(hex::encode(self.seed))),
             restore_height: self.restore_height,
@@ -618,17 +706,29 @@ impl Wallet {
     pub fn from_json(bytes: &[u8]) -> Result<Self, WalletError> {
         let p: Persisted =
             serde_json::from_slice(bytes).map_err(|e| WalletError::Serialization(e.to_string()))?;
-        if p.version != 1 {
-            return Err(WalletError::Serialization(format!(
-                "unsupported version {}",
-                p.version
-            )));
-        }
+        // Files without a derivation predate it: derivation 1.
+        let derivation = Derivation::from_number(p.derivation.unwrap_or(1));
+        let derivation = match (p.version, derivation) {
+            (1 | 2, Some(d)) if file_version(d) == p.version => d,
+            (1 | 2, _) => {
+                return Err(WalletError::Serialization(format!(
+                    "wallet file version {} with PX key derivation {:?}",
+                    p.version, p.derivation
+                )))
+            }
+            _ => {
+                return Err(WalletError::Serialization(format!(
+                    "unsupported version {}",
+                    p.version
+                )))
+            }
+        };
         let network = parse_network(&p.network)
             .ok_or_else(|| WalletError::Serialization("network".into()))?;
         let mut seed = h32(&p.seed.0)?;
-        let mut w = Self::from_seed(network, seed, p.restore_height);
+        let mut w = Self::from_seed_with(network, seed, p.restore_height, derivation);
         seed.zeroize();
+        w.index = p.output_index;
         w.synced_height = p.synced_height;
         w.block_ids = p
             .block_ids
@@ -710,6 +810,7 @@ impl Wallet {
             }
         }
         self.block_ids.retain(|h, _| *h <= height);
+        self.index.rewind(height);
         self.px.rewind(height);
         self.synced_height = height;
     }
@@ -804,6 +905,17 @@ impl Wallet {
     }
 
     fn apply_block(&mut self, block: &Block, height: u64, first_output: u64) {
+        // Every output, in the chain's global order (as `scan_block` counts).
+        self.index.push_block(
+            height,
+            first_output,
+            block.txs.iter().flat_map(|tx| {
+                let coinbase = tx.is_coinbase();
+                tx.output_keys()
+                    .into_iter()
+                    .map(move |k| (*k.one_time_key.bytes(), *k.commitment.bytes(), coinbase))
+            }),
+        );
         self.px
             .apply_block(&mut self.px_keys, &self.px_account, &block.txs, height);
         // Gap-limit scan (review M-2): an output found near the edge of the
@@ -848,6 +960,7 @@ impl Wallet {
                     spent_height: None,
                     pending: false,
                     pending_height: 0,
+                    tx: Some(hex::encode(o.tx_hash)),
                 });
                 grew |= self.note_used(subaddress.account, subaddress.index);
             }
@@ -1208,10 +1321,68 @@ impl Wallet {
         })
     }
 
-    /// Chooses inputs: the smallest single output that covers everything if one
-    /// exists (fewest inputs, least change linkage), otherwise largest-first.
-    fn select_inputs(
+    /// Adds inputs from `order` (largest first) until `enough(count, sum)`.
+    ///
+    /// Merge avoidance (review R3-13): spending two outputs of one transaction
+    /// together tells observers that both real inputs came from it (Kumar et
+    /// al. 2017; Möser et al. 2018). So the first pass takes at most one output
+    /// per source transaction; only if that cannot cover the amount does a
+    /// plain largest-first pass run. Returns the inputs and whether they
+    /// include two outputs of one source, or `None` if everything is not
+    /// enough. The result may exceed `MAX_INPUTS`; callers refuse that.
+    fn gather(
         &self,
+        order: &[usize],
+        enough: impl Fn(usize, u128) -> bool,
+    ) -> Option<(Vec<usize>, bool)> {
+        let mut sources = HashSet::new();
+        let mut chosen = Vec::new();
+        let mut sum = 0u128;
+        for &i in order {
+            if chosen.len() == MAX_INPUTS {
+                break;
+            }
+            if sources.insert(self.outputs[i].source()) {
+                chosen.push(i);
+                sum += self.outputs[i].amount as u128;
+                if enough(chosen.len(), sum) {
+                    return Some((chosen, false));
+                }
+            }
+        }
+        let mut chosen = Vec::new();
+        let mut sum = 0u128;
+        for &i in order {
+            chosen.push(i);
+            sum += self.outputs[i].amount as u128;
+            if chosen.len() > MAX_INPUTS {
+                return Some((chosen, false));
+            }
+            if enough(chosen.len(), sum) {
+                let distinct: HashSet<String> =
+                    chosen.iter().map(|&i| self.outputs[i].source()).collect();
+                let merged = distinct.len() < chosen.len();
+                return Some((chosen, merged));
+            }
+        }
+        None
+    }
+
+    /// The warning for inputs that include outputs of one source transaction.
+    fn merge_warning(&mut self) {
+        self.warnings.push(
+            "this transaction spends two or more outputs that were created by the same \
+             transaction; observers can link them and guess the real inputs of its rings \
+             (there was no other way to cover the amount)"
+                .into(),
+        );
+    }
+
+    /// Chooses inputs: the smallest single output that covers everything if one
+    /// exists (fewest inputs, least change linkage), otherwise largest-first,
+    /// avoiding outputs of one source transaction together (`gather`).
+    fn select_inputs(
+        &mut self,
         amount: u64,
         payments: usize,
         rules: &TxRules,
@@ -1229,27 +1400,22 @@ impl Wallet {
         {
             return Ok((vec![i], fee1));
         }
-        let mut chosen = Vec::new();
-        let mut sum = 0u128;
-        for &i in candidates.iter().rev() {
-            chosen.push(i);
-            sum += self.outputs[i].amount as u128;
-            if chosen.len() > MAX_INPUTS {
-                return Err(WalletError::TooManyInputs);
+        candidates.reverse();
+        let fee = |n: usize| standard_fee(n, payments + 1, rules);
+        match self.gather(&candidates, |n, sum| sum >= amount as u128 + fee(n) as u128) {
+            Some((chosen, _)) if chosen.len() > MAX_INPUTS => Err(WalletError::TooManyInputs),
+            Some((chosen, merged)) => {
+                if merged {
+                    self.merge_warning();
+                }
+                let f = fee(chosen.len());
+                Ok((chosen, f))
             }
-            let fee = standard_fee(chosen.len(), payments + 1, rules);
-            if sum >= amount as u128 + fee as u128 {
-                return Ok((chosen, fee));
-            }
+            None => Err(WalletError::InsufficientFunds {
+                available,
+                needed: amount.saturating_add(fee(candidates.len().max(1))),
+            }),
         }
-        Err(WalletError::InsufficientFunds {
-            available,
-            needed: amount.saturating_add(standard_fee(
-                candidates.len().max(1),
-                payments + 1,
-                rules,
-            )),
-        })
     }
 
     /// Builds, submits and records a transfer of `amount` to `to`. Change goes to
@@ -1355,39 +1521,108 @@ impl Wallet {
             .filter(|&i| Self::spendable_at(&self.outputs[i], next))
             .collect();
         candidates.sort_by_key(|&i| std::cmp::Reverse(self.outputs[i].amount));
-        let mut chosen = Vec::new();
-        let mut sum = 0u128;
-        for &i in &candidates {
-            if sum >= needed as u128 {
-                break;
+        let chosen = match self.gather(&candidates, |_, sum| sum >= needed as u128) {
+            Some((chosen, _)) if chosen.len() > MAX_INPUTS => {
+                return Err(WalletError::TooManyInputs)
             }
-            chosen.push(i);
-            sum += self.outputs[i].amount as u128;
-        }
-        if chosen.len() > MAX_INPUTS {
-            return Err(WalletError::TooManyInputs);
-        }
-        if sum < needed as u128 {
-            return Err(WalletError::InsufficientFunds {
-                available: candidates.iter().map(|&i| self.outputs[i].amount).sum(),
-                needed,
-            });
-        }
+            Some((chosen, merged)) => {
+                if merged {
+                    self.merge_warning();
+                }
+                chosen
+            }
+            None => {
+                return Err(WalletError::InsufficientFunds {
+                    available: candidates.iter().map(|&i| self.outputs[i].amount).sum(),
+                    needed,
+                })
+            }
+        };
         let plans = self.plans_for(node, &chosen, rng)?;
         Ok((chosen, plans))
     }
 
+    /// Makes the local output index (`crate::index`) cover every output up to
+    /// `total` (the node's count through the synced height).
+    ///
+    /// Outputs the wallet never scanned (below its restore height, or all of
+    /// them for a wallet file written before the index existed) are fetched
+    /// with `/outputs` **once**, as the whole missing range in fixed pages of
+    /// `MAX_OUTPUTS_PER_REQUEST` consecutive indices. The requests depend only
+    /// on the index's extent, never on which outputs the wallet spends, so
+    /// they reveal nothing about rings (review I3 §3.9; F2 is thereby moot).
+    fn complete_index(&mut self, node: &dyn NodeApi, total: u64) -> Result<(), WalletError> {
+        // Nothing indexed (an older wallet file with no block synced since):
+        // everything through the synced height is missing.
+        let end = if self.index.is_empty() {
+            total
+        } else if self.index.end() != total {
+            return Err(WalletError::BadNodeData(format!(
+                "the node counts {total} outputs through block {}, the blocks it sent {}",
+                self.synced_height,
+                self.index.end()
+            )));
+        } else {
+            self.index.start()
+        };
+        if end == 0 {
+            return Ok(());
+        }
+        let page = blacksilk_rpc::MAX_OUTPUTS_PER_REQUEST as u64;
+        // Not pre-allocated: `end` comes from the node.
+        let mut older: Vec<IndexedOutput> = Vec::new();
+        let mut from = 0u64;
+        while from < end {
+            let to = (from + page).min(end);
+            let query: Vec<u64> = (from..to).collect();
+            let fetched = node.outputs(&query).map_err(WalletError::Node)?.outputs;
+            if fetched.len() != query.len()
+                || fetched.iter().zip(&query).any(|(f, i)| f.index != *i)
+            {
+                return Err(WalletError::BadNodeData(
+                    "outputs do not match the request".into(),
+                ));
+            }
+            for f in fetched {
+                let key = h32(&f.one_time_key)?;
+                let commitment = h32(&f.commitment)?;
+                if Point::decode(&key).is_none() || Point::decode(&commitment).is_none() {
+                    return Err(WalletError::BadNodeData(
+                        "an output key is not a point".into(),
+                    ));
+                }
+                older.push(IndexedOutput {
+                    one_time_key: key,
+                    commitment,
+                    height: f.height,
+                    coinbase: f.coinbase,
+                });
+            }
+            from = to;
+        }
+        self.index
+            .prepend(older, end)
+            .map_err(WalletError::BadNodeData)?;
+        if !self.index.is_complete(total) {
+            return Err(WalletError::BadNodeData(
+                "the output index does not match the node's distribution".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Rings for the v1 outputs `chosen`, staged for `submit`.
     ///
-    /// Privacy of the node queries (docs/reviews/wallet-review.md F2): for each
-    /// input the wallet makes **one** `/outputs` request, containing the real
-    /// output, the members of any ring stored for it, and a pool of fresh
-    /// candidates, in random order. Decoys are then chosen locally. A request
-    /// without the real output, or several requests that all contain it, would
-    /// single it out.
+    /// Privacy of ring construction (review I3 §3.9, docs/reviews/wallet-review.md
+    /// F2): ring members are resolved from the local output index, so the node
+    /// is not asked about any of them. Only the output distribution (one
+    /// request, for the synced height) and, once, a backfill of outputs older
+    /// than the restore height (`complete_index`) come from the node.
     ///
-    /// An output spent before in a submitted transaction gets that ring again
-    /// (W-5), as far as its members still exist unchanged.
+    /// Decoys follow the gamma picker with coinbase maturity applied inside the
+    /// draw (`blacksilk_tx::decoy`, review R3-1). An output spent before in a
+    /// submitted transaction gets that ring again (W-5), as far as its members
+    /// still exist unchanged and are eligible.
     fn plans_for<R: RngCore + CryptoRng>(
         &mut self,
         node: &dyn NodeApi,
@@ -1399,13 +1634,38 @@ impl Wallet {
             .distribution(self.synced_height)
             .map_err(WalletError::Node)?;
         let cumulative = &dist.cumulative;
+        let total = *cumulative
+            .get(self.synced_height as usize)
+            .ok_or_else(|| WalletError::BadNodeData("short output distribution".into()))?;
+        self.complete_index(node, total)?;
         let target = ChainParams::for_network(self.network).target_block_time;
         let decoy_err = |e| WalletError::Decoys(format!("{e:?}"));
         let usable = blacksilk_tx::decoy::usable_outputs(cumulative, next).map_err(decoy_err)?;
+        // Coinbase outputs of blocks `0..=next − 60` are mature.
         let coinbase_limit = next
             .checked_sub(COINBASE_MATURITY)
             .and_then(|h| cumulative.get(h as usize).copied())
             .unwrap_or(0);
+        let index = &self.index;
+        let eligible = |i: u64| {
+            i < usable
+                && index
+                    .get(i)
+                    .is_some_and(|e| !(e.coinbase && i >= coinbase_limit))
+        };
+        let member = |i: u64| -> Result<Decoy, WalletError> {
+            let e = index
+                .get(i)
+                .ok_or_else(|| WalletError::Decoys(format!("output {i} is not indexed")))?;
+            let bad = || WalletError::BadNodeData(format!("output {i} is not a point"));
+            Ok(Decoy {
+                global_index: i,
+                key: OutputKey {
+                    one_time_key: Point::decode(&e.one_time_key).ok_or_else(bad)?,
+                    commitment: Point::decode(&e.commitment).ok_or_else(bad)?,
+                },
+            })
+        };
         let mut plans = Vec::with_capacity(chosen.len());
         let mut staged = Vec::with_capacity(chosen.len());
         for &i in chosen {
@@ -1414,94 +1674,43 @@ impl Wallet {
             if real >= usable {
                 return Err(WalletError::Decoys("output not yet usable".into()));
             }
-            // Stored members that can still be ring members (indices are dense:
-            // below `usable` every index exists).
-            let stored: Vec<&RingMember> = self
+            // Our own output, as scanned, must be what the index holds.
+            let own = index
+                .get(real)
+                .ok_or_else(|| WalletError::Decoys("own output not indexed".into()))?;
+            if hex::encode(own.one_time_key) != o.one_time_key
+                || hex::encode(own.commitment) != o.commitment
+            {
+                return Err(WalletError::BadNodeData(
+                    "the output index disagrees on our output".into(),
+                ));
+            }
+            // Stored members are kept only if the index still holds the same
+            // output at that position (a reorganization may have moved it).
+            let keep: Vec<u64> = self
                 .rings
                 .get(&o.key_image)
                 .map(|m| {
                     m.iter()
-                        .filter(|m| m.index < usable && m.index != real)
+                        .filter(|m| {
+                            index.get(m.index).is_some_and(|e| {
+                                hex::encode(e.one_time_key) == m.one_time_key
+                                    && hex::encode(e.commitment) == m.commitment
+                            })
+                        })
+                        .map(|m| m.index)
                         .collect()
                 })
                 .unwrap_or_default();
-            let need = (RING_SIZE - 1).saturating_sub(stored.len());
-            let mut exclude: Vec<u64> = stored.iter().map(|m| m.index).collect();
-            exclude.push(real);
-            let pool = if need == 0 {
-                Vec::new()
-            } else {
-                blacksilk_tx::decoy::draw_candidates(
-                    rng,
-                    cumulative,
-                    next,
-                    target,
-                    (4 * need).max(32),
-                    &exclude,
-                )
-                .map_err(decoy_err)?
-            };
-            // One request: real, stored members and the pool, shuffled.
-            let mut query: Vec<u64> = pool.clone();
-            query.extend(stored.iter().map(|m| m.index));
-            query.push(real);
-            shuffle(&mut query, rng);
-            let fetched = node.outputs(&query).map_err(WalletError::Node)?.outputs;
-            if fetched.len() != query.len()
-                || fetched.iter().zip(&query).any(|(f, i)| f.index != *i)
-            {
-                return Err(WalletError::BadNodeData(
-                    "outputs do not match the request".into(),
-                ));
-            }
-            let by_index: BTreeMap<u64, &blacksilk_rpc::OutputEntry> =
-                fetched.iter().map(|f| (f.index, f)).collect();
-            // The node must agree on our own output.
-            let own = by_index[&real];
-            if own.one_time_key != o.one_time_key || own.commitment != o.commitment {
-                return Err(WalletError::BadNodeData(
-                    "the node disagrees on our output".into(),
-                ));
-            }
-            let mature =
-                |f: &blacksilk_rpc::OutputEntry| !(f.coinbase && f.index >= coinbase_limit);
-            // Stored members: kept only if unchanged and still eligible.
-            let mut decoys: Vec<Decoy> = Vec::with_capacity(RING_SIZE - 1);
-            for m in &stored {
-                let f = by_index[&m.index];
-                if f.one_time_key == m.one_time_key && f.commitment == m.commitment && mature(f) {
-                    decoys.push(Decoy {
-                        global_index: m.index,
-                        key: OutputKey {
-                            one_time_key: point(&m.one_time_key)?,
-                            commitment: point(&m.commitment)?,
-                        },
-                    });
-                }
-            }
-            // The rest: a random subset of the eligible pool.
-            let mut eligible: Vec<&blacksilk_rpc::OutputEntry> = pool
+            let ring = blacksilk_tx::decoy::select_ring_keeping(
+                rng, cumulative, next, target, real, &keep, eligible,
+            )
+            .map_err(decoy_err)?;
+            let decoys = ring
                 .iter()
-                .map(|i| by_index[i])
-                .filter(|f| mature(f))
-                .collect();
-            shuffle(&mut eligible, rng);
-            for f in eligible {
-                if decoys.len() == RING_SIZE - 1 {
-                    break;
-                }
-                decoys.push(Decoy {
-                    global_index: f.index,
-                    key: OutputKey {
-                        one_time_key: point(&f.one_time_key)?,
-                        commitment: point(&f.commitment)?,
-                    },
-                });
-            }
-            if decoys.len() < RING_SIZE - 1 {
-                return Err(WalletError::Decoys("not enough eligible decoys".into()));
-            }
-            decoys.sort_by_key(|d| d.global_index);
+                .filter(|&&m| m != real)
+                .map(|&m| member(m))
+                .collect::<Result<Vec<Decoy>, WalletError>>()?;
             staged.push((
                 o.key_image.clone(),
                 decoys.iter().map(RingMember::of).collect(),
@@ -2099,14 +2308,6 @@ pub fn check_vault_deploy(programs: &[Registration]) -> Result<(), WalletError> 
     Ok(())
 }
 
-/// Fisher–Yates shuffle with the wallet's CSPRNG.
-fn shuffle<T, R: RngCore>(v: &mut [T], rng: &mut R) {
-    for i in (1..v.len()).rev() {
-        let j = (rng.next_u64() % (i as u64 + 1)) as usize;
-        v.swap(i, j);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2170,6 +2371,7 @@ mod tests {
             spent_height: None,
             pending: false,
             pending_height: 0,
+            tx: None,
         });
         assert!(w.try_address(0, 4_000 + GAP_LIMIT, false).is_ok());
         assert!(w.try_address(0, 4_001 + GAP_LIMIT, false).is_err());
@@ -2244,6 +2446,7 @@ mod tests {
             spent_height: None,
             pending: false,
             pending_height: 0,
+            tx: None,
         });
         let loaded = Wallet::from_json(&w.to_json()).unwrap();
         assert_eq!(loaded.issued[&0], 40);
@@ -2508,6 +2711,177 @@ mod tests {
                 claim(&mut w, cm, &mut rng),
                 Err(WalletError::Contract(_))
             ));
+        }
+    }
+
+    /// Serves `/outputs` for any index (identity keys, 10 outputs per block,
+    /// all coinbase) and records every request.
+    #[derive(Default)]
+    struct Pages(std::cell::RefCell<Vec<Vec<u64>>>);
+
+    impl NodeApi for Pages {
+        fn info(&self) -> Result<rpc::Info, String> {
+            Err("not used".into())
+        }
+        fn blocks(&self, _: u64, _: u64) -> Result<rpc::Blocks, String> {
+            Err("not used".into())
+        }
+        fn distribution(&self, _: u64) -> Result<rpc::Distribution, String> {
+            Err("not used".into())
+        }
+        fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String> {
+            self.0.borrow_mut().push(indices.to_vec());
+            Ok(rpc::Outputs {
+                outputs: indices
+                    .iter()
+                    .map(|&index| rpc::OutputEntry {
+                        index,
+                        one_time_key: "00".repeat(32),
+                        commitment: "00".repeat(32),
+                        height: index / 10,
+                        coinbase: true,
+                    })
+                    .collect(),
+            })
+        }
+        fn submit_tx(&self, _: &[u8]) -> Result<rpc::SubmitResult, String> {
+            Err("not used".into())
+        }
+        fn px_commitments(&self, _: u64) -> Result<rpc::PxCommitments, String> {
+            Err("not used".into())
+        }
+        fn px_contracts(&self, _: u64) -> Result<rpc::PxContracts, String> {
+            Err("not used".into())
+        }
+    }
+
+    /// Review I3 §3.9: outputs below the restore height are fetched once, as
+    /// the whole missing range in fixed pages, whatever the wallet spends.
+    #[test]
+    fn the_backfill_fetches_the_whole_missing_range_in_fixed_pages() {
+        let mut w = wallet();
+        w.index
+            .push_block(250, 2_500, [([0; 32], [0; 32], true); 3]);
+        w.synced_height = 250;
+        let node = Pages::default();
+        w.complete_index(&node, 2_503).unwrap();
+        {
+            let q = node.0.borrow();
+            let pages: Vec<(u64, u64)> = q.iter().map(|p| (p[0], p.len() as u64)).collect();
+            assert_eq!(pages, [(0, 1_024), (1_024, 1_024), (2_048, 452)]);
+            assert!(q.iter().all(|p| p.windows(2).all(|w| w[1] == w[0] + 1)));
+        }
+        assert!(w.index.is_complete(2_503));
+        assert_eq!(w.index.get(1_234).unwrap().height, 123);
+        // Complete: nothing more is fetched.
+        w.complete_index(&node, 2_503).unwrap();
+        assert_eq!(node.0.borrow().len(), 3);
+        // A distribution that disagrees with the blocks is refused.
+        assert!(matches!(
+            w.complete_index(&node, 2_504),
+            Err(WalletError::BadNodeData(_))
+        ));
+        // The index survives a save and load.
+        let reloaded = Wallet::from_json(&w.to_json()).unwrap();
+        assert_eq!(reloaded.index, w.index);
+    }
+
+    fn owned(w: &mut Wallet, global_index: u64, amount: u64, tx: Option<&str>, height: u64) {
+        let zero = hex::encode([0u8; 32]);
+        w.outputs.push(StoredOutput {
+            global_index,
+            height,
+            coinbase: false,
+            account: 0,
+            index: 0,
+            amount,
+            one_time_key: zero.clone(),
+            commitment: zero.clone(),
+            mask: zero.clone(),
+            offset: zero.clone(),
+            key_image: format!("{global_index:064x}"),
+            spent_height: None,
+            pending: false,
+            pending_height: 0,
+            tx: tx.map(String::from),
+        });
+    }
+
+    /// Review R3-13: two outputs of one transaction are spent together only
+    /// when nothing else covers the amount, and then with a warning.
+    #[test]
+    fn outputs_of_one_transaction_are_not_spent_together_unless_needed() {
+        use blacksilk_chain::emission::COIN;
+        let rules = TxRules::for_chain(&ChainParams::regtest());
+        let mut w = wallet();
+        w.synced_height = 100;
+        owned(&mut w, 1, 10 * COIN, Some("aa"), 50);
+        owned(&mut w, 2, 9 * COIN, Some("aa"), 50);
+        owned(&mut w, 3, 8 * COIN, Some("bb"), 60);
+        let amounts = |w: &Wallet, chosen: &[usize]| {
+            let mut a: Vec<u64> = chosen.iter().map(|&i| w.outputs[i].amount / COIN).collect();
+            a.sort_unstable();
+            a
+        };
+        // Largest-first would take 10 + 9, both from "aa".
+        let (chosen, _) = w.select_inputs(15 * COIN, 1, &rules).unwrap();
+        assert_eq!(amounts(&w, &chosen), [8, 10]);
+        assert!(w.take_warnings().is_empty());
+        // 25 needs all three: allowed, with a warning.
+        let (chosen, _) = w.select_inputs(25 * COIN, 1, &rules).unwrap();
+        assert_eq!(chosen.len(), 3);
+        assert_eq!(w.take_warnings().len(), 1);
+        // Outputs stored without their transaction (older files) are grouped
+        // by block.
+        let mut w = wallet();
+        w.synced_height = 100;
+        owned(&mut w, 1, 10 * COIN, None, 50);
+        owned(&mut w, 2, 9 * COIN, None, 50);
+        owned(&mut w, 3, 8 * COIN, None, 60);
+        let (chosen, _) = w.select_inputs(15 * COIN, 1, &rules).unwrap();
+        assert_eq!(amounts(&w, &chosen), [8, 10]);
+    }
+
+    /// Existing wallet files keep their PX addresses (derivation 1); new
+    /// wallets use derivation 2, recorded in a version-2 file.
+    #[test]
+    fn wallet_files_keep_their_px_key_derivation() {
+        let mut new = wallet();
+        assert_eq!(new.derivation(), Derivation::V2);
+        assert!(new.px_range_view(0).is_some());
+        let mut old = Wallet::from_seed_with(Network::Regtest, [7; 32], 1, Derivation::V1);
+        assert!(old.px_range_view(0).is_none());
+        let (new_px, old_px) = (new.px_address(0), old.px_address(0));
+        assert_ne!(new_px, old_px, "the derivation changes PX addresses");
+        assert_eq!(new.primary(), old.primary(), "but not the v1 keys");
+
+        // A file written before the derivation and the index existed.
+        let mut json: serde_json::Value = serde_json::from_slice(&old.to_json()).unwrap();
+        assert_eq!(json["version"], 1);
+        let fields = json.as_object_mut().unwrap();
+        fields.remove("derivation");
+        fields.remove("output_index");
+        let bytes = serde_json::to_vec(&json).unwrap();
+        let mut loaded = Wallet::from_json(&bytes).unwrap();
+        assert_eq!(loaded.derivation(), Derivation::V1);
+        assert_eq!(loaded.px_address(0), old_px);
+
+        let json: serde_json::Value = serde_json::from_slice(&new.to_json()).unwrap();
+        assert_eq!(json["version"], 2);
+        let mut loaded = Wallet::from_json(&new.to_json()).unwrap();
+        assert_eq!(loaded.derivation(), Derivation::V2);
+        assert_eq!(loaded.px_address(0), new_px);
+
+        // Inconsistent or unknown versions are refused.
+        for (version, derivation) in [(1, 2), (2, 1), (3, 2), (2, 9)] {
+            let mut json: serde_json::Value = serde_json::from_slice(&new.to_json()).unwrap();
+            json["version"] = version.into();
+            json["derivation"] = derivation.into();
+            let bytes = serde_json::to_vec(&json).unwrap();
+            assert!(
+                Wallet::from_json(&bytes).is_err(),
+                "version {version}, derivation {derivation}"
+            );
         }
     }
 }
