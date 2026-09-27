@@ -196,6 +196,52 @@ fn spawn(bin: &Path, args: &[String], log_path: &Path, name: &str) -> Proc {
     }
 }
 
+/// How long a connected node may stay behind the best height without
+/// progress before it counts as stuck.
+const STUCK_AFTER: Duration = Duration::from_secs(90);
+
+/// Stuck detection for one node, fed once per sample. A node is stuck if,
+/// while the network has been connected for a while, it stays behind the
+/// best height and its tip does not move for more than [`STUCK_AFTER`].
+/// Trailing the miner's node by a block at every sample while advancing is
+/// progress, not a stall: counting it was the seedrun2 false positive
+/// (docs/evidence/labnet-reorg-2026-09-27).
+#[derive(Default)]
+struct StuckDetector {
+    /// Since when the node has been behind at its current tip.
+    since: Option<Instant>,
+    /// Its tip at the previous sample.
+    tip: String,
+    /// An incident was already counted for this stall.
+    reported: bool,
+}
+
+impl StuckDetector {
+    /// Returns true when this sample starts a new stuck incident.
+    fn observe(
+        &mut self,
+        now: Instant,
+        tip: &str,
+        height: u64,
+        best: u64,
+        connected_long: bool,
+    ) -> bool {
+        let moved = self.tip != tip;
+        self.tip = tip.to_string();
+        if height >= best || !connected_long || moved {
+            self.since = (height < best && connected_long).then_some(now);
+            self.reported = false;
+            return false;
+        }
+        let since = *self.since.get_or_insert(now);
+        if now.duration_since(since) > STUCK_AFTER && !self.reported {
+            self.reported = true;
+            return true;
+        }
+        false
+    }
+}
+
 /// A node's RPC cookie: `rpc.cookie` in its data directory (docs/blocks.md
 /// §9.1). The node writes it at start and removes it at shutdown.
 fn cookie_path(data: &Path) -> PathBuf {
@@ -286,7 +332,7 @@ fn main() {
     let mut metrics = File::create(a.out.join("metrics.csv")).unwrap();
     writeln!(
         metrics,
-        "unix,partitioned,heights,header_heights,tips,mempools,peers,rss_mb"
+        "unix,partitioned,heights,header_heights,tips,mempools,peers,rss_mb,difficulties"
     )
     .unwrap();
     let node_bin = a.bin_dir.join(if cfg!(windows) {
@@ -405,9 +451,7 @@ fn main() {
     let mut partition_until: Option<Instant> = None;
     let mut next_partition = start + Duration::from_secs(a.partition_every_mins * 60);
     let mut connected_since = start;
-    // Since when each node has been continuously behind the best height (None: not behind).
-    let mut behind_since: Vec<Option<Instant>> = vec![None; n];
-    let mut stuck_now: Vec<bool> = vec![false; n];
+    let mut stuck: Vec<StuckDetector> = (0..n).map(|_| StuckDetector::default()).collect();
     while Instant::now() < end {
         let now = Instant::now();
 
@@ -467,6 +511,13 @@ fn main() {
                 .iter()
                 .map(|i| i.as_ref().map_or("-".into(), |i| i.peers.to_string()))
                 .collect();
+            // Tip difficulties: a run starts at the genesis difficulty, and
+            // its reorganization counts depend on how far the difficulty still
+            // is from the miners' equilibrium (docs/evidence/labnet-reorg-2026-09-27).
+            let difficulties: Vec<String> = is
+                .iter()
+                .map(|i| i.as_ref().map_or("-".into(), |i| i.difficulty.to_string()))
+                .collect();
             let mut rss = Vec::new();
             for p in &mut procs {
                 if let Ok(Some(status)) = p.child.try_wait() {
@@ -486,22 +537,13 @@ fn main() {
                 .iter()
                 .all(|i| i.as_ref().map(|x| &x.tip) == is[0].as_ref().map(|x| &x.tip));
             report.all_equal_samples += all_equal as u32;
-            // A node is stuck if, while the network is connected, it stays behind the
-            // best height for more than 90 s. Briefly trailing while a block
-            // propagates is normal and not counted.
+            // Stuck: behind the best height without progress (`StuckDetector`).
             let best = is.iter().flatten().map(|x| x.height).max().unwrap_or(0);
             let connected_long =
                 !partitioned && now.duration_since(connected_since) > Duration::from_secs(120);
             for (k, info) in is.iter().enumerate() {
                 let Some(info) = info else { continue };
-                if info.height >= best || !connected_long {
-                    behind_since[k] = None;
-                    stuck_now[k] = false;
-                    continue;
-                }
-                let since = *behind_since[k].get_or_insert(now);
-                if now.duration_since(since) > Duration::from_secs(90) && !stuck_now[k] {
-                    stuck_now[k] = true;
+                if stuck[k].observe(now, &info.tip, info.height, best, connected_long) {
                     report.stuck_incidents += 1;
                     log(
                         &mut journal,
@@ -514,7 +556,7 @@ fn main() {
             }
             let _ = writeln!(
                 metrics,
-                "{},{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{}",
                 unix_now(),
                 partitioned,
                 heights.join("/"),
@@ -522,7 +564,8 @@ fn main() {
                 tips.join("/"),
                 mps.join("/"),
                 peers.join("/"),
-                rss.join("/")
+                rss.join("/"),
+                difficulties.join("/")
             );
             let _ = metrics.flush();
         }
@@ -792,4 +835,54 @@ fn main() {
     println!("{json}");
     rt.shutdown_background();
     std::process::exit(if report.checks_passed { 0 } else { 1 });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(start: Instant, secs: u64) -> Instant {
+        start + Duration::from_secs(secs)
+    }
+
+    /// The seedrun2 incident (metrics 1790507835-1790507911): node1 trailed
+    /// the miner's node by one block at every sample while its height went
+    /// 2556, 2559, 2564, 2566. It advanced, so it is not stuck.
+    #[test]
+    fn trailing_by_one_while_advancing_is_not_stuck() {
+        let t0 = Instant::now();
+        let mut d = StuckDetector::default();
+        let samples = [(2556, 2557), (2559, 2560), (2564, 2565), (2566, 2567)];
+        for (i, (h, best)) in samples.into_iter().enumerate() {
+            let tip = format!("tip{h}");
+            assert!(!d.observe(at(t0, 40 * i as u64), &tip, h, best, true));
+        }
+    }
+
+    #[test]
+    fn behind_at_the_same_tip_is_stuck_once() {
+        let t0 = Instant::now();
+        let mut d = StuckDetector::default();
+        assert!(!d.observe(at(t0, 0), "a", 10, 11, true));
+        assert!(!d.observe(at(t0, 60), "a", 10, 12, true));
+        assert!(d.observe(at(t0, 91), "a", 10, 13, true));
+        assert!(!d.observe(at(t0, 200), "a", 10, 14, true), "counted once");
+        // Caught up, then stalled again: a new incident.
+        assert!(!d.observe(at(t0, 210), "b", 14, 14, true));
+        assert!(!d.observe(at(t0, 220), "b", 14, 15, true));
+        assert!(d.observe(at(t0, 311), "b", 14, 16, true));
+    }
+
+    #[test]
+    fn partitions_and_level_nodes_are_never_stuck() {
+        let t0 = Instant::now();
+        let mut d = StuckDetector::default();
+        for s in 0..10 {
+            assert!(!d.observe(at(t0, 30 * s), "a", 10, 20, false));
+        }
+        let mut level = StuckDetector::default();
+        for s in 0..10 {
+            assert!(!level.observe(at(t0, 30 * s), "a", 10, 10, true));
+        }
+    }
 }

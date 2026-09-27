@@ -164,6 +164,7 @@ impl ChainManager {
     /// receives the effects of the whole drain (`finish_sync`), once.
     fn drain_ready(&mut self, mut budget: usize) -> bool {
         let mut outcome = std::mem::take(&mut self.sync_outcome);
+        let before = self.tip_id();
         loop {
             if let Some(x) = self.syncing {
                 if !self.sync_state(&mut outcome, &mut budget) {
@@ -189,6 +190,9 @@ impl ChainManager {
             }
             self.mark_complete(x);
             self.syncing = Some(x);
+        }
+        if self.tip_id() != before {
+            log::debug!("tip {} at height {}", hex(&self.tip_id()), self.height());
         }
         self.finish_sync(outcome);
         true

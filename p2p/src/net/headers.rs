@@ -405,6 +405,9 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
             Ok(HeaderOutcome::Accepted {
                 last_id, advanced, ..
             }) => {
+                log::debug!(
+                    "peer {peer}: {count} headers up to height {last_height} accepted (new: {advanced})"
+                );
                 if full && advanced {
                     inner.request_headers_after(peer, Some(last_id)).await;
                 } else if pending {

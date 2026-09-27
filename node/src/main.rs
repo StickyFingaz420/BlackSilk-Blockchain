@@ -44,7 +44,10 @@ fn main() {
             std::process::exit(2);
         }
     };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&cfg.log)).init();
+    // Millisecond stamps: block races and relay delays are sub-second.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&cfg.log))
+        .format_timestamp_millis()
+        .init();
     if let Err(e) = run(cfg) {
         log::error!("{e}");
         std::process::exit(1);

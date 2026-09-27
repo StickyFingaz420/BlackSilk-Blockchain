@@ -87,6 +87,11 @@ pub(super) fn on_block(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
         }
     };
     let id = block.id(inner.cfg.network_id);
+    log::debug!(
+        "peer {peer}: block {} at height {} received",
+        super::state::short(&id),
+        block.header.height
+    );
     let job = {
         let mut st = inner.state();
         let requested = st.block_requests.get(&id).is_some_and(|(p, _)| *p == peer);
