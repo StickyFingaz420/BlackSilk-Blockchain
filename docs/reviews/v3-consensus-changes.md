@@ -270,6 +270,7 @@ tests (fresh proofs over the new `h_tx`) are run by the coordinator after the me
 **12. Open review points.** Agent 40's rule-revision list should record the domain
 layout change (the fingerprint's constant list cannot see it).
 
+---
 
 ## BS-ZK-3: eight random codewords per committed matrix (F24-1)
 
