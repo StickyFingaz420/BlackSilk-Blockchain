@@ -481,7 +481,7 @@ A deploy transaction version 2 adds `programs[]: (program_id, verifier_id)`, up 
 | P1 | Transparent (R3). |
 | P2 | Zero-knowledge (hiding) mode, not just succinctness. Many STARK stacks optimize for succinctness only, so hiding must be verified per candidate. |
 | P3 | Composition of kernel and function proofs (§9.4): by cross-table lookups in one batch proof (chosen), or by recursion. |
-| P4 | Soundness ≥ 100 bits by **proven** bounds for the chosen parameters (§9.3), plus ≥ 128-bit collision resistance of the hash. **As implemented, the hash part is not met:** an 8-element Poseidon2 digest over BabyBear gives about 123.6 bits of collision resistance (`COLLISION_BITS` = 123 in `zk/src/params.rs`), and the soundness figures of §9.3 are computed with 123. |
+| P4 | Soundness ≥ 100 bits by **proven** bounds for the chosen parameters (§9.3), plus ≥ 128-bit collision resistance of the hash. **As implemented, the hash part is not met:** the Merkle commitments give about 122 bits (`COLLISION_BITS` in `zk/src/params.rs`, from the extractability bound of ePrint 2026/089, Theorem 3; §9.3), and the soundness figures of §9.3 are computed with it. |
 | P5 | Pure-Rust prover and verifier, with a small, specifiable verifier. |
 | P6 | Plausible post-quantum security for both soundness and zero-knowledge (R4). |
 
@@ -544,12 +544,46 @@ owner): a STARK on Plonky3 0.7.**
   proofs, without migrating records.
 - **The parameter set is code** (`zk/src/params.rs`). A test
   (`every_shape_within_limits_meets_both_security_targets`) recomputes the proven
-  security over a grid of the whole envelope (heights 2^8 to 2^22, up to 5,000
-  constraints, degrees up to 8, and 1 to 65,536 batched columns, including
-  `MAX_ADVERSARIAL_COLUMNS` = 15,709). It fails unless **every** point reaches ≥ 120
-  bits in the Johnson regime **and** ≥ 100 bits in the unique-decoding regime. It is a
-  test, so it fails the test suite, not the build; `const` assertions check only the
-  parameter relations (such as eq. 17 below).
+  security with `p3-security` 0.7.0 over a grid of the whole envelope (trace heights
+  2^8 to 2^22, i.e. committed degree bits 9 to 23, since zero knowledge doubles the
+  committed size; up to 5,000 constraints, degrees up to 8, and 1 to 65,536 batched
+  columns, including `MAX_ADVERSARIAL_COLUMNS`). It fails unless **every** point
+  reaches `TARGET_JOHNSON_BITS` (120) in the Johnson regime **and** `MIN_PROVEN_BITS`
+  (100) in the unique-decoding regime, and it pins which term binds: the low-degree
+  test's query phase in unique decoding, the commitment term `COLLISION_BITS` in the
+  Johnson regime. Until v3 the calculator was fed the pre-ZK height (R4-01); the
+  figures did not change. It is a test, so it fails the test suite, not the build;
+  `const` assertions check the parameter relations (eqs. 16 and 17 below, and that the
+  largest evaluation domain, 2^(22+1+3) = 2^26, stays ≤ 2^27, where query positions
+  sampled from BabyBear elements are uniform).
+- **Independent recomputation** (`zk/tests/soundness_calc.rs`): closed-form bounds
+  written out in the test (ethSTARK, BCIKS20, BCHKS25, LogUp), sharing no code with
+  `p3-security`, over the same grid. It agrees within one bit in unique decoding and
+  exactly in the Johnson regime, and it bounds the terms `p3-security` does not model
+  for a batch STARK (LogUp; the DEEP union over up to 32 tables; per-round commit
+  errors of the real folding schedule): all ≥ 200 bits. The Johnson regime's algebraic
+  bound is ≥ 150 bits both with BCHKS25 and with the peer-reviewed BCIKS20 bound alone,
+  so the commitment term binds by a wide margin. Evidence class: computed and tested;
+  not a proof, and not independent review.
+- **Headline (BS-ZK-3):** about **105 bits proven** in the unique-decoding regime
+  (**89.7 statistical + 16 grinding**: the 108 queries at rate 1/8 give the
+  statistical part, and the 16 bits of query grinding are computational, counted
+  against an adversary's Poseidon2 budget); the Johnson regime is **hash-bound at
+  ≈ 122 bits** (`COLLISION_BITS`). The figures are pinned by
+  `zk/tests/soundness_calc.rs::headline_figures_at_the_largest_shape`.
+  - **The commitment term** `COLLISION_BITS` = 122 is our evaluation of ePrint
+    2026/089 (Coratger, Khovratovich, Mennink, Wagner, ACM CCS 2026), **Theorem 3**:
+    extractability of the Plonky3 Merkle tree with an overwrite-sponge leaf hash on
+    the node permutation, (4q² + 2q)/(|H| − 1) with |H| = p^8, reaches 1 at
+    q ≈ 2^122.6. The 122.6 is our evaluation, not the paper's figure. The adaptation
+    to BlackSilk's tree (salted leaves; fixed topology and matrix dimensions from the
+    proof shape) is argued, not proven, and the property claimed is extractability,
+    not binding. It replaces the generic 8-element birthday figure (123), which the
+    paper shows does not apply to the node compression alone.
+  - **Not modelled by `p3-security`:** LogUp, the multi-table DEEP union and
+    mixed-height FRI inputs. The first two are bounded by the independent calculator;
+    mixed-height FRI has no published analysis (it is covered only by the per-round
+    commit bound, an assumption).
 - **Batched-function count (internal review):** the calculator is given one batched
   function per committed column. Plonky3 batches each (column, opening point) pair
   with its own power of the FRI batching challenge, and trace and permutation columns
@@ -577,10 +611,9 @@ owner): a STARK on Plonky3 0.7.**
     of docs/reviews/zk-coverage.md, and computational in practice (§12.1); it is not
     perfect and not proven for the whole system.
   - degree-8 extension, blow-up 8, 108 queries, 16 grinding bits;
-  - over the whole shape envelope (2^22 rows, 6 000 columns): ≥ 123 bits in the
-    Johnson regime (the target is 120, the approved floor 100) **and** ≥ 105 bits in
-    the unique-decoding regime.
-  - The second target is extra conservatism beyond decision B. Dropping it would cut
+  - over the whole shape envelope: the headline figures above (Johnson target 120,
+    approved floor 100; unique-decoding floor 100).
+  - The unique-decoding floor is extra conservatism beyond decision B. Dropping it would cut
     queries by 35–55% (`zk/examples/param_study.rs`). That is an open
     security-policy decision for the owner.
 - Proof-of-work grinding may contribute at most 20 bits and is counted explicitly.

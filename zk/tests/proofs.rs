@@ -356,7 +356,9 @@ fn toy_shape_meets_the_security_floor() {
         committed_columns: 16,
         log_height: 8,
     });
-    assert!(s.johnson_bits >= params::MIN_PROVEN_BITS, "{s:?}");
+    // Both floors (25 W4 / R4-12): the Johnson target and unique decoding.
+    assert!(s.johnson_bits >= params::TARGET_JOHNSON_BITS, "{s:?}");
+    assert!(s.unique_decoding_bits >= params::MIN_PROVEN_BITS, "{s:?}");
     // Keep the value visible in test logs.
     let _ = Val::ORDER_U32;
 }

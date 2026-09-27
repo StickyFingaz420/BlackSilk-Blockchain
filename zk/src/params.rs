@@ -76,8 +76,25 @@ pub const MERKLE_SALT_ELEMS: usize = 4;
 pub const EXTENSION_DEGREE: usize = 8;
 /// `floor(log2(p^8))` for p = 2^31 − 2^27 + 1 (log2 p ≈ 30.91).
 pub const CHALLENGE_FIELD_BITS: usize = 247;
-/// Collision resistance of an 8-element Poseidon2 digest: 8 · log2(p) / 2 ≈ 123.6.
-pub const COLLISION_BITS: usize = 123;
+/// The commitment term of the soundness calculation: the security of the
+/// Merkle commitments, which caps every regime (a broken commitment forges
+/// any proof).
+///
+/// **122, from ePrint 2026/089** (Coratger, Khovratovich, Mennink, Wagner,
+/// "The Billion Dollar Merkle Tree", ACM CCS 2026), **Theorem 3**: for a
+/// Plonky3 Merkle tree whose leaves are hashed with an overwrite sponge on the
+/// same permutation as the `TruncatedPermutation` node compression (this
+/// configuration), an adversary making q permutation queries breaks
+/// extractability with probability at most (4q² + 2q)/(|H| − 1), |H| = p^8
+/// (log2 |H| ≈ 247.3). Setting that to 1 gives q ≈ 2^122.6: **our evaluation**,
+/// not a figure of the paper, floored to 122. Applying the theorem to this
+/// tree (salted leaves, fixed topology and matrix dimensions from the proof
+/// shape) is **argued, not proven**, and the property is extractability, not
+/// collision resistance or binding. The earlier 123 was the generic birthday
+/// bound 8·log2(p)/2 ≈ 123.6 of an 8-element digest, which the paper shows
+/// does not apply to the node compression on its own (it is not
+/// collision-resistant).
+pub const COLLISION_BITS: usize = 122;
 
 /// Minimum proven security in the unique-decoding regime (and the absolute
 /// floor in any regime).
@@ -145,7 +162,9 @@ pub struct ProofShape {
     /// Total committed base-field columns: main, permutation (lookup), quotient
     /// chunks, `R` and the hidden random codewords.
     pub committed_columns: usize,
-    /// log2 of the tallest table.
+    /// log2 of the tallest table's **trace** height (before zero knowledge).
+    /// Under zero knowledge the committed polynomials have twice that size
+    /// (`degree_bits = log_height + 1`); [`security`] accounts for it.
     pub log_height: usize,
 }
 
@@ -158,7 +177,7 @@ pub struct Security {
     pub unique_decoding_bits: usize,
 }
 
-pub fn security(shape: &ProofShape) -> Security {
+fn stark_params(shape: &ProofShape) -> StarkSecurityParams {
     let mut p = StarkSecurityParams::new(
         fri_regime(),
         CHALLENGE_FIELD_BITS,
@@ -169,11 +188,43 @@ pub fn security(shape: &ProofShape) -> Security {
         2,
     );
     p.num_batched_functions = shape.committed_columns.max(1);
-    let s = ProvenSecurity::compute(&p, 1 << shape.log_height);
+    p
+}
+
+/// Proven security of `shape` (p3-security 0.7.0 through
+/// `ProvenSecurity::compute_from_proof`), computed on the **committed**
+/// domain: `degree_bits = shape.log_height + 1` under zero knowledge (25 W1,
+/// R4-01). Before v3 the pre-ZK height was passed; the figures did not change
+/// (unique decoding is query-bound and domain-independent, Johnson is capped
+/// at [`COLLISION_BITS`]), but the input was wrong.
+pub fn security(shape: &ProofShape) -> Security {
+    let s = ProvenSecurity::compute_from_proof(shape.log_height + 1, &stark_params(shape));
     Security {
         johnson_bits: s.list_decoding_bits,
         unique_decoding_bits: s.unique_decoding_bits,
     }
+}
+
+/// The labelled breakdown behind [`security`] (the same p3-security 0.7.0
+/// computation, called directly): which term binds in each regime.
+pub fn security_report(shape: &ProofShape) -> p3_security::SecurityReport {
+    let p = stark_params(shape);
+    p3_security::stark::proven_security_report(
+        &fri_regime(),
+        &p3_security::StarkAirParams {
+            num_constraints: p.num_constraints,
+            max_constraint_degree: p.air_max_constraint_degree,
+            max_combo: p.max_combo,
+        },
+        &p3_security::InstanceShape {
+            log_trace_length: shape.log_height + 1,
+            modulus_bits: p.num_modulus_bits,
+            collision_resistance: p.collision_resistance,
+            num_batched_functions: p.num_batched_functions,
+        },
+        &[],
+        &p3_security::GrindingSites::NONE,
+    )
 }
 
 /// Maximum constraint degree the prover can commit under zero knowledge
@@ -201,6 +252,16 @@ const _: () = assert!(2 * (NUM_QUERIES + EXTENSION_DEGREE * OPENING_POINTS) <= 1
 const _: () = assert!(OPENING_POINTS + NUM_QUERIES <= 1 << MIN_LOG_HEIGHT);
 // F24-1: at least one random codeword per extension coordinate.
 const _: () = assert!(NUM_RANDOM_CODEWORDS >= EXTENSION_DEGREE);
+// Uniform query positions (25 ZS-6): FRI samples each query index as the low
+// bits of a canonical BabyBear element (p3-challenger 0.7.0
+// `DuplexChallenger::sample_bits`). Since p − 1 = 15·2^27, the low b bits are
+// uniform up to a 1/p bias only for b ≤ 27, so the largest evaluation domain,
+// 2^(MAX_LOG_HEIGHT + 1 + LOG_BLOWUP) (zero knowledge doubles the trace), must
+// stay at or below 2^27. Beyond it the calculator would over-report.
+const _: () = assert!(MAX_LOG_HEIGHT + 1 + LOG_BLOWUP <= 27);
+// The Johnson target is reachable at all only below the commitment term; a
+// higher target needs a wider digest, not more queries.
+const _: () = assert!(TARGET_JOHNSON_BITS <= COLLISION_BITS);
 
 #[cfg(test)]
 mod tests {
@@ -208,9 +269,18 @@ mod tests {
 
     /// Every shape up to the limits used by BlackSilk reaches the minimum. The
     /// envelope is generous on purpose (the zkVM stays well inside it); the
-    /// zkVM crate re-checks its exact shape against this function.
+    /// zkVM crate re-checks its exact shape against this function. Trace
+    /// heights 2^8..2^22, i.e. committed degree bits 9..=23.
+    ///
+    /// It also pins **which term binds**: in the unique-decoding regime the
+    /// low-degree test (its query phase: 108 queries at rate 1/8 plus 16
+    /// grinding bits, about 105.6), in the Johnson regime the commitment term
+    /// [`COLLISION_BITS`]; so the reported Johnson figure is exactly
+    /// `COLLISION_BITS` everywhere. The independent recomputation is
+    /// `zk/tests/soundness_calc.rs`.
     #[test]
     fn every_shape_within_limits_meets_both_security_targets() {
+        use p3_security::report::{COLLISION_LABEL, LDT_LABEL};
         let mut worst = Security {
             johnson_bits: usize::MAX,
             unique_decoding_bits: usize::MAX,
@@ -226,18 +296,30 @@ mod tests {
                         MAX_ADVERSARIAL_COLUMNS,
                         65_536,
                     ] {
-                        let s = security(&ProofShape {
+                        let shape = ProofShape {
                             constraints,
                             max_degree,
                             committed_columns,
                             log_height,
-                        });
+                        };
+                        let s = security(&shape);
+                        let at = format!(
+                            "{s:?} at 2^{log_height}, {constraints} constraints, degree {max_degree}, {committed_columns} columns"
+                        );
                         assert!(
                             s.johnson_bits >= TARGET_JOHNSON_BITS
                                 && s.unique_decoding_bits >= MIN_PROVEN_BITS,
-                            "{s:?} at 2^{log_height}, {constraints} constraints, degree {max_degree}, {committed_columns} columns"
+                            "{at}"
                         );
-                        if s.johnson_bits < worst.johnson_bits {
+                        // The report is the same computation, term by term.
+                        let r = security_report(&shape);
+                        let ldr = r.ldr.as_ref().expect("a Johnson regime exists");
+                        assert_eq!(r.udr.security_bits() as usize, s.unique_decoding_bits);
+                        assert_eq!(ldr.security_bits() as usize, s.johnson_bits);
+                        assert_eq!(r.udr.binding().label, LDT_LABEL, "{at}");
+                        assert_eq!(ldr.binding().label, COLLISION_LABEL, "{at}");
+                        assert_eq!(s.johnson_bits, COLLISION_BITS, "{at}");
+                        if s.unique_decoding_bits < worst.unique_decoding_bits {
                             worst = s;
                         }
                     }

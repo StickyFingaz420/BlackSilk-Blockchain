@@ -58,6 +58,17 @@ proofs is a new set with a new `PARAMS_ID`.
 - R3: `NUM_RANDOM_CODEWORDS ≥ EXTENSION_DEGREE` (Plonky3 0.8's hiding-PCS rule, PR #2100).
 - R4: `MIN_LOG_HEIGHT + 1 > LOG_FINAL_POLY_LEN` (every committed polynomial folds at
   least once).
+- R5: `MAX_LOG_HEIGHT + 1 + LOG_BLOWUP ≤ 27`: the largest evaluation domain stays at or
+  below 2^27, so query positions (low bits of a canonical BabyBear element,
+  p − 1 = 15·2^27) are uniform up to a 1/p bias.
+- R6: `TARGET_JOHNSON_BITS ≤ COLLISION_BITS`.
+
+**Security figures** are computed, not assumed: `params::security` (p3-security 0.7.0 on
+the committed, post-zero-knowledge domain `degree_bits = log_height + 1`) and the
+independent calculator `zk/tests/soundness_calc.rs`. Both must reach `MIN_PROVEN_BITS`
+in the unique-decoding regime and `TARGET_JOHNSON_BITS` in the Johnson regime over the
+whole envelope; the binding terms are pinned (query phase; commitment term
+`COLLISION_BITS`, ePrint 2026/089 Theorem 3). Figures and their caveats: zk.md §9.3.
 
 ---
 
@@ -134,7 +145,8 @@ zkVM statements with a fixed shape (every PX statement) additionally require eac
 
 | Rule | Code | Tests |
 |---|---|---|
-| R1–R4 | `zk/src/params.rs` (`const` assertions) | compile time |
+| R1–R6 | `zk/src/params.rs` (`const` assertions) | compile time |
+| Security figures | `zk/src/params.rs` `security`, `security_report` | `params::tests::every_shape_within_limits_meets_both_security_targets`; `zk/tests/soundness_calc.rs` (independent calculator, headline figures, `COLLISION_BITS` derivation) |
 | D1–D5 | `zk/src/lib.rs` `decode_proof` | `zk/tests/proofs.rs` `encoding_is_strict`, `byte_mutations_never_verify_and_never_panic_the_caller`; `zk/tests/field_mutations.rs`; fuzz target `proof_decode` |
 | C1–C2 | `zk/src/lib.rs` `check_canonical_form` | `zk/tests/proofs.rs` `unbound_proof_fields_cannot_be_rewritten` |
 | C3 | `zk/src/lib.rs` `check_canonical_form` | `zk/tests/proofs.rs` `honest_proofs_have_the_canonical_hidden_openings_and_caps`, `every_merkle_cap_root_count_mutation_is_refused` |

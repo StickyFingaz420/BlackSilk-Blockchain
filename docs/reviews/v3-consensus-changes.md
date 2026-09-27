@@ -160,3 +160,77 @@ exception is derived from the proof structure; mutation tests at every position.
     module text (the count is now pinned).
 15. **Review status.** Implemented and tested by W1-CB-B3; red-team review (agent 50)
     pending.
+
+---
+
+## Soundness figures: COLLISION_BITS = 122, post-ZK domain, independent calculator
+
+Owner: W1-CB-B3 (zk). Items 25 W1, W2, W3 (part), 24 I4, I5; decisions "Agent 24"
+(`COLLISION_BITS` = 122 citing ePrint 2026/089), "Agent 25" (headline, W2 in `zk` as a
+test module), "Agent 50" (R2-C6 wording: Theorem 3 only; our evaluation; argued, not
+proven; "extractable", not "binding").
+
+1. **Problem.** (a) `COLLISION_BITS` = 123 was the generic birthday bound of an
+   8-element digest (8·log2 p / 2 ≈ 123.6). The first analysis of Plonky3's Merkle tree
+   (ePrint 2026/089) shows the `TruncatedPermutation` node compression is not
+   collision-resistant on its own and proves extractability with an overwrite-sponge
+   leaf hash at (4q² + 2q)/(|H| − 1) (Theorem 3), about 2^122.6 for |H| = p^8 (our
+   evaluation). The documented "≥ 123 Johnson bits" was therefore about one bit
+   optimistic, and presented a hash bound as a proximity-gap figure. (b) `security()`
+   passed the pre-ZK trace height to `p3-security`, whose input is the committed
+   (post-ZK) size (R4-01). (c) No second calculator checked the figures; nothing
+   asserted which term binds; nothing enforced the ≤ 2^27 domain that uniform query
+   sampling needs.
+2. **Demonstrated failure.** (a) By calculation: `collision_bits_is_the_floor_of_the_merkle_extractability_bound`
+   gives log2 q = 122.6 < 123. (b) None in the figures: at the correct domain the
+   reported bits are unchanged (unique decoding 105, query-bound and domain-independent;
+   Johnson capped by the commitment term); the input was wrong, not the output
+   (dossier 25 §3.1, now tested). (c) Absence of a check, not a failure.
+3. **Prior art.** ePrint 2026/089 (ACM CCS 2026) Theorem 3; `ethereum/soundcalc`
+   (UDR/JBR formulas; capacity regime removed); BCIKS20 (ePrint 2020/654), BCHKS25
+   (ePrint 2025/2055); ethSTARK (ePrint 2021/582); Plonky3 PR #2048 (0.7 calculator
+   accounting, none of which applies on BlackSilk's call path, dossier 25 §3.7).
+4. **Alternatives.** Keep 123 and fix only the docs (rejected by decision "Agent 24":
+   the fingerprint changes before the freeze anyway); a wider digest to reach 128 (a
+   new hash configuration; not needed for the ≥ 120 target).
+5. **Affected components.** `zk/src/params.rs` (`COLLISION_BITS`, `security`, new
+   `security_report`, two `const` assertions); `zk/tests/soundness_calc.rs` (new);
+   `zk/tests/proofs.rs` (`toy_shape_meets_the_security_floor` asserts both floors). The
+   consensus fingerprint entry `zk.COLLISION_BITS`. No proof byte, transcript or
+   validation rule changes: `COLLISION_BITS` enters only the calculator.
+6. **Activation.** v3 genesis base rule (fingerprint only).
+7. **Compatibility.** Proofs are unaffected. Two builds that differ only here would show
+   different consensus fingerprints but agree on every proof.
+8. **Reorg, wallet, mining, P2P.** None.
+9. **Vectors.** `COLLISION_BITS` = 122 = floor((8·log2 p − 2)/2); at the largest shape
+   (degree bits 23, 5,000 constraints of degree 8, 65,536 batched functions): unique
+   decoding 105.65 bits (89.65 statistical + 16 grinding; p3-security floor 105),
+   Johnson reported 122; algebraic Johnson 175.7 (BCHKS25, m = 34) and 159.6 (BCIKS20
+   only, m = 4). Pinned by `headline_figures_at_the_largest_shape`.
+10. **Tests.** `params::tests::every_shape_within_limits_meets_both_security_targets`
+    (1,440 shapes, degree bits 9..=23: both floors; the report equals `security`; the
+    unique-decoding binding term is the low-degree test, the Johnson binding term is the
+    commitment term; Johnson = `COLLISION_BITS`); `zk/tests/soundness_calc.rs`:
+    `the_independent_calculator_agrees_with_p3_security` (±1 bit UDR, exact Johnson;
+    non-query terms ≥ 200 bits including LogUp and a 32-table DEEP union; Johnson
+    algebraic ≥ 150 under BCHKS25 and BCIKS20 alone; both floors),
+    `headline_figures_at_the_largest_shape`,
+    `collision_bits_is_the_floor_of_the_merkle_extractability_bound`. Compile time:
+    `MAX_LOG_HEIGHT + 1 + LOG_BLOWUP ≤ 27`, `TARGET_JOHNSON_BITS ≤ COLLISION_BITS`.
+11. **Suite results.** Independent calculator over 1,440 shapes: UDR ≥ 105.58 bits
+    (query-bound; other terms ≥ 205.3); Johnson algebraic ≥ 175.7 (BCHKS25), ≥ 159.6
+    (BCIKS20 only); reported Johnson = 122. `cargo test --release -p blacksilk-zk`:
+    23 passed, 0 failed, 1 ignored (the timing test). The PX-side fingerprint pin fails
+    as expected (item "BS-ZK-3", 9).
+12. **Open review points.** (i) The adaptation of Theorem 3 to BlackSilk's salted tree
+    is argued, not proven (agent 50); (ii) mixed-height FRI inputs have no published
+    analysis; (iii) the zkVM shape tests (`zkvm/tests/multi.rs`, `vm.rs`) still assert
+    only `johnson_bits ≥ MIN_PROVEN_BITS` (R4-12, owner 23); (iv) the calculator
+    example `zk/examples/param_study.rs` still passes the pre-ZK height (outside this
+    change's file scope; figures unaffected).
+13. **Identity impact.** Consensus fingerprint entry `zk.COLLISION_BITS` 123 → 122.
+14. **Documentation.** `docs/zk.md` §9.1 (P4), §9.3 (grid, independent calculator,
+    headline, commitment term, unmodelled terms); `docs/proof-system.md` §2 (R5, R6,
+    security figures) and §7.
+15. **Review status.** Implemented and tested by W1-CB-B3; red-team review (agent 50)
+    pending.
