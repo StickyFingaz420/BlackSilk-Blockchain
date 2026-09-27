@@ -568,6 +568,16 @@ min_fee(w)  = w · FEE_PER_WEIGHT                                  (constant: ec
 - A transaction that conflicts with the mempool on any key image is rejected (first seen
   wins; no replace-by-fee in v1).
 - Transactions must pass T1–T11 and C1–C4 against `best height + 1`.
+- Order: every stateless rule (T1–T11, including the range proof T10, and the PX
+  structure rules) runs before any contextual rule (C1–C4, PX1–PX4); the PX proof
+  (PX5) runs last. A transaction that breaks a stateless rule therefore always gets
+  a stateless error, which is what peer scoring penalizes (p2p.md §10), and costs no
+  chain lookup. A PX transaction repeating a one-time key between its hidden outputs
+  and payouts, or with two equal nullifiers, gets a stateless error
+  (`PxDuplicateOutputKey`, `PxNullifierRepeated`); such a transaction also fails C4
+  or PX2 on every chain. The order and these variants decide only which error an
+  invalid transaction gets, never whether a transaction or block is valid. The
+  classification of every error is documented on `TxError::is_stateless`.
 - On reorg, disconnected transactions return to the mempool if still valid.
 
 ---
