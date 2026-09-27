@@ -42,10 +42,14 @@ fn upgrading_regtest() -> ChainParams {
     p
 }
 
+/// A test genesis id.
+const GENESIS: [u8; 32] = [0x6E; 32];
+
 fn domain(network_id: u32, branch_id: u32) -> SigDomain {
     SigDomain {
         network_id,
         branch_id,
+        genesis_id: GENESIS,
     }
 }
 
@@ -76,7 +80,13 @@ fn built_in_rules_use_the_v3_branch_and_a_supported_verifier() {
         let p = ChainParams::for_network(n);
         let r = TxRules::for_chain(&p);
         assert_eq!(r.branch_id, BRANCH_ID_V3);
-        assert_eq!(r.domain(), domain(p.network_id, BRANCH_ID_V3));
+        assert_eq!(
+            r.domain(),
+            SigDomain {
+                genesis_id: p.genesis_id(),
+                ..domain(p.network_id, BRANCH_ID_V3)
+            }
+        );
         for e in p.schedule.epochs() {
             assert!(
                 SUPPORTED_VERIFIERS.contains(&e.verifier_id),
@@ -92,9 +102,18 @@ fn built_in_rules_use_the_v3_branch_and_a_supported_verifier() {
 }
 
 #[test]
-fn domain_bytes_are_network_then_branch() {
-    let d = domain(0x0102_0304, 0x0A0B_0C0D);
-    assert_eq!(d.bytes(), [4, 3, 2, 1, 0x0D, 0x0C, 0x0B, 0x0A]);
+fn domain_bytes_are_network_then_branch_then_genesis() {
+    let mut genesis = [0u8; 32];
+    for (i, b) in genesis.iter_mut().enumerate() {
+        *b = i as u8;
+    }
+    let d = SigDomain {
+        genesis_id: genesis,
+        ..domain(0x0102_0304, 0x0A0B_0C0D)
+    };
+    let mut expected = vec![4, 3, 2, 1, 0x0D, 0x0C, 0x0B, 0x0A];
+    expected.extend(0..32u8);
+    assert_eq!(d.bytes().to_vec(), expected);
 }
 
 #[test]
@@ -127,7 +146,7 @@ fn for_chain_refuses_a_multi_epoch_schedule() {
 }
 
 #[test]
-fn every_message_and_the_px_binding_commit_to_branch_and_network() {
+fn every_message_and_the_px_binding_commit_to_branch_network_and_genesis() {
     let mut net = TestNet::new(21, 80);
     let mut r = rng(22);
     let alice = Wallet::new(&mut r);
@@ -149,6 +168,10 @@ fn every_message_and_the_px_binding_commit_to_branch_and_network() {
     let other_network = domain(2, BRANCH_ID_V3);
     // Swapping the two ids is a different domain too (fixed-width fields).
     let swapped = domain(BRANCH_ID_V3, 1);
+    let other_genesis = SigDomain {
+        genesis_id: [0x6F; 32],
+        ..base
+    };
     type Hashes = Vec<[u8; 32]>;
     let hashes = |d: SigDomain| -> Hashes {
         vec![
@@ -159,7 +182,7 @@ fn every_message_and_the_px_binding_commit_to_branch_and_network() {
         ]
     };
     let h0 = hashes(base);
-    for d in [other_branch, other_network, swapped] {
+    for d in [other_branch, other_network, swapped, other_genesis] {
         let h = hashes(d);
         for (i, (a, b)) in h0.iter().zip(&h).enumerate() {
             assert_ne!(a, b, "hash {i} ignores {d:?}");
@@ -294,4 +317,38 @@ fn px_proof_failures_are_contextual_near_an_activation() {
             assert!(e.is_stateless_at(&q, h));
         }
     }
+}
+
+/// RT-14 (dossier 50): two chains with the same network id and branch id but
+/// different genesis blocks (a rehearsal and the final chain, say) have
+/// different signature domains, so a transaction signed for one is invalid
+/// on the other, and so is a PX proof (its binding `h_tx` changes too).
+#[test]
+fn a_transaction_signed_for_another_genesis_is_invalid() {
+    let a = ChainParams::regtest();
+    let mut b = ChainParams::regtest();
+    b.genesis.timestamp += 1;
+    assert_ne!(a.genesis_id(), b.genesis_id());
+    let (ra, rb) = (TxRules::for_chain(&a), TxRules::for_chain(&b));
+    assert_eq!((ra.network_id, ra.branch_id), (rb.network_id, rb.branch_id));
+
+    let mut net = TestNet::new(27, 80);
+    net.rules = ra;
+    let alice = Wallet::new(&mut rng(28));
+    let tx = net.pay(&net.miner_clone(), &[(alice.primary(), 1000)]);
+    let h = net.height();
+    assert_eq!(validate_transfer(&tx, &net.chain, h, &ra), Ok(()));
+    assert_eq!(
+        validate_transfer(&tx, &net.chain, h, &rb),
+        Err(TxError::InvalidSignature { input: 0 }),
+        "replayed on a chain with another genesis"
+    );
+
+    assert_ne!(ra.domain(), rb.domain(), "the genesis is in the domain");
+    let px = empty_px();
+    assert_ne!(px.binding(ra.domain()), px.binding(rb.domain()));
+    assert_ne!(
+        px.signature_message(ra.domain()),
+        px.signature_message(rb.domain())
+    );
 }

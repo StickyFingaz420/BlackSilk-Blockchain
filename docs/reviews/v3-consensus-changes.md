@@ -190,3 +190,71 @@ has the rule, and `d_identity_vector_values` shows that the §6.1 loop alone clo
 **11. Suite results.** In the commit message and the CB-B1a final report.
 
 **12. Open review points.** None specific; the rule follows Monero exactly.
+
+---
+
+## §3 RT-14: the genesis id in every signature domain
+
+Decision: red-team RT-14, adopted for v3 (decisions.md "Agent 50", RT-14; owner CB-B1).
+
+**1. Problem.** The v1 signature messages (`sig_message` of transfers, deploys and PX
+transactions) and the PX binding `h_tx` committed to `LE32(network_id) ‖ LE32(branch_id)`
+only. A rehearsal chain and the final chain (or a release candidate, or a retired
+identity) can share both ids. Replay of a transaction between them was then blocked only
+by chain state: ring indices and PX anchors that almost surely differ, not by the
+signature itself.
+
+**2. Demonstrated failure** (test first, on the item-3 commit `efd1f6d`):
+`tx/tests/upgrade.rs::a_transaction_signed_for_another_genesis_is_invalid` fails: a
+transfer signed under regtest's rules validates (`Ok(())`) under the rules of a chain
+identical but for its genesis timestamp (same network id and branch id).
+
+**3. Prior art.** EIP-155 binds Ethereum transaction signatures to a chain id; Zcash's
+ZIP 244 digests include the consensus branch id. BlackSilk's P2P session key already
+binds the genesis id (p2p.md, the session key `k`; test `different_genesis_ids_cannot_talk`).
+
+**4. Alternatives.** Keep relying on state mismatch (RT-14 rated it Info for that reason);
+a fresh network id for every rehearsal (already the policy, testnet-v3-genesis: reserved
+rehearsal ids) but not enforced by the signature. Chosen: bind the genesis id, free at the
+v3 reset.
+
+**5. Affected components.** `tx/src/params.rs`: `SigDomain` gains `genesis_id` and
+encodes as `LE32(network_id) ‖ LE32(branch_id) ‖ genesis_id` (40 bytes,
+`SIG_DOMAIN_BYTES`); `TxRules` gains `genesis_id`, filled by `TxRules::at_height` from
+`ChainParams::genesis_id`, so every path (node, mempool, templates, wallet, miner-side
+tools) gets it from the chain parameters. `node/src/fingerprint.rs`: the `TxRules`
+destructuring names the new field (its value is already the manifest's
+`chain.genesis_id`; no fingerprint value changes). Kernel, program ids and `CIRCUIT_ID`
+are unaffected: `h_tx` is a public input of the proof, absorbed in the transcript, never
+a guest input (reviews/v3-upgrade-mechanism.md §1 checked this for the branch id; the
+genesis id enters in the same place).
+
+**6. Activation.** v3 genesis base rule set. It changes every signature message and
+every PX statement, so after launch it would need a new branch id; before the freeze it
+is free.
+
+**7. Compatibility.** Every existing signature and PX proof becomes invalid (they bind
+the old 8-byte domain). No encoding changes: transaction bytes and ids keep their format;
+only the signed and proved messages change. Pinned vectors: none pin a v1 signature
+message or an `h_tx` (the CLSAG vectors sign fixed messages), so none change; the
+fingerprint pins do not change.
+
+**8. Reorg, wallet, mining and P2P implications.** None for reorgs and mining. Wallets
+sign with `Wallet::next_block_rules`, built from the wallet's chain parameters, so a
+wallet and its node agree when their genesis ids agree (the wallet already refuses a
+node with another genesis id, RT-15). P2P: a replayed transaction from another chain
+fails C3 (contextual `InvalidSignature`, not penalized, like a transaction from another
+epoch).
+
+**9. Vectors.** `domain_bytes_are_network_then_branch_then_genesis` pins the 40-byte
+layout; `every_message_and_the_px_binding_commit_to_branch_network_and_genesis` checks
+that each of the four domain-bound hashes changes with the genesis id alone.
+
+**10. Regression tests.** Step 2's test (the replay is refused with `InvalidSignature`,
+and the PX binding and message differ), plus the two above.
+
+**11. Suite results.** In the commit message and the CB-B1a final report. PX-proving
+tests (fresh proofs over the new `h_tx`) are run by the coordinator after the merge.
+
+**12. Open review points.** Agent 40's rule-revision list should record the domain
+layout change (the fingerprint's constant list cannot see it).

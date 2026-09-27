@@ -104,6 +104,8 @@ fn chain_entries(network: Network) -> Manifest {
     let TxRules {
         network_id: rules_network_id,
         branch_id,
+        // Already listed as `chain.genesis_id` above.
+        genesis_id: _,
         fee_per_weight,
         max_block_weight,
     } = TxRules::at_height(&p, 0);

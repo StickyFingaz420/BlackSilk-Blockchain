@@ -572,9 +572,9 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
   (already public) amounts in clear, like coinbase outputs.
 - **PX-side balance** is proven by the kernel (§4.1).
 - **Binding:** `h_tx = H32("px/tx-binding", LE32(network_id) ‖ LE32(branch_id) ‖
-  prefix hash ‖ base hash)` is the proof's binding. It covers every field except the
-  range proof, the signatures and the proof, plus the network and the epoch's branch id
-  (consensus.md §11). `h_tx` is a public input of the proof (it enters the CPU tables'
+  genesis_id ‖ prefix hash ‖ base hash)` is the proof's binding. It covers every field
+  except the range proof, the signatures and the proof, plus the network, the epoch's
+  branch id (consensus.md §11) and the chain's genesis id (RT-14, transactions.md §4.4). `h_tx` is a public input of the proof (it enters the CPU tables'
   public values and the transcript, never a guest's input), so the domain changes
   every proof but not the kernel or any program id.
 - **Signatures.** The v1 inputs' CLSAGs sign a message that also covers the range

@@ -346,7 +346,8 @@ tx_hash       = H32("tx/hash", prefix_hash ‖ base_hash ‖ prunable_hash)
 bp_hash       = H32("tx/bp", bp_plus bytes)
 
 sig_message   = H32("tx/sig-message",
-                    LE32(network_id) ‖ LE32(branch_id) ‖ prefix_hash ‖ base_hash ‖ bp_hash)
+                    domain ‖ prefix_hash ‖ base_hash ‖ bp_hash)
+domain        = LE32(network_id) ‖ LE32(branch_id) ‖ genesis_id           (40 bytes)
 ```
 
 - `tx_hash` is the transaction id. It is the leaf of the block's `tx_root` (consensus.md
@@ -364,6 +365,11 @@ sig_message   = H32("tx/sig-message",
   next block height. The reference wallet records the branch id of each stored
   transaction and never rebroadcasts one into another epoch: it releases its inputs and
   asks the user to send the payment again (reviews/v3-upgrade-mechanism.md §10).
+- `genesis_id` is the chain's genesis block id (consensus.md §1, `ChainParams::genesis_id`).
+  A signature is valid on one chain only: not on a rehearsal, release-candidate or
+  retired chain that shares the network id and branch id (red-team RT-14,
+  reviews/v3-consensus-changes.md §3). Without it, replay between such chains was
+  blocked only by chain state (ring indices and PX anchors that almost surely differ).
 
 ---
 
@@ -1138,7 +1144,7 @@ A wallet must also:
 | Ring member duplication or out-of-range reference | Strictly increasing indices (T5), existence and age checks (C1). |
 | Referencing unconfirmed or very recent outputs | Spendable age of 10, coinbase maturity 60 (§5.3). |
 | Weak Fiat–Shamir in range proofs | The transcript absorbs the statement and all prover messages (§7). |
-| Cross-network replay | `network_id` in `sig_message`. |
+| Cross-network and cross-chain replay | `network_id`, `branch_id` and `genesis_id` in `sig_message` and in the PX binding `h_tx` (§4.4). |
 | Verification DoS | Bounded sizes (T1, T3, ring = 16). Cheap checks run first. A transaction's verification cost is bounded by about 64 CLSAGs and one BP+ with `N ≤ 1024`. Peers relaying **stateless-invalid** transactions (§8.1) are penalized (p2p.md §10). Signature checks are contextual (they need the ring members from the chain), so relays of transactions with invalid signatures are **not** penalized: an open defect (N-11, docs/reviews/completion-readiness-2026-09-26.md). |
 | Arithmetic overflow in fees, indices, amounts | Checked arithmetic in decoding and summation (T5, T8, B3). |
 | Tx-hash collision between coinbases | `height` is in the coinbase prefix. |
