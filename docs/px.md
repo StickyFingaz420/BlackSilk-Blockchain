@@ -526,7 +526,16 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 ### 11.4 Wallets and RPC
 
 - Wallets scan whole blocks (`/blocks`) and fetch, whole and in order:
-  - the commitment list (`/px/commitments`);
+  - the commitment list (`/px/commitments`), in pages:
+    `GET /px/commitments?from=F&limit=L` returns the `(height, commitment)`
+    entries at tree positions `F..F+L`, the `total` count, the current tree `root`,
+    the tip `height`, and `next` (the `from` of the following page, or `null` at the
+    end). Both parameters are optional: `from` defaults to 0 and `limit` to 1 024; a
+    `limit` of 0 or above 4 096 is rejected (HTTP 400); a `from` at or past the end
+    gives an empty page. The node copies only the requested page under its chain
+    lock, so the cost of a request is proportional to the page, not to the chain.
+    A wallet requests pages starting from the number of commitments it already
+    has;
   - the contract-registration list (`/px/contracts`: height, contract id, program
     ids and budgets).
 
