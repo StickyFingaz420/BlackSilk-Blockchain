@@ -329,7 +329,7 @@ tx_hash       = H32("tx/hash", prefix_hash ‖ base_hash ‖ prunable_hash)
 bp_hash       = H32("tx/bp", bp_plus bytes)
 
 sig_message   = H32("tx/sig-message",
-                    LE32(network_id) ‖ prefix_hash ‖ base_hash ‖ bp_hash)
+                    LE32(network_id) ‖ LE32(branch_id) ‖ prefix_hash ‖ base_hash ‖ bp_hash)
 ```
 
 - `tx_hash` is the transaction id. It is the leaf of the block's `tx_root` (consensus.md
@@ -341,6 +341,10 @@ sig_message   = H32("tx/sig-message",
   signature (fixes audit finding S3).
 - `network_id` in the message makes a signature valid on one network only, so no
   cross-network replay is possible.
+- `branch_id` is the branch id of the epoch at the height of the block that includes
+  the transaction (consensus.md §11). A signature is valid in one epoch only, so no
+  transaction replays across a scheduled upgrade. Wallets sign for the epoch of the
+  next block height.
 
 ---
 

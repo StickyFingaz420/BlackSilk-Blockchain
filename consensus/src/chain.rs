@@ -7,7 +7,7 @@
 
 use crate::difficulty::next_difficulty;
 use crate::hash::Hash;
-use crate::header::{BlockHeader, HEADER_VERSION};
+use crate::header::BlockHeader;
 use crate::params::ChainParams;
 use crate::pow::{check_hash, seed_height, PowFunction};
 use crate::timestamp::{after_median_time_past, median, within_future_limit};
@@ -23,7 +23,20 @@ pub enum HeaderError {
     UnknownParent,
     /// Parent (or one of its ancestors) was marked invalid.
     InvalidParent,
-    BadVersion(u32),
+    /// The version is not the one the epoch at this height requires: an old
+    /// version after an activation, or a known later version before its
+    /// activation. Permanent.
+    BadVersion {
+        expected: u32,
+        got: u32,
+    },
+    /// The version is above every version this node's schedule knows: the
+    /// sender probably runs a newer release (an upgrade this node lacks). Not
+    /// permanent, and not the sender's fault: the network layer should warn
+    /// the operator instead of penalizing the peer (R1-C10).
+    UnknownUpgrade {
+        version: u32,
+    },
     BadHeight {
         expected: u64,
         got: u64,
@@ -55,6 +68,7 @@ impl HeaderError {
             HeaderError::Duplicate
                 | HeaderError::UnknownParent
                 | HeaderError::TimestampTooFarInFuture { .. }
+                | HeaderError::UnknownUpgrade { .. }
         )
     }
 }
@@ -94,6 +108,8 @@ pub struct Accepted {
 /// Everything a miner needs to build the next block on the best chain.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockTemplate {
+    /// The header version of the epoch at `height`.
+    pub version: u32,
     pub height: u64,
     pub prev_id: Hash,
     pub difficulty: u64,
@@ -278,6 +294,7 @@ impl HeaderChain {
         }
         let height = parent.header.height + 1;
         Some(BlockTemplate {
+            version: self.params.epoch_at(height).header_version,
             height,
             prev_id: parent_id,
             difficulty: self.required_difficulty(parent_id),
@@ -298,10 +315,21 @@ impl HeaderChain {
         if !parent.valid {
             return Err(HeaderError::InvalidParent);
         }
-        if header.version != HEADER_VERSION {
-            return Err(HeaderError::BadVersion(header.version));
-        }
+        // The epoch is the one at the height the header must have, so a bogus
+        // height cannot select another rule set.
         let expected_height = parent.height + 1;
+        let expected_version = self.params.epoch_at(expected_height).header_version;
+        if header.version != expected_version {
+            if header.version > self.params.schedule.max_header_version() {
+                return Err(HeaderError::UnknownUpgrade {
+                    version: header.version,
+                });
+            }
+            return Err(HeaderError::BadVersion {
+                expected: expected_version,
+                got: header.version,
+            });
+        }
         if header.height != expected_height {
             return Err(HeaderError::BadHeight {
                 expected: expected_height,
@@ -542,6 +570,7 @@ mod tests {
     use super::*;
     use crate::hash::H;
     use crate::merkle::tx_root;
+    use crate::schedule::{Epoch, Schedule, VERIFIER_PX_1};
 
     /// Fast stand-in for RandomX so chain logic can be tested over thousands of
     /// blocks. Test-only; production code always uses `RandomXPow`.
@@ -564,7 +593,7 @@ mod tests {
     fn mine_on(c: &HeaderChain, parent: Hash, dt: u64, tag: u8) -> BlockHeader {
         let p = *c.header(&parent).unwrap();
         let mut h = BlockHeader {
-            version: 1,
+            version: c.params().epoch_at(p.height + 1).header_version,
             height: p.height + 1,
             prev_id: parent,
             timestamp: p.timestamp + dt,
@@ -590,6 +619,118 @@ mod tests {
         ids
     }
 
+    /// A test-only schedule: a branch-only activation at 5, then header
+    /// version 2 from 10.
+    static UPGRADES: [Epoch; 3] = [
+        Epoch {
+            name: "a",
+            activation_height: 0,
+            header_version: 1,
+            branch_id: 1,
+            verifier_id: VERIFIER_PX_1,
+        },
+        Epoch {
+            name: "b",
+            activation_height: 5,
+            header_version: 1,
+            branch_id: 2,
+            verifier_id: VERIFIER_PX_1,
+        },
+        Epoch {
+            name: "c",
+            activation_height: 10,
+            header_version: 2,
+            branch_id: 3,
+            verifier_id: VERIFIER_PX_1,
+        },
+    ];
+
+    fn upgrading_chain() -> HeaderChain {
+        let mut params = ChainParams::regtest();
+        params.target_block_time = 120;
+        params.schedule = Schedule::new(&UPGRADES);
+        HeaderChain::new(params, Arc::new(TestPow))
+    }
+
+    #[test]
+    fn header_version_follows_the_schedule() {
+        let mut c = upgrading_chain();
+        let g = c.tip_id();
+        // Heights 1..=9 carry version 1, across the branch-only activation at 5.
+        let ids = extend(&mut c, g, 9, 120, 1);
+        assert_eq!(c.height(), 9);
+        let t = c.template();
+        assert_eq!((t.height, t.version), (10, 2));
+        let tip = *ids.last().unwrap();
+
+        // Height 10: version 2 is required.
+        let good = mine_on(&c, tip, 120, 1);
+        assert_eq!(good.version, 2);
+        let now = good.timestamp;
+        let mut old = good;
+        old.version = 1;
+        let e = c.validate(&old, now).unwrap_err();
+        assert_eq!(
+            e,
+            HeaderError::BadVersion {
+                expected: 2,
+                got: 1
+            }
+        );
+        assert!(
+            e.is_permanent(),
+            "an old version after activation is invalid"
+        );
+        let mut newer = good;
+        newer.version = 3;
+        let e = c.validate(&newer, now).unwrap_err();
+        assert_eq!(e, HeaderError::UnknownUpgrade { version: 3 });
+        assert!(
+            !e.is_permanent(),
+            "an unknown upgrade is not the sender's fault"
+        );
+        // The batch precheck reaches the same verdicts.
+        assert_eq!(
+            c.precheck_batch(&[old], now),
+            Err((
+                0,
+                HeaderError::BadVersion {
+                    expected: 2,
+                    got: 1
+                }
+            ))
+        );
+        assert_eq!(
+            c.precheck_batch(&[newer], now),
+            Err((0, HeaderError::UnknownUpgrade { version: 3 }))
+        );
+        c.accept(good, now).unwrap();
+
+        // A known later version before its activation is invalid, not unknown.
+        let parent8 = ids[7];
+        let mut early = mine_on(&c, parent8, 120, 2);
+        assert_eq!(early.height, 9);
+        early.version = 2;
+        assert_eq!(
+            c.validate(&early, u64::MAX / 2),
+            Err(HeaderError::BadVersion {
+                expected: 1,
+                got: 2
+            })
+        );
+        // The epoch is chosen by the parent's height, not the claimed height.
+        let mut lying = mine_on(&c, parent8, 120, 3);
+        lying.version = 2;
+        lying.height = 10;
+        assert_eq!(
+            c.validate(&lying, u64::MAX / 2),
+            Err(HeaderError::BadVersion {
+                expected: 1,
+                got: 2
+            })
+        );
+    }
+
     #[test]
     fn linear_chain_and_template() {
         let mut c = chain();
@@ -599,6 +740,7 @@ mod tests {
         assert_eq!(c.tip_id(), *ids.last().unwrap());
         let t = c.template();
         assert_eq!(t.height, 101);
+        assert_eq!(t.version, crate::header::HEADER_VERSION);
         assert_eq!(t.prev_id, c.tip_id());
         assert_eq!(
             t.seed_id,
@@ -623,7 +765,21 @@ mod tests {
 
         let mut h = good;
         h.version = 2;
-        assert_eq!(c.validate(&h, now), Err(HeaderError::BadVersion(2)));
+        let e = c.validate(&h, now).unwrap_err();
+        assert_eq!(e, HeaderError::UnknownUpgrade { version: 2 });
+        assert!(!e.is_permanent());
+
+        let mut h = good;
+        h.version = 0;
+        let e = c.validate(&h, now).unwrap_err();
+        assert_eq!(
+            e,
+            HeaderError::BadVersion {
+                expected: 1,
+                got: 0
+            }
+        );
+        assert!(e.is_permanent());
 
         let mut h = good;
         h.height += 1;

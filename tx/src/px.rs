@@ -382,26 +382,23 @@ impl PxTx {
 
     /// `h_tx`: the binding of the PX proof (zk.md §5.2). It covers the whole
     /// transaction except the prunable part (range proof, signatures, the
-    /// proof itself), and the network, so a proof is valid for exactly one
-    /// transaction on one network.
-    pub fn binding(&self, network_id: u32) -> Hash {
+    /// proof itself), the network and the branch, so a proof is valid for
+    /// exactly one transaction on one network in one epoch. It is a public
+    /// input of the proof, so the domain does not change the kernel.
+    pub fn binding(&self, domain: SigDomain) -> Hash {
         h32(
             tags::PX_TX_BINDING,
-            &[
-                &network_id.to_le_bytes(),
-                &self.prefix_hash(),
-                &self.base_hash(),
-            ],
+            &[&domain.bytes(), &self.prefix_hash(), &self.base_hash()],
         )
     }
 
     /// The message the v1 inputs' CLSAGs sign: everything except the
     /// signatures, including the range proof and the PX proof.
-    pub fn signature_message(&self, network_id: u32) -> Hash {
+    pub fn signature_message(&self, domain: SigDomain) -> Hash {
         h32(
             tags::PX_SIG_MESSAGE,
             &[
-                &network_id.to_le_bytes(),
+                &domain.bytes(),
                 &self.prefix_hash(),
                 &self.base_hash(),
                 &h32(tags::TX_BP, &[&self.range_proof_bytes()]),
@@ -549,12 +546,12 @@ impl PxDeploy {
         }
     }
 
-    pub fn signature_message(&self, network_id: u32) -> Hash {
+    pub fn signature_message(&self, domain: SigDomain) -> Hash {
         let t = self.as_transfer();
         h32(
             tags::TX_SIG_MESSAGE,
             &[
-                &network_id.to_le_bytes(),
+                &domain.bytes(),
                 &self.prefix_hash(),
                 &t.base_hash(),
                 &h32(tags::TX_BP, &[&t.range_proof_bytes()]),

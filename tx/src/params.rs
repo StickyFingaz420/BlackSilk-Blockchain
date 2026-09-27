@@ -55,21 +55,73 @@ pub const FEE_PER_WEIGHT: u64 = 20;
 /// Block weight limit (v1 fixed value, docs/blocks.md §5); a dynamic limit is future work.
 pub const MAX_BLOCK_WEIGHT: u64 = 600_000;
 
-/// Per-network parameters the transaction rules depend on.
+/// The PX verifiers this crate implements (`consensus::schedule::Epoch::verifier_id`).
+pub const SUPPORTED_VERIFIERS: &[u32] = &[blacksilk_consensus::schedule::VERIFIER_PX_1];
+
+/// What every signature message and the PX binding commit to besides the
+/// transaction (spec §4.4): the network and the rule-set branch. A signature
+/// or proof is valid on one network, in one epoch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SigDomain {
+    pub network_id: u32,
+    pub branch_id: u32,
+}
+
+impl SigDomain {
+    /// `LE32(network_id) ‖ LE32(branch_id)`.
+    pub fn bytes(&self) -> [u8; 8] {
+        let mut b = [0u8; 8];
+        b[..4].copy_from_slice(&self.network_id.to_le_bytes());
+        b[4..].copy_from_slice(&self.branch_id.to_le_bytes());
+        b
+    }
+}
+
+/// Per-network parameters the transaction rules depend on, for one epoch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TxRules {
     /// Committed to by every signature (spec §4.4), so no cross-network replay.
     pub network_id: u32,
+    /// The epoch's branch id, committed to next to the network id, so no
+    /// replay across rule sets (docs/consensus.md §11).
+    pub branch_id: u32,
     pub fee_per_weight: u64,
     pub max_block_weight: u64,
 }
 
 impl TxRules {
+    /// The rules of a chain whose schedule has a single epoch (every built-in
+    /// network).
+    ///
+    /// # Panics
+    /// If the schedule has more than one epoch: the rules then depend on the
+    /// height, and the caller must use [`Self::at_height`]. This is a tripwire,
+    /// so that no caller silently keeps the first epoch's branch id after an
+    /// activation (docs/reviews/v3-upgrade-mechanism.md §2.4).
     pub fn for_chain(params: &ChainParams) -> Self {
+        assert!(
+            params.schedule.len() == 1,
+            "multi-epoch schedule: build TxRules per height with TxRules::at_height"
+        );
+        Self::at_height(params, 0)
+    }
+
+    /// The rules for a transaction included in a block at `height`.
+    pub fn at_height(params: &ChainParams, height: u64) -> Self {
+        let epoch = params.epoch_at(height);
         Self {
             network_id: params.network_id,
+            branch_id: epoch.branch_id,
             fee_per_weight: FEE_PER_WEIGHT,
             max_block_weight: MAX_BLOCK_WEIGHT,
+        }
+    }
+
+    /// What signatures and the PX binding commit to under these rules.
+    pub fn domain(&self) -> SigDomain {
+        SigDomain {
+            network_id: self.network_id,
+            branch_id: self.branch_id,
         }
     }
 

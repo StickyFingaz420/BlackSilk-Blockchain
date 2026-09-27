@@ -1,7 +1,8 @@
 //! Per-network consensus parameters (spec §1).
 
 use crate::hash::Hash;
-use crate::header::{BlockHeader, HEADER_VERSION};
+use crate::header::BlockHeader;
+use crate::schedule::{Epoch, Schedule, V3};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Network {
@@ -29,6 +30,8 @@ pub struct ChainParams {
     pub seed_epoch: u64,
     /// RandomX key lag `L`.
     pub seed_lag: u64,
+    /// The rule sets by height (header version, branch id, PX verifier).
+    pub schedule: Schedule,
     pub genesis: BlockHeader,
 }
 
@@ -86,8 +89,9 @@ impl ChainParams {
     ) -> Self {
         // The genesis body is empty (blocks.md §3): tx_root is the root of the empty
         // list, and there is no coinbase and no premine.
+        let schedule = V3;
         let genesis = BlockHeader {
-            version: HEADER_VERSION,
+            version: schedule.epoch_at(0).header_version,
             height: 0,
             prev_id: [0; 32],
             timestamp: genesis_time,
@@ -105,8 +109,14 @@ impl ChainParams {
             future_time_limit: 360,
             seed_epoch: 2048,
             seed_lag: 64,
+            schedule,
             genesis,
         }
+    }
+
+    /// The rule set of a block at `height`.
+    pub fn epoch_at(&self, height: u64) -> &'static Epoch {
+        self.schedule.epoch_at(height)
     }
 
     pub fn genesis_id(&self) -> Hash {

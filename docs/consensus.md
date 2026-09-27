@@ -47,7 +47,7 @@ Serialized form: exactly **100 bytes**, fields in this order, no padding:
 
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
-| 0 | 4 | `version` | header version; must be `1` |
+| 0 | 4 | `version` | header version; must be the version of the epoch at `height` (§11); `1` in every epoch of the built-in schedules |
 | 4 | 8 | `height` | distance from genesis (genesis = 0) |
 | 12 | 32 | `prev_id` | block id of the parent (all zero for genesis) |
 | 44 | 8 | `timestamp` | seconds since the Unix epoch (miner-chosen) |
@@ -170,7 +170,9 @@ ahead mines blocks the others refuse (docs/testnet.md §12.2).
 A header `B` whose parent `P` is known and not invalid is valid iff, in this order
 (cheap checks first, the expensive RandomX check last):
 
-1. `B.version == 1`
+1. `B.version == epoch_at(P.height + 1).header_version` (§11). A version above every
+   version of the schedule is `UnknownUpgrade`, which is **not permanent** (the sender
+   probably runs a newer release). Any other mismatch is `BadVersion`, permanent.
 2. `B.height == P.height + 1`
 3. Timestamp rules (§5)
 4. `B.difficulty == next_difficulty(P's branch)` (§4)
@@ -251,3 +253,43 @@ the CVE-2012-2459 class of duplicate-transaction malleability.
 - The mainnet genesis timestamp is provisional until launch (§1).
 - Emission, block format and block limits: [`blocks.md`](blocks.md). Transaction
   rules and coinbase maturity: [`transactions.md`](transactions.md).
+
+## 11. Upgrades: the rule-set schedule
+
+*v3 candidate. Design, alternatives and the integration still owed by other
+components: [`reviews/v3-upgrade-mechanism.md`](reviews/v3-upgrade-mechanism.md).*
+
+`ChainParams.schedule` is a table of epochs (`consensus/src/schedule.rs`). Each epoch
+has an activation height, a header version, a branch id and a PX verifier id. The
+epoch of a block at height `h` is the last one whose activation height is at most `h`.
+
+| Epoch | Activation | Header version | Branch id | Verifier id |
+|---|---|---|---|---|
+| `v3` (every built-in network) | 0 | 1 | `0x42537633` (`"BSv3"`) | 1 |
+
+A table must be non-empty and start at 0. Its activation heights must increase, its
+header versions must not decrease, and its branch ids must be nonzero and distinct.
+`Schedule::new` checks this, at compile time for a constant table.
+
+What the epoch fixes:
+- **Header version** (§6 rule 1). The genesis header carries the version of epoch 0,
+  so the genesis ids of §1 are unchanged.
+- **Branch id.** Every transaction signature message and the PX proof binding `h_tx`
+  commit to `LE32(network_id) ‖ LE32(branch_id)` (transactions.md §4.4, px.md §11.1).
+  A transaction signed or proved in one epoch is invalid in every other.
+- **Verifier id.** It names the PX verifier (kernel, parameter set and kernel budgets).
+  Only `1` exists. A test checks that every scheduled id is implemented.
+
+**Rules for the network layer and the pool:**
+- `UnknownUpgrade` is not the peer's fault: warn the operator ("a newer consensus
+  version is in use") and do not penalize the peer.
+- Validate a block at height `h` with the transaction rules of `epoch_at(h)`
+  (`TxRules::at_height`).
+- When the next height crosses an activation (`Schedule::activation_in`), flush the
+  mempool: pooled transactions are bound to the old branch.
+- `TxRules::for_chain` panics on a schedule with more than one epoch, so no caller
+  can keep the first epoch's rules by accident.
+
+**Privacy note.** After a contentious split with shared history, key images can be
+spent on both chains with different rings. The branch id prevents replay; it does not
+prevent ring intersection. Wallets must reuse stored rings.

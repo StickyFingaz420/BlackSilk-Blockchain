@@ -422,7 +422,7 @@ pub fn check_signatures(
         &tx.pseudo_outs,
         &tx.signatures,
         rings,
-        &tx.signature_message(rules.network_id),
+        &tx.signature_message(rules.domain()),
     )
 }
 
@@ -530,7 +530,7 @@ pub fn check_px_proof(tx: &PxTx, chain: &impl ChainView, rules: &TxRules) -> Res
     blacksilk_px::prove::verify(
         &tx.public(),
         &calls,
-        tx.binding(rules.network_id),
+        tx.binding(rules.domain()),
         &proof,
         |contract, id| chain.px_function(contract, id).map(|(_, b)| b),
     )
@@ -544,7 +544,7 @@ pub fn check_px_proof(tx: &PxTx, chain: &impl ChainView, rules: &TxRules) -> Res
         ) {
             log::warn!(
                 "a PX proof made the verifier panic (contained, rejected); binding {}",
-                hex_id(&tx.binding(rules.network_id))
+                hex_id(&tx.binding(rules.domain()))
             );
         }
         TxError::PxProof
@@ -603,7 +603,7 @@ pub fn validate_px_without_proof(
         &tx.pseudo_outs,
         &tx.signatures,
         &rings,
-        &tx.signature_message(rules.network_id),
+        &tx.signature_message(rules.domain()),
     )
 }
 
@@ -630,7 +630,7 @@ pub fn validate_deploy(
         &tx.pseudo_outs,
         &tx.signatures,
         &rings,
-        &tx.signature_message(rules.network_id),
+        &tx.signature_message(rules.domain()),
     )
 }
 
@@ -966,19 +966,19 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
                 &t.inputs,
                 &t.pseudo_outs,
                 &t.signatures,
-                t.signature_message(rules.network_id),
+                t.signature_message(rules.domain()),
             ),
             Transaction::Px(t) => (
                 &t.inputs,
                 &t.pseudo_outs,
                 &t.signatures,
-                t.signature_message(rules.network_id),
+                t.signature_message(rules.domain()),
             ),
             Transaction::PxDeploy(t) => (
                 &t.inputs,
                 &t.pseudo_outs,
                 &t.signatures,
-                t.signature_message(rules.network_id),
+                t.signature_message(rules.domain()),
             ),
             Transaction::Coinbase(_) => unreachable!("checked above"),
         };

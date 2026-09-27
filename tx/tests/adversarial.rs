@@ -433,7 +433,7 @@ fn assemble(
         range_proof,
         signatures: vec![],
     };
-    let msg = tx.signature_message(net.rules.network_id);
+    let msg = tx.signature_message(net.rules.domain());
     let z = owned.received.mask - mask_sum;
     let (sig, _) = clsag::sign(&msg, &ring, &pseudo, pos, &p, &z, &mut net.rng).unwrap();
     tx.signatures.push(sig);

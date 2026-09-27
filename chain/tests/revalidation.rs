@@ -316,7 +316,7 @@ fn forge_with_output_key(
         range_proof,
         signatures: vec![],
     };
-    let message = tx.signature_message(rules.network_id);
+    let message = tx.signature_message(rules.domain());
     let (sig, ki) = clsag::sign(
         &message,
         &ring,

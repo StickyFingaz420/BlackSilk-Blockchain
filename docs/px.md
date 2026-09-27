@@ -483,9 +483,12 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
   `v = 0` exactly. Hidden change needs input masks to balance; payouts carry their
   (already public) amounts in clear, like coinbase outputs.
 - **PX-side balance** is proven by the kernel (§4.1).
-- **Binding:** `h_tx = H32("px/tx-binding", network ‖ prefix hash ‖ base hash)` is
-  the proof's binding. It covers every field except the range proof, the signatures
-  and the proof, and the network.
+- **Binding:** `h_tx = H32("px/tx-binding", LE32(network_id) ‖ LE32(branch_id) ‖
+  prefix hash ‖ base hash)` is the proof's binding. It covers every field except the
+  range proof, the signatures and the proof, plus the network and the epoch's branch id
+  (consensus.md §11). `h_tx` is a public input of the proof (it enters the CPU tables'
+  public values and the transcript, never a guest's input), so the domain changes
+  every proof but not the kernel or any program id.
 - **Signatures.** The v1 inputs' CLSAGs sign a message that also covers the range
   proof and the proof.
 - **Output context.** The stealth-output context is
@@ -546,7 +549,7 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 | Block PX budget | 8 MiB (about 4 PX transactions); total block ≤ `MAX_BLOCK_BYTES` = 1,000,000 + 8 MiB + 64 KiB = 9,454,144 bytes |
 | PX fee | Exactly `PX_STANDARD_FEE = PX_FEE_PER_BYTE × MAX_PX_TX_SIZE` = 8,912,896 atomic units, a consensus rule (§12). It covers the per-byte fee of any PX transaction. Consequence: every PX transaction pays the same, so the mempool's fee-per-byte ordering ranks larger ones (contract calls, ~2.5 MB) below plain transfers (~2 MB) when the PX budget is congested |
 | Relay | PX and deploy transactions together: per peer 0.2/s (burst 4); all peers together 2/s (burst 10) |
-| Invalid proof | Misbehaviour (the statement is branch-independent once PX1 and PX3 pass) |
+| Invalid proof | Misbehaviour (the statement is branch-independent once PX1 and PX3 pass). Across a scheduled activation the binding changes, so near an activation an honest peer can relay a proof for the previous epoch; see reviews/v3-upgrade-mechanism.md §2.4 |
 | Mempool | PX class capped at 64 MiB with fee-per-byte eviction; proofs verified once on admission; templates keep the pool non-negative in order |
 
 ## 12. Privacy guidance for users and wallets

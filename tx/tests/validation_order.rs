@@ -219,7 +219,7 @@ mod old {
             &tx.pseudo_outs,
             &tx.signatures,
             &rings,
-            &tx.signature_message(rules.network_id),
+            &tx.signature_message(rules.domain()),
         )?;
         if let Some(p) = &tx.range_proof {
             let c: Vec<Point> = tx.outputs.iter().map(|o| o.commitment).collect();
@@ -249,7 +249,7 @@ mod old {
             &tx.pseudo_outs,
             &tx.signatures,
             &rings,
-            &tx.signature_message(rules.network_id),
+            &tx.signature_message(rules.domain()),
         )?;
         check_range_proof(&t)
     }
