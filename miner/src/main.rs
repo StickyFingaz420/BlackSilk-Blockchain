@@ -79,7 +79,10 @@ fn parse_args() -> Args {
 
 fn main() {
     let args = parse_args();
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // Millisecond stamps: block races and relay delays are sub-second.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .init();
     if let Err(e) = run(args) {
         log::error!("{e}");
         std::process::exit(1);
@@ -162,6 +165,12 @@ fn run(args: Args) -> Result<(), String> {
             pow = Some(PowContext::new(seed_id, !args.light, threads));
             log::info!("RandomX ready in {:.1?}", started.elapsed());
         }
+        log::debug!(
+            "template {} on {} (difficulty {})",
+            template.height,
+            &template.prev_id[..12.min(template.prev_id.len())],
+            template.difficulty
+        );
         let block = build_block(&template, &payout, &hedge, now(), &mut rng)
             .map_err(|e| format!("bad template: {e:?}"))?;
         // A fresh random nonce start for every template: a start kept and counted
@@ -199,10 +208,17 @@ fn run(args: Args) -> Result<(), String> {
             block.header.nonce = f.nonce;
             match client.submit_block(&block.encode()) {
                 Ok(r) if r.accepted => log::info!(
-                    "found block {} (reward {} BLK, {} txs)",
+                    "found block {} (reward {} BLK, {} txs){}",
                     template.height,
                     format_amount(template.reward + template.fees),
-                    block.txs.len() - 1
+                    block.txs.len() - 1,
+                    // Accepted is not adopted: a rival of equal work seen
+                    // first by the node stays its tip.
+                    if r.on_best_chain == Some(false) {
+                        "; not on the node's best chain"
+                    } else {
+                        ""
+                    }
                 ),
                 Ok(r) => log::warn!(
                     "block {} rejected: {}",

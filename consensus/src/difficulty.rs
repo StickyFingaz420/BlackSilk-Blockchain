@@ -180,6 +180,38 @@ mod tests {
         assert_eq!(d, 1);
     }
 
+    /// Difficulties of blocks 1..=`blocks` on a regtest-shaped chain (T = 10,
+    /// D0 = 1) whose block 1 comes `gap` seconds after genesis and every later
+    /// block one second after its parent (miners far faster than D0 / T).
+    fn regtest_start(gap: u64, blocks: usize) -> Vec<u64> {
+        let mut ts = vec![1_700_000_000u64];
+        let mut cd = vec![1u128];
+        let mut out = Vec::new();
+        let first = ts[0] + gap;
+        for i in 0..blocks as u64 {
+            let d = next_difficulty(&ts, &cd, 10, N, 1);
+            ts.push(first + i);
+            cd.push(cd.last().unwrap() + d as u128);
+            out.push(d);
+        }
+        out
+    }
+
+    /// At D = 1 the rise bound (at most 2x the window average) is below 2
+    /// while the genesis gap's capped 6T solve time is in the window, and the
+    /// integer result truncates to 1: a regtest chain started long after its
+    /// genesis stamp mines every block of its first window at difficulty 1,
+    /// where every RandomX hash meets the target (labnet evidence
+    /// docs/evidence/labnet-reorg-2026-09-27). Without the gap it rises at once.
+    #[test]
+    fn a_genesis_gap_holds_difficulty_one_for_the_first_window() {
+        let gap = regtest_start(90_000_000, 100);
+        assert!(gap[..76].iter().all(|&d| d == 1), "{gap:?}");
+        assert_eq!(gap[76], 2, "block 77: the genesis solve left the window");
+        let no_gap = regtest_start(1, 100);
+        assert_eq!(&no_gap[..3], &[1, 2, 3]);
+    }
+
     /// Entries older than the warm-up are ignored.
     #[test]
     fn only_the_last_87_entries_matter() {

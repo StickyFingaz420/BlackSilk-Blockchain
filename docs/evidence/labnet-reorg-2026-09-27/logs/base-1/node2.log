@@ -1,0 +1,35 @@
+[2026-09-27T18:25:27Z INFO  blacksilk_node] blacksilk-node 0.1.0 commit unknown
+[2026-09-27T18:25:27Z INFO  blacksilk_node] regtest: genesis 087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7, consensus fingerprint 36be52e9489e1aa2e73ada22dc74ebd4fc8af04b55d1d7e43934991d1b1fa1dc
+[2026-09-27T18:25:27Z INFO  blacksilk_node] regtest: loading C:/bszkeval/inv-reorg/base-1\node2
+[2026-09-27T18:25:27Z INFO  blacksilk_node] chain loaded in 4.3ms: height 0, tip 087d6fd4efbc45eb
+[2026-09-27T18:25:27Z INFO  blacksilk_node] P2P listening on 127.0.0.1:47541
+[2026-09-27T18:25:27Z INFO  blacksilk_node] RPC listening on http://127.0.0.1:47540
+[2026-09-27T18:25:27Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:36205 (height 0)
+[2026-09-27T18:25:27Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:36194 (height 0)
+[2026-09-27T18:25:27Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:49583 (height 0)
+[2026-09-27T18:25:27Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:49580 (height 0)
+[2026-09-27T18:25:30Z INFO  blacksilk_node] block 9307480f820fc40f at height 1 accepted (tip 1)
+[2026-09-27T18:25:31Z INFO  blacksilk_node] block f62e3658c60c79a6 at height 2 accepted (tip 2)
+[2026-09-27T18:25:33Z INFO  blacksilk_node] block 476fb97eef7acd1c at height 3 accepted (tip 3)
+[2026-09-27T18:25:34Z INFO  blacksilk_node] block 1926ce5fbd7a4fc2 at height 4 accepted (tip 4)
+[2026-09-27T18:25:35Z INFO  blacksilk_node] block 184fe6329f21ef7e at height 5 accepted (tip 5)
+[2026-09-27T18:25:37Z INFO  blacksilk_node] block 88de50cbb2ecd206 at height 6 accepted (tip 6)
+[2026-09-27T18:25:39Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 6 block(s) above height 0
+[2026-09-27T18:25:40Z INFO  blacksilk_node] block 669d07ca210de167 at height 7 accepted (tip 7)
+[2026-09-27T18:25:42Z INFO  blacksilk_node] block be62e10135459e11 at height 8 accepted (tip 8)
+[2026-09-27T18:25:44Z INFO  blacksilk_node] block f1a5d1061cbeca25 at height 9 accepted (tip 10)
+[2026-09-27T18:25:57Z INFO  blacksilk_node] block e500777720f81182 at height 13 accepted (tip 14)
+[2026-09-27T18:26:03Z INFO  blacksilk_node] block 47c9783f133b8cef at height 15 accepted (tip 15)
+[2026-09-27T18:26:04Z INFO  blacksilk_node] block 4a1d7acb0ba56877 at height 16 accepted (tip 16)
+[2026-09-27T18:26:52Z INFO  blacksilk_node] block 74d08d466d8e2294 at height 22 accepted (tip 22)
+[2026-09-27T18:27:19Z INFO  blacksilk_node] block 2f835431872b1df7 at height 27 accepted (tip 27)
+[2026-09-27T18:27:21Z INFO  blacksilk_node] block b976a4f3785fbfad at height 28 accepted (tip 28)
+[2026-09-27T18:27:30Z INFO  blacksilk_node] block 80e3af65a307a9a6 at height 29 accepted (tip 29)
+[2026-09-27T18:28:06Z INFO  blacksilk_node] block b2d2606f0209e169 at height 33 accepted (tip 33)
+[2026-09-27T18:28:27Z INFO  blacksilk_node] block ebe0e809c850c21d at height 35 accepted (tip 35)
+[2026-09-27T18:28:55Z INFO  blacksilk_node] block 9ec49fc5e22461a6 at height 37 accepted (tip 37)
+[2026-09-27T18:29:10Z INFO  blacksilk_node] block 759d7df9537eefe5 at height 39 accepted (tip 39)
+[2026-09-27T18:29:13Z INFO  blacksilk_node] block 217458d6da76b331 at height 40 accepted (tip 40)
+[2026-09-27T18:29:20Z INFO  blacksilk_node] block 393f5476cf37c8f7 at height 41 accepted (tip 41)
+[2026-09-27T18:29:24Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 40
+[2026-09-27T18:29:50Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:36283 (height 8)

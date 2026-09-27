@@ -310,8 +310,8 @@ pub fn rpc_block_admissible(m: &ChainManager, header: &BlockHeader) -> Result<()
     let parent = m.header(&header.prev_id);
     if !near || parent.is_none_or(|p| p.height + 1 != header.height) {
         return Err(format!(
-            "NotNearTip: the parent must be the tip ({tip}) or at most {RPC_BLOCK_MAX_DEPTH} \
-             blocks below it"
+            "NotNearTip: the parent must be the tip ({tip}) or one of its last \
+             {RPC_BLOCK_MAX_DEPTH} ancestors on the connected chain"
         ));
     }
     let hc = m.headers();
