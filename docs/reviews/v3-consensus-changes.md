@@ -168,3 +168,50 @@ Owner: W1-CB-A (consensus bundle). Decisions: "Agent 03", "DAA update", "DAA DEC
 15. **Review status.** Selection (W0-03b) and red team (RT-DAA) done on the harness
     rule; this change is shown equal to the red team's `Anchored` rule by the differential
     test. The consensus implementation has not had a separate adversarial review.
+
+---
+
+## f05-header-check-order: permanent header rules before the future time limit
+
+Owner: W1-CB-A. Decisions: "Agent 01" (F-05 reorder accepted before the freeze).
+
+1. **Problem.** `check_rules` checked the future time limit (FTL, not permanent: it
+   depends on the local clock) before the difficulty rule (permanent). A header with a
+   wrong difficulty and a far-future timestamp was reported as
+   `TimestampTooFarInFuture`: unpenalized and re-evaluated later. A peer could wrap any
+   permanently invalid header this way to avoid scoring (dossier 01 F-05, Low).
+2. **Demonstrated failure.** On base `32054d4`, the new vector test
+   `chain::tests::header_check_order_vectors` failed at its first row:
+   `difficulty + future: TimestampTooFarInFuture { limit: 1700000680, got: 1700010320 }`.
+3. **Prior art.** Bitcoin Core `ContextualCheckBlockHeader`: `bad-diffbits`,
+   `time-too-old` and the time-warp checks are `BLOCK_INVALID_HEADER` first, then
+   `time-too-new` as `BLOCK_TIME_FUTURE`.
+4. **Alternatives.** Keep the order and document it (a second implementation must copy it
+   to score identically); or return every failing rule (a larger API change). Rejected:
+   the reorder is smaller and makes the scoring order-independent of clock skew.
+5. **Affected components.** `consensus/src/chain.rs::check_rules` (the single definition
+   used by `validate` and `precheck_batch`). New order: version, height, difficulty, MTP,
+   FTL, then PoW in `validate`.
+6. **Activation.** v3 genesis base rule set (policy-visible only).
+7. **Compatibility.** Validity is unchanged: a header is valid iff every rule holds, and
+   the conjunction does not depend on the order. Only the reported error, and so P2P
+   scoring, changes for headers that break both a permanent rule and the FTL.
+8. **Reorg, wallet, mining and P2P implications.** P2P: such headers are now penalized
+   (`BadDifficulty` and `TimestampTooOld` are permanent). A header that is only too far in
+   the future is still unpenalized. No reorg, wallet or mining effect.
+9. **Vectors.** `header_check_order_vectors`: 7 rows of mutation sets and their
+   first-failing error (difficulty + future, difficulty + too old, height + difficulty,
+   height + future, too old, future, difficulty) plus the FTL-before-PoW case, each
+   checked for `validate` and `precheck_batch` and for permanence.
+10. **Tests.** The vector test above; the existing
+    `precheck_agrees_with_sequential_validation_and_computes_no_pow` and
+    `rejects_each_invalid_field` still pass unchanged.
+11. **Suite results.** `-p blacksilk-consensus`: 63 passed (lib 42, golden 17, lwma_warm 2,
+    randomx_end_to_end 2). Wider suites: see the RT-1 section (run once on the final
+    branch).
+12. **Open review points.** 30/31: scoring of the new first errors is the existing
+    `penalized()` classification; no p2p change was needed.
+13. **Identity impact.** None (no constant or genesis change).
+14. **Documentation.** `docs/consensus.md` §6 (the order and why it does not change
+    validity), in this change.
+15. **Review status.** Internal; the validity-invariance argument is the conjunction.

@@ -345,6 +345,16 @@ impl HeaderChain {
                 got: header.height,
             });
         }
+        // The permanent rules first, the local-clock rule (not permanent) last,
+        // so that a permanently invalid header is always reported as such
+        // (F-05, docs/consensus.md §6). The order changes only which error is
+        // reported, never whether the header is valid.
+        if header.difficulty != parent.child_difficulty {
+            return Err(HeaderError::BadDifficulty {
+                expected: parent.child_difficulty,
+                got: header.difficulty,
+            });
+        }
         if !after_median_time_past(header.timestamp, &[parent.median_time_past]) {
             return Err(HeaderError::TimestampTooOld {
                 median_time_past: parent.median_time_past,
@@ -355,12 +365,6 @@ impl HeaderChain {
             return Err(HeaderError::TimestampTooFarInFuture {
                 limit: now.saturating_add(self.params.future_time_limit),
                 got: header.timestamp,
-            });
-        }
-        if header.difficulty != parent.child_difficulty {
-            return Err(HeaderError::BadDifficulty {
-                expected: parent.child_difficulty,
-                got: header.difficulty,
             });
         }
         Ok(())
@@ -836,6 +840,90 @@ mod tests {
         let id = c.accept(good, now).unwrap().id;
         assert_eq!(c.accept(good, now), Err(HeaderError::Duplicate));
         assert_eq!(c.tip_id(), id);
+    }
+
+    /// Searches for a nonce that makes `h` meet `difficulty` (`want = true`) or
+    /// fail it (`want = false`) under the seed of its parent's branch.
+    fn grind(c: &HeaderChain, mut h: BlockHeader, difficulty: u64, want: bool) -> BlockHeader {
+        let seed = c.seed_id_for(h.prev_id, h.height);
+        while check_hash(&TestPow.pow_hash(&seed, &h.to_bytes()), difficulty) != want {
+            h.nonce += 1;
+        }
+        h
+    }
+
+    /// A chain whose next required difficulty is above 1 (at 1 every hash is
+    /// valid, so no header could fail proof of work), and a valid child of its tip.
+    fn chain_above_one() -> (HeaderChain, BlockHeader) {
+        let mut c = chain();
+        let g = c.tip_id();
+        extend(&mut c, g, 10, 20, 1);
+        let good = mine_on(&c, c.tip_id(), 120, 1);
+        assert!(good.difficulty > 1);
+        (c, good)
+    }
+
+    /// F-05 (docs/consensus.md §6): the permanent rules (version, height,
+    /// difficulty) are checked before the timestamp rules, and the non-permanent
+    /// future-time limit after every permanent rule but proof of work. Validity is
+    /// unchanged (it is a conjunction); only the first reported error, and so
+    /// its permanence, depends on the order. Each row: the mutations, then the
+    /// first failing error of the v3 order.
+    #[test]
+    fn header_check_order_vectors() {
+        let (c, good) = chain_above_one();
+        let tip = good.prev_id;
+        let mtp = c.median_time_past(tip);
+        let now = good.timestamp;
+        type Mutation = fn(&mut BlockHeader, u64);
+        let bad_difficulty: Mutation = |h, _| h.difficulty += 1;
+        let bad_height: Mutation = |h, _| h.height += 1;
+        let too_old: Mutation = |h, mtp| h.timestamp = mtp;
+        let future: Mutation = |h, _| h.timestamp += 10_000;
+        let rows: [(&str, &[Mutation], &str); 7] = [
+            (
+                "difficulty + future",
+                &[bad_difficulty, future],
+                "BadDifficulty",
+            ),
+            (
+                "difficulty + too old",
+                &[bad_difficulty, too_old],
+                "BadDifficulty",
+            ),
+            (
+                "height + difficulty",
+                &[bad_height, bad_difficulty],
+                "BadHeight",
+            ),
+            ("height + future", &[bad_height, future], "BadHeight"),
+            ("too old", &[too_old], "TimestampTooOld"),
+            ("future", &[future], "TimestampTooFarInFuture"),
+            ("difficulty", &[bad_difficulty], "BadDifficulty"),
+        ];
+        for (what, ms, want) in rows {
+            let mut h = good;
+            for m in ms {
+                m(&mut h, mtp);
+            }
+            let e = c.validate(&h, now).unwrap_err();
+            assert!(format!("{e:?}").starts_with(want), "{what}: {e:?}");
+            assert_eq!(c.precheck_batch(&[h], now), Err((0, e.clone())), "{what}");
+            // The permanence of the first error is what peers are scored on.
+            assert_eq!(
+                e.is_permanent(),
+                want != "TimestampTooFarInFuture",
+                "{what}"
+            );
+        }
+        // The future-time limit still comes before proof of work.
+        let mut h = grind(&c, good, good.difficulty, false);
+        h.timestamp = now + 10_000;
+        let h = grind(&c, h, h.difficulty, false);
+        assert!(matches!(
+            c.validate(&h, now),
+            Err(HeaderError::TimestampTooFarInFuture { .. })
+        ));
     }
 
     /// Consensus code never runs on parameters that break an invariant.

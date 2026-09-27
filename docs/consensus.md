@@ -239,9 +239,18 @@ A header `B` whose parent `P` is known and not invalid is valid iff, in this ord
    version of the schedule is `UnknownUpgrade`, which is **not permanent** (the sender
    probably runs a newer release). Any other mismatch is `BadVersion`, permanent.
 2. `B.height == P.height + 1`
-3. Timestamp rules (§5)
-4. `B.difficulty == next_difficulty(P's branch)` (§4)
-5. PoW: `check_hash(RandomX(seed_id(B.height), bytes(B)), B.difficulty)` (§3)
+3. `B.difficulty == next_difficulty(P's branch)` (§4)
+4. Median-time-past (§5 rule 1)
+5. Future time limit (§5 rule 2), the only non-permanent rule, after every
+   permanent rule but PoW
+6. PoW: `check_hash(RandomX(seed_id(B.height), bytes(B)), B.difficulty)` (§3)
+
+Validity does not depend on the order (it is the conjunction of the rules); the
+order decides which error is reported, and so whether the sender is penalized.
+Since v3 (F-05) the permanent rules come before the future time limit, so a header
+with a wrong difficulty and a future timestamp is `BadDifficulty` (permanent), not
+`TimestampTooFarInFuture`. Vectors: `header_check_order_vectors` in
+`consensus/src/chain.rs`.
 
 Headers whose parent is unknown are not stored (the network layer requests
 the missing ancestors). Descendants of an invalid block are invalid.
