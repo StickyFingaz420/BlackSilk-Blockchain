@@ -70,7 +70,8 @@ jobs:
         with:
           toolchain: "1.98.1"
       - name: Test (release)
-        run: cargo test --locked --release --workspace --no-fail-fast
+        shell: bash
+        run: bash .github/scripts/annotate-tests.sh cargo test --locked --release --workspace --no-fail-fast
 
   # The release profile has overflow checks and debug assertions off. This job
   # runs the non-PX crates' tests optimized but with both on (and without LTO,
@@ -98,8 +99,9 @@ jobs:
         with:
           toolchain: "1.98.1"
       - name: Test with overflow checks and debug assertions (release, non-PX)
+        shell: bash
         run: |
-          cargo test --locked --release --no-fail-fast \
+          bash .github/scripts/annotate-tests.sh cargo test --locked --release --no-fail-fast \
             -p blacksilk-randomx -p blacksilk-consensus -p blacksilk-crypto \
             -p blacksilk-tx -p blacksilk-chain -p blacksilk-p2p \
             -p blacksilk-contracts -p blacksilk-px-core -p blacksilk-miner \
