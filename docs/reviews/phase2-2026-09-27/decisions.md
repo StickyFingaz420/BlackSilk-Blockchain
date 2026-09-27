@@ -643,3 +643,8 @@
 - **RTW1B-5, 7, 8, 9:** fix (readmit keeps the guard entry on Err; halt log string; cfg-gate `with_px_state`; `max_weight` as a const fn with a const assert).
 - **RTW1B-6:** a fee-grace window is required before any fee-changing epoch (none in v3). Logged for the schedule.
 - **Owner:** FX-RTW1B, after FX-RTW1-TW frees the mempool and p2p admission files.
+
+## W2-32 (addrman), Lead decisions 2026-09-27
+- **sha3 0.11.0** (RustCrypto, pure Rust, default features off) is APPROVED as a direct dependency of blacksilk-p2p for the Tor v3 checksum. It was already in the lockfile via ml-kem. This supersedes the "out of workspace" note for this use; 44 reviews it in its supply-chain pass.
+- **P2P PROTOCOL_VERSION = MIN_PROTOCOL_VERSION = 3:** accepted. The v3 reset has no v2 peers, and a clean handshake refusal is better than ban loops. 30 builds on MIN = 3.
+- **Still open (Wave 3):** addrman v2 (W1); anchors, feelers and stale-tip rotation (W4, W5, W7); inbound /64 limits and eviction (W6). The simulator baseline stays as the regression metric.
