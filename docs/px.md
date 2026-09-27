@@ -110,7 +110,10 @@ following hold. For each input `i ∈ {0, 1}`:
    - and `nf_0 ≠ nf_1`.
 
 For each output `j ∈ {0, 1}`: `rho'_j = Hk(RHO, nf_0 ‖ j)`, and `cm'_j` is the
-commitment of the output record. The function rules of §7.2 apply.
+commitment of the output record. A contract output (`contract ≠ 0`) must have
+`owner = 0` (PX-F5, testnet v3; `ContractOutputOwner`): contract records are spent by
+function approval, never by an owner, so one with an owner could never be spent. The
+function rules of §7.2 apply.
 
 Balance, over the integers (`u128`):
 `Σ value_i + bridge_in = Σ value'_j + bridge_out`.
@@ -151,7 +154,7 @@ On rejection the guest halts with the error's exit code:
 | 6 | NotInTree | 14 | SpecForeignContract |
 | 7 | DuplicateNullifier | 15 | SpecConflict |
 | 8 | Unbalanced | 16 | DummyContract |
-| 9 | TooManyFunctions | | |
+| 9 | TooManyFunctions | 17 | ContractOutputOwner (PX-F5) |
 
 A panic halts with exit code 1. **A proof is valid only for exit code 0**; the verifier
 fixes it.
@@ -347,7 +350,9 @@ io_hash = Hk(IO, C ‖ per input i: [a_i, a_i·cm_i] ‖ per output j: [s_j, s_j
     (`SpecForeignContract`);
   - at most one function specifies an output (`SpecConflict`).
 - **Contract outputs:** a contract output must be specified by a function of its
-  contract (`Unauthorized`), so nobody can forge contract state.
+  contract (`Unauthorized`), so nobody can forge contract state; and it must have owner 0
+  (`ContractOutputOwner`, PX-F5: a contract record with an owner is unspendable, its value
+  burned).
 - **Function contracts:** a function's contract is nonzero (`ZeroContract`).
 - **Dummies:** a dummy input may not be a contract record (`DummyContract`).
 

@@ -83,6 +83,11 @@ pub enum Error {
     SpecConflict,
     /// A dummy input with a contract.
     DummyContract,
+    /// An output of a contract (`contract ≠ 0`) with a nonzero owner (PX-F5).
+    /// A contract record is spent by its contract's approval, never by an
+    /// owner, so such a record could never be spent: its value would be
+    /// burned. Appended last, so every earlier exit code is unchanged.
+    ContractOutputOwner,
 }
 
 impl Error {
@@ -340,6 +345,11 @@ pub fn transfer<P: Permutation, S: Source>(perm: &mut P, src: &mut S) -> Result<
         let value = u64_word(src);
         let data = digest(src)?;
         let rcm = digest(src)?;
+        // PX-F5: a contract record has no owner (docs/px.md §4.1). Inputs
+        // already rebuild contract records with owner 0; outputs must match.
+        if !is_zero(&contract) && !is_zero(&owner) {
+            return Err(Error::ContractOutputOwner);
+        }
         let rho = output_rho(perm, &nullifiers[0], j as u32);
         *cm = Record {
             owner,
