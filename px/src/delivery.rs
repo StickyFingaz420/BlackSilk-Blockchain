@@ -11,6 +11,18 @@
 //! associated data. Every key is fresh (new `r` and new KEM randomness), so
 //! the nonce is zero.
 //!
+//! **Hedged randomness** (docs/transactions.md §10). The sender's ephemeral
+//! scalar `r` and the ML-KEM encapsulation coins `m` are not drawn from the
+//! caller's RNG directly. They come from a
+//! [`HedgedRng`](blacksilk_crypto::nonce::HedgedRng) keyed with a sender
+//! secret (required: [`seal`] refuses an empty or all-zero one) and bound to
+//! the full delivery statement: the recipient's owner tag, view key and whole
+//! encapsulation key, the commitment `cm`, and the complete plaintext
+//! (contract, value, data, `rcm`) plus `rho` (which fixes the output index).
+//! With a broken or constant RNG, `r` and `m` therefore stay unknown to anyone
+//! without the sender secret, and two deliveries of different records never
+//! share them. The ciphertext format is unchanged.
+//!
 //! Record contents therefore stay confidential unless **both** the discrete
 //! logarithm in Ristretto255 and ML-KEM-768 are broken: a future quantum
 //! adversary that breaks the first still faces the second.
@@ -33,6 +45,7 @@
 //! This is wallet-side code: consensus only fixes the ciphertext length.
 
 use blacksilk_crypto::hash::{h32, h64, tags};
+use blacksilk_crypto::nonce::HedgedRng;
 use blacksilk_px_core::record::Record;
 use blacksilk_px_core::{Digest, P, ZERO_DIGEST};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
@@ -125,15 +138,64 @@ fn key(ss_ec: &[u8; 32], ss_kem: &[u8], r: &[u8; 32], ct: &[u8], cm: &Digest) ->
 pub enum SealError {
     /// The address's view key or encapsulation key does not decode.
     BadAddress,
+    /// No hedge secret was supplied (empty or all zero): the ephemeral
+    /// secrets would depend on the RNG alone.
+    NoSecret,
+}
+
+/// Purpose label of the delivery hedge (first context item).
+const HEDGE_LABEL: &[u8] = b"px/delivery/hedge/v1";
+
+/// The hedge stream for one delivery: keyed with `secret`, bound to every
+/// public and private input of the delivery.
+fn hedge<R: RngCore + CryptoRng>(
+    rng: &mut R,
+    secret: &[u8],
+    to: &Address,
+    record: &Record,
+    cm: &Digest,
+) -> HedgedRng {
+    let owner = digest_bytes(&to.owner);
+    let cm = digest_bytes(cm);
+    let contract = digest_bytes(&record.contract);
+    let value = record.value.to_le_bytes();
+    let data = digest_bytes(&record.data);
+    let rcm = zeroize::Zeroizing::new(digest_bytes(&record.rcm));
+    let rho = digest_bytes(&record.rho);
+    HedgedRng::new(
+        &[secret],
+        &[
+            HEDGE_LABEL,
+            &owner,
+            &to.view,
+            &to.ek,
+            &cm,
+            &contract,
+            &value,
+            &data,
+            &*rcm,
+            &rho,
+        ],
+        rng,
+    )
 }
 
 /// Encrypts `record` (committed as `cm`) to `to`.
+///
+/// `hedge_secret` must be secret to the sender (for example
+/// `blacksilk_px::wallet::Account::hedge_secret`); it keys the hedged
+/// derivation of the ephemeral secrets (module docs). An empty or all-zero
+/// secret is refused with [`SealError::NoSecret`].
 pub fn seal<R: RngCore + CryptoRng>(
     rng: &mut R,
+    hedge_secret: &[u8],
     to: &Address,
     record: &Record,
     cm: &Digest,
 ) -> Result<Vec<u8>, SealError> {
+    if hedge_secret.iter().all(|&b| b == 0) {
+        return Err(SealError::NoSecret);
+    }
     let v = CompressedRistretto(to.view)
         .decompress()
         .ok_or(SealError::BadAddress)?;
@@ -141,14 +203,14 @@ pub fn seal<R: RngCore + CryptoRng>(
         ml_kem::Key::<Ek>::try_from(to.ek.as_slice()).map_err(|_| SealError::BadAddress)?;
     let ek = Ek::new(&ek_arr).map_err(|_| SealError::BadAddress)?;
 
-    // Ephemeral secrets are wiped on drop.
-    let mut wide = zeroize::Zeroizing::new([0u8; 64]);
-    rng.fill_bytes(&mut *wide);
-    let r = zeroize::Zeroizing::new(Scalar::from_bytes_mod_order_wide(&wide));
+    // Ephemeral secrets (hedged, module docs) are wiped on drop.
+    let mut stream = hedge(rng, hedge_secret, to, record, cm);
+    let r = zeroize::Zeroizing::new(stream.scalar());
     let r_pub = (&*r * RISTRETTO_BASEPOINT_TABLE).compress().to_bytes();
     let ss_ec = zeroize::Zeroizing::new((*r * v).compress().to_bytes());
     let mut m = zeroize::Zeroizing::new([0u8; 32]);
-    rng.fill_bytes(&mut *m);
+    stream.fill_bytes(&mut *m);
+    drop(stream);
     let (ct, ss_kem) = ek.encapsulate_deterministic(&(*m).into());
 
     let k = zeroize::Zeroizing::new(key(&ss_ec, ss_kem.as_slice(), &r_pub, ct.as_slice(), cm));
@@ -244,4 +306,124 @@ pub fn open(
     };
     let mut perm = crate::perm::HostPerm::new();
     (record.commit(&mut perm) == *cm).then_some(record)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::perm::HostPerm;
+    use crate::wallet::Account;
+
+    /// A "CSPRNG" that always outputs the same byte: a completely broken RNG.
+    struct ConstRng;
+    impl RngCore for ConstRng {
+        fn next_u32(&mut self) -> u32 {
+            0x4242_4242
+        }
+        fn next_u64(&mut self) -> u64 {
+            0x4242_4242_4242_4242
+        }
+        fn fill_bytes(&mut self, dest: &mut [u8]) {
+            dest.fill(0x42)
+        }
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+            dest.fill(0x42);
+            Ok(())
+        }
+    }
+    impl CryptoRng for ConstRng {}
+
+    const SENDER: [u8; 32] = [0x5e; 32];
+
+    fn record(owner: Digest, value: u64) -> (Record, Digest) {
+        let rec = Record::plain(owner, value, [3; 8], [4; 8], [5; 8]);
+        let cm = rec.commit(&mut HostPerm::new());
+        (rec, cm)
+    }
+
+    fn r_and_kem(c: &[u8]) -> (&[u8], &[u8]) {
+        (&c[..32], &c[33..33 + KEM_CT_BYTES])
+    }
+
+    /// R2-C2: under a constant RNG, two deliveries of different openings to
+    /// the same recipient use different `r` and different ML-KEM coins (so a
+    /// different `R` and KEM ciphertext), and both still open.
+    #[test]
+    fn broken_rng_different_openings_get_different_ephemeral_secrets() {
+        let bob = Account::from_seed(&[6; 32]);
+        let to = bob.address(0);
+        let keys = bob.delivery_keys(0);
+        let (rec1, cm1) = record(to.owner, 10);
+        let (rec2, cm2) = record(to.owner, 11);
+        let c1 = seal(&mut ConstRng, &SENDER, &to, &rec1, &cm1).unwrap();
+        let c2 = seal(&mut ConstRng, &SENDER, &to, &rec2, &cm2).unwrap();
+        let (r1, k1) = r_and_kem(&c1);
+        let (r2, k2) = r_and_kem(&c2);
+        assert_ne!(r1, r2, "ECDH scalar r must differ");
+        assert_ne!(k1, k2, "ML-KEM coins must differ");
+        assert_eq!(open(&keys, &to.owner, &c1, &cm1, &rec1.rho), Some(rec1));
+        assert_eq!(open(&keys, &to.owner, &c2, &cm2, &rec2.rho), Some(rec2));
+
+        // Only rcm differs (same value, owner, data, rho): still separated.
+        let mut rec3 = rec1;
+        rec3.rcm = [6; 8];
+        let cm3 = rec3.commit(&mut HostPerm::new());
+        let c3 = seal(&mut ConstRng, &SENDER, &to, &rec3, &cm3).unwrap();
+        assert_ne!(r_and_kem(&c1).0, r_and_kem(&c3).0);
+        assert_ne!(r_and_kem(&c1).1, r_and_kem(&c3).1);
+
+        // Same opening values, another address of the same wallet.
+        let to1 = bob.address(1);
+        let (rec4, cm4) = record(to1.owner, 10);
+        let c4 = seal(&mut ConstRng, &SENDER, &to1, &rec4, &cm4).unwrap();
+        assert_ne!(r_and_kem(&c1).0, r_and_kem(&c4).0);
+    }
+
+    /// Under a constant RNG the ephemeral values are unknown without the
+    /// sender secret: another secret gives other values. Everything equal
+    /// gives the same ciphertext (a deterministic, safe re-encryption).
+    #[test]
+    fn broken_rng_ephemeral_secrets_depend_on_the_sender_secret() {
+        let bob = Account::from_seed(&[6; 32]);
+        let to = bob.address(0);
+        let (rec, cm) = record(to.owner, 10);
+        let a = seal(&mut ConstRng, &SENDER, &to, &rec, &cm).unwrap();
+        let b = seal(&mut ConstRng, &[0x5f; 32], &to, &rec, &cm).unwrap();
+        assert_ne!(r_and_kem(&a).0, r_and_kem(&b).0);
+        assert_ne!(r_and_kem(&a).1, r_and_kem(&b).1);
+        assert_eq!(a, seal(&mut ConstRng, &SENDER, &to, &rec, &cm).unwrap());
+    }
+
+    /// A working RNG still randomizes each delivery, and the result opens.
+    #[test]
+    fn working_rng_randomizes_and_opens() {
+        use rand_chacha::rand_core::SeedableRng;
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(9);
+        let bob = Account::from_seed(&[6; 32]);
+        let to = bob.address(2);
+        let keys = bob.delivery_keys(2);
+        let (rec, cm) = record(to.owner, 99);
+        let a = seal(&mut rng, &SENDER, &to, &rec, &cm).unwrap();
+        let b = seal(&mut rng, &SENDER, &to, &rec, &cm).unwrap();
+        assert_ne!(r_and_kem(&a).0, r_and_kem(&b).0);
+        assert_ne!(r_and_kem(&a).1, r_and_kem(&b).1);
+        assert_eq!(open(&keys, &to.owner, &a, &cm, &rec.rho), Some(rec));
+        assert_eq!(open(&keys, &to.owner, &b, &cm, &rec.rho), Some(rec));
+    }
+
+    /// Fail closed: no sender secret, no delivery.
+    #[test]
+    fn a_missing_hedge_secret_is_refused() {
+        let bob = Account::from_seed(&[6; 32]);
+        let to = bob.address(0);
+        let (rec, cm) = record(to.owner, 1);
+        assert_eq!(
+            seal(&mut ConstRng, &[], &to, &rec, &cm),
+            Err(SealError::NoSecret)
+        );
+        assert_eq!(
+            seal(&mut ConstRng, &[0; 32], &to, &rec, &cm),
+            Err(SealError::NoSecret)
+        );
+    }
 }

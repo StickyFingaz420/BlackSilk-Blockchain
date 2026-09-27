@@ -11,6 +11,9 @@ use blacksilk_px_core::record::Record;
 use blacksilk_px_core::{Digest, ZERO_DIGEST};
 use rand_chacha::rand_core::SeedableRng;
 
+/// The sender's hedge secret (`Account::hedge_secret` in a wallet).
+const SENDER: [u8; 32] = [0x5e; 32];
+
 fn setup() -> (rand_chacha::ChaCha20Rng, Account, Account) {
     (
         rand_chacha::ChaCha20Rng::seed_from_u64(21),
@@ -32,7 +35,7 @@ fn the_recipient_opens_and_nobody_else_does() {
         wallet::random_digest(&mut rng),
     );
     let cm = rec.commit(&mut HostPerm::new());
-    let c = seal(&mut rng, &addr, &rec, &cm).unwrap();
+    let c = seal(&mut rng, &SENDER, &addr, &rec, &cm).unwrap();
     assert_eq!(c.len(), CIPHERTEXT_BYTES);
     assert_eq!(
         open(&bob.delivery_keys(3), &addr.owner, &c, &cm, &rho),
@@ -62,7 +65,7 @@ fn every_tampering_is_detected() {
     let rho = wallet::random_digest(&mut rng);
     let rec = Record::plain(addr.owner, 42, [0; 8], rho, wallet::random_digest(&mut rng));
     let cm = rec.commit(&mut HostPerm::new());
-    let c = seal(&mut rng, &addr, &rec, &cm).unwrap();
+    let c = seal(&mut rng, &SENDER, &addr, &rec, &cm).unwrap();
     // Flip one bit in every region: R, tag, KEM ciphertext, body, AEAD tag.
     for pos in [
         0,
@@ -99,7 +102,7 @@ fn a_record_inconsistent_with_its_commitment_is_refused() {
     let cm = real.commit(&mut HostPerm::new());
     let mut probe = real;
     probe.value = 11;
-    let c = seal(&mut rng, &addr, &probe, &cm).unwrap();
+    let c = seal(&mut rng, &SENDER, &addr, &probe, &cm).unwrap();
     assert_eq!(
         open(&bob.delivery_keys(1), &addr.owner, &c, &cm, &rho),
         None
@@ -113,10 +116,16 @@ fn malformed_addresses_are_refused() {
     let rec = Record::plain(addr.owner, 1, [0; 8], [1; 8], [2; 8]);
     let cm = rec.commit(&mut HostPerm::new());
     addr.ek.pop();
-    assert_eq!(seal(&mut rng, &addr, &rec, &cm), Err(SealError::BadAddress));
+    assert_eq!(
+        seal(&mut rng, &SENDER, &addr, &rec, &cm),
+        Err(SealError::BadAddress)
+    );
     let mut addr = bob.address(0);
     addr.view = [0xff; 32];
-    assert_eq!(seal(&mut rng, &addr, &rec, &cm), Err(SealError::BadAddress));
+    assert_eq!(
+        seal(&mut rng, &SENDER, &addr, &rec, &cm),
+        Err(SealError::BadAddress)
+    );
 }
 
 const CONTRACT: Digest = [0x100, 1, 2, 3, 4, 5, 6, 7];
@@ -142,7 +151,7 @@ fn contract_records_reach_the_addressed_party() {
     let rec = contract_record(&mut rng, 500);
     let cm = rec.commit(&mut HostPerm::new());
     let to = bob.address(2);
-    let c = seal(&mut rng, &to, &rec, &cm).unwrap();
+    let c = seal(&mut rng, &SENDER, &to, &rec, &cm).unwrap();
     assert_eq!(c.len(), CIPHERTEXT_BYTES);
     let got = open(&bob.delivery_keys(2), &to.owner, &c, &cm, &rec.rho).unwrap();
     assert_eq!(got, rec);
@@ -169,14 +178,14 @@ fn the_record_kind_cannot_be_misrepresented() {
     let cm = user.commit(&mut HostPerm::new());
     let mut probe = user;
     probe.contract = CONTRACT;
-    let c = seal(&mut rng, &to, &probe, &cm).unwrap();
+    let c = seal(&mut rng, &SENDER, &to, &probe, &cm).unwrap();
     assert_eq!(open(&keys, &to.owner, &c, &cm, &user.rho), None);
     // A contract record, claimed to be a user record of the recipient.
     let rec = contract_record(&mut rng, 9);
     let cm = rec.commit(&mut HostPerm::new());
     let mut probe = rec;
     probe.contract = ZERO_DIGEST;
-    let c = seal(&mut rng, &to, &probe, &cm).unwrap();
+    let c = seal(&mut rng, &SENDER, &to, &probe, &cm).unwrap();
     assert_eq!(open(&keys, &to.owner, &c, &cm, &rec.rho), None);
 }
 
@@ -188,7 +197,7 @@ fn shared_openings_reach_only_their_addressee() {
     let rec = contract_record(&mut rng, 77);
     let cm = rec.commit(&mut HostPerm::new());
     let to = eve.address(5);
-    let share = seal_share(&mut rng, &to, &rec, &cm).unwrap();
+    let share = seal_share(&mut rng, &SENDER, &to, &rec, &cm).unwrap();
     assert_eq!(share.len(), SHARE_BYTES);
     assert_eq!(
         open_share(&eve.delivery_keys(5), &to.owner, &share),

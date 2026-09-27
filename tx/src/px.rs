@@ -453,17 +453,22 @@ impl PxTx {
 
 // ---- deploy ----
 
+/// The encoded payload of a deploy (salt and programs).
+pub(crate) fn deploy_payload_bytes(salt: &[u8; 32], programs: &[Registration]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.bytes(salt);
+    w.varint(programs.len() as u64);
+    for p in programs {
+        w.varint(p.elf.len() as u64);
+        w.bytes(&p.elf);
+        write_budget(&mut w, &p.budget);
+    }
+    w.into_bytes()
+}
+
 impl PxDeploy {
     fn payload_bytes(&self) -> Vec<u8> {
-        let mut w = Writer::new();
-        w.bytes(&self.salt);
-        w.varint(self.programs.len() as u64);
-        for p in &self.programs {
-            w.varint(p.elf.len() as u64);
-            w.bytes(&p.elf);
-            write_budget(&mut w, &p.budget);
-        }
-        w.into_bytes()
+        deploy_payload_bytes(&self.salt, &self.programs)
     }
 
     pub fn prefix_bytes(&self) -> Vec<u8> {

@@ -159,6 +159,7 @@ fn every_mutant_decodes_canonically_or_fails_cleanly() {
                 recipients: [Some(acct.address(0)), None],
                 functions: vec![],
                 fee,
+                hedge_secret: [0x5e; 32],
             },
             &rules,
             &mut net.rng,
