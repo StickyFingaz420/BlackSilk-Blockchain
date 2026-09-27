@@ -469,8 +469,9 @@ dropped.
     tip;
 - a header whose version is above every version of this node's schedule
   (`HeaderError::UnknownUpgrade`, docs/consensus.md §11): the peer probably runs a
-  newer release. The first per peer is logged at WARN ("this node may need an
-  upgrade");
+  newer release. It is not penalized; the operator warning follows the rules of §6
+  ("Headers of an unknown version": outbound reporters only, required-difficulty work
+  gate, 2 distinct network groups);
 - within `ACTIVATION_GRACE_BLOCKS` (60) of an activation height, on either side, a
   transaction whose PX proof or ring signature fails: it may be bound to the
   neighbouring rule set's branch id (`TxError::is_stateless_at`);

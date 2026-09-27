@@ -389,10 +389,14 @@ What the epoch fixes:
 **Rules for the network layer and the pool:**
 - `UnknownUpgrade` (confirmed with PoW, §6) is not the peer's fault: do not penalize
   the peer. Disconnect it without a ban after 3 such headers. Warn the operator ("a
-  newer consensus version is in use") only once at least 2 distinct peers sent one, or
-  one extends a branch that reaches our best chain's work: a single peer cannot raise
-  the warning cheaply (RT-1). A header of an unknown version with junk PoW is
-  `InsufficientWork` and penalized.
+  newer consensus version is in use") only on reports from OUTBOUND peers whose header
+  passes the anti-DoS work threshold at the difficulty this node requires (never the
+  claimed one), once 2 distinct reporters (keyed by network group, so reconnects do
+  not count twice) sent one, or one extends a branch that reaches our best chain's
+  work: a single peer cannot raise the warning cheaply (RT-1, RTW1-1; docs/p2p.md §6).
+  A header whose RandomX key is not live (our next key or the one after) is dropped
+  unhashed. A header of an unknown version with junk PoW is `InsufficientWork` and
+  penalized.
 - Validate a block at height `h` with the transaction rules of `epoch_at(h)`
   (`TxRules::at_height`).
 - When the next height crosses an activation (`Schedule::activation_in`), flush the
