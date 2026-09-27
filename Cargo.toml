@@ -19,6 +19,7 @@ members = [
     "tools/labnet", # blacksilk-labnet: long-duration lab network test
     "tools/supply-audit", # blacksilk-supply-audit: closed-set supply check (trial)
     "tools/genesis", # blacksilk-genesis: beacon-derived genesis construction and verification
+    "tools/daa-sim", # blacksilk-daa-sim: difficulty-rule simulation harness (evidence, not consensus)
 ]
 # Pre-rebuild code kept for reference only (does not build; see legacy/README.md),
 # and the post-quantum research track.
