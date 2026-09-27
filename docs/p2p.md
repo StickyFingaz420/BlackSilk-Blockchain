@@ -28,7 +28,7 @@ All integers are little-endian unless stated otherwise. Encoding primitives
 | Transaction origin privacy against spy nodes | Dandelion++ (§8) and randomized relay delays (§7) |
 | Minimal fingerprint | No user agent, no clock, no services flags; own address not announced unless configured (§4) |
 | Availability | Strict size and count limits, rate limits, misbehavior scoring, bans (§10) |
-| Eclipse resistance | Bucketed address manager with a secret key; outbound diversity by network group (§9) |
+| Eclipse resistance (limited, §9) | Bucketed address manager with a secret key; per-peer address admission limits; outbound diversity by network group (§9) |
 | Correct sync under a lying peer | Header-first sync: every header is PoW-checked before any body is requested (§6) |
 | Tor/I2P users | SOCKS5 proxy for outbound connections, proxy-only mode, onion addresses (§11) |
 
@@ -87,7 +87,7 @@ Both sides send `Version` as their first frame and answer the other's `Version` 
 
 ```
 Version {
-  protocol:  u32        currently 2 (below); peers below MIN_PROTOCOL (1) are disconnected
+  protocol:  u32        currently 3 (below); peers below MIN_PROTOCOL (3) are disconnected
   network:   u32        must equal ours (defence in depth; §3 already separates networks)
   nonce:     u64        random per connection; equal to one of our own nonces = self-connection
   height:    u64        best header height (a hint for sync, not trusted)
@@ -107,11 +107,19 @@ Version {
 |---|---|
 | 1 | Original protocol: an unknown message type or extra bytes after `relay_txs` were protocol violations (100 points, a ban). |
 | 2 | Unknown message types are ignored (§5), and `Version` may carry **extension bytes** after `relay_txs`, which are ignored. Every known message's wire format is unchanged. |
+| 3 | `Addr` (type 5) carries timestamped, length-prefixed entries (§5) instead of bare `NetAddr`s. `MIN_PROTOCOL_VERSION` is 3. |
 
 Changed on 2026-09-27, before any launch: `PROTOCOL_VERSION` went from 1 to 2, and a
 v2 node accepts a v1 node's `Version` unchanged (`MIN_PROTOCOL_VERSION` stays 1). A v1
 node would reject a v2 node's `Version` only if it carried extension bytes; v2 sends
 none.
+
+Changed again before the v3 testnet launch (32 W3, agreed with 30 in the decisions
+log): the `Addr` format was **replaced in place** (type 5), not added as a new type,
+since no node was deployed. A v2 node cannot decode a v3 `Addr` and would ban its
+sender, so `MIN_PROTOCOL_VERSION` rose to 3 with it: v2 and v3 nodes refuse each other
+at the handshake instead. Old `peers.json` files stay readable (the table format did
+not change).
 
 How a later version (v3) adds a feature without splitting the network:
 - **New `Version` fields** are appended after `relay_txs`, in order. A decoder reads the
@@ -138,8 +146,8 @@ an oversized list is a protocol violation.
 | 1 | `Verack` | — | |
 | 2 | `Ping` | `u64` nonce | |
 | 3 | `Pong` | `u64` nonce | must answer our ping |
-| 4 | `GetAddr` | — | answered once per connection |
-| 5 | `Addr` | `varint n`, `n × NetAddr` | n ≤ 1000 |
+| 4 | `GetAddr` | — | answered once per connection, to inbound peers only (§9) |
+| 5 | `Addr` | `varint n`, `n × AddrEntry` | n ≤ 1000; each address ≤ 512 bytes |
 | 6 | `GetHeaders` | `varint n`, `n × id` (locator), `stop id` | n ≤ 64 |
 | 7 | `Headers` | `varint n`, `n × 100-byte header` | n ≤ 2000 |
 | 8 | `GetBlocks` | `varint n`, `n × id` | n ≤ 128 |
@@ -150,10 +158,34 @@ an oversized list is a protocol violation.
 | 13 | `Tx` | `varint len`, tx bytes | len ≤ the cap of the transaction's kind: 100 kB for transfers, `MAX_PX_TX_SIZE` / `MAX_DEPLOY_TX_SIZE` for kinds 2 and 3 (px.md §11.5) |
 | 14 | `StemTx` | `varint len`, tx bytes | as `Tx` (§8) |
 
-`NetAddr` is one of:
+`NetAddr` (only in `Version.listen`) is one of:
 - `0x04 ‖ 4-byte IPv4 ‖ LE16 port`
 - `0x06 ‖ 16-byte IPv6 ‖ LE16 port`
 - `0x0a ‖ 56-byte Tor v3 host (base32, without ".onion") ‖ LE16 port`
+
+`AddrEntry` (the entries of `Addr`, since protocol 3; BIP155's network numbering):
+
+```
+AddrEntry = LE32 time ‖ u8 network ‖ varint len ‖ len bytes of address ‖ LE16 port
+network 1 = IPv4 (len 4), 2 = IPv6 (len 16), 4 = Tor v3 (len 32: the service's public key)
+```
+
+- `len ≤ 512` for every network, checked before the bytes are read.
+- A **known network with another length**, or an IPv4-mapped IPv6 address (it must be
+  sent as IPv4), makes the message malformed (100 points, §10).
+- An entry of an **unknown network** decodes and is skipped: never stored, dialed or
+  relayed. A later version can add networks (I2P, CJDNS) without old nodes banning it.
+- A Tor v3 entry is the 32-byte key; the receiver derives the name with its checksum
+  and version (§9), so an onion entry is valid by construction.
+- `time` is the sender's claim of when the address was last seen, in Unix seconds, and
+  0 = unknown. It is never trusted for a security decision: the receiver uses it only
+  to decide whether the address is fresh enough to relay (§9).
+
+Every address is used in **canonical form**: an IPv4-mapped IPv6 address
+(`::ffff:a.b.c.d`) is the IPv4 address, whether it comes from the wire, the
+configuration or a dual-stack listener, so bans, per-IP limits, deduplication and
+groups see one form per host. The encoders write the IPv4 form; the decoders refuse
+the mapped one.
 
 **Unknown message types** (above 14) are ignored, not penalized, since protocol 2
 (§4.1). They still count against the peer's message and byte budgets (§10), so a flood
@@ -394,9 +426,43 @@ Following Fanti et al., "Dandelion++" (SIGMETRICS 2018), with Monero's parameter
 - **Seeds.** Seed nodes come from `--seed` or a built-in list. The built-in list is empty
   until the testnet is launched.
 - **Address exchange.** After each outbound handshake the node sends `GetAddr`. A peer
-  answers with at most 1000 random known addresses, and at most once per connection.
-- **Relaying addresses.** Received addresses are relayed to 2 random peers when they are
-  few (≤ 10) and routable.
+  answers with at most 1000 random known addresses, at most once per connection, and
+  **only to inbound peers**: a `GetAddr` from a peer the node dialed is ignored
+  (unpenalized). Answering it would let a peer plant unique addresses in a node's
+  table and recognize them later from another session, IP or Tor circuit, linking the
+  node's sessions (Biryukov and Pustogarov, "Bitcoin over Tor isn't a good idea",
+  IEEE S&P 2015; Bitcoin Core does the same, F32-4). The table keeps no per-address
+  times yet, so the answer's entries carry time 0 ("unknown").
+- **What a peer may add to the table** (`p2p/src/addrman_gate.rs`, per connection):
+  - **The answer to our `GetAddr`**: up to 1000 addresses in total within 60 s,
+    ending with its first message of more than 10 entries. Stored, never relayed.
+  - **An unsolicited `Addr` of more than 10 entries** is dropped whole and costs 10
+    points (Heilman et al., "Eclipse Attacks on Bitcoin's Peer-to-Peer Network",
+    USENIX Security 2015, countermeasure 8). Before this change one such batch of
+    1000 was accepted from every connection, inbound ones included, so reconnecting
+    delivered 1000 addresses per handshake (F32-1).
+  - **Unsolicited small `Addr` messages** are rate limited by address: 0.1 per second,
+    burst 1000, starting with 1 token per connection (Bitcoin Core PR #22387). The
+    excess is dropped, not penalized. Each new connection starts with one token, so
+    connection churn is the remaining flood rate (bounded by the inbound limits).
+  - **An inbound peer's `Version.listen`** is stored only if it is the peer's own
+    address: its IP must be the connection's IP, or it is an onion address arriving
+    through our hidden service (from loopback). Before this change any address was
+    accepted there, one per handshake, around every other limit (F32-8).
+  - Addresses of unknown networks, and addresses that are not routable (unless
+    `allow_private`), are skipped.
+- **Relaying addresses.** An address from an unsolicited `Addr` of at most 10 entries
+  is relayed to 2 random peers (other than the sender) if it is routable, it passed
+  the rate limit, and its time is **fresh**: at most 10 minutes old and at most 10
+  minutes in the future (times further in the future, or 0, count as 5 days old).
+  - Relay does **not** depend on whether the address was new to our table. Before this
+    change only addresses new to the table were relayed, so a spy could learn which
+    addresses the table held by sending one and watching whether it came back (F32-5).
+  - Each connection remembers the addresses the peer sent or was sent (up to 5000,
+    then the set restarts), and an address is not relayed to a peer that has it. With
+    the freshness window this bounds how long one address circulates.
+  - The relayed entry keeps its original time, so relaying reveals nothing about the
+    relayer's clock.
 - **Own address.** A node advertises its own address (`Version.listen`) only when the
   operator sets `--public-address`, so private nodes are not revealed.
   - An onion address is advertised only over Tor (proxied outbound connections, and
@@ -404,23 +470,65 @@ Following Fanti et al., "Dandelion++" (SIGMETRICS 2018), with Monero's parameter
     only over clearnet. A dual-homed configuration logs a warning at startup. Before
     2026-09-27 an onion address was sent to clearnet peers too, linking the node's
     two identities (I3-2).
+  - After each handshake the node also sends the same address to the peer as a
+    one-entry `Addr`, timed now rounded down to 5 minutes (so the peer relays it, and
+    the time reveals the node's clock no finer than that).
 - **Address manager.** Addresses live in two tables, *new* (heard of) and *tried*
   (successfully connected).
   - Each table is split into buckets. The bucket is
-    `H32("p2p/addrman", secret ‖ group(addr) ‖ group(source)) mod N`, where `secret`
-    is local and random.
-  - An attacker from a few network groups can therefore fill only a few buckets, and
-    cannot predict which ones.
-  - *new* has 256 buckets × 64 slots; *tried* has 64 × 64. A collision evicts the
-    older entry in *new*, and in *tried* keeps the entry that connected more recently.
-- **Groups.** An IPv4 /16, an IPv6 /32, or a single onion address.
+    `H32("p2p/addrman", secret ‖ table ‖ group(addr) ‖ group(source)) mod N`, where
+    `secret` is local and random, so an attacker cannot predict which buckets it
+    reaches.
+  - The bucket depends on the address's group and the source's group together.
+    Addresses from **many groups** announced by **one** source therefore spread over
+    all of *new*: one source group bounds nothing (R8-3, open; the per-source limit is
+    addrman v2, 32 W1). What bounds a flood today is what a peer may add (above).
+  - *new* has 256 buckets × 64 slots; *tried* has 64 × 64. A full *new* bucket
+    evicts an entry that failed 3 or more attempts, else a **random** entry; *tried*
+    keeps the entry that connected more recently and moves the other back to *new*.
+- **Groups** (`NetAddr::group`, as Bitcoin Core's without asmap):
+  - IPv4: the /16. IPv6: the /32, except Hurricane Electric's `2001:470::/32` at /36.
+  - IPv6 forms embedding an IPv4 address (IPv4-mapped, 6to4 `2002::/16`, NAT64
+    `64:ff9b::/96`, Teredo `2001::/32`): the embedded IPv4 /16, the group of that
+    IPv4 address.
+  - Onion: the first 4 bits of the service key, so **16 groups** for all onions.
+    Before this change every onion address was its own group, and onion names cost
+    nothing to create: 8 of them satisfied "one per group" (R8-5). Four bits do not
+    make onion addresses costly either (a name can be ground into any group); they
+    bound how many buckets onion addresses from one source can reach.
+- **Tor v3 names** are checked in full wherever one is parsed or decoded:
+  `base32(key ‖ checksum ‖ version)`, version 3,
+  `checksum = SHA3-256(".onion checksum" ‖ key ‖ version)[..2]` (Tor rend-spec-v3,
+  "Encoding onion addresses"). A name with a wrong checksum or version is refused,
+  never stored, relayed or dialed. The key itself is not checked to be a valid
+  ed25519 point (as in Bitcoin Core); such a name is unreachable, like any dead
+  address.
+- **Routability.** Stored, relayed and dialed addresses are routable: not loopback,
+  private, link-local, unspecified, multicast, broadcast, shared (100.64/10),
+  benchmarking (198.18/15), reserved (240/4), IETF (192.0.0/24) or documentation,
+  nor IPv6 `::/96`, unique-local, link-local, site-local, ORCHID, discard-only
+  (`100::/64`) or documentation; an IPv6 address embedding an IPv4 address
+  (mapped, 6to4, NAT64, Teredo) is routable only if that IPv4 address is.
 - **Outbound connections.** The node keeps **8 outbound connections**, at most **one per
   group**, also among the addresses picked in the same round (before 2026-09-27 two
-  picks of one round could share a group, R8-4). Candidates are drawn 50/50 from
-  *tried* and *new*.
+  picks of one round could share a group, R8-4). The groups of manual peers and seeds
+  being dialed count too (F32-12). Candidates are drawn 50/50 from *tried* and *new*.
 - **Seeds** are dialed when the address table is empty, and also when no outbound
   connection is up (every known address may be stale or hostile), each seed at most
-  every 30 s (R8-13).
+  every 30 s (R8-13). Dial attempt times are kept 10 minutes (longer than every
+  backoff), so dialing junk addresses does not grow memory (F32-10).
+- **Eclipse resistance is limited** (F32-13). The eclipse simulator
+  (`p2p/tests/eclipse_sim.rs`, run with `--nocapture`) models one node's table under a
+  Sybil address flood with the real address manager and admission code, and prints the
+  attacker's share of the outbound slots after a restart. Its results: the admission
+  limits above cut what a flood gets into the table by orders of magnitude, but on a
+  network of tens of honest nodes the attacker's addresses still outnumber the honest
+  ones in *new*, so roughly half the outbound picks (the *new* half) go to the attacker,
+  and a node whose *tried* table is empty (a new node) can have all 8 slots taken. The
+  practical defences for the testnet are manual `--peer` links to known operators,
+  independent seeds and operator monitoring; addrman v2, anchors, feelers and
+  stale-tip rotation (32 W1, W4–W7) are open. An AS-level attacker (Erebus, IEEE S&P
+  2020) is outside what /16 grouping can resist.
 - **Connect-only mode.** With `--connect-only`, outbound connections go only to the
   configured `--peer` entries: no seeds and no discovered addresses. Inbound
   connections and address exchange still work. It suits fixed private topologies and
@@ -451,7 +559,7 @@ dropped.
 | Unrequested `Headers` with more than one header | 10 |
 | Transaction invalid by a **stateless** rule (`Tx`/`StemTx`; transactions.md T1–T11), or with an invalid ring signature over ring members all ≥ 60 blocks deep | 20 |
 | A `StemTx` already proven invalid, sent again | 20 |
-| Unrequested `Block`/`Tx`, `Pong` without a ping, second `GetAddr` or oversized `Addr` | 10 |
+| Unrequested `Block`/`Tx`, `Pong` without a ping, second `GetAddr` from an inbound peer, or an unsolicited `Addr` of more than 10 entries (§9) | 10 |
 | Rate limit exceeded | 1 per excess message; the message is dropped |
 
 **Not penalized** (honest peers can trigger these):
@@ -650,6 +758,12 @@ already being written is finished first).
 - **Header worker head-of-line blocking** (R8-15): a single-header tip announcement
   waits behind a full 2000-header batch; no priority lane yet.
 
+- **Address manager and eclipse** (§9, dossier 32). Open: no per-source bucket limit
+  and random eviction in *new* (R8-3), no per-address times, `IsTerrible` or feelers,
+  no anchors or block-relay-only connections, no stale-tip rotation (an outbound set
+  of withholding peers is never replaced), per-IP limits and bans on the exact IPv6
+  address rather than its /64, no inbound eviction, and the admission rate restarts
+  with every connection.
 - **Tor inbound.** Every inbound connection through a hidden service comes from
   127.0.0.1, so they share the per-IP limits (2 connections, 2 queued header
   batches) and a ban of one bans all of them.

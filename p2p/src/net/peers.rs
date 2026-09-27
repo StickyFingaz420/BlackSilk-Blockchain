@@ -19,6 +19,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// A seed is dialed at most this often.
 const SEED_RETRY: Duration = Duration::from_secs(30);
 
+/// A dial attempt is remembered this long (longer than every backoff).
+const LAST_ATTEMPT_KEEP: Duration = Duration::from_secs(600);
+
 impl Inner {
     /// Adds a misbehavior score; at the threshold the peer is disconnected and,
     /// where meaningful, its IP banned (docs/p2p.md §10).
@@ -96,8 +99,10 @@ pub(super) async fn accept_loop(inner: Arc<Inner>, listener: TcpListener) {
                 continue;
             }
         };
-        let addr = NetAddr::Ip(remote);
-        let ip = remote.ip();
+        // Canonical (an IPv4 peer on a dual-stack listener arrives as
+        // ::ffff:a.b.c.d): bans and per-IP limits key on one form per host.
+        let addr = NetAddr::Ip(remote).canonical();
+        let Some(ip) = addr.ip() else { continue };
         let slot = {
             let mut st = inner.state();
             // Connections still in their handshake count like registered
@@ -177,6 +182,7 @@ impl Drop for HandshakeSlot {
 }
 
 pub(super) async fn connect_outbound(inner: Arc<Inner>, addr: NetAddr) {
+    let addr = addr.canonical();
     {
         let mut st = inner.state();
         if !st.connecting.insert(addr.clone()) {
@@ -229,6 +235,11 @@ pub(super) fn maintain_outbound(inner: &Arc<Inner>) {
     let mut to_connect = Vec::new();
     {
         let mut st = inner.state();
+        // Attempt times matter for at most a minute (the backoffs below):
+        // older ones are dropped, so dialing junk addresses does not grow the
+        // map without bound (F32-10).
+        st.last_attempt
+            .retain(|_, t| now.duration_since(*t) < LAST_ATTEMPT_KEEP);
         let connected: HashSet<NetAddr> = st.peers.values().map(|p| p.addr.clone()).collect();
         // Manual peers: always reconnect (after a short backoff).
         for a in &inner.cfg.connect {
@@ -270,12 +281,16 @@ pub(super) fn maintain_outbound(inner: &Arc<Inner>) {
                 }
             }
         }
+        // One outbound connection per network group (docs/p2p.md §9): the
+        // groups of live and pending outbound connections, and of the manual
+        // peers and seeds picked above (F32-12), are taken.
         let mut groups: HashSet<Vec<u8>> = st
             .peers
             .values()
             .filter(|p| !p.inbound)
             .map(|p| p.addr.group())
             .chain(st.connecting.iter().map(|a| a.group()))
+            .chain(to_connect.iter().map(|a| a.group()))
             .collect();
         let unix = unix_now();
         let cfg = &inner.cfg;

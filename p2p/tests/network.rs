@@ -2372,7 +2372,7 @@ async fn announcing_a_stem_transaction_neither_reveals_nor_fluffs_it() {
 /// (it would link the node's onion and IP identities).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_onion_address_is_not_advertised_over_clearnet() {
-    let onion = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion:9999";
+    let onion = "2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion:9999";
     let mut cfg = fast_config(&[]);
     cfg.public_address = Some(NetAddr::parse(onion).unwrap());
     let a = node_with(70, cfg).await;

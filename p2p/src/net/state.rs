@@ -5,6 +5,7 @@ use super::config::NetConfig;
 use super::{fatal, lock_or_exit, SharedChain};
 use crate::addr::NetAddr;
 use crate::addrman::{AddrMan, BanList};
+use crate::addrman_gate::AddrGate;
 use crate::dandelion::{Dandelion, PeerId};
 use crate::limits::PeerLimits;
 use crate::message::Message;
@@ -35,7 +36,11 @@ pub(super) struct Peer {
     pub(super) score: u32,
     pub(super) limits: PeerLimits,
     pub(super) answered_getaddr: bool,
-    pub(super) received_addr_batch: bool,
+    /// What this peer may add to the address table (docs/p2p.md §9).
+    pub(super) addr_gate: AddrGate,
+    /// Addresses this peer sent us or we relayed to it: not relayed to it
+    /// (again). Bounded by [`ADDR_KNOWN_MAX`].
+    pub(super) addr_known: HashSet<NetAddr>,
     pub(super) inv_queue: Vec<Hash>,
     pub(super) next_inv: Instant,
     pub(super) announced_to: HashSet<Hash>,
@@ -64,6 +69,10 @@ pub(super) struct Peer {
     /// sent (RT-1; [`UNKNOWN_UPGRADE_DISCONNECT`]).
     pub(super) unknown_upgrades: u32,
 }
+
+/// Per-peer known-address set size; the set is emptied when full (a relayed
+/// address may then be sent to that peer once more).
+pub(super) const ADDR_KNOWN_MAX: usize = 5000;
 
 pub(super) struct StemEntry {
     pub(super) tx: Transaction,

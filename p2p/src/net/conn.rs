@@ -1,12 +1,14 @@
 //! One connection: the handshake, registration, the read loop, cleanup and
 //! the writer task.
 
+use super::addr_relay::advertise_self;
 use super::blocks::SERVE_BLOCKS_PER_REQUEST;
 use super::dispatch::{handle, requested_by_us};
 use super::peers::{advertised_listen, inbound_count, same_ip_count, HandshakeSlot};
 use super::relay::retry_tx;
 use super::state::{unix_now, Inner, Peer, State};
 use crate::addr::NetAddr;
+use crate::addrman_gate::AddrGate;
 use crate::limits::score;
 use crate::message::{is_known_type, Message, Version, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION};
 use crate::transport::{handshake, FrameReader, FrameWriter, TransportError};
@@ -75,13 +77,14 @@ pub(super) async fn run_connection<S>(
     let (height, tip) = inner
         .with_chain(|c| (c.header_height(), c.best_header_id()))
         .await;
+    let our_listen = advertised_listen(&inner.cfg, &addr, inbound, proxied);
     let ours = Version {
         protocol: PROTOCOL_VERSION,
         network: nid,
         nonce,
         height,
         tip,
-        listen: advertised_listen(&inner.cfg, &addr, inbound, proxied),
+        listen: our_listen.clone(),
         relay_txs: true,
     };
     let result = async {
@@ -162,14 +165,28 @@ pub(super) async fn run_connection<S>(
         if !inbound {
             st.addrman.mark_good(&addr, unix_now());
         }
-        if let Some(listen) = &theirs.listen {
-            if inbound && (listen.is_routable() || inner.cfg.allow_private) {
+        // An inbound peer's own address. Only its own (F32-8): the IP must be
+        // the connection's, or it is an onion address arriving through our
+        // hidden service (from loopback). Anything else would let every
+        // handshake plant a third party's address, around the address rate.
+        let mut addr_known = HashSet::new();
+        if let Some(listen) = theirs.listen.clone().map(NetAddr::canonical) {
+            let own = match listen.ip() {
+                Some(ip) => addr.ip() == Some(ip),
+                None => addr.ip().is_some_and(|ip| ip.is_loopback()),
+            };
+            if inbound && own && (listen.is_routable() || inner.cfg.allow_private) {
                 let src = addr.clone();
                 let State { addrman, rng, .. } = &mut *st;
                 addrman.add(listen.clone(), &src, rng);
+                addr_known.insert(listen);
             }
         }
         let now = Instant::now();
+        let mut addr_gate = AddrGate::new(now);
+        if !inbound {
+            addr_gate.getaddr_sent(now);
+        }
         st.peers.insert(
             id,
             Peer {
@@ -185,7 +202,8 @@ pub(super) async fn run_connection<S>(
                 score: 0,
                 limits: inner.cfg.peer_limits.clone(),
                 answered_getaddr: false,
-                received_addr_batch: false,
+                addr_gate,
+                addr_known,
                 inv_queue: Vec::new(),
                 next_inv: now,
                 announced_to: HashSet::new(),
@@ -211,6 +229,9 @@ pub(super) async fn run_connection<S>(
     let writer_task = tokio::spawn(write_loop(writer, rx_out, rx_bulk));
     if !inbound {
         inner.send_now(id, Message::GetAddr);
+    }
+    if let Some(listen) = our_listen {
+        advertise_self(&inner, id, listen);
     }
     if theirs.height > height {
         inner.request_headers(id).await;

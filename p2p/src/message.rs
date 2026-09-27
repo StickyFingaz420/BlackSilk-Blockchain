@@ -4,7 +4,7 @@
 //! last known field, which are ignored. Unknown message types are not decoded
 //! here: [`is_known_type`] lets the network skip them (docs/p2p.md §5).
 
-use crate::addr::NetAddr;
+use crate::addr::{AddrEntry, NetAddr};
 use blacksilk_chain::block::MAX_BLOCK_BYTES;
 use blacksilk_consensus::{BlockHeader, Hash, HEADER_SIZE};
 use blacksilk_tx::codec::{DecodeError, Reader, Writer};
@@ -17,8 +17,13 @@ use blacksilk_tx::codec::{DecodeError, Reader, Writer};
 ///   known message is unchanged. A later version adds optional features by
 ///   (a) appending fields to `Version` and (b) sending new message types only
 ///   to peers whose `protocol` is at least the version that defines them.
-pub const PROTOCOL_VERSION: u32 = 2;
-pub const MIN_PROTOCOL_VERSION: u32 = 1;
+/// - 3: `Addr` (type 5) carries timestamped, length-prefixed entries
+///   ([`AddrEntry`], docs/p2p.md §5) instead of bare `NetAddr`s. A wire change
+///   made before the v3 testnet launch: a version-2 node cannot decode a
+///   version-3 `Addr` (it would ban the sender), so each side refuses the
+///   other at the handshake instead ([`MIN_PROTOCOL_VERSION`]).
+pub const PROTOCOL_VERSION: u32 = 3;
+pub const MIN_PROTOCOL_VERSION: u32 = 3;
 
 /// The highest message type this version decodes (`StemTx`).
 pub const MAX_KNOWN_TYPE: u8 = 14;
@@ -69,7 +74,7 @@ pub enum Message {
     Ping(u64),
     Pong(u64),
     GetAddr,
-    Addr(Vec<NetAddr>),
+    Addr(Vec<AddrEntry>),
     GetHeaders { locator: Vec<Hash>, stop: Hash },
     Headers(Vec<BlockHeader>),
     GetBlocks(Vec<Hash>),
@@ -143,11 +148,11 @@ impl Message {
                 w.bytes(&n.to_le_bytes());
             }
             Message::GetAddr => w.u8(4),
-            Message::Addr(addrs) => {
+            Message::Addr(entries) => {
                 w.u8(5);
-                w.varint(addrs.len() as u64);
-                for a in addrs {
-                    a.encode(&mut w);
+                w.varint(entries.len() as u64);
+                for e in entries {
+                    e.encode(&mut w);
                 }
             }
             Message::GetHeaders { locator, stop } => {
@@ -222,7 +227,7 @@ impl Message {
                 let n = r.count("addr", 0, MAX_ADDRS)?;
                 Message::Addr(
                     (0..n)
-                        .map(|_| NetAddr::decode(&mut r))
+                        .map(|_| AddrEntry::decode(&mut r))
                         .collect::<Result<_, _>>()?,
                 )
             }
@@ -305,8 +310,20 @@ mod tests {
             Message::Pong(6),
             Message::GetAddr,
             Message::Addr(vec![
-                NetAddr::parse("1.2.3.4:5").unwrap(),
-                NetAddr::parse("[::2]:7").unwrap(),
+                AddrEntry::new(1_800_000_000, NetAddr::parse("1.2.3.4:5").unwrap()),
+                AddrEntry::new(0, NetAddr::parse("[::2]:7").unwrap()),
+                AddrEntry::new(
+                    9,
+                    NetAddr::from_onion_key(&[7; crate::addr::ONION_KEY_LEN], 29334),
+                ),
+                AddrEntry {
+                    time: 3,
+                    addr: crate::addr::EntryAddr::Unknown {
+                        net: 200,
+                        bytes: vec![1, 2, 3],
+                        port: 4,
+                    },
+                },
             ]),
             Message::GetHeaders {
                 locator: vec![[3; 32], [4; 32]],
