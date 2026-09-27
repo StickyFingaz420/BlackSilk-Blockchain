@@ -11,9 +11,12 @@
 //! whatever else is wrong with it, and costs no ring resolution or CLSAG
 //! verification. The order changes only *which* error an invalid
 //! transaction gets, never *whether* it is valid: every rule is a pure check
-//! and a transaction is valid iff all pass. The PX proof (PX5) runs last: it
-//! needs PX3's registered programs and is the most expensive check. Block
-//! validation keeps its own order, with the range proofs batched.
+//! and a transaction is valid iff all pass. The PX proof (PX5) is decoded
+//! with the stateless rules and shape-checked once PX3's registered programs
+//! are known, both before any ring is resolved; it is verified last, the
+//! most expensive check. Block validation keeps its own order, with the
+//! range proofs batched, and the same proof steps (dossier 10 F10-2, red
+//! team RTW1-2).
 //!
 //! | Function | Rules |
 //! |---|---|
@@ -163,11 +166,14 @@ pub enum TxError {
     },
     /// PX4: the pool would go negative.
     PxPoolUnderflow,
-    /// PX5: the proof does not verify. Checked only after the anchor (PX1)
-    /// and the registrations (PX3) pass; a registered program is fixed by its
-    /// content (the contract id hashes the deploy), so the statement is the
-    /// same on every branch and a failing proof is the sender's fault: it is
-    /// stateless for peer scoring (docs/p2p.md §10).
+    /// PX5: the proof does not decode, does not have its statement's shape,
+    /// or does not verify. Decoding needs nothing but the proof bytes and runs
+    /// with the stateless rules; the shape and the verification run only
+    /// after the anchor (PX1) and the registrations (PX3) pass. A registered
+    /// program is fixed by its content (the contract id hashes the deploy),
+    /// so the statement is the same on every branch and a failing proof is
+    /// the sender's fault: it is stateless for peer scoring (docs/p2p.md
+    /// §10), except near an activation ([`TxError::is_stateless_at`]).
     PxProof,
     /// A deploy's contract id exists already.
     DuplicateContract,
@@ -238,7 +244,7 @@ impl TxError {
     /// | `PxUnregistered` | PX3 | contextual | the contract may be deployed on another branch or later |
     /// | `PxPoolUnderflow` | PX4 | contextual | the pool depends on the branch |
     /// | `PxTreeFull` | B8 | contextual | the tree size depends on the branch |
-    /// | `PxProof` | PX5 | stateless | checked only after PX1 and PX3 pass; registered programs are fixed by the contract id, so the statement is the same on every branch |
+    /// | `PxProof` | PX5 | stateless | decoding needs only the proof bytes; the shape and the verification are checked only after PX1 and PX3 pass, and registered programs are fixed by the contract id, so the statement is the same on every branch |
     /// | `DuplicateContract` | deploy | contextual | the same deploy may be on this branch and not on another |
     ///
     /// **Why `InvalidSignature` stays contextual.** A ring names its members
@@ -663,29 +669,54 @@ fn hex_id(h: &[u8; 32]) -> String {
     h.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Full validation of one PX transaction for inclusion at `height` (mempool).
-/// The proof, the most expensive check, runs last.
+/// Full validation of one PX transaction for inclusion at `height` (mempool,
+/// P2P admission, RPC submission, re-admission after a reorganization), in
+/// the block path's order (dossier 10 F10-2, red team RTW1-2): the proof is
+/// decoded with the stateless rules, before any ring is resolved, and
+/// shape-checked once PX3 holds, before any CLSAG; the proof verification,
+/// the most expensive check, runs last. A malformed proof (one that fails
+/// decoding or shape) therefore gets the stateless `PxProof` at no ring,
+/// range proof or CLSAG cost, whatever else is wrong with the transaction's
+/// context. A well-formed proof that does not verify still costs every
+/// check up to PX5.
 pub fn validate_px(
     tx: &PxTx,
     chain: &impl ChainView,
     height: u64,
     rules: &TxRules,
 ) -> Result<(), TxError> {
-    validate_px_without_proof(tx, chain, height, rules)?;
-    check_px_proof(tx, chain, rules)
+    validate_px_checks(tx, chain, height, rules, true)
 }
 
-/// Every rule of [`validate_px`] except the proof: for revalidating pooled
-/// transactions whose proof was verified on admission.
+/// Every rule of [`validate_px`] except PX5 (the proof is neither decoded
+/// nor checked): for revalidating pooled transactions whose proof was
+/// verified on admission.
 pub fn validate_px_without_proof(
     tx: &PxTx,
     chain: &impl ChainView,
     height: u64,
     rules: &TxRules,
 ) -> Result<(), TxError> {
-    // Stateless (the transaction alone), cheap to expensive.
+    validate_px_checks(tx, chain, height, rules, false)
+}
+
+/// [`validate_px`] (`with_proof`) or [`validate_px_without_proof`].
+fn validate_px_checks(
+    tx: &PxTx,
+    chain: &impl ChainView,
+    height: u64,
+    rules: &TxRules,
+    with_proof: bool,
+) -> Result<(), TxError> {
+    // Stateless (the transaction alone), cheap to expensive; the proof is
+    // decoded (a few milliseconds) before the range proof, as in blocks.
     check_px_structure(tx)?;
     check_px_balance(tx)?;
+    let proof = if with_proof {
+        Some(decode_px_proof(tx)?)
+    } else {
+        None
+    };
     if let Some(p) = &tx.range_proof {
         let c: Vec<Point> = tx.outputs.iter().map(|o| o.commitment).collect();
         if !bpp::verify(p, &c) {
@@ -699,6 +730,10 @@ pub fn validate_px_without_proof(
         return Err(TxError::PxPoolUnderflow);
     }
     check_px_capacity(tx, chain)?;
+    // PX5, second step: PX3 holds, so the statement's shape is known.
+    if let Some(proof) = &proof {
+        check_px_proof_shape(tx, chain, rules, proof)?;
+    }
     let rings = resolve_input_rings(&tx.inputs, chain, height)?;
     check_ring_signatures(
         &tx.inputs,
@@ -706,7 +741,12 @@ pub fn validate_px_without_proof(
         &tx.signatures,
         &rings,
         &tx.signature_message(rules.domain()),
-    )
+    )?;
+    // PX5, last.
+    match &proof {
+        Some(proof) => check_px_proof_decoded(tx, chain, rules, proof),
+        None => Ok(()),
+    }
 }
 
 /// Full validation of one deploy for inclusion at `height` (mempool).
@@ -982,7 +1022,8 @@ pub fn validate_block_transactions<R: RngCore + CryptoRng>(
 ///
 /// **Why this is sound.** The transaction id commits to the proof bytes (the
 /// prunable hash), and the statement is a function of the transaction, the
-/// network and the registry entries of its contracts. Registry entries are
+/// signature domain (network, branch and genesis ids, RT-14) and the
+/// registry entries of its contracts. Registry entries are
 /// immutable and fixed by the contract id, which hashes the deploy payload
 /// (docs/px.md §11.2); PX3 still checks, here, that they exist. So a proof
 /// that verified once verifies for the same id in any block. Every other

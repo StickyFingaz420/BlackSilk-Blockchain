@@ -370,6 +370,13 @@ domain        = LE32(network_id) ‖ LE32(branch_id) ‖ genesis_id           (4
   retired chain that shares the network id and branch id (red-team RT-14,
   reviews/v3-consensus-changes.md §3). Without it, replay between such chains was
   blocked only by chain state (ring indices and PX anchors that almost surely differ).
+  The reference wallet refuses to load a wallet file recorded for another genesis than
+  its build's, and to build with rules of another genesis, so it never signs (and never
+  exposes a key image or ring) for a chain the file does not belong to (red team
+  RTW1-5). It creates and restores wallets only for a network whose genesis is final
+  (`ChainParams::genesis_is_final`; regtest always is), as the node runs only those.
+  These are misconfiguration guards: the wallet trusts its node for the chain itself
+  (RT-15).
 
 ---
 
@@ -613,8 +620,12 @@ invalid block reports and how much work precedes it, never the verdict):
 | 9 | C3: every CLSAG | 2–4 ms per input |
 | 10 | PX5: every PX proof not already verified, on the decoded proof | about 0.2 s per proof |
 
-A block of PX transactions with valid ring signatures and malformed proofs is therefore
-rejected with no CLSAG verified (dossier 10 F10-2; `tx/tests/block_pipeline.rs`).
+A block of PX transactions whose proofs are malformed (they fail decoding in step 5 or
+the table shape in step 6) is therefore rejected with no ring resolved and no CLSAG
+verified, whatever its ring signatures (dossier 10 F10-2; `tx/tests/block_pipeline.rs`).
+This covers malformed proofs only: a well-formed proof that does not verify (for
+instance a valid proof replayed in another transaction, whose binding then differs)
+passes steps 5 and 6 and costs every check up to step 10.
 
 ### 8.4 Weight and fee
 
@@ -652,11 +663,20 @@ standard_fee(n, k) = min_fee(max_weight(n, k))                    (T8: the exact
 - A transaction that conflicts with the mempool on any key image is rejected (first seen
   wins; no replace-by-fee in v1).
 - Transactions must pass T1–T11 and C1–C3 against `best height + 1`.
-- Order: every stateless rule (T1–T11, including the range proof T10, and the PX
-  structure rules) runs before any contextual rule (C1–C3, PX1–PX4); the PX proof
-  (PX5) runs last. A transaction that breaks a stateless rule therefore always gets
-  a stateless error, which is what peer scoring penalizes (p2p.md §10), and costs no
-  chain lookup. A PX transaction repeating a one-time key between its hidden outputs
+- Order: every stateless rule (T1–T11, including the range proof T10, the PX
+  structure rules and the strict decoding of the PX proof, PX5's first step) runs
+  before any contextual rule (C1–C3, PX1–PX4). Once PX1–PX4 pass, the PX proof's table
+  shape is checked against its statement (PX5's second step, which needs PX3's
+  registered budgets), before any ring is resolved (C1); the proof's verification
+  runs last. This is the block path's order (§8.3), applied to every
+  single-transaction path: mempool admission, P2P relay, RPC submission and
+  re-admission after a reorganization (`validate_px`; red team RTW1-2, before which
+  these paths verified the CLSAG before looking at the proof). A transaction that
+  breaks a stateless rule therefore always gets a stateless error, which is what peer
+  scoring penalizes (p2p.md §10), and costs no chain lookup. A malformed proof gets
+  `PxProof` whatever its signatures: one failing decoding costs no chain lookup and no
+  range proof, one failing the shape no ring lookup and no CLSAG. A well-formed proof
+  that does not verify still costs every check up to the verification. A PX transaction repeating a one-time key between its hidden outputs
   and payouts, or with two equal nullifiers, gets a stateless error
   (`PxDuplicateOutputKey`, `PxNullifierRepeated`). `PxDuplicateOutputKey` is the only
   rule rejecting such a key repeat (there is no C4); two equal nullifiers would also
@@ -1082,7 +1102,17 @@ A wallet must also:
   possible with a dishonest node), keep the one with the **largest amount**, then the
   **lowest global index**, and record the event only in a local diagnostic log. Keeping
   the first seen instead would let a small early copy displace a large genuine output.
-  Reference: `Wallet::apply_block` (wallet/src/wallet/sync.rs).
+  Keep **every** such output unchanged, with the credit as a flag, and elect the
+  credited one again after every scan and rewind: an output that replaces another in
+  place (its height and global index overwritten) is lost when a reorganization
+  removes the replacing block, and the genuine output below the fork then stays
+  invisible until a restore from the seed (red team RTW1-4). All of them share the key
+  image's spent and reserved state. A stored ring reused for that key image drops
+  every member carrying the shared one-time key, so the kept part of the ring never
+  repeats the credited output's key. Fresh decoy draws for that spend are not yet kept
+  from drawing another output with the same key (an open item of the decoy picker).
+  Reference: `Wallet::apply_block` and
+  `Wallet::elect_credited` (wallet/src/wallet/sync.rs).
 - **not filter outputs that share a one-time key out of decoy selection.** The wallet
   cannot tell a copy from the genuine output; excluding both would make the genuine one
   a never-decoy, and its later spend would be identified. Unfiltered, a copy is a decoy

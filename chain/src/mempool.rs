@@ -173,8 +173,8 @@ pub struct Mempool {
     keys: HashMap<ConflictKey, Hash>,
     bytes: [usize; 2],
     next_seq: u64,
-    /// The signature domain (network and branch ids) every pooled transaction
-    /// was validated under; `None` before the first admission.
+    /// The signature domain (network, branch and genesis ids) every pooled
+    /// transaction was validated under; `None` before the first admission.
     domain: Option<SigDomain>,
     /// Transactions this node expired: id -> the height they expired at.
     /// Refused while `height < expired_at + RECENTLY_EXPIRED_BLOCKS`

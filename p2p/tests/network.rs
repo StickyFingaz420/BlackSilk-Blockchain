@@ -2134,8 +2134,10 @@ async fn the_signature_budget_is_charged_before_verification() {
     assert_eq!(a.net.peers()[0].score, score::RATE);
 }
 
-/// A PX-only transaction with a random anchor: well formed, fails PX1 (a
-/// cheap, contextual check).
+/// A PX-only transaction with a random anchor: well formed but for its proof
+/// bytes, which do not decode (the stateless `PxProof`, checked first since
+/// RTW1-2); with a decodable proof it would fail PX1 (a cheap, contextual
+/// check).
 fn junk_anchor_px(k: u32) -> Transaction {
     let fee = px_standard_fee();
     Transaction::Px(Box::new(blacksilk_tx::px::PxTx {
@@ -2165,6 +2167,14 @@ fn junk_anchor_px(k: u32) -> Transaction {
 /// the node-wide burst (10), are rejected cheaply and leave the budget
 /// intact for honest PX. Before the fix they drained it (the excess counted
 /// as `px_global_drops`), censoring honest PX relay for free.
+///
+/// Since RTW1-2 the proof is decoded in the cheap stage, so these junk
+/// transactions (their proof bytes do not decode) are rejected as the
+/// stateless `PxProof` and their senders penalized; the budget stays intact
+/// either way. The contextual path (a decodable proof over a random anchor)
+/// needs a real proof and is not exercised here: a proof is decoded only
+/// after the structure and balance rules, and PX1 comes before the token in
+/// the same cheap stage.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn junk_anchor_px_floods_do_not_drain_the_px_relay_budget() {
     let a = node(63, &[]).await;
@@ -2173,7 +2183,7 @@ async fn junk_anchor_px_floods_do_not_drain_the_px_relay_budget() {
     let decoded = Transaction::decode(&t.encode()).expect("decodes");
     assert!(matches!(
         a.chain.lock().unwrap().check_tx(&decoded),
-        Err(MempoolError::Invalid(TxError::PxUnknownAnchor))
+        Err(MempoolError::Invalid(TxError::PxProof))
     ));
     for peer in 0..6u32 {
         let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
@@ -2181,12 +2191,73 @@ async fn junk_anchor_px_floods_do_not_drain_the_px_relay_budget() {
             .map(|i| Message::StemTx(junk_anchor_px(peer * 4 + i).encode()).encode())
             .collect();
         send_and_sync(&mut r, &mut w, &msgs, peer as u64).await;
-        assert_eq!(a.net.peers().iter().map(|p| p.score).max(), Some(0));
+        assert_eq!(
+            a.net.peers().iter().map(|p| p.score).max(),
+            Some(4 * score::INVALID_TX),
+            "a garbage proof is penalized"
+        );
         drop((r, w));
     }
     let st = a.net.stats();
     assert_eq!(st.px_global_drops, 0, "the node-wide PX budget is intact");
     assert_eq!(st.tx_verifications, 0, "rejected by the cheap checks");
+}
+
+/// RTW1-2 (red team RT-W1): a PX transaction that passes every cheap
+/// contextual check (a real ring, an unspent key image, the current anchor,
+/// fresh nullifiers, a covered pool) but carries a garbage CLSAG and a
+/// garbage proof. Its proof is decoded in admission's cheap stage: it is
+/// rejected as the stateless `PxProof`, the relaying peer is penalized, and
+/// it is never verified, so it takes no node-wide PX token and costs no ring
+/// lookup, range proof or CLSAG. Before the fix it passed the cheap stage,
+/// took the node-wide token, was verified (rings and CLSAG), and failed with
+/// a contextual error that is never penalized.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_garbage_px_proof_is_penalized_before_the_px_token_and_any_signature() {
+    let mut a = node(97, &[]).await;
+    a.mine_n(80, 0);
+    let Transaction::Transfer(pay) = a.payment() else {
+        panic!("a transfer")
+    };
+    let root = a.chain.lock().unwrap().state().px().root();
+    let fee = px_standard_fee();
+    let bridge_in = 1_000 * fee;
+    let tx = Transaction::Px(Box::new(blacksilk_tx::px::PxTx {
+        inputs: vec![pay.inputs[0].clone()],
+        outputs: vec![],
+        payouts: vec![],
+        fee,
+        bridge_in,
+        bridge_out: 0,
+        anchor: root,
+        nullifiers: [[9, 1, 0, 0, 0, 0, 0, 0], [9, 2, 0, 0, 0, 0, 0, 0]],
+        commitments: [[0; 8]; 2],
+        ciphertexts: [
+            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
+            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
+        ],
+        functions: vec![],
+        pseudo_outs: vec![blacksilk_crypto::Point::from_point(
+            blacksilk_crypto::commitment::commit(bridge_in + fee, &blacksilk_crypto::Scalar::ZERO),
+        )],
+        range_proof: None,
+        // Another message's signature: garbage here.
+        signatures: vec![pay.signatures[0].clone()],
+        proof: vec![0xA5; 4096],
+    }));
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(&mut r, &mut w, &[Message::StemTx(tx.encode()).encode()], 1).await;
+    let st = a.net.stats();
+    assert_eq!(st.tx_verifications, 0, "rejected by the cheap stage");
+    assert_eq!(st.px_global_drops, 0);
+    assert_eq!(a.net.peers()[0].score, score::INVALID_TX, "penalized");
+    assert!(!a.net.stempool_contains(&tx.hash()));
+    // The full check agrees: the proof is the reported fault.
+    assert!(matches!(
+        a.chain.lock().unwrap().check_tx(&tx),
+        Err(MempoolError::Invalid(TxError::PxProof))
+    ));
 }
 
 /// R1-C1 (bodies): an unrequested block whose header we never accepted is

@@ -217,6 +217,18 @@ struct StoredOutput {
     /// written before 2026-09-27; the block height stands in for it then).
     #[serde(default)]
     tx: Option<String>,
+    /// Whether this record is the one credited for its key image (RTW1-4).
+    /// Outputs sharing a key image are all kept, and exactly one of them is
+    /// credited (balance, spending, holdings): the largest amount, then the
+    /// lowest global index, elected again after every scan and rewind
+    /// (`Wallet::elect_credited`). Absent in older files, which kept one
+    /// record per key image: credited.
+    #[serde(default = "credited_by_default")]
+    credited: bool,
+}
+
+fn credited_by_default() -> bool {
+    true
 }
 
 impl StoredOutput {
@@ -508,16 +520,11 @@ mod tests {
             Err(WalletError::WrongGenesis { node, .. }) if node.is_empty()
         ));
 
-        // A file written for another genesis stays bound to it after loading
-        // with this build, and this build's node is refused.
+        // A file written for another genesis is refused by this build
+        // (RTW1-5; `persistence::tests`).
         let mut json: serde_json::Value = serde_json::from_slice(&w.to_json()).unwrap();
         json["genesis_id"] = serde_json::Value::String(other.clone());
-        let mut foreign = Wallet::from_json(&serde_json::to_vec(&json).unwrap()).unwrap();
-        assert_eq!(hex::encode(foreign.genesis_id()), other);
-        assert!(matches!(
-            foreign.sync(&GenesisNode(Some(hex::encode(ours)))),
-            Err(WalletError::WrongGenesis { .. })
-        ));
+        assert!(Wallet::from_json(&serde_json::to_vec(&json).unwrap()).is_err());
     }
 
     /// Files without a genesis id (written before the binding) are refused,
@@ -592,6 +599,7 @@ mod tests {
             pending: false,
             pending_height: 0,
             tx: None,
+            credited: true,
         });
         assert!(w.try_address(0, 4_000 + GAP_LIMIT, false).is_ok());
         assert!(w.try_address(0, 4_001 + GAP_LIMIT, false).is_err());
@@ -667,6 +675,7 @@ mod tests {
             pending: false,
             pending_height: 0,
             tx: None,
+            credited: true,
         });
         let loaded = Wallet::from_json(&w.to_json()).unwrap();
         assert_eq!(loaded.issued[&0], 40);
@@ -1024,6 +1033,7 @@ mod tests {
             pending: false,
             pending_height: 0,
             tx: tx.map(String::from),
+            credited: true,
         });
     }
 
