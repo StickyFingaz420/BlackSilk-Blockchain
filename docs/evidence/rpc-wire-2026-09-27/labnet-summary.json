@@ -1,0 +1,43 @@
+{
+  "started_unix": 1790531565,
+  "duration_secs": 282,
+  "nodes": 4,
+  "final_height": 141,
+  "partitions": 0,
+  "tx_attempts": 1,
+  "tx_submitted": 0,
+  "tx_failures": {
+    "node": 1
+  },
+  "px_attempts": 0,
+  "px_submitted": 0,
+  "px_failures": {},
+  "reorganizations": 20,
+  "max_reorg_depth": 22,
+  "misbehavior_disconnects": 0,
+  "crashes": [],
+  "network": "regtest",
+  "all_equal_samples": 5,
+  "stuck_incidents": 0,
+  "samples": 16,
+  "max_rss_mb": {
+    "miner0": 264.19140625,
+    "miner1": 264.1484375,
+    "node0": 269.6875,
+    "node1": 269.5234375,
+    "node2": 271.15234375,
+    "node3": 269.578125
+  },
+  "converged_at_end": true,
+  "mempools_drained_at_end": true,
+  "late_joiner_synced": true,
+  "late_joiner_peers": 3,
+  "fresh_wallet_balances_match": true,
+  "fresh_wallet_px_balances_match": true,
+  "supply_conserved": true,
+  "generated": 282364114754,
+  "wallet_total": 282364114754,
+  "wallet_px_total": 0,
+  "proxy_bytes": 433388,
+  "checks_passed": true
+}
