@@ -436,3 +436,48 @@ mod preprocessed {
         );
     }
 }
+
+/// A relayer must not be able to rewrite a valid proof into another valid
+/// proof (the proof bytes are part of a transaction id). Plonky3 0.7.0 does
+/// not bind the commit-phase grinding witnesses at `COMMIT_POW_BITS = 0`, nor
+/// distinguish an absent optional opening from a present empty one:
+/// `decode_proof` rejects both rewrites (internal review round 5, M1/M2).
+#[test]
+fn unbound_proof_fields_cannot_be_rewritten() {
+    use p3_field::PrimeCharacteristicRing;
+    let (proof, pv) = honest_proof(9);
+    let v = VerifierConfig::new();
+    assert!(!proof.opening_proof.1.commit_pow_witnesses.is_empty());
+    assert!(proof
+        .opening_proof
+        .1
+        .commit_pow_witnesses
+        .iter()
+        .all(|w| *w == Val::ZERO));
+
+    // A rewritten grinding witness: the 0.7.0 verifier still accepts it (the
+    // flaw), and the decoder refuses it (the fix).
+    let mut rewritten = decode_proof(&encode_proof(&proof)).unwrap();
+    rewritten.opening_proof.1.commit_pow_witnesses[0] = Val::from_u32(12345);
+    assert_eq!(
+        verify(&v, &AIRS, &rewritten, &pv, &LIMITS),
+        Ok(()),
+        "Plonky3 0.7.0 does not bind the witness (if this fails, upstream fixed it: keep the decoder check anyway)"
+    );
+    let bytes = encode_proof(&rewritten);
+    assert_ne!(bytes, encode_proof(&proof), "a different encoding");
+    assert!(matches!(decode_proof(&bytes), Err(ZkError::Encoding(_))));
+
+    // A present-but-empty optional opening where the honest proof has none.
+    let mut empty = decode_proof(&encode_proof(&proof)).unwrap();
+    let o = &mut empty.opened_values.instances[0].base_opened_values;
+    assert!(o.preprocessed_next.is_none());
+    o.preprocessed_next = Some(vec![]);
+    assert!(matches!(
+        decode_proof(&encode_proof(&empty)),
+        Err(ZkError::Encoding(_))
+    ));
+
+    // The honest proof is unaffected.
+    assert!(decode_proof(&encode_proof(&proof)).is_ok());
+}

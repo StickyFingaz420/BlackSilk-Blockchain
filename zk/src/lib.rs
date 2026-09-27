@@ -203,7 +203,56 @@ pub fn decode_proof(bytes: &[u8]) -> Result<Proof, ZkError> {
     if encode_proof(&proof) != bytes {
         return Err(ZkError::Encoding("non-canonical encoding".into()));
     }
+    check_canonical_form(&proof)?;
     Ok(proof)
+}
+
+/// Rejects proofs that verify but carry fields Plonky3 0.7.0's verifier does
+/// not bind, so that one statement has exactly one valid proof encoding and a
+/// relayer cannot change a transaction id by rewriting its proof (the proof
+/// bytes are part of the id; internal review round 5, dependency review M1/M2).
+///
+/// - **Commit-phase grinding witnesses.** With `COMMIT_POW_BITS = 0`, the
+///   0.7.0 verifier accepts any witness value without absorbing it into the
+///   transcript (p3-challenger `check_witness` returns early at 0 bits). The
+///   honest prover writes zero; any other value is rejected here. Fixed
+///   upstream after 0.7.0 (Plonky3 #2106).
+/// - **Present-but-empty optional openings.** The 0.7.0 verifier compares
+///   only the lengths of optional openings, so `Some(vec![])` passes where
+///   `None` is expected (Plonky3 #2256 for `preprocessed_next`). An honest
+///   proof never opens an empty column set: `Some(empty)` is rejected.
+///
+/// **Consensus:** this narrows the set of valid PX proof encodings. Every
+/// honestly generated proof is unaffected (tests); a proof rewritten by a
+/// third party is refused. Part of the testnet v3 rule set.
+fn check_canonical_form(proof: &Proof) -> Result<(), ZkError> {
+    use p3_field::PrimeCharacteristicRing;
+    if params::COMMIT_POW_BITS == 0
+        && proof
+            .opening_proof
+            .1
+            .commit_pow_witnesses
+            .iter()
+            .any(|w| *w != Val::ZERO)
+    {
+        return Err(ZkError::Encoding(
+            "non-zero commit-phase grinding witness".into(),
+        ));
+    }
+    for (i, inst) in proof.opened_values.instances.iter().enumerate() {
+        let o = &inst.base_opened_values;
+        let empty = |v: &Option<Vec<_>>| v.as_ref().is_some_and(|v| v.is_empty());
+        if empty(&o.trace_next)
+            || empty(&o.preprocessed_local)
+            || empty(&o.preprocessed_next)
+            || empty(&o.random)
+        {
+            return Err(ZkError::Encoding(format!(
+                "instance {i}: present but empty optional opening"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// **Analysis only** (not used by proving or verification): what an outside
