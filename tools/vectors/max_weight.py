@@ -126,7 +126,8 @@ def main():
         print(f"wrote {path}")
     elif args.check:
         with open(path, newline="") as f:
-            if f.read() != text:
+            # A CRLF checkout (core.autocrlf) compares equal.
+            if f.read().replace("\r\n", "\n") != text:
                 print(f"{path} differs from the generated table", file=sys.stderr)
                 sys.exit(1)
         print("ok")

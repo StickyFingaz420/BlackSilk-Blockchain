@@ -222,8 +222,35 @@ Transactions from disconnected blocks return to the mempool if they are still va
     make admission quadratic (`eviction_under_a_flood_stays_fast`).
 - **Block templates** take transactions by descending fee per weight, up to
   `MAX_BLOCK_WEIGHT − COINBASE_RESERVE` with `COINBASE_RESERVE = 3 000`.
+- **Expiry** (`MEMPOOL_EXPIRY_BLOCKS = 2 160`, about 3 days at 120 s, Monero's pool
+  lifetime). A transaction leaves the pool once the next block's height reaches the
+  height it was admitted for plus 2 160, whatever its kind, deploys included (one value
+  for every kind, so the expiry tells no kinds apart; PX transactions leave earlier when
+  their anchor leaves the 100-block root window). It is counted from this node's
+  admission height: there is no expiry field in transactions (a per-wallet value would
+  fingerprint the wallet; Zcash's ZIP 203 field is rejected for that reason).
+  - **Recently-expired guard** (`RECENTLY_EXPIRED_BLOCKS = 30`). For 30 blocks after
+    expiring a transaction, the node refuses that transaction (by id) on `/tx`, on
+    relay and on the stem, with `MempoolError::Expired`, and does not stem or relay it
+    (no peer is penalized: the transaction may be valid). Honest nodes admitted it
+    within seconds of each other, so they expire it within the same few blocks; while
+    any of them still pools it, none re-injects it. Without the guard, a wallet
+    resubmitting its pending transaction at the block its own node expires it would
+    re-stem it to a peer that still pools it, marking the node as the origin (dossier
+    38 §3.4; Monero's `m_timed_out_transactions`). Another transaction spending the
+    same inputs is not refused by the guard.
+  - After a reorganization to a lower height, expiry and the guard count against the
+    new height: nothing expires early, and the guard lasts longer, never shorter.
+  - A transaction returned by a disconnected block is pooled again even inside the
+    guard window, with a fresh admission height (`Mempool::readmit`): it was on the
+    best chain, so this is no re-injection by its origin.
+  - Tested: `chain/src/mempool.rs` unit tests (expiry at exactly 2 160 for every kind,
+    the guard window at both ends, reorganizations) and
+    `chain/tests/mempool_expiry.rs` (through the chain manager, with a real transfer:
+    expiry, `Expired` on the fluff and stem paths, and the return by a reorganization).
 - After every change of the connected chain, the pool:
   - removes confirmed transactions and every pooled transaction conflicting with them;
+  - expires transactions pooled for 2 160 blocks (above);
   - re-adds transactions from disconnected blocks;
   - re-validates against the new tip, dropping what no longer validates:
     - **after a reorganization** (any block disconnected), every rule except PX proofs,
@@ -248,8 +275,9 @@ Transactions from disconnected blocks return to the mempool if they are still va
   - Tested: two nodes, one with the transactions pooled and one without, reach the same
     state from the same block, and both reject a tampered copy
     (`mempool_contents_never_change_a_blocks_verdict`).
-- **Not implemented:** expiry of old entries; per-peer or per-source limits beyond the
-  byte caps and the P2P rate limits.
+- **Not implemented:** per-peer or per-source limits beyond the byte caps and the P2P
+  rate limits; pool re-announcement with backoff and the wallet-side rebroadcast
+  redesign (dossier 38 W4, W4n; owners 33/30 and 38).
 
 ## 8. Storage (node)
 

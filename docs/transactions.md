@@ -663,6 +663,8 @@ standard_fee(n, k) = min_fee(max_weight(n, k))                    (T8: the exact
   invalid transaction gets, never whether a transaction or block is valid. The
   classification of every error is documented on `TxError::is_stateless`.
 - On reorg, disconnected transactions return to the mempool if still valid.
+- A pooled transaction expires 2 160 blocks after the height it was admitted for, and
+  the node then refuses it again for 30 blocks (`Expired`); blocks.md §7.
 
 ---
 

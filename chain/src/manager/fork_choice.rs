@@ -224,8 +224,9 @@ impl ChainManager {
         }
     }
 
-    /// Mempool: returns transactions from disconnected blocks, then drops
-    /// anything no longer valid at the new tip.
+    /// Mempool: expires transactions pooled for `MEMPOOL_EXPIRY_BLOCKS`,
+    /// returns transactions from disconnected blocks, then drops anything no
+    /// longer valid at the new tip.
     ///
     /// When the next block's rules differ from those the pool was validated
     /// under (the tip crossed an activation, in either direction), the pool is
@@ -245,8 +246,16 @@ impl ChainManager {
                 self.params.epoch_at(next).name
             );
         }
+        // Expiry (policy, `MEMPOOL_EXPIRY_BLOCKS` from each admission
+        // height), before the returned transactions come back: those are
+        // pooled with a fresh admission height, even if this node expired
+        // them recently (`Mempool::readmit`).
+        let expired = self.mempool.expire(next);
+        if expired > 0 {
+            log::info!("mempool: {expired} transaction(s) expired at height {next}");
+        }
         for tx in outcome.returned {
-            let _ = self.mempool.add(tx, &self.state, next, &rules);
+            let _ = self.mempool.readmit(tx, &self.state, next, &rules);
         }
         self.mempool
             .revalidate(&self.state, next, &rules, outcome.reorganized);

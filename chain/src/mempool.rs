@@ -22,6 +22,13 @@
 //! `select` re-checks the conflict keys as a second line of defence; it is not
 //! a substitute for admission.
 //!
+//! **Expiry.** A transaction leaves the pool [`MEMPOOL_EXPIRY_BLOCKS`] after
+//! the height it was admitted for, whatever its kind, and is then refused
+//! again for [`RECENTLY_EXPIRED_BLOCKS`] ([`MempoolError::Expired`]), so that
+//! no node re-injects it while other nodes still expire it (a re-injection
+//! would mark its origin). A transaction returned by a disconnected block is
+//! pooled again regardless ([`Mempool::readmit`]).
+//!
 //! **PX proofs are verified once, on admission.** After a block, pooled PX
 //! transactions are revalidated against the new state (anchor, nullifiers,
 //! registry, pool, rings) without re-verifying the proof, which depends only
@@ -44,6 +51,21 @@ pub const MEMPOOL_MAX_BYTES: usize = 50_000_000;
 pub const MEMPOOL_MAX_PX_BYTES: usize = 64 * 1024 * 1024;
 /// Weight reserved for the coinbase in block templates.
 pub const COINBASE_RESERVE: u64 = 3_000;
+/// A pooled transaction expires once the next block's height reaches its
+/// admission height plus this many blocks (about 3 days at 120 s, Monero's
+/// `CRYPTONOTE_MEMPOOL_TX_LIVETIME`). The same value for every kind, deploys
+/// included (decisions, Agent 38): a per-kind expiry would itself tell kinds
+/// apart. PX transactions leave earlier anyway, when their anchor leaves the
+/// 100-block root window. Policy; see [`Mempool::expire`].
+pub const MEMPOOL_EXPIRY_BLOCKS: u64 = 2_160;
+/// Blocks during which a transaction this node expired is refused again
+/// ([`MempoolError::Expired`]): on `/tx`, on relay and on the stem. Every
+/// honest node expires a transaction within the same few blocks (it was
+/// admitted network-wide within seconds), so within this window no node
+/// re-injects it, and a wallet's re-submission cannot mark its node as the
+/// origin to a stem peer that still pools it (dossier 38 §3.4, Monero's
+/// `m_timed_out_transactions`).
+pub const RECENTLY_EXPIRED_BLOCKS: u64 = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MempoolError {
@@ -57,6 +79,11 @@ pub enum MempoolError {
     /// The pool is full and the fee rate does not beat the cheapest entry of
     /// the same class.
     FeeTooLowForFullPool,
+    /// This node expired the transaction less than
+    /// [`RECENTLY_EXPIRED_BLOCKS`] blocks ago ([`MEMPOOL_EXPIRY_BLOCKS`]);
+    /// it is not admitted, relayed or stemmed again until then. Policy: the
+    /// transaction may still be valid, and no peer is penalized for it.
+    Expired,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,6 +101,9 @@ struct Entry {
     seq: u64,
     /// Conflict keys (`conflict_keys`).
     keys: Vec<ConflictKey>,
+    /// The height the transaction was admitted for (the next block's height
+    /// at admission); it expires [`MEMPOOL_EXPIRY_BLOCKS`] later.
+    admitted: u64,
 }
 
 /// The namespace of a conflict key. The same 32 bytes in two namespaces are
@@ -133,6 +163,10 @@ pub struct Mempool {
     /// The signature domain (network and branch ids) every pooled transaction
     /// was validated under; `None` before the first admission.
     domain: Option<SigDomain>,
+    /// Transactions this node expired: id -> the height they expired at.
+    /// Refused while `height < expired_at + RECENTLY_EXPIRED_BLOCKS`
+    /// ([`MempoolError::Expired`]); forgotten afterwards ([`Self::expire`]).
+    expired: HashMap<Hash, u64>,
 }
 
 impl Mempool {
@@ -217,7 +251,14 @@ impl Mempool {
         }
     }
 
-    fn precheck(&self, tx: &Transaction) -> Result<(Hash, Vec<ConflictKey>), MempoolError> {
+    /// Cheap admission checks, before any validation: not a coinbase, not
+    /// pooled, not expired here recently (for inclusion at `height`), no
+    /// conflict key in use.
+    fn precheck(
+        &self,
+        tx: &Transaction,
+        height: u64,
+    ) -> Result<(Hash, Vec<ConflictKey>), MempoolError> {
         if tx.is_coinbase() {
             return Err(MempoolError::Coinbase);
         }
@@ -225,11 +266,24 @@ impl Mempool {
         if self.entries.contains_key(&id) {
             return Err(MempoolError::AlreadyKnown);
         }
+        if self.recently_expired(&id, height) {
+            return Err(MempoolError::Expired);
+        }
         let keys = conflict_keys(tx);
         if keys.iter().any(|k| self.keys.contains_key(k)) {
             return Err(MempoolError::Conflict);
         }
         Ok((id, keys))
+    }
+
+    /// Whether this node expired `id` fewer than [`RECENTLY_EXPIRED_BLOCKS`]
+    /// blocks before `height` (the height a transaction would be admitted
+    /// for). After a reorganization to a lower height the window lasts
+    /// longer, never shorter.
+    pub fn recently_expired(&self, id: &Hash, height: u64) -> bool {
+        self.expired
+            .get(id)
+            .is_some_and(|&at| height < at.saturating_add(RECENTLY_EXPIRED_BLOCKS))
     }
 
     /// Validates `tx` for inclusion at `height` without adding it. Returns its id.
@@ -240,7 +294,7 @@ impl Mempool {
         height: u64,
         rules: &TxRules,
     ) -> Result<Hash, MempoolError> {
-        let (id, _) = self.precheck(tx)?;
+        let (id, _) = self.precheck(tx, height)?;
         validate_mempool_tx(tx, chain, height, rules).map_err(MempoolError::Invalid)?;
         Ok(id)
     }
@@ -248,6 +302,12 @@ impl Mempool {
     /// A pooled transaction by id.
     pub fn get(&self, id: &Hash) -> Option<&Transaction> {
         self.entries.get(id).map(|e| &e.tx)
+    }
+
+    /// The height a pooled transaction was admitted for; it expires
+    /// [`MEMPOOL_EXPIRY_BLOCKS`] later.
+    pub fn admitted_at(&self, id: &Hash) -> Option<u64> {
+        self.entries.get(id).map(|e| e.admitted)
     }
 
     /// Validates `tx` for inclusion at `height` and adds it.
@@ -261,9 +321,51 @@ impl Mempool {
         // Under other rules than the pool's, the pool is flushed first
         // (`enter_rules`): it never mixes transactions of two rule sets.
         self.enter_rules(rules);
-        let (id, keys) = self.precheck(&tx)?;
+        let (id, keys) = self.precheck(&tx, height)?;
         validate_mempool_tx(&tx, chain, height, rules).map_err(MempoolError::Invalid)?;
-        self.insert(id, tx, keys)
+        self.insert(id, tx, keys, height)
+    }
+
+    /// [`Self::add`] for a transaction of a block this node disconnected (a
+    /// reorganization returns it to the pool). It is not refused as recently
+    /// expired: it was on the best chain, so it is no re-injection by its
+    /// origin, and it is not relayed from here. It is pooled with a fresh
+    /// admission height (`height`), so it gets a full expiry window again,
+    /// and it leaves the recently-expired set.
+    pub fn readmit(
+        &mut self,
+        tx: Transaction,
+        chain: &impl ChainView,
+        height: u64,
+        rules: &TxRules,
+    ) -> Result<Hash, MempoolError> {
+        self.expired.remove(&tx.hash());
+        self.add(tx, chain, height, rules)
+    }
+
+    /// Expires every transaction admitted at least [`MEMPOOL_EXPIRY_BLOCKS`]
+    /// before `height` (the next block's height): it is removed with its
+    /// conflict keys and remembered as recently expired, and refused again
+    /// until `height + RECENTLY_EXPIRED_BLOCKS`. Transactions remembered
+    /// that long are forgotten. Returns the number expired.
+    ///
+    /// The count is from this node's admission height, the same for every
+    /// kind (policy, not consensus: no expiry field exists in transactions,
+    /// whose value would fingerprint the wallet).
+    pub fn expire(&mut self, height: u64) -> usize {
+        self.expired
+            .retain(|_, at| height < at.saturating_add(RECENTLY_EXPIRED_BLOCKS));
+        let old: Vec<Hash> = self
+            .entries
+            .iter()
+            .filter(|(_, e)| height >= e.admitted.saturating_add(MEMPOOL_EXPIRY_BLOCKS))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &old {
+            self.remove(id);
+            self.expired.insert(*id, height);
+        }
+        old.len()
     }
 
     fn insert(
@@ -271,6 +373,7 @@ impl Mempool {
         id: Hash,
         tx: Transaction,
         keys: Vec<ConflictKey>,
+        admitted: u64,
     ) -> Result<Hash, MempoolError> {
         let class = class_of(&tx);
         let size = tx.encode().len();
@@ -285,6 +388,7 @@ impl Mempool {
             cost,
             seq: self.next_seq,
             keys,
+            admitted,
         };
         // Make room if needed by evicting strictly cheaper entries of the class,
         // cheapest (then newest) first. The victims are chosen before anything
@@ -487,8 +591,120 @@ mod tests {
     }
 
     fn add(m: &mut Mempool, tx: Transaction) -> Result<Hash, MempoolError> {
-        let (id, keys) = m.precheck(&tx)?;
-        m.insert(id, tx, keys)
+        add_at(m, tx, 0)
+    }
+
+    /// `add` for inclusion at `height` (the admission height).
+    fn add_at(m: &mut Mempool, tx: Transaction, height: u64) -> Result<Hash, MempoolError> {
+        let (id, keys) = m.precheck(&tx, height)?;
+        m.insert(id, tx, keys, height)
+    }
+
+    /// Expiry (policy): a transaction admitted for height `a` stays pooled
+    /// while the next height is below `a + MEMPOOL_EXPIRY_BLOCKS`, and is
+    /// removed at exactly that height, with its conflict keys and bytes,
+    /// whatever its kind. Each entry counts from its own admission height.
+    #[test]
+    fn a_transaction_expires_exactly_at_its_admission_height_plus_the_expiry() {
+        let mut m = Mempool::new();
+        let a = 100;
+        let kinds = [
+            px(1, 1000, 10, 0, 0),
+            transfer(&[5], &[10, 11], 10),
+            deploy(6, &[12, 13], 0, 10),
+        ];
+        let ids: Vec<Hash> = kinds
+            .iter()
+            .map(|tx| add_at(&mut m, tx.clone(), a).unwrap())
+            .collect();
+        // A later admission expires later.
+        let late = add_at(&mut m, px(3, 1000, 10, 0, 0), a + 7).unwrap();
+        assert_eq!(m.expire(a + MEMPOOL_EXPIRY_BLOCKS - 1), 0);
+        assert_eq!(m.len(), 4);
+        assert_eq!(m.expire(a + MEMPOOL_EXPIRY_BLOCKS), 3, "every kind expires");
+        assert!(ids.iter().all(|id| !m.contains(id)));
+        assert!(m.contains(&late));
+        assert_invariants(&m);
+        // The conflict keys are free: another transaction spending the same
+        // key image is admitted.
+        add_at(
+            &mut m,
+            transfer(&[5], &[20, 21], 10),
+            a + MEMPOOL_EXPIRY_BLOCKS + 1,
+        )
+        .unwrap();
+        assert_eq!(m.expire(a + 7 + MEMPOOL_EXPIRY_BLOCKS), 1);
+        assert!(!m.contains(&late));
+        assert_invariants(&m);
+    }
+
+    /// The recently-expired guard: an expired transaction is refused with
+    /// `Expired` (before its conflict keys or anything else are looked at)
+    /// for exactly `RECENTLY_EXPIRED_BLOCKS` blocks, then admitted again and
+    /// forgotten. Only that transaction: another one spending the same key
+    /// images is not refused by the guard.
+    #[test]
+    fn an_expired_transaction_is_refused_for_the_guard_window_only() {
+        let mut m = Mempool::new();
+        let tx = transfer(&[5], &[10, 11], 10);
+        let id = add_at(&mut m, tx.clone(), 0).unwrap();
+        let e = MEMPOOL_EXPIRY_BLOCKS;
+        assert_eq!(m.expire(e), 1);
+        for h in e..e + RECENTLY_EXPIRED_BLOCKS {
+            assert!(m.recently_expired(&id, h));
+            assert_eq!(m.precheck(&tx, h).map(|_| ()), Err(MempoolError::Expired));
+        }
+        let rebuilt = transfer(&[5], &[30, 31], 10);
+        let other = add_at(&mut m, rebuilt, e + 1).unwrap();
+        m.remove(&other).unwrap();
+        let end = e + RECENTLY_EXPIRED_BLOCKS;
+        assert!(!m.recently_expired(&id, end));
+        m.expire(end);
+        assert!(m.expired.is_empty(), "forgotten after the window");
+        assert_eq!(add_at(&mut m, tx, end), Ok(id));
+        // Admitted again: it expires a full window after the new admission.
+        assert_eq!(m.expire(end + e - 1), 0);
+        assert_eq!(m.expire(end + e), 1);
+    }
+
+    /// Reorganizations: after the tip moves down, expiry counts from the
+    /// admission height against the new (lower) height, so nothing expires
+    /// early, and the guard lasts longer, never shorter. A transaction
+    /// returned by a disconnected block (`readmit`) is pooled even while it
+    /// is recently expired, with a fresh admission height.
+    #[test]
+    fn expiry_and_the_guard_follow_the_height_across_reorganizations() {
+        let mut m = Mempool::new();
+        let e = MEMPOOL_EXPIRY_BLOCKS;
+        let a = add_at(&mut m, px(1, 1000, 10, 0, 0), 50).unwrap();
+        let b_tx = px(3, 1000, 10, 0, 0);
+        let b = add_at(&mut m, b_tx.clone(), 10).unwrap();
+        assert_eq!(m.expire(10 + e), 1, "b expires");
+        assert!(m.contains(&a));
+        // A reorganization lowers the next height by 20 blocks: a is not
+        // expired early, b stays refused past its original window.
+        assert_eq!(m.expire(10 + e - 20), 0);
+        assert!(m.contains(&a));
+        assert!(m.recently_expired(&b, 10 + e + RECENTLY_EXPIRED_BLOCKS - 21));
+        assert_eq!(
+            m.precheck(&b_tx, 10 + e - 19).map(|_| ()),
+            Err(MempoolError::Expired)
+        );
+        // b was meanwhile mined on the other branch and that block is
+        // disconnected: the returned transaction is admitted again, with a
+        // fresh admission height, and leaves the guard.
+        let chain = blacksilk_tx::state::MemoryChain::new();
+        let rules = TxRules::at_height(&blacksilk_consensus::ChainParams::regtest(), 0);
+        // (A synthetic transaction fails validation; the guard is what is
+        // tested here: `readmit` gets past it to validation.)
+        assert!(matches!(
+            m.readmit(b_tx.clone(), &chain, 10 + e - 19, &rules),
+            Err(MempoolError::Invalid(_))
+        ));
+        assert!(!m.recently_expired(&b, 10 + e - 19));
+        assert_eq!(add_at(&mut m, b_tx, 10 + e - 19), Ok(b));
+        assert_eq!(m.expire(10 + e - 19 + e - 1), 1, "a expires, b does not");
+        assert!(m.contains(&b) && !m.contains(&a));
     }
 
     /// Fills the PX class as far as it goes with entries of `size` proof
@@ -526,7 +742,7 @@ mod tests {
             height: 1,
             outputs: vec![],
         });
-        assert_eq!(m.precheck(&cb).map(|_| ()), Err(MempoolError::Coinbase));
+        assert_eq!(m.precheck(&cb, 0).map(|_| ()), Err(MempoolError::Coinbase));
         // Removing it frees its conflict keys.
         m.remove(&id).unwrap();
         assert!(m.is_empty());
@@ -947,7 +1163,7 @@ mod tests {
             let mut m = Mempool::new();
             for tx in [a.clone(), b.clone(), other.clone()] {
                 let keys = conflict_keys(&tx);
-                m.insert(tx.hash(), tx, keys).unwrap();
+                m.insert(tx.hash(), tx, keys, 0).unwrap();
             }
             let sel = m.select(u64::MAX, 0);
             assert_disjoint(&sel);

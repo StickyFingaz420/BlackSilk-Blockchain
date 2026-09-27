@@ -363,3 +363,90 @@ spec-derived value is 57 439, and the Rust function agrees with the script.)
 - Agent 40: add the rule revision and weight samples to the fingerprint manifest.
 - `TxError::is_stateless` treats `FeeNotExact` as stateless; if a later epoch changes
   `fee_per_weight`, it becomes height-dependent near the activation (F11-3; P2 item).
+
+---
+
+<a id="expiry-guard"></a>
+
+## Mempool expiry (2 160 blocks) and the recently-expired guard (30 blocks)
+
+**Policy, not consensus.** No block's validity changes; this section follows the 15-step
+form because the decisions log bundles it with the consensus items (Agent 38 "Expiry",
+Agent 12 "Expiry"). No `Consensus-Change` path is touched.
+
+Decision: decisions.md, Agent 38 "Expiry: 2160 blocks from admission height, uniform for
+ALL classes (deploys too); the recently-expired guard (R = 30) ships in the SAME change";
+Agent 12 "Expiry". Dossiers 12 P3/W5 and 38 §3.4/W4n. Work item CB-B1b item 2.
+
+**1. Problem.** Nothing expired from the pool: a transaction that was never mined (a
+standard-fee transfer behind a full pool, or one whose rival won elsewhere) kept its
+key images locked in every pool until those nodes restarted, and diverging pools never
+re-converged (dossier 12 M12-5). An expiry counted from each node's admission height
+alone opens an origin oracle (dossier 38 F38-3): 2 160 = 108 × 20, so a wallet's
+20-block resubmission lands on the block at which its own node expires the transaction;
+the node re-stems it to a peer that still pools it, and an honest relay never stems a
+long-fluffed transaction, so the peer learns the origin.
+
+**2. Demonstrated failure.** No expiry existed on the base commit: a pooled transaction
+stayed pooled indefinitely (the new tests fail on the base by construction: there is no
+`Mempool::expire` and no `MempoolError::Expired`). The oracle is a design consequence of
+admission-height expiry without a guard (dossier 38 §3.4); the guard is what the tests
+pin.
+
+**3. Prior art.** Monero: `CRYPTONOTE_MEMPOOL_TX_LIVETIME` = 3 days, expired
+transactions kept in `m_timed_out_transactions` so they are not re-accepted. Bitcoin
+Core: `DEFAULT_MEMPOOL_EXPIRY_HOURS = 336`. Zcash ZIP 203 puts an expiry height in the
+transaction, which BlackSilk rejects (a per-wallet value fingerprints; full review
+never-change row 29). Sources: dossier 12 §8, dossier 38 §3.4.
+
+**4. Alternatives.** Expiry counted from the first sighting by any node (not uniform);
+720 blocks for deploys (dossier 14; rejected for uniformity, decisions Agent 38); expiry
+without the guard (rejected: the oracle above); flushing on every reorganization
+(dossier 12 P1 (c), rejected).
+
+**5. Affected components.** `chain/src/mempool.rs`: `MEMPOOL_EXPIRY_BLOCKS = 2 160`,
+`RECENTLY_EXPIRED_BLOCKS = 30`, `Entry::admitted`, `Mempool::expire`, `readmit`,
+`recently_expired`, `admitted_at`, `MempoolError::Expired` (checked in `precheck`, so on
+`add` and `check`, before any validation). `chain/src/manager/fork_choice.rs`:
+`finish_sync` expires before re-admitting returned transactions, which use `readmit`.
+P2P and RPC need no change: `Expired` is not `Invalid`, so no peer is penalized and the
+stem and relay paths drop it (`p2p/src/net/admission.rs`, the `Err(_) => {}` arms);
+`/tx` answers `Expired`.
+
+**6. Activation.** None (node policy), effective on upgrade.
+
+**7. Compatibility.** No consensus or encoding effect. Nodes with and without it relay
+the same transactions except expired ones.
+
+**8. Reorg, wallet, mining and P2P implications.** Reorg: expiry and the guard compare
+against the current next height, so after a reorganization to a lower height nothing
+expires early and the guard lasts longer, never shorter; a transaction returned by a
+disconnected block is pooled even inside the guard window, with a fresh admission
+height (it was on the best chain: no re-injection by its origin). Wallet: the wallet
+still resubmits every 20 blocks; after expiry network-wide its node answers `Expired`
+for 30 blocks and stems nothing. The wallet-side redesign (probe semantics, no
+re-injection before `relayed + E + R`, `NETWORK_EXPIRY_BLOCKS = 2 160 + 30` taken from
+`chain`) is dossier 38 W4, not in this change. Mining: templates never see expired
+entries. P2P: pool re-announcement with backoff is dossier 38 W4n (owners 33/30), not in
+this change.
+
+**9. Vectors.** The constants (2 160, 30) in `chain/src/mempool.rs`; no wire vectors.
+
+**10. Regression tests.** `chain/src/mempool.rs` unit tests
+`a_transaction_expires_exactly_at_its_admission_height_plus_the_expiry` (every kind,
+the exact block, keys and bytes released), `an_expired_transaction_is_refused_for_the_guard_window_only`
+(both ends of the window, only the same id), `expiry_and_the_guard_follow_the_height_across_reorganizations`;
+`chain/tests/mempool_expiry.rs::a_pooled_transaction_expires_is_guarded_and_comes_back_after_a_reorganization`
+(a real transfer through the chain manager: pooled one block before expiry, gone at
+admission + 2 160, `Expired` on `submit_tx` and `check_tx`, readmitted with a fresh
+admission height after a reorganization disconnects a block carrying it, then mined).
+
+**11. Suite results.** In the commit message and the CB-B1b final report.
+
+**12. Open review points.**
+- The guard is per node and by transaction id. It assumes honest nodes admit a
+  transaction within a few blocks of each other; a node that first saw it much later
+  (for example after a restart and a rebroadcast) expires it later, and the wallet
+  redesign (W4) must not re-inject before `relayed + 2 160 + 30`.
+- The recently-expired set is bounded by what expires within 30 blocks, which the pool
+  caps bound; it is not persisted (neither is the pool).
