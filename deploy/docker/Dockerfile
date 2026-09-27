@@ -9,6 +9,11 @@
 # data out of the build context.
 
 FROM rust:1.98.1-bookworm AS build
+# .git is not in the build context: pass the commit explicitly, e.g.
+#   docker build --build-arg BLACKSILK_BUILD_COMMIT=$(git rev-parse HEAD) ...
+# so --version, the start-up log and /info report it (docs/testnet.md §2.1).
+ARG BLACKSILK_BUILD_COMMIT=unknown
+ENV BLACKSILK_BUILD_COMMIT=${BLACKSILK_BUILD_COMMIT}
 WORKDIR /src
 COPY . .
 RUN cargo build --release --locked \
