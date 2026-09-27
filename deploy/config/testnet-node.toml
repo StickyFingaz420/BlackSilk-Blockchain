@@ -4,7 +4,8 @@
 
 network = "testnet"
 data_dir = "/var/lib/blacksilk/testnet"
-# The RPC has no authentication: keep it on loopback.
+# The RPC needs the node's cookie (<data_dir>/rpc.cookie) but is plaintext HTTP:
+# keep it on loopback. rpc_allow_hosts = [] lists extra host names it answers to.
 rpc_bind = "127.0.0.1:29333"
 log = "info"
 

@@ -53,4 +53,4 @@ systemctl daemon-reload
 systemctl enable --now blacksilk-node.service
 [ -n "$MINER_ADDRESS" ] && systemctl enable --now blacksilk-miner.service
 
-echo "==> done. Open TCP 29334 inbound. Status: deploy/scripts/check-node.sh"
+echo "==> done. Open TCP 29334 inbound. Status: sudo -u blacksilk deploy/scripts/check-node.sh"

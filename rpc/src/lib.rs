@@ -316,6 +316,21 @@ fn outputs_cap(n: usize) -> usize {
         .saturating_add(MAX_SMALL_RESPONSE_BYTES)
 }
 
+/// `GET /tx/status` (docs/blocks.md §9): `{"status":"pooled"}`,
+/// `{"status":"confirmed","height":h}` or `{"status":"unknown"}`. A
+/// transaction in the node's Dandelion++ stem is `unknown` (the stem state
+/// is never reported).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "lowercase")]
+pub enum TxStatus {
+    /// In the node's mempool.
+    Pooled,
+    /// In the connected block at `height`.
+    Confirmed { height: u64 },
+    /// Neither (or only in the stem).
+    Unknown,
+}
+
 #[derive(Debug)]
 pub enum RpcError {
     Http(String),
@@ -599,6 +614,15 @@ impl Client {
         )
     }
 
+    /// Whether the node has transaction `id` in its mempool or a connected
+    /// block (`GET /tx/status`, docs/blocks.md §9).
+    pub fn tx_status(&self, id: &[u8; 32]) -> Result<TxStatus, RpcError> {
+        self.get(
+            &format!("/tx/status?id={}", hex::encode(id)),
+            MAX_SMALL_RESPONSE_BYTES,
+        )
+    }
+
     pub fn outputs(&self, indices: &[u64]) -> Result<Outputs, RpcError> {
         self.post(
             "/outputs",
@@ -817,6 +841,24 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+
+    /// The `/tx/status` wire form (docs/blocks.md §9).
+    #[test]
+    fn tx_status_json() {
+        let cases = [
+            (TxStatus::Pooled, r#"{"status":"pooled"}"#),
+            (
+                TxStatus::Confirmed { height: 7 },
+                r#"{"status":"confirmed","height":7}"#,
+            ),
+            (TxStatus::Unknown, r#"{"status":"unknown"}"#),
+        ];
+        for (s, json) in cases {
+            assert_eq!(serde_json::to_string(&s).unwrap(), json);
+            assert_eq!(serde_json::from_str::<TxStatus>(json).unwrap(), s);
+        }
+        assert!(serde_json::from_str::<TxStatus>(r#"{"status":"stem"}"#).is_err());
     }
 
     #[test]

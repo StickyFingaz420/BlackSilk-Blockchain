@@ -80,7 +80,8 @@ fn every_deploy_config_parses_and_is_set_up_as_named() {
             t.contains_key("data_dir"),
             "{name}: names its data directory"
         );
-        // The RPC has no authentication: loopback only.
+        // The RPC is plaintext HTTP (its cookie would travel in the clear):
+        // loopback only.
         assert!(
             c.rpc_bind.ip().is_loopback(),
             "{name}: RPC on {}",

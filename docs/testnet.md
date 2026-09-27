@@ -124,6 +124,7 @@ Limits of the check:
 
 ```sh
 blacksilk-node --network testnet                    # P2P 0.0.0.0:29334, RPC 127.0.0.1:29333
+export BLACKSILK_RPC_COOKIE=<data dir>/rpc.cookie   # the RPC credential (§4.2)
 blacksilk-wallet -w me.wallet create --network testnet
 blacksilk-miner --address <address printed by create>   # add --light on machines with < 3 GB RAM
 blacksilk-wallet -w me.wallet balance
@@ -159,6 +160,7 @@ Main options (`blacksilk-node --help` lists all of them):
 | `--proxy`, `--proxy-only` | SOCKS5 (Tor) for outbound connections; proxy-only refuses clearnet |
 | `--max-outbound`, `--max-inbound` | connection limits (8 / 64) |
 | `--allow-private` | LAN/lab networks only: accept private addresses |
+| `--rpc-allow-host` / `rpc_allow_hosts` | extra host names the RPC answers to besides loopback and its bound address, e.g. an onion service name (blocks.md §9.1) |
 | `--log` | log filter, e.g. `info,blacksilk_p2p=debug` |
 
 ### 4.2 As a service (Linux)
@@ -172,7 +174,24 @@ journalctl -u blacksilk-node -f                          # logs
 
 The units in `deploy/systemd/` run as an unprivileged `blacksilk` user with a
 read-only system, and can write only `/var/lib/blacksilk`. Open TCP 29334 inbound.
-Never expose port 29333: the RPC has no authentication.
+Never expose port 29333 (§11).
+
+**RPC credential.** At every start the node writes a fresh random credential to
+`<data dir>/rpc.cookie` (`/var/lib/blacksilk/testnet/rpc.cookie` with the templates) and
+removes it at a clean shutdown; every RPC request must carry it (blocks.md §9.1).
+- Clients take `--rpc-cookie <path>`, or the `BLACKSILK_RPC_COOKIE` environment variable:
+  `blacksilk-miner`, `blacksilk-wallet` and `blacksilk-supply-audit`. The miner unit
+  passes `--rpc-cookie`; change it if `node.toml` sets another `data_dir`.
+- A restart writes a new credential. The miner reads the file again when the node
+  refuses the old one; restart other long-running clients.
+- On Linux the file is readable only by the node's user: run clients as that user,
+  e.g. `sudo -u blacksilk deploy/scripts/check-node.sh`.
+- On Windows the file inherits its directory's permissions. The default data directory
+  under `%APPDATA%` is private to your user; a data directory elsewhere gets a warning,
+  and you must make sure other users cannot read it.
+- `curl` needs the header `Authorization: Bearer <contents of rpc.cookie>`. Pass it on
+  standard input (`-H @-`, as `check-node.sh` does), not on the command line, which other
+  local users can read.
 
 ### 4.3 Over Tor
 
@@ -218,7 +237,8 @@ To resync from scratch, stop the node and delete `blocks.dat`.
 ## 5. Mining
 
 ```sh
-blacksilk-miner --node 127.0.0.1:29333 --address <testnet address> [--threads N] [--light]
+blacksilk-miner --node 127.0.0.1:29333 --rpc-cookie <node data dir>/rpc.cookie \
+    --address <testnet address> [--threads N] [--light]
 ```
 
 - **Full mode** needs about 2.3 GiB of RAM (the 2 GiB dataset plus about 0.3 GB). It
@@ -459,8 +479,13 @@ multiple of 16 is reached (canonical anchor, px.md §11.4).
 
 ## 11. Security notes for operators
 
-- **The RPC must stay on loopback.** It has no authentication, and `/block` and `/tx`
-  cost CPU to validate.
+- **The RPC must stay on loopback.** Every request needs the node's cookie (§4.2), but
+  the connection is plaintext HTTP: on any other path the cookie and every request can
+  be read. `/block` and `/tx` also cost CPU to validate. The node warns at start when
+  its RPC is bound to a non-loopback address. To reach it remotely, use SSH, a VPN or
+  Tor, and add the name used to `--rpc-allow-host`.
+- **Protect the cookie like a password while the node runs.** Anyone who can read
+  `rpc.cookie` can use the RPC; that includes malware running as the node's user.
 - **Use your own node for your wallet.** A remote node learns which ring members you
   fetch (blocks.md §9). The wallet has no Tor or TLS support: its RPC connection is
   plaintext HTTP, so a remote node, and anyone on the path, sees your requests and
@@ -509,8 +534,8 @@ same time; idle figures are to be re-measured.
   least one, better two, other trial devices. Addresses are then exchanged between
   peers.
 - **Firewall:** open TCP **29334** (P2P) inbound on devices that should accept
-  connections. **Block 29333** (RPC) from outside: the RPC has no authentication and
-  must stay on loopback (the default).
+  connections. **Block 29333** (RPC) from outside: it must stay on loopback (the
+  default). The cookie authenticates requests, but the RPC is plaintext HTTP (§11).
 - **Several devices behind one NAT** reach other nodes from one public IP. Without
   `--allow-private`, a node accepts at most `max_per_ip` = 2 inbound connections from
   one IP, and a ban of that IP (24 hours, after misbehaviour) shuts out every device

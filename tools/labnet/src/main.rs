@@ -196,16 +196,31 @@ fn spawn(bin: &Path, args: &[String], log_path: &Path, name: &str) -> Proc {
     }
 }
 
-fn wait_rpc(port: u16, secs: u64) -> bool {
-    let c = Client::new(&local(port).to_string());
+/// A node's RPC cookie: `rpc.cookie` in its data directory (docs/blocks.md
+/// §9.1). The node writes it at start and removes it at shutdown.
+fn cookie_path(data: &Path) -> PathBuf {
+    data.join(blacksilk_rpc::COOKIE_FILE)
+}
+
+/// A client of the node at `port` with data directory `data`, sending its
+/// cookie.
+fn client(port: u16, data: &Path) -> Result<Client, blacksilk_rpc::RpcError> {
+    Client::try_new(&local(port).to_string())?.with_cookie_file(&cookie_path(data))
+}
+
+/// Waits until the node answers an authenticated `/info`. The cookie is read
+/// on every attempt: the node binds its RPC port before it writes the file.
+fn wait_rpc(port: u16, data: &Path, secs: u64) -> Option<Client> {
     let deadline = Instant::now() + Duration::from_secs(secs);
     while Instant::now() < deadline {
-        if c.info().is_ok() {
-            return true;
+        if let Ok(c) = client(port, data) {
+            if c.info().is_ok() {
+                return Some(c);
+            }
         }
         std::thread::sleep(Duration::from_millis(250));
     }
-    false
+    None
 }
 
 fn infos(clients: &[Client]) -> Vec<Option<Info>> {
@@ -249,6 +264,18 @@ fn node_args(
 fn main() {
     let a = Args::parse();
     assert!(a.nodes >= 4, "need at least 4 nodes");
+    let net = match a.network.as_str() {
+        "regtest" => Network::Regtest,
+        "testnet" => Network::Testnet,
+        other => panic!("unsupported network {other}"),
+    };
+    // The node refuses a network whose genesis is not final; say so before
+    // starting anything.
+    assert!(
+        ChainParams::for_network(net).genesis_is_final(),
+        "the {} genesis is not final: the node refuses it (use --network regtest)",
+        a.network
+    );
     assert!(
         !a.out.exists(),
         "{} exists; choose a new output directory",
@@ -306,6 +333,7 @@ fn main() {
     }
 
     // Nodes.
+    let data_of = |i: usize| a.out.join(format!("node{i}"));
     let mut procs: Vec<Proc> = Vec::new();
     for i in 0..n {
         let peers: Vec<SocketAddr> = links
@@ -313,7 +341,7 @@ fn main() {
             .filter(|l| l.from == i)
             .map(|l| local(proxy_port(a.base_port, l.from, l.to)))
             .collect();
-        let data = a.out.join(format!("node{i}"));
+        let data = data_of(i);
         let args = node_args(&a, i, &data, &peers, peers.len(), true);
         procs.push(spawn(
             &node_bin,
@@ -322,23 +350,15 @@ fn main() {
             &format!("node{i}"),
         ));
     }
-    for i in 0..n {
-        assert!(
-            wait_rpc(rpc_port(a.base_port, i), 60),
-            "node{i} did not start"
-        );
-    }
     let clients: Vec<Client> = (0..n)
-        .map(|i| Client::new(&local(rpc_port(a.base_port, i)).to_string()))
+        .map(|i| {
+            wait_rpc(rpc_port(a.base_port, i), &data_of(i), 60)
+                .unwrap_or_else(|| panic!("node{i} did not start"))
+        })
         .collect();
     log(&mut journal, &format!("{n} nodes up"));
 
     // Wallets: two miners (one per partition group) and three users.
-    let net = match a.network.as_str() {
-        "regtest" => Network::Regtest,
-        "testnet" => Network::Testnet,
-        other => panic!("unsupported network {other}"),
-    };
     report.network = a.network.clone();
     let rules = TxRules::for_chain(&ChainParams::for_network(net));
     let mut wallets: Vec<(String, Wallet)> = Vec::new();
@@ -351,6 +371,8 @@ fn main() {
         let mut args: Vec<String> = vec![
             "--node".into(),
             local(rpc_port(a.base_port, node)).to_string(),
+            "--rpc-cookie".into(),
+            cookie_path(&data_of(node)).display().to_string(),
             "--threads".into(),
             a.miner_threads.to_string(),
             "--refresh".into(),
@@ -656,8 +678,7 @@ fn main() {
         &a.out.join("node-late.log"),
         "node-late",
     ));
-    assert!(wait_rpc(rpc_port(a.base_port, late), 60));
-    let late_client = Client::new(&local(rpc_port(a.base_port, late)).to_string());
+    let late_client = wait_rpc(rpc_port(a.base_port, late), &data, 60).expect("late node started");
     let deadline = Instant::now() + Duration::from_secs(900);
     while Instant::now() < deadline {
         if let (Ok(li), Some(fi)) = (late_client.info(), &final_info) {

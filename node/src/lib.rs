@@ -22,7 +22,7 @@ use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{
     submit_block_in_steps, ChainManager, SubmitError, SYNC_STEP_BLOCKS,
 };
-use blacksilk_consensus::{BlockHeader, Network};
+use blacksilk_consensus::{BlockHeader, Hash, Network};
 use blacksilk_p2p::Network as P2p;
 use blacksilk_rpc as rpc;
 use blacksilk_tx::state::MemoryChain;
@@ -168,6 +168,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/outputs"),
     ("GET", "/px/commitments"),
     ("GET", "/px/contracts"),
+    ("GET", "/tx/status"),
 ];
 
 /// The router behind the guard's host, browser, body and admission checks
@@ -192,6 +193,7 @@ pub fn router_secured(app: App, policy: guard::Policy) -> Router {
         .route("/outputs", post(outputs))
         .route("/px/commitments", get(px_commitments))
         .route("/px/contracts", get(px_contracts))
+        .route("/tx/status", get(tx_status_route))
         // The guard has already read the body within its per-route limit;
         // this only lets the extractors take a body of that size.
         .layer(DefaultBodyLimit::max(rpc::MAX_REQUEST_BYTES))
@@ -583,6 +585,45 @@ fn px_contracts_page(m: &ChainManager, from: u64) -> rpc::PxContracts {
         total,
         height: m.height(),
     }
+}
+
+#[derive(Deserialize)]
+struct TxStatusQuery {
+    id: String,
+}
+
+/// The `/tx/status` answer for `id` (docs/blocks.md §9): `pooled` if it is
+/// in the mempool, `confirmed` with its height if a connected block contains
+/// it, else `unknown`.
+///
+/// Only the chain manager is consulted, never the P2P stempool: a
+/// transaction in this node's Dandelion++ stem, its own or relayed, answers
+/// `unknown`, exactly like one the node has never seen (F36-11). Reporting
+/// it would let anyone who can query the node learn what it originated or
+/// stems.
+///
+/// Cost: a scan of the connected blocks' transaction ids, newest first,
+/// under the chain lock; `unknown` scans the whole chain (there is no
+/// transaction index, docs/blocks.md §8).
+pub fn tx_status(m: &ChainManager, id: &Hash) -> rpc::TxStatus {
+    if m.mempool().contains(id) {
+        return rpc::TxStatus::Pooled;
+    }
+    let state = m.state();
+    (1..=m.height())
+        .rev()
+        .find(|&h| state.block_tx_hashes(h).is_some_and(|ids| ids.contains(id)))
+        .map_or(rpc::TxStatus::Unknown, |height| rpc::TxStatus::Confirmed {
+            height,
+        })
+}
+
+async fn tx_status_route(
+    State(App { chain: s, .. }): State<App>,
+    Query(q): Query<TxStatusQuery>,
+) -> Result<Json<rpc::TxStatus>, ApiError> {
+    let id = rpc::parse_hash(&q.id).ok_or_else(|| bad_request("id: 32 bytes of hex"))?;
+    with_chain(s, move |m| tx_status(m, &id)).await.map(Json)
 }
 
 #[derive(Deserialize)]
