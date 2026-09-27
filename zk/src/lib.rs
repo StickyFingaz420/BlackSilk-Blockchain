@@ -23,7 +23,7 @@ compile_error!("blacksilk-zk must be built with panic = \"unwind\"");
 pub mod config;
 pub mod params;
 
-use config::{ProverConfig, Val, VerifierConfig, ZkConfig};
+use config::{ProverConfig, ProverZkConfig, Val, VerifierConfig, ZkConfig};
 use p3_air::Air;
 use p3_batch_stark::{prove_batch, verify_batch, ProverData, StarkInstance};
 use p3_lookup::folder::{ProverConstraintFolderWithLookups, VerifierConstraintFolderWithLookups};
@@ -58,7 +58,7 @@ pub enum ZkError {
 /// Bounds every AIR type must satisfy to be proven (Plonky3 batch prover).
 pub trait ProvableAir:
     Air<InteractionSymbolicBuilder<Val, config::Challenge>>
-    + for<'a> Air<ProverConstraintFolderWithLookups<'a, ZkConfig>>
+    + for<'a> Air<ProverConstraintFolderWithLookups<'a, ProverZkConfig>>
     + for<'a> Air<VerifierConstraintFolderWithLookups<'a, ZkConfig>>
     + for<'a> Air<p3_air::DebugConstraintBuilder<'a, Val, config::Challenge>>
     + Clone
@@ -67,7 +67,7 @@ pub trait ProvableAir:
 
 impl<A> ProvableAir for A where
     A: Air<InteractionSymbolicBuilder<Val, config::Challenge>>
-        + for<'a> Air<ProverConstraintFolderWithLookups<'a, ZkConfig>>
+        + for<'a> Air<ProverConstraintFolderWithLookups<'a, ProverZkConfig>>
         + for<'a> Air<VerifierConstraintFolderWithLookups<'a, ZkConfig>>
         + for<'a> Air<p3_air::DebugConstraintBuilder<'a, Val, config::Challenge>>
         + Clone
@@ -115,10 +115,21 @@ pub fn prove<A: ProvableAir>(
     let instances = StarkInstance::new_multiple(airs, &refs, public);
     // Preprocessed tables (programs, the byte table) are public. They are
     // committed with the deterministic setup configuration, exactly as the
-    // verifier recomputes them; committing them with the prover's hiding
-    // configuration would salt the commitment and desynchronize the transcript.
-    let data = ProverData::from_instances(VerifierConfig::setup().inner(), &instances);
-    Ok(prove_batch(cfg.inner(), &instances, &data))
+    // verifier recomputes them (`VerifierConfig::setup`, same seeds);
+    // committing them with the prover's hiding configuration would salt the
+    // commitment and desynchronize the transcript.
+    let data = ProverData::from_instances(&config::prover_setup(), &instances);
+    let p = prove_batch(cfg.inner(), &instances, &data);
+    // The prover's configuration differs from `ZkConfig` only in how its
+    // challenger grinds (config::ProverChallenger); the proof types coincide
+    // field by field.
+    Ok(Proof {
+        commitments: p.commitments,
+        opened_values: p.opened_values,
+        opening_proof: p.opening_proof,
+        lookup_terminals: p.lookup_terminals,
+        degree_bits: p.degree_bits,
+    })
 }
 
 /// Verifies `proof` against `airs` and `public`. `max_log_heights[i]` bounds the
