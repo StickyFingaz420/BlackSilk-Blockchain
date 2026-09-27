@@ -6,8 +6,11 @@
 
 mod common;
 
-use blacksilk_tx::builder::Payment;
-use blacksilk_tx::px::{check_deploy_structure, PxDeploy, Registration};
+use blacksilk_tx::builder::{max_weight, standard_fee, Payment};
+use blacksilk_tx::params::{
+    DEPLOY_FEE_PER_BYTE, FEE_PER_WEIGHT, MAX_DEPLOY_BLOCK_BYTES, MAX_PROGRAM_BYTES, PX_FEE_PER_BYTE,
+};
+use blacksilk_tx::px::{check_deploy_structure, deploy_fee, PxDeploy, Registration};
 use blacksilk_tx::px_builder::build_deploy;
 use blacksilk_tx::validate::{validate_mempool_tx, TxError};
 use blacksilk_tx::Transaction;
@@ -61,7 +64,7 @@ fn deploy(net: &mut TestNet, programs: Vec<Registration>) -> PxDeploy {
 fn check_after(net: &TestNet, d: &PxDeploy, f: impl Fn(&mut PxDeploy)) -> Result<(), TxError> {
     let mut x = d.clone();
     f(&mut x);
-    x.fee = 2 * x.min_fee();
+    x.fee = x.required_fee();
     check_deploy_structure(&x, &net.rules)
 }
 
@@ -229,4 +232,106 @@ fn a_deploy_at_the_limits_is_valid_and_one_above_is_rejected() {
 /// A second program that loads to another id than the vault: the kernel.
 fn other_elf() -> Vec<u8> {
     blacksilk_px::prove::KERNEL_ELF.to_vec()
+}
+
+// ------------------------------------------------------------------ R5-1, R6 TX-4
+
+/// The varint length of `v` (LEB128).
+fn varint_len(mut v: u64) -> u64 {
+    let mut n = 1;
+    while v >= 0x80 {
+        v >>= 7;
+        n += 1;
+    }
+    n
+}
+
+/// The fee formula written out independently of `px::deploy_fee`.
+fn expected_fee(inputs: usize, outputs: usize, programs: &[Registration]) -> u64 {
+    let mut payload = 32 + varint_len(programs.len() as u64);
+    for p in programs {
+        let b = p.budget;
+        payload += varint_len(p.elf.len() as u64) + p.elf.len() as u64;
+        for v in [
+            b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
+        ] {
+            payload += varint_len(v as u64);
+        }
+    }
+    FEE_PER_WEIGHT * max_weight(inputs, outputs) + DEPLOY_FEE_PER_BYTE * payload
+}
+
+#[test]
+fn the_deploy_fee_is_the_standard_transfer_fee_plus_the_payload_rate() {
+    assert_eq!(DEPLOY_FEE_PER_BYTE, 50);
+    assert_eq!(MAX_DEPLOY_BLOCK_BYTES, 1024 * 1024);
+    let mut net = TestNet::new(35, 80);
+    let d = deploy(&mut net, vec![vault()]);
+    assert_eq!((d.inputs.len(), d.outputs.len()), (1, 2));
+    assert_eq!(d.fee, expected_fee(1, 2, &d.programs));
+    assert_eq!(d.fee, d.required_fee());
+    assert_eq!(d.fee, deploy_fee(1, 2, &d.programs));
+    // The transfer part pays exactly what a standard transfer of the shape pays.
+    assert_eq!(
+        deploy_fee(1, 2, &[]) - DEPLOY_FEE_PER_BYTE * 33,
+        standard_fee(1, 2, &net.rules)
+    );
+    // Above the pre-v3 minimum (2 per encoded byte), and above the v1 rate
+    // for the whole encoded size.
+    let size = d.encoded_len() as u64;
+    assert!(d.fee >= PX_FEE_PER_BYTE * size);
+    assert!(d.fee >= FEE_PER_WEIGHT * size);
+    // The vault deploy costs well under 0.01 BLK; a maximal one about 0.52.
+    assert!(d.fee < 1_000_000, "{}", d.fee);
+    let big = Registration {
+        elf: vec![0; MAX_PROGRAM_BYTES],
+        budget: VAULT_BUDGET,
+    };
+    let four = vec![big.clone(), big.clone(), big.clone(), big];
+    let max_fee = deploy_fee(1, 2, &four);
+    assert!((52_000_000..54_000_000).contains(&max_fee), "{max_fee}");
+}
+
+#[test]
+fn only_the_exact_deploy_fee_is_valid() {
+    let mut net = TestNet::new(36, 80);
+    let d = deploy(&mut net, vec![vault()]);
+    let required = d.required_fee();
+    for fee in [0, 1, required - 1, required + 1, 2 * required, u64::MAX] {
+        let mut x = d.clone();
+        x.fee = fee;
+        // The required fee does not depend on the fee (no fixed point).
+        assert_eq!(x.required_fee(), required);
+        assert_eq!(
+            check_deploy_structure(&x, &net.rules),
+            Err(TxError::DeployFeeNotExact { fee, required }),
+            "fee {fee}"
+        );
+    }
+    assert!(TxError::DeployFeeNotExact {
+        fee: 0,
+        required: 1
+    }
+    .is_stateless());
+}
+
+#[test]
+fn the_payload_pays_per_byte_and_the_shape_pays_the_v1_rate() {
+    let one = [vault()];
+    let two = [
+        vault(),
+        Registration {
+            elf: other_elf(),
+            budget: VAULT_BUDGET,
+        },
+    ];
+    let with = deploy_fee(1, 2, &two);
+    let without = deploy_fee(1, 2, &one);
+    assert_eq!(with, expected_fee(1, 2, &two));
+    assert!(with - without > DEPLOY_FEE_PER_BYTE * other_elf().len() as u64);
+    for (n, k) in [(1, 2), (2, 2), (1, 16), (64, 16)] {
+        assert_eq!(deploy_fee(n, k, &one), expected_fee(n, k, &one));
+    }
+    assert!(deploy_fee(2, 2, &one) > deploy_fee(1, 2, &one));
+    assert!(deploy_fee(1, 3, &one) > deploy_fee(1, 2, &one));
 }

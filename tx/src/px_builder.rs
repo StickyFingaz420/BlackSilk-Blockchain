@@ -388,16 +388,9 @@ pub fn build_px<R: RngCore + CryptoRng>(
 }
 
 /// The fee of a deploy with `inputs` v1 inputs and `outputs` outputs that
-/// registers `programs`: the per-byte fee of an upper bound of its encoded
-/// size.
+/// registers `programs`: exactly [`crate::px::deploy_fee`], a consensus rule.
 pub fn deploy_fee(inputs: usize, outputs: usize, programs: &[crate::px::Registration]) -> u64 {
-    let payload: usize = 32
-        + 10
-        + programs
-            .iter()
-            .map(|p| p.elf.len() + 10 + 80)
-            .sum::<usize>();
-    PX_FEE_PER_BYTE * (crate::builder::max_weight(inputs, outputs) + payload as u64 + 64)
+    crate::px::deploy_fee(inputs, outputs, programs)
 }
 
 /// Builds a signed deploy registering `programs` (binary, budget), paid from

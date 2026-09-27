@@ -20,8 +20,19 @@ pub const MAX_DEPLOY_TX_SIZE: usize = 1024 * 1024;
 /// Bytes of PX and deploy transactions a block may carry, beyond the v1 weight
 /// limit (zk.md §11.1: a separate PX budget).
 pub const MAX_PX_BLOCK_BYTES: u64 = 8 * 1024 * 1024;
-/// Fee per encoded byte of PX and deploy transactions (atomic units).
+/// Fee per encoded byte of PX transactions (atomic units); it defines
+/// [`PX_STANDARD_FEE`].
 pub const PX_FEE_PER_BYTE: u64 = 2;
+/// Fee per payload byte of a deploy (salt, programs and budgets), on top of
+/// the standard v1 fee of its transfer part (`px::deploy_fee`). Registrations
+/// are permanent state, so the rate is above the v1 rate (`FEE_PER_WEIGHT`)
+/// and 25 times the PX rate (R5-1, R6 TX-4;
+/// docs/reviews/v3-upgrade-mechanism.md §7).
+pub const DEPLOY_FEE_PER_BYTE: u64 = 50;
+/// Encoded deploy bytes one block may carry, within `MAX_PX_BLOCK_BYTES`
+/// (R5-1). A block rule: it belongs in `validate_block_transactions`, which
+/// does not enforce it yet (docs/reviews/v3-upgrade-mechanism.md §7.2).
+pub const MAX_DEPLOY_BLOCK_BYTES: u64 = 1024 * 1024;
 /// The fee of every PX transaction, exactly (docs/px.md §11.5): the per-byte
 /// fee of the largest possible PX transaction. A uniform fee reveals nothing
 /// about the transaction or the wallet that built it (privacy review P-7).
@@ -31,6 +42,11 @@ pub const PX_STANDARD_FEE: u64 = PX_FEE_PER_BYTE * MAX_PX_TX_SIZE as u64;
 pub const MAX_PAYOUTS: usize = 16;
 /// Public output words a function may publish in a PX transaction.
 pub const MAX_FN_OUTPUT_WORDS: usize = 256;
+// Every valid deploy fits in a block's deploy budget, which fits in the PX budget.
+const _: () = assert!(MAX_DEPLOY_TX_SIZE as u64 <= MAX_DEPLOY_BLOCK_BYTES);
+const _: () = assert!(MAX_DEPLOY_BLOCK_BYTES <= MAX_PX_BLOCK_BYTES);
+const _: () = assert!(DEPLOY_FEE_PER_BYTE >= FEE_PER_WEIGHT);
+
 /// Programs one deploy may register, and the largest program binary.
 pub const MAX_DEPLOY_PROGRAMS: usize = 16;
 pub const MAX_PROGRAM_BYTES: usize = 256 * 1024;

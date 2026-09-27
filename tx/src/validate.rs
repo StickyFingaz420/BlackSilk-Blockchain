@@ -187,6 +187,12 @@ pub enum TxError {
     PxBudgetTooLarge {
         program: usize,
     },
+    /// A deploy's fee differs from `px::deploy_fee` for its shape and
+    /// payload (R5-1, R6 TX-4).
+    DeployFeeNotExact {
+        fee: u64,
+        required: u64,
+    },
 }
 
 impl TxError {
@@ -215,7 +221,7 @@ impl TxError {
     /// | `KeyImageSpent` | C2 | contextual | spent on this branch (or earlier in this block), possibly not on another |
     /// | `InvalidSignature` | C3 | contextual | see below |
     /// | `DuplicateOneTimeKey` | C4 | contextual | the colliding output is on this branch or earlier in this block; repeats within one transaction are caught first by T6 or `PxDuplicateOutputKey` |
-    /// | `PxShape`, `PxFeeNotStandard`, `PxInvalidProgram`, `PxBudgetTooLarge` | PX structure | stateless | the transaction alone |
+    /// | `PxShape`, `PxFeeNotStandard`, `PxInvalidProgram`, `PxBudgetTooLarge`, `DeployFeeNotExact` | PX structure | stateless | the transaction alone |
     /// | `PxDuplicateOutputKey`, `PxNullifierRepeated`, `PxDuplicateProgram` | PX structure | stateless | a repeat within the transaction |
     /// | `PxUnknownAnchor` | PX1 | contextual | the root window moves; the anchor may be recent on another branch |
     /// | `PxNullifierSpent` | PX2 | contextual | spent on this branch or earlier in this block |
@@ -262,6 +268,7 @@ impl TxError {
             | TxError::PxNullifierRepeated
             | TxError::PxDuplicateProgram { .. }
             | TxError::PxBudgetTooLarge { .. }
+            | TxError::DeployFeeNotExact { .. }
             | TxError::PxProof => true,
             TxError::UnknownRingMember { .. }
             | TxError::RingMemberTooYoung { .. }

@@ -511,7 +511,7 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
 
 | Rule | Meaning |
 |---|---|
-| Structure | Counts, sorting, identity points, range-proof shape, sizes. PX transactions: fee **exactly** `PX_STANDARD_FEE`. Deploys: fee ≥ `PX_FEE_PER_BYTE` × encoded size |
+| Structure | Counts, sorting, identity points, range-proof shape, sizes. PX transactions: fee **exactly** `PX_STANDARD_FEE`. Deploys: fee **exactly** `deploy_fee(n, k, programs) = FEE_PER_WEIGHT × max_weight(n, k) + DEPLOY_FEE_PER_BYTE × payload length` (`DeployFeeNotExact`; v3 candidate, R5-1/R6 TX-4) |
 | Balance | §11.1 (PX); the transfer rule for deploys |
 | C1–C4 | Rings, key images and one-time keys, as for transfers, including payouts |
 | PX1 | The anchor is a root of the last 100 blocks, before this block |
@@ -546,6 +546,8 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 |---|---|
 | PX transaction | ≤ `MAX_PX_TX_SIZE` = 4 MiB proof cap + 256 KiB |
 | Deploy | ≤ 1 MiB |
+| Deploy fee | Exactly the standard v1 fee of its transfer shape plus `DEPLOY_FEE_PER_BYTE` = 50 per payload byte (the vault: ~0.007 BLK; 1 MiB: ~0.52 BLK). A function of public data, so no wallet fingerprint |
+| Block deploy budget | `MAX_DEPLOY_BLOCK_BYTES` = 1 MiB of deploys per block, inside the 8 MiB PX budget. **Defined but not yet enforced**: the check belongs in `validate_block_transactions` (reviews/v3-upgrade-mechanism.md §7.2) |
 | Block PX budget | 8 MiB (about 4 PX transactions); total block ≤ `MAX_BLOCK_BYTES` = 1,000,000 + 8 MiB + 64 KiB = 9,454,144 bytes |
 | PX fee | Exactly `PX_STANDARD_FEE = PX_FEE_PER_BYTE × MAX_PX_TX_SIZE` = 8,912,896 atomic units, a consensus rule (§12). It covers the per-byte fee of any PX transaction. Consequence: every PX transaction pays the same, so the mempool's fee-per-byte ordering ranks larger ones (contract calls, ~2.5 MB) below plain transfers (~2 MB) when the PX budget is congested |
 | Relay | PX and deploy transactions together: per peer 0.2/s (burst 4); all peers together 2/s (burst 10) |

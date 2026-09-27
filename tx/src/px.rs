@@ -450,17 +450,38 @@ impl PxTx {
 
 // ---- deploy ----
 
+/// The deploy payload: salt, program count, and each program's length, ELF
+/// bytes and budget.
+fn encode_payload(salt: &[u8; 32], programs: &[Registration]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.bytes(salt);
+    w.varint(programs.len() as u64);
+    for p in programs {
+        w.varint(p.elf.len() as u64);
+        w.bytes(&p.elf);
+        write_budget(&mut w, &p.budget);
+    }
+    w.into_bytes()
+}
+
+/// The exact fee of a deploy with `inputs` v1 inputs and `outputs` outputs
+/// registering `programs` (R5-1, R6 TX-4; docs/px.md §11.3):
+///
+/// `FEE_PER_WEIGHT × max_weight(inputs, outputs) + DEPLOY_FEE_PER_BYTE × payload length`.
+///
+/// The transfer part pays exactly the standard fee of a transfer of the same
+/// shape; the payload pays per byte. Neither term depends on the fee itself,
+/// and every input is public, so the fee reveals nothing about the wallet.
+pub fn deploy_fee(inputs: usize, outputs: usize, programs: &[Registration]) -> u64 {
+    let payload = encode_payload(&[0; 32], programs).len() as u64;
+    FEE_PER_WEIGHT
+        .saturating_mul(crate::builder::max_weight(inputs, outputs))
+        .saturating_add(DEPLOY_FEE_PER_BYTE.saturating_mul(payload))
+}
+
 impl PxDeploy {
     fn payload_bytes(&self) -> Vec<u8> {
-        let mut w = Writer::new();
-        w.bytes(&self.salt);
-        w.varint(self.programs.len() as u64);
-        for p in &self.programs {
-            w.varint(p.elf.len() as u64);
-            w.bytes(&p.elf);
-            write_budget(&mut w, &p.budget);
-        }
-        w.into_bytes()
+        encode_payload(&self.salt, &self.programs)
     }
 
     pub fn prefix_bytes(&self) -> Vec<u8> {
@@ -598,8 +619,9 @@ impl PxDeploy {
             .collect()
     }
 
-    pub fn min_fee(&self) -> u64 {
-        (self.encoded_len() as u64).saturating_mul(PX_FEE_PER_BYTE)
+    /// The fee this deploy must pay, exactly ([`deploy_fee`]).
+    pub fn required_fee(&self) -> u64 {
+        deploy_fee(self.inputs.len(), self.outputs.len(), &self.programs)
     }
 }
 
@@ -760,8 +782,8 @@ pub fn budget_is_provable(b: &Budget) -> bool {
             .all(|&(x, kx)| x.checked_add(kx).is_some_and(|s| s <= max))
 }
 
-/// Structure of a deploy: the transfer rules on its v1 part, a fee covering
-/// its size, and loadable programs within their limits.
+/// Structure of a deploy: the transfer rules on its v1 part, the exact fee
+/// ([`deploy_fee`]), provable budgets, and loadable, distinct programs.
 pub fn check_deploy_structure(tx: &PxDeploy, rules: &TxRules) -> Result<(), TxError> {
     // The v1 part must be a valid transfer shape, except the fee rule, which
     // is per byte for deploys.
@@ -774,9 +796,11 @@ pub fn check_deploy_structure(tx: &PxDeploy, rules: &TxRules) -> Result<(), TxEr
     if size > MAX_DEPLOY_TX_SIZE {
         return Err(TxError::TooLarge { size });
     }
-    let required = tx.min_fee();
-    if tx.fee < required {
-        return Err(TxError::FeeTooLow {
+    // One fee per shape and payload (R6 §3.3): any other amount would
+    // fingerprint the wallet.
+    let required = tx.required_fee();
+    if tx.fee != required {
+        return Err(TxError::DeployFeeNotExact {
             fee: tx.fee,
             required,
         });
