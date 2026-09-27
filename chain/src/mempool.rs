@@ -24,10 +24,14 @@
 //!
 //! **Expiry.** A transaction leaves the pool [`MEMPOOL_EXPIRY_BLOCKS`] after
 //! the height it was admitted for, whatever its kind, and is then refused
-//! again for [`RECENTLY_EXPIRED_BLOCKS`] ([`MempoolError::Expired`]), so that
-//! no node re-injects it while other nodes still expire it (a re-injection
-//! would mark its origin). A transaction returned by a disconnected block is
-//! pooled again regardless ([`Mempool::readmit`]).
+//! again for [`RECENTLY_EXPIRED_BLOCKS`] ([`MempoolError::Expired`]) when this
+//! node's own wallet or RPC client submits it ([`Origin::Local`]), so that
+//! the node does not re-originate it while other nodes still pool it (a
+//! re-injection would mark it as the origin). Relay and stem admission
+//! ([`Origin::Peer`]) ignore the guard: a peer that admitted the transaction
+//! later is still inside its own window when the origin's ends, and a guard
+//! there would silently drop the origin's stem (RTW1B-1). A transaction
+//! returned by a disconnected block is pooled again ([`Mempool::readmit`]).
 //!
 //! **PX proofs are verified once, on admission.** After a block, pooled PX
 //! transactions are revalidated against the new state (anchor, nullifiers,
@@ -59,13 +63,29 @@ pub const COINBASE_RESERVE: u64 = 3_000;
 /// 100-block root window. Policy; see [`Mempool::expire`].
 pub const MEMPOOL_EXPIRY_BLOCKS: u64 = 2_160;
 /// Blocks during which a transaction this node expired is refused again
-/// ([`MempoolError::Expired`]): on `/tx`, on relay and on the stem. Every
-/// honest node expires a transaction within the same few blocks (it was
-/// admitted network-wide within seconds), so within this window no node
-/// re-injects it, and a wallet's re-submission cannot mark its node as the
-/// origin to a stem peer that still pools it (dossier 38 §3.4, Monero's
-/// `m_timed_out_transactions`).
+/// ([`MempoolError::Expired`]) on the local origination path only
+/// ([`Origin::Local`]: `/tx` and the wallets submitting through the node).
+/// Every honest node expires a transaction within the same few blocks (it
+/// was admitted network-wide within seconds), so within this window the
+/// origin does not re-originate it, and a wallet's re-submission cannot mark
+/// its node as the origin to a stem peer that still pools it (dossier 38
+/// §3.4, Monero's `m_timed_out_transactions`). Peers relaying or stemming it
+/// are served normally (RTW1B-1).
 pub const RECENTLY_EXPIRED_BLOCKS: u64 = 30;
+
+/// Where a transaction submitted to the pool comes from: whether the
+/// recently-expired guard ([`RECENTLY_EXPIRED_BLOCKS`]) applies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    /// Originated here: `/tx`, a wallet submitting through this node. The
+    /// guard applies.
+    Local,
+    /// From a peer (relay, stem), or a stem transaction this node fluffs:
+    /// admitted like any valid transaction. A guard here would make this
+    /// node a Dandelion black hole for an origin whose own window ended
+    /// earlier (RTW1B-1).
+    Peer,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MempoolError {
@@ -81,8 +101,8 @@ pub enum MempoolError {
     FeeTooLowForFullPool,
     /// This node expired the transaction less than
     /// [`RECENTLY_EXPIRED_BLOCKS`] blocks ago ([`MEMPOOL_EXPIRY_BLOCKS`]);
-    /// it is not admitted, relayed or stemmed again until then. Policy: the
-    /// transaction may still be valid, and no peer is penalized for it.
+    /// it is not originated here again until then ([`Origin::Local`] only).
+    /// Policy: the transaction may still be valid.
     Expired,
 }
 
@@ -101,6 +121,10 @@ struct Entry {
     /// Block weight (`Transaction::weight`, B6): a transfer's, or the v1
     /// part of a PX or deploy transaction (R12-2).
     weight: u64,
+    /// The fee templates rank by against `weight` ([`v1_part_fee`]): a
+    /// transfer's fee, or the v1 part of a deploy's (its payload term buys
+    /// no priority, RTW1B-3).
+    weight_fee: u64,
     /// Bytes against the block's PX budget (`Transaction::px_bytes`).
     px_bytes: u64,
     seq: u64,
@@ -130,12 +154,30 @@ impl Entry {
             .cmp(&(other.tx.fee() as u128 * self.cost as u128))
     }
 
-    /// Fee per block-weight unit, compared without division: the order of
-    /// transfers and deploys in templates, which compete for the same weight
-    /// (one unit, no cross-unit comparison).
+    /// v1-part fee per block-weight unit, compared without division: the
+    /// order of transfers and deploys in templates, which compete for the
+    /// same weight (one unit, no cross-unit comparison).
     fn weight_rate_cmp(&self, other: &Entry) -> std::cmp::Ordering {
-        (self.tx.fee() as u128 * other.weight as u128)
-            .cmp(&(other.tx.fee() as u128 * self.weight as u128))
+        (self.weight_fee as u128 * other.weight as u128)
+            .cmp(&(other.weight_fee as u128 * self.weight as u128))
+    }
+}
+
+/// The fee a transaction's block weight is ranked by in templates
+/// ([`Mempool::select`]): a transfer's fee; for a deploy, the v1 part of its
+/// exact fee, `rules.standard_fee(n_in, n_out)` (never more than the fee
+/// paid), without the payload term (`DEPLOY_FEE_PER_BYTE` per payload byte).
+/// The payload pays for permanent registration state, not for weight: counted
+/// here it would let every deploy with a large program outrank every
+/// standard-fee transfer, which cannot pay more (T8), and displace transfers
+/// from blocks (RTW1B-3). A PX transaction's fee (it is ranked separately, by
+/// fee per PX byte).
+fn v1_part_fee(tx: &Transaction, rules: &TxRules) -> u64 {
+    match tx {
+        Transaction::PxDeploy(t) => rules
+            .standard_fee(t.inputs.len(), t.outputs.len())
+            .map_or(0, |f| f.min(t.fee)),
+        tx => tx.fee(),
     }
 }
 
@@ -265,12 +307,13 @@ impl Mempool {
     }
 
     /// Cheap admission checks, before any validation: not a coinbase, not
-    /// pooled, not expired here recently (for inclusion at `height`), no
-    /// conflict key in use.
+    /// pooled, for a local origination not expired here recently (for
+    /// inclusion at `height`), no conflict key in use.
     fn precheck(
         &self,
         tx: &Transaction,
         height: u64,
+        origin: Origin,
     ) -> Result<(Hash, Vec<ConflictKey>), MempoolError> {
         if tx.is_coinbase() {
             return Err(MempoolError::Coinbase);
@@ -279,7 +322,7 @@ impl Mempool {
         if self.entries.contains_key(&id) {
             return Err(MempoolError::AlreadyKnown);
         }
-        if self.recently_expired(&id, height) {
+        if origin == Origin::Local && self.recently_expired(&id, height) {
             return Err(MempoolError::Expired);
         }
         let keys = conflict_keys(tx);
@@ -299,15 +342,17 @@ impl Mempool {
             .is_some_and(|&at| height < at.saturating_add(RECENTLY_EXPIRED_BLOCKS))
     }
 
-    /// Validates `tx` for inclusion at `height` without adding it. Returns its id.
+    /// Validates `tx` from `origin` for inclusion at `height` without adding
+    /// it. Returns its id.
     pub fn check(
         &self,
         tx: &Transaction,
         chain: &impl ChainView,
         height: u64,
         rules: &TxRules,
+        origin: Origin,
     ) -> Result<Hash, MempoolError> {
-        let (id, _) = self.precheck(tx, height)?;
+        let (id, _) = self.precheck(tx, height, origin)?;
         validate_mempool_tx(tx, chain, height, rules).map_err(MempoolError::Invalid)?;
         Ok(id)
     }
@@ -323,28 +368,33 @@ impl Mempool {
         self.entries.get(id).map(|e| e.admitted)
     }
 
-    /// Validates `tx` for inclusion at `height` and adds it.
+    /// Validates `tx` from `origin` for inclusion at `height` and adds it.
     pub fn add(
         &mut self,
         tx: Transaction,
         chain: &impl ChainView,
         height: u64,
         rules: &TxRules,
+        origin: Origin,
     ) -> Result<Hash, MempoolError> {
         // Under other rules than the pool's, the pool is flushed first
         // (`enter_rules`): it never mixes transactions of two rule sets.
         self.enter_rules(rules);
-        let (id, keys) = self.precheck(&tx, height)?;
+        let (id, keys) = self.precheck(&tx, height, origin)?;
         validate_mempool_tx(&tx, chain, height, rules).map_err(MempoolError::Invalid)?;
-        self.insert(id, tx, keys, height)
+        let weight_fee = v1_part_fee(&tx, rules);
+        self.insert(id, tx, keys, height, weight_fee)
     }
 
     /// [`Self::add`] for a transaction of a block this node disconnected (a
     /// reorganization returns it to the pool). It is not refused as recently
-    /// expired: it was on the best chain, so it is no re-injection by its
-    /// origin, and it is not relayed from here. It is pooled with a fresh
-    /// admission height (`height`), so it gets a full expiry window again,
-    /// and it leaves the recently-expired set.
+    /// expired ([`Origin::Peer`]): it was on the best chain, so it is no
+    /// re-injection by its origin, and it is not relayed from here. It is
+    /// pooled with a fresh admission height (`height`), so it gets a full
+    /// expiry window again, and it then leaves the recently-expired set. If
+    /// it is refused, its guard entry stays (RTW1B-5): the node's wallet
+    /// must not re-originate it early because a reorganization tried to
+    /// return it.
     pub fn readmit(
         &mut self,
         tx: Transaction,
@@ -352,8 +402,9 @@ impl Mempool {
         height: u64,
         rules: &TxRules,
     ) -> Result<Hash, MempoolError> {
-        self.expired.remove(&tx.hash());
-        self.add(tx, chain, height, rules)
+        let id = self.add(tx, chain, height, rules, Origin::Peer)?;
+        self.expired.remove(&id);
+        Ok(id)
     }
 
     /// Expires every transaction admitted at least [`MEMPOOL_EXPIRY_BLOCKS`]
@@ -387,6 +438,7 @@ impl Mempool {
         tx: Transaction,
         keys: Vec<ConflictKey>,
         admitted: u64,
+        weight_fee: u64,
     ) -> Result<Hash, MempoolError> {
         let class = class_of(&tx);
         let size = tx.encode().len();
@@ -401,6 +453,7 @@ impl Mempool {
             size,
             cost,
             weight,
+            weight_fee,
             px_bytes,
             seq: self.next_seq,
             keys,
@@ -520,7 +573,9 @@ impl Mempool {
     /// Order: PX transactions first (by fee per PX byte, then first seen;
     /// their fee is uniform), so v1 congestion cannot keep one with v1 inputs
     /// out; then transfers and deploys, which compete for the same weight, by
-    /// fee per weight, then first seen. No two units are compared.
+    /// the fee of their v1 part per weight ([`v1_part_fee`]: a deploy's
+    /// payload fee buys no priority), then first seen. No fee per byte is
+    /// compared with a fee per weight.
     ///
     /// `pool` is the PX pool before the block: PX transactions are taken
     /// only while the pool, evolving in block order, stays non-negative (each
@@ -630,10 +685,15 @@ mod tests {
         add_at(m, tx, 0)
     }
 
-    /// `add` for inclusion at `height` (the admission height).
+    fn rules() -> TxRules {
+        TxRules::for_chain(&blacksilk_consensus::ChainParams::regtest())
+    }
+
+    /// `add` from a peer for inclusion at `height` (the admission height).
     fn add_at(m: &mut Mempool, tx: Transaction, height: u64) -> Result<Hash, MempoolError> {
-        let (id, keys) = m.precheck(&tx, height)?;
-        m.insert(id, tx, keys, height)
+        let (id, keys) = m.precheck(&tx, height, Origin::Peer)?;
+        let weight_fee = v1_part_fee(&tx, &rules());
+        m.insert(id, tx, keys, height, weight_fee)
     }
 
     /// Expiry (policy): a transaction admitted for height `a` stays pooled
@@ -675,10 +735,11 @@ mod tests {
     }
 
     /// The recently-expired guard: an expired transaction is refused with
-    /// `Expired` (before its conflict keys or anything else are looked at)
-    /// for exactly `RECENTLY_EXPIRED_BLOCKS` blocks, then admitted again and
-    /// forgotten. Only that transaction: another one spending the same key
-    /// images is not refused by the guard.
+    /// `Expired` on the local origination path (before its conflict keys or
+    /// anything else are looked at) for exactly `RECENTLY_EXPIRED_BLOCKS`
+    /// blocks, then admitted again and forgotten. Only that transaction:
+    /// another one spending the same key images is not refused by the
+    /// guard. From a peer it is admitted throughout (RTW1B-1).
     #[test]
     fn an_expired_transaction_is_refused_for_the_guard_window_only() {
         let mut m = Mempool::new();
@@ -688,13 +749,18 @@ mod tests {
         assert_eq!(m.expire(e), 1);
         for h in e..e + RECENTLY_EXPIRED_BLOCKS {
             assert!(m.recently_expired(&id, h));
-            assert_eq!(m.precheck(&tx, h).map(|_| ()), Err(MempoolError::Expired));
+            assert_eq!(
+                m.precheck(&tx, h, Origin::Local).map(|_| ()),
+                Err(MempoolError::Expired)
+            );
+            assert!(m.precheck(&tx, h, Origin::Peer).is_ok(), "peers admit it");
         }
         let rebuilt = transfer(&[5], &[30, 31], 10);
         let other = add_at(&mut m, rebuilt, e + 1).unwrap();
         m.remove(&other).unwrap();
         let end = e + RECENTLY_EXPIRED_BLOCKS;
         assert!(!m.recently_expired(&id, end));
+        assert!(m.precheck(&tx, end, Origin::Local).is_ok());
         m.expire(end);
         assert!(m.expired.is_empty(), "forgotten after the window");
         assert_eq!(add_at(&mut m, tx, end), Ok(id));
@@ -723,12 +789,13 @@ mod tests {
         assert!(m.contains(&a));
         assert!(m.recently_expired(&b, 10 + e + RECENTLY_EXPIRED_BLOCKS - 21));
         assert_eq!(
-            m.precheck(&b_tx, 10 + e - 19).map(|_| ()),
+            m.precheck(&b_tx, 10 + e - 19, Origin::Local).map(|_| ()),
             Err(MempoolError::Expired)
         );
         // b was meanwhile mined on the other branch and that block is
         // disconnected: the returned transaction is admitted again, with a
-        // fresh admission height, and leaves the guard.
+        // fresh admission height, and leaves the guard once pooled
+        // (chain/tests/mempool_expiry.rs, with a valid transaction).
         let chain = blacksilk_tx::state::MemoryChain::new();
         let rules = TxRules::at_height(&blacksilk_consensus::ChainParams::regtest(), 0);
         // (A synthetic transaction fails validation; the guard is what is
@@ -737,7 +804,8 @@ mod tests {
             m.readmit(b_tx.clone(), &chain, 10 + e - 19, &rules),
             Err(MempoolError::Invalid(_))
         ));
-        assert!(!m.recently_expired(&b, 10 + e - 19));
+        // RTW1B-5: a failed readmission leaves the guard entry in place.
+        assert!(m.recently_expired(&b, 10 + e - 19));
         assert_eq!(add_at(&mut m, b_tx, 10 + e - 19), Ok(b));
         assert_eq!(m.expire(10 + e - 19 + e - 1), 1, "a expires, b does not");
         assert!(m.contains(&b) && !m.contains(&a));
@@ -778,7 +846,12 @@ mod tests {
             height: 1,
             outputs: vec![],
         });
-        assert_eq!(m.precheck(&cb, 0).map(|_| ()), Err(MempoolError::Coinbase));
+        for origin in [Origin::Local, Origin::Peer] {
+            assert_eq!(
+                m.precheck(&cb, 0, origin).map(|_| ()),
+                Err(MempoolError::Coinbase)
+            );
+        }
         // Removing it frees its conflict keys.
         m.remove(&id).unwrap();
         assert!(m.is_empty());
@@ -1199,7 +1272,8 @@ mod tests {
             let mut m = Mempool::new();
             for tx in [a.clone(), b.clone(), other.clone()] {
                 let keys = conflict_keys(&tx);
-                m.insert(tx.hash(), tx, keys, 0).unwrap();
+                let fee = tx.fee();
+                m.insert(tx.hash(), tx, keys, 0, fee).unwrap();
             }
             let sel = m.select(u64::MAX, 0, u64::MAX);
             assert_disjoint(&sel);
@@ -1580,5 +1654,117 @@ mod tests {
         assert!(admitted > 100, "{admitted}");
         assert!(conflicts > 100, "{conflicts}");
         assert!(blocks_removed > 20, "{blocks_removed}");
+    }
+
+    // ------------------------------------------------ RT-W1b (FX-RTW1B)
+
+    /// RTW1B-1. The origin admits its own transaction first (height `a`); a
+    /// stem peer admits it up to `RECENTLY_EXPIRED_BLOCKS` blocks later, so
+    /// the peer is still inside its own guard window when the origin's has
+    /// ended and the wallet's resubmission is stemmed. The peer must admit
+    /// it on the stem (and on relay) like any valid transaction: if it
+    /// answered `Expired`, `on_stem_tx` would drop it silently, a Dandelion
+    /// black hole whose embargo makes the origin fluff its own transaction.
+    /// The guard is for local origination only.
+    #[test]
+    fn rtw1b_a_later_stem_peer_admits_the_origins_reinjection() {
+        let tx = transfer(&[5], &[10, 11], 10);
+        let a = 1_000;
+        let e = MEMPOOL_EXPIRY_BLOCKS;
+        let r = RECENTLY_EXPIRED_BLOCKS;
+        let mut black_holes = Vec::new();
+        for lag in 0..=r {
+            let (mut origin, mut peer) = (Mempool::new(), Mempool::new());
+            add_at(&mut origin, tx.clone(), a).unwrap();
+            add_at(&mut peer, tx.clone(), a + lag).unwrap();
+            // Both follow the chain block by block up to the height at which
+            // the origin's guard has ended.
+            let reaccept = a + e + r;
+            for h in a..=reaccept {
+                origin.expire(h);
+                peer.expire(h);
+            }
+            assert!(
+                origin.precheck(&tx, reaccept, Origin::Local).is_ok(),
+                "origin re-admits its wallet's resubmission"
+            );
+            let at_peer = peer.precheck(&tx, reaccept, Origin::Peer).map(|_| ());
+            // The peer's own wallet is still guarded there.
+            if lag > 0 {
+                assert_eq!(
+                    peer.precheck(&tx, reaccept, Origin::Local).map(|_| ()),
+                    Err(MempoolError::Expired),
+                    "lag {lag}"
+                );
+            }
+            if at_peer == Err(MempoolError::Expired) {
+                black_holes.push(lag);
+            } else {
+                assert_eq!(at_peer, Ok(()), "lag {lag}");
+            }
+        }
+        assert_eq!(
+            black_holes,
+            Vec::<u64>::new(),
+            "peer admission lags (blocks) at which the stem peer black-holes"
+        );
+    }
+
+    /// RTW1B-3. Transfers and deploys compete for the block weight, ranked
+    /// by the fee of their v1 part per weight. A deploy's exact fee also
+    /// holds a payload term (`DEPLOY_FEE_PER_BYTE` x payload bytes) that is
+    /// not a weight and must buy no priority: with a vault-sized program,
+    /// 64-input deploys would otherwise outrank every standard-fee transfer
+    /// (which cannot pay more, T8) and displace them from templates.
+    #[test]
+    fn rtw1b_deploys_do_not_displace_standard_fee_transfers() {
+        let rules = TxRules::for_chain(&blacksilk_consensus::ChainParams::regtest());
+        // A realistic transfer: a 2-output range proof of the right length
+        // (7 rounds) and a ring of 3-byte varints (all transfers weigh the
+        // same).
+        let real_transfer = |image: u64, o: u64| {
+            let mut tx = transfer(&[image], &[o, o + 1], rules.standard_fee(1, 2).unwrap());
+            if let Transaction::Transfer(t) = &mut tx {
+                t.range_proof.l = vec![pt(3); 7];
+                t.range_proof.r = vec![pt(4); 7];
+                t.inputs[0].ring = std::array::from_fn(|j| 500_000 + 3_000 * j as u64);
+            }
+            tx
+        };
+        let elf_len = blacksilk_px::vault::VAULT_ELF.len();
+        let mut m = Mempool::new();
+        for k in 0..400u64 {
+            add(&mut m, real_transfer(100_000 + k, 200_000 + 2 * k)).unwrap();
+        }
+        for d in 0..20u64 {
+            let mut tx = deploy(0, &[300_000 + 2 * d, 300_001 + 2 * d], d as u8, 0);
+            if let Transaction::PxDeploy(t) = &mut tx {
+                t.inputs = (0..64).map(|j| input(1_000 * (d + 1) + j)).collect();
+                t.pseudo_outs = vec![pt(9); 64];
+                t.signatures = vec![clsag(); 64];
+                t.programs = vec![blacksilk_tx::px::Registration {
+                    elf: vec![d as u8; elf_len],
+                    budget: blacksilk_px::vault::BUDGET,
+                }];
+                t.fee = t.required_fee(&rules);
+            }
+            add(&mut m, tx).unwrap();
+        }
+        let budget = rules.max_block_weight - COINBASE_RESERVE;
+        let tw = real_transfer(1, 2).weight();
+        let sel = m.select(budget, 0, u64::MAX);
+        let is_deploy = |t: &&Transaction| matches!(t, Transaction::PxDeploy(_));
+        let deploys = sel.iter().filter(is_deploy).count();
+        let transfers = (sel.len() - deploys) as u64;
+        assert_eq!(
+            transfers,
+            (budget / tw).min(400),
+            "transfers of weight {tw} fill the budget first ({deploys} deploys)"
+        );
+        let first_deploy = sel.iter().position(|t| is_deploy(&t)).unwrap_or(sel.len());
+        assert!(
+            sel[first_deploy..].iter().all(|t| is_deploy(&t)),
+            "transfers rank above deploys"
+        );
     }
 }

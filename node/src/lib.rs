@@ -399,7 +399,8 @@ async fn submit_tx(
     // instead of being broadcast from this node directly.
     let result = match net {
         Some(n) => n.submit_tx(tx).await,
-        None => tokio::task::spawn_blocking(move || lock(&s).submit_tx(tx))
+        // Local origination: the recently-expired guard applies (RTW1B-1).
+        None => tokio::task::spawn_blocking(move || lock(&s).submit_local_tx(tx))
             .await
             .map_err(internal)?
             .map_err(|e| format!("{e:?}")),

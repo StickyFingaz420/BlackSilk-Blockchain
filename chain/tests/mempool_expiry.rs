@@ -1,9 +1,10 @@
 //! Mempool expiry and the recently-expired guard through the chain manager
 //! (policy; docs/blocks.md §7; dossiers 12 P3 and 38 §3.4): a transaction
 //! pooled for `MEMPOOL_EXPIRY_BLOCKS` leaves the pool, is refused as
-//! `Expired` on every admission path for `RECENTLY_EXPIRED_BLOCKS`, and is
-//! admitted again afterwards. A reorganization returning it from a
-//! disconnected block pools it again, with a fresh admission height.
+//! `Expired` on the local origination paths for `RECENTLY_EXPIRED_BLOCKS`
+//! while peers' relay and stem admit it (RTW1B-1), and is admitted again
+//! afterwards. A reorganization returning it from a disconnected block pools
+//! it again, with a fresh admission height, and clears its guard entry.
 
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{ChainManager, Template};
@@ -182,12 +183,16 @@ fn a_pooled_transaction_expires_is_guarded_and_comes_back_after_a_reorganization
     assert!(!m.mempool().contains(&id), "expired at admission + 2160");
     assert!(m.mempool().is_empty());
 
-    // The guard: refused on the fluff/RPC path and on the stem path, for
-    // RECENTLY_EXPIRED_BLOCKS blocks.
-    assert_eq!(m.submit_tx(tx.clone()), Err(MempoolError::Expired));
-    assert_eq!(m.check_tx(&tx), Err(MempoolError::Expired));
+    // The guard: refused on the local origination paths (`/tx` with and
+    // without P2P) for RECENTLY_EXPIRED_BLOCKS blocks; a peer's relay or
+    // stem is admitted (RTW1B-1: no Dandelion black hole).
+    assert_eq!(m.submit_local_tx(tx.clone()), Err(MempoolError::Expired));
+    assert_eq!(m.check_local_tx(&tx), Err(MempoolError::Expired));
+    assert_eq!(m.check_tx(&tx), Ok(id), "RTW1B-1: the stem path admits it");
     miner.mine_until_next(&mut m, expiry + RECENTLY_EXPIRED_BLOCKS - 5);
-    assert_eq!(m.submit_tx(tx.clone()), Err(MempoolError::Expired));
+    assert_eq!(m.submit_local_tx(tx.clone()), Err(MempoolError::Expired));
+    assert_eq!(m.check_tx(&tx), Ok(id));
+    assert!(m.mempool().is_empty(), "checks add nothing");
 
     // Reorganization: a block that still carries the transaction (mined by
     // a node that never expired it) connects, then a heavier branch from
@@ -209,6 +214,10 @@ fn a_pooled_transaction_expires_is_guarded_and_comes_back_after_a_reorganization
     );
     assert!(m.mempool().contains(&id), "returned and readmitted");
     assert_eq!(m.mempool().admitted_at(&id), Some(next));
+    assert!(
+        !m.mempool().recently_expired(&id, next),
+        "a successful readmission clears the guard entry"
+    );
     assert!(!m.state().is_key_image_spent(&tx.key_images()[0]));
 
     // It is mined normally from the pool.

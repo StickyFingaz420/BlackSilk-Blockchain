@@ -22,7 +22,7 @@
 
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{ChainManager, Template};
-use blacksilk_chain::mempool::{conflict_keys, Mempool};
+use blacksilk_chain::mempool::{conflict_keys, Mempool, Origin};
 use blacksilk_chain::store::{BlockStore, MemoryStore};
 use blacksilk_consensus::merkle::tx_root;
 use blacksilk_consensus::{BlockHeader, ChainParams, Hash, PowFunction, HEADER_VERSION};
@@ -391,9 +391,9 @@ fn an_output_key_copied_by_another_mined_transaction_leaves_the_victim_valid() {
 
     // An isolated pool holding the victim and the control.
     let mut pool = Mempool::new();
-    pool.add(victim.clone(), m.state(), next, m.rules())
+    pool.add(victim.clone(), m.state(), next, m.rules(), Origin::Peer)
         .unwrap();
-    pool.add(control.clone(), m.state(), next, m.rules())
+    pool.add(control.clone(), m.state(), next, m.rules(), Origin::Peer)
         .unwrap();
 
     // The attacker mines `forged` directly (not from any pool).
@@ -452,7 +452,10 @@ fn a_plain_extension_keeps_valid_transactions() {
     for nth in 0..3 {
         let plan = plan_where(&m, &miner.keys, |o| o.height == 1 + nth, &mut rng);
         let tx = Transaction::from(pay(&m, &miner.keys, &alice, plan, &mut rng));
-        ids.push(pool.add(tx, m.state(), next, m.rules()).unwrap());
+        ids.push(
+            pool.add(tx, m.state(), next, m.rules(), Origin::Peer)
+                .unwrap(),
+        );
     }
     // An unrelated transfer mined in a block.
     let plan = plan_where(&m, &miner.keys, |o| o.height == 10, &mut rng);
@@ -503,11 +506,11 @@ fn replacing_coinbase_only_blocks_changes_a_ring_and_needs_full_validation() {
     m.submit_tx(tx.clone()).unwrap();
     let mut ext_pool = Mempool::new();
     ext_pool
-        .add(tx.clone(), m.state(), next, m.rules())
+        .add(tx.clone(), m.state(), next, m.rules(), Origin::Peer)
         .unwrap();
     let mut full_pool = Mempool::new();
     full_pool
-        .add(tx.clone(), m.state(), next, m.rules())
+        .add(tx.clone(), m.state(), next, m.rules(), Origin::Peer)
         .unwrap();
 
     // A rival branch of coinbase-only blocks from before `x_height`, one
@@ -581,11 +584,11 @@ fn a_shorter_heavier_reorg_makes_a_ring_member_immature() {
     m.submit_tx(tx.clone()).unwrap();
     let mut ext_pool = Mempool::new();
     ext_pool
-        .add(tx.clone(), m.state(), old_next, m.rules())
+        .add(tx.clone(), m.state(), old_next, m.rules(), Origin::Peer)
         .unwrap();
     let mut full_pool = Mempool::new();
     full_pool
-        .add(tx.clone(), m.state(), old_next, m.rules())
+        .add(tx.clone(), m.state(), old_next, m.rules(), Origin::Peer)
         .unwrap();
 
     rival.mine_on(&mut m, fork_parent, 3, Some(1));

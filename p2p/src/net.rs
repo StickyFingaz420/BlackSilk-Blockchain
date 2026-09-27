@@ -182,12 +182,15 @@ impl Network {
     }
 
     /// Submits a locally created transaction: validated, then sent into the
-    /// Dandelion++ stem (docs/p2p.md §8).
+    /// Dandelion++ stem (docs/p2p.md §8). The only origination path, so the
+    /// only one refusing a transaction this node expired recently
+    /// (`MempoolError::Expired`, `ChainManager::check_local_tx`); peers'
+    /// transactions are relayed and stemmed regardless (RTW1B-1).
     pub async fn submit_tx(&self, tx: Transaction) -> Result<Hash, String> {
         let tx2 = tx.clone();
         let id = self
             .inner
-            .with_chain(move |c| c.check_tx(&tx2))
+            .with_chain(move |c| c.check_local_tx(&tx2))
             .await
             .map_err(|e| format!("{e:?}"))?;
         stem_or_fluff(&self.inner, tx, id, Source::Local).await;
