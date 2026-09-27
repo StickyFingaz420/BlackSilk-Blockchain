@@ -364,6 +364,11 @@ Following Fanti et al., "Dandelion++" (SIGMETRICS 2018), with Monero's parameter
     stem as soon as an outbound peer exists. If none appears before its embargo
     fires, it is fluffed then. Before 2026-09-27 it was fluffed at once, showing
     every connected (inbound) spy where it came from.
+  - A transaction this node expired from its mempool fewer than 30 blocks ago is
+    refused here (`Expired`, the recently-expired guard, blocks.md §7). This is the
+    only place the guard applies: a `StemTx` or relayed `Tx` from a peer is admitted
+    whether or not this node expired it recently, so a stem peer whose window is
+    later than the origin's does not drop the origin's stem (RTW1B-1).
 - **Receiving a `StemTx`.**
   - One that conflicts with a stem transaction (a shared key image or nullifier) is
     dropped first, before any verification: first seen wins, and valid

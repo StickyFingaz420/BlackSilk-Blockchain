@@ -91,6 +91,9 @@ impl MemoryChain {
     /// that need a PX state no sequence of blocks can reach in a test, such
     /// as a tree near capacity (`blacksilk_px::state::State::
     /// with_uniform_tree_for_tests`, `test-hooks` feature of `blacksilk-px`).
+    /// Not in release builds (RTW1B-8): a chain state that skips block
+    /// application must not be constructible outside tests.
+    #[cfg(any(test, feature = "test-hooks"))]
     #[doc(hidden)]
     pub fn with_px_state(px: PxState) -> Self {
         Self {

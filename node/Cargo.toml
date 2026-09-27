@@ -44,5 +44,7 @@ toml = "0.8"
 
 [dev-dependencies]
 blacksilk-crypto = { path = "../crypto" }
+# Fault injection for the halt exit-status test (tests/halt_exit.rs).
+blacksilk-chain = { path = "../chain", features = ["test-hooks"] }
 rand_chacha = { version = "0.3", default-features = false }
 tempfile = "3"

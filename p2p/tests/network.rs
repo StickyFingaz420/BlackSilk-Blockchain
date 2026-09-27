@@ -122,8 +122,17 @@ impl TestNode {
 
     /// Mines one block on the local tip (with mempool transactions).
     fn mine(&mut self, nonce: u64) -> Block {
+        self.mine_with(nonce, true)
+    }
+
+    /// Mines one block on the local tip, with the mempool's transactions
+    /// only if `with_pool`.
+    fn mine_with(&mut self, nonce: u64, with_pool: bool) -> Block {
         let mut c = self.chain.lock().unwrap();
-        let t = c.template();
+        let mut t = c.template();
+        if !with_pool {
+            t.txs.clear();
+        }
         let fees: u64 = t.txs.iter().map(Transaction::fee).sum();
         let cb = build_coinbase(
             t.height,
@@ -2935,4 +2944,48 @@ async fn an_old_epoch_unknown_version_header_triggers_no_cache_build() {
     assert_eq!(old_cost, 0, "an old-epoch key was hashed");
     assert_eq!(tip_cost, 1, "the current key is hashed");
     assert_eq!(a.net.peers()[0].score, 0);
+}
+
+/// RTW1B-1: the recently-expired guard applies to local origination only.
+/// A node that expired a transaction refuses it from its own wallet (`/tx`,
+/// `Network::submit_tx`) for `RECENTLY_EXPIRED_BLOCKS`, but a peer stemming
+/// it (the origin, whose own guard ended earlier because it admitted the
+/// transaction earlier) is served like any valid transaction: the node
+/// stems or fluffs it instead of dropping it, so the stem is no black hole
+/// that makes the origin fluff its own transaction after the embargo.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_recently_expired_transaction_is_stemmed_for_a_peer_but_not_originated() {
+    use blacksilk_chain::mempool::MEMPOOL_EXPIRY_BLOCKS;
+    let mut b = node(72, &[]).await;
+    b.mine_n(80, 0);
+    let tx = b.payment();
+    let id = tx.hash();
+    // Pooled from a peer at next height 81, then expired 2 160 blocks later
+    // (empty blocks: the transaction is never mined).
+    b.chain.lock().unwrap().submit_tx(tx.clone()).unwrap();
+    while b.height() + 1 < 81 + MEMPOOL_EXPIRY_BLOCKS {
+        b.mine_with(0, false);
+    }
+    assert!(!b.mempool_has(&id), "expired");
+    let next = b.height() + 1;
+    assert!(b
+        .chain
+        .lock()
+        .unwrap()
+        .mempool()
+        .recently_expired(&id, next));
+    // Its own wallet cannot originate it again inside the window.
+    let refused = b.net.submit_tx(tx.clone()).await.unwrap_err();
+    assert!(refused.contains("Expired"), "{refused}");
+    assert!(!b.net.stempool_contains(&id) && !b.mempool_has(&id));
+    // A peer stems it: served, not dropped, and the peer is not penalized.
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(b.addr, nid, true).await;
+    wait_until("peer registered", 5, || b.net.stats().peers == 1).await;
+    send_and_sync(&mut r, &mut w, &[Message::StemTx(tx.encode()).encode()], 1).await;
+    wait_until("the stem peer relays it", 10, || {
+        b.net.stempool_contains(&id) || b.mempool_has(&id)
+    })
+    .await;
+    assert_eq!(b.net.peers()[0].score, 0);
 }

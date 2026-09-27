@@ -81,6 +81,27 @@ fn lock(shared: &Shared) -> MutexGuard<'_, ChainManager> {
 pub const STORE_FAILED_EXIT: &str = "block store write failed: free disk space / check the disk, \
      then restart the node; it resumes from the last stored block (docs/testnet.md §9)";
 
+/// Exit status of a node that stopped because a block that passed
+/// validation failed to apply ([`ChainManager::apply_halted`]): a bug in this
+/// node, and deterministic, so a restart replays into the same failure. The
+/// systemd unit lists it in `RestartPreventExitStatus` so that the node is
+/// not restarted in a loop (docs/testnet.md, RTW1B-4). 65 is `EX_DATAERR`
+/// (sysexits.h); other failures exit 1, a configuration error 2, a poisoned
+/// chain lock [`POISONED_EXIT_CODE`].
+pub const HALT_EXIT_CODE: i32 = 65;
+const _: () = assert!(HALT_EXIT_CODE != POISONED_EXIT_CODE && HALT_EXIT_CODE > 2);
+
+/// The exit status of a node stopped by [`watch_store`]:
+/// [`HALT_EXIT_CODE`] for an apply failure, 1 for a failed block store
+/// (which a restart may recover from once the disk is fixed).
+pub fn halt_exit_code(shared: &Shared) -> i32 {
+    if lock(shared).apply_halted() {
+        HALT_EXIT_CODE
+    } else {
+        1
+    }
+}
+
 /// Resolves once the chain manager has halted ([`ChainManager::halted`]):
 /// its block store failed persistently, or a block that passed validation
 /// failed to apply. Checked every `period` on a plain thread. A halted node
@@ -399,7 +420,8 @@ async fn submit_tx(
     // instead of being broadcast from this node directly.
     let result = match net {
         Some(n) => n.submit_tx(tx).await,
-        None => tokio::task::spawn_blocking(move || lock(&s).submit_tx(tx))
+        // Local origination: the recently-expired guard applies (RTW1B-1).
+        None => tokio::task::spawn_blocking(move || lock(&s).submit_local_tx(tx))
             .await
             .map_err(internal)?
             .map_err(|e| format!("{e:?}")),

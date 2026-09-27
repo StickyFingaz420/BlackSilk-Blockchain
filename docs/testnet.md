@@ -174,6 +174,17 @@ journalctl -u blacksilk-node -f                          # logs
 
 The units in `deploy/systemd/` run as an unprivileged `blacksilk` user with a
 read-only system, and can write only `/var/lib/blacksilk`. Open TCP 29334 inbound.
+
+**Exit statuses.** The node exits 0 after a clean shutdown, 2 on a configuration error,
+70 when a panic poisoned its chain lock (a restart replays the store and recovers), 65
+when a block that passed validation failed to apply (a bug in the node, blocks.md §6),
+and 1 on any other error (a failed block store included). The node unit restarts on
+failure but not on 65 (`RestartPreventExitStatus=65`): a restart replays into the same
+failure. The constants are `HALT_EXIT_CODE` and `POISONED_EXIT_CODE` in
+`node/src/lib.rs`. Known gap: if the node is started again by hand after a 65, the
+replay reaches the same block at start-up and currently exits 1, which the unit does
+restart every 10 s; stop the unit (`systemctl stop blacksilk-node`) and report the
+block the log names (§9).
 Never expose port 29333 (§11).
 
 **RPC credential.** At every start the node writes a fresh random credential to
@@ -442,6 +453,7 @@ process's log.
 | `WARN … reorganization: disconnecting N block(s)` | A reorganization of 10 or more blocks: follow docs/testnet-incident-response.md |
 | `block store: … corrupt record at offset … followed by valid data` at start | Real corruption in `blocks.dat`, or (rarely) a crash while writing a block whose data contains a record-shaped byte string; a plain crash is repaired by the node itself. Back up the data directory, then start once with `--repair-store` (logged as a warning; remove the flag afterwards): the damaged part moves to `blocks.dat.damaged-<time>` and the node downloads the dropped blocks again (docs/blocks.md §8) |
 | The node exits with `block store write failed: free disk space / check the disk` | Several block writes in a row failed, or one could not be undone: the disk is full or failing. The node stops instead of re-downloading bodies it cannot store. Free space or fix the disk, then restart; it resumes from the last stored block |
+| The node exits with status 65 and `applying block … at height …, which passed validation, failed` | A bug in the node: a valid block did not apply. The block is not marked invalid, and systemd does not restart the node (§4.2). Keep the data directory and the log, report the block id, and do not restart in a loop: the same block fails again |
 | `SubmitError::Store` in the log, node still running | A single failed block write, undone; the block is downloaded again. Repeated failures stop the node (row above) |
 | `N stored block(s) without a stored parent were not replayed` at start | After a failed write: harmless, the node downloads them again |
 | `N stored block(s) descend from blocks found invalid` at start | Harmless: blocks refused before the restart are refused again |

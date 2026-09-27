@@ -133,9 +133,12 @@ panicking; block validation rejects every block that would fail to apply (for ex
 B8, the PX tree capacity). A block that passed validation and still fails to apply is
 therefore a bug in this node: the manager halts (`ChainManager::halted`), logs the
 block, does **not** mark it invalid, connects nothing more and refuses every further
-block (`SubmitError::Halted`), and the node stops. A restart replays the store and tries
-the block again (docs/reviews/v3-consensus-changes.md#tree-capacity; dossier 48 F48-5:
-never auto-invalidate).
+block (`SubmitError::Halted`), and the node stops with exit status 65
+(`HALT_EXIT_CODE`, node/src/lib.rs; other failures exit 1). A restart replays the store
+and tries the block again; a real apply bug fails the same way again, so the systemd
+unit does not restart on status 65 (`RestartPreventExitStatus`, docs/testnet.md §4.2)
+(docs/reviews/v3-consensus-changes.md#tree-capacity; dossier 48 F48-5: never
+auto-invalidate).
 
 There is no set of used one-time keys: output one-time keys may repeat across
 transactions (transactions.md §8.2; removed for the v3 genesis,
@@ -236,9 +239,14 @@ Transactions from disconnected blocks return to the mempool if they are still va
   part of PX and deploy transactions (R12-2), and PX and deploy transactions also
   against the PX budget and deploys against the deploy sub-budget, so a template never
   breaks B6. Order: PX transactions first (their fee is uniform; v1 congestion cannot
-  keep one with v1 inputs out), then transfers and deploys by descending fee per weight
-  (one unit for both; no fee per byte is compared with a fee per weight). Tested with
-  randomized pools of every kind (`templates_respect_both_budgets_for_every_kind`).
+  keep one with v1 inputs out), then transfers and deploys by descending fee of their v1
+  part per weight: a transfer's fee, a deploy's `standard_fee(n_in, n_out)`. A deploy's
+  payload fee (`DEPLOY_FEE_PER_BYTE` per payload byte) pays for permanent registration
+  state and buys no priority: ranked by its whole fee per weight, every deploy with a
+  large program outranked every standard-fee transfer, which cannot pay more (T8), and
+  displaced transfers from blocks (RTW1B-3). Tested with randomized pools of every kind
+  (`templates_respect_both_budgets_for_every_kind`) and with vault-sized 64-input deploys
+  against standard-fee transfers (`rtw1b_deploys_do_not_displace_standard_fee_transfers`).
 - **Expiry** (`MEMPOOL_EXPIRY_BLOCKS = 2 160`, about 3 days at 120 s, Monero's pool
   lifetime). A transaction leaves the pool once the next block's height reaches the
   height it was admitted for plus 2 160, whatever its kind, deploys included (one value
@@ -247,24 +255,38 @@ Transactions from disconnected blocks return to the mempool if they are still va
   admission height: there is no expiry field in transactions (a per-wallet value would
   fingerprint the wallet; Zcash's ZIP 203 field is rejected for that reason).
   - **Recently-expired guard** (`RECENTLY_EXPIRED_BLOCKS = 30`). For 30 blocks after
-    expiring a transaction, the node refuses that transaction (by id) on `/tx`, on
-    relay and on the stem, with `MempoolError::Expired`, and does not stem or relay it
-    (no peer is penalized: the transaction may be valid). Honest nodes admitted it
-    within seconds of each other, so they expire it within the same few blocks; while
-    any of them still pools it, none re-injects it. Without the guard, a wallet
-    resubmitting its pending transaction at the block its own node expires it would
-    re-stem it to a peer that still pools it, marking the node as the origin (dossier
-    38 §3.4; Monero's `m_timed_out_transactions`). Another transaction spending the
-    same inputs is not refused by the guard.
+    expiring a transaction, the node refuses that transaction (by id) when it would
+    originate it: on `/tx` (with P2P, before it enters the stem; without, before the
+    pool), with `MempoolError::Expired` (`mempool::Origin::Local`). Without the guard, a
+    wallet resubmitting its pending transaction at the block its own node expires it
+    would re-stem it to a peer that still pools it, marking the node as the origin
+    (dossier 38 §3.4; Monero's `m_timed_out_transactions`). Another transaction
+    spending the same inputs is not refused by the guard.
+  - Relay and stem admission do **not** apply the guard (`Origin::Peer`): a node
+    admits a peer's transaction it expired recently like any valid transaction. Nodes
+    expire a transaction up to the spread of their admission heights apart, so a stem
+    peer that admitted it later than the origin is still inside its own window when
+    the origin's ends; refusing it there would drop the origin's stem silently (a
+    Dandelion black hole), and the origin would fluff its own transaction when its
+    embargo fires (RTW1B-1, `rtw1b_a_later_stem_peer_admits_the_origins_reinjection`,
+    `a_recently_expired_transaction_is_stemmed_for_a_peer_but_not_originated`). What
+    the guard does not cover: the entries are not persisted, so a node restarted inside
+    the window can re-originate the transaction to a peer that still pools it; the
+    originated set (dossier 33 W2) and the wallet rebroadcast redesign (dossier 38 W4)
+    are the planned remedies, and no privacy claim about expiry and resubmission rests
+    on this guard alone.
   - After a reorganization to a lower height, expiry and the guard count against the
     new height: nothing expires early, and the guard lasts longer, never shorter.
   - A transaction returned by a disconnected block is pooled again even inside the
     guard window, with a fresh admission height (`Mempool::readmit`): it was on the
-    best chain, so this is no re-injection by its origin.
+    best chain, so this is no re-injection by its origin. Its guard entry is cleared
+    only if it is pooled; if it is refused, the entry stays (RTW1B-5).
   - Tested: `chain/src/mempool.rs` unit tests (expiry at exactly 2 160 for every kind,
-    the guard window at both ends, reorganizations) and
+    the guard window at both ends and on the local path only, reorganizations),
     `chain/tests/mempool_expiry.rs` (through the chain manager, with a real transfer:
-    expiry, `Expired` on the fluff and stem paths, and the return by a reorganization).
+    expiry, `Expired` on the local paths, admission on the stem path, and the return by
+    a reorganization) and `p2p/tests/network.rs` (a peer's stem is relayed while the
+    node's own `/tx` path refuses the transaction).
 - After every change of the connected chain, the pool:
   - removes confirmed transactions and every pooled transaction conflicting with them;
   - expires transactions pooled for 2 160 blocks (above);

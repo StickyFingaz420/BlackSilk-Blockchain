@@ -20,6 +20,12 @@ bs58 = "0.5"
 crc32fast = "1.4"
 log = "0.4"
 
+[features]
+# Test-only fault injection (`ChainManager::fail_next_apply_for_tests`, for
+# the node's halt exit-status test). Never enabled in a release build: only
+# dev-dependencies turn it on.
+test-hooks = ["blacksilk-tx/test-hooks"]
+
 [dev-dependencies]
 tempfile = "3"
 # Fault injection for the apply-failure halt test (manager unit tests).
