@@ -1,7 +1,21 @@
 # BlackSilk Confidential Contracts Specification
 
+> **Status banner (2026-09-27). This Wasm contract system is NOT integrated into the
+> chain and is not part of consensus on any network.**
+> - **Transaction kinds 2 and 3 are taken:** in consensus they are the PX transaction
+>   and the PX private-contract deploy (px.md §11), rules from genesis in the code
+>   (testnet v2, not yet launched, is the first network to run them).
+>   The kind numbers this document assigns to Wasm calls and deploys (§5) therefore
+>   conflict; integrating this system needs new kind numbers (for example 4 and 5) and
+>   a revised §5. That is an open design decision for the owner.
+> - M1 (cryptography) and M2 (engine and state) are implemented and tested in the
+>   `contracts/` and `crypto/` crates; M3 (chain integration) to M6 are not done.
+> - What exists, what is missing and the known findings (C-1 to C-5, K-1):
+>   [`reviews/contracts-completion-assessment.md`](reviews/contracts-completion-assessment.md).
+> - All review is internal; no external audit.
+
 Status: **v0.2: model approved (2026-09-23), implementation in progress.**
-- M1 (cryptography) is implemented and reviewed:
+- M1 (cryptography) is implemented and internally reviewed:
   [`reviews/contracts-crypto-review.md`](reviews/contracts-crypto-review.md).
 - Nothing in this document is consensus until it is implemented, tested and activated
   at a height (§18).
@@ -140,8 +154,8 @@ has all of the following:
 - no trusted setup, no trusted hardware, and no assumptions beyond those of the payment
   layer.
 
-"As far as we know" is not proof. The external review (§16.4) should include a
-prior-art check. We make no claim to being "first", and we will not until that check is
+"As far as we know" is not proof. An external review, if one were engaged (§16.4),
+should include a prior-art check. We make no claim to being "first", and we will not until that check is
 done.
 
 ---
@@ -205,6 +219,10 @@ membership proofs (§7.2).
 ---
 
 ## 5. Transaction formats
+
+> **Conflict (2026-09-27):** kinds 2 and 3 are already consensus rules for PX (px.md
+> §11). The numbers below must be changed before this system is integrated (see the
+> status banner).
 
 Encoding primitives, strict decoding and the no-optional-fields rule are those of
 transactions.md §4.1. Two new kinds are valid after activation (§18):
@@ -407,8 +425,9 @@ unless DL is broken. So a note can be consumed only by someone who knows its ope
   own address, so that `e` contains a mask only the builder knows.
 
 These claims are arguments, not proofs. The formal reduction for Claim 2 must go
-through FOS19's knowledge-soundness framework with BP+ extractability. It is listed for
-the external review (§16.4).
+through FOS19's knowledge-soundness framework with BP+ extractability. It has not been
+done; it is listed among the items for an external review, should one be engaged
+(§16.4).
 
 ---
 
@@ -512,11 +531,21 @@ verified before execution. The contract sees only verified statements.
 - fuel metering on;
 - eager compilation;
 - floats disabled in the engine as well;
-- wasmi's strict parsing limits (`EnforcedLimits::strict`).
+- wasmi's strict limits (`EnforcedLimits::strict()`), which are **part of the module
+  rule** because a module that exceeds them fails to compile at deploy. In wasmi
+  0.38.0 they are: ≤ 1,000 globals, ≤ 10,000 functions, ≤ 100 tables, ≤ 1 memory,
+  ≤ 1,000 data segments and ≤ 1,000 element segments, ≤ 32 parameters and ≤ 32
+  results per function type, and, once the function bodies total at least 1,000
+  bytes, an average body size of at least 40 bytes. The globals limit is tighter than
+  this section's 1,024 (so the effective limit is 1,000); the segment counts, the
+  parameter and result counts and the average-body-size rule add limits this section
+  does not state; the function, table and memory limits are looser than this
+  section's.
 
 **Why 0.38.0 and not the newest (2.0.0):**
-- 0.38.0 is the newest release covered by an external audit (Runtime Verification,
-  2024-11, for versions 0.36–0.38).
+- 0.38.0 is the newest release covered by a published external audit, according to
+  wasmi's own README (2.0.0): Runtime Verification, report dated 2024-11-27, for
+  versions 0.36–0.38. We have not read or verified the report.
 - It is not affected by either published advisory:
   - CVE-2024-28123 affects ≤ 0.31.0;
   - CVE-2025-66627, a use-after-free on memory growth, affects 0.41.0–1.0.0.
@@ -627,9 +656,12 @@ the note's position among all consumed (or all created) notes of the transaction
 **Instructions:**
 - Wasm instructions cost wasmi 0.38.0's fuel schedule, which is part of consensus
   through the exact version pin (§16.3):
-  - 1 unit per executed instruction;
-  - bulk operations (`memory.grow`, `memory.copy`, `memory.fill`) additionally cost 1
-    unit per 64 bytes.
+  - 1 unit per executed **wasmi IR** instruction (wasmi compiles Wasm to its own
+    register-based IR, so the count is not the number of Wasm instructions);
+  - plus register-copy costs: 1 unit per 8 registers copied (64 bytes) for calls'
+    parameter passing, multi-value copies and returns, and table operations;
+  - bulk memory operations (`memory.grow`, `memory.copy`, `memory.fill`,
+    `memory.init`) additionally cost 1 unit per 64 bytes.
 - **Instantiating** a module, at top level or in a nested call, costs 1 unit per code
   byte.
 - A golden test pins the exact fuel of a reference call (1 807 units), so any change of
@@ -935,7 +967,7 @@ They can be recovered from the seed.
 | S6 | Replay a claim or membership proof in another transaction | Proofs bound to `sig_message` / `claims_hash` |
 | S7 | Vote twice anonymously | Contract stores the scope tag; same key gives same tag |
 | S8 | Frame another member's tag | Non-frameability of the linkable ring signature |
-| S9 | Float NaN or engine nondeterminism | Floats rejected at deploy; `deterministic` feature; state root in every block |
+| S9 | Float NaN or engine nondeterminism | Floats rejected at deploy and disabled in the engine (`Config::floats(false)`); the exact wasmi version, feature set and limits pinned (§16.3); state root in every block. (wasmi 0.38.0 has no `deterministic` feature, which an earlier version of this row cited.) |
 | S10 | Infinite loop, memory bomb, deep recursion | Fuel; 2 MiB memory; wasmi stack limits (pinned) |
 | S11 | State bloat | Storage fees, per-call, block and contract caps |
 | S12 | Mempool CPU exhaustion via calls that become invalid before inclusion | Pool size and per-contract caps (§13); re-execution is fuel-bounded; stateless-invalid calls are penalized at relay. **Residual risk:** calls that are valid alone but conflict cost CPU without paying fees. M6 measures this under labnet load. |
@@ -950,12 +982,19 @@ They can be recovered from the seed.
   - It is a pure-Rust interpreter with no JIT, so there is no generated machine code.
   - It is maintained by wasmi-labs, and used by Substrate/Polkadot and, as a fork, by
     Stellar's Soroban.
-  - Version 0.38.0 is covered by an external audit and has no known advisory (§9.1).
+  - Version 0.38.0 is reported by wasmi's README to be covered by an external audit
+    (not verified by us), and has no known advisory (§9.1).
 - **Its internal `unsafe`** is outside our `forbid(unsafe_code)` rule: 120 occurrences
-  in wasmi 0.38.0's own sources, in executor and memory hot paths. We rely on the
-  external audit for it and have **not** reviewed it line by line. This is recorded as
-  an open item in AUDIT.md R7, and our fuzzing of the engine through the host API is
-  planned for M6.
+  in wasmi 0.38.0's own sources, in executor and memory hot paths. We have **not**
+  reviewed it: M2's review of the wasmi dependency is not done, and the upstream audit
+  is the only outside scrutiny, unverified by us. This is recorded as an open item in
+  AUDIT.md R7.
+- **Engine fuzzing exists:** the coverage-guided target `contract_sequence` drives
+  the engine through the host API with deploys, calls, block ends and rollbacks, and
+  checks determinism between two executor instances in one process, fuel and storage
+  limits, rollback and replay (4 hours, 0 crashes; AUDIT.md). `wasm_module` fuzzes the
+  module profile check (6 hours, 0 crashes). Neither is a cross-platform or
+  second-implementation test.
 - **Consensus pins everything that affects results:**
   - the version (`=0.38.0`) and its parser (`wasmparser-nostd =0.100.2`);
   - the feature set;
@@ -967,7 +1006,7 @@ They can be recovered from the seed.
 - **The state root in every block** turns any residual nondeterminism into an
   immediately detected block rejection, rather than a silent fork.
 
-### 16.4 External review items
+### 16.4 External review items (if a reviewer were engaged; none is, owner decision 2026-09-25)
 
 - The kernel argument (§6.3), especially Claim 2's extractability argument with BP+.
 - The fixed-base linkable ring signature (§7.2).
@@ -1020,7 +1059,9 @@ They can be recovered from the seed.
   - or the contracts ship with a **testnet reset** (new network id and genesis), if the
     multi-machine trial leads to a reset anyway.
 
-The choice is made at release time. Mainnet requires the external review (§16.4).
+The choice is made at release time. (This section originally required the external
+review of §16.4 before mainnet. Since the owner's decision of 2026-09-25 external review
+is not a current requirement; reviews/review-status.md.)
 
 ---
 

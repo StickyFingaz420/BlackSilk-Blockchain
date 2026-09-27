@@ -1,12 +1,14 @@
 # Testnet reset plan (approved; NOT yet executed on the testnet machines)
 
-Status: **the owner approved the reset on 2026-09-26** for the confirmed consensus
-parameters (BS-ZK-2 with terminal blinding and minimum height 2^8). The new identity
-is fixed in the code (§3). The reset itself runs on the operators' machines; until they
-report it, **no reset has been performed**. The owner approves the seven-machine trial
-separately (AUDIT.md R8). The testnet is a
-functional trial, not evidence of production readiness
-(docs/reviews/external-review-scope.md §5).
+Status (2026-09-27): the v2 identity is approved and fixed in code (§3), for the
+confirmed consensus parameters (BS-ZK-2 with terminal blinding and minimum height
+2^8). The seven-device trial is **not** authorized until the owner approves the
+readiness report after the hardening round
+(docs/reviews/completion-readiness-2026-09-26.md §6). Gates:
+docs/testnet-launch-checklist.md. The reset itself runs on the operators' machines;
+until they report it, **no reset has been performed**. The testnet is a functional
+trial, not evidence of production readiness (docs/reviews/external-review-scope.md
+§5).
 
 ## 0. Gates before execution (owner decision, 2026-09-25)
 
@@ -16,7 +18,7 @@ explicit approval:
 | Gate | State |
 |---|---|
 | Internal multi-pass review of the critical components (docs/reviews/review-status.md §3). **External review: none engaged; not a gate** (owner decision 2026-09-25) | **In progress** |
-| CI validated: the workflow run on GitHub, all jobs green | **Passed** for commit `d6534c3` (run 36177083290, 2026-09-25): lint, audit, fuzz-smoke and test all green. To be confirmed again on the release commit |
+| CI validated: the workflow run on GitHub, all jobs green | **Passed** for commit `d6534c3` (run 36177083290, 2026-09-25): lint, audit, fuzz-smoke and test all green; later commits passed through `87278ac` (runs #69–#74). `7826289` is unpushed; its new jobs `guests` and `randomx-full` have never run on GitHub. To be confirmed again on the release commit |
 | Extended contract-engine fuzzing | **Done:** 6 hours on `wasm_module` and 4 hours on `contract_sequence`, 0 crashes (AUDIT.md) |
 | Local reset rehearsal | **Done for v2** on 2026-09-26 (§7a): passed, isolation confirmed. The 2026-09-25 rehearsal (§7) predates the blinding |
 | Internal review of the ZK changes | Rounds 2–4 done (internal-review-log.md) |
@@ -64,7 +66,7 @@ Every item is intentional, active from height 0, and specified in the linked sec
 | `TESTNET_GENESIS_TIME` | 2026-09-23 00:00 UTC | **2026-09-26 00:00 UTC** (`1790380800`) |
 | `TESTNET_GENESIS_ID` (pinned by a test in `consensus/src/params.rs`) | `bbeb1a9f…` | **`6556f92dee4df050cfb113a2b4ba234794274854b69f7c8a39755ec7a66b037d`** |
 | docs/testnet.md §1, docs/consensus.md | v1 | updated |
-| Seed-node list | as deployed | the same hosts, restarted on the new build |
+| Seed-node list | empty | **still empty** (`builtin_seeds()` in `node/src/config.rs`). There are no seed nodes; operators connect with explicit `--peer` lists |
 
 With a new network id, old nodes fail the handshake with new ones
 (`transport::tests::different_networks_cannot_talk`), so the two chains cannot mix.
@@ -76,7 +78,9 @@ With a new network id, old nodes fail the handshake with new ones
    release mode (docs/testnet.md §2). Record the commit id on every machine.
 3. **Data:** move each node's old data directory aside, keeping it for the rollback.
    Start with empty data.
-4. **Seed nodes first,** then the other machines (docs/testnet.md §6, §7).
+4. **The first node first** (device A), then the other machines with `--peer`
+   pointing to A (and to each other if wanted). There are no seed nodes: the built-in
+   list is empty (docs/testnet.md §6, §7, §12).
 5. **Wallets:**
    - create **new** wallet files;
    - an existing seed may be restored on the new network (`restore --restore-height 1`),
@@ -100,7 +104,7 @@ With a new network id, old nodes fail the handshake with new ones
 | 8 | Reorganizations | During a partition the chain forks and converges; PX state and wallets follow (`px-records`, balances) |
 | 9 | Restart | A node restarted from its data directory reaches the same PX root, pool and registration list |
 | 10 | Relay limits | No honest peer is penalized; no misbehaviour disconnects between honest nodes |
-| 11 | Resources | Proof verification time per PX transaction; memory; no hang (liveness, ZK-F11, F21, F28) |
+| 11 | Resources | Proof verification time per PX transaction; memory recorded against chain height (it grows with the chain, PX-F1; testnet-v2-validation.md V15); no hang (liveness, ZK-F11, F21, F28) |
 | 12 | Logs | No verifier-panic warnings; no unexpected errors |
 
 Results go into a trial report with evidence (logs, metrics, `summary.json` where

@@ -1,10 +1,12 @@
 # BVM-1: the BlackSilk zero-knowledge virtual machine
 
-Status: **specification v0.3; implemented and tested, including the Poseidon2 syscall
-circuit, multi-execution proofs, public tables as periodic columns and fixed
-shapes** (AUDIT.md R8; internal security review
-`docs/reviews/zk-security-review.md`). Used by PX consensus (docs/px.md §11); not
-production-ready before independent review.
+Status: **specification v0.3 (updated 2026-09-27); implemented and tested, including
+the Poseidon2 syscall circuit, multi-execution proofs, public tables as periodic
+columns, fixed shapes, and terminal blinding with a minimum table height of 2^8**
+(AUDIT.md R8, R12, R13; internal security review `docs/reviews/zk-security-review.md`;
+`docs/reviews/terminal-blinding.md`). Used by PX consensus (docs/px.md §11). All review
+is internal; no external audit has taken place. Not production-ready. Zero knowledge
+is claimed only as **statistical and conditional** (docs/reviews/zk-coverage.md).
 This document is normative:
 - the reference interpreter (`zkvm/src/exec.rs`) and the constraint tables
   (`zkvm/src/air/`) implement exactly what it says;
@@ -20,9 +22,9 @@ functions §7.
 | # | Goal |
 |---|---|
 | V1 | Contract authors write **ordinary Rust**, compiled for `riscv32i-unknown-none-elf` with the `zmmul` extension (§3) and the BlackSilk SDK. No circuit knowledge is needed. |
-| V2 | **One** fixed constraint system, audited once, proves *every* program. Contract code never becomes constraints (zk.md §3). |
+| V2 | **One** fixed constraint system, reviewed once, proves *every* program. Contract code never becomes constraints (zk.md §3). (Reviewed internally so far; no external audit.) |
 | V3 | **Deterministic:** every program has exactly one valid execution for given inputs, fully specified here. No floating point, no undefined behavior, no host-dependent results. |
-| V4 | **Zero-knowledge:** a proof reveals only the program id, the public output digest, the exit code and the padded trace sizes (§8). |
+| V4 | **Zero-knowledge:** a proof reveals only the program id, the public output digest, the exit code and the padded trace sizes (§8). This holds **statistically, conditional on docs/reviews/zk-coverage.md §3**, not perfectly: LogUp arguments leak a little in every accepted proof (the paper's Appendix A; our unverified estimate is about N/\|F\|, about 2^−224), and the proof's byte length varies with the public FRI query positions (the pruned Merkle paths; privacy-review.md P-5), which were measured to show no dependence on the witness. |
 | V5 | **Bounded:** the cycle count, memory, input and output sizes are capped, so proving and verification costs are bounded. |
 | V6 | **Simple enough to review.** Fewer, clearer tables are preferred over faster ones. Each table has a written invariant (§6) and a negative test per constraint (§9). |
 
@@ -86,7 +88,12 @@ functions §7.
 
   It does not depend on ELF metadata, symbol tables or section names. Builds must be
   reproducible (SDK build profile) so that anyone can check a program id against
-  published source.
+  published source (zkvm/guests/README.md).
+- **Metadata in the image:** file-backed data is part of the id, so strings the
+  compiler embeds count. The consensus-pinned kernel's read-only data contains one
+  developer's absolute Windows source path (panic messages of `px-core/src/hash.rs`).
+  It is a small, public metadata disclosure about the build machine (not about users);
+  reproducing the id needs the same path, remapped with `--remap-path-prefix`.
 - **Limits:** code ≤ 2^16 instructions; data ≤ 2^20 bytes.
 
 ---
@@ -110,7 +117,7 @@ specification's; the notable cases are fixed here.
   result, never produce an accepted proof of a false statement.
 - The SDK also documents a pure RV32I build (software multiplication) as the stable
   fallback.
-- A division table may be added in BVM-2, after the core has been audited.
+- A division table may be added in BVM-2, after the core has been reviewed.
 
 | Class | Instructions |
 |---|---|
@@ -186,6 +193,37 @@ in the 31-bit field.
 | `ALU_MUL` | main | MUL/MULH/MULHSU/MULHU request | 8×8-byte convolution with range-checked carries |
 | `OUTPUT` | public | claimed output word | `(index, value)` of the public output |
 | `POSEIDON2` | main | syscall | Plonky3's `Poseidon2Air` (standard constants) unchanged, plus memory access, canonical-encoding checks and the syscall binding |
+| `BLIND` | main (always the last table) | blinded table | Terminal blinding (ZK-F29): row `t` provides table `t`'s blinding message; §6.1a |
+
+### 6.1a Terminal blinding (ZK-F29; docs/reviews/terminal-blinding.md)
+
+Plonky3 publishes each table's LogUp terminal (the sum of its bus fractions), which
+the hiding PCS does not mask. Without blinding, an observer could replay the
+transcript and test hypotheses about the witness against the terminals.
+
+- **Every table except `BLIND`** ends with **9 blinding columns**
+  (`air::util::BLIND_WIDTH`): a selector `s` and 8 values `v0..v7`
+  (`BLIND_VALUES` = 8, the extension degree).
+  - First row: `s = 1`. Every other row: `s = 0` and all 8 values `0` (no free cells).
+  - The first row **consumes** `(v0..v7)` once on the bus `bvm/blind`
+    (`util::blind_consume`).
+- **The `BLIND` table** is 9 columns wide, rows `(real, v0..v7)`:
+  - `real` is boolean; padding rows hold zeros;
+  - each real row **provides** its values once on `bvm/blind`
+    (`util::blind_provide`);
+  - its height is the minimum table height (2^8), one real row per blinded table.
+- **The prover** writes fresh uniformly random field elements into each table's first
+  row and the matching `BLIND` row (`air::trace::randomize_blinding`), from a seed
+  derived from the witness digest and OS randomness.
+- **Effect:** each published terminal is offset by a uniformly random term, so it is
+  independent of the table's unblinded sum up to about 2^−124 (the argument and its
+  conditions C1, C2 are in terminal-blinding.md §3). This is an internal argument,
+  reviewed internally; it is not proven for the system as a whole.
+
+**Minimum table height:** every table has at least `2^MIN_LOG_HEIGHT` = 2^8 = 256 rows
+(`zk::params::MIN_LOG_HEIGHT`, finding ZK-F30), so that the witness randomization
+bound 2·(8 + 108) = 232 ≤ 256 of ePrint 2024/1037 eq. (17) holds per table. The prover
+pads to it, and the verifier rejects smaller claimed heights before Plonky3 sees them.
 
 **Public tables are periodic columns (AUDIT.md ZK-F13).**
 - The contents of `BYTE`, `PROGRAM`, `IMAGE` and `OUTPUT` follow from the statement
@@ -212,6 +250,7 @@ Words are held as 4 bytes. Registers are memory keys `REG_BASE + r`
 | `bvm/memory` | `(exec, key, v[4], ts)` | accesses and MEM_INIT, produce (+1) and consume (−1) |
 | `bvm/output` | `(exec, index, v[4])` | CPU → OUTPUT |
 | `bvm/syscall` | `(exec, clk, ptr[4])` | POSEIDON2 → CPU |
+| `bvm/blind` | `(v0, …, v7)` | BLIND → the first row of every other table (§6.1a) |
 
 **Counts:**
 - Providers whose message contents are witness cells have boolean counts.
@@ -299,7 +338,8 @@ A statement may carry a **budget** for each execution:
 That is, the rows allowed in the execution's `CPU` and `MEM_INIT` tables, and its
 share of each shared table.
 - **The prover** (`prove_shaped`) pads every table to the height the budgets imply,
-  the next power of two of the sum over executions, at least the FRI minimum. An
+  the next power of two of the sum over executions, at least 2^8 (`MIN_LOG_HEIGHT`,
+  §6.1a). An
   execution needing more rows returns `BudgetExceeded`; nothing is proven.
 - **The verifier** requires exactly those heights (`Statement::shape`) and rejects any
   other shape, including a smaller, honest, unpadded one.
@@ -321,6 +361,7 @@ As zk.md §9.3, parameter set **BS-ZK-2**:
   the unique-decoding regime.
 
 **Height limits:**
+- minimum, every table: 2^8 (`MIN_LOG_HEIGHT`, §6.1a); `BLIND` is exactly 2^8;
 - `BYTE`: 2^16;
 - `CPU`: 2^21 (`MAX_CYCLES`, so the circuit accepts exactly the executions the
   interpreter allows);
@@ -352,7 +393,12 @@ As zk.md §9.3, parameter set **BS-ZK-2**:
 **Unbudgeted statements** (tests and tools only; PX always sets budgets) have
 power-of-two heights sized to the execution, and do leak coarse timing.
 
-**Zero-knowledge:**
+**Zero-knowledge (statistical, conditional; docs/reviews/zk-coverage.md):**
+- The hiding FRI commitments (random codewords, salted Merkle leaves, a mask
+  polynomial per table), the terminal blinding (§6.1a) and the minimum height of 2^8
+  are the mechanisms. Each table meets the per-table conditions of the published
+  construction (ePrint 2024/1037); that the multi-table, mixed-height, LogUp-based,
+  multi-phase system as a whole is zero knowledge is **not proven** (zk-coverage.md §3).
 - The hiding FRI commitment scheme needs fresh CSPRNG randomness **for every proof**.
 - The prover takes it from the OS RNG, hedged with the witness (transactions.md §10).
 - A fixed seed would break zero-knowledge; a test checks that two proofs of the same

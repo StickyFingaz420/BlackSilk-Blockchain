@@ -1,15 +1,24 @@
 # BlackSilk Private Execution (PX): Zero-Knowledge Architecture
 
-Status: **v0.3.**
+Status: **v0.3; statuses updated 2026-09-27.**
 - PX-0 (evaluation) is complete, and the proof system is **decided**: §9.2, §15.
 - The zkVM, the kernel with private records and nullifiers, and the unified proof of
   contract functions and kernel are implemented and tested ([`px.md`](px.md); AUDIT.md
-  R8). The internal security review is `reviews/zk-security-review.md`. Nothing is
-  production-ready before independent review.
+  R8). The internal security review is `reviews/zk-security-review.md`. All review so
+  far is internal; no external audit has taken place and none is engaged
+  (reviews/review-status.md). Nothing here is production-ready.
+- **Zero knowledge** is claimed only as **statistical and conditional**
+  ([`reviews/zk-coverage.md`](reviews/zk-coverage.md)), never as perfect or proven.
 - The zkVM is specified in [`zkvm.md`](zkvm.md).
 - **Consensus:** PX transactions (kind 2) and private-contract deploys (kind 3) are
-  consensus rules from genesis on every network ([`px.md`](px.md) §11). The owner has
-  approved a testnet reset for the final trial (AUDIT.md R8).
+  consensus rules from genesis on every network ([`px.md`](px.md) §11).
+- **Testnet:** the v2 identity is approved and fixed in code. The seven-device trial is
+  **not** authorized until the owner approves the readiness report after the hardening
+  round ([`reviews/completion-readiness-2026-09-26.md`](reviews/completion-readiness-2026-09-26.md)
+  §6). Gates: [`testnet-launch-checklist.md`](testnet-launch-checklist.md).
+- Much of this document is the original design. Sections marked **design, not
+  implemented** describe no code; where the implementation differs, the "as
+  implemented" notes and px.md are authoritative.
 
 This document fixes the architecture, interfaces and security requirements of private
 contract execution.
@@ -45,7 +54,7 @@ and learns only what the function deliberately makes public.
 
 | # | Requirement |
 |---|---|
-| R1 | **Privacy:** proofs are zero-knowledge. Nothing about private inputs, records or amounts leaks beyond the declared public outputs. |
+| R1 | **Privacy:** proofs are zero-knowledge. Nothing about private inputs, records or amounts leaks beyond the declared public outputs. (As implemented: statistical zero knowledge, conditional on the open items of reviews/zk-coverage.md §3.) |
 | R2 | **Soundness:** no one can create value, spend a record twice, spend without authorization, or claim a false function result, except with negligible probability under stated assumptions. |
 | R3 | **Transparent setup:** no trusted setup ceremony and no toxic waste. |
 | R4 | **Long-term security:** privacy should survive a future quantum adversary wherever technically possible. Soundness should not rest on DL alone. |
@@ -54,7 +63,7 @@ and learns only what the function deliberately makes public.
 | R7 | **Containment:** a soundness failure in the ZK system must not be able to inflate BLK beyond a publicly known bound. |
 | R8 | **Client-side proving:** users prove on their own device. Private witnesses are never sent to a third party. |
 | R9 | **Upgradeability:** proof systems and parameters can be replaced at activation heights without migrating records. |
-| R10 | **Assurance:** a formal statement of every circuit, constraint-level negative testing, independent verifier implementation, and at least two external audits before mainnet. |
+| R10 | **Assurance:** a formal statement of every circuit, constraint-level negative testing, and an independent verifier implementation. (The original requirement also asked for at least two external audits before mainnet. Since the owner's decision of 2026-09-25, external review is not a current requirement; it would be an item if a reviewer were engaged; reviews/review-status.md.) |
 
 **Non-goals:**
 - Hiding which contract a transaction interacts with. This may come later, through
@@ -126,15 +135,16 @@ and learns only what the function deliberately makes public.
 
 **The central security principle: protocol invariants never live in user code.**
 - Balance, nullifiers, record existence, and the authorization of *user* records are
-  enforced by one fixed **kernel**. It is written once, specified formally, and
-  audited.
+  enforced by one fixed **kernel**. It is written once and specified, so that review
+  effort concentrates on it. (So far it has had internal review only; no external
+  audit.)
 - Contract authors' programs can only *approve or produce* records that belong to
   their own contract. They cannot touch another contract's or a user's value.
 - v1 follows the same principle: contracts approve declared value movements but
   cannot move value themselves.
 - Under-constrained circuits are the most common catastrophic bug in deployed ZK
-  systems. This split confines that risk to one audited component, instead of
-  spreading it across every contract.
+  systems. This split confines that risk to one component that can be reviewed in
+  depth, instead of spreading it across every contract.
 
 ---
 
@@ -375,7 +385,14 @@ looks identical apart from its public inputs.
 - Its identity is `program_id = H32("px/program", canonical ELF image)`.
 - Programs are registered in the contract at deploy (§8.3) and are immutable.
 - Builds must be reproducible (pinned toolchain, SDK build profile), so anyone can
-  check that `program_id` matches the published source.
+  check that `program_id` matches the published source. (As implemented, the program
+  id is zkvm.md §3's `H64("zkvm/program", …)` over the loaded image.)
+- **Metadata in the pinned kernel:** the consensus-pinned kernel binary
+  (`px/kernel.elf`) embeds one developer's absolute Windows source path in panic
+  messages (zkvm/guests/README.md). It is public in every copy of the repository and
+  in the program image. It is a small metadata disclosure about the build machine,
+  not about users, and it is why reproduction currently needs a Windows host with
+  path remapping.
 
 ### 7.2 Execution and IO transcript
 
@@ -464,7 +481,7 @@ A deploy transaction version 2 adds `programs[]: (program_id, verifier_id)`, up 
 | P1 | Transparent (R3). |
 | P2 | Zero-knowledge (hiding) mode, not just succinctness. Many STARK stacks optimize for succinctness only, so hiding must be verified per candidate. |
 | P3 | Composition of kernel and function proofs (§9.4): by cross-table lookups in one batch proof (chosen), or by recursion. |
-| P4 | Soundness ≥ 100 bits by **proven** bounds for the chosen parameters (§9.3), plus ≥ 128-bit collision resistance of the hash. |
+| P4 | Soundness ≥ 100 bits by **proven** bounds for the chosen parameters (§9.3), plus ≥ 128-bit collision resistance of the hash. **As implemented, the hash part is not met:** an 8-element Poseidon2 digest over BabyBear gives about 123.6 bits of collision resistance (`COLLISION_BITS` = 123 in `zk/src/params.rs`), and the soundness figures of §9.3 are computed with 123. |
 | P5 | Pure-Rust prover and verifier, with a small, specifiable verifier. |
 | P6 | Plausible post-quantum security for both soundness and zero-knowledge (R4). |
 
@@ -525,8 +542,20 @@ owner): a STARK on Plonky3 0.7.**
 - **If those theorems come into doubt:** the verifier registry (§9.5) can move to
   unique-decoding parameters, ≥ 100 bits with about 128 queries and 2–3× larger
   proofs, without migrating records.
-- **The parameter set is code** (`zk/src/params.rs`). A test recomputes its proven
-  security for every registered table shape and fails the build below 100 bits.
+- **The parameter set is code** (`zk/src/params.rs`). A test
+  (`every_shape_within_limits_meets_both_security_targets`) recomputes the proven
+  security over a grid of the whole envelope (heights 2^8 to 2^22, up to 5,000
+  constraints, degrees up to 8, and 1 to 65,536 batched columns, including
+  `MAX_ADVERSARIAL_COLUMNS` = 15,709). It fails unless **every** point reaches ≥ 120
+  bits in the Johnson regime **and** ≥ 100 bits in the unique-decoding regime. It is a
+  test, so it fails the test suite, not the build; `const` assertions check only the
+  parameter relations (such as eq. 17 below).
+- **Batched-function count (internal review):** the calculator is given one batched
+  function per committed column. Plonky3 batches each (column, opening point) pair
+  with its own power of the FRI batching challenge, and trace and permutation columns
+  are opened at both ζ and g·ζ, so the true count can reach about twice the columns.
+  The worst case, 2 × 15,709 = 31,418, is still below the 65,536 the test covers, so
+  the figures below hold for it.
 - **Current set: BS-ZK-2.** Minimum table height 2^8 since 2026-09-26, so that
   2·(e·n_F + n_D) = 2·(8 + 108) = 232 ≤ 256 (ePrint 2024/1037 §4.2, eq. 17; a `const`
   assertion checks it in every build). Hiding: 4 random codewords per committed matrix,
@@ -544,10 +573,17 @@ owner): a STARK on Plonky3 0.7.**
     security-policy decision for the owner.
 - Proof-of-work grinding may contribute at most 20 bits and is counted explicitly.
 - Challenges are drawn from an extension field of ≥ 124 bits.
-- **Fiat–Shamir:** the transcript absorbs the full statement, i.e. all public inputs
-  (including `h_tx`), the verifier id, the parameters and every prover message, before
-  any challenge. This is the lesson of Frozen Heart (2022), as for BP+ in
-  transactions.md §7.
+- **Fiat–Shamir:** the transcript absorbs the full statement before any challenge.
+  This is the lesson of Frozen Heart (2022), as for BP+ in transactions.md §7. **As
+  implemented** (`zk/src/config.rs`, `challenger`):
+  - first the parameter-set identifier `PARAMS_ID` (`BlackSilk/zk/BS-ZK-2`, with its
+    length), then the 32-byte **statement digest** (zkvm.md §6.4: every table's
+    periodic columns, i.e. programs, images and claimed outputs), both before any
+    commitment;
+  - then Plonky3 observes the public values (which carry the binding `h_tx`, zkvm.md
+    §6.4), the instance data and every prover message.
+  - There is no verifier id in the transcript: the verifier registry is a design only
+    (§9.5). The parameter set is identified by `PARAMS_ID`.
 - **Quantum ROM:** security of BCS-compiled IOPs in the QROM is known in principle
   (Chiesa, Manohar and Spooner, 2019). Parameters are sized with the quantum bound
   noted separately.
@@ -597,8 +633,9 @@ verifier_id → { proof system version, parameters, kernel program id,
 **Recommendation at design time:** Poseidon2 with the designers' 128-bit parameters
 plus extra rounds as a safety margin. **Outcome (DR-4, px.md §2):** no extra rounds.
 `Hk` uses the standard instance, because the proof system already depends on it; a
-stronger `Hk` alone would not raise the security of the whole system. External
-cryptanalysis review remains required. `Hk` is
+stronger `Hk` alone would not raise the security of the whole system. Its
+cryptanalysis has not been reviewed outside the project; it would be the first item if
+a reviewer were engaged (none is, owner decision 2026-09-25). `Hk` is
 what makes records, nullifiers and the tree binding, so it is **the hardest-to-change
 component**. A later `Hk` change means a new tree with a migration (records spent from
 the old tree and re-created in the new one). Choosing conservatively matters more here
@@ -618,10 +655,11 @@ than prover speed.
 
 **Recommendation:** a **zkVM for contract functions, plus a fixed kernel.**
 - Contract authors write ordinary Rust, and the soundness-critical surface is a single
-  audited VM circuit. This is R10 and §3's central principle applied to computation.
+  VM circuit, reviewed once for all programs (internal review only so far; no external
+  audit). This is R10 and §3's central principle applied to computation.
 - The kernel runs in the same zkVM as a consensus-fixed program. It may later be
   replaced by a hand-optimized circuit with an identical statement, once that circuit
-  can be audited against the program.
+  can be checked against the program.
 
 **Decision:** our own zkVM, BVM-1, specified in [`zkvm.md`](zkvm.md), built on the
 Plonky3 components above. No existing pure-Rust RISC-V zkVM met P2 (zero-knowledge)
@@ -629,9 +667,10 @@ and R5 (pure Rust) together (§15).
 
 **zkVM profile, as originally targeted (superseded by zkvm.md):**
 - ISA: **RV32IM**, a small, stable, well-specified integer ISA with no floating point
-  (as in v1's Wasm profile).
+  (as in v1's Wasm profile). (Implemented instead: RV32I plus the multiplication-only
+  Zmmul extension, no division; zkvm.md §4.)
 - Memory: bounded, 16–64 MiB. A cycle limit per function.
-- Precompiles (fixed-function circuits, each specified and audited like the kernel):
+- Precompiles (fixed-function circuits, each specified and reviewed like the kernel):
   - `Hk` permutation;
   - Merkle path verification;
   - 256-bit arithmetic;
@@ -656,23 +695,31 @@ and R5 (pure Rust) together (§15).
 The targets below were set before PX-0. The PX-0 measurements are in
 `docs/evidence/px0-2026-09-23/RESULTS.md`.
 
-**Measured on the complete system (BS-ZK-2, this machine; docs/px.md §8): the targets
-are missed by a wide margin.**
+**Measured on the complete system (BS-ZK-2 with terminal blinding and minimum height
+2^8; `px/examples/proof_bench.rs`, 2 × 5 proofs of each kind, idle, one development
+machine; AUDIT.md R13): the targets are missed by a wide margin.**
 
-| Item | Target | Measured |
-|---|---|---|
-| Private transfer proving | ≤ 15 s | ~42 s |
-| Proof size | ≤ 150 KB | ~2.0 MB (transfer), ~2.5 MB (with one function) |
-| Verification | ≤ 30 ms | 188 ms (was 1.3–1.5 s before ZK-F13) |
+| Item | Target | Measured: transfer | Measured: vault call (one function) |
+|---|---|---|---|
+| Proving | ≤ 15 s | 44.6–45.2 s | 52.7–53.0 s |
+| Proof size | ≤ 150 KB | 2,178,213–2,180,408 B | 2,687,952–2,688,822 B (about 2.69 MB) |
+| Verification | ≤ 30 ms | 0.207–0.212 s | 0.254–0.265 s |
 
-Per-transaction proofs of this size are not viable for a chain. The paths are:
+Peak prover memory: 3,771 MB. (Verification was 1.3–1.5 s before ZK-F13.)
+
+**The widest shape** (the kernel plus two functions) has **not been measured** against
+`MAX_PROOF_BYTES` (4 MiB). An unmeasured estimate puts it at about 3.0–3.3 MB.
+
+Per-transaction proofs of this size are not viable for a production chain. The paths
+are:
 - the query-policy decision (§9.3);
 - per-block aggregation (PX-4).
 
 Verification caching is done (periodic columns, the block-level cache). The chain
 carries PX under a separate 8 MiB block budget (px.md §11.5), about 4 PX transactions
-per block. The owner has approved a testnet reset for the final trial. A production
-network is out of scope until proof size is solved (aggregation-study.md).
+per block. The v2 identity for a testnet trial is approved and fixed in code; the
+trial itself awaits the owner's approval (Status above). A production network is out
+of scope until proof size is solved (aggregation-study.md).
 
 | Item | Target | Why |
 |---|---|---|
@@ -716,7 +763,7 @@ network is out of scope until proof size is solved (aggregation-study.md).
 
 ### 12.1 Assumptions (complete list)
 
-1. **Proof system:** knowledge soundness and zero-knowledge of the chosen IOP, compiled
+1. **Proof system:** knowledge soundness and (statistical, conditional; reviews/zk-coverage.md) zero knowledge of the chosen IOP, compiled
    with Fiat–Shamir in the (Q)ROM, with the parameters of §9.3.
 2. **`Hk`:** collision resistance, preimage resistance, and PRF security when keyed
    (nullifiers). This is the key PX assumption.
@@ -753,7 +800,7 @@ reconsider.
 | Scenario | Impact | Response |
 |---|---|---|
 | Soundness bug in kernel or zkVM | Forged PX value or spends | Loss bounded by `px_pool` (R7). Emergency upgrade: activate a fixed verifier and sunset the old one. **There is no admin key and no pause key**; responses are consensus upgrades adopted by node operators. |
-| Zero-knowledge bug | Private data leaks from proofs | Cannot be undone for published proofs. Hence the ZK-mode verification in PX-0, and tests that proofs are simulatable (statistical tests on proof elements plus a review of the hiding construction). |
+| Zero-knowledge bug | Private data leaks from proofs | Cannot be undone for published proofs. Hence the ZK-mode verification in PX-0 and the internal review of the hiding construction (reviews/zk-coverage.md, reviews/terminal-blinding.md). **No simulatability tests exist:** statistical tests on hiding randomness would test only the RNG (terminal-blinding.md §3). What exists: a test that two proofs of one statement differ, the fixed-shape tests, and the P-5 proof-length campaign. |
 | `Hk` weakness | Collisions: double spends or fake records | Containment; migration to a new tree with a new `Hk` (§9.6) |
 | KEM break | Contents readable | Hybrid: both ECDH and ML-KEM must fail |
 | Quantum adversary | v1 layer broken (transactions.md §11.6) | PX soundness and zero-knowledge are hash-based; record contents stay protected by ML-KEM; the bridge's v1 side is exposed like all of v1 |
@@ -773,20 +820,26 @@ reconsider.
    This detects under-constrained witnesses.
 3. **Independent verifier:** the consensus verifier is written from the spec and
    cross-tested against the prover library's verifier on random and adversarial
-   proofs.
-4. **Differential execution:** zkVM traces against a reference RV32IM interpreter, on
-   the official RISC-V compliance tests plus fuzzed programs.
+   proofs. **Not implemented:** consensus uses Plonky3's own verifier, behind
+   `catch_unwind` (zkvm.md §10).
+4. **Differential execution:** zkVM traces against a reference interpreter (as
+   implemented: RV32I plus Zmmul, `zkvm/src/exec.rs`), on the official RISC-V
+   compliance tests plus fuzzed programs. (As implemented: hand-computed instruction
+   vectors, 20,000 random programs and the constraint checker; the official RISC-V
+   compliance suite is **not** run.)
 5. **Adversarial proofs:** mutated proofs, transcripts with a missing public input,
    wrong parameters, proof reuse across transactions. All must be rejected.
 6. **Fuzzing:** decoders, verifier inputs, zkVM programs.
 7. **Soundness parameter calculator** in the repository, with tests: it recomputes the
-   proven security bits from the parameters in the verifier registry, and the build
-   fails below 100.
-8. **External review:**
-   - two independent audits (cryptographic design, and implementation) before mainnet
-     activation;
-   - a public testnet period of at least 6 months;
-   - a bug bounty.
+   proven security bits from the parameters (`zk/src/params.rs`; there is no registry
+   yet), and a test fails unless every shape of the envelope reaches ≥ 120 Johnson
+   bits and ≥ 100 unique-decoding bits (§9.3).
+8. **External review (original plan; not a current requirement):** the design asked
+   for two independent audits (cryptographic design, and implementation) before
+   mainnet activation, a public testnet period of at least 6 months, and a bug bounty.
+   Since the owner's decision of 2026-09-25, review is internal and multi-pass
+   (reviews/review-status.md); external audits would be items if a reviewer were
+   engaged. None is engaged or planned.
 
 ---
 
@@ -802,9 +855,10 @@ reconsider.
 | **PX-5** | Long-term: PX as the default home of BLK, with the ring layer kept for compatibility | A post-quantum-private chain |
 
 **Rules for every phase:**
-- The order is spec → implementation → internal review → external audit → testnet →
-  activation height.
-- No phase is activated on mainnet without its external audit.
+- The order is spec → implementation → internal multi-pass review → testnet →
+  activation height. (The original plan also put an external audit before the testnet
+  and before every mainnet activation. Since the owner's decision of 2026-09-25 that is
+  not a current requirement; it would be a step if a reviewer were engaged.)
 
 **Compatibility with v1:**
 - v1 contracts, notes and claims keep working unchanged.
@@ -822,7 +876,7 @@ reconsider.
 |---|---|---|
 | DR-2 proof family | STARK on Plonky3 0.7, BabyBear; the challenge field became BabyBear^8 with BS-ZK-2 (≥ 123 bits Johnson, ≥ 105 unique decoding; AUDIT.md ZK-F4) | `docs/evidence/px0-2026-09-23/RESULTS.md` §1–2 |
 | DR-3 zkVM | Our own BVM-1 (zkvm.md): adopted zkVMs failed zero-knowledge (SP1) or pure Rust (RISC Zero) | RESULTS.md §3 |
-| DR-4 `Hk` | Poseidon2 over BabyBear, width 16, standard constants, no extra rounds (px.md §2). The same permutation is used for Merkle hashing and Fiat–Shamir. The external review may revisit this. | §9.6 |
+| DR-4 `Hk` | Poseidon2 over BabyBear, width 16, standard constants, no extra rounds (px.md §2). The same permutation is used for Merkle hashing and Fiat–Shamir. Not reviewed outside the project; a reviewer, if one were engaged, might revisit it. | §9.6 |
 | DR-5 bridge | Public amounts with containment (unchanged) | §12.2 |
 | DR-6 client proving | Small circuits prove in 0.1–3 s; 2^16-row traces take 10–45 s. Further tuning in PX-1 | RESULTS.md §2 |
 | DR-7 delivery | Unchanged (hybrid ML-KEM); decided in PX-1 | |
@@ -892,4 +946,5 @@ Each decision is recorded in this document, with the measurements as evidence in
 - kernel/user separation for all value invariants;
 - hybrid post-quantum record delivery with Janus-style commitment checks.
 
-As in contracts.md §3, "new" is our belief, pending the external prior-art check.
+As in contracts.md §3, "new" is our belief; no one outside the project has checked the
+prior art.

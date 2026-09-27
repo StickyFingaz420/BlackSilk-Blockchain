@@ -1,7 +1,9 @@
 # BlackSilk Transaction Specification
 
 Status: **v1, implemented** by `blacksilk-crypto` (`crypto/`) and `blacksilk-tx` (`tx/`).
-Not yet externally reviewed (§15). This document is normative: wallets, nodes and miners
+Not externally reviewed; no external review is engaged or planned (owner decision
+2026-09-25, reviews/review-status.md; §15). The PX transaction kinds 2 and 3 are
+specified in [`px.md`](px.md) §11. This document is normative: wallets, nodes and miners
 must follow exactly these rules. Where this document and the code disagree, that is a bug.
 
 Scope:
@@ -17,7 +19,8 @@ Out of scope, and specified separately:
 - header chain: [`consensus.md`](consensus.md)
 - emission schedule, block reward, block weight limit, fee constants: [`blocks.md`](blocks.md)
 - wallet seed words, address strings, wallet file: [`blocks.md`](blocks.md) §10
-- transaction relay (Dandelion++, Tor/I2P): P2P spec, pending
+- transaction relay (Dandelion++, outbound Tor through SOCKS5; I2P is not supported):
+  [`p2p.md`](p2p.md)
 
 Design basis: the Monero RingCT stack as deployed since 2022 (CLSAG, Bulletproofs+,
 view tags), with a small number of deliberate changes. Each change is marked
@@ -32,8 +35,11 @@ All integers are unsigned and little-endian unless stated otherwise.
 ### 1.1 Group: Ristretto255 [Δ Monero]
 
 All public keys, key images and commitments are elements of the **Ristretto255** group
-(RFC 9496), built on Curve25519. Implementation: `curve25519-dalek` 4.x (pure Rust, no
-`unsafe` in our code, audited by Quarkslab in 2019).
+(RFC 9496), built on Curve25519. Implementation: `curve25519-dalek` 4.1.3 (pure Rust;
+no `unsafe` in our code, though the crate itself uses some). A 2019 third-party audit
+of the dalek libraries is reported elsewhere (reviews/reviewer-candidates.md); the
+crate's README does not mention one and we have not verified it, so no audit of this
+dependency is claimed (reviews/dependency-review.md §2).
 
 - `ℓ = 2^252 + 27742317777372353535851937790883648493`: the prime group order.
 - `G`: the Ristretto255 base point.
@@ -448,8 +454,10 @@ The signature is valid iff the final `c[16]` equals `c0`.
 
 Chung, Han, Ju, Kim, Seo, *"Bulletproofs+: Shorter Proofs for a Privacy-Enhanced
 Distributed Ledger"*, IACR ePrint 2020/735, aggregated range proof (§4 and Fig. 3,
-weighted inner-product argument of Fig. 1). Monero has used BP+ since 2022 (v15). It was
-audited by Cypher Stack (Feickert, 2022).
+weighted inner-product argument of Fig. 1). Monero has used BP+ since 2022 (v15);
+Monero's design was reviewed by Cypher Stack (Feickert, 2022), as reported by the
+Monero project and not verified by us. That review does not cover this
+implementation, which no one outside the project has reviewed.
 
 **Statement:** for the output commitments `V_0..V_{k−1}` (the `Cm_j`), each commits to an
 amount in `[0, 2^64)`.
@@ -662,7 +670,8 @@ Security relies on the following. Nothing else is assumed.
   who can compute `I`; everyone else sees an unlinkable tag.
 - Coinbase amounts and the miner's one-time keys. The miner's address is not public.
 - The network origin of a transaction, unless the P2P layer hides it (Dandelion++, and
-  Tor/I2P; P2P spec).
+  a node running over Tor; p2p.md). I2P is not supported. The wallet itself has no Tor
+  or TLS support and talks plaintext HTTP to its node, so it should use its own node.
 
 ### 11.3 Known deanonymization techniques and mitigations
 
@@ -675,7 +684,7 @@ Security relies on the following. Nothing else is assumed.
 | Wallet fingerprinting via `extra`, `unlock_time`, payment IDs, output order, extra tx keys | Removed by format (§4.1, §5.2, §2.2). |
 | Fee fingerprinting | Wallets must pay the *standard fee* `min_fee(max_weight(n_in, n_out))` (`tx::builder::standard_fee`), so equal shapes pay equal fees. Not consensus. |
 | Input/output count fingerprinting | Wallets should default to 2 outputs; consolidation transactions remain visible. |
-| Timing and IP correlation | P2P layer (Dandelion++, Tor/I2P). Out of scope here. |
+| Timing and IP correlation | P2P layer (Dandelion++; outbound Tor for the node; no I2P). Out of scope here. |
 
 ### 11.4 Janus attack (subaddress linking) [Δ Monero]
 
@@ -897,8 +906,8 @@ voids Theorem 1.
 - It does not stop linkage through other channels: amounts, timing, IP addresses, or
   asking the victim.
 - The construction and the analysis above are BlackSilk's own. They follow the idea of
-  the Jamtis "Janus anchor" proposed for Monero, but have **not been peer-reviewed**. They
-  are listed for external review (§15).
+  the Jamtis "Janus anchor" proposed for Monero, but have **not been peer-reviewed**.
+  They would be a first item if an external reviewer were engaged (§15).
 
 ---
 
@@ -925,7 +934,7 @@ voids Theorem 1.
 | Referencing unconfirmed or very recent outputs | Spendable age of 10, coinbase maturity 60 (§5.3). |
 | Weak Fiat–Shamir in range proofs | The transcript absorbs the statement and all prover messages (§7). |
 | Cross-network replay | `network_id` in `sig_message`. |
-| Verification DoS | Bounded sizes (T1, T3, ring = 16). Cheap checks run first. A transaction's verification cost is bounded by about 64 CLSAGs and one BP+ with `N ≤ 1024`. Peers relaying invalid transactions are penalized (P2P spec). |
+| Verification DoS | Bounded sizes (T1, T3, ring = 16). Cheap checks run first. A transaction's verification cost is bounded by about 64 CLSAGs and one BP+ with `N ≤ 1024`. Peers relaying **stateless-invalid** transactions (§8.1) are penalized (p2p.md §10). Signature checks are contextual (they need the ring members from the chain), so relays of transactions with invalid signatures are **not** penalized: an open defect (N-11, docs/reviews/completion-readiness-2026-09-26.md). |
 | Arithmetic overflow in fees, indices, amounts | Checked arithmetic in decoding and summation (T5, T8, B3). |
 | Tx-hash collision between coinbases | `height` is in the coinbase prefix. |
 
@@ -963,12 +972,15 @@ Each part in bytes:
 
 ## 15. Known limitations and open items
 
-- **No external audit yet.** CLSAG and BP+ are implemented from the papers and from
-  Monero's audited design, in pure Rust. Because of Δ1 no official test vectors exist. The
-  test plan (§16) compensates with adversarial and property testing, but it does not
-  replace an external cryptographic review before mainnet.
-- **The Janus anchor (Δ4)** is our construction. Its analysis (§12.4) needs external
-  review.
+- **No external audit.** CLSAG and BP+ are implemented from the papers and from
+  Monero's design (externally reviewed for Monero, as reported by that project; not
+  this implementation), in pure Rust. Because of Δ1 no official test vectors exist.
+  The test plan (§16) compensates with adversarial and property testing, which is not
+  a substitute for a cryptographic review. By the owner's decision of 2026-09-25, no
+  external review is engaged or currently required (reviews/review-status.md); this
+  layer would be an item if a reviewer were engaged.
+- **The Janus anchor (Δ4)** is our construction. Its analysis (§12.4) has been
+  reviewed only internally.
 - **Decoy selection** (wallet policy, `tx/src/decoy.rs`) uses Monero's gamma parameters,
   which were fitted to Monero's spend-age data. BlackSilk has no spend data of its own yet.
 - **Economics constants** are fixed for v1 in [`blocks.md`](blocks.md) §2 and §5:
@@ -1014,8 +1026,9 @@ Each part in bytes:
    - Signature-coverage test: flipping any single prefix, base or BP+ byte invalidates
      the transaction.
 6. **Property tests** over random wallets, amounts and ring positions. These are seeded
-   randomized loops, not `proptest`: its default features need `getrandom`, which does
-   not build on the current audit toolchain (AUDIT.md Phase 1).
+   randomized loops, not `proptest`. (The original reason, that `getrandom` did not
+   build on the GNU toolchain, was resolved in R4 by moving to MSVC, AUDIT.md Phase 1;
+   the seeded loops were kept.)
 7. **Integration** with `blacksilk-consensus`: blocks whose `tx_root` commits to real
    transactions, a reorg deeper than 10 returning transactions to the mempool, and
    coinbase maturity.
