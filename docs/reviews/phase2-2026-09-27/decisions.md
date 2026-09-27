@@ -535,3 +535,83 @@
 - **Contracts:** moved out of the workspace NOW (29's W29-2, confirmed).
 - **cargo-vet criterion name:** `blacksilk-internal-review`, explicitly non-audit (P2).
 - **Project LICENSE:** an OWNER decision. Third-party notices are prepared regardless (P1) for the BSD-3 and MPL-2.0 obligations.
+
+## DAA update (after the W0-03 harness)
+- **Harness result:** the first run found no candidate meeting all criteria.
+  - A 2% rise cap cuts race excess to +4.2%, but its asymmetry lets a 100% miner gain +3.82% emission.
+  - ASERT is too slow for a small testnet.
+- **Revised acceptance criteria:**
+  - race ≤ +5% at q = 0.4 and ≤ +1% at q ≤ 0.35;
+  - emission gain ≤ +1%;
+  - hopper within ±3 points of the fair share;
+  - bias within ±1.5%;
+  - 10× up and down both followed in ≤ 150 blocks;
+  - from 0.5×D0 in ≤ 60 blocks;
+  - genesis-gap recovery ≤ 120 blocks;
+  - exact integer arithmetic.
+- **Rule choice:** the rule is chosen from W0-03b's selection study (symmetric solvetime clamp, rise+fall caps, weighted-sum caps, ASERT 1 h, hybrids, adaptive attackers). CB-A implements only after that and red-team review.
+
+## Open liveness item (labnet seedrun2, binaries 83fceee)
+- **What happened:** one "stuck" incident. node1 stayed one block behind for more than 90 s while connected.
+- **Why it is still open:** info-level logs cannot explain it.
+- **Plan:**
+  - Wave 4 evidence runs use debug logging for p2p::net blocks/headers, plus 09's labnet instrumentation.
+  - 31 (download scheduling, F31-2 stall detection) and 02 (F-1) own the hypotheses.
+  - The item must be closed or reproduced before the trial.
+
+## Git task COMPLETE (v3/candidate eliminated)
+- **Contained:** origin/v3/candidate is an ancestor of rebuild/core (merge 9e422d8). Checked with merge-base --is-ancestor.
+- **Tests:**
+  - local full suite on 9e422d8: 738 non-PX passed, 0 failed, 2 ignored; 11 PX-proving tests passed (single-threaded);
+  - CI run 87: all jobs green except guests(ubuntu), the pre-existing CI-1 kernel-id issue that came with the candidate content.
+- **Deleted:**
+  - local v3/candidate, v3a/b/c-candidate and all agent worktrees and branches (after patch-equivalence checks);
+  - REMOTE origin/v3/candidate.
+- **Remaining refs:** main and rebuild/core, plus temporary agent branches that are removed after their merges.
+
+## CI-1 fix DECIDED (W0-gates investigation)
+- **Mechanism:** the guest linker script starts SECTIONS at 0x10000, so the first PT_LOAD sits at file offset 0x1000 and the headers are not loaded. A `/DISCARD/ : { *(.comment) }` rule removes both rustc and LLD identification strings.
+- **Tested locally (kernel/vault):**
+  - the id is independent of `.comment` rewrites;
+  - native = guest tests pass;
+  - Program::from_elf accepts the result.
+- **Consequences:**
+  - The zkvm id definition is UNCHANGED.
+  - Ids change once, at the single v3 rebuild (43).
+  - New tests: no PT_LOAD at offset 0, and no .comment section.
+- **Acceptance:** byte-identical ELFs on windows, ubuntu and ubuntu-arm in CI at the rebuild commit.
+
+## Gates live
+- Consensus-path trailer, lockfile diff and unicode scan (cut-over 55f110e); cargo-deny for the main and fuzz workspaces; publish = false on every member.
+- From now on, EVERY commit touching a consensus path needs a `Consensus-Change:` trailer. Every implementation agent prompt must say so.
+
+## DAA DECIDED: LWMA-75 with counted-clock step T/2 (W0-03b selection)
+- **Rule:** `this = max(ts, prev + max(1, T/2))` (was prev + 1), with N = 75 on all networks (was 60).
+  - It is the only candidate of 29 that meets all 8 criteria on 2 seeds.
+  - Race q=0.4 z=100: +3.8% (was +33.6%). Emission gain +0.69% (unchanged). Hopper +2.4 points. Bias +1.0%. 10× up/down in 113/130 blocks. The genesis-fork rewrite goes to 0.
+  - The rise is bounded at 2× the window average; no overflow.
+- **Approvals:** the coordinator approves N = 75 (delegated authority). The cost is a slower 10×-drop recovery (9.6 h vs 7.7 h), accepted.
+- **Before CB-A implements it:** red team (50-style agent) attacks the rule (window boundaries, hopper margin, step interaction with MTP/FTL, adversarial histories).
+- **CB-A then:**
+  - implements it with new golden vectors from an independent script;
+  - re-derives the genesis-gap and 1-second-block tests;
+  - adds a fingerprint difficulty-rule identifier.
+- **Residual:** about 4% at q=0.4 is left to the park-on-deep-reorg policy (02).
+
+## DAA FINAL (after RT-DAA)
+- **Rule:**
+  - LWMA, N = 75;
+  - counted-clock step max(1, T/2);
+  - counted clock WARMED over the 11 blocks before the window: `from = w0.saturating_sub(11); prev = ts[from]; for j in from+1..=w0 { prev = max(ts[j], prev + step) }`;
+  - callers supply 87 ancestors;
+  - fingerprint id `lwma1-n75-step-t/2-warm11-cap6t-floor20`;
+  - golden vector from redteam.md (998,248 → 999,824 case) plus independent-script vectors.
+- **Measured:**
+  - race q=0.4: +3.5%;
+  - emission: worst +0.66% (search), static +0.25%;
+  - bias: +1.03%;
+  - 10× up/down: 113/130 blocks;
+  - genesis rewrite: 0.
+- **Hopper criterion RELAXED to ±5 points for the TESTNET** (option a): a 100× hopper with FTL stamps measures +4.2. Documented, and must be reopened before any mainnet.
+- **Also documented:** slow settling after 100×/1000× hash-rate increases (224/334 blocks); an arithmetic range invariant T < 2^51 (03-F6 ChainParams::check).
+- **Implementation:** CB-A may now implement it.
