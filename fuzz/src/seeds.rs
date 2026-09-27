@@ -5,15 +5,23 @@
 use blacksilk_chain::block::Block;
 use blacksilk_consensus::merkle::tx_root;
 use blacksilk_consensus::{BlockHeader, ChainParams, HEADER_VERSION};
-use blacksilk_crypto::keys::{SubaddressIndex, WalletKeys};
-use blacksilk_p2p::message::Message;
+use blacksilk_crypto::keys::{SubaddressIndex, SubaddressTable, WalletKeys};
+use blacksilk_p2p::message::{Message, Version, PROTOCOL_VERSION};
+use blacksilk_p2p::NetAddr;
 use blacksilk_px::perm::HostPerm;
 use blacksilk_px::prove::{prove_transfer, witness_words};
 use blacksilk_px::tree::Tree;
 use blacksilk_px::wallet::{self, Account};
 use blacksilk_px_core::record::Record;
-use blacksilk_tx::builder::{build_coinbase, Payment};
+use blacksilk_tx::builder::{
+    build_coinbase, build_transfer, standard_fee, Decoy, InputPlan, Payment, SpendableOutput,
+};
+use blacksilk_tx::params::TxRules;
+use blacksilk_tx::px::Registration;
+use blacksilk_tx::px_builder::{build_deploy, build_px, px_standard_fee, PxPlan};
+use blacksilk_tx::scan::scan_block;
 use blacksilk_tx::types::Transaction;
+use blacksilk_zkvm::air::trace::Budget;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::path::Path;
@@ -72,7 +80,8 @@ fn main() {
     };
     put("block_decode", "block", &block.encode());
 
-    // Messages of every shape.
+    // Messages of every shape. A Tor v3 host: 56 base32 characters.
+    let onion = "abcdefghijklmnopqrstuvwxyz234567".repeat(2);
     let messages = [
         Message::Verack,
         Message::Ping(7),
@@ -87,6 +96,33 @@ fn main() {
         Message::InvTx(vec![[4; 32], [5; 32]]),
         Message::Tx(vec![9; 100]),
         Message::StemTx(vec![8; 50]),
+        // Appended after the original ten, so m0..m9 keep their contents.
+        Message::Version(Version {
+            protocol: PROTOCOL_VERSION,
+            network: ChainParams::regtest().network_id,
+            nonce: 0x0123_4567_89ab_cdef,
+            height: 42,
+            tip: [6; 32],
+            listen: Some(NetAddr::parse("203.0.113.7:18333").unwrap()),
+            relay_txs: true,
+        }),
+        Message::Version(Version {
+            protocol: PROTOCOL_VERSION,
+            network: ChainParams::regtest().network_id,
+            nonce: 1,
+            height: 0,
+            tip: [0; 32],
+            listen: None,
+            relay_txs: false,
+        }),
+        Message::Pong(7),
+        Message::Addr(vec![
+            NetAddr::parse("198.51.100.1:18333").unwrap(),
+            NetAddr::parse("[2001:db9::1]:18333").unwrap(),
+            NetAddr::parse(&format!("{}.onion:18333", &onion[..56])).unwrap(),
+        ]),
+        Message::NotFound(vec![[10; 32], [11; 32]]),
+        Message::GetTx(vec![[12; 32]]),
     ];
     for (i, m) in messages.iter().enumerate() {
         put("p2p_message", &format!("m{i}"), &m.encode());
@@ -179,4 +215,115 @@ fn main() {
         "transfer",
         &blacksilk_zk::encode_proof(&proof),
     );
+
+    // The other transaction kinds (as in tx/tests/fuzz_decode.rs): a transfer,
+    // a PX transaction (one more proof) and a deploy. Their own generator, so
+    // the seeds above stay as they were. The spent outputs come from a
+    // 16-output coinbase to `keys`; each input's 15 decoys are its siblings.
+    // Valid encodings, not chain-valid transactions: nothing here is mined.
+    let mut rng = ChaCha20Rng::seed_from_u64(2);
+    let rules = TxRules::for_chain(&ChainParams::regtest());
+    let table = SubaddressTable::new(keys.view_keys(), 1, 16);
+    let funds: Vec<Payment> = (0..16)
+        .map(|i| Payment {
+            address: keys.address(SubaddressIndex::new(0, i)),
+            amount: 1_000_000_000 + i as u64,
+        })
+        .collect();
+    let funding = Transaction::Coinbase(build_coinbase(2, &funds, &[2; 32], &mut rng).unwrap());
+    let owned = scan_block(keys.view_keys(), &table, &[funding], 2, 0).owned;
+    assert_eq!(owned.len(), 16, "the wallet owns every funding output");
+    let plan = |k: usize| InputPlan {
+        real: SpendableOutput::from(&owned[k]),
+        decoys: owned
+            .iter()
+            .enumerate()
+            .filter(|&(j, _)| j != k)
+            .map(|(_, o)| Decoy {
+                global_index: o.global_index,
+                key: o.key,
+            })
+            .collect(),
+    };
+    let home = keys.address(SubaddressIndex::new(0, 0));
+
+    let transfer = build_transfer(
+        &keys,
+        vec![plan(0)],
+        &[Payment {
+            address: keys.address(SubaddressIndex::new(0, 1)),
+            amount: 1_000,
+        }],
+        &home,
+        standard_fee(1, 2, &rules),
+        &rules,
+        &mut rng,
+    )
+    .unwrap();
+    put(
+        "tx_decode",
+        "transfer",
+        &Transaction::from(transfer).encode(),
+    );
+
+    let deploy = build_deploy(
+        &keys,
+        vec![plan(1)],
+        &[Payment {
+            address: home,
+            amount: 1,
+        }],
+        &home,
+        [1; 32],
+        vec![Registration {
+            elf: blacksilk_px::vault::VAULT_ELF.to_vec(),
+            budget: Budget {
+                cycles: 6_000,
+                keys: 2_200,
+                add: 4_300,
+                bit: 200,
+                lt: 3_400,
+                shift: 200,
+                mul: 200,
+                poseidon: 22,
+            },
+        }],
+        &rules,
+        &mut rng,
+    )
+    .unwrap();
+    put(
+        "tx_decode",
+        "deploy",
+        &Transaction::PxDeploy(Box::new(deploy)).encode(),
+    );
+
+    // A bridge-in of 10_000_000 to a PX record (two dummy inputs).
+    let bob = Account::from_seed(&[9; 32]);
+    let bridge = wallet::witness(
+        Tree::new(&mut perm).root(),
+        10_000_000,
+        0,
+        [wallet::dummy_input(&mut rng), wallet::dummy_input(&mut rng)],
+        [
+            wallet::output(&mut rng, bob.owner(0), 10_000_000),
+            wallet::empty_output(&mut rng),
+        ],
+    );
+    let px = build_px(
+        PxPlan {
+            keys: Some(&keys),
+            inputs: vec![plan(2)],
+            change: Some(home),
+            payouts: vec![],
+            witness: bridge,
+            recipients: [Some(bob.address(0)), None],
+            functions: vec![],
+            fee: px_standard_fee(),
+        },
+        &rules,
+        &mut rng,
+    )
+    .unwrap();
+    put("tx_decode", "px", &Transaction::Px(Box::new(px)).encode());
 }

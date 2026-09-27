@@ -4,8 +4,11 @@
 #       blacksilk-node --config /etc/blacksilk/node.toml
 #
 # Pure Rust build: no C toolchain is needed beyond the Rust image's defaults.
+# The compiler is pinned to the version CI and the reviewed evidence use
+# (.github/workflows/ci.yml); .dockerignore keeps target/, .git and fuzzing
+# data out of the build context.
 
-FROM rust:1-bookworm AS build
+FROM rust:1.98.1-bookworm AS build
 WORKDIR /src
 COPY . .
 RUN cargo build --release --locked \
