@@ -21,7 +21,7 @@ use blacksilk_consensus::{
 use std::sync::{Arc, Mutex};
 
 const T: u64 = 120;
-const N: usize = 60;
+const N: usize = 75;
 const D0: u64 = 777;
 
 /// History from `(solve time, difficulty)` pairs, starting at t = 1 000 000 with
@@ -47,44 +47,57 @@ fn lwma_blocks(blocks: &[(u64, u64)]) -> u64 {
 }
 
 // ---------------------------------------------------------------- LWMA (§4)
+//
+// The v3 rule: N = 75, counted clock step max(1, T/2) = 60 s at T = 120, warmed
+// over the 11 blocks before the window. The sum of i for i = 1..=75 is 2 850.
 
 #[test]
 fn lwma_steady_state_is_exact() {
-    // n = 60, st = T, d = D: L = T·Σi = 1830·T, S = 60·D,
-    // next = 60·D·T·61 / (2·1830·T) = D exactly.
-    assert_eq!(lwma_blocks(&[(T, 10_000); 60]), 10_000);
+    // n = 75, st = T, d = D: L = T·Σi = 2850·T, S = 75·D,
+    // next = 75·D·T·76 / (2·2850·T) = D exactly.
+    assert_eq!(lwma_blocks(&[(T, 10_000); 75]), 10_000);
 }
 
 #[test]
 fn lwma_hashrate_doubles_and_halves() {
-    // st = T/2: L = 60·1830 = 109 800; next = 600 000·120·61 / 219 600 = 20 000.
-    assert_eq!(lwma_blocks(&[(T / 2, 10_000); 60]), 20_000);
-    // st = 2T: L = 240·1830 = 439 200; next = 4 392 000 000 / 878 400 = 5 000.
-    assert_eq!(lwma_blocks(&[(2 * T, 10_000); 60]), 5_000);
+    // st = T/2 = one step: L = 60·2850 = 171 000; next = 750 000·120·76 / 342 000
+    // = 20 000.
+    assert_eq!(lwma_blocks(&[(T / 2, 10_000); 75]), 20_000);
+    // st = 2T: L = 240·2850 = 684 000; next = 6 840 000 000 / 1 368 000 = 5 000.
+    assert_eq!(lwma_blocks(&[(2 * T, 10_000); 75]), 5_000);
 }
 
 #[test]
 fn lwma_only_the_last_window_counts() {
-    // 39 wildly different blocks before a steady window of 60: only the last
-    // N + 1 entries are used, so the result is the steady-state value.
+    // 39 wildly different blocks before 11 steady warm-up blocks and a steady
+    // window of 75: only the last N + 1 + 11 entries are read, so the result is
+    // the steady-state value.
     let mut blocks = vec![(7u64, 999_999u64); 39];
-    blocks.extend([(T, 10_000); 60]);
+    blocks.extend([(T, 10_000); 86]);
     assert_eq!(lwma_blocks(&blocks), 10_000);
     // Longer steady history: same.
     assert_eq!(lwma_blocks(&[(T, 10_000); 200]), 10_000);
+    // The warm-up does read the 11 blocks before the window: with the 7 s blocks
+    // right before it, the clock enters the window 583 s ahead of its oldest
+    // stamp, so the first solve times count one step each (script: 10 092).
+    let mut blocks = vec![(7u64, 999_999u64); 39];
+    blocks.extend([(T, 10_000); 75]);
+    assert_eq!(lwma_blocks(&blocks), 10_092);
 }
 
 #[test]
 fn lwma_window_fill_phase() {
     // n = 0 (only genesis): D0.
     assert_eq!(lwma(&[5], &[1]), D0);
-    // n = 1: next = d1·T·2 / (2·max(st, T/20)) = d1·T / max(st, 6).
+    // n = 1 (no warm-up block exists): next = d1·T·2 / (2·max(st, T/20)) with
+    // st = max(t1, t0 + 60) − t0.
     assert_eq!(lwma(&[1000, 1120], &[100, 200]), 100); // st = T
-    assert_eq!(lwma(&[1000, 1030], &[100, 200]), 400); // st = T/4
-                                                       // Equal timestamps: this = prev + 1, st = 1, L = max(1, 1·1·120/20 = 6) = 6:
-                                                       // 100·120·2 / 12 = 2000.
-    assert_eq!(lwma(&[1000, 1000], &[100, 200]), 2_000);
-    // n = 10, mixed (st_i = 60 + 37i mod 200, d_i = 1000 + 113i mod 500): script.
+                                                       // A 30 s solve time counts one step (60): 100·120·2 / 120 = 200.
+    assert_eq!(lwma(&[1000, 1030], &[100, 200]), 200);
+    // Equal timestamps: also one step, 200.
+    assert_eq!(lwma(&[1000, 1000], &[100, 200]), 200);
+    // n = 10, mixed (st_i = 60 + 37i mod 200 ≥ one step, d_i = 1000 + 113i mod 500):
+    // script. No solve time is below the step, so this is also the pre-v3 value.
     let blocks: Vec<(u64, u64)> = (1..=10u64)
         .map(|i| (60 + (i * 37) % 200, 1000 + (i * 113) % 500))
         .collect();
@@ -93,21 +106,25 @@ fn lwma_window_fill_phase() {
 
 #[test]
 fn lwma_out_of_order_timestamps() {
-    // t = [0, 50, 40, 400], d = [100, 200, 300]:
-    //   i=1: this=50, st=50, L=50
-    //   i=2: 40 ≤ 50 -> this=51, st=1, L=52
-    //   i=3: this=400, st=349 (measured from 51, not 40 or 50), L=52+1047=1099
-    //   floor 3·3·120/20 = 54; S = 600; next = 600·120·4 / 2198 = 131.
-    assert_eq!(lwma(&[0, 50, 40, 400], &[5, 105, 305, 605]), 131);
-    // Every timestamp 3 s earlier than its predecessor (d = 500 each): script.
+    // t = [0, 50, 40, 400], d = [100, 200, 300], step 60:
+    //   i=1: this = max(50, 0 + 60) = 60, st = 60, L = 60
+    //   i=2: this = max(40, 120) = 120, st = 60, L = 180
+    //   i=3: this = max(400, 180) = 400, st = 280 (from the clock, not 40 or 50),
+    //        L = 180 + 840 = 1020
+    //   floor 3·3·120/20 = 54; S = 600; next = 600·120·4 / 2040 = 141.
+    assert_eq!(lwma(&[0, 50, 40, 400], &[5, 105, 305, 605]), 141);
+    // Every timestamp 3 s earlier than its predecessor (d = 500 each, n = 60):
+    // every solve time counts one step, L = 60·1830 = 109 800, S = 30 000,
+    // next = 30 000·120·61 / 219 600 = 1 000.
     let ts: Vec<u64> = (0..61u64).map(|i| 10_000 - 3 * i).collect();
     let cd: Vec<u128> = (0..61u128).map(|i| i * 500).collect();
-    assert_eq!(lwma(&ts, &cd), 5_083);
+    assert_eq!(lwma(&ts, &cd), 1_000);
 }
 
 #[test]
 fn lwma_solve_time_cap_is_6t() {
-    // t = [0, 120, 120 + x], d = [1000, 1000]: i=1 st=120, i=2 st=min(720, x).
+    // t = [0, 120, 120 + x], d = [1000, 1000]: i=1 st=120, i=2 st=min(720, x)
+    // for x ≥ 60 (below 60 the step counts 60).
     // x ≥ 720: L = 120 + 2·720 = 1560; next = 2000·120·3 / 3120 = 230.
     assert_eq!(lwma(&[0, 120, 10_120], &[0, 1000, 2000]), 230);
     assert_eq!(lwma(&[0, 120, 840], &[0, 1000, 2000]), 230); // exactly 6T
@@ -118,25 +135,28 @@ fn lwma_solve_time_cap_is_6t() {
 }
 
 #[test]
-fn lwma_increase_floor_is_n2_t_over_20() {
-    // All timestamps equal: st = 1 each, L = 1830 < floor 60·60·120/20 = 21 600.
-    // next = 600 000·120·61 / 43 200 = 101 666 (a divisor of 19 would give 96 583).
-    assert_eq!(lwma_blocks(&[(0, 10_000); 60]), 101_666);
+fn lwma_increase_is_bounded_by_the_step() {
+    // All timestamps equal: each solve time counts one step (60), L = 60·2850 =
+    // 171 000, above the floor 75·75·120/20 = 33 750; next = 750 000·120·76 /
+    // 342 000 = 20 000, twice the window average. The floor n²T/20 cannot bind
+    // under the v3 rule: L ≥ step·n(n+1)/2 > n²T/20 for every n ≥ 1.
+    // (A step of 1, the pre-v3 rule, would give 101 666 here.)
+    assert_eq!(lwma_blocks(&[(0, 10_000); 75]), 20_000);
 }
 
 #[test]
 fn lwma_clamps() {
-    // Lower clamp: d = 1, st = 6T: next = 60·120·61 / (2·720·1830) = 0 -> 1.
-    assert_eq!(lwma_blocks(&[(6 * T, 1); 60]), 1);
-    assert_eq!(lwma_blocks(&[(1_000_000, 1); 60]), 1);
-    // Upper clamp: d = u64::MAX with equal timestamps would give ~10.17·u64::MAX.
-    assert_eq!(lwma_blocks(&[(0, u64::MAX); 60]), u64::MAX);
+    // Lower clamp: d = 1, st = 6T: next = 75·120·76 / (2·720·2850) = 0 -> 1.
+    assert_eq!(lwma_blocks(&[(6 * T, 1); 75]), 1);
+    assert_eq!(lwma_blocks(&[(1_000_000, 1); 75]), 1);
+    // Upper clamp: d = u64::MAX with equal timestamps would give 2·u64::MAX.
+    assert_eq!(lwma_blocks(&[(0, u64::MAX); 75]), u64::MAX);
 }
 
 #[test]
 fn lwma_mixed_window() {
-    // st_i = 60 + (37i mod 200), d_i = 1000 + (113i mod 500), i = 1..=60: script.
-    let blocks: Vec<(u64, u64)> = (1..=60u64)
+    // st_i = 60 + (37i mod 200), d_i = 1000 + (113i mod 500), i = 1..=75: script.
+    let blocks: Vec<(u64, u64)> = (1..=75u64)
         .map(|i| (60 + (i * 37) % 200, 1000 + (i * 113) % 500))
         .collect();
     assert_eq!(lwma_blocks(&blocks), 914);
@@ -191,22 +211,22 @@ fn child(chain: &HeaderChain, timestamp: u64) -> BlockHeader {
     }
 }
 
-/// Difficulties of blocks 1..=150 on regtest (T = 10, N = 60) with D0 = 1000,
+/// Difficulties of blocks 1..=150 on regtest (T = 10, N = 75, step 5 s, warm-up
+/// 11) with D0 = 1000,
 /// genesis time 1 700 000 000 and block h at `t[h-1] + PATTERN[h mod 12]`,
 /// from the spec pseudocode (script). The pattern includes decreasing
 /// timestamps and solve times above 6T = 60.
 const PATTERN: [i64; 12] = [10, 3, 25, -2, 1, 12, 10, 7, 70, -5, 4, 9];
 const CHAIN_DIFFICULTIES: [u64; 150] = [
-    1000, 3333, 1226, 1985, 3143, 3053, 2914, 3112, 1281, 1496, 1738, 1870, 1890, 2092, 1754, 1957,
-    2181, 2202, 2198, 2264, 1501, 1617, 1739, 1802, 1811, 1910, 1734, 1845, 1962, 1976, 1978, 2016,
-    1547, 1625, 1705, 1745, 1751, 1816, 1698, 1773, 1851, 1862, 1864, 1891, 1556, 1613, 1673, 1702,
-    1706, 1754, 1667, 1723, 1781, 1789, 1791, 1811, 1552, 1598, 1645, 1668, 1671, 1722, 1630, 1684,
-    1732, 1722, 1707, 1710, 1465, 1508, 1553, 1574, 1575, 1608, 1537, 1580, 1623, 1626, 1622, 1634,
-    1410, 1448, 1488, 1507, 1507, 1540, 1473, 1513, 1555, 1559, 1558, 1572, 1358, 1393, 1431, 1448,
-    1449, 1480, 1416, 1454, 1494, 1499, 1499, 1512, 1307, 1340, 1376, 1392, 1392, 1421, 1360, 1396,
-    1434, 1439, 1438, 1451, 1255, 1285, 1319, 1334, 1333, 1361, 1302, 1335, 1372, 1375, 1375, 1387,
-    1200, 1229, 1261, 1276, 1276, 1303, 1246, 1279, 1314, 1318, 1318, 1331, 1151, 1179, 1210, 1224,
-    1224, 1250, 1196, 1227, 1261, 1265,
+    1000, 2000, 882, 1176, 1470, 1764, 1974, 2095, 822, 914, 1005, 1096, 1188, 1279, 1124, 1199,
+    1274, 1349, 1408, 1449, 949, 995, 1040, 1085, 1130, 1175, 1095, 1136, 1176, 1217, 1249, 1273,
+    972, 1002, 1031, 1060, 1090, 1119, 1066, 1094, 1121, 1148, 1170, 1187, 974, 995, 1017, 1039,
+    1060, 1082, 1043, 1063, 1084, 1104, 1121, 1133, 969, 986, 1003, 1020, 1037, 1054, 1023, 1040,
+    1056, 1072, 1085, 1095, 963, 977, 991, 1005, 1019, 1033, 1007, 1020, 1036, 1039, 1054, 1063,
+    943, 947, 950, 951, 966, 980, 957, 969, 981, 992, 1002, 1009, 897, 905, 913, 921, 933, 946,
+    922, 934, 945, 956, 966, 974, 865, 874, 883, 893, 904, 916, 893, 904, 915, 926, 935, 943, 838,
+    847, 856, 866, 876, 887, 865, 875, 886, 897, 906, 913, 812, 820, 829, 839, 849, 859, 837, 847,
+    857, 868, 876, 883, 785, 793, 802, 811, 821, 830, 809, 818, 828, 838,
 ];
 
 #[test]
@@ -257,7 +277,7 @@ fn header_chain_difficulty_and_mtp_golden() {
     }
     // Work: genesis + every block's difficulty.
     let total: u128 = 1000 + CHAIN_DIFFICULTIES.iter().map(|&d| d as u128).sum::<u128>();
-    assert_eq!(total, 242_100); // script
+    assert_eq!(total, 153_943); // script
     assert_eq!(chain.best_work(), total);
 }
 

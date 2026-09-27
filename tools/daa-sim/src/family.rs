@@ -1,8 +1,8 @@
 //! Generalised candidate rules for the selection study (W0-03b).
 //!
 //! These rules exist only in this harness. [`GenLwma`] is a parametrised LWMA-1 whose
-//! default parameters reproduce the consensus rule exactly (pinned by a test against
-//! `blacksilk_consensus::difficulty::next_difficulty`). Every rule is exact integer
+//! default parameters reproduce the pre-v3 consensus rule exactly (pinned by a test
+//! against its frozen copy `crate::rules::legacy_next`). Every rule is exact integer
 //! arithmetic: `u128`/`i128` intermediates, truncating division, and (for the
 //! exponential rules) the aserti3-2d fixed-point `2^x` polynomial.
 
@@ -349,12 +349,13 @@ pub fn selection_candidates() -> Vec<Box<dyn DifficultyRule>> {
 mod tests {
     use super::*;
     use crate::rng::Rng;
-    use blacksilk_consensus::difficulty::next_difficulty;
+    use crate::rules::legacy_next;
 
-    /// The generalised LWMA with default parameters IS the consensus rule, on
-    /// random histories including out-of-order stamps and short windows.
+    /// The generalised LWMA with default parameters IS the pre-v3 consensus rule
+    /// (the frozen copy [`legacy_next`]), on random histories including
+    /// out-of-order stamps and short windows.
     #[test]
-    fn generalised_default_equals_consensus() {
+    fn generalised_default_equals_the_pre_v3_rule() {
         let g = GenLwma::current();
         let mut rng = Rng::new(5);
         for len in [1usize, 2, 3, 10, 61, 62, 200] {
@@ -367,7 +368,7 @@ mod tests {
                     cd.push(cd.last().unwrap() + 1 + rng.below(2_000_000) as u128);
                 }
                 let from = len.saturating_sub(61);
-                let want = next_difficulty(&ts[from..], &cd[from..], 120, 60, cd[0] as u64);
+                let want = legacy_next(&ts[from..], &cd[from..], 120, 60, cd[0] as u64);
                 assert_eq!(g.next(&ts, &cd, 120), want);
             }
         }

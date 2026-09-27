@@ -53,6 +53,10 @@ fn main() {
 fn run(cfg: Config) -> Result<(), String> {
     let network = cfg.network;
     let params = ChainParams::for_network(network);
+    // Refuse to start on parameters the consensus code was not written for.
+    params
+        .check()
+        .map_err(|e| format!("invalid chain parameters: {e}"))?;
     let data_dir = cfg.data_dir.clone();
     std::fs::create_dir_all(&data_dir).map_err(|e| format!("{}: {e}", data_dir.display()))?;
 

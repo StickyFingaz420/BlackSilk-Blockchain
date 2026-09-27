@@ -1236,6 +1236,100 @@ async fn an_unrequested_header_batch_is_not_verified() {
     assert_eq!(a.net.peers()[0].score, score::UNSOLICITED);
 }
 
+/// Counts every PoW evaluation; fails headers carrying `BAD_NONCE` (as
+/// `CountingPow`).
+#[derive(Default)]
+struct CountAllPow(std::sync::atomic::AtomicUsize);
+impl PowFunction for CountAllPow {
+    fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        CountingPow::default().pow_hash(seed, blob)
+    }
+}
+
+/// RT-1: a header of a version above every version the schedule knows is not
+/// penalized only if its proof of work is real. With junk proof of work the
+/// sender is penalized like for any invalid header (one hash spent). With real
+/// work the sender is not scored, and after `UNKNOWN_UPGRADE_DISCONNECT` (3)
+/// such headers it is disconnected without a ban.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn unknown_version_headers_need_real_proof_of_work() {
+    let pow = Arc::new(CountAllPow::default());
+    let a = node_with_pow(43, fast_config(&[]), pow.clone()).await;
+    let nid = params().network_id;
+    let hashes = || pow.0.load(std::sync::atomic::Ordering::SeqCst);
+    // 1-second blocks lift the difficulty above 1 (at 1 every hash passes).
+    let prefix = header_branch(30, 1, 0);
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &prefix {
+        g.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let t = g.template();
+    assert!(t.difficulty > 1);
+    let newer = |nonce| BlockHeader {
+        version: HEADER_VERSION + 6,
+        height: t.height,
+        prev_id: t.prev_id,
+        timestamp: t.min_timestamp.max(prefix[29].timestamp + 1),
+        difficulty: t.difficulty,
+        tx_root: [0; 32],
+        nonce,
+    };
+
+    // (a) Junk proof of work, at the end of a requested batch: penalized.
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 10_000).await;
+    assert!(
+        recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    let mut batch = prefix.clone();
+    batch.push(newer(BAD_NONCE));
+    w.send(&Message::Headers(batch).encode()).await.unwrap();
+    assert!(
+        closes_within(&mut r, 10).await,
+        "penalized and disconnected"
+    );
+    wait_until("penalized", 5, || {
+        a.net.stats().misbehaving_disconnects == 1
+    })
+    .await;
+    assert_eq!(
+        a.chain.lock().unwrap().header_height(),
+        30,
+        "the prefix is stored"
+    );
+
+    // (b) Real proof of work, as tip announcements: not scored; disconnected
+    // (not banned) at the third.
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    wait_until("registered", 5, || a.net.stats().peers == 1).await;
+    for k in 0..2u64 {
+        let before = hashes();
+        w.send(&Message::Headers(vec![newer(100 + k)]).encode())
+            .await
+            .unwrap();
+        wait_until("hashed", 5, || hashes() > before).await;
+        w.send(&Message::Ping(k).encode()).await.unwrap();
+        assert!(
+            recv_until(&mut r, 5.0, |m| matches!(m, Message::Pong(x) if *x == k))
+                .await
+                .is_some(),
+            "still connected after {} reports",
+            k + 1
+        );
+        assert_eq!(a.net.peers()[0].score, 0, "not penalized");
+    }
+    w.send(&Message::Headers(vec![newer(102)]).encode())
+        .await
+        .unwrap();
+    assert!(closes_within(&mut r, 10).await, "disconnected at the third");
+    wait_until("peer gone", 5, || a.net.stats().peers == 0).await;
+    assert_eq!(a.net.stats().misbehaving_disconnects, 1, "no penalty");
+    assert_eq!(a.net.stats().banned, 0, "no ban");
+    assert_eq!(a.chain.lock().unwrap().header_height(), 30);
+}
+
 /// Defect 2: a peer relaying headers of a block whose *body* we found invalid
 /// (or of its descendants) is not banned: it cannot know without the body.
 /// Before the fix every such relay scored 100 (an immediate ban), so one

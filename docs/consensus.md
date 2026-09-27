@@ -21,13 +21,29 @@ All integers are unsigned and little-endian unless stated otherwise.
 | `network_id` (u32) | `0x000B1A6C` | `0x0001D672` | `0x00DEB06E` |
 | Target block time `T` | 120 s | 120 s | 10 s |
 | Initial difficulty `D0` | 100 000 | 100 | 1 |
-| Difficulty window `N` (LWMA) | 60 | 60 | 60 |
+| Difficulty window `N` (LWMA, §4) | 75 | 75 | 75 |
 | Median-time-past window | 11 | 11 | 11 |
 | Future time limit `FTL` | 360 s | 360 s | 360 s |
 | RandomX epoch `E` | 2048 | 2048 | 2048 |
 | RandomX lag `L` | 64 | 64 | 64 |
 
-The genesis header of each network is a constant in `params.rs`.
+**Parameter invariants** (`ChainParams::check`, enforced when a `HeaderChain` is
+built and at node start-up): `2 ≤ T < 2^51`; `N ≥ 1` and `T·N·(N+1) < 2^64` (§4's
+`u128` bound); `1 ≤` median-time-past window `≤ 11` (the counted clock's warm-up);
+`1 ≤ FTL ≤ 7200 s`; `E` a power of two and `L < E`; `D0 ≥ 1`; the genesis header has
+height 0, zero parent and `tx_root`, difficulty `D0` and the first epoch's header
+version. The schedule table is validated when it is built (§11).
+
+The genesis header of each network is built in `params.rs` from a `GenesisSpec`
+(`consensus/src/genesis.rs`): network id, timestamp, `D0`, and the network's
+committed beacon (`TESTNET_BEACON`, `MAINNET_BEACON`). The nonce is **derived** from
+the beacon, `LE64(H("BlackSilk/genesis-nonce/v1" ‖ LE32(network_id) ‖ LE64(btc_height)
+‖ btc_hash_display)[0..8])` (docs/testnet-v3-genesis.md §2), or 0 while no beacon is
+committed. There is no nonce constant and no runtime override; `ChainParams::check`
+refuses a genesis whose nonce disagrees with the beacon. A testnet or mainnet genesis
+without a committed beacon is **not final** (`ChainParams::genesis_is_final`); regtest
+needs no beacon. No beacon is committed yet on any network, so every nonce is 0 and
+the genesis ids below are unchanged.
 - The genesis body is **empty**: no coinbase, no premine, `tx_root` = 32 zero bytes
   (blocks.md §3).
 - **Testnet v2 genesis** (the planned reset, identity fixed 2026-09-26: PX rules from height 0, parameter set
@@ -114,33 +130,91 @@ Why:
 - The seed block must be looked up **on the header's own branch**. On a fork deeper
   than the lag, the two branches can use different keys.
 
-## 4. Difficulty: LWMA-1
+## 4. Difficulty: LWMA-1 with a warmed counted clock
 
 The difficulty of block `h` is computed from its ancestors on its own branch using
-zawy12's Linearly Weighted Moving Average (LWMA-1), chosen because it:
-- responds quickly to hashrate swings (important for a young network),
-- bounds the influence of manipulated timestamps,
-- has been deployed widely by CryptoNote-family coins.
+zawy12's Linearly Weighted Moving Average (LWMA-1), with one change to how solve
+times are counted. The rule (v3; identifier `DIFFICULTY_RULE_ID` =
+`lwma1-n75-step-t/2-warm11-cap6t-floor20` in `consensus/src/difficulty.rs`):
 
-Let `A` be the list of the up to `N+1` most recent ancestors (oldest first, ending with
-the parent), with timestamps `t[i]` and cumulative difficulties `C[i]`, and `n = |A| - 1`.
+- LWMA responds quickly to hashrate swings, which a young network needs, and makes
+  timestamp manipulation that *lowers* the difficulty unprofitable.
+- The counted clock advances at least `step = max(1, ⌊T/2⌋)` per block (60 s at
+  T = 120). Compressed timestamps therefore raise the difficulty by at most 2× the
+  window average per block, which bounds the difficulty-raising attack (Bahack
+  2013; dossier 03-F1): a private branch can no longer concentrate its work in a
+  few very hard blocks.
+- The clock is **warmed** over the 11 blocks before the window, so a single low
+  stamp at the window's start cannot restart the clock low and let a window count
+  real time its predecessor did not (red-team finding RT-1).
+
+Rationale, alternatives and measurements:
+`docs/reviews/v3-consensus-changes.md` (section "daa-lwma75-warm") and the
+evidence in `docs/evidence/daa-sim-2026-09-27/` (`selection.md`, `redteam.md`).
+
+Let `A` be the ancestors of the new block, oldest first, ending with the parent:
+the last `N + 1 + 11 = 87` of them (fewer near genesis), with timestamps `t[i]` and
+cumulative difficulties `C[i]`. The window is the last `min(|A|, N + 1)` entries;
+`w0` is the index of its oldest entry and `n` the number of solve times in it.
 
 ```
+n  = min(|A|, N + 1) - 1
 if n < 1: return D0                         # block 1 (only genesis precedes it)
-prev = t[0]; L = 0; S = 0
-for i in 1..=n:
-    this = t[i] if t[i] > prev else prev + 1      # out-of-order timestamps
+step = max(1, T / 2)                        # integer division
+w0   = |A| - (n + 1)                        # the window's oldest entry
+from = max(0, w0 - 11)                      # the warm-up start
+prev = t[from]
+for j in from+1 ..= w0:                     # warm the counted clock
+    prev = max(t[j], prev + step)
+L = 0; S = 0
+for i in 1..=n:                             # the window: entry w0 + i
+    this = max(t[w0+i], prev + step)              # the counted clock
     st   = min(6·T, this - prev)                  # cap a single solve time
     prev = this
     L   += i · st                                 # linear weights: newest counts most
-    S   += C[i] - C[i-1]                          # sum of difficulties
-L = max(L, n·n·T / 20)                            # bound the maximum increase
+    S   += C[w0+i] - C[w0+i-1]                    # sum of difficulties
+L = max(L, n·n·T / 20, 1)
 next = S · T · (n + 1) / (2 · L)                  # integer arithmetic, u128
 return clamp(next, 1, u64::MAX)
 ```
 
-During the first `N` blocks the window is shorter (`n < N`), which lets the
-difficulty leave `D0` quickly.
+Exact semantics a second implementation must match:
+
+- All arithmetic is unsigned 128-bit with truncating division. The largest
+  intermediate is `S·T·(n+1)`, below `n·2^64·T·(n+1)`; it fits whenever
+  `T·N·(N+1) < 2^64` (at `N = 75`: `T < 2^51`), which `ChainParams::check`
+  requires (§1).
+  The counted clock stays below `max(t) + (N + 11)·step`.
+- Near genesis (`|A| < 87`) the warm-up starts at the oldest ancestor, and with
+  `|A| ≤ N + 1` there is no warm-up at all (`from = w0 = 0`). During the first `N`
+  blocks the window is shorter (`n < N`), which lets the difficulty leave `D0`
+  quickly.
+- Every counted solve time is at least `step`, so `L ≥ step·n(n+1)/2`, which is
+  always above the floor `n²T/20`: the floor cannot bind under this rule. It is
+  kept (and named in the rule id) as a bound that holds independently of the step.
+- The rise per block is at most `⌊S·T/(step·n)⌋`, i.e. 2× the window average at
+  even `T`. After a 2-hour genesis gap the difficulty therefore climbs back
+  additively at low difficulty (`tools/genesis/tests/genesis.rs`).
+- Timestamps are not reordered: a stamp at or below the clock counts one step.
+
+Deliberate differences from zawy12's reference LWMA-1 (a second implementation
+copying the reference would fork off):
+
+- no 99/100 factor, so honest block times are about 1% slower than `T` (measured in
+  `docs/evidence/daa-sim-2026-09-27/`);
+- the clock starts at a stamp (warmed as above), not at `t[0] − T`;
+- the counted clock's step is `T/2`, not 1 s, and it is warmed over 11 blocks;
+- a shortened window from block 2 instead of a fixed guess for the first `N` blocks;
+- no rounding of the result to significant digits.
+
+Known limits of the rule (evidence in `redteam.md`): a hash-rate hopper with a
+large external multiple gains a few points of block share (accepted for the
+testnet within ±5 points, to be reopened before any mainnet), and settling after a
+100× or 1000× hash-rate increase takes a few hundred blocks.
+
+Vectors: `consensus/tests/data/lwma_vectors.txt`, generated from this section by
+`tools/vectors/lwma_warm.py` (an independent standard-library Python script), and the
+hand derivations in `consensus/tests/golden.rs`.
 
 ## 5. Timestamps
 
@@ -156,7 +230,7 @@ is deliberately much shorter than Bitcoin's or Monero's 2 hours, because LWMA re
 to timestamps within a few blocks: `FTL ≤ N·T/20` as recommended for LWMA. Nodes
 must not adjust their clocks from peer time by more than `FTL/2`.
 
-On regtest (`T` = 10 s) the recommendation gives `N·T/20` = 30 s, but regtest keeps
+On regtest (`T` = 10 s) the recommendation gives `N·T/20` = 37 s, but regtest keeps
 `FTL` = 360 s like the other networks. Regtest is a local test network, so this is
 accepted; its difficulty is more sensitive to manipulated timestamps than the
 testnet's.
@@ -172,11 +246,25 @@ A header `B` whose parent `P` is known and not invalid is valid iff, in this ord
 
 1. `B.version == epoch_at(P.height + 1).header_version` (§11). A version above every
    version of the schedule is `UnknownUpgrade`, which is **not permanent** (the sender
-   probably runs a newer release). Any other mismatch is `BadVersion`, permanent.
+   probably runs a newer release), but only if the height is right and the header's
+   RandomX hash meets the difficulty this node requires at that position (RT-1: the
+   benign verdict costs real work). Otherwise it is `BadHeight` or
+   `InsufficientWork`, both permanent. The batch pre-check computes no PoW, so there
+   `UnknownUpgrade` is unconfirmed until full validation. Any other mismatch is
+   `BadVersion`, permanent.
 2. `B.height == P.height + 1`
-3. Timestamp rules (§5)
-4. `B.difficulty == next_difficulty(P's branch)` (§4)
-5. PoW: `check_hash(RandomX(seed_id(B.height), bytes(B)), B.difficulty)` (§3)
+3. `B.difficulty == next_difficulty(P's branch)` (§4)
+4. Median-time-past (§5 rule 1)
+5. Future time limit (§5 rule 2), the only non-permanent rule, after every
+   permanent rule but PoW
+6. PoW: `check_hash(RandomX(seed_id(B.height), bytes(B)), B.difficulty)` (§3)
+
+Validity does not depend on the order (it is the conjunction of the rules); the
+order decides which error is reported, and so whether the sender is penalized.
+Since v3 (F-05) the permanent rules come before the future time limit, so a header
+with a wrong difficulty and a future timestamp is `BadDifficulty` (permanent), not
+`TimestampTooFarInFuture`. Vectors: `header_check_order_vectors` in
+`consensus/src/chain.rs`.
 
 Headers whose parent is unknown are not stored (the network layer requests
 the missing ancestors). Descendants of an invalid block are invalid.
@@ -258,6 +346,9 @@ the CVE-2012-2459 class of duplicate-transaction malleability.
   78, 79 and 83 (2026-09-27), before vector 1f was added to it.
 - The only input not derived from chain data is the local clock (§5 rule 2), which is
   treated as non-final.
+- **Targets:** 64-bit little-endian only. Consensus encodings use explicit
+  little-endian conversions, but no big-endian build has run the vectors, so the
+  consensus crate refuses to compile for big-endian (and non-64-bit) targets.
 
 ## 10. Known limitations / open items
 
@@ -296,8 +387,12 @@ What the epoch fixes:
   Only `1` exists. A test checks that every scheduled id is implemented.
 
 **Rules for the network layer and the pool:**
-- `UnknownUpgrade` is not the peer's fault: warn the operator ("a newer consensus
-  version is in use") and do not penalize the peer.
+- `UnknownUpgrade` (confirmed with PoW, §6) is not the peer's fault: do not penalize
+  the peer. Disconnect it without a ban after 3 such headers. Warn the operator ("a
+  newer consensus version is in use") only once at least 2 distinct peers sent one, or
+  one extends a branch that reaches our best chain's work: a single peer cannot raise
+  the warning cheaply (RT-1). A header of an unknown version with junk PoW is
+  `InsufficientWork` and penalized.
 - Validate a block at height `h` with the transaction rules of `epoch_at(h)`
   (`TxRules::at_height`).
 - When the next height crosses an activation (`Schedule::activation_in`), flush the

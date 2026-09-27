@@ -542,8 +542,11 @@ fn replacing_coinbase_only_blocks_changes_a_ring_and_needs_full_validation() {
 /// `revalidate_after_extension` still accepts it; full validation drops it.
 ///
 /// Construction: the chain is mined with 1 s blocks (difficulty rises), then
-/// three slow blocks (60 s: the difficulty falls). A rival branch of two fast
-/// blocks from before the slow ones has more work with fewer blocks.
+/// four slow blocks (1000 s: the difficulty falls). A rival branch of three fast
+/// blocks from before the slow ones has more work with fewer blocks. (Under the
+/// v3 rule the counted clock runs ahead of 1 s stamps by the step T/2 per
+/// block, so the slow blocks must be slow enough to pass it before the
+/// difficulty can fall; see docs/reviews/v3-consensus-changes.md#daa-lwma75-warm.)
 #[test]
 fn a_shorter_heavier_reorg_makes_a_ring_member_immature() {
     let mut m = open();
@@ -555,8 +558,8 @@ fn a_shorter_heavier_reorg_makes_a_ring_member_immature() {
     miner.mine_on(&mut m, genesis, 80, Some(1));
     let fork_parent = m.tip_id();
     let fork_height = m.height();
-    miner.mine_on(&mut m, fork_parent, 3, Some(60));
-    assert_eq!(m.height(), fork_height + 3);
+    miner.mine_on(&mut m, fork_parent, 4, Some(1000));
+    assert_eq!(m.height(), fork_height + 4);
     let old_next = m.height() + 1;
     let diffs: Vec<u64> = (fork_height..=m.height())
         .map(|h| m.block_at(h).unwrap().header.difficulty)
@@ -585,13 +588,13 @@ fn a_shorter_heavier_reorg_makes_a_ring_member_immature() {
         .add(tx.clone(), m.state(), old_next, m.rules())
         .unwrap();
 
-    rival.mine_on(&mut m, fork_parent, 2, Some(1));
+    rival.mine_on(&mut m, fork_parent, 3, Some(1));
     assert_eq!(
         m.height(),
-        fork_height + 2,
-        "the 2-block branch must win (difficulties {diffs:?})"
+        fork_height + 3,
+        "the 3-block branch must win (difficulties {diffs:?})"
     );
-    assert_eq!(m.deepest_reorg(), 3);
+    assert_eq!(m.deepest_reorg(), 4);
     let next = m.height() + 1;
     assert!(next < created + COINBASE_MATURITY);
 

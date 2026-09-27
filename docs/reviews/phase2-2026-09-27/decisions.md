@@ -620,3 +620,10 @@
 - **Policy:** each reviewed consensus merge re-pins `px/tests/consensus_fingerprint.rs` and `node/tests/deploy_configs.rs`, with a Consensus-Change trailer citing its record. The new network id and the final values come with fingerprint v3 (40).
 - **Tooling constraint:** the Claude auto-mode classifier blocks the coordinator from editing these pinned values, both as a security-test change and as a bypass. The OWNER applies the re-pin, or adds a permission rule.
 - **Until then:** the two tests are red, known and documented. Every other test must stay green.
+
+## RPC (after W2-36), Lead decisions 2026-09-27
+- **Dependencies:** hyper 1.11.1, hyper-util 0.1.20 and subtle 2.6.1 are APPROVED as direct dependencies of blacksilk-node. They were already in the lockfile at the same versions (transitive via axum/crypto), so no new crate enters.
+- **/tx/status spec:** `GET /tx/status?id=<hex>` returns `{"status":"pooled"}`, `{"status":"confirmed","height":h}` or `{"status":"unknown"}`. It is cookie-authenticated.
+  - NEVER report stem state: a stem transaction answers `unknown` (F36-11).
+  - `expired` is added only with 12's recently-expired set.
+- **Wiring:** the binary switches to `serve::run` (cookie auth plus connection limits), with `--rpc-allow-host`, in the miner, labnet, check-node.sh and testnet docs, as ONE follow-up owner (W2-36b). This is a launch blocker until done.

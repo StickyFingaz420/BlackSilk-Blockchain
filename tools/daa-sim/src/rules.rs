@@ -1,11 +1,73 @@
 //! Pluggable difficulty rules.
 //!
-//! [`Lwma`] with window 60 IS the consensus rule: it calls
+//! [`ConsensusV3`] IS the consensus rule: it calls
 //! [`blacksilk_consensus::difficulty::next_difficulty`] exactly as
-//! `HeaderChain::required_difficulty` does. Every other rule here is a candidate
-//! that exists only in this harness.
+//! `HeaderChain::required_difficulty` does. [`Lwma`] with window 60 is the pre-v3
+//! consensus rule (LWMA-60, counted-clock step 1, no warm-up), frozen here as
+//! [`legacy_next`] so that the selection and red-team evidence
+//! (docs/evidence/daa-sim-2026-09-27/) stays reproducible after the v3 change.
+//! Every other rule here is a candidate that exists only in this harness.
 
-use blacksilk_consensus::difficulty::next_difficulty;
+use blacksilk_consensus::difficulty::{difficulty_ancestors, next_difficulty, DIFFICULTY_WINDOW};
+
+/// The pre-v3 consensus `next_difficulty` (rebuild/core before the v3 DAA change),
+/// copied verbatim: LWMA-1, counted clock `this = max(ts, prev + 1)`, 6T cap,
+/// floor `n²T/20`, no warm-up. Reads the last `window + 1` entries.
+pub fn legacy_next(
+    timestamps: &[u64],
+    cumulative: &[u128],
+    target: u64,
+    window: usize,
+    initial: u64,
+) -> u64 {
+    assert_eq!(timestamps.len(), cumulative.len());
+    let take = timestamps.len().min(window + 1);
+    let ts = &timestamps[timestamps.len() - take..];
+    let cd = &cumulative[cumulative.len() - take..];
+    let n = take.saturating_sub(1) as u128;
+    if n == 0 {
+        return initial;
+    }
+    let t = target as u128;
+
+    let mut prev = ts[0] as u128;
+    let mut weighted: u128 = 0;
+    let mut sum_difficulty: u128 = 0;
+    for i in 1..take {
+        let this = if ts[i] as u128 > prev {
+            ts[i] as u128
+        } else {
+            prev + 1
+        };
+        let solve_time = (this - prev).min(6 * t);
+        prev = this;
+        weighted += i as u128 * solve_time;
+        sum_difficulty += cd[i] - cd[i - 1];
+    }
+    weighted = weighted.max(n * n * t / 20).max(1);
+
+    let next = sum_difficulty * t * (n + 1) / (2 * weighted);
+    next.clamp(1, u64::MAX as u128) as u64
+}
+
+/// The v3 consensus rule, called as `HeaderChain` calls it: the last
+/// `difficulty_ancestors(75)` = 87 entries, window 75, and `cd[0]` (the anchor's
+/// difficulty, `D0` for a branch from genesis) as the initial difficulty.
+#[derive(Clone, Copy, Debug)]
+pub struct ConsensusV3;
+
+impl DifficultyRule for ConsensusV3 {
+    fn name(&self) -> String {
+        "LWMA-75 step T/2 warm 11 (v3 consensus)".into()
+    }
+    fn next(&self, ts: &[u64], cd: &[u128], target: u64) -> u64 {
+        let from = ts
+            .len()
+            .saturating_sub(difficulty_ancestors(DIFFICULTY_WINDOW));
+        let initial = cd[0].min(u64::MAX as u128) as u64;
+        next_difficulty(&ts[from..], &cd[from..], target, DIFFICULTY_WINDOW, initial)
+    }
+}
 
 /// A difficulty rule: the required difficulty of the child of the last block.
 ///
@@ -33,7 +95,9 @@ impl<F: Fn(&[u64], &[u128], u64) -> u64 + Send + Sync> DifficultyRule for FnRule
     }
 }
 
-/// The consensus LWMA-1 with window `N` (60 in consensus; 90 is a candidate).
+/// The pre-v3 consensus LWMA-1 ([`legacy_next`]) with window `N` (60 before v3;
+/// 90 was a candidate). The label "LWMA-60 (current)" is the one the committed
+/// evidence tables print, kept so that regenerated tables stay byte-identical.
 #[derive(Clone, Copy, Debug)]
 pub struct Lwma {
     pub window: usize,
@@ -48,11 +112,12 @@ impl DifficultyRule for Lwma {
         }
     }
     fn next(&self, ts: &[u64], cd: &[u128], target: u64) -> u64 {
-        // The consensus call passes the last N+1 blocks and `initial_difficulty`,
-        // which is also the genesis difficulty (`cd[0]` of a branch from genesis).
+        // The pre-v3 consensus call passed the last N+1 blocks and
+        // `initial_difficulty`, which is also the genesis difficulty (`cd[0]` of a
+        // branch from genesis).
         let from = ts.len().saturating_sub(self.window + 1);
         let initial = cd[0].min(u64::MAX as u128) as u64;
-        next_difficulty(&ts[from..], &cd[from..], target, self.window, initial)
+        legacy_next(&ts[from..], &cd[from..], target, self.window, initial)
     }
 }
 
@@ -169,21 +234,44 @@ mod tests {
     }
 
     #[test]
-    fn lwma60_is_the_consensus_call() {
-        let p = ChainParams::testnet();
-        assert_eq!(p.difficulty_window, 60);
-        // The genesis-gap vector of tools/genesis/tests/genesis.rs: 100 -> 16.
+    fn lwma60_is_the_pre_v3_rule() {
+        // The genesis-gap vector of the pre-v3 tools/genesis/tests/genesis.rs:
+        // 100 -> 16.
         let ts = [1_790_000_000, 1_790_007_200];
         let cd = [100u128, 200];
         let rule = Lwma { window: 60 };
         assert_eq!(rule.next(&ts[..1], &cd[..1], 120), 100);
         assert_eq!(rule.next(&ts, &cd, 120), 16);
+        // The pre-v3 floor vector (consensus/tests/golden.rs before v3): equal
+        // timestamps, 60 blocks at 10 000 -> 101 666.
+        let ts = [1_000_000u64; 61];
+        let cd: Vec<u128> = (1..=61u128).map(|i| i * 10_000).collect();
+        assert_eq!(rule.next(&ts, &cd, 120), 101_666);
         // A long history: the wrapper passes exactly the last N+1 blocks.
         let (ts, cd) = steady(500, 120, 10_000);
         assert_eq!(
             rule.next(&ts, &cd, 120),
-            next_difficulty(&ts[439..], &cd[439..], 120, 60, 1)
+            legacy_next(&ts[439..], &cd[439..], 120, 60, 1)
         );
+    }
+
+    #[test]
+    fn consensus_v3_is_the_consensus_call() {
+        let p = ChainParams::testnet();
+        assert_eq!(p.difficulty_window, DIFFICULTY_WINDOW);
+        assert_eq!(p.difficulty_ancestors(), 87);
+        // The genesis gap: the 6T cap still gives 100 -> 16.
+        let ts = [1_790_000_000, 1_790_007_200];
+        let cd = [100u128, 200];
+        assert_eq!(ConsensusV3.next(&ts[..1], &cd[..1], 120), 100);
+        assert_eq!(ConsensusV3.next(&ts, &cd, 120), 16);
+        // A long history: the wrapper passes exactly the last 87 blocks, and the
+        // consensus function ignores anything older anyway.
+        let (mut ts, cd) = steady(500, 120, 10_000);
+        ts[500 - 88] = 0;
+        let want = next_difficulty(&ts[413..], &cd[413..], 120, 75, 1);
+        assert_eq!(ConsensusV3.next(&ts, &cd, 120), want);
+        assert_eq!(next_difficulty(&ts, &cd, 120, 75, 1), want);
     }
 
     #[test]

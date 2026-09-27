@@ -34,6 +34,13 @@ pub enum HeaderError {
     /// sender probably runs a newer release (an upgrade this node lacks). Not
     /// permanent, and not the sender's fault: the network layer should warn
     /// the operator instead of penalizing the peer (R1-C10).
+    ///
+    /// [`HeaderChain::validate`] returns it only for a header whose height is
+    /// right and whose proof of work meets the difficulty this node requires
+    /// at that position (RT-1): with junk proof of work the verdict is
+    /// `InsufficientWork`. [`HeaderChain::precheck_batch`] computes no proof of
+    /// work, so there it is unconfirmed: the caller must confirm the header
+    /// with `validate` before treating it as benign.
     UnknownUpgrade {
         version: u32,
     },
@@ -148,7 +155,15 @@ pub struct HeaderChain {
 }
 
 impl HeaderChain {
+    /// A header chain holding only the genesis of `params`.
+    ///
+    /// # Panics
+    /// If `params` break an invariant of [`ChainParams::check`]: consensus code
+    /// never runs on parameters it was not written for.
     pub fn new(params: ChainParams, pow: Arc<dyn PowFunction>) -> Self {
+        if let Err(e) = params.check() {
+            panic!("invalid chain parameters: {e}");
+        }
         let genesis = params.genesis;
         let id = genesis.id(params.network_id);
         let mut entries = HashMap::new();
@@ -250,9 +265,10 @@ impl HeaderChain {
         out
     }
 
-    /// Difficulty required for a child of `parent_id` (spec §4).
+    /// Difficulty required for a child of `parent_id` (spec §4), from the
+    /// parent's last `ChainParams::difficulty_ancestors` blocks.
     fn required_difficulty(&self, parent_id: Hash) -> u64 {
-        let recent = self.recent(parent_id, self.params.difficulty_window + 1);
+        let recent = self.recent(parent_id, self.params.difficulty_ancestors());
         let ts: Vec<u64> = recent.iter().map(|e| e.header.timestamp).collect();
         let cd: Vec<u128> = recent.iter().map(|e| e.cumulative).collect();
         next_difficulty(
@@ -321,6 +337,15 @@ impl HeaderChain {
         let expected_version = self.params.epoch_at(expected_height).header_version;
         if header.version != expected_version {
             if header.version > self.params.schedule.max_header_version() {
+                // A newer release may change any other rule, but not the
+                // height: a wrong one is invalid under every version.
+                if header.height != expected_height {
+                    return Err(HeaderError::BadHeight {
+                        expected: expected_height,
+                        got: header.height,
+                    });
+                }
+                // Unconfirmed until `validate` checks the proof of work (RT-1).
                 return Err(HeaderError::UnknownUpgrade {
                     version: header.version,
                 });
@@ -336,6 +361,16 @@ impl HeaderChain {
                 got: header.height,
             });
         }
+        // The permanent rules first, the local-clock rule (not permanent) last,
+        // so that a permanently invalid header is always reported as such
+        // (F-05, docs/consensus.md §6). The order changes only which error is
+        // reported, never whether the header is valid.
+        if header.difficulty != parent.child_difficulty {
+            return Err(HeaderError::BadDifficulty {
+                expected: parent.child_difficulty,
+                got: header.difficulty,
+            });
+        }
         if !after_median_time_past(header.timestamp, &[parent.median_time_past]) {
             return Err(HeaderError::TimestampTooOld {
                 median_time_past: parent.median_time_past,
@@ -346,12 +381,6 @@ impl HeaderChain {
             return Err(HeaderError::TimestampTooFarInFuture {
                 limit: now.saturating_add(self.params.future_time_limit),
                 got: header.timestamp,
-            });
-        }
-        if header.difficulty != parent.child_difficulty {
-            return Err(HeaderError::BadDifficulty {
-                expected: parent.child_difficulty,
-                got: header.difficulty,
             });
         }
         Ok(())
@@ -430,7 +459,10 @@ impl HeaderChain {
         i: usize,
         overlay: &[(Hash, u64, u128)],
     ) -> Context {
-        let need = (self.params.difficulty_window + 1).max(self.params.median_time_window);
+        let need = self
+            .params
+            .difficulty_ancestors()
+            .max(self.params.median_time_window);
         // Newest first.
         let mut ts: Vec<u64> = Vec::with_capacity(need);
         let mut cd: Vec<u128> = Vec::with_capacity(need);
@@ -450,7 +482,7 @@ impl HeaderChain {
         ts.reverse();
         cd.reverse();
         let mtp_from = ts.len().saturating_sub(self.params.median_time_window);
-        let diff_from = ts.len().saturating_sub(self.params.difficulty_window + 1);
+        let diff_from = ts.len().saturating_sub(self.params.difficulty_ancestors());
         Context {
             height: headers[i - 1].height,
             valid: true,
@@ -476,15 +508,34 @@ impl HeaderChain {
             .entries
             .get(&header.prev_id)
             .ok_or(HeaderError::UnknownParent)?;
-        self.check_rules(header, &self.stored_context(header.prev_id, parent), now)?;
+        let context = self.stored_context(header.prev_id, parent);
+        if let Err(e) = self.check_rules(header, &context, now) {
+            if let HeaderError::UnknownUpgrade { .. } = e {
+                // RT-1: the benign verdict costs real work. The difficulty is the
+                // one this node requires here, whatever the header claims, so a
+                // header claiming difficulty 1 cannot buy it cheaply. A future
+                // proof-of-work change would make this node see
+                // `InsufficientWork`; it must upgrade then anyway.
+                if !self.pow_meets(header, context.child_difficulty) {
+                    return Err(HeaderError::InsufficientWork);
+                }
+            }
+            return Err(e);
+        }
 
         // Expensive check last.
-        let seed = self.seed_id_for(header.prev_id, header.height);
-        let pow_hash = self.pow.pow_hash(&seed, &header.to_bytes());
-        if !check_hash(&pow_hash, header.difficulty) {
+        if !self.pow_meets(header, header.difficulty) {
             return Err(HeaderError::InsufficientWork);
         }
         Ok(id)
+    }
+
+    /// Whether the RandomX hash of `header`, under the seed of its parent's
+    /// branch at its height, meets `difficulty`.
+    fn pow_meets(&self, header: &BlockHeader, difficulty: u64) -> bool {
+        let seed = self.seed_id_for(header.prev_id, header.height);
+        let pow_hash = self.pow.pow_hash(&seed, &header.to_bytes());
+        check_hash(&pow_hash, difficulty)
     }
 
     /// Validates and stores `header`, switching the best chain if it now has the
@@ -765,6 +816,7 @@ mod tests {
 
         let mut h = good;
         h.version = 2;
+        let h = grind(&c, h, h.difficulty, true); // RT-1: real work
         let e = c.validate(&h, now).unwrap_err();
         assert_eq!(e, HeaderError::UnknownUpgrade { version: 2 });
         assert!(!e.is_permanent());
@@ -824,6 +876,140 @@ mod tests {
         let id = c.accept(good, now).unwrap().id;
         assert_eq!(c.accept(good, now), Err(HeaderError::Duplicate));
         assert_eq!(c.tip_id(), id);
+    }
+
+    /// Searches for a nonce that makes `h` meet `difficulty` (`want = true`) or
+    /// fail it (`want = false`) under the seed of its parent's branch.
+    fn grind(c: &HeaderChain, mut h: BlockHeader, difficulty: u64, want: bool) -> BlockHeader {
+        let seed = c.seed_id_for(h.prev_id, h.height);
+        while check_hash(&TestPow.pow_hash(&seed, &h.to_bytes()), difficulty) != want {
+            h.nonce += 1;
+        }
+        h
+    }
+
+    /// A chain whose next required difficulty is above 1 (at 1 every hash is
+    /// valid, so no header could fail proof of work), and a valid child of its tip.
+    fn chain_above_one() -> (HeaderChain, BlockHeader) {
+        let mut c = chain();
+        let g = c.tip_id();
+        extend(&mut c, g, 10, 20, 1);
+        let good = mine_on(&c, c.tip_id(), 120, 1);
+        assert!(good.difficulty > 1);
+        (c, good)
+    }
+
+    /// F-05 (docs/consensus.md §6): the permanent rules (version, height,
+    /// difficulty) are checked before the timestamp rules, and the non-permanent
+    /// future-time limit after every permanent rule but proof of work. Validity is
+    /// unchanged (it is a conjunction); only the first reported error, and so
+    /// its permanence, depends on the order. Each row: the mutations, then the
+    /// first failing error of the v3 order.
+    #[test]
+    fn header_check_order_vectors() {
+        let (c, good) = chain_above_one();
+        let tip = good.prev_id;
+        let mtp = c.median_time_past(tip);
+        let now = good.timestamp;
+        type Mutation = fn(&mut BlockHeader, u64);
+        let bad_difficulty: Mutation = |h, _| h.difficulty += 1;
+        let bad_height: Mutation = |h, _| h.height += 1;
+        let too_old: Mutation = |h, mtp| h.timestamp = mtp;
+        let future: Mutation = |h, _| h.timestamp += 10_000;
+        let rows: [(&str, &[Mutation], &str); 7] = [
+            (
+                "difficulty + future",
+                &[bad_difficulty, future],
+                "BadDifficulty",
+            ),
+            (
+                "difficulty + too old",
+                &[bad_difficulty, too_old],
+                "BadDifficulty",
+            ),
+            (
+                "height + difficulty",
+                &[bad_height, bad_difficulty],
+                "BadHeight",
+            ),
+            ("height + future", &[bad_height, future], "BadHeight"),
+            ("too old", &[too_old], "TimestampTooOld"),
+            ("future", &[future], "TimestampTooFarInFuture"),
+            ("difficulty", &[bad_difficulty], "BadDifficulty"),
+        ];
+        for (what, ms, want) in rows {
+            let mut h = good;
+            for m in ms {
+                m(&mut h, mtp);
+            }
+            let e = c.validate(&h, now).unwrap_err();
+            assert!(format!("{e:?}").starts_with(want), "{what}: {e:?}");
+            assert_eq!(c.precheck_batch(&[h], now), Err((0, e.clone())), "{what}");
+            // The permanence of the first error is what peers are scored on.
+            assert_eq!(
+                e.is_permanent(),
+                want != "TimestampTooFarInFuture",
+                "{what}"
+            );
+        }
+        // The future-time limit still comes before proof of work.
+        let mut h = grind(&c, good, good.difficulty, false);
+        h.timestamp = now + 10_000;
+        let h = grind(&c, h, h.difficulty, false);
+        assert!(matches!(
+            c.validate(&h, now),
+            Err(HeaderError::TimestampTooFarInFuture { .. })
+        ));
+    }
+
+    /// RT-1: a header of a version above every version the schedule knows is
+    /// `UnknownUpgrade` (not penalized) only if its proof of work meets the
+    /// difficulty this node requires at that position. With junk proof of work it
+    /// is `InsufficientWork` (permanent, penalized), so the benign verdict cannot
+    /// be had for free.
+    #[test]
+    fn unknown_upgrade_needs_valid_proof_of_work() {
+        let (c, good) = chain_above_one();
+        let now = good.timestamp;
+        let mut newer = good;
+        newer.version = 7;
+        let junk = grind(&c, newer, good.difficulty, false);
+        let e = c.validate(&junk, now).unwrap_err();
+        assert_eq!(e, HeaderError::InsufficientWork);
+        assert!(e.is_permanent());
+        let real = grind(&c, newer, good.difficulty, true);
+        let e = c.validate(&real, now).unwrap_err();
+        assert_eq!(e, HeaderError::UnknownUpgrade { version: 7 });
+        assert!(!e.is_permanent());
+        // The work must be real at the difficulty this node requires, whatever
+        // difficulty the header claims.
+        let mut cheap = newer;
+        cheap.difficulty = 1;
+        let cheap = grind(&c, cheap, good.difficulty, false);
+        assert_eq!(c.validate(&cheap, now), Err(HeaderError::InsufficientWork));
+        // A known-but-wrong version stays a permanent `BadVersion`, without PoW.
+        let mut old = junk;
+        old.version = 0;
+        assert!(matches!(
+            c.validate(&old, now),
+            Err(HeaderError::BadVersion { .. })
+        ));
+        // A wrong height is invalid under any version: `BadHeight`, no PoW.
+        let mut lying = real;
+        lying.height += 1;
+        assert!(matches!(
+            c.validate(&lying, now),
+            Err(HeaderError::BadHeight { .. })
+        ));
+    }
+
+    /// Consensus code never runs on parameters that break an invariant.
+    #[test]
+    #[should_panic(expected = "invalid chain parameters: TargetTooSmall(1)")]
+    fn a_header_chain_refuses_invalid_parameters() {
+        let mut params = ChainParams::regtest();
+        params.target_block_time = 1;
+        HeaderChain::new(params, Arc::new(TestPow));
     }
 
     #[test]
@@ -966,7 +1152,7 @@ mod tests {
 
     /// The batch pre-check reaches the verdict of sequential validation for
     /// every rule it checks, at every position, across the LWMA window
-    /// (150 > 61 headers), and computes no proof of work at all.
+    /// and its warm-up (150 > 87 headers), and computes no proof of work at all.
     #[test]
     fn precheck_agrees_with_sequential_validation_and_computes_no_pow() {
         let headers = branch(150, 3);
@@ -986,7 +1172,7 @@ mod tests {
             ("difficulty down", |h| h.difficulty -= 1),
             ("timestamp too old", |h| h.timestamp = 0),
         ];
-        for k in [0usize, 1, 10, 59, 60, 61, 62, 100, 149] {
+        for k in [0usize, 1, 10, 11, 12, 74, 75, 76, 77, 86, 87, 88, 100, 149] {
             for (what, m) in mutations {
                 let mut batch = headers.clone();
                 m(&mut batch[k]);
@@ -997,7 +1183,20 @@ mod tests {
                 for h in &batch[..k] {
                     seq.accept(*h, now).unwrap();
                 }
-                assert_eq!(seq.validate(&batch[k], now), Err(e), "{what} at {k}");
+                let verdict = seq.validate(&batch[k], now);
+                if let HeaderError::UnknownUpgrade { .. } = e {
+                    // Unconfirmed in the pre-check (no PoW); `validate`
+                    // confirms it with the proof of work (RT-1).
+                    let real = seq.pow_meets(&batch[k], seq.required_difficulty(batch[k].prev_id));
+                    let want = if real {
+                        e
+                    } else {
+                        HeaderError::InsufficientWork
+                    };
+                    assert_eq!(verdict, Err(want), "{what} at {k}");
+                } else {
+                    assert_eq!(verdict, Err(e), "{what} at {k}");
+                }
             }
         }
         // The future-time limit, with the batch's own clock.

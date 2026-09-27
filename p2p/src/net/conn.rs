@@ -199,7 +199,7 @@ pub(super) async fn run_connection<S>(
                 headers_grace: None,
                 headers_busy: false,
                 headers_pending: false,
-                warned_upgrade: false,
+                unknown_upgrades: 0,
             },
         );
     }
