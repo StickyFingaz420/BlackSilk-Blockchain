@@ -5,6 +5,7 @@
 use blacksilk_chain::emission::{block_reward, COIN};
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::store::MemoryStore;
+use blacksilk_consensus::schedule::{Epoch, Schedule, BRANCH_ID_V3, VERIFIER_PX_1};
 use blacksilk_consensus::{ChainParams, Hash, Network, PowFunction};
 use blacksilk_crypto::keys::Address;
 use blacksilk_node::{router, Shared};
@@ -37,8 +38,13 @@ struct Net {
 
 impl Net {
     fn start() -> Self {
-        let params = ChainParams::regtest();
-        let rules = TxRules::for_chain(&params);
+        Self::start_with(ChainParams::regtest())
+    }
+
+    /// A node of `params` (a regtest chain, possibly with another schedule).
+    fn start_with(params: ChainParams) -> Self {
+        // The first epoch's rules; the manager derives the others per height.
+        let rules = TxRules::at_height(&params, 0);
         let manager = ChainManager::open(
             params,
             rules,
@@ -142,6 +148,9 @@ enum Submit {
     Invalid,
     /// Keep it (`Flaky::sent`) and report it accepted, without passing it on.
     Record,
+    /// Keep it (`Flaky::sent`) and report a transport failure, without
+    /// passing it on (a submission lost on the way).
+    Lose,
 }
 
 /// The real client, with submissions answered as `mode` says; counts them.
@@ -152,8 +161,10 @@ struct Flaky<'a> {
     sent: RefCell<Vec<Vec<u8>>>,
     /// Every `/outputs` request, in order.
     queries: RefCell<Vec<Vec<u64>>>,
-    /// Report at most this height (a node behind the wallet).
+    /// Report at most this height (a node behind the wallet)...
     height_cap: Option<u64>,
+    /// ...in this many more `info` answers (then the real height).
+    capped_infos: Cell<u32>,
     /// At submission, read this wallet file (password `pw`) and record
     /// whether it already holds the reservation.
     check_file: Option<std::path::PathBuf>,
@@ -169,6 +180,7 @@ impl<'a> Flaky<'a> {
             sent: RefCell::new(Vec::new()),
             queries: RefCell::new(Vec::new()),
             height_cap: None,
+            capped_infos: Cell::new(u32::MAX),
             check_file: None,
             saved_before_submit: Cell::new(None),
         }
@@ -179,8 +191,11 @@ impl NodeApi for Flaky<'_> {
     fn info(&self) -> Result<rpc::Info, String> {
         let mut i = NodeApi::info(self.inner)?;
         if let Some(cap) = self.height_cap {
-            i.height = i.height.min(cap);
-            i.header_height = i.header_height.min(cap);
+            if self.capped_infos.get() > 0 {
+                self.capped_infos.set(self.capped_infos.get() - 1);
+                i.height = i.height.min(cap);
+                i.header_height = i.header_height.min(cap);
+            }
         }
         Ok(i)
     }
@@ -225,6 +240,7 @@ impl NodeApi for Flaky<'_> {
                 on_best_chain: None,
                 error: None,
             }),
+            Submit::Lose => Err("connection reset".into()),
         }
     }
 }
@@ -1285,4 +1301,199 @@ fn out_of_range_address_indexes_are_refused() {
     let t = std::time::Instant::now();
     let _ = Wallet::from_json(&w.to_json()).unwrap();
     assert!(t.elapsed() < std::time::Duration::from_secs(5));
+}
+
+// ---- a regtest consensus upgrade (docs/reviews/v3-upgrade-mechanism.md §10) ----
+
+/// The first height of the second epoch of [`upgrade_params`].
+const ACTIVATION: u64 = 110;
+const NEXT_BRANCH: u32 = 0x4253_7634;
+
+/// Two epochs identical except the branch id, as in chain/tests/activation.rs.
+static NOOP_UPGRADE: [Epoch; 2] = [
+    Epoch {
+        name: "v3",
+        activation_height: 0,
+        header_version: 1,
+        branch_id: BRANCH_ID_V3,
+        verifier_id: VERIFIER_PX_1,
+    },
+    Epoch {
+        name: "noop",
+        activation_height: ACTIVATION,
+        header_version: 1,
+        branch_id: NEXT_BRANCH,
+        verifier_id: VERIFIER_PX_1,
+    },
+];
+
+fn upgrade_params() -> ChainParams {
+    let mut p = ChainParams::regtest();
+    p.schedule = Schedule::new(&NOOP_UPGRADE);
+    p
+}
+
+fn upgrade_wallet(seed: u8) -> Wallet {
+    let mut w = wallet(seed);
+    w.set_chain_params(upgrade_params()).unwrap();
+    w
+}
+
+fn rewards_through(height: u64) -> u64 {
+    let mut total = 0u64;
+    for h in 1..=height {
+        total += block_reward(h, total);
+    }
+    total
+}
+
+/// A transfer built before an activation and never mined is not rebroadcast
+/// after it, on the stored path and on the Uncertain path alike: its inputs
+/// are released, the user is told, and the payment sent again after the
+/// activation uses the new branch id and is accepted and mined.
+#[test]
+fn a_transfer_built_before_an_activation_is_not_rebroadcast_after_it() {
+    let mut net = Net::start_with(upgrade_params());
+    let mut miner = upgrade_wallet(40);
+    let mut bob = upgrade_wallet(41);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    miner.take_warnings();
+
+    // Built for height 91, 19 blocks before the activation: valid, with a
+    // warning. The first submission is recorded but never reaches a node;
+    // the second is lost in transport (Uncertain).
+    let recorded = Flaky::new(&net.client, Submit::Record);
+    miner
+        .transfer(&recorded, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    let warnings = miner.take_warnings();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("activates at block 110")),
+        "{warnings:?}"
+    );
+    let lost = Flaky::new(&net.client, Submit::Lose);
+    let err = miner
+        .transfer(&lost, &bob.primary(), 2 * COIN, &net.rules, &mut net.rng)
+        .unwrap_err();
+    assert!(matches!(err, WalletError::Uncertain(_)), "{err}");
+    assert!(miner.has_pending());
+    let old_bytes = recorded.sent.borrow()[0].clone();
+
+    // Before the activation both are kept and reserved, with a warning.
+    net.mine_n(ACTIVATION - 2 - 90, &miner_addr);
+    let node = Flaky::new(&net.client, Submit::Forward);
+    miner.sync(&node).unwrap();
+    assert_eq!(miner.synced_height(), ACTIVATION - 2);
+    assert!(miner.has_pending());
+    assert!(miner.stale_transactions().is_empty());
+    let warnings = miner.take_warnings();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("unconfirmed transaction")),
+        "{warnings:?}"
+    );
+
+    // Past the activation, when a rebroadcast would be due (20 blocks after
+    // the submission): neither is sent, both are dropped and released.
+    net.mine_n(8, &miner_addr);
+    assert!(net.client.info().unwrap().height >= 90 + 20);
+    let node = Flaky::new(&net.client, Submit::Forward);
+    miner.sync(&node).unwrap();
+    assert_eq!(
+        node.submits.get(),
+        0,
+        "no rebroadcast across the activation"
+    );
+    assert!(!miner.has_pending(), "inputs released");
+    let stale = miner.stale_transactions().to_vec();
+    assert_eq!(stale.len(), 2);
+    assert!(stale
+        .iter()
+        .all(|t| t.built_for == BRANCH_ID_V3 && t.needed == NEXT_BRANCH));
+    let warnings = miner.take_warnings();
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|w| w.contains("send the payment again"))
+            .count(),
+        2,
+        "{warnings:?}"
+    );
+    let height = miner.synced_height();
+    assert_eq!(miner.balance().total, rewards_through(height));
+
+    // The notices survive a save and load.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("miner.wallet");
+    let fast = KdfParams {
+        m_kib: 256,
+        t: 1,
+        p: 1,
+    };
+    save(&miner, &path, b"pw", fast).unwrap();
+    let mut miner = load(&path, b"pw").unwrap();
+    miner.set_chain_params(upgrade_params()).unwrap();
+    assert_eq!(miner.stale_transactions(), stale.as_slice());
+
+    // The node refuses the old-branch transaction after the activation.
+    let r = net.client.submit_tx(&old_bytes).unwrap();
+    assert!(!r.accepted, "old branch accepted after the activation");
+
+    // Sent again: new branch id, accepted, mined, received.
+    let node = Flaky::new(&net.client, Submit::Forward);
+    miner
+        .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    assert_eq!(node.submits.get(), 1);
+    assert_eq!(net.client.info().unwrap().mempool_txs, 1, "accepted");
+    net.mine(&miner_addr);
+    assert_eq!(net.client.info().unwrap().mempool_txs, 0, "mined");
+    bob.sync(&net.client).unwrap();
+    assert_eq!(bob.balance().total, COIN);
+    miner.sync(&net.client).unwrap();
+    assert!(!miner.has_pending());
+}
+
+/// A transaction built for the old branch is not sent when the node's next
+/// block is already past the activation (the tip moved while it was built):
+/// nothing is sent or reserved, and building again after a sync works.
+#[test]
+fn a_transaction_is_not_sent_across_an_activation_it_was_not_built_for() {
+    let mut net = Net::start_with(upgrade_params());
+    let mut miner = upgrade_wallet(42);
+    let bob = upgrade_wallet(43);
+    let miner_addr = miner.primary();
+    net.mine_n(ACTIVATION + 2, &miner_addr);
+    // The wallet syncs to a node that reports height 100 (old epoch next);
+    // at submission the node is past the activation.
+    let mut node = Flaky::new(&net.client, Submit::Forward);
+    node.height_cap = Some(100);
+    node.capped_infos.set(1);
+    let err = miner
+        .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            WalletError::EpochChanged {
+                built_for: BRANCH_ID_V3,
+                needed: NEXT_BRANCH,
+                ..
+            }
+        ),
+        "{err}"
+    );
+    assert_eq!(node.submits.get(), 0, "nothing sent");
+    assert!(!miner.has_pending(), "nothing reserved");
+    // After a full sync the wallet builds for the new branch.
+    let node = Flaky::new(&net.client, Submit::Forward);
+    miner
+        .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    assert_eq!(net.client.info().unwrap().mempool_txs, 1);
 }

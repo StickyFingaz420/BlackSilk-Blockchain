@@ -683,6 +683,13 @@ Measured privacy analysis: `docs/reviews/privacy-review.md`.
   the first ring so they do not reveal the real input, but these rings are kept in
   the wallet file only: keep backups of it, because a restore from the seed loses
   them.
+- **Across a consensus upgrade** a stored transaction built for the previous epoch
+  (branch id) can never be mined. The wallet does not rebroadcast it: it releases its
+  inputs, warns, and `sync` lists it as "needs rebuilding" (a PX transaction must be
+  proven again). The payment sent again reuses the stored v1 rings, but it shares the
+  key images and nullifiers of the dropped one, so anyone who saw the dropped one can
+  link the two. The wallet warns when an upgrade activates within 60 blocks of the
+  next block (reviews/v3-upgrade-mechanism.md §10).
 
 ## 13. Contract tooling and the distribution of contract records
 

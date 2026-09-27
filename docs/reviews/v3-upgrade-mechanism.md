@@ -166,7 +166,7 @@ second epoch is scheduled:
 | `chain/src/mempool.rs` | Admit with `at_height(params, tip + 1)`. When an extension crosses an activation (`schedule.activation_in(old_next, new_next)` is `Some`), **flush the pool**, or re-run full validation; `revalidate_after_extension` is not enough (below) |
 | `tx/src/validate.rs` | `revalidate_after_extension` assumes C3 signatures and PX5 are unchanged by an extension. That is false across an activation. Document it, or have it take the two heights |
 | `tx/src/validate.rs` | `TxError::PxProof` is classified stateless (misbehaviour). Across an activation, a proof bound to the previous branch fails honestly. The classification should be contextual for a transaction checked within a grace window after an activation |
-| `wallet/` | Build with `at_height(params, synced_height + 1)`. Do not broadcast when the target height crosses an activation until the wallet has re-signed (and re-proved PX) |
+| `wallet/` | Build with `at_height(params, synced_height + 1)`. Do not broadcast when the target height crosses an activation until the wallet has re-signed (and re-proved PX). **Done (V3-C, §10)** |
 | `node/`, `miner/` | Use `BlockTemplate.version` instead of `HEADER_VERSION` |
 
 `InvalidSignature` (C3) is already contextual, so v1 transactions signed for an old
@@ -394,10 +394,7 @@ single epoch (every built-in network).
 | `node/`, `miner/` | `chain::Template.version` and `rpc::Template.version` (serde default 1 for older nodes) carry the epoch's header version; the miner builds headers with it. |
 | Tests | `chain/tests/activation.rs` (regtest two-epoch no-op activation at the manager level: flush at `A − 1`, old-branch transactions refused in the pool and in block `A`, new-branch ones refused before and mined at `A`, blocks below `A` still valid under the old rules, a reorganization across `A` re-admits returned transactions only under the new rules); `chain/src/mempool.rs` unit tests (flush, deploy sub-budget in templates); `tx/tests/upgrade.rs` (`revalidate_between`, the grace window); `tx/tests/deploy_rules.rs` (the block deploy budget); `p2p/src/net.rs` (`unknown_upgrades_are_not_penalized`). |
 
-**Not done (wallet owner):** build with `at_height(params, synced_height + 1)` and
-refuse to broadcast across an activation before re-signing (and re-proving PX). The
-wallet still uses `TxRules::for_chain`, which panics on a multi-epoch schedule: a
-tripwire until then.
+**Wallet (V3-C):** done; see §10.
 
 ## 9. R2-C6 Hk node feed-forward: decision data (V3-B, measured, not implemented)
 
@@ -453,3 +450,40 @@ kernel, plus Δ, against the current budget and the table height the budget give
 2. **Keep** the current `node()`: the tree is argued to be ≈2^124-binding from leaf
    anchoring and fixed depth (the corrected comment in `px-core/src/hash.rs`); any
    future tree must not reuse `node()` with free leaves.
+
+## 10. Wallet integration (V3-C)
+
+The §2.4 wallet item, done on the candidate branch by V3-C (`wallet/` only). No-op
+with a single epoch (every built-in network).
+
+| Item | Done |
+|---|---|
+| Rules per height | Every build (transfer, deposit, PX send and withdraw, deploy, vault lock and claim) syncs, then uses `TxRules::at_height(params, synced + 1)` (`Wallet::next_block_rules`). The `rules` argument of the public build methods is kept for source compatibility (`tools/labnet`, `tools/supply-audit`); only its network is checked (`WrongNetwork` otherwise), and its epoch is ignored. The CLI no longer calls `TxRules::for_chain`. `Wallet::set_chain_params` replaces the built-in parameters (same network and genesis only), for regtest schedules in tests; it is not persisted. |
+| Stored transactions | Each `PendingTx` records the branch id it was built for (`branch_id`; files written before have none, and the epoch of `relayed_height + 1` stands in, which is exact on single-epoch chains). |
+| No broadcast across an activation | `submit` asks the node for its height first. If the node's next block needs another branch than the transaction's (the tip crossed an activation while the transaction was built or proven), nothing is sent or reserved: `WalletError::EpochChanged` (a vault lock's new record is dropped as on a refusal). |
+| No rebroadcast across an activation | `refresh_pending` (every sync; the stored and Uncertain paths alike) does not rebroadcast an unconfirmed transaction whose branch differs from that of `synced + 1`. Its unspent inputs (v1 outputs, PX and contract records) are released, the stored copy is dropped, a warning says to send the payment again, and it is listed in `Wallet::stale_transactions` (persisted as `stale_txs`; `sync` prints "needs rebuilding"; kept `RING_RETENTION_BLOCKS` = 720 blocks or until `clear-pending`). Rings stay stored, so a rebuild reuses them (W-5). |
+| Warning before an activation | When an activation lies within `ACTIVATION_GRACE_BLOCKS` = 60 blocks after the next block, building a transaction and syncing with unconfirmed stored transactions warn that they are valid only if mined before it. |
+| Tests | `wallet/tests/e2e.rs` with the regtest two-epoch schedule of `chain/tests/activation.rs` (activation at 110): `a_transfer_built_before_an_activation_is_not_rebroadcast_after_it` (a recorded and an Uncertain transfer built for 91 are kept and reserved at 108 with a warning; at 116, when a rebroadcast is due, nothing is sent, both inputs are released and the balance is whole again, two notices survive a save and load; the node refuses the old transaction; the payment sent again is accepted and mined under the new branch although the caller passed first-epoch rules); `a_transaction_is_not_sent_across_an_activation_it_was_not_built_for` (`EpochChanged`, nothing sent or reserved, then a rebuild after a full sync is accepted). `wallet/src/wallet.rs`: `stored_transactions_keep_their_branch_id_and_older_files_load` (older wallet JSON without the new fields loads; the fields round trip; rules and parameters of another network are refused). |
+
+**What remains (not done here):**
+- **PX flows across an activation are not tested end to end.** The code path is the
+  same (`submit`, `refresh_pending`, nullifiers released through `for_each_input`),
+  but the PX e2e tests prove and were not run for this change.
+- **A reorganization back below an activation** makes transactions built for the new
+  branch stale in turn: they are released and dropped, not kept for a later
+  re-activation. Only liveness is lost (the node's pool flushes them too, §2.5). If
+  the chain then crosses the activation again, the user sends again.
+- **Linkability of a rebuild.** A payment sent again spends the same key images and
+  nullifiers as the dropped transaction, so anyone who saw the dropped one relayed
+  can link the two. Stored rings prevent ring intersection. This cannot be avoided
+  without spending other funds.
+- **Uncertain and dropped vault locks.** A vault record created by a lock that is
+  later dropped stays listed as "unconfirmed" in `px-records` (with its secret); it
+  holds no value on chain.
+- **The pre-submission check trusts the node's height** and is skipped when `info`
+  fails (the submission then fails as Uncertain and the next sync applies the
+  rebroadcast rule).
+- **Other `for_chain` callers remain** outside the wallet: `node/src/main.rs`
+  (`ChainManager::open` with `for_chain`; must become `at_height(params, 0)` like
+  `chain/tests/activation.rs` before a second epoch is scheduled), `tools/labnet`
+  (its argument to the wallet is now only a network check), fuzz targets and tests.

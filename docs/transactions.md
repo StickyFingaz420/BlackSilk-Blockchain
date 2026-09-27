@@ -344,7 +344,9 @@ sig_message   = H32("tx/sig-message",
 - `branch_id` is the branch id of the epoch at the height of the block that includes
   the transaction (consensus.md §11). A signature is valid in one epoch only, so no
   transaction replays across a scheduled upgrade. Wallets sign for the epoch of the
-  next block height.
+  next block height. The reference wallet records the branch id of each stored
+  transaction and never rebroadcasts one into another epoch: it releases its inputs and
+  asks the user to send the payment again (reviews/v3-upgrade-mechanism.md §10).
 
 ---
 
