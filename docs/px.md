@@ -405,7 +405,7 @@ high-throughput per-transaction use on a chain.
 
   The owner has kept the conservative parameters (AUDIT.md R8).
 - **Consensus consequence:** blocks carry a separate 8 MiB PX budget (§11.5), room
-  for about four PX transactions per 2-minute block.
+  for three PX transactions per 2-minute block (4 × 2.18 MB exceeds 8 MiB).
 - **Architectural fix:** aggregation (recursion). A design study is in
   `docs/reviews/aggregation-study.md`; it is not implemented.
 
@@ -575,7 +575,7 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 |---|---|
 | PX transaction | ≤ `MAX_PX_TX_SIZE` = 4 MiB proof cap + 256 KiB |
 | Deploy | ≤ 1 MiB |
-| Block PX budget | 8 MiB (about 4 PX transactions); total block ≤ `MAX_BLOCK_BYTES` = 1,000,000 + 8 MiB + 64 KiB = 9,454,144 bytes |
+| Block PX budget | 8 MiB (3 PX transactions at measured proof sizes); total block ≤ `MAX_BLOCK_BYTES` = 1,000,000 + 8 MiB + 64 KiB = 9,454,144 bytes |
 | PX fee | Exactly `PX_STANDARD_FEE = PX_FEE_PER_BYTE × MAX_PX_TX_SIZE` = 8,912,896 atomic units, a consensus rule (§12). It covers the per-byte fee of any PX transaction. Consequence: every PX transaction pays the same, so the mempool's fee-per-byte ordering ranks larger ones (contract calls, ~2.5 MB) below plain transfers (~2 MB) when the PX budget is congested |
 | Relay | PX and deploy transactions together: per peer 0.2/s (burst 4); all peers together 2/s (burst 10) |
 | Invalid proof | Misbehaviour (the statement is branch-independent once PX1 and PX3 pass) |

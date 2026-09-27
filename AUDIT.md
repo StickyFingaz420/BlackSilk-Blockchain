@@ -1222,7 +1222,7 @@ seeded from real encodings (`fuzz/src/seeds.rs`).
 - **Final full suite** (all ZK-8 changes): **396 passed, 0 failed, 2 ignored (opt-in).**
 
 **Open items:**
-- **Proof size (main open problem):** ~2 MB per transfer, so about 4 PX transactions
+- **Proof size (main open problem):** ~2 MB per transfer, so 3 PX transactions
   per block. Options and measured costs are in `docs/reviews/aggregation-study.md`:
   - the query policy (owner decision; unchanged);
   - opened-width reductions;

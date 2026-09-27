@@ -716,7 +716,7 @@ are:
 - per-block aggregation (PX-4).
 
 Verification caching is done (periodic columns, the block-level cache). The chain
-carries PX under a separate 8 MiB block budget (px.md §11.5), about 4 PX transactions
+carries PX under a separate 8 MiB block budget (px.md §11.5), 3 PX transactions
 per block. The v2 identity for a testnet trial is approved and fixed in code; the
 trial itself awaits the owner's approval (Status above). A production network is out
 of scope until proof size is solved (aggregation-study.md).

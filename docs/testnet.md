@@ -454,7 +454,7 @@ multiple of 16 is reached (canonical anchor, px.md §11.4).
 
 **Privacy:** px.md §12 and `docs/reviews/privacy-review.md`.
 
-**Capacity:** about 4 PX transactions per block (aggregation-study.md).
+**Capacity:** 3 PX transactions per block (4 × 2.18 MB exceeds the 8 MiB budget) (aggregation-study.md).
 
 ## 11. Security notes for operators
 
@@ -546,6 +546,15 @@ always uses a new network id; never reuse one for a different genesis.
 
 ### 12.6 Known limitations that affect operators
 
+- **Proof of work gives no honest-majority guarantee against outsiders.** The PoW is
+  exactly Monero's RandomX (`rx/0`). Stock JIT miners (for example xmrig) and rented
+  `rx/0` hash rate are roughly 50–100× faster per core than the project's safe-Rust
+  miner, and the no-`unsafe` policy rules out a JIT here. Anyone who points such a
+  miner at the network can out-mine all honest devices and reorganize the chain.
+  The controlled trial relies on its peers being configured by hand and on no one
+  doing this; its PoW security is nominal (reviews R1-C2, R15-2). The mainnet choice
+  (standard RandomX, a BlackSilk-specific configuration, or an optional reviewed JIT
+  miner) is an open owner decision.
 - Every block body and its undo data stay in memory (PX-F1, PX-F2); memory grows with
   the chain.
 - Every restart re-validates every block, including every PX proof (PX-F3).

@@ -144,7 +144,7 @@ one proof per block instead of N.
 
 ## 4. Recommendation
 
-1. **Testnet:** keep BS-ZK-2 and 108 queries. Accept ~2 MB proofs and about 4 PX
+1. **Testnet:** keep BS-ZK-2 and 108 queries. Accept ~2 MB proofs and 3 PX
    transactions per block. That is enough to test every PX flow; it is not a
    throughput target.
 2. Pursue the width reductions of §3.2 one at a time, each with the full mutation and
