@@ -1,0 +1,14 @@
+test grinding_witnesses_helper ... ignored, helper: run by the tests below in child processes
+test proofs_do_not_depend_on_the_thread_count ... seed 0: ["witness 38079 length 231270 fnv 7fa29366f73d737b", "witness 1006635514 length 232934 fnv a196cf8f529c7ae9", "witness 125833631 length 230406 fnv 8c9795c1dff0ea65", "witness 1006635514 length 232934 fnv a196cf8f529c7ae9"]
+thread 'proofs_do_not_depend_on_the_thread_count' (4968) panicked at zk\tests\grinding.rs:208:9:
+seed 0: the proof depends on the thread count: ["witness 38079 length 231270 fnv 7fa29366f73d737b", "witness 1006635514 length 232934 fnv a196cf8f529c7ae9", "witness 125833631 length 230406 fnv 8c9795c1dff0ea65", "witness 1006635514 length 232934 fnv a196cf8f529c7ae9"]
+test upstream_grinding_witness_depends_on_the_thread_count ... state 0: smallest 104939; by 1/2/8/16 threads: ["104939", "1006705314", "251663734", "78648591"]
+state 1: smallest 27901; by 1/2/8/16 threads: ["27901", "27901", "1761613109", "1761613109"]
+state 2: smallest 370018; by 1/2/8/16 threads: ["370018", "1006772344", "1258295475", "1509961221"]
+state 3: smallest 74894; by 1/2/8/16 threads: ["74894", "74894", "503354706", "125832688"]
+state 4: smallest 19743; by 1/2/8/16 threads: ["19743", "19743", "1258306057", "1258306057"]
+state 5: smallest 6839; by 1/2/8/16 threads: ["6839", "6839", "6839", "6839"]
+state 6: smallest 8686; by 1/2/8/16 threads: ["8686", "8686", "8686", "125837340"]
+state 7: smallest 3243; by 1/2/8/16 threads: ["3243", "3243", "3243", "1635780121"]
+test result: FAILED. 1 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out; finished in 8.77s
+error: test failed, to rerun pass `-p blacksilk-zk --test grinding`

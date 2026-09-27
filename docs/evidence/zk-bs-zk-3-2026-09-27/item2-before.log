@@ -1,0 +1,12 @@
+test every_merkle_cap_root_count_mutation_is_refused ... FAILED
+test every_hidden_opening_count_mutation_is_refused ... FAILED
+test honest_proofs_have_the_canonical_hidden_openings_and_caps ... ok
+test a_non_canonical_fri_schedule_is_refused ... ok
+test honest_proofs_use_the_canonical_fri_schedule ... ok
+---- every_merkle_cap_root_count_mutation_is_refused stdout ----
+thread 'every_merkle_cap_root_count_mutation_is_refused' (14104) panicked at zk\tests\proofs.rs:735:13:
+---- every_hidden_opening_count_mutation_is_refused stdout ----
+thread 'every_hidden_opening_count_mutation_is_refused' (13848) panicked at zk\tests\proofs.rs:665:13:
+    every_hidden_opening_count_mutation_is_refused
+    every_merkle_cap_root_count_mutation_is_refused
+test result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 10 filtered out; finished in 7.59s

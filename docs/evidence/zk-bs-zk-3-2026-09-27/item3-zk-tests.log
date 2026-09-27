@@ -1,0 +1,38 @@
+     Running unittests src\lib.rs (C:/bszkeval/t-w1-zk\release\deps\blacksilk_zk-56f6fd75a4b79c13.exe)
+test schedule_tests::known_schedules ... ok
+test schedule_tests::honest_schedules_are_well_formed ... ok
+test params::tests::every_shape_within_limits_meets_both_security_targets ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.56s
+     Running tests\field_mutations.rs (C:/bszkeval/t-w1-zk\release\deps\field_mutations-fc5c1074d04e31c5.exe)
+test every_field_element_mutation_is_refused has been running for over 60 seconds
+test every_field_element_mutation_is_refused ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 150.15s
+     Running tests\pins.rs (C:/bszkeval/t-w1-zk\release\deps\pins-729e85b4c8489bdf.exe)
+test poseidon2_is_the_pinned_permutation ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\proofs.rs (C:/bszkeval/t-w1-zk\release\deps\proofs-34fb13f2fb5b8474.exe)
+test encoding_is_strict ... ok
+test a_non_canonical_fri_schedule_is_refused ... ok
+test claimed_heights_and_table_counts_are_checked_first ... ok
+test honest_proofs_have_the_canonical_hidden_openings_and_caps ... ok
+test preprocessed::statements_with_preprocessed_tables_verify ... ok
+test toy_shape_meets_the_security_floor ... ok
+test false_statements_cannot_be_proven ... ok
+test every_merkle_cap_root_count_mutation_is_refused ... ok
+test every_hidden_opening_count_mutation_is_refused ... ok
+test honest_proofs_verify_and_round_trip ... ok
+test unbound_proof_fields_cannot_be_rewritten ... ok
+test wrong_public_values_and_binding_are_rejected ... ok
+test proofs_are_randomized ... ok
+test honest_proofs_use_the_canonical_fri_schedule ... ok
+test byte_mutations_never_verify_and_never_panic_the_caller ... ok
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.92s
+     Running tests\soundness_calc.rs (C:/bszkeval/t-w1-zk\release\deps\soundness_calc-cfe887a2d3bf9624.exe)
+test collision_bits_is_the_floor_of_the_merkle_extractability_bound ... ok
+test headline_figures_at_the_largest_shape ... ok
+test the_independent_calculator_agrees_with_p3_security ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.85s
+     Running tests\toy_measure.rs (C:/bszkeval/t-w1-zk\release\deps\toy_measure-188214c79ca45661.exe)
+test toy_proof_size_and_time ... ignored, timing only; run explicitly with --ignored --nocapture
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

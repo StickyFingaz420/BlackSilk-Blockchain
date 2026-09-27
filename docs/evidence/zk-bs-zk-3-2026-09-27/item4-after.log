@@ -1,0 +1,18 @@
+test grinding_witnesses_helper ... ignored, helper: run by the tests below in child processes
+test proofs_do_not_depend_on_the_thread_count ... seed 0: ["witness 5633 length 134245 fnv eb7866d049bdd311", "witness 5633 length 134245 fnv eb7866d049bdd311", "witness 5633 length 134245 fnv eb7866d049bdd311", "witness 5633 length 134245 fnv eb7866d049bdd311"]
+seed 0, two tables (not compared): ["witness 38079 length 231270 fnv 7fa29366f73d737b", "witness 14557 length 232198 fnv 7e0aa8c6162123e6", "witness 38079 length 231270 fnv 7fa29366f73d737b", "witness 38079 length 231270 fnv 7fa29366f73d737b"]
+seed 1: ["witness 39401 length 133605 fnv 27293fb48d18ddf9", "witness 39401 length 133605 fnv 27293fb48d18ddf9", "witness 39401 length 133605 fnv 27293fb48d18ddf9", "witness 39401 length 133605 fnv 27293fb48d18ddf9"]
+seed 1, two tables (not compared): ["witness 70688 length 231398 fnv 51404e314fc11388", "witness 66894 length 228838 fnv 0e2e60b1f7752fb6", "witness 66894 length 228838 fnv 0e2e60b1f7752fb6", "witness 70688 length 231398 fnv 51404e314fc11388"]
+seed 2: ["witness 140593 length 135941 fnv e35ab594894582ea", "witness 140593 length 135941 fnv e35ab594894582ea", "witness 140593 length 135941 fnv e35ab594894582ea", "witness 140593 length 135941 fnv e35ab594894582ea"]
+seed 2, two tables (not compared): ["witness 108672 length 229414 fnv b2e7ef5a2070597c", "witness 162136 length 231814 fnv 17f22ce931535b07", "witness 162136 length 231814 fnv 17f22ce931535b07", "witness 162136 length 231814 fnv 17f22ce931535b07"]
+test proofs_from_the_upstream_grinding_prover_still_verify ... ok
+test the_prover_grinds_the_smallest_valid_nonce ... 150 (state, bits) cases: smallest nonce, same transcript
+test upstream_grinding_witness_depends_on_the_thread_count ... state 0: smallest 104939; by 1/2/8/16 threads: ["104939", "1006705314", "1509955085", "251663734"]
+state 1: smallest 27901; by 1/2/8/16 threads: ["27901", "27901", "377491331", "62926050"]
+state 2: smallest 370018; by 1/2/8/16 threads: ["370018", "1006772344", "125831939", "125831939"]
+state 3: smallest 74894; by 1/2/8/16 threads: ["74894", "74894", "754992813", "754992813"]
+state 4: smallest 19743; by 1/2/8/16 threads: ["19743", "19743", "1258306057", "62919148"]
+state 5: smallest 6839; by 1/2/8/16 threads: ["6839", "6839", "6839", "6839"]
+state 6: smallest 8686; by 1/2/8/16 threads: ["8686", "8686", "125837340", "125837340"]
+state 7: smallest 3243; by 1/2/8/16 threads: ["3243", "3243", "3243", "3243"]
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 23.31s

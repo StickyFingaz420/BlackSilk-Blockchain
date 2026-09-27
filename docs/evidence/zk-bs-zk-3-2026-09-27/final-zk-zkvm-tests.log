@@ -1,0 +1,153 @@
+     Running unittests src\lib.rs (C:/bszkeval/t-w1-zk\release\deps\blacksilk_zk-56f6fd75a4b79c13.exe)
+test schedule_tests::honest_schedules_are_well_formed ... ok
+test schedule_tests::known_schedules ... ok
+test params::tests::every_shape_within_limits_meets_both_security_targets ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.04s
+     Running tests\field_mutations.rs (C:/bszkeval/t-w1-zk\release\deps\field_mutations-fc5c1074d04e31c5.exe)
+test every_field_element_mutation_is_refused has been running for over 60 seconds
+test every_field_element_mutation_is_refused ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 80.90s
+     Running tests\grinding.rs (C:/bszkeval/t-w1-zk\release\deps\grinding-b2e50e519f9f1c9b.exe)
+test grinding_witnesses_helper ... ignored, helper: run by the tests below in child processes
+test proofs_from_the_upstream_grinding_prover_still_verify ... ok
+test the_prover_grinds_the_smallest_valid_nonce ... ok
+test proofs_do_not_depend_on_the_thread_count ... ok
+test upstream_grinding_witness_depends_on_the_thread_count ... ok
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 17.60s
+     Running tests\pins.rs (C:/bszkeval/t-w1-zk\release\deps\pins-729e85b4c8489bdf.exe)
+test poseidon2_is_the_pinned_permutation ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\proofs.rs (C:/bszkeval/t-w1-zk\release\deps\proofs-34fb13f2fb5b8474.exe)
+test a_non_canonical_fri_schedule_is_refused ... ok
+test claimed_heights_and_table_counts_are_checked_first ... ok
+test encoding_is_strict ... ok
+test every_hidden_opening_count_mutation_is_refused ... ok
+test every_merkle_cap_root_count_mutation_is_refused ... ok
+test false_statements_cannot_be_proven ... ok
+test honest_proofs_have_the_canonical_hidden_openings_and_caps ... ok
+test byte_mutations_never_verify_and_never_panic_the_caller ... ok
+test honest_proofs_verify_and_round_trip ... ok
+test preprocessed::statements_with_preprocessed_tables_verify ... ok
+test honest_proofs_use_the_canonical_fri_schedule ... ok
+test toy_shape_meets_the_security_floor ... ok
+test unbound_proof_fields_cannot_be_rewritten ... ok
+test wrong_public_values_and_binding_are_rejected ... ok
+test proofs_are_randomized ... ok
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.88s
+     Running tests\soundness_calc.rs (C:/bszkeval/t-w1-zk\release\deps\soundness_calc-cfe887a2d3bf9624.exe)
+test collision_bits_is_the_floor_of_the_merkle_extractability_bound ... ok
+test headline_figures_at_the_largest_shape ... ok
+test the_independent_calculator_agrees_with_p3_security ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s
+     Running tests\toy_measure.rs (C:/bszkeval/t-w1-zk\release\deps\toy_measure-188214c79ca45661.exe)
+test toy_proof_size_and_time ... ignored, timing only; run explicitly with --ignored --nocapture
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\upstream_advisories.rs (C:/bszkeval/t-w1-zk\release\deps\upstream_advisories-619d1454ca9885b1.exe)
+test honest_proofs_verify ... ok
+test pr_2033_a_non_canonical_fold_schedule_is_refused ... ok
+test pr_2106_every_commit_phase_witness_rewrite_is_refused ... ok
+test pr_2277_merkle_caps_with_other_root_counts_are_refused ... ok
+test third_party_patched_crates_are_pinned ... ok
+test pr_2256_present_but_empty_preprocessed_openings_are_refused ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.97s
+     Running unittests src\lib.rs (C:/bszkeval/t-w1-zk\release\deps\blacksilk_zkvm-d85f1831f5b5b95a.exe)
+test isa::tests::immediates_cover_their_full_range ... ok
+test isa::tests::encode_decode_round_trip_for_every_op ... ok
+test isa::tests::known_encodings ... ok
+test isa::tests::unsupported_encodings_are_rejected ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\alu.rs (C:/bszkeval/t-w1-zk\release\deps\alu-cb213a9c80e5d87e.exe)
+test a_false_alu_claim_leaves_the_bus_unbalanced ... ok
+test a_blinding_bus_message_cannot_stand_in_for_an_alu_result ... ok
+test byte_table_multiplicities_must_match ... ok
+test alu_tables_prove_and_verify ... ok
+test honest_alu_traces_satisfy_every_constraint ... ok
+test every_single_cell_mutation_of_a_real_alu_row_is_caught ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 38.56s
+     Running tests\blinding.rs (C:/bszkeval/t-w1-zk\release\deps\blinding-98798f6c070163fb.exe)
+test a_duplicated_blinding_message_is_rejected ... ok
+test a_missing_blinding_message_is_rejected ... ok
+test an_altered_blinding_value_on_either_side_is_rejected ... ok
+test a_blinded_proof_matches_no_hypothesis_directly ... ok
+test an_observer_reads_the_input_from_an_unblinded_proof ... ok
+test blinding_values_are_fresh_nonzero_and_keep_the_bus_balanced ... ok
+test every_table_of_a_real_proof_is_blinded_with_fresh_values ... ok
+test blinding_cannot_hide_an_unbalanced_real_bus has been running for over 60 seconds
+test the_blind_table_rejects_non_boolean_rows_and_dirty_padding ... ok
+test blinding_cannot_hide_an_unbalanced_real_bus ... ok
+test the_selector_admits_exactly_one_message_per_table ... ok
+test the_same_input_proven_twice_publishes_unrelated_program_terminals ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 130.06s
+     Running tests\circuit_fingerprint.rs (C:/bszkeval/t-w1-zk\release\deps\circuit_fingerprint-79aa5b6441c98b3f.exe)
+test the_air_digest_is_pinned_to_the_circuit_id ... ok
+test the_digest_depends_on_the_constraints_not_on_the_programs ... ok
+test every_mutation_changes_the_fingerprint ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests\circuit_id.rs (C:/bszkeval/t-w1-zk\release\deps\circuit_id-6265aab75cf6a0c4.exe)
+test the_circuit_tag_is_the_first_input_of_the_statement_digest ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\fuzz.rs (C:/bszkeval/t-w1-zk\release\deps\fuzz-fd221f31cd4aee21.exe)
+test mutated_elfs_never_panic_the_loader_or_the_interpreter ... ok
+test random_programs_satisfy_every_constraint has been running for over 60 seconds
+test random_programs_satisfy_every_constraint ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 125.23s
+     Running tests\guest.rs (C:/bszkeval/t-w1-zk\release\deps\guest-2c016d98e9b1a1b1.exe)
+test compiled_guest_contains_no_division_instructions ... ok
+test guest_panics_and_missing_input_have_no_successful_run ... ok
+test malformed_elves_are_rejected ... ok
+test program_id_depends_on_code_and_data_only ... ok
+test compiled_guest_loads_and_runs ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\interpreter.rs (C:/bszkeval/t-w1-zk\release\deps\interpreter-b5bca5ee45088997.exe)
+test auipc_lui_and_jalr_low_bit ... ok
+test branches_jumps_and_a_loop ... ok
+test code_is_readable_and_stores_below_the_code_end_trap ... ok
+test control_leaving_the_code_traps ... ok
+test hardware_division_is_not_part_of_bvm1 ... ok
+test executions_are_deterministic_and_the_access_log_is_consistent ... ok
+test immediate_ops_and_shift_amounts ... ok
+test initial_data_and_bss_are_visible ... ok
+test invalid_instructions_are_rejected_at_load_time ... ok
+test infinite_loops_hit_the_cycle_limit ... ok
+test layout_rules ... ok
+test loads_and_stores_with_sign_extension ... ok
+test memory_traps ... ok
+test poseidon2_syscall_permutes_in_place ... ok
+test syscalls_read_write_halt ... ok
+test x0_is_always_zero ... ok
+test register_ops_match_the_reference_on_edge_values ... ok
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests\multi.rs (C:/bszkeval/t-w1-zk\release\deps\multi-37522c7087d919cc.exe)
+test a_budget_fixes_the_shape_whatever_the_secret has been running for over 60 seconds
+test budgets_are_enforced_by_prover_and_verifier has been running for over 60 seconds
+test budgets_are_enforced_by_prover_and_verifier ... ok
+test every_part_of_a_multi_execution_statement_is_bound ... ok
+test every_single_cell_mutation_of_extra_executions_and_poseidon2_is_caught ... ok
+test executions_are_isolated_and_satisfy_the_constraints ... ok
+test the_logup_multiplicity_bound_holds_for_the_largest_statement ... ok
+test the_widest_multi_execution_shape_stays_in_the_envelope ... ok
+test a_budget_fixes_the_shape_whatever_the_secret ... ok
+test three_executions_prove_and_verify_in_one_proof ... ok
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 140.03s
+     Running tests\stress.rs (C:/bszkeval/t-w1-zk\release\deps\stress-c295a1789110731d.exe)
+test concurrent_proofs_all_finish ... ignored
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\vm.rs (C:/bszkeval/t-w1-zk\release\deps\vm-a7092878cfb38c77.exe)
+test a_compiled_guest_using_poseidon2_proves_and_verifies ... ok
+test a_lying_prover_cannot_change_a_register_value ... ok
+test a_poseidon2_row_cannot_claim_a_different_digest ... ok
+test a_compiled_rust_guest_proves_and_verifies has been running for over 60 seconds
+test a_compiled_rust_guest_proves_and_verifies ... ok
+test every_instruction_class_satisfies_the_constraints ... ok
+test every_single_cell_mutation_of_poseidon2_and_its_cpu_rows_is_caught ... ok
+test a_small_program_proves_and_verifies_and_statements_are_bound ... ok
+test every_single_cell_mutation_of_real_cpu_and_memory_rows_is_caught ... ok
+test poseidon2_syscalls_satisfy_the_constraints_and_match_the_native_permutation ... ok
+test every_table_commits_a_full_extension_randomization_polynomial ... ok
+test public_column_copies_are_pinned_to_the_statement ... ok
+test proof_composition_report ... ok
+test wrong_public_statement_is_caught_by_the_oracle ... ok
+test the_vm_shape_meets_the_security_floor ... ok
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 134.77s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
