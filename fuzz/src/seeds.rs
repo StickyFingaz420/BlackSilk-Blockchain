@@ -320,6 +320,7 @@ fn main() {
             recipients: [Some(bob.address(0)), None],
             functions: vec![],
             fee: px_standard_fee(),
+            hedge_secret: [0x5e; 32],
         },
         &rules,
         &mut rng,
