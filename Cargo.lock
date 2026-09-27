@@ -290,6 +290,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "blacksilk-daa-sim"
+version = "0.1.0"
+dependencies = [
+ "blacksilk-consensus",
+]
+
+[[package]]
 name = "blacksilk-genesis"
 version = "0.1.0"
 dependencies = [

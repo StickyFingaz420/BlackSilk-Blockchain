@@ -1,0 +1,16 @@
+[package]
+name = "blacksilk-daa-sim"
+version = "0.1.0"
+edition = "2021"
+description = "Monte Carlo harness for the BlackSilk difficulty rule: runs the consensus next_difficulty and MTP/FTL rules, and candidate rules, against honest and adversarial miners"
+publish = false
+
+[lib]
+name = "blacksilk_daa_sim"
+
+[[bin]]
+name = "blacksilk-daa-sim"
+path = "src/main.rs"
+
+[dependencies]
+blacksilk-consensus = { path = "../../consensus" }
