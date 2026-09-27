@@ -271,9 +271,12 @@ pub fn submit_block_in_steps<'a>(
         return Ok(first);
     }
     loop {
-        // The standard mutex is not fair: give threads waiting for the lock
-        // a chance to take it between steps.
-        std::thread::yield_now();
+        // The standard mutex is not fair: a yield alone lets this loop take the
+        // lock again before a waiting reader (RPC, P2P) is scheduled, which was
+        // observed on Windows. A short sleep hands the lock to waiters; a batch
+        // of 256 blocks is at most 32 steps, so the cost is negligible next to
+        // validating the blocks.
+        std::thread::sleep(std::time::Duration::from_millis(1));
         let mut c = lock();
         if c.sync_step(budget) {
             return c.verdict(first.id, first.height);
