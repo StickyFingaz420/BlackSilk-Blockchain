@@ -193,12 +193,22 @@ fn every_mutant_decodes_canonically_or_fails_cleanly() {
                     let _ = check_px_structure(t);
                     let _ = check_px_balance(t);
                     // A sample goes through full validation (proof included).
-                    if proofs_checked < 25 {
+                    // A mutation can reproduce the seed exactly (e.g. a byte
+                    // overwritten with its own value); that is the valid
+                    // original, not a mutant.
+                    if proofs_checked < 25 && m != *seed {
                         proofs_checked += 1;
-                        assert!(
-                            validate_mempool_tx(&tx, &net.chain, net.height(), &rules).is_err(),
-                            "a mutated PX transaction must not validate"
-                        );
+                        if validate_mempool_tx(&tx, &net.chain, net.height(), &rules).is_ok() {
+                            let diff: Vec<usize> = (0..m.len().max(seed.len()))
+                                .filter(|&i| m.get(i) != seed.get(i))
+                                .take(16)
+                                .collect();
+                            panic!(
+                                "a mutated PX transaction validated (malleability):                                  lengths {} vs {}, first differing offsets {diff:?}",
+                                m.len(),
+                                seed.len()
+                            );
+                        }
                     }
                 }
                 Transaction::PxDeploy(t) => {
