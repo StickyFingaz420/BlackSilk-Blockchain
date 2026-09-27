@@ -31,3 +31,14 @@
   - w1-tx-a (CB-B1a)
   - w1-cb-a (CB-A: DAA, ChainParams::check, F-05, BE guard, genesis.rs, RT-1)
 - **Next when a slot frees:** CB-B1b, then CB-B2, then the 43 rebuild.
+
+## Wave 1 merges
+- **w1-tx-a (CB-B1a):** D8-B, CLSAG D≠identity, early PX decode and RT-14, merged as f1fc15a. Non-PX suites: 570 passed, 0 failed, 6 ignored.
+- **w1-zk (CB-B3):** 8 codewords, canonical form, COLLISION_BITS 122, deterministic grinding, AIR digest, advisories and docs, merged as 03e9bd3. The consensus record was merged by concatenation; headings are unchanged so trailer anchors stay valid.
+- **OPEN (owner):** after the merges, the fingerprint pins fail as expected: px `consensus_fingerprint` (now 1673ae51…) and node `deploy_configs` (testnet now 3f865a23…).
+  - The coordinator's re-pin was blocked by the auto-mode permission classifier (it counts as a security-test change).
+  - The pins say "update only with a new network id". Options:
+    - (1) the owner authorizes re-pinning at each reviewed merge;
+    - (2) leave them red until the fingerprint v3 commit (40), which also sets the new network id.
+  - Until then CI's test job is red on these two tests.
+- **Running:** CB-A (w1-cb-a), CB-B1b (w1-tx-b), and the coordinator's PX-proving suite run.

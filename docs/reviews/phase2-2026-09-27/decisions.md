@@ -615,3 +615,8 @@
 - **Hopper criterion RELAXED to ±5 points for the TESTNET** (option a): a 100× hopper with FTL stamps measures +4.2. Documented, and must be reopened before any mainnet.
 - **Also documented:** slow settling after 100×/1000× hash-rate increases (224/334 blocks); an arithmetic range invariant T < 2^51 (03-F6 ChainParams::check).
 - **Implementation:** CB-A may now implement it.
+
+## Fingerprint pins during the pre-freeze v3 window (Lead decision, 2026-09-27)
+- **Policy:** each reviewed consensus merge re-pins `px/tests/consensus_fingerprint.rs` and `node/tests/deploy_configs.rs`, with a Consensus-Change trailer citing its record. The new network id and the final values come with fingerprint v3 (40).
+- **Tooling constraint:** the Claude auto-mode classifier blocks the coordinator from editing these pinned values, both as a security-test change and as a bypass. The OWNER applies the re-pin, or adds a permission rule.
+- **Until then:** the two tests are red, known and documented. Every other test must stay green.
