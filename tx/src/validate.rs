@@ -113,6 +113,11 @@ pub enum TxError {
     RangeProofInvalid,
     /// T11.
     SignatureCount,
+    /// T11: a CLSAG's auxiliary image `D` is the identity (`z = 0`, which
+    /// also makes `C' = Cr[π]` reveal the real input; dossier 15 W1).
+    AuxKeyImageIdentity {
+        input: usize,
+    },
     /// C1.
     UnknownRingMember {
         input: usize,
@@ -213,6 +218,7 @@ impl TxError {
     /// | `Unbalanced` | T9 | stateless | commitments and amounts in the transaction |
     /// | `RangeProofShape`, `RangeProofInvalid` | T10 | stateless | the proof and the transaction's own commitments |
     /// | `SignatureCount` | T11 | stateless | counts |
+    /// | `AuxKeyImageIdentity` | T11 | stateless | the signature itself (`D = identity`) |
     /// | `UnknownRingMember`, `RingMemberTooYoung` | C1 | contextual | the output may exist, or be old enough, on another branch or later |
     /// | `KeyImageSpent` | C2 | contextual | spent on this branch (or earlier in this block), possibly not on another |
     /// | `InvalidSignature` | C3 | contextual | see below |
@@ -256,6 +262,7 @@ impl TxError {
             | TxError::RangeProofShape
             | TxError::RangeProofInvalid
             | TxError::SignatureCount
+            | TxError::AuxKeyImageIdentity { .. }
             | TxError::PxShape
             | TxError::PxFeeNotStandard { .. }
             | TxError::PxInvalidProgram
@@ -289,6 +296,16 @@ fn strictly_increasing<T: Ord>(items: impl IntoIterator<Item = T>) -> bool {
         prev = Some(item);
     }
     true
+}
+
+/// T11: no CLSAG's auxiliary image `D` is the identity (dossier 15 W1). A
+/// stateless rule, decided from the signature alone before any ring is
+/// resolved; `clsag::verify` rejects such a signature too.
+pub fn check_aux_images(signatures: &[Clsag]) -> Result<(), TxError> {
+    match signatures.iter().position(|s| s.d.is_identity()) {
+        Some(input) => Err(TxError::AuxKeyImageIdentity { input }),
+        None => Ok(()),
+    }
 }
 
 /// Cheap structural rules: T1, T3–T8, T10 (shape) and T11.
@@ -335,6 +352,7 @@ pub fn check_structure(tx: &Transfer, rules: &TxRules) -> Result<(), TxError> {
     if tx.signatures.len() != n {
         return Err(TxError::SignatureCount);
     }
+    check_aux_images(&tx.signatures)?;
     let rounds = bpp::rounds(k).ok_or(TxError::RangeProofShape)?;
     if tx.range_proof.l.len() != rounds || tx.range_proof.r.len() != rounds {
         return Err(TxError::RangeProofShape);

@@ -257,12 +257,18 @@ struct Statement {
     key_image: RistrettoPoint,
 }
 
-/// The reference verifier, literally spec §6.1 as written today: reject
-/// `I = identity`, recompute `μP`, `μC`, `W`, run the loop from `c0`.
+/// The reference verifier, literally spec §6.1: reject `I = identity` and
+/// `D = identity`, then [`reference_loop`].
 fn reference_verify(st: &Statement, sig: &Clsag) -> bool {
-    if st.key_image.is_identity() {
+    if st.key_image.is_identity() || sig.d.point().is_identity() {
         return false;
     }
+    reference_loop(st, sig)
+}
+
+/// The verification loop of §6.1 alone: recompute `μP`, `μC`, `W`, run the
+/// loop from `c0`.
+fn reference_loop(st: &Statement, sig: &Clsag) -> bool {
     let ring = ring_bytes(&st.keys, &st.commitments);
     let d = *sig.d.point();
     let (mu_p, mu_c) = aggregation(&ring, &st.key_image, &d, &st.pseudo_out);
@@ -528,35 +534,29 @@ fn reject_vectors() {
 }
 
 /// The `z = 0` vector: `C' = Cr[π]`, so `D = identity`. The reference values are
-/// pinned, and the spec-literal verifier (§6.1 has no `D` rule) accepts it.
+/// pinned. The loop of §6.1 alone closes on it; the `D ≠ identity` rule is
+/// what rejects it.
 #[test]
 fn d_identity_vector_values() {
     let v = reference_sign(&D_IDENTITY);
     assert!(v.d.is_identity());
     assert_eq!(v.pseudo_out, v.commitments[v.pi]);
-    assert!(reference_verify(&v.statement(), &v.sig()));
-    let mut pins = Pins::new(FILE, VECTORS, "reject_pending_cb_b1.d_identity.");
+    assert!(reference_loop(&v.statement(), &v.sig()), "the loop closes");
+    assert!(!reference_verify(&v.statement(), &v.sig()));
+    let mut pins = Pins::new(FILE, VECTORS, "reject.d_identity.");
     v.pin(&mut pins);
     pins.finish();
 }
 
-/// Finding C1 (dossier 15) / CB-B1: `clsag::verify` rejects `I = identity` but
-/// not `D = identity`. This honest-looking signature with `z = 0` reveals the
-/// real input (`C' = Cr[π]`), and Monero and monero-oxide refuse it ("Bad
-/// auxiliary key image", `ClsagError::InvalidD`). On the base commit it is
-/// ACCEPTED, so this test fails; it is ignored until the W1 rule lands, and
-/// must then be un-ignored (and the reference verifier above gains the rule).
+/// Finding C1 (dossier 15 W1): `clsag::verify` rejects `D = identity`. This
+/// honest-looking signature with `z = 0` reveals the real input
+/// (`C' = Cr[π]`); Monero and monero-oxide refuse it too ("Bad auxiliary key
+/// image", `ClsagError::InvalidD`). Before the rule it was accepted (this test
+/// was ignored, pending CB-B1). Both verifiers must agree.
 #[test]
-#[ignore = "pending CB-B1: D != identity"]
 fn d_identity_is_rejected() {
     let v = reference_sign(&D_IDENTITY);
-    let ok = clsag::verify(
-        &v.message,
-        &v.ring(),
-        &Point::from_point(v.pseudo_out),
-        &Point::from_point(v.key_image),
-        &v.sig(),
-    );
+    let ok = verdict(&v.statement(), &v.sig(), "D = identity (z = 0)");
     assert!(!ok, "a CLSAG with D = identity must be rejected");
 }
 

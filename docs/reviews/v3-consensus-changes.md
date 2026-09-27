@@ -132,3 +132,61 @@ work item CB-B1a (exact commands and counts).
   looks at keys (a comment pins the intent).
 - `docs/contracts.md` (the non-integrated Wasm research engine) still describes a C4
   extension to private notes; left to its owners.
+
+---
+
+## §2 CLSAG: the auxiliary image `D` must not be the identity
+
+Decision: agent 15 W1 (decisions.md "Agent 15 (CLSAG)"); dossier 15 finding C1.
+
+**1. Problem.** `clsag::verify` rejected `I = identity` but not `D = identity`.
+`D = z·Hp(P[π])` is the identity exactly when `z = 0`, i.e. when the pseudo-output equals
+the real member's commitment (`C' = Cr[π]`), which reveals the real input to everyone.
+Monero (`verRctCLSAGSimple`, "Bad auxiliary key image") and monero-oxide (`InvalidD`)
+reject it, so a Monero-derived second implementation would split from BlackSilk on such a
+signature. Soundness is not affected (`I ≠ identity` is enforced).
+
+**2. Demonstrated failure** (tests first, on the item-1 commit, which does not touch
+CLSAG): `crypto/tests/clsag_vectors.rs::d_identity_is_rejected` (un-ignored) fails: the
+`z = 0` reference signature is accepted. `clsag::tests::a_zero_commitment_secret_is_refused`
+fails: `sign` signs `z = 0`. `tx/tests/adversarial.rs::t11_an_identity_auxiliary_image_is_a_stateless_fault`
+fails: the error is the contextual `InvalidSignature { input: 0 }`.
+
+**3. Prior art.** Monero since CLSAG (2020) and monero-oxide reject `D = identity`; the
+CLSAG paper draws secrets from `(F_p^*)^d`, so an honest `D` is never the identity.
+Monero's zero-challenge check is not adopted (decisions, C6).
+
+**4. Alternatives.** Wallet-only refusal of `z = 0` (not enough for conformance); a rule
+"`C'` differs from every ring commitment" (16 comparisons per input for no extra
+security). Chosen: the verification rule plus the signer refusal (dossier 15 P1).
+
+**5. Affected components.** `crypto/src/clsag.rs` (`verify` rejects `D = identity`;
+`sign` returns `ClsagError::ZeroCommitmentSecret`); `tx/src/validate.rs` (T11
+`check_aux_images` in `check_structure`, new stateless `TxError::AuxKeyImageIdentity`);
+`tx/src/px.rs` (the same check in `check_px_structure`; deploys go through
+`check_structure`).
+
+**6. Activation.** v3 genesis base rule set, from genesis. A tightening; after launch it
+would need an activation height.
+
+**7. Compatibility.** No honest transaction changes: the builder draws pseudo-output
+masks at random, so `z = 0` occurs with probability about 2^-252. All pinned vectors are
+unchanged except the renamed key prefix of the `z = 0` vector
+(`reject_pending_cb_b1.` to `reject.d_identity.`; values unchanged).
+
+**8. Reorg, wallet, mining and P2P implications.** None for reorgs and mining. The error
+is stateless (decidable from the transaction alone), so a peer relaying such a
+transaction is penalized, like `KeyImageIdentity`. Wallets: `sign` refuses `z = 0`.
+
+**9. Vectors.** `reject.d_identity.*` in `crypto/tests/vectors/clsag.txt` (pinned inputs,
+intermediates and signature); the reference verifier in `crypto/tests/clsag_vectors.rs`
+has the rule, and `d_identity_vector_values` shows that the §6.1 loop alone closes on it.
+
+**10. Regression tests.** Step 2's three tests, plus
+`tx/tests/validation_order.rs::px_and_deploy_identity_auxiliary_images_are_stateless`
+(PX and deploys, no chain query) and the classification list
+(`every_error_variant_is_classified`, 36 variants).
+
+**11. Suite results.** In the commit message and the CB-B1a final report.
+
+**12. Open review points.** None specific; the rule follows Monero exactly.

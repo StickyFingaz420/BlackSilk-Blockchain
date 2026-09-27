@@ -706,6 +706,7 @@ pub fn check_px_structure(tx: &PxTx) -> Result<(), TxError> {
     if tx.signatures.len() != n {
         return Err(TxError::SignatureCount);
     }
+    crate::validate::check_aux_images(&tx.signatures)?;
     match (&tx.range_proof, k) {
         (None, 0) => {}
         (Some(p), k) if k > 0 => {

@@ -593,6 +593,38 @@ fn px_equal_nullifiers_are_stateless() {
     );
 }
 
+/// T11 (dossier 15 W1) for PX transactions and deploys: an identity
+/// auxiliary image `D` is a stateless structure error, raised before any
+/// chain query.
+#[test]
+fn px_and_deploy_identity_auxiliary_images_are_stateless() {
+    let (mut net, t) = setup(12);
+    let identity = Point::decode(&[0; 32]).unwrap();
+    let mut px = px_from_transfer(&mut net, &t);
+    px.signatures[0].d = identity;
+    assert_eq!(
+        blacksilk_tx::px::check_px_structure(&px),
+        Err(TxError::AuxKeyImageIdentity { input: 0 })
+    );
+    let view = View::px_open(&net.chain);
+    assert_eq!(
+        validate_px_without_proof(&px, &view, net.height(), &net.rules),
+        Err(TxError::AuxKeyImageIdentity { input: 0 })
+    );
+    assert_eq!(view.queries.get(), 0);
+
+    let mut d = build_test_deploy(&mut net);
+    let view = View::new(&net.chain);
+    assert_eq!(validate_deploy(&d, &view, net.height(), &net.rules), Ok(()));
+    d.signatures[0].d = identity;
+    let view = View::new(&net.chain);
+    assert_eq!(
+        validate_deploy(&d, &view, net.height(), &net.rules),
+        Err(TxError::AuxKeyImageIdentity { input: 0 })
+    );
+    assert_eq!(view.queries.get(), 0);
+}
+
 #[test]
 fn transfer_and_deploy_repeated_keys_were_already_stateless() {
     // Within a transfer (and a deploy's v1 part), a repeated one-time key or
@@ -695,6 +727,7 @@ fn every_error_variant_is_classified() {
         RangeProofShape,
         RangeProofInvalid,
         SignatureCount,
+        AuxKeyImageIdentity { input: 0 },
         PxShape,
         PxFeeNotStandard { fee: 0 },
         PxInvalidProgram,
@@ -726,8 +759,8 @@ fn every_error_variant_is_classified() {
         assert!(!e.is_stateless(), "{e:?}");
     }
     // `is_stateless` is an exhaustive match, so a new variant cannot compile
-    // unclassified; these lists cover all 35 variants.
-    assert_eq!(stateless.len() + contextual.len(), 35);
+    // unclassified; these lists cover all 36 variants.
+    assert_eq!(stateless.len() + contextual.len(), 36);
 }
 
 // ------------------------------------------------------------------ differential validity

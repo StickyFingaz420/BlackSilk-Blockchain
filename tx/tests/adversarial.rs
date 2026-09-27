@@ -146,6 +146,40 @@ fn t7_t10_t11_shapes() {
     assert_eq!(validate(&net, &t), Err(TxError::RangeProofShape));
 }
 
+/// T11 (dossier 15 W1): a CLSAG whose auxiliary image `D` is the identity is
+/// a stateless fault of the transaction, found by the structure check before
+/// any ring is resolved, for every kind with v1 inputs.
+#[test]
+fn t11_an_identity_auxiliary_image_is_a_stateless_fault() {
+    let (net, tx, _) = setup(7);
+    let mut t = tx.clone();
+    t.signatures[0].d = Point::decode(&[0; 32]).unwrap();
+    let err = validate(&net, &t).unwrap_err();
+    assert!(err.is_stateless(), "{err:?}");
+    assert_eq!(err, TxError::AuxKeyImageIdentity { input: 0 });
+    assert_eq!(
+        check_structure(&t, &net.rules),
+        Err(TxError::AuxKeyImageIdentity { input: 0 }),
+        "structure, no chain state"
+    );
+    // The second input of a two-input transfer, in a block too.
+    let (mut net, tx) = two_input_transfer(8);
+    let mut t = tx.clone();
+    t.signatures[1].d = Point::decode(&[0; 32]).unwrap();
+    assert_eq!(
+        validate(&net, &t),
+        Err(TxError::AuxKeyImageIdentity { input: 1 })
+    );
+    assert_eq!(
+        net.mine(vec![t], &mut []),
+        Err(BlockError::Tx {
+            index: 1,
+            error: TxError::AuxKeyImageIdentity { input: 1 }
+        })
+    );
+    assert_eq!(validate(&net, &tx), Ok(()));
+}
+
 #[test]
 fn t8_fee() {
     let (net, tx, _) = setup(7);

@@ -444,7 +444,9 @@ Ristretto removes the cofactor handling.
 - ring `P[0..16)` and `Cr[0..16)`: the `(O, Cm)` of the members
 - pseudo-output `C'`
 - message `m = sig_message`
-- secret index `π`, with `p·G = P[π]` and `z·G = Cr[π] − C'`
+- secret index `π`, with `p·G = P[π]` and `z·G = Cr[π] − C'`, and `z ≠ 0` (a signer
+  refuses `z = 0`: it gives `D = identity`, which verification rejects, and `C' = Cr[π]`,
+  which reveals the real input)
 
 ```
 Hπ  = Hp("key-image", P[π])
@@ -467,7 +469,7 @@ s[π] = α − c[π]·(μP·p + μC·z)
 signature = (c0 = c[0], s[0..16), D)
 ```
 
-**Verification:** decode every point and scalar (§1.1) and reject `I = identity`.
+**Verification:** decode every point and scalar (§1.1) and reject `I = identity` and `D = identity`.
 Recompute `μP`, `μC` and `W`, then run the loop for `i = 0..15` starting from `c[0] = c0`.
 The signature is valid iff the final `c[16]` equals `c0`.
 
@@ -546,7 +548,7 @@ The rules are listed in evaluation order: cheap checks first, elliptic-curve wor
 | T8 | `fee ≥ min_fee(weight)`; fee arithmetic is checked and never overflows (§8.4). |
 | T9 | Balance: `Σ C'_k − Σ Cm_j − fee·H = identity`. |
 | T10 | BP+: length matches `k`, all elements decode, all scalars canonical, proof verifies (§7). |
-| T11 | Exactly `n` CLSAGs; all scalars canonical, all `D` decode. |
+| T11 | Exactly `n` CLSAGs; all scalars canonical, all `D` decode and are not the identity (a signature with `z = 0`, so `C' = Cr[π]`, which would reveal the real input; Monero's "bad auxiliary key image" rule). |
 
 ### 8.2 Contextual (against the chain state at the block's parent)
 
@@ -1194,6 +1196,8 @@ Each part in bytes:
    - Two signatures by the same key produce equal key images.
    - Different keys produce different key images.
    - A signature with a wrong commitment secret fails.
+   - `z = 0` is refused by the signer, and a signature with `D = identity` is rejected
+     (pinned vector `reject.d_identity`, crypto/tests/vectors/clsag.txt).
 4. **BP+**
    - Prove/verify for `k = 1..16`, including the amounts 0 and `2^64 − 1`.
    - The honest prover refuses out-of-range values.
