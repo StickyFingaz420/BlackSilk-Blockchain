@@ -1,6 +1,6 @@
 # Wallet error-handling review
 
-Status: **internal, 2026-09-25. Not independently reviewed.**
+Status: **internal, 2026-09-25; round 2 2026-09-27 (§1b). Not independently reviewed.**
 
 **Scope:** `wallet/src/` (about 2,900 lines: CLI, wallet state, PX store, file format,
 node interface) and the RPC client it uses.
@@ -23,6 +23,39 @@ read, asking three questions:
 | W-6 | **Rebroadcasting gives spy nodes another look at the origin.** A stored transaction is resubmitted through the wallet's node every 20 blocks while it is unconfirmed. If the node's pool already holds it, the node answers "already known" and relays nothing; if the node lost it, it enters the Dandelion++ stem again | Low | Accepted. The alternative is funds stuck indefinitely. Documented in privacy-review.md §3c |
 | W-7 | Wallets written before this change may hold reservations without a stored transaction | — | These keep the old 20-block expiry. Recommendation: before the testnet reset, create new wallets rather than migrating old files |
 | W-8 | `clear-pending` could be used casually | Low | Its help text and the `Uncertain` message now warn that it is only for a transaction that never left the wallet |
+
+## 1b. Round 2 (internal, 2026-09-27)
+
+A second internal pass over the wallet and its RPC client, plus the contract review.
+Every finding was reproduced or confirmed in the code before it was fixed. Internal
+work, not an independent audit.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| M-1 | **A large address index bricked the wallet file.** `address` stored any index as `issued`, and every load derived `issued + 50` subaddresses; `px-address --index 4000000000` did the same for PX, where scanning derived ML-KEM keys for every index up to `issued + 20`, per PX output | Medium (availability) | **Fixed.** An index more than 1,000 beyond the highest one that has received funds is refused without `--force`; with it, the ceiling is 10,000 (v1) and 2,000 (PX). Files from older versions with larger windows are clamped on load, with a warning. The window is extended incrementally, and PX delivery keys are derived once per session and cached in memory |
+| M-2 | **The v1 scan window never grew.** Scanning found outputs but did not raise `issued`, so a wallet restored from its seed never saw subaddresses beyond 50, even after finding a payment at 45 | Medium (funds not found) | **Fixed.** Gap-limit scan: an output at `(account, i)` raises `issued` to `i`, the window is extended and the block is scanned again, so later outputs of the same block are found. Old files with funds above their window are repaired on load |
+| L-1 | The first address of a new account was not scanned until the next load (`or_insert(0)` without extending the table) | Low | **Fixed** |
+| L-2 | **RPC client:** accepted `https://` addresses although no TLS stack is compiled in; honoured proxy environment variables implicitly; followed redirects; read response bodies without limit | Low (privacy, memory) | **Fixed.** `https://` and other schemes are refused with a clear message (`Client::try_new`). Proxies and redirects are disabled. Every body is capped per endpoint, above the largest honest response (derived from the node's own limits; tested) |
+| L-4 | **Secret copies:** the hex seed in the serialized form was a plain `String`; `mnemonic()` returned a plain `String`; a malformed field's value was echoed in errors | Low | **Fixed** for the wallet's own copies: the seed is a `Zeroizing` string, `mnemonic()` returns `Zeroizing<String>` written into a preallocated buffer, and no error echoes a field's value. **Not coverable:** `serde_json` may reallocate its output buffer while writing the JSON (earlier copies stay in freed memory); `bip39::Mnemonic` keeps word indices without zeroizing (its `zeroize` feature is off); clap keeps its own copy of any secret given on the command line; the OS may swap or dump memory |
+| L-5 | Wallet and lock files were created with the default permissions; the directory was not fsynced after the rename; the `atomic_write` test checked for `w.tmp`, a name never used (the real one is `w.tmp<pid>`) | Low | **Fixed.** On Unix both files are created 0600 and the directory is fsynced. A stale temporary file is removed first. The test now checks the real name and that only the wallet file remains. On Windows the files inherit the directory's ACL |
+| L-6 | Vault secrets could only be given on the command line (shell history, process list) | Low | **Fixed.** `--secret-file`, `--secret-prompt` (lock) and a prompt by default (claim). `--secret` still works, with a warning. `--secret-out` writes a generated secret to a new owner-only file |
+| P-1 | **Vault operations accepted a contract that registers other programs next to the vault.** Any program of a contract can spend its records, so a claimer could deploy `{vault, backdoor}` and take locked funds without the secret | Medium (funds) | **Fixed.** Lock and claim require the registered program set to be exactly `{vault}`. `px-deploy --vault` cannot be combined with `--program`; the library refuses such a deploy; `px-contracts` warns. docs/px.md §13.4 states the trust boundary |
+| P-2 | The wallet used whatever vault budget was registered. A budget that fits LOCK but not CLAIM would lock funds for good; an odd one fingerprints proofs | Low (funds) | **Fixed.** The budget must equal `vault::BUDGET` |
+| R11-W1 | **A vault lock with a generated secret lost the secret when the submission ended "uncertain".** The error returned before the secret was printed, and the wallet stored only `Hk(LOCK, secret)`. The lock could still be mined; the demonstration vault has no refund | High (funds) | **Fixed.** The secret is stored with the record's opening before `submit` saves and sends. `px-vault-secret` shows it; `px-records` marks it; the uncertain path prints a generated secret too |
+| D-1 | docs/px.md §6 and `px/src/delivery.rs` called the delivery key combiner "as in X-Wing". It hashes `ss_ec ‖ ss_kem ‖ R ‖ ct_kem ‖ cm`, without the recipient's `V` or `H(ek)` | Documentation | **Corrected.** Adding `V` and `H(ek)` is recorded as a non-blocking hardening (a wire-format change). Also documented: PX has no view/spend separation, and keys are not network-separated |
+
+**Residuals of round 2:**
+- **Restore scope.** A wallet restored from its seed scans account 0 only, and 50
+  subaddresses (20 PX addresses) beyond the highest one found. `address` and
+  `px-address` print a note when an address is outside what a restore would find.
+- **`Wallet::address` and `Wallet::px_address` panic** beyond the gap limit (library
+  convenience for tests and tools). The CLI uses `try_address` and `try_px_address`
+  only. Callers checked: the CLI's `create` (index 0), the e2e tests (small indexes)
+  and `tools/labnet` (indexes below 4 and 3). No path passes user input to them.
+- **The gap limit counts funds found, not addresses handed out.** Handing out more
+  than 1,000 unused addresses needs `--force`.
+- **No wallet Tor/SOCKS support.** Reach a remote node over an SSH tunnel, a VPN or a
+  local Tor forwarder.
 
 ## 1a. W-5 in detail: ring reuse
 
@@ -89,7 +122,7 @@ the unit test and by review only.
 
 | Area | Behaviour | Evidence |
 |---|---|---|
-| Wallet file writes | Encrypt to `*.tmp`, fsync, rename: a crash leaves the old or the new file, never a partial one | `wallet/src/file.rs::write_atomic`; test `atomic_write` |
+| Wallet file writes | Encrypt to `*.tmp<pid>` (0600 on Unix), fsync, rename, fsync the directory (Unix): a crash leaves the old or the new file, never a partial one | `wallet/src/file.rs::write_atomic`; tests `atomic_write`, `wallet_files_are_owner_only` (Unix only) |
 | Wrong password, damaged file | One message: "wrong password or damaged wallet file" (indistinguishable by design) | `file.rs::wrong_password_and_tampering_are_rejected` |
 | Truncated or tampered header | Length checked before parsing; absurd Argon2 parameters refused (memory exhaustion) | `file::decrypt` |
 | State saved after an error | The CLI saves after every command, even a failed one, so reservations and sync progress are kept | `main.rs` |
@@ -125,3 +158,32 @@ failures and verdicts:
   record after mining.
 - **Limitation:** the reservation checks inside the wallet are `debug_assert!`s, which
   do not run in the release-mode test runs.
+
+Round 2 (§1b):
+- `wallet/src/wallet.rs` unit tests: `subaddress_indexes_beyond_the_gap_limit_need_the_override`,
+  `the_limit_follows_the_highest_index_that_received_funds`,
+  `a_new_account_is_scanned_from_index_zero_at_once` (L-1),
+  `finding_funds_moves_the_window`, `absurd_scan_windows_in_old_files_are_clamped_on_load`
+  (a file with two accounts at `u32::MAX`-sized windows, clamped to 10,000 each, loads
+  in about 1.7 s on the test machine), `old_files_with_funds_above_the_window_raise_it_on_load`,
+  `px_address_indexes_beyond_the_gap_limit_need_the_override`,
+  `secrets_stay_out_of_error_messages`, `the_mnemonic_round_trips_without_reallocating`,
+  `deploys_mixing_the_vault_with_other_programs_are_refused`,
+  `vault_lock_and_claim_refuse_unsafe_contracts_before_proving` (P-1, P-2, with a fake
+  node), `a_stored_vault_secret_survives_a_save_and_load` (R11-W1).
+- `wallet/src/px.rs`: `vault_operations_need_the_vault_alone_with_the_reference_budget`,
+  `the_used_index_counts_payments_and_contract_records_received`,
+  `cached_address_keys_match_fresh_derivation`.
+- `wallet/src/file.rs`: `atomic_write` (corrected), `wallet_files_are_owner_only` (Unix).
+- `rpc/src/lib.rs`: `https_and_unknown_schemes_are_refused`,
+  `an_oversized_body_with_a_length_is_refused_before_reading`,
+  `an_endless_body_without_a_length_is_cut_at_the_cap`, `error_bodies_are_capped_too`,
+  `a_body_within_the_cap_is_parsed_and_redirects_are_not_followed`,
+  `caps_cover_the_largest_honest_responses`.
+- `wallet/tests/e2e.rs`: `a_restored_wallet_follows_payments_beyond_its_first_window`
+  (M-2: payments at 45 and 90 in one block, then 140; fails without the fix, checked),
+  `out_of_range_address_indexes_are_refused` (M-1), and
+  `an_uncertain_vault_lock_keeps_the_record_opening` extended to recover the secret
+  from the autosaved file (R11-W1; it builds PX proofs).
+- Not tested: proxy environment variables being ignored (setting them in a
+  multi-threaded test process is racy); `.no_proxy()` is checked by review.

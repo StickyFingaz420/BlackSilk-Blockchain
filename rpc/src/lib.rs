@@ -182,11 +182,70 @@ pub struct PxCommitments {
     pub height: u64,
 }
 
+// ---- response-size caps (client side) ----
+//
+// A node must not be able to exhaust the memory of a wallet or miner by
+// sending an endless or huge body. Every response is read up to a cap chosen
+// per endpoint, above the largest response an honest node sends (derived from
+// the node's own limits above; `tests::caps_cover_the_largest_honest_responses`);
+// a larger body is refused before it is parsed.
+
+/// `/info`, `/tx`, `/block` and error bodies: a few hundred bytes in practice.
+pub const MAX_SMALL_RESPONSE_BYTES: usize = 64 * 1024;
+/// `/template`: its transactions fit in one block, whose hex fits in a request.
+pub const MAX_TEMPLATE_RESPONSE_BYTES: usize = MAX_REQUEST_BYTES + 64 * 1024;
+/// `/blocks`: the node stops adding blocks at `MAX_BLOCKS_RESPONSE_BYTES` of hex
+/// (a single block is far below it), plus JSON framing for at most
+/// `MAX_BLOCKS_PER_REQUEST` entries.
+pub const MAX_BLOCKS_RESPONSE_LIMIT: usize = MAX_BLOCKS_RESPONSE_BYTES + 1024 * 1024;
+/// `/px/commitments`: at most `MAX_PX_COMMITMENTS_PER_REQUEST` entries of under
+/// 96 bytes (a height and 64 hex digits), with a 2x margin.
+pub const MAX_PX_COMMITMENTS_RESPONSE_BYTES: usize =
+    MAX_PX_COMMITMENTS_PER_REQUEST as usize * 192 + 64 * 1024;
+/// `/px/contracts`: at most `MAX_PX_CONTRACTS_PER_REQUEST` registrations of at
+/// most 16 programs (`tx::params::MAX_DEPLOY_PROGRAMS`) of under 320 bytes
+/// each, with a 2x margin.
+pub const MAX_PX_CONTRACTS_RESPONSE_BYTES: usize =
+    MAX_PX_CONTRACTS_PER_REQUEST as usize * (16 * 640 + 256) + 64 * 1024;
+/// `/outputs`: one entry of about 250 bytes per requested index, with a 4x margin.
+pub const OUTPUT_ENTRY_RESPONSE_BYTES: usize = 1024;
+/// `/distribution?to=h`: `h + 1` numbers of at most 20 digits and a comma.
+pub const DISTRIBUTION_ENTRY_RESPONSE_BYTES: usize = 32;
+
+// The node's own hex budget plus framing for every entry; a template's
+// transactions fit in a block, whose hex fits in a request.
+const _: () = {
+    assert!(
+        MAX_BLOCKS_RESPONSE_LIMIT
+            >= MAX_BLOCKS_RESPONSE_BYTES + MAX_BLOCKS_PER_REQUEST as usize * 256
+    );
+    assert!(MAX_TEMPLATE_RESPONSE_BYTES > MAX_REQUEST_BYTES);
+};
+
+fn distribution_cap(to: u64) -> usize {
+    usize::try_from(to)
+        .unwrap_or(usize::MAX)
+        .saturating_add(2)
+        .saturating_mul(DISTRIBUTION_ENTRY_RESPONSE_BYTES)
+        .saturating_add(MAX_SMALL_RESPONSE_BYTES)
+}
+
+fn outputs_cap(n: usize) -> usize {
+    n.saturating_mul(OUTPUT_ENTRY_RESPONSE_BYTES)
+        .saturating_add(MAX_SMALL_RESPONSE_BYTES)
+}
+
 #[derive(Debug)]
 pub enum RpcError {
     Http(String),
     Status(u16, String),
     Decode(String),
+    /// The response body exceeded the cap for its endpoint.
+    TooLarge {
+        limit: usize,
+    },
+    /// The node address cannot be used (for example `https://`).
+    Config(String),
 }
 
 impl std::fmt::Display for RpcError {
@@ -195,73 +254,170 @@ impl std::fmt::Display for RpcError {
             RpcError::Http(e) => write!(f, "cannot reach node: {e}"),
             RpcError::Status(c, m) => write!(f, "node returned HTTP {c}: {m}"),
             RpcError::Decode(e) => write!(f, "bad response from node: {e}"),
+            RpcError::TooLarge { limit } => write!(
+                f,
+                "bad response from node: the body exceeds the {limit}-byte limit for this request"
+            ),
+            RpcError::Config(e) => write!(f, "node address: {e}"),
         }
     }
 }
 
 impl std::error::Error for RpcError {}
 
+/// Normalizes a node address to `http://host:port` (no trailing slash).
+///
+/// Only plain HTTP is supported: no TLS stack is compiled in, so an
+/// `https://` address is refused here, rather than failing later with an
+/// obscure transport error or being mistaken for an encrypted connection.
+fn normalize_base(base: &str) -> Result<String, RpcError> {
+    let base = base.trim();
+    let host = |s: &str| {
+        let s = s.trim_end_matches('/');
+        if s.is_empty() {
+            Err(RpcError::Config("empty node address".into()))
+        } else {
+            Ok(format!("http://{s}"))
+        }
+    };
+    match base.split_once("://") {
+        None => host(base),
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("http") => host(rest),
+        Some((scheme, _)) if scheme.eq_ignore_ascii_case("https") => Err(RpcError::Config(
+            "https:// is not supported: this client speaks plain HTTP only (no TLS). \
+             Use your own node on this machine, or reach a remote node over an SSH \
+             tunnel, a VPN or Tor, and give its http:// address"
+                .into(),
+        )),
+        Some((scheme, _)) => Err(RpcError::Config(format!(
+            "unsupported address {scheme:?}://...: use host:port or http://host:port"
+        ))),
+    }
+}
+
 /// Blocking client for the node RPC.
+///
+/// - **Plain HTTP only.** `https://` addresses are refused (`try_new`).
+/// - **No implicit proxies.** Proxy environment variables (`HTTP_PROXY`,
+///   `ALL_PROXY`, ...) are ignored, so traffic never silently goes through a
+///   third party. To use Tor or a proxy, run a local forwarder and give its
+///   address.
+/// - **No redirects.** A node cannot send the client to another host.
+/// - **Bounded responses.** Every body is read up to a per-endpoint cap
+///   (the `MAX_*_RESPONSE_*` constants).
 pub struct Client {
     base: String,
     http: reqwest::blocking::Client,
+    /// Set when the address was refused: every request fails with this.
+    refused: Option<String>,
+}
+
+fn http_client() -> Result<reqwest::blocking::Client, RpcError> {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| RpcError::Config(e.to_string()))
 }
 
 impl Client {
-    /// `base` is e.g. `http://127.0.0.1:29333`.
-    pub fn new(base: &str) -> Self {
-        let base = if base.starts_with("http://") || base.starts_with("https://") {
-            base.trim_end_matches('/').to_string()
-        } else {
-            format!("http://{}", base.trim_end_matches('/'))
-        };
-        let http = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .build()
-            .expect("HTTP client");
-        Self { base, http }
+    /// `base` is `host:port` or `http://host:port`. Refuses `https://` and
+    /// other schemes.
+    pub fn try_new(base: &str) -> Result<Self, RpcError> {
+        Ok(Self {
+            base: normalize_base(base)?,
+            http: http_client()?,
+            refused: None,
+        })
     }
 
-    fn get<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, RpcError> {
+    /// Like `try_new`, but an unusable address gives a client whose every
+    /// request fails with the reason, without touching the network (for
+    /// callers that report errors per request).
+    pub fn new(base: &str) -> Self {
+        match Self::try_new(base) {
+            Ok(c) => c,
+            Err(e) => Self {
+                base: String::new(),
+                http: http_client().expect("HTTP client without TLS"),
+                refused: Some(e.to_string()),
+            },
+        }
+    }
+
+    fn check(&self) -> Result<(), RpcError> {
+        match &self.refused {
+            Some(e) => Err(RpcError::Config(e.clone())),
+            None => Ok(()),
+        }
+    }
+
+    fn get<T: for<'de> Deserialize<'de>>(&self, path: &str, cap: usize) -> Result<T, RpcError> {
+        self.check()?;
         let resp = self
             .http
             .get(format!("{}{path}", self.base))
             .send()
             .map_err(|e| RpcError::Http(e.to_string()))?;
-        Self::parse(resp)
+        Self::parse(resp, cap)
     }
 
     fn post<B: Serialize, T: for<'de> Deserialize<'de>>(
         &self,
         path: &str,
         body: &B,
+        cap: usize,
     ) -> Result<T, RpcError> {
+        self.check()?;
         let resp = self
             .http
             .post(format!("{}{path}", self.base))
             .json(body)
             .send()
             .map_err(|e| RpcError::Http(e.to_string()))?;
-        Self::parse(resp)
+        Self::parse(resp, cap)
+    }
+
+    /// Reads at most `cap` bytes of body; a longer one is an error.
+    fn read_capped(mut resp: reqwest::blocking::Response, cap: usize) -> Result<Vec<u8>, RpcError> {
+        use std::io::Read;
+        if resp.content_length().is_some_and(|n| n > cap as u64) {
+            return Err(RpcError::TooLarge { limit: cap });
+        }
+        let mut body = Vec::new();
+        (&mut resp)
+            .take(cap as u64 + 1)
+            .read_to_end(&mut body)
+            .map_err(|e| RpcError::Http(e.to_string()))?;
+        if body.len() > cap {
+            return Err(RpcError::TooLarge { limit: cap });
+        }
+        Ok(body)
     }
 
     fn parse<T: for<'de> Deserialize<'de>>(
         resp: reqwest::blocking::Response,
+        cap: usize,
     ) -> Result<T, RpcError> {
         let status = resp.status();
-        let text = resp.text().map_err(|e| RpcError::Http(e.to_string()))?;
         if !status.is_success() {
-            return Err(RpcError::Status(status.as_u16(), text));
+            let body = Self::read_capped(resp, MAX_SMALL_RESPONSE_BYTES)?;
+            return Err(RpcError::Status(
+                status.as_u16(),
+                String::from_utf8_lossy(&body).into_owned(),
+            ));
         }
-        serde_json::from_str(&text).map_err(|e| RpcError::Decode(e.to_string()))
+        let body = Self::read_capped(resp, cap)?;
+        serde_json::from_slice(&body).map_err(|e| RpcError::Decode(e.to_string()))
     }
 
     pub fn info(&self) -> Result<Info, RpcError> {
-        self.get("/info")
+        self.get("/info", MAX_SMALL_RESPONSE_BYTES)
     }
 
     pub fn template(&self) -> Result<Template, RpcError> {
-        self.get("/template")
+        self.get("/template", MAX_TEMPLATE_RESPONSE_BYTES)
     }
 
     pub fn submit_block(&self, block: &[u8]) -> Result<SubmitResult, RpcError> {
@@ -270,6 +426,7 @@ impl Client {
             &HexPayload {
                 hex: hex::encode(block),
             },
+            MAX_SMALL_RESPONSE_BYTES,
         )
     }
 
@@ -279,23 +436,33 @@ impl Client {
             &HexPayload {
                 hex: hex::encode(tx),
             },
+            MAX_SMALL_RESPONSE_BYTES,
         )
     }
 
     pub fn blocks(&self, from: u64, count: u64) -> Result<Blocks, RpcError> {
-        self.get(&format!("/blocks?from={from}&count={count}"))
+        self.get(
+            &format!("/blocks?from={from}&count={count}"),
+            MAX_BLOCKS_RESPONSE_LIMIT,
+        )
     }
 
     pub fn distribution(&self, to: u64) -> Result<Distribution, RpcError> {
-        self.get(&format!("/distribution?to={to}"))
+        self.get(&format!("/distribution?to={to}"), distribution_cap(to))
     }
 
     pub fn px_commitments(&self, from: u64) -> Result<PxCommitments, RpcError> {
-        self.get(&format!("/px/commitments?from={from}"))
+        self.get(
+            &format!("/px/commitments?from={from}"),
+            MAX_PX_COMMITMENTS_RESPONSE_BYTES,
+        )
     }
 
     pub fn px_contracts(&self, from: u64) -> Result<PxContracts, RpcError> {
-        self.get(&format!("/px/contracts?from={from}"))
+        self.get(
+            &format!("/px/contracts?from={from}"),
+            MAX_PX_CONTRACTS_RESPONSE_BYTES,
+        )
     }
 
     pub fn outputs(&self, indices: &[u64]) -> Result<Outputs, RpcError> {
@@ -304,6 +471,7 @@ impl Client {
             &OutputsRequest {
                 indices: indices.to_vec(),
             },
+            outputs_cap(indices.len()),
         )
     }
 }
@@ -311,4 +479,191 @@ impl Client {
 /// Parses a 32-byte hex id.
 pub fn parse_hash(s: &str) -> Option<[u8; 32]> {
     hex::decode(s).ok()?.try_into().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Serves one connection: reads the request head, then writes `head`
+    /// followed by `body_len` bytes of `b'x'`, then closes.
+    fn serve_once(head: String, body_len: usize) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let mut req = Vec::new();
+            while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = s.read(&mut buf).unwrap_or(0);
+                if n == 0 {
+                    return;
+                }
+                req.extend_from_slice(&buf[..n]);
+            }
+            if s.write_all(head.as_bytes()).is_err() {
+                return;
+            }
+            let chunk = vec![b'x'; 64 * 1024];
+            let mut left = body_len;
+            while left > 0 {
+                let n = left.min(chunk.len());
+                // The client hangs up once it has seen enough.
+                if s.write_all(&chunk[..n]).is_err() {
+                    return;
+                }
+                left -= n;
+            }
+        });
+        addr
+    }
+
+    #[test]
+    fn https_and_unknown_schemes_are_refused() {
+        for bad in [
+            "https://node.example:29333",
+            "HTTPS://x",
+            "ftp://x",
+            "",
+            "http://",
+        ] {
+            assert!(
+                matches!(Client::try_new(bad), Err(RpcError::Config(_))),
+                "{bad:?}"
+            );
+        }
+        let e = Client::try_new("https://node.example").err().unwrap();
+        assert!(e.to_string().contains("plain HTTP only"), "{e}");
+        // `new` never panics: the client refuses every request with the
+        // reason, without touching the network.
+        let c = Client::new("https://node.example:29333");
+        assert!(matches!(c.info(), Err(RpcError::Config(m)) if m.contains("https")));
+        for ok in [
+            "127.0.0.1:29333",
+            "http://127.0.0.1:29333/",
+            "HTTP://localhost:1",
+        ] {
+            assert!(Client::try_new(ok).is_ok(), "{ok:?}");
+        }
+        assert_eq!(
+            normalize_base("127.0.0.1:1/").unwrap(),
+            "http://127.0.0.1:1"
+        );
+    }
+
+    #[test]
+    fn an_oversized_body_with_a_length_is_refused_before_reading() {
+        let len = MAX_SMALL_RESPONSE_BYTES + 1;
+        let addr = serve_once(
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n"),
+            len,
+        );
+        let c = Client::try_new(&addr).unwrap();
+        assert!(matches!(
+            c.info(),
+            Err(RpcError::TooLarge {
+                limit: MAX_SMALL_RESPONSE_BYTES
+            })
+        ));
+    }
+
+    #[test]
+    fn an_endless_body_without_a_length_is_cut_at_the_cap() {
+        // No Content-Length: the body runs until the connection closes, far
+        // beyond the cap. The client stops reading at the cap.
+        let addr = serve_once(
+            "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_string(),
+            64 * 1024 * 1024,
+        );
+        let c = Client::try_new(&addr).unwrap();
+        assert!(matches!(
+            c.info(),
+            Err(RpcError::TooLarge {
+                limit: MAX_SMALL_RESPONSE_BYTES
+            })
+        ));
+    }
+
+    #[test]
+    fn error_bodies_are_capped_too() {
+        let len = 10 * 1024 * 1024;
+        let addr = serve_once(
+            format!(
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n"
+            ),
+            len,
+        );
+        let c = Client::try_new(&addr).unwrap();
+        assert!(matches!(c.info(), Err(RpcError::TooLarge { .. })));
+    }
+
+    #[test]
+    fn a_body_within_the_cap_is_parsed_and_redirects_are_not_followed() {
+        let body = r#"{"cumulative":[1,2,3]}"#;
+        let addr = serve_once(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            ),
+            0,
+        );
+        let c = Client::try_new(&addr).unwrap();
+        assert_eq!(c.distribution(2).unwrap().cumulative, vec![1, 2, 3]);
+        // A redirect is reported as a status, never followed to another host.
+        let addr = serve_once(
+            "HTTP/1.1 302 Found\r\nLocation: http://192.0.2.1:9/info\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_string(),
+            0,
+        );
+        let c = Client::try_new(&addr).unwrap();
+        assert!(matches!(c.info(), Err(RpcError::Status(302, _))));
+    }
+
+    #[test]
+    fn caps_cover_the_largest_honest_responses() {
+        // A full /distribution for ten million blocks, each count at its widest.
+        let entry = format!("{},", u64::MAX);
+        assert!(entry.len() <= DISTRIBUTION_ENTRY_RESPONSE_BYTES);
+        assert!(distribution_cap(10_000_000) > 10_000_001 * entry.len());
+        // A full /outputs entry.
+        let e = OutputEntry {
+            index: u64::MAX,
+            one_time_key: "f".repeat(64),
+            commitment: "f".repeat(64),
+            height: u64::MAX,
+            coinbase: false,
+        };
+        assert!(4 * serde_json::to_vec(&e).unwrap().len() <= OUTPUT_ENTRY_RESPONSE_BYTES);
+        // A full /px/commitments page.
+        let page = PxCommitments {
+            from: u64::MAX,
+            commitments: vec![(u64::MAX, "f".repeat(64)); MAX_PX_COMMITMENTS_PER_REQUEST as usize],
+            total: u64::MAX,
+            root: "f".repeat(64),
+            height: u64::MAX,
+        };
+        assert!(2 * serde_json::to_vec(&page).unwrap().len() <= MAX_PX_COMMITMENTS_RESPONSE_BYTES);
+        // A full /px/contracts page: 16 programs per contract.
+        let program = PxProgramEntry {
+            id: "f".repeat(64),
+            budget: [usize::MAX; 8],
+        };
+        let page = PxContracts {
+            from: u64::MAX,
+            contracts: vec![
+                PxContractEntry {
+                    height: u64::MAX,
+                    id: "f".repeat(64),
+                    programs: vec![program; 16],
+                };
+                MAX_PX_CONTRACTS_PER_REQUEST as usize
+            ],
+            total: u64::MAX,
+            height: u64::MAX,
+        };
+        assert!(2 * serde_json::to_vec(&page).unwrap().len() <= MAX_PX_CONTRACTS_RESPONSE_BYTES);
+        // /blocks and /template: checked at compile time (next to the caps).
+    }
 }

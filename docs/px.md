@@ -259,6 +259,29 @@ wallet share nothing visible.
 and ML-KEM-768. The KEM is RustCrypto `ml-kem` 0.3.2 (pure Rust, FIPS 203), pinned
 exactly.
 
+**The key combiner is not X-Wing.** The key hashes both shared secrets, both
+ciphertexts (`R`, `ct_kem`) and `cm`:
+- X-Wing (draft-connolly-cfrg-xwing-kem) also hashes the recipient's classical public
+  key; generic hybrid combiners also bind the KEM public key. This combiner hashes
+  neither `V` nor `H(ek)`, so X-Wing's security argument does not carry over as is.
+- Why it is acceptable here: each key is used once, for one body whose tag and
+  associated data bind `cm`, and the recipient accepts a record only if it recomputes
+  `cm` (below).
+- **Recorded hardening (non-blocking):** add `V` and `H(ek)` to the key hash. It
+  changes every ciphertext's key (a wire-format change), so it needs a coordinated
+  upgrade, best done at a testnet reset.
+
+**Key separation: limits.** The delivery keys of address `i` derive from the PX spend
+secret `sk` and `i` alone:
+- **No view/spend separation.** There is no view key from which a watch-only wallet
+  could derive every address's delivery keys without `sk`. One address's delivery keys
+  do not reveal `sk` (the derivation is one-way), but no wallet mode exports them, and
+  they would not see spends (nullifiers need `nk`).
+- **No network separation.** The derivation does not include the network: one seed
+  gives the same PX keys and owner tags on every network. Only the address encoding
+  differs. (The v1 keys are not network-separated either.) Use separate seeds for
+  testnet and mainnet.
+
 **Acceptance** (Janus principle, transactions.md §12): the recipient accepts a record
 only if it recomputes the on-chain commitment with the transaction's `rho` and:
 - for a user record, its own owner tag;
@@ -556,10 +579,18 @@ Measured privacy analysis: `docs/reviews/privacy-review.md`.
 - **Deposit and withdrawal amounts are public** (containment). Deposit round amounts,
   wait between deposits and withdrawals, and never withdraw the amount you deposited.
   The CLI prints this reminder.
-- **Use your own node,** or reach one over Tor. The node sees when you submit a
-  transaction; it learns nothing from your scanning.
+- **Use your own node,** or a node you trust, reached over a private channel (an SSH
+  tunnel, a VPN, or Tor through a local forwarder you run). The wallet itself has no
+  Tor or SOCKS support, speaks plain HTTP only (it refuses `https://` addresses), and
+  ignores proxy environment variables. The node sees when you submit a transaction;
+  it learns nothing from your scanning.
 - **Give each counterparty its own PX address** (`px-address --index`). Addresses of
   one wallet are unlinkable.
+  - Every scanned PX address costs a scalar multiplication for every PX output, so the
+    wallet hands out at most 1,000 addresses beyond the highest one that has received a
+    record (2,000 with `--force`).
+  - A wallet restored from the seed scans 20 addresses beyond the highest one found.
+    Keep the wallet file backed up if you hand out addresses far ahead.
 - **Contract calls reveal the contract, the program and the function's public
   outputs** (for the vault: LOCK or CLAIM). The time between a LOCK and its CLAIM is
   visible to anyone watching that contract.
@@ -622,7 +653,7 @@ wallet.
   deploys only while scanning, so a wallet newer than the deploy could not claim;
   that was found in review and fixed.
 - To call a contract, the wallet uses the budget registered on chain and checks that
-  its program is registered to that contract.
+  its program is registered to that contract. For the vault it checks more (below).
 - The node is trusted for the list's availability, as for blocks. A false entry can
   only make the wallet build a transaction that consensus refuses (PX3, PX5).
 - On a reorganization, entries above the fork are dropped and fetched again.
@@ -636,19 +667,56 @@ balance, never selected to pay. Their lifecycle:
 | Created (by this wallet) | its commitment appears in the chain's list | kept, as unconfirmed (the wallet holds the opening) |
 | Imported (a share) | its commitment appears in the chain's list | kept, as unconfirmed |
 
-- `clear-pending` also drops unconfirmed records this wallet created in transactions
-  that never confirmed.
+- `clear-pending` keeps every contract-record opening, including unconfirmed records
+  this wallet created: the transaction may have been relayed (review F14).
 - A contract record is spendable once confirmed at or below the canonical anchor (§11.4).
+
+**Trust boundary: a contract is its whole program set.** A contract record's nullifier,
+`Hk(NULLIFIER_CONTRACT, contract ‖ rcm ‖ cm)`, depends only on the record's opening,
+and **any** program registered to the contract can approve spending its records.
+So a contract is only as trustworthy as the least trustworthy of its programs.
+- **The attack (review P-1).** Bob, who is to claim, deploys `C = {vault, backdoor}`
+  and asks Alice to lock funds for him under `C`. Every check Alice's wallet made
+  (that the vault program is registered to `C`) passes. Bob then spends the record
+  through `backdoor`, without the secret.
+- **The wallet's rule.** `px-vault-lock` and `px-vault-claim` accept a contract only if
+  its registered program set is **exactly** `{vault}` (`wallet/src/px.rs::vault_check`).
+  `px-deploy --vault` cannot be combined with `--program`, and the library refuses any
+  deploy that registers the vault next to another program.
+- **Budget (review P-2).** The vault must be registered with exactly `vault::BUDGET`:
+  - a budget that covers LOCK but not CLAIM would lock funds for good (a CLAIM over
+    budget cannot be proven);
+  - any other budget would also make the contract's proofs stand out.
+- `px-contracts` prints a warning for a contract that registers the vault with other
+  programs or another budget.
+- **For any other contract:** read every program of the contract, not only the one
+  you intend to call, before putting funds under it.
+
+**Vault secrets are kept in the wallet file (review R11-W1).** `px-vault-lock` stores
+the secret with the record's opening, and `submit` saves the wallet **before** the
+transaction is sent. A lock whose submission ends "may or may not have received" can
+still be mined; the demonstration vault has no refund, so losing a generated secret
+would lock the funds for good.
+- `px-vault-secret --record CM [--out FILE]` shows the stored secret. `px-records`
+  marks the records that have one.
+- On an uncertain submission, `px-vault-lock` prints a generated secret anyway.
+- The secret is in the encrypted wallet file only: a restore from the seed does not
+  recover it. Keep backups of the file, or use `--secret-out FILE`.
 
 **Commands:**
 
 | Command | What it does |
 |---|---|
-| `px-deploy --vault` or `--program F.elf --budget c,k,a,b,l,s,m,p` (repeatable) | Registers a contract, paid with v1 funds, so the deployer is hidden behind ring signatures. Prints the contract id |
-| `px-contracts` | Lists deployed contracts and their programs (marks the vault) |
+| `px-deploy --vault` or `--program F.elf --budget c,k,a,b,l,s,m,p` (repeatable) | Registers a contract, paid with v1 funds, so the deployer is hidden behind ring signatures. Prints the contract id. `--vault` deploys the vault alone |
+| `px-contracts` | Lists deployed contracts and their programs (marks the vault; warns about contracts not usable as a vault) |
 | `px-records` | Lists the contract records this wallet holds, with status and source |
-| `px-vault-lock --contract C --amount A [--secret S] [--deliver-to PXADDR]` | Locks PX funds in a vault record under `Hk(LOCK, S)`, delivering the record to the claimer. The fee is paid from PX. Prints the secret if it was generated |
-| `px-vault-claim --record CM --secret S [--to PXADDR]` | Claims a vault record, paying its value privately. The fee is paid from one PX record, or else from v1 funds, so a claimer without PX funds can claim |
+| `px-vault-lock --contract C --amount A [--secret-file F \| --secret-prompt \| --secret S \| --secret-out F] [--deliver-to PXADDR]` | Locks PX funds in a vault record under `Hk(LOCK, S)`, delivering the record to the claimer. The fee is paid from PX. Without a secret option it generates one and prints it (or writes it to the `--secret-out` file) |
+| `px-vault-claim --record CM [--secret-file F \| --secret S] [--to PXADDR]` | Claims a vault record, paying its value privately; asks for the secret unless a file or `--secret` is given. The fee is paid from one PX record, or else from v1 funds, so a claimer without PX funds can claim |
+| `px-vault-secret --record CM [--out F]` | Shows the secret of a vault record this wallet locked |
+
+`--secret S` on the command line stays in shell history and is visible to other local
+users in the process list. The wallet warns when it is used; prefer `--secret-file` or
+the prompt.
 | `px-share --record CM --to PXADDR` / `px-import --share HEX` | Off-chain sharing (§13.3) |
 
 **The reference vault** (`px/src/vault.rs`, program pinned in `px/vault.elf` and
@@ -725,8 +793,17 @@ code.
   - the claim's nullifier equals `contract_nullifier`.
 - `wallet/src/px.rs` unit tests:
   - rewinds keep created and imported records;
-  - `clear-pending` drops only unconfirmed created records;
-  - contract records are never funds.
+  - `clear-pending` keeps every contract-record opening;
+  - contract records are never funds;
+  - `vault_operations_need_the_vault_alone_with_the_reference_budget` (P-1, P-2).
+- `wallet/src/wallet.rs` unit tests:
+  - `vault_lock_and_claim_refuse_unsafe_contracts_before_proving`: a contract
+    `{vault, backdoor}` and a vault with an odd budget are refused by lock and claim,
+    before any proof; the plain vault passes the check;
+  - `deploys_mixing_the_vault_with_other_programs_are_refused`;
+  - `a_stored_vault_secret_survives_a_save_and_load` (R11-W1).
+- `wallet/tests/e2e.rs::an_uncertain_vault_lock_keeps_the_record_opening` also reloads
+  the autosaved file after the uncertain submission and recovers the secret from it.
 - `wallet/tests/e2e.rs::a_vault_is_deployed_locked_delivered_shared_and_claimed_over_rpc`,
   through a real node:
   1. deploy;

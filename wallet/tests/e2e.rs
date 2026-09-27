@@ -838,6 +838,14 @@ fn an_uncertain_vault_lock_keeps_the_record_opening() {
     alice.sync(&net.client).unwrap();
 
     let secret = blacksilk_px::wallet::random_digest(&mut net.rng);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("alice.wallet");
+    let kdf = KdfParams {
+        m_kib: 256,
+        t: 1,
+        p: 1,
+    };
+    alice.set_autosave(&path, b"pw", kdf);
     let node = Flaky::new(&net.client, Submit::ForwardThenFail);
     let err = alice
         .px_vault_lock(
@@ -853,6 +861,13 @@ fn an_uncertain_vault_lock_keeps_the_record_opening() {
     assert!(matches!(err, WalletError::Uncertain(_)), "{err}");
     assert_eq!(alice.px_contract_records().len(), 1, "the opening is kept");
     assert_eq!(alice.px_contract_records()[0].height, None);
+    // R11-W1: the secret was saved with the record before the lock left the
+    // wallet. As if the process had been killed now: the file alone recovers it.
+    let cm =
+        blacksilk_wallet::px::digest_from_hex(&alice.px_contract_records()[0].commitment).unwrap();
+    let on_disk = load(&path, b"pw").unwrap();
+    assert_eq!(*on_disk.px_vault_secret(&cm).unwrap(), secret);
+    drop(on_disk);
     // The lock was in fact pooled: once mined, the wallet holds a confirmed
     // record it can open.
     net.mine(&a_addr);
@@ -1113,4 +1128,80 @@ fn a_reorganization_deeper_than_the_kept_window_rescans() {
         expected,
         "only the first 20 rewards remain"
     );
+}
+
+/// Review M-2: a wallet restored from its seed scans subaddresses 0..=50 at
+/// first. A payment found at index i moves the window to i + 50, within the
+/// same block (payments at 45 and 90 in one block) and for later blocks (a
+/// payment at 140), and across a save and load.
+#[test]
+fn a_restored_wallet_follows_payments_beyond_its_first_window() {
+    use blacksilk_chain::address::decode_address;
+    let mut net = Net::start();
+    let mut miner = wallet(42);
+    let mut alice = wallet(43);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    let mut sub = |i: u32| decode_address(Network::Regtest, &alice.address(0, i)).unwrap();
+    let (a45, a90, a140) = (sub(45), sub(90), sub(140));
+    for (to, amount) in [(&a45, COIN), (&a90, 2 * COIN)] {
+        miner
+            .transfer(&net.client, to, amount, &net.rules, &mut net.rng)
+            .unwrap();
+    }
+    net.mine(&miner_addr);
+    assert_eq!(
+        net.client.info().unwrap().mempool_txs,
+        0,
+        "both in one block"
+    );
+    let restored_early = {
+        let mut r = Wallet::from_mnemonic(Network::Regtest, &alice.mnemonic(), 1).unwrap();
+        r.sync(&net.client).unwrap();
+        assert_eq!(r.balance().total, 3 * COIN, "45, then 90 in the same block");
+        // Saved and loaded before the next payment: the window is kept.
+        Wallet::from_json(&r.to_json()).unwrap()
+    };
+    miner.sync(&net.client).unwrap();
+    miner
+        .transfer(&net.client, &a140, 3 * COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    net.mine(&miner_addr);
+
+    alice.sync(&net.client).unwrap();
+    assert_eq!(alice.balance().total, 6 * COIN);
+    let mut restored = Wallet::from_mnemonic(Network::Regtest, &alice.mnemonic(), 1).unwrap();
+    restored.sync(&net.client).unwrap();
+    assert_eq!(
+        restored.balance().total,
+        6 * COIN,
+        "45, then 90 in the same block, then 140 in a later one"
+    );
+    let mut reloaded = restored_early;
+    reloaded.sync(&net.client).unwrap();
+    assert_eq!(reloaded.balance().total, 6 * COIN, "140 after a reload");
+}
+
+/// Review M-1: an out-of-range subaddress index is refused instead of making
+/// every later load derive billions of keys.
+#[test]
+fn out_of_range_address_indexes_are_refused() {
+    let mut w = wallet(44);
+    assert!(matches!(
+        w.try_address(0, u32::MAX, false),
+        Err(WalletError::AddressIndex { forced: false, .. })
+    ));
+    assert!(matches!(
+        w.try_address(0, u32::MAX, true),
+        Err(WalletError::AddressIndex { forced: true, .. })
+    ));
+    assert!(matches!(
+        w.try_px_address(u32::MAX, true),
+        Err(WalletError::AddressIndex { .. })
+    ));
+    // Nothing changed: the wallet still saves and loads at once.
+    let t = std::time::Instant::now();
+    let _ = Wallet::from_json(&w.to_json()).unwrap();
+    assert!(t.elapsed() < std::time::Duration::from_secs(5));
 }
