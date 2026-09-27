@@ -20,10 +20,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod adaptive;
+pub mod family;
 pub mod report;
 pub mod rng;
 pub mod rules;
 pub mod scenarios;
+pub mod selection;
 pub mod sim;
 
 pub use rules::{candidates, Asert, DifficultyRule, FnRule, Lwma, RiseCap};

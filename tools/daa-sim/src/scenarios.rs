@@ -592,7 +592,13 @@ pub fn lowering_run(
     let mut total = 0.0;
     for k in 0..blocks {
         let d = b.required(rule);
-        let dt = rng.exp() * d as f64 / RATE;
+        let mut dt = rng.exp() * d as f64 / RATE;
+        // A block whose lowest valid stamp is beyond the FTL is held until the clock
+        // allows it (only reachable when a strategy drives the difficulty far below
+        // the hash rate); the wait counts as elapsed time.
+        if let Some(later) = held_back(b.min_timestamp(), now + dt) {
+            dt = later - now;
+        }
         now += dt;
         total += dt;
         let t = strategy.stamp(k, &mut b, now, d, rule);
