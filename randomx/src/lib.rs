@@ -70,6 +70,22 @@ mod tests {
         CACHE.get_or_init(|| Cache::new(b"test key 001"))
     }
 
+    /// Key of "Hash test 1f" (upstream PR #326): 31 bytes. The reference declares a
+    /// 32-byte array whose trailing zero its `initCache` helper drops (`sizeof - 1`).
+    const KEY_1F: [u8; 31] = [
+        0x77, 0x97, 0x37, 0x3e, 0xa4, 0x63, 0x31, 0x94, 0x64, 0x0b, 0xf8, 0xd8, 0xc3, 0xb6, 0x67,
+        0x24, 0xd6, 0xaa, 0x7b, 0xd2, 0xdc, 0x20, 0xe0, 0x09, 0xdf, 0x2f, 0x8f, 0x17, 0x10, 0xab,
+        0xe8,
+    ];
+    /// Input of "Hash test 1f": a 76-byte blob.
+    const INPUT_1F: &str = "1010e1eaf8cf067b37b5f0ee031ab23ed1755e090a3af4415830145853e2be3e1f6821fed84dae58d00e00da5214d6c1f2d0622e0abd51f9373d04e0b0f8e6d6514d90689721c4aac5a9bb0d";
+    const HASH_1F: &str = "78af2a1864c42abce36d2e8983e13df99b2af0ce1362999af09fab004d4435a8";
+
+    fn cache_1f() -> &'static Cache {
+        static CACHE: OnceLock<Cache> = OnceLock::new();
+        CACHE.get_or_init(|| Cache::new(&KEY_1F))
+    }
+
     #[test]
     fn cache_initialization() {
         let mem = cache_000().memory();
@@ -192,9 +208,21 @@ mod tests {
         );
     }
 
+    /// "Hash test 1f (ISUB_R edge case)", added upstream with the fix of PR #326
+    /// (in v1.2.3): per upstream, its programs execute ISUB_R with src = dst and the
+    /// immediate 0x80000000, the case on which the upstream JIT produced invalid
+    /// hashes. This port has no JIT; the vector pins the interpreter path.
+    #[test]
+    fn hash_1f() {
+        let input = hex::decode(INPUT_1F).unwrap();
+        assert_eq!(input.len(), 76);
+        check(cache_1f(), &input, HASH_1F);
+    }
+
     /// Full mode (the miner's default) must give the official vectors and agree
     /// with light mode (what nodes verify with) on random inputs, for both
-    /// reference keys. Needs ~2.3 GiB RAM and about 5 minutes, so it is opt-in:
+    /// reference keys and the 31-byte key of vector 1f. Needs ~2.3 GiB RAM and
+    /// several minutes (one dataset per key), so it is opt-in:
     /// `cargo test --release -p blacksilk-randomx -- --ignored --nocapture`.
     /// CI runs it in the `randomx-full` job.
     #[test]
@@ -206,7 +234,8 @@ mod tests {
         )
         .unwrap();
         type Vectors<'a> = Vec<(&'a [u8], &'a str)>;
-        let cases: [(&Cache, Vectors); 2] = [
+        let vector_1f = hex::decode(INPUT_1F).unwrap();
+        let cases: [(&Cache, Vectors); 3] = [
             (
                 cache_000(),
                 vec![
@@ -237,6 +266,7 @@ mod tests {
                     ),
                 ],
             ),
+            (cache_1f(), vec![(&vector_1f, HASH_1F)]),
         ];
         for (k, (cache, vectors)) in cases.iter().enumerate() {
             let started = std::time::Instant::now();
