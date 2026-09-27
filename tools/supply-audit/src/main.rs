@@ -28,6 +28,11 @@ struct Args {
     /// Node RPC address (host:port or http://host:port).
     #[arg(long, default_value = "127.0.0.1:29333")]
     node: String,
+    /// The node's RPC cookie: `rpc.cookie` in the node's data directory
+    /// (docs/blocks.md §9.1). Default: the file named by
+    /// BLACKSILK_RPC_COOKIE, if set.
+    #[arg(long)]
+    rpc_cookie: Option<PathBuf>,
     /// A wallet file to include (repeat for every wallet of the set).
     #[arg(long = "wallet", required = true)]
     wallets: Vec<PathBuf>,
@@ -115,7 +120,9 @@ fn run(args: &Args) -> Result<i32, String> {
         passwords.push(password);
     }
 
-    let client = Client::try_new(&args.node).map_err(|e| e.to_string())?;
+    let client = Client::try_new(&args.node)
+        .and_then(|c| c.with_cookie_option(args.rpc_cookie.as_deref()))
+        .map_err(|e| e.to_string())?;
     let report = audit(&client, &mut entries, args.height)?;
 
     if args.save {

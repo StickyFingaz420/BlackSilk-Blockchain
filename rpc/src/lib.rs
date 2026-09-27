@@ -20,6 +20,45 @@ pub const MAX_BLOCKS_PER_REQUEST: u64 = 100;
 /// Maximum indices per `/outputs` request.
 pub const MAX_OUTPUTS_PER_REQUEST: usize = 1024;
 
+// ---- authentication (docs/blocks.md §9.1) ----
+
+/// The file in the node's data directory that holds the RPC credential. The
+/// node writes a fresh one at every start and removes it at a clean shutdown;
+/// clients read it (`Client::with_cookie_file`).
+pub const COOKIE_FILE: &str = "rpc.cookie";
+
+/// Environment variable naming a cookie file, for command-line tools run
+/// without `--rpc-cookie` (`Client::with_cookie_option`).
+pub const COOKIE_ENV: &str = "BLACKSILK_RPC_COOKIE";
+
+/// Length of the credential: 32 random bytes as lowercase hex.
+pub const TOKEN_HEX_LEN: usize = 64;
+
+/// Whether `s` has the form of an RPC credential: exactly
+/// [`TOKEN_HEX_LEN`] lowercase hex digits.
+pub fn is_token(s: &str) -> bool {
+    s.len() == TOKEN_HEX_LEN && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Reads the credential from a node's cookie file (surrounding whitespace is
+/// ignored).
+pub fn read_cookie(path: &std::path::Path) -> Result<String, RpcError> {
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        RpcError::Config(format!(
+            "RPC cookie {}: {e} (the node writes it to its data directory at start)",
+            path.display()
+        ))
+    })?;
+    let token = text.trim();
+    if !is_token(token) {
+        return Err(RpcError::Config(format!(
+            "RPC cookie {}: not a node credential",
+            path.display()
+        )));
+    }
+    Ok(token.to_string())
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Info {
     pub network: String,
@@ -347,11 +386,16 @@ fn normalize_base(base: &str) -> Result<String, RpcError> {
 /// - **No redirects.** A node cannot send the client to another host.
 /// - **Bounded responses.** Every body is read up to a per-endpoint cap
 ///   (the `MAX_*_RESPONSE_*` constants).
+/// - **Authentication.** A node started by `blacksilk-node` requires its
+///   credential on every request ([`Client::with_cookie_file`],
+///   [`Client::with_token`]); it is sent as `Authorization: Bearer`.
 pub struct Client {
     base: String,
     http: reqwest::blocking::Client,
     /// Set when the address was refused: every request fails with this.
     refused: Option<String>,
+    /// The `Authorization` header value, when a credential is set.
+    auth: Option<String>,
 }
 
 fn http_client() -> Result<reqwest::blocking::Client, RpcError> {
@@ -371,7 +415,37 @@ impl Client {
             base: normalize_base(base)?,
             http: http_client()?,
             refused: None,
+            auth: None,
         })
+    }
+
+    /// Sends `token` (a node credential, see [`is_token`]) with every request.
+    pub fn with_token(mut self, token: &str) -> Result<Self, RpcError> {
+        let token = token.trim();
+        if !is_token(token) {
+            return Err(RpcError::Config("not a node RPC credential".into()));
+        }
+        self.auth = Some(format!("Bearer {token}"));
+        Ok(self)
+    }
+
+    /// Sends the credential read from the node's cookie file
+    /// (`<data dir>/rpc.cookie`, see [`COOKIE_FILE`]) with every request.
+    pub fn with_cookie_file(self, path: &std::path::Path) -> Result<Self, RpcError> {
+        let token = read_cookie(path)?;
+        self.with_token(&token)
+    }
+
+    /// For command-line tools: the cookie file given (`--rpc-cookie`), else
+    /// the one named by the [`COOKIE_ENV`] environment variable, else none.
+    pub fn with_cookie_option(self, path: Option<&std::path::Path>) -> Result<Self, RpcError> {
+        match path {
+            Some(p) => self.with_cookie_file(p),
+            None => match std::env::var_os(COOKIE_ENV) {
+                Some(p) if !p.is_empty() => self.with_cookie_file(std::path::Path::new(&p)),
+                _ => Ok(self),
+            },
+        }
     }
 
     /// Like `try_new`, but an unusable address gives a client whose every
@@ -384,6 +458,7 @@ impl Client {
                 base: String::new(),
                 http: http_client().expect("HTTP client without TLS"),
                 refused: Some(e.to_string()),
+                auth: None,
             },
         }
     }
@@ -395,11 +470,20 @@ impl Client {
         }
     }
 
+    fn authorized(
+        &self,
+        req: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
+        match &self.auth {
+            Some(v) => req.header(reqwest::header::AUTHORIZATION, v),
+            None => req,
+        }
+    }
+
     fn get<T: for<'de> Deserialize<'de>>(&self, path: &str, cap: usize) -> Result<T, RpcError> {
         self.check()?;
         let resp = self
-            .http
-            .get(format!("{}{path}", self.base))
+            .authorized(self.http.get(format!("{}{path}", self.base)))
             .send()
             .map_err(|e| RpcError::Http(e.to_string()))?;
         Self::parse(resp, cap)
@@ -413,8 +497,7 @@ impl Client {
     ) -> Result<T, RpcError> {
         self.check()?;
         let resp = self
-            .http
-            .post(format!("{}{path}", self.base))
+            .authorized(self.http.post(format!("{}{path}", self.base)))
             .json(body)
             .send()
             .map_err(|e| RpcError::Http(e.to_string()))?;
@@ -684,6 +767,75 @@ mod tests {
         );
         let c = Client::try_new(&addr).unwrap();
         assert!(matches!(c.info(), Err(RpcError::Status(302, _))));
+    }
+
+    /// Answers one request with an empty 401 and returns its head.
+    fn capture_head() -> (String, std::thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let h = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut req = Vec::new();
+            let mut buf = [0u8; 4096];
+            while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = s.read(&mut buf).unwrap();
+                if n == 0 {
+                    break;
+                }
+                req.extend_from_slice(&buf[..n]);
+            }
+            let _ = s.write_all(
+                b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+            String::from_utf8_lossy(&req).to_ascii_lowercase()
+        });
+        (addr, h)
+    }
+
+    #[test]
+    fn the_credential_is_sent_as_a_bearer_token() {
+        let token = "0123456789abcdef".repeat(4);
+        let (addr, h) = capture_head();
+        let c = Client::try_new(&addr).unwrap().with_token(&token).unwrap();
+        assert!(matches!(c.info(), Err(RpcError::Status(401, _))));
+        assert!(h
+            .join()
+            .unwrap()
+            .contains(&format!("authorization: bearer {token}\r\n")));
+        let (addr, h) = capture_head();
+        let _ = Client::try_new(&addr).unwrap().info();
+        assert!(!h.join().unwrap().contains("authorization"));
+        for bad in [
+            "",
+            "abc",
+            &token.to_uppercase(),
+            &token[1..],
+            &format!("{token}0"),
+        ] {
+            assert!(
+                Client::try_new(&addr).unwrap().with_token(bad).is_err(),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cookie_file_is_read_and_checked() {
+        let dir = std::env::temp_dir().join(format!("bs-rpc-cookie-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(COOKIE_FILE);
+        let token = "a".repeat(TOKEN_HEX_LEN);
+        std::fs::write(&path, format!("{token}\n")).unwrap();
+        assert_eq!(read_cookie(&path).unwrap(), token);
+        assert!(Client::try_new("127.0.0.1:1")
+            .unwrap()
+            .with_cookie_option(Some(&path))
+            .is_ok());
+        std::fs::write(&path, "not a token").unwrap();
+        assert!(matches!(read_cookie(&path), Err(RpcError::Config(_))));
+        std::fs::remove_file(&path).unwrap();
+        assert!(matches!(read_cookie(&path), Err(RpcError::Config(_))));
+        let _ = std::fs::remove_dir(&dir);
     }
 
     #[test]
