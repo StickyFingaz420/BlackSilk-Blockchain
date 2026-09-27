@@ -112,6 +112,15 @@ struct Entry {
     seq: u64,
 }
 
+/// What the rules need to know about a header's parent.
+struct Context {
+    height: u64,
+    valid: bool,
+    median_time_past: u64,
+    /// Difficulty required of the child.
+    child_difficulty: u64,
+}
+
 pub struct HeaderChain {
     params: ChainParams,
     pow: Arc<dyn PowFunction>,
@@ -277,6 +286,157 @@ impl HeaderChain {
         })
     }
 
+    /// Every header rule except proof of work, given the parent's context. The
+    /// single definition of these rules: [`Self::validate`] and
+    /// [`Self::precheck_batch`] both use it, so they cannot disagree.
+    fn check_rules(
+        &self,
+        header: &BlockHeader,
+        parent: &Context,
+        now: u64,
+    ) -> Result<(), HeaderError> {
+        if !parent.valid {
+            return Err(HeaderError::InvalidParent);
+        }
+        if header.version != HEADER_VERSION {
+            return Err(HeaderError::BadVersion(header.version));
+        }
+        let expected_height = parent.height + 1;
+        if header.height != expected_height {
+            return Err(HeaderError::BadHeight {
+                expected: expected_height,
+                got: header.height,
+            });
+        }
+        if !after_median_time_past(header.timestamp, &[parent.median_time_past]) {
+            return Err(HeaderError::TimestampTooOld {
+                median_time_past: parent.median_time_past,
+                got: header.timestamp,
+            });
+        }
+        if !within_future_limit(header.timestamp, now, self.params.future_time_limit) {
+            return Err(HeaderError::TimestampTooFarInFuture {
+                limit: now.saturating_add(self.params.future_time_limit),
+                got: header.timestamp,
+            });
+        }
+        if header.difficulty != parent.child_difficulty {
+            return Err(HeaderError::BadDifficulty {
+                expected: parent.child_difficulty,
+                got: header.difficulty,
+            });
+        }
+        Ok(())
+    }
+
+    /// Context for a child of the stored header `parent_id`.
+    fn stored_context(&self, parent_id: Hash, parent: &Entry) -> Context {
+        Context {
+            height: parent.header.height,
+            valid: parent.valid,
+            median_time_past: self.median_time_past(parent_id),
+            child_difficulty: self.required_difficulty(parent_id),
+        }
+    }
+
+    /// Checks a linked batch of headers (each the child of the previous one)
+    /// with every rule except proof of work, in the branch context the batch
+    /// itself forms. Nothing is stored and no RandomX hash is computed, so a
+    /// peer's batch can be rejected before any expensive work (docs/p2p.md §6).
+    ///
+    /// Headers already known are skipped (a known invalid one fails with
+    /// [`HeaderError::InvalidParent`]). On failure returns the index of the
+    /// first failing header; every header before it passed. A batch that is
+    /// not linked fails with `UnknownParent` at the first break.
+    pub fn precheck_batch(
+        &self,
+        headers: &[BlockHeader],
+        now: u64,
+    ) -> Result<(), (usize, HeaderError)> {
+        let nid = self.params.network_id;
+        // Headers of the batch not yet stored: (id, timestamp, cumulative work).
+        let mut overlay: Vec<(Hash, u64, u128)> = Vec::new();
+        let mut prev: Option<Hash> = None;
+        for (i, h) in headers.iter().enumerate() {
+            let id = h.id(nid);
+            if prev.is_some_and(|p| p != h.prev_id) {
+                return Err((i, HeaderError::UnknownParent));
+            }
+            prev = Some(id);
+            if let Some(e) = self.entries.get(&id) {
+                if !overlay.is_empty() {
+                    // A stored header cannot descend from an unstored one.
+                    return Err((i, HeaderError::UnknownParent));
+                }
+                if !e.valid {
+                    return Err((i, HeaderError::InvalidParent));
+                }
+                continue;
+            }
+            let parent = match overlay.last() {
+                None => {
+                    let e = self
+                        .entries
+                        .get(&h.prev_id)
+                        .ok_or((i, HeaderError::UnknownParent))?;
+                    self.stored_context(h.prev_id, e)
+                }
+                Some(_) => self.overlay_context(headers, i, &overlay),
+            };
+            self.check_rules(h, &parent, now).map_err(|e| (i, e))?;
+            let parent_work = match overlay.last() {
+                None => self.entries[&h.prev_id].cumulative,
+                Some(&(_, _, w)) => w,
+            };
+            overlay.push((id, h.timestamp, parent_work + h.difficulty as u128));
+        }
+        Ok(())
+    }
+
+    /// Context for `headers[i]`, whose parent `headers[i - 1]` is the last
+    /// entry of `overlay` (not stored): the recent timestamps and cumulative
+    /// work come from the overlay first, then from the stored ancestors.
+    fn overlay_context(
+        &self,
+        headers: &[BlockHeader],
+        i: usize,
+        overlay: &[(Hash, u64, u128)],
+    ) -> Context {
+        let need = (self.params.difficulty_window + 1).max(self.params.median_time_window);
+        // Newest first.
+        let mut ts: Vec<u64> = Vec::with_capacity(need);
+        let mut cd: Vec<u128> = Vec::with_capacity(need);
+        for &(_, t, w) in overlay.iter().rev().take(need) {
+            ts.push(t);
+            cd.push(w);
+        }
+        if ts.len() < need {
+            // The overlay starts at the first unstored header; its parent is stored.
+            let first_unstored = i - overlay.len();
+            let anchor = headers[first_unstored].prev_id;
+            for e in self.recent(anchor, need - ts.len()).into_iter().rev() {
+                ts.push(e.header.timestamp);
+                cd.push(e.cumulative);
+            }
+        }
+        ts.reverse();
+        cd.reverse();
+        let mtp_from = ts.len().saturating_sub(self.params.median_time_window);
+        let diff_from = ts.len().saturating_sub(self.params.difficulty_window + 1);
+        Context {
+            height: headers[i - 1].height,
+            valid: true,
+            median_time_past: median(&ts[mtp_from..]),
+            child_difficulty: next_difficulty(
+                &ts[diff_from..],
+                &cd[diff_from..],
+                self.params.target_block_time,
+                self.params.difficulty_window,
+                self.params.initial_difficulty,
+            ),
+        }
+    }
+
     /// Validates `header` against its own branch (spec §6). `now` is the local
     /// time in seconds since the Unix epoch.
     pub fn validate(&self, header: &BlockHeader, now: u64) -> Result<Hash, HeaderError> {
@@ -288,41 +448,7 @@ impl HeaderChain {
             .entries
             .get(&header.prev_id)
             .ok_or(HeaderError::UnknownParent)?;
-        if !parent.valid {
-            return Err(HeaderError::InvalidParent);
-        }
-        if header.version != HEADER_VERSION {
-            return Err(HeaderError::BadVersion(header.version));
-        }
-        let expected_height = parent.header.height + 1;
-        if header.height != expected_height {
-            return Err(HeaderError::BadHeight {
-                expected: expected_height,
-                got: header.height,
-            });
-        }
-
-        let mtp = self.median_time_past(header.prev_id);
-        if !after_median_time_past(header.timestamp, &[mtp]) {
-            return Err(HeaderError::TimestampTooOld {
-                median_time_past: mtp,
-                got: header.timestamp,
-            });
-        }
-        if !within_future_limit(header.timestamp, now, self.params.future_time_limit) {
-            return Err(HeaderError::TimestampTooFarInFuture {
-                limit: now.saturating_add(self.params.future_time_limit),
-                got: header.timestamp,
-            });
-        }
-
-        let expected = self.required_difficulty(header.prev_id);
-        if header.difficulty != expected {
-            return Err(HeaderError::BadDifficulty {
-                expected,
-                got: header.difficulty,
-            });
-        }
+        self.check_rules(header, &self.stored_context(header.prev_id, parent), now)?;
 
         // Expensive check last.
         let seed = self.seed_id_for(header.prev_id, header.height);
@@ -656,5 +782,121 @@ mod tests {
         let side_tip = *side.last().unwrap();
         assert_eq!(c.seed_id_for(side_tip, 2115), side_2048);
         assert_ne!(side_2048, main[2047]);
+    }
+
+    /// Headers of a branch mined on a scratch chain from genesis, with
+    /// block intervals that vary (so LWMA moves the difficulty).
+    fn branch(n: usize, tag: u8) -> Vec<BlockHeader> {
+        let mut g = chain();
+        let mut p = g.tip_id();
+        let mut out = Vec::new();
+        for i in 0..n {
+            let dt = [30, 300, 120, 45, 200, 90][i % 6];
+            let h = mine_on(&g, p, dt, tag);
+            p = g.accept(h, u64::MAX / 2).unwrap().id;
+            out.push(h);
+        }
+        out
+    }
+
+    /// Counts proof-of-work evaluations.
+    struct CountingPow(std::sync::atomic::AtomicUsize);
+    impl PowFunction for CountingPow {
+        fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            TestPow.pow_hash(seed, blob)
+        }
+    }
+
+    /// The batch pre-check reaches the verdict of sequential validation for
+    /// every rule it checks, at every position, across the LWMA window
+    /// (150 > 61 headers), and computes no proof of work at all.
+    #[test]
+    fn precheck_agrees_with_sequential_validation_and_computes_no_pow() {
+        let headers = branch(150, 3);
+        let now = u64::MAX / 2;
+        let counter = Arc::new(CountingPow(Default::default()));
+        let mut params = ChainParams::regtest();
+        params.target_block_time = 120;
+        let c = HeaderChain::new(params, counter.clone());
+        assert_eq!(c.precheck_batch(&headers, now), Ok(()));
+        assert_eq!(counter.0.load(std::sync::atomic::Ordering::Relaxed), 0);
+
+        type Mutation = fn(&mut BlockHeader);
+        let mutations: [(&str, Mutation); 5] = [
+            ("version", |h| h.version = 2),
+            ("height", |h| h.height += 1),
+            ("difficulty up", |h| h.difficulty += 1),
+            ("difficulty down", |h| h.difficulty -= 1),
+            ("timestamp too old", |h| h.timestamp = 0),
+        ];
+        for k in [0usize, 1, 10, 59, 60, 61, 62, 100, 149] {
+            for (what, m) in mutations {
+                let mut batch = headers.clone();
+                m(&mut batch[k]);
+                let (i, e) = c.precheck_batch(&batch, now).unwrap_err();
+                assert_eq!(i, k, "{what} at {k}");
+                // Sequential validation of the same headers.
+                let mut seq = chain();
+                for h in &batch[..k] {
+                    seq.accept(*h, now).unwrap();
+                }
+                assert_eq!(seq.validate(&batch[k], now), Err(e), "{what} at {k}");
+            }
+        }
+        // The future-time limit, with the batch's own clock.
+        let (i, e) = c
+            .precheck_batch(&headers, headers[70].timestamp - 361)
+            .unwrap_err();
+        assert!(i <= 70 && matches!(e, HeaderError::TimestampTooFarInFuture { .. }));
+        assert_eq!(counter.0.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    /// Known headers are skipped, a partially known batch is checked from the
+    /// first new header on, and a broken link is reported where it breaks.
+    #[test]
+    fn precheck_skips_known_headers_and_reports_breaks() {
+        let headers = branch(80, 4);
+        let now = u64::MAX / 2;
+        let mut c = chain();
+        for h in &headers[..30] {
+            c.accept(*h, now).unwrap();
+        }
+        assert_eq!(c.precheck_batch(&headers, now), Ok(()));
+        assert_eq!(c.precheck_batch(&headers[10..50], now), Ok(()));
+        assert_eq!(
+            c.precheck_batch(&headers[40..], now),
+            Err((0, HeaderError::UnknownParent))
+        );
+        let mut gap = headers[..50].to_vec();
+        gap.remove(35);
+        assert_eq!(
+            c.precheck_batch(&gap, now),
+            Err((35, HeaderError::UnknownParent))
+        );
+        assert_eq!(c.precheck_batch(&[], now), Ok(()));
+    }
+
+    /// A header whose body was found invalid, and every descendant, fail with
+    /// `InvalidParent` without any other work.
+    #[test]
+    fn precheck_rejects_known_invalid_headers_and_their_descendants() {
+        let headers = branch(20, 5);
+        let now = u64::MAX / 2;
+        let mut c = chain();
+        let mut ids = Vec::new();
+        for h in &headers[..10] {
+            ids.push(c.accept(*h, now).unwrap().id);
+        }
+        c.mark_invalid(&ids[5]);
+        assert_eq!(
+            c.precheck_batch(&headers[..12], now),
+            Err((5, HeaderError::InvalidParent))
+        );
+        assert_eq!(
+            c.precheck_batch(&headers[10..], now),
+            Err((0, HeaderError::InvalidParent))
+        );
+        assert_eq!(c.precheck_batch(&headers[..5], now), Ok(()));
     }
 }

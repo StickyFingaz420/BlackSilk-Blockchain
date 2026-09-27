@@ -1,7 +1,8 @@
 # Security policy
 
-BlackSilk is **experimental software**. Nothing in it has been independently audited
-yet, and the testnet's coins have no value. See AUDIT.md for the internal findings, and
+BlackSilk is **experimental software**. Nothing in it has been independently audited,
+and no external audit is planned at present (docs/reviews/review-status.md). The
+testnet's coins have no value. See AUDIT.md for the internal findings, and
 docs/reviews/ for the review material.
 
 ## Reporting a vulnerability
@@ -9,6 +10,15 @@ docs/reviews/ for the review material.
 Please **do not open a public issue** for a vulnerability. Report it privately through
 GitHub's private vulnerability reporting for this repository ("Security" tab, "Report
 a vulnerability").
+
+**If the Security tab offers no "Report a vulnerability" button,** private reporting is
+not enabled yet (it is a repository setting; checked disabled on 2026-09-27, and its
+activation is pending with the maintainer).
+- In that case, open a public issue titled only "Security contact request", with **no
+  details** of the vulnerability.
+- The maintainer will answer with a private channel.
+- Never put vulnerability details in a public issue, a pull request or a commit
+  message.
 
 Please include:
 - the affected component and commit;

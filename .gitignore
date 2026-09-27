@@ -58,3 +58,6 @@ Icon?
 # Ignore Rust build artifacts
 **/Cargo.lock
 !/Cargo.lock
+# Tracked for reproducible builds: the consensus-pinned guests and the fuzz workspace.
+!/zkvm/guests/Cargo.lock
+!/fuzz/Cargo.lock

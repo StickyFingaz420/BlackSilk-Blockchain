@@ -187,19 +187,105 @@ mod tests {
         );
     }
 
-    /// Full mode must agree with light mode. Needs ~2.3 GiB RAM, so it is opt-in:
-    /// `cargo test --release -p blacksilk-randomx -- --ignored`
+    /// Full mode (the miner's default) must give the official vectors and agree
+    /// with light mode (what nodes verify with) on random inputs, for both
+    /// reference keys. Needs ~2.3 GiB RAM and about 5 minutes, so it is opt-in:
+    /// `cargo test --release -p blacksilk-randomx -- --ignored --nocapture`.
+    /// CI runs it in the `randomx-full` job.
     #[test]
     #[ignore]
     fn full_mode_matches_light_mode() {
-        let dataset = Dataset::new(
-            cache_000(),
-            std::thread::available_parallelism().map_or(4, |n| n.get()),
-        );
-        let mut full = Vm::full(&dataset);
-        assert_eq!(
-            hex::encode(full.hash(b"This is a test")),
-            "639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f"
-        );
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let vector_1e = hex::decode(
+            "0b0b98bea7e805e0010a2126d287a2a0cc833d312cb786385a7c2f9de69d25537f584a9bc9977b00000000666fd8753bf61a8631f12984e3fd44f4014eca629276817b56f32e9b68bd82f416",
+        )
+        .unwrap();
+        type Vectors<'a> = Vec<(&'a [u8], &'a str)>;
+        let cases: [(&Cache, Vectors); 2] = [
+            (
+                cache_000(),
+                vec![
+                    (
+                        b"This is a test",
+                        "639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f",
+                    ),
+                    (
+                        b"Lorem ipsum dolor sit amet",
+                        "300a0adb47603dedb42228ccb2b211104f4da45af709cd7547cd049e9489c969",
+                    ),
+                    (
+                        b"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua",
+                        "c36d4ed4191e617309867ed66a443be4075014e2b061bcdaf9ce7b721d2b77a8",
+                    ),
+                ],
+            ),
+            (
+                cache_001(),
+                vec![
+                    (
+                        b"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua",
+                        "e9ff4503201c0c2cca26d285c93ae883f9b1d30c9eb240b820756f2d5a7905fc",
+                    ),
+                    (
+                        &vector_1e,
+                        "c56414121acda1713c2f2a819d8ae38aed7c80c35c2a769298d34f03833cd5f1",
+                    ),
+                ],
+            ),
+        ];
+        for (k, (cache, vectors)) in cases.iter().enumerate() {
+            let started = std::time::Instant::now();
+            let dataset = Dataset::new(cache, threads);
+            println!("key {k}: dataset built in {:.1?}", started.elapsed());
+            let mut full = Vm::full(&dataset);
+            for (input, want) in vectors {
+                assert_eq!(hex::encode(full.hash(input)), *want, "key {k}, full mode");
+            }
+            // Random inputs of 0..200 bytes, as headers and arbitrary blobs.
+            let mut x = 0x9e37_79b9_7f4a_7c15u64 ^ k as u64;
+            let mut next = || {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x
+            };
+            let inputs: Vec<Vec<u8>> = (0..512)
+                .map(|_| {
+                    let len = (next() % 200) as usize;
+                    (0..len).map(|_| next() as u8).collect()
+                })
+                .collect();
+            let started = std::time::Instant::now();
+            let full_hashes: Vec<[u8; HASH_SIZE]> = inputs.iter().map(|i| full.hash(i)).collect();
+            let full_time = started.elapsed();
+            let started = std::time::Instant::now();
+            let light_hashes: Vec<[u8; HASH_SIZE]> = std::thread::scope(|s| {
+                let chunk = inputs.len().div_ceil(threads);
+                let handles: Vec<_> = inputs
+                    .chunks(chunk)
+                    .map(|part| {
+                        s.spawn(move || {
+                            let mut vm = Vm::light(cache);
+                            part.iter().map(|i| vm.hash(i)).collect::<Vec<_>>()
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .flat_map(|h| h.join().unwrap())
+                    .collect()
+            });
+            let light_time = started.elapsed();
+            assert_eq!(
+                full_hashes, light_hashes,
+                "key {k}: full and light disagree"
+            );
+            println!(
+                "key {k}: {} random inputs agree; full {:.2} ms/hash (1 thread), light {:.0} ms/hash ({threads} threads)",
+                inputs.len(),
+                full_time.as_secs_f64() * 1e3 / inputs.len() as f64,
+                light_time.as_secs_f64() * 1e3 * threads as f64 / inputs.len() as f64,
+            );
+        }
     }
 }

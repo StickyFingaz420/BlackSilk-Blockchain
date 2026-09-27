@@ -681,3 +681,500 @@ fn restart_rebuilds_the_px_state_exactly() {
         Some(blacksilk_px::vault::BUDGET)
     );
 }
+
+/// Bodies arrive in any order during header-first sync (16 in flight, several
+/// peers) and are stored in arrival order. A restart must replay them.
+#[test]
+fn restart_after_out_of_order_body_arrival_replays_the_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("blocks.dat");
+    let (_, blocks) = mined_source(20, 21);
+    let tip = {
+        let mut dst = open(Box::new(FileStore::open(&path).unwrap()), Arc::default());
+        let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header).collect();
+        let now = headers.last().unwrap().timestamp;
+        dst.accept_headers(&headers, now).unwrap();
+        for b in blocks.iter().rev() {
+            dst.submit_block(b.clone(), b.header.timestamp).unwrap();
+        }
+        assert_eq!(dst.height(), 20);
+        dst.tip_id()
+    };
+    let m = ChainManager::open(
+        params(),
+        TxRules::for_chain(&params()),
+        Arc::new(ZeroPow::default()),
+        Box::new(FileStore::open(&path).unwrap()),
+        [7; 32],
+    )
+    .expect("the node restarts");
+    assert_eq!(m.height(), 20);
+    assert_eq!(m.tip_id(), tip);
+}
+
+/// A block store whose writes fail on request (a full disk, an I/O error),
+/// writing nothing, as `FileStore` guarantees after undoing a failed append.
+struct FlakyStore {
+    inner: FileStore,
+    fail: Arc<std::sync::atomic::AtomicBool>,
+}
+impl BlockStore for FlakyStore {
+    fn append(&mut self, pow_hash: &Hash, block: &[u8]) -> std::io::Result<()> {
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(std::io::Error::other("disk full"));
+        }
+        self.inner.append(pow_hash, block)
+    }
+    fn load(&mut self) -> std::io::Result<Vec<blacksilk_chain::store::StoredBlock>> {
+        self.inner.load()
+    }
+}
+
+/// A write failure during sync: the block is refused (not kept in memory as
+/// if stored), the node keeps running, the block is accepted when offered
+/// again, and a restart replays the store, including blocks whose parent was
+/// written after them, or never.
+#[test]
+fn a_failed_block_write_during_sync_is_recoverable() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("blocks.dat");
+    let (_, blocks) = mined_source(20, 22);
+    let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let store = FlakyStore {
+            inner: FileStore::open(&path).unwrap(),
+            fail: fail.clone(),
+        };
+        let mut m = open(Box::new(store), Arc::default());
+        let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header).collect();
+        m.accept_headers(&headers, headers.last().unwrap().timestamp)
+            .unwrap();
+        for b in &blocks[..5] {
+            m.submit_block(b.clone(), b.header.timestamp).unwrap();
+        }
+        // The disk is full while block 6 arrives.
+        fail.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            m.submit_block(blocks[5].clone(), blocks[5].header.timestamp),
+            Err(SubmitError::Store(_))
+        ));
+        assert_eq!(
+            m.height(),
+            5,
+            "a block that was not stored is not connected"
+        );
+        fail.store(false, Ordering::SeqCst);
+        // Later blocks arrive; block 6 is offered again last.
+        for b in &blocks[6..] {
+            m.submit_block(b.clone(), b.header.timestamp).unwrap();
+        }
+        assert_eq!(m.height(), 5);
+        m.submit_block(blocks[5].clone(), blocks[5].header.timestamp)
+            .unwrap();
+        assert_eq!(m.height(), 20);
+    }
+    let m = open(Box::new(FileStore::open(&path).unwrap()), Arc::default());
+    assert_eq!(
+        m.height(),
+        20,
+        "restart replays blocks stored before their parent"
+    );
+
+    // If block 6 is never stored, a restart keeps blocks 1 to 5 and starts;
+    // blocks 7 to 20 are downloaded again.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("blocks.dat");
+    {
+        let mut m = open(Box::new(FileStore::open(&path).unwrap()), Arc::default());
+        let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header).collect();
+        m.accept_headers(&headers, headers.last().unwrap().timestamp)
+            .unwrap();
+        for (i, b) in blocks.iter().enumerate() {
+            if i != 5 {
+                m.submit_block(b.clone(), b.header.timestamp).unwrap();
+            }
+        }
+    }
+    let mut m = open(Box::new(FileStore::open(&path).unwrap()), Arc::default());
+    assert_eq!(m.height(), 5);
+    let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header).collect();
+    m.accept_headers(&headers, headers.last().unwrap().timestamp)
+        .unwrap();
+    for b in &blocks[5..] {
+        let _ = m.submit_block(b.clone(), b.header.timestamp);
+    }
+    assert_eq!(m.height(), 20);
+}
+
+// ---------------------------------------------------------------- mempool
+
+/// A 1-input transfer of the `nth` spendable output of `from` to `to`, with
+/// the given fee.
+fn transfer_nth(
+    m: &ChainManager,
+    from: &WalletKeys,
+    to: &WalletKeys,
+    nth: usize,
+    fee: u64,
+    rng: &mut ChaCha20Rng,
+) -> Transfer {
+    let plan = plan_nth(m, from, nth, rng);
+    build_transfer(
+        from,
+        vec![plan],
+        &[Payment {
+            address: to.address(SubaddressIndex::PRIMARY),
+            amount: 1_000,
+        }],
+        &from.address(SubaddressIndex::PRIMARY),
+        fee,
+        m.rules(),
+        rng,
+    )
+    .unwrap()
+}
+
+/// Admission: a tampered transaction and one below the minimum fee are
+/// invalid and leave the pool untouched; valid ones are admitted.
+#[test]
+fn the_mempool_admits_only_valid_transactions() {
+    let mut m = open(Box::<MemoryStore>::default(), Arc::default());
+    let mut miner = Miner::new(31);
+    let mut rng = ChaCha20Rng::seed_from_u64(1031);
+    let (alice, _) = WalletKeys::generate(&mut rng);
+    for _ in 0..80 {
+        miner.mine_tip(&mut m);
+    }
+    let fee = standard_fee(1, 2, m.rules());
+    // Tampered after signing: the fee changes the signed message.
+    let mut tampered = transfer_nth(&m, &miner.keys, &alice, 0, fee, &mut rng);
+    tampered.fee += 1;
+    assert!(matches!(
+        m.submit_tx(Transaction::from(tampered)),
+        Err(MempoolError::Invalid(_))
+    ));
+    // Below the minimum fee (the builder refuses to sign such a transaction,
+    // so the fee is lowered after signing): the fee rule rejects it before
+    // the signatures are checked.
+    let mut cheap = transfer_nth(&m, &miner.keys, &alice, 1, fee, &mut rng);
+    cheap.fee = 1;
+    assert!(matches!(
+        m.submit_tx(Transaction::from(cheap)),
+        Err(MempoolError::Invalid(
+            blacksilk_tx::validate::TxError::FeeTooLow { .. }
+        ))
+    ));
+    assert!(m.mempool().is_empty(), "nothing admitted");
+    // A valid one is admitted, and a second input of the same wallet too.
+    let a = transfer_nth(&m, &miner.keys, &alice, 2, fee, &mut rng);
+    let b = transfer_nth(&m, &miner.keys, &alice, 3, fee, &mut rng);
+    m.submit_tx(Transaction::from(a)).unwrap();
+    m.submit_tx(Transaction::from(b)).unwrap();
+    assert_eq!(m.mempool().len(), 2);
+    assert_eq!(m.template().txs.len(), 2);
+}
+
+/// The mempool is not persisted (docs/blocks.md §7): after a restart it is
+/// empty, the same transaction is accepted again, and it confirms.
+#[test]
+fn after_a_restart_the_mempool_is_rebuilt_by_resubmission() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("blocks.dat");
+    let mut rng = ChaCha20Rng::seed_from_u64(1032);
+    let (alice, _) = WalletKeys::generate(&mut rng);
+    let mut miner = Miner::new(32);
+    let tx = {
+        let mut m = open(Box::new(FileStore::open(&path).unwrap()), Arc::default());
+        for _ in 0..80 {
+            miner.mine_tip(&mut m);
+        }
+        let fee = standard_fee(1, 2, m.rules());
+        let tx = Transaction::from(transfer_nth(&m, &miner.keys, &alice, 0, fee, &mut rng));
+        m.submit_tx(tx.clone()).unwrap();
+        assert_eq!(m.mempool().len(), 1);
+        tx
+    };
+    let mut m = open(Box::new(FileStore::open(&path).unwrap()), Arc::default());
+    assert!(m.mempool().is_empty(), "not persisted");
+    m.submit_tx(tx.clone()).unwrap();
+    miner.mine_tip(&mut m);
+    assert!(m.mempool().is_empty());
+    assert_eq!(scan_all(&m, &alice).len(), 1, "confirmed");
+}
+
+/// Mempool contents never change a block's verdict. Node A, with the
+/// transactions pooled (their checks done on admission), and node B, which
+/// never saw them, reach the same state from the same block. A block that
+/// replaces a pooled transaction with a tampered copy is rejected by both:
+/// the proof cache is keyed by the id, which commits to every byte.
+#[test]
+fn mempool_contents_never_change_a_blocks_verdict() {
+    let dir = tempfile::tempdir().unwrap();
+    let path_a = dir.path().join("a.dat");
+    let mut rng = ChaCha20Rng::seed_from_u64(1033);
+    let (alice, _) = WalletKeys::generate(&mut rng);
+    let mut miner = Miner::new(33);
+    let mut a = open(Box::new(FileStore::open(&path_a).unwrap()), Arc::default());
+    for _ in 0..80 {
+        miner.mine_tip(&mut a);
+    }
+    // B: the same chain, from A's store, with an empty mempool.
+    let path_b = dir.path().join("b.dat");
+    std::fs::copy(&path_a, &path_b).unwrap();
+    let mut b = open(Box::new(FileStore::open(&path_b).unwrap()), Arc::default());
+    assert_eq!(b.tip_id(), a.tip_id());
+
+    let fee = standard_fee(1, 2, a.rules());
+    for n in 0..3 {
+        let tx = transfer_nth(&a, &miner.keys, &alice, n, fee, &mut rng);
+        a.submit_tx(Transaction::from(tx)).unwrap();
+    }
+    let t = a.template();
+    assert_eq!(t.txs.len(), 3);
+    let block = miner.build(&t, t.txs.clone(), None, 0);
+
+    // A tampered variant: one pooled transaction with a changed fee.
+    let mut bad_txs = t.txs.clone();
+    if let Transaction::Transfer(x) = &mut bad_txs[1] {
+        x.fee += 1;
+    }
+    let bad = miner.build(&t, bad_txs, Some(t.reward + t.fees + 1), 1);
+    let now = bad.header.timestamp;
+    assert!(matches!(
+        a.submit_block(bad.clone(), now),
+        Err(SubmitError::Body(_))
+    ));
+    assert!(matches!(
+        b.submit_block(bad, now),
+        Err(SubmitError::Body(_))
+    ));
+
+    let now = block.header.timestamp;
+    a.submit_block(block.clone(), now).unwrap();
+    b.submit_block(block, now).unwrap();
+    assert_eq!(a.tip_id(), b.tip_id());
+    assert_eq!(a.state().output_count(), b.state().output_count());
+    assert_eq!(a.generated(), b.generated());
+    assert!(a.mempool().is_empty());
+}
+
+/// Measurement (docs/blocks.md §7): after every block the pool re-checks
+/// each pooled v1 transaction in full (signatures and range proof) under the
+/// chain lock. Prints the cost per transaction; run with `--nocapture`.
+#[test]
+fn mempool_revalidation_cost_per_transaction() {
+    let mut m = open(Box::<MemoryStore>::default(), Arc::default());
+    let mut miner = Miner::new(34);
+    let mut rng = ChaCha20Rng::seed_from_u64(1034);
+    let (alice, _) = WalletKeys::generate(&mut rng);
+    let n = 40;
+    for _ in 0..(60 + n + 1) {
+        miner.mine_tip(&mut m);
+    }
+    let fee = standard_fee(1, 2, m.rules());
+    for i in 0..n {
+        let tx = transfer_nth(&m, &miner.keys, &alice, i, fee, &mut rng);
+        m.submit_tx(Transaction::from(tx)).unwrap();
+    }
+    assert_eq!(m.mempool().len(), n);
+    // An empty block: connecting it revalidates the whole pool.
+    let t = m.template_on(&m.tip_id()).unwrap();
+    let empty = miner.build(&t, vec![], None, 7);
+    let now = empty.header.timestamp;
+    let start = std::time::Instant::now();
+    m.submit_block(empty, now).unwrap();
+    let per_tx = start.elapsed() / n as u32;
+    assert_eq!(m.mempool().len(), n, "all still valid");
+    println!(
+        "revalidation after a block: {n} pooled transfers in {:?} ({per_tx:?} each)",
+        start.elapsed()
+    );
+    // At the 50 MB v1 cap (about 20 000 one-input transfers of ~2.5 kB) this
+    // cost is paid after every block, under the chain lock.
+    println!(
+        "extrapolated to a full v1 pool (20 000 transfers): {:?} per block",
+        per_tx * 20_000
+    );
+}
+
+/// After a plain extension the pool re-checks only the rules an extension can
+/// change (`revalidate_after_extension`). Its verdict equals full validation
+/// for a transaction that stays valid and for one whose input a block spent
+/// with a competing transaction; and the pool drops the latter.
+#[test]
+fn revalidation_after_an_extension_agrees_with_full_validation() {
+    use blacksilk_tx::validate::{revalidate_after_extension, validate_mempool_tx};
+    let mut m = open(Box::<MemoryStore>::default(), Arc::default());
+    let mut miner = Miner::new(35);
+    let mut rng = ChaCha20Rng::seed_from_u64(1035);
+    let (alice, _) = WalletKeys::generate(&mut rng);
+    for _ in 0..80 {
+        miner.mine_tip(&mut m);
+    }
+    let fee = standard_fee(1, 2, m.rules());
+    let stays = Transaction::from(transfer_nth(&m, &miner.keys, &alice, 0, fee, &mut rng));
+    let loses = Transaction::from(transfer_nth(&m, &miner.keys, &alice, 1, fee, &mut rng));
+    // A competing spend of the same output as `loses` (other ring, other id).
+    let rival = Transaction::from(transfer_nth(&m, &miner.keys, &alice, 1, fee, &mut rng));
+    assert_ne!(rival.hash(), loses.hash());
+    m.submit_tx(stays.clone()).unwrap();
+    m.submit_tx(loses.clone()).unwrap();
+
+    // A block with the rival (not from the pool), then more plain blocks.
+    let t = m.template_on(&m.tip_id()).unwrap();
+    let b = miner.build(&t, vec![rival], Some(t.reward + fee), 3);
+    let now = b.header.timestamp;
+    m.submit_block(b, now).unwrap();
+    for _ in 0..3 {
+        let t = m.template_on(&m.tip_id()).unwrap();
+        let b = miner.build(&t, vec![], None, 4);
+        let now = b.header.timestamp;
+        m.submit_block(b, now).unwrap();
+    }
+    let next = m.height() + 1;
+    for tx in [&stays, &loses] {
+        assert_eq!(
+            revalidate_after_extension(tx, m.state()).is_ok(),
+            validate_mempool_tx(tx, m.state(), next, m.rules()).is_ok(),
+        );
+    }
+    assert!(revalidate_after_extension(&stays, m.state()).is_ok());
+    assert!(revalidate_after_extension(&loses, m.state()).is_err());
+    assert!(m.mempool().contains(&stays.hash()));
+    assert!(
+        !m.mempool().contains(&loses.hash()),
+        "the double spend left the pool"
+    );
+}
+
+// ---------------------------------------------------------------- RandomX seed switch
+
+/// Regtest rules with a short RandomX key epoch (16 blocks, lag 4): the key
+/// switches at heights 21 and 37 instead of 2113, so the switch runs with real
+/// RandomX in the test suite. Only the epoch length differs from the network
+/// parameters (2048, lag 64); the code path is the same.
+fn short_epoch_params() -> ChainParams {
+    let mut p = params();
+    p.seed_epoch = 16;
+    p.seed_lag = 4;
+    p
+}
+
+fn open_real(p: &ChainParams, store: Box<dyn BlockStore>) -> ChainManager {
+    ChainManager::open(
+        p.clone(),
+        TxRules::for_chain(p),
+        Arc::new(blacksilk_consensus::RandomXPow::new()),
+        store,
+        [9; 32],
+    )
+    .unwrap()
+}
+
+/// Mines `n` blocks on `parent` with real RandomX (regtest difficulty 1: any
+/// hash passes, but every header's hash is computed and checked), 10 s apart.
+fn mine_real(
+    m: &mut ChainManager,
+    miner: &mut Miner,
+    parent: Hash,
+    n: usize,
+    tag: u64,
+) -> Vec<Block> {
+    let mut out = Vec::new();
+    let mut p = parent;
+    for _ in 0..n {
+        let t = m.template_on(&p).unwrap();
+        let mut b = miner.build(&t, vec![], None, tag);
+        let parent_time = m.headers().header(&p).unwrap().timestamp;
+        b.header.timestamp = t.min_timestamp.max(parent_time + 10);
+        let now = b.header.timestamp;
+        m.submit_block(b.clone(), now).expect("valid block");
+        p = b.id(params().network_id);
+        out.push(b);
+    }
+    out
+}
+
+/// The RandomX key switch, with real RandomX (light verification): blocks on
+/// either side of the switch verify; a restart replays across it; a fresh node
+/// syncs the headers across it; and a heavier branch that forks before the
+/// seed block, so that its blocks after the switch use a different key, wins
+/// a reorganization and is itself verified with its own key.
+#[test]
+fn the_randomx_key_switch_works_across_sync_restart_and_reorg() {
+    let p = short_epoch_params();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("blocks.dat");
+    let mut miner = Miner::new(36);
+    let genesis = p.genesis_id();
+    let (main, tip) = {
+        let mut m = open_real(&p, Box::new(FileStore::open(&path).unwrap()));
+        let blocks = mine_real(&mut m, &mut miner, genesis, 40, 1);
+        assert_eq!(m.height(), 40);
+        // Keys: genesis up to height 20, block 16 from 21, block 32 from 37.
+        let id = |h: u64| m.headers().main_id_at(h).unwrap();
+        let seed = |h: u64| m.headers().seed_id_for(id(h - 1), h);
+        assert_eq!(seed(20), genesis);
+        assert_eq!(seed(21), id(16));
+        assert_eq!(seed(36), id(16));
+        assert_eq!(seed(37), id(32));
+        (blocks, m.tip_id())
+    };
+
+    // Restart: the store replays across both switches.
+    let started = std::time::Instant::now();
+    let m = open_real(&p, Box::new(FileStore::open(&path).unwrap()));
+    assert_eq!(m.tip_id(), tip);
+    println!("restart across 2 key switches: {:.1?}", started.elapsed());
+    drop(m);
+
+    // A fresh node: headers first (PoW computed in parallel, seeds from the
+    // batch), then bodies.
+    let mut fresh = open_real(&p, Box::<MemoryStore>::default());
+    let headers: Vec<BlockHeader> = main.iter().map(|b| b.header).collect();
+    let started = std::time::Instant::now();
+    let (pow, jobs) = fresh.pow_jobs(&headers).unwrap();
+    pow.compute_parallel(&jobs, 4);
+    fresh
+        .accept_headers(&headers, headers.last().unwrap().timestamp)
+        .unwrap();
+    println!(
+        "header sync of 40 headers across 2 switches: {:.1?}",
+        started.elapsed()
+    );
+    for b in &main {
+        fresh.submit_block(b.clone(), b.header.timestamp).unwrap();
+    }
+    assert_eq!(fresh.tip_id(), tip);
+
+    // A heavier branch forking at height 10, before the seed block 16: from
+    // height 21 it uses its own block 16 as the key.
+    let fork = main[9].id(p.network_id);
+    let side = mine_real(&mut fresh, &mut miner, fork, 32, 2);
+    assert_eq!(fresh.height(), 42, "the heavier branch won");
+    let side_tip = fresh.tip_id();
+    let side16 = side[5].id(p.network_id);
+    assert_eq!(fresh.headers().main_id_at(16).unwrap(), side16);
+    assert_eq!(
+        fresh.headers().seed_id_for(side[20].id(p.network_id), 22),
+        side16,
+        "the branch's own key"
+    );
+    assert_ne!(side16, main[15].id(p.network_id));
+    assert!(fresh.deepest_reorg() >= 30);
+
+    // The original node receives the branch's blocks and reorganizes too.
+    let mut m = open_real(&p, Box::new(FileStore::open(&path).unwrap()));
+    for b in &side {
+        let _ = m.submit_block(b.clone(), b.header.timestamp);
+    }
+    assert_eq!(m.tip_id(), side_tip);
+    drop(m);
+    // ...and restarts onto it.
+    let m = open_real(&p, Box::new(FileStore::open(&path).unwrap()));
+    assert_eq!(
+        m.tip_id(),
+        side_tip,
+        "restart after a reorg across the key switch"
+    );
+}

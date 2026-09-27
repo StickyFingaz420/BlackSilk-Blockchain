@@ -196,7 +196,11 @@ impl ChainManager {
             rng: ChaCha20Rng::from_seed(rng_seed),
             deepest_reorg: 0,
         };
+        // Blocks are stored in arrival order, and bodies arrive in any order
+        // during header-first sync. A block is replayed once its parent is
+        // known; one that arrived before its parent waits for it.
         let total = stored.len();
+        let mut waiting: HashMap<Hash, Vec<(usize, Block)>> = HashMap::new();
         for (i, (pow_hash, bytes)) in stored.into_iter().enumerate() {
             let block = Block::decode(&bytes).map_err(|e| {
                 io::Error::new(
@@ -205,23 +209,50 @@ impl ChainManager {
                 )
             })?;
             manager.pow.preload(&block.header.to_bytes(), pow_hash);
-            let now = block.header.timestamp; // the future-time rule was checked on arrival
-            match manager.submit_inner(block, now, false) {
-                // Deterministic outcomes of the original processing: a body found
-                // invalid, and descendants of blocks found invalid.
-                Ok(_)
-                | Err(SubmitError::Body(_))
-                | Err(SubmitError::Duplicate)
-                | Err(SubmitError::Header(HeaderError::InvalidParent)) => {}
-                Err(e) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("stored block {i} of {total} rejected on replay: {e:?}"),
-                    ))
+            if manager.headers.header(&block.header.prev_id).is_none() {
+                waiting
+                    .entry(block.header.prev_id)
+                    .or_default()
+                    .push((i, block));
+                continue;
+            }
+            let mut ready = vec![(i, block)];
+            while let Some((i, block)) = ready.pop() {
+                let id = block.id(manager.params.network_id);
+                manager.replay_one(i, total, block)?;
+                if let Some(children) = waiting.remove(&id) {
+                    ready.extend(children);
                 }
             }
         }
+        // Blocks whose parent was never stored (for example, the parent's write
+        // failed): nothing can be built on them. They are dropped from memory,
+        // not from the file, and the node downloads them again.
+        let orphans: usize = waiting.values().map(Vec::len).sum();
+        if orphans > 0 {
+            log::warn!(
+                "{orphans} stored block(s) without a stored parent were not replayed; \
+                 they will be downloaded again"
+            );
+        }
         Ok(manager)
+    }
+
+    /// Replays one stored block whose parent is known.
+    fn replay_one(&mut self, i: usize, total: usize, block: Block) -> io::Result<()> {
+        let now = block.header.timestamp; // the future-time rule was checked on arrival
+        match self.submit_inner(block, now, false) {
+            // Deterministic outcomes of the original processing: a body found
+            // invalid, and descendants of blocks found invalid.
+            Ok(_)
+            | Err(SubmitError::Body(_))
+            | Err(SubmitError::Duplicate)
+            | Err(SubmitError::Header(HeaderError::InvalidParent)) => Ok(()),
+            Err(e) => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("stored block {i} of {total} rejected on replay: {e:?}"),
+            )),
+        }
     }
 
     pub fn params(&self) -> &ChainParams {
@@ -353,6 +384,9 @@ impl ChainManager {
     /// Restores the invariant (module docs) after the header chain changed.
     fn sync_state(&mut self) {
         let mut returned: Vec<Transaction> = Vec::new();
+        // Whether any block was disconnected (the mempool then re-checks every
+        // rule; a reorganization of coinbase-only blocks returns nothing).
+        let mut reorganized = false;
         loop {
             let fork = self.fork_height();
             // How far the best header chain can be connected with the bodies at hand.
@@ -384,6 +418,7 @@ impl ChainManager {
                 log::info!("reorganization: disconnecting {depth} block(s) above height {fork}");
             }
             while self.connected.len() - 1 > fork {
+                reorganized = true;
                 let id = self.connected.pop().expect("above genesis");
                 self.generated.pop();
                 assert!(self.state.undo_block());
@@ -444,7 +479,8 @@ impl ChainManager {
         for tx in returned {
             let _ = self.mempool.add(tx, &self.state, next, &self.rules);
         }
-        self.mempool.revalidate(&self.state, next, &self.rules);
+        self.mempool
+            .revalidate(&self.state, next, &self.rules, reorganized);
     }
 
     // ---- header-first sync (docs/p2p.md §6) ----
@@ -579,6 +615,17 @@ impl ChainManager {
 
     /// Accepts a batch of headers in order. Known headers are skipped. Returns the
     /// number of new headers, or the index and error of the first rejected one.
+    /// Checks a linked batch of headers with every rule except proof of work,
+    /// without storing anything (`HeaderChain::precheck_batch`). Run before
+    /// any RandomX work on a peer's batch.
+    pub fn precheck_headers(
+        &self,
+        headers: &[BlockHeader],
+        now: u64,
+    ) -> Result<(), (usize, HeaderError)> {
+        self.headers.precheck_batch(headers, now)
+    }
+
     pub fn accept_headers(
         &mut self,
         headers: &[BlockHeader],

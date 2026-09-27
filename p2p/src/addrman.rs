@@ -255,11 +255,16 @@ impl BanList {
         self.until.is_empty()
     }
 
+    /// Written to a temporary file and renamed, as `peers.json`: a crash
+    /// mid-write leaves the previous list, not an unreadable one (which would
+    /// silently lift every ban).
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        let tmp = path.with_extension("tmp");
         std::fs::write(
-            path,
+            &tmp,
             serde_json::to_vec(self).map_err(std::io::Error::other)?,
-        )
+        )?;
+        std::fs::rename(tmp, path)
     }
 
     pub fn load(path: &Path) -> Self {

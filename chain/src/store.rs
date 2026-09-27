@@ -4,6 +4,18 @@
 //! record  = "BSB1" ‖ LE32 length ‖ LE32 crc32(payload) ‖ payload
 //! payload = pow_hash (32) ‖ block bytes
 //! ```
+//!
+//! **Failure behaviour** (docs/blocks.md §8):
+//! - A record is durable when `append` returns (`sync_data`).
+//! - A failed append (disk full, I/O error) is undone: the file is truncated
+//!   back to its previous length, so no record ever follows damaged bytes. If
+//!   even that fails, the store refuses further appends until the node
+//!   restarts; the damaged bytes are then the file's tail, which `load`
+//!   truncates.
+//! - `load` truncates a damaged **tail** (a crash mid-write) and refuses damage
+//!   followed by valid records, which is real corruption, not a crash. Such a
+//!   file is repaired only on the operator's request ([`FileStore::repair`]),
+//!   which keeps the damaged part aside.
 
 use blacksilk_consensus::Hash;
 use std::fs::{File, OpenOptions};
@@ -47,6 +59,14 @@ impl BlockStore for MemoryStore {
 pub struct FileStore {
     path: PathBuf,
     file: File,
+    /// A failed append could not be undone: refuse further appends.
+    poisoned: bool,
+    /// Test hooks: fail the next append after writing this many bytes, and
+    /// fail the truncation that undoes it.
+    #[cfg(test)]
+    fail_after: Option<usize>,
+    #[cfg(test)]
+    fail_undo: bool,
 }
 
 impl FileStore {
@@ -60,7 +80,69 @@ impl FileStore {
             .create(true)
             .truncate(false)
             .open(&path)?;
-        Ok(Self { path, file })
+        Ok(Self {
+            path,
+            file,
+            poisoned: false,
+            #[cfg(test)]
+            fail_after: None,
+            #[cfg(test)]
+            fail_undo: false,
+        })
+    }
+
+    /// Operator repair of a store that `load` refuses because of damage
+    /// followed by valid records. Everything from the first damaged record on
+    /// is moved to `<path>.damaged-<unix time>` and the store is truncated
+    /// there; the node then downloads the dropped blocks again.
+    ///
+    /// Returns the number of bytes set aside (0 if the store is undamaged).
+    pub fn repair(path: impl AsRef<Path>, unix_time: u64) -> io::Result<u64> {
+        let path = path.as_ref();
+        let data = std::fs::read(path)?;
+        let mut pos = 0usize;
+        while pos < data.len() {
+            match parse_record(&data[pos..]) {
+                Ok((_, used)) => pos += used,
+                Err(_) => break,
+            }
+        }
+        if pos == data.len() {
+            return Ok(0);
+        }
+        let aside = path.with_extension(format!("dat.damaged-{unix_time}"));
+        std::fs::write(&aside, &data[pos..])?;
+        let f = OpenOptions::new().write(true).open(path)?;
+        f.set_len(pos as u64)?;
+        f.sync_all()?;
+        log::warn!(
+            "{}: {} damaged or unreadable bytes from offset {pos} moved to {}",
+            path.display(),
+            data.len() - pos,
+            aside.display()
+        );
+        Ok((data.len() - pos) as u64)
+    }
+
+    /// Writes `record` at the end of the file and syncs it.
+    fn write_record(&mut self, record: &[u8]) -> io::Result<()> {
+        #[cfg(test)]
+        if let Some(n) = self.fail_after.take() {
+            self.file.write_all(&record[..n.min(record.len())])?;
+            return Err(io::Error::other("injected write failure"));
+        }
+        self.file.write_all(record)?;
+        self.file.sync_data()
+    }
+
+    /// Truncates the file back to `len` after a failed append.
+    fn undo(&mut self, len: u64) -> io::Result<()> {
+        #[cfg(test)]
+        if self.fail_undo {
+            return Err(io::Error::other("injected truncation failure"));
+        }
+        self.file.set_len(len)?;
+        self.file.sync_data()
     }
 
     pub fn path(&self) -> &Path {
@@ -82,9 +164,27 @@ impl BlockStore for FileStore {
         record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
         record.extend_from_slice(&crc32fast::hash(&payload).to_le_bytes());
         record.extend_from_slice(&payload);
-        self.file.seek(SeekFrom::End(0))?;
-        self.file.write_all(&record)?;
-        self.file.sync_data()
+        if self.poisoned {
+            return Err(io::Error::other(
+                "block store refuses writes after a failed write that could not be undone; \
+                 restart the node",
+            ));
+        }
+        let len = self.file.seek(SeekFrom::End(0))?;
+        if let Err(e) = self.write_record(&record) {
+            // Undo the partial record: a later record after damaged bytes would
+            // make the whole store refuse to load at the next start.
+            if let Err(u) = self.undo(len) {
+                self.poisoned = true;
+                log::error!(
+                    "{}: a failed write ({e}) could not be undone ({u}); no further blocks \
+                     are stored until restart",
+                    self.path.display()
+                );
+            }
+            return Err(e);
+        }
+        Ok(())
     }
 
     /// Reads every record. A damaged *last* record (a crash mid-write) is truncated
@@ -106,10 +206,14 @@ impl BlockStore for FileStore {
                     pos += used;
                 }
                 Err(e) => {
-                    // Is this the tail? Only if no valid record follows anywhere after it.
+                    // Is this the tail? Only if nothing after it is a run of valid
+                    // records reaching the end of the file. Requiring the run to
+                    // reach the end keeps a record-shaped byte string embedded in
+                    // a torn block (block data is partly user-chosen) from
+                    // passing for later data.
                     let rest = &data[pos + 1..];
                     let later_valid = (0..rest.len())
-                        .any(|i| rest[i..].starts_with(MAGIC) && parse_record(&rest[i..]).is_ok());
+                        .any(|i| rest[i..].starts_with(MAGIC) && valid_to_end(&rest[i..]));
                     if later_valid {
                         return Err(corrupt(format!(
                             "{}: corrupt record at offset {pos} ({e}) followed by valid data",
@@ -130,6 +234,17 @@ impl BlockStore for FileStore {
         self.file.seek(SeekFrom::End(0))?;
         Ok(out)
     }
+}
+
+/// Whether `data` is a sequence of valid records ending exactly at its end.
+fn valid_to_end(mut data: &[u8]) -> bool {
+    while !data.is_empty() {
+        match parse_record(data) {
+            Ok((_, used)) => data = &data[used..],
+            Err(_) => return false,
+        }
+    }
+    true
 }
 
 fn parse_record(data: &[u8]) -> Result<(&[u8], usize), &'static str> {
@@ -219,5 +334,111 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         // Nothing was truncated.
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+
+    /// A failed append leaves no bytes behind: later appends and a restart work.
+    /// Before 2026-09-27 the partial record stayed, the next block was appended
+    /// after it, and the node refused to start ("corrupt record followed by
+    /// valid data").
+    #[test]
+    fn a_failed_append_is_undone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.dat");
+        let mut s = FileStore::open(&path).unwrap();
+        fill(&mut s, 3);
+        let len = std::fs::metadata(&path).unwrap().len();
+        s.fail_after = Some(20);
+        assert!(s.append(&[8; 32], &[8; 500]).is_err());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            len,
+            "partial record removed"
+        );
+        s.append(&[9; 32], b"next").unwrap();
+        drop(s);
+        let recs = FileStore::open(&path).unwrap().load().unwrap();
+        assert_eq!(recs.len(), 4);
+        assert_eq!(recs[3], ([9; 32], b"next".to_vec()));
+    }
+
+    /// If the partial record cannot be removed, no further record is written,
+    /// so the damage stays the file's tail and a restart truncates it.
+    #[test]
+    fn a_failed_append_that_cannot_be_undone_stops_writes_until_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.dat");
+        let mut s = FileStore::open(&path).unwrap();
+        fill(&mut s, 3);
+        s.fail_after = Some(20);
+        s.fail_undo = true;
+        assert!(s.append(&[8; 32], &[8; 500]).is_err());
+        assert!(
+            s.append(&[9; 32], b"next").is_err(),
+            "refused while poisoned"
+        );
+        drop(s);
+        let mut s = FileStore::open(&path).unwrap();
+        assert_eq!(s.load().unwrap().len(), 3, "the damaged tail is truncated");
+        s.append(&[9; 32], b"next").unwrap();
+        assert_eq!(FileStore::open(&path).unwrap().load().unwrap().len(), 4);
+    }
+
+    /// A torn last record whose data contains a record-shaped byte string is
+    /// still a torn tail (block data is partly chosen by users).
+    #[test]
+    fn a_record_embedded_in_a_torn_tail_does_not_block_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.dat");
+        let mut inner = Vec::new();
+        {
+            let mut s = FileStore::open(&path).unwrap();
+            fill(&mut s, 2);
+            // A block whose data embeds a complete, valid record.
+            let fake_payload = [5u8; 40];
+            inner.extend_from_slice(MAGIC);
+            inner.extend_from_slice(&(fake_payload.len() as u32).to_le_bytes());
+            inner.extend_from_slice(&crc32fast::hash(&fake_payload).to_le_bytes());
+            inner.extend_from_slice(&fake_payload);
+            let mut data = vec![1u8; 100];
+            data.extend_from_slice(&inner);
+            data.extend_from_slice(&[2u8; 300]);
+            s.append(&[7; 32], &data).unwrap();
+        }
+        // Tear the last record after the embedded record.
+        let full = std::fs::metadata(&path).unwrap().len();
+        let f = OpenOptions::new().write(true).open(&path).unwrap();
+        f.set_len(full - 150).unwrap();
+        drop(f);
+        let recs = FileStore::open(&path).unwrap().load().unwrap();
+        assert_eq!(recs.len(), 2, "treated as a torn tail");
+    }
+
+    /// Real corruption followed by valid records is refused, and repaired only
+    /// on request, keeping the damaged part aside.
+    #[test]
+    fn corruption_in_the_middle_is_repaired_only_on_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.dat");
+        {
+            let mut s = FileStore::open(&path).unwrap();
+            fill(&mut s, 4);
+        }
+        let mut bytes = std::fs::read(&path).unwrap();
+        let second = RECORD_HEADER + 32 + 10; // start of the second record
+        bytes[second + RECORD_HEADER + 5] ^= 0xff;
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(FileStore::open(&path).unwrap().load().is_err());
+        let aside = FileStore::repair(&path, 1_234).unwrap();
+        assert_eq!(aside as usize, bytes.len() - second);
+        assert_eq!(
+            std::fs::read(path.with_extension("dat.damaged-1234")).unwrap(),
+            bytes[second..]
+        );
+        assert_eq!(FileStore::open(&path).unwrap().load().unwrap().len(), 1);
+        assert_eq!(
+            FileStore::repair(&path, 1_235).unwrap(),
+            0,
+            "nothing more to repair"
+        );
     }
 }

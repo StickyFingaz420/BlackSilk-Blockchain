@@ -56,6 +56,42 @@ jobs:
       - name: Test (release)
         run: cargo test --release --workspace --no-fail-fast
 
+  # RandomX full mode (the miner's default) against the official vectors and
+  # light mode (what nodes verify with), on Linux; the developers' runs are on
+  # Windows, so this is also a cross-platform check of the same vectors.
+  randomx-full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
+      - name: Full mode vectors and full/light agreement (about 2.3 GiB RAM)
+        run: cargo test --release -p blacksilk-randomx -- --ignored --nocapture
+
+  # The consensus-pinned guest programs rebuild from source to their pinned
+  # program ids (zkvm/guests/README.md). Windows: the pinned kernel embeds a
+  # Windows source path, which the script remaps from the runner's checkout.
+  guests:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
+          targets: riscv32i-unknown-none-elf
+      - name: Rebuild px/kernel.elf and px/vault.elf and compare their ids
+        shell: bash
+        run: bash zkvm/guests/reproduce.sh
+      - name: RandomX reference vectors on Windows (cross-platform check)
+        run: cargo test --release -p blacksilk-randomx
+
   # RustSec advisory database (docs/reviews/dependency-review.md §5).
   audit:
     runs-on: ubuntu-latest

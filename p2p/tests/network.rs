@@ -6,7 +6,9 @@ use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::store::MemoryStore;
 use blacksilk_consensus::merkle::tx_root;
-use blacksilk_consensus::{BlockHeader, ChainParams, Hash, PowFunction, HEADER_VERSION};
+use blacksilk_consensus::{
+    BlockHeader, ChainParams, Hash, HeaderChain, PowFunction, HEADER_VERSION,
+};
 use blacksilk_crypto::keys::{SubaddressIndex, SubaddressTable, WalletKeys};
 use blacksilk_p2p::dandelion::DandelionParams;
 use blacksilk_p2p::limits::score;
@@ -72,11 +74,15 @@ fn fast_config(connect: &[SocketAddr]) -> NetConfig {
 }
 
 async fn node_with(seed: u64, cfg: NetConfig) -> TestNode {
+    node_with_pow(seed, cfg, Arc::new(ZeroPow)).await
+}
+
+async fn node_with_pow(seed: u64, cfg: NetConfig, pow: Arc<dyn PowFunction>) -> TestNode {
     let p = params();
     let m = ChainManager::open(
         p.clone(),
         TxRules::for_chain(&p),
-        Arc::new(ZeroPow),
+        pow,
         Box::<MemoryStore>::default(),
         [seed as u8; 32],
     )
@@ -285,6 +291,17 @@ type RawWriter = FrameWriter<WriteHalf<TcpStream>>;
 
 /// A hand-driven peer for adversarial tests.
 async fn raw_peer(addr: SocketAddr, network_id: u32, relay_txs: bool) -> (RawReader, RawWriter) {
+    raw_peer_at(addr, network_id, relay_txs, 0).await
+}
+
+/// A raw peer claiming a chain of `height` blocks (so the node asks it for
+/// headers).
+async fn raw_peer_at(
+    addr: SocketAddr,
+    network_id: u32,
+    relay_txs: bool,
+    height: u64,
+) -> (RawReader, RawWriter) {
     let s = TcpStream::connect(addr).await.unwrap();
     let (mut r, mut w) = handshake(s, true, network_id, Duration::from_secs(5))
         .await
@@ -293,7 +310,7 @@ async fn raw_peer(addr: SocketAddr, network_id: u32, relay_txs: bool) -> (RawRea
         protocol: PROTOCOL_VERSION,
         network: network_id,
         nonce: 0xdead_beef,
-        height: 0,
+        height,
         tip: [0; 32],
         listen: None,
         relay_txs,
@@ -309,6 +326,81 @@ async fn raw_peer(addr: SocketAddr, network_id: u32, relay_txs: bool) -> (RawRea
         Message::Verack
     ));
     (r, w)
+}
+
+/// Reads messages until one matches `want`; `None` if the connection closes or
+/// `secs` pass first.
+async fn recv_until(
+    r: &mut RawReader,
+    secs: f64,
+    want: impl Fn(&Message) -> bool,
+) -> Option<Message> {
+    tokio::time::timeout(Duration::from_secs_f64(secs), async {
+        loop {
+            let frame = r.recv().await.ok()?;
+            let m = Message::decode(&frame).ok()?;
+            if want(&m) {
+                return Some(m);
+            }
+        }
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// `n` linked headers on genesis that satisfy every header rule under a PoW
+/// function accepting everything; blocks `dt` seconds apart. With `nonce`
+/// fixed, a node's PoW function can recognize (and fail) them.
+fn header_branch(n: usize, dt: u64, nonce: u64) -> Vec<BlockHeader> {
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        let t = g.template();
+        let parent = *g.header(&t.prev_id).unwrap();
+        let h = BlockHeader {
+            version: HEADER_VERSION,
+            height: t.height,
+            prev_id: t.prev_id,
+            timestamp: t.min_timestamp.max(parent.timestamp + dt),
+            difficulty: t.difficulty,
+            tx_root: [0; 32],
+            nonce,
+        };
+        g.accept(h, u64::MAX / 2).unwrap();
+        out.push(h);
+    }
+    out
+}
+
+/// Counts PoW evaluations of headers carrying `BAD_NONCE`, and fails them
+/// (the largest hash never meets a difficulty above 1). Everything else passes.
+const BAD_NONCE: u64 = 0xBAD0_BAD0;
+#[derive(Default)]
+struct CountingPow(std::sync::atomic::AtomicUsize);
+impl PowFunction for CountingPow {
+    fn pow_hash(&self, _: &Hash, blob: &[u8]) -> Hash {
+        let nonce = u64::from_le_bytes(
+            blob[blacksilk_consensus::NONCE_OFFSET..blacksilk_consensus::NONCE_OFFSET + 8]
+                .try_into()
+                .unwrap(),
+        );
+        if nonce == BAD_NONCE {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            [0xff; 32]
+        } else {
+            [0; 32]
+        }
+    }
+}
+
+/// A slow PoW function (every hash takes `ms` milliseconds; all pass).
+struct SlowPow(u64);
+impl PowFunction for SlowPow {
+    fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+        std::thread::sleep(Duration::from_millis(self.0));
+        [0; 32]
+    }
 }
 
 /// Reads messages until the connection closes; returns whether it closed within `secs`.
@@ -947,4 +1039,296 @@ async fn a_double_spend_across_a_partition_resolves_to_one_spend() {
             "no honest peer penalized"
         );
     }
+}
+
+// ------------------------------------------ header sync hardening (N-1..N-4)
+
+/// Defect 1: a peer's header batch is checked against every cheap rule before
+/// any RandomX work. A solicited batch of MAX_HEADERS headers whose first
+/// header has a wrong difficulty costs no PoW at all; one that passes the cheap
+/// rules but not the PoW costs at most one chunk (`pow_threads`) of hashes
+/// beyond its last valid header. Before the fix, the whole batch (2000 RandomX
+/// hashes, ~900 CPU-seconds at testnet cost) was hashed first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn junk_header_batches_cost_at_most_one_chunk_of_proof_of_work() {
+    let pow = Arc::new(CountingPow::default());
+    let a = node_with_pow(40, fast_config(&[]), pow.clone()).await;
+    let nid = params().network_id;
+    let count = || pow.0.load(std::sync::atomic::Ordering::SeqCst);
+
+    // (a) Cheap failure: header 0 has a wrong difficulty, the other 1999 are
+    // well formed (and all carry the bad nonce).
+    let mut junk = header_branch(2000, 120, BAD_NONCE);
+    junk[0].difficulty += 7;
+    for i in 1..junk.len() {
+        junk[i].prev_id = junk[i - 1].id(nid);
+    }
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 10_000).await;
+    assert!(
+        recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some(),
+        "the node asks for headers"
+    );
+    w.send(&Message::Headers(junk).encode()).await.unwrap();
+    assert!(closes_within(&mut r, 10).await, "peer disconnected");
+    assert_eq!(
+        count(),
+        0,
+        "no proof of work for a batch failing the cheap rules"
+    );
+
+    // (b) Only the PoW fails. 1-second blocks lift the difficulty above 1
+    // (regtest starts at 1, where every hash passes).
+    let junk = header_branch(2000, 1, BAD_NONCE);
+    let first_hard = junk
+        .iter()
+        .position(|h| h.difficulty > 1)
+        .expect("difficulty rises");
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 10_000).await;
+    assert!(
+        recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    w.send(&Message::Headers(junk).encode()).await.unwrap();
+    assert!(closes_within(&mut r, 10).await, "peer disconnected");
+    let threads = fast_config(&[]).pow_threads;
+    assert!(
+        count() <= first_hard + threads,
+        "{} hashes for a batch that fails at header {first_hard}",
+        count()
+    );
+    wait_until("both banned", 5, || {
+        a.net.stats().misbehaving_disconnects == 2
+    })
+    .await;
+    // Only the valid prefix (difficulty 1) was stored.
+    assert!(a.chain.lock().unwrap().header_height() < first_hard as u64 + 1);
+}
+
+/// Defect 1 (cont.): headers nobody asked for must be a single tip
+/// announcement. An unrequested batch is not verified at all and costs the
+/// sender the unsolicited-message penalty.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unrequested_header_batch_is_not_verified() {
+    let pow = Arc::new(CountingPow::default());
+    let a = node_with_pow(41, fast_config(&[]), pow.clone()).await;
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    wait_until("registered", 5, || a.net.stats().peers == 1).await;
+    w.send(&Message::Headers(header_branch(50, 120, BAD_NONCE)).encode())
+        .await
+        .unwrap();
+    w.send(&Message::Ping(7).encode()).await.unwrap();
+    assert!(recv_until(&mut r, 5.0, |m| matches!(m, Message::Pong(7)))
+        .await
+        .is_some());
+    assert_eq!(pow.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(a.chain.lock().unwrap().header_height(), 0);
+    assert_eq!(a.net.peers()[0].score, score::UNSOLICITED);
+}
+
+/// Defect 2: a peer relaying headers of a block whose *body* we found invalid
+/// (or of its descendants) is not banned: it cannot know without the body.
+/// Before the fix every such relay scored 100 (an immediate ban), so one
+/// invalid-body block could split honest nodes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn relaying_headers_of_a_block_with_an_invalid_body_is_not_penalized() {
+    let mut a = node(42, &[]).await;
+    a.mine_n(2, 0);
+    // A block with a valid header and an invalid body (the coinbase overpays).
+    let bad = {
+        let mut c = a.chain.lock().unwrap();
+        let t = c.template();
+        let cb = build_coinbase(
+            t.height,
+            &[Payment {
+                address: a.miner.address(SubaddressIndex::PRIMARY),
+                amount: t.reward + 1,
+            }],
+            &a.miner.hedge_secret(),
+            &mut a.rng,
+        )
+        .unwrap();
+        let txs = vec![Transaction::Coinbase(cb)];
+        let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+        let header = BlockHeader {
+            version: HEADER_VERSION,
+            height: t.height,
+            prev_id: t.prev_id,
+            timestamp: t
+                .min_timestamp
+                .max(params().genesis.timestamp + 120 * t.height),
+            difficulty: t.difficulty,
+            tx_root: tx_root(&ids),
+            nonce: 0,
+        };
+        let b = Block { header, txs };
+        assert!(
+            c.submit_block(b.clone(), header.timestamp).is_err(),
+            "body invalid"
+        );
+        b.header
+    };
+    // A child of the invalid block with a valid header.
+    let child = {
+        let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+        let c = a.chain.lock().unwrap();
+        for h in 1..=2 {
+            g.accept(c.block_at(h).unwrap().header, u64::MAX / 2)
+                .unwrap();
+        }
+        let x = g.accept(bad, u64::MAX / 2).unwrap().id;
+        let t = g.template_on(x).unwrap();
+        BlockHeader {
+            version: HEADER_VERSION,
+            height: t.height,
+            prev_id: x,
+            timestamp: t.min_timestamp.max(bad.timestamp + 120),
+            difficulty: t.difficulty,
+            tx_root: [0; 32],
+            nonce: 0,
+        }
+    };
+    let nid = params().network_id;
+    // Announced one by one, and as a solicited batch.
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 10).await;
+    assert!(
+        recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    w.send(&Message::Headers(vec![bad, child]).encode())
+        .await
+        .unwrap();
+    w.send(&Message::Headers(vec![bad]).encode()).await.unwrap();
+    w.send(&Message::Headers(vec![child]).encode())
+        .await
+        .unwrap();
+    w.send(&Message::Ping(9).encode()).await.unwrap();
+    assert!(recv_until(&mut r, 5.0, |m| matches!(m, Message::Pong(9)))
+        .await
+        .is_some());
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(a.net.stats().misbehaving_disconnects, 0);
+    assert_eq!(a.net.peers().len(), 1, "still connected");
+    assert_eq!(a.net.peers()[0].score, 0, "not penalized");
+    assert_eq!(a.height(), 2, "the invalid branch is not followed");
+    // A header that itself breaks the rules is still penalized.
+    let mut broken = child;
+    broken.prev_id = a.tip();
+    broken.difficulty += 3;
+    w.send(&Message::Headers(vec![broken]).encode())
+        .await
+        .unwrap();
+    assert!(
+        closes_within(&mut r, 5).await,
+        "a rule-breaking header gets the peer banned"
+    );
+}
+
+/// Defect 3: blocks we requested are not charged to the peer's byte budget.
+/// With a byte budget far below the blocks' total size, a node still syncs
+/// every block from an honest peer without penalizing it. Before the fix the
+/// requested blocks beyond the budget were dropped (+1 each), timed out (+5
+/// each) and re-requested.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn requested_blocks_are_not_dropped_by_the_byte_limit() {
+    let mut a = node(43, &[]).await;
+    a.mine_n(48, 0);
+    let total: usize = {
+        let c = a.chain.lock().unwrap();
+        (1..=48)
+            .map(|h| c.block_at(h).unwrap().encode().len())
+            .sum()
+    };
+    let mut cfg = fast_config(&[a.addr]);
+    let burst = 1_500.0;
+    cfg.peer_limits.bytes = blacksilk_p2p::limits::TokenBucket::new(50.0, burst);
+    assert!(
+        total as f64 > 2.0 * burst,
+        "blocks ({total} B) exceed the byte budget"
+    );
+    let b = node_with(44, cfg).await;
+    wait_until("b synced", 30, || b.height() == 48).await;
+    assert_eq!(b.tip(), a.tip());
+    let peers = b.net.peers();
+    assert_eq!(peers.len(), 1);
+    assert_eq!(peers[0].score, 0, "the honest peer was not penalized");
+    assert_eq!(b.net.stats().misbehaving_disconnects, 0);
+}
+
+/// Defect 4: verifying a header batch does not block the peer's read loop, so
+/// pings are answered while the proof of work runs. Before the fix a batch
+/// held the loop for its whole PoW (2000 x 0.45 s / threads at testnet
+/// cost), longer than the 30 s pong timeout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pings_are_answered_while_a_header_batch_is_verified() {
+    let mut cfg = fast_config(&[]);
+    cfg.pow_threads = 1;
+    // 300 headers x 20 ms (about 30 ms with Windows timer granularity): 6 to
+    // 10 s of proof of work on one thread.
+    let a = node_with_pow(45, cfg, Arc::new(SlowPow(20))).await;
+    let nid = params().network_id;
+    let batch = header_branch(300, 120, 0);
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 300).await;
+    assert!(
+        recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    w.send(&Message::Headers(batch).encode()).await.unwrap();
+    let started = std::time::Instant::now();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    w.send(&Message::Ping(77).encode()).await.unwrap();
+    assert!(
+        recv_until(&mut r, 1.0, |m| matches!(m, Message::Pong(77)))
+            .await
+            .is_some(),
+        "pong while the batch is being verified"
+    );
+    assert!(
+        a.chain.lock().unwrap().header_height() < 300,
+        "the batch was still being verified when the pong came"
+    );
+    wait_until("batch verified", 120, || {
+        a.chain.lock().unwrap().header_height() == 300
+    })
+    .await;
+    assert!(started.elapsed() > Duration::from_secs(3));
+    assert_eq!(a.net.peers()[0].score, 0);
+}
+
+/// A peer that disconnects before its batch is verified is still charged: the
+/// verdict comes from the header worker after the peer has left.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_peer_that_leaves_before_its_bad_batch_is_verified_is_still_charged() {
+    let mut cfg = fast_config(&[]);
+    cfg.pow_threads = 1;
+    let a = node_with_pow(46, cfg, Arc::new(SlowPow(20))).await;
+    let nid = params().network_id;
+    // 100 valid headers (2 s of proof of work), then one that breaks a rule.
+    let mut batch = header_branch(101, 120, 0);
+    batch[100].difficulty += 5;
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 1000).await;
+    assert!(
+        recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    w.send(&Message::Headers(batch).encode()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    drop((r, w));
+    wait_until("peer gone", 5, || a.net.stats().peers == 0).await;
+    assert_eq!(a.net.stats().misbehaving_disconnects, 0, "not yet verified");
+    wait_until("charged after leaving", 20, || {
+        a.net.stats().misbehaving_disconnects == 1
+    })
+    .await;
+    assert_eq!(
+        a.chain.lock().unwrap().header_height(),
+        100,
+        "the valid prefix is kept"
+    );
 }

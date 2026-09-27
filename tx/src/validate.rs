@@ -581,6 +581,61 @@ pub fn validate_mempool_tx(
     }
 }
 
+/// Re-checks a pooled transaction after the chain was **extended** (blocks
+/// connected, none disconnected) since it last passed [`validate_mempool_tx`].
+///
+/// Only the rules whose verdict an extension can change are checked:
+/// - C2 key images and C4 one-time keys (a new block may use them);
+/// - PX1-PX3: the anchor window moves, nullifiers get spent (the registry
+///   only grows);
+/// - PX4, the pool, which new blocks change;
+/// - a deploy's contract id (the same contract may have been deployed).
+///
+/// Every other rule is unchanged by an extension:
+/// - structure, balance, range proof and PX proof are functions of the
+///   transaction alone;
+/// - ring members resolve to the same outputs, because outputs are only
+///   appended, so C1 existence and C3 signatures are unchanged;
+/// - C1 maturity only improves as the height grows.
+///
+/// After a reorganization, [`validate_mempool_tx`] must be used again. Policy
+/// only: blocks are always validated in full (`validate_block_transactions`).
+pub fn revalidate_after_extension(tx: &Transaction, chain: &impl ChainView) -> Result<(), TxError> {
+    match tx {
+        Transaction::Coinbase(_) => Err(TxError::CoinbaseNotAllowed),
+        Transaction::Transfer(t) => {
+            check_uniqueness(t, chain, &mut HashSet::new(), &mut HashSet::new())
+        }
+        Transaction::Px(t) => {
+            let keys: Vec<Point> = t.output_keys().iter().map(|k| k.one_time_key).collect();
+            check_uniqueness_of(
+                &t.inputs,
+                &keys,
+                chain,
+                &mut HashSet::new(),
+                &mut HashSet::new(),
+            )?;
+            check_px_state(t, chain, &mut HashSet::new())?;
+            if chain.px_pool() + (t.bridge_in as u128) < (t.bridge_out as u128) {
+                return Err(TxError::PxPoolUnderflow);
+            }
+            Ok(())
+        }
+        Transaction::PxDeploy(t) => {
+            check_uniqueness(
+                &t.as_transfer(),
+                chain,
+                &mut HashSet::new(),
+                &mut HashSet::new(),
+            )?;
+            if chain.px_contract_exists(&t.contract_id()) {
+                return Err(TxError::DuplicateContract);
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Inputs to block-body validation that come from the header chain and emission.
 #[derive(Clone, Copy, Debug)]
 pub struct BlockContext {

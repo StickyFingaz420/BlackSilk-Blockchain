@@ -154,15 +154,45 @@ Transactions from disconnected blocks return to the mempool if they are still va
     the proof (`validate_block_transactions_cached`).
   - Templates add them in fee-per-byte order within the PX budget, simulating the pool
     so that it never goes negative.
-- It holds at most `MEMPOOL_MAX_BYTES = 50 MB`. When full, a new transaction is accepted
-  only if its fee per weight beats the lowest one in the pool, which is evicted.
+- It holds at most `MEMPOOL_MAX_BYTES = 50 MB`. When a class is full, a new transaction
+  is accepted only by evicting **strictly** cheaper entries of its class (fee per
+  weight, or per byte for PX), cheapest and then newest first.
+  - The victims are chosen before anything is removed. If strictly cheaper entries
+    cannot free enough room, the transaction is refused and the pool is unchanged.
+  - Before 2026-09-27 the cheaper entries were evicted one by one even when the new
+    transaction was refused in the end.
+  - One sort per admission, not one scan per victim: a flood of small entries cannot
+    make admission quadratic (`eviction_under_a_flood_stays_fast`).
 - **Block templates** take transactions by descending fee per weight, up to
   `MAX_BLOCK_WEIGHT − COINBASE_RESERVE` with `COINBASE_RESERVE = 3 000`.
 - After every change of the connected chain, the pool:
-  - removes confirmed transactions;
+  - removes confirmed transactions and every pooled transaction conflicting with them;
   - re-adds transactions from disconnected blocks;
-  - re-validates everything against the new tip, dropping what no longer validates
-    (spent key images, ring members now too young).
+  - re-validates against the new tip, dropping what no longer validates:
+    - **after a reorganization** (any block disconnected), every rule except PX proofs,
+      because ring members may now resolve to different outputs;
+    - **after a plain extension**, only the rules an extension can change
+      (`revalidate_after_extension`): key images, one-time keys, the PX anchor window,
+      nullifiers, the registry and the pool, and deploy contract ids.
+      - Structure, balance and proofs belong to the transaction alone.
+      - Outputs are only appended, so rings resolve to the same outputs and signatures
+        stay valid; maturity only improves.
+      - Measured: 6.3 µs instead of 6.8 ms per pooled transfer. A full v1 pool (about
+        20 000 transfers) costs about 0.13 s per block instead of about 136 s under the
+        chain lock (`mempool_revalidation_cost_per_transaction`).
+      - Its verdicts match full validation
+        (`revalidation_after_an_extension_agrees_with_full_validation`).
+- **The mempool is not persisted.** After a restart it is empty; wallets rebroadcast
+  their stored transactions (px.md §12).
+- **No consensus effect.** Blocks are always validated in full, whatever the pool
+  holds.
+  - The only use of pool contents in block validation is the PX proof cache, keyed by
+    the transaction id, which commits to every byte.
+  - Tested: two nodes, one with the transactions pooled and one without, reach the same
+    state from the same block, and both reject a tampered copy
+    (`mempool_contents_never_change_a_blocks_verdict`).
+- **Not implemented:** expiry of old entries; per-peer or per-source limits beyond the
+  byte caps and the P2P rate limits.
 
 ## 8. Storage (node)
 
@@ -182,9 +212,44 @@ payload = pow_hash (32) ‖ block bytes
   header validation, including PoW, and the CRC detects corruption. Bodies are fully
   re-validated during replay, so a stored block with an invalid body is rejected again
   deterministically.
-- **Corruption:** a truncated or corrupt tail record, for example from a crash
-  mid-write, is truncated away with a warning. Corruption before the tail stops startup
-  with an error rather than silently dropping blocks.
+- **Replay order.** Records are in arrival order, and bodies arrive in any order during
+  header-first sync (up to 16 in flight, from several peers). A block is replayed once
+  its parent is known; one stored before its parent waits for it.
+  - A stored block whose parent was never stored (the parent's write failed) is not
+    replayed. It stays in the file, and the node downloads it again.
+  - Fixed 2026-09-27. Before, a node that had received bodies out of order refused to
+    restart (`chain/tests/manager.rs::restart_after_out_of_order_body_arrival_replays_the_store`).
+- **A failed write** (disk full, I/O error) is undone: the file is truncated back to
+  its previous length. The block is refused (`SubmitError::Store`), is not kept in
+  memory as if stored, and is downloaded again.
+  - If the truncation itself fails, the store refuses further writes until the node
+    restarts. The damaged bytes are then the file's tail, which the restart truncates.
+  - So no record ever follows damaged bytes, and a node is never left unable to restart
+    by a failed write. Before 2026-09-27 the partial record stayed in place, and the
+    next block written after it made the whole store refuse to load.
+  - Tested with injected failures (`store.rs` tests,
+    `a_failed_block_write_during_sync_is_recoverable`). A real full disk has not been
+    tested.
+- **Corruption:**
+  - **Damaged tail** (a crash mid-write): truncated away with a warning. A damaged
+    record counts as the tail unless a run of valid records follows it **to the end of
+    the file**. This check keeps a record-shaped byte string inside a torn block's data
+    (partly user-chosen) from passing for later data.
+  - **Damage followed by valid records** is real corruption, not a crash. The node
+    refuses to start rather than silently drop blocks.
+  - The operator repairs it with `blacksilk-node --repair-store` (one run). Everything
+    from the first damaged record on is moved to `blocks.dat.damaged-<unix time>`, the
+    store is truncated there, and the node downloads the dropped blocks again.
+- **Known limitations** (acceptable for a controlled testnet; to be measured in the
+  trial):
+  - every block body and every block's undo data stays in memory (PX-F1, PX-F2);
+  - startup reads the whole file into memory, then replays every block through full
+    body validation, including every PX proof (about 0.2 s each; PX-F3). Only RandomX
+    is skipped;
+  - there are no indexes and no pruning;
+  - side-branch blocks and blocks with invalid bodies stay in the file.
+  - Startup time and memory therefore grow with the chain. A store with bodies on disk,
+    indexes and a verified-state checkpoint is post-trial work.
 
 ## 9. Node RPC (interface, not consensus)
 

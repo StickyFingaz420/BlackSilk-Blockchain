@@ -139,8 +139,29 @@ Unknown message types are violations.
    the following headers, at most 2000, ending at `stop` if it meets it.
 3. **Processing headers.** They must form a chain. Each header is fully validated
    (consensus.md §6), including RandomX PoW, *before* it enters the header tree.
-   - The PoW hashes of a batch are computed in parallel first; the seeds come from ids
-     in the batch or the existing chain. Accepting the batch is then cheap.
+   - **Where.** A batch is handed to a single header worker; the peer's read loop only
+     checks that the headers form a chain. The loop keeps answering pings however
+     long the proof of work takes. The worker verifies one batch at a time, so
+     batches from several peers covering the same headers are hashed once.
+   - **Cheap rules first.** The worker checks every rule except proof of work (parent,
+     version, height, median-time-past, future-time limit, difficulty) for the
+     **whole batch** before any RandomX hash (`HeaderChain::precheck_batch`). It uses
+     the branch context the batch itself forms, with the same rule function as
+     single-header validation, so the two cannot disagree.
+   - **Then proof of work, in chunks** of `pow_threads` headers, hashed in parallel
+     (the seeds come from ids in the batch or the existing chain). Each chunk is
+     accepted before the next is hashed.
+   - **Cost bound.** A batch that breaks a cheap rule costs no RandomX hash. One that
+     fails the proof of work costs at most one chunk of hashes beyond its last valid
+     header, and the sender is banned. Before 2026-09-27 every header of a batch was
+     hashed first: up to 2000 × 0.45 s ≈ 900 CPU-seconds per junk message.
+   - **Unrequested headers** must be a single tip announcement. A longer unrequested
+     batch is not verified at all, and costs the sender 10 points.
+   - **At most one batch per peer** is queued or being verified. The peer is not asked
+     for more headers meanwhile; headers arriving from it in that time are dropped,
+     and the node asks again once the batch is done.
+   - A sender that disconnects before its batch is verified is still charged. A
+     violation worth a ban bans its address.
    - If a full batch (2000) arrived, the node asks the same peer for more.
 4. **Bodies.** The node requests `GetBlocks` for best-chain blocks whose body it lacks,
    starting just above the connected tip.
@@ -249,9 +270,10 @@ the connection is dropped.
 | Violation | Score |
 |---|---|
 | Undecryptable or malformed frame, unknown type, list over its limit | 100 |
-| Header with invalid PoW, bad difficulty, bad version or height, invalid parent | 100 |
+| Header with invalid PoW, bad difficulty, bad version or height, a timestamp not after the median-time-past | 100 |
 | Block whose body is invalid or does not match its header | 100 |
 | `Headers` that do not connect or are not a chain | 20 |
+| Unrequested `Headers` with more than one header | 10 |
 | Transaction invalid by a **stateless** rule (`Tx`/`StemTx`; transactions.md T1–T11) | 20 |
 | Unrequested `Block`/`Tx`, `Pong` without a ping, second `GetAddr` or oversized `Addr` | 10 |
 | Timeout on a requested block or headers | 5 |
@@ -259,6 +281,17 @@ the connection is dropped.
 
 **Not penalized** (honest peers can trigger these):
 - a header rejected only by the future-time rule;
+- a header that descends from a block whose **body** we found invalid (including
+  that block's own header), whether it is relayed in `Headers` or arrives as a
+  block.
+  - An honest peer relaying headers cannot know a body is invalid before it has
+    downloaded and checked it, and an attacker can withhold the body from it.
+  - Penalizing such relays let one invalid-body block get honest peers banned, which
+    could split the network (fixed 2026-09-27).
+  - The peer that sends the invalid **body** itself is penalized (100). Headers that
+    break the header rules are penalized as before.
+  - After such a relay we stop asking that peer for headers until it announces a new
+    tip;
 - a duplicate;
 - an already-known transaction;
 - a transaction that conflicts with the mempool;
@@ -275,7 +308,16 @@ its bounded outbox (64 messages) fills up.
 
 **Rate limits** (per peer, token buckets):
 - **Messages:** 50 per second, burst 500.
-- **Bytes:** 4 MB per second, burst 16 MB.
+- **Bytes:** 4 MB per second, burst 16 MB, for what a peer sends **on its own
+  initiative**.
+  - Answers to our own requests are exempt: a block we requested from that peer and
+    are still waiting for, and headers while our `GetHeaders` is outstanding.
+  - Their volume is already bounded by our requests: 16 blocks of at most
+    `MAX_BLOCK_BYTES` (about 9.45 MB) in flight, and one header batch (at most
+    200 kB).
+  - Before 2026-09-27 requested blocks were charged too. During a sync of large (PX)
+    blocks the node dropped the blocks it had asked for, penalized the honest sender,
+    and re-requested them after a timeout.
 - **Transactions accepted into the relay path:** 20 per second, burst 100.
 - **PX and deploy transactions** (each costs ~0.2 s to verify): 0.2 per second,
   burst 4, per peer, **and** 2 per second, burst 10, over all peers together. Excess
@@ -313,6 +355,14 @@ its bounded outbox (64 messages) fills up.
 - PoW verification of headers costs about 0.45 s per header in RandomX light mode.
   Parallel verification divides this by the number of cores. Initial sync of a long
   chain is still slow until RandomX gets faster (AUDIT.md R1).
+- **Cheap valid-PoW headers.** Headers that satisfy every rule, including proof of
+  work at a low difficulty (early testnet), are valid and stored. A side branch mined
+  from genesis at low difficulty costs its miner little.
+  - There is no minimum-chain-work rule and no pruning of side branches
+    (consensus.md §8, policy K4).
+  - Bodies of such blocks are stored before they are validated (the completion
+    report's N-2).
+  - Both are open.
 - There is no compact-block relay; a full block is sent once per peer that lacks it.
 - Dandelion++'s parameters follow Monero. They have not been re-tuned for BlackSilk's
   network size.

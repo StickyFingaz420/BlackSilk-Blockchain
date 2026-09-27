@@ -44,7 +44,20 @@ fn run(cfg: Config) -> Result<(), String> {
         .try_lock_exclusive()
         .map_err(|_| format!("{} is in use by another node", data_dir.display()))?;
 
-    let store = FileStore::open(data_dir.join("blocks.dat")).map_err(|e| e.to_string())?;
+    let store_path = data_dir.join("blocks.dat");
+    if cfg.repair_store {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        match FileStore::repair(&store_path, now).map_err(|e| format!("repair: {e}"))? {
+            0 => log::info!("{}: no damage found", store_path.display()),
+            n => log::warn!(
+                "{}: {n} bytes set aside; the node resyncs them",
+                store_path.display()
+            ),
+        }
+    }
+    let store = FileStore::open(&store_path).map_err(|e| e.to_string())?;
     let mut seed = [0u8; 32];
     getrandom::getrandom(&mut seed).map_err(|e| format!("OS RNG: {e}"))?;
     log::info!(
@@ -61,7 +74,15 @@ fn run(cfg: Config) -> Result<(), String> {
         Box::new(store),
         seed,
     )
-    .map_err(|e| format!("block store: {e}"))?;
+    .map_err(|e| {
+        if e.kind() == std::io::ErrorKind::InvalidData {
+            format!(
+                "block store: {e}. If this reports a corrupt record followed by valid data,                  restart once with --repair-store (docs/testnet.md §9)"
+            )
+        } else {
+            format!("block store: {e}")
+        }
+    })?;
     log::info!(
         "chain loaded in {:.1?}: height {}, tip {}",
         started.elapsed(),

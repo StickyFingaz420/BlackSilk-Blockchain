@@ -78,6 +78,8 @@ pub struct NetConfig {
     pub trickle_inbound: Duration,
     pub pow_threads: usize,
     pub tick: Duration,
+    /// Per-peer rate limits (docs/p2p.md §10). Tests shrink them.
+    pub peer_limits: PeerLimits,
 }
 
 impl NetConfig {
@@ -101,6 +103,7 @@ impl NetConfig {
             trickle_inbound: Duration::from_secs(5),
             pow_threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
             tick: Duration::from_millis(250),
+            peer_limits: PeerLimits::default(),
         }
     }
 }
@@ -150,6 +153,12 @@ struct Peer {
     last_recv: Instant,
     blocks_in_flight: usize,
     headers_requested: Option<Instant>,
+    /// A header batch from this peer is queued for, or under, verification by
+    /// the header worker. At most one per peer: the queue is bounded by the
+    /// number of peers, and the peer is not asked for more headers meanwhile.
+    headers_busy: bool,
+    /// Headers arrived while `headers_busy`; ask again once the batch is done.
+    headers_pending: bool,
 }
 
 struct StemEntry {
@@ -182,9 +191,21 @@ struct State {
     slow_disconnects: u64,
 }
 
+/// A header batch waiting for the header worker, with its sender's address
+/// (a sender that disconnects before its batch is verified is still banned).
+struct HeaderBatch {
+    peer: PeerId,
+    addr: NetAddr,
+    proxied: bool,
+    headers: Vec<BlockHeader>,
+}
+
 struct Inner {
     chain: SharedChain,
     cfg: NetConfig,
+    /// To the header worker (`header_worker`): batches are verified there, one
+    /// at a time, never on a peer's read loop.
+    header_queue: mpsc::UnboundedSender<HeaderBatch>,
     state: Mutex<State>,
     next_id: AtomicU64,
     local_addr: Option<SocketAddr>,
@@ -253,9 +274,11 @@ impl Network {
             misbehaving_disconnects: 0,
             slow_disconnects: 0,
         };
+        let (header_queue, header_rx) = mpsc::unbounded_channel();
         let inner = Arc::new(Inner {
             chain,
             cfg,
+            header_queue,
             state: Mutex::new(state),
             next_id: AtomicU64::new(1),
             local_addr,
@@ -264,6 +287,7 @@ impl Network {
             tokio::spawn(accept_loop(inner.clone(), l));
         }
         tokio::spawn(maintenance_loop(inner.clone()));
+        tokio::spawn(header_worker(inner.clone(), header_rx));
         Ok(Network { inner })
     }
 
@@ -389,6 +413,29 @@ impl Inner {
             let local = ip.is_loopback() && self.cfg.allow_private;
             if !proxied && !local {
                 st.bans.ban(ip, now + BAN_SECS);
+            }
+        }
+    }
+
+    /// `misbehave` for work that finished after its sender disconnected: a
+    /// violation worth a ban on its own still bans the address.
+    fn misbehave_departed(&self, batch: &HeaderBatch, points: u32, reason: &str) {
+        if self.state().peers.contains_key(&batch.peer) {
+            return self.misbehave(batch.peer, points, reason);
+        }
+        if points < BAN_THRESHOLD {
+            return;
+        }
+        log::info!(
+            "banning departed peer {} for misbehavior: {reason}",
+            batch.addr
+        );
+        let mut st = self.state();
+        st.misbehaving_disconnects += 1;
+        if let Some(ip) = batch.addr.ip() {
+            let local = ip.is_loopback() && self.cfg.allow_private;
+            if !batch.proxied && !local {
+                st.bans.ban(ip, unix_now() + BAN_SECS);
             }
         }
     }
@@ -629,7 +676,7 @@ async fn run_connection<S>(
                 relay_txs: theirs.relay_txs,
                 height: theirs.height,
                 score: 0,
-                limits: PeerLimits::default(),
+                limits: inner.cfg.peer_limits.clone(),
                 answered_getaddr: false,
                 received_addr_batch: false,
                 inv_queue: Vec::new(),
@@ -641,6 +688,8 @@ async fn run_connection<S>(
                 last_recv: now,
                 blocks_in_flight: 0,
                 headers_requested: None,
+                headers_busy: false,
+                headers_pending: false,
             },
         );
     }
@@ -668,14 +717,14 @@ async fn run_connection<S>(
                     Ok(Err(e)) => { inner.misbehave(id, score::PROTOCOL, &format!("transport: {e}")); break; }
                     Ok(Ok(f)) => f,
                 };
-                // Rate limits.
+                // Rate limits. Every message counts against the message budget.
                 let over = {
                     let mut st = inner.state();
                     let now = Instant::now();
                     match st.peers.get_mut(&id) {
                         Some(p) => {
                             p.last_recv = now;
-                            !(p.limits.messages.take(1.0, now) && p.limits.bytes.take(frame.len() as f64, now))
+                            !p.limits.messages.take(1.0, now)
                         }
                         None => break,
                     }
@@ -688,6 +737,25 @@ async fn run_connection<S>(
                     Ok(m) => m,
                     Err(e) => { inner.misbehave(id, score::PROTOCOL, &format!("malformed message: {e:?}")); break; }
                 };
+                // The byte budget limits what a peer sends on its own initiative.
+                // Answers to our own requests are exempt: a block we requested
+                // (bounded by our request window, BLOCKS_IN_FLIGHT blocks of at
+                // most MAX_BLOCK_BYTES) and the headers we asked for (one
+                // outstanding request, at most MAX_HEADERS headers). Charging
+                // them would drop the data we asked for during a sync.
+                let requested = requested_by_us(&inner, id, &msg);
+                let over = !requested && {
+                    let mut st = inner.state();
+                    let now = Instant::now();
+                    match st.peers.get_mut(&id) {
+                        Some(p) => !p.limits.bytes.take(frame.len() as f64, now),
+                        None => break,
+                    }
+                };
+                if over {
+                    inner.misbehave(id, score::RATE, "byte rate limit");
+                    continue;
+                }
                 handle(&inner, id, msg).await;
             }
         }
@@ -720,6 +788,35 @@ async fn write_loop<W: AsyncWrite + Unpin>(
 
 // ---------------------------------------------------------------- handlers
 
+/// Whether `msg` answers a request we sent `peer` and are still waiting for:
+/// a block we requested (only its header, the first `HEADER_SIZE` bytes, is
+/// read), or headers while a `GetHeaders` is outstanding.
+fn requested_by_us(inner: &Inner, peer: PeerId, msg: &Message) -> bool {
+    let bytes = match msg {
+        Message::Block(bytes) => bytes,
+        Message::Headers(_) => {
+            return inner
+                .state()
+                .peers
+                .get(&peer)
+                .is_some_and(|p| p.headers_requested.is_some());
+        }
+        _ => return false,
+    };
+    let Some(header) = bytes
+        .get(..blacksilk_consensus::HEADER_SIZE)
+        .and_then(BlockHeader::from_bytes)
+    else {
+        return false;
+    };
+    let id = header.id(inner.cfg.network_id);
+    inner
+        .state()
+        .block_requests
+        .get(&id)
+        .is_some_and(|(p, _)| *p == peer)
+}
+
 async fn handle(inner: &Arc<Inner>, peer: PeerId, msg: Message) {
     match msg {
         Message::Version(_) | Message::Verack => {
@@ -749,7 +846,7 @@ async fn handle(inner: &Arc<Inner>, peer: PeerId, msg: Message) {
                 .headers_after(&locator, &stop, MAX_HEADERS as usize);
             inner.send_now(peer, Message::Headers(headers));
         }
-        Message::Headers(headers) => on_headers(inner, peer, headers).await,
+        Message::Headers(headers) => on_headers(inner, peer, headers),
         Message::GetBlocks(ids) => on_get_blocks(inner, peer, ids),
         Message::Block(bytes) => on_block(inner, peer, bytes).await,
         Message::NotFound(ids) => {
@@ -835,63 +932,193 @@ fn on_addr(inner: &Arc<Inner>, peer: PeerId, addrs: Vec<NetAddr>) {
     }
 }
 
-async fn on_headers(inner: &Arc<Inner>, peer: PeerId, headers: Vec<BlockHeader>) {
-    if let Some(p) = inner.state().peers.get_mut(&peer) {
-        p.headers_requested = None;
-    }
-    let Some(last) = headers.last().copied() else {
-        return;
-    };
+/// Receives a `Headers` message on the peer's read loop. Only cheap checks run
+/// here; the batch is verified by the header worker, so the read loop keeps
+/// answering pings however long the proof of work takes (docs/p2p.md §6).
+fn on_headers(inner: &Arc<Inner>, peer: PeerId, headers: Vec<BlockHeader>) {
     let nid = inner.cfg.network_id;
-    for w in headers.windows(2) {
-        if w[1].prev_id != w[0].id(nid) || w[1].height != w[0].height + 1 {
-            inner.misbehave(peer, score::UNCONNECTED_HEADERS, "headers are not a chain");
+    let penalty = {
+        let mut st = inner.state();
+        let Some(p) = st.peers.get_mut(&peer) else {
+            return;
+        };
+        let solicited = p.headers_requested.take().is_some();
+        if headers.is_empty() {
             return;
         }
-    }
-    let jobs = {
-        let c = inner.chain();
-        if c.header(&headers[0].prev_id).is_none() {
+        if !solicited && headers.len() > 1 {
+            // Unrequested headers are tip announcements: one header. A longer
+            // batch would make us verify work we never asked for.
+            Some((score::UNSOLICITED, "unrequested header batch"))
+        } else if headers
+            .windows(2)
+            .any(|w| w[1].prev_id != w[0].id(nid) || w[1].height != w[0].height + 1)
+        {
+            Some((score::UNCONNECTED_HEADERS, "headers are not a chain"))
+        } else if p.headers_busy {
+            // Still verifying this peer's previous batch; ask again afterwards.
+            p.headers_pending = true;
             None
         } else {
-            Some(c.pow_jobs(&headers))
-        }
-    };
-    let Some(jobs) = jobs else {
-        // Does not connect to anything we know: a gap or a deeper fork.
-        if headers.len() > 1 {
-            inner.misbehave(peer, score::UNCONNECTED_HEADERS, "headers do not connect");
-        }
-        inner.request_headers(peer);
-        return;
-    };
-    let full = headers.len() as u64 == MAX_HEADERS;
-    let inner2 = inner.clone();
-    let threads = inner.cfg.pow_threads;
-    let result = tokio::task::spawn_blocking(move || {
-        if let Some((pow, jobs)) = jobs {
-            pow.compute_parallel(&jobs, threads);
-        }
-        inner2.chain().accept_headers(&headers, unix_now())
-    })
-    .await;
-    match result {
-        Ok(Ok(_)) => {
-            if let Some(p) = inner.state().peers.get_mut(&peer) {
-                p.height = p.height.max(last.height);
+            p.headers_busy = true;
+            let batch = HeaderBatch {
+                peer,
+                addr: p.addr.clone(),
+                proxied: p.proxied,
+                headers,
+            };
+            if inner.header_queue.send(batch).is_err() {
+                p.headers_busy = false;
             }
-            if full {
+            None
+        }
+    };
+    if let Some((points, reason)) = penalty {
+        inner.misbehave(peer, points, reason);
+    }
+}
+
+/// Outcome of verifying one header batch.
+enum HeaderOutcome {
+    /// Every header is stored (new or already known); `last` is the height of
+    /// the last one.
+    Accepted { last: u64 },
+    /// The first header does not connect to anything we know.
+    Unconnected,
+    /// A header failed; the ones before it are stored.
+    Failed(HeaderError),
+}
+
+/// Verifies header batches one at a time (docs/p2p.md §6):
+/// 1. every rule except proof of work, for the whole batch, before any RandomX
+///    hash (`ChainManager::precheck_headers`);
+/// 2. proof of work in chunks of `pow_threads` headers, each chunk accepted
+///    before the next is hashed, so a batch that fails costs at most one
+///    chunk of hashes beyond its last valid header.
+///
+/// One worker for all peers: batches from several peers covering the same
+/// headers are hashed once (the second finds them stored).
+async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<HeaderBatch>) {
+    while let Some(mut batch) = rx.recv().await {
+        let peer = batch.peer;
+        let headers = std::mem::take(&mut batch.headers);
+        let full = headers.len() as u64 == MAX_HEADERS;
+        let count = headers.len();
+        let last_height = headers.last().map_or(0, |h| h.height);
+        let inner2 = inner.clone();
+        let outcome = tokio::task::spawn_blocking(move || verify_headers(&inner2, &headers)).await;
+        let pending = {
+            let mut st = inner.state();
+            match st.peers.get_mut(&peer) {
+                Some(p) => {
+                    p.headers_busy = false;
+                    std::mem::take(&mut p.headers_pending)
+                }
+                None => false,
+            }
+        };
+        match outcome {
+            Ok(HeaderOutcome::Accepted { last }) => {
+                if let Some(p) = inner.state().peers.get_mut(&peer) {
+                    p.height = p.height.max(last);
+                }
+                if full || pending {
+                    inner.request_headers(peer);
+                }
+            }
+            Ok(HeaderOutcome::Unconnected) => {
+                // A gap or a deeper fork: fetch from our locator.
+                if count > 1 {
+                    inner.misbehave_departed(
+                        &batch,
+                        score::UNCONNECTED_HEADERS,
+                        "headers do not connect",
+                    );
+                }
+                inner.request_headers(peer);
+            }
+            Ok(HeaderOutcome::Failed(e)) => {
+                on_header_error(&inner, &batch, e, last_height, pending)
+            }
+            Err(e) => log::error!("header task failed: {e}"),
+        }
+        schedule_downloads(&inner);
+    }
+}
+
+/// Pre-check, then chunked proof of work and acceptance. Runs on a blocking
+/// thread; the chain lock is held only for the cheap steps, never while
+/// hashing.
+fn verify_headers(inner: &Inner, headers: &[BlockHeader]) -> HeaderOutcome {
+    let now = unix_now();
+    let checked = {
+        let c = inner.chain();
+        if c.header(&headers[0].prev_id).is_none() {
+            return HeaderOutcome::Unconnected;
+        }
+        c.precheck_headers(headers, now)
+    };
+    let (good, precheck_error) = match checked {
+        Ok(()) => (headers, None),
+        Err((i, e)) => (&headers[..i], Some(e)),
+    };
+    let chunk = inner.cfg.pow_threads.max(1);
+    for part in good.chunks(chunk) {
+        let jobs = inner.chain().pow_jobs(part);
+        let Some((pow, jobs)) = jobs else {
+            return HeaderOutcome::Unconnected;
+        };
+        pow.compute_parallel(&jobs, chunk);
+        if let Err((_, e)) = inner.chain().accept_headers(part, now) {
+            return HeaderOutcome::Failed(e);
+        }
+    }
+    match precheck_error {
+        Some(e) => HeaderOutcome::Failed(e),
+        None => HeaderOutcome::Accepted {
+            last: headers.last().map_or(0, |h| h.height),
+        },
+    }
+}
+
+/// Penalties for a failed header batch. Only failures a peer can check itself
+/// from the headers are penalized:
+/// - `InvalidParent` means the header descends from a block whose *body* we
+///   found invalid. A peer relaying headers cannot know that without the body
+///   (it may not have downloaded it yet, or its sender withholds it), so it is
+///   not penalized; we stop asking it for headers until it announces again.
+/// - `Duplicate` and `TimestampTooFarInFuture` are not permanent.
+/// - Every other failure is a header that breaks the rules: the peer relayed
+///   it without checking, and is penalized.
+fn on_header_error(
+    inner: &Arc<Inner>,
+    batch: &HeaderBatch,
+    e: HeaderError,
+    last_height: u64,
+    pending: bool,
+) {
+    let peer = batch.peer;
+    match e {
+        HeaderError::Duplicate | HeaderError::TimestampTooFarInFuture { .. } => {}
+        HeaderError::UnknownParent => inner.request_headers(peer),
+        HeaderError::InvalidParent => {
+            log::info!(
+                "peer {peer} relays headers (up to height {last_height}) descending from a block with an invalid body"
+            );
+            let ours = inner.chain().header_height();
+            if let Some(p) = inner.state().peers.get_mut(&peer) {
+                p.height = p.height.min(ours);
+            }
+            if pending {
                 inner.request_headers(peer);
             }
         }
-        Ok(Err((_, e))) => match e {
-            HeaderError::Duplicate | HeaderError::TimestampTooFarInFuture { .. } => {}
-            HeaderError::UnknownParent => inner.request_headers(peer),
-            e => inner.misbehave(peer, score::INVALID_HEADER, &format!("invalid header: {e}")),
-        },
-        Err(e) => log::error!("header task failed: {e}"),
+        e => inner.misbehave_departed(
+            batch,
+            score::INVALID_HEADER,
+            &format!("invalid header: {e}"),
+        ),
     }
-    schedule_downloads(inner);
 }
 
 fn on_get_blocks(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) {
@@ -955,7 +1182,12 @@ async fn on_block(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
             inner.misbehave(peer, score::INVALID_BLOCK, &format!("invalid block: {e:?}"))
         }
         Ok(Err(SubmitError::Header(e))) => match e {
-            HeaderError::Duplicate | HeaderError::TimestampTooFarInFuture { .. } => {}
+            // `InvalidParent`: the parent's body was found invalid, possibly
+            // after we requested this block (a race), so it is not the
+            // sender's fault; an unrequested block was already charged above.
+            HeaderError::Duplicate
+            | HeaderError::TimestampTooFarInFuture { .. }
+            | HeaderError::InvalidParent => {}
             HeaderError::UnknownParent => inner.request_headers(peer),
             e => inner.misbehave(
                 peer,
@@ -1438,7 +1670,9 @@ async fn maintenance_loop(inner: Arc<Inner>) {
             .state()
             .peers
             .iter()
-            .filter(|(_, p)| p.height > header_height && p.headers_requested.is_none())
+            .filter(|(_, p)| {
+                p.height > header_height && p.headers_requested.is_none() && !p.headers_busy
+            })
             .map(|(id, _)| *id)
             .collect();
         for p in behind {

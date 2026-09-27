@@ -75,6 +75,10 @@ struct Args {
     /// about a minute, during which the harness loop pauses. 0 disables it.
     #[arg(long, default_value_t = 0)]
     px_every_mins: u64,
+    /// Run the miners in full mode (the miner's default: a 2 GiB dataset each,
+    /// rebuilt at every RandomX key switch) instead of light mode.
+    #[arg(long)]
+    miner_full: bool,
 }
 
 fn rpc_port(base: u16, i: usize) -> u16 {
@@ -344,10 +348,9 @@ fn main() {
     let miner_nodes = [0, n / 2];
     for (k, &node) in miner_nodes.iter().enumerate() {
         let addr = wallets[k].1.address(0, 0);
-        let args: Vec<String> = vec![
+        let mut args: Vec<String> = vec![
             "--node".into(),
             local(rpc_port(a.base_port, node)).to_string(),
-            "--light".into(),
             "--threads".into(),
             a.miner_threads.to_string(),
             "--refresh".into(),
@@ -355,6 +358,9 @@ fn main() {
             "--address".into(),
             addr,
         ];
+        if !a.miner_full {
+            args.push("--light".into());
+        }
         procs.push(spawn(
             &miner_bin,
             &args,

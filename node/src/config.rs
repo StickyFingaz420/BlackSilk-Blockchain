@@ -78,6 +78,12 @@ pub struct Args {
     /// Log filter, e.g. info, debug, blacksilk_p2p=debug.
     #[arg(long)]
     pub log: Option<String>,
+    /// Repair a block store that refuses to load because of damage followed by
+    /// valid data: the damaged part is moved to blocks.dat.damaged-<time>, the
+    /// store is truncated there, and the dropped blocks are downloaded again.
+    /// Command line only; use it only after that load error (docs/testnet.md §9).
+    #[arg(long)]
+    pub repair_store: bool,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -119,6 +125,7 @@ pub struct Config {
     pub rpc_bind: SocketAddr,
     pub log: String,
     pub p2p: Option<P2pConfig>,
+    pub repair_store: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -245,6 +252,7 @@ impl Config {
             rpc_bind,
             log,
             p2p,
+            repair_store: args.repair_store,
         })
     }
 }

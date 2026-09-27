@@ -238,6 +238,9 @@ process's log.
 | Wallet `insufficient unlocked funds` | Coinbase needs 60 blocks, other outputs 10 |
 | A transfer never confirms | Run `sync` again later: the wallet rebroadcasts the same transaction every 20 blocks and releases its funds itself if the node finds it invalid. Use `clear-pending` only if the transaction certainly never left the wallet (docs/px.md §12) |
 | `WARN … reorganization: disconnecting N block(s)` | A reorganization of 10 or more blocks: follow docs/testnet-incident-response.md |
+| `block store: … corrupt record at offset … followed by valid data` at start | Real corruption in `blocks.dat` (not a crash, which the node repairs itself). Back up the data directory, then start once with `--repair-store`: the damaged part moves to `blocks.dat.damaged-<time>` and the node downloads the dropped blocks again (docs/blocks.md §8) |
+| `block store: … refuses writes after a failed write` or `SubmitError::Store` in the log | The disk is full or failing. Free space, then restart the node; it resumes from the last stored block |
+| `N stored block(s) without a stored parent were not replayed` at start | After a failed write: harmless, the node downloads them again |
 
 ## 10. Private execution (PX)
 
