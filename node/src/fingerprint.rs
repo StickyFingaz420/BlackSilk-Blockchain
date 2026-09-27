@@ -61,6 +61,7 @@ fn chain_entries(network: Network) -> Manifest {
         seed_epoch,
         seed_lag,
         genesis,
+        schedule,
     } = &p;
     let mut m = Manifest::new();
     m.text("chain.network", crate::network_name(*n))
@@ -86,12 +87,28 @@ fn chain_entries(network: Network) -> Manifest {
             ]
             .map(|h| seed_height(h, *seed_epoch, *seed_lag)),
         );
+    // The activation table: every epoch, in order (docs/consensus.md §11).
+    m.size("schedule.len", schedule.len());
+    for (i, e) in schedule.epochs().iter().enumerate() {
+        m.list(
+            &format!("schedule.epoch[{i}] (activation, header version, branch id, verifier id)"),
+            [
+                e.activation_height,
+                u64::from(e.header_version),
+                u64::from(e.branch_id),
+                u64::from(e.verifier_id),
+            ],
+        );
+    }
+    // The rules at genesis; later epochs differ only in the scheduled fields above.
     let TxRules {
         network_id: rules_network_id,
+        branch_id,
         fee_per_weight,
         max_block_weight,
-    } = TxRules::for_chain(&p);
+    } = TxRules::at_height(&p, 0);
     m.u("rules.network_id", rules_network_id)
+        .u("rules.branch_id", branch_id)
         .u("rules.fee_per_weight", fee_per_weight)
         .u("rules.max_block_weight", max_block_weight);
 
@@ -128,6 +145,8 @@ fn chain_entries(network: Network) -> Manifest {
         .u("tx.MAX_PX_BLOCK_BYTES", tx::MAX_PX_BLOCK_BYTES)
         .u("tx.PX_FEE_PER_BYTE", tx::PX_FEE_PER_BYTE)
         .u("tx.PX_STANDARD_FEE", tx::PX_STANDARD_FEE)
+        .u("tx.DEPLOY_FEE_PER_BYTE", tx::DEPLOY_FEE_PER_BYTE)
+        .u("tx.MAX_DEPLOY_BLOCK_BYTES", tx::MAX_DEPLOY_BLOCK_BYTES)
         .size("tx.MAX_PAYOUTS", tx::MAX_PAYOUTS)
         .size("tx.MAX_FN_OUTPUT_WORDS", tx::MAX_FN_OUTPUT_WORDS)
         .size("tx.MAX_DEPLOY_PROGRAMS", tx::MAX_DEPLOY_PROGRAMS)

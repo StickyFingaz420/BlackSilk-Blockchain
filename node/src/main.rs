@@ -99,7 +99,7 @@ fn run(cfg: Config) -> Result<(), String> {
     let started = std::time::Instant::now();
     let manager = ChainManager::open(
         params.clone(),
-        TxRules::for_chain(&params),
+        TxRules::at_height(&params, 0), // base constants; the manager selects rules per height
         Arc::new(RandomXPow::new()),
         Box::new(store),
         seed,

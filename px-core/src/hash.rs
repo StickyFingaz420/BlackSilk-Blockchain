@@ -13,13 +13,37 @@
 //! permutation behaves ideally (docs/px.md §8 lists this assumption).
 //!
 //! **Tree nodes** use the 2-to-1 compression `node(l, r) = P(l ‖ r)[0..8]`
-//! (one permutation; the construction of Plonky3's own Merkle trees,
-//! `TruncatedPermutation`), with 124-bit collision resistance in the same
-//! model. It is separated from the sponge because every sponge call has a
-//! nonzero domain constant in word 8, while a node input has there the first
-//! element of a right child: equality needs a digest whose last seven
-//! elements equal `[domain, len, 0, 0, 0, 0, 0]`, a 2^−186 event.
-//! Depth is fixed at 32, so a leaf can never be read as a node.
+//! (one permutation, truncated, **without feed-forward**; the construction of
+//! Plonky3's own Merkle trees, `TruncatedPermutation`).
+//!
+//! **`node()` alone is not collision resistant.** `P` is an invertible public
+//! permutation, so anyone can pick two outputs `d ‖ u₁` and `d ‖ u₂` and apply
+//! `P⁻¹` to get two different child pairs with the same node `d` (R2-C6;
+//! confirmed by the SX1 cross-review). The PX commitment tree is nevertheless
+//! believed to be about 2^124-binding, for two reasons that are an argument,
+//! not a proof:
+//! - **leaves are anchored**: a leaf is a sponge output, whose first
+//!   permutation input must have capacity words `(domain, len, 0, …)`;
+//!   reaching one by inverting from a node is a constrained-input (CICO)
+//!   problem of about 2^248 work;
+//! - **depth is fixed at 32**, so a leaf is never read as a node; a forged path
+//!   from an accepted root is then a meet-in-the-middle on 248-bit nodes, about
+//!   2^124.
+//!
+//! **Never reuse `node()` in a tree whose leaves are free** (not sponge
+//! outputs) or whose depth varies: collisions are then trivial. Adding the
+//! feed-forward (`P(x) + x`) is analysed as R2-C6 (an owner decision).
+//!
+//! It is separated from the sponge because every sponge call has a nonzero
+//! domain constant in word 8, while a node input has there the first element
+//! of a right child: equality needs a digest whose last seven elements equal
+//! `[domain, len, 0, 0, 0, 0, 0]`, a 2^−186 event.
+//!
+//! **No panics with source locations (R15-6).** Invalid inputs (a
+//! non-canonical element, a wrong declared length) go to
+//! [`Permutation::invalid_input`]. The host panics; the kernel guest halts
+//! with exit code 1 through the SDK, so no source path is compiled into the
+//! consensus-pinned program.
 
 use crate::{add, canonical};
 
@@ -35,6 +59,17 @@ pub const ZERO_DIGEST: Digest = [0; 8];
 /// constants; `blacksilk-px` tests that they agree.
 pub trait Permutation {
     fn permute(&mut self, state: &mut [u32; 16]);
+
+    /// Called when an `Hk` input is invalid: a non-canonical element, or more
+    /// or fewer elements than declared. It is a caller bug (the kernel checks
+    /// every witness element before hashing it), and it must not return.
+    ///
+    /// The default panics, which suits hosts. Guests override it to halt
+    /// without a panic: a panic records its source location (a path) in the
+    /// program, and so in its consensus id (R15-6).
+    fn invalid_input(&mut self) -> ! {
+        panic!("Hk: invalid input (a non-canonical element or a wrong length)")
+    }
 }
 
 /// Domain constants of `Hk`. Each is a distinct canonical element.
@@ -75,12 +110,15 @@ impl Sponge {
 
     /// Absorbs one canonical element.
     ///
-    /// # Panics
-    /// If more elements are absorbed than declared, or `x` is not canonical.
+    /// More elements than declared, or a non-canonical `x`, call
+    /// [`Permutation::invalid_input`].
     pub fn absorb<P: Permutation>(&mut self, perm: &mut P, x: u32) {
-        assert!(self.remaining > 0, "Hk: input longer than declared");
-        assert!(canonical(x), "Hk: non-canonical input");
+        if self.remaining == 0 || !canonical(x) || self.pos >= 8 {
+            perm.invalid_input();
+        }
         self.remaining -= 1;
+        // `pos < 8` is checked above, so the index needs no bounds check,
+        // whose panic would carry a source location (R15-6).
         self.state[self.pos] = add(self.state[self.pos], x);
         self.pos += 1;
         if self.pos == 8 {
@@ -96,10 +134,12 @@ impl Sponge {
         }
     }
 
-    /// # Panics
-    /// If fewer elements were absorbed than declared.
+    /// Fewer elements absorbed than declared call
+    /// [`Permutation::invalid_input`].
     pub fn finish<P: Permutation>(mut self, perm: &mut P) -> Digest {
-        assert_eq!(self.remaining, 0, "Hk: input shorter than declared");
+        if self.remaining != 0 {
+            perm.invalid_input();
+        }
         if self.pos > 0 || !self.permuted {
             perm.permute(&mut self.state);
         }
@@ -113,8 +153,7 @@ impl Sponge {
 /// as [`Sponge`], without its per-element bookkeeping (a test checks they
 /// agree).
 ///
-/// # Panics
-/// If an input element is not canonical.
+/// A non-canonical input element calls [`Permutation::invalid_input`].
 pub fn hash<P: Permutation>(perm: &mut P, domain: u32, parts: &[&[u32]]) -> Digest {
     let len: usize = parts.iter().map(|p| p.len()).sum();
     let mut s = [0u32; 16];
@@ -123,7 +162,11 @@ pub fn hash<P: Permutation>(perm: &mut P, domain: u32, parts: &[&[u32]]) -> Dige
     let mut pos = 0usize;
     for part in parts {
         for &x in part.iter() {
-            assert!(canonical(x), "Hk: non-canonical input");
+            if !canonical(x) || pos >= 8 {
+                perm.invalid_input();
+            }
+            // `pos < 8` is checked above: no bounds check, whose panic
+            // would carry a source location (R15-6).
             s[pos] = add(s[pos], x);
             pos += 1;
             if pos == 8 {

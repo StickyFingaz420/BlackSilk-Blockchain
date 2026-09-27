@@ -35,8 +35,8 @@ const VAULT_BUDGET: Budget = Budget {
     cycles: 6_000,
     keys: 2_200,
     add: 4_300,
-    bit: 200,
-    lt: 3_400,
+    bit: 250,
+    lt: 3_500,
     shift: 200,
     mul: 200,
     poseidon: 22,
@@ -219,7 +219,7 @@ mod old {
             &tx.pseudo_outs,
             &tx.signatures,
             &rings,
-            &tx.signature_message(rules.network_id),
+            &tx.signature_message(rules.domain()),
         )?;
         if let Some(p) = &tx.range_proof {
             let c: Vec<Point> = tx.outputs.iter().map(|o| o.commitment).collect();
@@ -249,7 +249,7 @@ mod old {
             &tx.pseudo_outs,
             &tx.signatures,
             &rings,
-            &tx.signature_message(rules.network_id),
+            &tx.signature_message(rules.domain()),
         )?;
         check_range_proof(&t)
     }
@@ -696,6 +696,12 @@ fn every_error_variant_is_classified() {
         PxInvalidProgram,
         PxDuplicateOutputKey { output: 0 },
         PxNullifierRepeated,
+        PxDuplicateProgram { program: 1 },
+        PxBudgetTooLarge { program: 0 },
+        DeployFeeNotExact {
+            fee: 0,
+            required: 1,
+        },
         PxProof,
     ];
     let contextual = [
@@ -717,8 +723,8 @@ fn every_error_variant_is_classified() {
         assert!(!e.is_stateless(), "{e:?}");
     }
     // `is_stateless` is an exhaustive match, so a new variant cannot compile
-    // unclassified; these lists cover all 33 variants.
-    assert_eq!(stateless.len() + contextual.len(), 33);
+    // unclassified; these lists cover all 36 variants.
+    assert_eq!(stateless.len() + contextual.len(), 36);
 }
 
 // ------------------------------------------------------------------ differential validity

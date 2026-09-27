@@ -12,7 +12,8 @@ current readiness status is in [AUDIT.md](../AUDIT.md).
 > **Status (2026-09-27): the testnet is disabled.** The v2 identity (`0x0001D672`) is
 > retired because this tree enforces a rule v2 builds do not (canonical PX proofs), so
 > the two would fork. `blacksilk-node --network testnet` refuses to start until the v3
-> genesis is generated at launch (`TESTNET_GENESIS_FINAL` in `node/src/config.rs`).
+> genesis is generated at launch (`TESTNET_GENESIS_FINAL` in `node/src/config.rs`), by
+> the procedure and tool in docs/testnet-v3-genesis.md (`tools/genesis`).
 > Until then, use `--network regtest` or the labnet harness. The v2 parameters below
 > are kept for reference and will be replaced by v3's.
 

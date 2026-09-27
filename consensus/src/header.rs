@@ -5,7 +5,10 @@ use crate::hash::{Hash, H};
 /// Length of a serialized header in bytes.
 pub const HEADER_SIZE: usize = 100;
 
-/// The only header version currently valid.
+/// The header version of the first epoch of every built-in schedule
+/// ([`crate::schedule::V3`]), and so of every genesis header. The version a
+/// header must carry is that of the epoch at its height
+/// ([`crate::ChainParams::epoch_at`]).
 pub const HEADER_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -363,6 +363,69 @@ fn contract_rules_reject_their_violations() {
     println!("{n} contract rejection cases");
 }
 
+/// PX-F5 (docs/reviews/px-f4-f5-analysis.md §3): the kernel refuses an
+/// output with `contract ≠ 0` and `owner ≠ 0`, even when the contract's own
+/// function specified exactly that record. Such a record could never be
+/// spent (contract records are spent by approval, with owner 0), so its
+/// value would be burned by a buggy contract.
+///
+/// Native and guest (the kernel ELF run in the interpreter, no proving).
+fn owned_contract_output() -> (Witness, Witness) {
+    let mut rng = ChaCha20Rng::seed_from_u64(41);
+    let state = State::new();
+    let lock = lock_of(&wallet::random_digest(&mut rng));
+    let blind = wallet::random_digest(&mut rng);
+    let (_, fw) = lock_call(500, lock, 0, blind);
+    let outs = [
+        wallet::contract_output(&mut rng, C, 500, lock),
+        wallet::empty_output(&mut rng),
+    ];
+    let ok = with_functions(
+        wallet::witness(
+            state.root(),
+            500,
+            0,
+            [wallet::dummy_input(&mut rng), wallet::dummy_input(&mut rng)],
+            outs,
+        ),
+        &[fw],
+    );
+    // The same LOCK, where the function specifies (and the caller creates)
+    // the vault record with an owner.
+    let owner = Account::from_seed(&[5; 32]).owner(0);
+    let mut bad = ok.clone();
+    bad.outputs[0].owner = owner;
+    bad.functions[0].as_mut().unwrap().spec[0]
+        .as_mut()
+        .unwrap()
+        .owner = owner;
+    (ok, bad)
+}
+
+#[test]
+fn a_contract_output_with_an_owner_is_rejected() {
+    let (ok, bad) = owned_contract_output();
+    assert!(native(&ok).is_ok());
+    assert_eq!(native(&bad).err(), Some(Error::ContractOutputOwner));
+    // Every earlier exit code is unchanged: the variant is appended.
+    assert_eq!(Error::DummyContract.exit_code(), 16);
+    assert_eq!(Error::ContractOutputOwner.exit_code(), 17);
+    // A user output (contract 0) keeps its owner; a contract output with
+    // owner 0 is the valid form (`ok`).
+    assert_eq!(ok.outputs[0].owner, ZERO_DIGEST);
+    let guest = |w: &Witness| {
+        run(&kernel_program(), &witness_words(w), MAX_CYCLES)
+            .unwrap()
+            .exit_code
+    };
+    assert_eq!(guest(&ok), 0);
+    // The pinned guest (rebuilt with PX-F5) agrees with the native kernel.
+    // Before the rebuild the pinned pre-F5 kernel accepted `bad` with exit
+    // code 0 (this assertion read `assert_eq!(guest(&bad), 0)` in the PX-F5
+    // commit): the rule is new.
+    assert_eq!(guest(&bad), Error::ContractOutputOwner.exit_code());
+}
+
 /// A function whose transcript differs from the kernel's (another blind, an
 /// approval of another record) is detected: its `io_hash` differs, so the
 /// statement cannot be satisfied.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The reproducible guest build (README.md). This file is the single source of
-# the build's toolchain check, environment check, build location and rustflags;
-# reproduce.sh sources it.
+# the build's toolchain check, environment check and rustflags; reproduce.sh
+# sources it.
 #
 # Run directly, it rebuilds every guest and copies them to their pinned places:
 #   the test fixtures used by zkvm/tests/guest.rs (guest-sum, guest-arith);
@@ -10,14 +10,11 @@
 # Run ./reproduce.sh afterwards: a changed kernel id is a consensus change and
 # needs the owner's approval and a new testnet identity.
 #
-# Why the build runs at one fixed absolute path (README.md, "Why a fixed build
-# path"): the pinned ELFs embed that path (px-core panic messages), and their
-# symbol tables carry crate hashes that cargo derives from the absolute path of
-# px-core and zkvm/sdk (both outside this workspace). The symbol table's size
-# moves the section header offset, which is in the ELF header, which is inside
-# the first loaded segment, so it is part of the program id. A build anywhere
-# else gives other bytes and, depending on the hash lengths, another id.
-# Requires a Windows host and Git Bash (README.md).
+# Path independence (testnet v3, R15-6; README.md "Path independence"): the
+# guests are linked with --strip-all, so the path-dependent crate hashes in the
+# symbol table are not in the file, and px-core has no panic with a source
+# location on the guest paths (Permutation::invalid_input). The build runs in
+# place, from any checkout path, on any host with bash and the pinned rustc.
 set -euo pipefail
 
 guest_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,12 +23,11 @@ guest_root="$(cd "$guest_here/../.." && pwd)"
 # The pinned compiler (rust-toolchain.toml selects it in this directory).
 GUEST_RUSTC_RELEASE='1.98.1'
 GUEST_RUSTC_COMMIT='48a229cea'
-# The absolute path the pinned binaries were built at.
-GUEST_CANONICAL='C:\Users\Home 01\Desktop\BlackSilk\BlackSilk-Blockchain'
-# The target flags (docs/zkvm.md §4: static, non-PIE, RV32I + Zmmul).
+# The target flags (docs/zkvm.md §4: static, non-PIE, RV32I + Zmmul), and
+# --strip-all: no symbol table, so no path-derived crate hashes in the ELF.
 # .cargo/config.toml carries the same list for ad-hoc `cargo build` runs in this
 # directory; guest_check_config fails on drift.
-GUEST_FLAGS=(-Crelocation-model=static -Ctarget-feature=+zmmul)
+GUEST_FLAGS=(-Crelocation-model=static -Ctarget-feature=+zmmul -Clink-arg=--strip-all)
 
 guest_die() {
   echo "error: $*" >&2
@@ -82,70 +78,19 @@ guest_check_config() {
     guest_die ".cargo/config.toml rustflags differ from GUEST_FLAGS in build.sh; expected: rustflags = [$expected]"
 }
 
-# The checkout's path in Windows form (backslashes). Only MSYS bash (Git Bash)
-# has `pwd -W`; another bash (WSL, Cygwin, Linux) cannot reproduce the build.
-guest_native_root() {
-  local native
-  native="$(cd "$guest_root" && pwd -W 2>/dev/null)" ||
-    guest_die "this bash has no 'pwd -W': run the guest build from Git Bash (MSYS) on Windows (README.md)"
-  echo "${native//\//\\}"
-}
-
-# GUEST_CANONICAL as an MSYS path (C:\a\b -> /c/a/b).
-guest_canonical_posix() {
-  local p="${GUEST_CANONICAL//\\//}"
-  echo "/$(echo "${p:0:1}" | tr '[:upper:]' '[:lower:]')${p:2}"
-}
-
-# Chooses the tree to build and sets GUEST_SRC to its guests directory, always
-# spelled from GUEST_CANONICAL (cargo hashes the path string it is given):
-# - this checkout, when it is at GUEST_CANONICAL;
-# - otherwise, when GUEST_CANONICAL does not exist (a CI runner), a copy of the
-#   guest sources (px-core, zkvm/sdk, zkvm/guests) staged there.
-# It never deletes or overwrites anything: an existing GUEST_CANONICAL that is
-# not this checkout is an error.
-guest_prepare_tree() {
-  local native posix
-  native="$(guest_native_root)"
-  posix="$(guest_canonical_posix)"
-  if [ "$(echo "$native" | tr '[:upper:]' '[:lower:]')" = \
-    "$(echo "$GUEST_CANONICAL" | tr '[:upper:]' '[:lower:]')" ]; then
-    echo "building in place: this checkout is at the canonical path"
-  elif [ -e "$posix" ]; then
-    guest_die "this checkout is not at the canonical build path, and that path exists:
-  $GUEST_CANONICAL
-Run the build from the checkout at that path, or on a host where the path does
-not exist (the script then stages a copy of the guest sources there). A stale
-copy from an earlier run must be removed by hand. README.md, 'Why a fixed build path'."
-  else
-    echo "staging the guest sources at the canonical path $GUEST_CANONICAL"
-    mkdir -p "$posix/zkvm/guests" || guest_die "cannot create $GUEST_CANONICAL"
-    cp -R "$guest_root/px-core" "$posix/px-core"
-    cp -R "$guest_root/zkvm/sdk" "$posix/zkvm/sdk"
-    local item
-    for item in "$guest_here"/* "$guest_here"/.cargo; do
-      [ "$(basename "$item")" = target ] && continue
-      cp -R "$item" "$posix/zkvm/guests/"
-    done
-  fi
-  GUEST_SRC="$posix/zkvm/guests"
-}
-
 # Builds the given guest packages (all without arguments) into
-# $GUEST_OUT/<package>.
+# $GUEST_OUT/<package>, in place.
 guest_build() {
   guest_check_env
   guest_check_config
-  guest_prepare_tree
-  guest_check_rustc "$GUEST_SRC"
+  guest_check_rustc "$guest_here"
   local sep flags f pkgs=()
   sep=$'\x1f'
   flags=""
   for f in "${GUEST_FLAGS[@]}"; do flags+="${flags:+$sep}$f"; done
   for f in "$@"; do pkgs+=(-p "$f"); done
-  # The target directory stays in the checkout (it does not affect the output).
   local target="${CARGO_TARGET_DIR:-$guest_here/target}"
-  (cd "$GUEST_SRC" && CARGO_ENCODED_RUSTFLAGS="$flags" CARGO_TARGET_DIR="$target" \
+  (cd "$guest_here" && CARGO_ENCODED_RUSTFLAGS="$flags" CARGO_TARGET_DIR="$target" \
     cargo build --release --locked "${pkgs[@]}")
   GUEST_OUT="$target/riscv32i-unknown-none-elf/release"
 }

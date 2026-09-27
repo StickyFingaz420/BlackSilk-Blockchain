@@ -235,6 +235,10 @@ struct Peer {
     headers_busy: bool,
     /// Headers arrived while `headers_busy`; ask again once the batch is done.
     headers_pending: bool,
+    /// The peer sent a header of a version above every version this node's
+    /// schedule knows (`HeaderError::UnknownUpgrade`) and the operator was
+    /// warned once for it.
+    warned_upgrade: bool,
 }
 
 struct StemEntry {
@@ -343,6 +347,8 @@ fn remember(set: &mut HashSet<Hash>, ids: impl IntoIterator<Item = Hash>) {
 struct Inner {
     chain: SharedChain,
     cfg: NetConfig,
+    /// The chain's genesis id, bound into the session keys (R15-3).
+    genesis_id: Hash,
     /// To the header worker (`header_worker`): batches are verified there, one
     /// at a time, never on a peer's read loop.
     header_queue: mpsc::UnboundedSender<HeaderBatch>,
@@ -405,11 +411,14 @@ impl Network {
             None => None,
         };
         let local_addr = listener.as_ref().and_then(|l| l.local_addr().ok());
-        let tip = {
+        let (tip, genesis_id) = {
             let chain = chain.clone();
-            tokio::task::spawn_blocking(move || lock_or_exit(&chain, "chain").tip_id())
-                .await
-                .map_err(std::io::Error::other)?
+            tokio::task::spawn_blocking(move || {
+                let c = lock_or_exit(&chain, "chain");
+                (c.tip_id(), c.params().genesis_id())
+            })
+            .await
+            .map_err(std::io::Error::other)?
         };
         let state = State {
             peers: HashMap::new(),
@@ -449,6 +458,7 @@ impl Network {
         let inner = Arc::new(Inner {
             chain,
             cfg,
+            genesis_id,
             header_queue,
             block_queue,
             state: Mutex::new(state),
@@ -674,6 +684,29 @@ impl Inner {
                 .header_queue_origin
                 .get(&queue_key(addr))
                 .is_none_or(|&n| n < self.cfg.max_per_ip.max(1))
+    }
+
+    /// `peer` sent a header whose version no epoch of this node's schedule
+    /// uses (`HeaderError::UnknownUpgrade`): not scored, since the peer may run
+    /// a newer release that is right. Logged at WARN once per peer, so that the
+    /// operator learns an upgrade may be needed.
+    fn warn_unknown_upgrade(&self, peer: PeerId, version: u32) {
+        let first = {
+            let mut st = self.state();
+            match st.peers.get_mut(&peer) {
+                Some(p) if !p.warned_upgrade => {
+                    p.warned_upgrade = true;
+                    true
+                }
+                _ => false,
+            }
+        };
+        if first {
+            log::warn!(
+                "peer {peer} is on a newer consensus version (header version {version}); \
+                 this node may need an upgrade"
+            );
+        }
     }
 
     /// Asks `peer` for headers after our best header chain.
@@ -928,13 +961,16 @@ async fn run_connection<S>(
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let nid = inner.cfg.network_id;
-    let (mut reader, mut writer) = match handshake(stream, !inbound, nid, HANDSHAKE_TIMEOUT).await {
-        Ok(x) => x,
-        Err(e) => {
-            log::debug!("{addr}: transport handshake failed: {e}");
-            return;
-        }
-    };
+    // The session keys also bind the genesis id (R15-3).
+    let genesis = inner.genesis_id;
+    let (mut reader, mut writer) =
+        match handshake(stream, !inbound, nid, &genesis, HANDSHAKE_TIMEOUT).await {
+            Ok(x) => x,
+            Err(e) => {
+                log::debug!("{addr}: transport handshake failed: {e}");
+                return;
+            }
+        };
     // Version exchange.
     let nonce = {
         let mut st = inner.state();
@@ -1069,6 +1105,7 @@ async fn run_connection<S>(
                 headers_grace: None,
                 headers_busy: false,
                 headers_pending: false,
+                warned_upgrade: false,
             },
         );
     }
@@ -1466,6 +1503,7 @@ fn penalized(e: &HeaderError) -> bool {
             | HeaderError::TimestampTooFarInFuture { .. }
             | HeaderError::InvalidParent
             | HeaderError::UnknownParent
+            | HeaderError::UnknownUpgrade { .. }
     )
 }
 
@@ -1745,6 +1783,10 @@ fn verify_headers(
 ///   (it may not have downloaded it yet, or its sender withholds it), so it is
 ///   not penalized; we stop asking it for headers until it announces again.
 /// - `Duplicate` and `TimestampTooFarInFuture` are not permanent.
+/// - `UnknownUpgrade`: the header's version is above every version this
+///   node's schedule knows, so the peer probably runs a newer release and may
+///   be right. It is not penalized; the operator is warned once per peer
+///   (docs/consensus.md §11, docs/p2p.md §6).
 /// - Every other failure is a header that breaks the rules: the peer relayed
 ///   it without checking, and is penalized.
 ///
@@ -1765,6 +1807,7 @@ async fn on_header_error(
             }
         }
         HeaderError::UnknownParent => inner.request_headers(peer).await,
+        HeaderError::UnknownUpgrade { version } => inner.warn_unknown_upgrade(peer, version),
         HeaderError::InvalidParent => {
             log::info!(
                 "peer {peer} relays headers (up to height {last_height}) descending from a block with an invalid body"
@@ -1932,6 +1975,9 @@ async fn block_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<BlockJo
                 | HeaderError::TimestampTooFarInFuture { .. }
                 | HeaderError::InvalidParent => {}
                 HeaderError::UnknownParent => inner.request_headers(peer).await,
+                HeaderError::UnknownUpgrade { version } => {
+                    inner.warn_unknown_upgrade(peer, version)
+                }
                 e => inner.misbehave(
                     peer,
                     score::INVALID_HEADER,
@@ -2223,15 +2269,16 @@ async fn admit_tx(
             // The cheap stateless rules first, as in full validation: a
             // transaction that breaks one is penalized whatever its context.
             use blacksilk_tx::{px, validate};
+            let rules = c.next_rules();
             let stateless = match &*tx {
                 Transaction::Coinbase(_) => Err(blacksilk_tx::TxError::CoinbaseNotAllowed),
                 Transaction::Transfer(t) => {
-                    validate::check_structure(t, c.rules()).and_then(|_| validate::check_balance(t))
+                    validate::check_structure(t, &rules).and_then(|_| validate::check_balance(t))
                 }
                 Transaction::Px(t) => {
                     px::check_px_structure(t).and_then(|_| px::check_px_balance(t))
                 }
-                Transaction::PxDeploy(t) => px::check_deploy_structure(t, c.rules())
+                Transaction::PxDeploy(t) => px::check_deploy_structure(t, &rules)
                     .and_then(|_| validate::check_balance(&t.as_transfer())),
             };
             stateless
@@ -2299,9 +2346,14 @@ fn provably_invalid_signature(c: &ChainManager, ring: Option<&Vec<u64>>) -> bool
 fn proven_invalid(c: &ChainManager, rings: &[Vec<u64>], e: &MempoolError) -> bool {
     match e {
         MempoolError::Invalid(e) => {
-            e.is_stateless()
+            // Near an activation, proofs and signatures made for the
+            // neighbouring rule set fail honestly
+            // (`validate::ACTIVATION_GRACE_BLOCKS`).
+            let next = c.height() + 1;
+            let near = blacksilk_tx::validate::near_activation(c.params(), next);
+            e.is_stateless_at(c.params(), next)
                 || match e {
-                    blacksilk_tx::TxError::InvalidSignature { input } => {
+                    blacksilk_tx::TxError::InvalidSignature { input } if !near => {
                         provably_invalid_signature(c, rings.get(*input))
                     }
                     _ => false,
@@ -2820,7 +2872,10 @@ mod tests {
     async fn control_messages_overtake_queued_block_frames() {
         let (a, b) = tokio::io::duplex(1 << 16);
         let t = Duration::from_secs(5);
-        let (ours, theirs) = tokio::join!(handshake(a, true, 7, t), handshake(b, false, 7, t));
+        let (ours, theirs) = tokio::join!(
+            handshake(a, true, 7, &[3; 32], t),
+            handshake(b, false, 7, &[3; 32], t)
+        );
         let ((_, writer), (mut reader, _)) = (ours.unwrap(), theirs.unwrap());
         let (control_tx, control_rx) = mpsc::channel(OUTBOX);
         let (bulk_tx, bulk_rx) = mpsc::channel(BULK_OUTBOX);
@@ -2862,5 +2917,18 @@ mod tests {
             queue_key(&a),
             queue_key(&NetAddr::parse("1.2.3.5:5").unwrap())
         );
+    }
+
+    /// A header from a newer release (a version no epoch of the schedule
+    /// uses) is not scored; a bad version the schedule does know is.
+    #[test]
+    fn unknown_upgrades_are_not_penalized() {
+        assert!(!penalized(&HeaderError::UnknownUpgrade { version: 9 }));
+        assert!(penalized(&HeaderError::BadVersion {
+            expected: 1,
+            got: 0
+        }));
+        assert!(!penalized(&HeaderError::Duplicate));
+        assert!(penalized(&HeaderError::InsufficientWork));
     }
 }

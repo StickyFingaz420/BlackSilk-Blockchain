@@ -228,12 +228,17 @@ fn consensus_fingerprints_are_pinned() {
 }
 
 /// Changing this is a consensus change and requires a new network id.
+///
+/// v3 candidate values (branch `v3/candidate`): the v3 rule set, the rebuilt
+/// kernel and vault ids, with the testnet's genesis and network id still the
+/// retired v2 ones. The testnet value changes again when the v3 genesis is
+/// generated at launch (docs/testnet-v3-genesis.md §6).
 const TESTNET_FINGERPRINT: &str =
-    "e7b898636c53173d1417108b82fb4314c9e999ba80f072844b60d3a1f602478f";
+    "8876128fbe1b5d83a915a8c1ea4e70f920e5db155779bc0b78cef2a2ecc1cda9";
 /// Changing this is a consensus change and requires a new network id.
 const REGTEST_FINGERPRINT: &str =
-    "d56ea868280b03510b713ba2fef36cf353f5f35fa4fb2260e1e13acd779ac38f";
+    "9cb0c0bff53096b640da1ebdfba6f7134562eaa622afdaa9b9531627b4539a61";
 /// Changing this is a consensus change and requires a new network id. (The
 /// mainnet parameters are provisional; mainnet is not launched.)
 const MAINNET_FINGERPRINT: &str =
-    "a2dc1a58c8434369f28c8bbb2d782293de06cadf2f9e9613e381e82d243bc141";
+    "1ccf1942b48e94b60d3dbc2a1cf2ab8384721dc053b607a09f92226ed5d8edbb";

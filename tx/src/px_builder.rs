@@ -503,16 +503,15 @@ pub fn build_px<R: RngCore + CryptoRng>(
         .iter()
         .map(|f| (f.program.clone(), f.input.clone(), f.budget))
         .collect();
-    let (proven, _, proof) =
-        pxprove::prove(&plan.witness, &runs, tx.binding(rules.network_id), rng)
-            .map_err(PxBuildError::Kernel)?;
+    let (proven, _, proof) = pxprove::prove(&plan.witness, &runs, tx.binding(rules.domain()), rng)
+        .map_err(PxBuildError::Kernel)?;
     if proven != public {
         return Err(PxBuildError::Kernel(TransferError::Shape));
     }
     tx.proof = blacksilk_zk::encode_proof(&proof);
 
     // 5. Signatures over everything but themselves, including the proof.
-    let message = tx.signature_message(rules.network_id);
+    let message = tx.signature_message(rules.domain());
     for (k, x) in prepared.iter().enumerate() {
         let z = x.plan.real.mask - pseudo_masks[k];
         let (sig, _) = clsag::sign(
@@ -549,16 +548,9 @@ pub fn build_px<R: RngCore + CryptoRng>(
 }
 
 /// The fee of a deploy with `inputs` v1 inputs and `outputs` outputs that
-/// registers `programs`: the per-byte fee of an upper bound of its encoded
-/// size.
+/// registers `programs`: exactly [`crate::px::deploy_fee`], a consensus rule.
 pub fn deploy_fee(inputs: usize, outputs: usize, programs: &[crate::px::Registration]) -> u64 {
-    let payload: usize = 32
-        + 10
-        + programs
-            .iter()
-            .map(|p| p.elf.len() + 10 + 80)
-            .sum::<usize>();
-    PX_FEE_PER_BYTE * (crate::builder::max_weight(inputs, outputs) + payload as u64 + 64)
+    crate::px::deploy_fee(inputs, outputs, programs)
 }
 
 /// Builds a signed deploy registering `programs` (binary, budget), paid from
@@ -586,7 +578,7 @@ pub fn build_deploy<R: RngCore + CryptoRng>(
         range_proof: t.range_proof.clone(),
         signatures: Vec::new(),
     };
-    let net = rules.network_id;
+    let net = rules.domain();
     // The v1 part pays the per-byte fee, not the weight fee.
     let relaxed = TxRules {
         fee_per_weight: 0,

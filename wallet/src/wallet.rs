@@ -44,6 +44,7 @@ use blacksilk_tx::px_builder::{
 };
 use blacksilk_tx::scan::scan_block;
 use blacksilk_tx::types::{OutputKey, Transaction};
+use blacksilk_tx::validate::ACTIVATION_GRACE_BLOCKS;
 use rand_core::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -90,6 +91,13 @@ pub enum WalletError {
         wallet: String,
         node: String,
     },
+    /// The node runs the wallet's network (same name) on another chain: its
+    /// genesis id differs from the one recorded in the wallet file, or it does
+    /// not report one (R15-3). Hex ids; `node` is empty when not reported.
+    WrongGenesis {
+        wallet: String,
+        node: String,
+    },
     /// The node sent data inconsistent with itself (bad block encoding or id).
     BadNodeData(String),
     InsufficientFunds {
@@ -108,6 +116,15 @@ pub enum WalletError {
     /// A contract operation that cannot be carried out (unknown contract,
     /// unregistered program, wrong secret, record not spendable).
     Contract(String),
+    /// A consensus upgrade activated while the transaction was being built:
+    /// it is signed (or proven) for branch `built_for`, and the node's next
+    /// block, `height`, needs branch `needed`. Nothing was sent and no funds
+    /// were reserved (docs/reviews/v3-upgrade-mechanism.md §10).
+    EpochChanged {
+        built_for: u32,
+        needed: u32,
+        height: u64,
+    },
     /// An address index too far beyond the highest one that has received
     /// funds (`GAP_LIMIT`, `MAX_INDEX_AHEAD` and their PX counterparts).
     AddressIndex {
@@ -126,6 +143,17 @@ impl std::fmt::Display for WalletError {
             WalletError::WrongNetwork { wallet, node } => {
                 write!(f, "wallet is for {wallet} but the node runs {node}")
             }
+            WalletError::WrongGenesis { wallet, node } if node.is_empty() => write!(
+                f,
+                "the node does not report its genesis id; this wallet belongs to the chain \
+                 with genesis {wallet} and cannot check that the node follows it"
+            ),
+            WalletError::WrongGenesis { wallet, node } => write!(
+                f,
+                "the node follows another chain (genesis {node}) than this wallet \
+                 (genesis {wallet}); use a node of this wallet's chain, or restore the \
+                 seed into a new wallet file for that chain"
+            ),
             WalletError::BadNodeData(e) => write!(f, "inconsistent data from node: {e}"),
             WalletError::InsufficientFunds { available, needed } => write!(
                 f,
@@ -149,6 +177,14 @@ impl std::fmt::Display for WalletError {
             ),
             WalletError::Serialization(e) => write!(f, "wallet data: {e}"),
             WalletError::Contract(e) => write!(f, "contract: {e}"),
+            WalletError::EpochChanged {
+                built_for,
+                needed,
+                height,
+            } => write!(
+                f,
+                "a consensus upgrade activated while the transaction was being built: it was                  signed for branch {built_for:#010x}, and block {height} needs branch                  {needed:#010x}. Nothing was sent and no funds were reserved; run the                  command again"
+            ),
             WalletError::AddressIndex {
                 index,
                 limit,
@@ -219,6 +255,28 @@ struct PendingTx {
     tx: String,
     /// Wallet height of the last (re)broadcast.
     relayed_height: u64,
+    /// The branch id its signatures and PX proof commit to: the epoch of the
+    /// height it was built for (`TxRules::at_height(params, synced + 1)`).
+    /// It is rebroadcast only while the next block is in that epoch. Absent
+    /// in files written before 2026-09-27 (every network then had a single
+    /// epoch): the epoch of `relayed_height + 1` stands in for it.
+    #[serde(default)]
+    branch_id: Option<u32>,
+}
+
+/// A stored transaction dropped because a consensus upgrade made it invalid
+/// before it was mined (`refresh_pending`): its funds were released, and the
+/// payment must be sent again. Kept only as a notice for the user.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StaleTx {
+    /// Transaction id (hex).
+    pub id: String,
+    /// The branch id it was built for.
+    pub built_for: u32,
+    /// The branch id of the next block when it was dropped.
+    pub needed: u32,
+    /// Wallet height when it was dropped.
+    pub height: u64,
 }
 
 /// A decoy of a ring this wallet used, as persisted: its index and, to detect
@@ -264,6 +322,11 @@ impl<'de> Deserialize<'de> for SecretString {
 struct Persisted {
     version: u32,
     network: String,
+    /// The genesis id (hex) of the chain the wallet was created for (R15-3,
+    /// testnet v3). Required: files without it (written before the binding)
+    /// are refused.
+    #[serde(default)]
+    genesis_id: Option<String>,
     seed: SecretString,
     restore_height: u64,
     synced_height: u64,
@@ -289,6 +352,10 @@ struct Persisted {
     /// older files: rebuilt by the next sync and a backfill).
     #[serde(default)]
     output_index: OutputIndex,
+    /// Transactions dropped by an upgrade, still to be sent again (absent in
+    /// files written before 2026-09-27).
+    #[serde(default)]
+    stale_txs: Vec<StaleTx>,
 }
 
 /// The wallet-file format version for a wallet with PX derivation `d`.
@@ -305,6 +372,18 @@ fn file_version(d: Derivation) -> u32 {
 
 pub struct Wallet {
     network: Network,
+    /// The chain's parameters: `ChainParams::for_network`, unless replaced
+    /// by `set_chain_params` (regtest schedules in tests). Transactions are
+    /// built with the rules of the epoch of the next block
+    /// (`TxRules::at_height`).
+    params: ChainParams,
+    /// Transactions dropped by an upgrade (`StaleTx`).
+    stale_txs: Vec<StaleTx>,
+    /// The genesis id of the wallet's chain: recorded in the file and
+    /// compared with the node's at every sync (R15-3). A node of the same
+    /// network name on another genesis (a release candidate, a rehearsal, a
+    /// retired identity) is refused.
+    genesis_id: Hash,
     seed: [u8; 32],
     /// PX key derivation of this wallet (docs/px.md §3.1).
     derivation: Derivation,
@@ -437,7 +516,8 @@ pub struct HeldRecord {
 
 impl Wallet {
     /// A wallet from a 32-byte seed, with the latest PX key derivation.
-    /// `restore_height` is where scanning starts.
+    /// `restore_height` is where scanning starts. The wallet belongs to the
+    /// chain whose genesis this build defines for `network`.
     pub fn from_seed(network: Network, seed: [u8; 32], restore_height: u64) -> Self {
         Self::from_seed_with(network, seed, restore_height, Derivation::LATEST)
     }
@@ -451,8 +531,12 @@ impl Wallet {
         derivation: Derivation,
     ) -> Self {
         let keys = WalletKeys::from_seed(&seed);
+        let params = ChainParams::for_network(network);
         let mut w = Self {
             network,
+            genesis_id: params.genesis_id(),
+            params,
+            stale_txs: Vec::new(),
             seed,
             derivation,
             index: OutputIndex::default(),
@@ -543,6 +627,11 @@ impl Wallet {
         self.network
     }
 
+    /// The genesis id of the wallet's chain.
+    pub fn genesis_id(&self) -> Hash {
+        self.genesis_id
+    }
+
     /// The PX key derivation of this wallet.
     pub fn derivation(&self) -> Derivation {
         self.derivation
@@ -558,6 +647,68 @@ impl Wallet {
 
     pub fn synced_height(&self) -> u64 {
         self.synced_height
+    }
+
+    /// Replaces the chain parameters (by default `ChainParams::for_network`),
+    /// for a chain whose activation schedule differs from the built-in one:
+    /// a regtest upgrade in tests. Not persisted. Refused unless `params`
+    /// belongs to the wallet's network and genesis.
+    pub fn set_chain_params(&mut self, params: ChainParams) -> Result<(), WalletError> {
+        if params.network != self.network || params.genesis_id() != self.genesis_id {
+            return Err(WalletError::WrongGenesis {
+                wallet: hex::encode(self.genesis_id),
+                node: hex::encode(params.genesis_id()),
+            });
+        }
+        self.params = params;
+        Ok(())
+    }
+
+    /// The rules of the block after the synced height, the one a transaction
+    /// built now is meant for (`TxRules::at_height`,
+    /// docs/reviews/v3-upgrade-mechanism.md §2.4). Every transaction this
+    /// wallet builds uses them.
+    pub fn next_block_rules(&self) -> TxRules {
+        TxRules::at_height(&self.params, self.synced_height + 1)
+    }
+
+    /// `next_block_rules`, for a build that was given `given`: those must be
+    /// rules of this wallet's network (any epoch; only the network is
+    /// checked). Warns when an upgrade activates within
+    /// `ACTIVATION_GRACE_BLOCKS` of the next block: the transaction is then
+    /// valid only if it is mined before the upgrade.
+    fn next_rules(&mut self, given: &TxRules) -> Result<TxRules, WalletError> {
+        let rules = self.next_block_rules();
+        if given.network_id != rules.network_id {
+            return Err(WalletError::WrongNetwork {
+                wallet: network_name(self.network).into(),
+                node: format!("network id {:#010x}", given.network_id),
+            });
+        }
+        self.warn_near_activation(self.synced_height + 1, "this transaction");
+        Ok(rules)
+    }
+
+    /// Warns that `what` becomes invalid if an upgrade activates within
+    /// `ACTIVATION_GRACE_BLOCKS` blocks after `next` before it is mined.
+    fn warn_near_activation(&mut self, next: u64, what: &str) {
+        let horizon = next.saturating_add(ACTIVATION_GRACE_BLOCKS);
+        if let Some(e) = self.params.schedule.activation_in(next, horizon) {
+            self.warnings.push(format!(
+                "a consensus upgrade ({}) activates at block {}, {} blocks from now. {what} is                  valid only if it is mined before then; otherwise it can never be mined, the                  wallet releases its funds at a later sync, and you must send it again",
+                e.name,
+                e.activation_height,
+                e.activation_height - next
+            ));
+        }
+    }
+
+    /// Transactions dropped because an upgrade made them invalid before they
+    /// were mined: their funds are released, and the payments must be sent
+    /// again. Kept for `RING_RETENTION_BLOCKS` blocks or until
+    /// `clear_pending`.
+    pub fn stale_transactions(&self) -> &[StaleTx] {
+        &self.stale_txs
     }
 
     fn rebuild_table(&mut self) {
@@ -686,6 +837,7 @@ impl Wallet {
             derivation: Some(self.derivation.number()),
             output_index: self.index.clone(),
             network: network_name(self.network).into(),
+            genesis_id: Some(hex::encode(self.genesis_id)),
             seed: SecretString(Zeroizing::new(hex::encode(self.seed))),
             restore_height: self.restore_height,
             synced_height: self.synced_height,
@@ -699,6 +851,7 @@ impl Wallet {
             px: self.px.clone(),
             pending_txs: self.pending_txs.clone(),
             rings: self.rings.clone(),
+            stale_txs: self.stale_txs.clone(),
         };
         serde_json::to_vec(&p).expect("serializable")
     }
@@ -725,9 +878,22 @@ impl Wallet {
         };
         let network = parse_network(&p.network)
             .ok_or_else(|| WalletError::Serialization("network".into()))?;
+        // Files without a genesis id predate the binding (R15-3) and belong
+        // to a retired chain: refused, not silently bound to this build's
+        // genesis. Their seed is restored into a new file instead.
+        let genesis_id = h32(p.genesis_id.as_deref().ok_or_else(|| {
+            WalletError::Serialization(
+                "the wallet file predates the genesis binding and belongs to a retired chain; \
+                 restore its seed (mnemonic) into a new wallet file"
+                    .into(),
+            )
+        })?)?;
         let mut seed = h32(&p.seed.0)?;
         let mut w = Self::from_seed_with(network, seed, p.restore_height, derivation);
         seed.zeroize();
+        // The recorded id, not this build's: a file written for another
+        // genesis stays bound to it, and the node check refuses the mismatch.
+        w.genesis_id = genesis_id;
         w.index = p.output_index;
         w.synced_height = p.synced_height;
         w.block_ids = p
@@ -740,6 +906,7 @@ impl Wallet {
         w.px = p.px;
         w.pending_txs = p.pending_txs;
         w.rings = p.rings;
+        w.stale_txs = p.stale_txs;
         w.repair_windows();
         w.rebuild_table();
         Ok(w)
@@ -797,6 +964,18 @@ impl Wallet {
                 wallet: network_name(self.network).into(),
                 node: info.network,
             });
+        }
+        // The same network name is not enough: a release candidate, a
+        // rehearsal or a retired identity uses it too (R15-3).
+        let ours = hex::encode(self.genesis_id);
+        match &info.genesis_id {
+            Some(g) if g.eq_ignore_ascii_case(&ours) => {}
+            other => {
+                return Err(WalletError::WrongGenesis {
+                    wallet: ours,
+                    node: other.clone().unwrap_or_default(),
+                })
+            }
         }
         Ok(info)
     }
@@ -1081,6 +1260,7 @@ impl Wallet {
         }
         self.px.clear_pending();
         self.pending_txs.clear();
+        self.stale_txs.clear();
     }
 
     /// Makes every submission save the wallet to `path` **before** the
@@ -1145,10 +1325,32 @@ impl Wallet {
     /// Submits `tx`. Its inputs are reserved and the transaction stored
     /// *before* the request, so a transport failure leaves them reserved
     /// (`WalletError::Uncertain`). Only a definite refusal releases them.
-    fn submit(&mut self, node: &dyn NodeApi, tx: Transaction) -> Result<Hash, WalletError> {
+    ///
+    /// `rules` are those `tx` was built with. If the node's next block is
+    /// already in another epoch (an upgrade activated while the transaction
+    /// was built or proven), nothing is sent or reserved
+    /// (`WalletError::EpochChanged`).
+    fn submit(
+        &mut self,
+        node: &dyn NodeApi,
+        tx: Transaction,
+        rules: &TxRules,
+    ) -> Result<Hash, WalletError> {
         let id = tx.hash();
         let bytes = tx.encode();
         let at = self.synced_height;
+        // The node's tip, not the wallet's: proving takes about a minute. An
+        // unreachable node is left to the submission itself (Uncertain).
+        let tip = node.info().map(|i| i.height).unwrap_or(at).max(at);
+        let needed = self.params.epoch_at(tip + 1).branch_id;
+        if needed != rules.branch_id {
+            self.staged_rings.clear();
+            return Err(WalletError::EpochChanged {
+                built_for: rules.branch_id,
+                needed,
+                height: tip + 1,
+            });
+        }
         // Record everything before the transaction can leave: its reservation,
         // the stored copy, and its rings. Rings are kept even if the node then
         // refuses: reusing a ring that never became public costs nothing, and
@@ -1160,6 +1362,7 @@ impl Wallet {
         self.pending_txs.push(PendingTx {
             tx: hex::encode(&bytes),
             relayed_height: at,
+            branch_id: Some(rules.branch_id),
         });
         let kis: HashSet<String> = tx
             .key_images()
@@ -1210,8 +1413,18 @@ impl Wallet {
 
     /// Maintains the stored transactions after a sync (`PENDING_EXPIRY_BLOCKS`).
     /// Transport errors are ignored here; the next sync retries.
+    ///
+    /// An unconfirmed transaction built for another epoch than the next
+    /// block's (an upgrade activated, or a reorganization went back across
+    /// one) can never be mined as it is: it is not rebroadcast, its unspent
+    /// inputs are released, and it is listed in `stale_transactions` with a
+    /// warning. A new spend of those inputs reuses their stored rings (W-5)
+    /// but shares their key images, so observers who saw the old transaction
+    /// can link the two.
     fn refresh_pending(&mut self, node: &dyn NodeApi) {
         let synced = self.synced_height;
+        let next_branch = self.params.epoch_at(synced + 1).branch_id;
+        let mut unconfirmed = false;
         let mut kept = Vec::new();
         let mut covered_kis = HashSet::new();
         let mut covered_nfs = HashSet::new();
@@ -1240,6 +1453,32 @@ impl Wallet {
                 continue;
             }
             if unspent {
+                let built_for = p.branch_id.unwrap_or_else(|| {
+                    self.params
+                        .epoch_at(p.relayed_height.saturating_add(1))
+                        .branch_id
+                });
+                if built_for != next_branch {
+                    self.for_each_input(&tx, |spent, pending, _| {
+                        if spent.is_none() {
+                            *pending = false;
+                        }
+                    });
+                    let id = hex::encode(tx.hash());
+                    self.warnings.push(format!(
+                        "transaction {id} was built for consensus branch {built_for:#010x}, but                          block {} needs branch {next_branch:#010x} (an upgrade): it can never be                          mined as it is. It was not rebroadcast and its funds are released;                          send the payment again",
+                        synced + 1
+                    ));
+                    self.stale_txs.retain(|s| s.id != id);
+                    self.stale_txs.push(StaleTx {
+                        id,
+                        built_for,
+                        needed: next_branch,
+                        height: synced,
+                    });
+                    continue;
+                }
+                unconfirmed = true;
                 // Re-reserve inputs whose confirmation a reorganization undid.
                 let at = p.relayed_height;
                 self.for_each_input(&tx, |spent, pending, h| {
@@ -1272,6 +1511,12 @@ impl Wallet {
             kept.push(p);
         }
         self.pending_txs = kept;
+        if unconfirmed {
+            self.warn_near_activation(synced + 1, "an unconfirmed transaction of this wallet");
+        }
+        // Notices of dropped transactions expire with the rings' window.
+        self.stale_txs
+            .retain(|s| synced < s.height.saturating_add(RING_RETENTION_BLOCKS));
         // A ring is needed while its output may still be spent again: until the
         // spend is buried, or while a stored transaction still spends it.
         // Only rings of outputs known to be spent and buried beyond the
@@ -1420,6 +1665,10 @@ impl Wallet {
 
     /// Builds, submits and records a transfer of `amount` to `to`. Change goes to
     /// the primary address. Returns the transaction id and the fee.
+    ///
+    /// `rules` only has to belong to this wallet's network: the transaction
+    /// is always built with the rules of the block after the synced height
+    /// (`next_block_rules`), whatever epoch `rules` is for.
     pub fn transfer<R: RngCore + CryptoRng>(
         &mut self,
         node: &dyn NodeApi,
@@ -1429,7 +1678,8 @@ impl Wallet {
         rng: &mut R,
     ) -> Result<(Hash, u64), WalletError> {
         self.sync(node)?;
-        let (inputs, fee) = self.select_inputs(amount, 1, rules)?;
+        let rules = self.next_rules(rules)?;
+        let (inputs, fee) = self.select_inputs(amount, 1, &rules)?;
         let plans = self.plans_for(node, &inputs, rng)?;
         let tx = build_transfer(
             &self.keys,
@@ -1440,11 +1690,11 @@ impl Wallet {
             }],
             &self.primary(),
             fee,
-            rules,
+            &rules,
             rng,
         )
         .map_err(WalletError::Build)?;
-        let id = self.submit(node, Transaction::from(tx))?;
+        let id = self.submit(node, Transaction::from(tx), &rules)?;
         debug_assert!(inputs.iter().all(|&i| self.outputs[i].pending));
         Ok((id, fee))
     }
@@ -1505,8 +1755,13 @@ impl Wallet {
         self.px.balance(self.synced_height)
     }
 
-    fn submit_px(&mut self, node: &dyn NodeApi, tx: PxTx) -> Result<Hash, WalletError> {
-        self.submit(node, Transaction::Px(Box::new(tx)))
+    fn submit_px(
+        &mut self,
+        node: &dyn NodeApi,
+        tx: PxTx,
+        rules: &TxRules,
+    ) -> Result<Hash, WalletError> {
+        self.submit(node, Transaction::Px(Box::new(tx)), rules)
     }
 
     /// v1 inputs covering `needed` (largest first), with their rings.
@@ -1638,7 +1893,7 @@ impl Wallet {
             .get(self.synced_height as usize)
             .ok_or_else(|| WalletError::BadNodeData("short output distribution".into()))?;
         self.complete_index(node, total)?;
-        let target = ChainParams::for_network(self.network).target_block_time;
+        let target = self.params.target_block_time;
         let decoy_err = |e| WalletError::Decoys(format!("{e:?}"));
         let usable = blacksilk_tx::decoy::usable_outputs(cumulative, next).map_err(decoy_err)?;
         // Coinbase outputs of blocks `0..=next − 60` are mature.
@@ -1726,6 +1981,10 @@ impl Wallet {
 
     /// Moves `amount` of v1 funds into PX, to PX address 0. The v1 inputs pay
     /// the amount and the standard PX fee. Returns the transaction id and the fee.
+    ///
+    /// `rules` only has to belong to this wallet's network: the transaction
+    /// is always built with the rules of the block after the synced height
+    /// (`next_block_rules`), whatever epoch `rules` is for.
     pub fn px_deposit<R: RngCore + CryptoRng>(
         &mut self,
         node: &dyn NodeApi,
@@ -1734,6 +1993,7 @@ impl Wallet {
         rng: &mut R,
     ) -> Result<(Hash, u64), WalletError> {
         self.sync(node)?;
+        let rules = self.next_rules(rules)?;
         let fee = px_standard_fee();
         let needed = amount
             .checked_add(fee)
@@ -1766,11 +2026,11 @@ impl Wallet {
                 fee,
                 hedge_secret: self.px_account.hedge_secret(),
             },
-            rules,
+            &rules,
             rng,
         )
         .map_err(|e| WalletError::Rejected(format!("PX build: {e:?}")))?;
-        let id = self.submit_px(node, tx)?;
+        let id = self.submit_px(node, tx, &rules)?;
         debug_assert!(chosen.iter().all(|&i| self.outputs[i].pending));
         Ok((id, fee))
     }
@@ -1807,6 +2067,10 @@ impl Wallet {
     }
 
     /// Pays `amount` privately to a PX address; the fee is paid from PX.
+    ///
+    /// `rules` only has to belong to this wallet's network: the transaction
+    /// is always built with the rules of the block after the synced height
+    /// (`next_block_rules`), whatever epoch `rules` is for.
     pub fn px_send<R: RngCore + CryptoRng>(
         &mut self,
         node: &dyn NodeApi,
@@ -1816,6 +2080,7 @@ impl Wallet {
         rng: &mut R,
     ) -> Result<(Hash, u64), WalletError> {
         self.sync(node)?;
+        let rules = self.next_rules(rules)?;
         let fee = px_standard_fee();
         let (chosen, inputs, total, root) = self.px_inputs(amount.saturating_add(fee), rng)?;
         let change = total - amount - fee;
@@ -1841,18 +2106,22 @@ impl Wallet {
                 fee,
                 hedge_secret: self.px_account.hedge_secret(),
             },
-            rules,
+            &rules,
             rng,
         )
         .map_err(|e| WalletError::Rejected(format!("PX build: {e:?}")))?;
         self.px.issued = self.px.issued.max(1);
-        let id = self.submit_px(node, tx)?;
+        let id = self.submit_px(node, tx, &rules)?;
         debug_assert!(chosen.iter().all(|&i| self.px.records[i].pending));
         Ok((id, fee))
     }
 
     /// Moves `amount` out of PX to a v1 address (a clear-amount payout); the
     /// fee is paid from PX.
+    ///
+    /// `rules` only has to belong to this wallet's network: the transaction
+    /// is always built with the rules of the block after the synced height
+    /// (`next_block_rules`), whatever epoch `rules` is for.
     pub fn px_withdraw<R: RngCore + CryptoRng>(
         &mut self,
         node: &dyn NodeApi,
@@ -1862,6 +2131,7 @@ impl Wallet {
         rng: &mut R,
     ) -> Result<(Hash, u64), WalletError> {
         self.sync(node)?;
+        let rules = self.next_rules(rules)?;
         let fee = px_standard_fee();
         let out = amount.saturating_add(fee);
         let (chosen, inputs, total, root) = self.px_inputs(out, rng)?;
@@ -1891,12 +2161,12 @@ impl Wallet {
                 fee,
                 hedge_secret: self.px_account.hedge_secret(),
             },
-            rules,
+            &rules,
             rng,
         )
         .map_err(|e| WalletError::Rejected(format!("PX build: {e:?}")))?;
         self.px.issued = self.px.issued.max(1);
-        let id = self.submit_px(node, tx)?;
+        let id = self.submit_px(node, tx, &rules)?;
         debug_assert!(chosen.iter().all(|&i| self.px.records[i].pending));
         Ok((id, fee))
     }
@@ -1917,6 +2187,10 @@ impl Wallet {
     /// deployer is hidden behind ring signatures). Returns the transaction id,
     /// the contract id and the fee. The contract is usable from the block
     /// after the deploy confirms.
+    ///
+    /// `rules` only has to belong to this wallet's network: the transaction
+    /// is always built with the rules of the block after the synced height
+    /// (`next_block_rules`), whatever epoch `rules` is for.
     pub fn px_deploy<R: RngCore + CryptoRng>(
         &mut self,
         node: &dyn NodeApi,
@@ -1926,6 +2200,7 @@ impl Wallet {
     ) -> Result<(Hash, Digest, u64), WalletError> {
         check_vault_deploy(&programs)?;
         self.sync(node)?;
+        let rules = self.next_rules(rules)?;
         // Two outputs (the transfer minimum): change, and a zero-value output
         // to this wallet.
         let next = self.synced_height + 1;
@@ -1963,13 +2238,13 @@ impl Wallet {
             &self.primary(),
             salt,
             programs,
-            rules,
+            &rules,
             rng,
         )
         .map_err(WalletError::Build)?;
         let contract = deploy.contract_id();
         let fee = deploy.fee;
-        let id = self.submit(node, Transaction::PxDeploy(Box::new(deploy)))?;
+        let id = self.submit(node, Transaction::PxDeploy(Box::new(deploy)), &rules)?;
         debug_assert!(chosen.iter().all(|&i| self.outputs[i].pending));
         Ok((id, contract, fee))
     }
@@ -1989,6 +2264,10 @@ impl Wallet {
     /// `deliver_to` (the party that will claim it) or to this wallet; this
     /// wallet keeps its own copy either way. The fee is paid from PX. Returns
     /// the transaction id and the vault record's commitment.
+    ///
+    /// `rules` only has to belong to this wallet's network: the transaction
+    /// is always built with the rules of the block after the synced height
+    /// (`next_block_rules`), whatever epoch `rules` is for.
     #[allow(clippy::too_many_arguments)]
     pub fn px_vault_lock<R: RngCore + CryptoRng>(
         &mut self,
@@ -2001,6 +2280,7 @@ impl Wallet {
         rng: &mut R,
     ) -> Result<(Hash, Digest), WalletError> {
         self.sync(node)?;
+        let rules = self.next_rules(rules)?;
         let budget = self.vault_budget(contract)?;
         let fee = px_standard_fee();
         let needed = amount
@@ -2045,7 +2325,7 @@ impl Wallet {
                 fee,
                 hedge_secret: self.px_account.hedge_secret(),
             },
-            rules,
+            &rules,
             rng,
         )
         .map_err(|e| WalletError::Rejected(format!("PX build: {e:?}")))?;
@@ -2076,14 +2356,19 @@ impl Wallet {
         // And the secret: `submit` saves the wallet before sending, so it is
         // on disk before the lock can exist on chain (review R11-W1).
         self.px.set_secret(&cm, secret);
-        match self.submit_px(node, tx) {
+        match self.submit_px(node, tx, &rules) {
             Ok(id) => {
                 debug_assert!(chosen.iter().all(|&i| self.px.records[i].pending));
                 Ok((id, cm))
             }
             Err(e) => {
-                // A definite refusal: the record never existed.
-                if matches!(e, WalletError::Rejected(_)) && !known {
+                // A definite refusal, or nothing sent: the record never
+                // existed.
+                if matches!(
+                    e,
+                    WalletError::Rejected(_) | WalletError::EpochChanged { .. }
+                ) && !known
+                {
                     let hex_cm = crate::px::digest_hex(&cm);
                     self.px.contract_records.retain(|r| r.commitment != hex_cm);
                 }
@@ -2096,6 +2381,10 @@ impl Wallet {
     /// its value to `to` (a PX address) or to this wallet. The fee is paid
     /// from one of this wallet's PX records, or else from v1 funds. Returns
     /// the transaction id and the claimed value.
+    ///
+    /// `rules` only has to belong to this wallet's network: the transaction
+    /// is always built with the rules of the block after the synced height
+    /// (`next_block_rules`), whatever epoch `rules` is for.
     #[allow(clippy::too_many_arguments)]
     pub fn px_vault_claim<R: RngCore + CryptoRng>(
         &mut self,
@@ -2107,6 +2396,7 @@ impl Wallet {
         rng: &mut R,
     ) -> Result<(Hash, u64), WalletError> {
         self.sync(node)?;
+        let rules = self.next_rules(rules)?;
         let anchor = crate::px::anchor_height(self.synced_height);
         let k = self
             .px
@@ -2202,13 +2492,13 @@ impl Wallet {
                 fee,
                 hedge_secret: self.px_account.hedge_secret(),
             },
-            rules,
+            &rules,
             rng,
         )
         .map_err(|e| WalletError::Rejected(format!("PX build: {e:?}")))?;
         self.px.issued = self.px.issued.max(1);
         let records: Vec<usize> = fee_record.into_iter().collect();
-        let id = self.submit_px(node, tx)?;
+        let id = self.submit_px(node, tx, &rules)?;
         debug_assert!(records.iter().all(|&i| self.px.records[i].pending));
         debug_assert!(self.px.contract_records[k].pending);
         Ok((id, rec.value))
@@ -2318,6 +2608,116 @@ mod tests {
 
     fn wallet() -> Wallet {
         Wallet::from_seed(Network::Regtest, [7; 32], 1)
+    }
+
+    /// A regtest node that reports `genesis` and nothing else (R15-3 tests).
+    struct GenesisNode(Option<String>);
+
+    impl NodeApi for GenesisNode {
+        fn info(&self) -> Result<rpc::Info, String> {
+            Ok(rpc::Info {
+                network: "regtest".into(),
+                network_id: ChainParams::regtest().network_id,
+                height: 0,
+                tip: String::new(),
+                difficulty: 1,
+                generated: 0,
+                mempool_txs: 0,
+                mempool_bytes: 0,
+                outputs: 0,
+                peers: 0,
+                header_height: 0,
+                deepest_reorg: 0,
+                misbehaving_disconnects: 0,
+                genesis_id: self.0.clone(),
+                consensus_fingerprint: None,
+                build_commit: None,
+                version: None,
+            })
+        }
+        fn blocks(&self, _: u64, _: u64) -> Result<rpc::Blocks, String> {
+            Ok(rpc::Blocks { blocks: vec![] })
+        }
+        fn distribution(&self, _: u64) -> Result<rpc::Distribution, String> {
+            Err("not used".into())
+        }
+        fn outputs(&self, _: &[u64]) -> Result<rpc::Outputs, String> {
+            Err("not used".into())
+        }
+        fn submit_tx(&self, _: &[u8]) -> Result<rpc::SubmitResult, String> {
+            Err("not used".into())
+        }
+        fn px_commitments(&self, _: u64) -> Result<rpc::PxCommitments, String> {
+            Err("not used".into())
+        }
+        fn px_contracts(&self, _: u64) -> Result<rpc::PxContracts, String> {
+            Err("not used".into())
+        }
+    }
+
+    /// R15-3: the wallet file records the genesis id of its chain, and a node
+    /// of the same network name on another genesis (or reporting none) is
+    /// refused before anything is read from it.
+    #[test]
+    fn the_wallet_is_bound_to_its_genesis() {
+        let ours = ChainParams::regtest().genesis_id();
+        let w = wallet();
+        assert_eq!(w.genesis_id(), ours);
+        // Recorded in the file and restored from it.
+        let json: serde_json::Value = serde_json::from_slice(&w.to_json()).unwrap();
+        assert_eq!(json["genesis_id"], hex::encode(ours));
+        assert_eq!(Wallet::from_json(&w.to_json()).unwrap().genesis_id(), ours);
+
+        // The node of the wallet's chain: accepted.
+        let mut w = wallet();
+        assert!(w
+            .check_network(&GenesisNode(Some(hex::encode(ours))))
+            .is_ok());
+        // Same network name and id, another genesis: refused.
+        let other = hex::encode([0xAB; 32]);
+        match w.sync(&GenesisNode(Some(other.clone()))) {
+            Err(WalletError::WrongGenesis { wallet, node }) => {
+                assert_eq!(wallet, hex::encode(ours));
+                assert_eq!(node, other);
+            }
+            r => panic!("expected WrongGenesis, got {r:?}"),
+        }
+        // A node that does not report a genesis id: refused.
+        assert!(matches!(
+            w.sync(&GenesisNode(None)),
+            Err(WalletError::WrongGenesis { node, .. }) if node.is_empty()
+        ));
+
+        // A file written for another genesis stays bound to it after loading
+        // with this build, and this build's node is refused.
+        let mut json: serde_json::Value = serde_json::from_slice(&w.to_json()).unwrap();
+        json["genesis_id"] = serde_json::Value::String(other.clone());
+        let mut foreign = Wallet::from_json(&serde_json::to_vec(&json).unwrap()).unwrap();
+        assert_eq!(hex::encode(foreign.genesis_id()), other);
+        assert!(matches!(
+            foreign.sync(&GenesisNode(Some(hex::encode(ours)))),
+            Err(WalletError::WrongGenesis { .. })
+        ));
+    }
+
+    /// Files without a genesis id (written before the binding) are refused,
+    /// not silently bound to this build's genesis.
+    #[test]
+    fn files_without_a_genesis_id_are_refused() {
+        let w = wallet();
+        let mut json: serde_json::Value = serde_json::from_slice(&w.to_json()).unwrap();
+        json.as_object_mut().unwrap().remove("genesis_id");
+        let e = Wallet::from_json(&serde_json::to_vec(&json).unwrap())
+            .err()
+            .unwrap();
+        assert!(
+            e.to_string().contains("predates the genesis binding"),
+            "{e}"
+        );
+        // Also with the older file version and derivation (a pre-v3 file).
+        json["version"] = 1.into();
+        json["derivation"] = 1.into();
+        assert!(Wallet::from_json(&serde_json::to_vec(&json).unwrap()).is_err());
     }
 
     fn scanned(w: &Wallet, account: u32, index: u32) -> bool {
@@ -2569,7 +2969,7 @@ mod tests {
                 header_height: 0,
                 deepest_reorg: 0,
                 misbehaving_disconnects: 0,
-                genesis_id: None,
+                genesis_id: Some(hex::encode(ChainParams::regtest().genesis_id())),
                 consensus_fingerprint: None,
                 build_commit: None,
                 version: None,
@@ -2660,7 +3060,7 @@ mod tests {
                 )],
             ),
         ]);
-        let rules = TxRules::for_chain(&ChainParams::regtest());
+        let rules = TxRules::at_height(&ChainParams::regtest(), 0);
         let mut rng = ChaCha20Rng::seed_from_u64(1);
         let secret = [5, 6, 7, 8, 9, 10, 11, 12];
         let mut w = wallet();
@@ -2812,7 +3212,7 @@ mod tests {
     #[test]
     fn outputs_of_one_transaction_are_not_spent_together_unless_needed() {
         use blacksilk_chain::emission::COIN;
-        let rules = TxRules::for_chain(&ChainParams::regtest());
+        let rules = TxRules::at_height(&ChainParams::regtest(), 101);
         let mut w = wallet();
         w.synced_height = 100;
         owned(&mut w, 1, 10 * COIN, Some("aa"), 50);
@@ -2840,6 +3240,52 @@ mod tests {
         owned(&mut w, 3, 8 * COIN, None, 60);
         let (chosen, _) = w.select_inputs(15 * COIN, 1, &rules).unwrap();
         assert_eq!(amounts(&w, &chosen), [8, 10]);
+    }
+
+    /// Stored transactions record the branch id they were built for; files
+    /// written before (no `branch_id`, no `stale_txs`) still load
+    /// (docs/reviews/v3-upgrade-mechanism.md §10).
+    #[test]
+    fn stored_transactions_keep_their_branch_id_and_older_files_load() {
+        let mut w = wallet();
+        w.pending_txs.push(PendingTx {
+            tx: "00".into(),
+            relayed_height: 5,
+            branch_id: Some(7),
+        });
+        w.stale_txs.push(StaleTx {
+            id: "ab".into(),
+            built_for: 1,
+            needed: 2,
+            height: 9,
+        });
+        let back = Wallet::from_json(&w.to_json()).unwrap();
+        assert_eq!(back.pending_txs[0].branch_id, Some(7));
+        assert_eq!(back.stale_transactions(), w.stale_transactions());
+        let mut json: serde_json::Value = serde_json::from_slice(&w.to_json()).unwrap();
+        json["pending_txs"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("branch_id");
+        json.as_object_mut().unwrap().remove("stale_txs");
+        let old = Wallet::from_json(&serde_json::to_vec(&json).unwrap()).unwrap();
+        assert_eq!(old.pending_txs[0].branch_id, None);
+        assert_eq!(old.pending_txs[0].relayed_height, 5);
+        assert!(old.stale_transactions().is_empty());
+        // Rules and parameters of another chain are refused.
+        let mut w = wallet();
+        let testnet = TxRules::at_height(&ChainParams::testnet(), 0);
+        assert!(matches!(
+            w.next_rules(&testnet),
+            Err(WalletError::WrongNetwork { .. })
+        ));
+        assert_eq!(
+            w.next_rules(&TxRules::at_height(&ChainParams::regtest(), 0))
+                .unwrap(),
+            w.next_block_rules()
+        );
+        assert!(w.set_chain_params(ChainParams::testnet()).is_err());
+        assert!(w.set_chain_params(ChainParams::regtest()).is_ok());
     }
 
     /// Existing wallet files keep their PX addresses (derivation 1); new

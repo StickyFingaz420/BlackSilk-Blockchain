@@ -382,26 +382,23 @@ impl PxTx {
 
     /// `h_tx`: the binding of the PX proof (zk.md §5.2). It covers the whole
     /// transaction except the prunable part (range proof, signatures, the
-    /// proof itself), and the network, so a proof is valid for exactly one
-    /// transaction on one network.
-    pub fn binding(&self, network_id: u32) -> Hash {
+    /// proof itself), the network and the branch, so a proof is valid for
+    /// exactly one transaction on one network in one epoch. It is a public
+    /// input of the proof, so the domain does not change the kernel.
+    pub fn binding(&self, domain: SigDomain) -> Hash {
         h32(
             tags::PX_TX_BINDING,
-            &[
-                &network_id.to_le_bytes(),
-                &self.prefix_hash(),
-                &self.base_hash(),
-            ],
+            &[&domain.bytes(), &self.prefix_hash(), &self.base_hash()],
         )
     }
 
     /// The message the v1 inputs' CLSAGs sign: everything except the
     /// signatures, including the range proof and the PX proof.
-    pub fn signature_message(&self, network_id: u32) -> Hash {
+    pub fn signature_message(&self, domain: SigDomain) -> Hash {
         h32(
             tags::PX_SIG_MESSAGE,
             &[
-                &network_id.to_le_bytes(),
+                &domain.bytes(),
                 &self.prefix_hash(),
                 &self.base_hash(),
                 &h32(tags::TX_BP, &[&self.range_proof_bytes()]),
@@ -453,7 +450,8 @@ impl PxTx {
 
 // ---- deploy ----
 
-/// The encoded payload of a deploy (salt and programs).
+/// The deploy payload: salt, program count, and each program's length, ELF
+/// bytes and budget.
 pub(crate) fn deploy_payload_bytes(salt: &[u8; 32], programs: &[Registration]) -> Vec<u8> {
     let mut w = Writer::new();
     w.bytes(salt);
@@ -464,6 +462,21 @@ pub(crate) fn deploy_payload_bytes(salt: &[u8; 32], programs: &[Registration]) -
         write_budget(&mut w, &p.budget);
     }
     w.into_bytes()
+}
+
+/// The exact fee of a deploy with `inputs` v1 inputs and `outputs` outputs
+/// registering `programs` (R5-1, R6 TX-4; docs/px.md §11.3):
+///
+/// `FEE_PER_WEIGHT × max_weight(inputs, outputs) + DEPLOY_FEE_PER_BYTE × payload length`.
+///
+/// The transfer part pays exactly the standard fee of a transfer of the same
+/// shape; the payload pays per byte. Neither term depends on the fee itself,
+/// and every input is public, so the fee reveals nothing about the wallet.
+pub fn deploy_fee(inputs: usize, outputs: usize, programs: &[Registration]) -> u64 {
+    let payload = deploy_payload_bytes(&[0; 32], programs).len() as u64;
+    FEE_PER_WEIGHT
+        .saturating_mul(crate::builder::max_weight(inputs, outputs))
+        .saturating_add(DEPLOY_FEE_PER_BYTE.saturating_mul(payload))
 }
 
 impl PxDeploy {
@@ -554,12 +567,12 @@ impl PxDeploy {
         }
     }
 
-    pub fn signature_message(&self, network_id: u32) -> Hash {
+    pub fn signature_message(&self, domain: SigDomain) -> Hash {
         let t = self.as_transfer();
         h32(
             tags::TX_SIG_MESSAGE,
             &[
-                &network_id.to_le_bytes(),
+                &domain.bytes(),
                 &self.prefix_hash(),
                 &t.base_hash(),
                 &h32(tags::TX_BP, &[&t.range_proof_bytes()]),
@@ -606,8 +619,9 @@ impl PxDeploy {
             .collect()
     }
 
-    pub fn min_fee(&self) -> u64 {
-        (self.encoded_len() as u64).saturating_mul(PX_FEE_PER_BYTE)
+    /// The fee this deploy must pay, exactly ([`deploy_fee`]).
+    pub fn required_fee(&self) -> u64 {
+        deploy_fee(self.inputs.len(), self.outputs.len(), &self.programs)
     }
 }
 
@@ -739,8 +753,37 @@ pub fn check_px_balance(tx: &PxTx) -> Result<(), TxError> {
     }
 }
 
-/// Structure of a deploy: the transfer rules on its v1 part, a fee covering
-/// its size, and loadable programs within their limits.
+/// Whether a function with budget `b` can be proven, alone, with the kernel
+/// (R7-5): every table of the one-function statement stays within its height
+/// limit (`blacksilk_zkvm::prove::limits`).
+/// - The function's CPU table: at most `MAX_CYCLES` rows.
+/// - Its memory-init table (`keys`): at most `2^MAX_LOG_HEIGHT` rows.
+/// - The ALU and Poseidon2 tables are shared with the kernel, whose budget
+///   for one function is `kernel_budget(1)`: their sum is at most
+///   `2^MAX_LOG_HEIGHT` rows.
+///
+/// A call of two large functions can still exceed a shared table; such a
+/// combination cannot be proven, and the verifier refuses the heights.
+pub fn budget_is_provable(b: &Budget) -> bool {
+    let max = 1usize << blacksilk_zk::params::MAX_LOG_HEIGHT;
+    let k = blacksilk_px::prove::kernel_budget(1);
+    let shared = [
+        (b.add, k.add),
+        (b.bit, k.bit),
+        (b.lt, k.lt),
+        (b.shift, k.shift),
+        (b.mul, k.mul),
+        (b.poseidon, k.poseidon),
+    ];
+    b.cycles <= blacksilk_zkvm::MAX_CYCLES as usize
+        && b.keys <= max
+        && shared
+            .iter()
+            .all(|&(x, kx)| x.checked_add(kx).is_some_and(|s| s <= max))
+}
+
+/// Structure of a deploy: the transfer rules on its v1 part, the exact fee
+/// ([`deploy_fee`]), provable budgets, and loadable, distinct programs.
 pub fn check_deploy_structure(tx: &PxDeploy, rules: &TxRules) -> Result<(), TxError> {
     // The v1 part must be a valid transfer shape, except the fee rule, which
     // is per byte for deploys.
@@ -753,13 +796,29 @@ pub fn check_deploy_structure(tx: &PxDeploy, rules: &TxRules) -> Result<(), TxEr
     if size > MAX_DEPLOY_TX_SIZE {
         return Err(TxError::TooLarge { size });
     }
-    let required = tx.min_fee();
-    if tx.fee < required {
-        return Err(TxError::FeeTooLow {
+    // One fee per shape and payload (R6 §3.3): any other amount would
+    // fingerprint the wallet.
+    let required = tx.required_fee();
+    if tx.fee != required {
+        return Err(TxError::DeployFeeNotExact {
             fee: tx.fee,
             required,
         });
     }
-    tx.load_programs()?;
+    for (i, p) in tx.programs.iter().enumerate() {
+        if !budget_is_provable(&p.budget) {
+            return Err(TxError::PxBudgetTooLarge { program: i });
+        }
+    }
+    let programs = tx.load_programs()?;
+    // R5-7: the registry answers `(contract, program id)` with the first
+    // match, so a repeated program would be unreachable. Ids of the loaded
+    // programs are compared: different ELF files can load to one program.
+    let mut ids = std::collections::HashSet::with_capacity(programs.len());
+    for (i, (program, _)) in programs.iter().enumerate() {
+        if !ids.insert(program.id()) {
+            return Err(TxError::PxDuplicateProgram { program: i });
+        }
+    }
     Ok(())
 }

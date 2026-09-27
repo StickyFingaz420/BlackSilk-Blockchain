@@ -22,7 +22,7 @@ fuzz_target!(|data: &[u8]| {
         Transaction::Px(t) => {
             let _ = check_px_structure(t);
             let _ = check_px_balance(t);
-            let _ = t.binding(rules.network_id);
+            let _ = t.binding(rules.domain());
         }
         Transaction::PxDeploy(d) => {
             let _ = check_deploy_structure(d, &rules);

@@ -18,6 +18,7 @@ members = [
     "px",        # blacksilk-px: PX node state, wallet side, record delivery, kernel proofs
     "tools/labnet", # blacksilk-labnet: long-duration lab network test
     "tools/supply-audit", # blacksilk-supply-audit: closed-set supply check (trial)
+    "tools/genesis", # blacksilk-genesis: beacon-derived genesis construction and verification
 ]
 # Pre-rebuild code kept for reference only (does not build; see legacy/README.md),
 # and the post-quantum research track.

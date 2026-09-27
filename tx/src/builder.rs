@@ -254,7 +254,7 @@ pub fn build_transfer<R: RngCore + CryptoRng>(
     rules: &TxRules,
     rng: &mut R,
 ) -> Result<Transfer, BuildError> {
-    let net = rules.network_id;
+    let net = rules.domain();
     build_transfer_signing(keys, inputs, payments, change, fee, rules, rng, &[], &|t| {
         t.signature_message(net)
     })

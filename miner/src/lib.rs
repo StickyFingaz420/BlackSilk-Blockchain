@@ -7,7 +7,7 @@
 use blacksilk_chain::block::Block;
 use blacksilk_chain::emission::format_amount;
 use blacksilk_consensus::merkle::tx_root;
-use blacksilk_consensus::{check_hash, BlockHeader, Hash, HEADER_VERSION, NONCE_OFFSET};
+use blacksilk_consensus::{check_hash, BlockHeader, Hash, NONCE_OFFSET};
 use blacksilk_crypto::keys::Address;
 use blacksilk_randomx::{Cache, Dataset, Vm};
 use blacksilk_rpc as rpc;
@@ -52,7 +52,9 @@ pub fn build_block<R: RngCore + CryptoRng>(
     }
     let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
     let header = BlockHeader {
-        version: HEADER_VERSION,
+        // The version of the epoch at the template's height (the node's
+        // schedule), not a compiled constant.
+        version: template.version,
         height: template.height,
         prev_id,
         timestamp: now.max(template.min_timestamp),
@@ -161,7 +163,7 @@ pub fn search(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use blacksilk_consensus::{ChainParams, HeaderChain, RandomXPow};
+    use blacksilk_consensus::{ChainParams, HeaderChain, RandomXPow, HEADER_VERSION};
     use std::sync::Arc;
 
     #[test]
@@ -170,7 +172,7 @@ mod tests {
         let chain = HeaderChain::new(params.clone(), Arc::new(RandomXPow::new()));
         let t = chain.template();
         let mut header = BlockHeader {
-            version: HEADER_VERSION,
+            version: t.version,
             height: t.height,
             prev_id: t.prev_id,
             timestamp: t.min_timestamp.max(params.genesis.timestamp + 120),

@@ -8,7 +8,6 @@
 
 use blacksilk_chain::address::{decode_address, decode_px_address};
 use blacksilk_chain::emission::{format_amount, parse_amount};
-use blacksilk_consensus::ChainParams;
 use blacksilk_px::vault;
 use blacksilk_px_core::Digest;
 use blacksilk_rpc::Client;
@@ -270,8 +269,12 @@ fn os_rng() -> Result<ChaCha20Rng, String> {
     Ok(rng)
 }
 
+/// Rules of the wallet's network. The wallet builds every transaction with
+/// the rules of the block after its synced height (`Wallet::next_block_rules`,
+/// after the sync each command starts with), so the epoch of these does not
+/// matter.
 fn rules_for(w: &Wallet) -> TxRules {
-    TxRules::for_chain(&ChainParams::for_network(w.network()))
+    w.next_block_rules()
 }
 
 fn parse_budget(s: &str) -> Result<Budget, String> {
@@ -429,7 +432,18 @@ fn run(args: Args) -> Result<(), String> {
                     }),
                 Cmd::Sync => w
                     .sync(&client)
-                    .map(|h| println!("synced to height {h}"))
+                    .map(|h| {
+                        println!("synced to height {h}");
+                        // Payments an upgrade invalidated before they were
+                        // mined (their funds are released).
+                        for t in w.stale_transactions() {
+                            println!(
+                                "needs rebuilding: transaction {} (built for branch {:#010x}, \
+                                 dropped at height {}); send the payment again",
+                                t.id, t.built_for, t.height
+                            );
+                        }
+                    })
                     .map_err(|e| e.to_string()),
                 Cmd::Balance => w.sync(&client).map_err(|e| e.to_string()).map(|h| {
                     let b = w.balance();

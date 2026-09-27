@@ -196,20 +196,24 @@ pub fn px_entries() -> Manifest {
     .size("zk.MAX_PROOF_BYTES", zk::MAX_PROOF_BYTES)
     .size("zk.MAX_ADVERSARIAL_COLUMNS", zk::MAX_ADVERSARIAL_COLUMNS)
     .size("zk.MAX_CONSTRAINT_DEGREE", zk::MAX_CONSTRAINT_DEGREE);
-    // BVM-1 (zkvm/src/lib.rs, program.rs).
-    m.u("zkvm.MEM_SIZE", blacksilk_zkvm::MEM_SIZE)
-        .u("zkvm.NULL_GUARD", blacksilk_zkvm::NULL_GUARD)
-        .u("zkvm.STACK_TOP", blacksilk_zkvm::STACK_TOP)
-        .u("zkvm.STACK_SIZE", blacksilk_zkvm::STACK_SIZE)
-        .size("zkvm.CODE_LIMIT_WORDS", blacksilk_zkvm::CODE_LIMIT_WORDS)
-        .size("zkvm.DATA_LIMIT_BYTES", blacksilk_zkvm::DATA_LIMIT_BYTES)
-        .u("zkvm.MAX_CYCLES", blacksilk_zkvm::MAX_CYCLES)
-        .size("zkvm.MAX_INPUT_WORDS", blacksilk_zkvm::MAX_INPUT_WORDS)
-        .size("zkvm.MAX_OUTPUT_WORDS", blacksilk_zkvm::MAX_OUTPUT_WORDS)
-        .size(
-            "zkvm.MAX_DATA_SEGMENTS",
-            blacksilk_zkvm::program::MAX_DATA_SEGMENTS,
-        );
+    // BVM-1 (zkvm/src/lib.rs, program.rs, prove.rs).
+    m.text(
+        "zkvm.CIRCUIT_ID",
+        std::str::from_utf8(blacksilk_zkvm::prove::CIRCUIT_ID).expect("CIRCUIT_ID is ASCII"),
+    )
+    .u("zkvm.MEM_SIZE", blacksilk_zkvm::MEM_SIZE)
+    .u("zkvm.NULL_GUARD", blacksilk_zkvm::NULL_GUARD)
+    .u("zkvm.STACK_TOP", blacksilk_zkvm::STACK_TOP)
+    .u("zkvm.STACK_SIZE", blacksilk_zkvm::STACK_SIZE)
+    .size("zkvm.CODE_LIMIT_WORDS", blacksilk_zkvm::CODE_LIMIT_WORDS)
+    .size("zkvm.DATA_LIMIT_BYTES", blacksilk_zkvm::DATA_LIMIT_BYTES)
+    .u("zkvm.MAX_CYCLES", blacksilk_zkvm::MAX_CYCLES)
+    .size("zkvm.MAX_INPUT_WORDS", blacksilk_zkvm::MAX_INPUT_WORDS)
+    .size("zkvm.MAX_OUTPUT_WORDS", blacksilk_zkvm::MAX_OUTPUT_WORDS)
+    .size(
+        "zkvm.MAX_DATA_SEGMENTS",
+        blacksilk_zkvm::program::MAX_DATA_SEGMENTS,
+    );
     // The PX kernel (px-core) and the pinned program ids (px/kernel.id, px/vault.id).
     m.u("px_core.P", blacksilk_px_core::P)
         .u("px_core.kernel.VERSION", blacksilk_px_core::kernel::VERSION)

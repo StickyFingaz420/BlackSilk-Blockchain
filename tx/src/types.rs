@@ -272,13 +272,13 @@ impl Transfer {
     }
 
     /// The message every CLSAG signs (spec §4.4): everything except the CLSAGs,
-    /// plus the network id.
-    pub fn signature_message(&self, network_id: u32) -> Hash {
+    /// plus the network and branch ids.
+    pub fn signature_message(&self, domain: SigDomain) -> Hash {
         let bp_hash = h32(tags::TX_BP, &[&self.range_proof_bytes()]);
         h32(
             tags::TX_SIG_MESSAGE,
             &[
-                &network_id.to_le_bytes(),
+                &domain.bytes(),
                 &self.prefix_hash(),
                 &self.base_hash(),
                 &bp_hash,

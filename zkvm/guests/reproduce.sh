@@ -8,9 +8,9 @@
 # (sha256) to the committed one. Exits non-zero on any mismatch. CI runs it
 # (.github/workflows/ci.yml, job `guests`).
 #
-# Requirements (README): a Windows host with Git Bash (the pinned binaries
-# embed a Windows source path), rustc 1.98.1 with the riscv32i-unknown-none-elf
-# target (rust-toolchain.toml installs both). The toolchain check, the
+# Requirements (README): bash and rustc 1.98.1 with the riscv32i-unknown-none-elf
+# target (rust-toolchain.toml installs both), on any host and at any checkout
+# path (the build is path-independent since testnet v3). The toolchain check, the
 # environment check and the flags live in build.sh, sourced here.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

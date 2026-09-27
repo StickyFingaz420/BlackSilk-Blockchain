@@ -54,11 +54,13 @@ the clear:
 initiator → responder:  A = a·G     32 bytes, Ristretto255, a random
 responder → initiator:  B = b·G
 S       = a·B = b·A                 (reject non-canonical encodings and the identity)
-k       = H64("p2p/session", LE32(network_id) ‖ A ‖ B ‖ S)
+k       = H64("p2p/session", LE32(network_id) ‖ genesis_id ‖ A ‖ B ‖ S)
 k_i→r   = k[0..32],  k_r→i = k[32..64]
 ```
 
-- `network_id` is bound into the keys. Nodes of different networks derive different keys,
+- `network_id` and the 32-byte `genesis_id` are bound into the keys (the genesis since
+  testnet v3, R15-3: a release candidate or rehearsal with the same id but another
+  genesis cannot join). Nodes of different networks or chains derive different keys,
   and the first frame fails to decrypt: a cross-network connection is detected without
   any plaintext network marker.
 - Ephemeral keys give **forward secrecy**: recorded traffic cannot be decrypted later,
@@ -440,6 +442,13 @@ dropped.
     break the header rules are penalized as before.
   - After such a relay we stop asking that peer for headers until it announces a new
     tip;
+- a header whose version is above every version of this node's schedule
+  (`HeaderError::UnknownUpgrade`, docs/consensus.md §11): the peer probably runs a
+  newer release. The first per peer is logged at WARN ("this node may need an
+  upgrade");
+- within `ACTIVATION_GRACE_BLOCKS` (60) of an activation height, on either side, a
+  transaction whose PX proof or ring signature fails: it may be bound to the
+  neighbouring rule set's branch id (`TxError::is_stateless_at`);
 - a duplicate;
 - an already-known transaction;
 - a transaction that conflicts with the mempool (dropped before verification, step 3

@@ -304,7 +304,7 @@ fn forge(
         range_proof,
         signatures: vec![],
     };
-    let message = tx.signature_message(m.rules().network_id);
+    let message = tx.signature_message(m.rules().domain());
     let z = real.mask - pseudo_mask;
     let (sig, ki) = clsag::sign(&message, &ring, &pseudo_out, pos, &p, &z, rng).unwrap();
     assert_eq!(ki, key_image);

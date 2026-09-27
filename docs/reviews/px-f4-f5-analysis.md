@@ -1,6 +1,13 @@
 # PX-F4 and PX-F5: analysis for the owner's decision
 
-Status: **analysis only, 2026-09-27. Nothing has been changed.**
+Status: **analysis 2026-09-27. Update (v3 candidate, V3-B): PX-F5 option B is
+implemented on the candidate branch** — the kernel output loop refuses
+`contract ≠ 0 ∧ owner ≠ 0` with the new error `ContractOutputOwner` (exit code 17,
+appended so earlier codes are unchanged); tests in `px/tests/unified.rs`
+(`a_contract_output_with_an_owner_is_rejected`: native rejection, and the pre-F5
+guest accepting it before the neutral rebuild; native/guest agreement after it). It
+takes effect with the rebuilt kernel id of the v3 identity. **PX-F4 is unchanged
+(deferred).** Not merged into `rebuild/core` until the owner reviews it.
 - Both findings concern the PX kernel, whose program id is pinned in consensus
   (`px/kernel.id`). Changing either one changes that id, which is a **consensus
   change** needing a new testnet identity.
