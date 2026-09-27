@@ -1,0 +1,80 @@
+
+running 8 tests
+test demo_unauthenticated_info_is_refused ... FAILED
+test demo_oversized_headers_are_refused ... FAILED
+test demo_cross_site_request_is_refused ... FAILED
+test demo_rebinding_host_is_refused ... FAILED
+test demo_deep_fork_block_costs_no_pow ... FAILED
+test demo_oversized_tx_body_is_refused ... FAILED
+test demo_connection_flood_is_capped ... FAILED
+test demo_slow_headers_are_cut ... FAILED
+
+failures:
+
+---- demo_unauthenticated_info_is_refused stdout ----
+
+thread 'demo_unauthenticated_info_is_refused' (2196) panicked at node\tests\rpc_security.rs:101:5:
+assertion `left == right` failed: /info served without a credential
+  left: Some(200)
+ right: Some(401)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- demo_oversized_headers_are_refused stdout ----
+
+thread 'demo_oversized_headers_are_refused' (7436) panicked at node\tests\rpc_security.rs:122:5:
+assertion `left == right` failed: 100 KiB of headers accepted
+  left: Some(200)
+ right: Some(431)
+
+---- demo_cross_site_request_is_refused stdout ----
+
+thread 'demo_cross_site_request_is_refused' (13276) panicked at node\tests\rpc_security.rs:94:5:
+assertion `left == right` failed: a cross-site no-cors GET was served
+  left: Some(200)
+ right: Some(403)
+
+---- demo_rebinding_host_is_refused stdout ----
+
+thread 'demo_rebinding_host_is_refused' (13232) panicked at node\tests\rpc_security.rs:85:5:
+assertion `left == right` failed: a DNS-rebinding Host was served
+  left: Some(200)
+ right: Some(403)
+
+---- demo_deep_fork_block_costs_no_pow stdout ----
+
+thread 'demo_deep_fork_block_costs_no_pow' (15244) panicked at node\tests\rpc_security.rs:181:5:
+assertion `left == right` failed: a deep-fork block cost 1 PoW calls; stored: true
+  left: (1, true)
+ right: (0, false)
+
+---- demo_oversized_tx_body_is_refused stdout ----
+
+thread 'demo_oversized_tx_body_is_refused' (2756) panicked at node\tests\rpc_security.rs:112:5:
+assertion `left == right` failed: an 8 MiB /tx body was read and parsed
+  left: Some(400)
+ right: Some(413)
+
+---- demo_connection_flood_is_capped stdout ----
+
+thread 'demo_connection_flood_is_capped' (11888) panicked at node\tests\rpc_security.rs:154:5:
+200 idle connections all held open
+
+---- demo_slow_headers_are_cut stdout ----
+
+thread 'demo_slow_headers_are_cut' (13896) panicked at node\tests\rpc_security.rs:134:5:
+a partial request head was kept open for 12 s
+
+
+failures:
+    demo_connection_flood_is_capped
+    demo_cross_site_request_is_refused
+    demo_deep_fork_block_costs_no_pow
+    demo_oversized_headers_are_refused
+    demo_oversized_tx_body_is_refused
+    demo_rebinding_host_is_refused
+    demo_slow_headers_are_cut
+    demo_unauthenticated_info_is_refused
+
+test result: FAILED. 0 passed; 8 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.01s
+
+error: test failed, to rerun pass `-p blacksilk-node --test rpc_security`

@@ -1,0 +1,251 @@
+   Compiling blacksilk-supply-audit v0.1.0 (C:\Users\Home 01\Desktop\BlackSilk\BlackSilk-Blockchain\.claude\worktrees\agent-afb03b30c3c538db4\tools\supply-audit)
+   Compiling blacksilk-wallet v0.1.0 (C:\Users\Home 01\Desktop\BlackSilk\BlackSilk-Blockchain\.claude\worktrees\agent-afb03b30c3c538db4\wallet)
+   Compiling blacksilk-node v0.1.0 (C:\Users\Home 01\Desktop\BlackSilk\BlackSilk-Blockchain\.claude\worktrees\agent-afb03b30c3c538db4\node)
+   Compiling blacksilk-rpc v0.1.0 (C:\Users\Home 01\Desktop\BlackSilk\BlackSilk-Blockchain\.claude\worktrees\agent-afb03b30c3c538db4\rpc)
+    Finished `release` profile [optimized] target(s) in 9m 23s
+     Running unittests src\lib.rs (C:/bszkeval/t-w2-rpc\release\deps\blacksilk_node-4f99a150f5b72195.exe)
+
+running 10 tests
+test cookie::tests::tokens_parse_only_in_their_form ... ok
+test fingerprint::tests::manifest_ends_with_the_px_entries ... ok
+test guard::tests::hosts_are_loopback_the_bound_address_or_allowed_names ... ok
+test fingerprint::tests::networks_differ ... ok
+test guard::tests::classes_and_body_limits ... ok
+test guard::tests::the_credential_comparison_is_exact ... ok
+test fingerprint::tests::stable_across_calls ... ok
+test fingerprint::tests::version_text_names_every_network ... ok
+test cookie::tests::a_cookie_is_fresh_private_and_removed ... ok
+test tests::poll_until_fires_when_the_check_turns_true ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running unittests src\main.rs (C:/bszkeval/t-w2-rpc\release\deps\blacksilk_node-6bb1ac636af116cf.exe)
+
+running 6 tests
+test config::tests::retired_testnet_identity_is_refused_until_v3 ... ok
+test config::tests::proxy_only_does_not_listen_on_clearnet_by_default ... ok
+test config::tests::defaults ... ok
+test config::tests::errors ... ok
+test config::tests::file_then_command_line ... ok
+test config::tests::seed_resolution ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\build_id.rs (C:/bszkeval/t-w2-rpc\release\deps\build_id-ef21c141c87afbd7.exe)
+
+running 11 tests
+test baked_commit_is_well_formed ... ok
+test build_id::tests::find_dot_git_walks_up ... ok
+test build_id::tests::detached_head ... ok
+test build_id::tests::gitdir_file_parsing ... ok
+test build_id::tests::head_parsing ... ok
+test build_id::tests::loose_ref_in_a_plain_repository ... ok
+test build_id::tests::override_sanitizing ... ok
+test build_id::tests::missing_or_broken_repository_gives_none ... ok
+test build_id::tests::packed_ref_is_the_fallback ... ok
+test build_id::tests::packed_refs_lookup ... ok
+test build_id::tests::worktree_uses_commondir_for_refs ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\deploy_configs.rs (C:/bszkeval/t-w2-rpc\release\deps\deploy_configs-8145175556e38cd3.exe)
+
+running 8 tests
+test config::tests::retired_testnet_identity_is_refused_until_v3 ... ok
+test config::tests::proxy_only_does_not_listen_on_clearnet_by_default ... ok
+test config::tests::defaults ... ok
+test config::tests::errors ... ok
+test config::tests::file_then_command_line ... ok
+test every_deploy_config_parses_and_is_set_up_as_named ... ok
+test a_typo_in_a_config_is_an_error ... ok
+test config::tests::seed_resolution ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.02s
+
+     Running tests\info_identity.rs (C:/bszkeval/t-w2-rpc\release\deps\info_identity-736cb52df286c776.exe)
+
+running 1 test
+test info_carries_the_node_identity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\px_commitments.rs (C:/bszkeval/t-w2-rpc\release\deps\px_commitments-c049735d0a24a980.exe)
+
+running 7 tests
+test from_at_or_beyond_the_end ... ok
+test pages_follow_undo ... ok
+test limit_bounds ... ok
+test no_parameters_return_the_first_bounded_page ... ok
+test wallet_style_sync_completes ... ok
+test http_parameters ... ok
+test pages_reassemble_the_full_list ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests\rpc_liveness.rs (C:/bszkeval/t-w2-rpc\release\deps\rpc_liveness-e3967232621157c1.exe)
+
+running 3 tests
+test l4_info_answers_promptly_during_a_hold ... ignored, fails until Stage 1 (34)
+test control_info_answers_within_100_ms_without_a_hold ... ok
+test l5_an_rpc_burst_during_a_hold_stays_within_the_blocking_thread_cap ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 5.04s
+
+     Running tests\rpc_security.rs (C:/bszkeval/t-w2-rpc\release\deps\rpc_security-438c8d2b79dad98a.exe)
+
+running 15 tests
+test a_post_must_be_json_and_other_methods_carry_no_body ... ok
+test browser_requests_are_refused_on_every_route ... ok
+test loopback_hosts_are_served ... ok
+test a_tip_block_is_accepted_with_its_pow_computed_off_the_lock ... ok
+test every_route_refuses_foreign_hosts ... ok
+test a_deep_fork_block_is_refused_without_pow_or_storage ... ok
+test oversized_headers_are_refused ... ok
+test the_route_list_is_the_router ... ok
+test oversized_bodies_are_refused_before_reading ... ok
+test a_maximum_size_block_body_is_still_read ... ok
+test connections_beyond_the_cap_are_refused ... ok
+test a_slow_body_is_cut ... ok
+test a_full_class_answers_busy_at_once ... ok
+test slow_and_idle_connections_are_closed ... ok
+test the_node_rpc_requires_its_cookie_on_every_route ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 21.07s
+
+     Running unittests src\lib.rs (C:/bszkeval/t-w2-rpc\release\deps\blacksilk_rpc-5a6606398e177232.exe)
+
+running 10 tests
+test tests::caps_cover_the_largest_honest_responses ... ok
+test tests::info_identity_fields_are_optional ... ok
+test tests::a_cookie_file_is_read_and_checked ... ok
+test tests::error_bodies_are_capped_too ... ok
+test tests::px_commitments_without_next_decodes ... ok
+test tests::an_endless_body_without_a_length_is_cut_at_the_cap ... ok
+test tests::an_oversized_body_with_a_length_is_refused_before_reading ... ok
+test tests::a_body_within_the_cap_is_parsed_and_redirects_are_not_followed ... ok
+test tests::https_and_unknown_schemes_are_refused ... ok
+test tests::the_credential_is_sent_as_a_bearer_token ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running unittests src\lib.rs (C:/bszkeval/t-w2-rpc\release\deps\blacksilk_supply_audit-03a79f2df932fe4d.exe)
+
+running 2 tests
+test tests::summary_counts_on_chain_state_and_classifies_it ... ok
+test tests::exit_codes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (C:/bszkeval/t-w2-rpc\release\deps\blacksilk_supply_audit-9c077ec294182c51.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\regtest.rs (C:/bszkeval/t-w2-rpc\release\deps\regtest-af74845aeb9d4d03.exe)
+
+running 4 tests
+test a_wallet_that_cannot_reach_the_audit_block_is_refused ... ok
+test complete_set_balances_to_zero_and_a_missing_wallet_shows_its_exact_amount ... ok
+test audit_at_an_earlier_height_rewinds_the_wallets_to_it ... ok
+test the_binary_is_read_only_and_reports_json_and_exit_codes ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.26s
+
+     Running unittests src\lib.rs (C:/bszkeval/t-w2-rpc\release\deps\blacksilk_wallet-453304fd7cf13916.exe)
+
+running 36 tests
+test file::tests::round_trip ... ok
+test px::tests::a_rewind_keeps_the_contract_records_the_wallet_holds_openings_for ... ok
+test px::tests::cached_address_keys_match_fresh_derivation ... ok
+test index::tests::blocks_append_rewind_and_backfill ... ok
+test file::tests::atomic_write ... ok
+test index::tests::it_round_trips_and_refuses_damage ... ok
+test px::tests::clearing_pending_keeps_every_contract_record_opening ... ok
+test file::tests::wrong_password_and_tampering_are_rejected ... ok
+test px::tests::rewind_forgets_records_spends_and_commitments_above_the_height ... ok
+test px::tests::selection_prefers_one_record_then_the_smallest_pair ... ok
+test px::tests::vault_operations_need_the_vault_alone_with_the_reference_budget ... ok
+test wallet::sync::tests::a_copy_mined_before_the_genuine_output_is_not_credited ... ok
+test px::tests::contract_records_are_never_counted_or_selected_as_funds ... ok
+test px::tests::only_records_under_the_anchor_are_spendable ... ok
+test px::tests::the_anchor_is_the_last_multiple_of_the_interval ... ok
+test px::tests::the_used_index_counts_payments_and_contract_records_received ... ok
+test wallet::sync::tests::a_later_duplicate_replaces_the_credited_output_only_if_larger ... ok
+test wallet::sync::tests::one_output_is_credited_per_key_image_the_largest_then_the_lowest_index ... ok
+test wallet::tests::deploys_mixing_the_vault_with_other_programs_are_refused ... ok
+test wallet::tests::a_new_account_is_scanned_from_index_zero_at_once ... ok
+test wallet::tests::a_stored_vault_secret_survives_a_save_and_load ... ok
+test wallet::tests::files_without_a_genesis_id_are_refused ... ok
+test wallet::tests::finding_funds_moves_the_window ... ok
+test wallet::tests::px_address_indexes_beyond_the_gap_limit_need_the_override ... ok
+test wallet::tests::old_files_with_funds_above_the_window_raise_it_on_load ... ok
+test wallet::tests::outputs_of_one_transaction_are_not_spent_together_unless_needed ... ok
+test wallet::tests::secrets_stay_out_of_error_messages ... ok
+test wallet::tests::the_mnemonic_round_trips_without_reallocating ... ok
+test wallet::tests::the_wallet_is_bound_to_its_genesis ... ok
+test wallet::tests::stored_transactions_keep_their_branch_id_and_older_files_load ... ok
+test wallet::tests::the_backfill_fetches_the_whole_missing_range_in_fixed_pages ... ok
+test wallet::tests::vault_lock_and_claim_refuse_unsafe_contracts_before_proving ... ok
+test wallet::tests::wallet_files_keep_their_px_key_derivation ... ok
+test wallet::tests::the_limit_follows_the_highest_index_that_received_funds ... ok
+test wallet::tests::subaddress_indexes_beyond_the_gap_limit_need_the_override ... ok
+test wallet::tests::absurd_scan_windows_in_old_files_are_clamped_on_load ... ok
+
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.15s
+
+     Running unittests src\main.rs (C:/bszkeval/t-w2-rpc\release\deps\blacksilk_wallet-40a962705a4d0f4a.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\e2e.rs (C:/bszkeval/t-w2-rpc\release\deps\e2e-0c3c019df20b98a5.exe)
+
+running 18 tests
+test a_node_behind_the_wallet_does_not_make_it_forget_its_transactions ... ok
+test a_refused_transaction_still_pins_its_rings ... ok
+test a_stored_transaction_the_node_finds_invalid_releases_its_inputs ... ok
+test a_restored_wallet_follows_payments_beyond_its_first_window ... ok
+test a_transaction_is_not_sent_across_an_activation_it_was_not_built_for ... ok
+test out_of_range_address_indexes_are_refused ... ok
+test a_transfer_built_before_an_activation_is_not_rebroadcast_after_it ... ok
+test a_late_restore_backfills_older_outputs_once ... ok
+test rpc_rejects_malformed_and_oversized_requests ... ok
+test an_unconfirmed_transaction_keeps_its_inputs_and_is_rebroadcast_unchanged ... ok
+test wrong_network_is_refused ... ok
+test an_uncertain_submission_keeps_the_inputs_reserved_across_a_restart ... ok
+test the_wallet_is_saved_before_a_transaction_leaves_it ... ok
+test an_output_spent_again_reuses_its_ring ... ok
+test wallet_follows_a_reorganization ... ok
+test rings_are_built_without_asking_the_node_about_outputs ... ok
+test funds_move_between_wallets_over_rpc ... ok
+test a_reorganization_deeper_than_the_kept_window_rescans ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 3.95s
+
+   Doc-tests blacksilk_node
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests blacksilk_rpc
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests blacksilk_supply_audit
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests blacksilk_wallet
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+exit=0
