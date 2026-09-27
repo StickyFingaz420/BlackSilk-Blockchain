@@ -54,26 +54,36 @@ reuse it for as long as the key stays the same.
 
 ## Verification status
 
-`cargo test -p blacksilk-randomx` runs every applicable test vector from the reference
-`src/tests/tests.cpp`, and all pass:
+`cargo test -p blacksilk-randomx` runs these vectors, transcribed from the reference
+`src/tests/tests.cpp` (tevador/RandomX v1.2.3), and all pass:
 
 | Test | Checks |
 |---|---|
-| Cache initialization | 3 cache words for key `test key 000` |
-| SuperscalarHash generator | Blake2b of all 10 generated programs |
+| Cache initialization | 3 cache words (0, 1568413, 33554431) for key `test key 000` |
+| SuperscalarHash generator | Blake2b of the 10 programs generated for key `test key 000` |
 | `randomx_reciprocal` | 7 values |
-| Dataset initialization | items 0, 10M, 20M, 30M |
+| Dataset initialization | word 0 of items 0, 10M, 20M, 30M (key `test key 000`) |
 | AesGenerator1R | one 32-byte block |
-| Hash tests 1a–1e | end-to-end hashes for both reference keys |
+| Hash tests 1a–1e | end-to-end light-mode hashes, keys `test key 000` and `test key 001` |
+| Hash test 1f | end-to-end light-mode hash, 31-byte key, 76-byte input: the ISUB_R edge case (src = dst, immediate 0x80000000) added upstream in PR #326 |
 
-The crate also has unit tests of the rounding emulation (directed rounding, signed
-zeros, rescaled residuals, overflow, infinity propagation).
+What this does **not** cover:
+- The reference's instruction-level decode/execute tests (including its floating-point
+  rounding-mode cases) are not ported.
+- AesGenerator4R and AesHash1R have no direct vector (the reference has none either);
+  they are pinned only through the end-to-end hashes.
+- There is no comparison with the reference at scale: the evidence is the 6 hashes
+  above (3 keys), and no input has BlackSilk's 32-byte-key, 100-byte-header shape.
+- The rounding emulation has unit tests (directed rounding, signed zeros, rescaled
+  residuals, overflow, infinity propagation) that check self-consistency, not
+  agreement with an IEEE reference.
 
-`cargo test --release -p blacksilk-randomx -- --ignored` builds the full 2 GiB
-dataset and checks that full mode reproduces vector 1a.
+`cargo test --release -p blacksilk-randomx -- --ignored` builds the full 2 GiB dataset
+for each of the three keys and checks that full mode reproduces vectors 1a–1f and
+agrees with light mode on 512 random inputs per key (CI job `randomx-full`, Linux).
 
-Not covered: RandomX v2 (`RANDOMX_FLAG_V2`) is not implemented. The reference's
-JIT-specific tests don't apply.
+Not implemented: RandomX v2 (`RANDOMX_FLAG_V2`). The reference's JIT-specific tests
+don't apply.
 
 ## Performance
 

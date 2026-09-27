@@ -245,10 +245,17 @@ the CVE-2012-2459 class of duplicate-transaction malleability.
   x86_64: the official vectors pass on Windows (locally) and the test suite on Linux
   (CI). There is no ARM64 run and no cross-platform comparison of identical chain
   hashes (assumptions.md K5).
-- **RandomX full mode** (what the miner uses) agreed with light mode (what nodes
-  verify with) in local runs on 2026-09-25 and 2026-09-27: all 5 official hash vectors
-  in full mode plus 1,024 random inputs. Its CI job (`randomx-full`, Linux) has not
-  yet run on GitHub.
+- **RandomX conformance evidence** (`randomx/README.md`, "Verification status"): the
+  official hash vectors 1a–1f of the reference (tevador/RandomX v1.2.3, including 1f,
+  the ISUB_R immediate edge case of upstream PR #326) and its cache, dataset,
+  superscalar, reciprocal and AesGenerator1R vectors. That is 6 end-to-end hashes
+  under 3 keys. There is no comparison against the reference at scale (no reference
+  corpus, no oracle for the software rounding emulation), and no vector has
+  BlackSilk's 32-byte-key, 100-byte-header shape.
+- **RandomX full mode** (what the miner uses) must reproduce the official hash vectors
+  and agree with light mode (what nodes verify with) on 512 random inputs per key. The
+  CI job `randomx-full` (Linux x86_64) checks this and passed in GitHub Actions CI runs
+  78, 79 and 83 (2026-09-27), before vector 1f was added to it.
 - The only input not derived from chain data is the local clock (§5 rule 2), which is
   treated as non-final.
 
