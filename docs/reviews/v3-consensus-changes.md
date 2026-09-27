@@ -18,7 +18,7 @@ they are never renamed. Index:
 - §3 RT-14 genesis id in the signature domain (tx; W1-CB-B1a)
 - BS-ZK-3: eight random codewords (zk; W1-CB-B3)
 - Canonical proof shape (zk; W1-CB-B3)
-- Soundness figures, COLLISION_BITS = 122 (zk; W1-CB-B3)
+- Soundness figures, COLLISION_BITS = 122 (zk; W1-CB-B3); Follow-up (RTW1-3/6/8) (zkvm, zk; FX-RTW1-ZK)
 - daa-lwma75-warm (consensus; W1-CB-A)
 - f05-header-check-order (consensus; W1-CB-A)
 - genesis-beacon (consensus; W1-CB-A)
@@ -500,6 +500,132 @@ proven; "extractable", not "binding").
     headline, commitment term, unmodelled terms); `docs/proof-system.md` §2 (R5, R6,
     security figures) and §7.
 15. **Review status.** Implemented and tested by W1-CB-B3; red-team review (agent 50)
+    pending.
+
+### Follow-up (RTW1-3/6/8)
+
+Owner: FX-RTW1-ZK. Red-team findings RTW1-3 (Medium), RTW1-6 (Low), RTW1-8 (Low/Info)
+and an Info item (defence in depth), against the circuit fingerprint (decisions "Agent
+22" W4, "Agent 23" W2) and the zk records above. Internal review, not an audit.
+
+1. **Problem.**
+   - RTW1-3: `zkvm::air::check::fingerprint` evaluated every table's constraints at
+     random periodic values and never hashed the periodic columns themselves. A
+     soundness-relevant edit of the byte lookup table (`byte::preprocessed`, e.g. one
+     wrong XOR entry) or of the program, image or output public-column layouts
+     (`program::preprocessed`, `memory::image_preprocessed`,
+     `memory::output_preprocessed`) passed the pin next to `CIRCUIT_ID`. The next-row
+     column sets (`main_next_row_columns`, `preprocessed_next_row_columns`), which the
+     prover and verifier read instead of the constraints, were not hashed either.
+   - RTW1-6: `REVISIONS` was append-only by comment only; an in-place edit of an old
+     line passed.
+   - RTW1-8: `docs/zkvm.md` §7, `docs/zk.md` §15 and `px/src/fingerprint.rs` still
+     named BS-ZK-2 and "≥ 123 bits Johnson"; "about 105 bits proven" read as a proof;
+     `docs/proof-system.md` said "binding terms" for the limiting terms.
+   - Info: `zk::verify` did not apply the canonical-form rules; only `decode_proof`
+     did, so a caller holding a `Proof` built in memory could accept rewrites C1/C2.
+2. **Demonstrated failure.** The red team's test (`zkvm/tests/rtw1_fp.rs` of the demo
+   patch: the byte table with `c[4][0] += 1`) run on base `c3bd12c`:
+   `RTW1 fp equal despite a changed byte table: true`, `assertion left != right failed:
+   a changed lookup table must change the circuit digest`, `test result: FAILED. 0
+   passed; 1 failed` (log `C:/bszkeval/t-fx-rtw1-zk-before.log`). The same body is now
+   `circuit_fingerprint.rs::rtw1_3_a_changed_byte_table_entry_changes_the_fingerprint`
+   and passes. RTW1-6 and the Info item: absence of a check (on base, the advisory
+   suite asserted that a direct `verify` accepts the C1 and C2 rewrites).
+3. **Prior art.** Plonky3 documents periodic columns as public parameters that "must be
+   committed during initialization of the Fiat–Shamir transcript" (p3-air 0.7.0
+   `BaseAir::periodic_columns`), which `statement_digest` does for every proof; a
+   circuit pin must cover them the same way. Append-only logs with a hash chain
+   (Certificate Transparency, RFC 6962; git's parent hashes).
+4. **Alternatives.** (a) Hash only the fixed byte table in `fingerprint` (rejected: the
+   layout functions for programs, images and outputs are equally soundness-relevant);
+   (b) keep `fingerprint` statement-independent and pin only `statement_digest` of a
+   reference statement (partly adopted: both are hashed); (c) for RTW1-6, pin the full
+   list of earlier entries in a second constant (equivalent to a chain; the chain is
+   smaller and self-checking). For the Info item, keeping `verify` permissive to retain
+   the upstream canary (rejected: correctness over a change signal; the rules are kept
+   regardless of upstream).
+5. **Affected components.**
+   - `zkvm/src/air/check.rs` `fingerprint`: additionally hashes, per table, the contents
+     of its periodic columns (count, then each column with its length) and of its
+     preprocessed trace (if any), both next-row column sets, and the
+     `num_constraints` / `max_constraint_degree` hints. The constraint evaluations are
+     unchanged (same seeded stream). Test and documentation code only: no prover,
+     verifier or transcript path calls `fingerprint`.
+   - `zkvm/tests/circuit_fingerprint.rs`: the digest is taken on fixed reference
+     statements (`REFERENCE_TAG`) and also hashes their `statement_digest`;
+     `REVISIONS` lines carry (id, digest method, digest, chain hash of the earlier
+     lines), with a pinned head `REVISIONS_HEAD`.
+   - `zk/src/lib.rs` `verify`: runs `check_canonical_form` after V1–V2, before the FRI
+     schedule rule (`ZkError::Encoding`).
+   - Docs: `docs/proof-system.md` §2, §3, §5, §6, §7; `docs/zk.md` §9.3, §12, §13 item 7,
+     §15; `docs/zkvm.md` §7; the module comment of `px/src/fingerprint.rs`.
+6. **Activation.** v3 genesis base rules; nothing activates. The AIRs, the proof bytes
+   and the transcript are unchanged.
+7. **Compatibility.** Every proof that verified before verifies now, on consensus paths:
+   they decode with `decode_proof` first (tx `decode_px_proof`, then
+   `check_px_proof_decoded`), so every proof reaching `verify` is already canonical and
+   the new check cannot change a verdict. A direct caller of `verify` with a
+   non-canonical in-memory proof now gets `Encoding` instead of acceptance (C1, C2) or
+   `Invalid` / `VerifierPanicked` (C3, C4, the #2256 case).
+8. **Reorg, wallet, mining, P2P.** None. Wallets verify their own honest proofs, which
+   are canonical.
+9. **Vectors.** `CIRCUIT_ID` stays `BlackSilk/zkvm/BVM-1/circuit/v1`. The pinned
+   circuit digest is the last line of `REVISIONS` in
+   `zkvm/tests/circuit_fingerprint.rs` (digest method 2; the method-1 line is kept).
+   **Why the id does not change:** `CIRCUIT_ID` names the constraint system and is
+   absorbed into every transcript; the AIRs, buses, widths, table order, periodic
+   layouts and limits are byte-for-byte unchanged, so every honest proof and every
+   verdict is unchanged. Only the digest's coverage grew. Bumping the id would change
+   every transcript for no constraint change and would make the id track the test's
+   hashing method instead of the circuit. The decision "Agent 23" requires an AIR
+   change to bump the id and the digest together; it does not require the converse. A
+   coverage change is recorded as a new line with the same id and a new digest
+   method, so the (id, method) pair never repeats and each digest stays distinct.
+10. **Tests.** `zkvm/tests/circuit_fingerprint.rs`:
+    `the_air_digest_is_pinned_to_the_circuit_id` (re-pinned);
+    `the_revisions_are_append_only` (RTW1-6: an edited old digest, id, method or prev,
+    an edited last digest, a removed first or last line, a reorder, a duplicate and a
+    changed head are each refused); `only_the_public_columns_depend_on_the_programs`
+    (with public columns blanked, the fingerprints of tag 1 and 77 agree for 1 to
+    `MAX_EXECUTIONS` executions; unblanked they differ);
+    `every_mutation_changes_the_fingerprint` (now also, per table, the main and
+    preprocessed next-row sets and a degree hint, and for the 7 tables with public
+    columns a first and a last entry: all distinct);
+    `rtw1_3_a_changed_byte_table_entry_changes_the_fingerprint` (the red team's case);
+    `rtw1_3_layout_and_next_row_mutations_change_the_fingerprint` (every program,
+    image and output layout and every table's next-row set of the widest statement).
+    `zk/tests/proofs.rs::verify_itself_refuses_non_canonical_proofs` (every hidden
+    position +1, one −1 per proof, a filled preprocessed round, a missing round, a
+    2-root cap, a commit witness, an empty opening: each `Encoding` from `verify`);
+    `unbound_proof_fields_cannot_be_rewritten` and
+    `upstream_advisories.rs::{pr_2106_…, pr_2256_…}` now assert that `verify` refuses
+    the rewrites.
+11. **Suite results.** (2026-09-27, release, this change)
+    - `cargo test --locked --release -p blacksilk-zk -p blacksilk-zkvm -- --test-threads=2`:
+      zk 34 passed, 0 failed, 2 ignored (timing tests); zkvm 74 passed, 0 failed,
+      1 ignored (`stress`); `circuit_fingerprint` 6 passed (log
+      `C:/bszkeval/t-fx-rtw1-zk-zk-zkvm.log`).
+    - `cargo test --locked --release -p blacksilk-px --lib`: 19 passed, 0 failed.
+    - `cargo clippy --locked -p blacksilk-zk -p blacksilk-zkvm --all-targets -- -D warnings`:
+      clean. PX-proving suites were not run (not allowed for this change); the PX-side
+      consensus fingerprint does not change (item 13).
+12. **Open review points.** (i) Wire the digest into the PX consensus manifest in the
+    single fingerprint-v3 commit (deferred; proposed entry in the FX-RTW1-ZK report):
+    today it is tied to `CIRCUIT_ID` only by a test. (ii) The chain makes an in-place
+    edit visible, not impossible: rewriting every later `prev` and the head is still
+    possible and must be caught in review. (iii) The advisory suite no longer detects
+    an upstream fix of #2106 / #2256 through `verify`; revisit at a Plonky3 migration.
+    (iv) The digest covers the reference statements' layouts; a layout function whose
+    change shows only on other statements (larger programs, more image words) is
+    caught only if it also changes the reference layouts. (v) Stale claims outside this
+    change's files are listed in the FX-RTW1-ZK report (px.md §9.1, testnet.md,
+    testnet-reset-plan.md, testnet-roadmap.md, `zk/src/params.rs` module text,
+    `zkvm/tests/vm.rs`).
+13. **Identity impact.** None: `CIRCUIT_ID`, `PARAMS_ID`, proof bytes and the consensus
+    fingerprint are unchanged. The test-side circuit digest changes (method 2).
+14. **Documentation.** As in item 5.
+15. **Review status.** Implemented and tested by FX-RTW1-ZK; red-team re-review
     pending.
 
 ---

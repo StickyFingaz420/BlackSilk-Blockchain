@@ -423,6 +423,16 @@ where
 /// Domain tag of [`fingerprint`].
 const FINGERPRINT_TAG: &str = "zkvm/circuit-fingerprint";
 
+/// Hashes `values` with their count, as canonical little-endian words.
+fn update_values(h: &mut blacksilk_crypto::hash::Hasher64, values: &[Val]) {
+    let mut bytes = Vec::with_capacity(8 + 4 * values.len());
+    bytes.extend_from_slice(&(values.len() as u64).to_le_bytes());
+    for v in values {
+        bytes.extend_from_slice(&v.as_canonical_u32().to_le_bytes());
+    }
+    h.update(&bytes);
+}
+
 /// The builder of [`fingerprint`]: evaluates a table's `eval` on given values
 /// and records, in order, every constraint's value and every interaction
 /// (bus, message, count and its weight bound; exclusive branches with their
@@ -540,17 +550,30 @@ impl InteractionBuilder for FingerprintBuilder<'_> {
 /// fingerprint that `zkvm/tests/circuit_fingerprint.rs` pins next to
 /// `prove::CIRCUIT_ID`.
 ///
-/// For every table, in order, it hashes the table's index, width, periodic
-/// and preprocessed widths and public-value count, then evaluates its `eval`
-/// at `points` pseudo-random points (a ChaCha20 stream from `seed`: random
-/// `local` and `next` rows, periodic values, public values and random values
-/// of the first-row, last-row and transition selectors) and hashes every
-/// constraint value and every interaction the evaluation produces. A change
-/// to any constraint polynomial, bus, message, count, selector use, width or
-/// table order changes the digest except with probability about
-/// (degree / p) per point (Schwartz–Zippel), so an AIR edit cannot pass
-/// unnoticed. It does not depend on the programs, images or outputs a
-/// statement carries (their periodic values are replaced by random ones).
+/// For every table, in order, it hashes:
+/// - the table's index, width, periodic and preprocessed widths and
+///   public-value count;
+/// - the **contents** of its periodic columns and of its preprocessed trace
+///   (RTW1-3): the fixed byte-operation table, and the program, image and
+///   output layouts of the statement `airs` belongs to, exactly as the
+///   verifier supplies them;
+/// - the column sets whose next row is opened (`main_next_row_columns`,
+///   `preprocessed_next_row_columns`) and the constraint-count and degree
+///   hints (`num_constraints`, `max_constraint_degree`), which the prover and
+///   verifier read instead of the constraints;
+/// - the evaluation of its `eval` at `points` pseudo-random points (a
+///   ChaCha20 stream from `seed`: random `local` and `next` rows, periodic
+///   values, public values and random values of the first-row, last-row and
+///   transition selectors): every constraint value and every interaction the
+///   evaluation produces.
+///
+/// A change to any constraint polynomial, bus, message, count, selector use,
+/// width, table order, fixed table entry, public-column layout or next-row
+/// set changes the digest; for the constraints, except with probability about
+/// (degree / p) per point (Schwartz–Zippel). The constraint evaluations do not
+/// depend on the programs, images or outputs a statement carries (their
+/// periodic values are replaced by random ones), but the hashed column
+/// contents do: pin the digest on fixed reference statements.
 pub fn fingerprint<A>(airs: &[A], seed: u64, points: usize) -> [u8; 32]
 where
     A: for<'a> Air<FingerprintBuilder<'a>> + BaseAir<Val>,
@@ -567,6 +590,39 @@ where
         let npv = air.num_public_values();
         for n in [t, w, pw, air.preprocessed_width(), npv] {
             h.update(&(n as u64).to_le_bytes());
+        }
+        // The data the verifier supplies itself (RTW1-3): periodic columns,
+        // then the preprocessed trace, each column with its length.
+        let periodic = air.periodic_columns();
+        h.update(&(periodic.len() as u64).to_le_bytes());
+        for col in periodic.iter() {
+            update_values(&mut h, col);
+        }
+        match air.preprocessed_trace() {
+            None => {
+                h.update(&[0]);
+            }
+            Some(m) => {
+                h.update(&[1]).update(&(m.width() as u64).to_le_bytes());
+                update_values(&mut h, &m.values);
+            }
+        }
+        // What the prover and verifier open and assume without evaluating
+        // `eval`: the next-row column sets and the constraint hints.
+        for set in [
+            air.main_next_row_columns(),
+            air.preprocessed_next_row_columns(),
+        ] {
+            h.update(&(set.len() as u64).to_le_bytes());
+            for c in set {
+                h.update(&(c as u64).to_le_bytes());
+            }
+        }
+        for hint in [air.num_constraints(), air.max_constraint_degree()] {
+            match hint {
+                None => h.update(&[0]),
+                Some(n) => h.update(&[1]).update(&(n as u64).to_le_bytes()),
+            };
         }
         for _ in 0..points {
             let (cur, next, pc, pn, public) =

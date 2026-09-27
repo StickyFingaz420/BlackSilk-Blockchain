@@ -354,11 +354,12 @@ plus about 6%). Every function's budget is registered with its program at deploy
 
 ## 7. Proof parameters
 
-As zk.md §9.3, parameter set **BS-ZK-2**:
+The current parameter set of zk.md §9.3 (its name is `PARAMS_ID`, and its values are
+the constants of `zk/src/params.rs`; they are not copied here):
 - BabyBear with a degree-8 extension;
-- hiding FRI: blow-up 8, 108 queries, 16 grinding bits;
-- over the whole shape envelope, ≥ 123 bits in the Johnson regime and ≥ 105 bits in
-  the unique-decoding regime.
+- hiding FRI (blow-up, queries and grinding bits in `zk/src/params.rs`);
+- soundness figures over the whole shape envelope: computed, not proven, under the
+  assumptions of zk.md §9.3, where the figures and their caveats are stated.
 
 **Height limits:**
 - minimum, every table: 2^8 (`MIN_LOG_HEIGHT`, §6.1a); `BLIND` is exactly 2^8;

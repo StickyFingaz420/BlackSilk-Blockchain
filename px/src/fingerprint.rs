@@ -6,7 +6,8 @@
 //! itself (chain parameters, genesis, transaction and emission rules, RandomX
 //! configuration) followed by [`px_entries`]. This crate owns the encoding and
 //! the PX-side entries because it is the lowest crate that sees the kernel and
-//! vault program ids, the BS-ZK-2 parameters and the BVM-1 limits.
+//! vault program ids, the proof-system parameters (`blacksilk_zk::params`) and
+//! the BVM-1 limits.
 //!
 //! Two builds with the same fingerprint agree on every constant listed here.
 //! They can still differ in rule *code* that no constant captures; the build

@@ -73,7 +73,7 @@ proofs is a new set with a new `PARAMS_ID`.
 the committed, post-zero-knowledge domain `degree_bits = log_height + 1`) and the
 independent calculator `zk/tests/soundness_calc.rs`. Both must reach `MIN_PROVEN_BITS`
 in the unique-decoding regime and `TARGET_JOHNSON_BITS` in the Johnson regime over the
-whole envelope; the binding terms are pinned (query phase; commitment term
+whole envelope; the limiting terms are pinned (query phase; commitment term
 `COLLISION_BITS`, ePrint 2026/089 Theorem 3). Figures and their caveats: zk.md §9.3.
 
 ---
@@ -90,13 +90,20 @@ whole envelope; the binding terms are pinned (query phase; commitment term
   whose first input is `CIRCUIT_ID` (zk.md §9.3, zkvm.md §7). After that, the transcript
   is Plonky3 0.7.0's `p3-batch-stark` transcript unchanged.
 - **Circuit identity.** `CIRCUIT_ID` names the BVM-1 constraint system. The circuit
-  digest (`zkvm::air::check::fingerprint` over the table lists of 1 to `MAX_EXECUTIONS`
-  executions, with the height limits and the blinding width) is pinned next to it in
-  `zkvm/tests/circuit_fingerprint.rs` (`REVISIONS`). **Procedure:** any change to an AIR,
-  a bus, a width, the table order or a limit changes the digest; the same commit must
-  bump `CIRCUIT_ID` and append the new (id, digest) pair. An existing pair is never
-  edited. The v3 changes to the parameter set and canonical form (BS-ZK-3, §5) do not
-  touch the AIRs, so `CIRCUIT_ID` is unchanged by them.
+  digest is pinned next to it in `zkvm/tests/circuit_fingerprint.rs` (`REVISIONS`). It
+  covers, for fixed reference statements of 1 to `MAX_EXECUTIONS` executions,
+  `zkvm::air::check::fingerprint` of their table lists (constraint evaluations at seeded
+  points, widths, table order, the contents of the byte table and of the public-column
+  layouts of programs, images and outputs, the next-row column sets and the constraint
+  hints), their `statement_digest`, the height limits and the blinding width.
+  **Procedure:** any change to an AIR, a bus, a width, a fixed table, a public-column
+  layout, a next-row set, the table order or a limit changes the digest; the same commit
+  must bump `CIRCUIT_ID` and append a new line (id, digest method, digest, chain hash of
+  the earlier lines). An existing line is never edited; a test enforces this with the
+  hash chain and a pinned head. A change of the digest's coverage alone (RTW1-3) appends
+  a line with the same id and a new digest method: the AIRs, and so the transcript, did
+  not change. The v3 changes to the parameter set and canonical form (BS-ZK-3, §5) do
+  not touch the AIRs, so `CIRCUIT_ID` is unchanged by them.
 - **Prover randomness** (not checkable by a verifier): hedged seeds, OS randomness mixed
   with a witness digest, fresh per proof (`ProverConfig::for_statement`).
 - **Prover policy, grinding** (not a verifier rule): the prover's challenger
@@ -131,7 +138,8 @@ order; any failure is `ZkError::Encoding`:
 
 These rules make one honest proof have exactly one valid encoding, and close fields the
 Plonky3 0.7.0 verifier leaves unbound (`check_canonical_form`, applied by
-`decode_proof`). Honest proofs satisfy all of them by construction.
+`decode_proof` and again by `verify`, §6). Honest proofs satisfy all of them by
+construction.
 
 | # | Rule | Why |
 |---|---|---|
@@ -153,15 +161,20 @@ proof shape"). Plonky3 0.8 enforces both itself.
 |---|---|---|
 | V1 | one table, one public-value vector and one height limit per AIR, and the proof covers exactly that many tables | `Shape` |
 | V2 | every table's `degree_bits` (log2 height + 1 under zero knowledge) is in `[MIN_LOG_HEIGHT + 1, min(limit, MAX_LOG_HEIGHT) + 1]` | `Height` |
+| C1–C4 | the canonical-form rules of §5, applied again to the proof object | `Encoding` |
 | V3 | the FRI folding schedule equals `honest_fri_schedule(degree_bits)` (R4-02) | `Invalid` |
 | V4 | Plonky3 0.7.0 `verify_batch` accepts it, with the preprocessed commitment recomputed from a fresh `VerifierConfig::setup()` | `Invalid` |
 | V5 | a panic inside Plonky3 is caught (`catch_unwind`; builds must use `panic = "unwind"`, enforced by `compile_error!`) | `VerifierPanicked` |
 
 Consensus paths decode with `decode_proof` first, so §4–§5 always apply before §6.
-`verify` does **not** re-check §5: called on a proof object that did not come from
-`decode_proof`, it accepts what Plonky3 0.7.0 accepts, including rewrites C1 and C2
-exist to refuse (the advisory suite asserts this, so an upstream change is noticed).
-Every caller that takes proof bytes from outside must decode them with `decode_proof`.
+`verify` also re-checks §5 on the proof object (defence in depth, RTW1): a proof that
+did not come from `decode_proof` gets the same verdict on C1–C4, so a caller that skips
+decoding cannot accept the rewrites C1 and C2 exist to refuse. On consensus paths every
+proof is already canonical, so no verdict changes. The §4 byte rules (D1–D5) exist only
+for bytes: every caller that takes proof bytes from outside must still decode them with
+`decode_proof`. (Until RTW1 the advisory suite asserted that a direct `verify` accepted
+the C1 and C2 rewrites, as a signal of an upstream change; that signal is gone, and the
+rules are kept regardless of upstream.)
 zkVM statements with a fixed shape (every PX statement) additionally require each table's
 `degree_bits` to equal the shape's (`zkvm::prove::verify`, zkvm.md §6.6).
 
@@ -175,12 +188,13 @@ zkVM statements with a fixed shape (every PX statement) additionally require eac
 | Security figures | `zk/src/params.rs` `security`, `security_report` | `params::tests::every_shape_within_limits_meets_both_security_targets`; `zk/tests/soundness_calc.rs` (independent calculator, headline figures, `COLLISION_BITS` derivation) |
 | D1–D5 | `zk/src/lib.rs` `decode_proof` | `zk/tests/proofs.rs` `encoding_is_strict`, `byte_mutations_never_verify_and_never_panic_the_caller`; `zk/tests/field_mutations.rs`; fuzz target `proof_decode` |
 | C1–C2 | `zk/src/lib.rs` `check_canonical_form` | `zk/tests/proofs.rs` `unbound_proof_fields_cannot_be_rewritten` |
+| C1–C4 in `verify` | `zk/src/lib.rs` `verify` | `zk/tests/proofs.rs` `verify_itself_refuses_non_canonical_proofs` (every hidden position +1, one −1, a filled preprocessed round, a missing round, a 2-root cap, a commit witness, an empty opening: each `Encoding`) |
 | C3 | `zk/src/lib.rs` `check_canonical_form` | `zk/tests/proofs.rs` `honest_proofs_have_the_canonical_hidden_openings_and_caps`, `every_merkle_cap_root_count_mutation_is_refused` |
 | C4 | `zk/src/lib.rs` `check_hidden_openings` | `zk/tests/proofs.rs` `honest_proofs_have_the_canonical_hidden_openings_and_caps`, `every_hidden_opening_count_mutation_is_refused` (every position, +1 and −1, with and without a preprocessed round) |
 | V1–V2 | `zk/src/lib.rs` `verify` | `claimed_heights_and_table_counts_are_checked_first` |
 | V3 | `zk/src/lib.rs` `check_fri_schedule` | `honest_proofs_use_the_canonical_fri_schedule`, `a_non_canonical_fri_schedule_is_refused`, `schedule_tests::*`, `px/tests/fri_schedule.rs` |
 | V4–V5 | `zk/src/lib.rs` `verify` | `zk/tests/proofs.rs` (all), `zkvm/tests/*`, PX consensus tests |
-| Upstream fixes after 0.7.0 | C1 (#2106), C2 (#2256), V3 (#2033), C3 (#2277) | `zk/tests/upstream_advisories.rs`: every commit-phase witness rewritten (0.7.0 alone accepts; decode refuses) and the query witness (verify refuses); the #2256 panic case (`preprocessed_next = Some([])` on a preprocessed table) refused at decode and contained by a direct `verify` (`VerifierPanicked`); an empty `preprocessed_local` (0.7.0 alone accepts; decode refuses); swapped fold arities; 2- and 3-root caps |
+| Upstream fixes after 0.7.0 | C1 (#2106), C2 (#2256), V3 (#2033), C3 (#2277) | `zk/tests/upstream_advisories.rs`: every commit-phase witness rewritten (0.7.0 alone accepts; decode and `verify` refuse) and the query witness (verify refuses); the #2256 panic case (`preprocessed_next = Some([])` on a preprocessed table) refused at decode and by `verify` before Plonky3 runs; an empty `preprocessed_local` (0.7.0 alone accepts; decode and `verify` refuse); swapped fold arities; 2- and 3-root caps |
 | Patched crates | `third_party/p3-{dft,fri,merkle-tree}` | `zk/tests/upstream_advisories.rs::third_party_patched_crates_are_pinned` (digest of every tracked file, line ends normalized) |
-| Circuit identity | `zkvm/src/prove.rs` `CIRCUIT_ID`; `zkvm/src/air/check.rs` `fingerprint` | `zkvm/tests/circuit_fingerprint.rs` (pinned digest; every single mutation of any table, a table swap and an execution-id change alter it; independent of programs); `zkvm/tests/circuit_id.rs` |
+| Circuit identity | `zkvm/src/prove.rs` `CIRCUIT_ID`; `zkvm/src/air/check.rs` `fingerprint` | `zkvm/tests/circuit_fingerprint.rs` (pinned digest; every single mutation of any table's constraints, interactions, public-column entries, next-row sets or hints, a table swap and an execution-id change alter it; the constraint evaluations are independent of programs; `REVISIONS` append-only by a hash chain); `zkvm/tests/circuit_id.rs` |
 | Grinding policy (prover) | `zk/src/config.rs` `ProverChallenger`, `smallest_pow_witness` | `zk/tests/grinding.rs`: `the_prover_grinds_the_smallest_valid_nonce`, `proofs_do_not_depend_on_the_thread_count`, `upstream_grinding_witness_depends_on_the_thread_count` (the leak), `proofs_from_the_upstream_grinding_prover_still_verify` |
