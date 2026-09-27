@@ -1,0 +1,137 @@
+# BlackSilk proof system: format and verifier rules
+
+This document is **normative** for the zero-knowledge proof layer (`zk/`): the parameter
+set, the Fiat–Shamir transcript, the proof encoding and every rule a verifier applies to
+a proof before and around the Plonky3 verifier. It is written **by reference**: every
+value lives in code, and this document names the constant or function that holds it.
+Where the two disagree, the code is what nodes run and this document is wrong; fix it.
+
+- Design and rationale: [`zk.md`](zk.md) §9 (proof system), §12 (security analysis).
+- The circuit (the AIRs the proofs are about): [`zkvm.md`](zkvm.md) §6–§7, §10.
+- Consensus use (PX transactions, exact shapes, fees): [`px.md`](px.md) §11.
+- Changes to anything here are consensus changes, recorded in
+  [`reviews/v3-consensus-changes.md`](reviews/v3-consensus-changes.md).
+
+This is internal engineering documentation, not an audit. Zero knowledge is claimed only
+as statistical and conditional (reviews/zk-coverage.md §3).
+
+---
+
+## 1. Sources of truth
+
+| What | Where |
+|---|---|
+| Parameter set, its identifier and relations | `zk/src/params.rs` (`PARAMS_ID` and the constants next to it) |
+| Plonky3 configuration (field, hash, Merkle tree, PCS, challenger) | `zk/src/config.rs` |
+| Proving, verification, encoding, canonical form, FRI schedule | `zk/src/lib.rs` |
+| Circuit tag and statement digest | `zkvm/src/prove.rs` (`CIRCUIT_ID`, `statement_digest`) |
+| Plonky3 | exact pins `=0.7.0` in `zk/Cargo.toml`, `zkvm/Cargo.toml`; three prover-side patched crates in `third_party/` (verifier code byte-identical to upstream; third_party/README.md) |
+| Consensus fingerprint entries for all of the above | `px/src/fingerprint.rs` (`px_entries`) |
+
+---
+
+## 2. Parameter set
+
+The active set is the one named by `params::PARAMS_ID` (currently BS-ZK-3). A parameter
+set is never edited in place: any change to a constant in `zk/src/params.rs` that affects
+proofs is a new set with a new `PARAMS_ID`.
+
+| Parameter | Constant |
+|---|---|
+| FRI blow-up (log2) | `LOG_BLOWUP` |
+| FRI queries | `NUM_QUERIES` |
+| Maximum folding arity (log2) | `MAX_LOG_ARITY` |
+| Final polynomial length (log2) | `LOG_FINAL_POLY_LEN` |
+| Query proof-of-work bits | `QUERY_POW_BITS` |
+| Commit-phase proof-of-work bits | `COMMIT_POW_BITS` (0) |
+| Random codewords per committed matrix (hiding PCS) | `NUM_RANDOM_CODEWORDS` (= `EXTENSION_DEGREE` since BS-ZK-3) |
+| Salt elements per Merkle leaf | `MERKLE_SALT_ELEMS` |
+| Challenge field | degree-`EXTENSION_DEGREE` binomial extension of BabyBear |
+| Table heights | powers of two in `[2^MIN_LOG_HEIGHT, 2^MAX_LOG_HEIGHT]` |
+| Encoded proof size | at most `MAX_PROOF_BYTES` |
+
+**Relations checked at compile time** (`const` assertions in `zk/src/params.rs`):
+
+- R1 (ePrint 2024/1037 §4.2 eq. 17, both opening points counted):
+  `2·(NUM_QUERIES + EXTENSION_DEGREE·OPENING_POINTS) ≤ 2^MIN_LOG_HEIGHT`.
+- R2 (eq. 16): `OPENING_POINTS + NUM_QUERIES ≤ 2^MIN_LOG_HEIGHT`.
+- R3: `NUM_RANDOM_CODEWORDS ≥ EXTENSION_DEGREE` (Plonky3 0.8's hiding-PCS rule, PR #2100).
+- R4: `MIN_LOG_HEIGHT + 1 > LOG_FINAL_POLY_LEN` (every committed polynomial folds at
+  least once).
+
+---
+
+## 3. Configuration and transcript
+
+- **Configuration:** `config::ZkConfig`, a Plonky3 `StarkConfig` of the hiding FRI PCS
+  (`HidingFriPcs`) over the salted Merkle tree (`MerkleTreeHidingMmcs`, cap height 0),
+  Poseidon2 (BabyBear, width 16, Plonky3's default constants; pinned by
+  `zk/tests/pins.rs`) for leaves, nodes and Fiat–Shamir, and the `DuplexChallenger`.
+- **Transcript start** (`config::challenger`): the challenger absorbs the length of
+  `PARAMS_ID`, its bytes, then the 32 bytes of the **statement digest**, before any
+  commitment. For zkVM proofs the statement digest is `zkvm::prove::statement_digest`,
+  whose first input is `CIRCUIT_ID` (zk.md §9.3, zkvm.md §7). After that, the transcript
+  is Plonky3 0.7.0's `p3-batch-stark` transcript unchanged.
+- **Prover randomness** (not checkable by a verifier): hedged seeds, OS randomness mixed
+  with a witness digest, fresh per proof (`ProverConfig::for_statement`).
+
+---
+
+## 4. Encoding
+
+A proof on the wire is `PROOF_VERSION ‖ postcard(BatchProof)` (`encode_proof`).
+`decode_proof` accepts a byte string only if **all** of the following hold, in this
+order; any failure is `ZkError::Encoding`:
+
+| # | Rule |
+|---|---|
+| D1 | length ≤ `MAX_PROOF_BYTES` |
+| D2 | first byte = `PROOF_VERSION` |
+| D3 | the body decodes as a Plonky3 0.7.0 `BatchProof` for `ZkConfig` (a panicking decoder counts as failure) |
+| D4 | no trailing bytes |
+| D5 | re-encoding the decoded proof gives exactly the input bytes |
+| D6 | the canonical-form rules of §5 |
+
+---
+
+## 5. Canonical form
+
+These rules make one honest proof have exactly one valid encoding, and close fields the
+Plonky3 0.7.0 verifier leaves unbound (`check_canonical_form`, applied by
+`decode_proof`). Honest proofs satisfy all of them by construction.
+
+| # | Rule | Why |
+|---|---|---|
+| C1 | While `COMMIT_POW_BITS = 0`, every commit-phase grinding witness is zero | 0.7.0 accepts any unabsorbed witness at 0 bits (upstream fix #2106): a relayer could rewrite it and change the transaction id |
+| C2 | No optional opening (`trace_next`, `preprocessed_local`, `preprocessed_next`, `random`) is present but empty | 0.7.0 compares lengths only, so `Some([])` passes where `None` is expected (upstream fix #2256) |
+
+---
+
+## 6. Verification
+
+`verify(cfg, airs, proof, public, max_log_heights)` accepts a proof only if, in order:
+
+| # | Rule | Failure |
+|---|---|---|
+| V1 | one table, one public-value vector and one height limit per AIR, and the proof covers exactly that many tables | `Shape` |
+| V2 | every table's `degree_bits` (log2 height + 1 under zero knowledge) is in `[MIN_LOG_HEIGHT + 1, min(limit, MAX_LOG_HEIGHT) + 1]` | `Height` |
+| V3 | the FRI folding schedule equals `honest_fri_schedule(degree_bits)` (R4-02) | `Invalid` |
+| V4 | Plonky3 0.7.0 `verify_batch` accepts it, with the preprocessed commitment recomputed from a fresh `VerifierConfig::setup()` | `Invalid` |
+| V5 | a panic inside Plonky3 is caught (`catch_unwind`; builds must use `panic = "unwind"`, enforced by `compile_error!`) | `VerifierPanicked` |
+
+Consensus paths decode with `decode_proof` first, so §4–§5 always apply before §6.
+zkVM statements with a fixed shape (every PX statement) additionally require each table's
+`degree_bits` to equal the shape's (`zkvm::prove::verify`, zkvm.md §6.6).
+
+---
+
+## 7. Rule table
+
+| Rule | Code | Tests |
+|---|---|---|
+| R1–R4 | `zk/src/params.rs` (`const` assertions) | compile time |
+| D1–D5 | `zk/src/lib.rs` `decode_proof` | `zk/tests/proofs.rs` `encoding_is_strict`, `byte_mutations_never_verify_and_never_panic_the_caller`; `zk/tests/field_mutations.rs`; fuzz target `proof_decode` |
+| C1–C2 | `zk/src/lib.rs` `check_canonical_form` | `zk/tests/proofs.rs` `unbound_proof_fields_cannot_be_rewritten` |
+| V1–V2 | `zk/src/lib.rs` `verify` | `claimed_heights_and_table_counts_are_checked_first` |
+| V3 | `zk/src/lib.rs` `check_fri_schedule` | `honest_proofs_use_the_canonical_fri_schedule`, `a_non_canonical_fri_schedule_is_refused`, `schedule_tests::*`, `px/tests/fri_schedule.rs` |
+| V4–V5 | `zk/src/lib.rs` `verify` | `zk/tests/proofs.rs` (all), `zkvm/tests/*`, PX consensus tests |

@@ -1,4 +1,4 @@
-//! STARK configuration for BS-ZK-2 (docs/zk.md §9.2–9.3).
+//! STARK configuration for BS-ZK-3 (docs/zk.md §9.2–9.3, docs/proof-system.md).
 //!
 //! | Part | Choice |
 //! |---|---|

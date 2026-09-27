@@ -504,7 +504,7 @@ owner): a STARK on Plonky3 0.7.**
 | Hiding FRI and Merkle commitments | `HidingFriPcs` and `MerkleTreeHidingMmcs` |
 | Security calculator | `p3-security` |
 | Base field | BabyBear |
-| Challenge field | degree-8 extension of BabyBear (247 bits; parameter set BS-ZK-2, which replaced the degree-5 BS-ZK-1, AUDIT.md ZK-F4) |
+| Challenge field | degree-8 extension of BabyBear (247 bits; parameter sets BS-ZK-2 and BS-ZK-3, which replaced the degree-5 BS-ZK-1, AUDIT.md ZK-F4) |
 | Hashing (Merkle, Fiat–Shamir) | Poseidon2 with the standard constants |
 
 - Only this family meets R3 and R4 together: soundness and zero-knowledge rest on hash
@@ -556,14 +556,26 @@ owner): a STARK on Plonky3 0.7.**
   are opened at both ζ and g·ζ, so the true count can reach about twice the columns.
   The worst case, 2 × 15,709 = 31,418, is still below the 65,536 the test covers, so
   the figures below hold for it.
-- **Current set: BS-ZK-2.** Minimum table height 2^8 since 2026-09-26, so that
-  2·(e·n_F + n_D) = 2·(8 + 108) = 232 ≤ 256 (ePrint 2024/1037 §4.2, eq. 17; a `const`
-  assertion checks it in every build). Hiding: 4 random codewords per committed matrix,
-  4 salt elements per Merkle leaf, and a separate FRI mask polynomial per table that
-  spans the extension. The result is **statistical** zero knowledge under the open
-  items of docs/reviews/zk-coverage.md; it is not perfect and not proven for the whole
-  system. (An 8-codeword variant, BS-ZK-3, was built on a wrong premise and reverted
-  before any commit; internal-review-log.md, round 3.)
+- **Current set: BS-ZK-3** (testnet v3; the normative proof format and verifier
+  rules are in docs/proof-system.md). Minimum table height 2^8, so that the
+  witness-randomization bound of ePrint 2024/1037 §4.2, eq. 17, holds with **both**
+  opening points counted, as Plonky3 0.8's hiding budget counts them:
+  2·(n_D + e·n_F) = 2·(108 + 8·2) = 248 ≤ 256 (the query ceiling at this height is
+  112). Eq. 16 (n_F + n_D ≤ h_p) holds as well. Both are `const` assertions in
+  `zk/src/params.rs`, checked in every build. Hiding: `NUM_RANDOM_CODEWORDS` = the
+  extension degree (8) random codewords per committed matrix, 4 salt elements per
+  Merkle leaf, and a separate FRI mask polynomial per table that spans the extension.
+  - **Why 8 codewords (decision F24-1):** Plonky3 0.8 (PR #2100) requires at least
+    the extension degree per committed matrix, in prover and verifier, "to mask
+    extension-field batching". BS-ZK-2 used 4 on the internal argument that the mask
+    polynomial already spans the extension (internal-review-log.md, round 3). No
+    written proof supports either position, so the upstream rule is adopted at the v3
+    reset (docs/reviews/v3-consensus-changes.md, "BS-ZK-3"). The name BS-ZK-3 had
+    earlier been used for a local 8-codeword build that was reverted before any
+    commit; no proof under that build was ever published.
+  - The zero-knowledge claim is **statistical and conditional** under the open items
+    of docs/reviews/zk-coverage.md, and computational in practice (§12.1); it is not
+    perfect and not proven for the whole system.
   - degree-8 extension, blow-up 8, 108 queries, 16 grinding bits;
   - over the whole shape envelope (2^22 rows, 6 000 columns): ≥ 123 bits in the
     Johnson regime (the target is 120, the approved floor 100) **and** ≥ 105 bits in
@@ -576,7 +588,7 @@ owner): a STARK on Plonky3 0.7.**
 - **Fiat–Shamir:** the transcript absorbs the full statement before any challenge.
   This is the lesson of Frozen Heart (2022), as for BP+ in transactions.md §7. **As
   implemented** (`zk/src/config.rs`, `challenger`):
-  - first the parameter-set identifier `PARAMS_ID` (`BlackSilk/zk/BS-ZK-2`, with its
+  - first the parameter-set identifier `PARAMS_ID` (`zk/src/params.rs`, with its
     length), then the 32-byte **statement digest**, both before any commitment. The
     digest hashes first the **circuit tag** `CIRCUIT_ID`
     (`BlackSilk/zkvm/BVM-1/circuit/v1`, `zkvm/src/prove.rs`; R4-11, testnet v3),
@@ -702,7 +714,10 @@ The targets below were set before PX-0. The PX-0 measurements are in
 
 **Measured on the complete system (BS-ZK-2 with terminal blinding and minimum height
 2^8; `px/examples/proof_bench.rs`, 2 × 5 proofs of each kind, idle, one development
-machine; AUDIT.md R13): the targets are missed by a wide margin.**
+machine; AUDIT.md R13): the targets are missed by a wide margin.** BS-ZK-3 (8 random
+codewords) has not been re-measured on PX proofs yet; on the small toy proofs of
+`zk/tests/toy_measure.rs` it added about 8–13 % bytes (record in
+docs/reviews/v3-consensus-changes.md, "BS-ZK-3").
 
 | Item | Target | Measured: transfer | Measured: vault call (one function) |
 |---|---|---|---|

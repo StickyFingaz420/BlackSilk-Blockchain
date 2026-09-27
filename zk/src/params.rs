@@ -1,4 +1,5 @@
-//! Parameter set **BS-ZK-2** (docs/zk.md §9.3) and its proven security.
+//! Parameter set **BS-ZK-3** (docs/zk.md §9.3, docs/proof-system.md) and its
+//! proven security.
 //!
 //! Every shape inside the envelope reaches
 //! - at least [`TARGET_JOHNSON_BITS`] in the Johnson-bound (list-decoding)
@@ -9,7 +10,9 @@
 //! So soundness does not depend on the 2020/2025 proximity-gap results; they
 //! only add margin. BS-ZK-1 (degree-5 extension, blow-up 32, 50 queries) had
 //! exactly 100 Johnson bits and 63 unique-decoding bits at the largest shape
-//! and was replaced (AUDIT.md R8, finding ZK-F4).
+//! and was replaced (AUDIT.md R8, finding ZK-F4). BS-ZK-2 was BS-ZK-3 with 4
+//! random codewords per committed matrix; BS-ZK-3 uses 8, the extension
+//! degree (decision F24-1, testnet v3 reset; docs/reviews/v3-consensus-changes.md).
 //!
 //! Changing any constant here changes the proof format, its soundness or its
 //! zero knowledge: it is a new parameter set (a new verifier-registry entry),
@@ -27,7 +30,11 @@ use p3_security::fri::FriRegime;
 use p3_uni_stark::{ProvenSecurity, StarkSecurityParams};
 
 /// Identifier of this parameter set; absorbed into every transcript.
-pub const PARAMS_ID: &[u8] = b"BlackSilk/zk/BS-ZK-2";
+///
+/// BS-ZK-3 (testnet v3): BS-ZK-2 with [`NUM_RANDOM_CODEWORDS`] raised from 4
+/// to 8. (An earlier local 8-codeword build had also been called BS-ZK-3; it
+/// was reverted before any commit and never produced a published proof.)
+pub const PARAMS_ID: &[u8] = b"BlackSilk/zk/BS-ZK-3";
 
 /// log2 of the FRI blow-up factor (rate ρ = 2^-3).
 pub const LOG_BLOWUP: usize = 3;
@@ -50,11 +57,18 @@ pub const COMMIT_POW_BITS: usize = 0;
 /// codewords. Plonky3 commits a separate randomization polynomial per table
 /// (`get_opt_randomization_poly_commitment`) with `NUM_RANDOM_CODEWORDS +
 /// EXTENSION_DEGREE` base-field columns, which spans the extension field
-/// whatever this value is. These per-matrix codewords are additional masking.
-/// (An internal analysis wrongly treated them as `R`, and the value was briefly
-/// raised to 8; reverted after internal review round 3, see
-/// docs/reviews/internal-review-log.md.)
-pub const NUM_RANDOM_CODEWORDS: usize = 4;
+/// whatever this value is.
+///
+/// **8 = [`EXTENSION_DEGREE`] (BS-ZK-3, decision F24-1).** Plonky3 0.8
+/// (PR #2100) rejects, in prover and verifier, any hiding PCS with fewer
+/// random codewords per committed matrix than the extension degree, "to mask
+/// extension-field batching". Internal review round 3 had argued that `R`
+/// alone suffices and kept 4 (BS-ZK-2); no written proof of either position
+/// exists, so the conservative upstream rule is adopted: privacy before proof
+/// size (about +10 % bytes and time; the measurement is in
+/// docs/reviews/v3-consensus-changes.md). The verifier pins the hidden opening
+/// count to this value (canonical form, `crate::decode_proof`).
+pub const NUM_RANDOM_CODEWORDS: usize = 8;
 pub const MERKLE_SALT_ELEMS: usize = 4;
 
 /// Degree of the challenge extension field over BabyBear.
@@ -79,12 +93,14 @@ pub const MAX_LOG_HEIGHT: usize = 22;
 /// [`MAX_ADVERSARIAL_COLUMNS`]; honest shapes are checked against it.
 ///
 /// Raised from 4,000 on 2026-09-26: the widest PX statement (kernel plus two
-/// functions, 23 tables) commits 4,999 base columns, measured on a real proof
-/// with the hidden codewords and `R` included
+/// functions, 23 tables) is measured on a real proof with the hidden codewords
+/// and `R` included
 /// (`zkvm/tests/multi.rs::the_widest_multi_execution_shape_stays_in_the_envelope`;
-/// internal review round 4, M3). The security figures do not change up to at
-/// least 65,536 columns (tested). The envelope was checked only
-/// for single executions before (internal review round 2, S2).
+/// internal review round 4, M3). BS-ZK-3's 8 codewords add 4 columns per
+/// committed matrix and leave a thin margin below this bound (the measured
+/// count is in docs/reviews/v3-consensus-changes.md, "BS-ZK-3"). The security
+/// figures do not change up to at least 65,536 columns (tested). The envelope
+/// was checked only for single executions before (internal review round 2, S2).
 pub const MAX_COMMITTED_COLUMNS: usize = 6_000;
 /// Smallest table height (log2). FRI must fold every committed polynomial at
 /// least once before the final polynomial: `MIN_LOG_HEIGHT + 1 (zero-knowledge
@@ -161,13 +177,27 @@ pub fn security(shape: &ProofShape) -> Security {
 /// (quotient must fit the LDE: `degree ≤ 2^LOG_BLOWUP`).
 pub const MAX_CONSTRAINT_DEGREE: usize = 1 << LOG_BLOWUP;
 
+/// Out-of-domain opening points per committed polynomial: ζ and its
+/// translate g·ζ (tables read the `next` row).
+pub const OPENING_POINTS: usize = 2;
+
 // Witness randomization (docs/reviews/zk-coverage.md), checked in every build:
 // every table has enough randomizer degrees of freedom for the bound of
-// ePrint 2024/1037 §4.2, eq. (17): 2·(e·n_F + n_D) ≤ h ≤ |H|. Here n_F = 1
-// (one out-of-domain point; the factor 2 accounts for its translate by g),
-// n_D is the number of FRI queries, and h = |H| (Plonky3 adds one random row
-// per trace row). So 2·(8 + 108) = 232 ≤ 2^MIN_LOG_HEIGHT = 256.
-const _: () = assert!(2 * (EXTENSION_DEGREE + NUM_QUERIES) <= 1 << MIN_LOG_HEIGHT);
+// ePrint 2024/1037 §4.2, eq. (17): 2·(e·n_F + n_D) ≤ h ≤ |H|, with e the
+// extension degree, n_D the number of FRI queries and h = |H| (Plonky3 adds
+// one random row per trace row). n_F counts **both** opening points, as the
+// Plonky3 0.8 hiding budget does (PR #2100; the paper's n_F = 1 with the
+// translate folded into the factor 2 gave the weaker 2·(8 + 108) = 232):
+// 2·(108 + 8·2) = 248 ≤ 2^MIN_LOG_HEIGHT = 256. At this height the query
+// ceiling is 112.
+const _: () = assert!(2 * (NUM_QUERIES + EXTENSION_DEGREE * OPENING_POINTS) <= 1 << MIN_LOG_HEIGHT);
+// Quotient randomization, eq. (16): n_F + n_D ≤ h_p, where h_p (the height
+// of a quotient chunk's randomizer) is at least the trace height |H| ≥
+// 2^MIN_LOG_HEIGHT (Plonky3 `get_quotient_ldes` follows the Lagrange
+// decomposition of §4.2, the premise of this equation). 2 + 108 ≤ 256.
+const _: () = assert!(OPENING_POINTS + NUM_QUERIES <= 1 << MIN_LOG_HEIGHT);
+// F24-1: at least one random codeword per extension coordinate.
+const _: () = assert!(NUM_RANDOM_CODEWORDS >= EXTENSION_DEGREE);
 
 #[cfg(test)]
 mod tests {
@@ -212,7 +242,7 @@ mod tests {
             }
         }
         // Record the margin in the test output (cargo test -- --nocapture).
-        println!("BS-ZK-2 worst case over the envelope: {worst:?}");
+        println!("BS-ZK-3 worst case over the envelope: {worst:?}");
     }
 
     // Compile-time checks of the parameter relations.
