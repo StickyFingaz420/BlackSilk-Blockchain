@@ -1,0 +1,12 @@
+[1790533199] 4 nodes up
+[1790533199] miners started on nodes 0 and n/2 (one per partition group)
+[1790533320] sync user-3 via node3: node: the node is still synchronizing (87 of 88 blocks); try again later
+[1790533439] traffic phase over; final checks
+[1790533459] converged=true drained=true height=149
+[1790533478] late joiner synced=true peers=3
+[1790533478] miner-a: balance 2342.24508981 (fresh restore: 2342.24508981), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790533478] miner-b: balance 641.59126547 (fresh restore: 641.59126547), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790533478] user-1: balance 0.00000000 (fresh restore: 0.00000000), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790533478] user-2: balance 0.00000000 (fresh restore: 0.00000000), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790533478] user-3: balance 0.00000000 (fresh restore: 0.00000000), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790533478] supply: generated 2983.83635528 vs wallets 2983.83635528
