@@ -399,6 +399,57 @@ refuse to broadcast across an activation before re-signing (and re-proving PX). 
 wallet still uses `TxRules::for_chain`, which panics on a multi-epoch schedule: a
 tripwire until then.
 
-## 9. R2-C6 feed-forward: decision data (V3-B, not implemented)
+## 9. R2-C6 Hk node feed-forward: decision data (V3-B, measured, not implemented)
 
-See §9 data below (filled by measurement).
+**The owner decides.** Nothing here changes the kernel. The kernel pinned by this
+candidate (`0577e667…`) has no feed-forward.
+
+**What was measured (native, no proving; 2026-09-27).** The zkVM interpreter runs
+the kernel ELF and `zkvm::air::trace::usage` gives each table's rows. Two kernels
+ran the same witness (a plain bridge-in, both inputs dummy, `n_fn = 0`):
+- the candidate kernel;
+- the same source with `node()` changed to `P(l ‖ r)[0..8] + l` (feed-forward on
+  the first 8 words), built with the same flags in a scratch copy.
+
+Dummy inputs skip only the membership verdict, not the 2 × 32 `node()` calls, so
+the difference is the full cost of the change. It is the same for every shape (the
+number of `node()` calls does not depend on `n_fn`).
+
+| Table | Candidate | Feed-forward | Δ |
+|---|---|---|---|
+| cycles (CPU) | 24,550 | 27,181 | **+2,631** |
+| keys | 4,272 | 4,321 | +49 |
+| add | 16,902 | 18,509 | +1,607 |
+| bit | 1,378 | 1,890 | +512 |
+| lt | 14,199 | 14,786 | +587 |
+| shift, mul, poseidon | — | — | 0 |
+
+SX1 estimated +2–3k cycles; measured +2,631.
+
+**Headroom per fixed shape** (use from `budgets_leave_headroom` with the candidate
+kernel, plus Δ, against the current budget and the table height the budget gives):
+
+| Shape | Cycles now / budget | + Δ | Height now | Height needed (use + Δ, +6%) |
+|---|---|---|---|---|
+| `n_fn = 0` | 24,586 / 26,500 | 27,217 | 2^15 | 2^15 (28,850) |
+| `n_fn = 1` | 28,388 / 31,200 | 31,019 | 2^15 | **2^16** (32,880 > 32,768) |
+| `n_fn = 2` | 32,020 / 35,600 | 34,651 | 2^16 | 2^16 |
+
+- Shared ALU tables: `add` and `lt` keep their heights in every shape; `bit` for
+  `n_fn = 1` goes from 2^11 to 2^12 once the vault's budget (250) is added. Small.
+- **The decision point is `n_fn = 1` (one vault call).** With the usual +6% rounding
+  its CPU table doubles to 2^16 rows, which increases that shape's proof size and
+  proving time (not re-measured here; proving was not run for this). With a budget
+  of exactly 32,768 cycles the use is 94.7%, inside the 95% headroom rule, and the
+  height stays 2^15, at a thinner margin than the other shapes.
+- Every budget change and the node change itself change the kernel id, so the
+  choice must be made before the v3 ids are pinned for launch.
+
+**Options for the owner:**
+1. **Adopt** feed-forward in v3: `node()` becomes collision resistant on its own
+   (a future tree with free leaves stays safe); re-measure, set `n_fn = 1` to 32,768
+   cycles or accept 2^16; re-measure the widest two-function proof against
+   `MAX_PROOF_BYTES`; rebuild (new ids).
+2. **Keep** the current `node()`: the tree is argued to be ≈2^124-binding from leaf
+   anchoring and fixed depth (the corrected comment in `px-core/src/hash.rs`); any
+   future tree must not reuse `node()` with free leaves.
