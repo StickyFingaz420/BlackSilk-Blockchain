@@ -1,0 +1,124 @@
+# BlackSilk v1 stealth-address derivation vectors (docs/transactions.md §2, §3,
+# §12.3; docs/px.md §11 for the PX context). Test data, read by
+# crypto/tests/stealth_vectors.rs. One `name = value` per line; hex unless
+# noted. Every value is re-derived by the test from the spec formulas with raw
+# Blake2b and dalek, and compared with the implementation.
+#
+# keys.<w>.*          wallet a (seed 01 02 .. 20) and wallet b (seed a5 x 32):
+#                     k_s, k_v, K_s, and per subaddress (a_i) m, D, C, d.
+# ctx.*               key_images (the two transfer inputs, I = p*Hp("key-image",
+#                     p*G) with p = wide(0x90), wide(0x91)); transfer, coinbase
+#                     (per height, decimal in the name) and PX contexts
+#                     (nullifiers 01 x 32 and 02 x 32).
+# out.<name>.*        one output: recipient (decimal account/index), amount
+#                     (decimal), ctx, anchor, r, R, S (shared secret encoding),
+#                     x, O, view_tag (1 byte), mask, Cm, enc_amount (transfers
+#                     only), enc_anchor, p (one-time secret) and I (key image).
+#
+# Scalars are 32-byte little-endian, points compressed Ristretto255.
+# wide(b) = Scalar::from_bytes_mod_order_wide([b; 64]).
+
+ctx.key_images = 684ce92e97fec03fab29371ccd87f1949ae6e660c5e278c15adc4ea1ffb86a72084dc19dfc81bc67574ec6f55e7c17da81e075478143106cced6d7e8b059da79
+ctx.transfer.two_inputs = 8514bddc5afb2704d1025da44433e3b4dc640d48c55d268da5ac7ea1cd47f01b
+ctx.transfer.one_input = eaeee14044db2c8055c7beeae71ecc15265b052bbcc2b0e0fac4d2d5653ed7b8
+ctx.coinbase.0 = a4440bd3f061f4c09d16130fbd7aa0b0270b746827377ed705e00ee9afc0c718
+ctx.coinbase.1 = 060b885d18ffe90042ebe656263cd7e73b763c24dd6a25b387c741d6cf09534b
+ctx.coinbase.1000000 = b76e38306705e11df40836ed8d8a7481f676959e63afa3c8b2538319066206bb
+ctx.coinbase.18446744073709551615 = 2b5f8f94e563f98c2a710005fa6db85fbdb1b49260ca257bbcc73c3212f7b3a7
+ctx.px.nullifiers_and_key_image = 8c24fdb8dc437f9c84d42b012082522278d62455df87522907a1bfd5eee8a625
+ctx.px.nullifiers_only = e5f107695f18429a7f0c27e01f23bfad131be4eab04c921cce6d770aa495de79
+keys.a.seed = 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+keys.a.k_s = 7b36ff5623e322d0651a87f8e12c66ce34eb6a59420a848af6d1ac80e765d204
+keys.a.k_v = 57aead074bd54921dee28dd05ae26aaa57ddd1380f5af0df9342475f56d69c0c
+keys.a.K_s = d02f3a08b6157c06fd25f67fa5bbd4f574411f2e90a385f8442d14fcaa70e748
+keys.a.sub.0_0.m = 0000000000000000000000000000000000000000000000000000000000000000
+keys.a.sub.0_0.D = d02f3a08b6157c06fd25f67fa5bbd4f574411f2e90a385f8442d14fcaa70e748
+keys.a.sub.0_0.C = d4f441d7ba010a73320c37d10de7ef70bad9beb480f4c66bdf6fabff92bf8059
+keys.a.sub.0_0.d = 7b36ff5623e322d0651a87f8e12c66ce34eb6a59420a848af6d1ac80e765d204
+keys.a.sub.0_1.m = b579b196a263d552e9d2237c817d88c893329eba520c61c811e6f458b2f40806
+keys.a.sub.0_1.D = 429a0e083572857d672f66a78088528e7cd944ffee77246291c9e4892dd87424
+keys.a.sub.0_1.C = 581a5e729ad402e4c08fad8d58eb01aaec37cde615f993806919aef9fec3b15a
+keys.a.sub.0_1.d = 30b0b0edc546f8224fedaa7463aaee96c81d09149516e55208b8a1d9995adb0a
+keys.a.sub.1_0.m = f257ecb87f6001539d9683cb7114b0b69fe41db21dbab56cfcaf46f6d9a6a20f
+keys.a.sub.1_0.D = 9e9e5239bd5bb0a3b58d1a66a871455bea4b4ed2dca910224d09f2a6aa74d311
+keys.a.sub.1_0.C = e03ea113a81ca75dd349a817e1bcc2306f1f7f92d3a0427d8e90d938db5f8e3a
+keys.a.sub.1_0.d = 80baf5b288e011cb2c14132175473770d4cf880b60c439f7f281f376c10c7504
+keys.a.sub.7_3.m = f2955fae75524da25ad6d23f871e3dd3d80a66cbf9876eae9e60edfcaec1170f
+keys.a.sub.7_3.D = 4e1d924e6f5a2003633d564adeb1412045e8522a76d9eb96c9bf7f0e14f2282a
+keys.a.sub.7_3.C = 4827d6ceb6ef7fd9db3fa1d08b9aa0aa60650b498352eb446fca1730a8461234
+keys.a.sub.7_3.d = 80f868a87ed25d1aea5362958a51c48c0df6d0243c92f23895329a7d9627ea03
+keys.b.seed = a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5
+keys.b.k_s = ddd3de56a0f617940e649d7ce1309852241368c74bbc420fad7abd01da118107
+keys.b.k_v = 7ba2fb921455d34311912e06457ba6bc22bfbe976a7c7b5ff5e3e30349a6df0b
+keys.b.K_s = 86f67584f028479e647c05dc600095069f944b676e2d8b77d433d0edade6d97f
+keys.b.sub.0_0.m = 0000000000000000000000000000000000000000000000000000000000000000
+keys.b.sub.0_0.D = 86f67584f028479e647c05dc600095069f944b676e2d8b77d433d0edade6d97f
+keys.b.sub.0_0.C = f4eb9a6c3b32a10cbee1076fa8bf4d2b86c16e90162cdf59624965b9b9709b06
+keys.b.sub.0_0.d = ddd3de56a0f617940e649d7ce1309852241368c74bbc420fad7abd01da118107
+keys.b.sub.0_1.m = 2e52aa3387a7b55f26d90c521246464cc351b6f9b8cb3e3327dd3242c2c43f07
+keys.b.sub.0_1.D = 14b778552340387ffc2129d1f735f327808dbaff3515a5283c7fa7175cbc6b04
+keys.b.sub.0_1.C = e4023c6436cbc80a90e511eaf3ff6347e778724498f7cd88cdb7b884d8b42868
+keys.b.sub.0_1.d = 0b26898a279ecdf3343daacef376de9ee7641ec104888142d457f0439cd6c00e
+out.transfer_primary.recipient = 0/0
+out.transfer_primary.amount = 1000000
+out.transfer_primary.ctx = 8514bddc5afb2704d1025da44433e3b4dc640d48c55d268da5ac7ea1cd47f01b
+out.transfer_primary.anchor = 3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c
+out.transfer_primary.r = 425a2a2195c330340a907017be4a3c69aa28ce1916b82c621844457f0f455206
+out.transfer_primary.R = 164dd612c70b0d7dab2be36b0448b8abf546dd279c6778e6521eb1ed77c5c776
+out.transfer_primary.S = ae2f1a7f6d007e94e3780fa7e01740cbb6d0325728fe88e8f0ea86d557be8518
+out.transfer_primary.x = 10f42ebfbe3cf6c6b263301644bd17feb6ffc93e42ad46bf90e7e6c1db31f30a
+out.transfer_primary.O = 50df3f4dca05e8eb499b6938e4b2096a57f5e83733a0eb23dba7a01df2e52b34
+out.transfer_primary.view_tag = a2
+out.transfer_primary.mask = d3a8ad58a37720deb550c70eda556ab78856ffd525062d81c9314f7649ba8f0f
+out.transfer_primary.Cm = 0ae13283ac8ecb0e47adfea07ec2fc655ff7e17c2165a961f1f39905f7753a5d
+out.transfer_primary.enc_amount = a0f5fea5737754e5
+out.transfer_primary.enc_anchor = 57055d0aa94efcb75d6208e4103ac64b
+out.transfer_primary.p = 8b2a2e16e21f1997187eb70e26ea7dccebea349884b7ca4987b99342c397c50f
+out.transfer_primary.I = c0cc7b95ec182d9d23bd9b5a406fe3c0dda7dcbdf51c815e4dc5fa8009c9a15b
+out.transfer_subaddress_7_3.recipient = 7/3
+out.transfer_subaddress_7_3.amount = 0
+out.transfer_subaddress_7_3.ctx = 8514bddc5afb2704d1025da44433e3b4dc640d48c55d268da5ac7ea1cd47f01b
+out.transfer_subaddress_7_3.anchor = c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3
+out.transfer_subaddress_7_3.r = 15e7702e5d133a70daa8ab1d8cdd2fd935b09e2c71293ee4adb21f5c6fd6040d
+out.transfer_subaddress_7_3.R = baf6ee955835533ac7e0a84999c108dc95b5770845ae3635dfcd8efd6b080a47
+out.transfer_subaddress_7_3.S = 820044c3964c2e99efcdcfd162be9e5ccd611dbd10895264a1c8f5e7585cab27
+out.transfer_subaddress_7_3.x = 5a4408ad23b9d5035e2f33edec3581234f517526cafd2f9dc4bf2c4237b36309
+out.transfer_subaddress_7_3.O = 640a6fab548b3e470fe38cabab14667b77d07b07bebaf4f5a40559afc803ad32
+out.transfer_subaddress_7_3.view_tag = c6
+out.transfer_subaddress_7_3.mask = eaef1ed5d7573f095dd0be6700ec17538e35c5473e44e157a998eed656045b00
+out.transfer_subaddress_7_3.Cm = 526009b21d7cf97518e960c466159347337178654d023dfb1a42028b7b777e63
+out.transfer_subaddress_7_3.enc_amount = 226c9cee91a40f8b
+out.transfer_subaddress_7_3.enc_anchor = 88dfd9f28510da07791dd0cbd931f380
+out.transfer_subaddress_7_3.p = da3c7155a28b331e48839582778745b05c47464b069022d659f2c6bfcdda4d0d
+out.transfer_subaddress_7_3.I = c48d6572a13efcd8ded0f6e6436314e0bb5e2405712a5e25ea03183ff912af08
+out.coinbase_subaddress_1_0.recipient = 1/0
+out.coinbase_subaddress_1_0.amount = 17592186044416
+out.coinbase_subaddress_1_0.ctx = a31b39804839e47314bd9ba360ee6d3f3d71e18935d75710fdf194d969515306
+out.coinbase_subaddress_1_0.anchor = 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a
+out.coinbase_subaddress_1_0.r = 9bcfcf2d17f94f05132a711cfc2639b5d3a942ac9679fef9024f89d1c0e1ee03
+out.coinbase_subaddress_1_0.R = a22028cabcb3fc29b637638d32cc62aafd4036b0577986b26d4d3585f68d097c
+out.coinbase_subaddress_1_0.S = e862200d42076b3cc177e4510ae56ed107a6c9b2b5f4436947014f0142347e06
+out.coinbase_subaddress_1_0.x = aaedc3d08157b6d557cc5e6ac6fb1014d4ca5a85e15e440a92afe285a67a3e03
+out.coinbase_subaddress_1_0.O = 84df607c17897578bd26ede6cedbf182d359ee7e10324b211edc626971350251
+out.coinbase_subaddress_1_0.view_tag = d5
+out.coinbase_subaddress_1_0.mask = 0100000000000000000000000000000000000000000000000000000000000000
+out.coinbase_subaddress_1_0.Cm = de385f9ec80873888e531f64776ddcb624d7f07491a4d2d3f4edc5bccbcd8141
+out.coinbase_subaddress_1_0.enc_anchor = d6afc724968a1857d4fa8b1c062eb533
+out.coinbase_subaddress_1_0.p = 2aa8b9830a38c8a084e0718b3b434884a89ae39041237e018531d6fc6787b307
+out.coinbase_subaddress_1_0.I = d44fdc844a016ebea53c7ff567a1b68df53f98d4391d31d6338dab30686cbc52
+out.px_primary_b.recipient = 0/0
+out.px_primary_b.amount = 18446744073709551615
+out.px_primary_b.ctx = 8c24fdb8dc437f9c84d42b012082522278d62455df87522907a1bfd5eee8a625
+out.px_primary_b.anchor = 000102030405060708090a0b0c0d0e0f
+out.px_primary_b.r = 84116629514bbd7a42ac4a2369182459c595209a020fbee1318cb0fda3be3703
+out.px_primary_b.R = becf5ef6f3ebf6a7ecc1ca6850faad608f91d5ee247c66339fab486f21becb40
+out.px_primary_b.S = c293d057feeb7cb337de08c0931532f6602b4d921c0fce220426c696ac028e4b
+out.px_primary_b.x = 55a5973fd7f1262cd2ced26b8946f7184e4fca3ba6f5818bfa8994ce67350609
+out.px_primary_b.O = 589e30e69cdc484ffc49f11242583a1532d85a2e1c837037ec3914af7b221f13
+out.px_primary_b.view_tag = 25
+out.px_primary_b.mask = 12f317a1ab201f8b261c54153f949caf2263ad050482c2c6d064ac5e7009d70f
+out.px_primary_b.Cm = ec444e1d989ebff0b62ad6c2791aeffbd08458c3e4cf06f27c5225d53974324c
+out.px_primary_b.enc_amount = c97a5bccbb2f8e0c
+out.px_primary_b.enc_anchor = 9cbd4f9b1fb860f59c1097eeebae35d6
+out.px_primary_b.p = 45a580395d852c680a9678458c7db05672623203f2b1c49aa70452d041478700
+out.px_primary_b.I = 3eacdda287257d1477f93869cdd66714354c61a82f9e1fc9a3b4ac823a57ce1b
