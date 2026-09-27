@@ -181,6 +181,12 @@ pub enum TxError {
     PxDuplicateProgram {
         program: usize,
     },
+    /// A deploy registers a budget no proof can have: above `MAX_CYCLES`, or
+    /// a table above its height limit with the kernel's share (R7-5;
+    /// `px::budget_is_provable`).
+    PxBudgetTooLarge {
+        program: usize,
+    },
 }
 
 impl TxError {
@@ -209,7 +215,7 @@ impl TxError {
     /// | `KeyImageSpent` | C2 | contextual | spent on this branch (or earlier in this block), possibly not on another |
     /// | `InvalidSignature` | C3 | contextual | see below |
     /// | `DuplicateOneTimeKey` | C4 | contextual | the colliding output is on this branch or earlier in this block; repeats within one transaction are caught first by T6 or `PxDuplicateOutputKey` |
-    /// | `PxShape`, `PxFeeNotStandard`, `PxInvalidProgram` | PX structure | stateless | the transaction alone |
+    /// | `PxShape`, `PxFeeNotStandard`, `PxInvalidProgram`, `PxBudgetTooLarge` | PX structure | stateless | the transaction alone |
     /// | `PxDuplicateOutputKey`, `PxNullifierRepeated`, `PxDuplicateProgram` | PX structure | stateless | a repeat within the transaction |
     /// | `PxUnknownAnchor` | PX1 | contextual | the root window moves; the anchor may be recent on another branch |
     /// | `PxNullifierSpent` | PX2 | contextual | spent on this branch or earlier in this block |
@@ -255,6 +261,7 @@ impl TxError {
             | TxError::PxDuplicateOutputKey { .. }
             | TxError::PxNullifierRepeated
             | TxError::PxDuplicateProgram { .. }
+            | TxError::PxBudgetTooLarge { .. }
             | TxError::PxProof => true,
             TxError::UnknownRingMember { .. }
             | TxError::RingMemberTooYoung { .. }

@@ -731,6 +731,35 @@ pub fn check_px_balance(tx: &PxTx) -> Result<(), TxError> {
     }
 }
 
+/// Whether a function with budget `b` can be proven, alone, with the kernel
+/// (R7-5): every table of the one-function statement stays within its height
+/// limit (`blacksilk_zkvm::prove::limits`).
+/// - The function's CPU table: at most `MAX_CYCLES` rows.
+/// - Its memory-init table (`keys`): at most `2^MAX_LOG_HEIGHT` rows.
+/// - The ALU and Poseidon2 tables are shared with the kernel, whose budget
+///   for one function is `kernel_budget(1)`: their sum is at most
+///   `2^MAX_LOG_HEIGHT` rows.
+///
+/// A call of two large functions can still exceed a shared table; such a
+/// combination cannot be proven, and the verifier refuses the heights.
+pub fn budget_is_provable(b: &Budget) -> bool {
+    let max = 1usize << blacksilk_zk::params::MAX_LOG_HEIGHT;
+    let k = blacksilk_px::prove::kernel_budget(1);
+    let shared = [
+        (b.add, k.add),
+        (b.bit, k.bit),
+        (b.lt, k.lt),
+        (b.shift, k.shift),
+        (b.mul, k.mul),
+        (b.poseidon, k.poseidon),
+    ];
+    b.cycles <= blacksilk_zkvm::MAX_CYCLES as usize
+        && b.keys <= max
+        && shared
+            .iter()
+            .all(|&(x, kx)| x.checked_add(kx).is_some_and(|s| s <= max))
+}
+
 /// Structure of a deploy: the transfer rules on its v1 part, a fee covering
 /// its size, and loadable programs within their limits.
 pub fn check_deploy_structure(tx: &PxDeploy, rules: &TxRules) -> Result<(), TxError> {
@@ -751,6 +780,11 @@ pub fn check_deploy_structure(tx: &PxDeploy, rules: &TxRules) -> Result<(), TxEr
             fee: tx.fee,
             required,
         });
+    }
+    for (i, p) in tx.programs.iter().enumerate() {
+        if !budget_is_provable(&p.budget) {
+            return Err(TxError::PxBudgetTooLarge { program: i });
+        }
     }
     let programs = tx.load_programs()?;
     // R5-7: the registry answers `(contract, program id)` with the first

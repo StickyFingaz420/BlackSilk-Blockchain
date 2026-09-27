@@ -133,3 +133,100 @@ fn a_repeated_program_in_other_elf_bytes_is_rejected() {
     });
     assert_eq!(e, Err(TxError::PxDuplicateProgram { program: 1 }));
 }
+
+// ------------------------------------------------------------------ R7-5
+
+const MAX_ROWS: usize = 1 << blacksilk_zk::params::MAX_LOG_HEIGHT;
+
+/// Every budget field at its largest provable value, with the kernel's share
+/// of the shared tables (`kernel_budget(1)`) subtracted.
+fn largest_provable() -> Budget {
+    let k = blacksilk_px::prove::kernel_budget(1);
+    Budget {
+        cycles: blacksilk_zkvm::MAX_CYCLES as usize,
+        keys: MAX_ROWS,
+        add: MAX_ROWS - k.add,
+        bit: MAX_ROWS - k.bit,
+        lt: MAX_ROWS - k.lt,
+        shift: MAX_ROWS - k.shift,
+        mul: MAX_ROWS - k.mul,
+        poseidon: MAX_ROWS - k.poseidon,
+    }
+}
+
+type Field = (&'static str, fn(&mut Budget) -> &mut usize);
+
+const FIELDS: [Field; 8] = [
+    ("cycles", |b| &mut b.cycles),
+    ("keys", |b| &mut b.keys),
+    ("add", |b| &mut b.add),
+    ("bit", |b| &mut b.bit),
+    ("lt", |b| &mut b.lt),
+    ("shift", |b| &mut b.shift),
+    ("mul", |b| &mut b.mul),
+    ("poseidon", |b| &mut b.poseidon),
+];
+
+#[test]
+fn provable_budget_boundaries() {
+    use blacksilk_tx::px::budget_is_provable;
+    assert_eq!(blacksilk_zkvm::MAX_CYCLES, 1 << 21);
+    assert_eq!(MAX_ROWS, 1 << 22);
+    let top = largest_provable();
+    assert!(budget_is_provable(&top));
+    assert!(budget_is_provable(&VAULT_BUDGET));
+    assert!(budget_is_provable(&Budget {
+        cycles: 0,
+        keys: 0,
+        add: 0,
+        bit: 0,
+        lt: 0,
+        shift: 0,
+        mul: 0,
+        poseidon: 0,
+    }));
+    for (name, field) in FIELDS {
+        let mut b = top;
+        *field(&mut b) += 1;
+        assert!(!budget_is_provable(&b), "{name} one above its limit");
+        *field(&mut b) = usize::MAX;
+        assert!(
+            !budget_is_provable(&b),
+            "{name} at usize::MAX (no overflow)"
+        );
+    }
+}
+
+#[test]
+fn a_deploy_at_the_limits_is_valid_and_one_above_is_rejected() {
+    let mut net = TestNet::new(34, 80);
+    let d = deploy(&mut net, vec![vault()]);
+    let top = largest_provable();
+    assert_eq!(
+        check_after(&net, &d, |x| x.programs[0].budget = top),
+        Ok(()),
+        "every field at its limit"
+    );
+    for (name, field) in FIELDS {
+        let e = check_after(&net, &d, |x| {
+            let mut b = top;
+            *field(&mut b) += 1;
+            // A valid program first, so the index is checked too.
+            x.programs.push(Registration {
+                elf: other_elf(),
+                budget: b,
+            });
+        });
+        assert_eq!(
+            e,
+            Err(TxError::PxBudgetTooLarge { program: 1 }),
+            "{name} one above its limit"
+        );
+    }
+    assert!(TxError::PxBudgetTooLarge { program: 0 }.is_stateless());
+}
+
+/// A second program that loads to another id than the vault: the kernel.
+fn other_elf() -> Vec<u8> {
+    blacksilk_px::prove::KERNEL_ELF.to_vec()
+}

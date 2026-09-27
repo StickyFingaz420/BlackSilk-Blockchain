@@ -519,7 +519,7 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
 | PX3 | Every called function is a registered program of its contract (registry before this block) |
 | PX4 | The pool stays ≥ 0 through the block, in order |
 | PX5 | The proof verifies with the registered programs and budgets (last; most expensive) |
-| Deploy | Programs load, and their program ids are pairwise distinct (stateless, `PxDuplicateProgram`; R5-7); the contract id is new in the chain and the block |
+| Deploy | Every budget is provable: `cycles ≤ MAX_CYCLES` (2^21), `keys ≤ 2^22`, and each ALU and Poseidon2 field plus the kernel's `kernel_budget(1)` share ≤ 2^22 (stateless, `PxBudgetTooLarge`; R7-5). Programs load, and their program ids are pairwise distinct (stateless, `PxDuplicateProgram`; R5-7). The contract id is new in the chain and the block |
 | Block | Coinbase = reward + all fees; v1 weight ≤ limit; PX and deploy bytes ≤ 8 MiB |
 
 **Chain state.** The state (`MemoryChain`) keeps the PX state, the registry and a
