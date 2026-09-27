@@ -351,6 +351,50 @@ pub struct Balance {
     pub unlocked: u64,
 }
 
+/// What a wallet holds at its synced height (`Wallet::holdings`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Holdings {
+    /// The wallet's synced height.
+    pub height: u64,
+    /// The id of the block at `height`, if the wallet has scanned it.
+    pub tip: Option<Hash>,
+    /// Transactions submitted by this wallet and still stored (unconfirmed,
+    /// or confirmed but not yet buried).
+    pub pending_txs: usize,
+    pub outputs: Vec<HeldOutput>,
+    pub px_records: Vec<HeldRecord>,
+}
+
+/// An owned v1 output (`Holdings`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeldOutput {
+    pub global_index: u64,
+    /// Height of the block that created it.
+    pub height: u64,
+    pub amount: u64,
+    pub coinbase: bool,
+    /// Height of the block that spent it, if spent on chain.
+    pub spent_height: Option<u64>,
+    /// Reserved by a transaction this wallet submitted that is not confirmed.
+    pub pending: bool,
+}
+
+/// An owned PX record (`Holdings`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeldRecord {
+    /// The record commitment (hex), unique on chain.
+    pub commitment: String,
+    /// Height of the block that created it.
+    pub height: u64,
+    pub value: u64,
+    /// Height of the block that spent it, if spent on chain.
+    pub spent_height: Option<u64>,
+    /// Reserved by a transaction this wallet submitted that is not confirmed.
+    pub pending: bool,
+    /// The contract (hex) for a contract record, `None` for a plain record.
+    pub contract: Option<String>,
+}
+
 impl Wallet {
     /// A wallet from a 32-byte seed. `restore_height` is where scanning starts.
     pub fn from_seed(network: Network, seed: [u8; 32], restore_height: u64) -> Self {
@@ -852,6 +896,59 @@ impl Wallet {
             }
         }
         b
+    }
+
+    /// Everything this wallet holds, as of its synced height, for the supply
+    /// audit (tools/supply-audit). Read-only: no secret material (masks,
+    /// seeds, record openings) is included, only amounts and public ids.
+    ///
+    /// - v1: every owned output, spent or not, with its confirmation state.
+    /// - PX: every plain record, and every contract record that is on chain
+    ///   (`height` known). Contract records created or imported but never
+    ///   confirmed are left out: they hold no value on chain.
+    pub fn holdings(&self) -> Holdings {
+        let outputs = self
+            .outputs
+            .iter()
+            .map(|o| HeldOutput {
+                global_index: o.global_index,
+                height: o.height,
+                amount: o.amount,
+                coinbase: o.coinbase,
+                spent_height: o.spent_height,
+                pending: o.pending,
+            })
+            .collect();
+        let mut px_records: Vec<HeldRecord> = self
+            .px
+            .records
+            .iter()
+            .map(|r| HeldRecord {
+                commitment: r.commitment.clone(),
+                height: r.height,
+                value: r.value,
+                spent_height: r.spent_height,
+                pending: r.pending,
+                contract: None,
+            })
+            .collect();
+        px_records.extend(self.px.contract_records.iter().filter_map(|r| {
+            Some(HeldRecord {
+                commitment: r.commitment.clone(),
+                height: r.height?,
+                value: r.value,
+                spent_height: r.spent_height,
+                pending: r.pending,
+                contract: Some(r.contract.clone()),
+            })
+        }));
+        Holdings {
+            height: self.synced_height,
+            tip: self.block_ids.get(&self.synced_height).copied(),
+            pending_txs: self.pending_txs.len(),
+            outputs,
+            px_records,
+        }
     }
 
     /// Whether a submitted transaction is still unconfirmed.

@@ -420,6 +420,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "blacksilk-supply-audit"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "blacksilk-chain",
+ "blacksilk-consensus",
+ "blacksilk-crypto",
+ "blacksilk-miner",
+ "blacksilk-node",
+ "blacksilk-rpc",
+ "blacksilk-tx",
+ "blacksilk-wallet",
+ "clap",
+ "hex",
+ "rand_chacha",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "blacksilk-tx"
 version = "0.1.0"
 dependencies = [
