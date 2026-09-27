@@ -13,7 +13,7 @@ every branch, merged it, re-ran the tests on the merged tree and pushed.
 | Branch | Commit | Status |
 |---|---|---|
 | `rebuild/core` | `1c07316` (pushed) | Policy and engineering changes only. It holds no consensus change beyond the canonical-proof decode rule in `4b277cd` (see §5). |
-| `v3/candidate` | `602e07b` (pushed; 15 commits ahead, 0 behind) | Consensus changes for the future testnet v3 identity. **Not merged.** It waits for the owner's decisions (§8). |
+| `v3/candidate` | `a9edbf3` (pushed; 17 commits ahead of rebuild/core when pushed) | Consensus changes for the future testnet v3 identity. **Not merged.** It waits for the owner's decisions (§8). |
 
 The full review is in [full-review-2026-09-27.md](full-review-2026-09-27.md): findings
 register, recommendations, innovation, what must never change. Its source reports are in
@@ -310,7 +310,10 @@ wave the coordinator ran the affected suites on the merged tree.
   - `guests`: the kernel reproduces on the runner;
   - `overflow`: debug assertions and overflow checks on;
   - `randomx-full`: official vectors on Linux.
-- Run 80 (`1c07316`) was in progress when this report was written.
+- Run 80 (`1c07316`) failed one test on Linux in both test jobs,
+  `announcing_a_stem_transaction_neither_reveals_nor_fluffs_it`. It was a test race: the
+  stem peer had no stem route, so it fluffed honestly, and its announcement raced the one
+  under test. The tests were fixed in `197855b`; the new annotations named the test.
 - Failed tests are now reported as annotations, because job logs need admin access.
 
 ### v3 candidate (V3-B's runs)
@@ -318,8 +321,12 @@ wave the coordinator ran the affected suites on the merged tree.
 - Wallet: lib 27, e2e 15.
 - Proving: `px_consensus` 3/3, `px` 53/53, `zk` 17/17.
 - Path independence: identical ELF sha256 from three different directories.
-- The coordinator is re-running the remaining PX suites on the candidate: chain
-  restart, p2p PX, wallet PX e2e.
+- The coordinator then ran the remaining PX suites on the candidate at `602e07b`: chain
+  restart 1/1, p2p PX 2/2, wallet PX e2e 4/4.
+- V3-C then added the wallet side of the upgrade mechanism: builds per height, and no
+  rebroadcast across an activation. `a9edbf3` also opens the node with base rules
+  instead of `for_chain`. Results at `a9edbf3`: wallet lib 33, e2e 18 (+4 PX), and the
+  wallet PX e2e 4/4 again.
 
 ### Labnet with real RandomX (in progress)
 - 4 nodes, light-mode miners, binaries at `83fceee`, 450 minutes, with partitions
