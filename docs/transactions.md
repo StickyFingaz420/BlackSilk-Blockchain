@@ -629,6 +629,7 @@ Security relies on the following. Nothing else is assumed.
   | PX payout and change anchors, pseudo-output masks | PX hedge secret (required), plus `k_s` with v1 inputs | `px/v2`: network id, `ctx` (nullifiers and key images), fee, bridge-in, bridge-out, both output commitments, each ring, each payout, change address ‖ `LE64(change)` | full |
   | PX delivery `r` and ML-KEM coins `m` | sender's PX hedge secret (required; `seal` refuses an empty or all-zero one) | `px/delivery/hedge/v1`: recipient owner tag, `V`, the whole `ek`, `cm`, contract, `LE64(value)`, data, `rcm`, `rho` (which fixes the output index) | full |
   | PX throwaway delivery key (empty slot) | PX hedge secret | `px/throwaway/v1`: the slot's commitment, `LE64(slot)` | full |
+  | PX witness randomness: `rcm` of each user output; every field of each dummy input (`sk`, `d`, `rho`, `rcm`, position, path); owner of each empty slot; unused `sk`, `d` of contract inputs | PX hedge secret (required), plus `k_s` with v1 inputs | one stream per value, label `px/witness/rcm/v1`, `px/witness/dummy/v1`, `px/witness/empty-owner/v1` or `px/witness/contract-key/v1`, then `LE64(slot)`; the witness statement: anchor, bridge-in, bridge-out, each input (`"dummy"`, or the spent record's contract ‖ value ‖ data ‖ `rho` ‖ `rcm` ‖ position), each output (`"empty"`, or owner ‖ contract ‖ value ‖ data), each function (contract ‖ blind ‖ approve and spec flags); then the rest of the transaction: network id, fee, each ring, each payout, change address, each function run (program id ‖ private input). `build_px` re-derives these before running the kernel (`blacksilk_px::wallet::hedge_witness`) | full, except contract-output `rcm` and function blinds (below) |
   | Membership (bLSAG) nonce | `x` | `"membership"`, `m`, `B`, `P[π]` | **not full** (R2-C5) |
 
   The PX hedge secret is `blacksilk_px::wallet::Account::hedge_secret` (the PX spend secret
@@ -648,11 +649,21 @@ Security relies on the following. Nothing else is assumed.
   - *Membership nonce (R2-C5).* The context lacks the ring and the tag; with a constant RNG
     two signatures over different rings leak `x`. Unreachable today (contracts are not
     integrated); must be fixed before any integration.
-  - *PX witness randomness.* Output `rcm`, dummy inputs (key, `rho`, `rcm`, path) and
-    empty-slot owners (`blacksilk_px::wallet::{output, dummy_input, empty_output}`) come
-    from the caller's RNG directly. Under a broken RNG they are predictable, which could
-    let an observer recognise dummy inputs or empty slots, or test guesses of a record's
-    contents against `cm`. Open item.
+  - *Contract-output `rcm` and function blinds.* `build_px` keeps the `rcm` of a contract
+    output (the caller keeps that record's opening, e.g. the wallet's vault lock) and the
+    function `blind` (it is also in the function's private input). Both still come from
+    the caller's RNG (`blacksilk_px::wallet::{contract_output, random_digest}` in the
+    wallet's vault flows). Under a broken RNG an observer could test guesses of a contract
+    record's contents against its `cm`, or of a function's inputs and outputs against its
+    `io_hash`. Open item; the fix is to derive them in the wallet with the same kind of
+    hedge before the witness is assembled. The user-output, dummy-input, empty-slot and
+    contract-input values were hedged on 2026-09-27; before that they came from the
+    caller's RNG directly (`blacksilk_px::wallet::{output, dummy_input, empty_output}`,
+    which still draw placeholders that `build_px` replaces). Tests (no proving):
+    `broken_rng_*`, `working_rng_values_are_fresh`, `hedged_rcm_is_uniform_over_the_field`,
+    `the_kernel_accepts_a_hedged_witness` in px/src/wallet.rs, and
+    `broken_rng_witness_randomness_is_bound_to_the_whole_transaction` in
+    tx/src/px_builder.rs.
   - *Other RNG uses* are outside this table: decoy selection (not secret, but predictable
     under a broken RNG), key and seed generation, the wallet file's salt and nonce, and the
     STARK prover's randomness (derived with a witness digest; reviewed separately).

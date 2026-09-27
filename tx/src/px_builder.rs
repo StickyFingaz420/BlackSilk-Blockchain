@@ -66,7 +66,10 @@ pub struct PxPlan<'a> {
     /// Clear-amount bridge-out outputs.
     pub payouts: Vec<Payment>,
     /// The kernel witness. Its `bridge_in`/`bridge_out` must balance the v1
-    /// side with the fee (module docs of `crate::px`).
+    /// side with the fee (module docs of `crate::px`). Its secret random
+    /// fields (user output `rcm`, dummy inputs, empty-slot owners,
+    /// contract-input key fields) are placeholders: [`build_px`] re-derives
+    /// them with the hedge. A contract output's `rcm` is kept.
     pub witness: Witness,
     /// The PX delivery address of each output slot: the owner's address for a
     /// user record, the party that will act on it for a contract record;
@@ -76,8 +79,9 @@ pub struct PxPlan<'a> {
     pub fee: u64,
     /// The sender's secret for hedged randomness (docs/transactions.md §10),
     /// normally `blacksilk_px::wallet::Account::hedge_secret`. Required: it
-    /// keys record delivery, throwaway delivery addresses, payout and change
-    /// anchors and pseudo-output masks, so that none depends on the RNG
+    /// keys the witness randomness, record delivery, throwaway delivery
+    /// addresses, payout and change anchors and pseudo-output masks, so that
+    /// none depends on the RNG
     /// alone. An all-zero value is refused ([`PxBuildError::NoHedgeSecret`]).
     /// It is zeroized after use.
     pub hedge_secret: [u8; 32],
@@ -122,7 +126,83 @@ fn commitment_bytes(d: &blacksilk_px_core::Digest) -> [u8; 32] {
     b
 }
 
+/// Which output slots of `plan` are empty: a user output of value 0 with no
+/// data that nobody receives and no function specifies.
+fn empty_slots(plan: &PxPlan<'_>) -> [bool; 2] {
+    std::array::from_fn(|j| {
+        let out = &plan.witness.outputs[j];
+        plan.recipients[j].is_none()
+            && out.contract == blacksilk_px_core::ZERO_DIGEST
+            && out.value == 0
+            && out.data == [0; 8]
+            && !plan
+                .witness
+                .functions
+                .iter()
+                .take(plan.witness.n_fn)
+                .flatten()
+                .any(|f| f.spec[j].is_some())
+    })
+}
+
+/// Re-derives the secret randomness of the plan's witness (user output
+/// `rcm`, dummy inputs, empty-slot owners, contract-input key fields) with
+/// [`blacksilk_px::wallet::hedge_witness`], keyed with `secrets` and bound to
+/// the witness statement plus the rest of the transaction: network, fee,
+/// v1 rings (members sorted by global index), payouts, change address, and
+/// each function run (program id, private input). Contract outputs keep the
+/// caller's `rcm` (the caller keeps that opening).
+fn hedge_plan_witness<R: RngCore + CryptoRng>(
+    plan: &mut PxPlan<'_>,
+    secrets: &[&[u8]],
+    rules: &TxRules,
+    rng: &mut R,
+) {
+    let mut context: Vec<zeroize::Zeroizing<Vec<u8>>> = Vec::new();
+    let mut push = |v: Vec<u8>| context.push(zeroize::Zeroizing::new(v));
+    push(rules.network_id.to_le_bytes().to_vec());
+    push(plan.fee.to_le_bytes().to_vec());
+    push((plan.inputs.len() as u64).to_le_bytes().to_vec());
+    for ip in &plan.inputs {
+        let mut members: Vec<(u64, &OutputKey)> =
+            ip.decoys.iter().map(|d| (d.global_index, &d.key)).collect();
+        members.push((ip.real.global_index, &ip.real.key));
+        members.sort_by_key(|m| m.0);
+        let mut ring = Vec::with_capacity(members.len() * 72);
+        for (index, key) in members {
+            ring.extend_from_slice(&index.to_le_bytes());
+            ring.extend_from_slice(key.one_time_key.bytes());
+            ring.extend_from_slice(key.commitment.bytes());
+        }
+        push(ring);
+    }
+    push((plan.payouts.len() as u64).to_le_bytes().to_vec());
+    for p in &plan.payouts {
+        let mut item = p.address.to_bytes().to_vec();
+        item.extend_from_slice(&p.amount.to_le_bytes());
+        push(item);
+    }
+    push(match &plan.change {
+        Some(a) => a.to_bytes().to_vec(),
+        None => b"no change".to_vec(),
+    });
+    push((plan.functions.len() as u64).to_le_bytes().to_vec());
+    for f in &plan.functions {
+        let mut item = f.program.id().to_vec();
+        item.extend(f.input.iter().flat_map(|w| w.to_le_bytes()));
+        push(item);
+    }
+    let items: Vec<&[u8]> = context.iter().map(|v| v.as_slice()).collect();
+    let empty = empty_slots(plan);
+    blacksilk_px::wallet::hedge_witness(secrets, &items, &mut plan.witness, empty, rng);
+}
+
 /// Builds and proves a PX transaction.
+///
+/// The secret randomness of `plan.witness` is re-derived first (user output
+/// `rcm`, dummy inputs, empty-slot owners, contract-input key fields; see
+/// [`blacksilk_px::wallet::hedge_witness`]), so the caller's values for
+/// those fields are placeholders. Contract outputs keep their `rcm`.
 pub fn build_px<R: RngCore + CryptoRng>(
     mut plan: PxPlan<'_>,
     rules: &TxRules,
@@ -132,6 +212,15 @@ pub fn build_px<R: RngCore + CryptoRng>(
     plan.hedge_secret.zeroize();
     if px_secret.iter().all(|&b| b == 0) {
         return Err(PxBuildError::NoHedgeSecret);
+    }
+    // The v1 spend secret joins the hedge when there are v1 inputs.
+    let v1_secret = zeroize::Zeroizing::new(plan.keys.map(|k| k.hedge_secret()));
+    {
+        let mut secrets: Vec<&[u8]> = vec![px_secret.as_slice()];
+        if let Some(s) = v1_secret.as_ref() {
+            secrets.push(s);
+        }
+        hedge_plan_witness(&mut plan, &secrets, rules, rng);
     }
     let n = plan.inputs.len();
     if n > MAX_INPUTS {
@@ -298,7 +387,6 @@ pub fn build_px<R: RngCore + CryptoRng>(
     // secret when there are v1 inputs) and bound to the whole statement:
     // network, nullifiers and key images (ctx), fee, bridge amounts, output
     // commitments, rings, payouts, change address and amount.
-    let v1_secret = zeroize::Zeroizing::new(plan.keys.map(|k| k.hedge_secret()));
     let mut secrets: Vec<&[u8]> = vec![px_secret.as_slice()];
     if let Some(s) = v1_secret.as_ref() {
         secrets.push(s);
@@ -526,6 +614,7 @@ pub fn build_deploy<R: RngCore + CryptoRng>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use blacksilk_crypto::keys::SubaddressIndex;
     use blacksilk_px::wallet as pxw;
     use rand_chacha::rand_core::SeedableRng;
 
@@ -558,5 +647,139 @@ mod tests {
             build_px(plan, &rules, &mut rng),
             Err(PxBuildError::NoHedgeSecret)
         ));
+    }
+
+    /// A completely broken "CSPRNG": always zero.
+    struct ZeroRng;
+    impl RngCore for ZeroRng {
+        fn next_u32(&mut self) -> u32 {
+            0
+        }
+        fn next_u64(&mut self) -> u64 {
+            0
+        }
+        fn fill_bytes(&mut self, dest: &mut [u8]) {
+            dest.fill(0)
+        }
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+            dest.fill(0);
+            Ok(())
+        }
+    }
+    impl CryptoRng for ZeroRng {}
+
+    /// A withdrawal-shaped plan (not balanced; the hedge does not check):
+    /// two dummies, output 0 of 7 to `owner`, an empty slot 1, a payout of
+    /// `amount` to `to`. Placeholders come from a zero RNG.
+    fn withdrawal(owner: blacksilk_px_core::Digest, to: Address, amount: u64) -> PxPlan<'static> {
+        let witness = pxw::witness(
+            [1; 8],
+            0,
+            amount + PX_STANDARD_FEE,
+            [
+                pxw::dummy_input(&mut ZeroRng),
+                pxw::dummy_input(&mut ZeroRng),
+            ],
+            [
+                pxw::output(&mut ZeroRng, owner, 7),
+                pxw::empty_output(&mut ZeroRng),
+            ],
+        );
+        PxPlan {
+            keys: None,
+            inputs: vec![],
+            change: None,
+            payouts: vec![Payment {
+                address: to,
+                amount,
+            }],
+            witness,
+            recipients: [Some(pxw_address()), None],
+            functions: vec![],
+            fee: PX_STANDARD_FEE,
+            hedge_secret: [0; 32],
+        }
+    }
+
+    fn hedged(mut plan: PxPlan<'static>, rng: &mut (impl RngCore + CryptoRng)) -> Witness {
+        let rules = TxRules::for_chain(&blacksilk_consensus::ChainParams::regtest());
+        hedge_plan_witness(&mut plan, &[&[9u8; 32]], &rules, rng);
+        plan.witness
+    }
+
+    fn secrets_of(w: &Witness) -> Vec<blacksilk_px_core::Digest> {
+        let mut v = vec![w.outputs[0].rcm, w.outputs[1].rcm, w.outputs[1].owner];
+        for d in &w.inputs {
+            v.extend([d.sk, d.d, d.rho, d.rcm]);
+            v.extend_from_slice(&d.path);
+        }
+        v
+    }
+
+    fn assert_disjoint(a: &Witness, b: &Witness) {
+        let sb = secrets_of(b);
+        for x in secrets_of(a) {
+            assert!(!sb.contains(&x), "a hedged witness value repeats");
+        }
+    }
+
+    /// With a constant RNG, two PX builds that differ only in the payout
+    /// (amount or v1 recipient, which the kernel statement does not contain)
+    /// or in the PX recipient get unrelated witness randomness.
+    #[test]
+    fn broken_rng_witness_randomness_is_bound_to_the_whole_transaction() {
+        let alice = WalletKeys::from_seed(&[1; 32]).address(SubaddressIndex::PRIMARY);
+        let bob = WalletKeys::from_seed(&[2; 32]).address(SubaddressIndex::PRIMARY);
+        let base = hedged(withdrawal([3; 8], alice, 500), &mut ZeroRng);
+        let other_amount = hedged(withdrawal([3; 8], alice, 501), &mut ZeroRng);
+        let other_payee = hedged(withdrawal([3; 8], bob, 500), &mut ZeroRng);
+        let other_owner = hedged(withdrawal([4; 8], alice, 500), &mut ZeroRng);
+        for other in [&other_amount, &other_payee, &other_owner] {
+            assert_disjoint(&base, other);
+        }
+        // The two dummies differ from each other and from the placeholder.
+        assert_ne!(base.inputs[0], base.inputs[1]);
+        assert_ne!(base.inputs[0], pxw::dummy_input(&mut ZeroRng));
+        // The empty slot (no recipient, value 0) got a hedged owner.
+        assert_ne!(base.outputs[1].owner, pxw::empty_output(&mut ZeroRng).owner);
+        // A slot with a recipient keeps its owner and value.
+        assert_eq!((base.outputs[0].owner, base.outputs[0].value), ([3; 8], 7));
+        // An identical plan repeats (a deterministic rebuild).
+        assert_eq!(base, hedged(withdrawal([3; 8], alice, 500), &mut ZeroRng));
+    }
+
+    fn pxw_address() -> delivery::Address {
+        pxw::Account::from_seed(&[5; 32]).address(0)
+    }
+
+    #[test]
+    fn working_rng_witness_randomness_is_fresh() {
+        let alice = WalletKeys::from_seed(&[1; 32]).address(SubaddressIndex::PRIMARY);
+        let a = hedged(
+            withdrawal([3; 8], alice, 500),
+            &mut rand_chacha::ChaCha20Rng::seed_from_u64(1),
+        );
+        let b = hedged(
+            withdrawal([3; 8], alice, 500),
+            &mut rand_chacha::ChaCha20Rng::seed_from_u64(2),
+        );
+        assert_disjoint(&a, &b);
+    }
+
+    #[test]
+    fn empty_slots_are_unreceived_zero_user_outputs() {
+        let alice = WalletKeys::from_seed(&[1; 32]).address(SubaddressIndex::PRIMARY);
+        let mut plan = withdrawal([3; 8], alice, 500);
+        assert_eq!(empty_slots(&plan), [false, true]);
+        // No recipient and value 0: empty; a value makes it a payment.
+        plan.recipients[0] = None;
+        plan.witness.outputs[0].value = 0;
+        assert_eq!(empty_slots(&plan), [true, true]);
+        plan.recipients[0] = Some(pxw_address());
+        plan.witness.outputs[1].value = 1;
+        assert_eq!(empty_slots(&plan), [false, false]);
+        plan.witness.outputs[1].value = 0;
+        plan.witness.outputs[1].contract = [1; 8];
+        assert_eq!(empty_slots(&plan), [false, false]);
     }
 }
