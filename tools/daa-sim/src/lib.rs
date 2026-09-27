@@ -22,6 +22,7 @@
 
 pub mod adaptive;
 pub mod family;
+pub mod redteam;
 pub mod report;
 pub mod rng;
 pub mod rules;
