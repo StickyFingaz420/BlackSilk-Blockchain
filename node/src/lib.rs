@@ -8,7 +8,10 @@
 
 #![forbid(unsafe_code)]
 
+pub mod cookie;
 pub mod fingerprint;
+pub mod guard;
+pub mod serve;
 
 use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::StatusCode;
@@ -19,7 +22,7 @@ use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{
     submit_block_in_steps, ChainManager, SubmitError, SYNC_STEP_BLOCKS,
 };
-use blacksilk_consensus::Network;
+use blacksilk_consensus::{BlockHeader, Network};
 use blacksilk_p2p::Network as P2p;
 use blacksilk_rpc as rpc;
 use blacksilk_tx::state::MemoryChain;
@@ -141,7 +144,8 @@ async fn with_chain<T: Send + 'static>(
         .map_err(internal)
 }
 
-/// RPC without networking (tests, isolated nodes).
+/// RPC without networking (tests, isolated nodes). Guarded, without a
+/// credential: see [`router_with`].
 pub fn router(shared: Shared) -> Router {
     router_with(App {
         chain: shared,
@@ -152,7 +156,32 @@ pub fn router(shared: Shared) -> Router {
 // The RPC body limit covers the largest block, hex-encoded.
 const _: () = assert!(rpc::MAX_REQUEST_BYTES >= 2 * blacksilk_chain::block::MAX_BLOCK_BYTES + 1024);
 
+/// Every route, with its method (docs/blocks.md §9). The guard runs in front
+/// of all of them, and of unknown paths (tests enumerate this list).
+pub const ROUTES: &[(&str, &str)] = &[
+    ("GET", "/info"),
+    ("GET", "/template"),
+    ("POST", "/block"),
+    ("POST", "/tx"),
+    ("GET", "/blocks"),
+    ("GET", "/distribution"),
+    ("POST", "/outputs"),
+    ("GET", "/px/commitments"),
+    ("GET", "/px/contracts"),
+];
+
+/// The router behind the guard's host, browser, body and admission checks
+/// (docs/blocks.md §9.1), without a credential. Embedders and tests use
+/// this; the node binary serves [`serve::run`], which always requires the
+/// cookie.
 pub fn router_with(app: App) -> Router {
+    router_secured(app, guard::Policy::default())
+}
+
+/// The router behind the guard with `policy` (docs/blocks.md §9.1). The guard
+/// is the outermost layer, so it covers every route and unknown paths.
+pub fn router_secured(app: App, policy: guard::Policy) -> Router {
+    let guard = Arc::new(guard::Guard::new(policy));
     Router::new()
         .route("/info", get(info))
         .route("/template", get(template))
@@ -163,8 +192,11 @@ pub fn router_with(app: App) -> Router {
         .route("/outputs", post(outputs))
         .route("/px/commitments", get(px_commitments))
         .route("/px/contracts", get(px_contracts))
+        // The guard has already read the body within its per-route limit;
+        // this only lets the extractors take a body of that size.
         .layer(DefaultBodyLimit::max(rpc::MAX_REQUEST_BYTES))
         .with_state(app)
+        .layer(axum::middleware::from_fn_with_state(guard, guard::guard))
 }
 
 async fn info(State(App { chain: s, net }): State<App>) -> Result<Json<rpc::Info>, ApiError> {
@@ -227,21 +259,92 @@ fn rejected(error: String) -> rpc::SubmitResult {
     }
 }
 
+/// How far below the connected tip the parent of an RPC-submitted block may
+/// be (docs/blocks.md §9.2). The local miner builds on the tip; a template a
+/// few blocks old is still accepted.
+pub const RPC_BLOCK_MAX_DEPTH: u64 = 8;
+
+// Within this depth the block's RandomX seed lies on the connected chain
+// (the seed height is at least `seed_lag` below the block), and the parent's
+// work is above the P2P low-work threshold (144 blocks below the tip).
+const _: () = assert!(RPC_BLOCK_MAX_DEPTH < 64 && RPC_BLOCK_MAX_DEPTH < 144);
+
+/// The RPC admission rule for `/block` (docs/blocks.md §9.2; F07-3, F36-8),
+/// checked under the chain lock before any proof of work or storage:
+/// - the parent is the connected tip or one of its last
+///   [`RPC_BLOCK_MAX_DEPTH`] ancestors, and the height follows it;
+/// - the block's RandomX seed is the tip's or the next block's, so an RPC
+///   client can never make the node build the cache of another seed.
+///
+/// Stronger than the P2P `worth_verifying` gate for this path: only the
+/// local miner legitimately submits here. Blocks of other shapes arrive over
+/// P2P, under that gate.
+pub fn rpc_block_admissible(m: &ChainManager, header: &BlockHeader) -> Result<(), String> {
+    let tip = m.height();
+    let mut id = m.tip_id();
+    let mut near = false;
+    for _ in 0..=RPC_BLOCK_MAX_DEPTH {
+        if id == header.prev_id {
+            near = true;
+            break;
+        }
+        match m.header(&id) {
+            Some(h) if h.height > 0 => id = h.prev_id,
+            _ => break,
+        }
+    }
+    let parent = m.header(&header.prev_id);
+    if !near || parent.is_none_or(|p| p.height + 1 != header.height) {
+        return Err(format!(
+            "NotNearTip: the parent must be the tip ({tip}) or at most {RPC_BLOCK_MAX_DEPTH} \
+             blocks below it"
+        ));
+    }
+    let hc = m.headers();
+    let seed = hc.seed_id_for(header.prev_id, header.height);
+    let next = hc.seed_id_for(m.tip_id(), tip + 1);
+    let current = (tip > 0).then(|| hc.seed_id_for(m.tip_header().prev_id, tip));
+    if seed != next && Some(seed) != current {
+        return Err("StaleSeed: the block's RandomX seed is not the tip's or the next".into());
+    }
+    Ok(())
+}
+
 async fn submit_block(
     State(App { chain: s, .. }): State<App>,
     Json(p): Json<rpc::HexPayload>,
 ) -> Result<Json<rpc::SubmitResult>, ApiError> {
-    let bytes = hex::decode(&p.hex).map_err(|_| bad_request("hex"))?;
-    let block = Block::decode(&bytes).map_err(|e| bad_request(format!("block: {e:?}")))?;
-    // Validation (RandomX, CLSAG, BP+) is CPU-bound: keep it off the async
-    // workers, and connect in bounded steps (a block that releases many
-    // waiting descendants does not hold the chain lock for all of them).
-    let result = tokio::task::spawn_blocking(move || {
+    // Decoding, the admission rule, RandomX, CLSAG and BP+ are CPU-bound:
+    // all of it runs on a blocking thread, never on an async worker.
+    let result = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
+        let bytes = hex::decode(&p.hex).map_err(|_| bad_request("hex"))?;
+        let block = Block::decode(&bytes).map_err(|e| bad_request(format!("block: {e:?}")))?;
+        // Under a brief lock: the admission rule, then the PoW job.
+        let jobs = {
+            let m = lock(&s);
+            if let Err(e) = rpc_block_admissible(&m, &block.header) {
+                return Ok(Err(e));
+            }
+            m.pow_jobs(std::slice::from_ref(&block.header))
+        };
+        // RandomX outside the lock (the submission below hits the cache).
+        if let Some((pow, jobs)) = jobs {
+            pow.compute_parallel(&jobs, 1);
+        }
+        // Connect in bounded steps: a block that releases many waiting
+        // descendants does not hold the chain lock for all of them.
         let r = submit_block_in_steps(|| lock(&s), block, now(), SYNC_STEP_BLOCKS);
-        (r, lock(&s).height())
+        Ok(Ok((r, lock(&s).height())))
     })
     .await
-    .map_err(internal)?;
+    .map_err(internal)??;
+    let result = match result {
+        Ok(r) => r,
+        Err(gate) => {
+            log::info!("block refused at the RPC: {gate}");
+            return Ok(Json(rejected(gate)));
+        }
+    };
     Ok(Json(match result {
         (Ok(sub), height) => {
             log::info!(
@@ -271,8 +374,13 @@ async fn submit_tx(
     State(App { chain: s, net }): State<App>,
     Json(p): Json<rpc::HexPayload>,
 ) -> Result<Json<rpc::SubmitResult>, ApiError> {
-    let bytes = hex::decode(&p.hex).map_err(|_| bad_request("hex"))?;
-    let tx = Transaction::decode(&bytes).map_err(|e| bad_request(format!("transaction: {e:?}")))?;
+    // Decoding a transaction of several MiB is kept off the async workers.
+    let tx = tokio::task::spawn_blocking(move || {
+        let bytes = hex::decode(&p.hex).map_err(|_| bad_request("hex"))?;
+        Transaction::decode(&bytes).map_err(|e| bad_request(format!("transaction: {e:?}")))
+    })
+    .await
+    .map_err(internal)??;
     // With networking, local transactions enter the Dandelion++ stem (docs/p2p.md §8)
     // instead of being broadcast from this node directly.
     let result = match net {

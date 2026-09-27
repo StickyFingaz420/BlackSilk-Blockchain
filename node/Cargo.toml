@@ -23,7 +23,15 @@ blacksilk-p2p = { path = "../p2p" }
 blacksilk-px = { path = "../px" }
 blacksilk-randomx = { path = "../randomx" }
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "query", "tokio"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+# The RPC serve loop (src/serve.rs): hyper's HTTP/1 connections with a timer,
+# for the header-read timeout axum 0.7's `serve` cannot set. Both are already
+# in the graph through axum, with these features; no new crate.
+hyper = { version = "1", default-features = false, features = ["server", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio", "server", "service", "http1"] }
+# Constant-time credential comparison (src/guard.rs); already used by
+# blacksilk-crypto, same version and features.
+subtle = { version = "2.6", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 hex = "0.4"
 clap = { version = "4.5", features = ["derive"] }
