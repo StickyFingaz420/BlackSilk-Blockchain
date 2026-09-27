@@ -2,6 +2,7 @@
 name = "blacksilk-wallet"
 version = "0.1.0"
 edition = "2021"
+publish = false
 description = "BlackSilk CLI wallet: encrypted wallet file, scanning, transfers"
 
 [lib]

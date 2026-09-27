@@ -2,6 +2,7 @@
 name = "blacksilk-zkvm"
 version = "0.1.0"
 edition = "2021"
+publish = false
 description = "BVM-1: the BlackSilk zero-knowledge virtual machine (RV32IM), reference interpreter and constraint tables (docs/zkvm.md)"
 
 [lib]

@@ -2,6 +2,7 @@
 name = "blacksilk-contracts"
 version = "0.1.0"
 edition = "2021"
+publish = false
 description = "BlackSilk confidential contracts: module profile, deterministic Wasm execution, contract state and state root (docs/contracts.md)"
 
 [lib]

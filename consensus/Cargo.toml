@@ -2,6 +2,7 @@
 name = "blacksilk-consensus"
 version = "0.1.0"
 edition = "2021"
+publish = false
 description = "BlackSilk header-chain consensus rules: header format, RandomX PoW, LWMA difficulty, timestamps, chain selection"
 
 [lib]

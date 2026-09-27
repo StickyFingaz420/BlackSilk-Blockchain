@@ -2,6 +2,7 @@
 name = "blacksilk-node"
 version = "0.1.0"
 edition = "2021"
+publish = false
 description = "BlackSilk node: chain manager, block storage and local RPC"
 
 [lib]

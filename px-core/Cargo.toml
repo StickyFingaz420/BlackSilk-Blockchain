@@ -2,6 +2,7 @@
 name = "blacksilk-px-core"
 version = "0.1.0"
 edition = "2021"
+publish = false
 description = "BlackSilk private execution core (no_std): the Hk hash, records, nullifiers and the transfer kernel, shared by nodes, wallets and the kernel guest program"
 
 [lib]

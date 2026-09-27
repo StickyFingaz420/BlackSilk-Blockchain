@@ -2,6 +2,7 @@
 name = "blacksilk-rpc"
 version = "0.1.0"
 edition = "2021"
+publish = false
 description = "BlackSilk node RPC: wire types shared by node, miner and wallet, and a blocking client"
 
 [lib]

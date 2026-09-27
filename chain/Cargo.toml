@@ -2,6 +2,7 @@
 name = "blacksilk-chain"
 version = "0.1.0"
 edition = "2021"
+publish = false
 description = "BlackSilk blocks, emission, chain manager (header chain + transaction state + reorgs), mempool and block storage"
 
 [lib]

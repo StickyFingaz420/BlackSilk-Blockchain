@@ -2,6 +2,7 @@
 name = "blacksilk-px"
 version = "0.1.0"
 edition = "2021"
+publish = false
 description = "BlackSilk private execution (PX): commitment tree, nullifier set and pool state, wallet-side records, kernel proofs (docs/px.md)"
 
 [lib]

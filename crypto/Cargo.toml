@@ -2,6 +2,7 @@
 name = "blacksilk-crypto"
 version = "0.1.0"
 edition = "2021"
+publish = false
 description = "BlackSilk transaction cryptography: Ristretto255 primitives, stealth outputs, Janus anchors, CLSAG, Bulletproofs+"
 
 [lib]
