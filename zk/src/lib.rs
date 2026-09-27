@@ -150,8 +150,14 @@ pub fn verify<A: ProvableAir>(
         }
     }
     let result = catch_unwind(AssertUnwindSafe(|| {
-        // Same deterministic setup as the prover (see `prove`).
-        let data = ProverData::from_airs_and_degrees(cfg.inner(), airs, &proof.degree_bits);
+        // Same deterministic setup as the prover (see `prove`): a fresh setup
+        // configuration, so the preprocessed commitment never depends on the
+        // state of `cfg`'s RNGs and a `VerifierConfig` can be reused (ZK-F3).
+        let data = ProverData::from_airs_and_degrees(
+            VerifierConfig::setup().inner(),
+            airs,
+            &proof.degree_bits,
+        );
         verify_batch(cfg.inner(), airs, proof, public, &data.common)
     }));
     match result {

@@ -434,6 +434,13 @@ mod preprocessed {
             verify(&VerifierConfig::new(), &airs, &proof, &pv, &LIMITS),
             Ok(())
         );
+        // A verifier configuration is reusable: verifying twice with the same
+        // one gives the same verdict (ZK-F3: preprocessed tables are
+        // committed with a fresh setup configuration, not the caller's RNG).
+        let v = VerifierConfig::new();
+        for _ in 0..3 {
+            assert_eq!(verify(&v, &airs, &proof, &pv, &LIMITS), Ok(()));
+        }
     }
 }
 

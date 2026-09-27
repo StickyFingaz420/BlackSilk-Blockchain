@@ -15,9 +15,11 @@
 //! CSPRNG mixed with a digest of the witness (transactions.md §10). A broken OS
 //! RNG then still yields per-statement unpredictable seeds.
 //!
-//! [`VerifierConfig`] uses fixed seeds. Verification never draws from those RNGs,
-//! and the type cannot produce proofs, so a verifier configuration can never be
-//! used to prove with predictable randomness.
+//! [`VerifierConfig`] uses fixed seeds, and the type cannot produce proofs, so a
+//! verifier configuration can never be used to prove with predictable
+//! randomness. Committing preprocessed tables does draw Merkle salts; both
+//! `prove` and `verify` do it with a fresh [`VerifierConfig::setup`], so a
+//! caller's configuration is never consumed and can be reused (ZK-F3).
 
 use crate::params::{self, NUM_RANDOM_CODEWORDS};
 use blacksilk_crypto::hash::{tags, Hasher64};
