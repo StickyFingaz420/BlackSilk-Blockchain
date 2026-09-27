@@ -332,6 +332,9 @@ the CVE-2012-2459 class of duplicate-transaction malleability.
   78, 79 and 83 (2026-09-27), before vector 1f was added to it.
 - The only input not derived from chain data is the local clock (§5 rule 2), which is
   treated as non-final.
+- **Targets:** 64-bit little-endian only. Consensus encodings use explicit
+  little-endian conversions, but no big-endian build has run the vectors, so the
+  consensus crate refuses to compile for big-endian (and non-64-bit) targets.
 
 ## 10. Known limitations / open items
 
