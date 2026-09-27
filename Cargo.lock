@@ -468,6 +468,7 @@ dependencies = [
  "blacksilk-crypto",
  "blacksilk-px",
  "blacksilk-px-core",
+ "blacksilk-tx",
  "blacksilk-zk",
  "blacksilk-zkvm",
  "log",

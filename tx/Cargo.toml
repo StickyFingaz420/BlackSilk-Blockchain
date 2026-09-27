@@ -30,3 +30,6 @@ test-hooks = ["blacksilk-px/test-hooks"]
 rand_chacha = { version = "0.3", default-features = false }
 # A PX state near tree capacity for tests/tree_capacity.rs.
 blacksilk-px = { path = "../px", features = ["test-hooks"] }
+# This crate's own test constructors (`MemoryChain::with_px_state`) for its
+# integration tests, which build the library without `cfg(test)`.
+blacksilk-tx = { path = ".", features = ["test-hooks"] }
