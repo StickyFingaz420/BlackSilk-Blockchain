@@ -552,3 +552,130 @@ every template's total weight, PX bytes, deploy bytes and pool stay within bound
 - The invalid-block worst case (F10-2) is closed separately by early proof decoding
   (docs/transactions.md §8.3); this rule also bounds it through B6.
 - Agent 40: weight samples in the fingerprint manifest.
+
+---
+
+<a id="tree-capacity"></a>
+
+## PX tree capacity (I3) with 21-D, a fallible apply that halts, and 21-F
+
+Decision: decisions.md, Agent 11 "Tree-capacity rule (I3): rides the v3 reset … `apply_block`
+returns a Result, with no panic path"; Agent 21 "Tree capacity: the frontier stores the
+full root at the last append (21-D). It merges before or with 11's capacity rule" and
+"Undo compaction (21-F): done now … gated by a property test"; Agent 50 "Tree capacity:
+21-D lands with or before the rule; count leaves per output (not a literal 2); templates
+enforce it; an apply failure after validation stops the node, and must NOT mark the
+block invalid"; Agent 48 F48-5 (never auto-invalidate). Dossiers 11 §3.3 (F11-2) and 21
+§3.4, §3.6 (F21-1, F21-2, F21-4, F21-8). Work item CB-B1b item 4.
+
+**1. Problem.**
+- No rule bounded the PX commitment tree (depth 32, `CAPACITY = 2^32` leaves). A block
+  overflowing it passed validation and then panicked every node in
+  `MemoryChain::apply_block` (`expect`): a deterministic global halt. Unreachable at
+  today's proof size (≥ 2^29 blocks), about 10 years away if PX transactions shrank to
+  about 10 KB (dossier 11 §3.3); the rule is free now and needs an activation later.
+- 21-D (F21-1): at exactly `CAPACITY`, `Frontier::root` folded the all-zero size bits
+  and returned the empty tree's root; the append that filled the tree computed the full
+  root and dropped it. Under an exact-fill rule the last block's recorded root would be
+  wrong and its records unspendable.
+- 21-F (F21-4): every block's undo cloned the whole root window (100 roots, 3.2 KB) and
+  the frontier (about 1 KB), about 4.2 KB per block kept for ever, even for blocks
+  without PX transactions.
+- F21-8: the record log computed positions as `2 × index`, a literal 2.
+
+**2. Demonstrated failure.**
+Tests first, run on the item's code with the B8 checks not yet added (the parent
+commit `af5418c` has no test hook, so the tests could not be written against it):
+- `tx/tests/tree_capacity.rs`: with 4 leaves left, a block of 3 PX transactions (6
+  leaves) passed validation and applying it failed, `a validated block applies:
+  Px(TreeFull)` (on `af5418c` the same point was an `expect` panic in
+  `MemoryChain::apply_block`, on every node); `validation_implies_a_successful_apply_near_capacity`
+  failed the same way; the mempool accepted a PX transaction with 1 leaf left
+  (`left: Ok(()) right: Err(PxTreeFull)`).
+- 21-D, with the `full_root` return removed from `Frontier::root`:
+  `the_last_append_keeps_the_full_root` failed with `assertion left != right failed:
+  not the empty tree's root` (the root at `size = CAPACITY` was the empty tree's).
+
+**3. Prior art.** The Zcash protocol specification makes capacity a block rule ("A block
+MUST NOT add … note commitments that would result in the … note commitment tree
+exceeding its capacity"); Zebra returns `NoteCommitmentTreeError::FullTree` as a block
+error and never panics. Bitcoin Core and Zebra stop on an internal failure to connect a
+validated block rather than marking it invalid. Sources: dossier 11 §8, dossier 21 §8.
+
+**4. Alternatives.** Leave one leaf unused (`size + leaves < CAPACITY`) instead of 21-D
+(dossier 21 §3.4; rejected: the decision chose the exact semantics); defer the rule
+(rejected: an activation later); a new-tree epoch when full (future design; once full,
+PX is closed until then, documented).
+
+**5. Affected components.**
+- `px/src/tree.rs` (21-D): `Frontier::full_root`, set by the append at position
+  `CAPACITY − 1`, returned by `root()`; `Frontier::uniform_for_tests` (test-only).
+- `px/src/state.rs` (21-F): `Undo` keeps the frontier only if the block appended
+  (boxed) and only the root its push evicted; `undo` pops the block's root and restores
+  the evicted one; a failed `apply_block` restores what it changed without touching the
+  window. `State::free_leaves`; `State::with_uniform_tree_for_tests` (test-only).
+- `tx/src/validate.rs`: `ChainView::px_tree_size`; block rule B8
+  (`BlockError::PxTreeFull { leaves, free }`), with the B6 budgets, before any
+  cryptography: the block's PX output commitments, counted per commitment, must fit in
+  `CAPACITY − size`; contextual `TxError::PxTreeFull` in `validate_px_without_proof`
+  and `revalidate_after_extension`.
+- `tx/src/state.rs`: `MemoryChain::apply_block` returns `Result<u64, ApplyError>`
+  and is atomic (programs loaded and the PX state applied before anything else
+  changes); record positions count one leaf per commitment (F21-8);
+  `MemoryChain::with_px_state`; test-only fault injection.
+- `chain/src/mempool.rs`: `Mempool::select` takes the free leaves and never selects
+  more PX commitments than fit.
+- `chain/src/manager/*`: an apply failure after validation sets `apply_failed`
+  (`ChainManager::halted`), is logged naming the block, leaves the block valid and
+  unconnected, and refuses every further block (`SubmitError::Halted`); `open` fails
+  with the reason when replay hits it. `node`: the store watcher stops the node on any
+  halt, with the reason. `p2p/src/net/blocks.rs`: `Halted` is not the peer's fault.
+- Features: `blacksilk-px/test-hooks` and `blacksilk-tx/test-hooks` (test constructors
+  and fault injection), enabled only by dev-dependencies (tx, chain). A CI check that
+  no release build enables them is owed (agent 43, as for the actor test feature).
+
+**6. Activation.** v3 genesis base rule set (B8), from genesis. 21-D changes no root
+below capacity; 21-F is not consensus (identical behaviour, proven by the property test).
+
+**7. Compatibility.** No reachable chain is affected (B8 cannot trigger below 2^32
+leaves); no encoding, id or root changes; fingerprint constants unchanged (`CAPACITY` is
+already in the PX fingerprint). The rule revision belongs in agent 40's list.
+
+**8. Reorg, wallet, mining and P2P implications.** Reorg: undo is exact at capacity
+(tested), and a restart replays to the same full root. Wallet: none (the wallet's full
+`Tree` was already correct at capacity; the frontier now agrees with it). Mining:
+templates never exceed the free leaves. P2P: `PxTreeFull` is contextual (not penalized);
+`SubmitError::Halted` penalizes no peer. Node: halts rather than marking a block
+invalid; F48-5's quarantine marker and `--invalidate-block` (35 S5) are not part of
+this change.
+
+**9. Vectors.** Boundary: with `free` leaves left, `n` PX transactions are valid iff
+`2n ≤ free`, for `free = 0..6`, `n = 0..3`; the full root after the exact fill equals
+the fold of the last leaf's path (`the_last_append_keeps_the_full_root`).
+
+**10. Regression tests.**
+- `px/src/tree.rs`: `the_last_append_keeps_the_full_root` (21-D),
+  `a_uniform_frontier_matches_the_tree_of_equal_leaves` (the test constructor is the
+  frontier of equal leaves, sizes 0–300).
+- `px/src/state.rs`: `compact_undo_equals_the_full_clone_reference` (21-F: 4 000
+  random steps of apply, failed apply and undo, compared with a full clone before every
+  block, the window's eviction included), `an_empty_blocks_undo_is_small`,
+  `a_block_filling_the_tree_is_applied_and_one_more_leaf_is_refused`.
+- `tx/tests/tree_capacity.rs`: the demonstration; the boundary table; the mempool and
+  revalidation error; `validation_implies_a_successful_apply_near_capacity` (random
+  blocks: valid ⇒ applies; refused ⇒ the unvalidated apply fails atomically);
+  `undo_and_replay_are_exact_at_capacity`.
+- `chain/src/mempool.rs`: `templates_never_exceed_the_free_leaves`.
+- `chain/src/manager` unit test `an_apply_failure_after_validation_halts_without_invalidating`
+  (injected failure: the block stays valid and unconnected, further blocks are refused
+  with `Halted`, `halted()` names the block; after a restart the stored block connects).
+
+**11. Suite results.** In the commit message and the CB-B1b final report.
+
+**12. Open review points.**
+- Once the tree is full, PX is closed until a new-tree epoch is designed (documented;
+  far off at current proof sizes).
+- The fault-injection feature is compiled into test builds only; agent 43 to add the
+  release-build check.
+- Red team (50): the claim that validation is a superset of every `apply_block` failure
+  (anchor, nullifiers, pool, capacity, program loading).

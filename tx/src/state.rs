@@ -50,6 +50,26 @@ pub struct MemoryChain {
     px_records: Vec<PxRecordEntry>,
     /// `(height, nullifier)` in block order.
     px_nullifiers: Vec<(u64, Digest)>,
+    /// Tests only: the next `apply_block` fails (fault injection, to test
+    /// how the node handles an apply failure after validation).
+    #[cfg(feature = "test-hooks")]
+    fail_next_apply: bool,
+}
+
+/// Why [`MemoryChain::apply_block`] refused a block. Block validation
+/// (`validate_block_transactions`) rejects every block that would fail here,
+/// so on a validated block this is a bug: the caller must stop, not mark the
+/// block invalid (dossier 50 "Tree capacity"; docs/blocks.md §6). The state
+/// is unchanged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ApplyError {
+    /// The PX state rules (anchor, nullifiers, pool, tree capacity).
+    Px(blacksilk_px::state::StateError),
+    /// A deploy's program does not load.
+    Program(crate::validate::TxError),
+    /// Injected by a test (`test-hooks` feature only).
+    #[cfg(feature = "test-hooks")]
+    Injected,
 }
 
 struct BlockUndo {
@@ -65,6 +85,26 @@ struct BlockUndo {
 impl MemoryChain {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// An empty chain (no block applied) whose PX state is `px`: for tests
+    /// that need a PX state no sequence of blocks can reach in a test, such
+    /// as a tree near capacity (`blacksilk_px::state::State::
+    /// with_uniform_tree_for_tests`, `test-hooks` feature of `blacksilk-px`).
+    #[doc(hidden)]
+    pub fn with_px_state(px: PxState) -> Self {
+        Self {
+            px,
+            ..Self::default()
+        }
+    }
+
+    /// Tests only: makes the next [`Self::apply_block`] fail with
+    /// [`ApplyError::Injected`], changing nothing.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn fail_next_apply_for_tests(&mut self) {
+        self.fail_next_apply = true;
     }
 
     /// Height of the next block to apply (= number of applied blocks).
@@ -152,44 +192,29 @@ impl MemoryChain {
     /// Applies an already validated block at [`Self::next_height`]. Returns the
     /// global index of its first output.
     ///
-    /// # Panics
-    /// If the block's PX transactions violate the PX state rules, which block
-    /// validation excludes.
-    pub fn apply_block(&mut self, txs: &[Transaction]) -> u64 {
+    /// Atomic: the fallible steps (loading deploy programs, the PX state
+    /// rules including tree capacity) run before anything changes, so on an
+    /// error the state is unchanged. Block validation rejects every block
+    /// that fails here (it is a superset of these conditions), so an error on
+    /// a validated block is a bug to stop on, never a reason to mark the
+    /// block invalid ([`ApplyError`]).
+    pub fn apply_block(&mut self, txs: &[Transaction]) -> Result<u64, ApplyError> {
+        #[cfg(feature = "test-hooks")]
+        if std::mem::take(&mut self.fail_next_apply) {
+            return Err(ApplyError::Injected);
+        }
         let height = self.next_height();
-        let first_output = self.outputs.len();
-        let mut key_images = Vec::new();
-        let (px_records, px_nullifiers) = (self.px_records.len(), self.px_nullifiers.len());
+        // Fallible steps first, changing nothing but the PX state (which is
+        // itself atomic and applied last among them).
         let mut publics = Vec::new();
-        let mut contracts = Vec::new();
+        let mut registrations = Vec::new();
         for tx in txs {
-            for ki in tx.key_images() {
-                self.key_images.insert(*ki.bytes());
-                key_images.push(*ki.bytes());
-            }
             match tx {
-                Transaction::Px(t) => {
-                    let position = self.px.size() + 2 * publics.len() as u64;
-                    for (j, (cm, ct)) in t.commitments.iter().zip(&t.ciphertexts).enumerate() {
-                        self.px_records.push(PxRecordEntry {
-                            height,
-                            position: position + j as u64,
-                            commitment: *cm,
-                            ciphertext: ct.clone(),
-                            nf0: t.nullifiers[0],
-                            slot: j as u32,
-                        });
-                    }
-                    for nf in &t.nullifiers {
-                        self.px_nullifiers.push((height, *nf));
-                    }
-                    publics.push(t.public());
-                }
+                Transaction::Px(t) => publics.push(t.public()),
                 Transaction::PxDeploy(t) => {
-                    let id = t.contract_id();
-                    let functions = t
+                    let functions: Vec<RegisteredFunction> = t
                         .load_programs()
-                        .expect("validated deploys load")
+                        .map_err(ApplyError::Program)?
                         .into_iter()
                         .map(|(program, budget)| RegisteredFunction {
                             program_id: program.id(),
@@ -197,6 +222,47 @@ impl MemoryChain {
                             budget,
                         })
                         .collect();
+                    registrations.push((t.contract_id(), functions));
+                }
+                _ => {}
+            }
+        }
+        // The tree position of the block's first record.
+        let mut position = self.px.size();
+        // Every block records a root (the root window counts blocks).
+        let px = self.px.apply_block(&publics).map_err(ApplyError::Px)?;
+
+        // Infallible from here.
+        let first_output = self.outputs.len();
+        let mut key_images = Vec::new();
+        let (px_records, px_nullifiers) = (self.px_records.len(), self.px_nullifiers.len());
+        let mut contracts = Vec::new();
+        let mut registrations = registrations.into_iter();
+        for tx in txs {
+            for ki in tx.key_images() {
+                self.key_images.insert(*ki.bytes());
+                key_images.push(*ki.bytes());
+            }
+            match tx {
+                Transaction::Px(t) => {
+                    // One tree leaf per output commitment, in order.
+                    for (j, (cm, ct)) in t.commitments.iter().zip(&t.ciphertexts).enumerate() {
+                        self.px_records.push(PxRecordEntry {
+                            height,
+                            position,
+                            commitment: *cm,
+                            ciphertext: ct.clone(),
+                            nf0: t.nullifiers[0],
+                            slot: j as u32,
+                        });
+                        position += 1;
+                    }
+                    for nf in &t.nullifiers {
+                        self.px_nullifiers.push((height, *nf));
+                    }
+                }
+                Transaction::PxDeploy(_) => {
+                    let (id, functions) = registrations.next().expect("one per deploy");
                     self.registry.insert(id, functions);
                     self.px_contract_log.push((height, id));
                     contracts.push(id);
@@ -211,11 +277,6 @@ impl MemoryChain {
                 });
             }
         }
-        // Every block records a root (the root window counts blocks).
-        let px = self
-            .px
-            .apply_block(&publics)
-            .expect("block validation enforces the PX state rules");
         self.blocks.push(BlockUndo {
             first_output,
             key_images,
@@ -225,7 +286,7 @@ impl MemoryChain {
             px_records,
             px_nullifiers,
         });
-        first_output as u64
+        Ok(first_output as u64)
     }
 
     /// Disconnects the tip block. Returns `false` if there is none.
@@ -300,6 +361,10 @@ impl ChainView for MemoryChain {
     fn px_contract_exists(&self, contract: &Digest) -> bool {
         self.registry.contains_key(contract)
     }
+
+    fn px_tree_size(&self) -> u64 {
+        self.px.size()
+    }
 }
 
 #[cfg(test)]
@@ -341,7 +406,7 @@ mod tests {
                 txs.push(synthetic_px(&c, tag));
                 tag += 1;
             }
-            c.apply_block(&txs);
+            c.apply_block(&txs).unwrap();
         }
         c
     }

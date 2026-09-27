@@ -67,6 +67,7 @@ impl ChainManager {
             self.mempool.select(
                 rules.max_block_weight.saturating_sub(COINBASE_RESERVE),
                 blacksilk_tx::validate::ChainView::px_pool(&self.state),
+                self.state.px().free_leaves(),
             )
         } else {
             Vec::new()

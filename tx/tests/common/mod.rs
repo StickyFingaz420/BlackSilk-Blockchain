@@ -177,7 +177,10 @@ impl TestNet {
         let ctx = self.context(&txs);
         validate_block_transactions(&txs, &ctx, &self.chain, &self.rules, &mut self.rng)?;
         let height = self.height();
-        let first = self.chain.apply_block(&txs);
+        let first = self
+            .chain
+            .apply_block(&txs)
+            .expect("a validated block applies");
         self.miner.observe(&txs, height, first);
         for w in watchers.iter_mut() {
             w.observe(&txs, height, first);

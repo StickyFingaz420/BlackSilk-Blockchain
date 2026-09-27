@@ -9,7 +9,7 @@ use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::store::FileStore;
 use blacksilk_consensus::{ChainParams, RandomXPow};
 use blacksilk_node::fingerprint::{self, consensus_fingerprint, BUILD_COMMIT};
-use blacksilk_node::{router_with, watch_store, App, STORE_FAILED_EXIT};
+use blacksilk_node::{halt_message, router_with, watch_store, App};
 use blacksilk_p2p::{NetConfig, Network as P2p};
 use blacksilk_tx::params::TxRules;
 use clap::{CommandFactory, FromArgMatches};
@@ -168,23 +168,26 @@ fn run(cfg: Config) -> Result<(), String> {
             .await
             .map_err(|e| format!("bind {bind}: {e}"))?;
         log::info!("RPC listening on http://{bind}");
-        // A node whose block store failed accepts no block but would keep
-        // downloading bodies: stop it, so that a restart recovers
-        // deterministically (docs/blocks.md §8).
+        // A halted node (its block store failed, or a validated block failed
+        // to apply) accepts no block but would keep downloading bodies: stop
+        // it, so that a restart recovers deterministically (docs/blocks.md
+        // §6, §8).
         let store_failed = watch_store(shared.clone(), std::time::Duration::from_secs(2));
+        let watched = shared.clone();
         let app = App {
             chain: shared,
             net: net.clone(),
         };
         let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let failed_flag = failed.clone();
+        let reason = watched.clone();
         let served = axum::serve(listener, router_with(app))
             .with_graceful_shutdown(async move {
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => log::info!("shutting down"),
                     Ok(()) = store_failed => {
                         failed_flag.store(true, std::sync::atomic::Ordering::SeqCst);
-                        log::error!("{STORE_FAILED_EXIT}; shutting down");
+                        log::error!("{}; shutting down", halt_message(&reason));
                     }
                 }
             })
@@ -194,7 +197,7 @@ fn run(cfg: Config) -> Result<(), String> {
             n.save();
         }
         if failed.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(STORE_FAILED_EXIT.to_string());
+            return Err(halt_message(&watched));
         }
         served
     })

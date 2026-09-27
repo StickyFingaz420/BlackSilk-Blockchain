@@ -128,6 +128,15 @@ The transaction state is:
   pool, the contract registry, and the logs wallets download. Every block's changes
   have an exact undo.
 
+Applying a block (`MemoryChain::apply_block`) is atomic and returns an error instead of
+panicking; block validation rejects every block that would fail to apply (for example
+B8, the PX tree capacity). A block that passed validation and still fails to apply is
+therefore a bug in this node: the manager halts (`ChainManager::halted`), logs the
+block, does **not** mark it invalid, connects nothing more and refuses every further
+block (`SubmitError::Halted`), and the node stops. A restart replays the store and tries
+the block again (docs/reviews/v3-consensus-changes.md#tree-capacity; dossier 48 F48-5:
+never auto-invalidate).
+
 There is no set of used one-time keys: output one-time keys may repeat across
 transactions (transactions.md §8.2; removed for the v3 genesis,
 reviews/v3-consensus-changes.md §1). Outputs are records by global index, so two

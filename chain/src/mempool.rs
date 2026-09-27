@@ -524,21 +524,23 @@ impl Mempool {
     ///
     /// `pool` is the PX pool before the block: PX transactions are taken
     /// only while the pool, evolving in block order, stays non-negative (each
-    /// was admitted against the chain's pool alone).
+    /// was admitted against the chain's pool alone). `px_leaves` is the room
+    /// left in the PX commitment tree: PX transactions are taken only while
+    /// their output commitments, one leaf each, fit (B8).
     ///
     /// Defence in depth: a transaction sharing a conflict key with one already
     /// selected is skipped (and logged). Admission already guarantees that no
     /// two pooled transactions share one, so this never fires unless that
     /// invariant is broken; it keeps a broken invariant from making every
     /// template invalid.
-    pub fn select(&self, max_weight: u64, mut pool: u128) -> Vec<Transaction> {
+    pub fn select(&self, max_weight: u64, mut pool: u128, px_leaves: u64) -> Vec<Transaction> {
         let (mut px_first, mut rest): (Vec<&Entry>, Vec<&Entry>) = self
             .entries
             .values()
             .partition(|e| matches!(e.tx, Transaction::Px(_)));
         px_first.sort_by(|a, b| b.rate_cmp(a).then(a.seq.cmp(&b.seq)));
         rest.sort_by(|a, b| b.weight_rate_cmp(a).then(a.seq.cmp(&b.seq)));
-        let (mut weight, mut px, mut deploy) = (0u64, 0u64, 0u64);
+        let (mut weight, mut px, mut deploy, mut leaves) = (0u64, 0u64, 0u64, 0u64);
         let mut out = Vec::new();
         let mut used: std::collections::HashSet<ConflictKey> = std::collections::HashSet::new();
         for e in px_first.into_iter().chain(rest) {
@@ -561,10 +563,15 @@ impl Mempool {
             };
             match &e.tx {
                 Transaction::Px(t) => {
+                    let l = leaves + t.commitments.len() as u64;
+                    if l > px_leaves {
+                        continue;
+                    }
                     match (pool + t.bridge_in as u128).checked_sub(t.bridge_out as u128) {
                         Some(next) => pool = next,
                         None => continue,
                     }
+                    leaves = l;
                 }
                 // Deploys also fit the block's deploy sub-budget
                 // (`MAX_DEPLOY_BLOCK_BYTES`, a block rule).
@@ -860,7 +867,7 @@ mod tests {
         let tie_first = add(&mut m, px(30, 1000, 30, 0, 0)).unwrap();
         let tie_second = add(&mut m, px(40, 1000, 30, 0, 0)).unwrap();
         let order: Vec<Hash> = m
-            .select(u64::MAX, 0)
+            .select(u64::MAX, 0, u64::MAX)
             .iter()
             .map(Transaction::hash)
             .collect();
@@ -871,7 +878,7 @@ mod tests {
         for n in 0..4 {
             add(&mut m, px(100 + 2 * n, 3 * 1024 * 1024, 1_000, 0, 0)).unwrap();
         }
-        let sel = m.select(u64::MAX, 0);
+        let sel = m.select(u64::MAX, 0, u64::MAX);
         assert_eq!(sel.len(), 2);
         assert!(sel.iter().map(Transaction::px_bytes).sum::<u64>() <= MAX_PX_BLOCK_BYTES);
 
@@ -879,11 +886,11 @@ mod tests {
         // deposit selected before it covers it.
         let mut m = Mempool::new();
         let withdraw = add(&mut m, px(200, 1000, 90, 0, 5)).unwrap();
-        let sel = m.select(u64::MAX, 3);
+        let sel = m.select(u64::MAX, 3, u64::MAX);
         assert!(sel.is_empty(), "would make the pool negative");
         let deposit = add(&mut m, px(202, 1000, 95, 4, 0)).unwrap();
         let sel: Vec<Hash> = m
-            .select(u64::MAX, 3)
+            .select(u64::MAX, 3, u64::MAX)
             .iter()
             .map(Transaction::hash)
             .collect();
@@ -1141,7 +1148,7 @@ mod tests {
                     add(&mut m, second).unwrap_or_else(|e| panic!("{a_name} then {b_name}: {e:?}"));
                 assert_eq!(m.len(), 2);
                 let sel: Vec<Hash> = m
-                    .select(u64::MAX, 0)
+                    .select(u64::MAX, 0, u64::MAX)
                     .iter()
                     .map(Transaction::hash)
                     .collect();
@@ -1168,7 +1175,7 @@ mod tests {
             .contains_key(&(ConflictKind::KeyImage, *pt(5).bytes())));
         assert_eq!(m.len(), 4);
         assert_invariants(&m);
-        assert_eq!(m.select(u64::MAX, 0).len(), 4);
+        assert_eq!(m.select(u64::MAX, 0, u64::MAX).len(), 4);
         // ...while the same kind conflicts, and output keys never do.
         assert_eq!(
             add(&mut m, transfer(&[5], &[30, 31], 10)),
@@ -1194,7 +1201,7 @@ mod tests {
                 let keys = conflict_keys(&tx);
                 m.insert(tx.hash(), tx, keys, 0).unwrap();
             }
-            let sel = m.select(u64::MAX, 0);
+            let sel = m.select(u64::MAX, 0, u64::MAX);
             assert_disjoint(&sel);
             let ids: Vec<Hash> = sel.iter().map(Transaction::hash).collect();
             assert_eq!(sel.len(), 2, "one of the pair and the unrelated one");
@@ -1270,7 +1277,7 @@ mod tests {
         }
         // PX transactions at a lower fee rate still fill the PX lane.
         let small = add(&mut m, px(500, 3 * 1024 * 1024, 10, 0, 0)).unwrap();
-        let sel = m.select(u64::MAX, 0);
+        let sel = m.select(u64::MAX, 0, u64::MAX);
         let deploy_bytes: u64 = sel
             .iter()
             .filter(|t| matches!(t, Transaction::PxDeploy(_)))
@@ -1395,7 +1402,7 @@ mod tests {
             }
             let max_weight = rng.next_u64() % 400_000;
             let pool = u128::from(rng.next_u64() % 1_000);
-            let sel = m.select(max_weight, pool);
+            let sel = m.select(max_weight, pool, u64::MAX);
             let weight: u64 = sel.iter().map(Transaction::weight).sum();
             let px: u64 = sel.iter().map(Transaction::px_bytes).sum();
             let deploys: u64 = sel
@@ -1450,14 +1457,36 @@ mod tests {
             .unwrap();
         }
         let budget = 100_000;
-        let sel = m.select(budget, 0);
+        let sel = m.select(budget, 0, u64::MAX);
         assert!(sel.iter().any(|t| t.hash() == heavy), "the PX transaction");
         let total: u64 = sel.iter().map(Transaction::weight).sum();
         assert!(total <= budget && total >= w);
         assert!(sel.len() > 1, "transfers fill the rest");
         // Its weight counts: with less than its v1 part left, it is out.
-        let sel = m.select(w - 1, 0);
+        let sel = m.select(w - 1, 0, u64::MAX);
         assert!(!sel.iter().any(|t| t.hash() == heavy));
+    }
+
+    /// B8 in templates: PX transactions are taken only while their output
+    /// commitments fit in the tree's free leaves, whatever their fee order.
+    #[test]
+    fn templates_never_exceed_the_free_leaves() {
+        let mut m = Mempool::new();
+        for n in 0..6u32 {
+            add(&mut m, px(2 * n + 1, 1_000, 1_000, 0, 0)).unwrap();
+        }
+        for free in 0..=13u64 {
+            let sel = m.select(u64::MAX, 0, free);
+            let leaves: u64 = sel
+                .iter()
+                .map(|t| match t {
+                    Transaction::Px(t) => t.commitments.len() as u64,
+                    _ => 0,
+                })
+                .sum();
+            assert!(leaves <= free, "free {free}: {leaves}");
+            assert_eq!(sel.len() as u64, (free / 2).min(6), "free {free}");
+        }
     }
 
     /// Randomized: 2 000 operations (add, remove, remove_block, select) on
@@ -1537,7 +1566,7 @@ mod tests {
                     } else {
                         rng.next_u64() % 20_000
                     };
-                    let sel = m.select(max_weight, (rng.next_u64() % 10).into());
+                    let sel = m.select(max_weight, (rng.next_u64() % 10).into(), u64::MAX);
                     assert_disjoint(&sel);
                     assert!(sel.iter().all(|tx| m.contains(&tx.hash())));
                     if max_weight == u64::MAX {

@@ -52,7 +52,7 @@ fn chain(per_block: &[usize]) -> MemoryChain {
                 synthetic_px(&c, tag)
             })
             .collect();
-        c.apply_block(&txs);
+        c.apply_block(&txs).unwrap();
     }
     c
 }

@@ -594,6 +594,7 @@ Monero's ledger model (no output-key rule at all) plus Carrot's within-transacti
 | B5 | `tx_root` equals the Merkle root of the `tx_hash`es in block order (consensus.md §7). |
 | B6 | Block weight ≤ block weight limit (economics spec). A PX or deploy transaction with `n > 0` v1 inputs and `k` hidden outputs weighs `max_weight(n, k)` (§8.4), the weight bound of its v1 part, so its CLSAGs are paid in the same meter as a transfer's; without v1 inputs it weighs 0 (testnet v3, reviews/v3-consensus-changes.md#r12-2). PX and deploy transactions also count, in full, against a separate budget: their encoded bytes sum to at most `MAX_PX_BLOCK_BYTES = 8 MiB` (px.md §11.5), and the deploys' bytes to at most `MAX_DEPLOY_BLOCK_BYTES = 1 MiB` of it (testnet v3). A valid block therefore holds at most ⌊600 000 / 656⌋ = 914 v1 inputs of all kinds. |
 | B7 | Coinbase structure: 1–16 outputs, no identity `O` or `R`, outputs strictly sorted (so its one-time keys are distinct; they may repeat keys of other transactions or the chain, §8.2). |
+| B8 | PX tree capacity: the block's PX output commitments, one leaf each, fit in the PX commitment tree (`size + leaves ≤ 2^32`, px.md §5; `BlockError::PxTreeFull`). Testnet v3 (reviews/v3-consensus-changes.md#tree-capacity). Validation is a superset of every condition under which applying a block fails, so a valid block always applies. |
 
 **Evaluation order of block validation** (`validate_block_transactions_cached`; policy,
 not consensus: every rule is a pure check, so the order decides only which error an
@@ -603,7 +604,7 @@ invalid block reports and how much work precedes it, never the verdict):
 |---|---|---|
 | 1 | B1, B2, B7 (coinbase) | trivial |
 | 2 | Per-transaction structure: T1, T3–T8, T10 shape, T11 (including `D ≠ identity`), PX and deploy structure | cheap |
-| 3 | B5, B6, B3 | hashing, sums |
+| 3 | B5, B6, B8, B3 | hashing, sums |
 | 4 | T9 balances (every kind) | one multi-scalar sum per transaction |
 | 5 | PX proofs decoded strictly (PX5, first step), unless already verified by this node | a few ms per proof |
 | 6 | C2, PX1–PX4, contract ids, in block order; then each decoded PX proof's table shape against its statement (PX5, second step) | lookups |

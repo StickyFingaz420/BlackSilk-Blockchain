@@ -409,7 +409,7 @@ fn property_repeats_across_transactions_are_valid_and_within_one_are_not() {
                     assert_eq!(copies_on_chain(&net, k), model[k] - in_block);
                 }
                 // And again.
-                net.chain.apply_block(&txs);
+                net.chain.apply_block(&txs).unwrap();
                 for k in &space {
                     assert_eq!(copies_on_chain(&net, k), model[k]);
                 }

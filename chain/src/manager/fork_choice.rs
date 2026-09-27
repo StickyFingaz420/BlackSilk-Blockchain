@@ -134,7 +134,16 @@ impl ChainManager {
     /// before. Calling it again continues from the current connected chain
     /// (now a prefix of the target's branch), exactly where the loop stopped.
     /// Returns true once the connected tip is the target.
+    ///
+    /// **Apply failure.** A body that passed validation but fails to apply
+    /// (`MemoryChain::apply_block`; validation is a superset of every apply
+    /// failure, so this is a bug) halts the manager: the block is not marked
+    /// invalid and not connected, nothing is connected any more, and the
+    /// method returns true (`ChainManager::halted`; the node stops).
     pub(super) fn sync_state(&mut self, outcome: &mut SyncOutcome, budget: &mut usize) -> bool {
+        if self.apply_failed.is_some() {
+            return true;
+        }
         let floor = self.work(&self.tip_id());
         loop {
             let target = self.best_complete;
@@ -209,12 +218,23 @@ impl ChainManager {
                     &mut self.rng,
                     &|id| same_rules && mempool.contains(id),
                 ) {
-                    Ok(()) => {
-                        self.state.apply_block(body);
-                        self.connected.push(id);
-                        self.generated.push(generated + reward);
-                        self.mempool.remove_block(body);
-                    }
+                    Ok(()) => match self.state.apply_block(body) {
+                        Ok(_) => {
+                            self.connected.push(id);
+                            self.generated.push(generated + reward);
+                            self.mempool.remove_block(body);
+                        }
+                        Err(e) => {
+                            // Never `invalidate` here: the block is valid by
+                            // the rules; the node is at fault (F48-5).
+                            log::error!(
+                                "block {} at height {h} passed validation but failed to                                  apply ({e:?}); halting without marking it invalid",
+                                hex(&id)
+                            );
+                            self.apply_failed = Some((id, h, format!("{e:?}")));
+                            return true;
+                        }
+                    },
                     Err(e) => {
                         self.invalidate(id, e);
                         break;

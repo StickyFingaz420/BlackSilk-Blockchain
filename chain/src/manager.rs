@@ -57,6 +57,10 @@ pub enum SubmitError {
     /// block is now marked invalid.
     Body(BlockError),
     Store(io::Error),
+    /// The node halted: applying a block that passed validation failed
+    /// ([`ChainManager::halted`]). No block is accepted until a restart; the
+    /// block is not marked invalid.
+    Halted,
 }
 
 /// Outcome of replaying one stored block.
@@ -162,6 +166,10 @@ pub struct ChainManager {
     store_failures: u32,
     /// The block store failed persistently: no block is accepted any more.
     store_failed: bool,
+    /// Applying a validated block failed (a bug: validation is a superset of
+    /// every apply failure): the block's id and height and the error. The
+    /// node stops; the block is not marked invalid ([`ChainManager::halted`]).
+    apply_failed: Option<(Hash, u64, String)>,
     /// Blocks ready to complete (body kept, parent complete), lowest body
     /// arrival first. Drained by [`ChainManager::sync_step`] (and at once by
     /// [`ChainManager::submit_block`]).

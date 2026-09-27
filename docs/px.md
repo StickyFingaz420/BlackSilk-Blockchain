@@ -287,13 +287,19 @@ The proof's table heights are public (zkvm.md §8).
 
 | Component | Rule |
 |---|---|
-| Tree | Append-only frontier: 32 digests plus the size. Commitments are appended in block order, two per transfer. |
+| Tree | Append-only frontier: 32 digests plus the size. Commitments are appended in block order, one leaf per output commitment (two per transfer today). Capacity `CAPACITY = 2^32` leaves: a block whose commitments would exceed it is invalid (B8, transactions.md §8.3; testnet v3). The append that fills the tree keeps the full root, which the frontier returns at `size = CAPACITY` (21-D; below capacity every root is unchanged). Once full, the tree takes no more PX outputs until a new-tree epoch is designed. |
 | Root window | The roots after each of the last 100 blocks (initially the empty-tree root). A transfer's anchor must be one of them. Anchors never refer to a state inside the current block. |
 | Nullifier set | A nullifier can appear once, ever: across blocks, within a block, and within a transfer. |
 | Pool | `pool' = pool + bridge_in − bridge_out ≥ 0`, applied in order, as `u128`. Even a complete proof-system break cannot withdraw more than was deposited (containment, zk.md §4.7). |
 
 - Blocks apply atomically: one bad transfer leaves the state untouched.
-- `apply_block` returns an undo record that restores the previous state exactly.
+- `apply_block` returns an undo record that restores the previous state exactly. The
+  record keeps only what it cannot recompute (21-F): the frontier before the block if
+  the block appended (boxed), the root the block's own root pushed out of the window,
+  the pool and the inserted nullifiers; under 100 bytes for a block without PX
+  transfers, instead of about 4.2 KB for every block. A seeded property test compares
+  it with a full clone of the state over random apply, failed-apply and undo sequences
+  (`compact_undo_equals_the_full_clone_reference`).
 - Proofs are verified before these rules. The state sees only verified statements.
 
 This state is part of the chain state (`blacksilk_tx::state::MemoryChain`, §11.3),
@@ -606,6 +612,7 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
 | PX2 | Nullifiers are unspent and unrepeated across the chain and the block |
 | PX3 | Every called function is a registered program of its contract (registry before this block) |
 | PX4 | The pool stays ≥ 0 through the block, in order |
+| B8 (capacity) | The block's PX output commitments, one tree leaf each, fit in the `2^32 − size` leaves left (`BlockError::PxTreeFull`); for a mempool transaction, contextual `TxError::PxTreeFull`. Checked with the byte budgets, before any cryptography. Templates never exceed it |
 | PX5 | The proof verifies with the registered programs and budgets (last; most expensive) |
 | Deploy | Every budget is provable: `cycles ≤ MAX_CYCLES` (2^21), `keys ≤ 2^22`, and each ALU and Poseidon2 field plus the kernel's `kernel_budget(1)` share ≤ 2^22 (stateless, `PxBudgetTooLarge`; R7-5). Programs load, and their program ids are pairwise distinct (stateless, `PxDuplicateProgram`; R5-7). The contract id is new in the chain and the block |
 | Block | Coinbase = reward + all fees; block weight ≤ limit, where the v1 part of a PX or deploy transaction with `n > 0` inputs weighs `max_weight(n, k)` (transactions.md B6; R12-2); PX and deploy bytes ≤ 8 MiB |
