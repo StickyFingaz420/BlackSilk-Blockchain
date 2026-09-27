@@ -146,9 +146,9 @@ fn main() {
     let target = Account::from_seed(&[42; 32]);
     let to = target.address(0);
     let r = Record::plain(to.owner, 5, [0; 8], [2; 8], [3; 8]);
-    let ct = blacksilk_px::delivery::seal(&mut rng, &to, &r, &[1; 8]).unwrap();
+    let ct = blacksilk_px::delivery::seal(&mut rng, &[0x5e; 32], &to, &r, &[1; 8]).unwrap();
     put("delivery_open", "ciphertext", &ct);
-    let sh = blacksilk_px::share::seal_share(&mut rng, &to, &r, &[1; 8]).unwrap();
+    let sh = blacksilk_px::share::seal_share(&mut rng, &[0x5e; 32], &to, &r, &[1; 8]).unwrap();
     put("delivery_open", "share", &sh);
 
     // A contract module.

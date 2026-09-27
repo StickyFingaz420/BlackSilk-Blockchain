@@ -1,7 +1,11 @@
 //! Hedged randomness (spec §10).
 //!
-//! Every secret random value (Janus anchors, pseudo-output masks, CLSAG nonces,
-//! Bulletproofs+ blinding values) comes from a [`HedgedRng`]:
+//! The wallet's secret random values (Janus anchors, pseudo-output masks, CLSAG
+//! and Schnorr nonces, Bulletproofs+ blinding values, PX delivery `r` and
+//! ML-KEM coins, PX throwaway delivery keys) come from a [`HedgedRng`]. The
+//! exact secrets and context of each call site, and what is still not hedged
+//! (the membership nonce's context, R2-C5; the PX witness randomness; the
+//! per-process miner secret, R2-C4), are listed in docs/transactions.md §10.
 //!
 //! ```text
 //! seed    = H64("nonce", LE64(#secrets) ‖ (LE64(len) ‖ secret)… ‖
@@ -12,12 +16,13 @@
 //! - With a working CSPRNG the values are uniformly random.
 //! - With a broken or even constant CSPRNG they remain unpredictable to anyone
 //!   who does not know the secrets. They also differ whenever the context (the
-//!   signed message, ring, outputs…) differs. So a nonce is never reused for two
-//!   different challenges, which is what leaks the key in Schnorr-type schemes.
+//!   signed message, ring, outputs…) differs. So, where the context binds the
+//!   full statement, a nonce is never reused for two different challenges,
+//!   which is what leaks the key in Schnorr-type schemes.
 //!
 //! The last guarantee holds only for what the caller puts in the context. A
-//! caller must bind every input of the statement it proves or signs, plus a
-//! purpose label as the first context item. CLSAG binds its full transcript
+//! caller must bind every input of the statement it proves, signs or builds,
+//! plus a purpose label as the first context item. CLSAG binds its full transcript
 //! (label `clsag/nonce/v2`, `m`, `C'`, `I`, `D`, `π`, all `P[i]` and `Cr[i]`),
 //! see `clsag::nonce_stream` (internal review round 5, finding F2).
 
@@ -69,6 +74,16 @@ impl HedgedRng {
             if s != Scalar::ZERO {
                 return s;
             }
+        }
+    }
+
+    /// Fills `dest` from the stream, one fresh 64-byte block per started
+    /// 64 bytes (blocks are never shared between calls).
+    pub fn fill_bytes(&mut self, dest: &mut [u8]) {
+        for chunk in dest.chunks_mut(64) {
+            let mut block = self.next_block();
+            chunk.copy_from_slice(&block[..chunk.len()]);
+            block.zeroize();
         }
     }
 
@@ -169,6 +184,29 @@ mod tests {
                 assert_ne!(out[i], out[j], "{i} vs {j}");
             }
         }
+    }
+
+    #[test]
+    fn fill_bytes_uses_one_fresh_block_per_64_bytes() {
+        let new = || HedgedRng::new(&[b"k"], &[b"m"], &mut ZeroRng);
+        let mut a = [0u8; 100];
+        new().fill_bytes(&mut a);
+        let mut h = new();
+        let (mut b0, mut b1) = ([0u8; 64], [0u8; 36]);
+        h.fill_bytes(&mut b0);
+        h.fill_bytes(&mut b1);
+        assert_eq!(&a[..64], &b0[..]);
+        assert_eq!(&a[64..], &b1[..]);
+        assert_ne!(&a[..36], &a[64..]);
+        // A short read still consumes a whole block.
+        let mut h = new();
+        let mut x = [0u8; 4];
+        h.fill_bytes(&mut x);
+        let mut y = [0u8; 4];
+        h.fill_bytes(&mut y);
+        assert_ne!(x, y);
+        assert_eq!(x, b0[..4]);
+        assert_eq!(y, b1[..4]);
     }
 
     /// Pins the seed and stream construction (constant RNG, fixed inputs).

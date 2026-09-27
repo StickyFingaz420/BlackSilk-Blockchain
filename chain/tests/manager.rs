@@ -666,6 +666,7 @@ fn restart_rebuilds_the_px_state_exactly() {
                 recipients: [Some(acct.address(0)), None],
                 functions: vec![],
                 fee: px_standard_fee(),
+                hedge_secret: [0x5e; 32],
             },
             &rules,
             &mut miner.rng,

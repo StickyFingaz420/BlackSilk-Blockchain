@@ -333,21 +333,19 @@ fn prove_bits(
         r_out.push(r);
     }
 
-    let (a0, b0) = (a_vec[0], b_vec[0]);
-    let r_ = hedge.scalar();
-    let s_ = hedge.scalar();
-    let delta = hedge.scalar();
-    let eta = hedge.scalar();
+    // Final-round secrets: wiped below (best effort, `Scalar` is `Copy`).
+    let (mut a0, mut b0) = (a_vec[0], b_vec[0]);
+    let mut r_ = hedge.scalar();
+    let mut s_ = hedge.scalar();
+    let mut delta = hedge.scalar();
+    let mut eta = hedge.scalar();
     let a1 = Point::from_point(RistrettoPoint::multiscalar_mul(
         [r_, s_, r_ * y * b0 + s_ * y * a0, delta],
         [g_vec[0], h_vec[0], hv, G],
     ));
     let b = Point::from_point(RistrettoPoint::multiscalar_mul([r_ * y * s_, eta], [hv, G]));
     let e = challenge_final(&transcript, &a1, &b);
-    if e == Scalar::ZERO {
-        return None;
-    }
-    let proof = BppProof {
+    let proof = (e != Scalar::ZERO).then(|| BppProof {
         a,
         a1,
         b,
@@ -356,11 +354,14 @@ fn prove_bits(
         d1: eta + delta * e + alpha * e * e,
         l: l_out,
         r: r_out,
-    };
+    });
+    for secret in [&mut a0, &mut b0, &mut r_, &mut s_, &mut delta, &mut eta] {
+        secret.zeroize();
+    }
     a_vec.zeroize();
     b_vec.zeroize();
     alpha.zeroize();
-    Some(proof)
+    proof
 }
 
 // ---- verifier ----

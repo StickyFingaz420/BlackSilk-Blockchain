@@ -16,7 +16,7 @@
 //! consensus rule: the fee reveals nothing about the transaction's shape or
 //! the wallet that built it.
 
-use crate::builder::{BuildError, Decoy, InputPlan, Payment};
+use crate::builder::{BuildError, Decoy, HedgeContext, InputPlan, Payment};
 use crate::params::*;
 use crate::px::{check_px_balance, check_px_structure, PxFunction, PxTx};
 use crate::types::*;
@@ -74,6 +74,13 @@ pub struct PxPlan<'a> {
     pub recipients: [Option<delivery::Address>; 2],
     pub functions: Vec<FunctionRun>,
     pub fee: u64,
+    /// The sender's secret for hedged randomness (docs/transactions.md §10),
+    /// normally `blacksilk_px::wallet::Account::hedge_secret`. Required: it
+    /// keys record delivery, throwaway delivery addresses, payout and change
+    /// anchors and pseudo-output masks, so that none depends on the RNG
+    /// alone. An all-zero value is refused ([`PxBuildError::NoHedgeSecret`]).
+    /// It is zeroized after use.
+    pub hedge_secret: [u8; 32],
 }
 
 #[derive(Debug)]
@@ -86,6 +93,8 @@ pub enum PxBuildError {
     Function(usize),
     /// The v1 side does not balance with the witness's bridge amounts.
     Unbalanced,
+    /// [`PxPlan::hedge_secret`] is all zero.
+    NoHedgeSecret,
     SelfCheck(crate::validate::TxError),
 }
 
@@ -104,12 +113,26 @@ fn make_output(
     }
 }
 
+/// A commitment digest as bytes (for hedge contexts).
+fn commitment_bytes(d: &blacksilk_px_core::Digest) -> [u8; 32] {
+    let mut b = [0u8; 32];
+    for (i, x) in d.iter().enumerate() {
+        b[4 * i..4 * i + 4].copy_from_slice(&x.to_le_bytes());
+    }
+    b
+}
+
 /// Builds and proves a PX transaction.
 pub fn build_px<R: RngCore + CryptoRng>(
-    plan: PxPlan<'_>,
+    mut plan: PxPlan<'_>,
     rules: &TxRules,
     rng: &mut R,
 ) -> Result<PxTx, PxBuildError> {
+    let px_secret = zeroize::Zeroizing::new(plan.hedge_secret);
+    plan.hedge_secret.zeroize();
+    if px_secret.iter().all(|&b| b == 0) {
+        return Err(PxBuildError::NoHedgeSecret);
+    }
     let n = plan.inputs.len();
     if n > MAX_INPUTS {
         return Err(PxBuildError::V1(BuildError::InputCount(n)));
@@ -169,16 +192,36 @@ pub fn build_px<R: RngCore + CryptoRng>(
             }
             None => {
                 // A throwaway address: the ciphertext is real, the recipient
-                // is nobody.
-                let mut sk = [0u32; 8];
+                // is nobody. Its key is hedged too: with a broken RNG anyone
+                // could otherwise derive it, open the ciphertext and learn
+                // that the slot is empty.
+                let mut stream = HedgeContext::new(b"px/throwaway/v1")
+                    .push(&commitment_bytes(&public.commitments[j]))
+                    .push_u64(j as u64)
+                    .stream(&[px_secret.as_slice()], rng);
+                let mut sk = zeroize::Zeroizing::new([0u32; 8]);
                 for x in sk.iter_mut() {
-                    *x = rng.next_u32() % blacksilk_px_core::P;
+                    *x = loop {
+                        let mut b = [0u8; 4];
+                        stream.fill_bytes(&mut b);
+                        // p > 2^30: rejection sampling, no modulo bias.
+                        let v = u32::from_le_bytes(b) >> 1;
+                        if v < blacksilk_px_core::P {
+                            break v;
+                        }
+                    };
                 }
                 DeliveryKeys::derive(&sk, 0).address(out.owner)
             }
         };
-        *ct = delivery::seal(rng, &address, &record, &public.commitments[j])
-            .map_err(|_| PxBuildError::Recipient(j))?;
+        *ct = delivery::seal(
+            rng,
+            px_secret.as_slice(),
+            &address,
+            &record,
+            &public.commitments[j],
+        )
+        .map_err(|_| PxBuildError::Recipient(j))?;
     }
 
     // 3. The v1 part.
@@ -236,11 +279,50 @@ pub fn build_px<R: RngCore + CryptoRng>(
         })
         .collect();
     let ctx = tx.output_context();
-    let mut secret = plan.keys.map(|k| k.hedge_secret()).unwrap_or_default();
-    let mut hedge = HedgedRng::new(&[&secret], &[b"px", &ctx], rng);
-    secret.zeroize();
 
+    // v1 value: inputs = change + fee + bridge_in + payouts - bridge_out.
     let payouts_total: u128 = plan.payouts.iter().map(|p| p.amount as u128).sum();
+    let available: u128 = prepared.iter().map(|x| x.plan.real.amount as u128).sum();
+    let required: i128 = plan.fee as i128 + public.bridge_in as i128 + payouts_total as i128
+        - public.bridge_out as i128;
+    let change_amount = if n == 0 {
+        if required != 0 {
+            return Err(PxBuildError::Unbalanced);
+        }
+        0
+    } else {
+        u64::try_from(available as i128 - required).map_err(|_| PxBuildError::Unbalanced)?
+    };
+
+    // The hedge (spec §10) is keyed with the PX secret (plus the v1 spend
+    // secret when there are v1 inputs) and bound to the whole statement:
+    // network, nullifiers and key images (ctx), fee, bridge amounts, output
+    // commitments, rings, payouts, change address and amount.
+    let v1_secret = zeroize::Zeroizing::new(plan.keys.map(|k| k.hedge_secret()));
+    let mut secrets: Vec<&[u8]> = vec![px_secret.as_slice()];
+    if let Some(s) = v1_secret.as_ref() {
+        secrets.push(s);
+    }
+    let mut context = HedgeContext::new(b"px/v2");
+    context
+        .push(&rules.network_id.to_le_bytes())
+        .push(&ctx)
+        .push_u64(plan.fee)
+        .push_u64(public.bridge_in)
+        .push_u64(public.bridge_out);
+    for c in &public.commitments {
+        context.push(&commitment_bytes(c));
+    }
+    context
+        .rings(prepared.iter().map(|x| &x.plan))
+        .payments(&plan.payouts);
+    if let Some(change) = &plan.change {
+        context.output(change, change_amount);
+    }
+    let mut hedge = context.stream(&secrets, rng);
+    drop(secrets);
+    drop(v1_secret);
+
     let mut payouts: Vec<CoinbaseOutput> = plan
         .payouts
         .iter()
@@ -258,20 +340,10 @@ pub fn build_px<R: RngCore + CryptoRng>(
     payouts.sort_by_key(|o| o.one_time_key);
     tx.payouts = payouts;
 
-    // v1 value: inputs = change + fee + bridge_in + payouts − bridge_out.
-    let available: u128 = prepared.iter().map(|x| x.plan.real.amount as u128).sum();
-    let required: i128 = plan.fee as i128 + public.bridge_in as i128 + payouts_total as i128
-        - public.bridge_out as i128;
     let mut rings = Vec::with_capacity(n);
     let mut real_positions = Vec::with_capacity(n);
     let mut pseudo_masks: Vec<Scalar> = Vec::new();
-    if n == 0 {
-        if required != 0 {
-            return Err(PxBuildError::Unbalanced);
-        }
-    } else {
-        let change_amount =
-            u64::try_from(available as i128 - required).map_err(|_| PxBuildError::Unbalanced)?;
+    if n > 0 {
         let change = plan.change.ok_or(PxBuildError::Unbalanced)?;
         let created = make_output(
             &mut hedge,
@@ -432,6 +504,8 @@ pub fn build_deploy<R: RngCore + CryptoRng>(
         fee_per_weight: 0,
         ..*rules
     };
+    // The deploy payload (salt, programs) is bound into the hedge context.
+    let payload = crate::px::deploy_payload_bytes(&salt, &programs);
     let t = crate::builder::build_transfer_signing(
         keys,
         inputs,
@@ -440,10 +514,49 @@ pub fn build_deploy<R: RngCore + CryptoRng>(
         fee,
         &relaxed,
         rng,
+        &payload,
         &|t| view(t).signature_message(net),
     )?;
     let mut deploy = view(&t);
     deploy.signatures = t.signatures;
     crate::px::check_deploy_structure(&deploy, rules).map_err(BuildError::SelfCheck)?;
     Ok(deploy)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blacksilk_px::wallet as pxw;
+    use rand_chacha::rand_core::SeedableRng;
+
+    /// R2-C3: a PX build without a hedge secret fails closed (before any
+    /// kernel run, delivery or proof), instead of hedging with zeros.
+    #[test]
+    fn a_missing_hedge_secret_is_refused() {
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(1);
+        let owner = pxw::random_digest(&mut rng);
+        let witness = pxw::witness(
+            [0; 8],
+            0,
+            0,
+            [pxw::dummy_input(&mut rng), pxw::dummy_input(&mut rng)],
+            [pxw::output(&mut rng, owner, 0), pxw::empty_output(&mut rng)],
+        );
+        let plan = PxPlan {
+            keys: None,
+            inputs: vec![],
+            change: None,
+            payouts: vec![],
+            witness,
+            recipients: [None, None],
+            functions: vec![],
+            fee: PX_STANDARD_FEE,
+            hedge_secret: [0; 32],
+        };
+        let rules = TxRules::for_chain(&blacksilk_consensus::ChainParams::regtest());
+        assert!(matches!(
+            build_px(plan, &rules, &mut rng),
+            Err(PxBuildError::NoHedgeSecret)
+        ));
+    }
 }
