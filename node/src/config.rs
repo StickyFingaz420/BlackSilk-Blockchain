@@ -457,7 +457,8 @@ max_outbound = 3
             .unwrap();
         assert!(r.contains(&NetAddr::parse("1.2.3.4:29334").unwrap()));
         assert!(r.len() >= 2, "localhost resolves");
-        let onion = format!("{}.onion:29334", "a".repeat(56));
+        let onion =
+            "2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion:29334".to_string();
         assert_eq!(
             resolve_seeds(std::slice::from_ref(&onion), true)
                 .await

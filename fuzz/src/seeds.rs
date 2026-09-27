@@ -6,6 +6,7 @@ use blacksilk_chain::block::Block;
 use blacksilk_consensus::merkle::tx_root;
 use blacksilk_consensus::{BlockHeader, ChainParams, HEADER_VERSION};
 use blacksilk_crypto::keys::{SubaddressIndex, SubaddressTable, WalletKeys};
+use blacksilk_p2p::addr::AddrEntry;
 use blacksilk_p2p::message::{Message, Version, PROTOCOL_VERSION};
 use blacksilk_p2p::NetAddr;
 use blacksilk_px::perm::HostPerm;
@@ -80,8 +81,9 @@ fn main() {
     };
     put("block_decode", "block", &block.encode());
 
-    // Messages of every shape. A Tor v3 host: 56 base32 characters.
-    let onion = "abcdefghijklmnopqrstuvwxyz234567".repeat(2);
+    // Messages of every shape. A Tor v3 host: a real name (version 3 and a
+    // valid SHA3 checksum; p2p refuses anything else).
+    let onion = "2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid";
     let messages = [
         Message::Verack,
         Message::Ping(7),
@@ -117,9 +119,12 @@ fn main() {
         }),
         Message::Pong(7),
         Message::Addr(vec![
-            NetAddr::parse("198.51.100.1:18333").unwrap(),
-            NetAddr::parse("[2001:db9::1]:18333").unwrap(),
-            NetAddr::parse(&format!("{}.onion:18333", &onion[..56])).unwrap(),
+            AddrEntry::new(1_700_000_000, NetAddr::parse("198.51.100.1:18333").unwrap()),
+            AddrEntry::new(
+                1_700_000_300,
+                NetAddr::parse("[2001:db9::1]:18333").unwrap(),
+            ),
+            AddrEntry::new(0, NetAddr::parse(&format!("{onion}.onion:18333")).unwrap()),
         ]),
         Message::NotFound(vec![[10; 32], [11; 32]]),
         Message::GetTx(vec![[12; 32]]),
