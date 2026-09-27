@@ -1,10 +1,12 @@
 //! Mutation fuzzing of the p2p message decoder (pure Rust, seeded,
 //! repeatable; `BLACKSILK_FUZZ_ITERS` scales it): mutants of every message
 //! kind and random frames decode without a panic, and a successful decode
-//! re-encodes to the identical bytes.
+//! re-encodes to the identical bytes. The one exception is `Version`, whose
+//! extension area (bytes after its last known field) is ignored: it
+//! re-encodes to a prefix of the input (docs/p2p.md §4).
 
 use blacksilk_consensus::ChainParams;
-use blacksilk_p2p::message::Message;
+use blacksilk_p2p::message::{is_known_type, Message, Version, PROTOCOL_VERSION};
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
@@ -19,6 +21,15 @@ fn iters() -> usize {
 fn mutated_messages_never_panic_and_decode_canonically() {
     let genesis = ChainParams::regtest().genesis;
     let seeds = vec![
+        Message::Version(Version {
+            protocol: PROTOCOL_VERSION,
+            network: 9,
+            nonce: 5,
+            height: 300,
+            tip: [6; 32],
+            listen: None,
+            relay_txs: true,
+        }),
         Message::Verack,
         Message::Ping(7),
         Message::GetAddr,
@@ -55,7 +66,7 @@ fn mutated_messages_never_panic_and_decode_canonically() {
             }
             if let Ok(msg) = Message::decode(&m) {
                 decoded += 1;
-                assert_eq!(msg.encode(), m, "decode∘encode must be the identity");
+                canonical(&msg, &m);
             }
         }
     }
@@ -63,8 +74,24 @@ fn mutated_messages_never_panic_and_decode_canonically() {
         let len = rng.next_u32() as usize % 256;
         let v: Vec<u8> = (0..len).map(|_| rng.next_u32() as u8).collect();
         if let Ok(msg) = Message::decode(&v) {
-            assert_eq!(msg.encode(), v);
+            canonical(&msg, &v);
+        }
+        // Unknown types never decode (the network skips them unread).
+        if v.first().is_some_and(|&t| !is_known_type(t)) {
+            assert!(Message::decode(&v).is_err());
         }
     }
     println!("{n} mutants and {n} random frames: {decoded} mutants still decoded (all canonical); no panic");
+}
+
+/// `msg` was decoded from `bytes`: it re-encodes to the same bytes, or, for a
+/// `Version` with an extension area, to a prefix of them.
+fn canonical(msg: &Message, bytes: &[u8]) {
+    let enc = msg.encode();
+    if matches!(msg, Message::Version(_)) {
+        assert!(bytes.starts_with(&enc), "version re-encodes to a prefix");
+        assert_eq!(Message::decode(&enc).as_ref(), Ok(msg));
+    } else {
+        assert_eq!(enc, bytes, "decode then encode must be the identity");
+    }
 }

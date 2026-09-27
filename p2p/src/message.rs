@@ -1,13 +1,35 @@
 //! Protocol messages (docs/p2p.md §4–§5). Every list is bounded before allocation;
-//! decoding is strict (no trailing bytes).
+//! decoding of known messages is strict (no trailing bytes), with one
+//! exception kept for upgrades: `Version` may carry extension bytes after its
+//! last known field, which are ignored. Unknown message types are not decoded
+//! here: [`is_known_type`] lets the network skip them (docs/p2p.md §5).
 
 use crate::addr::NetAddr;
 use blacksilk_chain::block::MAX_BLOCK_BYTES;
 use blacksilk_consensus::{BlockHeader, Hash, HEADER_SIZE};
 use blacksilk_tx::codec::{DecodeError, Reader, Writer};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Our protocol version (docs/p2p.md §4).
+/// - 1: the original protocol (unknown message types and `Version` extension
+///   bytes were violations).
+/// - 2: unknown message types are ignored, and `Version` may carry extension
+///   bytes after `relay_txs`, which are ignored. The wire format of every
+///   known message is unchanged. A later version adds optional features by
+///   (a) appending fields to `Version` and (b) sending new message types only
+///   to peers whose `protocol` is at least the version that defines them.
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const MIN_PROTOCOL_VERSION: u32 = 1;
+
+/// The highest message type this version decodes (`StemTx`).
+pub const MAX_KNOWN_TYPE: u8 = 14;
+
+/// Whether a payload whose first byte is `tag` is a message type this version
+/// knows. Frames of other types are ignored by the network (they still count
+/// against the peer's message and byte budgets), so a later protocol version
+/// can add messages without old nodes banning it (docs/p2p.md §5).
+pub fn is_known_type(tag: u8) -> bool {
+    tag <= MAX_KNOWN_TYPE
+}
 
 pub const MAX_ADDRS: u64 = 1000;
 pub const MAX_LOCATOR: u64 = 64;
@@ -178,6 +200,10 @@ impl Message {
                     1 => true,
                     k => return Err(DecodeError::UnknownKind(k)),
                 };
+                // Extension area: fields a later protocol version appends
+                // after `relay_txs`. Ignored (the frame size bounds them).
+                let rest = bytes.len() - r.position();
+                r.skip(rest)?;
                 Message::Version(Version {
                     protocol,
                     network,
@@ -310,11 +336,16 @@ mod tests {
         for m in samples() {
             let mut b = m.encode();
             b.push(0);
-            assert!(
-                Message::decode(&b).is_err(),
-                "trailing byte after {}",
-                m.kind()
-            );
+            if matches!(m, Message::Version(_)) {
+                // The extension area (P0-8): trailing bytes are ignored.
+                assert_eq!(Message::decode(&b).as_ref(), Ok(&m), "version extension");
+            } else {
+                assert!(
+                    Message::decode(&b).is_err(),
+                    "trailing byte after {}",
+                    m.kind()
+                );
+            }
             let b = m.encode();
             for len in 0..b.len() {
                 assert!(
@@ -325,6 +356,30 @@ mod tests {
             }
         }
         assert!(Message::decode(&[99]).is_err(), "unknown type");
+        // Every known type is below the unknown ones.
+        for m in samples() {
+            assert!(is_known_type(m.encode()[0]), "{}", m.kind());
+        }
+        assert!(!is_known_type(MAX_KNOWN_TYPE + 1) && !is_known_type(0xff));
+    }
+
+    /// P0-8: a `Version` from a later protocol version, with fields appended
+    /// after `relay_txs`, decodes to the fields this version knows; broken
+    /// known fields are still rejected.
+    #[test]
+    fn version_extensions_are_ignored_but_known_fields_stay_strict() {
+        let v = samples().remove(0);
+        let mut b = v.encode();
+        b.extend_from_slice(&[0x07, 0xff, 0x00, 0x42, 1, 2, 3]);
+        assert_eq!(Message::decode(&b), Ok(v.clone()));
+        // A bad `relay_txs` flag (the last known field) is still an error.
+        let mut bad = v.encode();
+        *bad.last_mut().unwrap() = 2;
+        bad.push(0);
+        assert!(Message::decode(&bad).is_err());
+        // So is a truncated known field.
+        let b = v.encode();
+        assert!(Message::decode(&b[..b.len() - 1]).is_err());
     }
 
     #[test]
