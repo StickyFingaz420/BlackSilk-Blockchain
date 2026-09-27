@@ -1,8 +1,12 @@
 name: CI
 
 on:
+  # Every pushed branch runs CI, so no candidate branch can skip the Linux and
+  # arm64 legs (CI-1); testnet tags get their own run on the exact tagged
+  # commit (CI-3).
   push:
-    branches: [main, rebuild/core]
+    branches: ["**"]
+    tags: ["testnet-*"]
   pull_request:
   # Weekly: new RustSec advisories and the RandomX full-mode vectors do not
   # depend on a push (only the `audit` and `randomx-full` jobs run).
@@ -14,12 +18,24 @@ on:
 permissions:
   contents: read
 
+# One run per event and ref. A newer push to a pull request or to a work
+# branch cancels the older run there; runs on main, rebuild/core and tags are
+# never cancelled (each is evidence for its commit).
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.ref_type == 'branch' && github.ref != 'refs/heads/main' && github.ref != 'refs/heads/rebuild/core') }}
+
 env:
   CARGO_TERM_COLOR: always
 
-# Third-party actions are pinned to full commit SHAs (verified 2026-09-25):
-# - actions/checkout 11d5960a326750d5838078e36cf38b85af677262 = tag v4 = v4.4.0
+# Third-party actions are pinned to full commit SHAs:
+# - actions/checkout fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 = tag v5.1.0 = v5
+#   (Node 24; Node 20 left the runners on 2026-09-23, CI-12). Source, checked
+#   2026-09-27: `git ls-remote https://github.com/actions/checkout
+#   refs/tags/v5.1.0` (a lightweight tag, so the SHA is the commit), and the
+#   action.yml at that commit says `using: node24`.
 # - dtolnay/rust-toolchain 02cb101ec7c40f2c49e1d9714d64511d8e1b74de = branch master
+#   (verified 2026-09-25)
 # Toolchains and tools are pinned to the versions used for the local evidence
 # (docs/reviews/review-package.md §3). Every cargo build uses --locked: the
 # committed Cargo.lock files are what was reviewed.
@@ -29,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
@@ -63,7 +79,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
@@ -92,7 +108,7 @@ jobs:
       CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "true"
       CARGO_PROFILE_RELEASE_LTO: "off"
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
@@ -121,7 +137,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
@@ -131,26 +147,36 @@ jobs:
         run: cargo test --locked --release -p blacksilk-randomx -- --ignored --nocapture
 
   # The consensus-pinned guest programs rebuild from source to their pinned
-  # program ids and to the committed bytes (zkvm/guests/README.md), on Windows
-  # and Linux: the build is path-independent (stripped, no located panics;
-  # R15-6), so both hosts must reproduce the same kernel.id from their own
-  # checkout paths.
+  # program ids and to the committed bytes (zkvm/guests/README.md), on Windows,
+  # Linux x86_64 and Linux arm64: the build is path-independent (stripped, no
+  # located panics; R15-6), so every host must reproduce the same kernel.id
+  # from its own checkout path. Known failure until the v3 rebuild: the Linux
+  # legs differ in the non-loaded .comment bytes, which the current layout
+  # hashes through the ELF header (CI-1; README "Open: header bytes in the id").
+  # The build also checks the toolchain against zkvm/guests/toolchain.sha256,
+  # here with the published manifest downloaded (CI-13).
   guests:
     if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    env:
+      GUEST_REQUIRE_MANIFEST: "1"
+      GUEST_VERIFY_MANIFEST_ONLINE: "1"
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: "1.98.1"
           targets: riscv32i-unknown-none-elf
+      - name: build.sh refuses overriding cargo config files (self-test)
+        shell: bash
+        run: bash .github/scripts/guests-config-selftest.sh
       - name: Rebuild px/kernel.elf and px/vault.elf and compare ids and bytes
         shell: bash
         run: bash .github/scripts/guests-reproduce.sh
@@ -164,7 +190,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
@@ -179,6 +205,61 @@ jobs:
           cargo audit --ignore RUSTSEC-2024-0436
           cargo audit --file fuzz/Cargo.lock --ignore RUSTSEC-2024-0436
 
+  # Supply-chain policy (S1, dossier 44): cargo-deny over the main and fuzz
+  # workspaces (deny.toml, fuzz/deny.toml: advisories incl. unsound and
+  # yanked, native-code bans, crates.io only, licences, duplicate versions),
+  # and the *-sys name check cargo-deny cannot express. Weekly too: new
+  # advisories and yanks do not need a push.
+  deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: cargo deny (main workspace)
+        run: cargo deny --locked check
+      - name: cargo deny (fuzz workspace)
+        working-directory: fuzz
+        run: cargo deny --locked check
+      - name: No unreviewed *-sys crates
+        shell: bash
+        run: bash .github/scripts/sys-crates.sh
+
+  # Commit gates (F48-3, decisions "Agent 48"), over the commits this event
+  # adds after the cut-over commit in .github/scripts/gate-range.sh:
+  # - commits touching consensus paths carry a Consensus-Change: trailer;
+  # - commits changing Cargo.lock or fuzz/Cargo.lock name the crates they add
+  #   or re-version;
+  # - no invisible or bidirectional Unicode in tracked text files.
+  # The SHAs come in through env, never interpolated into the script.
+  gates:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GATE_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+      GATE_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          # The gates walk the history back to the cut-over commit.
+          fetch-depth: 0
+      - name: Consensus-path trailer gate
+        run: bash .github/scripts/consensus-gate.sh "$GATE_BASE" "$GATE_HEAD"
+      - name: Lockfile-diff gate
+        if: success() || failure()
+        run: bash .github/scripts/lockfile-gate.sh "$GATE_BASE" "$GATE_HEAD"
+      - name: Invisible and bidirectional Unicode scan
+        if: success() || failure()
+        run: bash .github/scripts/unicode-scan.sh
+
   # Coverage-guided fuzzing smoke run (AUDIT.md "Coverage-guided fuzzing"):
   # a short run of every target with debug assertions; the script fails if a
   # target crashes, does not run, or executes no inputs. Long campaigns run
@@ -190,7 +271,7 @@ jobs:
     env:
       TOOLCHAIN: nightly-2026-09-24
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
