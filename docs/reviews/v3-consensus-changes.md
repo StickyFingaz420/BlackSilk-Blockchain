@@ -1278,6 +1278,20 @@ admission height after a reorganization disconnects a block carrying it, then mi
 - The recently-expired set is bounded by what expires within 30 blocks, which the pool
   caps bound; it is not persisted (neither is the pool).
 
+### Follow-up (RT-W1b, FX-RTW1B)
+
+Red-team RTW1B-1 (Medium, privacy) showed that §5 and §8 above were wrong as written:
+applying the guard on the stem and relay paths made a later-admitting stem peer a
+Dandelion black hole, so the origin's embargo fired and it fluffed the transaction
+itself. Decision (RT-W1b): the guard applies only on the local origination path
+(`Mempool::add`/`check` with `Origin::Local`: RPC `/tx` and `Network::submit_tx`);
+peer relay and stem admit a guard-listed transaction normally (`Origin::Peer`).
+RTW1B-5: `readmit` now keeps the guard entry when readmission fails. Tests:
+`rtw1b_a_later_stem_peer_admits_the_origins_reinjection` (chain),
+`a_recently_expired_transaction_is_stemmed_for_a_peer_but_not_originated` (p2p, real
+TCP). Guard entries are still not persisted; 33 W2 (originated set) and 38 W4 (wallet
+rebroadcast) are required before any privacy claim (RTW1B-2). Merged in 5ec35db.
+
 ---
 
 <a id="r12-2"></a>
@@ -1379,6 +1393,19 @@ every template's total weight, PX bytes, deploy bytes and pool stay within bound
 - The invalid-block worst case (F10-2) is closed separately by early proof decoding
   (docs/transactions.md §8.3); this rule also bounds it through B6.
 - Agent 40: weight samples in the fingerprint manifest.
+
+### Follow-up (RT-W1b, FX-RTW1B)
+
+The block rule was accepted as is. Red-team RTW1B-3 showed the template claim in §5
+("the same unit for both, no cross-unit comparison") was false: a deploy's exact fee
+includes 50 per program byte, which is not a weight, so vault-sized deploys outranked
+every transfer (11 deploys displaced 367 of 382 transfers in the demonstration).
+`Mempool::select` now ranks transfers and deploys by `weight_fee / weight`, where a
+deploy's `weight_fee` is its v1 part `rules.standard_fee(n_in, n_out)`; program-byte
+fees buy no priority. RTW1B-9: `max_weight` is a `const fn` and
+`max_weight(64, 16) × FEE_PER_WEIGHT ≤ PX_STANDARD_FEE` is a compile-time assertion.
+Measured worst v1 block (red team, D5): 888 CLSAGs, about 1.9 s single-threaded;
+agent 10's benchmark with PX proofs is still owed. Merged in 5ec35db.
 
 ---
 
