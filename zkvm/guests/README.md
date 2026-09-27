@@ -39,6 +39,44 @@ sections placed before that table. See "Path independence".
   `RUSTC_WORKSPACE_WRAPPER`, `RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS`,
   `CARGO_BUILD_RUSTFLAGS`, `CARGO_BUILD_TARGET`, `CARGO_BUILD_RUSTC*`,
   `CARGO_PROFILE_*`, `CARGO_TARGET_RISCV32I_UNKNOWN_NONE_ELF_*`.
+- They also refuse cargo configuration files that would change the build
+  (CI-6). Cargo merges every `.cargo/config[.toml]` from this directory up to
+  the filesystem root, then `$CARGO_HOME/config[.toml]`. Except for this
+  directory's own `.cargo/config.toml`, none of them may contain:
+  - `[profile.*]` tables or `profile.*` keys (config profiles override
+    `Cargo.toml`);
+  - `build.rustc`, `build.rustc-wrapper` or `build.rustc-workspace-wrapper`
+    (for example sccache);
+  - `[target.riscv32i-unknown-none-elf]` or `[target.'cfg(...)']` tables;
+  - `[patch.*]` tables or path overrides (`paths = [...]`).
+
+  `rustflags` elsewhere are harmless: the flags the scripts pass take
+  precedence over every config `rustflags`. The check reads lines, so a file
+  that only mentions such a key can be refused too; move it aside for the
+  build. CI runs a self-test of this check
+  (`.github/scripts/guests-config-selftest.sh`).
+- **The toolchain manifest is pinned** in `toolchain.sha256` (CI-13). rustup
+  checks each download only against the channel manifest from the same
+  server, so the repository records:
+  - the sha256 of the published `channel-rust-1.98.1.toml`;
+  - the riscv32i `rust-std` archive hashes it lists (the precompiled `core`
+    and `compiler_builtins` in every guest).
+
+  Source (2026-09-27): `https://static.rust-lang.org/dist/channel-rust-1.98.1.toml`,
+  whose `.sha256` file and a local `sha256sum` agree. The dated
+  `2026-09-03/channel-rust-stable.toml` has the same hash. The rust-std lines
+  are identical in that manifest and in rustup's own copy.
+  - On every build, the scripts check rustup's copy of the manifest
+    (`<sysroot>/lib/rustlib/multirust-channel-manifest.toml`) against the
+    pinned rustc release and rust-std hashes. rustup rewrites that copy, so
+    its own sha256 is not the published one.
+  - With `GUEST_VERIFY_MANIFEST_ONLINE=1` (CI), they also download the
+    published manifest, check its sha256, and check that rustup recorded the
+    same rustc package hash for this host.
+  - A rustc not installed by rustup has no manifest. The scripts then warn, or
+    stop when `GUEST_REQUIRE_MANIFEST=1` (CI).
+- `sha256sum`, `shasum -a 256` or `openssl dgst -sha256`: whichever the host
+  has (CI-17; stock macOS has no `sha256sum`).
 - **Any host with bash, at any checkout path.** The build runs in place. There is
   no longer a canonical build path (testnet v3; the v2 kernel needed one).
 
@@ -88,8 +126,11 @@ would bring a path back; the test catches that.
 - The fixtures `sum` and `arith` are byte-identical to the committed ones
   (they were already stripped).
 - `reproduce.sh` passed in the checkout.
-- **Not yet verified here:** a Linux build. CI's `guests` job now runs on
-  `windows-latest` and `ubuntu-latest`; the first run is the cross-OS evidence.
+- **Linux does not reproduce these ids (CI-1).** CI rebuilt both guests on
+  `ubuntu-latest`. The loaded sections matched, but the files did not: the
+  Linux `.comment` differs, and through the ELF header that changes the id.
+  See "Open: header bytes in the id". The fix lands with the single v3
+  rebuild.
 
 Previous ids (testnet v2): kernel `e55c1d2a…`, vault `be646844…`.
 
@@ -105,9 +146,128 @@ bash zkvm/guests/build.sh      # rebuild every guest and copy it over the pinned
   - the committed `px/*.elf` has that id too;
   - the rebuilt ELF is byte-identical (sha256) to the committed one.
 
-  It exits non-zero on any mismatch. CI runs it on Windows and Linux for every
-  push (`.github/workflows/ci.yml`, job `guests`).
+  It exits non-zero on any mismatch. CI runs it on Windows, Linux x86_64 and
+  Linux arm64 for every push (`.github/workflows/ci.yml`, job `guests`). The
+  two Linux legs fail until the v3 rebuild (CI-1).
 - `.gitattributes` marks `*.elf` binary and `*.id` `-text`, so no checkout
   converts them.
 - A changed kernel id is a consensus change: it needs the owner's approval and a
   new testnet identity.
+
+## The toolchain is part of the identity (CI-7, accepted limitation)
+
+The pinned ELFs are the output of one exact toolchain: rustc 1.98.1
+(`48a229cea`), its LLVM and LLD, and its precompiled riscv32i `core` and
+`compiler_builtins` (pinned in `toolchain.sha256`). Any other compiler
+release, even with identical source, may emit other code, and so another id.
+Therefore:
+
+- **The guest toolchain never changes within a program identity.** A new
+  rustc for the guests means a rebuild, new ids and a new testnet identity,
+  like any other kernel change.
+- The id also binds the toolchain in a way that is not about code at all:
+  in the current layout, the ELF header is loaded, so the toolchain's
+  identification strings in `.comment` reach the id (next section). The fix
+  below removes that effect. It does not remove the first point.
+- The host toolchain (the node, the prover) may change freely. It only reads
+  the pinned ELF.
+
+## Open: header bytes in the id (CI-1)
+
+**Problem.** A program id covers the file-backed bytes of every `PT_LOAD`
+segment. LLD's default layout starts the first `PT_LOAD` at file offset 0, so
+the ELF header and the program headers are part of the id. The ELF header
+holds `e_shoff`, the offset of the section header table, which lies after the
+non-loaded sections. So every non-loaded byte before that table moves the id.
+
+`.comment` is such a section. It holds rustc's and LLD's identification
+strings, and they differ by host distribution:
+- The Windows build (committed): `rustc version 1.98.1 (48a229cea 2026-09-01)`,
+  then `Linker: LLD 22.1.8 (https://github.com/rust-lang/llvm-project.git 52ed14fc…)`.
+- The Linux build (CI): the LLD string first, with the source path
+  `/checkout/src/llvm-project/llvm` instead of the URL. That is 14 bytes
+  shorter, so `e_shoff` moves.
+
+So the same rustc release, producing the same code, gives a different id on
+Linux.
+
+**Decision (coordinator, CI-1):** make the id independent of every non-loaded
+byte before the single v3 rebuild. Two ways were tested with rust-lld 22.1.8
+(rustc 1.98.1). The tests used a scratch copy of the repository, and no ELF
+was committed. Method: build the kernel and the vault; then rewrite the
+`.comment` of each result exactly as Linux differs (the same strings, 14
+bytes shorter, every later offset shifted); then compare the ids from
+`cargo run -p blacksilk-zkvm --example program_id`.
+
+| Layout | Headers in a `PT_LOAD` | `.comment` | Id after the Linux-style `.comment` rewrite |
+|---|---|---|---|
+| current (LLD default) | yes, offset 0 | kept | **changes** (reproduces CI-1) |
+| (a1) `-Clink-arg=--nmagic` | no (first `PT_LOAD` at offset `0xb4`) | kept | unchanged |
+| (a2) linker script, see below | no (first `PT_LOAD` at offset `0x1000`) | kept | unchanged |
+| (a2) plus `/DISCARD/ : { *(.comment) }` | no | **removed** (rustc's and LLD's) | not applicable; the id equals (a2) without the discard |
+
+**(a) Keep the headers out of every `PT_LOAD`.** This works, in two variants:
+- **(a1) `--nmagic`**, a single flag. LLD then stops page-aligning segments,
+  and the headers are not loaded. The file still contains `.comment`, so the
+  files still differ between hosts while the ids agree. `reproduce.sh` would
+  have to compare ids and loaded bytes instead of whole files.
+- **(a2) a linker script** (`-Clink-arg=-T<file>`, a new tracked file here). It
+  places the sections from `0x10000`, a page boundary. The headers then do not
+  fit below the first section, and LLD leaves them out of the first `PT_LOAD`
+  (observed in the builds above; without `PHDRS`, LLD loads the headers only
+  when they fit below the first section in the same page).
+
+  ```
+  SECTIONS
+  {
+    . = 0x10000;
+    .rodata : { *(.rodata .rodata.* .srodata .srodata.*) }
+    .eh_frame : { KEEP(*(.eh_frame)) }
+    .text : { *(.text .text.*) }
+    .data : { *(.data .data.* .sdata .sdata.*) }
+    .bss : { *(.sbss .sbss.* .bss .bss.*) }
+    /DISCARD/ : { *(.comment) }
+  }
+  ```
+
+  Cargo runs rustc from this directory, and rustc runs LLD there, so a path
+  relative to this directory works in `GUEST_FLAGS` and
+  `.cargo/config.toml`. The absolute path never enters the ELF.
+
+**(b) Remove `.comment`.** There is no stable rustc option for this, and
+rust-lld 22.1.8 has no flag for it (checked with `rust-lld -flavor gnu
+--help`). It works through the linker script's `/DISCARD/` rule, which drops
+rustc's string and LLD's own. `rust-objcopy --remove-section .comment` (shipped
+with rustc) would also work, but as a post-link rewrite. Removing `.comment`
+while the headers are still loaded would make the id depend on the remaining
+non-loaded sections instead: fragile, and not a fix on its own.
+
+**Recommendation: (a2) with the `/DISCARD/` rule.** The ids no longer depend on
+any non-loaded byte. There are no toolchain strings left, so the whole file is
+expected to be byte-identical on every host, and `reproduce.sh` keeps its
+byte comparison. The id definition in zkvm (docs/zkvm.md §3) does not change.
+The ids change once, with the single v3 rebuild that is already planned.
+
+Evidence (scratch builds, Windows):
+- (a2) kernel and vault pass `px/tests/kernel.rs` (6 tests, native = guest),
+  `px/tests/elf_paths.rs` (2) and, with the relinked fixtures,
+  `zkvm/tests/guest.rs` (5).
+- `Program::from_elf` accepts all four relinked guests.
+- Not yet shown: the cross-host byte identity of (a2). That needs the CI legs
+  at the rebuild commit.
+
+**Before the rebuild (owners in brackets):**
+- a test that no pinned ELF has a `PT_LOAD` covering file offset 0 and that
+  none has a `.comment` [px/zkvm];
+- the flag in `GUEST_FLAGS` and `.cargo/config.toml`, and the script file
+  [43];
+- re-measuring the kernel budgets [20];
+- CI green on all three hosts [43];
+- one operator build [owner].
+
+**Fallback.** If a later toolchain cannot be made to keep headers out of
+`PT_LOAD`, change the program-id definition itself: hash each `PT_LOAD`'s
+bytes minus any part that overlaps the ELF header or the program header
+table. That is a consensus change to zkvm's id rule. It would be recorded in
+`docs/reviews/v3-consensus-changes.md`, and the coordinator has said it would
+approve it for the v3 rebuild. It is not needed with (a2).

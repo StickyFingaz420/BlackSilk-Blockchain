@@ -18,9 +18,10 @@ if [ "$status" -ne 0 ]; then
       echo "::error title=$name sections committed::$(stat -c %s "$committed") bytes; $b"
       first=$(cmp "$rebuilt" "$committed" 2>&1 | head -1)
       echo "::error title=$name first difference::$first; differing bytes: $(cmp -l "$rebuilt" "$committed" 2>/dev/null | wc -l)"
-      c=$(readelf -p .comment "$rebuilt" 2>/dev/null | tr -d '' | tr '
-' '|')
+      c=$(readelf -p .comment "$rebuilt" 2>/dev/null | tr -d '\r' | tr '\n' '|')
       echo "::error title=$name .comment rebuilt::$c"
+      c=$(readelf -p .comment "$committed" 2>/dev/null | tr -d '\r' | tr '\n' '|')
+      echo "::error title=$name .comment committed::$c"
     fi
   done
 fi
