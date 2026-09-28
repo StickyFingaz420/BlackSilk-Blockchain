@@ -100,6 +100,7 @@ impl ChainManager {
         );
         self.invalid.insert(id, e);
         self.headers.mark_invalid(&id);
+        self.refresh_hot_seeds();
         let mut stack = vec![id];
         while let Some(x) = stack.pop() {
             let w = self.work(&x);

@@ -65,6 +65,7 @@ impl ChainManager {
             store_failures: 0,
             store_failed: false,
             apply_failed: None,
+            hot_seeds: Vec::new(),
             ready: BinaryHeap::new(),
             syncing: None,
             sync_outcome: SyncOutcome::default(),
@@ -81,6 +82,7 @@ impl ChainManager {
         // Bodies kept from now on are numbered by their index among the
         // store's block records.
         manager.next_body_seq = total;
+        manager.refresh_hot_seeds();
         Ok(manager)
     }
 

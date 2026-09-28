@@ -186,6 +186,10 @@ pub struct ChainManager {
     /// every apply failure): the block's id and height and the error. The
     /// node stops; the block is not marked invalid ([`ChainManager::halted`]).
     apply_failed: Option<(Hash, u64, String)>,
+    /// The RandomX keys last passed to [`PowFunction::set_hot_seeds`]
+    /// (`sync_policy::hot_seeds` of the best header chain); refreshed when the
+    /// best header chain changes, so the next key is built before it is needed.
+    hot_seeds: Vec<Hash>,
     /// Blocks ready to complete (body kept, parent complete), lowest body
     /// arrival first. Drained by [`ChainManager::sync_step`] (and at once by
     /// [`ChainManager::submit_block`]).

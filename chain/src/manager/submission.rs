@@ -206,6 +206,19 @@ impl ChainManager {
         }
         let w = self.work(&id);
         self.leaves.insert((w, id));
+        self.refresh_hot_seeds();
+    }
+
+    /// Passes the hot RandomX keys of the best header chain to the PoW layer
+    /// when they changed: it pins them and builds the next key's cache on a
+    /// background thread, so no block pays a cache build under the chain lock
+    /// at a key switch (dossier 07 W1; `sync_policy::hot_seeds`).
+    pub(super) fn refresh_hot_seeds(&mut self) {
+        let hot = crate::sync_policy::hot_seeds(&self.headers);
+        if hot != self.hot_seeds {
+            self.pow.set_hot_seeds(&hot);
+            self.hot_seeds = hot;
+        }
     }
 }
 

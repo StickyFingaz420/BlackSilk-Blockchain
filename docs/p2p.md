@@ -812,14 +812,15 @@ already being written is finished first).
   - **RandomX caches** (`consensus::pow::SeedCache`, under `RandomXPow`): a cache
     is built outside the lock other PoW callers need, so a key switch no longer
     stalls hashing under the other key (`consensus/tests/seed_switch_liveness.rs`).
-    Pinning and prebuilding the best chain's keys (`sync_policy::hot_seeds`, fed to
-    `PowFunction::set_hot_seeds`) exist and are tested
-    (`chain/tests/seed_switch.rs`), but **the node does not call
-    `set_hot_seeds` yet**: until the chain manager does (and `CachedPow` forwards
-    it), caches are kept as a two-key LRU, a side-branch key can evict a best-chain
-    key, and the first block of each key epoch builds its cache when it is first
-    hashed. The work gate removes the free trigger (headers of free branches are
-    not hashed).
+    The chain manager pins and prebuilds the best header chain's keys: whenever
+    that chain changes (a new header, an invalidated block, start-up) it passes
+    `sync_policy::hot_seeds` to `PowFunction::set_hot_seeds` through `CachedPow`,
+    and the next key's cache is built on a background thread during the lag
+    (`ChainManager::refresh_hot_seeds`). Hot keys are never evicted for a
+    side-branch key, and the first block of a key epoch builds no cache under the
+    chain lock (`chain/tests/seed_switch.rs`: both switches cost an ordinary
+    block's hash). The work gate removes the free trigger (headers of free branches
+    are not hashed).
   - Bodies of stored side branches can still be stored before they are validated
     (the completion report's N-2), by an unrequested block whose header passed the
     gate.

@@ -86,4 +86,10 @@ impl PowFunction for CachedPow {
         self.preload(seed, header_bytes, h);
         h
     }
+
+    /// Forwards the hot keys to the RandomX layer, which pins and prebuilds
+    /// them off the chain lock (`sync_policy::hot_seeds`, dossier 07 W1).
+    fn set_hot_seeds(&self, seeds: &[Hash]) {
+        self.inner.set_hot_seeds(seeds)
+    }
 }

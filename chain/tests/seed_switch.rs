@@ -5,9 +5,11 @@
 //! whatever path (under the chain lock here, as `submit_block` runs).
 //!
 //! Real RandomX (light), with the short key epoch of the chain tests (16,
-//! lag 4: switches at 21 and 37). The first switch runs without a hot set
-//! (the pre-W1 behaviour: the build happens inside the submission), the
-//! second with it. Both submission times are printed (`--nocapture`).
+//! lag 4: switches at 21 and 37). The manager itself passes the hot keys to
+//! the PoW layer whenever its best header chain changes
+//! (`ChainManager::refresh_hot_seeds`); the test never calls
+//! `set_hot_seeds`. At both switches the new key's cache must be built
+//! before its first block, which then builds no cache under the lock.
 
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::ChainManager;
@@ -69,7 +71,7 @@ fn submit_next(m: &mut ChainManager, keys: &WalletKeys, rng: &mut ChaCha20Rng) -
 }
 
 #[test]
-fn a_prebuilt_next_key_takes_the_cache_build_off_the_switch() {
+fn the_manager_prebuilds_each_next_key_before_its_switch() {
     let p = short_epoch_params();
     let pow = Arc::new(RandomXPow::new());
     let mut m = ChainManager::open(
@@ -83,58 +85,41 @@ fn a_prebuilt_next_key_takes_the_cache_build_off_the_switch() {
     let mut rng = ChaCha20Rng::seed_from_u64(21);
     let (keys, _) = WalletKeys::generate(&mut rng);
 
-    // First switch (height 21, key = block 16), no hot set: the submission
-    // of block 21 builds the key's cache itself.
-    let mut before = Duration::ZERO;
-    let mut hash = Duration::ZERO;
-    for h in 1..=21u64 {
-        let builds = pow.builds();
-        let took = submit_next(&mut m, &keys, &mut rng);
-        if h == 20 {
-            hash = took;
-        }
-        if h == 21 {
-            before = took;
-            assert_eq!(
-                pow.builds(),
-                builds + 1,
-                "block 21 built the new key's cache"
+    // Switch heights and their keys: block 21 uses block 16's id, block 37
+    // block 32's (epoch 16, lag 4).
+    let mut ordinary = Duration::ZERO;
+    let mut at_switch = Vec::new();
+    for h in 1..=37u64 {
+        if h == 21 || h == 37 {
+            let k = m.headers().main_id_at(h - 5).expect("the key block exists");
+            assert!(
+                hot_seeds(m.headers()).contains(&k),
+                "the next key is hot at {h}"
             );
-        }
-    }
-
-    // From here the chain names its hot keys after every block, as the
-    // manager hook does. Block 32 (the next key) exists at tip 32; block 37
-    // is the first to use it.
-    let key32 = |m: &ChainManager| m.headers().main_id_at(32);
-    let mut after = Duration::ZERO;
-    for h in 22..=37u64 {
-        pow.set_hot_seeds(&hot_seeds(m.headers()));
-        if h == 37 {
-            let k = key32(&m).expect("block 32 exists");
-            assert!(hot_seeds(m.headers()).contains(&k), "the next key is hot");
             // The background build had the lag (4 blocks) to finish; in a
             // real network that is 64 blocks, about two hours.
             let deadline = Instant::now() + Duration::from_secs(120);
             while !pow.is_resident(&k) {
-                assert!(Instant::now() < deadline, "the next key was not prebuilt");
+                assert!(Instant::now() < deadline, "key for {h} was not prebuilt");
                 std::thread::sleep(Duration::from_millis(20));
             }
             let builds = pow.builds();
-            after = submit_next(&mut m, &keys, &mut rng);
-            assert_eq!(pow.builds(), builds, "block 37 built no cache");
+            at_switch.push(submit_next(&mut m, &keys, &mut rng));
+            assert_eq!(pow.builds(), builds, "block {h} built no cache");
         } else {
-            submit_next(&mut m, &keys, &mut rng);
+            let took = submit_next(&mut m, &keys, &mut rng);
+            if h == 20 {
+                ordinary = took;
+            }
         }
     }
     assert_eq!(m.height(), 37);
-    // The old key (block 16) stays built while a branch within the anti-DoS
-    // window may use it; the genesis key has been released.
-    pow.set_hot_seeds(&hot_seeds(m.headers()));
+    // At most the hot keys plus one side slot stay built; the genesis key has
+    // been released.
     let resident = pow.resident();
     assert!(resident.len() <= 3, "{resident:?}");
     println!(
-        "block submission at a key switch (under the chain lock): without prebuild {before:.1?}, \
-         with prebuild {after:.1?}; an ordinary block {hash:.1?}"
+        "block submission at the key switches (under the chain lock, prebuilt by the manager): \
+         {at_switch:.1?}; an ordinary block {ordinary:.1?}"
     );
 }
