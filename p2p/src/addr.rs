@@ -343,6 +343,22 @@ fn ip6(o: [u8; 16], port: u16) -> Option<NetAddr> {
         .then(|| NetAddr::Ip(SocketAddr::new(IpAddr::V6(v6), port)))
 }
 
+/// The identity inbound limits and bans key on (docs/p2p.md §9, §10;
+/// dossier 32 W6): an IPv4 address itself, an IPv6 address's /64 (the low 64
+/// bits cleared). One IPv6 host is routinely given a whole /64, so keying on
+/// the full address would let it take one per-IP allowance per address, and
+/// a ban of one address would not stop it. An IPv4-mapped IPv6 address is
+/// its IPv4 address.
+pub fn peer_key(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v6) => {
+            let masked = u128::from(v6) & !((1u128 << 64) - 1);
+            IpAddr::V6(Ipv6Addr::from(masked))
+        }
+        v4 => v4,
+    }
+}
+
 // ------------------------------------------------------------ Addr entries
 
 /// The address of an `Addr` entry: one of the networks this version knows,
@@ -529,6 +545,25 @@ mod tests {
         let m = NetAddr::Ip("[::ffff:8.8.9.9]:1".parse().unwrap());
         assert_eq!(m.group(), a.group());
         assert_eq!(m.ip(), NetAddr::parse("8.8.9.9:1").unwrap().ip());
+    }
+
+    /// W6: one IPv6 /64 is one peer identity; IPv4 addresses are their own;
+    /// an IPv4-mapped address is its IPv4 address.
+    #[test]
+    fn ipv6_slash64_counts_as_one_ip() {
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        assert_eq!(
+            peer_key(ip("2a00:1450:1:2:aaaa::1")),
+            peer_key(ip("2a00:1450:1:2:ffff:ffff:ffff:ffff"))
+        );
+        assert_eq!(peer_key(ip("2a00:1450:1:2:aaaa::1")), ip("2a00:1450:1:2::"));
+        assert_ne!(
+            peer_key(ip("2a00:1450:1:2::1")),
+            peer_key(ip("2a00:1450:1:3::1"))
+        );
+        assert_eq!(peer_key(ip("8.8.8.8")), ip("8.8.8.8"));
+        assert_ne!(peer_key(ip("8.8.8.8")), peer_key(ip("8.8.8.9")));
+        assert_eq!(peer_key(ip("::ffff:8.8.8.8")), ip("8.8.8.8"));
     }
 
     #[test]
