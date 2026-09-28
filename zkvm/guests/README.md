@@ -10,11 +10,12 @@ This workspace builds the programs that run inside the zkVM
 | `sum`, `arith` | `zkvm/tests/fixtures/` | — | Test fixtures |
 
 A **program id** (docs/zkvm.md §3) commits to the entry point, the code and the
-file-backed bytes of every loadable data segment. For these binaries the first
-loadable segment starts at file offset 0, so it contains the **ELF header**.
-The header holds the section header table's offset and count
-(`e_shoff`, `e_shnum`, `e_shstrndx`), so the id also depends on the size of the
-sections placed before that table. See "Path independence".
+file-backed bytes of every loadable data segment. Since the testnet v3 rebuild the
+guests are linked with **`guest.ld`**: the sections start at `0x10000`, so no
+loadable segment covers the ELF header or the program headers (the first `PT_LOAD`
+is at file offset `0x1000`), and `.comment` is discarded. The id therefore covers
+only loaded code and data, and no byte of the file depends on the host (CI-1, "Header
+bytes in the id"). `px/tests/elf_paths.rs` pins both properties.
 
 ## Build environment (verified 2026-09-27)
 
@@ -29,10 +30,12 @@ sections placed before that table. See "Path independence".
     host cannot build the workspace (the `dlltool` failure).
 - Profile: `Cargo.toml` here (`opt-level` 2 for the kernel, the vault and
   `px-core`, `lto`, one codegen unit, `panic = "abort"`, `strip`).
-- Target flags: static relocation, `+zmmul` and **`-Clink-arg=--strip-all`**.
-  **`build.sh` is the single source** (`GUEST_FLAGS`). `.cargo/config.toml`
-  repeats them for ad-hoc `cargo build` runs here, and the scripts fail if the
-  two differ.
+- Target flags: static relocation, `+zmmul`, **`-Clink-arg=--strip-all`** and
+  **`-Clink-arg=-Tguest.ld`** (the link layout; cargo runs rustc, and rustc runs
+  LLD, in this directory, so the relative path resolves here and no absolute path
+  enters the ELF). **`build.sh` is the single source** (`GUEST_FLAGS`).
+  `.cargo/config.toml` repeats them for ad-hoc `cargo build` runs here, and the
+  scripts fail if the two differ.
 - `Cargo.lock` here is tracked, and the build uses `--locked`. The guests have
   no external dependencies. The id tool is also built with `--locked`.
 - The scripts refuse to run when any of these is set: `RUSTC`, `RUSTC_WRAPPER`,
@@ -96,6 +99,7 @@ built at, in two ways:
    length moved `e_shoff` in the ELF header, which is in the first loaded
    segment. So the id changed with the path. `--remap-path-prefix` does not reach
    these hashes, and a neutral prefix would still leave OS-native separators.
+   (Since the v3 rebuild the ELF header is not loaded at all, see CI-1.)
 
 **The v3 build removes both:**
 
@@ -111,7 +115,8 @@ A test pins it: `px/tests/elf_paths.rs` fails if `px/kernel.elf` or
 directory) or a symbol table. Array-index bounds checks and any future `assert!`
 would bring a path back; the test catches that.
 
-**Verified (2026-09-27, V3-B), all with rustc 1.98.1 on Windows:**
+**Verified (2026-09-27, V3-B, the pre-rebuild layout), all with rustc 1.98.1 on
+Windows:**
 
 | Build tree | kernel.elf sha256 | vault.elf sha256 |
 |---|---|---|
@@ -126,13 +131,27 @@ would bring a path back; the test catches that.
 - The fixtures `sum` and `arith` are byte-identical to the committed ones
   (they were already stripped).
 - `reproduce.sh` passed in the checkout.
-- **Linux does not reproduce these ids (CI-1).** CI rebuilt both guests on
+- **Linux did not reproduce these ids (CI-1).** CI rebuilt both guests on
   `ubuntu-latest`. The loaded sections matched, but the files did not: the
-  Linux `.comment` differs, and through the ELF header that changes the id.
-  See "Open: header bytes in the id". The fix lands with the single v3
-  rebuild.
+  Linux `.comment` differs, and through the ELF header that changed the id.
+  Fixed by the link layout of the single v3 rebuild (below).
 
-Previous ids (testnet v2): kernel `e55c1d2a…`, vault `be646844…`.
+**The single v3 rebuild (2026-09-28, W1-CB-B2).** One rebuild of the kernel and the
+vault carries every guest-affecting v3 item: `ApprovalConflict` in the kernel
+(F-20-1), the call ABI and validity-window prefix and the vault's timeout, refund and
+contract-bound locks (F-28-1, PX6, W28-4), and the `guest.ld` layout (CI-1). The
+pinned ids are in `px/kernel.id` and `px/vault.id`; the record, with the ids and the
+ELF hashes, is docs/reviews/v3-consensus-changes.md, section `guest-rebuild`.
+`reproduce.sh` ends with one `SUMMARY` line per guest (host, id, sha256, size), and
+CI turns them into a notice annotation on each of the windows, ubuntu and
+ubuntu-arm legs, so the three hosts can be compared without the job logs.
+- Reproduced on Windows (rustc 1.98.1, `x86_64-pc-windows-gnu`) from a fresh target
+  directory, byte-identical to the committed ELFs.
+- Not yet shown here: the Linux x86_64 and arm64 legs (CI, after the push) and an
+  operator build.
+
+Previous ids: testnet v2 kernel `e55c1d2a…`, vault `be646844…`; the pre-rebuild
+neutral build kernel `0577e667…`, vault `666f7aab…`.
 
 ## Procedure
 
@@ -146,9 +165,9 @@ bash zkvm/guests/build.sh      # rebuild every guest and copy it over the pinned
   - the committed `px/*.elf` has that id too;
   - the rebuilt ELF is byte-identical (sha256) to the committed one.
 
-  It exits non-zero on any mismatch. CI runs it on Windows, Linux x86_64 and
-  Linux arm64 for every push (`.github/workflows/ci.yml`, job `guests`). The
-  two Linux legs fail until the v3 rebuild (CI-1).
+  It exits non-zero on any mismatch, and prints a `SUMMARY` line per guest. CI runs
+  it on Windows, Linux x86_64 and Linux arm64 for every push
+  (`.github/workflows/ci.yml`, job `guests`).
 - `.gitattributes` marks `*.elf` binary and `*.id` `-text`, so no checkout
   converts them.
 - A changed kernel id is a consensus change: it needs the owner's approval and a
@@ -165,14 +184,14 @@ Therefore:
 - **The guest toolchain never changes within a program identity.** A new
   rustc for the guests means a rebuild, new ids and a new testnet identity,
   like any other kernel change.
-- The id also binds the toolchain in a way that is not about code at all:
-  in the current layout, the ELF header is loaded, so the toolchain's
-  identification strings in `.comment` reach the id (next section). The fix
-  below removes that effect. It does not remove the first point.
+- Before the v3 rebuild the id also bound the toolchain in a way that was not
+  about code at all: the ELF header was loaded, so the toolchain's identification
+  strings in `.comment` reached the id (next section). The `guest.ld` layout
+  removes that effect. It does not remove the first point.
 - The host toolchain (the node, the prover) may change freely. It only reads
   the pinned ELF.
 
-## Open: header bytes in the id (CI-1)
+## Header bytes in the id (CI-1): fixed by the v3 rebuild
 
 **Problem.** A program id covers the file-backed bytes of every `PT_LOAD`
 segment. LLD's default layout starts the first `PT_LOAD` at file offset 0, so
@@ -256,14 +275,13 @@ Evidence (scratch builds, Windows):
 - Not yet shown: the cross-host byte identity of (a2). That needs the CI legs
   at the rebuild commit.
 
-**Before the rebuild (owners in brackets):**
-- a test that no pinned ELF has a `PT_LOAD` covering file offset 0 and that
-  none has a `.comment` [px/zkvm];
-- the flag in `GUEST_FLAGS` and `.cargo/config.toml`, and the script file
-  [43];
-- re-measuring the kernel budgets [20];
-- CI green on all three hosts [43];
-- one operator build [owner].
+**Done at the rebuild (W1-CB-B2):** the test that no pinned ELF has a `PT_LOAD`
+covering the headers and that none has a `.comment`
+(`px/tests/elf_paths.rs::pinned_guests_load_no_header_and_carry_no_comment`); the
+flag in `GUEST_FLAGS` and `.cargo/config.toml` and the script file `guest.ld`; the
+kernel budgets re-measured (unchanged, still within 95%); the test fixtures `sum`
+and `arith` relinked with the same layout. **Still owed:** CI green on the two
+Linux hosts [coordinator, after the push] and one operator build [owner].
 
 **Fallback.** If a later toolchain cannot be made to keep headers out of
 `PT_LOAD`, change the program-id definition itself: hash each `PT_LOAD`'s
