@@ -665,3 +665,13 @@
   - `next_seed_id` on `/template` (drops the `/blocks` lookup);
   - the first dataset build uses all threads when no context exists.
 - **Evidence:** labnet-warmup-2026-09-28 run 2. After warm-up, depths are 1 to 2 outside the heal, and 13 twice at the heal after a 3-minute partition. Difficulty had not reached equilibrium (9 to 12 against about 20); longer runs are needed for Wave 4.
+
+## RT-W1c (CB-B2 red team), Lead decisions 2026-09-28
+- **Verdicts:** approval-conflict ACCEPT; px-call-abi ACCEPT; PX6 ACCEPT WITH CHANGES; vault-v3 ACCEPT WITH CHANGES; guest rebuild ACCEPT (layout and Windows reproducibility), with the budget claim to be corrected.
+- **RTW1C-1 (Medium, liveness, pre-existing):** kernel budgets raised so every honest shape uses at most 95% of every table, verified by an exhaustive or property test over all shapes. This must land BEFORE the freeze.
+- **RTW1C-2 and RTW1C-3:** vault windows must not reveal T (rounded windows, T rounded to 16), and the refund must be recoverable from seed.
+- **RTW1C-4:** expiring-soon policy, margin 3 (Zcash). **RTW1C-5:** PX6 is checked before the range proof.
+- **RTW1C-6:** the vault is NOT an HTLC; the docs must say so.
+- **RTW1C-7:** new frozen tag `px/wallet/vault-refund/v1` (added to the W2-37 list).
+- **RTW1C-8:** out_words dry-run in the author checklist and wallet policy.
+- **Owner:** FX-RTW1C.
