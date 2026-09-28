@@ -686,3 +686,8 @@
 - **Frozen registry tags (added to the W2-37 list):** `px/wallet/vault-refund/v1`, `px/wallet/vault-rcm/v1`.
 - **Vault recovery design:** the seed-derived rcm for timed locks, plus the claim lock in the private change `data`. ACCEPTED.
 - **Owed:** the p2p cheap-phase expiring-soon refusal (assigned to W2-34b); wallet CLI commands for timed locks, stored refunds and recovery (wallet owner, next wallet batch).
+
+## W2-02/21, Lead decisions 2026-09-28
+- **ANCHOR_MIN_DEPTH = 3 (rounded down to 16) in `wallet/src/px.rs::anchor_height`:** accepted. Every wallet switches together before the trial.
+- **W2-02-F1 (restart pool not empty after a replay reorg): fix the CODE.** The manager empties the pool at the end of `open()`, matching blocks.md §7. Owner: the coordinator, after W2-34b (chain actor) merges; then un-ignore the reproducer and revert the docs exception.
+- **proptest =1.11.0 as a dev-dependency (chain):** accepted. deny.toml skips for rand/rand_chacha/rand_core 0.9 are added only if they are dev-only. The bitflags 2.9.1 → 2.13.2 bump is accepted (semver-minor, reaches tower-http).
