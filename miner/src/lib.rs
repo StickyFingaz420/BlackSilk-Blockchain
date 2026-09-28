@@ -866,8 +866,11 @@ mod tests {
         let before = Instant::now();
         assert_eq!(s.moved_since(&A, before), None, "nothing seen");
         s.observe(B, 7);
+        // Apart on a coarse clock (Windows): `moved_since` counts a tip seen
+        // at the very instant of the request as later.
+        std::thread::sleep(Duration::from_millis(20));
         let fetched = Instant::now();
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::sleep(Duration::from_millis(20));
         assert_eq!(s.moved_since(&A, before), Some(7));
         assert_eq!(s.moved_since(&B, before), None, "the parent is the tip");
         assert_eq!(s.moved_since(&A, fetched), None, "seen before the request");
