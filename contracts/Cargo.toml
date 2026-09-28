@@ -3,18 +3,23 @@ name = "blacksilk-contracts"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "BlackSilk confidential contracts: module profile, deterministic Wasm execution, contract state and state root (docs/contracts.md)"
+description = "Frozen research (not consensus): BlackSilk Wasm confidential contracts, module profile, deterministic Wasm execution, contract state and state root (docs/research/wasm-contracts.md)"
 
 [lib]
 name = "blacksilk_contracts"
 
 [dependencies]
 blacksilk-crypto = { path = "../crypto" }
-# Deterministic Wasm interpreter (no JIT). Pinned exactly: fuel accounting and
-# module acceptance are consensus. 0.38.0 is the newest release covered by an
-# external audit (Runtime Verification, 2024-11, versions 0.36–0.38) and is not
-# affected by the published advisories (CVE-2024-28123: <= 0.31.0;
-# CVE-2025-66627: 0.41.0–1.0.0). See AUDIT.md R7 and docs/contracts.md §16.3.
+# Deterministic Wasm interpreter (no JIT). Pinned exactly: in the frozen design
+# fuel accounting and module acceptance would be consensus. Audit coverage,
+# stated precisely (dossier 29 W-1): Runtime Verification's report (2024-11)
+# targets wasmi v0.36.0 plus the 0.36.1-0.36.5 fixes; 0.37 was only fuzzed and
+# wasmi's NEWS says "partially 0.37-0.38"; 0.38.0 has post-audit refactors of
+# its unsafe load/store paths, and the report's code-review findings C2-C4 are
+# unaddressed. 0.38.0 is therefore downstream of an audited base, not itself an
+# audited release. It is outside the published advisories' ranges
+# (CVE-2024-28123: <= 0.31.0; CVE-2025-66627: 0.41.0-1.0.0), but the 0.38 line
+# gets no patches (W-5). See docs/research/wasm-contracts.md §16.3.
 wasmi = { version = "=0.38.0", default-features = false, features = ["std"] }
 # The parser wasmi itself uses; our module profile check (§9.1) runs on it too,
 # so both agree on how a module decodes.
@@ -24,3 +29,15 @@ wasmparser = { package = "wasmparser-nostd", version = "=0.100.2", default-featu
 wat = "1"
 rand_chacha = { version = "0.3", default-features = false }
 rand_core = { version = "0.6", default-features = false }
+
+# Not a member of the root workspace (decision D22 "D-freeze"): its own
+# workspace and Cargo.lock, so wasmi is in no lockfile or binary of the node,
+# wallet or miner. Build and test from this directory: `cargo test --locked`.
+[workspace]
+members = ["."]
+
+# As in the root workspace: elliptic-curve code is far slower unoptimized.
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+[profile.dev.package.blacksilk-crypto]
+opt-level = 3

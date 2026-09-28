@@ -120,7 +120,7 @@ jobs:
           bash .github/scripts/annotate-tests.sh cargo test --locked --release --no-fail-fast \
             -p blacksilk-randomx -p blacksilk-consensus -p blacksilk-crypto \
             -p blacksilk-tx -p blacksilk-chain -p blacksilk-p2p \
-            -p blacksilk-contracts -p blacksilk-px-core -p blacksilk-miner \
+            -p blacksilk-px-core -p blacksilk-miner \
             -p blacksilk-node -- \
             --skip private_payments_through_consensus \
             --skip value_cannot_be_created_and_anchors_must_be_recent \
@@ -259,6 +259,37 @@ jobs:
       - name: Invisible and bidirectional Unicode scan
         if: success() || failure()
         run: bash .github/scripts/unicode-scan.sh
+
+  # Documentation lint (dossier 47 W47-8, decisions "Agent 47"): forbidden
+  # claims, retired identifiers, broken relative links and copied digests
+  # (.github/scripts/doc-lint.sh; docs/STATUS.md is the one status source).
+  # Also the Wasm freeze (decision D22 "D-freeze"): wasmi must never come back
+  # into the main or fuzz lockfile; the frozen `contracts/` crate has its own
+  # workspace and is not built by CI (contracts/README.md).
+  doc-lint:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: doc-lint self-test (a seeded failing fixture per rule)
+        run: bash .github/scripts/doc-lint-selftest.sh
+      - name: doc-lint
+        if: success() || failure()
+        run: bash .github/scripts/doc-lint.sh
+      - name: No Wasm engine in the main or fuzz lockfile (D22)
+        if: success() || failure()
+        shell: bash
+        run: |
+          for f in Cargo.lock fuzz/Cargo.lock; do
+            if grep -Eq '^name = "(wasmi|blacksilk-contracts)"$' "$f"; then
+              echo "::error title=Wasm freeze::$f locks wasmi or blacksilk-contracts (decision D22: contracts/ stays outside the workspace)"
+              exit 1
+            fi
+          done
+          echo "no wasmi or blacksilk-contracts in Cargo.lock or fuzz/Cargo.lock"
 
   # Coverage-guided fuzzing smoke run (AUDIT.md "Coverage-guided fuzzing"):
   # a short run of every target with debug assertions; the script fails if a

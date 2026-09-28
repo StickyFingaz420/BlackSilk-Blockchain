@@ -1,10 +1,12 @@
 # Testnet v3 genesis: procedure and rationale
 
-Status: **candidate (branch `v3/candidate`). No v3 genesis exists.** The genesis
-is generated at launch, with the owner, by the procedure below. The tool
-(`tools/genesis`) and its tests exist; the constants in `consensus/src/params.rs`
-are still those of the retired v2 identity, and `TESTNET_GENESIS_FINAL` is
-`false`, so `--network testnet` refuses to start.
+**No v3 genesis exists.** The v3 work is on `rebuild/core` (the former
+`v3/candidate` branch was merged in `9e422d8` and deleted); current status:
+[STATUS.md](STATUS.md). The genesis is generated at launch, after the protocol
+freeze, with the owner, by the procedure below. The tool (`tools/genesis`) and its
+tests exist; the constants in `consensus/src/params.rs` are still those of the
+retired v2 identity, and no beacon is committed (`ChainParams::genesis_is_final` is
+false), so `--network testnet` refuses to start.
 
 This is internal engineering work, not an audit. Source: the R15 review §4 (the
 procedure), R15-3 and R15-4, and the SX1 cross-review.
@@ -138,8 +140,10 @@ the announcement; it is an input, not a constant of the tool.
    It prints the nonce derivation, the header, its 100 bytes, the full id and the
    constants to paste. Both people compare the full id.
 5. **Commit** the final values only: the nonce, the beacon hash (for provenance),
-   the pinned genesis id and fingerprint, `TESTNET_GENESIS_FINAL = true`, and
-   docs/testnet.md §1. `git diff <rc-tag> HEAD` must show only these.
+   the pinned genesis id and fingerprint (the committed beacon makes
+   `ChainParams::genesis_is_final` true), and docs/testnet.md §1 (the network id
+   and time; ids and fingerprints are referenced there, never copied).
+   `git diff <rc-tag> HEAD` must show only these.
 6. **Operators** verify the tag and the diff, re-run
    `blacksilk-genesis verify ... --expected-id <id>` from the announced inputs,
    start the node, check that `/info` shows the full announced `genesis_id`, then

@@ -1,5 +1,14 @@
 # Pre-testnet roadmap and maturity matrix
 
+> **Historical snapshot (the v2-era roadmap and maturity matrix, last updated 2026-09-27); not maintained.** The current project and testnet
+> status, the launch gates and the open items are kept only in
+> [STATUS.md](STATUS.md). The v2 identity this document refers to is **retired**, and
+> the testnet is disabled until the v3 genesis is generated at launch
+> ([testnet-v3-genesis.md](testnet-v3-genesis.md)). The Wasm contract-engine rows (wasmi and its fuzzing) are **not testnet evidence**:
+> the engine is frozen research outside the build (decision D22,
+> [research/wasm-contracts.md](research/wasm-contracts.md)), and PX is the only
+> consensus contract platform.
+
 Status: **2026-09-25, internal; statuses updated 2026-09-27** (each updated entry is
 dated). The owner approves every step that changes the network; nothing here
 authorizes a reset or a launch. The v2 identity is approved and fixed in code. The

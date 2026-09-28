@@ -22,9 +22,7 @@ blacksilk-zk = { path = "../zk" }
 blacksilk-zkvm = { path = "../zkvm" }
 blacksilk-px = { path = "../px" }
 blacksilk-px-core = { path = "../px-core" }
-blacksilk-contracts = { path = "../contracts" }
 rand_chacha = { version = "0.3", default-features = false }
-wat = "1"
 
 # Its own workspace, so it never affects the main build.
 [workspace]
@@ -90,20 +88,6 @@ bench = false
 [[bin]]
 name = "delivery_open"
 path = "fuzz_targets/delivery_open.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "wasm_module"
-path = "fuzz_targets/wasm_module.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "contract_sequence"
-path = "fuzz_targets/contract_sequence.rs"
 test = false
 doc = false
 bench = false

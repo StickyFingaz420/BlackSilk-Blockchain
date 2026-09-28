@@ -1,0 +1,48 @@
+# Coverage-guided fuzzing of the frozen Wasm contract engine (cargo-fuzz /
+# libFuzzer), moved out of `fuzz/` by decision D22 "D-freeze" so the main fuzz
+# workspace no longer locks wasmi. Research only: not run by CI, and not
+# testnet evidence (the engine is not integrated). Needs a nightly toolchain,
+# from this directory:
+#   cargo +nightly run --locked --release --bin seeds
+#   cargo +nightly fuzz run -O -a --fuzz-dir . wasm_module corpus/wasm_module
+# libFuzzer is C++ test tooling linked only into these fuzz binaries.
+[package]
+name = "blacksilk-contracts-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+blacksilk-contracts = { path = ".." }
+wat = "1"
+
+# Its own workspace, so it never affects the contracts or main builds.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "seeds"
+path = "src/seeds.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "wasm_module"
+path = "fuzz_targets/wasm_module.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "contract_sequence"
+path = "fuzz_targets/contract_sequence.rs"
+test = false
+doc = false
+bench = false

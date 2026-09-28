@@ -1,5 +1,11 @@
 # Testnet v2: seven-device validation checklist
 
+> **Historical snapshot (the v2 seven-device validation checklist, which a v3 procedure replaces); not maintained.** The current project and testnet
+> status, the launch gates and the open items are kept only in
+> [STATUS.md](STATUS.md). The v2 identity this document refers to is **retired**, and
+> the testnet is disabled until the v3 genesis is generated at launch
+> ([testnet-v3-genesis.md](testnet-v3-genesis.md)).
+
 **For:** the owner and the operators of the seven testnet devices.
 
 **Status (2026-09-27):** the v2 identity is approved and fixed in code, and was

@@ -6,11 +6,36 @@
 > [`../contracts.md`](../contracts.md) ("Private contracts on PX") and
 > [`../px.md`](../px.md). Transaction kinds 2 and 3 belong to PX. This file was
 > `docs/contracts.md` until the testnet v3 rework and is kept, unchanged below this
-> banner, as history of the Wasm design. The `contracts/` crate is not integrated into
-> consensus; freezing it outside the default build is a separate work item (decision
-> D22, "D-freeze"). References of the form "contracts.md §N" in code comments and older
-> documents that concern Wasm (the `contracts/` crate, `crypto` Wasm modules, zk.md's
-> v1 contract sections, AUDIT.md R7) mean this file.
+> banner, as history of the Wasm design. References of the form "contracts.md §N" in
+> older documents that concern Wasm (`crypto` Wasm modules, AUDIT.md R7) mean this
+> file.
+>
+> **Frozen (decision D22, "D-freeze", 2026-09-28).** The `contracts/` crate is outside
+> the root workspace, with its own `contracts/Cargo.lock` (like `fuzz/`). The crate,
+> wasmi, `wat` and 17 other crates only they needed left the root lockfile, so none
+> is in a binary of the node, wallet or miner, and a CI check (`doc-lint` job) fails
+> if wasmi reappears in the root or fuzz `Cargo.lock`. Its two
+> fuzz targets moved to `contracts/fuzz/`. CI does not build it; it builds and tests
+> from its own directory (`contracts/README.md`). Any future public-state "finalize"
+> step would run on BVM-1, never on wasmi (dossier 29 §3.2; P3, only with evidence of
+> demand).
+>
+> **Corrections to the text below** (dossier 29, internal work, not an audit):
+> - **§9.1 and §16.3, "0.38.0 is covered by an external audit" (W-1):** overstated.
+>   Runtime Verification's report (delivered 2024-11-27) targets wasmi v0.36.0 plus the
+>   0.36.1-0.36.5 fixes, and fuzzed 0.37; wasmi's NEWS says "partially 0.37-0.38".
+>   0.38.0 has post-audit refactors of its `unsafe` load/store paths, and the report's
+>   code-review findings C2, C3 and C4 were not addressed. 0.38.0 is downstream of an
+>   audited base, not itself an audited release, and the 0.38 line gets no patches
+>   (W-5). The `unsafe` count of its dependency closure is about 171 lines, not 120.
+> - **§9.1, "the consensus rule is defined by this list, not by the engine" (W-3):**
+>   not achieved. The deploy check also compiles the module, and wasmi 0.38's
+>   `EnforcedLimits::strict()` refuses modules this profile accepts (more than 1,000
+>   globals, more than 32 params or results, segment counts, an average function-body
+>   size rule), so acceptance is "profile and wasmi 0.38 compiles".
+> - **§5, kinds 2 and 3:** retired with the move; no kind number is reserved for Wasm.
+> - **Findings C-1 to C-5** (reviews/contracts-completion-assessment.md) and dossier
+>   29's W-2 to W-8 are **preconditions for any revival**, not open testnet work.
 
 > **Status banner (2026-09-27). This Wasm contract system is NOT integrated into the
 > chain and is not part of consensus on any network.**

@@ -1,4 +1,4 @@
-//! Contract state, its commitment and per-block undo (docs/contracts.md §10).
+//! Contract state, its commitment and per-block undo (docs/research/wasm-contracts.md §10).
 //!
 //! Execution never mutates [`ContractState`] directly. It produces a
 //! [`StateDiff`] against a read-only state; [`ContractState::commit`] applies a

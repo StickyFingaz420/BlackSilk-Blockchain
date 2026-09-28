@@ -1,5 +1,5 @@
 //! Contract objects and the fixed-layout records passed to contracts
-//! (docs/contracts.md §4, §9.4).
+//! (docs/research/wasm-contracts.md §4, §9.4).
 
 use blacksilk_crypto::commitment::coinbase_commitment;
 use blacksilk_crypto::Point;

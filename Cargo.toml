@@ -11,8 +11,7 @@ members = [
     "node",      # blacksilk-node: the node binary (RPC)
     "miner",     # blacksilk-miner: RandomX miner
     "wallet",    # blacksilk-wallet: CLI wallet
-    "contracts", # blacksilk-contracts: confidential contracts (Wasm engine, state)
-    "zk",        # blacksilk-zk: zero-knowledge proof layer (Plonky3 STARK, BS-ZK-2)
+    "zk",        # blacksilk-zk: zero-knowledge proof layer (Plonky3 STARK, parameter set BS-ZK-3)
     "zkvm",      # blacksilk-zkvm: BVM-1 zero-knowledge virtual machine (RV32I + Zmmul)
     "px-core",   # blacksilk-px-core: PX hash, records and transfer kernel (no_std, shared with the guest)
     "px",        # blacksilk-px: PX node state, wallet side, record delivery, kernel proofs
@@ -22,8 +21,11 @@ members = [
     "tools/daa-sim", # blacksilk-daa-sim: difficulty-rule simulation harness (evidence, not consensus)
 ]
 # Pre-rebuild code kept for reference only (does not build; see legacy/README.md),
-# and the post-quantum research track.
-exclude = ["legacy", "research", "third_party", "fuzz"]
+# and the post-quantum research track. `contracts` is the frozen Wasm contract
+# research crate (decision D22 "D-freeze", ADR-28-1: PX is the only consensus
+# contract platform): its own workspace and Cargo.lock, like `fuzz`, so the Wasm
+# engine is in no build, lockfile or binary of this workspace (contracts/README.md).
+exclude = ["legacy", "research", "third_party", "fuzz", "contracts"]
 
 [profile.release]
 opt-level = 3
