@@ -3,17 +3,24 @@
 //! The wallet trusts the node it syncs from for *availability* (which blocks
 //! exist). It does not trust it for *correctness* of what it receives: block ids
 //! are recomputed from headers and must match, every output is recognized with
-//! the wallet's own keys (including the Janus anchor and commitment checks), and
-//! the node validates every transaction the wallet submits. A dishonest node can
-//! hide payments or lie about decoys; that is why wallets should use their own
-//! node (docs/blocks.md §9).
+//! the wallet's own keys (including the Janus anchor and commitment checks), the
+//! PX commitment tree is built from the blocks and every PX anchor checked
+//! against it (`crate::tree`), the header chain is checked on restores and on
+//! request (`crate::headers`), and the node validates every transaction the
+//! wallet submits. A dishonest node can still withhold blocks, and hide payments
+//! from a wallet that does not check the header chain; that is why wallets
+//! should use their own node (docs/blocks.md §9.3, §10).
 
 mod contracts;
 mod keys;
+#[cfg(test)]
+mod mock_chain;
 mod persistence;
 mod px_flows;
 mod rebroadcast;
 mod sync;
+#[cfg(test)]
+mod tests_sync;
 mod transfer;
 
 use crate::index::OutputIndex;
@@ -92,8 +99,14 @@ pub enum WalletError {
         wallet: String,
         node: String,
     },
-    /// The node sent data inconsistent with itself (bad block encoding or id).
+    /// The node sent data inconsistent with itself or with consensus (bad
+    /// block encoding or id, a PX anchor outside the wallet's own root
+    /// window, a header chain that fails the checks of `crate::headers`).
     BadNodeData(String),
+    /// A PX transaction cannot be built yet without letting the node choose
+    /// its anchor (`crate::px::PxStore::anchor_root`); the message says
+    /// from when it can.
+    PxNotReady(String),
     InsufficientFunds {
         available: u64,
         needed: u64,
@@ -152,6 +165,7 @@ impl std::fmt::Display for WalletError {
                  seed into a new wallet file for that chain"
             ),
             WalletError::BadNodeData(e) => write!(f, "inconsistent data from node: {e}"),
+            WalletError::PxNotReady(e) => write!(f, "not yet: {e}"),
             WalletError::InsufficientFunds { available, needed } => write!(
                 f,
                 "insufficient unlocked funds: {} available, {} needed (amount + fee)",
@@ -376,6 +390,20 @@ pub struct Wallet {
     vault_terms: BTreeMap<String, StoredTerms>,
     /// Problems found and repaired when loading (`take_warnings`).
     warnings: Vec<String>,
+    /// Check the header chain of the blocks scanned (`crate::headers`) at
+    /// the next syncs until the wallet reaches the node's tip: set by a
+    /// restore from the seed (dossier 39 W5, on by default for restores).
+    restore_check: bool,
+    /// Check the header chain at every sync (opt-in, not persisted).
+    verify_headers: bool,
+    /// The proof-of-work function of the header check: RandomX light mode
+    /// unless replaced (`set_header_pow`). Not persisted.
+    header_pow: Option<std::sync::Arc<dyn blacksilk_consensus::PowFunction>>,
+    /// Headers whose work the check samples per sync (`HEADER_SAMPLES`).
+    header_samples: u64,
+    /// The headers of the last scanned blocks, oldest first: the context of
+    /// a later header check (`difficulty_ancestors` of them).
+    headers: std::collections::VecDeque<blacksilk_consensus::BlockHeader>,
 }
 
 /// The wallet file to save to before a submission (docs/reviews/wallet-review.md F1).
@@ -861,7 +889,7 @@ mod tests {
                 from,
                 commitments: vec![],
                 total: 0,
-                root: digest_hex(&PxStore::default().tree().unwrap().root()),
+                root: digest_hex(&blacksilk_px::state::State::new().root()),
                 height: 0,
                 next: None,
             })

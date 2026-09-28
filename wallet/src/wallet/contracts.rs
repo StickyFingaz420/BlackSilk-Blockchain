@@ -529,9 +529,11 @@ impl Wallet {
     /// spent in that block, minus the standard fee and the change), for every
     /// vault contract deployed by then and every timeout that is a multiple
     /// of 16 in a bounded range around the lock's block. A candidate is kept
-    /// only if its commitment is one of that block's commitments. A record
-    /// that was claimed or refunded before the restore is found too; the
-    /// node refuses its refund (its nullifier is spent).
+    /// only if its commitment is that of the transaction's output 0, which
+    /// the scan kept with its position and a witness
+    /// (`StoredRecord::sibling`). A record that was claimed or refunded
+    /// before the restore is found too; the node refuses its refund (its
+    /// nullifier is spent).
     pub fn recover_vault_locks(&mut self) -> usize {
         let mut perm = HostPerm::new();
         let fee = px_standard_fee();
@@ -571,17 +573,14 @@ impl Wallet {
             };
             let nf0 = crate::px::digest_from_hex(&first.nullifier).expect("checked above");
             let rho = output_rho(&mut perm, &nf0, 0);
-            // This block's commitments, where the vault record must be.
-            let block: std::collections::HashMap<String, u64> = self
-                .px
-                .commitments
-                .iter()
-                .enumerate()
-                .filter(|(_, (height, _))| *height == h)
-                .map(|(pos, (_, cm))| (cm.clone(), pos as u64))
-                .collect();
+            // The transaction's output 0, where the vault record must be (the
+            // wallet keeps its commitment, position and witness from the
+            // scan).
+            let Some((sibling, sibling_pos)) = ch.sibling.clone() else {
+                continue;
+            };
             // Already known (the wallet file has its terms): no search.
-            if block.keys().any(|cm| self.vault_terms.contains_key(cm)) {
+            if self.vault_terms.contains_key(&sibling) {
                 continue;
             }
             // The second input: a dummy, or another record spent in the block.
@@ -631,8 +630,8 @@ impl Wallet {
                             rcm: *rcm,
                         };
                         let cm = record.commit(&mut perm);
-                        if let Some(&pos) = block.get(&crate::px::digest_hex(&cm)) {
-                            found.push((record, cm, h, pos, terms));
+                        if crate::px::digest_hex(&cm) == sibling {
+                            found.push((record, cm, h, sibling_pos, terms));
                             break 'contracts;
                         }
                     }
@@ -691,7 +690,9 @@ impl Wallet {
         self.sync(node)?;
         let rules = self.next_rules(rules)?;
         let next = self.synced_height + 1;
-        let anchor = crate::px::anchor_height(self.synced_height);
+        // The anchor's root and the paths come from the wallet's own tree
+        // (F39-1).
+        let (anchor, root) = self.px.anchor_root(self.synced_height)?;
         let k = self
             .px
             .contract_record(record)
@@ -732,10 +733,7 @@ impl Wallet {
         };
         let budget = self.vault_budget(&rec.contract)?;
         let fee = px_standard_fee();
-        let tree = self.px.tree_at(anchor)?;
-        let path = tree
-            .path(pos)
-            .ok_or_else(|| WalletError::BadNodeData("record outside the tree".into()))?;
+        let path = self.px.path(pos, anchor, &root)?;
         let vault_in = pxw::contract_input(rng, &rec, pos, path);
         let recipient = to.cloned().unwrap_or_else(|| self.px_account.address(0));
         // The function's blind, hedged (W28-4), bound to the record (whose
@@ -781,9 +779,7 @@ impl Wallet {
                 let p = r.position.expect("spendable records have positions");
                 let owner = self.px_account.owner(r.index);
                 let user = r.record(owner)?;
-                let path = tree
-                    .path(p)
-                    .ok_or_else(|| WalletError::BadNodeData("record outside the tree".into()))?;
+                let path = self.px.path(p, anchor, &root)?;
                 let change = pxw::output(rng, self.px_account.owner(1), r.value - fee);
                 (
                     self.px_account.spend(r.index, &user, p, path),
@@ -807,7 +803,7 @@ impl Wallet {
             }
         };
         let mut witness = pxw::witness(
-            tree.root(),
+            root,
             0,
             bridge_out,
             [vault_in, fee_input],
@@ -966,7 +962,10 @@ impl Wallet {
 
     /// Imports a shared contract-record opening addressed to one of this
     /// wallet's PX addresses. It counts as confirmed once its commitment is
-    /// found on chain (the next sync). Returns its commitment.
+    /// found on chain: at the next sync, in one bulk download of the chain's
+    /// commitment list checked against the wallet's own root (it may be
+    /// older than the blocks this wallet scanned), else in the block it
+    /// confirms in. Returns its commitment.
     pub fn px_import(&mut self, shared: &[u8]) -> Result<Digest, WalletError> {
         for index in 0..=self.px.issued.saturating_add(PX_LOOKAHEAD) {
             let (keys, owner) = self.px_keys.get(&self.px_account, index);
@@ -980,6 +979,10 @@ impl Wallet {
             }
             self.px
                 .add_contract_record(&rec, &cm, RecordSource::Imported, None);
+            if let Some(k) = self.px.contract_record(&cm) {
+                let r = &mut self.px.contract_records[k];
+                r.lookup = r.position.is_none();
+            }
             return Ok(cm);
         }
         Err(WalletError::Contract(
@@ -1457,19 +1460,23 @@ mod tests {
             spent_height: None,
             pending: false,
             pending_height: 0,
+            sibling: None,
         };
         let mut input = stored(&a, &cm_a, 0, h - 5);
         input.spent_height = Some(h);
         input.position = Some(0);
         let mut ch = stored(&change, &cm_ch, 1, h);
         ch.position = Some(2);
+        // The scan keeps output 0 of the change's transaction (the vault
+        // record) with its position.
+        ch.sibling = Some((digest_hex(&cm_v), 1));
         (input, vault_rec, cm_v, ch, terms, secret)
     }
 
     /// What a wallet restored from `words` knows after scanning the chain of
-    /// `timed_lock`: its own input (spent) and change, every commitment,
-    /// and the vault contract; not the vault record (delivered to the
-    /// counterparty) nor the terms.
+    /// `timed_lock`: its own input (spent) and change (with the commitment
+    /// and position of its transaction's output 0), and the vault contract;
+    /// not the vault record (delivered to the counterparty) nor the terms.
     fn restored_after_scan(
         words: &str,
         contract: Digest,
@@ -1484,13 +1491,8 @@ mod tests {
     ) -> Wallet {
         use crate::px::{digest_hex, KnownProgram};
         let mut r = Wallet::from_mnemonic(Network::Regtest, words, 1).unwrap();
-        let (input, _, cm_v, ch, _, _) = lock;
+        let (input, _, _, ch, _, _) = lock;
         r.px.records = vec![input.clone(), ch.clone()];
-        r.px.commitments = vec![
-            (input.height, input.commitment.clone()),
-            (ch.height, digest_hex(cm_v)),
-            (ch.height, ch.commitment.clone()),
-        ];
         let b = vault::BUDGET;
         r.px.contracts = vec![KnownContract {
             id: digest_hex(&contract),

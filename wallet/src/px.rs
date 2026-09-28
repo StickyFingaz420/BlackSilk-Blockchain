@@ -2,16 +2,21 @@
 //! records, spends, and the commitment tree.
 //!
 //! **Privacy of scanning.** The wallet learns about its records only from
-//! data every wallet downloads alike: whole blocks (records, nullifiers) and
-//! the complete, ordered list of commitments (`/px/commitments`, fetched in
+//! data every wallet downloads alike: whole blocks (records, nullifiers,
+//! commitments) and, below its restore height or for an imported record, the
+//! complete, ordered list of commitments (`/px/commitments`, fetched in
 //! bulk). It never asks the node about a specific record, position or
 //! nullifier, so the node cannot tell which records are the wallet's.
 //!
 //! **Keys.** PX keys derive from the same 27-word seed (format v1) as the v1 keys
 //! (domain-separated, `blacksilk_px::wallet::Account`).
 //!
-//! **Tree.** The wallet keeps every commitment in order to build
-//! authentication paths, and checks its root against the node's.
+//! **Tree** (`crate::tree`, dossier 39 W1). The wallet builds the commitment
+//! tree itself from the blocks it scans, keeps the consensus root window,
+//! and refuses a block with a PX transaction whose anchor is not in it. It
+//! keeps an incremental witness for every leaf it may spend, and anchors its
+//! own spends at the root it computed: a node cannot choose the anchor
+//! (F39-1).
 //!
 //! **Contracts** (docs/px.md §13). Deploys are public. The wallet downloads
 //! the complete, ordered list of registrations (`/px/contracts`), like every
@@ -27,15 +32,18 @@
 //! - **imported:** another holder shared the opening off chain
 //!   (`blacksilk_px::share`).
 //!
-//! Created and imported records are confirmed by finding their commitment in
-//! the chain's commitment list; received ones by the block they arrive in.
+//! Received and created records are confirmed by the block their commitment
+//! appears in; an imported record already on chain by one bulk download of
+//! the commitment list, checked against the wallet's own root.
 
 use crate::node::NodeApi;
+use crate::tree::{TreeError, WalletTree};
 use crate::wallet::WalletError;
 use blacksilk_px::delivery;
 use blacksilk_px::perm::HostPerm;
-use blacksilk_px::tree::Tree;
+use blacksilk_px::state::ROOT_WINDOW;
 use blacksilk_px::wallet::Account;
+use blacksilk_px_core::kernel::TREE_DEPTH;
 use blacksilk_px_core::record::{contract_nullifier, nullifier, output_rho, Record};
 use blacksilk_px_core::{Digest, P, ZERO_DIGEST};
 use blacksilk_tx::px::digest_bytes;
@@ -112,6 +120,11 @@ pub fn digest_hex(d: &Digest) -> String {
     hex::encode(digest_bytes(d))
 }
 
+/// A tree error as a wallet error: inconsistent node data, or a rescan.
+fn tree_error(e: TreeError) -> WalletError {
+    WalletError::BadNodeData(format!("PX tree: {e}"))
+}
+
 pub fn digest_from_hex(s: &str) -> Result<Digest, WalletError> {
     let b = hex::decode(s).map_err(|_| WalletError::Serialization("digest hex".into()))?;
     if b.len() != 32 {
@@ -134,7 +147,7 @@ pub struct StoredRecord {
     pub index: u32,
     pub height: u64,
     pub commitment: String,
-    /// Tree position (resolved from the commitment list).
+    /// Tree position (from the wallet's own tree, when the block is scanned).
     pub position: Option<u64>,
     pub value: u64,
     pub data: String,
@@ -145,6 +158,13 @@ pub struct StoredRecord {
     /// Spent by a submitted, unconfirmed transaction.
     pub pending: bool,
     pub pending_height: u64,
+    /// For output 1 of its transaction with nonzero data (the change of a
+    /// vault lock with a timeout carries the claim lock there): the
+    /// commitment (hex) and position of output 0, which may be the vault
+    /// record this wallet locked (`Wallet::recover_vault_locks`). The wallet
+    /// keeps a witness for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sibling: Option<(String, u64)>,
 }
 
 impl StoredRecord {
@@ -228,6 +248,11 @@ pub struct ContractRecord {
     /// for good (the demonstration vault has no refund).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
+    /// Imported and not yet found: the next sync looks for it once in the
+    /// chain's whole commitment list (it may have been created before this
+    /// wallet scanned), and later blocks find it otherwise.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lookup: bool,
 }
 
 impl ContractRecord {
@@ -248,6 +273,7 @@ impl ContractRecord {
             pending_height: 0,
             source,
             secret: None,
+            lookup: false,
         }
     }
 
@@ -275,8 +301,16 @@ impl ContractRecord {
 /// The persisted PX state.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PxStore {
-    /// Every commitment of the chain, `(height, hex)`, in tree order.
-    pub commitments: Vec<(u64, String)>,
+    /// The wallet's own commitment tree (`crate::tree`), up to its synced
+    /// height; `None` until the first sync builds it (or after a rewind
+    /// below the restore height: it is rebuilt then).
+    #[serde(default)]
+    pub tree: Option<WalletTree>,
+    /// Wallet files written before the wallet built its own tree kept the
+    /// node's commitment list here. Read only to notice such a file: its
+    /// PX state is rebuilt by a rescan (`Wallet::from_json`, `Wallet::sync`).
+    #[serde(default, rename = "commitments", skip_serializing)]
+    pub legacy_commitments: Option<Vec<(u64, String)>>,
     pub records: Vec<StoredRecord>,
     /// Highest PX address index handed out.
     pub issued: u32,
@@ -440,15 +474,80 @@ impl PxStore {
             .position(|r| r.commitment == hex_cm)
     }
 
-    /// Records the PX outputs paid to `account`, the contract records
-    /// addressed to it, and the spends of both, in a block at `height`.
+    /// The wallet's tree, which the first sync builds.
+    fn tree_ref(&self) -> Result<&WalletTree, WalletError> {
+        self.tree
+            .as_ref()
+            .ok_or_else(|| WalletError::Node("the wallet has not synced its PX tree yet".into()))
+    }
+
+    /// Checks the anchor of every PX transaction of block `height` against
+    /// the wallet's root window, as consensus does, before anything of the
+    /// block is applied. Returns whether one of them binds the backfill to
+    /// the chain (`WalletTree::check_anchor`).
+    fn check_block(&self, txs: &[Transaction], height: u64) -> Result<bool, WalletError> {
+        let tree = self.tree_ref()?;
+        if tree.height() + 1 != height {
+            return Err(WalletError::BadNodeData(format!(
+                "block {height} does not follow the wallet's PX tree (block {})",
+                tree.height()
+            )));
+        }
+        let mut confirms = false;
+        for tx in txs {
+            let Transaction::Px(t) = tx else { continue };
+            match tree.check_anchor(&t.anchor) {
+                Some(scanned) => confirms |= scanned,
+                None => {
+                    return Err(WalletError::BadNodeData(format!(
+                        "block {height} holds a PX transaction whose anchor is not one of the \
+                         last {ROOT_WINDOW} roots of the tree the wallet built from the chain: \
+                         the node's blocks or its commitment list do not follow consensus"
+                    )))
+                }
+            }
+        }
+        Ok(confirms)
+    }
+
+    /// Applies block `height` (the next after the tree's): checks every PX
+    /// anchor first (`check_block`; nothing is changed on a refusal), then
+    /// records the PX outputs paid to `account`, the contract records
+    /// addressed to it, and the spends of both, and appends the block's
+    /// commitments to the wallet's tree with a witness for every leaf the
+    /// wallet may spend.
     pub fn apply_block(
         &mut self,
         keys: &mut AddressKeys,
         account: &Account,
         txs: &[Transaction],
         height: u64,
-    ) {
+    ) -> Result<(), WalletError> {
+        let confirms = self.check_block(txs, height)?;
+        let mut tree = self.tree.take().expect("checked by check_block");
+        let result = self.scan_block(&mut tree, keys, account, txs, height);
+        match result {
+            Ok(()) => {
+                if confirms {
+                    tree.confirm(height);
+                }
+                self.tree = Some(tree);
+                Ok(())
+            }
+            // Only a full tree fails here, which consensus never allows: the
+            // tree is dropped and rebuilt by a rescan.
+            Err(e) => Err(e),
+        }
+    }
+
+    fn scan_block(
+        &mut self,
+        tree: &mut WalletTree,
+        keys: &mut AddressKeys,
+        account: &Account,
+        txs: &[Transaction],
+        height: u64,
+    ) -> Result<(), WalletError> {
         let mut perm = HostPerm::new();
         for tx in txs {
             let Transaction::Px(t) = tx else { continue };
@@ -465,6 +564,10 @@ impl PxStore {
                     r.pending = false;
                 }
             }
+            // Both outputs are scanned before their commitments are
+            // appended: a witness starts with its leaf's append.
+            let first = tree.size();
+            let mut witness = [false; 2];
             for (j, (cm, ct)) in t.commitments.iter().zip(&t.ciphertexts).enumerate() {
                 let rho = output_rho(&mut perm, &t.nullifiers[0], j as u32);
                 // The window is re-read for every output: a record found at
@@ -490,11 +593,17 @@ impl PxStore {
                         break;
                     }
                     let nf = nullifier(&mut perm, &account.keys().nk, &rec.rho, cm);
+                    // Output 1 with data: possibly the change of a vault lock
+                    // with a timeout, whose vault record is output 0.
+                    let sibling = (j == 1 && rec.data != ZERO_DIGEST)
+                        .then(|| (digest_hex(&t.commitments[0]), first));
+                    witness[0] |= sibling.is_some();
+                    witness[j] = true;
                     self.records.push(StoredRecord {
                         index,
                         height,
                         commitment: hex_cm,
-                        position: None,
+                        position: Some(first + j as u64),
                         value: rec.value,
                         data: digest_hex(&rec.data),
                         rho: digest_hex(&rec.rho),
@@ -503,18 +612,41 @@ impl PxStore {
                         spent_height: None,
                         pending: false,
                         pending_height: 0,
+                        sibling,
                     });
                     self.issued = self.issued.max(index);
                     break;
                 }
             }
+            for (j, cm) in t.commitments.iter().enumerate() {
+                // A contract record held and not yet placed: received now,
+                // created by this wallet, or imported.
+                let hex_cm = digest_hex(cm);
+                let held = self
+                    .contract_records
+                    .iter_mut()
+                    .find(|r| r.commitment == hex_cm && r.position.is_none());
+                let pos = tree.append(*cm).map_err(tree_error)?;
+                debug_assert_eq!(pos, first + j as u64);
+                if let Some(r) = held {
+                    r.position = Some(pos);
+                    r.height.get_or_insert(height);
+                    r.lookup = false;
+                    witness[j] = true;
+                }
+                if witness[j] {
+                    tree.mark(pos).map_err(tree_error)?;
+                }
+            }
         }
+        tree.end_block(height).map_err(tree_error)
     }
 
     /// Forgets everything learned above `height`. Contract records the
     /// wallet created or imported are kept (it still holds their openings),
-    /// as unconfirmed.
-    pub fn rewind(&mut self, height: u64) {
+    /// as unconfirmed. Returns `true` if the tree cannot be rewound that far
+    /// (it is dropped): the caller rescans from the restore height.
+    pub fn rewind(&mut self, height: u64) -> bool {
         self.records.retain(|r| r.height <= height);
         for r in &mut self.records {
             if r.spent_height.is_some_and(|h| h > height) {
@@ -535,7 +667,13 @@ impl PxStore {
                 r.spent_height = None;
             }
         }
-        self.commitments.retain(|(h, _)| *h <= height);
+        match self.tree.as_mut().map(|t| t.rewind(height)) {
+            Some(Err(_)) => {
+                self.tree = None;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Forgets unconfirmed spends. Contract-record openings are kept.
@@ -551,79 +689,195 @@ impl PxStore {
         // opening its funds could not be recovered (review F14).
     }
 
-    /// Fetches new commitments in bulk and resolves record positions. When
-    /// the node is at the wallet's height, the tree root must equal the
-    /// node's.
-    pub fn sync_commitments(&mut self, node: &dyn NodeApi, synced: u64) -> Result<(), WalletError> {
+    /// Builds the tree up to block `base` (the block before the first one
+    /// the wallet scans), unless it exists. Below the restore height the
+    /// commitments come from the node's bulk list, fetched whole (the
+    /// backfill, bound to the chain later: `crate::tree`); from the genesis
+    /// (whose body is empty) nothing is fetched.
+    pub fn backfill(&mut self, node: &dyn NodeApi, base: u64) -> Result<(), WalletError> {
+        if self.tree.is_some() {
+            return Ok(());
+        }
+        if base == 0 {
+            self.tree = Some(WalletTree::new(0, &[], false).map_err(tree_error)?);
+            return Ok(());
+        }
+        let mut list: Vec<(u64, Digest)> = Vec::new();
         loop {
-            let from = self.commitments.len() as u64;
+            let from = list.len() as u64;
             let resp = node.px_commitments(from).map_err(WalletError::Node)?;
             if resp.from != from {
                 return Err(WalletError::BadNodeData("commitment range".into()));
             }
-            // Only commitments of blocks the wallet has scanned.
-            let mut added = 0;
-            let mut ahead = false;
+            let n = resp.commitments.len();
+            let mut done = false;
             for (h, c) in resp.commitments {
-                if h > synced {
-                    ahead = true;
+                if h > base {
+                    done = true;
                     break;
                 }
-                digest_from_hex(&c)?;
-                self.commitments.push((h, c));
-                added += 1;
+                list.push((h, digest_from_hex(&c)?));
             }
-            let complete = self.commitments.len() as u64 == resp.total;
-            if added == 0 || ahead || complete {
-                if complete && resp.height == synced {
-                    let root = digest_hex(&self.tree()?.root());
-                    if root != resp.root {
-                        return Err(WalletError::BadNodeData("PX tree root differs".into()));
-                    }
-                }
+            if done || n == 0 || list.len() as u64 >= resp.total {
                 break;
             }
         }
-        for r in &mut self.records {
-            if r.position.is_none() {
-                r.position = self
-                    .commitments
-                    .iter()
-                    .position(|(_, c)| *c == r.commitment)
-                    .map(|p| p as u64);
+        self.tree = Some(WalletTree::new(base, &list, true).map_err(tree_error)?);
+        Ok(())
+    }
+
+    /// Places the imported contract records not found yet (`lookup`): one
+    /// bulk download of the chain's commitment list, which must give the
+    /// wallet's own root (`WalletTree::witness_from_list`), so nothing of it
+    /// is trusted. A record not in it is found later by the block it
+    /// confirms in.
+    pub fn resolve_lookups(&mut self, node: &dyn NodeApi) -> Result<(), WalletError> {
+        let wanted: Vec<usize> = (0..self.contract_records.len())
+            .filter(|&i| {
+                self.contract_records[i].lookup && self.contract_records[i].position.is_none()
+            })
+            .collect();
+        if wanted.is_empty() {
+            for r in &mut self.contract_records {
+                r.lookup = false;
+            }
+            return Ok(());
+        }
+        let size = self.tree_ref()?.size();
+        let mut list: Vec<Digest> = Vec::new();
+        let mut heights: Vec<u64> = Vec::new();
+        while (list.len() as u64) < size {
+            let from = list.len() as u64;
+            let resp = node.px_commitments(from).map_err(WalletError::Node)?;
+            if resp.from != from || resp.commitments.is_empty() {
+                return Err(WalletError::BadNodeData("commitment range".into()));
+            }
+            for (h, c) in resp.commitments {
+                list.push(digest_from_hex(&c)?);
+                heights.push(h);
             }
         }
-        // Contract records: a created or imported one is confirmed here, by
-        // its commitment in the chain's list.
+        list.truncate(size as usize);
+        let found: Vec<(usize, u64)> = wanted
+            .iter()
+            .filter_map(|&i| {
+                let cm = digest_from_hex(&self.contract_records[i].commitment).ok()?;
+                let p = list.iter().position(|c| *c == cm)?;
+                Some((i, p as u64))
+            })
+            .collect();
+        let tree = self.tree.as_mut().expect("checked above");
+        let positions: Vec<u64> = found.iter().map(|&(_, p)| p).collect();
+        tree.witness_from_list(&list, &positions)
+            .map_err(tree_error)?;
+        for (i, p) in found {
+            // The block height: the wallet's own where it scanned the block,
+            // else at most the node's (it only orders display and
+            // spendability, and every path is checked against the root).
+            let height = tree.height_of(p).unwrap_or_else(|| {
+                let below = if p < tree.base_size() {
+                    tree.base_height()
+                } else {
+                    tree.oldest_logged().map_or(tree.base_height(), |h| h - 1)
+                };
+                heights[p as usize].min(below)
+            });
+            let r = &mut self.contract_records[i];
+            r.position = Some(p);
+            r.height.get_or_insert(height);
+        }
         for r in &mut self.contract_records {
-            if r.position.is_none() {
-                if let Some((p, (h, _))) = self
-                    .commitments
-                    .iter()
-                    .enumerate()
-                    .find(|(_, (_, c))| *c == r.commitment)
-                {
-                    r.position = Some(p as u64);
-                    r.height.get_or_insert(*h);
-                }
-            }
+            r.lookup = false;
         }
         Ok(())
     }
 
-    pub fn tree(&self) -> Result<Tree, WalletError> {
-        self.tree_at(u64::MAX)
+    /// The anchor of a PX transaction built by a wallet synced to `synced`
+    /// (the canonical height, `anchor_height`) and the root there, from the
+    /// wallet's own tree. Refused while that root could still be one the
+    /// node chose (`WalletError::PxNotReady`):
+    /// - an anchor below the restore height: the per-block roots there come
+    ///   from the node's heights;
+    /// - a root that holds only backfilled commitments before the backfill
+    ///   is bound to the chain (`WalletTree::is_confirmed`), until the
+    ///   backfill's end has left the root window: a shortened backfill then
+    ///   gives a root no block accepts, never a valid root of the node's
+    ///   choice.
+    pub fn anchor_root(&self, synced: u64) -> Result<(u64, Digest), WalletError> {
+        let tree = self.tree_ref()?;
+        let anchor = anchor_height(synced);
+        if tree.height() != synced {
+            return Err(WalletError::BadNodeData(format!(
+                "the wallet's PX tree is at block {}, not {synced}",
+                tree.height()
+            )));
+        }
+        let base = tree.base_height();
+        if anchor < base {
+            let from = base.div_ceil(ANCHOR_INTERVAL) * ANCHOR_INTERVAL + ANCHOR_MIN_DEPTH;
+            return Err(WalletError::PxNotReady(format!(
+                "the PX anchor (block {anchor}) lies below this wallet's restore height, where \
+                 the tree's per-block roots come from the node; PX transactions can be built \
+                 once the wallet is synced to block {from}"
+            )));
+        }
+        let (root, size) = tree.root_at(anchor).ok_or_else(|| {
+            WalletError::BadNodeData("the anchor is outside the root window".into())
+        })?;
+        if !tree.is_confirmed() && size <= tree.base_size() {
+            let from = base + ROOT_WINDOW as u64;
+            if synced < from {
+                return Err(WalletError::PxNotReady(format!(
+                    "the PX tree below this wallet's restore height came from the node and no \
+                     later PX transaction has confirmed it yet, so the anchor could be a root \
+                     the node chose; PX transactions without a record of this wallet can be \
+                     built once a PX transaction confirms the tree or the wallet is synced to \
+                     block {from} (restoring from height 1 builds the whole tree from blocks)"
+                )));
+            }
+        }
+        Ok((anchor, root))
     }
 
-    /// The tree as of the end of block `height`.
-    pub fn tree_at(&self, height: u64) -> Result<Tree, WalletError> {
-        let mut perm = HostPerm::new();
-        let mut t = Tree::new(&mut perm);
-        for (_, c) in self.commitments.iter().filter(|(h, _)| *h <= height) {
-            t.append(&mut perm, digest_from_hex(c)?)
-                .map_err(|_| WalletError::BadNodeData("tree full".into()))?;
+    /// The authentication path of leaf `pos` at `anchor`, checked against
+    /// the wallet's root there (`root`).
+    pub fn path(
+        &self,
+        pos: u64,
+        anchor: u64,
+        root: &Digest,
+    ) -> Result<[Digest; TREE_DEPTH], WalletError> {
+        let (path, at) = self.tree_ref()?.path(pos, anchor).map_err(tree_error)?;
+        if at != *root {
+            return Err(WalletError::BadNodeData(
+                "the tree state at the anchor does not give the anchor's root".into(),
+            ));
         }
-        Ok(t)
+        Ok(path)
+    }
+
+    /// Drops the witnesses no record needs: a leaf is kept while its record
+    /// is unspent or its spend is within the wallet's reorganization window
+    /// (`keep_spent` blocks), and the sibling a record points to.
+    pub fn retain_witnesses(&mut self, synced: u64, keep_spent: u64) {
+        let live = |spent: Option<u64>| spent.is_none_or(|h| synced < h + keep_spent);
+        let mut keep: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        for r in &self.records {
+            if live(r.spent_height) {
+                keep.extend(r.position);
+            }
+            if let Some((_, p)) = &r.sibling {
+                keep.insert(*p);
+            }
+        }
+        for r in &self.contract_records {
+            if live(r.spent_height) {
+                keep.extend(r.position);
+            }
+        }
+        if let Some(t) = self.tree.as_mut() {
+            t.retain_witnesses(|p| keep.contains(&p));
+        }
     }
 
     fn spendable(r: &StoredRecord) -> bool {
@@ -700,6 +954,7 @@ mod tests {
             spent_height: None,
             pending: false,
             pending_height: 0,
+            sibling: None,
         }
     }
 
@@ -739,25 +994,24 @@ mod tests {
     /// so that the test states the policy, not the constant.
     #[test]
     fn a_reorganization_of_up_to_three_blocks_keeps_the_anchor_root() {
-        let commitment = |branch: u64, height: u64| format!("{:064x}", branch << 32 | height);
+        let commitment = |branch: u32, height: u64| [branch, height as u32, 0, 0, 0, 0, 0, 0];
+        let grow = |t: &mut WalletTree, branch: u32, heights: std::ops::RangeInclusive<u64>| {
+            for h in heights {
+                t.append(commitment(branch, h)).unwrap();
+                t.end_block(h).unwrap();
+            }
+        };
         for synced in 0..=100u64 {
-            let s = PxStore {
-                commitments: (1..=synced).map(|h| (h, commitment(1, h))).collect(),
-                ..PxStore::default()
-            };
+            let mut t = WalletTree::new(0, &[], false).unwrap();
+            grow(&mut t, 1, 1..=synced);
             let anchor = anchor_height(synced);
-            let before = s.tree_at(anchor).unwrap().root();
+            let before = t.root_at(anchor).unwrap();
             for depth in 1..=3u64.min(synced) {
-                let mut other = PxStore {
-                    commitments: s.commitments.clone(),
-                    ..PxStore::default()
-                };
-                other.rewind(synced - depth);
-                other
-                    .commitments
-                    .extend((synced - depth + 1..=synced).map(|h| (h, commitment(2, h))));
+                let mut other = t.clone();
+                other.rewind(synced - depth).unwrap();
+                grow(&mut other, 2, synced - depth + 1..=synced);
                 assert_eq!(
-                    other.tree_at(anchor).unwrap().root(),
+                    other.root_at(anchor).unwrap(),
                     before,
                     "synced {synced}: a {depth}-block reorganization moved anchor {anchor}"
                 );
@@ -816,11 +1070,21 @@ mod tests {
         s.records.push(record(10, 5, Some(0)));
         s.records.push(record(20, 7, Some(1)));
         s.records[0].spent_height = Some(21);
-        s.commitments = vec![(10, "a".into()), (20, "b".into()), (21, "c".into())];
-        s.rewind(15);
+        let mut t = WalletTree::new(0, &[], false).unwrap();
+        for h in 1..=21u64 {
+            if matches!(h, 10 | 20 | 21) {
+                t.append([h as u32, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+            }
+            t.end_block(h).unwrap();
+        }
+        let at_15 = t.root_at(15).unwrap();
+        s.tree = Some(t);
+        assert!(!s.rewind(15));
         assert_eq!(s.records.len(), 1);
         assert_eq!(s.records[0].spent_height, None, "the spend at 21 is undone");
-        assert_eq!(s.commitments, vec![(10, "a".to_string())]);
+        let t = s.tree.as_ref().unwrap();
+        assert_eq!((t.height(), t.size()), (15, 1));
+        assert_eq!(t.root_at(15), Some(at_15));
     }
 
     fn contract_rec(source: RecordSource, height: Option<u64>, n: u64) -> ContractRecord {
@@ -839,6 +1103,7 @@ mod tests {
             pending_height: 0,
             source,
             secret: None,
+            lookup: false,
         }
     }
 

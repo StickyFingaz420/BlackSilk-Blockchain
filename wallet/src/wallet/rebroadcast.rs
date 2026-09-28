@@ -5,7 +5,10 @@
 //! `/tx/status`. A transaction the node lacks is not sent again before
 //! `relayed_height + NETWORK_EXPIRY_BLOCKS`, while other nodes may still pool
 //! it (a re-send then would mark the wallet's node as its origin to any peer
-//! that still pools it), and after that at most once.
+//! that still pools it), and after that at most once. A PX transaction whose
+//! validity window (PX6) ends within the expiring-soon margin is not sent,
+//! and one whose window has passed is dropped with its inputs released: no
+//! block can include it any more.
 
 use super::{
     PendingTx, StaleTx, Wallet, WalletError, PENDING_EXPIRY_BLOCKS, RING_RETENTION_BLOCKS,
@@ -16,6 +19,7 @@ use blacksilk_consensus::Hash;
 use blacksilk_rpc as rpc;
 use blacksilk_tx::params::TxRules;
 use blacksilk_tx::types::Transaction;
+use blacksilk_tx::validate::px_expires_soon;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -301,6 +305,14 @@ impl Wallet {
         if !lacks {
             return true;
         }
+        // Pools refuse a PX transaction whose window ends within the
+        // expiring-soon margin (RTW1C-4): nothing is sent; it is dropped once
+        // its window has passed (`refresh_pending`).
+        if let Transaction::Px(t) = tx {
+            if px_expires_soon(t, synced + 1) {
+                return true;
+            }
+        }
         match p.state {
             RebroadcastState::Uncertain | RebroadcastState::ResendUncertain => {
                 self.resend(node, tx, p, synced)
@@ -474,6 +486,26 @@ impl Wallet {
                         height: synced,
                     });
                     continue;
+                }
+                // A PX transaction whose validity window (PX6) ends below the
+                // next block can never be mined (CB-B2): it is dropped and
+                // its unspent inputs are released, like one of another epoch.
+                if let Transaction::Px(t) = &tx {
+                    let not_after = t.window.not_after;
+                    if not_after != 0 && synced + 1 > not_after {
+                        self.for_each_input(&tx, |spent, pending, _| {
+                            if spent.is_none() {
+                                *pending = false;
+                            }
+                        });
+                        self.warnings.push(format!(
+                            "transaction {} could be mined only up to block {not_after} (its \
+                             validity window) and was not: it was dropped and its funds are \
+                             released",
+                            hex::encode(tx.hash())
+                        ));
+                        continue;
+                    }
                 }
                 unconfirmed = true;
                 // Re-reserve inputs whose confirmation a reorganization undid.

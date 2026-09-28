@@ -3,15 +3,78 @@
 
 use super::{
     network_name, Balance, HeldOutput, HeldRecord, Holdings, StoredOutput, Wallet, WalletError,
-    KEPT_BLOCK_IDS,
+    KEPT_BLOCK_IDS, RING_RETENTION_BLOCKS,
 };
+use crate::headers::HeaderCheck;
 use crate::node::NodeApi;
 use blacksilk_chain::block::Block;
+use blacksilk_consensus::pow::seed_height;
+use blacksilk_consensus::{BlockHeader, Hash, PowFunction, RandomXPow};
 use blacksilk_crypto::stealth::ReceivedOutput;
 use blacksilk_tx::params::{COINBASE_MATURITY, SPENDABLE_AGE};
 use blacksilk_tx::scan::scan_block;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+
+/// Where a header check starts (`Wallet::header_context`).
+struct HeaderContext {
+    /// Headers the check starts from (not themselves checked).
+    start: Vec<BlockHeader>,
+    /// Headers between them and the next block, checked first.
+    to_check: Vec<BlockHeader>,
+    /// Ids of RandomX key blocks below `start`.
+    seeds: Vec<(u64, Hash)>,
+}
+
+/// The local time, seconds since the Unix epoch.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// The headers of blocks `lo..=hi` from the node (its `/blocks`; each id is
+/// recomputed from the header and must be the one served).
+fn fetch_headers(
+    node: &dyn NodeApi,
+    lo: u64,
+    hi: u64,
+    network_id: u32,
+) -> Result<Vec<BlockHeader>, WalletError> {
+    let mut out = Vec::new();
+    let mut h = lo;
+    while h <= hi {
+        let count = (hi - h + 1).min(blacksilk_rpc::MAX_BLOCKS_PER_REQUEST);
+        let batch = node.blocks(h, count).map_err(WalletError::Node)?;
+        if batch.blocks.is_empty() {
+            return Err(WalletError::BadNodeData(format!("block {h} is missing")));
+        }
+        for entry in batch.blocks {
+            if entry.height != h || h > hi {
+                return Err(WalletError::BadNodeData(format!(
+                    "expected block {h}, got {}",
+                    entry.height
+                )));
+            }
+            let head = entry
+                .hex
+                .get(..2 * blacksilk_consensus::HEADER_SIZE)
+                .unwrap_or("");
+            let bytes =
+                hex::decode(head).map_err(|_| WalletError::BadNodeData("block hex".into()))?;
+            let header = BlockHeader::from_bytes(&bytes)
+                .ok_or_else(|| WalletError::BadNodeData("block header".into()))?;
+            if header.height != h || hex::encode(header.id(network_id)) != entry.id {
+                return Err(WalletError::BadNodeData(format!(
+                    "block {h} does not match its id"
+                )));
+            }
+            out.push(header);
+            h += 1;
+        }
+    }
+    Ok(out)
+}
 
 impl Wallet {
     // ---- sync ----
@@ -45,6 +108,11 @@ impl Wallet {
     /// credited for its key image that goes with them hands the credit back
     /// to a duplicate below the fork (RTW1-4).
     fn rewind(&mut self, height: u64) {
+        // Below the first scanned block the PX tree is rebuilt from a fresh
+        // backfill: the chain below the restore height may have changed.
+        if height < self.restore_height {
+            self.px.tree = None;
+        }
         self.outputs.retain(|o| o.height <= height);
         for o in &mut self.outputs {
             if o.spent_height.is_some_and(|h| h > height) {
@@ -53,13 +121,25 @@ impl Wallet {
         }
         self.elect_credited();
         self.block_ids.retain(|h, _| *h <= height);
+        self.headers.retain(|h| h.height <= height);
         self.index.rewind(height);
-        self.px.rewind(height);
+        let rescan = self.px.rewind(height);
         self.synced_height = height;
+        if rescan && height >= self.restore_height {
+            // The PX tree cannot go back that far: rescan from the restore
+            // height, as for a reorganization deeper than the kept window.
+            self.rewind(self.restore_height.saturating_sub(1));
+        }
     }
 
     /// Scans new blocks. Detects reorganizations by comparing stored block ids with
     /// the node's, and rewinds to the fork point. Returns the new synced height.
+    ///
+    /// Every block's PX anchors are checked against the wallet's own tree
+    /// (`crate::tree`), and, for a restored wallet until it has caught up or
+    /// when enabled (`set_verify_headers`), the header chain
+    /// (`crate::headers`). A refused block is not applied: the wallet stays
+    /// at the block before it.
     pub fn sync(&mut self, node: &dyn NodeApi) -> Result<u64, WalletError> {
         let info = self.check_network(node)?;
         if info.header_height > info.height {
@@ -95,8 +175,46 @@ impl Wallet {
             let h = self.synced_height - 1;
             self.rewind(h);
         }
+        // The PX tree: built once, below the first block scanned.
+        if self.px.tree.is_none() {
+            if self.synced_height >= self.restore_height {
+                self.rewind(self.restore_height.saturating_sub(1));
+            }
+            self.px.backfill(node, self.synced_height)?;
+        }
 
-        let mut from = self.synced_height + 1;
+        // The header check, with local copies so it can run beside the scan.
+        let params = self.params.clone();
+        let pow: std::sync::Arc<dyn PowFunction> = self
+            .header_pow
+            .clone()
+            .unwrap_or_else(|| std::sync::Arc::new(RandomXPow::new()));
+        let mut check = match self.header_context(node, &info)? {
+            None => None,
+            Some(ctx) => {
+                let expected = (info.height - self.synced_height) + ctx.to_check.len() as u64;
+                let bad = |e: String| WalletError::BadNodeData(format!("header chain: {e}"));
+                let mut c = HeaderCheck::new(
+                    &params,
+                    pow.as_ref(),
+                    &ctx.start,
+                    expected,
+                    self.header_samples,
+                    unix_now(),
+                )
+                .map_err(bad)?;
+                for (h, id) in ctx.seeds {
+                    c.add_seed(h, id);
+                }
+                for h in &ctx.to_check {
+                    c.check(h, false).map_err(bad)?;
+                }
+                Some(c)
+            }
+        };
+
+        let first = self.synced_height + 1;
+        let mut from = first;
         while from <= info.height {
             let batch = node
                 .blocks(from, blacksilk_rpc::MAX_BLOCKS_PER_REQUEST)
@@ -121,8 +239,7 @@ impl Wallet {
                         "block {from} does not match its id"
                     )));
                 }
-                // Each block must extend the one before it (review F6). Proof of
-                // work is not checked here: a wallet must trust its node for that.
+                // Each block must extend the one before it (review F6).
                 if let Some(prev) = self.block_ids.get(&(entry.height - 1)) {
                     if block.header.prev_id != *prev {
                         return Err(WalletError::BadNodeData(format!(
@@ -130,8 +247,28 @@ impl Wallet {
                         )));
                     }
                 }
-                self.apply_block(&block, entry.height, entry.first_output);
+                // Proof of work: checked when the header check runs (the
+                // first header and the tip always, others sampled).
+                if let Some(c) = check.as_mut() {
+                    let force = entry.height == first || entry.height == info.height;
+                    c.check(&block.header, force)
+                        .map_err(|e| WalletError::BadNodeData(format!("header chain: {e}")))?;
+                }
+                if let Err(e) = self.apply_block(&block, entry.height, entry.first_output) {
+                    if !self.px.tree.as_ref().is_some_and(|t| t.is_confirmed()) {
+                        // The node's list below the restore height may be
+                        // what is wrong (or stale after a reorganization
+                        // below it): the next sync rebuilds the tree from a
+                        // fresh one, from this node or another.
+                        self.rewind(self.restore_height.saturating_sub(1));
+                    }
+                    return Err(e);
+                }
                 self.block_ids.insert(entry.height, id);
+                self.headers.push_back(block.header);
+                while self.headers.len() > self.params.difficulty_ancestors() {
+                    self.headers.pop_front();
+                }
                 self.synced_height = entry.height;
                 from += 1;
             }
@@ -140,14 +277,126 @@ impl Wallet {
                 self.block_ids.remove(&first);
             }
         }
+        if check.is_some() && self.synced_height >= info.height {
+            // Caught up with a checked header chain.
+            self.restore_check = false;
+        }
         let synced = self.synced_height;
         self.refresh_pending(node);
-        self.px.sync_commitments(node, synced)?;
+        self.px.resolve_lookups(node)?;
         self.px.sync_contracts(node, synced)?;
+        self.px.retain_witnesses(synced, RING_RETENTION_BLOCKS);
         Ok(self.synced_height)
     }
 
-    fn apply_block(&mut self, block: &Block, height: u64, first_output: u64) {
+    /// The headers a header check of the next blocks starts from, or `None`
+    /// when no check runs (`restore_check`, `verify_headers`) or nothing is
+    /// to be scanned. The context is the `difficulty_ancestors` headers
+    /// before the next block: from the genesis (the check is then anchored,
+    /// and the headers between the genesis and the next block are checked
+    /// too), else the wallet's own last headers, else the node's.
+    fn header_context(
+        &self,
+        node: &dyn NodeApi,
+        info: &blacksilk_rpc::Info,
+    ) -> Result<Option<HeaderContext>, WalletError> {
+        if !(self.verify_headers || self.restore_check) || self.synced_height >= info.height {
+            return Ok(None);
+        }
+        let p = &self.params;
+        let from = self.synced_height + 1;
+        let lo = from.saturating_sub(p.difficulty_ancestors() as u64);
+        // Headers lo.max(1) ..= from - 1.
+        let low = lo.max(1);
+        let mut ctx: Vec<BlockHeader> = self
+            .headers
+            .iter()
+            .filter(|h| h.height >= low && h.height < from)
+            .copied()
+            .collect();
+        let covered = ctx.first().map(|h| h.height) == Some(low) && ctx.len() as u64 == from - low
+            || from == low;
+        if !covered {
+            ctx = fetch_headers(node, low, from - 1, p.network_id)?;
+        }
+        if let (Some(last), Some(ours)) = (ctx.last(), self.block_ids.get(&(from - 1))) {
+            if last.id(p.network_id) != *ours {
+                return Err(WalletError::BadNodeData(
+                    "the node's headers do not end at the wallet's last block".into(),
+                ));
+            }
+        }
+        let (start, to_check) = if lo == 0 {
+            (vec![p.genesis], ctx)
+        } else {
+            (ctx, Vec::new())
+        };
+        // RandomX keys below the headers the check holds: their ids come
+        // from the node (not themselves checked).
+        let start_height = start[0].height;
+        let first_checked = start.last().map_or(from, |h| h.height + 1);
+        let key = |h: u64| seed_height(h, p.seed_epoch, p.seed_lag);
+        let mut seeds = Vec::new();
+        let mut k = key(first_checked);
+        while k <= key(info.height) {
+            if k < start_height || k == 0 {
+                let id = if k == 0 {
+                    p.genesis_id()
+                } else {
+                    fetch_headers(node, k, k, p.network_id)?[0].id(p.network_id)
+                };
+                seeds.push((k, id));
+            }
+            k += p.seed_epoch;
+        }
+        Ok(Some(HeaderContext {
+            start,
+            to_check,
+            seeds,
+        }))
+    }
+
+    /// Checks the header chain at every sync (dossier 39 W5; opt-in for
+    /// routine syncs, on by default for the first sync of a restored
+    /// wallet). Not persisted.
+    pub fn set_verify_headers(&mut self, on: bool) {
+        self.verify_headers = on;
+    }
+
+    /// Whether the next sync checks the header chain.
+    pub fn verifies_headers(&self) -> bool {
+        self.verify_headers || self.restore_check
+    }
+
+    /// Replaces the header check's proof-of-work function (RandomX light
+    /// mode by default): for regtest nodes that mine with a stand-in, and
+    /// tests. Not persisted.
+    pub fn set_header_pow(&mut self, pow: std::sync::Arc<dyn PowFunction>) {
+        self.header_pow = Some(pow);
+    }
+
+    /// How many headers the check samples per sync (`HEADER_SAMPLES`).
+    pub fn set_header_samples(&mut self, samples: u64) {
+        self.header_samples = samples;
+    }
+
+    /// Applies block `height`: its PX part first, which checks the block's
+    /// anchors against the wallet's tree and changes nothing on a refusal,
+    /// then the v1 part.
+    fn apply_block(
+        &mut self,
+        block: &Block,
+        height: u64,
+        first_output: u64,
+    ) -> Result<(), WalletError> {
+        self.px
+            .apply_block(&mut self.px_keys, &self.px_account, &block.txs, height)?;
+        self.apply_v1_block(block, height, first_output);
+        Ok(())
+    }
+
+    /// The v1 part of a block: the output index, owned outputs and spends.
+    fn apply_v1_block(&mut self, block: &Block, height: u64, first_output: u64) {
         // Every output, in the chain's global order (as `scan_block` counts).
         self.index.push_block(
             height,
@@ -159,8 +408,6 @@ impl Wallet {
                     .map(move |k| (*k.one_time_key.bytes(), *k.commitment.bytes(), coinbase))
             }),
         );
-        self.px
-            .apply_block(&mut self.px_keys, &self.px_account, &block.txs, height);
         // Gap-limit scan (review M-2): an output found near the edge of the
         // window moves the window, and the block is scanned again with it, so
         // later outputs of the same block (and later blocks) are found too.
@@ -478,9 +725,9 @@ mod tests {
                 ..genuine.outputs[0].clone()
             }],
         };
-        w.apply_block(&block(1, vec![Transaction::Coinbase(copy)]), 1, 0);
+        w.apply_v1_block(&block(1, vec![Transaction::Coinbase(copy)]), 1, 0);
         assert!(w.outputs.is_empty(), "the copy is not credited");
-        w.apply_block(&block(2, vec![Transaction::Coinbase(genuine)]), 2, 1);
+        w.apply_v1_block(&block(2, vec![Transaction::Coinbase(genuine)]), 2, 1);
         assert_eq!(w.outputs.len(), 1);
         assert_eq!(w.outputs[0].global_index, 1);
         assert_eq!(w.outputs[0].amount, 1_000);
@@ -528,7 +775,7 @@ mod tests {
                     })
                     .collect(),
             };
-            w.apply_block(&block(5, vec![Transaction::Coinbase(bad)]), 5, 0);
+            w.apply_v1_block(&block(5, vec![Transaction::Coinbase(bad)]), 5, 0);
             assert_eq!(w.outputs.len(), 2, "{amounts:?}: both kept");
             assert_eq!(
                 credited(&w),
@@ -540,7 +787,7 @@ mod tests {
             assert_eq!(w.take_warnings().len(), 1, "a local diagnostic");
             // The key image is spent: nothing is left.
             let ki = stored_key_image(&w.outputs[0]);
-            w.apply_block(&block(6, vec![spend(ki)]), 6, 2);
+            w.apply_v1_block(&block(6, vec![spend(ki)]), 6, 2);
             assert!(w.outputs.iter().all(|o| o.spent_height == Some(6)));
             assert_eq!(w.balance().total, 0);
         }
@@ -563,15 +810,15 @@ mod tests {
             }],
         };
         // The same block served twice at two positions (a dishonest node).
-        w.apply_block(&block(5, vec![Transaction::Coinbase(with(300))]), 5, 10);
-        w.apply_block(&block(5, vec![Transaction::Coinbase(with(100))]), 5, 20);
+        w.apply_v1_block(&block(5, vec![Transaction::Coinbase(with(300))]), 5, 10);
+        w.apply_v1_block(&block(5, vec![Transaction::Coinbase(with(100))]), 5, 20);
         assert_eq!(credited(&w), vec![(10, 300)]);
         // Reserved by a submitted spend: a larger duplicate stays reserved.
         w.outputs[0].pending = true;
         w.outputs[0].pending_height = 5;
         w.outputs[1].pending = true;
         w.outputs[1].pending_height = 5;
-        w.apply_block(&block(5, vec![Transaction::Coinbase(with(800))]), 5, 30);
+        w.apply_v1_block(&block(5, vec![Transaction::Coinbase(with(800))]), 5, 30);
         assert_eq!(credited(&w), vec![(30, 800)]);
         assert!(w.outputs.iter().all(|o| o.pending && o.pending_height == 5));
         assert_eq!(w.balance().total, 0, "reserved");
@@ -601,8 +848,8 @@ mod tests {
         let _ = w.take_warnings();
         // Spent, then a larger duplicate: still spent.
         let ki = stored_key_image(&w.outputs[0]);
-        w.apply_block(&block(6, vec![spend(ki)]), 6, 40);
-        w.apply_block(&block(5, vec![Transaction::Coinbase(with(900))]), 5, 50);
+        w.apply_v1_block(&block(6, vec![spend(ki)]), 6, 40);
+        w.apply_v1_block(&block(5, vec![Transaction::Coinbase(with(900))]), 5, 50);
         assert_eq!(credited(&w), vec![(50, 900)]);
         assert!(w.outputs.iter().all(|o| o.spent_height == Some(6)));
         assert_eq!(w.balance().total, 0);
@@ -626,9 +873,9 @@ mod tests {
                 ..honest.outputs[0].clone()
             }],
         };
-        w.apply_block(&block(5, vec![Transaction::Coinbase(with(300))]), 5, 10);
+        w.apply_v1_block(&block(5, vec![Transaction::Coinbase(with(300))]), 5, 10);
         w.synced_height = 5;
-        w.apply_block(&block(7, vec![Transaction::Coinbase(with(800))]), 7, 30);
+        w.apply_v1_block(&block(7, vec![Transaction::Coinbase(with(800))]), 7, 30);
         w.synced_height = 7;
         assert_eq!(w.balance().total, 800, "the larger duplicate is credited");
         w.rewind(6);
@@ -656,7 +903,7 @@ mod tests {
                 ..honest.outputs[0].clone()
             }],
         };
-        w.apply_block(&block(5, vec![Transaction::Coinbase(with(300))]), 5, 10);
+        w.apply_v1_block(&block(5, vec![Transaction::Coinbase(with(300))]), 5, 10);
         let key = w.outputs[0].one_time_key.clone();
         let other = hex::encode([0x11; 32]);
         let member = |index: u64, k: &str| super::super::RingMember {
@@ -670,7 +917,7 @@ mod tests {
             w.outputs[0].key_image.clone(),
             vec![member(3, &other), member(30, &key)],
         );
-        w.apply_block(&block(7, vec![Transaction::Coinbase(with(800))]), 7, 30);
+        w.apply_v1_block(&block(7, vec![Transaction::Coinbase(with(800))]), 7, 30);
         assert_eq!(credited(&w), vec![(30, 800)]);
         let ring = &w.rings[&w.outputs[0].key_image];
         assert_eq!(ring.iter().map(|m| m.index).collect::<Vec<_>>(), vec![3]);

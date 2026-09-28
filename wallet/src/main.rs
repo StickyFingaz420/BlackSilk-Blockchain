@@ -40,6 +40,12 @@ struct Args {
     /// BLACKSILK_RPC_COOKIE, if set.
     #[arg(long)]
     rpc_cookie: Option<PathBuf>,
+    /// Check the header chain of the blocks this command scans: the LWMA
+    /// difficulty and timestamps of every header, and RandomX proof of work
+    /// of the last and of a random sample (docs/blocks.md §10). Always on for
+    /// the first sync of a restored wallet.
+    #[arg(long)]
+    verify_headers: bool,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -151,9 +157,17 @@ enum Cmd {
     /// List the contract records this wallet holds.
     PxRecords,
     /// Lock PX funds in a record of the DEMONSTRATION vault under a secret.
-    /// Not a trustless swap: no timeout, no refund, and you (the locker) also
-    /// know the secret, so you can claim too (docs/px.md §13.4).
+    /// Not a trustless swap or an HTLC: you (the locker) also know the
+    /// secret, so you can claim too (docs/px.md §13.4). Without --timeout the
+    /// record is never refundable; with it, only this wallet can take the
+    /// value back from the timeout on (px-vault-refund).
     PxVaultLock {
+        /// The first block height at which the value can be refunded, a
+        /// multiple of 16 more than 3 blocks ahead (docs/contracts.md §8).
+        /// Before it the record is claimable with the secret and the terms
+        /// this command prints. Leave a margin: a miner can delay a claim.
+        #[arg(long)]
+        timeout: Option<u64>,
         /// The vault contract id.
         #[arg(long)]
         contract: String,
@@ -198,7 +212,27 @@ enum Cmd {
         /// PX address to pay. Default: this wallet.
         #[arg(long)]
         to: Option<String>,
+        /// The record's terms, as px-vault-lock --timeout printed them
+        /// (`claim_lock:refund_lock:timeout`): needed for a record locked
+        /// with a timeout. The claim must be mined before the timeout.
+        #[arg(long)]
+        terms: Option<String>,
     },
+    /// Take back the value of a vault record this wallet locked with a
+    /// timeout, from the timeout on: the terms are the ones stored at lock
+    /// time, or found again after a restore from the seed (px-vault-recover).
+    PxVaultRefund {
+        /// The vault record's commitment (from px-records).
+        #[arg(long)]
+        record: String,
+        /// PX address to pay. Default: this wallet.
+        #[arg(long)]
+        to: Option<String>,
+    },
+    /// Sync, then find the vault records this wallet locked with a timeout
+    /// and delivered to someone else (after a restore from the seed), and
+    /// list the timed locks it holds the terms of.
+    PxVaultRecover,
     /// Show the secret of a vault record this wallet locked (stored in the
     /// wallet file before the lock was sent).
     PxVaultSecret {
@@ -222,7 +256,8 @@ enum Cmd {
         #[arg(long)]
         share: String,
     },
-    /// Show the 27-word seed.
+    /// Show the 27-word seed, after a confirmation typed on the terminal:
+    /// anyone who sees the words controls the funds.
     Seed,
     /// Forget unconfirmed spends and stored transactions. Meant for a
     /// transaction that certainly never left this wallet: `sync` rebroadcasts
@@ -318,6 +353,45 @@ fn digest_arg(what: &str, s: &str) -> Result<Digest, String> {
     digest_from_hex(s.trim()).map_err(|e| format!("{what}: {e}"))
 }
 
+/// A vault record's terms as px-vault-lock prints them and px-vault-claim
+/// reads them: `claim_lock:refund_lock:timeout` (two digests in hex and a
+/// height). Public data: the locks are hashes, not secrets.
+fn format_terms(t: &vault::Terms) -> String {
+    format!(
+        "{}:{}:{}",
+        digest_hex(&t.claim_lock),
+        digest_hex(&t.refund_lock),
+        t.timeout
+    )
+}
+
+fn parse_terms(s: &str) -> Result<vault::Terms, String> {
+    let bad =
+        || "terms: use claim_lock:refund_lock:timeout, as px-vault-lock printed them".to_string();
+    let parts: Vec<&str> = s.trim().split(':').collect();
+    let [claim, refund, timeout] = parts[..] else {
+        return Err(bad());
+    };
+    Ok(vault::Terms {
+        claim_lock: digest_from_hex(claim).map_err(|_| bad())?,
+        refund_lock: digest_from_hex(refund).map_err(|_| bad())?,
+        timeout: timeout.parse().map_err(|_| bad())?,
+    })
+}
+
+/// Asks on the terminal (stderr) and reads one line from stdin: whether it
+/// is exactly `expected`.
+fn confirmed(prompt: &str, expected: &str) -> Result<bool, String> {
+    use std::io::Write;
+    eprint!("{prompt}");
+    std::io::stderr().flush().map_err(|e| e.to_string())?;
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|e| e.to_string())?;
+    Ok(line.trim() == expected)
+}
+
 /// A vault secret from, in order: the command line (risky: shell history and
 /// the process list), a file, or a hidden prompt. `None` if none is asked for.
 /// Copies held by this function are wiped; clap's copy of a command-line
@@ -374,6 +448,7 @@ fn run(args: Args) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let _lock = lock_wallet(&args.wallet)?;
     let kdf = KdfParams::default();
+    let verify_headers = args.verify_headers;
     match args.cmd {
         Cmd::Create {
             network,
@@ -429,7 +504,8 @@ fn run(args: Args) -> Result<(), String> {
             save(&w, &args.wallet, &pw, kdf).map_err(|e| e.to_string())?;
             pw.zeroize();
             println!(
-                "Wallet restored ({}); run `sync` to scan from block {}.",
+                "Wallet restored ({}); run `sync` to scan from block {} (the header chain it \
+                 scans is checked until it has caught up).",
                 network_name(w.network()),
                 w.synced_height() + 1
             );
@@ -442,6 +518,7 @@ fn run(args: Args) -> Result<(), String> {
             }
             // Save before any transaction leaves the wallet (review F1).
             w.set_autosave(&args.wallet, &pw, kdf);
+            w.set_verify_headers(verify_headers);
             let result = match cmd {
                 Cmd::Address {
                     account,
@@ -647,9 +724,21 @@ fn run(args: Args) -> Result<(), String> {
                             r.contract,
                             format_amount(r.value)
                         );
+                        let terms = digest_from_hex(&r.commitment)
+                            .ok()
+                            .and_then(|cm| w.px_vault_terms(&cm));
+                        if let Some(t) = terms {
+                            println!(
+                                "  locked by this wallet until block {} (then px-vault-refund)\n  \
+                                 terms {}",
+                                t.timeout,
+                                format_terms(&t)
+                            );
+                        }
                     }
                 }),
                 Cmd::PxVaultLock {
+                    timeout,
                     contract,
                     amount,
                     secret,
@@ -673,15 +762,22 @@ fn run(args: Args) -> Result<(), String> {
                         })
                         .transpose()?;
                     let rules = rules_for(&w);
-                    eprintln!("warning: the vault is a DEMONSTRATION contract, not a trustless swap: no timeout, no refund, and you (the locker) also know the secret. Whoever learns the secret and the record can claim it (docs/px.md §13.4).");
-                    eprintln!("note: if you deliver the record to someone else, your own copy lives only in this wallet file; restoring from the seed will not recover it.");
+                    let timeout = timeout.unwrap_or(0);
+                    if timeout == 0 {
+                        eprintln!("warning: the vault is a DEMONSTRATION contract, not a trustless swap or an HTLC: without --timeout there is no refund, and you (the locker) also know the secret. Whoever learns the secret and the record can claim it (docs/px.md §13.4).");
+                        eprintln!("note: if you deliver the record to someone else, your own copy lives only in this wallet file; restoring from the seed will not recover it.");
+                    } else {
+                        eprintln!("warning: the vault is a DEMONSTRATION contract, not a trustless swap or an HTLC (docs/contracts.md §8): before block {timeout} whoever holds the secret, the record and the terms can claim it; from block {timeout} on only this wallet can refund it (px-vault-refund). A miner can delay a claim past the timeout.");
+                        eprintln!("note: a restore from the seed finds this lock again (px-vault-recover).");
+                    }
                     println!("proving (about a minute)...");
-                    let (id, record) = match w.px_vault_lock(
+                    let (id, record, terms) = match w.px_vault_lock_until(
                         &client,
                         &contract,
                         amount,
                         given.as_deref(),
                         to.as_ref(),
+                        timeout,
                         &rules,
                         &mut rng,
                     ) {
@@ -709,6 +805,11 @@ fn run(args: Args) -> Result<(), String> {
                         }
                     }
                     println!("record {}", digest_hex(&record));
+                    if timeout != 0 {
+                        // The claimer needs them (with the secret): public
+                        // hashes and the timeout.
+                        println!("terms {}", format_terms(&terms));
+                    }
                     println!("transaction {}", hex::encode(id));
                     Ok(())
                 })(),
@@ -717,7 +818,9 @@ fn run(args: Args) -> Result<(), String> {
                     secret,
                     secret_file,
                     to,
+                    terms,
                 } => (|| {
+                    let terms = terms.as_deref().map(parse_terms).transpose()?;
                     let record = digest_arg("record", &record)?;
                     let secret = Zeroizing::new(
                         read_secret(secret, secret_file, true)?.expect("the prompt is the default"),
@@ -731,13 +834,63 @@ fn run(args: Args) -> Result<(), String> {
                     let mut rng = os_rng()?;
                     let rules = rules_for(&w);
                     println!("proving (about a minute)...");
-                    let (id, value) = w
-                        .px_vault_claim(&client, &record, &secret, to.as_ref(), &rules, &mut rng)
-                        .map_err(|e| e.to_string())?;
+                    let (id, value) = match &terms {
+                        None => w.px_vault_claim(
+                            &client,
+                            &record,
+                            &secret,
+                            to.as_ref(),
+                            &rules,
+                            &mut rng,
+                        ),
+                        Some(t) => w.px_vault_claim_with_terms(
+                            &client,
+                            &record,
+                            &secret,
+                            t,
+                            to.as_ref(),
+                            &rules,
+                            &mut rng,
+                        ),
+                    }
+                    .map_err(|e| e.to_string())?;
                     println!("claimed {} BLK privately", format_amount(value));
                     println!("transaction {}", hex::encode(id));
                     Ok(())
                 })(),
+                Cmd::PxVaultRefund { record, to } => (|| {
+                    let record = digest_arg("record", &record)?;
+                    let to = to
+                        .map(|a| {
+                            decode_px_address(w.network(), &a)
+                                .map_err(|e| format!("PX address: {e:?}"))
+                        })
+                        .transpose()?;
+                    let mut rng = os_rng()?;
+                    let rules = rules_for(&w);
+                    println!("proving (about a minute)...");
+                    let (id, value) = w
+                        .px_vault_refund_stored(&client, &record, to.as_ref(), &rules, &mut rng)
+                        .map_err(|e| e.to_string())?;
+                    println!("refunded {} BLK privately", format_amount(value));
+                    println!("transaction {}", hex::encode(id));
+                    Ok(())
+                })(),
+                Cmd::PxVaultRecover => w.sync(&client).map_err(|e| e.to_string()).map(|_| {
+                    let found = w.recover_vault_locks();
+                    println!("found {found} vault lock(s) with a timeout");
+                    for (record, timeout) in w.px_vault_timed_locks() {
+                        let state = w
+                            .px_contract_records()
+                            .iter()
+                            .find(|r| r.commitment == digest_hex(&record))
+                            .map_or("unknown".to_string(), |r| match r.spent_height {
+                                Some(h) => format!("spent at {h}"),
+                                None => format!("refundable from block {timeout}"),
+                            });
+                        println!("record {} ({state})", digest_hex(&record));
+                    }
+                }),
                 Cmd::PxVaultSecret { record, out } => (|| {
                     let record = digest_arg("record", &record)?;
                     let secret = w.px_vault_secret(&record).map_err(|e| e.to_string())?;
@@ -769,10 +922,20 @@ fn run(args: Args) -> Result<(), String> {
                     println!("imported record {}", digest_hex(&cm));
                     Ok(())
                 })(),
-                Cmd::Seed => {
+                // F37-11: never shown without a typed confirmation.
+                Cmd::Seed => confirmed(
+                    "The 27 seed words give full control of this wallet's funds to anyone who \
+                     sees them. Make sure no one can see or record this screen.\nType 'show' to \
+                     show them: ",
+                    "show",
+                )
+                .and_then(|yes| {
+                    if !yes {
+                        return Err("not shown".to_string());
+                    }
                     println!("{}", w.mnemonic().as_str());
                     Ok(())
-                }
+                }),
                 Cmd::ClearPending => {
                     w.clear_pending();
                     Ok(())
@@ -790,4 +953,34 @@ fn run(args: Args) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Terms round-trip through their printed form; anything else is refused
+    /// with the expected format, never echoing the input.
+    #[test]
+    fn vault_terms_round_trip_through_their_printed_form() {
+        let t = vault::Terms {
+            claim_lock: [1, 2, 3, 4, 5, 6, 7, 8],
+            refund_lock: [9, 10, 11, 12, 13, 14, 15, 16],
+            timeout: 4_096,
+        };
+        assert_eq!(parse_terms(&format_terms(&t)), Ok(t));
+        assert_eq!(parse_terms(&format!(" {} \n", format_terms(&t))), Ok(t));
+        let hex = digest_hex(&t.claim_lock);
+        for bad in [
+            "",
+            "1:2:3",
+            &format!("{hex}:{hex}"),
+            &format!("{hex}:{hex}:x"),
+            &format!("{hex}:{hex}:1:2"),
+            &format!("{}:{hex}:16", "ff".repeat(32)),
+        ] {
+            let e = parse_terms(bad).unwrap_err();
+            assert!(e.contains("claim_lock:refund_lock:timeout"), "{bad}: {e}");
+        }
+    }
 }

@@ -4,10 +4,12 @@
 #![forbid(unsafe_code)]
 
 pub mod file;
+pub mod headers;
 pub mod index;
 pub mod node;
 pub mod px;
 pub mod seed;
+pub mod tree;
 pub mod wallet;
 
 pub use wallet::{Balance, Wallet, WalletError};
