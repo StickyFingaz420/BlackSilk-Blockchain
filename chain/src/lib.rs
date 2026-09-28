@@ -13,6 +13,7 @@ pub mod emission;
 pub mod manager;
 pub mod mempool;
 pub mod store;
+pub mod sync_policy;
 
 pub use block::Block;
 pub use manager::{ChainManager, SubmitError, Submitted, Template};

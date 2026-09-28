@@ -168,6 +168,19 @@ mod tests {
         );
     }
 
+    /// `Cache::try_new` (fallible allocation, for optional builds) builds the
+    /// same cache as `Cache::new`: the same memory, and vector 1a.
+    #[test]
+    fn try_new_builds_the_same_cache() {
+        let cache = Cache::try_new(b"test key 000").expect("256 MiB");
+        assert!(cache.memory() == cache_000().memory());
+        check(
+            &cache,
+            b"This is a test",
+            "639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f",
+        );
+    }
+
     #[test]
     fn hash_1b() {
         check(
