@@ -9,8 +9,16 @@ publish = false
 name = "blacksilk-labnet"
 path = "src/main.rs"
 
+# Evidence tooling: re-checks a run's proof of work in a fresh process
+# (light and full mode). Not part of any node, miner or wallet.
+[[bin]]
+name = "blacksilk-rx-verify"
+path = "src/bin/rx_verify.rs"
+
 [dependencies]
 blacksilk-consensus = { path = "../../consensus" }
+blacksilk-randomx = { path = "../../randomx" }
+hex = "0.4"
 blacksilk-chain = { path = "../../chain" }
 blacksilk-rpc = { path = "../../rpc" }
 blacksilk-tx = { path = "../../tx" }

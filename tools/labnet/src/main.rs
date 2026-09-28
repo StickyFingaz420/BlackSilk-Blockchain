@@ -85,6 +85,22 @@ struct Args {
     /// (`auto`) applies.
     #[arg(long)]
     prebuild: bool,
+    /// With `--miner-full`: only the first miner (the warm-up miner, on node
+    /// 0) runs in full mode; the second runs in light mode with one thread.
+    /// One 2 GiB dataset on the machine instead of two.
+    #[arg(long, requires = "miner_full")]
+    light_second_miner: bool,
+    /// The `--prebuild` value full-mode miners get when prebuild is on
+    /// (`--prebuild` or `--evidence`): `on`, or `auto` (the miner's default:
+    /// in full mode it prebuilds as well, and falls back to the light-mode
+    /// bridge, with a warning in its log, only if the second dataset cannot
+    /// be allocated). Light-mode miners always get `on`.
+    #[arg(long, default_value = "on", value_parser = ["on", "auto"])]
+    full_prebuild: String,
+    /// `--build-threads` for full-mode miners (otherwise the miner's
+    /// default: a quarter of `--miner-threads`, at least 1).
+    #[arg(long)]
+    miner_build_threads: Option<usize>,
     /// Skip the warm-up: both miners start at once, from the genesis
     /// difficulty. Its reorganizations are then counted with the rest.
     #[arg(long)]
@@ -174,6 +190,9 @@ struct Report {
     /// many of them their node did not adopt at submission.
     blocks_found_by_phase: BTreeMap<String, FoundStats>,
     miner_prebuild: bool,
+    /// Each miner's mode arguments (all but its node, cookie and payout
+    /// address).
+    miner_modes: Vec<String>,
     misbehavior_disconnects: u32,
     crashes: Vec<String>,
     network: String,
@@ -750,29 +769,44 @@ fn main() {
     }
     report.miner_prebuild = prebuild;
     let miner_nodes = [0, n / 2];
-    let miner_args = |k: usize, wallets: &mut Vec<(String, Wallet)>| -> Vec<String> {
+    // A miner's arguments, and its mode for the report.
+    let miner_args = |k: usize, wallets: &mut Vec<(String, Wallet)>| -> (Vec<String>, String) {
         let node = miner_nodes[k];
         let addr = wallets[k].1.address(0, 0);
+        let light_second = k == 1 && a.light_second_miner;
+        let full = a.miner_full && !light_second;
+        let threads = if light_second { 1 } else { a.miner_threads };
+        let mut mode: Vec<String> = vec![
+            "--threads".into(),
+            threads.to_string(),
+            "--refresh".into(),
+            "5".into(),
+        ];
+        if !full {
+            mode.push("--light".into());
+        }
+        if prebuild {
+            mode.push("--prebuild".into());
+            mode.push(if full {
+                a.full_prebuild.clone()
+            } else {
+                "on".into()
+            });
+        }
+        if let (true, Some(t)) = (full, a.miner_build_threads) {
+            mode.push("--build-threads".into());
+            mode.push(t.to_string());
+        }
         let mut args: Vec<String> = vec![
             "--node".into(),
             local(rpc_port(a.base_port, node)).to_string(),
             "--rpc-cookie".into(),
             cookie_path(&data_of(node)).display().to_string(),
-            "--threads".into(),
-            a.miner_threads.to_string(),
-            "--refresh".into(),
-            "5".into(),
             "--address".into(),
             addr,
         ];
-        if !a.miner_full {
-            args.push("--light".into());
-        }
-        if prebuild {
-            args.push("--prebuild".into());
-            args.push("on".into());
-        }
-        args
+        args.extend(mode.iter().cloned());
+        (args, format!("miner{k}: {}", mode.join(" ")))
     };
     let mut stuck: Vec<StuckDetector> = (0..n).map(|_| StuckDetector::default()).collect();
     let mut sampling = Sampling {
@@ -796,7 +830,8 @@ fn main() {
         target_secs,
         ..Default::default()
     };
-    let args0 = miner_args(0, &mut wallets);
+    let (args0, mode0) = miner_args(0, &mut wallets);
+    report.miner_modes.push(mode0);
     procs.push(spawn(
         &miner_bin,
         &args0,
@@ -866,7 +901,8 @@ fn main() {
             ),
         );
     }
-    let args1 = miner_args(1, &mut wallets);
+    let (args1, mode1) = miner_args(1, &mut wallets);
+    report.miner_modes.push(mode1);
     procs.push(spawn(
         &miner_bin,
         &args1,
