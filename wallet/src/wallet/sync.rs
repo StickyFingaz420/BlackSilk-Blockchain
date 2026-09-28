@@ -7,23 +7,55 @@ use super::{
 };
 use crate::headers::HeaderCheck;
 use crate::node::NodeApi;
+use crate::px::{deployed, listed_as, PxStore};
 use blacksilk_chain::block::Block;
 use blacksilk_consensus::pow::seed_height;
-use blacksilk_consensus::{BlockHeader, Hash, PowFunction, RandomXPow};
+use blacksilk_consensus::{BlockHeader, Hash, PowFunction, RandomXPow, HEADER_SIZE};
 use blacksilk_crypto::stealth::ReceivedOutput;
+use blacksilk_px_core::Digest;
+use blacksilk_rpc as rpc;
 use blacksilk_tx::params::{COINBASE_MATURITY, SPENDABLE_AGE};
 use blacksilk_tx::scan::scan_block;
+use blacksilk_tx::types::Transaction;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-/// Where a header check starts (`Wallet::header_context`).
-struct HeaderContext {
-    /// Headers the check starts from (not themselves checked).
-    start: Vec<BlockHeader>,
-    /// Headers between them and the next block, checked first.
-    to_check: Vec<BlockHeader>,
-    /// Ids of RandomX key blocks below `start`.
-    seeds: Vec<(u64, Hash)>,
+const _: () = assert!(rpc::HEADER_BYTES == HEADER_SIZE);
+
+/// RandomX key-block ids the wallet keeps from a header check: the keys of
+/// the next headers are among the last two.
+const KEPT_KEY_IDS: usize = 3;
+
+/// Where a header check starts (`Wallet::header_start`).
+enum HeaderStart {
+    /// From the genesis: the headers of the blocks up to the wallet's are
+    /// read from the node's header feed and checked first.
+    Genesis,
+    /// From the wallet's own last headers, checked from the genesis by an
+    /// earlier sync (`Wallet::checked_through`), with the RandomX key-block
+    /// ids below them.
+    Resume {
+        start: Vec<BlockHeader>,
+        seeds: Vec<(u64, Hash)>,
+    },
+}
+
+/// The node's lists below the first block the wallet scans (the backfill).
+struct BackfillLists {
+    /// `/px/commitments` up to the base block.
+    commitments: Vec<(u64, Digest)>,
+    /// `/px/contracts` up to the base block.
+    contracts: Vec<rpc::PxContractEntry>,
+}
+
+impl BackfillLists {
+    /// The blocks checked against the lists: the one of the last commitment
+    /// listed, and every one the contract list names.
+    fn blocks(&self) -> BTreeSet<u64> {
+        let mut out: BTreeSet<u64> = self.contracts.iter().map(|c| c.height).collect();
+        out.extend(self.commitments.last().map(|e| e.0));
+        out
+    }
 }
 
 /// The local time, seconds since the Unix epoch.
@@ -33,47 +65,114 @@ fn unix_now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-/// The headers of blocks `lo..=hi` from the node (its `/blocks`; each id is
-/// recomputed from the header and must be the one served).
+/// Reads the headers of blocks `lo..=hi` from the node's header feed
+/// (`/headers`, in pages) and hands each to `f`, in order. Each must be the
+/// header of its height; how they link is the caller's check.
+fn for_each_header(
+    node: &dyn NodeApi,
+    lo: u64,
+    hi: u64,
+    mut f: impl FnMut(BlockHeader) -> Result<(), WalletError>,
+) -> Result<(), WalletError> {
+    let mut h = lo;
+    while h <= hi {
+        let count = (hi - h + 1).min(rpc::MAX_HEADERS_PER_REQUEST);
+        let resp = node.headers(h, count).map_err(WalletError::Node)?;
+        let bytes = hex::decode(&resp.headers)
+            .map_err(|_| WalletError::BadNodeData("header hex".into()))?;
+        let n = bytes.len() / HEADER_SIZE;
+        if resp.from != h || n == 0 || bytes.len() % HEADER_SIZE != 0 || n as u64 > count {
+            return Err(WalletError::BadNodeData(format!(
+                "the node's header feed from block {h} is missing or malformed"
+            )));
+        }
+        for chunk in bytes.chunks(HEADER_SIZE) {
+            let header = BlockHeader::from_bytes(chunk)
+                .ok_or_else(|| WalletError::BadNodeData("block header".into()))?;
+            if header.height != h {
+                return Err(WalletError::BadNodeData(format!(
+                    "expected header {h}, got {}",
+                    header.height
+                )));
+            }
+            f(header)?;
+            h += 1;
+        }
+    }
+    Ok(())
+}
+
+/// The headers of blocks `lo..=hi` from the node, each extending the one
+/// before it.
 fn fetch_headers(
     node: &dyn NodeApi,
     lo: u64,
     hi: u64,
     network_id: u32,
 ) -> Result<Vec<BlockHeader>, WalletError> {
-    let mut out = Vec::new();
-    let mut h = lo;
-    while h <= hi {
-        let count = (hi - h + 1).min(blacksilk_rpc::MAX_BLOCKS_PER_REQUEST);
-        let batch = node.blocks(h, count).map_err(WalletError::Node)?;
-        if batch.blocks.is_empty() {
-            return Err(WalletError::BadNodeData(format!("block {h} is missing")));
-        }
-        for entry in batch.blocks {
-            if entry.height != h || h > hi {
+    let mut out: Vec<BlockHeader> = Vec::new();
+    for_each_header(node, lo, hi, |h| {
+        if let Some(p) = out.last() {
+            if h.prev_id != p.id(network_id) {
                 return Err(WalletError::BadNodeData(format!(
-                    "expected block {h}, got {}",
-                    entry.height
+                    "header {} does not extend header {}",
+                    h.height, p.height
                 )));
             }
-            let head = entry
-                .hex
-                .get(..2 * blacksilk_consensus::HEADER_SIZE)
-                .unwrap_or("");
-            let bytes =
-                hex::decode(head).map_err(|_| WalletError::BadNodeData("block hex".into()))?;
-            let header = BlockHeader::from_bytes(&bytes)
-                .ok_or_else(|| WalletError::BadNodeData("block header".into()))?;
-            if header.height != h || hex::encode(header.id(network_id)) != entry.id {
-                return Err(WalletError::BadNodeData(format!(
-                    "block {h} does not match its id"
-                )));
-            }
-            out.push(header);
-            h += 1;
         }
-    }
+        out.push(h);
+        Ok(())
+    })?;
     Ok(out)
+}
+
+/// The id of the node's block at `height` (computed from its header), or
+/// `None` if the node has none there.
+fn node_id_at(
+    node: &dyn NodeApi,
+    height: u64,
+    network_id: u32,
+) -> Result<Option<Hash>, WalletError> {
+    let resp = node.headers(height, 1).map_err(WalletError::Node)?;
+    if resp.headers.is_empty() {
+        return Ok(None);
+    }
+    let bytes =
+        hex::decode(&resp.headers).map_err(|_| WalletError::BadNodeData("header hex".into()))?;
+    match BlockHeader::from_bytes(&bytes) {
+        Some(h) if h.height == height && resp.from == height => Ok(Some(h.id(network_id))),
+        _ => Err(WalletError::BadNodeData(format!(
+            "the node's header {height} is malformed"
+        ))),
+    }
+}
+
+/// The node's block at `height`, which must be the block of header id `id`
+/// (its id recomputed, and its transactions those its `tx_root` commits
+/// to).
+fn fetch_block(
+    node: &dyn NodeApi,
+    height: u64,
+    id: &Hash,
+    network_id: u32,
+) -> Result<Block, WalletError> {
+    let entry = node
+        .blocks(height, 1)
+        .map_err(WalletError::Node)?
+        .blocks
+        .into_iter()
+        .next()
+        .filter(|e| e.height == height)
+        .ok_or_else(|| WalletError::BadNodeData(format!("block {height} is missing")))?;
+    let bytes =
+        hex::decode(&entry.hex).map_err(|_| WalletError::BadNodeData("block hex".into()))?;
+    let block = Block::decode(&bytes).map_err(|e| WalletError::BadNodeData(format!("{e:?}")))?;
+    if block.id(network_id) != *id || block.compute_tx_root() != block.header.tx_root {
+        return Err(WalletError::BadNodeData(format!(
+            "block {height} is not the block of the header chain at that height"
+        )));
+    }
+    Ok(block)
 }
 
 impl Wallet {
@@ -108,8 +207,9 @@ impl Wallet {
     /// credited for its key image that goes with them hands the credit back
     /// to a duplicate below the fork (RTW1-4).
     fn rewind(&mut self, height: u64) {
-        // Below the first scanned block the PX tree is rebuilt from a fresh
-        // backfill: the chain below the restore height may have changed.
+        // Below the first scanned block the PX tree and the registrations
+        // are rebuilt from a fresh backfill: the chain below the restore
+        // height may have changed.
         if height < self.restore_height {
             self.px.tree = None;
         }
@@ -122,6 +222,8 @@ impl Wallet {
         self.elect_credited();
         self.block_ids.retain(|h, _| *h <= height);
         self.headers.retain(|h| h.height <= height);
+        self.checked_through = self.checked_through.map(|c| c.min(height));
+        self.key_ids.retain(|h, _| *h <= height);
         self.index.rewind(height);
         let rescan = self.px.rewind(height);
         self.synced_height = height;
@@ -136,10 +238,11 @@ impl Wallet {
     /// the node's, and rewinds to the fork point. Returns the new synced height.
     ///
     /// Every block's PX anchors are checked against the wallet's own tree
-    /// (`crate::tree`), and, for a restored wallet until it has caught up or
-    /// when enabled (`set_verify_headers`), the header chain
-    /// (`crate::headers`). A refused block is not applied: the wallet stays
-    /// at the block before it.
+    /// (`crate::tree`), registrations are derived from the deploys
+    /// (`crate::px::deployed`), and, for a restored wallet until it has
+    /// caught up or when enabled (`set_verify_headers`), the header chain is
+    /// checked from the genesis (`crate::headers`). A refused block is not
+    /// applied: the wallet stays at the block before it.
     pub fn sync(&mut self, node: &dyn NodeApi) -> Result<u64, WalletError> {
         let info = self.check_network(node)?;
         if info.header_height > info.height {
@@ -148,7 +251,9 @@ impl Wallet {
                 info.height, info.header_height
             )));
         }
-        // Reorg detection: walk back from our tip until our block id matches the node's.
+        let nid = self.params.network_id;
+        // Reorg detection: walk back from our tip until our block id matches
+        // the node's (read from its header feed: 100 bytes per height).
         let fresh = self.block_ids.is_empty();
         while self.synced_height >= self.restore_height && self.synced_height > 0 {
             let Some(ours) = self.block_ids.get(&self.synced_height).copied() else {
@@ -161,11 +266,7 @@ impl Wallet {
                 break;
             };
             let theirs = if self.synced_height <= info.height {
-                node.blocks(self.synced_height, 1)
-                    .map_err(WalletError::Node)?
-                    .blocks
-                    .first()
-                    .and_then(|b| blacksilk_rpc::parse_hash(&b.id))
+                node_id_at(node, self.synced_height, nid)?
             } else {
                 None
             };
@@ -175,12 +276,31 @@ impl Wallet {
             let h = self.synced_height - 1;
             self.rewind(h);
         }
-        // The PX tree: built once, below the first block scanned.
-        if self.px.tree.is_none() {
+        // The PX tree and the registrations below the first block scanned:
+        // built once, from the node's lists checked against the blocks.
+        let backfill = if self.px.tree.is_none() {
             if self.synced_height >= self.restore_height {
                 self.rewind(self.restore_height.saturating_sub(1));
             }
-            self.px.backfill(node, self.synced_height)?;
+            let base = self.synced_height;
+            Some(if base == 0 {
+                BackfillLists {
+                    commitments: Vec::new(),
+                    contracts: Vec::new(),
+                }
+            } else {
+                BackfillLists {
+                    commitments: PxStore::fetch_commitments(node, base)?,
+                    contracts: PxStore::fetch_contract_list(node, base)?,
+                }
+            })
+        } else {
+            None
+        };
+        let mut backfill_ids: BTreeMap<u64, Hash> = BTreeMap::new();
+        let mut want: BTreeSet<u64> = backfill.as_ref().map_or_else(BTreeSet::new, |b| b.blocks());
+        if backfill.is_some() {
+            want.insert(self.synced_height);
         }
 
         // The header check, with local copies so it can run beside the scan.
@@ -189,32 +309,66 @@ impl Wallet {
             .header_pow
             .clone()
             .unwrap_or_else(|| std::sync::Arc::new(RandomXPow::new()));
-        let mut check = match self.header_context(node, &info)? {
+        let bad = |e: String| WalletError::BadNodeData(format!("header chain: {e}"));
+        let synced = self.synced_height;
+        let mut check = match self.header_start(&info) {
             None => None,
-            Some(ctx) => {
-                let expected = (info.height - self.synced_height) + ctx.to_check.len() as u64;
-                let bad = |e: String| WalletError::BadNodeData(format!("header chain: {e}"));
-                let mut c = HeaderCheck::new(
+            Some(HeaderStart::Resume { start, seeds }) => Some(
+                HeaderCheck::resume(
                     &params,
                     pow.as_ref(),
-                    &ctx.start,
-                    expected,
+                    &start,
+                    &seeds,
+                    info.height - synced,
+                    self.header_samples,
+                    unix_now(),
+                )
+                .map_err(bad)?,
+            ),
+            Some(HeaderStart::Genesis) => {
+                let mut c = HeaderCheck::from_genesis(
+                    &params,
+                    pow.as_ref(),
+                    info.height,
                     self.header_samples,
                     unix_now(),
                 )
                 .map_err(bad)?;
-                for (h, id) in ctx.seeds {
-                    c.add_seed(h, id);
-                }
-                for h in &ctx.to_check {
-                    c.check(h, false).map_err(bad)?;
+                // Every header below the first block scanned, from the
+                // genesis (W3-39b), streamed: the ids the backfill needs are
+                // kept, the rest is dropped.
+                if synced > 0 {
+                    for_each_header(node, 1, synced, |h| {
+                        c.check(&h, false).map_err(bad)?;
+                        if want.contains(&h.height) {
+                            backfill_ids.insert(h.height, c.last().1);
+                        }
+                        Ok(())
+                    })?;
+                    let (_, last) = c.last();
+                    if self
+                        .block_ids
+                        .get(&synced)
+                        .is_some_and(|ours| *ours != last)
+                    {
+                        return Err(WalletError::BadNodeData(
+                            "the node's headers do not end at the wallet's last block".into(),
+                        ));
+                    }
+                    self.headers = c.context().collect();
+                    self.checked_through = Some(synced);
+                    self.keep_key_ids(c.seeds());
                 }
                 Some(c)
             }
         };
+        if let Some(lists) = backfill {
+            self.backfill(node, lists, backfill_ids)?;
+        }
 
         let first = self.synced_height + 1;
         let mut from = first;
+        let keep_headers = HeaderCheck::context_len(&self.params);
         while from <= info.height {
             let batch = node
                 .blocks(from, blacksilk_rpc::MAX_BLOCKS_PER_REQUEST)
@@ -233,13 +387,14 @@ impl Wallet {
                     .map_err(|_| WalletError::BadNodeData("block hex".into()))?;
                 let block = Block::decode(&bytes)
                     .map_err(|e| WalletError::BadNodeData(format!("{e:?}")))?;
-                let id = block.id(info.network_id);
+                let id = block.id(nid);
                 if hex::encode(id) != entry.id || block.compute_tx_root() != block.header.tx_root {
                     return Err(WalletError::BadNodeData(format!(
                         "block {from} does not match its id"
                     )));
                 }
-                // Each block must extend the one before it (review F6).
+                // Each block must extend the one before it (review F6), the
+                // first one the backfill's base.
                 if let Some(prev) = self.block_ids.get(&(entry.height - 1)) {
                     if block.header.prev_id != *prev {
                         return Err(WalletError::BadNodeData(format!(
@@ -266,8 +421,16 @@ impl Wallet {
                 }
                 self.block_ids.insert(entry.height, id);
                 self.headers.push_back(block.header);
-                while self.headers.len() > self.params.difficulty_ancestors() {
+                while self.headers.len() > keep_headers {
                     self.headers.pop_front();
+                }
+                if check.is_some() {
+                    self.checked_through = Some(entry.height);
+                    if entry.height.is_multiple_of(self.params.seed_epoch) {
+                        self.keep_key_ids([(entry.height, id)]);
+                    }
+                } else {
+                    self.checked_through = None;
                 }
                 self.synced_height = entry.height;
                 from += 1;
@@ -284,76 +447,164 @@ impl Wallet {
         let synced = self.synced_height;
         self.refresh_pending(node);
         self.px.resolve_lookups(node)?;
-        self.px.sync_contracts(node, synced)?;
         self.px.retain_witnesses(synced, RING_RETENTION_BLOCKS);
         Ok(self.synced_height)
     }
 
-    /// The headers a header check of the next blocks starts from, or `None`
-    /// when no check runs (`restore_check`, `verify_headers`) or nothing is
-    /// to be scanned. The context is the `difficulty_ancestors` headers
-    /// before the next block: from the genesis (the check is then anchored,
-    /// and the headers between the genesis and the next block are checked
-    /// too), else the wallet's own last headers, else the node's.
-    fn header_context(
-        &self,
-        node: &dyn NodeApi,
-        info: &blacksilk_rpc::Info,
-    ) -> Result<Option<HeaderContext>, WalletError> {
+    /// Adds RandomX key-block ids from a header check, keeping the last
+    /// [`KEPT_KEY_IDS`].
+    fn keep_key_ids(&mut self, ids: impl IntoIterator<Item = (u64, Hash)>) {
+        self.key_ids.extend(ids);
+        while self.key_ids.len() > KEPT_KEY_IDS {
+            self.key_ids.pop_first();
+        }
+    }
+
+    /// Where the header check of the next blocks starts, or `None` when no
+    /// check runs (`restore_check`, `verify_headers`) or nothing is to be
+    /// scanned. From the wallet's own last headers when an earlier check
+    /// covered them from the genesis (`checked_through`) and they hold the
+    /// context, with the key-block ids the next headers need; else from the
+    /// genesis (W3-39b: every check is anchored there).
+    fn header_start(&self, info: &blacksilk_rpc::Info) -> Option<HeaderStart> {
         if !(self.verify_headers || self.restore_check) || self.synced_height >= info.height {
-            return Ok(None);
+            return None;
         }
         let p = &self.params;
-        let from = self.synced_height + 1;
-        let lo = from.saturating_sub(p.difficulty_ancestors() as u64);
-        // Headers lo.max(1) ..= from - 1.
-        let low = lo.max(1);
-        let mut ctx: Vec<BlockHeader> = self
-            .headers
-            .iter()
-            .filter(|h| h.height >= low && h.height < from)
-            .copied()
-            .collect();
-        let covered = ctx.first().map(|h| h.height) == Some(low) && ctx.len() as u64 == from - low
-            || from == low;
-        if !covered {
-            ctx = fetch_headers(node, low, from - 1, p.network_id)?;
+        let synced = self.synced_height;
+        if synced == 0 || self.checked_through != Some(synced) {
+            return Some(HeaderStart::Genesis);
         }
-        if let (Some(last), Some(ours)) = (ctx.last(), self.block_ids.get(&(from - 1))) {
-            if last.id(p.network_id) != *ours {
-                return Err(WalletError::BadNodeData(
-                    "the node's headers do not end at the wallet's last block".into(),
-                ));
-            }
+        let ctx: Vec<BlockHeader> = self.headers.iter().copied().collect();
+        let first = ctx.first().map_or(0, |h| h.height);
+        let from_genesis = first == 1;
+        let usable = ctx.last().map(|h| h.height) == Some(synced)
+            && ctx.windows(2).all(|w| w[1].height == w[0].height + 1)
+            && (from_genesis || ctx.len() >= HeaderCheck::context_len(p));
+        if !usable {
+            return Some(HeaderStart::Genesis);
         }
-        let (start, to_check) = if lo == 0 {
-            (vec![p.genesis], ctx)
-        } else {
-            (ctx, Vec::new())
-        };
-        // RandomX keys below the headers the check holds: their ids come
-        // from the node (not themselves checked).
-        let start_height = start[0].height;
-        let first_checked = start.last().map_or(from, |h| h.height + 1);
+        // The key blocks of the next headers that lie below the context.
         let key = |h: u64| seed_height(h, p.seed_epoch, p.seed_lag);
         let mut seeds = Vec::new();
-        let mut k = key(first_checked);
+        let mut k = key(synced + 1);
         while k <= key(info.height) {
-            if k < start_height || k == 0 {
+            if k < first {
                 let id = if k == 0 {
                     p.genesis_id()
                 } else {
-                    fetch_headers(node, k, k, p.network_id)?[0].id(p.network_id)
+                    match self.key_ids.get(&k) {
+                        Some(id) => *id,
+                        None => return Some(HeaderStart::Genesis),
+                    }
                 };
                 seeds.push((k, id));
             }
             k += p.seed_epoch;
         }
-        Ok(Some(HeaderContext {
-            start,
-            to_check,
-            seeds,
-        }))
+        let mut start = ctx;
+        if from_genesis {
+            start.insert(0, p.genesis);
+        }
+        Some(HeaderStart::Resume { start, seeds })
+    }
+
+    /// Builds the PX tree and the registrations below the first block the
+    /// wallet scans (block `base`, the synced height; dossier 39 W1,
+    /// W3-39b). From the genesis nothing is fetched. Above it the node's two
+    /// lists (fetched whole: they tell the node nothing) are checked against
+    /// the blocks they name, each bound to the header chain (`ids`: the
+    /// header check's own when it ran from the genesis, else the node's
+    /// header feed, which must lead to the wallet's checked header at the
+    /// base when it has one):
+    /// - the block of the last commitment listed must hold exactly the
+    ///   commitments listed at its height. A node that labels commitments of
+    ///   later blocks as older ones (withheld blocks behind a stale tip, the
+    ///   residual of W3-39) is caught here; a list that ends early gives a
+    ///   root no block accepts once it is 100 blocks old (`crate::tree`);
+    /// - every block the contract list names is read, and its deploys give
+    ///   the registrations; the list must state exactly those. A node can
+    ///   leave a deploy out of its list altogether: the wallet then does
+    ///   not know that contract and refuses to use it.
+    ///
+    /// The first scanned block must then extend the base block.
+    fn backfill(
+        &mut self,
+        node: &dyn NodeApi,
+        lists: BackfillLists,
+        mut ids: BTreeMap<u64, Hash>,
+    ) -> Result<(), WalletError> {
+        let base = self.synced_height;
+        let nid = self.params.network_id;
+        if base == 0 {
+            self.px.set_base(0, &[], false, Vec::new())?;
+            self.block_ids.insert(0, self.params.genesis_id());
+            return Ok(());
+        }
+        let blocks = lists.blocks();
+        if blocks.contains(&0) {
+            return Err(WalletError::BadNodeData(
+                "the node lists records in the genesis block".into(),
+            ));
+        }
+        if !blocks.iter().chain([&base]).all(|h| ids.contains_key(h)) {
+            let lo = blocks.first().copied().unwrap_or(base);
+            let headers = fetch_headers(node, lo, base, nid)?;
+            let top = headers.last().expect("lo <= base").id(nid);
+            let checked = self
+                .headers
+                .back()
+                .filter(|h| h.height == base && self.checked_through == Some(base));
+            if checked.is_some_and(|h| h.id(nid) != top) {
+                return Err(WalletError::BadNodeData(
+                    "the node's headers do not end at the wallet's checked header".into(),
+                ));
+            }
+            ids = headers.iter().map(|h| (h.height, h.id(nid))).collect();
+        }
+        let last = lists.commitments.last().map(|e| e.0);
+        let mut contracts = Vec::new();
+        for &h in &blocks {
+            let block = fetch_block(node, h, &ids[&h], nid)?;
+            if last == Some(h) {
+                let listed: Vec<Digest> = lists
+                    .commitments
+                    .iter()
+                    .filter(|e| e.0 == h)
+                    .map(|e| e.1)
+                    .collect();
+                let held: Vec<Digest> = block
+                    .txs
+                    .iter()
+                    .filter_map(|t| match t {
+                        Transaction::Px(p) => Some(p.commitments),
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect();
+                if listed != held {
+                    return Err(WalletError::BadNodeData(format!(
+                        "the node's commitment list does not end like block {h}: it lists \
+                         other commitments at that height than the block holds (commitments \
+                         of later blocks labelled as older ones, or some left out)"
+                    )));
+                }
+            }
+            let derived = deployed(&block.txs, h)?;
+            let listed: Vec<&rpc::PxContractEntry> =
+                lists.contracts.iter().filter(|c| c.height == h).collect();
+            if !listed_as(&listed, &derived) {
+                return Err(WalletError::BadNodeData(format!(
+                    "the node's contract list does not state the registrations of block {h}'s \
+                     deploys"
+                )));
+            }
+            contracts.extend(derived);
+        }
+        self.px
+            .set_base(base, &lists.commitments, true, contracts)?;
+        self.block_ids.insert(base, ids[&base]);
+        Ok(())
     }
 
     /// Checks the header chain at every sync (dossier 39 W5; opt-in for
@@ -366,6 +617,12 @@ impl Wallet {
     /// Whether the next sync checks the header chain.
     pub fn verifies_headers(&self) -> bool {
         self.verify_headers || self.restore_check
+    }
+
+    /// The height up to which the wallet's header chain was checked from
+    /// the genesis (`None` if its last block was scanned unchecked).
+    pub fn headers_checked_through(&self) -> Option<u64> {
+        self.checked_through
     }
 
     /// Replaces the header check's proof-of-work function (RandomX light

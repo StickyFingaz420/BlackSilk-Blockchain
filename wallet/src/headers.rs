@@ -1,4 +1,5 @@
-//! Header-chain checks on the blocks a wallet scans (dossier 39 W5, F39-10).
+//! Header-chain checks on the blocks a wallet scans (dossier 39 W5, F39-10;
+//! W3-39b).
 //!
 //! Without them a wallet trusts its node for proof of work: a node could
 //! serve a forged block, for example one that hides an old spend from a
@@ -17,17 +18,19 @@
 //!   which ones are checked. A node that forged a fraction `f` of `n`
 //!   headers is caught with probability about `1 − (1 − f)^HEADER_SAMPLES`.
 //!
-//! **Anchor.** The difficulty is recomputed from the wallet's first header
-//! on. When that is the genesis (a restore from a height at most
-//! `difficulty_ancestors()` blocks above it), the whole chain's difficulty
-//! follows from the genesis. Otherwise the check starts from
-//! `difficulty_ancestors()` headers the node served, whose own difficulty is
-//! not checked: a node could then serve a consistent chain at a lower
-//! difficulty of its choice, which proves internal consistency and real
-//! work at the claimed difficulty, not the chain's absolute work.
-//! [`HeaderCheck::is_anchored`] says which; a genesis-anchored check for
-//! every restore needs a header feed from the genesis (not provided by the
-//! node yet).
+//! **Anchored at the genesis.** Every check starts at the genesis
+//! ([`HeaderCheck::from_genesis`]): the wallet reads the headers below the
+//! blocks it scans from the node's header feed (`/headers`, 100 bytes each),
+//! so the difficulty of every header, at any restore height, follows from
+//! the genesis by the LWMA rule, and the sampled work is drawn from the whole
+//! chain. A later check continues from the wallet's own last headers when
+//! an earlier one checked them from the genesis ([`HeaderCheck::resume`]).
+//! A node can therefore not serve a consistent chain at a lower difficulty
+//! of its choice. It can still serve a chain it mined itself from the
+//! genesis under the rule (timestamps spaced at the target keep the
+//! difficulty at the genesis level): the check proves work under the rule,
+//! not that the chain is the network's heaviest, which only other nodes can
+//! show.
 //!
 //! On by default for restores (the first sync of a restored wallet),
 //! opt-in for routine syncs (decisions, "Agent 39").
@@ -41,10 +44,10 @@ use rand_chacha::ChaCha20Rng;
 use std::collections::{HashMap, VecDeque};
 
 /// Headers whose proof of work is checked per sync, in expectation, besides
-/// the last one.
+/// the first scanned one and the last.
 pub const HEADER_SAMPLES: u64 = 16;
 
-/// Checks a run of headers (module docs).
+/// Checks a run of headers from the genesis (module docs).
 pub struct HeaderCheck<'a> {
     params: &'a ChainParams,
     pow: &'a dyn PowFunction,
@@ -53,7 +56,6 @@ pub struct HeaderCheck<'a> {
     recent: VecDeque<(BlockHeader, Hash, u128)>,
     /// Ids of the blocks at RandomX key heights.
     seeds: HashMap<u64, Hash>,
-    anchored: bool,
     /// A header's work is checked when a draw is below this.
     threshold: u64,
     rng: ChaCha20Rng,
@@ -63,30 +65,64 @@ pub struct HeaderCheck<'a> {
 }
 
 impl<'a> HeaderCheck<'a> {
-    /// A check continuing from `start`: consecutive headers, oldest first,
-    /// either from the genesis (anchored) or at least
-    /// `ChainParams::difficulty_ancestors` of them. `expected` is about how
-    /// many headers will be checked (for the sampling rate), `samples` how
-    /// many of them should have their work checked, and `now` the local time.
-    pub fn new(
+    /// A check from the genesis. `expected` is about how many headers will
+    /// be checked (for the sampling rate), `samples` how many of them should
+    /// have their work checked, and `now` the local time.
+    pub fn from_genesis(
+        params: &'a ChainParams,
+        pow: &'a dyn PowFunction,
+        expected: u64,
+        samples: u64,
+        now: u64,
+    ) -> Result<Self, String> {
+        Self::build(
+            params,
+            pow,
+            std::slice::from_ref(&params.genesis),
+            &[],
+            expected,
+            samples,
+            now,
+        )
+    }
+
+    /// A check continuing one that checked `start` from the genesis (the
+    /// wallet's own last headers, [`HeaderCheck::last`]): consecutive
+    /// headers, oldest first, either from the genesis or at least
+    /// `max(difficulty_ancestors, median_time_window)` of them, with the ids
+    /// of the RandomX key blocks below them (`seeds`, from the same check).
+    /// The caller vouches that they were checked; nothing here can tell.
+    pub fn resume(
         params: &'a ChainParams,
         pow: &'a dyn PowFunction,
         start: &[BlockHeader],
+        seeds: &[(u64, Hash)],
+        expected: u64,
+        samples: u64,
+        now: u64,
+    ) -> Result<Self, String> {
+        Self::build(params, pow, start, seeds, expected, samples, now)
+    }
+
+    fn build(
+        params: &'a ChainParams,
+        pow: &'a dyn PowFunction,
+        start: &[BlockHeader],
+        seeds_below: &[(u64, Hash)],
         expected: u64,
         samples: u64,
         now: u64,
     ) -> Result<Self, String> {
         let first = start.first().ok_or("no headers to start from")?;
         let nid = params.network_id;
-        let anchored = first.height == 0;
-        if anchored && *first != params.genesis {
+        if first.height == 0 && *first != params.genesis {
             return Err("the node's genesis header is not this wallet's".into());
         }
-        if !anchored && (start.len() as u64) < params.difficulty_ancestors() as u64 {
+        if first.height != 0 && start.len() < Self::context_len(params) {
             return Err("too few headers to recompute the difficulty".into());
         }
         let mut recent = VecDeque::new();
-        let mut seeds = HashMap::new();
+        let mut seeds: HashMap<u64, Hash> = seeds_below.iter().copied().collect();
         let mut cumulative = 0u128;
         for (i, h) in start.iter().enumerate() {
             let id = h.id(nid);
@@ -118,7 +154,6 @@ impl<'a> HeaderCheck<'a> {
             pow,
             recent,
             seeds,
-            anchored,
             threshold,
             rng: ChaCha20Rng::from_seed(seed),
             now,
@@ -128,15 +163,9 @@ impl<'a> HeaderCheck<'a> {
         Ok(check)
     }
 
-    /// Whether the difficulty is recomputed from the genesis (module docs).
-    pub fn is_anchored(&self) -> bool {
-        self.anchored
-    }
-
-    /// Records the id of the block at RandomX key height `height`, when that
-    /// lies below the headers checked (it is not itself checked).
-    pub fn add_seed(&mut self, height: u64, id: Hash) {
-        self.seeds.entry(height).or_insert(id);
+    /// Headers a check keeps as the context of the next one.
+    pub fn context_len(params: &ChainParams) -> usize {
+        params.difficulty_ancestors().max(params.median_time_window)
     }
 
     /// Whether the id of the key block at `height` is known.
@@ -144,16 +173,25 @@ impl<'a> HeaderCheck<'a> {
         self.seeds.contains_key(&height)
     }
 
-    /// The height of the first header the check starts from.
-    pub fn start_height(&self) -> Option<u64> {
-        self.recent.front().map(|(h, _, _)| h.height)
+    /// The ids of the RandomX key blocks checked or given, by height.
+    pub fn seeds(&self) -> impl Iterator<Item = (u64, Hash)> + '_ {
+        self.seeds.iter().map(|(h, id)| (*h, *id))
+    }
+
+    /// The last header checked (or given) and its id.
+    pub fn last(&self) -> (BlockHeader, Hash) {
+        let (h, id, _) = self.recent.back().expect("never empty");
+        (*h, *id)
+    }
+
+    /// The headers the check holds, oldest first, without the genesis: the
+    /// context a later check resumes from ([`Self::resume`]).
+    pub fn context(&self) -> impl Iterator<Item = BlockHeader> + '_ {
+        self.recent.iter().map(|e| e.0).filter(|h| h.height > 0)
     }
 
     fn trim(&mut self) {
-        let keep = self
-            .params
-            .difficulty_ancestors()
-            .max(self.params.median_time_window);
+        let keep = Self::context_len(self.params);
         while self.recent.len() > keep {
             self.recent.pop_front();
         }

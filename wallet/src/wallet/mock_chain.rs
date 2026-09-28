@@ -6,13 +6,18 @@
 //!
 //! The PX transactions have no proofs and undecryptable ciphertexts: the
 //! wallet never verifies proofs, and these tests need only commitments,
-//! nullifiers and anchors.
+//! nullifiers and anchors. Deploys carry real programs (their registrations
+//! are what the wallet derives) and placeholder signatures and proofs.
 
 use crate::node::NodeApi;
 use crate::px::{anchor_height, digest_hex};
 use blacksilk_chain::block::Block;
+use blacksilk_consensus::difficulty::next_difficulty;
 use blacksilk_consensus::{BlockHeader, ChainParams, Hash, HeaderChain, PowFunction};
+use blacksilk_crypto::bulletproofs_plus::BppProof;
+use blacksilk_crypto::clsag::Clsag;
 use blacksilk_crypto::keys::Address;
+use blacksilk_crypto::{Point, Scalar};
 use blacksilk_px::delivery::{seal, Address as PxAddress, CIPHERTEXT_BYTES};
 use blacksilk_px::perm::HostPerm;
 use blacksilk_px::state::State;
@@ -20,8 +25,9 @@ use blacksilk_px_core::record::{output_rho, Record};
 use blacksilk_px_core::{Digest, P};
 use blacksilk_rpc as rpc;
 use blacksilk_tx::builder::{build_coinbase, Payment};
-use blacksilk_tx::px::{PxTx, Window};
-use blacksilk_tx::types::Transaction;
+use blacksilk_tx::params::RING_SIZE;
+use blacksilk_tx::px::{PxDeploy, PxTx, Registration, Window};
+use blacksilk_tx::types::{Input, Output, Transaction};
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use std::cell::RefCell;
@@ -57,6 +63,18 @@ pub(crate) struct Lies {
     pub omit: Vec<u64>,
     /// `/px/commitments`: the commitment at this position is replaced.
     pub replace: Option<(u64, Digest)>,
+    /// A stale tip: `/info`, `/blocks` and `/headers` stop at this height
+    /// (the blocks above it are withheld; `/px/commitments` still lists
+    /// their commitments, under whatever heights `relabel` gives).
+    pub tip: Option<u64>,
+    /// `/px/contracts`: the list is changed by this before it is served.
+    #[allow(clippy::type_complexity)]
+    pub contracts: Option<Box<dyn Fn(&mut Vec<rpc::PxContractEntry>)>>,
+    /// `/blocks`: the block at this height is changed by this (and its
+    /// `tx_root` recomputed) before it is served; `/headers` serves the
+    /// true header.
+    #[allow(clippy::type_complexity)]
+    pub alter_block: Option<(u64, Box<dyn Fn(&mut Block)>)>,
 }
 
 pub(crate) struct MockChain {
@@ -81,6 +99,16 @@ pub(crate) struct MockChain {
     pub forge: bool,
     /// Every `/px/commitments` request (`from`).
     pub commitment_requests: RefCell<Vec<u64>>,
+    /// Every `/headers` request (`from`, `count`).
+    pub header_requests: RefCell<Vec<(u64, u64)>>,
+    /// Every registration, in chain order, as an honest node lists it.
+    pub contracts: Vec<rpc::PxContractEntry>,
+    /// The difficulty of the header at a height, instead of the LWMA
+    /// rule's over the mock's own headers (`None`: the rule's). Once it
+    /// returns `Some`, the headers are no longer checked by `headers`.
+    #[allow(clippy::type_complexity)]
+    pub difficulty: Option<Box<dyn Fn(u64) -> Option<u64>>>,
+    forged_headers: bool,
 }
 
 impl MockChain {
@@ -106,11 +134,99 @@ impl MockChain {
             lies: Lies::default(),
             forge: false,
             commitment_requests: RefCell::new(Vec::new()),
+            header_requests: RefCell::new(Vec::new()),
+            contracts: Vec::new(),
+            difficulty: None,
+            forged_headers: false,
         }
     }
 
     pub fn height(&self) -> u64 {
         self.blocks.len() as u64 - 1
+    }
+
+    /// The height the node reports (a stale tip, or the chain's).
+    pub fn served_height(&self) -> u64 {
+        self.lies.tip.unwrap_or(self.height()).min(self.height())
+    }
+
+    /// The LWMA difficulty of the next header over the mock's own headers
+    /// (as `HeaderChain` computes it).
+    fn next_difficulty(&self) -> u64 {
+        let p = &self.params;
+        let from = self.blocks.len().saturating_sub(p.difficulty_ancestors());
+        let mut cumulative = 0u128;
+        let mut ts = Vec::new();
+        let mut cd = Vec::new();
+        for (i, b) in self.blocks.iter().enumerate() {
+            cumulative += b.header.difficulty as u128;
+            if i >= from {
+                ts.push(b.header.timestamp);
+                cd.push(cumulative);
+            }
+        }
+        next_difficulty(
+            &ts,
+            &cd,
+            p.target_block_time,
+            p.difficulty_window,
+            p.initial_difficulty,
+        )
+    }
+
+    /// A deploy of `programs` with placeholder inputs, outputs, signatures
+    /// and range proof (the wallet reads only its registrations, key image
+    /// and salt; it decodes like any deploy).
+    pub fn deploy(&mut self, programs: Vec<Registration>) -> PxDeploy {
+        let point = |rng: &mut ChaCha20Rng| {
+            let mut b = [0u8; 32];
+            rng.fill_bytes(&mut b);
+            Point::from_point(blacksilk_crypto::hash::hash_to_point("mock", &[&b]))
+        };
+        let mut ring = [0u64; RING_SIZE];
+        for (i, r) in ring.iter_mut().enumerate() {
+            *r = i as u64;
+        }
+        let outputs = (0..2)
+            .map(|_| Output {
+                one_time_key: point(&mut self.rng),
+                ephemeral: point(&mut self.rng),
+                view_tag: 0,
+                commitment: point(&mut self.rng),
+                enc_amount: [0; 8],
+                enc_anchor: [0; 16],
+            })
+            .collect();
+        let rounds = blacksilk_crypto::bulletproofs_plus::rounds(2).expect("two outputs");
+        let p = point(&mut self.rng);
+        let mut salt = [0u8; 32];
+        self.rng.fill_bytes(&mut salt);
+        PxDeploy {
+            inputs: vec![Input {
+                key_image: point(&mut self.rng),
+                ring,
+            }],
+            outputs,
+            fee: 0,
+            salt,
+            programs,
+            pseudo_outs: vec![p],
+            range_proof: BppProof {
+                a: p,
+                a1: p,
+                b: p,
+                r1: Scalar::ZERO,
+                s1: Scalar::ZERO,
+                d1: Scalar::ZERO,
+                l: vec![p; rounds],
+                r: vec![p; rounds],
+            },
+            signatures: vec![Clsag {
+                c0: Scalar::ZERO,
+                s: [Scalar::ZERO; RING_SIZE],
+                d: p,
+            }],
+        }
     }
 
     /// A PX transaction anchored like an honest wallet synced to the tip:
@@ -170,6 +286,11 @@ impl MockChain {
     /// Mines a block with a coinbase to `to` and the PX transactions `px`,
     /// which must satisfy the consensus PX rules (the anchors).
     pub fn mine_with(&mut self, to: &Address, px: Vec<PxTx>) -> u64 {
+        self.mine_deploys(to, px, vec![])
+    }
+
+    /// As [`Self::mine_with`], with `deploys` after the PX transactions.
+    pub fn mine_deploys(&mut self, to: &Address, px: Vec<PxTx>, deploys: Vec<PxDeploy>) -> u64 {
         let height = self.height() + 1;
         let coinbase = build_coinbase(
             height,
@@ -197,26 +318,57 @@ impl MockChain {
                 self.commitments.push((height, cm));
             }
         }
+        for d in &deploys {
+            self.contracts.push(rpc::PxContractEntry {
+                height,
+                id: digest_hex(&d.contract_id()),
+                programs: d
+                    .programs
+                    .iter()
+                    .map(|r| {
+                        let b = r.budget;
+                        rpc::PxProgramEntry {
+                            id: hex::encode(
+                                blacksilk_zkvm::Program::from_elf(&r.elf)
+                                    .expect("the mock deploys loadable programs")
+                                    .id(),
+                            ),
+                            budget: [
+                                b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
+                            ],
+                        }
+                    })
+                    .collect(),
+            });
+        }
         let mut txs = vec![Transaction::Coinbase(coinbase)];
         txs.extend(px.into_iter().map(|t| Transaction::Px(Box::new(t))));
-        let template = self.headers.template();
+        txs.extend(
+            deploys
+                .into_iter()
+                .map(|t| Transaction::PxDeploy(Box::new(t))),
+        );
+        let forged = self.difficulty.as_ref().and_then(|f| f(height));
+        self.forged_headers |= forged.is_some();
         let mut block = Block {
             header: BlockHeader {
-                version: template.version,
+                version: self.params.epoch_at(height).header_version,
                 height,
-                prev_id: template.prev_id,
+                prev_id: self.id(height - 1),
                 timestamp: self.params.genesis.timestamp + self.spacing * height,
-                difficulty: template.difficulty,
+                difficulty: forged.unwrap_or_else(|| self.next_difficulty()),
                 tx_root: [0; 32],
                 nonce: 0,
             },
             txs,
         };
         block.header.tx_root = block.compute_tx_root();
-        let now = block.header.timestamp;
-        self.headers
-            .accept(block.header, now)
-            .expect("valid header");
+        if !self.forged_headers {
+            let now = block.header.timestamp;
+            self.headers
+                .accept(block.header, now)
+                .expect("valid header");
+        }
         self.first_output.push(self.outputs);
         self.outputs += block
             .txs
@@ -255,20 +407,22 @@ impl MockChain {
 
 impl NodeApi for MockChain {
     fn info(&self) -> Result<rpc::Info, String> {
+        let height = self.served_height();
         Ok(rpc::Info {
             network: "regtest".into(),
             network_id: self.params.network_id,
-            height: self.height(),
-            tip: hex::encode(self.id(self.height())),
-            difficulty: self.blocks.last().unwrap().header.difficulty,
+            height,
+            tip: hex::encode(self.id(height)),
+            difficulty: self.blocks[height as usize].header.difficulty,
             generated: 0,
             mempool_txs: 0,
             mempool_bytes: 0,
             outputs: self.outputs,
             peers: 0,
-            header_height: self.height(),
+            header_height: height,
             deepest_reorg: 0,
             misbehaving_disconnects: 0,
+            template_ready: None,
             genesis_id: Some(hex::encode(self.params.genesis_id())),
             consensus_fingerprint: None,
             build_commit: None,
@@ -277,19 +431,38 @@ impl NodeApi for MockChain {
     }
 
     fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
-        let end = from.saturating_add(count).min(self.height() + 1);
+        let end = from.saturating_add(count).min(self.served_height() + 1);
         Ok(rpc::Blocks {
             blocks: (from.max(1)..end)
                 .map(|h| {
-                    let b = &self.blocks[h as usize];
+                    let mut b = self.blocks[h as usize].clone();
+                    if let Some((at, alter)) = &self.lies.alter_block {
+                        if *at == h {
+                            alter(&mut b);
+                            b.header.tx_root = b.compute_tx_root();
+                        }
+                    }
                     rpc::BlockEntry {
                         height: h,
-                        id: hex::encode(self.id(h)),
+                        id: hex::encode(b.id(self.params.network_id)),
                         first_output: self.first_output[h as usize],
                         hex: hex::encode(b.encode()),
                     }
                 })
                 .collect(),
+        })
+    }
+
+    fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+        self.header_requests.borrow_mut().push((from, count));
+        let end = from.saturating_add(count).min(self.served_height() + 1);
+        let bytes: Vec<u8> = (from..end)
+            .flat_map(|h| self.blocks[h as usize].header.to_bytes())
+            .collect();
+        Ok(rpc::Headers {
+            from,
+            headers: hex::encode(bytes),
+            height: self.served_height(),
         })
     }
 
@@ -316,17 +489,22 @@ impl NodeApi for MockChain {
             commitments: page,
             total,
             root: digest_hex(&self.px.root()),
-            height: self.lies.report_height.unwrap_or(self.height()),
+            height: self.lies.report_height.unwrap_or(self.served_height()),
             next: (end < total).then_some(end),
         })
     }
 
     fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
+        let mut all = self.contracts.clone();
+        if let Some(f) = &self.lies.contracts {
+            f(&mut all);
+        }
+        let total = all.len() as u64;
         Ok(rpc::PxContracts {
             from,
-            contracts: vec![],
-            total: 0,
-            height: self.height(),
+            contracts: all.into_iter().skip(from as usize).take(1_024).collect(),
+            total,
+            height: self.served_height(),
         })
     }
 }

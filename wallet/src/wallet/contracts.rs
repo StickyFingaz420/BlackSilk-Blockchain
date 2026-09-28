@@ -1219,7 +1219,8 @@ pub fn check_vault_deploy(programs: &[Registration]) -> Result<(), WalletError> 
             }
             if r.abi != ABI_VERSION || r.out_words != vault::OUT_WORDS {
                 return Err(WalletError::Contract(
-                    "the vault must be registered with the current call ABI and its one output                      word (vault::OUT_WORDS)"
+                    "the vault must be registered with the current call ABI and its one output \
+                     word (vault::OUT_WORDS)"
                         .into(),
                 ));
             }
@@ -1502,7 +1503,10 @@ mod tests {
                 budget: [
                     b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
                 ],
+                abi: ABI_VERSION,
+                out_words: vault::OUT_WORDS,
             }],
+            from_deploy: true,
         }];
         r
     }

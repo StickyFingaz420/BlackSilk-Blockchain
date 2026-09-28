@@ -687,7 +687,10 @@ fn run(args: Args) -> Result<(), String> {
                         println!("contract {} (height {})", c.id, c.height);
                         for p in &c.programs {
                             let tag = if p.id == vault_id { " (vault)" } else { "" };
-                            println!("  program {}{tag}", p.id);
+                            println!(
+                                "  program {}{tag} (ABI {}, {} output words)",
+                                p.id, p.abi, p.out_words
+                            );
                         }
                         // A contract's trust boundary is its whole program
                         // set (docs/px.md §13.4).

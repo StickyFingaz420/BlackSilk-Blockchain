@@ -6,6 +6,7 @@ use super::mock_chain::{MockChain, ZeroPow};
 use super::*;
 use crate::px::digest_hex;
 use blacksilk_consensus::{Hash, PowFunction};
+use blacksilk_px_core::Digest;
 use std::sync::Arc;
 
 fn wallet() -> Wallet {
@@ -354,14 +355,17 @@ fn a_restore_refuses_a_header_with_bad_proof_of_work() {
     assert!((2..120).contains(&calls), "{calls} hashes for 300 headers");
 }
 
-/// W5: a restore from a height above the genesis recomputes the difficulty
-/// from the node's headers before it (not anchored at the genesis), and a
-/// routine sync checks only when asked.
+/// W5, W3-39b: a restore from a height above the genesis checks the header
+/// chain from the genesis (read from the header feed, in one request here:
+/// no block below the restore height is downloaded for it), and a routine
+/// sync checks only when asked.
 #[test]
 fn the_header_check_from_a_later_restore_and_opt_in() {
     let mut chain = fast_chain(10, 200);
     let mut w = restored(None, 150);
     assert_eq!(w.sync(&chain).unwrap(), 200);
+    assert_eq!(w.headers_checked_through(), Some(200));
+    assert!(chain.header_requests.borrow().contains(&(1, 149)));
     // Routine syncs are not checked unless asked...
     let to = wallet().primary();
     chain.mine(&to, 0);
@@ -375,6 +379,92 @@ fn the_header_check_from_a_later_restore_and_opt_in() {
     w.set_header_pow(Arc::new(ZeroPow));
     assert!(w.sync(&chain).is_err());
     assert_eq!(w.synced_height(), 200);
+    // The unchecked wallet's header chain is no longer checked from the
+    // genesis: a check asked for later starts from the genesis again.
+    assert_eq!(unchecked.headers_checked_through(), None);
+}
+
+/// W3-39b cost measurement (ignored; run with `--ignored --nocapture`): a
+/// restore at the tip of a chain of 3 000 headers reads them from the header
+/// feed and checks them from the genesis, with the stand-in proof of work
+/// (the LWMA, time and link checks alone) and with RandomX light mode (the
+/// sampled hashes are computed, then accepted: the chain is mined with the
+/// stand-in).
+#[test]
+#[ignore]
+fn header_feed_cost_for_3000_headers() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    struct Measured(blacksilk_consensus::RandomXPow, AtomicU64);
+    impl PowFunction for Measured {
+        fn pow_hash(&self, seed: &Hash, header: &[u8]) -> Hash {
+            self.1.fetch_add(1, Ordering::Relaxed);
+            let _ = self.0.pow_hash(seed, header);
+            [0; 32]
+        }
+    }
+    let chain = fast_chain(18, 3_000);
+    let light = Arc::new(Measured(
+        blacksilk_consensus::RandomXPow::new(),
+        AtomicU64::new(0),
+    ));
+    for (name, pow) in [
+        ("stand-in", Arc::new(ZeroPow) as Arc<dyn PowFunction>),
+        ("RandomX light", light.clone() as Arc<dyn PowFunction>),
+    ] {
+        let mut w = restored(Some(pow), 3_000);
+        chain.header_requests.borrow_mut().clear();
+        let t = std::time::Instant::now();
+        assert_eq!(w.sync(&chain).unwrap(), 3_000);
+        let elapsed = t.elapsed();
+        let reqs = chain.header_requests.borrow();
+        let headers: u64 = reqs.iter().map(|r| r.1).sum();
+        eprintln!(
+            "{name}: sync {elapsed:?}; {headers} headers requested ({} bytes, {} hex) in {} \
+             requests; RandomX hashes so far {}",
+            headers * 100,
+            headers * 200,
+            reqs.len(),
+            light.1.load(Ordering::Relaxed)
+        );
+    }
+}
+
+/// W3-39b: a checked wallet's next check continues from its own last
+/// headers (checked from the genesis by the restore, and saved in the
+/// wallet file): it reads no header below them, across a RandomX key
+/// switch whose key block lies below them.
+#[test]
+fn a_later_check_continues_from_the_wallets_own_checked_headers() {
+    let mut chain = fast_chain(17, 2_150);
+    let mut w = restored(None, 2_000);
+    assert_eq!(w.sync(&chain).unwrap(), 2_150);
+    assert_eq!(w.headers_checked_through(), Some(2_150));
+    let to = wallet().primary();
+    // Past the key switch at 2 113, the key block is 2 048, below the 87
+    // headers the wallet keeps (2 064 to 2 150).
+    while chain.height() < 2_200 {
+        chain.mine(&to, 0);
+    }
+    let mut w = Wallet::from_json(&w.to_json()).unwrap();
+    w.set_header_pow(Arc::new(ZeroPow));
+    w.set_verify_headers(true);
+    chain.header_requests.borrow_mut().clear();
+    assert_eq!(w.sync(&chain).unwrap(), 2_200);
+    assert_eq!(w.headers_checked_through(), Some(2_200));
+    assert!(
+        chain
+            .header_requests
+            .borrow()
+            .iter()
+            .all(|&(from, _)| from >= 2_150),
+        "{:?}",
+        chain.header_requests.borrow()
+    );
+    // A forged header after it is still refused.
+    chain.mine(&to, 0);
+    let tip = chain.height() as usize;
+    chain.blocks[tip].header.difficulty += 1;
+    assert!(w.sync(&chain).is_err());
 }
 
 /// CB-B2 note (demonstrated on the base, 47179f1: the transaction was kept
@@ -453,4 +543,184 @@ fn the_tree_survives_the_wallet_file_and_a_damaged_one_is_refused() {
     assert!(old.take_warnings().iter().any(|m| m.contains("rescans")));
     assert_eq!(old.sync(&chain).unwrap(), 40);
     assert_eq!(old.px.tree.as_ref().unwrap().root(), chain.roots[40]);
+}
+
+/// W3-39b item 1 (header feed): a node serves a chain whose headers are
+/// consistent with the LWMA rule from `difficulty_ancestors` headers before
+/// the restore height on, but lighter than the rule from the genesis gives
+/// below that (difficulty 1 where the honest chain's has risen). A restore
+/// above those headers is refused: the check recomputes the difficulty from
+/// the genesis. Honest restores at any height pass.
+#[test]
+fn a_restore_refuses_a_chain_lighter_than_the_genesis_rule() {
+    let ancestors = ChainParams::regtest().difficulty_ancestors() as u64;
+    let honest = fast_chain(13, 200);
+    for restore in [ancestors + 20, 150] {
+        let start = restore - ancestors;
+        let mut chain = MockChain::new(13);
+        chain.spacing = 1;
+        chain.difficulty = Some(Box::new(move |h| (h < start).then_some(1)));
+        let to = wallet().primary();
+        for _ in 0..200 {
+            chain.mine(&to, 0);
+        }
+        assert!(honest.blocks[start as usize - 1].header.difficulty > 1);
+        let mut w = restored(None, restore);
+        let e = w.sync(&chain).unwrap_err();
+        assert!(e.to_string().contains("LWMA"), "{restore}: {e}");
+        assert_eq!(w.synced_height(), restore - 1, "{restore}: nothing scanned");
+    }
+    for restore in [1, ancestors, ancestors + 1, 150, 200] {
+        let mut w = restored(None, restore);
+        assert_eq!(w.sync(&honest).unwrap(), 200, "{restore}");
+        assert_eq!(w.headers_checked_through(), Some(200), "{restore}");
+    }
+}
+
+/// W3-39b item 3 (the stale-tip relabel residual of W3-39): the node
+/// withholds the block of a PX transaction (tip 152 of 160) and lists that
+/// block's commitments under a height below the restore height (31). No PX
+/// transaction lies between, so no anchor binds the backfill, and from 131
+/// on the unconfirmed backfill may be used: the wallet's root at the
+/// canonical anchor (144) would be the chain's root of block 153, a root no
+/// honest wallet anchors at. The backfill's last block is checked against
+/// the list: refused, and rebuilt from an honest node.
+#[test]
+fn a_stale_tip_cannot_relabel_withheld_commitments_into_the_backfill() {
+    for relabelled in [30u64, 25] {
+        let mut chain = chain_with(14, 160, &[3, 10, 25, 153]);
+        chain.lies.tip = Some(152);
+        chain.lies.relabel = Some(Box::new(move |_, h| if h == 153 { relabelled } else { h }));
+        let mut w = Wallet::from_seed(Network::Regtest, [7; 32], 31);
+        let r = w.sync(&chain);
+        if let Ok(synced) = r {
+            let anchor = w.px.anchor_root(synced);
+            panic!(
+                "{relabelled}: accepted; synced {synced}, anchor {:?} (chain root at 153: {})",
+                anchor.map(|(h, r)| (h, digest_hex(&r))),
+                digest_hex(&chain.roots[153])
+            );
+        }
+        assert!(
+            matches!(r, Err(WalletError::BadNodeData(_))),
+            "{relabelled}: {r:?}"
+        );
+        assert!(w.px.tree.is_none(), "{relabelled}: dropped");
+        chain.lies = Default::default();
+        assert_eq!(w.sync(&chain).unwrap(), 160);
+        assert_eq!(w.px.anchor_root(160).unwrap(), (144, chain.roots[144]));
+    }
+}
+
+/// A chain with a vault deploy at 5 and a deploy of the vault with two
+/// output words at 8 (valid on chain, uncallable as the vault), `n` blocks.
+fn deploy_chain(seed: u64, n: u64) -> (MockChain, Digest, Digest) {
+    use blacksilk_px::vault;
+    use blacksilk_tx::px::Registration;
+    let mut chain = MockChain::new(seed);
+    let to = wallet().primary();
+    let good = Registration::new(vault::VAULT_ELF.to_vec(), vault::BUDGET, vault::OUT_WORDS);
+    let mut odd = good.clone();
+    odd.out_words = 2;
+    for h in 1..=n {
+        let deploys = match h {
+            5 => vec![chain.deploy(vec![good.clone()])],
+            8 => vec![chain.deploy(vec![odd.clone()])],
+            _ => vec![],
+        };
+        chain.mine_deploys(&to, vec![], deploys);
+    }
+    let id = |i: usize| crate::px::digest_from_hex(&chain.contracts[i].id).unwrap();
+    let (a, b) = (id(0), id(1));
+    (chain, a, b)
+}
+
+/// W3-39b item 2: registrations come from the deploys the wallet scans, not
+/// from the node's list: a node that serves a wrong program id for one
+/// contract and hides another changes nothing. The wallet knows every
+/// registered program's ABI and output words, and refuses a vault
+/// registered with two output words (it could never be called: funds locked
+/// in it would be lost).
+#[test]
+fn registrations_come_from_scanned_deploys() {
+    use blacksilk_px::vault;
+    let (mut chain, good, odd) = deploy_chain(15, 20);
+    chain.lies.contracts = Some(Box::new(|l| {
+        l[0].programs[0].id = "ab".repeat(32);
+        l.remove(1);
+    }));
+    let mut w = wallet();
+    assert_eq!(w.sync(&chain).unwrap(), 20);
+    assert_eq!(w.px.vault_budget(&good).unwrap(), vault::BUDGET);
+    let e = w.px.vault_budget(&odd).unwrap_err().to_string();
+    assert!(e.contains("output word"), "{e}");
+}
+
+/// W3-39b item 2: below the restore height the registrations come from the
+/// deploy blocks the node lists, each checked against the header chain; a
+/// node that lies about a registration (a program id, a budget, a deploy
+/// listed at another height) or alters a deploy in the block it serves (its
+/// output words) is refused. An honest node gives the chain's registrations.
+#[test]
+fn a_lying_registration_below_the_restore_height_is_detected() {
+    use blacksilk_px::vault;
+    use blacksilk_tx::types::Transaction;
+    type Lie = Box<dyn Fn(&mut MockChain)>;
+    let lies: Vec<(&str, Lie)> = vec![
+        (
+            "program id",
+            Box::new(|c| {
+                c.lies.contracts = Some(Box::new(|l| l[0].programs[0].id = "ab".repeat(32)))
+            }),
+        ),
+        (
+            "budget",
+            Box::new(|c| c.lies.contracts = Some(Box::new(|l| l[1].programs[0].budget[0] += 1))),
+        ),
+        (
+            "out words",
+            Box::new(|c| {
+                c.lies.alter_block = Some((
+                    8,
+                    Box::new(|b| {
+                        for t in &mut b.txs {
+                            if let Transaction::PxDeploy(d) = t {
+                                d.programs[0].out_words = vault::OUT_WORDS;
+                            }
+                        }
+                    }),
+                ))
+            }),
+        ),
+        (
+            "height",
+            // The deploy of block 8 listed at 5: block 5 holds one deploy.
+            Box::new(|c| c.lies.contracts = Some(Box::new(|l| l[1].height = 5))),
+        ),
+    ];
+    for restored_wallet in [false, true] {
+        let fresh = || {
+            if restored_wallet {
+                restored(None, 20)
+            } else {
+                Wallet::from_seed(Network::Regtest, [7; 32], 20)
+            }
+        };
+        for (what, lie) in &lies {
+            let (mut chain, _, _) = deploy_chain(16, 40);
+            lie(&mut chain);
+            let mut w = fresh();
+            let r = w.sync(&chain);
+            assert!(
+                matches!(r, Err(WalletError::BadNodeData(_))),
+                "{what} ({restored_wallet}): {r:?}"
+            );
+        }
+        let (chain, good, odd) = deploy_chain(16, 40);
+        let mut w = fresh();
+        assert_eq!(w.sync(&chain).unwrap(), 40);
+        assert_eq!(w.px.vault_budget(&good).unwrap(), vault::BUDGET);
+        let e = w.px.vault_budget(&odd).unwrap_err().to_string();
+        assert!(e.contains("output word"), "{e}");
+    }
 }

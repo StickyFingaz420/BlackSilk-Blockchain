@@ -5,16 +5,18 @@
 //! are recomputed from headers and must match, every output is recognized with
 //! the wallet's own keys (including the Janus anchor and commitment checks), the
 //! PX commitment tree is built from the blocks and every PX anchor checked
-//! against it (`crate::tree`), the header chain is checked on restores and on
-//! request (`crate::headers`), and the node validates every transaction the
-//! wallet submits. A dishonest node can still withhold blocks, and hide payments
-//! from a wallet that does not check the header chain; that is why wallets
-//! should use their own node (docs/blocks.md §9.3, §10).
+//! against it (`crate::tree`), contract registrations are derived from the
+//! deploys themselves (`crate::px::deployed`), the header chain is checked
+//! from the genesis on restores and on request (`crate::headers`), and the
+//! node validates every transaction the wallet submits. A dishonest node can
+//! still withhold blocks, and hide payments from a wallet that does not check
+//! the header chain; that is why wallets should use their own node
+//! (docs/blocks.md §9.3, §10).
 
 mod contracts;
 mod keys;
 #[cfg(test)]
-mod mock_chain;
+pub(crate) mod mock_chain;
 mod persistence;
 mod px_flows;
 mod rebroadcast;
@@ -402,8 +404,16 @@ pub struct Wallet {
     /// Headers whose work the check samples per sync (`HEADER_SAMPLES`).
     header_samples: u64,
     /// The headers of the last scanned blocks, oldest first: the context of
-    /// a later header check (`difficulty_ancestors` of them).
+    /// a later header check (`HeaderCheck::context_len` of them).
     headers: std::collections::VecDeque<blacksilk_consensus::BlockHeader>,
+    /// The height up to which every header, from the genesis, passed the
+    /// header check (`crate::headers`), when `headers` end there: a later
+    /// check continues from them instead of reading the chain from the
+    /// genesis again. `None` once a block is scanned unchecked.
+    checked_through: Option<u64>,
+    /// Ids of the last RandomX key blocks among the checked headers (the
+    /// keys of the next ones).
+    key_ids: BTreeMap<u64, Hash>,
 }
 
 /// The wallet file to save to before a submission (docs/reviews/wallet-review.md F1).
@@ -524,6 +534,7 @@ mod tests {
                 header_height: 0,
                 deepest_reorg: 0,
                 misbehaving_disconnects: 0,
+                template_ready: None,
                 genesis_id: self.0.clone(),
                 consensus_fingerprint: None,
                 build_commit: None,
@@ -847,8 +858,9 @@ mod tests {
         assert!(bad.px_vault_secret(&cm).is_err());
     }
 
-    /// A node at height 0 with an empty PX tree and the given registrations.
-    struct Registry(Vec<rpc::PxContractEntry>);
+    /// A node at height 0 with an empty PX tree; the registrations are the
+    /// wallet's, as if derived from scanned deploys.
+    struct Registry(Vec<crate::px::KnownContract>);
 
     impl NodeApi for Registry {
         fn info(&self) -> Result<rpc::Info, String> {
@@ -866,6 +878,7 @@ mod tests {
                 header_height: 0,
                 deepest_reorg: 0,
                 misbehaving_disconnects: 0,
+                template_ready: None,
                 genesis_id: Some(hex::encode(ChainParams::regtest().genesis_id())),
                 consensus_fingerprint: None,
                 build_commit: None,
@@ -897,35 +910,34 @@ mod tests {
         fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
             Ok(rpc::PxContracts {
                 from,
-                contracts: self.0.iter().skip(from as usize).cloned().collect(),
-                total: self.0.len() as u64,
+                contracts: vec![],
+                total: 0,
                 height: 0,
             })
         }
     }
 
+    /// A registration as the wallet derives it from a deploy (current ABI,
+    /// the vault's output words).
     fn entry(
         contract: &Digest,
         programs: &[(String, blacksilk_zkvm::air::trace::Budget)],
-    ) -> rpc::PxContractEntry {
-        rpc::PxContractEntry {
+    ) -> crate::px::KnownContract {
+        crate::px::KnownContract {
             height: 0,
             id: digest_hex(contract),
             programs: programs
                 .iter()
-                .map(|(id, b)| {
-                    let p = KnownProgram {
-                        id: id.clone(),
-                        budget: [
-                            b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
-                        ],
-                    };
-                    rpc::PxProgramEntry {
-                        id: p.id,
-                        budget: p.budget,
-                    }
+                .map(|(id, b)| KnownProgram {
+                    id: id.clone(),
+                    budget: [
+                        b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
+                    ],
+                    abi: blacksilk_px_core::call::ABI_VERSION,
+                    out_words: vault::OUT_WORDS,
                 })
                 .collect(),
+            from_deploy: true,
         }
     }
 
@@ -961,6 +973,8 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(1);
         let secret = [5, 6, 7, 8, 9, 10, 11, 12];
         let mut w = wallet();
+        w.sync(&node).unwrap();
+        w.px.contracts = node.0.clone();
         // Lock: the safe vault passes the check and stops at the funds (this
         // wallet has none); the others are refused as contracts.
         let lock = |w: &mut Wallet, c: &Digest, rng: &mut ChaCha20Rng| {

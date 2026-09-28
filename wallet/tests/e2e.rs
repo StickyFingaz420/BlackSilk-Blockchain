@@ -212,6 +212,9 @@ impl NodeApi for Flaky<'_> {
     fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
         NodeApi::blocks(self.inner, from, count)
     }
+    fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+        NodeApi::headers(self.inner, from, count)
+    }
     fn distribution(&self, to: u64) -> Result<rpc::Distribution, String> {
         NodeApi::distribution(self.inner, to)
     }

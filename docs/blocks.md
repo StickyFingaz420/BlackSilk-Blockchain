@@ -656,6 +656,7 @@ The route list is `blacksilk_node::ROUTES` (`node/src/lib.rs`).
 | POST | `/block` | submit a mined block (`{"hex": …}`); admission rule §9.2 | block | `rpc::MAX_REQUEST_BYTES` (a maximum-size block in hex) |
 | POST | `/tx` | submit a transaction (`{"hex": …}`); with P2P enabled it enters the Dandelion++ stem (p2p.md §8), otherwise the local mempool | submit | `guard::MAX_TX_BODY_BYTES` (the largest transaction of any kind in hex) |
 | GET | `/blocks?from=h&count=n` | connected blocks with the global index of their first output (n ≤ 100, at most 64 MiB of hex), for wallet scanning | bulk | none |
+| GET | `/headers?from=h&count=n` | the headers of connected blocks `h…h+n−1` (fewer at the tip, none above it), 100 bytes each, concatenated as hex, with the tip height (`1 ≤ n ≤ rpc::MAX_HEADERS_PER_REQUEST`); the wallet's header check reads the chain from the genesis with it (§10) | read | none |
 | GET | `/distribution?to=h` | cumulative output counts per block, for decoy selection | read | none |
 | POST | `/outputs` | output keys and commitments for up to 1 024 global indices | read | `guard::MAX_OUTPUTS_BODY_BYTES` |
 | GET | `/px/commitments?from=f&limit=l` | a page of PX commitments in tree order (px.md §11.4) | read | none |
@@ -757,7 +758,11 @@ Ring members come from the wallet's own output index; `/outputs` is used once, t
 the missing range of that index in fixed pages, not per ring. The PX commitment tree is
 built from the scanned blocks; `/px/commitments` is fetched whole, once, for the part
 below the restore height, and once more to place an imported contract record (px.md
-§11.4). Wallets should use their own node.
+§11.4). Below the restore height the wallet also fetches `/px/contracts` whole, and the
+blocks both lists name (the block of the last commitment, every block with a deploy),
+one height each: the same requests for every wallet with that restore height. The
+header check reads `/headers` from height 1. None of this depends on what the wallet
+owns or uses. Wallets should use their own node.
 
 ### 9.4 Mining endpoints (policy)
 
@@ -863,10 +868,14 @@ key = Argon2id(password, salt; m_kib = 65536, t = 3, p = 1 by default)
   features (so the words can be shown again), the network and genesis id, and the
   scan state. Files of versions 1 and 2 (24-word seeds, PX derivation 1) are refused.
 - The scan state includes the wallet's own PX tree (frontier, root window, recent
-  blocks' commitments, checkpoints, witnesses; px.md §11.4) and the headers of the
-  last `N + 1 + 11` scanned blocks (the context of a header check). A version 3 file written
-  before the wallet built its own tree holds the node's commitment list instead: it
-  loads with a warning, and the next sync rescans from the restore height.
+  blocks' commitments, checkpoints, witnesses; px.md §11.4), the contract
+  registrations derived from deploys (px.md §13.4), the headers of the last `N + 1 + 11`
+  scanned blocks (the context of a header check), the height up to which the header
+  chain was checked from the genesis, and the ids of the last RandomX key blocks among
+  the checked headers. A version 3 file written before the wallet built its own tree
+  holds the node's commitment list instead, and one written before registrations were
+  derived holds the node's registrations: either loads with a warning, and the next
+  sync rescans from the restore height.
 - `seed` shows the words only after the user types `show` at a warning prompt
   (F37-11); `create` prints them once.
 
@@ -885,14 +894,26 @@ and hashes the sampled headers in light mode):
   RNG as the headers arrive, so the node cannot tell which are checked. A header of
   difficulty 1 is met by every hash and is not hashed.
 
-A header that fails is refused, with every block from it on. The check starts from the
-genesis for a restore at most `N + 1 + 11` (the difficulty ancestors, consensus.md §4) blocks above
-it, and then proves the chain's work from the genesis on. From a later restore height
-it starts from that many headers before it, as the node serves them (RandomX key
-blocks below them too): it then proves only that the chain is consistent and that the
-sampled headers carry real work at the difficulty they claim, not that this difficulty
-is the network's (a genesis-anchored check needs a header feed from the genesis, which
-the node does not serve yet). Without the check a wallet trusts its node for proof of
-work. A node can always withhold blocks, or hide a spend behind a forged block from a
-wallet that does not check; a restored wallet that spent an output again after such a
-hiding would publish a second ring for one key image.
+A header that fails is refused, with every block from it on. Every check starts at the
+genesis (W3-39b): the headers below the first block the wallet scans come from
+`/headers` (100 bytes each, `rpc::MAX_HEADERS_PER_REQUEST` per request) and are
+checked first, so at any restore height every header's difficulty follows from the
+genesis by the LWMA rule, and the work sample is drawn from the whole chain. A later
+check continues from the wallet's own last headers when an earlier one checked them
+from the genesis (the height is kept in the wallet file); a sync without the check ends
+that, and the next check starts from the genesis again. The check then proves that the
+chain follows the difficulty rule from the genesis and that the sampled headers carry
+that work; it does not prove that the chain is the network's heaviest (a node that
+mines its own chain from the genesis under the rule passes), which only other nodes can
+show. Cost: [evidence/wallet-header-feed-2026-09-28](evidence/wallet-header-feed-2026-09-28/README.md)
+(`wallet::tests_sync::header_feed_cost_for_3000_headers`, `--ignored`). Without
+the check a wallet trusts its node for proof of work. A node can always withhold
+blocks, or hide a spend behind a forged block from a wallet that does not check; a
+restored wallet that spent an output again after such a hiding would publish a second
+ring for one key image.
+
+Below the restore height the wallet checks the node's lists against the blocks they
+name, each bound to that header chain (px.md §11.4, §13.4): the block of the last
+commitment listed must hold exactly the commitments listed at its height, and every
+block the registration list names is read and its deploys give the registrations. The
+first scanned block must extend the header at the restore height minus one.
