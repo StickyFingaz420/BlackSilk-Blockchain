@@ -238,11 +238,18 @@ jobs:
           cargo audit --ignore RUSTSEC-2024-0436
           cargo audit --file fuzz/Cargo.lock --ignore RUSTSEC-2024-0436
 
-  # Supply-chain policy (S1, dossier 44): cargo-deny over the main and fuzz
-  # workspaces (deny.toml, fuzz/deny.toml: advisories incl. unsound and
-  # yanked, native-code bans, crates.io only, licences, duplicate versions),
-  # and the *-sys name check cargo-deny cannot express. Weekly too: new
-  # advisories and yanks do not need a push.
+  # Supply-chain policy (S1, dossier 44; W3-44): cargo-deny over the main and
+  # fuzz workspaces (deny.toml, fuzz/deny.toml): advisories incl. unsound,
+  # unmaintained and yanked; native-code bans; crates.io only; the exact
+  # licence set; duplicate versions (dev-only included) against an exact
+  # skip list; every build script allow-listed by exact version, and no
+  # native executable, archive or script in build-time crates. `-D warnings`
+  # also fails a stale skip, licence or ignore. Then the checks cargo-deny
+  # cannot express: *-sys names and C in build scripts per release target
+  # (sys-crates.sh), hazmat APIs outside their reviewed crates
+  # (hazmat-policy.sh), and a warning when docs/reviews/unsafe-inventory.md
+  # no longer matches the lockfile. Weekly too: new advisories and yanks do
+  # not need a push.
   deny:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -256,13 +263,25 @@ jobs:
       - name: Install cargo-deny
         run: cargo install cargo-deny --version 0.20.2 --locked
       - name: cargo deny (main workspace)
-        run: cargo deny --locked check
+        run: cargo deny --locked check -D warnings
       - name: cargo deny (fuzz workspace)
+        if: success() || failure()
         working-directory: fuzz
-        run: cargo deny --locked check
-      - name: No unreviewed *-sys crates
+        run: cargo deny --locked check -D warnings
+      - name: No unreviewed *-sys crates; no C in build scripts (per release target)
+        if: success() || failure()
         shell: bash
         run: bash .github/scripts/sys-crates.sh
+      - name: Hazmat APIs only in their reviewed crates
+        if: success() || failure()
+        shell: bash
+        run: bash .github/scripts/hazmat-policy.sh
+      - name: unsafe inventory current (a warning, not a gate)
+        if: success() || failure()
+        shell: bash
+        run: |
+          bash .github/scripts/unsafe-report.sh --check ||
+            echo "::warning title=unsafe inventory stale::docs/reviews/unsafe-inventory.md does not match Cargo.lock; run bash .github/scripts/unsafe-report.sh and commit it"
 
   # Commit gates (F48-3, decisions "Agent 48"), over the commits this event
   # adds after the cut-over commit in .github/scripts/gate-range.sh:

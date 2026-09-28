@@ -1,11 +1,17 @@
 # cargo-deny policy for the main workspace (S1,
 # docs/reviews/phase2-2026-09-27/research/44-supply-chain.md). CI: .github/workflows/ci.yml, job `deny`,
-# with the pinned cargo-deny version given there. Run locally:
-#   cargo deny --locked check
-# The fuzz workspace has its own policy: fuzz/deny.toml.
+# with the pinned cargo-deny version given there. Run locally, exactly as CI:
+#   cargo deny --locked check -D warnings
+# `-D warnings` makes a stale entry fail too: a skip, licence or advisory
+# ignore that no longer matches anything must be removed, not left behind.
+# The fuzz workspace has its own policy: fuzz/deny.toml. What cargo-deny cannot
+# express is checked by .github/scripts/sys-crates.sh (*-sys names, C in build
+# scripts, target-aware) and .github/scripts/feature-policy.sh (hazmat
+# features); docs/reviews/dependency-review.md records the verdicts.
 #
-# Any change here is a supply-chain decision: a new skip, licence, source or a
-# removed ban needs the reason in the commit and the coordinator's review.
+# Any change here is a supply-chain decision: a new skip, licence, source,
+# build script or a removed ban needs the reason in the commit and the
+# coordinator's review.
 
 [graph]
 # The release targets: dependencies behind other cfgs (wasm, *-windows-gnu)
@@ -29,19 +35,21 @@ ignore = [
 ]
 
 [licenses]
-# The inbound licences of today's graph (cargo deny list -l license,
-# 2026-09-27). BlackSilk itself has no outbound licence yet (an owner
+# Exactly the inbound licences of today's graph (cargo deny list, 2026-09-28):
+# an allowed licence that no crate uses is a warning, so under -D warnings the
+# list cannot drift from the graph, and a crate with any other licence fails.
+# Add a licence only in the commit that brings the crate needing it (for
+# example "Apache-2.0 WITH LLVM-exception" with the approved rustc_apfloat dev
+# dependency). BlackSilk itself has no outbound licence yet (an owner
 # decision). Its crates are skipped as unpublished, which requires
 # `publish = false` in every workspace member's [package]; without it, the
 # licence check reports them as unlicensed and the wildcard check refuses
 # their path dependencies.
 allow = [
     "Apache-2.0",
-    "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
-    "CC0-1.0",
     "MIT",
     "MPL-2.0",
     "Unicode-3.0",
@@ -49,13 +57,17 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.93
-unused-allowed-license = "allow"
+unused-allowed-license = "warn"
 
 [licenses.private]
 ignore = true
 
 [bans]
 multiple-versions = "deny"
+# Dev-only crates are in the duplicate check too: they are built by every
+# `cargo test` on developer and CI machines, so a second version is review
+# surface even if it never ships. Their skips say "dev-only" below.
+multiple-versions-include-dev = true
 # A `*` requirement is refused; unpublished path dependencies are fine.
 wildcards = "deny"
 allow-wildcard-paths = true
@@ -68,6 +80,10 @@ deny = [
     { crate = "cc", reason = "compiles C/C++: no foreign code in the product" },
     { crate = "cmake", reason = "drives a C/C++ build" },
     { crate = "bindgen", reason = "generates FFI bindings to C headers" },
+    { crate = "cxx", reason = "C++ interop" },
+    { crate = "cxx-build", reason = "compiles C++" },
+    { crate = "autotools", reason = "drives a C build (configure and make)" },
+    { crate = "nasm-rs", reason = "assembles native code" },
     { crate = "pkg-config", reason = "locates system C libraries" },
     { crate = "vcpkg", reason = "locates system C libraries" },
     { crate = "openssl", reason = "binds the OpenSSL C library" },
@@ -85,9 +101,21 @@ deny = [
     { crate = "blst", reason = "C and assembly" },
     { crate = "randomx-rs", reason = "binds the C++ RandomX; BlackSilk has its own Rust RandomX" },
     { crate = "libfuzzer-sys", reason = "C++ libFuzzer: allowed only in the fuzz workspace (fuzz/deny.toml)" },
+    # monero-oxide was rejected (decisions "Agent 44"): too large a tree for a
+    # test oracle; the small map it would provide is ported instead.
+    { crate = "monero-oxide", reason = "rejected dependency (decisions Agent 44); port the needed map instead" },
+    # curve25519-dalek 5 is approved only in the commit that lands transport
+    # v2, and only inside the P2P crate (decisions "Agent 44", "Agent 30"). The
+    # consensus crates stay on =4.1.3; no 5.x type may cross into
+    # blacksilk-crypto. Until then 5.x is banned outright. The transport v2
+    # commit adds `wrappers = ["blacksilk-p2p"]` to this entry (5.x then only
+    # as a direct dependency of blacksilk-p2p; cargo-deny refuses a wrapper
+    # that matches nothing, so it cannot be added earlier) and a skip for the
+    # 4.1.3 / 5.x duplicate.
+    { crate = "curve25519-dalek:>=5", reason = "dalek 5 only with transport v2, confined to blacksilk-p2p (decisions Agent 44); the consensus crates use =4.1.3" },
 ]
 
-# Today's duplicate versions (cargo deny check bans, 2026-09-27), each accepted
+# Today's duplicate versions (cargo deny check bans, 2026-09-28), each accepted
 # for the stated reason. Only these exact versions are exempt: a new duplicate,
 # or a version bump of one of these, fails until reviewed here.
 skip = [
@@ -99,24 +127,118 @@ skip = [
     { crate = "crypto-common@0.1.6", reason = "RustCrypto 0.10 generation (SC-6)" },
     { crate = "digest@0.10.7", reason = "RustCrypto 0.10 generation (SC-6)" },
     { crate = "cpufeatures@0.2.17", reason = "RustCrypto 0.10 generation (SC-6)" },
-    { crate = "chacha20@0.9.1", reason = "chacha20poly1305 0.10 (P2P transport) vs rand 0.10's chacha20 0.10 (SC-6)" },
+    { crate = "chacha20@0.9.1", reason = "chacha20poly1305 0.10 (PX record AEAD) vs rand 0.10's chacha20 0.10 (SC-6)" },
     { crate = "rand_core@0.6.4", reason = "rand_core 0.6 (the workspace crates, curve25519-dalek 4, RustCrypto 0.10) vs 0.10 (rand 0.10, ml-kem) (SC-6)" },
     { crate = "syn@2.0.104", reason = "proc-macro crates on syn 2 and syn 3; compile time only" },
-    # proptest 1.11 (dev-dependency of blacksilk-chain only; decisions Agents 02,
-    # 41, 44) pulls the rand 0.9 generation. Verified absent from the node,
-    # wallet and miner graphs (cargo tree -e normal,build, 2026-09-28).
-    { crate = "rand@0.9.5", reason = "proptest 1.11, dev-only (chain tests)" },
-    { crate = "rand_chacha@0.9.0", reason = "proptest 1.11, dev-only (chain tests)" },
-    { crate = "rand_core@0.9.5", reason = "proptest 1.11, dev-only (chain tests)" },
+    # Dev-only: proptest 1.11 (dev-dependency of blacksilk-chain; decisions
+    # Agents 02, 41, 44 and W2-02/21) pulls the rand 0.9 generation. Absent
+    # from every normal and build graph (cargo tree --workspace -e normal,build
+    # --target all -i rand@0.9.5 prints nothing, 2026-09-28).
+    { crate = "rand@0.9.5", reason = "dev-only: proptest 1.11 (chain tests)" },
+    { crate = "rand_chacha@0.9.0", reason = "dev-only: proptest 1.11 (chain tests)" },
+    { crate = "rand_core@0.9.5", reason = "dev-only: proptest 1.11 (chain tests)" },
+    # Dev-only: tempfile 3.20 (dev-dependency of several crates) uses
+    # getrandom 0.3 and, through rustix, windows-sys 0.59. The shipped
+    # binaries use getrandom 0.2 only (the 0.4.3 move is P2, decisions
+    # "Agent 44").
+    { crate = "getrandom@0.3.3", reason = "dev-only: tempfile 3.20" },
+    { crate = "windows-sys@0.59.0", reason = "dev-only: tempfile 3.20 through rustix" },
+    { crate = "windows-targets@0.52.6", reason = "dev-only: windows-sys 0.59 (tempfile)" },
+    { crate = "windows_x86_64_gnu@0.52.6", reason = "dev-only: windows-targets 0.52 (tempfile); listed because cargo-deny unions the target cfgs" },
+    { crate = "windows_x86_64_msvc@0.52.6", reason = "dev-only: windows-targets 0.52 (tempfile)" },
     # Windows OS bindings and import libraries (SC-7): dirs-sys uses
     # windows-sys 0.48 (and windows-targets 0.48); tokio, mio, socket2 and
-    # rpassword use 0.61; errno uses 0.60 (windows-targets 0.53). The dev-only
-    # 0.59 is outside the checked graph.
+    # rpassword use 0.61; errno uses 0.60 (windows-targets 0.53).
     { crate = "windows-sys@0.48.0", reason = "Windows OS bindings, older generation (SC-7)" },
     { crate = "windows-sys@0.60.2", reason = "Windows OS bindings, older generation (SC-7)" },
     { crate = "windows-targets@0.48.5", reason = "Windows OS bindings, older generation (SC-7)" },
-    { crate = "windows_x86_64_gnu@0.48.5", reason = "Windows import libraries, older generation (SC-7)" },
+    { crate = "windows_x86_64_gnu@0.48.5", reason = "Windows import libraries, older generation (SC-7); listed because cargo-deny unions the target cfgs" },
     { crate = "windows_x86_64_msvc@0.48.5", reason = "Windows import libraries, older generation (SC-7)" },
+]
+
+# Build scripts: only these exact crate versions may have one (a new
+# build-script crate, or a new version of one, fails until its build.rs is
+# read and listed here). Each was read on the date given in
+# docs/reviews/dependency-review.md section 1: none compiles native code. They
+# probe the compiler version, emit cfgs, or (the windows_* crates) add the
+# directory of a pre-built import library to the link search path.
+[bans.build]
+allow-build-scripts = [
+    "crossbeam-deque@0.8.8",       # rustc version probe, cfgs
+    "crossbeam-epoch@0.9.21",      # rustc version probe, cfgs
+    "crossbeam-utils@0.8.23",      # rustc version probe, cfgs
+    "curve25519-dalek@4.1.3",      # selects the field and SIMD backend (cfgs)
+    "generic-array@0.14.7",        # rustc version probe, cfgs
+    "getrandom@0.3.3",             # cfgs (dev-only, tempfile)
+    "httparse@1.10.1",             # SIMD cfgs
+    "icu_normalizer_data@2.1.1",   # cfgs for the baked data
+    "icu_properties_data@2.1.2",   # cfgs for the baked data
+    "libc@0.2.174",                # rustc version probe, cfgs
+    "libm@0.2.16",                 # cfgs
+    "num-traits@0.2.19",           # autocfg probes
+    "paste@1.0.15",                # rustc version probe (proc macro, Plonky3)
+    "proc-macro2@1.0.95",          # rustc version probe, cfgs
+    "rayon-core@1.13.0",           # empty (the `links` marker)
+    "rustix@1.0.7",                # rustc probes, cfgs (dev-only, tempfile)
+    "rustversion@1.0.23",          # rustc version probe
+    "semver@1.0.26",               # rustc version probe
+    "serde@1.0.229",               # rustc version probe
+    "serde_core@1.0.229",          # rustc version probe
+    "serde_json@1.0.151",          # cfgs
+    "thiserror@2.0.20",            # rustc probe
+    "winapi@0.3.9",                # link search for Windows import libraries
+    "windows_x86_64_gnu@0.48.5",   # link search path (import library)
+    "windows_x86_64_gnu@0.52.6",   # link search path (import library)
+    "windows_x86_64_gnu@0.53.0",   # link search path (import library)
+    "windows_x86_64_msvc@0.48.5",  # link search path (import library)
+    "windows_x86_64_msvc@0.52.6",  # link search path (import library)
+    "windows_x86_64_msvc@0.53.0",  # link search path (import library)
+    "zerocopy@0.8.26",             # rustc version probe, cfgs
+    "zmij@1.0.23",                 # rustc version probe, cfgs
+]
+# Every crate with a build script or a proc macro, and every dependency of one,
+# is scanned: a native executable or archive (a pre-built object or library)
+# fails, and so does a script file (*.sh, *.py, ...). The files below are
+# allowed by exact crate version and path; Cargo.lock's checksum fixes the
+# content of each version, so a changed file means a new version, which fails
+# again until reviewed.
+executables = "deny"
+interpreted = "deny"
+enable-builtin-globs = true
+include-dependencies = true
+include-archives = true
+bypass = [
+    # Pre-built Windows import libraries (OS API stubs, no code; SC-7):
+    # linked only on Windows targets, and the only archives in the graph.
+    { crate = "windows_x86_64_msvc@0.48.5", allow = [{ path = "lib/windows.0.48.5.lib" }] },
+    { crate = "windows_x86_64_msvc@0.52.6", allow = [{ path = "lib/windows.0.52.0.lib" }] },
+    { crate = "windows_x86_64_msvc@0.53.0", allow = [{ path = "lib/windows.0.53.0.lib" }] },
+    # windows-gnu libraries: never linked for a release target (msvc is the
+    # Windows target); present only because cargo-deny unions the target cfgs.
+    { crate = "windows_x86_64_gnu@0.48.5", allow = [{ path = "lib/libwindows.0.48.5.a" }] },
+    { crate = "windows_x86_64_gnu@0.52.6", allow = [{ path = "lib/libwindows.0.52.0.a" }] },
+    { crate = "windows_x86_64_gnu@0.53.0", allow = [{ path = "lib/libwindows.0.53.0.a" }] },
+    # Maintainer scripts shipped in the crate packages. None is run by a build
+    # script (each crate's build.rs, where it has one, was read; see the
+    # allow-build-scripts list above).
+    { crate = "cobs@0.3.0", allow = [{ path = "docs.sh" }] },
+    { crate = "curve25519-dalek@4.1.3", allow = [{ path = "tests/build_tests.sh" }] },
+    { crate = "p3-poseidon1@0.7.0", allow = [{ path = "generate_constants.py" }] },
+    { crate = "p3-poseidon2@0.7.0", allow = [{ path = "generate_constants.py" }] },
+    { crate = "proptest@1.11.0", allow = [{ path = "test-persistence-location/run-tests.bat" }, { path = "test-persistence-location/run-tests.sh" }] },
+    { crate = "tracing@0.1.44", allow = [{ path = "test-macros/bin/macro-results.sh" }] },
+    { crate = "zerocopy@0.8.26", allow = [
+        { path = "cargo.sh" },
+        { path = "ci/check_all_toolchains_tested.sh" },
+        { path = "ci/check_fmt.sh" },
+        { path = "ci/check_job_dependencies.sh" },
+        { path = "ci/check_readme.sh" },
+        { path = "ci/check_todo.sh" },
+        { path = "ci/check_versions.sh" },
+        { path = "ci/release_crate_version.sh" },
+        { path = "githooks/pre-push" },
+        { path = "win-cargo.bat" },
+    ] },
 ]
 
 [sources]

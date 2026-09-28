@@ -43,3 +43,28 @@ Everything in this repository is in scope. These are especially valuable:
 - consensus rules (`consensus/`, `tx/`, `chain/`);
 - anything that reveals private data (docs/reviews/privacy-review.md lists the known
   limitations; those are not new findings).
+
+## Dependency policy
+
+BlackSilk's core is pure Rust: no C, C++ or assembly is compiled or linked into the
+node, miner, wallet or tools, and BlackSilk's own crates forbid `unsafe` code.
+Dependencies do contain `unsafe` internally (docs/reviews/unsafe-inventory.md).
+The rules, checked by the CI job `deny` on every push and weekly:
+- crates come from crates.io only, with the checksums in the committed `Cargo.lock`
+  files, and every CI build uses `--locked`;
+- no known vulnerable, unsound, unmaintained (except the reviewed exceptions listed
+  in `deny.toml`) or yanked crate (`deny.toml`, `fuzz/deny.toml`);
+- no C toolchain or C-library binding crate, no build script that compiles native
+  code, and only reviewed build scripts, by exact version (`deny.toml`,
+  `.github/scripts/sys-crates.sh`);
+- hazardous-material APIs (deterministic ML-KEM encapsulation, single-round AES)
+  only in the crates reviewed for them (`.github/scripts/hazmat-policy.sh`);
+- a second version of a crate, a new licence or a new source fails until reviewed;
+- a commit that changes a lockfile names every crate it adds or re-versions
+  (`.github/scripts/lockfile-gate.sh`).
+
+A new dependency needs a recorded decision before it is added; the verdicts, the
+reasons, and what was and was not reviewed are in docs/reviews/dependency-review.md.
+No dependency is described as audited unless a specific third-party review of the
+locked version is cited there. A weakness in a dependency that affects BlackSilk is
+in scope for the reporting process above.

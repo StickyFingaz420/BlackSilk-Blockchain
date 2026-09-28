@@ -2,8 +2,9 @@
 # workspace's policy is ../deny.toml; this one differs only where the fuzz
 # harness needs it: libFuzzer (C++, built by cc) is allowed here, and only as
 # the harness's own dependency. Nothing in this workspace enters a product
-# build. CI: .github/workflows/ci.yml, job `deny`. Run locally, in fuzz/:
-#   cargo deny --locked check
+# build. CI: .github/workflows/ci.yml, job `deny`. Run locally, in fuzz/,
+# exactly as CI (stale entries fail too; see ../deny.toml):
+#   cargo deny --locked check -D warnings
 
 [graph]
 # The fuzz campaigns run on Linux x86_64 only (fuzz/run_campaign.sh, CI).
@@ -19,10 +20,10 @@ ignore = [
 ]
 
 [licenses]
-# ../deny.toml's list for this graph, plus NCSA (libFuzzer, part of LLVM).
+# Exactly the inbound licences of this graph (2026-09-28): ../deny.toml's
+# list where used here, plus NCSA (libFuzzer, part of LLVM).
 allow = [
     "Apache-2.0",
-    "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "MIT",
@@ -32,13 +33,15 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.93
-unused-allowed-license = "allow"
+unused-allowed-license = "warn"
 
 [licenses.private]
 ignore = true
 
 [bans]
 multiple-versions = "deny"
+# Dev-only crates count too, as in ../deny.toml.
+multiple-versions-include-dev = true
 wildcards = "deny"
 allow-wildcard-paths = true
 highlight = "all"
@@ -50,6 +53,10 @@ deny = [
     { crate = "cc", wrappers = ["libfuzzer-sys"], reason = "builds libFuzzer; nothing else may compile C/C++" },
     { crate = "cmake", reason = "drives a C/C++ build" },
     { crate = "bindgen", reason = "generates FFI bindings to C headers" },
+    { crate = "cxx", reason = "C++ interop" },
+    { crate = "cxx-build", reason = "compiles C++" },
+    { crate = "autotools", reason = "drives a C build (configure and make)" },
+    { crate = "nasm-rs", reason = "assembles native code" },
     { crate = "pkg-config", reason = "locates system C libraries" },
     { crate = "vcpkg", reason = "locates system C libraries" },
     { crate = "openssl", reason = "binds the OpenSSL C library" },
@@ -66,9 +73,11 @@ deny = [
     { crate = "secp256k1-sys", reason = "binds libsecp256k1 (C)" },
     { crate = "blst", reason = "C and assembly" },
     { crate = "randomx-rs", reason = "binds the C++ RandomX" },
+    { crate = "monero-oxide", reason = "rejected dependency (decisions Agent 44)" },
+    { crate = "curve25519-dalek:>=5", reason = "dalek 5 only with transport v2, confined to blacksilk-p2p (see ../deny.toml)" },
 ]
 
-# Today's duplicates in fuzz/Cargo.lock (cargo deny check bans, 2026-09-27),
+# Today's duplicates in fuzz/Cargo.lock (cargo deny check bans, 2026-09-28),
 # the same splits as in ../deny.toml; exact versions only. The fuzz lock
 # resolves some versions differently from the main lock (SC-5).
 skip = [
@@ -79,6 +88,58 @@ skip = [
     { crate = "chacha20@0.9.1", reason = "chacha20poly1305 0.10 vs rand 0.10's chacha20 0.10 (SC-6)" },
     { crate = "rand_core@0.6.4", reason = "rand_core 0.6 (workspace crates, curve25519-dalek 4) vs 0.10 (rand 0.10, ml-kem) (SC-6)" },
     { crate = "syn@2.0.119", reason = "proc-macro crates on syn 2 and syn 3; compile time only" },
+]
+
+# Build scripts, as in ../deny.toml: only these exact versions may have one.
+# The fuzz lock resolves some to other versions than the main lock (SC-5); the
+# extra build scripts here (crc32fast, quote, and the other versions of libc,
+# proc-macro2, thiserror, zerocopy) were read on 2026-09-28: rustc probes and
+# cfgs only. libfuzzer-sys is the one build script that compiles C++ (with cc).
+[bans.build]
+allow-build-scripts = [
+    "crc32fast@1.5.2",           # rustc version probe
+    "crossbeam-deque@0.8.8",     # rustc version probe, cfgs
+    "crossbeam-epoch@0.9.21",    # rustc version probe, cfgs
+    "crossbeam-utils@0.8.23",    # rustc version probe, cfgs
+    "curve25519-dalek@4.1.3",    # selects the field and SIMD backend (cfgs)
+    "generic-array@0.14.7",      # rustc version probe, cfgs
+    "libc@0.2.189",              # rustc version probe, cfgs
+    "libfuzzer-sys@0.4.13",      # compiles libFuzzer (C++) with cc: the harness's reason to exist
+    "libm@0.2.16",               # cfgs
+    "num-traits@0.2.19",         # autocfg probes
+    "paste@1.0.15",              # rustc version probe (proc macro, Plonky3)
+    "proc-macro2@1.0.107",       # rustc probes, cfgs
+    "quote@1.0.47",              # rustc version probe
+    "rayon-core@1.13.0",         # empty (the `links` marker)
+    "serde@1.0.229",             # rustc version probe
+    "serde_core@1.0.229",        # rustc version probe
+    "serde_json@1.0.151",        # cfgs
+    "thiserror@2.0.21",          # rustc probe
+    "zerocopy@0.8.58",           # rustc version probe, cfgs
+    "zmij@1.0.23",               # rustc version probe, cfgs
+]
+executables = "deny"
+interpreted = "deny"
+enable-builtin-globs = true
+include-dependencies = true
+include-archives = true
+# Maintainer scripts shipped in the crate packages, allowed by exact crate
+# version and path (see ../deny.toml); none is run by a build script.
+bypass = [
+    { crate = "arbitrary@1.4.2", allow = [{ path = "publish.sh" }] },
+    { crate = "curve25519-dalek@4.1.3", allow = [{ path = "tests/build_tests.sh" }] },
+    { crate = "libc@0.2.189", allow = [{ path = "etc/libc-util.py" }] },
+    { crate = "zerocopy@0.8.58", allow = [
+        { path = "cargo.sh" },
+        { path = "ci/check_all_toolchains_tested.sh" },
+        { path = "ci/check_fmt.sh" },
+        { path = "ci/check_msrv_is_minimal.sh" },
+        { path = "ci/check_readme.sh" },
+        { path = "ci/check_stale_stderr.sh" },
+        { path = "ci/check_versions.sh" },
+        { path = "ci/release_crate_version.sh" },
+        { path = "win-cargo.bat" },
+    ] },
 ]
 
 [sources]
