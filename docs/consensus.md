@@ -344,6 +344,15 @@ the CVE-2012-2459 class of duplicate-transaction malleability.
   and agree with light mode (what nodes verify with) on 512 random inputs per key. The
   CI job `randomx-full` (Linux x86_64) checks this and passed in GitHub Actions CI runs
   78, 79 and 83 (2026-09-27), before vector 1f was added to it.
+- **Cache state never affects a hash.** A RandomX cache is a pure function of its key
+  (§3.1). Which caches the node keeps, builds in the background or evicts
+  (`RandomXPow` over `consensus::pow::SeedCache`: builds outside the lock, hot keys
+  kept, a bounded side slot) and the miner's key-switch planning
+  (`miner::SeedPlanner`) are node and miner policy: they decide who waits and how
+  much memory is used, never a hash or a verdict. Tested by comparing `RandomXPow`
+  with freshly built caches across key switches, prebuilds and evictions
+  (`consensus/tests/seed_cache.rs`); the fallible `Cache::try_new` builds the same
+  memory as `Cache::new` and passes vector 1a (`randomx` unit tests).
 - The only input not derived from chain data is the local clock (§5 rule 2), which is
   treated as non-final.
 - **Targets:** 64-bit little-endian only. Consensus encodings use explicit
