@@ -374,6 +374,24 @@ to every peer that does not already have it. A peer that lacks the body asks for
     mined, dropped or never known.
   - A spy therefore cannot probe the stempool or the mempool for transactions it was
     never offered.
+- **Pool re-announcement** (dossier 38 §3.4 item 3, `net/maintenance.rs`). Every node
+  announces again, with `InvTx` like any announcement above, each pooled transaction
+  that is still in its next block template, at fixed pool ages: 10, 20, 40, 80, 160,
+  320, 640 and 1 000 blocks (the gap doubles from 10 and is capped at 360), and never
+  after 1 080 blocks (half the pool expiry, blocks.md §7).
+  - The age counts from the height the node pooled the transaction for; for a
+    transaction this node originated, from the height it was relayed for (§8.1), if
+    that is earlier. Honest nodes pool a transaction within seconds of each other,
+    so they all re-announce it at the same heights: the origin re-announces its own
+    transaction exactly as every other node does, and never with a `StemTx`.
+  - Only peers not known to have the transaction get the announcement (the per-peer
+    sets above), so in practice it reaches connections opened since: a peer that
+    restarted fetches it back with `GetTx`, without its origin doing anything.
+  - Cost: 32 bytes per transaction and peer at each point. Announcements use the
+    per-peer trickle delays of this section (a shared inbound timer, R8-16, is open).
+  - Tested: `pooled_transactions_are_reannounced_on_the_common_schedule` (not before
+    age 10, once at age 10, not again at 11; `InvTx` only) and the schedule's unit
+    test (`reannouncement_follows_the_backoff_schedule`).
 
 ## 8. Dandelion++ (stem phase)
 
@@ -401,6 +419,8 @@ Following Fanti et al., "Dandelion++" (SIGMETRICS 2018), with Monero's parameter
     only place the guard applies: a `StemTx` or relayed `Tx` from a peer is admitted
     whether or not this node expired it recently, so a stem peer whose window is
     later than the origin's does not drop the origin's stem (RTW1B-1).
+  - A transaction this node originated before is never originated again while other
+    nodes may still hold it (§8.1).
 - **Receiving a `StemTx`.**
   - One that conflicts with a stem transaction (a shared key image or nullifier) is
     dropped first, before any verification: first seen wins, and valid
@@ -419,6 +439,54 @@ Following Fanti et al., "Dandelion++" (SIGMETRICS 2018), with Monero's parameter
   - This guarantees delivery if a stem peer is malicious or offline.
 - **Stem failures.** A relayed stem transaction with no stem peer to forward it to is
   fluffed immediately (the node's own transactions are held instead, see above).
+
+### 8.1 The originated set: no re-origination
+
+An honest relay never stems, or announces as new, a transaction the network has held
+for a while. Only its origin does that, when its wallet resubmits a transaction the
+origin forgot: a restart empties the pool (it is not persisted), and the pool's own
+expiry comes first at the origin, which admitted the transaction first. A spy that
+still pools it then learns the origin with near certainty (dossier 33 F33-1, dossier
+38 F38-3). So the node keeps an **originated set** (`p2p/src/originated.rs`):
+
+- **What.** The id of every transaction originated here (`Network::submit_tx`, which
+  serves the RPC `/tx`), with the next-block height it was relayed for. Recorded and
+  written to disk before the transaction leaves the node.
+- **Resubmission** of a transaction in the set, for inclusion at next height `h`
+  (relayed for `r`):
+  - already in this node's stempool: nothing is sent, and `/tx` accepts it;
+  - `h < r + 2 160` (the pool expiry, blocks.md §7): other nodes most likely still
+    pool it. It is **held**: pooled here, never stemmed and never announced, and `/tx`
+    accepts it (or answers what the pool answers, e.g. `AlreadyKnown`). It is then
+    re-announced only on the common schedule of §7, from `r`;
+  - `r + 2 160 ≤ h < r + 2 190`: other nodes expired it recently and refuse it from
+    their own wallets. It is refused here too, as `Expired`, also after a restart,
+    when the pool's in-memory guard is gone;
+  - `h ≥ r + 2 190` (`NETWORK_EXPIRY_BLOCKS`, 2 160 + 30, derived from the pool's
+    constants): the network has dropped it, the entry is gone, and the transaction is
+    originated again as a new one, through the stem.
+- **Only local origination.** A peer's `StemTx` or `Tx` is admitted and relayed
+  whether or not its transaction is in the set (as for the guard, RTW1B-1).
+- **Persistence.** `originated.json` in the data directory: written to a temporary
+  file, synced and renamed (a crash leaves the old or the new set), whenever the set
+  changes. Entries are dropped when their window ends; at most 10 000 are kept, oldest
+  dropped first (logged). A missing file is an empty set; an unreadable one is logged
+  as an error and an empty set is used, so the node may then originate one of its old
+  transactions again.
+- **The wallet side** (wallet `sync`) asks `/tx/status` instead of re-posting, and
+  re-originates at most once, after `relayed + 2 190` (px.md §12).
+- Tested (`p2p/tests/network.rs`, over TCP):
+  `a_restarted_origin_does_not_reoriginate_a_transaction_the_network_holds` (no
+  `StemTx` and no `InvTx` after a restart), `an_expired_local_transaction_is_not_reoriginated_inside_the_window_even_after_a_restart`
+  (`Expired` up to the window's last block after a restart, then one `StemTx`),
+  `a_peers_stem_of_a_transaction_this_node_originated_is_relayed`, and the unit tests
+  of `originated.rs`.
+- **Limits.** The set protects against re-origination by this node only. A wallet
+  that submits the same transaction to another node, or a node without this set,
+  still re-originates it. A transaction the whole network dropped early (a full-pool
+  eviction wave) is still not originated again before `r + 2 190`. The node's own
+  miner may include a held transaction in its templates. Every independent re-origination is
+  another sample for a spy (dossier 33 F33-3).
 
 **Limitations.**
 - Dandelion++ gives statistical origin privacy against spy nodes that control a fraction

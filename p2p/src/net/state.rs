@@ -9,6 +9,7 @@ use crate::addrman_gate::AddrGate;
 use crate::dandelion::{Dandelion, PeerId};
 use crate::limits::PeerLimits;
 use crate::message::Message;
+use crate::originated::Originated;
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_consensus::{BlockHeader, Hash};
@@ -134,6 +135,8 @@ pub(super) struct State {
     pub(super) blocks_queued: HashSet<Hash>,
     /// Peers that reported a newer consensus version (RT-1).
     pub(super) upgrades: UpgradeReports,
+    /// Transactions this node originated, persisted (docs/p2p.md §8.1).
+    pub(super) originated: Originated,
 }
 
 /// A peer is disconnected (never banned) after this many headers of an unknown
@@ -257,6 +260,9 @@ pub(super) struct Inner {
     pub(super) state: Mutex<State>,
     pub(super) next_id: AtomicU64,
     pub(super) local_addr: Option<SocketAddr>,
+    /// Serializes writes of the originated set's file (taken before the
+    /// state lock, only on blocking threads or at shutdown).
+    pub(super) originated_io: Mutex<()>,
 }
 
 pub(super) fn unix_now() -> u64 {
@@ -302,13 +308,16 @@ impl Inner {
         let Some(dir) = &self.cfg.data_dir else {
             return;
         };
-        let st = self.state();
-        if let Err(e) = st.addrman.save(&dir.join("peers.json")) {
-            log::warn!("saving peers.json: {e}");
+        {
+            let st = self.state();
+            if let Err(e) = st.addrman.save(&dir.join("peers.json")) {
+                log::warn!("saving peers.json: {e}");
+            }
+            if let Err(e) = st.bans.save(&dir.join("bans.json")) {
+                log::warn!("saving bans.json: {e}");
+            }
         }
-        if let Err(e) = st.bans.save(&dir.join("bans.json")) {
-            log::warn!("saving bans.json: {e}");
-        }
+        self.write_originated(dir);
     }
 
     /// Queues `msg` for `peer`: `Block` frames in the bulk outbox, everything

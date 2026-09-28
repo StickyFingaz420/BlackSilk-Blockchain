@@ -11,6 +11,7 @@
 //! | [`limits`] | §10 | token buckets, misbehavior scores |
 //! | [`socks5`] | §11 | SOCKS5 client for Tor |
 //! | [`net`] | §4–§11 | the network manager |
+//! | [`originated`] | §8.1 | transactions this node originated, persisted (no re-origination) |
 
 #![forbid(unsafe_code)]
 
@@ -21,6 +22,7 @@ pub mod dandelion;
 pub mod limits;
 pub mod message;
 pub mod net;
+pub mod originated;
 pub mod socks5;
 pub mod transport;
 

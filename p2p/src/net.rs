@@ -26,7 +26,8 @@ mod stem;
 
 use crate::addr::NetAddr;
 use crate::addrman::{AddrMan, BanList};
-use crate::dandelion::{Dandelion, Source};
+use crate::dandelion::Dandelion;
+use crate::originated::Originated;
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_consensus::Hash;
 use blacksilk_tx::types::Transaction;
@@ -43,7 +44,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard};
-use stem::stem_or_fluff;
+use stem::{submit_local, ORIGINATED_FILE};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
@@ -108,6 +109,13 @@ impl Network {
             .as_ref()
             .map(|d| BanList::load(&d.join("bans.json")))
             .unwrap_or_default();
+        // Transactions originated before a restart are not originated again
+        // while other nodes may still hold them (docs/p2p.md §8.1).
+        let originated = cfg
+            .data_dir
+            .as_ref()
+            .map(|d| Originated::load(&d.join(ORIGINATED_FILE)))
+            .unwrap_or_default();
         let listener = match cfg.listen {
             Some(a) => Some(TcpListener::bind(a).await?),
             None => None,
@@ -155,6 +163,7 @@ impl Network {
             unrequested_queued: 0,
             blocks_queued: HashSet::new(),
             upgrades: Default::default(),
+            originated,
         };
         let (header_queue, header_rx) = mpsc::unbounded_channel();
         let (block_queue, block_rx) = mpsc::unbounded_channel();
@@ -167,6 +176,7 @@ impl Network {
             state: Mutex::new(state),
             next_id: AtomicU64::new(1),
             local_addr,
+            originated_io: Mutex::new(()),
         });
         if let Some(l) = listener {
             tokio::spawn(accept_loop(inner.clone(), l));
@@ -184,17 +194,17 @@ impl Network {
     /// Submits a locally created transaction: validated, then sent into the
     /// Dandelion++ stem (docs/p2p.md §8). The only origination path, so the
     /// only one refusing a transaction this node expired recently
-    /// (`MempoolError::Expired`, `ChainManager::check_local_tx`); peers'
-    /// transactions are relayed and stemmed regardless (RTW1B-1).
+    /// (`MempoolError::Expired`, `ChainManager::check_local_tx`) and the only
+    /// one consulting the originated set: a transaction originated here
+    /// before is never originated again while other nodes may still hold it
+    /// (docs/p2p.md §8.1). Peers' transactions are relayed and stemmed
+    /// regardless (RTW1B-1).
+    ///
+    /// `Ok(id)` also when nothing was sent: the transaction is already in
+    /// this node's stem, or it was originated here before and is now only
+    /// pooled here (held).
     pub async fn submit_tx(&self, tx: Transaction) -> Result<Hash, String> {
-        let tx2 = tx.clone();
-        let id = self
-            .inner
-            .with_chain(move |c| c.check_local_tx(&tx2))
-            .await
-            .map_err(|e| format!("{e:?}"))?;
-        stem_or_fluff(&self.inner, tx, id, Source::Local).await;
-        Ok(id)
+        submit_local(&self.inner, tx).await
     }
 
     pub fn connect(&self, addr: NetAddr) {

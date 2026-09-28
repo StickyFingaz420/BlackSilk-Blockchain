@@ -1,12 +1,16 @@
 //! Dandelion++ glue: stem keys, stem-or-fluff routing, held local
-//! transactions and fluffing.
+//! transactions and fluffing; local origination through the originated set
+//! (docs/p2p.md §8.1).
 
+use super::lock_or_exit;
 use super::state::{short, Inner, State, StemEntry};
 use crate::dandelion::{PeerId, Route, Source};
 use crate::message::Message;
+use crate::originated::{write_atomic, Verdict};
 use blacksilk_chain::mempool::MempoolError;
 use blacksilk_consensus::Hash;
 use blacksilk_tx::types::Transaction;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -26,13 +30,20 @@ pub(super) fn unstem_key_images(st: &mut State, tx: &Transaction) {
 }
 
 /// Stem-phase handling of a validated transaction (docs/p2p.md §8).
-pub(super) async fn stem_or_fluff(inner: &Arc<Inner>, tx: Transaction, id: Hash, source: Source) {
+/// Returns whether it entered the stempool (`false`: it conflicts with a
+/// stem transaction, and nothing was sent).
+pub(super) async fn stem_or_fluff(
+    inner: &Arc<Inner>,
+    tx: Transaction,
+    id: Hash,
+    source: Source,
+) -> bool {
     let route = {
         let mut st = inner.state();
         // Conflicts with another stem transaction: first seen wins.
         let keys = stem_keys(&tx);
         if keys.iter().any(|k| st.stem_key_images.contains_key(k)) {
-            return;
+            return false;
         }
         for k in keys {
             st.stem_key_images.insert(k, id);
@@ -56,7 +67,7 @@ pub(super) async fn stem_or_fluff(inner: &Arc<Inner>, tx: Transaction, id: Hash,
         );
         if hold {
             log::debug!("local tx {} held until a stem peer exists", short(&id));
-            return;
+            return true;
         }
         route
     };
@@ -67,6 +78,7 @@ pub(super) async fn stem_or_fluff(inner: &Arc<Inner>, tx: Transaction, id: Hash,
             inner.send_now(p, Message::StemTx(tx.encode()));
         }
     }
+    true
 }
 
 /// Sends local transactions held for lack of a stem peer (`stem_or_fluff`)
@@ -115,4 +127,99 @@ pub(super) async fn fluff(inner: &Arc<Inner>, id: Hash, except: Option<PeerId>) 
         }
         Err(e) => log::debug!("fluffing {} failed: {e:?}", short(&id)),
     }
+}
+
+/// The originated set's file in the data directory (docs/p2p.md §8.1).
+pub(super) const ORIGINATED_FILE: &str = "originated.json";
+
+impl Inner {
+    /// Writes the originated set to the data directory if it changed. Blocks
+    /// on file I/O: call it on a blocking thread ([`Inner::save_originated`])
+    /// or at shutdown. A failed write is logged and retried at the next
+    /// change or save.
+    pub(super) fn write_originated(&self, dir: &Path) {
+        let _io = lock_or_exit(&self.originated_io, "originated set file");
+        let bytes = {
+            let mut st = self.state();
+            if !st.originated.is_dirty() {
+                return;
+            }
+            st.originated.encode()
+        };
+        if let Err(e) = write_atomic(&dir.join(ORIGINATED_FILE), &bytes) {
+            log::error!(
+                "saving {ORIGINATED_FILE}: {e}; after a restart this node could originate \
+                 again a transaction it originated before"
+            );
+            self.state().originated.mark_dirty();
+        }
+    }
+
+    /// [`Inner::write_originated`] on a blocking thread.
+    pub(super) async fn save_originated(self: &Arc<Self>) {
+        let Some(dir) = self.cfg.data_dir.clone() else {
+            return;
+        };
+        let inner = self.clone();
+        let _ = tokio::task::spawn_blocking(move || inner.write_originated(&dir)).await;
+    }
+}
+
+/// Submits a transaction originated here (docs/p2p.md §8, §8.1): the only
+/// origination path, so the only one applying the recently-expired guard
+/// and the originated set. A peer's transactions are relayed regardless
+/// (RTW1B-1).
+pub(super) async fn submit_local(inner: &Arc<Inner>, tx: Transaction) -> Result<Hash, String> {
+    // Hashing a PX transaction reads megabytes: off the async workers.
+    let tx2 = tx.clone();
+    let (id, next) = inner
+        .with_chain(move |c| (tx2.hash(), c.height() + 1))
+        .await;
+    let verdict = {
+        let st = inner.state();
+        if st.stempool.contains_key(&id) {
+            // Already in our stem (this submission or an earlier one):
+            // nothing more to send.
+            return Ok(id);
+        }
+        st.originated.verdict(&id, next)
+    };
+    match verdict {
+        Verdict::Held => {
+            // Other nodes most likely still pool it: pooled here, never
+            // stemmed or announced. The pool answers as for any submission
+            // (`AlreadyKnown` if pooled here too).
+            let r = inner.with_chain(move |c| c.submit_local_tx(tx)).await;
+            if r.is_ok() {
+                log::debug!(
+                    "local tx {} was originated here before: pooled, not originated again",
+                    short(&id)
+                );
+            }
+            return r.map_err(|e| format!("{e:?}"));
+        }
+        Verdict::Expired => {
+            log::debug!(
+                "local tx {} was originated here and expired network-wide recently: refused",
+                short(&id)
+            );
+            return Err(format!("{:?}", MempoolError::Expired));
+        }
+        Verdict::Fresh => {}
+    }
+    let tx2 = tx.clone();
+    let next = inner
+        .with_chain(move |c| c.check_local_tx(&tx2).map(|_| c.height() + 1))
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    // Recorded, and written, before the transaction leaves the node: a crash
+    // right after sending must not forget it.
+    inner.state().originated.record(id, next);
+    inner.save_originated().await;
+    if !stem_or_fluff(inner, tx, id, Source::Local).await {
+        // A conflicting stem transaction won: this one was not sent.
+        inner.state().originated.forget(&id);
+        inner.save_originated().await;
+    }
+    Ok(id)
 }

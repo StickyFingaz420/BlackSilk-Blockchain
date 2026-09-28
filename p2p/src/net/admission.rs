@@ -382,7 +382,12 @@ pub(super) async fn on_stem_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>)
         .await;
     inner.state().tx_verifications += 1;
     match checked {
-        (_, Ok(_), _) => stem_or_fluff(inner, tx, id, Source::Peer(peer)).await,
+        // A peer's transaction is relayed whether or not this node
+        // originated it (the originated set, docs/p2p.md §8.1, and the
+        // recently-expired guard apply to local origination only: RTW1B-1).
+        (_, Ok(_), _) => {
+            stem_or_fluff(inner, tx, id, Source::Peer(peer)).await;
+        }
         (tip, Err(MempoolError::Invalid(e)), proven) => {
             on_invalid_tx(inner, peer, id, tip, e, proven)
         }

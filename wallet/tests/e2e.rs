@@ -13,6 +13,7 @@ use blacksilk_rpc::{self as rpc, Client};
 use blacksilk_tx::params::TxRules;
 use blacksilk_wallet::file::KdfParams;
 use blacksilk_wallet::node::NodeApi;
+use blacksilk_wallet::wallet::{RebroadcastState, NETWORK_EXPIRY_BLOCKS};
 use blacksilk_wallet::{load, save, Wallet, WalletError};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -151,6 +152,9 @@ enum Submit {
     /// Keep it (`Flaky::sent`) and report a transport failure, without
     /// passing it on (a submission lost on the way).
     Lose,
+    /// Report that the node refuses it as recently expired (`Expired`),
+    /// without passing it on.
+    Expired,
 }
 
 /// The real client, with submissions answered as `mode` says; counts them.
@@ -169,6 +173,10 @@ struct Flaky<'a> {
     /// whether it already holds the reservation.
     check_file: Option<std::path::PathBuf>,
     saved_before_submit: Cell<Option<bool>>,
+    /// `/tx/status` requests; answered with `status` if set, else by the
+    /// node.
+    status_checks: Cell<u32>,
+    status: Option<rpc::TxStatus>,
 }
 
 impl<'a> Flaky<'a> {
@@ -176,6 +184,8 @@ impl<'a> Flaky<'a> {
         Self {
             inner,
             mode,
+            status_checks: Cell::new(0),
+            status: None,
             submits: Cell::new(0),
             sent: RefCell::new(Vec::new()),
             queries: RefCell::new(Vec::new()),
@@ -215,6 +225,13 @@ impl NodeApi for Flaky<'_> {
     fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
         NodeApi::px_contracts(self.inner, from)
     }
+    fn tx_status(&self, id: &[u8; 32]) -> Result<rpc::TxStatus, String> {
+        self.status_checks.set(self.status_checks.get() + 1);
+        match self.status {
+            Some(s) => Ok(s),
+            None => NodeApi::tx_status(self.inner, id),
+        }
+    }
     fn submit_tx(&self, tx: &[u8]) -> Result<rpc::SubmitResult, String> {
         self.submits.set(self.submits.get() + 1);
         self.sent.borrow_mut().push(tx.to_vec());
@@ -241,6 +258,12 @@ impl NodeApi for Flaky<'_> {
                 error: None,
             }),
             Submit::Lose => Err("connection reset".into()),
+            Submit::Expired => Ok(rpc::SubmitResult {
+                accepted: false,
+                id: None,
+                on_best_chain: None,
+                error: Some("Expired".into()),
+            }),
         }
     }
 }
@@ -406,7 +429,7 @@ fn rpc_rejects_malformed_and_oversized_requests() {
 }
 
 #[test]
-fn an_unconfirmed_transaction_keeps_its_inputs_and_is_rebroadcast_unchanged() {
+fn an_unconfirmed_transaction_keeps_its_inputs_and_is_checked_not_resent() {
     let mut net = Net::start();
     let mut miner = wallet(7);
     let bob = wallet(8);
@@ -434,12 +457,18 @@ fn an_unconfirmed_transaction_keeps_its_inputs_and_is_rebroadcast_unchanged() {
         let tip = { net.shared.lock().unwrap().tip_id() };
         net.mine_on(&tip, &miner_addr, 1000 + i);
     }
-    // The wallet rebroadcasts it and keeps the inputs reserved: releasing them
-    // would let a new transaction spend the same output with a new ring.
+    // The wallet checks on it (the node still pools it: nothing is sent) and
+    // keeps the inputs reserved: releasing them would let a new transaction
+    // spend the same output with a new ring.
     let node = Flaky::new(&net.client, Submit::Forward);
     miner.sync(&node).unwrap();
-    assert_eq!(node.submits.get(), 1, "rebroadcast once");
+    assert_eq!(node.status_checks.get(), 1, "checked once");
+    assert_eq!(node.submits.get(), 0, "not sent again");
     assert!(miner.has_pending(), "still reserved after 20 blocks");
+    assert_eq!(
+        miner.pending_transactions()[0].state,
+        RebroadcastState::Sent
+    );
     // Once mined, the spend is detected.
     net.mine(&miner_addr);
     miner.sync(&net.client).unwrap();
@@ -452,6 +481,130 @@ fn an_unconfirmed_transaction_keeps_its_inputs_and_is_rebroadcast_unchanged() {
         expected += block_reward(h, expected);
     }
     assert_eq!(miner.balance().total, expected - COIN);
+    assert!(!miner.has_pending());
+}
+
+/// Dossier 38 W4 (privacy suite c): the wallet checks on a pending
+/// transaction with `/tx/status` and makes no `/tx` POST while the node
+/// reports it pooled. Before the redesign it re-posted the full transaction
+/// every 20 blocks as its check.
+#[test]
+fn a_pooled_transaction_is_checked_not_posted_again() {
+    let mut net = Net::start();
+    let mut miner = wallet(40);
+    let bob = wallet(41);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    miner
+        .transfer(&net.client, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    for round in 0..3u64 {
+        for i in 0..20 {
+            let tip = { net.shared.lock().unwrap().tip_id() };
+            net.mine_on(&tip, &miner_addr, 4000 + 100 * round + i);
+        }
+        let node = Flaky::new(&net.client, Submit::Record);
+        miner.sync(&node).unwrap();
+        assert_eq!(node.submits.get(), 0, "no POST for a pooled transaction");
+        assert_eq!(node.status_checks.get(), 1, "checked with /tx/status");
+        assert!(miner.has_pending());
+    }
+}
+
+/// Dossier 38 W4: a transaction the node no longer holds (it expired from
+/// the pool unmined) is not sent again before
+/// `relayed + NETWORK_EXPIRY_BLOCKS` (2 160 + 30, from the chain's
+/// constants); then it is sent once, through the node's normal path. The
+/// node's `Expired` refusal is handled explicitly (nothing was sent: tried
+/// again later, not counted as the one re-send), and after the one re-send
+/// nothing is ever sent again automatically.
+#[test]
+fn a_transaction_the_node_lacks_is_sent_again_once_only_after_the_network_expiry() {
+    use blacksilk_chain::mempool::{MEMPOOL_EXPIRY_BLOCKS, RECENTLY_EXPIRED_BLOCKS};
+    assert_eq!(
+        NETWORK_EXPIRY_BLOCKS,
+        MEMPOOL_EXPIRY_BLOCKS + RECENTLY_EXPIRED_BLOCKS
+    );
+    let mut net = Net::start();
+    let mut miner = wallet(42);
+    let bob = wallet(43);
+    let miner_addr = miner.primary();
+    net.mine_n(90, &miner_addr);
+    miner.sync(&net.client).unwrap();
+    let (id, _) = miner
+        .transfer(&net.client, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap();
+    let relayed = miner.pending_transactions()[0].relayed_height;
+    assert_eq!(relayed, 90);
+    let horizon = relayed + NETWORK_EXPIRY_BLOCKS;
+    assert_eq!(miner.pending_transactions()[0].resend_from, horizon);
+    let empty_blocks_to = |net: &mut Net, height: u64| {
+        let mut nonce = 0;
+        while net.shared.lock().unwrap().height() < height {
+            let tip = { net.shared.lock().unwrap().tip_id() };
+            nonce += 1;
+            net.mine_on(&tip, &miner_addr, 10_000_000 + height * 10 + nonce);
+        }
+    };
+    // Expired from the node's pool (at next height 91 + 2 160), unmined.
+    empty_blocks_to(&mut net, horizon - 1);
+    assert!(!net.shared.lock().unwrap().mempool().contains(&id));
+    // One block before the window ends: checked, not sent; waiting.
+    let node = Flaky::new(&net.client, Submit::Forward);
+    miner.sync(&node).unwrap();
+    assert_eq!(node.status_checks.get(), 1);
+    assert_eq!(node.submits.get(), 0, "not sent inside the window");
+    let p = &miner.pending_transactions()[0];
+    assert_eq!(p.state, RebroadcastState::Waiting);
+    assert!(miner.has_pending(), "still reserved");
+    let warnings = miner.take_warnings();
+    assert!(
+        warnings.iter().any(|w| w.contains("not sent again before")),
+        "{warnings:?}"
+    );
+    // The window's end: sent; the node refuses it as recently expired.
+    empty_blocks_to(&mut net, horizon);
+    let node = Flaky::new(&net.client, Submit::Expired);
+    miner.sync(&node).unwrap();
+    assert_eq!(node.submits.get(), 1);
+    assert_eq!(
+        miner.pending_transactions()[0].state,
+        RebroadcastState::Waiting,
+        "an Expired refusal is not the one re-send"
+    );
+    assert!(miner.take_warnings().iter().any(|w| w.contains("refused")));
+    // Not tried again before the next check...
+    let node = Flaky::new(&net.client, Submit::Forward);
+    miner.sync(&node).unwrap();
+    assert_eq!(node.submits.get(), 0);
+    // ...which sends it through the node (accepted: pooled again).
+    empty_blocks_to(&mut net, horizon + 20);
+    let node = Flaky::new(&net.client, Submit::Forward);
+    miner.sync(&node).unwrap();
+    assert_eq!(node.submits.get(), 1, "sent again, once");
+    assert!(net.shared.lock().unwrap().mempool().contains(&id));
+    assert_eq!(
+        miner.pending_transactions()[0].state,
+        RebroadcastState::Resent {
+            height: horizon + 20
+        }
+    );
+    // Never again automatically, even if the node lacks it.
+    for k in 1..=3u64 {
+        empty_blocks_to(&mut net, horizon + 20 + 20 * k);
+        let mut node = Flaky::new(&net.client, Submit::Forward);
+        node.status = Some(rpc::TxStatus::Unknown);
+        miner.sync(&node).unwrap();
+        assert_eq!(node.status_checks.get(), 1);
+        assert_eq!(node.submits.get(), 0, "at most one re-send");
+    }
+    // Mined at last.
+    net.mine(&miner_addr);
+    miner.sync(&net.client).unwrap();
+    let mut bob = bob;
+    bob.sync(&net.client).unwrap();
+    assert_eq!(bob.balance().total, COIN);
     assert!(!miner.has_pending());
 }
 
@@ -502,22 +655,34 @@ fn a_stored_transaction_the_node_finds_invalid_releases_its_inputs() {
     net.mine_n(90, &miner_addr);
     miner.sync(&net.client).unwrap();
     let before = miner.balance();
-    miner
-        .transfer(&net.client, &bob.primary(), COIN, &net.rules, &mut net.rng)
-        .unwrap();
+    // The submission is lost on the way: uncertain, so the next sync checks
+    // on it and, as the node lacks it, sends it again (dossier 38 W4 (d)).
+    let lost = Flaky::new(&net.client, Submit::Lose);
+    let err = miner
+        .transfer(&lost, &bob.primary(), COIN, &net.rules, &mut net.rng)
+        .unwrap_err();
+    assert!(matches!(err, WalletError::Uncertain(_)), "{err}");
+    assert_eq!(
+        miner.pending_transactions()[0].state,
+        RebroadcastState::Uncertain
+    );
     for i in 0..20 {
         let tip = { net.shared.lock().unwrap().tip_id() };
         net.mine_on(&tip, &miner_addr, 2000 + i);
     }
-    // A full pool or a transport error keeps the reservation...
-    miner
-        .sync(&Flaky::new(&net.client, Submit::ForwardThenFail))
-        .unwrap();
+    // A transport error keeps the reservation...
+    let node = Flaky::new(&net.client, Submit::Lose);
+    miner.sync(&node).unwrap();
+    assert_eq!(
+        node.submits.get(),
+        1,
+        "an uncertain submission is sent again"
+    );
     assert!(miner.has_pending());
     // ...an invalid verdict releases it: the transaction can never be mined.
     let node = Flaky::new(&net.client, Submit::Invalid);
     miner.sync(&node).unwrap();
-    assert_eq!(node.submits.get(), 1);
+    assert_eq!(node.submits.get(), 1, "again at the very next sync");
     assert!(!miner.has_pending(), "released");
     assert!(
         miner.balance().total > before.total,
@@ -945,24 +1110,29 @@ fn an_output_spent_again_reuses_its_ring() {
         .unwrap();
     net.mine_n(11, &miner_addr);
     carol.sync(&net.client).unwrap();
-    let spend = |carol: &mut Wallet, net: &mut Net| {
-        let node = Flaky::new(&net.client, Submit::Record);
-        carol
-            .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
-            .unwrap();
+    // `Record`: the spend "leaves" the wallet (not mined); `Lose`: it may
+    // have (uncertain), so the next sync sends it again.
+    let spend = |carol: &mut Wallet, net: &mut Net, mode: Submit| {
+        let node = Flaky::new(&net.client, mode);
+        let r = carol.transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng);
+        match mode {
+            Submit::Lose => assert!(matches!(r, Err(WalletError::Uncertain(_)))),
+            _ => assert!(r.is_ok()),
+        }
         let rings = rings_of(&node.sent.borrow()[0]);
         assert_eq!(rings.len(), 1, "her one output");
         rings
     };
 
     // The first spend "leaves" the wallet (recorded, not mined).
-    let first = spend(&mut carol, &mut net);
+    let first = spend(&mut carol, &mut net, Submit::Record);
     // Freed by clear-pending, spent again: the same ring.
     carol.clear_pending();
-    let second = spend(&mut carol, &mut net);
+    let second = spend(&mut carol, &mut net, Submit::Lose);
     assert_eq!(first, second, "ring reused after clear-pending");
 
-    // Freed by an Invalid verdict 20 blocks later, spent again: the same ring.
+    // Freed by an Invalid verdict when it is sent again, spent again: the
+    // same ring.
     for i in 0..20 {
         let tip = { net.shared.lock().unwrap().tip_id() };
         net.mine_on(&tip, &miner_addr, 3000 + i);
@@ -971,7 +1141,7 @@ fn an_output_spent_again_reuses_its_ring() {
         .sync(&Flaky::new(&net.client, Submit::Invalid))
         .unwrap();
     assert!(!carol.has_pending(), "released");
-    let third = spend(&mut carol, &mut net);
+    let third = spend(&mut carol, &mut net, Submit::Record);
     assert_eq!(second, third, "ring reused after the Invalid verdict");
 
     // The ring survives a save and load.
@@ -987,7 +1157,7 @@ fn an_output_spent_again_reuses_its_ring() {
     let mut carol = load(&path, b"pw").unwrap();
     std::fs::remove_dir_all(&dir).ok();
     carol.clear_pending();
-    let fourth = spend(&mut carol, &mut net);
+    let fourth = spend(&mut carol, &mut net, Submit::Record);
     assert_eq!(third, fourth, "ring reused after a restart");
 }
 
@@ -1383,10 +1553,12 @@ fn a_transfer_built_before_an_activation_is_not_rebroadcast_after_it() {
     assert!(miner.has_pending());
     let old_bytes = recorded.sent.borrow()[0].clone();
 
-    // Before the activation both are kept and reserved, with a warning.
+    // Before the activation both are kept and reserved, with a warning. The
+    // uncertain one is sent again at this sync, and lost again.
     net.mine_n(ACTIVATION - 2 - 90, &miner_addr);
-    let node = Flaky::new(&net.client, Submit::Forward);
+    let node = Flaky::new(&net.client, Submit::Lose);
     miner.sync(&node).unwrap();
+    assert_eq!(node.submits.get(), 1, "the uncertain one, at the next sync");
     assert_eq!(miner.synced_height(), ACTIVATION - 2);
     assert!(miner.has_pending());
     assert!(miner.stale_transactions().is_empty());

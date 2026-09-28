@@ -2989,3 +2989,230 @@ async fn a_recently_expired_transaction_is_stemmed_for_a_peer_but_not_originated
     .await;
     assert_eq!(b.net.peers()[0].score, 0);
 }
+
+// ------------------------- originated set and pool re-announcement (33 W2)
+
+/// A fresh, empty temporary data directory.
+fn temp_data_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("bs-p2p-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// `a` restarted: a new node (seed `seed`) over a copy of `a`'s blocks, with
+/// an empty mempool and stempool, whose data directory holds a copy of what
+/// `a` saved in `a_dir` (persisted state survives a restart, memory does
+/// not). `a` keeps running, but is no peer of the new node. Returns the new
+/// node and its data directory.
+async fn restarted(
+    a: &TestNode,
+    a_dir: &std::path::Path,
+    seed: u64,
+) -> (TestNode, std::path::PathBuf) {
+    a.net.save();
+    let dir = temp_data_dir(&format!("restart-{seed}"));
+    for f in std::fs::read_dir(a_dir).unwrap() {
+        let f = f.unwrap();
+        if f.path().is_file() {
+            std::fs::copy(f.path(), dir.join(f.file_name())).unwrap();
+        }
+    }
+    let mut cfg = fast_config(&[]);
+    cfg.data_dir = Some(dir.clone());
+    let b = node_with(seed, cfg).await;
+    {
+        let ca = a.chain.lock().unwrap();
+        let mut cb = b.chain.lock().unwrap();
+        for h in 1..=ca.height() {
+            let block = ca.block_at(h).unwrap();
+            let now = block.header.timestamp;
+            cb.submit_block(block, now).unwrap();
+        }
+    }
+    (b, dir)
+}
+
+/// Whether a message is an announcement or a stem transaction (what an
+/// origination shows a peer).
+fn originates(m: &Message) -> bool {
+    matches!(m, Message::StemTx(_) | Message::InvTx(_))
+}
+
+/// A node (data directory `dir`, 80 blocks) that originated one payment
+/// through a raw stem peer and pooled it once its embargo fired, at next
+/// height 81. Returns the node and the transaction.
+async fn origin_with_a_pooled_payment(seed: u64, dir: &std::path::Path) -> (TestNode, Transaction) {
+    let mut cfg = fast_config(&[]);
+    cfg.data_dir = Some(dir.to_path_buf());
+    let mut a = node_with(seed, cfg).await;
+    a.mine_n(80, 0);
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (mut stem, _w) = dialed_raw_peer(&a, &l).await;
+    tokio::time::sleep(Duration::from_millis(300)).await; // an epoch with a stem
+    let tx = a.payment();
+    let id = tx.hash();
+    a.net.submit_tx(tx.clone()).await.unwrap();
+    assert!(
+        recv_until(&mut stem, 5.0, |m| matches!(m, Message::StemTx(_)))
+            .await
+            .is_some(),
+        "originated into the stem"
+    );
+    // The raw stem peer relays nothing: the origin's embargo fluffs it.
+    wait_until("pooled after the embargo", 15, || a.mempool_has(&id)).await;
+    (a, tx)
+}
+
+/// Dossier 33 F33-1, W2 (privacy suite b): an origin restarted while the
+/// network still pools its transaction (its own pool is empty after the
+/// restart) does not originate it again when its wallet resubmits it: no
+/// `StemTx` to its stem peer and no `InvTx` to anyone. The transaction is
+/// held (pooled here without an announcement) and `/tx` accepts it. Before
+/// the originated set the restarted node stemmed it to a peer that still
+/// pooled it: an honest relay never stems a long-fluffed transaction, so the
+/// peer learned the origin.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restarted_origin_does_not_reoriginate_a_transaction_the_network_holds() {
+    let dir = temp_data_dir("orig-held");
+    let (a, tx) = origin_with_a_pooled_payment(80, &dir).await;
+    let id = tx.hash();
+    let (b, b_dir) = restarted(&a, &dir, 81).await;
+    assert!(!b.mempool_has(&id), "the pool is not persisted");
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (mut stem, _w) = dialed_raw_peer(&b, &l).await;
+    let nid = params().network_id;
+    let (mut spy, _spy_w) = raw_peer(b.addr, nid, true).await;
+    tokio::time::sleep(Duration::from_millis(300)).await; // an epoch with a stem
+    assert_eq!(b.net.submit_tx(tx.clone()).await, Ok(id), "accepted: held");
+    assert!(
+        recv_until(&mut stem, 5.0, originates).await.is_none(),
+        "not re-originated to the stem peer"
+    );
+    assert!(
+        recv_until(&mut spy, 1.0, originates).await.is_none(),
+        "not announced"
+    );
+    assert!(!b.net.stempool_contains(&id));
+    assert!(b.mempool_has(&id), "held in the pool, unannounced");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&b_dir);
+}
+
+/// Dossier 33 W2, FX-RTW1B follow-up (privacy suite a): a transaction the
+/// origin expired from its pool is not originated again before
+/// `relayed + MEMPOOL_EXPIRY_BLOCKS + RECENTLY_EXPIRED_BLOCKS`, also after a
+/// restart inside the recently-expired window (the in-memory guard is gone
+/// then; the originated set is persisted). After the window it is
+/// originated once, through the stem.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_expired_local_transaction_is_not_reoriginated_inside_the_window_even_after_a_restart() {
+    use blacksilk_chain::mempool::{MEMPOOL_EXPIRY_BLOCKS, RECENTLY_EXPIRED_BLOCKS};
+    let dir = temp_data_dir("orig-expired");
+    let (mut a, tx) = origin_with_a_pooled_payment(82, &dir).await;
+    let id = tx.hash();
+    while a.height() + 1 < 81 + MEMPOOL_EXPIRY_BLOCKS {
+        a.mine_with(0, false);
+    }
+    assert!(!a.mempool_has(&id), "expired");
+    let r = a.net.submit_tx(tx.clone()).await;
+    assert!(matches!(&r, Err(e) if e.contains("Expired")), "{r:?}");
+    let (mut b, b_dir) = restarted(&a, &dir, 83).await;
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (mut stem, _w) = dialed_raw_peer(&b, &l).await;
+    tokio::time::sleep(Duration::from_millis(300)).await; // an epoch with a stem
+    let r = b.net.submit_tx(tx.clone()).await;
+    assert!(
+        matches!(&r, Err(e) if e.contains("Expired")),
+        "refused inside the window after a restart: {r:?}"
+    );
+    assert!(
+        recv_until(&mut stem, 5.0, originates).await.is_none(),
+        "not re-originated inside the window"
+    );
+    while b.height() + 1 < 81 + MEMPOOL_EXPIRY_BLOCKS + RECENTLY_EXPIRED_BLOCKS - 1 {
+        b.mine_with(0, false);
+    }
+    let r = b.net.submit_tx(tx.clone()).await;
+    assert!(
+        matches!(&r, Err(e) if e.contains("Expired")),
+        "the window's last block: {r:?}"
+    );
+    b.mine_with(0, false);
+    // Past the window the network has dropped it: originated once, as new.
+    assert_eq!(b.net.submit_tx(tx.clone()).await, Ok(id));
+    assert!(
+        recv_until(&mut stem, 5.0, |m| matches!(m, Message::StemTx(_)))
+            .await
+            .is_some(),
+        "originated after the window"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&b_dir);
+}
+
+/// Dossier 33 W2 with RTW1B-1 (privacy suite d): the originated set applies
+/// to local origination only. A peer stemming a transaction this node
+/// originated (and holds back after a restart) is served like any valid
+/// stem: the node relays it, and the peer is not penalized.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_peers_stem_of_a_transaction_this_node_originated_is_relayed() {
+    let dir = temp_data_dir("orig-peer");
+    let (a, tx) = origin_with_a_pooled_payment(84, &dir).await;
+    let id = tx.hash();
+    let (b, b_dir) = restarted(&a, &dir, 85).await;
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (mut stem, _w) = dialed_raw_peer(&b, &l).await;
+    tokio::time::sleep(Duration::from_millis(300)).await; // an epoch with a stem
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(b.addr, nid, true).await;
+    send_and_sync(&mut r, &mut w, &[Message::StemTx(tx.encode()).encode()], 1).await;
+    assert!(
+        recv_until(&mut stem, 5.0, |m| matches!(m, Message::StemTx(_)))
+            .await
+            .is_some(),
+        "relayed along the stem"
+    );
+    assert!(b.net.stempool_contains(&id) || b.mempool_has(&id));
+    assert!(b.net.peers().iter().all(|p| p.score == 0));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&b_dir);
+}
+
+/// Dossier 38 §3.4 item 3 (W4n, pool re-announcement): every node
+/// re-announces a pooled transaction that is still in its block template on
+/// one fixed schedule of pool ages (10, 20, 40 … blocks), so a peer that
+/// lost it (a restart) gets it back without its origin doing anything the
+/// other nodes do not do. Only `InvTx`, never a `StemTx`; not before age 10,
+/// and once per peer and schedule point.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pooled_transactions_are_reannounced_on_the_common_schedule() {
+    let mut a = node(86, &[]).await;
+    a.mine_n(80, 0);
+    let tx = a.payment();
+    let id = tx.hash();
+    // Pooled from a peer at next height 81 (never announced by this node).
+    a.chain.lock().unwrap().submit_tx(tx).unwrap();
+    let nid = params().network_id;
+    let (mut spy, _w) = raw_peer(a.addr, nid, true).await;
+    wait_until("spy registered", 5, || a.net.stats().peers == 1).await;
+    for _ in 0..9 {
+        a.mine_with(0, false);
+    }
+    // Age 9 (next height 90): not yet.
+    assert!(
+        recv_until(&mut spy, 1.5, originates).await.is_none(),
+        "not before age 10"
+    );
+    a.mine_with(0, false);
+    let got = recv_until(&mut spy, 5.0, originates).await;
+    assert!(
+        matches!(&got, Some(Message::InvTx(ids)) if ids == &vec![id]),
+        "re-announced at age 10: {got:?}"
+    );
+    a.mine_with(0, false);
+    assert!(
+        recv_until(&mut spy, 1.5, originates).await.is_none(),
+        "not again at age 11"
+    );
+}

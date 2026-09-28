@@ -25,6 +25,9 @@ use blacksilk_px::wallet::Account;
 use blacksilk_tx::builder::{BuildError, Decoy};
 use blacksilk_tx::params::MAX_INPUTS;
 pub use contracts::check_vault_deploy;
+pub use rebroadcast::{
+    PendingInfo, RebroadcastState, NETWORK_EXPIRY_BLOCKS, REBROADCAST_PROBE_BLOCKS,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -49,12 +52,12 @@ pub const GAP_LIMIT: u32 = 1_000;
 /// versions, which had no limit) are clamped when loaded.
 pub const MAX_INDEX_AHEAD: u32 = 10_000;
 
-/// How long the wallet keeps a submitted transaction (`PendingTx`):
-/// - while it is unconfirmed, it is rebroadcast unchanged every this many
-///   blocks, and its inputs stay reserved until the node rejects it for a
-///   reason other than "already pooled";
-/// - once confirmed, it is kept until its spend is this many blocks deep, so
-///   that a reorganization re-reserves its inputs instead of freeing them.
+/// Reservations without a stored transaction (wallet files written before
+/// transactions were stored) are released after this many blocks. A stored
+/// transaction (`PendingTx`) keeps its inputs reserved while it is
+/// unconfirmed, until the node finds it invalid; it is checked on with
+/// `/tx/status` and sent again only as `rebroadcast.rs` allows
+/// (`REBROADCAST_PROBE_BLOCKS`, `NETWORK_EXPIRY_BLOCKS`).
 ///
 /// The inputs are never simply released after a timeout. A transaction that
 /// was relayed but not mined could still be in other nodes' pools, and spending
@@ -266,6 +269,14 @@ struct PendingTx {
     /// epoch): the epoch of `relayed_height + 1` stands in for it.
     #[serde(default)]
     branch_id: Option<u32>,
+    /// What the wallet knows and did about it (`rebroadcast.rs`). Absent in
+    /// files written before 2026-09-28: `Sent`.
+    #[serde(default)]
+    state: RebroadcastState,
+    /// Wallet height it was last checked on (`/tx/status`); absent in older
+    /// files: 0, so it is checked at the next sync.
+    #[serde(default)]
+    checked_height: u64,
 }
 
 /// A stored transaction dropped because a consensus upgrade made it invalid
@@ -1087,6 +1098,8 @@ mod tests {
             tx: "00".into(),
             relayed_height: 5,
             branch_id: Some(7),
+            state: RebroadcastState::Resent { height: 9 },
+            checked_height: 9,
         });
         w.stale_txs.push(StaleTx {
             id: "ab".into(),
@@ -1096,15 +1109,23 @@ mod tests {
         });
         let back = Wallet::from_json(&w.to_json()).unwrap();
         assert_eq!(back.pending_txs[0].branch_id, Some(7));
+        assert_eq!(
+            back.pending_txs[0].state,
+            RebroadcastState::Resent { height: 9 }
+        );
         assert_eq!(back.stale_transactions(), w.stale_transactions());
         let mut json: serde_json::Value = serde_json::from_slice(&w.to_json()).unwrap();
-        json["pending_txs"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("branch_id");
+        for field in ["branch_id", "state", "checked_height"] {
+            json["pending_txs"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+        }
         json.as_object_mut().unwrap().remove("stale_txs");
         let old = Wallet::from_json(&serde_json::to_vec(&json).unwrap()).unwrap();
         assert_eq!(old.pending_txs[0].branch_id, None);
+        assert_eq!(old.pending_txs[0].state, RebroadcastState::Sent);
+        assert_eq!(old.pending_txs[0].checked_height, 0);
         assert_eq!(old.pending_txs[0].relayed_height, 5);
         assert!(old.stale_transactions().is_empty());
         // Rules and parameters of another chain are refused.

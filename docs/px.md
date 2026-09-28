@@ -692,13 +692,39 @@ Measured privacy analysis: `docs/reviews/privacy-review.md`.
 - **The fee is the same for every PX transaction** (consensus), so it reveals nothing.
 - **Never spend the same funds twice after a transaction may have been relayed**
   (privacy-review.md §3c, P-9). The wallet keeps every submitted transaction and
-  rebroadcasts it unchanged. If a submission ends with "the node may or may not have
+  never rebuilds it. If a submission ends with "the node may or may not have
   received the transaction", just `sync` later. `clear-pending` is only for a
   transaction that certainly never left the wallet. A second spend of a v1 input
   shares the key image with the first, so the two are linkable. The wallet reuses
   the first ring so they do not reveal the real input, but these rings are kept in
   the wallet file only: keep backups of it, because a restore from the seed loses
   them.
+- **Rebroadcast** (dossier 38 W4; `wallet/src/wallet/rebroadcast.rs`). A stored
+  transaction that is not mined is checked on at `sync` with `/tx/status`
+  (blocks.md §9) every 20 blocks, never by posting it again:
+  - `pooled` or `confirmed`: nothing is sent.
+  - The node lacks it (`unknown`): nothing is sent before `relayed + 2 190` blocks
+    (`NETWORK_EXPIRY_BLOCKS`: the pool expiry, 2 160, plus the recently-expired guard,
+    30, both taken from `chain`). Other nodes may still pool it until then, and a
+    re-send would show them which node it came from (p2p.md §8.1). The wallet warns
+    and lists it as `waiting` (`Wallet::pending_transactions`).
+  - After that it is sent again **once**, through the node's normal `/tx` path, with a
+    warning, and listed as `resent`. It is never sent again automatically; its funds
+    stay reserved until it is mined or found invalid.
+  - The node's answers are handled one by one: `Expired` (the node dropped it recently
+    and does not originate it again yet) sends nothing and is retried at a later
+    check, not counted as the one re-send, with a warning; `Invalid` releases the
+    inputs; a full pool or another refusal keeps them reserved and retries later.
+  - A submission that failed in transport (`uncertain`) is checked, and sent again if
+    the node lacks it, at the next `sync`, not 20 blocks later. If it had arrived, the
+    node's originated set keeps the repeat from being originated again (p2p.md §8.1).
+  - A node without `/tx/status` gets nothing before `relayed + 2 190`.
+  - Each independent sending of the same transaction is another sample for a network
+    spy (dossier 33 F33-3); the one re-send is not private broadcast over a fresh Tor
+    circuit (not implemented).
+  - Tested (`wallet/tests/e2e.rs`): `a_pooled_transaction_is_checked_not_posted_again`,
+    `a_transaction_the_node_lacks_is_sent_again_once_only_after_the_network_expiry`,
+    `a_stored_transaction_the_node_finds_invalid_releases_its_inputs`.
 - **Across a consensus upgrade** a stored transaction built for the previous epoch
   (branch id) can never be mined. The wallet does not rebroadcast it: it releases its
   inputs, warns, and `sync` lists it as "needs rebuilding" (a PX transaction must be
