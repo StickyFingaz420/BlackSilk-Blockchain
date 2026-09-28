@@ -2,8 +2,11 @@
 //! (finding F3).
 //!
 //! After a plain extension the pool re-checks only the rules an extension can
-//! change (`revalidate_after_extension`); after a reorganization it runs full
-//! validation. These tests make each path decide something:
+//! change (`revalidate_after_extension`); after a reorganization it also
+//! resolves every ring at the new next height (C1) and compares what it
+//! resolves to with the entry's ring digest, verifying nothing (W2-12,
+//! `chain/src/mempool/reorg.rs`). These tests make each path decide
+//! something:
 //! - an extension that creates a pooled transaction's output one-time key
 //!   through a DIFFERENT transaction (the two share no key image): the
 //!   extension check alone must drop it;
@@ -11,8 +14,9 @@
 //! - a reorganization that replaces coinbase-only blocks changes what a pooled
 //!   transaction's ring resolves to, and a reorganization to a shorter but
 //!   heavier chain makes its ring member immature: full validation drops the
-//!   transaction, while the extension check alone would have kept it, which is
-//!   why the reorg path must use full validation.
+//!   transaction, and so does the reorg path (a changed ring digest, C1 at the
+//!   new height), without verifying a signature, while the extension check
+//!   alone would have kept it.
 //!
 //! To isolate `Mempool::revalidate` from `Mempool::remove_block` (which, since
 //! output keys became conflict keys, also drops a pooled transaction sharing
@@ -484,7 +488,8 @@ fn a_plain_extension_keeps_valid_transactions() {
 /// disconnected block and nothing it spends or creates appears on the new
 /// branch, so `revalidate_after_extension` still accepts it; but its ring
 /// indices now resolve to other outputs and its signature no longer verifies.
-/// Full validation, which the reorg path uses, drops it.
+/// Full validation drops it; the reorg path drops it for its changed ring
+/// digest, without verifying it (nothing is verified by any pool here).
 #[test]
 fn replacing_coinbase_only_blocks_changes_a_ring_and_needs_full_validation() {
     let mut m = open();
@@ -516,6 +521,7 @@ fn replacing_coinbase_only_blocks_changes_a_ring_and_needs_full_validation() {
     // A rival branch of coinbase-only blocks from before `x_height`, one
     // block longer (regtest difficulty 1: more blocks, more work).
     let depth = m.height() - (x_height - 1);
+    let manager_verified = m.mempool().full_validations();
     rival.mine_on(&mut m, fork_parent, depth as usize + 1, None);
     assert_eq!(m.deepest_reorg() as u64, depth);
     assert_eq!(m.height(), x_height + depth);
@@ -533,16 +539,22 @@ fn replacing_coinbase_only_blocks_changes_a_ring_and_needs_full_validation() {
         validate_mempool_tx(&tx, m.state(), next, m.rules()),
         Err(TxError::InvalidSignature { input: 0 })
     );
-    full_pool.revalidate(m.state(), next, m.rules(), true);
+    let verified = full_pool.full_validations();
+    let r = full_pool.revalidate(m.state(), next, m.rules(), true);
     assert!(!full_pool.contains(&tx.hash()));
-    // The manager used the full path after the reorganization.
+    assert_eq!((r.ring_changed, r.invalid), (1, 0), "{r:?}");
+    assert_eq!(full_pool.full_validations(), verified);
+    // The manager used the reorg path, and verified nothing for it (the
+    // disconnected blocks were coinbase-only: nothing returned).
     assert!(!m.mempool().contains(&tx.hash()));
+    assert_eq!(m.mempool().full_validations(), manager_verified);
 }
 
 /// A reorganization to a shorter but heavier branch lowers the height, so a
 /// pooled transfer whose (coinbase) input matured exactly at the old next
 /// height becomes immature (C1). Nothing it spends or creates changes, so
-/// `revalidate_after_extension` still accepts it; full validation drops it.
+/// `revalidate_after_extension` still accepts it; full validation drops it,
+/// and so does the reorg path (C1 at the new height), unverified.
 ///
 /// Construction: the chain is mined with 1 s blocks (difficulty rises), then
 /// four slow blocks (1000 s: the difficulty falls). A rival branch of three fast
@@ -612,7 +624,10 @@ fn a_shorter_heavier_reorg_makes_a_ring_member_immature() {
         }
         e => panic!("expected RingMemberTooYoung, got {e:?}"),
     }
-    full_pool.revalidate(m.state(), next, m.rules(), true);
+    let verified = full_pool.full_validations();
+    let r = full_pool.revalidate(m.state(), next, m.rules(), true);
     assert!(!full_pool.contains(&tx.hash()));
+    assert_eq!((r.invalid, r.ring_changed), (1, 0), "{r:?}");
+    assert_eq!(full_pool.full_validations(), verified);
     assert!(!m.mempool().contains(&tx.hash()));
 }

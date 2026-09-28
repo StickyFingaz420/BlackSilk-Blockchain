@@ -40,6 +40,19 @@
 //! the state checks. Re-verifying every pooled proof at every block would be a
 //! denial-of-service lever.
 //!
+//! **Reorganizations** ([`reorg`]). After blocks are disconnected, a pooled
+//! transaction is kept only if the rules an extension can change still hold
+//! and its rings resolve (C1, at the new next height) to the same outputs
+//! as when it was verified: a hash of them, the ring digest, is kept per
+//! entry. A changed ring drops it unverified. A transaction of a
+//! disconnected block, captured with its ring digest while the block was
+//! connected ([`Returned`]), is readmitted the same way
+//! ([`Mempool::readmit_returned`]), after the pool was revalidated. No
+//! signature, range proof or PX proof is verified again on either path
+//! ([`Mempool::full_validations`]); a reorganization costs microseconds per
+//! input, not a CLSAG per input under the chain lock (dossier 12 M12-1,
+//! M12-2).
+//!
 //! **PX validity windows (PX6).** A PX transaction is valid only at heights
 //! inside its window. Admission is for the next block's height, so a
 //! premature transaction is refused (`TxError::PxWindow`, contextual: a
@@ -63,10 +76,14 @@ use blacksilk_tx::params::{SigDomain, TxRules, MAX_DEPLOY_BLOCK_BYTES, MAX_PX_BL
 use blacksilk_tx::px::digest_bytes;
 use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::{
-    px_expires_soon, revalidate_after_extension, validate_mempool_tx, validate_px_without_proof,
-    ChainView, TxError,
+    px_expires_soon, revalidate_after_extension, validate_mempool_tx, ChainView, TxError,
 };
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+mod reorg;
+use reorg::{check_after_reorg, ReorgVerdict};
+pub use reorg::{ring_digest, Returned, RingDigest, RING_DIGEST_TAG};
 
 /// Maximum total encoded size of pooled v1 transactions.
 pub const MEMPOOL_MAX_BYTES: usize = 50_000_000;
@@ -158,6 +175,9 @@ struct Entry {
     /// The height the transaction was admitted for (the next block's height
     /// at admission); it expires [`MEMPOOL_EXPIRY_BLOCKS`] later.
     admitted: u64,
+    /// What its rings resolved to when its signatures were verified (or its
+    /// block connected): the reorganization check ([`reorg`]).
+    ring: RingDigest,
 }
 
 /// The namespace of a conflict key. The same 32 bytes in two namespaces are
@@ -249,14 +269,87 @@ pub struct Mempool {
     keys: HashMap<ConflictKey, Hash>,
     bytes: [usize; 2],
     next_seq: u64,
-    /// The signature domain (network, branch and genesis ids) every pooled
-    /// transaction was validated under; `None` before the first admission.
-    domain: Option<SigDomain>,
+    /// The rules every pooled transaction was validated under; `None` before
+    /// the first admission. Compared whole, not only their signature domain
+    /// ([`Self::enter_rules`]).
+    rules: Option<TxRules>,
     /// Transactions this node expired: id -> the height they expired at.
     /// Refused while `height < expired_at + RECENTLY_EXPIRED_BLOCKS`
     /// ([`MempoolError::Expired`]); forgotten afterwards ([`Self::expire`]).
     expired: HashMap<Hash, u64>,
+    /// Full validations run by the pool (`validate_mempool_tx`): admission,
+    /// `check` and [`Self::readmit`]. Revalidation and
+    /// [`Self::readmit_returned`] run none.
+    full_validations: AtomicU64,
 }
+
+/// What [`Mempool::revalidate`] dropped.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Revalidation {
+    /// Entries checked.
+    pub checked: usize,
+    /// Dropped: a rule fails at the new tip (a key image or nullifier spent,
+    /// the PX window, anchor, registry, pool or tree capacity, a contract
+    /// registered, a ring member gone or immature).
+    pub invalid: usize,
+    /// Dropped after a reorganization: a ring resolves to other outputs
+    /// (not verified again, [`reorg`]).
+    pub ring_changed: usize,
+}
+
+/// What [`Mempool::readmit_returned`] did with the transactions of
+/// disconnected blocks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Readmission {
+    /// Pooled again, with a fresh admission height.
+    pub readmitted: usize,
+    /// Already pooled.
+    pub already_pooled: usize,
+    /// Its block was validated under other rules than the pool's (an
+    /// activation between them): dropped unverified, it would fail.
+    pub other_rules: usize,
+    /// A pooled transaction holds one of its conflict keys (a double spend
+    /// by the same owner that was pooled first here): the pooled one stays.
+    pub conflicts: usize,
+    /// A rule fails at the new tip (spent on the new branch, PX window,
+    /// anchor, registry, pool, capacity, a ring member gone or immature).
+    pub invalid: usize,
+    /// A ring resolves to other outputs than when its block was validated.
+    pub ring_changed: usize,
+    /// The class is full of entries paying at least as much.
+    pub no_room: usize,
+    /// Beyond the per-reorganization byte budget ([`READMIT_MAX_BYTES`]).
+    pub over_budget: usize,
+}
+
+/// The chain change [`Mempool::update_after_chain_change`] follows.
+#[derive(Clone, Debug, Default)]
+pub struct ChainChange {
+    /// The transactions of the disconnected blocks, captured while each was
+    /// connected ([`Returned::capture`]), tip first.
+    pub returned: Vec<Returned>,
+    /// Whether any block was disconnected.
+    pub reorganized: bool,
+}
+
+/// What [`Mempool::update_after_chain_change`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChainUpdate {
+    /// Dropped by a change of rules ([`Mempool::enter_rules`]).
+    pub flushed: usize,
+    /// Expired ([`Mempool::expire`]).
+    pub expired: usize,
+    pub revalidation: Revalidation,
+    pub readmission: Readmission,
+}
+
+/// Encoded bytes of returned transactions one reorganization examines, per
+/// class (v1, PX): the class's cap. More could not be pooled together
+/// anyway; the rest (the deepest disconnected blocks', since they come tip
+/// first) is dropped unexamined, and wallets rebroadcast (Bitcoin Core
+/// bounds its disconnected pool the same way,
+/// `MAX_DISCONNECTED_TX_POOL_BYTES`).
+pub const READMIT_MAX_BYTES: [usize; 2] = [MEMPOOL_MAX_BYTES, MEMPOOL_MAX_PX_BYTES];
 
 impl Mempool {
     pub fn new() -> Self {
@@ -282,14 +375,51 @@ impl Mempool {
 
     /// The signature domain the pooled transactions were validated under.
     pub fn validated_under(&self) -> Option<SigDomain> {
-        self.domain
+        self.rules.as_ref().map(TxRules::domain)
+    }
+
+    /// The pooled transactions, in no particular order.
+    pub fn iter(&self) -> impl Iterator<Item = &Transaction> {
+        self.entries.values().map(|e| &e.tx)
+    }
+
+    /// Full validations the pool has run (signatures, range proofs and PX
+    /// proofs verified): on admission, `check` and [`Self::readmit`]. A
+    /// monotone counter, for operators and for tests showing that
+    /// revalidation and [`Self::readmit_returned`] verify nothing.
+    pub fn full_validations(&self) -> u64 {
+        self.full_validations.load(Ordering::Relaxed)
+    }
+
+    /// Transactions in the recently-expired set (bounded by what expired in
+    /// the last [`RECENTLY_EXPIRED_BLOCKS`] blocks).
+    pub fn recently_expired_count(&self) -> usize {
+        self.expired.len()
+    }
+
+    /// `validate_mempool_tx`, counted ([`Self::full_validations`]).
+    fn validate(
+        &self,
+        tx: &Transaction,
+        chain: &impl ChainView,
+        height: u64,
+        rules: &TxRules,
+    ) -> Result<(), MempoolError> {
+        self.full_validations.fetch_add(1, Ordering::Relaxed);
+        validate_mempool_tx(tx, chain, height, rules).map_err(MempoolError::Invalid)
     }
 
     /// Makes `rules` the pool's rule set. If the pool was validated under
-    /// another signature domain (an activation between the old and the new
-    /// next height, in either direction), every entry is dropped and their
-    /// conflict keys (key images, nullifiers, contract ids) are
-    /// released. Returns the number dropped.
+    /// other rules (an activation between the old and the new next height,
+    /// in either direction, changes the signature domain), every entry is
+    /// dropped and their conflict keys (key images, nullifiers, contract ids)
+    /// are released. Returns the number dropped.
+    ///
+    /// The whole rule set is compared, not only its signature domain: the
+    /// revalidation and readmission paths skip every stateless rule, which
+    /// is exact only while the rules are the same (dossier 12 M12-8; today
+    /// the fee and weight limits are the same in every epoch, so this flushes
+    /// exactly when the domain changes).
     ///
     /// A flush, not a revalidation: every signature message and the PX
     /// binding `h_tx` commit to the branch id, so every pooled v1 or deploy
@@ -297,11 +427,10 @@ impl Mempool {
     /// revalidation would reach the same verdict after verifying each of them
     /// again (docs/reviews/v3-upgrade-mechanism.md §2.5).
     pub fn enter_rules(&mut self, rules: &TxRules) -> usize {
-        let domain = rules.domain();
-        if self.domain == Some(domain) {
+        if self.rules.as_ref() == Some(rules) {
             return 0;
         }
-        let dropped = if self.domain.is_some() {
+        let dropped = if self.rules.is_some() {
             let n = self.entries.len();
             self.entries.clear();
             self.keys.clear();
@@ -310,7 +439,7 @@ impl Mempool {
         } else {
             0
         };
-        self.domain = Some(domain);
+        self.rules = Some(*rules);
         dropped
     }
 
@@ -388,7 +517,7 @@ impl Mempool {
     ) -> Result<Hash, MempoolError> {
         let (id, _) = self.precheck(tx, height, origin)?;
         expiring_soon(tx, height)?;
-        validate_mempool_tx(tx, chain, height, rules).map_err(MempoolError::Invalid)?;
+        self.validate(tx, chain, height, rules)?;
         Ok(id)
     }
 
@@ -433,9 +562,11 @@ impl Mempool {
         if refuse_expiring_soon {
             expiring_soon(&tx, height)?;
         }
-        validate_mempool_tx(&tx, chain, height, rules).map_err(MempoolError::Invalid)?;
+        self.validate(&tx, chain, height, rules)?;
+        // The rings just verified (C1 held at `height`, so they resolve).
+        let ring = ring_digest(&tx, chain, height).map_err(MempoolError::Invalid)?;
         let weight_fee = v1_part_fee(&tx, rules);
-        self.insert(id, tx, keys, height, weight_fee)
+        self.insert(id, tx, keys, height, weight_fee, ring)
     }
 
     /// [`Self::add`] for a transaction of a block this node disconnected (a
@@ -449,6 +580,10 @@ impl Mempool {
     /// return it. The expiring-soon policy does not apply: the transaction
     /// was already relayed and mined, and may still be mined inside its
     /// window on the new branch.
+    ///
+    /// Validates in full (signatures, range proof, PX proof): prefer
+    /// [`Self::readmit_returned`] with transactions captured before their
+    /// block was undone, which verifies nothing.
     pub fn readmit(
         &mut self,
         tx: Transaction,
@@ -495,6 +630,7 @@ impl Mempool {
         keys: Vec<ConflictKey>,
         admitted: u64,
         weight_fee: u64,
+        ring: RingDigest,
     ) -> Result<Hash, MempoolError> {
         let class = class_of(&tx);
         let size = tx.encode().len();
@@ -514,6 +650,7 @@ impl Mempool {
             seq: self.next_seq,
             keys,
             admitted,
+            ring,
         };
         // Make room if needed by evicting strictly cheaper entries of the class,
         // cheapest (then newest) first. The victims are chosen before anything
@@ -581,41 +718,163 @@ impl Mempool {
     }
 
     /// Drops everything that is no longer valid for inclusion at `height`.
-    /// PX proofs are not re-verified (module docs).
+    /// Nothing is verified again: no signature, range proof or PX proof.
     ///
-    /// `after_reorg`: blocks were disconnected since the last revalidation, so
-    /// ring members may resolve to different outputs and every rule is checked
-    /// again. After a plain extension only the rules an extension can change
-    /// are (`revalidate_after_extension`): a full re-check of a full pool
+    /// After a plain extension only the rules an extension can change are
+    /// checked (`revalidate_after_extension`): a full re-check of a full pool
     /// (about 6.8 ms per transfer, measured) would take minutes per block
     /// under the chain lock, a denial-of-service lever.
     ///
-    /// Across an activation (`rules` in another signature domain than the
-    /// pool's) the extension-only check is not enough, since signatures and
-    /// PX proofs change verdict: the pool is flushed ([`Self::enter_rules`]).
+    /// `after_reorg`: blocks were disconnected since the last revalidation,
+    /// so ring members may resolve to other outputs, or have become
+    /// immature. Each entry is then also checked for C1 at `height` and for
+    /// its ring digest: an entry whose rings resolve to other outputs is
+    /// dropped without verifying it ([`reorg`]).
+    ///
+    /// Across an activation (`rules` other than the pool's) neither is
+    /// enough, since signatures and PX proofs change verdict: the pool is
+    /// flushed ([`Self::enter_rules`]).
     pub fn revalidate(
         &mut self,
         chain: &impl ChainView,
         height: u64,
         rules: &TxRules,
         after_reorg: bool,
-    ) {
+    ) -> Revalidation {
         self.enter_rules(rules);
-        let stale: Vec<Hash> = self
-            .entries
-            .iter()
-            .filter(|(_, e)| {
-                let r = match &e.tx {
-                    tx if !after_reorg => revalidate_after_extension(tx, chain, height),
-                    Transaction::Px(t) => validate_px_without_proof(t, chain, height, rules),
-                    tx => validate_mempool_tx(tx, chain, height, rules),
-                };
-                r.is_err()
-            })
-            .map(|(id, _)| *id)
-            .collect();
+        let mut report = Revalidation {
+            checked: self.entries.len(),
+            ..Revalidation::default()
+        };
+        let mut stale = Vec::new();
+        for (id, e) in &self.entries {
+            let verdict = if after_reorg {
+                check_after_reorg(&e.tx, &e.ring, chain, height)
+            } else if revalidate_after_extension(&e.tx, chain, height).is_ok() {
+                ReorgVerdict::Valid
+            } else {
+                ReorgVerdict::Invalid
+            };
+            match verdict {
+                ReorgVerdict::Valid => continue,
+                ReorgVerdict::Invalid => report.invalid += 1,
+                ReorgVerdict::RingChanged => report.ring_changed += 1,
+            }
+            stale.push(*id);
+        }
         for id in stale {
             self.remove(&id);
+        }
+        report
+    }
+
+    /// Pools again the transactions of disconnected blocks, captured while
+    /// each block was connected ([`Returned::capture`]), for inclusion at
+    /// `height` under `rules`, without verifying any of them ([`reorg`]):
+    /// - a transaction whose block was validated under other rules than
+    ///   `rules` is dropped (it would fail: an activation lies between);
+    /// - it is not refused as recently expired, nor as expiring soon (as
+    ///   [`Self::readmit`]); an already pooled one stays, and one sharing a
+    ///   conflict key with a pooled transaction is refused (both are the
+    ///   same owner's spends, and the pooled one was just revalidated);
+    /// - then the rules an extension can change, C1 at `height` and the ring
+    ///   digest; then admission with the class's normal eviction and
+    ///   `height` as its admission height, which clears its
+    ///   recently-expired entry.
+    ///
+    /// Call it after [`Self::revalidate`], so that stale entries neither
+    /// take the room nor hold the conflict keys (Bitcoin Core also
+    /// revalidates before it trims). At most [`READMIT_MAX_BYTES`] of each
+    /// class are examined; the work is a few lookups and one hash per input,
+    /// bounded by those bytes.
+    pub fn readmit_returned(
+        &mut self,
+        returned: Vec<Returned>,
+        chain: &impl ChainView,
+        height: u64,
+        rules: &TxRules,
+    ) -> Readmission {
+        self.enter_rules(rules);
+        let mut report = Readmission::default();
+        let mut examined = [0usize; 2];
+        for r in returned {
+            let tx = r.tx();
+            let slot = Self::slot(class_of(tx));
+            let size = tx.encode().len();
+            if examined[slot] + size > READMIT_MAX_BYTES[slot] {
+                report.over_budget += 1;
+                continue;
+            }
+            examined[slot] += size;
+            if r.rules() != rules {
+                report.other_rules += 1;
+                continue;
+            }
+            let (id, keys) = match self.precheck(tx, height, Origin::Peer) {
+                Ok(v) => v,
+                Err(MempoolError::AlreadyKnown) => {
+                    report.already_pooled += 1;
+                    continue;
+                }
+                Err(MempoolError::Conflict) => {
+                    report.conflicts += 1;
+                    continue;
+                }
+                Err(_) => {
+                    // A coinbase (the manager never returns one).
+                    report.invalid += 1;
+                    continue;
+                }
+            };
+            let Some(ring) = r.ring() else {
+                report.invalid += 1;
+                continue;
+            };
+            match check_after_reorg(tx, &ring, chain, height) {
+                ReorgVerdict::Valid => {}
+                ReorgVerdict::Invalid => {
+                    report.invalid += 1;
+                    continue;
+                }
+                ReorgVerdict::RingChanged => {
+                    report.ring_changed += 1;
+                    continue;
+                }
+            }
+            let weight_fee = v1_part_fee(tx, rules);
+            match self.insert(id, r.into_tx(), keys, height, weight_fee, ring) {
+                Ok(_) => {
+                    self.expired.remove(&id);
+                    report.readmitted += 1;
+                }
+                Err(_) => report.no_room += 1,
+            }
+        }
+        report
+    }
+
+    /// Follows a change of the connected chain, once its newly connected
+    /// blocks were removed ([`Self::remove_block`]): the rules of the next
+    /// block ([`Self::enter_rules`]), expiry at `height` ([`Self::expire`]),
+    /// revalidation ([`Self::revalidate`], the reorganization path if
+    /// `change.reorganized`), then readmission of the returned transactions
+    /// ([`Self::readmit_returned`]). Verifies no signature or proof.
+    pub fn update_after_chain_change(
+        &mut self,
+        change: ChainChange,
+        chain: &impl ChainView,
+        height: u64,
+        rules: &TxRules,
+    ) -> ChainUpdate {
+        let flushed = self.enter_rules(rules);
+        let expired = self.expire(height);
+        let revalidation = self.revalidate(chain, height, rules, change.reorganized);
+        let readmission = self.readmit_returned(change.returned, chain, height, rules);
+        ChainUpdate {
+            flushed,
+            expired,
+            revalidation,
+            readmission,
         }
     }
 
@@ -764,7 +1023,14 @@ mod tests {
     fn add_at(m: &mut Mempool, tx: Transaction, height: u64) -> Result<Hash, MempoolError> {
         let (id, keys) = m.precheck(&tx, height, Origin::Peer)?;
         let weight_fee = v1_part_fee(&tx, &rules());
-        m.insert(id, tx, keys, height, weight_fee)
+        let ring = test_ring(&tx);
+        m.insert(id, tx, keys, height, weight_fee, ring)
+    }
+
+    /// The ring digest of a synthetic transaction: that of no ring, or a
+    /// placeholder for rings that resolve nowhere.
+    fn test_ring(tx: &Transaction) -> RingDigest {
+        ring_digest(tx, &blacksilk_tx::state::MemoryChain::new(), u64::MAX).unwrap_or([0xa5; 32])
     }
 
     /// Expiry (policy): a transaction admitted for height `a` stays pooled
@@ -1496,7 +1762,8 @@ mod tests {
             for tx in [a.clone(), b.clone(), other.clone()] {
                 let keys = conflict_keys(&tx);
                 let fee = tx.fee();
-                m.insert(tx.hash(), tx, keys, 0, fee).unwrap();
+                let ring = test_ring(&tx);
+                m.insert(tx.hash(), tx, keys, 0, fee, ring).unwrap();
             }
             let sel = m.select(1, u64::MAX, 0, u64::MAX);
             assert_disjoint(&sel);
@@ -1993,5 +2260,346 @@ mod tests {
             sel[first_deploy..].iter().all(|t| is_deploy(&t)),
             "transfers rank above deploys"
         );
+    }
+
+    // ------------------------------------------------ W2-12: reorganizations
+
+    use blacksilk_tx::params::SPENDABLE_AGE;
+
+    /// A chain of `n` blocks, each a synthetic coinbase and a synthetic
+    /// transfer creating two non-coinbase outputs (salt `salt` keeps the
+    /// outputs of two branches apart).
+    fn grow(chain: &mut blacksilk_tx::state::MemoryChain, n: u64, salt: u64) {
+        for _ in 0..n {
+            let h = chain.next_height();
+            let k = 10_000 * salt + 10 * h;
+            chain
+                .apply_block(&[
+                    coinbase(&[k]),
+                    transfer(&[1_000_000 * salt + h], &[k + 1, k + 2], 1),
+                ])
+                .unwrap();
+        }
+    }
+
+    /// A synthetic transfer spending key image `image` with the given ring.
+    fn ringed(image: u64, ring: [u64; RING_SIZE]) -> Transaction {
+        let mut tx = transfer(&[image], &[image + 7_000_000, image + 7_000_001], 10);
+        if let Transaction::Transfer(t) = &mut tx {
+            t.inputs[0].ring = ring;
+        }
+        tx
+    }
+
+    /// A ring of the non-coinbase outputs `3h + 1` of blocks `from..from + 16`
+    /// (`grow`: three outputs per block).
+    fn ring_from(from: u64) -> [u64; RING_SIZE] {
+        std::array::from_fn(|j| 3 * (from + j as u64) + 1)
+    }
+
+    /// Inserts `tx` as `add` would after validation, with the digest of its
+    /// rings on `chain` (the signatures are never verified here: synthetic
+    /// transactions carry none that verify).
+    fn pool_on(m: &mut Mempool, chain: &impl ChainView, tx: Transaction, height: u64) -> Hash {
+        let (id, keys) = m.precheck(&tx, height, Origin::Peer).unwrap();
+        let ring = ring_digest(&tx, chain, height).unwrap();
+        let fee = v1_part_fee(&tx, &rules());
+        m.insert(id, tx, keys, height, fee, ring).unwrap()
+    }
+
+    /// W2-12 item 1 (dossier 12 W1). A reorganization above every ring
+    /// member keeps a pooled transfer without verifying it: its rings
+    /// resolve to the same outputs, so its CLSAG verdict is the one of its
+    /// admission. The transfer is synthetic and its signature does not
+    /// verify: full validation (the path before W2-12, which failed this
+    /// test on the base, C:/bszkeval/w2-pool-scratch/base-demo.log) drops it.
+    #[test]
+    fn a_reorganization_above_the_rings_keeps_the_entry_without_verifying_it() {
+        use blacksilk_tx::state::MemoryChain;
+        let mut chain = MemoryChain::new();
+        grow(&mut chain, 40, 1);
+        let rules = rules();
+        let mut m = Mempool::new();
+        m.enter_rules(&rules);
+        let tx = ringed(90_000_000, ring_from(1));
+        let id = pool_on(&mut m, &chain, tx.clone(), chain.next_height());
+        assert!(validate_mempool_tx(&tx, &chain, chain.next_height(), &rules).is_err());
+        // Two blocks replaced by three.
+        assert!(chain.undo_block() && chain.undo_block());
+        grow(&mut chain, 3, 2);
+        let verified = m.full_validations();
+        let r = m.revalidate(&chain, chain.next_height(), &rules, true);
+        assert!(m.contains(&id), "{r:?}");
+        assert_eq!(
+            r,
+            Revalidation {
+                checked: 1,
+                invalid: 0,
+                ring_changed: 0
+            }
+        );
+        assert_eq!(m.full_validations(), verified, "nothing verified");
+    }
+
+    /// A reorganization below a ring member (its block replaced by one with
+    /// other outputs at the same indices) drops the entry as `ring_changed`,
+    /// unverified; an entry whose rings lie below the fork stays.
+    #[test]
+    fn a_reorganization_below_a_ring_drops_the_entry_unverified() {
+        use blacksilk_tx::state::MemoryChain;
+        let mut chain = MemoryChain::new();
+        grow(&mut chain, 45, 1);
+        let rules = rules();
+        let mut m = Mempool::new();
+        let next = chain.next_height();
+        let deep = pool_on(&mut m, &chain, ringed(90_000_000, ring_from(1)), next);
+        // Members at heights 19..=34, mature at 45 (SPENDABLE_AGE 10).
+        let recent = pool_on(&mut m, &chain, ringed(90_000_010, ring_from(19)), next);
+        for _ in 0..15 {
+            assert!(chain.undo_block());
+        }
+        grow(&mut chain, 16, 2);
+        let r = m.revalidate(&chain, chain.next_height(), &rules, true);
+        assert!(m.contains(&deep));
+        assert!(!m.contains(&recent));
+        assert_eq!((r.ring_changed, r.invalid), (1, 0), "{r:?}");
+        assert_invariants(&m);
+    }
+
+    /// A reorganization to a lower height makes a ring member immature (C1
+    /// at the new next height): the entry is dropped, although its digest is
+    /// unchanged. The extension path alone would keep it.
+    #[test]
+    fn a_ring_member_that_becomes_immature_drops_the_entry() {
+        use blacksilk_tx::state::MemoryChain;
+        let mut chain = MemoryChain::new();
+        grow(&mut chain, 40, 1);
+        let rules = rules();
+        let next = chain.next_height();
+        // The newest member, at height next - SPENDABLE_AGE, matures exactly
+        // at `next`.
+        let from = next - SPENDABLE_AGE - (RING_SIZE as u64 - 1);
+        let tx = ringed(90_000_000, ring_from(from));
+        let mut m = Mempool::new();
+        let id = pool_on(&mut m, &chain, tx.clone(), next);
+        let mut ext = Mempool::new();
+        pool_on(&mut ext, &chain, tx, next);
+        assert!(chain.undo_block());
+        let lower = chain.next_height();
+        ext.revalidate(&chain, lower, &rules, false);
+        assert!(ext.contains(&id), "the extension check alone keeps it");
+        let r = m.revalidate(&chain, lower, &rules, true);
+        assert!(!m.contains(&id));
+        assert_eq!((r.invalid, r.ring_changed), (1, 0), "{r:?}");
+    }
+
+    /// Item 2 (W2): transactions of a disconnected block, captured while it
+    /// was connected, come back without verification (their signatures do
+    /// not verify here) and with a fresh admission height; one whose ring
+    /// changed, one of other rules and one conflicting with a pooled
+    /// transaction do not; the guard entry of a readmitted one is cleared.
+    #[test]
+    fn returned_transactions_are_readmitted_without_verification() {
+        use blacksilk_tx::state::MemoryChain;
+        let mut chain = MemoryChain::new();
+        grow(&mut chain, 45, 1);
+        let rules = rules();
+        let other = TxRules {
+            branch_id: rules.branch_id + 1,
+            ..rules
+        };
+        let keep = ringed(90_000_000, ring_from(1));
+        let moved = ringed(90_000_010, ring_from(19));
+        let foreign = ringed(90_000_020, ring_from(2));
+        let doubled = ringed(90_000_030, ring_from(3));
+        let mut rival = ringed(90_000_030, ring_from(4));
+        if let Transaction::Transfer(t) = &mut rival {
+            t.fee = 11;
+        }
+        let block = vec![
+            coinbase(&[99_000_000]),
+            keep.clone(),
+            moved.clone(),
+            foreign.clone(),
+            doubled.clone(),
+        ];
+        chain.apply_block(&block).unwrap();
+        let mut returned: Vec<Returned> = block[1..]
+            .iter()
+            .map(|tx| Returned::capture(tx.clone(), &chain, &rules))
+            .collect();
+        returned[2] = Returned::capture(foreign.clone(), &chain, &other);
+
+        let mut m = Mempool::new();
+        m.enter_rules(&rules);
+        // `keep` expired here earlier: the guard does not stop readmission,
+        // and is cleared by it.
+        m.expired.insert(keep.hash(), chain.next_height());
+        // The block and the blocks below it down to height 31 are
+        // disconnected; the new branch has other outputs there.
+        for _ in 0..15 {
+            assert!(chain.undo_block());
+        }
+        grow(&mut chain, 17, 2);
+        let next = chain.next_height();
+        pool_on(&mut m, &chain, rival.clone(), next);
+        let verified = m.full_validations();
+        let r = m.readmit_returned(returned, &chain, next, &rules);
+        assert_eq!(m.full_validations(), verified, "nothing verified");
+        assert_eq!(
+            r,
+            Readmission {
+                readmitted: 1,
+                other_rules: 1,
+                conflicts: 1,
+                ring_changed: 1,
+                ..Readmission::default()
+            }
+        );
+        assert!(m.contains(&keep.hash()) && m.contains(&rival.hash()));
+        assert_eq!(m.admitted_at(&keep.hash()), Some(next));
+        assert!(!m.recently_expired(&keep.hash(), next));
+        assert_invariants(&m);
+        // Mined again on the new branch: its key image is spent, it is not
+        // readmitted a second time.
+        let again = Returned::capture(keep.clone(), &chain, &rules);
+        m.remove(&keep.hash());
+        chain.apply_block(&[coinbase(&[99_000_001]), keep]).unwrap();
+        let r = m.readmit_returned(vec![again], &chain, chain.next_height(), &rules);
+        assert_eq!(r.invalid, 1, "{r:?}");
+    }
+
+    /// A PX transaction a reorganization returns is readmitted without its
+    /// proof being verified (here it has none: `add` and `readmit` refuse
+    /// it with `PxProof`), and still leaves at its window's end.
+    #[test]
+    fn a_returned_px_transaction_is_readmitted_without_its_proof() {
+        use blacksilk_px::state::State as PxState;
+        use blacksilk_tx::state::MemoryChain;
+        let chain =
+            MemoryChain::with_px_state(PxState::with_uniform_tree_for_tests(4, [7; 8], 1 << 60));
+        let rules = rules();
+        let h = 20;
+        let tx = valid_px(&chain, 1, 0, h + 1);
+        let mut m = Mempool::new();
+        assert_eq!(
+            m.readmit(tx.clone(), &chain, h, &rules),
+            Err(MempoolError::Invalid(TxError::PxProof))
+        );
+        let verified = m.full_validations();
+        let r = m.readmit_returned(
+            vec![Returned::capture(tx.clone(), &chain, &rules)],
+            &chain,
+            h,
+            &rules,
+        );
+        assert_eq!(r.readmitted, 1, "{r:?}");
+        assert_eq!(m.full_validations(), verified);
+        m.revalidate(&chain, h + 1, &rules, true);
+        assert!(m.contains(&tx.hash()));
+        m.revalidate(&chain, h + 2, &rules, false);
+        assert!(!m.contains(&tx.hash()), "past its window");
+    }
+
+    /// Order: `update_after_chain_change` revalidates before it readmits, so
+    /// a returned transaction takes the room of stale entries of a full
+    /// class. Readmitting first (the order before W2-12) refuses it.
+    #[test]
+    fn returned_transactions_take_the_room_of_stale_entries() {
+        use blacksilk_px::state::State as PxState;
+        use blacksilk_tx::state::MemoryChain;
+        let chain =
+            MemoryChain::with_px_state(PxState::with_uniform_tree_for_tests(4, [7; 8], 1 << 60));
+        let rules = rules();
+        let tx = valid_px(&chain, 1_000_001, 0, 0);
+        let returned = || vec![Returned::capture(tx.clone(), &chain, &rules)];
+        // A PX class full of entries paying more per byte, with an anchor
+        // that is no recent root: stale at the next revalidation.
+        let full = || {
+            let mut m = Mempool::new();
+            m.enter_rules(&rules);
+            fill(&mut m, 0, 1024 * 1024, u64::MAX / 4);
+            // Top it up to the last byte.
+            let room = MEMPOOL_MAX_PX_BYTES - m.bytes[1];
+            let top = |proof| px(900_001, proof, u64::MAX / 4, 0, 0);
+            let mut proof = room - top(0).encode().len();
+            while top(proof).encode().len() > room {
+                proof -= 1;
+            }
+            add(&mut m, top(proof)).unwrap();
+            assert!(MEMPOOL_MAX_PX_BYTES - m.bytes[1] < tx.encode().len());
+            m
+        };
+        let mut before = full();
+        let r = before.readmit_returned(returned(), &chain, 20, &rules);
+        assert_eq!(r.no_room, 1, "{r:?}");
+        let mut m = full();
+        let u = m.update_after_chain_change(
+            ChainChange {
+                returned: returned(),
+                reorganized: true,
+            },
+            &chain,
+            20,
+            &rules,
+        );
+        assert!(u.revalidation.invalid > 0, "{u:?}");
+        assert_eq!(u.readmission.readmitted, 1, "{u:?}");
+        assert_eq!(m.len(), 1);
+    }
+
+    /// Bounded work: one reorganization examines at most a class cap of
+    /// returned bytes per class; the rest is dropped unexamined.
+    #[test]
+    fn readmission_examines_at_most_a_class_cap_per_reorganization() {
+        use blacksilk_tx::state::MemoryChain;
+        let chain = MemoryChain::new();
+        let rules = rules();
+        let size = 3 * 1024 * 1024;
+        let tx = px(1, size, 1, 0, 0);
+        let fits = MEMPOOL_MAX_PX_BYTES / tx.encode().len();
+        let returned = vec![Returned::capture(tx, &chain, &rules); fits + 5];
+        let mut m = Mempool::new();
+        let r = m.readmit_returned(returned, &chain, 1, &rules);
+        assert_eq!(r.over_budget, 5, "{r:?}");
+        assert_eq!(r.invalid + r.readmitted + r.already_pooled, fits, "{r:?}");
+    }
+
+    /// M12-8: the pool is flushed when any rule changes, not only the
+    /// signature domain (the reorganization paths skip every stateless
+    /// rule, exact only under the same rules).
+    #[test]
+    fn any_rule_change_flushes_the_pool() {
+        let r0 = rules();
+        let r1 = TxRules {
+            fee_per_weight: r0.fee_per_weight + 1,
+            ..r0
+        };
+        assert_eq!(r0.domain(), r1.domain());
+        let mut m = Mempool::new();
+        m.enter_rules(&r0);
+        add(&mut m, px(1, 1000, 10, 0, 0)).unwrap();
+        assert_eq!(m.enter_rules(&r1), 1);
+        assert!(m.is_empty());
+    }
+
+    /// The digest tag is not a registered consensus tag, and the digest
+    /// binds each member and its position.
+    #[test]
+    fn the_ring_digest_binds_every_member_in_order() {
+        use blacksilk_tx::state::MemoryChain;
+        assert!(!blacksilk_crypto::hash::tags::ALL.contains(&RING_DIGEST_TAG));
+        let mut chain = MemoryChain::new();
+        grow(&mut chain, 40, 1);
+        let d = |ring| ring_digest(&ringed(1, ring), &chain, 40).unwrap();
+        let base = ring_from(1);
+        let mut swapped = base;
+        swapped.swap(0, 1);
+        let mut other = base;
+        other[15] += 1;
+        assert_ne!(d(base), d(swapped));
+        assert_ne!(d(base), d(other));
+        assert_eq!(d(base), d(base));
+        assert_ne!(d(base), test_ring(&px(1, 10, 1, 0, 0)), "no ring");
     }
 }
