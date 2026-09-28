@@ -80,6 +80,10 @@ pub struct Args {
     /// Accept and dial private/loopback peer addresses (LAN or lab testnets only).
     #[arg(long)]
     pub allow_private: bool,
+    /// File holding the network pre-shared key (64 hex characters): only
+    /// nodes with the same key can connect (private testnets; docs/p2p.md §3).
+    #[arg(long)]
+    pub network_psk_file: Option<PathBuf>,
     /// Log filter, e.g. info, debug, blacksilk_p2p=debug.
     #[arg(long)]
     pub log: Option<String>,
@@ -122,6 +126,7 @@ struct FileP2p {
     max_outbound: Option<usize>,
     max_inbound: Option<usize>,
     allow_private: Option<bool>,
+    network_psk_file: Option<PathBuf>,
 }
 
 /// The effective configuration.
@@ -151,6 +156,9 @@ pub struct P2pConfig {
     pub max_outbound: usize,
     pub max_inbound: usize,
     pub allow_private: bool,
+    /// The network pre-shared key's file, loaded at start
+    /// (`blacksilk_p2p::transport::NetworkPsk::load`).
+    pub network_psk_file: Option<PathBuf>,
 }
 
 /// Refuses to run a network whose genesis is not final (called at start-up).
@@ -283,6 +291,7 @@ impl Config {
                 // Regtest is local by nature.
                 allow_private: args.allow_private
                     || f.allow_private.unwrap_or(network == Network::Regtest),
+                network_psk_file: args.network_psk_file.or(f.network_psk_file),
             })
         } else {
             None
@@ -373,6 +382,30 @@ mod tests {
         // Unknown keys are still refused.
         std::fs::write(&path, "rpc_allow_host = [\"a.onion\"]\n").unwrap();
         assert!(Config::resolve(args(&["--config", p])).is_err());
+    }
+
+    /// W2-30 PSK: the key file comes from `[p2p] network_psk_file` or
+    /// `--network-psk-file`, the command line winning; none by default.
+    #[test]
+    fn the_network_psk_file_comes_from_the_file_or_the_command_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.toml");
+        std::fs::write(
+            &path,
+            "network = \"regtest\"\n[p2p]\nnetwork_psk_file = \"file.psk\"\n",
+        )
+        .unwrap();
+        let p = path.to_str().unwrap();
+        let psk = |c: Config| c.p2p.unwrap().network_psk_file;
+        assert_eq!(
+            psk(Config::resolve(args(&["--config", p])).unwrap()),
+            Some(PathBuf::from("file.psk"))
+        );
+        assert_eq!(
+            psk(Config::resolve(args(&["--config", p, "--network-psk-file", "cli.psk"])).unwrap()),
+            Some(PathBuf::from("cli.psk"))
+        );
+        assert_eq!(psk(Config::resolve(args(&[])).unwrap()), None);
     }
     use super::*;
 

@@ -33,7 +33,7 @@ mod summary;
 mod template;
 
 use crate::block::Block;
-use crate::mempool::Mempool;
+use crate::mempool::{Mempool, Returned};
 use crate::store::BlockStore;
 use blacksilk_consensus::{ChainParams, Hash, HeaderChain, HeaderError};
 use blacksilk_tx::params::TxRules;
@@ -140,8 +140,10 @@ pub const LOW_WORK_MARGIN_BLOCKS: u128 = 100;
 /// the mempool once at the end ([`ChainManager::finish_sync`]).
 #[derive(Default)]
 struct SyncOutcome {
-    /// Transactions of disconnected blocks.
-    returned: Vec<Transaction>,
+    /// Transactions of disconnected blocks, captured with their ring
+    /// digests and block rules before each block was undone
+    /// (`Returned::capture`), tip first.
+    returned: Vec<Returned>,
     /// Whether any block was disconnected (the mempool then re-checks every
     /// rule; a reorganization of coinbase-only blocks returns nothing).
     reorganized: bool,

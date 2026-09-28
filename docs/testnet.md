@@ -158,6 +158,7 @@ Main options (`blacksilk-node --help` lists all of them):
 | `--proxy`, `--proxy-only` | SOCKS5 (Tor) for outbound connections; proxy-only refuses clearnet |
 | `--max-outbound`, `--max-inbound` | connection limits (8 / 64) |
 | `--allow-private` | LAN/lab networks only: accept private addresses |
+| `--network-psk-file` / `[p2p] network_psk_file` | private networks only: a file holding a 64-hex-character pre-shared key; only nodes with the same key can connect, and an on-path attacker without it cannot read or inject P2P traffic (p2p.md §3). One leaked key opens the network to its holder; it gives no identity between members |
 | `--rpc-allow-host` / `rpc_allow_hosts` | extra host names the RPC answers to besides loopback and its bound address, e.g. an onion service name (blocks.md §9.1) |
 | `--log` | log filter, e.g. `info,blacksilk_p2p=debug` |
 

@@ -3,6 +3,7 @@
 
 use super::{hex, ChainManager, SyncOutcome, DEEP_REORG_WARN_DEPTH, LOW_WORK_MARGIN_BLOCKS};
 use crate::emission::block_reward;
+use crate::mempool::{ChainChange, Returned};
 use blacksilk_consensus::Hash;
 use blacksilk_tx::validate::{validate_block_transactions_cached, BlockContext, BlockError};
 use std::cmp::Reverse;
@@ -207,12 +208,21 @@ impl ChainManager {
             }
             while self.connected.len() - 1 > fork {
                 outcome.reorganized = true;
+                let h = (self.connected.len() - 1) as u64;
                 let id = self.connected.pop().expect("above genesis");
                 self.generated.pop();
-                assert!(self.state.undo_block());
+                // Captured while the block is still applied: its rings then
+                // resolve as when it was validated (outputs are only
+                // appended), so the pool readmits it without verifying it.
                 if let Some(body) = self.bodies.get(&id) {
-                    outcome.returned.extend(body.iter().skip(1).cloned());
+                    let rules = self.rules_at(h);
+                    outcome.returned.extend(
+                        body.iter()
+                            .skip(1)
+                            .map(|tx| Returned::capture(tx.clone(), &self.state, &rules)),
+                    );
                 }
+                assert!(self.state.undo_block());
             }
             for id in path {
                 if *budget == 0 && self.work(&self.tip_id()) >= floor {
@@ -287,7 +297,21 @@ impl ChainManager {
     pub(super) fn finish_sync(&mut self, outcome: SyncOutcome) {
         let next = self.height() + 1;
         let rules = self.rules_at(next);
-        let flushed = self.mempool.enter_rules(&rules);
+        // Rules, expiry (before the returned transactions come back: those
+        // are pooled with a fresh admission height, even if this node expired
+        // them recently), revalidation (the ring-digest path after a
+        // reorganization), then readmission without verification
+        // (`Mempool::update_after_chain_change`, docs/blocks.md §7).
+        let update = self.mempool.update_after_chain_change(
+            ChainChange {
+                returned: outcome.returned,
+                reorganized: outcome.reorganized,
+            },
+            &self.state,
+            next,
+            &rules,
+        );
+        let flushed = update.flushed;
         if flushed > 0 {
             log::info!(
                 "rule set {} active from height {next}: {flushed} pooled transaction(s) \
@@ -295,18 +319,16 @@ impl ChainManager {
                 self.params.epoch_at(next).name
             );
         }
-        // Expiry (policy, `MEMPOOL_EXPIRY_BLOCKS` from each admission
-        // height), before the returned transactions come back: those are
-        // pooled with a fresh admission height, even if this node expired
-        // them recently (`Mempool::readmit`).
-        let expired = self.mempool.expire(next);
+        let expired = update.expired;
         if expired > 0 {
             log::info!("mempool: {expired} transaction(s) expired at height {next}");
         }
-        for tx in outcome.returned {
-            let _ = self.mempool.readmit(tx, &self.state, next, &rules);
+        if outcome.reorganized {
+            log::info!(
+                "mempool after the reorganization: {:?}; returned transactions: {:?}",
+                update.revalidation,
+                update.readmission
+            );
         }
-        self.mempool
-            .revalidate(&self.state, next, &rules, outcome.reorganized);
     }
 }

@@ -640,7 +640,6 @@ fn a_shorter_heavier_reorg_makes_a_ring_member_immature() {
 /// chain-manager owner (W2-34b); until then the manager re-admits with
 /// `Mempool::readmit`, which validates in full, and this test fails.
 #[test]
-#[ignore = "needs the W2-12 call-site change in chain/src/manager (owner W2-34b)"]
 fn a_reorganization_returning_a_transfer_readmits_it_unverified() {
     let mut m = open();
     let mut miner = Miner::new(341);

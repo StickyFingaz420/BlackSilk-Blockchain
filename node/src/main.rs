@@ -180,6 +180,13 @@ fn run(cfg: Config) -> Result<(), Stop> {
                 nc.max_inbound = p.max_inbound;
                 nc.allow_private = p.allow_private;
                 nc.data_dir = Some(data_dir.clone());
+                if let Some(path) = &p.network_psk_file {
+                    nc.network_psk = Some(
+                        blacksilk_p2p::transport::NetworkPsk::load(path)
+                            .map_err(|e| format!("network PSK file {}: {e}", path.display()))?,
+                    );
+                    log::info!("P2P: network pre-shared key loaded; only nodes with it can connect");
+                }
                 if nc.seeds.is_empty() && nc.connect.is_empty() {
                     log::warn!(
                         "no seeds or peers configured: the node can only receive inbound connections"
