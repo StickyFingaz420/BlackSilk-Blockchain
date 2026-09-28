@@ -111,8 +111,11 @@ dependencies = [
  "blacksilk-tx",
  "blacksilk-zk",
  "blacksilk-zkvm",
+ "getrandom 0.2.17",
  "libfuzzer-sys",
  "rand_chacha",
+ "tokio",
+ "zeroize",
 ]
 
 [[package]]

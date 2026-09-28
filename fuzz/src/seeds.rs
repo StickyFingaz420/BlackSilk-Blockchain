@@ -26,6 +26,24 @@ use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::path::Path;
 
+// The target bodies shared with the stable drivers in the crates' tests
+// (src/targets/driver.rs); here only their seed builders are used.
+#[path = "targets/addr_v2.rs"]
+#[allow(dead_code)]
+mod addr_v2;
+#[path = "../../wallet/src/seed.rs"]
+#[allow(dead_code)]
+mod seed;
+#[path = "targets/seed_words.rs"]
+#[allow(dead_code)]
+mod seed_words;
+#[path = "targets/store_records.rs"]
+#[allow(dead_code)]
+mod store_records;
+#[path = "targets/transport_recv.rs"]
+#[allow(dead_code)]
+mod transport_recv;
+
 fn put(target: &str, name: &str, bytes: &[u8]) {
     let dir = Path::new("corpus").join(target);
     std::fs::create_dir_all(&dir).unwrap();
@@ -34,6 +52,27 @@ fn put(target: &str, name: &str, bytes: &[u8]) {
 }
 
 fn main() {
+    // The targets with their own seed builders (none uses a generator, so
+    // the seeds below keep their contents). Naming targets on the command
+    // line writes only those and stops: a quick run without the proofs
+    // below (`cargo run --release --bin seeds -- store_records addr_v2`).
+    let only: Vec<String> = std::env::args().skip(1).collect();
+    for (target, seeds) in [
+        ("store_records", store_records::seeds()),
+        ("seed_words", seed_words::seeds()),
+        ("transport_recv", transport_recv::seeds()),
+        ("addr_v2", addr_v2::seeds()),
+    ] {
+        if only.is_empty() || only.iter().any(|t| t == target) {
+            for (name, bytes) in seeds {
+                put(target, name, &bytes);
+            }
+        }
+    }
+    if !only.is_empty() {
+        return;
+    }
+
     let mut rng = ChaCha20Rng::seed_from_u64(1);
 
     // Transactions and blocks: a coinbase and a block carrying it.
