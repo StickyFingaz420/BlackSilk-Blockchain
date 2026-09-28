@@ -988,7 +988,9 @@ fn a_vault_is_deployed_locked_delivered_shared_and_claimed_over_rpc() {
     )
     .expect("claim with the fee from PX");
     net.mine(&a_addr);
-    net.mine_n(16, &a_addr);
+    // The claimed record (height 161) is spendable once the canonical anchor,
+    // three blocks below the tip, reaches it: synced 179, anchor 176.
+    net.mine_n(18, &a_addr);
     bob.sync(&net.client).unwrap();
     assert_eq!(bob.balance().total, v1_before, "no v1 funds used");
     // COIN − (lock fee) − (claim fee): the vault's value came back.

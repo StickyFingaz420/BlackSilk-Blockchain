@@ -741,8 +741,10 @@ mod tests {
     fn a_reorganization_of_up_to_three_blocks_keeps_the_anchor_root() {
         let commitment = |branch: u64, height: u64| format!("{:064x}", branch << 32 | height);
         for synced in 0..=100u64 {
-            let mut s = PxStore::default();
-            s.commitments = (1..=synced).map(|h| (h, commitment(1, h))).collect();
+            let s = PxStore {
+                commitments: (1..=synced).map(|h| (h, commitment(1, h))).collect(),
+                ..PxStore::default()
+            };
             let anchor = anchor_height(synced);
             let before = s.tree_at(anchor).unwrap().root();
             for depth in 1..=3u64.min(synced) {
