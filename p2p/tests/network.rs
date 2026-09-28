@@ -1062,7 +1062,13 @@ async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
                 .unwrap();
         }
     }
-    for _ in 0..8 {
+    // Over its PX share (burst 4), within its byte burst (16 MB): the byte
+    // rate stays a scored flood limit on the read loop, and is not what
+    // this checks.
+    let frame = Message::StemTx(bytes.clone()).encode().len();
+    let sixth = (16_000_000 / frame).min(8);
+    assert!(sixth > 4, "{sixth} stems of {frame} bytes");
+    for _ in 0..sixth {
         w6.send(&Message::StemTx(bytes.clone()).encode())
             .await
             .unwrap();
