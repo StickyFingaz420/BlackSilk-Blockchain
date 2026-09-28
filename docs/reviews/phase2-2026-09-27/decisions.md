@@ -702,3 +702,8 @@
 - **RTW2A-6:** capture of returned transactions stops at the per-class budget (tip first).
 - **RTW2A-7:** the ctx-reject cache is keyed by the tip returned from the cheap command.
 - **Owner:** FX-RTW2A, after the coordinator merges w2-pool and applies the manager call-site diff. It must not touch the handshake parts of admission.rs or conn.rs (W2-30).
+
+## FX-RTW2A and gate waivers, Lead decisions 2026-09-28
+- **FX-RTW2A:** accepted as implemented. Relay budget = MAX_RELAY_FRAME + 2 MiB (strict); relay charges on the lane, all or nothing, after dedupe; rate excess dropped, not scored and not fluffed; `ReorgPending` reservation; fluffs off the maintenance loop; bounded capture.
+- **Read-loop byte rate stays SCORED** (4 MB/s, burst 16 MB): an honest forwarder within the receiver's PX share (0.2/s, about 0.6 MB/s) stays far below it, so only floods reach it.
+- **Consensus gate waivers:** `.github/consensus-gate-waivers.txt` lists published commits that lack the trailer, since shared history is never rewritten. First entry: b24a19a (test-only). Each new entry is a reviewed change.
