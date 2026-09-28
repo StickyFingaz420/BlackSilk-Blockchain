@@ -175,9 +175,10 @@ fn pages_follow_undo() {
     assert_eq!(p.root, hex(&c.px().root()));
 }
 
-/// The existing wallet's loop (`wallet/src/px.rs::sync_commitments`): request
-/// `from` = what it has, append, stop when it has `total`. It needs no change
-/// for the smaller default page.
+/// The paging loop the wallet's backfill uses (W3-39 replaced the old
+/// `sync_commitments` with its own tree; the list is fetched once below the
+/// restore height): request `from` = what it has, append, stop when it has
+/// `total`. It needs no change for the smaller default page.
 #[test]
 fn wallet_style_sync_completes() {
     let c = big_chain();

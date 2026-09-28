@@ -96,8 +96,9 @@ k_i→r   = k[0..32],  k_r→i = k[32..64]
   - There is no rekeying. Whoever obtains a session key while the session runs (for
     example from the memory of a running node) can decrypt the whole session, including
     what was sent before.
-  - The AES key schedules are not wiped from memory when a session ends (the
-    `aes`/`aes-gcm` `zeroize` features are off; dossier 30 W7, open).
+  - The AES key schedules are wiped when a session ends (`aes`/`aes-gcm`/`polyval`
+    `zeroize` features, W3-44). Residuals: polyval's aarch64 PMULL backend and ghash's
+    temporary copies of H are not wiped upstream.
   - A future attacker able to compute discrete logarithms in Ristretto255 can decrypt
     recorded sessions (harvest now, decrypt later; the hybrid ML-KEM step of transport
     v2 below addresses it).
