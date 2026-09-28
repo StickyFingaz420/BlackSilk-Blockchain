@@ -661,6 +661,8 @@ fn a_vault_is_deployed_locked_delivered_shared_and_claimed_over_rpc() {
             vec![Registration {
                 elf: vault::VAULT_ELF.to_vec(),
                 budget: vault::BUDGET,
+                abi: blacksilk_tx::px::ABI_VERSION,
+                out_words: 1,
             }],
             &net.rules,
             &mut net.rng,
@@ -853,6 +855,8 @@ fn an_uncertain_vault_lock_keeps_the_record_opening() {
             vec![Registration {
                 elf: vault::VAULT_ELF.to_vec(),
                 budget: vault::BUDGET,
+                abi: blacksilk_tx::px::ABI_VERSION,
+                out_words: 1,
             }],
             &net.rules,
             &mut net.rng,

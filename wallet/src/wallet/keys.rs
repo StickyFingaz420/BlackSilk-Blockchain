@@ -229,7 +229,7 @@ impl Wallet {
                 continue;
             };
             let candidate = self.px_vault_secret_for(&rec.contract, &rec.rho);
-            if vault::lock_of(&candidate) == rec.data {
+            if vault::record_data(&rec.contract, &candidate) == rec.data {
                 found.push((cm, candidate));
             }
         }
@@ -588,7 +588,7 @@ mod tests {
             contract,
             asset: ZERO_DIGEST,
             value: 10,
-            data: vault::lock_of(secret),
+            data: vault::record_data(&contract, secret),
             rho,
             rcm: [3, 0, 0, 0, 0, 0, 0, 0],
         };

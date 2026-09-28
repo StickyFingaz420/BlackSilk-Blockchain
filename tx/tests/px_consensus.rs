@@ -7,36 +7,19 @@ mod common;
 use blacksilk_px::delivery;
 use blacksilk_px::perm::HostPerm;
 use blacksilk_px::tree::Tree;
+use blacksilk_px::vault;
 use blacksilk_px::wallet::{self as pxw, Account};
-use blacksilk_px_core::call::OutSpec;
-use blacksilk_px_core::hash::hash;
-use blacksilk_px_core::kernel::{FunctionWitness, Witness};
+use blacksilk_px_core::kernel::Witness;
 use blacksilk_px_core::record::Record;
 use blacksilk_px_core::{Digest, ZERO_DIGEST};
 use blacksilk_tx::builder::Payment;
-use blacksilk_tx::px::{PxTx, Registration};
+use blacksilk_tx::px::{PxDeploy, PxTx, Registration, Window, ABI_VERSION};
 use blacksilk_tx::px_builder::{build_deploy, build_px, px_standard_fee, FunctionRun, PxPlan};
 use blacksilk_tx::state::MemoryChain;
 use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::{validate_mempool_tx, ChainView};
 use blacksilk_tx::{BlockError, TxError};
-use blacksilk_zkvm::air::trace::Budget;
-use blacksilk_zkvm::Program;
 use common::*;
-use std::sync::Arc;
-
-const VAULT_ELF: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../px/vault.elf"));
-const VAULT_BUDGET: Budget = Budget {
-    cycles: 6_000,
-    keys: 2_200,
-    add: 4_300,
-    bit: 250,
-    lt: 3_500,
-    shift: 200,
-    mul: 200,
-    poseidon: 22,
-};
-const LOCK: u32 = 0x5641_0001;
 
 /// A wallet's view of the PX part of the chain: the tree and its records.
 struct PxWallet {
@@ -161,6 +144,7 @@ fn bridge_in_skipping(net: &mut TestNet, to: &PxWallet, amount: u64, skip: usize
             recipients: [Some(to.account.address(0)), None],
             functions: vec![],
             fee,
+            window: Default::default(),
             hedge_secret: [0x5e; 32],
         },
         &rules,
@@ -223,6 +207,7 @@ fn private_payments_through_consensus() {
             recipients: [Some(bob.account.address(1)), Some(alice.account.address(2))],
             functions: vec![],
             fee,
+            window: Default::default(),
             hedge_secret: [0x5e; 32],
         },
         &rules,
@@ -329,6 +314,7 @@ fn private_payments_through_consensus() {
             recipients: [None, None],
             functions: vec![],
             fee,
+            window: Default::default(),
             hedge_secret: [0x5e; 32],
         },
         &rules,
@@ -388,6 +374,7 @@ fn value_cannot_be_created_and_anchors_must_be_recent() {
             recipients: [None, None],
             functions: vec![],
             fee,
+            window: Default::default(),
             hedge_secret: [0x5e; 32],
         },
         &rules,
@@ -426,18 +413,14 @@ fn value_cannot_be_created_and_anchors_must_be_recent() {
     );
 }
 
-#[test]
-fn a_private_contract_is_deployed_and_used_through_consensus() {
-    let mut net = TestNet::new(73, 130);
-    let mut bob = PxWallet::new(4);
+/// A deploy of the reference vault (its registered budget, ABI and output
+/// words) from the miner's first spendable output.
+fn vault_deploy(net: &mut TestNet, salt: u8) -> PxDeploy {
     let miner = net.miner_clone();
-    let rules = net.rules;
-
-    // Deploy the vault contract.
-    let height = net.height();
-    let real = miner.spendable(height)[0].clone();
+    let real = miner.spendable(net.height())[0].clone();
     let plan = net.plan(&real);
-    let deploy = build_deploy(
+    let rules = net.rules;
+    build_deploy(
         &miner.keys,
         vec![plan],
         &[Payment {
@@ -445,17 +428,166 @@ fn a_private_contract_is_deployed_and_used_through_consensus() {
             amount: 1,
         }],
         &miner.primary(),
-        [9; 32],
-        vec![Registration {
-            elf: VAULT_ELF.to_vec(),
-            budget: VAULT_BUDGET,
-        }],
+        [salt; 32],
+        vec![Registration::new(
+            vault::VAULT_ELF.to_vec(),
+            vault::BUDGET,
+            vault::OUT_WORDS,
+        )],
         &rules,
         &mut net.rng,
     )
-    .expect("deploy builds");
+    .expect("deploy builds")
+}
+
+/// LOCK: the miner bridges `value` into a vault record of `contract` under
+/// `terms` (output slot 0), mined in a block. Returns the vault record.
+fn lock_vault(net: &mut TestNet, contract: Digest, value: u64, terms: &vault::Terms) -> Record {
+    let blind = pxw::random_digest(&mut net.rng);
+    let window = Window::UNBOUNDED;
+    let (lock_input, fw) = vault::lock_call(&contract, value, terms, 0, &blind, &window);
+    let fee = px_standard_fee();
+    let miner = net.miner_clone();
+    let real = miner
+        .spendable(net.height())
+        .into_iter()
+        .find(|o| o.received.amount as u128 >= (value + fee) as u128)
+        .unwrap()
+        .clone();
+    let plan = net.plan(&real);
+    let data = terms.data(&contract);
+    let outs = [
+        pxw::contract_output(&mut net.rng, contract, value, data),
+        pxw::empty_output(&mut net.rng),
+    ];
+    let mut w = empty_witness(net, value, 0, outs.clone());
+    w.n_fn = 1;
+    w.functions[0] = Some(fw);
+    let rules = net.rules;
+    let lock_tx = build_px(
+        PxPlan {
+            keys: Some(&miner.keys),
+            inputs: vec![plan],
+            change: Some(miner.primary()),
+            payouts: vec![],
+            witness: w,
+            recipients: [None, None],
+            functions: vec![FunctionRun {
+                program: vault::program(),
+                input: lock_input,
+                budget: vault::BUDGET,
+            }],
+            fee,
+            window,
+            hedge_secret: [0x5e; 32],
+        },
+        &rules,
+        &mut net.rng,
+    )
+    .expect("LOCK builds");
+    let rho =
+        blacksilk_px_core::record::output_rho(&mut HostPerm::new(), &lock_tx.nullifiers[0], 0);
+    let rec = Record {
+        owner: ZERO_DIGEST,
+        contract,
+        asset: ZERO_DIGEST,
+        value,
+        data,
+        rho,
+        rcm: outs[0].rcm,
+    };
+    assert_eq!(rec.commit(&mut HostPerm::new()), lock_tx.commitments[0]);
+    px_block(net, vec![Transaction::Px(Box::new(lock_tx))]).expect("LOCK block");
+    rec
+}
+
+/// A CLAIM (`vault::CLAIM`, with the claim secret) or a REFUND
+/// (`vault::REFUND`, with the refund secret) of the vault record `rec` under
+/// `terms`, paying `to`, in a transaction with validity window `window`; the
+/// fee comes from the miner's v1 funds. Built and proven, not mined.
+#[allow(clippy::too_many_arguments)]
+fn release_vault(
+    net: &mut TestNet,
+    selector: u32,
+    rec: &Record,
+    secret: &Digest,
+    terms: &vault::Terms,
+    to: &PxWallet,
+    window: Window,
+) -> PxTx {
+    let tr = tree(&net.chain);
+    let cm = rec.commit(&mut HostPerm::new());
+    let pos = net
+        .chain
+        .px_records(0, u64::MAX)
+        .iter()
+        .find(|e| e.commitment == cm)
+        .unwrap()
+        .position;
+    let blind = pxw::random_digest(&mut net.rng);
+    let recipient = to.account.owner(0);
+    let (input, fw) = if selector == vault::CLAIM {
+        vault::claim_call(rec, secret, terms, &recipient, 0, 0, &blind, &window)
+    } else {
+        vault::refund_call(rec, secret, terms, &recipient, 0, 0, &blind, &window)
+    };
+    let fee = px_standard_fee();
+    let miner = net.miner_clone();
+    let real = miner
+        .spendable(net.height())
+        .into_iter()
+        .find(|o| o.received.amount as u128 >= fee as u128)
+        .unwrap()
+        .clone();
+    let plan = net.plan(&real);
+    let mut w = pxw::witness(
+        tr.root(),
+        0,
+        0,
+        [
+            pxw::contract_input(&mut net.rng, rec, pos, tr.path(pos).unwrap()),
+            pxw::dummy_input(&mut net.rng),
+        ],
+        [
+            pxw::output(&mut net.rng, recipient, rec.value),
+            pxw::empty_output(&mut net.rng),
+        ],
+    );
+    w.n_fn = 1;
+    w.functions[0] = Some(fw);
+    let rules = net.rules;
+    build_px(
+        PxPlan {
+            keys: Some(&miner.keys),
+            inputs: vec![plan],
+            change: Some(miner.primary()),
+            payouts: vec![],
+            witness: w,
+            recipients: [Some(to.account.address(0)), None],
+            functions: vec![FunctionRun {
+                program: vault::program(),
+                input,
+                budget: vault::BUDGET,
+            }],
+            fee,
+            window,
+            hedge_secret: [0x5e; 32],
+        },
+        &rules,
+        &mut net.rng,
+    )
+    .expect("the release builds")
+}
+
+#[test]
+fn a_private_contract_is_deployed_and_used_through_consensus() {
+    let mut net = TestNet::new(73, 130);
+    let mut bob = PxWallet::new(4);
+
+    // Deploy the vault contract.
+    let deploy = vault_deploy(&mut net, 9);
     let contract = deploy.contract_id();
-    let vault = Arc::new(Program::from_elf(VAULT_ELF).unwrap());
+    let vault = vault::program();
     let dtx = Transaction::PxDeploy(Box::new(deploy));
     assert_eq!(
         validate_mempool_tx(&dtx, &net.chain, net.height(), &net.rules),
@@ -482,175 +614,33 @@ fn a_private_contract_is_deployed_and_used_through_consensus() {
         Some(&(deploy_height, contract))
     );
     assert!(net.chain.px_contract_exists(&contract));
+    // The registry records the budget, the call ABI and the output words.
     assert_eq!(
-        net.chain.px_function(&contract, &vault.id()).map(|f| f.1),
-        Some(VAULT_BUDGET)
+        net.chain
+            .px_function(&contract, &vault.id())
+            .map(|f| (f.budget, f.abi, f.out_words)),
+        Some((vault::BUDGET, ABI_VERSION, vault::OUT_WORDS))
     );
     // The same deploy again: refused (key image, and the contract id).
     assert!(px_block(&mut net, vec![dtx]).is_err());
 
-    // LOCK: the miner bridges 5 000 000 into a vault record of the contract.
+    // LOCK: the miner bridges 5 000 000 into a vault record of the contract,
+    // claimable with the secret, without a timeout.
     let secret: Digest = [5, 6, 7, 8, 9, 10, 11, 12];
-    let lock = hash(&mut HostPerm::new(), LOCK, &[&secret]);
-    let blind = pxw::random_digest(&mut net.rng);
+    let terms = vault::Terms::claim_only(&contract, &secret);
     let value = 5_000_000u64;
-    let lock_input: Vec<u32> = [
-        &[0u32][..],
-        &contract,
-        &blind,
-        &[value as u32, (value >> 32) as u32],
-        &lock,
-        &[0],
-    ]
-    .concat();
-    let fw = FunctionWitness {
-        contract,
-        blind,
-        approve: [false; 2],
-        spec: [
-            Some(OutSpec {
-                owner: ZERO_DIGEST,
-                contract,
-                value,
-                data: lock,
-            }),
-            None,
-        ],
-    };
-    let fee = px_standard_fee();
-    let height = net.height();
-    let miner = net.miner_clone();
-    let real = miner
-        .spendable(height)
-        .into_iter()
-        .find(|o| o.received.amount as u128 >= (value + fee) as u128)
-        .unwrap()
-        .clone();
-    let plan = net.plan(&real);
-    let outs = [
-        pxw::contract_output(&mut net.rng, contract, value, lock),
-        pxw::empty_output(&mut net.rng),
-    ];
-    let mut w = empty_witness(&mut net, value, 0, outs.clone());
-    w.n_fn = 1;
-    w.functions[0] = Some(fw);
-    let lock_tx = build_px(
-        PxPlan {
-            keys: Some(&miner.keys),
-            inputs: vec![plan],
-            change: Some(miner.primary()),
-            payouts: vec![],
-            witness: w,
-            recipients: [None, None],
-            functions: vec![FunctionRun {
-                program: vault.clone(),
-                input: lock_input,
-                budget: VAULT_BUDGET,
-            }],
-            fee,
-            hedge_secret: [0x5e; 32],
-        },
-        &rules,
-        &mut net.rng,
-    )
-    .expect("LOCK builds");
-    let nf0 = lock_tx.nullifiers[0];
-    let lock_cm = lock_tx.commitments[0];
-    px_block(&mut net, vec![Transaction::Px(Box::new(lock_tx))]).expect("LOCK block");
+    let vault_rec = lock_vault(&mut net, contract, value, &terms);
 
     // CLAIM: Bob, knowing the secret, takes the vault's value privately.
-    let rho = blacksilk_px_core::record::output_rho(&mut HostPerm::new(), &nf0, 0);
-    let vault_rec = Record {
-        owner: ZERO_DIGEST,
-        contract,
-        asset: ZERO_DIGEST,
-        value,
-        data: lock,
-        rho,
-        rcm: outs[0].rcm,
-    };
-    assert_eq!(vault_rec.commit(&mut HostPerm::new()), lock_cm);
-    let tr = tree(&net.chain);
-    let pos = net
-        .chain
-        .px_records(0, u64::MAX)
-        .iter()
-        .find(|e| e.commitment == lock_cm)
-        .unwrap()
-        .position;
-    let blind = pxw::random_digest(&mut net.rng);
-    let recipient = bob.account.owner(0);
-    let claim_input: Vec<u32> = [
-        &[1u32][..],
-        &contract,
-        &blind,
-        &[value as u32, (value >> 32) as u32],
-        &lock,
-        &rho,
-        &vault_rec.rcm,
+    let claim = release_vault(
+        &mut net,
+        vault::CLAIM,
+        &vault_rec,
         &secret,
-        &recipient,
-        &[0, 0],
-    ]
-    .concat();
-    let fw = FunctionWitness {
-        contract,
-        blind,
-        approve: [true, false],
-        spec: [
-            Some(OutSpec {
-                owner: recipient,
-                contract: ZERO_DIGEST,
-                value,
-                data: [0; 8],
-            }),
-            None,
-        ],
-    };
-    let height = net.height();
-    let miner = net.miner_clone();
-    let real = miner
-        .spendable(height)
-        .into_iter()
-        .find(|o| o.received.amount as u128 >= fee as u128)
-        .unwrap()
-        .clone();
-    let plan = net.plan(&real);
-    let mut w = pxw::witness(
-        tr.root(),
-        0,
-        0,
-        [
-            pxw::contract_input(&mut net.rng, &vault_rec, pos, tr.path(pos).unwrap()),
-            pxw::dummy_input(&mut net.rng),
-        ],
-        [
-            pxw::output(&mut net.rng, recipient, value),
-            pxw::empty_output(&mut net.rng),
-        ],
+        &terms,
+        &bob,
+        Window::UNBOUNDED,
     );
-    w.n_fn = 1;
-    w.functions[0] = Some(fw);
-    let claim = build_px(
-        PxPlan {
-            keys: Some(&miner.keys),
-            inputs: vec![plan],
-            change: Some(miner.primary()),
-            payouts: vec![],
-            witness: w,
-            recipients: [Some(bob.account.address(0)), None],
-            functions: vec![FunctionRun {
-                program: vault.clone(),
-                input: claim_input,
-                budget: VAULT_BUDGET,
-            }],
-            fee,
-            hedge_secret: [0x5e; 32],
-        },
-        &rules,
-        &mut net.rng,
-    )
-    .expect("CLAIM builds");
     // An unregistered program cannot stand in for the contract's function.
     let mut forged = claim.clone();
     forged.functions[0].program_id[0] ^= 1;
@@ -663,9 +653,127 @@ fn a_private_contract_is_deployed_and_used_through_consensus() {
         ),
         Err(TxError::PxUnregistered { function: 0 })
     );
+    // F-28-5: a call publishing another number of output words than its
+    // program's registered `out_words` is refused, before the proof.
+    let mut padded = claim.clone();
+    padded.functions[0].outputs.push(0);
+    assert_eq!(
+        validate_mempool_tx(
+            &Transaction::Px(Box::new(padded)),
+            &net.chain,
+            net.height(),
+            &net.rules
+        ),
+        Err(TxError::PxOutputWords { function: 0 })
+    );
+    assert!(TxError::PxOutputWords { function: 0 }.is_stateless());
+    // PX6: the window is in the prefix, so it is covered by the v1
+    // signatures (checked before PX5; this claim pays its fee from v1 funds)
+    // and by h_tx, the proof's binding (px/tests/unified.rs checks that the
+    // proof alone refuses another window). The same transaction with another
+    // window is refused.
+    let mut rewindowed = claim.clone();
+    rewindowed.window.not_after = net.height() + 100;
+    assert_eq!(
+        validate_mempool_tx(
+            &Transaction::Px(Box::new(rewindowed)),
+            &net.chain,
+            net.height(),
+            &net.rules
+        ),
+        Err(TxError::InvalidSignature { input: 0 })
+    );
     px_block(&mut net, vec![Transaction::Px(Box::new(claim))]).expect("CLAIM block");
     bob.scan(&net.chain);
     assert_eq!(bob.balance(), value);
     // The vault record is spent: its nullifier is on chain.
     assert_eq!(net.chain.px_pool(), value as u128);
+}
+
+/// PX6 and the vault refund (W28-4) through consensus, with real proofs: a
+/// vault locked with a timeout `T` is refunded by a transaction whose window
+/// starts at `T`. The refund is premature at `T − 1` (contextual, never
+/// scored), valid at `T` and later, and a block at `T − 1` cannot include
+/// it, even when its proof was already verified (the cache vouches only for
+/// the proof, AT-5).
+#[test]
+fn a_vault_refund_obeys_its_validity_window_through_consensus() {
+    let mut net = TestNet::new(79, 130);
+    let mut carol = PxWallet::new(6);
+    let deploy = vault_deploy(&mut net, 11);
+    let contract = deploy.contract_id();
+    px_block(&mut net, vec![Transaction::PxDeploy(Box::new(deploy))]).expect("deploy block");
+
+    let secret: Digest = [21, 22, 23, 24, 25, 26, 27, 28];
+    let refund_secret: Digest = [31, 32, 33, 34, 35, 36, 37, 38];
+    let timeout = net.height() + 3;
+    let terms = vault::Terms {
+        claim_lock: vault::lock_of(&contract, &secret),
+        refund_lock: vault::refund_lock_of(&contract, &refund_secret),
+        timeout,
+    };
+    let value = 3_000_000u64;
+    let rec = lock_vault(&mut net, contract, value, &terms);
+    assert!(net.height() < timeout);
+
+    let window = Window {
+        not_before: timeout,
+        not_after: 0,
+    };
+    let refund = Transaction::Px(Box::new(release_vault(
+        &mut net,
+        vault::REFUND,
+        &rec,
+        &refund_secret,
+        &terms,
+        &carol,
+        window,
+    )));
+    // Every height below T: premature, contextual (a relaying peer is not
+    // penalized).
+    for h in net.height()..timeout {
+        assert_eq!(
+            validate_mempool_tx(&refund, &net.chain, h, &net.rules),
+            Err(TxError::PxWindow),
+            "height {h}"
+        );
+    }
+    assert!(!TxError::PxWindow.is_stateless());
+    // At T and after: valid, proof included.
+    for h in [timeout, timeout + 1, timeout + 1000] {
+        assert_eq!(
+            validate_mempool_tx(&refund, &net.chain, h, &net.rules),
+            Ok(()),
+            "height {h}"
+        );
+    }
+    // Mine up to T − 1: a block at T − 1 cannot include the refund, even with
+    // its proof vouched for by the cache.
+    while net.height() < timeout - 1 {
+        net.mine(vec![], &mut []).unwrap();
+    }
+    assert_eq!(net.height(), timeout - 1);
+    let fees = refund.fee();
+    let early = vec![net.coinbase(fees), refund.clone()];
+    let ctx = net.context(&early);
+    let vouched = |_: &blacksilk_tx::types::Hash| true;
+    assert_eq!(
+        blacksilk_tx::validate::validate_block_transactions_cached(
+            &early,
+            &ctx,
+            &net.chain,
+            &net.rules,
+            &mut net.rng,
+            &vouched
+        ),
+        Err(BlockError::Tx {
+            index: 1,
+            error: TxError::PxWindow
+        })
+    );
+    net.mine(vec![], &mut []).unwrap();
+    assert_eq!(net.height(), timeout);
+    px_block(&mut net, vec![refund]).expect("the refund at T");
+    carol.scan(&net.chain);
+    assert_eq!(carol.balance(), value);
 }

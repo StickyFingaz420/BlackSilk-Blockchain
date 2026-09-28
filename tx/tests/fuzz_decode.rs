@@ -19,7 +19,6 @@ use blacksilk_tx::px::{
 use blacksilk_tx::px_builder::{build_deploy, build_px, px_standard_fee, PxPlan};
 use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::{check_balance, check_structure, validate_mempool_tx};
-use blacksilk_zkvm::air::trace::Budget;
 use common::*;
 use rand_chacha::rand_core::RngCore;
 
@@ -112,16 +111,9 @@ fn every_mutant_decodes_canonically_or_fails_cleanly() {
         [1; 32],
         vec![Registration {
             elf: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../px/vault.elf")).to_vec(),
-            budget: Budget {
-                cycles: 6_000,
-                keys: 2_200,
-                add: 4_300,
-                bit: 250,
-                lt: 3_500,
-                shift: 200,
-                mul: 200,
-                poseidon: 22,
-            },
+            budget: blacksilk_px::vault::BUDGET,
+            abi: blacksilk_tx::px::ABI_VERSION,
+            out_words: 1,
         }],
         &rules,
         &mut net.rng,
@@ -159,6 +151,7 @@ fn every_mutant_decodes_canonically_or_fails_cleanly() {
                 recipients: [Some(acct.address(0)), None],
                 functions: vec![],
                 fee,
+                window: Default::default(),
                 hedge_secret: [0x5e; 32],
             },
             &rules,

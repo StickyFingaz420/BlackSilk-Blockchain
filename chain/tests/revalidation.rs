@@ -405,7 +405,7 @@ fn an_output_key_copied_by_another_mined_transaction_leaves_the_victim_valid() {
 
     // The extension check keeps both, and agrees with full validation.
     for tx in [&victim, &control] {
-        assert_eq!(revalidate_after_extension(tx, m.state()), Ok(()));
+        assert_eq!(revalidate_after_extension(tx, m.state(), next), Ok(()));
         assert_eq!(validate_mempool_tx(tx, m.state(), next, m.rules()), Ok(()));
     }
 
@@ -468,7 +468,7 @@ fn a_plain_extension_keeps_valid_transactions() {
         let next = m.height() + 1;
         for id in &ids {
             let tx = pool.get(id).unwrap();
-            assert_eq!(revalidate_after_extension(tx, m.state()), Ok(()));
+            assert_eq!(revalidate_after_extension(tx, m.state(), next), Ok(()));
             assert_eq!(validate_mempool_tx(tx, m.state(), next, m.rules()), Ok(()));
         }
         pool.revalidate(m.state(), next, m.rules(), false);
@@ -525,7 +525,7 @@ fn replacing_coinbase_only_blocks_changes_a_ring_and_needs_full_validation() {
     assert!(!m.state().is_key_image_spent(&tx.key_images()[0]));
 
     // The extension check alone would keep it...
-    assert_eq!(revalidate_after_extension(&tx, m.state()), Ok(()));
+    assert_eq!(revalidate_after_extension(&tx, m.state(), next), Ok(()));
     ext_pool.revalidate(m.state(), next, m.rules(), false);
     assert!(ext_pool.contains(&tx.hash()));
     // ...full validation does not.
@@ -601,7 +601,7 @@ fn a_shorter_heavier_reorg_makes_a_ring_member_immature() {
     let next = m.height() + 1;
     assert!(next < created + COINBASE_MATURITY);
 
-    assert_eq!(revalidate_after_extension(&tx, m.state()), Ok(()));
+    assert_eq!(revalidate_after_extension(&tx, m.state(), next), Ok(()));
     ext_pool.revalidate(m.state(), next, m.rules(), false);
     assert!(ext_pool.contains(&tx.hash()));
     let err = validate_mempool_tx(&tx, m.state(), next, m.rules()).unwrap_err();

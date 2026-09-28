@@ -3,9 +3,10 @@
 target = "riscv32i-unknown-none-elf"
 
 [target.riscv32i-unknown-none-elf]
-# Static, non-PIE; the default lld layout starts above the 4 KiB null guard.
-# --strip-all: no symbol table (path-dependent crate hashes), README.md.
-# build.sh is the single source of these flags (GUEST_FLAGS) and fails if this
-# line differs from them. A plain `cargo build` here gives the same bytes as
-# build.sh with the pinned rustc (rust-toolchain.toml).
-rustflags = ["-C", "relocation-model=static", "-C", "target-feature=+zmmul", "-C", "link-arg=--strip-all"]
+# Static, non-PIE; guest.ld places the sections from 0x10000, above the 4 KiB
+# null guard, keeps the ELF headers out of every PT_LOAD and discards
+# .comment (CI-1). --strip-all: no symbol table (path-dependent crate hashes),
+# README.md. build.sh is the single source of these flags (GUEST_FLAGS) and
+# fails if this line differs from them. A plain `cargo build` here gives the
+# same bytes as build.sh with the pinned rustc (rust-toolchain.toml).
+rustflags = ["-C", "relocation-model=static", "-C", "target-feature=+zmmul", "-C", "link-arg=--strip-all", "-C", "link-arg=-Tguest.ld"]

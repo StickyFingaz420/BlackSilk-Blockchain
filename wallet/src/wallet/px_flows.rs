@@ -10,6 +10,7 @@ use blacksilk_consensus::Hash;
 use blacksilk_crypto::keys::Address;
 use blacksilk_crypto::Point;
 use blacksilk_px::wallet as pxw;
+use blacksilk_px_core::call::Window;
 use blacksilk_tx::builder::{Decoy, InputPlan, Payment};
 use blacksilk_tx::params::{TxRules, COINBASE_MATURITY, MAX_INPUTS};
 use blacksilk_tx::px::PxTx;
@@ -361,6 +362,7 @@ impl Wallet {
                 recipients: [Some(self.px_account.address(0)), None],
                 functions: vec![],
                 fee,
+                window: Window::UNBOUNDED,
                 hedge_secret: self.px_account.hedge_secret(),
             },
             &rules,
@@ -441,6 +443,7 @@ impl Wallet {
                 recipients: [Some(to.clone()), Some(self.px_account.address(1))],
                 functions: vec![],
                 fee,
+                window: Window::UNBOUNDED,
                 hedge_secret: self.px_account.hedge_secret(),
             },
             &rules,
@@ -496,6 +499,7 @@ impl Wallet {
                 recipients: [Some(self.px_account.address(1)), None],
                 functions: vec![],
                 fee,
+                window: Window::UNBOUNDED,
                 hedge_secret: self.px_account.hedge_secret(),
             },
             &rules,

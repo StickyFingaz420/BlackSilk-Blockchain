@@ -26,7 +26,7 @@ use blacksilk_tx::params::{TxRules, RING_SIZE};
 use blacksilk_tx::px::{digest_bytes, PxDeploy, PxFunction, PxTx, Registration};
 use blacksilk_tx::types::{Coinbase, CoinbaseOutput, Input, Output, Transaction, Transfer};
 use blacksilk_tx::validate::{
-    revalidate_after_extension, validate_mempool_tx, ChainView, OutputRecord, TxError,
+    revalidate_after_extension, validate_mempool_tx, ChainView, OutputRecord, PxProgram, TxError,
 };
 use blacksilk_zkvm::air::trace::Budget;
 use blacksilk_zkvm::Program;
@@ -37,8 +37,11 @@ use std::sync::Arc;
 
 // ------------------------------------------------------------------ mock chain
 
-/// Registered functions: (contract bytes, program id) -> program and budget.
-type Registry = HashMap<([u8; 32], [u8; 32]), (Arc<Program>, Budget)>;
+/// Registered functions: (contract bytes, program id) -> the registration.
+type Registry = HashMap<([u8; 32], [u8; 32]), PxProgram>;
+
+/// The height the pooled transactions are re-checked for (the next block's).
+const NEXT: u64 = 1;
 
 /// A chain view whose every answer the test sets. Only the state the function
 /// may consult is modelled; `output` answers nothing, so any attempt to
@@ -69,11 +72,7 @@ impl ChainView for MockChain {
     fn px_pool(&self) -> u128 {
         self.pool
     }
-    fn px_function(
-        &self,
-        contract: &Digest,
-        program_id: &[u8; 32],
-    ) -> Option<(Arc<Program>, Budget)> {
+    fn px_function(&self, contract: &Digest, program_id: &[u8; 32]) -> Option<PxProgram> {
         self.functions
             .get(&(digest_bytes(contract), *program_id))
             .cloned()
@@ -92,8 +91,15 @@ impl MockChain {
     }
     fn register(&mut self, contract: Digest, program_id: [u8; 32]) {
         self.contracts.insert(digest_bytes(&contract));
-        self.functions
-            .insert((digest_bytes(&contract), program_id), (program(), budget()));
+        self.functions.insert(
+            (digest_bytes(&contract), program_id),
+            PxProgram {
+                program: program(),
+                budget: budget(),
+                abi: blacksilk_tx::px::ABI_VERSION,
+                out_words: 0,
+            },
+        );
     }
 }
 
@@ -191,6 +197,7 @@ fn px(bridge_in: u64, bridge_out: u64) -> PxTx {
         fee: 1,
         bridge_in,
         bridge_out,
+        window: Default::default(),
         anchor: ANCHOR,
         nullifiers: NF,
         commitments: [[21; 8], [22; 8]],
@@ -218,6 +225,8 @@ fn deploy() -> PxDeploy {
         programs: vec![Registration {
             elf: vec![1, 2, 3],
             budget: budget(),
+            abi: blacksilk_tx::px::ABI_VERSION,
+            out_words: 1,
         }],
         pseudo_outs: vec![],
         range_proof: dummy_proof(),
@@ -255,7 +264,7 @@ fn all_txs() -> Vec<Transaction> {
 fn assert_all_ok(chain: &MockChain, context: &str) {
     for tx in all_txs() {
         assert_eq!(
-            revalidate_after_extension(&tx, chain),
+            revalidate_after_extension(&tx, chain, NEXT),
             Ok(()),
             "{context}: {tx:?}"
         );
@@ -273,7 +282,7 @@ fn baseline_every_kind_passes_and_a_coinbase_is_refused() {
         outputs: vec![payout(700), payout(701)],
     });
     assert_eq!(
-        revalidate_after_extension(&cb, &c),
+        revalidate_after_extension(&cb, &c, NEXT),
         Err(TxError::CoinbaseNotAllowed)
     );
 }
@@ -283,17 +292,17 @@ fn baseline_every_kind_passes_and_a_coinbase_is_refused() {
 fn px_anchor_leaving_the_window_is_detected() {
     let mut c = base_chain();
     let tx = tx_px(0, 0);
-    assert_eq!(revalidate_after_extension(&tx, &c), Ok(()));
+    assert_eq!(revalidate_after_extension(&tx, &c, NEXT), Ok(()));
     // An extension adds new roots and evicts the oldest.
     c.recent_roots.insert(digest_bytes(&[50; 8]));
     assert_eq!(
-        revalidate_after_extension(&tx, &c),
+        revalidate_after_extension(&tx, &c, NEXT),
         Ok(()),
         "a new root alone"
     );
     c.recent_roots.remove(&digest_bytes(&ANCHOR));
     assert_eq!(
-        revalidate_after_extension(&tx, &c),
+        revalidate_after_extension(&tx, &c, NEXT),
         Err(TxError::PxUnknownAnchor)
     );
 }
@@ -306,22 +315,22 @@ fn px_pool_becoming_insufficient_is_detected() {
     c.pool = 100;
     let withdraw = tx_px(30, 130);
     assert_eq!(
-        revalidate_after_extension(&withdraw, &c),
+        revalidate_after_extension(&withdraw, &c, NEXT),
         Ok(()),
         "100 + 30 == 130"
     );
     c.pool = 99;
     assert_eq!(
-        revalidate_after_extension(&withdraw, &c),
+        revalidate_after_extension(&withdraw, &c, NEXT),
         Err(TxError::PxPoolUnderflow)
     );
     // A deposit is unaffected by the pool, even at zero.
     c.pool = 0;
-    assert_eq!(revalidate_after_extension(&tx_px(50, 0), &c), Ok(()));
+    assert_eq!(revalidate_after_extension(&tx_px(50, 0), &c, NEXT), Ok(()));
     // And a pool that grows back revives the withdrawal: the verdict is a
     // function of the current state only.
     c.pool = 1_000;
-    assert_eq!(revalidate_after_extension(&withdraw, &c), Ok(()));
+    assert_eq!(revalidate_after_extension(&withdraw, &c, NEXT), Ok(()));
 }
 
 /// PX2: either nullifier spent by a block.
@@ -330,10 +339,10 @@ fn px_nullifier_becoming_spent_is_detected() {
     for (i, nf) in NF.iter().enumerate() {
         let mut c = base_chain();
         let tx = tx_px(0, 0);
-        assert_eq!(revalidate_after_extension(&tx, &c), Ok(()));
+        assert_eq!(revalidate_after_extension(&tx, &c, NEXT), Ok(()));
         c.nullifiers.insert(digest_bytes(nf));
         assert_eq!(
-            revalidate_after_extension(&tx, &c),
+            revalidate_after_extension(&tx, &c, NEXT),
             Err(TxError::PxNullifierSpent { index: i })
         );
     }
@@ -349,13 +358,13 @@ fn a_contract_deployed_on_chain_makes_the_pooled_deploy_a_duplicate() {
     let mut c = base_chain();
     let tx = tx_deploy();
     let d = deploy();
-    assert_eq!(revalidate_after_extension(&tx, &c), Ok(()));
+    assert_eq!(revalidate_after_extension(&tx, &c, NEXT), Ok(()));
     // Another contract registered: no effect.
     c.register([1; 8], [1; 32]);
-    assert_eq!(revalidate_after_extension(&tx, &c), Ok(()));
+    assert_eq!(revalidate_after_extension(&tx, &c, NEXT), Ok(()));
     c.contracts.insert(digest_bytes(&d.contract_id()));
     assert_eq!(
-        revalidate_after_extension(&tx, &c),
+        revalidate_after_extension(&tx, &c, NEXT),
         Err(TxError::DuplicateContract)
     );
 }
@@ -371,10 +380,10 @@ fn a_key_image_becoming_spent_is_detected() {
     ];
     for (tx, ki, input) in cases {
         let mut c = base_chain();
-        assert_eq!(revalidate_after_extension(&tx, &c), Ok(()));
+        assert_eq!(revalidate_after_extension(&tx, &c, NEXT), Ok(()));
         c.spend_key_image(&pt(ki));
         assert_eq!(
-            revalidate_after_extension(&tx, &c),
+            revalidate_after_extension(&tx, &c, NEXT),
             Err(TxError::KeyImageSpent { input }),
             "key image {ki}"
         );
@@ -389,13 +398,13 @@ fn registered_functions_stay_registered_as_the_registry_grows() {
     let tx = tx_px(0, 0);
     for n in 0..10u32 {
         c.register([n + 100; 8], [n as u8; 32]);
-        assert_eq!(revalidate_after_extension(&tx, &c), Ok(()));
+        assert_eq!(revalidate_after_extension(&tx, &c, NEXT), Ok(()));
     }
     // The check is live: without the registration the verdict is PX3.
     let mut bare = base_chain();
     bare.functions.clear();
     assert_eq!(
-        revalidate_after_extension(&tx, &bare),
+        revalidate_after_extension(&tx, &bare, NEXT),
         Err(TxError::PxUnregistered { function: 0 })
     );
 }
@@ -428,7 +437,7 @@ fn intrinsic_rules_are_not_rechecked_by_design() {
     let c = base_chain();
     let rules = TxRules::for_chain(&blacksilk_consensus::ChainParams::regtest());
     for tx in all_txs() {
-        assert_eq!(revalidate_after_extension(&tx, &c), Ok(()));
+        assert_eq!(revalidate_after_extension(&tx, &c, NEXT), Ok(()));
         let full = validate_mempool_tx(&tx, &c, 100, &rules);
         assert!(full.is_err(), "full validation must reject {tx:?}");
     }
@@ -437,7 +446,7 @@ fn intrinsic_rules_are_not_rechecked_by_design() {
     let mut ring_unresolvable = transfer();
     ring_unresolvable.inputs[0].ring = [u64::MAX - RING_SIZE as u64; RING_SIZE];
     assert_eq!(
-        revalidate_after_extension(&Transaction::from(ring_unresolvable), &c),
+        revalidate_after_extension(&Transaction::from(ring_unresolvable), &c, NEXT),
         Ok(())
     );
 }

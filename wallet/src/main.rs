@@ -127,10 +127,11 @@ enum Cmd {
     /// hidden behind ring signatures). Its programs are public.
     PxDeploy {
         /// Register the reference hash-locked vault (px/vault.elf), a
-        /// demonstration contract: no timeout, no refund, not trustless. It
-        /// is deployed alone: any other program of the same contract could
-        /// spend the vault's records without the secret.
-        #[arg(long, conflicts_with_all = ["program", "budget"])]
+        /// demonstration contract with an optional timeout and refund
+        /// (docs/contracts.md §8). It is deployed alone: any other program of
+        /// the same contract could spend the vault's records without the
+        /// secret.
+        #[arg(long, conflicts_with_all = ["program", "budget", "out_words"])]
         vault: bool,
         /// A function program (RISC-V ELF); repeat for several.
         #[arg(long)]
@@ -139,6 +140,11 @@ enum Cmd {
         /// cycles,keys,add,bit,lt,shift,mul,poseidon.
         #[arg(long)]
         budget: Vec<String>,
+        /// The exact number of public output words it writes after its
+        /// prefix, one per --program; every call must publish exactly this
+        /// many (docs/contracts.md §5).
+        #[arg(long = "out-words")]
+        out_words: Vec<u32>,
     },
     /// List the private contracts deployed on chain.
     PxContracts,
@@ -564,24 +570,25 @@ fn run(args: Args) -> Result<(), String> {
                     vault: with_vault,
                     program,
                     budget,
+                    out_words,
                 } => (|| {
-                    if program.len() != budget.len() {
-                        return Err("give one --budget per --program".to_string());
+                    if program.len() != budget.len() || program.len() != out_words.len() {
+                        return Err(
+                            "give one --budget and one --out-words per --program".to_string()
+                        );
                     }
                     let mut programs = Vec::new();
                     if with_vault {
-                        programs.push(Registration {
-                            elf: vault::VAULT_ELF.to_vec(),
-                            budget: vault::BUDGET,
-                        });
+                        programs.push(Registration::new(
+                            vault::VAULT_ELF.to_vec(),
+                            vault::BUDGET,
+                            vault::OUT_WORDS,
+                        ));
                     }
-                    for (path, b) in program.iter().zip(&budget) {
+                    for ((path, b), &n) in program.iter().zip(&budget).zip(&out_words) {
                         let elf =
                             std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-                        programs.push(Registration {
-                            elf,
-                            budget: parse_budget(b)?,
-                        });
+                        programs.push(Registration::new(elf, parse_budget(b)?, n));
                     }
                     if programs.is_empty() {
                         return Err("nothing to deploy: use --vault or --program".into());

@@ -172,7 +172,7 @@ async fn admit_tx(
                     .and_then(|_| validate::check_balance(&t.as_transfer())),
             };
             let r = stateless
-                .and_then(|_| validate::revalidate_after_extension(&tx, c.state()))
+                .and_then(|_| validate::revalidate_after_extension(&tx, c.state(), c.height() + 1))
                 .and_then(|_| match (&*tx, &proof) {
                     (Transaction::Px(t), Some(p)) => {
                         validate::check_px_proof_shape(t, c.state(), &rules, p)

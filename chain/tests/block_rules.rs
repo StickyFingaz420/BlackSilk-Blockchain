@@ -402,6 +402,7 @@ fn px_tx(seed: u32, proof_bytes: usize) -> PxTx {
         fee: PX_STANDARD_FEE,
         bridge_in: 0,
         bridge_out: PX_STANDARD_FEE,
+        window: Default::default(),
         anchor: [0; 8],
         nullifiers: [[seed; 8], [seed + 1_000_000; 8]],
         commitments: [[seed + 2; 8], [seed + 3; 8]],

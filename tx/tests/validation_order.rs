@@ -23,24 +23,13 @@ use blacksilk_tx::types::{CoinbaseOutput, Transaction};
 use blacksilk_tx::validate::*;
 use blacksilk_tx::{Transfer, TxError};
 use blacksilk_zkvm::air::trace::Budget;
-use blacksilk_zkvm::Program;
 use common::*;
 use rand_chacha::rand_core::RngCore;
 use std::cell::Cell;
-use std::sync::Arc;
 use std::time::Instant;
 
 const VAULT_ELF: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../px/vault.elf"));
-const VAULT_BUDGET: Budget = Budget {
-    cycles: 6_000,
-    keys: 2_200,
-    add: 4_300,
-    bit: 250,
-    lt: 3_500,
-    shift: 200,
-    mul: 200,
-    poseidon: 22,
-};
+const VAULT_BUDGET: Budget = blacksilk_px::vault::BUDGET;
 
 /// The pre-change mempool functions, copied verbatim from `tx/src/validate.rs`
 /// and `tx/src/px.rs` at commit 7826289 (only paths adapted to public items).
@@ -330,7 +319,7 @@ impl ChainView for View<'_> {
             self.inner.px_pool()
         }
     }
-    fn px_function(&self, c: &Digest, id: &[u8; 32]) -> Option<(Arc<Program>, Budget)> {
+    fn px_function(&self, c: &Digest, id: &[u8; 32]) -> Option<blacksilk_tx::validate::PxProgram> {
         self.tick();
         self.inner.px_function(c, id)
     }
@@ -384,6 +373,7 @@ fn px_zero_input(net: &mut TestNet) -> PxTx {
         fee: PX_STANDARD_FEE,
         bridge_in: 0,
         bridge_out: PX_STANDARD_FEE + a,
+        window: Default::default(),
         anchor: digest(7),
         nullifiers: [digest(1), digest(2)],
         commitments: [digest(3), digest(4)],
@@ -430,6 +420,8 @@ fn build_test_deploy(net: &mut TestNet) -> PxDeploy {
         vec![Registration {
             elf: VAULT_ELF.to_vec(),
             budget: VAULT_BUDGET,
+            abi: blacksilk_tx::px::ABI_VERSION,
+            out_words: 1,
         }],
         &rules,
         &mut net.rng,

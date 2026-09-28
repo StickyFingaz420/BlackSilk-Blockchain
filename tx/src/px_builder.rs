@@ -32,6 +32,7 @@ use blacksilk_crypto::{Point, RistrettoPoint, Scalar};
 use blacksilk_px::delivery::{self, DeliveryKeys};
 use blacksilk_px::perm::HostPerm;
 use blacksilk_px::prove::{self as pxprove, witness_words, TransferError};
+use blacksilk_px_core::call::{function_prefix, Window, ABI_VERSION, PREFIX_WORDS};
 use blacksilk_px_core::kernel::{self, SliceSource, Witness};
 use blacksilk_px_core::record::{output_rho, Record};
 use blacksilk_zkvm::air::trace::Budget;
@@ -77,6 +78,10 @@ pub struct PxPlan<'a> {
     pub recipients: [Option<delivery::Address>; 2],
     pub functions: Vec<FunctionRun>,
     pub fee: u64,
+    /// The transaction's validity window (PX6), which every function reads
+    /// in its prefix. [`Window::UNBOUNDED`] unless a function needs one: any
+    /// other value is public and sets the transaction apart.
+    pub window: Window,
     /// The sender's secret for hedged randomness (docs/transactions.md §10),
     /// normally `blacksilk_px::wallet::Account::hedge_secret`. Required: it
     /// keys the witness randomness, record delivery, throwaway delivery
@@ -149,8 +154,8 @@ fn empty_slots(plan: &PxPlan<'_>) -> [bool; 2] {
 /// `rcm`, dummy inputs, empty-slot owners, contract-input key fields) with
 /// [`blacksilk_px::wallet::hedge_witness`], keyed with `secrets` and bound to
 /// the witness statement plus the rest of the transaction: network, fee,
-/// v1 rings (members sorted by global index), payouts, change address, and
-/// each function run (program id, private input). Contract outputs keep the
+/// validity window, v1 rings (members sorted by global index), payouts,
+/// change address, and each function run (program id, private input). Contract outputs keep the
 /// caller's `rcm` (the caller keeps that opening).
 fn hedge_plan_witness<R: RngCore + CryptoRng>(
     plan: &mut PxPlan<'_>,
@@ -162,6 +167,12 @@ fn hedge_plan_witness<R: RngCore + CryptoRng>(
     let mut push = |v: Vec<u8>| context.push(zeroize::Zeroizing::new(v));
     push(rules.network_id.to_le_bytes().to_vec());
     push(plan.fee.to_le_bytes().to_vec());
+    push(
+        [plan.window.not_before, plan.window.not_after]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect(),
+    );
     push((plan.inputs.len() as u64).to_le_bytes().to_vec());
     for ip in &plan.inputs {
         let mut members: Vec<(u64, &OutputKey)> =
@@ -241,8 +252,9 @@ pub fn build_px<R: RngCore + CryptoRng>(
             .map_err(|_| PxBuildError::Function(k))?;
         let (contract, io_hash) = public.functions[k];
         if exec.exit_code != 0
-            || exec.output.len() < 16
-            || exec.output[..16] != blacksilk_px_core::call::function_prefix(&io_hash, &contract)
+            || exec.output.len() < PREFIX_WORDS
+            || exec.output[..PREFIX_WORDS]
+                != function_prefix(ABI_VERSION, &io_hash, &contract, &plan.window)
         {
             return Err(PxBuildError::Function(k));
         }
@@ -250,7 +262,7 @@ pub fn build_px<R: RngCore + CryptoRng>(
             contract,
             program_id: f.program.id(),
             io_hash,
-            outputs: exec.output[16..].to_vec(),
+            outputs: exec.output[PREFIX_WORDS..].to_vec(),
         });
     }
 
@@ -350,6 +362,7 @@ pub fn build_px<R: RngCore + CryptoRng>(
         fee: plan.fee,
         bridge_in: public.bridge_in,
         bridge_out: public.bridge_out,
+        window: plan.window,
         anchor: public.anchor,
         nullifiers: public.nullifiers,
         commitments: public.commitments,
@@ -385,8 +398,8 @@ pub fn build_px<R: RngCore + CryptoRng>(
 
     // The hedge (spec §10) is keyed with the PX secret (plus the v1 spend
     // secret when there are v1 inputs) and bound to the whole statement:
-    // network, nullifiers and key images (ctx), fee, bridge amounts, output
-    // commitments, rings, payouts, change address and amount.
+    // network, nullifiers and key images (ctx), fee, bridge amounts, validity
+    // window, output commitments, rings, payouts, change address and amount.
     let mut secrets: Vec<&[u8]> = vec![px_secret.as_slice()];
     if let Some(s) = v1_secret.as_ref() {
         secrets.push(s);
@@ -397,7 +410,9 @@ pub fn build_px<R: RngCore + CryptoRng>(
         .push(&ctx)
         .push_u64(plan.fee)
         .push_u64(public.bridge_in)
-        .push_u64(public.bridge_out);
+        .push_u64(public.bridge_out)
+        .push_u64(plan.window.not_before)
+        .push_u64(plan.window.not_after);
     for c in &public.commitments {
         context.push(&commitment_bytes(c));
     }
@@ -503,8 +518,14 @@ pub fn build_px<R: RngCore + CryptoRng>(
         .iter()
         .map(|f| (f.program.clone(), f.input.clone(), f.budget))
         .collect();
-    let (proven, _, proof) = pxprove::prove(&plan.witness, &runs, tx.binding(rules.domain()), rng)
-        .map_err(PxBuildError::Kernel)?;
+    let (proven, _, proof) = pxprove::prove(
+        &plan.witness,
+        &runs,
+        &plan.window,
+        tx.binding(rules.domain()),
+        rng,
+    )
+    .map_err(PxBuildError::Kernel)?;
     if proven != public {
         return Err(PxBuildError::Kernel(TransferError::Shape));
     }
@@ -634,6 +655,7 @@ mod tests {
             recipients: [None, None],
             functions: vec![],
             fee: PX_STANDARD_FEE,
+            window: Window::UNBOUNDED,
             hedge_secret: [0; 32],
         };
         let rules = TxRules::for_chain(&blacksilk_consensus::ChainParams::regtest());
@@ -691,6 +713,7 @@ mod tests {
             recipients: [Some(pxw_address()), None],
             functions: vec![],
             fee: PX_STANDARD_FEE,
+            window: Window::UNBOUNDED,
             hedge_secret: [0; 32],
         }
     }

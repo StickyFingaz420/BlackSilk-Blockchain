@@ -49,7 +49,7 @@ fn fixture() -> Fixture {
             contract: C,
             asset: ZERO_DIGEST,
             value: 500,
-            data: vault::lock_of(&secret),
+            data: vault::record_data(&C, &secret),
             rho: wallet::random_digest(&mut rng),
             rcm: wallet::random_digest(&mut rng),
         };
@@ -75,8 +75,16 @@ fn vault_witness(f: &Fixture, class: &str, k: usize, rng: &mut ChaCha20Rng) -> (
             let (r, pos) = &f.user[k % 4];
             let value = 1 + rng.next_u64() % r.value;
             let secret = wallet::random_digest(rng);
-            let lock = vault::lock_of(&secret);
-            let (input, fw) = vault::lock_call(&C, value, &lock, 0, &blind);
+            let terms = vault::Terms::claim_only(&C, &secret);
+            let lock = terms.data(&C);
+            let (input, fw) = vault::lock_call(
+                &C,
+                value,
+                &terms,
+                0,
+                &blind,
+                &blacksilk_px_core::call::Window::UNBOUNDED,
+            );
             let mut w = wallet::witness(
                 f.tree.root(),
                 0,
@@ -98,7 +106,17 @@ fn vault_witness(f: &Fixture, class: &str, k: usize, rng: &mut ChaCha20Rng) -> (
         "claim" => {
             let (r, pos, secret) = &f.vaults[k % 4];
             let recipient = f.alice.owner(27);
-            let (input, fw) = vault::claim_call(r, secret, &recipient, 0, 0, &blind);
+            let terms = vault::Terms::claim_only(&C, secret);
+            let (input, fw) = vault::claim_call(
+                r,
+                secret,
+                &terms,
+                &recipient,
+                0,
+                0,
+                &blind,
+                &blacksilk_px_core::call::Window::UNBOUNDED,
+            );
             let mut w = wallet::witness(
                 f.tree.root(),
                 0,
@@ -185,13 +203,22 @@ fn main() {
         let (public, calls, proof) = prove::prove(
             &w,
             &[(vault::program(), input, vault::BUDGET)],
+            &blacksilk_px_core::call::Window::UNBOUNDED,
             [2; 32],
             &mut rng,
         )
         .unwrap();
         tp += t.elapsed().as_secs_f64();
         let t = Instant::now();
-        prove::verify(&public, &calls, [2; 32], &proof, registry).unwrap();
+        prove::verify(
+            &public,
+            &calls,
+            &blacksilk_px_core::call::Window::UNBOUNDED,
+            [2; 32],
+            &proof,
+            registry,
+        )
+        .unwrap();
         tv += t.elapsed().as_secs_f64();
         sz += blacksilk_zk::encode_proof(&proof).len();
     }

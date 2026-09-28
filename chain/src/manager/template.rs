@@ -91,6 +91,7 @@ impl ChainManager {
         // so that a template never offers transactions of another rule set.
         let txs = if self.mempool.validated_under() == Some(rules.domain()) {
             self.mempool.select(
+                t.height,
                 rules.max_block_weight.saturating_sub(COINBASE_RESERVE),
                 blacksilk_tx::validate::ChainView::px_pool(&self.state),
                 self.state.px().free_leaves(),

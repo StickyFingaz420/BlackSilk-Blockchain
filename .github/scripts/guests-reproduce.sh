@@ -5,6 +5,12 @@ set -uo pipefail
 log=$(mktemp)
 bash zkvm/guests/reproduce.sh 2>&1 | tee "$log"
 status=${PIPESTATUS[0]}
+# The rebuilt ids and ELF hashes of this runner, as one annotation, whatever
+# the outcome: compare them across the windows, ubuntu and ubuntu-arm legs.
+summary=$(grep '^SUMMARY ' "$log" | sed 's/^SUMMARY //' | tr -d '\r' | awk 'BEGIN{ORS="%0A"} {print}')
+if [ -n "$summary" ]; then
+  echo "::notice title=guests ids and sha256 ($(uname -sm))::$summary"
+fi
 if [ "$status" -ne 0 ]; then
   msg=$(tail -40 "$log" | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
   echo "::error title=guests reproduce (tail)::$msg"

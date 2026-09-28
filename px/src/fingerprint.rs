@@ -251,6 +251,11 @@ pub fn px_entries() -> Manifest {
         )
         .text("px.VAULT_PROGRAM_ID", crate::vault::VAULT_PROGRAM_ID.trim());
     // The vault's registered row budget and entry points (px/src/vault.rs).
+    // Not yet listed (owed to the fingerprint v3 commit, agent 40; W1-CB-B2):
+    // the call ABI (`px_core::call::ABI_VERSION`, `PREFIX_WORDS`), the vault's
+    // REFUND entry, its REFUND and TERMS domains and its `OUT_WORDS`. The
+    // vault program is compiled with all of them, so the vault id above
+    // already changes with any of them; `ABI_VERSION` is also a deploy rule.
     let b = crate::vault::BUDGET;
     m.u("px.vault.LOCK_DOMAIN", crate::vault::LOCK_DOMAIN)
         .list(

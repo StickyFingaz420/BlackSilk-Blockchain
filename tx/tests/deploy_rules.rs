@@ -19,21 +19,14 @@ use blacksilk_zkvm::Program;
 use common::*;
 
 const VAULT_ELF: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../px/vault.elf"));
-const VAULT_BUDGET: Budget = Budget {
-    cycles: 6_000,
-    keys: 2_200,
-    add: 4_300,
-    bit: 250,
-    lt: 3_500,
-    shift: 200,
-    mul: 200,
-    poseidon: 22,
-};
+const VAULT_BUDGET: Budget = blacksilk_px::vault::BUDGET;
 
 fn vault() -> Registration {
     Registration {
         elf: VAULT_ELF.to_vec(),
         budget: VAULT_BUDGET,
+        abi: blacksilk_tx::px::ABI_VERSION,
+        out_words: 1,
     }
 }
 
@@ -104,6 +97,8 @@ fn a_repeated_program_is_rejected_whatever_its_budget() {
             x.programs.push(Registration {
                 elf: VAULT_ELF.to_vec(),
                 budget,
+                abi: blacksilk_tx::px::ABI_VERSION,
+                out_words: 1,
             })
         });
         assert_eq!(e, Err(TxError::PxDuplicateProgram { program: 1 }));
@@ -131,6 +126,8 @@ fn a_repeated_program_in_other_elf_bytes_is_rejected() {
             Registration {
                 elf: padded.clone(),
                 budget: VAULT_BUDGET,
+                abi: blacksilk_tx::px::ABI_VERSION,
+                out_words: 1,
             },
         )
     });
@@ -218,6 +215,8 @@ fn a_deploy_at_the_limits_is_valid_and_one_above_is_rejected() {
             x.programs.push(Registration {
                 elf: other_elf(),
                 budget: b,
+                abi: blacksilk_tx::px::ABI_VERSION,
+                out_words: 1,
             });
         });
         assert_eq!(
@@ -257,6 +256,8 @@ fn expected_fee(inputs: usize, outputs: usize, programs: &[Registration]) -> u64
         ] {
             payload += varint_len(v as u64);
         }
+        // The call ABI and the output-word count (testnet v3, F-28-1, F-28-5).
+        payload += varint_len(p.abi as u64) + varint_len(p.out_words as u64);
     }
     FEE_PER_WEIGHT * max_weight(inputs, outputs) + DEPLOY_FEE_PER_BYTE * payload
 }
@@ -286,6 +287,8 @@ fn the_deploy_fee_is_the_standard_transfer_fee_plus_the_payload_rate() {
     let big = Registration {
         elf: vec![0; MAX_PROGRAM_BYTES],
         budget: VAULT_BUDGET,
+        abi: blacksilk_tx::px::ABI_VERSION,
+        out_words: 1,
     };
     let four = vec![big.clone(), big.clone(), big.clone(), big];
     let max_fee = deploy_fee(1, 2, &four, &rules());
@@ -323,6 +326,8 @@ fn the_payload_pays_per_byte_and_the_shape_pays_the_v1_rate() {
         Registration {
             elf: other_elf(),
             budget: VAULT_BUDGET,
+            abi: blacksilk_tx::px::ABI_VERSION,
+            out_words: 1,
         },
     ];
     let with = deploy_fee(1, 2, &two, &rules());
@@ -368,6 +373,8 @@ fn padded(elf: &[u8]) -> Registration {
     Registration {
         elf: v,
         budget: VAULT_BUDGET,
+        abi: blacksilk_tx::px::ABI_VERSION,
+        out_words: 1,
     }
 }
 

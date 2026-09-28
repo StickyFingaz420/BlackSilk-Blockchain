@@ -28,6 +28,7 @@ fn synthetic_px(chain: &MemoryChain, tag: u32) -> Transaction {
         fee: 0,
         bridge_in: 0,
         bridge_out: 0,
+        window: Default::default(),
         anchor: chain.px().root(),
         nullifiers: [[tag, 1, 0, 0, 0, 0, 0, 0], [tag, 2, 0, 0, 0, 0, 0, 0]],
         commitments: [[tag, 3, 0, 0, 0, 0, 0, 0], [tag, 4, 0, 0, 0, 0, 0, 0]],

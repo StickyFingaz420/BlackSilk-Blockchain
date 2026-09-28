@@ -6,7 +6,7 @@
 //! **Mempool order.** The single-transaction entry points
 //! ([`validate_transfer`], [`validate_deploy`], [`validate_px`]) run every
 //! stateless rule (structure, balance, range proof) before any contextual
-//! one (C1–C3, PX1–PX4). A transaction invalid for a stateless reason is
+//! one (C1–C3, PX1–PX4, PX6). A transaction invalid for a stateless reason is
 //! therefore reported with a stateless error ([`TxError::is_stateless`]),
 //! whatever else is wrong with it, and costs no ring resolution or CLSAG
 //! verification. The order changes only *which* error an invalid
@@ -53,6 +53,18 @@ pub struct OutputRecord {
     pub coinbase: bool,
 }
 
+/// A registered function program, as consensus reads it from the contract
+/// registry: the program, its row budget, its call ABI (the first word of
+/// its function prefix) and the exact number of public output words each
+/// call publishes (docs/px.md §11.2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PxProgram {
+    pub program: Arc<Program>,
+    pub budget: Budget,
+    pub abi: u32,
+    pub out_words: u32,
+}
+
 /// Read access to the chain state at the parent of the block being validated.
 pub trait ChainView {
     fn output(&self, global_index: u64) -> Option<OutputRecord>;
@@ -64,12 +76,8 @@ pub trait ChainView {
     /// The BLK value inside PX.
     fn px_pool(&self) -> u128;
     /// The registered function program `program_id` of `contract`, with its
-    /// budget.
-    fn px_function(
-        &self,
-        contract: &Digest,
-        program_id: &[u8; 32],
-    ) -> Option<(Arc<Program>, Budget)>;
+    /// budget, call ABI and output-word count.
+    fn px_function(&self, contract: &Digest, program_id: &[u8; 32]) -> Option<PxProgram>;
     fn px_contract_exists(&self, contract: &Digest) -> bool;
     /// Leaves in the PX commitment tree (at most `px::tree::CAPACITY`).
     fn px_tree_size(&self) -> u64;
@@ -166,6 +174,26 @@ pub enum TxError {
     },
     /// PX4: the pool would go negative.
     PxPoolUnderflow,
+    /// PX6: the transaction's validity window does not contain the height of
+    /// the block that would include it (premature or expired). Contextual:
+    /// the same transaction is valid at another height, and heights race at
+    /// the window's edges, so it is never scored (docs/px.md §11.2).
+    PxWindow,
+    /// PX6, stateless part: `not_after ≠ 0` and `not_before > not_after`,
+    /// a window no height is in.
+    PxWindowInverted,
+    /// A deploy registers a program for a call ABI other than
+    /// `blacksilk_px_core::call::ABI_VERSION` (`program` indexes it; F-28-1).
+    PxUnsupportedAbi {
+        program: usize,
+    },
+    /// A called function publishes a number of output words other than its
+    /// program's registered `out_words` (F-28-5; `function` indexes the call).
+    /// Checked with PX3. Stateless for scoring for the same reason as
+    /// `PxProof`: a registration is fixed by its contract id.
+    PxOutputWords {
+        function: usize,
+    },
     /// PX5: the proof does not decode, does not have its statement's shape,
     /// or does not verify. Decoding needs nothing but the proof bytes and runs
     /// with the stateless rules; the shape and the verification run only
@@ -237,12 +265,14 @@ impl TxError {
     /// | `UnknownRingMember`, `RingMemberTooYoung` | C1 | contextual | the output may exist, or be old enough, on another branch or later |
     /// | `KeyImageSpent` | C2 | contextual | spent on this branch (or earlier in this block), possibly not on another |
     /// | `InvalidSignature` | C3 | contextual | see below |
-    /// | `PxShape`, `PxFeeNotStandard`, `PxInvalidProgram`, `PxBudgetTooLarge`, `DeployFeeNotExact` | PX structure | stateless | the transaction alone |
+    /// | `PxShape`, `PxFeeNotStandard`, `PxInvalidProgram`, `PxBudgetTooLarge`, `DeployFeeNotExact`, `PxUnsupportedAbi`, `PxWindowInverted` | PX structure | stateless | the transaction alone |
     /// | `PxDuplicateOutputKey`, `PxNullifierRepeated`, `PxDuplicateProgram` | PX structure | stateless | a repeat within the transaction (a one-time key shared by a hidden output and a payout) |
     /// | `PxUnknownAnchor` | PX1 | contextual | the root window moves; the anchor may be recent on another branch |
     /// | `PxNullifierSpent` | PX2 | contextual | spent on this branch or earlier in this block |
     /// | `PxUnregistered` | PX3 | contextual | the contract may be deployed on another branch or later |
     /// | `PxPoolUnderflow` | PX4 | contextual | the pool depends on the branch |
+    /// | `PxWindow` | PX6 | contextual | the height: the transaction is valid at another height (premature now, or expired only on this branch's height), and relays race at the window's edges; never scored |
+    /// | `PxOutputWords` | PX3 | stateless | checked once the registration is found; a registration is fixed by its contract id, so the count is the same on every branch that has it |
     /// | `PxTreeFull` | B8 | contextual | the tree size depends on the branch |
     /// | `PxProof` | PX5 | stateless | decoding needs only the proof bytes; the shape and the verification are checked only after PX1 and PX3 pass, and registered programs are fixed by the contract id, so the statement is the same on every branch |
     /// | `DuplicateContract` | deploy | contextual | the same deploy may be on this branch and not on another |
@@ -287,6 +317,9 @@ impl TxError {
             | TxError::PxDuplicateProgram { .. }
             | TxError::PxBudgetTooLarge { .. }
             | TxError::DeployFeeNotExact { .. }
+            | TxError::PxUnsupportedAbi { .. }
+            | TxError::PxWindowInverted
+            | TxError::PxOutputWords { .. }
             | TxError::PxProof => true,
             TxError::UnknownRingMember { .. }
             | TxError::RingMemberTooYoung { .. }
@@ -296,6 +329,7 @@ impl TxError {
             | TxError::PxNullifierSpent { .. }
             | TxError::PxUnregistered { .. }
             | TxError::PxPoolUnderflow
+            | TxError::PxWindow
             | TxError::PxTreeFull
             | TxError::DuplicateContract => false,
         }
@@ -544,7 +578,7 @@ fn check_key_images(
 
 /// PX1–PX3 against the chain (and, for blocks, the block's earlier
 /// nullifiers): recent anchor, unspent and unrepeated nullifiers, registered
-/// functions.
+/// functions, each publishing exactly its registered number of output words.
 fn check_px_state(
     tx: &PxTx,
     chain: &impl ChainView,
@@ -559,11 +593,27 @@ fn check_px_state(
         }
     }
     for (k, f) in tx.functions.iter().enumerate() {
-        if chain.px_function(&f.contract, &f.program_id).is_none() {
+        let Some(registered) = chain.px_function(&f.contract, &f.program_id) else {
             return Err(TxError::PxUnregistered { function: k });
+        };
+        if f.outputs.len() != registered.out_words as usize {
+            return Err(TxError::PxOutputWords { function: k });
         }
     }
     Ok(())
+}
+
+/// PX6: a block at `height` may include the transaction only inside its
+/// validity window (`blacksilk_px_core::call::Window::contains`; `(0, 0)` is
+/// unbounded). Contextual and never scored. It is checked for every PX
+/// transaction of a block, whether or not its proof was verified before:
+/// a verified proof says nothing about the height (AT-5).
+pub fn check_px_window(tx: &PxTx, height: u64) -> Result<(), TxError> {
+    if tx.window.contains(height) {
+        Ok(())
+    } else {
+        Err(TxError::PxWindow)
+    }
 }
 
 /// Leaves the PX commitment tree has left: `CAPACITY − size`.
@@ -601,11 +651,12 @@ fn px_calls(
 ) -> Result<Vec<blacksilk_px::prove::FunctionCall>, TxError> {
     let mut calls = Vec::with_capacity(tx.functions.len());
     for (k, f) in tx.functions.iter().enumerate() {
-        let (program, _) = chain
+        let registered = chain
             .px_function(&f.contract, &f.program_id)
             .ok_or(TxError::PxUnregistered { function: k })?;
         calls.push(blacksilk_px::prove::FunctionCall {
-            program,
+            program: registered.program,
+            abi: registered.abi,
             outputs: f.outputs.clone(),
         });
     }
@@ -626,9 +677,10 @@ pub fn check_px_proof_shape(
     blacksilk_px::prove::check_shape(
         &tx.public(),
         &calls,
+        &tx.window,
         tx.binding(rules.domain()),
         proof,
-        |contract, id| chain.px_function(contract, id).map(|(_, b)| b),
+        |contract, id| chain.px_function(contract, id).map(|r| r.budget),
     )
     .map_err(|_| TxError::PxProof)
 }
@@ -644,9 +696,10 @@ pub fn check_px_proof_decoded(
     blacksilk_px::prove::verify(
         &tx.public(),
         &calls,
+        &tx.window,
         tx.binding(rules.domain()),
         proof,
-        |contract, id| chain.px_function(contract, id).map(|(_, b)| b),
+        |contract, id| chain.px_function(contract, id).map(|r| r.budget),
     )
     .map_err(|e| {
         // A malformed proof that panics Plonky3's verifier is contained
@@ -723,7 +776,8 @@ fn validate_px_checks(
             return Err(TxError::RangeProofInvalid);
         }
     }
-    // Contextual.
+    // Contextual, the height first (PX6, a comparison).
+    check_px_window(tx, height)?;
     check_key_images(&tx.inputs, chain, &mut HashSet::new())?;
     check_px_state(tx, chain, &mut HashSet::new())?;
     if chain.px_pool() + (tx.bridge_in as u128) < (tx.bridge_out as u128) {
@@ -810,10 +864,13 @@ pub fn validate_mempool_tx(
 }
 
 /// Re-checks a pooled transaction after the chain was **extended** (blocks
-/// connected, none disconnected) since it last passed [`validate_mempool_tx`].
+/// connected, none disconnected) since it last passed [`validate_mempool_tx`],
+/// for inclusion at `height` (the next block's).
 ///
 /// Only the rules whose verdict an extension can change are checked:
 /// - C2 key images (a new block may spend them);
+/// - PX6, the validity window: a growing height expires a transaction past
+///   its `not_after` (the height is the reason this function takes it);
 /// - PX1-PX3: the anchor window moves, nullifiers get spent (the registry
 ///   only grows);
 /// - PX4, the pool, which new blocks change;
@@ -835,11 +892,16 @@ pub fn validate_mempool_tx(
 /// the epoch's branch id, so an extension crossing an activation changes
 /// their verdict ([`revalidate_between`] handles both cases). Policy only:
 /// blocks are always validated in full (`validate_block_transactions`).
-pub fn revalidate_after_extension(tx: &Transaction, chain: &impl ChainView) -> Result<(), TxError> {
+pub fn revalidate_after_extension(
+    tx: &Transaction,
+    chain: &impl ChainView,
+    height: u64,
+) -> Result<(), TxError> {
     match tx {
         Transaction::Coinbase(_) => Err(TxError::CoinbaseNotAllowed),
         Transaction::Transfer(t) => check_key_images(&t.inputs, chain, &mut HashSet::new()),
         Transaction::Px(t) => {
+            check_px_window(t, height)?;
             check_key_images(&t.inputs, chain, &mut HashSet::new())?;
             check_px_state(t, chain, &mut HashSet::new())?;
             if chain.px_pool() + (t.bridge_in as u128) < (t.bridge_out as u128) {
@@ -876,7 +938,7 @@ pub fn revalidate_between(
     if from.domain() != rules.domain() {
         validate_mempool_tx(tx, chain, height, rules)
     } else {
-        revalidate_after_extension(tx, chain)
+        revalidate_after_extension(tx, chain, height)
     }
 }
 
@@ -1001,7 +1063,7 @@ pub enum BlockError {
 /// Validates the transactions of a block at `ctx.height` against `chain` (the
 /// state after the parent block). Checks B1–B8 and every T/C rule, cheap
 /// first (docs/transactions.md §8.3): structure, B5, B6, B3, balances, PX
-/// proof decoding, C2 and PX1–PX4 with each PX proof's shape, every ring
+/// proof decoding, C2 and PX1–PX4 and PX6 with each PX proof's shape, every ring
 /// (C1), one Bulletproofs+ batch (T10), the CLSAGs (C3), and the PX proofs
 /// (PX5) last. The order decides only which error an invalid block reports,
 /// never whether it is valid: every rule is a pure check.
@@ -1027,7 +1089,9 @@ pub fn validate_block_transactions<R: RngCore + CryptoRng>(
 /// immutable and fixed by the contract id, which hashes the deploy payload
 /// (docs/px.md §11.2); PX3 still checks, here, that they exist. So a proof
 /// that verified once verifies for the same id in any block. Every other
-/// rule is checked in full.
+/// rule is checked in full, PX6 (the validity window) included: whether a
+/// transaction may be in a block at this height is not a property of its
+/// proof, so the cache never vouches for it (AT-5).
 pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
     txs: &[Transaction],
     ctx: &BlockContext,
@@ -1198,6 +1262,8 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
         check_key_images(inputs, chain, &mut key_images).map_err(err)?;
         match tx {
             Transaction::Px(t) => {
+                // PX6 for every PX transaction, cached proof or not (AT-5).
+                check_px_window(t, ctx.height).map_err(err)?;
                 check_px_state(t, chain, &mut nullifiers).map_err(err)?;
                 pool = (pool + t.bridge_in as u128)
                     .checked_sub(t.bridge_out as u128)

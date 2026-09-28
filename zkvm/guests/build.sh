@@ -23,11 +23,13 @@ guest_root="$(cd "$guest_here/../.." && pwd)"
 # The pinned compiler (rust-toolchain.toml selects it in this directory).
 GUEST_RUSTC_RELEASE='1.98.1'
 GUEST_RUSTC_COMMIT='48a229cea'
-# The target flags (docs/zkvm.md §4: static, non-PIE, RV32I + Zmmul), and
-# --strip-all: no symbol table, so no path-derived crate hashes in the ELF.
+# The target flags (docs/zkvm.md §4: static, non-PIE, RV32I + Zmmul),
+# --strip-all: no symbol table, so no path-derived crate hashes in the ELF, and
+# the link layout guest.ld (CI-1: no ELF header in any PT_LOAD, no .comment; a
+# path relative to this directory, where cargo runs rustc and rustc runs LLD).
 # .cargo/config.toml carries the same list for ad-hoc `cargo build` runs in this
 # directory; guest_check_config fails on drift.
-GUEST_FLAGS=(-Crelocation-model=static -Ctarget-feature=+zmmul -Clink-arg=--strip-all)
+GUEST_FLAGS=(-Crelocation-model=static -Ctarget-feature=+zmmul -Clink-arg=--strip-all -Clink-arg=-Tguest.ld)
 
 guest_die() {
   echo "error: $*" >&2

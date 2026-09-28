@@ -223,16 +223,22 @@ On rejection the guest halts with the error's exit code:
 | 7 | DuplicateNullifier | 15 | SpecConflict |
 | 8 | Unbalanced | 16 | DummyContract |
 | 9 | TooManyFunctions | 17 | ContractOutputOwner (PX-F5) |
+| | | 18 | ApprovalConflict (F-20-1, testnet v3) |
+
+Codes are append-only: a new rule gets the next code, so an exit code means the same
+rule in every kernel build (`px/tests/unified.rs::kernel_exit_codes_are_append_only`).
 
 A panic halts with exit code 1. **A proof is valid only for exit code 0**; the verifier
 fixes it.
 
 ### 4.3 Proof
 
-`prove::verify(public, calls, h_tx, proof, registered)` verifies a BVM-1 proof of the
-multi-execution statement:
+`prove::verify(public, calls, window, h_tx, proof, registered)` verifies a BVM-1 proof
+of the multi-execution statement:
 - the kernel program, with exit code 0 and the public words;
-- one execution per called function (§7);
+- one execution per called function (§7), each writing the function prefix built from
+  its registered ABI, the kernel's `(contract, io_hash)` and the transaction's validity
+  `window` (§7.2);
 - all bound to `h_tx`.
 
 `verify_transfer` is the case without functions.
@@ -403,12 +409,23 @@ Both the function and the kernel compute
 io_hash = Hk(IO, C ‖ per input i: [a_i, a_i·cm_i] ‖ per output j: [s_j, s_j·(owner ‖ contract ‖ value₁₆[4] ‖ data)] ‖ blind)
 ```
 
-- The function writes `io_hash ‖ C` as its first 16 public output words, followed by
-  its own public outputs (the vault writes its selector).
+- The function writes the **function prefix** as its first `PREFIX_WORDS = 21`
+  public output words (`call::function_prefix`), followed by exactly its registered
+  number of public output words (`out_words`; the vault writes its selector):
+
+  ```text
+  abi ‖ io_hash[8] ‖ C[8] ‖ not_before(lo, hi) ‖ not_after(lo, hi)
+  ```
+
 - The kernel writes `(C, io_hash)` for each function, computed from the **actual**
   input commitments and outputs.
-- The verifier builds both from one public value. So a proof exists only if the
-  function and the kernel agree on the transcript.
+- The verifier builds the prefix from public values: `abi` from the program's
+  registration (F-28-1: `ABI_VERSION = 1` is the only one a deploy may register),
+  `(C, io_hash)` from the statement, and the window from the transaction (PX6,
+  §11.3). So a proof exists only if the function and the kernel agree on the
+  transcript, and a function can rely on the ABI and on the window it reads. The
+  call ABI, its versioning and the window's semantics for contract authors are in
+  [`contracts.md`](contracts.md) §4.
 - The random `blind` makes `io_hash` a hiding commitment: records, amounts and
   recipients stay private.
 
@@ -416,7 +433,11 @@ io_hash = Hk(IO, C ‖ per input i: [a_i, a_i·cm_i] ‖ per output j: [s_j, s_j
 - **Contract inputs:**
   - a contract input must be approved by a function of its contract (`Unauthorized`);
   - a function may approve only real records of its own contract
-    (`ApprovalMismatch`).
+    (`ApprovalMismatch`);
+  - a contract input is approved by exactly one function (`ApprovalConflict`,
+    testnet v3, F-20-1): one consumption authorizes one transition. A mismatching
+    approval is reported first; the conflict is reported before tree membership,
+    which is decided after both inputs.
 - **Specified outputs:**
   - a specified output must match exactly (`SpecMismatch`), so a caller cannot redirect
     a payout or change an amount;
@@ -437,22 +458,36 @@ the contract's program: otherwise anyone could write a function that approves sp
 another contract's records.
 - `prove::verify` therefore takes `registered(contract, program_id)` as a **mandatory**
   argument. The tests check that an unregistered program is refused.
-- Consensus answers it from the deploy data (§11.2): PX3 checks registration, and PX5
-  verifies with the registered programs and budgets (`tx/src/validate.rs`).
+- Consensus answers it from the deploy data (§11.2): PX3 checks registration and the
+  output-word count, and PX5 verifies with the registered programs, budgets and ABIs
+  (`tx/src/validate.rs`).
 
 ### 7.4 Example: a private hash-locked vault (`zkvm/guests/vault`)
 
-- `LOCK` creates a record of the vault contract holding `value` under
-  `lock = Hk(LOCK, secret)`.
-- `CLAIM` takes the vault record and the secret, approves consuming the record, and pays
-  its value to a recipient.
+Specified in [`contracts.md`](contracts.md) §8 (testnet v3, W28-4). A vault record's
+data commits to its terms, `Hk(TERMS, C ‖ claim_lock ‖ refund_lock ‖ timeout₁₆[4])`,
+with `claim_lock = Hk(LOCK, C ‖ secret)` and `refund_lock = Hk(REFUND, C ‖
+refund_secret)`:
+- `LOCK` creates a record of the vault contract holding `value` under the terms;
+- `CLAIM` takes the vault record and the secret, approves consuming the record, and
+  pays its value to a recipient; with a timeout `T`, only in a transaction whose window
+  ends before `T`;
+- `REFUND` does the same with the refund secret, only in a transaction whose window
+  starts at `T` or later.
 
-Everything except the contract id, the selector and `io_hash` stays private. Tests
-(`px/tests/unified.rs`):
-- LOCK and CLAIM proven and verified;
+Everything except the contract id, the selector, the window and `io_hash` stays
+private. Tests (`px/tests/unified.rs`):
+- LOCK and CLAIM proven and verified; the proof refused for another window or ABI;
+- a two-function transaction (CLAIM and LOCK) proven and verified, and refused with
+  the calls swapped, an altered output or a missing registration (W28-3);
 - a wrong secret gives no proof;
 - 12 contract-rule violations, each rejected identically natively and in the guest;
-- a function transcript that differs from the kernel's is detected;
+- double approvals refused, crossed approvals valid, with the error precedence
+  (`an_input_approved_by_two_functions_is_rejected`, F-20-1);
+- the timeout, the refund and the contract-bound locks, in the pinned vault guest
+  against the native kernel;
+- a function transcript that differs from the kernel's, or a function echoing another
+  window, is detected;
 - unregistered programs, wrong shapes and altered outputs are refused;
 - kernel heights are identical for contract and user inputs.
 
@@ -462,7 +497,8 @@ Everything except the contract id, the selector and `io_hash` stays private. Tes
 |---|---|
 | Kernel execution (v2) | 25.0–25.2k cycles; 29.3–29.4k with one function (opt-level "z" gave 141k for v1) |
 | Transfer proof | **2.04 MB** (6 proofs: 2,029,768–2,046,856 bytes), proving ~42 s, **verifying 188 ms** |
-| Kernel + one function (vault CLAIM) | **~2.5 MB**, proving ~51 s (a 40-proof stress run gave 48.4–51.4 s each) |
+| Kernel + one function (vault CLAIM) | **~2.5 MB**, proving ~51 s (a 40-proof stress run gave 48.4–51.4 s each; before BS-ZK-3 and the v3 vault) |
+| Kernel + two functions (CLAIM + LOCK) | Measured by `px/tests/unified.rs::a_two_function_transaction_proves_and_verifies` (W28-3); the figures are recorded in reviews/v3-consensus-changes.md, section `guest-rebuild` |
 | PX transaction (encoded) | ~2.05 MB (bridge-in with one v1 input) |
 | Record ciphertext | 1,241 bytes per output |
 
@@ -574,6 +610,7 @@ high-throughput per-transaction use on a chain.
 ```text
 prefix:   version ‖ kind=2 ‖ v1 inputs[0..64] (key image, ring) ‖ hidden outputs[0..16]
           ‖ payouts[0..16] (clear amount, stealth) ‖ fee ‖ bridge_in ‖ bridge_out
+          ‖ not_before ‖ not_after (varints; the validity window, PX6)
           ‖ anchor ‖ nullifiers[2] ‖ commitments[2] ‖ ciphertexts[2] (1241 bytes each)
           ‖ functions[0..2] (contract, program id, io_hash, public output words)
 base:     pseudo-outputs[inputs]
@@ -585,9 +622,13 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
   `v = 0` exactly. Hidden change needs input masks to balance; payouts carry their
   (already public) amounts in clear, like coinbase outputs.
 - **PX-side balance** is proven by the kernel (§4.1).
+- **Validity window (PX6, testnet v3):** `[not_before, not_after]`, `(0, 0)` for
+  unbounded, which every transaction without a reason for a window carries (§11.3,
+  contracts.md §4.3). Each called function receives it in its prefix (§7.2).
 - **Binding:** `h_tx = H32("px/tx-binding", LE32(network_id) ‖ LE32(branch_id) ‖
   genesis_id ‖ prefix hash ‖ base hash)` is the proof's binding. It covers every field
-  except the range proof, the signatures and the proof, plus the network, the epoch's
+  (the validity window included) except the range proof, the signatures and the proof,
+  plus the network, the epoch's
   branch id (consensus.md §11) and the chain's genesis id (RT-14, transactions.md §4.4). `h_tx` is a public input of the proof (it enters the CPU tables'
   public values and the transcript, never a guest's input), so the domain changes
   every proof but not the kernel or any program id.
@@ -600,13 +641,18 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
 ### 11.2 Private-contract deploy (kind 3)
 
 - **Format:** a v1 transfer (at least one input, 2–16 outputs) plus a salt and 1–16
-  programs, each an ELF binary of at most 256 KiB with its row budget. The binaries
-  are on chain: verifiers need them to build the statement.
+  programs, each an ELF binary of at most 256 KiB with its row budget, its call ABI
+  and its output-word count (`abi`, `out_words` varints after the budget; testnet v3,
+  F-28-1, F-28-5). The binaries are on chain: verifiers need them to build the
+  statement.
 - **Contract id:** 8 field elements from
   `H64("px/contract-id", first key image ‖ salt ‖ H32(payload))`. It is unique
-  because key images never repeat.
-- **What it registers:** each program's id and budget under the contract. Entries
-  are immutable, and a registration is usable from the next block.
+  because key images never repeat. The payload covers every program's ELF, budget,
+  ABI and output words, so the contract id fixes its registrations.
+- **What it registers:** each program's id, budget, ABI and output-word count under the
+  contract. Entries are immutable, and a registration is usable from the next block.
+  A deploy may register only `ABI_VERSION` (`PxUnsupportedAbi`) and at most
+  `MAX_FN_OUTPUT_WORDS` output words.
 - **Signatures** cover the payload.
 
 ### 11.3 State and rules (`tx/src/validate.rs`, `tx/src/state.rs`)
@@ -618,11 +664,12 @@ prunable: range proof (if hidden outputs) ‖ CLSAGs[inputs] ‖ proof (≤ 4 Mi
 | C1–C3 | Rings and key images, as for transfers. One-time keys (hidden outputs and payouts together) are distinct within the transaction (stateless: the sort of each list, and `PxDuplicateOutputKey` between them) but may repeat across transactions and the chain (transactions.md §8.2) |
 | PX1 | The anchor is a root of the last 100 blocks, before this block |
 | PX2 | Nullifiers are unspent and unrepeated across the chain and the block |
-| PX3 | Every called function is a registered program of its contract (registry before this block) |
+| PX3 | Every called function is a registered program of its contract (registry before this block), and publishes exactly its registered number of output words (`PxOutputWords`, stateless for scoring: a registration is fixed by its contract id; F-28-5) |
 | PX4 | The pool stays ≥ 0 through the block, in order |
+| PX6 (window) | The block's height is inside the transaction's validity window: `not_before ≤ h` and (`not_after = 0` or `h ≤ not_after`) (`PxWindow`, contextual and never penalized; testnet v3). An inverted window is a stateless structure error (`PxWindowInverted`). Checked for every PX transaction of a block, including those whose proof the node verified before (the verified-proof cache vouches only for the proof). The mempool admits for the next height, revalidates at every new height (`revalidate_after_extension` takes it) and templates select by it |
 | B8 (capacity) | The block's PX output commitments, one tree leaf each, fit in the `2^32 − size` leaves left (`BlockError::PxTreeFull`); for a mempool transaction, contextual `TxError::PxTreeFull`. Checked with the byte budgets, before any cryptography. Templates never exceed it |
 | PX5 | The proof verifies with the registered programs and budgets. Checked in three steps, in blocks and on every single-transaction path alike (transactions.md §8.3, §8.5): strict decoding with the stateless rules, the statement's table shape once PX3 holds and before any ring is resolved, and the verification last (the most expensive check). A malformed proof therefore costs no CLSAG (dossier 10 F10-2, red team RTW1-2) |
-| Deploy | Every budget is provable: `cycles ≤ MAX_CYCLES` (2^21), `keys ≤ 2^22`, and each ALU and Poseidon2 field plus the kernel's `kernel_budget(1)` share ≤ 2^22 (stateless, `PxBudgetTooLarge`; R7-5). Programs load, and their program ids are pairwise distinct (stateless, `PxDuplicateProgram`; R5-7). The contract id is new in the chain and the block |
+| Deploy | Every budget is provable: `cycles ≤ MAX_CYCLES` (2^21), `keys ≤ 2^22`, and each ALU and Poseidon2 field plus the kernel's `kernel_budget(1)` share ≤ 2^22 (stateless, `PxBudgetTooLarge`; R7-5). Every ABI is `ABI_VERSION` (stateless, `PxUnsupportedAbi`; F-28-1). Programs load, and their program ids are pairwise distinct (stateless, `PxDuplicateProgram`; R5-7). The contract id is new in the chain and the block |
 | Block | Coinbase = reward + all fees; block weight ≤ limit, where the v1 part of a PX or deploy transaction with `n > 0` inputs weighs `max_weight(n, k)` (transactions.md B6; R12-2); PX and deploy bytes ≤ 8 MiB |
 
 **Chain state.** The state (`MemoryChain`) keeps the PX state, the registry and a
@@ -643,7 +690,8 @@ undo. Tests check that a reorganization restores the root and pool exactly.
     A wallet requests pages starting from the number of commitments it already
     has;
   - the contract-registration list (`/px/contracts`: height, contract id, program
-    ids and budgets).
+    ids and budgets). The registered ABI and output words are in the deploy itself,
+    which wallets also see when they scan the block.
 
   The node never learns which records a wallet owns or which contracts it uses.
 - CLI commands: `px-address`, `px-balance`, `px-deposit`, `px-send`, `px-withdraw`, and
@@ -665,7 +713,7 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 | Relay | PX and deploy transactions together: per peer 0.2/s (burst 4); all peers together 2/s (burst 10) |
 | Invalid proof | Misbehaviour (the statement is branch-independent once PX1 and PX3 pass). Across a scheduled activation the binding changes, so near an activation an honest peer can relay a proof for the previous epoch; see reviews/v3-upgrade-mechanism.md §2.4. A malformed proof (failing decoding or shape) is caught by relay admission's cheap checks, before the node-wide PX token and any ring or CLSAG (p2p.md §10); a well-formed proof that does not verify costs every check up to the verification |
 | Block weight | A PX or deploy transaction with v1 inputs also takes `max_weight(n, k)` of the 600 000 block weight (R12-2): its CLSAGs are metered like a transfer's. The fixed PX fee covers it (`FEE_PER_WEIGHT × max_weight(64, 16)` = 1,148,780 ≤ `PX_STANDARD_FEE`), so the PX fee stays uniform; a deploy's fee already pays exactly that weight at the v1 rate |
-| Mempool | PX class capped at 64 MiB with fee-per-byte eviction; proofs verified once on admission; templates take PX transactions first, charge every transaction against both the weight and the PX budgets, and keep the pool non-negative in order |
+| Mempool | PX class capped at 64 MiB with fee-per-byte eviction; proofs verified once on admission; a PX transaction outside its validity window (PX6) is refused for the next height, leaves the pool at the revalidation after its window ends, and is never selected into a template for a height outside it; templates take PX transactions first, charge every transaction against both the weight and the PX budgets, and keep the pool non-negative in order |
 
 ## 12. Privacy guidance for users and wallets
 
@@ -687,8 +735,12 @@ Measured privacy analysis: `docs/reviews/privacy-review.md`.
   - A wallet restored from the seed scans 20 addresses beyond the highest one found.
     Keep the wallet file backed up if you hand out addresses far ahead.
 - **Contract calls reveal the contract, the program and the function's public
-  outputs** (for the vault: LOCK or CLAIM). The time between a LOCK and its CLAIM is
-  visible to anyone watching that contract.
+  outputs** (for the vault: LOCK, CLAIM or REFUND). The time between a LOCK and its
+  CLAIM is visible to anyone watching that contract.
+- **The validity window is public** (PX6). Wallets leave it unbounded, `(0, 0)`,
+  unless a contract needs one, so ordinary transactions look alike. A vault claim or
+  refund with a timeout reveals the timeout; round it (to a multiple of 16, as
+  anchors are).
 - **The fee is the same for every PX transaction** (consensus), so it reveals nothing.
 - **Never spend the same funds twice after a transaction may have been relayed**
   (privacy-review.md §3c, P-9). The wallet keeps every submitted transaction and
@@ -810,13 +862,20 @@ secret is unpredictable without `hk_px` and reveals nothing about it. `network` 
 seed's network code (blocks.md §10).
 - The wallet stores the secret with the record's opening, and `submit` saves the
   wallet **before** the transaction is sent. A lock whose submission ends "may or may
-  not have received" can still be mined; the demonstration vault has no refund, so
+  not have received" can still be mined; a vault without a timeout has no refund, so
   losing the secret would lock the funds for good.
 - **Restore recovers it** for a vault record the wallet holds the opening of (a lock
   delivered to itself): the wallet re-derives the candidate from the record's `rho` and
-  keeps it when `Hk(LOCK, candidate)` matches. A lock delivered to someone else leaves
-  no opening in a restored wallet, so its secret is not recovered that way (the
-  claimer has the record; the locker keeps the wallet file).
+  keeps it when the record's data equals the terms of a vault without a timeout,
+  `Hk(TERMS, C ‖ Hk(LOCK, C ‖ candidate) ‖ 0 ‖ 0)` (contracts.md §8). A lock delivered
+  to someone else leaves no opening in a restored wallet, so its secret is not
+  recovered that way (the claimer has the record; the locker keeps the wallet file).
+- **Refund secret (testnet v3, W28-4).** A lock with a timeout
+  (`Wallet::px_vault_lock_until`) also derives a refund secret, the same derivation
+  with the suffix `"refund"` after `rho_vault` (`px_vault_refund_secret_for`), so it is
+  seed-recoverable too. The refund (`Wallet::px_vault_refund`) needs the timeout,
+  which the lock returns and the wallet does not store. The function's blind and the
+  vault record's `rcm` are hedged with `hk_px` (`blacksilk_px::wallet::hedged_digest`).
 - A secret given with `--secret-file`, `--secret-prompt` or `--secret` is used as is
   and is recoverable from the wallet file only.
 - `px-vault-secret --record CM [--out FILE]` shows the stored (or re-derived) secret.
@@ -826,10 +885,10 @@ seed's network code (blocks.md §10).
 
 | Command | What it does |
 |---|---|
-| `px-deploy --vault` or `--program F.elf --budget c,k,a,b,l,s,m,p` (repeatable) | Registers a contract, paid with v1 funds, so the deployer is hidden behind ring signatures. Prints the contract id. `--vault` deploys the vault alone |
+| `px-deploy --vault` or `--program F.elf --budget c,k,a,b,l,s,m,p --out-words N` (repeatable) | Registers a contract, paid with v1 funds, so the deployer is hidden behind ring signatures. Prints the contract id. `--vault` deploys the vault alone. `--out-words` is the exact number of public output words each call of the program publishes (contracts.md §5) |
 | `px-contracts` | Lists deployed contracts and their programs (marks the vault; warns about contracts not usable as a vault) |
 | `px-records` | Lists the contract records this wallet holds, with status and source |
-| `px-vault-lock --contract C --amount A [--secret-file F \| --secret-prompt \| --secret S \| --secret-out F] [--deliver-to PXADDR]` | Locks PX funds in a vault record under `Hk(LOCK, S)`, delivering the record to the claimer. The fee is paid from PX. Without a secret option it derives one (above) and prints it after sending (or writes it to the `--secret-out` file) |
+| `px-vault-lock --contract C --amount A [--secret-file F \| --secret-prompt \| --secret S \| --secret-out F] [--deliver-to PXADDR]` | Locks PX funds in a vault record claimable with `S` and without a timeout, delivering the record to the claimer. The fee is paid from PX. Without a secret option it derives one (above) and prints it after sending (or writes it to the `--secret-out` file). Locks with a timeout and refunds are in the wallet library (`px_vault_lock_until`, `px_vault_claim_with_terms`, `px_vault_refund`); the CLI does not expose them yet |
 | `px-vault-claim --record CM [--secret-file F \| --secret S] [--to PXADDR]` | Claims a vault record, paying its value privately; asks for the secret unless a file or `--secret` is given. The fee is paid from one PX record, or else from v1 funds, so a claimer without PX funds can claim |
 | `px-vault-secret --record CM [--out F]` | Shows the secret of a vault record this wallet locked |
 
@@ -839,18 +898,18 @@ the prompt.
 | `px-share --record CM --to PXADDR` / `px-import --share HEX` | Off-chain sharing (§13.3) |
 
 **The reference vault** (`px/src/vault.rs`, program pinned in `px/vault.elf` and
-`px/vault.id`) is a **demonstration contract. It is not production-ready and not
-trustless**:
+`px/vault.id`) is a **demonstration contract, not production-ready**
+(contracts.md §8):
 
 | Limitation | Consequence |
 |---|---|
-| **No timeout** | A vault stays claimable forever |
-| **No refund** | The value never returns to the locker except by claiming with the secret |
-| **The locker knows the secret** | The locker can claim too; whoever holds the secret and the record's opening can claim |
-| **Not a trustless swap** | A hash-time-locked contract needs a timelock and a refund function; this vault has neither |
+| **A lock without a timeout** (`px-vault-lock`) | Stays claimable forever; the value returns to the locker only by claiming with the secret |
+| **Whoever made the claim secret can claim** | With a derived or locally given secret the locker can claim too; a swap needs the counterparty to choose the secret and hand over only its lock |
+| **Censorship before a timeout** | A miner can delay a claim until the timeout passes and the refund becomes valid; leave a margin |
+| **Delivery (PX-F4)** | The caller of a claim or refund chooses the new record's `rcm` and writes its ciphertext |
 
-The wallet prints this warning on every `px-vault-lock`, and the command help says
-the same.
+The wallet prints a warning on every `px-vault-lock`, and the command help says the
+same.
 
 **Recovery after restoring a wallet from its seed:**
 
@@ -869,13 +928,15 @@ downloads the whole registration list.
 
 The wallet can call a contract only through a host-side helper like `px::vault`.
 Writing one for a new contract requires:
-1. **A function program** (a RISC-V ELF built with the zkVM SDK) that:
-   - reads its private input;
+1. **A function program** (a RISC-V ELF built with the zkVM SDK and the guest link
+   layout, zkvm/guests/README.md) that:
+   - reads its private input, including the transaction's validity window;
    - checks the contract's rules;
-   - writes `io_hash ‖ contract` (`px_core::call::function_prefix`) and then its
-     public outputs.
+   - writes the function prefix (`px_core::call::function_prefix` with
+     `ABI_VERSION`, its `io_hash`, its contract and the window) and then exactly its
+     registered number of public output words.
    It must approve only records of its own contract and specify outputs through
-   `Call` (docs/px.md §7.2).
+   `Call` (docs/px.md §7.2). The author checklist is contracts.md §6.
 2. **A row budget** that covers the worst case of every valid input, with headroom.
    - Measure it: `trace::usage`, as in `px/tests/unified.rs::budgets_leave_headroom`.
    - An execution over budget cannot be proven: a liveness failure for that input,
@@ -897,7 +958,8 @@ Writing one for a new contract requires:
 6. **Tests:** the rule violations natively and in the guest, a proof end to end, and
    the budget headroom.
 
-Deploying registers the program and its budget (`px-deploy --program --budget`).
+Deploying registers the program, its budget, its ABI and its output words
+(`px-deploy --program --budget --out-words`).
 Deploying alone does not make a contract callable from the wallet: steps 4 and 5 are
 code.
 
@@ -909,7 +971,11 @@ code.
   - shares open only for their addressee, and any change is refused.
 - `px/tests/unified.rs`:
   - the vault program id is pinned;
-  - the claim's nullifier equals `contract_nullifier`.
+  - the claim's nullifier equals `contract_nullifier`;
+  - the vault's timeout, refund and contract-bound locks (§7.4).
+- `wallet/src/wallet/contracts.rs` unit tests: the refund secret is seed-recoverable
+  and distinct from the claim secret; `px_vault_secret` opens only records without a
+  timeout; a vault deploy needs the current ABI and one output word.
 - `wallet/src/px.rs` unit tests:
   - rewinds keep created and imported records;
   - `clear-pending` keeps every contract-record opening;
