@@ -1,12 +1,16 @@
 //! Fork choice: work, ancestry, body completeness, the connection target,
 //! invalidation and syncing the transaction state to the target.
 
-use super::{hex, ChainManager, SyncOutcome, DEEP_REORG_WARN_DEPTH, LOW_WORK_MARGIN_BLOCKS};
+use super::{
+    hex, ChainManager, SyncOutcome, DEEP_REORG_WARN_DEPTH, LOW_WORK_MARGIN_BLOCKS, OPERATOR_REASON,
+};
 use crate::emission::block_reward;
 use crate::mempool::{ChainChange, Returned};
+use crate::store::{InvalidMarker, InvalidOrigin, Marker};
 use blacksilk_consensus::Hash;
 use blacksilk_tx::validate::{validate_block_transactions_cached, BlockContext, BlockError};
 use std::cmp::Reverse;
+use std::io;
 
 impl ChainManager {
     /// Whether the manager halted because a block that passed validation
@@ -77,7 +81,25 @@ impl ChainManager {
     /// Marks the valid block `id` (body kept, parent complete) complete. A
     /// block with strictly more work than the current target becomes the
     /// target, so among equal-work blocks the one completed first stays.
+    ///
+    /// A block the operator invalidated (`--invalidate-block`) is marked
+    /// invalid with its descendants instead: this is where the verdict
+    /// applies to a block that arrives (or is replayed) after it was given,
+    /// before its body is ever validated or connected.
     pub(super) fn mark_complete(&mut self, id: Hash) {
+        if self.operator_invalid.contains(&id) {
+            log::warn!(
+                "block {} at height {} is invalid by operator request \
+                 (--invalidate-block); it and its descendants are not connected",
+                hex(&id),
+                self.headers.header(&id).map_or(0, |h| h.height)
+            );
+            for x in self.drop_invalid(id) {
+                self.bodies.remove(&x);
+                self.body_seq.remove(&x);
+            }
+            return;
+        }
         let seq = self.next_complete_seq;
         self.next_complete_seq += 1;
         let w = self.work(&id);
@@ -89,15 +111,21 @@ impl ChainManager {
     }
 
     /// Recomputes the target after blocks left the complete set: the most
-    /// work; among equal work the connected tip if it is one of them (no
-    /// flapping), else the one completed first.
+    /// work; among equal work the connected tip if it is one of them and
+    /// still complete (no flapping), else the one completed first. (The
+    /// connected tip leaves the complete set only when the operator
+    /// invalidates it or an ancestor, [`Self::invalidate_block`].)
     fn recompute_target(&mut self) {
         let &(w, _, id) = self
             .complete_order
             .last()
             .expect("genesis is always complete");
         let tip = self.tip_id();
-        self.best_complete = if self.work(&tip) == w { tip } else { id };
+        self.best_complete = if self.work(&tip) == w && self.complete.contains_key(&tip) {
+            tip
+        } else {
+            id
+        };
     }
 
     /// A body failed validation: marks the block and its descendants invalid,
@@ -110,8 +138,21 @@ impl ChainManager {
             self.headers.header(&id).map_or(0, |h| h.height)
         );
         self.invalid.insert(id, e);
+        for x in self.drop_invalid(id) {
+            self.bodies.remove(&x);
+            self.body_seq.remove(&x);
+        }
+    }
+
+    /// Marks the known block `id` and its descendants invalid in the header
+    /// chain, drops them from the complete set and the leaves, and
+    /// recomputes the target. Returns the ids of the block and its
+    /// descendants, whose bodies the caller drops from memory (after
+    /// disconnecting them, if they are connected).
+    fn drop_invalid(&mut self, id: Hash) -> Vec<Hash> {
         self.headers.mark_invalid(&id);
         self.refresh_hot_seeds();
+        let mut dropped = Vec::new();
         let mut stack = vec![id];
         while let Some(x) = stack.pop() {
             let w = self.work(&x);
@@ -119,8 +160,7 @@ impl ChainManager {
                 self.complete_order.remove(&(w, Reverse(seq), x));
             }
             self.leaves.remove(&(w, x));
-            self.bodies.remove(&x);
-            self.body_seq.remove(&x);
+            dropped.push(x);
             if let Some(kids) = self.children.get(&x) {
                 stack.extend_from_slice(kids);
             }
@@ -135,6 +175,75 @@ impl ChainManager {
             self.leaves.insert((self.work(&prev), prev));
         }
         self.recompute_target();
+        dropped
+    }
+
+    /// The operator invalidates block `id` on a running manager
+    /// (docs/blocks.md §8; the node's `--invalidate-block` does the same
+    /// before the manager opens, [`Self::mark_stored_block`]). The verdict
+    /// is first appended to the block store as an operator
+    /// [`Marker::Invalid`] record, so it holds after a restart. Then the
+    /// block and its descendants are marked invalid and never connected: if
+    /// the block is on the connected chain, the chain reorganizes at once to
+    /// the best remaining body-complete branch (at least the block's
+    /// parent), and the transactions of the disconnected blocks return to
+    /// the pool as in any reorganization. A block whose header is not known
+    /// yet is refused when it arrives.
+    ///
+    /// Refused (`InvalidInput`, nothing written): genesis. Refused (`Other`):
+    /// a halted manager (restart the node with the flag instead) or a failed
+    /// store write. A block the operator already invalidated is left as it
+    /// is.
+    ///
+    /// Not a consensus rule: only this node refuses the block, and a chain
+    /// built on it is not followed however much work it has (Bitcoin Core's
+    /// `invalidateblock`). The chain actor does not expose it; the node uses
+    /// the flag.
+    pub fn invalidate_block(&mut self, id: Hash) -> io::Result<()> {
+        if id == self.params.genesis_id() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the genesis block cannot be invalidated",
+            ));
+        }
+        if let Some(why) = self.halted() {
+            return Err(io::Error::other(format!(
+                "the manager halted ({why}); restart the node with --invalidate-block"
+            )));
+        }
+        if self.operator_invalid.contains(&id) {
+            return Ok(());
+        }
+        // Finish a bounded drain first, so the verdict applies to a settled
+        // chain.
+        while !self.sync_step(usize::MAX) {}
+        self.store.append_marker(&Marker::Invalid(InvalidMarker {
+            id,
+            origin: InvalidOrigin::Operator,
+            reason: OPERATOR_REASON.into(),
+        }))?;
+        self.operator_invalid.insert(id);
+        if self.headers.is_valid(&id) != Some(true) {
+            // Unknown (refused on arrival, `mark_complete`) or already invalid.
+            log::warn!("block {} marked invalid by operator request", hex(&id));
+            return Ok(());
+        }
+        log::warn!(
+            "block {} at height {} marked invalid by operator request; it and its \
+             descendants are not connected",
+            hex(&id),
+            self.headers.header(&id).map_or(0, |h| h.height)
+        );
+        let dropped = self.drop_invalid(id);
+        let (mut outcome, mut budget) = (SyncOutcome::default(), usize::MAX);
+        self.sync_state(&mut outcome, &mut budget);
+        self.finish_sync(outcome);
+        for x in dropped {
+            self.bodies.remove(&x);
+            self.body_seq.remove(&x);
+        }
+        self.publish_summary();
+        Ok(())
     }
 
     /// Height of the last block shared by the connected chain and the best header
@@ -179,7 +288,12 @@ impl ChainManager {
             if target == self.tip_id() {
                 return true;
             }
-            debug_assert!(self.work(&target) > self.work(&self.tip_id()));
+            // Only an operator invalidation of the connected chain moves it
+            // to a lighter target (`invalidate_block`).
+            debug_assert!(
+                self.work(&target) > self.work(&self.tip_id())
+                    || !self.complete.contains_key(&self.tip_id())
+            );
             // The target's branch back to the connected chain.
             let mut path = Vec::new();
             let mut cur = target;

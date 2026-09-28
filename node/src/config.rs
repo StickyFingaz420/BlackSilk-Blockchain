@@ -93,6 +93,17 @@ pub struct Args {
     /// Command line only; use it only after that load error (docs/testnet.md §9).
     #[arg(long)]
     pub repair_store: bool,
+    /// Mark the block with this id (64 hex characters) invalid before the
+    /// chain loads: it and its descendants are never connected, and the
+    /// node follows the best other branch. The verdict is stored in
+    /// blocks.dat, so the flag is needed once (repeatable; command line
+    /// only; docs/testnet.md §9).
+    #[arg(long = "invalidate-block", value_name = "BLOCK_ID")]
+    pub invalidate_blocks: Vec<String>,
+    /// Cancel an earlier --invalidate-block of the block with this id
+    /// (repeatable; command line only).
+    #[arg(long = "reconsider-block", value_name = "BLOCK_ID")]
+    pub reconsider_blocks: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -141,6 +152,10 @@ pub struct Config {
     pub log: String,
     pub p2p: Option<P2pConfig>,
     pub repair_store: bool,
+    /// Blocks the operator invalidates, then reconsiders, before the chain
+    /// loads (`--invalidate-block`, `--reconsider-block`).
+    pub invalidate_blocks: Vec<[u8; 32]>,
+    pub reconsider_blocks: Vec<[u8; 32]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -296,6 +311,17 @@ impl Config {
         } else {
             None
         };
+        let invalidate_blocks = parse_block_ids("--invalidate-block", &args.invalidate_blocks)?;
+        let reconsider_blocks = parse_block_ids("--reconsider-block", &args.reconsider_blocks)?;
+        if let Some(both) = invalidate_blocks
+            .iter()
+            .find(|id| reconsider_blocks.contains(id))
+        {
+            return Err(format!(
+                "block {} is given to both --invalidate-block and --reconsider-block",
+                hex::encode(both)
+            ));
+        }
         Ok(Config {
             network,
             data_dir,
@@ -304,8 +330,24 @@ impl Config {
             log,
             p2p,
             repair_store: args.repair_store,
+            invalidate_blocks,
+            reconsider_blocks,
         })
     }
+}
+
+/// Block ids given to `flag`: 64 hex characters each (a block id as the
+/// RPC and the logs print it in full).
+fn parse_block_ids(flag: &str, ids: &[String]) -> Result<Vec<[u8; 32]>, String> {
+    ids.iter()
+        .map(|s| {
+            let s = s.trim();
+            hex::decode(s)
+                .ok()
+                .and_then(|b| <[u8; 32]>::try_from(b).ok())
+                .ok_or_else(|| format!("{flag} {s:?}: expected a block id of 64 hex characters"))
+        })
+        .collect()
 }
 
 /// Resolves seed and peer entries to addresses. Literal IPs and onion addresses are
@@ -481,6 +523,36 @@ max_outbound = 3
     fn proxy_only_does_not_listen_on_clearnet_by_default() {
         let c = Config::resolve(args(&["--proxy", "127.0.0.1:9050", "--proxy-only"])).unwrap();
         assert_eq!(c.p2p.unwrap().listen, None);
+    }
+
+    /// `--invalidate-block` and `--reconsider-block` take full 64-hex block
+    /// ids (repeatable); anything else, or one id given to both, is refused.
+    #[test]
+    fn operator_block_flags() {
+        let a = "ab".repeat(32);
+        let b = "0C".repeat(32);
+        let c = Config::resolve(args(&[
+            "--invalidate-block",
+            &a,
+            "--invalidate-block",
+            &b,
+            "--reconsider-block",
+            &"01".repeat(32),
+        ]))
+        .unwrap();
+        assert_eq!(c.invalidate_blocks, vec![[0xab; 32], [0x0c; 32]]);
+        assert_eq!(c.reconsider_blocks, vec![[0x01; 32]]);
+        assert!(Config::resolve(args(&[]))
+            .unwrap()
+            .invalidate_blocks
+            .is_empty());
+        for bad in ["abcd", &"ab".repeat(33), &"zz".repeat(32), ""] {
+            let err = Config::resolve(args(&["--invalidate-block", bad])).unwrap_err();
+            assert!(err.contains("64 hex characters"), "{err}");
+        }
+        let err = Config::resolve(args(&["--invalidate-block", &a, "--reconsider-block", &a]))
+            .unwrap_err();
+        assert!(err.contains("both"), "{err}");
     }
 
     #[tokio::test]

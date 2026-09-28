@@ -279,3 +279,141 @@ fn allowed_hosts_are_configurable() {
     assert_eq!(ask("NODE.example:80"), "200");
     assert_eq!(ask("evil.example"), "403");
 }
+
+// ------------------------------------------------ operator invalidation
+
+/// Zero hash: meets any difficulty. The node trusts the PoW hash stored with
+/// each block in its own store (docs/blocks.md §8), so a store written with
+/// it replays in the binary without RandomX work.
+struct ZeroPow;
+impl blacksilk_consensus::PowFunction for ZeroPow {
+    fn pow_hash(&self, _: &[u8; 32], _: &[u8]) -> [u8; 32] {
+        [0; 32]
+    }
+}
+
+/// Writes `n` coinbase-only regtest blocks to `<data>/blocks.dat`, as a
+/// node would; returns their ids.
+fn regtest_store(data: &Path, n: usize) -> Vec<[u8; 32]> {
+    use blacksilk_chain::block::Block;
+    use blacksilk_chain::manager::ChainManager;
+    use blacksilk_chain::store::FileStore;
+    use blacksilk_consensus::merkle::tx_root;
+    use blacksilk_consensus::{BlockHeader, ChainParams};
+    use blacksilk_crypto::keys::{SubaddressIndex, WalletKeys};
+    use blacksilk_tx::builder::{build_coinbase, Payment};
+    use blacksilk_tx::params::TxRules;
+    use blacksilk_tx::types::Transaction;
+    use rand_chacha::rand_core::SeedableRng;
+
+    std::fs::create_dir_all(data).unwrap();
+    let p = ChainParams::regtest();
+    let mut m = ChainManager::open(
+        p.clone(),
+        TxRules::for_chain(&p),
+        std::sync::Arc::new(ZeroPow),
+        Box::new(FileStore::open(data.join("blocks.dat")).unwrap()),
+        [3; 32],
+    )
+    .unwrap();
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0x35b);
+    let (keys, _) = WalletKeys::generate(&mut rng);
+    let mut ids = Vec::new();
+    for _ in 0..n {
+        let t = m.template();
+        let cb = build_coinbase(
+            t.height,
+            &[Payment {
+                address: keys.address(SubaddressIndex::PRIMARY),
+                amount: t.reward,
+            }],
+            &keys.hedge_secret(),
+            &mut rng,
+        )
+        .unwrap();
+        let txs = vec![Transaction::Coinbase(cb)];
+        let hashes: Vec<[u8; 32]> = txs.iter().map(Transaction::hash).collect();
+        let header = BlockHeader {
+            version: t.version,
+            height: t.height,
+            prev_id: t.prev_id,
+            timestamp: t
+                .min_timestamp
+                .max(p.genesis.timestamp + p.target_block_time * t.height),
+            difficulty: t.difficulty,
+            tx_root: tx_root(&hashes),
+            nonce: 0,
+        };
+        let b = Block { header, txs };
+        ids.push(b.id(p.network_id));
+        m.submit_block(b, header.timestamp).unwrap();
+    }
+    ids
+}
+
+fn height_of(n: &NodeProc) -> u64 {
+    blacksilk_rpc::Client::new(&n.addr.to_string())
+        .with_cookie_file(&n.cookie())
+        .unwrap()
+        .info()
+        .unwrap()
+        .height
+}
+
+/// `--invalidate-block` end to end (docs/testnet.md §9): the binary starts
+/// on the block's parent, keeps the verdict on a restart without the flag,
+/// and `--reconsider-block` connects the block again. Invalidating genesis
+/// and a malformed id stop the node with the configuration status (2)
+/// before anything is written.
+#[test]
+fn the_node_binary_invalidates_and_reconsiders_a_block() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("node");
+    let ids = regtest_store(&data, 3);
+    let tip = hex::encode(ids[2]);
+    let store = data.join("blocks.dat");
+
+    let n = NodeProc::start(&data, &[]);
+    assert_eq!(height_of(&n), 3, "log:\n{}", n.log_text());
+    drop(n);
+
+    let n = NodeProc::start(&data, &["--invalidate-block", &tip]);
+    assert_eq!(height_of(&n), 2, "log:\n{}", n.log_text());
+    let log = n.log_text();
+    assert!(
+        log.contains(&format!("block {tip} at height 3 is marked invalid")),
+        "{log}"
+    );
+    drop(n);
+    let len = std::fs::metadata(&store).unwrap().len();
+
+    // The verdict is stored: no flag needed; giving it again writes nothing.
+    let n = NodeProc::start(&data, &[]);
+    assert_eq!(height_of(&n), 2, "log:\n{}", n.log_text());
+    drop(n);
+    let n = NodeProc::start(&data, &["--invalidate-block", &tip]);
+    assert_eq!(height_of(&n), 2);
+    assert!(n.log_text().contains("already marked invalid"));
+    drop(n);
+    assert_eq!(std::fs::metadata(&store).unwrap().len(), len);
+
+    let n = NodeProc::start(&data, &["--reconsider-block", &tip]);
+    assert_eq!(height_of(&n), 3, "log:\n{}", n.log_text());
+    drop(n);
+
+    let before = std::fs::read(&store).unwrap();
+    let genesis = hex::encode(blacksilk_consensus::ChainParams::regtest().genesis_id());
+    for (bad, text) in [(genesis.as_str(), "genesis"), ("12ab", "64 hex characters")] {
+        let out = Command::new(NODE)
+            .args(["--network", "regtest", "--no-p2p", "--data-dir"])
+            .arg(&data)
+            .args(["--rpc-bind", &free_port().to_string()])
+            .args(["--invalidate-block", bad])
+            .output()
+            .unwrap();
+        let text_out = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{bad}: {text_out}");
+        assert!(text_out.contains(text), "{bad}: {text_out}");
+    }
+    assert_eq!(std::fs::read(&store).unwrap(), before, "nothing written");
+}

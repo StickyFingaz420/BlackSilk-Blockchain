@@ -8,6 +8,7 @@
 //! body    = type (1) ‖ payload
 //!   0x01 block       payload = pow_hash (32) ‖ block bytes
 //!   0x02 invalid     payload = block id (32) ‖ origin (1) ‖ LE16 k ‖ reason (k ≤ 256, UTF-8)
+//!   0x03 reconsider  payload = block id (32)
 //!   0x81 checkpoint  payload = tip id (32) ‖ LE64 height ‖ state digest (32)
 //!                              ‖ consensus fingerprint (32) ‖ LE16 k ‖ build commit (k ≤ 64, UTF-8)
 //! ```
@@ -18,6 +19,18 @@
 //! the store was written by a newer build whose records this one cannot
 //! honour. A record whose checksum holds but whose body is malformed is
 //! refused too; it is never skipped.
+//!
+//! **Operator verdicts** (`--invalidate-block`, `--reconsider-block`): an
+//! `invalid` record of origin "operator" rules a block out; a later
+//! `reconsider` record for the same id cancels it (the last of the two for
+//! an id wins). Both are critical: a build that ignored them would connect
+//! a block the operator ruled out, or keep refusing one reconsidered.
+//!
+//! **Reserved:** type `0x82` for the F48-5 quarantine record ("validating
+//! <block id>", written before a body is validated and cleared after, so a
+//! start after a crash during validation halts naming the suspect block
+//! instead of looping). It is advisory (ignoring it only means validating
+//! the block again) and not written or read by this build.
 //!
 //! **Network identity** ([`BlockStore::bind`], called by the chain manager
 //! before `load`): a new store is created with the file header; an existing
@@ -70,8 +83,13 @@ const MAX_BLOCK: usize = crate::block::MAX_BLOCK_BYTES;
 const TYPE_BLOCK: u8 = 0x01;
 /// Record type of an invalid-block marker (critical).
 const TYPE_INVALID: u8 = 0x02;
+/// Record type of an operator's reconsider marker (critical).
+const TYPE_RECONSIDER: u8 = 0x03;
 /// Record type of a validation checkpoint (advisory).
 const TYPE_CHECKPOINT: u8 = 0x81;
+/// Reserved record type of the F48-5 quarantine marker (advisory; not
+/// written by this build and skipped when read, see the module docs).
+const TYPE_QUARANTINE_RESERVED: u8 = 0x82;
 /// Bit set in the type of every advisory record.
 const ADVISORY: u8 = 0x80;
 /// Longest reason text of an invalid marker.
@@ -120,6 +138,10 @@ pub struct Checkpoint {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Marker {
     Invalid(InvalidMarker),
+    /// The operator reconsiders the block with this id: an earlier
+    /// operator [`Marker::Invalid`] for it no longer applies
+    /// (`--reconsider-block`). Rule verdicts are not affected.
+    Reconsider(Hash),
     Checkpoint(Checkpoint),
 }
 
@@ -316,9 +338,18 @@ impl Codec {
                 Ok(Some(block_record(p)))
             }
             TYPE_INVALID => decode_invalid(p).map(|m| Some(Record::Marker(Marker::Invalid(m)))),
+            TYPE_RECONSIDER => {
+                let id: Hash = p
+                    .try_into()
+                    .map_err(|_| format!("reconsider marker of {} bytes", p.len()))?;
+                Ok(Some(Record::Marker(Marker::Reconsider(id))))
+            }
             TYPE_CHECKPOINT => {
                 decode_checkpoint(p).map(|c| Some(Record::Marker(Marker::Checkpoint(c))))
             }
+            // Reserved (F48-5): no build writes it yet; skipped like any
+            // advisory type this build does not know.
+            TYPE_QUARANTINE_RESERVED => Ok(None),
             t if t & ADVISORY != 0 => Ok(None),
             t => Err(format!(
                 "unknown record type {t:#04x} (written by a newer build?)"
@@ -399,6 +430,10 @@ fn encode_marker(marker: &Marker) -> io::Result<Vec<u8>> {
                 InvalidOrigin::Operator => 2,
             });
             encode_text(&mut b, &m.reason, MAX_REASON, "invalid marker reason")?;
+        }
+        Marker::Reconsider(id) => {
+            b.push(TYPE_RECONSIDER);
+            b.extend_from_slice(id);
         }
         Marker::Checkpoint(c) => {
             b.push(TYPE_CHECKPOINT);
@@ -931,6 +966,7 @@ mod tests {
             block(4),
             Record::Marker(invalid(5, InvalidOrigin::Operator)),
             block(6),
+            Record::Marker(Marker::Reconsider([5; 32])),
         ]
     }
 
@@ -1040,6 +1076,7 @@ mod tests {
 
         let mut with_advisory = good.clone();
         with_advisory.extend(raw_record(0xC7, b"future advisory data"));
+        with_advisory.extend(raw_record(TYPE_QUARANTINE_RESERVED, &[3; 32]));
         with_advisory.extend(Codec::Typed.block_record(&[2; 32], &[2; 12]));
         std::fs::write(&path, &with_advisory).unwrap();
         assert_eq!(
@@ -1065,7 +1102,7 @@ mod tests {
         trailing.extend_from_slice(b"ab"); // one byte more than the length says
         let cases: Vec<(Vec<u8>, &str)> = vec![
             (
-                raw_record(0x03, b"future critical data"),
+                raw_record(0x04, b"future critical data"),
                 "unknown record type",
             ),
             (raw_record(0x7f, b""), "unknown record type"),
@@ -1076,6 +1113,8 @@ mod tests {
             (raw_record(TYPE_INVALID, &long_text), "bad length"),
             (raw_record(TYPE_INVALID, &trailing), "bad length"),
             (raw_record(TYPE_CHECKPOINT, &[1; 103]), "too short"),
+            (raw_record(TYPE_RECONSIDER, &[1; 31]), "reconsider marker"),
+            (raw_record(TYPE_RECONSIDER, &[1; 33]), "reconsider marker"),
         ];
         for (rec, why) in cases {
             for last in [true, false] {
@@ -1243,7 +1282,13 @@ mod tests {
     #[test]
     fn random_bytes_never_panic_and_allocate_within_the_input() {
         let mut rng = ChaCha20Rng::seed_from_u64(0x35);
-        let types = [TYPE_BLOCK, TYPE_INVALID, TYPE_CHECKPOINT, 0x99];
+        let types = [
+            TYPE_BLOCK,
+            TYPE_INVALID,
+            TYPE_RECONSIDER,
+            TYPE_CHECKPOINT,
+            0x99,
+        ];
         for codec in [Codec::Typed, Codec::Legacy] {
             for round in 0..20_000usize {
                 let n = (rng.next_u32() % 300) as usize;
@@ -1269,6 +1314,7 @@ mod tests {
                         let size = match r {
                             Record::Block((_, b)) => 32 + b.len(),
                             Record::Marker(Marker::Invalid(m)) => 35 + m.reason.len(),
+                            Record::Marker(Marker::Reconsider(_)) => 32,
                             Record::Marker(Marker::Checkpoint(c)) => 106 + c.build_commit.len(),
                         };
                         assert!(size <= body.len());
@@ -1285,7 +1331,14 @@ mod tests {
         // Whole files of random records.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("blocks.dat");
-        let types = [TYPE_BLOCK, TYPE_INVALID, TYPE_CHECKPOINT, 0x05, 0x85];
+        let types = [
+            TYPE_BLOCK,
+            TYPE_INVALID,
+            TYPE_RECONSIDER,
+            TYPE_CHECKPOINT,
+            0x05,
+            0x85,
+        ];
         for _ in 0..300 {
             let mut bytes = encode_file_header(&REGTEST).to_vec();
             for _ in 0..(rng.next_u32() % 6) {

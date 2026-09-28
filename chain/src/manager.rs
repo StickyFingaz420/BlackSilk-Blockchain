@@ -42,8 +42,9 @@ use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::BlockError;
 pub use pow_cache::{CachedPow, PowJob};
 use rand_chacha::ChaCha20Rng;
+pub use replay::{OperatorMark, OperatorMarked};
 use std::cmp::Reverse;
-use std::collections::{BTreeSet, BinaryHeap, HashMap};
+use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
 pub use summary::{ChainSummary, NextBlock, SummaryCell, SUMMARY_MISSING_BODIES};
@@ -183,6 +184,11 @@ pub struct ChainManager {
     /// The connection target (module docs).
     best_complete: Hash,
     invalid: HashMap<Hash, BlockError>,
+    /// Blocks the operator invalidated (`--invalidate-block`, operator
+    /// markers in the store; docs/blocks.md §8): never connected, whatever
+    /// their bodies. Kept for ids whose header is not known yet, so the
+    /// verdict applies when the block arrives.
+    operator_invalid: HashSet<Hash>,
     mempool: Mempool,
     store: Box<dyn BlockStore>,
     rng: ChaCha20Rng,
@@ -257,6 +263,9 @@ pub fn submit_block_in_steps<'a>(
 /// and the block is downloaded again; repeated ones mean a full or failing
 /// disk, where continuing would only re-download bodies forever.
 pub const STORE_FAILURE_LIMIT: u32 = 3;
+
+/// The reason text of the operator's invalid markers.
+const OPERATOR_REASON: &str = "invalidated by the operator (--invalidate-block)";
 
 fn hex(id: &Hash) -> String {
     id.iter().take(8).map(|b| format!("{b:02x}")).collect()
