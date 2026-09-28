@@ -1,5 +1,12 @@
 # Testnet reset plan (approved; NOT yet executed on the testnet machines)
 
+> **Historical snapshot (the v2 reset plan of 2026-09-27, which the v3 reset replaces); not maintained.** The current project and testnet
+> status, the launch gates and the open items are kept only in
+> [STATUS.md](STATUS.md). The v2 identity this document refers to is **retired**, and
+> the testnet is disabled until the v3 genesis is generated at launch
+> ([testnet-v3-genesis.md](testnet-v3-genesis.md)). Its "extended contract-engine fuzzing" gate is **not testnet evidence**: the Wasm
+> engine is frozen research, not integrated (decision D22).
+
 Status (2026-09-27): the v2 identity is approved and fixed in code (§3), for the
 confirmed consensus parameters (BS-ZK-2 with terminal blinding and minimum height
 2^8). The seven-device trial is **not** authorized until the owner approves the

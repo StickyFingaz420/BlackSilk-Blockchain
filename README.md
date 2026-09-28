@@ -2,32 +2,27 @@
 
 A privacy-first proof-of-work cryptocurrency written in pure Rust.
 
-> **Status (2026-09-27): pre-testnet, hardening round in progress.** The components
+> **Pre-testnet.** The current status (identity, testnet, open items, accepted
+> limitations) is kept only in **[docs/STATUS.md](docs/STATUS.md)**. The components
 > below are implemented and have internal tests. The software has **not** had an
-> external security audit or any independent review; all security work so far is
-> internal, and no external review is engaged or planned (owner decision 2026-09-25,
+> external security audit or any independent review; all security work is internal,
+> and no external review is engaged or planned (owner decision 2026-09-25,
 > [`docs/reviews/review-status.md`](docs/reviews/review-status.md)). It must not be used
-> for anything of value. [`AUDIT.md`](AUDIT.md) is the project's **internal findings
-> log**, not an external audit.
->
-> **Testnet v2:** the v2 identity is approved and fixed in code. The seven-device
-> trial is **not** authorized until the owner approves the readiness report after the
-> hardening round
-> ([`docs/reviews/completion-readiness-2026-09-26.md`](docs/reviews/completion-readiness-2026-09-26.md)
-> §6). Gates: [`docs/testnet-launch-checklist.md`](docs/testnet-launch-checklist.md).
+> for anything of value. [`AUDIT.md`](AUDIT.md) is a historical **internal findings
+> log**, not an audit.
 
 ## What it is
 
 | Area | Design | Spec |
 |---|---|---|
-| Proof of work | RandomX v1 (pure-Rust implementation, passes the official test vectors), Monero key schedule | [consensus.md](docs/consensus.md) |
-| Difficulty | LWMA-1, 2-minute blocks | [consensus.md](docs/consensus.md) |
+| Proof of work | RandomX v1, exactly Monero's `rx/0` (pure-Rust implementation; the reference test vectors it pins are listed in [randomx/README.md](randomx/README.md)), Monero key schedule | [consensus.md](docs/consensus.md) |
+| Difficulty | LWMA-1 with a 75-block window and a counted clock, 2-minute blocks | [consensus.md §4](docs/consensus.md) |
 | Sender privacy | CLSAG ring signatures, ring size 16, key images | [transactions.md](docs/transactions.md) |
 | Receiver privacy | one-time stealth outputs, view tags, subaddresses, **Janus anchor** | [transactions.md §3, §12](docs/transactions.md) |
 | Amount privacy | Pedersen commitments, aggregated Bulletproofs+ | [transactions.md §6–7](docs/transactions.md) |
 | Group | Ristretto255 (prime order) | [transactions.md §1](docs/transactions.md) |
 | Emission | smooth curve to ~21 M BLK, then 0.6 BLK/block tail forever; no premine | [blocks.md §2](docs/blocks.md) |
-| Private execution (PX) | private records and nullifiers, a fixed transfer kernel and private contract functions proven in the BVM-1 zkVM (Plonky3 STARK, parameter set BS-ZK-2). Transaction kinds 2 and 3 are **consensus rules from genesis** (testnet v2, not yet launched, will be the first public network to run them). Zero knowledge is claimed only as **statistical and conditional** ([zk-coverage.md](docs/reviews/zk-coverage.md)); proofs are about 2.2 MB (transfer) | [px.md](docs/px.md), [zk.md](docs/zk.md), [zkvm.md](docs/zkvm.md) |
+| Private execution (PX) | private records and nullifiers, a fixed transfer kernel and private contract functions proven in the BVM-1 zkVM (Plonky3 STARK, parameter set BS-ZK-3). Transaction kinds 2 and 3 are **consensus rules from genesis**; no network running them has launched. Zero knowledge is claimed only as **statistical and conditional**, computational in practice ([zk-coverage.md](docs/reviews/zk-coverage.md)); proofs are about 2.2 MB (transfer) | [px.md](docs/px.md), [zk.md](docs/zk.md), [zkvm.md](docs/zkvm.md) |
 | Network | encrypted (unauthenticated) transport, header-first sync, Dandelion++, bucketed address manager with eclipse mitigations (not tested against a real Sybil attack), peer scoring and bans, outbound SOCKS5/Tor | [p2p.md](docs/p2p.md) |
 
 **What it is not (yet):**
@@ -38,11 +33,16 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
   active man in the middle ([p2p.md §1](docs/p2p.md)). Tor works through its SOCKS5
   proxy for the node's outbound connections; I2P is not supported. The wallet has no
   Tor or TLS support: its RPC connection is plaintext HTTP, so use your own node.
-- **Not a finished contract platform.** PX private contracts are in consensus, with one
-  **demonstration** contract (the vault: no timeout, no refund, not trustless). The
-  separate Wasm confidential-contract system ([contracts.md](docs/contracts.md)) has
-  its engine and cryptography implemented but is **not integrated** into the chain and
-  is not active on any network. The old marketplace stays parked in `legacy/`.
+- **Not a finished contract platform.** PX is the only consensus contract platform
+  ([contracts.md](docs/contracts.md), "Private contracts on PX"), with one
+  **demonstration** contract (the vault: not trustless, not an HTLC). The earlier Wasm
+  confidential-contract design is **frozen research**, outside the build and not
+  consensus on any network ([research/wasm-contracts.md](docs/research/wasm-contracts.md),
+  [contracts/README.md](contracts/README.md)). The old marketplace stays parked in
+  `legacy/`.
+- **Not a strong PoW network yet.** The testnet's PoW is Monero's `rx/0`: anyone with
+  rented or JIT-mined `rx/0` hash power can out-mine it (an accepted limitation,
+  [docs/STATUS.md](docs/STATUS.md) §6).
 
 ## Repository layout
 
@@ -50,21 +50,26 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 |---|---|
 | `randomx/` | RandomX v1 (light and full mode) |
 | `consensus/` | header format, PoW, difficulty, timestamps, chain selection |
-| `crypto/` | Ristretto255 primitives, stealth outputs, Janus anchor, CLSAG, Bulletproofs+, contract signatures and claims |
+| `crypto/` | Ristretto255 primitives, stealth outputs, Janus anchor, CLSAG, Bulletproofs+ (and the Wasm research's signatures, membership proofs and claims, used by no consensus crate) |
 | `tx/` | transaction format, validation rules (v1 and PX), builder, scanner, decoy selection |
 | `chain/` | blocks, emission, chain manager (reorgs), mempool, block storage, addresses |
-| `zk/` | proof-system configuration (Plonky3 0.7.0, BS-ZK-2) and its security parameters |
+| `zk/` | proof-system configuration (Plonky3 0.7.0, parameter set BS-ZK-3) and its security parameters |
 | `zkvm/` | BVM-1 zero-knowledge virtual machine: interpreter, constraint tables, guest SDK and guest programs |
 | `px-core/` | PX hash `Hk`, records and the transfer kernel (`no_std`, shared with the guest) |
 | `px/` | PX node state, wallet side, record delivery, kernel proofs, the vault |
-| `contracts/` | Wasm confidential contracts: module profile, engine, contract state and state root (**not in consensus**) |
+| `contracts/` | frozen Wasm contract research: its own workspace, **outside the root workspace and every binary**, not consensus ([contracts/README.md](contracts/README.md)) |
 | `p2p/` | peer-to-peer network |
 | `rpc/` | node RPC types and client |
 | `node/` | `blacksilk-node` |
 | `miner/` | `blacksilk-miner` |
 | `wallet/` | `blacksilk-wallet` |
 | `tools/labnet/` | long-duration multi-node lab test (latency, partitions, wallet traffic) |
+| `tools/genesis/` | beacon-derived genesis construction and verification |
+| `tools/supply-audit/` | closed-set supply check for a trial |
+| `tools/daa-sim/` | difficulty-rule simulation harness (evidence, not consensus) |
 | `fuzz/` | coverage-guided fuzz targets (separate workspace, nightly toolchain) |
+| `research/` | the post-quantum research track (outside the workspace) |
+| `legacy/` | pre-rebuild code kept for reference; does not build |
 | `third_party/` | three Plonky3 0.7.0 crates with a local lock-scope patch ([third_party/README.md](third_party/README.md)) |
 | `deploy/` | node configuration templates, systemd units, Docker image, install scripts |
 
@@ -88,7 +93,7 @@ consensus-pinned guest programs reproduce only with this exact rustc,
 the OS RNG crate.
 
 ```sh
-cargo test --release --workspace  # about 450 tests; proofs make it slow (30-40 min)
+cargo test --release --workspace  # the PX proofs make it slow (tens of minutes)
 cargo clippy --workspace --all-targets
 cargo build --release
 ```
@@ -109,7 +114,7 @@ blacksilk-node --network regtest --data-dir ./regtest-data
 # 2. Wallet (prints a 27-word seed and the primary address)
 blacksilk-wallet -w miner.wallet --node 127.0.0.1:39333 create --network regtest
 
-# 3. Miner (light mode needs 256 MiB; full mode needs 2 GiB)
+# 3. Miner (light mode needs 256 MiB; full mode about 2.3 GiB, more while it prebuilds)
 blacksilk-miner --node 127.0.0.1:39333 --light --address <primary address>
 
 # 4. Balance and transfers. Coinbase outputs unlock after 60 blocks,
@@ -121,6 +126,9 @@ blacksilk-wallet -w miner.wallet --node 127.0.0.1:39333 transfer --to <address> 
 For scripted use, set `BLACKSILK_WALLET_PASSWORD` instead of typing the password.
 
 ## Joining a network
+
+The testnet is disabled until the v3 genesis is generated at launch: until then
+`--network testnet` refuses to start ([docs/STATUS.md](docs/STATUS.md)). Once it runs:
 
 ```sh
 # Connect to known peers (repeatable); addresses are discovered from them.
@@ -142,9 +150,14 @@ blacksilk-node --network testnet --proxy 127.0.0.1:9050 --proxy-only --peer <oni
 - The node RPC requires the node's cookie (`<data dir>/rpc.cookie`), but it is plaintext
   HTTP and binds to loopback by default. Do not expose
   it.
-- A wallet using someone else's node reveals which ring members it fetches, and its
-  RPC traffic is plaintext (the wallet has no Tor or TLS support). Use your own node
+- A wallet using someone else's node reveals its IP address, its scan start (the
+  wallet's birthday), when it sends, and which transaction came from it; rings are
+  chosen from the wallet's own output index, so ring members are not revealed. Its RPC
+  traffic is plaintext (the wallet has no Tor or TLS support). Use your own node
   ([blocks.md §9](docs/blocks.md)).
+- An observer of your node's own link (your ISP, or your Tor guard) sees when it sends
+  a PX transaction, whose size (about 2.2 MB) no transport hides
+  ([docs/testnet.md §12.7](docs/testnet.md)).
 - Wallet files are encrypted with Argon2id and AES-256-GCM. The 27 seed words recover the
   keys and on-chain funds, but not everything: the stored rings of pending spends and
   contract records this wallet created for others live only in the wallet file. Back

@@ -1,4 +1,21 @@
-# BlackSilk Testnet Readiness Audit (internal findings log)
+# BlackSilk internal findings log (historical)
+
+> **Historical record; not maintained, and not an audit.** This file was titled
+> "Testnet Readiness Audit"; it is the project's internal findings and remediation
+> log up to the 2026-09-27 hardening round (the file name is kept because many
+> documents link to it). Its status lines are records of their time: the v2 identity
+> it describes is **retired**, and the testnet is disabled until the v3 genesis. The
+> current status, open items and evidence are kept only in
+> [docs/STATUS.md](docs/STATUS.md); later findings are in `docs/reviews/`.
+>
+> Corrections to statements below (dossier 29, W-1 and W-9; decision D22):
+> - **R7, wasmi:** Runtime Verification's report (2024-11) targets wasmi v0.36.0 and
+>   the 0.36.1-0.36.5 fixes; 0.37-0.38 are only partly covered, and 0.38.0 has
+>   post-audit changes to its `unsafe` paths. 0.38.0 is not itself an audited release.
+> - **The Wasm contract system** (R7, `docs/contracts.md` references in it) is frozen
+>   research: its specification is now docs/research/wasm-contracts.md, and the
+>   `contracts/` crate is outside the root workspace. PX is the only consensus contract
+>   platform (ADR-28-1). Its fuzzing hours are not testnet evidence.
 
 **What this file is:** the project's internal findings and remediation log. Despite
 its title it is **not an external audit**. No external audit or independent review has

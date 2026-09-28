@@ -3,17 +3,18 @@
 This guide is for people running testnet nodes, miners and wallets, and for seed-node
 operators. Protocol details are in [consensus.md](consensus.md),
 [transactions.md](transactions.md), [blocks.md](blocks.md) and [p2p.md](p2p.md). The
-current readiness status is in [AUDIT.md](../AUDIT.md).
+project and testnet status is kept only in [STATUS.md](STATUS.md).
 
 > **Testnet coins have no value.** The testnet may be reset. A reset uses a new
 > network id and genesis block, so old nodes simply stop connecting. Use the
 > testnet to find problems, and report them.
 
-> **Status (2026-09-27): the testnet is disabled.** The v2 identity (`0x0001D672`) is
-> retired because this tree enforces a rule v2 builds do not (canonical PX proofs), so
-> the two would fork. `blacksilk-node --network testnet` refuses to start until the v3
-> genesis is generated at launch (`TESTNET_GENESIS_FINAL` in `node/src/config.rs`), by
-> the procedure and tool in docs/testnet-v3-genesis.md (`tools/genesis`).
+> **The testnet is disabled** (current status: [STATUS.md](STATUS.md)). The v2
+> identity (`0x0001D672`) is retired because this tree enforces rules v2 builds do not,
+> so the two would fork. `blacksilk-node --network testnet` refuses to start until the
+> v3 genesis is final (`ChainParams::genesis_is_final`, checked by
+> `check_network_enabled` in `node/src/config.rs`): it is generated at launch, by the
+> procedure and tool in docs/testnet-v3-genesis.md (`tools/genesis`).
 > Until then, use `--network regtest` or the labnet harness. The v2 parameters below
 > are kept for reference and will be replaced by v3's.
 
@@ -23,11 +24,11 @@ current readiness status is in [AUDIT.md](../AUDIT.md).
 |---|---|---|
 | Network id | `0x0001D672` (testnet v2; v1 was `0x0001D670`) | `0x00DEB06E` |
 | Genesis time | 2026-09-26 00:00:00 UTC (`1790380800`) | `1700000000` |
-| Genesis id | `6556f92dee4df050cfb113a2b4ba234794274854b69f7c8a39755ec7a66b037d` | `087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7` |
+| Genesis id | pinned by `genesis_ids_are_pinned` (`consensus/src/params.rs`); printed by `blacksilk-node --version` | same |
 | Genesis body | empty, no premine | empty |
 | Block time | 120 s | 10 s |
 | Starting difficulty | 100 | 1 |
-| Difficulty | LWMA-1, 60 blocks | same |
+| Difficulty | LWMA-1, 75-block window (consensus.md §4) | same |
 | Proof of work | RandomX v1; the key changes every 2048 blocks, with a 64-block lag | same |
 | First reward | 20.02716064 BLK; smooth curve with a 0.6 BLK tail | same |
 | Coinbase maturity / spendable age | 60 / 10 blocks | same |
@@ -83,19 +84,16 @@ length-prefixed encoding of the following consensus constants
 - every `ChainParams` field, the genesis block bytes and id, and `TxRules`;
 - the header, transaction, block and emission constants, and emission samples;
 - the RandomX configuration;
-- the BS-ZK-2 parameters and `PROOF_VERSION`;
+- the proof-system parameter set (BS-ZK-3, `zk/src/params.rs`) and `PROOF_VERSION`;
 - the BVM-1 limits;
 - the PX kernel constants and hash domains;
 - the kernel and vault program ids.
 
 `node/tests/deploy_configs.rs` pins one value per network. Changing one is a
-consensus change and needs a new network id. Pinned values at the time of
-writing:
-
-| Network | Consensus fingerprint |
-|---|---|
-| testnet | `e7b898636c53173d1417108b82fb4314c9e999ba80f072844b60d3a1f602478f` |
-| regtest | `d56ea868280b03510b713ba2fef36cf353f5f35fa4fb2260e1e13acd779ac38f` |
+consensus change and needs a new network id. The values are deliberately not copied
+here (a copy goes stale with every consensus change before the freeze): compare the
+output of `blacksilk-node --version` with the signed release announcement, which
+takes its values from that test at the release commit.
 
 Limits of the check:
 
@@ -337,8 +335,8 @@ public launch, run this procedure on at least **3 machines in 2 different networ
    - Pass: the minority side's logs contain `reorganization: disconnecting …`.
    - Pass: transactions from the orphaned side return to the mempool and confirm.
 6. **Wallet sync from a fresh node.** Start a new node D, with an empty data directory,
-   connected to one machine. When D reaches the tip, restore each wallet from its 24
-   words against D:
+   connected to one machine. When D reaches the tip, restore each wallet from its 27
+   seed words against D:
 
    ```sh
    blacksilk-wallet -w fresh.wallet restore --network testnet
@@ -353,7 +351,8 @@ public launch, run this procedure on at least **3 machines in 2 different networ
      (PX-F1, PX-F2): about 7 KB per v1 block, up to about 8 MiB per full PX block.
      Fail only on growth the chain does not explain.
 
-Record the results in AUDIT.md, in the testnet-readiness section.
+Record the results as an evidence directory under `docs/evidence/` and link it from
+[STATUS.md](STATUS.md) (AUDIT.md is a historical log and is no longer updated).
 
 ### 7.1 Supply audit (closed trial only)
 
@@ -525,15 +524,17 @@ height is added first.
 | `px-deposit --amount A` | v1 funds into PX. **The amount is public** |
 | `px-send --to PXADDR --amount A` | A private payment. Proving takes about 45 s and a peak of about 3.8 GB of memory (§12.1) |
 | `px-withdraw --to ADDR --amount A` | PX funds to a v1 address. **The amount is public** |
-| `px-deploy --vault` (or `--program F.elf --budget …`) | Registers a private contract, paid with v1 funds |
+| `px-deploy --vault` (or `--program F.elf --budget … --out-words N`, one `--budget` and one `--out-words` per `--program`) | Registers a private contract, paid with v1 funds. `--out-words` is the exact number of public output words each call of that function publishes (contracts.md §5); check it with a dry run of the function before deploying, because a wrong count makes every call invalid |
 | `px-contracts` / `px-records` | Deployed contracts / contract records this wallet holds |
 | `px-vault-lock --contract C --amount A [--secret S] [--deliver-to PXADDR]` | Locks PX funds in the reference vault under a secret; the record goes to the claimer |
 | `px-vault-claim --record CM --secret S [--to PXADDR]` | Claims a vault record privately; the fee comes from PX or v1 funds |
 | `px-share --record CM --to PXADDR` / `px-import --share HEX` | Shares a contract record off chain / imports one |
 
 Contract tooling is described in px.md §13. **The reference vault is a demonstration
-contract: not production-ready and not trustless.** It has no timeout and no refund,
-the locker also knows the secret (and can claim), and it is not a trustless swap. A
+contract, not production-ready and not trustless.** It is not an HTLC. The vault
+program supports a timeout and refund (contracts.md §8), but `px-vault-lock` sets no
+timeout, so the wallet's locks have no refund path; the locker also knows the secret
+(and can claim), and it is not a trustless swap. A
 record the locker delivers to someone else is kept only in the locker's wallet file
 and is not recovered by restoring from the seed (px.md §13.4).
 
@@ -546,7 +547,10 @@ multiple of 16 is reached (canonical anchor, px.md §11.4).
 
 **Privacy:** px.md §12 and `docs/reviews/privacy-review.md`.
 
-**Capacity:** 3 PX transactions per block (4 × 2.18 MB exceeds the 8 MiB budget) (aggregation-study.md).
+**Capacity:** the 8 MiB block PX budget holds 3 transfers or vault calls at the
+measured proof sizes (4 × 2.18 MB exceeds it), fewer for wider shapes: an estimated 2
+for a call with two functions, and 1 at the 4 MiB `MAX_PROOF_BYTES` cap. The widest
+shape is not yet measured (aggregation-study.md).
 
 ## 11. Security notes for operators
 
@@ -557,10 +561,12 @@ multiple of 16 is reached (canonical anchor, px.md §11.4).
   Tor, and add the name used to `--rpc-allow-host`.
 - **Protect the cookie like a password while the node runs.** Anyone who can read
   `rpc.cookie` can use the RPC; that includes malware running as the node's user.
-- **Use your own node for your wallet.** A remote node learns which ring members you
-  fetch (blocks.md §9). The wallet has no Tor or TLS support: its RPC connection is
-  plaintext HTTP, so a remote node, and anyone on the path, sees your requests and
-  your IP address.
+- **Use your own node for your wallet.** Rings are chosen from the wallet's own
+  output index, so a remote node does not learn ring members, but it does learn your
+  IP address, your scan start (the wallet's birthday), when you send (`/distribution`
+  then `/tx`) and which transaction came from your IP (blocks.md §9). The wallet has no
+  Tor or TLS support: its RPC connection is plaintext HTTP, so anyone on the path sees
+  the same.
 - **P2P encryption is unauthenticated.** It protects against passive observers only
   (p2p.md §1). An active man in the middle can also inject invalid messages under the
   peer's address, so that the victim bans the impersonated peer's IP for 24 hours, and
@@ -669,14 +675,14 @@ always uses a new network id; never reuse one for a different genesis.
   tests); a full-mode miner has not yet crossed 2113 with the network's parameters.
 - No seed nodes; peers are configured by hand.
 - Open P2P defects (docs/reviews/completion-readiness-2026-09-26.md §2–§3; the
-  hardening round in AUDIT.md R14 addresses others):
-  - N-4: connections that have not completed the handshake are not bounded;
+  current list is in [STATUS.md](STATUS.md)). N-4 (unbounded pre-handshake
+  connections, fixed in `12ce4cb`: handshakes count against the limits) and N-11
+  (fixed in `54c4827`: invalid signatures are penalized when every ring member is at
+  least 60 blocks deep, p2p.md §10) are closed. Still open:
   - N-5: bans are per exact IP, so they are easy to evade and hit every device behind
     one NAT;
   - N-6: inbound Tor peers share `127.0.0.1` (§4.3);
   - N-9: no eviction of inbound peers when the inbound slots are full;
-  - N-11: relays of transactions with invalid signatures are not penalized (signature
-    checks are contextual, so they are not scored as misbehaviour);
   - N-12: memory growth.
 - Peers are not authenticated (§11).
 
@@ -686,6 +692,14 @@ always uses a new network id; never reuse one for a different genesis.
   representative of a production anonymity set; the trial tests mechanics, not
   anonymity. The same holds for the PX pool, whose anonymity set is only the records
   the trial creates.
+- **Origin of a PX transaction.** A PX transaction is about 2.2 MB (a transfer) to
+  2.7 MB (a vault call); a v1 transfer is a few kB. No transport hides a 2.2 MB upload
+  from the origin's ISP, or from its Tor guard: an observer of a node's own link sees
+  that it sent a PX transaction, even over Tor. Dandelion++ helps only against spy
+  nodes, and on PX paths its protection is weaker than on v1 paths (an origin is named
+  first about 3.6 times as often in a simulation, dossier 33 §3.4). Padding does not
+  remove the PX-versus-v1 distinction; smaller proofs would (dossier 33 §3.7,
+  docs/reviews/phase2-2026-09-27/research/33-dandelion-network-privacy.md).
 - **Security:** the trial shows operation, not security. The security assumptions are
   listed in docs/reviews/assumptions.md; the zero-knowledge claim is statistical and
   conditional, and its remaining assumptions are in docs/reviews/zk-coverage.md.
