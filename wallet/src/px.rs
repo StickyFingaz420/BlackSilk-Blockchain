@@ -18,10 +18,15 @@
 //! own spends at the root it computed: a node cannot choose the anchor
 //! (F39-1).
 //!
-//! **Contracts** (docs/px.md §13). Deploys are public. The wallet downloads
-//! the complete, ordered list of registrations (`/px/contracts`), like every
-//! other wallet, so it knows contracts deployed before its restore height too,
-//! and the node learns nothing about which contracts it uses. Contract
+//! **Contracts** (docs/px.md §13). Deploys are public. The wallet derives
+//! every registration from the deploy transactions themselves, as consensus
+//! records them (contract id, and per program its id, budget, call ABI and
+//! output words; [`deployed`]): from the blocks it scans, and below its
+//! restore height from the blocks the node's registration list
+//! (`/px/contracts`) names, fetched whole and checked against the header
+//! chain (`Wallet::sync`). The node's list only says where deploys are; a
+//! registration it misstates is refused, and the node learns nothing about
+//! which contracts the wallet uses. Contract
 //! records are kept apart from the wallet's own funds: they are spent only
 //! with a function of their contract, never selected to pay, and never
 //! counted in the balance. The wallet learns a contract record in one of
@@ -33,8 +38,9 @@
 //!   (`blacksilk_px::share`).
 //!
 //! Received and created records are confirmed by the block their commitment
-//! appears in; an imported record already on chain by one bulk download of
-//! the commitment list, checked against the wallet's own root.
+//! appears in; an imported record already on chain from the commitments of
+//! the recent blocks the wallet's tree keeps, or from the backfill list of a
+//! rescan, never by a download made for it (RTW3-15).
 
 use crate::node::NodeApi;
 use crate::tree::{TreeError, WalletTree};
@@ -43,9 +49,11 @@ use blacksilk_px::delivery;
 use blacksilk_px::perm::HostPerm;
 use blacksilk_px::state::ROOT_WINDOW;
 use blacksilk_px::wallet::Account;
+use blacksilk_px_core::call::ABI_VERSION;
 use blacksilk_px_core::kernel::TREE_DEPTH;
 use blacksilk_px_core::record::{contract_nullifier, nullifier, output_rho, Record};
 use blacksilk_px_core::{Digest, P, ZERO_DIGEST};
+use blacksilk_rpc as rpc;
 use blacksilk_tx::px::digest_bytes;
 use blacksilk_tx::types::Transaction;
 use blacksilk_zkvm::air::trace::Budget;
@@ -179,12 +187,18 @@ impl StoredRecord {
     }
 }
 
-/// A program registered by a deploy: its id (hex) and row budget.
+/// A program registered by a deploy: its id (hex), row budget, call ABI and
+/// output words (`blacksilk_tx::px::Registration`).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KnownProgram {
     pub id: String,
     /// `cycles, keys, add, bit, lt, shift, mul, poseidon`.
     pub budget: [usize; 8],
+    #[serde(default)]
+    pub abi: u32,
+    /// The exact number of public output words every call publishes.
+    #[serde(default)]
+    pub out_words: u32,
 }
 
 impl KnownProgram {
@@ -203,12 +217,74 @@ impl KnownProgram {
     }
 }
 
-/// A deployed contract, from the chain's registration list.
+/// A deployed contract, derived from its deploy transaction ([`deployed`]).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KnownContract {
     pub id: String,
     pub height: u64,
     pub programs: Vec<KnownProgram>,
+    /// Derived from the deploy itself. `false` only in wallet files written
+    /// when registrations came from the node's list: such a file rescans
+    /// (`Wallet::from_json`).
+    #[serde(default)]
+    pub from_deploy: bool,
+}
+
+/// The registrations of the deploys among `txs` (block `height`), in block
+/// order, exactly as consensus records them (`MemoryChain::apply_block`):
+/// the contract id (`PxDeploy::contract_id`, which binds the key image, the
+/// salt and every program's ELF, budget, ABI and output words) and each
+/// program's id. A program that does not load cannot be in a valid block.
+pub fn deployed(txs: &[Transaction], height: u64) -> Result<Vec<KnownContract>, WalletError> {
+    txs.iter()
+        .filter_map(|t| match t {
+            Transaction::PxDeploy(d) => Some(d),
+            _ => None,
+        })
+        .map(|d| {
+            let programs = d
+                .programs
+                .iter()
+                .map(|r| {
+                    let program = blacksilk_zkvm::Program::from_elf(&r.elf).map_err(|_| {
+                        WalletError::BadNodeData(format!(
+                            "a program deployed in block {height} does not load"
+                        ))
+                    })?;
+                    let b = r.budget;
+                    Ok(KnownProgram {
+                        id: hex::encode(program.id()),
+                        budget: [
+                            b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
+                        ],
+                        abi: r.abi,
+                        out_words: r.out_words,
+                    })
+                })
+                .collect::<Result<_, WalletError>>()?;
+            Ok(KnownContract {
+                id: digest_hex(&d.contract_id()),
+                height,
+                programs,
+                from_deploy: true,
+            })
+        })
+        .collect()
+}
+
+/// Whether the node's registration entries for one block say exactly what
+/// its deploys register (ids, program ids and budgets, in order; the list
+/// has no ABI or output words).
+pub fn listed_as(listed: &[&rpc::PxContractEntry], derived: &[KnownContract]) -> bool {
+    listed.len() == derived.len()
+        && listed.iter().zip(derived).all(|(l, d)| {
+            l.id == d.id
+                && l.programs.len() == d.programs.len()
+                && l.programs
+                    .iter()
+                    .zip(&d.programs)
+                    .all(|(lp, dp)| lp.id == dp.id && lp.budget == dp.budget)
+        })
 }
 
 /// How the wallet learned a contract record.
@@ -323,38 +399,35 @@ pub struct PxStore {
 }
 
 impl PxStore {
-    /// Downloads new entries of the chain's registration list, up to the
-    /// wallet's scanned height. Like the commitment list, the whole list is
-    /// fetched in order, so the node learns nothing about the wallet.
-    pub fn sync_contracts(&mut self, node: &dyn NodeApi, synced: u64) -> Result<(), WalletError> {
+    /// The node's registration list up to block `base` (`/px/contracts`,
+    /// fetched whole and in order, like the commitment list): where the
+    /// deploys below the restore height are. Its entries are claims, checked
+    /// against those blocks by the caller (`Wallet::sync`).
+    pub fn fetch_contract_list(
+        node: &dyn NodeApi,
+        base: u64,
+    ) -> Result<Vec<rpc::PxContractEntry>, WalletError> {
+        let mut list: Vec<rpc::PxContractEntry> = Vec::new();
         loop {
-            let from = self.contracts.len() as u64;
+            let from = list.len() as u64;
             let resp = node.px_contracts(from).map_err(WalletError::Node)?;
             if resp.from != from {
                 return Err(WalletError::BadNodeData("contract range".into()));
             }
-            let mut added = 0;
+            let n = resp.contracts.len();
             for c in resp.contracts {
-                if c.height > synced {
-                    return Ok(());
+                if c.height > base {
+                    return Ok(list);
                 }
-                digest_from_hex(&c.id)?;
-                self.contracts.push(KnownContract {
-                    id: c.id,
-                    height: c.height,
-                    programs: c
-                        .programs
-                        .into_iter()
-                        .map(|p| KnownProgram {
-                            id: p.id,
-                            budget: p.budget,
-                        })
-                        .collect(),
-                });
-                added += 1;
+                if c.height == 0 || list.last().is_some_and(|l| l.height > c.height) {
+                    return Err(WalletError::BadNodeData(
+                        "the contract list is out of height order".into(),
+                    ));
+                }
+                list.push(c);
             }
-            if added == 0 || self.contracts.len() as u64 >= resp.total {
-                return Ok(());
+            if n == 0 || list.len() as u64 >= resp.total {
+                return Ok(list);
             }
         }
     }
@@ -419,6 +492,15 @@ pub fn vault_check(c: &KnownContract) -> Result<Budget, WalletError> {
              not cover CLAIM would lock funds for good, so the wallet refuses it"
                 .into(),
         ));
+    }
+    let words = blacksilk_px::vault::OUT_WORDS;
+    if p.abi != ABI_VERSION || p.out_words != words {
+        return Err(WalletError::Contract(format!(
+            "this contract registers the vault with call ABI {} and {} output word(s), where the \
+             vault is called with ABI {ABI_VERSION} and publishes exactly {words} output word: \
+             no call of it could ever be valid, so funds locked in it would be lost",
+            p.abi, p.out_words
+        )));
     }
     Ok(budget)
 }
@@ -511,9 +593,10 @@ impl PxStore {
     }
 
     /// Applies block `height` (the next after the tree's): checks every PX
-    /// anchor first (`check_block`; nothing is changed on a refusal), then
-    /// records the PX outputs paid to `account`, the contract records
-    /// addressed to it, and the spends of both, and appends the block's
+    /// anchor first (`check_block`) and derives the block's registrations
+    /// (`deployed`; nothing is changed on a refusal), then records the PX
+    /// outputs paid to `account`, the contract records addressed to it, the
+    /// spends of both and the registrations, and appends the block's
     /// commitments to the wallet's tree with a witness for every leaf the
     /// wallet may spend.
     pub fn apply_block(
@@ -524,6 +607,7 @@ impl PxStore {
         height: u64,
     ) -> Result<(), WalletError> {
         let confirms = self.check_block(txs, height)?;
+        let contracts = deployed(txs, height)?;
         let mut tree = self.tree.take().expect("checked by check_block");
         let result = self.scan_block(&mut tree, keys, account, txs, height);
         match result {
@@ -532,6 +616,7 @@ impl PxStore {
                     tree.confirm(height);
                 }
                 self.tree = Some(tree);
+                self.contracts.extend(contracts);
                 Ok(())
             }
             // Only a full tree fails here, which consensus never allows: the
@@ -689,19 +774,30 @@ impl PxStore {
         // opening its funds could not be recovered (review F14).
     }
 
-    /// Builds the tree up to block `base` (the block before the first one
-    /// the wallet scans), unless it exists. Below the restore height the
-    /// commitments come from the node's bulk list, fetched whole (the
-    /// backfill, bound to the chain later: `crate::tree`); from the genesis
-    /// (whose body is empty) nothing is fetched.
-    pub fn backfill(&mut self, node: &dyn NodeApi, base: u64) -> Result<(), WalletError> {
-        if self.tree.is_some() {
-            return Ok(());
-        }
-        if base == 0 {
-            self.tree = Some(WalletTree::new(0, &[], false).map_err(tree_error)?);
-            return Ok(());
-        }
+    /// Sets the state below the first block the wallet scans (block
+    /// `base`): the tree from the chain's commitments up to it (`backfilled`
+    /// unless the list is known exact, `crate::tree`) and the registrations
+    /// derived from the deploys up to it. Replaces what was there.
+    pub fn set_base(
+        &mut self,
+        base: u64,
+        commitments: &[(u64, Digest)],
+        backfilled: bool,
+        contracts: Vec<KnownContract>,
+    ) -> Result<(), WalletError> {
+        self.tree = Some(WalletTree::new(base, commitments, backfilled).map_err(tree_error)?);
+        self.contracts = contracts;
+        Ok(())
+    }
+
+    /// The node's commitment list up to block `base` (`/px/commitments`,
+    /// fetched whole: the backfill). Checked by the caller against the block
+    /// of its last entry (`Wallet::sync`), and bound to the chain later
+    /// (`crate::tree`).
+    pub fn fetch_commitments(
+        node: &dyn NodeApi,
+        base: u64,
+    ) -> Result<Vec<(u64, Digest)>, WalletError> {
         let mut list: Vec<(u64, Digest)> = Vec::new();
         loop {
             let from = list.len() as u64;
@@ -722,42 +818,55 @@ impl PxStore {
                 break;
             }
         }
-        self.tree = Some(WalletTree::new(base, &list, true).map_err(tree_error)?);
-        Ok(())
+        Ok(list)
     }
 
-    /// Places the imported contract records not found yet (`lookup`): one
-    /// bulk download of the chain's commitment list, which must give the
-    /// wallet's own root (`WalletTree::witness_from_list`), so nothing of it
-    /// is trusted. A record not in it is found later by the block it
-    /// confirms in.
-    pub fn resolve_lookups(&mut self, node: &dyn NodeApi) -> Result<(), WalletError> {
+    /// Places the imported contract records not found yet (`lookup`) that
+    /// lie in a scanned block the tree still logs (`WalletTree::
+    /// witness_from_log`), asking the node nothing (RTW3-15: a download of
+    /// the commitment list after an import would tell the node that the
+    /// wallet holds a record whose position it does not know). A record in
+    /// an older block stays looked for: it is placed from the backfill list
+    /// of the next rescan (`place_from_list`); a record not yet on chain is
+    /// placed by the block it confirms in.
+    pub fn resolve_lookups(&mut self) -> Result<Vec<String>, WalletError> {
+        let mut unplaced = Vec::new();
+        let Some(tree) = self.tree.as_mut() else {
+            return Ok(unplaced);
+        };
+        for r in &mut self.contract_records {
+            if !r.lookup || r.position.is_some() {
+                r.lookup = false;
+                continue;
+            }
+            let cm = digest_from_hex(&r.commitment)?;
+            match tree.witness_from_log(&cm).map_err(tree_error)? {
+                Some((pos, height)) => {
+                    r.position = Some(pos);
+                    r.height.get_or_insert(height);
+                    r.lookup = false;
+                }
+                None => unplaced.push(r.commitment.clone()),
+            }
+        }
+        Ok(unplaced)
+    }
+
+    /// Places the imported records still looked for that are in `list`, the
+    /// chain's commitments up to the tree's height (the backfill of a
+    /// rescan), which must give the wallet's own root
+    /// (`WalletTree::witness_from_list`).
+    pub fn place_from_list(&mut self, list: &[(u64, Digest)]) -> Result<(), WalletError> {
         let wanted: Vec<usize> = (0..self.contract_records.len())
             .filter(|&i| {
                 self.contract_records[i].lookup && self.contract_records[i].position.is_none()
             })
             .collect();
         if wanted.is_empty() {
-            for r in &mut self.contract_records {
-                r.lookup = false;
-            }
             return Ok(());
         }
-        let size = self.tree_ref()?.size();
-        let mut list: Vec<Digest> = Vec::new();
-        let mut heights: Vec<u64> = Vec::new();
-        while (list.len() as u64) < size {
-            let from = list.len() as u64;
-            let resp = node.px_commitments(from).map_err(WalletError::Node)?;
-            if resp.from != from || resp.commitments.is_empty() {
-                return Err(WalletError::BadNodeData("commitment range".into()));
-            }
-            for (h, c) in resp.commitments {
-                list.push(digest_from_hex(&c)?);
-                heights.push(h);
-            }
-        }
-        list.truncate(size as usize);
+        let heights: Vec<u64> = list.iter().map(|e| e.0).collect();
+        let list: Vec<Digest> = list.iter().map(|e| e.1).collect();
         let found: Vec<(usize, u64)> = wanted
             .iter()
             .filter_map(|&i| {
@@ -766,27 +875,20 @@ impl PxStore {
                 Some((i, p as u64))
             })
             .collect();
-        let tree = self.tree.as_mut().expect("checked above");
+        let tree = self
+            .tree
+            .as_mut()
+            .ok_or_else(|| WalletError::Node("the wallet has not synced its PX tree yet".into()))?;
         let positions: Vec<u64> = found.iter().map(|&(_, p)| p).collect();
         tree.witness_from_list(&list, &positions)
             .map_err(tree_error)?;
         for (i, p) in found {
-            // The block height: the wallet's own where it scanned the block,
-            // else at most the node's (it only orders display and
-            // spendability, and every path is checked against the root).
-            let height = tree.height_of(p).unwrap_or_else(|| {
-                let below = if p < tree.base_size() {
-                    tree.base_height()
-                } else {
-                    tree.oldest_logged().map_or(tree.base_height(), |h| h - 1)
-                };
-                heights[p as usize].min(below)
-            });
+            // The block height: at most the list's (it only orders display
+            // and spendability, and every path is checked against the root).
+            let height = heights[p as usize].min(tree.base_height());
             let r = &mut self.contract_records[i];
             r.position = Some(p);
             r.height.get_or_insert(height);
-        }
-        for r in &mut self.contract_records {
             r.lookup = false;
         }
         Ok(())
@@ -1112,6 +1214,7 @@ mod tests {
             id: format!("{height:064x}"),
             height,
             programs: vec![],
+            from_deploy: true,
         }
     }
 
@@ -1174,6 +1277,7 @@ mod tests {
             id: digest_hex(&[9, 0, 0, 0, 0, 0, 0, 0]),
             height: 1,
             programs,
+            from_deploy: true,
         }
     }
 
@@ -1184,6 +1288,8 @@ mod tests {
             budget: [
                 b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
             ],
+            abi: ABI_VERSION,
+            out_words: blacksilk_px::vault::OUT_WORDS,
         }
     }
 
@@ -1194,6 +1300,8 @@ mod tests {
         let other = KnownProgram {
             id: "ab".repeat(32),
             budget: [1_000; 8],
+            abi: ABI_VERSION,
+            out_words: 0,
         };
         let mut s = PxStore::default();
         // Unknown contract.
@@ -1234,6 +1342,70 @@ mod tests {
             let e = s.vault_budget(&contract).unwrap_err().to_string();
             assert!(e.contains("non-standard budget"), "{e}");
         }
+        // W3-39b: the vault registered with another call ABI or output-word
+        // count is uncallable (every call must publish exactly the
+        // registered words): refused.
+        for (abi, out_words) in [
+            (ABI_VERSION, blacksilk_px::vault::OUT_WORDS + 1),
+            (ABI_VERSION, 0),
+            (ABI_VERSION + 1, blacksilk_px::vault::OUT_WORDS),
+        ] {
+            let mut p = vault_program(BUDGET);
+            (p.abi, p.out_words) = (abi, out_words);
+            s.contracts = vec![vault_contract(vec![p])];
+            let e = s.vault_budget(&contract).unwrap_err().to_string();
+            assert!(e.contains("output word"), "{e}");
+        }
+    }
+
+    /// W3-39b: registrations are derived from the deploy itself, as
+    /// consensus records them; a program that does not load is node data
+    /// no valid block holds.
+    #[test]
+    fn registrations_are_derived_from_the_deploy() {
+        use blacksilk_px::vault;
+        use blacksilk_tx::px::Registration;
+        let mut chain = crate::wallet::mock_chain::MockChain::new(1);
+        let mut odd = Registration::new(vault::VAULT_ELF.to_vec(), vault::BUDGET, 3);
+        odd.abi = 7;
+        let d = chain.deploy(vec![
+            Registration::new(vault::VAULT_ELF.to_vec(), vault::BUDGET, vault::OUT_WORDS),
+            odd,
+        ]);
+        let txs = vec![Transaction::PxDeploy(Box::new(d.clone()))];
+        let got = deployed(&txs, 9).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, digest_hex(&d.contract_id()));
+        assert_eq!((got[0].height, got[0].from_deploy), (9, true));
+        let vault_id = hex::encode(vault::program().id());
+        let b = vault::BUDGET;
+        let budget = [
+            b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
+        ];
+        assert_eq!(
+            got[0].programs,
+            vec![
+                KnownProgram {
+                    id: vault_id.clone(),
+                    budget,
+                    abi: ABI_VERSION,
+                    out_words: vault::OUT_WORDS,
+                },
+                KnownProgram {
+                    id: vault_id,
+                    budget,
+                    abi: 7,
+                    out_words: 3,
+                },
+            ]
+        );
+        let mut bad = d;
+        bad.programs[0].elf = vec![0; 16];
+        let txs = vec![Transaction::PxDeploy(Box::new(bad))];
+        assert!(matches!(
+            deployed(&txs, 9),
+            Err(WalletError::BadNodeData(_))
+        ));
     }
 
     #[test]

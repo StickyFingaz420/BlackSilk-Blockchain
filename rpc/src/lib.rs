@@ -19,6 +19,12 @@ pub const MAX_BLOCKS_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_BLOCKS_PER_REQUEST: u64 = 100;
 /// Maximum indices per `/outputs` request.
 pub const MAX_OUTPUTS_PER_REQUEST: usize = 1024;
+/// Maximum headers per `/headers` request (Bitcoin's `headers` message
+/// carries as many).
+pub const MAX_HEADERS_PER_REQUEST: u64 = 2_000;
+/// Bytes of one encoded block header (`blacksilk_consensus::HEADER_SIZE`,
+/// which the node and the wallet assert equal).
+pub const HEADER_BYTES: usize = 100;
 
 // ---- authentication (docs/blocks.md §9.1) ----
 
@@ -212,6 +218,22 @@ pub struct Blocks {
     pub blocks: Vec<BlockEntry>,
 }
 
+/// Headers of connected blocks by height, answering
+/// `GET /headers?from=h&count=n` (`1 ≤ n ≤` [`MAX_HEADERS_PER_REQUEST`]):
+/// the wallet's header check reads the chain from the genesis with it
+/// (docs/blocks.md §9, §10). Like `/blocks` it names only a height range.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Headers {
+    /// Height of the first header (the request's `from`).
+    pub from: u64,
+    /// The headers of blocks `from, from + 1, …` up to the request's count
+    /// or the connected tip, [`HEADER_BYTES`] bytes each, concatenated, as
+    /// hex. Empty when `from` is above the tip.
+    pub headers: String,
+    /// The node's connected tip height.
+    pub height: u64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Distribution {
     /// `cumulative[h]` = outputs in blocks `0..=h`.
@@ -335,6 +357,9 @@ fn px_commitments_cap(limit: u64) -> usize {
 /// each, with a 2x margin.
 pub const MAX_PX_CONTRACTS_RESPONSE_BYTES: usize =
     MAX_PX_CONTRACTS_PER_REQUEST as usize * (16 * 640 + 256) + 64 * 1024;
+/// `/headers`: at most `MAX_HEADERS_PER_REQUEST` headers in hex, plus framing.
+pub const MAX_HEADERS_RESPONSE_BYTES: usize =
+    2 * MAX_HEADERS_PER_REQUEST as usize * HEADER_BYTES + 64 * 1024;
 /// `/outputs`: one entry of about 250 bytes per requested index, with a 4x margin.
 pub const OUTPUT_ENTRY_RESPONSE_BYTES: usize = 1024;
 /// `/distribution?to=h`: `h + 1` numbers of at most 20 digits and a comma.
@@ -672,6 +697,15 @@ impl Client {
         self.get(
             &format!("/blocks?from={from}&count={count}"),
             MAX_BLOCKS_RESPONSE_LIMIT,
+        )
+    }
+
+    /// The headers of connected blocks `from..from + count` (fewer at the
+    /// tip; `count` at most [`MAX_HEADERS_PER_REQUEST`]).
+    pub fn headers(&self, from: u64, count: u64) -> Result<Headers, RpcError> {
+        self.get(
+            &format!("/headers?from={from}&count={count}"),
+            MAX_HEADERS_RESPONSE_BYTES,
         )
     }
 
@@ -1021,6 +1055,13 @@ mod tests {
             height: u64::MAX,
         };
         assert!(2 * serde_json::to_vec(&page).unwrap().len() <= MAX_PX_CONTRACTS_RESPONSE_BYTES);
+        // A full /headers page.
+        let headers = Headers {
+            from: u64::MAX,
+            headers: "f".repeat(2 * HEADER_BYTES * MAX_HEADERS_PER_REQUEST as usize),
+            height: u64::MAX,
+        };
+        assert!(serde_json::to_vec(&headers).unwrap().len() + 1024 <= MAX_HEADERS_RESPONSE_BYTES);
         // /blocks and /template: checked at compile time (next to the caps).
     }
 

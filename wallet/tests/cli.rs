@@ -145,6 +145,8 @@ fn vault_timeout_refund_and_recovery_commands() {
         &path,
         n,
         &[
+            // The test chain's timestamps are from 2023 (RTW3-6).
+            "--allow-stale-tip",
             "px-vault-lock",
             "--contract",
             &contract,
@@ -184,7 +186,17 @@ fn vault_timeout_refund_and_recovery_commands() {
     assert!(text(&out.stderr).contains("claim_lock:refund_lock:timeout"));
 
     // No stored terms: nothing to refund.
-    let out = run(&path, n, &["px-vault-refund", "--record", &contract], "");
+    let out = run(
+        &path,
+        n,
+        &[
+            "--allow-stale-tip",
+            "px-vault-refund",
+            "--record",
+            &contract,
+        ],
+        "",
+    );
     assert!(!out.status.success());
     assert!(
         text(&out.stderr).contains("no stored terms"),

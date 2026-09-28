@@ -91,6 +91,14 @@ struct Persisted {
     /// header check (absent in older files: fetched when needed).
     #[serde(default)]
     headers: Vec<String>,
+    /// Where the header chain checked from the genesis ends
+    /// (`Wallet::checked_through`; absent in older files: the next check
+    /// starts from the genesis).
+    #[serde(default)]
+    checked_through: Option<u64>,
+    /// Ids (hex) of the last RandomX key blocks among the checked headers.
+    #[serde(default)]
+    key_ids: BTreeMap<u64, String>,
 }
 
 pub(super) fn h32(s: &str) -> Result<[u8; 32], WalletError> {
@@ -140,6 +148,12 @@ impl Wallet {
                 .headers
                 .iter()
                 .map(|h| hex::encode(h.to_bytes()))
+                .collect(),
+            checked_through: self.checked_through,
+            key_ids: self
+                .key_ids
+                .iter()
+                .map(|(h, id)| (*h, hex::encode(id)))
                 .collect(),
         };
         serde_json::to_vec(&p).expect("serializable")
@@ -234,6 +248,23 @@ impl Wallet {
                     .ok_or_else(|| WalletError::Serialization("bad stored header".into()))
             })
             .collect::<Result<_, _>>()?;
+        w.checked_through = p.checked_through;
+        w.key_ids = p
+            .key_ids
+            .iter()
+            .map(|(h, id)| Ok((*h, h32(id)?)))
+            .collect::<Result<_, WalletError>>()?;
+        if w.px.contracts.iter().any(|c| !c.from_deploy) {
+            // Written when registrations came from the node's list (before
+            // W3-39b): they are derived again from the deploys by a rescan.
+            w.px.contracts.clear();
+            w.px.tree = None;
+            w.warnings.push(format!(
+                "this wallet file holds contract registrations taken from the node's list; the \
+                 next sync rescans from block {} to derive them from the deploys",
+                w.restore_height
+            ));
+        }
         if w.px.legacy_commitments.take().is_some() {
             // Written before the wallet built its own PX tree (dossier 39
             // W1): the next sync rescans from the restore height to build it.

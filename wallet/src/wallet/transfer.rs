@@ -138,7 +138,7 @@ impl Wallet {
         rules: &TxRules,
         rng: &mut R,
     ) -> Result<(Hash, u64), WalletError> {
-        self.sync(node)?;
+        self.sync_to_send(node)?;
         let rules = self.next_rules(rules)?;
         let (inputs, fee) = self.select_inputs(amount, 1, &rules)?;
         let plans = self.plans_for(node, &inputs, rng)?;

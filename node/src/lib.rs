@@ -239,6 +239,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/block"),
     ("POST", "/tx"),
     ("GET", "/blocks"),
+    ("GET", "/headers"),
     ("GET", "/distribution"),
     ("POST", "/outputs"),
     ("GET", "/px/commitments"),
@@ -268,6 +269,7 @@ pub fn router_secured(app: App, policy: guard::Policy) -> Router {
         .route("/block", post(submit_block))
         .route("/tx", post(submit_tx))
         .route("/blocks", get(blocks))
+        .route("/headers", get(headers))
         .route("/distribution", get(distribution))
         .route("/outputs", post(outputs))
         .route("/px/commitments", get(px_commitments))
@@ -627,6 +629,85 @@ async fn blocks(
     })
     .await?;
     Ok(Json(rpc::Blocks { blocks: out }))
+}
+
+const _: () = assert!(rpc::HEADER_BYTES == blacksilk_consensus::HEADER_SIZE);
+
+#[derive(Deserialize)]
+struct HeadersQuery {
+    from: u64,
+    count: u64,
+}
+
+/// The headers of the connected blocks `from..from + count` (fewer at the
+/// connected tip, none above it), oldest first: the answer of `/headers`
+/// (docs/blocks.md §9). Exposed for tests: the handler is exactly this.
+///
+/// Cost: one lookup per header. The connected chain is read from the
+/// header chain's height index, except for connected blocks off the best
+/// header chain (a heavier header branch whose bodies are missing), which
+/// are found by walking back from the connected tip to that branch.
+pub fn connected_headers(m: &ChainManager, from: u64, count: u64) -> Vec<BlockHeader> {
+    let tip = m.height();
+    if count == 0 || from > tip {
+        return Vec::new();
+    }
+    let end = from.saturating_add(count - 1).min(tip);
+    let hc = m.headers();
+    // Connected blocks above the fork point with the best header chain,
+    // newest first (none while the connected tip is on it).
+    let mut off_main = Vec::new();
+    let mut id = m.tip_id();
+    let mut h = tip;
+    while !hc.is_on_main(&id) {
+        let header = *hc.header(&id).expect("connected blocks have headers");
+        if h <= end {
+            off_main.push(header);
+        }
+        if h == from {
+            // Every requested header is off the best header chain.
+            off_main.reverse();
+            return off_main;
+        }
+        id = header.prev_id;
+        h -= 1;
+    }
+    // Heights `from..=h` are on the best header chain (the genesis always is).
+    let mut out: Vec<BlockHeader> = (from..=h.min(end))
+        .map(|x| {
+            let id = hc.main_id_at(x).expect("below a block on the best chain");
+            *hc.header(&id).expect("known header")
+        })
+        .collect();
+    out.extend(off_main.into_iter().rev());
+    out
+}
+
+/// `/headers`: one Query command copies the headers (100 bytes each, at
+/// most `rpc::MAX_HEADERS_PER_REQUEST`); hex encoding follows outside it.
+async fn headers(
+    State(App { chain: s, .. }): State<App>,
+    Query(q): Query<HeadersQuery>,
+) -> Result<Json<rpc::Headers>, ApiError> {
+    if q.count == 0 || q.count > rpc::MAX_HEADERS_PER_REQUEST {
+        return Err(bad_request(format!(
+            "count must be 1..={}",
+            rpc::MAX_HEADERS_PER_REQUEST
+        )));
+    }
+    let (headers, height) = with_chain(&s, move |m| {
+        (connected_headers(m, q.from, q.count), m.height())
+    })
+    .await?;
+    let mut bytes = Vec::with_capacity(headers.len() * rpc::HEADER_BYTES);
+    for h in &headers {
+        bytes.extend_from_slice(&h.to_bytes());
+    }
+    Ok(Json(rpc::Headers {
+        from: q.from,
+        headers: hex::encode(bytes),
+        height,
+    }))
 }
 
 #[derive(Deserialize)]

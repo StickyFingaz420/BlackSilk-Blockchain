@@ -646,6 +646,61 @@ impl WalletTree {
         self.blocks.front().map(|b| b.height)
     }
 
+    /// A witness for the leaf `cm` of a scanned block the tree still logs
+    /// (RTW3-15: an imported record is placed without asking the node for
+    /// anything). The tree state is replayed from the last checkpoint below
+    /// that block through the logged blocks, and must end at the tree's own
+    /// frontier. Returns the leaf's position and block height, or `None` if
+    /// `cm` is not in a logged block that can be replayed.
+    pub fn witness_from_log(&mut self, cm: &Digest) -> Result<Option<(u64, u64)>, TreeError> {
+        let Some((block, pos)) = self.blocks.iter().find_map(|b| {
+            let first = b.size - b.commitments.len() as u64;
+            b.commitments
+                .iter()
+                .position(|c| c == cm)
+                .map(|i| (b.height, first + i as u64))
+        }) else {
+            return Ok(None);
+        };
+        if let Some(w) = self.witnesses.get(&pos) {
+            return Ok((w.leaf == *cm).then_some((pos, block)));
+        }
+        let Some((&cp, frontier)) = self.checkpoints.range(..block).next_back() else {
+            return Ok(None);
+        };
+        // Every block after the checkpoint must be logged.
+        let replay: Vec<&BlockLog> = self.blocks.iter().filter(|b| b.height > cp).collect();
+        if replay.first().map(|b| b.height) != Some(cp + 1)
+            || replay.len() as u64 != self.top - cp
+            || !self.current.is_empty()
+        {
+            return Ok(None);
+        }
+        let mut perm = HostPerm::new();
+        let mut f = frontier.clone();
+        let mut witness: Option<Witness> = None;
+        for b in replay {
+            for &c in &b.commitments {
+                let at = f.append(&mut perm, c, |level, index, root| {
+                    if let Some(w) = witness.as_mut() {
+                        w.note(level, index, root);
+                    }
+                })?;
+                if at == pos {
+                    witness = Some(Witness::new(pos, c, &f));
+                }
+            }
+        }
+        if f != self.frontier {
+            return Err(TreeError::Inconsistent(
+                "the logged blocks do not replay to the wallet's tree".into(),
+            ));
+        }
+        let w = witness.expect("the leaf is in a replayed block");
+        self.witnesses.insert(pos, w);
+        Ok(Some((pos, block)))
+    }
+
     /// Witnesses for the leaves `positions` of the chain's commitment list
     /// `list` (every commitment, in tree order), after checking that its
     /// first `size()` entries give this tree's root: the list is then the

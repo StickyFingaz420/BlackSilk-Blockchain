@@ -55,7 +55,7 @@ impl Wallet {
         rng: &mut R,
     ) -> Result<(Hash, Digest, u64), WalletError> {
         check_vault_deploy(&programs)?;
-        self.sync(node)?;
+        self.sync_to_send(node)?;
         let rules = self.next_rules(rules)?;
         // Two outputs (the transfer minimum): change, and a zero-value output
         // to this wallet.
@@ -176,7 +176,7 @@ impl Wallet {
         rules: &TxRules,
         rng: &mut R,
     ) -> Result<(Hash, Digest, vault::Terms), WalletError> {
-        self.sync(node)?;
+        self.sync_to_send(node)?;
         let rules = self.next_rules(rules)?;
         let next = self.synced_height + 1;
         if timeout != 0 {
@@ -469,7 +469,7 @@ impl Wallet {
         rng: &mut R,
     ) -> Result<(Hash, u64), WalletError> {
         if self.px_vault_terms(record).is_none() {
-            self.sync(node)?;
+            self.sync_to_send(node)?;
             self.recover_vault_locks();
         }
         let terms = self.px_vault_terms(record).ok_or_else(|| {
@@ -687,7 +687,7 @@ impl Wallet {
         rules: &TxRules,
         rng: &mut R,
     ) -> Result<(Hash, u64), WalletError> {
-        self.sync(node)?;
+        self.sync_to_send(node)?;
         let rules = self.next_rules(rules)?;
         let next = self.synced_height + 1;
         // The anchor's root and the paths come from the wallet's own tree
@@ -962,10 +962,10 @@ impl Wallet {
 
     /// Imports a shared contract-record opening addressed to one of this
     /// wallet's PX addresses. It counts as confirmed once its commitment is
-    /// found on chain: at the next sync, in one bulk download of the chain's
-    /// commitment list checked against the wallet's own root (it may be
-    /// older than the blocks this wallet scanned), else in the block it
-    /// confirms in. Returns its commitment.
+    /// found on chain: at the next sync among the commitments of the recent
+    /// blocks the wallet's tree keeps, else in the block it confirms in, else
+    /// (a record older than those blocks) from the backfill list of a rescan.
+    /// No download is made for it (RTW3-15). Returns its commitment.
     pub fn px_import(&mut self, shared: &[u8]) -> Result<Digest, WalletError> {
         for index in 0..=self.px.issued.saturating_add(PX_LOOKAHEAD) {
             let (keys, owner) = self.px_keys.get(&self.px_account, index);
@@ -1219,7 +1219,8 @@ pub fn check_vault_deploy(programs: &[Registration]) -> Result<(), WalletError> 
             }
             if r.abi != ABI_VERSION || r.out_words != vault::OUT_WORDS {
                 return Err(WalletError::Contract(
-                    "the vault must be registered with the current call ABI and its one output                      word (vault::OUT_WORDS)"
+                    "the vault must be registered with the current call ABI and its one output \
+                     word (vault::OUT_WORDS)"
                         .into(),
                 ));
             }
@@ -1502,7 +1503,10 @@ mod tests {
                 budget: [
                     b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
                 ],
+                abi: ABI_VERSION,
+                out_words: vault::OUT_WORDS,
             }],
+            from_deploy: true,
         }];
         r
     }

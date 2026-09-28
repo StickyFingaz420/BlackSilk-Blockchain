@@ -330,7 +330,7 @@ impl Wallet {
         rules: &TxRules,
         rng: &mut R,
     ) -> Result<(Hash, u64), WalletError> {
-        self.sync(node)?;
+        self.sync_to_send(node)?;
         let rules = self.next_rules(rules)?;
         let fee = px_standard_fee();
         let needed = amount
@@ -418,7 +418,7 @@ impl Wallet {
         rules: &TxRules,
         rng: &mut R,
     ) -> Result<(Hash, u64), WalletError> {
-        self.sync(node)?;
+        self.sync_to_send(node)?;
         let rules = self.next_rules(rules)?;
         let fee = px_standard_fee();
         let (chosen, inputs, total, root) = self.px_inputs(amount.saturating_add(fee), rng)?;
@@ -470,7 +470,7 @@ impl Wallet {
         rules: &TxRules,
         rng: &mut R,
     ) -> Result<(Hash, u64), WalletError> {
-        self.sync(node)?;
+        self.sync_to_send(node)?;
         let rules = self.next_rules(rules)?;
         let fee = px_standard_fee();
         let out = amount.saturating_add(fee);

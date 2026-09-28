@@ -705,8 +705,8 @@ undo. Tests check that a reorganization restores the root and pool exactly.
     gives an empty page. The node copies only the requested page under its chain
     lock, so the cost of a request is proportional to the page, not to the chain;
   - the contract-registration list (`/px/contracts`: height, contract id, program
-    ids and budgets). The registered ABI and output words are in the deploy itself,
-    which wallets also see when they scan the block.
+    ids and budgets), only below their restore height (once), to find the deploys
+    there. Registrations themselves are derived from the deploys (§13.4).
 
   The node never learns which records a wallet owns or which contracts it uses.
 - **The wallet's own tree** (dossier 39 W1, finding F39-1; `wallet/src/tree.rs`). The
@@ -732,10 +732,19 @@ undo. Tests check that a reorganization restores the root and pool exactly.
     altered or relabelled commitment) is caught by the first PX transaction anchored
     after it, or, for commitments of later blocks labelled as older ones, by the first
     scanned commitment; the wallet then rebuilds the tree from a fresh list at the
-    next sync. Residual: a node that withholds blocks (reports a stale tip) and labels
-    commitments of the withheld blocks as older ones can still steer the anchor of a
-    transaction whose anchor's tree holds only backfilled commitments, until a scanned
-    PX transaction confirms the list. A stale tip is not detectable from one node.
+    next sync.
+  - **The backfill's end is checked against its block** (W3-39b). The wallet reads the
+    block of the last listed commitment (bound to the header chain, which a restore
+    checks from the genesis, blocks.md §10) and refuses the list unless the entries at
+    that height are exactly the block's commitments. This closes the residual W3-39
+    left: a node that withholds blocks (reports a stale tip) and labels commitments of
+    the withheld blocks as older ones made the wallet's tree a real prefix of the
+    chain's that ran ahead of it, so its canonical anchor was the root of a later,
+    non-canonical height, which marks the transaction (demonstrated on the base by
+    `a_stale_tip_cannot_relabel_withheld_commitments_into_the_backfill`). Such a list
+    ends with a commitment its claimed block does not hold. What remains is a list that
+    ends early (commitments left out after its last block), whose root no block accepts
+    once it is 100 blocks old: the rule above.
   - **Witnesses** are incremental and in-tree: for every leaf the wallet may spend,
     the left siblings are taken from the frontier when the leaf is appended and the
     right siblings recorded as the frontier completes them; the tree keeps the
@@ -744,13 +753,18 @@ undo. Tests check that a reorganization restores the root and pool exactly.
     blocks from a checkpoint; deeper ones rescan. The wallet file stores the frontier,
     the window, the last 820 blocks' commitments, the checkpoints and the witnesses,
     not the chain's whole list.
-  - **An imported record** already on chain is placed with one bulk download of the
-    list, accepted only if its first entries give the wallet's own root; otherwise the
-    block it confirms in places it.
+  - **An imported record** already on chain is placed from the commitments of the
+    recent blocks the tree keeps (replayed from a checkpoint, and required to end at the
+    wallet's own frontier); one not on chain yet is placed by the block it confirms in;
+    one older than the kept blocks is placed from the backfill list of a rescan (the
+    wallet warns). No download is made for it (RTW3-15: the earlier bulk download after
+    an import told the node that the wallet holds a record whose position it does not
+    know). Tested by `an_imported_record_is_placed_without_a_download`.
   - Tested (`wallet/src/tree.rs`, `wallet/src/wallet/tests_sync.rs`): paths equal the
     reference tree's, the window equals the consensus state's on random chains, a
-    rewind equals rebuilding, and a node that relabels, omits, alters or pads its list,
-    or serves a block anchored outside the window, is refused.
+    rewind equals rebuilding, and a node that relabels, omits, alters or pads its list
+    (behind a stale tip too), or serves a block anchored outside the window, is
+    refused.
 - CLI commands: `px-address`, `px-balance`, `px-deposit`, `px-send`, `px-withdraw`, and
   the contract commands of §13.4.
 - **Canonical anchor** (wallet policy, `wallet::px::anchor_height`). Wallets use the
@@ -902,17 +916,26 @@ share = version (1) ‖ cm (32) ‖ rho (32) ‖ delivery ciphertext to the reci
 
 ### 13.4 Wallet (`wallet/src/px.rs`, `wallet/src/wallet.rs`)
 
-**Contract index.** The wallet downloads the chain's complete registration list
-(`/px/contracts`, paged, in block order) up to its scanned height, like every other
-wallet.
-- A wallet created after a deploy knows the contract too. The first version indexed
-  deploys only while scanning, so a wallet newer than the deploy could not claim;
-  that was found in review and fixed.
+**Contract index** (W3-39b, `wallet::px::deployed`). The wallet derives every
+registration from the deploy transaction itself, as consensus records it: the contract
+id (which binds the deploy's first key image, salt and every program's ELF, budget, ABI
+and output words), and per program its id, budget, call ABI and output words.
+- From the blocks it scans, and below its restore height from the blocks that the
+  chain's registration list (`/px/contracts`, fetched whole, in block order) names:
+  each is read once, bound to the header chain (blocks.md §10), and the list must state
+  exactly what the block's deploys register, or it is refused. So a wallet created
+  after a deploy knows the contract too (the first version indexed deploys only while
+  scanning, so a wallet newer than the deploy could not claim; that was found in review
+  and fixed), and a node cannot change a registration: before W3-39b the list was
+  trusted, so a node could hide a program registered next to the vault (the P-1
+  backdoor) or show one that is not there (tested by
+  `registrations_come_from_scanned_deploys` and
+  `a_lying_registration_below_the_restore_height_is_detected`, which fail on the base).
+- A node can still leave a deploy below the restore height out of its list altogether:
+  the wallet then does not know that contract and refuses to use it.
 - To call a contract, the wallet uses the budget registered on chain and checks that
   its program is registered to that contract. For the vault it checks more (below).
-- The node is trusted for the list's availability, as for blocks. A false entry can
-  only make the wallet build a transaction that consensus refuses (PX3, PX5).
-- On a reorganization, entries above the fork are dropped and fetched again.
+- On a reorganization, registrations above the fork are dropped and derived again.
 
 **Contract records** are kept apart from the wallet's funds: never counted in the
 balance, never selected to pay. Their lifecycle:
@@ -943,8 +966,16 @@ So a contract is only as trustworthy as the least trustworthy of its programs.
   - a budget that covers LOCK but not CLAIM would lock funds for good (a CLAIM over
     budget cannot be proven);
   - any other budget would also make the contract's proofs stand out.
-- `px-contracts` prints a warning for a contract that registers the vault with other
-  programs or another budget.
+- **ABI and output words (W3-39b).** The vault must be registered with the current
+  call ABI and exactly `vault::OUT_WORDS` output words. Consensus accepts a deploy with
+  any output-word count up to `MAX_FN_OUTPUT_WORDS`, and every call must publish exactly
+  the registered count (F-28-5), so
+  a vault registered with another count can never be called: funds locked under it
+  would be lost. The wallet knows both values only since it derives registrations from
+  the deploys (tested by `registrations_come_from_scanned_deploys`).
+- `px-contracts` prints each program's ABI and output words, and a warning for a
+  contract that registers the vault with other programs, another budget, ABI or
+  output-word count.
 - **For any other contract:** read every program of the contract, not only the one
   you intend to call, before putting funds under it.
 
@@ -1094,7 +1125,11 @@ code.
   - rewinds keep created and imported records;
   - `clear-pending` keeps every contract-record opening;
   - contract records are never funds;
-  - `vault_operations_need_the_vault_alone_with_the_reference_budget` (P-1, P-2).
+  - `vault_operations_need_the_vault_alone_with_the_reference_budget` (P-1, P-2, and
+    the ABI and output words, W3-39b);
+  - `registrations_are_derived_from_the_deploy` (W3-39b).
+- `wallet/src/wallet/tests_sync.rs` (W3-39b): `registrations_come_from_scanned_deploys`,
+  `a_lying_registration_below_the_restore_height_is_detected`.
 - `wallet/src/wallet.rs` unit tests:
   - `vault_lock_and_claim_refuse_unsafe_contracts_before_proving`: a contract
     `{vault, backdoor}` and a vault with an odd budget are refused by lock and claim,
