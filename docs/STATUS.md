@@ -84,7 +84,7 @@ section named in the row.
 | Miner seed planner, `--prebuild auto`, light-mode bridge; labnet warm-up (09 W2) | Complete but requires further testing | `26408a6`, `36e0456`; [labnet warm-up evidence](evidence/labnet-warmup-2026-09-28/README.md) |
 | Template readiness gate and tip notification (W2-09b) | Not implemented | decisions, "W2-09" |
 | Full-mode miner across the first RandomX key switch (height 2113) at network parameters | Not implemented (light-mode miners crossed it) | [seed-switch evidence](evidence/labnet-seedswitch-2026-09-27/README.md) |
-| Chain-actor liveness: stage 0 tests | Complete but requires further testing; stages 1, 2 and 4 are not implemented | `9a73e7c`; decisions, "Agent 34" |
+| Chain-actor liveness (P0-A): stages 0-2 | Complete but requires further testing: stage 1 (per-peer slow lane, summary snapshot) and stage 2 (single-writer actor with priority lanes; E1-E4 equivalence, g1-g7 ordering, L1-L8 liveness all pass). Stages 3-4 (header index, mempool and verification outside the writer) are not implemented | merges f220ceb, fc1274b; docs/reviews/chain-actor-stage2.md |
 | Seed format v1 (27 words, check words, network, birthday), derived hedge keys | Complete but requires further testing; open: F37-11, K7, K8 | `ed82f30`, `7a6fe53`; decisions, "W2-37" |
 | `ANCHOR_MIN_DEPTH` (21) | Not implemented | decisions, "Agent 21" |
 | Clock sanity monitor (04) | Not implemented | decisions, "Agent 04" |

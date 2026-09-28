@@ -1,10 +1,14 @@
-# Chain actor, Stage 2: design addendum (not implemented)
+# Chain actor, Stage 2: design addendum (implemented, W2-34b; see the note below)
 
 Internal engineering design for P0-A (research dossier 34, `C:/bszkeval/p2/research/
 34-chain-actor-concurrency.md` §3.6 and §5; decisions "Agent 34"). It builds on Stage 1
 (per-peer slow lane, published chain summary, chain-free maintenance loop; docs/p2p.md
-§10). Nothing here is implemented yet, and nothing here changes consensus: the actor is a
-scheduler for the same `ChainManager` methods. This is not an audit and claims no security
+§10). **Status (2026-09-28):** implemented by W2-34b (`chain/src/actor.rs`,
+`p2p/src/net/chain_access.rs`; merge fc1274b), with the deviations it recorded: lanes are
+a `Mutex` plus `Condvar` queue, the L7 bound is one step per header-worker command, and
+`/template` is a plain Query command. E1-E4, g1-g7, L7, L8 and F1 are in `chain/tests/`.
+Nothing here changes consensus: the actor is a scheduler for the same `ChainManager`
+methods. This is not an audit and claims no security
 property that the tests below do not demonstrate.
 
 ## 1. Why Stage 1 is not the end
