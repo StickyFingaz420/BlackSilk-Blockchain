@@ -34,9 +34,12 @@ All integers are little-endian unless stated otherwise. Encoding primitives
 
 **Not protected in v1:**
 - **An active man in the middle** can read and modify a connection. Peers are not
-  authenticated; the encryption is opportunistic, like Bitcoin's BIP 324. The
-  consequences are limited: a MITM cannot forge valid blocks or transactions, only drop
-  or observe traffic.
+  authenticated; the encryption is opportunistic, like Bitcoin's BIP 324. A MITM cannot
+  forge valid blocks or transactions, but he can observe and drop traffic: he reads the
+  transactions a node originates (its stem, §8, so origin privacy is lost against him),
+  and he can eclipse a node whose connections he controls (F48-1). An explicit `--peer`
+  list does not stop him. A closed network can close this with a pre-shared key (§3);
+  a public network cannot.
 - **Traffic analysis** of sizes and timing.
 - **A global passive adversary** watching all links.
 
@@ -54,17 +57,50 @@ the clear:
 initiator → responder:  A = a·G     32 bytes, Ristretto255, a random
 responder → initiator:  B = b·G
 S       = a·B = b·A                 (reject non-canonical encodings and the identity)
-k       = H64("p2p/session", LE32(network_id) ‖ genesis_id ‖ A ‖ B ‖ S)
+k       = H64("p2p/session", LE32(network_id) ‖ genesis_id ‖ LE32(TRANSPORT_VERSION)
+                             ‖ psk_flag ‖ psk ‖ A ‖ B ‖ S)
 k_i→r   = k[0..32],  k_r→i = k[32..64]
 ```
 
+- Every input has a fixed length: `network_id` 4 bytes, `genesis_id` 32,
+  `TRANSPORT_VERSION` 4, `psk_flag` 1 (1 with a pre-shared key, else 0), `psk` 32 (zero
+  without a key), `A`, `B` and `S` 32 each. A known-answer vector, computed outside
+  the code, is the test `transport::tests::the_session_key_matches_its_known_answer`
+  (`p2p/src/transport.rs`).
 - `network_id` and the 32-byte `genesis_id` are bound into the keys (the genesis since
   testnet v3, R15-3: a release candidate or rehearsal with the same id but another
   genesis cannot join). Nodes of different networks or chains derive different keys,
   and the first frame fails to decrypt: a cross-network connection is detected without
   any plaintext network marker.
-- Ephemeral keys give **forward secrecy**: recorded traffic cannot be decrypted later,
-  even if a node is compromised.
+- **`TRANSPORT_VERSION` = 1** (`p2p/src/transport.rs`) is bound into the keys too
+  (dossier 30 W5, changed before the v3 testnet launch). It is not negotiated. A node of
+  another transport version derives other keys and fails at the first frame, so two
+  transports never talk. **No fallback:** a later transport is either a flag day or an
+  in-band extension negotiated inside this one; a node never falls back silently to a
+  weaker transport. The message protocol version (§4.1) is deliberately *not* in the
+  keys: it is negotiated in `Version`, and a peer below `MIN_PROTOCOL_VERSION` is refused
+  there with a clear reason.
+- **Closed-network pre-shared key** (optional, F48-1). A private test network can give
+  every member the same 32 secret bytes (`NetConfig::network_psk`; a file of 64
+  hexadecimal characters, for example from `openssl rand -hex 32`, read by
+  `NetworkPsk::load`). The key is mixed into `k`, so a node without it, or with another
+  key, fails at the first frame, and so does a man in the middle: without a key he can
+  run the handshake with both ends and read everything (`p2p/tests/transport_adversarial.rs`,
+  `a_man_in_the_middle_reads_the_traffic_unless_a_psk_is_set`). Limits: one leaked key
+  reopens the hole for everyone; members are not authenticated to one another; the key
+  is never printed (its `Debug` is redacted). It must never be required on a public
+  network.
+- Ephemeral keys protect a *finished* session against a later compromise of either
+  node's long-term state: nothing long-term exists to steal. They do **not** give more
+  than that:
+  - There is no rekeying. Whoever obtains a session key while the session runs (for
+    example from the memory of a running node) can decrypt the whole session, including
+    what was sent before.
+  - The AES key schedules are not wiped from memory when a session ends (the
+    `aes`/`aes-gcm` `zeroize` features are off; dossier 30 W7, open).
+  - A future attacker able to compute discrete logarithms in Ristretto255 can decrypt
+    recorded sessions (harvest now, decrypt later; the hybrid ML-KEM step of transport
+    v2 below addresses it).
 
 **Frames:**
 
@@ -74,11 +110,46 @@ frame = AEAD(k_dir, n,   LE32(len))      4 + 16 bytes
 ```
 
 - AEAD is AES-256-GCM. The nonce `n` is a 96-bit little-endian message counter that
-  starts at 0 and increases by 2 per frame, separately for each direction.
+  starts at 0 and increases by 2 per frame, separately for each direction. A replayed,
+  reordered, reflected or truncated frame fails (tests in `p2p/src/transport.rs`).
 - `len ≤ MAX_FRAME = MAX_BLOCK_BYTES + 64 KiB` is checked right after the length decrypts, before
-  any payload is read.
-- Any decryption failure ends the connection.
+  any payload is read. Before `Verack` the limit is `MAX_HANDSHAKE_FRAME` = 4096 bytes
+  (§4).
+- Any decryption failure ends the connection. It is **never scored and never bans**
+  (§10): anyone on the path can cause one by flipping a bit, and a node of another
+  network, genesis, transport version or pre-shared key causes one at the first frame.
+  It is counted in `NetStats::transport_failures`. Both ends send their first frame at
+  once, and the end that reads first fails and closes, so a refused connection is
+  counted on at least one side, not necessarily on both.
 - The counter never wraps: 2^64 frames are unreachable.
+
+### 3.1 Transport v2 (design notes; not implemented)
+
+Decided for the v3 genesis if it is complete and adversarially tested by the protocol
+freeze (decisions log, agent 30 W6); otherwise v3 ships the transport above and v2
+comes later through `TRANSPORT_VERSION`, as a flag day. There is no partial v2. The
+design (dossier 30 §5 W6):
+
+- **Keys:** ephemeral Ristretto255 keys sent as 64-byte Elligator-Squared encodings, so
+  the first bytes are uniform. Today a passive observer who decodes the first 32 bytes
+  of each direction recognizes a BlackSilk handshake with about 8 bits of confidence per
+  connection.
+- **Garbage:** 0 to 4095 random bytes and a derived 16-byte terminator (BIP 324
+  pattern); the garbage is authenticated as the first frame's associated data.
+- **Key schedule:** the same inputs as above with `TRANSPORT_VERSION = 2`, over the exact
+  encodings sent.
+- **Hybrid post-quantum step:** an ML-KEM-768 exchange inside the encrypted channel,
+  then a switch to `k' = H64("p2p/session-pq", k ‖ ss_pq ‖ H(transcript))` at a defined
+  frame in each direction. The encapsulation key is checked (FIPS 203) before use.
+- **Length block with flags:** a decoy bit, and a size class checked against the message
+  type (a block-size frame only while a block request to that peer is outstanding).
+- **Rekeying** every 224 frames per direction; a **session id** shown to operators for
+  comparing manual links out of band.
+- **Tests owed before activation:** encoding uniformity statistics and round trips,
+  known answers, the terminator search bound, the PQ switch point, `ek` validation,
+  fuzzing of the ML-KEM inputs, and v1-against-v2 failing cleanly with no fallback.
+- New dependencies (curve25519-dalek 5 with `lizard`, in `p2p` only; `ml-kem`) are
+  conditional on the supply-chain review (agent 44).
 
 ## 4. Handshake and version negotiation
 
@@ -99,7 +170,21 @@ Version {
 
 - There is deliberately **no user agent, no timestamp and no service bits**. Each would
   fingerprint software versions or clocks.
-- The handshake must complete within **10 s**, or the connection is closed.
+- **Before `Verack`** (dossier 30 W1) the peer is unregistered, so no message or byte
+  budget applies to it yet. The handshake therefore has its own limits:
+  - only `Version`, then at most 8 frames of unknown types (§4.1), then `Verack`. Any
+    other message, a malformed one or a ninth unknown frame closes the connection;
+  - every frame is at most **`MAX_HANDSHAKE_FRAME` = 4096 bytes** (`p2p/src/message.rs`),
+    refused as soon as its length decrypts;
+  - the key exchange must finish within 10 s, and the whole handshake, from the TCP
+    connection to the peer's `Verack`, within **20 s** (one deadline, not one per frame;
+    the margin is for Tor round trips).
+
+  A failure only closes the connection. Nothing is **scored or banned** before
+  registration: the peer is unauthenticated, and its address may be a proxy's, a hidden
+  service's loopback, or spoofed by whoever is on the path. At most about 40 KiB can
+  arrive per handshaking connection (10 frames of 4 KiB), and handshaking connections
+  count against the inbound limits (§9).
 
 ### 4.1 Protocol versions and extensibility (P0-8, R8-14)
 
@@ -128,7 +213,10 @@ How a later version (v3) adds a feature without splitting the network:
   that defines them. Older v2 peers ignore them anyway (§5), so a mistake costs
   bandwidth, not a ban.
 - **Negotiation** may use messages of new types between `Version` and `Verack`: a v2
-  node skips up to 8 frames of unknown types there.
+  node skips up to 8 frames of unknown types there. Each must fit in
+  `MAX_HANDSHAKE_FRAME` (4096 bytes), and the whole negotiation in the 20 s handshake
+  deadline: deployed nodes enforce both, so a later version cannot relax them without a
+  flag day.
 - No feature bitfield was added: with nothing to negotiate yet it would only be a
   constant, and each bit set later would fingerprint software versions. The protocol
   number carries the same information for features every node of a version supports.
@@ -633,7 +721,7 @@ dropped.
 
 | Violation | Score |
 |---|---|
-| Undecryptable frame, malformed known message, list over its limit | 100 |
+| Frame over `MAX_FRAME` (its length is authenticated), malformed known message, list over its limit | 100 |
 | Header with invalid PoW, bad difficulty, bad version or height, a timestamp not after the median-time-past | 100 |
 | Block whose body is invalid or does not match its header | 100 |
 | `Headers` that do not connect or are not a chain | 20 |
@@ -644,6 +732,14 @@ dropped.
 | Rate limit exceeded | 1 per excess message; the message is dropped |
 
 **Not penalized** (honest peers can trigger these):
+- a frame that fails to decrypt, at any time (§3). It closes the connection and is
+  counted in `NetStats::transport_failures`, never scored. It is not attributable: an
+  on-path party can flip one bit, and a ban would let it cut two honest nodes apart for
+  24 h in both directions (dossier 30 T-2; before 2026-09-28 it scored 100 and banned).
+  An active man in the middle who runs the handshake with both ends can still send
+  well-formed invalid messages under a peer's address; only a pre-shared key (§3) or
+  authenticated transports prevent that;
+- anything before `Verack` (§4): the connection is closed, unscored;
 - a header rejected only by the future-time rule;
 - a header that descends from a block whose **body** we found invalid (including
   that block's own header), whether it is relayed in `Headers` or arrives as a
@@ -895,7 +991,9 @@ already being written is finished first).
 
 ## 12. Known limitations
 
-- Peers are not authenticated (§1). A MITM can read or drop a connection's traffic.
+- Peers are not authenticated (§1). A MITM can read or drop a connection's traffic,
+  except on a closed network with a pre-shared key (§3). The transport has no rekeying
+  and no post-quantum step, and its first bytes are recognizable (§3.1).
 - PoW verification of headers costs about 0.45 s per header in RandomX light mode.
   Parallel verification divides this by the number of cores. Initial sync of a long
   chain is still slow until RandomX gets faster (AUDIT.md R1).

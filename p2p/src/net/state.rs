@@ -113,6 +113,7 @@ pub(super) struct State {
     pub(super) rng: ChaCha20Rng,
     pub(super) misbehaving_disconnects: u64,
     pub(super) slow_disconnects: u64,
+    pub(super) transport_failures: u64,
     /// The ban list changed since it was last saved.
     pub(super) bans_dirty: bool,
     /// Inbound connections accepted but not yet registered (handshake in

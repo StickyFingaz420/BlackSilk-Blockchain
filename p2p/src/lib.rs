@@ -2,7 +2,7 @@
 //!
 //! | Module | Spec | Content |
 //! |---|---|---|
-//! | [`transport`] | §3 | Ristretto255 key exchange, AES-256-GCM framed encryption |
+//! | [`transport`] | §3 | Ristretto255 key exchange, AES-256-GCM framed encryption, optional network pre-shared key |
 //! | [`message`] | §4–§5 | protocol messages, strict bounded codec |
 //! | [`addr`] | §5, §9 | IPv4/IPv6/Tor v3 addresses, network groups, routability |
 //! | [`addrman`] | §9 | bucketed address manager, ban list |
