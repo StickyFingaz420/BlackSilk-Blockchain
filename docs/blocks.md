@@ -269,12 +269,12 @@ Transactions from disconnected blocks return to the mempool if they are still va
     the origin's ends; refusing it there would drop the origin's stem silently (a
     Dandelion black hole), and the origin would fluff its own transaction when its
     embargo fires (RTW1B-1, `rtw1b_a_later_stem_peer_admits_the_origins_reinjection`,
-    `a_recently_expired_transaction_is_stemmed_for_a_peer_but_not_originated`). What
-    the guard does not cover: the entries are not persisted, so a node restarted inside
-    the window can re-originate the transaction to a peer that still pools it; the
-    originated set (dossier 33 W2) and the wallet rebroadcast redesign (dossier 38 W4)
-    are the planned remedies, and no privacy claim about expiry and resubmission rests
-    on this guard alone.
+    `a_recently_expired_transaction_is_stemmed_for_a_peer_but_not_originated`). The
+    guard's entries are not persisted; the node's originated set (p2p.md §8.1) is,
+    and keeps a restarted node from originating its own transaction again inside the
+    window, and the wallet does not send a transaction its node lacks before
+    `relayed + 2 190` (px.md §12). Neither covers a transaction submitted through
+    another node.
   - After a reorganization to a lower height, expiry and the guard count against the
     new height: nothing expires early, and the guard lasts longer, never shorter.
   - A transaction returned by a disconnected block is pooled again even inside the
@@ -305,8 +305,10 @@ Transactions from disconnected blocks return to the mempool if they are still va
         chain lock (`mempool_revalidation_cost_per_transaction`).
       - Its verdicts match full validation
         (`revalidation_after_an_extension_agrees_with_full_validation`).
-- **The mempool is not persisted.** After a restart it is empty; wallets rebroadcast
-  their stored transactions (px.md §12).
+- **The mempool is not persisted.** After a restart it is empty; peers' pool
+  re-announcement (p2p.md §7) brings pending transactions back, and a transaction this
+  node originated is held, not originated again, if its wallet sends it (p2p.md §8.1,
+  px.md §12).
 - **No consensus effect.** Blocks are always validated in full, whatever the pool
   holds.
   - The only use of pool contents in block validation is the PX proof cache, keyed by
@@ -315,8 +317,8 @@ Transactions from disconnected blocks return to the mempool if they are still va
     state from the same block, and both reject a tampered copy
     (`mempool_contents_never_change_a_blocks_verdict`).
 - **Not implemented:** per-peer or per-source limits beyond the byte caps and the P2P
-  rate limits; pool re-announcement with backoff and the wallet-side rebroadcast
-  redesign (dossier 38 W4, W4n; owners 33/30 and 38).
+  rate limits; mempool persistence (dossiers 35/12). Pool re-announcement is in p2p.md
+  §7, the wallet rebroadcast in px.md §12.
 
 ## 8. Storage (node)
 

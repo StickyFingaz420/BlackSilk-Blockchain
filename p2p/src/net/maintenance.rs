@@ -1,10 +1,11 @@
 //! The maintenance loop: Dandelion epochs and embargo, tip announcements,
-//! trickle flush, pings, timeouts, re-requests, downloads, outbound, saving.
+//! pool re-announcement, trickle flush, pings, timeouts, re-requests,
+//! downloads, outbound, saving.
 
 use super::blocks::{release_block_slot, schedule_downloads, BLOCK_TIMEOUT};
 use super::headers::HEADERS_TIMEOUT;
 use super::peers::maintain_outbound;
-use super::relay::{remember, retry_tx, TX_TIMEOUT};
+use super::relay::{reannounce_pool, remember, retry_tx, TX_TIMEOUT};
 use super::state::{short, unix_now, Inner, State};
 use super::stem::{fluff, send_held_local_txs};
 use crate::dandelion::PeerId;
@@ -28,6 +29,8 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
     let mut last_save = Instant::now() - SAVE_INTERVAL + Duration::from_secs(5);
     let mut saved_fingerprint = (0, 0);
     let mut last_outbound = Instant::now() - Duration::from_secs(60);
+    // The next block's height at the previous tick (0: not seen yet).
+    let mut last_next = 0u64;
     loop {
         tokio::time::sleep(inner.cfg.tick).await;
         let now = Instant::now();
@@ -59,6 +62,18 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
         let (tip, header_height_now) = inner
             .with_chain(|c| ((c.tip_id(), *c.tip_header()), c.header_height()))
             .await;
+        // Once per new height: pool re-announcement (docs/p2p.md §7), and
+        // originated-set entries whose window ended are dropped (§8.1).
+        let next = tip.1.height + 1;
+        if next != last_next {
+            if last_next != 0 {
+                reannounce_pool(&inner, last_next, next).await;
+            }
+            last_next = next;
+            if inner.state().originated.prune(next) > 0 {
+                inner.save_originated().await;
+            }
+        }
         {
             let mut st = inner.state();
             if st.announced_tip != tip.0 {

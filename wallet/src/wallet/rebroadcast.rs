@@ -1,18 +1,100 @@
 //! Pending transactions: submission, input bookkeeping, expiry and rebroadcast.
+//!
+//! **Rebroadcast** (docs/px.md §12; dossier 38 W4). The wallet never re-posts
+//! a transaction to learn whether its node still has it: it asks
+//! `/tx/status`. A transaction the node lacks is not sent again before
+//! `relayed_height + NETWORK_EXPIRY_BLOCKS`, while other nodes may still pool
+//! it (a re-send then would mark the wallet's node as its origin to any peer
+//! that still pools it), and after that at most once.
 
 use super::{
     PendingTx, StaleTx, Wallet, WalletError, PENDING_EXPIRY_BLOCKS, RING_RETENTION_BLOCKS,
 };
 use crate::node::NodeApi;
+use blacksilk_chain::mempool::{MEMPOOL_EXPIRY_BLOCKS, RECENTLY_EXPIRED_BLOCKS};
 use blacksilk_consensus::Hash;
+use blacksilk_rpc as rpc;
 use blacksilk_tx::params::TxRules;
 use blacksilk_tx::types::Transaction;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+
+/// A stored, unconfirmed transaction is checked on with `/tx/status` every
+/// this many blocks. A submission that may not have reached the node
+/// ([`RebroadcastState::Uncertain`]) is checked at every sync.
+pub const REBROADCAST_PROBE_BLOCKS: u64 = 20;
+
+/// Blocks after its relay height during which other nodes may still pool a
+/// transaction, or refuse it as recently expired: the pool expiry plus the
+/// recently-expired guard. A transaction the node lacks is not sent again
+/// before this. Derived from the pool's constants, as the node's originated
+/// set is (`blacksilk_p2p::originated::NETWORK_EXPIRY_BLOCKS`), never copied.
+pub const NETWORK_EXPIRY_BLOCKS: u64 = MEMPOOL_EXPIRY_BLOCKS + RECENTLY_EXPIRED_BLOCKS;
+
+/// What the wallet knows, and did, about a stored transaction that is not
+/// mined (docs/px.md §12). Listed by [`Wallet::pending_transactions`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RebroadcastState {
+    /// Sent; the node accepted it, or last reported it pooled or mined.
+    #[default]
+    Sent,
+    /// The submission failed in transport: the node may never have received
+    /// it. Checked at the next sync, and sent again if the node lacks it.
+    Uncertain,
+    /// The node no longer holds it, and it is not mined. Not sent again
+    /// before `relayed_height + NETWORK_EXPIRY_BLOCKS`: other nodes may still
+    /// pool it until then.
+    Waiting,
+    /// Sent again once, at this wallet height, after the network dropped it.
+    /// Never sent again automatically.
+    Resent { height: u64 },
+    /// The one re-send failed in transport. Checked at the next sync, and
+    /// sent again if the node lacks it (still the one re-send).
+    ResendUncertain,
+}
+
+/// A stored transaction, as [`Wallet::pending_transactions`] lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingInfo {
+    /// Transaction id (hex).
+    pub id: String,
+    /// Wallet height it was relayed at.
+    pub relayed_height: u64,
+    pub state: RebroadcastState,
+    /// The first wallet height at which it may be sent again if the node
+    /// lacks it (`relayed_height + NETWORK_EXPIRY_BLOCKS`).
+    pub resend_from: u64,
+}
+
+/// Whether the node refused a submission as `what` (it reports mempool
+/// errors by their `Debug` names).
+fn refused_as(r: &rpc::SubmitResult, what: &str) -> bool {
+    !r.accepted && r.error.as_deref().is_some_and(|e| e.starts_with(what))
+}
 
 impl Wallet {
     /// Whether a submitted transaction is still unconfirmed.
     pub fn has_pending(&self) -> bool {
         self.outputs.iter().any(|o| o.pending)
+    }
+
+    /// The stored transactions (unconfirmed, or confirmed but not yet
+    /// buried), with what the wallet did about each.
+    pub fn pending_transactions(&self) -> Vec<PendingInfo> {
+        self.pending_txs
+            .iter()
+            .map(|p| PendingInfo {
+                id: hex::decode(&p.tx)
+                    .ok()
+                    .and_then(|b| Transaction::decode(&b).ok())
+                    .map(|t| hex::encode(t.hash()))
+                    .unwrap_or_default(),
+                relayed_height: p.relayed_height,
+                state: p.state,
+                resend_from: p.relayed_height.saturating_add(NETWORK_EXPIRY_BLOCKS),
+            })
+            .collect()
     }
 
     /// Forgets unconfirmed spends and the stored transactions, v1 and PX alike.
@@ -100,10 +182,13 @@ impl Wallet {
             *pending = true;
             *h = at;
         });
+        let tx_hex = hex::encode(&bytes);
         self.pending_txs.push(PendingTx {
-            tx: hex::encode(&bytes),
+            tx: tx_hex.clone(),
             relayed_height: at,
             branch_id: Some(rules.branch_id),
+            state: RebroadcastState::Sent,
+            checked_height: at,
         });
         let kis: HashSet<String> = tx
             .key_images()
@@ -121,7 +206,15 @@ impl Wallet {
             return Err(e);
         }
         let result = match node.submit_tx(&bytes) {
-            Err(e) => Err(WalletError::Uncertain(e)),
+            Err(e) => {
+                // Checked, and sent again if the node lacks it, at the next
+                // sync (the node's originated set makes a repeat harmless if
+                // it did arrive, docs/p2p.md §8.1).
+                if let Some(p) = self.pending_txs.iter_mut().find(|p| p.tx == tx_hex) {
+                    p.state = RebroadcastState::Uncertain;
+                }
+                Err(WalletError::Uncertain(e))
+            }
             Ok(r)
                 if r.accepted
                     || r.error
@@ -152,8 +245,168 @@ impl Wallet {
         });
     }
 
-    /// Maintains the stored transactions after a sync (`PENDING_EXPIRY_BLOCKS`).
-    /// Transport errors are ignored here; the next sync retries.
+    /// Checks on the unconfirmed stored transaction `tx` (`p`) at wallet
+    /// height `synced` (dossier 38 W4, docs/px.md §12):
+    /// - it is due every [`REBROADCAST_PROBE_BLOCKS`], at the first sync at or
+    ///   after `relayed_height + NETWORK_EXPIRY_BLOCKS`, and at every sync
+    ///   while a submission is uncertain;
+    /// - the node is asked `/tx/status`, never sent the transaction to find
+    ///   out: `pooled` or `confirmed` means nothing is sent;
+    /// - if the node lacks it, it is sent again only after
+    ///   `relayed_height + NETWORK_EXPIRY_BLOCKS`, once; an uncertain
+    ///   submission is sent again at once (it may never have arrived; if it
+    ///   did, the node's originated set keeps the repeat from being
+    ///   originated, docs/p2p.md §8.1).
+    ///
+    /// Returns `false` if the node found it invalid: it can never be mined,
+    /// and its inputs were released.
+    fn check_pending(
+        &mut self,
+        node: &dyn NodeApi,
+        tx: &Transaction,
+        p: &mut PendingTx,
+        synced: u64,
+    ) -> bool {
+        let horizon = p.relayed_height.saturating_add(NETWORK_EXPIRY_BLOCKS);
+        let uncertain = matches!(
+            p.state,
+            RebroadcastState::Uncertain | RebroadcastState::ResendUncertain
+        );
+        let due = uncertain
+            || synced >= p.checked_height.saturating_add(REBROADCAST_PROBE_BLOCKS)
+            || (synced >= horizon && p.checked_height < horizon);
+        if !due {
+            return true;
+        }
+        p.checked_height = synced;
+        let lacks = match node.tx_status(&tx.hash()) {
+            Ok(rpc::TxStatus::Pooled) | Ok(rpc::TxStatus::Confirmed { .. }) => {
+                p.state = match p.state {
+                    RebroadcastState::ResendUncertain => {
+                        RebroadcastState::Resent { height: synced }
+                    }
+                    RebroadcastState::Resent { height } => RebroadcastState::Resent { height },
+                    _ => RebroadcastState::Sent,
+                };
+                false
+            }
+            Ok(rpc::TxStatus::Unknown) => true,
+            // No answer (a transport error, or a node without /tx/status):
+            // before the window nothing is sent, as the node may well hold
+            // it; an uncertain submission, or one past the window, is sent
+            // (a node that holds it answers `AlreadyKnown` and relays
+            // nothing).
+            Err(_) => uncertain || synced >= horizon,
+        };
+        if !lacks {
+            return true;
+        }
+        match p.state {
+            RebroadcastState::Uncertain | RebroadcastState::ResendUncertain => {
+                self.resend(node, tx, p, synced)
+            }
+            // At most once, ever.
+            RebroadcastState::Resent { .. } => true,
+            RebroadcastState::Sent | RebroadcastState::Waiting if synced < horizon => {
+                if p.state != RebroadcastState::Waiting {
+                    p.state = RebroadcastState::Waiting;
+                    self.warnings.push(format!(
+                        "transaction {} is no longer in the node's pool and is not mined. \
+                         Other nodes may still hold it, so it is not sent again before \
+                         height {horizon} (sending it earlier would show which node it came \
+                         from); its funds stay reserved",
+                        hex::encode(tx.hash())
+                    ));
+                }
+                true
+            }
+            RebroadcastState::Sent | RebroadcastState::Waiting => self.resend(node, tx, p, synced),
+        }
+    }
+
+    /// Sends the stored transaction `tx` (`p`) again: an uncertain submission
+    /// once more, or the one re-send after the network dropped it. Every node
+    /// answer is handled explicitly; returns `false` if the node found it
+    /// invalid (its inputs are released).
+    fn resend(
+        &mut self,
+        node: &dyn NodeApi,
+        tx: &Transaction,
+        p: &mut PendingTx,
+        synced: u64,
+    ) -> bool {
+        let id = hex::encode(tx.hash());
+        // The first submission's outcome is unknown: this is that submission
+        // again, not a re-send.
+        let first = p.state == RebroadcastState::Uncertain;
+        match node.submit_tx(&tx.encode()) {
+            Ok(r) if r.accepted || r.already_pooled() => {
+                if first {
+                    // Relayed now at the latest: the window counts from here.
+                    p.state = RebroadcastState::Sent;
+                    p.relayed_height = synced;
+                } else {
+                    p.state = RebroadcastState::Resent { height: synced };
+                    self.warnings.push(format!(
+                        "transaction {id} was dropped by the network without being mined and \
+                         was sent again, once, at height {synced}. It is not sent again \
+                         automatically; its funds stay reserved"
+                    ));
+                }
+                true
+            }
+            // The node expired it within its recently-expired window, so it
+            // does not originate it again yet, and nothing was sent. Tried
+            // again at a later sync; not the one re-send.
+            Ok(r) if refused_as(&r, "Expired") => {
+                p.state = match p.state {
+                    RebroadcastState::ResendUncertain => {
+                        RebroadcastState::Resent { height: synced }
+                    }
+                    _ => RebroadcastState::Waiting,
+                };
+                self.warnings.push(format!(
+                    "the node refused to send transaction {id} again yet (it dropped it \
+                     recently); the wallet tries again at a later sync"
+                ));
+                true
+            }
+            // It can never be mined on this chain: release the inputs.
+            Ok(r) if refused_as(&r, "Invalid") => {
+                self.for_each_input(tx, |spent, pending, _| {
+                    if spent.is_none() {
+                        *pending = false;
+                    }
+                });
+                false
+            }
+            // A full pool: nothing was sent; tried again at a later sync.
+            Ok(r) if refused_as(&r, "FeeTooLowForFullPool") => true,
+            // Any other refusal: nothing was sent; kept reserved and tried
+            // again at a later sync.
+            Ok(r) => {
+                self.warnings.push(format!(
+                    "the node refused transaction {id} ({}); its funds stay reserved and the \
+                     wallet tries again at a later sync",
+                    r.error.unwrap_or_default()
+                ));
+                true
+            }
+            // It may or may not have arrived: checked at the next sync.
+            Err(_) => {
+                p.state = if first {
+                    RebroadcastState::Uncertain
+                } else {
+                    RebroadcastState::ResendUncertain
+                };
+                true
+            }
+        }
+    }
+
+    /// Maintains the stored transactions after a sync. An unconfirmed one is
+    /// checked on ([`Self::check_pending`]); transport errors are ignored
+    /// here, and a later sync retries.
     ///
     /// An unconfirmed transaction built for another epoch than the next
     /// block's (an upgrade activated, or a reorganization went back across
@@ -231,21 +484,10 @@ impl Wallet {
                         *h = at;
                     }
                 });
-                if synced >= p.relayed_height + PENDING_EXPIRY_BLOCKS {
-                    match node.submit_tx(&tx.encode()) {
-                        Ok(r) if r.accepted || r.already_pooled() => p.relayed_height = synced,
-                        // It can never be mined on this chain: release the inputs.
-                        Ok(r) if r.error.as_deref().is_some_and(|e| e.starts_with("Invalid")) => {
-                            self.for_each_input(&tx, |spent, pending, _| {
-                                if spent.is_none() {
-                                    *pending = false;
-                                }
-                            });
-                            continue;
-                        }
-                        // A full pool or a transport error: retry on a later sync.
-                        _ => {}
-                    }
+                if !self.check_pending(node, &tx, &mut p, synced) {
+                    // It can never be mined on this chain: its inputs were
+                    // released.
+                    continue;
                 }
             }
             covered_kis.extend(tx.key_images().iter().map(|k| hex::encode(k.bytes())));
