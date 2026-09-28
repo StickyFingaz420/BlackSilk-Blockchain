@@ -5,6 +5,15 @@ use crate::config::{
     ARGON_MEMORY, CACHE_ACCESSES, CACHE_LINE_SIZE, CACHE_SIZE, DATASET_ITEM_COUNT,
 };
 use crate::superscalar::{self, Blake2Generator, SsProgram};
+use std::collections::TryReserveError;
+
+/// `len` zero words, or the allocation error (no abort).
+fn zeroed(len: usize) -> Result<Vec<u64>, TryReserveError> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(len)?;
+    v.resize(len, 0);
+    Ok(v)
+}
 
 const SUPERSCALAR_MUL0: u64 = 6364136223846793005;
 const SUPERSCALAR_ADD: [u64; 8] = [
@@ -29,7 +38,19 @@ impl Cache {
     /// Builds the cache for `key` (Argon2d fill + 8 SuperscalarHash programs).
     /// Takes roughly a second and allocates 256 MiB.
     pub fn new(key: &[u8]) -> Self {
-        let mut memory = vec![0u64; ARGON_MEMORY as usize * QWORDS_IN_BLOCK];
+        let memory = vec![0u64; ARGON_MEMORY as usize * QWORDS_IN_BLOCK];
+        Self::with_memory(key, memory)
+    }
+
+    /// [`Cache::new`], but an allocation failure is returned instead of
+    /// aborting the process (for optional builds such as a miner's prebuild).
+    /// The cache is the same.
+    pub fn try_new(key: &[u8]) -> Result<Self, TryReserveError> {
+        let memory = zeroed(ARGON_MEMORY as usize * QWORDS_IN_BLOCK)?;
+        Ok(Self::with_memory(key, memory))
+    }
+
+    fn with_memory(key: &[u8], mut memory: Vec<u64>) -> Self {
         argon2d::fill_memory(key, &mut memory);
 
         let mut gen = Blake2Generator::new(key, 0);
@@ -84,9 +105,21 @@ pub struct Dataset {
 impl Dataset {
     /// Expands the dataset from `cache` using `threads` worker threads.
     pub fn new(cache: &Cache, threads: usize) -> Self {
+        let items = vec![0u64; DATASET_ITEM_COUNT as usize * 8];
+        Self::with_items(cache, threads, items)
+    }
+
+    /// [`Dataset::new`], but an allocation failure is returned instead of
+    /// aborting the process (for optional builds such as a miner's prebuild).
+    /// The dataset is the same.
+    pub fn try_new(cache: &Cache, threads: usize) -> Result<Self, TryReserveError> {
+        let items = zeroed(DATASET_ITEM_COUNT as usize * 8)?;
+        Ok(Self::with_items(cache, threads, items))
+    }
+
+    fn with_items(cache: &Cache, threads: usize, mut items: Vec<u64>) -> Self {
         let threads = threads.max(1);
         let total = DATASET_ITEM_COUNT as usize;
-        let mut items = vec![0u64; total * 8];
         let per_thread = total.div_ceil(threads);
         std::thread::scope(|s| {
             for (t, chunk) in items.chunks_mut(per_thread * 8).enumerate() {
@@ -112,5 +145,18 @@ impl Dataset {
     pub(crate) fn item(&self, item_number: u64) -> [u64; 8] {
         let base = item_number as usize * 8;
         self.items[base..base + 8].try_into().unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The fallible constructors report an allocation that cannot succeed
+    /// instead of aborting (`lib.rs` checks they build the same cache).
+    #[test]
+    fn an_impossible_allocation_is_an_error() {
+        assert!(zeroed(usize::MAX).is_err());
+        assert_eq!(zeroed(3).unwrap(), vec![0, 0, 0]);
     }
 }
