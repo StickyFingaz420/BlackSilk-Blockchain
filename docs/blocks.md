@@ -188,6 +188,27 @@ among the remaining complete blocks, the connected tip on a tie) and the loop re
 reconnecting the old chain if it is again the best. The state is synced after every
 single block that becomes complete, live and on replay alike.
 
+**Reference model.** `chain/tests/model` is an independent, brute-force executable
+form of this section and of §7's pool rules; it shares no code with the manager.
+`chain/tests/reference_model.rs` drives the real `ChainManager`, `MemoryChain` and
+`Mempool` against it:
+- every body arrival order, with and without headers first, of small trees with
+  invalid bodies (explicit-state search);
+- proptest over random trees, deliveries (orphans, duplicates, headers first, bounded
+  drains paused across later arrivals), blocks with real transfers (double spends,
+  blocks invalid by C2), and pool submissions;
+- the mempool alone at explicit heights (conflicts, expiry, the guard, readmission).
+
+After every step it compares the verdict, the connected chain, header validity, kept
+bodies, `missing_bodies`, the pool and the deepest reorganization. It also checks:
+- the tip has the most work among blocks whose whole branch has valid bodies;
+- the state equals a fresh replay of the connected bodies;
+- a paused drain never rests on a lighter tip;
+- a restart reproduces the tip.
+
+The model tests the rules as written here; it proves nothing beyond the cases it
+runs. Known differences are listed in the test file (W2-02-F1 and W2-02-I1).
+
 Transactions from disconnected blocks return to the mempool if they are still valid
 (§7).
 
@@ -309,6 +330,11 @@ Transactions from disconnected blocks return to the mempool if they are still va
   re-announcement (p2p.md §7) brings pending transactions back, and a transaction this
   node originated is held, not originated again, if its wallet sends it (p2p.md §8.1,
   px.md §12).
+  - Exception (finding W2-02-F1, open): when the replay itself reorganizes, for example
+    through a heavier branch whose body fails, the transactions of the blocks it
+    disconnects are pooled, as they were live. They are valid at the tip. Reproducer:
+    `a_restart_that_replays_a_failed_reorganization_starts_with_an_empty_pool`
+    (ignored until decided).
 - **No consensus effect.** Blocks are always validated in full, whatever the pool
   holds.
   - The only use of pool contents in block validation is the PX proof cache, keyed by

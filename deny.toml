@@ -102,6 +102,12 @@ skip = [
     { crate = "chacha20@0.9.1", reason = "chacha20poly1305 0.10 (P2P transport) vs rand 0.10's chacha20 0.10 (SC-6)" },
     { crate = "rand_core@0.6.4", reason = "rand_core 0.6 (the workspace crates, curve25519-dalek 4, RustCrypto 0.10) vs 0.10 (rand 0.10, ml-kem) (SC-6)" },
     { crate = "syn@2.0.104", reason = "proc-macro crates on syn 2 and syn 3; compile time only" },
+    # proptest 1.11 (dev-dependency of blacksilk-chain only; decisions Agents 02,
+    # 41, 44) pulls the rand 0.9 generation. Verified absent from the node,
+    # wallet and miner graphs (cargo tree -e normal,build, 2026-09-28).
+    { crate = "rand@0.9.5", reason = "proptest 1.11, dev-only (chain tests)" },
+    { crate = "rand_chacha@0.9.0", reason = "proptest 1.11, dev-only (chain tests)" },
+    { crate = "rand_core@0.9.5", reason = "proptest 1.11, dev-only (chain tests)" },
     # Windows OS bindings and import libraries (SC-7): dirs-sys uses
     # windows-sys 0.48 (and windows-targets 0.48); tokio, mio, socket2 and
     # rpassword use 0.61; errno uses 0.60 (windows-targets 0.53). The dev-only

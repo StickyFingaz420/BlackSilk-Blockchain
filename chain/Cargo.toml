@@ -36,3 +36,6 @@ blacksilk-randomx = { path = "../randomx" }
 # The chain actor's test-only log and panic command (tests/actor_*.rs), as
 # tx enables its own hooks for its tests.
 blacksilk-chain = { path = ".", features = ["test-hooks"] }
+# Property tests of the reference model (chain/tests/reference_model.rs).
+# Approved in decisions (Agents 02, 41, 44): pure Rust, std only.
+proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
