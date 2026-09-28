@@ -675,3 +675,8 @@
 - **RTW1C-7:** new frozen tag `px/wallet/vault-refund/v1` (added to the W2-37 list).
 - **RTW1C-8:** out_words dry-run in the author checklist and wallet policy.
 - **Owner:** FX-RTW1C.
+
+## CI-1 CLOSED (2026-09-28)
+- **Result:** CI run 102 (5da354b): guests jobs green on windows-latest, ubuntu-24.04 and ubuntu-24.04-arm. The v3 kernel ef75a535… and vault 3fdec803… ELFs rebuild byte-identically on all three hosts.
+- **Fix:** the guest.ld layout (CB-B2), plus the build.sh SIGPIPE fix (5da354b). The SIGPIPE bug dated from 097114a, so earlier Linux guests failures were partly that bug.
+- **Still owed:** one operator build at the reveal (decisions 43 W4).
