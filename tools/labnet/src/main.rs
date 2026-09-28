@@ -275,6 +275,23 @@ fn mean_interval(arrivals: &BTreeMap<u64, f64>, window: u64) -> Option<f64> {
     Some((t_top - t_base) / (top - base) as f64)
 }
 
+/// Records when `height` was first seen at `secs`. The height seen first
+/// (`start`) is not recorded: its time is when the harness first looked,
+/// not when it was mined. Counting it put the miner's start, minutes for a
+/// full-mode dataset build, into the window, which then ended the warm-up
+/// at difficulty 1 (W4-RX run 1).
+fn record_arrival(
+    arrivals: &mut BTreeMap<u64, f64>,
+    start: &mut Option<u64>,
+    height: u64,
+    secs: f64,
+) {
+    let start = *start.get_or_insert(height);
+    if height > start {
+        arrivals.entry(height).or_insert(secs);
+    }
+}
+
 /// The warm-up criterion: with a single miner, the difficulty is near its
 /// equilibrium once blocks come at close to the target interval
 /// (`mean >= ratio * target`). Below equilibrium blocks come faster; the
@@ -849,6 +866,7 @@ fn main() {
         );
         let deadline = run_start + Duration::from_secs(a.warmup_max_mins * 60);
         let mut arrivals: BTreeMap<u64, f64> = BTreeMap::new();
+        let mut start_height: Option<u64> = None;
         let mut next_sample = run_start;
         let mut last = None;
         while Instant::now() < deadline {
@@ -864,9 +882,12 @@ fn main() {
                 );
             }
             if let Ok(i) = clients[0].info() {
-                arrivals
-                    .entry(i.height)
-                    .or_insert(run_start.elapsed().as_secs_f64());
+                record_arrival(
+                    &mut arrivals,
+                    &mut start_height,
+                    i.height,
+                    run_start.elapsed().as_secs_f64(),
+                );
                 last = Some(i);
             }
             let mean = mean_interval(&arrivals, a.warmup_window);
@@ -1313,6 +1334,31 @@ mod tests {
         let a = arrivals(&[(1, 0.0), (2, 1.0), (4, 12.0), (7, 42.0)]);
         assert_eq!(mean_interval(&a, 3), Some(30.0 / 3.0));
         assert_eq!(mean_interval(&a, 4), Some(41.0 / 5.0));
+    }
+
+    /// W4-RX run 1: a full-mode miner builds its dataset for about 290 s,
+    /// then mines 30 blocks at difficulty 1 in about 25 s. Timed from the
+    /// genesis, the window's mean was 10.4 s and the warm-up ended; the
+    /// starting tip must not count.
+    #[test]
+    fn the_miners_start_is_not_a_block_interval() {
+        let (mut arrivals, mut start) = (BTreeMap::new(), None);
+        for s in 0..290 {
+            record_arrival(&mut arrivals, &mut start, 0, s as f64);
+        }
+        for h in 1..=30 {
+            record_arrival(&mut arrivals, &mut start, h, 290.0 + 0.8 * h as f64);
+        }
+        let mean = mean_interval(&arrivals, 30);
+        assert!(!warmed_up(mean, 10, 0.75), "{mean:?}");
+        record_arrival(&mut arrivals, &mut start, 31, 316.0);
+        let mean = mean_interval(&arrivals, 30).expect("a full window");
+        assert!(mean < 1.0 && !warmed_up(Some(mean), 10, 0.75));
+        // The pre-fix computation, with the genesis at time 0.
+        let mut old = arrivals.clone();
+        old.insert(0, 0.0);
+        old.remove(&31);
+        assert!(warmed_up(mean_interval(&old, 30), 10, 0.75));
     }
 
     /// At difficulty 1 (the genesis gap) blocks come every 1-2 s against a
