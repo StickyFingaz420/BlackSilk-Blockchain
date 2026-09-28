@@ -76,6 +76,8 @@ impl ChainManager {
                 network,
                 network_id,
             )),
+            #[cfg(feature = "test-hooks")]
+            step_delay: None,
         };
         let total = stored.len() as u64;
         manager.replay(stored)?;

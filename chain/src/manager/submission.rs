@@ -169,6 +169,12 @@ impl ChainManager {
     /// validations. Returns true when the queue is empty; the mempool then
     /// receives the effects of the whole drain (`finish_sync`), once.
     fn drain_ready(&mut self, mut budget: usize) -> bool {
+        #[cfg(feature = "test-hooks")]
+        if let (Some(d), true) = (self.step_delay, budget != usize::MAX) {
+            if self.syncing.is_some() || !self.ready.is_empty() {
+                std::thread::sleep(d);
+            }
+        }
         let mut outcome = std::mem::take(&mut self.sync_outcome);
         let before = self.tip_id();
         loop {

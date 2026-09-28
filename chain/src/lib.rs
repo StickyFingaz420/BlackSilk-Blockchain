@@ -7,6 +7,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod actor;
 pub mod address;
 pub mod block;
 pub mod emission;
