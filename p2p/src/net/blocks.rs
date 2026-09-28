@@ -149,10 +149,10 @@ pub(super) async fn block_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRecei
         let inner2 = inner.clone();
         let result = tokio::task::spawn_blocking(move || {
             // Only a block whose header we already accepted (so it passed
-            // the header gate, `worth_verifying`) is worth storing, e.g. a
-            // requested block arriving after its timeout. Any other
-            // unrequested body, for instance of a free low-work branch, is
-            // dropped before it is hashed or written (R1-C1).
+            // the header gate, `sync_policy::worth_verifying`) is worth
+            // storing, e.g. a requested block arriving after its timeout.
+            // Any other unrequested body, for instance of a free low-work
+            // branch, is dropped before it is hashed or written (R1-C1).
             if unrequested && inner2.chain().header(&id).is_none() {
                 return None;
             }
