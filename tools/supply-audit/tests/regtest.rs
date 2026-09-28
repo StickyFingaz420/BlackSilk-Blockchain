@@ -74,7 +74,12 @@ impl Net {
 }
 
 fn wallet(seed: u8) -> Wallet {
-    Wallet::from_seed(Network::Regtest, [seed; 32], 1)
+    let mut w = Wallet::from_seed(Network::Regtest, [seed; 32], 1);
+    // The regtest chain here carries fixed 2023 timestamps, so its tip is
+    // "stale" by this computer's clock; the scenario still builds its
+    // transfers (RTW3-6's refusal is for real networks).
+    w.set_allow_stale_tip(true);
+    w
 }
 
 fn generated_at(height: u64) -> u64 {

@@ -277,6 +277,12 @@ impl Wallet {
         self.synced_height
     }
 
+    /// The height scanning starts from (the seed's birthday or `--from`):
+    /// the wallet knows nothing below it.
+    pub fn restore_height(&self) -> u64 {
+        self.restore_height
+    }
+
     /// Replaces the chain parameters (by default `ChainParams::for_network`),
     /// for a chain whose activation schedule differs from the built-in one:
     /// a regtest upgrade in tests. Not persisted. Refused unless `params`

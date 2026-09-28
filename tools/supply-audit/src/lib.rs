@@ -108,6 +108,26 @@ impl NodeApi for Pinned<'_> {
         b.blocks.retain(|e| e.height <= self.height);
         Ok(b)
     }
+    /// The header feed (the wallets' genesis-anchored header check, W3-39b),
+    /// pinned like `blocks`: nothing above the audit height, and the node's
+    /// height reported as the audit height.
+    fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+        let pinned = |from| rpc::Headers {
+            from,
+            headers: String::new(),
+            height: self.height,
+        };
+        if from > self.height || count == 0 {
+            return Ok(pinned(from));
+        }
+        let mut h = self
+            .inner
+            .headers(from, count.min(self.height - from + 1))?;
+        let keep = ((self.height - from + 1) as usize) * rpc::HEADER_BYTES * 2;
+        h.headers.truncate(keep.min(h.headers.len()));
+        h.height = self.height;
+        Ok(h)
+    }
     fn distribution(&self, to: u64) -> Result<rpc::Distribution, String> {
         self.inner.distribution(to)
     }
@@ -575,6 +595,16 @@ pub fn audit(
     for e in wallets.iter_mut() {
         if e.wallet.network() != network {
             return Err(format!("{}: not a {} wallet", e.name, info.network));
+        }
+        // A wallet that starts scanning above the audit block never reaches
+        // it: refused before any sync (its header check would otherwise fail
+        // first, with a misleading message about the node's feed).
+        if e.wallet.restore_height() > h.max(1) {
+            return Err(format!(
+                "{}: scanning starts at height {}, above the audit block {h}; refusing to compare",
+                e.name,
+                e.wallet.restore_height()
+            ));
         }
         let synced = e
             .wallet
