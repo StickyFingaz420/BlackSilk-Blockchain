@@ -680,3 +680,9 @@
 - **Result:** CI run 102 (5da354b): guests jobs green on windows-latest, ubuntu-24.04 and ubuntu-24.04-arm. The v3 kernel ef75a535… and vault 3fdec803… ELFs rebuild byte-identically on all three hosts.
 - **Fix:** the guest.ld layout (CB-B2), plus the build.sh SIGPIPE fix (5da354b). The SIGPIPE bug dated from 097114a, so earlier Linux guests failures were partly that bug.
 - **Still owed:** one operator build at the reveal (decisions 43 W4).
+
+## FX-RTW1C, Lead decisions 2026-09-28
+- **Accepted:** kernel budgets n_fn=1 bit 1850 / lt 18050 and n_fn=2 bit 2000 / lt 20550, verified exhaustively (1,766 shapes, at most 94.3%). The budgets are in the fingerprint manifest (`px.kernel.BUDGET.n_fn_*`). `prove` refuses an over-budget execution before proving.
+- **Frozen registry tags (added to the W2-37 list):** `px/wallet/vault-refund/v1`, `px/wallet/vault-rcm/v1`.
+- **Vault recovery design:** the seed-derived rcm for timed locks, plus the claim lock in the private change `data`. ACCEPTED.
+- **Owed:** the p2p cheap-phase expiring-soon refusal (assigned to W2-34b); wallet CLI commands for timed locks, stored refunds and recovery (wallet owner, next wallet batch).
