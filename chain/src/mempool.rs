@@ -49,13 +49,22 @@
 //! too; and [`Mempool::select`] takes only transactions whose window contains
 //! the template's height. Neither a proof verified on admission nor the
 //! block path's proof cache ever stands in for the window check.
+//!
+//! **Expiring soon (RTW1C-4).** [`Mempool::add`] and [`Mempool::check`]
+//! refuse a PX transaction whose window ends fewer than three blocks after
+//! the admission height (`not_after ≠ 0 ∧ not_after < height + 3`,
+//! [`MempoolError::ExpiringSoon`], Zcash's threshold), before any
+//! validation: it would likely expire while it propagates. Policy only: a
+//! pooled transaction stays until its window ends, and one a
+//! reorganization returns ([`Mempool::readmit`]) is readmitted without it.
 
 use blacksilk_consensus::Hash;
 use blacksilk_tx::params::{SigDomain, TxRules, MAX_DEPLOY_BLOCK_BYTES, MAX_PX_BLOCK_BYTES};
 use blacksilk_tx::px::digest_bytes;
 use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::{
-    revalidate_after_extension, validate_mempool_tx, validate_px_without_proof, ChainView, TxError,
+    px_expires_soon, revalidate_after_extension, validate_mempool_tx, validate_px_without_proof,
+    ChainView, TxError,
 };
 use std::collections::HashMap;
 
@@ -114,6 +123,12 @@ pub enum MempoolError {
     /// it is not originated here again until then ([`Origin::Local`] only).
     /// Policy: the transaction may still be valid.
     Expired,
+    /// A PX transaction whose validity window ends fewer than
+    /// `PX_EXPIRING_SOON_BLOCKS` (3) blocks after the height it would be
+    /// admitted for (`blacksilk_tx::validate::px_expires_soon`, RTW1C-4).
+    /// Policy: it is still valid in a block inside its window, but would
+    /// likely expire while it propagates. Never scored.
+    ExpiringSoon,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,6 +203,15 @@ fn v1_part_fee(tx: &Transaction, rules: &TxRules) -> u64 {
             .standard_fee(t.inputs.len(), t.outputs.len())
             .map_or(0, |f| f.min(t.fee)),
         tx => tx.fee(),
+    }
+}
+
+/// The expiring-soon policy for admission at `height` (RTW1C-4,
+/// [`MempoolError::ExpiringSoon`]).
+fn expiring_soon(tx: &Transaction, height: u64) -> Result<(), MempoolError> {
+    match tx {
+        Transaction::Px(t) if px_expires_soon(t, height) => Err(MempoolError::ExpiringSoon),
+        _ => Ok(()),
     }
 }
 
@@ -363,6 +387,7 @@ impl Mempool {
         origin: Origin,
     ) -> Result<Hash, MempoolError> {
         let (id, _) = self.precheck(tx, height, origin)?;
+        expiring_soon(tx, height)?;
         validate_mempool_tx(tx, chain, height, rules).map_err(MempoolError::Invalid)?;
         Ok(id)
     }
@@ -378,7 +403,9 @@ impl Mempool {
         self.entries.get(id).map(|e| e.admitted)
     }
 
-    /// Validates `tx` from `origin` for inclusion at `height` and adds it.
+    /// Validates `tx` from `origin` for inclusion at `height` and adds it. A
+    /// PX transaction expiring soon is refused first
+    /// ([`MempoolError::ExpiringSoon`], before any proof work).
     pub fn add(
         &mut self,
         tx: Transaction,
@@ -387,10 +414,25 @@ impl Mempool {
         rules: &TxRules,
         origin: Origin,
     ) -> Result<Hash, MempoolError> {
+        self.admit(tx, chain, height, rules, origin, true)
+    }
+
+    fn admit(
+        &mut self,
+        tx: Transaction,
+        chain: &impl ChainView,
+        height: u64,
+        rules: &TxRules,
+        origin: Origin,
+        refuse_expiring_soon: bool,
+    ) -> Result<Hash, MempoolError> {
         // Under other rules than the pool's, the pool is flushed first
         // (`enter_rules`): it never mixes transactions of two rule sets.
         self.enter_rules(rules);
         let (id, keys) = self.precheck(&tx, height, origin)?;
+        if refuse_expiring_soon {
+            expiring_soon(&tx, height)?;
+        }
         validate_mempool_tx(&tx, chain, height, rules).map_err(MempoolError::Invalid)?;
         let weight_fee = v1_part_fee(&tx, rules);
         self.insert(id, tx, keys, height, weight_fee)
@@ -404,7 +446,9 @@ impl Mempool {
     /// expiry window again, and it then leaves the recently-expired set. If
     /// it is refused, its guard entry stays (RTW1B-5): the node's wallet
     /// must not re-originate it early because a reorganization tried to
-    /// return it.
+    /// return it. The expiring-soon policy does not apply: the transaction
+    /// was already relayed and mined, and may still be mined inside its
+    /// window on the new branch.
     pub fn readmit(
         &mut self,
         tx: Transaction,
@@ -412,7 +456,7 @@ impl Mempool {
         height: u64,
         rules: &TxRules,
     ) -> Result<Hash, MempoolError> {
-        let id = self.add(tx, chain, height, rules, Origin::Peer)?;
+        let id = self.admit(tx, chain, height, rules, Origin::Peer, false)?;
         self.expired.remove(&id);
         Ok(id)
     }
@@ -1102,6 +1146,55 @@ mod tests {
         m.revalidate(&chain, 9, &rules, true);
         assert!(!m.contains(&ids[1]));
         assert!(m.contains(&ids[2]));
+    }
+
+    /// RTW1C-4, the expiring-soon policy: `add` and `check` refuse a PX
+    /// transaction whose window ends before `height + 3`
+    /// (`MempoolError::ExpiringSoon`) before any validation; one ending at
+    /// `height + 3` or unbounded goes on to full validation (here refused
+    /// for its empty proof, `PxProof`); a transaction a reorganization
+    /// returns (`readmit`) is not refused as expiring soon.
+    #[test]
+    fn transactions_expiring_soon_are_refused_but_readmitted() {
+        use blacksilk_px::state::State as PxState;
+        use blacksilk_tx::state::MemoryChain;
+        let chain =
+            MemoryChain::with_px_state(PxState::with_uniform_tree_for_tests(4, [7; 8], 1 << 60));
+        let rules = rules();
+        let mut m = Mempool::new();
+        let h = 20;
+        for (n, not_after, soon) in [
+            (1, h - 1, true),
+            (3, h, true),
+            (5, h + 2, true),
+            (7, h + 3, false),
+            (9, 0, false),
+        ] {
+            let tx = valid_px(&chain, n, 0, not_after);
+            let expected = if soon {
+                Err(MempoolError::ExpiringSoon)
+            } else {
+                Err(MempoolError::Invalid(TxError::PxProof))
+            };
+            assert_eq!(
+                m.add(tx.clone(), &chain, h, &rules, Origin::Peer)
+                    .map(|_| ()),
+                expected,
+                "add, not_after {not_after}"
+            );
+            assert_eq!(
+                m.check(&tx, &chain, h, &rules, Origin::Local).map(|_| ()),
+                expected,
+                "check, not_after {not_after}"
+            );
+        }
+        // Readmission after a reorganization skips the policy: the
+        // transaction goes on to full validation.
+        assert_eq!(
+            m.readmit(valid_px(&chain, 11, 0, h + 1), &chain, h, &rules)
+                .map(|_| ()),
+            Err(MempoolError::Invalid(TxError::PxProof))
+        );
     }
 
     /// `conflicts` answers what `add` would say about conflicts, without

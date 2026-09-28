@@ -46,18 +46,25 @@ pub fn kernel_program() -> Arc<Program> {
 /// (zkvm.md §8): every kernel execution with the same `n_fn` has exactly the
 /// same table heights, whatever its witness.
 ///
-/// Values are the measured use plus ~6%, rounded up
-/// (`budgets_leave_headroom` checks that every tested witness stays at or
-/// below 95% of each). Changing the kernel changes its program id and
-/// requires re-measuring.
+/// Every honest shape must fit: the kernel's few data-dependent comparisons
+/// (a specified contract output, an approval) cost rows, and a kernel
+/// execution over its budget would be provable only while the padded shared
+/// tables happen to have room, so provability would depend on the other
+/// functions' budgets (RTW1C-1). Values are the maximum over every shape the
+/// kernel accepts plus ~6%, rounded up to 50 (`px/tests/kernel_budget.rs`
+/// enumerates the shapes and checks that each table stays at or below 95%).
+/// The budgets are prover and verifier parameters (the statement's table
+/// heights), not part of the kernel ELF; they are consensus values, listed
+/// in the fingerprint (`px.kernel.BUDGET`). Changing the kernel changes its
+/// program id and requires re-measuring.
 ///
 /// # Panics
 /// If `n_fn > MAX_FN`.
 pub fn kernel_budget(n_fn: usize) -> Budget {
     let [cycles, keys, add, bit, lt, shift, mul, poseidon] = match n_fn {
         0 => [26_500, 4_550, 18_300, 1_500, 15_300, 1_450, 1_450, 126],
-        1 => [31_200, 4_600, 21_800, 1_700, 17_900, 1_550, 1_550, 138],
-        2 => [35_600, 4_650, 25_200, 1_900, 20_400, 1_650, 1_650, 151],
+        1 => [31_200, 4_600, 21_800, 1_850, 18_050, 1_550, 1_550, 138],
+        2 => [35_600, 4_650, 25_200, 2_000, 20_550, 1_650, 1_650, 151],
         _ => panic!("at most MAX_FN functions"),
     };
     Budget {
@@ -96,6 +103,17 @@ pub enum TransferError {
     Shape,
     /// An execution needs more rows than its budget in table `.0`.
     BudgetExceeded(usize),
+    /// Execution `execution` (0 is the kernel, `k + 1` function `k`) uses
+    /// `used` rows of `table`, more than its budget `budget`. Checked for each
+    /// execution before proving: the shared tables are padded to a power of
+    /// two of the budgets' sum, so an over-budget execution could otherwise
+    /// be proven or not depending on the other executions' budgets.
+    OverBudget {
+        execution: usize,
+        table: &'static str,
+        used: usize,
+        budget: usize,
+    },
     Proof(ZkError),
 }
 
@@ -148,6 +166,43 @@ fn statement(
     Some(st)
 }
 
+/// The first table in which `used` exceeds `budget`, as
+/// `(table, used, budget)`.
+pub fn over_budget(used: &Budget, budget: &Budget) -> Option<(&'static str, usize, usize)> {
+    [
+        ("cycles", used.cycles, budget.cycles),
+        ("keys", used.keys, budget.keys),
+        ("add", used.add, budget.add),
+        ("bit", used.bit, budget.bit),
+        ("lt", used.lt, budget.lt),
+        ("shift", used.shift, budget.shift),
+        ("mul", used.mul, budget.mul),
+        ("poseidon", used.poseidon, budget.poseidon),
+    ]
+    .into_iter()
+    .find(|&(_, u, b)| u > b)
+}
+
+/// Checks that execution `execution` (a run of `program`) fits `budget` in
+/// every table ([`TransferError::OverBudget`]).
+fn check_budget(
+    execution: usize,
+    program: &Program,
+    exec: &blacksilk_zkvm::Execution,
+    budget: &Budget,
+) -> Result<(), TransferError> {
+    let used = blacksilk_zkvm::air::trace::usage(program, exec);
+    match over_budget(&used, budget) {
+        Some((table, used, budget)) => Err(TransferError::OverBudget {
+            execution,
+            table,
+            used,
+            budget,
+        }),
+        None => Ok(()),
+    }
+}
+
 fn prove_error(e: ProveError) -> TransferError {
     match e {
         ProveError::Execution(t) => TransferError::Execution(format!("{t:?}")),
@@ -177,10 +232,27 @@ pub fn prove<R: RngCore + CryptoRng>(
     if functions.len() != public.n_fn {
         return Err(TransferError::Shape);
     }
-    // Run every function first (cheap) and check it writes the prefix of the
-    // kernel's `(io_hash, contract)`, the ABI and the window, so a mismatched
-    // call is refused before any proving work.
-    for (k, (program, input, _)) in functions.iter().enumerate() {
+    // Run the kernel guest and every function first (cheap next to proving):
+    // each execution must fit its own budget in every table (RTW1C-1), and
+    // each function must write the prefix of the kernel's `(io_hash,
+    // contract)`, the ABI and the window, so a mismatched or over-budget call
+    // is refused before any proving work.
+    let kernel_exec = blacksilk_zkvm::run(&kernel_program(), &words, blacksilk_zkvm::MAX_CYCLES)
+        .map_err(|t| TransferError::Execution(format!("kernel: {t:?}")))?;
+    if kernel_exec.exit_code != 0 {
+        return Err(TransferError::Execution(format!(
+            "kernel guest diverged from the native kernel: exit {}",
+            kernel_exec.exit_code
+        )));
+    }
+    check_budget(
+        0,
+        &kernel_program(),
+        &kernel_exec,
+        &kernel_budget(public.n_fn),
+    )?;
+    drop(kernel_exec);
+    for (k, (program, input, budget)) in functions.iter().enumerate() {
         let exec = blacksilk_zkvm::run(program, input, blacksilk_zkvm::MAX_CYCLES)
             .map_err(|t| TransferError::Execution(format!("function {k}: {t:?}")))?;
         if exec.exit_code != 0 {
@@ -194,6 +266,7 @@ pub fn prove<R: RngCore + CryptoRng>(
         if exec.output.len() < PREFIX_WORDS || exec.output[..PREFIX_WORDS] != prefix {
             return Err(TransferError::FunctionMismatch(k));
         }
+        check_budget(k + 1, program, &exec, budget)?;
     }
     let mut runs: Vec<(Arc<Program>, &[u32])> = vec![(kernel_program(), &words)];
     runs.extend(functions.iter().map(|(p, i, _)| (p.clone(), i.as_slice())));

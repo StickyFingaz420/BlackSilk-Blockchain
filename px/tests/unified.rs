@@ -1062,11 +1062,12 @@ fn fits(name: &str, used: &Budget, budget: &Budget, errors: &mut Vec<String>) {
     }
 }
 
-/// Every tested execution uses at most 95% of each budgeted table: the
-/// kernel with 0, 1 and 2 functions (user, contract and dummy inputs; for
-/// two functions both the CLAIM + LOCK shape and the widest branch profile,
-/// two contract inputs with crossed approvals and both outputs specified),
-/// and every vault entry point (LOCK with a timeout, CLAIM, REFUND).
+/// Every vault entry point (LOCK with a timeout, CLAIM, REFUND) uses at most
+/// 95% of each table of `vault::BUDGET`, and so do the kernel executions of
+/// the vault flows. The kernel's budgets are checked against EVERY shape the
+/// kernel accepts in `px/tests/kernel_budget.rs` (RTW1C-1: the CLAIM-only
+/// profiles measured here before missed the shapes with specified contract
+/// outputs, which exceeded the `n_fn = 1` bit budget).
 #[test]
 fn budgets_leave_headroom() {
     let mut s = locked_with(false);
@@ -1074,22 +1075,13 @@ fn budgets_leave_headroom() {
     let bob_owner = s.bob.owner(0);
     let secret = s.secret;
     let (claim_input, claim_w) = claim_witness(&mut s, secret, bob_owner);
-    // n_fn = 0: a dummy-only bridge-in.
-    let mut plain = claim_w.clone();
-    plain.n_fn = 0;
-    plain.inputs = [
-        wallet::dummy_input(&mut s.rng),
-        wallet::dummy_input(&mut s.rng),
-    ];
-    plain.bridge_in = 500;
     // n_fn = 2: CLAIM plus a LOCK into a new vault record.
     let (_, _, two) = claim_and_lock(&mut s, bob_owner, 300);
-    // n_fn = 2, the widest branches: two contract inputs, crossed approvals.
+    // n_fn = 2: two contract inputs, crossed approvals.
     let mut v = two_vaults();
     let (_, crossed) = crossed_claims(&mut v, bob_owner);
     for (name, w) in [
-        ("kernel n_fn=0", &plain),
-        ("kernel n_fn=1", &claim_w),
+        ("kernel n_fn=1 claim", &claim_w),
         ("kernel n_fn=2 claim+lock", &two),
         ("kernel n_fn=2 crossed claims", &crossed),
     ] {

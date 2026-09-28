@@ -6,10 +6,14 @@
 //! **Mempool order.** The single-transaction entry points
 //! ([`validate_transfer`], [`validate_deploy`], [`validate_px`]) run every
 //! stateless rule (structure, balance, range proof) before any contextual
-//! one (C1–C3, PX1–PX4, PX6). A transaction invalid for a stateless reason is
-//! therefore reported with a stateless error ([`TxError::is_stateless`]),
-//! whatever else is wrong with it, and costs no ring resolution or CLSAG
-//! verification. The order changes only *which* error an invalid
+//! one (C1–C3, PX1–PX4), with one exception: PX6 (a height comparison) runs
+//! right before a PX transaction's range proof (RTW1C-5), so a transaction
+//! outside its validity window costs no Bulletproofs+ verification. A
+//! transaction invalid for a stateless reason is therefore reported with a
+//! stateless error ([`TxError::is_stateless`]), whatever else is wrong with
+//! it, unless it is also outside its window (then `PxWindow`, and the
+//! stateless error at a height inside it); it costs no ring resolution or
+//! CLSAG verification. The order changes only *which* error an invalid
 //! transaction gets, never *whether* it is valid: every rule is a pure check
 //! and a transaction is valid iff all pass. The PX proof (PX5) is decoded
 //! with the stateless rules and shape-checked once PX3's registered programs
@@ -288,7 +292,8 @@ impl TxError {
     /// contextual failures), not by this classification. The mempool paths
     /// run every stateless check, including the range proof, before any ring
     /// is resolved (module docs), so a transaction that is invalid for a
-    /// stateless reason always gets the stateless error.
+    /// stateless reason gets the stateless error (a PX transaction outside
+    /// its window gets `PxWindow` first: PX6 precedes its range proof).
     pub fn is_stateless(&self) -> bool {
         match self {
             TxError::TooLarge { .. }
@@ -616,6 +621,26 @@ pub fn check_px_window(tx: &PxTx, height: u64) -> Result<(), TxError> {
     }
 }
 
+/// Blocks of margin the expiring-soon policy asks of a PX transaction's
+/// `not_after` ([`px_expires_soon`]); Zcash's `TX_EXPIRING_SOON_THRESHOLD`.
+pub const PX_EXPIRING_SOON_BLOCKS: u64 = 3;
+
+/// Expiring-soon policy (not consensus, RTW1C-4): a PX transaction whose
+/// window ends fewer than [`PX_EXPIRING_SOON_BLOCKS`] blocks after `next`
+/// (the next block's height), `not_after ≠ 0 ∧ not_after < next + 3`, is not
+/// admitted to a pool or relayed. It is still valid in a block while its
+/// window contains the height, but it would likely expire while it
+/// propagates: relaying it spends every node's verification for a
+/// transaction that is soon unminable, and a pooled one that expires is
+/// dropped anyway. Pooled transactions are not re-checked against it (they
+/// stay until their window ends), and a transaction a reorganization returns
+/// to the pool is readmitted without it. Wallets build windows that end at
+/// least this far ahead.
+pub fn px_expires_soon(tx: &PxTx, next: u64) -> bool {
+    let not_after = tx.window.not_after;
+    not_after != 0 && not_after < next.saturating_add(PX_EXPIRING_SOON_BLOCKS)
+}
+
 /// Leaves the PX commitment tree has left: `CAPACITY − size`.
 fn px_free_leaves(chain: &impl ChainView) -> u64 {
     blacksilk_px::tree::CAPACITY.saturating_sub(chain.px_tree_size())
@@ -770,14 +795,20 @@ fn validate_px_checks(
     } else {
         None
     };
+    // PX6, a comparison, before the range proof (RTW1C-5): a transaction
+    // outside its window costs no Bulletproofs+ verification. The verdict is
+    // unchanged; only a transaction that is also invalid for the range proof
+    // is now refused as `PxWindow` (contextual) here, as relay admission
+    // already does (its cheap phase checks PX6 and not the range proof). At a
+    // height inside its window it gets the stateless error.
+    check_px_window(tx, height)?;
     if let Some(p) = &tx.range_proof {
         let c: Vec<Point> = tx.outputs.iter().map(|o| o.commitment).collect();
         if !bpp::verify(p, &c) {
             return Err(TxError::RangeProofInvalid);
         }
     }
-    // Contextual, the height first (PX6, a comparison).
-    check_px_window(tx, height)?;
+    // Contextual.
     check_key_images(&tx.inputs, chain, &mut HashSet::new())?;
     check_px_state(tx, chain, &mut HashSet::new())?;
     if chain.px_pool() + (tx.bridge_in as u128) < (tx.bridge_out as u128) {

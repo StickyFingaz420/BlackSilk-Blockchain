@@ -148,7 +148,14 @@ not_before ≤ h   and   (not_after = 0  or  h ≤ not_after)
   passed at every revalidation, after a reorganization too, and templates take only
   transactions whose window contains their height. The block path checks the window
   for every PX transaction, including those whose proof the node verified before: a
-  verified proof says nothing about the height.
+  verified proof says nothing about the height. In the mempool path the window is
+  checked before the range proof (RTW1C-5).
+- **Expiring soon (policy, RTW1C-4).** Pools and relays refuse a PX transaction whose
+  window ends within three blocks, `not_after ≠ 0 ∧ not_after < next + 3`
+  (`tx::validate::px_expires_soon`; Zcash's threshold): it is still valid in a block
+  inside its window, but would likely expire while it propagates. A pooled
+  transaction stays until its window ends, and one a reorganization returns is
+  readmitted. Build windows that end at least three blocks ahead.
 - A function **asserts** on the window it reads: `not_after ≠ 0 ∧ not_after < T`
   shows that the transaction is included before `T`; `not_before ≥ T` shows that it is
   included at `T` or later. This is the CLTV model (BIP 65; Zcash ZIP 203 expiry,
@@ -211,9 +218,13 @@ Each item cites the finding it comes from. Check every item before deploying.
     only its own (F-28-7; the reference vault does, §8).
 11. **Randomness.** Derive the `io_hash` blind and every `rcm` you choose from a CSPRNG,
     hedged with a wallet secret (R-6, W28-4; `blacksilk_px::wallet::hedged_digest`).
-12. **Budget.** Measure the worst case of every valid path and keep headroom
-    (`px/tests/unified.rs::budgets_leave_headroom` keeps 5%). A path over budget cannot
-    be proven: funds under it are stuck (P-2).
+12. **Budget.** Measure the worst case of **every** valid path, not a sample, and keep
+    headroom in every table (5%, as `px/tests/unified.rs::budgets_leave_headroom` does
+    for the vault; the kernel's own budgets are checked against every shape it
+    accepts, `px/tests/kernel_budget.rs`). A path over budget cannot be proven: funds
+    under it are stuck (P-2). The prover refuses any execution over its own budget in
+    any table (`TransferError::OverBudget`), even when the padded shared tables would
+    have had room, so provability never depends on the other calls (RTW1C-1).
 13. **Canonical input.** Check every field element you read (`canonical`); halt with
     codes, never with located panics (R15-6; `px/tests/elf_paths.rs`).
 14. **Time.** Assert on the echoed window (§4.3); a function that reads the window but
@@ -232,6 +243,14 @@ Each item cites the finding it comes from. Check every item before deploying.
 20. **Tests before deploying.** Every rule violation natively and in the guest, an end-
     to-end proof, budget headroom, window boundaries if you use a window, and
     two-function interactions if the contract allows them (W28-3).
+21. **Dry-run every way out before locking funds (RTW1C-8).** Before value goes into a
+    record of a contract (yours or a third party's), run each function that can
+    release it, with the record's real opening, and check that it halts with 0, writes
+    the prefix the kernel requires, publishes exactly the registered `out_words`, and
+    fits the registered budget in every table. A registration whose release path fails
+    any of these locks the value for good. The wallet does this for the vault before
+    every lock (CLAIM, and REFUND with a timeout; §8); other contracts need the same
+    check in their host-side helper.
 
 ## 7. Delivery and sharing
 
@@ -264,27 +283,63 @@ refund_lock = Hk(REFUND, C ‖ refund_secret)          (0 when timeout = 0)
 - Both locks bind the contract id, so a lock copied into another vault instance does
   not open with the secret (F-28-7).
 - A wrong secret yields a transcript the kernel never matches: no proof exists.
-- The wallet (`wallet/src/wallet/contracts.rs`) locks with a derived or given claim
-  secret and an optional timeout; it derives the refund secret from its keys and the
-  record's `rho` (seed-recoverable, like the claim secret, px.md §13.4), and hedges
-  the function blind and the vault record's `rcm` with its PX hedge key (W28-4). A
-  wallet restored from its seed recovers the claim secret of a vault without a
-  timeout; the refund needs the timeout, which the wallet returns at lock time and
-  does not store.
+- **The vault is not an HTLC (RTW1C-6).** A CLAIM proves knowledge of the secret
+  inside the proof and never publishes it: the claim transaction reveals nothing a
+  counterparty could use to claim a second, linked vault (on this chain or another).
+  So two vaults do **not** make an atomic swap. A swap needs a preimage-revealing
+  claim (a function that publishes the secret as its output, giving up that privacy),
+  or another design (adaptor signatures, a joint contract); none exists yet (§9).
+
+**The wallet** (`wallet/src/wallet/contracts.rs`):
+- It locks with a derived or given claim secret and an optional timeout. It derives
+  the refund secret from its keys and the record's `rho` under its own tag,
+  `px/wallet/vault-refund/v1` (RTW1C-7; px.md §13.4), and hedges the function blind
+  with its PX hedge key (W28-4).
+- **Timeouts are multiples of 16** (`VAULT_TIMEOUT_GRANULE`), more than 3 blocks above
+  the next block (so a claim can be built outside the expiring-soon margin, §4.3) and
+  at most `MAX_VAULT_TIMEOUT_AHEAD` = 2^20 blocks ahead (RTW1C-2).
+- **Windows are rounded, not the timeout (RTW1C-2).** A claim built for the next block
+  `n` uses `[0, min(T − 1, round_up16(n + 3) + 31)]`; a refund uses
+  `[max(T, round_down16(n)), ∞)`. A claim window always ends one below a multiple of
+  16, a refund window always starts at a multiple of 16, so a window reveals `T` only
+  when the claim is made within about 50 blocks before it or the refund within 16
+  blocks after it, where the rounded bound is `T − 1` or `T` itself. The wallet refuses
+  to build a claim whose window would end within 3 blocks (RTW1C-4).
+- **Before every lock it dry-runs every way out** (RTW1C-8, §6 item 21): CLAIM with
+  the secret and, with a timeout, REFUND with its refund secret, on the record's real
+  opening, each checked for exit code, prefix, output words and budget.
+- **The refund is recoverable from the seed (RTW1C-3).** The terms (claim lock and
+  timeout) are stored in the wallet file before the lock is sent, and a refund takes
+  them from there (`px_vault_refund_stored`). A wallet restored from its seed rebuilds
+  them from the chain even when the record was delivered to the counterparty and the
+  claim secret was the counterparty's: the record's `rcm` is derived,
+  `H32("px/wallet/vault-rcm/v1", hk_px ‖ u8 network ‖ C ‖ rho)`; the lock's change
+  output (to the locker's own address 1, encrypted to it) carries the claim lock in its
+  data; the value follows from the lock's inputs, fee and change; and the timeout is
+  found by trying every multiple of 16 in a bounded range until the record's
+  commitment appears in the lock's block (`Wallet::recover_vault_locks`, run at load
+  and before a refund; the range is bounded by `MAX_VAULT_TIMEOUT_AHEAD`, and the test
+  `a_restored_locker_recovers_its_timed_lock_and_can_refund` prints the cost of a
+  full search). None of this is visible on chain: the change's data is
+  inside its commitment and its ciphertext. A record claimed or refunded before the
+  restore is recovered as well; its refund is refused by the node (spent nullifier).
+- A wallet restored from its seed recovers the claim secret of a vault without a
+  timeout that it holds (px.md §13.4).
 
 **Limits** (it remains a demonstration):
 - whoever made the claim secret can claim; a swap needs the counterparty to choose the
   secret and hand over only its lock (`vault::lock_call` takes the terms, not the
-  secret);
+  secret), and even then two vaults are no atomic swap (above);
 - a miner can delay a claim until the timeout passes; leave a margin;
 - the caller chooses the new record's `rcm` and writes its ciphertext (PX-F4);
-- a claim reveals its window, so the timeout is public once the vault is spent.
+- a claim or refund reveals its window, rounded to 16 blocks; the timeout is revealed
+  only near it (above).
 
 ## 9. Roadmap
 
 | Phase | Content | Consensus impact |
 |---|---|---|
-| Tooling (after the trial starts) | A contract SDK (typed `Call` builder that makes foreign approvals and specs unrepresentable, window assertions, a conservation lint, type-tagged data, hedged blinds); a manifest (ABI, output schema, budgets, source hash) and a verifier tool; reference escrow and HTLC contracts with abuse tests | None (new deploys only) |
+| Tooling (after the trial starts) | A contract SDK (typed `Call` builder that makes foreign approvals and specs unrepresentable, window assertions, a conservation lint, type-tagged data, hedged blinds); a manifest (ABI, output schema, budgets, source hash) and a verifier tool; reference escrow and HTLC contracts with abuse tests (an HTLC needs a preimage-revealing claim, which the vault is not, §8) | None (new deploys only) |
 | Second kernel generation, by height | Verifier selection by (epoch, ABI) (§4.2); PX-F4 option B′ (`rcm` derived from a seed and `rho'`); message commitments between the two functions of a call; contract-scoped tags in the nullifier set; user-owned contract records; shape classes | New verifier generation, activated at a height |
 | Scale | Recursion (aggregation); a public finalize phase over PX only with evidence of demand | New proof system |
 

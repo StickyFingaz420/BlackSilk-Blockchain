@@ -217,6 +217,77 @@ fn a_cached_proof_never_skips_the_window() {
     assert_eq!(block_with_cached_proofs(&mut net, &edge), Ok(()));
 }
 
+/// RTW1C-5: in the mempool path PX6 (a comparison) runs before the range
+/// proof, so a transaction outside its window costs no Bulletproofs+
+/// verification. A PX transaction carrying a real v1 part (inputs, hidden
+/// outputs, range proof) with a broken range proof is refused as `PxWindow`
+/// outside its window and as `RangeProofInvalid` inside it; the verdict
+/// (invalid) is the same. On the base (e986250) the range proof ran first:
+/// `RangeProofInvalid` at every height.
+#[test]
+fn the_window_is_checked_before_the_range_proof() {
+    let mut net = TestNet::new(21, 80);
+    let alice = Wallet::new(&mut rng(1021));
+    let t = net.pay(&net.miner_clone(), &[(alice.primary(), 1_000_000)]);
+    let h = net.height();
+    let mut tx = px(&net, 1, window(h + 5, 0));
+    tx.inputs = t.inputs.clone();
+    tx.outputs = t.outputs.clone();
+    tx.pseudo_outs = t.pseudo_outs.clone();
+    tx.signatures = t.signatures.clone();
+    tx.range_proof = Some(t.range_proof.clone());
+    // Balance: the v1 part carries the transfer's fee, `fee − bridge_out`.
+    tx.bridge_out = PX_STANDARD_FEE - t.fee;
+    assert_eq!(blacksilk_tx::px::check_px_structure(&tx), Ok(()));
+    assert_eq!(blacksilk_tx::px::check_px_balance(&tx), Ok(()));
+    let mut broken = tx.clone();
+    broken.range_proof.as_mut().unwrap().d1 += blacksilk_crypto::Scalar::ONE;
+    let rules = net.rules;
+    // Premature: PX6 first.
+    assert_eq!(
+        validate_px_without_proof(&broken, &net.chain, h, &rules),
+        Err(TxError::PxWindow)
+    );
+    // Inside the window the range proof refuses it (stateless).
+    assert_eq!(
+        validate_px_without_proof(&broken, &net.chain, h + 5, &rules),
+        Err(TxError::RangeProofInvalid)
+    );
+    // With the genuine range proof the transaction passes both.
+    assert!(!matches!(
+        validate_px_without_proof(&tx, &net.chain, h + 5, &rules),
+        Err(TxError::PxWindow | TxError::RangeProofInvalid)
+    ));
+}
+
+/// RTW1C-4: the expiring-soon policy (`px_expires_soon`, margin 3 blocks,
+/// Zcash's threshold): a window ending before `next + 3` is refused by pools
+/// and relays; an unbounded end never is.
+#[test]
+fn a_window_ending_within_three_blocks_expires_soon() {
+    use blacksilk_tx::validate::{px_expires_soon, PX_EXPIRING_SOON_BLOCKS};
+    assert_eq!(PX_EXPIRING_SOON_BLOCKS, 3);
+    let net = chain(6);
+    let next = 100;
+    for (w, soon) in [
+        (Window::UNBOUNDED, false),
+        (window(500, 0), false),
+        (window(0, next - 1), true),
+        (window(0, next), true),
+        (window(0, next + 2), true),
+        (window(0, next + 3), false),
+        (window(0, u64::MAX), false),
+    ] {
+        assert_eq!(px_expires_soon(&px(&net, 1, w), next), soon, "{w:?}");
+    }
+    // No overflow at the top of the height range.
+    assert!(px_expires_soon(
+        &px(&net, 1, window(0, u64::MAX - 1)),
+        u64::MAX
+    ));
+    assert!(!px_expires_soon(&px(&net, 1, window(0, 0)), u64::MAX));
+}
+
 fn vault() -> Registration {
     Registration::new(
         blacksilk_px::vault::VAULT_ELF.to_vec(),
