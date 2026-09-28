@@ -171,6 +171,7 @@ impl ChainManager {
         }
         // Headers never change the connected chain: its target depends only on
         // bodies (module docs). New headers only add bodies to download.
+        self.publish_summary();
         result.map(|()| new)
     }
 }

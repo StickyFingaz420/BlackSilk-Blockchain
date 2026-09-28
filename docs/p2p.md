@@ -765,9 +765,50 @@ already being written is finished first).
 - **The chain lock is never taken on an async worker thread** (P0-7, R8-1, R10-5).
   Every P2P handler and every RPC handler that reads or changes the chain runs that
   part on a blocking thread (`spawn_blocking`); the async workers only wait for the
-  result. A long lock hold (a reorganization, a block with PX proofs, a drain step)
-  delays only the requests that need the chain; pings, reads, accepts and handshakes
-  of other peers keep flowing. Tested: `pings_are_answered_while_the_chain_lock_is_held`.
+  result. Tested: `pings_are_answered_while_the_chain_lock_is_held`.
+- **No read loop and no maintenance tick waits for the chain lock** (dossier 34
+  Stage 1; F34-1 to F34-3). Before this, a peer whose own request waited for the
+  lock stopped reading its socket, so its pings went unanswered and it dropped the
+  node after the 30 s pong timeout, and the handshake and the maintenance loop
+  stopped with it. A long hold (a heavy block step, a reorganization, a slow disk)
+  now delays only the chain work itself:
+  - **Per-peer slow lane.** Messages whose handling takes the chain lock
+    (`GetHeaders`, `GetBlocks`, `InvTx`, `GetTx`, `Tx`, `StemTx`) go to a bounded
+    per-peer queue (`dispatch::SLOW_LANE` messages and `dispatch::SLOW_LANE_BYTES`
+    bytes, but always at least one message), handled by the peer's own task one at
+    a time in arrival order. Every other message (pings, pongs, addresses,
+    `NotFound`, headers, blocks) is handled on the read loop, which never waits for
+    the chain. A lane message may be handled after a later non-lane message of the
+    same peer; no handler depends on that order. A full lane drops the message:
+    transaction relay (`InvTx`, `Tx`, `StemTx`) without penalty (relay is best
+    effort; a request is retried with the next announcer), a request
+    (`GetHeaders`, `GetBlocks`, `GetTx`) charged as a message-rate excess
+    (`score::RATE`). At a disconnect the lane task stops before its next message,
+    never in the middle of one.
+  - **Published chain summary** (`ChainManager::summary_cell`): the tip (id,
+    header, height), the best header chain (height, id, locator), the mempool
+    counts, and the drain and halt flags. The manager republishes it before a
+    writer releases the lock (every submission, bounded step and header batch, and
+    after every closure the P2P and RPC layers run under the lock), in a
+    `std::sync::RwLock<Arc<_>>` whose critical sections are a pointer copy. The
+    handshake's `Version`, the locator of every `GetHeaders` we send, the handling
+    of an empty `Headers`, tip announcements and RPC `/info` read it. A reader sees
+    the state of the last publication: at most one lock hold old, and consistent
+    (one publication is one point in the lock order). Nothing consensus-relevant
+    reads it.
+  - **Two maintenance loops.** Pings, timeouts, Dandelion epochs, held local
+    transactions, tip announcements, header re-requests, outbound dialing and
+    saving never wait for the chain. Embargo fluff (a mempool submission), pool
+    re-announcement and download scheduling run on a second task. A hold delays
+    only those, by at most the hold: an embargo that expires during a hold is
+    fluffed when the hold ends.
+
+  Tested with real holds of the chain lock (a stalled block append on the
+  block-submission path, 15-40 s): `p2p/tests/liveness.rs` L1 and L6 (a peer's own
+  pongs flow while its `GetHeaders` and `InvTx` wait, and the replies come in
+  arrival order after the hold), L2 (outbound dialing continues), L3 (a handshake
+  completes); `node/tests/rpc_liveness.rs` L4 (`/info` within 100 ms) and L5 (an
+  RPC burst stays within the admission classes, docs/blocks.md §9.1).
 - **A poisoned lock stops the node** (P0-9, R10-2). A panic while holding the chain
   lock can leave the manager half-updated. The node then exits with status 70
   (`POISONED_EXIT_CODE`, the same in the P2P layer and the RPC) instead of relaying
@@ -827,19 +868,27 @@ already being written is finished first).
   - A batch whose sender left before verification is only pre-checked: a sender
     whose batch would fail only the proof of work is not banned (it paid the real
     work of every header before the failing one).
-- **One global chain lock.** Handlers no longer take it on async workers (§10), and
-  block connection is bounded per hold (§6), but every chain access still
-  serializes on it. Open:
-  - A *single* block still holds the lock for its whole validation (up to ~3.4 s
-    for a full block with 3 PX proofs not seen in the mempool), and a
-    reorganization is not paused before its new branch outweighs the old tip.
-  - PoW of a block whose header we never saw is computed under the lock (R8-1c),
-    and relayed transactions are verified under it, one per connection at a time
-    (R8-1d: stateless verification outside the lock is open).
-  - Requests that need the chain (headers, blocks, transactions of a peer) wait
-    for the lock on a blocking thread. Tokio's blocking pool is large (512
-    threads), and each connection has at most one such request at a time, so the
-    waiters are bounded by the number of connections.
+- **One global chain lock.** Handlers no longer take it on async workers, read loops
+  and the first maintenance loop no longer wait for it (§10), and block connection
+  is bounded per hold (§6), but every chain write and most chain reads still
+  serialize on it. Open (dossier 34 Stage 2: a single-writer chain actor with
+  published snapshots):
+  - Holds are bounded in blocks, not in time: a step of `SYNC_STEP_BLOCKS` heavy
+    blocks, a reorganization (never paused before its new branch outweighs the old
+    tip) or the pool revalidation after it can hold the lock for many seconds
+    (research dossiers 10 and 12 estimate several seconds per heavy block). What
+    waits for them is now only chain work: lane messages, embargo fluff, download
+    scheduling, header acceptance (the header worker takes the lock several times
+    per batch, F34-7) and RPC chain calls.
+  - Relayed transactions are verified under the lock, one per peer lane at a time
+    (R8-1d: verification outside the lock is dossier 34 Stage 4). Every lane
+    contends for the one unfair mutex with the block and header workers.
+  - PoW of an RPC `/block` is computed outside the lock (docs/blocks.md §9.2); a
+    P2P block whose header we never saw is dropped unhashed (§6.4).
+  - Requests that need the chain wait for the lock on a blocking thread: at most
+    one per peer lane, the workers' and the second maintenance loop's, plus the RPC
+    admission classes (docs/blocks.md §9.1). Tokio's blocking pool (512 threads) is
+    shared by all of them.
 - **Block worker.** Bodies of all peers are connected by one worker, in arrival
   order: a peer's large valid blocks delay other peers' blocks, not their pings.
   Block-download timeouts still use a fixed 60 s (no per-size or head-of-queue

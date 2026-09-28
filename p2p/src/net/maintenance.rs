@@ -1,6 +1,12 @@
-//! The maintenance loop: Dandelion epochs and embargo, tip announcements,
-//! pool re-announcement, trickle flush, pings, timeouts, re-requests,
-//! downloads, outbound, saving.
+//! The maintenance loops (docs/p2p.md §10):
+//! - [`maintenance_loop`] never waits for the chain lock: Dandelion epochs,
+//!   held local transactions, tip announcements (from the published chain
+//!   summary), trickle flush, pings, timeouts, header re-requests, outbound
+//!   dialing and saving keep their schedule during any chain-lock hold
+//!   (F34-2);
+//! - [`chain_maintenance_loop`] does the work that needs the chain lock:
+//!   embargo fluff (a mempool submission), pool re-announcement and download
+//!   scheduling. A hold delays only these, by at most the hold.
 
 use super::blocks::{release_block_slot, schedule_downloads, BLOCK_TIMEOUT};
 use super::headers::HEADERS_TIMEOUT;
@@ -29,14 +35,12 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
     let mut last_save = Instant::now() - SAVE_INTERVAL + Duration::from_secs(5);
     let mut saved_fingerprint = (0, 0);
     let mut last_outbound = Instant::now() - Duration::from_secs(60);
-    // The next block's height at the previous tick (0: not seen yet).
-    let mut last_next = 0u64;
     loop {
         tokio::time::sleep(inner.cfg.tick).await;
         let now = Instant::now();
 
-        // Dandelion epoch and embargoes.
-        let expired: Vec<Hash> = {
+        // Dandelion epoch; held local transactions.
+        {
             let mut st = inner.state();
             let outbound: Vec<PeerId> = st
                 .peers
@@ -47,33 +51,14 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
             let State { dandelion, rng, .. } = &mut *st;
             dandelion.maybe_new_epoch(now, &outbound, rng);
             send_held_local_txs(&inner, &mut st);
-            st.stempool
-                .iter()
-                .filter(|(_, e)| now >= e.embargo)
-                .map(|(id, _)| *id)
-                .collect()
-        };
-        for id in expired {
-            log::debug!("embargo expired for {}", short(&id));
-            fluff(&inner, id, None).await;
         }
 
-        // Announce a new tip.
-        let (tip, header_height_now) = inner
-            .with_chain(|c| ((c.tip_id(), *c.tip_header()), c.header_height()))
-            .await;
-        // Once per new height: pool re-announcement (docs/p2p.md §7), and
-        // originated-set entries whose window ended are dropped (§8.1).
-        let next = tip.1.height + 1;
-        if next != last_next {
-            if last_next != 0 {
-                reannounce_pool(&inner, last_next, next).await;
-            }
-            last_next = next;
-            if inner.state().originated.prune(next) > 0 {
-                inner.save_originated().await;
-            }
-        }
+        // Announce a new tip (the published summary: a block connected by
+        // any path is announced within a tick, even during a hold).
+        let (tip, header_height_now) = {
+            let s = inner.summary.load();
+            ((s.tip_id, s.tip_header), s.header_height)
+        };
         {
             let mut st = inner.state();
             if st.announced_tip != tip.0 {
@@ -177,7 +162,6 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
         for p in behind {
             inner.request_headers(p).await;
         }
-        schedule_downloads(&inner).await;
 
         // Outbound connections.
         if now.duration_since(last_outbound) > Duration::from_secs(2) {
@@ -202,5 +186,49 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
             drop(st);
             inner.save();
         }
+    }
+}
+
+/// The chain-side maintenance, every tick, on its own task so that a chain-lock
+/// hold never stops [`maintenance_loop`]: embargoes that expired are fluffed
+/// (the transaction enters the mempool: a chain write), pooled transactions
+/// are re-announced once per new height, originated-set entries whose window
+/// ended are dropped, and missing bodies are requested.
+pub(super) async fn chain_maintenance_loop(inner: Arc<Inner>) {
+    // The next block's height at the previous tick (0: not seen yet).
+    let mut last_next = 0u64;
+    loop {
+        tokio::time::sleep(inner.cfg.tick).await;
+        let now = Instant::now();
+
+        // Embargoes, detected at the tick after expiry; fluffing waits for
+        // the chain lock (Stage 2 queues it to the single writer instead).
+        let expired: Vec<Hash> = {
+            let st = inner.state();
+            st.stempool
+                .iter()
+                .filter(|(_, e)| now >= e.embargo)
+                .map(|(id, _)| *id)
+                .collect()
+        };
+        for id in expired {
+            log::debug!("embargo expired for {}", short(&id));
+            fluff(&inner, id, None).await;
+        }
+
+        // Once per new height: pool re-announcement (docs/p2p.md §7), and
+        // originated-set entries whose window ended are dropped (§8.1).
+        let next = inner.summary.load().height + 1;
+        if next != last_next {
+            if last_next != 0 {
+                reannounce_pool(&inner, last_next, next).await;
+            }
+            last_next = next;
+            if inner.state().originated.prune(next) > 0 {
+                inner.save_originated().await;
+            }
+        }
+
+        schedule_downloads(&inner).await;
     }
 }

@@ -3,7 +3,7 @@
 
 use super::addr_relay::advertise_self;
 use super::blocks::SERVE_BLOCKS_PER_REQUEST;
-use super::dispatch::{handle, requested_by_us};
+use super::dispatch::{handle, is_slow, requested_by_us, Pushed, SlowLane};
 use super::peers::{advertised_listen, inbound_count, same_ip_count, HandshakeSlot};
 use super::relay::retry_tx;
 use super::state::{unix_now, Inner, Peer, State};
@@ -74,9 +74,12 @@ pub(super) async fn run_connection<S>(
         st.local_nonces.insert(n);
         n
     };
-    let (height, tip) = inner
-        .with_chain(|c| (c.header_height(), c.best_header_id()))
-        .await;
+    // From the published summary, never the chain lock: a long hold must not
+    // make every new connection miss the remote's handshake timeout (F34-3).
+    let (height, tip) = {
+        let s = inner.summary.load();
+        (s.header_height, s.best_header_id)
+    };
     let our_listen = advertised_listen(&inner.cfg, &addr, inbound, proxied);
     let ours = Version {
         protocol: PROTOCOL_VERSION,
@@ -237,7 +240,9 @@ pub(super) async fn run_connection<S>(
         inner.request_headers(id).await;
     }
 
-    // Read loop.
+    // Read loop. Messages whose handling takes the chain lock go to the
+    // peer's slow lane; the loop itself never waits for the chain (F34-1).
+    let lane = SlowLane::start(&inner, id);
     loop {
         tokio::select! {
             _ = kill.notified() => break,
@@ -283,6 +288,7 @@ pub(super) async fn run_connection<S>(
                     }
                     continue;
                 }
+                let len = frame.len();
                 let msg = match Message::decode(&frame) {
                     Ok(m) => m,
                     Err(e) => { inner.misbehave(id, score::PROTOCOL, &format!("malformed message: {e:?}")); break; }
@@ -306,12 +312,26 @@ pub(super) async fn run_connection<S>(
                     inner.misbehave(id, score::RATE, "byte rate limit");
                     continue;
                 }
-                handle(&inner, id, msg).await;
+                if !is_slow(&msg) {
+                    handle(&inner, id, msg).await;
+                    continue;
+                }
+                let kind = msg.kind();
+                match lane.push(msg, len) {
+                    Pushed::Queued => {}
+                    Pushed::Dropped { charge: true } => {
+                        inner.misbehave(id, score::RATE, "slow lane full");
+                    }
+                    Pushed::Dropped { charge: false } => {
+                        log::debug!("{addr}: slow lane full; {kind} dropped");
+                    }
+                }
             }
         }
     }
 
-    // Cleanup.
+    // Cleanup. The lane task stops before its next message.
+    drop(lane);
     writer_task.abort();
     let mut st = inner.state();
     if let Some(p) = st.peers.remove(&id) {

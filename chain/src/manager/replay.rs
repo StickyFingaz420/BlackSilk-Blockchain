@@ -30,6 +30,8 @@ impl ChainManager {
         let headers = HeaderChain::new(params.clone(), pow.clone());
         let genesis_id = params.genesis_id();
         let genesis_work = headers.work(&genesis_id).expect("genesis");
+        let genesis_header = *headers.header(&genesis_id).expect("genesis");
+        let (network, network_id) = (params.network, params.network_id);
         let mut state = MemoryChain::new();
         // Genesis: an empty body (docs/blocks.md §3), which always applies.
         state
@@ -69,6 +71,11 @@ impl ChainManager {
             ready: BinaryHeap::new(),
             syncing: None,
             sync_outcome: SyncOutcome::default(),
+            summary: Arc::new(super::SummaryCell::placeholder(
+                genesis_header,
+                network,
+                network_id,
+            )),
         };
         let total = stored.len() as u64;
         manager.replay(stored)?;
@@ -83,6 +90,7 @@ impl ChainManager {
         // store's block records.
         manager.next_body_seq = total;
         manager.refresh_hot_seeds();
+        manager.publish_first_summary();
         Ok(manager)
     }
 

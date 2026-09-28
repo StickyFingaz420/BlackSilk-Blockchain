@@ -9,6 +9,12 @@
 //!   long lock hold elsewhere never stalls pings, reads or accepts (R8-1);
 //! - block bodies are connected by the block worker in bounded steps
 //!   (`submit_block_in_steps`), releasing the chain lock in between;
+//! - no connection's read loop and no maintenance tick waits for the chain
+//!   lock (F34-1 to F34-3): messages whose handling takes it run on the
+//!   peer's slow lane (`dispatch::SlowLane`); the handshake, header requests
+//!   and tip announcements read the published chain summary
+//!   (`ChainManager::summary_cell`); chain-side maintenance (embargo fluff,
+//!   pool re-announcement, download scheduling) runs on its own task;
 //! - a poisoned chain or state lock stops the node (`lock_or_exit`).
 
 mod addr_relay;
@@ -35,7 +41,7 @@ use blocks::block_worker;
 pub use blocks::BLOCK_WINDOW_BYTES;
 pub use config::{NetConfig, NetStats, PeerInfo};
 use headers::header_worker;
-use maintenance::maintenance_loop;
+use maintenance::{chain_maintenance_loop, maintenance_loop};
 use peers::{accept_loop, connect_outbound};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -121,11 +127,11 @@ impl Network {
             None => None,
         };
         let local_addr = listener.as_ref().and_then(|l| l.local_addr().ok());
-        let (tip, genesis_id) = {
+        let (tip, genesis_id, summary) = {
             let chain = chain.clone();
             tokio::task::spawn_blocking(move || {
                 let c = lock_or_exit(&chain, "chain");
-                (c.tip_id(), c.params().genesis_id())
+                (c.tip_id(), c.params().genesis_id(), c.summary_cell())
             })
             .await
             .map_err(std::io::Error::other)?
@@ -169,6 +175,7 @@ impl Network {
         let (block_queue, block_rx) = mpsc::unbounded_channel();
         let inner = Arc::new(Inner {
             chain,
+            summary,
             cfg,
             genesis_id,
             header_queue,
@@ -182,6 +189,7 @@ impl Network {
             tokio::spawn(accept_loop(inner.clone(), l));
         }
         tokio::spawn(maintenance_loop(inner.clone()));
+        tokio::spawn(chain_maintenance_loop(inner.clone()));
         tokio::spawn(header_worker(inner.clone(), header_rx));
         tokio::spawn(block_worker(inner.clone(), block_rx));
         Ok(Network { inner })

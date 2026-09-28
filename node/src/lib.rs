@@ -13,14 +13,14 @@ pub mod fingerprint;
 pub mod guard;
 pub mod serve;
 
-use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::extract::{DefaultBodyLimit, Extension, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{
-    submit_block_in_steps, ChainManager, SubmitError, SYNC_STEP_BLOCKS,
+    submit_block_in_steps, ChainManager, ChainSummary, SubmitError, SummaryCell, SYNC_STEP_BLOCKS,
 };
 use blacksilk_chain::sync_policy::worth_verifying;
 use blacksilk_consensus::{BlockHeader, Hash, Network};
@@ -116,12 +116,15 @@ pub fn open_exit_code(e: &std::io::Error) -> i32 {
 
 /// Resolves once the chain manager has halted ([`ChainManager::halted`]):
 /// its block store failed persistently, or a block that passed validation
-/// failed to apply. Checked every `period` on a plain thread. A halted node
-/// accepts no block but would keep downloading bodies; the caller shuts it
-/// down so that a restart recovers deterministically (the load truncates a
-/// torn tail and replays the store).
+/// failed to apply. Checked every `period` on a plain thread, on the
+/// published chain summary (the manager publishes the halt before releasing
+/// the chain lock), so the check never queues behind a long hold. A halted
+/// node accepts no block but would keep downloading bodies; the caller shuts
+/// it down so that a restart recovers deterministically (the load truncates
+/// a torn tail and replays the store).
 pub fn watch_store(shared: Shared, period: Duration) -> tokio::sync::oneshot::Receiver<()> {
-    poll_until(period, move || lock(&shared).halted().is_some())
+    let summary = lock(&shared).summary_cell();
+    poll_until(period, move || summary.load().halted())
 }
 
 /// Why the node stopped, once [`watch_store`] resolved: the manager's
@@ -180,13 +183,19 @@ fn internal(e: tokio::task::JoinError) -> ApiError {
 
 /// Runs `f` under the chain lock on a blocking thread: an RPC handler never
 /// waits for the lock on an async worker, which the P2P tasks share (R10-5).
+/// The chain summary is republished before the lock is released.
 async fn with_chain<T: Send + 'static>(
     s: Shared,
     f: impl FnOnce(&ChainManager) -> T + Send + 'static,
 ) -> Result<T, ApiError> {
-    tokio::task::spawn_blocking(move || f(&lock(&s)))
-        .await
-        .map_err(internal)
+    tokio::task::spawn_blocking(move || {
+        let m = lock(&s);
+        let t = f(&m);
+        m.publish_summary();
+        t
+    })
+    .await
+    .map_err(internal)
 }
 
 /// RPC without networking (tests, isolated nodes). Guarded, without a
@@ -226,8 +235,13 @@ pub fn router_with(app: App) -> Router {
 
 /// The router behind the guard with `policy` (docs/blocks.md §9.1). The guard
 /// is the outermost layer, so it covers every route and unknown paths.
+///
+/// Building the router takes the chain lock once, briefly, for the chain's
+/// summary cell (`ChainManager::summary_cell`), which `/info` reads without
+/// the lock from then on.
 pub fn router_secured(app: App, policy: guard::Policy) -> Router {
     let guard = Arc::new(guard::Guard::new(policy));
+    let summary = lock(&app.chain).summary_cell();
     Router::new()
         .route("/info", get(info))
         .route("/template", get(template))
@@ -242,33 +256,40 @@ pub fn router_secured(app: App, policy: guard::Policy) -> Router {
         // The guard has already read the body within its per-route limit;
         // this only lets the extractors take a body of that size.
         .layer(DefaultBodyLimit::max(rpc::MAX_REQUEST_BYTES))
+        .layer(Extension(summary))
         .with_state(app)
         .layer(axum::middleware::from_fn_with_state(guard, guard::guard))
 }
 
-async fn info(State(App { chain: s, net }): State<App>) -> Result<Json<rpc::Info>, ApiError> {
+/// `/info` answers from the published chain summary, never the chain lock:
+/// it stays prompt during any hold (F34-4), and its chain fields are those of
+/// the last publication (at most one lock hold old, mutually consistent).
+async fn info(
+    State(App { net, .. }): State<App>,
+    Extension(summary): Extension<Arc<SummaryCell>>,
+) -> Json<rpc::Info> {
     let stats = net.map(|n| n.stats());
-    with_chain(s, move |m| info_of(m, stats)).await.map(Json)
+    Json(info_of(&summary.load(), stats))
 }
 
-fn info_of(m: &ChainManager, stats: Option<blacksilk_p2p::NetStats>) -> rpc::Info {
+fn info_of(s: &ChainSummary, stats: Option<blacksilk_p2p::NetStats>) -> rpc::Info {
     rpc::Info {
-        network: network_name(m.params().network).to_string(),
-        network_id: m.params().network_id,
-        height: m.height(),
-        tip: hex::encode(m.tip_id()),
-        difficulty: m.tip_header().difficulty,
-        generated: m.generated(),
-        mempool_txs: m.mempool().len(),
-        mempool_bytes: m.mempool().bytes(),
-        outputs: m.state().output_count(),
+        network: network_name(s.network).to_string(),
+        network_id: s.network_id,
+        height: s.height,
+        tip: hex::encode(s.tip_id),
+        difficulty: s.tip_header.difficulty,
+        generated: s.generated,
+        mempool_txs: s.mempool_txs,
+        mempool_bytes: s.mempool_bytes,
+        outputs: s.outputs,
         peers: stats.as_ref().map_or(0, |s| s.peers),
-        header_height: m.header_height(),
-        deepest_reorg: m.deepest_reorg() as u64,
+        header_height: s.header_height,
+        deepest_reorg: s.deepest_reorg as u64,
         misbehaving_disconnects: stats.as_ref().map_or(0, |s| s.misbehaving_disconnects),
-        genesis_id: Some(fingerprint::hex(&m.params().genesis_id())),
+        genesis_id: Some(fingerprint::hex(&s.genesis_id)),
         consensus_fingerprint: Some(fingerprint::hex(&fingerprint::consensus_fingerprint(
-            m.params().network,
+            s.network,
         ))),
         build_commit: Some(fingerprint::BUILD_COMMIT.to_string()),
         version: Some(fingerprint::VERSION.to_string()),
@@ -448,10 +469,15 @@ async fn submit_tx(
     let result = match net {
         Some(n) => n.submit_tx(tx).await,
         // Local origination: the recently-expired guard applies (RTW1B-1).
-        None => tokio::task::spawn_blocking(move || lock(&s).submit_local_tx(tx))
-            .await
-            .map_err(internal)?
-            .map_err(|e| format!("{e:?}")),
+        None => tokio::task::spawn_blocking(move || {
+            let mut m = lock(&s);
+            let r = m.submit_local_tx(tx);
+            m.publish_summary();
+            r
+        })
+        .await
+        .map_err(internal)?
+        .map_err(|e| format!("{e:?}")),
     };
     Ok(Json(match result {
         Ok(id) => rpc::SubmitResult {

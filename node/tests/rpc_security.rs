@@ -540,7 +540,12 @@ fn connections_beyond_the_cap_are_refused() {
 }
 
 /// A full admission class answers 503 at once; the chain lock is held by the
-/// test, so the admitted requests wait on it.
+/// test, so the admitted requests wait on it. They read the chain
+/// (`/distribution`): `/info` answers from the published chain summary
+/// without the lock (dossier 34 Stage 1) and would free its slot at once.
+/// Two more requests than the class has slots are sent; the class is known
+/// to be full once two of them were refused (no fixed sleep: under a loaded
+/// test run the fillers may take longer than any fixed delay to arrive).
 #[test]
 fn a_full_class_answers_busy_at_once() {
     let n = Node::guarded(ConnLimits {
@@ -548,12 +553,28 @@ fn a_full_class_answers_busy_at_once() {
         ..test_conn()
     });
     let reads = Limits::default().reads;
+    let extra = 2;
     let guard = n.shared.lock().unwrap();
     let addr = n.addr;
-    let waiting: Vec<_> = (0..reads)
-        .map(|_| std::thread::spawn(move || get(addr, "/info", "").map(|a| a.status)))
-        .collect();
-    std::thread::sleep(Duration::from_millis(500));
+    let (tx, rx) = std::sync::mpsc::channel();
+    for _ in 0..reads + extra {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(get(addr, "/distribution?to=0", "").map(|a| a.status));
+        });
+    }
+    let mut statuses = Vec::new();
+    while statuses.len() < extra {
+        let s = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the class fills up");
+        assert_eq!(
+            s,
+            Some(503),
+            "only refusals come back while the lock is held"
+        );
+        statuses.push(s);
+    }
     let start = Instant::now();
     let a = get(addr, "/distribution?to=0", "").unwrap();
     assert_eq!(a.status, 503, "{}", a.body);
@@ -562,9 +583,14 @@ fn a_full_class_answers_busy_at_once() {
     let a = get(addr, "/px/contracts?from=0", "").unwrap();
     assert_eq!(a.status, 503);
     drop(guard);
-    for w in waiting {
-        assert_eq!(w.join().unwrap(), Some(200));
+    for _ in 0..reads {
+        statuses.push(rx.recv_timeout(Duration::from_secs(20)).unwrap());
     }
+    let ok = statuses.iter().filter(|s| **s == Some(200)).count();
+    assert_eq!(
+        ok, reads,
+        "every admitted request is answered: {statuses:?}"
+    );
     assert_eq!(get(addr, "/info", "").unwrap().status, 200);
 }
 

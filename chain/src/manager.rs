@@ -29,6 +29,7 @@ mod header_sync;
 mod pow_cache;
 mod replay;
 mod submission;
+mod summary;
 mod template;
 
 use crate::block::Block;
@@ -45,6 +46,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap, HashMap};
 use std::io;
 use std::sync::Arc;
+pub use summary::{ChainSummary, SummaryCell};
 
 #[derive(Debug)]
 pub enum SubmitError {
@@ -199,6 +201,8 @@ pub struct ChainManager {
     syncing: Option<Hash>,
     /// Mempool effects of a drain in progress, applied when it ends.
     sync_outcome: SyncOutcome,
+    /// The published summary, read without the chain lock (`summary`).
+    summary: Arc<SummaryCell>,
 }
 
 /// Blocks validated and connected per lock hold by the bounded API

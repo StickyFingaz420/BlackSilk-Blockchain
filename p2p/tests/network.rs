@@ -735,22 +735,19 @@ async fn mempool_cannot_be_probed_with_gettx() {
     let id = tx.hash();
     a.chain.lock().unwrap().submit_tx(tx).unwrap(); // in A's mempool
     w.send(&Message::GetTx(vec![id]).encode()).await.unwrap();
-    w.send(&Message::Ping(77).encode()).await.unwrap();
     // The answer is NotFound, exactly as for a transaction the node never had: the
-    // reply does not reveal the mempool content.
-    let mut not_found = false;
+    // reply does not reveal the mempool content. (One handler sends any `Tx`
+    // before the `NotFound`, so the `NotFound` ends the answer.)
     loop {
         match Message::decode(&r.recv().await.unwrap()).unwrap() {
-            Message::Pong(77) => break,
             Message::NotFound(ids) => {
                 assert_eq!(ids, vec![id]);
-                not_found = true;
+                break;
             }
             Message::Tx(_) => panic!("served a transaction that was never announced to this peer"),
             _ => {}
         }
     }
-    assert!(not_found);
     // Same answer for an id that does not exist at all.
     w.send(&Message::GetTx(vec![[0x55; 32]]).encode())
         .await
@@ -2005,18 +2002,29 @@ async fn a_local_transaction_waits_for_a_stem_peer() {
 
 // ------------------------------------ transaction relay hardening (tx review)
 
-/// Sends `msgs`, then a ping, and waits for its pong: every message before it
-/// has been handled.
+/// A `GetTx` for an id no node has, derived from `nonce`, and whether `m` is
+/// the node's answer to it (`NotFound`). A barrier through the peer's slow
+/// lane: its answer comes after every earlier message of the peer has been
+/// handled. A ping is no barrier: pings are answered on the read loop, ahead
+/// of queued chain work (docs/p2p.md §10, F34-1).
+fn lane_barrier(nonce: u64) -> (Vec<u8>, impl Fn(&Message) -> bool) {
+    let mut id = [0xb7; 32];
+    id[..8].copy_from_slice(&nonce.to_le_bytes());
+    let answered = move |m: &Message| matches!(m, Message::NotFound(ids) if ids == &vec![id]);
+    (Message::GetTx(vec![id]).encode(), answered)
+}
+
+/// Sends `msgs`, then a slow-lane barrier ([`lane_barrier`]), and waits for
+/// its answer: every message before it has been handled.
 async fn send_and_sync(r: &mut RawReader, w: &mut RawWriter, msgs: &[Vec<u8>], nonce: u64) {
     for m in msgs {
         w.send(m).await.unwrap();
     }
-    w.send(&Message::Ping(nonce).encode()).await.unwrap();
+    let (barrier, answered) = lane_barrier(nonce);
+    w.send(&barrier).await.unwrap();
     assert!(
-        recv_until(r, 10.0, |m| matches!(m, Message::Pong(n) if *n == nonce))
-            .await
-            .is_some(),
-        "pong {nonce}"
+        recv_until(r, 10.0, answered).await.is_some(),
+        "barrier {nonce}"
     );
 }
 
@@ -2108,12 +2116,13 @@ async fn contextual_rejects_are_not_reverified_at_the_same_tip() {
     w.send(&Message::InvTx(vec![bad.hash()]).encode())
         .await
         .unwrap();
-    w.send(&Message::Ping(2).encode()).await.unwrap();
+    let (barrier, answered) = lane_barrier(2);
+    w.send(&barrier).await.unwrap();
     let got = recv_until(&mut r, 5.0, |m| {
-        matches!(m, Message::GetTx(_) | Message::Pong(2))
+        matches!(m, Message::GetTx(_)) || answered(m)
     })
     .await;
-    assert!(matches!(got, Some(Message::Pong(2))), "{got:?}");
+    assert!(got.as_ref().is_some_and(&answered), "{got:?}");
     // A new tip: verified again.
     a.mine(0);
     send_and_sync(&mut r, &mut w, &[stem], 3).await;
