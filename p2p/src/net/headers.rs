@@ -1,5 +1,7 @@
-//! Header-first sync: header requests, the header queue and worker, the
-//! anti-DoS work threshold, header verification and header error scoring.
+//! Header-first sync: header requests, the header queue and worker, header
+//! verification and header error scoring. The anti-DoS work gate, the live
+//! RandomX keys and the PoW chunk cap are `blacksilk_chain::sync_policy`'s,
+//! shared with the RPC `/block` gate.
 
 use super::blocks::schedule_downloads;
 use super::fatal;
@@ -10,6 +12,7 @@ use crate::addr::NetAddr;
 use crate::dandelion::PeerId;
 use crate::limits::score;
 use crate::message::{Message, MAX_HEADERS};
+use blacksilk_chain::sync_policy::{anti_dos_threshold, pow_chunk, seed_is_live, worth_verifying};
 use blacksilk_consensus::{seed_height, BlockHeader, Hash, HeaderChain, HeaderError};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -293,19 +296,6 @@ impl UpgradeWork {
     }
 }
 
-/// Whether `seed` is the RandomX key of the next block on our best chain, or
-/// the key after it once the block holding it exists: the two keys
-/// `RandomXPow` keeps built. An unknown-version header under any other key is
-/// never hashed, so it cannot make the node build (and evict) a cache
-/// (RTW1-1 (c)).
-fn seed_is_live(hc: &HeaderChain, seed: &Hash) -> bool {
-    let p = hc.params();
-    let next = hc.height() + 1;
-    [next, next + p.seed_epoch]
-        .into_iter()
-        .any(|h| hc.main_id_at(seed_height(h, p.seed_epoch, p.seed_lag)) == Some(*seed))
-}
-
 /// The RandomX key of `headers[i]`, on its own branch: `headers` is a linked
 /// batch whose first header's parent is stored, one height below it (as
 /// `ChainManager::pow_jobs` computes it).
@@ -326,9 +316,11 @@ fn batch_seed(hc: &HeaderChain, headers: &[BlockHeader], i: usize) -> Hash {
 ///    penalized for rejects the batch without any hash;
 /// 2. headers already stored are skipped, and a batch whose work cannot beat
 ///    our best header chain is dropped (`low_work`);
-/// 3. proof of work in chunks of `pow_threads` headers, each chunk accepted
-///    before the next is hashed, so a batch that fails costs at most one
-///    chunk of hashes beyond its last valid header.
+/// 3. proof of work in chunks of `pow_threads` headers, at most `seed_lag`
+///    (`sync_policy::pow_chunk`), each chunk accepted before the next is
+///    hashed, so a batch that fails costs at most one chunk of hashes beyond
+///    its last valid header, and no header is hashed under a key taken from
+///    an unverified header of its own chunk (F07-4).
 ///
 /// One worker for all peers: batches from several peers covering the same
 /// headers are hashed once (the second finds them stored). The queue is
@@ -457,67 +449,6 @@ fn sender_live(inner: &Inner, peer: PeerId, addr: &NetAddr) -> bool {
             .is_none_or(|ip| !st.bans.is_banned(&ip, unix_now()))
 }
 
-/// Blocks of main-chain work below our best that a competing branch may lack
-/// and still be verified and stored (R1-C1; Bitcoin Core's anti-DoS work
-/// threshold uses 144 blocks as well).
-const ANTI_DOS_BLOCKS: u64 = 144;
-
-/// Claimed cumulative work a branch must reach to be hashed and stored:
-/// `best_work - work(last ANTI_DOS_BLOCKS main blocks)`, i.e. the work of our
-/// best chain at `tip - ANTI_DOS_BLOCKS`. There is no hard-coded minimum
-/// chain work (docs/p2p.md §12).
-fn anti_dos_threshold(hc: &HeaderChain) -> u128 {
-    let base = hc.height().saturating_sub(ANTI_DOS_BLOCKS);
-    hc.main_id_at(base).and_then(|id| hc.work(&id)).unwrap_or(0)
-}
-
-/// Whether headers `fresh` (linked, not stored, every rule but PoW checked,
-/// the first one's parent stored) are worth their proof of work: RandomX
-/// hashes are spent only on headers that can make a chain competitive with
-/// our best one (docs/p2p.md §6). The difficulties are the required ones (the
-/// pre-check passed, and the caller replaced the unchecked difficulty of an
-/// unknown-version header by the required one, RTW1-1), so the sums below are
-/// the work this node would count for the headers.
-///
-/// - The batch's claimed tip work reaches `anti_dos_threshold` (our best
-///   work minus that of our last 144 blocks): verify. This covers every
-///   extension of our best chain and near-tip competing branches.
-/// - Otherwise, if the message was not a full batch (`MAX_HEADERS`), the
-///   peer's branch ends here, far below our work: dropped.
-/// - A full batch may be the start of a longer, heavier branch (a fork deeper
-///   than one batch). It is verified only if its work per height is at least
-///   half of our best chain's over the same heights (our tip's difficulty for
-///   heights above our tip). Cheap branches (difficulty driven down with
-///   spread-out timestamps) fail this; an honest competing branch, mined at
-///   comparable difficulty, passes.
-fn worth_verifying(hc: &HeaderChain, fresh: &[BlockHeader], full: bool) -> bool {
-    let Some(first) = fresh.first() else {
-        return true;
-    };
-    let Some(parent_work) = hc.work(&first.prev_id) else {
-        return true; // not reached: the parent is stored
-    };
-    let batch: u128 = fresh.iter().map(|h| h.difficulty as u128).sum();
-    if parent_work + batch >= anti_dos_threshold(hc) {
-        return true;
-    }
-    if !full {
-        return false;
-    }
-    let last = first.height + fresh.len() as u64 - 1;
-    let tip = hc.height();
-    let tip_difficulty = hc.tip().difficulty as u128;
-    let ours = if first.height > tip {
-        tip_difficulty * fresh.len() as u128
-    } else {
-        let top = last.min(tip);
-        let work_at = |h: u64| hc.main_id_at(h).and_then(|id| hc.work(&id)).unwrap_or(0);
-        work_at(top).saturating_sub(work_at(first.height - 1))
-            + tip_difficulty * (last - top) as u128
-    };
-    batch.saturating_mul(2) >= ours
-}
-
 /// Pre-check, then chunked proof of work and acceptance. Runs on a blocking
 /// thread; the chain lock is held only for the cheap steps, never while
 /// hashing.
@@ -595,7 +526,7 @@ fn verify_headers(
     }
     let unknown_at = fresh_range.end;
     let fresh = &headers[fresh_range];
-    let chunk = inner.cfg.pow_threads.max(1);
+    let chunk = pow_chunk(inner.cfg.pow_threads, inner.chain().params());
     let mut new = 0;
     for (k, part) in fresh.chunks(chunk).enumerate() {
         if k > 0 && !sender_live(inner, peer, addr) {

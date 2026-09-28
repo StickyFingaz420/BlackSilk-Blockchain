@@ -22,6 +22,7 @@ use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{
     submit_block_in_steps, ChainManager, SubmitError, SYNC_STEP_BLOCKS,
 };
+use blacksilk_chain::sync_policy::worth_verifying;
 use blacksilk_consensus::{BlockHeader, Hash, Network};
 use blacksilk_p2p::Network as P2p;
 use blacksilk_rpc as rpc;
@@ -320,11 +321,15 @@ const _: () = assert!(RPC_BLOCK_MAX_DEPTH < 64 && RPC_BLOCK_MAX_DEPTH < 144);
 /// - the parent is the connected tip or one of its last
 ///   [`RPC_BLOCK_MAX_DEPTH`] ancestors, and the height follows it;
 /// - the block's RandomX seed is the tip's or the next block's, so an RPC
-///   client can never make the node build the cache of another seed.
+///   client can never make the node build the cache of another seed;
+/// - it passes the P2P header gate, `sync_policy::worth_verifying` (one rule
+///   for both paths, R16-5), charged the difficulty this node requires at
+///   its position, not the one it claims (`LowWork`; only while our best
+///   header chain is 144 blocks of work ahead of the connected tip, as
+///   during initial sync).
 ///
-/// Stronger than the P2P `worth_verifying` gate for this path: only the
-/// local miner legitimately submits here. Blocks of other shapes arrive over
-/// P2P, under that gate.
+/// Stronger than the P2P gate alone: only the local miner legitimately
+/// submits here. Blocks of other shapes arrive over P2P, under that gate.
 pub fn rpc_block_admissible(m: &ChainManager, header: &BlockHeader) -> Result<(), String> {
     let tip = m.height();
     let mut id = m.tip_id();
@@ -352,6 +357,17 @@ pub fn rpc_block_admissible(m: &ChainManager, header: &BlockHeader) -> Result<()
     let current = (tip > 0).then(|| hc.seed_id_for(m.tip_header().prev_id, tip));
     if seed != next && Some(seed) != current {
         return Err("StaleSeed: the block's RandomX seed is not the tip's or the next".into());
+    }
+    // The claimed difficulty is not checked yet (validation comes after the
+    // proof of work): the gate counts the required one (RTW1-1 (a)).
+    let mut charged = *header;
+    charged.difficulty = hc.template_on(header.prev_id).map_or(0, |t| t.difficulty);
+    if !worth_verifying(hc, std::slice::from_ref(&charged), false) {
+        return Err(
+            "LowWork: the block's chain is below the anti-DoS work threshold of our best \
+             header chain"
+                .into(),
+        );
     }
     Ok(())
 }

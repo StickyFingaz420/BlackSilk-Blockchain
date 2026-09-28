@@ -212,9 +212,14 @@ is a violation (100 points). The only exception is `Version`'s extension area (ย
      **whole batch** before any RandomX hash (`HeaderChain::precheck_batch`). It uses
      the branch context the batch itself forms, with the same rule function as
      single-header validation, so the two cannot disagree.
-   - **Then proof of work, in chunks** of `pow_threads` headers, hashed in parallel
-     (the seeds come from ids in the batch or the existing chain). Each chunk is
-     accepted before the next is hashed.
+   - **Then proof of work, in chunks** of `pow_threads` headers, at most `seed_lag`
+     (64; `sync_policy::pow_chunk`), hashed in parallel (the seeds come from ids in
+     the batch or the existing chain). Each chunk is accepted before the next is
+     hashed. A header's RandomX key is at least `seed_lag + 1` blocks below it, so
+     its key block is never an unverified header of its own chunk: a batch with junk
+     proof of work at a key block cannot make the node build that key's cache (on
+     hosts with more than 65 threads it could before, F07-4;
+     `p2p/tests/sync_policy.rs`).
    - **Cost bound.** A batch that breaks a cheap rule costs no RandomX hash. One that
      fails the proof of work costs at most one chunk of hashes beyond its last valid
      header, and the sender is banned. Before 2026-09-27 every header of a batch was
@@ -226,8 +231,10 @@ is a violation (100 points). The only exception is `Version`'s extension area (ย
    - **Known headers are skipped.** Headers already stored cost nothing more: a peer
      replaying known headers causes no hashing.
    - **Work gate (anti-DoS, R1-C1).** After the pre-check, the cumulative work the
-     batch *claims* is exact: the difficulties are the required ones. RandomX hashes
-     are spent only if one of these holds:
+     batch *claims* is exact: the difficulties are the required ones. The gate is
+     `blacksilk_chain::sync_policy::worth_verifying`, the one rule shared with the
+     RPC `/block` gate (blocks.md ยง9.2), which charges a submitted block the
+     required difficulty too. RandomX hashes are spent only if one of these holds:
      - the batch's claimed tip work is at least
        `threshold = best_work โ’ work(our last 144 blocks)`, i.e. the work of our best
        chain 144 blocks below its tip. Every extension of our best chain and every
@@ -250,9 +257,9 @@ is a violation (100 points). The only exception is `Version`'s extension area (ย
        never the difficulty it claims. Before this rule a header anchored at genesis
        and claiming `u64::MAX` passed the gate and was hashed.
      - **Live RandomX keys only.** It is hashed only if its RandomX key (on its own
-       branch) is the key of our next block or the next key after it, the two keys
-       the node keeps built. Under any other key it is dropped unhashed, so it cannot
-       make the node build and evict a RandomX cache.
+       branch) is the key of our next block or the next key after it
+       (`sync_policy::seed_is_live`). Under any other key it is dropped unhashed, so
+       it cannot make the node build a RandomX cache.
      - **Classified by its proof of work.** Otherwise it is hashed after the batch's
        valid prefix and checked against the required difficulty: junk proof of work
        is `InsufficientWork` (penalized); real work is `UnknownUpgrade`, not scored.
@@ -734,9 +741,17 @@ already being written is finished first).
     half of ours feed side branches deeper than one batch; that costs real work.
   - No pruning of stored side branches (consensus.md ยง8, policy K4); `HeaderChain`
     and the PoW cache still grow with every stored header.
-  - **RandomX seed pinning** (the best chain's cache never evicted by side-branch
-    seeds) is in the consensus crate, not here; the work gate removes the free
-    trigger (headers of free branches are no longer hashed).
+  - **RandomX caches** (`consensus::pow::SeedCache`, under `RandomXPow`): a cache
+    is built outside the lock other PoW callers need, so a key switch no longer
+    stalls hashing under the other key (`consensus/tests/seed_switch_liveness.rs`).
+    Pinning and prebuilding the best chain's keys (`sync_policy::hot_seeds`, fed to
+    `PowFunction::set_hot_seeds`) exist and are tested
+    (`chain/tests/seed_switch.rs`), but **the node does not call
+    `set_hot_seeds` yet**: until the chain manager does (and `CachedPow` forwards
+    it), caches are kept as a two-key LRU, a side-branch key can evict a best-chain
+    key, and the first block of each key epoch builds its cache when it is first
+    hashed. The work gate removes the free trigger (headers of free branches are
+    not hashed).
   - Bodies of stored side branches can still be stored before they are validated
     (the completion report's N-2), by an unrequested block whose header passed the
     gate.
