@@ -214,13 +214,25 @@ impl ChainManager {
                 // Captured while the block is still applied: its rings then
                 // resolve as when it was validated (outputs are only
                 // appended), so the pool readmits it without verifying it.
+                // Tip first, within the per-class readmission budget
+                // (RTW2A-6); each captured transaction's conflict keys are
+                // reserved until the drain ends (RTW2A-2).
                 if let Some(body) = self.bodies.get(&id) {
                     let rules = self.rules_at(h);
-                    outcome.returned.extend(
-                        body.iter()
-                            .skip(1)
-                            .map(|tx| Returned::capture(tx.clone(), &self.state, &rules)),
-                    );
+                    for tx in body.iter().skip(1) {
+                        match Returned::capture_within(
+                            tx,
+                            &self.state,
+                            &rules,
+                            &mut outcome.captured_bytes,
+                        ) {
+                            Some(r) => {
+                                self.mempool.reserve(&r);
+                                outcome.returned.push(r);
+                            }
+                            None => outcome.uncaptured += 1,
+                        }
+                    }
                 }
                 assert!(self.state.undo_block());
             }
@@ -297,6 +309,7 @@ impl ChainManager {
     pub(super) fn finish_sync(&mut self, outcome: SyncOutcome) {
         let next = self.height() + 1;
         let rules = self.rules_at(next);
+        let uncaptured = outcome.uncaptured;
         // Rules, expiry (before the returned transactions come back: those
         // are pooled with a fresh admission height, even if this node expired
         // them recently), revalidation (the ring-digest path after a
@@ -325,9 +338,11 @@ impl ChainManager {
         }
         if outcome.reorganized {
             log::info!(
-                "mempool after the reorganization: {:?}; returned transactions: {:?}",
+                "mempool after the reorganization: {:?}; returned transactions: {:?}; \
+                 {} beyond the readmission budget, not captured",
                 update.revalidation,
-                update.readmission
+                update.readmission,
+                uncaptured
             );
         }
     }

@@ -144,6 +144,12 @@ struct SyncOutcome {
     /// digests and block rules before each block was undone
     /// (`Returned::capture`), tip first.
     returned: Vec<Returned>,
+    /// Encoded bytes captured into `returned` per class (v1, PX), bounded by
+    /// `READMIT_MAX_BYTES` (`Returned::capture_within`, RTW2A-6)...
+    captured_bytes: [usize; 2],
+    /// ...and the transactions of disconnected blocks not captured beyond
+    /// it (dropped; their wallets rebroadcast them).
+    uncaptured: usize,
     /// Whether any block was disconnected (the mempool then re-checks every
     /// rule; a reorganization of coinbase-only blocks returns nothing).
     reorganized: bool,

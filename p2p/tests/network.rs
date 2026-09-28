@@ -107,6 +107,15 @@ async fn node_with_pow(seed: u64, cfg: NetConfig, pow: Arc<dyn PowFunction>) -> 
 /// A node whose chain actor has the lane capacities and step budget of
 /// `actor_cfg` (Stage 2 lane tests).
 async fn node_with_actor(seed: u64, cfg: NetConfig, actor_cfg: ActorConfig) -> TestNode {
+    node_with_actor_handle(seed, cfg, actor_cfg).await.0
+}
+
+/// [`node_with_actor`], also returning the chain actor's handle.
+async fn node_with_actor_handle(
+    seed: u64,
+    cfg: NetConfig,
+    actor_cfg: ActorConfig,
+) -> (TestNode, actor::ChainHandle) {
     let p = params();
     let m = ChainManager::open(
         p.clone(),
@@ -118,17 +127,18 @@ async fn node_with_actor(seed: u64, cfg: NetConfig, actor_cfg: ActorConfig) -> T
     .unwrap();
     let chain: SharedChain = Arc::new(Mutex::new(m));
     let (handle, _thread) = actor::spawn_shared(chain.clone(), actor_cfg);
-    let net = Network::start_with(cfg, handle).await.unwrap();
+    let net = Network::start_with(cfg, handle.clone()).await.unwrap();
     let addr = net.local_addr().unwrap();
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     let (miner, _) = WalletKeys::generate(&mut rng);
-    TestNode {
+    let node = TestNode {
         chain,
         net,
         addr,
         miner,
         rng,
-    }
+    };
+    (node, handle)
 }
 
 async fn node(seed: u64, connect: &[SocketAddr]) -> TestNode {
@@ -258,23 +268,56 @@ impl TestNode {
     /// An input plan for a mature, unspent miner output worth more than
     /// `min_amount`.
     fn input_plan(&mut self, min_amount: u64) -> (InputPlan, TxRules) {
+        self.input_plan_nth(min_amount, 0)
+    }
+
+    /// A 1-input transfer spending the `nth` mature, unspent miner output
+    /// (distinct `nth`: transfers that do not conflict).
+    fn payment_nth(&mut self, nth: usize) -> Transaction {
+        let (plan, rules) = self.input_plan_nth(0, nth);
+        let (dest, _) = WalletKeys::generate(&mut self.rng);
+        let tx = build_transfer(
+            &self.miner,
+            vec![plan],
+            &[Payment {
+                address: dest.address(SubaddressIndex::PRIMARY),
+                amount: 1_000,
+            }],
+            &self.miner.address(SubaddressIndex::PRIMARY),
+            standard_fee(1, 2, &rules),
+            &rules,
+            &mut self.rng,
+        )
+        .unwrap();
+        Transaction::from(tx)
+    }
+
+    /// [`Self::input_plan`] for the `nth` qualifying output (0: the first
+    /// block's last, as before).
+    fn input_plan_nth(&mut self, min_amount: u64, nth: usize) -> (InputPlan, TxRules) {
         let c = self.chain.lock().unwrap();
         let table = SubaddressTable::new(self.miner.view_keys(), 1, 2);
         let next = c.height() + 1;
         let mut owned = None;
+        let mut seen = 0;
         for h in 1..=c.height() {
             let b = c.block_at(h).unwrap();
             let first = c.state().first_output_at(h).unwrap();
+            let mut found = None;
             for o in scan_block(self.miner.view_keys(), &table, &b.txs, h, first).owned {
                 if next >= o.height + COINBASE_MATURITY
                     && o.received.amount > min_amount
                     && !c.state().is_key_image_spent(&o.key_image(&self.miner))
                 {
-                    owned = Some(o);
+                    found = Some(o);
                 }
             }
-            if owned.is_some() {
-                break;
+            if let Some(o) = found {
+                if seen == nth {
+                    owned = Some(o);
+                    break;
+                }
+                seen += 1;
             }
         }
         let owned = owned.expect("a mature coinbase");
@@ -1002,7 +1045,9 @@ async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
     // transaction 4 times: within each peer's share (burst 4). Every copy
     // fails the cheap contextual check (a spent nullifier) before the
     // node-wide PX token is taken, and no peer is penalized for it. A sixth
-    // peer exceeding its own share is penalized.
+    // peer exceeding its own share has its excess dropped, unpenalized
+    // (RTW2A-4: an honest forwarder exceeds a rate without misbehaving; the
+    // share itself is `limits::tests::relay_charges_are_all_or_nothing`).
     let nid = params().network_id;
     let before: Vec<_> = b.net.peers().iter().map(|p| p.id).collect();
     let mut raws = Vec::new();
@@ -1017,7 +1062,13 @@ async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
                 .unwrap();
         }
     }
-    for _ in 0..8 {
+    // Over its PX share (burst 4), within its byte burst (16 MB): the byte
+    // rate stays a scored flood limit on the read loop, and is not what
+    // this checks.
+    let frame = Message::StemTx(bytes.clone()).encode().len();
+    let sixth = (16_000_000 / frame).min(8);
+    assert!(sixth > 4, "{sixth} stems of {frame} bytes");
+    for _ in 0..sixth {
         w6.send(&Message::StemTx(bytes.clone()).encode())
             .await
             .unwrap();
@@ -1036,17 +1087,7 @@ async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
         .filter(|p| !before.contains(&p.id))
         .map(|p| p.score)
         .collect();
-    assert_eq!(scores.len(), 6);
-    let penalized: Vec<u32> = scores.into_iter().filter(|&s| s > 0).collect();
-    assert_eq!(
-        penalized.len(),
-        1,
-        "only the peer over its own share: {penalized:?}"
-    );
-    assert!(
-        (3..=4).contains(&penalized[0]),
-        "one point per excess message"
-    );
+    assert_eq!(scores, [0; 6], "no peer penalized, over its share or not");
 
     // A request behind a queued PX transaction (more than the lane's relay
     // byte bound) is answered and costs its sender nothing: the Stage 1
@@ -2266,8 +2307,9 @@ async fn contextual_rejects_are_not_reverified_at_the_same_tip() {
 }
 
 /// tx review H1 (a): the signature budget is charged per v1 input before any
-/// verification; a peer over it is rate-limited, and its excess
-/// transactions are not verified.
+/// verification; a peer over it is rate-limited: its excess transactions
+/// are not verified, and (RTW2A-4) not penalized either, a relayed stem
+/// included.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_signature_budget_is_charged_before_verification() {
     let mut cfg = fast_config(&[]);
@@ -2286,7 +2328,7 @@ async fn the_signature_budget_is_charged_before_verification() {
         2,
         "the third was not verified"
     );
-    assert_eq!(a.net.peers()[0].score, score::RATE);
+    assert_eq!(a.net.peers()[0].score, 0, "a rate excess is not penalized");
 }
 
 /// A PX-only transaction with a random anchor: well formed but for its proof
@@ -3416,4 +3458,138 @@ async fn pooled_transactions_are_reannounced_on_the_common_schedule() {
         recv_until(&mut spy, 1.5, originates).await.is_none(),
         "not again at age 11"
     );
+}
+
+// ------------------------------------------------------------ RT-W2a fixes
+
+/// RTW2A-4: a rate excess on a relayed `StemTx` is dropped without penalty.
+/// An honest node forwarding many peers' valid stems exceeds a per-peer
+/// rate without misbehaving; a penalty would get it banned. Here its `txs`
+/// budget (burst 2) admits two of five valid stems: those are verified,
+/// the other three are dropped unverified, not stemmed and not fluffed
+/// (a forced fluff helps locate the origin), and the forwarder's score
+/// stays 0. Invalid content is still penalized. On 47179f1 each excess
+/// stem cost one point (`score::RATE`, "stem rate").
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_honest_stem_forwarder_over_its_rate_is_not_penalized() {
+    let mut cfg = fast_config(&[]);
+    cfg.peer_limits.txs = blacksilk_p2p::limits::TokenBucket::new(0.001, 2.0);
+    let mut a = node_with(66, cfg).await;
+    a.mine_n(80, 0);
+    let txs: Vec<Transaction> = (0..5).map(|n| a.payment_nth(n)).collect();
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    let msgs: Vec<Vec<u8>> = txs
+        .iter()
+        .map(|t| Message::StemTx(t.encode()).encode())
+        .collect();
+    send_and_sync(&mut r, &mut w, &msgs, 1).await;
+    assert_eq!(a.net.stats().tx_verifications, 2, "two within the rate");
+    assert_eq!(a.net.peers()[0].score, 0, "the excess is not penalized");
+    for t in &txs[2..] {
+        let id = t.hash();
+        assert!(
+            !a.net.stempool_contains(&id) && !a.mempool_has(&id),
+            "dropped: neither stemmed nor fluffed"
+        );
+    }
+    // A stem that does not decode is invalid content: still penalized.
+    send_and_sync(
+        &mut r,
+        &mut w,
+        &[Message::StemTx(vec![1, 2, 3]).encode()],
+        2,
+    )
+    .await;
+    assert_eq!(a.net.peers()[0].score, score::INVALID_TX);
+}
+
+/// RTW2A-3: body downloads are scheduled during a drain while an embargo
+/// fluff waits for the chain actor. During a drain a Tx-lane command runs
+/// only after about `STARVATION_LIMIT` (16) steps
+/// (`chain/tests/actor_order.rs`), and the chain-maintenance loop used to
+/// await each fluff before `schedule_downloads`: here the drain has 30
+/// steps of 250 ms and a local transaction's embargo expires at its start,
+/// so a peer announcing the chain got its first `GetBlocks` only about 4 s
+/// later. Now the loop schedules first and fluffs on a task of its own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn downloads_are_scheduled_during_a_drain_while_a_fluff_waits() {
+    const STEP: Duration = Duration::from_millis(250);
+    let mut cfg = fast_config(&[]);
+    cfg.dandelion.embargo_base = Duration::from_millis(300);
+    cfg.dandelion.embargo_mean = Duration::from_millis(1);
+    let (mut a, handle) = node_with_actor_handle(
+        67,
+        cfg,
+        ActorConfig {
+            step_budget: 1,
+            ..ActorConfig::default()
+        },
+    )
+    .await;
+    a.mine_n(80, 0);
+    // An extension of 40 blocks, mined elsewhere.
+    let mut c = node(68, &[]).await;
+    {
+        let ca = a.chain.lock().unwrap();
+        let mut cc = c.chain.lock().unwrap();
+        for h in 1..=ca.height() {
+            let b = ca.block_at(h).unwrap();
+            let now = b.header.timestamp;
+            cc.submit_block(b, now).unwrap();
+        }
+    }
+    c.mine_n(40, 1);
+    let ext: Vec<Block> = {
+        let cc = c.chain.lock().unwrap();
+        (81..=120).map(|h| cc.block_at(h).unwrap()).collect()
+    };
+    let now = ext.last().unwrap().header.timestamp;
+    {
+        // Headers 81-120 and bodies 82-110: body 81 releases a drain of 30
+        // blocks; bodies 111-120 are missing.
+        let mut ca = a.chain.lock().unwrap();
+        let headers: Vec<BlockHeader> = ext.iter().map(|b| b.header).collect();
+        ca.accept_headers(&headers, now).unwrap();
+        for b in &ext[1..30] {
+            ca.submit_block(b.clone(), now).unwrap();
+        }
+        ca.set_step_delay_for_tests(Some(STEP));
+    }
+    // A local transaction, held for lack of a stem peer; its embargo
+    // expires during the drain.
+    let tx = a.payment();
+    let id = tx.hash();
+    a.net.submit_tx(tx).await.unwrap();
+    assert!(a.net.stempool_contains(&id), "held");
+    handle
+        .submit_block(ext[0].clone(), now, false, |_| {})
+        .unwrap();
+    let t = std::time::Instant::now();
+    while !handle.summary().sync_pending {
+        assert!(t.elapsed() < Duration::from_secs(10), "the drain started");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    // The embargo expires and its fluff waits on the Tx lane.
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert!(!a.net.stempool_contains(&id), "the fluff is under way");
+    let nid = params().network_id;
+    let (mut r, _w) = raw_peer_at(a.addr, nid, true, 120).await;
+    let start = std::time::Instant::now();
+    let got = recv_until(&mut r, 2.0, |m| matches!(m, Message::GetBlocks(_))).await;
+    let took = start.elapsed();
+    let s = handle.summary();
+    println!(
+        "RTW2A-3: GetBlocks {:?} after {:.0} ms, drain at height {} (pending {})",
+        got.is_some(),
+        took.as_secs_f64() * 1000.0,
+        s.height,
+        s.sync_pending
+    );
+    assert!(got.is_some(), "no body request within 2 s during the drain");
+    assert!(s.sync_pending, "requested while the drain runs");
+    wait_until("the fluffed transaction is pooled", 30, || {
+        a.mempool_has(&id)
+    })
+    .await;
 }

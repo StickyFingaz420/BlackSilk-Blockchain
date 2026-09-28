@@ -47,7 +47,8 @@
 //! few microseconds per input, not a CLSAG per input and a PX proof per PX
 //! transaction under the chain lock (M12-1, M12-2).
 
-use super::{ChainView, Transaction, TxError, TxRules};
+use super::{class_of, ChainView, Mempool, Transaction, TxError, TxRules, READMIT_MAX_BYTES};
+use blacksilk_consensus::Hash;
 use blacksilk_crypto::clsag::{RingMember, RING_SIZE};
 use blacksilk_crypto::hash::h32;
 use blacksilk_tx::types::Input;
@@ -102,6 +103,9 @@ pub fn ring_digest(
 #[derive(Clone, Debug)]
 pub struct Returned {
     tx: Transaction,
+    /// Its id and encoded size, computed once at capture.
+    id: Hash,
+    size: usize,
     /// The digest of its rings while its block was connected; `None` if they
     /// did not resolve then (never for a validated block: it is then not
     /// readmitted).
@@ -117,13 +121,47 @@ impl Returned {
     /// checked here (the block's validation did, at its own height), only
     /// what the rings resolve to.
     pub fn capture(tx: Transaction, chain: &impl ChainView, rules: &TxRules) -> Self {
+        let size = tx.encode().len();
+        Self::capture_sized(tx, size, chain, rules)
+    }
+
+    fn capture_sized(
+        tx: Transaction,
+        size: usize,
+        chain: &impl ChainView,
+        rules: &TxRules,
+    ) -> Self {
         // `u64::MAX` as the height: every existing member counts as mature.
         let ring = ring_digest(&tx, chain, u64::MAX).ok();
         Self {
+            id: tx.hash(),
+            size,
             tx,
             ring,
             rules: *rules,
         }
+    }
+
+    /// [`Self::capture`] within a per-class byte budget: `used` holds the
+    /// encoded bytes captured so far in this reorganization (v1, PX). A
+    /// transaction that would take its class past [`READMIT_MAX_BYTES`] is
+    /// not captured (`None`: no copy, no ring digest), so what one
+    /// reorganization holds for readmission is bounded, whatever its depth
+    /// (RTW2A-6). Called tip first, it keeps the transactions of the blocks
+    /// nearest the old tip, as `readmit_returned` examines them.
+    pub fn capture_within(
+        tx: &Transaction,
+        chain: &impl ChainView,
+        rules: &TxRules,
+        used: &mut [usize; 2],
+    ) -> Option<Self> {
+        let size = tx.encode().len();
+        let slot = Mempool::slot(class_of(tx));
+        if used[slot] + size > READMIT_MAX_BYTES[slot] {
+            return None;
+        }
+        used[slot] += size;
+        Some(Self::capture_sized(tx.clone(), size, chain, rules))
     }
 
     pub fn tx(&self) -> &Transaction {
@@ -132,6 +170,16 @@ impl Returned {
 
     pub fn into_tx(self) -> Transaction {
         self.tx
+    }
+
+    /// Its id (`Transaction::hash`).
+    pub fn id(&self) -> Hash {
+        self.id
+    }
+
+    /// Its encoded size in bytes.
+    pub fn size(&self) -> usize {
+        self.size
     }
 
     pub(super) fn ring(&self) -> Option<RingDigest> {

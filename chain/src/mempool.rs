@@ -51,7 +51,10 @@
 //! signature, range proof or PX proof is verified again on either path
 //! ([`Mempool::full_validations`]); a reorganization costs microseconds per
 //! input, not a CLSAG per input under the chain lock (dossier 12 M12-1,
-//! M12-2).
+//! M12-2). While a bounded drain holds returned transactions, their
+//! conflict keys are reserved ([`Mempool::reserve`],
+//! [`MempoolError::ReorgPending`]), so a double spend submitted between two
+//! drain steps cannot displace them (RTW2A-2).
 //!
 //! **PX validity windows (PX6).** A PX transaction is valid only at heights
 //! inside its window. Admission is for the next block's height, so a
@@ -146,6 +149,13 @@ pub enum MempoolError {
     /// Policy: it is still valid in a block inside its window, but would
     /// likely expire while it propagates. Never scored.
     ExpiringSoon,
+    /// A key image, PX nullifier or contract id is reserved for a
+    /// transaction of a block a reorganization disconnected, until the
+    /// reorganization's bounded drain ends and it is readmitted
+    /// ([`Mempool::reserve`], RTW2A-2): the returned transaction wins, as
+    /// in an atomic reorganization. Contextual (a later submission may
+    /// succeed); never scored.
+    ReorgPending,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -277,6 +287,10 @@ pub struct Mempool {
     /// Refused while `height < expired_at + RECENTLY_EXPIRED_BLOCKS`
     /// ([`MempoolError::Expired`]); forgotten afterwards ([`Self::expire`]).
     expired: HashMap<Hash, u64>,
+    /// Conflict keys of returned transactions a bounded drain holds, and the
+    /// id of the transaction each is reserved for ([`Self::reserve`]);
+    /// released by [`Self::readmit_returned`].
+    reserved: HashMap<ConflictKey, Hash>,
     /// Full validations run by the pool (`validate_mempool_tx`): admission,
     /// `check` and [`Self::readmit`]. Revalidation and
     /// [`Self::readmit_returned`] run none.
@@ -343,7 +357,8 @@ pub struct ChainUpdate {
     pub readmission: Readmission,
 }
 
-/// Encoded bytes of returned transactions one reorganization examines, per
+/// Encoded bytes of returned transactions one reorganization captures
+/// (`Returned::capture_within`, RTW2A-6) and examines, per
 /// class (v1, PX): the class's cap. More could not be pooled together
 /// anyway; the rest (the deepest disconnected blocks', since they come tip
 /// first) is dropped unexamined, and wallets rebroadcast (Bitcoin Core
@@ -444,15 +459,17 @@ impl Mempool {
     }
 
     /// Whether `tx` shares a conflict key ([`conflict_keys`]) with a pooled
-    /// transaction other than itself: [`Self::add`] would refuse it with
-    /// [`MempoolError::Conflict`] (first seen wins). Read-only and cheap (no
-    /// validation): the P2P layer drops such a transaction before verifying it
-    /// or charging the node-wide PX relay budget (docs/p2p.md §10).
+    /// transaction other than itself, or with a returned transaction a
+    /// reorganization is still connecting: [`Self::add`] would refuse it
+    /// with [`MempoolError::Conflict`] (first seen wins) or
+    /// [`MempoolError::ReorgPending`]. Read-only and cheap (no validation):
+    /// the P2P layer drops such a transaction before verifying it or
+    /// charging the node-wide PX relay budget (docs/p2p.md §10).
     pub fn conflicts(&self, tx: &Transaction) -> bool {
         let id = tx.hash();
-        conflict_keys(tx)
-            .iter()
-            .any(|k| self.keys.get(k).is_some_and(|holder| *holder != id))
+        conflict_keys(tx).iter().any(|k| {
+            self.keys.get(k).is_some_and(|holder| *holder != id) || self.reserved_for_other(k, &id)
+        })
     }
 
     fn cap(class: Class) -> usize {
@@ -482,6 +499,24 @@ impl Mempool {
             return Err(MempoolError::Coinbase);
         }
         let id = tx.hash();
+        self.precheck_id(tx, id, height, origin)
+            .map(|keys| (id, keys))
+    }
+
+    /// [`Self::precheck`] of a non-coinbase transaction whose id is known.
+    /// A conflict key reserved for another transaction returned by a
+    /// reorganization still being connected refuses it with
+    /// [`MempoolError::ReorgPending`] ([`Self::reserve`]).
+    fn precheck_id(
+        &self,
+        tx: &Transaction,
+        id: Hash,
+        height: u64,
+        origin: Origin,
+    ) -> Result<Vec<ConflictKey>, MempoolError> {
+        if tx.is_coinbase() {
+            return Err(MempoolError::Coinbase);
+        }
         if self.entries.contains_key(&id) {
             return Err(MempoolError::AlreadyKnown);
         }
@@ -492,7 +527,37 @@ impl Mempool {
         if keys.iter().any(|k| self.keys.contains_key(k)) {
             return Err(MempoolError::Conflict);
         }
-        Ok((id, keys))
+        if keys.iter().any(|k| self.reserved_for_other(k, &id)) {
+            return Err(MempoolError::ReorgPending);
+        }
+        Ok(keys)
+    }
+
+    /// Whether `key` is reserved for a returned transaction other than `id`.
+    fn reserved_for_other(&self, key: &ConflictKey, id: &Hash) -> bool {
+        self.reserved.get(key).is_some_and(|holder| holder != id)
+    }
+
+    /// Reserves the conflict keys of `returned`, a transaction of a block a
+    /// bounded drain disconnected, until the drain ends and
+    /// [`Self::readmit_returned`] examines it (RTW2A-2). Between two drain
+    /// steps the node serves other commands; without the reservation a
+    /// double spend admitted there would hold the keys, and the returned
+    /// transaction would be refused as a conflict at the end, while an
+    /// atomic reorganization refuses the double spend and readmits the
+    /// returned one. Meanwhile [`Self::add`], [`Self::check`] and
+    /// [`Self::conflicts`] refuse a transaction using a reserved key
+    /// ([`MempoolError::ReorgPending`]); the returned transaction itself is
+    /// not refused.
+    pub fn reserve(&mut self, returned: &Returned) {
+        for k in conflict_keys(returned.tx()) {
+            self.reserved.insert(k, returned.id());
+        }
+    }
+
+    /// Conflict keys reserved for returned transactions ([`Self::reserve`]).
+    pub fn reserved_keys(&self) -> usize {
+        self.reserved.len()
     }
 
     /// Whether this node expired `id` fewer than [`RECENTLY_EXPIRED_BLOCKS`]
@@ -632,8 +697,21 @@ impl Mempool {
         weight_fee: u64,
         ring: RingDigest,
     ) -> Result<Hash, MempoolError> {
-        let class = class_of(&tx);
         let size = tx.encode().len();
+        self.insert_sized(id, (tx, size), keys, admitted, weight_fee, ring)
+    }
+
+    /// [`Self::insert`] of a transaction with its known encoded size.
+    fn insert_sized(
+        &mut self,
+        id: Hash,
+        (tx, size): (Transaction, usize),
+        keys: Vec<ConflictKey>,
+        admitted: u64,
+        weight_fee: u64,
+        ring: RingDigest,
+    ) -> Result<Hash, MempoolError> {
+        let class = class_of(&tx);
         let cost = match class {
             Class::V1 => tx.weight(),
             Class::Px => tx.px_bytes(),
@@ -787,6 +865,11 @@ impl Mempool {
     /// revalidates before it trims). At most [`READMIT_MAX_BYTES`] of each
     /// class are examined; the work is a few lookups and one hash per input,
     /// bounded by those bytes.
+    ///
+    /// It first releases every reservation ([`Self::reserve`]): the drain
+    /// that held these transactions has ended, and no transaction using one
+    /// of their keys was admitted meanwhile, so they win over any double
+    /// spend submitted during the drain (RTW2A-2).
     pub fn readmit_returned(
         &mut self,
         returned: Vec<Returned>,
@@ -794,13 +877,14 @@ impl Mempool {
         height: u64,
         rules: &TxRules,
     ) -> Readmission {
+        self.reserved.clear();
         self.enter_rules(rules);
         let mut report = Readmission::default();
         let mut examined = [0usize; 2];
         for r in returned {
             let tx = r.tx();
             let slot = Self::slot(class_of(tx));
-            let size = tx.encode().len();
+            let size = r.size();
             if examined[slot] + size > READMIT_MAX_BYTES[slot] {
                 report.over_budget += 1;
                 continue;
@@ -810,8 +894,9 @@ impl Mempool {
                 report.other_rules += 1;
                 continue;
             }
-            let (id, keys) = match self.precheck(tx, height, Origin::Peer) {
-                Ok(v) => v,
+            let id = r.id();
+            let keys = match self.precheck_id(tx, id, height, Origin::Peer) {
+                Ok(keys) => keys,
                 Err(MempoolError::AlreadyKnown) => {
                     report.already_pooled += 1;
                     continue;
@@ -842,7 +927,7 @@ impl Mempool {
                 }
             }
             let weight_fee = v1_part_fee(tx, rules);
-            match self.insert(id, r.into_tx(), keys, height, weight_fee, ring) {
+            match self.insert_sized(id, (r.into_tx(), size), keys, height, weight_fee, ring) {
                 Ok(_) => {
                     self.expired.remove(&id);
                     report.readmitted += 1;
@@ -2563,6 +2648,86 @@ mod tests {
         let r = m.readmit_returned(returned, &chain, 1, &rules);
         assert_eq!(r.over_budget, 5, "{r:?}");
         assert_eq!(r.invalid + r.readmitted + r.already_pooled, fits, "{r:?}");
+    }
+
+    /// RTW2A-6: capture itself is bounded. A reorganization returning more
+    /// PX bytes than `READMIT_MAX_BYTES` (here 30 transactions of 3 MiB,
+    /// about 90 MiB, over the 64 MiB class cap) keeps the first ones, tip
+    /// first, up to the budget and copies nothing beyond it; the v1 class
+    /// has its own budget. The size is the encoded size, computed once.
+    #[test]
+    fn capture_of_returned_transactions_stops_at_the_class_budget() {
+        use blacksilk_tx::state::MemoryChain;
+        let chain = MemoryChain::new();
+        let rules = rules();
+        let txs: Vec<Transaction> = (0..30).map(|n| px(n, 3 * 1024 * 1024, 1, 0, 0)).collect();
+        let size = txs[0].encode().len();
+        let fits = MEMPOOL_MAX_PX_BYTES / size;
+        assert!(fits < txs.len());
+        let mut used = [0usize; 2];
+        let captured: Vec<Returned> = txs
+            .iter()
+            .map_while(|tx| Returned::capture_within(tx, &chain, &rules, &mut used))
+            .collect();
+        assert_eq!(captured.len(), fits);
+        assert_eq!(used, [0, fits * size]);
+        assert!(captured
+            .iter()
+            .zip(&txs)
+            .all(|(r, tx)| r.id() == tx.hash() && r.size() == size && r.tx() == tx));
+        for tx in &txs[fits..] {
+            assert!(Returned::capture_within(tx, &chain, &rules, &mut used).is_none());
+        }
+        let v1 = transfer(&[1], &[2, 3], 1);
+        assert!(Returned::capture_within(&v1, &chain, &rules, &mut used).is_some());
+        assert_eq!(used[1], fits * size, "a refused capture charges nothing");
+    }
+
+    /// RTW2A-2: while a bounded drain holds a returned transaction, its
+    /// conflict keys are reserved. A double spend is refused before any
+    /// validation (`ReorgPending`, also by `conflicts`, the P2P pre-check),
+    /// the returned transaction itself is not, and readmission releases the
+    /// keys and pools it: the outcome of an atomic reorganization.
+    #[test]
+    fn a_returned_transactions_keys_are_reserved_until_its_readmission() {
+        use blacksilk_tx::state::MemoryChain;
+        let mut chain = MemoryChain::new();
+        grow(&mut chain, 45, 1);
+        let rules = rules();
+        let t1 = ringed(90_000_000, ring_from(1));
+        let t2 = ringed(90_000_000, ring_from(2));
+        assert_ne!(t1.hash(), t2.hash());
+        chain
+            .apply_block(&[coinbase(&[99_000_000]), t1.clone()])
+            .unwrap();
+        let returned = Returned::capture(t1.clone(), &chain, &rules);
+        let mut m = Mempool::new();
+        m.enter_rules(&rules);
+        m.reserve(&returned);
+        assert!(chain.undo_block());
+        let next = chain.next_height();
+        let verified = m.full_validations();
+        assert_eq!(
+            m.check(&t2, &chain, next, &rules, Origin::Peer),
+            Err(MempoolError::ReorgPending)
+        );
+        assert_eq!(
+            m.add(t2.clone(), &chain, next, &rules, Origin::Local),
+            Err(MempoolError::ReorgPending)
+        );
+        assert_eq!(m.full_validations(), verified, "refused before validation");
+        assert!(m.conflicts(&t2));
+        assert!(!m.conflicts(&t1), "not against itself");
+        assert!(m.precheck(&t1, next, Origin::Peer).is_ok());
+        let r = m.readmit_returned(vec![returned], &chain, next, &rules);
+        assert_eq!(r.readmitted, 1, "{r:?}");
+        assert_eq!(m.reserved_keys(), 0);
+        assert!(m.contains(&t1.hash()));
+        assert_eq!(
+            m.precheck(&t2, next, Origin::Peer).map(|_| ()),
+            Err(MempoolError::Conflict)
+        );
+        assert_invariants(&m);
     }
 
     /// M12-8: the pool is flushed when any rule changes, not only the

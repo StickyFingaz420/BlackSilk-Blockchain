@@ -26,7 +26,7 @@
 
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{ChainManager, Template};
-use blacksilk_chain::mempool::{conflict_keys, Mempool, Origin};
+use blacksilk_chain::mempool::{conflict_keys, Mempool, MempoolError, Origin};
 use blacksilk_chain::store::{BlockStore, MemoryStore};
 use blacksilk_consensus::merkle::tx_root;
 use blacksilk_consensus::{BlockHeader, ChainParams, Hash, PowFunction, HEADER_VERSION};
@@ -662,4 +662,112 @@ fn a_reorganization_returning_a_transfer_readmits_it_unverified() {
     assert_eq!(m.deepest_reorg(), 1);
     assert!(m.mempool().contains(&tx.hash()), "returned to the pool");
     assert_eq!(m.mempool().full_validations(), verified, "nothing verified");
+}
+
+// ------------------------------------------------------ RT-W2a (RTW2A-2)
+
+/// What a double spend `t2` of a returned transaction `t1` gets, submitted
+/// right after `t1`'s block was disconnected by a reorganization to a
+/// heavier branch without it, and which of the two the pool holds once the
+/// reorganization is connected: through a bounded drain (`bounded`: `t2`
+/// arrives between two drain steps, where the chain actor serves other
+/// commands) or atomically (`t2` arrives after it).
+///
+/// The red team's demo (RT-W2a, on 47179f1): between two steps `t2` was
+/// pooled (`Ok`), and at the end of the drain `readmit_returned` refused
+/// `t1` as a conflict; the atomic path refuses `t2` and readmits `t1`.
+fn mid_reorg_double_spend(bounded: bool) -> (Result<(), MempoolError>, bool, bool) {
+    let mut m = open();
+    let mut m2 = open();
+    let mut miner = Miner::new(901);
+    let mut rival = Miner::new(902);
+    let mut rng = ChaCha20Rng::seed_from_u64(9_901);
+    let (alice, _) = WalletKeys::generate(&mut rng);
+    let (mallory, _) = WalletKeys::generate(&mut rng);
+    miner.mine_tip(&mut m, 80);
+    for h in 1..=m.height() {
+        let b = m.block_at(h).unwrap();
+        let now = b.header.timestamp;
+        m2.submit_block(b, now).unwrap();
+    }
+    assert_eq!(m.tip_id(), m2.tip_id());
+    let fork_parent = m.tip_id();
+    // Two spends of the same output (same key image).
+    let plan1 = plan_where(&m, &miner.keys, |o| o.height == 1, &mut rng);
+    let plan2 = plan_where(&m, &miner.keys, |o| o.height == 1, &mut rng);
+    let t1 = Transaction::from(pay(&m, &miner.keys, &alice, plan1, &mut rng));
+    let t2 = Transaction::from(pay(&m, &miner.keys, &mallory, plan2, &mut rng));
+    assert!(conflict_keys(&t1)
+        .iter()
+        .any(|k| conflict_keys(&t2).contains(k)));
+    m.submit_tx(t1.clone()).unwrap();
+    let t = m.template();
+    assert_eq!(t.txs.len(), 1);
+    let blk = miner.build(&t, t.txs.clone(), None);
+    let now = blk.header.timestamp;
+    m.submit_block(blk, now).unwrap();
+    assert!(m.mempool().is_empty());
+    // A heavier rival branch without t1, built on a second manager.
+    rival.mine_on(&mut m2, fork_parent, 20, None);
+    let rivals: Vec<Block> = (81..=100).map(|h| m2.block_at(h).unwrap()).collect();
+    let now = rivals.last().unwrap().header.timestamp;
+    let submitted = if bounded {
+        let headers: Vec<BlockHeader> = rivals.iter().map(|b| b.header).collect();
+        m.accept_headers(&headers, now).unwrap();
+        for b in rivals[1..].iter().rev() {
+            m.submit_block(b.clone(), now).unwrap();
+        }
+        // The first rival body releases the branch: a bounded drain of
+        // SYNC_STEP_BLOCKS (8) validations per step, as the actor runs it.
+        m.submit_block_bounded(rivals[0].clone(), now, 8).unwrap();
+        assert!(m.sync_pending(), "the drain is split into steps");
+        assert!(m.deepest_reorg() >= 1, "t1's block is disconnected already");
+        // Between two steps: the double spend arrives (stem, relay or /tx).
+        assert_eq!(m.check_tx(&t2), Err(MempoolError::ReorgPending));
+        assert!(m.mempool().conflicts(&t2), "the P2P pre-check drops it");
+        let r = m.submit_tx(t2.clone());
+        eprintln!("mid-drain submit_tx(t2) = {r:?}");
+        while !m.sync_step(8) {}
+        r
+    } else {
+        for b in &rivals {
+            m.submit_block(b.clone(), now).unwrap();
+        }
+        let r = m.submit_tx(t2.clone());
+        eprintln!("after the atomic reorg submit_tx(t2) = {r:?}");
+        r
+    };
+    assert_eq!(m.height(), 100);
+    assert_eq!(
+        m.mempool().reserved_keys(),
+        0,
+        "released at the drain's end"
+    );
+    (
+        submitted.map(|_| ()),
+        m.mempool().contains(&t1.hash()),
+        m.mempool().contains(&t2.hash()),
+    )
+}
+
+#[test]
+fn rtw2a_atomic_reorg_readmits_the_returned_spend() {
+    let (r, t1, t2) = mid_reorg_double_spend(false);
+    eprintln!("atomic: t1 pooled {t1}, t2 pooled {t2}");
+    assert_eq!(r, Err(MempoolError::Conflict));
+    assert!(t1 && !t2);
+}
+
+/// RTW2A-2: the bounded drain now matches the atomic control: `t2` is
+/// refused mid-drain as `ReorgPending` (contextual, never scored) and `t1`
+/// is readmitted.
+#[test]
+fn rtw2a_a_mid_drain_double_spend_is_refused_and_the_returned_spend_wins() {
+    let (r, t1, t2) = mid_reorg_double_spend(true);
+    eprintln!("bounded drain: t1 pooled {t1}, t2 pooled {t2}");
+    assert_eq!(r, Err(MempoolError::ReorgPending));
+    assert!(
+        t1 && !t2,
+        "the returned spend wins, as in the atomic control"
+    );
 }

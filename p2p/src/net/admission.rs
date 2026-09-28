@@ -6,7 +6,6 @@ use super::state::{short, Inner, State};
 use super::stem::{stem_keys, stem_or_fluff, unstem_key_images};
 use crate::dandelion::{PeerId, Source};
 use crate::limits::score;
-use crate::message::Message;
 use blacksilk_chain::actor::{Lane, SendError};
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::mempool::MempoolError;
@@ -30,50 +29,20 @@ impl Inner {
     }
 }
 
-fn decode_tx(bytes: &[u8]) -> Option<Transaction> {
+/// Decodes a relayed transaction once, into the `Arc` every later step
+/// shares (RTW2A-5: no copy of a multi-megabyte PX transaction per chain
+/// command). The frame's bytes are freed by the caller right after.
+fn decode_tx(bytes: &[u8]) -> Option<Arc<Transaction>> {
     match Transaction::decode(bytes) {
         Ok(Transaction::Coinbase(_)) | Err(_) => None,
-        Ok(t) => Some(t),
+        Ok(t) => Some(Arc::new(t)),
     }
 }
 
-/// Whether the encoded transaction `bytes` claims to be a PX or deploy
-/// transaction (its version and kind bytes; nothing else is decoded).
-fn claims_px(bytes: &[u8]) -> bool {
-    use blacksilk_tx::params::{KIND_PX, KIND_PX_DEPLOY, TX_VERSION};
-    const _: () = assert!(TX_VERSION < 0x80, "a one-byte varint");
-    bytes.len() >= 2 && bytes[0] == TX_VERSION as u8 && matches!(bytes[1], KIND_PX | KIND_PX_DEPLOY)
-}
-
-/// The per-peer PX share, charged on the read loop when a PX `Tx` or
-/// `StemTx` arrives, before it is queued on the peer's slow lane: a peer
-/// over its share is penalized (`StemTx`, unsolicited) or its transaction
-/// dropped (`Tx`, which we requested), however busy its lane is. Returns
-/// whether to queue the message. Needs no chain access.
-pub(super) fn charge_px_share(inner: &Arc<Inner>, peer: PeerId, msg: &Message) -> bool {
-    let (bytes, stem) = match msg {
-        Message::StemTx(b) => (b, true),
-        Message::Tx(b) => (b, false),
-        _ => return true,
-    };
-    if !claims_px(bytes) {
-        return true;
-    }
-    let within = {
-        let mut st = inner.state();
-        match st.peers.get_mut(&peer) {
-            Some(p) => p.limits.px.take(1.0, Instant::now()),
-            None => return false,
-        }
-    };
-    if !within {
-        if stem {
-            inner.misbehave(peer, score::RATE, "PX stem rate");
-        } else {
-            log::debug!("peer {peer}: PX transaction over its share dropped");
-        }
-    }
-    within
+/// The transaction behind `tx`, without a copy once every chain command
+/// that shared it has run (their closures are dropped before they reply).
+fn unshare(tx: Arc<Transaction>) -> Transaction {
+    Arc::try_unwrap(tx).unwrap_or_else(|shared| (*shared).clone())
 }
 
 /// The ring indices of each v1 input (for `provably_invalid_signature`).
@@ -107,9 +76,18 @@ fn ctx_reject(st: &mut State, id: Hash, tip: Hash) {
 /// §10):
 /// 1. a transaction already proven invalid is dropped (and a peer stemming it
 ///    again is penalized);
-/// 2. the peer's signature budget is charged one token per v1 input (one
-///    CLSAG verification each); a PX or deploy transaction was charged its
-///    PX share on arrival (`charge_px_share`, on the read loop);
+/// 2. the peer's relay budgets are charged, all or nothing
+///    (`PeerLimits::charge_relay`): a `txs` token for a `StemTx`, the PX
+///    share for a PX or deploy transaction, and one signature token per v1
+///    input (one CLSAG verification each). Over a budget the transaction is
+///    dropped unverified and NOT penalized, a `StemTx` included (RTW2A-4):
+///    an honest node forwarding many peers' stems exceeds a rate without
+///    misbehaving, and a penalty would get it banned. It is not fluffed
+///    either (a forced fluff helps locate the origin); its origin's embargo
+///    ends the stem. Floods are still bounded, and scored, on the read loop
+///    (message and byte rates) and by the slow lane's bounds. Charged only
+///    here, after the free drops (dedupe in `on_stem_tx`, step 1), and only
+///    for a message the lane took (RTW2A-1);
 /// 3. a transaction already in the mempool, one that conflicts with a pooled
 ///    transaction (same key image, nullifier or contract id; the
 ///    pool keeps the first seen, so it would be refused after verification),
@@ -126,18 +104,17 @@ fn ctx_reject(st: &mut State, id: Hash, tip: Hash) {
 ///    checks (e.g. a random PX anchor, or a garbage proof, penalized as
 ///    `PxProof`) never consume it, so they cannot starve honest PX relay.
 ///
-/// `stem`: an unsolicited `StemTx` (rate excesses are penalized) rather than a
-/// `Tx` we requested (never penalized for its rate: we asked for it; over a
-/// limit it is dropped unverified). Returns whether to verify.
+/// `stem`: an unsolicited `StemTx` rather than a `Tx` we requested. Returns
+/// whether to verify.
 async fn admit_tx(
     inner: &Arc<Inner>,
     peer: PeerId,
-    tx: &Transaction,
+    tx: &Arc<Transaction>,
     id: Hash,
     stem: bool,
 ) -> bool {
     let now = Instant::now();
-    let px = matches!(tx, Transaction::Px(_) | Transaction::PxDeploy(_));
+    let px = matches!(**tx, Transaction::Px(_) | Transaction::PxDeploy(_));
     let over = {
         let mut st = inner.state();
         if st.recent_rejects_set.contains(&id) {
@@ -147,24 +124,20 @@ async fn admit_tx(
             }
             return false;
         }
-        let cost = tx.key_images().len().max(1) as f64;
         let Some(p) = st.peers.get_mut(&peer) else {
             return false;
         };
-        if !p.limits.inputs.take(cost, now) {
-            Some("input rate")
-        } else {
-            None
-        }
+        p.limits
+            .charge_relay(stem, px, tx.key_images().len(), now)
+            .err()
     };
     if let Some(reason) = over {
-        log::debug!("transaction {} dropped: {reason}", short(&id));
-        if stem {
-            inner.misbehave(peer, score::RATE, reason);
-        }
+        log::debug!(
+            "peer {peer}: transaction {} over its {reason}; dropped (not penalized)",
+            short(&id)
+        );
         return false;
     }
-    let tx = Arc::new(tx.clone());
     let tx2 = tx.clone();
     let (tip, pooled, conflict) = inner
         .with_chain(move |c| {
@@ -187,50 +160,11 @@ async fn admit_tx(
         );
         return false;
     }
-    let cheap = inner
-        .with_chain(move |c| {
-            // The cheap stateless rules first, as in full validation: a
-            // transaction that breaks one is penalized whatever its context.
-            // A PX proof is decoded with them (a few milliseconds, far below
-            // the verification it gates) and shape-checked once its
-            // functions are known to be registered, so a malformed proof
-            // never reaches the node-wide PX token, a ring or a CLSAG
-            // (RTW1-2).
-            use blacksilk_tx::{px, validate};
-            // Expiring soon (RTW1C-4): policy, contextual, before anything
-            // is decoded or verified and before the node-wide PX token.
-            if let Transaction::Px(t) = &*tx {
-                if validate::px_expires_soon(t, c.height() + 1) {
-                    return Ok(false);
-                }
-            }
-            let rules = c.next_rules();
-            let mut proof = None;
-            let stateless = match &*tx {
-                Transaction::Coinbase(_) => Err(blacksilk_tx::TxError::CoinbaseNotAllowed),
-                Transaction::Transfer(t) => {
-                    validate::check_structure(t, &rules).and_then(|_| validate::check_balance(t))
-                }
-                Transaction::Px(t) => px::check_px_structure(t)
-                    .and_then(|_| px::check_px_balance(t))
-                    .and_then(|_| validate::decode_px_proof(t))
-                    .map(|p| proof = Some(p)),
-                Transaction::PxDeploy(t) => px::check_deploy_structure(t, &rules)
-                    .and_then(|_| validate::check_balance(&t.as_transfer())),
-            };
-            let r = stateless
-                .and_then(|_| validate::revalidate_after_extension(&tx, c.state(), c.height() + 1))
-                .and_then(|_| match (&*tx, &proof) {
-                    (Transaction::Px(t), Some(p)) => {
-                        validate::check_px_proof_shape(t, c.state(), &rules, p)
-                    }
-                    _ => Ok(()),
-                });
-            // Near an activation a proof made for the neighbouring rule set
-            // fails honestly: contextual then (`is_stateless_at`).
-            r.map(|()| true)
-                .map_err(|e| (e, e.is_stateless_at(c.params(), c.height() + 1)))
-        })
+    let tx3 = tx.clone();
+    // The tip these checks ran at keys the contextual-reject cache
+    // (RTW2A-7): the tip may have moved since the first command.
+    let (tip, cheap) = inner
+        .with_chain(move |c| (c.tip_id(), cheap_checks(c, &tx3)))
         .await;
     if matches!(cheap, Ok(false)) {
         // Refused like any contextual failure: not scored, not verified
@@ -268,6 +202,52 @@ async fn admit_tx(
         st.px_global_taken += 1;
     }
     true
+}
+
+/// The cheap checks of `admit_tx` (step 4), in one chain command: `Ok(false)`
+/// if a PX transaction expires soon, `Err((e, stateless))` if a rule fails.
+fn cheap_checks(c: &ChainManager, tx: &Transaction) -> Result<bool, (blacksilk_tx::TxError, bool)> {
+    // The cheap stateless rules first, as in full validation: a
+    // transaction that breaks one is penalized whatever its context.
+    // A PX proof is decoded with them (a few milliseconds, far below
+    // the verification it gates) and shape-checked once its
+    // functions are known to be registered, so a malformed proof
+    // never reaches the node-wide PX token, a ring or a CLSAG
+    // (RTW1-2).
+    use blacksilk_tx::{px, validate};
+    // Expiring soon (RTW1C-4): policy, contextual, before anything
+    // is decoded or verified and before the node-wide PX token.
+    if let Transaction::Px(t) = tx {
+        if validate::px_expires_soon(t, c.height() + 1) {
+            return Ok(false);
+        }
+    }
+    let rules = c.next_rules();
+    let mut proof = None;
+    let stateless = match tx {
+        Transaction::Coinbase(_) => Err(blacksilk_tx::TxError::CoinbaseNotAllowed),
+        Transaction::Transfer(t) => {
+            validate::check_structure(t, &rules).and_then(|_| validate::check_balance(t))
+        }
+        Transaction::Px(t) => px::check_px_structure(t)
+            .and_then(|_| px::check_px_balance(t))
+            .and_then(|_| validate::decode_px_proof(t))
+            .map(|p| proof = Some(p)),
+        Transaction::PxDeploy(t) => px::check_deploy_structure(t, &rules)
+            .and_then(|_| validate::check_balance(&t.as_transfer())),
+    };
+    let r = stateless
+        .and_then(|_| validate::revalidate_after_extension(tx, c.state(), c.height() + 1))
+        .and_then(|_| match (tx, &proof) {
+            (Transaction::Px(t), Some(p)) => {
+                validate::check_px_proof_shape(t, c.state(), &rules, p)
+            }
+            _ => Ok(()),
+        });
+    // Near an activation a proof made for the neighbouring rule set
+    // fails honestly: contextual then (`is_stateless_at`).
+    r.map(|()| true)
+        .map_err(|e| (e, e.is_stateless_at(c.params(), c.height() + 1)))
 }
 
 /// Ring members this deep below our tip resolve to the same outputs on every
@@ -372,6 +352,7 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
         inner.misbehave(peer, score::INVALID_TX, "transaction does not decode");
         return;
     };
+    drop(bytes);
     let id = tx.hash();
     let requested = {
         let mut st = inner.state();
@@ -394,7 +375,7 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     // classification see the same state (one former lock hold).
     let Some(result) = verify_on_tx_lane(inner, id, move |c| {
         let tip = c.tip_id();
-        let r = c.submit_tx(tx);
+        let r = c.submit_tx(unshare(tx));
         let proven = r.as_ref().is_err_and(|e| proven_invalid(c, &rings, e));
         (tip, r, proven)
     })
@@ -420,24 +401,16 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     }
 }
 
+/// A relayed `StemTx`. The free drops come first: a transaction that does
+/// not decode is penalized; one already stemmed, or conflicting with a stem
+/// transaction, is dropped silently. Only then are the peer's budgets
+/// charged (`admit_tx`; over one, dropped without penalty, RTW2A-4).
 pub(super) async fn on_stem_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
-    {
-        let mut st = inner.state();
-        let now = Instant::now();
-        let within = match st.peers.get_mut(&peer) {
-            Some(p) => p.limits.txs.take(1.0, now),
-            None => return,
-        };
-        if !within {
-            drop(st);
-            inner.misbehave(peer, score::RATE, "stem rate");
-            return;
-        }
-    }
     let Some(tx) = decode_tx(&bytes) else {
         inner.misbehave(peer, score::INVALID_TX, "stem transaction does not decode");
         return;
     };
+    drop(bytes);
     let id = tx.hash();
     {
         // Already stemmed, or a conflict with a stem transaction (first seen
@@ -472,11 +445,13 @@ pub(super) async fn on_stem_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>)
         // originated it (the originated set, docs/p2p.md §8.1, and the
         // recently-expired guard apply to local origination only: RTW1B-1).
         (_, Ok(_), _) => {
-            stem_or_fluff(inner, tx, id, Source::Peer(peer)).await;
+            stem_or_fluff(inner, unshare(tx), id, Source::Peer(peer)).await;
         }
         (tip, Err(MempoolError::Invalid(e)), proven) => {
             on_invalid_tx(inner, peer, id, tip, e, proven)
         }
+        // `ReorgPending` among them: a returned transaction holds its keys
+        // until a reorganization's drain ends (contextual, never scored).
         (_, Err(_), _) => {}
     }
 }
