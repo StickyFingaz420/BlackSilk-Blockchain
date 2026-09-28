@@ -120,47 +120,67 @@ pub fn select_inbound_to_evict(candidates: &[EvictionCandidate]) -> Option<PeerI
 #[derive(Clone, Debug)]
 pub struct OutboundCandidate {
     pub id: PeerId,
-    /// The height of the peer's best chain as far as this node knows.
-    pub height: u64,
+    /// When the peer last delivered a validated new tip: a header batch
+    /// that stored new headers on our best header chain, or a block that
+    /// joined our best chain (`None`: never). Never the height the peer
+    /// claimed in its `Version`, which costs nothing to inflate (RTW3-4).
+    pub last_new_tip: Option<Instant>,
     pub connected: Instant,
+    /// Blocks requested from the peer are still outstanding.
+    pub blocks_in_flight: bool,
 }
 
-/// The outbound peer to disconnect: among those connected at least
-/// [`MIN_CONNECT_TIME`], the one with the lowest chain (ties: the youngest).
-/// A peer that brought a better chain stays; if none did, the rotation
-/// removes the newest, and the next stale check tries another.
-pub fn select_outbound_to_evict(candidates: &[OutboundCandidate], now: Instant) -> Option<PeerId> {
-    candidates
-        .iter()
-        .filter(|p| now.saturating_duration_since(p.connected) >= MIN_CONNECT_TIME)
-        .min_by(|a, b| {
-            a.height
-                .cmp(&b.height)
-                .then(b.connected.cmp(&a.connected))
-                .then(b.id.cmp(&a.id))
-        })
-        .map(|p| p.id)
+/// The outbound peer to disconnect, after Bitcoin Core's
+/// `EvictExtraOutboundPeers`: the worst of ALL candidates is the one whose
+/// last validated new tip is oldest (never: worst), ties broken by the
+/// youngest connection. If that peer is younger than `min_connect_time`, or
+/// blocks it was asked for are outstanding, nothing is evicted now: the
+/// rotation waits for it rather than evicting a better peer (RTW3-4). So a
+/// newcomer that brought nothing goes once it is old enough, and one that
+/// brought a new tip stays while an established peer that brought none goes.
+pub fn select_outbound_to_evict(
+    candidates: &[OutboundCandidate],
+    now: Instant,
+    min_connect_time: Duration,
+) -> Option<PeerId> {
+    let worst = candidates.iter().min_by(|a, b| {
+        a.last_new_tip
+            .cmp(&b.last_new_tip)
+            .then(b.connected.cmp(&a.connected))
+            .then(b.id.cmp(&a.id))
+    })?;
+    let old_enough = now.saturating_duration_since(worst.connected) >= min_connect_time;
+    (old_enough && !worst.blocks_in_flight).then_some(worst.id)
 }
 
 // ---------------------------------------------------------------- stale tip
 
+/// The stale-tip threshold for a chain with target block time
+/// `target_secs`: `3 × T × STALE_TIP_FACTOR`.
+pub fn stale_threshold(target_secs: u64) -> Duration {
+    Duration::from_secs(3 * target_secs.max(1) * STALE_TIP_FACTOR)
+}
+
 /// Watches the connected tip: stale once it has not changed for the
-/// threshold (`3 × T × STALE_TIP_FACTOR`).
+/// threshold ([`stale_threshold`] by default).
 #[derive(Clone, Debug)]
 pub struct StaleTip {
     tip: Hash,
     since: Instant,
     threshold: Duration,
+    check_interval: Duration,
     last_extra: Option<Instant>,
 }
 
 impl StaleTip {
-    /// For a chain with target block time `target_secs`.
-    pub fn new(tip: Hash, now: Instant, target_secs: u64) -> Self {
+    /// Stale after `threshold` without a new tip; one extra connection at
+    /// most every `check_interval` ([`STALE_CHECK_INTERVAL`] by default).
+    pub fn new(tip: Hash, now: Instant, threshold: Duration, check_interval: Duration) -> Self {
         Self {
             tip,
             since: now,
-            threshold: Duration::from_secs(3 * target_secs.max(1) * STALE_TIP_FACTOR),
+            threshold,
+            check_interval,
             last_extra: None,
         }
     }
@@ -176,12 +196,12 @@ impl StaleTip {
     }
 
     /// Whether an extra outbound connection is due (the tip is stale, and
-    /// none was made in the last [`STALE_CHECK_INTERVAL`]).
+    /// none was made in the last check interval).
     pub fn extra_due(&self, now: Instant) -> bool {
         now.saturating_duration_since(self.since) >= self.threshold
             && self
                 .last_extra
-                .is_none_or(|t| now.saturating_duration_since(t) >= STALE_CHECK_INTERVAL)
+                .is_none_or(|t| now.saturating_duration_since(t) >= self.check_interval)
     }
 
     /// An extra connection was started now.
@@ -192,12 +212,12 @@ impl StaleTip {
 
 // ---------------------------------------------------------------- feelers
 
-/// When the next feeler is due: exponentially distributed with mean
-/// [`FEELER_INTERVAL`] (a Poisson process: the schedule tells a peer
-/// nothing).
-pub fn next_feeler(now: Instant, rng: &mut impl RngCore) -> Instant {
+/// When the next feeler is due: exponentially distributed with mean `mean`
+/// ([`FEELER_INTERVAL`] by default; a Poisson process: the schedule tells a
+/// peer nothing), capped at 10 means.
+pub fn next_feeler(now: Instant, mean: Duration, rng: &mut impl RngCore) -> Instant {
     let u = ((rng.next_u64() >> 11) as f64 + 1.0) / (1u64 << 53) as f64;
-    let secs = (-u.ln() * FEELER_INTERVAL.as_secs_f64()).min(10.0 * FEELER_INTERVAL.as_secs_f64());
+    let secs = (-u.ln() * mean.as_secs_f64()).min(10.0 * mean.as_secs_f64());
     now + Duration::from_secs_f64(secs)
 }
 
@@ -328,21 +348,45 @@ mod tests {
         assert!(left.iter().any(|p| p.id == 7), "oldest kept");
     }
 
+    /// RTW3-4: the worst outbound peer is the one whose last validated new
+    /// tip is oldest (never: worst; ties: the youngest), over all candidates.
+    /// A young worst peer is waited for, never replaced by an older, better
+    /// one; so is one with blocks in flight.
     #[test]
-    fn outbound_rotation_evicts_the_lowest_chain() {
+    fn outbound_rotation_evicts_the_peer_that_brought_the_least() {
         let now = Instant::now() + Duration::from_secs(1000);
-        let o = |id, height, age| OutboundCandidate {
+        let min = MIN_CONNECT_TIME;
+        let o = |id, tip_ago: Option<u64>, age| OutboundCandidate {
             id,
-            height,
+            last_new_tip: tip_ago.map(|s| now - Duration::from_secs(s)),
             connected: now - Duration::from_secs(age),
+            blocks_in_flight: false,
         };
-        let c = [o(1, 100, 500), o(2, 90, 400), o(3, 90, 300), o(4, 10, 5)];
-        assert_eq!(
-            select_outbound_to_evict(&c, now),
-            Some(3),
-            "lowest, youngest; 4 is too new"
-        );
-        assert_eq!(select_outbound_to_evict(&[o(4, 10, 5)], now), None);
+        // 2 brought its last tip long ago, 1 and 3 recently.
+        let c = [
+            o(1, Some(10), 500),
+            o(2, Some(400), 450),
+            o(3, Some(20), 300),
+        ];
+        assert_eq!(select_outbound_to_evict(&c, now, min), Some(2));
+        // A young newcomer that brought a new tip stays; the stale one goes.
+        let mut c2 = c.to_vec();
+        c2.push(o(4, Some(1), 5));
+        assert_eq!(select_outbound_to_evict(&c2, now, min), Some(2));
+        // Nobody brought anything: the youngest is worst; while it is younger
+        // than the minimum the rotation waits (it never evicts an older one).
+        let quiet = [o(1, None, 500), o(2, None, 400), o(3, None, 5)];
+        assert_eq!(select_outbound_to_evict(&quiet, now, min), None);
+        let later = now + min;
+        assert_eq!(select_outbound_to_evict(&quiet, later, min), Some(3));
+        // Never delivered is worse than delivered long ago, whatever the age.
+        let c3 = [o(1, Some(900), 950), o(2, None, 600)];
+        assert_eq!(select_outbound_to_evict(&c3, now, min), Some(2));
+        // Blocks in flight: wait.
+        let mut busy = c3.to_vec();
+        busy[1].blocks_in_flight = true;
+        assert_eq!(select_outbound_to_evict(&busy, now, min), None);
+        assert_eq!(select_outbound_to_evict(&[], now, min), None);
     }
 
     /// W7: the tip is stale after 3 × T × factor without change; one extra
@@ -350,8 +394,9 @@ mod tests {
     #[test]
     fn stale_tip_asks_for_an_extra_outbound() {
         let t0 = Instant::now();
-        let mut s = StaleTip::new([1; 32], t0, 120);
-        let stale_after = Duration::from_secs(3 * 120 * STALE_TIP_FACTOR);
+        let stale_after = stale_threshold(120);
+        assert_eq!(stale_after, Duration::from_secs(3 * 120 * STALE_TIP_FACTOR));
+        let mut s = StaleTip::new([1; 32], t0, stale_after, STALE_CHECK_INTERVAL);
         assert!(!s.observe([1; 32], t0 + stale_after - Duration::from_secs(1)));
         assert!(!s.extra_due(t0 + stale_after - Duration::from_secs(1)));
         let t = t0 + stale_after;
@@ -371,7 +416,11 @@ mod tests {
         let t0 = Instant::now();
         let n = 20_000;
         let total: f64 = (0..n)
-            .map(|_| next_feeler(t0, &mut rng).duration_since(t0).as_secs_f64())
+            .map(|_| {
+                next_feeler(t0, FEELER_INTERVAL, &mut rng)
+                    .duration_since(t0)
+                    .as_secs_f64()
+            })
             .sum();
         let mean = total / n as f64;
         assert!((mean - 120.0).abs() < 5.0, "{mean}");

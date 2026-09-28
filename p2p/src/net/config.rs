@@ -44,6 +44,19 @@ pub struct NetConfig {
     /// A closed network's pre-shared key, mixed into every session key
     /// (docs/p2p.md §3, F48-1). `None` on public networks.
     pub network_psk: Option<NetworkPsk>,
+    /// Mean time between feeler connections (docs/p2p.md §9). Tests shorten
+    /// it; the default is [`crate::connman::FEELER_INTERVAL`].
+    pub feeler_interval: Duration,
+    /// The tip is stale after this long without a change (`None`: `3 × T ×
+    /// STALE_TIP_FACTOR` for the chain's target block time `T`). Tests
+    /// shorten it.
+    pub stale_tip_after: Option<Duration>,
+    /// While the tip is stale, one extra outbound connection at most this
+    /// often (default [`crate::connman::STALE_CHECK_INTERVAL`]).
+    pub stale_check_interval: Duration,
+    /// An outbound peer younger than this is never rotated out (default
+    /// [`crate::connman::MIN_CONNECT_TIME`]).
+    pub min_connect_time: Duration,
 }
 
 impl NetConfig {
@@ -69,6 +82,10 @@ impl NetConfig {
             tick: Duration::from_millis(250),
             peer_limits: PeerLimits::default(),
             network_psk: None,
+            feeler_interval: crate::connman::FEELER_INTERVAL,
+            stale_tip_after: None,
+            stale_check_interval: crate::connman::STALE_CHECK_INTERVAL,
+            min_connect_time: crate::connman::MIN_CONNECT_TIME,
         }
     }
 }

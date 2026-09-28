@@ -104,17 +104,64 @@ impl NetworkPsk {
     /// The key from 64 hexadecimal characters; surrounding whitespace (a
     /// trailing newline) is ignored.
     pub fn from_hex(text: &str) -> Result<Self, PskError> {
-        let mut bytes = Zeroizing::new([0u8; 32]);
-        hex::decode_to_slice(text.trim(), &mut bytes[..]).map_err(|_| PskError::Format)?;
-        Self::from_bytes(*bytes)
+        Self::from_hex_bytes(text.as_bytes())
+    }
+
+    /// [`Self::from_hex`] over bytes. The key is decoded straight into the
+    /// value that holds it (wiped on drop, also when the input is refused):
+    /// no copy of it is left in a temporary (RTW3-12).
+    fn from_hex_bytes(text: &[u8]) -> Result<Self, PskError> {
+        let mut psk = Self([0; 32]);
+        hex::decode_to_slice(text.trim_ascii(), &mut psk.0).map_err(|_| PskError::Format)?;
+        if psk.0 == [0; 32] {
+            return Err(PskError::Format);
+        }
+        Ok(psk)
     }
 
     /// Reads the key from a file holding its 64 hexadecimal characters
-    /// (for example `openssl rand -hex 32`).
+    /// (for example `openssl rand -hex 32`). The file is read into a buffer
+    /// that is wiped when dropped. On Unix, a file that its group or other
+    /// users can read is logged as a warning (RTW3-12): the key is still
+    /// used, since refusing it would stop a node an operator started.
     pub fn load(path: &Path) -> Result<Self, PskError> {
-        let text = Zeroizing::new(std::fs::read_to_string(path).map_err(PskError::Io)?);
-        Self::from_hex(&text)
+        let file = std::fs::File::open(path).map_err(PskError::Io)?;
+        warn_if_shared(path, &file);
+        // Sized once from the file length (plus one byte to see the end), so
+        // the buffer is not reallocated, leaving unwiped copies, while read.
+        let len = file.metadata().map_or(0, |m| m.len()).min(4096) as usize;
+        let mut text = Zeroizing::new(Vec::with_capacity(len + 1));
+        std::io::Read::read_to_end(&mut std::io::Read::take(&file, 4096), &mut text)
+            .map_err(PskError::Io)?;
+        Self::from_hex_bytes(&text)
     }
+}
+
+/// Warns if the key file at `path` is readable by its group or by others
+/// (Unix permission bits `0o077`).
+#[cfg(unix)]
+fn warn_if_shared(path: &Path, file: &std::fs::File) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(m) = file.metadata() {
+        if shared_mode(m.permissions().mode()) {
+            log::warn!(
+                "the network key file {} is readable by its group or other users (mode {:o}); \
+                 restrict it with `chmod 600`",
+                path.display(),
+                m.permissions().mode() & 0o777
+            );
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn warn_if_shared(_path: &Path, _file: &std::fs::File) {}
+
+/// Whether Unix permission bits `mode` let the group or others read, write
+/// or execute the file.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn shared_mode(mode: u32) -> bool {
+    mode & 0o077 != 0
 }
 
 impl Drop for NetworkPsk {
@@ -141,20 +188,22 @@ pub struct Session<'a> {
 /// The 64-byte session key of `version` over the public keys `a` (initiator)
 /// and `b` (responder) and the shared point `s`. Every input has a fixed
 /// length, so the encoding is unambiguous; without a pre-shared key its flag
-/// is 0 and its 32 bytes are zero.
+/// is 0 and its 32 bytes are zero. The key is returned in a buffer wiped on
+/// drop. The BLAKE2b state inside `h64` is not wiped: the `blake2` crate
+/// (0.10) offers no zeroizing state (RTW3-12, docs/p2p.md §3).
 fn session_key(
     version: u32,
     session: &Session<'_>,
     a: &[u8; 32],
     b: &[u8; 32],
     s: &[u8; 32],
-) -> [u8; 64] {
+) -> Zeroizing<[u8; 64]> {
     const NO_PSK: [u8; 32] = [0; 32];
     let (flag, psk) = match session.psk {
         Some(p) => (1u8, &p.0),
         None => (0u8, &NO_PSK),
     };
-    h64(
+    Zeroizing::new(h64(
         tags::P2P_SESSION,
         &[
             &session.network_id.to_le_bytes(),
@@ -166,7 +215,7 @@ fn session_key(
             b,
             s,
         ],
-    )
+    ))
 }
 
 fn nonce(counter: u64) -> [u8; 12] {
@@ -322,9 +371,15 @@ where
     if theirs.is_identity() {
         return Err(TransportError::BadKey);
     }
-    let shared = Point::from_point(*secret * theirs.point());
+    // The shared point and its encoding are wiped on drop (RTW3-12); no
+    // `Point` (a plain copyable value) holds them.
+    // By reference: `*secret * point` would copy the secret scalar.
+    let shared = Zeroizing::new(std::ops::Mul::mul(&*secret, theirs.point()));
     drop(secret);
-    if shared.is_identity() {
+    let s = Zeroizing::new(shared.compress().to_bytes());
+    drop(shared);
+    // The identity's canonical encoding is 32 zero bytes (RFC 9496).
+    if *s == [0u8; 32] {
         return Err(TransportError::BadKey);
     }
     let (a, b) = if initiator {
@@ -332,12 +387,11 @@ where
     } else {
         (&theirs, &ours)
     };
-    let mut s = *shared.bytes();
-    let mut k = session_key(version, session, a.bytes(), b.bytes(), &s);
-    s.zeroize();
+    let k = session_key(version, session, a.bytes(), b.bytes(), &s);
+    drop(s);
     let i2r = Aes256Gcm::new_from_slice(&k[..32]).expect("32-byte key");
     let r2i = Aes256Gcm::new_from_slice(&k[32..]).expect("32-byte key");
-    k.zeroize();
+    drop(k);
     let (send, recv) = if initiator { (i2r, r2i) } else { (r2i, i2r) };
     let (rh, wh) = tokio::io::split(stream);
     Ok((
@@ -557,7 +611,7 @@ mod tests {
             &[2; 32],
             &[3; 32],
         );
-        assert_eq!(hex::encode(k), KDF_KAT);
+        assert_eq!(hex::encode(*k), KDF_KAT);
     }
 
     /// Computed independently of this code (Python `hashlib.blake2b`, 64-byte
@@ -619,6 +673,31 @@ mod tests {
             NetworkPsk::load(&dir.path().join("missing")),
             Err(PskError::Io(_))
         ));
+        // An oversized file is read only up to its first 4 KiB, and refused.
+        std::fs::write(&path, "ab".repeat(5000)).unwrap();
+        assert!(matches!(NetworkPsk::load(&path), Err(PskError::Format)));
+    }
+
+    /// RTW3-12: a key file readable by the group or others is flagged
+    /// (the mode check; the warning itself is Unix-only).
+    #[test]
+    fn shared_psk_file_modes_are_flagged() {
+        assert!(!shared_mode(0o100600));
+        assert!(!shared_mode(0o400));
+        assert!(shared_mode(0o640));
+        assert!(shared_mode(0o604));
+        assert!(shared_mode(0o644));
+        assert!(shared_mode(0o660));
+    }
+
+    /// RTW3-12: an identity shared point (a small-order or identity key from
+    /// the peer) is refused without the `Point` wrapper: its encoding is 32
+    /// zero bytes.
+    #[test]
+    fn the_identity_encodes_as_zero_bytes() {
+        use blacksilk_crypto::RistrettoPoint;
+        let id = RistrettoPoint::mul_base(&Scalar::ZERO);
+        assert_eq!(id.compress().to_bytes(), [0u8; 32]);
     }
 
     /// A reflected key exchange: a party that echoes the initiator's own key
