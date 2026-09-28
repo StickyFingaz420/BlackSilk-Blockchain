@@ -133,6 +133,8 @@ pub(super) struct State {
     /// Relayed transactions dropped because the chain actor's Tx lane was
     /// full (never penalized; `NetStats::tx_lane_drops`).
     pub(super) tx_lane_drops: u64,
+    /// Node-wide PX relay tokens taken (`NetStats::px_global_taken`).
+    pub(super) px_global_taken: u64,
     /// Unrequested blocks in the block worker's queue (`UNREQUESTED_QUEUE`).
     pub(super) unrequested_queued: usize,
     /// Ids of blocks received and waiting for, or under, processing by the

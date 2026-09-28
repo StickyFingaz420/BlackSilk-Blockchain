@@ -115,7 +115,10 @@ fn ctx_reject(st: &mut State, id: Hash, tip: Hash) {
 ///    pool keeps the first seen, so it would be refused after verification),
 ///    or one that failed a contextual rule at the current tip, is dropped
 ///    unverified;
-/// 4. cheap checks: structure and balance (stateless), and a PX proof's
+/// 4. cheap checks: a PX transaction whose window ends within
+///    `PX_EXPIRING_SOON_BLOCKS` of the next block is refused first, as a
+///    contextual failure (never scored; RTW1C-4, `px_expires_soon`), before
+///    its proof is decoded; then structure and balance (stateless), and a PX proof's
 ///    decoding (stateless), then the contextual rules an extension can change
 ///    (key images, PX anchor, nullifiers, registry, pool, contract id), then
 ///    a PX proof's shape against its registered functions;
@@ -194,6 +197,13 @@ async fn admit_tx(
             // never reaches the node-wide PX token, a ring or a CLSAG
             // (RTW1-2).
             use blacksilk_tx::{px, validate};
+            // Expiring soon (RTW1C-4): policy, contextual, before anything
+            // is decoded or verified and before the node-wide PX token.
+            if let Transaction::Px(t) = &*tx {
+                if validate::px_expires_soon(t, c.height() + 1) {
+                    return Ok(false);
+                }
+            }
             let rules = c.next_rules();
             let mut proof = None;
             let stateless = match &*tx {
@@ -218,9 +228,17 @@ async fn admit_tx(
                 });
             // Near an activation a proof made for the neighbouring rule set
             // fails honestly: contextual then (`is_stateless_at`).
-            r.map_err(|e| (e, e.is_stateless_at(c.params(), c.height() + 1)))
+            r.map(|()| true)
+                .map_err(|e| (e, e.is_stateless_at(c.params(), c.height() + 1)))
         })
         .await;
+    if matches!(cheap, Ok(false)) {
+        // Refused like any contextual failure: not scored, not verified
+        // again at this tip.
+        log::debug!("PX transaction {} expires soon; not relayed", short(&id));
+        ctx_reject(&mut inner.state(), id, tip);
+        return false;
+    }
     if let Err((e, stateless)) = cheap {
         if stateless {
             Inner::reject_cache(&mut inner.state(), id);
@@ -247,6 +265,7 @@ async fn admit_tx(
             );
             return false;
         }
+        st.px_global_taken += 1;
     }
     true
 }

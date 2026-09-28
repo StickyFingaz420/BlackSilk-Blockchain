@@ -188,6 +188,7 @@ impl Network {
             tx_verifications: 0,
             px_global_drops: 0,
             tx_lane_drops: 0,
+            px_global_taken: 0,
             unrequested_queued: 0,
             blocks_queued: HashSet::new(),
             upgrades: Default::default(),
@@ -271,6 +272,7 @@ impl Network {
             tx_verifications: st.tx_verifications,
             px_global_drops: st.px_global_drops,
             tx_lane_drops: st.tx_lane_drops,
+            px_global_taken: st.px_global_taken,
         }
     }
 

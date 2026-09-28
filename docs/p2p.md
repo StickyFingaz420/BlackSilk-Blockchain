@@ -711,7 +711,8 @@ already being written is finished first).
   the budget costs 1 point, a requested `Tx` over it is dropped unverified.
 - **Admission order** of a relayed transaction, cheapest first:
   1. an id already proven invalid is dropped;
-  2. the signature budget and, for PX, the peer's PX share are charged;
+  2. the signature budget is charged; for PX, the peer's PX share was charged
+     on arrival, on the read loop (§10, slow lane);
   3. an id already in our mempool (a replay, SX2), or one that failed a
      contextual rule **at our current tip**, is dropped unverified: the same bytes are verified again only after the tip changes
      (the cache holds at most 10 000 ids and is emptied when the tip changes).
@@ -721,7 +722,10 @@ already being written is finished first).
      keeps the first seen, so it would be refused after verification anyway. Before
      2026-09-27 such a PX transaction passed the cheap checks and took a node-wide PX
      token (step 5) first;
-  4. cheap checks: the stateless structure and balance rules and, for PX, the
+  4. cheap checks: first, a PX transaction whose window ends fewer than
+     `PX_EXPIRING_SOON_BLOCKS` (3) blocks after the next block is refused
+     (RTW1C-4, `validate::px_expires_soon`): contextual, never scored, cached as
+     in 3, before its proof is decoded; then the stateless structure and balance rules and, for PX, the
      proof's strict decoding (penalized), then the contextual rules a chain
      extension can change: key images, PX anchor, nullifiers, registry, pool,
      contract id (not penalized, cached as in 3), then, for PX, the proof's table

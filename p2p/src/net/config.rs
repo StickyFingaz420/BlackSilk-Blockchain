@@ -102,4 +102,7 @@ pub struct NetStats {
     /// transaction lane was full (best effort; the senders are not
     /// penalized; docs/p2p.md §10).
     pub tx_lane_drops: u64,
+    /// Node-wide PX relay tokens taken since start: PX transactions that
+    /// passed every cheap check and went on to full verification.
+    pub px_global_taken: u64,
 }

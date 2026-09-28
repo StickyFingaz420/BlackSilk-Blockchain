@@ -2359,6 +2359,56 @@ async fn junk_anchor_px_floods_do_not_drain_the_px_relay_budget() {
     assert_eq!(st.tx_verifications, 0, "rejected by the cheap checks");
 }
 
+/// RTW1C-4: a PX transaction whose window ends fewer than
+/// `PX_EXPIRING_SOON_BLOCKS` blocks after the next block is refused in the
+/// cheap stage before its proof is decoded (these junk proofs would be the
+/// penalized `PxProof` otherwise) and before the node-wide PX token: never
+/// scored, never verified, no token taken, and not looked at again at this
+/// tip. The same transaction with an unbounded window is decoded (and
+/// penalized for its proof), showing the refusal came first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_expiring_soon_px_transaction_is_refused_before_the_px_token() {
+    use blacksilk_tx::validate::PX_EXPIRING_SOON_BLOCKS;
+    let a = node(64, &[]).await;
+    let nid = params().network_id;
+    // The next block is 1: a window ending at 1 + 3 - 1 expires soon.
+    let expiring = |k: u32| {
+        let Transaction::Px(mut t) = junk_anchor_px(k) else {
+            unreachable!()
+        };
+        t.window.not_after = PX_EXPIRING_SOON_BLOCKS;
+        Transaction::Px(t)
+    };
+    assert!(matches!(
+        a.chain.lock().unwrap().check_tx(&expiring(0)),
+        Err(MempoolError::ExpiringSoon)
+    ));
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    // Within the peer's PX share (burst 4); one sent twice.
+    let msgs: Vec<Vec<u8>> = [0, 1, 2, 2]
+        .iter()
+        .map(|&k| Message::StemTx(expiring(k).encode()).encode())
+        .collect();
+    send_and_sync(&mut r, &mut w, &msgs, 1).await;
+    let st = a.net.stats();
+    assert_eq!(a.net.peers()[0].score, 0, "never scored");
+    assert_eq!(st.px_global_taken, 0, "no node-wide PX token taken");
+    assert_eq!(st.px_global_drops, 0);
+    assert_eq!(st.tx_verifications, 0, "never verified");
+    assert!(!a.net.stempool_contains(&expiring(0).hash()), "not stemmed");
+
+    // Control: the same junk with an unbounded window reaches the proof
+    // decoding and is penalized for it.
+    let msgs = vec![Message::StemTx(junk_anchor_px(9).encode()).encode()];
+    let (mut r2, mut w2) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(&mut r2, &mut w2, &msgs, 2).await;
+    assert!(
+        a.net.peers().iter().any(|p| p.score == score::INVALID_TX),
+        "a decodable window reaches the proof check"
+    );
+    assert_eq!(a.net.stats().px_global_taken, 0);
+}
+
 /// RTW1-2 (red team RT-W1): a PX transaction that passes every cheap
 /// contextual check (a real ring, an unspent key image, the current anchor,
 /// fresh nullifiers, a covered pool) but carries a garbage CLSAG and a
