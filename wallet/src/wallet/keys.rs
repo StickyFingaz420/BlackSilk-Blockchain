@@ -77,6 +77,11 @@ impl Wallet {
             px_keys: AddressKeys::default(),
             vault_terms: BTreeMap::new(),
             warnings: Vec::new(),
+            restore_check: false,
+            verify_headers: false,
+            header_pow: None,
+            header_samples: crate::headers::HEADER_SAMPLES,
+            headers: std::collections::VecDeque::new(),
         };
         w.rebuild_table();
         w
@@ -152,7 +157,11 @@ impl Wallet {
         }
         Self::check_network_enabled(seed.network())?;
         let start = restore_height.unwrap_or_else(|| seed.scan_start());
-        Ok(Self::from_parts(seed, start))
+        let mut w = Self::from_parts(seed, start);
+        // A restored wallet checks the header chain it scans until it has
+        // caught up (dossier 39 W5): it has no history of its own.
+        w.restore_check = true;
+        Ok(w)
     }
 
     /// The seed, for the wallet file.

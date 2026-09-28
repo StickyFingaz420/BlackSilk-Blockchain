@@ -704,8 +704,10 @@ anyone on the path:
   network does not learn the origin, but that node's operator does.
 
 Ring members come from the wallet's own output index; `/outputs` is used once, to fill
-the missing range of that index in fixed pages, not per ring. Wallets should use their
-own node.
+the missing range of that index in fixed pages, not per ring. The PX commitment tree is
+built from the scanned blocks; `/px/commitments` is fetched whole, once, for the part
+below the restore height, and once more to place an imported contract record (px.md
+§11.4). Wallets should use their own node.
 
 ## 10. Wallet formats (interface, not consensus)
 
@@ -772,3 +774,37 @@ key = Argon2id(password, salt; m_kib = 65536, t = 3, p = 1 by default)
 - The plaintext is JSON, format version 3: the seed's entropy, version, birthday and
   features (so the words can be shown again), the network and genesis id, and the
   scan state. Files of versions 1 and 2 (24-word seeds, PX derivation 1) are refused.
+- The scan state includes the wallet's own PX tree (frontier, root window, recent
+  blocks' commitments, checkpoints, witnesses; px.md §11.4) and the headers of the
+  last `N + 1 + 11` scanned blocks (the context of a header check). A version 3 file written
+  before the wallet built its own tree holds the node's commitment list instead: it
+  loads with a warning, and the next sync rescans from the restore height.
+- `seed` shows the words only after the user types `show` at a warning prompt
+  (F37-11); `create` prints them once.
+
+**What a wallet checks of its node** (dossier 39 W5, F39-10; `wallet/src/headers.rs`).
+Blocks are decoded strictly; each block's id is recomputed from its header, its
+`tx_root` from its transactions, and it must extend the previous block. Every PX
+anchor must be in the wallet's own root window (px.md §11.4). The header chain is
+checked by the first sync of a restored wallet, until it reaches the node's tip, and
+at every sync with `--verify-headers` (opt-in: it builds a RandomX cache per key epoch
+and hashes the sampled headers in light mode):
+- each header's version, height and link; its difficulty recomputed with the LWMA
+  rule over its own ancestors; its timestamp after the median time past and within the
+  future time limit of the local clock;
+- the RandomX proof of work (light mode) of the first header and the tip, and of a
+  random sample of the others (`headers::HEADER_SAMPLES` expected), drawn from the OS
+  RNG as the headers arrive, so the node cannot tell which are checked. A header of
+  difficulty 1 is met by every hash and is not hashed.
+
+A header that fails is refused, with every block from it on. The check starts from the
+genesis for a restore at most `N + 1 + 11` (the difficulty ancestors, consensus.md §4) blocks above
+it, and then proves the chain's work from the genesis on. From a later restore height
+it starts from that many headers before it, as the node serves them (RandomX key
+blocks below them too): it then proves only that the chain is consistent and that the
+sampled headers carry real work at the difficulty they claim, not that this difficulty
+is the network's (a genesis-anchored check needs a header feed from the genesis, which
+the node does not serve yet). Without the check a wallet trusts its node for proof of
+work. A node can always withhold blocks, or hide a spend behind a forged block from a
+wallet that does not check; a restored wallet that spent an output again after such a
+hiding would publish a second ring for one key image.

@@ -339,11 +339,10 @@ impl Wallet {
                 available: 0,
                 needed: u64::MAX,
             })?;
+        // The canonical anchor's root, from the wallet's own tree: never a
+        // root the node chose (F39-1).
+        let (_, root) = self.px.anchor_root(self.synced_height)?;
         let (chosen, plans) = self.v1_plans(node, needed, rng)?;
-        let root = self
-            .px
-            .tree_at(crate::px::anchor_height(self.synced_height))?
-            .root();
         let owner = self.px_account.owner(0);
         let witness = pxw::witness(
             root,
@@ -384,9 +383,10 @@ impl Wallet {
         // The canonical anchor, at least `px::ANCHOR_MIN_DEPTH` blocks below
         // the synced tip (see `px::anchor_height`): only records at or below
         // it are selected, so a shallow reorganization cannot void the spend.
-        let anchor = crate::px::anchor_height(self.synced_height);
+        // Its root and every path come from the wallet's own tree, and each
+        // path is checked against that root (F39-1).
+        let (anchor, root) = self.px.anchor_root(self.synced_height)?;
         let chosen = self.px.select(needed, anchor)?;
-        let tree = self.px.tree_at(anchor)?;
         let mut inputs = Vec::with_capacity(2);
         let mut total = 0u64;
         for &i in &chosen {
@@ -394,9 +394,7 @@ impl Wallet {
             let pos = r.position.expect("spendable records have positions");
             let owner = self.px_account.owner(r.index);
             let rec = r.record(owner)?;
-            let path = tree
-                .path(pos)
-                .ok_or_else(|| WalletError::BadNodeData("record outside the tree".into()))?;
+            let path = self.px.path(pos, anchor, &root)?;
             inputs.push(self.px_account.spend(r.index, &rec, pos, path));
             total += r.value;
         }
@@ -404,7 +402,7 @@ impl Wallet {
             inputs.push(pxw::dummy_input(rng));
         }
         let inputs: [_; 2] = inputs.try_into().expect("two inputs");
-        Ok((chosen, inputs, total, tree.root()))
+        Ok((chosen, inputs, total, root))
     }
 
     /// Pays `amount` privately to a PX address; the fee is paid from PX.

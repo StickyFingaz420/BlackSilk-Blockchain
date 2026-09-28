@@ -83,6 +83,14 @@ struct Persisted {
     /// (absent in files written before RTW1C-3).
     #[serde(default)]
     vault_terms: BTreeMap<String, StoredTerms>,
+    /// A restored wallet checks the header chain until it has caught up
+    /// (dossier 39 W5; absent in older files: no check).
+    #[serde(default)]
+    restore_check: bool,
+    /// The headers of the last scanned blocks (hex), the context of a later
+    /// header check (absent in older files: fetched when needed).
+    #[serde(default)]
+    headers: Vec<String>,
 }
 
 pub(super) fn h32(s: &str) -> Result<[u8; 32], WalletError> {
@@ -127,6 +135,12 @@ impl Wallet {
             rings: self.rings.clone(),
             stale_txs: self.stale_txs.clone(),
             vault_terms: self.vault_terms.clone(),
+            restore_check: self.restore_check,
+            headers: self
+                .headers
+                .iter()
+                .map(|h| hex::encode(h.to_bytes()))
+                .collect(),
         };
         serde_json::to_vec(&p).expect("serializable")
     }
@@ -209,6 +223,26 @@ impl Wallet {
         w.rings = p.rings;
         w.stale_txs = p.stale_txs;
         w.vault_terms = p.vault_terms;
+        w.restore_check = p.restore_check;
+        w.headers = p
+            .headers
+            .iter()
+            .map(|h| {
+                hex::decode(h)
+                    .ok()
+                    .and_then(|b| blacksilk_consensus::BlockHeader::from_bytes(&b))
+                    .ok_or_else(|| WalletError::Serialization("bad stored header".into()))
+            })
+            .collect::<Result<_, _>>()?;
+        if w.px.legacy_commitments.take().is_some() {
+            // Written before the wallet built its own PX tree (dossier 39
+            // W1): the next sync rescans from the restore height to build it.
+            w.warnings.push(format!(
+                "this wallet file predates the wallet's own PX tree; the next sync rescans \
+                 from block {} to build it",
+                w.restore_height
+            ));
+        }
         // Files written before RTW1-4 hold one record per key image, all
         // credited: a no-op for them.
         w.elect_credited();

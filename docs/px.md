@@ -695,21 +695,62 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 ### 11.4 Wallets and RPC
 
 - Wallets scan whole blocks (`/blocks`) and fetch, whole and in order:
-  - the commitment list (`/px/commitments`), in pages:
+  - the commitment list (`/px/commitments`), in pages, only below their restore height
+    (once) and to place an imported record (below):
     `GET /px/commitments?from=F&limit=L` returns the `(height, commitment)`
     entries at tree positions `F..F+L`, the `total` count, the current tree `root`,
     the tip `height`, and `next` (the `from` of the following page, or `null` at the
     end). Both parameters are optional: `from` defaults to 0 and `limit` to 1 024; a
     `limit` of 0 or above 4 096 is rejected (HTTP 400); a `from` at or past the end
     gives an empty page. The node copies only the requested page under its chain
-    lock, so the cost of a request is proportional to the page, not to the chain.
-    A wallet requests pages starting from the number of commitments it already
-    has;
+    lock, so the cost of a request is proportional to the page, not to the chain;
   - the contract-registration list (`/px/contracts`: height, contract id, program
     ids and budgets). The registered ABI and output words are in the deploy itself,
     which wallets also see when they scan the block.
 
   The node never learns which records a wallet owns or which contracts it uses.
+- **The wallet's own tree** (dossier 39 W1, finding F39-1; `wallet/src/tree.rs`). The
+  wallet builds the commitment tree from the blocks it scans (bound to their headers by
+  `tx_root` and to each other by `prev_id`), appending the two commitments of every PX
+  transaction in block order, and keeps the consensus root window of §5: the roots
+  after each of the last 100 blocks. Every PX transaction of a scanned block must
+  anchor at a root of that window, as consensus requires; a block that does not is
+  refused and nothing of it is applied. The wallet anchors its own transactions at the
+  root it computed, and checks every authentication path against it, so a node cannot
+  choose the anchor. (Before, the tree came from the node's list, whose heights the
+  node chose: it could place a wallet's anchor at a non-canonical root that marked the
+  transaction as its client's.)
+  - **Below the restore height** the commitments come from the node's list, once (the
+    backfill). It is bound to the chain as soon as a scanned PX transaction anchors at
+    a root that includes a commitment of a scanned block: the backfill is then the
+    chain's exact list, by the collision resistance of the node hash and the
+    uniqueness of commitments. Until then, a transaction whose anchor's tree holds only
+    backfilled commitments (a deposit, for example) is refused until the wallet is
+    synced 100 blocks past the restore height, where a shortened list gives a root no
+    block accepts; an anchor below the restore height is always refused. A restore
+    from height 1 has no backfill. A list that does not follow the chain (an omitted,
+    altered or relabelled commitment) is caught by the first PX transaction anchored
+    after it, or, for commitments of later blocks labelled as older ones, by the first
+    scanned commitment; the wallet then rebuilds the tree from a fresh list at the
+    next sync. Residual: a node that withholds blocks (reports a stale tip) and labels
+    commitments of the withheld blocks as older ones can still steer the anchor of a
+    transaction whose anchor's tree holds only backfilled commitments, until a scanned
+    PX transaction confirms the list. A stale tip is not detectable from one node.
+  - **Witnesses** are incremental and in-tree: for every leaf the wallet may spend,
+    the left siblings are taken from the frontier when the leaf is appended and the
+    right siblings recorded as the frontier completes them; the tree keeps the
+    frontier at every multiple of 16 (where anchors lie) to compute the one partially
+    filled sibling. Rewinds within the wallet's reorganization window replay the kept
+    blocks from a checkpoint; deeper ones rescan. The wallet file stores the frontier,
+    the window, the last 820 blocks' commitments, the checkpoints and the witnesses,
+    not the chain's whole list.
+  - **An imported record** already on chain is placed with one bulk download of the
+    list, accepted only if its first entries give the wallet's own root; otherwise the
+    block it confirms in places it.
+  - Tested (`wallet/src/tree.rs`, `wallet/src/wallet/tests_sync.rs`): paths equal the
+    reference tree's, the window equals the consensus state's on random chains, a
+    rewind equals rebuilding, and a node that relabels, omits, alters or pads its list,
+    or serves a block anchored outside the window, is refused.
 - CLI commands: `px-address`, `px-balance`, `px-deposit`, `px-send`, `px-withdraw`, and
   the contract commands of §13.4.
 - **Canonical anchor** (wallet policy, `wallet::px::anchor_height`). Wallets use the
@@ -803,9 +844,15 @@ Measured privacy analysis: `docs/reviews/privacy-review.md`.
   - Each independent sending of the same transaction is another sample for a network
     spy (dossier 33 F33-3); the one re-send is not private broadcast over a fresh Tor
     circuit (not implemented).
+  - A PX transaction whose validity window (PX6) ends within the expiring-soon margin
+    of the next block is not sent (pools refuse it, RTW1C-4); once its window has
+    passed it can never be mined, and the wallet drops it, releases its unspent inputs
+    and warns.
   - Tested (`wallet/tests/e2e.rs`): `a_pooled_transaction_is_checked_not_posted_again`,
     `a_transaction_the_node_lacks_is_sent_again_once_only_after_the_network_expiry`,
-    `a_stored_transaction_the_node_finds_invalid_releases_its_inputs`.
+    `a_stored_transaction_the_node_finds_invalid_releases_its_inputs`;
+    (`wallet/src/wallet/tests_sync.rs`)
+    `a_px_transaction_past_its_window_is_dropped_not_rebroadcast`.
 - **Across a consensus upgrade** a stored transaction built for the previous epoch
   (branch id) can never be mined. The wallet does not rebroadcast it: it releases its
   inputs, warns, and `sync` lists it as "needs rebuilding" (a PX transaction must be
@@ -951,9 +998,11 @@ seed's network code (blocks.md §10).
 |---|---|
 | `px-deploy --vault` or `--program F.elf --budget c,k,a,b,l,s,m,p --out-words N` (repeatable) | Registers a contract, paid with v1 funds, so the deployer is hidden behind ring signatures. Prints the contract id. `--vault` deploys the vault alone. `--out-words` is the exact number of public output words each call of the program publishes (contracts.md §5) |
 | `px-contracts` | Lists deployed contracts and their programs (marks the vault; warns about contracts not usable as a vault) |
-| `px-records` | Lists the contract records this wallet holds, with status and source |
-| `px-vault-lock --contract C --amount A [--secret-file F \| --secret-prompt \| --secret S \| --secret-out F] [--deliver-to PXADDR]` | Locks PX funds in a vault record claimable with `S` and without a timeout, delivering the record to the claimer. The fee is paid from PX. Without a secret option it derives one (above) and prints it after sending (or writes it to the `--secret-out` file). Locks with a timeout and refunds are in the wallet library (`px_vault_lock_until`, `px_vault_claim_with_terms`, `px_vault_refund_stored`, `recover_vault_locks`); the CLI does not expose them yet |
-| `px-vault-claim --record CM [--secret-file F \| --secret S] [--to PXADDR]` | Claims a vault record, paying its value privately; asks for the secret unless a file or `--secret` is given. The fee is paid from one PX record, or else from v1 funds, so a claimer without PX funds can claim |
+| `px-records` | Lists the contract records this wallet holds, with status and source, and for a lock of this wallet with a timeout, the timeout and the terms |
+| `px-vault-lock --contract C --amount A [--timeout T] [--secret-file F \| --secret-prompt \| --secret S \| --secret-out F] [--deliver-to PXADDR]` | Locks PX funds in a vault record claimable with `S`, delivering the record to the claimer. The fee is paid from PX. Without a secret option it derives one (above) and prints it after sending (or writes it to the `--secret-out` file). With `--timeout T` (`px_vault_lock_until`; a multiple of 16 more than 3 blocks ahead) the record is claimable before `T` and refundable by this wallet from `T` on; the command prints the terms (`terms claim_lock:refund_lock:T`, public hashes and the timeout) that the claimer needs with the secret |
+| `px-vault-claim --record CM [--secret-file F \| --secret S] [--to PXADDR] [--terms TERMS]` | Claims a vault record, paying its value privately; asks for the secret unless a file or `--secret` is given. A record locked with a timeout needs its `--terms` (`px_vault_claim_with_terms`); the claim must be mined before the timeout. The fee is paid from one PX record, or else from v1 funds, so a claimer without PX funds can claim |
+| `px-vault-refund --record CM [--to PXADDR]` | From the timeout on, takes back the value of a record this wallet locked with a timeout, with the terms stored at lock time or recovered from the chain (`px_vault_refund_stored`) |
+| `px-vault-recover` | Syncs, then finds this wallet's vault locks with a timeout after a restore from the seed (`recover_vault_locks`), and lists the timed locks it holds the terms of |
 | `px-vault-secret --record CM [--out F]` | Shows the secret of a vault record this wallet locked |
 
 `--secret S` on the command line stays in shell history and is visible to other local
