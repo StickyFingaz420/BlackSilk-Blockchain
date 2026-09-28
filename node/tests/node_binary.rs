@@ -173,11 +173,25 @@ fn the_node_binary_caps_its_connections() {
         .map(|_| TcpStream::connect(n.addr).unwrap())
         .collect();
     std::thread::sleep(Duration::from_millis(500));
-    assert_eq!(
-        get(n.addr, "/info", &bearer(&token)),
-        None,
-        "served beyond the cap"
-    );
+    let answer = get(n.addr, "/info", &bearer(&token));
+    if answer.is_some() {
+        // Diagnose before failing: a held connection the server already
+        // closed frees its slot, which would explain an answer here.
+        let closed = held
+            .iter()
+            .filter(|s| {
+                s.set_nonblocking(true).unwrap();
+                let mut b = [0u8; 1];
+                let mut r: &TcpStream = s;
+                matches!(r.read(&mut b), Ok(0))
+            })
+            .count();
+        panic!(
+            "served beyond the cap: {answer:?}; held connections already closed by the \
+             server: {closed} of 64; log:\n{}",
+            n.log_text()
+        );
+    }
     drop(held);
     let start = Instant::now();
     while get(n.addr, "/info", &bearer(&token)).map(|a| a.0) != Some(200) {

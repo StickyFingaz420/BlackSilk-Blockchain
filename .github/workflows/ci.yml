@@ -85,9 +85,42 @@ jobs:
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: "1.98.1"
-      - name: Test (release)
+      # Everything except the tests that build PX proofs, in parallel.
+      - name: Test (release, non-PX)
         shell: bash
-        run: bash .github/scripts/annotate-tests.sh cargo test --locked --release --workspace --no-fail-fast
+        run: |
+          rc=0
+          bash .github/scripts/annotate-tests.sh cargo test --locked --release --workspace --no-fail-fast \
+            --exclude blacksilk-tx --exclude blacksilk-px -- \
+            --skip restart_rebuilds_the_px_state_exactly \
+            --skip px_transactions_travel_the_stem --skip invalid_px_transactions_get_the_relaying_peer_penalized \
+            --skip private_funds_move_over_rpc --skip px_records_follow_a_reorganization \
+            --skip a_vault_is_deployed --skip an_uncertain_vault_lock || rc=1
+          tx_tests=$(ls tx/tests | sed -n 's/\.rs$//p' | grep -vx 'px_consensus\|fuzz_decode' | sed 's/^/--test /')
+          bash .github/scripts/annotate-tests.sh cargo test --locked --release --no-fail-fast -p blacksilk-tx --lib $tx_tests || rc=1
+          px_tests=$(ls px/tests | sed -n 's/\.rs$//p' | grep -vx 'proof\|unified' | sed 's/^/--test /')
+          bash .github/scripts/annotate-tests.sh cargo test --locked --release --no-fail-fast -p blacksilk-px --lib $px_tests || rc=1
+          exit $rc
+      # The tests that build PX proofs (4-6 GB each), one at a time: run in
+      # parallel they exhaust the runner's memory (run 105 was killed, 143).
+      - name: Test (release, PX-proving, one at a time)
+        shell: bash
+        run: |
+          set -o pipefail
+          run() { bash .github/scripts/annotate-tests.sh cargo test --locked --release "$@" -- --test-threads=1; }
+          rc=0
+          run -p blacksilk-px --test proof || rc=1
+          run -p blacksilk-px --test unified || rc=1
+          run -p blacksilk-tx --test px_consensus || rc=1
+          run -p blacksilk-tx --test fuzz_decode || rc=1
+          run -p blacksilk-chain restart_rebuilds_the_px_state_exactly || rc=1
+          run -p blacksilk-wallet --test e2e private_funds_move_over_rpc || rc=1
+          run -p blacksilk-wallet --test e2e px_records_follow_a_reorganization || rc=1
+          run -p blacksilk-wallet --test e2e a_vault_is_deployed || rc=1
+          run -p blacksilk-wallet --test e2e an_uncertain_vault_lock || rc=1
+          run -p blacksilk-p2p --test network px_transactions_travel_the_stem || rc=1
+          run -p blacksilk-p2p --test network invalid_px_transactions_get_the_relaying_peer_penalized || rc=1
+          exit $rc
 
   # The release profile has overflow checks and debug assertions off. This job
   # runs the non-PX crates' tests optimized but with both on (and without LTO,

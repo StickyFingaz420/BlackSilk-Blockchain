@@ -54,11 +54,15 @@ fn a_cache_build_does_not_stall_callers_of_a_built_key() {
          new-key build {build:.1?}; built-key cache lookup during that build {wait:.1?}; \
          one light hash {hash:.1?}"
     );
+    // A real build (a 256 MiB Argon2d fill) cannot be near-instant, but its
+    // length depends on the machine: fast CI runners build in well under the
+    // 400 ms this once assumed (run 101). The claim is relative: the built
+    // key's lookup waited a small fraction of the build.
     assert!(
-        build > Duration::from_millis(400),
-        "the build is a real one"
+        build > Duration::from_millis(100),
+        "the build is a real one: {build:.1?}"
     );
-    let bound = Duration::from_millis(50);
+    let bound = Duration::from_millis(50).min(build / 4);
     assert!(
         wait <= bound,
         "a caller of a built key waited for another key's cache build: {wait:.1?} > {bound:.1?} \
