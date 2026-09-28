@@ -1,14 +1,14 @@
 //! Block download and serving: the per-peer byte window, the block worker and
 //! download scheduling.
 
-use super::fatal;
+use super::chain_access;
 use super::headers::UpgradeWork;
 use super::state::{unix_now, BlockJob, Inner, Peer, State};
 use crate::dandelion::PeerId;
 use crate::limits::score;
 use crate::message::Message;
 use blacksilk_chain::block::{Block, MAX_BLOCK_BYTES};
-use blacksilk_chain::manager::{submit_block_in_steps, SubmitError, SYNC_STEP_BLOCKS};
+use blacksilk_chain::manager::SubmitError;
 use blacksilk_consensus::{Hash, HeaderError};
 use rand_chacha::rand_core::RngCore;
 use std::collections::HashMap;
@@ -37,8 +37,17 @@ pub(super) const SERVE_BLOCKS_PER_REQUEST: usize = 16;
 /// this they are dropped unread (honest peers send only requested blocks).
 const UNREQUESTED_QUEUE: usize = 8;
 
+// The chain actor's Blocks lane holds every block the P2P layer can have in
+// flight (the request windows of all peers plus the unrequested queue), so a
+// requested block is never refused there (docs/p2p.md §10; the block worker
+// also submits one block at a time).
+const _: () = assert!(
+    blacksilk_chain::actor::DEFAULT_BLOCKS_CAPACITY
+        >= (64 + 8) * (BLOCK_WINDOW_BYTES / MAX_BLOCK_BYTES) + UNREQUESTED_QUEUE
+);
+
 pub(super) async fn on_get_blocks(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) {
-    // Copied and encoded under the lock on a blocking thread; queued after.
+    // Copied and encoded by one Query-lane command; queued after.
     let (found, missing): (Vec<Vec<u8>>, Vec<Hash>) = inner
         .with_chain(move |c| {
             let mut found = Vec::new();
@@ -132,10 +141,10 @@ pub(super) fn on_block(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
 }
 
 /// Validates and connects received blocks, one at a time, in arrival order
-/// (docs/p2p.md §6). Each block is connected through the bounded API
-/// (`submit_block_in_steps`): at most `SYNC_STEP_BLOCKS` block validations
-/// per chain-lock hold, so the gap-filling block of a long download does not
-/// hold the lock while hundreds of waiting descendants connect.
+/// (docs/p2p.md §6). Each block is one `SubmitBlock` command on the chain
+/// actor's Blocks lane; the actor connects what it releases in steps of at
+/// most `SYNC_STEP_BLOCKS` validations, serving other commands in between,
+/// and answers with the final verdict once the drain is done.
 pub(super) async fn block_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<BlockJob>) {
     while let Some(job) = rx.recv().await {
         let BlockJob {
@@ -146,24 +155,17 @@ pub(super) async fn block_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRecei
         } = job;
         let unrequested = !requested && !late;
         let id = block.id(inner.cfg.network_id);
-        let inner2 = inner.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            // Only a block whose header we already accepted (so it passed
-            // the header gate, `sync_policy::worth_verifying`) is worth
-            // storing, e.g. a requested block arriving after its timeout.
-            // Any other unrequested body, for instance of a free low-work
-            // branch, is dropped before it is hashed or written (R1-C1).
-            if unrequested && inner2.chain().header(&id).is_none() {
-                return None;
-            }
-            Some(submit_block_in_steps(
-                || inner2.chain(),
-                block,
-                unix_now(),
-                SYNC_STEP_BLOCKS,
-            ))
-        })
-        .await;
+        // Only a block whose header we already accepted (so it passed the
+        // header gate, `sync_policy::worth_verifying`) is worth storing, e.g.
+        // a requested block arriving after its timeout. Any other
+        // unrequested body, for instance of a free low-work branch, is
+        // dropped before it is hashed or written (R1-C1): the actor checks
+        // the header in the same command.
+        let Some(result) =
+            chain_access::submit_block(&inner.chain, block, unix_now(), unrequested).await
+        else {
+            return; // the chain actor stopped: the node is shutting down
+        };
         {
             let mut st = inner.state();
             if requested {
@@ -175,14 +177,14 @@ pub(super) async fn block_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRecei
             st.blocks_queued.remove(&id);
         }
         match result {
-            Ok(None) | Ok(Some(Ok(_))) | Ok(Some(Err(SubmitError::Duplicate))) => {}
-            Ok(Some(Err(SubmitError::BodyMismatch))) => {
+            None | Some(Ok(_)) | Some(Err(SubmitError::Duplicate)) => {}
+            Some(Err(SubmitError::BodyMismatch)) => {
                 inner.misbehave(peer, score::INVALID_BLOCK, "body does not match header")
             }
-            Ok(Some(Err(SubmitError::Body(e)))) => {
+            Some(Err(SubmitError::Body(e))) => {
                 inner.misbehave(peer, score::INVALID_BLOCK, &format!("invalid block: {e:?}"))
             }
-            Ok(Some(Err(SubmitError::Header(e)))) => match e {
+            Some(Err(SubmitError::Header(e))) => match e {
                 // `InvalidParent`: the parent's body was found invalid,
                 // possibly after we requested this block (a race), so it is
                 // not the sender's fault; an unrequested block was already
@@ -205,13 +207,10 @@ pub(super) async fn block_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRecei
                     &format!("invalid block header: {e}"),
                 ),
             },
-            Ok(Some(Err(SubmitError::Store(e)))) => log::error!("block store: {e}"),
+            Some(Err(SubmitError::Store(e))) => log::error!("block store: {e}"),
             // The node halted on its own fault, not the peer's
             // (`ChainManager::halted`); the node shuts down.
-            Ok(Some(Err(SubmitError::Halted))) => {}
-            // The task holds the chain lock: a panic there poisoned it.
-            Err(e) if e.is_panic() => fatal(&format!("block task failed: {e}")),
-            Err(_) => return, // the runtime is shutting down
+            Some(Err(SubmitError::Halted)) => {}
         }
         schedule_downloads(&inner).await;
     }
@@ -220,9 +219,11 @@ pub(super) async fn block_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRecei
 /// Requests missing best-chain bodies from peers that have them (docs/p2p.md
 /// §6), within each peer's window: `BLOCKS_IN_FLIGHT` blocks and
 /// `BLOCK_WINDOW_BYTES` (each request charged `MAX_BLOCK_BYTES`), at least
-/// one block.
+/// one block. The missing bodies come from the published chain snapshot
+/// (`ChainSummary::missing_bodies`, republished after every command), so
+/// scheduling never waits for the chain.
 pub(super) async fn schedule_downloads(inner: &Arc<Inner>) {
-    let missing = inner.with_chain(|c| c.missing_bodies(256)).await;
+    let missing = inner.summary.load().missing_bodies.clone();
     if missing.is_empty() {
         return;
     }

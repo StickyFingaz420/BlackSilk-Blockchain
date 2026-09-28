@@ -331,20 +331,21 @@ is a violation (100 points). The only exception is `Version`'s extension area (�
    them in order, validates each, and reorganizes when a heavier branch completes. The
    network layer never decides validity.
    - **Where.** The peer's read loop only decodes the block and matches it against our
-     requests; a single **block worker** validates and connects bodies, one at a time,
-     in arrival order. The read loop keeps answering pings however long a block
-     takes. Unrequested blocks (penalized, §10) wait there too, at most 8 node-wide;
-     beyond that they are dropped unread.
-   - **Bounded lock holds (P0-7, R8-1).** The body that fills a gap can release
-     hundreds of downloaded descendants at once. The worker connects them in steps of
-     at most **8** block validations per chain-lock hold
-     (`ChainManager::submit_block_in_steps`), releasing the lock in between, so the
-     header worker, transaction relay and the RPC get it. Results are unchanged:
-     blocks complete in the same order (lowest body arrival first), a body arriving
-     during a drain waits for it, and a reorganization is never paused on a tip
-     lighter than the one it replaces. The mempool receives the drain's effects once,
-     at its end. Tested: `bounded_submission_reaches_the_unbounded_result_in_bounded_steps`,
-     `a_bounded_reorganization_never_stops_on_a_lighter_tip` (chain) and
+     requests; a single **block worker** hands bodies to the chain actor (§10), one at
+     a time, in arrival order, and waits for each verdict. The read loop keeps
+     answering pings however long a block takes. Unrequested blocks (penalized, §10)
+     wait there too, at most 8 node-wide; beyond that they are dropped unread.
+   - **Bounded steps (P0-7, R8-1, dossier 34 Stage 2).** The body that fills a gap
+     can release hundreds of downloaded descendants at once. The chain actor connects
+     them in steps of at most **8** block validations (`ChainManager::sync_step`)
+     and serves one waiting command between two steps (§10), so header sync, queries
+     and the RPC are not held up by the whole drain. Results are unchanged: blocks
+     complete in the same order (lowest body arrival first), a body arriving during a
+     drain waits for it, and a reorganization is never paused on a tip lighter than
+     the one it replaces. The mempool receives the drain's effects once, at its end.
+     Tested: `bounded_submission_reaches_the_unbounded_result_in_bounded_steps`,
+     `a_bounded_reorganization_never_stops_on_a_lighter_tip`, the equivalence tests
+     E1-E4 (`chain/tests/actor_equivalence.rs`) and
      `pings_are_answered_while_a_long_batch_of_blocks_connects` (p2p).
    - Between steps, readers see intermediate tips of the drain (each a valid,
      heavier-or-equal connected chain). Node policy that depends on the tip (the
@@ -710,7 +711,8 @@ already being written is finished first).
   the budget costs 1 point, a requested `Tx` over it is dropped unverified.
 - **Admission order** of a relayed transaction, cheapest first:
   1. an id already proven invalid is dropped;
-  2. the signature budget and, for PX, the peer's PX share are charged;
+  2. the signature budget is charged; for PX, the peer's PX share was charged
+     on arrival, on the read loop (§10, slow lane);
   3. an id already in our mempool (a replay, SX2), or one that failed a
      contextual rule **at our current tip**, is dropped unverified: the same bytes are verified again only after the tip changes
      (the cache holds at most 10 000 ids and is emptied when the tip changes).
@@ -720,7 +722,10 @@ already being written is finished first).
      keeps the first seen, so it would be refused after verification anyway. Before
      2026-09-27 such a PX transaction passed the cheap checks and took a node-wide PX
      token (step 5) first;
-  4. cheap checks: the stateless structure and balance rules and, for PX, the
+  4. cheap checks: first, a PX transaction whose window ends fewer than
+     `PX_EXPIRING_SOON_BLOCKS` (3) blocks after the next block is refused
+     (RTW1C-4, `validate::px_expires_soon`): contextual, never scored, cached as
+     in 3, before its proof is decoded; then the stateless structure and balance rules and, for PX, the
      proof's strict decoding (penalized), then the contextual rules a chain
      extension can change: key images, PX anchor, nullifiers, registry, pool,
      contract id (not penalized, cached as in 3), then, for PX, the proof's table
@@ -762,59 +767,116 @@ already being written is finished first).
 **Liveness:**
 - The node pings every 60 s.
 - A connection is closed after 180 s without any message, or when a pong is 30 s late.
-- **The chain lock is never taken on an async worker thread** (P0-7, R8-1, R10-5).
-  Every P2P handler and every RPC handler that reads or changes the chain runs that
-  part on a blocking thread (`spawn_blocking`); the async workers only wait for the
-  result. Tested: `pings_are_answered_while_the_chain_lock_is_held`.
-- **No read loop and no maintenance tick waits for the chain lock** (dossier 34
+- **The chain actor** (dossier 34 Stage 2; `chain/src/actor.rs`). One dedicated
+  thread owns the chain manager and runs every chain operation, one at a time; no
+  other thread can reach the manager, so nothing waits on a chain lock. P2P and RPC
+  send it **commands** (one former lock closure each: the same manager calls with
+  the same arguments) on four bounded **lanes**, served in priority order:
+  - **Headers** (the header worker's pre-checks, PoW jobs and acceptance),
+    **Blocks** (the block worker and RPC `/block`: local mining), **Query** (reads
+    the snapshot does not answer: `GetHeaders`, `GetBlocks`, mempool lookups,
+    transaction pre-checks, `/template` and the RPC state pages), **Tx**
+    (verification of relayed transactions, fluff, local submission).
+  - A lower lane's command is served after at most `STARVATION_LIMIT` (16) higher
+    ones. During a drain, one command runs between two steps, and a Tx command only
+    once starved: blocks, headers and queries go first (F34-5).
+  - Producers never block: a full lane refuses at once. Relayed transactions are
+    then dropped, counted (`NetStats::tx_lane_drops`) and never penalized (relay is
+    best effort); every other caller waits asynchronously and offers the command
+    again. The Blocks lane holds at least every block the node can have in flight
+    ((64 + 8) × 3 + 8), and the block worker submits one at a time, so a requested
+    block is never dropped.
+  - Replies come back through oneshot channels: no async worker and no blocking
+    thread waits for chain work (P0-7, R8-1, R10-5). The actor never takes the
+    network-state lock, and no command is sent with it held.
+  - Each command of the header worker (a batch of `k` PoW chunks costs `k + 1`:
+    the pre-check with the first chunk's jobs, then each acceptance with the next
+    chunk's jobs) waits for at most one step (F34-7). RandomX runs outside the
+    actor.
+  - **Equivalence.** Every actor schedule is one the old mutex allowed (the same
+    closures, one at a time), and the connected chain, state, invalid marks and
+    store bytes depend only on the sequence of submitted bodies and headers, so
+    consensus results are unchanged (docs/reviews/chain-actor-stage2.md §4). Tested:
+    E1 (four drivers, including the actor, reach the oracle's chain, state, store
+    bytes and every verdict), E2 (four concurrent producers: replaying the actor's
+    command log gives every reply and the final state), E3 (every published
+    snapshot equals the one recomputed on the replay), E4 (a restart from the
+    actor's store gives the oracle's state), and the ordering guarantees
+    `chain/tests/actor_order.rs` g1-g7.
+- **No read loop and no maintenance tick waits for the chain** (dossier 34
   Stage 1; F34-1 to F34-3). Before this, a peer whose own request waited for the
-  lock stopped reading its socket, so its pings went unanswered and it dropped the
-  node after the 30 s pong timeout, and the handshake and the maintenance loop
-  stopped with it. A long hold (a heavy block step, a reorganization, a slow disk)
-  now delays only the chain work itself:
-  - **Per-peer slow lane.** Messages whose handling takes the chain lock
+  chain lock stopped reading its socket, so its pings went unanswered and it dropped
+  the node after the 30 s pong timeout, and the handshake and the maintenance loop
+  stopped with it. A long command (a heavy block step, a reorganization, a slow
+  disk) now delays only the chain work itself:
+  - **Per-peer slow lane.** Messages whose handling needs a chain command
     (`GetHeaders`, `GetBlocks`, `InvTx`, `GetTx`, `Tx`, `StemTx`) go to a bounded
-    per-peer queue (`dispatch::SLOW_LANE` messages and `dispatch::SLOW_LANE_BYTES`
-    bytes, but always at least one message), handled by the peer's own task one at
-    a time in arrival order. Every other message (pings, pongs, addresses,
-    `NotFound`, headers, blocks) is handled on the read loop, which never waits for
-    the chain. A lane message may be handled after a later non-lane message of the
-    same peer; no handler depends on that order. A full lane drops the message:
-    transaction relay (`InvTx`, `Tx`, `StemTx`) without penalty (relay is best
-    effort; a request is retried with the next announcer), a request
-    (`GetHeaders`, `GetBlocks`, `GetTx`) charged as a message-rate excess
-    (`score::RATE`). At a disconnect the lane task stops before its next message,
-    never in the middle of one.
-  - **Published chain summary** (`ChainManager::summary_cell`): the tip (id,
-    header, height), the best header chain (height, id, locator), the mempool
-    counts, and the drain and halt flags. The manager republishes it before a
-    writer releases the lock (every submission, bounded step and header batch, and
-    after every closure the P2P and RPC layers run under the lock), in a
-    `std::sync::RwLock<Arc<_>>` whose critical sections are a pointer copy. The
-    handshake's `Version`, the locator of every `GetHeaders` we send, the handling
-    of an empty `Headers`, tip announcements and RPC `/info` read it. A reader sees
-    the state of the last publication: at most one lock hold old, and consistent
-    (one publication is one point in the lock order). Nothing consensus-relevant
-    reads it.
+    per-peer queue, handled by the peer's own task one at a time in arrival order.
+    Every other message (pings, pongs, addresses, `NotFound`, headers, blocks) is
+    handled on the read loop, which never waits for the chain. A lane message may
+    be handled after a later non-lane message of the same peer; no handler depends
+    on that order. The bounds (`dispatch.rs`):
+    - relay (`InvTx`, `Tx`, `StemTx`): at most `SLOW_LANE_RELAY` messages and
+      `SLOW_LANE_BYTES` bytes (but always one message, so the largest transaction
+      passes); beyond them relay is dropped without penalty (relay is best effort;
+      a request is retried with the next announcer);
+    - requests (`GetHeaders`, `GetBlocks`, `GetTx`): the rest of the lane's
+      `SLOW_LANE` places, which relay never takes; queued relay bytes never drop
+      a request. A request is dropped and charged as a message-rate excess
+      (`score::RATE`) only when the lane holds `SLOW_LANE` messages. Before this
+      split (a Stage 1 defect, found by the PX relay test), one queued PX
+      transaction of about 3 MB made every later message of its peer dropped,
+      and its requests charged;
+    - memory: at most `SLOW_LANE_BYTES` plus one maximum-size transaction of
+      relay, plus `SLOW_LANE` requests of at most 16 KiB each (about 11.5 MB per
+      peer).
+
+    The per-peer PX share (`PeerLimits::px`) is charged on the read loop when a
+    PX `Tx` or `StemTx` arrives, before the lane: a peer stemming PX
+    transactions over its share is penalized (one point each) however busy its
+    lane is; a requested `Tx` over the share is dropped. At a disconnect the lane
+    task stops before its next message, never in the middle of one.
+  - **Published chain snapshot** (`ChainHandle::summary_cell`,
+    `chain/src/manager/summary.rs`): the tip (id, header, height), the best header
+    chain (height, id, locator), the bodies to download (at most 256), the next
+    block's header fields, rule domain and epoch, the PX record count and root, the
+    mempool counts, and the drain and halt flags. The actor republishes it after
+    every command and step, before it replies and before it takes the next command,
+    in a `std::sync::RwLock<Arc<_>>` whose critical sections are a pointer copy;
+    `seq` never decreases. The handshake's `Version`, the locator of every
+    `GetHeaders` we send, the handling of an empty `Headers`, tip announcements,
+    download scheduling, the next height of a local transaction, RPC `/info` and
+    the halt watcher read it. A reader sees the state of the last publication: at
+    most one command or step old, and consistent (one publication is one point in
+    the actor's order); a command's reply is never older than its snapshot. Nothing
+    consensus-relevant reads it.
   - **Two maintenance loops.** Pings, timeouts, Dandelion epochs, held local
     transactions, tip announcements, header re-requests, outbound dialing and
     saving never wait for the chain. Embargo fluff (a mempool submission), pool
-    re-announcement and download scheduling run on a second task. A hold delays
-    only those, by at most the hold: an embargo that expires during a hold is
-    fluffed when the hold ends.
+    re-announcement and download scheduling run on a second task. A long command
+    delays only the first two, by at most its length: an embargo that expires
+    during one is fluffed when it ends.
 
-  Tested with real holds of the chain lock (a stalled block append on the
-  block-submission path, 15-40 s): `p2p/tests/liveness.rs` L1 and L6 (a peer's own
-  pongs flow while its `GetHeaders` and `InvTx` wait, and the replies come in
-  arrival order after the hold), L2 (outbound dialing continues), L3 (a handshake
-  completes); `node/tests/rpc_liveness.rs` L4 (`/info` within 100 ms) and L5 (an
-  RPC burst stays within the admission classes, docs/blocks.md §9.1).
-- **A poisoned lock stops the node** (P0-9, R10-2). A panic while holding the chain
-  lock can leave the manager half-updated. The node then exits with status 70
-  (`POISONED_EXIT_CODE`, the same in the P2P layer and the RPC) instead of relaying
-  and building on that state; systemd (`Restart=on-failure`) or the operator restarts
-  it, and the replay of the append-only block store rebuilds a consistent state. The
-  same holds for the network state lock, and for a panic inside a blocking chain task.
+  Tested with real long commands (a stalled block append in a block submitted to
+  the actor, 15-40 s): `p2p/tests/liveness.rs` L1 and L6 (a peer's own pongs flow
+  while its `GetHeaders` and `InvTx` wait, and the replies come in arrival order
+  afterwards), L2 (outbound dialing continues), L3 (a handshake completes), L7 (a
+  header announcement is accepted during a body drain of heavy steps);
+  `node/tests/rpc_liveness.rs` L4 (`/info` within 100 ms) and L5 (an RPC burst
+  stays within the admission classes, docs/blocks.md §9.1); `p2p/tests/network.rs`
+  L8 (a full Tx lane drops a relayed transaction without penalty while a requested
+  block connects). `chain/tests/actor_order.rs` `l7_...` measures the header
+  acceptance of L7 against the pre-Stage 2 mutex under transaction-verification
+  load (printed; the actor's bound is asserted).
+- **A panic in the chain actor stops the node** (P0-9, R10-2). A panic while running
+  a chain operation can leave the manager half-updated. The node then exits with
+  status 70 (`POISONED_EXIT_CODE`, the same in the chain actor, the P2P layer and
+  the RPC) instead of relaying and building on that state; systemd
+  (`Restart=on-failure`) or the operator restarts it, and the replay of the
+  append-only block store rebuilds a consistent state (tested:
+  `f1_a_panic_in_the_actor_exits_with_70_and_the_store_replays`). The same holds for
+  a poisoned network state lock. At shutdown the actor stops between two steps; a
+  drain in progress is finished by the replay at the next start.
 
 
 ## 11. Tor, I2P and proxies
@@ -868,21 +930,23 @@ already being written is finished first).
   - A batch whose sender left before verification is only pre-checked: a sender
     whose batch would fail only the proof of work is not banned (it paid the real
     work of every header before the failing one).
-- **One global chain lock.** Handlers no longer take it on async workers, read loops
-  and the first maintenance loop no longer wait for it (§10), and block connection
-  is bounded per hold (§6), but every chain write and most chain reads still
-  serialize on it. Open (dossier 34 Stage 2: a single-writer chain actor with
-  published snapshots):
-  - Holds are bounded in blocks, not in time: a step of `SYNC_STEP_BLOCKS` heavy
-    blocks, a reorganization (never paused before its new branch outweighs the old
-    tip) or the pool revalidation after it can hold the lock for many seconds
-    (research dossiers 10 and 12 estimate several seconds per heavy block). What
-    waits for them is now only chain work: lane messages, embargo fluff, download
-    scheduling, header acceptance (the header worker takes the lock several times
-    per batch, F34-7) and RPC chain calls.
-  - Relayed transactions are verified under the lock, one per peer lane at a time
-    (R8-1d: verification outside the lock is dossier 34 Stage 4). Every lane
-    contends for the one unfair mutex with the block and header workers.
+- **One chain writer.** Every chain operation runs on the chain actor (§10), which
+  serves commands by priority and one command between two drain steps, but still
+  one at a time. Open (dossier 34 Stages 3 and 4):
+  - Commands and steps are bounded in blocks, not in time: a step of
+    `SYNC_STEP_BLOCKS` heavy blocks, a reorganization (never paused before its new
+    branch outweighs the old tip) or the pool revalidation after it can take many
+    seconds (research dossiers 10 and 12 estimate several seconds per heavy block).
+    What waits for them is only chain work: lane messages, embargo fluff, header
+    acceptance (each header-worker command waits for at most one step) and RPC
+    chain calls. The main-chain header index and the mempool outside the writer
+    (Stage 3) would let `GetHeaders`, pre-checks and mempool lookups skip the
+    actor.
+  - Relayed transactions are verified in the actor, below blocks, headers and
+    queries (Tx lane; R8-1d: verification outside the writer is dossier 34
+    Stage 4). They no longer delay block connection by more than one command per
+    `STARVATION_LIMIT` slots during a drain, but each still costs the actor its
+    verification time.
   - PoW of an RPC `/block` is computed outside the lock (docs/blocks.md §9.2); a
     P2P block whose header we never saw is dropped unhashed (§6.4).
   - Requests that need the chain wait for the lock on a blocking thread: at most

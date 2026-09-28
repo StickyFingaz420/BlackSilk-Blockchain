@@ -46,7 +46,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap, HashMap};
 use std::io;
 use std::sync::Arc;
-pub use summary::{ChainSummary, SummaryCell};
+pub use summary::{ChainSummary, NextBlock, SummaryCell, SUMMARY_MISSING_BODIES};
 
 #[derive(Debug)]
 pub enum SubmitError {
@@ -203,6 +203,10 @@ pub struct ChainManager {
     sync_outcome: SyncOutcome,
     /// The published summary, read without the chain lock (`summary`).
     summary: Arc<SummaryCell>,
+    /// Test-only: each bounded validation call (a drain step) first sleeps
+    /// this long (`set_step_delay_for_tests`).
+    #[cfg(feature = "test-hooks")]
+    step_delay: Option<std::time::Duration>,
 }
 
 /// Blocks validated and connected per lock hold by the bounded API

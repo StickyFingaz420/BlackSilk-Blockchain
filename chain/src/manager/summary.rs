@@ -1,17 +1,18 @@
-//! The published chain summary (research dossier 34, Stage 1 item 1b): a
-//! small, read-mostly copy of the manager's headline fields that readers take
-//! WITHOUT the chain lock.
+//! The published chain summary (research dossier 34, Stage 1 item 1b,
+//! extended into the Stage 2 snapshot): a small, read-mostly copy of the
+//! manager's headline fields that readers take WITHOUT reaching the manager.
 //!
-//! The manager republishes it just before a writer releases the lock: at the
-//! end of every submission and bounded step, header batch and replay, and
-//! after every closure the P2P and RPC layers run under the lock
-//! ([`ChainManager::publish_summary`]). A reader holding a summary acts like
-//! a reader that took the chain lock at the last publication: the values are
-//! at most one lock hold old, and always mutually consistent (one publication
-//! is one linearization point). Nothing consensus-relevant reads it; it serves
-//! the P2P handshake, locators, tip announcements and RPC `/info`, so that a
-//! long hold (a heavy block step, a reorganization, a slow disk) never stalls
-//! them.
+//! The manager republishes it at the end of every submission and bounded
+//! step, header batch and replay; the chain actor (`crate::actor`) publishes
+//! it after every command it runs, before it replies and before it takes the
+//! next command ([`ChainManager::publish_summary`]). A reader holding a
+//! summary acts like a reader that ran a command right after the last
+//! publication: the values are at most one command (or one drain step) old,
+//! and always mutually consistent (one publication is one linearization
+//! point). Nothing consensus-relevant reads it; it serves the P2P handshake,
+//! locators, tip announcements, download scheduling and RPC `/info`, so that
+//! a long command (a heavy block step, a reorganization, a slow disk) never
+//! stalls them.
 //!
 //! The cell is a `std::sync::RwLock<Arc<ChainSummary>>` (no new dependency;
 //! `arc-swap` was rejected, decisions "Agent 34"). A read clones the `Arc`
@@ -22,7 +23,27 @@
 
 use super::ChainManager;
 use blacksilk_consensus::{BlockHeader, Hash, Network};
+use blacksilk_tx::params::SigDomain;
 use std::sync::{Arc, PoisonError, RwLock};
+
+/// Missing bodies listed in a summary (`ChainManager::missing_bodies`): the
+/// most the P2P download scheduler asks for at once.
+pub const SUMMARY_MISSING_BODIES: usize = 256;
+
+/// The header fields of the next block on the connected tip, as
+/// `ChainManager::template` gives them (without transactions): what a miner
+/// or a monitor needs to know about the next block without a command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NextBlock {
+    pub height: u64,
+    pub prev_id: Hash,
+    pub difficulty: u64,
+    pub seed_id: Hash,
+    pub min_timestamp: u64,
+    pub version: u32,
+    /// `reward(height)`, fees excluded.
+    pub reward: u64,
+}
 
 /// The manager's headline fields at one publication.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,6 +76,22 @@ pub struct ChainSummary {
     pub store_failed: bool,
     /// `ChainManager::apply_halted`.
     pub apply_halted: bool,
+    /// `ChainManager::halted`: why the manager halted, if it did.
+    pub halt_reason: Option<String>,
+    /// `ChainManager::missing_bodies(SUMMARY_MISSING_BODIES)`: the bodies to
+    /// download, lowest height first.
+    pub missing_bodies: Vec<(u64, Hash)>,
+    /// The next block on the connected tip.
+    pub next_block: NextBlock,
+    /// The signature domain transactions are admitted under now (that of
+    /// the next block's rules, `ChainManager::next_rules`).
+    pub next_domain: SigDomain,
+    /// The name of the next block's rule-set epoch.
+    pub next_epoch: &'static str,
+    /// PX records in the state (`MemoryChain::px_record_count`).
+    pub px_records: u64,
+    /// The PX record tree root.
+    pub px_root: [u32; 8],
 }
 
 impl ChainSummary {
@@ -63,36 +100,86 @@ impl ChainSummary {
         self.store_failed || self.apply_halted
     }
 
-    /// The fields of `m` now; `seq` is the caller's.
-    fn of(m: &ChainManager, seq: u64) -> Self {
+    /// The fields of `m` now; `seq` is the caller's. The fields derived
+    /// from the connected tip (the next block, the rule domain, the PX
+    /// counters) and the locator (derived from the best header) are copied
+    /// from `prev` when those ids did not change.
+    fn of(m: &ChainManager, seq: u64, prev: Option<&ChainSummary>) -> Self {
         let p = m.params();
+        let tip_id = m.tip_id();
+        let best_header_id = m.best_header_id();
+        let same_tip = prev.filter(|s| s.seq > 0 && s.tip_id == tip_id);
+        let same_best = prev.filter(|s| s.seq > 0 && s.best_header_id == best_header_id);
+        let (next_block, next_domain, next_epoch, px_records, px_root) = match same_tip {
+            Some(s) => (
+                s.next_block,
+                s.next_domain,
+                s.next_epoch,
+                s.px_records,
+                s.px_root,
+            ),
+            None => {
+                let t = m
+                    .template_on(&tip_id)
+                    .expect("the connected tip is a valid header");
+                let next = NextBlock {
+                    height: t.height,
+                    prev_id: t.prev_id,
+                    difficulty: t.difficulty,
+                    seed_id: t.seed_id,
+                    min_timestamp: t.min_timestamp,
+                    version: t.version,
+                    reward: t.reward,
+                };
+                let state = m.state();
+                (
+                    next,
+                    m.next_rules().domain(),
+                    p.epoch_at(t.height).name,
+                    state.px_record_count(),
+                    state.px().root(),
+                )
+            }
+        };
         Self {
             seq,
             network: p.network,
             network_id: p.network_id,
             genesis_id: p.genesis_id(),
-            tip_id: m.tip_id(),
+            tip_id,
             tip_header: *m.tip_header(),
             height: m.height(),
             generated: m.generated(),
             outputs: m.state().output_count(),
             header_height: m.header_height(),
-            best_header_id: m.best_header_id(),
-            locator: m.locator(),
+            best_header_id,
+            locator: match same_best {
+                Some(s) => s.locator.clone(),
+                None => m.locator(),
+            },
             mempool_txs: m.mempool().len(),
             mempool_bytes: m.mempool().bytes(),
             deepest_reorg: m.deepest_reorg(),
             sync_pending: m.sync_pending(),
             store_failed: m.store_failed(),
             apply_halted: m.apply_halted(),
+            halt_reason: m.halted(),
+            missing_bodies: m.missing_bodies(SUMMARY_MISSING_BODIES),
+            next_block,
+            next_domain,
+            next_epoch,
+            px_records,
+            px_root,
         }
     }
 
     /// Whether `self` still describes `m`. The locator, the tip's derived
-    /// fields (header, height, generated, outputs) and the static fields are
-    /// functions of the compared ids, so only the ids and the counters that
-    /// change on their own are compared: a cheap test run at every
-    /// publication point.
+    /// fields (header, height, generated, outputs, the next block, the PX
+    /// counters) and the static fields are functions of the compared ids,
+    /// and the halt reason is a function of the halt flags, so only the ids,
+    /// the counters that change on their own and the missing bodies (which
+    /// change with any header or body) are compared: a test run at every
+    /// publication point, bounded by `SUMMARY_MISSING_BODIES`.
     fn describes(&self, m: &ChainManager) -> bool {
         self.tip_id == m.tip_id()
             && self.best_header_id == m.best_header_id()
@@ -102,6 +189,7 @@ impl ChainSummary {
             && self.sync_pending == m.sync_pending()
             && self.store_failed == m.store_failed()
             && self.apply_halted == m.apply_halted()
+            && self.missing_bodies == m.missing_bodies(SUMMARY_MISSING_BODIES)
     }
 }
 
@@ -136,6 +224,25 @@ impl SummaryCell {
             sync_pending: false,
             store_failed: false,
             apply_halted: false,
+            halt_reason: None,
+            missing_bodies: Vec::new(),
+            next_block: NextBlock {
+                height: 1,
+                prev_id: id,
+                difficulty: 0,
+                seed_id: id,
+                min_timestamp: 0,
+                version: genesis.version,
+                reward: 0,
+            },
+            next_domain: SigDomain {
+                network_id,
+                branch_id: 0,
+                genesis_id: id,
+            },
+            next_epoch: "",
+            px_records: 0,
+            px_root: [0; 8],
         };
         Self {
             current: RwLock::new(Arc::new(s)),
@@ -182,13 +289,14 @@ impl ChainManager {
         if cur.describes(self) {
             return;
         }
-        self.summary.store(ChainSummary::of(self, cur.seq + 1));
+        self.summary
+            .store(ChainSummary::of(self, cur.seq + 1, Some(&cur)));
     }
 
     /// Publishes the full summary unconditionally as publication 1: the end
     /// of `ChainManager::open`, once the store is replayed.
     pub(super) fn publish_first_summary(&self) {
-        self.summary.store(ChainSummary::of(self, 1));
+        self.summary.store(ChainSummary::of(self, 1, None));
     }
 
     /// Whether the published summary equals the fields recomputed now (tests
@@ -196,6 +304,13 @@ impl ChainManager {
     #[cfg(test)]
     pub(super) fn summary_is_current(&self) -> bool {
         let cur = self.summary.load();
-        *cur == ChainSummary::of(self, cur.seq)
+        *cur == self.summary_now(cur.seq)
+    }
+
+    /// The summary of the fields now, computed from scratch (nothing copied
+    /// from an earlier publication) and numbered `seq`: what the published
+    /// one must equal (tests of the publication points, the actor's E3).
+    pub fn summary_now(&self, seq: u64) -> ChainSummary {
+        ChainSummary::of(self, seq, None)
     }
 }

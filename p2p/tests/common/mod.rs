@@ -5,6 +5,7 @@
 #[path = "../../../chain/tests/support/stall.rs"]
 pub mod stall;
 
+use blacksilk_chain::actor::{self, ActorConfig, ChainHandle};
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_consensus::{ChainParams, Hash, PowFunction};
 use blacksilk_p2p::dandelion::DandelionParams;
@@ -53,13 +54,22 @@ pub fn fast_config(connect: &[SocketAddr]) -> NetConfig {
 
 /// A running node whose block store can stall on demand.
 pub struct SlowNode {
+    /// The manager's lock, kept by the test for direct reads (the chain
+    /// actor locks it for each command).
     pub chain: SharedChain,
+    /// The node's chain actor.
+    pub actor: ChainHandle,
     pub net: Network,
     pub addr: SocketAddr,
     pub ctl: Arc<StallControl>,
 }
 
 pub async fn slow_node(seed: u64, cfg: NetConfig) -> SlowNode {
+    slow_node_with(seed, cfg, ActorConfig::default()).await
+}
+
+/// [`slow_node`] with the chain actor configured by `actor_cfg`.
+pub async fn slow_node_with(seed: u64, cfg: NetConfig, actor_cfg: ActorConfig) -> SlowNode {
     let p = params();
     let (store, ctl) = SlowStore::new();
     let m = ChainManager::open(
@@ -71,10 +81,12 @@ pub async fn slow_node(seed: u64, cfg: NetConfig) -> SlowNode {
     )
     .unwrap();
     let chain: SharedChain = Arc::new(Mutex::new(m));
-    let net = Network::start(cfg, chain.clone()).await.unwrap();
+    let (handle, _thread) = actor::spawn_shared(chain.clone(), actor_cfg);
+    let net = Network::start_with(cfg, handle.clone()).await.unwrap();
     let addr = net.local_addr().unwrap();
     SlowNode {
         chain,
+        actor: handle,
         net,
         addr,
         ctl,
@@ -98,11 +110,12 @@ impl SlowNode {
         .unwrap();
     }
 
-    /// Starts a chain-lock hold of at most `max` (a stalled block append on
-    /// the block-submission path); returns once the lock is held.
+    /// Starts a hold of at most `max`: a stalled block append in a block
+    /// submitted to the chain actor, which is busy with it (and holds the
+    /// manager's lock) until the stall ends; returns once it has started.
     pub async fn hold(&self, max: Duration) -> Holder {
-        let (chain, ctl) = (self.chain.clone(), self.ctl.clone());
-        tokio::task::spawn_blocking(move || Holder::start(chain, ctl, max))
+        let (chain, ctl) = (self.actor.clone(), self.ctl.clone());
+        tokio::task::spawn_blocking(move || Holder::start_actor(chain, ctl, max))
             .await
             .unwrap()
     }

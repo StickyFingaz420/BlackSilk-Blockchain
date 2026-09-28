@@ -527,12 +527,18 @@ The route list is `blacksilk_node::ROUTES` (`node/src/lib.rs`).
 
 The PX endpoints are bulk-only: there is no lookup of a single record, contract or ring.
 
-**Concurrency (node, not consensus).** `/info` answers from the chain's published
-summary (`ChainManager::summary_cell`, p2p.md §10), never the chain lock, so it stays
-prompt while a block step, a reorganization or a slow disk holds the lock. Its chain
-fields are those of the last publication: at most one lock hold old, and mutually
-consistent. Every other route that reads the chain takes the lock on a blocking thread,
-within its admission class (§9.1), and may wait for the bounded step in progress.
+**Concurrency (node, not consensus).** One chain actor runs every chain operation of
+the node, one command at a time, from priority lanes (p2p.md §10; `chain/src/actor.rs`).
+`/info` and the halt watcher answer from the chain's published snapshot
+(`ChainHandle::summary_cell`), never a command, so they stay prompt during a block
+step, a reorganization or a slow disk. Their chain fields are those of the last
+publication: at most one command or drain step old, and mutually consistent. Every
+other route that reads the chain is one command on the actor's Query lane (`/block`:
+its admission check on the Blocks lane; a local `/tx` without P2P: the Tx lane),
+within its admission class (§9.1); it may wait for the command or drain step in
+progress, and its answer describes the chain at one point of the actor's order (the
+state may already be one command further when it arrives). No RPC request occupies a
+thread while it waits.
 
 ### 9.1 Access control and limits (policy)
 
@@ -573,8 +579,8 @@ before routing. In order:
    Other methods carry no body (`413`).
 5. **Admission.** Each class has a fixed number of concurrent requests: read 4, bulk 2,
    submit 2, block 1, long poll 16 (`guard::Limits`). A request that finds its class full
-   is answered `503` with `Retry-After: 1` at once, instead of waiting on a blocking thread
-   for the chain lock. Clients retry with backoff.
+   is answered `503` with `Retry-After: 1` at once, instead of waiting for the chain.
+   Clients retry with backoff.
 
 The serve loop (`node/src/serve.rs`) adds connection limits: at most 64 open
 connections (a connection beyond them is closed at once), a 10 s limit to receive a
@@ -587,8 +593,8 @@ any other path the cookie and every request are visible.
 
 ### 9.2 `/block` admission
 
-`/block` is for the local miner. Before any proof of work or storage, under a brief
-chain lock, a block is refused (`accepted: false`, no PoW computed, nothing stored)
+`/block` is for the local miner. Before any proof of work or storage, in one brief
+chain command, a block is refused (`accepted: false`, no PoW computed, nothing stored)
 unless:
 - its parent is the connected tip or one of its last `RPC_BLOCK_MAX_DEPTH` = 8
   ancestors, and its height follows the parent's (`NotNearTip`);
@@ -598,7 +604,7 @@ unless:
 Within that depth the seed block lies on the connected chain and the parent is above the
 P2P low-work threshold (p2p.md §6), so the rule is stricter than the P2P header gate.
 Blocks of any other shape arrive over P2P, under that gate. The block's RandomX hash is
-then computed outside the chain lock, and the submission hits the PoW cache.
+then computed outside the chain actor, and the submission hits the PoW cache.
 
 ### 9.3 Privacy of the RPC
 

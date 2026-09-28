@@ -74,6 +74,8 @@ fn an_apply_failure_exits_with_the_halt_status_the_unit_does_not_restart() {
     )
     .unwrap();
     let shared: Shared = Arc::new(Mutex::new(m));
+    // The node's chain actor; the test writes through the lock it keeps.
+    let (chain, _actor) = blacksilk_chain::actor::spawn_shared(shared.clone(), Default::default());
     let mut rng = ChaCha20Rng::seed_from_u64(0x4A17);
     let (keys, _) = WalletKeys::generate(&mut rng);
     {
@@ -83,7 +85,7 @@ fn an_apply_failure_exits_with_the_halt_status_the_unit_does_not_restart() {
         c.submit_block(b, now).unwrap();
         assert!(c.halted().is_none());
     }
-    assert_eq!(halt_exit_code(&shared), 1, "not halted: the generic status");
+    assert_eq!(halt_exit_code(&chain), 1, "not halted: the generic status");
 
     let failed = {
         let mut c = shared.lock().unwrap();
@@ -105,14 +107,14 @@ fn an_apply_failure_exits_with_the_halt_status_the_unit_does_not_restart() {
     rt.block_on(async {
         tokio::time::timeout(
             Duration::from_secs(10),
-            watch_store(shared.clone(), Duration::from_millis(10)),
+            watch_store(&chain, Duration::from_millis(10)),
         )
         .await
         .expect("the watcher resolves")
         .unwrap();
     });
-    assert_eq!(halt_exit_code(&shared), HALT_EXIT_CODE);
-    let msg = halt_message(&shared);
+    assert_eq!(halt_exit_code(&chain), HALT_EXIT_CODE);
+    let msg = halt_message(&chain);
     assert!(msg.contains(&hex::encode(&failed[..8])), "{msg}");
     assert!(!msg.contains("\n"), "one log line: {msg:?}");
 

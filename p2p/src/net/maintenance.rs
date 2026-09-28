@@ -2,11 +2,13 @@
 //! - [`maintenance_loop`] never waits for the chain lock: Dandelion epochs,
 //!   held local transactions, tip announcements (from the published chain
 //!   summary), trickle flush, pings, timeouts, header re-requests, outbound
-//!   dialing and saving keep their schedule during any chain-lock hold
+//!   dialing and saving keep their schedule during any long chain command
 //!   (F34-2);
-//! - [`chain_maintenance_loop`] does the work that needs the chain lock:
-//!   embargo fluff (a mempool submission), pool re-announcement and download
-//!   scheduling. A hold delays only these, by at most the hold.
+//! - [`chain_maintenance_loop`] does the work that needs the chain: embargo
+//!   fluff (a mempool submission on the actor's Tx lane), pool
+//!   re-announcement (a Query command) and download scheduling (from the
+//!   published snapshot). A long command delays only the first two, by at
+//!   most its length.
 
 use super::blocks::{release_block_slot, schedule_downloads, BLOCK_TIMEOUT};
 use super::headers::HEADERS_TIMEOUT;
@@ -189,8 +191,8 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
     }
 }
 
-/// The chain-side maintenance, every tick, on its own task so that a chain-lock
-/// hold never stops [`maintenance_loop`]: embargoes that expired are fluffed
+/// The chain-side maintenance, every tick, on its own task so that a long
+/// chain command never stops [`maintenance_loop`]: embargoes that expired are fluffed
 /// (the transaction enters the mempool: a chain write), pooled transactions
 /// are re-announced once per new height, originated-set entries whose window
 /// ended are dropped, and missing bodies are requested.
@@ -201,8 +203,8 @@ pub(super) async fn chain_maintenance_loop(inner: Arc<Inner>) {
         tokio::time::sleep(inner.cfg.tick).await;
         let now = Instant::now();
 
-        // Embargoes, detected at the tick after expiry; fluffing waits for
-        // the chain lock (Stage 2 queues it to the single writer instead).
+        // Embargoes, detected at the tick after expiry; each fluff is a
+        // command on the chain actor's Tx lane.
         let expired: Vec<Hash> = {
             let st = inner.state();
             st.stempool

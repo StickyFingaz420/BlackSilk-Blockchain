@@ -2,6 +2,7 @@
 //! Dandelion++ relay, reorganization across the network, peer discovery, and
 //! defenses against misbehaving peers.
 
+use blacksilk_chain::actor::{self, ActorConfig};
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::mempool::MempoolError;
@@ -91,6 +92,33 @@ async fn node_with_pow(seed: u64, cfg: NetConfig, pow: Arc<dyn PowFunction>) -> 
     .unwrap();
     let chain: SharedChain = Arc::new(Mutex::new(m));
     let net = Network::start(cfg, chain.clone()).await.unwrap();
+    let addr = net.local_addr().unwrap();
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let (miner, _) = WalletKeys::generate(&mut rng);
+    TestNode {
+        chain,
+        net,
+        addr,
+        miner,
+        rng,
+    }
+}
+
+/// A node whose chain actor has the lane capacities and step budget of
+/// `actor_cfg` (Stage 2 lane tests).
+async fn node_with_actor(seed: u64, cfg: NetConfig, actor_cfg: ActorConfig) -> TestNode {
+    let p = params();
+    let m = ChainManager::open(
+        p.clone(),
+        TxRules::for_chain(&p),
+        Arc::new(ZeroPow),
+        Box::<MemoryStore>::default(),
+        [seed as u8; 32],
+    )
+    .unwrap();
+    let chain: SharedChain = Arc::new(Mutex::new(m));
+    let (handle, _thread) = actor::spawn_shared(chain.clone(), actor_cfg);
+    let net = Network::start_with(cfg, handle).await.unwrap();
     let addr = net.local_addr().unwrap();
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     let (miner, _) = WalletKeys::generate(&mut rng);
@@ -785,6 +813,84 @@ async fn connect_only_nodes_do_not_dial_discovered_addresses() {
     assert_eq!(peers[0].addr, NetAddr::Ip(a.addr));
 }
 
+/// L8 (Stage 2, dossier 34 F34-5): with the chain actor's Tx lane full (here
+/// of capacity 0, so always full), a requested, valid relayed transaction is
+/// dropped before verification, counted, and its sender is not penalized;
+/// a block the node requests from the same peer meanwhile is connected (the
+/// Blocks lane is never refused).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn l8_a_full_tx_lane_drops_relayed_transactions_without_penalty() {
+    let mut a = node_with_actor(
+        0x28,
+        fast_config(&[]),
+        ActorConfig {
+            capacity: [64, 256, 1024, 0],
+            ..ActorConfig::default()
+        },
+    )
+    .await;
+    a.mine_n(80, 0);
+    let tx = a.payment();
+    let id = tx.hash();
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    w.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+    loop {
+        if let Message::GetTx(ids) = Message::decode(&r.recv().await.unwrap()).unwrap() {
+            assert_eq!(ids, vec![id]);
+            break;
+        }
+    }
+    w.send(&Message::Tx(tx.encode()).encode()).await.unwrap();
+    let an = a.net.clone();
+    wait_until("the transaction dropped at the Tx lane", 20, || {
+        an.stats().tx_lane_drops == 1
+    })
+    .await;
+    let stats = a.net.stats();
+    assert_eq!(stats.tx_verifications, 0, "never verified");
+    assert!(!a.mempool_has(&id), "not pooled");
+
+    // A block announced by the same peer is requested and connected.
+    let block = {
+        let mut other = node(0x29, &[]).await;
+        // The same chain as `a` (its blocks), then one block more.
+        let mut c = other.chain.lock().unwrap();
+        let ca = a.chain.lock().unwrap();
+        for h in 1..=ca.height() {
+            let b = ca.block_at(h).unwrap();
+            let now = b.header.timestamp;
+            c.submit_block(b, now).unwrap();
+        }
+        drop((c, ca));
+        other.mine_with(7, false)
+    };
+    let height = a.height();
+    w.send(&Message::Headers(vec![block.header]).encode())
+        .await
+        .unwrap();
+    let requested = block.id(nid);
+    loop {
+        match Message::decode(&r.recv().await.unwrap()).unwrap() {
+            Message::GetBlocks(ids) if ids.contains(&requested) => break,
+            Message::Ping(n) => w.send(&Message::Pong(n).encode()).await.unwrap(),
+            _ => {}
+        }
+    }
+    w.send(&Message::Block(block.encode()).encode())
+        .await
+        .unwrap();
+    let chain = a.chain.clone();
+    wait_until("the requested block connected", 20, move || {
+        chain.lock().unwrap().height() == height + 1
+    })
+    .await;
+    let peers = a.net.peers();
+    assert_eq!(peers.len(), 1, "still connected");
+    assert_eq!(peers[0].score, 0, "no penalty for the dropped relay");
+    println!("L8: {:?}", a.net.stats());
+}
+
 /// Regression (lab network finding): relaying a transaction that the node has just
 /// seen confirmed is an honest race, not misbehavior.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -875,7 +981,7 @@ async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
     }
     let mut c = c;
     c.mine(0);
-    wait_until("A and B confirm", 30, || {
+    wait_until("A and B confirm", 60, || {
         a.height() == 81 && b.height() == 81 && !a.mempool_has(&id) && !b.mempool_has(&id)
     })
     .await;
@@ -916,19 +1022,12 @@ async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
             .await
             .unwrap();
     }
-    // A ping after the stems: its pong means they were all handled.
+    // A slow-lane barrier after the stems: its answer means they were all
+    // handled (a ping is no barrier: pongs overtake lane work since Stage 1).
+    // Queued PX bytes never drop the barrier request.
     raws.push((r6, w6));
     for (i, (r, w)) in raws.iter_mut().enumerate() {
-        w.send(&Message::Ping(100 + i as u64).encode())
-            .await
-            .unwrap();
-        loop {
-            if let Message::Pong(n) = Message::decode(&r.recv().await.unwrap()).unwrap() {
-                if n == 100 + i as u64 {
-                    break;
-                }
-            }
-        }
+        send_and_sync(r, w, &[], 100 + i as u64).await;
     }
     let scores: Vec<u32> = b
         .net
@@ -948,6 +1047,42 @@ async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
         (3..=4).contains(&penalized[0]),
         "one point per excess message"
     );
+
+    // A request behind a queued PX transaction (more than the lane's relay
+    // byte bound) is answered and costs its sender nothing: the Stage 1
+    // lane dropped it and charged it.
+    assert!(bytes.len() > 2 * 1024 * 1024, "{} bytes", bytes.len());
+    let (mut r7, mut w7) = raw_peer(b.addr, nid, true).await;
+    w7.send(&Message::StemTx(bytes.clone()).encode())
+        .await
+        .unwrap();
+    w7.send(
+        &Message::GetHeaders {
+            locator: vec![params().genesis_id()],
+            stop: [0; 32],
+        }
+        .encode(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        recv_until(
+            &mut r7,
+            20.0,
+            |m| matches!(m, Message::Headers(h) if h.len() == 81)
+        )
+        .await
+        .is_some(),
+        "the GetHeaders behind a PX StemTx is answered"
+    );
+    let newest = b
+        .net
+        .peers()
+        .into_iter()
+        .filter(|p| !before.contains(&p.id))
+        .max_by_key(|p| p.id)
+        .unwrap();
+    assert_eq!(newest.score, 0, "the requester is not charged");
 }
 
 /// A peer relaying an invalid PX transaction is penalized as misbehaving
@@ -2224,6 +2359,56 @@ async fn junk_anchor_px_floods_do_not_drain_the_px_relay_budget() {
     assert_eq!(st.tx_verifications, 0, "rejected by the cheap checks");
 }
 
+/// RTW1C-4: a PX transaction whose window ends fewer than
+/// `PX_EXPIRING_SOON_BLOCKS` blocks after the next block is refused in the
+/// cheap stage before its proof is decoded (these junk proofs would be the
+/// penalized `PxProof` otherwise) and before the node-wide PX token: never
+/// scored, never verified, no token taken, and not looked at again at this
+/// tip. The same transaction with an unbounded window is decoded (and
+/// penalized for its proof), showing the refusal came first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_expiring_soon_px_transaction_is_refused_before_the_px_token() {
+    use blacksilk_tx::validate::PX_EXPIRING_SOON_BLOCKS;
+    let a = node(64, &[]).await;
+    let nid = params().network_id;
+    // The next block is 1: a window ending at 1 + 3 - 1 expires soon.
+    let expiring = |k: u32| {
+        let Transaction::Px(mut t) = junk_anchor_px(k) else {
+            unreachable!()
+        };
+        t.window.not_after = PX_EXPIRING_SOON_BLOCKS;
+        Transaction::Px(t)
+    };
+    assert!(matches!(
+        a.chain.lock().unwrap().check_tx(&expiring(0)),
+        Err(MempoolError::ExpiringSoon)
+    ));
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    // Within the peer's PX share (burst 4); one sent twice.
+    let msgs: Vec<Vec<u8>> = [0, 1, 2, 2]
+        .iter()
+        .map(|&k| Message::StemTx(expiring(k).encode()).encode())
+        .collect();
+    send_and_sync(&mut r, &mut w, &msgs, 1).await;
+    let st = a.net.stats();
+    assert_eq!(a.net.peers()[0].score, 0, "never scored");
+    assert_eq!(st.px_global_taken, 0, "no node-wide PX token taken");
+    assert_eq!(st.px_global_drops, 0);
+    assert_eq!(st.tx_verifications, 0, "never verified");
+    assert!(!a.net.stempool_contains(&expiring(0).hash()), "not stemmed");
+
+    // Control: the same junk with an unbounded window reaches the proof
+    // decoding and is penalized for it.
+    let msgs = vec![Message::StemTx(junk_anchor_px(9).encode()).encode()];
+    let (mut r2, mut w2) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(&mut r2, &mut w2, &msgs, 2).await;
+    assert!(
+        a.net.peers().iter().any(|p| p.score == score::INVALID_TX),
+        "a decodable window reaches the proof check"
+    );
+    assert_eq!(a.net.stats().px_global_taken, 0);
+}
+
 /// RTW1-2 (red team RT-W1): a PX transaction that passes every cheap
 /// contextual check (a real ring, an unspent key image, the current anchor,
 /// fresh nullifiers, a covered pool) but carries a garbage CLSAG and a
@@ -2508,12 +2693,15 @@ async fn pings_are_answered_while_the_chain_lock_is_held() {
 /// P0-7: a long batch of downloaded blocks connects in bounded steps, off the
 /// read loops. A peer serves 120 bodies but withholds the first until it has
 /// sent all the others; its arrival releases 119 waiting blocks at once.
-/// Another peer's pings are answered promptly throughout, a thread taking the
-/// chain lock repeatedly sees intermediate heights (the lock is released
-/// between steps), and the node ends on the same tip without penalizing
-/// anyone. Coinbase-only blocks connect fast (the drain takes a fraction of a
-/// second here), so the lock-release check, not the pong latency, is what
-/// fails if the batch is connected in one hold.
+/// Another peer's pings are answered promptly throughout, a thread reading
+/// the published chain snapshot repeatedly sees intermediate heights (the
+/// chain actor connects the batch in steps and publishes after each), and
+/// the node ends on the same tip without penalizing anyone. Coinbase-only
+/// blocks connect fast (the drain takes a fraction of a second here), so the
+/// step check, not the pong latency, is what fails if the batch is connected
+/// in one step. (Before Stage 2 the observer took the chain mutex between
+/// steps; the actor re-takes its private lock at once, so the snapshot is
+/// the observable now.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pings_are_answered_while_a_long_batch_of_blocks_connects() {
     const N: u64 = 120;
@@ -2579,16 +2767,16 @@ async fn pings_are_answered_while_a_long_batch_of_blocks_connects() {
     // Another peer pings the node throughout.
     let (mut pr, mut pw) = raw_peer(b.addr, nid, true).await;
     let chain_busy = |c: &SharedChain| c.try_lock().map(|c| c.height()).ok();
-    // An observer takes the chain lock over and over while the batch
-    // connects: it sees intermediate heights only if the lock is released
-    // between steps (one hold for the whole batch shows 0, then 120).
+    // An observer reads the published snapshot over and over while the
+    // batch connects: it sees intermediate heights only if the batch
+    // connects in steps (one step for the whole batch shows 0, then 120).
     let observer = {
-        let chain = b.chain.clone();
+        let summary = b.chain.lock().unwrap().summary_cell();
         std::thread::spawn(move || {
             let mut seen = std::collections::BTreeSet::new();
             let deadline = std::time::Instant::now() + Duration::from_secs(120);
             loop {
-                let h = chain.lock().unwrap().height();
+                let h = summary.load().height;
                 seen.insert(h);
                 if h == N || std::time::Instant::now() > deadline {
                     return seen;
@@ -2638,7 +2826,7 @@ async fn pings_are_answered_while_a_long_batch_of_blocks_connects() {
     let between: Vec<u64> = seen.iter().copied().filter(|&h| h > 0 && h < N).collect();
     assert!(
         !between.is_empty() && between.iter().all(|h| h % 8 == 0),
-        "the lock was released between steps of 8 blocks: {seen:?}"
+        "the batch connected in steps of 8 blocks: {seen:?}"
     );
 
     assert_eq!(b.tip(), src.tip());

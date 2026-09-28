@@ -74,7 +74,7 @@ pub(super) async fn run_connection<S>(
         st.local_nonces.insert(n);
         n
     };
-    // From the published summary, never the chain lock: a long hold must not
+    // From the published snapshot, never a chain command: a long one must not
     // make every new connection miss the remote's handshake timeout (F34-3).
     let (height, tip) = {
         let s = inner.summary.load();
@@ -240,7 +240,7 @@ pub(super) async fn run_connection<S>(
         inner.request_headers(id).await;
     }
 
-    // Read loop. Messages whose handling takes the chain lock go to the
+    // Read loop. Messages whose handling needs a chain command go to the
     // peer's slow lane; the loop itself never waits for the chain (F34-1).
     let lane = SlowLane::start(&inner, id);
     loop {
@@ -314,6 +314,11 @@ pub(super) async fn run_connection<S>(
                 }
                 if !is_slow(&msg) {
                     handle(&inner, id, msg).await;
+                    continue;
+                }
+                // The PX share is charged here, not on the lane: a busy lane
+                // must not let a flood of PX stems through unscored.
+                if !super::admission::charge_px_share(&inner, id, &msg) {
                     continue;
                 }
                 let kind = msg.kind();

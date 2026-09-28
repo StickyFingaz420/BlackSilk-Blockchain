@@ -25,6 +25,16 @@ impl ChainManager {
         self.state.fail_next_apply_for_tests();
     }
 
+    /// Tests only: every bounded validation call with blocks to connect (a
+    /// drain step: `submit_block_bounded`, `sync_step`) first sleeps
+    /// `delay`, holding the manager: a heavy step on demand, for the
+    /// liveness tests and benchmarks of the chain actor.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn set_step_delay_for_tests(&mut self, delay: Option<std::time::Duration>) {
+        self.step_delay = delay;
+    }
+
     pub(super) fn work(&self, id: &Hash) -> u128 {
         self.headers.work(id).expect("known header")
     }

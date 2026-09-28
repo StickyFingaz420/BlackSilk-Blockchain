@@ -8,14 +8,18 @@
 //! would hold it. [`StallControl`] arms, observes and ends the stall, and
 //! records every append (the store bytes, for equivalence checks).
 //!
-//! [`Holder`] submits one block through `submit_block_in_steps` (the path of
-//! the P2P block worker and RPC `/block`) on its own thread with the store
-//! armed, and returns once the append has started, so the chain lock is held.
+//! [`Holder`] submits one block with the store armed, on its own thread, and
+//! returns once the append has started: [`Holder::start_actor`] through the
+//! chain actor's Blocks lane (the Stage 2 path of the P2P block worker and
+//! RPC `/block`: the actor is busy with the stalled command), and
+//! [`Holder::start`] through `submit_block_in_steps` under the mutex (the
+//! pre-Stage 2 path, kept as the baseline), so the chain lock is held.
 //!
 //! Shared by `chain`, `p2p` and `node` tests through `#[path]`; each test
 //! crate uses a different subset of it.
 #![allow(dead_code)]
 
+use blacksilk_chain::actor::{ChainHandle, Lane};
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{submit_block_in_steps, ChainManager, SYNC_STEP_BLOCKS};
 use blacksilk_chain::store::{BlockStore, Marker, MemoryStore, Record, StoreIdentity, StoredBlock};
@@ -212,6 +216,32 @@ impl Holder {
         let started = Instant::now();
         let thread = std::thread::spawn(move || {
             submit_block_in_steps(|| chain.lock().unwrap(), block, now, SYNC_STEP_BLOCKS).is_ok()
+        });
+        assert!(
+            ctl.wait_stalling(Duration::from_secs(30)),
+            "the block append never started"
+        );
+        Self {
+            thread,
+            ctl,
+            height,
+            started,
+        }
+    }
+
+    /// [`Self::start`] through the chain actor: the block is submitted on the
+    /// Blocks lane, so the actor itself stalls in the append (it also holds
+    /// the manager's lock, if a caller keeps one).
+    pub fn start_actor(chain: ChainHandle, ctl: Arc<StallControl>, max: Duration) -> Self {
+        let block = chain
+            .call_blocking(Lane::Query, |m| next_block(m, 0x5107, 0))
+            .unwrap();
+        let height = block.header.height;
+        let now = block.header.timestamp;
+        ctl.stall_next_append(max);
+        let started = Instant::now();
+        let thread = std::thread::spawn(move || {
+            matches!(chain.submit_block_blocking(block, now), Ok(Ok(_)))
         });
         assert!(
             ctl.wait_stalling(Duration::from_secs(30)),
