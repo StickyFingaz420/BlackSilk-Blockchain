@@ -29,4 +29,6 @@ sha3 = { version = "=0.11.0", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
+# The chain actor's test-only step delay (liveness test L7).
+blacksilk-chain = { path = "../chain", features = ["test-hooks"] }
 blacksilk-px = { path = "../px" }

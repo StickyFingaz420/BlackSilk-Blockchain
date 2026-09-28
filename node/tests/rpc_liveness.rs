@@ -1,8 +1,9 @@
 //! RPC liveness while the chain lock is held for a long time (research
 //! dossier 34, Stage 0; findings F34-4, F34-6), over the real router.
 //!
-//! The hold is a stalled block append on the block-submission path
-//! (`chain/tests/support/stall.rs`); nothing in the node is instrumented.
+//! The hold is a stalled block append in a block submitted to the chain
+//! actor (`chain/tests/support/stall.rs`, `Holder::start_actor`): the actor
+//! is busy with it for the whole hold; nothing in the node is instrumented.
 //! Numbering follows the Stage 0 assignment: L4 here is the dossier's L5, L5
 //! the dossier's L6 (see `p2p/tests/liveness.rs`). L4 failed before Stage 1
 //! (`/info` from the published chain summary) and runs by default since. L5
@@ -11,9 +12,10 @@
 #[path = "../../chain/tests/support/stall.rs"]
 mod stall;
 
+use blacksilk_chain::actor::ChainHandle;
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_consensus::{ChainParams, Hash, PowFunction};
-use blacksilk_node::{router, Shared};
+use blacksilk_node::{router_with, App, Shared};
 use blacksilk_tx::params::TxRules;
 use stall::{Holder, SlowStore, StallControl};
 use std::io::{Read, Write};
@@ -43,7 +45,7 @@ struct ThreadCount {
 struct Server {
     rt: tokio::runtime::Runtime,
     addr: SocketAddr,
-    shared: Shared,
+    chain: ChainHandle,
     ctl: Arc<StallControl>,
     threads: Arc<ThreadCount>,
 }
@@ -76,12 +78,14 @@ fn serve() -> Server {
         .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
         .unwrap();
     let addr = listener.local_addr().unwrap();
-    let app = router(shared.clone());
+    let app = App::shared(shared, None);
+    let chain = app.chain.clone();
+    let app = router_with(app);
     rt.spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         rt,
         addr,
-        shared,
+        chain,
         ctl,
         threads,
     }
@@ -109,7 +113,7 @@ fn get(addr: SocketAddr, path: &str, timeout: Duration) -> Option<u16> {
 fn l4_info_answers_promptly_during_a_hold() {
     let s = serve();
     assert_eq!(get(s.addr, "/info", Duration::from_secs(5)), Some(200));
-    let holder = Holder::start(s.shared.clone(), s.ctl.clone(), Duration::from_secs(40));
+    let holder = Holder::start_actor(s.chain.clone(), s.ctl.clone(), Duration::from_secs(40));
     let mut worst = Duration::ZERO;
     for i in 0..5 {
         let start = Instant::now();
@@ -165,7 +169,7 @@ const CHAIN_READ: &str = "/distribution?to=1";
 fn l5_an_rpc_burst_during_a_hold_stays_within_the_blocking_thread_cap() {
     let s = serve();
     assert_eq!(get(s.addr, "/info", Duration::from_secs(5)), Some(200));
-    let holder = Holder::start(s.shared.clone(), s.ctl.clone(), Duration::from_secs(60));
+    let holder = Holder::start_actor(s.chain.clone(), s.ctl.clone(), Duration::from_secs(60));
     let before = s.threads.alive.load(Ordering::SeqCst);
     s.threads.peak.store(before, Ordering::SeqCst);
 

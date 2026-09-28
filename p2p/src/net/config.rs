@@ -98,4 +98,8 @@ pub struct NetStats {
     /// PX transactions dropped because the node-wide PX relay limit was
     /// exhausted (docs/p2p.md §10).
     pub px_global_drops: u64,
+    /// Relayed transactions dropped unverified because the chain actor's
+    /// transaction lane was full (best effort; the senders are not
+    /// penalized; docs/p2p.md §10).
+    pub tx_lane_drops: u64,
 }

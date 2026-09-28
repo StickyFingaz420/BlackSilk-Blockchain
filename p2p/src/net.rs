@@ -1,25 +1,33 @@
 //! The network manager (docs/p2p.md): connections, handshake, message handling,
 //! header-first sync, block and transaction relay, Dandelion++, peer management.
 //!
-//! Concurrency rules:
-//! - the chain lock (`ChainManager`) and the network state lock are never held
-//!   at the same time, and neither is held across an `.await`;
-//! - the chain lock is never taken on an async worker thread: every access goes
-//!   through a blocking thread (`Inner::with_chain`, `spawn_blocking`), so a
-//!   long lock hold elsewhere never stalls pings, reads or accepts (R8-1);
-//! - block bodies are connected by the block worker in bounded steps
-//!   (`submit_block_in_steps`), releasing the chain lock in between;
+//! Concurrency rules (docs/p2p.md §10):
+//! - the chain is reached only through the chain actor
+//!   (`blacksilk_chain::actor`, `chain_access`): each access is one command
+//!   on a priority lane (Headers, Blocks, Query, Tx), answered through a
+//!   oneshot channel, so no async worker and no blocking thread waits for
+//!   chain work (R8-1); the actor never takes the network state lock, and no
+//!   command is sent with the state lock held (it is never held across an
+//!   `.await`);
+//! - block bodies are connected by the actor in bounded steps
+//!   (`ChainManager::sync_step`), serving one waiting command between two
+//!   steps: a header batch or a query waits for at most one step (F34-7);
 //! - no connection's read loop and no maintenance tick waits for the chain
-//!   lock (F34-1 to F34-3): messages whose handling takes it run on the
-//!   peer's slow lane (`dispatch::SlowLane`); the handshake, header requests
-//!   and tip announcements read the published chain summary
-//!   (`ChainManager::summary_cell`); chain-side maintenance (embargo fluff,
-//!   pool re-announcement, download scheduling) runs on its own task;
-//! - a poisoned chain or state lock stops the node (`lock_or_exit`).
+//!   (F34-1 to F34-3): messages whose handling needs a command run on the
+//!   peer's slow lane (`dispatch::SlowLane`); the handshake, header requests,
+//!   tip announcements and download scheduling read the published chain
+//!   snapshot (`ChainHandle::summary_cell`); chain-side maintenance (embargo
+//!   fluff, pool re-announcement, download scheduling) runs on its own task;
+//! - relayed transactions are verified on the actor's Tx lane, below blocks
+//!   and headers; when that lane is full they are dropped, never penalized
+//!   (F34-5);
+//! - a panic in the chain actor, or a poisoned state lock, stops the node
+//!   (`POISONED_EXIT_CODE`).
 
 mod addr_relay;
 mod admission;
 mod blocks;
+pub mod chain_access;
 mod config;
 mod conn;
 mod dispatch;
@@ -34,6 +42,7 @@ use crate::addr::NetAddr;
 use crate::addrman::{AddrMan, BanList};
 use crate::dandelion::Dandelion;
 use crate::originated::Originated;
+use blacksilk_chain::actor::{self, ActorConfig, ChainHandle};
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_consensus::Hash;
 use blacksilk_tx::types::Transaction;
@@ -54,15 +63,22 @@ use stem::{submit_local, ORIGINATED_FILE};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
+/// A manager behind a lock the caller keeps: the input of [`Network::start`]
+/// (tests and embedders), which runs a chain actor over it
+/// (`blacksilk_chain::actor::spawn_shared`). The node shares one actor
+/// between P2P and RPC instead ([`Network::start_with`]).
 pub type SharedChain = Arc<Mutex<ChainManager>>;
 
-/// Exit status of a node whose chain or network-state lock was poisoned by a
-/// panic (the same as `blacksilk_node::POISONED_EXIT_CODE`).
+/// Exit status of a node whose chain actor panicked or whose network-state
+/// lock was poisoned by a panic (the same as
+/// `blacksilk_node::POISONED_EXIT_CODE`).
 pub const POISONED_EXIT_CODE: i32 = 70;
+const _: () = assert!(POISONED_EXIT_CODE == actor::POISONED_EXIT_CODE);
 
 /// Locks `m`, or stops the process if a panic poisoned it (R10-2). A panic
-/// while holding the chain lock can leave the manager half-updated (a block
-/// applied to the state without being connected, for example); continuing
+/// while holding a lock (the network state, or a manager lock kept by a
+/// test or embedder) can leave its data half-updated (a block applied to the
+/// state without being connected, for example); continuing
 /// would relay and build on that state. The block store is append-only and a
 /// restart replays it deterministically, so the node exits instead, with
 /// [`POISONED_EXIT_CODE`], for the supervisor to restart it.
@@ -88,8 +104,17 @@ pub struct Network {
 }
 
 impl Network {
-    /// Binds the listener (if configured) and starts the network tasks.
+    /// [`Self::start_with`] over a chain actor started on `chain` (tests and
+    /// embedders that keep the manager's lock to read it directly). The
+    /// actor runs until the network's tasks end.
     pub async fn start(cfg: NetConfig, chain: SharedChain) -> std::io::Result<Network> {
+        let (handle, _thread) = actor::spawn_shared(chain, ActorConfig::default());
+        Self::start_with(cfg, handle).await
+    }
+
+    /// Binds the listener (if configured) and starts the network tasks, with
+    /// every chain access going to the chain actor behind `chain`.
+    pub async fn start_with(cfg: NetConfig, chain: ChainHandle) -> std::io::Result<Network> {
         if cfg.proxy_only && cfg.proxy.is_none() {
             return Err(std::io::Error::other("proxy_only requires a proxy"));
         }
@@ -127,14 +152,10 @@ impl Network {
             None => None,
         };
         let local_addr = listener.as_ref().and_then(|l| l.local_addr().ok());
-        let (tip, genesis_id, summary) = {
-            let chain = chain.clone();
-            tokio::task::spawn_blocking(move || {
-                let c = lock_or_exit(&chain, "chain");
-                (c.tip_id(), c.params().genesis_id(), c.summary_cell())
-            })
-            .await
-            .map_err(std::io::Error::other)?
+        let summary = chain.summary_cell();
+        let (tip, genesis_id) = {
+            let s = summary.load();
+            (s.tip_id, s.genesis_id)
         };
         let state = State {
             peers: HashMap::new(),
@@ -166,6 +187,7 @@ impl Network {
             ctx_rejects_tip: [0; 32],
             tx_verifications: 0,
             px_global_drops: 0,
+            tx_lane_drops: 0,
             unrequested_queued: 0,
             blocks_queued: HashSet::new(),
             upgrades: Default::default(),
@@ -248,6 +270,7 @@ impl Network {
             slow_disconnects: st.slow_disconnects,
             tx_verifications: st.tx_verifications,
             px_global_drops: st.px_global_drops,
+            tx_lane_drops: st.tx_lane_drops,
         }
     }
 

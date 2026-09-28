@@ -7,6 +7,7 @@ use super::state::{short, Inner, State, StemEntry};
 use crate::dandelion::{PeerId, Route, Source};
 use crate::message::Message;
 use crate::originated::{write_atomic, Verdict};
+use blacksilk_chain::actor::Lane;
 use blacksilk_chain::mempool::MempoolError;
 use blacksilk_consensus::Hash;
 use blacksilk_tx::types::Transaction;
@@ -119,7 +120,11 @@ pub(super) async fn fluff(inner: &Arc<Inner>, id: Hash, except: Option<PeerId>) 
         e
     };
     let Some(entry) = entry else { return };
-    let result = inner.with_chain(move |c| c.submit_tx(entry.tx)).await;
+    // The Tx lane, waiting for room: a fluff is this node's own decision,
+    // not relay volume, and the transaction left the stempool already.
+    let result = inner
+        .chain_on(Lane::Tx, move |c| c.submit_tx(entry.tx))
+        .await;
     match result {
         Ok(_) | Err(MempoolError::AlreadyKnown) => {
             log::debug!("fluff tx {}", short(&id));
@@ -170,11 +175,16 @@ impl Inner {
 /// and the originated set. A peer's transactions are relayed regardless
 /// (RTW1B-1).
 pub(super) async fn submit_local(inner: &Arc<Inner>, tx: Transaction) -> Result<Hash, String> {
-    // Hashing a PX transaction reads megabytes: off the async workers.
+    // Hashing a PX transaction reads megabytes: off the async workers (and
+    // off the chain actor, which it does not need). The next height is the
+    // published snapshot's, as a command run just after its publication
+    // would read it.
     let tx2 = tx.clone();
-    let (id, next) = inner
-        .with_chain(move |c| (tx2.hash(), c.height() + 1))
-        .await;
+    let id = match tokio::task::spawn_blocking(move || tx2.hash()).await {
+        Ok(id) => id,
+        Err(e) => return Err(format!("hashing the transaction: {e}")),
+    };
+    let next = inner.summary.load().height + 1;
     let verdict = {
         let st = inner.state();
         if st.stempool.contains_key(&id) {
@@ -189,7 +199,9 @@ pub(super) async fn submit_local(inner: &Arc<Inner>, tx: Transaction) -> Result<
             // Other nodes most likely still pool it: pooled here, never
             // stemmed or announced. The pool answers as for any submission
             // (`AlreadyKnown` if pooled here too).
-            let r = inner.with_chain(move |c| c.submit_local_tx(tx)).await;
+            let r = inner
+                .chain_on(Lane::Tx, move |c| c.submit_local_tx(tx))
+                .await;
             if r.is_ok() {
                 log::debug!(
                     "local tx {} was originated here before: pooled, not originated again",
@@ -209,7 +221,9 @@ pub(super) async fn submit_local(inner: &Arc<Inner>, tx: Transaction) -> Result<
     }
     let tx2 = tx.clone();
     let next = inner
-        .with_chain(move |c| c.check_local_tx(&tx2).map(|_| c.height() + 1))
+        .chain_on(Lane::Tx, move |c| {
+            c.check_local_tx(&tx2).map(|_| c.height() + 1)
+        })
         .await
         .map_err(|e| format!("{e:?}"))?;
     // Recorded, and written, before the transaction leaves the node: a crash

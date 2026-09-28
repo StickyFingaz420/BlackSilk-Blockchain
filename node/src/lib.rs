@@ -1,10 +1,13 @@
 //! BlackSilk node library: the RPC server over a [`ChainManager`]
 //! (docs/blocks.md §9).
 //!
-//! The binary (`main.rs`) opens the block store, replays it, and serves this
-//! router on a loopback address. Everything consensus-relevant happens in
-//! `blacksilk-chain` and below; this layer only decodes requests and bounds their
-//! size and cost.
+//! The binary (`main.rs`) opens the block store, replays it, starts the chain
+//! actor (`blacksilk_chain::actor`) and serves this router on a loopback
+//! address. Every chain access of a handler is one command on the actor's
+//! lanes (`/block` on the Blocks lane, local `/tx` on the Tx lane, the other
+//! reads on the Query lane); `/info` and the halt watcher read the published
+//! snapshot. Everything consensus-relevant happens in `blacksilk-chain` and
+//! below; this layer only decodes requests and bounds their size and cost.
 
 #![forbid(unsafe_code)]
 
@@ -18,28 +21,40 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use blacksilk_chain::actor::{self, ActorConfig, ChainHandle, Lane};
 use blacksilk_chain::block::Block;
-use blacksilk_chain::manager::{
-    submit_block_in_steps, ChainManager, ChainSummary, SubmitError, SummaryCell, SYNC_STEP_BLOCKS,
-};
+use blacksilk_chain::manager::{ChainManager, ChainSummary, SubmitError, SummaryCell};
 use blacksilk_chain::sync_policy::worth_verifying;
 use blacksilk_consensus::{BlockHeader, Hash, Network};
-use blacksilk_p2p::Network as P2p;
+use blacksilk_p2p::{chain_access, Network as P2p};
 use blacksilk_rpc as rpc;
 use blacksilk_tx::state::MemoryChain;
 use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::ChainView;
 use serde::Deserialize;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// A manager behind a lock the caller keeps (tests and embedders): the input
+/// of [`router`], which starts a chain actor over it
+/// (`blacksilk_chain::actor::spawn_shared`). The node binary shares one
+/// actor between RPC and P2P instead ([`App`]).
 pub type Shared = Arc<Mutex<ChainManager>>;
 
-/// RPC state: the chain, and the P2P network when it runs.
+/// RPC state: the chain actor, and the P2P network when it runs.
 #[derive(Clone)]
 pub struct App {
-    pub chain: Shared,
+    pub chain: ChainHandle,
     pub net: Option<P2p>,
+}
+
+impl App {
+    /// An `App` over a chain actor started on `shared` (tests and
+    /// embedders; see [`Shared`]).
+    pub fn shared(shared: Shared, net: Option<P2p>) -> Self {
+        let (chain, _thread) = actor::spawn_shared(shared, ActorConfig::default());
+        Self { chain, net }
+    }
 }
 
 pub fn network_name(n: Network) -> &'static str {
@@ -59,24 +74,14 @@ pub fn default_rpc_port(n: Network) -> u16 {
     }
 }
 
-/// Exit status of a node whose chain lock was poisoned.
+/// Exit status of a node whose chain actor panicked (a panic while running
+/// a chain operation can leave the manager half-updated; the node stops and
+/// a restart replays the append-only store deterministically).
 pub const POISONED_EXIT_CODE: i32 = 70;
-// The P2P layer stops the node the same way (it cannot depend on this crate).
+// The chain actor and the P2P layer stop the node the same way (they cannot
+// depend on this crate).
 const _: () = assert!(POISONED_EXIT_CODE == blacksilk_p2p::POISONED_EXIT_CODE);
-
-fn lock(shared: &Shared) -> MutexGuard<'_, ChainManager> {
-    // A panic while holding the lock can leave the manager half-updated (a block
-    // applied to the state but not to the tip, for example). Continuing would
-    // serve and build on that state, so the node stops instead: the block store
-    // is append-only and a restart replays it deterministically.
-    match shared.lock() {
-        Ok(guard) => guard,
-        Err(_) => {
-            log::error!("chain state lock poisoned by a panic; stopping (restart to recover)");
-            std::process::exit(POISONED_EXIT_CODE)
-        }
-    }
-}
+const _: () = assert!(POISONED_EXIT_CODE == actor::POISONED_EXIT_CODE);
 
 /// The message the node exits with when its block store failed.
 pub const STORE_FAILED_EXIT: &str = "block store write failed: free disk space / check the disk, \
@@ -94,9 +99,11 @@ const _: () = assert!(HALT_EXIT_CODE != POISONED_EXIT_CODE && HALT_EXIT_CODE > 2
 
 /// The exit status of a node stopped by [`watch_store`]:
 /// [`HALT_EXIT_CODE`] for an apply failure, 1 for a failed block store
-/// (which a restart may recover from once the disk is fixed).
-pub fn halt_exit_code(shared: &Shared) -> i32 {
-    if lock(shared).apply_halted() {
+/// (which a restart may recover from once the disk is fixed). Read from the
+/// published snapshot (the actor publishes the halt with the command that
+/// caused it).
+pub fn halt_exit_code(chain: &ChainHandle) -> i32 {
+    if chain.summary().apply_halted {
         HALT_EXIT_CODE
     } else {
         1
@@ -117,24 +124,27 @@ pub fn open_exit_code(e: &std::io::Error) -> i32 {
 /// Resolves once the chain manager has halted ([`ChainManager::halted`]):
 /// its block store failed persistently, or a block that passed validation
 /// failed to apply. Checked every `period` on a plain thread, on the
-/// published chain summary (the manager publishes the halt before releasing
-/// the chain lock), so the check never queues behind a long hold. A halted
-/// node accepts no block but would keep downloading bodies; the caller shuts
-/// it down so that a restart recovers deterministically (the load truncates
-/// a torn tail and replays the store).
-pub fn watch_store(shared: Shared, period: Duration) -> tokio::sync::oneshot::Receiver<()> {
-    let summary = lock(&shared).summary_cell();
+/// published chain snapshot (the actor publishes the halt with the command
+/// that caused it), so the check never queues behind a long command. A
+/// halted node accepts no block but would keep downloading bodies; the
+/// caller shuts it down so that a restart recovers deterministically (the
+/// load truncates a torn tail and replays the store).
+pub fn watch_store(chain: &ChainHandle, period: Duration) -> tokio::sync::oneshot::Receiver<()> {
+    let summary = chain.summary_cell();
     poll_until(period, move || summary.load().halted())
 }
 
 /// Why the node stopped, once [`watch_store`] resolved: the manager's
-/// reason, with the operator instructions for a failed store.
-pub fn halt_message(shared: &Shared) -> String {
-    let c = lock(shared);
-    if c.store_failed() {
+/// reason, with the operator instructions for a failed store (from the
+/// published snapshot).
+pub fn halt_message(chain: &ChainHandle) -> String {
+    let s = chain.summary();
+    if s.store_failed {
         STORE_FAILED_EXIT.to_string()
     } else {
-        c.halted().unwrap_or_else(|| STORE_FAILED_EXIT.to_string())
+        s.halt_reason
+            .clone()
+            .unwrap_or_else(|| STORE_FAILED_EXIT.to_string())
     }
 }
 
@@ -181,30 +191,40 @@ fn internal(e: tokio::task::JoinError) -> ApiError {
     ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
 }
 
-/// Runs `f` under the chain lock on a blocking thread: an RPC handler never
-/// waits for the lock on an async worker, which the P2P tasks share (R10-5).
-/// The chain summary is republished before the lock is released.
-async fn with_chain<T: Send + 'static>(
-    s: Shared,
-    f: impl FnOnce(&ChainManager) -> T + Send + 'static,
-) -> Result<T, ApiError> {
-    tokio::task::spawn_blocking(move || {
-        let m = lock(&s);
-        let t = f(&m);
-        m.publish_summary();
-        t
-    })
-    .await
-    .map_err(internal)
+/// The answer when the chain actor stopped (the node is shutting down).
+fn stopping() -> ApiError {
+    ApiError(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the node is shutting down".into(),
+    )
 }
 
-/// RPC without networking (tests, isolated nodes). Guarded, without a
-/// credential: see [`router_with`].
+/// Runs `f` as one command on the chain actor's Query lane: an RPC handler
+/// never waits on an async worker or a blocking thread, which the P2P tasks
+/// share (R10-5), and its answer reflects the chain state at one point of
+/// the actor's command order (docs/blocks.md §9).
+async fn with_chain<T: Send + 'static>(
+    chain: &ChainHandle,
+    f: impl FnOnce(&ChainManager) -> T + Send + 'static,
+) -> Result<T, ApiError> {
+    on_lane(chain, Lane::Query, move |m| f(m)).await
+}
+
+/// [`with_chain`] on `lane`, with the manager mutable.
+async fn on_lane<T: Send + 'static>(
+    chain: &ChainHandle,
+    lane: Lane,
+    f: impl FnOnce(&mut ChainManager) -> T + Send + 'static,
+) -> Result<T, ApiError> {
+    chain_access::call(chain, lane, f)
+        .await
+        .ok_or_else(stopping)
+}
+
+/// RPC without networking (tests, isolated nodes) over a chain actor started
+/// on `shared`. Guarded, without a credential: see [`router_with`].
 pub fn router(shared: Shared) -> Router {
-    router_with(App {
-        chain: shared,
-        net: None,
-    })
+    router_with(App::shared(shared, None))
 }
 
 // The RPC body limit covers the largest block, hex-encoded.
@@ -235,13 +255,11 @@ pub fn router_with(app: App) -> Router {
 
 /// The router behind the guard with `policy` (docs/blocks.md §9.1). The guard
 /// is the outermost layer, so it covers every route and unknown paths.
-///
-/// Building the router takes the chain lock once, briefly, for the chain's
-/// summary cell (`ChainManager::summary_cell`), which `/info` reads without
-/// the lock from then on.
+/// `/info` reads the chain actor's published snapshot
+/// (`ChainHandle::summary_cell`), never a command.
 pub fn router_secured(app: App, policy: guard::Policy) -> Router {
     let guard = Arc::new(guard::Guard::new(policy));
-    let summary = lock(&app.chain).summary_cell();
+    let summary = app.chain.summary_cell();
     Router::new()
         .route("/info", get(info))
         .route("/template", get(template))
@@ -261,9 +279,10 @@ pub fn router_secured(app: App, policy: guard::Policy) -> Router {
         .layer(axum::middleware::from_fn_with_state(guard, guard::guard))
 }
 
-/// `/info` answers from the published chain summary, never the chain lock:
-/// it stays prompt during any hold (F34-4), and its chain fields are those of
-/// the last publication (at most one lock hold old, mutually consistent).
+/// `/info` answers from the published chain snapshot, never a command: it
+/// stays prompt during any long command (F34-4), and its chain fields are
+/// those of the last publication (at most one command or drain step old,
+/// mutually consistent).
 async fn info(
     State(App { net, .. }): State<App>,
     Extension(summary): Extension<Arc<SummaryCell>>,
@@ -299,8 +318,8 @@ fn info_of(s: &ChainSummary, stats: Option<blacksilk_p2p::NetStats>) -> rpc::Inf
 async fn template(
     State(App { chain: s, .. }): State<App>,
 ) -> Result<Json<rpc::Template>, ApiError> {
-    // Only the template is built under the lock; hex encoding follows.
-    let t = with_chain(s, |m| m.template()).await?;
+    // Only the template is built by the command; hex encoding follows.
+    let t = with_chain(&s, |m| m.template()).await?;
     Ok(Json(rpc::Template {
         height: t.height,
         prev_id: hex::encode(t.prev_id),
@@ -338,7 +357,7 @@ pub const RPC_BLOCK_MAX_DEPTH: u64 = 8;
 const _: () = assert!(RPC_BLOCK_MAX_DEPTH < 64 && RPC_BLOCK_MAX_DEPTH < 144);
 
 /// The RPC admission rule for `/block` (docs/blocks.md §9.2; F07-3, F36-8),
-/// checked under the chain lock before any proof of work or storage:
+/// checked by one chain command before any proof of work or storage:
 /// - the parent is the connected tip or one of its last
 ///   [`RPC_BLOCK_MAX_DEPTH`] ancestors, and the height follows it;
 /// - the block's RandomX seed is the tip's or the next block's, so an RPC
@@ -397,37 +416,44 @@ async fn submit_block(
     State(App { chain: s, .. }): State<App>,
     Json(p): Json<rpc::HexPayload>,
 ) -> Result<Json<rpc::SubmitResult>, ApiError> {
-    // Decoding, the admission rule, RandomX, CLSAG and BP+ are CPU-bound:
-    // all of it runs on a blocking thread, never on an async worker.
-    let result = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
+    // Decoding and RandomX are CPU-bound: on a blocking thread, never on an
+    // async worker. Block validation (CLSAG, BP+) runs in the chain actor.
+    let block = tokio::task::spawn_blocking(move || {
         let bytes = hex::decode(&p.hex).map_err(|_| bad_request("hex"))?;
-        let block = Block::decode(&bytes).map_err(|e| bad_request(format!("block: {e:?}")))?;
-        // Under a brief lock: the admission rule, then the PoW job.
-        let jobs = {
-            let m = lock(&s);
-            if let Err(e) = rpc_block_admissible(&m, &block.header) {
-                return Ok(Err(e));
-            }
-            m.pow_jobs(std::slice::from_ref(&block.header))
-        };
-        // RandomX outside the lock (the submission below hits the cache).
-        if let Some((pow, jobs)) = jobs {
-            pow.compute_parallel(&jobs, 1);
-        }
-        // Connect in bounded steps: a block that releases many waiting
-        // descendants does not hold the chain lock for all of them.
-        let r = submit_block_in_steps(|| lock(&s), block, now(), SYNC_STEP_BLOCKS);
-        Ok(Ok((r, lock(&s).height())))
+        Block::decode(&bytes).map_err(|e| bad_request(format!("block: {e:?}")))
     })
     .await
     .map_err(internal)??;
-    let result = match result {
-        Ok(r) => r,
+    // One Blocks-lane command: the admission rule, then the PoW job (one
+    // former lock hold). Local mining submissions are served above queries
+    // and transactions.
+    let header = block.header;
+    let admitted = on_lane(&s, Lane::Blocks, move |m| {
+        rpc_block_admissible(m, &header).map(|()| m.pow_jobs(std::slice::from_ref(&header)))
+    })
+    .await?;
+    let jobs = match admitted {
+        Ok(jobs) => jobs,
         Err(gate) => {
             log::info!("block refused at the RPC: {gate}");
             return Ok(Json(rejected(gate)));
         }
     };
+    // RandomX outside the actor (the submission below hits the cache).
+    if let Some((pow, jobs)) = jobs {
+        tokio::task::spawn_blocking(move || pow.compute_parallel(&jobs, 1))
+            .await
+            .map_err(internal)?;
+    }
+    // The actor connects in bounded steps (a block that releases many
+    // waiting descendants does not stop other commands for all of them)
+    // and answers with the final verdict.
+    let r = match chain_access::submit_block(&s, block, now(), false).await {
+        Some(Some(r)) => r,
+        Some(None) => unreachable!("only_if_header_known is false"),
+        None => return Err(stopping()),
+    };
+    let result = (r, s.summary().height);
     Ok(Json(match result {
         (Ok(sub), height) => {
             log::info!(
@@ -469,15 +495,9 @@ async fn submit_tx(
     let result = match net {
         Some(n) => n.submit_tx(tx).await,
         // Local origination: the recently-expired guard applies (RTW1B-1).
-        None => tokio::task::spawn_blocking(move || {
-            let mut m = lock(&s);
-            let r = m.submit_local_tx(tx);
-            m.publish_summary();
-            r
-        })
-        .await
-        .map_err(internal)?
-        .map_err(|e| format!("{e:?}")),
+        None => on_lane(&s, Lane::Tx, move |m| m.submit_local_tx(tx))
+            .await?
+            .map_err(|e| format!("{e:?}")),
     };
     Ok(Json(match result {
         Ok(id) => rpc::SubmitResult {
@@ -506,7 +526,7 @@ async fn blocks(
             rpc::MAX_BLOCKS_PER_REQUEST
         )));
     }
-    let out = with_chain(s, move |m| {
+    let out = with_chain(&s, move |m| {
         let end = q.from.saturating_add(q.count - 1).min(m.height());
         let mut out = Vec::new();
         let mut bytes = 0usize;
@@ -559,7 +579,7 @@ struct PxPage {
 
 impl PxPage {
     /// Validates the query and copies the page. Cost is proportional to the
-    /// page, so the caller may hold the chain lock around it.
+    /// page, so the caller may run it as one chain command.
     fn take(
         state: &MemoryChain,
         height: u64,
@@ -621,9 +641,9 @@ async fn px_commitments(
     State(App { chain: s, .. }): State<App>,
     Query(q): Query<PxCommitmentsQuery>,
 ) -> Result<Json<rpc::PxCommitments>, ApiError> {
-    // The lock is held only to copy the requested page; hex encoding and
-    // serialization happen after it is released.
-    let page = with_chain(s, move |m| {
+    // The command only copies the requested page; hex encoding and
+    // serialization happen after it.
+    let page = with_chain(&s, move |m| {
         PxPage::take(m.state(), m.height(), q.from, q.limit)
     })
     .await?;
@@ -634,7 +654,7 @@ async fn px_contracts(
     State(App { chain: s, .. }): State<App>,
     Query(q): Query<FromQuery>,
 ) -> Result<Json<rpc::PxContracts>, ApiError> {
-    with_chain(s, move |m| px_contracts_page(m, q.from))
+    with_chain(&s, move |m| px_contracts_page(m, q.from))
         .await
         .map(Json)
 }
@@ -689,8 +709,8 @@ struct TxStatusQuery {
 /// it would let anyone who can query the node learn what it originated or
 /// stems.
 ///
-/// Cost: a scan of the connected blocks' transaction ids, newest first,
-/// under the chain lock; `unknown` scans the whole chain (there is no
+/// Cost: a scan of the connected blocks' transaction ids, newest first, in
+/// one chain command; `unknown` scans the whole chain (there is no
 /// transaction index, docs/blocks.md §8).
 pub fn tx_status(m: &ChainManager, id: &Hash) -> rpc::TxStatus {
     if m.mempool().contains(id) {
@@ -710,7 +730,7 @@ async fn tx_status_route(
     Query(q): Query<TxStatusQuery>,
 ) -> Result<Json<rpc::TxStatus>, ApiError> {
     let id = rpc::parse_hash(&q.id).ok_or_else(|| bad_request("id: 32 bytes of hex"))?;
-    with_chain(s, move |m| tx_status(m, &id)).await.map(Json)
+    with_chain(&s, move |m| tx_status(m, &id)).await.map(Json)
 }
 
 #[derive(Deserialize)]
@@ -722,7 +742,7 @@ async fn distribution(
     State(App { chain: s, .. }): State<App>,
     Query(q): Query<DistributionQuery>,
 ) -> Result<Json<rpc::Distribution>, ApiError> {
-    let cumulative = with_chain(s, move |m| {
+    let cumulative = with_chain(&s, move |m| {
         let mut cumulative = m.state().cumulative_outputs();
         cumulative.truncate(q.to.saturating_add(1) as usize);
         cumulative
@@ -741,7 +761,7 @@ async fn outputs(
             rpc::MAX_OUTPUTS_PER_REQUEST
         )));
     }
-    let out = with_chain(s, move |m| {
+    let out = with_chain(&s, move |m| {
         let mut out = Vec::with_capacity(req.indices.len());
         for &i in &req.indices {
             let rec = m

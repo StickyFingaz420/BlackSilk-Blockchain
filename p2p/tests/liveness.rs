@@ -16,15 +16,27 @@
 //! | L3 | L4 | a new connection's handshake |
 //! | L4, L5 | L5, L6 | RPC (`node/tests/rpc_liveness.rs`) |
 //! | L6 | L2 | a peer's own pongs while its `InvTx` waits; per-peer order kept |
+//! | L7 | L7 | a header announcement is accepted during a body drain (Stage 2) |
 //!
 //! L1, L2, L3 and L6 failed before Stage 1 (the per-peer slow lane, the
 //! published chain summary and the chain-free maintenance loop) and run by
-//! default since. Each prints what it measured (`-- --nocapture`).
+//! default since. Since Stage 2 the hold is a stalled command of the chain
+//! actor (`Holder::start_actor`), the path every chain write takes. L7 is
+//! Stage 2's (its before/after comparison is chain-level,
+//! `chain/tests/actor_order.rs`; L8 is `network.rs`). Each prints what it
+//! measured (`-- --nocapture`).
 
 mod common;
 
+use blacksilk_chain::actor::ActorConfig;
+use blacksilk_chain::block::Block;
+use blacksilk_chain::manager::ChainManager;
+use blacksilk_chain::store::MemoryStore;
+use blacksilk_consensus::BlockHeader;
 use blacksilk_p2p::message::Message;
+use blacksilk_tx::params::TxRules;
 use common::*;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// A hold past `PONG_TIMEOUT` (30 s), as a step of heavy blocks can take.
@@ -220,6 +232,110 @@ async fn l3_a_handshake_completes_during_a_hold() {
             .is_some(),
         "the new peer stays connected"
     );
+}
+
+/// `n` coinbase-only blocks on genesis, built on a separate manager.
+fn chain_of(n: u64) -> Vec<Block> {
+    let p = params();
+    let mut src = ChainManager::open(
+        p.clone(),
+        TxRules::for_chain(&p),
+        Arc::new(ZeroPow),
+        Box::<MemoryStore>::default(),
+        [0x77; 32],
+    )
+    .unwrap();
+    (0..n)
+        .map(|i| {
+            let b = common::stall::next_block(&src, 0x7700 + i, i);
+            let now = b.header.timestamp;
+            src.submit_block(b.clone(), now).unwrap();
+            b
+        })
+        .collect()
+}
+
+/// L7 (F34-7): a peer's header announcement is accepted while the node
+/// connects a long body drain of heavy steps (`STEP` each, 2 blocks per
+/// step, 20 steps). The header worker's two commands (pre-check with the
+/// PoW jobs, then acceptance) each wait for at most one step: the Headers
+/// lane is served before the next step. Before Stage 2 each of its four
+/// chain-lock holds waited behind a step of an unfair mutex (measured in
+/// `chain/tests/actor_order.rs`, `l7_...`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l7_a_header_announcement_is_accepted_during_a_body_drain() {
+    const STEP: Duration = Duration::from_millis(300);
+    let a = slow_node_with(
+        0x19,
+        fast_config(&[]),
+        ActorConfig {
+            step_budget: 2,
+            ..ActorConfig::default()
+        },
+    )
+    .await;
+    let blocks = chain_of(42);
+    {
+        // Headers 1-41 and bodies 2-41: the first body releases the drain.
+        let mut c = a.chain.lock().unwrap();
+        let hs: Vec<BlockHeader> = blocks[..41].iter().map(|b| b.header).collect();
+        let now = blocks[40].header.timestamp;
+        c.accept_headers(&hs, now).unwrap();
+        for b in &blocks[1..41] {
+            c.submit_block(b.clone(), now).unwrap();
+        }
+        c.set_step_delay_for_tests(Some(STEP));
+    }
+    let (mut r, mut w) = raw_peer(a.addr).await;
+    let now = blocks[40].header.timestamp;
+    a.actor
+        .submit_block(blocks[0].clone(), now, false, |_| {})
+        .unwrap();
+    let t = Instant::now();
+    while !(a.actor.summary().sync_pending && a.actor.summary().height >= 2) {
+        assert!(t.elapsed() < Duration::from_secs(10), "the drain started");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+
+    let start = Instant::now();
+    w.send(&Message::Headers(vec![blocks[41].header]).encode())
+        .await
+        .unwrap();
+    let s = loop {
+        let s = a.actor.summary();
+        if s.header_height == 42 {
+            break s;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "the announced header was not accepted"
+        );
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    };
+    let took = start.elapsed();
+    println!(
+        "L7: header accepted {:.0} ms after the announcement, at height {} of the drain \
+         (steps of {STEP:?})",
+        took.as_secs_f64() * 1000.0,
+        s.height
+    );
+    assert!(s.sync_pending && s.height < 41, "accepted during the drain");
+    assert!(
+        took < 2 * STEP + Duration::from_millis(700),
+        "{took:?}: more than one step per header-worker command"
+    );
+    let mut other = Vec::new();
+    assert!(
+        pong_latency(&mut r, &mut w, 1, 30.0, &mut other)
+            .await
+            .is_some(),
+        "the announcing peer stays connected"
+    );
+    let t = Instant::now();
+    while a.actor.summary().height < 41 {
+        assert!(t.elapsed() < Duration::from_secs(60), "the drain ends");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 /// The fixture itself: a hold keeps the chain lock for its whole length,

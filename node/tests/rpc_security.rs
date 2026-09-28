@@ -120,10 +120,7 @@ impl Node {
             .unwrap();
         let addr = l.local_addr().unwrap();
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-        let app = App {
-            chain: shared.clone(),
-            net: None,
-        };
+        let app = App::shared(shared.clone(), None);
         let data = dir.path().to_path_buf();
         let settings = RpcSettings {
             conn: test_conn(),
@@ -485,13 +482,7 @@ fn a_slow_body_is_cut() {
         },
         ..Default::default()
     };
-    let app = blacksilk_node::router_secured(
-        App {
-            chain: shared,
-            net: None,
-        },
-        policy,
-    );
+    let app = blacksilk_node::router_secured(App::shared(shared, None), policy);
     rt.spawn(serve::serve(l, app, test_conn(), std::future::pending()));
     let mut s = TcpStream::connect(addr).unwrap();
     write!(

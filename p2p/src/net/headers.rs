@@ -12,9 +12,12 @@ use crate::addr::NetAddr;
 use crate::dandelion::PeerId;
 use crate::limits::score;
 use crate::message::{Message, MAX_HEADERS};
+use blacksilk_chain::actor::Lane;
+use blacksilk_chain::manager::{CachedPow, ChainManager, PowJob};
 use blacksilk_chain::sync_policy::{anti_dos_threshold, pow_chunk, seed_is_live, worth_verifying};
 use blacksilk_consensus::{seed_height, BlockHeader, Hash, HeaderChain, HeaderError};
 use std::net::SocketAddr;
+use std::ops::Range;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -109,8 +112,8 @@ impl Inner {
     /// maintenance loop, the header worker) already asked, this does nothing
     /// (the second reply would arrive unsolicited). The request is marked
     /// outstanding, under the same lock as that check. The locator is the
-    /// published chain summary's (never the chain lock): it is republished
-    /// whenever the best header chain changes, before the lock is released.
+    /// published chain snapshot's (never a chain command): the actor
+    /// republishes it after every command that changes the best header chain.
     async fn request_headers_after(self: &Arc<Self>, peer: PeerId, from: Option<Hash>) {
         {
             let mut st = self.state();
@@ -158,8 +161,8 @@ pub(super) fn in_grace(grace: Option<Instant>, now: Instant) -> bool {
 /// answering pings however long the proof of work takes (docs/p2p.md §6).
 pub(super) async fn on_headers(inner: &Arc<Inner>, peer: PeerId, headers: Vec<BlockHeader>) {
     let nid = inner.cfg.network_id;
-    // Only needed for an empty reply: the published summary's (the read loop
-    // never waits for the chain lock).
+    // Only needed for an empty reply: the published snapshot's (the read loop
+    // never waits for the chain).
     let ours = headers
         .is_empty()
         .then(|| inner.summary.load().header_height);
@@ -334,14 +337,15 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
         let last_height = headers.last().map_or(0, |h| h.height);
         let inner2 = inner.clone();
         let addr = batch.addr.clone();
-        // Our header height after the batch is read on the same blocking
-        // thread, so the peer's claimed height is corrected below under the
-        // same state lock that ends `headers_busy`: the maintenance loop
-        // never sees the peer idle with its stale (higher) height, which
-        // would ask it again (R8-15 request loops).
+        // Our header height after the batch is read before the peer's
+        // claimed height is corrected below under the same state lock that
+        // ends `headers_busy`, so the maintenance loop never sees the peer
+        // idle with its stale (higher) height, which would ask it again
+        // (R8-15 request loops). The snapshot is published before the
+        // actor answers the batch's last command, so it includes the batch.
         let result = tokio::task::spawn_blocking(move || {
             let outcome = verify_headers(&inner2, peer, &addr, &headers);
-            let ours = inner2.chain().header_height();
+            let ours = inner2.summary.load().header_height;
             (outcome, ours)
         })
         .await;
@@ -431,7 +435,7 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
                 on_header_error(&inner, &batch, e, last_height, pending).await
             }
             Ok(HeaderOutcome::Abandoned) => {}
-            // `verify_headers` takes the chain lock: a panic there poisoned it.
+            // A panic outside the actor (the PoW jobs): stop as for one in it.
             Err(e) if e.is_panic() => fatal(&format!("header task failed: {e}")),
             Err(_) => return, // the runtime is shutting down
         }
@@ -448,9 +452,97 @@ fn sender_live(inner: &Inner, peer: PeerId, addr: &NetAddr) -> bool {
             .is_none_or(|ip| !st.bans.is_banned(&ip, unix_now()))
 }
 
+/// The PoW work of one chunk (`ChainManager::pow_jobs`); `None` if the
+/// chunk does not extend a known header.
+type Jobs = Option<(Arc<CachedPow>, Vec<PowJob>)>;
+
+/// What the first command of a batch found (`precheck`).
+struct Prechecked {
+    checked: Result<(), (usize, HeaderError)>,
+    /// The headers not stored yet, up to the first failing one.
+    fresh: Range<usize>,
+    worth: bool,
+    /// The failing header is of an unknown version and will be hashed.
+    hash_unknown: bool,
+    /// Headers per PoW chunk (`sync_policy::pow_chunk`).
+    chunk: usize,
+    /// The PoW jobs of the first fresh chunk.
+    jobs: Jobs,
+}
+
+/// The first command of a batch (one former lock hold, plus the first
+/// chunk's PoW jobs, formerly the next hold): every rule except proof of
+/// work, the stored prefix, the work gate. `None` if the batch does not
+/// connect to a known header.
+fn precheck(
+    c: &ChainManager,
+    headers: &[BlockHeader],
+    now: u64,
+    full: bool,
+    pow_threads: usize,
+) -> Option<Prechecked> {
+    let nid = c.params().network_id;
+    c.header(&headers[0].prev_id)?;
+    let checked = c.precheck_headers(headers, now);
+    let good_end = match &checked {
+        Ok(()) => headers.len(),
+        Err((i, _)) => *i,
+    };
+    // A header of an unknown version is unconfirmed after the pre-check
+    // (no proof of work yet): it is hashed with the batch, if the batch is
+    // worth it, and only then classified (RT-1). Its claimed difficulty
+    // was never checked, so it is charged the difficulty this node
+    // requires at its position (RTW1-1 (a)); under a RandomX key that is
+    // not live it is never hashed (RTW1-1 (c)).
+    let hc = c.headers();
+    let required = match &checked {
+        Err((i, HeaderError::UnknownUpgrade { .. }))
+            if seed_is_live(hc, &batch_seed(hc, headers, *i)) =>
+        {
+            hc.required_difficulty_after(headers[0].prev_id, &headers[..*i])
+        }
+        _ => None,
+    };
+    // Headers we already have (a prefix: a stored header cannot follow
+    // an unstored one) cost nothing more.
+    let start = headers[..good_end]
+        .iter()
+        .position(|h| c.header(&h.id(nid)).is_none())
+        .unwrap_or(good_end);
+    let worth = match required {
+        Some(difficulty) => {
+            let mut charged = headers[start..=good_end].to_vec();
+            if let Some(unknown) = charged.last_mut() {
+                unknown.difficulty = difficulty;
+            }
+            worth_verifying(hc, &charged, full)
+        }
+        None => worth_verifying(hc, &headers[start..good_end], full),
+    };
+    let chunk = pow_chunk(pow_threads, c.params());
+    let first = start..good_end.min(start + chunk);
+    let jobs = if first.is_empty() || !worth {
+        None
+    } else {
+        c.pow_jobs(&headers[first])
+    };
+    Some(Prechecked {
+        checked,
+        fresh: start..good_end,
+        worth,
+        hash_unknown: required.is_some(),
+        chunk,
+        jobs,
+    })
+}
+
 /// Pre-check, then chunked proof of work and acceptance. Runs on a blocking
-/// thread; the chain lock is held only for the cheap steps, never while
-/// hashing.
+/// thread; the chain actor runs only the cheap steps (Headers lane), never
+/// the hashing. A batch of `k` fresh chunks costs `k + 1` commands: the
+/// pre-check with the first chunk's jobs, then each chunk's acceptance with
+/// the next chunk's jobs (adjacent former lock holds merged: a schedule the
+/// lock allowed). Each command waits for at most one drain step
+/// (docs/p2p.md §10, test L7).
 fn verify_headers(
     inner: &Inner,
     peer: PeerId,
@@ -468,48 +560,24 @@ fn verify_headers(
         return HeaderOutcome::Abandoned;
     }
     let nid = inner.cfg.network_id;
-    let (checked, fresh_range, worth, hash_unknown) = {
-        let c = inner.chain();
-        if c.header(&headers[0].prev_id).is_none() {
-            return HeaderOutcome::Unconnected;
-        }
-        let checked = c.precheck_headers(headers, now);
-        let good_end = match &checked {
-            Ok(()) => headers.len(),
-            Err((i, _)) => *i,
-        };
-        // A header of an unknown version is unconfirmed after the pre-check
-        // (no proof of work yet): it is hashed with the batch, if the batch is
-        // worth it, and only then classified (RT-1). Its claimed difficulty
-        // was never checked, so it is charged the difficulty this node
-        // requires at its position (RTW1-1 (a)); under a RandomX key that is
-        // not live it is never hashed (RTW1-1 (c)).
-        let hc = c.headers();
-        let required = match &checked {
-            Err((i, HeaderError::UnknownUpgrade { .. }))
-                if seed_is_live(hc, &batch_seed(hc, headers, *i)) =>
-            {
-                hc.required_difficulty_after(headers[0].prev_id, &headers[..*i])
-            }
-            _ => None,
-        };
-        // Headers we already have (a prefix: a stored header cannot follow
-        // an unstored one) cost nothing more.
-        let start = headers[..good_end]
-            .iter()
-            .position(|h| c.header(&h.id(nid)).is_none())
-            .unwrap_or(good_end);
-        let worth = match required {
-            Some(difficulty) => {
-                let mut charged = headers[start..=good_end].to_vec();
-                if let Some(unknown) = charged.last_mut() {
-                    unknown.difficulty = difficulty;
-                }
-                worth_verifying(hc, &charged, full)
-            }
-            None => worth_verifying(hc, &headers[start..good_end], full),
-        };
-        (checked, start..good_end, worth, required.is_some())
+    let batch: Arc<[BlockHeader]> = headers.into();
+    let b = batch.clone();
+    let pow_threads = inner.cfg.pow_threads;
+    let Some(pre) = inner.chain_blocking(Lane::Headers, move |c| {
+        precheck(c, &b, now, full, pow_threads)
+    }) else {
+        return HeaderOutcome::Abandoned; // the node is stopping
+    };
+    let Some(Prechecked {
+        checked,
+        fresh,
+        worth,
+        hash_unknown,
+        chunk,
+        mut jobs,
+    }) = pre
+    else {
+        return HeaderOutcome::Unconnected;
     };
     let precheck_error = match checked {
         // A violation the sender is banned for: no hash for its batch.
@@ -523,52 +591,95 @@ fn verify_headers(
     if !worth {
         return HeaderOutcome::LowWork;
     }
-    let unknown_at = fresh_range.end;
-    let fresh = &headers[fresh_range];
-    let chunk = pow_chunk(inner.cfg.pow_threads, inner.chain().params());
+    let unknown_at = fresh.end;
+    let last = headers.last().expect("a batch is not empty");
+    let last_id = last.id(nid);
+    let parts: Vec<Range<usize>> = fresh
+        .clone()
+        .step_by(chunk)
+        .map(|i| i..(i + chunk).min(fresh.end))
+        .collect();
     let mut new = 0;
-    for (k, part) in fresh.chunks(chunk).enumerate() {
+    let mut on_main = None;
+    for (k, part) in parts.iter().enumerate() {
         if k > 0 && !sender_live(inner, peer, addr) {
             return HeaderOutcome::Abandoned;
         }
-        let jobs = inner.chain().pow_jobs(part);
-        let Some((pow, jobs)) = jobs else {
+        let Some((pow, j)) = jobs.take() else {
             return HeaderOutcome::Unconnected;
         };
-        pow.compute_parallel(&jobs, chunk);
-        match inner.chain().accept_headers(part, now) {
+        pow.compute_parallel(&j, chunk);
+        let (b, part, next) = (batch.clone(), part.clone(), parts.get(k + 1).cloned());
+        let Some((accepted, next_jobs, main)) = inner.chain_blocking(Lane::Headers, move |c| {
+            let accepted = c.accept_headers(&b[part], now);
+            let next_jobs = match (&accepted, next) {
+                (Ok(_), Some(n)) => c.pow_jobs(&b[n]),
+                _ => None,
+            };
+            (accepted, next_jobs, c.headers().is_on_main(&last_id))
+        }) else {
+            return HeaderOutcome::Abandoned;
+        };
+        match accepted {
             Ok(n) => new += n,
             Err((_, e)) => return HeaderOutcome::Failed(e),
         }
+        jobs = next_jobs;
+        on_main = Some(main);
     }
     if let (Some(HeaderError::UnknownUpgrade { .. }), true) = (&precheck_error, hash_unknown) {
         // The unknown-version header's parent is now stored: hash it off the
-        // chain lock, then let `validate` classify it (RT-1). Junk proof of work
+        // actor, then let `validate` classify it (RT-1). Junk proof of work
         // is `InsufficientWork` (penalized); real work is `UnknownUpgrade`.
-        let one = &headers[unknown_at..=unknown_at];
-        let Some((pow, jobs)) = inner.chain().pow_jobs(one) else {
+        let one = unknown_at..unknown_at + 1;
+        let (b, o) = (batch.clone(), one.clone());
+        let Some(jobs) = inner.chain_blocking(Lane::Headers, move |c| c.pow_jobs(&b[o])) else {
+            return HeaderOutcome::Abandoned;
+        };
+        let Some((pow, jobs)) = jobs else {
             return HeaderOutcome::Unconnected;
         };
         pow.compute_parallel(&jobs, 1);
-        let mut c = inner.chain();
-        match c.accept_headers(one, now) {
+        let b = batch.clone();
+        let Some((accepted, work)) = inner.chain_blocking(Lane::Headers, move |c| {
+            let accepted = c.accept_headers(&b[one.clone()], now);
+            let work = match &accepted {
+                Err((_, HeaderError::UnknownUpgrade { .. })) => {
+                    Some(UpgradeWork::of(c.headers(), &b[one.start]))
+                }
+                _ => None,
+            };
+            (accepted, work)
+        }) else {
+            return HeaderOutcome::Abandoned;
+        };
+        match accepted {
             Err((_, e)) => {
-                if let HeaderError::UnknownUpgrade { version } = e {
-                    let work = UpgradeWork::of(c.headers(), &one[0]);
-                    drop(c);
-                    inner.note_unknown_upgrade(peer, version, work);
+                if let (HeaderError::UnknownUpgrade { version }, Some(work)) = (&e, work) {
+                    inner.note_unknown_upgrade(peer, *version, work);
                 }
                 return HeaderOutcome::Failed(e);
             }
             // Not reached: a header of an unknown version is never valid.
-            Ok(n) => new += n,
+            Ok(n) => {
+                new += n;
+                on_main = None;
+            }
         }
     } else if let Some(e) = precheck_error {
         return HeaderOutcome::Failed(e);
     }
-    let last = headers.last().expect("a batch is not empty");
-    let last_id = last.id(nid);
-    let on_main = inner.chain().headers().is_on_main(&last_id);
+    let on_main = match on_main {
+        Some(m) => m,
+        None => {
+            let Some(m) =
+                inner.chain_blocking(Lane::Headers, move |c| c.headers().is_on_main(&last_id))
+            else {
+                return HeaderOutcome::Abandoned;
+            };
+            m
+        }
+    };
     HeaderOutcome::Accepted {
         last: last.height,
         last_id,

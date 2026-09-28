@@ -5,6 +5,7 @@
 
 mod config;
 
+use blacksilk_chain::actor::{self, ActorConfig};
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::store::FileStore;
 use blacksilk_consensus::{ChainParams, RandomXPow};
@@ -16,7 +17,7 @@ use blacksilk_tx::params::TxRules;
 use clap::{CommandFactory, FromArgMatches};
 use config::{network_name, resolve_seeds, Args, Config};
 use fs2::FileExt;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Parses the command line. `-V` prints the version and commit; `--version`
 /// adds the consensus fingerprint and genesis id of every network, which
@@ -159,9 +160,12 @@ fn run(cfg: Config) -> Result<(), Stop> {
         allow_hosts: cfg.rpc_allow_hosts.clone(),
         ..RpcSettings::default()
     };
-    let shared = Arc::new(Mutex::new(manager));
+    // From here on only the chain actor reaches the manager: RPC and P2P
+    // send it commands (docs/p2p.md §10).
+    let (chain, actor_thread) = actor::spawn(manager, ActorConfig::default());
     let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
-    runtime.block_on(async move {
+    let stopper = chain.clone();
+    let result = runtime.block_on(async move {
         let net = match cfg.p2p {
             Some(p) => {
                 let mut nc = NetConfig::new(params.network_id);
@@ -181,7 +185,7 @@ fn run(cfg: Config) -> Result<(), Stop> {
                         "no seeds or peers configured: the node can only receive inbound connections"
                     );
                 }
-                let n = P2p::start(nc, shared.clone())
+                let n = P2p::start_with(nc, chain.clone())
                     .await
                     .map_err(|e| format!("P2P: {e}"))?;
                 match n.local_addr() {
@@ -203,10 +207,10 @@ fn run(cfg: Config) -> Result<(), Stop> {
         // to apply) accepts no block but would keep downloading bodies: stop
         // it, so that a restart recovers deterministically (docs/blocks.md
         // §6, §8).
-        let store_failed = watch_store(shared.clone(), std::time::Duration::from_secs(2));
-        let watched = shared.clone();
+        let store_failed = watch_store(&chain, std::time::Duration::from_secs(2));
+        let watched = chain.clone();
         let app = App {
-            chain: shared,
+            chain,
             net: net.clone(),
         };
         let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -234,5 +238,13 @@ fn run(cfg: Config) -> Result<(), Stop> {
             });
         }
         Ok(served?)
-    })
+    });
+    // The runtime's tasks (and their handles) end with it; the actor then
+    // stops between steps. A drain in progress is left to the replay at the
+    // next start (every kept body is on disk: fsync before apply).
+    drop(runtime);
+    stopper.stop();
+    drop(stopper);
+    actor_thread.stop_and_join();
+    result
 }

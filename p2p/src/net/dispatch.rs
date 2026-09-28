@@ -27,10 +27,10 @@ pub(super) const SLOW_LANE: usize = 64;
 /// read loop gave before it stopped waiting for the chain.
 pub(super) const SLOW_LANE_BYTES: usize = 2 * 1024 * 1024;
 
-/// Whether handling `msg` takes the chain lock: it then runs on the peer's
+/// Whether handling `msg` needs a chain command: it then runs on the peer's
 /// slow lane ([`SlowLane`]), never on its read loop, so the read loop keeps
-/// answering pings, pongs and everything else however long the chain lock
-/// is held (F34-1). Everything else reads only the network state or the
+/// answering pings, pongs and everything else however long the chain actor
+/// is busy (F34-1). Everything else reads only the network state or the
 /// published chain summary, or queues work for the header and block workers.
 pub(super) fn is_slow(msg: &Message) -> bool {
     matches!(
@@ -54,7 +54,7 @@ fn is_relay(msg: &Message) -> bool {
 /// the task handling them one at a time, in arrival order (per-peer order is
 /// kept: `tx_requests` and `known_txs` depend on it). One peer's backlog
 /// waits in its own lane; other peers' lanes and read loops are not behind
-/// it (they share only the chain lock itself).
+/// it (they share only the chain actor itself).
 pub(super) struct SlowLane {
     queue: mpsc::Sender<(Message, usize)>,
     bytes: Arc<AtomicUsize>,

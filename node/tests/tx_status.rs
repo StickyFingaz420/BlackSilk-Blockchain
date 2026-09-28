@@ -191,14 +191,18 @@ fn a_stem_transaction_is_unknown_then_pooled_then_confirmed() {
         embargo_mean: Duration::from_millis(1),
         ..DandelionParams::default()
     };
-    let net = rt.block_on(Network::start(cfg, shared.clone())).unwrap();
+    // One chain actor for P2P and RPC, as in the node.
+    let (chain, _actor) = blacksilk_chain::actor::spawn_shared(shared.clone(), Default::default());
+    let net = rt
+        .block_on(Network::start_with(cfg, chain.clone()))
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let l = rt
         .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
         .unwrap();
     let addr = l.local_addr().unwrap();
     let app = App {
-        chain: shared.clone(),
+        chain,
         net: Some(net.clone()),
     };
     let data = dir.path().to_path_buf();

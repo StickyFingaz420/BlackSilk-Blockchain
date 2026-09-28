@@ -1,10 +1,12 @@
 //! Transaction admission: decoding, contextual reject caching, mempool
 //! admission and invalid-transaction scoring, fluff and stem receipt.
 
+use super::chain_access;
 use super::state::{short, Inner, State};
 use super::stem::{stem_keys, stem_or_fluff, unstem_key_images};
 use crate::dandelion::{PeerId, Source};
 use crate::limits::score;
+use blacksilk_chain::actor::{Lane, SendError};
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::mempool::MempoolError;
 use blacksilk_consensus::Hash;
@@ -241,7 +243,7 @@ fn provably_invalid_signature(c: &ChainManager, ring: Option<&Vec<u64>>) -> bool
 /// Whether the verification failure `e` of a transaction whose inputs have
 /// rings `rings` proves that its relayer broke the rules: a stateless
 /// failure, or a signature that fails over deeply buried ring members. Runs
-/// under the chain lock, with the verification (same tip).
+/// in the verification's chain command (same tip).
 fn proven_invalid(c: &ChainManager, rings: &[Vec<u64>], e: &MempoolError) -> bool {
     match e {
         MempoolError::Invalid(e) => {
@@ -287,6 +289,30 @@ fn on_invalid_tx(
     }
 }
 
+/// Runs the verification of a relayed transaction on the chain actor's Tx
+/// lane, below blocks, headers and queries. A full lane drops it (`None`):
+/// relay is best effort, so the sender is not penalized and the drop is
+/// only counted (`NetStats::tx_lane_drops`, F34-5).
+async fn verify_on_tx_lane<T: Send + 'static>(
+    inner: &Arc<Inner>,
+    id: Hash,
+    f: impl FnOnce(&mut ChainManager) -> T + Send + 'static,
+) -> Option<T> {
+    match chain_access::try_call(&inner.chain, Lane::Tx, f).await {
+        Ok(t) => Some(t),
+        Err(SendError::Full(_)) => {
+            inner.state().tx_lane_drops += 1;
+            log::debug!(
+                "transaction {} dropped: the chain's transaction lane is full",
+                short(&id)
+            );
+            None
+        }
+        // The node is shutting down.
+        Err(SendError::Stopped) => std::future::pending().await,
+    }
+}
+
 pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     let Some(tx) = decode_tx(&bytes) else {
         inner.misbehave(peer, score::INVALID_TX, "transaction does not decode");
@@ -310,14 +336,18 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
         return;
     }
     let rings = input_rings(&tx);
-    let result = inner
-        .with_chain(move |c| {
-            let tip = c.tip_id();
-            let r = c.submit_tx(tx);
-            let proven = r.as_ref().is_err_and(|e| proven_invalid(c, &rings, e));
-            (tip, r, proven)
-        })
-        .await;
+    // One Tx-lane command: the tip, the verification and the penalty
+    // classification see the same state (one former lock hold).
+    let Some(result) = verify_on_tx_lane(inner, id, move |c| {
+        let tip = c.tip_id();
+        let r = c.submit_tx(tx);
+        let proven = r.as_ref().is_err_and(|e| proven_invalid(c, &rings, e));
+        (tip, r, proven)
+    })
+    .await
+    else {
+        return;
+    };
     inner.state().tx_verifications += 1;
     match result {
         (_, Ok(_), _) => {
@@ -373,13 +403,15 @@ pub(super) async fn on_stem_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>)
     }
     let rings = input_rings(&tx);
     let tx2 = tx.clone();
-    let checked = inner
-        .with_chain(move |c| {
-            let r = c.check_tx(&tx2);
-            let proven = r.as_ref().is_err_and(|e| proven_invalid(c, &rings, e));
-            (c.tip_id(), r, proven)
-        })
-        .await;
+    let Some(checked) = verify_on_tx_lane(inner, id, move |c| {
+        let r = c.check_tx(&tx2);
+        let proven = r.as_ref().is_err_and(|e| proven_invalid(c, &rings, e));
+        (c.tip_id(), r, proven)
+    })
+    .await
+    else {
+        return;
+    };
     inner.state().tx_verifications += 1;
     match checked {
         // A peer's transaction is relayed whether or not this node

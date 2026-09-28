@@ -1,8 +1,9 @@
 //! Shared network state: the per-peer record, the state behind the network
 //! lock, worker jobs, and `Inner` lock access and message sending.
 
+use super::chain_access;
 use super::config::NetConfig;
-use super::{fatal, lock_or_exit, SharedChain};
+use super::lock_or_exit;
 use crate::addr::NetAddr;
 use crate::addrman::{AddrMan, BanList};
 use crate::addrman_gate::AddrGate;
@@ -10,6 +11,7 @@ use crate::dandelion::{Dandelion, PeerId};
 use crate::limits::PeerLimits;
 use crate::message::Message;
 use crate::originated::Originated;
+use blacksilk_chain::actor::{ChainHandle, Lane};
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{ChainManager, SummaryCell};
 use blacksilk_consensus::{BlockHeader, Hash};
@@ -128,6 +130,9 @@ pub(super) struct State {
     pub(super) ctx_rejects_tip: Hash,
     pub(super) tx_verifications: u64,
     pub(super) px_global_drops: u64,
+    /// Relayed transactions dropped because the chain actor's Tx lane was
+    /// full (never penalized; `NetStats::tx_lane_drops`).
+    pub(super) tx_lane_drops: u64,
     /// Unrequested blocks in the block worker's queue (`UNREQUESTED_QUEUE`).
     pub(super) unrequested_queued: usize,
     /// Ids of blocks received and waiting for, or under, processing by the
@@ -246,10 +251,13 @@ pub(super) struct HeaderBatch {
 }
 
 pub(super) struct Inner {
-    pub(super) chain: SharedChain,
-    /// The chain's published summary (`ChainManager::summary_cell`): the tip,
-    /// header height and locator, read without the chain lock by the
-    /// handshake, header requests and the maintenance loop.
+    /// The chain actor: every chain operation is a command on one of its
+    /// lanes (`chain_access`).
+    pub(super) chain: ChainHandle,
+    /// The chain's published snapshot (`ChainHandle::summary_cell`): the
+    /// tip, header height, locator and missing bodies, read without a
+    /// command by the handshake, header requests, download scheduling and
+    /// the maintenance loop.
     pub(super) summary: Arc<SummaryCell>,
     pub(super) cfg: NetConfig,
     /// The chain's genesis id, bound into the session keys (R15-3).
@@ -285,35 +293,38 @@ impl Inner {
         lock_or_exit(&self.state, "network state")
     }
 
-    /// The chain lock. Only on blocking threads (`with_chain`, the header and
-    /// block workers' blocking tasks), never on an async worker.
-    pub(super) fn chain(&self) -> MutexGuard<'_, ChainManager> {
-        lock_or_exit(&self.chain, "chain")
-    }
-
-    /// Runs `f` under the chain lock on a blocking thread, so an async worker
-    /// never waits for the lock (R8-1), then publishes the chain summary
-    /// before releasing the lock (a mempool change made by `f` is visible to
-    /// summary readers at once). A panic in `f` poisoned the lock: the
-    /// node stops, as `lock_or_exit` would on the next access. A task
-    /// cancelled because the runtime is shutting down never resolves (the
-    /// caller is being dropped too).
+    /// Runs `f` on the chain actor's Query lane and returns its result
+    /// (`chain_access::call`): the task waits, no thread does. If the actor
+    /// stopped (the node is shutting down), never resolves: the caller is
+    /// being dropped too. A panic in `f` stops the node (the actor's
+    /// fail-stop).
     pub(super) async fn with_chain<T: Send + 'static>(
         self: &Arc<Self>,
         f: impl FnOnce(&mut ChainManager) -> T + Send + 'static,
     ) -> T {
-        let inner = self.clone();
-        let run = move || {
-            let mut c = inner.chain();
-            let t = f(&mut c);
-            c.publish_summary();
-            t
-        };
-        match tokio::task::spawn_blocking(run).await {
-            Ok(t) => t,
-            Err(e) if e.is_panic() => fatal(&format!("chain task failed: {e}")),
-            Err(_) => std::future::pending().await,
+        self.chain_on(Lane::Query, f).await
+    }
+
+    /// [`Self::with_chain`] on `lane`.
+    pub(super) async fn chain_on<T: Send + 'static>(
+        &self,
+        lane: Lane,
+        f: impl FnOnce(&mut ChainManager) -> T + Send + 'static,
+    ) -> T {
+        match chain_access::call(&self.chain, lane, f).await {
+            Some(t) => t,
+            None => std::future::pending().await,
         }
+    }
+
+    /// Runs `f` on `lane` from a blocking thread (the header worker),
+    /// waiting for room and for the result; `None` if the actor stopped.
+    pub(super) fn chain_blocking<T: Send + 'static>(
+        &self,
+        lane: Lane,
+        f: impl FnOnce(&mut ChainManager) -> T + Send + 'static,
+    ) -> Option<T> {
+        self.chain.call_blocking(lane, f).ok()
     }
 
     pub(super) fn save(&self) {
