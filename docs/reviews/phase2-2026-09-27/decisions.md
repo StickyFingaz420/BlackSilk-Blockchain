@@ -655,3 +655,13 @@
 - **Registry tags frozen for v3:** `seed/master/v1`, `wallet/hedge-key/v1`, `px/wallet/hedge-key/v1`, `px/wallet/vault-secret/v1`.
 - **Wallet never auto-applies seed corrections** (a two-word error can land on another valid seed, about 1.3%): ACCEPTED as designed.
 - **Open:** removing px `Derivation::V1` (px owner, with CB-B2); a fuzz target for the seed parser (41); F37-11 confirmation prompt; K7 and K8.
+
+## W2-09 (miner and labnet), Lead decisions 2026-09-28
+- **Miner prebuild default:** `--prebuild auto` (the "Agent 09 REVISED" line wins). Prebuild in full mode whenever the fallible allocation succeeds; the light-mode bridge otherwise. Supersedes "off by default" for the miner. Labnet evidence runs force it on.
+- **Miner exit 78** (configuration) with `RestartPreventExitStatus=78`: accepted.
+- **W2-09b (after CB-B2 releases template.rs):**
+  - the template readiness gate as designed by W2-09 (`template_ready`, slack 2, 503, no zero-peers rule);
+  - tip notification I1 (stale work measured at about 21% of found blocks);
+  - `next_seed_id` on `/template` (drops the `/blocks` lookup);
+  - the first dataset build uses all threads when no context exists.
+- **Evidence:** labnet-warmup-2026-09-28 run 2. After warm-up, depths are 1 to 2 outside the heal, and 13 twice at the heal after a 3-minute partition. Difficulty had not reached equilibrium (9 to 12 against about 20); longer runs are needed for Wave 4.
