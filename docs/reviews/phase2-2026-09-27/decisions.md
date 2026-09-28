@@ -368,7 +368,7 @@
 ## Agent 39 (wallet-sync)
 - **W1 (the wallet builds the PX tree from verified blocks and checks anchors against its own root window; fixes F39-1):** P1 in this phase. Not a blocker for the own-node trial; P0 before a public testnet.
 - **Compact feed encoding:** the project codec served as application/octet-stream. `/blocks` (hex) stays for tools and older wallets.
-- **W5 header PoW check:** ON by default for restores (sampled light-mode checks plus LWMA recompute), opt-in for routine sync. Closes F39-10.
+- **W5 header PoW check:** ON by default for restores (sampled light-mode checks plus LWMA recompute), opt-in for routine sync. BOUNDS F39-10 (corrected 2026-09-28 after RT-W3: W3-39b adds the genesis-anchored feed and a dense check of the last 720 headers).
 - **PX-root header commitment:** NOT in v3 (P3).
 - **proptest in wallet tests:** allowed.
 - **Ownership:** as listed by 39. wallet.rs edits are serialized with 37, 38, 17 and 18 in the order 37 → 17 → 18 → 38 → 39.
@@ -739,3 +739,28 @@
 - **TRIED_BIAS = 0.7** (simulator-derived; the slot share is 10% for g=1 and 20% for g=4, against 16.6% and 33.8% at 0.5).
 - **Owed (W3-32b):** eviction protection by ping and recent tx/block relay; block-relay-only connections; `--onion-inbound`; NetConfig interval knobs plus integration tests for feelers and stale-tip rotation; seeds as one-shot address fetches.
 - **Accepted limitation:** a fresh node with an empty tried table gives the attacker about 61% of slots in small-network scenarios (F32-13). Documented.
+
+## RT-W3, Lead decisions 2026-09-28
+- **RTW3-1 (High):** the W2-09b template gate is REJECTED as designed. Replace it with a LATCHED catch-up gate (Bitcoin's IBD latch): templates may be refused only until the node first reaches "synced" (tip recent against the local clock, plus not sync_pending and a small header gap); once latched, a bodiless header lead never closes it again. Correct the blocks.md §9 risk text. NO PUSH of the gate until fixed.
+- **RTW3-2 (High, pre-existing):** count a registered outbound address once, not in both `connecting` and registered. Regression test: refill after churn.
+- **RTW3-3:** handshaking connections are eviction candidates first (oldest first); evict at registration, not at accept; cap handshaking at max_inbound/4, also per /16; consider a 5 s key-exchange timeout.
+- **RTW3-4:** stale rotation picks the worst outbound peer by validated new-tip announcements (never by the Version height), and waits if that peer is younger than MIN_CONNECT_TIME.
+- **RTW3-9:** feeler collision tests are exempt from the group and backoff filters; an untestable occupant is not evicted. **RTW3-10:** re-derive TRIED_BIAS after RTW3-2 and 9, with feelers and answering attacker IPs modeled.
+- **RTW3-5 / RTW3-6 (wallet):** check PoW densely on the suffix after the restore height (at least the last 720 headers), plus the genesis feed; tip-age freshness against the local clock (warn, and refuse to build transactions past a bound; show the age). **RTW3-15:** no full commitments fetch after the backfill except at a fixed cadence. Owner W3-39b.
+- **RTW3-7:** repair re-appends intact operator records from the moved region. **RTW3-8:** reword the halt message (the block is consensus-valid; the node leaves the network chain; reconsider undoes it); periodic WARN plus an /info field when a heavier chain is refused only because of an operator verdict; templates refused then unless overridden. **RTW3-11:** log verdict ids and heights at open.
+- **RTW3-12:** PSK hygiene, P2.
+- **RTW3-13 (process):** the coordinator's full check runs every crate's tests before any push; it caught this.
+
+## W3-39b and FX-RTW3-P2P, Lead decisions 2026-09-28
+- **W3-39b accepted:**
+  - `/headers` feed with genesis-anchored checks;
+  - registrations derived from deploys (vault ABI and out_words enforced);
+  - backfill end check;
+  - RTW3-5 (dense 720-header tail), RTW3-6 (tip age: warn at 10T+FTL, refuse transactions at 60T+FTL, `--allow-stale-tip`), RTW3-15.
+- **Owed (W3-39c):** parallel PoW for the restore check (currently about 13 min single-threaded for 720 light hashes).
+- **FX-RTW3-P2P accepted:** RTW3-2 (`pending_dials`), RTW3-3 (handshake caps and handshake-first eviction; 5 s/10 s key-exchange timeouts), RTW3-4 (rotation by `last_new_tip`), RTW3-9 (untested occupant kept), RTW3-12. TRIED_BIAS stays 0.7 (re-derived).
+- **Open eclipse items (W3-32c):**
+  - feelers drain honest addresses out of new;
+  - onion attackers are uncapped in tried: cap tried entries per onion group;
+  - model honest address inflow and regular-dial promotions in the simulator.
+- **Watch:** one unexplained first-run failure of `px_transactions_travel_the_stem_and_confirm_everywhere` under heavy load (suspect: the 5 s key exchange under CPU starvation). Rerun in the full check with the panic captured.
