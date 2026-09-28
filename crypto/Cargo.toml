@@ -9,7 +9,9 @@ description = "BlackSilk transaction cryptography: Ristretto255 primitives, stea
 name = "blacksilk_crypto"
 
 [dependencies]
-# Pure Rust, no `unsafe` in the arithmetic we use; audited by Quarkslab (2019).
+# Pure Rust, no `unsafe` in the arithmetic we use. Third-party review of the
+# library itself: Quarkslab's 2019 assessment of the dalek crates (an earlier
+# version, not this pin and not BlackSilk; docs/reviews/dependency-review.md).
 curve25519-dalek = { version = "=4.1.3", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
 blake2 = "=0.10.6"
 # Traits only: the caller supplies the CSPRNG (the OS RNG in wallets, seeded ChaCha in tests).

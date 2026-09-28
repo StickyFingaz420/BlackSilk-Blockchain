@@ -54,8 +54,12 @@ the two would need a digest ending in `[domain, len, 0, 0, 0, 0, 0]`, a 2^−186
 NULLIFIER_CONTRACT` = `0x505800 + 1..10`. Applications (such as the example vault's lock
 hash) use their own constants outside this range.
 
-**Security:** 124-bit collision and preimage resistance, if the permutation behaves
-ideally.
+**Security:** the sponge `Hk`: 124-bit collision and preimage resistance, if the
+permutation behaves ideally. The node compression is **not** collision resistant on its
+own (an invertible public permutation with no feed-forward, R2-C6): the commitment
+tree's extractability rests on zk.md §9.3's ePrint 2026/089 argument and its adaptation
+("argued, not proven"), zk.md §4.5. Never reuse `node()` in a tree with free leaves or
+variable depth.
 - *Decision DR-4 (outcome):* no extra rounds. `Hk` uses the standard instance because
   the proof system already depends on it; a stronger `Hk` alone would not raise the
   security of the whole system.
@@ -502,7 +506,7 @@ private. Tests (`px/tests/unified.rs`):
 - unregistered programs, wrong shapes and altered outputs are refused;
 - kernel heights are identical for contract and user inputs.
 
-## 8. Performance (measured, this machine, BS-ZK-2)
+## 8. Performance (measured on this machine under the earlier BS-ZK-2 set; re-measured for BS-ZK-3 in Wave 4)
 
 | Item | Value |
 |---|---|
@@ -539,10 +543,11 @@ high-throughput per-transaction use on a chain.
 
 ### 9.1 Assumptions
 
-1. Knowledge soundness and zero knowledge of the BVM-1 STARK at BS-ZK-2 (zk.md §9.3;
-   AUDIT.md R8).
-2. `Hk` and the node compression: collision resistance, preimage resistance, and PRF
-   security keyed by `nk`.
+1. Knowledge soundness and zero knowledge (statistical and conditional, computational
+   in practice) of the BVM-1 STARK at BS-ZK-3 (zk.md §9.3, §12).
+2. `Hk`: collision resistance, preimage resistance, and PRF security keyed by `nk`. The
+   node compression: extractability of the commitment tree as argued in zk.md §9.3
+   (argued, not proven; the compression alone is not collision resistant, §2).
 3. Delivery: IND-CCA of the hybrid KEM (secure if either ECDH or ML-KEM holds) and of
    ChaCha20-Poly1305.
 4. The kernel source implements §4.1. It is short, with one path per check, and is

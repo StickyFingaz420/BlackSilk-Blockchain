@@ -453,7 +453,7 @@ This is what makes inflation impossible (fixes audit finding S4).
 
 Concise Linkable Spontaneous Anonymous Group signatures: Goodell, Noether, Blue,
 *"Concise Linkable Ring Signatures and Forgery Against Adversarial Keys"*, IACR ePrint
-2019/654. Monero has used CLSAG since 2020 (v13). It was audited before deployment
+2019/654. Monero has used CLSAG since 2020 (v13). It was audited before deployment <!-- doc-lint: allow (Monero's third-party CLSAG audit, not a BlackSilk claim) -->
 (Aumasson & Vennard, 2020). BlackSilk follows Monero's construction, except that
 Ristretto removes the cofactor handling.
 

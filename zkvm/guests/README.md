@@ -124,10 +124,8 @@ Windows:**
 | a copy at `…\scratchpad\buildA` | identical | identical |
 | a copy at `…\scratchpad\build B with spaces\deeper` | identical | identical |
 
-- kernel sha256 `587e0a4f059c593891054759f530bf13302cc4f62f8ee28eba48b972b100294e`,
-  id `0577e667c09a8007871d3fda04af01520877db63d9a3a40391a6c8b0598e143a`;
-- vault sha256 `1b9498843209beceafccc146627cde5a133cce1b89bbb3e80c0d5b625034aecf`,
-  id `666f7aab9350c9c67c3b68b5a5a92cf14e7808e10074723f36ff16dd2ea12f98`.
+- The full hashes and ids of that earlier, pre-rebuild build are in the git history of
+  this file and of `px/*.id` (they were replaced by the v3 rebuild below).
 - The fixtures `sum` and `arith` are byte-identical to the committed ones
   (they were already stripped).
 - `reproduce.sh` passed in the checkout.
@@ -147,11 +145,12 @@ CI turns them into a notice annotation on each of the windows, ubuntu and
 ubuntu-arm legs, so the three hosts can be compared without the job logs.
 - Reproduced on Windows (rustc 1.98.1, `x86_64-pc-windows-gnu`) from a fresh target
   directory, byte-identical to the committed ELFs.
-- Not yet shown here: the Linux x86_64 and arm64 legs (CI, after the push) and an
-  operator build.
+- Reproduced byte-identically by CI on windows-latest, ubuntu-24.04 and
+  ubuntu-24.04-arm (run 102, commit 5da354b, after the build.sh SIGPIPE fix): CI-1 is
+  closed.
+- Still owed: an operator build at the genesis reveal.
 
-Previous ids: testnet v2 kernel `e55c1d2a…`, vault `be646844…`; the pre-rebuild
-neutral build kernel `0577e667…`, vault `666f7aab…`.
+Previous ids (history): testnet v2 kernel `e55c1d2a…`, vault `be646844…`; the earlier pre-rebuild neutral build kernel `0577e667…`, vault `666f7aab…`.
 
 ## Procedure
 

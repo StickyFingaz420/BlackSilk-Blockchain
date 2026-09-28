@@ -45,13 +45,7 @@ HISTORY='^(AUDIT\.md|Claude\.md|docs/reviews/|docs/evidence/|docs/research/wasm-
 # once its owner fixes the finding (the findings are listed in the W2-29/47
 # report). Do not add entries without the coordinator. DOC_LINT_NO_EXCLUDE=1
 # ignores the list, to show what is left.
-TEMP_EXCLUDE=(
-  "stale docs/px.md"           # BS-ZK-2 in §8 and §9.1 (FX-RTW1C owns px.md)
-  "claims docs/transactions.md" # §6.1 "was audited": Monero's CLSAG audit, a correct
-                                # third-party statement; its owner adds an allow marker
-  "hex zkvm/guests/README.md"  # dated pre-rebuild verification record (zkvm owner)
-  "stale zkvm/guests/README.md"
-)
+TEMP_EXCLUDE=()
 
 NEG="(^|[^a-z])(not|never|no|nor|none|nothing|neither|without|cannot|unaudited|non-audit|refused|refuses|rejected|rejects)([^a-z]|\$)|n't([^a-z]|\$)"
 HIST='(^|[^a-z])(was|were|former|formerly|previous|previously|earlier|old|retired|superseded|replaced|removed|history|historical|pre-rebuild|no longer|until|before|instead of)([^a-z]|$)'

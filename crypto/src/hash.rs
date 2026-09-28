@@ -51,7 +51,7 @@ pub mod tags {
     pub const ADDRESS_CHECKSUM: &str = "address/checksum";
     pub const P2P_SESSION: &str = "p2p/session";
     pub const P2P_ADDRMAN: &str = "p2p/addrman";
-    // Contracts (docs/contracts.md).
+    // Wasm contracts, frozen outside the workspace (docs/research/wasm-contracts.md).
     pub const CONTRACT_ID: &str = "contract/id";
     pub const CONTRACT_CODE: &str = "contract/code";
     pub const CONTRACT_NOTE_ID: &str = "contract/note-id";

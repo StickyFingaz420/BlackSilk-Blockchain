@@ -101,8 +101,6 @@ skip = [
     { crate = "cpufeatures@0.2.17", reason = "RustCrypto 0.10 generation (SC-6)" },
     { crate = "chacha20@0.9.1", reason = "chacha20poly1305 0.10 (P2P transport) vs rand 0.10's chacha20 0.10 (SC-6)" },
     { crate = "rand_core@0.6.4", reason = "rand_core 0.6 (the workspace crates, curve25519-dalek 4, RustCrypto 0.10) vs 0.10 (rand 0.10, ml-kem) (SC-6)" },
-    { crate = "hashbrown@0.14.5", reason = "wasmi_collections 0.38 and string-interner 0.17 (contracts) use 0.14; indexmap and Plonky3 use 0.17" },
-    { crate = "spin@0.9.9", reason = "wasmi 0.38 (contracts) uses 0.9; Plonky3 0.7 uses 0.12" },
     { crate = "syn@2.0.104", reason = "proc-macro crates on syn 2 and syn 3; compile time only" },
     # Windows OS bindings and import libraries (SC-7): dirs-sys uses
     # windows-sys 0.48 (and windows-targets 0.48); tokio, mio, socket2 and
