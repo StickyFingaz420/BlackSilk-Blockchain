@@ -23,7 +23,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use blacksilk_chain::actor::{self, ActorConfig, ChainHandle, Lane};
 use blacksilk_chain::block::Block;
-use blacksilk_chain::manager::{ChainManager, ChainSummary, SubmitError, SummaryCell};
+use blacksilk_chain::manager::{
+    ChainManager, ChainSummary, OperatorFork, SubmitError, SummaryCell,
+};
 use blacksilk_chain::sync_policy::{self, worth_verifying};
 use blacksilk_consensus::{BlockHeader, Hash, Network};
 use blacksilk_p2p::{chain_access, Network as P2p};
@@ -31,7 +33,7 @@ use blacksilk_rpc as rpc;
 use blacksilk_tx::state::MemoryChain;
 use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::ChainView;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -41,20 +43,36 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// actor between RPC and P2P instead ([`App`]).
 pub type Shared = Arc<Mutex<ChainManager>>;
 
-/// RPC state: the chain actor, and the P2P network when it runs.
+/// RPC state: the chain actor, the P2P network when it runs, and the
+/// operator's mining policy.
 #[derive(Clone)]
 pub struct App {
     pub chain: ChainHandle,
     pub net: Option<P2p>,
+    pub mining: MiningPolicy,
 }
 
 impl App {
     /// An `App` over a chain actor started on `shared` (tests and
-    /// embedders; see [`Shared`]).
+    /// embedders; see [`Shared`]), with the default mining policy.
     pub fn shared(shared: Shared, net: Option<P2p>) -> Self {
         let (chain, _thread) = actor::spawn_shared(shared, ActorConfig::default());
-        Self { chain, net }
+        Self {
+            chain,
+            net,
+            mining: MiningPolicy::default(),
+        }
     }
+}
+
+/// The operator's overrides of the template gate (docs/blocks.md §9.4).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MiningPolicy {
+    /// `--mine-despite-operator-fork`: serve templates although a heavier
+    /// chain is refused only because of the operator's verdicts
+    /// ([`ChainManager::operator_fork`], RTW3-8). Off by default: blocks
+    /// mined then extend a chain the rest of the network does not follow.
+    pub despite_operator_fork: bool,
 }
 
 pub fn network_name(n: Network) -> &'static str {
@@ -146,6 +164,110 @@ pub fn halt_message(chain: &ChainHandle) -> String {
             .clone()
             .unwrap_or_else(|| STORE_FAILED_EXIT.to_string())
     }
+}
+
+/// How often [`watch_operator_fork`] repeats its warning while an operator
+/// fork lasts.
+pub const OPERATOR_FORK_WARN_INTERVAL: Duration = Duration::from_secs(600);
+
+/// The periodic warning of an operator fork (RTW3-8): a message when one
+/// starts, then every `interval` while it lasts, and one when it ends.
+#[derive(Debug)]
+pub struct ForkWarner {
+    interval: Duration,
+    last: Option<(OperatorFork, std::time::Instant)>,
+}
+
+impl ForkWarner {
+    pub fn new(interval: Duration) -> Self {
+        Self {
+            interval,
+            last: None,
+        }
+    }
+
+    /// The message to log for the fork state `fork` at `at`, if any:
+    /// `(true, _)` for a warning, `(false, _)` for the all-clear.
+    pub fn poll(
+        &mut self,
+        fork: Option<OperatorFork>,
+        mining: MiningPolicy,
+        at: std::time::Instant,
+    ) -> Option<(bool, String)> {
+        match (fork, self.last) {
+            (None, None) => None,
+            (None, Some(_)) => {
+                self.last = None;
+                Some((
+                    false,
+                    "operator fork ended: no heavier chain is refused because of the \
+                     operator's verdicts any more"
+                        .into(),
+                ))
+            }
+            (Some(f), last) => {
+                let due = match last {
+                    None => true,
+                    Some((prev, t)) => {
+                        prev.block != f.block || at.duration_since(t) >= self.interval
+                    }
+                };
+                if !due {
+                    return None;
+                }
+                self.last = Some((f, at));
+                Some((true, operator_fork_warning(&f, mining)))
+            }
+        }
+    }
+}
+
+/// The text of the operator-fork warning.
+pub fn operator_fork_warning(f: &OperatorFork, mining: MiningPolicy) -> String {
+    format!(
+        "operator fork: a heavier chain (known up to height {}) is refused only because the \
+         operator invalidated block {} at height {}. This node is off the network's chain: \
+         its view, its wallets' balances and any block mined here differ from the network. \
+         Verify the incident through a second channel; --reconsider-block {} undoes the \
+         verdict (for example after upgrading to a fixed build). Templates are {}",
+        f.branch_height,
+        hex::encode(f.block),
+        f.height,
+        hex::encode(f.block),
+        if mining.despite_operator_fork {
+            "still served (--mine-despite-operator-fork)"
+        } else {
+            "refused (--mine-despite-operator-fork overrides)"
+        }
+    )
+}
+
+/// Logs [`ForkWarner`]'s messages for the published snapshot, checked
+/// every `period` on a plain thread (never a chain command), until the
+/// returned sender is dropped.
+pub fn watch_operator_fork(
+    chain: &ChainHandle,
+    period: Duration,
+    mining: MiningPolicy,
+) -> std::sync::mpsc::Sender<()> {
+    let summary = chain.summary_cell();
+    let (stop, stopped) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        let mut warner = ForkWarner::new(OPERATOR_FORK_WARN_INTERVAL);
+        loop {
+            let fork = summary.load().operator_fork;
+            match warner.poll(fork, mining, std::time::Instant::now()) {
+                Some((true, msg)) => log::warn!("{msg}"),
+                Some((false, msg)) => log::info!("{msg}"),
+                None => {}
+            }
+            match stopped.recv_timeout(period) {
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                _ => return,
+            }
+        }
+    });
+    stop
 }
 
 /// Resolves the returned receiver once `check` returns true, polling every
@@ -288,14 +410,69 @@ pub fn router_secured(app: App, policy: guard::Policy) -> Router {
 /// those of the last publication (at most one command or drain step old,
 /// mutually consistent).
 async fn info(
-    State(App { net, .. }): State<App>,
+    State(App { net, mining, .. }): State<App>,
     Extension(summary): Extension<Arc<SummaryCell>>,
-) -> Json<rpc::Info> {
+) -> Json<NodeInfo> {
     let stats = net.map(|n| n.stats());
-    Json(info_of(&summary.load(), stats))
+    Json(node_info(&summary.load(), stats, mining, now()))
 }
 
-fn info_of(s: &ChainSummary, stats: Option<blacksilk_p2p::NetStats>) -> rpc::Info {
+/// `/info`'s answer: the [`rpc::Info`] fields plus the template gate's state
+/// (docs/blocks.md §9.4). A client that decodes only [`rpc::Info`] ignores
+/// the extra fields.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct NodeInfo {
+    #[serde(flatten)]
+    pub info: rpc::Info,
+    /// The catch-up latch (RTW3-1): set once the node was caught up; from
+    /// then on only a drain in progress or an operator fork refuses
+    /// templates.
+    pub template_latched: bool,
+    /// Present while a heavier chain is refused only because of the
+    /// operator's verdicts (RTW3-8).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operator_fork: Option<OperatorForkInfo>,
+}
+
+/// [`OperatorFork`] as `/info` reports it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OperatorForkInfo {
+    /// The operator-invalidated block (full hex id) and its height.
+    pub block: String,
+    pub height: u64,
+    /// The refused branch's heaviest known header height (a lower bound of
+    /// the network's chain).
+    pub branch_height: u64,
+    /// Whether `/template` refuses because of it (no
+    /// `--mine-despite-operator-fork`).
+    pub templates_refused: bool,
+}
+
+/// The `/info` answer for the published snapshot `s` at the local time
+/// `now`.
+pub fn node_info(
+    s: &ChainSummary,
+    stats: Option<blacksilk_p2p::NetStats>,
+    mining: MiningPolicy,
+    now: u64,
+) -> NodeInfo {
+    NodeInfo {
+        info: info_of(s, stats, summary_template_ready(s, mining, now)),
+        template_latched: s.template_latched,
+        operator_fork: s.operator_fork.map(|f| OperatorForkInfo {
+            block: hex::encode(f.block),
+            height: f.height,
+            branch_height: f.branch_height,
+            templates_refused: !mining.despite_operator_fork,
+        }),
+    }
+}
+
+fn info_of(
+    s: &ChainSummary,
+    stats: Option<blacksilk_p2p::NetStats>,
+    template_ready: bool,
+) -> rpc::Info {
     rpc::Info {
         network: network_name(s.network).to_string(),
         network_id: s.network_id,
@@ -316,43 +493,88 @@ fn info_of(s: &ChainSummary, stats: Option<blacksilk_p2p::NetStats>) -> rpc::Inf
         ))),
         build_commit: Some(fingerprint::BUILD_COMMIT.to_string()),
         version: Some(fingerprint::VERSION.to_string()),
-        template_ready: Some(summary_template_ready(s)),
+        template_ready: Some(template_ready),
     }
 }
 
-/// [`ChainManager::template_ready`] as of a published snapshot.
-fn summary_template_ready(s: &ChainSummary) -> bool {
-    sync_policy::template_ready(s.sync_pending, s.height, s.header_height)
+/// Whether `/template` would serve a template, as of a published snapshot
+/// at the local time `now`: [`ChainManager::template_ready`], and no
+/// operator fork unless the policy overrides it (the checks of
+/// [`template_refusal`]).
+fn summary_template_ready(s: &ChainSummary, mining: MiningPolicy, now: u64) -> bool {
+    s.template_ready(now) && (s.operator_fork.is_none() || mining.despite_operator_fork)
 }
 
-/// The `503` answer of `/template` while the node syncs
-/// ([`ChainManager::template_ready`], dossier 09 M9-2): mining on the
-/// connected tip now would produce orphans (bodies far behind the best
-/// header) or offer transactions the mempool has not yet revalidated
-/// (mid-drain). The miner retries.
-fn syncing(height: u64, header_height: u64) -> ApiError {
-    ApiError(
-        StatusCode::SERVICE_UNAVAILABLE,
-        format!("syncing: height {height}, headers {header_height}"),
+/// Why `/template` refuses (`503`), or `None` if it serves: the checks run
+/// in one chain command, after the catch-up latch is updated at `now`.
+/// - **Operator fork** (RTW3-8): a heavier chain is refused only because of
+///   the operator's verdicts, so a block mined here extends a chain the
+///   network does not follow. Refused unless the operator passed
+///   `--mine-despite-operator-fork`.
+/// - **Syncing** ([`ChainManager::template_ready`], RTW3-1): a bounded drain
+///   is in progress (the mempool is not yet revalidated), or the node has
+///   not yet caught up since it started (its blocks would be orphans). Once
+///   caught up, a header lead never refuses templates.
+///
+/// The miner retries after a `503`.
+pub fn template_refusal(m: &ChainManager, mining: MiningPolicy, now: u64) -> Option<String> {
+    if let Some(f) = m.operator_fork().filter(|_| !mining.despite_operator_fork) {
+        return Some(operator_fork_refusal(&f));
+    }
+    if m.template_ready(now) {
+        return None;
+    }
+    let (h, hh) = (m.height(), m.header_height());
+    Some(if m.sync_pending() {
+        format!("syncing: height {h}, headers {hh}: connecting downloaded blocks")
+    } else {
+        let age = now.saturating_sub(m.tip_header().timestamp);
+        format!(
+            "syncing: height {h}, headers {hh}, tip {age} s old: catching up since the node \
+             started; templates are served once the tip is recent and at most {} blocks \
+             below the best header (if every miner of the network has stopped, restart with \
+             --mine-from-stale-tip)",
+            sync_policy::TEMPLATE_SYNC_SLACK
+        )
+    })
+}
+
+/// The `503` body of `/template` during an operator fork (RTW3-8).
+fn operator_fork_refusal(f: &OperatorFork) -> String {
+    format!(
+        "operator fork: a heavier chain (known up to height {}) is refused only because the \
+         operator invalidated block {} at height {} (--invalidate-block); a block mined here \
+         extends a chain the rest of the network does not follow. Verify the incident through \
+         a second channel. --reconsider-block {} returns to the network's chain; \
+         --mine-despite-operator-fork mines anyway",
+        f.branch_height,
+        hex::encode(f.block),
+        f.height,
+        hex::encode(f.block)
     )
 }
 
-/// `/template`: one Query command checks readiness and builds the template
-/// and its next RandomX key (one point of the command order); hex encoding
-/// follows outside the actor.
+/// `/template`: one Query command updates the catch-up latch, checks
+/// readiness ([`template_refusal`]) and builds the template and its next
+/// RandomX key (one point of the command order); hex encoding follows
+/// outside the actor.
 async fn template(
-    State(App { chain: s, .. }): State<App>,
+    State(App {
+        chain: s, mining, ..
+    }): State<App>,
 ) -> Result<Json<rpc::MiningTemplate>, ApiError> {
-    let (t, next) = with_chain(&s, |m| {
-        if !m.template_ready() {
-            return Err((m.height(), m.header_height()));
+    let now = now();
+    let (t, next) = on_lane(&s, Lane::Query, move |m| {
+        m.update_template_latch(now);
+        if let Some(why) = template_refusal(m, mining, now) {
+            return Err(why);
         }
         let t = m.template();
         let next = m.next_seed_id(t.height, &t.prev_id);
         Ok((t, next))
     })
     .await?
-    .map_err(|(h, hh)| syncing(h, hh))?;
+    .map_err(|why| ApiError(StatusCode::SERVICE_UNAVAILABLE, why))?;
     Ok(Json(rpc::MiningTemplate {
         template: rpc::Template {
             height: t.height,
@@ -384,12 +606,12 @@ struct TipQuery {
 /// delay without any chain command.
 pub const TIP_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
-fn tip_of(s: &ChainSummary) -> rpc::Tip {
+fn tip_of(s: &ChainSummary, mining: MiningPolicy) -> rpc::Tip {
     rpc::Tip {
         height: s.height,
         tip: hex::encode(s.tip_id),
         header_height: s.header_height,
-        template_ready: summary_template_ready(s),
+        template_ready: summary_template_ready(s, mining, now()),
     }
 }
 
@@ -399,6 +621,7 @@ fn tip_of(s: &ChainSummary) -> rpc::Tip {
 /// answered with the current tip either way. It never runs a chain command;
 /// its admission class (`guard::Class::LongPoll`) bounds how many are held.
 async fn tip(
+    State(App { mining, .. }): State<App>,
     Extension(summary): Extension<Arc<SummaryCell>>,
     Query(q): Query<TipQuery>,
 ) -> Result<Json<rpc::Tip>, ApiError> {
@@ -411,7 +634,7 @@ async fn tip(
     loop {
         let s = summary.load();
         if after != Some(s.tip_id) || tokio::time::Instant::now() >= deadline {
-            return Ok(Json(tip_of(&s)));
+            return Ok(Json(tip_of(&s, mining)));
         }
         drop(s);
         tokio::time::sleep(TIP_POLL_INTERVAL).await;
@@ -561,7 +784,7 @@ async fn submit_block(
 }
 
 async fn submit_tx(
-    State(App { chain: s, net }): State<App>,
+    State(App { chain: s, net, .. }): State<App>,
     Json(p): Json<rpc::HexPayload>,
 ) -> Result<Json<rpc::SubmitResult>, ApiError> {
     // Decoding a transaction of several MiB is kept off the async workers.
@@ -946,6 +1169,47 @@ async fn outputs(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn fork(block: u8) -> OperatorFork {
+        OperatorFork {
+            block: [block; 32],
+            height: 4,
+            branch_tip: [9; 32],
+            branch_height: 7,
+            excess_work: 3,
+        }
+    }
+
+    /// RTW3-8: warned at once, repeated every interval while it lasts, again
+    /// at once for another verdict, and an all-clear when it ends.
+    #[test]
+    fn the_operator_fork_warning_repeats_while_the_fork_lasts() {
+        let policy = MiningPolicy::default();
+        let t0 = std::time::Instant::now();
+        let every = Duration::from_secs(600);
+        let mut w = ForkWarner::new(every);
+        assert_eq!(w.poll(None, policy, t0), None);
+        let (warn, msg) = w.poll(Some(fork(1)), policy, t0).unwrap();
+        assert!(warn);
+        assert!(msg.contains(&hex::encode([1u8; 32])), "{msg}");
+        assert!(msg.contains("known up to height 7"), "{msg}");
+        assert!(msg.contains("second channel"), "{msg}");
+        assert!(msg.contains("--reconsider-block"), "{msg}");
+        assert!(msg.contains("refused (--mine-despite-operator-fork overrides)"));
+        assert_eq!(w.poll(Some(fork(1)), policy, t0 + every / 2), None);
+        assert!(w.poll(Some(fork(1)), policy, t0 + every).unwrap().0);
+        assert!(
+            w.poll(Some(fork(2)), policy, t0 + every).unwrap().0,
+            "another verdict"
+        );
+        let (warn, msg) = w.poll(None, policy, t0 + every).unwrap();
+        assert!(!warn, "{msg}");
+        assert_eq!(w.poll(None, policy, t0 + every * 3), None);
+        let despite = MiningPolicy {
+            despite_operator_fork: true,
+        };
+        assert!(operator_fork_warning(&fork(1), despite).contains("still served"));
+    }
 
     /// The store watcher fires once the check turns true, not before.
     #[test]

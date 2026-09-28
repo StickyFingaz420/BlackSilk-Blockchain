@@ -22,6 +22,7 @@
 //! taking another lock (std leaves reader/writer priority to the OS).
 
 use super::ChainManager;
+use crate::sync_policy;
 use blacksilk_consensus::{BlockHeader, Hash, Network};
 use blacksilk_tx::params::SigDomain;
 use std::sync::{Arc, PoisonError, RwLock};
@@ -43,6 +44,27 @@ pub struct NextBlock {
     pub version: u32,
     /// `reward(height)`, fees excluded.
     pub reward: u64,
+}
+
+/// A heavier chain this node refuses only because of the operator's
+/// verdicts (`--invalidate-block`; RTW3-8): the heaviest known valid-by-rule
+/// branch through an operator-invalidated block has more work than the
+/// connected tip ([`ChainManager::operator_fork`]). The node then mines, if
+/// at all, on a chain the rest of the network does not follow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OperatorFork {
+    /// The operator-invalidated block the refused branch contains.
+    pub block: Hash,
+    /// Its height.
+    pub height: u64,
+    /// The refused branch's heaviest known header: its id and height. Its
+    /// headers passed every header rule, proof of work included, before the
+    /// verdict applied; headers built on it later are refused unverified,
+    /// so the network's chain may be longer than this.
+    pub branch_tip: Hash,
+    pub branch_height: u64,
+    /// The branch's cumulative work minus the connected tip's (positive).
+    pub excess_work: u128,
 }
 
 /// The manager's headline fields at one publication.
@@ -72,6 +94,13 @@ pub struct ChainSummary {
     pub deepest_reorg: usize,
     /// A bounded drain is in progress (`ChainManager::sync_pending`).
     pub sync_pending: bool,
+    /// The template gate's catch-up latch
+    /// (`ChainManager::template_latched`, RTW3-1).
+    pub template_latched: bool,
+    /// `sync_policy::max_tip_age` of the network (static).
+    pub max_tip_age: Option<u64>,
+    /// `ChainManager::operator_fork` (RTW3-8).
+    pub operator_fork: Option<OperatorFork>,
     /// `ChainManager::store_failed`.
     pub store_failed: bool,
     /// `ChainManager::apply_halted`.
@@ -98,6 +127,29 @@ impl ChainSummary {
     /// Whether the manager has halted (`ChainManager::halted().is_some()`).
     pub fn halted(&self) -> bool {
         self.store_failed || self.apply_halted
+    }
+
+    /// `ChainManager::caught_up` at the local time `now`, as of this
+    /// publication.
+    pub fn caught_up(&self, now: u64) -> bool {
+        sync_policy::caught_up(
+            self.sync_pending,
+            self.height,
+            self.header_height,
+            self.tip_header.timestamp,
+            now,
+            self.max_tip_age,
+        )
+    }
+
+    /// `ChainManager::template_ready` at the local time `now`, as of this
+    /// publication.
+    pub fn template_ready(&self, now: u64) -> bool {
+        sync_policy::template_ready(
+            self.sync_pending,
+            self.template_latched,
+            self.caught_up(now),
+        )
     }
 
     /// The fields of `m` now; `seq` is the caller's. The fields derived
@@ -161,6 +213,9 @@ impl ChainSummary {
             mempool_bytes: m.mempool().bytes(),
             deepest_reorg: m.deepest_reorg(),
             sync_pending: m.sync_pending(),
+            template_latched: m.template_latched(),
+            max_tip_age: sync_policy::max_tip_age(p),
+            operator_fork: m.operator_fork(),
             store_failed: m.store_failed(),
             apply_halted: m.apply_halted(),
             halt_reason: m.halted(),
@@ -177,9 +232,11 @@ impl ChainSummary {
     /// fields (header, height, generated, outputs, the next block, the PX
     /// counters) and the static fields are functions of the compared ids,
     /// and the halt reason is a function of the halt flags, so only the ids,
-    /// the counters that change on their own and the missing bodies (which
-    /// change with any header or body) are compared: a test run at every
-    /// publication point, bounded by `SUMMARY_MISSING_BODIES`.
+    /// the counters that change on their own, the latch, the missing bodies
+    /// (which change with any header or body) and the operator fork (a
+    /// verdict can apply without changing any id above) are compared: a
+    /// test run at every publication point, bounded by
+    /// `SUMMARY_MISSING_BODIES` (and free while no verdict is in force).
     fn describes(&self, m: &ChainManager) -> bool {
         self.tip_id == m.tip_id()
             && self.best_header_id == m.best_header_id()
@@ -187,9 +244,11 @@ impl ChainSummary {
             && self.mempool_bytes == m.mempool().bytes()
             && self.deepest_reorg == m.deepest_reorg()
             && self.sync_pending == m.sync_pending()
+            && self.template_latched == m.template_latched()
             && self.store_failed == m.store_failed()
             && self.apply_halted == m.apply_halted()
             && self.missing_bodies == m.missing_bodies(SUMMARY_MISSING_BODIES)
+            && self.operator_fork == m.operator_fork()
     }
 }
 
@@ -222,6 +281,9 @@ impl SummaryCell {
             mempool_bytes: 0,
             deepest_reorg: 0,
             sync_pending: false,
+            template_latched: false,
+            max_tip_age: None,
+            operator_fork: None,
             store_failed: false,
             apply_halted: false,
             halt_reason: None,

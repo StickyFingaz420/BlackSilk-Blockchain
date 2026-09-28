@@ -343,7 +343,29 @@ fn check_repair(path: &Path, id: &StoreIdentity, before: &[u8]) {
     } else {
         let set_aside = read(&aside);
         assert_eq!(set_aside.len() as u64, dropped);
-        assert_eq!([&kept[..], &set_aside[..]].concat(), before, "no byte lost");
+        let cut = before.len() - set_aside.len();
+        assert_eq!(&before[cut..], &set_aside[..], "the moved region, whole");
+        assert_eq!(&kept[..cut], &before[..cut], "the prefix is kept");
+        // RTW3-7: after the prefix, only whole operator records (`invalid`
+        // of origin 2, `reconsider`) copied from the moved region.
+        let mut at = cut;
+        while at < kept.len() {
+            assert!(kept.len() - at >= 13, "a whole record frame");
+            assert_eq!(&kept[at..at + 4], b"BSR2", "a record frame");
+            let n = u32::from_le_bytes(kept[at + 4..at + 8].try_into().unwrap()) as usize;
+            let frame = &kept[at..at + 12 + n];
+            let operator = match frame[12] {
+                0x02 => n >= 34 && frame[12 + 33] == 2,
+                0x03 => n == 33,
+                _ => false,
+            };
+            assert!(operator, "only operator records are kept after the cut");
+            assert!(
+                set_aside.windows(frame.len()).any(|w| w == frame),
+                "a kept record comes from the moved region"
+            );
+            at += frame.len();
+        }
         std::fs::remove_file(&aside).expect("remove the set-aside file");
     }
     let mut s = FileStore::open(path).expect("open the repaired store");

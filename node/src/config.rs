@@ -104,6 +104,18 @@ pub struct Args {
     /// (repeatable; command line only).
     #[arg(long = "reconsider-block", value_name = "BLOCK_ID")]
     pub reconsider_blocks: Vec<String>,
+    /// Serve block templates although a heavier chain is refused only
+    /// because of an --invalidate-block verdict: blocks mined then extend a
+    /// chain the rest of the network does not follow (command line only;
+    /// docs/blocks.md §9.4).
+    #[arg(long)]
+    pub mine_despite_operator_fork: bool,
+    /// Serve block templates from the start, without waiting to catch up
+    /// with the network: for the first blocks of a network whose genesis is
+    /// older than 24 block times, or when every miner of the network has
+    /// stopped for that long (command line only; docs/blocks.md §9.4).
+    #[arg(long)]
+    pub mine_from_stale_tip: bool,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -156,6 +168,11 @@ pub struct Config {
     /// loads (`--invalidate-block`, `--reconsider-block`).
     pub invalidate_blocks: Vec<[u8; 32]>,
     pub reconsider_blocks: Vec<[u8; 32]>,
+    /// `--mine-despite-operator-fork` (RTW3-8).
+    pub mine_despite_operator_fork: bool,
+    /// `--mine-from-stale-tip`: sets the template gate's catch-up latch at
+    /// start (RTW3-1).
+    pub mine_from_stale_tip: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -332,6 +349,8 @@ impl Config {
             repair_store: args.repair_store,
             invalidate_blocks,
             reconsider_blocks,
+            mine_despite_operator_fork: args.mine_despite_operator_fork,
+            mine_from_stale_tip: args.mine_from_stale_tip,
         })
     }
 }
@@ -553,6 +572,19 @@ max_outbound = 3
         let err = Config::resolve(args(&["--invalidate-block", &a, "--reconsider-block", &a]))
             .unwrap_err();
         assert!(err.contains("both"), "{err}");
+    }
+
+    /// The template-gate overrides (RTW3-1, RTW3-8) are off unless given.
+    #[test]
+    fn mining_override_flags() {
+        let c = Config::resolve(args(&[])).unwrap();
+        assert!(!c.mine_despite_operator_fork && !c.mine_from_stale_tip);
+        let c = Config::resolve(args(&[
+            "--mine-despite-operator-fork",
+            "--mine-from-stale-tip",
+        ]))
+        .unwrap();
+        assert!(c.mine_despite_operator_fork && c.mine_from_stale_tip);
     }
 
     #[tokio::test]

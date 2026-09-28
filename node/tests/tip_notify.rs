@@ -7,7 +7,7 @@
 //!   `after` (a miner learns of a new block at once), or for `wait` seconds.
 //! - `/template` carries `next_seed_id` exactly in the `seed_lag` heights
 //!   before a key switch.
-//! - `/info` reports `template_ready`.
+//! - `/info` and `/tip` report `template_ready`.
 
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::ChainManager;
@@ -16,7 +16,7 @@ use blacksilk_consensus::merkle::tx_root;
 use blacksilk_consensus::{BlockHeader, ChainParams, Hash, PowFunction};
 use blacksilk_crypto::keys::{SubaddressIndex, WalletKeys};
 use blacksilk_node::{router, Shared, TIP_POLL_INTERVAL};
-use blacksilk_rpc::{Client, RpcError, MAX_TIP_WAIT_SECS};
+use blacksilk_rpc::{Client, MAX_TIP_WAIT_SECS};
 use blacksilk_tx::builder::{build_coinbase, Payment};
 use blacksilk_tx::params::TxRules;
 use blacksilk_tx::types::Transaction;
@@ -218,7 +218,10 @@ fn the_template_announces_the_next_key_in_the_lag_window() {
     }
 }
 
-/// `/info` reports whether templates are served.
+/// `/info` and `/tip` report whether templates are served. On regtest (no
+/// clock rule) the node latches at its first input, so a bodiless header
+/// lead leaves templates served (RTW3-1; the catch-up refusal is tested on
+/// testnet parameters in `template_gate.rs`).
 #[test]
 fn info_reports_template_readiness() {
     let n = Node::start();
@@ -238,7 +241,9 @@ fn info_reports_template_readiness() {
         .unwrap()
         .accept_headers(&headers, u64::MAX / 2)
         .unwrap();
-    assert_eq!(c.info().unwrap().template_ready, Some(false));
-    assert!(!c.tip(None, 0).unwrap().template_ready);
-    assert!(matches!(c.template(), Err(RpcError::Status(503, _))));
+    assert!(n.shared.lock().unwrap().template_latched());
+    assert_eq!(c.info().unwrap().header_height, 3);
+    assert_eq!(c.info().unwrap().template_ready, Some(true));
+    assert!(c.tip(None, 0).unwrap().template_ready);
+    assert_eq!(c.template().unwrap().height, 1);
 }

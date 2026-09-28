@@ -151,6 +151,10 @@ impl ChainManager {
         headers: &[BlockHeader],
         now: u64,
     ) -> Result<usize, (usize, HeaderError)> {
+        // The catch-up latch (RTW3-1) is judged on the state before the
+        // batch: a lead the batch opens never keeps a synced node from
+        // latching.
+        self.update_template_latch(now);
         let mut new = 0;
         let mut result = Ok(());
         for (i, h) in headers.iter().enumerate() {

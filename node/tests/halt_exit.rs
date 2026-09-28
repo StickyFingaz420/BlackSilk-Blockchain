@@ -122,6 +122,18 @@ fn an_apply_failure_exits_with_the_halt_status_the_unit_does_not_restart() {
         "{msg}"
     );
     assert!(!msg.contains("\n"), "one log line: {msg:?}");
+    // RTW3-8: the message says what invalidating costs and how to undo it.
+    for part in [
+        "consensus-valid by this build's rules",
+        "forks this node off the network's chain",
+        "Report the incident",
+    ] {
+        assert!(msg.contains(part), "{part:?} in {msg}");
+    }
+    assert!(
+        msg.contains(&format!("--reconsider-block {}", hex::encode(failed))),
+        "{msg}"
+    );
 
     // Distinct from every other status the node exits with.
     assert!(![0, 1, 2, POISONED_EXIT_CODE].contains(&HALT_EXIT_CODE));

@@ -114,12 +114,68 @@ impl ChainManager {
         }
     }
 
-    /// Whether this node serves block templates now
-    /// ([`sync_policy::template_ready`]): no bounded drain in progress and the
-    /// best header at most [`sync_policy::TEMPLATE_SYNC_SLACK`] blocks ahead
-    /// of the connected tip. `/template` answers `503` otherwise.
-    pub fn template_ready(&self) -> bool {
-        sync_policy::template_ready(self.sync_pending(), self.height(), self.header_height())
+    /// Whether the node counts as caught up at the local time `now`
+    /// ([`sync_policy::caught_up`]): no bounded drain in progress, the best
+    /// header at most [`sync_policy::TEMPLATE_SYNC_SLACK`] blocks ahead of
+    /// the connected tip, and the tip recent ([`sync_policy::max_tip_age`];
+    /// no clock rule on regtest).
+    pub fn caught_up(&self, now: u64) -> bool {
+        sync_policy::caught_up(
+            self.sync_pending(),
+            self.height(),
+            self.header_height(),
+            self.tip_header().timestamp,
+            now,
+            sync_policy::max_tip_age(&self.params),
+        )
+    }
+
+    /// Whether the template gate's catch-up latch is set (RTW3-1): the node
+    /// was caught up at some clock reading since it opened
+    /// ([`Self::update_template_latch`]), or the operator set it
+    /// ([`Self::set_template_latch`]). It is never cleared.
+    pub fn template_latched(&self) -> bool {
+        self.template_latched
+    }
+
+    /// Sets the catch-up latch if the node is caught up at `now`
+    /// ([`Self::caught_up`]). Called with the clock reading of every block
+    /// submission (`submit_block`, `submit_block_bounded`) and header batch
+    /// (`accept_headers`), before the input is processed, and by `/template`
+    /// before it decides. Evaluating before the input means a synced node
+    /// latches on the state it had when the next block or header batch
+    /// arrived, whatever that input adds.
+    pub fn update_template_latch(&mut self, now: u64) {
+        if !self.template_latched && self.caught_up(now) {
+            self.template_latched = true;
+            log::info!(
+                "caught up at height {}: block templates are served from now on",
+                self.height()
+            );
+        }
+    }
+
+    /// Sets the catch-up latch without the checks (the node's
+    /// `--mine-from-stale-tip`): for the first blocks of a network whose
+    /// genesis is older than the tip-age bound, or restarting mining after
+    /// every miner of the network stopped. Mid-drain templates stay refused.
+    pub fn set_template_latch(&mut self) {
+        self.template_latched = true;
+        self.publish_summary();
+    }
+
+    /// Whether this node serves block templates at the local time `now`
+    /// ([`sync_policy::template_ready`]): never while a bounded drain is in
+    /// progress, and before the catch-up latch sets only when
+    /// [`Self::caught_up`]. Once latched, a header lead never closes the
+    /// gate (RTW3-1). `/template` answers `503` otherwise. Read-only: it
+    /// does not set the latch ([`Self::update_template_latch`] does).
+    pub fn template_ready(&self, now: u64) -> bool {
+        sync_policy::template_ready(
+            self.sync_pending(),
+            self.template_latched,
+            self.caught_up(now),
+        )
     }
 
     /// The RandomX key that blocks after a template at `height` on `prev_id`
@@ -142,9 +198,10 @@ impl ChainManager {
 
 #[cfg(test)]
 mod tests {
-    //! The template readiness gate (dossier 09 M9-2) and the next RandomX
-    //! key (09 I3), on a regtest chain with a short key epoch (16, lag 4:
-    //! the first switch at height 21, key = block 16).
+    //! The template readiness gate (dossier 09 M9-2, RTW3-1) and the next
+    //! RandomX key (09 I3), on a regtest chain with a short key epoch (16,
+    //! lag 4: the first switch at height 21, key = block 16), and on
+    //! testnet parameters where the tip-age rule applies.
     use super::*;
     use crate::block::Block;
     use crate::store::MemoryStore;
@@ -172,7 +229,10 @@ mod tests {
     }
 
     fn open() -> ChainManager {
-        let p = params();
+        open_with(params())
+    }
+
+    fn open_with(p: ChainParams) -> ChainManager {
         ChainManager::open(
             p.clone(),
             TxRules::for_chain(&p),
@@ -225,53 +285,100 @@ mod tests {
         out
     }
 
-    /// Headers ahead of the bodies: ready with a gap of 1 or 2, not with 3.
+    /// Testnet (tip-age bound 24 × 120 s): a node catching up refuses
+    /// templates while its bodies are more than 2 blocks behind its best
+    /// header (even with a recent tip) and while its tip is old (even with
+    /// no header gap). Once caught up at a clock reading it latches, and
+    /// from then on neither rule refuses, however far headers run ahead.
     #[test]
-    fn templates_wait_for_bodies_more_than_two_blocks_behind() {
-        let mut src = open();
+    fn a_node_refuses_templates_until_it_first_catches_up_then_latches() {
+        let mut src = open_with(ChainParams::testnet());
         let g = src.tip_id();
-        let blocks = branch(&mut src, g, 3, 1);
-        let mut m = open();
-        assert!(
-            m.template_ready(),
-            "a lone node at genesis serves templates"
-        );
-        let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header).collect();
-        m.accept_headers(&headers, NOW).unwrap();
-        assert_eq!((m.height(), m.header_height()), (0, 3));
-        assert!(!m.template_ready(), "a header gap of 3");
-        m.submit_block(blocks[0].clone(), NOW).unwrap();
+        let blocks = branch(&mut src, g, 13, 1);
+        let at = |i: usize| blocks[i].header.timestamp;
+        let late = at(12) + 100_000;
+        let mut m = open_with(ChainParams::testnet());
+        let age = sync_policy::max_tip_age(m.params()).unwrap();
+        assert_eq!(age, 24 * 120);
+        assert!(!m.template_ready(late), "an old genesis is not caught up");
+        m.update_template_latch(late);
+        assert!(!m.template_latched());
+        let headers: Vec<BlockHeader> = blocks[..10].iter().map(|b| b.header).collect();
+        m.accept_headers(&headers, late).unwrap();
+        for b in &blocks[..7] {
+            m.submit_block(b.clone(), late).unwrap();
+        }
+        assert_eq!((m.height(), m.header_height()), (7, 10));
+        assert!(!m.template_ready(at(6)), "a header gap of 3, recent tip");
+        m.update_template_latch(at(6));
+        assert!(!m.template_latched());
+        m.submit_block(blocks[7].clone(), late).unwrap();
         assert_eq!(m.header_height() - m.height(), SLACK);
-        assert!(m.template_ready(), "a header gap of 2");
-        m.submit_block(blocks[1].clone(), NOW).unwrap();
-        assert_eq!(m.header_height() - m.height(), 1);
-        assert!(m.template_ready(), "a header gap of 1");
+        assert!(m.template_ready(at(7)), "a header gap of 2, recent tip");
+        assert!(m.template_ready(at(7) + age), "at the tip-age bound");
+        assert!(!m.template_ready(at(7) + age + 1), "an old tip");
+        assert!(!m.template_latched(), "only a clock reading latches");
+        // The latch sets on the state before the input: the node is caught
+        // up at `at(9)` (tip 240 s old, header gap 2) when these headers
+        // arrive, and the lead they open does not matter.
+        let more: Vec<BlockHeader> = blocks[10..].iter().map(|b| b.header).collect();
+        m.accept_headers(&more, at(9)).unwrap();
+        assert!(m.template_latched());
+        assert_eq!(m.header_height() - m.height(), 5);
+        assert!(m.template_ready(late), "latched: no header or clock rule");
+        assert!(m.summary().template_latched);
+        assert!(m.summary().template_ready(late));
     }
 
-    /// A bounded drain (the actor connects a released branch in steps):
-    /// not ready between the steps, ready once it ends.
+    /// Regtest has no clock rule, so a fresh node latches at its first
+    /// input (Bitcoin Core serves templates on test chains without its
+    /// initial-download check). A bounded drain refuses templates between
+    /// its steps, latched or not.
     #[test]
-    fn templates_wait_for_a_bounded_drain() {
+    fn templates_wait_for_a_bounded_drain_even_when_latched() {
         let mut src = open();
         let g = src.tip_id();
         let blocks = branch(&mut src, g, 20, 1);
         let mut m = open();
+        assert!(
+            m.template_ready(NOW),
+            "a lone node at genesis serves templates"
+        );
         let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header).collect();
         m.accept_headers(&headers, NOW).unwrap();
+        assert!(
+            m.template_latched(),
+            "caught up at genesis before the headers"
+        );
+        assert!(m.template_ready(NOW), "a header gap of 20, latched");
         for b in blocks[1..].iter().rev() {
             m.submit_block_bounded(b.clone(), NOW, 8).unwrap();
         }
         assert_eq!(m.height(), 0, "the bodies wait for block 1");
         m.submit_block_bounded(blocks[0].clone(), NOW, 8).unwrap();
         assert!(m.sync_pending(), "the drain is split into steps");
-        assert!(!m.template_ready(), "mid-drain");
+        assert!(!m.template_ready(NOW), "mid-drain");
         let mut steps = 0;
         while !m.sync_step(8) {
             steps += 1;
-            assert!(!m.template_ready(), "mid-drain, step {steps}");
+            assert!(!m.template_ready(NOW), "mid-drain, step {steps}");
         }
         assert_eq!(m.height(), 20);
-        assert!(m.template_ready(), "the drain ended");
+        assert!(m.template_ready(NOW), "the drain ended");
+    }
+
+    /// `--mine-from-stale-tip`: the operator's latch serves templates on an
+    /// old testnet tip, but not mid-drain.
+    #[test]
+    fn the_operator_latch_serves_templates_on_an_old_tip() {
+        let mut m = open_with(ChainParams::testnet());
+        assert!(!m.template_ready(NOW));
+        let seq = m.summary().seq;
+        m.set_template_latch();
+        assert!(m.template_latched());
+        assert!(m.template_ready(NOW));
+        assert!(m.summary().seq > seq, "published");
+        assert!(m.summary().template_ready(NOW));
     }
 
     /// `next_seed_id` is announced exactly for the `lag` template heights
