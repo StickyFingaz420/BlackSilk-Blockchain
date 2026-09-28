@@ -421,8 +421,10 @@ body    = type (1) ‖ payload
   0x01 block       payload = pow_hash (32) ‖ block bytes
   0x02 invalid     payload = block id (32) ‖ origin (1: verdict, 2: operator)
                              ‖ LE16 k ‖ reason (k ≤ 256 bytes, UTF-8)
+  0x03 reconsider  payload = block id (32)
   0x81 checkpoint  payload = tip id (32) ‖ LE64 height ‖ state digest (32)
                              ‖ consensus fingerprint (32) ‖ LE16 k ‖ build commit (k ≤ 64, UTF-8)
+  0x82 (reserved)  F48-5 quarantine marker ("validating <block id>"); not written, skipped
 ```
 
 - **Record types.** A type with bit 7 set is *advisory*: ignoring it never changes the
@@ -432,13 +434,57 @@ body    = type (1) ‖ payload
   type is refused too, wherever it is; it is never skipped and never truncated as a
   torn tail. The format was fixed before the v3 freeze so that v3 stores never migrate;
   new record types are added with new type codes.
-  - **What this build writes:** block records only. Invalid markers and checkpoints are
-    defined for the invalid-marker / `--invalidate-block` work (S5) and the own-store
-    validation checkpoints (S7), which are not implemented yet. On replay a checkpoint
-    is not trusted (every stored block is validated in full), a verdict marker is
-    redundant (the block is validated again and gets the same deterministic verdict),
-    and an operator marker, which this build cannot apply, makes the store refused
-    rather than ignored (`chain/src/manager/replay.rs::blocks_of`).
+  - **What this build writes:** block records, and the operator's `invalid`
+    (origin 2) and `reconsider` records (below). Verdict markers (origin 1) and
+    checkpoints are defined for the own-store trust work (S5 tombstones, S7), which is
+    not implemented yet. On replay a checkpoint is not trusted (every stored block is
+    validated in full), and a verdict marker is redundant (the block is validated again
+    and gets the same deterministic verdict) (`chain/src/manager/replay.rs::scan`).
+  - **Reserved:** type `0x82`, the F48-5 quarantine marker (written before a body is
+    validated and cleared after, so that a start after a crash during validation halts
+    naming the suspect block instead of looping). It is advisory and not implemented:
+    this build writes none and skips it when read.
+- **Operator invalidation** (node policy, not consensus; added 2026-09-28, S5).
+  `blacksilk-node --invalidate-block <block id>` appends an `invalid` record of origin
+  2 (operator) before the chain loads (`ChainManager::mark_stored_block`), and
+  `ChainManager::invalidate_block` does the same on a running manager (not exposed
+  through the chain actor or the RPC). The block and its descendants are never
+  connected, whatever their bodies, and the node follows the best remaining
+  body-complete branch: invalidating a block of the connected chain reorganizes to
+  the best other branch, or down to the block's parent. It is Bitcoin Core's
+  `invalidateblock`: a branch built on the block is not followed however much work it
+  has, so a node whose operator invalidates a block the network accepts stays on its
+  own chain until the verdict is cancelled.
+  - **Where it applies.** When the block would become body-complete
+    (`ChainManager::mark_complete`): on replay, before its body is validated or applied
+    (so the flag gets the node past a block that halts it at start-up, below), and
+    live for a block that arrives after the verdict. The verdict may name a block the
+    store does not hold yet; it applies when the block arrives. The block's header is
+    marked invalid, so the block and every descendant sent again are refused
+    (`HeaderError::InvalidParent`). `invalid_reason` stays empty for it (no rule was
+    broken); `operator_invalidated` reports it.
+  - **Reconsider.** `--reconsider-block <block id>` appends a `reconsider` record that
+    cancels the operator's earlier verdict on that id; the last operator record for an
+    id wins, wherever it is in the log. It takes effect at that start (a running
+    manager cannot reconsider). It does not cancel an operator verdict on an ancestor,
+    and a block that breaks a rule stays invalid.
+  - **Refused:** genesis (`InvalidInput`, nothing written; the node exits with status
+    2), and a malformed id (status 2). A verdict already in force (invalidating an
+    invalidated block, reconsidering one that is not) writes nothing. A legacy
+    headerless regtest store keeps no markers.
+  - **Durability.** The record is appended with `sync_data` before the verdict takes
+    effect. A crash while writing it loses only that record (a torn tail); a crash
+    while writing a later record keeps it.
+  - **Compatibility.** Both record types are critical: a build that does not know them
+    refuses the store rather than connect a block the operator ruled out. (The build
+    before this one refused any store holding an operator `invalid` record.)
+  - Tested in `chain/tests/operator_invalidation.rs` (the tip and a buried block, live
+    and through the flag, with restarts; descendants arriving later; a block marked
+    before it arrives; reconsider; genesis; a torn tail right after a marker; the
+    apply-halt escape), `store_format.rs::replay_reaches_the_state_of_a_fresh_sync`,
+    the `store.rs` record tests, `node/tests/node_binary.rs::
+    the_node_binary_invalidates_and_reconsiders_a_block` (the binary end to end) and
+    `node/src/config.rs::operator_block_flags`.
 - **Network identity** (added 2026-09-27, R10-3). A new store is created with the file
   header. At startup (`BlockStore::bind`, before any record is read) a store naming
   another network id or genesis is refused with "wrong network data directory", so a
@@ -500,9 +546,12 @@ body    = type (1) ‖ payload
     had, so applying it fails again and `ChainManager::open` refuses to start, naming
     the block. A halt caused by a transient fault (tested with an injected one-shot
     failure, `an_apply_failure_after_validation_halts_without_invalidating`) connects on
-    the next start. A persistent halt needs an operator decision (`--invalidate-block`,
-    S5, not implemented yet). Until then the node cannot pass that block: report it
-    (moving the store aside only resyncs to the same block).
+    the next start. A persistent halt needs an operator decision: report the block,
+    then restart once with `--invalidate-block <block id>` (the halt message names the
+    full id), and the node starts on the block's parent without validating or applying
+    it again (moving the store aside only resyncs to the same block). The node then
+    does not follow a chain containing the block until the operator reconsiders it,
+    presumably with a fixed build.
 - **Replay order.** Records are in arrival order, and bodies arrive in any order during
   header-first sync (up to 16 in flight, from several peers). A block is replayed once
   its parent is known; one stored before its parent waits for it. Blocks released

@@ -1,10 +1,12 @@
 //! Opening a chain manager and replaying the block store.
 
 use super::pow_cache::CachedPow;
-use super::{ChainManager, Replayed, SubmitError, SyncOutcome};
+use super::{ChainManager, Replayed, SubmitError, SyncOutcome, OPERATOR_REASON};
 use crate::block::Block;
 use crate::mempool::Mempool;
-use crate::store::{BlockStore, InvalidOrigin, Marker, Record, StoreIdentity, StoredBlock};
+use crate::store::{
+    BlockStore, InvalidMarker, InvalidOrigin, Marker, Record, StoreIdentity, StoredBlock,
+};
 use blacksilk_consensus::{ChainParams, Hash, HeaderChain, HeaderError, PowFunction};
 use blacksilk_tx::params::TxRules;
 use blacksilk_tx::state::MemoryChain;
@@ -15,7 +17,75 @@ use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
 
+/// An operator verdict for [`ChainManager::mark_stored_block`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OperatorMark {
+    /// `--invalidate-block`: the block and its descendants are never
+    /// connected.
+    Invalidate,
+    /// `--reconsider-block`: cancels an earlier operator invalidation of the
+    /// block.
+    Reconsider,
+}
+
+/// What [`ChainManager::mark_stored_block`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OperatorMarked {
+    /// The marker was appended. `height` is the block's height if the store
+    /// holds the block, `None` if it does not (yet): an invalidation then
+    /// applies when the block arrives.
+    Appended { height: Option<u64> },
+    /// Nothing was appended: the block is already invalidated by the
+    /// operator (`Invalidate`), or it is not (`Reconsider`).
+    Unchanged,
+}
+
 impl ChainManager {
+    /// Appends an operator verdict on block `id` to a store that is not
+    /// open (the node's `--invalidate-block` and `--reconsider-block`,
+    /// handled before [`Self::open`]; docs/blocks.md §8). The store is bound
+    /// to `params`' network and loaded first, exactly as `open` does (a torn
+    /// tail is truncated), so a store `open` would refuse is refused here
+    /// too, unchanged. The marker takes effect when the store is opened; the
+    /// last verdict for an id wins.
+    ///
+    /// Refused (`InvalidInput`, nothing written): invalidating genesis. A
+    /// legacy headerless (regtest) store keeps no markers (`Unsupported`).
+    pub fn mark_stored_block(
+        params: &ChainParams,
+        store: &mut dyn BlockStore,
+        id: Hash,
+        mark: OperatorMark,
+    ) -> io::Result<OperatorMarked> {
+        if mark == OperatorMark::Invalidate && id == params.genesis_id() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the genesis block cannot be invalidated",
+            ));
+        }
+        store.bind(&StoreIdentity::of(params))?;
+        let records = store.load()?;
+        let height = records.iter().find_map(|r| match r {
+            Record::Block((_, bytes)) => Block::decode(bytes)
+                .ok()
+                .filter(|b| b.id(params.network_id) == id)
+                .map(|b| b.header.height),
+            Record::Marker(_) => None,
+        });
+        let invalid_now = scan(records).operator.contains(&id);
+        let marker = match (mark, invalid_now) {
+            (OperatorMark::Invalidate, false) => Marker::Invalid(InvalidMarker {
+                id,
+                origin: InvalidOrigin::Operator,
+                reason: OPERATOR_REASON.into(),
+            }),
+            (OperatorMark::Reconsider, true) => Marker::Reconsider(id),
+            _ => return Ok(OperatorMarked::Unchanged),
+        };
+        store.append_marker(&marker)?;
+        Ok(OperatorMarked::Appended { height })
+    }
+
     /// Opens the chain: replays every stored block, then returns the manager.
     /// `rng_seed` seeds the CSPRNG used for batch-verification weights; the node
     /// passes 32 bytes from the OS RNG.
@@ -41,7 +111,25 @@ impl ChainManager {
         // build does not read, is refused before any record is read
         // (docs/blocks.md §8).
         store.bind(&StoreIdentity::of(&params))?;
-        let stored = blocks_of(store.load()?)?;
+        let Scanned {
+            blocks: stored,
+            operator,
+            checkpoints,
+            verdicts,
+        } = scan(store.load()?);
+        if checkpoints + verdicts > 0 {
+            log::info!(
+                "block store: {checkpoints} checkpoint(s) not trusted and {verdicts} invalid \
+                 marker(s) re-checked: every stored block is validated in full"
+            );
+        }
+        if !operator.is_empty() {
+            log::warn!(
+                "block store: {} block(s) invalidated by the operator (--invalidate-block); \
+                 they and their descendants are not connected",
+                operator.len()
+            );
+        }
         let mut manager = Self {
             params,
             rules,
@@ -60,6 +148,7 @@ impl ChainManager {
             next_complete_seq: 1,
             best_complete: genesis_id,
             invalid: HashMap::new(),
+            operator_invalid: operator,
             mempool: Mempool::new(),
             store,
             rng: ChaCha20Rng::from_seed(rng_seed),
@@ -238,8 +327,10 @@ impl ChainManager {
         if let Some((id, height, e)) = &self.apply_failed {
             return Some(format!(
                 "applying block {} at height {height}, which passed validation, failed: {e}; \
-                 the node stops (the block is not marked invalid; report this, it is a bug)",
-                super::hex(id)
+                 the node stops (the block is not marked invalid; report this, it is a bug). \
+                 To start without the block, restart once with --invalidate-block {}",
+                super::hex(id),
+                id.iter().map(|b| format!("{b:02x}")).collect::<String>()
             ));
         }
         self.store_failed
@@ -247,41 +338,47 @@ impl ChainManager {
     }
 }
 
-/// The stored blocks, in storage order, from the records of the store
-/// (docs/blocks.md §8). Markers do not change the chain a replay reaches in
-/// this build:
+/// The records of a store, sorted for replay.
+struct Scanned {
+    /// The stored blocks, in storage order.
+    blocks: Vec<StoredBlock>,
+    /// The blocks the operator invalidated and did not reconsider since.
+    operator: HashSet<Hash>,
+    checkpoints: usize,
+    verdicts: usize,
+}
+
+/// Sorts the records of the store (docs/blocks.md §8):
 /// - a checkpoint (own-store validation evidence, for a later build) is not
 ///   trusted: every stored block is validated in full;
 /// - an invalid marker holding the node's own verdict is redundant: the block
 ///   is validated again and gets the same deterministic verdict;
-/// - an invalid marker set by the operator must be honoured, and this build
-///   cannot apply one, so the store is refused rather than risk connecting a
-///   block the operator ruled out.
-fn blocks_of(records: Vec<Record>) -> io::Result<Vec<StoredBlock>> {
-    let mut blocks = Vec::with_capacity(records.len());
-    let (mut checkpoints, mut verdicts) = (0usize, 0usize);
+/// - an invalid marker set by the operator is honoured: the block is never
+///   connected (`ChainManager::mark_complete`), whatever its body, and its
+///   descendants are refused. A later reconsider marker for the same id
+///   cancels it (and a later invalid marker restores it): the last operator
+///   record for an id wins, wherever it is in the log.
+fn scan(records: Vec<Record>) -> Scanned {
+    let mut out = Scanned {
+        blocks: Vec::with_capacity(records.len()),
+        operator: HashSet::new(),
+        checkpoints: 0,
+        verdicts: 0,
+    };
     for record in records {
         match record {
-            Record::Block(b) => blocks.push(b),
-            Record::Marker(Marker::Checkpoint(_)) => checkpoints += 1,
+            Record::Block(b) => out.blocks.push(b),
+            Record::Marker(Marker::Checkpoint(_)) => out.checkpoints += 1,
             Record::Marker(Marker::Invalid(m)) => match m.origin {
-                InvalidOrigin::Verdict => verdicts += 1,
+                InvalidOrigin::Verdict => out.verdicts += 1,
                 InvalidOrigin::Operator => {
-                    return Err(io::Error::other(format!(
-                        "the block store marks block {} invalid by operator request, and \
-                         this build cannot apply such a marker; run a build that supports \
-                         it, or move the store aside and resync",
-                        super::hex(&m.id)
-                    )))
+                    out.operator.insert(m.id);
                 }
             },
+            Record::Marker(Marker::Reconsider(id)) => {
+                out.operator.remove(&id);
+            }
         }
     }
-    if checkpoints + verdicts > 0 {
-        log::info!(
-            "block store: {checkpoints} checkpoint(s) not trusted and {verdicts} invalid \
-             marker(s) re-checked: every stored block is validated in full"
-        );
-    }
-    Ok(blocks)
+    out
 }

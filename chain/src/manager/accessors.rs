@@ -98,6 +98,13 @@ impl ChainManager {
         self.invalid.get(id)
     }
 
+    /// Whether the operator invalidated the block
+    /// ([`Self::invalidate_block`], `--invalidate-block`). Its descendants
+    /// are refused too, but are not listed here.
+    pub fn operator_invalidated(&self, id: &Hash) -> bool {
+        self.operator_invalid.contains(id)
+    }
+
     // ---- header-first sync (docs/p2p.md §6) ----
 
     /// Height of the best valid header chain (may exceed [`Self::height`] while

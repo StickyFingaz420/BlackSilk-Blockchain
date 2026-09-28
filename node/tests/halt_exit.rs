@@ -116,6 +116,11 @@ fn an_apply_failure_exits_with_the_halt_status_the_unit_does_not_restart() {
     assert_eq!(halt_exit_code(&chain), HALT_EXIT_CODE);
     let msg = halt_message(&chain);
     assert!(msg.contains(&hex::encode(&failed[..8])), "{msg}");
+    // The way out: the flag with the block's full id (docs/testnet.md §9).
+    assert!(
+        msg.contains(&format!("--invalidate-block {}", hex::encode(failed))),
+        "{msg}"
+    );
     assert!(!msg.contains("\n"), "one log line: {msg:?}");
 
     // Distinct from every other status the node exits with.

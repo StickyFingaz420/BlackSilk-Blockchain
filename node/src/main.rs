@@ -6,7 +6,7 @@
 mod config;
 
 use blacksilk_chain::actor::{self, ActorConfig};
-use blacksilk_chain::manager::ChainManager;
+use blacksilk_chain::manager::{ChainManager, OperatorMark, OperatorMarked};
 use blacksilk_chain::store::FileStore;
 use blacksilk_consensus::{ChainParams, RandomXPow};
 use blacksilk_node::fingerprint::{self, consensus_fingerprint, BUILD_COMMIT};
@@ -17,6 +17,7 @@ use blacksilk_tx::params::TxRules;
 use clap::{CommandFactory, FromArgMatches};
 use config::{network_name, resolve_seeds, Args, Config};
 use fs2::FileExt;
+use std::path::Path;
 use std::sync::Arc;
 
 /// Parses the command line. `-V` prints the version and commit; `--version`
@@ -68,6 +69,79 @@ impl From<String> for Stop {
     }
 }
 
+/// `--invalidate-block` and `--reconsider-block` (docs/blocks.md §8,
+/// docs/testnet.md §9): appends the operator's verdicts to the block store
+/// before the chain loads, so they apply to the replay (a block that halts
+/// the node at start-up is never validated or applied again) and to every
+/// later start. Nothing is written for a verdict already in force.
+fn mark_blocks(params: &ChainParams, path: &Path, cfg: &Config) -> Result<(), Stop> {
+    let marks: Vec<([u8; 32], OperatorMark)> = cfg
+        .invalidate_blocks
+        .iter()
+        .map(|id| (*id, OperatorMark::Invalidate))
+        .chain(
+            cfg.reconsider_blocks
+                .iter()
+                .map(|id| (*id, OperatorMark::Reconsider)),
+        )
+        .collect();
+    if marks.is_empty() {
+        return Ok(());
+    }
+    let mut store = FileStore::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    for (id, mark) in marks {
+        let block = hex::encode(id);
+        let flag = match mark {
+            OperatorMark::Invalidate => "--invalidate-block",
+            OperatorMark::Reconsider => "--reconsider-block",
+        };
+        match ChainManager::mark_stored_block(params, &mut store, id, mark) {
+            Ok(OperatorMarked::Appended { height }) => {
+                let at = height.map_or_else(
+                    || " (not in the block store yet)".to_string(),
+                    |h| format!(" at height {h}"),
+                );
+                match mark {
+                    OperatorMark::Invalidate => log::warn!(
+                        "{flag}: block {block}{at} is marked invalid by the operator: it and \
+                         its descendants are never connected, and the node follows the best \
+                         other branch. The verdict is stored in {}; the flag is not needed \
+                         again (undo it with --reconsider-block {block})",
+                        path.display()
+                    ),
+                    OperatorMark::Reconsider => log::warn!(
+                        "{flag}: the operator's invalidation of block {block}{at} is \
+                         cancelled; the block is validated like any other again"
+                    ),
+                }
+            }
+            Ok(OperatorMarked::Unchanged) => match mark {
+                OperatorMark::Invalidate => log::warn!(
+                    "{flag}: block {block} is already marked invalid by the operator; \
+                     nothing written"
+                ),
+                OperatorMark::Reconsider => log::warn!(
+                    "{flag}: block {block} is not marked invalid by the operator; nothing \
+                     written (a block that breaks a rule stays invalid)"
+                ),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => {
+                return Err(Stop {
+                    code: 2,
+                    message: format!("{flag} {block}: {e}"),
+                })
+            }
+            Err(e) => {
+                return Err(Stop {
+                    code: open_exit_code(&e),
+                    message: format!("{flag} {block}: block store {}: {e}", path.display()),
+                })
+            }
+        }
+    }
+    Ok(())
+}
+
 fn run(cfg: Config) -> Result<(), Stop> {
     let network = cfg.network;
     let params = ChainParams::for_network(network);
@@ -102,6 +176,7 @@ fn run(cfg: Config) -> Result<(), Stop> {
             ),
         }
     }
+    mark_blocks(&params, &store_path, &cfg)?;
     let store = FileStore::open(&store_path).map_err(|e| e.to_string())?;
     let mut seed = [0u8; 32];
     getrandom::getrandom(&mut seed).map_err(|e| format!("OS RNG: {e}"))?;

@@ -303,8 +303,8 @@ fn submit(m: &mut ChainManager, b: &Block) {
 /// fresh, a node that restarts from its store after every block, and a node
 /// whose store also holds markers (checkpoints, which this build does not
 /// trust, and verdict markers, which it re-checks) reach one identical state,
-/// including the PX state. An operator marker, which this build cannot
-/// apply, makes the store refused instead of ignored.
+/// including the PX state. An operator marker is honoured: the replay
+/// reaches the state of a node that never saw that block.
 #[test]
 fn replay_reaches_the_state_of_a_fresh_sync() {
     let p = ChainParams::regtest();
@@ -366,7 +366,9 @@ fn replay_reaches_the_state_of_a_fresh_sync() {
     assert_eq!(snapshot(&replayed, &ids), want);
     assert_eq!(replayed.deepest_reorg(), 3, "the replay reorganizes too");
 
-    // An operator marker is refused, naming the block.
+    // An operator marker is honoured (on the base commit, bff3a62, the store
+    // was refused): the replay reaches the state of a node that never saw
+    // the operator's block.
     {
         let mut s = FileStore::open(&path).unwrap();
         s.bind(&StoreIdentity::of(&p)).unwrap();
@@ -378,8 +380,13 @@ fn replay_reaches_the_state_of_a_fresh_sync() {
         }))
         .unwrap();
     }
-    let err = open_path(&p, &path).err().expect("refused");
-    assert!(err.to_string().contains("operator"), "{err}");
+    let mut without = open_with(&p, Box::<MemoryStore>::default()).unwrap();
+    for b in &blocks[..11] {
+        submit(&mut without, b);
+    }
+    let replayed = open_path(&p, &path).unwrap();
+    assert!(replayed.operator_invalidated(&ids[11]));
+    assert_eq!(snapshot(&replayed, &ids), snapshot(&without, &ids));
 }
 
 /// A crash at every byte of the store, at every write (file header, each
