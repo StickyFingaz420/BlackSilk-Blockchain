@@ -252,14 +252,20 @@ async fn a_solicited_getaddr_answer_is_accepted() {
     let (mut r, mut w) = dialed(&a).await;
     let got = collect_for(&mut r, 1.0).await;
     assert!(got.contains(&Message::GetAddr), "{got:?}");
-    // The dialed peer itself is in the table (tried).
     let before = known(&a);
     send_and_sync(&mut r, &mut w, &[addr((0..300).map(public).collect())]).await;
-    assert_eq!(known(&a), before + 300);
+    // All 300 are admitted. One source's addresses share its 16 *new*
+    // buckets (1024 slots), and an address whose slot is taken is dropped
+    // (addrman v2, docs/p2p.md §9), so some collide.
+    let stored = known(&a);
+    assert!(
+        stored > before + 200 && stored <= before + 300,
+        "{before} -> {stored}"
+    );
     assert_eq!(a.peers()[0].score, 0);
     // A second large batch is not an answer.
     send_and_sync(&mut r, &mut w, &[addr((300..400).map(public).collect())]).await;
-    assert_eq!(known(&a), before + 300);
+    assert_eq!(known(&a), stored);
     assert!(a.peers()[0].score >= 10);
 }
 
