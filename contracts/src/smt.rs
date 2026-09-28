@@ -1,4 +1,4 @@
-//! Sparse Merkle tree over 256-bit paths (docs/contracts.md §10.2).
+//! Sparse Merkle tree over 256-bit paths (docs/research/wasm-contracts.md §10.2).
 //!
 //! ```text
 //! empty subtree                    = 0^32

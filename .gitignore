@@ -61,6 +61,10 @@ Icon?
 # Tracked for reproducible builds: the consensus-pinned guests and the fuzz workspace.
 !/zkvm/guests/Cargo.lock
 !/fuzz/Cargo.lock
+# The frozen Wasm contract research crate and its fuzz targets are their own
+# workspaces (decision D22 "D-freeze"; contracts/README.md).
+!/contracts/Cargo.lock
+!/contracts/fuzz/Cargo.lock
 
 # Claude Code local state and agent worktrees
 .claude/

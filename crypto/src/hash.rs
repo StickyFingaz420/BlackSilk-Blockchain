@@ -51,7 +51,7 @@ pub mod tags {
     pub const ADDRESS_CHECKSUM: &str = "address/checksum";
     pub const P2P_SESSION: &str = "p2p/session";
     pub const P2P_ADDRMAN: &str = "p2p/addrman";
-    // Contracts (docs/contracts.md).
+    // Wasm contracts, frozen outside the workspace (docs/research/wasm-contracts.md).
     pub const CONTRACT_ID: &str = "contract/id";
     pub const CONTRACT_CODE: &str = "contract/code";
     pub const CONTRACT_NOTE_ID: &str = "contract/note-id";
@@ -77,6 +77,12 @@ pub mod tags {
     pub const WALLET_HEDGE_KEY: &str = "wallet/hedge-key/v1";
     pub const PX_WALLET_HEDGE_KEY: &str = "px/wallet/hedge-key/v1";
     pub const PX_WALLET_VAULT_SECRET: &str = "px/wallet/vault-secret/v1";
+    /// The refund secret of a vault lock with a timeout (RTW1C-7; it replaced
+    /// the `"refund"` suffix on `PX_WALLET_VAULT_SECRET`).
+    pub const PX_WALLET_VAULT_REFUND: &str = "px/wallet/vault-refund/v1";
+    /// The record `rcm` of a vault lock with a timeout, so a locker restored
+    /// from the seed can rebuild the record and refund it (RTW1C-3).
+    pub const PX_WALLET_VAULT_RCM: &str = "px/wallet/vault-rcm/v1";
     // Zero-knowledge layer (docs/zk.md).
     pub const ZK_PROVER_SEED: &str = "zk/prover-seed";
     /// Seed of the lookup-terminal blinding values (ZK-F29).
@@ -154,6 +160,8 @@ pub mod tags {
         WALLET_HEDGE_KEY,
         PX_WALLET_HEDGE_KEY,
         PX_WALLET_VAULT_SECRET,
+        PX_WALLET_VAULT_REFUND,
+        PX_WALLET_VAULT_RCM,
         ZK_PROVER_SEED,
         ZK_BLIND_SEED,
         ZKVM_PROGRAM,
@@ -257,6 +265,25 @@ mod tests {
         assert_eq!(set.len(), tags::ALL.len(), "duplicate tag name");
         for t in tags::ALL {
             assert!(DOMAIN_PREFIX.len() + t.len() <= 255);
+        }
+    }
+
+    /// The wallet registry tags frozen for v3 (decisions.md W2-37, RT-W1c):
+    /// a seed restored by another build must derive the same keys, secrets
+    /// and vault openings, so these strings never change. Each is in `ALL`
+    /// (distinct from every other tag).
+    #[test]
+    fn frozen_wallet_tags_are_pinned() {
+        for (tag, frozen) in [
+            (tags::SEED_MASTER, "seed/master/v1"),
+            (tags::WALLET_HEDGE_KEY, "wallet/hedge-key/v1"),
+            (tags::PX_WALLET_HEDGE_KEY, "px/wallet/hedge-key/v1"),
+            (tags::PX_WALLET_VAULT_SECRET, "px/wallet/vault-secret/v1"),
+            (tags::PX_WALLET_VAULT_REFUND, "px/wallet/vault-refund/v1"),
+            (tags::PX_WALLET_VAULT_RCM, "px/wallet/vault-rcm/v1"),
+        ] {
+            assert_eq!(tag, frozen);
+            assert!(tags::ALL.contains(&tag), "{tag} is not in ALL");
         }
     }
 

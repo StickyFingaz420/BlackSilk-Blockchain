@@ -2,8 +2,9 @@
 
 BlackSilk is **experimental software**. Nothing in it has been independently audited,
 and no external audit is planned at present (docs/reviews/review-status.md). The
-testnet's coins have no value. See AUDIT.md for the internal findings, and
-docs/reviews/ for the review material.
+testnet's coins have no value. The current status, open items and accepted
+limitations are in docs/STATUS.md; AUDIT.md is the historical internal findings log,
+and docs/reviews/ holds the review material.
 
 ## Reporting a vulnerability
 

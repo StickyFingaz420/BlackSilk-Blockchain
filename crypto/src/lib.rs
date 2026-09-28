@@ -1,7 +1,7 @@
 //! BlackSilk transaction cryptography.
 //!
-//! Implements the cryptographic parts of `docs/transactions.md` and
-//! `docs/contracts.md`:
+//! Implements the cryptographic parts of `docs/transactions.md` (and the
+//! frozen Wasm contract engine's hashes, `docs/research/wasm-contracts.md`):
 //!
 //! | Module | Spec | Content |
 //! |---|---|---|

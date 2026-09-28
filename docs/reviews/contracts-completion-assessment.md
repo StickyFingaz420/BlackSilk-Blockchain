@@ -4,6 +4,12 @@ Status: **internal assessment, 2026-09-27. No external audit.** BlackSilk is **n
 complete while the Wasm contract system is not integrated; this document says what
 exists and what remains.
 
+> **Superseded (2026-09-28).** PX is the only consensus contract platform (ADR-28-1,
+> owner decision D22), and the Wasm system is frozen research outside the build
+> (`contracts/README.md`, docs/research/wasm-contracts.md). BlackSilk's completeness
+> does not depend on it. Findings C-1 to C-5 below are **preconditions for any
+> revival**, not open testnet work (dossier 29). Current status: docs/STATUS.md.
+
 ## 0. Two contract systems
 
 The repository has two contract designs, and they are at very different stages.

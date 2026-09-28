@@ -109,7 +109,7 @@ then).
 | P-5 campaign | `… --example proof_length_campaign -- 50 30 out.csv` | 13,493 s (2026-09-26, docs/evidence/p5-2026-09-26b/) | 260 proofs. Non-authentication parts byte-identical per shape (1,811,565 B transfer, 2,359,622 B vault); 14 pairwise tests, p from 0.107 to 0.965, none significant | 260 proofs detect only large effects; privacy-review §3a.5 |
 | Coverage-guided fuzzing, first campaign | `fuzz/run_campaign.sh 900` | 15 min per target | 144,432,805 executions, 0 crashes | Short for the slow targets |
 | Coverage-guided fuzzing, long campaign | per target, AUDIT.md ZK-8 | 10.5 h total | 386,839,603 executions, 0 crashes | Slow targets reached < 0.5 M executions |
-| Contract-engine fuzzing, extended | `wasm_module` 6 h and `contract_sequence` 4 h | 10 h | 0 crashes (AUDIT.md) | Determinism is checked between two executor instances in one process only |
+| Contract-engine fuzzing, extended | `wasm_module` 6 h and `contract_sequence` 4 h | 10 h | 0 crashes (AUDIT.md) | Determinism is checked between two executor instances in one process only. **Not testnet evidence:** the Wasm engine is frozen research, not integrated (D22; dossier 29 W-9) |
 | Multi-process network with PX | `blacksilk-labnet … --px-every-mins 4` (docs/evidence/labnet-2026-09-25) | 62 min | `checks_passed`; supply conserved; restored wallets match | One machine, 5 processes, simulated latency |
 | Reset rehearsal | the same, `--network testnet`, new identity | 30 min | `checks_passed`; an old-identity node is refused | No transactions (coinbase maturity) |
 | Supply chain | `cargo audit` | < 1 min | 0 vulnerabilities; 1 unmaintained (`paste`) | Advisory database only; no code review of dependencies |

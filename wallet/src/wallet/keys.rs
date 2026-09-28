@@ -75,6 +75,7 @@ impl Wallet {
             staged_rings: Vec::new(),
             autosave: None,
             px_keys: AddressKeys::default(),
+            vault_terms: BTreeMap::new(),
             warnings: Vec::new(),
         };
         w.rebuild_table();

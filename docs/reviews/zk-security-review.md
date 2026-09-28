@@ -38,6 +38,14 @@ reviews: `privacy-review.md`, `dependency-review.md`, `aggregation-study.md`.
 | A6 | **Statistical** zero knowledge: the hiding FRI (a separate mask `R` per table, 4 random codewords per matrix), salted Merkle leaves (4 elements) and the terminal blinding hide the witness; prover randomness is fresh | Plonky3's hiding construction (ePrint 2024/1037); `ProverConfig` hedges the OS RNG with a witness digest; per-table conditions checked (docs/reviews/zk-coverage.md) | Not proven for the system as a whole; open items in zk-coverage.md §3 |
 | A7 | Delivery: IND-CCA of the hybrid KEM (Ristretto ECDH and ML-KEM-768) and of ChaCha20-Poly1305 | Standard assumptions; RustCrypto `ml-kem` 0.3.2 | Wallet-side only |
 
+**Corrections (2026-09-28, historical rows kept):** A1's figures are superseded by the
+adopted headline (zk.md §9.3; the current set is BS-ZK-3). A2 does not hold for the
+Merkle tree nodes: `node(l, r) = P(l ‖ r)[0..8]` alone has trivial collisions (an
+invertible public permutation, R2-C6). The PX commitment tree relies instead on the
+extractability argument of ePrint 2026/089 Theorem 3 (about 122.6 bits by our
+evaluation; the adaptation to BlackSilk's tree is argued, not proven), with leaves that
+are always sponge outputs at fixed depth (zk.md §4.5, §12.1).
+
 ## 3. Coordinated (multi-cell) forgery analysis
 
 **Adversary.** It chooses all main-trace cells of all tables, all table heights within

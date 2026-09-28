@@ -46,9 +46,12 @@ needs no beacon. No beacon is committed yet on any network, so every nonce is 0 
 the genesis ids below are unchanged.
 - The genesis body is **empty**: no coinbase, no premine, `tx_root` = 32 zero bytes
   (blocks.md §3).
-- **Testnet v2 genesis** (the planned reset, identity fixed 2026-09-26: PX rules from height 0, parameter set
-  BS-ZK-2 with terminal blinding): timestamp `1790380800` (2026-09-26 00:00:00 UTC), network id `0x0001D672`,
-  genesis id `6556f92dee4df050cfb113a2b4ba234794274854b69f7c8a39755ec7a66b037d`.
+- **Testnet v2 genesis: retired** (2026-09-27). Its parameters are still the testnet's
+  in `params.rs`: timestamp `1790380800` (2026-09-26 00:00:00 UTC), network id
+  `0x0001D672`, PX rules from height 0; its genesis id is pinned by a test in
+  `consensus/src/params.rs` (not copied here). This tree's rules differ from v2
+  builds', so `blacksilk-node --network testnet` refuses to start until the v3 genesis
+  is generated at launch (docs/testnet-v3-genesis.md; status: [STATUS.md](STATUS.md)).
   Testnet v1 was `0x0001D670` at `1790121600`, genesis id `bbeb1a9f…`. The id
   `0x0001D671` was used only by the 2026-09-25 local reset rehearsal.
 - The mainnet genesis timestamp is provisional until its launch date.

@@ -19,7 +19,7 @@ FLAGS=(-O -a --fuzz-dir .)
 cargo +"$TC" fuzz build "${FLAGS[@]}" || { echo "fuzz build failed"; exit 1; }
 mkdir -p logs
 failed=()
-for target in tx_decode block_decode p2p_message zkvm_elf kernel_diff delivery_open wasm_module contract_sequence proof_decode; do
+for target in tx_decode block_decode p2p_message zkvm_elf kernel_diff delivery_open proof_decode; do
   case "$target" in
     proof_decode) extra=(-max_len=2200000 -rss_limit_mb=4096) ;;
     zkvm_elf) extra=(-max_len=32768) ;;

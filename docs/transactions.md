@@ -453,7 +453,7 @@ This is what makes inflation impossible (fixes audit finding S4).
 
 Concise Linkable Spontaneous Anonymous Group signatures: Goodell, Noether, Blue,
 *"Concise Linkable Ring Signatures and Forgery Against Adversarial Keys"*, IACR ePrint
-2019/654. Monero has used CLSAG since 2020 (v13). It was audited before deployment
+2019/654. Monero has used CLSAG since 2020 (v13). It was audited before deployment <!-- doc-lint: allow (Monero's third-party CLSAG audit, not a BlackSilk claim) -->
 (Aumasson & Vennard, 2020). BlackSilk follows Monero's construction, except that
 Ristretto removes the cofactor handling.
 
@@ -669,7 +669,11 @@ standard_fee(n, k) = min_fee(max_weight(n, k))                    (T8: the exact
 - Transactions must pass T1–T11 and C1–C3 against `best height + 1`.
 - Order: every stateless rule (T1–T11, including the range proof T10, the PX
   structure rules and the strict decoding of the PX proof, PX5's first step) runs
-  before any contextual rule (C1–C3, PX1–PX4, PX6). Once PX1–PX4 pass, the PX proof's table
+  before any contextual rule (C1–C3, PX1–PX4), except PX6: the validity window, a
+  height comparison, runs right before a PX transaction's range proof (RTW1C-5), so a
+  transaction outside its window costs no Bulletproofs+ verification (it is then
+  refused with `PxWindow` even if its range proof is also invalid; the verdict is
+  the same). Once PX1–PX4 pass, the PX proof's table
   shape is checked against its statement (PX5's second step, which needs PX3's
   registered budgets), before any ring is resolved (C1); the proof's verification
   runs last. This is the block path's order (§8.3), applied to every
@@ -691,7 +695,10 @@ standard_fee(n, k) = min_fee(max_weight(n, k))                    (T8: the exact
   `best height + 1`: a premature one is refused (`PxWindow`, contextual, never
   penalized), every revalidation after a new block or a reorganization drops one
   whose window no longer contains the next height, and templates select only
-  transactions whose window contains their height.
+  transactions whose window contains their height. Admission (not revalidation)
+  also refuses one whose window ends within 3 blocks, `not_after ≠ 0 ∧ not_after <
+  best height + 4` (`ExpiringSoon`, policy, RTW1C-4); a transaction a reorganization
+  returns is readmitted without that check.
 - On reorg, disconnected transactions return to the mempool if still valid.
 - A pooled transaction expires 2 160 blocks after the height it was admitted for, and
   the node then refuses it again for 30 blocks (`Expired`); blocks.md §7.
@@ -747,6 +754,7 @@ Security relies on the following. Nothing else is assumed.
   | PX throwaway delivery key (empty slot) | PX hedge secret | `px/throwaway/v1`: the slot's commitment, `LE64(slot)` | full |
   | PX witness randomness: `rcm` of each user output; every field of each dummy input (`sk`, `d`, `rho`, `rcm`, position, path); owner of each empty slot; unused `sk`, `d` of contract inputs | PX hedge secret (required), plus `hk_v1` with v1 inputs | one stream per value, label `px/witness/rcm/v1`, `px/witness/dummy/v1`, `px/witness/empty-owner/v1` or `px/witness/contract-key/v1`, then `LE64(slot)`; the witness statement: anchor, bridge-in, bridge-out, each input (`"dummy"`, or the spent record's contract ‖ value ‖ data ‖ `rho` ‖ `rcm` ‖ position), each output (`"empty"`, or owner ‖ contract ‖ value ‖ data), each function (contract ‖ blind ‖ approve and spec flags); then the rest of the transaction: network id, fee, the validity window, each ring, each payout, change address, each function run (program id ‖ private input). `build_px` re-derives these before running the kernel (`blacksilk_px::wallet::hedge_witness`) | full, except contract-output `rcm` and function blinds (next row) |
   | Contract-output `rcm` and function blinds of the wallet's vault flows (W28-4) | PX hedge secret `hk_px` | one stream per value, `blacksilk_px::wallet::hedged_digest`, label `px/witness/contract-rcm/v1` or `px/witness/fn-blind/v1`: for a lock, `px/vault/lock`, the contract, `LE64(amount)`, the record data (the terms), each spent input (dummy flag ‖ `rho` ‖ `rcm` ‖ position); for a claim or refund, the selector, the vault record's `rho` ‖ `rcm`, the recipient's owner tag and the window | full |
+  | Vault record `rcm` of a lock with a timeout (RTW1C-3) | PX hedge secret `hk_px` | deterministic, no RNG: `H32("px/wallet/vault-rcm/v1", hk_px ‖ u8 network ‖ contract ‖ rho_vault)` as eight 30-bit limbs (`rho_vault` is unique on chain), so a restored wallet rebuilds the record (px.md §13.4) | deterministic (not RNG-dependent) |
   | Membership (bLSAG) nonce | `x` | `"membership"`, `m`, `B`, `P[π]` | **not full** (R2-C5) |
 
   The hedge secrets are derived hedge keys, not the spend secrets themselves (dossier 37

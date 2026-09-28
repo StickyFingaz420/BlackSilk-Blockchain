@@ -1,4 +1,4 @@
-//! The consensus module profile (docs/contracts.md §9.1), checked at deploy.
+//! The consensus module profile (docs/research/wasm-contracts.md §9.1), checked at deploy.
 //!
 //! Two passes, both on `wasmparser-nostd` 0.100.2 (the parser wasmi 0.38 uses):
 //! 1. full validation with a restricted feature set: no floats, SIMD, threads,
@@ -8,8 +8,14 @@
 //!    signatures, one bounded memory, at most one bounded funcref table,
 //!    required exports, no start function, no passive segments, size limits.
 //!
-//! The accept/reject decision is therefore defined by this file and its tests,
-//! not by whatever an engine version happens to accept.
+//! The intent is that this file and its tests define the accept/reject
+//! decision. As built they do not fully: `Executor::check_module` also compiles
+//! the module, and wasmi 0.38's `EnforcedLimits::strict()` rejects some modules
+//! this profile accepts (more than 1,000 globals, more than 32 params or
+//! results, segment counts, the average function-body size rule), so
+//! acceptance is "profile and wasmi 0.38 compiles" (dossier 29 W-3). Stating
+//! every strict limit here is a precondition for any revival of this frozen
+//! crate (README.md).
 
 use std::collections::HashMap;
 use wasmparser::{

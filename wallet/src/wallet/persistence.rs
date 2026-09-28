@@ -1,8 +1,8 @@
 //! The wallet file format: serialization, loading, window repair and autosave.
 
 use super::{
-    network_name, parse_network, AutoSave, PendingTx, RingMember, StaleTx, StoredOutput, Wallet,
-    WalletError, GAP_LIMIT, MAX_INDEX_AHEAD,
+    network_name, parse_network, AutoSave, PendingTx, RingMember, StaleTx, StoredOutput,
+    StoredTerms, Wallet, WalletError, GAP_LIMIT, MAX_INDEX_AHEAD,
 };
 use crate::index::OutputIndex;
 use crate::px::{PxStore, PX_GAP_LIMIT, PX_MAX_INDEX_AHEAD};
@@ -79,6 +79,10 @@ struct Persisted {
     /// files written before 2026-09-27).
     #[serde(default)]
     stale_txs: Vec<StaleTx>,
+    /// Terms of the vault records locked with a timeout, by commitment
+    /// (absent in files written before RTW1C-3).
+    #[serde(default)]
+    vault_terms: BTreeMap<String, StoredTerms>,
 }
 
 pub(super) fn h32(s: &str) -> Result<[u8; 32], WalletError> {
@@ -122,6 +126,7 @@ impl Wallet {
             pending_txs: self.pending_txs.clone(),
             rings: self.rings.clone(),
             stale_txs: self.stale_txs.clone(),
+            vault_terms: self.vault_terms.clone(),
         };
         serde_json::to_vec(&p).expect("serializable")
     }
@@ -203,6 +208,7 @@ impl Wallet {
         w.pending_txs = p.pending_txs;
         w.rings = p.rings;
         w.stale_txs = p.stale_txs;
+        w.vault_terms = p.vault_terms;
         // Files written before RTW1-4 hold one record per key image, all
         // credited: a no-op for them.
         w.elect_credited();
@@ -211,6 +217,9 @@ impl Wallet {
         // Derived vault secrets of held records the file does not have yet
         // (a restored wallet that found its own locks, docs/px.md §13.4).
         w.recover_vault_secrets();
+        // And the openings and terms of its vault locks with a timeout,
+        // delivered to someone else (RTW1C-3); a no-op once they are stored.
+        w.recover_vault_locks();
         Ok(w)
     }
 

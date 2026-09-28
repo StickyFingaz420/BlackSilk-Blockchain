@@ -12,10 +12,16 @@ Status: **v0.3; statuses updated 2026-09-27.**
 - The zkVM is specified in [`zkvm.md`](zkvm.md).
 - **Consensus:** PX transactions (kind 2) and private-contract deploys (kind 3) are
   consensus rules from genesis on every network ([`px.md`](px.md) §11).
-- **Testnet:** the v2 identity is approved and fixed in code. The seven-device trial is
-  **not** authorized until the owner approves the readiness report after the hardening
-  round ([`reviews/completion-readiness-2026-09-26.md`](reviews/completion-readiness-2026-09-26.md)
-  §6). Gates: [`testnet-launch-checklist.md`](testnet-launch-checklist.md).
+- **Project and testnet status** (identity, gates, open items) is kept only in
+  [`STATUS.md`](STATUS.md).
+- **Wasm contracts are not part of this architecture any more.** PX is the only
+  consensus contract platform (ADR-28-1, owner decision D22); private contracts are PX
+  functions ([`contracts.md`](contracts.md), "Private contracts on PX"). The Wasm
+  confidential-contract design this document was first built around is frozen research
+  ([`research/wasm-contracts.md`](research/wasm-contracts.md)); the `contracts/` crate
+  is outside the build. Every mention below of "v1 contracts", the "v1 Wasm VM",
+  proof facts or deploy v2 (R6, §1, §3 step 3, §5.1, §8, §14 PX-2, §17) is that
+  superseded design, and references of the form "wasm-contracts.md §N" point to it.
 - Much of this document is the original design. Sections marked **design, not
   implemented** describe no code; where the implementation differs, the "as
   implemented" notes and px.md are authoritative.
@@ -30,14 +36,15 @@ marked *target* are requirements to be measured, not claims.
 
 It builds on:
 - [`transactions.md`](transactions.md): the payment layer;
-- [`contracts.md`](contracts.md): v1 confidential contracts;
+- [`research/wasm-contracts.md`](research/wasm-contracts.md): the superseded v1 Wasm
+  confidential-contract design (frozen research, not consensus);
 - [`reviews/contracts-crypto-review.md`](reviews/contracts-crypto-review.md).
 
 ---
 
 ## 1. Problem and goals
 
-**What v1 cannot do.** v1 confidential contracts (contracts.md) hide *who* acts and
+**What v1 cannot do.** v1 confidential contracts (the superseded Wasm design, research/wasm-contracts.md) hide *who* acts and
 *how much* moves, but their logic and state are public. A contract can reason about
 hidden amounts only through predicates the caller proves: ranges, equalities, reveals.
 It cannot, for example:
@@ -224,7 +231,13 @@ rho of output j  = Hk("px/rho", nf_0 ‖ j)                             nf_0: fi
 
 ### 4.5 Commitment tree and roots
 
-- An append-only binary Merkle tree of depth 32 with `Hk("px/node", l ‖ r)`.
+- An append-only binary Merkle tree of depth 32. As implemented, a node is the
+  one-permutation compression `node(l, r) = P(l ‖ r)[0..8]` (Plonky3's
+  `TruncatedPermutation`, no feed-forward; px.md §2), not a keyed `Hk` call. `node()`
+  alone is **not** collision resistant (an invertible public permutation, R2-C6); the
+  tree's extractability rests on §9.3's ePrint 2026/089 argument with its adaptation
+  ("argued, not proven"). Never reuse `node()` in a tree with free leaves or variable
+  depth (`px-core/src/hash.rs`).
   Commitments are appended in block order.
 - Consensus keeps the roots of the last `ROOT_WINDOW = 100` blocks. A transaction
   proves membership against one of them (its *anchor*), so a proof survives while
@@ -274,7 +287,7 @@ The sketch below is kept as the design record.
 
 ```
 Prefix
-  v1 part          as a call (contracts.md §5.2): ring inputs, outputs, fee, optional
+  v1 part          as a call (research/wasm-contracts.md §5.2): ring inputs, outputs, fee, optional
                    public call; kernel over the v1 terms and ±bridge (§5.3)
   px_version       varint (selects the verifier, §9.5)
   anchor           digest               a recent tree root
@@ -294,7 +307,7 @@ Prunable
   `h_tx = H32("px/tx-binding", everything in the prefix except the proof)`.
 - The proof commits to `h_tx` in its transcript, so it is valid for exactly this
   transaction.
-- The v1 kernel signature (contracts.md §6.2) signs a message that covers
+- The v1 kernel signature (research/wasm-contracts.md §6.2) signs a message that covers
   `H32(proof)`.
 - A third party can therefore neither move the proof nor alter any field.
 
@@ -428,7 +441,9 @@ The transcript `(inputs digest, approved, created, public outputs)` is hashed in
 
 ## 8. Integration with the contract VM
 
-**Status: design only, not implemented.**
+**Status: superseded design, not implemented, and not planned** (ADR-28-1: PX is the
+only consensus contract platform; the Wasm VM is frozen research,
+research/wasm-contracts.md).
 - Proof facts (§8.1), their Wasm host interface and the combined atomicity (§8.2) do
   not exist in the code.
 - The deploy that was implemented is px.md §11.2: kind 3, program binaries on chain.
@@ -436,7 +451,7 @@ The transcript `(inputs digest, approved, created, public outputs)` is hashed in
 
 ### 8.1 Proof facts (v1 claim kinds 128–255)
 
-- contracts.md §8 reserves claim kinds 128–255 for proof systems. Kind `128` is
+- research/wasm-contracts.md §8 reserves claim kinds 128–255 for proof systems. Kind `128` is
   **ProofFact**: `(verifier_id, contract, program_id, public_outputs)`. It is valid
   only if the transaction's proof verified with that function in its `functions[]`.
 - The v1 Wasm host exposes proof facts through the existing `claim_count` and `claim`
@@ -452,7 +467,7 @@ A PX transaction with a public part is atomic. The order of checks is:
 3. Wasm execution with the facts;
 4. state commit.
 
-Any failure invalidates the whole transaction (contracts.md §9.2). Private and public
+Any failure invalidates the whole transaction (research/wasm-contracts.md §9.2). Private and public
 state of one contract therefore change together or not at all.
 
 ### 8.3 Contract deploy v2
@@ -469,7 +484,7 @@ A deploy transaction version 2 adds `programs[]: (program_id, verifier_id)`, up 
 - **Value** moves between v1 and PX through the bridge (§5.3).
 - **Contract data** does not migrate automatically. A contract that wants private
   state deploys a v2 version and migrates through its own logic, as for any v1
-  upgrade (contracts.md §4.1).
+  upgrade (research/wasm-contracts.md §4.1).
 
 ---
 
@@ -514,8 +529,8 @@ owner): a STARK on Plonky3 0.7.**
   - proofs of 130–230 KB at the chosen parameters (§9.3);
   - verification in 11–64 ms;
   - proving from 0.1 s for small circuits to minutes for 2^20-row traces.
-  - These were single-table benchmark circuits at BS-ZK-1. The complete zkVM at
-    BS-ZK-2 is much larger; see §11 for its measured costs.
+  - These were single-table benchmark circuits at BS-ZK-1. The complete zkVM (measured at
+    the earlier set BS-ZK-2) is much larger; see §11 for its measured costs.
 - **Rejected, with reasons:**
 
   | Candidate | Reason |
@@ -603,7 +618,7 @@ owner): a STARK on Plonky3 0.7.**
   Merkle leaf, and a separate FRI mask polynomial per table that spans the extension.
   - **Why 8 codewords (decision F24-1):** Plonky3 0.8 (PR #2100) requires at least
     the extension degree per committed matrix, in prover and verifier, "to mask
-    extension-field batching". BS-ZK-2 used 4 on the internal argument that the mask
+    extension-field batching". The earlier set BS-ZK-2 used 4 on the internal argument that the mask
     polynomial already spans the extension (internal-review-log.md, round 3). No
     written proof supports either position, so the upstream rule is adopted at the v3
     reset (docs/reviews/v3-consensus-changes.md, "BS-ZK-3"). The name BS-ZK-3 had
@@ -761,7 +776,7 @@ and R5 (pure Rust) together (§15).
 The targets below were set before PX-0. The PX-0 measurements are in
 `docs/evidence/px0-2026-09-23/RESULTS.md`.
 
-**Measured on the complete system (BS-ZK-2 with terminal blinding and minimum height
+**Measured on the complete system (the earlier set BS-ZK-2 with terminal blinding and minimum height
 2^8; `px/examples/proof_bench.rs`, 2 × 5 proofs of each kind, idle, one development
 machine; AUDIT.md R13): the targets are missed by a wide margin.** BS-ZK-3 (8 random
 codewords) has not been re-measured on PX proofs yet; on the small toy proofs of
@@ -785,9 +800,10 @@ are:
 - per-block aggregation (PX-4).
 
 Verification caching is done (periodic columns, the block-level cache). The chain
-carries PX under a separate 8 MiB block budget (px.md §11.5), 3 PX transactions
-per block. The v2 identity for a testnet trial is approved and fixed in code; the
-trial itself awaits the owner's approval (Status above). A production network is out
+carries PX under a separate 8 MiB block budget (px.md §11.5): at the measured sizes
+3 transfers or vault calls per block, fewer for wider shapes (an estimated 2 with two
+functions, and 1 at the 4 MiB `MAX_PROOF_BYTES` cap; the widest shape is not yet
+measured). Testnet status: [`STATUS.md`](STATUS.md). A production network is out
 of scope until proof size is solved (aggregation-study.md).
 
 | Item | Target | Why |
@@ -853,8 +869,12 @@ secure or perfectly zero-knowledge; it is internal engineering work, not an audi
      zk-coverage.md §3).
    - **Soundness** counts 16 bits of proof-of-work grinding, which are computational
      (an adversary's Poseidon2 budget), on top of 89.7 statistical bits.
-2. **`Hk`:** collision resistance, preimage resistance, and PRF security when keyed
-   (nullifiers). This is the key PX assumption.
+2. **`Hk`** (the sponge): collision resistance, preimage resistance, and PRF security
+   when keyed (nullifiers), assuming the Poseidon2 permutation behaves ideally. This is
+   the key PX assumption. It does **not** extend to the tree-node compression
+   `node(l, r)`, which alone has trivial collisions; the commitment tree relies instead
+   on the extractability argument of §9.3 (ePrint 2026/089 Theorem 3, adaptation
+   argued, not proven) and on leaves always being sponge outputs at fixed depth 32.
 3. **Encryption:** IND-CCA security of the hybrid KEM (secure if either ECDH/DDH or
    ML-KEM holds) and of ChaCha20-Poly1305.
 4. **The v1 side** (bridge and fees): transactions.md §9, plus the kernel analysis in
@@ -985,7 +1005,7 @@ The criteria below are the original gates, kept for the record.
 | Decision | Criteria (all must hold) | Fallback |
 |---|---|---|
 | DR-2 proof family | P1–P6; §11 size and verify targets within 2× | Halo2-IPA; R4 dropped and documented |
-| DR-3 zkVM (own vs adopted) | Hiding verified; verifier specifiable in ≤ ~5 kLOC; audited or auditable; pinned | Own minimal zkVM on established components (audit status to be verified) |
+| DR-3 zkVM (own vs adopted) | Hiding verified; verifier specifiable in ≤ ~5 kLOC; reviewable; pinned | Own minimal zkVM on established components (audit status to be verified) |
 | DR-4 `Hk` | No known attack within the security margin; parameters from the designers | Rescue-Prime Optimized |
 | DR-5 bridge | Default: public amounts with containment | Confidential bridge only after ≥ 2 years of PX operation and audits |
 | DR-6 client proving | 2×2 proving ≤ 15 s on the reference laptop | Smaller circuits or a relaxed target; never delegated proving |
@@ -1035,6 +1055,6 @@ Each decision is recorded in this document, with the measurements as evidence in
 - kernel/user separation for all value invariants;
 - hybrid post-quantum record delivery with Janus-style commitment checks.
 
-As in contracts.md §3, "new" is our belief; no one outside the project has checked the
+As in research/wasm-contracts.md §3, "new" is our belief; no one outside the project has checked the
 prior art. Neptune Cash (above) already combines STARK privacy, post-quantum
 assumptions and proof of work, so none of these points is claimed as a first.
