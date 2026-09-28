@@ -14,7 +14,14 @@ blacksilk-crypto = { path = "../crypto" }
 blacksilk-tx = { path = "../tx" }
 blacksilk-chain = { path = "../chain" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
-aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+# Session AEAD. =0.10.3 is the first release with the GHSA-423w-p2w9-r7vq fix.
+# Its `zeroize` feature wipes only a temporary copy of the GHASH key, so `aes`
+# and `polyval` are named here for their `zeroize` features alone (feature
+# unification): the AES round keys and the GHASH key state are wiped on drop.
+# Residual: polyval's aarch64 PMULL backend has no wipe (dossier 44 P3.7).
+aes-gcm = { version = "=0.10.3", default-features = false, features = ["aes", "alloc", "zeroize"] }
+aes = { version = "=0.8.4", features = ["zeroize"] }
+polyval = { version = "=0.6.2", default-features = false, features = ["zeroize"] }
 rand_core = { version = "0.6", default-features = false }
 rand_chacha = { version = "0.3", default-features = false }
 getrandom = "0.2"
