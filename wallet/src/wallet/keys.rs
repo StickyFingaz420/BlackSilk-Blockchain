@@ -84,6 +84,8 @@ impl Wallet {
             headers: std::collections::VecDeque::new(),
             checked_through: None,
             key_ids: BTreeMap::new(),
+            tip_time: None,
+            allow_stale_tip: false,
         };
         w.rebuild_table();
         w

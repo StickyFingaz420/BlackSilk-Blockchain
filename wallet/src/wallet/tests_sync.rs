@@ -345,14 +345,173 @@ fn a_restore_refuses_a_header_with_bad_proof_of_work() {
         assert!(e.to_string().contains("proof of work"), "{bad}: {e}");
         assert_eq!(w.synced_height(), bad - 1);
     }
-    // Sampling: with the default rate, the tip is always checked, and far
-    // fewer than all headers are hashed.
+    // With the default rate, the last `DENSE_POW_TAIL` headers are all
+    // hashed (RTW3-5), and far fewer than all of those below them.
     let pow = Arc::new(BadPow::default());
-    let long = fast_chain(9, 300);
+    let long = fast_chain(9, 1_000);
     let mut w = restored(Some(pow.clone()), 1);
     w.sync(&long).unwrap();
     let calls = pow.calls.load(std::sync::atomic::Ordering::Relaxed);
-    assert!((2..120).contains(&calls), "{calls} hashes for 300 headers");
+    let tail = super::DENSE_POW_TAIL;
+    assert!(
+        (tail..tail + 60).contains(&calls),
+        "{calls} hashes for 1 000 headers"
+    );
+}
+
+/// RTW3-5 (demonstrated by the red team on 403e924: 25 of 30 restores
+/// accepted it): a forgery of block `h` forces the node to relink every
+/// block after it, so a forged region is a suffix of its chain, and the
+/// node chooses how short. Here the 4 headers below the tip carry no proof
+/// of work. The last `DENSE_POW_TAIL` headers are all hashed: every restore
+/// refuses, whether it scans them or reads them from the header feed.
+#[test]
+fn a_short_forged_suffix_is_refused() {
+    let chain = fast_chain(21, 400);
+    let pow = Arc::new(BadPow::default());
+    for h in 396..400u64 {
+        assert!(chain.blocks[h as usize].header.difficulty > 1);
+        pow.bad
+            .lock()
+            .unwrap()
+            .push(chain.blocks[h as usize].header.to_bytes());
+    }
+    for restore in [1, 200, 398, 400] {
+        for _ in 0..5 {
+            let mut w = restored(Some(pow.clone()), restore);
+            let e = w.sync(&chain).unwrap_err().to_string();
+            assert!(e.contains("proof of work"), "{restore}: {e}");
+            // No block of the forged suffix was scanned.
+            assert!(w.synced_height() < 396.max(restore), "{restore}");
+        }
+    }
+}
+
+/// RTW3-15: an imported record already on chain, in a block the wallet
+/// scanned, is placed from the commitments its tree keeps: no commitment
+/// list is downloaded for it (such a download told the node that the wallet
+/// holds a record whose position it does not know). Its witness verifies at
+/// the wallet's anchor. A record not in those blocks stays looked for, with
+/// a warning.
+#[test]
+fn an_imported_record_is_placed_without_a_download() {
+    use crate::px::RecordSource;
+    use blacksilk_px_core::record::Record;
+    let record = Record {
+        owner: blacksilk_px_core::ZERO_DIGEST,
+        contract: [4, 0, 0, 0, 0, 0, 0, 0],
+        asset: blacksilk_px_core::ZERO_DIGEST,
+        value: 5,
+        data: [0; 8],
+        rho: [1, 0, 0, 0, 0, 0, 0, 0],
+        rcm: [2, 0, 0, 0, 0, 0, 0, 0],
+    };
+    let cm = record.commit(&mut blacksilk_px::perm::HostPerm::new());
+    let mut chain = MockChain::new(23);
+    let to = wallet().primary();
+    for h in 1..=40u64 {
+        let txs = match h {
+            12 => {
+                let mut t = chain.px_tx();
+                t.commitments[1] = cm;
+                vec![t]
+            }
+            20 => vec![chain.px_tx()],
+            _ => vec![],
+        };
+        chain.mine_with(&to, txs);
+    }
+    let mut w = wallet();
+    w.sync(&chain).unwrap();
+    w.px.add_contract_record(&record, &cm, RecordSource::Imported, None);
+    w.px.contract_records[0].lookup = true;
+    let unknown = Record {
+        value: 6,
+        ..record
+    };
+    let unknown_cm = unknown.commit(&mut blacksilk_px::perm::HostPerm::new());
+    w.px.add_contract_record(&unknown, &unknown_cm, RecordSource::Imported, None);
+    w.px.contract_records[1].lookup = true;
+    chain.commitment_requests.borrow_mut().clear();
+    w.sync(&chain).unwrap();
+    assert!(chain.commitment_requests.borrow().is_empty(), "no download");
+    let r = &w.px.contract_records[0];
+    assert_eq!((r.position, r.height, r.lookup), (Some(1), Some(12), false));
+    let (anchor, root) = w.px.anchor_root(40).unwrap();
+    assert_eq!(root, chain.roots[anchor as usize]);
+    w.px.path(1, anchor, &root).unwrap();
+    assert!(w.px.contract_records[1].lookup, "still looked for");
+    assert!(w
+        .take_warnings()
+        .iter()
+        .any(|m| m.contains("imported record")));
+}
+
+/// A chain of `n` blocks whose tip is `age` seconds old by the local clock
+/// (spacing chosen to end there; difficulty 1).
+fn chain_ending(seed: u64, n: u64, age: u64) -> MockChain {
+    let mut chain = MockChain::new(seed);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let genesis = chain.params.genesis.timestamp;
+    chain.spacing = (now - age - genesis) / n;
+    let to = wallet().primary();
+    for _ in 0..n {
+        chain.mine(&to, 0);
+    }
+    chain
+}
+
+/// RTW3-6 (demonstrated by the red team on 403e924: a restore accepted a
+/// tip 1 048 days old without a word): a node that withholds its newest
+/// blocks shows a stale tip. The wallet reports its age, warns past
+/// `STALE_TIP_WARN_BLOCKS` target times plus the future time limit, and
+/// refuses to build a transaction past `STALE_TIP_REFUSE_BLOCKS` of them,
+/// unless told the network has really stalled.
+#[test]
+fn a_withheld_tip_is_reported_and_blocks_transactions() {
+    let (warn, refuse) = super::stale_tip_limits(&ChainParams::regtest());
+    for (age, warned, refused) in [
+        (0, false, false),
+        (warn + 60, true, false),
+        (refuse + 60, true, true),
+    ] {
+        let chain = chain_ending(22, 40, age);
+        let mut w = restored(None, 1);
+        assert_eq!(w.sync(&chain).unwrap(), 40, "{age}");
+        let (h, seen) = w.tip_age().unwrap();
+        assert_eq!(h, 40);
+        assert!(seen >= age && seen < age + 60, "{age}: {seen}");
+        let warnings = w.take_warnings();
+        assert_eq!(
+            warnings
+                .iter()
+                .any(|m| m.contains("old by this computer's clock")),
+            warned,
+            "{age}: {warnings:?}"
+        );
+        let r = w.check_fresh_tip();
+        assert_eq!(
+            matches!(r, Err(WalletError::StaleTip { height: 40, .. })),
+            refused,
+            "{age}: {r:?}"
+        );
+        // And so does every transaction path, before anything is built.
+        let to = wallet().primary();
+        let rules = blacksilk_tx::params::TxRules::at_height(&ChainParams::regtest(), 41);
+        let mut rng =
+            <rand_chacha::ChaCha20Rng as rand_chacha::rand_core::SeedableRng>::seed_from_u64(1);
+        let e = w.transfer(&chain, &to, 1, &rules, &mut rng).unwrap_err();
+        assert_eq!(
+            matches!(e, WalletError::StaleTip { .. }),
+            refused,
+            "{age}: {e}"
+        );
+        w.set_allow_stale_tip(true);
+        assert!(w.check_fresh_tip().is_ok());
+    }
 }
 
 /// W5, W3-39b: a restore from a height above the genesis checks the header

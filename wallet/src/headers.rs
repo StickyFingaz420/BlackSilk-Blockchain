@@ -12,11 +12,17 @@
 //!   ancestors, recomputed by the wallet;
 //! - its timestamp is after the median time past and within the future
 //!   time limit of the local clock;
-//! - its RandomX hash (light mode) meets its difficulty, for the last header
-//!   and for a random sample of the others, drawn from the OS RNG as the
-//!   headers arrive ([`HEADER_SAMPLES`] expected), so the node cannot know
-//!   which ones are checked. A node that forged a fraction `f` of `n`
-//!   headers is caught with probability about `1 − (1 − f)^HEADER_SAMPLES`.
+//! - its RandomX hash (light mode) meets its difficulty: for every one of
+//!   the node's last `DENSE_POW_TAIL` (720) headers and the first scanned
+//!   one (the caller forces them, RTW3-5), and for a random sample of the
+//!   others, drawn from the OS RNG as the headers arrive ([`HEADER_SAMPLES`]
+//!   expected), so the node cannot know which ones are checked. A forged
+//!   header forces the node to forge every header after it, so a forgery is
+//!   a suffix of its chain: one within the last 720 headers is always
+//!   caught, and a deeper one, covering a fraction `f` of the sampled
+//!   headers, with probability about `1 − (1 − f)^HEADER_SAMPLES` besides.
+//!   (Uniform sampling alone let a 4-header forged suffix pass most
+//!   restores: RTW3-5.)
 //!
 //! **Anchored at the genesis.** Every check starts at the genesis
 //! ([`HeaderCheck::from_genesis`]): the wallet reads the headers below the
@@ -43,8 +49,8 @@ use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use std::collections::{HashMap, VecDeque};
 
-/// Headers whose proof of work is checked per sync, in expectation, besides
-/// the first scanned one and the last.
+/// Headers whose proof of work is checked per sync, in expectation, below
+/// the densely checked tail (module docs).
 pub const HEADER_SAMPLES: u64 = 16;
 
 /// Checks a run of headers from the genesis (module docs).

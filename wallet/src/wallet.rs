@@ -42,6 +42,9 @@ pub use rebroadcast::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+pub use sync::{
+    format_age, stale_tip_limits, DENSE_POW_TAIL, STALE_TIP_REFUSE_BLOCKS, STALE_TIP_WARN_BLOCKS,
+};
 
 /// Block ids kept for reorg detection.
 const KEPT_BLOCK_IDS: usize = 720;
@@ -146,6 +149,14 @@ pub enum WalletError {
         /// Whether the override was given (then `limit` is the hard ceiling).
         forced: bool,
     },
+    /// The node's tip (block `height`) is `age` seconds old by the local
+    /// clock, beyond `limit` (`sync::stale_tip_limits`, RTW3-6): no
+    /// transaction is built on it.
+    StaleTip {
+        height: u64,
+        age: u64,
+        limit: u64,
+    },
 }
 
 impl std::fmt::Display for WalletError {
@@ -191,6 +202,15 @@ impl std::fmt::Display for WalletError {
             WalletError::Serialization(e) => write!(f, "wallet data: {e}"),
             WalletError::Contract(e) => write!(f, "contract: {e}"),
             WalletError::Seed(e) => write!(f, "seed: {e}"),
+            WalletError::StaleTip { height, age, limit } => write!(
+                f,
+                "the node's tip (block {height}) is {} old by this computer's clock, more than \
+                 {}: the node may be withholding newer blocks, in which this wallet's funds may \
+                 already be spent. No transaction was built. Use another node, check the \
+                 clock, or, if the network has really stalled, pass --allow-stale-tip",
+                sync::format_age(*age),
+                sync::format_age(*limit)
+            ),
             WalletError::EpochChanged {
                 built_for,
                 needed,
@@ -414,6 +434,12 @@ pub struct Wallet {
     /// Ids of the last RandomX key blocks among the checked headers (the
     /// keys of the next ones).
     key_ids: BTreeMap<u64, Hash>,
+    /// The synced tip's height and timestamp, as of the last sync (memory
+    /// only; RTW3-6).
+    tip_time: Option<(u64, u64)>,
+    /// Build transactions on a stale tip anyway (`set_allow_stale_tip`;
+    /// memory only).
+    allow_stale_tip: bool,
 }
 
 /// The wallet file to save to before a submission (docs/reviews/wallet-review.md F1).
@@ -975,6 +1001,8 @@ mod tests {
         let mut w = wallet();
         w.sync(&node).unwrap();
         w.px.contracts = node.0.clone();
+        // The node's tip is the regtest genesis (2023): stale (RTW3-6).
+        w.set_allow_stale_tip(true);
         // Lock: the safe vault passes the check and stops at the funds (this
         // wallet has none); the others are refused as contracts.
         let lock = |w: &mut Wallet, c: &Digest, rng: &mut ChaCha20Rng| {

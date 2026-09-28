@@ -26,6 +26,46 @@ const _: () = assert!(rpc::HEADER_BYTES == HEADER_SIZE);
 /// the next headers are among the last two.
 const KEPT_KEY_IDS: usize = 3;
 
+/// The header check computes the proof of work of every header among the
+/// node's last this many (RTW3-5), besides the sample below them. A forged
+/// block forces the node to forge every header after it, so a forgery is
+/// always a suffix of the node's chain, and one within this depth is caught
+/// for sure; a deeper one covers at least this many headers of the sampled
+/// range too. 720 blocks is the wallet's reorganization window
+/// (`KEPT_BLOCK_IDS`).
+pub const DENSE_POW_TAIL: u64 = 720;
+const _: () = assert!(DENSE_POW_TAIL as usize == KEPT_BLOCK_IDS);
+
+/// A tip older than this many target block times plus the future time limit
+/// (against the local clock) is reported as stale (RTW3-6).
+pub const STALE_TIP_WARN_BLOCKS: u64 = 10;
+
+/// A tip older than this many target block times plus the future time limit
+/// makes the wallet refuse to build transactions (RTW3-6). With a steady
+/// hash rate the chance that the network finds no block for `k` target
+/// times is `e^-k`; the future time limit covers a tip stamped ahead.
+pub const STALE_TIP_REFUSE_BLOCKS: u64 = 60;
+
+/// A duration in seconds, for messages.
+pub fn format_age(secs: u64) -> String {
+    match secs {
+        s if s < 120 => format!("{s} s"),
+        s if s < 7_200 => format!("{} min", s / 60),
+        s if s < 172_800 => format!("{} h", s / 3_600),
+        s => format!("{} days", s / 86_400),
+    }
+}
+
+/// `(warn, refuse)` tip ages in seconds for `params` (RTW3-6).
+pub fn stale_tip_limits(params: &blacksilk_consensus::ChainParams) -> (u64, u64) {
+    let t = params.target_block_time;
+    let ftl = params.future_time_limit;
+    (
+        STALE_TIP_WARN_BLOCKS * t + ftl,
+        STALE_TIP_REFUSE_BLOCKS * t + ftl,
+    )
+}
+
 /// Where a header check starts (`Wallet::header_start`).
 enum HeaderStart {
     /// From the genesis: the headers of the blocks up to the wallet's are
@@ -311,6 +351,9 @@ impl Wallet {
             .unwrap_or_else(|| std::sync::Arc::new(RandomXPow::new()));
         let bad = |e: String| WalletError::BadNodeData(format!("header chain: {e}"));
         let synced = self.synced_height;
+        // Headers above this have their work computed, all of them (RTW3-5);
+        // the sample is spread over those below it.
+        let dense_from = info.height.saturating_sub(DENSE_POW_TAIL);
         let mut check = match self.header_start(&info) {
             None => None,
             Some(HeaderStart::Resume { start, seeds }) => Some(
@@ -319,7 +362,7 @@ impl Wallet {
                     pow.as_ref(),
                     &start,
                     &seeds,
-                    info.height - synced,
+                    dense_from.saturating_sub(synced),
                     self.header_samples,
                     unix_now(),
                 )
@@ -329,7 +372,7 @@ impl Wallet {
                 let mut c = HeaderCheck::from_genesis(
                     &params,
                     pow.as_ref(),
-                    info.height,
+                    dense_from,
                     self.header_samples,
                     unix_now(),
                 )
@@ -339,7 +382,7 @@ impl Wallet {
                 // kept, the rest is dropped.
                 if synced > 0 {
                     for_each_header(node, 1, synced, |h| {
-                        c.check(&h, false).map_err(bad)?;
+                        c.check(&h, h.height > dense_from).map_err(bad)?;
                         if want.contains(&h.height) {
                             backfill_ids.insert(h.height, c.last().1);
                         }
@@ -403,9 +446,10 @@ impl Wallet {
                     }
                 }
                 // Proof of work: checked when the header check runs (the
-                // first header and the tip always, others sampled).
+                // first header, the tip and the last `DENSE_POW_TAIL`
+                // always, others sampled).
                 if let Some(c) = check.as_mut() {
-                    let force = entry.height == first || entry.height == info.height;
+                    let force = entry.height == first || entry.height > dense_from;
                     c.check(&block.header, force)
                         .map_err(|e| WalletError::BadNodeData(format!("header chain: {e}")))?;
                 }
@@ -445,10 +489,100 @@ impl Wallet {
             self.restore_check = false;
         }
         let synced = self.synced_height;
+        self.note_tip_age(node)?;
         self.refresh_pending(node);
-        self.px.resolve_lookups(node)?;
+        for cm in self.px.resolve_lookups()? {
+            self.warnings.push(format!(
+                "imported record {cm} is not in the blocks this wallet keeps and not yet on \
+                 chain after them: it is placed when its block is scanned, or, if it is older, \
+                 at a rescan (restore the seed at a height below its block and import it again)"
+            ));
+        }
         self.px.retain_witnesses(synced, RING_RETENTION_BLOCKS);
         Ok(self.synced_height)
+    }
+
+    /// Records the age of the synced tip against the local clock, with a
+    /// warning when it is stale (RTW3-6): a node that withholds its newest
+    /// blocks hides the payments and spends in them.
+    fn note_tip_age(&mut self, node: &dyn NodeApi) -> Result<(), WalletError> {
+        let h = self.synced_height;
+        let nid = self.params.network_id;
+        let header = match self.headers.back() {
+            Some(t) if t.height == h => *t,
+            _ if h == 0 => self.params.genesis,
+            _ => {
+                let t = fetch_headers(node, h, h, nid)?[0];
+                if self.block_ids.get(&h).is_some_and(|id| *id != t.id(nid)) {
+                    return Err(WalletError::BadNodeData(
+                        "the node's header at the wallet's height is not the wallet's block".into(),
+                    ));
+                }
+                t
+            }
+        };
+        self.tip_time = Some((h, header.timestamp));
+        let age = unix_now().saturating_sub(header.timestamp);
+        let (warn, refuse) = stale_tip_limits(&self.params);
+        if age > warn {
+            self.warnings.push(format!(
+                "the node's tip (block {h}) is {} old by this computer's clock: the node may be \
+                 behind or withholding blocks (payments and spends in them are not shown), or \
+                 the clock is wrong. Transactions are refused while it is older than {} \
+                 (docs/blocks.md §10)",
+                format_age(age),
+                format_age(refuse)
+            ));
+        }
+        Ok(())
+    }
+
+    /// The synced tip's height and its age in seconds by the local clock, as
+    /// of the last sync.
+    pub fn tip_age(&self) -> Option<(u64, u64)> {
+        self.tip_time
+            .map(|(h, ts)| (h, unix_now().saturating_sub(ts)))
+    }
+
+    /// The chain parameters the wallet checks and builds with.
+    pub fn params(&self) -> &blacksilk_consensus::ChainParams {
+        &self.params
+    }
+
+    /// Lets transactions be built on a tip older than the refusal bound
+    /// (`stale_tip_limits`): for a network that really stalled, or tests on
+    /// chains with old timestamps. Not persisted.
+    pub fn set_allow_stale_tip(&mut self, allow: bool) {
+        self.allow_stale_tip = allow;
+    }
+
+    /// Refuses to build or send a transaction on a stale tip (RTW3-6): the
+    /// node may withhold newer blocks, in which the wallet's outputs may be
+    /// spent already (a new ring for them would intersect the old one) and
+    /// the anchor would lag the chain.
+    pub(super) fn check_fresh_tip(&self) -> Result<(), WalletError> {
+        if self.allow_stale_tip {
+            return Ok(());
+        }
+        let (_, refuse) = stale_tip_limits(&self.params);
+        match self.tip_age() {
+            Some((height, age)) if age > refuse => Err(WalletError::StaleTip {
+                height,
+                age,
+                limit: refuse,
+            }),
+            Some(_) => Ok(()),
+            None => Err(WalletError::Node(
+                "the wallet has not synced with the node yet".into(),
+            )),
+        }
+    }
+
+    /// `sync`, then `check_fresh_tip`: the start of every transaction.
+    pub(super) fn sync_to_send(&mut self, node: &dyn NodeApi) -> Result<u64, WalletError> {
+        let h = self.sync(node)?;
+        self.check_fresh_tip()?;
+        Ok(h)
     }
 
     /// Adds RandomX key-block ids from a header check, keeping the last
@@ -603,6 +737,8 @@ impl Wallet {
         }
         self.px
             .set_base(base, &lists.commitments, true, contracts)?;
+        // Imported records older than the scanned blocks (RTW3-15).
+        self.px.place_from_list(&lists.commitments)?;
         self.block_ids.insert(base, ids[&base]);
         Ok(())
     }

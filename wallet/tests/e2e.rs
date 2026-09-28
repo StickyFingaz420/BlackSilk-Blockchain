@@ -134,7 +134,16 @@ impl Net {
 }
 
 fn wallet(seed: u8) -> Wallet {
-    Wallet::from_seed(Network::Regtest, [seed; 32], 1)
+    stale_ok(Wallet::from_seed(Network::Regtest, [seed; 32], 1))
+}
+
+/// The test chains carry timestamps from the regtest genesis (2023) on, so
+/// their tip is always stale by the local clock (RTW3-6): transactions are
+/// allowed on it (`tests_sync::a_withheld_tip_is_reported_and_blocks_transactions`
+/// tests the refusal).
+fn stale_ok(mut w: Wallet) -> Wallet {
+    w.set_allow_stale_tip(true);
+    w
 }
 
 /// How `Flaky` answers a submission.
@@ -346,9 +355,10 @@ fn funds_move_between_wallets_over_rpc() {
     };
     save(&alice, &path, b"correct horse", fast).unwrap();
     assert!(load(&path, b"wrong").is_err());
-    let reloaded = load(&path, b"correct horse").unwrap();
+    let reloaded = stale_ok(load(&path, b"correct horse").unwrap());
     assert_eq!(reloaded.balance(), alice.balance());
-    let mut restored = Wallet::from_mnemonic(Network::Regtest, &alice.mnemonic(), 1).unwrap();
+    let mut restored =
+        stale_ok(Wallet::from_mnemonic(Network::Regtest, &alice.mnemonic(), 1).unwrap());
     restored.address(0, 3); // the subaddress must be within the scanned window
     restored.sync(&net.client).unwrap();
     assert_eq!(restored.balance(), alice.balance());
@@ -403,7 +413,7 @@ fn wallet_follows_a_reorganization() {
 #[test]
 fn wrong_network_is_refused() {
     let net = Net::start();
-    let mut w = Wallet::from_seed(Network::Testnet, [6; 32], 1);
+    let mut w = stale_ok(Wallet::from_seed(Network::Testnet, [6; 32], 1));
     assert!(matches!(
         w.sync(&net.client),
         Err(WalletError::WrongNetwork { .. })
@@ -638,7 +648,7 @@ fn an_uncertain_submission_keeps_the_inputs_reserved_across_a_restart() {
         p: 1,
     };
     save(&miner, &path, b"pw", kdf).unwrap();
-    let mut miner = load(&path, b"pw").unwrap();
+    let mut miner = stale_ok(load(&path, b"pw").unwrap());
     std::fs::remove_dir_all(&dir).ok();
     assert!(miner.has_pending());
     // It was in fact pooled: it confirms and both wallets see it.
@@ -743,7 +753,7 @@ fn private_funds_move_over_rpc() {
         p: 1,
     };
     save(&alice, &path, b"pw", kdf).unwrap();
-    let mut alice = load(&path, b"pw").unwrap();
+    let mut alice = stale_ok(load(&path, b"pw").unwrap());
     assert_eq!(alice.px_balance(), (pay, pay));
 
     // Alice withdraws to Bob's v1 address (clear payout).
@@ -847,7 +857,7 @@ fn a_vault_is_deployed_locked_delivered_shared_and_claimed_over_rpc() {
     // A wallet created after the deploy (scanning from a later height) still
     // knows the contract: the registration list is downloaded whole.
     let tip = net.client.info().unwrap().height;
-    let mut late = Wallet::from_seed(Network::Regtest, [24; 32], tip + 1);
+    let mut late = stale_ok(Wallet::from_seed(Network::Regtest, [24; 32], tip + 1));
     late.sync(&net.client).unwrap();
     assert!(late
         .px_contracts()
@@ -1068,7 +1078,7 @@ fn an_uncertain_vault_lock_keeps_the_record_opening() {
     // wallet. As if the process had been killed now: the file alone recovers it.
     let cm =
         blacksilk_wallet::px::digest_from_hex(&alice.px_contract_records()[0].commitment).unwrap();
-    let on_disk = load(&path, b"pw").unwrap();
+    let on_disk = stale_ok(load(&path, b"pw").unwrap());
     assert_eq!(*on_disk.px_vault_secret(&cm).unwrap(), secret);
     drop(on_disk);
     // The lock was in fact pooled: once mined, the wallet holds a confirmed
@@ -1163,7 +1173,7 @@ fn an_output_spent_again_reuses_its_ring() {
         p: 1,
     };
     save(&carol, &path, b"pw", kdf).unwrap();
-    let mut carol = load(&path, b"pw").unwrap();
+    let mut carol = stale_ok(load(&path, b"pw").unwrap());
     std::fs::remove_dir_all(&dir).ok();
     carol.clear_pending();
     let fourth = spend(&mut carol, &mut net, Submit::Record);
@@ -1223,7 +1233,7 @@ fn rings_are_built_without_asking_the_node_about_outputs() {
     assert_eq!(bob.balance().total, 3 * COIN, "the node accepted the rings");
 
     // After a save and load the index is still complete.
-    let mut miner = Wallet::from_json(&miner.to_json()).unwrap();
+    let mut miner = stale_ok(Wallet::from_json(&miner.to_json()).unwrap());
     let node = Flaky::new(&net.client, Submit::Forward);
     miner
         .transfer(&node, &bob.primary(), COIN, &net.rules, &mut net.rng)
@@ -1245,7 +1255,7 @@ fn a_late_restore_backfills_older_outputs_once() {
     miner.sync(&net.client).unwrap();
     let first = net.client.distribution(40).unwrap().cumulative[40];
     // Coinbases from block 41 on are this wallet's; it starts scanning there.
-    let mut late = Wallet::from_seed(Network::Regtest, [36; 32], 41);
+    let mut late = stale_ok(Wallet::from_seed(Network::Regtest, [36; 32], 41));
     net.mine_n(80, &late.primary());
     late.sync(&net.client).unwrap();
     let node = Flaky::new(&net.client, Submit::Forward);
@@ -1338,7 +1348,7 @@ fn the_wallet_is_saved_before_a_transaction_leaves_it() {
     );
     // As if the process had been killed now: only what is on disk remains.
     drop(miner);
-    let on_disk = load(&path, b"pw").unwrap();
+    let on_disk = stale_ok(load(&path, b"pw").unwrap());
     std::fs::remove_dir_all(&dir).ok();
     assert!(
         on_disk.has_pending(),
@@ -1433,7 +1443,8 @@ fn a_restored_wallet_follows_payments_beyond_its_first_window() {
         "both in one block"
     );
     let restored_early = {
-        let mut r = Wallet::from_mnemonic(Network::Regtest, &alice.mnemonic(), 1).unwrap();
+        let mut r =
+            stale_ok(Wallet::from_mnemonic(Network::Regtest, &alice.mnemonic(), 1).unwrap());
         r.sync(&net.client).unwrap();
         assert_eq!(r.balance().total, 3 * COIN, "45, then 90 in the same block");
         // Saved and loaded before the next payment: the window is kept.
@@ -1447,7 +1458,8 @@ fn a_restored_wallet_follows_payments_beyond_its_first_window() {
 
     alice.sync(&net.client).unwrap();
     assert_eq!(alice.balance().total, 6 * COIN);
-    let mut restored = Wallet::from_mnemonic(Network::Regtest, &alice.mnemonic(), 1).unwrap();
+    let mut restored =
+        stale_ok(Wallet::from_mnemonic(Network::Regtest, &alice.mnemonic(), 1).unwrap());
     restored.sync(&net.client).unwrap();
     assert_eq!(
         restored.balance().total,
@@ -1478,7 +1490,7 @@ fn out_of_range_address_indexes_are_refused() {
     ));
     // Nothing changed: the wallet still saves and loads at once.
     let t = std::time::Instant::now();
-    let _ = Wallet::from_json(&w.to_json()).unwrap();
+    let _ = stale_ok(Wallet::from_json(&w.to_json()).unwrap());
     assert!(t.elapsed() < std::time::Duration::from_secs(5));
 }
 
@@ -1617,7 +1629,7 @@ fn a_transfer_built_before_an_activation_is_not_rebroadcast_after_it() {
         p: 1,
     };
     save(&miner, &path, b"pw", fast).unwrap();
-    let mut miner = load(&path, b"pw").unwrap();
+    let mut miner = stale_ok(load(&path, b"pw").unwrap());
     miner.set_chain_params(upgrade_params()).unwrap();
     assert_eq!(miner.stale_transactions(), stale.as_slice());
 

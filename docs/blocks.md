@@ -757,8 +757,10 @@ anyone on the path:
 Ring members come from the wallet's own output index; `/outputs` is used once, to fill
 the missing range of that index in fixed pages, not per ring. The PX commitment tree is
 built from the scanned blocks; `/px/commitments` is fetched whole, once, for the part
-below the restore height, and once more to place an imported contract record (px.md
-§11.4). Below the restore height the wallet also fetches `/px/contracts` whole, and the
+below the restore height, and never after it: an imported contract record is placed
+from the commitments of the recent blocks the wallet keeps, or at a rescan (px.md
+§11.4; RTW3-15: a download made for an import told the node that the wallet holds a
+record whose position it does not know). Below the restore height the wallet also fetches `/px/contracts` whole, and the
 blocks both lists name (the block of the last commitment, every block with a deploy),
 one height each: the same requests for every wallet with that restore height. The
 header check reads `/headers` from height 1. None of this depends on what the wallet
@@ -889,10 +891,15 @@ and hashes the sampled headers in light mode):
 - each header's version, height and link; its difficulty recomputed with the LWMA
   rule over its own ancestors; its timestamp after the median time past and within the
   future time limit of the local clock;
-- the RandomX proof of work (light mode) of the first header and the tip, and of a
+- the RandomX proof of work (light mode) of every one of the node's last
+  `wallet::DENSE_POW_TAIL` (720) headers and of the first scanned one (RTW3-5), and of a
   random sample of the others (`headers::HEADER_SAMPLES` expected), drawn from the OS
   RNG as the headers arrive, so the node cannot tell which are checked. A header of
-  difficulty 1 is met by every hash and is not hashed.
+  difficulty 1 is met by every hash and is not hashed. A forged header forces the node
+  to forge every header after it, so a forgery is a suffix of its chain: within the last
+  720 headers it is always caught; a deeper one is caught by the sample with a
+  probability that grows with its length. (With uniform sampling alone, the red team's
+  4-header forged suffix passed 25 of 30 restores.)
 
 A header that fails is refused, with every block from it on. Every check starts at the
 genesis (W3-39b): the headers below the first block the wallet scans come from
@@ -905,12 +912,30 @@ that, and the next check starts from the genesis again. The check then proves th
 chain follows the difficulty rule from the genesis and that the sampled headers carry
 that work; it does not prove that the chain is the network's heaviest (a node that
 mines its own chain from the genesis under the rule passes), which only other nodes can
-show. Cost: [evidence/wallet-header-feed-2026-09-28](evidence/wallet-header-feed-2026-09-28/README.md)
+show. Cost: a restore hashes the whole dense tail in light mode, one header at a time,
+which dominates the check; figures in
+[evidence/wallet-header-feed-2026-09-28](evidence/wallet-header-feed-2026-09-28/README.md)
 (`wallet::tests_sync::header_feed_cost_for_3000_headers`, `--ignored`). Without
-the check a wallet trusts its node for proof of work. A node can always withhold
-blocks, or hide a spend behind a forged block from a wallet that does not check; a
-restored wallet that spent an output again after such a hiding would publish a second
-ring for one key image.
+the check a wallet trusts its node for proof of work.
+
+**Tip age** (RTW3-6). Every sync records the age of the synced tip by the local clock
+(`sync` and `balance` print it). Past `STALE_TIP_WARN_BLOCKS` = 10 target block times
+plus the future time limit the wallet warns; past `STALE_TIP_REFUSE_BLOCKS` = 60 of them
+plus the future time limit (`wallet::stale_tip_limits`; about 2 h on the testnet) it
+refuses to build any transaction, unless run with `--allow-stale-tip` for a network that
+has really stalled. With a steady hash rate the chance of no block for `k` target times
+is `e^-k`; a wrong local clock also trips it.
+
+**What this bounds (F39-10).** A node that hides a spend from a restored wallet (which
+would then spend the output again, and the two rings would intersect at the real
+input) must either forge blocks or withhold them. Forged blocks: within the last 720
+headers they fail the dense check; deeper forged suffixes pass only if the random
+sample misses them, and only below that tail. Withheld blocks: the tip then goes stale,
+and within at most 60 target times plus the future time limit the wallet refuses to
+transact; a node that withholds less than that can still hide a spend made in the
+withheld blocks. A node that mines a chain of its own from the genesis under the rule
+passes all of this. F39-10 is bounded by these checks, not closed; a wallet's own node
+remains the recommendation.
 
 Below the restore height the wallet checks the node's lists against the blocks they
 name, each bound to that header chain (px.md §11.4, §13.4): the block of the last

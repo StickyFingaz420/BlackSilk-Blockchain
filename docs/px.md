@@ -753,9 +753,13 @@ undo. Tests check that a reorganization restores the root and pool exactly.
     blocks from a checkpoint; deeper ones rescan. The wallet file stores the frontier,
     the window, the last 820 blocks' commitments, the checkpoints and the witnesses,
     not the chain's whole list.
-  - **An imported record** already on chain is placed with one bulk download of the
-    list, accepted only if its first entries give the wallet's own root; otherwise the
-    block it confirms in places it.
+  - **An imported record** already on chain is placed from the commitments of the
+    recent blocks the tree keeps (replayed from a checkpoint, and required to end at the
+    wallet's own frontier); one not on chain yet is placed by the block it confirms in;
+    one older than the kept blocks is placed from the backfill list of a rescan (the
+    wallet warns). No download is made for it (RTW3-15: the earlier bulk download after
+    an import told the node that the wallet holds a record whose position it does not
+    know). Tested by `an_imported_record_is_placed_without_a_download`.
   - Tested (`wallet/src/tree.rs`, `wallet/src/wallet/tests_sync.rs`): paths equal the
     reference tree's, the window equals the consensus state's on random chains, a
     rewind equals rebuilding, and a node that relabels, omits, alters or pads its list

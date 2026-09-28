@@ -38,8 +38,9 @@
 //!   (`blacksilk_px::share`).
 //!
 //! Received and created records are confirmed by the block their commitment
-//! appears in; an imported record already on chain by one bulk download of
-//! the commitment list, checked against the wallet's own root.
+//! appears in; an imported record already on chain from the commitments of
+//! the recent blocks the wallet's tree keeps, or from the backfill list of a
+//! rescan, never by a download made for it (RTW3-15).
 
 use crate::node::NodeApi;
 use crate::tree::{TreeError, WalletTree};
@@ -820,38 +821,52 @@ impl PxStore {
         Ok(list)
     }
 
-    /// Places the imported contract records not found yet (`lookup`): one
-    /// bulk download of the chain's commitment list, which must give the
-    /// wallet's own root (`WalletTree::witness_from_list`), so nothing of it
-    /// is trusted. A record not in it is found later by the block it
-    /// confirms in.
-    pub fn resolve_lookups(&mut self, node: &dyn NodeApi) -> Result<(), WalletError> {
+    /// Places the imported contract records not found yet (`lookup`) that
+    /// lie in a scanned block the tree still logs (`WalletTree::
+    /// witness_from_log`), asking the node nothing (RTW3-15: a download of
+    /// the commitment list after an import would tell the node that the
+    /// wallet holds a record whose position it does not know). A record in
+    /// an older block stays looked for: it is placed from the backfill list
+    /// of the next rescan (`place_from_list`); a record not yet on chain is
+    /// placed by the block it confirms in.
+    pub fn resolve_lookups(&mut self) -> Result<Vec<String>, WalletError> {
+        let mut unplaced = Vec::new();
+        let Some(tree) = self.tree.as_mut() else {
+            return Ok(unplaced);
+        };
+        for r in &mut self.contract_records {
+            if !r.lookup || r.position.is_some() {
+                r.lookup = false;
+                continue;
+            }
+            let cm = digest_from_hex(&r.commitment)?;
+            match tree.witness_from_log(&cm).map_err(tree_error)? {
+                Some((pos, height)) => {
+                    r.position = Some(pos);
+                    r.height.get_or_insert(height);
+                    r.lookup = false;
+                }
+                None => unplaced.push(r.commitment.clone()),
+            }
+        }
+        Ok(unplaced)
+    }
+
+    /// Places the imported records still looked for that are in `list`, the
+    /// chain's commitments up to the tree's height (the backfill of a
+    /// rescan), which must give the wallet's own root
+    /// (`WalletTree::witness_from_list`).
+    pub fn place_from_list(&mut self, list: &[(u64, Digest)]) -> Result<(), WalletError> {
         let wanted: Vec<usize> = (0..self.contract_records.len())
             .filter(|&i| {
                 self.contract_records[i].lookup && self.contract_records[i].position.is_none()
             })
             .collect();
         if wanted.is_empty() {
-            for r in &mut self.contract_records {
-                r.lookup = false;
-            }
             return Ok(());
         }
-        let size = self.tree_ref()?.size();
-        let mut list: Vec<Digest> = Vec::new();
-        let mut heights: Vec<u64> = Vec::new();
-        while (list.len() as u64) < size {
-            let from = list.len() as u64;
-            let resp = node.px_commitments(from).map_err(WalletError::Node)?;
-            if resp.from != from || resp.commitments.is_empty() {
-                return Err(WalletError::BadNodeData("commitment range".into()));
-            }
-            for (h, c) in resp.commitments {
-                list.push(digest_from_hex(&c)?);
-                heights.push(h);
-            }
-        }
-        list.truncate(size as usize);
+        let heights: Vec<u64> = list.iter().map(|e| e.0).collect();
+        let list: Vec<Digest> = list.iter().map(|e| e.1).collect();
         let found: Vec<(usize, u64)> = wanted
             .iter()
             .filter_map(|&i| {
@@ -860,27 +875,20 @@ impl PxStore {
                 Some((i, p as u64))
             })
             .collect();
-        let tree = self.tree.as_mut().expect("checked above");
+        let tree = self
+            .tree
+            .as_mut()
+            .ok_or_else(|| WalletError::Node("the wallet has not synced its PX tree yet".into()))?;
         let positions: Vec<u64> = found.iter().map(|&(_, p)| p).collect();
         tree.witness_from_list(&list, &positions)
             .map_err(tree_error)?;
         for (i, p) in found {
-            // The block height: the wallet's own where it scanned the block,
-            // else at most the node's (it only orders display and
-            // spendability, and every path is checked against the root).
-            let height = tree.height_of(p).unwrap_or_else(|| {
-                let below = if p < tree.base_size() {
-                    tree.base_height()
-                } else {
-                    tree.oldest_logged().map_or(tree.base_height(), |h| h - 1)
-                };
-                heights[p as usize].min(below)
-            });
+            // The block height: at most the list's (it only orders display
+            // and spendability, and every path is checked against the root).
+            let height = heights[p as usize].min(tree.base_height());
             let r = &mut self.contract_records[i];
             r.position = Some(p);
             r.height.get_or_insert(height);
-        }
-        for r in &mut self.contract_records {
             r.lookup = false;
         }
         Ok(())

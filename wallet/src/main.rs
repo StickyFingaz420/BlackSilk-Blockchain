@@ -46,6 +46,13 @@ struct Args {
     /// the first sync of a restored wallet.
     #[arg(long)]
     verify_headers: bool,
+    /// Build transactions even when the node's tip is older than the
+    /// refusal bound (60 target block times plus the future time limit by
+    /// this computer's clock; docs/blocks.md §10). Only for a network that
+    /// has really stalled: a node that withholds newer blocks can hide spends
+    /// of this wallet's funds.
+    #[arg(long)]
+    allow_stale_tip: bool,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -442,6 +449,25 @@ fn lock_wallet(path: &std::path::Path) -> Result<std::fs::File, String> {
     Ok(f)
 }
 
+/// The age of the node's tip by this computer's clock (RTW3-6), and whether
+/// transactions are refused on it.
+fn print_tip_age(w: &Wallet) {
+    if let Some((height, age)) = w.tip_age() {
+        let (warn, refuse) = blacksilk_wallet::wallet::stale_tip_limits(w.params());
+        let note = if age > refuse {
+            " (stale: transactions are refused)"
+        } else if age > warn {
+            " (stale)"
+        } else {
+            ""
+        };
+        println!(
+            "tip: block {height}, {} old{note}",
+            blacksilk_wallet::wallet::format_age(age)
+        );
+    }
+}
+
 fn run(args: Args) -> Result<(), String> {
     let client = Client::try_new(&args.node)
         .and_then(|c| c.with_cookie_option(args.rpc_cookie.as_deref()))
@@ -449,6 +475,7 @@ fn run(args: Args) -> Result<(), String> {
     let _lock = lock_wallet(&args.wallet)?;
     let kdf = KdfParams::default();
     let verify_headers = args.verify_headers;
+    let allow_stale_tip = args.allow_stale_tip;
     match args.cmd {
         Cmd::Create {
             network,
@@ -519,6 +546,7 @@ fn run(args: Args) -> Result<(), String> {
             // Save before any transaction leaves the wallet (review F1).
             w.set_autosave(&args.wallet, &pw, kdf);
             w.set_verify_headers(verify_headers);
+            w.set_allow_stale_tip(allow_stale_tip);
             let result = match cmd {
                 Cmd::Address {
                     account,
@@ -537,6 +565,7 @@ fn run(args: Args) -> Result<(), String> {
                     .sync(&client)
                     .map(|h| {
                         println!("synced to height {h}");
+                        print_tip_age(&w);
                         // Payments an upgrade invalidated before they were
                         // mined (their funds are released).
                         for t in w.stale_transactions() {
@@ -551,6 +580,7 @@ fn run(args: Args) -> Result<(), String> {
                 Cmd::Balance => w.sync(&client).map_err(|e| e.to_string()).map(|h| {
                     let b = w.balance();
                     println!("height {h}");
+                    print_tip_age(&w);
                     println!("balance:  {} BLK", format_amount(b.total));
                     println!("unlocked: {} BLK", format_amount(b.unlocked));
                 }),
