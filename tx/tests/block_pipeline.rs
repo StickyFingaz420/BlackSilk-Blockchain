@@ -28,13 +28,10 @@ use blacksilk_tx::state::MemoryChain;
 use blacksilk_tx::types::{Input, Transaction};
 use blacksilk_tx::validate::{
     validate_block_transactions_cached, validate_mempool_tx, validate_px,
-    validate_px_without_proof, BlockError, ChainView, OutputRecord, TxError,
+    validate_px_without_proof, BlockError, ChainView, OutputRecord, PxProgram, TxError,
 };
-use blacksilk_zkvm::air::trace::Budget;
-use blacksilk_zkvm::Program;
 use common::*;
 use std::cell::Cell;
-use std::sync::Arc;
 
 /// The chain as seen at the parent, with the PX side open (every anchor is
 /// recent, the pool is large) and every ring-member lookup counted.
@@ -69,7 +66,7 @@ impl ChainView for Counting<'_> {
     fn px_pool(&self) -> u128 {
         u64::MAX as u128
     }
-    fn px_function(&self, c: &Digest, id: &[u8; 32]) -> Option<(Arc<Program>, Budget)> {
+    fn px_function(&self, c: &Digest, id: &[u8; 32]) -> Option<PxProgram> {
         self.inner.px_function(c, id)
     }
     fn px_contract_exists(&self, c: &Digest) -> bool {
@@ -118,6 +115,7 @@ fn px_spend(net: &mut TestNet, real: &OwnedOutput, seed: u32, proof: Vec<u8>) ->
         fee: PX_STANDARD_FEE,
         bridge_in: real.amount - PX_STANDARD_FEE,
         bridge_out: 0,
+        window: Default::default(),
         anchor: [7; 8],
         nullifiers: [[seed; 8], [seed + 1_000_000; 8]],
         commitments: [[seed + 2; 8], [seed + 3; 8]],

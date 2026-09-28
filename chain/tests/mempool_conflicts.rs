@@ -776,6 +776,8 @@ fn copying_a_pooled_deploys_output_key_changes_nothing() {
             vec![Registration {
                 elf: blacksilk_px::vault::VAULT_ELF.to_vec(),
                 budget: blacksilk_px::vault::BUDGET,
+                abi: blacksilk_tx::px::ABI_VERSION,
+                out_words: 1,
             }],
             &rules,
             &mut w.rng,

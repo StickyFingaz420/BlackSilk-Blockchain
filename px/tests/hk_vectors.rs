@@ -23,7 +23,7 @@
 use blacksilk_px::perm::HostPerm;
 use blacksilk_px::state::State;
 use blacksilk_px::tree::{empty_roots, Frontier, Tree};
-use blacksilk_px::vault::{lock_of, LOCK_DOMAIN};
+use blacksilk_px::vault::{lock_of, refund_lock_of, Terms, LOCK_DOMAIN};
 use blacksilk_px_core::call::{Call, OutSpec};
 use blacksilk_px_core::hash::{domain, hash, node, Sponge};
 use blacksilk_px_core::kernel::TREE_DEPTH;
@@ -36,7 +36,7 @@ use std::collections::BTreeMap;
 const VECTORS: &str = include_str!("data/hk_vectors.txt");
 
 /// Number of vectors in the file; a changed count means the file changed.
-const COUNT: usize = 157;
+const COUNT: usize = 159;
 
 fn vectors() -> BTreeMap<&'static str, &'static str> {
     let mut map = BTreeMap::new();
@@ -254,7 +254,16 @@ fn records(c: &mut Checker) {
     };
     c.check("call.io_hash", &call.io_hash(&mut perm));
 
-    c.check("vault.lock_of", &lock_of(&digest(&seq(8, 31))));
+    // The vault (testnet v3, W28-4): both locks bind the contract id, and
+    // the record data commits to the terms.
+    let terms = Terms {
+        claim_lock: lock_of(&contract, &digest(&seq(8, 31))),
+        refund_lock: refund_lock_of(&contract, &digest(&seq(8, 32))),
+        timeout: 0x0001_0002_0003_0004,
+    };
+    c.check("vault.lock_of", &terms.claim_lock);
+    c.check("vault.refund_lock_of", &terms.refund_lock);
+    c.check("vault.terms", &terms.data(&contract));
     // The value limbs the script uses are the record's.
     assert_eq!(limbs16(value), blacksilk_px_core::record::limbs(value));
 }

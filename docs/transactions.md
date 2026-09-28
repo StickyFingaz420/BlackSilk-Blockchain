@@ -556,7 +556,7 @@ The rules are listed in evaluation order: cheap checks first, elliptic-curve wor
 | # | Rule |
 |---|---|
 | T1 | Strict decode (§4); `size ≤ MAX_TX_SIZE = 100 000` bytes for coinbase and transfer; no trailing bytes. |
-| T2 | `version = 1`; `kind ∈ {0, 1, 2, 3}`; a coinbase is only valid as the first tx of a block (B1). Kinds 2 (PX transaction) and 3 (private-contract deploy) are specified in [`px.md`](px.md) §11, with their own size caps (`MAX_PX_TX_SIZE` = 4 MiB proof cap + 256 KiB; `MAX_DEPLOY_TX_SIZE` = 1 MiB) and rules (PX1–PX5); they reuse T4–T11 and C1–C3 for their v1 inputs and outputs. |
+| T2 | `version = 1`; `kind ∈ {0, 1, 2, 3}`; a coinbase is only valid as the first tx of a block (B1). Kinds 2 (PX transaction) and 3 (private-contract deploy) are specified in [`px.md`](px.md) §11, with their own size caps (`MAX_PX_TX_SIZE` = 4 MiB proof cap + 256 KiB; `MAX_DEPLOY_TX_SIZE` = 1 MiB) and rules (PX1–PX6, PX6 being the validity window of testnet v3); they reuse T4–T11 and C1–C3 for their v1 inputs and outputs. |
 | T3 | Transfer: `1 ≤ n ≤ 64` inputs, `2 ≤ k ≤ 16` outputs. |
 | T4 | Key images decode, are not the identity, and are strictly increasing (§5.2). |
 | T5 | Each input has exactly 16 ring indices, strictly increasing, with no `u64` overflow. |
@@ -618,7 +618,7 @@ invalid block reports and how much work precedes it, never the verdict):
 | 3 | B5, B6, B8, B3 | hashing, sums |
 | 4 | T9 balances (every kind) | one multi-scalar sum per transaction |
 | 5 | PX proofs decoded strictly (PX5, first step), unless already verified by this node | a few ms per proof |
-| 6 | C2, PX1–PX4, contract ids, in block order; then each decoded PX proof's table shape against its statement (PX5, second step) | lookups |
+| 6 | C2, PX1–PX4, PX6 (the validity window, for every PX transaction, whether or not its proof was verified before), contract ids, in block order; then each decoded PX proof's table shape against its statement (PX5, second step) | lookups |
 | 7 | C1: every ring of the block resolved | lookups |
 | 8 | T10: one Bulletproofs+ batch over the block | below one CLSAG input per proof |
 | 9 | C3: every CLSAG | 2–4 ms per input |
@@ -669,7 +669,7 @@ standard_fee(n, k) = min_fee(max_weight(n, k))                    (T8: the exact
 - Transactions must pass T1–T11 and C1–C3 against `best height + 1`.
 - Order: every stateless rule (T1–T11, including the range proof T10, the PX
   structure rules and the strict decoding of the PX proof, PX5's first step) runs
-  before any contextual rule (C1–C3, PX1–PX4). Once PX1–PX4 pass, the PX proof's table
+  before any contextual rule (C1–C3, PX1–PX4, PX6). Once PX1–PX4 pass, the PX proof's table
   shape is checked against its statement (PX5's second step, which needs PX3's
   registered budgets), before any ring is resolved (C1); the proof's verification
   runs last. This is the block path's order (§8.3), applied to every
@@ -687,6 +687,11 @@ standard_fee(n, k) = min_fee(max_weight(n, k))                    (T8: the exact
   fail PX2 on every chain. The order and these variants decide only which error an
   invalid transaction gets, never whether a transaction or block is valid. The
   classification of every error is documented on `TxError::is_stateless`.
+- A PX transaction must be inside its validity window (PX6, px.md §11.3) at
+  `best height + 1`: a premature one is refused (`PxWindow`, contextual, never
+  penalized), every revalidation after a new block or a reorganization drops one
+  whose window no longer contains the next height, and templates select only
+  transactions whose window contains their height.
 - On reorg, disconnected transactions return to the mempool if still valid.
 - A pooled transaction expires 2 160 blocks after the height it was admitted for, and
   the node then refuses it again for 30 blocks (`Expired`); blocks.md §7.
@@ -737,10 +742,11 @@ Security relies on the following. Nothing else is assumed.
   | Schnorr nonce | `k` | `"schnorr"`, tag, `K`, `m` | full |
   | Transfer anchors, pseudo-output masks | hedge key `hk_v1` (from `k_s`, §2.1) | `transfer/v2`: network id, `H(key images)`, fee, each ring (members in global-index order: `LE64(index) ‖ O ‖ C`), each payment (address ‖ `LE64(amount)`), change address ‖ `LE64(change)`, caller payload (a deploy's salt and programs) | full |
   | Coinbase anchors | miner-supplied secret | `coinbase/v2`: `ctx(height)`, each payout (address ‖ `LE64(amount)`) | full, but see R2-C4 below |
-  | PX payout and change anchors, pseudo-output masks | PX hedge secret (required), plus `hk_v1` with v1 inputs | `px/v2`: network id, `ctx` (nullifiers and key images), fee, bridge-in, bridge-out, both output commitments, each ring, each payout, change address ‖ `LE64(change)` | full |
+  | PX payout and change anchors, pseudo-output masks | PX hedge secret (required), plus `hk_v1` with v1 inputs | `px/v2`: network id, `ctx` (nullifiers and key images), fee, bridge-in, bridge-out, `LE64(not_before)`, `LE64(not_after)`, both output commitments, each ring, each payout, change address ‖ `LE64(change)` | full |
   | PX delivery `r` and ML-KEM coins `m` | sender's PX hedge secret (required; `seal` refuses an empty or all-zero one) | `px/delivery/hedge/v1`: recipient owner tag, `V`, the whole `ek`, `cm`, contract, `LE64(value)`, data, `rcm`, `rho` (which fixes the output index) | full |
   | PX throwaway delivery key (empty slot) | PX hedge secret | `px/throwaway/v1`: the slot's commitment, `LE64(slot)` | full |
-  | PX witness randomness: `rcm` of each user output; every field of each dummy input (`sk`, `d`, `rho`, `rcm`, position, path); owner of each empty slot; unused `sk`, `d` of contract inputs | PX hedge secret (required), plus `hk_v1` with v1 inputs | one stream per value, label `px/witness/rcm/v1`, `px/witness/dummy/v1`, `px/witness/empty-owner/v1` or `px/witness/contract-key/v1`, then `LE64(slot)`; the witness statement: anchor, bridge-in, bridge-out, each input (`"dummy"`, or the spent record's contract ‖ value ‖ data ‖ `rho` ‖ `rcm` ‖ position), each output (`"empty"`, or owner ‖ contract ‖ value ‖ data), each function (contract ‖ blind ‖ approve and spec flags); then the rest of the transaction: network id, fee, each ring, each payout, change address, each function run (program id ‖ private input). `build_px` re-derives these before running the kernel (`blacksilk_px::wallet::hedge_witness`) | full, except contract-output `rcm` and function blinds (below) |
+  | PX witness randomness: `rcm` of each user output; every field of each dummy input (`sk`, `d`, `rho`, `rcm`, position, path); owner of each empty slot; unused `sk`, `d` of contract inputs | PX hedge secret (required), plus `hk_v1` with v1 inputs | one stream per value, label `px/witness/rcm/v1`, `px/witness/dummy/v1`, `px/witness/empty-owner/v1` or `px/witness/contract-key/v1`, then `LE64(slot)`; the witness statement: anchor, bridge-in, bridge-out, each input (`"dummy"`, or the spent record's contract ‖ value ‖ data ‖ `rho` ‖ `rcm` ‖ position), each output (`"empty"`, or owner ‖ contract ‖ value ‖ data), each function (contract ‖ blind ‖ approve and spec flags); then the rest of the transaction: network id, fee, the validity window, each ring, each payout, change address, each function run (program id ‖ private input). `build_px` re-derives these before running the kernel (`blacksilk_px::wallet::hedge_witness`) | full, except contract-output `rcm` and function blinds (next row) |
+  | Contract-output `rcm` and function blinds of the wallet's vault flows (W28-4) | PX hedge secret `hk_px` | one stream per value, `blacksilk_px::wallet::hedged_digest`, label `px/witness/contract-rcm/v1` or `px/witness/fn-blind/v1`: for a lock, `px/vault/lock`, the contract, `LE64(amount)`, the record data (the terms), each spent input (dummy flag ‖ `rho` ‖ `rcm` ‖ position); for a claim or refund, the selector, the vault record's `rho` ‖ `rcm`, the recipient's owner tag and the window | full |
   | Membership (bLSAG) nonce | `x` | `"membership"`, `m`, `B`, `P[π]` | **not full** (R2-C5) |
 
   The hedge secrets are derived hedge keys, not the spend secrets themselves (dossier 37
@@ -764,14 +770,14 @@ Security relies on the following. Nothing else is assumed.
   - *Membership nonce (R2-C5).* The context lacks the ring and the tag; with a constant RNG
     two signatures over different rings leak `x`. Unreachable today (contracts are not
     integrated); must be fixed before any integration.
-  - *Contract-output `rcm` and function blinds.* `build_px` keeps the `rcm` of a contract
-    output (the caller keeps that record's opening, e.g. the wallet's vault lock) and the
-    function `blind` (it is also in the function's private input). Both still come from
-    the caller's RNG (`blacksilk_px::wallet::{contract_output, random_digest}` in the
-    wallet's vault flows). Under a broken RNG an observer could test guesses of a contract
-    record's contents against its `cm`, or of a function's inputs and outputs against its
-    `io_hash`. Open item; the fix is to derive them in the wallet with the same kind of
-    hedge before the witness is assembled. The user-output, dummy-input, empty-slot and
+  - *Contract-output `rcm` and function blinds of other callers.* `build_px` keeps the
+    `rcm` of a contract output (the caller keeps that record's opening) and the function
+    `blind` (it is also in the function's private input), so the caller derives them.
+    The wallet's vault flows hedge both (row above; testnet v3, W28-4). Any other caller
+    of the library must do the same (`blacksilk_px::wallet::hedged_digest`; contracts.md
+    §6 item 11): under a broken RNG an observer could otherwise test guesses of a
+    contract record's contents against its `cm`, or of a function's inputs and outputs
+    against its `io_hash`. The user-output, dummy-input, empty-slot and
     contract-input values were hedged on 2026-09-27; before that they came from the
     caller's RNG directly (`blacksilk_px::wallet::{output, dummy_input, empty_output}`,
     which still draw placeholders that `build_px` replaces). Tests (no proving):

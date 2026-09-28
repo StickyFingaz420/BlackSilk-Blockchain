@@ -20,7 +20,7 @@
 use blacksilk_px::fingerprint::px_entries;
 
 /// Changing this is a consensus change and requires a new network id.
-const PX_SIDE_DIGEST: &str = "1673ae51a5323ee983af7d76e560d104be7989830102b27ddb9e1db3d4031b0a";
+const PX_SIDE_DIGEST: &str = "4189f4364b101d90ce04c619d1f9d287ab4f447137c3f6fab1a741210c3ee446";
 
 #[test]
 fn px_side_consensus_constants_are_pinned() {

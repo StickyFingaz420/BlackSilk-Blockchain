@@ -56,7 +56,7 @@ fn fixture() -> Fixture {
             contract: C,
             asset: ZERO_DIGEST,
             value: 500,
-            data: vault::lock_of(&secret),
+            data: vault::record_data(&C, &secret),
             rho: wallet::random_digest(&mut rng),
             rcm: wallet::random_digest(&mut rng),
         };

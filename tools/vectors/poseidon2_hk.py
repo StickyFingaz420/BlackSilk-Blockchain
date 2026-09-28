@@ -124,7 +124,11 @@ DOMAINS = {  # docs/px.md §2: 0x505800 + 1..10, in this order
     "RECORD": 0x505806, "NULLIFIER": 0x505807, "RHO": 0x505808, "IO": 0x505809,
     "NULLIFIER_CONTRACT": 0x50580A,
 }
-LOCK_DOMAIN = 0x5641_0001  # the example vault's application domain (docs/px.md §7.4)
+# The reference vault's application domains (docs/contracts.md §8): the claim
+# lock, the refund lock and the terms a vault record's data commits to.
+LOCK_DOMAIN = 0x5641_0001
+REFUND_DOMAIN = 0x5641_0002
+TERMS_DOMAIN = 0x5641_0003
 DEPTH = 32
 
 
@@ -259,7 +263,15 @@ def vectors():
     assert len(io) == 92
     out.append(("call.io_hash", hexd(hk(DOMAINS["IO"], io))))
 
-    out.append(("vault.lock_of", hexd(hk(LOCK_DOMAIN, seq(8, 31)))))
+    # The vault (px/src/vault.rs; testnet v3, W28-4): both locks bind the
+    # contract id; the record data is Hk(TERMS, C ‖ claim_lock ‖ refund_lock ‖
+    # timeout16[4]).
+    lock = hk(LOCK_DOMAIN, contract + seq(8, 31))
+    refund = hk(REFUND_DOMAIN, contract + seq(8, 32))
+    timeout = 0x0001_0002_0003_0004
+    out.append(("vault.lock_of", hexd(lock)))
+    out.append(("vault.refund_lock_of", hexd(refund)))
+    out.append(("vault.terms", hexd(hk(TERMS_DOMAIN, contract + lock + refund + limbs16(timeout, 4)))))
     return out
 
 

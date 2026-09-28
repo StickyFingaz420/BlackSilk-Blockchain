@@ -39,6 +39,16 @@
 //! on the transaction and its registered programs; a change to those fails
 //! the state checks. Re-verifying every pooled proof at every block would be a
 //! denial-of-service lever.
+//!
+//! **PX validity windows (PX6).** A PX transaction is valid only at heights
+//! inside its window. Admission is for the next block's height, so a
+//! premature transaction is refused (`TxError::PxWindow`, contextual: a
+//! relaying peer is not penalized, and the wallet keeps it until its window
+//! opens). Every revalidation checks the window at the new next height, so a
+//! transaction past its `not_after` leaves the pool, after a reorganization
+//! too; and [`Mempool::select`] takes only transactions whose window contains
+//! the template's height. Neither a proof verified on admission nor the
+//! block path's proof cache ever stands in for the window check.
 
 use blacksilk_consensus::Hash;
 use blacksilk_tx::params::{SigDomain, TxRules, MAX_DEPLOY_BLOCK_BYTES, MAX_PX_BLOCK_BYTES};
@@ -414,8 +424,10 @@ impl Mempool {
     /// that long are forgotten. Returns the number expired.
     ///
     /// The count is from this node's admission height, the same for every
-    /// kind (policy, not consensus: no expiry field exists in transactions,
-    /// whose value would fingerprint the wallet).
+    /// kind (policy, not consensus). It is independent of a PX transaction's
+    /// validity window (PX6), a consensus rule that [`Self::revalidate`] and
+    /// [`Self::select`] apply; wallets leave that window unbounded unless a
+    /// contract needs one, since its value is public.
     pub fn expire(&mut self, height: u64) -> usize {
         self.expired
             .retain(|_, at| height < at.saturating_add(RECENTLY_EXPIRED_BLOCKS));
@@ -550,7 +562,7 @@ impl Mempool {
             .iter()
             .filter(|(_, e)| {
                 let r = match &e.tx {
-                    tx if !after_reorg => revalidate_after_extension(tx, chain),
+                    tx if !after_reorg => revalidate_after_extension(tx, chain, height),
                     Transaction::Px(t) => validate_px_without_proof(t, chain, height, rules),
                     tx => validate_mempool_tx(tx, chain, height, rules),
                 };
@@ -563,7 +575,7 @@ impl Mempool {
         }
     }
 
-    /// Transactions for a block template. Every candidate is charged against
+    /// Transactions for a block template at `height`. Every candidate is charged against
     /// the block weight budget `max_weight` (`Transaction::weight`: a
     /// transfer's weight, or the v1 part of a PX or deploy transaction,
     /// R12-2), and PX and deploy transactions also against the PX byte budget
@@ -577,6 +589,11 @@ impl Mempool {
     /// payload fee buys no priority), then first seen. No fee per byte is
     /// compared with a fee per weight.
     ///
+    /// PX transactions are taken only if their validity window contains
+    /// `height` (PX6). The pool holds transactions valid for the next block,
+    /// so this skips only a transaction the pool has not yet revalidated for
+    /// `height`; a template never breaks PX6 either way.
+    ///
     /// `pool` is the PX pool before the block: PX transactions are taken
     /// only while the pool, evolving in block order, stays non-negative (each
     /// was admitted against the chain's pool alone). `px_leaves` is the room
@@ -588,7 +605,13 @@ impl Mempool {
     /// two pooled transactions share one, so this never fires unless that
     /// invariant is broken; it keeps a broken invariant from making every
     /// template invalid.
-    pub fn select(&self, max_weight: u64, mut pool: u128, px_leaves: u64) -> Vec<Transaction> {
+    pub fn select(
+        &self,
+        height: u64,
+        max_weight: u64,
+        mut pool: u128,
+        px_leaves: u64,
+    ) -> Vec<Transaction> {
         let (mut px_first, mut rest): (Vec<&Entry>, Vec<&Entry>) = self
             .entries
             .values()
@@ -618,6 +641,9 @@ impl Mempool {
             };
             match &e.tx {
                 Transaction::Px(t) => {
+                    if !t.window.contains(height) {
+                        continue;
+                    }
                     let l = leaves + t.commitments.len() as u64;
                     if l > px_leaves {
                         continue;
@@ -669,6 +695,7 @@ mod tests {
             fee,
             bridge_in,
             bridge_out,
+            window: Default::default(),
             anchor: [0; 8],
             nullifiers: [[n, 0, 0, 0, 0, 0, 0, 1], [n, 0, 0, 0, 0, 0, 0, 2]],
             commitments: [[n; 8], [n + 1; 8]],
@@ -940,7 +967,7 @@ mod tests {
         let tie_first = add(&mut m, px(30, 1000, 30, 0, 0)).unwrap();
         let tie_second = add(&mut m, px(40, 1000, 30, 0, 0)).unwrap();
         let order: Vec<Hash> = m
-            .select(u64::MAX, 0, u64::MAX)
+            .select(1, u64::MAX, 0, u64::MAX)
             .iter()
             .map(Transaction::hash)
             .collect();
@@ -951,7 +978,7 @@ mod tests {
         for n in 0..4 {
             add(&mut m, px(100 + 2 * n, 3 * 1024 * 1024, 1_000, 0, 0)).unwrap();
         }
-        let sel = m.select(u64::MAX, 0, u64::MAX);
+        let sel = m.select(1, u64::MAX, 0, u64::MAX);
         assert_eq!(sel.len(), 2);
         assert!(sel.iter().map(Transaction::px_bytes).sum::<u64>() <= MAX_PX_BLOCK_BYTES);
 
@@ -959,11 +986,11 @@ mod tests {
         // deposit selected before it covers it.
         let mut m = Mempool::new();
         let withdraw = add(&mut m, px(200, 1000, 90, 0, 5)).unwrap();
-        let sel = m.select(u64::MAX, 3, u64::MAX);
+        let sel = m.select(1, u64::MAX, 3, u64::MAX);
         assert!(sel.is_empty(), "would make the pool negative");
         let deposit = add(&mut m, px(202, 1000, 95, 4, 0)).unwrap();
         let sel: Vec<Hash> = m
-            .select(u64::MAX, 3, u64::MAX)
+            .select(1, u64::MAX, 3, u64::MAX)
             .iter()
             .map(Transaction::hash)
             .collect();
@@ -972,6 +999,109 @@ mod tests {
             vec![deposit, withdraw],
             "deposit first, then 3 + 4 - 5"
         );
+    }
+
+    /// `px` with validity window `[not_before, not_after]`.
+    fn windowed(n: u32, not_before: u64, not_after: u64) -> Transaction {
+        let mut t = px(n, 1000, 10, 0, 0);
+        if let Transaction::Px(p) = &mut t {
+            p.window = blacksilk_tx::px::Window {
+                not_before,
+                not_after,
+            };
+        }
+        t
+    }
+
+    /// PX6 in templates: `select(height, ..)` takes a PX transaction only
+    /// when its validity window contains `height`, so a template never holds
+    /// a premature or expired one, whether or not the pool was revalidated
+    /// for that height.
+    #[test]
+    fn templates_take_only_transactions_whose_window_contains_the_height() {
+        let mut m = Mempool::new();
+        let early = add(&mut m, windowed(1, 10, 0)).unwrap();
+        let late = add(&mut m, windowed(3, 0, 5)).unwrap();
+        let edge = add(&mut m, windowed(5, 7, 7)).unwrap();
+        let open = add(&mut m, windowed(7, 0, 0)).unwrap();
+        let at = |h: u64| -> std::collections::HashSet<Hash> {
+            m.select(h, u64::MAX, 0, u64::MAX)
+                .iter()
+                .map(Transaction::hash)
+                .collect()
+        };
+        assert_eq!(at(5), [late, open].into());
+        assert_eq!(at(6), [open].into());
+        assert_eq!(at(7), [edge, open].into());
+        assert_eq!(at(9), [open].into());
+        assert_eq!(at(10), [early, open].into());
+    }
+
+    /// A PX transaction (no v1 inputs, fee paid out of the pool) that every
+    /// rule but the proof accepts on `chain`, with the given window.
+    fn valid_px(
+        chain: &blacksilk_tx::state::MemoryChain,
+        n: u32,
+        not_before: u64,
+        not_after: u64,
+    ) -> Transaction {
+        use blacksilk_tx::params::PX_STANDARD_FEE;
+        Transaction::Px(Box::new(PxTx {
+            inputs: vec![],
+            outputs: vec![],
+            payouts: vec![],
+            fee: PX_STANDARD_FEE,
+            bridge_in: 0,
+            bridge_out: PX_STANDARD_FEE,
+            window: blacksilk_tx::px::Window {
+                not_before,
+                not_after,
+            },
+            anchor: chain.px().root(),
+            nullifiers: [[n, 1, 0, 0, 0, 0, 0, 0], [n, 2, 0, 0, 0, 0, 0, 0]],
+            commitments: [[n, 3, 0, 0, 0, 0, 0, 0], [n, 4, 0, 0, 0, 0, 0, 0]],
+            ciphertexts: [vec![], vec![]],
+            functions: vec![],
+            pseudo_outs: vec![],
+            range_proof: None,
+            signatures: vec![],
+            proof: vec![],
+        }))
+    }
+
+    /// PX6 in revalidation (policy side of a consensus rule): after an
+    /// extension (`revalidate_after_extension`, which takes the next height)
+    /// a pooled PX transaction past its `not_after` is dropped; after a
+    /// reorganization to a lower height (full revalidation) one that is
+    /// premature again is dropped too; transactions inside their window stay.
+    #[test]
+    fn revalidation_drops_transactions_outside_their_window() {
+        use blacksilk_px::state::State as PxState;
+        use blacksilk_tx::state::MemoryChain;
+        let chain =
+            MemoryChain::with_px_state(PxState::with_uniform_tree_for_tests(4, [7; 8], 1 << 60));
+        let rules = rules();
+        let mut m = Mempool::new();
+        m.enter_rules(&rules);
+        let until_12 = valid_px(&chain, 1, 0, 12);
+        let from_10 = valid_px(&chain, 3, 10, 0);
+        let open = valid_px(&chain, 5, 0, 0);
+        let ids: Vec<Hash> = [until_12, from_10, open]
+            .into_iter()
+            .map(|t| add_at(&mut m, t, 10).unwrap())
+            .collect();
+        // Extensions up to the next height 12: nothing leaves.
+        m.revalidate(&chain, 12, &rules, false);
+        assert!(ids.iter().all(|id| m.contains(id)));
+        // Next height 13: `until_12` has expired.
+        m.revalidate(&chain, 13, &rules, false);
+        assert!(!m.contains(&ids[0]));
+        assert!(m.contains(&ids[1]) && m.contains(&ids[2]));
+        // A reorganization lowers the next height to 9: `from_10` is
+        // premature again and leaves (the wallet re-submits it later).
+        m.revalidate(&chain, 9, &rules, true);
+        assert!(!m.contains(&ids[1]));
+        assert!(m.contains(&ids[2]));
     }
 
     /// `conflicts` answers what `add` would say about conflicts, without
@@ -1221,7 +1351,7 @@ mod tests {
                     add(&mut m, second).unwrap_or_else(|e| panic!("{a_name} then {b_name}: {e:?}"));
                 assert_eq!(m.len(), 2);
                 let sel: Vec<Hash> = m
-                    .select(u64::MAX, 0, u64::MAX)
+                    .select(1, u64::MAX, 0, u64::MAX)
                     .iter()
                     .map(Transaction::hash)
                     .collect();
@@ -1248,7 +1378,7 @@ mod tests {
             .contains_key(&(ConflictKind::KeyImage, *pt(5).bytes())));
         assert_eq!(m.len(), 4);
         assert_invariants(&m);
-        assert_eq!(m.select(u64::MAX, 0, u64::MAX).len(), 4);
+        assert_eq!(m.select(1, u64::MAX, 0, u64::MAX).len(), 4);
         // ...while the same kind conflicts, and output keys never do.
         assert_eq!(
             add(&mut m, transfer(&[5], &[30, 31], 10)),
@@ -1275,7 +1405,7 @@ mod tests {
                 let fee = tx.fee();
                 m.insert(tx.hash(), tx, keys, 0, fee).unwrap();
             }
-            let sel = m.select(u64::MAX, 0, u64::MAX);
+            let sel = m.select(1, u64::MAX, 0, u64::MAX);
             assert_disjoint(&sel);
             let ids: Vec<Hash> = sel.iter().map(Transaction::hash).collect();
             assert_eq!(sel.len(), 2, "one of the pair and the unrelated one");
@@ -1334,6 +1464,8 @@ mod tests {
             t.programs = vec![blacksilk_tx::px::Registration {
                 elf: vec![salt; bytes],
                 budget: blacksilk_px::vault::BUDGET,
+                abi: blacksilk_tx::px::ABI_VERSION,
+                out_words: 1,
             }];
         }
         d
@@ -1351,7 +1483,7 @@ mod tests {
         }
         // PX transactions at a lower fee rate still fill the PX lane.
         let small = add(&mut m, px(500, 3 * 1024 * 1024, 10, 0, 0)).unwrap();
-        let sel = m.select(u64::MAX, 0, u64::MAX);
+        let sel = m.select(1, u64::MAX, 0, u64::MAX);
         let deploy_bytes: u64 = sel
             .iter()
             .filter(|t| matches!(t, Transaction::PxDeploy(_)))
@@ -1476,7 +1608,7 @@ mod tests {
             }
             let max_weight = rng.next_u64() % 400_000;
             let pool = u128::from(rng.next_u64() % 1_000);
-            let sel = m.select(max_weight, pool, u64::MAX);
+            let sel = m.select(1, max_weight, pool, u64::MAX);
             let weight: u64 = sel.iter().map(Transaction::weight).sum();
             let px: u64 = sel.iter().map(Transaction::px_bytes).sum();
             let deploys: u64 = sel
@@ -1531,13 +1663,13 @@ mod tests {
             .unwrap();
         }
         let budget = 100_000;
-        let sel = m.select(budget, 0, u64::MAX);
+        let sel = m.select(1, budget, 0, u64::MAX);
         assert!(sel.iter().any(|t| t.hash() == heavy), "the PX transaction");
         let total: u64 = sel.iter().map(Transaction::weight).sum();
         assert!(total <= budget && total >= w);
         assert!(sel.len() > 1, "transfers fill the rest");
         // Its weight counts: with less than its v1 part left, it is out.
-        let sel = m.select(w - 1, 0, u64::MAX);
+        let sel = m.select(1, w - 1, 0, u64::MAX);
         assert!(!sel.iter().any(|t| t.hash() == heavy));
     }
 
@@ -1550,7 +1682,7 @@ mod tests {
             add(&mut m, px(2 * n + 1, 1_000, 1_000, 0, 0)).unwrap();
         }
         for free in 0..=13u64 {
-            let sel = m.select(u64::MAX, 0, free);
+            let sel = m.select(1, u64::MAX, 0, free);
             let leaves: u64 = sel
                 .iter()
                 .map(|t| match t {
@@ -1640,7 +1772,7 @@ mod tests {
                     } else {
                         rng.next_u64() % 20_000
                     };
-                    let sel = m.select(max_weight, (rng.next_u64() % 10).into(), u64::MAX);
+                    let sel = m.select(1, max_weight, (rng.next_u64() % 10).into(), u64::MAX);
                     assert_disjoint(&sel);
                     assert!(sel.iter().all(|tx| m.contains(&tx.hash())));
                     if max_weight == u64::MAX {
@@ -1745,6 +1877,8 @@ mod tests {
                 t.programs = vec![blacksilk_tx::px::Registration {
                     elf: vec![d as u8; elf_len],
                     budget: blacksilk_px::vault::BUDGET,
+                    abi: blacksilk_tx::px::ABI_VERSION,
+                    out_words: 1,
                 }];
                 t.fee = t.required_fee(&rules);
             }
@@ -1752,7 +1886,7 @@ mod tests {
         }
         let budget = rules.max_block_weight - COINBASE_RESERVE;
         let tw = real_transfer(1, 2).weight();
-        let sel = m.select(budget, 0, u64::MAX);
+        let sel = m.select(1, budget, 0, u64::MAX);
         let is_deploy = |t: &&Transaction| matches!(t, Transaction::PxDeploy(_));
         let deploys = sel.iter().filter(is_deploy).count();
         let transfers = (sel.len() - deploys) as u64;

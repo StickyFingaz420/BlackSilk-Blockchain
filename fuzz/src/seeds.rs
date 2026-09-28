@@ -22,7 +22,6 @@ use blacksilk_tx::px::Registration;
 use blacksilk_tx::px_builder::{build_deploy, build_px, px_standard_fee, PxPlan};
 use blacksilk_tx::scan::scan_block;
 use blacksilk_tx::types::Transaction;
-use blacksilk_zkvm::air::trace::Budget;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::path::Path;
@@ -282,16 +281,9 @@ fn main() {
         [1; 32],
         vec![Registration {
             elf: blacksilk_px::vault::VAULT_ELF.to_vec(),
-            budget: Budget {
-                cycles: 6_000,
-                keys: 2_200,
-                add: 4_300,
-                bit: 250,
-                lt: 3_500,
-                shift: 200,
-                mul: 200,
-                poseidon: 22,
-            },
+            budget: blacksilk_px::vault::BUDGET,
+            abi: blacksilk_tx::px::ABI_VERSION,
+            out_words: 1,
         }],
         &rules,
         &mut rng,
@@ -325,6 +317,7 @@ fn main() {
             recipients: [Some(bob.address(0)), None],
             functions: vec![],
             fee: px_standard_fee(),
+            window: Default::default(),
             hedge_secret: [0x5e; 32],
         },
         &rules,

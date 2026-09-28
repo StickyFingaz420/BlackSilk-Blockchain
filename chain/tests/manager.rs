@@ -674,6 +674,7 @@ fn restart_rebuilds_the_px_state_exactly() {
                 recipients: [Some(acct.address(0)), None],
                 functions: vec![],
                 fee: px_standard_fee(),
+                window: Default::default(),
                 hedge_secret: [0x5e; 32],
             },
             &rules,
@@ -694,6 +695,8 @@ fn restart_rebuilds_the_px_state_exactly() {
             vec![Registration {
                 elf: blacksilk_px::vault::VAULT_ELF.to_vec(),
                 budget: blacksilk_px::vault::BUDGET,
+                abi: blacksilk_tx::px::ABI_VERSION,
+                out_words: 1,
             }],
             &rules,
             &mut miner.rng,
@@ -726,8 +729,12 @@ fn restart_rebuilds_the_px_state_exactly() {
     assert!(s.px_contract_exists(&contract));
     assert_eq!(
         s.px_function(&contract, &blacksilk_px::vault::program().id())
-            .map(|f| f.1),
-        Some(blacksilk_px::vault::BUDGET)
+            .map(|f| (f.budget, f.abi, f.out_words)),
+        Some((
+            blacksilk_px::vault::BUDGET,
+            blacksilk_tx::px::ABI_VERSION,
+            blacksilk_px::vault::OUT_WORDS
+        ))
     );
 }
 
@@ -1086,12 +1093,12 @@ fn revalidation_after_an_extension_agrees_with_full_validation() {
     let next = m.height() + 1;
     for tx in [&stays, &loses] {
         assert_eq!(
-            revalidate_after_extension(tx, m.state()).is_ok(),
+            revalidate_after_extension(tx, m.state(), next).is_ok(),
             validate_mempool_tx(tx, m.state(), next, m.rules()).is_ok(),
         );
     }
-    assert!(revalidate_after_extension(&stays, m.state()).is_ok());
-    assert!(revalidate_after_extension(&loses, m.state()).is_err());
+    assert!(revalidate_after_extension(&stays, m.state(), next).is_ok());
+    assert!(revalidate_after_extension(&loses, m.state(), next).is_err());
     assert!(m.mempool().contains(&stays.hash()));
     assert!(
         !m.mempool().contains(&loses.hash()),

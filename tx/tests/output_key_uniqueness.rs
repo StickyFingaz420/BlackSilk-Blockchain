@@ -171,6 +171,8 @@ fn a_deploy_repeating_a_key_is_invalid() {
         vec![Registration {
             elf: blacksilk_px::vault::VAULT_ELF.to_vec(),
             budget: blacksilk_px::vault::BUDGET,
+            abi: blacksilk_tx::px::ABI_VERSION,
+            out_words: 1,
         }],
         &rules,
         &mut net.rng,
@@ -209,6 +211,7 @@ fn px_with_payouts(net: &mut TestNet, payouts: &[Point]) -> PxTx {
         fee: PX_STANDARD_FEE,
         bridge_in: 0,
         bridge_out: PX_STANDARD_FEE + total,
+        window: Default::default(),
         anchor: [7; 8],
         nullifiers: [[1; 8], [2; 8]],
         commitments: [[3; 8], [4; 8]],

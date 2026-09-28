@@ -10,6 +10,8 @@
 //!   outputs (only with inputs), and clear-amount **payouts** (bridge-out
 //!   stealth outputs whose amounts are public anyway, like coinbase outputs);
 //! - the public fee;
+//! - the validity window `[not_before, not_after]` (PX6; `(0, 0)` is
+//!   unbounded), which every called function receives in its prefix;
 //! - the PX proof, bound to `h_tx`, which covers everything but the prunable
 //!   part.
 //!
@@ -21,8 +23,10 @@
 //!
 //! **Deploy.** A v1 transfer (paying the fee) plus a salt and up to 16
 //! function programs (RISC-V binaries, stored on chain because verifiers
-//! need them) with their row budgets. The contract id is derived from the
-//! first key image, the salt and the programs, so it is unique.
+//! need them), each with its row budget, call ABI and number of public
+//! output words. The contract id is derived from the first key image, the
+//! salt and the whole payload (programs, budgets, ABIs and output words), so
+//! it is unique and fixes every registration.
 
 use crate::codec::{DecodeError, Reader, Writer};
 use crate::params::*;
@@ -35,6 +39,7 @@ use blacksilk_crypto::hash::{h32, h64, tags};
 use blacksilk_crypto::{Point, RistrettoPoint, Scalar};
 use blacksilk_px::delivery::CIPHERTEXT_BYTES;
 use blacksilk_px_core::call::MAX_FN;
+pub use blacksilk_px_core::call::{Window, ABI_VERSION};
 use blacksilk_px_core::kernel::Public;
 use blacksilk_px_core::{Digest, P};
 use blacksilk_zkvm::air::trace::Budget;
@@ -60,6 +65,10 @@ pub struct PxTx {
     pub fee: u64,
     pub bridge_in: u64,
     pub bridge_out: u64,
+    /// The validity window (PX6): the heights at which a block may include
+    /// the transaction. Covered by `h_tx` and placed in every function's
+    /// prefix. `Window::UNBOUNDED` for every transaction that needs none.
+    pub window: Window,
     pub anchor: Digest,
     pub nullifiers: [Digest; 2],
     pub commitments: [Digest; 2],
@@ -76,6 +85,24 @@ pub struct PxTx {
 pub struct Registration {
     pub elf: Vec<u8>,
     pub budget: Budget,
+    /// The call ABI the program was built for (the first word of its
+    /// function prefix). A deploy must register [`ABI_VERSION`] (F-28-1).
+    pub abi: u32,
+    /// The exact number of public output words the program writes after its
+    /// prefix; every call must publish exactly this many (F-28-5).
+    pub out_words: u32,
+}
+
+impl Registration {
+    /// A registration of `elf` for the current call ABI ([`ABI_VERSION`]).
+    pub fn new(elf: Vec<u8>, budget: Budget, out_words: u32) -> Self {
+        Registration {
+            elf,
+            budget,
+            abi: ABI_VERSION,
+            out_words,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -242,6 +269,8 @@ impl PxTx {
         w.varint(self.fee);
         w.varint(self.bridge_in);
         w.varint(self.bridge_out);
+        w.varint(self.window.not_before);
+        w.varint(self.window.not_after);
         write_digest(&mut w, &self.anchor);
         for d in self.nullifiers.iter().chain(&self.commitments) {
             write_digest(&mut w, d);
@@ -315,6 +344,10 @@ impl PxTx {
         let fee = r.varint()?;
         let bridge_in = r.varint()?;
         let bridge_out = r.varint()?;
+        let window = Window {
+            not_before: r.varint()?,
+            not_after: r.varint()?,
+        };
         let anchor = read_digest(r)?;
         let nullifiers = [read_digest(r)?, read_digest(r)?];
         let commitments = [read_digest(r)?, read_digest(r)?];
@@ -356,6 +389,7 @@ impl PxTx {
             fee,
             bridge_in,
             bridge_out,
+            window,
             anchor,
             nullifiers,
             commitments,
@@ -382,7 +416,7 @@ impl PxTx {
 
     /// `h_tx`: the binding of the PX proof (zk.md §5.2). It covers the whole
     /// transaction except the prunable part (range proof, signatures, the
-    /// proof itself), and the signature domain (network, branch and genesis
+    /// proof itself; so the validity window too), and the signature domain (network, branch and genesis
     /// ids, RT-14), so a proof is valid for exactly one transaction on one
     /// chain in one epoch. It is a public input of the proof, so the domain
     /// does not change the kernel.
@@ -452,7 +486,9 @@ impl PxTx {
 // ---- deploy ----
 
 /// The deploy payload: salt, program count, and each program's length, ELF
-/// bytes and budget.
+/// bytes, budget, call ABI and output-word count. The contract id hashes it
+/// ([`PxDeploy::contract_id`]), so the ABI and the output words of every
+/// program are part of the contract's identity.
 pub(crate) fn deploy_payload_bytes(salt: &[u8; 32], programs: &[Registration]) -> Vec<u8> {
     let mut w = Writer::new();
     w.bytes(salt);
@@ -461,6 +497,8 @@ pub(crate) fn deploy_payload_bytes(salt: &[u8; 32], programs: &[Registration]) -
         w.varint(p.elf.len() as u64);
         w.bytes(&p.elf);
         write_budget(&mut w, &p.budget);
+        w.varint(p.abi as u64);
+        w.varint(p.out_words as u64);
     }
     w.into_bytes()
 }
@@ -540,7 +578,16 @@ impl PxDeploy {
         for _ in 0..np {
             let elf = read_bytes(r, "program", MAX_PROGRAM_BYTES)?;
             let budget = read_budget(r)?;
-            programs.push(Registration { elf, budget });
+            // Any u32 decodes; `check_deploy_structure` refuses an ABI other
+            // than ABI_VERSION with its own error.
+            let abi = r.count("program abi", 0, u32::MAX as u64)? as u32;
+            let out_words = r.count("program output words", 0, MAX_FN_OUTPUT_WORDS as u64)? as u32;
+            programs.push(Registration {
+                elf,
+                budget,
+                abi,
+                out_words,
+            });
         }
         let n = inputs.len();
         let pseudo_outs = (0..n).map(|_| r.point()).collect::<Result<_, _>>()?;
@@ -591,7 +638,9 @@ impl PxDeploy {
 
     /// The contract id: 8 canonical field elements from
     /// `H64("px/contract-id", first key image ‖ salt ‖ payload hash)`. Key
-    /// images never repeat, so neither do contract ids.
+    /// images never repeat, so neither do contract ids. The payload hash
+    /// covers every program's ELF, budget, ABI and output words, so a
+    /// contract id fixes its registrations.
     ///
     /// Total: a deploy without inputs (which `decode` never produces, and
     /// which is invalid by T3) takes the identity encoding (32 zero bytes) in
@@ -729,6 +778,10 @@ pub fn check_px_structure(tx: &PxTx) -> Result<(), TxError> {
     if tx.functions.len() > MAX_FN {
         return Err(TxError::PxShape);
     }
+    // PX6, its stateless part: an inverted window admits no height.
+    if !tx.window.is_well_formed() {
+        return Err(TxError::PxWindowInverted);
+    }
     let size = tx.encoded_len();
     if size > MAX_PX_TX_SIZE {
         return Err(TxError::TooLarge { size });
@@ -796,7 +849,8 @@ pub fn budget_is_provable(b: &Budget) -> bool {
 }
 
 /// Structure of a deploy: the transfer rules on its v1 part, the exact fee
-/// ([`deploy_fee`]), provable budgets, and loadable, distinct programs.
+/// ([`deploy_fee`]), supported ABIs, provable budgets, and loadable, distinct
+/// programs.
 pub fn check_deploy_structure(tx: &PxDeploy, rules: &TxRules) -> Result<(), TxError> {
     // The v1 part must be a valid transfer shape; the fee rule is the
     // deploy's own exact fee below (the transfer's exact fee plus the payload).
@@ -815,6 +869,14 @@ pub fn check_deploy_structure(tx: &PxDeploy, rules: &TxRules) -> Result<(), TxEr
         });
     }
     for (i, p) in tx.programs.iter().enumerate() {
+        // F-28-1: this kernel generation verifies exactly one call ABI.
+        if p.abi != ABI_VERSION {
+            return Err(TxError::PxUnsupportedAbi { program: i });
+        }
+        // The decoding bound, for deploys not produced by `decode`.
+        if p.out_words as usize > MAX_FN_OUTPUT_WORDS {
+            return Err(TxError::PxShape);
+        }
         if !budget_is_provable(&p.budget) {
             return Err(TxError::PxBudgetTooLarge { program: i });
         }

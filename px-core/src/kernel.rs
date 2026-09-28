@@ -33,6 +33,15 @@
 //! own contract; the kernel outputs `(contract_k, io_hash_k)` computed from
 //! the actual commitments and outputs (`call::Call::io_hash`).
 //!
+//! **One approval per contract input** (F-20-1): a contract input is approved
+//! by exactly one function. Two approvals of one record would let one
+//! consumption authorize two transitions of the contract (a unique item, a
+//! one-shot approval record or a sequence number could fork), the input-side
+//! mirror of the one-specifier-per-output rule.
+//!
+//! **Output ownership** (PX-F5): a contract output (`contract ≠ 0`) has owner
+//! 0. **Dummy inputs** are user records of value 0 (`DummyContract`).
+//!
 //! Balance, over the integers: `Σ value_i + bridge_in = Σ value'_j + bridge_out`.
 //!
 //! **Constant work.** For a given number of functions, successful executions
@@ -88,6 +97,10 @@ pub enum Error {
     /// owner, so such a record could never be spent: its value would be
     /// burned. Appended last, so every earlier exit code is unchanged.
     ContractOutputOwner,
+    /// A contract input approved by more than one function (F-20-1): one
+    /// consumption would authorize several transitions of its contract.
+    /// Appended last (exit code 18), so every earlier exit code is unchanged.
+    ApprovalConflict,
 }
 
 impl Error {
@@ -310,19 +323,24 @@ pub fn transfer<P: Permutation, S: Source>(perm: &mut P, src: &mut S) -> Result<
             ok &= member;
         }
 
-        // Authorization of contract records; approvals must match.
-        let mut approved = false;
+        // Authorization of contract records: every approval must match, and
+        // a contract input has exactly one (F-20-1). The count is a plain
+        // increment per approving function (constant work).
+        let mut approvals = 0u32;
         for call in calls.iter_mut().take(n_fn) {
             if let Some(a) = call.approve[i].as_mut() {
                 if dummy || !is_contract || !digest_eq(&call.contract, &contract) {
                     return Err(Error::ApprovalMismatch);
                 }
                 *a = cm;
-                approved = true;
+                approvals += 1;
             }
         }
-        if is_contract && !approved {
+        if is_contract && approvals == 0 {
             return Err(Error::Unauthorized);
+        }
+        if approvals > 1 {
+            return Err(Error::ApprovalConflict);
         }
 
         let user_nf = nullifier(perm, &keys.nk, &rho, &cm);

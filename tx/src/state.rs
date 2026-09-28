@@ -7,7 +7,7 @@
 //! store must behave identically. It is also what the tests use.
 
 use crate::types::{Hash, Transaction};
-use crate::validate::{ChainView, OutputRecord};
+use crate::validate::{ChainView, OutputRecord, PxProgram};
 use blacksilk_crypto::Point;
 use blacksilk_px::state::{State as PxState, Undo as PxUndo};
 use blacksilk_px_core::Digest;
@@ -36,6 +36,9 @@ pub struct RegisteredFunction {
     pub program_id: [u8; 32],
     pub program: Arc<Program>,
     pub budget: Budget,
+    /// The call ABI and the output-word count it was registered with.
+    pub abi: u32,
+    pub out_words: u32,
 }
 
 #[derive(Default)]
@@ -219,10 +222,13 @@ impl MemoryChain {
                         .load_programs()
                         .map_err(ApplyError::Program)?
                         .into_iter()
-                        .map(|(program, budget)| RegisteredFunction {
+                        .zip(&t.programs)
+                        .map(|((program, budget), r)| RegisteredFunction {
                             program_id: program.id(),
                             program,
                             budget,
+                            abi: r.abi,
+                            out_words: r.out_words,
                         })
                         .collect();
                     registrations.push((t.contract_id(), functions));
@@ -349,16 +355,17 @@ impl ChainView for MemoryChain {
         self.px.pool()
     }
 
-    fn px_function(
-        &self,
-        contract: &Digest,
-        program_id: &[u8; 32],
-    ) -> Option<(Arc<Program>, Budget)> {
+    fn px_function(&self, contract: &Digest, program_id: &[u8; 32]) -> Option<PxProgram> {
         self.registry
             .get(contract)?
             .iter()
             .find(|f| &f.program_id == program_id)
-            .map(|f| (f.program.clone(), f.budget))
+            .map(|f| PxProgram {
+                program: f.program.clone(),
+                budget: f.budget,
+                abi: f.abi,
+                out_words: f.out_words,
+            })
     }
 
     fn px_contract_exists(&self, contract: &Digest) -> bool {
@@ -386,6 +393,7 @@ mod tests {
             fee: 0,
             bridge_in: 0,
             bridge_out: 0,
+            window: Default::default(),
             anchor: chain.px().root(),
             nullifiers: [[tag, 1, 0, 0, 0, 0, 0, 0], [tag, 2, 0, 0, 0, 0, 0, 0]],
             commitments: [[tag, 3, 0, 0, 0, 0, 0, 0], [tag, 4, 0, 0, 0, 0, 0, 0]],

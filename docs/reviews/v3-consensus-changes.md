@@ -27,6 +27,11 @@ they are never renamed. Index:
 - expiry-guard (chain mempool policy; W1-CB-B1b)
 - r12-2 (tx, chain; W1-CB-B1b)
 - tree-capacity (px, tx, chain; W1-CB-B1b)
+- approval-conflict (px-core kernel; W1-CB-B2)
+- px-call-abi (px-core, px, tx; W1-CB-B2)
+- px6-validity-window (px-core, px, tx, chain mempool; W1-CB-B2)
+- vault-v3 (vault guest and host, wallet; W1-CB-B2)
+- guest-rebuild (kernel and vault ELFs and ids, guest link layout; W1-CB-B2)
 
 New sections are appended at the end.
 
@@ -1533,3 +1538,495 @@ the fold of the last leaf's path (`the_last_append_keeps_the_full_root`).
   release-build check.
 - Red team (50): the claim that validation is a superset of every `apply_block` failure
   (anchor, nullifiers, pool, capacity, program loading).
+
+---
+
+<a id="approval-conflict"></a>
+
+## approval-conflict: one approval per contract input (F-20-1)
+
+Decision: decisions.md, Agent 20 "F-20-1 … ACCEPTED as a v3 consensus item. It adds an
+`ApprovalConflict` error (exit 18) and needs a new kernel id. It lands in the SINGLE v3
+kernel rebuild"; Agent 50 "F-20-1: accepted, with the listed tests (double/triple
+approvals, crossed approvals allowed, error precedence, exit-code table)". Dossier 20
+§3.1 (G1), §3.2 (d), §4 F-20-1. Work item CB-B2 item 1.
+
+**1. Problem.** The kernel (`px-core/src/kernel.rs`) let any number of called functions
+approve one contract input: every approval matched, so all passed. One consumed record
+could then authorize two transitions of its contract in one transaction (the input-side
+mirror of Cardano's "double satisfaction"). Value stays conserved by the global balance
+(the caller funds any duplicate), but linear contract state forks: a unique item, a
+one-shot approval record (R7-2, F-28-4) or a sequence number could be duplicated. The
+output side already had the rule (`SpecConflict`).
+
+**2. Demonstrated failure.** On the base commit `b4d9ff9`, a CLAIM witness of the
+reference vault with a second function (a copy of CLAIM approving the same input 0 and
+specifying output 1) was accepted by the native kernel and by the pinned kernel guest
+(exit code 0): scratch test `base_accepts_a_double_approval`, log
+`C:/bszkeval/w1-cb-b2/base-demo.log` ("native: Ok("accepted")", "pinned guest exit
+code: 0").
+
+**3. Prior art.** Cardano double satisfaction (Plutus documentation, "common
+weaknesses"): each resource counted by exactly one validation. Aleo: a record's serial
+number is produced by exactly one transition. Zexe: each consumed record's death
+predicate runs once, on the whole transaction's local data. Sources: dossier 20 §8.
+
+**4. Alternatives.** (A) Document it as a contract-author rule: fragile and silent.
+(B) The kernel rule (chosen). (C) Give functions a view of all approvals (Zexe-style
+local data): a larger transcript, a privacy cost across contracts, a redesign.
+
+**5. Affected components.** `px-core/src/kernel.rs`: an approval counter per input
+(`approvals > 1 ⇒ ApprovalConflict`), appended as the last `Error` variant (exit code
+18), checked right after the approvals are read, next to `Unauthorized` (the two are
+exclusive). The kernel ELF (`px/kernel.elf`, new id; section `guest-rebuild`). No
+host-side rule changes.
+
+**6. Activation.** v3 genesis base rule set; the pinned kernel is the rule.
+
+**7. Compatibility.** A new kernel id (every PX proof). Exit codes 2–17 unchanged
+(append-only). No honest transaction built by the wallet has a double approval (the
+vault flows approve one input per call). The kernel budgets were re-measured and are
+unchanged (section `guest-rebuild`).
+
+**8. Reorg, wallet, mining and P2P implications.** None beyond the new kernel id: the
+rule is inside the proof, so a transaction with a double approval has no proof.
+
+**9. Vectors.** The rejection cases of `an_input_approved_by_two_functions_is_rejected`
+(native and guest exit codes) and the exit-code table
+(`kernel_exit_codes_are_append_only`).
+
+**10. Regression tests** (`px/tests/unified.rs`, native and the pinned guest):
+- `an_input_approved_by_two_functions_is_rejected`: a double approval of input 0, a
+  double approval of both inputs (refused at input 0); crossed approvals (function `k`
+  approves input `k`) valid, with each function's transcript equal to the kernel's;
+  precedence: a double approval whose second approval is by a foreign contract gives
+  `ApprovalMismatch`, a double approval of a record not in the tree gives
+  `ApprovalConflict` (membership is decided after both inputs), a double approval of a
+  dummy gives `ApprovalMismatch`; a third function ("triple approval") is not
+  expressible with `MAX_FN = 2` and gives `TooManyFunctions` first.
+- `kernel_exit_codes_are_append_only`: every error's exit code, 2–18.
+- `contract_rules_reject_their_violations` (12 cases) unchanged.
+
+**11. Suite results.** Section `guest-rebuild` §11 (one run for the whole bundle).
+
+**12. Open review points.** Red team (50): the precedence choices, and whether any
+legitimate contract pattern needs two functions to approve one record (dossier 20: none
+known; such a contract can put both checks in one program).
+
+---
+
+<a id="px-call-abi"></a>
+
+## px-call-abi: a versioned function prefix, and ABI and output words in the registry (F-28-1, F-28-5)
+
+Decision: decisions.md, Agent 28 "F-28-1 v3 part: ACCEPTED as a v3 consensus item. An
+`ABI_VERSION` word leads the function prefix. The registry records `abi` and
+`out_words` for each program. Verifier selection by (epoch, abi) is designed now
+(W28-9) and implemented with the second kernel generation"; Agent 50 "PX6/ABI: … deploys
+reject an unsupported ABI; the ABI and out_words are inside the contract-id payload
+hash". Dossier 28 §3.6, §4 F-28-1, F-28-5, §5 W28-1. Work item CB-B2 item 2.
+
+**1. Problem.**
+- F-28-1: the call format (`Call`, `OutSpec`, `N_IN`, `N_OUT`, the 16-word prefix
+  `io_hash ‖ contract`) was compiled into every function program with no version, and
+  nothing recorded which format a registered program used. The first kernel generation
+  that changes the format would make every deployed contract uncallable and strand the
+  value in its records.
+- F-28-5: a function could publish 0–256 output words per call, varying between calls
+  of one program, so the length (and the output table height) could fingerprint calls.
+
+**2. Demonstrated failure.** Not a failing behaviour but a missing field: on `b4d9ff9`
+the deploy payload carries only `elf ‖ budget` per program (`deploy_payload_bytes`), the
+registry entry only `(program, budget)`, the prefix has no version word, and
+`check_px_structure` and PX3 accept any output length. The tests below do not compile
+on the base (the fields do not exist).
+
+**3. Prior art.** Zcash keeps each pool's verifier and lets old pools be spent out (ZIP
+211); Aleo programs carry an `edition`. Sources: dossier 28 §8.
+
+**4. Alternatives.** A multi-ABI kernel (every transaction pays for all formats;
+rejected); no versioning until the second generation (then the first contracts are
+stranded; rejected); an output length pinned per call by the caller (no privacy gain;
+rejected).
+
+**5. Affected components.**
+- `px-core/src/call.rs`: `ABI_VERSION = 1`, `PREFIX_WORDS = 21`, `Window`,
+  `function_prefix(abi, io_hash, contract, window)` =
+  `abi ‖ io_hash ‖ contract ‖ window words` (the window is section
+  `px6-validity-window`).
+- `px/src/prove.rs`: `FunctionCall::abi`; the statement's function prefixes use each
+  call's registered ABI and the transaction's window; `prove` writes `ABI_VERSION`;
+  `verify`/`check_shape` take the window; a statement with `n_fn > MAX_FN` is `Shape`
+  instead of a panic (F-20-5).
+- `tx/src/px.rs`: `Registration { elf, budget, abi, out_words }` (`Registration::new`
+  for the current ABI); the payload appends `varint(abi) ‖ varint(out_words)` per
+  program, so the contract id covers them; decoding bounds `out_words ≤
+  MAX_FN_OUTPUT_WORDS`; `check_deploy_structure` refuses `abi ≠ ABI_VERSION`
+  (`TxError::PxUnsupportedAbi`, stateless) and `out_words > MAX_FN_OUTPUT_WORDS`
+  (`PxShape`).
+- `tx/src/validate.rs`: `ChainView::px_function` returns `PxProgram { program, budget,
+  abi, out_words }`; PX3 also requires `outputs.len() == out_words`
+  (`TxError::PxOutputWords`, stateless for scoring: a registration is fixed by its
+  contract id); PX5 takes the ABI from the registry. `tx/src/state.rs`: the registry
+  stores both fields.
+- `tx/src/px_builder.rs`, `wallet`: builders and the vault deploy use
+  `Registration::new(.., vault::OUT_WORDS)`; `wallet/src/main.rs` `px-deploy` takes
+  `--out-words` per program; `check_vault_deploy` requires the current ABI and one
+  output word.
+
+**6. Activation.** v3 genesis base rule set.
+
+**7. Compatibility.** New deploy encoding (two varints per program), new contract ids,
+new vault id (its prefix changed); the kernel does not use the prefix. The deploy fee
+covers the two extra payload bytes per program through the per-byte rate.
+
+**8. Reorg, wallet, mining and P2P implications.** Registry undo unchanged (entries are
+removed whole). Wallets must register `out_words` for custom programs (CLI flag).
+`PxUnsupportedAbi` and `PxOutputWords` are stateless (a relaying peer is penalized, as
+for any structure fault). Verifier selection by (epoch, ABI) is designed in
+docs/contracts.md §4.2 and not implemented (W28-9).
+
+**9. Vectors.** The contract id changes with the ABI, the output words or the budget
+(`registrations_carry_their_abi_and_output_words`); the prefix layout
+(`a_function_transcript_must_match_the_kernel`: word 0 is `ABI_VERSION`, words 1–8 the
+kernel's `io_hash`, 9–16 the contract, 17–20 the window).
+
+**10. Regression tests.**
+- `tx/tests/px_window.rs::registrations_carry_their_abi_and_output_words`: contract id
+  sensitivity; an unsupported ABI refused by the builder's self-check
+  (`PxUnsupportedAbi`); too many output words refused (`PxShape`) and not decodable;
+  the bound itself decodes.
+- `tx/tests/px_consensus.rs::a_private_contract_is_deployed_and_used_through_consensus`
+  (proving): the registry records budget, ABI and output words; a claim with one more
+  output word is `PxOutputWords` before the proof; a claim with another window is
+  refused (its v1 signatures cover the prefix, so `InvalidSignature` comes first;
+  the proof alone refuses it in `px/tests/unified.rs`).
+- `px/tests/unified.rs::lock_then_claim_proves_verifies_and_pays_the_recipient`
+  (proving): the proof does not verify under another ABI or another window; a
+  statement with three functions is `Shape`.
+- `chain/tests/manager.rs::restart_rebuilds_the_px_state_exactly` (proving): the
+  registry keeps ABI and output words across a restart.
+- `wallet/src/wallet/contracts.rs::a_vault_deploy_needs_the_current_abi_and_one_output_word`.
+
+**11. Suite results.** Section `guest-rebuild` §11.
+
+**12. Open review points.** W28-9 (verifier dispatch, coexistence and sunset) must be
+reviewed before any second generation is designed. The fingerprint does not list
+`ABI_VERSION` or `PREFIX_WORDS` yet (owed to agent 40's fingerprint v3; both are in the
+vault's id, and the ABI is a deploy rule).
+
+---
+
+<a id="px6-validity-window"></a>
+
+## px6-validity-window: the transaction validity window (PX6)
+
+Decision: decisions.md, Agent 28 "Validity window, PX6: ACCEPTED for v3. Transactions
+carry `[not_before, not_after]` in the PX prefix, covered by h_tx and copied into each
+function prefix. The rule is contextual and never scored. Default (0,0) means
+unbounded"; Agent 50 "the mempool refuses premature transactions;
+`revalidate_after_extension` takes the height; templates filter by the window; the
+proof cache never skips PX6"; Agent 48 AT-5. Dossier 28 §3.2, F-28-3. Work item CB-B2
+item 3.
+
+**1. Problem.** A contract function had no clock: it sees only its private input, and
+the root window cannot give an unambiguous height (F-28-3). No timeout, refund, HTLC or
+deadline could be expressed, and the reference vault had no refund.
+
+**2. Demonstrated failure.** On `b4d9ff9` the vault guest has no refund entry: selector
+2 halts with 2 (`base_vault_has_no_refund`, `C:/bszkeval/w1-cb-b2/base-demo.log`), and a
+PX transaction has no field a function or consensus could use as a bound. The PX6
+behaviours below are new; each test fails to compile on the base. The checks that must
+not be skipped were verified to be load-bearing by mutation (§11).
+
+**3. Prior art.** Bitcoin BIP 65 (the script checks the transaction's `nLockTime`,
+consensus checks `nLockTime` against the block); Zcash ZIP 203 (`nExpiryHeight`,
+contextual); Aztec `expiration_timestamp`; Neptune Cash (scripts read the kernel's
+timestamp through its hash, and the timestamp is checked against the block). Sources:
+dossier 28 §3.2, §8.
+
+**4. Alternatives.** An anchor-height clock (R5-3; ambiguous, F-28-3); a per-function
+window in each function's output header (R7-1; one window per call, several rules);
+reserving zeroed prefix words and activating later (rejected: the testnet reset is
+free now).
+
+**5. Affected components.**
+- `px-core/src/call.rs`: `Window { not_before, not_after }` (`contains`,
+  `is_well_formed`, `words`), in the function prefix.
+- `tx/src/px.rs`: `PxTx::window`, two varints in the prefix after `bridge_out` (so in
+  `h_tx` and the transaction id); `check_px_structure` refuses an inverted window
+  (`PxWindowInverted`, stateless).
+- `tx/src/validate.rs`: `check_px_window(tx, height)` (`TxError::PxWindow`,
+  contextual); in `validate_px` / `validate_px_without_proof`, first among the
+  contextual rules; in `revalidate_after_extension(tx, chain, height)` (new `height`
+  argument) and so in `revalidate_between`; in the block path for every PX transaction,
+  in the per-transaction contextual loop, independent of the verified-proof cache.
+- `chain/src/mempool.rs`: `revalidate` passes the next height to the extension check;
+  `select(height, ..)` skips PX transactions whose window excludes the template's
+  height; `chain/src/manager/template.rs` passes it. `p2p/src/net/admission.rs` passes
+  the next height to `revalidate_after_extension` (one argument; its classification
+  already treats contextual errors as unscored).
+- `tx/src/px_builder.rs`: `PxPlan::window`; the window enters both hedge contexts.
+  Wallets use `Window::UNBOUNDED` except for vault claims and refunds with a timeout
+  (section `vault-v3`).
+
+**6. Activation.** v3 genesis base rule set.
+
+**7. Compatibility.** New PX transaction encoding (two varints, two bytes for the
+default); every PX transaction id, `h_tx` and proof changes; the kernel is unchanged by
+the window (the vault id changes: it echoes the window).
+
+**8. Reorg, wallet, mining and P2P implications.**
+- Reorg: after a reorganization a pooled transaction can become premature again
+  (dropped by the full revalidation; the wallet keeps it and resubmits) or valid again
+  after expiring (the wallet resubmits). Heights race at the edges, so PX6 is never
+  scored.
+- Mining: templates select by the window; the block path rejects a transaction outside
+  it whatever the cache says.
+- Wallet: `(0, 0)` by default, so no fingerprint; a claim window ends at `T − 1`, a
+  refund window starts at `T`; wallets should round `T` (docs/contracts.md §4.3, px.md
+  §12).
+- P2P: relay admission checks PX6 at the next height (contextual: not penalized, the
+  rejection is cached per tip).
+
+**9. Vectors.** The boundary table of `the_window_holds_exactly_between_its_ends`:
+window `[20, 30]` valid at 20, 25, 30, invalid at 19 and 31; `(0, 0)` valid at 0, 1 and
+`u64::MAX`; `[20, 0]` valid at `u64::MAX`.
+
+**10. Regression tests.**
+- `tx/tests/px_window.rs` (no proving): encoding round trip and `h_tx` binding,
+  unbounded by default; inverted window stateless; the boundary table and
+  classification (`is_stateless`, `is_stateless_at`), a stateless fault reported first;
+  `revalidation_after_an_extension_expires_the_window`;
+  `a_cached_proof_never_skips_the_window` (blocks validated with every proof vouched
+  for by the cache: premature and expired transactions refused with `PxWindow`, the
+  edges valid).
+- `chain/src/mempool.rs`: `templates_take_only_transactions_whose_window_contains_the_height`,
+  `revalidation_drops_transactions_outside_their_window` (extension expiry at the next
+  height; a reorganization to a lower height drops a transaction premature again).
+- `tx/tests/px_consensus.rs::a_vault_refund_obeys_its_validity_window_through_consensus`
+  (proving): a real vault refund with window `[T, 0]` is `PxWindow` at every height
+  below `T` and valid at `T`, `T + 1`, `T + 1000`; a block at `T − 1` including it is
+  refused with the proof vouched for by the cache; the block at `T` connects and pays
+  the refund.
+- `px/tests/unified.rs`: a proof does not verify under another window; a function
+  echoing another window is `FunctionMismatch`.
+
+**11. Suite results.** Section `guest-rebuild` §11.
+
+**12. Open review points.** Red team (50): the window boundaries, template and mempool
+interplay across reorganizations, and whether premature transactions can load relays
+at no cost (they are refused after the stateless checks and the proof decode, and the
+rejection is cached per tip).
+
+---
+
+<a id="vault-v3"></a>
+
+## vault-v3: the reference vault with contract-bound locks, hedged blinds, a timeout and a refund (W28-4)
+
+Decision: decisions.md, Agent 28 "Vault changes (W28-4): the lock hash includes the
+contract id, and blinds are hedged. The vault is rebuilt ONCE together with the kernel"
+and "The vault gains a timeout and refund path"; Agent 37 (the vault secret derivation
+`px/wallet/vault-secret/v1`, K6). Dossier 28 F-28-7, §3.2, W28-4. Work item CB-B2 item
+4. The vault is a demonstration contract, not consensus code; its program id is pinned
+and fingerprinted.
+
+**1. Problem.** The lock hash `Hk(LOCK, secret)` did not bind the contract, so a secret
+reused across vault instances opened every instance whose opening one held (F-28-7);
+the vault had no timeout and no refund; its function blind and record `rcm` came from
+the caller's RNG only (transactions.md §10).
+
+**2. Demonstrated failure.** On `b4d9ff9`: the pinned vault guest accepted a CLAIM of a
+record of another contract with the same secret (exit 0,
+`base_lock_hash_ignores_the_contract`), and had no refund (`base_vault_has_no_refund`);
+log `C:/bszkeval/w1-cb-b2/base-demo.log`.
+
+**3. Prior art.** HTLCs (Bitcoin BIP 65 / BIP 199), with a claim before and a refund
+after a timeout; application hashes that include the contract instance (Aztec's
+contract-address siloing). Sources: dossier 28 §3.7 item 10, §8.
+
+**4. Alternatives.** A cleartext timeout in the record data (the remaining words cannot
+hold two 248-bit locks; truncation would weaken the lock binding; rejected); a refund
+paid to a fixed owner with no refund secret (anyone holding the opening could trigger
+it and withhold the new record's opening, PX-F4; rejected).
+
+**5. Affected components.**
+- `zkvm/guests/vault/src/main.rs`: record data `Hk(TERMS, C ‖ claim_lock ‖ refund_lock
+  ‖ timeout₁₆[4])`, `claim_lock = Hk(LOCK, C ‖ secret)`, `refund_lock = Hk(REFUND, C ‖
+  refund_secret)`; LOCK (a zero refund lock without a timeout), CLAIM (with a timeout,
+  only if `not_after ≠ 0 ∧ not_after < T`), REFUND (only with a timeout and
+  `not_before ≥ T`); the window read from the input and echoed in the prefix; public
+  output: the selector. Domains `0x5641_0001..3` (application range).
+- `px/src/vault.rs`: `Terms`, `lock_of(contract, secret)`, `refund_lock_of`,
+  `record_data`, `lock_call`, `claim_call`, `refund_call` (window argument), `REFUND`,
+  `OUT_WORDS = 1`, `BUDGET` re-measured.
+- `px/src/wallet.rs`: `hedged_digest` and the labels `px/witness/fn-blind/v1`,
+  `px/witness/contract-rcm/v1`.
+- `wallet/src/wallet/contracts.rs`: `px_vault_lock` (no timeout, unchanged API),
+  `px_vault_lock_until` (timeout; returns the terms), `px_vault_claim`,
+  `px_vault_claim_with_terms`, `px_vault_refund`, `px_vault_refund_secret_for`
+  (`H32("px/wallet/vault-secret/v1", hk_px ‖ net ‖ contract ‖ rho ‖ "refund")`); the
+  blind and the record `rcm` hedged with `hk_px`. `wallet/src/wallet/keys.rs`: the K6
+  recovery compares the claim-only record data (the derivation itself is unchanged).
+- `tools/vectors/poseidon2_hk.py` and `px/tests/data/hk_vectors.txt`: the lock, refund
+  lock and terms vectors.
+
+**6. Activation.** A new pinned vault id at the v3 genesis (section `guest-rebuild`).
+
+**7. Compatibility.** New vault id and record format; no earlier vault exists on any
+launched network. The W2-37 vault secret derivation is unchanged; its recovery tests
+pass.
+
+**8. Reorg, wallet, mining and P2P implications.** A claim window reveals the timeout
+(round it); a claim can be censored until the refund is valid (leave a margin); the
+refund needs the timeout, which the wallet returns at lock time and does not store (a
+record without a timeout recovers fully from the seed).
+
+**9. Vectors.** `vault.lock_of`, `vault.refund_lock_of`, `vault.terms` in
+`px/tests/data/hk_vectors.txt`, from the independent Python implementation
+(`tools/vectors/poseidon2_hk.py --check`).
+
+**10. Regression tests.**
+- `px/tests/unified.rs::the_vault_enforces_its_timeout_refund_and_lock_binding` (the
+  pinned vault guest against the native kernel's statement): CLAIM only with a window
+  ending before `T`, REFUND only from `T`; the wrong key opens nothing; a copied lock in
+  another instance does not open; LOCK without a timeout needs a zero refund lock.
+- `px/tests/unified.rs::budgets_leave_headroom`: LOCK with a timeout, CLAIM, CLAIM with a
+  timeout, REFUND within 95% of `vault::BUDGET`.
+- `px/tests/hk_vectors.rs` (the three vectors).
+- `tx/tests/px_consensus.rs::a_vault_refund_obeys_its_validity_window_through_consensus`
+  (proving).
+- `wallet/src/wallet/contracts.rs`: the refund secret is seed-recoverable and distinct
+  from the claim secret; `px_vault_secret` opens only records without a timeout.
+- `wallet/src/wallet/keys.rs` K6 tests (unchanged: `a_restored_wallet_recovers_its_vault_secret`,
+  `vault_secrets_are_deterministic_and_bound_to_the_record`).
+
+**11. Suite results.** Section `guest-rebuild` §11.
+
+**12. Open review points.** The wallet CLI has no command for locks with a timeout,
+claims with terms or refunds (library only; `wallet/src/main.rs` is outside this work
+item). A dedicated tag for the refund-secret derivation (instead of the suffix) is a
+choice for agent 19's registry.
+
+---
+
+<a id="guest-rebuild"></a>
+
+## guest-rebuild: the single v3 kernel and vault rebuild, with the guest link layout (CI-1)
+
+Decision: decisions.md, Agent 43 "W4 single kernel/vault rebuild: gated on all
+guest-affecting merges (20 F-20-1, 28 ABI/PX6/vault, 19 comments), plus W5 script
+hardening first"; "CI-1 fix DECIDED: the guest linker script starts SECTIONS at 0x10000
+… A `/DISCARD/ : { *(.comment) }` rule … The zkvm id definition is UNCHANGED … New
+tests: no PT_LOAD at offset 0, and no .comment section. Acceptance: byte-identical ELFs
+on windows, ubuntu and ubuntu-arm in CI at the rebuild commit." Work item CB-B2 item 5
+(with W28-3, item 6).
+
+**1. Problem.** The first `PT_LOAD` of the pinned guests started at file offset 0, so
+the program id covered the ELF header, whose `e_shoff` moves with the host-specific
+`.comment` strings: Linux rebuilt different ids (CI-1). And every guest-affecting v3 item
+needs one rebuild, done once.
+
+**2. Demonstrated failure.** On `b4d9ff9`, `px/kernel.elf` and `px/vault.elf` have a
+`PT_LOAD` at file offset 0 (size `0x130` for the kernel) and a 153-byte `.comment`
+(`C:/bszkeval/w1-cb-b2/base-elf-layout.log`); the new test
+`pinned_guests_load_no_header_and_carry_no_comment` fails on that layout by
+construction (`the_layout_checks_detect_the_default_layout` exercises the detector on
+it). The Linux mismatch itself is in CI runs 84/85 (decisions.md CI-1).
+
+**3. Prior art.** Reproducible builds compare whole artifacts across hosts (Bitcoin
+Core and Monero Guix builds); linker scripts that keep headers out of loaded segments
+are common for bare-metal images. Sources: dossier 43 §8.
+
+**4. Alternatives.** `--nmagic` (ids agree but files still differ; `reproduce.sh` would
+compare loaded bytes only); a post-link `objcopy`; changing the program-id definition
+(a consensus change in zkvm; not needed).
+
+**5. Affected components.** `zkvm/guests/guest.ld` (new); `GUEST_FLAGS` in
+`zkvm/guests/build.sh` and `.cargo/config.toml` (`-Clink-arg=-Tguest.ld`);
+`px/kernel.elf`, `px/kernel.id`, `px/vault.elf`, `px/vault.id` (rebuilt);
+`zkvm/tests/fixtures/guest-{sum,arith}.elf` (relinked by `build.sh`);
+`zkvm/guests/reproduce.sh` and `.github/scripts/guests-reproduce.sh` (a `SUMMARY` line
+per guest and a CI notice with each host's ids and hashes); `px/tests/elf_paths.rs`
+(the layout tests); `zkvm/guests/README.md`. The zkvm id definition is unchanged.
+
+**The rebuild** (Windows, rustc 1.98.1 `48a229cea`, `x86_64-pc-windows-gnu`), inputs:
+F-20-1 (kernel), the ABI and window prefix and the v3 vault (vault), and the layout
+(both):
+
+| Guest | Program id (`px/*.id`) | ELF sha256 | Bytes |
+|---|---|---|---|
+| kernel | `ef75a53554b953c1f8f199064b1ae1cd9a08a51f75e0f49fe510d66035c522b4` | `f30c54a78c9557d1b647030fb0a85c88b60fee7601f970e3a0336aaf22bc3fb3` | 19 076 |
+| vault | `3fdec8034d22fb685bb52b341695a98a5629ced43736aacf0dce86c9c036b9da` | `134a40dc050a4be28dadce635ebd4191fa02e393a3c4d55f05f8419be403bbcf` | 13 444 |
+
+Previous (the pre-rebuild neutral build): kernel `0577e667…`, vault `666f7aab…`. The
+first `PT_LOAD` of each is at file offset `0x1000`; neither has a `.comment`.
+
+**Budgets re-measured** (`budgets_leave_headroom`, which now includes the widest kernel
+branch profile, two contract inputs with crossed approvals, and every vault entry):
+- kernel: unchanged (`n_fn = 2` with crossed claims uses 32 182 of 35 600 cycles; the
+  tightest table is `lt`, 19 316 of 20 400, 94.7%);
+- vault: raised to cycles 6 000, keys 2 700, add 4 300, bit 260, lt 3 900, shift 240,
+  mul 240, poseidon 27 (REFUND, the widest entry, uses 5 539 cycles, 2 544 keys and
+  25 Poseidon2 rows).
+
+**6. Activation.** v3 genesis: the kernel id is consensus; the vault id is pinned and
+fingerprinted.
+
+**7. Compatibility.** Every PX proof changes (new kernel id). Fingerprint changes (the
+full manifest diff: before `C:/bszkeval/w1-cb-b2/manifest-before.txt`, after
+`manifest-after.txt`): `px.KERNEL_PROGRAM_ID` (this section and `approval-conflict`),
+`px.VAULT_PROGRAM_ID` (this section, `px-call-abi`, `px6-validity-window`, `vault-v3`),
+`px.vault.BUDGET` (`vault-v3`); nothing else. The digests follow: PX side `4189f436…`,
+node testnet `ca6d87d5…`, regtest `9975ed2e…`, mainnet `9fcfac47…` (re-pinned in
+`px/tests/consensus_fingerprint.rs` and `node/tests/deploy_configs.rs`).
+
+**8. Reorg, wallet, mining and P2P implications.** None beyond the ids.
+
+**9. Vectors.** The ids and hashes above; `reproduce.sh` checks them on every CI host.
+
+**10. Regression tests.** `px/tests/elf_paths.rs::pinned_guests_load_no_header_and_carry_no_comment`
+and `the_layout_checks_detect_the_default_layout`; `the_vault_program_id_is_pinned`;
+the kernel id pin in `px/tests/proof.rs`; native = guest in `px/tests/kernel.rs`,
+`unified.rs`, `fuzz.rs`; `zkvm/tests/guest.rs`, `vm.rs`, `fuzz.rs` on the relinked
+fixtures.
+
+**W28-3 evidence (P0, F-28-2).** A two-function transaction (kernel + vault CLAIM +
+vault LOCK), proven and verified end to end
+(`px/tests/unified.rs::a_two_function_transaction_proves_and_verifies`), measured on this
+machine (i7-6700, one proving test at a time; other agents' builds may have been
+running): **3 629 639 bytes**, prove 119.9 s, verify 369 ms. In the same run the kernel
+plus one function (CLAIM) gave 3 009 904 bytes in 65.6 s. The two-function proof is
+below `MAX_PROOF_BYTES` (4 MiB) and below the 3.8 MB threshold of decision 22 (above it,
+"a deploy-time proof-size bound"), with a 4.5% margin to 3.8 MB. Agent 22's widest-proof
+measurement (other function pairs, larger budgets) is still owed.
+
+**11. Suite results** (branch `w1-cb-b2`, release builds on this machine; the exact
+commands and counts are in the W1-CB-B2 final report):
+- non-PX suites (tx, px-core and px without proving, chain, wallet, node, p2p, the
+  zkvm guest fixtures): 597 passed, 2 failed, 5 ignored on the first run; the two
+  failures were `tx/tests/deploy_rules.rs`'s independent fee formula, which lacked the
+  two new payload fields; after that fix `deploy_rules` passed 9 of 9. The relinked
+  fixtures also pass `zkvm/tests/vm.rs` (2) and `fuzz.rs` (14).
+- PX-proving, one at a time with at least 7 GB free: px `unified` 12, `proof` 3; tx
+  `px_consensus` 4 (a first run failed one expectation, a window change refused by the
+  v1 signatures before the proof; corrected), `fuzz_decode` 1; chain
+  `restart_rebuilds_the_px_state_exactly` 1; wallet `private_funds_move_over_rpc`,
+  `px_records_follow_a_reorganization`, `a_vault_is_deployed…`,
+  `an_uncertain_vault_lock…` 4; p2p `px_transactions_travel_the_stem…`,
+  `invalid_px_transactions_get_the_relaying_peer_penalized` 2. All passed.
+- Mutation checks: each of 7 new checks removed in turn (the block-path PX6, the
+  extension revalidation's PX6, the template filter, the admission PX6, the native
+  `ApprovalConflict`, the inverted-window rule, the ABI rule) is caught by its test.
+- `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --check`
+  clean; `guests-reproduce.sh` on Windows byte-identical.
+
+**12. Open review points.**
+- The Linux x86_64 and arm64 CI legs must reproduce the same bytes after the push
+  (coordinator), and one operator build (owner). If they differ, the fallback is the
+  zkvm id-rule change in dossier 43 (a consensus change, not taken here).
+- Agent 40's fingerprint v3 should list `ABI_VERSION`, `PREFIX_WORDS`, the vault's
+  REFUND entry, domains and `OUT_WORDS` (`px/src/fingerprint.rs` notes them).
+- Agent 26's P-5 re-run on the new kernel and vault, and agent 22's widest-proof
+  measurement.

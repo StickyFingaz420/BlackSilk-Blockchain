@@ -62,6 +62,7 @@ fn empty_px() -> PxTx {
         fee: 1,
         bridge_in: 0,
         bridge_out: 0,
+        window: Default::default(),
         anchor: [1; 8],
         nullifiers: [[2; 8], [3; 8]],
         commitments: [[4; 8], [5; 8]],
@@ -277,7 +278,10 @@ fn revalidation_across_the_activation_is_a_full_validation() {
     // Same epoch: the extension check, which passes.
     assert_eq!(revalidate_between(&tx, &net.chain, h, &old, &old), Ok(()));
     // The extension-only check cannot see the new branch id...
-    assert_eq!(revalidate_after_extension(&tx, &net.chain), Ok(()));
+    assert_eq!(
+        revalidate_after_extension(&tx, &net.chain, ACTIVATION),
+        Ok(())
+    );
     // ...the cross-activation one does.
     assert_eq!(
         revalidate_between(&tx, &net.chain, ACTIVATION, &old, &new),

@@ -19,6 +19,8 @@ fn vault() -> Registration {
     Registration {
         elf: blacksilk_px::vault::VAULT_ELF.to_vec(),
         budget: blacksilk_px::vault::BUDGET,
+        abi: blacksilk_tx::px::ABI_VERSION,
+        out_words: 1,
     }
 }
 
@@ -100,6 +102,7 @@ fn px_with_inputs(n: usize) -> PxTx {
         fee: PX_STANDARD_FEE,
         bridge_in: 0,
         bridge_out: 0,
+        window: Default::default(),
         anchor: [0; 8],
         nullifiers: [[1, 0, 0, 0, 0, 0, 0, 0], [2, 0, 0, 0, 0, 0, 0, 0]],
         commitments: [[3; 8], [4; 8]],

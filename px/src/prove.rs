@@ -5,8 +5,10 @@
 //!   `zkvm/guests/kernel`), halting with exit code 0 and writing exactly the
 //!   transaction's public statement;
 //! - executions 1..: the contract functions it calls, each halting with exit
-//!   code 0 and writing `io_hash ‖ contract` (the values the kernel reports
-//!   for it) followed by its public outputs.
+//!   code 0 and writing the function prefix `abi ‖ io_hash ‖ contract ‖
+//!   window` (`blacksilk_px_core::call::function_prefix`: its registered call
+//!   ABI, the values the kernel reports for it and the transaction's validity
+//!   window) followed by its public outputs.
 //!
 //! All executions are bound to the transaction hash `h_tx`. The verifier never
 //! runs anything: it rebuilds the statement from public data and checks the
@@ -16,7 +18,7 @@
 //! contract's records.
 
 use crate::perm::HostPerm;
-use blacksilk_px_core::call::function_prefix;
+use blacksilk_px_core::call::{function_prefix, Window, ABI_VERSION, MAX_FN, PREFIX_WORDS};
 use blacksilk_px_core::kernel::{self, Public, SliceSource, Witness};
 use blacksilk_px_core::Digest;
 use blacksilk_zk::{Proof, ZkError};
@@ -70,11 +72,13 @@ pub fn kernel_budget(n_fn: usize) -> Budget {
     }
 }
 
-/// A called function, as the verifier sees it: its program and the public
-/// outputs it writes after `io_hash ‖ contract`.
+/// A called function, as the verifier sees it: its program and call ABI (both
+/// from the registry) and the public outputs it writes after its prefix.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctionCall {
     pub program: Arc<Program>,
+    /// The call ABI the program is registered with: the first prefix word.
+    pub abi: u32,
     pub outputs: Vec<u32>,
 }
 
@@ -84,8 +88,9 @@ pub enum TransferError {
     Rejected(kernel::Error),
     /// The kernel or a function panicked, trapped or halted with an error.
     Execution(String),
-    /// Function `k` did not report the `(io_hash, contract)` the kernel
-    /// computed: its transcript differs from the kernel's.
+    /// Function `k` did not write the prefix the statement requires: its
+    /// transcript differs from the kernel's (`io_hash`), or it echoes another
+    /// ABI or validity window.
     FunctionMismatch(usize),
     /// A function run is missing or superfluous.
     Shape,
@@ -96,7 +101,8 @@ pub enum TransferError {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VerifyError {
-    /// The number of function calls differs from the statement's.
+    /// The number of function calls differs from the statement's, or exceeds
+    /// `MAX_FN`.
     Shape,
     /// Function `k`'s program is not registered to its contract.
     Unregistered(usize),
@@ -119,15 +125,18 @@ fn statement(
     public: &Public,
     calls: &[FunctionCall],
     budgets: &[Budget],
+    window: &Window,
     h_tx: [u8; 32],
 ) -> Option<Statement> {
-    if calls.len() != public.n_fn || budgets.len() != calls.len() {
+    // `n_fn > MAX_FN` never decodes from a transaction; a hand-built
+    // statement gets `Shape` instead of a panic (F-20-5).
+    if public.n_fn > MAX_FN || calls.len() != public.n_fn || budgets.len() != calls.len() {
         return None;
     }
     let mut st = Statement::single(kernel_program(), 0, public_words(public), h_tx);
     st.budget = Some(kernel_budget(public.n_fn));
     for ((call, (contract, io_hash)), budget) in calls.iter().zip(&public.functions).zip(budgets) {
-        let mut output = function_prefix(io_hash, contract).to_vec();
+        let mut output = function_prefix(call.abi, io_hash, contract, window).to_vec();
         output.extend(&call.outputs);
         st.others.push(Part {
             program: call.program.clone(),
@@ -149,11 +158,14 @@ fn prove_error(e: ProveError) -> TransferError {
 
 /// Checks the witness natively, then proves the kernel's execution together
 /// with the function runs `functions[k] = (program, private input, budget)`,
-/// each budget as registered for the program. The proof has the fixed shape
-/// of these budgets.
+/// each budget as registered for the program (with ABI [`ABI_VERSION`], the
+/// only one a deploy may register). `window` is the transaction's validity
+/// window, which every function echoes in its prefix. The proof has the
+/// fixed shape of these budgets.
 pub fn prove<R: RngCore + CryptoRng>(
     w: &Witness,
     functions: &[(Arc<Program>, Vec<u32>, Budget)],
+    window: &Window,
     h_tx: [u8; 32],
     rng: &mut R,
 ) -> Result<(Public, Vec<FunctionCall>, Proof), TransferError> {
@@ -165,9 +177,9 @@ pub fn prove<R: RngCore + CryptoRng>(
     if functions.len() != public.n_fn {
         return Err(TransferError::Shape);
     }
-    // Run every function first (cheap) and check it reports the kernel's
-    // `(io_hash, contract)`, so a mismatched call is refused before any
-    // proving work.
+    // Run every function first (cheap) and check it writes the prefix of the
+    // kernel's `(io_hash, contract)`, the ABI and the window, so a mismatched
+    // call is refused before any proving work.
     for (k, (program, input, _)) in functions.iter().enumerate() {
         let exec = blacksilk_zkvm::run(program, input, blacksilk_zkvm::MAX_CYCLES)
             .map_err(|t| TransferError::Execution(format!("function {k}: {t:?}")))?;
@@ -178,7 +190,8 @@ pub fn prove<R: RngCore + CryptoRng>(
             )));
         }
         let (contract, io_hash) = &public.functions[k];
-        if exec.output.len() < 16 || exec.output[..16] != function_prefix(io_hash, contract) {
+        let prefix = function_prefix(ABI_VERSION, io_hash, contract, window);
+        if exec.output.len() < PREFIX_WORDS || exec.output[..PREFIX_WORDS] != prefix {
             return Err(TransferError::FunctionMismatch(k));
         }
     }
@@ -204,12 +217,14 @@ pub fn prove<R: RngCore + CryptoRng>(
             )));
         }
         let (contract, io_hash) = &public.functions[k];
-        if part.output.len() < 16 || part.output[..16] != function_prefix(io_hash, contract) {
+        let prefix = function_prefix(ABI_VERSION, io_hash, contract, window);
+        if part.output.len() < PREFIX_WORDS || part.output[..PREFIX_WORDS] != prefix {
             return Err(TransferError::FunctionMismatch(k));
         }
         calls.push(FunctionCall {
             program: part.program.clone(),
-            outputs: part.output[16..].to_vec(),
+            abi: ABI_VERSION,
+            outputs: part.output[PREFIX_WORDS..].to_vec(),
         });
     }
     Ok((public, calls, proof))
@@ -217,16 +232,19 @@ pub fn prove<R: RngCore + CryptoRng>(
 
 /// Verifies a PX proof. `registered(contract, program_id)` must return the
 /// program's registered budget if it is a function of the contract, and
-/// `None` otherwise (consensus state). The proof must have exactly the fixed
-/// shape of the kernel's and the functions' budgets.
+/// `None` otherwise (consensus state); each call's `abi` must be the
+/// program's registered one. `window` is the transaction's validity window.
+/// The proof must have exactly the fixed shape of the kernel's and the
+/// functions' budgets.
 pub fn verify(
     public: &Public,
     calls: &[FunctionCall],
+    window: &Window,
     h_tx: [u8; 32],
     proof: &Proof,
     registered: impl Fn(&Digest, &[u8; 32]) -> Option<Budget>,
 ) -> Result<(), VerifyError> {
-    if calls.len() != public.n_fn {
+    if public.n_fn > MAX_FN || calls.len() != public.n_fn {
         return Err(VerifyError::Shape);
     }
     let mut budgets = Vec::with_capacity(calls.len());
@@ -236,7 +254,7 @@ pub fn verify(
             None => return Err(VerifyError::Unregistered(k)),
         }
     }
-    let st = statement(public, calls, &budgets, h_tx).ok_or(VerifyError::Shape)?;
+    let st = statement(public, calls, &budgets, window, h_tx).ok_or(VerifyError::Shape)?;
     blacksilk_zkvm::prove::verify(&st, proof).map_err(VerifyError::Proof)
 }
 
@@ -249,11 +267,12 @@ pub fn verify(
 pub fn check_shape(
     public: &Public,
     calls: &[FunctionCall],
+    window: &Window,
     h_tx: [u8; 32],
     proof: &Proof,
     registered: impl Fn(&Digest, &[u8; 32]) -> Option<Budget>,
 ) -> Result<(), VerifyError> {
-    if calls.len() != public.n_fn {
+    if public.n_fn > MAX_FN || calls.len() != public.n_fn {
         return Err(VerifyError::Shape);
     }
     let mut budgets = Vec::with_capacity(calls.len());
@@ -263,7 +282,7 @@ pub fn check_shape(
             None => return Err(VerifyError::Unregistered(k)),
         }
     }
-    let st = statement(public, calls, &budgets, h_tx).ok_or(VerifyError::Shape)?;
+    let st = statement(public, calls, &budgets, window, h_tx).ok_or(VerifyError::Shape)?;
     // Every execution has a budget here, so the statement has a fixed shape.
     let shape = st.shape().ok_or(VerifyError::Shape)?;
     // `degree_bits` is log2(height) + 1 under zero knowledge (as in
@@ -282,16 +301,17 @@ pub fn check_shape(
     }
 }
 
-/// Proves a plain transfer (no functions).
+/// Proves a plain transfer (no functions). No function reads the validity
+/// window, which `h_tx` still binds.
 pub fn prove_transfer<R: RngCore + CryptoRng>(
     w: &Witness,
     h_tx: [u8; 32],
     rng: &mut R,
 ) -> Result<(Public, Proof), TransferError> {
-    prove(w, &[], h_tx, rng).map(|(p, _, proof)| (p, proof))
+    prove(w, &[], &Window::UNBOUNDED, h_tx, rng).map(|(p, _, proof)| (p, proof))
 }
 
 /// Verifies a plain transfer proof (a statement with functions is rejected).
 pub fn verify_transfer(public: &Public, h_tx: [u8; 32], proof: &Proof) -> Result<(), VerifyError> {
-    verify(public, &[], h_tx, proof, |_, _| None)
+    verify(public, &[], &Window::UNBOUNDED, h_tx, proof, |_, _| None)
 }

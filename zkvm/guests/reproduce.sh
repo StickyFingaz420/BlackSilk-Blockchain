@@ -53,4 +53,15 @@ check() {
 }
 check kernel "$(id_of 1)" "$(id_of 3)" "$GUEST_OUT/guest-kernel" "$root/px/kernel.elf"
 check vault "$(id_of 2)" "$(id_of 4)" "$GUEST_OUT/guest-vault" "$root/px/vault.elf"
+
+# One line per guest, in a fixed format that CI turns into an annotation, so
+# every host's ids and hashes can be compared without opening the job logs.
+host="$(cd "$guest_here" && rustc -vV | sed -n 's/^host: //p' | tr -d '\r')"
+for name in kernel vault; do
+  case "$name" in
+    kernel) n=1 ;;
+    vault) n=2 ;;
+  esac
+  echo "SUMMARY $name host=$host id=$(id_of "$n") sha256=$(sha_of "$GUEST_OUT/guest-$name") bytes=$(wc -c < "$GUEST_OUT/guest-$name" | tr -d ' ')"
+done
 exit $status

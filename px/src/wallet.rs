@@ -547,6 +547,35 @@ pub mod witness_labels {
     pub const EMPTY_OWNER: &[u8] = b"px/witness/empty-owner/v1";
     /// The unused key fields of a contract input.
     pub const CONTRACT_KEY: &[u8] = b"px/witness/contract-key/v1";
+    /// The `io_hash` blind of a function call ([`super::hedged_digest`];
+    /// the blind is also in the function's private input, so the caller
+    /// derives it before building the call).
+    pub const FN_BLIND: &[u8] = b"px/witness/fn-blind/v1";
+    /// The `rcm` of a contract output the caller creates (part of the
+    /// opening the caller keeps).
+    pub const CONTRACT_RCM: &[u8] = b"px/witness/contract-rcm/v1";
+}
+
+/// A digest from a hedged stream (docs/transactions.md §10): keyed with
+/// `secrets` (normally the PX hedge key, [`Account::hedge_secret`]) and bound
+/// to `label` and `context`, mixed with `rng`. With a broken RNG the value
+/// stays unpredictable without the secret, and distinct contexts give
+/// unrelated values; with a working RNG it is a uniformly random canonical
+/// digest. For the values a caller chooses before `build_px` hedges the
+/// witness: function blinds ([`witness_labels::FN_BLIND`]) and contract
+/// output `rcm` ([`witness_labels::CONTRACT_RCM`]). Wallet side only.
+pub fn hedged_digest<R: RngCore + CryptoRng>(
+    secrets: &[&[u8]],
+    label: &[u8],
+    context: &[&[u8]],
+    rng: &mut R,
+) -> Digest {
+    let count = (context.len() as u64).to_le_bytes();
+    let mut items: Vec<&[u8]> = Vec::with_capacity(2 + context.len());
+    items.push(label);
+    items.push(&count);
+    items.extend_from_slice(context);
+    random_digest(&mut HedgedWords::new(HedgedRng::new(secrets, &items, rng)))
 }
 
 /// A hedged stream as an `RngCore`, so that the samplers above

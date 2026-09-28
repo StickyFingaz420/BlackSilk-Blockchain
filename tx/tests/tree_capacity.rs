@@ -53,6 +53,7 @@ fn px(net: &TestNet, tag: u32) -> PxTx {
         fee: PX_STANDARD_FEE,
         bridge_in: 0,
         bridge_out: PX_STANDARD_FEE,
+        window: Default::default(),
         anchor: net.chain.px().root(),
         nullifiers: [[tag, 1, 0, 0, 0, 0, 0, 0], [tag, 2, 0, 0, 0, 0, 0, 0]],
         commitments: [[tag, 3, 0, 0, 0, 0, 0, 0], [tag, 4, 0, 0, 0, 0, 0, 0]],
@@ -158,7 +159,7 @@ fn the_mempool_refuses_a_px_transaction_the_tree_cannot_take() {
     );
     assert!(!TxError::PxTreeFull.is_stateless());
     assert_eq!(
-        revalidate_after_extension(&Transaction::Px(Box::new(t.clone())), &net.chain),
+        revalidate_after_extension(&Transaction::Px(Box::new(t.clone())), &net.chain, h),
         Err(TxError::PxTreeFull)
     );
     // A stateless fault is still reported first.

@@ -739,10 +739,14 @@ mod tests {
         let vault = Registration {
             elf: vault::VAULT_ELF.to_vec(),
             budget: vault::BUDGET,
+            abi: blacksilk_tx::px::ABI_VERSION,
+            out_words: 1,
         };
         let other = Registration {
             elf: include_bytes!("../../zkvm/tests/fixtures/guest-sum.elf").to_vec(),
             budget: vault::BUDGET,
+            abi: blacksilk_tx::px::ABI_VERSION,
+            out_words: 1,
         };
         assert!(check_vault_deploy(std::slice::from_ref(&vault)).is_ok());
         assert!(check_vault_deploy(std::slice::from_ref(&other)).is_ok());
@@ -768,7 +772,7 @@ mod tests {
             contract: [1, 0, 0, 0, 0, 0, 0, 0],
             asset: ZERO_DIGEST,
             value: 10,
-            data: vault::lock_of(&secret),
+            data: vault::record_data(&[1, 0, 0, 0, 0, 0, 0, 0], &secret),
             rho: [2, 0, 0, 0, 0, 0, 0, 0],
             rcm: [3, 0, 0, 0, 0, 0, 0, 0],
         };
@@ -933,7 +937,7 @@ mod tests {
                 contract: *c,
                 asset: ZERO_DIGEST,
                 value: 10,
-                data: vault::lock_of(&secret),
+                data: vault::record_data(c, &secret),
                 rho: [i as u32 + 1, 0, 0, 0, 0, 0, 0, 0],
                 rcm: [i as u32 + 7, 0, 0, 0, 0, 0, 0, 0],
             };
