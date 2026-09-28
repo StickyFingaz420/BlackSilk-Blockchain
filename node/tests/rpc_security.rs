@@ -540,7 +540,9 @@ fn connections_beyond_the_cap_are_refused() {
 }
 
 /// A full admission class answers 503 at once; the chain lock is held by the
-/// test, so the admitted requests wait on it.
+/// test, so the admitted requests wait on it. They read the chain
+/// (`/distribution`): `/info` answers from the published chain summary
+/// without the lock (dossier 34 Stage 1) and would free its slot at once.
 #[test]
 fn a_full_class_answers_busy_at_once() {
     let n = Node::guarded(ConnLimits {
@@ -551,7 +553,7 @@ fn a_full_class_answers_busy_at_once() {
     let guard = n.shared.lock().unwrap();
     let addr = n.addr;
     let waiting: Vec<_> = (0..reads)
-        .map(|_| std::thread::spawn(move || get(addr, "/info", "").map(|a| a.status)))
+        .map(|_| std::thread::spawn(move || get(addr, "/distribution?to=0", "").map(|a| a.status)))
         .collect();
     std::thread::sleep(Duration::from_millis(500));
     let start = Instant::now();
