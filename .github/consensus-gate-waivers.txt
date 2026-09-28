@@ -1,0 +1,4 @@
+# Published commits that touch a consensus path without a Consensus-Change
+# trailer (they cannot be amended without rewriting shared history). One per
+# line: <full sha> <trailer value>. Reviewed like the gate's path list.
+b24a19a20ef4ddf167bdc08415834fe7c22942b9 none: test-only change in consensus/tests/seed_switch_liveness.rs (the build-time floor and wait bound of a liveness test); no rule, constant or encoding changed. Trailer omitted by mistake (coordinator, 2026-09-28).

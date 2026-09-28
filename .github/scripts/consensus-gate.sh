@@ -59,6 +59,26 @@ valid_trailer() {
   return 1
 }
 
+# A published commit that lacks the trailer cannot be amended without
+# rewriting shared history. `.github/consensus-gate-waivers.txt` records such
+# commits, one per line: `<full sha> <trailer value>`, where the value must be
+# a valid trailer value (`none: <reason>` or a record reference). Adding a
+# line is a reviewed change, like changing the path list above; the gate
+# prints every waived commit.
+waiver_for() {
+  local f="$here/../consensus-gate-waivers.txt" sha rest
+  [ -f "$f" ] || return 0
+  while IFS=' ' read -r sha rest; do
+    sha="${sha%$'\r'}"
+    rest="${rest%$'\r'}"
+    case "$sha" in '' | '#'*) continue ;; esac
+    if [ "$sha" = "$1" ]; then
+      printf '%s\n' "$rest"
+      return 0
+    fi
+  done <"$f"
+}
+
 main() {
   [ "$#" -le 2 ] || gate_die "usage: consensus-gate.sh [BASE [HEAD]]"
   local commits c hits bad=0 n=0 flagged=0
@@ -76,9 +96,15 @@ main() {
     local trailers subject
     trailers="$(git log -1 --format='%(trailers:key=Consensus-Change,valueonly=true,unfold=true)' "$c")"
     subject="$(git log -1 --format='%h %s' "$c")"
+    local full waiver
+    full="$(git rev-parse "$c")"
+    waiver="$(waiver_for "$full")"
     if printf '%s\n' "$trailers" | valid_trailer; then
       echo "ok   $subject"
       printf '%s\n' "$trailers" | sed '/^[[:space:]]*$/d; s/^/     Consensus-Change: /'
+    elif [ -n "$waiver" ] && printf '%s\n' "$waiver" | valid_trailer; then
+      echo "waived $subject"
+      echo "     (.github/consensus-gate-waivers.txt) $waiver"
     else
       bad=1
       gate_annotate "consensus path without a Consensus-Change trailer: $subject" \
