@@ -4,6 +4,7 @@
 use crate::addr::NetAddr;
 use crate::dandelion::{DandelionParams, PeerId};
 use crate::limits::PeerLimits;
+use crate::transport::NetworkPsk;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -40,6 +41,9 @@ pub struct NetConfig {
     pub tick: Duration,
     /// Per-peer rate limits (docs/p2p.md §10). Tests shrink them.
     pub peer_limits: PeerLimits,
+    /// A closed network's pre-shared key, mixed into every session key
+    /// (docs/p2p.md §3, F48-1). `None` on public networks.
+    pub network_psk: Option<NetworkPsk>,
 }
 
 impl NetConfig {
@@ -64,6 +68,7 @@ impl NetConfig {
             pow_threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
             tick: Duration::from_millis(250),
             peer_limits: PeerLimits::default(),
+            network_psk: None,
         }
     }
 }
@@ -92,6 +97,11 @@ pub struct NetStats {
     pub misbehaving_disconnects: u64,
     /// Peers disconnected because they did not read their messages fast enough.
     pub slow_disconnects: u64,
+    /// Connections closed because a frame failed to decrypt, in the handshake
+    /// or after it: tampering on the path, or a node of another network,
+    /// genesis, transport version or pre-shared key. Never scored
+    /// (docs/p2p.md §10).
+    pub transport_failures: u64,
     /// Relayed transactions that reached full verification (signatures,
     /// proofs) since start.
     pub tx_verifications: u64,

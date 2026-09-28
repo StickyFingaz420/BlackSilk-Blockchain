@@ -45,6 +45,13 @@ pub const MAX_INV: u64 = 500;
 /// Largest frame: a full block (with its PX budget) plus framing.
 pub const MAX_FRAME: usize = MAX_BLOCK_BYTES + 64 * 1024;
 
+/// Largest frame payload before `Verack` (docs/p2p.md §4): `Version` with its
+/// extension area, and every negotiation message of a later protocol version.
+/// A peer is unregistered and unbudgeted until then, so a longer frame closes
+/// the connection. Deployed nodes enforce it: a later version's negotiation
+/// must fit (dossier 30 W1).
+pub const MAX_HANDSHAKE_FRAME: usize = 4096;
+
 /// Largest transaction payload of any kind (PX transactions carry proofs).
 pub const MAX_ANY_TX_SIZE: usize = {
     let px = blacksilk_tx::params::MAX_PX_TX_SIZE;

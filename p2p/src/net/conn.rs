@@ -10,8 +10,10 @@ use super::state::{unix_now, Inner, Peer, State};
 use crate::addr::NetAddr;
 use crate::addrman_gate::AddrGate;
 use crate::limits::score;
-use crate::message::{is_known_type, Message, Version, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION};
-use crate::transport::{handshake, FrameReader, FrameWriter, TransportError};
+use crate::message::{
+    is_known_type, Message, Version, MAX_HANDSHAKE_FRAME, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION,
+};
+use crate::transport::{handshake_with, FrameReader, FrameWriter, Session, TransportError};
 use blacksilk_consensus::Hash;
 use rand_chacha::rand_core::RngCore;
 use std::collections::HashSet;
@@ -21,7 +23,14 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, Notify};
 
+/// The key exchange's own timeout (its first step).
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The whole handshake, from the connection to the peer's `Verack`
+/// (docs/p2p.md §4). One deadline, not one per frame: before it, a peer
+/// could hold a connection slot for a step timeout per negotiation frame
+/// (dossier 30 T-1). Two step timeouts leave room for Tor round trips.
+const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(20);
 
 const IDLE_TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -35,15 +44,23 @@ const BULK_OUTBOX: usize = 2 * SERVE_BLOCKS_PER_REQUEST;
 /// (a later protocol version may negotiate features there).
 const HANDSHAKE_UNKNOWN_FRAMES: usize = 8;
 
-async fn recv_msg<R: AsyncRead + Unpin>(
+/// A frame before `Verack`: at most [`MAX_HANDSHAKE_FRAME`] bytes. The peer
+/// is unregistered and unauthenticated, so a failure only closes the
+/// connection; nothing is scored or banned (docs/p2p.md §4, §10).
+async fn recv_handshake_frame<R: AsyncRead + Unpin>(
+    inner: &Inner,
     r: &mut FrameReader<R>,
-    timeout: Duration,
-) -> Result<Message, String> {
-    let frame = tokio::time::timeout(timeout, r.recv())
-        .await
-        .map_err(|_| "timeout".to_string())?
-        .map_err(|e| e.to_string())?;
-    Message::decode(&frame).map_err(|e| format!("decode: {e:?}"))
+) -> Result<Vec<u8>, String> {
+    r.recv_limited(MAX_HANDSHAKE_FRAME).await.map_err(|e| {
+        if matches!(e, TransportError::Decrypt) {
+            inner.state().transport_failures += 1;
+            "a frame failed to decrypt (another network, genesis, transport version or \
+             pre-shared key, tampering, or not a BlackSilk peer)"
+                .to_string()
+        } else {
+            e.to_string()
+        }
+    })
 }
 
 pub(super) async fn run_connection<S>(
@@ -57,16 +74,27 @@ pub(super) async fn run_connection<S>(
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let nid = inner.cfg.network_id;
-    // The session keys also bind the genesis id (R15-3).
+    let deadline = tokio::time::Instant::now() + HANDSHAKE_DEADLINE;
+    // The session keys also bind the genesis id (R15-3), the transport
+    // version and a closed network's pre-shared key (docs/p2p.md §3).
     let genesis = inner.genesis_id;
-    let (mut reader, mut writer) =
-        match handshake(stream, !inbound, nid, &genesis, HANDSHAKE_TIMEOUT).await {
-            Ok(x) => x,
-            Err(e) => {
-                log::debug!("{addr}: transport handshake failed: {e}");
-                return;
-            }
-        };
+    let session = Session {
+        network_id: nid,
+        genesis_id: &genesis,
+        psk: inner.cfg.network_psk.as_ref(),
+    };
+    let keyed = handshake_with(stream, !inbound, session, HANDSHAKE_TIMEOUT);
+    let (mut reader, mut writer) = match tokio::time::timeout_at(deadline, keyed).await {
+        Ok(Ok(x)) => x,
+        Ok(Err(e)) => {
+            log::debug!("{addr}: transport handshake failed: {e}");
+            return;
+        }
+        Err(_) => {
+            log::debug!("{addr}: transport handshake timed out");
+            return;
+        }
+    };
     // Version exchange.
     let nonce = {
         let mut st = inner.state();
@@ -90,12 +118,17 @@ pub(super) async fn run_connection<S>(
         listen: our_listen.clone(),
         relay_txs: true,
     };
-    let result = async {
+    // Before `Verack` only `Version`, then up to HANDSHAKE_UNKNOWN_FRAMES
+    // frames of unknown types, then `Verack`; each at most
+    // MAX_HANDSHAKE_FRAME bytes, all before the deadline. Anything else
+    // closes the connection, unscored (docs/p2p.md §4).
+    let exchange = async {
         writer
             .send(&Message::Version(ours).encode())
             .await
             .map_err(|e| e.to_string())?;
-        let theirs = match recv_msg(&mut reader, HANDSHAKE_TIMEOUT).await? {
+        let frame = recv_handshake_frame(&inner, &mut reader).await?;
+        let theirs = match Message::decode(&frame).map_err(|e| format!("decode: {e:?}"))? {
             Message::Version(v) => v,
             other => return Err(format!("expected version, got {}", other.kind())),
         };
@@ -116,10 +149,7 @@ pub(super) async fn run_connection<S>(
         // know before its `Verack` (feature negotiation): skipped.
         let mut skipped = 0;
         loop {
-            let frame = tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.recv())
-                .await
-                .map_err(|_| "timeout".to_string())?
-                .map_err(|e| e.to_string())?;
+            let frame = recv_handshake_frame(&inner, &mut reader).await?;
             if frame.first().is_some_and(|&t| !is_known_type(t))
                 && skipped < HANDSHAKE_UNKNOWN_FRAMES
             {
@@ -131,8 +161,10 @@ pub(super) async fn run_connection<S>(
                 other => Err(format!("expected verack, got {}", other.kind())),
             };
         }
-    }
-    .await;
+    };
+    let result = tokio::time::timeout_at(deadline, exchange)
+        .await
+        .unwrap_or_else(|_| Err("handshake deadline passed".into()));
     inner.state().local_nonces.remove(&nonce);
     let theirs = match result {
         Ok(v) => v,
@@ -250,6 +282,14 @@ pub(super) async fn run_connection<S>(
                 let frame = match frame {
                     Err(_) => { log::debug!("{addr}: idle timeout"); break; }
                     Ok(Err(TransportError::Io(_))) => break,
+                    // Not attributable: anyone on the path can flip a bit, and
+                    // a ban would let them cut honest peers apart for 24 h
+                    // (docs/p2p.md §10, dossier 30 T-2). Disconnect only.
+                    Ok(Err(TransportError::Decrypt)) => {
+                        inner.state().transport_failures += 1;
+                        log::debug!("{addr}: a frame failed to decrypt; disconnecting (not scored)");
+                        break;
+                    }
                     Ok(Err(e)) => { inner.misbehave(id, score::PROTOCOL, &format!("transport: {e}")); break; }
                     Ok(Ok(f)) => f,
                 };
@@ -386,6 +426,7 @@ async fn write_loop<W: AsyncWrite + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::handshake;
 
     /// R8-11: control messages queued behind block frames are written first.
     #[tokio::test]
