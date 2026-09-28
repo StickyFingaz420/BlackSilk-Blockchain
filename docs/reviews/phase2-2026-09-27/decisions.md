@@ -727,3 +727,9 @@
   - a header feed from genesis, so W5 is anchored at genesis for every restore;
   - verified contract registrations (from scanned deploys, not the node's `/px/contracts`);
   - the stale-tip relabel residual.
+
+## W3-41, W2-09b, W3-35b, Lead decisions 2026-09-28
+- **W3-41 accepted:** 4 fuzz targets (store records, seed words, transport recv, Addr v2), no findings. The seed target compiles `wallet/src/seed.rs` by path to keep reqwest, hyper and argon2 out of the fuzz graph (accepted). Longer campaigns in Wave 4.
+- **W2-09b accepted:** template gate (503), `/tip` long poll (20 ms snapshot polling), `next_seed_id` via `rpc::MiningTemplate`, `--prebuild auto`. Stale blocks went from 21% to about 15% (indication). The all-thread synchronous first dataset build is accepted.
+- **W3-35b accepted:** operator invalidate/reconsider (store record 0x03; 0x82 reserved for F48-5 quarantine), plus the runtime `invalidate_block` reorg.
+  - **Owed (S5b):** refuse marked blocks at header time (`header_sync`, `header_added`); a runtime RPC or actor command for operators; a mempool-return test for operator reorgs; a red-team review of the S5 trust model.
