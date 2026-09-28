@@ -733,3 +733,9 @@
 - **W2-09b accepted:** template gate (503), `/tip` long poll (20 ms snapshot polling), `next_seed_id` via `rpc::MiningTemplate`, `--prebuild auto`. Stale blocks went from 21% to about 15% (indication). The all-thread synchronous first dataset build is accepted.
 - **W3-35b accepted:** operator invalidate/reconsider (store record 0x03; 0x82 reserved for F48-5 quarantine), plus the runtime `invalidate_block` reorg.
   - **Owed (S5b):** refuse marked blocks at header time (`header_sync`, `header_added`); a runtime RPC or actor command for operators; a mempool-return test for operator reorgs; a red-team review of the S5 trust model.
+
+## W3-32 (addrman v2), Lead decisions 2026-09-28
+- **Accepted:** keyed two-stage bucketing (a source reaches at most 16 of 256 new buckets), test-before-evict, one tried entry per IP, anchors (2, anchors.json), Poisson feelers, /64 IPv6 limits, inbound eviction protection, stale-tip rotation. Out-of-ownership wiring in net.rs, state.rs and lib.rs accepted.
+- **TRIED_BIAS = 0.7** (simulator-derived; the slot share is 10% for g=1 and 20% for g=4, against 16.6% and 33.8% at 0.5).
+- **Owed (W3-32b):** eviction protection by ping and recent tx/block relay; block-relay-only connections; `--onion-inbound`; NetConfig interval knobs plus integration tests for feelers and stale-tip rotation; seeds as one-shot address fetches.
+- **Accepted limitation:** a fresh node with an empty tried table gives the attacker about 61% of slots in small-network scenarios (F32-13). Documented.
