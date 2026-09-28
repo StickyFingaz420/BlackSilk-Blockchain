@@ -5,8 +5,8 @@
 //! actor (`blacksilk_chain::actor`) and serves this router on a loopback
 //! address. Every chain access of a handler is one command on the actor's
 //! lanes (`/block` on the Blocks lane, local `/tx` on the Tx lane, the other
-//! reads on the Query lane); `/info` and the halt watcher read the published
-//! snapshot. Everything consensus-relevant happens in `blacksilk-chain` and
+//! reads on the Query lane); `/info`, `/tip` and the halt watcher read the
+//! published snapshot. Everything consensus-relevant happens in `blacksilk-chain` and
 //! below; this layer only decodes requests and bounds their size and cost.
 
 #![forbid(unsafe_code)]
@@ -24,7 +24,7 @@ use axum::{Json, Router};
 use blacksilk_chain::actor::{self, ActorConfig, ChainHandle, Lane};
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::{ChainManager, ChainSummary, SubmitError, SummaryCell};
-use blacksilk_chain::sync_policy::worth_verifying;
+use blacksilk_chain::sync_policy::{self, worth_verifying};
 use blacksilk_consensus::{BlockHeader, Hash, Network};
 use blacksilk_p2p::{chain_access, Network as P2p};
 use blacksilk_rpc as rpc;
@@ -235,6 +235,7 @@ const _: () = assert!(rpc::MAX_REQUEST_BYTES >= 2 * blacksilk_chain::block::MAX_
 pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/info"),
     ("GET", "/template"),
+    ("GET", "/tip"),
     ("POST", "/block"),
     ("POST", "/tx"),
     ("GET", "/blocks"),
@@ -255,7 +256,7 @@ pub fn router_with(app: App) -> Router {
 
 /// The router behind the guard with `policy` (docs/blocks.md §9.1). The guard
 /// is the outermost layer, so it covers every route and unknown paths.
-/// `/info` reads the chain actor's published snapshot
+/// `/info` and `/tip` read the chain actor's published snapshot
 /// (`ChainHandle::summary_cell`), never a command.
 pub fn router_secured(app: App, policy: guard::Policy) -> Router {
     let guard = Arc::new(guard::Guard::new(policy));
@@ -263,6 +264,7 @@ pub fn router_secured(app: App, policy: guard::Policy) -> Router {
     Router::new()
         .route("/info", get(info))
         .route("/template", get(template))
+        .route("/tip", get(tip))
         .route("/block", post(submit_block))
         .route("/tx", post(submit_tx))
         .route("/blocks", get(blocks))
@@ -312,29 +314,106 @@ fn info_of(s: &ChainSummary, stats: Option<blacksilk_p2p::NetStats>) -> rpc::Inf
         ))),
         build_commit: Some(fingerprint::BUILD_COMMIT.to_string()),
         version: Some(fingerprint::VERSION.to_string()),
+        template_ready: Some(summary_template_ready(s)),
     }
 }
 
+/// [`ChainManager::template_ready`] as of a published snapshot.
+fn summary_template_ready(s: &ChainSummary) -> bool {
+    sync_policy::template_ready(s.sync_pending, s.height, s.header_height)
+}
+
+/// The `503` answer of `/template` while the node syncs
+/// ([`ChainManager::template_ready`], dossier 09 M9-2): mining on the
+/// connected tip now would produce orphans (bodies far behind the best
+/// header) or offer transactions the mempool has not yet revalidated
+/// (mid-drain). The miner retries.
+fn syncing(height: u64, header_height: u64) -> ApiError {
+    ApiError(
+        StatusCode::SERVICE_UNAVAILABLE,
+        format!("syncing: height {height}, headers {header_height}"),
+    )
+}
+
+/// `/template`: one Query command checks readiness and builds the template
+/// and its next RandomX key (one point of the command order); hex encoding
+/// follows outside the actor.
 async fn template(
     State(App { chain: s, .. }): State<App>,
-) -> Result<Json<rpc::Template>, ApiError> {
-    // Only the template is built by the command; hex encoding follows.
-    let t = with_chain(&s, |m| m.template()).await?;
-    Ok(Json(rpc::Template {
-        height: t.height,
-        prev_id: hex::encode(t.prev_id),
-        difficulty: t.difficulty,
-        seed_id: hex::encode(t.seed_id),
-        min_timestamp: t.min_timestamp,
-        version: t.version,
-        reward: t.reward,
-        fees: t.fees,
-        txs: t
-            .txs
-            .into_iter()
-            .map(|tx| hex::encode(tx.encode()))
-            .collect(),
+) -> Result<Json<rpc::MiningTemplate>, ApiError> {
+    let (t, next) = with_chain(&s, |m| {
+        if !m.template_ready() {
+            return Err((m.height(), m.header_height()));
+        }
+        let t = m.template();
+        let next = m.next_seed_id(t.height, &t.prev_id);
+        Ok((t, next))
+    })
+    .await?
+    .map_err(|(h, hh)| syncing(h, hh))?;
+    Ok(Json(rpc::MiningTemplate {
+        template: rpc::Template {
+            height: t.height,
+            prev_id: hex::encode(t.prev_id),
+            difficulty: t.difficulty,
+            seed_id: hex::encode(t.seed_id),
+            min_timestamp: t.min_timestamp,
+            version: t.version,
+            reward: t.reward,
+            fees: t.fees,
+            txs: t
+                .txs
+                .into_iter()
+                .map(|tx| hex::encode(tx.encode()))
+                .collect(),
+        },
+        next_seed_id: next.map(hex::encode),
     }))
+}
+
+#[derive(Deserialize)]
+struct TipQuery {
+    after: Option<String>,
+    wait: Option<u64>,
+}
+
+/// How often a held `/tip` request re-reads the published snapshot: a
+/// pointer copy under a read lock, so a new tip is answered within this
+/// delay without any chain command.
+pub const TIP_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+fn tip_of(s: &ChainSummary) -> rpc::Tip {
+    rpc::Tip {
+        height: s.height,
+        tip: hex::encode(s.tip_id),
+        header_height: s.header_height,
+        template_ready: summary_template_ready(s),
+    }
+}
+
+/// `/tip` (dossier 09 I1): the connected tip from the published snapshot.
+/// With `after=<tip id>` the request is held until the tip differs from it,
+/// at most `wait` seconds (clamped to `rpc::MAX_TIP_WAIT_SECS`), then
+/// answered with the current tip either way. It never runs a chain command;
+/// its admission class (`guard::Class::LongPoll`) bounds how many are held.
+async fn tip(
+    Extension(summary): Extension<Arc<SummaryCell>>,
+    Query(q): Query<TipQuery>,
+) -> Result<Json<rpc::Tip>, ApiError> {
+    let after = match q.after.as_deref() {
+        Some(a) => Some(rpc::parse_hash(a).ok_or_else(|| bad_request("after: 32 bytes of hex"))?),
+        None => None,
+    };
+    let wait = Duration::from_secs(q.wait.unwrap_or(0).min(rpc::MAX_TIP_WAIT_SECS));
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        let s = summary.load();
+        if after != Some(s.tip_id) || tokio::time::Instant::now() >= deadline {
+            return Ok(Json(tip_of(&s)));
+        }
+        drop(s);
+        tokio::time::sleep(TIP_POLL_INTERVAL).await;
+    }
 }
 
 fn rejected(error: String) -> rpc::SubmitResult {

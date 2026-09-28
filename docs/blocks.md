@@ -601,8 +601,9 @@ The route list is `blacksilk_node::ROUTES` (`node/src/lib.rs`).
 
 | Method | Path | Purpose | Class | Body limit |
 |---|---|---|---|---|
-| GET | `/info` | network, height, tip id, difficulty, generated supply, mempool size, identity (genesis id, consensus fingerprint, commit, version) | read | none |
-| GET | `/template` | mining template: height, prev id, difficulty, seed id, min timestamp, reward, fees, transactions | bulk | none |
+| GET | `/info` | network, height, tip id, difficulty, generated supply, mempool size, identity (genesis id, consensus fingerprint, commit, version), `template_ready` (§9.4) | read | none |
+| GET | `/template` | mining template: height, prev id, difficulty, seed id, min timestamp, reward, fees, transactions, and `next_seed_id` inside the key-switch window; `503` while the node syncs (§9.4) | bulk | none |
+| GET | `/tip?after=<id>&wait=<s>` | the connected tip (height, id, header height, `template_ready`); with `after`, held until the tip differs from it, at most `wait` ≤ 30 s (§9.4) | long poll | none |
 | POST | `/block` | submit a mined block (`{"hex": …}`); admission rule §9.2 | block | `rpc::MAX_REQUEST_BYTES` (a maximum-size block in hex) |
 | POST | `/tx` | submit a transaction (`{"hex": …}`); with P2P enabled it enters the Dandelion++ stem (p2p.md §8), otherwise the local mempool | submit | `guard::MAX_TX_BODY_BYTES` (the largest transaction of any kind in hex) |
 | GET | `/blocks?from=h&count=n` | connected blocks with the global index of their first output (n ≤ 100, at most 64 MiB of hex), for wallet scanning | bulk | none |
@@ -616,7 +617,7 @@ The PX endpoints are bulk-only: there is no lookup of a single record, contract 
 
 **Concurrency (node, not consensus).** One chain actor runs every chain operation of
 the node, one command at a time, from priority lanes (p2p.md §10; `chain/src/actor.rs`).
-`/info` and the halt watcher answer from the chain's published snapshot
+`/info`, `/tip` and the halt watcher answer from the chain's published snapshot
 (`ChainHandle::summary_cell`), never a command, so they stay prompt during a block
 step, a reorganization or a slow disk. Their chain fields are those of the last
 publication: at most one command or drain step old, and mutually consistent. Every
@@ -706,6 +707,44 @@ anyone on the path:
 Ring members come from the wallet's own output index; `/outputs` is used once, to fill
 the missing range of that index in fixed pages, not per ring. Wallets should use their
 own node.
+
+### 9.4 Mining endpoints (policy)
+
+- **Readiness gate.** `/template` answers `503` with the body `syncing: height h,
+  headers hh` unless the node is *template-ready*
+  (`blacksilk_chain::sync_policy::template_ready`, checked in the same chain command
+  that builds the template):
+  - no bounded drain is in progress (`sync_pending`): between the steps of a drain the
+    mempool is not yet revalidated, so a template could offer transactions the next
+    block cannot carry;
+  - the best valid header is at most `TEMPLATE_SYNC_SLACK` = 2 blocks above the
+    connected tip. A header usually arrives just before its body, so a gap of 1 or 2 is
+    normal; a larger gap means the node is catching up, and a block mined on its tip
+    would be an orphan.
+
+  There is no peer-count rule: the first node of a network mines alone from genesis.
+  `/info` and `/tip` report the same predicate as `template_ready`. The miner treats
+  `503` as "retry later".
+
+  **Risk.** A node that knows a heavier header chain whose bodies are withheld refuses
+  templates until the bodies arrive or its connected chain outweighs those headers.
+  Headers carry real proof of work, so stopping the network's mining this way takes the
+  most work, that is majority hash power. A minority attacker can only stall a node that
+  has no honest peers; such a node is eclipsed anyway.
+- **Next RandomX key.** During the `seed_lag` (64) template heights before a key switch,
+  `/template` carries `next_seed_id`: the id of the block whose id becomes the key
+  (`sync_policy::next_seed_height`, Monero's `next_seed_hash`), taken on the template's
+  own branch. A miner builds that key's context in advance. The template's `seed_id`
+  remains the only key its block is hashed with. The field is absent outside the window,
+  and clients that do not know it ignore it.
+- **Tip notification.** `GET /tip?after=<tip id>&wait=<s>` is answered at once when
+  `after` is absent or differs from the connected tip. Otherwise the request is held
+  until the tip changes, re-reading the published snapshot every
+  `TIP_POLL_INTERVAL` = 20 ms, and at most `min(wait, rpc::MAX_TIP_WAIT_SECS = 30)`
+  seconds; then it answers with the tip either way. It runs no chain command and has
+  its own admission class (long poll, §9.1). The miner holds one such poll open and
+  drops its work as soon as the tip moves off the template's parent (stale work,
+  dossier 09 R9-9).
 
 ## 10. Wallet formats (interface, not consensus)
 

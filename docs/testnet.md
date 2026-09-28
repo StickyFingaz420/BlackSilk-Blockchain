@@ -256,33 +256,51 @@ format 0 store as it is.
 
 ```sh
 blacksilk-miner --node 127.0.0.1:29333 --rpc-cookie <node data dir>/rpc.cookie \
-    --address <testnet address> [--threads N] [--light] [--prebuild] [--build-threads N]
+    --address <testnet address> [--threads N] [--light] [--prebuild auto|on|off] \
+    [--build-threads N]
 ```
 
 - **Full mode** needs about 2.3 GiB of RAM (the 2 GiB dataset plus about 0.3 GB). It
   is much faster per hash (§12.1).
-  - The dataset is built at start and again at every RandomX key switch (heights
-    2113, 4161, …), on `--build-threads` background threads (default: a quarter of
-    `--threads`, at least 1). Build times are in §12.1.
-  - **Without `--prebuild` (the default):** at start and at a key switch the miner
-    builds the key's light cache (about 1 s) and mines in light mode until the
-    dataset is ready, then in full mode. The old dataset is freed first, so the peak
-    stays at about 2.3 GiB. Hashing never stops for the build, but runs at light-mode
-    speed meanwhile.
-  - **With `--prebuild`:** during the 64 blocks before a switch, when the next key's
-    block already exists, the miner reads its id from the node (`/blocks`, once per
-    template height and parent) and builds the next dataset in the background while
-    it mines. At the switch it swaps it in and keeps full-mode hashing. The previous
-    dataset is kept for 144 blocks after the switch, for a reorganization back across
-    it. Peak about **4.4 GiB** (two datasets and a cache). If the allocation fails,
-    the miner falls back to the light-mode bridge above.
+  - **At start** the miner builds the dataset before it hashes, on all `--threads`
+    threads: there is nothing to mine with yet, and light-mode hashing alongside
+    would only slow the build down. If the dataset cannot be allocated, the miner
+    mines in light mode.
+  - The dataset is built again at every RandomX key switch (heights 2113, 4161, …),
+    on `--build-threads` background threads (default: a quarter of `--threads`, at
+    least 1). Build times are in §12.1.
+  - **`--prebuild auto` (the default):** during the 64 blocks before a switch the
+    node announces the next key with each template (`next_seed_id`, docs/blocks.md
+    §9.4), and the miner builds the next dataset in the background while it mines.
+    At the switch it swaps it in and keeps full-mode hashing. The previous dataset
+    is kept for 144 blocks after the switch, for a reorganization back across it.
+    Peak about **4.4 GiB** (two datasets and a cache). If the second dataset cannot
+    be allocated, prebuild is turned off for the rest of the run and the miner uses
+    the light-mode bridge below. On Linux with memory overcommit an allocation can
+    succeed and the process still be killed later when memory runs out; give the
+    miner 4.4 GiB or use `--prebuild off`.
+  - **`--prebuild off`** (the light-mode bridge): at a key switch the miner frees the
+    old dataset, builds the new key's light cache (about 1 s) and mines in light mode
+    until the dataset is ready, then in full mode. The peak stays at about 2.3 GiB.
+    Hashing never stops for the build, but runs at light-mode speed meanwhile.
+  - **`--prebuild on`**: as `auto`, but a failed prebuild leaves that key in light
+    mode (no fallback), and light mode prebuilds too. The lab network uses it.
+    A bare `--prebuild` means `on`.
   - The template's key (`seed_id`) is always the one hashed with; a prebuilt dataset is
     used only if its key matches exactly.
 - **Light mode** needs 256 MiB and no dataset, but is much slower per hash. With
-  `--prebuild` it builds the next key's cache before the switch.
-- **Errors:** an unreachable or busy node, or a template the miner cannot use (for
-  example a transaction kind an outdated miner cannot decode), is logged and retried
-  every 5 s. The miner exits with status 78 only when the configuration is wrong (a
+  `--prebuild on` it builds the next key's cache before the switch.
+- **New blocks:** the miner keeps one `/tip` long poll open on its node
+  (docs/blocks.md §9.4) and drops its current work as soon as the node's tip is no
+  longer the template's parent, logging `new tip at height h: work on template t
+  abandoned`. It fetches a new template at once. `--refresh` (default 15 s) only
+  picks up new transactions.
+- **Syncing node:** while the node catches up (bodies more than 2 blocks behind its
+  best header) or connects a batch of blocks, `/template` answers `503` and the miner
+  waits and retries. A node with no peers still serves templates.
+- **Errors:** an unreachable, busy or syncing node, or a template the miner cannot
+  use (for example a transaction kind an outdated miner cannot decode), is logged and
+  retried every 5 s. The miner exits with status 78 only when the configuration is wrong (a
   payout address not valid on the node's network, or an unknown network); the systemd
   unit does not restart it then (`RestartPreventExitStatus=78`).
 - The miner logs its hash rate at info level every minute.
@@ -475,12 +493,17 @@ count only after the warm-up. The warm-up's are in `warmup_reorganizations` and
 `partition`, `heal` (the first 60 s after a partition heals) and `final` (the end
 checks), by the log position at each phase change.
 
+**Stale work.** `blocks_found_by_phase` also counts, per phase, the blocks a miner's
+node did not adopt at submission (`not_on_best_chain`: its node already had a rival
+of equal work) and the templates the miners abandoned when their node's tip moved
+(`abandoned`, from the miners' `/tip` long poll).
+
 **Evidence runs.** `summary.json` has `evidence: true` only if the checks passed, the
 warm-up reached its criterion, the miners ran with `--prebuild`, and the measured
 phase lasted at least 10 minutes; `evidence_notes` lists what is missing. Shorter
 runs are not evidence. `--evidence` refuses to start with `--duration-mins` below 10
-or with `--no-warmup`, turns on `--prebuild`, and exits with status 1 unless the run
-is evidence.
+or with `--no-warmup`, turns on `--prebuild` (the miners get `--prebuild on`), and
+exits with status 1 unless the run is evidence.
 
 **Output:** `summary.json`, `metrics.csv` (every 15 s, with the phase in the last
 column), `journal.log`, and each process's log.
@@ -588,7 +611,7 @@ logical CPUs) unless stated; treat them as orders of magnitude, not guarantees.
 |---|---|---|---|
 | Node | about 300 MB at start (267–297 MB peak per process in the local rehearsals, docs/evidence/labnet-2026-09-26/) | Verification of a PX proof takes about 0.21–0.27 s; light-mode RandomX about 0.45–0.75 s per header | **Grows with the chain:** every block body and its undo data stay in memory (PX-F1, PX-F2), about 7 KB per v1 block and up to about 8 MiB per full PX block. Plan disk and RAM for the length of the trial |
 | Wallet proving a PX transaction | peak about **3.8 GB** (3,771 MB measured) | about 45 s (transfer) to 53 s (vault call) per proof, on all cores | Proving is local; a machine without the memory cannot send PX transactions |
-| Miner, full mode | 2 GiB dataset plus about 0.3 GB; about 4.4 GiB peak with `--prebuild` | Dataset build about 180 s with 8 threads (179 s measured under load), about **20 minutes with 1 thread** (1,217–1,219 s measured, 2026-09-27); hashing about 100 ms per hash per thread (measured under load) | The build is **repeated at every RandomX key switch** (heights 2113, 4161, …). It runs in the background: the miner mines in light mode meanwhile, or, with `--prebuild`, builds before the switch (§5) |
+| Miner, full mode | 2 GiB dataset plus about 0.3 GB; about 4.4 GiB peak with prebuild (`--prebuild auto`, the default, when the memory is there) | Dataset build about 180 s with 8 threads (179 s measured under load), about **20 minutes with 1 thread** (1,217–1,219 s measured, 2026-09-27); hashing about 100 ms per hash per thread (measured under load) | The build is **repeated at every RandomX key switch** (heights 2113, 4161, …). It runs in the background: with prebuild before the switch, otherwise while the miner mines in light mode (§5) |
 | Miner, light mode | 256 MiB | about 0.45–0.75 s per hash per thread | No dataset; suitable for small machines, but finds far fewer blocks |
 
 The per-hash figures under load were measured with the full test suite running at the
@@ -671,8 +694,9 @@ always uses a new network id; never reuse one for a different genesis.
 - Every block body and its undo data stay in memory (PX-F1, PX-F2); memory grows with
   the chain.
 - Every restart re-validates every block, including every PX proof (PX-F3).
-- At every RandomX key switch a full-mode miner without `--prebuild` mines in light
-  mode (much slower) for the 3 to 20 minutes of the dataset build (§5). The prebuild
+- At every RandomX key switch a full-mode miner without prebuild (`--prebuild off`,
+  or `auto` after a failed allocation) mines in light mode (much slower) for the 3
+  to 20 minutes of the dataset build (§5). The prebuild
   and the light-mode bridge are tested with a short epoch (16 blocks, lag 4; `miner`
   tests); a full-mode miner has not yet crossed 2113 with the network's parameters.
 - No seed nodes; peers are configured by hand.

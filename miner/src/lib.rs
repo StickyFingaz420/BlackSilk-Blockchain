@@ -17,6 +17,7 @@ use rand_core::{CryptoRng, RngCore};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub enum TemplateError {
@@ -148,12 +149,20 @@ pub trait ContextBuilder: Send + Sync + 'static {
     fn seed(ctx: &Self::Ctx) -> Hash;
     fn is_full(ctx: &Self::Ctx) -> bool;
     fn build(&self, seed: &Hash, full: bool) -> Result<Self::Ctx, BuildError>;
+    /// The first full context, built while the miner has no context at all
+    /// (at start): on the calling thread, with every thread the machine
+    /// gives the miner, since nothing is mined meanwhile.
+    fn build_first(&self, seed: &Hash) -> Result<Self::Ctx, BuildError> {
+        self.build(seed, true)
+    }
 }
 
-/// Real RandomX contexts ([`PowContext::try_new`]); a dataset is expanded
-/// on `threads` threads.
+/// Real RandomX contexts ([`PowContext::try_new`]): a dataset is expanded on
+/// `threads` threads in the background, and on `first_threads` for the
+/// first one ([`ContextBuilder::build_first`]).
 pub struct RandomXBuilder {
     pub threads: usize,
+    pub first_threads: usize,
 }
 
 impl ContextBuilder for RandomXBuilder {
@@ -167,6 +176,9 @@ impl ContextBuilder for RandomXBuilder {
     fn build(&self, seed: &Hash, full: bool) -> Result<PowContext, BuildError> {
         PowContext::try_new(*seed, full, self.threads)
     }
+    fn build_first(&self, seed: &Hash) -> Result<PowContext, BuildError> {
+        PowContext::try_new(*seed, true, self.first_threads.max(self.threads))
+    }
 }
 
 /// How the miner handles RandomX key switches.
@@ -174,12 +186,18 @@ impl ContextBuilder for RandomXBuilder {
 pub struct SeedPlan {
     /// Mine with the full dataset (2 GiB) instead of the light cache.
     pub full: bool,
-    /// Build the next key's context in the background, from the moment its
-    /// block exists (`seed_lag` blocks before the switch), and keep the
-    /// previous context for [`KEEP_PREVIOUS_BLOCKS`] after a switch. Off by
-    /// default (decisions "Agent 07"): with `full` the peak is about 4.4 GiB
-    /// (two datasets and a cache).
+    /// Build the next key's context in the background, from the moment the
+    /// node announces it (`next_seed_id`, `seed_lag` blocks before the
+    /// switch), and keep the previous context for [`KEEP_PREVIOUS_BLOCKS`]
+    /// after a switch. With `full` the peak is about 4.4 GiB (two datasets
+    /// and a cache).
     pub prebuild: bool,
+    /// `--prebuild auto` (the default, decisions "W2-09"): a prebuild whose
+    /// full context cannot be allocated turns prebuild off for the rest of
+    /// the run, and the miner uses the light-mode bridge at switches (one
+    /// dataset at a time). Without it (`--prebuild on`) the key whose
+    /// prebuild failed is mined in light mode.
+    pub fallback: bool,
 }
 
 /// Blocks after a key switch during which a prebuilding miner keeps the
@@ -187,23 +205,17 @@ pub struct SeedPlan {
 /// (the anti-DoS window of the node, `sync_policy::ANTI_DOS_BLOCKS`).
 pub const KEEP_PREVIOUS_BLOCKS: u64 = 144;
 
-/// The height of the block holding the key a template at `height` switches
-/// to next, while that block exists and the switch is ahead (heights `S + 1
-/// ..= S + lag` for the key block S; Monero's `next_seed_hash` window), else
-/// `None`. The miner reads that block's id from its node (`/blocks`).
-pub fn next_seed_height(height: u64, epoch: u64, lag: u64) -> Option<u64> {
-    let now = blacksilk_consensus::seed_height(height, epoch, lag);
-    let next = blacksilk_consensus::seed_height(height + lag, epoch, lag);
-    (next != now).then_some(next)
-}
-
 /// A background build: its key, whether it is a full context, the thread.
 type Background<C> = (Hash, bool, JoinHandle<Result<C, BuildError>>);
 
 /// The miner's RandomX contexts across key switches (dossier 07 §3.4, W5):
 /// no mining time is lost to a full-mode rebuild at a switch.
 ///
-/// - **Light-mode bridge** (the default in full mode): at a switch the old
+/// - **First context** (full mode, at start): the dataset is built on the
+///   mining thread with every thread ([`ContextBuilder::build_first`]);
+///   there is nothing to mine with yet, and light-mode hashing alongside
+///   would only slow the build down.
+/// - **Light-mode bridge** (full mode without prebuild): at a switch the old
 ///   dataset is dropped, the new key's light cache is built (about 1 s) and
 ///   mined with while the dataset is expanded in the background; the next
 ///   template after it is ready mines in full mode. Before, the miner
@@ -214,7 +226,9 @@ type Background<C> = (Hash, bool, JoinHandle<Result<C, BuildError>>);
 ///   the new key's started once the old build has ended.
 /// - A context that fails to build (allocation failure) is not retried for
 ///   that key: the miner stays in light mode for it (bridge) or falls back
-///   to the bridge at the switch (prebuild).
+///   to the bridge at the switch (prebuild). With [`SeedPlan::fallback`] a
+///   failed prebuild turns prebuild off instead, so that the bridge builds
+///   the dataset once the old one is freed.
 pub struct SeedPlanner<B: ContextBuilder> {
     builder: Arc<B>,
     plan: SeedPlan,
@@ -242,7 +256,7 @@ impl<B: ContextBuilder> SeedPlanner<B> {
     }
 
     /// The context to mine a template at `height` under key `seed` with.
-    /// `next`: the next key ([`next_seed_height`]'s block id), if known.
+    /// `next`: the next key (the template's `next_seed_id`), if announced.
     /// Builds on the calling thread only what mining needs now: nothing if
     /// the key is prepared, else a light cache (or, in light mode without a
     /// prebuilt context, the light context itself).
@@ -305,29 +319,43 @@ impl<B: ContextBuilder> SeedPlanner<B> {
         }
     }
 
+    /// Whether prebuild is on now (off after a fallback, [`SeedPlan::fallback`]).
+    pub fn prebuilding(&self) -> bool {
+        self.plan.prebuild
+    }
+
     fn take_result(
         &mut self,
         seed: Hash,
         full: bool,
         result: std::thread::Result<Result<B::Ctx, BuildError>>,
     ) {
-        match result {
-            Ok(Ok(ctx)) => self.ready = Some(ctx),
-            Ok(Err(e)) => {
-                log::warn!(
-                    "background RandomX build for key {} failed: {e}",
-                    hex::encode(&seed[..8])
-                );
-                if full {
-                    self.failed.push(seed);
-                }
+        let e = match result {
+            Ok(Ok(ctx)) => {
+                self.ready = Some(ctx);
+                return;
             }
-            Err(_) => {
-                log::warn!("background RandomX build thread panicked");
-                if full {
-                    self.failed.push(seed);
-                }
-            }
+            Ok(Err(e)) => e,
+            Err(_) => BuildError::Thread,
+        };
+        log::warn!(
+            "background RandomX build for key {} failed: {e}",
+            hex::encode(&seed[..8])
+        );
+        if !full {
+            return;
+        }
+        let prebuild = self.current.as_ref().map(B::seed) != Some(seed);
+        if prebuild && self.plan.prebuild && self.plan.fallback {
+            // Two datasets do not fit: one at a time from now on.
+            self.plan.prebuild = false;
+            self.previous = None;
+            log::warn!(
+                "--prebuild auto: prebuild off for this run; at key switches the miner \
+                 mines in light mode while the new dataset is built"
+            );
+        } else {
+            self.failed.push(seed);
         }
     }
 
@@ -358,12 +386,30 @@ impl<B: ContextBuilder> SeedPlanner<B> {
         // Not prepared: free the old context first (without prebuild), then
         // build what mining needs now. In full mode that is the light cache;
         // the dataset follows in the background (the bridge).
+        let first = old.is_none() && self.previous.is_none();
         if self.plan.prebuild {
             self.previous = keep(old);
         } else {
             drop(old);
         }
         let started = std::time::Instant::now();
+        if first && self.plan.full && !self.failed.contains(&seed) {
+            match self.builder.build_first(&seed) {
+                Ok(ctx) => {
+                    self.current = Some(ctx);
+                    log::info!(
+                        "RandomX key {}: dataset built in {:.1?} on all threads",
+                        hex::encode(&seed[..8]),
+                        started.elapsed()
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::warn!("RandomX dataset: {e}; mining in light mode");
+                    self.failed.push(seed);
+                }
+            }
+        }
         self.current = Some(self.builder.build(&seed, false)?);
         log::info!(
             "RandomX key {}: light context ready in {:.1?}{}",
@@ -411,6 +457,119 @@ impl<B: ContextBuilder> SeedPlanner<B> {
                 self.take_result(key, full, Ok(Err(BuildError::Thread)));
             }
         }
+    }
+}
+
+// ------------------------------------------------ tip notification (09 I1)
+
+/// The node's latest tip as a [`TipWatcher`] saw it: the mining loop
+/// abandons a template whose parent is no longer the tip (stale work).
+#[derive(Clone, Default)]
+pub struct TipSignal(Arc<Mutex<Option<SeenTip>>>);
+
+#[derive(Clone, Copy, Debug)]
+struct SeenTip {
+    id: Hash,
+    height: u64,
+    at: Instant,
+}
+
+impl TipSignal {
+    /// Records the tip `id` at `height`, seen now, if it is new.
+    pub fn observe(&self, id: Hash, height: u64) {
+        let mut seen = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if seen.is_none_or(|s| s.id != id) {
+            *seen = Some(SeenTip {
+                id,
+                height,
+                at: Instant::now(),
+            });
+        }
+    }
+
+    /// The height of a tip other than `prev_id` first seen after `since`
+    /// (the moment the template on `prev_id` was requested), if any. A tip
+    /// seen before `since` says nothing about the template: the node
+    /// answered the template request after it.
+    pub fn moved_since(&self, prev_id: &Hash, since: Instant) -> Option<u64> {
+        let seen = *self.0.lock().unwrap_or_else(|e| e.into_inner());
+        seen.filter(|s| s.id != *prev_id && s.at >= since)
+            .map(|s| s.height)
+    }
+}
+
+/// One long poll of the node's tip: `GET /tip?after=<id>&wait=<secs>`
+/// (`blacksilk_rpc::Client::tip`), with the id the watcher last saw.
+pub type TipSource = Box<dyn FnMut(Option<&Hash>, u64) -> Result<rpc::Tip, String> + Send>;
+
+/// A thread that long-polls the node's tip and publishes every change to a
+/// [`TipSignal`], so that the miner stops hashing on a parent the node has
+/// replaced within a poll interval, instead of at its next template refresh
+/// (dossier 09 R9-9 / I1; the stale-work effect measured in
+/// docs/evidence/labnet-warmup-2026-09-28). The node holds each poll until
+/// its tip changes; a failed poll is retried with a growing pause. Dropping
+/// the watcher stops the thread after its current poll.
+pub struct TipWatcher {
+    signal: TipSignal,
+    stop: Arc<AtomicBool>,
+}
+
+/// How long each tip poll is held by the node (below
+/// `blacksilk_rpc::MAX_TIP_WAIT_SECS` and the client's request timeout).
+pub const TIP_WAIT_SECS: u64 = 25;
+
+impl TipWatcher {
+    pub fn spawn(mut source: TipSource, wait_secs: u64) -> std::io::Result<Self> {
+        let signal = TipSignal::default();
+        let stop = Arc::new(AtomicBool::new(false));
+        let (sig, halt) = (signal.clone(), stop.clone());
+        std::thread::Builder::new()
+            .name("tip-watcher".into())
+            .spawn(move || {
+                let mut after: Option<Hash> = None;
+                let mut failures = 0u32;
+                while !halt.load(Ordering::Relaxed) {
+                    let started = Instant::now();
+                    match source(after.as_ref(), wait_secs) {
+                        Ok(t) => {
+                            failures = 0;
+                            match rpc::parse_hash(&t.tip) {
+                                Some(id) if Some(id) != after => {
+                                    sig.observe(id, t.height);
+                                    after = Some(id);
+                                }
+                                // Unchanged (the wait ended) or malformed: a
+                                // node that answers at once is not polled in
+                                // a busy loop.
+                                _ if started.elapsed() < Duration::from_millis(100) => {
+                                    std::thread::sleep(Duration::from_millis(250));
+                                }
+                                _ => {}
+                            }
+                        }
+                        Err(e) => {
+                            failures = failures.saturating_add(1);
+                            if failures == 1 {
+                                log::debug!("tip poll: {e}");
+                            }
+                            std::thread::sleep(Duration::from_millis(
+                                500 * u64::from(failures.min(10)),
+                            ));
+                        }
+                    }
+                }
+            })?;
+        Ok(Self { signal, stop })
+    }
+
+    pub fn signal(&self) -> TipSignal {
+        self.signal.clone()
+    }
+}
+
+impl Drop for TipWatcher {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
     }
 }
 
@@ -564,35 +723,33 @@ mod tests {
     const FULL_PREBUILD: SeedPlan = SeedPlan {
         full: true,
         prebuild: true,
+        fallback: false,
+    };
+    const AUTO: SeedPlan = SeedPlan {
+        full: true,
+        prebuild: true,
+        fallback: true,
     };
 
-    #[test]
-    fn next_seed_heights_follow_monero_next_seed_hash() {
-        let window: Vec<u64> = (2000..2200)
-            .filter(|&h| next_seed_height(h, 2048, 64).is_some())
-            .collect();
-        assert_eq!(window, (2049..=2112).collect::<Vec<_>>());
-        assert_eq!(next_seed_height(2100, 2048, 64), Some(2048));
-        assert_eq!(next_seed_height(100, 2048, 64), None);
-    }
-
-    /// The default: full mode, no prebuild. At a switch the miner mines in
-    /// light mode at once (one light build on the mining thread) while the
-    /// dataset is built in the background, then mines in full mode.
+    /// Full mode without prebuild. The first dataset is built at once (no
+    /// context exists). At a switch the miner mines in light mode (one
+    /// light build on the mining thread) while the dataset is built in the
+    /// background, then mines in full mode.
     #[test]
     fn the_light_bridge_keeps_mining_through_a_switch() {
         let (mut p, b) = planner(SeedPlan {
             full: true,
             prebuild: false,
+            fallback: false,
         });
         assert_eq!(
             state(&mut p, 1, A, None),
-            (A, false),
-            "bridge from the start"
+            (A, true),
+            "the first dataset, built at once"
         );
-        p.finish_background();
+        assert_eq!(p.building(), None);
         assert_eq!(state(&mut p, 2, A, Some(B)), (A, true));
-        assert_eq!(p.building(), None, "no prebuild by default");
+        assert_eq!(p.building(), None, "no prebuild");
         assert_eq!(
             state(&mut p, 3, B, None),
             (B, false),
@@ -602,8 +759,170 @@ mod tests {
         assert_eq!(state(&mut p, 4, B, None), (B, true));
         assert_eq!(
             *b.builds.lock().unwrap(),
-            vec![(A, false), (A, true), (B, false), (B, true)]
+            vec![(A, true), (B, false), (B, true)]
         );
+    }
+
+    /// The first context uses `build_first` (every thread); a failed first
+    /// dataset leaves the miner in light mode for that key.
+    #[test]
+    fn the_first_dataset_is_built_on_all_threads_once() {
+        #[derive(Default)]
+        struct Counting {
+            first: Mutex<Vec<Hash>>,
+            other: Mutex<Vec<(Hash, bool)>>,
+            fail: AtomicBool,
+        }
+        impl ContextBuilder for Arc<Counting> {
+            type Ctx = FakeCtx;
+            fn seed(ctx: &FakeCtx) -> Hash {
+                ctx.seed
+            }
+            fn is_full(ctx: &FakeCtx) -> bool {
+                ctx.full
+            }
+            fn build(&self, seed: &Hash, full: bool) -> Result<FakeCtx, BuildError> {
+                self.other.lock().unwrap().push((*seed, full));
+                Ok(FakeCtx { seed: *seed, full })
+            }
+            fn build_first(&self, seed: &Hash) -> Result<FakeCtx, BuildError> {
+                self.first.lock().unwrap().push(*seed);
+                if self.fail.load(Ordering::SeqCst) {
+                    return Err(BuildError::OutOfMemory);
+                }
+                Ok(FakeCtx {
+                    seed: *seed,
+                    full: true,
+                })
+            }
+        }
+        let b = Arc::new(Counting::default());
+        let mut p = SeedPlanner::new(b.clone(), AUTO);
+        let c = p.context(1, A, None).unwrap();
+        assert_eq!((c.seed, c.full), (A, true));
+        p.context(2, B, None).unwrap();
+        p.finish_background();
+        assert_eq!(*b.first.lock().unwrap(), vec![A], "only while none exists");
+        // Light mode never builds a dataset.
+        let b = Arc::new(Counting::default());
+        let mut p = SeedPlanner::new(
+            b.clone(),
+            SeedPlan {
+                full: false,
+                prebuild: false,
+                fallback: false,
+            },
+        );
+        p.context(1, A, None).unwrap();
+        assert!(b.first.lock().unwrap().is_empty());
+        // An allocation failure: light mode for that key, not retried.
+        let b = Arc::new(Counting::default());
+        b.fail.store(true, Ordering::SeqCst);
+        let mut p = SeedPlanner::new(b.clone(), AUTO);
+        let c = p.context(1, A, None).unwrap();
+        assert_eq!((c.seed, c.full), (A, false));
+        assert_eq!(p.building(), None, "the failed key is not rebuilt");
+        assert_eq!(*b.other.lock().unwrap(), vec![(A, false)]);
+    }
+
+    /// `--prebuild auto`: a prebuild that cannot be allocated turns prebuild
+    /// off, and the switch bridges in light mode while the new dataset is
+    /// built with the old one freed; the new key is not marked failed.
+    #[test]
+    fn auto_falls_back_to_the_bridge_when_the_prebuild_does_not_fit() {
+        let (mut p, b) = planner(AUTO);
+        assert_eq!(state(&mut p, 1, A, None), (A, true));
+        b.fail_full.store(true, Ordering::SeqCst);
+        assert_eq!(state(&mut p, 2, A, Some(B)), (A, true));
+        assert_eq!(p.building(), Some(B), "the prebuild is tried");
+        p.finish_background();
+        assert!(!p.prebuilding(), "off after the failed allocation");
+        assert_eq!(state(&mut p, 3, A, Some(B)), (A, true));
+        assert_eq!(p.building(), None, "not retried");
+        // At the switch there is memory for one dataset again.
+        b.fail_full.store(false, Ordering::SeqCst);
+        assert_eq!(state(&mut p, 4, B, None), (B, false), "bridge");
+        assert_eq!(p.building(), Some(B), "the dataset is built after all");
+        p.finish_background();
+        assert_eq!(state(&mut p, 5, B, None), (B, true));
+        // With `--prebuild on` the same failure marks the key: light mode.
+        let (mut p, b) = planner(FULL_PREBUILD);
+        state(&mut p, 1, A, None);
+        b.fail_full.store(true, Ordering::SeqCst);
+        state(&mut p, 2, A, Some(B));
+        p.finish_background();
+        assert!(p.prebuilding());
+        b.fail_full.store(false, Ordering::SeqCst);
+        assert_eq!(state(&mut p, 3, B, None), (B, false));
+        p.finish_background();
+        assert_eq!(state(&mut p, 4, B, None), (B, false));
+    }
+
+    /// A tip seen after the template request, other than its parent, stops
+    /// the work; one seen before it, or the parent itself, does not.
+    #[test]
+    fn the_tip_signal_reports_only_later_changes() {
+        let s = TipSignal::default();
+        let before = Instant::now();
+        assert_eq!(s.moved_since(&A, before), None, "nothing seen");
+        s.observe(B, 7);
+        let fetched = Instant::now();
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(s.moved_since(&A, before), Some(7));
+        assert_eq!(s.moved_since(&B, before), None, "the parent is the tip");
+        assert_eq!(s.moved_since(&A, fetched), None, "seen before the request");
+        s.observe(B, 7);
+        assert_eq!(s.moved_since(&A, fetched), None, "the same tip again");
+        s.observe(C, 8);
+        assert_eq!(s.moved_since(&B, fetched), Some(8));
+    }
+
+    /// The watcher long-polls with the last tip it saw and publishes each
+    /// change; errors are retried.
+    #[test]
+    fn the_tip_watcher_publishes_each_new_tip() {
+        let calls: Arc<Mutex<Vec<Option<Hash>>>> = Arc::default();
+        let (tx, rx) = mpsc::channel::<Result<(Hash, u64), String>>();
+        let rx = Mutex::new(rx);
+        let log = calls.clone();
+        let source: TipSource = Box::new(move |after, wait| {
+            assert_eq!(wait, 3);
+            log.lock().unwrap().push(after.copied());
+            match rx.lock().unwrap().recv() {
+                Ok(Ok((id, height))) => Ok(rpc::Tip {
+                    height,
+                    tip: hex::encode(id),
+                    header_height: height,
+                    template_ready: true,
+                }),
+                Ok(Err(e)) => Err(e),
+                Err(_) => {
+                    std::thread::sleep(Duration::from_millis(50));
+                    Err("closed".into())
+                }
+            }
+        });
+        let w = TipWatcher::spawn(source, 3).unwrap();
+        let sig = w.signal();
+        let t0 = Instant::now();
+        let wait_for = |prev: Hash, height: u64| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while sig.moved_since(&prev, t0) != Some(height) {
+                assert!(Instant::now() < deadline, "no tip {height}");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        tx.send(Ok((A, 1))).unwrap();
+        wait_for(C, 1);
+        tx.send(Err("down".into())).unwrap();
+        tx.send(Ok((B, 2))).unwrap();
+        wait_for(A, 2);
+        let seen = calls.lock().unwrap().clone();
+        assert_eq!(seen[0], None, "the first poll answers at once");
+        assert_eq!(seen[1], Some(A), "then polls after the last tip");
+        assert_eq!(seen[2], Some(A), "and again after an error");
+        drop(w);
+        drop(tx);
     }
 
     /// Prebuild: the next key's context is built before the switch and used
@@ -720,6 +1039,7 @@ mod tests {
         let (mut p, b) = planner(SeedPlan {
             full: false,
             prebuild: true,
+            fallback: false,
         });
         state(&mut p, 1, A, Some(B));
         p.finish_background();
@@ -728,6 +1048,7 @@ mod tests {
         let (mut p, b) = planner(SeedPlan {
             full: false,
             prebuild: false,
+            fallback: false,
         });
         state(&mut p, 1, A, Some(B));
         assert_eq!(p.building(), None);
@@ -740,10 +1061,14 @@ mod tests {
     #[test]
     fn the_randomx_builder_builds_the_same_context() {
         let mut p = SeedPlanner::new(
-            RandomXBuilder { threads: 1 },
+            RandomXBuilder {
+                threads: 1,
+                first_threads: 1,
+            },
             SeedPlan {
                 full: false,
                 prebuild: true,
+                fallback: false,
             },
         );
         let (a, b) = ([0x21; 32], [0x22; 32]);

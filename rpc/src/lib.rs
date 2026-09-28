@@ -98,6 +98,12 @@ pub struct Info {
     /// The node crate version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// Whether the node serves block templates now: no bounded drain in
+    /// progress and bodies at most 2 blocks behind the best header
+    /// (`/template` answers `503` otherwise; docs/blocks.md §9). Optional
+    /// so that clients decode nodes that predate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template_ready: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -120,6 +126,47 @@ pub struct Template {
 fn first_header_version() -> u32 {
     1
 }
+
+/// `/template`'s answer: the [`Template`] fields plus `next_seed_id`, the
+/// RandomX key blocks switch to after the template's height, announced
+/// during the `seed_lag` (64) heights before the switch (Monero's
+/// `next_seed_hash`). A miner may build that key's context in advance; the
+/// template's own `seed_id` stays the only key its block is hashed with.
+/// A client that decodes only [`Template`] ignores the field.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct MiningTemplate {
+    #[serde(flatten)]
+    pub template: Template,
+    /// The next key's block id (hex), inside the window only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_seed_id: Option<String>,
+}
+
+/// The extra field of a [`MiningTemplate`], decoded apart from the
+/// template (a flattened decode would buffer every transaction twice).
+#[derive(Deserialize)]
+struct NextSeedField {
+    #[serde(default)]
+    next_seed_id: Option<String>,
+}
+
+/// `GET /tip` (docs/blocks.md §9): the node's connected tip, from its
+/// published chain snapshot. With `after=<tip id>&wait=<secs>` the node
+/// holds the request until its tip differs from `after`, at most
+/// [`MAX_TIP_WAIT_SECS`], so a miner learns of a new block at once instead
+/// of at its next template refresh (dossier 09 I1).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Tip {
+    pub height: u64,
+    /// The connected tip's id (hex).
+    pub tip: String,
+    pub header_height: u64,
+    /// As [`Info::template_ready`].
+    pub template_ready: bool,
+}
+
+/// The longest a `/tip` long poll is held; a larger `wait` is clamped.
+pub const MAX_TIP_WAIT_SECS: u64 = 30;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HexPayload {
@@ -540,6 +587,13 @@ impl Client {
         resp: reqwest::blocking::Response,
         cap: usize,
     ) -> Result<T, RpcError> {
+        let body = Self::body(resp, cap)?;
+        serde_json::from_slice(&body).map_err(|e| RpcError::Decode(e.to_string()))
+    }
+
+    /// The body of a successful response, at most `cap` bytes; an error
+    /// status is returned with its (capped) body.
+    fn body(resp: reqwest::blocking::Response, cap: usize) -> Result<Vec<u8>, RpcError> {
         let status = resp.status();
         if !status.is_success() {
             let body = Self::read_capped(resp, MAX_SMALL_RESPONSE_BYTES)?;
@@ -548,16 +602,50 @@ impl Client {
                 String::from_utf8_lossy(&body).into_owned(),
             ));
         }
-        let body = Self::read_capped(resp, cap)?;
-        serde_json::from_slice(&body).map_err(|e| RpcError::Decode(e.to_string()))
+        Self::read_capped(resp, cap)
     }
 
     pub fn info(&self) -> Result<Info, RpcError> {
         self.get("/info", MAX_SMALL_RESPONSE_BYTES)
     }
 
+    /// The block template. A node that is syncing answers `503`
+    /// (`RpcError::Status(503, "syncing: ...")`): retry later.
     pub fn template(&self) -> Result<Template, RpcError> {
         self.get("/template", MAX_TEMPLATE_RESPONSE_BYTES)
+    }
+
+    /// The block template with the next RandomX key ([`MiningTemplate`]).
+    pub fn mining_template(&self) -> Result<MiningTemplate, RpcError> {
+        self.check()?;
+        let resp = self
+            .authorized(self.http.get(format!("{}/template", self.base)))
+            .send()
+            .map_err(|e| RpcError::Http(e.to_string()))?;
+        let body = Self::body(resp, MAX_TEMPLATE_RESPONSE_BYTES)?;
+        let template: Template =
+            serde_json::from_slice(&body).map_err(|e| RpcError::Decode(e.to_string()))?;
+        let next: NextSeedField =
+            serde_json::from_slice(&body).map_err(|e| RpcError::Decode(e.to_string()))?;
+        Ok(MiningTemplate {
+            template,
+            next_seed_id: next.next_seed_id,
+        })
+    }
+
+    /// The node's connected tip (`GET /tip`). With `after`, the node answers
+    /// once its tip differs from `after`, or after `wait_secs` (at most
+    /// [`MAX_TIP_WAIT_SECS`]) with the unchanged tip.
+    pub fn tip(&self, after: Option<&[u8; 32]>, wait_secs: u64) -> Result<Tip, RpcError> {
+        let path = match after {
+            Some(id) => format!(
+                "/tip?after={}&wait={}",
+                hex::encode(id),
+                wait_secs.min(MAX_TIP_WAIT_SECS)
+            ),
+            None => "/tip".to_string(),
+        };
+        self.get(&path, MAX_SMALL_RESPONSE_BYTES)
     }
 
     pub fn submit_block(&self, block: &[u8]) -> Result<SubmitResult, RpcError> {
@@ -959,5 +1047,109 @@ mod tests {
         };
         let back: Info = serde_json::from_str(&serde_json::to_string(&new).unwrap()).unwrap();
         assert_eq!(back, new);
+        assert_eq!(i.template_ready, None, "a node older than the field");
+    }
+
+    fn template() -> Template {
+        Template {
+            height: 2049,
+            prev_id: "aa".repeat(32),
+            difficulty: 5,
+            seed_id: "00".repeat(32),
+            min_timestamp: 7,
+            version: 2,
+            reward: 9,
+            fees: 1,
+            txs: vec!["abcd".into()],
+        }
+    }
+
+    /// `/template` with `next_seed_id` still decodes as a [`Template`] (an
+    /// older miner), and the field is left out outside the window.
+    #[test]
+    fn the_next_seed_id_extends_the_template_compatibly() {
+        let with = MiningTemplate {
+            template: template(),
+            next_seed_id: Some("bb".repeat(32)),
+        };
+        let json = serde_json::to_string(&with).unwrap();
+        assert!(json.contains("\"next_seed_id\""), "{json}");
+        let old: Template = serde_json::from_str(&json).unwrap();
+        assert_eq!(old, template());
+        let next: NextSeedField = serde_json::from_str(&json).unwrap();
+        assert_eq!(next.next_seed_id, with.next_seed_id);
+        let without = MiningTemplate {
+            next_seed_id: None,
+            ..with
+        };
+        let json = serde_json::to_string(&without).unwrap();
+        assert!(!json.contains("next_seed_id"), "{json}");
+        let next: NextSeedField = serde_json::from_str(&json).unwrap();
+        assert_eq!(next.next_seed_id, None);
+    }
+
+    /// The miner's template request: both parts decoded from one body.
+    #[test]
+    fn a_mining_template_is_read_from_one_response() {
+        let with = MiningTemplate {
+            template: template(),
+            next_seed_id: Some("cc".repeat(32)),
+        };
+        let body = serde_json::to_string(&with).unwrap();
+        let (head, served) = capture_response(format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        ));
+        let got = Client::new(&head).mining_template().unwrap();
+        assert_eq!(got, with);
+        assert!(served.join().unwrap().starts_with("GET /template "));
+    }
+
+    /// `/tip` requests: a long poll names the tip and a clamped wait.
+    #[test]
+    fn a_tip_long_poll_names_the_tip_and_a_clamped_wait() {
+        let tip = Tip {
+            height: 3,
+            tip: "dd".repeat(32),
+            header_height: 4,
+            template_ready: true,
+        };
+        let body = serde_json::to_string(&tip).unwrap();
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let (addr, served) = capture_response(reply.clone());
+        assert_eq!(Client::new(&addr).tip(Some(&[0xab; 32]), 999).unwrap(), tip);
+        let head = served.join().unwrap();
+        let expected = format!(
+            "GET /tip?after={}&wait={MAX_TIP_WAIT_SECS} ",
+            "ab".repeat(32)
+        );
+        assert!(head.starts_with(&expected), "{head}");
+        let (addr, served) = capture_response(reply);
+        Client::new(&addr).tip(None, 5).unwrap();
+        assert!(served.join().unwrap().starts_with("GET /tip "));
+    }
+
+    /// Serves `reply` to one request; the thread returns the request head.
+    fn capture_response(reply: String) -> (String, std::thread::JoinHandle<String>) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        let t = std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = s.read(&mut chunk).unwrap();
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            s.write_all(reply.as_bytes()).unwrap();
+            String::from_utf8_lossy(&buf).into_owned()
+        });
+        (addr, t)
     }
 }

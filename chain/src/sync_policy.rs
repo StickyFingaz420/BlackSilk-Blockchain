@@ -15,6 +15,11 @@
 //! - [`pow_chunk`]: the header proof-of-work chunk, capped so that no header
 //!   is hashed under a key taken from an unverified header of its own chunk
 //!   (F07-4, F31-8).
+//! - [`template_ready`]: whether the node serves block templates (dossier 09
+//!   M9-2): not while a bounded drain is in progress or bodies are missing
+//!   more than [`TEMPLATE_SYNC_SLACK`] blocks below the best header.
+//! - [`next_seed_height`]: the next RandomX key announced with a template
+//!   (Monero's `next_seed_hash`), for the miner's prebuild.
 
 use blacksilk_consensus::pow::HOT_SEEDS;
 use blacksilk_consensus::{seed_height, BlockHeader, ChainParams, Hash, HeaderChain};
@@ -137,6 +142,48 @@ pub fn hot_seeds(hc: &HeaderChain) -> Vec<Hash> {
 pub fn pow_chunk(pow_threads: usize, p: &ChainParams) -> usize {
     let cap = usize::try_from(p.seed_lag).unwrap_or(usize::MAX).max(1);
     pow_threads.clamp(1, cap)
+}
+
+/// Blocks the best valid header chain may be ahead of the connected tip
+/// while the node still serves block templates. A header usually arrives a
+/// moment before its body (the labnet shows `header_height = height + 1`
+/// most of the time), so 0 would refuse templates in normal operation; 2
+/// also covers a body racing a second header.
+pub const TEMPLATE_SYNC_SLACK: u64 = 2;
+
+/// Whether the node serves block templates (`/template`, docs/blocks.md §9;
+/// dossier 09 M9-2). Node policy, not consensus:
+///
+/// - **Not mid-drain** (`sync_pending`): between the steps of a bounded
+///   drain the mempool is only partly revalidated, so a template could
+///   offer transactions the next block cannot carry.
+/// - **Not while catching up**: with bodies missing more than
+///   [`TEMPLATE_SYNC_SLACK`] blocks below the best header, every block
+///   mined on the connected tip would be an orphan (Bitcoin Core refuses
+///   `getblocktemplate` during initial download, Monero answers "Core is
+///   busy").
+/// - **No peer-count rule**: the first node of a network mines from genesis
+///   alone (decisions "Agent 09").
+///
+/// Risk (documented, docs/blocks.md §9): a node that knows a heavier header
+/// chain whose bodies are withheld stops serving templates until the bodies
+/// arrive or the headers are outworked. Keeping the whole network from
+/// mining that way requires announcing headers with the most work, i.e.
+/// majority hash power; a minority attacker can only stall nodes that have
+/// no honest peers.
+pub fn template_ready(sync_pending: bool, height: u64, header_height: u64) -> bool {
+    !sync_pending && header_height.saturating_sub(height) <= TEMPLATE_SYNC_SLACK
+}
+
+/// The height of the block holding the RandomX key that templates at
+/// `height` switch to next, while that block exists and the switch is ahead
+/// (heights `S + 1 ..= S + lag` for the key block `S`), else `None`: Monero's
+/// `next_seed_hash` window (`rx_seedheights`). The returned height is at
+/// most `height - 1`, so the block is an ancestor of the template's parent.
+pub fn next_seed_height(height: u64, epoch: u64, lag: u64) -> Option<u64> {
+    let now = seed_height(height, epoch, lag);
+    let next = seed_height(height + lag, epoch, lag);
+    (next != now).then_some(next)
 }
 
 #[cfg(test)]
@@ -304,6 +351,60 @@ mod tests {
         assert_eq!(hot_seeds(&c), vec![g, ids[15]]);
         assert!(seed_is_live(&c, &g));
         assert!(!seed_is_live(&c, &[3; 32]));
+    }
+
+    /// Monero's `rx_seedheight` / `rx_seedheights`, transcribed independently
+    /// of `seed_height` (src/crypto/rx-slow-hash.c): the next key is
+    /// announced exactly when it differs from the current one.
+    fn monero_seedheight(height: u64) -> u64 {
+        const EPOCH: u64 = 2048;
+        const LAG: u64 = 64;
+        if height <= EPOCH + LAG {
+            0
+        } else {
+            (height - LAG - 1) & !(EPOCH - 1)
+        }
+    }
+
+    #[test]
+    fn next_seed_heights_follow_monero_next_seed_hash() {
+        for h in 0..20_000u64 {
+            let (seed, next) = (monero_seedheight(h), monero_seedheight(h + 64));
+            let expected = (next != seed).then_some(next);
+            assert_eq!(next_seed_height(h, 2048, 64), expected, "height {h}");
+            if let Some(n) = expected {
+                assert!(n < h, "the key block exists below the template");
+            }
+        }
+        let window: Vec<u64> = (2000..2200)
+            .filter(|&h| next_seed_height(h, 2048, 64).is_some())
+            .collect();
+        assert_eq!(window, (2049..=2112).collect::<Vec<_>>());
+        for (h, n) in [(2048, None), (2049, Some(2048)), (2112, Some(2048))] {
+            assert_eq!(next_seed_height(h, 2048, 64), n, "height {h}");
+        }
+        for (h, n) in [
+            (2113, None),
+            (4096, None),
+            (4097, Some(4096)),
+            (4160, Some(4096)),
+        ] {
+            assert_eq!(next_seed_height(h, 2048, 64), n, "height {h}");
+        }
+        assert_eq!(next_seed_height(4161, 2048, 64), None);
+    }
+
+    /// Slack 2: a header gap of 1 or 2 serves templates, 3 does not; a
+    /// pending drain never does.
+    #[test]
+    fn template_readiness_needs_no_drain_and_a_small_header_gap() {
+        assert_eq!(TEMPLATE_SYNC_SLACK, 2);
+        assert!(template_ready(false, 10, 10));
+        assert!(template_ready(false, 10, 11));
+        assert!(template_ready(false, 10, 12));
+        assert!(!template_ready(false, 10, 13));
+        assert!(!template_ready(true, 10, 10));
+        assert!(template_ready(false, 0, 0), "a lone node at genesis");
     }
 
     /// F07-4 / F31-8: the chunk never exceeds the key lag.

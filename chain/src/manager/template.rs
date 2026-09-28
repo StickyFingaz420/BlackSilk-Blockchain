@@ -3,6 +3,7 @@
 use super::{ChainManager, Template};
 use crate::emission::block_reward;
 use crate::mempool::{MempoolError, Origin, COINBASE_RESERVE};
+use crate::sync_policy;
 use blacksilk_consensus::Hash;
 use blacksilk_tx::types::Transaction;
 
@@ -111,5 +112,202 @@ impl ChainManager {
             fees,
             txs,
         }
+    }
+
+    /// Whether this node serves block templates now
+    /// ([`sync_policy::template_ready`]): no bounded drain in progress and the
+    /// best header at most [`sync_policy::TEMPLATE_SYNC_SLACK`] blocks ahead
+    /// of the connected tip. `/template` answers `503` otherwise.
+    pub fn template_ready(&self) -> bool {
+        sync_policy::template_ready(self.sync_pending(), self.height(), self.header_height())
+    }
+
+    /// The RandomX key that blocks after a template at `height` on `prev_id`
+    /// switch to, while it is announced (the `seed_lag` heights before the
+    /// switch, [`sync_policy::next_seed_height`]): the id of that key block
+    /// on `prev_id`'s branch. `None` outside the window, or for a parent that
+    /// is unknown or not at `height - 1`. The miner builds the next key's
+    /// context from it; the template's own `seed_id` stays the only key a
+    /// block is hashed with.
+    pub fn next_seed_id(&self, height: u64, prev_id: &Hash) -> Option<Hash> {
+        let p = self.params();
+        sync_policy::next_seed_height(height, p.seed_epoch, p.seed_lag)?;
+        let parent = self.headers.header(prev_id)?;
+        if parent.height + 1 != height {
+            return None;
+        }
+        Some(self.headers.seed_id_for(*prev_id, height + p.seed_lag))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The template readiness gate (dossier 09 M9-2) and the next RandomX
+    //! key (09 I3), on a regtest chain with a short key epoch (16, lag 4:
+    //! the first switch at height 21, key = block 16).
+    use super::*;
+    use crate::block::Block;
+    use crate::store::MemoryStore;
+    use blacksilk_consensus::merkle::tx_root;
+    use blacksilk_consensus::{BlockHeader, ChainParams, PowFunction};
+    use blacksilk_crypto::keys::{SubaddressIndex, WalletKeys};
+    use blacksilk_tx::builder::{build_coinbase, Payment};
+    use blacksilk_tx::params::TxRules;
+    use rand_chacha::rand_core::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
+    use std::sync::Arc;
+
+    struct ZeroPow;
+    impl PowFunction for ZeroPow {
+        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            [0; 32]
+        }
+    }
+
+    fn params() -> blacksilk_consensus::ChainParams {
+        let mut p = ChainParams::regtest();
+        p.seed_epoch = 16;
+        p.seed_lag = 4;
+        p
+    }
+
+    fn open() -> ChainManager {
+        let p = params();
+        ChainManager::open(
+            p.clone(),
+            TxRules::for_chain(&p),
+            Arc::new(ZeroPow),
+            Box::<MemoryStore>::default(),
+            [3; 32],
+        )
+        .unwrap()
+    }
+
+    const NOW: u64 = u64::MAX / 2;
+    const SLACK: u64 = sync_policy::TEMPLATE_SYNC_SLACK;
+
+    /// `n` coinbase-only blocks on `parent`, connected on `m`; `nonce`
+    /// tells branches apart.
+    fn branch(m: &mut ChainManager, parent: Hash, n: usize, nonce: u64) -> Vec<Block> {
+        let mut rng = ChaCha20Rng::seed_from_u64(nonce);
+        let (keys, _) = WalletKeys::generate(&mut rng);
+        let genesis_time = m.params().genesis.timestamp;
+        let mut prev = parent;
+        let mut out = Vec::new();
+        for _ in 0..n {
+            let t = m.template_on(&prev).unwrap();
+            let cb = build_coinbase(
+                t.height,
+                &[Payment {
+                    address: keys.address(SubaddressIndex::PRIMARY),
+                    amount: t.reward,
+                }],
+                &keys.hedge_secret(),
+                &mut rng,
+            )
+            .unwrap();
+            let txs = vec![Transaction::Coinbase(cb)];
+            let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+            let header = BlockHeader {
+                version: t.version,
+                height: t.height,
+                prev_id: prev,
+                timestamp: t.min_timestamp.max(genesis_time + 120 * t.height),
+                difficulty: t.difficulty,
+                tx_root: tx_root(&ids),
+                nonce,
+            };
+            let b = Block { header, txs };
+            m.submit_block(b.clone(), NOW).unwrap();
+            prev = b.id(m.params().network_id);
+            out.push(b);
+        }
+        out
+    }
+
+    /// Headers ahead of the bodies: ready with a gap of 1 or 2, not with 3.
+    #[test]
+    fn templates_wait_for_bodies_more_than_two_blocks_behind() {
+        let mut src = open();
+        let g = src.tip_id();
+        let blocks = branch(&mut src, g, 3, 1);
+        let mut m = open();
+        assert!(
+            m.template_ready(),
+            "a lone node at genesis serves templates"
+        );
+        let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header).collect();
+        m.accept_headers(&headers, NOW).unwrap();
+        assert_eq!((m.height(), m.header_height()), (0, 3));
+        assert!(!m.template_ready(), "a header gap of 3");
+        m.submit_block(blocks[0].clone(), NOW).unwrap();
+        assert_eq!(m.header_height() - m.height(), SLACK);
+        assert!(m.template_ready(), "a header gap of 2");
+        m.submit_block(blocks[1].clone(), NOW).unwrap();
+        assert_eq!(m.header_height() - m.height(), 1);
+        assert!(m.template_ready(), "a header gap of 1");
+    }
+
+    /// A bounded drain (the actor connects a released branch in steps):
+    /// not ready between the steps, ready once it ends.
+    #[test]
+    fn templates_wait_for_a_bounded_drain() {
+        let mut src = open();
+        let g = src.tip_id();
+        let blocks = branch(&mut src, g, 20, 1);
+        let mut m = open();
+        let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header).collect();
+        m.accept_headers(&headers, NOW).unwrap();
+        for b in blocks[1..].iter().rev() {
+            m.submit_block_bounded(b.clone(), NOW, 8).unwrap();
+        }
+        assert_eq!(m.height(), 0, "the bodies wait for block 1");
+        m.submit_block_bounded(blocks[0].clone(), NOW, 8).unwrap();
+        assert!(m.sync_pending(), "the drain is split into steps");
+        assert!(!m.template_ready(), "mid-drain");
+        let mut steps = 0;
+        while !m.sync_step(8) {
+            steps += 1;
+            assert!(!m.template_ready(), "mid-drain, step {steps}");
+        }
+        assert_eq!(m.height(), 20);
+        assert!(m.template_ready(), "the drain ended");
+    }
+
+    /// `next_seed_id` is announced exactly for the `lag` template heights
+    /// before a switch, equals the key of the first template after it, and
+    /// follows the parent's branch.
+    #[test]
+    fn the_next_key_is_announced_in_the_lag_window() {
+        let mut m = open();
+        let g = m.tip_id();
+        let main = branch(&mut m, g, 24, 1);
+        let nid = m.params().network_id;
+        let id = |b: &Block| b.id(nid);
+        let key16 = id(&main[15]);
+        for h in 1..=24u64 {
+            let prev = if h == 1 { g } else { id(&main[h as usize - 2]) };
+            let expected = (17..=20).contains(&h).then_some(key16);
+            assert_eq!(m.next_seed_id(h, &prev), expected, "template height {h}");
+        }
+        let t = m.template_on(&id(&main[19])).unwrap();
+        assert_eq!(
+            (t.height, t.seed_id),
+            (21, key16),
+            "the key after the switch"
+        );
+        // A side branch forking at 15 has its own block 16: the next key on
+        // it is that block, not the main chain's.
+        let side = branch(&mut m, id(&main[14]), 3, 2);
+        assert_eq!(m.height(), 24, "the side branch is lighter");
+        assert_eq!(
+            m.next_seed_id(19, &id(&side[2])),
+            Some(id(&side[0])),
+            "the side branch's block 16"
+        );
+        assert_ne!(id(&side[0]), key16);
+        // A parent at the wrong height or an unknown parent: nothing.
+        assert_eq!(m.next_seed_id(19, &id(&main[16])), None);
+        assert_eq!(m.next_seed_id(18, &[9; 32]), None);
     }
 }
