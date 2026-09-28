@@ -4,14 +4,14 @@
 
 use blacksilk_chain::address::decode_address;
 use blacksilk_chain::emission::format_amount;
-use blacksilk_consensus::{ChainParams, Hash, Network};
+use blacksilk_consensus::Network;
 use blacksilk_crypto::keys::Address;
 use blacksilk_miner::{
-    build_block, next_seed_height, search, ContextBuilder, PowContext, RandomXBuilder, SeedPlan,
-    SeedPlanner,
+    build_block, search, ContextBuilder, PowContext, RandomXBuilder, SeedPlan, SeedPlanner,
+    TipSignal, TipSource, TipWatcher, TIP_WAIT_SECS,
 };
 use blacksilk_rpc::{self as rpc, parse_hash, Client, RpcError};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::path::{Path, PathBuf};
@@ -42,18 +42,53 @@ struct Args {
     light: bool,
     /// Build the next RandomX key's context in the background during the 64
     /// blocks before a key switch, so full-mode mining continues at the
-    /// switch. Peak memory in full mode about 4.4 GiB (two datasets and a
-    /// cache) instead of 2.3 GiB. Off by default: at a switch the miner then
-    /// mines in light mode while the new dataset is built (docs/testnet.md).
-    #[arg(long)]
-    prebuild: bool,
+    /// switch (peak memory about 4.4 GiB: two datasets and a cache).
+    /// `auto` (the default): on in full mode; if the second dataset cannot
+    /// be allocated, off for the rest of the run, and at a switch the miner
+    /// mines in light mode while the new dataset is built. `on`: also in
+    /// light mode, and without the fallback. `off`: the light-mode bridge
+    /// only (docs/testnet.md §5). A bare `--prebuild` means `on`.
+    #[arg(long, value_enum, default_value = "auto", num_args = 0..=1, default_missing_value = "on")]
+    prebuild: Prebuild,
     /// Threads that build a RandomX dataset in the background (default: a
-    /// quarter of the mining threads, at least 1).
+    /// quarter of the mining threads, at least 1). The first dataset, built
+    /// before any hashing, uses all mining threads.
     #[arg(long)]
     build_threads: Option<usize>,
-    /// Seconds before refreshing the template (new transactions, new tip).
+    /// Seconds before refreshing the template (new transactions). A new tip
+    /// ends the work at once: the miner long-polls the node's `/tip`.
     #[arg(long, default_value_t = 15)]
     refresh: u64,
+}
+
+/// `--prebuild` (decisions "W2-09").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum Prebuild {
+    Auto,
+    On,
+    Off,
+}
+
+impl Prebuild {
+    fn plan(self, full: bool) -> SeedPlan {
+        match self {
+            Prebuild::Auto => SeedPlan {
+                full,
+                prebuild: full,
+                fallback: true,
+            },
+            Prebuild::On => SeedPlan {
+                full,
+                prebuild: true,
+                fallback: false,
+            },
+            Prebuild::Off => SeedPlan {
+                full,
+                prebuild: false,
+                fallback: false,
+            },
+        }
+    }
 }
 
 fn now() -> u64 {
@@ -144,9 +179,8 @@ fn connect(node: &str, cookie: Option<&Path>) -> Result<Client, String> {
 /// What the mining loop asks of its node: the RPC client in the binary, a
 /// chain in process in the tests.
 trait Node {
-    fn template(&mut self) -> Result<rpc::Template, String>;
-    /// The id of the connected block at `height`.
-    fn block_id_at(&mut self, height: u64) -> Result<Hash, String>;
+    /// The template with the next RandomX key (`/template`).
+    fn template(&mut self) -> Result<rpc::MiningTemplate, String>;
     fn submit_block(&mut self, block: &[u8]) -> Result<rpc::SubmitResult, String>;
 }
 
@@ -175,18 +209,8 @@ impl RpcNode {
 }
 
 impl Node for RpcNode {
-    fn template(&mut self) -> Result<rpc::Template, String> {
-        self.client.template().map_err(|e| self.check(e))
-    }
-
-    fn block_id_at(&mut self, height: u64) -> Result<Hash, String> {
-        let blocks = self.client.blocks(height, 1).map_err(|e| self.check(e))?;
-        let entry = blocks
-            .blocks
-            .first()
-            .filter(|b| b.height == height)
-            .ok_or_else(|| format!("the node has no block at height {height}"))?;
-        parse_hash(&entry.id).ok_or_else(|| format!("bad block id at height {height}"))
+    fn template(&mut self) -> Result<rpc::MiningTemplate, String> {
+        self.client.mining_template().map_err(|e| self.check(e))
     }
 
     fn submit_block(&mut self, block: &[u8]) -> Result<rpc::SubmitResult, String> {
@@ -194,61 +218,35 @@ impl Node for RpcNode {
     }
 }
 
-/// The next RandomX key of the templates on one tip, looked up once.
-///
-/// During the `seed_lag` blocks before a key switch the key block already
-/// exists below the template's parent ([`next_seed_height`]); its id is read
-/// from the node's `/blocks` once per template height and parent, so a
-/// template refresh on the same tip costs no lookup. The template's
-/// `seed_id` stays the only authority for the key a block is hashed with:
-/// a wrong next key (a reorganization between the two requests) only wastes
-/// a background build, which the planner discards.
-#[derive(Default)]
-struct NextSeed {
-    /// (template height, parent) of the cached lookup, and its result.
-    cached: Option<((u64, String), Hash)>,
-    /// Lookups sent to the node (tests).
-    lookups: u64,
+/// The tip watcher's long poll, on its own connection to the node (the
+/// cookie is read again after a `401`, as for [`RpcNode`]).
+fn tip_source(node: String, cookie: Option<PathBuf>) -> TipSource {
+    let mut client = connect(&node, cookie.as_deref()).ok();
+    Box::new(move |after, wait| {
+        if client.is_none() {
+            client = Some(connect(&node, cookie.as_deref())?);
+        }
+        let c = client.as_ref().expect("set above");
+        c.tip(after, wait).map_err(|e| {
+            if matches!(e, RpcError::Status(401, _)) {
+                client = None;
+            }
+            e.to_string()
+        })
+    })
 }
 
-impl NextSeed {
-    fn lookup(
-        &mut self,
-        node: &mut impl Node,
-        t: &rpc::Template,
-        epoch: u64,
-        lag: u64,
-    ) -> Option<Hash> {
-        let height = next_seed_height(t.height, epoch, lag)?;
-        if let Some(((h, prev), id)) = &self.cached {
-            if *h == t.height && *prev == t.prev_id {
-                return Some(*id);
-            }
-        }
-        self.lookups += 1;
-        match node.block_id_at(height) {
-            Ok(id) => {
-                self.cached = Some(((t.height, t.prev_id.clone()), id));
-                Some(id)
-            }
-            Err(e) => {
-                // Not cached: the next template retries.
-                log::warn!("next RandomX key (block {height}): {e}");
-                None
-            }
-        }
-    }
-}
+/// How often a search checks its refresh deadline and the tip signal.
+const STOP_CHECK_EVERY: Duration = Duration::from_millis(20);
 
 /// The mining loop's state: one [`Miner::round`] per template.
 struct Miner<N: Node, B: ContextBuilder<Ctx = PowContext>> {
     node: N,
     planner: SeedPlanner<B>,
-    next_seed: NextSeed,
-    /// Whether next keys are looked up (only a prebuilding planner uses them).
-    prebuild: bool,
-    seed_epoch: u64,
-    seed_lag: u64,
+    /// The node's tip as the tip watcher sees it (`None`: refresh only).
+    tips: Option<TipSignal>,
+    /// Templates abandoned because the node's tip moved (tests).
+    abandoned: u64,
     payout: Address,
     hedge: [u8; 32],
     rng: ChaCha20Rng,
@@ -265,14 +263,16 @@ impl<N: Node, B: ContextBuilder<Ctx = PowContext>> Miner<N, B> {
     /// `Ok(Some((height, accepted)))`: a block was found and submitted.
     /// `Err`: nothing was mined; the caller retries after [`RETRY_AFTER`].
     fn round(&mut self) -> Result<Option<(u64, bool)>, String> {
-        let template = self.node.template()?;
+        let requested = Instant::now();
+        let rpc::MiningTemplate {
+            template,
+            next_seed_id,
+        } = self.node.template()?;
         let seed_id = parse_hash(&template.seed_id).ok_or("bad seed id from node")?;
-        let next = if self.prebuild {
-            self.next_seed
-                .lookup(&mut self.node, &template, self.seed_epoch, self.seed_lag)
-        } else {
-            None
-        };
+        let prev_id = parse_hash(&template.prev_id).ok_or("bad parent id from node")?;
+        // The next key only steers a background build; a malformed one is
+        // ignored (the template's own key stays authoritative).
+        let next = next_seed_id.as_deref().and_then(parse_hash);
         let ctx = self
             .planner
             .context(template.height, seed_id, next)
@@ -300,17 +300,28 @@ impl<N: Node, B: ContextBuilder<Ctx = PowContext>> Miner<N, B> {
         // a fresh coinbase, so its header differs and restarting loses nothing.
         let nonce_start = rand_core::RngCore::next_u64(&mut self.rng);
 
-        // Stop the search after `refresh` to pick up a newer template.
+        // Stop the search after `refresh` to pick up a newer template, or
+        // as soon as the node's tip is no longer this template's parent
+        // (stale work: a block found now could only be an orphan).
         let stop = Arc::new(AtomicBool::new(false));
         let timer = {
             let stop = stop.clone();
             let refresh = self.refresh;
+            let tips = self.tips.clone();
             std::thread::spawn(move || {
                 let deadline = Instant::now() + refresh;
+                let mut moved = None;
                 while Instant::now() < deadline && !stop.load(Ordering::Relaxed) {
-                    std::thread::sleep(Duration::from_millis(200));
+                    moved = tips
+                        .as_ref()
+                        .and_then(|t| t.moved_since(&prev_id, requested));
+                    if moved.is_some() {
+                        break;
+                    }
+                    std::thread::sleep(STOP_CHECK_EVERY);
                 }
                 stop.store(true, Ordering::Relaxed);
+                moved
             })
         };
         let started = Instant::now();
@@ -323,7 +334,7 @@ impl<N: Node, B: ContextBuilder<Ctx = PowContext>> Miner<N, B> {
             &stop,
         );
         stop.store(true, Ordering::Relaxed);
-        let _ = timer.join();
+        let moved = timer.join().unwrap_or(None);
         log::debug!(
             "{hashes} hashes in {:.1?} ({:.1} H/s)",
             started.elapsed(),
@@ -341,6 +352,14 @@ impl<N: Node, B: ContextBuilder<Ctx = PowContext>> Miner<N, B> {
         }
 
         let Some(f) = found else {
+            if let Some(h) = moved {
+                self.abandoned += 1;
+                log::info!(
+                    "new tip at height {h}: work on template {} abandoned after {:.1?}",
+                    template.height,
+                    started.elapsed()
+                );
+            }
             return Ok(None);
         };
         let mut block = block;
@@ -403,23 +422,27 @@ fn run(args: Args) -> Result<(), Fatal> {
             info.network
         ))
     })?;
-    let params = ChainParams::for_network(net);
     let threads = args
         .threads
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
         .max(1);
     let build_threads = args.build_threads.unwrap_or(threads / 4).max(1);
-    let plan = SeedPlan {
-        full: !args.light,
-        prebuild: args.prebuild,
-    };
+    let plan = args.prebuild.plan(!args.light);
     log::info!(
-        "mining on {} at height {} with {threads} threads ({} mode; prebuild {}, {build_threads} build threads)",
+        "mining on {} at height {} with {threads} threads ({} mode; prebuild {:?}: {}, {build_threads} build threads)",
         info.network,
         info.height,
         if args.light { "light" } else { "full" },
-        if args.prebuild { "on" } else { "off" },
+        args.prebuild,
+        if plan.prebuild { "on" } else { "off" },
     );
+    // Tip notification: a new block on the node ends the current work at
+    // once instead of at the next refresh.
+    let watcher = TipWatcher::spawn(
+        tip_source(args.node.clone(), args.rpc_cookie.clone()),
+        TIP_WAIT_SECS,
+    )
+    .map_err(|e| Fatal::Other(format!("tip watcher thread: {e}")))?;
 
     // Secret randomness for coinbase construction (hedged inside the builder).
     let mut seed = [0u8; 32];
@@ -438,13 +461,12 @@ fn run(args: Args) -> Result<(), Fatal> {
         planner: SeedPlanner::new(
             RandomXBuilder {
                 threads: build_threads,
+                first_threads: threads,
             },
             plan,
         ),
-        next_seed: NextSeed::default(),
-        prebuild: args.prebuild,
-        seed_epoch: params.seed_epoch,
-        seed_lag: params.seed_lag,
+        tips: Some(watcher.signal()),
+        abandoned: 0,
         payout,
         hedge,
         rng,
@@ -468,7 +490,7 @@ mod tests {
     use blacksilk_chain::block::Block;
     use blacksilk_chain::manager::ChainManager;
     use blacksilk_chain::store::MemoryStore;
-    use blacksilk_consensus::RandomXPow;
+    use blacksilk_consensus::{ChainParams, Hash, RandomXPow};
     use blacksilk_crypto::keys::{SubaddressIndex, WalletKeys};
     use blacksilk_miner::BuildError;
     use blacksilk_tx::params::TxRules;
@@ -480,38 +502,39 @@ mod tests {
     struct ChainNode {
         chain: ChainManager,
         network_id: u32,
-        /// `block_id_at` calls.
-        id_lookups: Vec<u64>,
+        /// Template heights that announced a next key.
+        announced: Vec<u64>,
         /// Replace the next template's seed id (a malformed response).
         corrupt_seed: bool,
+        /// Serve templates of this difficulty (a search that never ends).
+        difficulty: Option<u64>,
     }
 
     impl Node for ChainNode {
-        fn template(&mut self) -> Result<rpc::Template, String> {
+        fn template(&mut self) -> Result<rpc::MiningTemplate, String> {
             let t = self.chain.template();
-            Ok(rpc::Template {
-                height: t.height,
-                prev_id: hex::encode(t.prev_id),
-                difficulty: t.difficulty,
-                seed_id: if std::mem::take(&mut self.corrupt_seed) {
-                    "not hex".into()
-                } else {
-                    hex::encode(t.seed_id)
+            let next = self.chain.next_seed_id(t.height, &t.prev_id);
+            if next.is_some() {
+                self.announced.push(t.height);
+            }
+            Ok(rpc::MiningTemplate {
+                template: rpc::Template {
+                    height: t.height,
+                    prev_id: hex::encode(t.prev_id),
+                    difficulty: self.difficulty.unwrap_or(t.difficulty),
+                    seed_id: if std::mem::take(&mut self.corrupt_seed) {
+                        "not hex".into()
+                    } else {
+                        hex::encode(t.seed_id)
+                    },
+                    min_timestamp: t.min_timestamp,
+                    version: t.version,
+                    reward: t.reward,
+                    fees: t.fees,
+                    txs: t.txs.iter().map(|tx| hex::encode(tx.encode())).collect(),
                 },
-                min_timestamp: t.min_timestamp,
-                version: t.version,
-                reward: t.reward,
-                fees: t.fees,
-                txs: t.txs.iter().map(|tx| hex::encode(tx.encode())).collect(),
+                next_seed_id: next.map(hex::encode),
             })
-        }
-
-        fn block_id_at(&mut self, height: u64) -> Result<Hash, String> {
-            self.id_lookups.push(height);
-            self.chain
-                .block_at(height)
-                .map(|b| b.id(self.network_id))
-                .ok_or_else(|| format!("no block at {height}"))
         }
 
         fn submit_block(&mut self, block: &[u8]) -> Result<rpc::SubmitResult, String> {
@@ -576,23 +599,26 @@ mod tests {
             node: ChainNode {
                 chain,
                 network_id: p.network_id,
-                id_lookups: Vec::new(),
+                announced: Vec::new(),
                 corrupt_seed: false,
+                difficulty: None,
             },
             planner: SeedPlanner::new(
                 Recording {
-                    inner: RandomXBuilder { threads: 1 },
+                    inner: RandomXBuilder {
+                        threads: 1,
+                        first_threads: 1,
+                    },
                     builds: builds.clone(),
                 },
                 SeedPlan {
                     full: false,
                     prebuild,
+                    fallback: false,
                 },
             ),
-            next_seed: NextSeed::default(),
-            prebuild,
-            seed_epoch: p.seed_epoch,
-            seed_lag: p.seed_lag,
+            tips: None,
+            abandoned: 0,
             payout: keys.address(SubaddressIndex::PRIMARY),
             hedge: [7; 32],
             rng,
@@ -617,11 +643,11 @@ mod tests {
     }
 
     /// A short regtest chain across a key switch, mined by the real loop
-    /// (templates, next-key lookup, planner, RandomX light, submission):
+    /// (templates with `next_seed_id`, planner, RandomX light, submission):
     /// with `--prebuild` the next key's context is built on the planner's
     /// background thread inside the lag window and used at the switch,
-    /// so the mining thread builds nothing there; the key lookup runs once
-    /// per template height, only inside the window.
+    /// so the mining thread builds nothing there. The next key comes with
+    /// the template (no `/blocks` lookup).
     #[test]
     fn prebuild_crosses_a_key_switch_without_building_on_the_mining_thread() {
         let (mut m, builds) = miner(true);
@@ -630,8 +656,7 @@ mod tests {
         }
         let key16 = m.node.chain.block_at(16).unwrap().id(m.node.network_id);
         // Templates 17..=20 are the window (next key = block 16).
-        assert_eq!(m.node.id_lookups, vec![16; 4]);
-        assert_eq!(m.next_seed.lookups, 4);
+        assert_eq!(m.node.announced, vec![17, 18, 19, 20]);
         // The lag gives the build time; in a network it is 64 blocks.
         m.planner.finish_background();
         let before = builds.lock().unwrap().len();
@@ -656,15 +681,15 @@ mod tests {
         assert_eq!(m.node.chain.height(), 23);
     }
 
-    /// Without `--prebuild` nothing is looked up, and the switch builds the
-    /// new key's context on the mining thread (the default).
+    /// Without prebuild the announced key is not built ahead, and the
+    /// switch builds the new key's context on the mining thread.
     #[test]
     fn without_prebuild_the_switch_builds_on_the_mining_thread() {
         let (mut m, builds) = miner(false);
         for h in 1..=21 {
             assert_eq!(mine(&mut m), h);
         }
-        assert!(m.node.id_lookups.is_empty());
+        assert_eq!(m.node.announced, vec![17, 18, 19, 20]);
         let builds = builds.lock().unwrap().clone();
         assert_eq!(builds.len(), 2);
         assert_ne!(builds[1].2, "randomx-build", "{builds:?}");
@@ -682,11 +707,8 @@ mod tests {
 
         struct Down;
         impl Node for Down {
-            fn template(&mut self) -> Result<rpc::Template, String> {
-                Err("HTTP 503 syncing".into())
-            }
-            fn block_id_at(&mut self, _: u64) -> Result<Hash, String> {
-                unreachable!()
+            fn template(&mut self) -> Result<rpc::MiningTemplate, String> {
+                Err("node returned HTTP 503: syncing: height 0, headers 3".into())
             }
             fn submit_block(&mut self, _: &[u8]) -> Result<rpc::SubmitResult, String> {
                 unreachable!()
@@ -695,10 +717,8 @@ mod tests {
         let mut down = Miner {
             node: Down,
             planner: m.planner,
-            next_seed: NextSeed::default(),
-            prebuild: false,
-            seed_epoch: 16,
-            seed_lag: 4,
+            tips: None,
+            abandoned: 0,
             payout: m.payout,
             hedge: m.hedge,
             rng: m.rng,
@@ -710,60 +730,60 @@ mod tests {
         assert!(down.round().unwrap_err().contains("503"));
     }
 
-    /// The next-key lookup: only inside the window, once per template
-    /// height and parent, again after the parent changes, and not cached
-    /// when it fails.
+    /// Tip notification: a search on a template whose parent is no longer
+    /// the node's tip stops within a check interval, long before the
+    /// refresh, and the next round mines on the new tip.
     #[test]
-    fn the_next_key_is_looked_up_once_per_tip() {
-        struct Ids {
-            calls: Vec<u64>,
-            fail: bool,
-        }
-        impl Node for Ids {
-            fn template(&mut self) -> Result<rpc::Template, String> {
-                unreachable!()
-            }
-            fn block_id_at(&mut self, height: u64) -> Result<Hash, String> {
-                self.calls.push(height);
-                if self.fail {
-                    return Err("down".into());
-                }
-                Ok([height as u8; 32])
-            }
-            fn submit_block(&mut self, _: &[u8]) -> Result<rpc::SubmitResult, String> {
-                unreachable!()
-            }
-        }
-        let t = |height: u64, prev: &str| rpc::Template {
-            height,
-            prev_id: prev.into(),
-            difficulty: 1,
-            seed_id: String::new(),
-            min_timestamp: 0,
-            version: 1,
-            reward: 0,
-            fees: 0,
-            txs: Vec::new(),
+    fn a_new_tip_abandons_stale_work_at_once() {
+        let (mut m, _) = miner(false);
+        assert_eq!(mine(&mut m), 1);
+        let signal = TipSignal::default();
+        m.tips = Some(signal.clone());
+        // A search that cannot end on its own (refresh 60 s).
+        m.node.difficulty = Some(u64::MAX);
+        let tip = m.node.chain.tip_id();
+        let rival: Hash = [0x77; 32];
+        let notify = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            signal.observe(rival, 1);
+        });
+        let started = Instant::now();
+        assert_eq!(m.round().unwrap(), None, "no block on a stale parent");
+        let took = started.elapsed();
+        notify.join().unwrap();
+        assert!(took < Duration::from_secs(10), "stopped after {took:?}");
+        assert!(took >= Duration::from_millis(250), "{took:?}");
+        assert_eq!(m.abandoned, 1);
+        assert_eq!(m.node.chain.tip_id(), tip);
+        // The node's own tip, seen again, is not a change: the next round
+        // mines normally.
+        m.tips.as_ref().unwrap().observe(tip, 1);
+        m.node.difficulty = None;
+        assert_eq!(mine(&mut m), 2);
+        assert_eq!(m.abandoned, 1);
+    }
+
+    /// `--prebuild`: `auto` prebuilds in full mode with the fallback, never
+    /// in light mode; `on` always; `off` never; a bare flag is `on`.
+    #[test]
+    fn prebuild_modes() {
+        let full = |p: Prebuild| {
+            let s = p.plan(true);
+            (s.prebuild, s.fallback)
         };
-        let mut node = Ids {
-            calls: Vec::new(),
-            fail: false,
+        assert_eq!(full(Prebuild::Auto), (true, true));
+        assert_eq!(full(Prebuild::On), (true, false));
+        assert_eq!(full(Prebuild::Off), (false, false));
+        assert!(!Prebuild::Auto.plan(false).prebuild);
+        assert!(Prebuild::On.plan(false).prebuild);
+        let parse = |extra: &[&str]| {
+            let mut argv = vec!["blacksilk-miner", "--address", "x"];
+            argv.extend_from_slice(extra);
+            Args::try_parse_from(argv).unwrap().prebuild
         };
-        let mut n = NextSeed::default();
-        let (e, l) = (2048, 64);
-        assert_eq!(n.lookup(&mut node, &t(2048, "a"), e, l), None);
-        assert_eq!(n.lookup(&mut node, &t(2113, "a"), e, l), None);
-        assert!(node.calls.is_empty(), "outside the window");
-        assert_eq!(n.lookup(&mut node, &t(2049, "a"), e, l), Some([0; 32]));
-        assert_eq!(n.lookup(&mut node, &t(2049, "a"), e, l), Some([0; 32]));
-        assert_eq!(node.calls, vec![2048], "a refresh on the same tip");
-        n.lookup(&mut node, &t(2049, "b"), e, l);
-        n.lookup(&mut node, &t(2050, "c"), e, l);
-        assert_eq!(node.calls, vec![2048; 3], "a new parent, a new height");
-        node.fail = true;
-        assert_eq!(n.lookup(&mut node, &t(2051, "d"), e, l), None);
-        node.fail = false;
-        assert_eq!(n.lookup(&mut node, &t(2051, "d"), e, l), Some([0; 32]));
-        assert_eq!(node.calls.len(), 5, "a failure is not cached");
+        assert_eq!(parse(&[]), Prebuild::Auto);
+        assert_eq!(parse(&["--prebuild"]), Prebuild::On);
+        assert_eq!(parse(&["--prebuild", "off"]), Prebuild::Off);
+        assert_eq!(parse(&["--prebuild=on"]), Prebuild::On);
     }
 }

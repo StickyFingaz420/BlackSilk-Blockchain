@@ -1,0 +1,105 @@
+{
+  "started_unix": 1790613137,
+  "duration_secs": 1592,
+  "nodes": 4,
+  "final_height": 314,
+  "partitions": 1,
+  "tx_attempts": 27,
+  "tx_submitted": 27,
+  "tx_failures": {},
+  "px_attempts": 0,
+  "px_submitted": 0,
+  "px_failures": {},
+  "warmup": {
+    "enabled": true,
+    "reached": true,
+    "secs": 564,
+    "end_height": 193,
+    "end_difficulty": 11,
+    "mean_interval_secs": 8.071322570000001,
+    "window_blocks": 30,
+    "ratio": 0.75,
+    "target_secs": 10
+  },
+  "measured_secs": 960,
+  "reorganizations": 20,
+  "max_reorg_depth": 12,
+  "reorg_depths": {
+    "1": 15,
+    "2": 2,
+    "3": 1,
+    "12": 2
+  },
+  "warmup_reorganizations": 0,
+  "warmup_max_reorg_depth": 0,
+  "reorgs_by_phase": {
+    "connected": {
+      "count": 16,
+      "max_depth": 3,
+      "depths": {
+        "1": 13,
+        "2": 2,
+        "3": 1
+      }
+    },
+    "heal": {
+      "count": 4,
+      "max_depth": 12,
+      "depths": {
+        "1": 2,
+        "12": 2
+      }
+    }
+  },
+  "blocks_found_by_phase": {
+    "connected": {
+      "found": 119,
+      "not_on_best_chain": 9,
+      "abandoned": 75
+    },
+    "heal": {
+      "found": 10,
+      "not_on_best_chain": 1,
+      "abandoned": 3
+    },
+    "partition": {
+      "found": 25,
+      "not_on_best_chain": 0,
+      "abandoned": 0
+    },
+    "warmup": {
+      "found": 193,
+      "not_on_best_chain": 0,
+      "abandoned": 0
+    }
+  },
+  "miner_prebuild": true,
+  "misbehavior_disconnects": 0,
+  "crashes": [],
+  "network": "regtest",
+  "all_equal_samples": 64,
+  "stuck_incidents": 0,
+  "samples": 101,
+  "max_rss_mb": {
+    "miner0": 265.11328125,
+    "miner1": 264.91015625,
+    "node0": 269.93359375,
+    "node1": 270.6796875,
+    "node2": 270.984375,
+    "node3": 270.2109375
+  },
+  "converged_at_end": true,
+  "mempools_drained_at_end": true,
+  "late_joiner_synced": true,
+  "late_joiner_peers": 3,
+  "fresh_wallet_balances_match": true,
+  "fresh_wallet_px_balances_match": true,
+  "supply_conserved": true,
+  "generated": 628758997082,
+  "wallet_total": 628758997082,
+  "wallet_px_total": 0,
+  "proxy_bytes": 1260713,
+  "checks_passed": true,
+  "evidence": true,
+  "evidence_notes": []
+}

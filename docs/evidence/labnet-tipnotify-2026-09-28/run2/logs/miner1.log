@@ -1,0 +1,134 @@
+[2026-09-28T16:41:42.045Z INFO  blacksilk_miner] mining on regtest at height 193 with 1 threads (light mode; prebuild On: on, 1 build threads)
+[2026-09-28T16:41:42.930Z INFO  blacksilk_miner] RandomX key 087d6fd4efbc45eb: light context ready in 884.4ms
+[2026-09-28T16:41:44.745Z INFO  blacksilk_miner] found block 194 (reward 20.02347479 BLK, 0 txs)
+[2026-09-28T16:41:47.841Z INFO  blacksilk_miner] found block 195 (reward 20.02345570 BLK, 0 txs)
+[2026-09-28T16:41:55.021Z INFO  blacksilk_miner] found block 196 (reward 20.02343660 BLK, 0 txs)
+[2026-09-28T16:42:03.421Z INFO  blacksilk_miner] new tip at height 197: work on template 197 abandoned after 3.0s
+[2026-09-28T16:42:14.798Z INFO  blacksilk_miner] new tip at height 198: work on template 198 abandoned after 672.7ms
+[2026-09-28T16:42:29.002Z INFO  blacksilk_miner] found block 200 (reward 20.02336022 BLK, 0 txs)
+[2026-09-28T16:42:43.335Z INFO  blacksilk_miner] hash rate 1.6 H/s (light mode)
+[2026-09-28T16:42:43.925Z INFO  blacksilk_miner] found block 201 (reward 20.02334112 BLK, 0 txs)
+[2026-09-28T16:42:49.424Z INFO  blacksilk_miner] found block 202 (reward 20.02332203 BLK, 0 txs)
+[2026-09-28T16:42:55.610Z INFO  blacksilk_miner] new tip at height 203: work on template 203 abandoned after 725.0ms
+[2026-09-28T16:42:58.022Z INFO  blacksilk_miner] found block 204 (reward 20.02328384 BLK, 0 txs)
+[2026-09-28T16:43:01.750Z INFO  blacksilk_miner] found block 205 (reward 20.02326474 BLK, 0 txs); not on the node's best chain
+[2026-09-28T16:43:03.574Z INFO  blacksilk_miner] found block 206 (reward 20.02324565 BLK, 0 txs)
+[2026-09-28T16:43:10.217Z INFO  blacksilk_miner] new tip at height 207: work on template 207 abandoned after 1.2s
+[2026-09-28T16:43:13.197Z INFO  blacksilk_miner] found block 208 (reward 20.02320745 BLK, 0 txs)
+[2026-09-28T16:43:22.122Z INFO  blacksilk_miner] new tip at height 209: work on template 209 abandoned after 3.5s
+[2026-09-28T16:43:22.766Z INFO  blacksilk_miner] new tip at height 210: work on template 210 abandoned after 642.6ms
+[2026-09-28T16:43:30.352Z INFO  blacksilk_miner] found block 211 (reward 20.02349477 BLK, 1 txs)
+[2026-09-28T16:43:36.222Z INFO  blacksilk_miner] new tip at height 212: work on template 212 abandoned after 630.2ms
+[2026-09-28T16:43:39.658Z INFO  blacksilk_miner] found block 213 (reward 20.02311198 BLK, 0 txs)
+[2026-09-28T16:43:44.193Z INFO  blacksilk_miner] found block 214 (reward 20.02309288 BLK, 0 txs)
+[2026-09-28T16:43:49.398Z INFO  blacksilk_miner] hash rate 1.5 H/s (light mode)
+[2026-09-28T16:43:56.200Z INFO  blacksilk_miner] new tip at height 215: work on template 215 abandoned after 1.3s
+[2026-09-28T16:44:00.011Z INFO  blacksilk_miner] new tip at height 216: work on template 216 abandoned after 3.8s
+[2026-09-28T16:44:01.504Z INFO  blacksilk_miner] found block 217 (reward 20.02303559 BLK, 0 txs)
+[2026-09-28T16:44:05.771Z INFO  blacksilk_miner] found block 218 (reward 20.02301650 BLK, 0 txs)
+[2026-09-28T16:44:11.462Z INFO  blacksilk_miner] found block 219 (reward 20.02299740 BLK, 0 txs)
+[2026-09-28T16:44:23.075Z INFO  blacksilk_miner] new tip at height 220: work on template 220 abandoned after 815.3ms
+[2026-09-28T16:44:27.328Z INFO  blacksilk_miner] found block 221 (reward 20.02295921 BLK, 0 txs)
+[2026-09-28T16:44:29.753Z INFO  blacksilk_miner] found block 222 (reward 20.02294012 BLK, 0 txs)
+[2026-09-28T16:44:36.970Z INFO  blacksilk_miner] found block 223 (reward 20.02292102 BLK, 0 txs)
+[2026-09-28T16:44:39.880Z INFO  blacksilk_miner] found block 224 (reward 20.02290193 BLK, 0 txs)
+[2026-09-28T16:44:41.333Z INFO  blacksilk_miner] found block 225 (reward 20.02288283 BLK, 0 txs)
+[2026-09-28T16:44:45.751Z INFO  blacksilk_miner] found block 226 (reward 20.02286374 BLK, 0 txs)
+[2026-09-28T16:44:49.062Z INFO  blacksilk_miner] found block 227 (reward 20.02284464 BLK, 0 txs)
+[2026-09-28T16:44:54.476Z INFO  blacksilk_miner] hash rate 1.3 H/s (light mode)
+[2026-09-28T16:45:17.162Z INFO  blacksilk_miner] found block 228 (reward 20.02317015 BLK, 1 txs)
+[2026-09-28T16:45:23.943Z INFO  blacksilk_miner] found block 229 (reward 20.02280645 BLK, 0 txs)
+[2026-09-28T16:45:27.448Z INFO  blacksilk_miner] found block 230 (reward 20.02278735 BLK, 0 txs)
+[2026-09-28T16:45:33.007Z INFO  blacksilk_miner] found block 231 (reward 20.02276826 BLK, 0 txs)
+[2026-09-28T16:45:37.384Z INFO  blacksilk_miner] found block 232 (reward 20.02274916 BLK, 0 txs)
+[2026-09-28T16:45:54.856Z INFO  blacksilk_miner] hash rate 1.4 H/s (light mode)
+[2026-09-28T16:45:55.483Z INFO  blacksilk_miner] found block 233 (reward 20.02273007 BLK, 0 txs)
+[2026-09-28T16:46:00.197Z INFO  blacksilk_miner] found block 234 (reward 20.02271097 BLK, 0 txs); not on the node's best chain
+[2026-09-28T16:46:04.036Z INFO  blacksilk_miner] new tip at height 235: work on template 235 abandoned after 3.8s
+[2026-09-28T16:46:05.300Z INFO  blacksilk_miner] found block 236 (reward 20.02267278 BLK, 0 txs)
+[2026-09-28T16:46:19.843Z INFO  blacksilk_miner] new tip at height 238: work on template 238 abandoned after 4.0s
+[2026-09-28T16:46:22.952Z INFO  blacksilk_miner] found block 239 (reward 20.02261550 BLK, 0 txs)
+[2026-09-28T16:46:25.071Z INFO  blacksilk_miner] found block 240 (reward 20.02259640 BLK, 0 txs)
+[2026-09-28T16:46:35.926Z INFO  blacksilk_miner] new tip at height 241: work on template 241 abandoned after 677.6ms
+[2026-09-28T16:46:40.293Z INFO  blacksilk_miner] new tip at height 242: work on template 242 abandoned after 4.4s
+[2026-09-28T16:46:47.035Z INFO  blacksilk_miner] new tip at height 243: work on template 243 abandoned after 1.3s
+[2026-09-28T16:46:50.439Z INFO  blacksilk_miner] found block 244 (reward 20.02252002 BLK, 0 txs)
+[2026-09-28T16:46:55.536Z INFO  blacksilk_miner] hash rate 1.5 H/s (light mode)
+[2026-09-28T16:47:00.770Z INFO  blacksilk_miner] new tip at height 245: work on template 245 abandoned after 5.2s
+[2026-09-28T16:47:08.553Z INFO  blacksilk_miner] new tip at height 246: work on template 246 abandoned after 2.7s
+[2026-09-28T16:47:12.321Z INFO  blacksilk_miner] found block 247 (reward 20.02280734 BLK, 1 txs)
+[2026-09-28T16:47:26.060Z INFO  blacksilk_miner] found block 248 (reward 20.02244364 BLK, 0 txs)
+[2026-09-28T16:47:31.472Z INFO  blacksilk_miner] new tip at height 249: work on template 249 abandoned after 5.4s
+[2026-09-28T16:47:35.262Z INFO  blacksilk_miner] found block 250 (reward 20.02240545 BLK, 0 txs)
+[2026-09-28T16:47:49.697Z INFO  blacksilk_miner] new tip at height 251: work on template 251 abandoned after 4.2s
+[2026-09-28T16:47:51.441Z INFO  blacksilk_miner] new tip at height 252: work on template 252 abandoned after 1.7s
+[2026-09-28T16:47:56.598Z INFO  blacksilk_miner] hash rate 1.5 H/s (light mode)
+[2026-09-28T16:48:04.426Z INFO  blacksilk_miner] new tip at height 253: work on template 253 abandoned after 2.8s
+[2026-09-28T16:48:15.206Z INFO  blacksilk_miner] new tip at height 254: work on template 254 abandoned after 5.1s
+[2026-09-28T16:48:23.259Z INFO  blacksilk_miner] found block 255 (reward 20.02230998 BLK, 0 txs)
+[2026-09-28T16:48:32.597Z INFO  blacksilk_miner] new tip at height 256: work on template 256 abandoned after 4.3s
+[2026-09-28T16:48:35.740Z INFO  blacksilk_miner] found block 257 (reward 20.02227179 BLK, 0 txs)
+[2026-09-28T16:48:39.623Z INFO  blacksilk_miner] found block 258 (reward 20.02225270 BLK, 0 txs)
+[2026-09-28T16:48:48.642Z INFO  blacksilk_miner] found block 259 (reward 20.02223360 BLK, 0 txs)
+[2026-09-28T16:48:53.140Z INFO  blacksilk_miner] found block 260 (reward 20.02221451 BLK, 0 txs)
+[2026-09-28T16:48:55.231Z INFO  blacksilk_miner] found block 261 (reward 20.02219541 BLK, 0 txs)
+[2026-09-28T16:49:00.416Z INFO  blacksilk_miner] hash rate 1.5 H/s (light mode)
+[2026-09-28T16:49:18.582Z INFO  blacksilk_miner] found block 262 (reward 20.02217632 BLK, 0 txs)
+[2026-09-28T16:49:27.491Z INFO  blacksilk_miner] found block 263 (reward 20.02215722 BLK, 0 txs)
+[2026-09-28T16:49:40.747Z INFO  blacksilk_miner] found block 264 (reward 20.02213813 BLK, 0 txs)
+[2026-09-28T16:49:52.620Z INFO  blacksilk_miner] found block 265 (reward 20.02211903 BLK, 0 txs)
+[2026-09-28T16:49:55.182Z INFO  blacksilk_miner] found block 266 (reward 20.02209994 BLK, 0 txs)
+[2026-09-28T16:50:05.446Z INFO  blacksilk_miner] hash rate 1.5 H/s (light mode)
+[2026-09-28T16:50:21.794Z INFO  blacksilk_miner] found block 267 (reward 20.02208084 BLK, 0 txs)
+[2026-09-28T16:51:05.794Z INFO  blacksilk_miner] hash rate 1.6 H/s (light mode)
+[2026-09-28T16:51:06.418Z INFO  blacksilk_miner] found block 268 (reward 20.02206175 BLK, 0 txs)
+[2026-09-28T16:51:33.379Z INFO  blacksilk_miner] found block 269 (reward 20.02238725 BLK, 1 txs)
+[2026-09-28T16:51:37.525Z INFO  blacksilk_miner] found block 270 (reward 20.02202356 BLK, 0 txs)
+[2026-09-28T16:51:47.092Z WARN  blacksilk_miner] block 271 rejected: NotNearTip: the parent must be the tip (272) or one of its last 8 ancestors on the connected chain
+[2026-09-28T16:51:49.977Z INFO  blacksilk_miner] new tip at height 273: work on template 273 abandoned after 2.9s
+[2026-09-28T16:51:57.146Z INFO  blacksilk_miner] new tip at height 274: work on template 274 abandoned after 2.1s
+[2026-09-28T16:51:58.679Z INFO  blacksilk_miner] found block 275 (reward 20.02227269 BLK, 1 txs); not on the node's best chain
+[2026-09-28T16:52:00.846Z INFO  blacksilk_miner] new tip at height 276: work on template 276 abandoned after 2.2s
+[2026-09-28T16:52:05.932Z INFO  blacksilk_miner] hash rate 1.5 H/s (light mode)
+[2026-09-28T16:52:23.171Z INFO  blacksilk_miner] found block 277 (reward 20.02257910 BLK, 2 txs)
+[2026-09-28T16:52:35.515Z INFO  blacksilk_miner] found block 278 (reward 20.02187081 BLK, 0 txs)
+[2026-09-28T16:52:45.307Z INFO  blacksilk_miner] found block 279 (reward 20.02185171 BLK, 0 txs)
+[2026-09-28T16:52:54.714Z INFO  blacksilk_miner] new tip at height 280: work on template 280 abandoned after 3.9s
+[2026-09-28T16:52:58.800Z INFO  blacksilk_miner] new tip at height 281: work on template 281 abandoned after 4.1s
+[2026-09-28T16:53:01.413Z INFO  blacksilk_miner] found block 282 (reward 20.02213903 BLK, 1 txs)
+[2026-09-28T16:53:06.521Z INFO  blacksilk_miner] hash rate 1.5 H/s (light mode)
+[2026-09-28T16:53:07.135Z INFO  blacksilk_miner] found block 283 (reward 20.02177533 BLK, 0 txs)
+[2026-09-28T16:53:10.378Z INFO  blacksilk_miner] found block 284 (reward 20.02175624 BLK, 0 txs)
+[2026-09-28T16:53:25.652Z INFO  blacksilk_miner] found block 285 (reward 20.02208175 BLK, 1 txs)
+[2026-09-28T16:53:35.294Z INFO  blacksilk_miner] found block 286 (reward 20.02171805 BLK, 0 txs)
+[2026-09-28T16:53:46.865Z INFO  blacksilk_miner] new tip at height 287: work on template 287 abandoned after 698.8ms
+[2026-09-28T16:53:59.508Z INFO  blacksilk_miner] found block 288 (reward 20.02167986 BLK, 0 txs)
+[2026-09-28T16:54:07.239Z INFO  blacksilk_miner] hash rate 1.5 H/s (light mode)
+[2026-09-28T16:54:07.875Z INFO  blacksilk_miner] found block 289 (reward 20.02166077 BLK, 0 txs)
+[2026-09-28T16:54:10.750Z INFO  blacksilk_miner] found block 290 (reward 20.02164167 BLK, 0 txs)
+[2026-09-28T16:54:17.311Z INFO  blacksilk_miner] new tip at height 291: work on template 291 abandoned after 796.7ms
+[2026-09-28T16:54:23.835Z INFO  blacksilk_miner] new tip at height 292: work on template 292 abandoned after 1.4s
+[2026-09-28T16:54:33.396Z INFO  blacksilk_miner] found block 293 (reward 20.02158439 BLK, 0 txs)
+[2026-09-28T16:54:40.136Z INFO  blacksilk_miner] new tip at height 294: work on template 294 abandoned after 1.4s
+[2026-09-28T16:54:43.260Z INFO  blacksilk_miner] found block 295 (reward 20.02154620 BLK, 0 txs)
+[2026-09-28T16:54:53.517Z INFO  blacksilk_miner] new tip at height 296: work on template 296 abandoned after 5.2s
+[2026-09-28T16:55:00.440Z INFO  blacksilk_miner] found block 297 (reward 20.02219722 BLK, 2 txs)
+[2026-09-28T16:55:11.525Z INFO  blacksilk_miner] hash rate 1.4 H/s (light mode)
+[2026-09-28T16:55:14.891Z INFO  blacksilk_miner] new tip at height 298: work on template 298 abandoned after 3.4s
+[2026-09-28T16:55:31.210Z INFO  blacksilk_miner] new tip at height 299: work on template 299 abandoned after 686.5ms
+[2026-09-28T16:55:48.906Z INFO  blacksilk_miner] new tip at height 300: work on template 300 abandoned after 1.4s
+[2026-09-28T16:55:50.977Z INFO  blacksilk_miner] new tip at height 301: work on template 301 abandoned after 2.1s
+[2026-09-28T16:55:54.129Z INFO  blacksilk_miner] found block 302 (reward 20.02141255 BLK, 0 txs)
+[2026-09-28T16:56:07.794Z INFO  blacksilk_miner] new tip at height 303: work on template 303 abandoned after 2.7s
+[2026-09-28T16:56:13.428Z INFO  blacksilk_miner] hash rate 1.6 H/s (light mode)
+[2026-09-28T16:56:22.820Z INFO  blacksilk_miner] found block 304 (reward 20.02137436 BLK, 0 txs)
+[2026-09-28T16:56:40.160Z INFO  blacksilk_miner] new tip at height 305: work on template 305 abandoned after 640.7ms
+[2026-09-28T16:56:43.231Z INFO  blacksilk_miner] found block 306 (reward 20.02133617 BLK, 0 txs)
+[2026-09-28T16:56:52.293Z INFO  blacksilk_miner] found block 308 (reward 20.02129798 BLK, 0 txs); not on the node's best chain
+[2026-09-28T16:56:55.220Z INFO  blacksilk_miner] found block 309 (reward 20.02162349 BLK, 1 txs)
+[2026-09-28T16:57:00.245Z INFO  blacksilk_miner] found block 310 (reward 20.02125980 BLK, 0 txs)
+[2026-09-28T16:57:13.039Z INFO  blacksilk_miner] found block 311 (reward 20.02192990 BLK, 2 txs)
+[2026-09-28T16:57:18.472Z INFO  blacksilk_miner] hash rate 1.5 H/s (light mode)
+[2026-09-28T16:57:31.211Z INFO  blacksilk_miner] new tip at height 312: work on template 312 abandoned after 2.0s
+[2026-09-28T16:57:34.143Z INFO  blacksilk_miner] found block 313 (reward 20.02120251 BLK, 0 txs)
+[2026-09-28T16:57:37.790Z INFO  blacksilk_miner] found block 314 (reward 20.02118342 BLK, 0 txs)

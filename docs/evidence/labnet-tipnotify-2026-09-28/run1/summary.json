@@ -1,0 +1,106 @@
+{
+  "started_unix": 1790611332,
+  "duration_secs": 1759,
+  "nodes": 4,
+  "final_height": 320,
+  "partitions": 1,
+  "tx_attempts": 17,
+  "tx_submitted": 17,
+  "tx_failures": {},
+  "px_attempts": 0,
+  "px_submitted": 0,
+  "px_failures": {},
+  "warmup": {
+    "enabled": true,
+    "reached": true,
+    "secs": 742,
+    "end_height": 188,
+    "end_difficulty": 8,
+    "mean_interval_secs": 7.642701286666666,
+    "window_blocks": 30,
+    "ratio": 0.75,
+    "target_secs": 10
+  },
+  "measured_secs": 960,
+  "reorganizations": 30,
+  "max_reorg_depth": 24,
+  "reorg_depths": {
+    "1": 28,
+    "24": 2
+  },
+  "warmup_reorganizations": 0,
+  "warmup_max_reorg_depth": 0,
+  "reorgs_by_phase": {
+    "connected": {
+      "count": 22,
+      "max_depth": 1,
+      "depths": {
+        "1": 22
+      }
+    },
+    "heal": {
+      "count": 8,
+      "max_depth": 24,
+      "depths": {
+        "1": 6,
+        "24": 2
+      }
+    }
+  },
+  "blocks_found_by_phase": {
+    "connected": {
+      "found": 123,
+      "not_on_best_chain": 16,
+      "abandoned": 58
+    },
+    "final": {
+      "found": 1,
+      "not_on_best_chain": 0,
+      "abandoned": 0
+    },
+    "heal": {
+      "found": 17,
+      "not_on_best_chain": 1,
+      "abandoned": 9
+    },
+    "partition": {
+      "found": 47,
+      "not_on_best_chain": 0,
+      "abandoned": 0
+    },
+    "warmup": {
+      "found": 188,
+      "not_on_best_chain": 0,
+      "abandoned": 0
+    }
+  },
+  "miner_prebuild": true,
+  "misbehavior_disconnects": 0,
+  "crashes": [],
+  "network": "regtest",
+  "all_equal_samples": 78,
+  "stuck_incidents": 0,
+  "samples": 110,
+  "max_rss_mb": {
+    "miner0": 265.12109375,
+    "miner1": 265.0546875,
+    "node0": 271.828125,
+    "node1": 270.7421875,
+    "node2": 270.609375,
+    "node3": 270.21484375
+  },
+  "converged_at_end": true,
+  "mempools_drained_at_end": true,
+  "late_joiner_synced": true,
+  "late_joiner_peers": 3,
+  "fresh_wallet_balances_match": true,
+  "fresh_wallet_px_balances_match": true,
+  "supply_conserved": true,
+  "generated": 640771667038,
+  "wallet_total": 640771667038,
+  "wallet_px_total": 0,
+  "proxy_bytes": 1113609,
+  "checks_passed": true,
+  "evidence": true,
+  "evidence_notes": []
+}

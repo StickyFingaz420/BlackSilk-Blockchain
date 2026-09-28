@@ -79,8 +79,10 @@ struct Args {
     /// instead of light mode.
     #[arg(long)]
     miner_full: bool,
-    /// Pass `--prebuild` to the miners (the next RandomX key's context is
-    /// built before the switch). On in evidence runs.
+    /// Pass `--prebuild on` to the miners (the next RandomX key's context
+    /// is built before the switch, also in light mode, without the `auto`
+    /// fallback). On in evidence runs; otherwise the miner's default
+    /// (`auto`) applies.
     #[arg(long)]
     prebuild: bool,
     /// Skip the warm-up: both miners start at once, from the genesis
@@ -98,8 +100,9 @@ struct Args {
     #[arg(long, default_value_t = 60)]
     warmup_max_mins: u64,
     /// An evidence run: refuses to start if `--duration-mins` is shorter
-    /// than 10 minutes, turns on `--prebuild`, refuses `--no-warmup`, and
-    /// exits with status 1 unless `summary.json` says `evidence: true`.
+    /// than 10 minutes, turns on `--prebuild` (`on`), refuses
+    /// `--no-warmup`, and exits with status 1 unless `summary.json` says
+    /// `evidence: true`.
     #[arg(long)]
     evidence: bool,
 }
@@ -237,6 +240,9 @@ impl ReorgStats {
 struct FoundStats {
     found: u32,
     not_on_best_chain: u32,
+    /// Templates the miners abandoned because their node's tip moved (the
+    /// miner's `/tip` long poll, dossier 09 I1).
+    abandoned: u32,
 }
 
 /// The mean interval (seconds) of the newest `window` or more blocks, from
@@ -343,6 +349,8 @@ impl LogStats {
                 let f = self.found.entry(phase.into()).or_default();
                 f.found += 1;
                 f.not_on_best_chain += u32::from(line.contains("not on the node's best chain"));
+            } else if line.contains("new tip at height ") && line.contains(" abandoned") {
+                self.found.entry(phase.into()).or_default().abandoned += 1;
             }
         }
     }
@@ -762,6 +770,7 @@ fn main() {
         }
         if prebuild {
             args.push("--prebuild".into());
+            args.push("on".into());
         }
         args
     };
@@ -1336,6 +1345,7 @@ mod tests {
             "miner0.log",
             b"[t INFO blacksilk_miner] found block 5 (reward 1 BLK, 0 txs)\n\
               [t INFO blacksilk_miner] found block 6 (reward 1 BLK, 0 txs); not on the node's best chain\n\
+              [t INFO blacksilk_miner] new tip at height 6: work on template 7 abandoned after 1.2s\n\
               [t WARN blacksilk_miner] block 7 rejected: x\n",
             &m,
         );
@@ -1349,7 +1359,8 @@ mod tests {
             s.found[CONNECTED],
             FoundStats {
                 found: 2,
-                not_on_best_chain: 1
+                not_on_best_chain: 1,
+                abandoned: 1,
             }
         );
     }

@@ -1,0 +1,11 @@
+[2026-09-28T16:31:05.824Z INFO  blacksilk_node] blacksilk-node 0.1.0 commit bec93ff
+[2026-09-28T16:31:05.824Z INFO  blacksilk_node] regtest: genesis 087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7, consensus fingerprint 65334546765a538f41d5e8ec6aff7d6aebd17b26e3f612c2c844b44a1af7abaa
+[2026-09-28T16:31:05.824Z INFO  blacksilk_node] regtest: loading C:/bszkeval/w2-mine2-scratch/labnet-run1\node-late
+[2026-09-28T16:31:05.828Z INFO  blacksilk_node] chain loaded in 3.9ms: height 0, tip 087d6fd4efbc45eb
+[2026-09-28T16:31:05.830Z INFO  blacksilk_node] P2P listening on 127.0.0.1:47781
+[2026-09-28T16:31:05.831Z INFO  blacksilk_node] RPC listening on http://127.0.0.1:47780
+[2026-09-28T16:31:05.836Z WARN  blacksilk_node::cookie] the data directory C:/bszkeval/w2-mine2-scratch/labnet-run1\node-late is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it
+[2026-09-28T16:31:05.836Z INFO  blacksilk_node::serve] RPC credential written to C:/bszkeval/w2-mine2-scratch/labnet-run1\node-late\rpc.cookie (clients read it: --rpc-cookie)
+[2026-09-28T16:31:06.088Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:47701 (height 320)
+[2026-09-28T16:31:08.341Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:49780 (height 320)
+[2026-09-28T16:31:08.379Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:49702 (height 320)
