@@ -175,6 +175,15 @@ pub(super) async fn block_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRecei
                 st.unrequested_queued = st.unrequested_queued.saturating_sub(1);
             }
             st.blocks_queued.remove(&id);
+            // A validated block that joined our best chain: the sender
+            // brought something (RTW3-4, outbound rotation).
+            if let Some(Ok(s)) = &result {
+                if s.on_best_chain {
+                    if let Some(p) = st.peers.get_mut(&peer) {
+                        p.last_new_tip = Some(Instant::now());
+                    }
+                }
+            }
         }
         match result {
             None | Some(Ok(_)) | Some(Err(SubmitError::Duplicate)) => {}

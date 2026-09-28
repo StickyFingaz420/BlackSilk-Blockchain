@@ -244,6 +244,10 @@ enum HeaderOutcome {
         last: u64,
         last_id: Hash,
         advanced: bool,
+        /// The batch stored new headers and ends on our best header chain:
+        /// the sender delivered a validated new tip (RTW3-4, outbound
+        /// rotation).
+        new_tip: bool,
     },
     /// The batch's cumulative work would not exceed our best header chain's
     /// (and it cannot be the start of a heavier branch, `low_work`): dropped
@@ -367,7 +371,15 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
                 Some(p) => {
                     p.headers_busy = false;
                     match &outcome {
-                        Ok(HeaderOutcome::Accepted { last, advanced, .. }) => {
+                        Ok(HeaderOutcome::Accepted {
+                            last,
+                            advanced,
+                            new_tip,
+                            ..
+                        }) => {
+                            if *new_tip {
+                                p.last_new_tip = Some(Instant::now());
+                            }
                             p.height = p.height.max(*last);
                             if !advanced && batch.solicited {
                                 // A solicited reply that taught us nothing:
@@ -684,6 +696,7 @@ fn verify_headers(
         last: last.height,
         last_id,
         advanced: new > 0 || !on_main,
+        new_tip: new > 0 && on_main,
     }
 }
 

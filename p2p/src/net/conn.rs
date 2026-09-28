@@ -4,7 +4,7 @@
 use super::addr_relay::advertise_self;
 use super::blocks::SERVE_BLOCKS_PER_REQUEST;
 use super::dispatch::{handle, is_slow, requested_by_us, Pushed, SlowLane};
-use super::peers::{advertised_listen, inbound_count, same_ip_count, HandshakeSlot};
+use super::peers::{advertised_listen, evict_inbound, inbound_count, same_ip_count, HandshakeSlot};
 use super::relay::retry_tx;
 use super::state::{unix_now, Inner, Peer};
 use crate::addr::NetAddr;
@@ -23,8 +23,14 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, Notify};
 
-/// The key exchange's own timeout (its first step).
+/// The key exchange's own timeout (its first step), over Tor: a proxied
+/// outbound connection, or an inbound one through our hidden service.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The key exchange's timeout on clearnet: one round trip of 32-byte keys.
+/// An inbound connection that sends nothing leaves after this, not after the
+/// whole handshake deadline (RTW3-3).
+const KEY_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The whole handshake, from the connection to the peer's `Verack`
 /// (docs/p2p.md §4). One deadline, not one per frame: before it, a peer
@@ -83,8 +89,32 @@ pub(super) async fn run_connection<S>(
         genesis_id: &genesis,
         psk: inner.cfg.network_psk.as_ref(),
     };
-    let keyed = handshake_with(stream, !inbound, session, HANDSHAKE_TIMEOUT);
-    let (mut reader, mut writer) = match tokio::time::timeout_at(deadline, keyed).await {
+    // A pending inbound handshake the node evicted (RTW3-3) ends here, at
+    // whatever step it is.
+    let kill_handshake = slot.as_ref().map(|s| s.kill.clone());
+    let evicted = async move {
+        match kill_handshake {
+            Some(kill) => kill.notified().await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::pin!(evicted);
+    let via_tor = proxied
+        || (inbound && !inner.cfg.allow_private && addr.ip().is_some_and(|ip| ip.is_loopback()));
+    let key_timeout = if via_tor {
+        HANDSHAKE_TIMEOUT
+    } else {
+        KEY_EXCHANGE_TIMEOUT
+    };
+    let keyed = handshake_with(stream, !inbound, session, key_timeout);
+    let keyed = tokio::select! {
+        r = tokio::time::timeout_at(deadline, keyed) => r,
+        _ = &mut evicted => {
+            log::debug!("{addr}: evicted during the key exchange");
+            return;
+        }
+    };
+    let (mut reader, mut writer) = match keyed {
         Ok(Ok(x)) => x,
         Ok(Err(e)) => {
             log::debug!("{addr}: transport handshake failed: {e}");
@@ -162,9 +192,12 @@ pub(super) async fn run_connection<S>(
             };
         }
     };
-    let result = tokio::time::timeout_at(deadline, exchange)
-        .await
-        .unwrap_or_else(|_| Err("handshake deadline passed".into()));
+    let result = tokio::select! {
+        r = tokio::time::timeout_at(deadline, exchange) => {
+            r.unwrap_or_else(|_| Err("handshake deadline passed".into()))
+        }
+        _ = &mut evicted => Err("evicted during the handshake".into()),
+    };
     inner.state().local_nonces.remove(&nonce);
     let theirs = match result {
         Ok(v) => v,
@@ -184,14 +217,19 @@ pub(super) async fn run_connection<S>(
         if let Some(slot) = slot.as_mut() {
             slot.release(&mut st);
         }
-        // Re-check the inbound limits at registration, under the same lock
-        // as the insertion (the accept-time check counted this connection
-        // as handshaking), and a ban that came in during the handshake.
+        // Check the inbound limits at registration, under the same lock as
+        // the insertion (the accept-time check counted this connection as
+        // handshaking), and a ban that came in during the handshake. With
+        // inbound full, a registered peer gives way if one is not protected
+        // (`connman::select_inbound_to_evict`); else this one is refused.
+        // Evicting here, not at accept, means only a peer that completed its
+        // handshake can take a registered peer's place (RTW3-3).
         if inbound {
             let over = addr.ip().is_some_and(|ip| {
                 st.bans.is_banned(&ip, unix_now())
                     || (!inner.cfg.allow_private && same_ip_count(&st, ip) >= inner.cfg.max_per_ip)
-            }) || inbound_count(&st) >= inner.cfg.max_inbound;
+            }) || (inbound_count(&st) >= inner.cfg.max_inbound
+                && !evict_inbound(&inner, &mut st));
             if over {
                 log::debug!("{addr}: inbound limit reached at registration");
                 return;
@@ -260,6 +298,7 @@ pub(super) async fn run_connection<S>(
                 unknown_upgrades: 0,
                 connected_at: now,
                 evicted: false,
+                last_new_tip: None,
             },
         );
     }

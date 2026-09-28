@@ -66,6 +66,10 @@ pub const TEST_WINDOW_SECS: u64 = 40 * 60;
 /// the attacker's outbound share again compared with 0.5, since *tried*
 /// holds only addresses this node connected to. A *tried* draw with nothing
 /// eligible falls back to *new*, so a small *tried* table costs nothing.
+/// Re-derived with feelers modelled (RTW3-10: answering attacker addresses
+/// reach *tried*, one per IP): 0.7 is never worse than 0.5 in any scenario;
+/// 0.8 and 0.9 lower the share further where the attacker holds few *tried*
+/// entries but raise P(all 8) where it holds most of them, so it stays 0.7.
 pub const TRIED_BIAS: f64 = 0.7;
 /// The share of the table a `GetAddr` answer may reveal, in percent
 /// (Bitcoin Core's `MAX_PCT_ADDR_TO_SEND`).
@@ -504,8 +508,9 @@ impl AddrMan {
     ///   and the newcomer stays in *new*;
     /// - it was tried in that time without success, at least a minute ago:
     ///   the newcomer replaces it;
-    /// - it was not tested within [`TEST_WINDOW_SECS`] of the collision: the
-    ///   newcomer replaces it;
+    /// - it was not tested within [`TEST_WINDOW_SECS`] of the collision: it
+    ///   stays, and the collision is dropped (the newcomer stays in *new*;
+    ///   RTW3-9: an occupant that could not be tested is not evicted);
     /// - the slot became free, or the newcomer left *new*: settled.
     pub fn resolve_collisions(&mut self, now: u64) {
         for id in self.collisions.clone() {
@@ -528,7 +533,13 @@ impl AddrMan {
                     } else if now.saturating_sub(old.last_try) < REPLACEMENT_SECS {
                         (now.saturating_sub(old.last_try) > 60).then_some(true)
                     } else if now.saturating_sub(e.last_success) > TEST_WINDOW_SECS {
-                        Some(true)
+                        // Never tested within the window: the collision is
+                        // dropped and the occupant kept (RTW3-9). Bitcoin
+                        // Core evicts it here; a node that could not test it
+                        // (no feeler ran, no route) has no evidence it is
+                        // gone, and an attacker's answering address must not
+                        // displace a working entry by default.
+                        Some(false)
                     } else {
                         None
                     }
@@ -1062,8 +1073,9 @@ mod tests {
         m.connected(&old, t + TEST_WINDOW_SECS);
         m.resolve_collisions(t + TEST_WINDOW_SECS + 1);
         assert_eq!(m.position(&old).unwrap().0, Table::Tried);
-        // Never tested: replaced after the test window.
-        let (mut m, _) = table(10);
+        // Never tested (RTW3-9): after the test window the collision is
+        // dropped and the occupant kept; it was replaced before.
+        let (mut m, mut rng) = table(10);
         m.add(old.clone(), &src, NOW);
         m.good(&old, NOW);
         m.add(newer.clone(), &src, NOW);
@@ -1071,8 +1083,11 @@ mod tests {
         assert!(!m.good(&newer, t));
         m.resolve_collisions(t + TEST_WINDOW_SECS);
         assert_eq!(m.position(&newer).unwrap().0, Table::New);
+        assert_eq!(m.select_tried_collision(&mut rng), Some(old.clone()));
         m.resolve_collisions(t + TEST_WINDOW_SECS + 1);
-        assert_eq!(m.position(&newer).unwrap().0, Table::Tried);
+        assert_eq!(m.position(&old).unwrap().0, Table::Tried, "kept");
+        assert_eq!(m.position(&newer).unwrap().0, Table::New);
+        assert_eq!(m.select_tried_collision(&mut rng), None, "dropped");
         m.check().unwrap();
     }
 

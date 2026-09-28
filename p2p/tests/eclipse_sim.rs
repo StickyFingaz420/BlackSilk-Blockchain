@@ -34,6 +34,14 @@
 //! connections, and honest churn, feelers and anchors are not modelled (an
 //! anchor that was honest before the restart keeps one slot honest).
 //! Run with `--nocapture` for the table.
+//!
+//! A second model ([`eclipse_simulation_with_feelers_rederives_the_tried_bias`],
+//! RTW3-10) adds feelers after the flood: attacker addresses that accept
+//! connections (its own IPs, or up to 128 in distinct groups) reach *tried*,
+//! one per IP, and so do honest *new* addresses; the restart draws are then
+//! compared for *tried* biases 0.5 to 0.9. Regular outbound connections
+//! promoting what they reach, honest address inflow after the flood and
+//! anchors are still not modelled.
 
 use blacksilk_crypto::hash::{h32, tags};
 use blacksilk_p2p::addrman::{
@@ -557,5 +565,287 @@ fn eclipse_simulation_attacker_share_of_outbound_slots() {
     for secs in [1u64, 60, 600, 3600] {
         let bound = 1 + (secs as f64 * ADDR_RATE) as u64;
         assert!(admitted_current(secs) <= bound, "{secs} s");
+    }
+}
+
+// ---------------------------------------------------------------- feelers (RTW3-10)
+
+/// Feelers after the flood, one every [`FEELER_SECS`] (their mean
+/// interval): the *tried* table the restart draws from is no longer only
+/// the honest addresses the node connected to before the attack.
+const FEELER_SECS: u64 = 120;
+/// Feeler horizons: none, one day, one week.
+const FEELER_HORIZONS: [u64; 3] = [0, 720, 5040];
+/// The *tried* biases compared.
+const BIASES: [f64; 5] = [0.5, 0.6, 0.7, 0.8, 0.9];
+const FEELER_RESTARTS: usize = 1_000;
+
+/// A flood scenario plus `answering` attacker addresses that accept
+/// connections (so a feeler promotes them to *tried*).
+#[derive(Clone, Copy)]
+struct FeelerScenario {
+    base: Scenario,
+    /// Attacker addresses that answer. `None`: the attacker's own source
+    /// IPs (the connections it floods from); `Some(n)`: `n` addresses in
+    /// distinct groups (IPv4 /16s, or free onion names), announced first.
+    answering: Option<u64>,
+}
+
+/// Per (scenario, horizon, bias): outbound slot tallies; per (scenario,
+/// horizon): the *tried* table's make-up.
+#[derive(Default, Clone)]
+struct FeelerTally {
+    attacker: u64,
+    honest: u64,
+    all_attacker: u64,
+    restarts: u64,
+}
+
+#[derive(Default, Clone)]
+struct TriedTally {
+    honest_tried: u64,
+    attacker_tried: u64,
+    answering: u64,
+    runs: u64,
+}
+
+/// One outbound draw after a restart under `bias`, as `maintain_outbound`
+/// makes it (routable, one per group).
+fn restart_draws(
+    m: &AddrMan,
+    s: &Scenario,
+    honest: &HashSet<NetAddr>,
+    bias: f64,
+    now: u64,
+    rng: &mut ChaCha20Rng,
+    t: &mut FeelerTally,
+) {
+    for _ in 0..FEELER_RESTARTS {
+        let mut groups = HashSet::new();
+        let mut picked: Vec<NetAddr> = Vec::new();
+        for _ in 0..OUTBOUND {
+            let pick = m.select_biased(rng, now, false, bias, |a| {
+                !a.is_routable()
+                    || groups.contains(&a.group())
+                    || picked.contains(a)
+                    || a.is_onion() != s.onion
+            });
+            if let Some(a) = pick {
+                groups.insert(a.group());
+                picked.push(a);
+            }
+        }
+        let bad = picked.iter().filter(|a| !honest.contains(*a)).count();
+        t.attacker += bad as u64;
+        t.honest += (picked.len() - bad) as u64;
+        t.restarts += 1;
+        if bad == OUTBOUND {
+            t.all_attacker += 1;
+        }
+    }
+}
+
+/// One scenario on one table (seed): the flood as in [`run`] (the current
+/// admission, addrman v2), the answering addresses announced first; then
+/// feelers as `maintain_outbound` makes them since RTW3-2 and RTW3-9 (the
+/// slots are full, so one is due every [`FEELER_SECS`]): a waiting *tried*
+/// collision's occupant is tested first, whatever its group or last attempt,
+/// else a routable *new* address. An address that answers (honest, or
+/// attacker-answering) moves to *tried*; one that does not is charged an
+/// attempt. At each horizon the restart draws are measured for every bias.
+fn run_feelers(
+    fs: FeelerScenario,
+    seed: u64,
+    slots: &mut HashMap<(u64, u64), FeelerTally>,
+    tried: &mut HashMap<u64, TriedTally>,
+) {
+    let s = fs.base;
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let mut m = AddrMan::new(&mut rng);
+    let mut used = HashSet::new();
+    let mut fresh = |rng: &mut ChaCha20Rng| {
+        if s.onion {
+            onion(rng)
+        } else {
+            public_v4(rng, &mut used)
+        }
+    };
+    let honest: Vec<NetAddr> = (0..s.honest).map(|_| fresh(&mut rng)).collect();
+    for (i, h) in honest.iter().enumerate() {
+        let src = &honest[(i + 1) % honest.len()];
+        m.add(h.clone(), src, NOW);
+        if i < s.honest_tried {
+            m.good(h, NOW);
+        }
+    }
+    let honest: HashSet<NetAddr> = honest.into_iter().filter(|h| m.contains(h)).collect();
+    let sources: Vec<NetAddr> = (0..s.sources)
+        .map(|_| public_v4(&mut rng, &mut HashSet::new()))
+        .collect();
+    // The answering addresses, announced first (each costs one admitted
+    // address of its source's budget).
+    let answering: Vec<NetAddr> = match fs.answering {
+        None => sources.clone(),
+        Some(n) => (0..n).map(|_| fresh(&mut rng)).collect(),
+    };
+    let conns = MAX_PER_IP * s.flood_secs.div_ceil(s.reconnect_secs);
+    let per_source = (conns * admitted_current(s.reconnect_secs)).min(FLOOD_CAP / s.sources);
+    let mut left: Vec<u64> = vec![per_source; sources.len()];
+    for (i, a) in answering.iter().enumerate() {
+        let k = i % sources.len();
+        if left[k] > 0 {
+            // A source announcing its own address is a relayed `Addr`
+            // entry, not `Version.listen` (F32-8): it takes the same path.
+            m.add(a.clone(), &sources[(k + 1) % sources.len()], NOW);
+            left[k] -= 1;
+        }
+    }
+    for (src, n) in sources.iter().zip(left) {
+        for _ in 0..n {
+            let a = fresh(&mut rng);
+            m.add(a, src, NOW);
+        }
+    }
+    let answers: HashSet<NetAddr> = answering.iter().cloned().collect();
+    let mut done = 0;
+    for horizon in FEELER_HORIZONS {
+        while done < horizon {
+            done += 1;
+            let now = NOW + s.flood_secs + done * FEELER_SECS;
+            m.resolve_collisions(now);
+            let pick = m.select_tried_collision(&mut rng).or_else(|| {
+                m.select(&mut rng, now, true, |a| {
+                    !a.is_routable() || a.is_onion() != s.onion
+                })
+            });
+            if let Some(a) = pick {
+                m.attempt(&a, now);
+                if honest.contains(&a) || answers.contains(&a) {
+                    m.good(&a, now);
+                }
+            }
+        }
+        let now = NOW + s.flood_secs + horizon * FEELER_SECS + 1;
+        let in_tried: Vec<NetAddr> = m
+            .addresses()
+            .into_iter()
+            .filter(|(_, t)| *t == Table::Tried)
+            .map(|(a, _)| a)
+            .collect();
+        let tt = tried.entry(horizon).or_default();
+        let attacker_tried = in_tried.iter().filter(|a| !honest.contains(*a)).count() as u64;
+        tt.attacker_tried += attacker_tried;
+        tt.honest_tried += in_tried.len() as u64 - attacker_tried;
+        tt.answering += answering.len() as u64;
+        tt.runs += 1;
+        // One *tried* entry per IP, and only answering addresses get there.
+        assert!(in_tried
+            .iter()
+            .all(|a| honest.contains(a) || answers.contains(a)));
+        assert!(attacker_tried <= answering.len() as u64);
+        for (i, bias) in BIASES.iter().enumerate() {
+            let t = slots.entry((horizon, i as u64)).or_default();
+            restart_draws(&m, &s, &honest, *bias, now, &mut rng, t);
+        }
+    }
+    m.check().unwrap();
+}
+
+/// RTW3-10: the *tried* bias re-derived with feelers modelled (after RTW3-2
+/// they actually run, and RTW3-9 lets them test collisions whatever the
+/// group). Attacker addresses that answer reach *tried* through feelers,
+/// one per IP; honest *new* addresses do too. The table prints, per
+/// scenario and horizon, the *tried* make-up and the attacker's outbound
+/// share and P(all 8) for each bias. Run with `--nocapture`.
+#[test]
+fn eclipse_simulation_with_feelers_rederives_the_tried_bias() {
+    let ipv4 = |name, honest_tried, sources| Scenario {
+        name,
+        honest: 50,
+        honest_tried,
+        sources,
+        flood_secs: 600,
+        reconnect_secs: 60,
+        onion: false,
+    };
+    let onion_s = Scenario {
+        name: "onion g=1",
+        honest: 20,
+        honest_tried: 8,
+        sources: 1,
+        flood_secs: 600,
+        reconnect_secs: 60,
+        onion: true,
+    };
+    let mut scenarios = Vec::new();
+    for base in [
+        ipv4("ipv4 g=1", 16, 1),
+        ipv4("ipv4 g=4", 16, 4),
+        ipv4("ipv4 g=4 empty-tried", 0, 4),
+    ] {
+        for answering in [None, Some(32), Some(128)] {
+            scenarios.push(FeelerScenario { base, answering });
+        }
+    }
+    for answering in [Some(32), Some(128)] {
+        scenarios.push(FeelerScenario {
+            base: onion_s,
+            answering,
+        });
+    }
+    print!(
+        "{:<22} {:>5} {:>7} {:>8} {:>8}",
+        "scenario", "ans", "feelers", "hon-tr", "att-tr"
+    );
+    for b in BIASES {
+        print!(" {:>13}", format!("slot%/all8@{b}"));
+    }
+    println!();
+    for fs in scenarios {
+        let mut slots = HashMap::new();
+        let mut tried = HashMap::new();
+        for seed in 0..SEEDS {
+            run_feelers(fs, 2000 + seed, &mut slots, &mut tried);
+        }
+        for horizon in FEELER_HORIZONS {
+            let tt = &tried[&horizon];
+            print!(
+                "{:<22} {:>5} {:>7} {:>8.1} {:>8.1}",
+                fs.base.name,
+                tt.answering / tt.runs,
+                horizon,
+                tt.honest_tried as f64 / tt.runs as f64,
+                tt.attacker_tried as f64 / tt.runs as f64,
+            );
+            let share_at = |i: usize| {
+                let t: &FeelerTally = &slots[&(horizon, i as u64)];
+                t.attacker as f64 / (t.attacker + t.honest).max(1) as f64
+            };
+            // The chosen bias is never worse than Bitcoin Core's 0.5 (one
+            // point of sampling noise allowed).
+            let ours = BIASES.iter().position(|b| *b == TRIED_BIAS).unwrap();
+            assert!(
+                share_at(ours) <= share_at(0) + 0.01,
+                "{} ans {} feelers {horizon}: {:.3} vs {:.3}",
+                fs.base.name,
+                tt.answering / tt.runs,
+                share_at(ours),
+                share_at(0)
+            );
+            for i in 0..BIASES.len() {
+                let t = &slots[&(horizon, i as u64)];
+                let share = share_at(i);
+                assert!((0.0..=1.0).contains(&share));
+                print!(
+                    " {:>13}",
+                    format!(
+                        "{:.1}/{:.3}",
+                        100.0 * share,
+                        t.all_attacker as f64 / t.restarts as f64
+                    )
+                );
+            }
+            println!();
+        }
     }
 }

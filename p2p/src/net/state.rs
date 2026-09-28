@@ -77,6 +77,24 @@ pub(super) struct Peer {
     /// Chosen for inbound eviction and told to disconnect: no longer counted
     /// against `max_inbound` (docs/p2p.md §9).
     pub(super) evicted: bool,
+    /// When this peer last delivered a validated new tip: a header batch
+    /// that stored new headers on our best header chain, or a block that
+    /// joined our best chain. Outbound rotation ranks by it (RTW3-4), never
+    /// by `height`, which the peer claims.
+    pub(super) last_new_tip: Option<Instant>,
+}
+
+/// An inbound connection accepted but not yet registered (key exchange or
+/// version handshake in progress): a candidate for eviction before any
+/// registered peer (RTW3-3, docs/p2p.md §9).
+pub(super) struct PendingHandshake {
+    pub(super) started: Instant,
+    /// The connection's IPv4 address or IPv6 /64 (`peer_key`).
+    pub(super) ip: IpAddr,
+    /// Its bucketing group (IPv4 /16, IPv6 /32; `AddrMan::bucket_group`).
+    pub(super) group: Vec<u8>,
+    /// Closes the connection.
+    pub(super) kill: Arc<Notify>,
 }
 
 /// Per-peer known-address set size; the set is emptied when full (a relayed
@@ -123,10 +141,12 @@ pub(super) struct State {
     /// The ban list changed since it was last saved.
     pub(super) bans_dirty: bool,
     /// Inbound connections accepted but not yet registered (handshake in
-    /// progress), in total and per IP: counted against `max_inbound` and
-    /// `max_per_ip` like registered peers.
-    pub(super) handshaking: usize,
+    /// progress), by slot id, and their count per IP (counted against
+    /// `max_per_ip` like registered peers). Bounded in total and per group
+    /// (`peers::handshake_caps`); never counted against `max_inbound`.
+    pub(super) handshakes: HashMap<u64, PendingHandshake>,
     pub(super) handshaking_ip: HashMap<IpAddr, usize>,
+    pub(super) next_handshake: u64,
     /// Header batches queued for, or under, verification: in total and per
     /// sender origin (`queue_key`). Bounded (docs/p2p.md §6).
     pub(super) header_queue_len: usize,

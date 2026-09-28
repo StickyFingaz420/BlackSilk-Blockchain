@@ -90,6 +90,13 @@ k_i→r   = k[0..32],  k_r→i = k[32..64]
   reopens the hole for everyone; members are not authenticated to one another; the key
   is never printed (its `Debug` is redacted). It must never be required on a public
   network.
+  - **Key hygiene** (RTW3-12). The file is read into a buffer wiped on drop (at most
+    4 KiB) and decoded straight into the key's own wiped storage, with no copy in a
+    temporary. On Unix a key file its group or other users can read is logged as a
+    warning (the node still starts). The shared point `S`, its encoding and the session
+    key `k` are held in wiped buffers. Residuals: the BLAKE2b state inside the key
+    derivation is not wiped (the `blake2` 0.10 crate has no zeroizing state), and
+    temporary copies the compiler makes are outside the program's control.
 - Ephemeral keys protect a *finished* session against a later compromise of either
   node's long-term state: nothing long-term exists to steal. They do **not** give more
   than that:
@@ -177,15 +184,18 @@ Version {
     other message, a malformed one or a ninth unknown frame closes the connection;
   - every frame is at most **`MAX_HANDSHAKE_FRAME` = 4096 bytes** (`p2p/src/message.rs`),
     refused as soon as its length decrypts;
-  - the key exchange must finish within 10 s, and the whole handshake, from the TCP
-    connection to the peer's `Verack`, within **20 s** (one deadline, not one per frame;
-    the margin is for Tor round trips).
+  - the key exchange must finish within **5 s** on clearnet and 10 s over Tor (a proxied
+    outbound connection, or an inbound one through our hidden service), and the whole
+    handshake, from the TCP connection to the peer's `Verack`, within **20 s** (one
+    deadline, not one per frame; the margin is for Tor round trips). The 5 s bound
+    (RTW3-3) makes a connection that sends nothing leave after one key-exchange round
+    trip's allowance, not after the whole deadline.
 
   A failure only closes the connection. Nothing is **scored or banned** before
   registration: the peer is unauthenticated, and its address may be a proxy's, a hidden
   service's loopback, or spoofed by whoever is on the path. At most about 40 KiB can
-  arrive per handshaking connection (10 frames of 4 KiB), and handshaking connections
-  count against the inbound limits (§9).
+  arrive per handshaking connection (10 frames of 4 KiB). Handshaking inbound connections
+  have their own bounds and are the first to be evicted (§9, "Inbound").
 
 ### 4.1 Protocol versions and extensibility (P0-8, R8-14)
 
@@ -673,8 +683,11 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
     - the newcomer waits in *new* (at most 10 wait), and a feeler tests the occupant;
     - the occupant stays if it connected in the last 4 hours (an outbound peer this
       node is connected to counts as connected now);
-    - the newcomer replaces it if an attempt on it failed, at least a minute ago, or if
-      it was not tested within 40 minutes;
+    - the newcomer replaces it if an attempt on it failed, at least a minute ago;
+    - if it was not tested within 40 minutes, the collision is dropped and the occupant
+      stays (RTW3-9). Bitcoin Core replaces it then; an occupant this node could not
+      test has shown nothing wrong, and an answering attacker address must not displace
+      a working entry by default;
     - a replaced *tried* entry goes back to *new*.
 
     *tried* holds **one address per IP**: another port of that IP that connects
@@ -718,6 +731,12 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   outbound connections**, at most **one per group**, also among the addresses picked in
   the same round (before 2026-09-27 two picks of one round could share a group, R8-4).
   The groups of manual peers, anchors and seeds being dialed count too (F32-12).
+  - A registered outbound peer counts **once** against the target (RTW3-2). Its address
+    stays in the dialing set for its whole session (so it is never dialed twice), and
+    before the fix it was counted there and as a registered peer: a node refilled a lost
+    outbound slot only once fewer than half its target were left, never reached the
+    feeler condition after churn, and could not dial the stale-tip extra peer
+    (`p2p/tests/outbound_policy.rs`, `lost_outbound_peers_are_replaced`).
   - **Anchors** (dossier 32 W4):
     - At shutdown the node writes up to 2 of its outbound peers to `anchors.json`:
       those dialed from the table, longest connected first, never manual peers or seeds.
@@ -730,17 +749,34 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
     honours `relay_txs = false` from a peer (§4) but always sends `true`. Its anchors
     are therefore full-relay peers.
   - **Feelers** (W5). When every outbound slot is taken, the node opens a short
-    connection about every 2 minutes (exponentially distributed). It goes to a waiting
-    *tried* collision's occupant, else to a *new* address in a group with no outbound
-    peer. A completed handshake moves the address to *tried* (or settles the
-    collision). The connection is then closed unregistered: no message is exchanged.
+    connection about every 2 minutes (exponentially distributed; `NetConfig::
+    feeler_interval`). It goes to a waiting *tried* collision's occupant, else to a *new*
+    address in a group with no outbound peer. A collision test ignores the group and
+    one-minute backoff filters (RTW3-9): the occupant may share a group with an
+    outbound peer, and a repeated attempt is what the test needs. A completed handshake
+    moves the address to *tried* (or settles the collision). The connection is then
+    closed unregistered: no message is exchanged (`feelers_move_an_answering_new_address_to_tried`).
   - **Stale tip** (W7). If the connected tip has not changed for `3 × T × 2` (Bitcoin
     Core uses 3 × T), the node allows one extra outbound connection, at most once per 10
     minutes, and also dials seeds. With more outbound peers than the target, one
-    discovered outbound peer is disconnected, not banned: the one with the lowest known
-    chain (ties: the youngest), never one connected less than 30 s, never a manual peer.
-    A node whose outbound peers all withhold blocks thus rotates one of them every 10
-    minutes; before, it kept them forever (F32-3).
+    discovered outbound peer (never a manual peer) is disconnected, not banned, after
+    Bitcoin Core's `EvictExtraOutboundPeers` (RTW3-4):
+    - the worst of **all** of them: the one whose last **validated new tip** is oldest
+      (a header batch that stored new headers on our best header chain, or a block that
+      joined our best chain; never delivered is worst), ties broken by the youngest
+      connection. The height a peer claims in `Version` is never used: it costs nothing
+      to inflate;
+    - if that peer is younger than 30 s (`MIN_CONNECT_TIME`) or has blocks in flight,
+      the rotation waits for it, rather than evicting a better peer.
+
+    So an extra peer that brings nothing goes once it is 30 s old, and one that brings a
+    new tip stays while an established peer that brought none goes. Before RTW3-4 the
+    peer with the lowest claimed height went, and among equal heights an established
+    peer was evicted two seconds after the newcomer arrived. A node whose outbound peers
+    all withhold blocks rotates one of them every 10 minutes; before W7 it kept them
+    forever (F32-3). The thresholds are `NetConfig` fields (`stale_tip_after`,
+    `stale_check_interval`, `min_connect_time`) so tests can shorten them
+    (`p2p/tests/outbound_policy.rs`).
 - **Seeds** are dialed in three cases, each seed at most every 30 s (R8-13):
   - the address table is empty;
   - no outbound connection is up (every known address may be stale or hostile);
@@ -761,6 +797,20 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   simulator as the baseline) and v2. It asserts that v2 is never worse than the
   baseline, that one source reaches at most 16 *new* buckets, and that with one or four
   attacker sources the attacker's outbound share at least halves.
+  - A second model (RTW3-10, `eclipse_simulation_with_feelers_rederives_the_tried_bias`)
+    adds a day and a week of feelers after the flood. Attacker addresses that accept
+    connections reach *tried* through them (one per IP; the attacker's own source IPs,
+    or 32 or 128 addresses in distinct groups), and so do the honest *new* addresses.
+    It prints the *tried* make-up and the outbound share for biases 0.5 to 0.9, and
+    asserts that the chosen bias is never worse than 0.5. Findings: 0.7 is never worse
+    than 0.5; 0.8 and 0.9 lower the share further where the attacker holds few *tried*
+    entries, but raise P(all 8) where it holds most of them, so `TRIED_BIAS` stays 0.7.
+    Feelers drain honest addresses out of *new* into *tried*, so after them *new* is
+    almost all the attacker's and a *new* draw almost always picks it. An attacker with
+    more answering addresses than the honest *tried* entries keeps most of the slots at
+    every bias tested (run the simulator for the figures); onion addresses have no
+    per-IP limit, and their names are free. The model does not include honest address
+    inflow after the flood, promotions by regular outbound connections, or anchors.
   - The admission limits cut what a flood gets into the table by orders of magnitude.
   - Addrman v2 confines what gets in to 16 buckets per source.
   - On a network of tens of honest nodes, the attacker's addresses still outnumber the
@@ -778,13 +828,23 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   **IPv6 /64** (`addr::peer_key`). One IPv6 host is routinely given a whole /64. Before
   W3-32 the limit applied per exact address, so one /64 could fill every inbound slot
   (F32-2).
-  - Connections still in their handshake count against both limits when a new one
+  - Connections still in their handshake count against the per-IP limit when a new one
     is accepted, and the limits (and bans) are checked again, atomically, when the
     peer is registered. Before 2026-09-27 only registered peers were counted, so
     concurrent handshakes bypassed both limits.
+  - **Handshaking connections** (RTW3-3, `peers::handshake_caps`) are bounded on their
+    own: at most a quarter of `max_inbound` at once (16 of 64), and a quarter of that
+    per group (4 per IPv4 /16 or IPv6 /32). A new connection past either bound closes
+    the **oldest** handshaking connection (of its group first): handshaking
+    connections are the first eviction candidates, before any registered peer. They
+    never count against `max_inbound`. Before RTW3-3 they did, and room was made at
+    accept by evicting registered peers, so TCP connections that never sent a byte
+    pushed honest registered peers out and held the slots
+    (`silent_handshakes_do_not_evict_registered_peers`).
   - **Eviction** (W6; `connman::select_inbound_to_evict`, after Bitcoin Core's
-    `SelectNodeToEvict`). When inbound is full, a new connection is still accepted if
-    a registered inbound peer can give way. Protected, in order:
+    `SelectNodeToEvict`). When inbound is full, a peer that completed its handshake is
+    still registered if a registered inbound peer can give way; the choice is made at
+    registration, not at accept (RTW3-3). Protected, in order:
     1. the oldest peer of each of the 4 groups with the highest keyed group hash (keyed
        with the address table's key, so peers cannot tell which groups);
     2. up to a quarter of the candidates arriving through our hidden service (from
@@ -792,8 +852,8 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
     3. the older half of the rest.
 
     Of the others, the youngest peer of the group with the most connections is
-    disconnected, not banned. If every peer is protected, the new connection is
-    dropped. Before W3-32 it always was.
+    disconnected, not banned. If every peer is protected, the new peer is refused at
+    registration. Before W3-32 it always was.
   - Bitcoin Core also protects the peers with the lowest ping and those that recently
     relayed transactions or blocks. BlackSilk does not measure those yet.
 - **Persistence.** The tables and the ban list are saved in the data directory
