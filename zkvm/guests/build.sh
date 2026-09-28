@@ -122,10 +122,15 @@ guest_sha256() {
 # The value of key $3 in table [$2] of the TOML file $1 (one-line string
 # values only; enough for rustup's channel manifests).
 guest_toml_value() {
-  tr -d '\r' < "$1" | awk -v t="[$2]" -v k="$3" '
+  # awk reads the file itself and to the end: an early `exit` behind a pipe
+  # makes the writer die of SIGPIPE on large manifests, which `pipefail`
+  # turns into a failure (the Linux CI legs, whose manifests exceed the pipe
+  # buffer).
+  awk -v t="[$2]" -v k="$3" '
+    { sub(/\r$/, "") }
     $0 == t { on = 1; next }
     /^\[/ { on = 0 }
-    on && index($0, k " = \"") == 1 { v = substr($0, length(k) + 5); sub(/"$/, "", v); print v; exit }'
+    on && !done && index($0, k " = \"") == 1 { v = substr($0, length(k) + 5); sub(/"$/, "", v); print v; done = 1 }' "$1"
 }
 
 # Checks the installed toolchain against toolchain.sha256 (CI-13). rustup
