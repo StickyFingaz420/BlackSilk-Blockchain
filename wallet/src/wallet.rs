@@ -24,7 +24,10 @@ use blacksilk_crypto::keys::{SubaddressTable, WalletKeys};
 use blacksilk_px::wallet::Account;
 use blacksilk_tx::builder::{BuildError, Decoy};
 use blacksilk_tx::params::MAX_INPUTS;
-pub use contracts::check_vault_deploy;
+pub use contracts::{
+    check_vault_deploy, vault_claim_window, vault_refund_window, MAX_VAULT_TIMEOUT_AHEAD,
+    VAULT_TIMEOUT_GRANULE,
+};
 pub use rebroadcast::{
     PendingInfo, RebroadcastState, NETWORK_EXPIRY_BLOCKS, REBROADCAST_PROBE_BLOCKS,
 };
@@ -303,6 +306,20 @@ struct RingMember {
     commitment: String,
 }
 
+/// The terms of a vault record this wallet locked with a timeout
+/// (docs/contracts.md §8), kept in the wallet file so the refund needs no
+/// argument (RTW1C-3): the claim lock and the timeout. The refund lock is
+/// re-derived from the seed. After a restore from the seed the same terms
+/// are found again from the chain (`Wallet::recover_vault_locks`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredTerms {
+    /// `Hk(LOCK, contract ‖ secret)` (hex digest).
+    pub claim_lock: String,
+    /// The first height at which a refund may be included (a multiple of
+    /// `VAULT_TIMEOUT_GRANULE`).
+    pub timeout: u64,
+}
+
 impl RingMember {
     fn of(d: &Decoy) -> Self {
         Self {
@@ -354,6 +371,9 @@ pub struct Wallet {
     autosave: Option<AutoSave>,
     /// PX delivery keys derived so far (memory only).
     px_keys: AddressKeys,
+    /// Terms of the vault records this wallet locked with a timeout, by
+    /// commitment (hex): stored before the lock is sent.
+    vault_terms: BTreeMap<String, StoredTerms>,
     /// Problems found and repaired when loading (`take_warnings`).
     warnings: Vec<String>,
 }

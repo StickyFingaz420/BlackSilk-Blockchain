@@ -31,7 +31,8 @@ they are never renamed. Index:
 - px-call-abi (px-core, px, tx; W1-CB-B2)
 - px6-validity-window (px-core, px, tx, chain mempool; W1-CB-B2)
 - vault-v3 (vault guest and host, wallet; W1-CB-B2)
-- guest-rebuild (kernel and vault ELFs and ids, guest link layout; W1-CB-B2)
+- guest-rebuild (kernel and vault ELFs and ids, guest link layout; W1-CB-B2); Follow-up (RTW1C-9)
+- kernel-budget-shapes (px; FX-RTW1C); Follow-ups (RT-W1c) in px6-validity-window and vault-v3
 
 New sections are appended at the end.
 
@@ -1819,6 +1820,40 @@ interplay across reorganizations, and whether premature transactions can load re
 at no cost (they are refused after the stateless checks and the proof decode, and the
 rejection is cached per tip).
 
+### Follow-up (RT-W1c, FX-RTW1C): PX6 before the range proof, and the expiring-soon policy
+
+Red team RT-W1c (internal review, not an audit), decisions.md "RT-W1c": PX6 ACCEPT WITH
+CHANGES; RTW1C-4 and RTW1C-5.
+
+- **RTW1C-5 (check order; consensus path, verdicts unchanged).** In
+  `tx/src/validate.rs::validate_px_checks` (mempool, RPC and relay full validation) PX6
+  now runs right after the proof decode and **before** the Bulletproofs+ range proof,
+  so a premature or expired transaction costs no range-proof verification. Every rule
+  is a pure check, so validity is unchanged; only a transaction that is both outside
+  its window and invalid for its range proof gets `PxWindow` (contextual, unscored)
+  instead of `RangeProofInvalid` on this path. Relay admission's cheap phase already
+  checked PX6 without the range proof, so the two paths now agree. The block path is
+  unchanged. Demonstrated: `tx/tests/px_window.rs::the_window_is_checked_before_the_range_proof`
+  (a PX transaction with a real v1 part and a broken range proof: `PxWindow` when
+  premature, `RangeProofInvalid` inside its window) fails on the base with
+  `RangeProofInvalid` for the premature case (log
+  `C:/bszkeval/fx-rtw1c/base-rtw1c5.log`).
+- **RTW1C-4 (expiring-soon policy; not consensus).** `tx::validate::px_expires_soon`:
+  `not_after ≠ 0 ∧ not_after < next + PX_EXPIRING_SOON_BLOCKS` (3, Zcash's
+  `TX_EXPIRING_SOON_THRESHOLD`). `chain/src/mempool.rs`: `add` and `check` refuse such
+  a PX transaction first (`MempoolError::ExpiringSoon`, before any validation, so a
+  relay spends no proof verification on it); `readmit` (a reorganization) skips it;
+  pooled transactions are not re-checked against it. The relay and stem paths reach it
+  through `submit_tx` / `check_tx`; their `(_, Err(_), _)` arm drops it unscored. The
+  relay's cheap phase (`p2p/src/net/admission.rs`, not in this work item's ownership)
+  still decodes the proof and takes a node-wide PX token before that refusal; the
+  change owed there: in the cheap closure, for `Transaction::Px(t)`, refuse early as a
+  contextual failure when `validate::px_expires_soon(t, c.height() + 1)` (a
+  `ctx_reject`, never `misbehave`). The wallet builds no claim within the margin
+  (section `vault-v3`, Follow-up). Tests:
+  `tx/tests/px_window.rs::a_window_ending_within_three_blocks_expires_soon`,
+  `chain/src/mempool.rs::transactions_expiring_soon_are_refused_but_readmitted`.
+
 ---
 
 <a id="vault-v3"></a>
@@ -1908,6 +1943,81 @@ record without a timeout recovers fully from the seed).
 claims with terms or refunds (library only; `wallet/src/main.rs` is outside this work
 item). A dedicated tag for the refund-secret derivation (instead of the suffix) is a
 choice for agent 19's registry.
+
+### Follow-up (RT-W1c, FX-RTW1C): rounded windows, a seed-recoverable refund, not an HTLC
+
+Red team RT-W1c (internal review, not an audit), decisions.md "RT-W1c": vault-v3 ACCEPT
+WITH CHANGES; RTW1C-2, -3, -6, -7, -8. Wallet side only: the vault guest, its id, its
+budget and the kernel are unchanged, so nothing here is a consensus change.
+
+- **RTW1C-2 (Low/Medium, privacy): windows no longer reveal `T`.** §8 above ("a claim
+  window reveals the timeout") is superseded. The wallet requires `T` to be a multiple
+  of 16 (`VAULT_TIMEOUT_GRANULE`), and builds a claim for the next block `n` with
+  `[0, min(T − 1, round_up16(n + 3) + 31)]` and a refund with `[max(T,
+  round_down16(n)), ∞)` (`vault_claim_window`, `vault_refund_window`). A claim window
+  always ends at `16k − 1` and a refund window always starts at `16k`, so they show
+  `T` only when the rounded bound is itself `T − 1` (a claim within about 50 blocks
+  before `T`) or `T` (a refund within 16 blocks after it). Test
+  `wallet::contracts::vault_windows_do_not_reveal_the_timeout` (every `T ≤ 2 000` and
+  every next height up to `T + 99`); on the base the claim ended at `T − 1` and the
+  refund started at `T` always.
+- **RTW1C-3 (Medium, funds at risk): the refund survives a restore.** On the base a
+  locker restored from its seed could not refund a lock delivered to the counterparty:
+  the record's `rcm` was hedged-random and existed only in the wallet file and the
+  counterparty's ciphertext, and the timeout was not stored at all. Now (the simpler
+  of the two options in the decision, extended by what it lacked):
+  - the terms (claim lock, timeout) are stored in the wallet file before the lock is
+    sent (`Wallet::vault_terms`, `px_vault_refund_stored`, `px_vault_terms`);
+  - the `rcm` of a lock with a timeout is derived, `H32("px/wallet/vault-rcm/v1",
+    hk_px ‖ u8 network ‖ C ‖ rho_vault)` (`px_vault_rcm_for`);
+  - the claim lock is not derivable when the counterparty chose the secret (the swap
+    case), so the lock's change output, which goes to the locker's own address 1,
+    carries the claim lock in its `data`: inside its commitment and its ciphertext to
+    the locker, invisible to anyone else and never published when the change is spent;
+  - `Wallet::recover_vault_locks` (at load, and before a stored-terms refund) finds each
+    held change with nonzero data whose `rho` is `output_rho(nf, 1)` of a record this
+    wallet spent in the same block (only its own locks qualify), rebuilds the vault
+    record (`rho = output_rho(nf, 0)`, the derived `rcm` and refund lock, the value from
+    the lock's inputs, fee and change) for every usable vault contract, and searches
+    `T` over the multiples of 16 from 4 096 blocks below the lock's block to
+    `MAX_VAULT_TIMEOUT_AHEAD` = 2^20 above it, keeping a candidate only if its
+    commitment is in the lock's block.
+
+  Why not "the opening and `T` to self in the change ciphertext": the delivery
+  plaintext has a fixed length (consensus fixes the ciphertext length) and holds exactly
+  one record, so the only free space is the change record's own 248-bit `data`, which
+  the claim lock fills; the rest is derived or searched. Test
+  `wallet::contracts::a_restored_locker_recovers_its_timed_lock_and_can_refund`: a
+  restored wallet that knows only its spent input, its change, the block's commitments
+  and the vault contract recovers the record (opening, value, position) and the terms
+  for a counterparty-chosen secret; the pinned vault guest accepts its REFUND at `T`
+  within `vault::BUDGET`, with the prefix the kernel requires; the native kernel
+  accepts spending the recovered record; the terms survive the wallet file, and a file
+  saved before the recovery recovers at load; another seed and a lock without the
+  marker recover nothing; a full unmatched search is timed and printed. On the base
+  none of this existed (the `rcm` was random, so no restore could rebuild the record).
+- **RTW1C-4 (wallet side).** A claim whose window would end within 3 blocks of the
+  next block is not built; the lock requires `T − 1 ≥ n + 3`
+  (`vault_timeouts_are_rounded_and_bounded`).
+- **RTW1C-6 (Info).** docs/contracts.md §8 and px.md §13.4 state that the vault is
+  **not an HTLC**: a claim proves the secret without publishing it, so no atomic swap
+  is possible with two vaults.
+- **RTW1C-7 (Info).** The refund secret has its own tag, `px/wallet/vault-refund/v1`,
+  instead of the `"refund"` suffix; the new `rcm` tag is `px/wallet/vault-rcm/v1`.
+  Both are in `crypto::hash::tags::ALL` (the distinctness test) and pinned with the
+  other frozen wallet tags (`frozen_wallet_tags_are_pinned`); the coordinator adds them
+  to the frozen list in decisions.md. The derivations are covered by
+  `the_refund_secret_and_rcm_have_their_own_tags`.
+- **RTW1C-8 (Info).** Before every lock the wallet dry-runs every way out of the new
+  record with its real opening: CLAIM with the secret and, with a timeout, REFUND with
+  its refund secret, each checked for exit code 0, the kernel's prefix (a wrong secret
+  gives another `io_hash`), exactly `vault::OUT_WORDS` output words and the registered
+  budget (`a_lock_dry_runs_every_way_out_of_the_record`). docs/contracts.md §6 item 21
+  is the author-checklist rule.
+- **Open.** The wallet CLI still has no commands for timed locks, stored-terms refunds
+  or the recovery (`wallet/src/main.rs`, outside this work item). A recovered record
+  that was already claimed or refunded before the restore is listed until its refund
+  is refused (the wallet does not query nullifiers).
 
 ---
 
@@ -2030,3 +2140,131 @@ commands and counts are in the W1-CB-B2 final report):
   REFUND entry, domains and `OUT_WORDS` (`px/src/fingerprint.rs` notes them).
 - Agent 26's P-5 re-run on the new kernel and vault, and agent 22's widest-proof
   measurement.
+
+### Follow-up (RT-W1c, FX-RTW1C): the budget claim corrected (RTW1C-9)
+
+Red team RT-W1c (internal review, not an audit) found the "kernel: unchanged" line of
+§5 above wrong. `budgets_leave_headroom` measured four sampled witnesses (CLAIM-shaped
+calls, whose specified outputs are user payouts), not every shape the kernel accepts. A
+specified **contract** output and some approval patterns take the kernel's few
+data-dependent comparisons (`read_spec`'s foreign-contract test, the output-owner rule,
+`by_own_contract`), and on this rebuild's budgets:
+- `n_fn = 1`, one function specifying two contract outputs from two user inputs (two
+  new records of one contract in one call): `bit` 1 714 of 1 700 (100.8%, **over**);
+  a partial withdrawal (a contract input and a contract output): `bit` 1 692 of 1 700
+  (99.5%); two contract inputs and two contract outputs: `lt` 17 012 of 17 900 (95.0%);
+- `n_fn = 2`, contract outputs: `bit` 1 842 of 1 900 (96.9%), `lt` 19 381 of 20 400
+  (95.0%).
+
+The widest profile quoted above (`lt` 19 316 of 20 400, 94.7%) was therefore not the
+widest. The kernel ELF and id of this rebuild are unaffected; the budgets are prover and
+verifier parameters, raised in section `kernel-budget-shapes` below (logs
+`C:/bszkeval/fx-rtw1c/base-demo.log`, the red team's demonstration, and
+`C:/bszkeval/fx-rtw1c/base-kernel-budget.log`, the exhaustive test on the base).
+
+---
+
+<a id="kernel-budget-shapes"></a>
+
+## kernel-budget-shapes: the kernel budgets cover every honest shape, and each execution fits its own budget (RTW1C-1)
+
+Decision: decisions.md, "RT-W1c (CB-B2 red team), Lead decisions 2026-09-28":
+"RTW1C-1 (Medium, liveness, pre-existing): kernel budgets raised so every honest shape
+uses at most 95% of every table, verified by an exhaustive or property test over all
+shapes. This must land BEFORE the freeze." Work item FX-RTW1C.
+
+**1. Problem.** `prove::kernel_budget(n_fn)` fixes the kernel's table heights for each
+function count (px.md §4.4). Honest shapes exceeded it (section `guest-rebuild`,
+Follow-up). An over-budget kernel execution was not refused by itself: the shared ALU
+and Poseidon2 tables are padded to `pow2(Σ budgets)` over the kernel and every called
+function, and the prover only checked the padded heights. So whether such a transaction
+could be proven depended on the other calls' registered budgets: with a function budget
+`B_f` such that `1 700 + B_f` is a power of two, a one-function transaction with two
+contract outputs was unprovable (liveness), and the same transaction proved with other
+functions.
+
+**2. Demonstrated failure.** On the base `e986250`:
+- the red team's scratch test (`C:/bszkeval/rt-w1c-demo.patch`, log
+  `C:/bszkeval/fx-rtw1c/base-demo.log`): `n1 C+C one fn approves both, specs both
+  contract outs: … bit 1714/1700 (100.8%) … OVER95=["bit", "lt"]`;
+- the new exhaustive test `px/tests/kernel_budget.rs::every_honest_kernel_shape_fits_its_budget_with_headroom`
+  fails on the base budgets with the four violations listed in the `guest-rebuild`
+  Follow-up (log `C:/bszkeval/fx-rtw1c/base-kernel-budget.log`).
+
+**3. Prior art.** Fixed-shape proofs are the norm for private transactions: a Groth16
+circuit (Zcash Sprout, Sapling) has one shape per statement type, so no witness can
+exceed it; zkVMs that pad traces to a power of two per execution (RISC Zero's segments)
+choose the padded size from the actual execution and publish it, which reveals the
+length, the trade-off BlackSilk's fixed budgets avoid (px.md §4.4, R-5). The lesson
+taken here: a fixed shape is only safe if it provably covers every honest execution.
+
+**4. Alternatives.**
+- (A) Make the kernel strictly constant-work (evaluate every comparison
+  unconditionally): a kernel rebuild (new ELF and id) for a few dozen rows, and the
+  budgets would still need a measured margin. Not taken now; recorded for the next
+  kernel change.
+- (B) Raise the budgets over the maximum of every accepted shape, and refuse any
+  execution over its own budget before proving (chosen: no ELF change, deterministic
+  provability).
+- (C) A budget per shape class: the class would be public in the proof shape (a
+  privacy loss). Rejected.
+
+**5. Affected components.**
+- `px/src/prove.rs`: `kernel_budget(1)`: `bit` 1 700 → 1 850, `lt` 17 900 → 18 050;
+  `kernel_budget(2)`: `bit` 1 900 → 2 000, `lt` 20 400 → 20 550 (each the maximum over
+  every accepted shape plus about 6%, rounded up to 50). `n_fn = 0` and every other
+  table unchanged (all at or below 94.2%). `prove` runs the kernel guest and every
+  function before proving and refuses an execution over its own budget in any table
+  (`TransferError::OverBudget { execution, table, used, budget }`); the new
+  `prove::over_budget` names the first such table.
+- `px/src/fingerprint.rs`: the kernel budgets enter the consensus manifest as
+  `px.kernel.BUDGET.n_fn_0`, `…_1`, `…_2` (they were missing: two nodes with different
+  budgets disagree on every PX proof).
+- `tx/src/px.rs::budget_is_provable` (unchanged code) reads `kernel_budget(1)`: the
+  largest `bit` and `lt` a deploy may register fall by 150 rows each (from `2^22 −
+  1 700` to `2^22 − 1 850`, and from `2^22 − 17 900` to `2^22 − 18 050`).
+- The kernel ELF and program id, and the vault ELF, id and budget, are **unchanged**:
+  the budgets are prover and verifier parameters only.
+
+**6. Activation.** v3 genesis base rule set (no launched network has the old budgets).
+
+**7. Compatibility.** Every PX proof that calls one or two functions has a new
+statement shape (the kernel's heights); proofs made with the old budgets do not verify.
+The padded shared tables change only where a power of two is crossed: with the vault,
+`n_fn = 1`'s `bit` table goes from `pow2(1 700 + 260) = 2 048` to `pow2(1 850 + 260) =
+4 096` rows; its `lt` table (`pow2(18 050 + 3 900)`) and every `n_fn = 2` vault
+combination keep their heights. Fingerprint changes: the three new entries only (the
+manifest diff and the digests are in the commit message).
+
+**8. Reorg, wallet, mining and P2P implications.** None beyond the new shapes: the
+wallet and the builders call `prove`, which now refuses an over-budget call before any
+proving work with a precise error instead of a shape failure.
+
+**9. Vectors.** The budget table itself (fingerprint entries `px.kernel.BUDGET.n_fn_*`).
+The enumeration's counts: 4 accepted shapes with `n_fn = 0`, 162 with 1, 1 600 with 2
+(input kinds user, dummy and two contracts; output kinds user and two contracts; each
+function's contract; every approval and specification pattern).
+
+**10. Regression tests** (`px/tests/kernel_budget.rs`, no proving):
+- `every_honest_kernel_shape_fits_its_budget_with_headroom`: every accepted shape,
+  checked by the native kernel and the pinned guest (exit 0), uses at most 95% of every
+  table of its budget; it prints the widest shape per table;
+- `the_shape_rules_match_the_kernel`: the enumeration's validity predicate equals the
+  native kernel's verdict on every one-function shape (so no accepted shape is
+  skipped);
+- `an_execution_over_its_own_budget_is_refused_before_proving`: a vault LOCK with a
+  budget one row short in `bit` is `OverBudget { execution: 1, table: "bit", .. }`;
+  the kernel's `n_fn = 1` execution fits `kernel_budget(1)` and not `kernel_budget(0)`;
+- `px/tests/unified.rs::budgets_leave_headroom`: now the vault entries and the vault
+  flows' kernel executions (the kernel's shapes moved to the exhaustive test);
+- `px/tests/consensus_fingerprint.rs`, `node/tests/deploy_configs.rs`: re-pinned.
+
+**11. Suite results.** In the FX-RTW1C final report (one run for all RT-W1c fixes;
+the commands are listed there).
+
+**12. Open review points.**
+- The enumeration covers record kinds, contracts and patterns, not values: values and
+  positions are handled branch-free (px.md §4.4 and its constant-work tests), which the
+  red team may re-check.
+- Alternative (A) at the next kernel change; agent 22's widest-proof measurement should
+  be re-run with the new `n_fn = 1` shape.

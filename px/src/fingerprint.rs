@@ -250,6 +250,19 @@ pub fn px_entries() -> Manifest {
             crate::prove::KERNEL_PROGRAM_ID.trim(),
         )
         .text("px.VAULT_PROGRAM_ID", crate::vault::VAULT_PROGRAM_ID.trim());
+    // The kernel's fixed row budgets (px/src/prove.rs `kernel_budget`): the
+    // verifier builds the statement's table heights from them, so two nodes
+    // with different budgets disagree on every PX proof (RTW1C-1).
+    for n_fn in 0..=blacksilk_px_core::call::MAX_FN {
+        let b = crate::prove::kernel_budget(n_fn);
+        m.list(
+            &format!("px.kernel.BUDGET.n_fn_{n_fn}"),
+            [
+                b.cycles, b.keys, b.add, b.bit, b.lt, b.shift, b.mul, b.poseidon,
+            ]
+            .map(|v| v as u64),
+        );
+    }
     // The vault's registered row budget and entry points (px/src/vault.rs).
     // Not yet listed (owed to the fingerprint v3 commit, agent 40; W1-CB-B2):
     // the call ABI (`px_core::call::ABI_VERSION`, `PREFIX_WORDS`), the vault's

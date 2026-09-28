@@ -266,9 +266,19 @@ of the multi-execution statement:
   what they did: not the dummies, the record kinds, the positions, the amounts, or
   a function's execution path or length.
 - An execution that needs more rows than its budget cannot be proven. It fails
-  loudly; it never leaks.
-- A test checks that every tested witness uses at most 95% of each budget, and
-  another that a deposit and a payment have identical shapes.
+  loudly; it never leaks. The prover checks each execution against its own budget in
+  every table before proving (`TransferError::OverBudget`): the shared ALU and
+  Poseidon2 tables are padded to a power of two of the budgets' sum, so without the
+  check an over-budget execution would be provable or not depending on the other
+  calls' budgets (RTW1C-1).
+- The kernel's budgets cover every shape it accepts: `px/tests/kernel_budget.rs`
+  enumerates every input kind (user, dummy, two contracts), output kind, function
+  contract and approval and specification pattern for 0, 1 and 2 functions and checks
+  that each table stays at or below 95% (RTW1C-1: the earlier sample missed the
+  shapes with specified contract outputs, which exceeded the one-function `bit`
+  budget). The budgets are prover and verifier parameters, in the consensus
+  fingerprint (`px.kernel.BUDGET.n_fn_*`), not part of the kernel ELF. Another test
+  checks that a deposit and a payment have identical shapes.
 - **Byte length** (privacy review P-5). Field elements are always 4 bytes (Plonky3
   writes them fixed-width), so values never change the length. What varies is the
   Merkle opening proof: FRI opens its queries with pruned paths, and the number of
@@ -294,8 +304,9 @@ The proof's table heights are public (zkvm.md §8).
   `successful_executions_have_identical_trace_heights` and
   `record_kinds_are_not_revealed_by_trace_heights`).
 - **Margin:** fixed budgets (above) made heights independent of the witness, which
-  resolved security review R-5. `budgets_leave_headroom` keeps every tested witness at
-  or below 95% of each budget.
+  resolved security review R-5. `px/tests/kernel_budget.rs` keeps every accepted
+  kernel shape, and `budgets_leave_headroom` every vault entry, at or below 95% of
+  each budget.
 
 ## 5. Consensus state (`px/src/state.rs`)
 
@@ -713,7 +724,7 @@ undo. Tests check that a reorganization restores the root and pool exactly.
 | Relay | PX and deploy transactions together: per peer 0.2/s (burst 4); all peers together 2/s (burst 10) |
 | Invalid proof | Misbehaviour (the statement is branch-independent once PX1 and PX3 pass). Across a scheduled activation the binding changes, so near an activation an honest peer can relay a proof for the previous epoch; see reviews/v3-upgrade-mechanism.md §2.4. A malformed proof (failing decoding or shape) is caught by relay admission's cheap checks, before the node-wide PX token and any ring or CLSAG (p2p.md §10); a well-formed proof that does not verify costs every check up to the verification |
 | Block weight | A PX or deploy transaction with v1 inputs also takes `max_weight(n, k)` of the 600 000 block weight (R12-2): its CLSAGs are metered like a transfer's. The fixed PX fee covers it (`FEE_PER_WEIGHT × max_weight(64, 16)` = 1,148,780 ≤ `PX_STANDARD_FEE`), so the PX fee stays uniform; a deploy's fee already pays exactly that weight at the v1 rate |
-| Mempool | PX class capped at 64 MiB with fee-per-byte eviction; proofs verified once on admission; a PX transaction outside its validity window (PX6) is refused for the next height, leaves the pool at the revalidation after its window ends, and is never selected into a template for a height outside it; templates take PX transactions first, charge every transaction against both the weight and the PX budgets, and keep the pool non-negative in order |
+| Mempool | PX class capped at 64 MiB with fee-per-byte eviction; proofs verified once on admission; a PX transaction outside its validity window (PX6) is refused for the next height, leaves the pool at the revalidation after its window ends, and is never selected into a template for a height outside it; one whose window ends within 3 blocks of the next height is refused (expiring-soon policy, RTW1C-4; readmitted after a reorganization); templates take PX transactions first, charge every transaction against both the weight and the PX budgets, and keep the pool non-negative in order |
 
 ## 12. Privacy guidance for users and wallets
 
@@ -739,8 +750,10 @@ Measured privacy analysis: `docs/reviews/privacy-review.md`.
   CLAIM is visible to anyone watching that contract.
 - **The validity window is public** (PX6). Wallets leave it unbounded, `(0, 0)`,
   unless a contract needs one, so ordinary transactions look alike. A vault claim or
-  refund with a timeout reveals the timeout; round it (to a multiple of 16, as
-  anchors are).
+  refund with a timeout reveals its window, which the wallet rounds to 16-block
+  boundaries (timeouts are multiples of 16): the timeout itself shows only for a claim
+  within about 50 blocks before it or a refund within 16 blocks after it
+  (contracts.md §8, RTW1C-2).
 - **The fee is the same for every PX transaction** (consensus), so it reveals nothing.
 - **Never spend the same funds twice after a transaction may have been relayed**
   (privacy-review.md §3c, P-9). The wallet keeps every submitted transaction and
@@ -896,12 +909,21 @@ seed's network code (blocks.md §10).
   `Hk(TERMS, C ‖ Hk(LOCK, C ‖ candidate) ‖ 0 ‖ 0)` (contracts.md §8). A lock delivered
   to someone else leaves no opening in a restored wallet, so its secret is not
   recovered that way (the claimer has the record; the locker keeps the wallet file).
-- **Refund secret (testnet v3, W28-4).** A lock with a timeout
-  (`Wallet::px_vault_lock_until`) also derives a refund secret, the same derivation
-  with the suffix `"refund"` after `rho_vault` (`px_vault_refund_secret_for`), so it is
-  seed-recoverable too. The refund (`Wallet::px_vault_refund`) needs the timeout,
-  which the lock returns and the wallet does not store. The function's blind and the
-  vault record's `rcm` are hedged with `hk_px` (`blacksilk_px::wallet::hedged_digest`).
+- **Refund secret (testnet v3, W28-4, RTW1C-7).** A lock with a timeout
+  (`Wallet::px_vault_lock_until`) also derives a refund secret,
+  `H32("px/wallet/vault-refund/v1", hk_px ‖ u8 network ‖ contract ‖ rho_vault)` as
+  eight 30-bit limbs (`px_vault_refund_secret_for`; a dedicated tag, frozen for v3),
+  so it is seed-recoverable too. The function's blind is hedged with `hk_px`
+  (`blacksilk_px::wallet::hedged_digest`), and so is the `rcm` of a vault record
+  without a timeout.
+- **A lock with a timeout is recoverable from the seed (RTW1C-3).** Its record's
+  `rcm` is derived, `H32("px/wallet/vault-rcm/v1", hk_px ‖ u8 network ‖ contract ‖
+  rho_vault)` as eight 30-bit limbs (`px_vault_rcm_for`), and its change output (to
+  address 1) carries the claim lock in its data. The wallet stores the terms (claim
+  lock, timeout) in the wallet file before sending, and a wallet restored from the
+  seed rebuilds the record and its terms from the chain
+  (`Wallet::recover_vault_locks`, contracts.md §8), so the refund
+  (`Wallet::px_vault_refund_stored`) needs no argument either way.
 - A secret given with `--secret-file`, `--secret-prompt` or `--secret` is used as is
   and is recoverable from the wallet file only.
 - `px-vault-secret --record CM [--out FILE]` shows the stored (or re-derived) secret.
@@ -914,7 +936,7 @@ seed's network code (blocks.md §10).
 | `px-deploy --vault` or `--program F.elf --budget c,k,a,b,l,s,m,p --out-words N` (repeatable) | Registers a contract, paid with v1 funds, so the deployer is hidden behind ring signatures. Prints the contract id. `--vault` deploys the vault alone. `--out-words` is the exact number of public output words each call of the program publishes (contracts.md §5) |
 | `px-contracts` | Lists deployed contracts and their programs (marks the vault; warns about contracts not usable as a vault) |
 | `px-records` | Lists the contract records this wallet holds, with status and source |
-| `px-vault-lock --contract C --amount A [--secret-file F \| --secret-prompt \| --secret S \| --secret-out F] [--deliver-to PXADDR]` | Locks PX funds in a vault record claimable with `S` and without a timeout, delivering the record to the claimer. The fee is paid from PX. Without a secret option it derives one (above) and prints it after sending (or writes it to the `--secret-out` file). Locks with a timeout and refunds are in the wallet library (`px_vault_lock_until`, `px_vault_claim_with_terms`, `px_vault_refund`); the CLI does not expose them yet |
+| `px-vault-lock --contract C --amount A [--secret-file F \| --secret-prompt \| --secret S \| --secret-out F] [--deliver-to PXADDR]` | Locks PX funds in a vault record claimable with `S` and without a timeout, delivering the record to the claimer. The fee is paid from PX. Without a secret option it derives one (above) and prints it after sending (or writes it to the `--secret-out` file). Locks with a timeout and refunds are in the wallet library (`px_vault_lock_until`, `px_vault_claim_with_terms`, `px_vault_refund_stored`, `recover_vault_locks`); the CLI does not expose them yet |
 | `px-vault-claim --record CM [--secret-file F \| --secret S] [--to PXADDR]` | Claims a vault record, paying its value privately; asks for the secret unless a file or `--secret` is given. The fee is paid from one PX record, or else from v1 funds, so a claimer without PX funds can claim |
 | `px-vault-secret --record CM [--out F]` | Shows the secret of a vault record this wallet locked |
 
@@ -932,6 +954,7 @@ the prompt.
 | **A lock without a timeout** (`px-vault-lock`) | Stays claimable forever; the value returns to the locker only by claiming with the secret |
 | **Whoever made the claim secret can claim** | With a derived or locally given secret the locker can claim too; a swap needs the counterparty to choose the secret and hand over only its lock |
 | **Censorship before a timeout** | A miner can delay a claim until the timeout passes and the refund becomes valid; leave a margin |
+| **Not an HTLC** (RTW1C-6) | A claim proves the secret without publishing it, so two vaults do not make an atomic swap (contracts.md §8) |
 | **Delivery (PX-F4)** | The caller of a claim or refund chooses the new record's `rcm` and writes its ciphertext |
 
 The wallet prints a warning on every `px-vault-lock`, and the command help says the
@@ -944,7 +967,7 @@ same.
 | Received (its ciphertext was addressed to this wallet) at or after the restore height | Yes, by scanning |
 | Received before the restore height | No: restore from an earlier height, or ask a holder for a share |
 | Created by this wallet and addressed to itself (the default) | Yes, as a received record |
-| Created by this wallet and addressed to another party | **No:** the creator's copy lives only in the wallet file. Keep the file, or have the other party share the record back |
+| Created by this wallet and addressed to another party | **No,** except a vault lock with a timeout, which is rebuilt from the seed and the chain (RTW1C-3, above): the creator's copy lives only in the wallet file. Keep the file, or have the other party share the record back |
 | Imported from a share | No: import the share again |
 
 Contracts themselves (their registrations) are always recovered: the wallet
