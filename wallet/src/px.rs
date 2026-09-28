@@ -80,16 +80,32 @@ impl AddressKeys {
     }
 }
 
-/// Wallets anchor spends at the most recent height that is a multiple of
-/// this, so every wallet transacting in the same window uses the same anchor
-/// and the anchor does not reveal when a wallet last synced. Records become
-/// spendable once the anchor height reaches them (at most this many blocks),
-/// well inside the 100-block root window.
+/// Wallets anchor spends at a height that is a multiple of this, so every
+/// wallet transacting in the same window uses the same anchor and the anchor
+/// does not reveal when a wallet last synced.
 pub const ANCHOR_INTERVAL: u64 = 16;
 
-/// The canonical anchor height for a wallet synced to `synced`.
+/// Wallet policy (dossier 21 F21-3; decisions, Agent 21): the anchor lies at
+/// least this many blocks below the wallet's synced tip, for every record,
+/// so a reorganization of up to this depth never removes the root a pending
+/// spend proves against. Without it the anchor was the tip itself at every
+/// multiple of [`ANCHOR_INTERVAL`]: a one-block reorganization made the
+/// spend `PxUnknownAnchor`, and rebuilding it republished the same
+/// nullifiers, linking both attempts (R5-12). ZIP 315 anchors at the same
+/// depth (three trusted confirmations) for the same reason. Every wallet
+/// must use the same value: the anchor is visible in each transaction.
+pub const ANCHOR_MIN_DEPTH: u64 = 3;
+
+/// The canonical anchor height for a wallet synced to `synced`: the highest
+/// multiple of [`ANCHOR_INTERVAL`] at least [`ANCHOR_MIN_DEPTH`] blocks
+/// below it (genesis while the chain is shorter). It lies 3 to 18 blocks
+/// below the tip, well inside the 100-block root window, so a transaction
+/// stays valid for at least 81 blocks after it is built. Records become
+/// spendable once the anchor height reaches them, within
+/// `ANCHOR_MIN_DEPTH + ANCHOR_INTERVAL - 1` blocks of their confirmation.
 pub fn anchor_height(synced: u64) -> u64 {
-    synced - synced % ANCHOR_INTERVAL
+    let deep = synced.saturating_sub(ANCHOR_MIN_DEPTH);
+    deep - deep % ANCHOR_INTERVAL
 }
 
 pub fn digest_hex(d: &Digest) -> String {
@@ -688,13 +704,63 @@ mod tests {
     }
 
     #[test]
-    fn the_anchor_is_the_last_multiple_of_the_interval() {
+    fn the_anchor_is_the_last_multiple_of_the_interval_three_blocks_deep() {
         assert_eq!(anchor_height(0), 0);
+        assert_eq!(anchor_height(2), 0);
         assert_eq!(anchor_height(15), 0);
-        assert_eq!(anchor_height(16), 16);
+        // The tip itself is never the anchor.
+        assert_eq!(anchor_height(16), 0);
+        assert_eq!(anchor_height(18), 0);
+        assert_eq!(anchor_height(19), 16);
         assert_eq!(anchor_height(47), 32);
         // Two wallets synced at different heights in one window share the anchor.
-        assert_eq!(anchor_height(33), anchor_height(47));
+        assert_eq!(anchor_height(35), anchor_height(50));
+        for synced in 0..=1_000u64 {
+            let a = anchor_height(synced);
+            assert_eq!(a % ANCHOR_INTERVAL, 0);
+            if synced >= ANCHOR_MIN_DEPTH {
+                assert!(a + ANCHOR_MIN_DEPTH <= synced, "{synced}: {a} too shallow");
+                assert!(
+                    synced - a < ANCHOR_MIN_DEPTH + ANCHOR_INTERVAL,
+                    "{synced}: {a}"
+                );
+            } else {
+                assert_eq!(a, 0);
+            }
+        }
+    }
+
+    /// Dossier 21 F21-3 (decisions, Agent 21): a reorganization of up to
+    /// three blocks never changes the root a wallet anchors to. Before the
+    /// minimum depth the anchor was the tip itself at every multiple of 16,
+    /// so a one-block reorganization that replaced the tip's commitments
+    /// invalidated a fresh spend (`PxUnknownAnchor`), and rebuilding it
+    /// republished the same nullifiers (R5-12). The depth is a literal here
+    /// so that the test states the policy, not the constant.
+    #[test]
+    fn a_reorganization_of_up_to_three_blocks_keeps_the_anchor_root() {
+        let commitment = |branch: u64, height: u64| format!("{:064x}", branch << 32 | height);
+        for synced in 0..=100u64 {
+            let mut s = PxStore::default();
+            s.commitments = (1..=synced).map(|h| (h, commitment(1, h))).collect();
+            let anchor = anchor_height(synced);
+            let before = s.tree_at(anchor).unwrap().root();
+            for depth in 1..=3u64.min(synced) {
+                let mut other = PxStore {
+                    commitments: s.commitments.clone(),
+                    ..PxStore::default()
+                };
+                other.rewind(synced - depth);
+                other
+                    .commitments
+                    .extend((synced - depth + 1..=synced).map(|h| (h, commitment(2, h))));
+                assert_eq!(
+                    other.tree_at(anchor).unwrap().root(),
+                    before,
+                    "synced {synced}: a {depth}-block reorganization moved anchor {anchor}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -712,13 +778,15 @@ mod tests {
                 needed: 6
             })
         ));
-        // At height 32 the second record is under the anchor too.
-        assert_eq!(s.balance(32), (21, 12));
-        assert_eq!(s.select(12, 32).unwrap(), vec![0, 1]);
+        // Synced to 32 the anchor is still 16 (three blocks deep); at 35 it
+        // is 32, and the second record is under it too.
+        assert_eq!(s.balance(32), (21, 5));
+        assert_eq!(s.balance(35), (21, 12));
+        assert_eq!(s.select(12, anchor_height(35)).unwrap(), vec![0, 1]);
         // Pending and spent records are never selected.
         s.records[0].pending = true;
         s.records[1].spent_height = Some(30);
-        assert_eq!(s.balance(32), (14, 0));
+        assert_eq!(s.balance(35), (14, 0));
     }
 
     #[test]

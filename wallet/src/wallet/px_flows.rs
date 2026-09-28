@@ -381,7 +381,9 @@ impl Wallet {
         needed: u64,
         rng: &mut R,
     ) -> Result<PxInputs, WalletError> {
-        // The canonical anchor (see `px::anchor_height`).
+        // The canonical anchor, at least `px::ANCHOR_MIN_DEPTH` blocks below
+        // the synced tip (see `px::anchor_height`): only records at or below
+        // it are selected, so a shallow reorganization cannot void the spend.
         let anchor = crate::px::anchor_height(self.synced_height);
         let chosen = self.px.select(needed, anchor)?;
         let tree = self.px.tree_at(anchor)?;

@@ -541,8 +541,9 @@ Every PX transaction pays exactly the standard PX fee, a consensus rule:
 `2 × MAX_PX_TX_SIZE` = 8 912 896 atomic units (≈ 0.089 BLK). So fees do not
 fingerprint transactions or wallets.
 
-**Spendability.** A received record becomes spendable once the next height that is a
-multiple of 16 is reached (canonical anchor, px.md §11.4).
+**Spendability.** A received record becomes spendable once the canonical anchor reaches
+it: the highest multiple of 16 at least 3 blocks below the wallet's tip (px.md §11.4),
+so within 18 blocks of its confirmation (about 36 minutes at 120 s).
 
 **Privacy:** px.md §12 and `docs/reviews/privacy-review.md`.
 

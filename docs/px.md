@@ -696,9 +696,20 @@ undo. Tests check that a reorganization restores the root and pool exactly.
   The node never learns which records a wallet owns or which contracts it uses.
 - CLI commands: `px-address`, `px-balance`, `px-deposit`, `px-send`, `px-withdraw`, and
   the contract commands of §13.4.
-- **Canonical anchor.** Wallets use the root at the most recent height that is a
-  multiple of 16. So the anchor does not reveal when a wallet last synced; a record
-  becomes spendable once that height reaches it.
+- **Canonical anchor** (wallet policy, `wallet::px::anchor_height`). Wallets use the
+  root at the highest multiple of 16 that is at least `ANCHOR_MIN_DEPTH` = 3 blocks
+  below their synced tip (genesis while the chain is shorter).
+  - The multiple of 16 keeps the anchor from revealing when a wallet last synced.
+  - The depth keeps a reorganization of up to 3 blocks from removing the anchor
+    (ZIP 315's trusted depth). Before it, the anchor was the tip itself once in 16
+    heights; a 1-block reorganization then made the spend `PxUnknownAnchor`, and
+    the rebuilt spend republished the same nullifiers (dossier 21 F21-3). Tested by
+    `a_reorganization_of_up_to_three_blocks_keeps_the_anchor_root`.
+  - Every wallet must use the same depth, since the anchor is public in each
+    transaction.
+  - A record becomes spendable once the anchor reaches it, within 18 blocks of its
+    confirmation. The anchor lies 3 to 18 blocks deep, so a transaction stays inside
+    the 100-root window for at least 81 blocks after it is built.
 
 ### 11.5 Capacity, relay and denial of service
 
