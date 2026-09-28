@@ -130,11 +130,12 @@ impl Network {
         let mut seed = [0u8; 32];
         getrandom::getrandom(&mut seed).map_err(|e| std::io::Error::other(e.to_string()))?;
         let mut rng = ChaCha20Rng::from_seed(seed);
-        let addrman = cfg
+        let mut addrman = cfg
             .data_dir
             .as_ref()
             .and_then(|d| AddrMan::load(&d.join("peers.json")))
             .unwrap_or_else(|| AddrMan::new(&mut rng));
+        addrman.set_private_groups(cfg.allow_private);
         let bans = cfg
             .data_dir
             .as_ref()
@@ -194,6 +195,7 @@ impl Network {
             blocks_queued: HashSet::new(),
             upgrades: Default::default(),
             originated,
+            connman: Default::default(),
         };
         let (header_queue, header_rx) = mpsc::unbounded_channel();
         let (block_queue, block_rx) = mpsc::unbounded_channel();
@@ -294,8 +296,10 @@ impl Network {
         self.inner.state().upgrades.warned()
     }
 
-    /// Persists the address table and ban list.
+    /// Persists the address table and ban list, and the anchors: call at
+    /// shutdown (the anchors file is written only here, docs/p2p.md §9).
     pub fn save(&self) {
         self.inner.save();
+        peers::save_anchors(&self.inner);
     }
 }

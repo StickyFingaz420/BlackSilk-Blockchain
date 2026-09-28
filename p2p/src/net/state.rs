@@ -71,6 +71,12 @@ pub(super) struct Peer {
     /// with valid proof of work (`HeaderError::UnknownUpgrade`), this peer
     /// sent (RT-1; [`UNKNOWN_UPGRADE_DISCONNECT`]).
     pub(super) unknown_upgrades: u32,
+    /// When the peer was registered (inbound eviction, outbound rotation,
+    /// anchors).
+    pub(super) connected_at: Instant,
+    /// Chosen for inbound eviction and told to disconnect: no longer counted
+    /// against `max_inbound` (docs/p2p.md §9).
+    pub(super) evicted: bool,
 }
 
 /// Per-peer known-address set size; the set is emptied when full (a relayed
@@ -145,6 +151,8 @@ pub(super) struct State {
     pub(super) upgrades: UpgradeReports,
     /// Transactions this node originated, persisted (docs/p2p.md §8.1).
     pub(super) originated: Originated,
+    /// Anchors, feelers and the stale-tip watch (docs/p2p.md §9).
+    pub(super) connman: crate::connman::ConnState,
 }
 
 /// A peer is disconnected (never banned) after this many headers of an unknown

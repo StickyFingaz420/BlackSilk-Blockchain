@@ -41,10 +41,11 @@ pub(super) fn on_get_addr(inner: &Arc<Inner>, peer: PeerId) {
     let State {
         addrman, rng, bans, ..
     } = &mut *st;
-    // The table keeps no per-address times yet, so every entry carries time
-    // 0 ("unknown"): nothing about the table or the clock is revealed.
+    // At most 23 % of the table, none terrible (`AddrMan::get_addr`). Every
+    // entry carries time 0 ("unknown"): the table's per-address times stay
+    // local, so nothing about the table or the clock is revealed.
     let sample: Vec<AddrEntry> = addrman
-        .sample(1000, rng)
+        .get_addr(1000, rng, now)
         .into_iter()
         .filter(|a| a.is_routable() || allow_private)
         .filter(|a| a.ip().is_none_or(|ip| !bans.is_banned(&ip, now)))
@@ -79,12 +80,7 @@ pub(super) fn on_addr(inner: &Arc<Inner>, peer: PeerId, entries: Vec<AddrEntry>)
     let allow_private = inner.cfg.allow_private;
     let mut fresh = Vec::new();
     {
-        let State {
-            addrman,
-            rng,
-            peers,
-            ..
-        } = &mut *st;
+        let State { addrman, peers, .. } = &mut *st;
         let known = &mut peers.get_mut(&peer).expect("checked").addr_known;
         // Entries of networks this version does not know are skipped.
         for e in entries.iter().take(admit) {
@@ -99,7 +95,7 @@ pub(super) fn on_addr(inner: &Arc<Inner>, peer: PeerId, entries: Vec<AddrEntry>)
             if relay && is_fresh(e.time, now) {
                 fresh.push(AddrEntry::new(e.time, a.clone()));
             }
-            addrman.add(a, &source, rng);
+            addrman.add(a, &source, now);
         }
     }
     relay_fresh(inner, &mut st, Some(peer), fresh);

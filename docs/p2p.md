@@ -28,7 +28,7 @@ All integers are little-endian unless stated otherwise. Encoding primitives
 | Transaction origin privacy against spy nodes | Dandelion++ (§8) and randomized relay delays (§7) |
 | Minimal fingerprint | No user agent, no clock, no services flags; own address not announced unless configured (§4) |
 | Availability | Strict size and count limits, rate limits, misbehavior scoring, bans (§10) |
-| Eclipse resistance (limited, §9) | Bucketed address manager with a secret key; per-peer address admission limits; outbound diversity by network group (§9) |
+| Eclipse resistance (limited, §9) | Keyed *new*/*tried* address tables with a per-source bucket limit and test-before-evict; per-peer address admission limits; outbound diversity by network group; anchors, feelers and stale-tip rotation; inbound eviction (§9) |
 | Correct sync under a lying peer | Header-first sync: every header is PoW-checked before any body is requested (§6) |
 | Tor/I2P users | SOCKS5 proxy for outbound connections, proxy-only mode, onion addresses (§11) |
 
@@ -601,8 +601,10 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   (unpenalized). Answering it would let a peer plant unique addresses in a node's
   table and recognize them later from another session, IP or Tor circuit, linking the
   node's sessions (Biryukov and Pustogarov, "Bitcoin over Tor isn't a good idea",
-  IEEE S&P 2015; Bitcoin Core does the same, F32-4). The table keeps no per-address
-  times yet, so the answer's entries carry time 0 ("unknown").
+  IEEE S&P 2015; Bitcoin Core does the same, F32-4). The answer holds at most 23 % of
+  the table (rounded up; Bitcoin Core's `MAX_PCT_ADDR_TO_SEND`) and no terrible entry
+  (below). Its entries carry time 0 ("unknown"): the table's times stay local, so the
+  answer reveals nothing about them or the node's clock.
 - **What a peer may add to the table** (`p2p/src/addrman_gate.rs`, per connection):
   - **The answer to our `GetAddr`**: up to 1000 addresses in total within 60 s,
     ending with its first message of more than 10 entries. Stored, never relayed.
@@ -643,19 +645,52 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   - After each handshake the node also sends the same address to the peer as a
     one-entry `Addr`, timed now rounded down to 5 minutes (so the peer relays it, and
     the time reveals the node's clock no finer than that).
-- **Address manager.** Addresses live in two tables, *new* (heard of) and *tried*
-  (successfully connected).
-  - Each table is split into buckets. The bucket is
-    `H32("p2p/addrman", secret ‖ table ‖ group(addr) ‖ group(source)) mod N`, where
-    `secret` is local and random, so an attacker cannot predict which buckets it
-    reaches.
-  - The bucket depends on the address's group and the source's group together.
-    Addresses from **many groups** announced by **one** source therefore spread over
-    all of *new*: one source group bounds nothing (R8-3, open; the per-source limit is
-    addrman v2, 32 W1). What bounds a flood today is what a peer may add (above).
-  - *new* has 256 buckets × 64 slots; *tried* has 64 × 64. A full *new* bucket
-    evicts an entry that failed 3 or more attempts, else a **random** entry; *tried*
-    keeps the entry that connected more recently and moves the other back to *new*.
+- **Address manager** (`p2p/src/addrman.rs`; v2 since W3-32, after Bitcoin Core's).
+  Two tables of fixed slots: *new* (256 buckets × 64 slots: heard of) and *tried*
+  (64 × 64: this node connected to it).
+  - **Placement** is a keyed hash. The `key` is random, local to the node and saved with
+    the table, so an attacker cannot predict placement. `H(d, parts…)` below is
+    `H32("p2p/addrman", key ‖ d ‖ (len ‖ part)…)`, first 8 bytes:
+    - *new* bucket: `h1 = H(0, group(addr), group(src)) mod 16`, then
+      `H(2, group(src), h1) mod 256`. **One source group reaches at most 16 of the 256
+      buckets**, whatever addresses it announces. Before v2 the bucket was
+      `H32(secret ‖ table ‖ group(addr) ‖ group(src)) mod 256`, so one source reached
+      all of them (R8-3; `one_source_group_reaches_at_most_16_new_buckets` fails on
+      bff3a62 with 256 of 256).
+    - *tried* bucket: `h1 = H(1, addr) mod 2`, then `H(3, group(addr), h1) mod 64`: one
+      group reaches at most 2 buckets.
+    - Slot: `H(4 + table, bucket, addr) mod 64`. An address has exactly one slot.
+  - **Flooding evicts nothing that works.** A new address whose slot is taken is
+    dropped, unless the occupant is *terrible*. Before v2 a full bucket evicted a random
+    entry. Terrible follows Bitcoin Core's `IsTerrible`, and never applies within a
+    minute of an attempt. An entry is terrible if:
+    - it was not heard of or connected to for 30 days;
+    - it failed 3 attempts and never connected;
+    - it failed 10 attempts and had no success for 7 days.
+  - **Promotion and test-before-evict.** An address moves to *tried* when an outbound
+    connection to it (a regular one or a feeler) completes its handshake. Inbound
+    connections never promote. If its *tried* slot holds another address:
+    - the newcomer waits in *new* (at most 10 wait), and a feeler tests the occupant;
+    - the occupant stays if it connected in the last 4 hours (an outbound peer this
+      node is connected to counts as connected now);
+    - the newcomer replaces it if an attempt on it failed, at least a minute ago, or if
+      it was not tested within 40 minutes;
+    - a replaced *tried* entry goes back to *new*.
+
+    *tried* holds **one address per IP**: another port of that IP that connects
+    replaces it (F32-9).
+  - **Selection.** A table is drawn: *tried* with probability 0.7 (`TRIED_BIAS`, set
+    from the simulator below; Bitcoin Core uses 0.5, Monero 70 %), else *new*. Then a
+    **non-empty bucket is drawn uniformly**, then an entry of it. The entry is accepted
+    with Bitcoin Core's `GetChance` (0.01 if tried in the last 10 minutes, × 0.66 per
+    failed attempt up to 8), raised 1.2× per draw. A source's entries, crowded into its
+    16 buckets, are therefore drawn no more often than 16 buckets' worth. When nothing
+    eligible is left in the drawn table, the other one is used.
+  - **Times are local:** when this node heard of or connected to an address. Peers'
+    claimed times are used only for relay freshness (above).
+  - With `allow_private` (local and lab networks), unroutable addresses are grouped by
+    the whole address. A LAN's nodes then spread over buckets instead of sharing one
+    /16's.
 - **Groups** (`NetAddr::group`, as Bitcoin Core's without asmap):
   - IPv4: the /16. IPv6: the /32, except Hurricane Electric's `2001:470::/32` at /36.
   - IPv6 forms embedding an IPv4 address (IPv4-mapped, 6to4 `2002::/16`, NAT64
@@ -679,44 +714,104 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   nor IPv6 `::/96`, unique-local, link-local, site-local, ORCHID, discard-only
   (`100::/64`) or documentation; an IPv6 address embedding an IPv4 address
   (mapped, 6to4, NAT64, Teredo) is routable only if that IPv4 address is.
-- **Outbound connections.** The node keeps **8 outbound connections**, at most **one per
-  group**, also among the addresses picked in the same round (before 2026-09-27 two
-  picks of one round could share a group, R8-4). The groups of manual peers and seeds
-  being dialed count too (F32-12). Candidates are drawn 50/50 from *tried* and *new*.
-- **Seeds** are dialed when the address table is empty, and also when no outbound
-  connection is up (every known address may be stale or hostile), each seed at most
-  every 30 s (R8-13). Dial attempt times are kept 10 minutes (longer than every
-  backoff), so dialing junk addresses does not grow memory (F32-10).
+- **Outbound connections** (`maintain_outbound`, every 2 s). The node keeps **8
+  outbound connections**, at most **one per group**, also among the addresses picked in
+  the same round (before 2026-09-27 two picks of one round could share a group, R8-4).
+  The groups of manual peers, anchors and seeds being dialed count too (F32-12).
+  - **Anchors** (dossier 32 W4):
+    - At shutdown the node writes up to 2 of its outbound peers to `anchors.json`:
+      those dialed from the table, longest connected first, never manual peers or seeds.
+    - At the next start it dials them before anything else.
+    - The file is deleted when read, so a node that crashes later does not re-anchor to
+      an old file.
+    - Not used with `--connect-only`.
+
+    Bitcoin Core anchors block-relay-only connections. BlackSilk opens none yet: it
+    honours `relay_txs = false` from a peer (§4) but always sends `true`. Its anchors
+    are therefore full-relay peers.
+  - **Feelers** (W5). When every outbound slot is taken, the node opens a short
+    connection about every 2 minutes (exponentially distributed). It goes to a waiting
+    *tried* collision's occupant, else to a *new* address in a group with no outbound
+    peer. A completed handshake moves the address to *tried* (or settles the
+    collision). The connection is then closed unregistered: no message is exchanged.
+  - **Stale tip** (W7). If the connected tip has not changed for `3 × T × 2` (Bitcoin
+    Core uses 3 × T), the node allows one extra outbound connection, at most once per 10
+    minutes, and also dials seeds. With more outbound peers than the target, one
+    discovered outbound peer is disconnected, not banned: the one with the lowest known
+    chain (ties: the youngest), never one connected less than 30 s, never a manual peer.
+    A node whose outbound peers all withhold blocks thus rotates one of them every 10
+    minutes; before, it kept them forever (F32-3).
+- **Seeds** are dialed in three cases, each seed at most every 30 s (R8-13):
+  - the address table is empty;
+  - no outbound connection is up (every known address may be stale or hostile);
+  - the tip is stale.
+
+  Dial attempt times are kept 10 minutes (longer than every backoff), so dialing junk
+  addresses does not grow memory (F32-10).
 - **Eclipse resistance is limited** (F32-13). The eclipse simulator
-  (`p2p/tests/eclipse_sim.rs`, run with `--nocapture`) models one node's table under a
-  Sybil address flood with the real address manager and admission code, and prints the
-  attacker's share of the outbound slots after a restart. Its results: the admission
-  limits above cut what a flood gets into the table by orders of magnitude, but on a
-  network of tens of honest nodes the attacker's addresses still outnumber the honest
-  ones in *new*, so roughly half the outbound picks (the *new* half) go to the attacker,
-  and a node whose *tried* table is empty (a new node) can have all 8 slots taken. The
-  practical defences for the testnet are manual `--peer` links to known operators,
-  independent seeds and operator monitoring; addrman v2, anchors, feelers and
-  stale-tip rotation (32 W1, W4–W7) are open. An AS-level attacker (Erebus, IEEE S&P
-  2020) is outside what /16 grouping can resist.
+  (`p2p/tests/eclipse_sim.rs`, run with `--nocapture`) is the regression metric. It
+  models one node's table under a Sybil address flood with the real address manager and
+  admission code, and prints for each scenario:
+  - the attacker's share of *new* entries and buckets;
+  - the most buckets one attacker source reached;
+  - its share of the outbound slots after a restart;
+  - the probability that all 8 slots are its.
+
+  It compares the admission before W2-32, the address manager before v2 (kept in the
+  simulator as the baseline) and v2. It asserts that v2 is never worse than the
+  baseline, that one source reaches at most 16 *new* buckets, and that with one or four
+  attacker sources the attacker's outbound share at least halves.
+  - The admission limits cut what a flood gets into the table by orders of magnitude.
+  - Addrman v2 confines what gets in to 16 buckets per source.
+  - On a network of tens of honest nodes, the attacker's addresses still outnumber the
+    honest ones in *new*. A node whose *tried* table is empty (a new node) still gives
+    the attacker most of its *new* draws.
+
+  The practical defences for the testnet are manual `--peer` links to known operators,
+  anchors, independent seeds and operator monitoring. An AS-level attacker (Erebus,
+  IEEE S&P 2020) is outside what /16 grouping can resist (asmap is not implemented).
 - **Connect-only mode.** With `--connect-only`, outbound connections go only to the
   configured `--peer` entries: no seeds and no discovered addresses. Inbound
   connections and address exchange still work. It suits fixed private topologies and
   lab tests.
-- **Inbound.** At most 64 inbound connections, and at most 2 from any one IP.
+- **Inbound.** At most 64 inbound connections, and at most 2 per IPv4 address or
+  **IPv6 /64** (`addr::peer_key`). One IPv6 host is routinely given a whole /64. Before
+  W3-32 the limit applied per exact address, so one /64 could fill every inbound slot
+  (F32-2).
   - Connections still in their handshake count against both limits when a new one
     is accepted, and the limits (and bans) are checked again, atomically, when the
     peer is registered. Before 2026-09-27 only registered peers were counted, so
     concurrent handshakes bypassed both limits.
+  - **Eviction** (W6; `connman::select_inbound_to_evict`, after Bitcoin Core's
+    `SelectNodeToEvict`). When inbound is full, a new connection is still accepted if
+    a registered inbound peer can give way. Protected, in order:
+    1. the oldest peer of each of the 4 groups with the highest keyed group hash (keyed
+       with the address table's key, so peers cannot tell which groups);
+    2. up to a quarter of the candidates arriving through our hidden service (from
+       loopback), oldest first;
+    3. the older half of the rest.
+
+    Of the others, the youngest peer of the group with the most connections is
+    disconnected, not banned. If every peer is protected, the new connection is
+    dropped. Before W3-32 it always was.
+  - Bitcoin Core also protects the peers with the lowest ping and those that recently
+    relayed transactions or blocks. BlackSilk does not measure those yet.
 - **Persistence.** The tables and the ban list are saved in the data directory
   (`peers.json`, `bans.json`) within a minute of changing, and on shutdown. The ban
   list is saved whenever a ban was added (not only when its size changed). An
   existing `bans.json` that cannot be read or parsed is logged as a warning.
+  - `peers.json` holds the table's key, a format version (2) and the entries. A file of
+    another version, such as the format before v2, starts a fresh table (logged).
+  - Slots are recomputed from the key at load. A damaged or edited file therefore
+    cannot break the tables' invariants: duplicates, a second *tried* entry of an IP
+    and non-canonical addresses are dropped.
+  - `anchors.json` is written only at shutdown (above).
 
 ## 10. Misbehavior, limits and bans
 
 Each connection has a misbehavior score. At **100** the peer is disconnected and its IP
-banned for **24 h**. Every other live connection from that IP is disconnected too.
+banned for **24 h** (an IPv6 address's whole /64, §9). Every other live connection from
+that IP (or /64) is disconnected too.
 Tor peers all share one exit IP, so for proxied or onion peers only the connection is
 dropped.
 
@@ -1103,12 +1198,17 @@ already being written is finished first).
 - **Header worker head-of-line blocking** (R8-15): a single-header tip announcement
   waits behind a full 2000-header batch; no priority lane yet.
 
-- **Address manager and eclipse** (§9, dossier 32). Open: no per-source bucket limit
-  and random eviction in *new* (R8-3), no per-address times, `IsTerrible` or feelers,
-  no anchors or block-relay-only connections, no stale-tip rotation (an outbound set
-  of withholding peers is never replaced), per-IP limits and bans on the exact IPv6
-  address rather than its /64, no inbound eviction, and the admission rate restarts
-  with every connection.
+- **Address manager and eclipse** (§9, dossier 32). Open:
+  - no block-relay-only connections, so the anchors are full-relay peers;
+  - inbound eviction does not protect by ping or recent relay;
+  - no chain-sync eviction of outbound peers that stay behind, only the stale-tip
+    rotation;
+  - seeds are full outbound peers, not one-shot address fetches;
+  - no asmap;
+  - the admission rate restarts with every connection.
+
+  On a network of tens of honest nodes, the address manager bounds an eclipse by an
+  attacker with many real addresses but cannot prevent it (§9).
 - **Tor inbound.** Every inbound connection through a hidden service comes from
   127.0.0.1, so they share the per-IP limits (2 connections, 2 queued header
   batches) and a ban of one bans all of them.

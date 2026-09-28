@@ -6,7 +6,7 @@ use super::blocks::SERVE_BLOCKS_PER_REQUEST;
 use super::dispatch::{handle, is_slow, requested_by_us, Pushed, SlowLane};
 use super::peers::{advertised_listen, inbound_count, same_ip_count, HandshakeSlot};
 use super::relay::retry_tx;
-use super::state::{unix_now, Inner, Peer, State};
+use super::state::{unix_now, Inner, Peer};
 use crate::addr::NetAddr;
 use crate::addrman_gate::AddrGate;
 use crate::limits::score;
@@ -198,7 +198,14 @@ pub(super) async fn run_connection<S>(
             }
         }
         if !inbound {
-            st.addrman.mark_good(&addr, unix_now());
+            st.addrman.good(&addr, unix_now());
+            // A feeler (docs/p2p.md §9): the handshake was the test; the
+            // address is now in *tried* (or its collision settled). Closed
+            // without registering: no messages, no slot.
+            if st.connman.feeler.as_ref() == Some(&addr) {
+                log::debug!("feeler to {addr} answered");
+                return;
+            }
         }
         // An inbound peer's own address. Only its own (F32-8): the IP must be
         // the connection's, or it is an onion address arriving through our
@@ -211,9 +218,7 @@ pub(super) async fn run_connection<S>(
                 None => addr.ip().is_some_and(|ip| ip.is_loopback()),
             };
             if inbound && own && (listen.is_routable() || inner.cfg.allow_private) {
-                let src = addr.clone();
-                let State { addrman, rng, .. } = &mut *st;
-                addrman.add(listen.clone(), &src, rng);
+                st.addrman.add(listen.clone(), &addr, unix_now());
                 addr_known.insert(listen);
             }
         }
@@ -253,6 +258,8 @@ pub(super) async fn run_connection<S>(
                 headers_busy: false,
                 headers_pending: false,
                 unknown_upgrades: 0,
+                connected_at: now,
+                evicted: false,
             },
         );
     }
