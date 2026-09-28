@@ -729,7 +729,7 @@ dropped.
 | Transaction invalid by a **stateless** rule (`Tx`/`StemTx`; transactions.md T1–T11), or with an invalid ring signature over ring members all ≥ 60 blocks deep | 20 |
 | A `StemTx` already proven invalid, sent again | 20 |
 | Unrequested `Block`/`Tx`, `Pong` without a ping, second `GetAddr` from an inbound peer, or an unsolicited `Addr` of more than 10 entries (§9) | 10 |
-| Rate limit exceeded | 1 per excess message; the message is dropped |
+| Message or byte rate exceeded (read loop), `InvTx` rate, a request dropped by a full slow lane | 1 per excess message; the message is dropped |
 
 **Not penalized** (honest peers can trigger these):
 - a frame that fails to decrypt, at any time (§3). It closes the connection and is
@@ -762,6 +762,13 @@ dropped.
   neighbouring rule set's branch id (`TxError::is_stateless_at`);
 - a duplicate;
 - an already-known transaction;
+- a relayed transaction (`Tx` or `StemTx`) over one of the peer's relay budgets
+  (transactions, ring signatures, PX share; below): dropped unverified. A `StemTx`
+  is not fluffed either (a forced fluff helps locate its origin; the origin's
+  embargo ends the stem). An honest node forwarding many peers' stems exceeds these
+  rates without misbehaving; before 2026-09-28 each excess `StemTx` cost 1 point, so
+  such a forwarder could be banned (RTW2A-4). Floods stay bounded, and scored, by
+  the message and byte rates and by the slow lane's bounds;
 - a transaction that conflicts with the mempool (dropped before verification, step 3
   below);
 - a message of an unknown type (§5; it still counts against the rate limits);
@@ -800,18 +807,26 @@ already being written is finished first).
   - Before 2026-09-27 requested blocks were charged too. During a sync of large (PX)
     blocks the node dropped the blocks it had asked for, penalized the honest sender,
     and re-requested them after a timeout.
-- **Transactions accepted into the relay path:** 20 per second, burst 100.
+- **Transactions accepted into the relay path:** 20 per second, burst 100 (one per
+  `StemTx`; an `InvTx` costs 0.1 per id).
 - **Ring signatures:** 50 per second, burst 500. A relayed transaction (`Tx` or
   `StemTx`) costs one token per v1 input (one CLSAG verification each): a 64-input
-  transaction costs 64, not 1. Charged before any verification; a `StemTx` over
-  the budget costs 1 point, a requested `Tx` over it is dropped unverified.
+  transaction costs 64, not 1. Charged before any verification.
+- A relayed transaction's budgets (a transaction token for a `StemTx`, its ring
+  signatures, the PX share below) are charged together, all or nothing
+  (`PeerLimits::charge_relay`), on the peer's slow lane, never for a message the
+  lane dropped. Over any of them it is dropped unverified and not penalized
+  (RTW2A-4).
 - **Admission order** of a relayed transaction, cheapest first:
-  1. an id already proven invalid is dropped;
-  2. the signature budget is charged; for PX, the peer's PX share was charged
-     on arrival, on the read loop (§10, slow lane);
+  0. for a `StemTx`: one that does not decode is penalized (20); one already in
+     our stempool, or conflicting with a stem transaction, is dropped for free;
+  1. an id already proven invalid is dropped (a `StemTx` of it is penalized);
+  2. the relay budgets are charged (above);
   3. an id already in our mempool (a replay, SX2), or one that failed a
      contextual rule **at our current tip**, is dropped unverified: the same bytes are verified again only after the tip changes
-     (the cache holds at most 10 000 ids and is emptied when the tip changes).
+     (the cache holds at most 10 000 ids and is emptied when the tip changes; a
+     failure is cached under the tip its cheap checks ran at, returned by the same
+     chain command, RTW2A-7).
      `InvTx` announcements of such ids are not requested either. A transaction that
      **conflicts** with a pooled one (same key image, PX nullifier or contract id,
      `Mempool::conflicts`; output keys never conflict) is dropped here too, unpenalized: the pool
@@ -836,10 +851,9 @@ already being written is finished first).
     2026-09-27 it was taken first, so ~10 connections sending PX transactions with a
     random anchor (rejected cheaply, contextual, unpenalized) drained it and
     censored honest PX relay for free (tx review M2).
-  - A peer is penalized (1 point) only for exceeding **its own** share with unsolicited
-    `StemTx` messages.
-  - It is never penalized for the node-wide limit, which an attacker can drain, nor
-    for a `Tx` we requested.
+  - A peer over **its own** share has its excess dropped, unpenalized (RTW2A-4;
+    before 2026-09-28 an unsolicited `StemTx` over it cost 1 point). A peer is
+    never penalized for the node-wide limit either, which an attacker can drain.
   - A malformed proof (one that fails decoding or shape) is caught in step 4, so it
     never takes the node-wide token. Before red team RTW1-2 the proof was not
     looked at until step 6: a PX transaction with a garbage proof and a garbage
@@ -858,7 +872,7 @@ already being written is finished first).
 - A well-formed proof that does not verify (for instance a valid proof replayed in
   another transaction) passes step 4, takes the node-wide token and costs every
   check up to the proof verification before it is penalized: the per-peer PX share
-  and the penalty bound that cost, not the cheap stage.
+  and the penalty (20, once verified) bound that cost, not the cheap stage.
 
 **Liveness:**
 - The node pings every 60 s.
@@ -913,9 +927,18 @@ already being written is finished first).
     be handled after a later non-lane message of the same peer; no handler depends
     on that order. The bounds (`dispatch.rs`):
     - relay (`InvTx`, `Tx`, `StemTx`): at most `SLOW_LANE_RELAY` messages and
-      `SLOW_LANE_BYTES` bytes (but always one message, so the largest transaction
-      passes); beyond them relay is dropped without penalty (relay is best effort;
-      a request is retried with the next announcer);
+      `SLOW_LANE_BYTES` = `MAX_RELAY_FRAME` + `SMALL_RELAY_BYTES` (2 MiB) bytes,
+      queued or being handled; `MAX_RELAY_FRAME` is the largest relay frame (a
+      transaction of `MAX_ANY_TX_SIZE` and its framing), so a maximum-size
+      transaction always fits behind 2 MiB of other relay. Beyond them relay is
+      dropped without penalty (relay is best effort; a request is retried with the
+      next announcer). Before RTW2A-1 (2026-09-28) the bound was 2 MiB, and a
+      message over it entered only a lane with no relay bytes: every PX transfer
+      is larger (docs/zk.md), so one queued 40-byte `InvTx` dropped a requested PX
+      `Tx` (its PX share already charged) or a PX `StemTx` (a stem black hole,
+      which the origin then ends by fluffing its own transaction). Two PX
+      transfers and small relay now fit together (`dispatch.rs`,
+      `a_px_transaction_behind_small_queued_relay_is_queued`);
     - requests (`GetHeaders`, `GetBlocks`, `GetTx`): the rest of the lane's
       `SLOW_LANE` places, which relay never takes; queued relay bytes never drop
       a request. A request is dropped and charged as a message-rate excess
@@ -923,15 +946,29 @@ already being written is finished first).
       split (a Stage 1 defect, found by the PX relay test), one queued PX
       transaction of about 3 MB made every later message of its peer dropped,
       and its requests charged;
-    - memory: at most `SLOW_LANE_BYTES` plus one maximum-size transaction of
-      relay, plus `SLOW_LANE` requests of at most 16 KiB each (about 11.5 MB per
-      peer).
+    - memory of one peer's lane, what the code bounds: the relay frames counted
+      above (at most `SLOW_LANE_BYTES`; a frame stays counted until its handler
+      returns, although the handler frees it once decoded), plus at most
+      `SLOW_LANE` requests of at most 16 KiB each (`MAX_INV` ids; a lane without
+      relay can hold 64 requests), plus the one message being handled: a relayed
+      transaction is decoded once, into one shared copy of about its encoded
+      size (at most `MAX_ANY_TX_SIZE`; RTW2A-5, before it was copied twice more).
+      Together about `MAX_RELAY_FRAME` × 2 + 3 MiB per peer. Not in this bound:
+      the frame the read loop is receiving (the transport, §3), the outboxes, the
+      stempool and the mempool (their own bounds), and the answer a `GetTx`
+      handler builds, which holds encoded copies of every requested pooled
+      transaction announced to that peer (bounded only by the pool's caps).
+    - requests and relay share one queue with separate bounds; separate queues
+      would lose the per-peer order across kinds that the handlers keep, and were
+      not made (RTW2A-5).
 
-    The per-peer PX share (`PeerLimits::px`) is charged on the read loop when a
-    PX `Tx` or `StemTx` arrives, before the lane: a peer stemming PX
-    transactions over its share is penalized (one point each) however busy its
-    lane is; a requested `Tx` over the share is dropped. At a disconnect the lane
-    task stops before its next message, never in the middle of one.
+    A relayed transaction's budgets, the per-peer PX share (`PeerLimits::px`)
+    included, are charged when the lane handles it (admission order above), so a
+    message the lane dropped costs nothing (RTW2A-1). Until 2026-09-28 the PX
+    share was charged on the read loop, before the lane: a PX transaction the
+    lane then dropped had burned it, and a `StemTx` over it cost 1 point. At a
+    disconnect the lane task stops before its next message, never in the middle
+    of one.
   - **Published chain snapshot** (`ChainHandle::summary_cell`,
     `chain/src/manager/summary.rs`): the tip (id, header, height), the best header
     chain (height, id, locator), the bodies to download (at most 256), the next
@@ -948,10 +985,14 @@ already being written is finished first).
     consensus-relevant reads it.
   - **Two maintenance loops.** Pings, timeouts, Dandelion epochs, held local
     transactions, tip announcements, header re-requests, outbound dialing and
-    saving never wait for the chain. Embargo fluff (a mempool submission), pool
-    re-announcement and download scheduling run on a second task. A long command
-    delays only the first two, by at most its length: an embargo that expires
-    during one is fluffed when it ends.
+    saving never wait for the chain. Download scheduling (from the snapshot, first),
+    embargo fluffs and pool re-announcement run on a second task; each fluff (a
+    mempool submission) runs on a task of its own, so that loop never waits for
+    one (RTW2A-3). A long command delays only the fluffs and the re-announcement,
+    by at most its length (during a drain a fluff waits about `STARVATION_LIMIT`
+    steps): an embargo that expires during one is fluffed when it ends. Tested:
+    `p2p/tests/network.rs`
+    `downloads_are_scheduled_during_a_drain_while_a_fluff_waits`.
 
   Tested with real long commands (a stalled block append in a block submitted to
   the actor, 15-40 s): `p2p/tests/liveness.rs` L1 and L6 (a peer's own pongs flow
@@ -1035,7 +1076,10 @@ already being written is finished first).
     `SYNC_STEP_BLOCKS` heavy blocks, a reorganization (never paused before its new
     branch outweighs the old tip) or the pool revalidation after it can take many
     seconds (research dossiers 10 and 12 estimate several seconds per heavy block).
-    What waits for them is only chain work: lane messages, embargo fluff, header
+    What waits for them is only chain work: lane messages, embargo fluffs (each on
+    a task of its own: the chain-maintenance loop schedules body downloads first
+    and never waits for a fluff, RTW2A-3; before, each expired embargo parked
+    download scheduling for about `STARVATION_LIMIT` drain steps), header
     acceptance (each header-worker command waits for at most one step) and RPC
     chain calls. The main-chain header index and the mempool outside the writer
     (Stage 3) would let `GetHeaders`, pre-checks and mempool lookups skip the

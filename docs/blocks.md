@@ -351,16 +351,30 @@ Transactions from disconnected blocks return to the mempool if they are still va
     the same owner's spends; the pooled one stays), the reorganization checks above
     pass and the class has room, with a fresh admission height and no signature or
     proof verified. Revalidation comes first, so stale entries neither take the room
-    nor hold the keys. At most one class cap of returned bytes per class is examined
-    per reorganization (`READMIT_MAX_BYTES`, like Bitcoin Core's
-    `MAX_DISCONNECTED_TX_POOL_BYTES`); the rest is dropped.
+    nor hold the keys. At most one class cap of returned bytes per class is captured
+    and examined per reorganization (`READMIT_MAX_BYTES`, like Bitcoin Core's
+    `MAX_DISCONNECTED_TX_POOL_BYTES`); the rest is dropped. The manager stops
+    capturing, tip first, once a class's budget is reached
+    (`Returned::capture_within`; each transaction is encoded once, and its size and
+    id are kept for readmission), so a reorganization of any depth holds at most
+    that much for readmission (RTW2A-6; before 2026-09-28 capture was unbounded
+    and only readmission was bounded).
+  - **Reservation during a bounded drain** (RTW2A-2). The manager captures a
+    disconnected block's transactions when it undoes the block, but the pool
+    receives them only when the whole drain ends, and between two drain steps the
+    chain actor serves other commands. The conflict keys of every captured
+    transaction are therefore reserved (`Mempool::reserve`) until readmission
+    releases them: meanwhile admission, `check` and `Mempool::conflicts` refuse a
+    transaction using one of them (`MempoolError::ReorgPending`, contextual, never
+    scored), before any validation, and the returned transaction wins, as it does
+    when the same reorganization is connected in one command. Before, a double
+    spend admitted between two steps held the keys and the returned transaction was
+    refused as a conflict (`chain/tests/revalidation.rs`, the `rtw2a_` pair: the
+    bounded drain against its atomic control).
   - `Mempool::update_after_chain_change` does all of this and reports it;
     `Mempool::full_validations` counts every full validation the pool runs (none on
-    these paths). Readmission without verification needs the chain manager to capture
-    the transactions before it undoes their block; until it does
-    (`chain/src/manager/fork_choice.rs`, owned by the chain-actor work), the manager
-    re-admits them with `Mempool::readmit`, which validates in full, before it
-    revalidates.
+    these paths). The manager captures the transactions before it undoes their block
+    (`chain/src/manager/fork_choice.rs`).
   - The pool is flushed when any transaction rule changes (`Mempool::enter_rules`),
     not only the signature domain: the paths above skip every stateless rule, which
     is exact only under the same rules.
@@ -368,7 +382,8 @@ Transactions from disconnected blocks return to the mempool if they are still va
     verification; a changed ring and an immature member dropped; readmission without
     verification, of PX transactions without their proof, with conflicts, other rules
     and changed rings refused; returned transactions taking the room of stale entries;
-    the byte bound); `chain/tests/revalidation.rs` (the two reorganizations above with
+    the byte bounds of readmission and of capture; reserved keys refusing a double
+    spend until readmission); `chain/tests/revalidation.rs` (the two reorganizations above with
     real transfers, through the manager); `chain/tests/mempool_stateful.rs` (proptest:
     random submissions, extensions, reorganizations up to 69 blocks deep, expiry and
     templates; after every step the pool equals what full validation decides, no

@@ -9,7 +9,7 @@ use super::relay::{on_get_tx, on_inv_tx, retry_tx};
 use super::state::Inner;
 use crate::dandelion::PeerId;
 use crate::limits::score;
-use crate::message::{Message, MAX_HEADERS};
+use crate::message::{Message, MAX_ANY_TX_SIZE, MAX_HEADERS};
 use blacksilk_consensus::BlockHeader;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -26,15 +26,28 @@ pub(super) const SLOW_LANE: usize = 64;
 /// stay for the peer's requests.
 pub(super) const SLOW_LANE_RELAY: usize = 32;
 
-/// Bytes of relay messages queued in one peer's slow lane. A relay message
-/// always enters a lane without queued relay bytes, so relay holds at most
-/// this plus one message (one maximum-size PX transaction). Requests are not
-/// counted here: they are bounded by their count and their codec limits
-/// (a `GetTx` of `MAX_INV` ids, 16 KiB, is the largest), so one peer's lane
-/// holds at most `SLOW_LANE_BYTES + MAX_ANY_TX_SIZE + SLOW_LANE × 16 KiB`
-/// (about 11.5 MB). The bound replaces the TCP back-pressure the read loop
-/// gave before it stopped waiting for the chain.
-pub(super) const SLOW_LANE_BYTES: usize = 2 * 1024 * 1024;
+/// Room for small relay (announcements, transfers) queued ahead of a
+/// maximum-size transaction in one peer's slow lane.
+pub(super) const SMALL_RELAY_BYTES: usize = 2 * 1024 * 1024;
+
+/// The largest relay frame: a `Tx` or `StemTx` of `MAX_ANY_TX_SIZE` bytes
+/// (the codec's limit) plus its type byte and length varint. An `InvTx` is
+/// at most `MAX_INV` ids (16 KiB).
+pub(super) const MAX_RELAY_FRAME: usize = MAX_ANY_TX_SIZE + 16;
+
+/// Bytes of relay messages (`InvTx`, `Tx`, `StemTx`) in one peer's slow
+/// lane: queued, or being handled (a message is counted until its handler
+/// returns). A maximum-size transaction always fits behind
+/// `SMALL_RELAY_BYTES` of other relay (RTW2A-1): every measured PX transfer
+/// (about 2.18 MB, its proof alone) is larger than 2 MiB, and the former
+/// 2 MiB bound dropped a requested PX `Tx`, or a PX `StemTx` (a stem black
+/// hole the origin then ends by fluffing its own transaction), behind a
+/// single queued 40-byte `InvTx`. Two PX transfers and small relay fit
+/// together. Requests are not counted here (they are bounded by their count
+/// and codec limits). The bound replaces the TCP back-pressure the read
+/// loop gave before it stopped waiting for the chain; the per-peer memory
+/// it implies is in docs/p2p.md §10.
+pub(super) const SLOW_LANE_BYTES: usize = MAX_RELAY_FRAME + SMALL_RELAY_BYTES;
 
 /// Whether handling `msg` needs a chain command: it then runs on the peer's
 /// slow lane ([`SlowLane`]), never on its read loop, so the read loop keeps
@@ -64,6 +77,12 @@ fn is_relay(msg: &Message) -> bool {
 /// kept: `tx_requests` and `known_txs` depend on it). One peer's backlog
 /// waits in its own lane; other peers' lanes and read loops are not behind
 /// it (they share only the chain actor itself).
+///
+/// Requests and relay share the one queue, with separate bounds (places
+/// and bytes, [`SlowLane::push`]). Separate request and relay queues were
+/// considered (RTW2A-5) and not made: a second task per peer would lose
+/// the per-peer order across kinds that the handlers rely on, and the
+/// place split already keeps relay from crowding out requests.
 pub(super) struct SlowLane {
     queue: mpsc::Sender<(Message, usize)>,
     /// Relay bytes and relay messages queued (requests are not counted).
@@ -112,8 +131,11 @@ impl SlowLane {
     }
 
     /// Queues `msg` (a frame of `len` bytes), or drops it:
-    /// - relay, if [`SLOW_LANE_RELAY`] relay messages or [`SLOW_LANE_BYTES`]
-    ///   relay bytes are queued already (never charged);
+    /// - relay, if [`SLOW_LANE_RELAY`] relay messages are queued already, or
+    ///   if it would take the relay bytes past [`SLOW_LANE_BYTES`] (never
+    ///   charged; a relay frame is at most [`MAX_RELAY_FRAME`], so an empty
+    ///   lane takes any, and one of that size always fits behind
+    ///   [`SMALL_RELAY_BYTES`]);
     /// - a request, only if the lane holds [`SLOW_LANE`] messages (charged:
     ///   at least `SLOW_LANE - SLOW_LANE_RELAY` of them are this peer's own
     ///   requests). Queued relay bytes never drop a request.
@@ -122,7 +144,7 @@ impl SlowLane {
         if relay {
             let bytes = self.relay_bytes.load(Ordering::Relaxed);
             if self.relay_count.load(Ordering::Relaxed) >= SLOW_LANE_RELAY
-                || (bytes > 0 && bytes + len > SLOW_LANE_BYTES)
+                || bytes + len > SLOW_LANE_BYTES
             {
                 return Pushed::Dropped { charge: false };
             }
@@ -307,25 +329,68 @@ mod tests {
         assert!(rx.try_recv().is_err());
     }
 
-    /// The relay byte bound: a lane without queued relay takes one relay
-    /// message of any size (the largest transaction must pass), then no
-    /// relay past the bound; a request is still queued and never charged
-    /// (the Stage 1 regression: one queued PX transaction made every later
-    /// request of its peer dropped and charged).
+    /// The relay byte bound: a lane without queued relay takes the largest
+    /// relay frame, and past the bound relay is dropped; a request is still
+    /// queued and never charged (the Stage 1 regression: one queued PX
+    /// transaction made every later request of its peer dropped and
+    /// charged).
     #[test]
     fn queued_relay_bytes_never_drop_or_charge_a_request() {
         let (lane, mut rx) = idle_lane();
-        let big = SLOW_LANE_BYTES + 1;
-        assert_eq!(lane.push(Message::StemTx(vec![]), big), Pushed::Queued);
+        let max = Message::StemTx(vec![0; MAX_ANY_TX_SIZE]).encode().len();
+        assert!(max <= MAX_RELAY_FRAME, "{max}");
+        assert_eq!(lane.push(Message::StemTx(vec![]), max), Pushed::Queued);
         assert_eq!(lane.push(get_headers(), 100), Pushed::Queued);
         assert_eq!(lane.push(Message::GetBlocks(vec![]), 100), Pushed::Queued);
+        let room = SLOW_LANE_BYTES - max;
+        assert_eq!(
+            lane.push(Message::Tx(vec![]), room + 1),
+            Pushed::Dropped { charge: false }
+        );
+        assert_eq!(lane.push(Message::InvTx(vec![]), room), Pushed::Queued);
         assert_eq!(
             lane.push(Message::InvTx(vec![]), 1),
             Pushed::Dropped { charge: false }
         );
-        assert_eq!(lane.relay_bytes.load(Ordering::Relaxed), big);
-        assert_eq!(lane.relay_count.load(Ordering::Relaxed), 1);
+        assert_eq!(lane.push(get_headers(), 100), Pushed::Queued);
+        assert_eq!(lane.relay_bytes.load(Ordering::Relaxed), SLOW_LANE_BYTES);
+        assert_eq!(lane.relay_count.load(Ordering::Relaxed), 2);
         assert_eq!(rx.try_recv().unwrap().0, Message::StemTx(vec![]));
         assert_eq!(rx.try_recv().unwrap().0, get_headers());
+    }
+
+    /// RTW2A-1, with real PX sizes. Every measured PX transfer is larger than
+    /// 2 MiB (proof alone 2,178,213 to 2,180,408 B, docs/zk.md), and the
+    /// former 2 MiB bound (a lane took a message over it only when it held
+    /// no relay bytes) dropped a requested PX `Tx` and a PX `StemTx` behind
+    /// one queued 40-byte `InvTx`, and the second PX `Tx` of one `GetTx`
+    /// answer (demonstrated on 47179f1). Now both are queued, and so is a
+    /// maximum-size transaction behind `SMALL_RELAY_BYTES` of small relay.
+    #[test]
+    fn a_px_transaction_behind_small_queued_relay_is_queued() {
+        let frame = |n| Message::StemTx(vec![0; n]).encode().len();
+        let px_len = frame(2_180_408);
+        assert!(px_len > 2 * 1024 * 1024);
+        let (lane, _rx) = idle_lane();
+        assert_eq!(lane.push(Message::InvTx(vec![[1; 32]]), 40), Pushed::Queued);
+        assert_eq!(lane.push(Message::Tx(vec![]), px_len), Pushed::Queued);
+        assert_eq!(lane.push(Message::StemTx(vec![]), px_len), Pushed::Queued);
+        let (lane, _rx) = idle_lane();
+        assert_eq!(lane.push(Message::Tx(vec![]), px_len), Pushed::Queued);
+        assert_eq!(
+            lane.push(Message::Tx(vec![]), px_len),
+            Pushed::Queued,
+            "the second PX Tx of one GetTx answer"
+        );
+        // The largest PX transaction behind 2 MiB of announcements and
+        // transfers.
+        let (lane, _rx) = idle_lane();
+        let small = SMALL_RELAY_BYTES / 16;
+        for i in 0..16 {
+            let m = Message::InvTx(vec![[i; 32]]);
+            assert_eq!(lane.push(m, small), Pushed::Queued);
+        }
+        let max = frame(MAX_ANY_TX_SIZE);
+        assert_eq!(lane.push(Message::StemTx(vec![]), max), Pushed::Queued);
     }
 }

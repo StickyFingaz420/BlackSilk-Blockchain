@@ -356,11 +356,10 @@ pub(super) async fn run_connection<S>(
                     handle(&inner, id, msg).await;
                     continue;
                 }
-                // The PX share is charged here, not on the lane: a busy lane
-                // must not let a flood of PX stems through unscored.
-                if !super::admission::charge_px_share(&inner, id, &msg) {
-                    continue;
-                }
+                // Relay budgets (the PX share among them) are charged when
+                // the lane handles a message, after the checks that drop it
+                // for free: never for a message the lane dropped (RTW2A-1,
+                // RTW2A-4). The lane's own bounds limit what waits.
                 let kind = msg.kind();
                 match lane.push(msg, len) {
                     Pushed::Queued => {}

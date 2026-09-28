@@ -4,18 +4,19 @@
 //!   summary), trickle flush, pings, timeouts, header re-requests, outbound
 //!   dialing and saving keep their schedule during any long chain command
 //!   (F34-2);
-//! - [`chain_maintenance_loop`] does the work that needs the chain: embargo
-//!   fluff (a mempool submission on the actor's Tx lane), pool
-//!   re-announcement (a Query command) and download scheduling (from the
-//!   published snapshot). A long command delays only the first two, by at
-//!   most its length.
+//! - [`chain_maintenance_loop`] does the work that needs the chain: download
+//!   scheduling (from the published snapshot, first), embargo fluffs (each
+//!   a mempool submission on the actor's Tx lane, run on its own task: the
+//!   loop never waits for one, RTW2A-3) and pool re-announcement (a Query
+//!   command). A long command delays only the re-announcement, by at most
+//!   its length.
 
 use super::blocks::{release_block_slot, schedule_downloads, BLOCK_TIMEOUT};
 use super::headers::HEADERS_TIMEOUT;
 use super::peers::maintain_outbound;
 use super::relay::{reannounce_pool, remember, retry_tx, TX_TIMEOUT};
-use super::state::{short, unix_now, Inner, State};
-use super::stem::{fluff, send_held_local_txs};
+use super::state::{short, unix_now, Inner, State, StemEntry};
+use super::stem::{fluff_entry, send_held_local_txs, take_stem};
 use crate::dandelion::PeerId;
 use crate::message::Message;
 use blacksilk_consensus::Hash;
@@ -192,10 +193,11 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
 }
 
 /// The chain-side maintenance, every tick, on its own task so that a long
-/// chain command never stops [`maintenance_loop`]: embargoes that expired are fluffed
-/// (the transaction enters the mempool: a chain write), pooled transactions
-/// are re-announced once per new height, originated-set entries whose window
-/// ended are dropped, and missing bodies are requested.
+/// chain command never stops [`maintenance_loop`]: missing bodies are
+/// requested, embargoes that expired are fluffed (the transaction enters the
+/// mempool: a chain write, on a task of its own), pooled transactions are
+/// re-announced once per new height, and originated-set entries whose
+/// window ended are dropped.
 pub(super) async fn chain_maintenance_loop(inner: Arc<Inner>) {
     // The next block's height at the previous tick (0: not seen yet).
     let mut last_next = 0u64;
@@ -203,19 +205,31 @@ pub(super) async fn chain_maintenance_loop(inner: Arc<Inner>) {
         tokio::time::sleep(inner.cfg.tick).await;
         let now = Instant::now();
 
-        // Embargoes, detected at the tick after expiry; each fluff is a
-        // command on the chain actor's Tx lane.
-        let expired: Vec<Hash> = {
-            let st = inner.state();
-            st.stempool
+        // Body downloads first: they read only the published snapshot, so a
+        // busy chain never delays them (RTW2A-3).
+        schedule_downloads(&inner).await;
+
+        // Embargoes, detected at the tick after expiry. Each fluff is a
+        // command on the chain actor's Tx lane, which during a drain runs
+        // only after about `STARVATION_LIMIT` steps: it runs on its own task,
+        // so the loop never waits for it (RTW2A-3). The entry leaves the
+        // stempool here, so a later tick does not fluff it again.
+        let expired: Vec<(Hash, StemEntry)> = {
+            let mut st = inner.state();
+            let ids: Vec<Hash> = st
+                .stempool
                 .iter()
                 .filter(|(_, e)| now >= e.embargo)
                 .map(|(id, _)| *id)
+                .collect();
+            ids.into_iter()
+                .filter_map(|id| take_stem(&mut st, &id).map(|e| (id, e)))
                 .collect()
         };
-        for id in expired {
+        for (id, entry) in expired {
             log::debug!("embargo expired for {}", short(&id));
-            fluff(&inner, id, None).await;
+            let inner = inner.clone();
+            tokio::spawn(async move { fluff_entry(&inner, id, entry, None).await });
         }
 
         // Once per new height: pool re-announcement (docs/p2p.md §7), and
@@ -230,7 +244,5 @@ pub(super) async fn chain_maintenance_loop(inner: Arc<Inner>) {
                 inner.save_originated().await;
             }
         }
-
-        schedule_downloads(&inner).await;
     }
 }

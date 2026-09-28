@@ -111,15 +111,26 @@ pub(super) fn send_held_local_txs(inner: &Inner, st: &mut State) {
 
 /// Moves a stem transaction into the mempool and announces it.
 pub(super) async fn fluff(inner: &Arc<Inner>, id: Hash, except: Option<PeerId>) {
-    let entry = {
-        let mut st = inner.state();
-        let e = st.stempool.remove(&id);
-        if let Some(e) = &e {
-            unstem_key_images(&mut st, &e.tx);
-        }
-        e
+    let Some(entry) = take_stem(&mut inner.state(), &id) else {
+        return;
     };
-    let Some(entry) = entry else { return };
+    fluff_entry(inner, id, entry, except).await;
+}
+
+/// Removes `id` from the stempool (with its stem keys), for a fluff.
+pub(super) fn take_stem(st: &mut State, id: &Hash) -> Option<StemEntry> {
+    let e = st.stempool.remove(id)?;
+    unstem_key_images(st, &e.tx);
+    Some(e)
+}
+
+/// [`fluff`] of an entry already taken from the stempool ([`take_stem`]).
+pub(super) async fn fluff_entry(
+    inner: &Arc<Inner>,
+    id: Hash,
+    entry: StemEntry,
+    except: Option<PeerId>,
+) {
     // The Tx lane, waiting for room: a fluff is this node's own decision,
     // not relay volume, and the transaction left the stempool already.
     let result = inner

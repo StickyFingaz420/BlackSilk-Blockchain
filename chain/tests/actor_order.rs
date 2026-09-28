@@ -756,3 +756,59 @@ fn f1_a_panic_in_the_actor_exits_with_70_and_the_store_replays() {
     ));
     assert_eq!(m.height(), 3, "the store replays every connected block");
 }
+
+/// The premise of RTW2A-3 (the red team's demo, kept as a characterization):
+/// during a drain a Tx-lane command runs only once starved
+/// (`STARVATION_LIMIT` steps). The P2P chain-maintenance loop used to await
+/// each embargo fluff as a Tx-lane command before it called
+/// `schedule_downloads`, so every expired embargo parked body-download
+/// scheduling for about 16 drain steps (the block worker is parked too: it
+/// waits for the drain's verdict). The loop now schedules downloads first
+/// and fluffs on tasks of their own (`p2p/tests/network.rs`,
+/// `downloads_are_scheduled_during_a_drain_while_a_fluff_waits`).
+#[test]
+fn a_tx_command_waits_about_starvation_limit_steps_during_a_drain() {
+    let blocks = chain_of(60);
+    let mut m = waiting_for_the_first(&blocks);
+    m.set_step_delay_for_tests(Some(Duration::from_millis(10)));
+    let (h, t) = actor::spawn(m, config(1));
+    let (tx, rx) = mpsc::channel();
+    h.submit_block_labeled("first".into(), blocks[0].clone(), NOW, move |r| {
+        tx.send(format!("{r:?}")).unwrap()
+    })
+    .unwrap();
+    // A fluff, queued once the drain runs.
+    while !h.summary().sync_pending {
+        std::thread::yield_now();
+    }
+    let steps_at_queue = h
+        .log_for_tests()
+        .iter()
+        .filter(|e| matches!(e, LogEntry::Step { .. }))
+        .count();
+    let started = std::time::Instant::now();
+    h.call_blocking(Lane::Tx, |_| ()).unwrap();
+    let waited = started.elapsed();
+    let _ = rx.recv();
+    let log = h.log_for_tests();
+    // Steps between the command's arrival (approximated by the first step
+    // after `sync_pending` was seen) and the command.
+    let mut steps_before = 0usize;
+    for e in &log {
+        match e {
+            LogEntry::Step { .. } => steps_before += 1,
+            LogEntry::Run { label, .. } if label.is_empty() => break,
+            _ => {}
+        }
+    }
+    let waited_steps = steps_before.saturating_sub(steps_at_queue);
+    eprintln!(
+        "Tx command during a drain: waited {waited:?}; {steps_at_queue} step(s) before it was queued, {waited_steps} while it waited (STARVATION_LIMIT = {STARVATION_LIMIT})"
+    );
+    assert!(
+        waited_steps + 1 >= STARVATION_LIMIT as usize,
+        "{waited_steps}"
+    );
+    drop(h);
+    t.join().unwrap();
+}
