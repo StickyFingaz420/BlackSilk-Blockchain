@@ -274,7 +274,13 @@ impl PhaseMarks {
         for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             if is_process_log(&name) {
-                let len = entry.metadata().map_or(0, |m| m.len());
+                // The size through an open handle: on Windows the directory
+                // entry's size (`DirEntry::metadata`) lags while another
+                // process appends, which put every line of the first
+                // evidence run in the last phase.
+                let len = File::open(entry.path())
+                    .and_then(|f| f.metadata())
+                    .map_or(0, |m| m.len());
                 sizes.insert(name, len);
             }
         }
@@ -835,7 +841,7 @@ fn main() {
         log(
             &mut journal,
             &format!(
-                "warm-up {} after {} s at height {} (difficulty {}, mean interval {:.1?} s)",
+                "warm-up {} after {} s at height {} (difficulty {}, mean interval {} s)",
                 if report.warmup.reached {
                     "done"
                 } else {
@@ -844,7 +850,10 @@ fn main() {
                 report.warmup.secs,
                 report.warmup.end_height,
                 report.warmup.end_difficulty,
-                report.warmup.mean_interval_secs
+                report
+                    .warmup
+                    .mean_interval_secs
+                    .map_or("-".into(), |m| format!("{m:.1}"))
             ),
         );
     }
