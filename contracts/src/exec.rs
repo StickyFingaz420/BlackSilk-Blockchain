@@ -1,4 +1,4 @@
-//! Deterministic execution of contract calls and deploys (docs/contracts.md §9).
+//! Deterministic execution of contract calls and deploys (docs/research/wasm-contracts.md §9).
 //!
 //! [`Executor::call`] and [`Executor::deploy`] run against a read-only
 //! [`ContractState`] and return a [`Receipt`] with the [`StateDiff`] to commit,

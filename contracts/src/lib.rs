@@ -1,4 +1,9 @@
-//! BlackSilk confidential contracts (docs/contracts.md).
+//! BlackSilk confidential contracts (docs/research/wasm-contracts.md).
+//!
+//! **Frozen research, not consensus.** PX is the only consensus contract
+//! platform (ADR-28-1, owner decision D22; docs/contracts.md, "Private contracts
+//! on PX"). This crate is outside the root workspace, with its own Cargo.lock,
+//! and no node, wallet or miner crate depends on it (README.md).
 //!
 //! | Module | Spec | Content |
 //! |---|---|---|

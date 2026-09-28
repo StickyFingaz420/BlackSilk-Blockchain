@@ -120,7 +120,7 @@ jobs:
           bash .github/scripts/annotate-tests.sh cargo test --locked --release --no-fail-fast \
             -p blacksilk-randomx -p blacksilk-consensus -p blacksilk-crypto \
             -p blacksilk-tx -p blacksilk-chain -p blacksilk-p2p \
-            -p blacksilk-contracts -p blacksilk-px-core -p blacksilk-miner \
+            -p blacksilk-px-core -p blacksilk-miner \
             -p blacksilk-node -- \
             --skip private_payments_through_consensus \
             --skip value_cannot_be_created_and_anchors_must_be_recent \

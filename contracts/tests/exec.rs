@@ -1,4 +1,4 @@
-//! Execution tests (docs/contracts.md §9, §20 item 4–5) on small WAT modules.
+//! Execution tests (docs/research/wasm-contracts.md §9, §20 item 4–5) on small WAT modules.
 
 use blacksilk_contracts::exec::{fuel, MAX_DEPTH};
 use blacksilk_contracts::profile::{self, ProfileError};
