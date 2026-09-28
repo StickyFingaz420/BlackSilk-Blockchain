@@ -16,7 +16,7 @@ use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::store::MemoryStore;
 use blacksilk_chain::sync_policy::hot_seeds;
 use blacksilk_consensus::merkle::tx_root;
-use blacksilk_consensus::{BlockHeader, ChainParams, Hash, PowFunction, RandomXPow};
+use blacksilk_consensus::{BlockHeader, ChainParams, Hash, RandomXPow};
 use blacksilk_crypto::keys::{SubaddressIndex, WalletKeys};
 use blacksilk_tx::builder::{build_coinbase, Payment};
 use blacksilk_tx::params::TxRules;
