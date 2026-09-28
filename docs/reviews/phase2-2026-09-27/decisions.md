@@ -648,3 +648,10 @@
 - **sha3 0.11.0** (RustCrypto, pure Rust, default features off) is APPROVED as a direct dependency of blacksilk-p2p for the Tor v3 checksum. It was already in the lockfile via ml-kem. This supersedes the "out of workspace" note for this use; 44 reviews it in its supply-chain pass.
 - **P2P PROTOCOL_VERSION = MIN_PROTOCOL_VERSION = 3:** accepted. The v3 reset has no v2 peers, and a clean handshake refusal is better than ban loops. 30 builds on MIN = 3.
 - **Still open (Wave 3):** addrman v2 (W1); anchors, feelers and stale-tip rotation (W4, W5, W7); inbound /64 limits and eviction (W6). The simulator baseline stays as the regression metric.
+
+## W2-37 (wallet keys), Lead decisions 2026-09-28
+- **Out-of-ownership commit 7a6fe53:** ACCEPTED (crypto keys.rs/hash.rs, px wallet.rs; dossier 37 owns these functions; no consensus path).
+- **PX account 0 is a hardened child of the root** (`sk_a = Hk(SK_ACCOUNT, root‖a)`): ACCEPTED. The root never enters a witness.
+- **Registry tags frozen for v3:** `seed/master/v1`, `wallet/hedge-key/v1`, `px/wallet/hedge-key/v1`, `px/wallet/vault-secret/v1`.
+- **Wallet never auto-applies seed corrections** (a two-word error can land on another valid seed, about 1.3%): ACCEPTED as designed.
+- **Open:** removing px `Derivation::V1` (px owner, with CB-B2); a fuzz target for the seed parser (41); F37-11 confirmation prompt; K7 and K8.
