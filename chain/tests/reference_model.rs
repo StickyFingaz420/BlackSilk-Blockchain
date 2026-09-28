@@ -633,12 +633,11 @@ fn restart_matches(real: &Real) -> Result<(), TestCaseError> {
             prop_assert_eq!(again.headers().is_valid(id), live.headers().is_valid(id));
         }
     }
-    // docs/blocks.md §7 says the pool is empty after a restart. It is not
-    // when the replay itself reorganizes: transactions of the blocks it
-    // disconnects are pooled (finding W2-02-F1,
+    // The pool is empty after a restart (docs/blocks.md §7), also when the
+    // replay itself reorganizes (finding W2-02-F1, fixed in `open`;
     // `a_restart_that_replays_a_failed_reorganization_starts_with_an_empty_pool`).
-    // Until that is decided, the reopened pool must at least hold only
-    // transactions valid at the tip, without conflicts.
+    // Checked here in its weaker form too: whatever the reopened pool holds
+    // is valid at the tip, without conflicts.
     let mut keys = HashSet::new();
     for tx in real
         .txs
@@ -899,11 +898,10 @@ fn random_reorganizations_with_transactions_match_the_model() {
 /// is empty", but a replay that reorganizes pools the transactions of the
 /// blocks it disconnects, as live processing does. Here the heavier branch
 /// 1-2-3 fails at block 2 (a second spend of block 1's key image), the node
-/// returns to 4-5, and block 1's transfer is pooled, live and again on every
-/// restart. Ignored until the coordinator decides whether the code or the
-/// document changes (policy only; the pooled transaction is valid).
+/// returns to 4-5, and block 1's transfer was pooled, live and again on every
+/// restart. Decided: the code changes (`open` empties the pool after the
+/// replay); this test failed before that fix and guards it.
 #[test]
-#[ignore = "finding W2-02-F1: replay pools the transactions of blocks it disconnects"]
 fn a_restart_that_replays_a_failed_reorganization_starts_with_an_empty_pool() {
     let f = fixture();
     let (t, key) = (4, f.key_of[4]);

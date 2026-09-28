@@ -330,11 +330,9 @@ Transactions from disconnected blocks return to the mempool if they are still va
   re-announcement (p2p.md §7) brings pending transactions back, and a transaction this
   node originated is held, not originated again, if its wallet sends it (p2p.md §8.1,
   px.md §12).
-  - Exception (finding W2-02-F1, open): when the replay itself reorganizes, for example
-    through a heavier branch whose body fails, the transactions of the blocks it
-    disconnects are pooled, as they were live. They are valid at the tip. Reproducer:
-    `a_restart_that_replays_a_failed_reorganization_starts_with_an_empty_pool`
-    (ignored until decided).
+  - This holds also when the replay itself reorganizes (for example through a heavier
+    branch whose body fails): `open` empties the pool after the replay (finding
+    W2-02-F1, `a_restart_that_replays_a_failed_reorganization_starts_with_an_empty_pool`).
 - **No consensus effect.** Blocks are always validated in full, whatever the pool
   holds.
   - The only use of pool contents in block validation is the PX proof cache, keyed by

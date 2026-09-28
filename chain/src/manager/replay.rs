@@ -91,6 +91,12 @@ impl ChainManager {
         // Bodies kept from now on are numbered by their index among the
         // store's block records.
         manager.next_body_seq = total;
+        // The pool is not persisted and starts empty (docs/blocks.md §7). A
+        // replay that reorganizes pools the transactions of the blocks it
+        // disconnects, as it would live; a restart drops them like the rest
+        // of the pool (finding W2-02-F1). Peers' re-announcement brings back
+        // what is still pending.
+        manager.mempool = Mempool::new();
         manager.refresh_hot_seeds();
         manager.publish_first_summary();
         Ok(manager)
