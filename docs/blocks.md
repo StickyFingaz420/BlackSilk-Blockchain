@@ -241,9 +241,10 @@ Transactions from disconnected blocks return to the mempool if they are still va
 - PX and deploy transactions are validated in full, proof included, on admission. They
   live in a separate class of at most `MEMPOOL_MAX_PX_BYTES = 64 MiB` with the same
   fee-per-byte eviction.
-  - Their proofs are not re-verified when the pool is revalidated, nor when a block
-    containing them is validated: a sound cache, because the transaction id commits to
-    the proof (`validate_block_transactions_cached`).
+  - Their proofs are not re-verified when the pool is revalidated or readmits them,
+    nor when a block containing them is validated: a sound cache, because the
+    transaction id commits to the proof (`validate_block_transactions_cached`). A
+    readmitted one was verified when its block connected, under the same rules.
   - Templates add PX transactions first, in fee-per-byte order within the PX budget,
     simulating the pool so that it never goes negative.
 - It holds at most `MEMPOOL_MAX_BYTES = 50 MB`. When a class is full, a new transaction
@@ -311,13 +312,11 @@ Transactions from disconnected blocks return to the mempool if they are still va
 - After every change of the connected chain, the pool:
   - removes confirmed transactions and every pooled transaction conflicting with them;
   - expires transactions pooled for 2 160 blocks (above);
-  - re-adds transactions from disconnected blocks;
-  - re-validates against the new tip, dropping what no longer validates:
-    - **after a reorganization** (any block disconnected), every rule except PX proofs,
-      because ring members may now resolve to different outputs;
+  - re-validates against the new tip, dropping what no longer validates, without
+    verifying any signature, range proof or PX proof again:
     - **after a plain extension**, only the rules an extension can change
-      (`revalidate_after_extension`): key images, the PX anchor window,
-      nullifiers, the registry and the pool, and deploy contract ids.
+      (`revalidate_after_extension`): key images, the PX window, anchor, nullifiers,
+      registry, pool and tree capacity, and deploy contract ids.
       - Structure, balance and proofs belong to the transaction alone.
       - Outputs are only appended, so rings resolve to the same outputs and signatures
         stay valid; maturity only improves.
@@ -326,6 +325,55 @@ Transactions from disconnected blocks return to the mempool if they are still va
         chain lock (`mempool_revalidation_cost_per_transaction`).
       - Its verdicts match full validation
         (`revalidation_after_an_extension_agrees_with_full_validation`).
+    - **after a reorganization** (any block disconnected), ring members may resolve to
+      other outputs, or be immature at a lower height. The same checks, plus C1 at the
+      new next height (`resolve_input_rings`, the function blocks use) and the entry's
+      **ring digest**: a hash of the resolved `(one_time_key, commitment)` of every ring
+      member of every v1 input, kept from when its signatures were verified
+      (`mempool::ring_digest`, tag `mempool/ring-digest`, in memory only).
+      - Unchanged digest: the CLSAG verdict is unchanged, exactly (`clsag::verify` is
+        a function of the message, ring, pseudo-output, key image and signature; the
+        rest is the transaction and the rules, which the pool fixes).
+      - Changed digest: dropped without verification (the ring is hashed into the
+        CLSAG aggregation coefficients and every round challenge, so a signature valid
+        over one ring verifies over another only with negligible probability). The
+        only error is dropping a transaction that would still verify; its wallet
+        rebroadcasts it.
+      - Before 2026-09-28 this path validated every entry in full, CLSAGs and range
+        proofs included (dossier 12 M12-1): after any reorganization, minutes under
+        the chain lock with a full pool.
+  - then pools again the transactions of the disconnected blocks
+    (`Mempool::readmit_returned`), each captured with its ring digest and its block's
+    rules while the block was connected (`mempool::Returned::capture`; outputs are only
+    appended, so the rings then resolve as when the block was validated). One is
+    readmitted if its block's rules are the pool's (otherwise it would fail: dropped
+    unverified), no pooled transaction holds one of its conflict keys (both would be
+    the same owner's spends; the pooled one stays), the reorganization checks above
+    pass and the class has room, with a fresh admission height and no signature or
+    proof verified. Revalidation comes first, so stale entries neither take the room
+    nor hold the keys. At most one class cap of returned bytes per class is examined
+    per reorganization (`READMIT_MAX_BYTES`, like Bitcoin Core's
+    `MAX_DISCONNECTED_TX_POOL_BYTES`); the rest is dropped.
+  - `Mempool::update_after_chain_change` does all of this and reports it;
+    `Mempool::full_validations` counts every full validation the pool runs (none on
+    these paths). Readmission without verification needs the chain manager to capture
+    the transactions before it undoes their block; until it does
+    (`chain/src/manager/fork_choice.rs`, owned by the chain-actor work), the manager
+    re-admits them with `Mempool::readmit`, which validates in full, before it
+    revalidates.
+  - The pool is flushed when any transaction rule changes (`Mempool::enter_rules`),
+    not only the signature domain: the paths above skip every stateless rule, which
+    is exact only under the same rules.
+  - Tested: `chain/src/mempool.rs` unit tests (an unchanged ring kept without
+    verification; a changed ring and an immature member dropped; readmission without
+    verification, of PX transactions without their proof, with conflicts, other rules
+    and changed rings refused; returned transactions taking the room of stale entries;
+    the byte bound); `chain/tests/revalidation.rs` (the two reorganizations above with
+    real transfers, through the manager); `chain/tests/mempool_stateful.rs` (proptest:
+    random submissions, extensions, reorganizations up to 69 blocks deep, expiry and
+    templates; after every step the pool equals what full validation decides, no
+    chain update verifies anything, templates are within budget and are accepted as
+    blocks, and the manager's own pool agrees).
 - **The mempool is not persisted.** After a restart it is empty; peers' pool
   re-announcement (p2p.md §7) brings pending transactions back, and a transaction this
   node originated is held, not originated again, if its wallet sends it (p2p.md §8.1,
@@ -341,8 +389,8 @@ Transactions from disconnected blocks return to the mempool if they are still va
     state from the same block, and both reject a tampered copy
     (`mempool_contents_never_change_a_blocks_verdict`).
 - **Not implemented:** per-peer or per-source limits beyond the byte caps and the P2P
-  rate limits; mempool persistence (dossiers 35/12). Pool re-announcement is in p2p.md
-  §7, the wallet rebroadcast in px.md §12.
+  rate limits; mempool persistence (dossiers 35/12; P1, designed in dossier 12 §9).
+  Pool re-announcement is in p2p.md §7, the wallet rebroadcast in px.md §12.
 
 ## 8. Storage (node)
 
