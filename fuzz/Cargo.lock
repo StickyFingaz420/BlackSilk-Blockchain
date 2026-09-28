@@ -21,6 +21,7 @@ dependencies = [
  "cfg-if",
  "cipher",
  "cpufeatures 0.2.17",
+ "zeroize",
 ]
 
 [[package]]
@@ -35,6 +36,7 @@ dependencies = [
  "ctr",
  "ghash",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -117,6 +119,7 @@ dependencies = [
 name = "blacksilk-p2p"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "aes-gcm",
  "blacksilk-chain",
  "blacksilk-consensus",
@@ -125,6 +128,7 @@ dependencies = [
  "getrandom 0.2.17",
  "hex",
  "log",
+ "polyval",
  "rand_chacha",
  "rand_core 0.6.4",
  "serde",
@@ -1159,6 +1163,7 @@ dependencies = [
  "cpufeatures 0.2.17",
  "opaque-debug",
  "universal-hash",
+ "zeroize",
 ]
 
 [[package]]
