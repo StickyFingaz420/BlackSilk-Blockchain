@@ -707,3 +707,23 @@
 - **FX-RTW2A:** accepted as implemented. Relay budget = MAX_RELAY_FRAME + 2 MiB (strict); relay charges on the lane, all or nothing, after dedupe; rate excess dropped, not scored and not fluffed; `ReorgPending` reservation; fluffs off the maintenance loop; bounded capture.
 - **Read-loop byte rate stays SCORED** (4 MB/s, burst 16 MB): an honest forwarder within the receiver's PX share (0.2/s, about 0.6 MB/s) stays far below it, so only floods reach it.
 - **Consensus gate waivers:** `.github/consensus-gate-waivers.txt` lists published commits that lack the trailer, since shared history is never rewritten. First entry: b24a19a (test-only). Each new entry is a reviewed change.
+
+## W3-44 and W3-39, Lead decisions 2026-09-28
+- **W3-44 accepted:**
+  - cargo-deny `-D warnings` on both workspaces, including dev duplicates;
+  - `[bans.build]` allowlist;
+  - no-C enforcement per release target (sys-crates.sh part 2);
+  - hazmat-policy.sh (ml-kem hazmat confined to px, single-round AES to randomx);
+  - dalek >= 5 banned until transport v2;
+  - `unsafe` inventory as a report.
+  - **Not adopted now:** ghash/zeroize, argon2/zeroize (it needs wallet code, dossier 37 Z1), cargo-vet (S9), getrandom 0.4.3 (P2).
+- **W3-39 accepted:**
+  - W1: own PX tree, root-window anchor checks, incremental witnesses;
+  - W5: header check on restores;
+  - the vault CLI;
+  - PX6 drop in rebroadcast.
+- **Unconfirmed backfill (W3-39 Q1):** privacy over liveness ACCEPTED. No anchor over backfill-only commitments for 100 blocks past the restore height unless confirmed. Documented UX workaround: restore from height 1.
+- **Owed (wallet batch W3-39b):**
+  - a header feed from genesis, so W5 is anchored at genesis for every restore;
+  - verified contract registrations (from scanned deploys, not the node's `/px/contracts`);
+  - the stale-tip relabel residual.
