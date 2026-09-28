@@ -2,13 +2,14 @@
 //! headers and stored blocks.
 
 use super::pow_cache::CachedPow;
-use super::ChainManager;
+use super::{ChainManager, OperatorFork};
 use crate::block::Block;
 use crate::mempool::Mempool;
 use blacksilk_consensus::{BlockHeader, ChainParams, Hash, HeaderChain};
 use blacksilk_tx::params::TxRules;
 use blacksilk_tx::state::MemoryChain;
 use blacksilk_tx::validate::BlockError;
+use std::cmp::Reverse;
 use std::sync::Arc;
 
 impl ChainManager {
@@ -103,6 +104,62 @@ impl ChainManager {
     /// are refused too, but are not listed here.
     pub fn operator_invalidated(&self, id: &Hash) -> bool {
         self.operator_invalid.contains(id)
+    }
+
+    /// The operator's verdicts in force, sorted by id.
+    pub fn operator_verdicts(&self) -> Vec<Hash> {
+        let mut ids: Vec<Hash> = self.operator_invalid.iter().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// A heavier chain this node refuses only because of the operator's
+    /// verdicts (RTW3-8): the heaviest known header in the subtree of an
+    /// operator-invalidated block, if it has more work than the connected
+    /// tip. Blocks whose bodies broke a rule (`invalid_reason`) and their
+    /// descendants do not count: the node would refuse them without the
+    /// verdict. Headers under a verdict were fully checked (proof of work
+    /// included) before it applied; later children are refused unverified
+    /// (`HeaderError::InvalidParent`), so the refused chain's known work is
+    /// a lower bound of the network's. Deterministic: ties go to the lowest
+    /// branch tip id, then the lowest verdict id. Free while no verdict is
+    /// in force; otherwise it walks the verdicts' subtrees.
+    pub fn operator_fork(&self) -> Option<OperatorFork> {
+        if self.operator_invalid.is_empty() {
+            return None;
+        }
+        let tip_work = self.work(&self.tip_id());
+        let mut best: Option<(u128, Reverse<Hash>, Reverse<Hash>)> = None;
+        for root in self.operator_verdicts() {
+            let mut stack = vec![root];
+            while let Some(x) = stack.pop() {
+                if self.invalid.contains_key(&x) {
+                    continue;
+                }
+                let Some(w) = self.headers.work(&x) else {
+                    continue;
+                };
+                let key = (w, Reverse(x), Reverse(root));
+                if best.is_none_or(|b| key > b) {
+                    best = Some(key);
+                }
+                if let Some(kids) = self.children.get(&x) {
+                    stack.extend_from_slice(kids);
+                }
+            }
+        }
+        let (w, Reverse(branch_tip), Reverse(block)) = best?;
+        if w <= tip_work {
+            return None;
+        }
+        let height_of = |id: &Hash| self.headers.header(id).map_or(0, |h| h.height);
+        Some(OperatorFork {
+            block,
+            height: height_of(&block),
+            branch_tip,
+            branch_height: height_of(&branch_tip),
+            excess_work: w - tip_work,
+        })
     }
 
     // ---- header-first sync (docs/p2p.md §6) ----

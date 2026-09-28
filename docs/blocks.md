@@ -463,6 +463,9 @@ body    = type (1) ‖ payload
     marked invalid, so the block and every descendant sent again are refused
     (`HeaderError::InvalidParent`). `invalid_reason` stays empty for it (no rule was
     broken); `operator_invalidated` reports it.
+  - **At start-up** (RTW3-11) the node logs each verdict in force, with the full block id
+    and the block's height (or that the block has not arrived yet), and whether a heavier
+    chain is refused only because of them (§9.4, operator fork).
   - **Reconsider.** `--reconsider-block <block id>` appends a `reconsider` record that
     cancels the operator's earlier verdict on that id; the last operator record for an
     id wins, wherever it is in the log. It takes effect at that start (a running
@@ -549,9 +552,11 @@ body    = type (1) ‖ payload
     the next start. A persistent halt needs an operator decision: report the block,
     then restart once with `--invalidate-block <block id>` (the halt message names the
     full id), and the node starts on the block's parent without validating or applying
-    it again (moving the store aside only resyncs to the same block). The node then
-    does not follow a chain containing the block until the operator reconsiders it,
-    presumably with a fixed build.
+    it again (moving the store aside only resyncs to the same block). The block passed
+    validation, so it is consensus-valid by the node's own rules and the rest of the
+    network follows it: invalidating it forks this node off the network's chain (§9.4,
+    operator fork) until the operator reconsiders it, presumably with a fixed build. The
+    halt message says so (RTW3-8).
 - **Replay order.** Records are in arrival order, and bodies arrive in any order during
   header-first sync (up to 16 in flight, from several peers). A block is replayed once
   its parent is known; one stored before its parent waits for it. Blocks released
@@ -626,7 +631,19 @@ body    = type (1) ‖ payload
     warning). Everything from the first damaged record on is moved to
     `blocks.dat.damaged-<unix time>` (synced to disk before the store is truncated),
     the store is truncated there, and the node downloads the dropped blocks again.
-    Valid records after the damage are not salvaged (they are in the set-aside file).
+    Valid block records after the damage are not salvaged (they are in the set-aside
+    file). The operator's records are (RTW3-7, 2026-09-28): every intact `invalid`
+    record of origin 2 and every `reconsider` record of the moved region is written back
+    after the kept prefix, in its order, before the store is cut behind them, and each is
+    logged with its block id. Before, a verdict written after the damage was moved aside
+    with it, and the node connected the block the operator had invalidated. The region is
+    walked record by record (the bytes of an intact record are never read as records);
+    past a damaged record the walk resumes where its length field says it ends if a valid
+    record starts there, otherwise at the next valid record. Only that last search can
+    take a record-shaped byte string inside a damaged block for a record, so the operator
+    compares the logged ids with the verdicts they gave. Tested:
+    `store.rs::repair_keeps_the_operator_records_of_the_moved_region`,
+    `chain/tests/rt_w3_regressions.rs::repair_keeps_operator_verdicts_written_after_the_damage`.
     A missing store (fresh data directory) is "nothing to repair". Repair handles format
     2 and regtest format 0 stores only; it refuses a damaged file header or another
     format version and changes nothing (the operator moves the store aside and
@@ -650,8 +667,8 @@ The route list is `blacksilk_node::ROUTES` (`node/src/lib.rs`).
 
 | Method | Path | Purpose | Class | Body limit |
 |---|---|---|---|---|
-| GET | `/info` | network, height, tip id, difficulty, generated supply, mempool size, identity (genesis id, consensus fingerprint, commit, version), `template_ready` (§9.4) | read | none |
-| GET | `/template` | mining template: height, prev id, difficulty, seed id, min timestamp, reward, fees, transactions, and `next_seed_id` inside the key-switch window; `503` while the node syncs (§9.4) | bulk | none |
+| GET | `/info` | network, height, tip id, difficulty, generated supply, mempool size, identity (genesis id, consensus fingerprint, commit, version), `template_ready`, `template_latched` and, during an operator fork, `operator_fork` (§9.4) | read | none |
+| GET | `/template` | mining template: height, prev id, difficulty, seed id, min timestamp, reward, fees, transactions, and `next_seed_id` inside the key-switch window; `503` until the node has caught up, during a drain, and during an operator fork (§9.4) | bulk | none |
 | GET | `/tip?after=<id>&wait=<s>` | the connected tip (height, id, header height, `template_ready`); with `after`, held until the tip differs from it, at most `wait` ≤ 30 s (§9.4) | long poll | none |
 | POST | `/block` | submit a mined block (`{"hex": …}`); admission rule §9.2 | block | `rpc::MAX_REQUEST_BYTES` (a maximum-size block in hex) |
 | POST | `/tx` | submit a transaction (`{"hex": …}`); with P2P enabled it enters the Dandelion++ stem (p2p.md §8), otherwise the local mempool | submit | `guard::MAX_TX_BODY_BYTES` (the largest transaction of any kind in hex) |
@@ -761,27 +778,69 @@ below the restore height, and once more to place an imported contract record (px
 
 ### 9.4 Mining endpoints (policy)
 
-- **Readiness gate.** `/template` answers `503` with the body `syncing: height h,
-  headers hh` unless the node is *template-ready*
+- **Readiness gate** (RTW3-1, 2026-09-28; replaces the W2-09b gate). `/template` answers
+  `503` with a body starting `syncing:` unless the node is *template-ready*
   (`blacksilk_chain::sync_policy::template_ready`, checked in the same chain command
-  that builds the template):
-  - no bounded drain is in progress (`sync_pending`): between the steps of a drain the
+  that builds the template, after the catch-up latch is updated with the node's clock):
+  - **never mid-drain** (`sync_pending`): between the steps of a bounded drain the
     mempool is not yet revalidated, so a template could offer transactions the next
-    block cannot carry;
-  - the best valid header is at most `TEMPLATE_SYNC_SLACK` = 2 blocks above the
-    connected tip. A header usually arrives just before its body, so a gap of 1 or 2 is
-    normal; a larger gap means the node is catching up, and a block mined on its tip
-    would be an orphan.
+    block cannot carry. A drain connects bodies the node holds and always ends;
+  - **catch-up latch**, as Bitcoin Core's initial-download latch. Until the node is
+    first *caught up* (`sync_policy::caught_up`), templates are refused, since a block
+    mined on a tip the network has passed is an orphan. Caught up means: no drain in
+    progress, the best valid header at most `TEMPLATE_SYNC_SLACK` = 2 blocks above the
+    connected tip (a header usually arrives just before its body), and the connected
+    tip's timestamp at most `MAX_TIP_AGE_BLOCKS` = 24 target block times (48 minutes on
+    testnet) before the node's clock. The bound, and why 24 is enough, is documented on
+    `sync_policy::MAX_TIP_AGE_BLOCKS`. Regtest has no clock rule: its tests and lab
+    networks mine at synthetic timestamps (Bitcoin Core skips this check for templates
+    on test chains too), so a regtest node latches at its first input.
+  - The latch is judged whenever the node is given a clock reading: before each block
+    submission and header batch is processed, and at each `/template` request. Once
+    set, it stays set until the process exits (it is not stored). **No header lead
+    closes the gate again**: the W2-09b gate recomputed the header gap on every request,
+    so three bodiless headers on a synced node's tip (a 3-block private branch, at any
+    minority hash rate) stopped its mining until the bodies came or its chain outworked
+    them (RT-W3 demonstration; `chain/tests/rt_w3_regressions.rs`).
+  - **Restart after a network-wide stall.** A node that restarts while the whole
+    network's tip is older than the bound (every miner gone for 48 minutes, or the first
+    blocks of a network on an old genesis) is not caught up and would wait. The operator
+    of the first miner starts its node once with `--mine-from-stale-tip`, which sets the
+    latch at start (`ChainManager::set_template_latch`); the 503 body names the flag.
 
-  There is no peer-count rule: the first node of a network mines alone from genesis.
-  `/info` and `/tip` report the same predicate as `template_ready`. The miner treats
-  `503` as "retry later".
+  There is no peer-count rule: the first node of a network mines alone from genesis once
+  its genesis is recent or the latch is set. `/info` and `/tip` report `template_ready`
+  from the published snapshot at the node's clock, and `/info` reports
+  `template_latched`. The miner treats `503` as "retry later".
 
-  **Risk.** A node that knows a heavier header chain whose bodies are withheld refuses
-  templates until the bodies arrive or its connected chain outweighs those headers.
-  Headers carry real proof of work, so stopping the network's mining this way takes the
-  most work, that is majority hash power. A minority attacker can only stall a node that
-  has no honest peers; such a node is eclipsed anyway.
+  **Risk.** Before the latch sets, a node that knows a heavier header chain whose bodies
+  are withheld refuses templates until the bodies arrive or its connected chain outweighs
+  those headers. This needs no majority: three withheld headers on the network's tip, a
+  3-block private branch at any hash rate, delay a node that has not latched yet (the
+  catch-up refusal is tested in `a_node_in_its_initial_catch_up_refuses_templates`). The
+  delay lasts until the rest of the network's chain outweighs the withheld headers;
+  keeping it up longer takes a branch that stays ahead of the network. It affects only
+  nodes that started or restarted recently and have not caught up since. A node that has
+  latched is not affected, whatever headers it is sent. The operator can release a
+  delayed node by restarting it with `--mine-from-stale-tip`.
+- **Operator fork** (RTW3-8, 2026-09-28). When a heavier chain is refused only because of
+  an operator verdict (`--invalidate-block`, §8; `ChainManager::operator_fork`: the
+  heaviest known header in the subtree of an operator-invalidated block, bodies found
+  invalid excluded, has more work than the connected tip), a block mined on this node
+  extends a chain the rest of the network does not follow. Then:
+  - `/template` answers `503` with a body starting `operator fork:` that names the block,
+    asks the operator to verify the incident through a second channel, and names
+    `--reconsider-block` and the override. The override is
+    `--mine-despite-operator-fork` (command line only).
+  - `/info` carries `operator_fork` (`block`, `height`, `branch_height`,
+    `templates_refused`), and `template_ready` is false unless overridden.
+  - The node logs a warning when the fork starts, every 10 minutes while it lasts, and a
+    notice when it ends (`blacksilk_node::watch_operator_fork`), and one at start-up.
+  - **Limitation.** Headers built on an invalidated block after the verdict are refused
+    unverified (`InvalidParent`), and on restart the stored descendants of the block are
+    not replayed, so the refused chain's known work is a lower bound: after a restart only
+    the invalidated block itself counts. The report ends when the node's own chain
+    outweighs that known work, not the network's.
 - **Next RandomX key.** During the `seed_lag` (64) template heights before a key switch,
   `/template` carries `next_seed_id`: the id of the block whose id becomes the key
   (`sync_policy::next_seed_height`, Monero's `next_seed_hash`), taken on the template's

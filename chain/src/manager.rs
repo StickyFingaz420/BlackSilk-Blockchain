@@ -47,7 +47,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
-pub use summary::{ChainSummary, NextBlock, SummaryCell, SUMMARY_MISSING_BODIES};
+pub use summary::{ChainSummary, NextBlock, OperatorFork, SummaryCell, SUMMARY_MISSING_BODIES};
 
 #[derive(Debug)]
 pub enum SubmitError {
@@ -189,6 +189,11 @@ pub struct ChainManager {
     /// their bodies. Kept for ids whose header is not known yet, so the
     /// verdict applies when the block arrives.
     operator_invalid: HashSet<Hash>,
+    /// The template gate's catch-up latch (RTW3-1,
+    /// `sync_policy::template_ready`): set the first time the node is caught
+    /// up at a clock reading it was given, or by the operator; never cleared
+    /// while the manager lives. Not stored: every start catches up again.
+    template_latched: bool,
     mempool: Mempool,
     store: Box<dyn BlockStore>,
     rng: ChaCha20Rng,

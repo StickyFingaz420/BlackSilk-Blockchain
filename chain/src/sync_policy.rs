@@ -15,14 +15,15 @@
 //! - [`pow_chunk`]: the header proof-of-work chunk, capped so that no header
 //!   is hashed under a key taken from an unverified header of its own chunk
 //!   (F07-4, F31-8).
-//! - [`template_ready`]: whether the node serves block templates (dossier 09
-//!   M9-2): not while a bounded drain is in progress or bodies are missing
-//!   more than [`TEMPLATE_SYNC_SLACK`] blocks below the best header.
+//! - [`caught_up`], [`template_ready`]: whether the node serves block
+//!   templates (dossier 09 M9-2, RTW3-1): never mid-drain, and before the
+//!   node's catch-up latch sets only once it has caught up (tip recent,
+//!   bodies at most [`TEMPLATE_SYNC_SLACK`] blocks below the best header).
 //! - [`next_seed_height`]: the next RandomX key announced with a template
 //!   (Monero's `next_seed_hash`), for the miner's prebuild.
 
 use blacksilk_consensus::pow::HOT_SEEDS;
-use blacksilk_consensus::{seed_height, BlockHeader, ChainParams, Hash, HeaderChain};
+use blacksilk_consensus::{seed_height, BlockHeader, ChainParams, Hash, HeaderChain, Network};
 
 /// Blocks of main-chain work below our best that a competing branch may lack
 /// and still be verified and stored (R1-C1; Bitcoin Core's anti-DoS work
@@ -145,34 +146,93 @@ pub fn pow_chunk(pow_threads: usize, p: &ChainParams) -> usize {
 }
 
 /// Blocks the best valid header chain may be ahead of the connected tip
-/// while the node still serves block templates. A header usually arrives a
-/// moment before its body (the labnet shows `header_height = height + 1`
-/// most of the time), so 0 would refuse templates in normal operation; 2
-/// also covers a body racing a second header.
+/// while a node that has not latched yet counts as caught up
+/// ([`caught_up`]). A header usually arrives a moment before its body (the
+/// labnet shows `header_height = height + 1` most of the time), so 0 would
+/// keep a node that is at the tip from latching; 2 also covers a body racing
+/// a second header.
 pub const TEMPLATE_SYNC_SLACK: u64 = 2;
 
-/// Whether the node serves block templates (`/template`, docs/blocks.md §9;
-/// dossier 09 M9-2). Node policy, not consensus:
+/// The oldest the connected tip may be, in target block times, for a node
+/// that has not latched yet to count as caught up ([`max_tip_age`]).
 ///
-/// - **Not mid-drain** (`sync_pending`): between the steps of a bounded
-///   drain the mempool is only partly revalidated, so a template could
-///   offer transactions the next block cannot carry.
-/// - **Not while catching up**: with bodies missing more than
-///   [`TEMPLATE_SYNC_SLACK`] blocks below the best header, every block
-///   mined on the connected tip would be an orphan (Bitcoin Core refuses
-///   `getblocktemplate` during initial download, Monero answers "Core is
-///   busy").
+/// Why 24: the bound only has to tell "downloading old blocks" from "at the
+/// network's tip".
+/// - **Honest tips are younger.** At a steady hash rate the chance that no
+///   block is found for 24 target times is `e^-24` (about `4e-11`). A tip's
+///   timestamp may also trail the real time: a miner may stamp as low as the
+///   median of the last 11 blocks plus one (about 6 target times back), and
+///   clocks differ by seconds (docs/testnet.md §12.2). That leaves about 18
+///   target times of margin.
+/// - **Catch-up tips are older.** A node downloading history sees tips
+///   stamped hours or days ago. Once its tip is within 24 target times of
+///   the clock, about 24 blocks are left at most, and the header-gap rule
+///   holds the gate for those whose headers are known.
+/// - **A false "not caught up" only delays mining, and only before the
+///   latch sets:** the next block from the network makes the tip recent. It
+///   needs every miner to have been gone for 24 target times (48 minutes on
+///   testnet) and this node to have restarted since. `--mine-from-stale-tip`
+///   sets the latch for that case and for a network's first blocks on an
+///   old genesis.
+///
+/// Bitcoin Core's initial-download latch uses 24 hours at 10-minute blocks
+/// (144 target times, `DEFAULT_MAX_TIP_AGE`). Here the header-gap rule does
+/// most of the work, so a shorter bound suffices.
+pub const MAX_TIP_AGE_BLOCKS: u64 = 24;
+
+/// The tip-age bound of [`caught_up`] in seconds: [`MAX_TIP_AGE_BLOCKS`]
+/// target block times (48 minutes on testnet and mainnet). `None` on
+/// regtest: its tests and lab networks mine at synthetic timestamps far
+/// behind the real clock (Bitcoin Core likewise skips its initial-download
+/// check for block templates on test chains), so only the drain and
+/// header-gap rules apply there.
+pub fn max_tip_age(p: &ChainParams) -> Option<u64> {
+    (p.network != Network::Regtest).then(|| MAX_TIP_AGE_BLOCKS.saturating_mul(p.target_block_time))
+}
+
+/// Whether a node counts as caught up with its network at the local time
+/// `now` (RTW3-1): what sets its catch-up latch ([`template_ready`]).
+///
+/// - **Not mid-drain** (`sync_pending`).
+/// - **Headers:** bodies at most [`TEMPLATE_SYNC_SLACK`] blocks below the
+///   best valid header.
+/// - **Clock:** the connected tip's timestamp at most `max_tip_age` seconds
+///   before `now` ([`max_tip_age`]; no bound when `None`). A tip stamped
+///   ahead of `now` counts as recent.
+pub fn caught_up(
+    sync_pending: bool,
+    height: u64,
+    header_height: u64,
+    tip_time: u64,
+    now: u64,
+    max_tip_age: Option<u64>,
+) -> bool {
+    !sync_pending
+        && header_height.saturating_sub(height) <= TEMPLATE_SYNC_SLACK
+        && max_tip_age.is_none_or(|age| tip_time.saturating_add(age) >= now)
+}
+
+/// Whether the node serves block templates (`/template`, docs/blocks.md
+/// §9.4; dossier 09 M9-2, RTW3-1). Node policy, not consensus:
+///
+/// - **Never mid-drain** (`sync_pending`): between the steps of a bounded
+///   drain the mempool is only partly revalidated, so a template could offer
+///   transactions the next block cannot carry. A drain connects bodies the
+///   node already holds and always ends; nobody can prolong it without
+///   supplying real blocks.
+/// - **Catch-up latch** (Bitcoin Core's initial-download latch): until the
+///   node is first [`caught_up`], templates are refused, since a block mined
+///   on a tip the network has passed is an orphan. Once caught up, the latch
+///   (`latched`) sets and stays set for the life of the process: no header
+///   lead closes the gate again. The W2-09b gate recomputed the header gap
+///   on every request, so three bodiless headers on a synced node's tip (a
+///   3-block private branch, at any minority hash rate) kept it from mining
+///   until the bodies came or the headers were outworked (RT-W3).
 /// - **No peer-count rule**: the first node of a network mines from genesis
-///   alone (decisions "Agent 09").
-///
-/// Risk (documented, docs/blocks.md §9): a node that knows a heavier header
-/// chain whose bodies are withheld stops serving templates until the bodies
-/// arrive or the headers are outworked. Keeping the whole network from
-/// mining that way requires announcing headers with the most work, i.e.
-/// majority hash power; a minority attacker can only stall nodes that have
-/// no honest peers.
-pub fn template_ready(sync_pending: bool, height: u64, header_height: u64) -> bool {
-    !sync_pending && header_height.saturating_sub(height) <= TEMPLATE_SYNC_SLACK
+///   alone (decisions "Agent 09"), once its genesis is recent or the
+///   operator sets the latch (`--mine-from-stale-tip`).
+pub fn template_ready(sync_pending: bool, latched: bool, caught_up: bool) -> bool {
+    !sync_pending && (latched || caught_up)
 }
 
 /// The height of the block holding the RandomX key that templates at
@@ -394,17 +454,44 @@ mod tests {
         assert_eq!(next_seed_height(4161, 2048, 64), None);
     }
 
-    /// Slack 2: a header gap of 1 or 2 serves templates, 3 does not; a
-    /// pending drain never does.
+    /// Slack 2 and the tip-age bound decide `caught_up`; a pending drain
+    /// never serves templates, latched or not; the latch overrides the rest.
     #[test]
-    fn template_readiness_needs_no_drain_and_a_small_header_gap() {
+    fn caught_up_needs_no_drain_a_small_header_gap_and_a_recent_tip() {
         assert_eq!(TEMPLATE_SYNC_SLACK, 2);
-        assert!(template_ready(false, 10, 10));
-        assert!(template_ready(false, 10, 11));
-        assert!(template_ready(false, 10, 12));
-        assert!(!template_ready(false, 10, 13));
-        assert!(!template_ready(true, 10, 10));
-        assert!(template_ready(false, 0, 0), "a lone node at genesis");
+        let age = Some(2880);
+        let now = 1_000_000;
+        assert!(caught_up(false, 10, 10, now, now, age));
+        assert!(caught_up(false, 10, 12, now, now, age));
+        assert!(
+            !caught_up(false, 10, 13, now, now, age),
+            "a header gap of 3"
+        );
+        assert!(!caught_up(true, 10, 10, now, now, age), "mid-drain");
+        assert!(
+            caught_up(false, 10, 10, now - 2880, now, age),
+            "at the bound"
+        );
+        assert!(!caught_up(false, 10, 10, now - 2881, now, age), "older");
+        assert!(
+            caught_up(false, 10, 10, now + 300, now, age),
+            "stamped ahead"
+        );
+        assert!(caught_up(false, 10, 10, 0, now, None), "no bound");
+        assert!(caught_up(false, 0, 0, 0, u64::MAX, None), "regtest genesis");
+
+        assert!(template_ready(false, false, true));
+        assert!(!template_ready(false, false, false), "catching up");
+        assert!(template_ready(false, true, false), "latched");
+        assert!(!template_ready(true, true, true), "mid-drain");
+    }
+
+    /// 24 target block times on testnet and mainnet, none on regtest.
+    #[test]
+    fn the_tip_age_bound_is_24_target_times_except_on_regtest() {
+        assert_eq!(max_tip_age(&ChainParams::testnet()), Some(24 * 120));
+        assert_eq!(max_tip_age(&ChainParams::mainnet()), Some(24 * 120));
+        assert_eq!(max_tip_age(&ChainParams::regtest()), None);
     }
 
     /// F07-4 / F31-8: the chunk never exceeds the key lag.

@@ -149,6 +149,7 @@ impl ChainManager {
             best_complete: genesis_id,
             invalid: HashMap::new(),
             operator_invalid: operator,
+            template_latched: false,
             mempool: Mempool::new(),
             store,
             rng: ChaCha20Rng::from_seed(rng_seed),
@@ -186,6 +187,7 @@ impl ChainManager {
         // of the pool (finding W2-02-F1). Peers' re-announcement brings back
         // what is still pending.
         manager.mempool = Mempool::new();
+        manager.log_operator_verdicts();
         manager.refresh_hot_seeds();
         manager.publish_first_summary();
         Ok(manager)
@@ -307,6 +309,39 @@ impl ChainManager {
         }
     }
 
+    /// Logs every operator verdict in force once the store is replayed
+    /// (RTW3-11): the full block id and the block's height, or that the
+    /// block has not arrived yet; then whether a heavier chain is refused
+    /// only because of them ([`Self::operator_fork`]).
+    fn log_operator_verdicts(&self) {
+        for id in self.operator_verdicts() {
+            match self.headers.header(&id) {
+                Some(h) => log::warn!(
+                    "operator verdict in force: block {} at height {} is invalid by operator \
+                     request (--reconsider-block {} cancels it)",
+                    full_hex(&id),
+                    h.height,
+                    full_hex(&id)
+                ),
+                None => log::warn!(
+                    "operator verdict in force: block {} (not received yet) is invalid by \
+                     operator request (--reconsider-block {} cancels it)",
+                    full_hex(&id),
+                    full_hex(&id)
+                ),
+            }
+        }
+        if let Some(f) = self.operator_fork() {
+            log::warn!(
+                "a heavier chain (known up to height {}) is refused only because the operator \
+                 invalidated block {} at height {}: this node is off that chain",
+                f.branch_height,
+                full_hex(&f.block),
+                f.height
+            );
+        }
+    }
+
     /// Whether the block store failed persistently: a write failed and could
     /// not be undone, or [`STORE_FAILURE_LIMIT`] writes in a row failed. No
     /// block is accepted any more ([`SubmitError::Store`]), and the state does
@@ -325,17 +360,28 @@ impl ChainManager {
     /// never marked invalid automatically.
     pub fn halted(&self) -> Option<String> {
         if let Some((id, height, e)) = &self.apply_failed {
+            let full = full_hex(id);
             return Some(format!(
-                "applying block {} at height {height}, which passed validation, failed: {e}; \
-                 the node stops (the block is not marked invalid; report this, it is a bug). \
-                 To start without the block, restart once with --invalidate-block {}",
+                "applying block {} at height {height} failed: {e}. The block passed \
+                 validation, so it is consensus-valid by this build's rules: this is a bug in \
+                 this build, not a bad block. The node stops; the block is not marked invalid. \
+                 Report the incident (block id, log, data directory) and keep the data \
+                 directory. Invalidating the block forks this node off the network's chain: \
+                 it then follows no chain containing the block, however much work it has, \
+                 until --reconsider-block {full} undoes the verdict after an upgrade to a \
+                 fixed build. Only if you accept that, restart once with \
+                 --invalidate-block {full}",
                 super::hex(id),
-                id.iter().map(|b| format!("{b:02x}")).collect::<String>()
             ));
         }
         self.store_failed
             .then(|| "the block store failed (see the earlier errors)".to_string())
     }
+}
+
+/// All 64 hex digits of a block id (what `--invalidate-block` takes).
+fn full_hex(id: &Hash) -> String {
+    id.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// The records of a store, sorted for replay.

@@ -58,7 +58,7 @@
 //!   followed by any valid record, which is real corruption, not a crash (fail
 //!   safe: valid data is never dropped silently). Such a file is repaired only
 //!   on the operator's request ([`FileStore::repair`]), which keeps the
-//!   damaged part aside.
+//!   damaged part aside and the operator's verdicts in the store.
 //! - A store that failed permanently reports it ([`BlockStore::failed`]); the
 //!   chain manager then stops accepting blocks and the node exits, so a
 //!   restart recovers deterministically.
@@ -495,7 +495,11 @@ impl FileStore {
     /// followed by valid records. Everything from the first damaged record on
     /// is moved to `<path>.damaged-<unix time>` (synced to disk first) and the
     /// store is truncated there; the node then downloads the dropped blocks
-    /// again. Every valid record before the first damaged one is kept.
+    /// again. Every valid record before the first damaged one is kept, and
+    /// so is every intact operator record (`invalid` of origin operator,
+    /// `reconsider`) of the moved region: they are written back after the
+    /// kept prefix, in their order, each logged with its block id (RTW3-7).
+    /// Blocks are downloaded again, but a lost verdict would not come back.
     ///
     /// Only the current format and legacy headerless stores are repaired; a
     /// damaged file header or another format version is an error (the
@@ -547,14 +551,41 @@ impl FileStore {
             // The set-aside copy must be durable before the store loses the bytes.
             f.sync_all()?;
         }
-        let f = OpenOptions::new().write(true).open(path)?;
-        f.set_len(pos as u64)?;
+        // The operator's verdicts in the moved region are kept (RTW3-7): an
+        // `invalid` record of the operator or a `reconsider` record lost here
+        // would silently undo a verdict. They are written over the start of
+        // the moved region, in their order, before the store is cut behind
+        // them, so a crash in between leaves them in the file (a second
+        // repair finds them again; repeating the sequence changes no verdict,
+        // the last record for an id wins).
+        let kept = match codec {
+            Codec::Typed => operator_records(&data[pos..]),
+            Codec::Legacy => Vec::new(),
+        };
+        let mut f = OpenOptions::new().write(true).open(path)?;
+        let mut end = pos;
+        if !kept.is_empty() {
+            f.seek(SeekFrom::Start(pos as u64))?;
+            for (at, frame, what) in &kept {
+                f.write_all(frame)?;
+                end += frame.len();
+                log::warn!(
+                    "{}: operator record kept from the damaged region (offset {}): {what}",
+                    path.display(),
+                    pos + at
+                );
+            }
+            f.sync_all()?;
+        }
+        f.set_len(end as u64)?;
         f.sync_all()?;
         log::warn!(
-            "{}: {} damaged or unreadable bytes from offset {pos} moved to {}",
+            "{}: {} damaged or unreadable bytes from offset {pos} moved to {}; {} operator \
+             record(s) kept",
             path.display(),
             data.len() - pos,
-            aside.display()
+            aside.display(),
+            kept.len()
         );
         Ok((data.len() - pos) as u64)
     }
@@ -866,6 +897,66 @@ fn valid_prefix(codec: Codec, data: &[u8], start: usize) -> usize {
         }
     }
     pos
+}
+
+/// The intact operator records (`invalid` of origin operator, `reconsider`)
+/// of a damaged typed region (`FileStore::repair`), in order: each one's
+/// offset in `region`, its framed bytes and a description naming the full
+/// block id. `region` starts at the first damaged record.
+///
+/// The region is walked record by record, so the bytes inside an intact
+/// record (block data is partly user-chosen) are never read as records.
+/// Past a damaged record the walk resumes at the end its length field
+/// names, when a valid record (or the end of the region) starts exactly
+/// there; otherwise at the next position holding a valid record. Only that
+/// search can land inside a damaged record's data, so a record-shaped byte
+/// string embedded in a block is taken for a record only if damage hit that
+/// very block record before it. Every kept record is logged with its block
+/// id; the operator compares them with the verdicts they gave.
+fn operator_records(region: &[u8]) -> Vec<(usize, Vec<u8>, String)> {
+    let codec = Codec::Typed;
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while pos < region.len() {
+        match codec.parse_frame(&region[pos..]) {
+            Ok((body, used)) => {
+                let what = match codec.decode_body(body) {
+                    Ok(Some(Record::Marker(Marker::Invalid(m))))
+                        if m.origin == InvalidOrigin::Operator =>
+                    {
+                        Some(format!("block {} invalidated", hex(&m.id)))
+                    }
+                    Ok(Some(Record::Marker(Marker::Reconsider(id)))) => {
+                        Some(format!("block {} reconsidered", hex(&id)))
+                    }
+                    _ => None,
+                };
+                if let Some(what) = what {
+                    out.push((pos, region[pos..pos + used].to_vec(), what));
+                }
+                pos += used;
+            }
+            Err(_) => {
+                let named_end = (region.len() - pos >= RECORD_HEADER
+                    && &region[pos..pos + 4] == codec.magic())
+                .then(|| {
+                    let n =
+                        u32::from_le_bytes(region[pos + 4..pos + 8].try_into().expect("4 bytes"))
+                            as usize;
+                    pos + RECORD_HEADER + n
+                })
+                .filter(|&end| {
+                    end == region.len()
+                        || (end < region.len() && codec.parse_frame(&region[end..]).is_ok())
+                });
+                match named_end.or_else(|| next_valid_record(codec, region, pos + 1)) {
+                    Some(next) => pos = next,
+                    None => break,
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Offset of the first valid record frame starting at or after `from`. Each
@@ -1619,6 +1710,55 @@ mod tests {
             0,
             "nothing more to repair"
         );
+    }
+
+    /// RTW3-7: repair writes the intact operator records of the moved region
+    /// back after the kept prefix, in order (verdict records of the node and
+    /// checkpoints are not kept: replay recomputes them), past a second
+    /// damaged record too. A block whose data embeds an operator-record frame
+    /// is never read as records: not when intact, and not when damaged with
+    /// its record header intact (the walk resumes at the end its length
+    /// names).
+    #[test]
+    fn repair_keeps_the_operator_records_of_the_moved_region() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.dat");
+        let fake = Codec::Typed.frame(&encode_marker(&Marker::Reconsider([0xee; 32])).unwrap());
+        let mut data = vec![0x11; 40];
+        data.extend_from_slice(&fake);
+        data.extend_from_slice(&[0x22; 40]);
+        let carrier = Record::Block(([7; 32], data));
+        let records = [
+            block(0),
+            block(1),
+            Record::Marker(invalid(5, InvalidOrigin::Operator)),
+            carrier.clone(),
+            Record::Marker(invalid(6, InvalidOrigin::Verdict)),
+            Record::Marker(checkpoint(7)),
+            block(2),
+            Record::Marker(Marker::Reconsider([5; 32])),
+            carrier,
+            Record::Marker(invalid(8, InvalidOrigin::Operator)),
+        ];
+        let (mut bytes, ends) = file_of(&path, &records);
+        // Damage block 1's body, and the first carrier's data before its
+        // embedded frame (its record header stays intact).
+        bytes[ends[0] + RECORD_HEADER + 5] ^= 0xff;
+        bytes[ends[2] + RECORD_HEADER + 40] ^= 0xff;
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(load(&path).is_err());
+        let moved = FileStore::repair(&path, 7).unwrap();
+        assert_eq!(moved as usize, bytes.len() - ends[0]);
+        assert_eq!(
+            load(&path).unwrap(),
+            vec![
+                block(0),
+                Record::Marker(invalid(5, InvalidOrigin::Operator)),
+                Record::Marker(Marker::Reconsider([5; 32])),
+                Record::Marker(invalid(8, InvalidOrigin::Operator)),
+            ]
+        );
+        assert_eq!(FileStore::repair(&path, 8).unwrap(), 0, "nothing more");
     }
 
     /// A store is used only after `bind`.

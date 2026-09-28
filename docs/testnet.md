@@ -295,9 +295,16 @@ blacksilk-miner --node 127.0.0.1:29333 --rpc-cookie <node data dir>/rpc.cookie \
   longer the template's parent, logging `new tip at height h: work on template t
   abandoned`. It fetches a new template at once. `--refresh` (default 15 s) only
   picks up new transactions.
-- **Syncing node:** while the node catches up (bodies more than 2 blocks behind its
-  best header) or connects a batch of blocks, `/template` answers `503` and the miner
-  waits and retries. A node with no peers still serves templates.
+- **Syncing node:** until the node has caught up after it starts (bodies at most 2
+  blocks behind its best header, tip at most 48 minutes old), and while it connects a
+  batch of blocks, `/template` answers `503` and the miner waits and retries. Once
+  caught up the node keeps serving templates, whatever headers it learns (docs/blocks.md
+  §9.4). A node with no peers still serves templates once its tip is recent;
+  `--mine-from-stale-tip` starts mining on an older tip (a network's first blocks, or
+  after every miner stopped).
+- **Operator fork:** while a heavier chain is refused only because of an
+  `--invalidate-block` verdict, `/template` answers `503 operator fork: …` unless the node
+  runs with `--mine-despite-operator-fork` (§9).
 - **Errors:** an unreachable, busy or syncing node, or a template the miner cannot
   use (for example a transaction kind an outdated miner cannot decode), is logged and
   retried every 5 s. The miner exits with status 78 only when the configuration is wrong (a
@@ -520,12 +527,14 @@ column), `journal.log`, and each process's log.
 | Wallet `insufficient unlocked funds` | Coinbase needs 60 blocks, other outputs 10 |
 | A transfer never confirms | Run `sync` again later: the wallet checks on the same transaction every 20 blocks (`/tx/status`), sends it again at most once and only after the network has dropped it (2 190 blocks, docs/px.md §12), and releases its funds itself if the node finds it invalid. Use `clear-pending` only if the transaction certainly never left the wallet (docs/px.md §12) |
 | `WARN … reorganization: disconnecting N block(s)` | A reorganization of 10 or more blocks: follow docs/testnet-incident-response.md |
-| `block store: … corrupt record at offset … followed by valid data` at start | Real corruption in `blocks.dat`, or (rarely) a crash while writing a block whose data contains a record-shaped byte string; a plain crash is repaired by the node itself. Back up the data directory, then start once with `--repair-store` (logged as a warning; remove the flag afterwards): the damaged part moves to `blocks.dat.damaged-<time>` and the node downloads the dropped blocks again (docs/blocks.md §8) |
+| `block store: … corrupt record at offset … followed by valid data` at start | Real corruption in `blocks.dat`, or (rarely) a crash while writing a block whose data contains a record-shaped byte string; a plain crash is repaired by the node itself. Back up the data directory, then start once with `--repair-store` (logged as a warning; remove the flag afterwards): the damaged part moves to `blocks.dat.damaged-<time>` and the node downloads the dropped blocks again (docs/blocks.md §8). Your `--invalidate-block` and `--reconsider-block` verdicts in the moved part are kept: each is logged as `operator record kept from the damaged region … block … invalidated` (or `reconsidered`). Check that the listed ids are verdicts you gave, and cancel any you did not give with the opposite flag |
 | The node exits with `block store write failed: free disk space / check the disk` | Several block writes in a row failed, or one could not be undone: the disk is full or failing. The node stops instead of re-downloading bodies it cannot store. Free space or fix the disk, then restart; it resumes from the last stored block |
-| The node exits with status 65 and `applying block … at height …, which passed validation, failed` | A bug in the node: a valid block did not apply. The block is not marked invalid, and systemd does not restart the node (§4.2). Keep the data directory and the log, report the block id, and do not restart in a loop: the same block fails again. To run on without it, back up the data directory and start once with the `--invalidate-block <block id>` the message ends with (next row) |
-| A block must not be followed (the halt above, or an incident notice naming a block) | Start once with `--invalidate-block <block id>` (the full 64-hex id; repeatable). The node logs `block … is marked invalid by the operator` and starts on the best other branch, or on the block's parent. The verdict is stored in `blocks.dat`, so the flag is not needed again; the node refuses the block and its descendants, however much work they carry, until `--reconsider-block <block id>` cancels it (for example after upgrading to a fixed build). Node policy, not consensus: other nodes are not affected (docs/blocks.md §8) |
+| The node exits with status 65 and `applying block … at height … failed: …. The block passed validation, so it is consensus-valid by this build's rules` | A bug in this build: a block valid by its own rules did not apply. The block is not bad, the rest of the network follows it, and it is not marked invalid; systemd does not restart the node (§4.2). Keep the data directory and the log, report the incident (block id, log) to the project, and do not restart in a loop: the same block fails again. The fix is an upgraded build. Invalidating the block instead (next row) forks this node off the network's chain until you reconsider it |
+| Deciding to invalidate a block (`--invalidate-block`) | Only for the halt above on your own node, or an incident you have verified through a second channel: the project's signed announcement plus a check with at least one other operator you know, or your own node's logs. Never on the strength of a single message, chat post or notice naming a block: anyone can post one, and a node that invalidates a block the network follows leaves the network's chain. Start once with `--invalidate-block <block id>` (the full 64-hex id; repeatable). The node logs `block … is marked invalid by the operator` and starts on the best other branch, or on the block's parent. The verdict is stored in `blocks.dat`, so the flag is not needed again; the node refuses the block and its descendants, however much work they carry, until `--reconsider-block <block id>` cancels it (for example after upgrading to a fixed build). Node policy, not consensus: other nodes are not affected (docs/blocks.md §8) |
 | `configuration error: --invalidate-block …: expected a block id of 64 hex characters`, or `--invalidate-block …: the genesis block cannot be invalidated` (status 2) | A shortened or mistyped id (use the full id), or genesis; nothing was written |
-| `block store: N block(s) invalidated by the operator` at start | The operator verdicts in force; `--reconsider-block` cancels one |
+| `block store: N block(s) invalidated by the operator` and `operator verdict in force: block … at height …` at start | The operator verdicts in force, one line per block with its full id and height; `--reconsider-block` cancels one. Check that each is a verdict you gave |
+| `WARN operator fork: a heavier chain (known up to height …) is refused only because the operator invalidated block …`, repeated every 10 minutes; `/info` shows `operator_fork` | This node is off the network's chain because of your verdict: its view and its wallets' balances differ from the network's, and `/template` answers `503 operator fork: …`, so the miner stops. Verify the incident through a second channel (row above). When it is over (for example after upgrading), restart once with `--reconsider-block <block id>`. Mine on the fork only deliberately, with `--mine-despite-operator-fork` (docs/blocks.md §9.4) |
+| The miner reports `503 syncing: height …, headers …, tip … s old` | The node has not caught up since it started: bodies are still downloading, or its tip is older than 48 minutes. It serves templates once caught up, and from then on keeps serving them. If every miner of the network has stopped (or the network starts on an old genesis), start the first miner's node once with `--mine-from-stale-tip` (docs/blocks.md §9.4) |
 | `SubmitError::Store` in the log, node still running | A single failed block write, undone; the block is downloaded again. Repeated failures stop the node (row above) |
 | `N stored block(s) without a stored parent were not replayed` at start | After a failed write: harmless, the node downloads them again |
 | `N stored block(s) descend from blocks found invalid` at start | Harmless: blocks refused before the restart are refused again |
@@ -671,11 +680,12 @@ same time; idle figures are to be re-measured.
   data directory, then start once with `--repair-store` (§9, blocks.md §8).
 - **A full or failing disk:** free space or replace the disk, then restart (§9).
 - **Resync from scratch:** stop the node, move `blocks.dat` aside, start again.
-- **A halt that repeats at every start** (`applying block … which passed validation,
-  failed`): the stored block fails to apply again because the replay rebuilds the same
-  state (blocks.md §8). Keep the data directory and report the block id
-  (docs/testnet-incident-response.md); resyncing reaches the same block. An operator
-  override (`--invalidate-block`) is planned, not implemented.
+- **A halt that repeats at every start** (`applying block … failed: …. The block passed
+  validation`): the stored block fails to apply again because the replay rebuilds the
+  same state (blocks.md §8). Keep the data directory and report the block id
+  (docs/testnet-incident-response.md); resyncing reaches the same block. The block is
+  consensus-valid by the build's rules, so the fix is an upgraded build;
+  `--invalidate-block` forks the node off the network's chain until reconsidered (§9).
 
 ### 12.5 Testnet reset
 

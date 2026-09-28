@@ -11,7 +11,10 @@ use blacksilk_chain::store::FileStore;
 use blacksilk_consensus::{ChainParams, RandomXPow};
 use blacksilk_node::fingerprint::{self, consensus_fingerprint, BUILD_COMMIT};
 use blacksilk_node::serve::{self, RpcSettings};
-use blacksilk_node::{halt_exit_code, halt_message, open_exit_code, watch_store, App};
+use blacksilk_node::{
+    halt_exit_code, halt_message, open_exit_code, watch_operator_fork, watch_store, App,
+    MiningPolicy,
+};
 use blacksilk_p2p::{NetConfig, Network as P2p};
 use blacksilk_tx::params::TxRules;
 use clap::{CommandFactory, FromArgMatches};
@@ -194,7 +197,7 @@ fn run(cfg: Config) -> Result<(), Stop> {
     );
     log::info!("{}: loading {}", network_name(network), data_dir.display());
     let started = std::time::Instant::now();
-    let manager = ChainManager::open(
+    let mut manager = ChainManager::open(
         params.clone(),
         TxRules::at_height(&params, 0), // base constants; the manager selects rules per height
         Arc::new(RandomXPow::new()),
@@ -222,6 +225,24 @@ fn run(cfg: Config) -> Result<(), Stop> {
         manager.height(),
         hex::encode(&manager.tip_id()[..8])
     );
+    if cfg.mine_from_stale_tip {
+        manager.set_template_latch();
+        log::warn!(
+            "--mine-from-stale-tip: block templates are served from the start, without \
+             waiting to catch up with the network (for a network's first blocks on an old \
+             genesis, or after every miner stopped); blocks mined on a tip the network has \
+             passed are orphans"
+        );
+    }
+    let mining = MiningPolicy {
+        despite_operator_fork: cfg.mine_despite_operator_fork,
+    };
+    if mining.despite_operator_fork {
+        log::warn!(
+            "--mine-despite-operator-fork: block templates are served even while a heavier \
+             chain is refused only because of an --invalidate-block verdict"
+        );
+    }
 
     let bind = cfg.rpc_bind;
     if !bind.ip().is_loopback() {
@@ -290,10 +311,14 @@ fn run(cfg: Config) -> Result<(), Stop> {
         // it, so that a restart recovers deterministically (docs/blocks.md
         // §6, §8).
         let store_failed = watch_store(&chain, std::time::Duration::from_secs(2));
+        // A heavier chain refused only because of the operator's verdicts
+        // is warned about until it ends (RTW3-8).
+        let _fork_watch = watch_operator_fork(&chain, std::time::Duration::from_secs(10), mining);
         let watched = chain.clone();
         let app = App {
             chain,
             net: net.clone(),
+            mining,
         };
         let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let failed_flag = failed.clone();

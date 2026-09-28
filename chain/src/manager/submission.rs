@@ -10,6 +10,7 @@ use std::io;
 impl ChainManager {
     /// Accepts a block from the local miner or (later) the network.
     pub fn submit_block(&mut self, block: Block, now: u64) -> Result<Submitted, SubmitError> {
+        self.update_template_latch(now);
         let r = self.submit_inner(block, now, true, usize::MAX);
         self.publish_summary();
         r
@@ -36,6 +37,7 @@ impl ChainManager {
         now: u64,
         budget: usize,
     ) -> Result<Submitted, SubmitError> {
+        self.update_template_latch(now);
         let r = self.submit_inner(block, now, true, budget);
         self.publish_summary();
         r
