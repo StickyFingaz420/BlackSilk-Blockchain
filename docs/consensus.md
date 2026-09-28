@@ -119,11 +119,15 @@ Why:
 - The lag of 64 blocks means the next key is known about 2 hours before it takes
   effect, so miners and nodes *could* prepare the new dataset in time, and a shallow
   reorg cannot change the key under active miners.
-  - **As implemented, the miner does not prepare ahead:** it frees the old dataset and
-    builds the new one when the node's template shows the new key, and does not hash
-    meanwhile. Measured (2026-09-27, one machine): about 179 s with 8 threads under
-    load, 1,217–1,219 s with 1 thread. Nodes verify in light mode and only need a new
-    256 MiB cache (about 0.6 s).
+  - **As implemented (miner policy, not consensus):** by default the miner frees the
+    old dataset when the node's template shows the new key, builds the new key's
+    light cache and mines in light mode while the dataset is built in the background
+    (`miner::SeedPlanner`). With `--prebuild` it reads the next key's block id from
+    its node during the lag window (`next_seed_height`, Monero's `next_seed_hash`
+    window) and builds the next dataset before the switch. The template's `seed_id`
+    remains the only key a block is hashed with. Dataset build times are in
+    docs/testnet.md §12.1. Nodes verify in light mode and only need a new 256 MiB
+    cache (about 0.6 s).
   - The first switch is at height 2113 (then 4161, …). The switch has been exercised
     only in a test with a short epoch (16 blocks, lag 4, `chain/tests/manager.rs`),
     not at 2113 with the network parameters.

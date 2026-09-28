@@ -9,12 +9,18 @@ User=blacksilk
 Group=blacksilk
 # Set BLACKSILK_MINER_ADDRESS in /etc/blacksilk/miner.env (a testnet address from
 # `blacksilk-wallet address`). Full mode needs ~2.3 GiB of RAM; add --light for 256 MiB.
+# Add --prebuild to build the next RandomX key's dataset before each key switch
+# (peak ~4.4 GiB in full mode; docs/testnet.md §5).
 # The node writes its RPC cookie to <data_dir>/rpc.cookie at start (docs/blocks.md
 # §9.1); change --rpc-cookie if /etc/blacksilk/node.toml sets another data_dir.
 EnvironmentFile=/etc/blacksilk/miner.env
 ExecStart=/usr/local/bin/blacksilk-miner --node 127.0.0.1:29333 --rpc-cookie /var/lib/blacksilk/testnet/rpc.cookie --address ${BLACKSILK_MINER_ADDRESS}
 Restart=on-failure
 RestartSec=10
+# Exit status 78 (CONFIG_EXIT_CODE, miner/src/main.rs): the payout address is not
+# valid on the node's network, or the node reports an unknown network. A restart
+# cannot fix the configuration, so the miner stays stopped for the operator.
+RestartPreventExitStatus=78
 Nice=10
 
 NoNewPrivileges=yes

@@ -1,0 +1,88 @@
+{
+  "started_unix": 1790561797,
+  "duration_secs": 1661,
+  "nodes": 4,
+  "final_height": 301,
+  "partitions": 1,
+  "tx_attempts": 9,
+  "tx_submitted": 9,
+  "tx_failures": {},
+  "px_attempts": 0,
+  "px_submitted": 0,
+  "px_failures": {},
+  "warmup": {
+    "enabled": true,
+    "reached": true,
+    "secs": 636,
+    "end_height": 197,
+    "end_difficulty": 12,
+    "mean_interval_secs": 7.858489123333332,
+    "window_blocks": 30,
+    "ratio": 0.75,
+    "target_secs": 10
+  },
+  "measured_secs": 960,
+  "reorganizations": 21,
+  "max_reorg_depth": 12,
+  "reorg_depths": {
+    "1": 17,
+    "2": 2,
+    "12": 2
+  },
+  "warmup_reorganizations": 0,
+  "warmup_max_reorg_depth": 0,
+  "reorgs_by_phase": {
+    "final": {
+      "count": 21,
+      "max_depth": 12,
+      "depths": {
+        "1": 17,
+        "2": 2,
+        "12": 2
+      }
+    }
+  },
+  "blocks_found_by_phase": {
+    "connected": {
+      "found": 208,
+      "not_on_best_chain": 1
+    },
+    "final": {
+      "found": 137,
+      "not_on_best_chain": 25
+    },
+    "warmup": {
+      "found": 3,
+      "not_on_best_chain": 0
+    }
+  },
+  "miner_prebuild": true,
+  "misbehavior_disconnects": 0,
+  "crashes": [],
+  "network": "regtest",
+  "all_equal_samples": 57,
+  "stuck_incidents": 0,
+  "samples": 105,
+  "max_rss_mb": {
+    "miner0": 264.45703125,
+    "miner1": 264.4296875,
+    "node0": 270.4140625,
+    "node1": 269.9375,
+    "node2": 270.48828125,
+    "node3": 271.8671875
+  },
+  "converged_at_end": true,
+  "mempools_drained_at_end": true,
+  "late_joiner_synced": true,
+  "late_joiner_peers": 3,
+  "fresh_wallet_balances_match": true,
+  "fresh_wallet_px_balances_match": true,
+  "supply_conserved": true,
+  "generated": 602731309704,
+  "wallet_total": 602731309704,
+  "wallet_px_total": 0,
+  "proxy_bytes": 961691,
+  "checks_passed": true,
+  "evidence": true,
+  "evidence_notes": []
+}

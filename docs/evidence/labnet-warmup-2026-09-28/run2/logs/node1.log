@@ -1,0 +1,20 @@
+[2026-09-28T02:47:49.087Z INFO  blacksilk_node] blacksilk-node 0.1.0 commit fd848fb77231a1f36f1ed76587083bcf1ee0fae4
+[2026-09-28T02:47:49.087Z INFO  blacksilk_node] regtest: genesis 087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7, consensus fingerprint 5df1f2267d609ceaab90f5368b368d4302da7542462f78323a9f88383d99fd2a
+[2026-09-28T02:47:49.087Z INFO  blacksilk_node] regtest: loading C:/bszkeval/w2-mine/ev2\node1
+[2026-09-28T02:47:49.104Z INFO  blacksilk_node] chain loaded in 16.6ms: height 0, tip 087d6fd4efbc45eb
+[2026-09-28T02:47:49.107Z INFO  blacksilk_node] P2P listening on 127.0.0.1:47621
+[2026-09-28T02:47:49.107Z INFO  blacksilk_node] RPC listening on http://127.0.0.1:47620
+[2026-09-28T02:47:49.152Z WARN  blacksilk_node::cookie] the data directory C:/bszkeval/w2-mine/ev2\node1 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it
+[2026-09-28T02:47:49.154Z INFO  blacksilk_node::serve] RPC credential written to C:/bszkeval/w2-mine/ev2\node1\rpc.cookie (clients read it: --rpc-cookie)
+[2026-09-28T02:47:49.473Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:3846 (height 0)
+[2026-09-28T02:47:49.473Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:3851 (height 0)
+[2026-09-28T02:47:49.489Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:49643 (height 0)
+[2026-09-28T02:47:49.489Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:49642 (height 0)
+[2026-09-28T03:01:03.633Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 211
+[2026-09-28T03:01:41.014Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 214
+[2026-09-28T03:04:43.885Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:49642
+[2026-09-28T03:04:43.886Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:3851
+[2026-09-28T03:04:43.886Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:49643
+[2026-09-28T03:07:47.563Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:6251 (height 251)
+[2026-09-28T03:07:47.961Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:49643 (height 252)
+[2026-09-28T03:07:47.977Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:49642 (height 252)

@@ -75,11 +75,49 @@ struct Args {
     /// about a minute, during which the harness loop pauses. 0 disables it.
     #[arg(long, default_value_t = 0)]
     px_every_mins: u64,
-    /// Run the miners in full mode (the miner's default: a 2 GiB dataset each,
-    /// rebuilt at every RandomX key switch) instead of light mode.
+    /// Run the miners in full mode (the miner's default: a 2 GiB dataset each)
+    /// instead of light mode.
     #[arg(long)]
     miner_full: bool,
+    /// Pass `--prebuild` to the miners (the next RandomX key's context is
+    /// built before the switch). On in evidence runs.
+    #[arg(long)]
+    prebuild: bool,
+    /// Skip the warm-up: both miners start at once, from the genesis
+    /// difficulty. Its reorganizations are then counted with the rest.
+    #[arg(long)]
+    no_warmup: bool,
+    /// Warm-up criterion: the mean interval of the last this many blocks...
+    #[arg(long, default_value_t = 30)]
+    warmup_window: u64,
+    /// ...is at least this fraction of the target block time.
+    #[arg(long, default_value_t = 0.75)]
+    warmup_ratio: f64,
+    /// Longest warm-up; a run whose warm-up ends here without meeting the
+    /// criterion is not evidence.
+    #[arg(long, default_value_t = 60)]
+    warmup_max_mins: u64,
+    /// An evidence run: refuses to start if `--duration-mins` is shorter
+    /// than 10 minutes, turns on `--prebuild`, refuses `--no-warmup`, and
+    /// exits with status 1 unless `summary.json` says `evidence: true`.
+    #[arg(long)]
+    evidence: bool,
 }
+
+/// The shortest measured phase (after the warm-up) of a run that may be
+/// labelled evidence (decisions "Labnet deep reorgs (INV-REORG)").
+const EVIDENCE_MIN_SECS: u64 = 600;
+
+/// How long after a partition heals its reorganizations count as the
+/// heal's rather than as connected-network ones.
+const HEAL_SECS: u64 = 60;
+
+/// Phases of a run. Reorganizations and found blocks are reported per phase.
+const WARMUP: &str = "warmup";
+const CONNECTED: &str = "connected";
+const PARTITION: &str = "partition";
+const HEAL: &str = "heal";
+const FINAL: &str = "final";
 
 fn rpc_port(base: u16, i: usize) -> u16 {
     base + 20 * i as u16
@@ -113,8 +151,26 @@ struct Report {
     px_attempts: u32,
     px_submitted: u32,
     px_failures: BTreeMap<String, u32>,
+    /// The warm-up: a single miner until the difficulty nears equilibrium.
+    warmup: Warmup,
+    /// Seconds from the end of the warm-up to the end of the traffic phase:
+    /// the measured part of the run.
+    measured_secs: u64,
+    /// Reorganizations (log lines summed over all nodes) after the warm-up.
     reorganizations: u32,
     max_reorg_depth: u64,
+    /// Depth -> count, after the warm-up.
+    reorg_depths: BTreeMap<u64, u32>,
+    /// The warm-up's reorganizations, reported separately (not in the above).
+    warmup_reorganizations: u32,
+    warmup_max_reorg_depth: u64,
+    /// All reorganizations by phase: warmup, connected, partition, heal (the
+    /// first 60 s after a partition heals) and final (the checks).
+    reorgs_by_phase: BTreeMap<String, ReorgStats>,
+    /// Blocks the miners found (accepted by their node), by phase, and how
+    /// many of them their node did not adopt at submission.
+    blocks_found_by_phase: BTreeMap<String, FoundStats>,
+    miner_prebuild: bool,
     misbehavior_disconnects: u32,
     crashes: Vec<String>,
     network: String,
@@ -138,6 +194,158 @@ struct Report {
     wallet_px_total: u64,
     proxy_bytes: u64,
     checks_passed: bool,
+    /// Whether the run may be cited as evidence: `checks_passed`, a warm-up
+    /// that reached its criterion, miners with `--prebuild`, and a measured
+    /// phase of at least 10 minutes. `evidence_notes` says what is missing.
+    evidence: bool,
+    evidence_notes: Vec<String>,
+}
+
+#[derive(Default, Serialize)]
+struct Warmup {
+    enabled: bool,
+    /// The criterion was met (else the warm-up hit `--warmup-max-mins`).
+    reached: bool,
+    secs: u64,
+    /// Node 0's height and tip difficulty when the warm-up ended.
+    end_height: u64,
+    end_difficulty: u64,
+    /// The mean block interval over the criterion window at the end.
+    mean_interval_secs: Option<f64>,
+    window_blocks: u64,
+    ratio: f64,
+    target_secs: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+struct ReorgStats {
+    count: u32,
+    max_depth: u64,
+    /// Depth -> count.
+    depths: BTreeMap<u64, u32>,
+}
+
+impl ReorgStats {
+    fn add(&mut self, depth: u64) {
+        self.count += 1;
+        self.max_depth = self.max_depth.max(depth);
+        *self.depths.entry(depth).or_insert(0) += 1;
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+struct FoundStats {
+    found: u32,
+    not_on_best_chain: u32,
+}
+
+/// The mean interval (seconds) of the newest `window` or more blocks, from
+/// the times a node first reported each height (`height -> seconds`).
+/// Heights can be missing (two blocks between samples); the base is the
+/// newest recorded height at least `window` below the top.
+fn mean_interval(arrivals: &BTreeMap<u64, f64>, window: u64) -> Option<f64> {
+    let (&top, &t_top) = arrivals.iter().next_back()?;
+    let limit = top.checked_sub(window.max(1))?;
+    let (&base, &t_base) = arrivals.range(..=limit).next_back()?;
+    Some((t_top - t_base) / (top - base) as f64)
+}
+
+/// The warm-up criterion: with a single miner, the difficulty is near its
+/// equilibrium once blocks come at close to the target interval
+/// (`mean >= ratio * target`). Below equilibrium blocks come faster; the
+/// ratio allows for the noise of a window of exponential solve times
+/// (a standard deviation of about target/sqrt(window)).
+fn warmed_up(mean: Option<f64>, target_secs: u64, ratio: f64) -> bool {
+    mean.is_some_and(|m| m >= ratio * target_secs as f64)
+}
+
+/// Log-file sizes at which phases begin, to attribute every log line to the
+/// phase in which it was written.
+#[derive(Default)]
+struct PhaseMarks {
+    marks: Vec<(&'static str, BTreeMap<String, u64>)>,
+}
+
+impl PhaseMarks {
+    /// Records that `phase` begins now: the current size of every node and
+    /// miner log in `dir`.
+    fn mark(&mut self, phase: &'static str, dir: &Path) {
+        let mut sizes = BTreeMap::new();
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if is_process_log(&name) {
+                // The size through an open handle: on Windows the directory
+                // entry's size (`DirEntry::metadata`) lags while another
+                // process appends, which put every line of the first
+                // evidence run in the last phase.
+                let len = File::open(entry.path())
+                    .and_then(|f| f.metadata())
+                    .map_or(0, |m| m.len());
+                sizes.insert(name, len);
+            }
+        }
+        self.marks.push((phase, sizes));
+    }
+
+    /// The phase of the byte at `pos` of log `file`: that of the last mark
+    /// at or below `pos`. Before its first mark a file belongs to that
+    /// mark's phase; a file no mark knows (started later) to [`FINAL`].
+    fn phase_at(&self, file: &str, pos: u64) -> &'static str {
+        let mut phase = None;
+        for (p, sizes) in &self.marks {
+            let Some(&at) = sizes.get(file) else { continue };
+            if phase.is_none() || at <= pos {
+                phase = Some(*p);
+            } else {
+                break;
+            }
+        }
+        phase.unwrap_or(FINAL)
+    }
+}
+
+fn is_process_log(name: &str) -> bool {
+    (name.starts_with("node") || name.starts_with("miner")) && name.ends_with(".log")
+}
+
+/// The depth of a node's `reorganization: disconnecting <depth> block(s)`
+/// line.
+fn reorg_depth(line: &str) -> Option<u64> {
+    let rest = line.split("reorganization: disconnecting ").nth(1)?;
+    rest.split_whitespace().next()?.parse().ok()
+}
+
+/// What the logs say, by phase.
+#[derive(Default)]
+struct LogStats {
+    reorgs: BTreeMap<String, ReorgStats>,
+    found: BTreeMap<String, FoundStats>,
+    misbehavior: u32,
+}
+
+impl LogStats {
+    /// Adds the lines of log `file` (bytes), each in the phase in which it
+    /// was written.
+    fn add_log(&mut self, file: &str, bytes: &[u8], marks: &PhaseMarks) {
+        let mut pos = 0u64;
+        for raw in bytes.split_inclusive(|b| *b == b'\n') {
+            let phase = marks.phase_at(file, pos);
+            pos += raw.len() as u64;
+            let line = String::from_utf8_lossy(raw);
+            if file.starts_with("node") {
+                if let Some(depth) = reorg_depth(&line) {
+                    self.reorgs.entry(phase.into()).or_default().add(depth);
+                }
+                if line.contains("for misbehavior") {
+                    self.misbehavior += 1;
+                }
+            } else if line.contains("found block ") {
+                let f = self.found.entry(phase.into()).or_default();
+                f.found += 1;
+                f.not_on_best_chain += u32::from(line.contains("not on the node's best chain"));
+            }
+        }
+    }
 }
 
 fn unix_now() -> u64 {
@@ -307,9 +515,130 @@ fn node_args(
     v
 }
 
+/// Why a run may not be labelled evidence (empty: it may).
+fn evidence_notes(r: &Report) -> Vec<String> {
+    let mut notes = Vec::new();
+    if !r.checks_passed {
+        notes.push("checks did not pass".into());
+    }
+    if !r.warmup.enabled {
+        notes.push("no warm-up (--no-warmup)".into());
+    } else if !r.warmup.reached {
+        notes.push("the warm-up did not reach its criterion".into());
+    }
+    if !r.miner_prebuild {
+        notes.push("miners without --prebuild".into());
+    }
+    if r.measured_secs < EVIDENCE_MIN_SECS {
+        notes.push(format!(
+            "measured phase {} s, shorter than {} s",
+            r.measured_secs, EVIDENCE_MIN_SECS
+        ));
+    }
+    notes
+}
+
+/// What one metrics sample needs besides the processes and the report.
+struct Sampling<'a> {
+    clients: &'a [Client],
+    metrics: &'a mut File,
+    stuck: &'a mut [StuckDetector],
+}
+
+impl Sampling<'_> {
+    /// Records one metrics row and checks crashes and stuck nodes.
+    fn sample(
+        &mut self,
+        journal: &mut File,
+        phase: &str,
+        procs: &mut [Proc],
+        report: &mut Report,
+        partitioned: bool,
+        connected_since: Instant,
+    ) {
+        let now = Instant::now();
+        report.samples += 1;
+        let is = infos(self.clients);
+        let col = |f: &dyn Fn(&Info) -> String| -> String {
+            is.iter()
+                .map(|i| i.as_ref().map_or("-".into(), f))
+                .collect::<Vec<_>>()
+                .join("/")
+        };
+        let heights = col(&|i| i.height.to_string());
+        let hh = col(&|i| i.header_height.to_string());
+        let tips = col(&|i| i.tip[..8].to_string());
+        let mps = col(&|i| i.mempool_txs.to_string());
+        let peers = col(&|i| i.peers.to_string());
+        // Tip difficulties: a run starts at the genesis difficulty, and
+        // its reorganization counts depend on how far the difficulty still
+        // is from the miners' equilibrium (docs/evidence/labnet-reorg-2026-09-27).
+        let difficulties = col(&|i| i.difficulty.to_string());
+        let mut rss = Vec::new();
+        for p in procs.iter_mut() {
+            if let Ok(Some(status)) = p.child.try_wait() {
+                let msg = format!("{} exited: {status}", p.name);
+                if !report.crashes.contains(&msg) {
+                    log(journal, &format!("CRASH: {msg}"));
+                    report.crashes.push(msg);
+                }
+            }
+            let mb = rss_mb(p.child.id()).unwrap_or(0.0);
+            let e = report.max_rss_mb.entry(p.name.clone()).or_insert(0.0);
+            *e = e.max(mb);
+            rss.push(format!("{mb:.0}"));
+        }
+        let all_equal = is
+            .iter()
+            .all(|i| i.as_ref().map(|x| &x.tip) == is[0].as_ref().map(|x| &x.tip));
+        report.all_equal_samples += all_equal as u32;
+        // Stuck: behind the best height without progress (`StuckDetector`).
+        let best = is.iter().flatten().map(|x| x.height).max().unwrap_or(0);
+        let connected_long =
+            !partitioned && now.duration_since(connected_since) > Duration::from_secs(120);
+        for (k, info) in is.iter().enumerate() {
+            let Some(info) = info else { continue };
+            if self.stuck[k].observe(now, &info.tip, info.height, best, connected_long) {
+                report.stuck_incidents += 1;
+                log(
+                    journal,
+                    &format!(
+                        "node{k} stuck at height {} while best is {best}",
+                        info.height
+                    ),
+                );
+            }
+        }
+        let _ = writeln!(
+            self.metrics,
+            "{},{},{},{},{},{},{},{},{},{}",
+            unix_now(),
+            partitioned,
+            heights,
+            hh,
+            tips,
+            mps,
+            peers,
+            rss.join("/"),
+            difficulties,
+            phase
+        );
+        let _ = self.metrics.flush();
+    }
+}
+
 fn main() {
     let a = Args::parse();
     assert!(a.nodes >= 4, "need at least 4 nodes");
+    if a.evidence {
+        assert!(
+            a.duration_mins * 60 >= EVIDENCE_MIN_SECS,
+            "--evidence needs --duration-mins of at least {} (the measured phase after the warm-up)",
+            EVIDENCE_MIN_SECS / 60
+        );
+        assert!(!a.no_warmup, "--evidence needs the warm-up");
+    }
+    let prebuild = a.prebuild || a.evidence;
     let net = match a.network.as_str() {
         "regtest" => Network::Regtest,
         "testnet" => Network::Testnet,
@@ -332,7 +661,7 @@ fn main() {
     let mut metrics = File::create(a.out.join("metrics.csv")).unwrap();
     writeln!(
         metrics,
-        "unix,partitioned,heights,header_heights,tips,mempools,peers,rss_mb,difficulties"
+        "unix,partitioned,heights,header_heights,tips,mempools,peers,rss_mb,difficulties,phase"
     )
     .unwrap();
     let node_bin = a.bin_dir.join(if cfg!(windows) {
@@ -411,8 +740,10 @@ fn main() {
     for name in ["miner-a", "miner-b", "user-1", "user-2", "user-3"] {
         wallets.push((name.into(), Wallet::generate(net, 1).unwrap()));
     }
+    report.miner_prebuild = prebuild;
     let miner_nodes = [0, n / 2];
-    for (k, &node) in miner_nodes.iter().enumerate() {
+    let miner_args = |k: usize, wallets: &mut Vec<(String, Wallet)>| -> Vec<String> {
+        let node = miner_nodes[k];
         let addr = wallets[k].1.address(0, 0);
         let mut args: Vec<String> = vec![
             "--node".into(),
@@ -429,19 +760,117 @@ fn main() {
         if !a.miner_full {
             args.push("--light".into());
         }
-        procs.push(spawn(
-            &miner_bin,
-            &args,
-            &a.out.join(format!("miner{k}.log")),
-            &format!("miner{k}"),
-        ));
+        if prebuild {
+            args.push("--prebuild".into());
+        }
+        args
+    };
+    let mut stuck: Vec<StuckDetector> = (0..n).map(|_| StuckDetector::default()).collect();
+    let mut sampling = Sampling {
+        clients: &clients,
+        metrics: &mut metrics,
+        stuck: &mut stuck,
+    };
+    let mut marks = PhaseMarks::default();
+    let run_start = Instant::now();
+
+    // Warm-up (decisions "Labnet deep reorgs (INV-REORG)"): the first miner
+    // alone until the difficulty nears its equilibrium. Two miners from the
+    // genesis difficulty mine in lockstep at difficulty 1 and split deeply
+    // (docs/evidence/labnet-reorg-2026-09-27); those splits say nothing
+    // about the network at a working difficulty.
+    let target_secs = ChainParams::for_network(net).target_block_time;
+    report.warmup = Warmup {
+        enabled: !a.no_warmup,
+        window_blocks: a.warmup_window,
+        ratio: a.warmup_ratio,
+        target_secs,
+        ..Default::default()
+    };
+    let args0 = miner_args(0, &mut wallets);
+    procs.push(spawn(
+        &miner_bin,
+        &args0,
+        &a.out.join("miner0.log"),
+        "miner0",
+    ));
+    if !a.no_warmup {
+        marks.mark(WARMUP, &a.out);
+        log(
+            &mut journal,
+            &format!(
+                "warm-up: miner0 alone until the mean interval of {} blocks is at least {} x {target_secs} s (at most {} min)",
+                a.warmup_window, a.warmup_ratio, a.warmup_max_mins
+            ),
+        );
+        let deadline = run_start + Duration::from_secs(a.warmup_max_mins * 60);
+        let mut arrivals: BTreeMap<u64, f64> = BTreeMap::new();
+        let mut next_sample = run_start;
+        let mut last = None;
+        while Instant::now() < deadline {
+            if Instant::now() >= next_sample {
+                next_sample = Instant::now() + Duration::from_secs(15);
+                sampling.sample(
+                    &mut journal,
+                    WARMUP,
+                    &mut procs,
+                    &mut report,
+                    false,
+                    run_start,
+                );
+            }
+            if let Ok(i) = clients[0].info() {
+                arrivals
+                    .entry(i.height)
+                    .or_insert(run_start.elapsed().as_secs_f64());
+                last = Some(i);
+            }
+            let mean = mean_interval(&arrivals, a.warmup_window);
+            report.warmup.mean_interval_secs = mean;
+            if warmed_up(mean, target_secs, a.warmup_ratio) {
+                report.warmup.reached = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        report.warmup.secs = run_start.elapsed().as_secs();
+        if let Some(i) = &last {
+            report.warmup.end_height = i.height;
+            report.warmup.end_difficulty = i.difficulty;
+        }
+        log(
+            &mut journal,
+            &format!(
+                "warm-up {} after {} s at height {} (difficulty {}, mean interval {} s)",
+                if report.warmup.reached {
+                    "done"
+                } else {
+                    "ended WITHOUT reaching its criterion"
+                },
+                report.warmup.secs,
+                report.warmup.end_height,
+                report.warmup.end_difficulty,
+                report
+                    .warmup
+                    .mean_interval_secs
+                    .map_or("-".into(), |m| format!("{m:.1}"))
+            ),
+        );
     }
+    let args1 = miner_args(1, &mut wallets);
+    procs.push(spawn(
+        &miner_bin,
+        &args1,
+        &a.out.join("miner1.log"),
+        "miner1",
+    ));
+    marks.mark(CONNECTED, &a.out);
     log(
         &mut journal,
-        "miners started on nodes 0 and n/2 (one per partition group)",
+        "miners running on nodes 0 and n/2 (one per partition group)",
     );
 
-    // Main loop.
+    // Main loop: the measured phase.
     let start = Instant::now();
     let end = start + Duration::from_secs(a.duration_mins * 60);
     let mut next_sample = start;
@@ -449,14 +878,20 @@ fn main() {
     // PX needs mature coinbase outputs first (60 blocks).
     let mut next_px = start + Duration::from_secs(60 * a.px_every_mins.max(12));
     let mut partition_until: Option<Instant> = None;
+    let mut heal_until: Option<Instant> = None;
     let mut next_partition = start + Duration::from_secs(a.partition_every_mins * 60);
     let mut connected_since = start;
-    let mut stuck: Vec<StuckDetector> = (0..n).map(|_| StuckDetector::default()).collect();
     while Instant::now() < end {
         let now = Instant::now();
 
+        if heal_until.is_some_and(|t| now >= t) {
+            heal_until = None;
+            marks.mark(CONNECTED, &a.out);
+        }
         // Partitions.
         if partition_until.is_none() && now >= next_partition {
+            heal_until = None;
+            marks.mark(PARTITION, &a.out);
             for l in &links {
                 if group(l.from) != group(l.to) {
                     l.handle.set_up(false);
@@ -480,94 +915,30 @@ fn main() {
             partition_until = None;
             connected_since = now;
             next_partition = now + Duration::from_secs(a.partition_every_mins * 60);
+            heal_until = Some(now + Duration::from_secs(HEAL_SECS));
+            marks.mark(HEAL, &a.out);
             log(&mut journal, "partition healed");
         }
 
         // Samples and invariants.
         if now >= next_sample {
             next_sample = now + Duration::from_secs(15);
-            report.samples += 1;
-            let is = infos(&clients);
-            let heights: Vec<String> = is
-                .iter()
-                .map(|i| i.as_ref().map_or("-".into(), |i| i.height.to_string()))
-                .collect();
-            let hh: Vec<String> = is
-                .iter()
-                .map(|i| {
-                    i.as_ref()
-                        .map_or("-".into(), |i| i.header_height.to_string())
-                })
-                .collect();
-            let tips: Vec<String> = is
-                .iter()
-                .map(|i| i.as_ref().map_or("-".into(), |i| i.tip[..8].to_string()))
-                .collect();
-            let mps: Vec<String> = is
-                .iter()
-                .map(|i| i.as_ref().map_or("-".into(), |i| i.mempool_txs.to_string()))
-                .collect();
-            let peers: Vec<String> = is
-                .iter()
-                .map(|i| i.as_ref().map_or("-".into(), |i| i.peers.to_string()))
-                .collect();
-            // Tip difficulties: a run starts at the genesis difficulty, and
-            // its reorganization counts depend on how far the difficulty still
-            // is from the miners' equilibrium (docs/evidence/labnet-reorg-2026-09-27).
-            let difficulties: Vec<String> = is
-                .iter()
-                .map(|i| i.as_ref().map_or("-".into(), |i| i.difficulty.to_string()))
-                .collect();
-            let mut rss = Vec::new();
-            for p in &mut procs {
-                if let Ok(Some(status)) = p.child.try_wait() {
-                    let msg = format!("{} exited: {status}", p.name);
-                    if !report.crashes.contains(&msg) {
-                        log(&mut journal, &format!("CRASH: {msg}"));
-                        report.crashes.push(msg);
-                    }
-                }
-                let mb = rss_mb(p.child.id()).unwrap_or(0.0);
-                let e = report.max_rss_mb.entry(p.name.clone()).or_insert(0.0);
-                *e = e.max(mb);
-                rss.push(format!("{mb:.0}"));
-            }
             let partitioned = partition_until.is_some();
-            let all_equal = is
-                .iter()
-                .all(|i| i.as_ref().map(|x| &x.tip) == is[0].as_ref().map(|x| &x.tip));
-            report.all_equal_samples += all_equal as u32;
-            // Stuck: behind the best height without progress (`StuckDetector`).
-            let best = is.iter().flatten().map(|x| x.height).max().unwrap_or(0);
-            let connected_long =
-                !partitioned && now.duration_since(connected_since) > Duration::from_secs(120);
-            for (k, info) in is.iter().enumerate() {
-                let Some(info) = info else { continue };
-                if stuck[k].observe(now, &info.tip, info.height, best, connected_long) {
-                    report.stuck_incidents += 1;
-                    log(
-                        &mut journal,
-                        &format!(
-                            "node{k} stuck at height {} while best is {best}",
-                            info.height
-                        ),
-                    );
-                }
-            }
-            let _ = writeln!(
-                metrics,
-                "{},{},{},{},{},{},{},{},{}",
-                unix_now(),
+            let phase = if partitioned {
+                PARTITION
+            } else if heal_until.is_some() {
+                HEAL
+            } else {
+                CONNECTED
+            };
+            sampling.sample(
+                &mut journal,
+                phase,
+                &mut procs,
+                &mut report,
                 partitioned,
-                heights.join("/"),
-                hh.join("/"),
-                tips.join("/"),
-                mps.join("/"),
-                peers.join("/"),
-                rss.join("/"),
-                difficulties.join("/")
+                connected_since,
             );
-            let _ = metrics.flush();
         }
 
         // Transactions.
@@ -662,6 +1033,8 @@ fn main() {
         }
         std::thread::sleep(Duration::from_millis(200));
     }
+    report.measured_secs = start.elapsed().as_secs();
+    marks.mark(FINAL, &a.out);
     log(&mut journal, "traffic phase over; final checks");
 
     // --- Final checks -----------------------------------------------------------
@@ -794,33 +1167,36 @@ fn main() {
     for p in &mut procs {
         let _ = p.child.kill();
     }
-    // Log analysis.
+    // Log analysis: every line in the phase in which it was written.
+    let mut stats = LogStats::default();
     for entry in std::fs::read_dir(&a.out).unwrap().flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !(name.starts_with("node") && name.ends_with(".log")) {
+        if !is_process_log(&name) {
             continue;
         }
-        let text = std::fs::read_to_string(entry.path()).unwrap_or_default();
-        for line in text.lines() {
-            if let Some(rest) = line.split("reorganization: disconnecting ").nth(1) {
-                report.reorganizations += 1;
-                let depth: u64 = rest
-                    .split_whitespace()
-                    .next()
-                    .and_then(|d| d.parse().ok())
-                    .unwrap_or(0);
-                report.max_reorg_depth = report.max_reorg_depth.max(depth);
-            }
-            if line.contains("for misbehavior") {
-                report.misbehavior_disconnects += 1;
-            }
+        let bytes = std::fs::read(entry.path()).unwrap_or_default();
+        stats.add_log(&name, &bytes, &marks);
+    }
+    report.misbehavior_disconnects = stats.misbehavior;
+    for (phase, r) in &stats.reorgs {
+        if phase == WARMUP {
+            report.warmup_reorganizations = r.count;
+            report.warmup_max_reorg_depth = r.max_depth;
+            continue;
+        }
+        report.reorganizations += r.count;
+        report.max_reorg_depth = report.max_reorg_depth.max(r.max_depth);
+        for (d, c) in &r.depths {
+            *report.reorg_depths.entry(*d).or_insert(0) += c;
         }
     }
+    report.reorgs_by_phase = stats.reorgs;
+    report.blocks_found_by_phase = stats.found;
     report.proxy_bytes = links
         .iter()
         .map(|l| l.handle.bytes.load(std::sync::atomic::Ordering::Relaxed))
         .sum();
-    report.duration_secs = start.elapsed().as_secs();
+    report.duration_secs = run_start.elapsed().as_secs();
     report.checks_passed = report.crashes.is_empty()
         && report.converged_at_end
         && report.mempools_drained_at_end
@@ -830,11 +1206,14 @@ fn main() {
         && report.supply_conserved
         && report.misbehavior_disconnects == 0
         && report.stuck_incidents == 0;
+    report.evidence_notes = evidence_notes(&report);
+    report.evidence = report.evidence_notes.is_empty();
     let json = serde_json::to_string_pretty(&report).unwrap();
     std::fs::write(a.out.join("summary.json"), &json).unwrap();
     println!("{json}");
     rt.shutdown_background();
-    std::process::exit(if report.checks_passed { 0 } else { 1 });
+    let ok = report.checks_passed && (report.evidence || !a.evidence);
+    std::process::exit(if ok { 0 } else { 1 });
 }
 
 #[cfg(test)]
@@ -871,6 +1250,127 @@ mod tests {
         assert!(!d.observe(at(t0, 210), "b", 14, 14, true));
         assert!(!d.observe(at(t0, 220), "b", 14, 15, true));
         assert!(d.observe(at(t0, 311), "b", 14, 16, true));
+    }
+
+    fn arrivals(v: &[(u64, f64)]) -> BTreeMap<u64, f64> {
+        v.iter().copied().collect()
+    }
+
+    #[test]
+    fn the_mean_interval_needs_a_full_window() {
+        assert_eq!(mean_interval(&BTreeMap::new(), 3), None);
+        let a = arrivals(&[(1, 0.0), (2, 1.0), (3, 2.0)]);
+        assert_eq!(mean_interval(&a, 3), None, "only 2 intervals");
+        let a = arrivals(&[(1, 0.0), (2, 1.0), (3, 2.0), (4, 32.0)]);
+        assert_eq!(mean_interval(&a, 3), Some(32.0 / 3.0));
+        // Heights 5 and 6 arrived between samples: the base is the newest
+        // height at least the window below the top.
+        let a = arrivals(&[(1, 0.0), (2, 1.0), (4, 12.0), (7, 42.0)]);
+        assert_eq!(mean_interval(&a, 3), Some(30.0 / 3.0));
+        assert_eq!(mean_interval(&a, 4), Some(41.0 / 5.0));
+    }
+
+    /// At difficulty 1 (the genesis gap) blocks come every 1-2 s against a
+    /// 10 s target: not warmed up; near equilibrium they come at about T.
+    #[test]
+    fn the_warmup_ends_near_the_target_interval() {
+        assert!(!warmed_up(None, 10, 0.75));
+        assert!(!warmed_up(Some(1.2), 10, 0.75));
+        assert!(!warmed_up(Some(7.4), 10, 0.75));
+        assert!(warmed_up(Some(7.5), 10, 0.75));
+        assert!(warmed_up(Some(11.0), 10, 0.75));
+    }
+
+    fn marks(v: &[(&'static str, &[(&str, u64)])]) -> PhaseMarks {
+        PhaseMarks {
+            marks: v
+                .iter()
+                .map(|(p, sizes)| {
+                    let sizes = sizes.iter().map(|(f, s)| (f.to_string(), *s)).collect();
+                    (*p, sizes)
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn log_lines_belong_to_the_phase_they_were_written_in() {
+        let m = marks(&[
+            (WARMUP, &[("node0.log", 0), ("miner0.log", 0)]),
+            (
+                CONNECTED,
+                &[("node0.log", 100), ("miner0.log", 50), ("miner1.log", 0)],
+            ),
+            (
+                PARTITION,
+                &[("node0.log", 200), ("miner0.log", 60), ("miner1.log", 10)],
+            ),
+        ]);
+        assert_eq!(m.phase_at("node0.log", 0), WARMUP);
+        assert_eq!(m.phase_at("node0.log", 99), WARMUP);
+        assert_eq!(m.phase_at("node0.log", 100), CONNECTED);
+        assert_eq!(m.phase_at("node0.log", 250), PARTITION);
+        assert_eq!(m.phase_at("miner1.log", 5), CONNECTED);
+        assert_eq!(m.phase_at("node-late.log", 0), FINAL, "started later");
+    }
+
+    /// Warm-up reorganizations are counted apart from the rest, by depth.
+    #[test]
+    fn reorganizations_and_found_blocks_are_split_by_phase() {
+        let warm =
+            "[t INFO blacksilk_chain] reorganization: disconnecting 22 block(s) above height 3\n";
+        let later = "[t INFO blacksilk_chain] reorganization: disconnecting 2 block(s) above height 300\n\
+                     [t WARN blacksilk_chain] reorganization: disconnecting 9 block(s) above height 310. A reorganization this deep\n\
+                     [t INFO blacksilk_p2p] disconnecting peer 1.2.3.4 for misbehavior: x\n";
+        let node = format!("{warm}{later}");
+        let m = marks(&[
+            (WARMUP, &[("node1.log", 0), ("miner0.log", 0)]),
+            (
+                CONNECTED,
+                &[("node1.log", warm.len() as u64), ("miner0.log", 0)],
+            ),
+        ]);
+        let mut s = LogStats::default();
+        s.add_log("node1.log", node.as_bytes(), &m);
+        s.add_log(
+            "miner0.log",
+            b"[t INFO blacksilk_miner] found block 5 (reward 1 BLK, 0 txs)\n\
+              [t INFO blacksilk_miner] found block 6 (reward 1 BLK, 0 txs); not on the node's best chain\n\
+              [t WARN blacksilk_miner] block 7 rejected: x\n",
+            &m,
+        );
+        assert_eq!(s.reorgs[WARMUP].count, 1);
+        assert_eq!(s.reorgs[WARMUP].max_depth, 22);
+        let c = &s.reorgs[CONNECTED];
+        assert_eq!((c.count, c.max_depth), (2, 9));
+        assert_eq!(c.depths, BTreeMap::from([(2, 1), (9, 1)]));
+        assert_eq!(s.misbehavior, 1);
+        assert_eq!(
+            s.found[CONNECTED],
+            FoundStats {
+                found: 2,
+                not_on_best_chain: 1
+            }
+        );
+    }
+
+    #[test]
+    fn a_short_or_unwarmed_run_is_not_evidence() {
+        let mut r = Report {
+            checks_passed: true,
+            miner_prebuild: true,
+            measured_secs: EVIDENCE_MIN_SECS,
+            ..Default::default()
+        };
+        r.warmup.enabled = true;
+        r.warmup.reached = true;
+        assert!(evidence_notes(&r).is_empty());
+        r.measured_secs = EVIDENCE_MIN_SECS - 1;
+        assert_eq!(evidence_notes(&r).len(), 1);
+        r.measured_secs = EVIDENCE_MIN_SECS;
+        r.warmup.reached = false;
+        r.miner_prebuild = false;
+        assert_eq!(evidence_notes(&r).len(), 2);
     }
 
     #[test]
