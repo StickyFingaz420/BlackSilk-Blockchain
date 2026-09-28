@@ -269,6 +269,7 @@ impl NodeApi for MockChain {
             header_height: self.height(),
             deepest_reorg: 0,
             misbehaving_disconnects: 0,
+            template_ready: None,
             genesis_id: Some(hex::encode(self.params.genesis_id())),
             consensus_fingerprint: None,
             build_commit: None,

@@ -176,6 +176,12 @@ fn spec_body(typed: bool, record: &Record) -> Vec<u8> {
             });
             text(&mut b, &m.reason);
         }
+        Record::Marker(Marker::Reconsider(id)) => {
+            // 0x03, the block id (W3-35b; docs/blocks.md §8).
+            assert!(typed, "a legacy store holds blocks only");
+            b.push(0x03);
+            b.extend_from_slice(id);
+        }
         Record::Marker(Marker::Checkpoint(c)) => {
             assert!(typed, "a legacy store holds blocks only");
             assert!(c.build_commit.len() <= MAX_BUILD_COMMIT);
@@ -394,6 +400,7 @@ pub fn seeds() -> Vec<(&'static str, Vec<u8>)> {
             origin: InvalidOrigin::Operator,
             reason: String::new(),
         })),
+        Record::Marker(Marker::Reconsider([7; 32])),
         Record::Block(([8; 32], Vec::new())),
     ];
     let file = record_file(&dir, &records);
@@ -409,10 +416,12 @@ pub fn seeds() -> Vec<(&'static str, Vec<u8>)> {
     let mut damaged = body.to_vec();
     damaged[FRAME_HEADER + 5] ^= 1;
     // Frames the store never writes: an unknown advisory type (skipped), an
-    // unknown critical type (refused), a short block record, a bad origin.
+    // unknown critical type (refused), a short reconsider record, a short
+    // block record, a bad origin.
     let odd: Vec<u8> = [
         frame(true, &[0x90, 1, 2, 3]),
         frame(true, &[0x01; 40]),
+        frame(true, &[0x04, 0]),
         frame(true, &[0x03, 0]),
         frame(true, &[0x01; 20]),
         frame(true, &[&[0x02][..], &[9; 32], &[3, 0, 0]].concat()),
