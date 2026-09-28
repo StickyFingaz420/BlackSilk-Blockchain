@@ -20,8 +20,9 @@
 //! output set, the PX root, invalid marks, kept bodies, the mempool and the
 //! exact store bytes in append order.
 //!
-//! This starts as a manager-only oracle; Stage 2 adds the actor as a fourth
-//! driver.
+//! Every driver's published chain summary (Stage 1) must describe its final
+//! state. This starts as a manager-only oracle; Stage 2 adds the actor as a
+//! fourth driver (docs/reviews/chain-actor-stage2.md).
 
 #[path = "support/stall.rs"]
 mod stall;
@@ -218,6 +219,20 @@ struct Outcome {
 
 fn outcome(m: &ChainManager, ctl: &StallControl, u: &Universe) -> Outcome {
     assert!(!m.sync_pending(), "the drain is finished");
+    // What a reader without the chain lock sees (Stage 1 summary) is the
+    // final state, whatever driver published it.
+    let s = m.summary();
+    assert_eq!(
+        (s.tip_id, s.height, s.header_height, s.best_header_id),
+        (
+            m.tip_id(),
+            m.height(),
+            m.header_height(),
+            m.best_header_id()
+        )
+    );
+    assert_eq!(s.locator, m.locator());
+    assert_eq!((s.mempool_txs, s.sync_pending), (m.mempool().len(), false));
     let state = m.state();
     Outcome {
         tip: m.tip_id(),

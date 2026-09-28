@@ -11,7 +11,7 @@ use crate::limits::PeerLimits;
 use crate::message::Message;
 use crate::originated::Originated;
 use blacksilk_chain::block::Block;
-use blacksilk_chain::manager::ChainManager;
+use blacksilk_chain::manager::{ChainManager, SummaryCell};
 use blacksilk_consensus::{BlockHeader, Hash};
 use blacksilk_tx::types::Transaction;
 use rand_chacha::ChaCha20Rng;
@@ -247,6 +247,10 @@ pub(super) struct HeaderBatch {
 
 pub(super) struct Inner {
     pub(super) chain: SharedChain,
+    /// The chain's published summary (`ChainManager::summary_cell`): the tip,
+    /// header height and locator, read without the chain lock by the
+    /// handshake, header requests and the maintenance loop.
+    pub(super) summary: Arc<SummaryCell>,
     pub(super) cfg: NetConfig,
     /// The chain's genesis id, bound into the session keys (R15-3).
     pub(super) genesis_id: Hash,
@@ -288,7 +292,9 @@ impl Inner {
     }
 
     /// Runs `f` under the chain lock on a blocking thread, so an async worker
-    /// never waits for the lock (R8-1). A panic in `f` poisoned the lock: the
+    /// never waits for the lock (R8-1), then publishes the chain summary
+    /// before releasing the lock (a mempool change made by `f` is visible to
+    /// summary readers at once). A panic in `f` poisoned the lock: the
     /// node stops, as `lock_or_exit` would on the next access. A task
     /// cancelled because the runtime is shutting down never resolves (the
     /// caller is being dropped too).
@@ -297,7 +303,13 @@ impl Inner {
         f: impl FnOnce(&mut ChainManager) -> T + Send + 'static,
     ) -> T {
         let inner = self.clone();
-        match tokio::task::spawn_blocking(move || f(&mut inner.chain())).await {
+        let run = move || {
+            let mut c = inner.chain();
+            let t = f(&mut c);
+            c.publish_summary();
+            t
+        };
+        match tokio::task::spawn_blocking(run).await {
             Ok(t) => t,
             Err(e) if e.is_panic() => fatal(&format!("chain task failed: {e}")),
             Err(_) => std::future::pending().await,

@@ -527,6 +527,13 @@ The route list is `blacksilk_node::ROUTES` (`node/src/lib.rs`).
 
 The PX endpoints are bulk-only: there is no lookup of a single record, contract or ring.
 
+**Concurrency (node, not consensus).** `/info` answers from the chain's published
+summary (`ChainManager::summary_cell`, p2p.md §10), never the chain lock, so it stays
+prompt while a block step, a reorganization or a slow disk holds the lock. Its chain
+fields are those of the last publication: at most one lock hold old, and mutually
+consistent. Every other route that reads the chain takes the lock on a blocking thread,
+within its admission class (§9.1), and may wait for the bounded step in progress.
+
 ### 9.1 Access control and limits (policy)
 
 A guard (`node/src/guard.rs`) runs in front of every route, and in front of unknown paths,

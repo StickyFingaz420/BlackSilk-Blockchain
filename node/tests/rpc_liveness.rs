@@ -4,9 +4,9 @@
 //! The hold is a stalled block append on the block-submission path
 //! (`chain/tests/support/stall.rs`); nothing in the node is instrumented.
 //! Numbering follows the Stage 0 assignment: L4 here is the dossier's L5, L5
-//! the dossier's L6 (see `p2p/tests/liveness.rs`). L4 fails until Stage 1 (34's
-//! snapshot) and is ignored (`-- --ignored` runs it). L5 passes since the RPC
-//! admission classes (36 W2, `node/src/guard.rs`) and runs by default.
+//! the dossier's L6 (see `p2p/tests/liveness.rs`). L4 failed before Stage 1
+//! (`/info` from the published chain summary) and runs by default since. L5
+//! passes since the RPC admission classes (36 W2, `node/src/guard.rs`).
 
 #[path = "../../chain/tests/support/stall.rs"]
 mod stall;
@@ -102,14 +102,15 @@ fn get(addr: SocketAddr, path: &str, timeout: Duration) -> Option<u16> {
 }
 
 /// L4 (F34-4; dossier L5): `/info` answers within 100 ms during a 40 s hold.
-/// Today every RPC chain call waits for the chain lock (on a blocking
-/// thread), so `/info` answers only when the hold ends.
+/// Before Stage 1 `/info` waited for the chain lock (on a blocking thread),
+/// so it answered only when the hold ended; it now reads the published
+/// summary, whose tip is the one from before the held block.
 #[test]
-#[ignore = "fails until Stage 1 (34)"]
 fn l4_info_answers_promptly_during_a_hold() {
     let s = serve();
     assert_eq!(get(s.addr, "/info", Duration::from_secs(5)), Some(200));
     let holder = Holder::start(s.shared.clone(), s.ctl.clone(), Duration::from_secs(40));
+    let mut worst = Duration::ZERO;
     for i in 0..5 {
         let start = Instant::now();
         let status = get(s.addr, "/info", Duration::from_secs(3));
@@ -124,7 +125,9 @@ fn l4_info_answers_promptly_during_a_hold() {
             took < Duration::from_millis(100),
             "/info {i} took {took:?} during the hold"
         );
+        worst = worst.max(took);
     }
+    println!("L4: worst /info latency during the hold: {worst:?}");
     assert!(holder.release());
 }
 
@@ -148,11 +151,16 @@ fn control_info_answers_within_100_ms_without_a_hold() {
 const RPC_CHAIN_CAP: usize = 16;
 const BURST: usize = 1000;
 
-/// L5 (F34-6; dossier L6): a burst of 1,000 `/info` requests during a hold
-/// starts at most [`RPC_CHAIN_CAP`] blocking threads, and every request is
-/// answered (200 or 503) once the hold ends. Before the admission classes,
-/// each request parked one blocking thread on the chain lock, up to tokio's
-/// default of 512, which the P2P tasks share.
+/// The route of the L5 burst: a read-class route that takes the chain lock.
+/// `/info` no longer does (Stage 1), so a burst of it would start no blocking
+/// thread at all and prove nothing about the cap.
+const CHAIN_READ: &str = "/distribution?to=1";
+
+/// L5 (F34-6; dossier L6): a burst of 1,000 chain-reading requests
+/// ([`CHAIN_READ`]) during a hold starts at most [`RPC_CHAIN_CAP`] blocking
+/// threads, and every request is answered (200 or 503) once the hold ends.
+/// Before the admission classes, each request parked one blocking thread on
+/// the chain lock, up to tokio's default of 512, which the P2P tasks share.
 #[test]
 fn l5_an_rpc_burst_during_a_hold_stays_within_the_blocking_thread_cap() {
     let s = serve();
@@ -174,7 +182,7 @@ fn l5_an_rpc_burst_during_a_hold_stays_within_the_blocking_thread_cap() {
                     tokio::spawn(async move {
                         let mut c = tokio::net::TcpStream::connect(addr).await.ok()?;
                         let req = format!(
-                            "GET /info HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+                            "GET {CHAIN_READ} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
                         );
                         c.write_all(req.as_bytes()).await.ok()?;
                         let mut resp = Vec::new();
@@ -205,7 +213,11 @@ fn l5_an_rpc_burst_during_a_hold_stays_within_the_blocking_thread_cap() {
         .filter(|s| matches!(s, Some(200) | Some(503)))
         .count();
     let blocking = peak.saturating_sub(WORKERS);
-    println!("peak blocking threads during the burst: {blocking}; answered {answered}/{BURST}");
+    let ok = statuses.iter().filter(|s| **s == Some(200)).count();
+    println!(
+        "L5: peak blocking threads during the burst: {blocking}; \
+         answered {answered}/{BURST} ({ok} with 200)"
+    );
     assert!(still_held, "the burst was measured during the hold");
     assert!(
         blocking <= RPC_CHAIN_CAP,

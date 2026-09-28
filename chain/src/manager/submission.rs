@@ -10,7 +10,9 @@ use std::io;
 impl ChainManager {
     /// Accepts a block from the local miner or (later) the network.
     pub fn submit_block(&mut self, block: Block, now: u64) -> Result<Submitted, SubmitError> {
-        self.submit_inner(block, now, true, usize::MAX)
+        let r = self.submit_inner(block, now, true, usize::MAX);
+        self.publish_summary();
+        r
     }
 
     /// [`Self::submit_block`] that validates and connects at most `budget`
@@ -34,14 +36,18 @@ impl ChainManager {
         now: u64,
         budget: usize,
     ) -> Result<Submitted, SubmitError> {
-        self.submit_inner(block, now, true, budget)
+        let r = self.submit_inner(block, now, true, budget);
+        self.publish_summary();
+        r
     }
 
     /// Continues the drain started by [`Self::submit_block_bounded`]: at most
     /// `budget` block validations. Returns true when nothing is left (the
     /// mempool then received the drain's effects).
     pub fn sync_step(&mut self, budget: usize) -> bool {
-        self.drain_ready(budget)
+        let done = self.drain_ready(budget);
+        self.publish_summary();
+        done
     }
 
     /// Whether completed blocks still wait to be connected (a bounded drain
@@ -333,10 +339,16 @@ mod tests {
         assert_eq!(full.height(), 41);
 
         let budget = 3;
+        assert!(bounded.summary_is_current(), "published after the headers");
         let first = bounded
             .submit_block_bounded(blocks[0].clone(), NOW, budget)
             .unwrap();
         assert_eq!(bounded.height(), 3, "exactly `budget` blocks connected");
+        assert!(
+            bounded.summary_is_current(),
+            "published after a bounded call"
+        );
+        assert!(bounded.summary().sync_pending);
         assert!(bounded.sync_pending());
         // Block 41 (header unknown so far) arrives mid-drain.
         let late = bounded
@@ -346,8 +358,14 @@ mod tests {
         let mut steps = 0;
         loop {
             let before = bounded.height();
+            let seq = bounded.summary().seq;
             let done = bounded.sync_step(budget);
             assert!(bounded.height() - before <= budget as u64);
+            // A reader without the lock sees exactly the fields of the last
+            // step, published once if the step changed any.
+            assert!(bounded.summary_is_current(), "published after a step");
+            let moved = bounded.height() != before;
+            assert!(!moved || bounded.summary().seq == seq + 1);
             steps += 1;
             if done {
                 break;
@@ -355,6 +373,12 @@ mod tests {
         }
         assert!(steps >= 10, "{steps} steps");
         same_chain(&full, &bounded);
+        assert_eq!(*full.summary(), {
+            let mut s = (*bounded.summary()).clone();
+            s.seq = full.summary().seq;
+            s
+        });
+        assert!(!bounded.summary().sync_pending);
         assert!(
             bounded
                 .verdict(first.id, first.height)

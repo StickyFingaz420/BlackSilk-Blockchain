@@ -108,8 +108,9 @@ impl Inner {
     /// At most one `GetHeaders` is outstanding per peer: if another task (the
     /// maintenance loop, the header worker) already asked, this does nothing
     /// (the second reply would arrive unsolicited). The request is marked
-    /// outstanding, under the same lock as that check, before the locator is
-    /// read on a blocking thread.
+    /// outstanding, under the same lock as that check. The locator is the
+    /// published chain summary's (never the chain lock): it is republished
+    /// whenever the best header chain changes, before the lock is released.
     async fn request_headers_after(self: &Arc<Self>, peer: PeerId, from: Option<Hash>) {
         {
             let mut st = self.state();
@@ -122,7 +123,7 @@ impl Inner {
                 _ => return,
             }
         }
-        let mut locator = self.with_chain(|c| c.locator()).await;
+        let mut locator = self.summary.load().locator.clone();
         if let Some(id) = from {
             locator.retain(|h| *h != id);
             locator.insert(0, id);
@@ -157,13 +158,11 @@ pub(super) fn in_grace(grace: Option<Instant>, now: Instant) -> bool {
 /// answering pings however long the proof of work takes (docs/p2p.md §6).
 pub(super) async fn on_headers(inner: &Arc<Inner>, peer: PeerId, headers: Vec<BlockHeader>) {
     let nid = inner.cfg.network_id;
-    // Only needed for an empty reply; read before the state lock (the two
-    // locks are never held together).
-    let ours = if headers.is_empty() {
-        Some(inner.with_chain(|c| c.header_height()).await)
-    } else {
-        None
-    };
+    // Only needed for an empty reply: the published summary's (the read loop
+    // never waits for the chain lock).
+    let ours = headers
+        .is_empty()
+        .then(|| inner.summary.load().header_height);
     let penalty = {
         let mut st = inner.state();
         let room = st

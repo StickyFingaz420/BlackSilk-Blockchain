@@ -17,8 +17,9 @@
 //! | L4, L5 | L5, L6 | RPC (`node/tests/rpc_liveness.rs`) |
 //! | L6 | L2 | a peer's own pongs while its `InvTx` waits; per-peer order kept |
 //!
-//! Tests that fail on the current code are ignored until Stage 1 lands
-//! (`cargo test -p blacksilk-p2p --test liveness -- --ignored` runs them).
+//! L1, L2, L3 and L6 failed before Stage 1 (the per-peer slow lane, the
+//! published chain summary and the chain-free maintenance loop) and run by
+//! default since. Each prints what it measured (`-- --nocapture`).
 
 mod common;
 
@@ -43,6 +44,7 @@ async fn pong_while_held(
     what: &str,
 ) -> u64 {
     let mut n = 1000;
+    let mut worst: f64 = 0.0;
     while holder.holding() {
         let t = pong_latency(r, w, n, 2.5, other).await.unwrap_or_else(|| {
             panic!(
@@ -55,9 +57,16 @@ async fn pong_while_held(
             "{what}: pong {n} took {t:.2} s, {:.1} s into the hold",
             holder.started.elapsed().as_secs_f64()
         );
+        worst = worst.max(t);
         n += 1;
         tokio::time::sleep(Duration::from_millis(900)).await;
     }
+    println!(
+        "{what}: {} pongs during a {:.1} s hold, worst {:.1} ms",
+        n - 1000,
+        holder.started.elapsed().as_secs_f64(),
+        worst * 1000.0
+    );
     n - 1000
 }
 
@@ -69,10 +78,9 @@ fn headers_reply(m: &Message, height: u64) -> bool {
 
 /// L1 (F34-1): a peer whose `GetHeaders` waits for the chain lock (held 40 s,
 /// past `PONG_TIMEOUT`) still gets every one of its pings answered promptly,
-/// and the `Headers` reply arrives once the hold ends. Today the peer's read
-/// loop is parked in the `GetHeaders` handler, so its pings sit unread.
+/// and the `Headers` reply arrives once the hold ends. Before Stage 1 the read
+/// loop was parked in the `GetHeaders` handler, so its pings sat unread.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "fails until Stage 1 (34)"]
 async fn l1_a_peers_own_pongs_flow_while_its_get_headers_waits() {
     let a = slow_node(0x11, fast_config(&[])).await;
     a.mine(3).await;
@@ -107,7 +115,6 @@ async fn l1_a_peers_own_pongs_flow_while_its_get_headers_waits() {
 /// a 40 s hold. Its pings are answered promptly throughout; after the hold the
 /// `Headers` reply comes first, then the `GetTx` request for the announced id.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "fails until Stage 1 (34)"]
 async fn l6_a_peers_own_pongs_flow_while_its_inv_tx_waits_and_order_is_kept() {
     let a = slow_node(0x16, fast_config(&[])).await;
     a.mine(3).await;
@@ -145,11 +152,10 @@ async fn l6_a_peers_own_pongs_flow_while_its_inv_tx_waits_and_order_is_kept() {
 /// L2 (F34-2, dossier L3): the maintenance loop keeps running during a hold.
 /// The node keeps a manual peer connected; the "peer" is a listener that drops
 /// every connection, so the node dials it again after its 10 s backoff. During
-/// a 30 s hold the second dial still comes within 20 s of the first. Today the
-/// loop waits for the chain tip at every tick, so nothing is dialed (nor
-/// pinged, timed out, fluffed or announced) until the hold ends.
+/// a 30 s hold the second dial still comes within 20 s of the first. Before Stage 1
+/// the loop waited for the chain tip at every tick, so nothing was dialed (nor
+/// pinged, timed out, fluffed or announced) until the hold ended.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "fails until Stage 1 (34)"]
 async fn l2_the_maintenance_loop_keeps_dialing_during_a_hold() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let a = slow_node(0x12, fast_config(&[listener.local_addr().unwrap()])).await;
@@ -171,17 +177,20 @@ async fn l2_the_maintenance_loop_keeps_dialing_during_a_hold() {
         again.is_ok(),
         "no redial within 20 s of the first dial (hold still on: {held})"
     );
+    println!(
+        "L2: redialed {:.1} s after the first dial, during the hold",
+        t0.elapsed().as_secs_f64()
+    );
     assert!(held, "the redial happened during the hold");
     assert!(holder.release());
 }
 
 /// L3 (F34-3, dossier L4): a new peer completes its handshake within 1 s
 /// during a hold longer than `HANDSHAKE_TIMEOUT`, and the node's `Version`
-/// carries its header height from before or after the held block. Today the
-/// node reads the chain before sending `Version`, so no connection completes
-/// during the hold.
+/// carries its header height from before or after the held block. Before
+/// Stage 1 the node read the chain before sending `Version`, so no connection
+/// completed during the hold.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "fails until Stage 1 (34)"]
 async fn l3_a_handshake_completes_during_a_hold() {
     let a = slow_node(0x13, fast_config(&[])).await;
     a.mine(2).await;
@@ -197,6 +206,7 @@ async fn l3_a_handshake_completes_during_a_hold() {
         panic!("no handshake within 1 s ({took:.2} s) of a hold (still on: {held})")
     });
     assert!(held, "the handshake completed during the hold");
+    println!("L3: handshake in {:.1} ms during the hold", took * 1000.0);
     assert!(
         version.height == header_height || version.height == header_height + 1,
         "Version.height {} (header height {header_height})",
