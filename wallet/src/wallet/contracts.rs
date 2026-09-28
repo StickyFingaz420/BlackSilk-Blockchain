@@ -1022,7 +1022,7 @@ fn round_up(x: u64) -> u64 {
 /// built ([`vault_claim_window`]) and at most [`MAX_VAULT_TIMEOUT_AHEAD`]
 /// ahead.
 fn check_vault_timeout(next: u64, timeout: u64) -> Result<(), WalletError> {
-    if timeout % VAULT_TIMEOUT_GRANULE != 0 {
+    if !timeout.is_multiple_of(VAULT_TIMEOUT_GRANULE) {
         return Err(WalletError::Contract(format!(
             "the vault timeout must be a multiple of {VAULT_TIMEOUT_GRANULE}, so the claim and \
              refund windows do not reveal it (e.g. {})",
@@ -1330,7 +1330,7 @@ mod tests {
                     );
                     assert_eq!(w.not_after % 16, 15, "{next} {t} {w:?}");
                     assert!(w.contains(next));
-                    let forced = round_up(next + 3) + CLAIM_WINDOW_SPAN - 1 >= t - 1;
+                    let forced = round_up(next + 3) + CLAIM_WINDOW_SPAN > t - 1;
                     assert_eq!(w.not_after == t - 1, forced, "{next} {t} {w:?}");
                 } else {
                     assert!(t - 1 < next + 3, "{next} {t}");
