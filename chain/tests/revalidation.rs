@@ -631,3 +631,36 @@ fn a_shorter_heavier_reorg_makes_a_ring_member_immature() {
     assert_eq!(full_pool.full_validations(), verified);
     assert!(!m.mempool().contains(&tx.hash()));
 }
+
+/// W2-12 item 2 through the manager: a reorganization returning a mined
+/// transfer pools it again without verifying it (`full_validations`
+/// unchanged). Needs the manager to capture returned transactions before it
+/// undoes their block (`Returned::capture`) and to call
+/// `Mempool::update_after_chain_change`: the call-site change reported to the
+/// chain-manager owner (W2-34b); until then the manager re-admits with
+/// `Mempool::readmit`, which validates in full, and this test fails.
+#[test]
+#[ignore = "needs the W2-12 call-site change in chain/src/manager (owner W2-34b)"]
+fn a_reorganization_returning_a_transfer_readmits_it_unverified() {
+    let mut m = open();
+    let mut miner = Miner::new(341);
+    let mut rival = Miner::new(342);
+    let mut rng = ChaCha20Rng::seed_from_u64(1_341);
+    let (alice, _) = WalletKeys::generate(&mut rng);
+    miner.mine_tip(&mut m, 80);
+    let plan = plan_where(&m, &miner.keys, |o| o.height == 1, &mut rng);
+    let tx = Transaction::from(pay(&m, &miner.keys, &alice, plan, &mut rng));
+    m.submit_tx(tx.clone()).unwrap();
+    let fork_parent = m.tip_id();
+    let t = m.template();
+    assert_eq!(t.txs.len(), 1);
+    let blk = miner.build(&t, t.txs.clone(), None);
+    let now = blk.header.timestamp;
+    m.submit_block(blk, now).unwrap();
+    assert!(m.mempool().is_empty());
+    let verified = m.mempool().full_validations();
+    rival.mine_on(&mut m, fork_parent, 2, None);
+    assert_eq!(m.deepest_reorg(), 1);
+    assert!(m.mempool().contains(&tx.hash()), "returned to the pool");
+    assert_eq!(m.mempool().full_validations(), verified, "nothing verified");
+}
