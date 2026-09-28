@@ -691,3 +691,14 @@
 - **ANCHOR_MIN_DEPTH = 3 (rounded down to 16) in `wallet/src/px.rs::anchor_height`:** accepted. Every wallet switches together before the trial.
 - **W2-02-F1 (restart pool not empty after a replay reorg): fix the CODE.** The manager empties the pool at the end of `open()`, matching blocks.md §7. Owner: the coordinator, after W2-34b (chain actor) merges; then un-ignore the reproducer and revert the docs exception.
 - **proptest =1.11.0 as a dev-dependency (chain):** accepted. deny.toml skips for rand/rand_chacha/rand_core 0.9 are added only if they are dev-only. The bitflags 2.9.1 → 2.13.2 bump is accepted (semver-minor, reaches tower-http).
+
+## RT-W2a (chain actor, slow lane, pool readmission), Lead decisions 2026-09-28
+- **Verdicts:** all three ACCEPT WITH CHANGES. Soundness of unverified readmission holds (no unverified path into the pool; ring digest collision-only).
+- **RTW2A-1 (Medium):** the per-peer relay byte budget must admit a maximum-size transaction behind small queued relay: at least MAX_ANY_TX_SIZE + 2 MiB. The PX share is charged only after a successful push. Regression test with real PX sizes. BLOCKS any PX relay or privacy claim until fixed.
+- **RTW2A-2:** returned transactions' conflict keys are RESERVED while a bounded drain holds them: `precheck` refuses with `ReorgPending`, and the returned transaction wins.
+- **RTW2A-3:** embargo fluffs run off the maintenance loop (spawned, or `try_call` with a retry), and `schedule_downloads` runs first.
+- **RTW2A-4 (Medium):** a rate excess on relayed StemTx is DROPPED without penalty. It is not fluffed: forced fluffs would help deanonymization. The PX share is charged after the dedupe and recent-reject checks.
+- **RTW2A-5:** correct the per-peer memory docs; decode once into an Arc.
+- **RTW2A-6:** capture of returned transactions stops at the per-class budget (tip first).
+- **RTW2A-7:** the ctx-reject cache is keyed by the tip returned from the cheap command.
+- **Owner:** FX-RTW2A, after the coordinator merges w2-pool and applies the manager call-site diff. It must not touch the handshake parts of admission.rs or conn.rs (W2-30).
