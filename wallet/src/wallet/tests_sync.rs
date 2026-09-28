@@ -425,10 +425,7 @@ fn an_imported_record_is_placed_without_a_download() {
     w.sync(&chain).unwrap();
     w.px.add_contract_record(&record, &cm, RecordSource::Imported, None);
     w.px.contract_records[0].lookup = true;
-    let unknown = Record {
-        value: 6,
-        ..record
-    };
+    let unknown = Record { value: 6, ..record };
     let unknown_cm = unknown.commit(&mut blacksilk_px::perm::HostPerm::new());
     w.px.add_contract_record(&unknown, &unknown_cm, RecordSource::Imported, None);
     w.px.contract_records[1].lookup = true;

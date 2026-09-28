@@ -174,7 +174,13 @@ fn a_long_poll_returns_as_soon_as_the_tip_changes() {
     let mined = Instant::now();
     let (t, held, answered) = poll.join().unwrap();
     assert_eq!((t.height, t.tip), (1, hex::encode(id)));
-    assert!(held >= Duration::from_millis(400), "{held:?}");
+    // Held until the block: answered only after it was mined (`held` counts
+    // from the thread's start, which a loaded machine delays, so it is not
+    // asserted; the unfinished poll at 500 ms above shows the hold).
+    assert!(
+        answered >= mined,
+        "answered before the block (held {held:?})"
+    );
     let latency = answered.saturating_duration_since(mined);
     assert!(
         latency < Duration::from_secs(2),

@@ -104,10 +104,13 @@ pub struct Info {
     /// The node crate version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    /// Whether the node serves block templates now: no bounded drain in
-    /// progress and bodies at most 2 blocks behind the best header
-    /// (`/template` answers `503` otherwise; docs/blocks.md §9). Optional
-    /// so that clients decode nodes that predate it.
+    /// Whether the node serves block templates now (`/template` answers
+    /// `503` otherwise; docs/blocks.md §9.4): no bounded drain in progress,
+    /// and either the catch-up latch is set (the node has been synced once
+    /// this run: a recent tip and a small header gap; a later bodiless header
+    /// lead never clears it, RTW3-1) or the node is caught up now. An operator
+    /// fork also refuses templates unless overridden. Optional so that
+    /// clients decode nodes that predate it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template_ready: Option<bool>,
 }
