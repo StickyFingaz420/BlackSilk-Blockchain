@@ -316,6 +316,11 @@ pub(super) async fn run_connection<S>(
                     handle(&inner, id, msg).await;
                     continue;
                 }
+                // The PX share is charged here, not on the lane: a busy lane
+                // must not let a flood of PX stems through unscored.
+                if !super::admission::charge_px_share(&inner, id, &msg) {
+                    continue;
+                }
                 let kind = msg.kind();
                 match lane.push(msg, len) {
                     Pushed::Queued => {}

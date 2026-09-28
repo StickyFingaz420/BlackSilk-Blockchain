@@ -807,17 +807,31 @@ already being written is finished first).
   disk) now delays only the chain work itself:
   - **Per-peer slow lane.** Messages whose handling needs a chain command
     (`GetHeaders`, `GetBlocks`, `InvTx`, `GetTx`, `Tx`, `StemTx`) go to a bounded
-    per-peer queue (`dispatch::SLOW_LANE` messages and `dispatch::SLOW_LANE_BYTES`
-    bytes, but always at least one message), handled by the peer's own task one at
-    a time in arrival order. Every other message (pings, pongs, addresses,
-    `NotFound`, headers, blocks) is handled on the read loop, which never waits for
-    the chain. A lane message may be handled after a later non-lane message of the
-    same peer; no handler depends on that order. A full lane drops the message:
-    transaction relay (`InvTx`, `Tx`, `StemTx`) without penalty (relay is best
-    effort; a request is retried with the next announcer), a request
-    (`GetHeaders`, `GetBlocks`, `GetTx`) charged as a message-rate excess
-    (`score::RATE`). At a disconnect the lane task stops before its next message,
-    never in the middle of one.
+    per-peer queue, handled by the peer's own task one at a time in arrival order.
+    Every other message (pings, pongs, addresses, `NotFound`, headers, blocks) is
+    handled on the read loop, which never waits for the chain. A lane message may
+    be handled after a later non-lane message of the same peer; no handler depends
+    on that order. The bounds (`dispatch.rs`):
+    - relay (`InvTx`, `Tx`, `StemTx`): at most `SLOW_LANE_RELAY` messages and
+      `SLOW_LANE_BYTES` bytes (but always one message, so the largest transaction
+      passes); beyond them relay is dropped without penalty (relay is best effort;
+      a request is retried with the next announcer);
+    - requests (`GetHeaders`, `GetBlocks`, `GetTx`): the rest of the lane's
+      `SLOW_LANE` places, which relay never takes; queued relay bytes never drop
+      a request. A request is dropped and charged as a message-rate excess
+      (`score::RATE`) only when the lane holds `SLOW_LANE` messages. Before this
+      split (a Stage 1 defect, found by the PX relay test), one queued PX
+      transaction of about 3 MB made every later message of its peer dropped,
+      and its requests charged;
+    - memory: at most `SLOW_LANE_BYTES` plus one maximum-size transaction of
+      relay, plus `SLOW_LANE` requests of at most 16 KiB each (about 11.5 MB per
+      peer).
+
+    The per-peer PX share (`PeerLimits::px`) is charged on the read loop when a
+    PX `Tx` or `StemTx` arrives, before the lane: a peer stemming PX
+    transactions over its share is penalized (one point each) however busy its
+    lane is; a requested `Tx` over the share is dropped. At a disconnect the lane
+    task stops before its next message, never in the middle of one.
   - **Published chain snapshot** (`ChainHandle::summary_cell`,
     `chain/src/manager/summary.rs`): the tip (id, header, height), the best header
     chain (height, id, locator), the bodies to download (at most 256), the next

@@ -6,6 +6,7 @@ use super::state::{short, Inner, State};
 use super::stem::{stem_keys, stem_or_fluff, unstem_key_images};
 use crate::dandelion::{PeerId, Source};
 use crate::limits::score;
+use crate::message::Message;
 use blacksilk_chain::actor::{Lane, SendError};
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::mempool::MempoolError;
@@ -36,8 +37,43 @@ fn decode_tx(bytes: &[u8]) -> Option<Transaction> {
     }
 }
 
-fn is_px(tx: &Transaction) -> bool {
-    matches!(tx, Transaction::Px(_) | Transaction::PxDeploy(_))
+/// Whether the encoded transaction `bytes` claims to be a PX or deploy
+/// transaction (its version and kind bytes; nothing else is decoded).
+fn claims_px(bytes: &[u8]) -> bool {
+    use blacksilk_tx::params::{KIND_PX, KIND_PX_DEPLOY, TX_VERSION};
+    const _: () = assert!(TX_VERSION < 0x80, "a one-byte varint");
+    bytes.len() >= 2 && bytes[0] == TX_VERSION as u8 && matches!(bytes[1], KIND_PX | KIND_PX_DEPLOY)
+}
+
+/// The per-peer PX share, charged on the read loop when a PX `Tx` or
+/// `StemTx` arrives, before it is queued on the peer's slow lane: a peer
+/// over its share is penalized (`StemTx`, unsolicited) or its transaction
+/// dropped (`Tx`, which we requested), however busy its lane is. Returns
+/// whether to queue the message. Needs no chain access.
+pub(super) fn charge_px_share(inner: &Arc<Inner>, peer: PeerId, msg: &Message) -> bool {
+    let (bytes, stem) = match msg {
+        Message::StemTx(b) => (b, true),
+        Message::Tx(b) => (b, false),
+        _ => return true,
+    };
+    if !claims_px(bytes) {
+        return true;
+    }
+    let within = {
+        let mut st = inner.state();
+        match st.peers.get_mut(&peer) {
+            Some(p) => p.limits.px.take(1.0, Instant::now()),
+            None => return false,
+        }
+    };
+    if !within {
+        if stem {
+            inner.misbehave(peer, score::RATE, "PX stem rate");
+        } else {
+            log::debug!("peer {peer}: PX transaction over its share dropped");
+        }
+    }
+    within
 }
 
 /// The ring indices of each v1 input (for `provably_invalid_signature`).
@@ -72,7 +108,8 @@ fn ctx_reject(st: &mut State, id: Hash, tip: Hash) {
 /// 1. a transaction already proven invalid is dropped (and a peer stemming it
 ///    again is penalized);
 /// 2. the peer's signature budget is charged one token per v1 input (one
-///    CLSAG verification each), and a PX or deploy transaction its PX share;
+///    CLSAG verification each); a PX or deploy transaction was charged its
+///    PX share on arrival (`charge_px_share`, on the read loop);
 /// 3. a transaction already in the mempool, one that conflicts with a pooled
 ///    transaction (same key image, nullifier or contract id; the
 ///    pool keeps the first seen, so it would be refused after verification),
@@ -97,7 +134,7 @@ async fn admit_tx(
     stem: bool,
 ) -> bool {
     let now = Instant::now();
-    let px = is_px(tx);
+    let px = matches!(tx, Transaction::Px(_) | Transaction::PxDeploy(_));
     let over = {
         let mut st = inner.state();
         if st.recent_rejects_set.contains(&id) {
@@ -113,8 +150,6 @@ async fn admit_tx(
         };
         if !p.limits.inputs.take(cost, now) {
             Some("input rate")
-        } else if px && !p.limits.px.take(1.0, now) {
-            Some("PX stem rate")
         } else {
             None
         }

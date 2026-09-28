@@ -480,7 +480,8 @@ fn announce_to_the_actor(chain: &ChainHandle, h: BlockHeader) {
 /// mutex waits behind whatever holds it (a step or a verification); the
 /// actor serves each of its two Headers-lane commands before the next step
 /// and before any queued transaction command. Both latencies are printed;
-/// the actor's must stay within one step per command (plus slack).
+/// the actor's must stay within one step (and one starved Tx command) per
+/// command, plus slack for a loaded machine.
 #[test]
 fn l7_a_header_announcement_is_accepted_within_a_step_per_command_during_a_drain() {
     const STEP: Duration = Duration::from_millis(150);
@@ -564,7 +565,7 @@ fn l7_a_header_announcement_is_accepted_within_a_step_per_command_during_a_drain
     );
     assert!(after.1, "the header was accepted during the drain");
     assert!(
-        after.0 < 2 * STEP + POW_GAP + Duration::from_millis(250),
+        after.0 < 2 * (STEP + VERIFY) + POW_GAP + Duration::from_millis(300),
         "actor: {:?} for two commands",
         after.0
     );

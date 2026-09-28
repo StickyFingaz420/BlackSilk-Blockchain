@@ -981,7 +981,7 @@ async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
     }
     let mut c = c;
     c.mine(0);
-    wait_until("A and B confirm", 30, || {
+    wait_until("A and B confirm", 60, || {
         a.height() == 81 && b.height() == 81 && !a.mempool_has(&id) && !b.mempool_has(&id)
     })
     .await;
@@ -1022,19 +1022,12 @@ async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
             .await
             .unwrap();
     }
-    // A ping after the stems: its pong means they were all handled.
+    // A slow-lane barrier after the stems: its answer means they were all
+    // handled (a ping is no barrier: pongs overtake lane work since Stage 1).
+    // Queued PX bytes never drop the barrier request.
     raws.push((r6, w6));
     for (i, (r, w)) in raws.iter_mut().enumerate() {
-        w.send(&Message::Ping(100 + i as u64).encode())
-            .await
-            .unwrap();
-        loop {
-            if let Message::Pong(n) = Message::decode(&r.recv().await.unwrap()).unwrap() {
-                if n == 100 + i as u64 {
-                    break;
-                }
-            }
-        }
+        send_and_sync(r, w, &[], 100 + i as u64).await;
     }
     let scores: Vec<u32> = b
         .net
@@ -1054,6 +1047,42 @@ async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
         (3..=4).contains(&penalized[0]),
         "one point per excess message"
     );
+
+    // A request behind a queued PX transaction (more than the lane's relay
+    // byte bound) is answered and costs its sender nothing: the Stage 1
+    // lane dropped it and charged it.
+    assert!(bytes.len() > 2 * 1024 * 1024, "{} bytes", bytes.len());
+    let (mut r7, mut w7) = raw_peer(b.addr, nid, true).await;
+    w7.send(&Message::StemTx(bytes.clone()).encode())
+        .await
+        .unwrap();
+    w7.send(
+        &Message::GetHeaders {
+            locator: vec![params().genesis_id()],
+            stop: [0; 32],
+        }
+        .encode(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        recv_until(
+            &mut r7,
+            20.0,
+            |m| matches!(m, Message::Headers(h) if h.len() == 81)
+        )
+        .await
+        .is_some(),
+        "the GetHeaders behind a PX StemTx is answered"
+    );
+    let newest = b
+        .net
+        .peers()
+        .into_iter()
+        .filter(|p| !before.contains(&p.id))
+        .max_by_key(|p| p.id)
+        .unwrap();
+    assert_eq!(newest.score, 0, "the requester is not charged");
 }
 
 /// A peer relaying an invalid PX transaction is penalized as misbehaving

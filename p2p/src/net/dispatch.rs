@@ -18,13 +18,22 @@ use tokio::sync::mpsc;
 
 // ---------------------------------------------------------------- slow lane
 
-/// Messages queued in one peer's slow lane.
+/// Messages queued in one peer's slow lane, requests and relay together.
 pub(super) const SLOW_LANE: usize = 64;
 
-/// Bytes of messages queued in one peer's slow lane. A message always enters
-/// an empty lane, so the lane holds at most this plus one message (one
-/// maximum-size PX transaction): the bound replaces the TCP back-pressure the
-/// read loop gave before it stopped waiting for the chain.
+/// Relay messages (`InvTx`, `Tx`, `StemTx`) queued in one peer's slow lane:
+/// relay never takes the last `SLOW_LANE - SLOW_LANE_RELAY` places, which
+/// stay for the peer's requests.
+pub(super) const SLOW_LANE_RELAY: usize = 32;
+
+/// Bytes of relay messages queued in one peer's slow lane. A relay message
+/// always enters a lane without queued relay bytes, so relay holds at most
+/// this plus one message (one maximum-size PX transaction). Requests are not
+/// counted here: they are bounded by their count and their codec limits
+/// (a `GetTx` of `MAX_INV` ids, 16 KiB, is the largest), so one peer's lane
+/// holds at most `SLOW_LANE_BYTES + MAX_ANY_TX_SIZE + SLOW_LANE × 16 KiB`
+/// (about 11.5 MB). The bound replaces the TCP back-pressure the read loop
+/// gave before it stopped waiting for the chain.
 pub(super) const SLOW_LANE_BYTES: usize = 2 * 1024 * 1024;
 
 /// Whether handling `msg` needs a chain command: it then runs on the peer's
@@ -57,7 +66,9 @@ fn is_relay(msg: &Message) -> bool {
 /// it (they share only the chain actor itself).
 pub(super) struct SlowLane {
     queue: mpsc::Sender<(Message, usize)>,
-    bytes: Arc<AtomicUsize>,
+    /// Relay bytes and relay messages queued (requests are not counted).
+    relay_bytes: Arc<AtomicUsize>,
+    relay_count: Arc<AtomicUsize>,
 }
 
 /// What [`SlowLane::push`] did with a message.
@@ -77,37 +88,56 @@ impl SlowLane {
     /// message.
     pub(super) fn start(inner: &Arc<Inner>, peer: PeerId) -> Self {
         let (queue, mut rx) = mpsc::channel::<(Message, usize)>(SLOW_LANE);
-        let bytes = Arc::new(AtomicUsize::new(0));
-        let (inner, queued) = (inner.clone(), bytes.clone());
+        let relay_bytes = Arc::new(AtomicUsize::new(0));
+        let relay_count = Arc::new(AtomicUsize::new(0));
+        let (inner, bytes, count) = (inner.clone(), relay_bytes.clone(), relay_count.clone());
         tokio::spawn(async move {
             while let Some((msg, len)) = rx.recv().await {
                 if !inner.state().peers.contains_key(&peer) {
                     break;
                 }
+                let relay = is_relay(&msg);
                 handle(&inner, peer, msg).await;
-                queued.fetch_sub(len, Ordering::Relaxed);
+                if relay {
+                    bytes.fetch_sub(len, Ordering::Relaxed);
+                    count.fetch_sub(1, Ordering::Relaxed);
+                }
             }
         });
-        Self { queue, bytes }
+        Self {
+            queue,
+            relay_bytes,
+            relay_count,
+        }
     }
 
-    /// Queues `msg` (a frame of `len` bytes), or drops it if the lane holds
-    /// [`SLOW_LANE`] messages or [`SLOW_LANE_BYTES`] bytes already.
+    /// Queues `msg` (a frame of `len` bytes), or drops it:
+    /// - relay, if [`SLOW_LANE_RELAY`] relay messages or [`SLOW_LANE_BYTES`]
+    ///   relay bytes are queued already (never charged);
+    /// - a request, only if the lane holds [`SLOW_LANE`] messages (charged:
+    ///   at least `SLOW_LANE - SLOW_LANE_RELAY` of them are this peer's own
+    ///   requests). Queued relay bytes never drop a request.
     pub(super) fn push(&self, msg: Message, len: usize) -> Pushed {
-        let queued = self.bytes.load(Ordering::Relaxed);
-        if queued > 0 && queued + len > SLOW_LANE_BYTES {
-            return Pushed::Dropped {
-                charge: !is_relay(&msg),
-            };
-        }
         let relay = is_relay(&msg);
-        // Counted before the task can see it (the task subtracts after
-        // handling it); only the read loop pushes.
-        self.bytes.fetch_add(len, Ordering::Relaxed);
+        if relay {
+            let bytes = self.relay_bytes.load(Ordering::Relaxed);
+            if self.relay_count.load(Ordering::Relaxed) >= SLOW_LANE_RELAY
+                || (bytes > 0 && bytes + len > SLOW_LANE_BYTES)
+            {
+                return Pushed::Dropped { charge: false };
+            }
+            // Counted before the task can see it (the task subtracts after
+            // handling it); only the read loop pushes.
+            self.relay_bytes.fetch_add(len, Ordering::Relaxed);
+            self.relay_count.fetch_add(1, Ordering::Relaxed);
+        }
         match self.queue.try_send((msg, len)) {
             Ok(()) => Pushed::Queued,
             Err(_) => {
-                self.bytes.fetch_sub(len, Ordering::Relaxed);
+                if relay {
+                    self.relay_bytes.fetch_sub(len, Ordering::Relaxed);
+                    self.relay_count.fetch_sub(1, Ordering::Relaxed);
+                }
                 Pushed::Dropped { charge: !relay }
             }
         }
@@ -205,7 +235,8 @@ mod tests {
         let (queue, rx) = mpsc::channel(SLOW_LANE);
         let lane = SlowLane {
             queue,
-            bytes: Arc::new(AtomicUsize::new(0)),
+            relay_bytes: Arc::new(AtomicUsize::new(0)),
+            relay_count: Arc::new(AtomicUsize::new(0)),
         };
         (lane, rx)
     }
@@ -244,44 +275,57 @@ mod tests {
         }
     }
 
-    /// A full lane (by count) drops relay without a charge and charges a
-    /// request; nothing is queued beyond the bound, and the queue keeps the
-    /// arrival order.
+    /// Relay fills at most `SLOW_LANE_RELAY` places, dropped without a
+    /// charge beyond; requests still take the rest, and only a lane full of
+    /// messages charges a request. The queue keeps the arrival order.
     #[test]
-    fn a_full_lane_drops_relay_free_and_charges_requests() {
+    fn relay_is_bounded_apart_and_only_a_full_lane_charges_requests() {
         let (lane, mut rx) = idle_lane();
-        for i in 0..SLOW_LANE {
+        for i in 0..SLOW_LANE_RELAY {
             let m = Message::InvTx(vec![[i as u8; 32]]);
             assert_eq!(lane.push(m, 40), Pushed::Queued);
         }
         let dropped = |charge| Pushed::Dropped { charge };
         assert_eq!(lane.push(Message::Tx(vec![0; 10]), 10), dropped(false));
         assert_eq!(lane.push(Message::StemTx(vec![0; 10]), 10), dropped(false));
+        for _ in SLOW_LANE_RELAY..SLOW_LANE {
+            assert_eq!(lane.push(get_headers(), 40), Pushed::Queued);
+        }
         assert_eq!(lane.push(Message::GetTx(vec![[1; 32]]), 40), dropped(true));
         assert_eq!(lane.push(get_headers(), 40), dropped(true));
-        assert_eq!(lane.bytes.load(Ordering::Relaxed), SLOW_LANE * 40);
-        for i in 0..SLOW_LANE {
+        assert_eq!(
+            lane.relay_bytes.load(Ordering::Relaxed),
+            SLOW_LANE_RELAY * 40
+        );
+        for i in 0..SLOW_LANE_RELAY {
             let (m, _) = rx.try_recv().unwrap();
             assert_eq!(m, Message::InvTx(vec![[i as u8; 32]]));
+        }
+        for _ in SLOW_LANE_RELAY..SLOW_LANE {
+            assert_eq!(rx.try_recv().unwrap().0, get_headers());
         }
         assert!(rx.try_recv().is_err());
     }
 
-    /// The byte bound: an empty lane takes one message of any size (the
-    /// largest transaction must pass), a non-empty one nothing past the bound.
+    /// The relay byte bound: a lane without queued relay takes one relay
+    /// message of any size (the largest transaction must pass), then no
+    /// relay past the bound; a request is still queued and never charged
+    /// (the Stage 1 regression: one queued PX transaction made every later
+    /// request of its peer dropped and charged).
     #[test]
-    fn the_lane_is_bounded_in_bytes_but_takes_one_message_of_any_size() {
-        let (lane, _rx) = idle_lane();
+    fn queued_relay_bytes_never_drop_or_charge_a_request() {
+        let (lane, mut rx) = idle_lane();
         let big = SLOW_LANE_BYTES + 1;
-        assert_eq!(lane.push(Message::Tx(vec![]), big), Pushed::Queued);
-        assert_eq!(
-            lane.push(get_headers(), 1),
-            Pushed::Dropped { charge: true }
-        );
+        assert_eq!(lane.push(Message::StemTx(vec![]), big), Pushed::Queued);
+        assert_eq!(lane.push(get_headers(), 100), Pushed::Queued);
+        assert_eq!(lane.push(Message::GetBlocks(vec![]), 100), Pushed::Queued);
         assert_eq!(
             lane.push(Message::InvTx(vec![]), 1),
             Pushed::Dropped { charge: false }
         );
-        assert_eq!(lane.bytes.load(Ordering::Relaxed), big);
+        assert_eq!(lane.relay_bytes.load(Ordering::Relaxed), big);
+        assert_eq!(lane.relay_count.load(Ordering::Relaxed), 1);
+        assert_eq!(rx.try_recv().unwrap().0, Message::StemTx(vec![]));
+        assert_eq!(rx.try_recv().unwrap().0, get_headers());
     }
 }
