@@ -79,6 +79,21 @@ pub fn kernel_budget(n_fn: usize) -> Budget {
     }
 }
 
+/// The proof decoder's limits for PX statements (RT-FUZZ-1,
+/// `blacksilk_zk::bounds`): the envelope's, with the table count of the
+/// widest PX statement, the kernel and `MAX_FN` functions
+/// (`zkvm::air::trace::tables`: 12 base tables, 5 per further execution and
+/// the Blind table, 23). [`verify`] and [`check_shape`] accept only a proof
+/// with exactly its statement's tables, so a proof with more cannot verify
+/// for any PX statement. `px/tests/proof_limits.rs` checks every PX table
+/// against the quotient-chunk and width limits.
+pub const PROOF_LIMITS: blacksilk_zk::DecodeLimits = blacksilk_zk::DecodeLimits {
+    max_instances: blacksilk_zkvm::air::trace::BASE_TABLES
+        + blacksilk_zkvm::air::trace::TABLES_PER_EXTRA * MAX_FN
+        + 1,
+    ..blacksilk_zk::DecodeLimits::ENVELOPE
+};
+
 /// A called function, as the verifier sees it: its program and call ABI (both
 /// from the registry) and the public outputs it writes after its prefix.
 #[derive(Clone, Debug, PartialEq, Eq)]

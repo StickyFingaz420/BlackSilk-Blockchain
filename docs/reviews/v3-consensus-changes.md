@@ -34,6 +34,7 @@ they are never renamed. Index:
 - guest-rebuild (kernel and vault ELFs and ids, guest link layout; W1-CB-B2); Follow-up (RTW1C-9)
 - kernel-budget-shapes (px; FX-RTW1C); Follow-ups (RT-W1c) in px6-validity-window and vault-v3
 - fingerprint-v3 (node, px, zkvm, consensus network id, tools/genesis; W4-40); Follow-up (RT-FP3) (FX-RTFP3)
+- px-proof-decode-bounds (zk, px, tx, p2p admission; W4-PXDOS)
 
 New sections are appended at the end.
 
@@ -2755,3 +2756,205 @@ the verdicts are computed at run time rather than pinned by a test.
   from this change on; older commits are checked for existing sections only.
 - The equivalent-mutant exemption E1 depends on the networks' target times (regtest
   T = 10 observes `% 20`, which is therefore not exempt).
+
+---
+
+<a id="px-proof-decode-bounds"></a>
+
+## px-proof-decode-bounds: the proof decoder bounds every vector before allocating it (RT-FUZZ-1)
+
+Revision: none (a decoder resource bound; the set of valid proofs is unchanged)
+
+Owner: W4-PXDOS. Decisions: "W4-FUZZ and RT-FUZZ" (RT-FUZZ-1, Medium, fix now: caps
+implied by the shape check, the valid set and the fingerprint unchanged, decoding out
+of the chain actor where safe, a non-revision record; a red-team pass follows).
+
+1. **Problem.** `blacksilk_zk::decode_proof` handed the proof body to `postcard`, which
+   allocates a vector of whatever length its prefix announces; the canonical-form rules
+   and the shape check ran on the decoded struct, after the allocation. An empty inner
+   vector costs 1 byte on the wire and a 24-byte header in memory, so a proof padded
+   with empty vectors up to `MAX_PROOF_BYTES` (4 MiB) decoded to up to 34 times its
+   size. P2P admission decodes a relayed PX proof inside one chain-actor command
+   (`cheap_checks`, `p2p/src/net/admission.rs`), so any connected peer's PX
+   transaction could hold the actor for about 0.2 s and 143 MB per transaction; block
+   validation also decodes every PX proof of a block before any other PX5 work
+   (`tx/src/validate.rs`, `validate_block_transactions`). The shape check refuses such proofs, so
+   soundness was never affected: this is a liveness and resource defect.
+2. **Demonstrated failure.** The red team's construction (`proof-amp` in the rt-fuzz
+   tool, read as data): the real 2 399 314-byte transfer proof with about 1.8 million
+   empty quotient chunks appended to instance 0, and the same with the FRI openings
+   stripped first. Reproduced on base `64d89d4` with a counting allocator (a scratch
+   probe, not committed; release build, best of 5 runs):
+
+   | Input | Bytes | Heap peak | Time | Result |
+   |---|---|---|---|---|
+   | real transfer proof | 2 399 314 | 9 667 378 B (4.0×) | 12.2 ms | Ok |
+   | padded quotient chunks | 4 194 298 | 78 570 106 B (18.7×) | 108.0 ms | **Ok** |
+   | padded, FRI openings stripped | 4 194 299 | 142 800 411 B (34.0×) | 182.6 ms | **Ok** |
+
+   The new tests `rt_fuzz_1_padded_proofs_are_refused_before_allocation`,
+   `every_cap_refuses_one_more` and `the_bounds_agree_with_the_decoded_structure`
+   (`zk/tests/decode_bounds.rs`) fail with the pre-scan call removed (the decoder of the
+   base): "strip false: Ok", "trace_local: Ok", "assertion failed: r.is_err()".
+3. **Prior art.** Bitcoin Core bounds every length prefix before allocating
+   (`ReadCompactSize` refuses sizes above `MAX_SIZE`; vectors are read in chunks of at
+   most `MAX_VECTOR_ALLOCATE` so a claimed length cannot allocate ahead of the bytes,
+   `src/serialize.h`). Zebra's `TrustedPreallocate` gives every deserialized collection
+   a maximum derived from the largest message and the smallest encoded item
+   (`zebra-chain/src/serialization`). serde's own `size_hint::cautious` caps only the
+   first preallocation (1 MiB), not the number of small vectors, which is what the red
+   team used; postcard documents no limits.
+4. **Alternatives.** (a) Mirror structs with a bounded `Deserialize` for every Plonky3
+   proof type, converted into the real types: duplicates the layout in types and needs
+   constructors Plonky3 keeps private or asserting (`MerkleCap::new` panics on a
+   non-power-of-two cap). (b) A global allocation budget during decoding: needs a
+   counting allocator (unsafe) or an approximation, and says nothing about which proof is
+   valid. (c) A smaller `MAX_PROOF_BYTES`: shrinks the absolute numbers, not the 34-fold
+   amplification. (d) Caps exact to the statement: the statement (registered functions)
+   needs chain state, and decoding is stateless by design (F10-2). Chosen: a
+   non-allocating pre-scan (`zk/src/bounds.rs`) that walks the encoding and refuses any
+   length above a cap that the verifier implies, before `postcard` sees the bytes.
+5. **Affected components.**
+   - `zk/src/bounds.rs` (new): `prescan`, `DecodeLimits` (`ENVELOPE`: 33 tables, 16
+     quotient chunks, 6 000 opened columns), `MAX_FRI_ROUNDS` = 17,
+     `MAX_MERKLE_DEPTH` = 26, `MAX_PRUNED_SIBLINGS` = 2 808.
+   - `zk/src/lib.rs`: `decode_proof` = `decode_proof_with(bytes, &ENVELOPE)`; the
+     pre-scan runs after the size and version checks, before `postcard`; everything
+     after it is unchanged. `analysis::quotient_chunks` and `analysis::trace_widths`
+     (test support: what `verify_batch` derives from the AIRs).
+   - `px/src/prove.rs`: `PROOF_LIMITS` (the envelope with 23 tables, the widest PX
+     statement).
+   - `tx/src/validate.rs`: `decode_px_proof` decodes with `PROOF_LIMITS`; `PxProof`
+     names the decoded type; the "a few milliseconds" comments now give measured
+     numbers.
+   - `p2p/src/net/admission.rs`: a PX transaction's stateless checks (structure,
+     balance, proof decoding) run on a blocking thread before the chain command
+     (`px_pre_checks`, at most two at a time node-wide); the command receives their
+     result and keeps only the checks that read chain state; the decoded proof is
+     returned from the command and freed outside the actor.
+6. **Activation.** v3 genesis base rule set; no height. Not a rule revision.
+7. **Compatibility: the valid set is unchanged.** A proof is valid if it decodes and
+   `blacksilk_px::prove::verify` accepts it. Each cap below holds for every such proof,
+   so the pre-scan refuses only proofs that were already invalid (for any PX
+   statement). The caps, in encoding order, with what implies each:
+   - Merkle caps: exactly one root (the canonical-form rule F24-2, moved before
+     allocation, same message).
+   - Instances at most 23 (`PROOF_LIMITS`): `verify_batch` requires one instance per
+     AIR, and a PX statement has 12 + 5·n_fn + 1 tables with n_fn ≤ `MAX_FN` = 2
+     (`px/tests/proof_limits.rs` builds all three statements).
+   - Per instance, every opened vector (trace, next row, preprocessed, permutation) at
+     most 6 000 extension elements: `verify_batch` pins each to a committed matrix's
+     width, and the widest PX statement commits at most `MAX_COMMITTED_COLUMNS` = 6 000
+     columns in total (measured on a real proof,
+     `zkvm/tests/multi.rs::the_widest_multi_execution_shape_stays_in_the_envelope`;
+     the widest table is 540 columns).
+   - Quotient chunks per instance at most 16, each at most 8 elements, the random
+     opening at most 8: `verify_batch` requires exactly `2^(log2_ceil(d)+1)` chunks
+     for constraint degree `d` (`QuotientChunksCountMismatch`), each of the extension
+     degree (`QuotientChunkDimensionMismatch`, `RandomizationError`). Every PX table's
+     count, computed with the verifier's own function
+     (`analysis::quotient_chunks`, `px/tests/proof_limits.rs`), is 4, 8 or 16; the
+     real transfer proof has exactly those (`px/tests/proof.rs`).
+   - Hidden openings: exactly the proof's rounds (the canonical-form rule I2, moved
+     before allocation, same message); per round at most one matrix per instance, or
+     one per quotient chunk in the quotient round (the hiding PCS requires exactly the
+     opening argument's matrices); at most 2 points per matrix (ζ, gζ); at most
+     `NUM_RANDOM_CODEWORDS` = 8 values per point (I2).
+   - FRI: at most 17 commit-phase rounds (the arities, each at least 1, sum to the fold
+     from at most `MAX_LOG_HEIGHT + 1 + LOG_BLOWUP` = 26 down to 9; `verify` bounds
+     the degree bits), no more grinding witnesses or round openings than rounds (exact in
+     `verify_fri`); at most one input batch per opening round
+     (`InputProofBatchCountMismatch`); in each batch exactly 108 queries
+     (`InputOpeningsQueryCountMismatch`) of exactly the round's matrix count
+     (`BatchOpenedValuesCountMismatch`, which the hidden openings already fix), each
+     row at most the widest opened vector plus 8 (`check_widths`: a row is as wide as
+     its claimed evaluations, public plus hidden); every multiproof with exactly 108 ×
+     matrices salts of exactly `MERKLE_SALT_ELEMS` = 4 (`zip_eq` against the rows,
+     salted widths pinned, duplicate queries equal to their representative) and at
+     most 108 × 26 sibling digests (`restore_paths` requires the exact count, at most
+     one per level per queried leaf of a binary tree of depth at most 26); every round
+     opening with exactly 108 sibling sets (`CommitPhaseQueryCountMismatch`) of at most
+     15 values (`SiblingValuesLengthMismatch`, arity at most 2^4) and a one-matrix
+     multiproof; the final polynomial at most 64 (`FinalPolyLengthMismatch`).
+   - Lookup terminals and degree bits at most one per instance (`verify_batch`'s
+     instance count check).
+
+   The walk mirrors the postcard layout of the Plonky3 0.7.0 types field by field
+   (checked against the struct definitions, including the patched `p3-fri` and
+   `p3-merkle-tree`). A walk that disagreed with the layout would refuse honest proofs
+   (the real proof and the synthetic ones decode) or refuse at another field; it cannot
+   let `postcard` allocate beyond a cap, since `postcard` reads the same length prefixes
+   and the walk must consume the body exactly. Verdicts: an invalid proof may now be
+   refused with another `ZkError::Encoding` message than before (the first broken cap);
+   every caller maps all of them to one error (`TxError::PxProof`, stateless), so the
+   verdict, its class and P2P scoring are unchanged.
+8. **Reorg, wallet, mining and P2P implications.** No reorg, mining or wallet effect
+   (wallets produce honest proofs; the real transfer proof decodes under the PX
+   limits and verifies). P2P: admission verdicts are unchanged (the same checks in the
+   same order: expiring-soon first, then structure, balance, decoding, then the
+   contextual rules and the shape check), but the decoding now runs off the actor. An
+   expiring-soon transaction is not decoded (checked at the published height; if the
+   actor's height went back, the command decodes it itself). Off-actor decodings are
+   limited to two at a time per process; a peer waits for a slot as it waited for the
+   actor before. Full verification (`submit_tx`, on the Tx lane) still decodes the
+   proof again inside the actor, now bounded: it runs next to the proof verification,
+   by design (open point). Block validation still decodes every unverified PX proof
+   of a block first, each now bounded.
+9. **Vectors.** The red team's two padded encodings of the real proof (refused:
+   `decode bound: quotient_chunks has 1794986 entries, more than 16` and `… 4008713
+   …`); the synthetic transfer-shaped proof (13 instances with the real chunk counts)
+   and the densest proofs the caps admit (`support/synthetic.rs::densest`).
+10. **Tests.**
+    - `zk/tests/decode_bounds.rs` (no proving): `synthetic_proofs_decode_under_both_limits`,
+      `rt_fuzz_1_padded_proofs_are_refused_before_allocation`,
+      `every_cap_refuses_one_more` (one edit per cap, 25 edits, each refused with its
+      cap's message; the instance count against both limits; the two canonical-form
+      rules moved before allocation keep their messages),
+      `at_the_caps_nothing_is_refused_by_the_bounds`,
+      `the_densest_proof_within_the_caps_has_a_bounded_heap` (structural heap estimate
+      at most 5 times the bytes; the padded proof's grows by at least 20 times its padding),
+      `the_bounds_agree_with_the_decoded_structure` (400 random structural edits: a
+      proof `postcard` decodes is refused by the bounds exactly when the decoded struct
+      breaks a cap).
+    - `px/tests/proof_limits.rs` (no proving): every PX statement (n_fn 0 to 2) is
+      within `PROOF_LIMITS`, with the verifier-derived chunk counts; the envelope covers
+      BVM-1's 33 tables.
+    - `px/tests/proof.rs` (PX-proving): the real transfer proof decodes under the PX
+      limits and verifies, has the derived chunk counts, and the red team's two padded
+      variants of it are refused under both limits.
+11. **Suite results.** Recorded in the next commit of W4-PXDOS (this commit adds the change and its tests).
+12. **Measurements after the fix** (the same probe, release, best of 5):
+
+    | Input | Bytes | Heap peak | Time | Result |
+    |---|---|---|---|---|
+    | real transfer proof | 2 399 314 | 9 667 378 B (4.0×) | 10.7 to 12.6 ms | Ok |
+    | padded quotient chunks | 4 194 298 | 78 B | < 0.1 ms | decode bound |
+    | padded, FRI openings stripped | 4 194 299 | 78 B | < 0.1 ms | decode bound |
+    | densest within the caps, 23 tables | 933 701 | 5 390 269 B (5.8×) | 11.8 ms | refused after decoding (canonical form) |
+    | the same, full multiproofs | 2 910 555 | 12 489 683 B (4.3×) | 18.6 ms | same |
+    | densest within the envelope, 33 tables | 1 323 551 | 8 227 615 B (6.2×) | 17.2 ms | same |
+    | the same, full multiproofs | 3 300 405 | 14 278 453 B (4.3×) | 23.8 ms | same |
+
+    The densest proofs are the worst the caps admit for heap per byte (every vector at
+    its cap, empty where it may be); they cost about what an honest proof of their size
+    costs. The heap peak includes the re-encoding check's copy.
+13. **Open review points.**
+    - The walk must follow any change of the proof encoding (a Plonky3 upgrade, a new
+      PCS): the synthetic and real-proof tests fail loudly if it does not.
+    - `max_opened_width` rests on the committed-column envelope, measured on the
+      widest PX statement by a PX-proving test; it bounds only data the proof pays for
+      byte by byte.
+    - The mempool path decodes a PX proof twice (admission off the actor, then full
+      verification on the Tx lane inside the actor); passing the decoded proof into
+      `submit_tx` would change the chain manager's interface and is left out.
+    - The off-actor slot limit (2) is a process-wide static: nodes sharing a process
+      (tests) share it.
+    - There is no golden proof fixture in the repository yet (decision "Agent 22": after
+      the kernel freeze); the real-proof checks prove a transfer.
+    - The structure-aware proof fuzz target (W4-FUZZ2) should drive
+      `decode_proof_with` with `PROOF_LIMITS`.
+14. **Identity impact.** None: no constant of the manifests changed. `blacksilk-node
+    --print-manifest` built from clean commits before and after: recorded in the next commit.
+15. **Documentation.** This record, the module documentation of `zk/src/bounds.rs`, and
+    the comments of `decode_px_proof`, `validate_px_checks`, `validate_block_transactions` and
+    `admission.rs`. **Review status.** Internal; a red-team pass follows (decisions).
