@@ -564,10 +564,18 @@ fn l7_a_header_announcement_is_accepted_within_a_step_per_command_during_a_drain
         before.0, after.0, after.1
     );
     assert!(after.1, "the header was accepted during the drain");
+    // The bound is about ordering, not wall-clock speed: a loaded machine
+    // stretches every step (the absolute `2 × (step + verify) + gap + 300 ms`
+    // failed once under a parallel test run, at a machine-dependent margin).
+    // The actor must accept within a few commands' time, i.e. far faster
+    // than the mutex path measured under the same conditions, and within a
+    // generous absolute cap.
+    let nominal = 2 * (STEP + VERIFY) + POW_GAP + Duration::from_millis(300);
     assert!(
-        after.0 < 2 * (STEP + VERIFY) + POW_GAP + Duration::from_millis(300),
-        "actor: {:?} for two commands",
-        after.0
+        after.0 * 10 < before.0 && after.0 < 8 * nominal,
+        "actor: {:?} for two commands (nominal {nominal:?}; mutex {:?})",
+        after.0,
+        before.0
     );
 }
 
