@@ -778,3 +778,7 @@
 - **Accepted (simulator-derived):** TRIED_PER_ONION_GROUP = 1; TRIED_PER_SOURCE_GROUP = 16; adaptive tried bias (0.9 once tried holds 64 entries, 0.7 below). Plus ping and relay eviction protection, 2 block-relay-only anchors, `--onion-inbound`, and seeds as one-shot address fetches.
 - **Operator requirement:** seed nodes must set `--public-address` (docs/testnet.md).
 - **Later:** a "fewer than 3 seeds" warning; the extra block-relay-only probe every 5 minutes (W5).
+
+## CI cadence (Lead decision 2026-09-29)
+- **Status:** CI run 110 was the first push run whose full test job (PX-proving included, one at a time) passed on the current code; its overflow job timed out (fixed by sharding in the commit after 1075bd9).
+- **Cadence:** do not push again while a rebuild/core CI run is mid-way unless the push fixes CI. Batch merges, so that every push's run completes and serves as evidence for its commit.
