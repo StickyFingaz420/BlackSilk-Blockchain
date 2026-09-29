@@ -809,3 +809,9 @@
   - the miner logs background dataset build start and end (`miner/src/lib.rs`);
   - document the new labnet flags in docs/testnet.md §8;
   - test the regtest prebuild window versus default build threads (1 thread does not finish within 640 s) and the light bridge at a switch; consider scaling the default build threads when the window is short.
+
+## INV-PEERS, Lead decisions 2026-09-29
+- **Accepted:** labnet passes `--public-address`; a node no longer stores its own address relayed back. The labnet evidence run passes (the late joiner reached 2 peers in 2.4 s).
+- **Small-network plateau:** GetAddr answers carry at least min(table, 8) non-terrible addresses (the 23% cap for large tables). Owner P2P-FIX2.
+- **The PX stem test's "no peer penalized" flake under load** (twice now): root cause required, since penalizing honest peers because the NODE is slow is a bug. Owner P2P-FIX2.
+- **Deploy templates:** unchanged (seed and lab set public_address; the ordinary-node template documents it, since NAT is possible).
