@@ -2718,8 +2718,26 @@ a full-mode miner): every network's fingerprints from a cold process 54 to 58 ms
 (the transaction samples about 30 ms of it); warm 3 ms. Well under the 1 s budget, so
 the verdicts are computed at run time rather than pinned by a test.
 
-**11. Suite results.** See the next paragraph (filled in by the commit that records
-them).
+**11. Suite results** (2026-09-29, release, `--locked`, this machine, on `f9ff776`):
+- `cargo fmt --all -- --check`, `cargo clippy --locked --workspace --all-targets -- -D
+  warnings`: clean. `cargo deny check`, doc-lint, unicode scan, lockfile gate: clean.
+  Cargo.lock unchanged. Consensus gate over the whole history: 200 commits, 53 touch
+  consensus paths, pass (19 waived); `--selftest`: pass.
+- Non-PX (the CI job's selection, zk `proofs` moved to the PX runs; run on the tree
+  before the commit, with `BLACKSILK_ALLOW_DIRTY=1`): 147 test binaries, 1 247 passed,
+  0 failed, 9 ignored.
+- PX-proving, one at a time, each started at 7 GB free or more, `--test-threads=1`:
+  px `proof` 3, `unified` 12; tx `px_consensus` 4, `fuzz_decode` 1; zk `proofs` 16;
+  chain `restart_rebuilds_the_px_state_exactly` 1; wallet e2e PX 4; p2p PX 2. All
+  passed, 0 failed.
+- Acceptance (`tools/fingerprint-mutations.sh`, a scratch copy of `f9ff776`): each of
+  the seven red-team mutations, applied alone, changes the rules fingerprint, through
+  the entries: the clamp sample (1 → 2); the FTL sample (`[1, 1, 0]` → `[1, 0, 0]`);
+  `crypto.hash.tags.CONSENSUS[16]` and both fixture ids; the empty leaf, the empty
+  roots and the three-leaf root; `randomx.PROGRAM_ITERATIONS`; the fixture transfer's
+  weight (2 846 → 2 674); the verdict "key images unsorted"
+  (`KeyImagesNotSorted` → `InvalidSignature`). Result: "7 mutations, every one changes
+  the rules fingerprint".
 
 **12. Open review points.**
 - Coverage stays sample-based. Rules a transfer fixture cannot reach have no verdict
