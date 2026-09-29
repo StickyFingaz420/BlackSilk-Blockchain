@@ -76,11 +76,26 @@ fingerprint v3, reviews/v3-consensus-changes.md#fingerprint-v3): it is
 The genesis on it is generated at launch; the id is registered afterwards (step 7).
 The known-answer tests use `TEST_VECTOR_NETWORK_ID = 0xFFFFFF00`, reserved for
 test vectors and never a network's id. Rehearsal ids are reserved at
-`0x0001D6E0`–`0x0001D6EF` (the tool does not yet enforce the range).
+`0x0001D6E0`–`0x0001D6EF`.
+
+The tool enforces the reserved ids (`RESERVED_IDS` in `tools/genesis`, RT-FP3):
+
+| Id | Use | `generate` accepts it with |
+|---|---|---|
+| `0x0001D673` | testnet v3, final | `--final` only |
+| `0x0001D6E0`–`0x0001D6EF` | rehearsals | `--rehearsal` only |
+| `0xFFFFFF00` | test vectors | never |
+
+`--final` accepts no other id and `--rehearsal` none outside the range; without
+either flag, `generate` refuses every reserved id.
 
 - It must not be any id already used (`NETWORK_ID_REGISTRY`: testnet v1
   `0x0001D670`, the 2026-09-25 rehearsal `0x0001D671`, testnet v2 `0x0001D672`,
-  mainnet `0x000B1A6C`, regtest `0x00DEB06E`). The tool refuses them.
+  mainnet `0x000B1A6C`, regtest `0x00DEB06E`). `generate` refuses them, with any
+  flag. `verify` recomputes an unregistered id as given, and accepts a registered
+  id only when the recomputed genesis is that built-in network's compiled
+  genesis, so after step 7 the testnet genesis still verifies from its announced
+  inputs and a retired id's genesis does not.
 - A release candidate or rehearsal must use its own id, recorded in the registry
   afterwards. Since R15-3, the genesis id is also bound into the P2P session key
   and the wallet file, so a node or wallet on another genesis with the same id
@@ -138,10 +153,11 @@ the announcement; it is an input, not a constant of the tool.
    obtain `H`'s hash from at least two sources and compare.
 4. **Compute:**
    ```sh
-   cargo run --release -p blacksilk-genesis -- generate \
-     --network-id <id> --timestamp <T_g> --difficulty <D0> \
+   cargo run --release -p blacksilk-genesis -- generate --final \
+     --network-id 0x0001D673 --timestamp <T_g> --difficulty <D0> \
      --btc-height <H> --btc-hash <hash, display order>
    ```
+   (A rehearsal uses `--rehearsal` and an id of `0x0001D6E0`–`0x0001D6EF`.)
    It prints the nonce derivation, the header, its 100 bytes, the full id and the
    constants to paste. Both people compare the full id.
 5. **Commit** the final values only: the nonce, the beacon hash (for provenance),
@@ -154,7 +170,9 @@ the announcement; it is an input, not a constant of the tool.
    start the node, check that `/info` shows the full announced `genesis_id`, then
    start miners.
 7. **Retire** the id in the registry. Never reuse it, the release candidate's or
-   any rehearsal's.
+   any rehearsal's. `verify` keeps accepting the launched testnet's genesis
+   (a registered id whose genesis is the compiled one); `generate` refuses the id
+   from then on.
 
 **Anyone, later:** `verify` needs only the announced inputs and a public Bitcoin
 hash. Without the tool:
@@ -174,10 +192,15 @@ into `b2sum -l 256`, then the first 8 bytes little-endian.
 ## 8. Tests (`tools/genesis`)
 
 - Known-answer vector: Bitcoin block 0 (`000000000019d668…8ce26f`), `H = 0`, the
-  placeholder id; the nonce is pinned.
+  test-vector id; the nonce is pinned.
 - The reversed byte order gives a different nonce.
 - Every genesis field asserted (version 1, height 0, zero parent and root, the
   given timestamp and difficulty, the derived nonce).
-- Registry: the placeholder is not a used id; every used id is refused.
+- Registry: the testnet v3 id is not a used id; every used id is refused by
+  `generate` with any flag (`used_network_ids_are_refused`).
+- Reserved ids: `--final` only for `0x0001D673`, `--rehearsal` only for the
+  range, the test-vector id never (`reserved_ids_need_their_purpose`).
+- `verify` accepts a registered id only for a built-in network's compiled genesis
+  (`verify_accepts_a_registered_built_in_genesis`, simulated on the test-vector id).
 - `generate` refuses a future timestamp; `verify` refuses a wrong id.
 - The starting difficulty from a measured rate (err low), and the genesis gap.

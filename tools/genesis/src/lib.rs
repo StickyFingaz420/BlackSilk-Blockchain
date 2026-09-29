@@ -31,7 +31,7 @@
 use blacksilk_consensus::genesis::{Beacon, GenesisSpec};
 use blacksilk_consensus::hash::Hash;
 use blacksilk_consensus::schedule::V3;
-use blacksilk_consensus::BlockHeader;
+use blacksilk_consensus::{BlockHeader, ChainParams};
 
 pub use blacksilk_consensus::genesis::{
     derive_genesis_nonce, nonce_preimage, nonce_preimage_digest, NONCE_DOMAIN,
@@ -40,9 +40,68 @@ pub use blacksilk_consensus::genesis::{
 
 /// The network id of testnet v3, final (decisions "Agent 40"; fingerprint v3):
 /// `ChainParams::testnet().network_id`. Its genesis is generated at launch
-/// (docs/testnet-v3-genesis.md §3), so it passes [`check_network_id`] until
-/// then. No rehearsal or release candidate may use it.
+/// (docs/testnet-v3-genesis.md §3), with `generate --final`, the only mode
+/// that accepts it ([`RESERVED_IDS`]). No rehearsal or release candidate may
+/// use it.
 pub const TESTNET_V3_NETWORK_ID: u32 = 0x0001_D673;
+
+/// The network ids reserved for genesis rehearsals (decisions "Agent 40"):
+/// `generate --rehearsal` accepts only these, and only it does. A used
+/// rehearsal id is registered in [`NETWORK_ID_REGISTRY`] afterwards.
+pub const REHEARSAL_IDS: std::ops::RangeInclusive<u32> = 0x0001_D6E0..=0x0001_D6EF;
+
+/// Why a genesis is generated: the purpose fixes which network ids it may use
+/// ([`check_network_id`], [`RESERVED_IDS`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Purpose {
+    /// The final testnet v3 genesis (`--final`): only [`TESTNET_V3_NETWORK_ID`].
+    Final,
+    /// A rehearsal (`--rehearsal`): only an id of [`REHEARSAL_IDS`].
+    Rehearsal,
+    /// Anything else (a private network): any id that is neither reserved
+    /// nor registered.
+    Other,
+}
+
+impl Purpose {
+    /// The command-line flag of the purpose (none for [`Purpose::Other`]).
+    pub fn flag(self) -> &'static str {
+        match self {
+            Purpose::Final => "--final",
+            Purpose::Rehearsal => "--rehearsal",
+            Purpose::Other => "(no flag)",
+        }
+    }
+}
+
+/// The reserved network ids (RTFP3-13): `(first, last, use)`. An id in one
+/// of these ranges is generated only with the purpose that owns it, and the
+/// test-vector id never.
+pub const RESERVED_IDS: &[(u32, u32, &str)] = &[
+    (
+        TESTNET_V3_NETWORK_ID,
+        TESTNET_V3_NETWORK_ID,
+        "testnet v3, final: `generate --final` only",
+    ),
+    (
+        *REHEARSAL_IDS.start(),
+        *REHEARSAL_IDS.end(),
+        "rehearsals: `generate --rehearsal` only",
+    ),
+    (
+        TEST_VECTOR_NETWORK_ID,
+        TEST_VECTOR_NETWORK_ID,
+        "test vectors only: never a network",
+    ),
+];
+
+/// What a reserved id is reserved for.
+pub fn reserved_use(id: u32) -> Option<&'static str> {
+    RESERVED_IDS
+        .iter()
+        .find(|(first, last, _)| (*first..=*last).contains(&id))
+        .map(|(_, _, u)| *u)
+}
 
 /// Every network id already given to a genesis, with what used it. An id is
 /// never reused for another genesis: nodes and wallets of the old network
@@ -83,6 +142,9 @@ pub enum GenesisError {
     TimestampInFuture { timestamp: u64, now: u64 },
     /// The recomputed genesis id differs from the expected one.
     IdMismatch { computed: Hash },
+    /// The id is reserved ([`RESERVED_IDS`]) for another purpose than the
+    /// one given, or the purpose needs an id it does not have.
+    Reserved { id: u32, purpose: Purpose },
 }
 
 impl std::fmt::Display for GenesisError {
@@ -104,6 +166,27 @@ impl std::fmt::Display for GenesisError {
             Self::IdMismatch { computed } => {
                 write!(f, "genesis id mismatch: computed {}", hex(computed))
             }
+            Self::Reserved { id, purpose } => match reserved_use(*id) {
+                Some(u) if *purpose == Purpose::Other => write!(
+                    f,
+                    "network id {id:#010x} is reserved ({u}); without that flag, \
+                     generate refuses it"
+                ),
+                Some(u) => write!(
+                    f,
+                    "network id {id:#010x} is reserved ({u}); not usable with {}",
+                    purpose.flag()
+                ),
+                None => write!(
+                    f,
+                    "{} needs {}; network id {id:#010x} is not",
+                    purpose.flag(),
+                    match purpose {
+                        Purpose::Final => "the testnet v3 id 0x0001d673",
+                        _ => "a rehearsal id (0x0001d6e0..=0x0001d6ef)",
+                    }
+                ),
+            },
         }
     }
 }
@@ -118,13 +201,24 @@ pub fn registry_name(id: u32) -> Option<&'static str> {
         .map(|(_, n)| *n)
 }
 
-/// Refuses network id 0 and every id in [`NETWORK_ID_REGISTRY`].
-pub fn check_network_id(id: u32) -> Result<(), GenesisError> {
+/// Whether a new genesis for `purpose` may use `id`: never 0, never an id of
+/// [`NETWORK_ID_REGISTRY`], never the test-vector id; [`Purpose::Final`] only
+/// [`TESTNET_V3_NETWORK_ID`], [`Purpose::Rehearsal`] only [`REHEARSAL_IDS`],
+/// and [`Purpose::Other`] no reserved id.
+pub fn check_network_id(id: u32, purpose: Purpose) -> Result<(), GenesisError> {
     if id == 0 {
         return Err(GenesisError::NetworkIdZero);
     }
     if registry_name(id).is_some() {
         return Err(GenesisError::NetworkIdReused(id));
+    }
+    let allowed = match purpose {
+        Purpose::Final => id == TESTNET_V3_NETWORK_ID,
+        Purpose::Rehearsal => REHEARSAL_IDS.contains(&id),
+        Purpose::Other => reserved_use(id).is_none(),
+    };
+    if !allowed {
+        return Err(GenesisError::Reserved { id, purpose });
     }
     Ok(())
 }
@@ -195,8 +289,14 @@ impl Genesis {
 /// the empty body's root (zero, docs/blocks.md §3), the announced timestamp
 /// and difficulty. The id is `Blake2b-256("BlackSilk/block-id" ‖
 /// LE32(network_id) ‖ header)`, as for every block.
+///
+/// Construction only: which ids a new genesis may use is [`generate`]'s check
+/// ([`check_network_id`]), and which registered ids a check may recompute is
+/// [`verify`]'s.
 pub fn build(inputs: &GenesisInputs) -> Result<Genesis, GenesisError> {
-    check_network_id(inputs.network_id)?;
+    if inputs.network_id == 0 {
+        return Err(GenesisError::NetworkIdZero);
+    }
     if inputs.difficulty == 0 {
         return Err(GenesisError::Difficulty);
     }
@@ -224,10 +324,17 @@ pub fn spec(inputs: &GenesisInputs) -> GenesisSpec {
     }
 }
 
-/// [`build`], refusing a timestamp later than `now` (R15-4: the timestamp is
-/// fixed before the beacon, so by the time the beacon is known the genesis is
-/// in the past, and no block can be mined ahead with a future timestamp).
-pub fn generate(inputs: &GenesisInputs, now: u64) -> Result<Genesis, GenesisError> {
+/// A new genesis for `purpose`: [`build`], refusing an id the purpose may not
+/// use ([`check_network_id`]: registered, reserved for another purpose) and a
+/// timestamp later than `now` (R15-4: the timestamp is fixed before the
+/// beacon, so by the time the beacon is known the genesis is in the past, and
+/// no block can be mined ahead with a future timestamp).
+pub fn generate(
+    inputs: &GenesisInputs,
+    now: u64,
+    purpose: Purpose,
+) -> Result<Genesis, GenesisError> {
+    check_network_id(inputs.network_id, purpose)?;
     if inputs.timestamp > now {
         return Err(GenesisError::TimestampInFuture {
             timestamp: inputs.timestamp,
@@ -239,10 +346,42 @@ pub fn generate(inputs: &GenesisInputs, now: u64) -> Result<Genesis, GenesisErro
 
 /// Recomputes the genesis from its inputs and compares its id with
 /// `expected_id`. Independent of the clock.
+///
+/// An unregistered id is recomputed as given. A registered id (RTFP3-14) is
+/// accepted only when it is a built-in network's id and the recomputed
+/// genesis is that network's compiled genesis: so after the launch, when the
+/// testnet id is registered, operators and anyone later still verify the
+/// testnet genesis from its announced inputs, while a retired id's genesis
+/// (v1, v2, a rehearsal) is refused.
 pub fn verify(inputs: &GenesisInputs, expected_id: &Hash) -> Result<Genesis, GenesisError> {
+    verify_against(
+        inputs,
+        expected_id,
+        &[
+            ChainParams::testnet(),
+            ChainParams::mainnet(),
+            ChainParams::regtest(),
+        ],
+    )
+}
+
+/// [`verify`] against the given built-in networks' parameters.
+pub fn verify_against(
+    inputs: &GenesisInputs,
+    expected_id: &Hash,
+    built_in: &[ChainParams],
+) -> Result<Genesis, GenesisError> {
     let g = build(inputs)?;
     if g.id != *expected_id {
         return Err(GenesisError::IdMismatch { computed: g.id });
+    }
+    if registry_name(inputs.network_id).is_some() {
+        let own = built_in.iter().any(|p| {
+            p.network_id == inputs.network_id && p.genesis == g.header && p.genesis_id() == g.id
+        });
+        if !own {
+            return Err(GenesisError::NetworkIdReused(inputs.network_id));
+        }
     }
     Ok(g)
 }

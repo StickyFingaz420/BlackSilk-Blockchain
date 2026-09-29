@@ -108,21 +108,30 @@ fn all_genesis_fields_are_fixed() {
 
 /// The registry: the testnet v3 id is the compiled one and not yet used (its
 /// genesis is generated at launch), the test-vector id is not a network's,
-/// and every used id (v1, the rehearsal, v2, mainnet, regtest) is refused.
+/// and every used id (v1, the rehearsal, v2, mainnet, regtest) is refused
+/// for a new genesis, whatever the purpose.
 #[test]
 fn used_network_ids_are_refused() {
     assert_eq!(ChainParams::testnet().network_id, TESTNET_V3_NETWORK_ID);
     assert!(!ChainParams::testnet().genesis_is_final());
-    assert_eq!(check_network_id(TESTNET_V3_NETWORK_ID), Ok(()));
+    assert_eq!(
+        check_network_id(TESTNET_V3_NETWORK_ID, Purpose::Final),
+        Ok(())
+    );
     assert_ne!(TEST_VECTOR_NETWORK_ID, TESTNET_V3_NETWORK_ID);
     for (id, _) in NETWORK_ID_REGISTRY {
-        assert_eq!(
-            check_network_id(*id),
-            Err(GenesisError::NetworkIdReused(*id))
-        );
+        for purpose in [Purpose::Final, Purpose::Rehearsal, Purpose::Other] {
+            assert_eq!(
+                check_network_id(*id, purpose),
+                Err(GenesisError::NetworkIdReused(*id))
+            );
+        }
         let mut i = kat_inputs();
         i.network_id = *id;
-        assert_eq!(build(&i), Err(GenesisError::NetworkIdReused(*id)));
+        assert_eq!(
+            generate(&i, i.timestamp, Purpose::Other),
+            Err(GenesisError::NetworkIdReused(*id))
+        );
     }
     for id in [0x0001_D670, 0x0001_D671, 0x0001_D672] {
         assert!(registry_name(id).is_some(), "{id:#x}");
@@ -132,7 +141,126 @@ fn used_network_ids_are_refused() {
     for p in [ChainParams::mainnet(), ChainParams::regtest()] {
         assert!(registry_name(p.network_id).is_some(), "{:#x}", p.network_id);
     }
-    assert_eq!(check_network_id(0), Err(GenesisError::NetworkIdZero));
+    for purpose in [Purpose::Final, Purpose::Rehearsal, Purpose::Other] {
+        assert_eq!(
+            check_network_id(0, purpose),
+            Err(GenesisError::NetworkIdZero)
+        );
+    }
+}
+
+/// RTFP3-13: the reserved ids. `--final` accepts only the testnet v3 id,
+/// `--rehearsal` only the rehearsal range, no flag neither of them, and the
+/// test-vector id is never generated. No reserved id is registered, and the
+/// ranges do not overlap.
+#[test]
+fn reserved_ids_need_their_purpose() {
+    use Purpose::{Final, Other, Rehearsal};
+    let refused = |id, purpose| Err(GenesisError::Reserved { id, purpose });
+    assert_eq!(check_network_id(TESTNET_V3_NETWORK_ID, Final), Ok(()));
+    assert_eq!(
+        check_network_id(TESTNET_V3_NETWORK_ID, Rehearsal),
+        refused(TESTNET_V3_NETWORK_ID, Rehearsal)
+    );
+    assert_eq!(
+        check_network_id(TESTNET_V3_NETWORK_ID, Other),
+        refused(TESTNET_V3_NETWORK_ID, Other)
+    );
+    for id in [0x0001_D6E0, 0x0001_D6E7, 0x0001_D6EF] {
+        assert_eq!(check_network_id(id, Rehearsal), Ok(()));
+        assert_eq!(check_network_id(id, Other), refused(id, Other));
+        assert_eq!(check_network_id(id, Final), refused(id, Final));
+    }
+    for id in [0x0001_D6DF, 0x0001_D6F0] {
+        assert_eq!(check_network_id(id, Rehearsal), refused(id, Rehearsal));
+        assert_eq!(check_network_id(id, Other), Ok(()));
+    }
+    for purpose in [Final, Rehearsal, Other] {
+        assert_eq!(
+            check_network_id(TEST_VECTOR_NETWORK_ID, purpose),
+            refused(TEST_VECTOR_NETWORK_ID, purpose)
+        );
+    }
+    // The generate path applies the check.
+    let i = kat_inputs();
+    assert_eq!(
+        generate(&i, i.timestamp, Other).map(|_| ()),
+        refused(TEST_VECTOR_NETWORK_ID, Other)
+    );
+    let mut r = i;
+    r.network_id = 0x0001_D6E0;
+    assert!(generate(&r, r.timestamp, Rehearsal).is_ok());
+    assert_eq!(
+        generate(&r, r.timestamp, Other).map(|_| ()),
+        refused(0x0001_D6E0, Other)
+    );
+    // The messages name the flag.
+    let msg = GenesisError::Reserved {
+        id: 0x0001_D6E0,
+        purpose: Other,
+    }
+    .to_string();
+    assert!(msg.contains("--rehearsal"), "{msg}");
+    // Reserved ids are never registered; the ranges are disjoint.
+    for (first, last, _) in RESERVED_IDS {
+        for (id, _) in NETWORK_ID_REGISTRY {
+            assert!(!(*first..=*last).contains(id), "{id:#x}");
+        }
+        let overlapping = RESERVED_IDS
+            .iter()
+            .filter(|(f, l, _)| f <= last && first <= l)
+            .count();
+        assert_eq!(overlapping, 1);
+    }
+}
+
+/// RTFP3-14 (F40-1): once the testnet genesis exists its id is registered,
+/// and `verify` still accepts it, because the recomputed genesis is the
+/// built-in network's own compiled genesis; a registered id whose genesis
+/// is not a built-in network's (a retired network) is refused. Simulated on
+/// the test-vector id: a built-in network whose compiled genesis is the
+/// known answer's, and a registry that holds the id.
+#[test]
+fn verify_accepts_a_registered_built_in_genesis() {
+    let i = kat_inputs();
+    let g = build(&i).unwrap();
+    // Before registration: any unregistered id verifies as given.
+    assert_eq!(verify(&i, &g.id), Ok(g));
+    // The launched network: its compiled genesis is the one from the inputs.
+    let mut launched = ChainParams::testnet();
+    launched.network_id = i.network_id;
+    launched.genesis = g.header;
+    assert_eq!(verify_against(&i, &g.id, &[launched.clone()]), Ok(g));
+    // The built-in ids are registered, so verify checks them against the
+    // compiled genesis: the regtest id with the known answer's inputs is not
+    // regtest's genesis.
+    let mut regtest_id = i;
+    regtest_id.network_id = ChainParams::regtest().network_id;
+    let other = build(&regtest_id).unwrap();
+    assert_eq!(
+        verify(&regtest_id, &other.id),
+        Err(GenesisError::NetworkIdReused(regtest_id.network_id))
+    );
+    // A retired id (testnet v2) has no built-in network: refused.
+    let mut retired = i;
+    retired.network_id = 0x0001_D672;
+    let old = build(&retired).unwrap();
+    assert_eq!(
+        verify(&retired, &old.id),
+        Err(GenesisError::NetworkIdReused(0x0001_D672))
+    );
+    // A built-in network with the same id but another genesis: refused.
+    let mut moved = launched;
+    moved.genesis.timestamp += 1;
+    let mut reg = i;
+    reg.network_id = ChainParams::mainnet().network_id;
+    let m = build(&reg).unwrap();
+    let mut mainnet_like = moved;
+    mainnet_like.network_id = reg.network_id;
+    assert_eq!(
+        verify_against(&reg, &m.id, &[mainnet_like]),
+        Err(GenesisError::NetworkIdReused(reg.network_id))
+    );
 }
 
 /// The timestamp is fixed before the beacon: `generate` refuses one in the
@@ -140,15 +268,17 @@ fn used_network_ids_are_refused() {
 /// wrong id.
 #[test]
 fn generate_and_verify() {
-    let i = kat_inputs();
+    // A rehearsal id: the test-vector id is never generated.
+    let mut i = kat_inputs();
+    i.network_id = 0x0001_D6E0;
     assert_eq!(
-        generate(&i, i.timestamp - 1),
+        generate(&i, i.timestamp - 1, Purpose::Rehearsal),
         Err(GenesisError::TimestampInFuture {
             timestamp: i.timestamp,
             now: i.timestamp - 1
         })
     );
-    let g = generate(&i, i.timestamp).unwrap();
+    let g = generate(&i, i.timestamp, Purpose::Rehearsal).unwrap();
     assert_eq!(verify(&i, &g.id), Ok(g));
     let mut wrong = g.id;
     wrong[31] ^= 1;
