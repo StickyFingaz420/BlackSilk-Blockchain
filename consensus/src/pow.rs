@@ -410,6 +410,8 @@ mod tests {
         assert_eq!(cache.set_hot(&[a, b, key(3)]), vec![a, b], "two hot keys");
         let _ = cache.get(&a);
         let _ = cache.get(&b);
+        // Built hot keys are not reported missing (W4-MUT: `&&` to `||`).
+        assert_eq!(cache.set_hot(&[a, b]), Vec::<Hash>::new(), "both built");
         for i in 100..200 {
             let _ = cache.get(&key(i));
             assert!(cache.is_resident(&a) && cache.is_resident(&b));
@@ -436,6 +438,64 @@ mod tests {
         let _ = cache.get(&key(3));
         assert_eq!(cache.resident(), vec![key(4), key(3)]);
         assert_eq!(cache.builds(), 5);
+        assert_eq!(live.load(Ordering::SeqCst), 2);
+        // Nothing was borrowed when evicted, so nothing is tracked, and no
+        // key is left marked as being built (W4-MUT: `trim`'s `> 1` to
+        // `>= 1`, and `get`'s `retain` with `!=` to `==`).
+        {
+            let st = cache.lock();
+            assert!(st.evicted.is_empty(), "no evicted cache was borrowed");
+            assert!(st.building.is_empty(), "no build in progress");
+            assert_eq!(st.side_building, 0);
+        }
+        // An evicted key is built again when asked for.
+        let _ = cache.get(&key(0));
+        assert_eq!(cache.builds(), 6);
+        assert_eq!(cache.resident(), vec![key(3), key(0)]);
+    }
+
+    /// A hashing thread that still holds one evicted cache can build
+    /// another key; two borrowed evicted caches hold every build back until
+    /// one is released (the bound of T3, here without a race). W4-MUT:
+    /// `get`'s `evicted_alive() > 1` mutated to `>= 1` or `== 1` survived.
+    /// The waits have generous timeouts so that a mutant fails instead of
+    /// hanging; the one negative wait can only let a mutant through, never
+    /// fail the rule.
+    #[test]
+    fn one_borrowed_evicted_cache_does_not_block_a_build_but_two_do() {
+        let (cache, live) = fake_cache();
+        let cache = Arc::new(cache);
+        let held1 = cache.get(&key(1));
+        let held2 = cache.get(&key(2));
+        let _ = cache.get(&key(3)); // evicts key 1, still borrowed
+        assert_eq!(cache.lock().evicted_alive(), 1);
+        let ask = |k: u64| {
+            let (done, done_rx) = mpsc::channel();
+            let cache = cache.clone();
+            std::thread::spawn(move || {
+                let _ = cache.get(&key(k));
+                let _ = done.send(());
+            });
+            done_rx
+        };
+        ask(4)
+            .recv_timeout(Duration::from_secs(60))
+            .expect("one borrowed evicted cache does not block a build");
+        // Key 4 evicted key 2, still borrowed: two are alive now.
+        assert_eq!(cache.lock().evicted_alive(), 2);
+        let builds = cache.builds();
+        let waiting = ask(5);
+        assert!(
+            waiting.recv_timeout(Duration::from_millis(300)).is_err(),
+            "a build started while two evicted caches were borrowed"
+        );
+        assert_eq!(cache.builds(), builds);
+        drop(held1);
+        waiting
+            .recv_timeout(Duration::from_secs(60))
+            .expect("the build proceeds once one is released");
+        drop(held2);
+        assert_eq!(cache.builds(), builds + 1);
         assert_eq!(live.load(Ordering::SeqCst), 2);
     }
 
@@ -481,20 +541,31 @@ mod tests {
     fn the_caches_alive_stay_bounded_under_many_keys() {
         let live = Arc::new(AtomicUsize::new(0));
         let peak = Arc::new(AtomicUsize::new(0));
-        let (l, p) = (live.clone(), peak.clone());
+        // A cache whose last `Arc` is released is already gone for the store
+        // (its weak count reads zero) while its destructor, which decrements
+        // `live`, has not run yet. Unguarded, a build that starts in that
+        // window counts it, and a preempted destructor made this test flaky
+        // under load (peak 6 in 12 of 200 runs, W4-MUT). So hashing threads
+        // release under the read side of `gate`, and a build counts itself
+        // under the write side: the peak counts exactly the caches the store
+        // keeps or lends out, plus the one being built.
+        let gate = Arc::new(std::sync::RwLock::new(()));
+        let (l, p, g) = (live.clone(), peak.clone(), gate.clone());
         let cache = Arc::new(SeedCache::new(move |_: &Hash| {
+            let _counting = g.write().unwrap_or_else(|e| e.into_inner());
             let now = l.fetch_add(1, Ordering::SeqCst) + 1;
             p.fetch_max(now, Ordering::SeqCst);
             Fake { live: l.clone() }
         }));
         std::thread::scope(|s| {
             for t in 0..32u64 {
-                let cache = cache.clone();
+                let (cache, gate) = (cache.clone(), gate.clone());
                 s.spawn(move || {
                     for i in 0..200u64 {
                         // Hold the cache for a moment, as a hash does.
                         let c = cache.get(&key(t * 1000 + i % 50));
                         std::thread::yield_now();
+                        let _releasing = gate.read().unwrap_or_else(|e| e.into_inner());
                         drop(c);
                     }
                 });
@@ -541,6 +612,28 @@ mod tests {
         for h in 2113..20_000u64 {
             assert!(h - s(h) > 64);
             assert_eq!(s(h) % 2048, 0);
+        }
+    }
+
+    /// Every key schedule `ChainParams::check` accepts (epoch a power of two,
+    /// `1 ≤ lag < epoch`), small enough to enumerate, against the spec formula
+    /// in wide arithmetic: 0 up to `E + L`, then `(h − L − 1)` rounded down to
+    /// a multiple of `E`. Lags above `E/2` reach the first branch's edge:
+    /// W4-MUT's surviving `E + L → E − L` only differs there.
+    #[test]
+    fn seed_schedule_matches_the_spec_for_every_valid_small_schedule() {
+        for epoch in [2u64, 4, 8, 16] {
+            for lag in 1..epoch {
+                for h in 0..8 * epoch {
+                    let (hh, e, l) = (h as u128, epoch as u128, lag as u128);
+                    let want = if hh <= e + l { 0 } else { (hh - l - 1) / e * e };
+                    assert_eq!(
+                        seed_height(h, epoch, lag) as u128,
+                        want,
+                        "E {epoch} L {lag} h {h}"
+                    );
+                }
+            }
         }
     }
 }

@@ -1157,6 +1157,70 @@ mod tests {
         }
     }
 
+    /// The accessors report the stored entries exactly, and an extension is
+    /// told apart from a reorg that disconnects blocks (W4-MUT: `is_valid`,
+    /// `work`, `Reorg::is_extension` and the work sum of `accept` survived
+    /// mutation).
+    #[test]
+    fn accessors_report_validity_work_and_extensions() {
+        let mut c = chain();
+        let g = c.tip_id();
+        let d0 = c.params().initial_difficulty as u128;
+        let unknown = [0xAB; 32];
+        assert_eq!(c.work(&g), Some(d0));
+        assert_eq!(c.is_valid(&g), Some(true));
+        assert_eq!(c.work(&unknown), None);
+        assert_eq!(c.is_valid(&unknown), None);
+
+        let h = mine_on(&c, g, 120, 1);
+        let acc = c.accept(h, u64::MAX / 2).unwrap();
+        let reorg = acc.reorg.expect("an extension changes the best chain");
+        assert!(reorg.is_extension());
+        assert_eq!((reorg.fork_height, reorg.connected), (0, vec![acc.id]));
+        assert_eq!(c.work(&acc.id), Some(d0 + h.difficulty as u128));
+        assert_eq!(c.work(&acc.id), Some(c.best_work()));
+        assert_eq!(c.is_valid(&acc.id), Some(true));
+
+        extend(&mut c, acc.id, 2, 120, 1);
+        let side = extend(&mut c, acc.id, 2, 120, 2);
+        let next = mine_on(&c, side[1], 120, 2);
+        let reorg = c.accept(next, u64::MAX / 2).unwrap().reorg.unwrap();
+        assert_eq!(reorg.disconnected.len(), 2);
+        assert!(!reorg.is_extension());
+    }
+
+    /// After an invalidation, equal-work branches are ranked by arrival: the
+    /// first-seen tip becomes best, whatever order the entries are stored in
+    /// (W4-MUT: the arrival counter survived mutation). Six tied tips and
+    /// eight fresh chains: a tie broken by storage order alone passes with
+    /// probability about 6^-8.
+    #[test]
+    fn invalidation_breaks_work_ties_by_first_arrival() {
+        for _ in 0..8 {
+            let mut c = chain();
+            let g = c.tip_id();
+            let fork = *extend(&mut c, g, 3, 120, 1).last().unwrap();
+            let heavy = extend(&mut c, fork, 3, 120, 1);
+            let tips: Vec<Hash> = (2..8)
+                .map(|tag| *extend(&mut c, fork, 2, 120, tag).last().unwrap())
+                .collect();
+            let work = c.work(&tips[0]);
+            assert!(tips.iter().all(|t| c.work(t) == work), "tied tips");
+            c.mark_invalid(&heavy[0]).expect("the best chain changes");
+            assert_eq!(c.tip_id(), tips[0]);
+        }
+    }
+
+    /// `Display` is the `Debug` form (logs and RPC errors quote it).
+    #[test]
+    fn errors_display_as_their_debug_form() {
+        let e = HeaderError::BadHeight {
+            expected: 1,
+            got: 2,
+        };
+        assert_eq!(e.to_string(), "BadHeight { expected: 1, got: 2 }");
+    }
+
     #[test]
     fn verdicts_do_not_depend_on_arrival_order() {
         // Build two branches in one chain, then feed all headers to a fresh chain
