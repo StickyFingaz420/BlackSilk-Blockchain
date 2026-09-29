@@ -1,0 +1,12 @@
+addr_v2 333 44464
+block_decode 593 423283
+delivery_open 24 29779
+kernel_diff 1191 1139816
+p2p_message 600 169223
+proof_decode 2253 365010870
+seed_words 408 39949
+store_records 347 97959
+transport_handshake 29 1076
+transport_recv 287 94860
+tx_decode 1657 5496361
+zkvm_elf 1524 4594011
