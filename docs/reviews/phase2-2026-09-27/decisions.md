@@ -782,3 +782,30 @@
 ## CI cadence (Lead decision 2026-09-29)
 - **Status:** CI run 110 was the first push run whose full test job (PX-proving included, one at a time) passed on the current code; its overflow job timed out (fixed by sharding in the commit after 1075bd9).
 - **Cadence:** do not push again while a rebuild/core CI run is mid-way unless the push fixes CI. Batch merges, so that every push's run completes and serves as evidence for its commit.
+
+## RT-FP3 (fingerprint v3 coverage), Lead decisions 2026-09-29
+- **Verdict:** ACCEPT WITH CHANGES. The construction is sound; the COVERAGE is not: six demonstrated consensus mutations leave all fingerprints identical. **The fingerprint does not freeze until the P0 items land.**
+- **P0:**
+  - RTFP3-2: RandomX config read from the crate (`config_entries()`), plus a pinned RandomX KAT constant asserted by the vector tests (the CIRCUIT_DIGEST pattern).
+  - RTFP3-1: a `tags::CONSENSUS` list in the manifest, plus samples (a fixture tx hash and signature message, a key image of a fixed secret, generator H).
+  - RTFP3-8: a machine-readable `Revision:` line per record, a test equating the record revisions to REVISIONS, the consensus-gate tie-in, the record-template checklist item, and exact heading match.
+  - RTFP3-10: extend consensus-gate paths to `crypto/`, `tx/src/{types,codec,state}.rs`, `chain/src/manager/`, `px/src/{prove,state,tree}.rs`, `randomx/`, `third_party/`.
+  - RTFP3-9 and RTFP3-15: build.rs marks dirty trees (release builds refuse them unless explicitly allowed); reproducible binary hashes are the operator check; doc overclaims corrected.
+- **P1:**
+  - RTFP3-3/4/5/6/7 samples: `Transaction::weight` fixtures, verdict samples for pinned fixture txs (valid plus one per error class), the FTL boundary, the D=1 clamp, empty roots and a small fixed tree root.
+  - RTFP3-14: `verify` accepts a registered id whose genesis matches.
+  - RTFP3-13: reserved-id table, `--rehearsal` range, `--final` for 0x0001D673.
+  - RTFP3-11/12: a zk transcript sample; exhaustive matches for exit codes and Epoch.
+- **RTFP3-16:** the DAA floor n²T/20 is provably unreachable for T >= 2. KEEP it as a documented defensive floor (the rule id is unchanged); its mutants are recorded as equivalent-by-proof in the mutation exemptions.
+- **Owner:** FX-RTFP3. Re-pin per procedure.
+
+## W4-RX evidence (2026-09-29)
+- **P0 EVIDENCE MET:** the real full-mode miner (`--prebuild auto`) crossed the first seed switch at 2113 on labnet regtest.
+  - The prebuild finished at height 2070; block 2113 came 2.9 s after the key switch; no hash-rate drop and no node stall.
+  - 2835 headers were independently verified (light mode, fresh processes) on all 5 nodes, byte-identical; full vs light agreed bit for bit on 61 blocks; the negative control was rejected.
+  - Scope: one crossing, one machine, regtest; the verifier shares the randomx crate (reference conformance rests on the vectors).
+- **Finding:** the late joiner stayed at 1 peer (no Addr, no dials); earlier labnets reached 3. A suspected P2P discovery regression, owned by INV-PEERS. It BLOCKS the next labnet evidence and any testnet claim about peer discovery.
+- **Follow-ups:**
+  - the miner logs background dataset build start and end (`miner/src/lib.rs`);
+  - document the new labnet flags in docs/testnet.md §8;
+  - test the regtest prebuild window versus default build threads (1 thread does not finish within 640 s) and the light bridge at a switch; consider scaling the default build threads when the window is short.
