@@ -17,14 +17,13 @@ use super::peers::maintain_outbound;
 use super::relay::{reannounce_pool, remember, retry_tx, TX_TIMEOUT};
 use super::state::{short, unix_now, Inner, State, StemEntry};
 use super::stem::{fluff_entry, send_held_local_txs, take_stem};
+use crate::connman::ConnKind;
 use crate::dandelion::PeerId;
 use crate::message::Message;
 use blacksilk_consensus::Hash;
 use rand_chacha::rand_core::RngCore;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-const PING_INTERVAL: Duration = Duration::from_secs(60);
 
 const PONG_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -93,11 +92,17 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
                         let _ = p.out.try_send(Message::InvTx(chunk.to_vec()));
                     }
                 }
+                // A seed's address fetch that got no answer in time.
+                if p.kind == ConnKind::AddrFetch
+                    && now.duration_since(p.connected_at) > inner.cfg.addr_fetch_timeout
+                {
+                    p.kill.notify_one();
+                }
                 if let Some((_, sent)) = p.ping {
                     if now.duration_since(sent) > PONG_TIMEOUT {
                         p.kill.notify_one();
                     }
-                } else if now.duration_since(p.last_ping) > PING_INTERVAL {
+                } else if now.duration_since(p.last_ping) > inner.cfg.ping_interval {
                     p.ping = Some((nonce, now));
                     p.last_ping = now;
                     let _ = p.out.try_send(Message::Ping(nonce));
@@ -154,10 +159,11 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
             st.peers
                 .iter()
                 .filter(|(_, p)| {
-                    (p.height > header_height || p.headers_pending)
+                    p.kind != ConnKind::AddrFetch
+                        && (p.height > header_height || p.headers_pending)
                         && p.headers_requested.is_none()
                         && !p.headers_busy
-                        && inner.header_queue_room(&st, &p.addr)
+                        && inner.header_queue_room(&st, &p.addr, p.proxied)
                 })
                 .map(|(id, _)| *id)
                 .collect()

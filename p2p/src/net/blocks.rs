@@ -4,6 +4,7 @@
 use super::chain_access;
 use super::headers::UpgradeWork;
 use super::state::{unix_now, BlockJob, Inner, Peer, State};
+use crate::connman::ConnKind;
 use crate::dandelion::PeerId;
 use crate::limits::score;
 use crate::message::Message;
@@ -177,10 +178,13 @@ pub(super) async fn block_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRecei
             st.blocks_queued.remove(&id);
             // A validated block that joined our best chain: the sender
             // brought something (RTW3-4, outbound rotation).
+            // Inbound eviction protects the recent block relayers by it.
             if let Some(Ok(s)) = &result {
                 if s.on_best_chain {
                     if let Some(p) = st.peers.get_mut(&peer) {
-                        p.last_new_tip = Some(Instant::now());
+                        let now = Instant::now();
+                        p.last_new_tip = Some(now);
+                        p.last_block = Some(now);
                     }
                 }
             }
@@ -247,7 +251,9 @@ pub(super) async fn schedule_downloads(inner: &Arc<Inner>) {
         let candidates: Vec<PeerId> = st
             .peers
             .iter()
-            .filter(|(_, p)| p.height >= height && window_has_room(p))
+            .filter(|(_, p)| {
+                p.height >= height && window_has_room(p) && p.kind != ConnKind::AddrFetch
+            })
             .map(|(id, _)| *id)
             .collect();
         if candidates.is_empty() {

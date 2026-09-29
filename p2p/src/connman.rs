@@ -1,8 +1,8 @@
-//! Connection policy (docs/p2p.md §9; dossier 32 W4–W7): which inbound peer
-//! gives way when inbound is full, which outbound peers are anchors across a
-//! restart, when a feeler is due, and when the tip is stale. Pure decisions
-//! (no I/O except the anchors file, time passed in), used by the network and
-//! unit-tested here.
+//! Connection policy (docs/p2p.md §9; dossier 32 W4–W7): the kinds of
+//! connection, which inbound peer gives way when inbound is full, which
+//! outbound peers are anchors across a restart, when a feeler is due, and
+//! when the tip is stale. Pure decisions (no I/O except the anchors file,
+//! time passed in), used by the network and unit-tested here.
 
 use crate::addr::NetAddr;
 use crate::dandelion::PeerId;
@@ -12,9 +12,24 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-/// Outbound peers saved at shutdown and dialed first at the next start
+/// Block-relay-only peers saved at shutdown and dialed first at the next start
 /// (Bitcoin Core: 2 block-relay-only anchors; Monero: 2).
 pub const MAX_ANCHORS: usize = 2;
+/// Block-relay-only outbound connections kept besides the full-relay ones
+/// (Bitcoin Core: 2). They carry headers and blocks only: no transactions and
+/// no addresses, so transaction and address relay reveal nothing about them
+/// (TxProbe, Delgado-Segura et al., FC 2019), and they are the anchors.
+pub const BLOCK_RELAY_ONLY: usize = 2;
+/// A seed's address fetch is closed after this long if the seed has not
+/// answered by then (Bitcoin Core closes an addr-fetch connection after its
+/// answer, or at the next check).
+pub const ADDR_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+/// Seeds are asked for addresses when fewer than this many full-relay
+/// outbound peers are up...
+pub const SEED_FALLBACK_OUTBOUND: usize = 2;
+/// ...for this long (or at once when the address table is empty, and while
+/// the tip is stale).
+pub const SEED_FALLBACK_AFTER: Duration = Duration::from_secs(60);
 /// The anchors file in the data directory.
 pub const ANCHORS_FILE: &str = "anchors.json";
 /// Mean time between feeler connections (Bitcoin Core: 2 minutes).
@@ -30,6 +45,66 @@ pub const STALE_CHECK_INTERVAL: Duration = Duration::from_secs(600);
 pub const MIN_CONNECT_TIME: Duration = Duration::from_secs(30);
 /// Inbound peers protected by keyed network group, one per group.
 pub const PROTECT_BY_GROUP: usize = 4;
+/// Inbound peers protected by the lowest minimum ping time.
+pub const PROTECT_BY_PING: usize = 8;
+/// Inbound peers protected by the most recent new valid transaction.
+pub const PROTECT_BY_TX: usize = 4;
+/// Block-relay-only inbound peers protected by the most recent new block.
+pub const PROTECT_BLOCK_RELAY_BY_BLOCK: usize = 8;
+/// Inbound peers protected by the most recent new block.
+pub const PROTECT_BY_BLOCK: usize = 4;
+
+// ---------------------------------------------------------------- connection kinds
+
+/// What a connection is for (docs/p2p.md §9).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ConnKind {
+    /// Accepted on the P2P listener.
+    Inbound,
+    /// Accepted on the onion listener (`NetConfig::onion_listen`): a peer
+    /// reaching our hidden service. Its IP is the Tor daemon's, so it is
+    /// never IP-banned or counted per IP; the class is capped instead
+    /// ([`onion_inbound_cap`]).
+    OnionInbound,
+    /// Outbound, relaying blocks, transactions and addresses. Manual peers
+    /// are full-relay.
+    FullRelay,
+    /// Outbound, relaying headers and blocks only ([`BLOCK_RELAY_ONLY`]):
+    /// `Version.relay_txs = false`, no `GetAddr`, no `Addr` either way, never
+    /// a Dandelion stem.
+    BlockRelay,
+    /// Outbound to a seed, one-shot: `GetAddr`, then closed on the answer or
+    /// after [`ADDR_FETCH_TIMEOUT`]. Never promoted in the address table,
+    /// never a stem or an anchor, not counted as an outbound peer.
+    AddrFetch,
+}
+
+impl ConnKind {
+    pub fn is_inbound(self) -> bool {
+        matches!(self, ConnKind::Inbound | ConnKind::OnionInbound)
+    }
+
+    /// Whether transactions are relayed (announced, stemmed) on it by this
+    /// node.
+    pub fn relays_txs(self) -> bool {
+        matches!(
+            self,
+            ConnKind::Inbound | ConnKind::OnionInbound | ConnKind::FullRelay
+        )
+    }
+
+    /// Whether addresses are exchanged on it (our `GetAddr` or theirs, our
+    /// own address, relayed addresses).
+    pub fn relays_addrs(self) -> bool {
+        self != ConnKind::BlockRelay
+    }
+}
+
+/// Onion inbound peers at most: a quarter of `max_inbound` (at least one).
+/// They share `max_inbound` with the clearnet inbound peers.
+pub fn onion_inbound_cap(max_inbound: usize) -> usize {
+    (max_inbound / 4).max(1)
+}
 
 // ---------------------------------------------------------------- inbound eviction
 
@@ -41,9 +116,38 @@ pub struct EvictionCandidate {
     pub keyed_group: u64,
     pub connected: Instant,
     /// A network whose peers are scarce and would lose out on the other
-    /// criteria: onion peers, arriving through our hidden service from
-    /// loopback.
+    /// criteria: onion peers, arriving through our hidden service.
     pub disadvantaged: bool,
+    /// The lowest ping round trip measured (`None`: not measured yet). A
+    /// peer cannot make it lower than its real distance: the nonce it must
+    /// echo is sent only then.
+    pub min_ping: Option<Duration>,
+    /// When the peer last delivered a new transaction that passed
+    /// verification (`None`: never).
+    pub last_tx: Option<Instant>,
+    /// When the peer last delivered a new block that joined our best chain
+    /// (`None`: never).
+    pub last_block: Option<Instant>,
+    /// The peer asked for transaction relay (`Version.relay_txs`); `false`:
+    /// a block-relay-only connection of the peer's.
+    pub relay_txs: bool,
+}
+
+/// Removes from `c` up to `k` candidates for which `key` is `Some`, those
+/// with the greatest key (ties: the oldest connection, then the lowest id):
+/// they are protected.
+fn protect_best<K: Ord>(
+    c: &mut Vec<&EvictionCandidate>,
+    k: usize,
+    key: impl Fn(&EvictionCandidate) -> Option<K>,
+) {
+    let mut ranked: Vec<(K, Instant, PeerId)> = c
+        .iter()
+        .filter_map(|p| key(p).map(|x| (x, p.connected, p.id)))
+        .collect();
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+    let keep: Vec<PeerId> = ranked.into_iter().take(k).map(|x| x.2).collect();
+    c.retain(|p| !keep.contains(&p.id));
 }
 
 /// The inbound peer to disconnect so that a new inbound connection can be
@@ -51,17 +155,23 @@ pub struct EvictionCandidate {
 /// `SelectNodeToEvict`. Protected, in order:
 /// 1. one peer (the oldest) of each of the [`PROTECT_BY_GROUP`] groups with
 ///    the highest keyed group hash: an attacker cannot know which groups;
-/// 2. up to a quarter of all candidates from disadvantaged networks, oldest
+/// 2. the [`PROTECT_BY_PING`] peers with the lowest measured minimum ping
+///    (an attacker must be close to the node, in the network, to win);
+/// 3. the [`PROTECT_BY_TX`] peers that most recently delivered a new valid
+///    transaction;
+/// 4. the [`PROTECT_BLOCK_RELAY_BY_BLOCK`] block-relay-only peers that most
+///    recently delivered a new block;
+/// 5. the [`PROTECT_BY_BLOCK`] peers that most recently delivered a new
+///    block;
+/// 6. up to a quarter of all candidates from disadvantaged networks, oldest
 ///    first;
-/// 3. half of the rest, by uptime (oldest first): long-lived connections are
+/// 7. half of the rest, by uptime (oldest first): long-lived connections are
 ///    costly to take over.
 ///
-/// From the rest, the youngest peer of the group with the most connections
-/// (ties: the group whose youngest peer is youngest) is evicted.
-///
-/// Bitcoin Core also protects the peers with the lowest ping and those that
-/// recently relayed transactions or blocks; BlackSilk does not measure them
-/// yet (docs/p2p.md §9).
+/// Classes 2 to 5 protect only peers that earned it (a measured ping, a
+/// delivery). From the rest, the youngest peer of the group with the most
+/// connections (ties: the group whose youngest peer is youngest) is
+/// evicted.
 pub fn select_inbound_to_evict(candidates: &[EvictionCandidate]) -> Option<PeerId> {
     let total = candidates.len();
     let mut c: Vec<&EvictionCandidate> = candidates.iter().collect();
@@ -80,7 +190,19 @@ pub fn select_inbound_to_evict(candidates: &[EvictionCandidate]) -> Option<PeerI
         }
         true
     });
-    // 2. Disadvantaged networks.
+    // 2. Lowest ping (greatest key: the reversed ping).
+    protect_best(&mut c, PROTECT_BY_PING, |p| {
+        p.min_ping.map(std::cmp::Reverse)
+    });
+    // 3. Recent transactions.
+    protect_best(&mut c, PROTECT_BY_TX, |p| p.last_tx);
+    // 4. Block-relay-only peers by recent blocks.
+    protect_best(&mut c, PROTECT_BLOCK_RELAY_BY_BLOCK, |p| {
+        p.last_block.filter(|_| !p.relay_txs)
+    });
+    // 5. Recent blocks.
+    protect_best(&mut c, PROTECT_BY_BLOCK, |p| p.last_block);
+    // 6. Disadvantaged networks.
     c.sort_by(|a, b| a.connected.cmp(&b.connected).then(a.id.cmp(&b.id)));
     let mut quota = total / 4;
     c.retain(|p| {
@@ -90,7 +212,7 @@ pub fn select_inbound_to_evict(candidates: &[EvictionCandidate]) -> Option<PeerI
         }
         true
     });
-    // 3. Uptime.
+    // 7. Uptime.
     let keep = c.len() / 2;
     let c = &c[keep..];
     if c.is_empty() {
@@ -271,8 +393,15 @@ pub fn take_anchors(dir: &Path) -> Vec<NetAddr> {
 /// The network's connection-policy state (behind the network lock).
 #[derive(Default)]
 pub struct ConnState {
-    /// Anchors still to dial; `None` until the anchors file was read.
+    /// Anchors still to dial (as block-relay-only connections); `None` until
+    /// the anchors file was read.
     pub anchors: Option<Vec<NetAddr>>,
+    /// Since when fewer than [`SEED_FALLBACK_OUTBOUND`] full-relay outbound
+    /// peers are up (`None`: enough are).
+    pub low_outbound_since: Option<Instant>,
+    /// When each seed was last asked for addresses (at most every
+    /// `SEED_RETRY`).
+    pub seed_fetches: HashMap<NetAddr, Instant>,
     /// The feeler connection in progress, if any.
     pub feeler: Option<NetAddr>,
     /// When the next feeler is due (`None`: not scheduled yet).
@@ -293,6 +422,10 @@ mod tests {
             keyed_group: group,
             connected: t0 - Duration::from_secs(age_secs),
             disadvantaged: false,
+            min_ping: None,
+            last_tx: None,
+            last_block: None,
+            relay_txs: true,
         }
     }
 
@@ -346,6 +479,72 @@ mod tests {
         }
         // The oldest peers are protected by uptime.
         assert!(left.iter().any(|p| p.id == 7), "oldest kept");
+    }
+
+    /// W3-32c item 3 (W6 remainder): peers that recently delivered a new
+    /// valid transaction or block, and the lowest-ping peers, survive
+    /// eviction; a peer that delivered nothing, however old, does not
+    /// outlast them. All candidates share one group and are young (no group
+    /// or uptime advantage) except where stated.
+    #[test]
+    fn recent_relayers_and_low_ping_peers_survive_eviction() {
+        let t0 = Instant::now() + Duration::from_secs(100_000);
+        let recent = |secs| Some(t0 - Duration::from_secs(secs));
+        let mut c: Vec<EvictionCandidate> = (0..40).map(|i| cand(i, 7, 10 + i, t0)).collect();
+        // 8 fast peers, 4 transaction relayers, 4 block relayers and 8
+        // block-relay-only peers that delivered blocks; the rest delivered
+        // nothing and have no ping measured.
+        for p in &mut c[0..8] {
+            p.min_ping = Some(Duration::from_millis(5 + p.id));
+        }
+        for p in &mut c[8..12] {
+            p.last_tx = recent(p.id);
+        }
+        for p in &mut c[12..16] {
+            p.last_block = recent(p.id);
+        }
+        for p in &mut c[16..24] {
+            p.last_block = recent(1000 + p.id);
+            p.relay_txs = false;
+        }
+        // Slower peers than the 8 fast ones, and staler relayers: not
+        // protected by those classes.
+        for p in &mut c[24..28] {
+            p.min_ping = Some(Duration::from_millis(500));
+        }
+        let protected: Vec<PeerId> = (0..24).collect();
+        let mut left = c.clone();
+        while let Some(v) = select_inbound_to_evict(&left) {
+            assert!(!protected.contains(&v), "evicted protected peer {v}");
+            left.retain(|p| p.id != v);
+        }
+        for id in &protected {
+            assert!(left.iter().any(|p| p.id == *id), "{id} evicted");
+        }
+        // Protection is earned: without the measurements the same peers are
+        // evicted like any other.
+        let plain: Vec<EvictionCandidate> = (0..40).map(|i| cand(i, 7, 10 + i, t0)).collect();
+        let mut left = plain;
+        let mut evicted = Vec::new();
+        while let Some(v) = select_inbound_to_evict(&left) {
+            evicted.push(v);
+            left.retain(|p| p.id != v);
+        }
+        assert!(evicted.iter().any(|v| *v < 24), "{evicted:?}");
+    }
+
+    /// Connection kinds: what each relays.
+    #[test]
+    fn connection_kinds() {
+        use ConnKind::*;
+        for k in [Inbound, OnionInbound] {
+            assert!(k.is_inbound() && k.relays_txs() && k.relays_addrs());
+        }
+        assert!(!FullRelay.is_inbound() && FullRelay.relays_txs() && FullRelay.relays_addrs());
+        assert!(!BlockRelay.relays_txs() && !BlockRelay.relays_addrs());
+        assert!(!AddrFetch.relays_txs() && AddrFetch.relays_addrs());
+        assert_eq!(onion_inbound_cap(64), 16);
+        assert_eq!(onion_inbound_cap(3), 1);
     }
 
     /// RTW3-4: the worst outbound peer is the one whose last validated new

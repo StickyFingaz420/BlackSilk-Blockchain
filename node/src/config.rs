@@ -49,6 +49,12 @@ pub struct Args {
     /// Do not accept inbound P2P connections.
     #[arg(long)]
     pub no_listen: bool,
+    /// Second P2P listener for our Tor hidden service, e.g. 127.0.0.1:29335:
+    /// point the onion service's port here. Its peers are onion peers, never
+    /// IP-banned or limited per IP (they share the Tor daemon's address),
+    /// capped at a quarter of --max-inbound (docs/p2p.md §11).
+    #[arg(long, value_name = "ADDR")]
+    pub onion_inbound: Option<SocketAddr>,
     /// Disable P2P networking entirely (isolated node).
     #[arg(long)]
     pub no_p2p: bool,
@@ -137,6 +143,7 @@ struct FileP2p {
     enabled: Option<bool>,
     bind: Option<SocketAddr>,
     listen: Option<bool>,
+    onion_inbound: Option<SocketAddr>,
     public_address: Option<String>,
     #[serde(default)]
     peers: Vec<String>,
@@ -178,6 +185,8 @@ pub struct Config {
 #[derive(Debug, Clone, PartialEq)]
 pub struct P2pConfig {
     pub listen: Option<SocketAddr>,
+    /// The onion listener (`--onion-inbound`).
+    pub onion_inbound: Option<SocketAddr>,
     pub public_address: Option<NetAddr>,
     pub peers: Vec<String>,
     pub connect_only: bool,
@@ -293,6 +302,23 @@ impl Config {
                     None => Some(SocketAddr::from(([0, 0, 0, 0], default_p2p_port(network)))),
                 }
             };
+            let onion_inbound = if listen_enabled {
+                args.onion_inbound.or(f.onion_inbound)
+            } else {
+                None
+            };
+            if let Some(o) = onion_inbound {
+                if !o.ip().is_loopback() {
+                    return Err(format!(
+                        "onion_inbound {o}: bind it to loopback, where only the local Tor daemon reaches it"
+                    ));
+                }
+                if listen == Some(o) {
+                    return Err(format!(
+                        "onion_inbound {o} is the P2P listen address; give the onion service its own port"
+                    ));
+                }
+            }
             let public_address = args
                 .public_address
                 .or(f.public_address)
@@ -312,6 +338,7 @@ impl Config {
             }
             Some(P2pConfig {
                 listen,
+                onion_inbound,
                 public_address,
                 peers,
                 connect_only,
@@ -536,6 +563,41 @@ max_outbound = 3
         );
         assert!(Config::resolve(args(&["--network", "mainnet"])).is_err());
         assert!(Config::resolve(args(&["--proxy-only"])).is_err());
+    }
+
+    /// W3-32c (N-6): `--onion-inbound` or `[p2p] onion_inbound` sets the
+    /// onion listener; it must be loopback and not the P2P listener, and
+    /// `--no-listen` disables it too.
+    #[test]
+    fn onion_inbound_listener() {
+        let c = Config::resolve(args(&[])).unwrap();
+        assert_eq!(c.p2p.unwrap().onion_inbound, None, "off by default");
+        let c = Config::resolve(args(&["--onion-inbound", "127.0.0.1:29335"])).unwrap();
+        assert_eq!(
+            c.p2p.unwrap().onion_inbound,
+            Some("127.0.0.1:29335".parse().unwrap())
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.toml");
+        std::fs::write(&path, "[p2p]\nonion_inbound = \"127.0.0.1:29336\"\n").unwrap();
+        let c = Config::resolve(args(&["--config", path.to_str().unwrap()])).unwrap();
+        assert_eq!(
+            c.p2p.unwrap().onion_inbound,
+            Some("127.0.0.1:29336".parse().unwrap())
+        );
+        let err = Config::resolve(args(&["--onion-inbound", "0.0.0.0:29335"])).unwrap_err();
+        assert!(err.contains("loopback"), "{err}");
+        let err = Config::resolve(args(&[
+            "--p2p-bind",
+            "127.0.0.1:29334",
+            "--onion-inbound",
+            "127.0.0.1:29334",
+        ]))
+        .unwrap_err();
+        assert!(err.contains("own port"), "{err}");
+        let c =
+            Config::resolve(args(&["--no-listen", "--onion-inbound", "127.0.0.1:29335"])).unwrap();
+        assert_eq!(c.p2p.unwrap().onion_inbound, None);
     }
 
     #[test]

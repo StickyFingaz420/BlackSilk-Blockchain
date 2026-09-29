@@ -347,6 +347,14 @@ async fn verify_on_tx_lane<T: Send + 'static>(
     }
 }
 
+/// `peer` delivered a new transaction that passed verification: inbound
+/// eviction protects the recent relayers (docs/p2p.md §9).
+fn note_new_tx(st: &mut State, peer: PeerId) {
+    if let Some(p) = st.peers.get_mut(&peer) {
+        p.last_tx = Some(Instant::now());
+    }
+}
+
 pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     let Some(tx) = decode_tx(&bytes) else {
         inner.misbehave(peer, score::INVALID_TX, "transaction does not decode");
@@ -391,6 +399,7 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
                 if let Some(e) = st.stempool.remove(&id) {
                     unstem_key_images(&mut st, &e.tx);
                 }
+                note_new_tx(&mut st, peer);
             }
             inner.announce_tx(id, Some(peer));
         }
@@ -445,6 +454,7 @@ pub(super) async fn on_stem_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>)
         // originated it (the originated set, docs/p2p.md §8.1, and the
         // recently-expired guard apply to local origination only: RTW1B-1).
         (_, Ok(_), _) => {
+            note_new_tx(&mut inner.state(), peer);
             stem_or_fluff(inner, unshare(tx), id, Source::Peer(peer)).await;
         }
         (tip, Err(MempoolError::Invalid(e)), proven) => {

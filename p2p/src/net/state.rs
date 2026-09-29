@@ -7,6 +7,7 @@ use super::lock_or_exit;
 use crate::addr::NetAddr;
 use crate::addrman::{AddrMan, BanList};
 use crate::addrman_gate::AddrGate;
+use crate::connman::ConnKind;
 use crate::dandelion::{Dandelion, PeerId};
 use crate::limits::PeerLimits;
 use crate::message::Message;
@@ -21,12 +22,18 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, Notify};
 
 pub(super) struct Peer {
     pub(super) addr: NetAddr,
+    /// What the connection is for (`connman::ConnKind`).
+    pub(super) kind: ConnKind,
+    /// `kind.is_inbound()`.
     pub(super) inbound: bool,
+    /// The connection's IP is not the peer's: a proxied outbound connection,
+    /// or an inbound one through our hidden service (`OnionInbound`). Such a
+    /// peer is never IP-banned or counted per IP.
     pub(super) proxied: bool,
     pub(super) protocol: u32,
     /// Control messages; sent before anything queued in `bulk`.
@@ -34,7 +41,14 @@ pub(super) struct Peer {
     /// `Block` frames.
     pub(super) bulk: mpsc::Sender<Message>,
     pub(super) kill: Arc<Notify>,
+    /// Transactions are announced and stemmed to this peer: it asked for them
+    /// (`Version.relay_txs`) and the connection's kind relays them (not
+    /// block-relay-only or an address fetch).
     pub(super) relay_txs: bool,
+    /// Addresses are exchanged with this peer (`GetAddr`, `Addr`, our own
+    /// address, relayed ones): not on a block-relay-only connection, ours
+    /// or the peer's (docs/p2p.md §9).
+    pub(super) addr_relay: bool,
     pub(super) height: u64,
     pub(super) score: u32,
     pub(super) limits: PeerLimits,
@@ -49,6 +63,9 @@ pub(super) struct Peer {
     pub(super) announced_to: HashSet<Hash>,
     pub(super) known_txs: HashSet<Hash>,
     pub(super) ping: Option<(u64, Instant)>,
+    /// The lowest ping round trip measured (inbound eviction protects the
+    /// lowest; `None`: none answered yet).
+    pub(super) min_ping: Option<Duration>,
     pub(super) last_ping: Instant,
     pub(super) last_recv: Instant,
     /// Blocks requested from this peer and not yet processed, and the bytes
@@ -82,6 +99,12 @@ pub(super) struct Peer {
     /// joined our best chain. Outbound rotation ranks by it (RTW3-4), never
     /// by `height`, which the peer claims.
     pub(super) last_new_tip: Option<Instant>,
+    /// When this peer last delivered a new block that joined our best chain,
+    /// and a new transaction that passed verification (accepted to the pool,
+    /// or a valid stem transaction). Inbound eviction protects the most
+    /// recent (docs/p2p.md §9).
+    pub(super) last_block: Option<Instant>,
+    pub(super) last_tx: Option<Instant>,
 }
 
 /// An inbound connection accepted but not yet registered (key exchange or
@@ -89,13 +112,19 @@ pub(super) struct Peer {
 /// registered peer (RTW3-3, docs/p2p.md §9).
 pub(super) struct PendingHandshake {
     pub(super) started: Instant,
-    /// The connection's IPv4 address or IPv6 /64 (`peer_key`).
-    pub(super) ip: IpAddr,
-    /// Its bucketing group (IPv4 /16, IPv6 /32; `AddrMan::bucket_group`).
+    /// The connection's IPv4 address or IPv6 /64 (`peer_key`); `None` on the
+    /// onion listener, where the IP is the Tor daemon's.
+    pub(super) ip: Option<IpAddr>,
+    /// Its bucketing group (IPv4 /16, IPv6 /32; `AddrMan::bucket_group`), or
+    /// the onion class ([`ONION_HANDSHAKE_GROUP`]).
     pub(super) group: Vec<u8>,
     /// Closes the connection.
     pub(super) kill: Arc<Notify>,
 }
+
+/// The handshake group of every connection on the onion listener: they share
+/// one IP (the Tor daemon's), so they are bounded together.
+pub(super) const ONION_HANDSHAKE_GROUP: &[u8] = &[10];
 
 /// Per-peer known-address set size; the set is emptied when full (a relayed
 /// address may then be sent to that peer once more).
@@ -131,7 +160,9 @@ pub(super) struct State {
     /// unsolicited block (R8-9).
     pub(super) late_blocks: HashMap<Hash, (PeerId, Instant)>,
     pub(super) local_nonces: HashSet<u64>,
-    pub(super) connecting: HashSet<NetAddr>,
+    /// Addresses being dialed or connected outbound, with the kind of the
+    /// connection (`peers::connect_outbound`).
+    pub(super) connecting: HashMap<NetAddr, ConnKind>,
     pub(super) last_attempt: HashMap<NetAddr, Instant>,
     pub(super) announced_tip: Hash,
     pub(super) rng: ChaCha20Rng,
@@ -275,6 +306,8 @@ pub(super) struct BlockJob {
 pub(super) struct HeaderBatch {
     pub(super) peer: PeerId,
     pub(super) addr: NetAddr,
+    /// The sender's IP is not its own (`Peer::proxied`): it is never banned,
+    /// and its origin for the header queue bound is the connection.
     pub(super) proxied: bool,
     /// An answer to our `GetHeaders` (not a tip announcement).
     pub(super) solicited: bool,
@@ -303,6 +336,8 @@ pub(super) struct Inner {
     pub(super) state: Mutex<State>,
     pub(super) next_id: AtomicU64,
     pub(super) local_addr: Option<SocketAddr>,
+    /// The onion listener's bound address (`NetConfig::onion_listen`).
+    pub(super) onion_addr: Option<SocketAddr>,
     /// Serializes writes of the originated set's file (taken before the
     /// state lock, only on blocking threads or at shutdown).
     pub(super) originated_io: Mutex<()>,

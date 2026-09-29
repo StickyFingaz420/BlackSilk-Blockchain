@@ -25,10 +25,12 @@ use tokio::sync::mpsc;
 pub(super) const HEADERS_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The origin a queued header batch is charged to: the sender's IP (port
-/// dropped), or the whole address for onion peers.
-fn queue_key(addr: &NetAddr) -> NetAddr {
+/// dropped), or the whole address for onion peers and for peers whose IP is
+/// not their own (`proxied`: those reaching our hidden service all share the
+/// Tor daemon's IP).
+fn queue_key(addr: &NetAddr, proxied: bool) -> NetAddr {
     match addr {
-        NetAddr::Ip(a) => NetAddr::Ip(SocketAddr::new(a.ip(), 0)),
+        NetAddr::Ip(a) if !proxied => NetAddr::Ip(SocketAddr::new(a.ip(), 0)),
         other => other.clone(),
     }
 }
@@ -38,7 +40,7 @@ impl Inner {
     /// `max_per_ip` batches per origin (not enforced for loopback-style
     /// `allow_private` setups, like the connection limit) and
     /// `2 × (max_inbound + max_outbound)` in total.
-    pub(super) fn header_queue_room(&self, st: &State, addr: &NetAddr) -> bool {
+    pub(super) fn header_queue_room(&self, st: &State, addr: &NetAddr, proxied: bool) -> bool {
         let total = 2 * (self.cfg.max_inbound + self.cfg.max_outbound).max(1);
         if st.header_queue_len >= total {
             return false;
@@ -46,7 +48,7 @@ impl Inner {
         self.cfg.allow_private
             || st
                 .header_queue_origin
-                .get(&queue_key(addr))
+                .get(&queue_key(addr, proxied))
                 .is_none_or(|&n| n < self.cfg.max_per_ip.max(1))
     }
 
@@ -171,7 +173,7 @@ pub(super) async fn on_headers(inner: &Arc<Inner>, peer: PeerId, headers: Vec<Bl
         let room = st
             .peers
             .get(&peer)
-            .is_some_and(|p| inner.header_queue_room(&st, &p.addr));
+            .is_some_and(|p| inner.header_queue_room(&st, &p.addr, p.proxied));
         let Some(p) = st.peers.get_mut(&peer) else {
             return;
         };
@@ -218,7 +220,7 @@ pub(super) async fn on_headers(inner: &Arc<Inner>, peer: PeerId, headers: Vec<Bl
                 solicited,
                 headers,
             };
-            let key = queue_key(&batch.addr);
+            let key = queue_key(&batch.addr, batch.proxied);
             if inner.header_queue.send(batch).is_err() {
                 p.headers_busy = false;
                 log::error!("header worker stopped: header batch dropped");
@@ -360,7 +362,7 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
         let pending = {
             let mut st = inner.state();
             st.header_queue_len = st.header_queue_len.saturating_sub(1);
-            let key = queue_key(&batch.addr);
+            let key = queue_key(&batch.addr, batch.proxied);
             if let Some(n) = st.header_queue_origin.get_mut(&key) {
                 *n -= 1;
                 if *n == 0 {
@@ -763,11 +765,17 @@ mod tests {
     fn header_queue_origins_ignore_the_port() {
         let a = NetAddr::parse("1.2.3.4:5").unwrap();
         let b = NetAddr::parse("1.2.3.4:6").unwrap();
-        assert_eq!(queue_key(&a), queue_key(&b));
+        assert_eq!(queue_key(&a, false), queue_key(&b, false));
         assert_ne!(
-            queue_key(&a),
-            queue_key(&NetAddr::parse("1.2.3.5:5").unwrap())
+            queue_key(&a, false),
+            queue_key(&NetAddr::parse("1.2.3.5:5").unwrap(), false)
         );
+        // Onion peers through our hidden service: one origin per connection.
+        let (o1, o2) = (
+            NetAddr::parse("127.0.0.1:50001").unwrap(),
+            NetAddr::parse("127.0.0.1:50002").unwrap(),
+        );
+        assert_ne!(queue_key(&o1, true), queue_key(&o2, true));
     }
 
     /// A header from a newer release (a version no epoch of the schedule

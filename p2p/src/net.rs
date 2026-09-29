@@ -40,6 +40,7 @@ mod stem;
 
 use crate::addr::NetAddr;
 use crate::addrman::{AddrMan, BanList};
+use crate::connman::ConnKind;
 use crate::dandelion::Dandelion;
 use crate::originated::Originated;
 use blacksilk_chain::actor::{self, ActorConfig, ChainHandle};
@@ -133,7 +134,7 @@ impl Network {
         let mut addrman = cfg
             .data_dir
             .as_ref()
-            .and_then(|d| AddrMan::load(&d.join("peers.json")))
+            .and_then(|d| AddrMan::load_grouped(&d.join("peers.json"), cfg.allow_private))
             .unwrap_or_else(|| AddrMan::new(&mut rng));
         addrman.set_private_groups(cfg.allow_private);
         let bans = cfg
@@ -152,6 +153,11 @@ impl Network {
             Some(a) => Some(TcpListener::bind(a).await?),
             None => None,
         };
+        let onion_listener = match cfg.onion_listen {
+            Some(a) => Some(TcpListener::bind(a).await?),
+            None => None,
+        };
+        let onion_addr = onion_listener.as_ref().and_then(|l| l.local_addr().ok());
         let local_addr = listener.as_ref().and_then(|l| l.local_addr().ok());
         let summary = chain.summary_cell();
         let (tip, genesis_id) = {
@@ -173,7 +179,7 @@ impl Network {
             recent_rejects_set: HashSet::new(),
             late_blocks: HashMap::new(),
             local_nonces: HashSet::new(),
-            connecting: HashSet::new(),
+            connecting: HashMap::new(),
             last_attempt: HashMap::new(),
             announced_tip: tip,
             rng,
@@ -210,10 +216,14 @@ impl Network {
             state: Mutex::new(state),
             next_id: AtomicU64::new(1),
             local_addr,
+            onion_addr,
             originated_io: Mutex::new(()),
         });
         if let Some(l) = listener {
-            tokio::spawn(accept_loop(inner.clone(), l));
+            tokio::spawn(accept_loop(inner.clone(), l, false));
+        }
+        if let Some(l) = onion_listener {
+            tokio::spawn(accept_loop(inner.clone(), l, true));
         }
         tokio::spawn(maintenance_loop(inner.clone()));
         tokio::spawn(chain_maintenance_loop(inner.clone()));
@@ -224,6 +234,11 @@ impl Network {
 
     pub fn local_addr(&self) -> Option<SocketAddr> {
         self.inner.local_addr
+    }
+
+    /// The onion listener's address (`NetConfig::onion_listen`), if any.
+    pub fn onion_local_addr(&self) -> Option<SocketAddr> {
+        self.inner.onion_addr
     }
 
     /// Submits a locally created transaction: validated, then sent into the
@@ -242,8 +257,13 @@ impl Network {
         submit_local(&self.inner, tx).await
     }
 
+    /// Dials `addr` as a full-relay outbound peer.
     pub fn connect(&self, addr: NetAddr) {
-        tokio::spawn(connect_outbound(self.inner.clone(), addr));
+        tokio::spawn(connect_outbound(
+            self.inner.clone(),
+            addr,
+            ConnKind::FullRelay,
+        ));
     }
 
     pub fn peers(&self) -> Vec<PeerInfo> {
@@ -254,9 +274,13 @@ impl Network {
                 id: *id,
                 addr: p.addr.clone(),
                 inbound: p.inbound,
+                kind: p.kind,
                 height: p.height,
                 score: p.score,
                 protocol: p.protocol,
+                min_ping: p.min_ping,
+                last_block: p.last_block,
+                last_tx: p.last_tx,
             })
             .collect()
     }
@@ -267,6 +291,11 @@ impl Network {
         NetStats {
             peers: st.peers.len(),
             outbound,
+            block_relay: st
+                .peers
+                .values()
+                .filter(|p| p.kind == ConnKind::BlockRelay)
+                .count(),
             inbound: st.peers.len() - outbound,
             stempool: st.stempool.len(),
             banned: st.bans.len(),

@@ -207,6 +207,10 @@ pub(super) async fn handle(inner: &Arc<Inner>, peer: PeerId, msg: Message) {
                 let mut st = inner.state();
                 match st.peers.get_mut(&peer) {
                     Some(p) if p.ping.map(|(x, _)| x) == Some(n) => {
+                        // The round trip: the nonce was sent only then, so a
+                        // peer cannot answer faster than its real distance.
+                        let rtt = p.ping.map(|(_, sent)| sent.elapsed()).unwrap_or_default();
+                        p.min_ping = Some(p.min_ping.map_or(rtt, |m| m.min(rtt)));
                         p.ping = None;
                         true
                     }
