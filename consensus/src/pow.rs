@@ -374,6 +374,12 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
 
+    /// How long a test waits for a call that must return. The stand-in
+    /// caches build instantly, so this is only ever reached by a bug (or a
+    /// mutant that loses a wake-up), which then fails the test instead of
+    /// hanging it (RT-MUT).
+    const BOUND: Duration = Duration::from_secs(10);
+
     /// A stand-in cache that counts the instances alive.
     struct Fake {
         live: Arc<AtomicUsize>,
@@ -385,20 +391,40 @@ mod tests {
         }
     }
 
-    fn fake_cache() -> (SeedCache<Fake>, Arc<AtomicUsize>) {
+    fn fake_cache() -> (Arc<SeedCache<Fake>>, Arc<AtomicUsize>) {
         let live = Arc::new(AtomicUsize::new(0));
         let l = live.clone();
         let cache = SeedCache::new(move |_: &Hash| {
             l.fetch_add(1, Ordering::SeqCst);
             Fake { live: l.clone() }
         });
-        (cache, live)
+        (Arc::new(cache), live)
     }
 
     fn key(i: u64) -> Hash {
         let mut h = [0u8; 32];
         h[..8].copy_from_slice(&i.to_le_bytes());
         h
+    }
+
+    /// `cache.get(seed)` on a helper thread, as a receiver of its result.
+    fn ask<C: Send + Sync + 'static>(
+        cache: &Arc<SeedCache<C>>,
+        seed: &Hash,
+    ) -> mpsc::Receiver<Arc<C>> {
+        let (done, done_rx) = mpsc::channel();
+        let (cache, seed) = (cache.clone(), *seed);
+        std::thread::spawn(move || {
+            let _ = done.send(cache.get(&seed));
+        });
+        done_rx
+    }
+
+    /// `cache.get(seed)`, failing the test unless it returns within [`BOUND`].
+    fn get<C: Send + Sync + 'static>(cache: &Arc<SeedCache<C>>, seed: &Hash) -> Arc<C> {
+        ask(cache, seed)
+            .recv_timeout(BOUND)
+            .unwrap_or_else(|e| panic!("get did not return within {BOUND:?}: {e}"))
     }
 
     /// T1: a hot key is built once and never evicted, however many other
@@ -408,21 +434,21 @@ mod tests {
         let (cache, live) = fake_cache();
         let (a, b) = (key(1), key(2));
         assert_eq!(cache.set_hot(&[a, b, key(3)]), vec![a, b], "two hot keys");
-        let _ = cache.get(&a);
-        let _ = cache.get(&b);
+        let _ = get(&cache, &a);
+        let _ = get(&cache, &b);
         // Built hot keys are not reported missing (W4-MUT: `&&` to `||`).
         assert_eq!(cache.set_hot(&[a, b]), Vec::<Hash>::new(), "both built");
         for i in 100..200 {
-            let _ = cache.get(&key(i));
+            let _ = get(&cache, &key(i));
             assert!(cache.is_resident(&a) && cache.is_resident(&b));
             assert!(cache.resident().len() <= HOT_SEEDS + SIDE_CAP_PINNED);
         }
-        let _ = cache.get(&a);
+        let _ = get(&cache, &a);
         assert_eq!(cache.builds(), 2 + 100, "the hot keys were built once");
         assert_eq!(live.load(Ordering::SeqCst), 3);
         // A key that leaves the hot set becomes evictable.
         cache.set_hot(&[b]);
-        let _ = cache.get(&key(500));
+        let _ = get(&cache, &key(500));
         assert!(!cache.is_resident(&a) && cache.is_resident(&b));
         assert_eq!(live.load(Ordering::SeqCst), 2);
     }
@@ -433,9 +459,9 @@ mod tests {
     fn without_a_hot_set_the_two_most_recent_keys_stay() {
         let (cache, live) = fake_cache();
         for i in 0..5 {
-            let _ = cache.get(&key(i));
+            let _ = get(&cache, &key(i));
         }
-        let _ = cache.get(&key(3));
+        let _ = get(&cache, &key(3));
         assert_eq!(cache.resident(), vec![key(4), key(3)]);
         assert_eq!(cache.builds(), 5);
         assert_eq!(live.load(Ordering::SeqCst), 2);
@@ -449,7 +475,7 @@ mod tests {
             assert_eq!(st.side_building, 0);
         }
         // An evicted key is built again when asked for.
-        let _ = cache.get(&key(0));
+        let _ = get(&cache, &key(0));
         assert_eq!(cache.builds(), 6);
         assert_eq!(cache.resident(), vec![key(3), key(0)]);
     }
@@ -458,33 +484,22 @@ mod tests {
     /// another key; two borrowed evicted caches hold every build back until
     /// one is released (the bound of T3, here without a race). W4-MUT:
     /// `get`'s `evicted_alive() > 1` mutated to `>= 1` or `== 1` survived.
-    /// The waits have generous timeouts so that a mutant fails instead of
-    /// hanging; the one negative wait can only let a mutant through, never
-    /// fail the rule.
+    /// Every wait is bounded, so that a mutant fails instead of hanging; the
+    /// one negative wait can only let a mutant through, never fail the rule.
     #[test]
     fn one_borrowed_evicted_cache_does_not_block_a_build_but_two_do() {
         let (cache, live) = fake_cache();
-        let cache = Arc::new(cache);
-        let held1 = cache.get(&key(1));
-        let held2 = cache.get(&key(2));
-        let _ = cache.get(&key(3)); // evicts key 1, still borrowed
+        let held1 = get(&cache, &key(1));
+        let held2 = get(&cache, &key(2));
+        let _ = get(&cache, &key(3)); // evicts key 1, still borrowed
         assert_eq!(cache.lock().evicted_alive(), 1);
-        let ask = |k: u64| {
-            let (done, done_rx) = mpsc::channel();
-            let cache = cache.clone();
-            std::thread::spawn(move || {
-                let _ = cache.get(&key(k));
-                let _ = done.send(());
-            });
-            done_rx
-        };
-        ask(4)
-            .recv_timeout(Duration::from_secs(60))
+        ask(&cache, &key(4))
+            .recv_timeout(BOUND)
             .expect("one borrowed evicted cache does not block a build");
         // Key 4 evicted key 2, still borrowed: two are alive now.
         assert_eq!(cache.lock().evicted_alive(), 2);
         let builds = cache.builds();
-        let waiting = ask(5);
+        let waiting = ask(&cache, &key(5));
         assert!(
             waiting.recv_timeout(Duration::from_millis(300)).is_err(),
             "a build started while two evicted caches were borrowed"
@@ -492,7 +507,7 @@ mod tests {
         assert_eq!(cache.builds(), builds);
         drop(held1);
         waiting
-            .recv_timeout(Duration::from_secs(60))
+            .recv_timeout(BOUND)
             .expect("the build proceeds once one is released");
         drop(held2);
         assert_eq!(cache.builds(), builds + 1);
@@ -508,35 +523,38 @@ mod tests {
         let slow = key(9);
         let cache = Arc::new(SeedCache::new(move |s: &Hash| {
             if *s == slow {
-                gate.lock().unwrap().recv().unwrap();
+                let _ = gate.lock().unwrap().recv_timeout(BOUND);
             }
             *s
         }));
         let built = key(1);
-        let _ = cache.get(&built);
+        let _ = get(&cache, &built);
         let hot = key(2);
         cache.set_hot(&[hot]);
-        let (started, started_rx) = mpsc::channel();
-        let slow_caller = {
-            let cache = cache.clone();
-            std::thread::spawn(move || {
-                started.send(()).unwrap();
-                *cache.get(&slow)
-            })
-        };
-        started_rx.recv().unwrap();
+        let slow_caller = ask(&cache, &slow);
+        let deadline = std::time::Instant::now() + BOUND;
         while !cache.lock().building.contains(&slow) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the slow build never started"
+            );
             std::thread::yield_now();
         }
-        assert_eq!(*cache.get(&built), built, "built key: no wait");
-        assert_eq!(*cache.get(&hot), hot, "hot key: built without waiting");
+        assert_eq!(*get(&cache, &built), built, "built key: no wait");
+        assert_eq!(*get(&cache, &hot), hot, "hot key: built without waiting");
         release.send(()).unwrap();
-        assert_eq!(slow_caller.join().unwrap(), slow);
+        let got = slow_caller
+            .recv_timeout(BOUND)
+            .expect("the slow build finishes");
+        assert_eq!(*got, slow);
     }
 
     /// T3: 32 threads asking for 200 distinct keys each never hold more than
-    /// five caches alive at once (two kept, one being built, at most two
-    /// evicted but still borrowed), and two once idle.
+    /// four caches alive at once, and two once idle. A side build starts only
+    /// while at most one evicted cache is still borrowed and no other side
+    /// build runs, with at most two kept: 2 kept + 1 evicted and borrowed +
+    /// 1 being built. (A build that then evicts a borrowed cache moves one
+    /// from kept to evicted, and the count stays 4.)
     #[test]
     fn the_caches_alive_stay_bounded_under_many_keys() {
         let live = Arc::new(AtomicUsize::new(0));
@@ -557,22 +575,31 @@ mod tests {
             p.fetch_max(now, Ordering::SeqCst);
             Fake { live: l.clone() }
         }));
-        std::thread::scope(|s| {
-            for t in 0..32u64 {
-                let (cache, gate) = (cache.clone(), gate.clone());
-                s.spawn(move || {
-                    for i in 0..200u64 {
-                        // Hold the cache for a moment, as a hash does.
-                        let c = cache.get(&key(t * 1000 + i % 50));
-                        std::thread::yield_now();
-                        let _releasing = gate.read().unwrap_or_else(|e| e.into_inner());
-                        drop(c);
-                    }
-                });
-            }
-        });
+        // Detached threads and one deadline for all of them, so that a lost
+        // wake-up fails the test instead of hanging it.
+        let (done, done_rx) = mpsc::channel();
+        for t in 0..32u64 {
+            let (cache, gate, done) = (cache.clone(), gate.clone(), done.clone());
+            std::thread::spawn(move || {
+                for i in 0..200u64 {
+                    // Hold the cache for a moment, as a hash does.
+                    let c = cache.get(&key(t * 1000 + i % 50));
+                    std::thread::yield_now();
+                    let _releasing = gate.read().unwrap_or_else(|e| e.into_inner());
+                    drop(c);
+                }
+                let _ = done.send(());
+            });
+        }
+        let deadline = std::time::Instant::now() + 6 * BOUND;
+        for n in 0..32 {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            done_rx
+                .recv_timeout(left)
+                .unwrap_or_else(|_| panic!("only {n} of 32 threads finished in time"));
+        }
         let peak = peak.load(Ordering::SeqCst);
-        assert!(peak <= 5, "peak {peak} caches alive");
+        assert!(peak <= 4, "peak {peak} caches alive");
         assert_eq!(live.load(Ordering::SeqCst), 2, "idle: the side slots");
     }
 
@@ -589,13 +616,15 @@ mod tests {
             *s
         }));
         let k = key(4);
-        let failed = {
-            let cache = cache.clone();
-            std::thread::spawn(move || *cache.get(&k)).join()
-        };
-        assert!(failed.is_err(), "the first build panicked");
-        assert_eq!(*cache.get(&k), k, "retried");
-        let _ = cache.get(&key(5));
+        assert!(
+            matches!(
+                ask(&cache, &k).recv_timeout(BOUND),
+                Err(mpsc::RecvTimeoutError::Disconnected)
+            ),
+            "the first build panicked (and did not hang)"
+        );
+        assert_eq!(*get(&cache, &k), k, "retried");
+        let _ = get(&cache, &key(5));
         assert_eq!(cache.builds(), 2);
     }
 

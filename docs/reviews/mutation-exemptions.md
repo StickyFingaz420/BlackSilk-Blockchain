@@ -193,5 +193,15 @@ the same input. So no witness reaches the difference: the first two terms are
 implied by the third. The second `||` (332:42) and both `!` deletions are caught
 (run B, `caught.txt`).
 
+**What the equivalence depends on (RT-MUT).** The argument holds only because the
+`DummyContract` check runs, for the same input, *before* the approval loop, and
+because `ZeroContract` is checked when the function is read. A reordering that moves
+the approval loop above the dummy checks would make the mutant observable: a dummy
+contract input approved by its own function would pass the guard, so the refusal
+would come later with another exit code, or not at all if the later dummy check were
+also changed. Any such edit changes the kernel guest, and
+so the pinned kernel ELF and its id (`px/kernel.id`, the consensus fingerprint): that
+pin is the tripwire, and the edit must re-examine this entry.
+
 **Reproduce (E5–E7).** In run B's configuration (docs/evidence/mutation-2026-09-29/),
 with the `--re` filters in the evidence's `rerunB.args`.

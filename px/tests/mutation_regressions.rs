@@ -262,6 +262,13 @@ fn one_function(rng: &mut ChaCha20Rng, c: Digest) -> Witness {
 /// value and data, each checked alone (W4-MUT: each `&` of the comparison
 /// mutated to `|` survived, since no native test called a function; the
 /// proving tests that do were outside the census). Natively and in the guest.
+///
+/// Every edited witness is otherwise valid: balanced (the value cases move
+/// `bridge_in` with the output), and a contract edit goes to contract 0, so
+/// that no other rule (`Unbalanced`, `Unauthorized`) refuses it. A mutant
+/// that skips one field of the comparison therefore ACCEPTS an output the
+/// function did not specify. The control: the same witness with the
+/// function's specification updated to the edited output is accepted.
 #[test]
 fn a_specified_output_must_match_in_every_field() {
     let mut rng = ChaCha20Rng::seed_from_u64(44);
@@ -273,29 +280,39 @@ fn a_specified_output_must_match_in_every_field() {
 
     let other = wallet::random_digest(&mut rng);
     type Edit = fn(&mut Witness, &Digest);
-    let cases: [(&str, Edit, Error); 5] = [
-        ("owner", |w, o| w.outputs[1].owner = *o, Error::SpecMismatch),
-        (
-            "contract",
-            |w, o| w.outputs[0].contract = *o,
-            Error::SpecMismatch,
-        ),
-        ("value", |w, _| w.outputs[0].value -= 1, Error::SpecMismatch),
-        (
-            "data",
-            |w, _| w.outputs[0].data[3] ^= 1,
-            Error::SpecMismatch,
-        ),
-        (
-            "payout value",
-            |w, _| w.outputs[1].value += 1,
-            Error::SpecMismatch,
-        ),
+    let cases: [(&str, Edit); 5] = [
+        ("owner", |w, o| w.outputs[1].owner = *o),
+        ("contract", |w, _| w.outputs[0].contract = [0; 8]),
+        ("value", |w, _| {
+            w.outputs[0].value -= 1;
+            w.bridge_in -= 1;
+        }),
+        ("data", |w, _| w.outputs[0].data[3] ^= 1),
+        ("payout value", |w, _| {
+            w.outputs[1].value += 1;
+            w.bridge_in += 1;
+        }),
     ];
-    for (name, edit, want) in cases {
+    for (name, edit) in cases {
         let mut w = base.clone();
         edit(&mut w, &other);
-        assert_eq!(both(&w).err(), Some(want), "{name} differs from the spec");
+        assert_eq!(
+            both(&w).err(),
+            Some(Error::SpecMismatch),
+            "{name} differs from the spec"
+        );
+        // Control: specify exactly the edited outputs, and it is accepted.
+        let mut f = w.functions[0].expect("one function");
+        for (j, o) in w.outputs.iter().enumerate() {
+            f.spec[j] = Some(OutSpec {
+                owner: o.owner,
+                contract: o.contract,
+                value: o.value,
+                data: o.data,
+            });
+        }
+        w.functions[0] = Some(f);
+        both(&w).unwrap_or_else(|e| panic!("{name}: the edited witness is otherwise valid: {e:?}"));
     }
 }
 
