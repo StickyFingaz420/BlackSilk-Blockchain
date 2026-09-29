@@ -773,3 +773,8 @@
   - **Tier 3 (local, before push):** consensus-path or PX/zk changes, and evidence runs, also run the local PX-proving suites.
   - **A red CI run stops the line:** fix before merging anything else.
 - **Every agent must run the tests of every crate that depends on what it changed** (RTW3-13, the supply-audit break).
+
+## W3-32c, Lead decisions 2026-09-29
+- **Accepted (simulator-derived):** TRIED_PER_ONION_GROUP = 1; TRIED_PER_SOURCE_GROUP = 16; adaptive tried bias (0.9 once tried holds 64 entries, 0.7 below). Plus ping and relay eviction protection, 2 block-relay-only anchors, `--onion-inbound`, and seeds as one-shot address fetches.
+- **Operator requirement:** seed nodes must set `--public-address` (docs/testnet.md).
+- **Later:** a "fewer than 3 seeds" warning; the extra block-relay-only probe every 5 minutes (W5).
