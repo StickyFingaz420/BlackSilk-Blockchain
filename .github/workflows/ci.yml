@@ -316,8 +316,10 @@ jobs:
           persist-credentials: false
           # The gates walk the history back to the cut-over commit.
           fetch-depth: 0
-      - name: Consensus-path trailer gate
-        run: bash .github/scripts/consensus-gate.sh "$GATE_BASE" "$GATE_HEAD"
+      - name: Consensus-path trailer gate (self-test first)
+        run: |
+          bash .github/scripts/consensus-gate.sh --selftest
+          bash .github/scripts/consensus-gate.sh "$GATE_BASE" "$GATE_HEAD"
       - name: Lockfile-diff gate
         if: success() || failure()
         run: bash .github/scripts/lockfile-gate.sh "$GATE_BASE" "$GATE_HEAD"
