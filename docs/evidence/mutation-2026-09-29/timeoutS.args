@@ -1,0 +1,21 @@
+--re=^consensus[/]src[/]pow[.]rs[:]102[:]9[:] replace SeedState[<]C[>][:][:]side[_]cap \-[>] usize with 0$
+--re=^consensus[/]src[/]pow[.]rs[:]110[:]50[:] replace [>] with [=][=] in SeedState[<]C[>][:][:]evicted[_]alive$
+--re=^consensus[/]src[/]pow[.]rs[:]110[:]50[:] replace [>] with [>][=] in SeedState[<]C[>][:][:]evicted[_]alive$
+--re=^consensus[/]src[/]pow[.]rs[:]143[:]9[:] replace [<]impl Drop for BuildGuard[<]['][_][,] C[>][>][:][:]drop with [(][)]$
+--re=^consensus[/]src[/]pow[.]rs[:]147[:]35[:] replace [!][=] with [=][=] in [<]impl Drop for BuildGuard[<]['][_][,] C[>][>][:][:]drop$
+--re=^consensus[/]src[/]pow[.]rs[:]148[:]26[:] replace \-[=] with [+][=] in [<]impl Drop for BuildGuard[<]['][_][,] C[>][>][:][:]drop$
+--re=^consensus[/]src[/]pow[.]rs[:]148[:]26[:] replace \-[=] with [/][=] in [<]impl Drop for BuildGuard[<]['][_][,] C[>][>][:][:]drop$
+--re=^consensus[/]src[/]pow[.]rs[:]180[:]71[:] replace [=][=] with [!][=] in SeedCache[<]C[>][:][:]get$
+--re=^consensus[/]src[/]pow[.]rs[:]187[:]52[:] replace [&][&] with [|][|] in SeedCache[<]C[>][:][:]get$
+--re=^consensus[/]src[/]pow[.]rs[:]187[:]72[:] replace [>] with [=][=] in SeedCache[<]C[>][:][:]get$
+--re=^consensus[/]src[/]pow[.]rs[:]187[:]72[:] replace [>] with [>][=] in SeedCache[<]C[>][:][:]get$
+--re=^consensus[/]src[/]pow[.]rs[:]191[:]21[:] replace [&][&] with [|][|] in SeedCache[<]C[>][:][:]get$
+--re=^consensus[/]src[/]pow[.]rs[:]191[:]43[:] replace [>] with [<] in SeedCache[<]C[>][:][:]get$
+--re=^consensus[/]src[/]pow[.]rs[:]202[:]26[:] replace [+][=] with \-[=] in SeedCache[<]C[>][:][:]get$
+--re=^consensus[/]src[/]pow[.]rs[:]215[:]26[:] replace \-[=] with [+][=] in SeedCache[<]C[>][:][:]get$
+--re=^consensus[/]src[/]pow[.]rs[:]215[:]26[:] replace \-[=] with [/][=] in SeedCache[<]C[>][:][:]get$
+--re=^consensus[/]src[/]pow[.]rs[:]229[:]9[:] replace SeedCache[<]C[>][:][:]set[_]hot \-[>] Vec[<]Hash[>] with vec[!]\[\]$
+--re=^consensus[/]src[/]pow[.]rs[:]229[:]9[:] replace SeedCache[<]C[>][:][:]set[_]hot \-[>] Vec[<]Hash[>] with vec[!]\[Default[:][:]default[(][)]\]$
+--re=^consensus[/]src[/]pow[.]rs[:]232[:]26[:] replace [<] with [=][=] in SeedCache[<]C[>][:][:]set[_]hot$
+--re=^consensus[/]src[/]pow[.]rs[:]232[:]26[:] replace [<] with [>] in SeedCache[<]C[>][:][:]set[_]hot$
+--re=^consensus[/]src[/]pow[.]rs[:]232[:]41[:] delete [!] in SeedCache[<]C[>][:][:]set[_]hot$

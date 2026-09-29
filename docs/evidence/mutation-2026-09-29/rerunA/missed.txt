@@ -1,0 +1,7 @@
+consensus/src/chain.rs:527:21: replace < with <= in HeaderChain::overlay_context
+consensus/src/chain.rs:531:47: replace - with + in HeaderChain::overlay_context
+consensus/src/difficulty.rs:35:19: replace > with >= in clock_step
+consensus/src/difficulty.rs:91:35: replace * with / in next_difficulty
+consensus/src/difficulty.rs:91:31: replace * with + in next_difficulty
+consensus/src/difficulty.rs:91:31: replace * with / in next_difficulty
+consensus/src/genesis.rs:121:36: replace | with ^ in parse_display_hex

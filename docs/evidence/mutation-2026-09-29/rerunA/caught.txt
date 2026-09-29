@@ -1,0 +1,21 @@
+consensus/src/chain.rs:85:9: replace <impl fmt::Display for HeaderError>::fmt -> fmt::Result with Ok(Default::default())
+consensus/src/chain.rs:227:9: replace HeaderChain::is_valid -> Option<bool> with Some(false)
+consensus/src/chain.rs:236:9: replace HeaderChain::work -> Option<u128> with None
+consensus/src/chain.rs:104:9: replace Reorg::is_extension -> bool with true
+consensus/src/chain.rs:236:9: replace HeaderChain::work -> Option<u128> with Some(0)
+consensus/src/chain.rs:236:9: replace HeaderChain::work -> Option<u128> with Some(1)
+consensus/src/chain.rs:601:23: replace += with *= in HeaderChain::accept
+consensus/src/params.rs:198:31: replace + with - in ChainParams::check
+consensus/src/params.rs:198:31: replace + with * in ChainParams::check
+consensus/src/pow.rs:27:24: replace + with - in seed_height
+consensus/src/pow.rs:125:42: replace > with >= in SeedState<C>::trim
+consensus/src/pow.rs:191:43: replace > with == in SeedCache<C>::get
+consensus/src/pow.rs:214:34: replace != with == in SeedCache<C>::get
+consensus/src/pow.rs:241:50: replace && with || in SeedCache<C>::set_hot
+consensus/src/pow.rs:309:9: replace RandomXPow::resident -> Vec<Hash> with vec![]
+consensus/src/pow.rs:191:43: replace > with >= in SeedCache<C>::get
+consensus/src/pow.rs:309:9: replace RandomXPow::resident -> Vec<Hash> with vec![Default::default()]
+consensus/src/schedule.rs:94:9: replace Schedule::epochs -> &'static[Epoch] with Vec::leak(Vec::new())
+consensus/src/pow.rs:314:9: replace RandomXPow::is_resident -> bool with true
+consensus/src/schedule.rs:99:9: replace Schedule::len -> usize with 1
+consensus/src/schedule.rs:104:9: replace Schedule::is_empty -> bool with true

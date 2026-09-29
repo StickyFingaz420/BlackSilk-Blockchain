@@ -1,0 +1,5 @@
+px-core/src/call.rs:54:47: replace + with *
+px-core/src/kernel.rs:66:70: replace + with *
+px-core/src/kernel.rs:192:8: replace | with ^ in u64_word
+px-core/src/kernel.rs:217:27: replace | with ^ in select
+px-core/src/kernel.rs:332:26: replace || with && in transfer

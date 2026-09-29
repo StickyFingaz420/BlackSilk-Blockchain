@@ -57,6 +57,28 @@ opt-level = 3
 [profile.dev.package.argon2]
 opt-level = 3
 
+# Mutation testing (`cargo mutants --profile mutants`, decisions "Agent 42";
+# docs/evidence/mutation-*). The test profile with every dependency optimized,
+# so the px differential tests (the guest interpreter) and RandomX run fast.
+# The mutated crate and the crates rebuilt after it (px for px-core) stay at
+# the test profile's settings: optimizing them costs minutes per mutant and
+# saves seconds of test time. Overflow checks and
+# debug assertions stay on, so a mutant that overflows is caught. No release
+# artifact uses this profile.
+[profile.mutants]
+inherits = "test"
+debug = false
+[profile.mutants.package."*"]
+opt-level = 3
+[profile.mutants.package.blacksilk-randomx]
+opt-level = 3
+[profile.mutants.package.blacksilk-crypto]
+opt-level = 3
+[profile.mutants.package.blacksilk-zk]
+opt-level = 3
+[profile.mutants.package.blacksilk-zkvm]
+opt-level = 3
+
 # Patched Plonky3 0.7.0 crates (third_party/README.md): spin locks held across
 # rayon work could hang the prover (AUDIT.md ZK-F11, ZK-F21). Only lock scopes
 # change. p3-dft is fixed upstream in 0.8.0; p3-fri and p3-merkle-tree are not.

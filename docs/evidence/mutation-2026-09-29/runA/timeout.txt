@@ -1,0 +1,48 @@
+consensus/src/chain.rs:280:9: replace HeaderChain::required_difficulty -> u64 with 0
+consensus/src/chain.rs:557:9: replace HeaderChain::validate -> Result<Hash, HeaderError> with Ok(Default::default())
+consensus/src/chain.rs:606:47: replace + with * in HeaderChain::accept
+consensus/src/difficulty.rs:63:5: replace next_difficulty -> u64 with 0
+consensus/src/difficulty.rs:78:38: replace + with * in next_difficulty
+consensus/src/difficulty.rs:85:32: replace - with / in next_difficulty
+consensus/src/difficulty.rs:85:46: replace * with / in next_difficulty
+consensus/src/difficulty.rs:87:18: replace += with *= in next_difficulty
+consensus/src/difficulty.rs:87:31: replace * with + in next_difficulty
+consensus/src/difficulty.rs:87:31: replace * with / in next_difficulty
+consensus/src/difficulty.rs:88:46: replace - with + in next_difficulty
+consensus/src/difficulty.rs:93:45: replace / with * in next_difficulty
+consensus/src/difficulty.rs:93:35: replace * with + in next_difficulty
+consensus/src/difficulty.rs:93:31: replace * with + in next_difficulty
+consensus/src/hash.rs:18:9: replace H::chain -> Self with Default::default()
+consensus/src/header.rs:31:9: replace BlockHeader::to_bytes -> [u8; HEADER_SIZE] with [0; HEADER_SIZE]
+consensus/src/header.rs:31:9: replace BlockHeader::to_bytes -> [u8; HEADER_SIZE] with [1; HEADER_SIZE]
+consensus/src/merkle.rs:19:23: replace > with == in tx_root
+consensus/src/merkle.rs:19:23: replace > with >= in tx_root
+consensus/src/pow.rs:11:5: replace check_hash -> bool with true
+consensus/src/pow.rs:11:5: replace check_hash -> bool with false
+consensus/src/pow.rs:11:19: replace == with != in check_hash
+consensus/src/pow.rs:19:50: replace >> with << in check_hash
+consensus/src/pow.rs:19:41: replace + with * in check_hash
+consensus/src/pow.rs:19:20: replace * with + in check_hash
+consensus/src/pow.rs:19:20: replace * with / in check_hash
+consensus/src/pow.rs:21:11: replace == with != in check_hash
+consensus/src/pow.rs:102:9: replace SeedState<C>::side_cap -> usize with 0
+consensus/src/pow.rs:110:50: replace > with == in SeedState<C>::evicted_alive
+consensus/src/pow.rs:110:50: replace > with >= in SeedState<C>::evicted_alive
+consensus/src/pow.rs:143:9: replace <impl Drop for BuildGuard<'_, C>>::drop with ()
+consensus/src/pow.rs:147:35: replace != with == in <impl Drop for BuildGuard<'_, C>>::drop
+consensus/src/pow.rs:148:26: replace -= with += in <impl Drop for BuildGuard<'_, C>>::drop
+consensus/src/pow.rs:148:26: replace -= with /= in <impl Drop for BuildGuard<'_, C>>::drop
+consensus/src/pow.rs:180:71: replace == with != in SeedCache<C>::get
+consensus/src/pow.rs:187:52: replace && with || in SeedCache<C>::get
+consensus/src/pow.rs:187:72: replace > with == in SeedCache<C>::get
+consensus/src/pow.rs:187:72: replace > with >= in SeedCache<C>::get
+consensus/src/pow.rs:191:21: replace && with || in SeedCache<C>::get
+consensus/src/pow.rs:191:43: replace > with < in SeedCache<C>::get
+consensus/src/pow.rs:202:26: replace += with -= in SeedCache<C>::get
+consensus/src/pow.rs:215:26: replace -= with += in SeedCache<C>::get
+consensus/src/pow.rs:215:26: replace -= with /= in SeedCache<C>::get
+consensus/src/pow.rs:229:9: replace SeedCache<C>::set_hot -> Vec<Hash> with vec![]
+consensus/src/pow.rs:229:9: replace SeedCache<C>::set_hot -> Vec<Hash> with vec![Default::default()]
+consensus/src/pow.rs:232:26: replace < with == in SeedCache<C>::set_hot
+consensus/src/pow.rs:232:26: replace < with > in SeedCache<C>::set_hot
+consensus/src/pow.rs:232:41: delete ! in SeedCache<C>::set_hot

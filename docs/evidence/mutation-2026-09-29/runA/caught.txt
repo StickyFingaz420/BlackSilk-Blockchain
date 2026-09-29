@@ -1,0 +1,289 @@
+consensus/src/chain.rs:73:9: replace HeaderError::is_permanent -> bool with true
+consensus/src/chain.rs:73:9: delete ! in HeaderError::is_permanent
+consensus/src/chain.rs:73:9: replace HeaderError::is_permanent -> bool with false
+consensus/src/chain.rs:203:9: replace HeaderChain::tip_id -> Hash with Default::default()
+consensus/src/chain.rs:104:9: replace Reorg::is_extension -> bool with false
+consensus/src/chain.rs:214:9: replace HeaderChain::height -> u64 with 0
+consensus/src/chain.rs:214:9: replace HeaderChain::height -> u64 with 1
+consensus/src/chain.rs:214:32: replace - with + in HeaderChain::height
+consensus/src/chain.rs:214:32: replace - with / in HeaderChain::height
+consensus/src/chain.rs:219:9: replace HeaderChain::best_work -> u128 with 0
+consensus/src/chain.rs:219:9: replace HeaderChain::best_work -> u128 with 1
+consensus/src/chain.rs:223:9: replace HeaderChain::header -> Option<&BlockHeader> with None
+consensus/src/chain.rs:227:9: replace HeaderChain::is_valid -> Option<bool> with None
+consensus/src/chain.rs:227:9: replace HeaderChain::is_valid -> Option<bool> with Some(true)
+consensus/src/chain.rs:231:9: replace HeaderChain::main_id_at -> Option<Hash> with None
+consensus/src/chain.rs:231:9: replace HeaderChain::main_id_at -> Option<Hash> with Some(Default::default())
+consensus/src/chain.rs:240:9: replace HeaderChain::is_on_main -> bool with true
+consensus/src/chain.rs:240:9: replace HeaderChain::is_on_main -> bool with false
+consensus/src/chain.rs:242:63: replace == with != in HeaderChain::is_on_main
+consensus/src/chain.rs:247:9: replace HeaderChain::ancestor_id -> Hash with Default::default()
+consensus/src/chain.rs:251:32: replace == with != in HeaderChain::ancestor_id
+consensus/src/chain.rs:263:9: replace HeaderChain::recent -> Vec<&Entry> with vec![]
+consensus/src/chain.rs:254:49: replace == with != in HeaderChain::ancestor_id
+consensus/src/chain.rs:265:25: replace < with == in HeaderChain::recent
+consensus/src/chain.rs:265:25: replace < with > in HeaderChain::recent
+consensus/src/chain.rs:265:25: replace < with <= in HeaderChain::recent
+consensus/src/chain.rs:268:32: replace == with != in HeaderChain::recent
+consensus/src/chain.rs:280:9: replace HeaderChain::required_difficulty -> u64 with 1
+consensus/src/chain.rs:293:9: replace HeaderChain::median_time_past -> u64 with 0
+consensus/src/chain.rs:293:9: replace HeaderChain::median_time_past -> u64 with 1
+consensus/src/chain.rs:303:9: replace HeaderChain::seed_id_for -> Hash with Default::default()
+consensus/src/chain.rs:316:9: replace HeaderChain::template_on -> Option<BlockTemplate> with None
+consensus/src/chain.rs:317:12: delete ! in HeaderChain::template_on
+consensus/src/chain.rs:320:43: replace + with - in HeaderChain::template_on
+consensus/src/chain.rs:320:43: replace + with * in HeaderChain::template_on
+consensus/src/chain.rs:327:61: replace + with - in HeaderChain::template_on
+consensus/src/chain.rs:327:61: replace + with * in HeaderChain::template_on
+consensus/src/chain.rs:342:9: replace HeaderChain::required_difficulty_after -> Option<u64> with Some(0)
+consensus/src/chain.rs:342:9: replace HeaderChain::required_difficulty_after -> Option<u64> with None
+consensus/src/chain.rs:345:27: delete ! in HeaderChain::required_difficulty_after
+consensus/src/chain.rs:342:9: replace HeaderChain::required_difficulty_after -> Option<u64> with Some(1)
+consensus/src/chain.rs:349:27: replace - with + in HeaderChain::required_difficulty_after
+consensus/src/chain.rs:349:27: replace - with / in HeaderChain::required_difficulty_after
+consensus/src/chain.rs:352:12: delete ! in HeaderChain::required_difficulty_after
+consensus/src/chain.rs:352:26: replace || with && in HeaderChain::required_difficulty_after
+consensus/src/chain.rs:363:26: replace != with == in HeaderChain::required_difficulty_after
+consensus/src/chain.rs:352:70: replace != with == in HeaderChain::required_difficulty_after
+consensus/src/chain.rs:367:18: replace += with -= in HeaderChain::required_difficulty_after
+consensus/src/chain.rs:367:18: replace += with *= in HeaderChain::required_difficulty_after
+consensus/src/chain.rs:385:12: delete ! in HeaderChain::check_rules
+consensus/src/chain.rs:385:9: replace HeaderChain::check_rules -> Result<(), HeaderError> with Ok(())
+consensus/src/chain.rs:390:45: replace + with - in HeaderChain::check_rules
+consensus/src/chain.rs:390:45: replace + with * in HeaderChain::check_rules
+consensus/src/chain.rs:393:31: replace > with == in HeaderChain::check_rules
+consensus/src/chain.rs:392:27: replace != with == in HeaderChain::check_rules
+consensus/src/chain.rs:393:31: replace > with < in HeaderChain::check_rules
+consensus/src/chain.rs:393:31: replace > with >= in HeaderChain::check_rules
+consensus/src/chain.rs:396:34: replace != with == in HeaderChain::check_rules
+consensus/src/chain.rs:412:26: replace != with == in HeaderChain::check_rules
+consensus/src/chain.rs:422:30: replace != with == in HeaderChain::check_rules
+consensus/src/chain.rs:428:12: delete ! in HeaderChain::check_rules
+consensus/src/chain.rs:434:12: delete ! in HeaderChain::check_rules
+consensus/src/chain.rs:467:9: replace HeaderChain::precheck_batch -> Result<(), (usize, HeaderError)> with Ok(())
+consensus/src/chain.rs:473:39: replace != with == in HeaderChain::precheck_batch
+consensus/src/chain.rs:478:20: delete ! in HeaderChain::precheck_batch
+consensus/src/chain.rs:482:20: delete ! in HeaderChain::precheck_batch
+consensus/src/chain.rs:502:56: replace + with - in HeaderChain::precheck_batch
+consensus/src/chain.rs:502:56: replace + with * in HeaderChain::precheck_batch
+consensus/src/chain.rs:527:21: replace < with == in HeaderChain::overlay_context
+consensus/src/chain.rs:527:21: replace < with > in HeaderChain::overlay_context
+consensus/src/chain.rs:529:36: replace - with + in HeaderChain::overlay_context
+consensus/src/chain.rs:529:36: replace - with / in HeaderChain::overlay_context
+consensus/src/chain.rs:531:47: replace - with / in HeaderChain::overlay_context
+consensus/src/chain.rs:541:31: replace - with + in HeaderChain::overlay_context
+consensus/src/chain.rs:541:31: replace - with / in HeaderChain::overlay_context
+consensus/src/chain.rs:573:20: delete ! in HeaderChain::validate
+consensus/src/chain.rs:581:12: delete ! in HeaderChain::validate
+consensus/src/chain.rs:590:9: replace HeaderChain::pow_meets -> bool with true
+consensus/src/chain.rs:590:9: replace HeaderChain::pow_meets -> bool with false
+consensus/src/chain.rs:601:23: replace += with -= in HeaderChain::accept
+consensus/src/chain.rs:606:47: replace + with - in HeaderChain::accept
+consensus/src/chain.rs:613:53: replace > with == in HeaderChain::accept
+consensus/src/chain.rs:613:53: replace > with < in HeaderChain::accept
+consensus/src/chain.rs:613:53: replace > with >= in HeaderChain::accept
+consensus/src/chain.rs:625:15: delete ! in HeaderChain::switch_to
+consensus/src/chain.rs:632:76: replace + with - in HeaderChain::switch_to
+consensus/src/chain.rs:632:76: replace + with * in HeaderChain::switch_to
+consensus/src/chain.rs:645:9: replace HeaderChain::mark_invalid -> Option<Reorg> with None
+consensus/src/chain.rs:646:28: replace == with != in HeaderChain::mark_invalid
+consensus/src/chain.rs:658:12: delete ! in HeaderChain::mark_invalid
+consensus/src/difficulty.rs:30:5: replace difficulty_ancestors -> usize with 0
+consensus/src/difficulty.rs:30:5: replace difficulty_ancestors -> usize with 1
+consensus/src/difficulty.rs:30:16: replace + with - in difficulty_ancestors
+consensus/src/difficulty.rs:30:16: replace + with * in difficulty_ancestors
+consensus/src/difficulty.rs:30:12: replace + with - in difficulty_ancestors
+consensus/src/difficulty.rs:30:12: replace + with * in difficulty_ancestors
+consensus/src/difficulty.rs:35:5: replace clock_step -> u64 with 0
+consensus/src/difficulty.rs:35:5: replace clock_step -> u64 with 1
+consensus/src/difficulty.rs:35:19: replace > with == in clock_step
+consensus/src/difficulty.rs:35:19: replace > with < in clock_step
+consensus/src/difficulty.rs:35:15: replace / with % in clock_step
+consensus/src/difficulty.rs:35:15: replace / with * in clock_step
+consensus/src/difficulty.rs:36:16: replace / with % in clock_step
+consensus/src/difficulty.rs:36:16: replace / with * in clock_step
+consensus/src/difficulty.rs:63:5: replace next_difficulty -> u64 with 1
+consensus/src/difficulty.rs:65:31: replace + with - in next_difficulty
+consensus/src/difficulty.rs:65:31: replace + with * in next_difficulty
+consensus/src/difficulty.rs:74:18: replace - with + in next_difficulty
+consensus/src/difficulty.rs:67:10: replace == with != in next_difficulty
+consensus/src/difficulty.rs:74:18: replace - with / in next_difficulty
+consensus/src/difficulty.rs:77:33: replace + with - in next_difficulty
+consensus/src/difficulty.rs:77:33: replace + with * in next_difficulty
+consensus/src/difficulty.rs:78:38: replace + with - in next_difficulty
+consensus/src/difficulty.rs:84:35: replace + with - in next_difficulty
+consensus/src/difficulty.rs:84:35: replace + with * in next_difficulty
+consensus/src/difficulty.rs:84:58: replace + with - in next_difficulty
+consensus/src/difficulty.rs:84:58: replace + with * in next_difficulty
+consensus/src/difficulty.rs:85:32: replace - with + in next_difficulty
+consensus/src/difficulty.rs:85:46: replace * with + in next_difficulty
+consensus/src/difficulty.rs:87:18: replace += with -= in next_difficulty
+consensus/src/difficulty.rs:88:24: replace += with -= in next_difficulty
+consensus/src/difficulty.rs:88:24: replace += with *= in next_difficulty
+consensus/src/difficulty.rs:88:46: replace - with / in next_difficulty
+consensus/src/difficulty.rs:88:41: replace + with - in next_difficulty
+consensus/src/difficulty.rs:88:41: replace + with * in next_difficulty
+consensus/src/difficulty.rs:88:66: replace - with + in next_difficulty
+consensus/src/difficulty.rs:88:66: replace - with / in next_difficulty
+consensus/src/difficulty.rs:88:62: replace + with - in next_difficulty
+consensus/src/difficulty.rs:88:62: replace + with * in next_difficulty
+consensus/src/difficulty.rs:91:39: replace / with % in next_difficulty
+consensus/src/difficulty.rs:91:39: replace / with * in next_difficulty
+consensus/src/difficulty.rs:91:35: replace * with + in next_difficulty
+consensus/src/difficulty.rs:93:45: replace / with % in next_difficulty
+consensus/src/difficulty.rs:93:35: replace * with / in next_difficulty
+consensus/src/difficulty.rs:93:31: replace * with / in next_difficulty
+consensus/src/difficulty.rs:93:40: replace + with - in next_difficulty
+consensus/src/difficulty.rs:93:40: replace + with * in next_difficulty
+consensus/src/difficulty.rs:93:50: replace * with + in next_difficulty
+consensus/src/difficulty.rs:93:50: replace * with / in next_difficulty
+consensus/src/genesis.rs:60:9: replace GenesisSpec::nonce -> u64 with 1
+consensus/src/genesis.rs:60:9: replace GenesisSpec::nonce -> u64 with 0
+consensus/src/genesis.rs:69:9: replace GenesisSpec::is_final -> bool with true
+consensus/src/genesis.rs:69:9: replace GenesisSpec::is_final -> bool with false
+consensus/src/genesis.rs:69:28: replace || with && in GenesisSpec::is_final
+consensus/src/genesis.rs:69:9: delete ! in GenesisSpec::is_final
+consensus/src/genesis.rs:90:5: replace nonce_preimage -> Vec<u8> with vec![]
+consensus/src/genesis.rs:90:5: replace nonce_preimage -> Vec<u8> with vec![0]
+consensus/src/genesis.rs:90:5: replace nonce_preimage -> Vec<u8> with vec![1]
+consensus/src/genesis.rs:101:5: replace nonce_preimage_digest -> Hash with Default::default()
+consensus/src/genesis.rs:108:5: replace derive_genesis_nonce -> u64 with 0
+consensus/src/genesis.rs:108:5: replace derive_genesis_nonce -> u64 with 1
+consensus/src/genesis.rs:114:5: replace parse_display_hex -> Option<[u8; 32]> with None
+consensus/src/genesis.rs:114:5: replace parse_display_hex -> Option<[u8; 32]> with Some([0; 32])
+consensus/src/genesis.rs:114:5: replace parse_display_hex -> Option<[u8; 32]> with Some([1; 32])
+consensus/src/genesis.rs:115:16: replace != with == in parse_display_hex
+consensus/src/genesis.rs:121:36: replace | with & in parse_display_hex
+consensus/src/genesis.rs:121:31: replace << with >> in parse_display_hex
+consensus/src/genesis.rs:121:24: replace * with + in parse_display_hex
+consensus/src/genesis.rs:121:24: replace * with / in parse_display_hex
+consensus/src/genesis.rs:121:52: replace + with - in parse_display_hex
+consensus/src/genesis.rs:121:52: replace + with * in parse_display_hex
+consensus/src/genesis.rs:121:48: replace * with + in parse_display_hex
+consensus/src/genesis.rs:121:48: replace * with / in parse_display_hex
+consensus/src/hash.rs:23:9: replace H::finish -> Hash with Default::default()
+consensus/src/header.rs:44:9: replace BlockHeader::from_bytes -> Option<Self> with None
+consensus/src/header.rs:45:59: replace + with - in BlockHeader::from_bytes
+consensus/src/header.rs:45:59: replace + with * in BlockHeader::from_bytes
+consensus/src/header.rs:59:9: replace BlockHeader::id -> Hash with Default::default()
+consensus/src/merkle.rs:6:5: replace leaf -> Hash with Default::default()
+consensus/src/merkle.rs:10:5: replace node -> Hash with Default::default()
+consensus/src/merkle.rs:15:5: replace tx_root -> Hash with Default::default()
+consensus/src/merkle.rs:19:23: replace > with < in tx_root
+consensus/src/merkle.rs:23:17: delete match arm [l, r] in tx_root
+consensus/src/merkle.rs:24:17: delete match arm [odd] in tx_root
+consensus/src/params.rs:131:9: replace ChainParams::genesis_id -> Hash with Default::default()
+consensus/src/params.rs:149:9: replace ChainParams::genesis_is_final -> bool with true
+consensus/src/params.rs:149:9: replace ChainParams::genesis_is_final -> bool with false
+consensus/src/params.rs:156:9: replace ChainParams::difficulty_ancestors -> usize with 0
+consensus/src/params.rs:156:9: replace ChainParams::difficulty_ancestors -> usize with 1
+consensus/src/params.rs:187:9: replace ChainParams::check -> Result<(), ParamsError> with Ok(())
+consensus/src/params.rs:188:14: replace < with == in ChainParams::check
+consensus/src/params.rs:188:14: replace < with > in ChainParams::check
+consensus/src/params.rs:188:14: replace < with <= in ChainParams::check
+consensus/src/params.rs:191:14: replace >= with < in ChainParams::check
+consensus/src/params.rs:191:19: replace << with >> in ChainParams::check
+consensus/src/params.rs:195:14: replace == with != in ChainParams::check
+consensus/src/params.rs:198:62: replace >= with < in ChainParams::check
+consensus/src/params.rs:198:67: replace << with >> in ChainParams::check
+consensus/src/params.rs:204:41: replace || with && in ChainParams::check
+consensus/src/params.rs:204:36: replace == with != in ChainParams::check
+consensus/src/params.rs:204:68: replace > with == in ChainParams::check
+consensus/src/params.rs:204:68: replace > with < in ChainParams::check
+consensus/src/params.rs:204:68: replace > with >= in ChainParams::check
+consensus/src/params.rs:207:35: replace == with != in ChainParams::check
+consensus/src/params.rs:207:40: replace || with && in ChainParams::check
+consensus/src/params.rs:207:66: replace > with < in ChainParams::check
+consensus/src/params.rs:207:66: replace > with == in ChainParams::check
+consensus/src/params.rs:207:66: replace > with >= in ChainParams::check
+consensus/src/params.rs:212:13: replace || with && in ChainParams::check
+consensus/src/params.rs:210:12: delete ! in ChainParams::check
+consensus/src/params.rs:211:13: replace || with && in ChainParams::check
+consensus/src/params.rs:211:30: replace == with != in ChainParams::check
+consensus/src/params.rs:212:30: replace >= with < in ChainParams::check
+consensus/src/params.rs:219:36: replace == with != in ChainParams::check
+consensus/src/params.rs:228:13: replace || with && in ChainParams::check
+consensus/src/params.rs:227:13: replace || with && in ChainParams::check
+consensus/src/params.rs:226:13: replace || with && in ChainParams::check
+consensus/src/params.rs:225:13: replace || with && in ChainParams::check
+consensus/src/params.rs:224:13: replace || with && in ChainParams::check
+consensus/src/params.rs:223:21: replace != with == in ChainParams::check
+consensus/src/params.rs:224:26: replace != with == in ChainParams::check
+consensus/src/params.rs:226:29: replace != with == in ChainParams::check
+consensus/src/params.rs:225:26: replace != with == in ChainParams::check
+consensus/src/params.rs:228:24: replace != with == in ChainParams::check
+consensus/src/params.rs:227:26: replace != with == in ChainParams::check
+consensus/src/params.rs:283:9: replace <impl std::fmt::Display for ParamsError>::fmt -> std::fmt::Result with Ok(Default::default())
+consensus/src/pow.rs:19:41: replace + with - in check_hash
+consensus/src/pow.rs:26:5: replace seed_height -> u64 with 0
+consensus/src/pow.rs:26:5: replace seed_height -> u64 with 1
+consensus/src/pow.rs:27:15: replace <= with > in seed_height
+consensus/src/pow.rs:27:24: replace + with * in seed_height
+consensus/src/pow.rs:30:28: replace & with | in seed_height
+consensus/src/pow.rs:30:28: replace & with ^ in seed_height
+consensus/src/pow.rs:30:23: replace - with + in seed_height
+consensus/src/pow.rs:30:23: replace - with / in seed_height
+consensus/src/pow.rs:30:17: replace - with + in seed_height
+consensus/src/pow.rs:30:17: replace - with / in seed_height
+consensus/src/pow.rs:30:30: delete ! in seed_height
+consensus/src/pow.rs:30:38: replace - with + in seed_height
+consensus/src/pow.rs:30:38: replace - with / in seed_height
+consensus/src/pow.rs:102:9: replace SeedState<C>::side_cap -> usize with 1
+consensus/src/pow.rs:110:9: replace SeedState<C>::evicted_alive -> usize with 0
+consensus/src/pow.rs:110:9: replace SeedState<C>::evicted_alive -> usize with 1
+consensus/src/pow.rs:110:50: replace > with < in SeedState<C>::evicted_alive
+consensus/src/pow.rs:117:9: replace SeedState<C>::trim with ()
+consensus/src/pow.rs:119:30: delete ! in SeedState<C>::trim
+consensus/src/pow.rs:121:27: replace <= with > in SeedState<C>::trim
+consensus/src/pow.rs:125:42: replace > with == in SeedState<C>::trim
+consensus/src/pow.rs:125:42: replace > with < in SeedState<C>::trim
+consensus/src/pow.rs:186:24: delete ! in SeedCache<C>::get
+consensus/src/pow.rs:187:43: replace || with && in SeedCache<C>::get
+consensus/src/pow.rs:187:72: replace > with < in SeedCache<C>::get
+consensus/src/pow.rs:202:26: replace += with *= in SeedCache<C>::get
+consensus/src/pow.rs:216:19: replace += with -= in SeedCache<C>::get
+consensus/src/pow.rs:216:19: replace += with *= in SeedCache<C>::get
+consensus/src/pow.rs:232:38: replace && with || in SeedCache<C>::set_hot
+consensus/src/pow.rs:232:26: replace < with <= in SeedCache<C>::set_hot
+consensus/src/pow.rs:241:25: delete ! in SeedCache<C>::set_hot
+consensus/src/pow.rs:241:53: delete ! in SeedCache<C>::set_hot
+consensus/src/pow.rs:241:88: replace == with != in SeedCache<C>::set_hot
+consensus/src/pow.rs:252:9: replace SeedCache<C>::builds -> u64 with 0
+consensus/src/pow.rs:252:9: replace SeedCache<C>::builds -> u64 with 1
+consensus/src/pow.rs:257:9: replace SeedCache<C>::resident -> Vec<Hash> with vec![]
+consensus/src/pow.rs:257:9: replace SeedCache<C>::resident -> Vec<Hash> with vec![Default::default()]
+consensus/src/pow.rs:262:9: replace SeedCache<C>::is_resident -> bool with true
+consensus/src/pow.rs:262:9: replace SeedCache<C>::is_resident -> bool with false
+consensus/src/pow.rs:262:52: replace == with != in SeedCache<C>::is_resident
+consensus/src/pow.rs:304:9: replace RandomXPow::builds -> u64 with 0
+consensus/src/pow.rs:294:9: replace RandomXPow::prebuild with ()
+consensus/src/pow.rs:304:9: replace RandomXPow::builds -> u64 with 1
+consensus/src/pow.rs:326:9: replace <impl PowFunction for RandomXPow>::pow_hash -> Hash with Default::default()
+consensus/src/pow.rs:314:9: replace RandomXPow::is_resident -> bool with false
+consensus/src/pow.rs:331:9: replace <impl PowFunction for RandomXPow>::set_hot_seeds with ()
+consensus/src/schedule.rs:99:9: replace Schedule::len -> usize with 0
+consensus/src/schedule.rs:112:54: replace <= with > in Schedule::epoch_at
+consensus/src/schedule.rs:114:24: replace - with + in Schedule::epoch_at
+consensus/src/schedule.rs:114:24: replace - with / in Schedule::epoch_at
+consensus/src/schedule.rs:120:9: replace Schedule::max_header_version -> u32 with 0
+consensus/src/schedule.rs:120:9: replace Schedule::max_header_version -> u32 with 1
+consensus/src/schedule.rs:131:9: replace Schedule::activation_in -> Option<&'static Epoch> with None
+consensus/src/schedule.rs:133:50: replace && with || in Schedule::activation_in
+consensus/src/schedule.rs:133:43: replace > with == in Schedule::activation_in
+consensus/src/schedule.rs:133:43: replace > with < in Schedule::activation_in
+consensus/src/schedule.rs:133:43: replace > with >= in Schedule::activation_in
+consensus/src/schedule.rs:133:73: replace <= with > in Schedule::activation_in
+consensus/src/timestamp.rs:5:5: replace median -> u64 with 0
+consensus/src/timestamp.rs:5:5: replace median -> u64 with 1
+consensus/src/timestamp.rs:8:21: replace / with % in median
+consensus/src/timestamp.rs:8:21: replace / with * in median
+consensus/src/timestamp.rs:8:16: replace - with + in median
+consensus/src/timestamp.rs:8:16: replace - with / in median
+consensus/src/timestamp.rs:13:5: replace after_median_time_past -> bool with false
+consensus/src/timestamp.rs:13:5: replace after_median_time_past -> bool with true
+consensus/src/timestamp.rs:13:15: replace > with < in after_median_time_past
+consensus/src/timestamp.rs:13:15: replace > with == in after_median_time_past
+consensus/src/timestamp.rs:18:5: replace within_future_limit -> bool with true
+consensus/src/timestamp.rs:13:15: replace > with >= in after_median_time_past
+consensus/src/timestamp.rs:18:5: replace within_future_limit -> bool with false
+consensus/src/timestamp.rs:18:15: replace <= with > in within_future_limit

@@ -1,0 +1,2 @@
+consensus/src/merkle.rs:19:23: replace > with == in tx_root
+consensus/src/merkle.rs:19:23: replace > with >= in tx_root
