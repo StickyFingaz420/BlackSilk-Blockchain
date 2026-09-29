@@ -63,6 +63,14 @@ struct Args {
     /// JSON report.
     #[arg(long)]
     out: PathBuf,
+    /// Check only heights 1 ..= this one.
+    #[arg(long)]
+    up_to: Option<u64>,
+    /// Negative control: after the agreement check, change the nonce of
+    /// the header at this height, which must be the last one checked
+    /// (`--up-to`). The run must then FAIL.
+    #[arg(long, requires = "up_to")]
+    corrupt_nonce: Option<u64>,
 }
 
 /// Monero `rx/0` key schedule, written out here rather than taken from
@@ -208,6 +216,9 @@ struct Report {
     full_mismatches: Vec<u64>,
     keys: Vec<KeyStats>,
     threads: usize,
+    /// `--corrupt-nonce`: the height whose nonce was changed (a run that
+    /// must fail).
+    negative_control: Option<u64>,
     all_passed: bool,
     records: Vec<Record>,
 }
@@ -238,6 +249,7 @@ fn main() {
         network: a.network.clone(),
         nodes: a.node.clone(),
         threads,
+        negative_control: a.corrupt_nonce,
         ..Default::default()
     };
 
@@ -264,10 +276,21 @@ fn main() {
         }
     }
     r.nodes_agree = r.disagreements.is_empty() && common > 0;
-    let headers: Vec<BlockHeader> = chains[0][..common]
+    let common = common.min(a.up_to.map_or(usize::MAX, |h| h as usize));
+    r.common_height = r.common_height.min(common as u64);
+    let mut headers: Vec<BlockHeader> = chains[0][..common]
         .iter()
         .map(|b| BlockHeader::from_bytes(b).expect("header"))
         .collect();
+    if let Some(h) = a.corrupt_nonce {
+        assert_eq!(
+            h as usize, common,
+            "--corrupt-nonce must be the --up-to height"
+        );
+        let last = headers.last_mut().expect("at least one header");
+        last.nonce ^= 1;
+        eprintln!("negative control: nonce of header {h} changed");
+    }
     let mut ids: Vec<Hash> = vec![params.genesis.id(nid)];
     for (i, h) in headers.iter().enumerate() {
         assert_eq!(h.height, i as u64 + 1, "heights are consecutive");

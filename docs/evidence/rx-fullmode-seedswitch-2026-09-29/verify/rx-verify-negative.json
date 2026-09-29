@@ -1,0 +1,64 @@
+{
+  "started_unix": 1790666621,
+  "network": "regtest",
+  "nodes": [
+    "127.0.0.1:48500"
+  ],
+  "node_heights": [
+    2835
+  ],
+  "common_height": 2113,
+  "nodes_agree": true,
+  "disagreements": [],
+  "light_checked": 2113,
+  "light_failures": [
+    2113
+  ],
+  "consensus_accepted": 2112,
+  "consensus_error": "height 2113: InsufficientWork",
+  "consensus_key_mismatches": [],
+  "consensus_tip_matches": false,
+  "full_compared": 0,
+  "full_mismatches": [],
+  "keys": [
+    {
+      "key_height": 0,
+      "key": "087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7",
+      "first_height": 1,
+      "last_height": 2112,
+      "headers": 2112,
+      "cache_build_secs": 0.8264026,
+      "light_hash_secs": 317.6249579,
+      "dataset_build_secs": null,
+      "full_compared": 0
+    },
+    {
+      "key_height": 2048,
+      "key": "3bbf6fb874d645fc228566f7b266431a52afbef23afa1c89230c281389b63d0b",
+      "first_height": 2113,
+      "last_height": 2113,
+      "headers": 1,
+      "cache_build_secs": 0.7977461,
+      "light_hash_secs": 0.6150983,
+      "dataset_build_secs": null,
+      "full_compared": 0
+    }
+  ],
+  "threads": 4,
+  "negative_control": 2113,
+  "all_passed": false,
+  "records": [
+    {
+      "height": 2113,
+      "id": "07373f758bc3ab3a24134eaeabe8263e37f39cd8e1d781c9393f425a473d65e3",
+      "timestamp": 1790654618,
+      "difficulty": 233,
+      "key_height": 2048,
+      "key": "3bbf6fb874d645fc228566f7b266431a52afbef23afa1c89230c281389b63d0b",
+      "light_hash": "286f37cc1b2c442db614ae84b1442e7864138a98df3266e18b2b86fa416f29fa",
+      "meets_target": false,
+      "full_hash": null,
+      "full_matches_light": null
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+[1790635741] 4 nodes up
+[1790635741] warm-up: miner0 alone until the mean interval of 30 blocks is at least 0.75 x 10 s (at most 60 min)
+[1790636802] warm-up done after 1060 s at height 343 (difficulty 224, mean interval 8.4 s)
+[1790636802] miners running on nodes 0 and n/2 (one per partition group)
+[1790638358] sync miner-b via node1: node: the node is still synchronizing (505 of 506 blocks); try again later
+[1790639502] partition #1 started (groups split at node 2)
+[1790639682] partition healed
+[1790641393] sync user-3 via node1: node: the node is still synchronizing (812 of 813 blocks); try again later
+[1790642382] partition #2 started (groups split at node 2)
+[1790642562] partition healed
+[1790642872] sync user-1 via node2: node: the node is still synchronizing (953 of 954 blocks); try again later
+[1790645263] partition #3 started (groups split at node 2)
+[1790645443] partition healed
+[1790648143] partition #4 started (groups split at node 2)
+[1790648234] sync miner-b via node0: node: cannot reach node: error sending request for url (http://127.0.0.1:48200/info)
+[1790648323] partition healed
+[1790651023] partition #5 started (groups split at node 2)
+[1790651203] partition healed
+[1790652082] sync user-3 via node1: node: the node is still synchronizing (1873 of 1874 blocks); try again later
+[1790653903] partition #6 started (groups split at node 2)
+[1790654087] partition healed
+[1790656145] sync user-2 via node3: node: the node is still synchronizing (2265 of 2266 blocks); try again later
+[1790656787] partition #7 started (groups split at node 2)
+[1790656967] partition healed
+[1790657363] sync miner-a via node2: node: the node is still synchronizing (2381 of 2382 blocks); try again later
+[1790658390] sync user-1 via node1: node: the node is still synchronizing (2489 of 2490 blocks); try again later
+[1790659538] sync user-3 via node1: node: the node is still synchronizing (2615 of 2616 blocks); try again later
+[1790659667] partition #8 started (groups split at node 2)
+[1790659847] partition healed
+[1790662005] traffic phase over; final checks
+[1790662025] converged=true drained=true height=2835
+[1790662926] late joiner synced=false peers=0
+[1790663519] miner-a: balance 54695.92073713 (fresh restore: 54695.92073713), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790663984] miner-b: balance 1988.35970971 (fresh restore: 1988.35970971), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790664431] user-1: balance 10.18154014 (fresh restore: 10.18154014), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790664863] user-2: balance 3.02775635 (fresh restore: 3.02775635), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790665301] user-3: balance 2.85375248 (fresh restore: 2.85375248), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790665301] supply: generated 56700.34349581 vs wallets 56700.34349581

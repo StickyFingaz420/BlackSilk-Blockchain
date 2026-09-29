@@ -1,0 +1,106 @@
+{
+  "what": "One full-mode RandomX miner (2 GiB dataset, --prebuild auto) across the first real key switch (height 2113), regtest labnet, one machine",
+  "not_a_claim_of": "production readiness; multi-machine behaviour; testnet timing (120 s blocks)",
+  "sources": {
+    "labnet": "labnet-summary.json",
+    "log_analysis": "analysis/analysis.json (analysis/analyze.py over the full logs)",
+    "block_attribution": "analysis/attribution.json",
+    "independent_pow_check": "verify/rx-verify.json",
+    "negative_control": "verify/rx-verify-negative.json",
+    "positive_control": "verify/rx-verify-positive.json",
+    "miner_memory_cpu": "analysis/monitor-miner-full.csv"
+  },
+  "binaries": {
+    "node_miner_labnet_commit": "17ba8b1",
+    "rx_verify_source_commits": "17ba8b1 (main check; rx_verify.rs unchanged since 2cea0aa), the evidence commit (controls: adds --up-to and --corrupt-nonce)",
+    "sha256": {
+      "blacksilk-node.exe": "020a89b4454c7188aabefc25ff842c1c4e248aa874cbec7caeaa298f1f783ebb",
+      "blacksilk-miner.exe": "05ecbd15353b72352ca2341f695f5975bacd19523506592e62e54c5d0fc00e85",
+      "blacksilk-labnet.exe": "4881d9b9817734ef2c39aa6ce4e3d33eddcffc002c310589f558db1cedc33a17",
+      "blacksilk-rx-verify.exe (main check)": "21df0cf28084ce54b836c944eda7200a1944dd24676865e2c7d422491f204c03",
+      "blacksilk-rx-verify.exe (controls)": "1760c27ae59b16ec865fc23663596495caa0793a4c9df2083809a39e814b372b"
+    },
+    "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01), release profile, x86_64-pc-windows-msvc"
+  },
+  "machine": "Intel Core i7-6700 (4 cores, 8 threads, 3.4 GHz), 16 GB RAM, Windows 10 Pro 19045; shared with other work during the run",
+  "run": {
+    "started_utc": "2026-09-28T22:49:01Z",
+    "warmup": {"secs": 1060, "end_height": 343, "end_difficulty": 224, "mean_interval_secs": 8.37},
+    "measured_secs": 25202,
+    "final_height": 2835,
+    "partitions": 8,
+    "transactions_submitted": 1099,
+    "reorganizations_after_warmup": 72,
+    "max_reorg_depth": 2,
+    "crashes": 0,
+    "misbehaviour_disconnects": 0,
+    "stuck_incidents": 0,
+    "converged": true,
+    "mempools_drained": true,
+    "fresh_wallet_balances_match": true,
+    "supply_conserved": true,
+    "late_joiner_synced_per_labnet": false,
+    "labnet_checks_passed": false,
+    "labnet_evidence": false,
+    "why_checks_failed": "the late joiner connected to one peer only (the labnet requires 2); it had all 2835 blocks and the same tip (restart check, verify/rx-verify.json)"
+  },
+  "full_mode_miner": {
+    "args": "--threads 2 --refresh 5 --prebuild auto --build-threads 4",
+    "first_dataset_build_secs": 302.6,
+    "first_dataset_build_threads": 4,
+    "prebuild": {
+      "next_key_announced_template_height": 2049,
+      "announced_utc": "2026-09-29T03:52:30.900Z",
+      "allocation_observed_utc": "2026-09-29T03:52:35Z",
+      "finished_utc": "2026-09-29T03:58:00Z",
+      "finished_by_height": 2070,
+      "duration_secs_bounds": [314, 335],
+      "finished_before_first_2113_template_secs": 338.2,
+      "fallback_to_light_bridge": false,
+      "miner_cores_busy": {"before": 1.86, "during": 4.93, "after": 1.85}
+    },
+    "switch": {
+      "first_2113_template_utc": "2026-09-29T04:03:38.155Z",
+      "log": "RandomX key 3bbf6fb874d645fc: prebuilt context in use",
+      "block_2113_found_utc": "2026-09-29T04:03:41.064Z",
+      "switch_to_first_new_key_block_secs": 2.909,
+      "hash_rate_lines_in_light_mode": 0
+    },
+    "hash_rate_hps": {
+      "10 min before the prebuild": 27.09,
+      "during the prebuild": 19.71,
+      "prebuild end to the switch": 27.33,
+      "first 10 min after the switch": 27.25
+    },
+    "peak_private_mb": 4433,
+    "previous_dataset_released_with_template": 2258,
+    "blocks_found_accepted": 2743,
+    "blocks_found_at_or_after_2113": 692
+  },
+  "node_side": {
+    "block_2113_submit_round_trip_secs": 0.582,
+    "submit_round_trip_secs_all_blocks": {"median": 0.594, "p95": 0.983, "max": 1.756},
+    "submit_round_trip_secs_2113_to_2123": {"median": 0.576, "max": 0.608},
+    "relay_to_nodes_1_to_3_header_accepted_secs_2113": [0.941, 0.939, 0.947],
+    "relay_secs_range_2103_to_2123": [0.686, 0.947],
+    "node0_mean_block_interval_secs": {"2049-2112": 10.43, "2113-2176": 10.49}
+  },
+  "independent_verification": {
+    "nodes_compared": 5,
+    "headers_byte_identical": 2835,
+    "light_mode_hashes_checked": 2835,
+    "light_mode_target_failures": 0,
+    "consensus_header_validation_accepted": 2835,
+    "consensus_key_mismatches": 0,
+    "full_mode_heights_compared": 61,
+    "full_mode_heights": "2100-2130, 2300-2313, 2820-2835 (13 under the genesis key, 48 under the block-2048 key)",
+    "full_light_mismatches": 0,
+    "verifier_dataset_builds_secs": [275.2, 281.4],
+    "negative_control": "nonce of 2113 changed: target failure at 2113, consensus InsufficientWork, exit 1",
+    "positive_control": "same range unchanged: PASS, exit 0"
+  },
+  "memory": {
+    "min_free_mb": 362,
+    "light_miner_suspended": ["02:17:46-02:18:30 UTC", "03:25:53-03:26:48 UTC"]
+  }
+}

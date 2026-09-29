@@ -1,0 +1,11 @@
+127.0.0.1:48500: 2835 headers
+127.0.0.1:48520: 2835 headers
+127.0.0.1:48540: 2835 headers
+127.0.0.1:48560: 2835 headers
+127.0.0.1:48580: 2835 headers
+key height 0: 2112 light hashes in 342.4 s (cache 1.0 s)
+key height 2048: 723 light hashes in 112.8 s (cache 0.8 s)
+key height 0: dataset built in 275.2 s
+key height 2048: dataset built in 281.4 s
+nodes agree true (1..=2835), light 2835 checked / 0 failed, consensus accepted 2835, full 61 compared / 0 mismatched: PASS
+exit 0
