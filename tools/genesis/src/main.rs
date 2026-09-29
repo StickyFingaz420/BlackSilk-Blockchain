@@ -2,9 +2,10 @@
 //! inputs and a Bitcoin block-hash beacon (docs/testnet-v3-genesis.md).
 //!
 //! ```text
-//! blacksilk-genesis generate --network-id 0x0001D673 --timestamp <T_g> --difficulty <D0> \
-//!                            --btc-height <H> --btc-hash <hex, display order>
-//! blacksilk-genesis verify   (the same inputs) --expected-id <hex>
+//! blacksilk-genesis generate --final --network-id 0x0001D673 --timestamp <T_g> \
+//!                            --difficulty <D0> --btc-height <H> --btc-hash <hex, display order>
+//! blacksilk-genesis generate --rehearsal --network-id 0x0001D6E0 ...
+//! blacksilk-genesis verify   (the same inputs, no flag) --expected-id <hex>
 //! blacksilk-genesis difficulty --hashrate-mhs <milli-hashes/s> [--target 120]
 //! ```
 
@@ -12,17 +13,24 @@
 
 use blacksilk_genesis::{
     build, generate, parse_beacon_hex, report, rust_constants, starting_difficulty, verify,
-    GenesisInputs,
+    GenesisInputs, Purpose,
 };
 use std::collections::HashMap;
 use std::process::ExitCode;
 
 const USAGE: &str = "usage:
-  blacksilk-genesis generate --network-id <id> --timestamp <unix s> --difficulty <D0> --btc-height <H> --btc-hash <hex>
+  blacksilk-genesis generate [--final | --rehearsal] --network-id <id> --timestamp <unix s> --difficulty <D0> --btc-height <H> --btc-hash <hex>
   blacksilk-genesis verify   --network-id <id> --timestamp <unix s> --difficulty <D0> --btc-height <H> --btc-hash <hex> --expected-id <hex>
   blacksilk-genesis difficulty --hashrate-mhs <milli-hashes per second> [--target <seconds, default 120>]
 The Bitcoin hash is given in display order (as `bitcoin-cli getblockhash H` prints it).
-`generate` refuses a timestamp later than the current time (docs/testnet-v3-genesis.md).";
+`generate` refuses a timestamp later than the current time, a registered network id,
+and a reserved one outside its purpose: `--final` only for the testnet v3 id 0x0001D673,
+`--rehearsal` only for 0x0001D6E0..=0x0001D6EF, never the test-vector id 0xFFFFFF00.
+`verify` accepts a registered id only for a built-in network's own compiled genesis
+(docs/testnet-v3-genesis.md).";
+
+/// Flags without a value.
+const SWITCHES: [&str; 2] = ["final", "rehearsal"];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -41,14 +49,24 @@ fn main() -> ExitCode {
 fn run(args: &[String]) -> Result<String, String> {
     let (cmd, rest) = args.split_first().ok_or("no command")?;
     let flags = parse_flags(rest)?;
+    let switch = |name: &str| flags.contains_key(name);
+    if cmd != "generate" && SWITCHES.iter().any(|s| switch(s)) {
+        return Err("--final and --rehearsal apply to generate only".into());
+    }
     match cmd.as_str() {
         "generate" => {
+            let purpose = match (switch("final"), switch("rehearsal")) {
+                (true, true) => return Err("--final and --rehearsal exclude each other".into()),
+                (true, false) => Purpose::Final,
+                (false, true) => Purpose::Rehearsal,
+                (false, false) => Purpose::Other,
+            };
             let inputs = inputs(&flags)?;
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|e| e.to_string())?
                 .as_secs();
-            let g = generate(&inputs, now).map_err(|e| e.to_string())?;
+            let g = generate(&inputs, now, purpose).map_err(|e| e.to_string())?;
             Ok(format!(
                 "{}\nconstants to paste:\n{}",
                 report(&inputs, &g),
@@ -94,6 +112,12 @@ fn parse_flags(rest: &[String]) -> Result<HashMap<String, String>, String> {
         let name = k
             .strip_prefix("--")
             .ok_or_else(|| format!("unexpected argument {k}"))?;
+        if SWITCHES.contains(&name) {
+            if flags.insert(name.to_string(), String::new()).is_some() {
+                return Err(format!("--{name} given twice"));
+            }
+            continue;
+        }
         let v = it.next().ok_or_else(|| format!("--{name} needs a value"))?;
         if flags.insert(name.to_string(), v.clone()).is_some() {
             return Err(format!("--{name} given twice"));

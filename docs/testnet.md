@@ -54,15 +54,26 @@ The binaries are in `target/release/`. Everything is pure Rust; no C compiler is
 Nodes built from different commits can agree on the genesis and still follow
 different rules. They connect, and then fork on the first block that uses the
 difference. Every crate version is `0.1.0`, so the version number alone does
-not identify a build. Before the trial, **every device** compares three values
+not identify a build. Before the trial, **every device** compares four values
 with the ones the release announcement publishes:
 
+- the **SHA-256 of the node binary**, rebuilt from the announced commit with
+  the announced toolchain and target, against the announced hash (this is
+  the check that the binary is the announced code; the others identify
+  rules and chain, not code);
 - the **genesis id** (full, 64 hex digits);
 - the **consensus fingerprint** of the network (full, 64 hex digits);
-- the **build commit**.
+- the **build commit**, which must not end in `-dirty`.
 
 The **rules fingerprint** (below) is also published with the release candidate,
 before the genesis exists; the final build must show the same value.
+
+The binary-hash comparison assumes a reproducible node build. Only the guest
+programs are shown reproducible today (CI job `guests`); the node binary's
+reproducibility across hosts has not been demonstrated (docs/STATUS.md). Until
+it is, devices that build their own binary compare the fingerprints and the
+commit, and devices that run a distributed binary also compare its hash with
+the announcement.
 
 Where to read them:
 
@@ -82,7 +93,7 @@ Where to read them:
 - `blacksilk-miner --version` and `blacksilk-wallet --version` print the version
   and commit (see the limitation below).
 
-Pass: all three values are identical on every device, and they match the
+Pass: all values are identical on every device, and they match the
 announcement. On any difference, stop. Do not start or keep mining until
 the builds match.
 
@@ -95,15 +106,24 @@ Each is a domain-separated BLAKE2b hash of a canonical, length-prefixed encoding
   fields that are not identity (block time, `D0`, the difficulty window and rule
   id, the median-time window, the FTL, the RandomX key schedule), the activation
   table without its branch ids, `TxRules`, the header, transaction, block and
-  emission constants, the RandomX configuration, the proof-system parameter set
+  emission constants, the RandomX configuration (read from the RandomX crate)
+  and a pinned RandomX known answer, the consensus hash tags of the v1
+  cryptography (read from the crypto crate), the proof-system parameter set
   and `PROOF_VERSION`, the BVM-1 limits and circuit digest, the PX kernel
   constants, hash domains, exit codes and call ABI, the kernel and vault program
   ids, budgets and entry points. It also covers **rule samples**: outputs of rule
-  functions on fixed inputs (difficulty, median time, the proof-of-work target,
-  the block id, the Merkle root, the signature domain, weights and fees, the
-  genesis-nonce derivation, emission, the Poseidon2 permutation, `Hk`, the tree
-  node, record commitments, nullifiers, the function prefix and the PX6 window),
-  and the **rule-revision list**, one entry per reviewed rule change.
+  functions on fixed inputs (difficulty and its lower clamp, median time, the
+  future time limit at its boundary, the proof-of-work target, the block id,
+  the Merkle root, the signature domain, weights and fees, the genesis-nonce
+  derivation, emission, the generators, a commitment and a key image, the
+  Poseidon2 permutation, `Hk`, the tree node, the empty and a small tree root,
+  record commitments, nullifiers, the function prefix, the PX6 window and the
+  proof transcript), **transaction samples** on a pinned fixture transfer
+  (`node/src/fingerprint_fixture.txt`: its weight, id and signature message, and
+  the validation verdict of the transfer and of one variant per error class a
+  transfer can reach), and the **rule-revision list**, one entry per reviewed
+  rule change (each record in reviews/v3-consensus-changes.md carries a
+  `Revision:` line, and a test ties the two).
 - The **identity fingerprint** covers the network name and id, the genesis block
   and id, and the branch ids.
 - The **consensus fingerprint** is the hash of the two.
@@ -117,21 +137,28 @@ values from that test at the release commit.
 
 Limits of the check:
 
-- **Rule code is covered only where a sample or a revision reaches it.** A change
-  that keeps every sampled result (for example a different order of checks with
-  the same verdicts) leaves the fingerprints unchanged, and the revision list is
-  maintained by hand. Only the commit tells such builds apart, so compare the
-  commit as well.
-- **The RandomX entries are copies.** They are the RandomX v1 values, because
-  `blacksilk-randomx` does not export its configuration, and no RandomX hash is
-  sampled (one needs a 256 MiB cache). The crate's official test vectors pin its
-  behaviour.
-- **The circuit digest is a pinned copy.** `zkvm.CIRCUIT_DIGEST` is not computed
-  at run time; `zkvm/tests/circuit_fingerprint.rs` recomputes it from the AIRs and
-  requires it to equal the pinned value.
-- **There is no dirty flag.** The node reads the commit from `.git` directly
-  (`node/build.rs`, without running `git`). It does not detect uncommitted
-  changes. Build the trial binaries from a clean checkout of the announced
+- **The fingerprints identify rules, not code.** Rule code is covered only where
+  a sample or a revision reaches it. A change that keeps every sampled result
+  (for example a different order of checks with the same verdicts, or a rule
+  only a PX proof or a full block exercises: CLSAG and proof internals beyond
+  the samples, the canonical-proof rules, tree capacity, block-level rules)
+  leaves the fingerprints unchanged, and the revision list is maintained by hand
+  (a test ties it to the records). Equal fingerprints do not show equal
+  binaries; the binary hash and the commit do.
+- **The RandomX known answer and the circuit digest are pinned copies.** No
+  RandomX hash is computed at run time (one needs a 256 MiB cache): the
+  manifest lists the crate's configuration and a known answer that the crate's
+  vector test requires it to compute. `zkvm.CIRCUIT_DIGEST` is not computed at
+  run time either; `zkvm/tests/circuit_fingerprint.rs` recomputes it from the
+  AIRs and requires it to equal the pinned value. A build that skips those
+  tests is covered only by the configuration entries.
+- **The dirty flag covers tracked build inputs only.** The node reads the
+  commit from `.git` directly (`node/build.rs`, without running `git`) and
+  compares every tracked file outside `docs/` and `*.md` with the git index: a
+  modified or deleted file marks the commit `<commit>-dirty`, and a release
+  build of such a tree fails unless `BLACKSILK_ALLOW_DIRTY=1` is set (for
+  development builds). Untracked files and changes staged but not committed are
+  not detected. Build the trial binaries from a clean checkout of the announced
   commit.
 - **A build without `.git` reports `commit unknown`.** This covers Docker (the
   `.dockerignore` excludes `.git`) and source archives. To record the commit,
