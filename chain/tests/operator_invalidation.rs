@@ -455,3 +455,134 @@ fn an_apply_halt_is_escaped_with_the_flag() {
     assert_eq!(snapshot(&m), fresh(&[&bs.main[0], &bs.main[1]]));
     assert!(m.halted().is_none());
 }
+
+/// Blocks in the store at `path`, by id (operator markers left out).
+fn stored_ids(path: &Path) -> Vec<Hash> {
+    use blacksilk_chain::store::{Record, StoreIdentity};
+    let mut store = FileStore::open(path).unwrap();
+    store.bind(&StoreIdentity::of(&params())).unwrap();
+    store
+        .load()
+        .unwrap()
+        .into_iter()
+        .filter_map(|r| match r {
+            Record::Block((_, bytes)) => {
+                Some(Block::decode(&bytes).unwrap().id(params().network_id))
+            }
+            Record::Marker(_) => None,
+        })
+        .collect()
+}
+
+/// S5b (owed by W3-35b; demonstrated on the base, 49423b7: `accept_headers`
+/// took the marked header and its descendants, and listed their bodies for
+/// download): a verdict given before the block arrives applies when its
+/// header arrives. The header is refused as a descendant of an invalid block
+/// is (`InvalidParent`, which the P2P layer does not penalize); its
+/// descendants' headers are refused by the pre-check, before any proof of
+/// work; no body of them is asked for, and a body that arrives anyway is
+/// refused before it is stored.
+#[test]
+fn a_marked_header_and_its_descendants_are_refused_at_header_time() {
+    use blacksilk_consensus::HeaderError::{InvalidParent, UnknownParent};
+    let bs = blocks();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("blocks.dat");
+    let bad = id(&bs.main[2]);
+    let headers: Vec<BlockHeader> = bs.main.iter().map(|b| b.header).collect();
+    let now = headers.last().unwrap().timestamp;
+    let below = fresh(&[&bs.main[0], &bs.main[1]]);
+    {
+        let mut m = open_path(&path).unwrap();
+        m.invalidate_block(bad).unwrap();
+        assert_eq!(
+            m.accept_headers(&headers, now),
+            Err((2, InvalidParent)),
+            "the marked header is refused, its parent kept"
+        );
+        assert!(m.header(&id(&bs.main[1])).is_some());
+        assert_eq!(m.headers().is_valid(&bad), Some(false));
+        assert_eq!(
+            m.headers().height(),
+            2,
+            "the best header chain ends below it"
+        );
+        // Its descendants, in a later batch, are refused without any work.
+        assert_eq!(
+            m.precheck_headers(&headers[3..], now),
+            Err((0, InvalidParent))
+        );
+        assert_eq!(
+            m.accept_headers(&headers[3..], now),
+            Err((0, InvalidParent))
+        );
+        assert!(m.header(&id(&bs.main[3])).is_none());
+        // The same batch again: refused at the marked header, nothing new.
+        assert_eq!(m.accept_headers(&headers, now), Err((2, InvalidParent)));
+        // Only the bodies below it are wanted.
+        let wanted: Vec<Hash> = m.missing_bodies(16).into_iter().map(|e| e.1).collect();
+        assert_eq!(wanted, vec![id(&bs.main[0]), id(&bs.main[1])]);
+        for b in &bs.main[..2] {
+            submit(&mut m, b).unwrap();
+        }
+        assert!(m.missing_bodies(16).is_empty());
+        // Bodies that arrive anyway are refused, and never stored.
+        for b in &bs.main[2..] {
+            // A grandchild's parent was refused, so it is not even known.
+            assert!(
+                matches!(
+                    submit(&mut m, b),
+                    Err(SubmitError::Header(InvalidParent | UnknownParent))
+                ),
+                "height {}",
+                b.header.height
+            );
+        }
+        assert_eq!(snapshot(&m), below);
+        // The heavier refused chain is reported as far as it is known: the
+        // marked header, fully checked on arrival (RTW3-8).
+        let fork = m
+            .operator_fork()
+            .expect("the marked header outweighs the tip");
+        assert_eq!((fork.block, fork.branch_height), (bad, 3));
+    }
+    assert_eq!(stored_ids(&path), vec![id(&bs.main[0]), id(&bs.main[1])]);
+    // A restart keeps refusing it.
+    let mut m = open_path(&path).unwrap();
+    assert_eq!(snapshot(&m), below);
+    assert_eq!(m.accept_headers(&headers, now), Err((2, InvalidParent)));
+    assert!(m.missing_bodies(16).is_empty());
+}
+
+/// S5b through a whole block (the local miner's, or one relayed before its
+/// header): a marked block whose header was never seen is refused before
+/// its body is stored, and so are its descendants.
+#[test]
+fn a_marked_block_is_refused_before_its_body_is_stored() {
+    use blacksilk_consensus::HeaderError::{InvalidParent, UnknownParent};
+    let bs = blocks();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("blocks.dat");
+    let bad = id(&bs.main[2]);
+    {
+        let mut m = open_path(&path).unwrap();
+        m.invalidate_block(bad).unwrap();
+        for b in &bs.main[..2] {
+            submit(&mut m, b).unwrap();
+        }
+        for b in &bs.main[2..] {
+            // A grandchild's parent was refused, so it is not even known.
+            assert!(
+                matches!(
+                    submit(&mut m, b),
+                    Err(SubmitError::Header(InvalidParent | UnknownParent))
+                ),
+                "height {}",
+                b.header.height
+            );
+        }
+        assert_eq!(snapshot(&m), fresh(&[&bs.main[0], &bs.main[1]]));
+        assert!(!m.has_body(&bad));
+    }
+    assert_eq!(stored_ids(&path), vec![id(&bs.main[0]), id(&bs.main[1])]);
+}

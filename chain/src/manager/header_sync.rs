@@ -171,6 +171,12 @@ impl ChainManager {
                 break;
             }
             self.header_added(id, h.prev_id);
+            // S5b: a block the operator invalidated is refused at its
+            // header, and so is everything after it in the batch.
+            if self.refuse_operator_invalidated(id) {
+                result = Err((i, HeaderError::InvalidParent));
+                break;
+            }
             new += 1;
         }
         // Headers never change the connected chain: its target depends only on

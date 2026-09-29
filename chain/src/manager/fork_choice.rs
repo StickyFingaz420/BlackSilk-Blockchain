@@ -149,7 +149,7 @@ impl ChainManager {
     /// recomputes the target. Returns the ids of the block and its
     /// descendants, whose bodies the caller drops from memory (after
     /// disconnecting them, if they are connected).
-    fn drop_invalid(&mut self, id: Hash) -> Vec<Hash> {
+    pub(super) fn drop_invalid(&mut self, id: Hash) -> Vec<Hash> {
         self.headers.mark_invalid(&id);
         self.refresh_hot_seeds();
         let mut dropped = Vec::new();
