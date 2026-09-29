@@ -85,6 +85,22 @@ struct Args {
     /// (`auto`) applies.
     #[arg(long)]
     prebuild: bool,
+    /// With `--miner-full`: only the first miner (the warm-up miner, on node
+    /// 0) runs in full mode; the second runs in light mode with one thread.
+    /// One 2 GiB dataset on the machine instead of two.
+    #[arg(long, requires = "miner_full")]
+    light_second_miner: bool,
+    /// The `--prebuild` value full-mode miners get when prebuild is on
+    /// (`--prebuild` or `--evidence`): `on`, or `auto` (the miner's default:
+    /// in full mode it prebuilds as well, and falls back to the light-mode
+    /// bridge, with a warning in its log, only if the second dataset cannot
+    /// be allocated). Light-mode miners always get `on`.
+    #[arg(long, default_value = "on", value_parser = ["on", "auto"])]
+    full_prebuild: String,
+    /// `--build-threads` for full-mode miners (otherwise the miner's
+    /// default: a quarter of `--miner-threads`, at least 1).
+    #[arg(long)]
+    miner_build_threads: Option<usize>,
     /// Skip the warm-up: both miners start at once, from the genesis
     /// difficulty. Its reorganizations are then counted with the rest.
     #[arg(long)]
@@ -174,6 +190,9 @@ struct Report {
     /// many of them their node did not adopt at submission.
     blocks_found_by_phase: BTreeMap<String, FoundStats>,
     miner_prebuild: bool,
+    /// Each miner's mode arguments (all but its node, cookie and payout
+    /// address).
+    miner_modes: Vec<String>,
     misbehavior_disconnects: u32,
     crashes: Vec<String>,
     network: String,
@@ -254,6 +273,23 @@ fn mean_interval(arrivals: &BTreeMap<u64, f64>, window: u64) -> Option<f64> {
     let limit = top.checked_sub(window.max(1))?;
     let (&base, &t_base) = arrivals.range(..=limit).next_back()?;
     Some((t_top - t_base) / (top - base) as f64)
+}
+
+/// Records when `height` was first seen at `secs`. The height seen first
+/// (`start`) is not recorded: its time is when the harness first looked,
+/// not when it was mined. Counting it put the miner's start, minutes for a
+/// full-mode dataset build, into the window, which then ended the warm-up
+/// at difficulty 1 (W4-RX run 1).
+fn record_arrival(
+    arrivals: &mut BTreeMap<u64, f64>,
+    start: &mut Option<u64>,
+    height: u64,
+    secs: f64,
+) {
+    let start = *start.get_or_insert(height);
+    if height > start {
+        arrivals.entry(height).or_insert(secs);
+    }
 }
 
 /// The warm-up criterion: with a single miner, the difficulty is near its
@@ -750,29 +786,44 @@ fn main() {
     }
     report.miner_prebuild = prebuild;
     let miner_nodes = [0, n / 2];
-    let miner_args = |k: usize, wallets: &mut Vec<(String, Wallet)>| -> Vec<String> {
+    // A miner's arguments, and its mode for the report.
+    let miner_args = |k: usize, wallets: &mut Vec<(String, Wallet)>| -> (Vec<String>, String) {
         let node = miner_nodes[k];
         let addr = wallets[k].1.address(0, 0);
+        let light_second = k == 1 && a.light_second_miner;
+        let full = a.miner_full && !light_second;
+        let threads = if light_second { 1 } else { a.miner_threads };
+        let mut mode: Vec<String> = vec![
+            "--threads".into(),
+            threads.to_string(),
+            "--refresh".into(),
+            "5".into(),
+        ];
+        if !full {
+            mode.push("--light".into());
+        }
+        if prebuild {
+            mode.push("--prebuild".into());
+            mode.push(if full {
+                a.full_prebuild.clone()
+            } else {
+                "on".into()
+            });
+        }
+        if let (true, Some(t)) = (full, a.miner_build_threads) {
+            mode.push("--build-threads".into());
+            mode.push(t.to_string());
+        }
         let mut args: Vec<String> = vec![
             "--node".into(),
             local(rpc_port(a.base_port, node)).to_string(),
             "--rpc-cookie".into(),
             cookie_path(&data_of(node)).display().to_string(),
-            "--threads".into(),
-            a.miner_threads.to_string(),
-            "--refresh".into(),
-            "5".into(),
             "--address".into(),
             addr,
         ];
-        if !a.miner_full {
-            args.push("--light".into());
-        }
-        if prebuild {
-            args.push("--prebuild".into());
-            args.push("on".into());
-        }
-        args
+        args.extend(mode.iter().cloned());
+        (args, format!("miner{k}: {}", mode.join(" ")))
     };
     let mut stuck: Vec<StuckDetector> = (0..n).map(|_| StuckDetector::default()).collect();
     let mut sampling = Sampling {
@@ -796,7 +847,8 @@ fn main() {
         target_secs,
         ..Default::default()
     };
-    let args0 = miner_args(0, &mut wallets);
+    let (args0, mode0) = miner_args(0, &mut wallets);
+    report.miner_modes.push(mode0);
     procs.push(spawn(
         &miner_bin,
         &args0,
@@ -814,6 +866,7 @@ fn main() {
         );
         let deadline = run_start + Duration::from_secs(a.warmup_max_mins * 60);
         let mut arrivals: BTreeMap<u64, f64> = BTreeMap::new();
+        let mut start_height: Option<u64> = None;
         let mut next_sample = run_start;
         let mut last = None;
         while Instant::now() < deadline {
@@ -829,9 +882,12 @@ fn main() {
                 );
             }
             if let Ok(i) = clients[0].info() {
-                arrivals
-                    .entry(i.height)
-                    .or_insert(run_start.elapsed().as_secs_f64());
+                record_arrival(
+                    &mut arrivals,
+                    &mut start_height,
+                    i.height,
+                    run_start.elapsed().as_secs_f64(),
+                );
                 last = Some(i);
             }
             let mean = mean_interval(&arrivals, a.warmup_window);
@@ -866,7 +922,8 @@ fn main() {
             ),
         );
     }
-    let args1 = miner_args(1, &mut wallets);
+    let (args1, mode1) = miner_args(1, &mut wallets);
+    report.miner_modes.push(mode1);
     procs.push(spawn(
         &miner_bin,
         &args1,
@@ -1277,6 +1334,31 @@ mod tests {
         let a = arrivals(&[(1, 0.0), (2, 1.0), (4, 12.0), (7, 42.0)]);
         assert_eq!(mean_interval(&a, 3), Some(30.0 / 3.0));
         assert_eq!(mean_interval(&a, 4), Some(41.0 / 5.0));
+    }
+
+    /// W4-RX run 1: a full-mode miner builds its dataset for about 290 s,
+    /// then mines 30 blocks at difficulty 1 in about 25 s. Timed from the
+    /// genesis, the window's mean was 10.4 s and the warm-up ended; the
+    /// starting tip must not count.
+    #[test]
+    fn the_miners_start_is_not_a_block_interval() {
+        let (mut arrivals, mut start) = (BTreeMap::new(), None);
+        for s in 0..290 {
+            record_arrival(&mut arrivals, &mut start, 0, s as f64);
+        }
+        for h in 1..=30 {
+            record_arrival(&mut arrivals, &mut start, h, 290.0 + 0.8 * h as f64);
+        }
+        let mean = mean_interval(&arrivals, 30);
+        assert!(!warmed_up(mean, 10, 0.75), "{mean:?}");
+        record_arrival(&mut arrivals, &mut start, 31, 316.0);
+        let mean = mean_interval(&arrivals, 30).expect("a full window");
+        assert!(mean < 1.0 && !warmed_up(Some(mean), 10, 0.75));
+        // The pre-fix computation, with the genesis at time 0.
+        let mut old = arrivals.clone();
+        old.insert(0, 0.0);
+        old.remove(&31);
+        assert!(warmed_up(mean_interval(&old, 30), 10, 0.75));
     }
 
     /// At difficulty 1 (the genesis gap) blocks come every 1-2 s against a

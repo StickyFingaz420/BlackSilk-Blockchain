@@ -1,0 +1,5 @@
+127.0.0.1:48500: 2835 headers
+key height 0: 2112 light hashes in 324.5 s (cache 0.9 s)
+key height 2048: 1 light hashes in 0.5 s (cache 0.7 s)
+nodes agree true (1..=2113), light 2113 checked / 0 failed, consensus accepted 2113, full 0 compared / 0 mismatched: PASS
+exit 0

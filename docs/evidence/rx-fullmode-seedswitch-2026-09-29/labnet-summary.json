@@ -1,0 +1,107 @@
+{
+  "started_unix": 1790635741,
+  "duration_secs": 29559,
+  "nodes": 4,
+  "final_height": 2835,
+  "partitions": 8,
+  "tx_attempts": 1099,
+  "tx_submitted": 1099,
+  "tx_failures": {},
+  "px_attempts": 0,
+  "px_submitted": 0,
+  "px_failures": {},
+  "warmup": {
+    "enabled": true,
+    "reached": true,
+    "secs": 1060,
+    "end_height": 343,
+    "end_difficulty": 224,
+    "mean_interval_secs": 8.369512823333336,
+    "window_blocks": 30,
+    "ratio": 0.75,
+    "target_secs": 10
+  },
+  "measured_secs": 25202,
+  "reorganizations": 72,
+  "max_reorg_depth": 2,
+  "reorg_depths": {
+    "1": 70,
+    "2": 2
+  },
+  "warmup_reorganizations": 0,
+  "warmup_max_reorg_depth": 0,
+  "reorgs_by_phase": {
+    "connected": {
+      "count": 62,
+      "max_depth": 1,
+      "depths": {
+        "1": 62
+      }
+    },
+    "heal": {
+      "count": 10,
+      "max_depth": 2,
+      "depths": {
+        "1": 8,
+        "2": 2
+      }
+    }
+  },
+  "blocks_found_by_phase": {
+    "connected": {
+      "found": 2373,
+      "not_on_best_chain": 29,
+      "abandoned": 2113
+    },
+    "heal": {
+      "found": 49,
+      "not_on_best_chain": 2,
+      "abandoned": 61
+    },
+    "partition": {
+      "found": 142,
+      "not_on_best_chain": 0,
+      "abandoned": 1
+    },
+    "warmup": {
+      "found": 343,
+      "not_on_best_chain": 0,
+      "abandoned": 0
+    }
+  },
+  "miner_prebuild": true,
+  "miner_modes": [
+    "miner0: --threads 2 --refresh 5 --prebuild auto --build-threads 4",
+    "miner1: --threads 1 --refresh 5 --light --prebuild on"
+  ],
+  "misbehavior_disconnects": 0,
+  "crashes": [],
+  "network": "regtest",
+  "all_equal_samples": 1407,
+  "stuck_incidents": 0,
+  "samples": 1734,
+  "max_rss_mb": {
+    "miner0": 4424.58984375,
+    "miner1": 521.53515625,
+    "node0": 541.88671875,
+    "node1": 540.60546875,
+    "node2": 532.22265625,
+    "node3": 533.328125
+  },
+  "converged_at_end": true,
+  "mempools_drained_at_end": true,
+  "late_joiner_synced": false,
+  "late_joiner_peers": 0,
+  "fresh_wallet_balances_match": true,
+  "fresh_wallet_px_balances_match": true,
+  "supply_conserved": true,
+  "generated": 5670034349581,
+  "wallet_total": 5670034349581,
+  "wallet_px_total": 0,
+  "proxy_bytes": 24884745,
+  "checks_passed": false,
+  "evidence": false,
+  "evidence_notes": [
+    "checks did not pass"
+  ]
+}

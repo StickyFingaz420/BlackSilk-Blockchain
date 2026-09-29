@@ -1,0 +1,10 @@
+[2026-09-29T06:07:05.774Z INFO  blacksilk_node] blacksilk-node 0.1.0 commit 17ba8b1
+[2026-09-29T06:07:05.774Z INFO  blacksilk_node] regtest: genesis 087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7, consensus fingerprint 65334546765a538f41d5e8ec6aff7d6aebd17b26e3f612c2c844b44a1af7abaa
+[2026-09-29T06:07:05.774Z INFO  blacksilk_node] regtest: loading C:/bszkeval/w4-rx/run2\node-late
+[2026-09-29T06:07:05.782Z INFO  blacksilk_node] chain loaded in 7.4ms: height 0, tip 087d6fd4efbc45eb
+[2026-09-29T06:07:05.785Z INFO  blacksilk_node] P2P listening on 127.0.0.1:48281
+[2026-09-29T06:07:05.785Z INFO  blacksilk_node] RPC listening on http://127.0.0.1:48280
+[2026-09-29T06:07:05.789Z WARN  blacksilk_node::cookie] the data directory C:/bszkeval/w4-rx/run2\node-late is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it
+[2026-09-29T06:07:05.789Z INFO  blacksilk_node::serve] RPC credential written to C:/bszkeval/w4-rx/run2\node-late\rpc.cookie (clients read it: --rpc-cookie)
+[2026-09-29T06:07:06.196Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:48201 (height 2835)
+[2026-09-29T06:07:08.473Z INFO  blacksilk_chain::manager::template] caught up at height 0: block templates are served from now on

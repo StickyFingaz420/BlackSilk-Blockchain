@@ -1,0 +1,953 @@
+[2026-09-29T03:50:00.650Z DEBUG blacksilk_miner] 6 hashes in 3.9s (1.5 H/s)
+[2026-09-29T03:50:00.650Z INFO  blacksilk_miner] new tip at height 2031: work on template 2031 abandoned after 3.9s
+[2026-09-29T03:50:00.650Z DEBUG blacksilk_miner] template 2032 on e7f598221c22 (difficulty 243)
+[2026-09-29T03:50:00.651Z DEBUG blacksilk_miner] template 2032: 0 txs, payout 19.98840731
+[2026-09-29T03:50:05.961Z DEBUG blacksilk_miner] 8 hashes in 5.3s (1.5 H/s)
+[2026-09-29T03:50:05.961Z DEBUG blacksilk_miner] template 2032 on e7f598221c22 (difficulty 243)
+[2026-09-29T03:50:05.961Z DEBUG blacksilk_miner] template 2032: 0 txs, payout 19.98840731
+[2026-09-29T03:50:06.629Z DEBUG blacksilk_miner] 1 hashes in 667.7ms (1.5 H/s)
+[2026-09-29T03:50:06.629Z INFO  blacksilk_miner] new tip at height 2032: work on template 2032 abandoned after 667.7ms
+[2026-09-29T03:50:06.630Z DEBUG blacksilk_miner] template 2033 on 17232aef7f4b (difficulty 247)
+[2026-09-29T03:50:06.630Z DEBUG blacksilk_miner] template 2033: 0 txs, payout 19.98838824
+[2026-09-29T03:50:12.004Z DEBUG blacksilk_miner] 8 hashes in 5.4s (1.5 H/s)
+[2026-09-29T03:50:12.004Z INFO  blacksilk_miner] new tip at height 2033: work on template 2033 abandoned after 5.4s
+[2026-09-29T03:50:12.005Z DEBUG blacksilk_miner] template 2034 on 2695c68df641 (difficulty 251)
+[2026-09-29T03:50:12.005Z DEBUG blacksilk_miner] template 2034: 0 txs, payout 19.98836918
+[2026-09-29T03:50:17.330Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T03:50:17.330Z INFO  blacksilk_miner] new tip at height 2034: work on template 2034 abandoned after 5.3s
+[2026-09-29T03:50:17.330Z DEBUG blacksilk_miner] template 2035 on 1b2d63f06135 (difficulty 255)
+[2026-09-29T03:50:17.330Z DEBUG blacksilk_miner] template 2035: 0 txs, payout 19.98835012
+[2026-09-29T03:50:21.576Z DEBUG blacksilk_miner] 7 hashes in 4.2s (1.6 H/s)
+[2026-09-29T03:50:21.576Z INFO  blacksilk_miner] new tip at height 2035: work on template 2035 abandoned after 4.2s
+[2026-09-29T03:50:21.577Z DEBUG blacksilk_miner] template 2036 on 26699727304b (difficulty 259)
+[2026-09-29T03:50:21.577Z DEBUG blacksilk_miner] template 2036: 0 txs, payout 19.98833106
+[2026-09-29T03:50:26.869Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T03:50:26.870Z DEBUG blacksilk_miner] template 2036 on 26699727304b (difficulty 259)
+[2026-09-29T03:50:26.870Z DEBUG blacksilk_miner] template 2036: 0 txs, payout 19.98833106
+[2026-09-29T03:50:32.140Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T03:50:32.140Z DEBUG blacksilk_miner] template 2036 on 26699727304b (difficulty 259)
+[2026-09-29T03:50:32.141Z DEBUG blacksilk_miner] template 2036: 0 txs, payout 19.98833106
+[2026-09-29T03:50:37.348Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T03:50:37.349Z DEBUG blacksilk_miner] template 2036 on 26699727304b (difficulty 259)
+[2026-09-29T03:50:37.349Z DEBUG blacksilk_miner] template 2036: 0 txs, payout 19.98833106
+[2026-09-29T03:50:42.589Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T03:50:42.590Z DEBUG blacksilk_miner] template 2036 on 26699727304b (difficulty 259)
+[2026-09-29T03:50:42.590Z DEBUG blacksilk_miner] template 2036: 1 txs, payout 19.98867566
+[2026-09-29T03:50:44.333Z DEBUG blacksilk_miner] 3 hashes in 1.7s (1.7 H/s)
+[2026-09-29T03:50:44.333Z INFO  blacksilk_miner] new tip at height 2036: work on template 2036 abandoned after 1.7s
+[2026-09-29T03:50:44.333Z DEBUG blacksilk_miner] template 2037 on cd388c9c76e1 (difficulty 246)
+[2026-09-29T03:50:44.333Z DEBUG blacksilk_miner] template 2037: 0 txs, payout 19.98831199
+[2026-09-29T03:50:49.549Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T03:50:49.550Z DEBUG blacksilk_miner] template 2037 on cd388c9c76e1 (difficulty 246)
+[2026-09-29T03:50:49.551Z DEBUG blacksilk_miner] template 2037: 1 txs, payout 19.98865659
+[2026-09-29T03:50:50.955Z DEBUG blacksilk_miner] 2 hashes in 1.4s (1.4 H/s)
+[2026-09-29T03:50:50.955Z INFO  blacksilk_miner] new tip at height 2037: work on template 2037 abandoned after 1.4s
+[2026-09-29T03:50:50.956Z DEBUG blacksilk_miner] template 2038 on fc23cc77fe2a (difficulty 247)
+[2026-09-29T03:50:50.956Z DEBUG blacksilk_miner] template 2038: 0 txs, payout 19.98829293
+[2026-09-29T03:50:56.072Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T03:50:56.073Z DEBUG blacksilk_miner] template 2038 on fc23cc77fe2a (difficulty 247)
+[2026-09-29T03:50:56.073Z DEBUG blacksilk_miner] template 2038: 1 txs, payout 19.98863753
+[2026-09-29T03:50:58.974Z DEBUG blacksilk_miner] 5 hashes in 2.9s (1.7 H/s)
+[2026-09-29T03:50:58.974Z INFO  blacksilk_miner] hash rate 1.7 H/s (light mode)
+[2026-09-29T03:50:58.974Z INFO  blacksilk_miner] new tip at height 2038: work on template 2038 abandoned after 2.9s
+[2026-09-29T03:50:58.975Z DEBUG blacksilk_miner] template 2039 on 7ecd31d2fe23 (difficulty 250)
+[2026-09-29T03:50:58.975Z DEBUG blacksilk_miner] template 2039: 1 txs, payout 19.98861847
+[2026-09-29T03:51:00.717Z DEBUG blacksilk_miner] 3 hashes in 1.7s (1.7 H/s)
+[2026-09-29T03:51:00.717Z INFO  blacksilk_miner] new tip at height 2039: work on template 2039 abandoned after 1.7s
+[2026-09-29T03:51:00.717Z DEBUG blacksilk_miner] template 2040 on d984116955f9 (difficulty 254)
+[2026-09-29T03:51:00.718Z DEBUG blacksilk_miner] template 2040: 0 txs, payout 19.98825481
+[2026-09-29T03:51:05.840Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T03:51:05.840Z DEBUG blacksilk_miner] template 2040 on d984116955f9 (difficulty 254)
+[2026-09-29T03:51:05.841Z DEBUG blacksilk_miner] template 2040: 0 txs, payout 19.98825481
+[2026-09-29T03:51:09.408Z DEBUG blacksilk_miner] 6 hashes in 3.6s (1.7 H/s)
+[2026-09-29T03:51:09.408Z INFO  blacksilk_miner] new tip at height 2040: work on template 2040 abandoned after 3.6s
+[2026-09-29T03:51:09.408Z DEBUG blacksilk_miner] template 2041 on 39a4d2084fc4 (difficulty 258)
+[2026-09-29T03:51:09.408Z DEBUG blacksilk_miner] template 2041: 0 txs, payout 19.98823574
+[2026-09-29T03:51:14.741Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T03:51:14.741Z DEBUG blacksilk_miner] template 2041 on 39a4d2084fc4 (difficulty 258)
+[2026-09-29T03:51:14.741Z DEBUG blacksilk_miner] template 2041: 0 txs, payout 19.98823574
+[2026-09-29T03:51:20.108Z DEBUG blacksilk_miner] 9 hashes in 5.4s (1.7 H/s)
+[2026-09-29T03:51:20.108Z DEBUG blacksilk_miner] template 2041 on 39a4d2084fc4 (difficulty 258)
+[2026-09-29T03:51:20.109Z DEBUG blacksilk_miner] template 2041: 1 txs, payout 19.98874034
+[2026-09-29T03:51:25.220Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T03:51:25.221Z DEBUG blacksilk_miner] template 2041 on 39a4d2084fc4 (difficulty 258)
+[2026-09-29T03:51:25.221Z DEBUG blacksilk_miner] template 2041: 1 txs, payout 19.98874034
+[2026-09-29T03:51:26.425Z DEBUG blacksilk_miner] 2 hashes in 1.2s (1.7 H/s)
+[2026-09-29T03:51:26.425Z INFO  blacksilk_miner] new tip at height 2041: work on template 2041 abandoned after 1.2s
+[2026-09-29T03:51:26.426Z DEBUG blacksilk_miner] template 2042 on 212fb0dcaea4 (difficulty 250)
+[2026-09-29T03:51:26.426Z DEBUG blacksilk_miner] template 2042: 0 txs, payout 19.98821668
+[2026-09-29T03:51:31.494Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T03:51:31.495Z DEBUG blacksilk_miner] template 2042 on 212fb0dcaea4 (difficulty 250)
+[2026-09-29T03:51:31.495Z DEBUG blacksilk_miner] template 2042: 1 txs, payout 19.98856128
+[2026-09-29T03:51:36.652Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T03:51:36.653Z DEBUG blacksilk_miner] template 2042 on 212fb0dcaea4 (difficulty 250)
+[2026-09-29T03:51:36.653Z DEBUG blacksilk_miner] template 2042: 1 txs, payout 19.98856128
+[2026-09-29T03:51:38.948Z DEBUG blacksilk_miner] 4 hashes in 2.3s (1.7 H/s)
+[2026-09-29T03:51:38.948Z INFO  blacksilk_miner] new tip at height 2042: work on template 2042 abandoned after 2.3s
+[2026-09-29T03:51:38.948Z DEBUG blacksilk_miner] template 2043 on 6bbc256771a3 (difficulty 248)
+[2026-09-29T03:51:38.949Z DEBUG blacksilk_miner] template 2043: 0 txs, payout 19.98819762
+[2026-09-29T03:51:40.465Z DEBUG blacksilk_miner] 2 hashes in 1.5s (1.3 H/s)
+[2026-09-29T03:51:40.465Z INFO  blacksilk_miner] new tip at height 2043: work on template 2043 abandoned after 1.5s
+[2026-09-29T03:51:40.466Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:51:40.466Z DEBUG blacksilk_miner] template 2044: 0 txs, payout 19.98817856
+[2026-09-29T03:51:45.471Z DEBUG blacksilk_miner] 9 hashes in 5.0s (1.8 H/s)
+[2026-09-29T03:51:45.472Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:51:45.472Z DEBUG blacksilk_miner] template 2044: 0 txs, payout 19.98817856
+[2026-09-29T03:51:50.522Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T03:51:50.523Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:51:50.523Z DEBUG blacksilk_miner] template 2044: 0 txs, payout 19.98817856
+[2026-09-29T03:51:55.834Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T03:51:55.835Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:51:55.835Z DEBUG blacksilk_miner] template 2044: 0 txs, payout 19.98817856
+[2026-09-29T03:52:01.454Z DEBUG blacksilk_miner] 10 hashes in 5.6s (1.8 H/s)
+[2026-09-29T03:52:01.454Z INFO  blacksilk_miner] hash rate 1.7 H/s (light mode)
+[2026-09-29T03:52:01.455Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:52:01.455Z DEBUG blacksilk_miner] template 2044: 1 txs, payout 19.98852316
+[2026-09-29T03:52:06.917Z DEBUG blacksilk_miner] 9 hashes in 5.5s (1.6 H/s)
+[2026-09-29T03:52:06.918Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:52:06.918Z DEBUG blacksilk_miner] template 2044: 1 txs, payout 19.98852316
+[2026-09-29T03:52:12.205Z DEBUG blacksilk_miner] 8 hashes in 5.3s (1.5 H/s)
+[2026-09-29T03:52:12.206Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:52:12.207Z DEBUG blacksilk_miner] template 2044: 1 txs, payout 19.98852316
+[2026-09-29T03:52:17.812Z DEBUG blacksilk_miner] 9 hashes in 5.6s (1.6 H/s)
+[2026-09-29T03:52:17.813Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:52:17.814Z DEBUG blacksilk_miner] template 2044: 1 txs, payout 19.98852316
+[2026-09-29T03:52:23.268Z DEBUG blacksilk_miner] 9 hashes in 5.5s (1.6 H/s)
+[2026-09-29T03:52:23.269Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:52:23.269Z DEBUG blacksilk_miner] template 2044: 1 txs, payout 19.98852316
+[2026-09-29T03:52:28.513Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T03:52:28.513Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:52:28.514Z DEBUG blacksilk_miner] template 2044: 1 txs, payout 19.98852316
+[2026-09-29T03:52:33.959Z DEBUG blacksilk_miner] 8 hashes in 5.4s (1.5 H/s)
+[2026-09-29T03:52:33.960Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:52:33.960Z DEBUG blacksilk_miner] template 2044: 1 txs, payout 19.98852316
+[2026-09-29T03:52:39.720Z DEBUG blacksilk_miner] 6 hashes in 5.8s (1.0 H/s)
+[2026-09-29T03:52:39.722Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:52:39.723Z DEBUG blacksilk_miner] template 2044: 1 txs, payout 19.98852316
+[2026-09-29T03:52:45.597Z DEBUG blacksilk_miner] 7 hashes in 5.9s (1.2 H/s)
+[2026-09-29T03:52:45.597Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:52:45.598Z DEBUG blacksilk_miner] template 2044: 1 txs, payout 19.98852316
+[2026-09-29T03:52:50.934Z DEBUG blacksilk_miner] 7 hashes in 5.3s (1.3 H/s)
+[2026-09-29T03:52:50.935Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:52:50.936Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:52:56.414Z DEBUG blacksilk_miner] 8 hashes in 5.5s (1.5 H/s)
+[2026-09-29T03:52:56.415Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:52:56.416Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:53:01.782Z DEBUG blacksilk_miner] 8 hashes in 5.4s (1.5 H/s)
+[2026-09-29T03:53:01.782Z INFO  blacksilk_miner] hash rate 1.5 H/s (light mode)
+[2026-09-29T03:53:01.784Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:53:01.785Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:53:07.191Z DEBUG blacksilk_miner] 8 hashes in 5.4s (1.5 H/s)
+[2026-09-29T03:53:07.192Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:53:07.192Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:53:12.747Z DEBUG blacksilk_miner] 8 hashes in 5.6s (1.4 H/s)
+[2026-09-29T03:53:12.748Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:53:12.749Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:53:18.011Z DEBUG blacksilk_miner] 8 hashes in 5.3s (1.5 H/s)
+[2026-09-29T03:53:18.011Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:53:18.012Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:53:23.067Z DEBUG blacksilk_miner] 7 hashes in 5.1s (1.4 H/s)
+[2026-09-29T03:53:23.068Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:53:23.069Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:53:28.784Z DEBUG blacksilk_miner] 7 hashes in 5.7s (1.2 H/s)
+[2026-09-29T03:53:28.785Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:53:28.786Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:53:34.621Z DEBUG blacksilk_miner] 7 hashes in 5.8s (1.2 H/s)
+[2026-09-29T03:53:34.622Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:53:34.623Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:53:39.822Z DEBUG blacksilk_miner] 7 hashes in 5.2s (1.3 H/s)
+[2026-09-29T03:53:39.823Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:53:39.823Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:53:45.325Z DEBUG blacksilk_miner] 6 hashes in 5.5s (1.1 H/s)
+[2026-09-29T03:53:45.326Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:53:45.326Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:53:50.776Z DEBUG blacksilk_miner] 6 hashes in 5.4s (1.1 H/s)
+[2026-09-29T03:53:50.838Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:53:50.839Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:53:56.874Z DEBUG blacksilk_miner] 6 hashes in 6.0s (1.0 H/s)
+[2026-09-29T03:53:56.908Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:53:56.909Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:54:02.000Z DEBUG blacksilk_miner] 7 hashes in 5.1s (1.4 H/s)
+[2026-09-29T03:54:02.000Z INFO  blacksilk_miner] hash rate 1.3 H/s (light mode)
+[2026-09-29T03:54:02.002Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:54:02.003Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:54:07.759Z DEBUG blacksilk_miner] 6 hashes in 5.8s (1.0 H/s)
+[2026-09-29T03:54:07.760Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:54:07.760Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:54:13.301Z DEBUG blacksilk_miner] 6 hashes in 5.5s (1.1 H/s)
+[2026-09-29T03:54:13.302Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:54:13.303Z DEBUG blacksilk_miner] template 2044: 2 txs, payout 19.98950776
+[2026-09-29T03:54:18.408Z DEBUG blacksilk_miner] 5 hashes in 5.1s (1.0 H/s)
+[2026-09-29T03:54:18.409Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:54:18.410Z DEBUG blacksilk_miner] template 2044: 3 txs, payout 19.98985236
+[2026-09-29T03:54:23.746Z DEBUG blacksilk_miner] 8 hashes in 5.3s (1.5 H/s)
+[2026-09-29T03:54:23.746Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:54:23.747Z DEBUG blacksilk_miner] template 2044: 3 txs, payout 19.98985236
+[2026-09-29T03:54:29.056Z DEBUG blacksilk_miner] 8 hashes in 5.3s (1.5 H/s)
+[2026-09-29T03:54:29.057Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:54:29.058Z DEBUG blacksilk_miner] template 2044: 3 txs, payout 19.98985236
+[2026-09-29T03:54:34.882Z DEBUG blacksilk_miner] 7 hashes in 5.8s (1.2 H/s)
+[2026-09-29T03:54:34.894Z DEBUG blacksilk_miner] template 2044 on 87f6e4abcb69 (difficulty 251)
+[2026-09-29T03:54:34.895Z DEBUG blacksilk_miner] template 2044: 3 txs, payout 19.98985236
+[2026-09-29T03:54:39.986Z DEBUG blacksilk_miner] 7 hashes in 5.1s (1.4 H/s)
+[2026-09-29T03:54:40.982Z INFO  blacksilk_miner] found block 2044 (reward 19.98985236 BLK, 3 txs)
+[2026-09-29T03:54:40.982Z DEBUG blacksilk_miner] template 2045 on cb6cfd07de0a (difficulty 216)
+[2026-09-29T03:54:40.982Z DEBUG blacksilk_miner] template 2045: 0 txs, payout 19.98815950
+[2026-09-29T03:54:46.025Z DEBUG blacksilk_miner] 6 hashes in 5.0s (1.2 H/s)
+[2026-09-29T03:54:46.051Z DEBUG blacksilk_miner] template 2045 on cb6cfd07de0a (difficulty 216)
+[2026-09-29T03:54:46.052Z DEBUG blacksilk_miner] template 2045: 0 txs, payout 19.98815950
+[2026-09-29T03:54:51.663Z DEBUG blacksilk_miner] 6 hashes in 5.6s (1.1 H/s)
+[2026-09-29T03:54:51.663Z INFO  blacksilk_miner] new tip at height 2051: work on template 2045 abandoned after 5.6s
+[2026-09-29T03:54:51.664Z DEBUG blacksilk_miner] template 2052 on c8e677a44bce (difficulty 242)
+[2026-09-29T03:54:51.665Z DEBUG blacksilk_miner] template 2052: 3 txs, payout 19.98969986
+[2026-09-29T03:54:52.578Z DEBUG blacksilk_miner] 1 hashes in 913.0ms (1.1 H/s)
+[2026-09-29T03:54:52.578Z INFO  blacksilk_miner] new tip at height 2056: work on template 2052 abandoned after 913.0ms
+[2026-09-29T03:54:52.579Z DEBUG blacksilk_miner] template 2057 on 1e0db94d1578 (difficulty 220)
+[2026-09-29T03:54:52.581Z DEBUG blacksilk_miner] template 2057: 3 txs, payout 19.98960455
+[2026-09-29T03:54:54.962Z DEBUG blacksilk_miner] 2 hashes in 2.4s (0.8 H/s)
+[2026-09-29T03:54:54.962Z INFO  blacksilk_miner] new tip at height 2057: work on template 2057 abandoned after 2.4s
+[2026-09-29T03:54:54.991Z DEBUG blacksilk_miner] template 2058 on 55e68da70eb5 (difficulty 216)
+[2026-09-29T03:54:54.992Z DEBUG blacksilk_miner] template 2058: 3 txs, payout 19.98958549
+[2026-09-29T03:55:00.277Z DEBUG blacksilk_miner] 7 hashes in 5.3s (1.3 H/s)
+[2026-09-29T03:55:00.277Z DEBUG blacksilk_miner] template 2058 on 55e68da70eb5 (difficulty 216)
+[2026-09-29T03:55:00.278Z DEBUG blacksilk_miner] template 2058: 3 txs, payout 19.98958549
+[2026-09-29T03:55:06.046Z DEBUG blacksilk_miner] 7 hashes in 5.8s (1.2 H/s)
+[2026-09-29T03:55:06.046Z INFO  blacksilk_miner] hash rate 1.2 H/s (light mode)
+[2026-09-29T03:55:06.101Z DEBUG blacksilk_miner] template 2058 on 55e68da70eb5 (difficulty 216)
+[2026-09-29T03:55:06.102Z DEBUG blacksilk_miner] template 2058: 3 txs, payout 19.98958549
+[2026-09-29T03:55:10.020Z DEBUG blacksilk_miner] 5 hashes in 3.9s (1.3 H/s)
+[2026-09-29T03:55:10.020Z INFO  blacksilk_miner] new tip at height 2058: work on template 2058 abandoned after 3.9s
+[2026-09-29T03:55:10.020Z DEBUG blacksilk_miner] template 2059 on 14fd610b39e3 (difficulty 215)
+[2026-09-29T03:55:10.020Z DEBUG blacksilk_miner] template 2059: 0 txs, payout 19.98789263
+[2026-09-29T03:55:15.374Z DEBUG blacksilk_miner] 7 hashes in 5.4s (1.3 H/s)
+[2026-09-29T03:55:15.374Z DEBUG blacksilk_miner] template 2059 on 14fd610b39e3 (difficulty 215)
+[2026-09-29T03:55:15.375Z DEBUG blacksilk_miner] template 2059: 0 txs, payout 19.98789263
+[2026-09-29T03:55:20.985Z DEBUG blacksilk_miner] 7 hashes in 5.6s (1.2 H/s)
+[2026-09-29T03:55:21.010Z DEBUG blacksilk_miner] template 2059 on 14fd610b39e3 (difficulty 215)
+[2026-09-29T03:55:21.010Z DEBUG blacksilk_miner] template 2059: 0 txs, payout 19.98789263
+[2026-09-29T03:55:26.824Z DEBUG blacksilk_miner] 7 hashes in 5.8s (1.2 H/s)
+[2026-09-29T03:55:26.825Z DEBUG blacksilk_miner] template 2059 on 14fd610b39e3 (difficulty 215)
+[2026-09-29T03:55:26.825Z DEBUG blacksilk_miner] template 2059: 0 txs, payout 19.98789263
+[2026-09-29T03:55:32.704Z DEBUG blacksilk_miner] 7 hashes in 5.9s (1.2 H/s)
+[2026-09-29T03:55:32.705Z DEBUG blacksilk_miner] template 2059 on 14fd610b39e3 (difficulty 215)
+[2026-09-29T03:55:32.705Z DEBUG blacksilk_miner] template 2059: 0 txs, payout 19.98789263
+[2026-09-29T03:55:38.375Z DEBUG blacksilk_miner] 7 hashes in 5.7s (1.2 H/s)
+[2026-09-29T03:55:38.400Z DEBUG blacksilk_miner] template 2059 on 14fd610b39e3 (difficulty 215)
+[2026-09-29T03:55:38.400Z DEBUG blacksilk_miner] template 2059: 2 txs, payout 19.98858183
+[2026-09-29T03:55:44.108Z DEBUG blacksilk_miner] 9 hashes in 5.7s (1.6 H/s)
+[2026-09-29T03:55:44.108Z DEBUG blacksilk_miner] template 2059 on 14fd610b39e3 (difficulty 215)
+[2026-09-29T03:55:44.109Z DEBUG blacksilk_miner] template 2059: 2 txs, payout 19.98858183
+[2026-09-29T03:55:45.832Z DEBUG blacksilk_miner] 2 hashes in 1.7s (1.2 H/s)
+[2026-09-29T03:55:45.832Z INFO  blacksilk_miner] new tip at height 2059: work on template 2059 abandoned after 1.7s
+[2026-09-29T03:55:45.833Z DEBUG blacksilk_miner] template 2060 on 70b62de68e81 (difficulty 202)
+[2026-09-29T03:55:45.833Z DEBUG blacksilk_miner] template 2060: 0 txs, payout 19.98787356
+[2026-09-29T03:55:49.998Z DEBUG blacksilk_miner] 5 hashes in 4.2s (1.2 H/s)
+[2026-09-29T03:55:49.998Z INFO  blacksilk_miner] new tip at height 2060: work on template 2060 abandoned after 4.2s
+[2026-09-29T03:55:49.998Z DEBUG blacksilk_miner] template 2061 on 1083eeb388c3 (difficulty 204)
+[2026-09-29T03:55:49.999Z DEBUG blacksilk_miner] template 2061: 0 txs, payout 19.98785450
+[2026-09-29T03:55:55.459Z DEBUG blacksilk_miner] 7 hashes in 5.5s (1.3 H/s)
+[2026-09-29T03:55:55.459Z DEBUG blacksilk_miner] template 2061 on 1083eeb388c3 (difficulty 204)
+[2026-09-29T03:55:55.459Z DEBUG blacksilk_miner] template 2061: 0 txs, payout 19.98785450
+[2026-09-29T03:55:59.743Z DEBUG blacksilk_miner] 6 hashes in 4.3s (1.4 H/s)
+[2026-09-29T03:55:59.743Z INFO  blacksilk_miner] new tip at height 2061: work on template 2061 abandoned after 4.3s
+[2026-09-29T03:55:59.743Z DEBUG blacksilk_miner] template 2062 on 5543263e4052 (difficulty 205)
+[2026-09-29T03:55:59.743Z DEBUG blacksilk_miner] template 2062: 0 txs, payout 19.98783544
+[2026-09-29T03:56:03.058Z DEBUG blacksilk_miner] 4 hashes in 3.3s (1.2 H/s)
+[2026-09-29T03:56:03.058Z INFO  blacksilk_miner] new tip at height 2062: work on template 2062 abandoned after 3.3s
+[2026-09-29T03:56:03.059Z DEBUG blacksilk_miner] template 2063 on c9bcc3ddec87 (difficulty 208)
+[2026-09-29T03:56:03.059Z DEBUG blacksilk_miner] template 2063: 0 txs, payout 19.98781638
+[2026-09-29T03:56:08.247Z DEBUG blacksilk_miner] 6 hashes in 5.2s (1.2 H/s)
+[2026-09-29T03:56:08.247Z INFO  blacksilk_miner] hash rate 1.3 H/s (light mode)
+[2026-09-29T03:56:08.248Z DEBUG blacksilk_miner] template 2063 on c9bcc3ddec87 (difficulty 208)
+[2026-09-29T03:56:08.248Z DEBUG blacksilk_miner] template 2063: 1 txs, payout 19.98816098
+[2026-09-29T03:56:13.799Z DEBUG blacksilk_miner] 7 hashes in 5.6s (1.3 H/s)
+[2026-09-29T03:56:13.799Z DEBUG blacksilk_miner] template 2063 on c9bcc3ddec87 (difficulty 208)
+[2026-09-29T03:56:13.800Z DEBUG blacksilk_miner] template 2063: 1 txs, payout 19.98816098
+[2026-09-29T03:56:19.530Z DEBUG blacksilk_miner] 7 hashes in 5.7s (1.2 H/s)
+[2026-09-29T03:56:19.531Z DEBUG blacksilk_miner] template 2063 on c9bcc3ddec87 (difficulty 208)
+[2026-09-29T03:56:19.531Z DEBUG blacksilk_miner] template 2063: 1 txs, payout 19.98816098
+[2026-09-29T03:56:24.696Z DEBUG blacksilk_miner] 8 hashes in 5.2s (1.5 H/s)
+[2026-09-29T03:56:24.696Z DEBUG blacksilk_miner] template 2063 on c9bcc3ddec87 (difficulty 208)
+[2026-09-29T03:56:24.697Z DEBUG blacksilk_miner] template 2063: 1 txs, payout 19.98816098
+[2026-09-29T03:56:30.555Z DEBUG blacksilk_miner] 7 hashes in 5.9s (1.2 H/s)
+[2026-09-29T03:56:30.556Z DEBUG blacksilk_miner] template 2063 on c9bcc3ddec87 (difficulty 208)
+[2026-09-29T03:56:30.556Z DEBUG blacksilk_miner] template 2063: 1 txs, payout 19.98816098
+[2026-09-29T03:56:36.136Z DEBUG blacksilk_miner] 8 hashes in 5.6s (1.4 H/s)
+[2026-09-29T03:56:36.136Z DEBUG blacksilk_miner] template 2063 on c9bcc3ddec87 (difficulty 208)
+[2026-09-29T03:56:36.137Z DEBUG blacksilk_miner] template 2063: 2 txs, payout 19.98850558
+[2026-09-29T03:56:41.452Z DEBUG blacksilk_miner] 8 hashes in 5.3s (1.5 H/s)
+[2026-09-29T03:56:41.452Z DEBUG blacksilk_miner] template 2063 on c9bcc3ddec87 (difficulty 208)
+[2026-09-29T03:56:41.453Z DEBUG blacksilk_miner] template 2063: 2 txs, payout 19.98850558
+[2026-09-29T03:56:47.116Z DEBUG blacksilk_miner] 7 hashes in 5.7s (1.2 H/s)
+[2026-09-29T03:56:47.128Z DEBUG blacksilk_miner] template 2063 on c9bcc3ddec87 (difficulty 208)
+[2026-09-29T03:56:47.129Z DEBUG blacksilk_miner] template 2063: 2 txs, payout 19.98850558
+[2026-09-29T03:56:52.347Z DEBUG blacksilk_miner] 8 hashes in 5.2s (1.5 H/s)
+[2026-09-29T03:56:52.372Z DEBUG blacksilk_miner] template 2063 on c9bcc3ddec87 (difficulty 208)
+[2026-09-29T03:56:52.373Z DEBUG blacksilk_miner] template 2063: 2 txs, payout 19.98850558
+[2026-09-29T03:56:58.172Z DEBUG blacksilk_miner] 6 hashes in 5.8s (1.0 H/s)
+[2026-09-29T03:56:58.172Z DEBUG blacksilk_miner] template 2064 on 580bcd74b32a (difficulty 188)
+[2026-09-29T03:56:58.173Z DEBUG blacksilk_miner] template 2064: 0 txs, payout 19.98779732
+[2026-09-29T03:57:03.783Z DEBUG blacksilk_miner] 8 hashes in 5.6s (1.4 H/s)
+[2026-09-29T03:57:03.783Z DEBUG blacksilk_miner] template 2064 on 580bcd74b32a (difficulty 188)
+[2026-09-29T03:57:03.783Z DEBUG blacksilk_miner] template 2064: 0 txs, payout 19.98779732
+[2026-09-29T03:57:08.837Z DEBUG blacksilk_miner] 6 hashes in 5.1s (1.2 H/s)
+[2026-09-29T03:57:08.837Z INFO  blacksilk_miner] hash rate 1.3 H/s (light mode)
+[2026-09-29T03:57:08.837Z DEBUG blacksilk_miner] template 2064 on 580bcd74b32a (difficulty 188)
+[2026-09-29T03:57:08.837Z DEBUG blacksilk_miner] template 2064: 0 txs, payout 19.98779732
+[2026-09-29T03:57:10.878Z DEBUG blacksilk_miner] 3 hashes in 2.0s (1.5 H/s)
+[2026-09-29T03:57:10.878Z INFO  blacksilk_miner] new tip at height 2064: work on template 2064 abandoned after 2.0s
+[2026-09-29T03:57:10.879Z DEBUG blacksilk_miner] template 2065 on cd25ee70f856 (difficulty 186)
+[2026-09-29T03:57:10.879Z DEBUG blacksilk_miner] template 2065: 0 txs, payout 19.98777825
+[2026-09-29T03:57:12.995Z DEBUG blacksilk_miner] 2 hashes in 2.1s (0.9 H/s)
+[2026-09-29T03:57:12.995Z INFO  blacksilk_miner] new tip at height 2065: work on template 2065 abandoned after 2.1s
+[2026-09-29T03:57:12.996Z DEBUG blacksilk_miner] template 2066 on 75437ca0ac61 (difficulty 188)
+[2026-09-29T03:57:12.996Z DEBUG blacksilk_miner] template 2066: 0 txs, payout 19.98775919
+[2026-09-29T03:57:18.253Z DEBUG blacksilk_miner] 7 hashes in 5.3s (1.3 H/s)
+[2026-09-29T03:57:18.254Z DEBUG blacksilk_miner] template 2066 on 75437ca0ac61 (difficulty 188)
+[2026-09-29T03:57:18.254Z DEBUG blacksilk_miner] template 2066: 0 txs, payout 19.98775919
+[2026-09-29T03:57:23.417Z DEBUG blacksilk_miner] 6 hashes in 5.2s (1.2 H/s)
+[2026-09-29T03:57:23.421Z DEBUG blacksilk_miner] template 2066 on 75437ca0ac61 (difficulty 188)
+[2026-09-29T03:57:23.422Z DEBUG blacksilk_miner] template 2066: 1 txs, payout 19.98810379
+[2026-09-29T03:57:28.876Z DEBUG blacksilk_miner] 7 hashes in 5.5s (1.3 H/s)
+[2026-09-29T03:57:28.876Z DEBUG blacksilk_miner] template 2066 on 75437ca0ac61 (difficulty 188)
+[2026-09-29T03:57:28.877Z DEBUG blacksilk_miner] template 2066: 1 txs, payout 19.98810379
+[2026-09-29T03:57:31.108Z DEBUG blacksilk_miner] 3 hashes in 2.2s (1.3 H/s)
+[2026-09-29T03:57:31.108Z INFO  blacksilk_miner] new tip at height 2066: work on template 2066 abandoned after 2.2s
+[2026-09-29T03:57:31.123Z DEBUG blacksilk_miner] template 2067 on c58e2ce92db1 (difficulty 186)
+[2026-09-29T03:57:31.123Z DEBUG blacksilk_miner] template 2067: 0 txs, payout 19.98774013
+[2026-09-29T03:57:34.369Z DEBUG blacksilk_miner] 4 hashes in 3.2s (1.2 H/s)
+[2026-09-29T03:57:34.369Z INFO  blacksilk_miner] new tip at height 2067: work on template 2067 abandoned after 3.2s
+[2026-09-29T03:57:34.369Z DEBUG blacksilk_miner] template 2068 on e9edde09d361 (difficulty 189)
+[2026-09-29T03:57:34.369Z DEBUG blacksilk_miner] template 2068: 0 txs, payout 19.98772107
+[2026-09-29T03:57:39.794Z DEBUG blacksilk_miner] 8 hashes in 5.4s (1.5 H/s)
+[2026-09-29T03:57:39.799Z DEBUG blacksilk_miner] template 2068 on e9edde09d361 (difficulty 189)
+[2026-09-29T03:57:39.799Z DEBUG blacksilk_miner] template 2068: 0 txs, payout 19.98772107
+[2026-09-29T03:57:44.324Z DEBUG blacksilk_miner] 5 hashes in 4.5s (1.1 H/s)
+[2026-09-29T03:57:44.324Z INFO  blacksilk_miner] new tip at height 2068: work on template 2068 abandoned after 4.5s
+[2026-09-29T03:57:44.324Z DEBUG blacksilk_miner] template 2069 on 07d761051b0d (difficulty 191)
+[2026-09-29T03:57:44.325Z DEBUG blacksilk_miner] template 2069: 0 txs, payout 19.98770201
+[2026-09-29T03:57:50.254Z DEBUG blacksilk_miner] 7 hashes in 5.9s (1.2 H/s)
+[2026-09-29T03:57:50.254Z DEBUG blacksilk_miner] template 2070 on dc8cfca27e11 (difficulty 191)
+[2026-09-29T03:57:50.255Z DEBUG blacksilk_miner] template 2070: 0 txs, payout 19.98768295
+[2026-09-29T03:57:55.654Z DEBUG blacksilk_miner] 8 hashes in 5.4s (1.5 H/s)
+[2026-09-29T03:57:55.654Z DEBUG blacksilk_miner] template 2070 on dc8cfca27e11 (difficulty 191)
+[2026-09-29T03:57:55.655Z DEBUG blacksilk_miner] template 2070: 0 txs, payout 19.98768295
+[2026-09-29T03:58:00.815Z DEBUG blacksilk_miner] 8 hashes in 5.2s (1.6 H/s)
+[2026-09-29T03:58:00.815Z INFO  blacksilk_miner] new tip at height 2070: work on template 2070 abandoned after 5.2s
+[2026-09-29T03:58:00.816Z DEBUG blacksilk_miner] template 2071 on 7b9ef58674c7 (difficulty 191)
+[2026-09-29T03:58:00.816Z DEBUG blacksilk_miner] template 2071: 0 txs, payout 19.98766388
+[2026-09-29T03:58:06.047Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T03:58:06.048Z DEBUG blacksilk_miner] template 2071 on 7b9ef58674c7 (difficulty 191)
+[2026-09-29T03:58:06.048Z DEBUG blacksilk_miner] template 2071: 0 txs, payout 19.98766388
+[2026-09-29T03:58:11.549Z DEBUG blacksilk_miner] 9 hashes in 5.5s (1.6 H/s)
+[2026-09-29T03:58:11.549Z INFO  blacksilk_miner] hash rate 1.4 H/s (light mode)
+[2026-09-29T03:58:11.549Z DEBUG blacksilk_miner] template 2071 on 7b9ef58674c7 (difficulty 191)
+[2026-09-29T03:58:11.549Z DEBUG blacksilk_miner] template 2071: 0 txs, payout 19.98766388
+[2026-09-29T03:58:14.751Z DEBUG blacksilk_miner] 5 hashes in 3.2s (1.6 H/s)
+[2026-09-29T03:58:14.751Z INFO  blacksilk_miner] new tip at height 2071: work on template 2071 abandoned after 3.2s
+[2026-09-29T03:58:14.751Z DEBUG blacksilk_miner] template 2072 on c99320e204a2 (difficulty 190)
+[2026-09-29T03:58:14.752Z DEBUG blacksilk_miner] template 2072: 0 txs, payout 19.98764482
+[2026-09-29T03:58:20.071Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T03:58:20.072Z DEBUG blacksilk_miner] template 2072 on c99320e204a2 (difficulty 190)
+[2026-09-29T03:58:20.072Z DEBUG blacksilk_miner] template 2072: 1 txs, payout 19.98846942
+[2026-09-29T03:58:25.301Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T03:58:25.301Z DEBUG blacksilk_miner] template 2072 on c99320e204a2 (difficulty 190)
+[2026-09-29T03:58:25.302Z DEBUG blacksilk_miner] template 2072: 2 txs, payout 19.98881402
+[2026-09-29T03:58:27.660Z DEBUG blacksilk_miner] 4 hashes in 2.4s (1.7 H/s)
+[2026-09-29T03:58:27.660Z INFO  blacksilk_miner] new tip at height 2072: work on template 2072 abandoned after 2.4s
+[2026-09-29T03:58:27.660Z DEBUG blacksilk_miner] template 2073 on 5632ba177909 (difficulty 189)
+[2026-09-29T03:58:27.660Z DEBUG blacksilk_miner] template 2073: 0 txs, payout 19.98762576
+[2026-09-29T03:58:29.984Z DEBUG blacksilk_miner] 4 hashes in 2.3s (1.7 H/s)
+[2026-09-29T03:58:29.984Z INFO  blacksilk_miner] new tip at height 2073: work on template 2073 abandoned after 2.3s
+[2026-09-29T03:58:29.985Z DEBUG blacksilk_miner] template 2074 on 5e08a0380e11 (difficulty 191)
+[2026-09-29T03:58:29.985Z DEBUG blacksilk_miner] template 2074: 0 txs, payout 19.98760670
+[2026-09-29T03:58:35.237Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T03:58:35.237Z DEBUG blacksilk_miner] template 2074 on 5e08a0380e11 (difficulty 191)
+[2026-09-29T03:58:35.237Z DEBUG blacksilk_miner] template 2074: 0 txs, payout 19.98760670
+[2026-09-29T03:58:37.548Z DEBUG blacksilk_miner] 4 hashes in 2.3s (1.7 H/s)
+[2026-09-29T03:58:37.548Z INFO  blacksilk_miner] new tip at height 2074: work on template 2074 abandoned after 2.3s
+[2026-09-29T03:58:37.548Z DEBUG blacksilk_miner] template 2075 on 0d2f1bb36b84 (difficulty 193)
+[2026-09-29T03:58:37.549Z DEBUG blacksilk_miner] template 2075: 0 txs, payout 19.98758764
+[2026-09-29T03:58:42.742Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T03:58:42.742Z DEBUG blacksilk_miner] template 2075 on 0d2f1bb36b84 (difficulty 193)
+[2026-09-29T03:58:42.742Z DEBUG blacksilk_miner] template 2075: 0 txs, payout 19.98758764
+[2026-09-29T03:58:45.703Z DEBUG blacksilk_miner] 5 hashes in 3.0s (1.7 H/s)
+[2026-09-29T03:58:45.703Z INFO  blacksilk_miner] new tip at height 2075: work on template 2075 abandoned after 3.0s
+[2026-09-29T03:58:45.704Z DEBUG blacksilk_miner] template 2076 on 46a604b81db2 (difficulty 194)
+[2026-09-29T03:58:45.704Z DEBUG blacksilk_miner] template 2076: 0 txs, payout 19.98756858
+[2026-09-29T03:58:50.290Z DEBUG blacksilk_miner] 8 hashes in 4.6s (1.7 H/s)
+[2026-09-29T03:58:50.290Z INFO  blacksilk_miner] new tip at height 2076: work on template 2076 abandoned after 4.6s
+[2026-09-29T03:58:50.291Z DEBUG blacksilk_miner] template 2077 on 9dab74227d0f (difficulty 197)
+[2026-09-29T03:58:50.291Z DEBUG blacksilk_miner] template 2077: 0 txs, payout 19.98754951
+[2026-09-29T03:58:55.359Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T03:58:55.360Z DEBUG blacksilk_miner] template 2077 on 9dab74227d0f (difficulty 197)
+[2026-09-29T03:58:55.360Z DEBUG blacksilk_miner] template 2077: 0 txs, payout 19.98754951
+[2026-09-29T03:58:57.136Z DEBUG blacksilk_miner] 3 hashes in 1.8s (1.7 H/s)
+[2026-09-29T03:58:57.136Z INFO  blacksilk_miner] new tip at height 2077: work on template 2077 abandoned after 1.8s
+[2026-09-29T03:58:57.136Z DEBUG blacksilk_miner] template 2078 on 62652180f429 (difficulty 198)
+[2026-09-29T03:58:57.137Z DEBUG blacksilk_miner] template 2078: 1 txs, payout 19.98787505
+[2026-09-29T03:58:58.898Z DEBUG blacksilk_miner] 3 hashes in 1.8s (1.7 H/s)
+[2026-09-29T03:58:58.898Z INFO  blacksilk_miner] new tip at height 2078: work on template 2078 abandoned after 1.8s
+[2026-09-29T03:58:58.898Z DEBUG blacksilk_miner] template 2079 on 74d86e9b9429 (difficulty 200)
+[2026-09-29T03:58:58.899Z DEBUG blacksilk_miner] template 2079: 1 txs, payout 19.98785599
+[2026-09-29T03:59:02.920Z DEBUG blacksilk_miner] 7 hashes in 4.0s (1.7 H/s)
+[2026-09-29T03:59:02.920Z INFO  blacksilk_miner] new tip at height 2079: work on template 2079 abandoned after 4.0s
+[2026-09-29T03:59:02.920Z DEBUG blacksilk_miner] template 2080 on fbe3e9baed2f (difficulty 203)
+[2026-09-29T03:59:02.920Z DEBUG blacksilk_miner] template 2080: 0 txs, payout 19.98749233
+[2026-09-29T03:59:04.580Z DEBUG blacksilk_miner] 3 hashes in 1.7s (1.8 H/s)
+[2026-09-29T03:59:05.156Z INFO  blacksilk_miner] found block 2080 (reward 19.98749233 BLK, 0 txs)
+[2026-09-29T03:59:05.156Z DEBUG blacksilk_miner] template 2081 on e7b47dc0fde3 (difficulty 205)
+[2026-09-29T03:59:05.156Z DEBUG blacksilk_miner] template 2081: 1 txs, payout 19.98781787
+[2026-09-29T03:59:07.603Z DEBUG blacksilk_miner] 4 hashes in 2.4s (1.6 H/s)
+[2026-09-29T03:59:07.603Z INFO  blacksilk_miner] new tip at height 2081: work on template 2081 abandoned after 2.4s
+[2026-09-29T03:59:07.604Z DEBUG blacksilk_miner] template 2082 on 54345e7528f8 (difficulty 208)
+[2026-09-29T03:59:07.604Z DEBUG blacksilk_miner] template 2082: 0 txs, payout 19.98745421
+[2026-09-29T03:59:12.722Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T03:59:12.722Z INFO  blacksilk_miner] hash rate 1.7 H/s (light mode)
+[2026-09-29T03:59:12.722Z DEBUG blacksilk_miner] template 2082 on 54345e7528f8 (difficulty 208)
+[2026-09-29T03:59:12.723Z DEBUG blacksilk_miner] template 2082: 1 txs, payout 19.98779881
+[2026-09-29T03:59:16.700Z DEBUG blacksilk_miner] 7 hashes in 4.0s (1.8 H/s)
+[2026-09-29T03:59:16.700Z INFO  blacksilk_miner] new tip at height 2082: work on template 2082 abandoned after 4.0s
+[2026-09-29T03:59:16.700Z DEBUG blacksilk_miner] template 2083 on 10fb2027e0b6 (difficulty 211)
+[2026-09-29T03:59:16.700Z DEBUG blacksilk_miner] template 2083: 1 txs, payout 19.98777974
+[2026-09-29T03:59:17.886Z DEBUG blacksilk_miner] 2 hashes in 1.2s (1.7 H/s)
+[2026-09-29T03:59:17.886Z INFO  blacksilk_miner] new tip at height 2083: work on template 2083 abandoned after 1.2s
+[2026-09-29T03:59:17.887Z DEBUG blacksilk_miner] template 2084 on ef0ea613e5e7 (difficulty 213)
+[2026-09-29T03:59:17.887Z DEBUG blacksilk_miner] template 2084: 0 txs, payout 19.98741608
+[2026-09-29T03:59:20.229Z DEBUG blacksilk_miner] 4 hashes in 2.3s (1.7 H/s)
+[2026-09-29T03:59:20.229Z INFO  blacksilk_miner] new tip at height 2084: work on template 2084 abandoned after 2.3s
+[2026-09-29T03:59:20.229Z DEBUG blacksilk_miner] template 2085 on 136b288c71f5 (difficulty 216)
+[2026-09-29T03:59:20.229Z DEBUG blacksilk_miner] template 2085: 0 txs, payout 19.98739702
+[2026-09-29T03:59:25.393Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T03:59:25.394Z DEBUG blacksilk_miner] template 2086 on e35fbd8156a4 (difficulty 219)
+[2026-09-29T03:59:25.394Z DEBUG blacksilk_miner] template 2086: 0 txs, payout 19.98737796
+[2026-09-29T03:59:30.730Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T03:59:30.731Z DEBUG blacksilk_miner] template 2086 on e35fbd8156a4 (difficulty 219)
+[2026-09-29T03:59:30.731Z DEBUG blacksilk_miner] template 2086: 1 txs, payout 19.98772256
+[2026-09-29T03:59:35.928Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T03:59:35.928Z DEBUG blacksilk_miner] template 2086 on e35fbd8156a4 (difficulty 219)
+[2026-09-29T03:59:35.928Z DEBUG blacksilk_miner] template 2086: 1 txs, payout 19.98772256
+[2026-09-29T03:59:40.690Z DEBUG blacksilk_miner] 8 hashes in 4.8s (1.7 H/s)
+[2026-09-29T03:59:40.690Z INFO  blacksilk_miner] new tip at height 2086: work on template 2086 abandoned after 4.8s
+[2026-09-29T03:59:40.691Z DEBUG blacksilk_miner] template 2087 on 790e7f1d0045 (difficulty 222)
+[2026-09-29T03:59:40.691Z DEBUG blacksilk_miner] template 2087: 0 txs, payout 19.98735890
+[2026-09-29T03:59:42.962Z DEBUG blacksilk_miner] 4 hashes in 2.3s (1.8 H/s)
+[2026-09-29T03:59:42.962Z INFO  blacksilk_miner] new tip at height 2087: work on template 2087 abandoned after 2.3s
+[2026-09-29T03:59:42.962Z DEBUG blacksilk_miner] template 2088 on b1b7126e9b2f (difficulty 225)
+[2026-09-29T03:59:42.962Z DEBUG blacksilk_miner] template 2088: 0 txs, payout 19.98733984
+[2026-09-29T03:59:47.074Z DEBUG blacksilk_miner] 7 hashes in 4.1s (1.7 H/s)
+[2026-09-29T03:59:47.074Z INFO  blacksilk_miner] new tip at height 2088: work on template 2088 abandoned after 4.1s
+[2026-09-29T03:59:47.074Z DEBUG blacksilk_miner] template 2089 on b613716ef0ef (difficulty 228)
+[2026-09-29T03:59:47.075Z DEBUG blacksilk_miner] template 2089: 0 txs, payout 19.98732078
+[2026-09-29T03:59:49.322Z DEBUG blacksilk_miner] 4 hashes in 2.2s (1.8 H/s)
+[2026-09-29T03:59:49.322Z INFO  blacksilk_miner] new tip at height 2089: work on template 2089 abandoned after 2.2s
+[2026-09-29T03:59:49.323Z DEBUG blacksilk_miner] template 2090 on d08ef07f220b (difficulty 231)
+[2026-09-29T03:59:49.323Z DEBUG blacksilk_miner] template 2090: 0 txs, payout 19.98730171
+[2026-09-29T03:59:51.721Z DEBUG blacksilk_miner] 4 hashes in 2.4s (1.7 H/s)
+[2026-09-29T03:59:51.721Z INFO  blacksilk_miner] new tip at height 2090: work on template 2090 abandoned after 2.4s
+[2026-09-29T03:59:51.721Z DEBUG blacksilk_miner] template 2091 on 514b497cbc5d (difficulty 234)
+[2026-09-29T03:59:51.722Z DEBUG blacksilk_miner] template 2091: 1 txs, payout 19.98762725
+[2026-09-29T03:59:56.930Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T03:59:56.930Z DEBUG blacksilk_miner] template 2091 on 514b497cbc5d (difficulty 234)
+[2026-09-29T03:59:56.931Z DEBUG blacksilk_miner] template 2091: 1 txs, payout 19.98762725
+[2026-09-29T04:00:02.165Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:00:02.166Z DEBUG blacksilk_miner] template 2091 on 514b497cbc5d (difficulty 234)
+[2026-09-29T04:00:02.166Z DEBUG blacksilk_miner] template 2091: 1 txs, payout 19.98762725
+[2026-09-29T04:00:03.354Z DEBUG blacksilk_miner] 2 hashes in 1.2s (1.7 H/s)
+[2026-09-29T04:00:03.354Z INFO  blacksilk_miner] new tip at height 2091: work on template 2091 abandoned after 1.2s
+[2026-09-29T04:00:03.354Z DEBUG blacksilk_miner] template 2092 on 8cb0faf2925d (difficulty 238)
+[2026-09-29T04:00:03.355Z DEBUG blacksilk_miner] template 2092: 0 txs, payout 19.98726359
+[2026-09-29T04:00:08.647Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:00:08.649Z DEBUG blacksilk_miner] template 2092 on 8cb0faf2925d (difficulty 238)
+[2026-09-29T04:00:08.649Z DEBUG blacksilk_miner] template 2092: 1 txs, payout 19.98760819
+[2026-09-29T04:00:13.731Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:00:13.731Z INFO  blacksilk_miner] hash rate 1.7 H/s (light mode)
+[2026-09-29T04:00:13.731Z DEBUG blacksilk_miner] template 2092 on 8cb0faf2925d (difficulty 238)
+[2026-09-29T04:00:13.732Z DEBUG blacksilk_miner] template 2092: 1 txs, payout 19.98760819
+[2026-09-29T04:00:15.472Z DEBUG blacksilk_miner] 3 hashes in 1.7s (1.7 H/s)
+[2026-09-29T04:00:15.472Z INFO  blacksilk_miner] new tip at height 2092: work on template 2092 abandoned after 1.7s
+[2026-09-29T04:00:15.472Z DEBUG blacksilk_miner] template 2093 on 3f671ea57ee1 (difficulty 239)
+[2026-09-29T04:00:15.472Z DEBUG blacksilk_miner] template 2093: 0 txs, payout 19.98724453
+[2026-09-29T04:00:20.713Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:00:20.713Z DEBUG blacksilk_miner] template 2093 on 3f671ea57ee1 (difficulty 239)
+[2026-09-29T04:00:20.713Z DEBUG blacksilk_miner] template 2093: 0 txs, payout 19.98724453
+[2026-09-29T04:00:25.741Z DEBUG blacksilk_miner] 8 hashes in 5.0s (1.6 H/s)
+[2026-09-29T04:00:25.742Z DEBUG blacksilk_miner] template 2093 on 3f671ea57ee1 (difficulty 239)
+[2026-09-29T04:00:25.742Z DEBUG blacksilk_miner] template 2093: 0 txs, payout 19.98724453
+[2026-09-29T04:00:28.117Z DEBUG blacksilk_miner] 4 hashes in 2.4s (1.7 H/s)
+[2026-09-29T04:00:28.117Z INFO  blacksilk_miner] new tip at height 2093: work on template 2093 abandoned after 2.4s
+[2026-09-29T04:00:28.118Z DEBUG blacksilk_miner] template 2094 on e15d5f557d06 (difficulty 238)
+[2026-09-29T04:00:28.118Z DEBUG blacksilk_miner] template 2094: 0 txs, payout 19.98722547
+[2026-09-29T04:00:33.605Z DEBUG blacksilk_miner] 9 hashes in 5.5s (1.6 H/s)
+[2026-09-29T04:00:33.605Z DEBUG blacksilk_miner] template 2094 on e15d5f557d06 (difficulty 238)
+[2026-09-29T04:00:33.606Z DEBUG blacksilk_miner] template 2094: 0 txs, payout 19.98722547
+[2026-09-29T04:00:38.930Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:00:38.930Z INFO  blacksilk_miner] new tip at height 2094: work on template 2094 abandoned after 5.3s
+[2026-09-29T04:00:38.930Z DEBUG blacksilk_miner] template 2095 on 3505dfa49f42 (difficulty 236)
+[2026-09-29T04:00:38.930Z DEBUG blacksilk_miner] template 2095: 0 txs, payout 19.98720641
+[2026-09-29T04:00:40.725Z DEBUG blacksilk_miner] 3 hashes in 1.8s (1.7 H/s)
+[2026-09-29T04:00:40.725Z INFO  blacksilk_miner] new tip at height 2095: work on template 2095 abandoned after 1.8s
+[2026-09-29T04:00:40.725Z DEBUG blacksilk_miner] template 2096 on 5e7d2550ae57 (difficulty 239)
+[2026-09-29T04:00:40.725Z DEBUG blacksilk_miner] template 2096: 0 txs, payout 19.98718735
+[2026-09-29T04:00:45.833Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:00:45.833Z DEBUG blacksilk_miner] template 2096 on 5e7d2550ae57 (difficulty 239)
+[2026-09-29T04:00:45.834Z DEBUG blacksilk_miner] template 2096: 0 txs, payout 19.98718735
+[2026-09-29T04:00:51.083Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:00:51.084Z DEBUG blacksilk_miner] template 2096 on 5e7d2550ae57 (difficulty 239)
+[2026-09-29T04:00:51.084Z DEBUG blacksilk_miner] template 2096: 0 txs, payout 19.98718735
+[2026-09-29T04:00:56.268Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:00:56.268Z DEBUG blacksilk_miner] template 2096 on 5e7d2550ae57 (difficulty 239)
+[2026-09-29T04:00:56.269Z DEBUG blacksilk_miner] template 2096: 1 txs, payout 19.98753195
+[2026-09-29T04:01:01.316Z DEBUG blacksilk_miner] 9 hashes in 5.0s (1.8 H/s)
+[2026-09-29T04:01:01.317Z DEBUG blacksilk_miner] template 2096 on 5e7d2550ae57 (difficulty 239)
+[2026-09-29T04:01:01.317Z DEBUG blacksilk_miner] template 2096: 1 txs, payout 19.98753195
+[2026-09-29T04:01:03.669Z DEBUG blacksilk_miner] 4 hashes in 2.4s (1.7 H/s)
+[2026-09-29T04:01:03.669Z INFO  blacksilk_miner] new tip at height 2096: work on template 2096 abandoned after 2.4s
+[2026-09-29T04:01:03.670Z DEBUG blacksilk_miner] template 2097 on dedc7ec0144c (difficulty 235)
+[2026-09-29T04:01:03.670Z DEBUG blacksilk_miner] template 2097: 0 txs, payout 19.98716829
+[2026-09-29T04:01:08.926Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:01:08.926Z DEBUG blacksilk_miner] template 2098 on 709bd0c62a64 (difficulty 238)
+[2026-09-29T04:01:08.927Z DEBUG blacksilk_miner] template 2098: 1 txs, payout 19.98749382
+[2026-09-29T04:01:14.485Z DEBUG blacksilk_miner] 10 hashes in 5.6s (1.8 H/s)
+[2026-09-29T04:01:14.485Z INFO  blacksilk_miner] hash rate 1.7 H/s (light mode)
+[2026-09-29T04:01:14.486Z DEBUG blacksilk_miner] template 2098 on 709bd0c62a64 (difficulty 238)
+[2026-09-29T04:01:14.486Z DEBUG blacksilk_miner] template 2098: 1 txs, payout 19.98749382
+[2026-09-29T04:01:19.626Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:01:19.626Z DEBUG blacksilk_miner] template 2098 on 709bd0c62a64 (difficulty 238)
+[2026-09-29T04:01:19.627Z DEBUG blacksilk_miner] template 2098: 1 txs, payout 19.98749382
+[2026-09-29T04:01:24.267Z DEBUG blacksilk_miner] 8 hashes in 4.6s (1.7 H/s)
+[2026-09-29T04:01:24.267Z INFO  blacksilk_miner] new tip at height 2098: work on template 2098 abandoned after 4.6s
+[2026-09-29T04:01:24.268Z DEBUG blacksilk_miner] template 2099 on f5275db97433 (difficulty 235)
+[2026-09-29T04:01:24.268Z DEBUG blacksilk_miner] template 2099: 0 txs, payout 19.98713016
+[2026-09-29T04:01:29.392Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:01:29.392Z DEBUG blacksilk_miner] template 2099 on f5275db97433 (difficulty 235)
+[2026-09-29T04:01:29.392Z DEBUG blacksilk_miner] template 2099: 0 txs, payout 19.98713016
+[2026-09-29T04:01:34.574Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:01:34.575Z DEBUG blacksilk_miner] template 2099 on f5275db97433 (difficulty 235)
+[2026-09-29T04:01:34.575Z DEBUG blacksilk_miner] template 2099: 1 txs, payout 19.98747476
+[2026-09-29T04:01:39.893Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:01:39.894Z DEBUG blacksilk_miner] template 2099 on f5275db97433 (difficulty 235)
+[2026-09-29T04:01:39.894Z DEBUG blacksilk_miner] template 2099: 1 txs, payout 19.98747476
+[2026-09-29T04:01:43.389Z DEBUG blacksilk_miner] 6 hashes in 3.5s (1.7 H/s)
+[2026-09-29T04:01:43.389Z INFO  blacksilk_miner] new tip at height 2099: work on template 2099 abandoned after 3.5s
+[2026-09-29T04:01:43.390Z DEBUG blacksilk_miner] template 2100 on fcc953900d08 (difficulty 229)
+[2026-09-29T04:01:43.390Z DEBUG blacksilk_miner] template 2100: 0 txs, payout 19.98711110
+[2026-09-29T04:01:48.497Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:01:48.498Z DEBUG blacksilk_miner] template 2100 on fcc953900d08 (difficulty 229)
+[2026-09-29T04:01:48.498Z DEBUG blacksilk_miner] template 2100: 0 txs, payout 19.98711110
+[2026-09-29T04:01:50.895Z DEBUG blacksilk_miner] 4 hashes in 2.4s (1.7 H/s)
+[2026-09-29T04:01:50.895Z INFO  blacksilk_miner] new tip at height 2100: work on template 2100 abandoned after 2.4s
+[2026-09-29T04:01:50.895Z DEBUG blacksilk_miner] template 2101 on 02c031d42884 (difficulty 229)
+[2026-09-29T04:01:50.895Z DEBUG blacksilk_miner] template 2101: 0 txs, payout 19.98709204
+[2026-09-29T04:01:51.500Z DEBUG blacksilk_miner] 1 hashes in 604.5ms (1.7 H/s)
+[2026-09-29T04:01:51.500Z INFO  blacksilk_miner] new tip at height 2101: work on template 2101 abandoned after 604.6ms
+[2026-09-29T04:01:51.500Z DEBUG blacksilk_miner] template 2102 on 5341418bfb67 (difficulty 232)
+[2026-09-29T04:01:51.501Z DEBUG blacksilk_miner] template 2102: 0 txs, payout 19.98707298
+[2026-09-29T04:01:56.564Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:01:56.564Z DEBUG blacksilk_miner] template 2102 on 5341418bfb67 (difficulty 232)
+[2026-09-29T04:01:56.564Z DEBUG blacksilk_miner] template 2102: 0 txs, payout 19.98707298
+[2026-09-29T04:01:58.350Z DEBUG blacksilk_miner] 3 hashes in 1.8s (1.7 H/s)
+[2026-09-29T04:01:58.350Z INFO  blacksilk_miner] new tip at height 2102: work on template 2102 abandoned after 1.8s
+[2026-09-29T04:01:58.350Z DEBUG blacksilk_miner] template 2103 on ca398d81ed47 (difficulty 236)
+[2026-09-29T04:01:58.351Z DEBUG blacksilk_miner] template 2103: 0 txs, payout 19.98705392
+[2026-09-29T04:02:03.407Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:02:03.407Z DEBUG blacksilk_miner] template 2103 on ca398d81ed47 (difficulty 236)
+[2026-09-29T04:02:03.408Z DEBUG blacksilk_miner] template 2103: 1 txs, payout 19.98803852
+[2026-09-29T04:02:08.706Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:02:08.707Z DEBUG blacksilk_miner] template 2103 on ca398d81ed47 (difficulty 236)
+[2026-09-29T04:02:08.707Z DEBUG blacksilk_miner] template 2103: 1 txs, payout 19.98803852
+[2026-09-29T04:02:13.833Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:02:13.833Z DEBUG blacksilk_miner] template 2103 on ca398d81ed47 (difficulty 236)
+[2026-09-29T04:02:13.834Z DEBUG blacksilk_miner] template 2103: 2 txs, payout 19.98838312
+[2026-09-29T04:02:16.234Z DEBUG blacksilk_miner] 4 hashes in 2.4s (1.7 H/s)
+[2026-09-29T04:02:16.234Z INFO  blacksilk_miner] hash rate 1.7 H/s (light mode)
+[2026-09-29T04:02:16.234Z INFO  blacksilk_miner] new tip at height 2103: work on template 2103 abandoned after 2.4s
+[2026-09-29T04:02:16.234Z DEBUG blacksilk_miner] template 2104 on dc748c4e4338 (difficulty 232)
+[2026-09-29T04:02:16.235Z DEBUG blacksilk_miner] template 2104: 1 txs, payout 19.98737946
+[2026-09-29T04:02:21.333Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:02:21.333Z DEBUG blacksilk_miner] template 2104 on dc748c4e4338 (difficulty 232)
+[2026-09-29T04:02:21.333Z DEBUG blacksilk_miner] template 2104: 1 txs, payout 19.98737946
+[2026-09-29T04:02:26.474Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:02:26.474Z DEBUG blacksilk_miner] template 2104 on dc748c4e4338 (difficulty 232)
+[2026-09-29T04:02:26.475Z DEBUG blacksilk_miner] template 2104: 1 txs, payout 19.98737946
+[2026-09-29T04:02:31.705Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:02:31.706Z DEBUG blacksilk_miner] template 2104 on dc748c4e4338 (difficulty 232)
+[2026-09-29T04:02:31.706Z DEBUG blacksilk_miner] template 2104: 1 txs, payout 19.98737946
+[2026-09-29T04:02:36.955Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:02:36.955Z DEBUG blacksilk_miner] template 2104 on dc748c4e4338 (difficulty 232)
+[2026-09-29T04:02:36.956Z DEBUG blacksilk_miner] template 2104: 1 txs, payout 19.98737946
+[2026-09-29T04:02:38.170Z DEBUG blacksilk_miner] 2 hashes in 1.2s (1.6 H/s)
+[2026-09-29T04:02:38.170Z INFO  blacksilk_miner] new tip at height 2104: work on template 2104 abandoned after 1.2s
+[2026-09-29T04:02:38.170Z DEBUG blacksilk_miner] template 2105 on a43e730831d1 (difficulty 224)
+[2026-09-29T04:02:38.171Z DEBUG blacksilk_miner] template 2105: 0 txs, payout 19.98701580
+[2026-09-29T04:02:39.979Z DEBUG blacksilk_miner] 3 hashes in 1.8s (1.7 H/s)
+[2026-09-29T04:02:39.980Z INFO  blacksilk_miner] new tip at height 2105: work on template 2105 abandoned after 1.8s
+[2026-09-29T04:02:39.980Z DEBUG blacksilk_miner] template 2106 on 7b32d3c13a95 (difficulty 227)
+[2026-09-29T04:02:39.980Z DEBUG blacksilk_miner] template 2106: 0 txs, payout 19.98699673
+[2026-09-29T04:02:45.017Z DEBUG blacksilk_miner] 9 hashes in 5.0s (1.8 H/s)
+[2026-09-29T04:02:45.017Z DEBUG blacksilk_miner] template 2106 on 7b32d3c13a95 (difficulty 227)
+[2026-09-29T04:02:45.017Z DEBUG blacksilk_miner] template 2106: 0 txs, payout 19.98699673
+[2026-09-29T04:02:50.253Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:02:50.253Z INFO  blacksilk_miner] new tip at height 2106: work on template 2106 abandoned after 5.2s
+[2026-09-29T04:02:50.254Z DEBUG blacksilk_miner] template 2107 on c8eea7a9d722 (difficulty 230)
+[2026-09-29T04:02:50.254Z DEBUG blacksilk_miner] template 2107: 0 txs, payout 19.98697767
+[2026-09-29T04:02:54.382Z DEBUG blacksilk_miner] 7 hashes in 4.1s (1.7 H/s)
+[2026-09-29T04:02:54.382Z INFO  blacksilk_miner] new tip at height 2107: work on template 2107 abandoned after 4.1s
+[2026-09-29T04:02:54.382Z DEBUG blacksilk_miner] template 2108 on cd2b40113a60 (difficulty 234)
+[2026-09-29T04:02:54.382Z DEBUG blacksilk_miner] template 2108: 0 txs, payout 19.98695861
+[2026-09-29T04:02:59.425Z DEBUG blacksilk_miner] 9 hashes in 5.0s (1.8 H/s)
+[2026-09-29T04:02:59.425Z DEBUG blacksilk_miner] template 2108 on cd2b40113a60 (difficulty 234)
+[2026-09-29T04:02:59.425Z DEBUG blacksilk_miner] template 2108: 0 txs, payout 19.98695861
+[2026-09-29T04:03:04.740Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:03:04.740Z DEBUG blacksilk_miner] template 2109 on 78ae8e567095 (difficulty 232)
+[2026-09-29T04:03:04.741Z DEBUG blacksilk_miner] template 2109: 0 txs, payout 19.98693955
+[2026-09-29T04:03:07.580Z DEBUG blacksilk_miner] 5 hashes in 2.8s (1.8 H/s)
+[2026-09-29T04:03:07.580Z INFO  blacksilk_miner] new tip at height 2109: work on template 2109 abandoned after 2.8s
+[2026-09-29T04:03:07.580Z DEBUG blacksilk_miner] template 2110 on 2a23ce59e8d4 (difficulty 235)
+[2026-09-29T04:03:07.581Z DEBUG blacksilk_miner] template 2110: 0 txs, payout 19.98692049
+[2026-09-29T04:03:12.855Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:03:12.855Z DEBUG blacksilk_miner] template 2110 on 2a23ce59e8d4 (difficulty 235)
+[2026-09-29T04:03:12.856Z DEBUG blacksilk_miner] template 2110: 0 txs, payout 19.98692049
+[2026-09-29T04:03:18.016Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:03:18.016Z INFO  blacksilk_miner] hash rate 1.7 H/s (light mode)
+[2026-09-29T04:03:18.017Z DEBUG blacksilk_miner] template 2110 on 2a23ce59e8d4 (difficulty 235)
+[2026-09-29T04:03:18.017Z DEBUG blacksilk_miner] template 2110: 0 txs, payout 19.98692049
+[2026-09-29T04:03:23.072Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:03:23.073Z DEBUG blacksilk_miner] template 2110 on 2a23ce59e8d4 (difficulty 235)
+[2026-09-29T04:03:23.073Z DEBUG blacksilk_miner] template 2110: 0 txs, payout 19.98692049
+[2026-09-29T04:03:28.226Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:03:28.226Z DEBUG blacksilk_miner] template 2110 on 2a23ce59e8d4 (difficulty 235)
+[2026-09-29T04:03:28.227Z DEBUG blacksilk_miner] template 2110: 0 txs, payout 19.98692049
+[2026-09-29T04:03:33.422Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:03:33.422Z DEBUG blacksilk_miner] template 2110 on 2a23ce59e8d4 (difficulty 235)
+[2026-09-29T04:03:33.423Z DEBUG blacksilk_miner] template 2110: 2 txs, payout 19.98776969
+[2026-09-29T04:03:36.914Z DEBUG blacksilk_miner] 6 hashes in 3.5s (1.7 H/s)
+[2026-09-29T04:03:36.914Z INFO  blacksilk_miner] new tip at height 2110: work on template 2110 abandoned after 3.5s
+[2026-09-29T04:03:36.914Z DEBUG blacksilk_miner] template 2111 on 5b27d912e998 (difficulty 227)
+[2026-09-29T04:03:36.915Z DEBUG blacksilk_miner] template 2111: 1 txs, payout 19.98724603
+[2026-09-29T04:03:37.520Z DEBUG blacksilk_miner] 1 hashes in 605.6ms (1.7 H/s)
+[2026-09-29T04:03:37.520Z INFO  blacksilk_miner] new tip at height 2111: work on template 2111 abandoned after 605.6ms
+[2026-09-29T04:03:37.521Z DEBUG blacksilk_miner] template 2112 on 7326d160ac0f (difficulty 230)
+[2026-09-29T04:03:37.521Z DEBUG blacksilk_miner] template 2112: 0 txs, payout 19.98688237
+[2026-09-29T04:03:39.316Z DEBUG blacksilk_miner] 3 hashes in 1.8s (1.7 H/s)
+[2026-09-29T04:03:39.316Z INFO  blacksilk_miner] new tip at height 2112: work on template 2112 abandoned after 1.8s
+[2026-09-29T04:03:39.317Z INFO  blacksilk_miner] RandomX key 3bbf6fb874d645fc: prebuilt context in use
+[2026-09-29T04:03:39.317Z DEBUG blacksilk_miner] template 2113 on 9da046dff578 (difficulty 233)
+[2026-09-29T04:03:39.317Z DEBUG blacksilk_miner] template 2113: 1 txs, payout 19.98720791
+[2026-09-29T04:03:42.373Z DEBUG blacksilk_miner] 5 hashes in 3.1s (1.6 H/s)
+[2026-09-29T04:03:42.373Z INFO  blacksilk_miner] new tip at height 2113: work on template 2113 abandoned after 3.1s
+[2026-09-29T04:03:42.374Z DEBUG blacksilk_miner] template 2114 on 41d90bf040a1 (difficulty 236)
+[2026-09-29T04:03:42.374Z DEBUG blacksilk_miner] template 2114: 1 txs, payout 19.98718885
+[2026-09-29T04:03:47.617Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:03:47.618Z INFO  blacksilk_miner] new tip at height 2114: work on template 2114 abandoned after 5.2s
+[2026-09-29T04:03:47.618Z DEBUG blacksilk_miner] template 2115 on 442e39fa1ff4 (difficulty 239)
+[2026-09-29T04:03:47.619Z DEBUG blacksilk_miner] template 2115: 1 txs, payout 19.98716979
+[2026-09-29T04:03:52.643Z DEBUG blacksilk_miner] 9 hashes in 5.0s (1.8 H/s)
+[2026-09-29T04:03:52.644Z DEBUG blacksilk_miner] template 2116 on 16d602b114fc (difficulty 243)
+[2026-09-29T04:03:52.644Z DEBUG blacksilk_miner] template 2116: 1 txs, payout 19.98715072
+[2026-09-29T04:03:56.109Z DEBUG blacksilk_miner] 6 hashes in 3.5s (1.7 H/s)
+[2026-09-29T04:03:56.109Z INFO  blacksilk_miner] new tip at height 2116: work on template 2116 abandoned after 3.5s
+[2026-09-29T04:03:56.109Z DEBUG blacksilk_miner] template 2117 on 01b887f4ed81 (difficulty 246)
+[2026-09-29T04:03:56.109Z DEBUG blacksilk_miner] template 2117: 0 txs, payout 19.98678706
+[2026-09-29T04:04:01.243Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:04:01.244Z DEBUG blacksilk_miner] template 2117 on 01b887f4ed81 (difficulty 246)
+[2026-09-29T04:04:01.244Z DEBUG blacksilk_miner] template 2117: 0 txs, payout 19.98678706
+[2026-09-29T04:04:06.310Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:04:06.311Z DEBUG blacksilk_miner] template 2117 on 01b887f4ed81 (difficulty 246)
+[2026-09-29T04:04:06.311Z DEBUG blacksilk_miner] template 2117: 0 txs, payout 19.98678706
+[2026-09-29T04:04:11.438Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:04:11.439Z DEBUG blacksilk_miner] template 2117 on 01b887f4ed81 (difficulty 246)
+[2026-09-29T04:04:11.439Z DEBUG blacksilk_miner] template 2117: 0 txs, payout 19.98678706
+[2026-09-29T04:04:16.586Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.7 H/s)
+[2026-09-29T04:04:16.587Z DEBUG blacksilk_miner] template 2117 on 01b887f4ed81 (difficulty 246)
+[2026-09-29T04:04:16.587Z DEBUG blacksilk_miner] template 2117: 0 txs, payout 19.98678706
+[2026-09-29T04:04:21.624Z DEBUG blacksilk_miner] 9 hashes in 5.0s (1.8 H/s)
+[2026-09-29T04:04:21.624Z INFO  blacksilk_miner] hash rate 1.7 H/s (light mode)
+[2026-09-29T04:04:21.624Z DEBUG blacksilk_miner] template 2117 on 01b887f4ed81 (difficulty 246)
+[2026-09-29T04:04:21.624Z DEBUG blacksilk_miner] template 2117: 1 txs, payout 19.98713166
+[2026-09-29T04:04:26.734Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:04:26.735Z DEBUG blacksilk_miner] template 2117 on 01b887f4ed81 (difficulty 246)
+[2026-09-29T04:04:26.735Z DEBUG blacksilk_miner] template 2117: 1 txs, payout 19.98713166
+[2026-09-29T04:04:29.069Z DEBUG blacksilk_miner] 4 hashes in 2.3s (1.7 H/s)
+[2026-09-29T04:04:29.069Z INFO  blacksilk_miner] new tip at height 2117: work on template 2117 abandoned after 2.3s
+[2026-09-29T04:04:29.069Z DEBUG blacksilk_miner] template 2118 on 7ccf08616e53 (difficulty 237)
+[2026-09-29T04:04:29.070Z DEBUG blacksilk_miner] template 2118: 0 txs, payout 19.98676800
+[2026-09-29T04:04:31.313Z DEBUG blacksilk_miner] 4 hashes in 2.2s (1.8 H/s)
+[2026-09-29T04:04:31.313Z INFO  blacksilk_miner] new tip at height 2118: work on template 2118 abandoned after 2.2s
+[2026-09-29T04:04:31.313Z DEBUG blacksilk_miner] template 2119 on 376849076f4c (difficulty 240)
+[2026-09-29T04:04:31.313Z DEBUG blacksilk_miner] template 2119: 0 txs, payout 19.98674894
+[2026-09-29T04:04:36.419Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:04:36.419Z DEBUG blacksilk_miner] template 2119 on 376849076f4c (difficulty 240)
+[2026-09-29T04:04:36.420Z DEBUG blacksilk_miner] template 2119: 0 txs, payout 19.98674894
+[2026-09-29T04:04:38.741Z DEBUG blacksilk_miner] 4 hashes in 2.3s (1.7 H/s)
+[2026-09-29T04:04:38.741Z INFO  blacksilk_miner] new tip at height 2119: work on template 2119 abandoned after 2.3s
+[2026-09-29T04:04:38.741Z DEBUG blacksilk_miner] template 2120 on 510860ea8273 (difficulty 244)
+[2026-09-29T04:04:38.741Z DEBUG blacksilk_miner] template 2120: 0 txs, payout 19.98672988
+[2026-09-29T04:04:40.527Z DEBUG blacksilk_miner] 3 hashes in 1.8s (1.7 H/s)
+[2026-09-29T04:04:40.527Z INFO  blacksilk_miner] new tip at height 2120: work on template 2120 abandoned after 1.8s
+[2026-09-29T04:04:40.527Z DEBUG blacksilk_miner] template 2121 on f50fa25e1db9 (difficulty 247)
+[2026-09-29T04:04:40.527Z DEBUG blacksilk_miner] template 2121: 0 txs, payout 19.98671082
+[2026-09-29T04:04:45.846Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:04:45.846Z INFO  blacksilk_miner] new tip at height 2121: work on template 2121 abandoned after 5.3s
+[2026-09-29T04:04:45.846Z DEBUG blacksilk_miner] template 2122 on 19b3b9e776c0 (difficulty 251)
+[2026-09-29T04:04:45.846Z DEBUG blacksilk_miner] template 2122: 0 txs, payout 19.98669176
+[2026-09-29T04:04:50.969Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:04:50.970Z DEBUG blacksilk_miner] template 2122 on 19b3b9e776c0 (difficulty 251)
+[2026-09-29T04:04:50.970Z DEBUG blacksilk_miner] template 2122: 1 txs, payout 19.98703636
+[2026-09-29T04:04:56.194Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:04:56.195Z DEBUG blacksilk_miner] template 2122 on 19b3b9e776c0 (difficulty 251)
+[2026-09-29T04:04:56.196Z DEBUG blacksilk_miner] template 2122: 2 txs, payout 19.98738096
+[2026-09-29T04:05:01.257Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:05:01.258Z DEBUG blacksilk_miner] template 2122 on 19b3b9e776c0 (difficulty 251)
+[2026-09-29T04:05:01.258Z DEBUG blacksilk_miner] template 2122: 2 txs, payout 19.98738096
+[2026-09-29T04:05:06.466Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:05:06.467Z DEBUG blacksilk_miner] template 2122 on 19b3b9e776c0 (difficulty 251)
+[2026-09-29T04:05:06.467Z DEBUG blacksilk_miner] template 2122: 2 txs, payout 19.98738096
+[2026-09-29T04:05:11.662Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:05:11.663Z DEBUG blacksilk_miner] template 2122 on 19b3b9e776c0 (difficulty 251)
+[2026-09-29T04:05:11.663Z DEBUG blacksilk_miner] template 2122: 3 txs, payout 19.98772556
+[2026-09-29T04:05:12.879Z DEBUG blacksilk_miner] 2 hashes in 1.2s (1.6 H/s)
+[2026-09-29T04:05:12.879Z INFO  blacksilk_miner] new tip at height 2122: work on template 2122 abandoned after 1.2s
+[2026-09-29T04:05:12.879Z DEBUG blacksilk_miner] template 2123 on d0095f9c526b (difficulty 241)
+[2026-09-29T04:05:12.880Z DEBUG blacksilk_miner] template 2123: 0 txs, payout 19.98667270
+[2026-09-29T04:05:18.075Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:05:18.076Z DEBUG blacksilk_miner] template 2123 on d0095f9c526b (difficulty 241)
+[2026-09-29T04:05:18.076Z DEBUG blacksilk_miner] template 2123: 0 txs, payout 19.98667270
+[2026-09-29T04:05:23.077Z DEBUG blacksilk_miner] 9 hashes in 5.0s (1.8 H/s)
+[2026-09-29T04:05:23.077Z INFO  blacksilk_miner] hash rate 1.7 H/s (light mode)
+[2026-09-29T04:05:23.077Z INFO  blacksilk_miner] new tip at height 2123: work on template 2123 abandoned after 5.0s
+[2026-09-29T04:05:23.078Z DEBUG blacksilk_miner] template 2124 on 83cc8c1d2806 (difficulty 243)
+[2026-09-29T04:05:23.078Z DEBUG blacksilk_miner] template 2124: 0 txs, payout 19.98665364
+[2026-09-29T04:05:28.172Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:05:28.172Z DEBUG blacksilk_miner] template 2124 on 83cc8c1d2806 (difficulty 243)
+[2026-09-29T04:05:28.173Z DEBUG blacksilk_miner] template 2124: 0 txs, payout 19.98665364
+[2026-09-29T04:05:31.082Z DEBUG blacksilk_miner] 5 hashes in 2.9s (1.7 H/s)
+[2026-09-29T04:05:31.082Z INFO  blacksilk_miner] new tip at height 2124: work on template 2124 abandoned after 2.9s
+[2026-09-29T04:05:31.083Z DEBUG blacksilk_miner] template 2125 on f465d0313520 (difficulty 242)
+[2026-09-29T04:05:31.083Z DEBUG blacksilk_miner] template 2125: 0 txs, payout 19.98663458
+[2026-09-29T04:05:36.200Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:05:36.201Z DEBUG blacksilk_miner] template 2125 on f465d0313520 (difficulty 242)
+[2026-09-29T04:05:36.201Z DEBUG blacksilk_miner] template 2125: 0 txs, payout 19.98663458
+[2026-09-29T04:05:37.942Z DEBUG blacksilk_miner] 3 hashes in 1.7s (1.7 H/s)
+[2026-09-29T04:05:37.942Z INFO  blacksilk_miner] new tip at height 2125: work on template 2125 abandoned after 1.7s
+[2026-09-29T04:05:37.943Z DEBUG blacksilk_miner] template 2126 on a1e06d496f6f (difficulty 244)
+[2026-09-29T04:05:37.943Z DEBUG blacksilk_miner] template 2126: 0 txs, payout 19.98661552
+[2026-09-29T04:05:43.119Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:05:43.119Z DEBUG blacksilk_miner] template 2126 on a1e06d496f6f (difficulty 244)
+[2026-09-29T04:05:43.119Z DEBUG blacksilk_miner] template 2126: 0 txs, payout 19.98661552
+[2026-09-29T04:05:44.420Z DEBUG blacksilk_miner] 2 hashes in 1.3s (1.5 H/s)
+[2026-09-29T04:05:44.420Z INFO  blacksilk_miner] new tip at height 2126: work on template 2126 abandoned after 1.3s
+[2026-09-29T04:05:44.420Z DEBUG blacksilk_miner] template 2127 on 2de91f5230fd (difficulty 247)
+[2026-09-29T04:05:44.421Z DEBUG blacksilk_miner] template 2127: 0 txs, payout 19.98659646
+[2026-09-29T04:05:49.715Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:05:49.715Z DEBUG blacksilk_miner] template 2127 on 2de91f5230fd (difficulty 247)
+[2026-09-29T04:05:49.716Z DEBUG blacksilk_miner] template 2127: 1 txs, payout 19.98710106
+[2026-09-29T04:05:51.676Z DEBUG blacksilk_miner] 3 hashes in 2.0s (1.5 H/s)
+[2026-09-29T04:05:51.676Z INFO  blacksilk_miner] new tip at height 2127: work on template 2127 abandoned after 2.0s
+[2026-09-29T04:05:51.676Z DEBUG blacksilk_miner] template 2128 on 52e5246869e8 (difficulty 249)
+[2026-09-29T04:05:51.677Z DEBUG blacksilk_miner] template 2128: 1 txs, payout 19.98708200
+[2026-09-29T04:05:55.485Z DEBUG blacksilk_miner] 6 hashes in 3.8s (1.6 H/s)
+[2026-09-29T04:05:55.485Z INFO  blacksilk_miner] new tip at height 2128: work on template 2128 abandoned after 3.8s
+[2026-09-29T04:05:55.486Z DEBUG blacksilk_miner] template 2129 on fc03ded9887f (difficulty 253)
+[2026-09-29T04:05:55.486Z DEBUG blacksilk_miner] template 2129: 0 txs, payout 19.98655833
+[2026-09-29T04:06:01.195Z DEBUG blacksilk_miner] 9 hashes in 5.7s (1.6 H/s)
+[2026-09-29T04:06:01.200Z DEBUG blacksilk_miner] template 2129 on fc03ded9887f (difficulty 253)
+[2026-09-29T04:06:01.200Z DEBUG blacksilk_miner] template 2129: 0 txs, payout 19.98655833
+[2026-09-29T04:06:01.929Z DEBUG blacksilk_miner] 1 hashes in 729.4ms (1.4 H/s)
+[2026-09-29T04:06:01.929Z INFO  blacksilk_miner] new tip at height 2129: work on template 2129 abandoned after 729.4ms
+[2026-09-29T04:06:01.930Z DEBUG blacksilk_miner] template 2130 on 6b87d0e3b223 (difficulty 256)
+[2026-09-29T04:06:01.930Z DEBUG blacksilk_miner] template 2130: 0 txs, payout 19.98653927
+[2026-09-29T04:06:04.394Z DEBUG blacksilk_miner] 4 hashes in 2.5s (1.6 H/s)
+[2026-09-29T04:06:04.394Z INFO  blacksilk_miner] new tip at height 2130: work on template 2130 abandoned after 2.5s
+[2026-09-29T04:06:04.395Z DEBUG blacksilk_miner] template 2131 on 68df272d7f8d (difficulty 260)
+[2026-09-29T04:06:04.395Z DEBUG blacksilk_miner] template 2131: 0 txs, payout 19.98652021
+[2026-09-29T04:06:09.626Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:06:09.627Z DEBUG blacksilk_miner] template 2131 on 68df272d7f8d (difficulty 260)
+[2026-09-29T04:06:09.627Z DEBUG blacksilk_miner] template 2131: 0 txs, payout 19.98652021
+[2026-09-29T04:06:14.921Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:06:14.922Z DEBUG blacksilk_miner] template 2131 on 68df272d7f8d (difficulty 260)
+[2026-09-29T04:06:14.922Z DEBUG blacksilk_miner] template 2131: 1 txs, payout 19.98686481
+[2026-09-29T04:06:20.435Z DEBUG blacksilk_miner] 9 hashes in 5.5s (1.6 H/s)
+[2026-09-29T04:06:20.435Z DEBUG blacksilk_miner] template 2131 on 68df272d7f8d (difficulty 260)
+[2026-09-29T04:06:20.436Z DEBUG blacksilk_miner] template 2131: 2 txs, payout 19.98720941
+[2026-09-29T04:06:25.750Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:06:25.750Z INFO  blacksilk_miner] hash rate 1.7 H/s (light mode)
+[2026-09-29T04:06:25.750Z DEBUG blacksilk_miner] template 2131 on 68df272d7f8d (difficulty 260)
+[2026-09-29T04:06:25.751Z DEBUG blacksilk_miner] template 2131: 2 txs, payout 19.98720941
+[2026-09-29T04:06:30.937Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:06:30.938Z DEBUG blacksilk_miner] template 2131 on 68df272d7f8d (difficulty 260)
+[2026-09-29T04:06:30.938Z DEBUG blacksilk_miner] template 2131: 2 txs, payout 19.98720941
+[2026-09-29T04:06:36.264Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:06:36.265Z DEBUG blacksilk_miner] template 2131 on 68df272d7f8d (difficulty 260)
+[2026-09-29T04:06:36.266Z DEBUG blacksilk_miner] template 2131: 3 txs, payout 19.98755401
+[2026-09-29T04:06:41.456Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:06:41.456Z DEBUG blacksilk_miner] template 2131 on 68df272d7f8d (difficulty 260)
+[2026-09-29T04:06:41.457Z DEBUG blacksilk_miner] template 2131: 3 txs, payout 19.98755401
+[2026-09-29T04:06:46.720Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:06:46.721Z DEBUG blacksilk_miner] template 2131 on 68df272d7f8d (difficulty 260)
+[2026-09-29T04:06:46.721Z DEBUG blacksilk_miner] template 2131: 3 txs, payout 19.98755401
+[2026-09-29T04:06:50.677Z DEBUG blacksilk_miner] 7 hashes in 4.0s (1.8 H/s)
+[2026-09-29T04:06:50.677Z INFO  blacksilk_miner] new tip at height 2131: work on template 2131 abandoned after 4.0s
+[2026-09-29T04:06:50.678Z DEBUG blacksilk_miner] template 2132 on 6f865ae335fb (difficulty 236)
+[2026-09-29T04:06:50.678Z DEBUG blacksilk_miner] template 2132: 0 txs, payout 19.98650115
+[2026-09-29T04:06:55.854Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:06:55.855Z DEBUG blacksilk_miner] template 2132 on 6f865ae335fb (difficulty 236)
+[2026-09-29T04:06:55.855Z DEBUG blacksilk_miner] template 2132: 1 txs, payout 19.98684575
+[2026-09-29T04:07:01.122Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:07:01.123Z DEBUG blacksilk_miner] template 2132 on 6f865ae335fb (difficulty 236)
+[2026-09-29T04:07:01.123Z DEBUG blacksilk_miner] template 2132: 1 txs, payout 19.98684575
+[2026-09-29T04:07:06.376Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:07:06.377Z DEBUG blacksilk_miner] template 2132 on 6f865ae335fb (difficulty 236)
+[2026-09-29T04:07:06.377Z DEBUG blacksilk_miner] template 2132: 1 txs, payout 19.98684575
+[2026-09-29T04:07:07.582Z DEBUG blacksilk_miner] 2 hashes in 1.2s (1.7 H/s)
+[2026-09-29T04:07:07.582Z INFO  blacksilk_miner] new tip at height 2132: work on template 2132 abandoned after 1.2s
+[2026-09-29T04:07:07.582Z DEBUG blacksilk_miner] template 2133 on 473cb69fbd2b (difficulty 231)
+[2026-09-29T04:07:07.582Z DEBUG blacksilk_miner] template 2133: 0 txs, payout 19.98648209
+[2026-09-29T04:07:09.236Z DEBUG blacksilk_miner] 2 hashes in 1.7s (1.2 H/s)
+[2026-09-29T04:07:09.236Z INFO  blacksilk_miner] new tip at height 2133: work on template 2133 abandoned after 1.7s
+[2026-09-29T04:07:09.236Z DEBUG blacksilk_miner] template 2134 on e97abb1b2839 (difficulty 234)
+[2026-09-29T04:07:09.237Z DEBUG blacksilk_miner] template 2134: 0 txs, payout 19.98646303
+[2026-09-29T04:07:14.570Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:07:14.570Z INFO  blacksilk_miner] new tip at height 2134: work on template 2134 abandoned after 5.3s
+[2026-09-29T04:07:14.570Z DEBUG blacksilk_miner] template 2135 on 3794e7d83548 (difficulty 238)
+[2026-09-29T04:07:14.570Z DEBUG blacksilk_miner] template 2135: 0 txs, payout 19.98644397
+[2026-09-29T04:07:19.816Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:07:19.816Z DEBUG blacksilk_miner] template 2135 on 3794e7d83548 (difficulty 238)
+[2026-09-29T04:07:19.816Z DEBUG blacksilk_miner] template 2135: 0 txs, payout 19.98644397
+[2026-09-29T04:07:24.947Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:07:24.948Z DEBUG blacksilk_miner] template 2135 on 3794e7d83548 (difficulty 238)
+[2026-09-29T04:07:24.948Z DEBUG blacksilk_miner] template 2135: 0 txs, payout 19.98644397
+[2026-09-29T04:07:30.088Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:07:30.088Z INFO  blacksilk_miner] hash rate 1.7 H/s (light mode)
+[2026-09-29T04:07:30.088Z DEBUG blacksilk_miner] template 2135 on 3794e7d83548 (difficulty 238)
+[2026-09-29T04:07:30.088Z DEBUG blacksilk_miner] template 2135: 0 txs, payout 19.98644397
+[2026-09-29T04:07:35.266Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:07:35.267Z DEBUG blacksilk_miner] template 2135 on 3794e7d83548 (difficulty 238)
+[2026-09-29T04:07:35.267Z DEBUG blacksilk_miner] template 2135: 0 txs, payout 19.98644397
+[2026-09-29T04:07:35.876Z DEBUG blacksilk_miner] 1 hashes in 608.6ms (1.6 H/s)
+[2026-09-29T04:07:35.876Z INFO  blacksilk_miner] new tip at height 2135: work on template 2135 abandoned after 608.7ms
+[2026-09-29T04:07:35.876Z DEBUG blacksilk_miner] template 2136 on 573658ba5199 (difficulty 233)
+[2026-09-29T04:07:35.876Z DEBUG blacksilk_miner] template 2136: 0 txs, payout 19.98642491
+[2026-09-29T04:07:41.181Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:07:41.181Z DEBUG blacksilk_miner] template 2136 on 573658ba5199 (difficulty 233)
+[2026-09-29T04:07:41.182Z DEBUG blacksilk_miner] template 2136: 2 txs, payout 19.98711411
+[2026-09-29T04:07:46.233Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:07:46.233Z DEBUG blacksilk_miner] template 2136 on 573658ba5199 (difficulty 233)
+[2026-09-29T04:07:46.234Z DEBUG blacksilk_miner] template 2136: 3 txs, payout 19.98745871
+[2026-09-29T04:07:51.598Z DEBUG blacksilk_miner] 9 hashes in 5.4s (1.7 H/s)
+[2026-09-29T04:07:51.599Z DEBUG blacksilk_miner] template 2136 on 573658ba5199 (difficulty 233)
+[2026-09-29T04:07:51.600Z DEBUG blacksilk_miner] template 2136: 3 txs, payout 19.98745871
+[2026-09-29T04:07:53.308Z DEBUG blacksilk_miner] 3 hashes in 1.7s (1.8 H/s)
+[2026-09-29T04:07:53.907Z INFO  blacksilk_miner] found block 2136 (reward 19.98745871 BLK, 3 txs)
+[2026-09-29T04:07:53.908Z DEBUG blacksilk_miner] template 2137 on c94dfad4713c (difficulty 228)
+[2026-09-29T04:07:53.908Z DEBUG blacksilk_miner] template 2137: 0 txs, payout 19.98640585
+[2026-09-29T04:07:59.249Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:07:59.249Z DEBUG blacksilk_miner] template 2137 on c94dfad4713c (difficulty 228)
+[2026-09-29T04:07:59.250Z DEBUG blacksilk_miner] template 2137: 1 txs, payout 19.98675045
+[2026-09-29T04:08:01.699Z DEBUG blacksilk_miner] 4 hashes in 2.4s (1.6 H/s)
+[2026-09-29T04:08:01.699Z INFO  blacksilk_miner] new tip at height 2137: work on template 2137 abandoned after 2.4s
+[2026-09-29T04:08:01.700Z DEBUG blacksilk_miner] template 2138 on 6b9a774bcbb9 (difficulty 231)
+[2026-09-29T04:08:01.700Z DEBUG blacksilk_miner] template 2138: 1 txs, payout 19.98673139
+[2026-09-29T04:08:06.883Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:08:06.884Z DEBUG blacksilk_miner] template 2138 on 6b9a774bcbb9 (difficulty 231)
+[2026-09-29T04:08:06.885Z DEBUG blacksilk_miner] template 2138: 1 txs, payout 19.98673139
+[2026-09-29T04:08:10.391Z DEBUG blacksilk_miner] 6 hashes in 3.5s (1.7 H/s)
+[2026-09-29T04:08:10.391Z INFO  blacksilk_miner] new tip at height 2138: work on template 2138 abandoned after 3.5s
+[2026-09-29T04:08:10.391Z DEBUG blacksilk_miner] template 2139 on 74b95c90a9b8 (difficulty 232)
+[2026-09-29T04:08:10.392Z DEBUG blacksilk_miner] template 2139: 0 txs, payout 19.98636773
+[2026-09-29T04:08:11.645Z DEBUG blacksilk_miner] 2 hashes in 1.3s (1.6 H/s)
+[2026-09-29T04:08:11.645Z INFO  blacksilk_miner] new tip at height 2139: work on template 2139 abandoned after 1.3s
+[2026-09-29T04:08:11.645Z DEBUG blacksilk_miner] template 2140 on 205c67f10b12 (difficulty 235)
+[2026-09-29T04:08:11.645Z DEBUG blacksilk_miner] template 2140: 0 txs, payout 19.98634867
+[2026-09-29T04:08:12.887Z DEBUG blacksilk_miner] 2 hashes in 1.2s (1.6 H/s)
+[2026-09-29T04:08:12.887Z INFO  blacksilk_miner] new tip at height 2140: work on template 2140 abandoned after 1.2s
+[2026-09-29T04:08:12.887Z DEBUG blacksilk_miner] template 2141 on 0eb5af7e6f5f (difficulty 238)
+[2026-09-29T04:08:12.888Z DEBUG blacksilk_miner] template 2141: 0 txs, payout 19.98632961
+[2026-09-29T04:08:17.577Z DEBUG blacksilk_miner] 8 hashes in 4.7s (1.7 H/s)
+[2026-09-29T04:08:17.577Z INFO  blacksilk_miner] new tip at height 2141: work on template 2141 abandoned after 4.7s
+[2026-09-29T04:08:17.578Z DEBUG blacksilk_miner] template 2142 on e95fe6bf6550 (difficulty 241)
+[2026-09-29T04:08:17.578Z DEBUG blacksilk_miner] template 2142: 0 txs, payout 19.98631055
+[2026-09-29T04:08:22.867Z DEBUG blacksilk_miner] 9 hashes in 5.3s (1.7 H/s)
+[2026-09-29T04:08:22.869Z DEBUG blacksilk_miner] template 2142 on e95fe6bf6550 (difficulty 241)
+[2026-09-29T04:08:22.869Z DEBUG blacksilk_miner] template 2142: 1 txs, payout 19.98665515
+[2026-09-29T04:08:23.459Z DEBUG blacksilk_miner] 1 hashes in 589.3ms (1.7 H/s)
+[2026-09-29T04:08:23.459Z INFO  blacksilk_miner] new tip at height 2142: work on template 2142 abandoned after 589.3ms
+[2026-09-29T04:08:23.459Z DEBUG blacksilk_miner] template 2143 on b7b29254838b (difficulty 245)
+[2026-09-29T04:08:23.459Z DEBUG blacksilk_miner] template 2143: 0 txs, payout 19.98629149
+[2026-09-29T04:08:26.837Z DEBUG blacksilk_miner] 5 hashes in 3.4s (1.5 H/s)
+[2026-09-29T04:08:26.837Z INFO  blacksilk_miner] new tip at height 2143: work on template 2143 abandoned after 3.4s
+[2026-09-29T04:08:26.838Z DEBUG blacksilk_miner] template 2144 on fffaacbfef66 (difficulty 248)
+[2026-09-29T04:08:26.838Z DEBUG blacksilk_miner] template 2144: 0 txs, payout 19.98627243
+[2026-09-29T04:08:31.457Z DEBUG blacksilk_miner] 8 hashes in 4.6s (1.7 H/s)
+[2026-09-29T04:08:31.458Z INFO  blacksilk_miner] hash rate 1.7 H/s (light mode)
+[2026-09-29T04:08:31.458Z INFO  blacksilk_miner] new tip at height 2144: work on template 2144 abandoned after 4.6s
+[2026-09-29T04:08:31.458Z DEBUG blacksilk_miner] template 2145 on 60e6088cdd97 (difficulty 251)
+[2026-09-29T04:08:31.458Z DEBUG blacksilk_miner] template 2145: 0 txs, payout 19.98625337
+[2026-09-29T04:08:36.868Z DEBUG blacksilk_miner] 9 hashes in 5.4s (1.7 H/s)
+[2026-09-29T04:08:36.869Z DEBUG blacksilk_miner] template 2145 on 60e6088cdd97 (difficulty 251)
+[2026-09-29T04:08:36.869Z DEBUG blacksilk_miner] template 2145: 0 txs, payout 19.98625337
+[2026-09-29T04:08:42.077Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:08:42.077Z DEBUG blacksilk_miner] template 2145 on 60e6088cdd97 (difficulty 251)
+[2026-09-29T04:08:42.078Z DEBUG blacksilk_miner] template 2145: 1 txs, payout 19.98659797
+[2026-09-29T04:08:47.184Z DEBUG blacksilk_miner] 9 hashes in 5.1s (1.8 H/s)
+[2026-09-29T04:08:47.185Z DEBUG blacksilk_miner] template 2145 on 60e6088cdd97 (difficulty 251)
+[2026-09-29T04:08:47.185Z DEBUG blacksilk_miner] template 2145: 1 txs, payout 19.98659797
+[2026-09-29T04:08:48.494Z DEBUG blacksilk_miner] 2 hashes in 1.3s (1.5 H/s)
+[2026-09-29T04:08:48.494Z INFO  blacksilk_miner] new tip at height 2145: work on template 2145 abandoned after 1.3s
+[2026-09-29T04:08:48.494Z DEBUG blacksilk_miner] template 2146 on 3d26ae6bb770 (difficulty 251)
+[2026-09-29T04:08:48.495Z DEBUG blacksilk_miner] template 2146: 0 txs, payout 19.98623431
+[2026-09-29T04:08:53.733Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:08:53.734Z DEBUG blacksilk_miner] template 2146 on 3d26ae6bb770 (difficulty 251)
+[2026-09-29T04:08:53.734Z DEBUG blacksilk_miner] template 2146: 0 txs, payout 19.98623431
+[2026-09-29T04:08:57.782Z DEBUG blacksilk_miner] 6 hashes in 4.0s (1.5 H/s)
+[2026-09-29T04:08:57.782Z INFO  blacksilk_miner] new tip at height 2146: work on template 2146 abandoned after 4.0s
+[2026-09-29T04:08:57.782Z DEBUG blacksilk_miner] template 2147 on 14fcf41cb293 (difficulty 253)
+[2026-09-29T04:08:57.782Z DEBUG blacksilk_miner] template 2147: 0 txs, payout 19.98621525
+[2026-09-29T04:09:01.995Z DEBUG blacksilk_miner] 7 hashes in 4.2s (1.7 H/s)
+[2026-09-29T04:09:01.995Z INFO  blacksilk_miner] new tip at height 2147: work on template 2147 abandoned after 4.2s
+[2026-09-29T04:09:01.996Z DEBUG blacksilk_miner] template 2148 on c6489605c73e (difficulty 257)
+[2026-09-29T04:09:01.996Z DEBUG blacksilk_miner] template 2148: 1 txs, payout 19.98654078
+[2026-09-29T04:09:07.503Z DEBUG blacksilk_miner] 9 hashes in 5.5s (1.6 H/s)
+[2026-09-29T04:09:07.504Z DEBUG blacksilk_miner] template 2149 on 4992fbdab2c0 (difficulty 261)
+[2026-09-29T04:09:07.504Z DEBUG blacksilk_miner] template 2149: 0 txs, payout 19.98617712
+[2026-09-29T04:09:12.884Z DEBUG blacksilk_miner] 9 hashes in 5.4s (1.7 H/s)
+[2026-09-29T04:09:12.884Z DEBUG blacksilk_miner] template 2149 on 4992fbdab2c0 (difficulty 261)
+[2026-09-29T04:09:12.884Z DEBUG blacksilk_miner] template 2149: 0 txs, payout 19.98617712
+[2026-09-29T04:09:18.094Z DEBUG blacksilk_miner] 8 hashes in 5.2s (1.5 H/s)
+[2026-09-29T04:09:18.094Z DEBUG blacksilk_miner] template 2149 on 4992fbdab2c0 (difficulty 261)
+[2026-09-29T04:09:18.095Z DEBUG blacksilk_miner] template 2149: 1 txs, payout 19.98652172
+[2026-09-29T04:09:19.444Z DEBUG blacksilk_miner] 2 hashes in 1.3s (1.5 H/s)
+[2026-09-29T04:09:19.444Z INFO  blacksilk_miner] new tip at height 2149: work on template 2149 abandoned after 1.3s
+[2026-09-29T04:09:19.445Z DEBUG blacksilk_miner] template 2150 on 4d6ad195fbd7 (difficulty 257)
+[2026-09-29T04:09:19.445Z DEBUG blacksilk_miner] template 2150: 1 txs, payout 19.98650266
+[2026-09-29T04:09:24.824Z DEBUG blacksilk_miner] 9 hashes in 5.4s (1.7 H/s)
+[2026-09-29T04:09:24.824Z DEBUG blacksilk_miner] template 2150 on 4d6ad195fbd7 (difficulty 257)
+[2026-09-29T04:09:24.825Z DEBUG blacksilk_miner] template 2150: 1 txs, payout 19.98650266
+[2026-09-29T04:09:30.065Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:09:30.065Z DEBUG blacksilk_miner] template 2150 on 4d6ad195fbd7 (difficulty 257)
+[2026-09-29T04:09:30.066Z DEBUG blacksilk_miner] template 2150: 1 txs, payout 19.98650266
+[2026-09-29T04:09:34.213Z DEBUG blacksilk_miner] 7 hashes in 4.1s (1.7 H/s)
+[2026-09-29T04:09:34.213Z INFO  blacksilk_miner] hash rate 1.7 H/s (light mode)
+[2026-09-29T04:09:34.213Z INFO  blacksilk_miner] new tip at height 2150: work on template 2150 abandoned after 4.1s
+[2026-09-29T04:09:34.213Z DEBUG blacksilk_miner] template 2151 on 41cbef1386db (difficulty 256)
+[2026-09-29T04:09:34.213Z DEBUG blacksilk_miner] template 2151: 0 txs, payout 19.98613900
+[2026-09-29T04:09:39.418Z DEBUG blacksilk_miner] 9 hashes in 5.2s (1.7 H/s)
+[2026-09-29T04:09:39.418Z DEBUG blacksilk_miner] template 2151 on 41cbef1386db (difficulty 256)
+[2026-09-29T04:09:39.419Z DEBUG blacksilk_miner] template 2151: 0 txs, payout 19.98613900
+[2026-09-29T04:09:44.938Z DEBUG blacksilk_miner] 9 hashes in 5.5s (1.6 H/s)
+[2026-09-29T04:09:44.939Z DEBUG blacksilk_miner] template 2151 on 41cbef1386db (difficulty 256)
+[2026-09-29T04:09:44.939Z DEBUG blacksilk_miner] template 2151: 0 txs, payout 19.98613900
+[2026-09-29T04:09:46.138Z DEBUG blacksilk_miner] 2 hashes in 1.2s (1.7 H/s)
+[2026-09-29T04:09:46.138Z INFO  blacksilk_miner] new tip at height 2151: work on template 2151 abandoned after 1.2s
+[2026-09-29T04:09:46.138Z DEBUG blacksilk_miner] template 2152 on 81f99d2aade9 (difficulty 252)
+[2026-09-29T04:09:46.139Z DEBUG blacksilk_miner] template 2152: 0 txs, payout 19.98611994
+[2026-09-29T04:09:51.165Z DEBUG blacksilk_miner] 9 hashes in 5.0s (1.8 H/s)
+[2026-09-29T04:09:51.170Z DEBUG blacksilk_miner] template 2152 on 81f99d2aade9 (difficulty 252)
+[2026-09-29T04:09:51.171Z DEBUG blacksilk_miner] template 2152: 0 txs, payout 19.98611994
+[2026-09-29T04:09:51.806Z DEBUG blacksilk_miner] 1 hashes in 635.7ms (1.6 H/s)
+[2026-09-29T04:09:51.806Z INFO  blacksilk_miner] new tip at height 2152: work on template 2152 abandoned after 635.8ms
+[2026-09-29T04:09:51.807Z DEBUG blacksilk_miner] template 2153 on f3562d29d0c1 (difficulty 255)
+[2026-09-29T04:09:51.807Z DEBUG blacksilk_miner] template 2153: 0 txs, payout 19.98610088
+[2026-09-29T04:09:57.187Z DEBUG blacksilk_miner] 9 hashes in 5.4s (1.7 H/s)
+[2026-09-29T04:09:57.187Z DEBUG blacksilk_miner] template 2153 on f3562d29d0c1 (difficulty 255)
+[2026-09-29T04:09:57.188Z DEBUG blacksilk_miner] template 2153: 0 txs, payout 19.98610088

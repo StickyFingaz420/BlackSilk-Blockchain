@@ -1,0 +1,30 @@
+{
+ "2040-2112": {
+  "blocks": 73,
+  "miner0_full": 73,
+  "miner1_light": [],
+  "unattributed": []
+ },
+ "2113-2140": {
+  "blocks": 28,
+  "miner0_full": 27,
+  "miner1_light": [
+   2136
+  ],
+  "unattributed": []
+ },
+ "2300-2313": {
+  "blocks": 14,
+  "miner0_full": 14,
+  "miner1_light": [],
+  "unattributed": []
+ },
+ "2820-2835": {
+  "blocks": 16,
+  "miner0_full": 15,
+  "miner1_light": [
+   2832
+  ],
+  "unattributed": []
+ }
+}

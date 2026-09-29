@@ -1,0 +1,62 @@
+{
+  "started_unix": 1790666941,
+  "network": "regtest",
+  "nodes": [
+    "127.0.0.1:48500"
+  ],
+  "node_heights": [
+    2835
+  ],
+  "common_height": 2113,
+  "nodes_agree": true,
+  "disagreements": [],
+  "light_checked": 2113,
+  "light_failures": [],
+  "consensus_accepted": 2113,
+  "consensus_error": null,
+  "consensus_key_mismatches": [],
+  "consensus_tip_matches": true,
+  "full_compared": 0,
+  "full_mismatches": [],
+  "keys": [
+    {
+      "key_height": 0,
+      "key": "087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7",
+      "first_height": 1,
+      "last_height": 2112,
+      "headers": 2112,
+      "cache_build_secs": 0.8755187,
+      "light_hash_secs": 324.4841938,
+      "dataset_build_secs": null,
+      "full_compared": 0
+    },
+    {
+      "key_height": 2048,
+      "key": "3bbf6fb874d645fc228566f7b266431a52afbef23afa1c89230c281389b63d0b",
+      "first_height": 2113,
+      "last_height": 2113,
+      "headers": 1,
+      "cache_build_secs": 0.7131956,
+      "light_hash_secs": 0.5123371,
+      "dataset_build_secs": null,
+      "full_compared": 0
+    }
+  ],
+  "threads": 4,
+  "negative_control": null,
+  "all_passed": true,
+  "records": [
+    {
+      "height": 2113,
+      "id": "41d90bf040a1feb06eab93d2b7ac92eafe6dc157ea71965095ee0ebfd4deb00b",
+      "timestamp": 1790654618,
+      "difficulty": 233,
+      "key_height": 2048,
+      "key": "3bbf6fb874d645fc228566f7b266431a52afbef23afa1c89230c281389b63d0b",
+      "light_hash": "685e19a3ca4179b9db2cf13ad7c7fb62274f2989b97cba4b604f831583717a00",
+      "meets_target": true,
+      "full_hash": null,
+      "full_matches_light": null
+    }
+  ]
+}

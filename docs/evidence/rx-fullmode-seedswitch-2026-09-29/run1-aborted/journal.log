@@ -1,0 +1,4 @@
+[1790634979] 4 nodes up
+[1790634979] warm-up: miner0 alone until the mean interval of 30 blocks is at least 0.75 x 10 s (at most 60 min)
+[1790635293] warm-up done after 314 s at height 30 (difficulty 1, mean interval 10.4 s)
+[1790635293] miners running on nodes 0 and n/2 (one per partition group)

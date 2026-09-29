@@ -1,0 +1,87 @@
+[2026-09-28T22:49:01.044Z INFO  blacksilk_node] blacksilk-node 0.1.0 commit 17ba8b1
+[2026-09-28T22:49:01.044Z INFO  blacksilk_node] regtest: genesis 087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7, consensus fingerprint 65334546765a538f41d5e8ec6aff7d6aebd17b26e3f612c2c844b44a1af7abaa
+[2026-09-28T22:49:01.044Z INFO  blacksilk_node] regtest: loading C:/bszkeval/w4-rx/run2\node1
+[2026-09-28T22:49:01.054Z INFO  blacksilk_node] chain loaded in 10.1ms: height 0, tip 087d6fd4efbc45eb
+[2026-09-28T22:49:01.075Z INFO  blacksilk_node] P2P listening on 127.0.0.1:48221
+[2026-09-28T22:49:01.076Z INFO  blacksilk_node] RPC listening on http://127.0.0.1:48220
+[2026-09-28T22:49:01.113Z WARN  blacksilk_node::cookie] the data directory C:/bszkeval/w4-rx/run2\node1 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it
+[2026-09-28T22:49:01.114Z INFO  blacksilk_node::serve] RPC credential written to C:/bszkeval/w4-rx/run2\node1\rpc.cookie (clients read it: --rpc-cookie)
+[2026-09-28T22:49:01.449Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:21113 (height 0)
+[2026-09-28T22:49:01.465Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:21120 (height 0)
+[2026-09-28T22:49:01.465Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50243 (height 0)
+[2026-09-28T22:49:01.465Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50242 (height 0)
+[2026-09-28T22:54:06.069Z INFO  blacksilk_chain::manager::template] caught up at height 0: block templates are served from now on
+[2026-09-28T23:51:42.592Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50242
+[2026-09-28T23:51:42.592Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50243
+[2026-09-28T23:51:42.592Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:21113
+[2026-09-28T23:54:53.000Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:25485 (height 640)
+[2026-09-28T23:54:53.600Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50242 (height 640)
+[2026-09-28T23:54:53.600Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50243 (height 640)
+[2026-09-29T00:39:42.888Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50243
+[2026-09-29T00:39:42.888Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:25485
+[2026-09-29T00:39:42.888Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50242
+[2026-09-29T00:42:53.577Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:27120 (height 929)
+[2026-09-29T00:42:53.627Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50242 (height 929)
+[2026-09-29T00:42:53.627Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50243 (height 929)
+[2026-09-29T01:09:29.388Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 1083
+[2026-09-29T01:09:29.389Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 1, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T01:27:43.041Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50243
+[2026-09-29T01:27:43.041Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50242
+[2026-09-29T01:27:43.041Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:27120
+[2026-09-29T01:30:52.644Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50242 (height 1207)
+[2026-09-29T01:30:52.644Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50243 (height 1207)
+[2026-09-29T01:30:52.911Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:32191 (height 1207)
+[2026-09-29T01:48:44.501Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 1319
+[2026-09-29T01:48:44.512Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 1, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T02:15:43.287Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50243
+[2026-09-29T02:15:43.287Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50242
+[2026-09-29T02:15:43.287Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:32191
+[2026-09-29T02:18:48.510Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:35467 (height 1479)
+[2026-09-29T02:18:50.001Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50243 (height 1479)
+[2026-09-29T02:18:50.001Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50242 (height 1486)
+[2026-09-29T02:38:07.090Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 1615
+[2026-09-29T02:38:07.091Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T02:58:59.713Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 1730
+[2026-09-29T02:58:59.713Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 1, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T03:03:43.603Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50242
+[2026-09-29T03:03:43.603Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:35467
+[2026-09-29T03:03:43.603Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50243
+[2026-09-29T03:06:52.978Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:36708 (height 1758)
+[2026-09-29T03:06:53.014Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50243 (height 1758)
+[2026-09-29T03:06:53.050Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50242 (height 1758)
+[2026-09-29T03:51:43.749Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50243
+[2026-09-29T03:51:43.749Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50242
+[2026-09-29T03:51:43.749Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:36708
+[2026-09-29T03:54:48.950Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50242 (height 2044)
+[2026-09-29T03:54:48.950Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50243 (height 2044)
+[2026-09-29T03:54:57.917Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:40197 (height 2057)
+[2026-09-29T03:59:07.506Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 2079
+[2026-09-29T03:59:07.512Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T04:18:26.993Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 2199
+[2026-09-29T04:18:27.003Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T04:26:26.860Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 2250
+[2026-09-29T04:26:26.860Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 1, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T04:28:10.800Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 2260
+[2026-09-29T04:28:10.806Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T04:35:12.498Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 2306
+[2026-09-29T04:35:12.504Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T04:37:52.180Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 2319
+[2026-09-29T04:37:52.180Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T04:39:47.541Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50243
+[2026-09-29T04:39:47.541Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50242
+[2026-09-29T04:39:47.541Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:40197
+[2026-09-29T04:42:57.573Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50242 (height 2332)
+[2026-09-29T04:42:57.613Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50243 (height 2332)
+[2026-09-29T04:42:58.173Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:41447 (height 2332)
+[2026-09-29T04:53:24.489Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 2405
+[2026-09-29T04:53:24.497Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 1, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 1, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T05:27:47.685Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50242
+[2026-09-29T05:27:47.685Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:50243
+[2026-09-29T05:27:47.685Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:41447
+[2026-09-29T05:30:57.321Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50243 (height 2633)
+[2026-09-29T05:30:57.321Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:50242 (height 2633)
+[2026-09-29T05:30:58.364Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:44828 (height 2633)
+[2026-09-29T05:32:20.167Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 2652
+[2026-09-29T05:32:20.174Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 1, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 1, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T05:50:04.250Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 2744
+[2026-09-29T05:50:04.276Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 2, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
