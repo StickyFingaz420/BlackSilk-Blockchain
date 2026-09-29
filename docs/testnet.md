@@ -15,15 +15,16 @@ project and testnet status is kept only in [STATUS.md](STATUS.md).
 > v3 genesis is final (`ChainParams::genesis_is_final`, checked by
 > `check_network_enabled` in `node/src/config.rs`): it is generated at launch, by the
 > procedure and tool in docs/testnet-v3-genesis.md (`tools/genesis`).
-> Until then, use `--network regtest` or the labnet harness. The v2 parameters below
-> are kept for reference and will be replaced by v3's.
+> Until then, use `--network regtest` or the labnet harness. The v3 network id is
+> final (`0x0001D673`); the genesis time below is still the v2 placeholder until the
+> launch fixes it.
 
 ## 1. Parameters
 
 | | Testnet | Regtest (local only) |
 |---|---|---|
-| Network id | `0x0001D672` (testnet v2; v1 was `0x0001D670`) | `0x00DEB06E` |
-| Genesis time | 2026-09-26 00:00:00 UTC (`1790380800`) | `1700000000` |
+| Network id | `0x0001D673` (testnet v3; v1 was `0x0001D670`, v2 `0x0001D672`) | `0x00DEB06E` |
+| Genesis time | fixed at launch (`T_g`, testnet-v3-genesis.md §4); the code holds the v2 placeholder `1790380800` | `1700000000` |
 | Genesis id | pinned by `genesis_ids_are_pinned` (`consensus/src/params.rs`); printed by `blacksilk-node --version` | same |
 | Genesis body | empty, no premine | empty |
 | Block time | 120 s | 10 s |
@@ -60,15 +61,24 @@ with the ones the release announcement publishes:
 - the **consensus fingerprint** of the network (full, 64 hex digits);
 - the **build commit**.
 
+The **rules fingerprint** (below) is also published with the release candidate,
+before the genesis exists; the final build must show the same value.
+
 Where to read them:
 
 - `blacksilk-node --version` prints the commit and, for every network, the
-  fingerprint (the first 16 hex digits, then the full value) and the genesis id.
-  `blacksilk-node -V` prints only the version and commit.
+  consensus fingerprint (the first 16 hex digits, then the full value), the
+  rules and identity fingerprints and the genesis id. `blacksilk-node -V`
+  prints only the version and commit.
+- `blacksilk-node --print-manifest [testnet|regtest|mainnet]` prints the full
+  manifest behind the fingerprints: every entry as `name = value`, the
+  canonical encodings in hex and how each digest is computed, so a second
+  implementation can recompute them.
 - The start-up log prints `blacksilk-node <version> commit <commit>`, then
   `<network>: genesis <id>, consensus fingerprint <fingerprint>`.
-- The RPC `/info` returns `genesis_id`, `consensus_fingerprint`, `build_commit`
-  and `version`. `deploy/scripts/check-node.sh` prints them.
+- The RPC `/info` returns `genesis_id`, `consensus_fingerprint`,
+  `rules_fingerprint`, `identity_fingerprint`, `build_commit` and `version`.
+  `deploy/scripts/check-node.sh` prints the identity fields.
 - `blacksilk-miner --version` and `blacksilk-wallet --version` print the version
   and commit (see the limitation below).
 
@@ -76,33 +86,49 @@ Pass: all three values are identical on every device, and they match the
 announcement. On any difference, stop. Do not start or keep mining until
 the builds match.
 
-**What the fingerprint covers.** It is a domain-separated hash
-(`BlackSilk/v1/node/consensus-fingerprint/v1`, BLAKE2b) of a canonical,
-length-prefixed encoding of the following consensus constants
-(`node/src/fingerprint.rs`, `px/src/fingerprint.rs`):
+**What the fingerprints cover** (fingerprint v3, `node/src/fingerprint.rs`,
+`px/src/fingerprint.rs`; record: reviews/v3-consensus-changes.md#fingerprint-v3).
+Each is a domain-separated BLAKE2b hash of a canonical, length-prefixed encoding
+(`--print-manifest` prints the domains):
 
-- every `ChainParams` field, the genesis block bytes and id, and `TxRules`;
-- the header, transaction, block and emission constants, and emission samples;
-- the RandomX configuration;
-- the proof-system parameter set (BS-ZK-3, `zk/src/params.rs`) and `PROOF_VERSION`;
-- the BVM-1 limits;
-- the PX kernel constants and hash domains;
-- the kernel and vault program ids.
+- The **rules fingerprint** covers every consensus constant: the `ChainParams`
+  fields that are not identity (block time, `D0`, the difficulty window and rule
+  id, the median-time window, the FTL, the RandomX key schedule), the activation
+  table without its branch ids, `TxRules`, the header, transaction, block and
+  emission constants, the RandomX configuration, the proof-system parameter set
+  and `PROOF_VERSION`, the BVM-1 limits and circuit digest, the PX kernel
+  constants, hash domains, exit codes and call ABI, the kernel and vault program
+  ids, budgets and entry points. It also covers **rule samples**: outputs of rule
+  functions on fixed inputs (difficulty, median time, the proof-of-work target,
+  the block id, the Merkle root, the signature domain, weights and fees, the
+  genesis-nonce derivation, emission, the Poseidon2 permutation, `Hk`, the tree
+  node, record commitments, nullifiers, the function prefix and the PX6 window),
+  and the **rule-revision list**, one entry per reviewed rule change.
+- The **identity fingerprint** covers the network name and id, the genesis block
+  and id, and the branch ids.
+- The **consensus fingerprint** is the hash of the two.
 
-`node/tests/deploy_configs.rs` pins one value per network. Changing one is a
-consensus change and needs a new network id. The values are deliberately not copied
-here (a copy goes stale with every consensus change before the freeze): compare the
-output of `blacksilk-node --version` with the signed release announcement, which
-takes its values from that test at the release commit.
+`node/tests/deploy_configs.rs` pins all three per network, and
+`px/tests/consensus_fingerprint.rs` pins the PX part on its own. Changing one is a
+consensus change with a record. The values are deliberately not copied here (a copy
+goes stale with every consensus change before the freeze): compare the output of
+`blacksilk-node --version` with the signed release announcement, which takes its
+values from that test at the release commit.
 
 Limits of the check:
 
-- **The fingerprint covers constants, not rule code.** A fix that changes
-  validation logic without changing a constant leaves the fingerprint unchanged,
-  and only the commit tells the two builds apart. So compare the commit as well.
+- **Rule code is covered only where a sample or a revision reaches it.** A change
+  that keeps every sampled result (for example a different order of checks with
+  the same verdicts) leaves the fingerprints unchanged, and the revision list is
+  maintained by hand. Only the commit tells such builds apart, so compare the
+  commit as well.
 - **The RandomX entries are copies.** They are the RandomX v1 values, because
-  `blacksilk-randomx` does not export its configuration. The crate's official
-  test vectors pin its behaviour.
+  `blacksilk-randomx` does not export its configuration, and no RandomX hash is
+  sampled (one needs a 256 MiB cache). The crate's official test vectors pin its
+  behaviour.
+- **The circuit digest is a pinned copy.** `zkvm.CIRCUIT_DIGEST` is not computed
+  at run time; `zkvm/tests/circuit_fingerprint.rs` recomputes it from the AIRs and
+  requires it to equal the pinned value.
 - **There is no dirty flag.** The node reads the commit from `.git` directly
   (`node/build.rs`, without running `git`). It does not detect uncommitted
   changes. Build the trial binaries from a clean checkout of the announced

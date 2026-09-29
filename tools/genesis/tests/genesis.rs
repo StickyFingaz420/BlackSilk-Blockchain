@@ -4,10 +4,11 @@ use blacksilk_consensus::difficulty::next_difficulty;
 use blacksilk_consensus::{ChainParams, HEADER_VERSION};
 use blacksilk_genesis::*;
 
-/// Bitcoin block 0, `H = 0`, the placeholder network id.
+/// Bitcoin block 0, `H = 0`, the network id reserved for test vectors (never
+/// a network's id; the final testnet id is not used here).
 fn kat_inputs() -> GenesisInputs {
     GenesisInputs {
-        network_id: V3_NETWORK_ID_PLACEHOLDER,
+        network_id: TEST_VECTOR_NETWORK_ID,
         timestamp: 1_790_000_000,
         difficulty: 100,
         btc_height: 0,
@@ -16,12 +17,14 @@ fn kat_inputs() -> GenesisInputs {
 }
 
 /// The digest behind the known-answer nonce, pinned. Recompute by hand:
-/// `printf 'BlackSilk/genesis-nonce/v1'` ‖ `73 d6 01 00` (LE32 0x0001D673) ‖
+/// `printf 'BlackSilk/genesis-nonce/v1'` ‖ `00 ff ff ff` (LE32 0xFFFFFF00) ‖
 /// eight zero bytes (LE64 0) ‖ the 32 bytes of `000000000019d668…8ce26f`,
-/// into `b2sum -l 256`. Cross-checked with Python's `hashlib.blake2b(digest_size=32)`.
-const KAT_DIGEST: &str = "3c437d97cf3b1e3550d4d1476da14eea569da954da543bbc86031233de167e19";
-const KAT_NONCE: u64 = 0x351e_3bcf_977d_433c;
-const KAT_GENESIS_ID: &str = "f35c4e2bf9ba7fee251d88efcf2314f1a59fa7b1968d5c7d3e28ffe4711a714e";
+/// into `b2sum -l 256`. Cross-checked with Python's `hashlib.blake2b(digest_size=32)`
+/// (fingerprint v3; before it the known answer used 0x0001D673, now the
+/// final testnet id).
+const KAT_DIGEST: &str = "5081810a27720a228d4620fd4d69d67d55b5b894d87642f49a1186e5049340a9";
+const KAT_NONCE: u64 = 0x220a_7227_0a81_8150;
+const KAT_GENESIS_ID: &str = "6c86579e89b300c41c7163f1515f4f09880a4d019cdce34e4f45b0c2d089d6c8";
 
 #[test]
 fn known_answer_bitcoin_block_0() {
@@ -103,11 +106,15 @@ fn all_genesis_fields_are_fixed() {
     );
 }
 
-/// The registry: the placeholder is not a used id, and every used id (v1, the
-/// rehearsal, v2, mainnet, regtest) is refused.
+/// The registry: the testnet v3 id is the compiled one and not yet used (its
+/// genesis is generated at launch), the test-vector id is not a network's,
+/// and every used id (v1, the rehearsal, v2, mainnet, regtest) is refused.
 #[test]
 fn used_network_ids_are_refused() {
-    assert_eq!(check_network_id(V3_NETWORK_ID_PLACEHOLDER), Ok(()));
+    assert_eq!(ChainParams::testnet().network_id, TESTNET_V3_NETWORK_ID);
+    assert!(!ChainParams::testnet().genesis_is_final());
+    assert_eq!(check_network_id(TESTNET_V3_NETWORK_ID), Ok(()));
+    assert_ne!(TEST_VECTOR_NETWORK_ID, TESTNET_V3_NETWORK_ID);
     for (id, _) in NETWORK_ID_REGISTRY {
         assert_eq!(
             check_network_id(*id),
@@ -120,12 +127,9 @@ fn used_network_ids_are_refused() {
     for id in [0x0001_D670, 0x0001_D671, 0x0001_D672] {
         assert!(registry_name(id).is_some(), "{id:#x}");
     }
-    // The built-in networks' ids are all registered.
-    for p in [
-        ChainParams::testnet(),
-        ChainParams::mainnet(),
-        ChainParams::regtest(),
-    ] {
+    // The other built-in networks' ids are registered. The testnet's is
+    // registered once its genesis exists (docs/testnet-v3-genesis.md §6 step 7).
+    for p in [ChainParams::mainnet(), ChainParams::regtest()] {
         assert!(registry_name(p.network_id).is_some(), "{:#x}", p.network_id);
     }
     assert_eq!(check_network_id(0), Err(GenesisError::NetworkIdZero));

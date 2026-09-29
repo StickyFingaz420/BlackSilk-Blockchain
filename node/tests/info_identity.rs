@@ -69,6 +69,11 @@ fn info_carries_the_node_identity() {
         info.consensus_fingerprint.as_deref(),
         Some(hex(&consensus_fingerprint(Network::Testnet)).as_str())
     );
+    // Fingerprint v3: the rules and identity fingerprints (decision "Agent 40").
+    let r = hex(&fingerprint::rules_fingerprint(Network::Regtest));
+    let i = hex(&fingerprint::identity_fingerprint(Network::Regtest));
+    assert_eq!(info.rules_fingerprint.as_deref(), Some(r.as_str()));
+    assert_eq!(info.identity_fingerprint.as_deref(), Some(i.as_str()));
     assert_eq!(info.build_commit.as_deref(), Some(BUILD_COMMIT));
     assert_eq!(info.version.as_deref(), Some(fingerprint::VERSION));
     assert_eq!(info.genesis_id.as_ref().map(String::len), Some(64));
@@ -78,6 +83,8 @@ fn info_carries_the_node_identity() {
     for field in [
         format!("\"genesis_id\":\"{genesis}\""),
         format!("\"consensus_fingerprint\":\"{f}\""),
+        format!("\"rules_fingerprint\":\"{r}\""),
+        format!("\"identity_fingerprint\":\"{i}\""),
         format!("\"build_commit\":\"{BUILD_COMMIT}\""),
     ] {
         assert!(body.contains(&field), "{field} in {body}");

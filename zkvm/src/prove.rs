@@ -58,6 +58,21 @@ const _: () = assert!(MAX_CYCLES.is_power_of_two());
 /// change).
 pub const CIRCUIT_ID: &[u8] = b"BlackSilk/zkvm/BVM-1/circuit/v1";
 
+/// The pinned digest of the constraint system [`CIRCUIT_ID`] names (hex),
+/// computed with digest method [`CIRCUIT_DIGEST_METHOD`]: the last line of
+/// `REVISIONS` in `zkvm/tests/circuit_fingerprint.rs`, which recomputes the
+/// digest from the AIRs and asserts that both equal this value. It is never
+/// computed at run time (the computation evaluates every table's
+/// constraints); it is listed in the consensus manifest
+/// (`px/src/fingerprint.rs`), so an AIR change moves the consensus
+/// fingerprint too (RTW1-6, docs/reviews/v3-consensus-changes.md
+/// #fingerprint-v3).
+pub const CIRCUIT_DIGEST: &str = "bcaba6c607782a75a0b9130eddb8d284dd35a95350355d9d9d87fe5db3cbe941";
+
+/// The digest method of [`CIRCUIT_DIGEST`] (`DIGEST_METHOD` in
+/// `zkvm/tests/circuit_fingerprint.rs`).
+pub const CIRCUIT_DIGEST_METHOD: u32 = 2;
+
 /// The digest of the circuit tag and of every public column of every table of
 /// a statement: the programs, images, claimed outputs and the byte table,
 /// exactly as the verifier supplies them to the AIRs (periodic columns). It is

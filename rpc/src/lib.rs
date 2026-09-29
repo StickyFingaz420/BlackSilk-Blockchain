@@ -98,6 +98,14 @@ pub struct Info {
     /// `blacksilk_node::fingerprint`). Nodes with different fingerprints fork.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consensus_fingerprint: Option<String>,
+    /// The rules fingerprint (hex): the consensus constants, rule samples
+    /// and rule revisions, without the chain's identity. A release candidate
+    /// and the final build of a network show the same value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules_fingerprint: Option<String>,
+    /// The identity fingerprint (hex): network id, genesis and branch ids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_fingerprint: Option<String>,
     /// The git commit the node was built from, or `unknown`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_commit: Option<String>,

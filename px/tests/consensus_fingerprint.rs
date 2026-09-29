@@ -1,26 +1,29 @@
 //! Pins the PX-side consensus entries ([`blacksilk_px::fingerprint::px_entries`]):
-//! the BS-ZK-2 proof parameters and `PROOF_VERSION` (zk), the BVM-1 machine
-//! limits (zkvm), the PX kernel and its hash domains (px-core), the pinned
-//! kernel and vault program ids, the PX state and delivery formats (px), and
-//! the v1 ring size (crypto).
+//! the proof parameter set and `PROOF_VERSION` (zk), the BVM-1 machine limits
+//! and circuit digest (zkvm), the PX kernel, its hash domains and call ABI
+//! (px-core), the pinned kernel and vault program ids, budgets and entry
+//! points, the PX state and delivery formats (px), the v1 ring size
+//! (crypto), and the PX rule samples (Poseidon2, `Hk`, node, commitment,
+//! nullifier, exit codes, function prefix, PX6 window).
 //!
-//! These entries are part of the node's `consensus_fingerprint(network)`
-//! (node/src/fingerprint.rs), which operators compare before a trial and
-//! which `node/tests/deploy_configs.rs` pins per network. This test pins the
-//! PX part on its own so that a change here fails in the crate that made it.
+//! These entries are part of the node's rules fingerprint and so of its
+//! `consensus_fingerprint(network)` (node/src/fingerprint.rs), which
+//! operators compare before a trial and which `node/tests/deploy_configs.rs`
+//! pins per network. This test pins the PX part on its own so that a change
+//! here fails in the crate that made it.
 //!
-//! **Changing any of these is a consensus change and requires a new network
-//! id** (and, for the kernel or the proof parameters, a new testnet identity;
-//! docs/testnet-reset-plan.md). When this test fails, the change must be
-//! deliberate: update the pinned digest in the same commit as the new network
-//! id, never on its own.
+//! **Changing any of these is a consensus change.** When this test fails, the
+//! change must be deliberate: re-pin in the same commit as the change, with a
+//! `Consensus-Change:` trailer naming its record in
+//! docs/reviews/v3-consensus-changes.md (the re-pin procedure is in its
+//! `fingerprint-v3` section).
 //!
-//! Constants only: no proof is built, the test is instant.
+//! No proof is built, the test is instant.
 
 use blacksilk_px::fingerprint::px_entries;
 
-/// Changing this is a consensus change and requires a new network id.
-const PX_SIDE_DIGEST: &str = "fa8a022a57baf3e3128761060849c2b130749b07e7306d1618a8909dd6116205";
+/// Changing this is a consensus change (fingerprint v3: see the module text).
+const PX_SIDE_DIGEST: &str = "ee47cdc27639acee5d4317df1945f3ccabd37fdb6da4bb96efb757e57633585a";
 
 #[test]
 fn px_side_consensus_constants_are_pinned() {
@@ -33,8 +36,8 @@ fn px_side_consensus_constants_are_pinned() {
     assert_eq!(
         digest,
         PX_SIDE_DIGEST,
-        "a consensus constant changed (this is a consensus change and requires a new network id); \
-         current values:\n{}",
+        "a PX consensus constant or rule sample changed (a consensus change: re-pin with its \
+         record); current values:\n{}",
         m.render()
     );
 }

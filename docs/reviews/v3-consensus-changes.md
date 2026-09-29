@@ -33,6 +33,7 @@ they are never renamed. Index:
 - vault-v3 (vault guest and host, wallet; W1-CB-B2)
 - guest-rebuild (kernel and vault ELFs and ids, guest link layout; W1-CB-B2); Follow-up (RTW1C-9)
 - kernel-budget-shapes (px; FX-RTW1C); Follow-ups (RT-W1c) in px6-validity-window and vault-v3
+- fingerprint-v3 (node, px, zkvm, consensus network id, tools/genesis; W4-40)
 
 New sections are appended at the end.
 
@@ -2268,3 +2269,247 @@ the commands are listed there).
   red team may re-check.
 - Alternative (A) at the next kernel change; agent 22's widest-proof measurement should
   be re-run with the new `n_fn = 1` shape.
+
+---
+
+<a id="fingerprint-v3"></a>
+
+## fingerprint-v3: rules and identity fingerprints, rule samples, rule revisions, and the testnet v3 network id
+
+Owner: W4-40. Decisions: "Agent 40" (40 lands all entries in one commit after every
+rule decision; the digest is split into rules and identity; `--print-manifest`; the
+rules fingerprint in `/info`; network ids: final `0x0001D673`, rehearsal ids reserved
+at `0x0001D6E0`–`EF`, the known answer on a reserved test-only id), "Fingerprint pins
+during the pre-freeze v3 window" (the new network id and the final values come with
+fingerprint v3), "Agent 03" / "DAA FINAL" (a difficulty-rule identifier), "Agent 14"
+(weight samples, a general "rule samples" section), "D8 / C4" (a rule-revision list),
+"R2-C6" (the Poseidon2 instance in the fingerprint), "Agent 22" W5 / "Agent 23" W2
+(the circuit digest), RTW1-6. Dossier 40 F40-6, F40-7, §3 P4. Internal engineering
+work, not an audit.
+
+**1. Problem.**
+- The consensus fingerprint covered constants only (F40-6). Most v3 changes are rule
+  code (D8 option B, CLSAG `D ≠ identity`, RT-14's domain layout, exact fee, R12-2, tree
+  capacity, F-20-1, the ABI word, PX6): two builds that differ in one of them had equal
+  fingerprints and would fork on the first transaction that uses the difference.
+- The genesis and the network id were inside the one digest (F40-7): a release
+  candidate and the final build must differ, so operators had no digest proving "the
+  rules did not change between the candidate and the launch".
+- Entries owed by earlier records were missing: `DIFFICULTY_RULE_ID`
+  (daa-lwma75-warm §13), the circuit digest (Follow-up RTW1-3/6/8 §12 (i)),
+  `ABI_VERSION` and `PREFIX_WORDS` (px-call-abi §12), the vault's REFUND entry, REFUND
+  and TERMS domains and `OUT_WORDS` (guest-rebuild §12), weight samples (exact-v1-fee
+  §12, r12-2 §7), rule revisions (§1 §7, §3 §12, exact-v1-fee §7, tree-capacity §7).
+- The testnet still carried the retired v2 id `0x0001D672`, and the genesis known
+  answer used `0x0001D673`, the id decided as the final testnet id.
+
+**2. Demonstrated failure.** On base `419725e` (rendered with a scratch test in a
+separate target directory, `C:/bszkeval/w4-fp3-scratch/manifest-before-*.txt`):
+the manifest has no entry that any of the ten rule-code changes above moves (no
+sample, no revision, no difficulty rule id), so it cannot tell a build with a
+reverted rule from this one; the testnet's `chain.network_id` is `120434`
+(`0x0001D672`); `chain.genesis` and `chain.genesis_id` are entries of the single
+digest. The absence of the owed entries is visible in the same files.
+
+**3. Prior art.** Zcash's consensus branch id names a rule set independently of the
+chain (ZIP 200, ZIP 244); Bitcoin Core's `chainparams` asserts the genesis hash
+separately from the rules; Ethereum's EIP-2124 fork id is a checksum of the genesis
+hash and the fork block numbers passed, one value for the chain and its rule history
+(dossier 40 §3 P4). Known-answer rule samples are the approach of test-vector files
+(dossier 01, consensus/tests/golden.rs): the manifest carries a few of them so that a
+code change moves the digest the node shows.
+
+**4. Alternatives.** (a) Hash the rule source code (rejected: it changes with comments
+and formatting and does not identify behaviour); (b) samples only, no revision list
+(rejected: a sample exists only where a rule function can be called on cheap fixed
+inputs; CLSAG, D8-B and the canonical-proof rules cannot be sampled without building
+signatures or proofs); (c) a revision list only (rejected: hand-maintained, and
+forgetting an entry would go unnoticed; samples backstop it); (d) keep one digest and
+publish the genesis separately (rejected by the decision: operators need a rules digest
+equal from the release candidate to the launch). Chosen: rules manifest (constants,
+samples, revisions) and identity manifest, each hashed, and the consensus fingerprint
+as the hash of both.
+
+**5. Affected components.**
+- `node/src/fingerprint.rs`: `rules_manifest`, `identity_manifest`,
+  `rules_fingerprint`, `identity_fingerprint`, `consensus_fingerprint` (now
+  `H64("node/consensus-fingerprint/v2", encode([rules, identity]))`), `fingerprints`
+  (computed once per process), `REVISIONS`, the chain-side rule samples,
+  `manifest_text` (`--print-manifest`), `network_by_name`, the `--version` text.
+  `ChainParams` and `TxRules` stay destructured, now sorting every field into rules
+  or identity.
+- `px/src/fingerprint.rs`: `zkvm.CIRCUIT_DIGEST(_METHOD)`, `px_core.call.ABI_VERSION`,
+  `PREFIX_WORDS`, the vault's REFUND and TERMS domains, REFUND entry and `OUT_WORDS`,
+  and `px_samples` (Poseidon2, `Hk`, node, commitment, nullifier, kernel exit codes,
+  function prefix, PX6 window).
+- `zkvm/src/prove.rs`: `pub const CIRCUIT_DIGEST`, `CIRCUIT_DIGEST_METHOD` (values of
+  the last `REVISIONS` line; `zkvm/tests/circuit_fingerprint.rs` asserts equality).
+- `tx/src/types.rs`: `v1_part_weight` made `pub` (no logic change) for the R12-2
+  weight sample.
+- `node/src/main.rs`: `--print-manifest [NETWORK]`. `node/src/lib.rs` and
+  `rpc/src/lib.rs`: `/info` gains `rules_fingerprint` and `identity_fingerprint`
+  (optional fields; wallet test mocks set them to `None`).
+- Network id: `consensus/src/params.rs` testnet `0x0001_D673` (the genesis time stays
+  the v2 value as a placeholder until `T_g`; no beacon); `consensus/src/genesis.rs`
+  `TEST_VECTOR_NETWORK_ID = 0xFFFF_FF00` and the known answer on it;
+  `tools/genesis`: `TESTNET_V3_NETWORK_ID` replaces `V3_NETWORK_ID_PLACEHOLDER`, the
+  known answer moves to the test-vector id, the registry test no longer requires the
+  testnet's id to be registered before its genesis exists.
+- Docs: testnet.md §1 and §2.1, consensus.md §1, testnet-v3-genesis.md §3,
+  proof-system.md §3 (circuit identity), STATUS.md §1.
+
+**The rule-revision list** (`REVISIONS`, one per reviewed validity or
+proof-acceptance change, in record order): §1 D8-B, §2 CLSAG D, §3 RT-14, BS-ZK-3,
+Canonical proof shape, daa-lwma75-warm, exact-v1-fee, r12-2, tree-capacity,
+approval-conflict, px-call-abi, px6-validity-window, kernel-budget-shapes. **Not
+revisions:** f05-header-check-order, rt1-unknown-upgrade-pow, the RTW1C-5 check order
+and the RTW1-3 `verify` hardening (error classes or order only, verdicts unchanged);
+expiry-guard (mempool policy); genesis-beacon (identity); guest-rebuild and vault-v3
+(their effect is the program ids, which are listed); Soundness figures (the
+`COLLISION_BITS` constant, listed). A test requires every entry to name an existing
+record here and to be unique.
+
+**Frozen wallet-side registry tags** (`seed/master/v1`, `wallet/hedge-key/v1`,
+`px/wallet/hedge-key/v1`, `px/wallet/vault-secret/v1`, `px/wallet/vault-refund/v1`,
+`px/wallet/vault-rcm/v1`): **not listed.** They derive wallet secrets; no node
+computes them, and a chain accepts any value they could produce, so two nodes with
+different tags agree on every block. They are pinned by the crypto crate's
+`frozen_wallet_tags_are_pinned` instead. The hash domain prefix `crypto.DOMAIN_PREFIX`
+(which every consensus tag uses) was and stays listed.
+
+**Rule samples** (all on fixed inputs; network-independent except the fees, which
+read the network's `TxRules`): `next_difficulty` at T = 120, N = 75 (steady, the
+red-team golden case 999 824, the window-only 998 248, a genesis-only history),
+`clock_step`, `difficulty_ancestors`; `median` and `after_median_time_past`;
+`check_hash` at the 2^256 boundary; a block id and two Merkle roots; the genesis nonce
+of Bitcoin block 0 on the test-vector id; the 40-byte signature domain; `max_weight`,
+the PX/deploy v1-part weight (0 without inputs), `standard_fee` and `deploy_fee`;
+plus the existing emission and seed-height samples and the PX samples above. A RandomX
+hash is not sampled (a light-mode hash needs a 256 MiB cache, too costly for `/info`);
+the RandomX constants stay copies, as before.
+
+**6. Activation.** None: the fingerprint is not a validity rule. The network id is part
+of the v3 genesis identity (no launched network has it).
+
+**7. Compatibility.** Every fingerprint value changes on every network (the manifest
+gained entries and the consensus digest's construction changed; its domain is now
+`…/v2`). The testnet's genesis id changes with its network id (the pinned
+`genesis_ids_are_pinned` and `genesis_ids_golden` values, recomputed independently in
+Python from the spec). Every testnet signature and PX statement changes with it (RT-14
+binds the genesis id), which affects no launched chain. Regtest and mainnet ids,
+genesis blocks and every regtest vector are unchanged. `/info` gains two optional
+fields; older clients ignore them and old nodes' JSON still decodes.
+
+**Entry-level diff** (base `419725e` against this change, per network, from the
+rendered manifests; every changed entry maps to a record):
+
+| Entry | Change | Record |
+|---|---|---|
+| `chain.network_id`, `rules.network_id`, `chain.genesis_id` (testnet only) | `0x0001D672` → `0x0001D673`, and the genesis id that follows | this section (network id) |
+| `schedule.epoch[0]` (4 values) | split into `schedule.epoch[0] (activation, header version, verifier id)` (rules) and `schedule.branch_ids` (identity); values unchanged | this section (split) |
+| `chain.network`, `chain.genesis`, `rules.branch_id` | moved to the identity manifest, values unchanged | this section (split) |
+| `chain.difficulty_rule`, `chain.DIFFICULTY_WARMUP` | added | daa-lwma75-warm §13 |
+| `tx.SIG_DOMAIN_BYTES`, `rules.sample.sig_domain` | added | §3 RT-14 |
+| `tx.SUPPORTED_VERIFIERS` | added (the verifier ids this build implements; the schedule's `verifier_id` was already listed) | this section |
+| `zkvm.CIRCUIT_DIGEST`, `zkvm.CIRCUIT_DIGEST_METHOD` | added | Follow-up (RTW1-3/6/8) §12 (i) |
+| `px_core.call.ABI_VERSION`, `px_core.call.PREFIX_WORDS`, `px.sample.function_prefix` | added | px-call-abi §12; px6-validity-window (the window words) |
+| `px.vault.entry` → `px.vault.entry (LOCK, CLAIM, REFUND)`; `px.vault.REFUND_DOMAIN`, `TERMS_DOMAIN`, `OUT_WORDS` | REFUND entry and fields added | vault-v3, guest-rebuild §12 |
+| `px.sample.poseidon2`, `Hk`, `node`, `commit`, `nullifier` | added | decisions "R2-C6" (the Poseidon2 instance); this section |
+| `px.kernel.exit_codes` | added | approval-conflict (exit 18) |
+| `px.sample.window.contains`, `is_well_formed` | added | px6-validity-window |
+| `rules.sample.next_difficulty`, `clock_step`, `difficulty_ancestors` | added | daa-lwma75-warm §13 (golden case) |
+| `rules.sample.median`, `after_median_time_past`, `check_hash`, `block_id`, `tx_root` | added (unchanged rules, sampled) | this section (dossier 40 §3 P4) |
+| `rules.sample.genesis_nonce` | added | genesis-beacon; this section (test-vector id) |
+| `rules.sample.max_weight`, `standard_fee`, `deploy_fee` | added | exact-v1-fee §12 |
+| `rules.sample.px_v1_part_weight` | added | r12-2 §7, §12 |
+| `rules.revision.len`, `rules.revision[0..12]` | added | each entry's own record (list above) |
+
+Every other base entry is unchanged (testnet: 118 of 123; regtest and mainnet: 121 of
+123, the two not unchanged being the split `schedule.epoch[0]` and the renamed vault
+entry list). The digests, before and after, are in the commit message.
+
+**8. Reorg, wallet, mining and P2P implications.** None from the fingerprint: it is
+computed, printed and served, never checked against peers. Operators compare the
+**rules** fingerprint of the release candidate with the final build's, and the
+consensus fingerprint and genesis id at launch (testnet.md §2.1). The network id
+change: wallets, miners and nodes read it from `ChainParams`, so they agree; testnet
+stays disabled (`genesis_is_final` is false) until the launch commit.
+
+**9. Vectors.**
+- Testnet v3 genesis id (placeholder genesis, nonce 0) and the known answer on
+  `0xFFFFFF00` (digest, nonce, genesis id): recomputed by an independent standard-library
+  Python script written from the spec text (`hashlib.blake2b`), which also reproduces
+  the pinned v2 testnet id and the old `0x0001D673` known answer; values in
+  `consensus/src/params.rs`, `consensus/tests/golden.rs`, `consensus/src/genesis.rs`,
+  `tools/genesis/tests/genesis.rs`.
+- The three fingerprints of every network: recomputed by a second independent Python
+  script from the `--print-manifest` output (it hashes the printed encodings with the
+  printed domains, re-derives the consensus digest, and decodes each encoding back to
+  the printed `name = value` lines: all equal); the PX-side pin was recomputed from the
+  printed rules encoding the same way.
+- The samples equal the golden values of their own suites
+  (`samples_are_the_golden_values`: the DAA golden case, `max_weight(1, 2) = 1 723`,
+  `(64, 16) = 57 439`, `(1, 0) = 841`, `(64, 2) = 52 123`, the known-answer nonce).
+
+**10. Tests.**
+- `node/src/fingerprint.rs`: `rules_fingerprint_excludes_identity` (no rules entry
+  names or equals the network id, genesis or branch id; the identity manifest holds
+  exactly them; testnet and mainnet rules differ only in `D0`),
+  `consensus_combines_rules_and_identity`, `every_revision_is_unique_and_recorded`,
+  `samples_are_the_golden_values`, `a_changed_sample_changes_the_rules_fingerprint`,
+  `entry_names_are_unique_printable_ascii`, `manifest_text_recomputes` (the printed
+  encodings hash to the printed digests), `rules_manifest_holds_the_px_entries_and_samples`,
+  `version_text_names_every_network`, `stable_across_calls`, `networks_differ`.
+- `node/tests/deploy_configs.rs::consensus_fingerprints_are_pinned`: consensus, rules
+  and identity per network (re-pinned); `px/tests/consensus_fingerprint.rs` (re-pinned).
+- `node/tests/info_identity.rs`: `/info` serves both new fields.
+- `zkvm/tests/circuit_fingerprint.rs::the_air_digest_is_pinned_to_the_circuit_id`:
+  `CIRCUIT_DIGEST` is the last `REVISIONS` line.
+- `consensus` (`known_answer_bitcoin_block_0`, `genesis_ids_are_pinned`,
+  `genesis_ids_golden`) and `tools/genesis` (`known_answer_bitcoin_block_0`,
+  `used_network_ids_are_refused`): the new id and known answer.
+
+**11. Suite results** (2026-09-29, release, `--locked`, this machine):
+- `cargo fmt --all -- --check`, `cargo clippy --locked --workspace --all-targets -- -D
+  warnings`: clean. `cargo deny check`, doc-lint, unicode scan: clean. Cargo.lock
+  unchanged.
+- Non-PX: every workspace crate except tx, px and zk, skipping the seven PX-proving
+  tests: 1 000 passed, 0 failed, 4 ignored; tx (lib and every test file except
+  `px_consensus`, `fuzz_decode`): 133 passed; px (lib and every test file except
+  `proof`, `unified`): 61 passed; zk (lib and every test file except `proofs`): 18
+  passed, 2 ignored (timing).
+- PX-proving, one at a time, each started at 7 GB free or more, `--test-threads=1`:
+  tx `px_consensus` 4, `fuzz_decode` 1; px `proof` 3, `unified` 12; zk `proofs` 16;
+  chain `restart_rebuilds_the_px_state_exactly` 1; wallet e2e PX 4; p2p PX 2. All
+  passed, 0 failed.
+- Not run: a code mutant of a sampled rule (the LWMA `(n + 1) → n` check of dossier
+  40); the unit test substitutes sample values instead.
+
+**12. Open review points.**
+- **F40-1 is not closed.** Once the testnet genesis exists, step 7 of
+  testnet-v3-genesis.md registers `0x0001D673`; the tool's `build`/`verify` then refuse
+  it, so "operators re-run `verify`" fails after the launch. The registry semantics
+  (verify accepts a built-in network's own id with its announced inputs) and the
+  enforced rehearsal range are dossier 40 item 2, not this change.
+- The revision list is hand-maintained; a rule change that forgets its entry and moves
+  no sample is caught only in review. The red team (50) should check the list against
+  the records, and the consensus-change template should gain the checklist item.
+- Samples cover functions callable on cheap fixed inputs. CLSAG, D8-B, the
+  canonical-proof rules, tree capacity and PX6's block-path placement have no sample
+  (revision only).
+- The RandomX configuration stays a copy (no public accessor in `blacksilk-randomx`,
+  01 F-09); the circuit digest is a pinned copy tied by a test.
+- An independent recompute script in the repository (dossier 40 item 5,
+  `verify_manifest.py`) is not part of this change; the scratch scripts used here are
+  not committed.
+- The start-up log still prints only the consensus fingerprint.
+
+**13. Identity impact.** Every network's fingerprints change; the testnet's network id
+and genesis id change (pre-launch, intended). Regtest and mainnet ids unchanged. At the
+launch, the beacon and `T_g` change only the testnet's identity and consensus
+fingerprints; its rules fingerprint must stay equal to the release candidate's.
+
+**14. Documentation.** testnet.md §1, §2.1; consensus.md §1; testnet-v3-genesis.md §3;
+proof-system.md §3; STATUS.md §1; this record. Values are referenced, not copied.
+
+**15. Review status.** Implemented and tested by W4-40; red-team review pending.

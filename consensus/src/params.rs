@@ -37,9 +37,10 @@ pub struct ChainParams {
     pub genesis: BlockHeader,
 }
 
-/// Testnet genesis time: 2026-09-26 00:00:00 UTC (testnet v2, reset with the PX
-/// rules, parameter set BS-ZK-2 and the terminal blinding; docs/testnet-reset-plan.md). Testnet v1:
-/// 2026-09-23, network id `0x0001_D670`.
+/// Testnet genesis time: a **placeholder** (2026-09-26 00:00:00 UTC, the retired
+/// v2 genesis time) until the v3 launch fixes `T_g` (docs/testnet-v3-genesis.md
+/// §4). Testnet v1: 2026-09-23, network id `0x0001_D670`; v2: 2026-09-26,
+/// `0x0001_D672`.
 pub const TESTNET_GENESIS_TIME: u64 = 1_790_380_800;
 /// Mainnet genesis time: **provisional** until the mainnet launch date is fixed.
 pub const MAINNET_GENESIS_TIME: u64 = 1_830_297_600;
@@ -67,9 +68,11 @@ impl ChainParams {
     pub fn testnet() -> Self {
         Self::base(
             Network::Testnet,
-            // v2 (2026-09-26). v1 was 0x0001_D670; 0x0001_D671 was used by the
-            // 2026-09-25 local reset rehearsal. Never reuse an id for another genesis.
-            0x0001_D672,
+            // v3, the final testnet id (decisions "Agent 40"; its genesis is
+            // generated at launch). v1 was 0x0001_D670, 0x0001_D671 the
+            // 2026-09-25 local reset rehearsal, v2 0x0001_D672 (retired).
+            // Never reuse an id for another genesis.
+            0x0001_D673,
             100,
             TESTNET_GENESIS_TIME,
             120,
@@ -438,8 +441,12 @@ mod tests {
         h.iter().map(|b| format!("{b:02x}")).collect()
     }
 
+    /// Testnet v3 before its launch: id `0x0001_D673`, the placeholder genesis
+    /// time and nonce 0 (no beacon). Recomputed independently from the spec
+    /// (Python `hashlib.blake2b`, docs/reviews/v3-consensus-changes.md
+    /// #fingerprint-v3). The launch commit changes it with the beacon.
     const TESTNET_GENESIS_ID: &str =
-        "6556f92dee4df050cfb113a2b4ba234794274854b69f7c8a39755ec7a66b037d";
+        "08b9e7c994bf8329fb710dd374af20e5450839e7cdaa6f2b6a05fd772cc96bcf";
     const REGTEST_GENESIS_ID: &str =
         "087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7";
 

@@ -563,6 +563,8 @@ mod tests {
                 template_ready: None,
                 genesis_id: self.0.clone(),
                 consensus_fingerprint: None,
+                rules_fingerprint: None,
+                identity_fingerprint: None,
                 build_commit: None,
                 version: None,
             })
@@ -907,6 +909,8 @@ mod tests {
                 template_ready: None,
                 genesis_id: Some(hex::encode(ChainParams::regtest().genesis_id())),
                 consensus_fingerprint: None,
+                rules_fingerprint: None,
+                identity_fingerprint: None,
                 build_commit: None,
                 version: None,
             })
