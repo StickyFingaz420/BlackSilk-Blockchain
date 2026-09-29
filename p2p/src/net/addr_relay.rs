@@ -43,7 +43,8 @@ pub(super) fn on_get_addr(inner: &Arc<Inner>, peer: PeerId) {
     let State {
         addrman, rng, bans, ..
     } = &mut *st;
-    // At most 23 % of the table, none terrible (`AddrMan::get_addr`). Every
+    // At most 23 % of the table but at least min(table, 8), none terrible
+    // (`AddrMan::get_addr`). Every
     // entry carries time 0 ("unknown"): the table's per-address times stay
     // local, so nothing about the table or the clock is revealed.
     let sample: Vec<AddrEntry> = addrman
@@ -72,11 +73,16 @@ pub(super) fn on_addr(inner: &Arc<Inner>, peer: PeerId, entries: Vec<AddrEntry>)
         return;
     }
     log::debug!("peer {peer}: addr with {} entries", entries.len());
-    // A seed's address fetch ends with its answer: any `Addr` except a
-    // single entry (the seed's own address, sent on every connection).
-    // Bitcoin Core closes on more than one entry; an empty answer ends it
-    // here too.
-    if p.kind == ConnKind::AddrFetch && entries.len() != 1 {
+    // A seed's address fetch ends with its answer: any `Addr` except the
+    // seed's self-advertisement (one entry, the address its `Version`
+    // carried, sent on every connection before the answer). Bitcoin Core
+    // closes on more than one entry, so a seed whose answer was one address
+    // (or its own, in a table of one) was held until the timeout (P2P-FIX2).
+    // An empty answer ends it too.
+    let self_ad = entries.len() == 1
+        && p.listen.is_some()
+        && entries[0].known().map(|a| a.clone().canonical()) == p.listen;
+    if p.kind == ConnKind::AddrFetch && !self_ad {
         p.kill.notify_one();
     }
     let (admit, relay) = match p.addr_gate.check(entries.len(), Instant::now()) {
@@ -110,10 +116,10 @@ pub(super) fn on_addr(inner: &Arc<Inner>, peer: PeerId, entries: Vec<AddrEntry>)
             }
             remember(known, a.clone());
             // Our own address is relayed like any other but not stored: it
-            // is never dialed, and in a `GetAddr` answer (at most 23 % of
-            // the table: 1 entry of up to 4) it would crowd out an address
-            // the asker can use. A joiner that knew one node of a 4-node
-            // labnet learned nothing it could dial in 7 of 32 runs (INV-PEERS).
+            // is never dialed, and in a `GetAddr` answer (then 23 % of the
+            // table: 1 entry of up to 4) it crowded out an address the asker
+            // could use. A joiner that knew one node of a 4-node labnet
+            // learned nothing it could dial in 7 of 32 runs (INV-PEERS).
             let own = inner.cfg.public_address.as_ref() == Some(&a);
             // Relay depends on the entry, never on whether the table knew the
             // address: that would tell a spy what the table holds (F32-5).

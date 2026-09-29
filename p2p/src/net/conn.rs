@@ -20,7 +20,7 @@ use crate::message::{
 use crate::transport::{handshake_with, FrameReader, FrameWriter, Session, TransportError};
 use blacksilk_consensus::Hash;
 use rand_chacha::rand_core::RngCore;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -326,6 +326,7 @@ pub(super) async fn run_connection<S>(
                 kill: kill.clone(),
                 relay_txs: theirs.relay_txs && kind.relays_txs(),
                 addr_relay,
+                listen: theirs.listen.clone().map(NetAddr::canonical),
                 height: theirs.height,
                 score: 0,
                 limits: inner.cfg.peer_limits.clone(),
@@ -343,7 +344,7 @@ pub(super) async fn run_connection<S>(
                 blocks_in_flight: 0,
                 bytes_in_flight: 0,
                 headers_requested: None,
-                headers_grace: None,
+                headers_grace: VecDeque::new(),
                 headers_busy: false,
                 headers_pending: false,
                 unknown_upgrades: 0,

@@ -179,6 +179,7 @@ impl Network {
             recent_rejects: VecDeque::new(),
             recent_rejects_set: HashSet::new(),
             late_blocks: HashMap::new(),
+            late_txs: HashMap::new(),
             local_nonces: HashSet::new(),
             connecting: HashMap::new(),
             last_attempt: HashMap::new(),

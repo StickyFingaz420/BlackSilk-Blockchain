@@ -12,10 +12,10 @@
 //!   its length.
 
 use super::blocks::{release_block_slot, schedule_downloads, BLOCK_TIMEOUT};
-use super::headers::HEADERS_TIMEOUT;
+use super::headers::{add_grace, HEADERS_TIMEOUT};
 use super::peers::maintain_outbound;
 use super::relay::{reannounce_pool, remember, retry_tx, TX_TIMEOUT};
-use super::state::{short, unix_now, Inner, State, StemEntry};
+use super::state::{short, unix_now, Inner, State, StemEntry, LATE_TXS_MAX};
 use super::stem::{fluff_entry, send_held_local_txs, take_stem};
 use crate::connman::ConnKind;
 use crate::dandelion::PeerId;
@@ -111,6 +111,9 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
                     .is_some_and(|t| now.duration_since(t) > HEADERS_TIMEOUT)
                 {
                     p.headers_requested = None;
+                    // Its reply is still accepted, unpenalized, for another
+                    // HEADERS_TIMEOUT (a busy honest peer, R8-9).
+                    add_grace(&mut p.headers_grace, now);
                     timed_out.push((pid, "headers"));
                     // Not asked again every tick; asked again when it
                     // announces a new tip.
@@ -139,8 +142,14 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
                 .collect();
             // Transaction relay is best effort: a slow answer is retried with the
             // next announcer but not penalized (peers answer `NotFound` when they
-            // no longer have the transaction).
+            // no longer have the transaction). The late answer is still
+            // accepted from the peer asked (`late_txs`).
+            st.late_txs
+                .retain(|_, t| now.duration_since(*t) <= TX_TIMEOUT);
             for (id, p) in stale_txs {
+                if st.late_txs.len() < LATE_TXS_MAX {
+                    st.late_txs.insert((id, p), now);
+                }
                 retry_tx(&inner, &mut st, id, p, now);
             }
         }

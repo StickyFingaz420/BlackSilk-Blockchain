@@ -17,6 +17,7 @@ use blacksilk_chain::actor::Lane;
 use blacksilk_chain::manager::{CachedPow, ChainManager, PowJob};
 use blacksilk_chain::sync_policy::{anti_dos_threshold, pow_chunk, seed_is_live, worth_verifying};
 use blacksilk_consensus::{seed_height, BlockHeader, Hash, HeaderChain, HeaderError};
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::ops::Range;
 use std::sync::Arc;
@@ -24,6 +25,10 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 pub(super) const HEADERS_TIMEOUT: Duration = Duration::from_secs(60);
+/// The most `GetHeaders` replies a peer may still owe once nothing is
+/// outstanding (`Peer::headers_grace`). One is added per request we sent,
+/// so this bounds only memory.
+pub(super) const MAX_HEADER_GRACE: usize = 8;
 
 /// The origin a queued header batch is charged to: the sender's IP (port
 /// dropped), or the whole address for onion peers and for peers whose IP is
@@ -123,7 +128,6 @@ impl Inner {
             match st.peers.get_mut(&peer) {
                 Some(p) if p.headers_requested.is_none() => {
                     p.headers_requested = Some(Instant::now());
-                    p.headers_grace = None;
                     p.headers_pending = false;
                 }
                 _ => return,
@@ -141,7 +145,6 @@ impl Inner {
         let mut st = self.state();
         if let Some(p) = st.peers.get_mut(&peer) {
             p.headers_requested = Some(Instant::now());
-            p.headers_grace = None;
             p.headers_pending = false;
         }
         self.send(
@@ -155,8 +158,29 @@ impl Inner {
     }
 }
 
-pub(super) fn in_grace(grace: Option<Instant>, now: Instant) -> bool {
-    grace.is_some_and(|t| now.duration_since(t) <= HEADERS_TIMEOUT)
+/// Drops the expired entries of `grace` (older than `HEADERS_TIMEOUT`);
+/// then whether a reply is still owed.
+pub(super) fn in_grace(grace: &mut VecDeque<Instant>, now: Instant) -> bool {
+    while grace
+        .front()
+        .is_some_and(|t| now.duration_since(*t) > HEADERS_TIMEOUT)
+    {
+        grace.pop_front();
+    }
+    !grace.is_empty()
+}
+
+/// Takes one owed reply (the oldest) from `grace`, if any is still owed.
+pub(super) fn take_grace(grace: &mut VecDeque<Instant>, now: Instant) -> bool {
+    in_grace(grace, now) && grace.pop_front().is_some()
+}
+
+/// Remembers that the reply to a request sent at `t` may still come.
+pub(super) fn add_grace(grace: &mut VecDeque<Instant>, t: Instant) {
+    if grace.len() >= MAX_HEADER_GRACE {
+        grace.pop_front();
+    }
+    grace.push_back(t);
 }
 
 /// Receives a `Headers` message on the peer's read loop. Only cheap checks run
@@ -179,16 +203,21 @@ pub(super) async fn on_headers(inner: &Arc<Inner>, peer: PeerId, headers: Vec<Bl
             return;
         };
         let now = Instant::now();
+        // Every `GetHeaders` gets exactly one `Headers` reply; a tip
+        // announcement is one header, unrequested. A reply of other than one
+        // header answers the outstanding request or, failing that, an owed
+        // one (`headers_grace`): a slow peer, or a node slow to read, may
+        // have two replies in flight. Before P2P-FIX2 a new request cancelled
+        // the owed one, and its reply cost an honest peer 10 points.
         let solicited = if let Some(t) = p.headers_requested.take() {
             // One header may be a tip announcement that crossed our request:
-            // the real (multi-header) reply may still come, once.
-            p.headers_grace = (headers.len() == 1).then_some(t);
-            true
-        } else if headers.len() > 1 && in_grace(p.headers_grace, now) {
-            p.headers_grace = None;
+            // the real reply may still come, once.
+            if headers.len() == 1 {
+                add_grace(&mut p.headers_grace, t);
+            }
             true
         } else {
-            false
+            headers.len() != 1 && take_grace(&mut p.headers_grace, now)
         };
         if let Some(ours) = ours {
             // An empty answer: the peer has nothing after our locator. Stop

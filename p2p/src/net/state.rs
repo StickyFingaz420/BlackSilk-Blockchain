@@ -50,6 +50,9 @@ pub(super) struct Peer {
     /// address, relayed ones): not on a block-relay-only connection, ours
     /// or the peer's (docs/p2p.md §9).
     pub(super) addr_relay: bool,
+    /// The listen address the peer's `Version` carried (canonical): its
+    /// self-advertisement, which does not end a seed's address fetch.
+    pub(super) listen: Option<NetAddr>,
     pub(super) height: u64,
     pub(super) score: u32,
     pub(super) limits: PeerLimits,
@@ -74,11 +77,15 @@ pub(super) struct Peer {
     pub(super) blocks_in_flight: usize,
     pub(super) bytes_in_flight: usize,
     pub(super) headers_requested: Option<Instant>,
-    /// When a single header consumed an outstanding `GetHeaders` (it may be a
-    /// tip announcement racing the real reply), the request time: one
-    /// multi-header batch arriving within `HEADERS_TIMEOUT` of it still counts
-    /// as solicited (docs/p2p.md §6).
-    pub(super) headers_grace: Option<Instant>,
+    /// `GetHeaders` requests whose reply may still come although nothing is
+    /// outstanding any more, oldest first, by request time: one a single
+    /// header took (it may have been a tip announcement racing the real
+    /// reply), or one that timed out. Each lets one later batch of other
+    /// than one header count as solicited within `HEADERS_TIMEOUT`
+    /// (`headers::take_grace`, docs/p2p.md §6). A new request does not
+    /// cancel them: their replies may still be in flight (P2P-FIX2). At most
+    /// `headers::MAX_HEADER_GRACE`.
+    pub(super) headers_grace: VecDeque<Instant>,
     /// A header batch from this peer is queued for, or under, verification by
     /// the header worker. At most one per peer: the queue is bounded by the
     /// number of peers, and the peer is not asked for more headers meanwhile.
@@ -140,6 +147,10 @@ pub(super) struct StemEntry {
     pub(super) awaiting_stem: bool,
 }
 
+/// The most timed-out transaction requests remembered (`State::late_txs`);
+/// beyond it a late answer is unrequested again.
+pub(super) const LATE_TXS_MAX: usize = 10_000;
+
 pub(super) struct State {
     pub(super) peers: HashMap<PeerId, Peer>,
     pub(super) addrman: AddrMan,
@@ -160,6 +171,11 @@ pub(super) struct State {
     /// block arriving late from the peer we asked is an answer, not an
     /// unsolicited block (R8-9).
     pub(super) late_blocks: HashMap<Hash, (PeerId, Instant)>,
+    /// Transaction requests that timed out and moved on, by (id, the peer
+    /// asked), kept for another `TX_TIMEOUT`: the late answer is accepted
+    /// from that peer, unpenalized, as a late block is (P2P-FIX2). At most
+    /// [`LATE_TXS_MAX`].
+    pub(super) late_txs: HashMap<(Hash, PeerId), Instant>,
     pub(super) local_nonces: HashSet<u64>,
     /// Addresses being dialed or connected outbound, with the kind of the
     /// connection (`peers::connect_outbound`).

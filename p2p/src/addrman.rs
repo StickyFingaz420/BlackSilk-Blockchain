@@ -101,6 +101,13 @@ pub const RICH_TRIED: usize = 64;
 /// The share of the table a `GetAddr` answer may reveal, in percent
 /// (Bitcoin Core's `MAX_PCT_ADDR_TO_SEND`).
 pub const GETADDR_MAX_PCT: usize = 23;
+/// A `GetAddr` answer carries at least this many addresses (all of a smaller
+/// table), whatever [`GETADDR_MAX_PCT`] allows. The percentage governs only
+/// tables above 34 entries (23 % of 35 rounds up to 9). Without the floor a
+/// table of up to 4 entries answered 1 address, and a joiner on a small
+/// network stopped below its outbound target (INV-PEERS: a target of 4 filled
+/// in 3 of 6 runs on a 5-node network).
+pub const GETADDR_MIN: usize = 8;
 
 const DAY: u64 = 24 * 3600;
 /// Random bucket draws in [`AddrMan::select`] before it falls back to a scan.
@@ -830,11 +837,13 @@ impl AddrMan {
     }
 
     /// Addresses for a `GetAddr` answer: at most `max`, and at most
-    /// [`GETADDR_MAX_PCT`] percent of the table (rounded up), random, none
-    /// terrible.
+    /// [`GETADDR_MAX_PCT`] percent of the table (rounded up) but never fewer
+    /// than [`GETADDR_MIN`] (or the whole table if smaller); random, none
+    /// terrible (so fewer if the table holds fewer that are not terrible).
     pub fn get_addr(&self, max: usize, rng: &mut impl RngCore, now: u64) -> Vec<NetAddr> {
         let total = self.entries.len();
-        let n = max.min((total * GETADDR_MAX_PCT).div_ceil(100));
+        let pct = (total * GETADDR_MAX_PCT).div_ceil(100);
+        let n = max.min(pct.max(GETADDR_MIN.min(total)));
         let mut all: Vec<&Entry> = [&self.new, &self.tried]
             .into_iter()
             .flat_map(|t| t.iter().flatten().flatten())
@@ -1629,6 +1638,32 @@ mod tests {
         assert!(one
             .get_addr(1000, &mut rng, NOW + HORIZON_SECS + 1)
             .is_empty());
+    }
+
+    /// P2P-FIX2 item 1: an answer carries at least min(table, 8) addresses;
+    /// 23 % governs only above 34 entries. Terrible entries are still left
+    /// out, so a table of expired entries answers nothing.
+    #[test]
+    fn get_addr_answers_small_tables_with_at_least_eight() {
+        let (_, mut rng) = table(7);
+        for size in [1usize, 2, 3, 4, 5, 8, 9, 20, 34, 35, 40, 100] {
+            let (mut m, _) = table(7);
+            let mut i = 0u32;
+            while m.len().0 < size {
+                m.add(in_group(i, 1), &in_group(1000 + i, 1), NOW);
+                i += 1;
+            }
+            let pct = (size * GETADDR_MAX_PCT).div_ceil(100);
+            let want = pct.max(size.min(GETADDR_MIN));
+            assert_eq!(m.get_addr(1000, &mut rng, NOW).len(), want, "table {size}");
+            assert!(
+                m.get_addr(3, &mut rng, NOW).len() <= 3,
+                "max still bounds it"
+            );
+            assert!(m
+                .get_addr(1000, &mut rng, NOW + HORIZON_SECS + 1)
+                .is_empty());
+        }
     }
 
     /// Local networks: with private groups, a LAN's addresses spread over
