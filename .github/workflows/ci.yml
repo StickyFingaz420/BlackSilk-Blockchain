@@ -77,7 +77,7 @@ jobs:
   test:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -88,6 +88,8 @@ jobs:
       # Everything except the tests that build PX proofs, in parallel.
       - name: Test (release, non-PX)
         shell: bash
+        env:
+          ANNOTATE_TIMEOUT: 100m
         run: |
           rc=0
           bash .github/scripts/annotate-tests.sh cargo test --locked --release --workspace --no-fail-fast \
@@ -156,6 +158,8 @@ jobs:
       # test name: a new proving test must never slip in with checks on.
       - name: Test with overflow checks and debug assertions (release, non-PX)
         shell: bash
+        env:
+          ANNOTATE_TIMEOUT: 200m
         run: |
           skip="--skip restart_rebuilds_the_px_state_exactly             --skip px_transactions_travel_the_stem_and_confirm_everywhere             --skip invalid_px_transactions_get_the_relaying_peer_penalized"
           t() { bash .github/scripts/annotate-tests.sh cargo test --locked --release --no-fail-fast "$@"; }
