@@ -433,6 +433,35 @@ const POW_GAP: Duration = Duration::from_millis(20);
 const VERIFIERS: usize = 8;
 const VERIFY: Duration = Duration::from_millis(20);
 
+/// How long the legacy mutex baseline's verifiers keep competing. Linux's
+/// mutex is unfair enough that a waiter can starve behind them for as long
+/// as they run (CI run 114 hung in both baselines until the 100-minute
+/// step timeout), so they stop after this cap and the starved path then
+/// completes: a baseline near the cap reads "starved at least this long".
+const BASELINE_CAP: Duration = Duration::from_secs(20);
+
+/// `n` verifications looping on the legacy chain mutex, each holding it for
+/// [`VERIFY`], until `stop` or [`BASELINE_CAP`].
+fn mutex_verifiers(
+    chain: &Arc<Mutex<ChainManager>>,
+    n: usize,
+    stop: &Arc<std::sync::atomic::AtomicBool>,
+) -> Vec<std::thread::JoinHandle<()>> {
+    let until = Instant::now() + BASELINE_CAP;
+    (0..n)
+        .map(|_| {
+            let (c, stop) = (chain.clone(), stop.clone());
+            std::thread::spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::SeqCst) && Instant::now() < until {
+                    let g = c.lock().unwrap();
+                    std::thread::sleep(VERIFY);
+                    drop(g);
+                }
+            })
+        })
+        .collect()
+}
+
 /// The pre-Stage 2 header worker's lock pattern for one announced header
 /// (`p2p` `verify_headers` before Stage 2): pre-check, PoW jobs, hashing
 /// outside the lock, acceptance, and the best-chain check, each a separate
@@ -504,18 +533,7 @@ fn l7_a_header_announcement_is_accepted_within_a_step_per_command_during_a_drain
         let drain = std::thread::spawn(move || {
             submit_block_in_steps(|| c.lock().unwrap(), first, NOW, 2).unwrap()
         });
-        let verifiers: Vec<_> = (0..VERIFIERS)
-            .map(|_| {
-                let (c, stop) = (chain.clone(), stop.clone());
-                std::thread::spawn(move || {
-                    while running(&stop) {
-                        let g = c.lock().unwrap();
-                        std::thread::sleep(VERIFY);
-                        drop(g);
-                    }
-                })
-            })
-            .collect();
+        let verifiers = mutex_verifiers(&chain, VERIFIERS, &stop);
         std::thread::sleep(STEP / 2);
         let start = Instant::now();
         announce_under_the_mutex(&chain, announced);
@@ -602,18 +620,7 @@ fn f34_5_transaction_verification_does_not_starve_a_drain() {
     let mutex_drain = |load: bool| {
         stop.store(false, std::sync::atomic::Ordering::SeqCst);
         let chain = Arc::new(Mutex::new(prepare()));
-        let verifiers: Vec<_> = (0..if load { VERIFIERS } else { 0 })
-            .map(|_| {
-                let (c, stop) = (chain.clone(), stop.clone());
-                std::thread::spawn(move || {
-                    while running(&stop) {
-                        let g = c.lock().unwrap();
-                        std::thread::sleep(VERIFY);
-                        drop(g);
-                    }
-                })
-            })
-            .collect();
+        let verifiers = mutex_verifiers(&chain, if load { VERIFIERS } else { 0 }, &stop);
         std::thread::sleep(Duration::from_millis(50));
         let start = Instant::now();
         let s = submit_block_in_steps(|| chain.lock().unwrap(), blocks[0].clone(), NOW, 2);
