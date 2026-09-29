@@ -5,7 +5,7 @@
 use super::mock_chain::{MockChain, ZeroPow};
 use super::*;
 use crate::px::digest_hex;
-use blacksilk_consensus::{Hash, PowFunction};
+use blacksilk_consensus::{BlockHeader, Hash, PowFunction};
 use blacksilk_px_core::Digest;
 use std::sync::Arc;
 
@@ -878,5 +878,159 @@ fn a_lying_registration_below_the_restore_height_is_detected() {
         assert_eq!(w.px.vault_budget(&good).unwrap(), vault::BUDGET);
         let e = w.px.vault_budget(&odd).unwrap_err().to_string();
         assert!(e.contains("output word"), "{e}");
+    }
+}
+
+/// W3-39c: the header check's verdict does not depend on how its
+/// proof-of-work checks run. A reference check computes each header's work
+/// as it arrives, on one thread (the check before W3-39c); the deferred
+/// check queues them and computes them in parallel batches (`POW_BATCH`),
+/// on 1, 2, 4 and 8 threads. On a mixed set of valid chains and chains with
+/// forged proofs of work and forged difficulties (before, after and across
+/// batch boundaries), both refuse the same header with the same message, or
+/// both accept.
+#[test]
+fn parallel_and_sequential_verdicts_agree() {
+    use crate::headers::{HeaderCheck, POW_BATCH};
+    const N: u64 = 700;
+    let chain = fast_chain(21, N);
+    let params = ChainParams::regtest();
+    let honest: Vec<BlockHeader> = (1..=N).map(|h| chain.blocks[h as usize].header).collect();
+    let b = POW_BATCH as u64;
+    // (heights whose proof of work fails, height whose difficulty is forged)
+    let scenarios: Vec<(Vec<u64>, Option<u64>)> = vec![
+        (vec![], None),
+        (vec![650], None),
+        (vec![100, 600], None),
+        (vec![300], Some(500)),
+        (vec![550], Some(200)),
+        (vec![b, b + 1], None),
+        (vec![b + 1], Some(b + 2)),
+        (vec![2 * b + 3], Some(2 * b + 3)),
+        (vec![N], None),
+        (vec![], Some(640)),
+    ];
+    for (bad, forged) in scenarios {
+        let mut headers = honest.clone();
+        if let Some(f) = forged {
+            headers[f as usize - 1].difficulty += 1;
+        }
+        let pow = BadPow::default();
+        pow.bad
+            .lock()
+            .unwrap()
+            .extend(bad.iter().map(|&h| headers[h as usize - 1].to_bytes()));
+        let run = |threads: usize, deferred: bool| {
+            // Every header's work is checked (samples = expected).
+            let mut c = HeaderCheck::from_genesis(&params, &pow, N, N, u64::MAX / 2).unwrap();
+            c.set_threads(threads);
+            let mut verdict = Ok(());
+            for h in &headers {
+                verdict = if deferred {
+                    c.check_deferred(h, false)
+                } else {
+                    c.check(h, false)
+                };
+                if verdict.is_err() {
+                    break;
+                }
+            }
+            if verdict.is_ok() {
+                verdict = c.flush();
+            }
+            (verdict, c.refused_height(), c.pow_checked)
+        };
+        let reference = run(1, false);
+        // The scenario bites where it should: the first failure in chain
+        // order.
+        let first = bad
+            .iter()
+            .copied()
+            .filter(|&h| headers[h as usize - 1].difficulty > 1)
+            .chain(forged)
+            .min();
+        assert_eq!(reference.1, first, "{bad:?} {forged:?}");
+        if let Some(h) = first {
+            let e = reference.0.as_ref().unwrap_err();
+            assert!(e.contains(&format!("header {h}")), "{e}");
+        }
+        for threads in [1, 2, 4, 8] {
+            let parallel = run(threads, true);
+            assert_eq!(
+                (&parallel.0, parallel.1),
+                (&reference.0, reference.1),
+                "{threads} threads, {bad:?} {forged:?}"
+            );
+            if threads == 1 {
+                assert_eq!(parallel.2, reference.2, "the same hashes, one by one");
+            }
+        }
+    }
+}
+
+/// W3-39c, through a restore (the check's threads: every available one): a
+/// forged proof of work in the dense tail, in the header feed (below the
+/// restore height) or in the scanned blocks, is refused at its block, as
+/// the one-by-one check refused it: the blocks below it applied, none from
+/// it on, whatever block of its batch of 100 it is.
+#[test]
+fn a_parallel_restore_refuses_at_the_forged_block() {
+    let chain = fast_chain(22, 400);
+    for bad in [150u64, 330, 399] {
+        for restore in [100u64, 360] {
+            let pow = Arc::new(BadPow::default());
+            pow.bad
+                .lock()
+                .unwrap()
+                .push(chain.blocks[bad as usize].header.to_bytes());
+            let mut w = restored(Some(pow.clone()), restore);
+            let e = w.sync(&chain).unwrap_err().to_string();
+            assert!(e.contains(&format!("header {bad}'s proof of work")), "{e}");
+            let want = if bad >= restore { bad - 1 } else { restore - 1 };
+            assert_eq!(w.synced_height(), want, "bad {bad} restore {restore}");
+        }
+    }
+}
+
+/// W3-39c measurement (ignored; run with `--ignored --nocapture`): the
+/// header check's 720-header dense tail with RandomX light mode (each hash
+/// computed, then accepted: the chain is mined with the stand-in), on one
+/// thread and on every available thread, the results compared.
+#[test]
+#[ignore]
+fn dense_tail_pow_720_headers_sequential_and_parallel() {
+    use crate::headers::HeaderCheck;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    struct Measured(blacksilk_consensus::RandomXPow, AtomicU64);
+    impl PowFunction for Measured {
+        fn pow_hash(&self, seed: &Hash, header: &[u8]) -> Hash {
+            self.1.fetch_add(1, Ordering::Relaxed);
+            let _ = self.0.pow_hash(seed, header);
+            [0; 32]
+        }
+    }
+    const N: u64 = 720;
+    let chain = fast_chain(23, N);
+    let params = ChainParams::regtest();
+    let pow = Measured(blacksilk_consensus::RandomXPow::new(), AtomicU64::new(0));
+    // The light cache is built once, outside the measurement.
+    let _ = pow.0.cache(&params.genesis_id());
+    let all = std::thread::available_parallelism().map_or(1, |n| n.get());
+    for threads in [1, all] {
+        let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
+        c.set_threads(threads);
+        let before = pow.1.load(Ordering::Relaxed);
+        let t = std::time::Instant::now();
+        for h in 1..=N {
+            c.check_deferred(&chain.blocks[h as usize].header, true)
+                .unwrap();
+        }
+        c.flush().unwrap();
+        let elapsed = t.elapsed();
+        let hashes = pow.1.load(Ordering::Relaxed) - before;
+        eprintln!(
+            "{threads} thread(s): {hashes} light hashes in {elapsed:?} ({:?} per hash)",
+            elapsed / hashes.max(1) as u32
+        );
     }
 }

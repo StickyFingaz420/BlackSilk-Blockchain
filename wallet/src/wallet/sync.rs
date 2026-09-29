@@ -105,6 +105,45 @@ fn unix_now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// Decodes a block the node served.
+fn decode_block(entry: &rpc::BlockEntry) -> Result<Block, WalletError> {
+    let bytes =
+        hex::decode(&entry.hex).map_err(|_| WalletError::BadNodeData("block hex".into()))?;
+    Block::decode(&bytes).map_err(|e| WalletError::BadNodeData(format!("{e:?}")))
+}
+
+/// Checks the headers of a batch of blocks in order (`decoded`, as served in
+/// `entries`), their proof of work computed together (W3-39c): the first
+/// header, the last `DENSE_POW_TAIL` of the node's chain (above
+/// `dense_from`) always, others sampled. Stops at the first block that does
+/// not decode (the scan refuses it first). Returns the position in the
+/// batch of the first header refused, in chain order, and why.
+fn check_batch(
+    c: &mut HeaderCheck<'_>,
+    entries: &[rpc::BlockEntry],
+    decoded: &[Result<Block, WalletError>],
+    first: u64,
+    dense_from: u64,
+) -> Option<(usize, String)> {
+    let base = c.last().0.height + 1;
+    // The refused header's position in the batch (a proof-of-work refusal
+    // may name an earlier header than the one being checked).
+    let at = |c: &HeaderCheck<'_>, e: String| -> (usize, String) {
+        let height = c.refused_height().expect("a refusal has a height");
+        (height.saturating_sub(base) as usize, e)
+    };
+    for (entry, block) in entries.iter().zip(decoded) {
+        let Ok(block) = block else {
+            break;
+        };
+        let force = entry.height == first || entry.height > dense_from;
+        if let Err(e) = c.check_deferred(&block.header, force) {
+            return Some(at(c, e));
+        }
+    }
+    c.flush().err().map(|e| at(c, e))
+}
+
 /// Reads the headers of blocks `lo..=hi` from the node's header feed
 /// (`/headers`, in pages) and hands each to `f`, in order. Each must be the
 /// header of its height; how they link is the caller's check.
@@ -379,15 +418,18 @@ impl Wallet {
                 .map_err(bad)?;
                 // Every header below the first block scanned, from the
                 // genesis (W3-39b), streamed: the ids the backfill needs are
-                // kept, the rest is dropped.
+                // kept, the rest is dropped. Their proof of work is computed
+                // in parallel batches (W3-39c), all of it before anything
+                // relies on them.
                 if synced > 0 {
                     for_each_header(node, 1, synced, |h| {
-                        c.check(&h, h.height > dense_from).map_err(bad)?;
+                        c.check_deferred(&h, h.height > dense_from).map_err(bad)?;
                         if want.contains(&h.height) {
                             backfill_ids.insert(h.height, c.last().1);
                         }
                         Ok(())
                     })?;
+                    c.flush().map_err(bad)?;
                     let (_, last) = c.last();
                     if self
                         .block_ids
@@ -419,17 +461,24 @@ impl Wallet {
             if batch.blocks.is_empty() {
                 break;
             }
-            for entry in batch.blocks {
+            let decoded: Vec<Result<Block, WalletError>> =
+                batch.blocks.iter().map(decode_block).collect();
+            // The batch's headers are checked before any of its blocks is
+            // applied, their proof of work in parallel (W3-39c). A refusal
+            // is reported at its block, after the blocks before it are
+            // applied, as a check block by block would.
+            let refused = match check.as_mut() {
+                Some(c) => check_batch(c, &batch.blocks, &decoded, first, dense_from),
+                None => None,
+            };
+            for (i, (entry, block)) in batch.blocks.into_iter().zip(decoded).enumerate() {
                 if entry.height != from {
                     return Err(WalletError::BadNodeData(format!(
                         "expected block {from}, got {}",
                         entry.height
                     )));
                 }
-                let bytes = hex::decode(&entry.hex)
-                    .map_err(|_| WalletError::BadNodeData("block hex".into()))?;
-                let block = Block::decode(&bytes)
-                    .map_err(|e| WalletError::BadNodeData(format!("{e:?}")))?;
+                let block = block?;
                 let id = block.id(nid);
                 if hex::encode(id) != entry.id || block.compute_tx_root() != block.header.tx_root {
                     return Err(WalletError::BadNodeData(format!(
@@ -447,11 +496,11 @@ impl Wallet {
                 }
                 // Proof of work: checked when the header check runs (the
                 // first header, the tip and the last `DENSE_POW_TAIL`
-                // always, others sampled).
-                if let Some(c) = check.as_mut() {
-                    let force = entry.height == first || entry.height > dense_from;
-                    c.check(&block.header, force)
-                        .map_err(|e| WalletError::BadNodeData(format!("header chain: {e}")))?;
+                // always, others sampled), by `check_batch` above.
+                if let Some((at, e)) = &refused {
+                    if *at == i {
+                        return Err(WalletError::BadNodeData(format!("header chain: {e}")));
+                    }
                 }
                 if let Err(e) = self.apply_block(&block, entry.height, entry.first_output) {
                     if !self.px.tree.as_ref().is_some_and(|t| t.is_confirmed()) {

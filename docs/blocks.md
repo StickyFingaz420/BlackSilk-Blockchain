@@ -971,8 +971,13 @@ that, and the next check starts from the genesis again. The check then proves th
 chain follows the difficulty rule from the genesis and that the sampled headers carry
 that work; it does not prove that the chain is the network's heaviest (a node that
 mines its own chain from the genesis under the rule passes), which only other nodes can
-show. Cost: a restore hashes the whole dense tail in light mode, one header at a time,
-which dominates the check; figures in
+show. Cost: a restore hashes the whole dense tail in light mode, which dominates the
+check. The cheap checks run in order. The hashes they call for are computed in batches
+of up to `headers::POW_BATCH` on every available thread (W3-39c), which share one light
+cache per RandomX key. The verdict is that of checking header by header: the first
+header refused in chain order, with the blocks before it applied. Figures in
+[evidence/wallet-parallel-pow-2026-09-29](evidence/wallet-parallel-pow-2026-09-29/README.md)
+and, before W3-39c,
 [evidence/wallet-header-feed-2026-09-28](evidence/wallet-header-feed-2026-09-28/README.md)
 (`wallet::tests_sync::header_feed_cost_for_3000_headers`, `--ignored`). Without
 the check a wallet trusts its node for proof of work.
