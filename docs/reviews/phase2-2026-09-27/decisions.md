@@ -821,3 +821,10 @@
 - **Fingerprint v3 is now eligible for the FREEZE,** subject to the Wave 4 gate (mutation run, fuzz, benchmarks) and the second threat-model round.
 - **Still sample-based (accepted, documented):** PX and deploy verdicts, block-level rules and canonical-proof rules are covered by REVISIONS plus the build commit and binary hash.
 - **Owed:** reproducible node binaries (STATUS: Not implemented), the dirty check for untracked and staged-only files, the stale difficulty.rs comment.
+
+## Wave 4 start (Lead, 2026-09-29)
+- **Status of the owner's list:** peer discovery (late joiner) and fingerprint v3 coverage are closed in this log (INV-PEERS, P2P-FIX2, FX-RTFP3), but both are RE-CONFIRMED in Wave 4 on current code: a labnet late-joiner run after the GetAddr floor, and the fingerprint-mutation script as part of the freeze gate.
+- **Schedule (4-core/16 GB machine):** phase 4a = W4-MUT (cargo-mutants, consensus then px-core, jobs <= 2) + W4-FUZZ (one libFuzzer process at a time, >= 1800 s per target, -O -a). Phase 4b = W4-LAB (adversarial labnet + late-joiner re-check) once W4-MUT frees the CPU, since labnet timing evidence needs a quiet machine. Benchmarks last, alone.
+- **Amends "Agent 42" (exclusive windows):** runs A and B share the machine with a single-core fuzzer. Mitigation: generous timeouts, and every TIMEOUT mutant is re-run in isolation before it is classified.
+- **Cross-review:** every W4 report goes to a separate red-team agent who tries to break its conclusions (unexplained exemptions, weak killing tests, fuzz coverage gaps) before the Lead accepts it.
+- **CI:** run 115 = connection-cap race in node_binary (fixed d6f4609); the actor_order hang fix (ccff37c) held on Linux (non-PX step 28 min).
