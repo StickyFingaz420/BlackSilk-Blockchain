@@ -507,6 +507,14 @@ fn node_args(
         local(rpc_port(a.base_port, i)).to_string(),
         "--p2p-bind".into(),
         local(p2p_port(a.base_port, i)).to_string(),
+        // Every node advertises its own P2P port, or no node is ever learned
+        // (docs/p2p.md §9: a node without `--public-address` is never
+        // advertised) and the late joiner, which knows only node 0, stays
+        // with one peer: node 0's table stays empty (W4-RX, INV-PEERS). The
+        // lab nodes are connect-only, so they never dial these direct ports
+        // around the proxies; the late joiner does, after the run.
+        "--public-address".into(),
+        local(p2p_port(a.base_port, i)).to_string(),
         "--max-outbound".into(),
         max_outbound.to_string(),
         "--no-builtin-seeds".into(),
@@ -1382,6 +1390,26 @@ mod tests {
         r.warmup.reached = false;
         r.miner_prebuild = false;
         assert_eq!(evidence_notes(&r).len(), 2);
+    }
+
+    /// INV-PEERS: every node advertises its own P2P port (without it no node
+    /// is learned and the late joiner stays with one peer, W4-RX); the lab
+    /// nodes stay connect-only, the late joiner does not.
+    #[test]
+    fn every_node_advertises_its_own_port() {
+        let a = Args::try_parse_from(["labnet", "--bin-dir", "b", "--out", "o"]).unwrap();
+        let peer = [local(proxy_port(a.base_port, 1, 2))];
+        for (i, connect_only) in [(1, true), (4, false)] {
+            let v = node_args(&a, i, Path::new("d"), &peer, 1, connect_only);
+            let at = v.iter().position(|x| x == "--public-address");
+            let advertised = at.map(|k| v[k + 1].clone());
+            assert_eq!(
+                advertised,
+                Some(local(p2p_port(a.base_port, i)).to_string()),
+                "{v:?}"
+            );
+            assert_eq!(v.contains(&"--connect-only".to_string()), connect_only);
+        }
     }
 
     #[test]

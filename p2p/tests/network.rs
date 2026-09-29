@@ -12,6 +12,7 @@ use blacksilk_consensus::{
     seed_height, BlockHeader, ChainParams, Hash, HeaderChain, PowFunction, HEADER_VERSION,
 };
 use blacksilk_crypto::keys::{SubaddressIndex, SubaddressTable, WalletKeys};
+use blacksilk_p2p::addr::AddrEntry;
 use blacksilk_p2p::dandelion::DandelionParams;
 use blacksilk_p2p::limits::score;
 use blacksilk_p2p::message::{Message, Version, PROTOCOL_VERSION};
@@ -697,6 +698,121 @@ async fn peers_are_discovered_through_addr_exchange() {
     })
     .await;
     drop(b);
+}
+
+/// Four connect-only nodes in labnet's topology (a ring with chords: node i
+/// dials i+1 and i+2), each listening on its own loopback port, all of them
+/// advertising that port (`--public-address`) if `public`.
+async fn lab_mesh(seed: u64, public: bool) -> Vec<TestNode> {
+    let addrs: Vec<SocketAddr> = (0..4).map(|_| free_local_addr()).collect();
+    let mut nodes = Vec::new();
+    for i in 0..4 {
+        let mut cfg = fast_config(&[addrs[(i + 1) % 4], addrs[(i + 2) % 4]]);
+        cfg.listen = Some(addrs[i]);
+        cfg.connect_only = true;
+        if public {
+            cfg.public_address = Some(NetAddr::Ip(addrs[i]));
+        }
+        nodes.push(node_with(seed + i as u64, cfg).await);
+    }
+    for (i, n) in nodes.iter().enumerate() {
+        wait_until(&format!("node {i} has its 4 links"), 30, || {
+            n.net.stats().peers >= 4
+        })
+        .await;
+    }
+    nodes
+}
+
+/// Distinct lab nodes the joiner holds an outbound connection to.
+fn outbound_lab_peers(joiner: &TestNode, lab: &[TestNode]) -> usize {
+    let peers = joiner.net.peers();
+    lab.iter()
+        .filter(|n| {
+            peers
+                .iter()
+                .any(|p| !p.inbound && p.addr == NetAddr::Ip(n.addr))
+        })
+        .count()
+}
+
+/// INV-PEERS (W4-RX labnet): a joiner that knows one peer, on a network whose
+/// nodes advertise their addresses, reaches a second node through the
+/// address it learns from that peer, all on one IP (127.0.0.1, one *tried*
+/// entry per IP). Node 0's answer holds 1 entry of its 3 or 4; on 693dd95
+/// that entry was node 0's own address (relayed back to it) in 7 of 32 runs,
+/// and the joiner stayed with one peer (`a_node_does_not_store_its_own_address`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_joiner_with_one_peer_reaches_the_advertised_nodes() {
+    let lab = lab_mesh(160, true).await;
+    let known = lab[0].net.clone();
+    wait_until("node 0 learned addresses", 20, || {
+        let (n, t) = known.stats().known_addresses;
+        n + t >= 2
+    })
+    .await;
+    let joiner = node(170, &[lab[0].addr]).await;
+    wait_until("the joiner reached a second lab node", 30, || {
+        outbound_lab_peers(&joiner, &lab) >= 2
+    })
+    .await;
+}
+
+/// INV-PEERS: a node does not store its own address when a peer relays it
+/// back. Its `GetAddr` answer holds at most 23 % of the table (1 entry of up
+/// to 4), and on a small network that one entry could be the node's own
+/// address, useless to the asker: a joiner that knew only that node then
+/// learned nothing it could dial.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_node_does_not_store_its_own_address() {
+    let a_addr = free_local_addr();
+    let mut cfg = fast_config(&[]);
+    cfg.listen = Some(a_addr);
+    cfg.public_address = Some(NetAddr::Ip(a_addr));
+    let a = node_with(220, cfg).await;
+    let (_r, mut w) = raw_peer(a.addr, params().network_id, true).await;
+    wait_until("registered", 5, || a.net.stats().peers == 1).await;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as u32;
+    // One entry per message, 10.5 s apart: an unsolicited `Addr` spends one
+    // token per entry (one at the start, then 0.1 per second).
+    let other = NetAddr::parse("127.0.0.1:9").unwrap();
+    for e in [NetAddr::Ip(a_addr), other] {
+        w.send(&Message::Addr(vec![AddrEntry::new(now, e)]).encode())
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(10_500)).await;
+    }
+    wait_until("the other address stored", 5, || {
+        let (n, t) = a.net.stats().known_addresses;
+        n + t >= 1
+    })
+    .await;
+    assert_eq!(
+        a.net.stats().known_addresses,
+        (1, 0),
+        "only the other address"
+    );
+}
+
+/// INV-PEERS: nodes that do not advertise themselves are never learned,
+/// by design (a private node is not revealed, docs/p2p.md §9): a joiner that
+/// knows one of them stays with that one peer. This was the W4-RX labnet,
+/// whose nodes ran without `--public-address`: node 0's table stayed empty,
+/// so its `GetAddr` answer was empty.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn nodes_that_do_not_advertise_are_not_discovered() {
+    let lab = lab_mesh(180, false).await;
+    let joiner = node(190, &[lab[0].addr]).await;
+    wait_until("the joiner connected to node 0", 10, || {
+        outbound_lab_peers(&joiner, &lab) == 1
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!(lab[0].net.stats().known_addresses, (0, 0));
+    assert_eq!(outbound_lab_peers(&joiner, &lab), 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

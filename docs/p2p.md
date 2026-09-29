@@ -679,6 +679,11 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
     accepted there, one per handshake, around every other limit (F32-8).
   - Addresses of unknown networks, and addresses that are not routable (unless
     `allow_private`), are skipped.
+  - The node's own address (`--public-address`) is relayed like any other but not
+    stored. It is never dialed, and in a small table it could take the one entry a
+    `GetAddr` answer carries. Before INV-PEERS a 4-node labnet's joiner that knew one
+    node learned only that node's own address in 7 of 32 runs, and stayed with one
+    peer (`a_node_does_not_store_its_own_address`).
 - **Relaying addresses.** An address from an unsolicited `Addr` of at most 10 entries
   is relayed to 2 random peers (other than the sender) if it is routable, it passed
   the rate limit, and its time is **fresh**: at most 10 minutes old and at most 10
@@ -704,6 +709,14 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   - After each handshake the node also sends the same address to the peer as a
     one-entry `Addr`, timed now rounded down to 5 minutes (so the peer relays it, and
     the time reveals the node's clock no finer than that).
+  - **Discovery depends on it.** A node that does not set `--public-address` never
+    enters another node's table: a successful outbound connection promotes only an
+    address the table already holds (`AddrMan::good`), so the addresses a node dials,
+    manual peers included, are not learned from it either. A network whose nodes all
+    run without it gives a joiner nothing to discover (INV-PEERS: the W4-RX labnet,
+    `nodes_that_do_not_advertise_are_not_discovered`). Before addrman v2 (W3-32) every
+    successful dial inserted its address into *tried*, so a node's `GetAddr` answer
+    revealed the addresses it had dialed.
 - **Address manager** (`p2p/src/addrman.rs`; v2 since W3-32, after Bitcoin Core's).
   Two tables of fixed slots: *new* (256 buckets × 64 slots: heard of) and *tried*
   (64 × 64: this node connected to it).
