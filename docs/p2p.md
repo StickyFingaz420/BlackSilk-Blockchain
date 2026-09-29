@@ -375,10 +375,21 @@ is a violation (100 points). The only exception is `Version`'s extension area (�
    - **Unrequested headers** must be a single tip announcement. A longer unrequested
      batch is not verified at all, and costs the sender 10 points.
      - A single header that arrives while our `GetHeaders` is outstanding may be a
-       tip announcement that crossed our request. It answers the request, but one
-       multi-header batch arriving within 60 s of the request still counts as
-       solicited (the real reply). Before 2026-09-27 that reply cost the honest
-       sender 10 points and was dropped.
+       tip announcement that crossed our request. It answers the request, but the
+       request's reply is still **owed**: one later batch of other than one header,
+       arriving within 60 s of the request, still counts as solicited (the real
+       reply). Before 2026-09-27 that reply cost the honest sender 10 points and was
+       dropped.
+     - A request that times out (60 s) is owed the same way for another 60 s: its
+       late reply is accepted, unpenalized.
+     - The node asks again as soon as nothing is outstanding, so a slow peer can owe
+       several replies; each one owed (at most 8 remembered) excuses exactly one
+       batch. Every `GetHeaders` still buys at most one batch. Before P2P-FIX2 a new
+       request cancelled the owed reply, whose arrival then cost the honest sender 10
+       points. Under CPU load this happened while syncing from a peer that was itself
+       syncing and announcing every new tip (the flake of
+       `px_transactions_travel_the_stem_and_confirm_everywhere`; regression test
+       `a_headers_reply_overtaken_by_a_second_request_is_not_penalized`).
    - **At most one batch per peer** is queued or being verified. The peer is not asked
      for more headers meanwhile; headers arriving from it in that time are dropped,
      and the node asks again once the batch is done (whatever its outcome, unless the
@@ -510,6 +521,11 @@ never used in any check or sent to a peer:
   - A `NotFound` answer, no answer within 30 s, or the peer disconnecting moves the
     request to the next announcer (on disconnect at once).
   - Neither is penalized: transaction relay is best effort.
+  - The answer to a request that timed out is still accepted from the peer asked
+    for another 30 s, unpenalized, as a late block is (at most 10 000 such requests
+    remembered). Before P2P-FIX2 it was an unrequested `Tx` (10 points) and was
+    dropped, so a node or link slow for 30 s penalized honest peers
+    (`a_late_transaction_answer_is_not_penalized`).
   - The per-peer sets of announced and known transaction ids are capped (50 000;
     cleared when exceeded: forgetting only costs a redundant announcement).
 - **Stem transactions stay private.** An `InvTx` for a transaction in our stempool
@@ -658,9 +674,20 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   table and recognize them later from another session, IP or Tor circuit, linking the
   node's sessions (Biryukov and Pustogarov, "Bitcoin over Tor isn't a good idea",
   IEEE S&P 2015; Bitcoin Core does the same, F32-4). The answer holds at most 23 % of
-  the table (rounded up; Bitcoin Core's `MAX_PCT_ADDR_TO_SEND`) and no terrible entry
-  (below). Its entries carry time 0 ("unknown"): the table's times stay local, so the
-  answer reveals nothing about them or the node's clock.
+  the table (rounded up; Bitcoin Core's `MAX_PCT_ADDR_TO_SEND`) but at least
+  min(table size, 8) addresses (`addrman::GETADDR_MIN`), and no terrible entry (below).
+  Its entries carry time 0 ("unknown"): the table's times stay local, so the answer
+  reveals nothing about them or the node's clock.
+  - **The floor of 8** (P2P-FIX2, Lead decision after INV-PEERS). With 23 % alone a
+    table of up to 4 entries answered 1 address, so a joiner on a small network
+    stopped below its outbound target: a joiner with one seed and a target of 4, on
+    a network of 4 advertised nodes, often did not fill it
+    (`a_joiner_with_one_seed_fills_its_outbound_target`).
+  - **Privacy cost.** A table of at most 8 entries is revealed whole to one
+    `GetAddr`, and tables up to 34 entries answer more than 23 %. Above 34 entries
+    the 23 % cap governs, as before. A spy could already sample a small table fully
+    by reconnecting (one answer per connection); an attacker's own table is large,
+    so the floor gives it nothing (the eclipse simulator's output is unchanged).
 - **What a peer may add to the table** (`p2p/src/addrman_gate.rs`, per connection):
   - **The answer to our `GetAddr`**: up to 1000 addresses in total within 60 s,
     ending with its first message of more than 10 entries. Stored, never relayed.
@@ -863,8 +890,12 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
     (`p2p/tests/outbound_policy.rs`).
 - **Seeds are one-shot address fetches** (W3-32c, dossier 32 W7, F32-6; Bitcoin Core's
   `ADDR_FETCH`): the node connects, sends `GetAddr`, stores the answer and closes the
-  connection on it (any `Addr` except a single entry, which is the seed's own address),
-  or after 30 s without one (`NetConfig::addr_fetch_timeout`). The seed is never
+  connection on it, or after 30 s without one (`NetConfig::addr_fetch_timeout`). Any
+  `Addr` closes it except the seed's self-advertisement: one entry equal to the
+  listen address its `Version` carried, sent before the answer. Before P2P-FIX2 any
+  single-entry `Addr` was taken for the self-advertisement, so a seed whose answer
+  was one address was held for the whole timeout
+  (`a_seed_answering_one_address_is_left_at_once`). The seed is never
   promoted in the table, never counted as an outbound peer, never a stem or an anchor;
   no transaction is taken from it and no header or block is requested from it. Before,
   a seed was dialed as a full outbound peer, promoted to *tried* and kept: a seed
@@ -1026,7 +1057,7 @@ dropped.
 | Unrequested `Headers` with more than one header | 10 |
 | Transaction invalid by a **stateless** rule (`Tx`/`StemTx`; transactions.md T1–T11), or with an invalid ring signature over ring members all ≥ 60 blocks deep | 20 |
 | A `StemTx` already proven invalid, sent again | 20 |
-| Unrequested `Block`/`Tx`, `Pong` without a ping, second `GetAddr` from an inbound peer, or an unsolicited `Addr` of more than 10 entries (§9) | 10 |
+| Unrequested `Block`/`Tx`, `Pong` without a ping, second `GetAddr` from an inbound peer, or an unsolicited `Addr` of more than 10 entries (§9). The late answer to a request of ours that timed out is not unrequested (§6, §7) | 10 |
 | Message or byte rate exceeded (read loop), `InvTx` rate, a request dropped by a full slow lane | 1 per excess message; the message is dropped |
 
 **Not penalized** (honest peers can trigger these):

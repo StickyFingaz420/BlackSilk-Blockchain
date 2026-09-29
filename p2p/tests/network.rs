@@ -48,6 +48,57 @@ fn params() -> ChainParams {
     ChainParams::regtest()
 }
 
+/// Test diagnostics: with `BLACKSILK_TEST_LOG` set, the network's debug log
+/// (every penalty with its reason, `Inner::penalize`) goes to stderr,
+/// prefixed with the milliseconds since the logger started. No new
+/// dependency: `log` is the crate's own.
+struct StderrLog(std::time::Instant);
+impl log::Log for StderrLog {
+    fn enabled(&self, m: &log::Metadata) -> bool {
+        m.target().starts_with("blacksilk_p2p") && m.level() <= log::Level::Debug
+    }
+    fn log(&self, r: &log::Record) {
+        if self.enabled(r.metadata()) {
+            eprintln!(
+                "[{:>7} ms {} {}] {}",
+                self.0.elapsed().as_millis(),
+                r.level(),
+                r.target(),
+                r.args()
+            );
+        }
+    }
+    fn flush(&self) {}
+}
+
+fn init_test_log() {
+    static LOG: std::sync::OnceLock<StderrLog> = std::sync::OnceLock::new();
+    if std::env::var_os("BLACKSILK_TEST_LOG").is_none() {
+        return;
+    }
+    let l = LOG.get_or_init(|| StderrLog(std::time::Instant::now()));
+    if log::set_logger(l).is_ok() {
+        log::set_max_level(log::LevelFilter::Debug);
+    }
+}
+
+/// Every peer of `nodes` with a misbehavior score: (node index, peer
+/// address, kind, score). The penalty reasons are in the debug log
+/// (`BLACKSILK_TEST_LOG`).
+fn penalized(nodes: &[&TestNode]) -> Vec<(usize, NetAddr, String, u32)> {
+    nodes
+        .iter()
+        .enumerate()
+        .flat_map(|(i, n)| {
+            n.net
+                .peers()
+                .into_iter()
+                .filter(|p| p.score != 0)
+                .map(move |p| (i, p.addr, format!("{:?}", p.kind), p.score))
+        })
+        .collect()
+}
+
 struct TestNode {
     chain: SharedChain,
     net: Network,
@@ -758,6 +809,34 @@ async fn a_joiner_with_one_peer_reaches_the_advertised_nodes() {
     .await;
 }
 
+/// P2P-FIX2 item 1 (INV-PEERS small-network plateau): a joiner that knows
+/// one seed fills its outbound target (4) on a network of four advertised
+/// nodes, i.e. every one of them, the seed included once its address fetch
+/// has closed. A `GetAddr` answer carries at least min(table, 8) addresses
+/// (`addrman::GETADDR_MIN`): the seed's answer holds the other three nodes.
+/// On the base (23 % of a 3-entry table: 1 address) the joiner filled its
+/// target in 3 of 6 trial runs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_joiner_with_one_seed_fills_its_outbound_target() {
+    let lab = lab_mesh(230, true).await;
+    for (i, n) in lab.iter().enumerate() {
+        let net = n.net.clone();
+        wait_until(&format!("node {i} learned the other three"), 20, || {
+            let (n, t) = net.stats().known_addresses;
+            n + t >= 3
+        })
+        .await;
+    }
+    let mut cfg = fast_config(&[]);
+    cfg.seeds = vec![NetAddr::Ip(lab[0].addr)];
+    cfg.block_relay_only = 0;
+    let joiner = node_with(240, cfg).await;
+    wait_until("the joiner filled its 4 outbound slots", 30, || {
+        outbound_lab_peers(&joiner, &lab) >= 4
+    })
+    .await;
+}
+
 /// INV-PEERS: a node does not store its own address when a peer relays it
 /// back. Its `GetAddr` answer holds at most 23 % of the table (1 entry of up
 /// to 4), and on a small network that one entry could be the node's own
@@ -1107,6 +1186,7 @@ async fn relaying_an_already_confirmed_transaction_is_not_penalized() {
 /// node verifies its proof, and once mined all nodes hold the same PX state.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
+    init_test_log();
     let mut a = node(30, &[]).await;
     a.mine_n(80, 0);
     let b = node(31, &[a.addr]).await;
@@ -1135,9 +1215,11 @@ async fn px_transactions_travel_the_stem_and_confirm_everywhere() {
     })
     .await;
     // No peer was penalized for relaying it.
-    for n in [&a, &b, &c] {
-        assert!(n.net.peers().iter().all(|p| p.score == 0));
-    }
+    let scored = penalized(&[&a, &b, &c]);
+    assert!(
+        scored.is_empty(),
+        "penalized (node, peer, kind, score): {scored:?}"
+    );
     let mut c = c;
     c.mine(0);
     wait_until("A and B confirm", 60, || {
@@ -2141,6 +2223,98 @@ async fn a_tip_announcement_racing_a_headers_reply_is_not_penalized() {
     })
     .await;
     assert_eq!(a.net.peers()[0].score, 0, "the reply was not unsolicited");
+}
+
+/// P2P-FIX2 item 2, the root cause of the PX stem test's load flake: a
+/// peer slow to answer (or a node slow to read its answer) is not penalized.
+/// A one-header tip announcement takes the outstanding `GetHeaders`; the
+/// node, now "not waiting", asks again before the first reply arrives, so
+/// two replies are in flight. Before, the second reply was an "unrequested
+/// header batch" (+10): the node forgot the first request when it sent the
+/// second. Under CPU load this hit node C of
+/// `px_transactions_travel_the_stem_and_confirm_everywhere` while it synced
+/// from B, which was itself syncing and announcing every new tip.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_headers_reply_overtaken_by_a_second_request_is_not_penalized() {
+    init_test_log();
+    let a = node(250, &[]).await;
+    let nid = params().network_id;
+    let branch = header_branch(30, 120, 0);
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 30).await;
+    let Some(Message::GetHeaders { locator: first, .. }) =
+        recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. })).await
+    else {
+        panic!("no first GetHeaders");
+    };
+    // The announcement; the node asks again once it has taken it.
+    w.send(&Message::Headers(vec![branch[0]]).encode())
+        .await
+        .unwrap();
+    let Some(Message::GetHeaders {
+        locator: second, ..
+    }) = recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. })).await
+    else {
+        panic!("no second GetHeaders");
+    };
+    // Only now the two (delayed) replies, in order.
+    for locator in [first, second] {
+        w.send(&Message::Headers(serve_headers(&branch, &locator)).encode())
+            .await
+            .unwrap();
+    }
+    serve_branch(r, w, branch.clone());
+    wait_until("synced", 10, || {
+        a.chain.lock().unwrap().header_height() == 30
+    })
+    .await;
+    let scored = penalized(&[&a]);
+    assert!(scored.is_empty(), "penalized: {scored:?}");
+    // A third multi-header batch answers nothing: still unrequested.
+    let (mut r2, mut w2) = raw_peer_at(a.addr, nid, true, 0).await;
+    let _ = recv_until(&mut r2, 1.0, |_| false).await;
+    w2.send(&Message::Headers(branch[..3].to_vec()).encode())
+        .await
+        .unwrap();
+    wait_until("the unrequested batch is scored", 5, || {
+        penalized(&[&a]).iter().any(|(_, _, _, s)| *s == 10)
+    })
+    .await;
+}
+
+/// P2P-FIX2 item 2 (same class): the answer to a `GetTx` that timed out
+/// (30 s) and moved on is accepted from the peer we asked, unpenalized, as a
+/// late block is. Before, it was an "unrequested transaction" (+10) and
+/// dropped: a node or link slow for 30 s got honest peers penalized.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_late_transaction_answer_is_not_penalized() {
+    init_test_log();
+    let mut a = node(260, &[]).await;
+    a.mine_n(80, 0);
+    let tx = a.payment();
+    let id = tx.hash();
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    w.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+    assert!(recv_until(
+        &mut r,
+        5.0,
+        |m| matches!(m, Message::GetTx(ids) if ids == &vec![id])
+    )
+    .await
+    .is_some());
+    // Past the 30 s request timeout, answering pings meanwhile.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(32);
+    while tokio::time::Instant::now() < deadline {
+        if let Some(Message::Ping(n)) =
+            recv_until(&mut r, 1.0, |m| matches!(m, Message::Ping(_))).await
+        {
+            w.send(&Message::Pong(n).encode()).await.unwrap();
+        }
+    }
+    w.send(&Message::Tx(tx.encode()).encode()).await.unwrap();
+    wait_until("the late transaction is pooled", 10, || a.mempool_has(&id)).await;
+    let scored = penalized(&[&a]);
+    assert!(scored.is_empty(), "penalized: {scored:?}");
 }
 
 /// M1: when the peer we asked for a transaction disconnects, the request

@@ -369,7 +369,11 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
             st.tx_requests.remove(&id);
             st.tx_announcers.remove(&id);
         }
-        r
+        // An answer to our request that timed out and moved on (P2P-FIX2):
+        // accepted, unpenalized. The request to the next announcer stays,
+        // so its answer is not unrequested either (a pooled copy is then
+        // dropped for free).
+        r || st.late_txs.remove(&(id, peer)).is_some()
     };
     if !requested {
         inner.misbehave(peer, score::UNSOLICITED, "unrequested transaction");

@@ -419,6 +419,49 @@ async fn seed_is_disconnected_after_its_addr_answer() {
     assert_eq!(seed.seen.lock().unwrap().connections, 1, "asked once");
 }
 
+/// P2P-FIX2 item 3: a seed whose answer is exactly one address is left as
+/// soon as the answer arrives, not after the address-fetch timeout. The seed
+/// (a real node, advertising itself) first sends its own address, a
+/// one-entry `Addr` that is not the answer; its answer then holds the one
+/// entry of its table. Before, the fetch closed only on an `Addr` of other
+/// than one entry, so this seed was held for the whole timeout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_seed_answering_one_address_is_left_at_once() {
+    // S advertises itself; P advertises itself to S, S's only table entry.
+    let s_addr = free_local_addr();
+    let mut cfg = config(None);
+    cfg.listen = Some(s_addr);
+    cfg.public_address = Some(NetAddr::Ip(s_addr));
+    let (s, _) = start(45, cfg).await;
+    let p_addr = free_local_addr();
+    let mut cfg = config(None);
+    cfg.listen = Some(p_addr);
+    cfg.public_address = Some(NetAddr::Ip(p_addr));
+    cfg.connect = vec![NetAddr::Ip(s_addr)];
+    cfg.connect_only = true;
+    let (_p, _) = start(46, cfg).await;
+    wait_until("S learned P, its one entry", 10, || {
+        s.stats().known_addresses == (1, 0)
+    })
+    .await;
+    // V knows only S, as a seed; the timeout is far beyond the wait below.
+    let mut cfg = config(None);
+    cfg.seeds = vec![NetAddr::Ip(s_addr)];
+    cfg.block_relay_only = 0;
+    cfg.addr_fetch_timeout = Duration::from_secs(120);
+    let (v, _) = start(47, cfg).await;
+    // S's own address and its answer (P).
+    wait_until("V stored S and the answer", 10, || {
+        let (n, t) = v.stats().known_addresses;
+        n + t >= 2
+    })
+    .await;
+    wait_until("V closed the fetch on the one-address answer", 5, || {
+        !v.peers().iter().any(|p| p.kind == ConnKind::AddrFetch)
+    })
+    .await;
+}
+
 /// W3-32c item 6: a seed that never answers is left after the address-fetch
 /// timeout.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

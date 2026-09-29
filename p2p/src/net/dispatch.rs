@@ -176,8 +176,9 @@ pub(super) fn requested_by_us(inner: &Inner, peer: PeerId, msg: &Message) -> boo
         Message::Block(bytes) => bytes,
         Message::Headers(h) => {
             let now = Instant::now();
-            return inner.state().peers.get(&peer).is_some_and(|p| {
-                p.headers_requested.is_some() || (h.len() > 1 && in_grace(p.headers_grace, now))
+            return inner.state().peers.get_mut(&peer).is_some_and(|p| {
+                p.headers_requested.is_some()
+                    || (h.len() != 1 && in_grace(&mut p.headers_grace, now))
             });
         }
         _ => return false,
