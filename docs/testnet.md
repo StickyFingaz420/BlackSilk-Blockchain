@@ -153,7 +153,7 @@ Main options (`blacksilk-node --help` lists all of them):
 | `--peer` / `p2p.peers` | peers to stay connected to |
 | `--connect-only` / `p2p.connect_only` | outbound connections only to the peers above (fixed topologies) |
 | `--seed` / `p2p.seeds` | seeds for discovery (host names allowed, except in proxy-only mode) |
-| `--public-address` | advertise this address; unset means the node is never advertised |
+| `--public-address` | advertise this address; unset means the node is never advertised. **Seed nodes must set it:** peers only ask a seed for addresses and then disconnect (p2p.md §9), so a seed without it is never learned as a peer |
 | `--p2p-bind`, `--no-listen` | inbound connections |
 | `--proxy`, `--proxy-only` | SOCKS5 (Tor) for outbound connections; proxy-only refuses clearnet |
 | `--max-outbound`, `--max-inbound` | connection limits (8 / 64) |
