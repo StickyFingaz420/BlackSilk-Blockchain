@@ -14,7 +14,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const NODE: &str = env!("CARGO_BIN_EXE_blacksilk-node");
 
@@ -23,6 +23,8 @@ struct NodeProc {
     addr: SocketAddr,
     data: PathBuf,
     log: PathBuf,
+    /// When this process was spawned: its cookie is written after it.
+    spawned: SystemTime,
 }
 
 fn free_port() -> SocketAddr {
@@ -45,6 +47,7 @@ impl NodeProc {
             addr.to_string(),
         ];
         args.extend(extra.iter().map(|s| s.to_string()));
+        let spawned = SystemTime::now();
         let child = Command::new(NODE)
             .args(&args)
             .env("RUST_LOG", "info")
@@ -57,6 +60,7 @@ impl NodeProc {
             addr,
             data: data.to_path_buf(),
             log,
+            spawned,
         };
         n.wait_listening();
         n
@@ -66,11 +70,19 @@ impl NodeProc {
         std::fs::read_to_string(&self.log).unwrap_or_default()
     }
 
-    /// Waits until the RPC port accepts connections and the cookie file
-    /// exists (the node binds the port before it writes the cookie).
+    /// Waits until the RPC port accepts connections and THIS process has
+    /// written its cookie (the node binds the port before it writes the
+    /// cookie, and a killed earlier node leaves its stale cookie behind: CI
+    /// run 111 read that one and got 401).
     fn wait_listening(&mut self) {
         let start = Instant::now();
-        while TcpStream::connect(self.addr).is_err() || !self.cookie().exists() {
+        let spawned = self.spawned;
+        let fresh = |p: &Path| {
+            std::fs::metadata(p)
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| t >= spawned)
+        };
+        while TcpStream::connect(self.addr).is_err() || !fresh(&self.cookie()) {
             if let Some(status) = self.child.try_wait().unwrap() {
                 panic!("the node exited ({status}); log:\n{}", self.log_text());
             }
