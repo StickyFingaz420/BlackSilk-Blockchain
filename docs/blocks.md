@@ -455,11 +455,19 @@ body    = type (1) ‖ payload
   `invalidateblock`: a branch built on the block is not followed however much work it
   has, so a node whose operator invalidates a block the network accepts stays on its
   own chain until the verdict is cancelled.
-  - **Where it applies.** When the block would become body-complete
-    (`ChainManager::mark_complete`): on replay, before its body is validated or applied
-    (so the flag gets the node past a block that halts it at start-up, below), and
-    live for a block that arrives after the verdict. The verdict may name a block the
-    store does not hold yet; it applies when the block arrives. The block's header is
+  - **Where it applies.** On a block the store holds: when the block would become
+    body-complete (`ChainManager::mark_complete`), on replay before its body is
+    validated or applied (so the flag gets the node past a block that halts it at
+    start-up, below). The verdict may name a block whose header the node does not know
+    yet; it then applies **when the header arrives** (S5b, 2026-09-29;
+    `ChainManager::refuse_operator_invalidated`), from a header batch or with a whole
+    block: the header passes every header rule, proof of work included, and is then
+    marked invalid at once and refused as a descendant of an invalid block is
+    (`HeaderError::InvalidParent`, which the P2P layer does not penalize: the peer
+    follows the network's rules). No body of it or of a descendant is requested or
+    stored, and a descendant's header is refused by the pre-check before any proof of
+    work. The header stays known, so a heavier chain refused only because of the
+    verdict is still reported (§9.4, operator fork). In every case the block's header is
     marked invalid, so the block and every descendant sent again are refused
     (`HeaderError::InvalidParent`). `invalid_reason` stays empty for it (no rule was
     broken); `operator_invalidated` reports it.
@@ -483,8 +491,9 @@ body    = type (1) ‖ payload
     before this one refused any store holding an operator `invalid` record.)
   - Tested in `chain/tests/operator_invalidation.rs` (the tip and a buried block, live
     and through the flag, with restarts; descendants arriving later; a block marked
-    before it arrives; reconsider; genesis; a torn tail right after a marker; the
-    apply-halt escape), `store_format.rs::replay_reaches_the_state_of_a_fresh_sync`,
+    before it arrives; its header and its descendants' headers refused at header time
+    with no body requested or stored (S5b); reconsider; genesis; a torn tail right
+    after a marker; the apply-halt escape), `store_format.rs::replay_reaches_the_state_of_a_fresh_sync`,
     the `store.rs` record tests, `node/tests/node_binary.rs::
     the_node_binary_invalidates_and_reconsiders_a_block` (the binary end to end) and
     `node/src/config.rs::operator_block_flags`.
@@ -971,8 +980,13 @@ that, and the next check starts from the genesis again. The check then proves th
 chain follows the difficulty rule from the genesis and that the sampled headers carry
 that work; it does not prove that the chain is the network's heaviest (a node that
 mines its own chain from the genesis under the rule passes), which only other nodes can
-show. Cost: a restore hashes the whole dense tail in light mode, one header at a time,
-which dominates the check; figures in
+show. Cost: a restore hashes the whole dense tail in light mode, which dominates the
+check. The cheap checks run in order. The hashes they call for are computed in batches
+of up to `headers::POW_BATCH` on every available thread (W3-39c), which share one light
+cache per RandomX key. The verdict is that of checking header by header: the first
+header refused in chain order, with the blocks before it applied. Figures in
+[evidence/wallet-parallel-pow-2026-09-29](evidence/wallet-parallel-pow-2026-09-29/README.md)
+and, before W3-39c,
 [evidence/wallet-header-feed-2026-09-28](evidence/wallet-header-feed-2026-09-28/README.md)
 (`wallet::tests_sync::header_feed_cost_for_3000_headers`, `--ignored`). Without
 the check a wallet trusts its node for proof of work.

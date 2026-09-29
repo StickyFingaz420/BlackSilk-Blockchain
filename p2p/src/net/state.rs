@@ -7,6 +7,7 @@ use super::lock_or_exit;
 use crate::addr::NetAddr;
 use crate::addrman::{AddrMan, BanList};
 use crate::addrman_gate::AddrGate;
+use crate::clock::ClockMonitor;
 use crate::connman::ConnKind;
 use crate::dandelion::{Dandelion, PeerId};
 use crate::limits::PeerLimits;
@@ -341,6 +342,10 @@ pub(super) struct Inner {
     /// Serializes writes of the originated set's file (taken before the
     /// state lock, only on blocking threads or at shutdown).
     pub(super) originated_io: Mutex<()>,
+    /// The warn-only estimate of the local clock's offset against recent
+    /// blocks (`crate::clock`); never used for validation. Taken alone,
+    /// never with the state lock.
+    pub(super) clock: Mutex<ClockMonitor>,
 }
 
 pub(super) fn unix_now() -> u64 {
@@ -357,6 +362,10 @@ pub(super) fn short(h: &Hash) -> String {
 impl Inner {
     pub(super) fn state(&self) -> MutexGuard<'_, State> {
         lock_or_exit(&self.state, "network state")
+    }
+
+    pub(super) fn clock(&self) -> MutexGuard<'_, ClockMonitor> {
+        lock_or_exit(&self.clock, "clock monitor")
     }
 
     /// Runs `f` on the chain actor's Query lane and returns its result

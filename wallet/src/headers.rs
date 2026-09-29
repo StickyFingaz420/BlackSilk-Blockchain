@@ -40,6 +40,19 @@
 //!
 //! On by default for restores (the first sync of a restored wallet),
 //! opt-in for routine syncs (decisions, "Agent 39").
+//!
+//! **Parallel proof of work (W3-39c).** The dense tail alone is about 720
+//! light-mode RandomX hashes, about 13 minutes on one thread. The cheap
+//! checks run in order as headers arrive; the proof-of-work checks they
+//! call for are queued ([`HeaderCheck::check_deferred`]) and computed
+//! together ([`HeaderCheck::flush`]) on up to [`HeaderCheck::threads`]
+//! scoped threads. The threads share the proof-of-work function, so the
+//! one light cache per RandomX key that `RandomXPow` keeps is built once
+//! and read by all of them (each hash runs its own light-mode VM over it).
+//! The verdict is the one of checking header by header: the first header
+//! that fails, in chain order, cheap check or proof of work, with its
+//! message (`parallel_and_sequential_verdicts_agree` in the wallet's sync
+//! tests).
 
 use blacksilk_consensus::difficulty::next_difficulty;
 use blacksilk_consensus::pow::{check_hash, seed_height};
@@ -48,10 +61,22 @@ use blacksilk_consensus::{BlockHeader, ChainParams, Hash, PowFunction};
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Headers whose proof of work is checked per sync, in expectation, below
 /// the densely checked tail (module docs).
 pub const HEADER_SAMPLES: u64 = 16;
+
+/// Deferred proof-of-work checks are computed once this many are queued
+/// ([`HeaderCheck::check_deferred`]): enough to keep every thread busy,
+/// few enough that a forged header is caught soon.
+pub const POW_BATCH: usize = 256;
+
+/// A proof-of-work check the cheap checks called for, not computed yet.
+struct PowJob {
+    header: BlockHeader,
+    seed: Hash,
+}
 
 /// Checks a run of headers from the genesis (module docs).
 pub struct HeaderCheck<'a> {
@@ -66,6 +91,13 @@ pub struct HeaderCheck<'a> {
     threshold: u64,
     rng: ChaCha20Rng,
     now: u64,
+    /// Proof-of-work checks queued, in chain order ([`Self::flush`]).
+    pending: Vec<PowJob>,
+    /// Threads [`Self::flush`] uses.
+    threads: usize,
+    /// The first refusal, with the height it was at: a check is spent after
+    /// it (every later call returns it again).
+    refused: Option<(u64, String)>,
     /// Headers whose proof of work was computed.
     pub pow_checked: u64,
 }
@@ -163,10 +195,31 @@ impl<'a> HeaderCheck<'a> {
             threshold,
             rng: ChaCha20Rng::from_seed(seed),
             now,
+            pending: Vec::new(),
+            threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
+            refused: None,
             pow_checked: 0,
         };
         check.trim();
         Ok(check)
+    }
+
+    /// Threads the proof-of-work checks use (default: the machine's
+    /// available parallelism; 1 computes them on the calling thread).
+    pub fn threads(&self) -> usize {
+        self.threads
+    }
+
+    /// The height of the header the check refused (for a header that does
+    /// not extend the last one, the height expected next), if it refused
+    /// one.
+    pub fn refused_height(&self) -> Option<u64> {
+        self.refused.as_ref().map(|r| r.0)
+    }
+
+    /// Sets [`Self::threads`] (at least 1).
+    pub fn set_threads(&mut self, threads: usize) {
+        self.threads = threads.max(1);
     }
 
     /// Headers a check keeps as the context of the next one.
@@ -204,8 +257,62 @@ impl<'a> HeaderCheck<'a> {
     }
 
     /// Checks the next header; `force_pow` checks its work whatever the
-    /// draw. On success the header joins the context.
+    /// draw. On success the header joins the context. Proof-of-work checks
+    /// queued before it are computed first ([`Self::flush`]).
     pub fn check(&mut self, header: &BlockHeader, force_pow: bool) -> Result<(), String> {
+        self.check_deferred(header, force_pow)?;
+        self.flush()
+    }
+
+    /// [`Self::check`] with the header's proof-of-work check, if it has
+    /// one, queued: computed with others by [`Self::flush`], which the
+    /// caller runs before it relies on the headers (at most [`POW_BATCH`]
+    /// wait; more are computed here). The header joins the context at once,
+    /// so the headers after it can be checked. A refusal is the first one in
+    /// chain order: when a cheap check fails, the queued checks are computed
+    /// first, and one of them that fails is the refusal instead.
+    pub fn check_deferred(&mut self, header: &BlockHeader, force_pow: bool) -> Result<(), String> {
+        if let Some((_, e)) = &self.refused {
+            return Err(e.clone());
+        }
+        let queued = self.precheck(header, force_pow);
+        if queued.is_err() || self.pending.len() >= POW_BATCH {
+            self.flush()?;
+        }
+        if let Err(e) = &queued {
+            let at = self.last().0.height + 1;
+            self.refused = Some((at, e.clone()));
+        }
+        queued
+    }
+
+    /// Computes the queued proof-of-work checks, on [`Self::threads`]
+    /// threads. Refuses with the first header, in chain order, whose hash
+    /// does not meet its difficulty.
+    pub fn flush(&mut self) -> Result<(), String> {
+        if let Some((_, e)) = &self.refused {
+            return Err(e.clone());
+        }
+        let jobs = std::mem::take(&mut self.pending);
+        let computed = AtomicU64::new(0);
+        let failed = first_failure(self.pow, &jobs, self.threads, &computed);
+        self.pow_checked += computed.into_inner();
+        match failed {
+            None => Ok(()),
+            Some(i) => {
+                let e = format!(
+                    "header {}'s proof of work does not meet its difficulty",
+                    jobs[i].header.height
+                );
+                self.refused = Some((jobs[i].header.height, e.clone()));
+                Err(e)
+            }
+        }
+    }
+
+    /// Every check of [`Self::check`] but the proof of work, which is
+    /// queued.
+    fn precheck(&mut self, header: &BlockHeader, force_pow: bool) -> Result<(), String> {
         let p = &self.params;
         let (parent, parent_id, parent_cum) = *self.recent.back().expect("never empty");
         let height = parent.height + 1;
@@ -268,13 +375,10 @@ impl<'a> HeaderCheck<'a> {
             let seed = *self.seeds.get(&key).ok_or_else(|| {
                 format!("the RandomX key block {key} of header {height} is unknown")
             })?;
-            self.pow_checked += 1;
-            let hash = self.pow.pow_hash(&seed, &header.to_bytes());
-            if !check_hash(&hash, header.difficulty) {
-                return Err(format!(
-                    "header {height}'s proof of work does not meet its difficulty"
-                ));
-            }
+            self.pending.push(PowJob {
+                header: *header,
+                seed,
+            });
         }
         let id = header.id(p.network_id);
         if height.is_multiple_of(p.seed_epoch) {
@@ -285,4 +389,51 @@ impl<'a> HeaderCheck<'a> {
         self.trim();
         Ok(())
     }
+}
+
+/// The index of the first job, in order, whose hash does not meet its
+/// difficulty. The jobs are computed on up to `threads` scoped threads (the
+/// caller's included), which take them in order from a shared counter.
+/// Every job before the first failure is computed, so the result is the one
+/// of computing them one by one; jobs after a known failure are skipped.
+/// `computed` counts the hashes computed.
+fn first_failure(
+    pow: &dyn PowFunction,
+    jobs: &[PowJob],
+    threads: usize,
+    computed: &AtomicU64,
+) -> Option<usize> {
+    let next = AtomicUsize::new(0);
+    let failed = AtomicUsize::new(usize::MAX);
+    let work = || loop {
+        let i = next.fetch_add(1, Ordering::Relaxed);
+        // Indices are taken in increasing order: once one is past a known
+        // failure, every later one is too.
+        if i >= jobs.len() || i > failed.load(Ordering::Relaxed) {
+            return;
+        }
+        let job = &jobs[i];
+        computed.fetch_add(1, Ordering::Relaxed);
+        let hash = pow.pow_hash(&job.seed, &job.header.to_bytes());
+        if !check_hash(&hash, job.header.difficulty) {
+            failed.fetch_min(i, Ordering::Relaxed);
+        }
+    };
+    let helpers = threads.min(jobs.len()).saturating_sub(1);
+    if helpers == 0 {
+        work();
+    } else {
+        std::thread::scope(|s| {
+            for _ in 0..helpers {
+                // A thread that cannot be started leaves its share to the
+                // others.
+                let _ = std::thread::Builder::new()
+                    .name("header-pow".into())
+                    .spawn_scoped(s, work);
+            }
+            work();
+        });
+    }
+    let failed = failed.into_inner();
+    (failed != usize::MAX).then_some(failed)
 }

@@ -105,6 +105,9 @@ impl ChainManager {
                 .accept(block.header, now)
                 .map_err(SubmitError::Header)?;
             self.header_added(id, block.header.prev_id);
+            if self.refuse_operator_invalidated(id) {
+                return Err(SubmitError::Header(HeaderError::InvalidParent));
+            }
         }
         if block.compute_tx_root() != block.header.tx_root {
             return Err(SubmitError::BodyMismatch);
@@ -221,6 +224,34 @@ impl ChainManager {
         let w = self.work(&id);
         self.leaves.insert((w, id));
         self.refresh_hot_seeds();
+    }
+
+    /// S5b: applies the operator's verdict (`--invalidate-block`, or
+    /// [`Self::invalidate_block`] before the block arrived) to a header just
+    /// added. The header is marked invalid at once, before anything is built
+    /// on it: no body of it or of a descendant is asked for
+    /// ([`Self::missing_bodies`]) or stored, and a descendant's header is
+    /// refused by the header chain before any proof of work
+    /// (`HeaderError::InvalidParent`). The header itself stays known, fully
+    /// checked, so a heavier chain refused only because of the verdict is
+    /// reported ([`Self::operator_fork`], RTW3-8). The caller refuses it as
+    /// the header chain refuses a descendant of an invalid block
+    /// (`InvalidParent`, which the P2P layer does not penalize: the peer
+    /// follows the network's rules). Returns whether the verdict applied.
+    pub(super) fn refuse_operator_invalidated(&mut self, id: Hash) -> bool {
+        if !self.operator_invalid.contains(&id) {
+            return false;
+        }
+        log::warn!(
+            "block {} at height {} is invalid by operator request (--invalidate-block): its \
+             header is refused, and nothing built on it is downloaded",
+            hex(&id),
+            self.headers.header(&id).map_or(0, |h| h.height)
+        );
+        // A header just added has no descendants: only it is dropped.
+        let dropped = self.drop_invalid(id);
+        debug_assert_eq!(dropped, [id]);
+        true
     }
 
     /// Passes the hot RandomX keys of the best header chain to the PoW layer

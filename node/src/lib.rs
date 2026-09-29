@@ -27,7 +27,7 @@ use blacksilk_chain::manager::{
     ChainManager, ChainSummary, OperatorFork, SubmitError, SummaryCell,
 };
 use blacksilk_chain::sync_policy::{self, worth_verifying};
-use blacksilk_consensus::{BlockHeader, Hash, Network};
+use blacksilk_consensus::{BlockHeader, ChainParams, Hash, Network};
 use blacksilk_p2p::{chain_access, Network as P2p};
 use blacksilk_rpc as rpc;
 use blacksilk_tx::state::MemoryChain;
@@ -295,6 +295,54 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// The system clock in seconds since the Unix epoch, or `None` when it reads
+/// before the epoch (unusable: every block would be in its future).
+pub fn system_clock() -> Option<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
+}
+
+/// The start-up clock check (dossier 04 W4; decisions, "Agent 04"). The
+/// local clock is the only clock consensus reads (the future time limit,
+/// consensus.md §5), and nothing corrects it. A node refuses to start on a
+/// clock that it cannot read or that is before the genesis block, since it
+/// could accept no new block. It warns (the returned message) when the
+/// stored best block is stamped more than the future time limit ahead of
+/// the clock: the chain is in this clock's future, so the clock is probably
+/// behind, and new blocks are refused until it is set. `now` is
+/// [`system_clock`].
+pub fn clock_check(
+    now: Option<u64>,
+    params: &ChainParams,
+    tip_timestamp: u64,
+) -> Result<Option<String>, String> {
+    let Some(now) = now else {
+        return Err(
+            "the system clock reads before 1970: set it (docs/testnet.md §12.2); \
+                    consensus checks every new block's timestamp against it"
+                .into(),
+        );
+    };
+    let genesis = params.genesis.timestamp;
+    if now < genesis {
+        return Err(format!(
+            "the system clock ({now}) is before this network's genesis block ({genesis}): \
+             set it (docs/testnet.md §12.2); this node could accept no new block"
+        ));
+    }
+    let ftl = params.future_time_limit;
+    Ok((tip_timestamp > now.saturating_add(ftl)).then(|| {
+        format!(
+            "the stored best block is stamped {} s ahead of the system clock, more than the \
+             future time limit ({ftl} s): the clock is probably behind, and new blocks are \
+             refused until it is set (docs/testnet.md §12.2)",
+            tip_timestamp - now
+        )
+    }))
 }
 
 struct ApiError(StatusCode, String);
@@ -1209,6 +1257,30 @@ mod tests {
             despite_operator_fork: true,
         };
         assert!(operator_fork_warning(&fork(1), despite).contains("still served"));
+    }
+
+    /// Dossier 04 W4: the start-up clock check refuses an unreadable clock
+    /// and one before the genesis, and warns when the stored tip is more
+    /// than the future time limit ahead of the clock.
+    #[test]
+    fn the_start_up_clock_check() {
+        let p = ChainParams::testnet();
+        let g = p.genesis.timestamp;
+        let ftl = p.future_time_limit;
+        let e = clock_check(None, &p, g).unwrap_err();
+        assert!(e.contains("before 1970"), "{e}");
+        let e = clock_check(Some(g - 1), &p, g).unwrap_err();
+        assert!(e.contains("before this network's genesis"), "{e}");
+        assert_eq!(clock_check(Some(g), &p, g), Ok(None));
+        let now = g + 1_000_000;
+        assert_eq!(
+            clock_check(Some(now), &p, now + ftl),
+            Ok(None),
+            "at the limit"
+        );
+        let w = clock_check(Some(now), &p, now + ftl + 1).unwrap().unwrap();
+        assert!(w.contains(&format!("{} s ahead", ftl + 1)), "{w}");
+        assert!(clock_check(system_clock(), &p, g).is_ok());
     }
 
     /// The store watcher fires once the check turns true, not before.
