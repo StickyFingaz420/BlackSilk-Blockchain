@@ -1,17 +1,23 @@
 //! The consensus manifest: a canonical, ordered list of the consensus-critical
-//! constants, and the PX-side part of it (docs/testnet.md, operator checks).
+//! constants and rule samples, and the PX-side part of it (docs/testnet.md
+//! §2.1, operator checks).
 //!
-//! The node's `consensus_fingerprint(network)` (node/src/fingerprint.rs) is a
-//! domain-separated hash of one [`Manifest`]: the chain-level entries it adds
-//! itself (chain parameters, genesis, transaction and emission rules, RandomX
-//! configuration) followed by [`px_entries`]. This crate owns the encoding and
-//! the PX-side entries because it is the lowest crate that sees the kernel and
-//! vault program ids, the proof-system parameters (`blacksilk_zk::params`) and
-//! the BVM-1 limits.
+//! The node splits its manifest in two (node/src/fingerprint.rs): the
+//! **rules** (every constant, rule sample and rule revision, the same for a
+//! release-candidate build and the final build of one network) and the
+//! **identity** (network id, genesis, branch ids). This crate owns the
+//! encoding and the PX-side rule entries ([`px_entries`]) because it is the
+//! lowest crate that sees the kernel and vault program ids, the proof-system
+//! parameters (`blacksilk_zk::params`), the circuit digest and the BVM-1
+//! limits.
 //!
-//! Two builds with the same fingerprint agree on every constant listed here.
-//! They can still differ in rule *code* that no constant captures; the build
-//! commit (`--version`, `/info`) covers that.
+//! Besides constants, [`px_entries`] lists **rule samples** ([`px_samples`]):
+//! outputs of PX rule functions on fixed inputs (the Poseidon2 permutation,
+//! `Hk`, the tree node, a record commitment and a nullifier, the kernel exit
+//! codes, the function prefix and the PX6 window), so a change of that code
+//! moves the digest even when no constant changes. Rule code that no sample
+//! reaches is named by the node's rule-revision list and, in the end, told
+//! apart only by the build commit.
 
 use std::fmt::Write;
 
@@ -163,11 +169,12 @@ impl Manifest {
     }
 }
 
-/// The PX-side consensus entries: the BS-ZK-2 proof parameters and proof
-/// version (zk), the BVM-1 machine limits (zkvm), the PX kernel constants and
-/// hash domains (px-core), the pinned kernel and vault program ids, the PX
-/// state and delivery formats (px), and the v1 ring size and hash domain
-/// prefix (crypto).
+/// The PX-side consensus entries: the proof parameter set and proof version
+/// (zk), the BVM-1 machine limits and circuit digest (zkvm), the PX kernel
+/// constants, hash domains and call ABI (px-core), the pinned kernel and
+/// vault program ids, budgets, entry points and domains, the PX state and
+/// delivery formats (px), the v1 ring size and hash domain prefix (crypto),
+/// and the PX rule samples ([`px_samples`]).
 pub fn px_entries() -> Manifest {
     use blacksilk_px_core::hash::domain;
     use blacksilk_zk::params as zk;
@@ -197,10 +204,18 @@ pub fn px_entries() -> Manifest {
     .size("zk.MAX_PROOF_BYTES", zk::MAX_PROOF_BYTES)
     .size("zk.MAX_ADVERSARIAL_COLUMNS", zk::MAX_ADVERSARIAL_COLUMNS)
     .size("zk.MAX_CONSTRAINT_DEGREE", zk::MAX_CONSTRAINT_DEGREE);
-    // BVM-1 (zkvm/src/lib.rs, program.rs, prove.rs).
+    // BVM-1 (zkvm/src/lib.rs, program.rs, prove.rs). The circuit digest is the
+    // pinned digest of the constraint system `CIRCUIT_ID` names;
+    // zkvm/tests/circuit_fingerprint.rs asserts that it is the last line of
+    // `REVISIONS` (RTW1-6), so an AIR change moves this manifest too.
     m.text(
         "zkvm.CIRCUIT_ID",
         std::str::from_utf8(blacksilk_zkvm::prove::CIRCUIT_ID).expect("CIRCUIT_ID is ASCII"),
+    )
+    .text("zkvm.CIRCUIT_DIGEST", blacksilk_zkvm::prove::CIRCUIT_DIGEST)
+    .u(
+        "zkvm.CIRCUIT_DIGEST_METHOD",
+        blacksilk_zkvm::prove::CIRCUIT_DIGEST_METHOD,
     )
     .u("zkvm.MEM_SIZE", blacksilk_zkvm::MEM_SIZE)
     .u("zkvm.NULL_GUARD", blacksilk_zkvm::NULL_GUARD)
@@ -229,6 +244,16 @@ pub fn px_entries() -> Manifest {
             blacksilk_px_core::kernel::MAX_PUBLIC_WORDS,
         )
         .size("px_core.call.MAX_FN", blacksilk_px_core::call::MAX_FN)
+        // The call ABI (F-28-1): the only ABI a deploy may register, and the
+        // function prefix length (abi, io_hash, contract, PX6 window).
+        .u(
+            "px_core.call.ABI_VERSION",
+            blacksilk_px_core::call::ABI_VERSION,
+        )
+        .size(
+            "px_core.call.PREFIX_WORDS",
+            blacksilk_px_core::call::PREFIX_WORDS,
+        )
         .list(
             "px_core.hash.domain",
             [
@@ -263,18 +288,23 @@ pub fn px_entries() -> Manifest {
             .map(|v| v as u64),
         );
     }
-    // The vault's registered row budget and entry points (px/src/vault.rs).
-    // Not yet listed (owed to the fingerprint v3 commit, agent 40; W1-CB-B2):
-    // the call ABI (`px_core::call::ABI_VERSION`, `PREFIX_WORDS`), the vault's
-    // REFUND entry, its REFUND and TERMS domains and its `OUT_WORDS`. The
-    // vault program is compiled with all of them, so the vault id above
-    // already changes with any of them; `ABI_VERSION` is also a deploy rule.
+    // The vault's domains, entry points, output words and registered row
+    // budget (px/src/vault.rs). The vault program is compiled with all of
+    // them, so its id above changes with any of them too.
     let b = crate::vault::BUDGET;
     m.u("px.vault.LOCK_DOMAIN", crate::vault::LOCK_DOMAIN)
+        .u("px.vault.REFUND_DOMAIN", crate::vault::REFUND_DOMAIN)
+        .u("px.vault.TERMS_DOMAIN", crate::vault::TERMS_DOMAIN)
         .list(
-            "px.vault.entry",
-            [crate::vault::LOCK, crate::vault::CLAIM].map(u64::from),
+            "px.vault.entry (LOCK, CLAIM, REFUND)",
+            [
+                crate::vault::LOCK,
+                crate::vault::CLAIM,
+                crate::vault::REFUND,
+            ]
+            .map(u64::from),
         )
+        .u("px.vault.OUT_WORDS", crate::vault::OUT_WORDS)
         .list(
             "px.vault.BUDGET",
             [
@@ -295,6 +325,102 @@ pub fn px_entries() -> Manifest {
             "crypto.DOMAIN_PREFIX",
             blacksilk_crypto::hash::DOMAIN_PREFIX,
         );
+    m.extend(px_samples());
+    m
+}
+
+/// The PX rule samples: outputs of PX rule functions on fixed inputs.
+///
+/// - The Poseidon2 instance (R2-C6: width 16 over BabyBear with the standard
+///   constants; the permutation of `Hk`, the zkVM's `POSEIDON2` table and the
+///   STARK's own hashing): the permutation of `[0, 1, …, 15]`.
+/// - `Hk` (the sponge with its capacity start `[domain, len, 0, …]`), the
+///   tree node (truncated, without feed-forward), a record commitment and a
+///   nullifier, on fixed inputs.
+/// - The kernel's exit codes, in variant order (append only; F-20-1 made 18
+///   `ApprovalConflict`).
+/// - The function prefix (`abi ‖ io_hash ‖ contract ‖ window`; F-28-1, PX6)
+///   of fixed inputs, and the PX6 window rule at its edges.
+pub fn px_samples() -> Manifest {
+    use blacksilk_px_core::call::{function_prefix, Window, ABI_VERSION};
+    use blacksilk_px_core::hash::{domain, hash, node, Digest, Permutation};
+    use blacksilk_px_core::kernel::Error;
+    use blacksilk_px_core::record::{nullifier, Record};
+    let mut perm = crate::perm::HostPerm::new();
+    let words = |d: &[u32]| d.iter().map(|&x| u64::from(x)).collect::<Vec<_>>();
+    let a: Digest = [1, 2, 3, 4, 5, 6, 7, 8];
+    let b: Digest = [9, 10, 11, 12, 13, 14, 15, 16];
+
+    let mut m = Manifest::new();
+    let mut state: [u32; 16] = std::array::from_fn(|i| i as u32);
+    perm.permute(&mut state);
+    m.list("px.sample.poseidon2([0..16])", words(&state));
+    m.list(
+        "px.sample.Hk(RECORD, [1, 2, 3])",
+        words(&hash(&mut perm, domain::RECORD, &[&[1, 2, 3][..]])),
+    );
+    m.list("px.sample.node(a, b)", words(&node(&mut perm, &a, &b)));
+    let cm = Record::plain(a, 5, [7; 8], b, a).commit(&mut perm);
+    m.list("px.sample.commit(plain(a, 5, [7; 8], b, a))", words(&cm));
+    m.list(
+        "px.sample.nullifier(a, b, cm)",
+        words(&nullifier(&mut perm, &a, &b, &cm)),
+    );
+    m.list(
+        "px.kernel.exit_codes",
+        [
+            Error::Version,
+            Error::NonCanonical,
+            Error::NotBoolean,
+            Error::DummyWithValue,
+            Error::NotInTree,
+            Error::DuplicateNullifier,
+            Error::Unbalanced,
+            Error::TooManyFunctions,
+            Error::ZeroContract,
+            Error::Unauthorized,
+            Error::ApprovalMismatch,
+            Error::SpecMismatch,
+            Error::SpecForeignContract,
+            Error::SpecConflict,
+            Error::DummyContract,
+            Error::ContractOutputOwner,
+            Error::ApprovalConflict,
+        ]
+        .map(|e| u64::from(e.exit_code())),
+    );
+    let w = |not_before, not_after| Window {
+        not_before,
+        not_after,
+    };
+    m.list(
+        "px.sample.function_prefix(ABI_VERSION, a, b, window)",
+        words(&function_prefix(
+            ABI_VERSION,
+            &a,
+            &b,
+            &w(0x1_0000_0002, 0x3_0000_0004),
+        )),
+    );
+    // PX6 at its edges: `contains` for (window, height), then well-formedness.
+    m.list(
+        "px.sample.window.contains",
+        [
+            (Window::UNBOUNDED, 0),
+            (Window::UNBOUNDED, u64::MAX),
+            (w(10, 20), 9),
+            (w(10, 20), 10),
+            (w(10, 20), 20),
+            (w(10, 20), 21),
+            (w(10, 0), u64::MAX),
+            (w(20, 20), 20),
+        ]
+        .map(|(win, h)| u64::from(win.contains(h))),
+    )
+    .list(
+        "px.sample.window.is_well_formed",
+        [w(0, 0), w(5, 0), w(5, 5), w(6, 5)].map(|win| u64::from(win.is_well_formed())),
+    );
     m
 }
 

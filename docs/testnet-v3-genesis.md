@@ -70,8 +70,13 @@ id     = Blake2b-256("BlackSilk/block-id" ‖ LE32(network_id) ‖ header bytes)
 
 ## 3. The network id
 
-`tools/genesis` uses a **placeholder**, `V3_NETWORK_ID_PLACEHOLDER = 0x0001D673`.
-The final id is chosen at launch and announced with the other fields.
+The testnet v3 id is **`0x0001D673`**, final (decision "Agent 40"; committed with
+fingerprint v3, reviews/v3-consensus-changes.md#fingerprint-v3): it is
+`ChainParams::testnet().network_id` and `TESTNET_V3_NETWORK_ID` in `tools/genesis`.
+The genesis on it is generated at launch; the id is registered afterwards (step 7).
+The known-answer tests use `TEST_VECTOR_NETWORK_ID = 0xFFFFFF00`, reserved for
+test vectors and never a network's id. Rehearsal ids are reserved at
+`0x0001D6E0`–`0x0001D6EF` (the tool does not yet enforce the range).
 
 - It must not be any id already used (`NETWORK_ID_REGISTRY`: testnet v1
   `0x0001D670`, the 2026-09-25 rehearsal `0x0001D671`, testnet v2 `0x0001D672`,

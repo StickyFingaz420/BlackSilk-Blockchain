@@ -425,6 +425,8 @@ impl NodeApi for MockChain {
             template_ready: None,
             genesis_id: Some(hex::encode(self.params.genesis_id())),
             consensus_fingerprint: None,
+            rules_fingerprint: None,
+            identity_fingerprint: None,
             build_commit: None,
             version: None,
         })

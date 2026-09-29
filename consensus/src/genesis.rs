@@ -24,6 +24,12 @@ use crate::header::BlockHeader;
 /// The domain string of the nonce derivation.
 pub const NONCE_DOMAIN: &[u8] = b"BlackSilk/genesis-nonce/v1";
 
+/// A network id reserved for test vectors (the known answers here, in
+/// `tools/genesis` and in the consensus manifest's samples). Never a
+/// network's id, so a known answer never collides with a real genesis
+/// (decisions "Agent 40": the final testnet id is `0x0001_D673`).
+pub const TEST_VECTOR_NETWORK_ID: u32 = 0xFFFF_FF00;
+
 /// The committed beacon: Bitcoin block `btc_height`'s hash, in display order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Beacon {
@@ -128,13 +134,24 @@ mod tests {
         b.iter().map(|x| format!("{x:02x}")).collect()
     }
 
-    /// The known answer of tools/genesis (recomputed independently in Python by
-    /// dossier 40): Bitcoin block 0, H = 0, network id 0x0001D673.
+    /// The known answer of tools/genesis: Bitcoin block 0, H = 0, the reserved
+    /// test-vector network id (recomputed independently from the spec in
+    /// Python, fingerprint v3). Before fingerprint v3 the known answer used
+    /// 0x0001D673, now the final testnet id: digest `3c437d97…`, nonce
+    /// `0x351e3bcf977d433c`, still reproduced here as a second vector.
     #[test]
     fn known_answer_bitcoin_block_0() {
         let beacon = parse_display_hex(BTC0).unwrap();
         assert_eq!(beacon[0], 0x00);
         assert_eq!(beacon[31], 0x6f);
+        assert_eq!(
+            hex(&nonce_preimage_digest(TEST_VECTOR_NETWORK_ID, 0, &beacon)),
+            "5081810a27720a228d4620fd4d69d67d55b5b894d87642f49a1186e5049340a9"
+        );
+        assert_eq!(
+            derive_genesis_nonce(TEST_VECTOR_NETWORK_ID, 0, &beacon),
+            0x220a_7227_0a81_8150
+        );
         assert!(hex(&nonce_preimage_digest(0x0001_D673, 0, &beacon)).starts_with("3c437d97"));
         assert_eq!(
             derive_genesis_nonce(0x0001_D673, 0, &beacon),

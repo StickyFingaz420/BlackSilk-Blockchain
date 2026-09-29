@@ -13,7 +13,9 @@
 //! table, a public-column layout, a next-row set or the table order changed:
 //! that is a consensus change. In the same commit, bump `CIRCUIT_ID`
 //! (zkvm/src/prove.rs) and **append** a line to `REVISIONS` (the failure
-//! message prints its `prev`), then set `REVISIONS_HEAD`. If only the
+//! message prints its `prev`), then set `REVISIONS_HEAD`, and set
+//! `CIRCUIT_DIGEST` and `CIRCUIT_DIGEST_METHOD` (zkvm/src/prove.rs, listed in
+//! the consensus manifest) to the new line. If only the
 //! digest's coverage changed (a new `DIGEST_METHOD`, no AIR change), append a
 //! line with the same id and the new method. Never edit an existing line:
 //! `the_revisions_are_append_only` enforces it with a hash chain (RTW1-6).
@@ -25,7 +27,9 @@ use blacksilk_zkvm::air::check::{fingerprint, FingerprintBuilder};
 use blacksilk_zkvm::air::trace::{self, Part, Statement, MAX_EXECUTIONS};
 use blacksilk_zkvm::air::{util, Table};
 use blacksilk_zkvm::asm::{reg::*, Asm};
-use blacksilk_zkvm::prove::{limits, statement_digest, CIRCUIT_ID};
+use blacksilk_zkvm::prove::{
+    limits, statement_digest, CIRCUIT_DIGEST, CIRCUIT_DIGEST_METHOD, CIRCUIT_ID,
+};
 use blacksilk_zkvm::Program;
 use p3_air::{Air, AirBuilder, BaseAir};
 use p3_field::PrimeCharacteristicRing;
@@ -196,6 +200,14 @@ fn the_air_digest_is_pinned_to_the_circuit_id() {
          consensus change: bump CIRCUIT_ID in zkvm/src/prove.rs and append (new id, \
          DIGEST_METHOD, this digest, prev = {}) to REVISIONS in the same commit",
         chain(REVISIONS)
+    );
+    // The consensus manifest lists the pinned digest (px/src/fingerprint.rs,
+    // RTW1-6): it must be this line.
+    assert_eq!(
+        (CIRCUIT_DIGEST, CIRCUIT_DIGEST_METHOD),
+        (last.digest, last.method),
+        "zkvm/src/prove.rs CIRCUIT_DIGEST and CIRCUIT_DIGEST_METHOD must be the last line of \
+         REVISIONS (set them in the same commit)"
     );
 }
 

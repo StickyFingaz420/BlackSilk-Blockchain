@@ -491,6 +491,10 @@ fn info_of(
         consensus_fingerprint: Some(fingerprint::hex(&fingerprint::consensus_fingerprint(
             s.network,
         ))),
+        rules_fingerprint: Some(fingerprint::hex(&fingerprint::rules_fingerprint(s.network))),
+        identity_fingerprint: Some(fingerprint::hex(&fingerprint::identity_fingerprint(
+            s.network,
+        ))),
         build_commit: Some(fingerprint::BUILD_COMMIT.to_string()),
         version: Some(fingerprint::VERSION.to_string()),
         template_ready: Some(template_ready),

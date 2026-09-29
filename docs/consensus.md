@@ -18,7 +18,7 @@ All integers are unsigned and little-endian unless stated otherwise.
 
 | Parameter | Mainnet | Testnet | Regtest |
 |---|---|---|---|
-| `network_id` (u32) | `0x000B1A6C` | `0x0001D672` | `0x00DEB06E` |
+| `network_id` (u32) | `0x000B1A6C` | `0x0001D673` (v3) | `0x00DEB06E` |
 | Target block time `T` | 120 s | 120 s | 10 s |
 | Initial difficulty `D0` | 100 000 | 100 | 1 |
 | Difficulty window `N` (LWMA, §4) | 75 | 75 | 75 |
@@ -46,12 +46,16 @@ needs no beacon. No beacon is committed yet on any network, so every nonce is 0 
 the genesis ids below are unchanged.
 - The genesis body is **empty**: no coinbase, no premine, `tx_root` = 32 zero bytes
   (blocks.md §3).
-- **Testnet v2 genesis: retired** (2026-09-27). Its parameters are still the testnet's
-  in `params.rs`: timestamp `1790380800` (2026-09-26 00:00:00 UTC), network id
-  `0x0001D672`, PX rules from height 0; its genesis id is pinned by a test in
-  `consensus/src/params.rs` (not copied here). This tree's rules differ from v2
-  builds', so `blacksilk-node --network testnet` refuses to start until the v3 genesis
-  is generated at launch (docs/testnet-v3-genesis.md; status: [STATUS.md](STATUS.md)).
+- **Testnet v3: network id `0x0001D673`**, the final id (decided with fingerprint v3,
+  reviews/v3-consensus-changes.md#fingerprint-v3). Its genesis is not final: the
+  genesis time in `params.rs` is still the v2 placeholder `1790380800` and no beacon
+  is committed (nonce 0); the launch fixes `T_g` and commits the beacon. Its current
+  genesis id is pinned by a test in `consensus/src/params.rs` (not copied here), and
+  `blacksilk-node --network testnet` refuses to start until the genesis is final
+  (docs/testnet-v3-genesis.md; status: [STATUS.md](STATUS.md)).
+- **Testnet v2 genesis: retired** (2026-09-27): network id `0x0001D672`, timestamp
+  `1790380800` (2026-09-26 00:00:00 UTC), genesis id `6556f92d…`; this tree's rules
+  differ from v2 builds'.
   Testnet v1 was `0x0001D670` at `1790121600`, genesis id `bbeb1a9f…`. The id
   `0x0001D671` was used only by the 2026-09-25 local reset rehearsal.
 - The mainnet genesis timestamp is provisional until its launch date.

@@ -100,7 +100,10 @@ whole envelope; the limiting terms are pinned (query phase; commitment term
   layout, a next-row set, the table order or a limit changes the digest; the same commit
   must bump `CIRCUIT_ID` and append a new line (id, digest method, digest, chain hash of
   the earlier lines). An existing line is never edited; a test enforces this with the
-  hash chain and a pinned head. A change of the digest's coverage alone (RTW1-3) appends
+  hash chain and a pinned head. The last line is also `zkvm::prove::CIRCUIT_DIGEST`
+  (with `CIRCUIT_DIGEST_METHOD`), which the same test requires and the consensus
+  manifest lists (`zkvm.CIRCUIT_DIGEST`, fingerprint v3), so an AIR change also moves
+  the rules fingerprint. A change of the digest's coverage alone (RTW1-3) appends
   a line with the same id and a new digest method: the AIRs, and so the transcript, did
   not change. The v3 changes to the parameter set and canonical form (BS-ZK-3, §5) do
   not touch the AIRs, so `CIRCUIT_ID` is unchanged by them.

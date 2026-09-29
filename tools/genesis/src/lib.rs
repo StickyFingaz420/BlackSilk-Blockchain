@@ -35,13 +35,14 @@ use blacksilk_consensus::BlockHeader;
 
 pub use blacksilk_consensus::genesis::{
     derive_genesis_nonce, nonce_preimage, nonce_preimage_digest, NONCE_DOMAIN,
+    TEST_VECTOR_NETWORK_ID,
 };
 
-/// **PLACEHOLDER** network id for testnet v3. The final id is chosen at launch
-/// (docs/testnet-v3-genesis.md §3) and must pass [`check_network_id`]. Nothing
-/// on any network uses this value; a rehearsal that uses it must record it in
-/// [`NETWORK_ID_REGISTRY`] afterwards, so that it is never reused.
-pub const V3_NETWORK_ID_PLACEHOLDER: u32 = 0x0001_D673;
+/// The network id of testnet v3, final (decisions "Agent 40"; fingerprint v3):
+/// `ChainParams::testnet().network_id`. Its genesis is generated at launch
+/// (docs/testnet-v3-genesis.md §3), so it passes [`check_network_id`] until
+/// then. No rehearsal or release candidate may use it.
+pub const TESTNET_V3_NETWORK_ID: u32 = 0x0001_D673;
 
 /// Every network id already given to a genesis, with what used it. An id is
 /// never reused for another genesis: nodes and wallets of the old network

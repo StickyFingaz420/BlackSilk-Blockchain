@@ -24,8 +24,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 /// Parses the command line. `-V` prints the version and commit; `--version`
-/// adds the consensus fingerprint and genesis id of every network, which
-/// operators compare before joining a network (docs/testnet.md).
+/// adds the consensus, rules and identity fingerprints and the genesis id of
+/// every network, which operators compare before joining a network
+/// (docs/testnet.md §2.1). `--print-manifest [NETWORK]` prints the full
+/// consensus manifest of one network (default: every network) and exits.
 fn parse_args() -> Args {
     // clap takes `'static` strings; this runs once per process.
     let long: &'static str = Box::leak(fingerprint::version_text().into_boxed_str());
@@ -34,8 +36,48 @@ fn parse_args() -> Args {
     let matches = Args::command()
         .version(short)
         .long_version(long)
+        .arg(
+            clap::Arg::new(PRINT_MANIFEST)
+                .long(PRINT_MANIFEST)
+                .value_name("NETWORK")
+                .num_args(0..=1)
+                .help(
+                    "Print the consensus manifest (rules and identity entries, their \
+                     encodings and fingerprints) of NETWORK (testnet, regtest or mainnet; \
+                     default: all) and exit",
+                ),
+        )
         .get_matches();
+    if matches.contains_id(PRINT_MANIFEST) {
+        print_manifest(
+            matches
+                .get_one::<String>(PRINT_MANIFEST)
+                .map(String::as_str),
+        );
+    }
     Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
+}
+
+const PRINT_MANIFEST: &str = "print-manifest";
+
+/// `--print-manifest`: prints and exits (0), or exits 2 on an unknown name.
+fn print_manifest(network: Option<&str>) -> ! {
+    let networks = match network {
+        None => fingerprint::NETWORKS.to_vec(),
+        Some(name) => match fingerprint::network_by_name(name) {
+            Some(n) => vec![n],
+            None => {
+                eprintln!("unknown network {name:?} (use testnet, regtest or mainnet)");
+                std::process::exit(2);
+            }
+        },
+    };
+    let texts: Vec<String> = networks
+        .into_iter()
+        .map(fingerprint::manifest_text)
+        .collect();
+    print!("{}", texts.join("\n"));
+    std::process::exit(0);
 }
 
 fn main() {

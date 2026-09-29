@@ -381,8 +381,9 @@ impl Coinbase {
 
 /// The block weight of the v1 part of a PX or deploy transaction with
 /// `inputs` v1 inputs and `outputs` hidden outputs: `max_weight(inputs,
-/// outputs)`, or 0 without inputs ([`Transaction::weight`]).
-fn v1_part_weight(inputs: usize, outputs: usize) -> u64 {
+/// outputs)`, or 0 without inputs ([`Transaction::weight`], R12-2). Public
+/// for the consensus manifest's weight samples (node/src/fingerprint.rs).
+pub fn v1_part_weight(inputs: usize, outputs: usize) -> u64 {
     if inputs == 0 {
         0
     } else {

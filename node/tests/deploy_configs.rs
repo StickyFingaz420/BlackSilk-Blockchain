@@ -193,33 +193,39 @@ fn a_typo_in_a_config_is_an_error() {
     }
 }
 
-/// The consensus fingerprint of every network
-/// (`blacksilk_node::fingerprint::consensus_fingerprint`): the chain parameters
-/// and genesis, the transaction, block and emission rules, the RandomX
-/// configuration, and the PX side (proof system, zkVM, kernel and vault ids;
-/// `px/tests/consensus_fingerprint.rs` pins that part on its own). The test
-/// pins the value the node computes at run time, prints in `--version` and
-/// the start-up log, and serves in `/info`.
+/// The fingerprints of every network (`blacksilk_node::fingerprint`, v3): the
+/// **rules** fingerprint (every consensus constant, the rule samples and the
+/// rule-revision list, including the PX side that
+/// `px/tests/consensus_fingerprint.rs` pins on its own), the **identity**
+/// fingerprint (network id, genesis, branch ids) and the **consensus**
+/// fingerprint that combines them. The test pins the values the node
+/// computes at run time, prints in `--version` and `--print-manifest`, and
+/// serves in `/info`.
 ///
-/// **Changing any of these digests is a consensus change and requires a new
-/// network id.** Update a pinned digest only in the same commit as the new id.
+/// **Changing any of these digests is a consensus change.** Re-pin only in
+/// the same commit as the change, with a `Consensus-Change:` trailer naming
+/// its record (docs/reviews/v3-consensus-changes.md, section `fingerprint-v3`
+/// for the procedure). A change of rules moves the rules and consensus
+/// values of every network; the launch commit (the testnet beacon and genesis
+/// time) moves only the testnet's identity and consensus values.
 #[test]
 fn consensus_fingerprints_are_pinned() {
-    use blacksilk_node::fingerprint::{consensus_fingerprint, hex, manifest};
-    for (network, pinned) in [
-        (Network::Testnet, TESTNET_FINGERPRINT),
-        (Network::Regtest, REGTEST_FINGERPRINT),
-        (Network::Mainnet, MAINNET_FINGERPRINT),
+    use blacksilk_node::fingerprint::{fingerprints, hex, manifest};
+    for (network, [consensus, rules, identity]) in [
+        (Network::Testnet, TESTNET),
+        (Network::Regtest, REGTEST),
+        (Network::Mainnet, MAINNET),
     ] {
+        let f = fingerprints(network);
         assert_eq!(
-            hex(&consensus_fingerprint(network)),
-            pinned,
-            "{network:?}: a consensus constant changed (this is a consensus change and requires \
-             a new network id); current values:\n{}",
+            [hex(&f.consensus), hex(&f.rules), hex(&f.identity)],
+            [consensus, rules, identity],
+            "{network:?}: [consensus, rules, identity] changed (a consensus change: re-pin with \
+             its record); current values:\n{}",
             manifest(network).render()
         );
     }
-    // Every network's own parameters are in its fingerprint.
+    // Every network's own identity is in its manifest.
     for n in [Network::Testnet, Network::Regtest, Network::Mainnet] {
         let text = manifest(n).render();
         let p = ChainParams::for_network(n);
@@ -228,18 +234,25 @@ fn consensus_fingerprints_are_pinned() {
     }
 }
 
-/// Changing this is a consensus change and requires a new network id.
-///
-/// v3 candidate values (branch `v3/candidate`): the v3 rule set, the rebuilt
-/// kernel and vault ids, with the testnet's genesis and network id still the
-/// retired v2 ones. The testnet value changes again when the v3 genesis is
-/// generated at launch (docs/testnet-v3-genesis.md §6).
-const TESTNET_FINGERPRINT: &str =
-    "ad68c9bee4b525242a96861133f0929142af177417aee8db4c47daab397dd531";
-/// Changing this is a consensus change and requires a new network id.
-const REGTEST_FINGERPRINT: &str =
-    "65334546765a538f41d5e8ec6aff7d6aebd17b26e3f612c2c844b44a1af7abaa";
-/// Changing this is a consensus change and requires a new network id. (The
-/// mainnet parameters are provisional; mainnet is not launched.)
-const MAINNET_FINGERPRINT: &str =
-    "486d0b8e93225549aa4c6ecd0e59937f807a4aa098ab62d7d152270a7590b49b";
+/// `[consensus, rules, identity]` (fingerprint v3). Testnet v3: the final id
+/// `0x0001D673`, the placeholder genesis time and no beacon yet, so the
+/// identity and consensus values change at launch (docs/testnet-v3-genesis.md
+/// §6) and the rules value does not.
+const TESTNET: [&str; 3] = [
+    "1b401f536e064978d81ef970deef0813035a3d78cc81f39f0becdfc17069dc72",
+    "ac51aca1b439d9e37f14d25b31381acfa1418346298821d71ce0c361c89799a7",
+    "b333a99f2bcd5d351fe87d043e9cd17d6920c43c09021ea453bc14d9fec4b294",
+];
+/// `[consensus, rules, identity]` (fingerprint v3).
+const REGTEST: [&str; 3] = [
+    "d2257d9bd7999effa9986a4fc00aaa31b5fe6b3ecd25e2fe4aa626f3efdf36fe",
+    "9bb8a6cd21f6598b09f7e10ce53fb9a4e685c562ebdb76e81c56be8fb52771d2",
+    "dfab90c6b92c127ab987cc3285557ad9b71ccd29c05bf2024531c54f10f6cf87",
+];
+/// `[consensus, rules, identity]` (fingerprint v3). The mainnet parameters are
+/// provisional; mainnet is not launched.
+const MAINNET: [&str; 3] = [
+    "42849cb96c7178765eee54f7a778251180ceba03914805cc5a1bcd7c4bedb357",
+    "938d75dd78a5a72e631923c7e415dfa422a101e826c90117df381ec315492a14",
+    "2dbb1c3703d90367c2d4475adb86a0e57c1d8c6ebe5f698f53baa7ec27465088",
+];

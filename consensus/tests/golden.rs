@@ -382,11 +382,12 @@ fn header_bytes_and_id_golden() {
 #[test]
 fn genesis_ids_golden() {
     // From the §1 parameters (version 1, height 0, zero prev_id and tx_root,
-    // timestamp, D0, nonce 0) with the script; the testnet value is also the
-    // one printed in docs/consensus.md §1.
+    // timestamp, D0, nonce 0) with the script. Testnet: the v3 id 0x0001D673
+    // with the placeholder genesis time and no beacon (fingerprint v3; the
+    // launch commit changes it). The retired v2 value was 6556f92d…037d.
     assert_eq!(
         hex(&ChainParams::testnet().genesis_id()),
-        "6556f92dee4df050cfb113a2b4ba234794274854b69f7c8a39755ec7a66b037d"
+        "08b9e7c994bf8329fb710dd374af20e5450839e7cdaa6f2b6a05fd772cc96bcf"
     );
     assert_eq!(
         hex(&ChainParams::regtest().genesis_id()),
