@@ -57,10 +57,18 @@ struct Args {
     latency_ms: u64,
     #[arg(long, default_value_t = 60)]
     jitter_ms: u64,
+    /// Minutes between partitions; 0: no partitions.
     #[arg(long, default_value_t = 25)]
     partition_every_mins: u64,
     #[arg(long, default_value_t = 4)]
     partition_mins: u64,
+    /// Partition groups: nodes below this index against the rest (default
+    /// n/2). The second miner runs on this node, so each group keeps one
+    /// miner. With 1, node 0 and its miner mine a private branch during
+    /// each partition and release it at the heal (a withholding miner with
+    /// half the hash rate).
+    #[arg(long)]
+    partition_split: Option<usize>,
     #[arg(long, default_value_t = 20)]
     tx_every_secs: u64,
     #[arg(long, default_value_t = 41000)]
@@ -164,6 +172,9 @@ struct Report {
     nodes: usize,
     final_height: u64,
     partitions: u32,
+    /// The first node of the second partition group (and the second
+    /// miner's node).
+    partition_split: usize,
     tx_attempts: u32,
     tx_submitted: u32,
     tx_failures: BTreeMap<String, u32>,
@@ -736,7 +747,14 @@ fn main() {
     getrandom::getrandom(&mut seed).unwrap();
     let mut rng = ChaCha20Rng::from_seed(seed);
     let n = a.nodes;
-    let group = |i: usize| usize::from(i >= n / 2);
+    let split = a.partition_split.unwrap_or(n / 2);
+    assert!(
+        (1..n).contains(&split),
+        "--partition-split must be between 1 and {}",
+        n - 1
+    );
+    report.partition_split = split;
+    let group = |i: usize| usize::from(i >= split);
 
     // Links: ring plus chords (i -> i+1, i -> i+2), each through a proxy.
     let mut links = Vec::new();
@@ -793,7 +811,7 @@ fn main() {
         wallets.push((name.into(), Wallet::generate(net, 1).unwrap()));
     }
     report.miner_prebuild = prebuild;
-    let miner_nodes = [0, n / 2];
+    let miner_nodes = [0, split];
     // A miner's arguments, and its mode for the report.
     let miner_args = |k: usize, wallets: &mut Vec<(String, Wallet)>| -> (Vec<String>, String) {
         let node = miner_nodes[k];
@@ -941,7 +959,7 @@ fn main() {
     marks.mark(CONNECTED, &a.out);
     log(
         &mut journal,
-        "miners running on nodes 0 and n/2 (one per partition group)",
+        &format!("miners running on nodes 0 and {split} (one per partition group)"),
     );
 
     // Main loop: the measured phase.
@@ -963,7 +981,7 @@ fn main() {
             marks.mark(CONNECTED, &a.out);
         }
         // Partitions.
-        if partition_until.is_none() && now >= next_partition {
+        if a.partition_every_mins > 0 && partition_until.is_none() && now >= next_partition {
             heal_until = None;
             marks.mark(PARTITION, &a.out);
             for l in &links {
@@ -977,8 +995,7 @@ fn main() {
                 &mut journal,
                 &format!(
                     "partition #{} started (groups split at node {})",
-                    report.partitions,
-                    n / 2
+                    report.partitions, split
                 ),
             );
         }

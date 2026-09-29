@@ -565,6 +565,41 @@ runs are not evidence. `--evidence` refuses to start with `--duration-mins` belo
 or with `--no-warmup`, turns on `--prebuild` (the miners get `--prebuild on`), and
 exits with status 1 unless the run is evidence.
 
+**Mining mode.** By default both miners run in light mode (`--light`), with
+`--miner-threads` threads each.
+- `--prebuild`: the miners get `--prebuild on`, so the next RandomX key's
+  context is built before the key switch. `--evidence` turns it on.
+- `--miner-full`: full mode (a 2 GiB dataset per miner).
+  - `--light-second-miner`: only the first miner (node 0, the warm-up miner)
+    runs in full mode; the second runs in light mode with one thread. The
+    machine then holds one dataset, not two.
+  - `--full-prebuild on|auto`: the `--prebuild` value the full-mode miners get
+    when prebuild is on (default `on`). With `auto` a miner falls back to the
+    light-mode bridge, with a warning in its log, if it cannot allocate the
+    second dataset.
+  - `--miner-build-threads N`: the full-mode miners' `--build-threads`
+    (otherwise the miner's default).
+
+**Partition groups.** `--partition-split K` (default `nodes / 2`): nodes below
+`K` form one group, the rest the other, and the second miner runs on node `K`, so
+each group keeps one miner. With `K = 1`, node 0 and its miner mine a private
+branch during every partition and release it at the heal: a withholding miner
+with half the hash rate. `--partition-every-mins 0` runs without partitions.
+
+**Network metrics.** `blacksilk-labnet-report <run directory> [--json <file>]`
+reads a finished run's files and prints what `summary.json` does not hold:
+- the tip difficulty over the measured phase;
+- block propagation, from the origin node's `accepted` line to the last lab
+  node's `received` line, for blocks every lab node saw in a connected phase;
+- stale blocks after the warm-up (found blocks minus the final chain's blocks
+  above the warm-up height);
+- per heal, the seconds to one tip everywhere (15 s resolution) and the
+  reorganizations of the heal window;
+- the late joiner's connections and address messages over time.
+
+Propagation needs the P2P debug lines: run the labnet with
+`RUST_LOG=info,blacksilk_p2p::net=debug` (the nodes inherit it).
+
 **Output:** `summary.json`, `metrics.csv` (every 15 s, with the phase in the last
 column), `journal.log`, and each process's log.
 
