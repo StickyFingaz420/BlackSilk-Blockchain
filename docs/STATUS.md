@@ -89,7 +89,7 @@ section named in the row.
 | Chain-actor liveness (P0-A): stages 0-2 | Complete but requires further testing: stage 1 (per-peer slow lane, summary snapshot) and stage 2 (single-writer actor with priority lanes; E1-E4 equivalence, g1-g7 ordering, L1-L8 liveness all pass). Stages 3-4 (header index, mempool and verification outside the writer) are not implemented | merges f220ceb, fc1274b; docs/reviews/chain-actor-stage2.md |
 | Seed format v1 (27 words, check words, network, birthday), derived hedge keys | Complete but requires further testing; open: F37-11, K7, K8 | `ed82f30`, `7a6fe53`; decisions, "W2-37" |
 | `ANCHOR_MIN_DEPTH` (21) | Not implemented | decisions, "Agent 21" |
-| Clock sanity monitor (04) | Not implemented | decisions, "Agent 04" |
+| Clock sanity monitor (04) | Partially implemented: a warn-only estimate of the local clock's offset from PoW-verified live blocks and retro-confirmed FTL refusals, with WARN/ERROR logs (p2p.md §6.1; unit-tested only); a start-up clock check function (`blacksilk_node::clock_check`) not yet called by the node binary. Open: the binary call, the `/info` fields, an injectable clock and network-level skew tests, miner clock safety (04 W5) | decisions, "Agent 04"; dossier 04 |
 | RandomX official vectors including hash test 1f | Complete but requires further testing: the transcribed reference vectors are pinned by tests (light and full mode, `randomx-full` CI job); the reference's instruction-level tests are not ported, and other platforms than x86_64 are untested | `1319a8d`; [randomx/README.md](../randomx/README.md) |
 
 ## 4. Contracts

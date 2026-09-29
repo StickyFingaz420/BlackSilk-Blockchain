@@ -40,6 +40,7 @@ mod stem;
 
 use crate::addr::NetAddr;
 use crate::addrman::{AddrMan, BanList};
+use crate::clock::{ClockEstimate, ClockMonitor};
 use crate::connman::ConnKind;
 use crate::dandelion::Dandelion;
 use crate::originated::Originated;
@@ -218,6 +219,7 @@ impl Network {
             local_addr,
             onion_addr,
             originated_io: Mutex::new(()),
+            clock: Mutex::new(ClockMonitor::default()),
         });
         if let Some(l) = listener {
             tokio::spawn(accept_loop(inner.clone(), l, false));
@@ -324,6 +326,13 @@ impl Network {
     /// version (once per run; RT-1, RTW1-1, docs/p2p.md §6).
     pub fn upgrade_warned(&self) -> bool {
         self.inner.state().upgrades.warned()
+    }
+
+    /// The local clock's offset against recent blocks, once enough blocks
+    /// from enough peers were seen (`crate::clock`, docs/p2p.md §6.1): for
+    /// the operator only, never used for validation, never sent to a peer.
+    pub fn clock_estimate(&self) -> Option<ClockEstimate> {
+        self.inner.clock().estimate()
     }
 
     /// Persists the address table and ban list, and the anchors: call at

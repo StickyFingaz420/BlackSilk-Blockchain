@@ -9,6 +9,7 @@ use super::state::{
     unix_now, upgrade_reporter_key, HeaderBatch, Inner, State, UNKNOWN_UPGRADE_DISCONNECT,
 };
 use crate::addr::NetAddr;
+use crate::clock::{Accepted, ClockLevel};
 use crate::dandelion::PeerId;
 use crate::limits::score;
 use crate::message::{Message, MAX_HEADERS};
@@ -482,6 +483,8 @@ struct Prechecked {
     chunk: usize,
     /// The PoW jobs of the first fresh chunk.
     jobs: Jobs,
+    /// The future time limit (for the clock monitor).
+    ftl: u64,
 }
 
 /// The first command of a batch (one former lock hold, plus the first
@@ -547,6 +550,7 @@ fn precheck(
         hash_unknown: required.is_some(),
         chunk,
         jobs,
+        ftl: c.params().future_time_limit,
     })
 }
 
@@ -564,6 +568,9 @@ fn verify_headers(
     headers: &[BlockHeader],
 ) -> HeaderOutcome {
     let now = unix_now();
+    // Our best header height when the batch is taken up (the clock
+    // monitor's live-arrival test).
+    let ours_before = inner.summary.load().header_height;
     let full = headers.len() as u64 == MAX_HEADERS;
     let live = sender_live(inner, peer, addr);
     if !live
@@ -589,10 +596,16 @@ fn verify_headers(
         hash_unknown,
         chunk,
         mut jobs,
+        ftl,
     }) = pre
     else {
         return HeaderOutcome::Unconnected;
     };
+    if let Err((i, HeaderError::TimestampTooFarInFuture { .. })) = &checked {
+        // Unverified: remembered, a sample only if accepted later
+        // (`crate::clock`).
+        inner.clock().note_future_refusal(headers[*i].id(nid), now);
+    }
     let precheck_error = match checked {
         // A violation the sender is banned for: no hash for its batch.
         Err((_, e)) if penalized(&e) => return HeaderOutcome::Failed(e),
@@ -638,6 +651,7 @@ fn verify_headers(
             Ok(n) => new += n,
             Err((_, e)) => return HeaderOutcome::Failed(e),
         }
+        note_clock(inner, peer, &batch[parts[k].clone()], false, now, ftl);
         jobs = next_jobs;
         on_main = Some(main);
     }
@@ -694,11 +708,57 @@ fn verify_headers(
             m
         }
     };
+    // A live arrival: the batch extended the best header chain outside bulk
+    // sync. Its last header is a sample of the clock monitor.
+    if new > 0 && on_main && !full && last.height > ours_before {
+        note_clock(inner, peer, std::slice::from_ref(last), true, now, ftl);
+    }
     HeaderOutcome::Accepted {
         last: last.height,
         last_id,
         advanced: new > 0 || !on_main,
         new_tip: new > 0 && on_main,
+    }
+}
+
+/// Feeds the clock monitor (`crate::clock`) with headers just accepted, their
+/// proof of work verified, that arrived from `peer` at local time `arrival`:
+/// each is a sample if it was refused by the future time limit before, and
+/// the last one also if `live_last`. Logs what the monitor reports.
+fn note_clock(
+    inner: &Inner,
+    peer: PeerId,
+    accepted: &[BlockHeader],
+    live_last: bool,
+    arrival: u64,
+    ftl: u64,
+) {
+    let nid = inner.cfg.network_id;
+    let mono = Instant::now();
+    let mut reports = Vec::new();
+    {
+        let mut clock = inner.clock();
+        for (i, h) in accepted.iter().enumerate() {
+            let live = live_last && i + 1 == accepted.len();
+            if !live && !clock.has_refusals() {
+                continue;
+            }
+            let a = Accepted {
+                id: h.id(nid),
+                timestamp: h.timestamp,
+                peer,
+                arrival,
+                live,
+            };
+            reports.extend(clock.note_accepted(a, ftl, mono));
+        }
+    }
+    for r in reports {
+        match r.level {
+            ClockLevel::Error => log::error!("{}", r.message),
+            ClockLevel::Warn => log::warn!("{}", r.message),
+            ClockLevel::Normal => log::info!("{}", r.message),
+        }
     }
 }
 

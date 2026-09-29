@@ -455,6 +455,49 @@ is a violation (100 points). The only exception is `Version`'s extension area (�
 to every peer that does not already have it. A peer that lacks the body asks for it with
 `GetBlocks`.
 
+### 6.1 The local clock and the clock-offset monitor
+
+The future time limit (consensus.md §5, `FTL` = 360 s) is checked against the local
+clock only. Nothing corrects that clock: there is no peer time, and `Version` carries
+no clock (§4), since a clock's skew identifies a device (Kohno, Broido and claffy 2005;
+Murdoch 2006).
+
+- **A slow clock** (more than `FTL` behind) refuses every new tip as too far in the
+  future. That refusal is not permanent and not penalized (§10); the header is not
+  stored, and it is accepted once the clock reaches it, from the next header request
+  or announcement. Until then the node falls behind the network.
+- **A fast clock** accepts blocks normally, but a miner on the same machine stamps its
+  blocks from it (the miner reads its own clock), so they can exceed the other nodes'
+  limit and be refused there (not penalized). A fast clock also makes the connected tip look old to
+  the template gate's catch-up latch (blocks.md §9.4); a slow one makes it look recent.
+  The wallet's tip-age check (blocks.md §10, RTW3-6) reads the wallet machine's clock
+  and is tripped by a wrong one too.
+
+**Monitor** (`blacksilk_p2p::clock`, dossier 04 P2; warn-only). It estimates the local
+clock's offset against recent blocks, logs a warning when the offset is large, and is
+never used in any check or sent to a peer:
+
+- **Samples.** (1) A header batch that is not a bulk-sync batch (fewer than
+  `MAX_HEADERS` headers) and extends the best header chain gives the offset
+  `timestamp − arrival` of its last header, once its proof of work is verified. An
+  honest sample is a few to a few tens of seconds below zero (template age plus
+  propagation). (2) A header refused only by the FTL is remembered (at most 64, first
+  sighting kept); if the same header is later accepted with its proof of work verified,
+  `timestamp − first sighting` is a sample. This is what a slow clock produces. An
+  unverified refusal is never a sample: the FTL is checked before the proof of work, so
+  it costs a forger nothing.
+- **Estimate.** The lower median of the last 25 samples (one per block), reported once
+  5 samples from 3 distinct peers are held (`Network::clock_estimate`). Every sample
+  needs a header with valid proof of work at the chain's difficulty. A peer that delays
+  blocks (an eclipse) pushes the estimate below zero, which the warning names as a
+  possible cause; it cannot make the clock look slow without mining.
+- **Warnings.** WARN above `FTL/3` (120 s), ERROR above `FTL`, repeated at most every
+  10 minutes while they last, and one INFO line when the estimate is back below `FTL/6`.
+- **Tested** by the unit tests of `p2p/src/clock.rs` (the median, the sample and peer
+  minimums, the one-sample-per-block window, retro-confirmed refusals, the refusal list
+  bound, levels, the repeat limit and the hysteresis). No network-level test injects a
+  clock skew yet: the clock is not injectable (dossier 04 W2, open).
+
 ## 7. Transaction relay (fluff phase)
 
 - **Announcing.** A transaction in the mempool is announced with `InvTx`.

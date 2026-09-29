@@ -236,8 +236,11 @@ A header with parent `P` is valid only if:
 Rule 2 depends on the local clock, so it is **not** a permanent verdict. A header
 rejected only by rule 2 must not be marked invalid; it may be accepted later. `FTL`
 is deliberately much shorter than Bitcoin's or Monero's 2 hours, because LWMA reacts
-to timestamps within a few blocks: `FTL ≤ N·T/20` as recommended for LWMA. Nodes
-must not adjust their clocks from peer time by more than `FTL/2`.
+to timestamps within a few blocks: `FTL ≤ N·T/20` as recommended for LWMA. `local_time`
+is the node's own clock, never adjusted from peers (there is no peer time: the version
+message carries no clock). The P2P layer estimates the local clock's offset against
+recent blocks for an operator warning only; the estimate is never used in any check
+(p2p.md §6.1).
 
 On regtest (`T` = 10 s) the recommendation gives `N·T/20` = 37 s, but regtest keeps
 `FTL` = 360 s like the other networks. Regtest is a local test network, so this is

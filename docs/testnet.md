@@ -640,6 +640,24 @@ same time; idle figures are to be re-measured.
     refuse, so its miner works on a private fork that is later discarded.
 - Such refusals are not permanent verdicts: the block is accepted once the clocks
   agree. But while they last the network can split.
+- The node never adjusts its clock from peers. It logs a WARN when recent blocks'
+  timestamps suggest its clock is more than 120 s off, and an ERROR past 360 s
+  (p2p.md §6.1). The estimate is only a hint: a slow-looking network can also mean
+  slow miners' clocks or delayed blocks. Check the clock when you see it.
+- A clock jump on the device with most of the hash rate is the worst case: its blocks
+  stamped in the future are refused by everyone else, it keeps mining on them, and when
+  real time reaches their stamps the others may reorganize deeply (dossier 04 P4).
+- **Before starting** (and after a sleep or a long power-off), check that the offset
+  is under 10 s:
+  - Linux: chrony or ntpd, with NTS (RFC 8915) where available; `chronyc tracking`
+    shows the offset.
+  - Windows (the time service polls stand-alone machines only every 7 days by default,
+    and Secure Time Seeding has caused jumps of days): run `w32tm /resync`, and check
+    with `w32tm /stripchart /computer:time.windows.com /samples:3`. Set the poll
+    interval to at most an hour (registry `HKLM\SYSTEM\CurrentControlSet\Services\
+    W32Time\TimeProviders\NtpClient\SpecialPollInterval` = 3600) and turn Secure Time
+    Seeding off (`HKLM\SYSTEM\CurrentControlSet\Services\W32Time\Config\
+    UtilizeSslTimeData` = 0), then restart the time service.
 
 ### 12.3 Network configuration
 

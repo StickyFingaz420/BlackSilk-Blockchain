@@ -7,6 +7,7 @@
 //! | [`addr`] | §5, §9 | IPv4/IPv6/Tor v3 addresses, network groups, routability |
 //! | [`addrman`] | §9 | keyed new/tried address tables with test-before-evict, ban list |
 //! | [`addrman_gate`] | §9 | per-peer admission and freshness of received addresses |
+//! | [`clock`] | §6.1 | warn-only estimate of the local clock's offset against recent blocks |
 //! | [`connman`] | §9 | inbound eviction, anchors, feelers, stale-tip rotation |
 //! | [`dandelion`] | §8 | Dandelion++ epochs, routes, embargo |
 //! | [`limits`] | §10 | token buckets, misbehavior scores |
@@ -19,6 +20,7 @@
 pub mod addr;
 pub mod addrman;
 pub mod addrman_gate;
+pub mod clock;
 pub mod connman;
 pub mod dandelion;
 pub mod limits;
