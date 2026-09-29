@@ -12,7 +12,7 @@ explained in [mutation-exemptions.md](../../reviews/mutation-exemptions.md).
 | Crate | Mutants | Caught | Missed | Timeout | Unviable |
 |---|---|---|---|---|---|
 | consensus, run A (before) | 405 | 289 | 28 | 48 | 40 |
-| consensus, after | 405 | 310, plus the 48 timeouts, all classified (below) | 7, all exempt (E1–E4) | 48 re-run in isolation: 25 fail an assertion, 23 real hangs | 40 |
+| consensus, after | 405 | 310, plus the 48 timeouts, all classified (below) | 7, all exempt (E1–E4) | 48 re-run in isolation: 46 fail an assertion, 2 real hangs (after RT-MUT's bounded waits; 35 and 13 before) | 40 |
 | px-core, run B (before) | 244 | 219 | 15 | 0 | 10 |
 | px-core, after | 244 | 229 | 5, all exempt (E5–E7) | 0 | 10 |
 
@@ -21,18 +21,29 @@ explained in [mutation-exemptions.md](../../reviews/mutation-exemptions.md).
 - **Equivalent (exempt):** 12 mutants, 7 in consensus and 5 in px-core. No input can
   observe them; the arguments are in the register. None of them is a mutant of a
   reachable rule that a test could see.
-- **Timeouts:** all 48 of run A were re-run one at a time with a narrower test set.
-  - 25 now fail an assertion within seconds.
-  - 23 are real hangs, which the suite catches by its timeout: 2 infinite loops in
-    `tx_root` and 21 lost wake-ups or releases in the RandomX cache store.
+- **Timeouts:** all 48 of run A were re-run one at a time with a narrower test set
+  (§ consensus: run A, 48 timeouts).
+  - 25 fail an assertion in golden, lwma_warm or the lib unit tests.
+  - The 21 cache-store mutants: 10 already failed an assertion when each test ran
+    alone, and 11 hung (red team RT-MUT; this report first counted all 21 as
+    hangs, because one hanging test holds the whole test binary). After RT-MUT's
+    bounded waits in the cache-store tests, all 21 fail an assertion
+    (re-run `timeoutS2`).
+  - Consensus overall: 35 assertion failures and 13 real hangs before the bounded
+    waits, 46 and 2 after. The 2 are infinite loops in `tx_root`, which the suite
+    catches by its timeout.
   - Run B had none.
+- **Release arithmetic (RT-MUT):** the 24 mutants whose kills could rest on an
+  overflow check or a debug assertion were re-run with both switched off, as in
+  a release build (§ Release arithmetic). All are killed: px-core 10 of 10,
+  consensus 12 of 14 directly and the other 2 by a named test.
 - **No survivor revealed a bug in a consensus rule.**
   - Three of the killed px-core survivors would weaken a kernel rule if the code
     changed that way (`digest_eq`'s fold, the specifier count, the spec
     comparison). The code is correct; only the tests were missing.
   - Run B's test set never ran the kernel's contract-function paths natively.
 - **One flaky test found and fixed (§ Flaky baseline).** It was a measurement race
-  in the test, not in the code.
+  in the test, not in the code. RT-MUT tightened its bound from 5 to the exact 4.
 
 ## Setup
 
@@ -158,10 +169,54 @@ caches alive" (bound: 5), on the unmutated tree.
     code's bound: 2 kept, 1 evicted but borrowed, 1 being built.
   - Afterwards: 300 of 300 runs passed in the mutants profile, and 100 of 100 in
     the dev profile.
+- **The exact bound (RT-MUT).** The gated measure's bound is 4, as the peaks with the
+  sleep showed, not the 5 first asserted: a side build starts only while at most
+  two caches are kept and at most one evicted cache is still borrowed, and no other
+  side build runs. The test now asserts `peak <= 4`, and its doc comment is
+  corrected. Reproduced (loop of the test binary, `pow::tests` filter
+  `the_caches_alive_stay_bounded`): 0 failures in 200 runs unmutated; with
+  `evicted_alive() > 1` loosened to `> 2`, 50 failures in 50 runs (peak 5), a
+  loosening the old `<= 5` let pass.
 - **Real, transient effect.** With real 256 MiB caches, a new build can briefly
   overlap the freeing of a cache whose destructor is still running. This is bounded
   by the number of hashing threads that release at that moment. It is not a
   consensus matter (a cache never changes a hash), and it is reported for the Lead.
+
+## Release arithmetic (RT-MUT)
+
+The census builds with overflow checks and debug assertions on, so a mutant can be
+caught by an overflow panic that a release build (both off) would not have. The red
+team listed the 24 caught mutants where that may be the only reason
+(`ovfA.args`, 14 in consensus; `ovfB.args`, 10 in px-core) and re-ran them with
+both off. Reproduced here, on commit `ac6ce40` (a `git archive` export for
+consensus; px-core's run used the same test code):
+
+```text
+RUSTFLAGS="-C overflow-checks=off -C debug-assertions=off" cargo mutants \
+  -p blacksilk-consensus --profile mutants --jobs 1 --timeout 240 --cap-lints true \
+  -o <out> <ovfA.args>
+RUSTFLAGS="-C overflow-checks=off -C debug-assertions=off" cargo mutants \
+  -p blacksilk-px-core --test-package blacksilk-px-core,blacksilk-px --profile mutants \
+  --jobs 1 --baseline skip --timeout 300 --build-timeout 3600 --cap-lints true -o <out> \
+  <run B's -C test targets> -C=--test=mutation_regressions <ovfB.args>
+```
+
+The rustc command lines in the logs carry `-C overflow-checks=off -C
+debug-assertions=off`, and the profile passes neither switch itself.
+
+- **px-core:** 10 of 10 caught (`ovfB/`).
+- **consensus:** 12 caught and 2 timeouts (`ovfA/`). The two, each re-run with only
+  the test named, under the same flags and a 120 s timeout:
+  - chain.rs 606:47 `parent_cumulative + difficulty` → `-` in `accept`: caught by
+    `chain::tests::accessors_report_validity_work_and_extensions` (an extension
+    no longer changes the best chain), in 10 s (`ovf606/`, filter `ovf606.args`,
+    test arguments `-C=--lib … -- -- chain::tests::accessors_report_validity_work_and_extensions`);
+  - difficulty.rs 88:24 `sum_difficulty +=` → `-=` in `next_difficulty`: caught by
+    `golden` and `lwma_warm` (the result wraps to `u64::MAX`: for example
+    `lwma_increase_is_bounded_by_the_step` gets 18446744073709551615 for 20000), in
+    10 s (`ovf88/`, filter `ovf88.args`, `-C=--test=golden -C=--test=lwma_warm`).
+  - The two timed out in the full suite for the same reason as run A's: the chain
+    unit tests' nonce searches never end under a wrong difficulty.
 
 ## Survivors and their resolution
 
@@ -197,13 +252,23 @@ Re-run A: 21 caught, 7 missed. The 7 are exactly the E1–E4 mutants.
   they had hung in the unit tests' nonce searches.
   - `merkle.rs` 19:23 `>` → `>=` and `>` → `==` loop forever on a one-leaf list,
     which every block has (the coinbase): real hangs.
-- **timeoutS, 21 mutants.** All still hang at 120 s against a baseline of about 1 s,
-  as they did at 300 s in run A before this work's tests existed. They are all in
-  the RandomX cache store (`pow.rs` 102–232).
+- **timeoutS, 21 mutants.** All timed out at 120 s with the whole of `pow::tests`, as
+  they did at 300 s in run A. They are all in the RandomX cache store (`pow.rs`
+  102–232).
   - Each loses a release or a wake-up: a key left in `building`, `side_building`
     never decremented, dead weak references counted as alive, a side capacity of 0,
     or a hot set never installed.
-  - Callers then wait forever: a real hang, which the suite catches by its timeout.
+  - **Per test (RT-MUT).** Run test by test, 10 of the 21 fail an assertion
+    (102:9, 110:50 `==`, 180:71, 202:26, 215:26 `/=`, 229:9 twice, 232:26 twice,
+    232:41) and 11 only hang. This report had counted all 21 as hangs: a test
+    binary with one hanging test never reports the others.
+  - **timeoutS2, after the bounded waits.** Every blocking call of the cache-store
+    tests now has a deadline (a `get` on a helper thread with `recv_timeout`, 10 s;
+    the 32-thread test with detached threads and one 60 s deadline). The same 21
+    mutants, same command (`timeoutS.args`, `-j1`, 120 s): **21 caught, 0
+    timeouts**, each by a test's assertion. 8 fail within about 10 s (one bounded
+    call), 1 at 52 s, and 12 at about 60 s (the 32-thread test's deadline);
+    outcome lists in `timeoutS2/`.
 
 ### px-core: run B, 15 missed
 
@@ -237,7 +302,8 @@ kernel with the pinned guest.
 - **Operators.** The census covers cargo-mutants' mutation operators, not every
   possible fault. A caught mutant shows only that some test notices that change.
 - **Timeouts.** They count as caught when they are real hangs. Hangs are a weaker
-  oracle than failed assertions.
+  oracle than failed assertions. After RT-MUT only the two `tx_root` loops remain
+  hang-only in consensus.
 - **px-core oracles.** Its mutants were tested against px's non-proving tests and
   the new regression tests only. The tx, chain and wallet tests, and px's proving
   tests, were not used.

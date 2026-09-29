@@ -1,0 +1,12 @@
+consensus/src/chain.rs:367:18: replace += with -= in HeaderChain::required_difficulty_after
+consensus/src/chain.rs:390:45: replace + with - in HeaderChain::check_rules
+consensus/src/chain.rs:502:56: replace + with - in HeaderChain::precheck_batch
+consensus/src/chain.rs:601:23: replace += with -= in HeaderChain::accept
+consensus/src/chain.rs:632:76: replace + with - in HeaderChain::switch_to
+consensus/src/difficulty.rs:77:33: replace + with - in next_difficulty
+consensus/src/difficulty.rs:84:58: replace + with - in next_difficulty
+consensus/src/difficulty.rs:87:18: replace += with -= in next_difficulty
+consensus/src/difficulty.rs:88:41: replace + with - in next_difficulty
+consensus/src/genesis.rs:121:52: replace + with - in parse_display_hex
+consensus/src/header.rs:45:59: replace + with - in BlockHeader::from_bytes
+consensus/src/pow.rs:27:15: replace <= with > in seed_height

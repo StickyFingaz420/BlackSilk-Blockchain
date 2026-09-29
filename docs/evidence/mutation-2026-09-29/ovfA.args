@@ -1,0 +1,14 @@
+--re=^consensus[/]src[/]chain[.]rs[:]367[:]18[:] replace [+][=] with \-[=] in HeaderChain[:][:]required[_]difficulty[_]after$
+--re=^consensus[/]src[/]chain[.]rs[:]390[:]45[:] replace [+] with \- in HeaderChain[:][:]check[_]rules$
+--re=^consensus[/]src[/]chain[.]rs[:]502[:]56[:] replace [+] with \- in HeaderChain[:][:]precheck[_]batch$
+--re=^consensus[/]src[/]chain[.]rs[:]601[:]23[:] replace [+][=] with \-[=] in HeaderChain[:][:]accept$
+--re=^consensus[/]src[/]chain[.]rs[:]606[:]47[:] replace [+] with \- in HeaderChain[:][:]accept$
+--re=^consensus[/]src[/]chain[.]rs[:]632[:]76[:] replace [+] with \- in HeaderChain[:][:]switch[_]to$
+--re=^consensus[/]src[/]difficulty[.]rs[:]77[:]33[:] replace [+] with \- in next[_]difficulty$
+--re=^consensus[/]src[/]difficulty[.]rs[:]84[:]58[:] replace [+] with \- in next[_]difficulty$
+--re=^consensus[/]src[/]difficulty[.]rs[:]87[:]18[:] replace [+][=] with \-[=] in next[_]difficulty$
+--re=^consensus[/]src[/]difficulty[.]rs[:]88[:]24[:] replace [+][=] with \-[=] in next[_]difficulty$
+--re=^consensus[/]src[/]difficulty[.]rs[:]88[:]41[:] replace [+] with \- in next[_]difficulty$
+--re=^consensus[/]src[/]genesis[.]rs[:]121[:]52[:] replace [+] with \- in parse[_]display[_]hex$
+--re=^consensus[/]src[/]header[.]rs[:]45[:]59[:] replace [+] with \- in BlockHeader[:][:]from[_]bytes$
+--re=^consensus[/]src[/]pow[.]rs[:]27[:]15[:] replace [<][=] with [>] in seed[_]height$
