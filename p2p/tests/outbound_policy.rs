@@ -18,6 +18,7 @@ use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::store::MemoryStore;
 use blacksilk_consensus::{ChainParams, Hash, PowFunction};
 use blacksilk_p2p::addrman::AddrMan;
+use blacksilk_p2p::connman::ConnKind;
 use blacksilk_p2p::message::{Message, Version, PROTOCOL_VERSION};
 use blacksilk_p2p::transport::{handshake, FrameReader, FrameWriter};
 use blacksilk_p2p::{NetAddr, NetConfig, Network, SharedChain};
@@ -111,12 +112,29 @@ fn table_of(addrs: impl Iterator<Item = SocketAddr>, key: u8) -> AddrMan {
     table
 }
 
+/// The full-relay outbound peers (block-relay-only connections and seed
+/// address fetches are not counted against `max_outbound`).
 fn outbound(v: &Network) -> Vec<NetAddr> {
     v.peers()
         .into_iter()
-        .filter(|p| !p.inbound)
+        .filter(|p| p.kind == ConnKind::FullRelay)
         .map(|p| p.addr)
         .collect()
+}
+
+fn free_local_addr() -> SocketAddr {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    l.local_addr().unwrap()
+}
+
+/// A node that advertises its own address (so a node that asks it for
+/// addresses learns it).
+async fn start_public(seed: u8) -> (Network, SocketAddr, SharedChain) {
+    let a = free_local_addr();
+    let mut cfg = config(None);
+    cfg.listen = Some(a);
+    cfg.public_address = Some(NetAddr::Ip(a));
+    start_chain(seed, cfg).await
 }
 
 fn rand_nonce() -> u64 {
@@ -353,10 +371,12 @@ fn mine(chain: &SharedChain, n: u64) {
 }
 
 /// Shortened policy intervals: the tip is stale after 4 s, a peer may be
-/// rotated out after 3 s; one extra connection per stale episode.
+/// rotated out after 3 s; one extra connection per stale episode. Only
+/// full-relay connections (the rotation concerns them).
 fn rotation_config(dir: &Path, seed: SocketAddr) -> NetConfig {
     let mut cfg = config(Some(dir));
     cfg.max_outbound = 2;
+    cfg.block_relay_only = 0;
     cfg.seeds = vec![NetAddr::Ip(seed)];
     cfg.stale_tip_after = Some(Duration::from_secs(4));
     cfg.min_connect_time = Duration::from_secs(3);
@@ -364,11 +384,14 @@ fn rotation_config(dir: &Path, seed: SocketAddr) -> NetConfig {
     cfg
 }
 
-/// V's two outbound peers H1 and H2 as anchors (dialed first, so the seed S
-/// is dialed only once the tip is stale).
+/// V's table: H1 and H2 only, so they fill V's two slots, and the seed S is
+/// asked for addresses only once the tip is stale. S answers with its own
+/// address (it advertises itself), which V then dials as the extra peer.
 fn anchored(name: &str, h1: SocketAddr, h2: SocketAddr) -> PathBuf {
     let dir = temp_dir(name);
-    blacksilk_p2p::connman::save_anchors(&dir, &[NetAddr::Ip(h1), NetAddr::Ip(h2)]).unwrap();
+    table_of([h1, h2].into_iter(), 5)
+        .save(&dir.join("peers.json"))
+        .unwrap();
     dir
 }
 
@@ -381,7 +404,7 @@ fn anchored(name: &str, h1: SocketAddr, h2: SocketAddr) -> PathBuf {
 async fn stale_tip_rotation_keeps_established_peers() {
     let (h1, h1_addr) = start(11, config(None)).await;
     let (h2, h2_addr) = start(12, config(None)).await;
-    let (s, s_addr) = start(13, config(None)).await;
+    let (s, s_addr, _) = start_public(13).await;
     let dir = anchored("stale-keep", h1_addr, h2_addr);
     let (v, _) = start(10, rotation_config(&dir, s_addr)).await;
     let (h1n, h2n, sn) = (
@@ -389,14 +412,16 @@ async fn stale_tip_rotation_keeps_established_peers() {
         NetAddr::Ip(h2_addr),
         NetAddr::Ip(s_addr),
     );
-    wait_until("V dialed its anchors H1 and H2", 10, || {
+    wait_until("V dialed H1 and H2", 10, || {
         let o = outbound(&v);
         o.contains(&h1n) && o.contains(&h2n)
     })
     .await;
-    wait_until("V dialed the seed once the tip was stale", 15, || {
-        outbound(&v).contains(&sn)
-    })
+    wait_until(
+        "V learned S from the seed once the tip was stale and dialed it",
+        15,
+        || outbound(&v).contains(&sn),
+    )
     .await;
     let dialed = std::time::Instant::now();
     // H1 and H2 stay throughout; S goes once it is old enough.
@@ -423,7 +448,7 @@ async fn stale_tip_rotation_keeps_established_peers() {
 async fn stale_tip_rotation_keeps_a_newcomer_that_brought_a_new_tip() {
     let (h1, h1_addr) = start(21, config(None)).await;
     let (h2, h2_addr) = start(22, config(None)).await;
-    let (s, s_addr, s_chain) = start_chain(23, config(None)).await;
+    let (s, s_addr, s_chain) = start_public(23).await;
     mine(&s_chain, 3);
     let dir = anchored("stale-new-tip", h1_addr, h2_addr);
     let (v, _, v_chain) = start_chain(20, rotation_config(&dir, s_addr)).await;
@@ -432,9 +457,11 @@ async fn stale_tip_rotation_keeps_a_newcomer_that_brought_a_new_tip() {
         NetAddr::Ip(h2_addr),
         NetAddr::Ip(s_addr),
     );
-    wait_until("V dialed the seed once the tip was stale", 20, || {
-        outbound(&v).contains(&sn)
-    })
+    wait_until(
+        "V learned S from the seed once the tip was stale and dialed it",
+        20,
+        || outbound(&v).contains(&sn),
+    )
     .await;
     wait_until("V synced S's chain", 15, || {
         v_chain.lock().unwrap().height() == 3
@@ -477,6 +504,7 @@ async fn feelers_move_an_answering_new_address_to_tried() {
         .unwrap();
     let mut cfg = config(Some(&dir));
     cfg.max_outbound = 2;
+    cfg.block_relay_only = 0;
     cfg.feeler_interval = Duration::from_millis(500);
     let (v, _) = start(30, cfg).await;
     wait_until("both outbound slots filled", 10, || outbound(&v).len() == 2).await;

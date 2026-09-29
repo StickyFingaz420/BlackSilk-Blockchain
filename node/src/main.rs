@@ -266,6 +266,7 @@ fn run(cfg: Config) -> Result<(), Stop> {
             Some(p) => {
                 let mut nc = NetConfig::new(params.network_id);
                 nc.listen = p.listen;
+                nc.onion_listen = p.onion_inbound;
                 nc.public_address = p.public_address;
                 nc.connect = resolve_seeds(&p.peers, p.proxy_only).await?;
                 nc.connect_only = p.connect_only;

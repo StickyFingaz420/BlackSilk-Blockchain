@@ -1,15 +1,16 @@
 //! Peer management: misbehavior scoring and bans, inbound accept limits and
 //! eviction, outbound connections and the outbound maintenance (anchors,
-//! feelers, stale-tip rotation; docs/p2p.md §9, `crate::connman`).
+//! block-relay-only connections, feelers, seed address fetches, stale-tip
+//! rotation; docs/p2p.md §9, `crate::connman`).
 
 use super::config::NetConfig;
-use super::conn::run_connection;
-use super::state::{unix_now, HeaderBatch, Inner, PendingHandshake, State};
+use super::conn::{loopback_is_tor, run_connection};
+use super::state::{unix_now, HeaderBatch, Inner, PendingHandshake, State, ONION_HANDSHAKE_GROUP};
 use crate::addr::{peer_key, NetAddr};
 use crate::addrman::BanList;
 use crate::connman::{
-    self, next_feeler, select_inbound_to_evict, select_outbound_to_evict, EvictionCandidate,
-    OutboundCandidate, StaleTip,
+    self, next_feeler, select_inbound_to_evict, select_outbound_to_evict, ConnKind,
+    EvictionCandidate, OutboundCandidate, StaleTip, SEED_FALLBACK_OUTBOUND,
 };
 use crate::dandelion::PeerId;
 use crate::limits::{BAN_SECS, BAN_THRESHOLD};
@@ -24,7 +25,7 @@ use tokio::sync::Notify;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// A seed is dialed at most this often.
+/// A seed is asked for addresses at most this often.
 const SEED_RETRY: Duration = Duration::from_secs(30);
 
 /// A dial attempt is remembered this long (longer than every backoff).
@@ -129,16 +130,22 @@ fn evict_handshake(st: &mut State, group: Option<&[u8]>) -> bool {
 /// Removes pending handshake `id` from the state and the per-IP counts.
 fn release_handshake(st: &mut State, id: u64) -> Option<PendingHandshake> {
     let h = st.handshakes.remove(&id)?;
-    if let Some(n) = st.handshaking_ip.get_mut(&h.ip) {
-        *n -= 1;
-        if *n == 0 {
-            st.handshaking_ip.remove(&h.ip);
+    if let Some(ip) = h.ip {
+        if let Some(n) = st.handshaking_ip.get_mut(&ip) {
+            *n -= 1;
+            if *n == 0 {
+                st.handshaking_ip.remove(&ip);
+            }
         }
     }
     Some(h)
 }
 
-pub(super) async fn accept_loop(inner: Arc<Inner>, listener: TcpListener) {
+/// Accepts inbound connections on `listener`: the P2P listener, or with
+/// `onion` the onion listener (`NetConfig::onion_listen`), whose connections
+/// all come from the Tor daemon: no ban or per-IP limit is checked for them,
+/// and their handshakes are bounded as one group (`ONION_HANDSHAKE_GROUP`).
+pub(super) async fn accept_loop(inner: Arc<Inner>, listener: TcpListener, onion: bool) {
     loop {
         let (stream, remote) = match listener.accept().await {
             Ok(x) => x,
@@ -162,8 +169,9 @@ pub(super) async fn accept_loop(inner: Arc<Inner>, listener: TcpListener) {
             let same_ip =
                 same_ip_count(&st, ip) + st.handshaking_ip.get(&key).copied().unwrap_or(0);
             if inner.cfg.max_inbound == 0
-                || st.bans.is_banned(&ip, unix_now())
-                || (!inner.cfg.allow_private && same_ip >= inner.cfg.max_per_ip)
+                || (!onion
+                    && (st.bans.is_banned(&ip, unix_now())
+                        || (!inner.cfg.allow_private && same_ip >= inner.cfg.max_per_ip)))
             {
                 continue; // drop the socket
             }
@@ -172,7 +180,11 @@ pub(super) async fn accept_loop(inner: Arc<Inner>, listener: TcpListener) {
             // gives way oldest first. Room among the registered peers is
             // made at registration (`conn::run_connection`), for a peer
             // that completed its handshake.
-            let group = st.addrman.bucket_group(&addr);
+            let group = if onion {
+                ONION_HANDSHAKE_GROUP.to_vec()
+            } else {
+                st.addrman.bucket_group(&addr)
+            };
             let (total, per_group) = handshake_caps(inner.cfg.max_inbound);
             let in_group = st.handshakes.values().filter(|h| h.group == group).count();
             if in_group >= per_group {
@@ -188,12 +200,14 @@ pub(super) async fn accept_loop(inner: Arc<Inner>, listener: TcpListener) {
                 id,
                 PendingHandshake {
                     started: Instant::now(),
-                    ip: key,
+                    ip: (!onion).then_some(key),
                     group,
                     kill: kill.clone(),
                 },
             );
-            *st.handshaking_ip.entry(key).or_default() += 1;
+            if !onion {
+                *st.handshaking_ip.entry(key).or_default() += 1;
+            }
             HandshakeSlot {
                 inner: inner.clone(),
                 id,
@@ -202,12 +216,17 @@ pub(super) async fn accept_loop(inner: Arc<Inner>, listener: TcpListener) {
             }
         };
         let _ = stream.set_nodelay(true);
+        let kind = if onion {
+            ConnKind::OnionInbound
+        } else {
+            ConnKind::Inbound
+        };
         tokio::spawn(run_connection(
             inner.clone(),
             stream,
             addr,
-            true,
-            false,
+            kind,
+            onion,
             Some(slot),
         ));
     }
@@ -218,6 +237,15 @@ pub(super) fn inbound_count(st: &State) -> usize {
     st.peers
         .values()
         .filter(|p| p.inbound && !p.evicted)
+        .count()
+}
+
+/// Registered onion inbound peers (`ConnKind::OnionInbound`), except those
+/// being evicted.
+pub(super) fn onion_inbound_count(st: &State) -> usize {
+    st.peers
+        .values()
+        .filter(|p| p.kind == ConnKind::OnionInbound && !p.evicted)
         .count()
 }
 
@@ -232,21 +260,26 @@ pub(super) fn same_ip_count(st: &State, ip: IpAddr) -> usize {
 
 /// Disconnects one registered inbound peer to make room for a newly
 /// registering one, if `connman::select_inbound_to_evict` finds one that is
-/// not protected. Returns whether it did. Onion peers (through our hidden
-/// service, from loopback) are the disadvantaged class. Groups are keyed with
-/// the address table's secret key, so peers cannot tell which groups are
-/// protected.
-pub(super) fn evict_inbound(inner: &Inner, st: &mut State) -> bool {
+/// not protected; among onion inbound peers only if `onion_only` (their
+/// class is full). Returns whether it did. Onion peers (through our hidden
+/// service) are the disadvantaged class. Groups are keyed with the address
+/// table's secret key, so peers cannot tell which groups are protected.
+pub(super) fn evict_inbound(inner: &Inner, st: &mut State, onion_only: bool) -> bool {
     let candidates: Vec<EvictionCandidate> = st
         .peers
         .iter()
-        .filter(|(_, p)| p.inbound && !p.evicted)
+        .filter(|(_, p)| {
+            p.inbound && !p.evicted && (!onion_only || p.kind == ConnKind::OnionInbound)
+        })
         .map(|(id, p)| EvictionCandidate {
             id: *id,
             keyed_group: st.addrman.keyed_group(&st.addrman.bucket_group(&p.addr)),
             connected: p.connected_at,
-            disadvantaged: !inner.cfg.allow_private
-                && p.addr.ip().is_some_and(|ip| ip.is_loopback()),
+            disadvantaged: p.kind == ConnKind::OnionInbound || loopback_is_tor(&inner.cfg, &p.addr),
+            min_ping: p.min_ping,
+            last_tx: p.last_tx,
+            last_block: p.last_block,
+            relay_txs: p.relay_txs,
         })
         .collect();
     let Some(victim) = select_inbound_to_evict(&candidates) else {
@@ -288,20 +321,24 @@ impl Drop for HandshakeSlot {
     }
 }
 
-/// Dials `addr`. The address stays in `connecting` from the dial until the
-/// connection ends, registered or not: it is never dialed twice at once.
-/// A registered outbound peer is therefore in both `connecting` and the peer
-/// map; [`pending_dials`] counts it once (RTW3-2).
-pub(super) async fn connect_outbound(inner: Arc<Inner>, addr: NetAddr) {
+/// Dials `addr` for a connection of `kind`. The address stays in
+/// `connecting` from the dial until the connection ends, registered or not:
+/// it is never dialed twice at once. A registered outbound peer is therefore
+/// in both `connecting` and the peer map; [`pending_dials`] counts it once
+/// (RTW3-2). An address fetch (a seed) is not an attempt on a table entry.
+pub(super) async fn connect_outbound(inner: Arc<Inner>, addr: NetAddr, kind: ConnKind) {
     let addr = addr.canonical();
     {
         let mut st = inner.state();
-        if !st.connecting.insert(addr.clone()) {
+        if st.connecting.contains_key(&addr) {
             return;
         }
-        st.last_attempt.insert(addr.clone(), Instant::now());
-        // Counted when made: a success resets it (`AddrMan::good`).
-        st.addrman.attempt(&addr, unix_now());
+        st.connecting.insert(addr.clone(), kind);
+        if kind != ConnKind::AddrFetch {
+            st.last_attempt.insert(addr.clone(), Instant::now());
+            // Counted when made: a success resets it (`AddrMan::good`).
+            st.addrman.attempt(&addr, unix_now());
+        }
     }
     let proxied = inner.cfg.proxy.is_some();
     let result = tokio::time::timeout(CONNECT_TIMEOUT, async {
@@ -317,7 +354,7 @@ pub(super) async fn connect_outbound(inner: Arc<Inner>, addr: NetAddr) {
     match result {
         Ok(Ok(stream)) => {
             let _ = stream.set_nodelay(true);
-            run_connection(inner.clone(), stream, addr.clone(), false, proxied, None).await;
+            run_connection(inner.clone(), stream, addr.clone(), kind, proxied, None).await;
         }
         _ => log::debug!("connect {addr} failed"),
     }
@@ -330,9 +367,11 @@ pub(super) async fn connect_outbound(inner: Arc<Inner>, addr: NetAddr) {
 
 /// Our address to advertise on a connection (`Version.listen`): an onion
 /// address only over Tor (a proxied outbound connection, or an inbound one
-/// through our hidden service, which arrives from loopback), a clearnet
-/// address only over clearnet. Advertising one over the other would link the
-/// node's two identities (I3-2).
+/// through our hidden service: on the onion listener, or from loopback on
+/// the P2P listener when there is none and private addresses are not
+/// allowed, `loopback_is_tor`), a clearnet address only over clearnet.
+/// Advertising one over the other would link the node's two identities
+/// (I3-2).
 pub(super) fn advertised_listen(
     cfg: &NetConfig,
     addr: &NetAddr,
@@ -340,23 +379,24 @@ pub(super) fn advertised_listen(
     proxied: bool,
 ) -> Option<NetAddr> {
     let public = cfg.public_address.as_ref()?;
-    let via_tor = proxied || (inbound && addr.ip().is_some_and(|ip| ip.is_loopback()));
+    let via_tor = proxied || (inbound && loopback_is_tor(cfg, addr));
     (public.is_onion() == via_tor).then(|| public.clone())
 }
 
-/// Dials in progress that are not yet registered outbound peers, feelers
-/// excluded: `connecting` also holds every registered outbound peer's
-/// address until its connection ends (`connect_outbound`), and counting those
-/// twice left a node refilling lost outbound slots only below half its
-/// target (RTW3-2).
+/// Dials of `kind` in progress that are not yet registered outbound peers,
+/// feelers excluded: `connecting` also holds every registered outbound
+/// peer's address until its connection ends (`connect_outbound`), and
+/// counting those twice left a node refilling lost outbound slots only below
+/// half its target (RTW3-2).
 fn pending_dials(
-    connecting: &HashSet<NetAddr>,
+    connecting: &HashMap<NetAddr, ConnKind>,
     registered: &HashSet<NetAddr>,
     feeler: Option<&NetAddr>,
+    kind: ConnKind,
 ) -> usize {
     connecting
         .iter()
-        .filter(|a| !registered.contains(*a) && Some(*a) != feeler)
+        .filter(|(a, k)| **k == kind && !registered.contains(*a) && Some(*a) != feeler)
         .count()
 }
 
@@ -367,7 +407,7 @@ struct Dialable<'a> {
     cfg: &'a NetConfig,
     local_addr: Option<std::net::SocketAddr>,
     connected: &'a HashSet<NetAddr>,
-    connecting: &'a HashSet<NetAddr>,
+    connecting: &'a HashMap<NetAddr, ConnKind>,
     bans: &'a BanList,
     last_attempt: &'a HashMap<NetAddr, Instant>,
     now: Instant,
@@ -375,7 +415,7 @@ struct Dialable<'a> {
 }
 
 impl Dialable<'_> {
-    fn skip(&self, a: &NetAddr, to_connect: &[NetAddr], groups: &HashSet<Vec<u8>>) -> bool {
+    fn skip(&self, a: &NetAddr, to_connect: &[Dial], groups: &HashSet<Vec<u8>>) -> bool {
         self.skip_test(a, to_connect)
             || (!self.cfg.allow_private && groups.contains(&a.group()))
             || self
@@ -389,11 +429,11 @@ impl Dialable<'_> {
     /// one of our outbound peers' (a regular dial would skip it forever),
     /// and a recent failed attempt is exactly what the test must repeat
     /// before the occupant can be replaced. Everything else does.
-    fn skip_test(&self, a: &NetAddr, to_connect: &[NetAddr]) -> bool {
+    fn skip_test(&self, a: &NetAddr, to_connect: &[Dial]) -> bool {
         let cfg = self.cfg;
         self.connected.contains(a)
-            || self.connecting.contains(a)
-            || to_connect.contains(a)
+            || self.connecting.contains_key(a)
+            || to_connect.iter().any(|(x, _)| x == a)
             || Some(a) == cfg.public_address.as_ref()
             || a.ip().is_some_and(|ip| self.bans.is_banned(&ip, self.unix))
             || (!cfg.allow_private && !a.is_routable())
@@ -402,17 +442,26 @@ impl Dialable<'_> {
     }
 }
 
+/// A dial this maintenance round decided: the address and the kind of
+/// connection.
+type Dial = (NetAddr, ConnKind);
+
 /// Keeps the outbound connections (docs/p2p.md §9), every 2 s:
-/// - manual peers are reconnected;
-/// - anchors saved at the last shutdown are dialed first, once;
-/// - seeds, when the table is empty, no outbound peer is up, or the tip is
-///   stale;
-/// - free slots are filled from the address table, one per group;
-/// - while the tip is stale, one extra outbound connection every
-///   `stale_check_interval`, and when there are more outbound peers than the
-///   target, the one that brought the least is disconnected (not banned):
-///   the oldest last validated new tip, never the claimed height (RTW3-4);
-/// - when the outbound slots are full, a feeler about every
+/// - manual peers are reconnected (full-relay);
+/// - anchors saved at the last shutdown are dialed first, once, as
+///   block-relay-only connections;
+/// - free full-relay slots, then free block-relay-only slots
+///   (`NetConfig::block_relay_only`), are filled from the address table,
+///   one per group across both;
+/// - seeds are asked for addresses (one-shot address fetches, not peers)
+///   when the table is empty, when fewer than two full-relay outbound peers
+///   were up for `seed_fallback_after`, or while the tip is stale;
+/// - while the tip is stale, one extra full-relay connection every
+///   `stale_check_interval`, and when there are more full-relay peers than
+///   the target, the one that brought the least is disconnected (not
+///   banned): the oldest last validated new tip, never the claimed height
+///   (RTW3-4);
+/// - when the full-relay slots are full, a feeler about every
 ///   `feeler_interval` (Poisson): a short connection that tests a *tried*
 ///   collision or a *new* address and moves it to *tried* if it answers.
 ///
@@ -422,7 +471,7 @@ pub(super) fn maintain_outbound(inner: &Arc<Inner>) {
     let unix = unix_now();
     let cfg = &inner.cfg;
     let tip = inner.summary.load();
-    let mut to_connect = Vec::new();
+    let mut to_connect: Vec<Dial> = Vec::new();
     let mut feeler = None;
     {
         let mut st = inner.state();
@@ -431,10 +480,15 @@ pub(super) fn maintain_outbound(inner: &Arc<Inner>) {
         // map without bound (F32-10).
         st.last_attempt
             .retain(|_, t| now.duration_since(*t) < LAST_ATTEMPT_KEEP);
+        st.connman
+            .seed_fetches
+            .retain(|_, t| now.duration_since(*t) < LAST_ATTEMPT_KEEP);
         st.addrman.resolve_collisions(unix);
         if st.connman.anchors.is_none() {
             st.connman.anchors = Some(match &cfg.data_dir {
-                Some(dir) if !cfg.connect_only => connman::take_anchors(dir),
+                Some(dir) if !cfg.connect_only && cfg.block_relay_only > 0 => {
+                    connman::take_anchors(dir)
+                }
                 _ => Vec::new(),
             });
         }
@@ -462,45 +516,61 @@ pub(super) fn maintain_outbound(inner: &Arc<Inner>) {
         // Manual peers: always reconnect (after a short backoff).
         for a in &cfg.connect {
             if !connected.contains(a)
-                && !st.connecting.contains(a)
+                && !st.connecting.contains_key(a)
                 && st
                     .last_attempt
                     .get(a)
                     .is_none_or(|t| now.duration_since(*t) > Duration::from_secs(10))
             {
-                to_connect.push(a.clone());
+                to_connect.push((a.clone(), ConnKind::FullRelay));
             }
         }
         // Outbound peers still up keep their table entries fresh (and a
         // *tried* one is never replaced by test-before-evict).
         let State { peers, addrman, .. } = &mut *st;
-        for p in peers.values().filter(|p| !p.inbound) {
+        for p in peers
+            .values()
+            .filter(|p| !p.inbound && p.kind != ConnKind::AddrFetch)
+        {
             addrman.connected(&p.addr, unix);
         }
-        let outbound_addrs: HashSet<NetAddr> = st
+        let registered: HashSet<NetAddr> = st
             .peers
             .values()
             .filter(|p| !p.inbound)
             .map(|p| p.addr.clone())
             .collect();
-        let registered_outbound = st.peers.values().filter(|p| !p.inbound).count();
-        let pending = pending_dials(&st.connecting, &outbound_addrs, st.connman.feeler.as_ref());
+        let count = |k: ConnKind| st.peers.values().filter(|p| p.kind == k).count();
+        let (full, block_relay) = (count(ConnKind::FullRelay), count(ConnKind::BlockRelay));
+        let pending = |k| pending_dials(&st.connecting, &registered, st.connman.feeler.as_ref(), k);
+        let (pending_full, pending_block_relay) =
+            (pending(ConnKind::FullRelay), pending(ConnKind::BlockRelay));
         let target = cfg.max_outbound + usize::from(extra);
-        let mut free = if cfg.connect_only {
-            0
+        let (free, mut free_block_relay) = if cfg.connect_only {
+            (0, 0)
         } else {
-            target.saturating_sub(registered_outbound + pending + to_connect.len())
+            (
+                target.saturating_sub(full + pending_full + to_connect.len()),
+                cfg.block_relay_only
+                    .saturating_sub(block_relay + pending_block_relay),
+            )
         };
         // One outbound connection per network group (docs/p2p.md §9): the
-        // groups of live and pending outbound connections, and of the manual
-        // peers, anchors and seeds picked below (F32-12), are taken.
+        // groups of live and pending outbound connections (address fetches
+        // aside: they are short), and of the manual peers and anchors picked
+        // below (F32-12), are taken.
         let mut groups: HashSet<Vec<u8>> = st
             .peers
             .values()
-            .filter(|p| !p.inbound)
+            .filter(|p| !p.inbound && p.kind != ConnKind::AddrFetch)
             .map(|p| p.addr.group())
-            .chain(st.connecting.iter().map(|a| a.group()))
-            .chain(to_connect.iter().map(|a| a.group()))
+            .chain(
+                st.connecting
+                    .iter()
+                    .filter(|(_, k)| **k != ConnKind::AddrFetch)
+                    .map(|(a, _)| a.group()),
+            )
+            .chain(to_connect.iter().map(|(a, _)| a.group()))
             .collect();
         let anchors = st
             .connman
@@ -508,6 +578,14 @@ pub(super) fn maintain_outbound(inner: &Arc<Inner>) {
             .as_mut()
             .map(std::mem::take)
             .unwrap_or_default();
+        // Seeds are asked when fewer than two full-relay outbound peers have
+        // been up for a while.
+        let low = full < SEED_FALLBACK_OUTBOUND;
+        let low_since = match (low, st.connman.low_outbound_since) {
+            (false, _) => None,
+            (true, since) => Some(since.unwrap_or(now)),
+        };
+        st.connman.low_outbound_since = low_since;
         let State {
             addrman,
             rng,
@@ -527,58 +605,67 @@ pub(super) fn maintain_outbound(inner: &Arc<Inner>) {
             now,
             unix,
         };
-        let policy_start = to_connect.len();
-        // Anchors first (W4): the outbound peers this node had when it last
-        // shut down, so a restart does not redraw every slot from a table an
-        // attacker may have filled.
+        // Anchors first (W4): the block-relay-only peers this node had when
+        // it last shut down, so a restart does not redraw every slot from a
+        // table an attacker may have filled.
         for a in anchors {
-            if free > 0 && !dialable.skip(&a, &to_connect, &groups) {
+            if free_block_relay > 0 && !dialable.skip(&a, &to_connect, &groups) {
                 log::info!("dialing anchor {a}");
                 groups.insert(a.group());
-                to_connect.push(a);
-                free -= 1;
+                to_connect.push((a, ConnKind::BlockRelay));
+                free_block_relay -= 1;
             }
         }
-        // Seeds: when we know no address, when no outbound connection is up
-        // (every known address may be stale or hostile), and when the tip is
-        // stale; each at most every SEED_RETRY.
-        if free > 0 && (addrman.is_empty() || registered_outbound == 0 || stale) {
-            for s in &cfg.seeds {
-                if free == 0 {
-                    break;
+        // Full-relay slots, then block-relay-only slots, from the table.
+        let mut picked_full = 0;
+        for (slots, kind) in [
+            (free, ConnKind::FullRelay),
+            (free_block_relay, ConnKind::BlockRelay),
+        ] {
+            for _ in 0..slots {
+                match addrman.select(rng, unix, false, |a| dialable.skip(a, &to_connect, &groups)) {
+                    Some(a) => {
+                        // One outbound connection per group, also among the
+                        // picks of this round (R8-4).
+                        groups.insert(a.group());
+                        to_connect.push((a, kind));
+                        picked_full += usize::from(kind == ConnKind::FullRelay);
+                    }
+                    None => break,
                 }
-                let recent = last_attempt
-                    .get(s)
-                    .is_some_and(|t| now.duration_since(*t) < SEED_RETRY);
-                if !connected.contains(s) && !connecting.contains(s) && !recent {
-                    groups.insert(s.group());
-                    to_connect.push(s.clone());
-                    free -= 1;
-                }
-            }
-        }
-        for _ in 0..free {
-            match addrman.select(rng, unix, false, |a| dialable.skip(a, &to_connect, &groups)) {
-                Some(a) => {
-                    // One outbound connection per group, also among the
-                    // picks of this round (R8-4).
-                    groups.insert(a.group());
-                    to_connect.push(a);
-                }
-                None => break,
             }
         }
         // The extra connection counts as made only once something was
         // dialed for it; otherwise the next round tries again.
-        if extra && to_connect.len() > policy_start {
+        if extra && picked_full > 0 {
             log::info!("tip unchanged for too long: trying an extra outbound peer");
             if let Some(s) = conn.stale.as_mut() {
                 s.extra_started(now);
             }
         }
-        // Feelers (W5), only when every outbound slot is taken: the regular
+        // Seeds: one-shot address fetches (W7, F32-6): `GetAddr`, then the
+        // connection closes. A seed never holds an outbound slot, an anchor
+        // or a *tried* entry of the joiner. Each seed at most every
+        // SEED_RETRY.
+        let want_seeds = !cfg.connect_only
+            && (addrman.is_empty()
+                || low_since.is_some_and(|t| now.duration_since(t) >= cfg.seed_fallback_after)
+                || stale);
+        if want_seeds {
+            for s in &cfg.seeds {
+                let recent = conn
+                    .seed_fetches
+                    .get(s)
+                    .is_some_and(|t| now.duration_since(*t) < SEED_RETRY);
+                if !connected.contains(s) && !connecting.contains_key(s) && !recent {
+                    conn.seed_fetches.insert(s.clone(), now);
+                    to_connect.push((s.clone(), ConnKind::AddrFetch));
+                }
+            }
+        }
+        // Feelers (W5), only when every full-relay slot is taken: the regular
         // dials test addresses otherwise.
-        if !cfg.connect_only && registered_outbound >= cfg.max_outbound && conn.feeler.is_none() {
+        if !cfg.connect_only && full >= cfg.max_outbound && conn.feeler.is_none() {
             let mean = cfg.feeler_interval;
             let due = *conn
                 .next_feeler
@@ -599,16 +686,16 @@ pub(super) fn maintain_outbound(inner: &Arc<Inner>) {
                 }
             }
         }
-        // More outbound peers than the target (the extra stale-tip peer
-        // connected, or manual peers came up): of all discovered outbound
+        // More full-relay peers than the target (the extra stale-tip peer
+        // connected, or manual peers came up): of all discovered full-relay
         // peers, the one whose last validated new tip is oldest goes; if it
         // is too young to have shown one, or has blocks in flight, the
         // rotation waits for it (RTW3-4).
-        if registered_outbound > cfg.max_outbound {
+        if full > cfg.max_outbound {
             let candidates: Vec<OutboundCandidate> = st
                 .peers
                 .iter()
-                .filter(|(_, p)| !p.inbound && !cfg.connect.contains(&p.addr))
+                .filter(|(_, p)| p.kind == ConnKind::FullRelay && !cfg.connect.contains(&p.addr))
                 .map(|(id, p)| OutboundCandidate {
                     id: *id,
                     last_new_tip: p.last_new_tip,
@@ -630,15 +717,18 @@ pub(super) fn maintain_outbound(inner: &Arc<Inner>) {
             }
         }
     }
-    for a in to_connect.into_iter().chain(feeler) {
-        tokio::spawn(connect_outbound(inner.clone(), a));
+    for (a, kind) in to_connect {
+        tokio::spawn(connect_outbound(inner.clone(), a, kind));
+    }
+    if let Some(a) = feeler {
+        tokio::spawn(connect_outbound(inner.clone(), a, ConnKind::FullRelay));
     }
 }
 
-/// Writes the anchors at shutdown (W4): up to `MAX_ANCHORS` outbound peers
-/// this node dialed from its table (not manual peers, not seeds: a seed
-/// operator must not hold every joiner's anchors), longest connected first.
-/// The next start dials them before anything else.
+/// Writes the anchors at shutdown (W4): up to `MAX_ANCHORS` of this node's
+/// block-relay-only peers (never manual peers or seeds: a seed operator must
+/// not hold every joiner's anchors), longest connected first. The next start
+/// dials them, as block-relay-only connections, before anything else.
 pub(super) fn save_anchors(inner: &Inner) {
     let Some(dir) = &inner.cfg.data_dir else {
         return;
@@ -648,7 +738,7 @@ pub(super) fn save_anchors(inner: &Inner) {
         st.peers
             .values()
             .filter(|p| {
-                !p.inbound
+                p.kind == ConnKind::BlockRelay
                     && !inner.cfg.connect.contains(&p.addr)
                     && !inner.cfg.seeds.contains(&p.addr)
             })
@@ -685,12 +775,23 @@ mod tests {
             a("7.7.7.7:1"),
             a("6.6.6.6:1"),
         );
-        let connecting: HashSet<NetAddr> =
-            [&p1, &p2, &dial, &feeler].into_iter().cloned().collect();
+        let full = ConnKind::FullRelay;
+        let mut connecting: HashMap<NetAddr, ConnKind> = [&p1, &p2, &dial, &feeler]
+            .into_iter()
+            .map(|a| (a.clone(), full))
+            .collect();
         let registered: HashSet<NetAddr> = [p1, p2].into_iter().collect();
-        assert_eq!(pending_dials(&connecting, &registered, Some(&feeler)), 1);
-        assert_eq!(pending_dials(&connecting, &registered, None), 2);
-        assert_eq!(pending_dials(&connecting, &HashSet::new(), None), 4);
+        assert_eq!(
+            pending_dials(&connecting, &registered, Some(&feeler), full),
+            1
+        );
+        assert_eq!(pending_dials(&connecting, &registered, None, full), 2);
+        assert_eq!(pending_dials(&connecting, &HashSet::new(), None, full), 4);
+        // Counted per kind: a block-relay-only dial is not a full-relay one.
+        connecting.insert(a("5.5.5.5:1"), ConnKind::BlockRelay);
+        assert_eq!(pending_dials(&connecting, &registered, None, full), 2);
+        let br = ConnKind::BlockRelay;
+        assert_eq!(pending_dials(&connecting, &registered, None, br), 1);
     }
 
     /// RTW3-9: a feeler testing a *tried* collision's occupant ignores the
@@ -707,7 +808,7 @@ mod tests {
                 .into_iter()
                 .collect();
         let bans = BanList::default();
-        let empty = HashSet::new();
+        let empty = HashMap::new();
         let connected: HashSet<NetAddr> = [a("5.5.5.5:1")].into_iter().collect();
         let d = Dialable {
             cfg: &cfg,
@@ -725,7 +826,7 @@ mod tests {
         assert!(d.skip_test(&a("5.5.5.5:1"), &[]), "connected");
         assert!(d.skip_test(&a("10.0.0.1:1"), &[]), "unroutable");
         assert!(
-            d.skip_test(&occupant, std::slice::from_ref(&occupant)),
+            d.skip_test(&occupant, &[(occupant.clone(), ConnKind::FullRelay)]),
             "being dialed"
         );
         let mut banned = BanList::default();

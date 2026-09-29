@@ -2,6 +2,7 @@
 //! (`NetConfig`, `PeerInfo`, `NetStats`).
 
 use crate::addr::NetAddr;
+use crate::connman::ConnKind;
 use crate::dandelion::{DandelionParams, PeerId};
 use crate::limits::PeerLimits;
 use crate::transport::NetworkPsk;
@@ -14,6 +15,11 @@ pub struct NetConfig {
     pub network_id: u32,
     /// Listen for inbound connections here (`None`: outbound only).
     pub listen: Option<SocketAddr>,
+    /// A second listener for our Tor hidden service (`--onion-inbound`,
+    /// docs/p2p.md §11): its peers are onion peers (`ConnKind::OnionInbound`),
+    /// never IP-banned or counted per IP, capped as a class. When it is set,
+    /// loopback connections on `listen` are no longer taken for Tor.
+    pub onion_listen: Option<SocketAddr>,
     /// Our reachable address, advertised to peers. `None` keeps it private.
     pub public_address: Option<NetAddr>,
     pub seeds: Vec<NetAddr>,
@@ -26,7 +32,11 @@ pub struct NetConfig {
     pub proxy: Option<SocketAddr>,
     /// Only connect through the proxy.
     pub proxy_only: bool,
+    /// Full-relay outbound connections (manual peers included).
     pub max_outbound: usize,
+    /// Block-relay-only outbound connections besides them (default
+    /// [`crate::connman::BLOCK_RELAY_ONLY`]; none with `connect_only`).
+    pub block_relay_only: usize,
     pub max_inbound: usize,
     pub max_per_ip: usize,
     /// Accept and dial loopback/private addresses and skip network-group diversity
@@ -57,6 +67,15 @@ pub struct NetConfig {
     /// An outbound peer younger than this is never rotated out (default
     /// [`crate::connman::MIN_CONNECT_TIME`]).
     pub min_connect_time: Duration,
+    /// Time between pings to a peer (default 60 s). Tests shorten it.
+    pub ping_interval: Duration,
+    /// A seed's address fetch is closed after this long without an answer
+    /// (default [`crate::connman::ADDR_FETCH_TIMEOUT`]).
+    pub addr_fetch_timeout: Duration,
+    /// Seeds are asked for addresses once fewer than two full-relay outbound
+    /// peers were up this long (default
+    /// [`crate::connman::SEED_FALLBACK_AFTER`]).
+    pub seed_fallback_after: Duration,
 }
 
 impl NetConfig {
@@ -64,6 +83,7 @@ impl NetConfig {
         Self {
             network_id,
             listen: None,
+            onion_listen: None,
             public_address: None,
             seeds: Vec::new(),
             connect: Vec::new(),
@@ -71,6 +91,7 @@ impl NetConfig {
             proxy: None,
             proxy_only: false,
             max_outbound: 8,
+            block_relay_only: crate::connman::BLOCK_RELAY_ONLY,
             max_inbound: 64,
             max_per_ip: 2,
             allow_private: false,
@@ -86,6 +107,9 @@ impl NetConfig {
             stale_tip_after: None,
             stale_check_interval: crate::connman::STALE_CHECK_INTERVAL,
             min_connect_time: crate::connman::MIN_CONNECT_TIME,
+            ping_interval: Duration::from_secs(60),
+            addr_fetch_timeout: crate::connman::ADDR_FETCH_TIMEOUT,
+            seed_fallback_after: crate::connman::SEED_FALLBACK_AFTER,
         }
     }
 }
@@ -96,16 +120,27 @@ pub struct PeerInfo {
     pub id: PeerId,
     pub addr: NetAddr,
     pub inbound: bool,
+    pub kind: ConnKind,
     pub height: u64,
     pub score: u32,
     /// The peer's `Version.protocol`.
     pub protocol: u32,
+    /// The lowest ping round trip measured.
+    pub min_ping: Option<Duration>,
+    /// When the peer last delivered a new block that joined our best chain,
+    /// and a new valid transaction.
+    pub last_block: Option<std::time::Instant>,
+    pub last_tx: Option<std::time::Instant>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NetStats {
     pub peers: usize,
+    /// Outbound peers of every kind (full-relay, block-relay-only, address
+    /// fetches).
     pub outbound: usize,
+    /// Of them, block-relay-only.
+    pub block_relay: usize,
     pub inbound: usize,
     pub stempool: usize,
     pub banned: usize,

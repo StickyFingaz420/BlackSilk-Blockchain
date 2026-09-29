@@ -41,11 +41,20 @@
 //! one per IP, and so do honest *new* addresses; the restart draws are then
 //! compared for *tried* biases 0.5 to 0.9. Regular outbound connections
 //! promoting what they reach, honest address inflow after the flood and
-//! anchors are still not modelled.
+//! anchors are not modelled there.
+//!
+//! W3-32c adds two: the onion rows of the feeler model under each onion
+//! *tried* cap ([`eclipse_simulation_onion_tried_cap`]), and a realistic
+//! model ([`eclipse_simulation_realistic_model`]): a week after the flood
+//! with feelers, regular redials that promote what answers, honest address
+//! inflow and continued flooding, comparing W3-32's policy with the
+//! source-group *tried* cap and the rich-*tried* bias. Honest churn and an
+//! attacker laundering addresses through honest relays are not modelled.
 
 use blacksilk_crypto::hash::{h32, tags};
 use blacksilk_p2p::addrman::{
-    AddrMan, Table, BUCKET_SIZE, NEW_BUCKETS_PER_SOURCE_GROUP, TRIED_BIAS,
+    AddrMan, Table, TriedCaps, BUCKET_SIZE, NEW_BUCKETS_PER_SOURCE_GROUP, TRIED_BIAS,
+    TRIED_PER_ONION_GROUP,
 };
 use blacksilk_p2p::addrman_gate::{AddrGate, Verdict, ADDR_RATE};
 use blacksilk_p2p::NetAddr;
@@ -304,7 +313,8 @@ fn public_v4(rng: &mut ChaCha20Rng, used: &mut HashSet<[u8; 2]>) -> NetAddr {
         if a.is_routable() && used.insert([b[0], b[1]]) {
             return a;
         }
-        if used.len() > 60_000 {
+        // Fewer than 60 000 /16s are routable: start over well before.
+        if used.len() > 40_000 {
             used.clear();
         }
     }
@@ -609,22 +619,24 @@ struct TriedTally {
     runs: u64,
 }
 
-/// One outbound draw after a restart under `bias`, as `maintain_outbound`
-/// makes it (routable, one per group).
+/// `n` outbound draws after a restart under `bias`, as `maintain_outbound`
+/// makes them (routable, one per group).
+#[allow(clippy::too_many_arguments)]
 fn restart_draws(
     m: &AddrMan,
     s: &Scenario,
     honest: &HashSet<NetAddr>,
-    bias: f64,
+    bias: Option<f64>,
     now: u64,
     rng: &mut ChaCha20Rng,
     t: &mut FeelerTally,
+    n: usize,
 ) {
-    for _ in 0..FEELER_RESTARTS {
+    for _ in 0..n {
         let mut groups = HashSet::new();
         let mut picked: Vec<NetAddr> = Vec::new();
         for _ in 0..OUTBOUND {
-            let pick = m.select_biased(rng, now, false, bias, |a| {
+            let pick = draw(m, rng, now, bias, |a| {
                 !a.is_routable()
                     || groups.contains(&a.group())
                     || picked.contains(a)
@@ -655,6 +667,7 @@ fn restart_draws(
 /// attempt. At each horizon the restart draws are measured for every bias.
 fn run_feelers(
     fs: FeelerScenario,
+    caps: TriedCaps,
     seed: u64,
     slots: &mut HashMap<(u64, u64), FeelerTally>,
     tried: &mut HashMap<u64, TriedTally>,
@@ -662,6 +675,7 @@ fn run_feelers(
     let s = fs.base;
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     let mut m = AddrMan::new(&mut rng);
+    m.set_tried_caps(caps);
     let mut used = HashSet::new();
     let mut fresh = |rng: &mut ChaCha20Rng| {
         if s.onion {
@@ -745,7 +759,16 @@ fn run_feelers(
         assert!(attacker_tried <= answering.len() as u64);
         for (i, bias) in BIASES.iter().enumerate() {
             let t = slots.entry((horizon, i as u64)).or_default();
-            restart_draws(&m, &s, &honest, *bias, now, &mut rng, t);
+            restart_draws(
+                &m,
+                &s,
+                &honest,
+                Some(*bias),
+                now,
+                &mut rng,
+                t,
+                FEELER_RESTARTS,
+            );
         }
     }
     m.check().unwrap();
@@ -805,7 +828,13 @@ fn eclipse_simulation_with_feelers_rederives_the_tried_bias() {
         let mut slots = HashMap::new();
         let mut tried = HashMap::new();
         for seed in 0..SEEDS {
-            run_feelers(fs, 2000 + seed, &mut slots, &mut tried);
+            run_feelers(
+                fs,
+                TriedCaps::default(),
+                2000 + seed,
+                &mut slots,
+                &mut tried,
+            );
         }
         for horizon in FEELER_HORIZONS {
             let tt = &tried[&horizon];
@@ -847,5 +876,549 @@ fn eclipse_simulation_with_feelers_rederives_the_tried_bias() {
             }
             println!();
         }
+    }
+}
+
+// ---------------------------------------------------------------- onion tried cap (W3-32c)
+
+/// Onion *tried* caps compared (`usize::MAX`: no cap, before W3-32c).
+const ONION_CAPS: [usize; 5] = [usize::MAX, 1, 2, 4, 8];
+
+fn cap_name(c: usize) -> String {
+    if c == usize::MAX {
+        "none".into()
+    } else {
+        c.to_string()
+    }
+}
+
+/// W3-32c item 1: the onion rows of the feeler model under each onion
+/// *tried* cap. Before the cap an onion attacker had no per-entry cost: every
+/// answering onion it announced could reach *tried*. The cap bounds its
+/// *tried* entries to 16 × cap whatever it announces; the honest-only rows
+/// show what the cap costs an onion node whose honest peers outnumber it.
+/// Run with `--nocapture` for the table.
+#[test]
+fn eclipse_simulation_onion_tried_cap() {
+    let onion = |name, honest, honest_tried| Scenario {
+        name,
+        honest,
+        honest_tried,
+        sources: 1,
+        flood_secs: 600,
+        reconnect_secs: 60,
+        onion: true,
+    };
+    let scenarios = [
+        FeelerScenario {
+            base: onion("onion g=1", 20, 8),
+            answering: Some(32),
+        },
+        FeelerScenario {
+            base: onion("onion g=1", 20, 8),
+            answering: Some(128),
+        },
+        FeelerScenario {
+            base: onion("onion honest-only", 100, 8),
+            answering: Some(0),
+        },
+    ];
+    let ours = BIASES.iter().position(|b| *b == TRIED_BIAS).unwrap();
+    println!(
+        "{:<18} {:>4} {:>5} {:>7} {:>8} {:>8} {:>14}",
+        "scenario", "cap", "ans", "feelers", "hon-tr", "att-tr", "slot%/all8"
+    );
+    // (scenario, cap) -> (share, P(all 8), attacker tried, honest tried)
+    // after a week of feelers.
+    let mut week: HashMap<(usize, usize), (f64, f64, f64, f64)> = HashMap::new();
+    for (k, fs) in scenarios.iter().enumerate() {
+        for cap in ONION_CAPS {
+            let caps = TriedCaps {
+                onion_group: cap,
+                source_group: usize::MAX,
+            };
+            let mut slots = HashMap::new();
+            let mut tried = HashMap::new();
+            for seed in 0..SEEDS {
+                run_feelers(*fs, caps, 2000 + seed, &mut slots, &mut tried);
+            }
+            for horizon in FEELER_HORIZONS {
+                let tt = &tried[&horizon];
+                let t = &slots[&(horizon, ours as u64)];
+                let share = t.attacker as f64 / (t.attacker + t.honest).max(1) as f64;
+                let all8 = t.all_attacker as f64 / t.restarts as f64;
+                let att = tt.attacker_tried as f64 / tt.runs as f64;
+                let hon = tt.honest_tried as f64 / tt.runs as f64;
+                println!(
+                    "{:<18} {:>4} {:>5} {:>7} {:>8.1} {:>8.1} {:>14}",
+                    fs.base.name,
+                    cap_name(cap),
+                    tt.answering / tt.runs,
+                    horizon,
+                    hon,
+                    att,
+                    format!("{:.1}/{:.3}", 100.0 * share, all8)
+                );
+                if cap != usize::MAX {
+                    assert!(
+                        att <= 16.0 * cap as f64,
+                        "{} cap {cap}: {att}",
+                        fs.base.name
+                    );
+                }
+                if horizon == *FEELER_HORIZONS.last().unwrap() {
+                    week.insert((k, cap), (share, all8, att, hon));
+                }
+            }
+        }
+    }
+    let chosen = TRIED_PER_ONION_GROUP;
+    for k in 0..2 {
+        let (none, capped) = (week[&(k, usize::MAX)], week[&(k, chosen)]);
+        // The cap bounds the attacker's *tried* entries, and at least a
+        // third of its outbound share goes.
+        assert!(capped.2 <= 16.0 * chosen as f64 && capped.2 < none.2);
+        assert!(
+            capped.0 <= none.0 * 2.0 / 3.0 && capped.1 <= none.1,
+            "scenario {k}: {:.3}/{:.3} vs {:.3}/{:.3}",
+            capped.0,
+            capped.1,
+            none.0,
+            none.1
+        );
+    }
+    // With no answering attacker address the cap costs little: the
+    // attacker's share of the slots rises by at most 5 points.
+    let (none, capped) = (week[&(2, usize::MAX)], week[&(2, chosen)]);
+    assert!(
+        capped.0 <= none.0 + 0.05,
+        "{:.3} vs {:.3}",
+        capped.0,
+        none.0
+    );
+}
+
+// ---------------------------------------------------------------- the realistic model (W3-32c item 2)
+
+/// One step of the realistic model is one feeler (their mean interval).
+const STEP_SECS: u64 = 120;
+/// One outbound slot is redrawn about this often (honest peers restarting,
+/// attacker peers leaving to force a redraw, stale-tip rotation): a slot
+/// lasts about 4 hours.
+const DIAL_SECS: u64 = 1800;
+/// A new honest node's address reaches the victim this often, relayed by an
+/// honest peer (honest address inflow: nodes joining).
+const JOIN_SECS: u64 = 3600;
+/// Every honest node's address is heard again about once a day (its own
+/// re-advertisement, relayed; Bitcoin Core re-advertises every 24 hours).
+const READVERTISE_SECS: u64 = 24 * 3600;
+/// Attacker addresses admitted per source per hour after the flood: it keeps
+/// flooding within the admission limits (a fraction of what they allow), so
+/// its addresses that fail and turn terrible are replaced.
+const FLOOD_PER_HOUR: u64 = 100;
+/// The honest peers the victim learned its honest addresses from (its
+/// outbound peers' `GetAddr` answers): the source groups of those entries.
+const HONEST_SOURCES: usize = 8;
+/// Days after the flood at which the table and the slots are measured.
+const REAL_DAYS: [u64; 3] = [0, 1, 7];
+const REAL_RESTARTS: usize = 500;
+const REAL_SEEDS: u64 = 5;
+
+/// A policy variant: *tried* caps and bias (`None`: the node's own,
+/// `AddrMan::tried_bias`).
+#[derive(Clone, Copy)]
+struct Mitigation {
+    name: &'static str,
+    caps: TriedCaps,
+    bias: Option<f64>,
+}
+
+/// One draw as `maintain_outbound` makes it, under `bias` (`None`: the
+/// node's own).
+fn draw(
+    m: &AddrMan,
+    rng: &mut ChaCha20Rng,
+    now: u64,
+    bias: Option<f64>,
+    skip: impl Fn(&NetAddr) -> bool,
+) -> Option<NetAddr> {
+    match bias {
+        Some(b) => m.select_biased(rng, now, false, b, skip),
+        None => m.select(rng, now, false, skip),
+    }
+}
+
+#[derive(Default, Clone)]
+struct RealTally {
+    new_honest: u64,
+    new_total: u64,
+    tried_honest: u64,
+    tried_attacker: u64,
+    /// The victim's live outbound slots, sampled every hour since the
+    /// previous measurement.
+    live_attacker: u64,
+    live_total: u64,
+    restart: FeelerTally,
+    runs: u64,
+}
+
+impl RealTally {
+    fn live_share(&self) -> f64 {
+        self.live_attacker as f64 / self.live_total.max(1) as f64
+    }
+
+    fn restart_share(&self) -> f64 {
+        let r = &self.restart;
+        r.attacker as f64 / (r.attacker + r.honest).max(1) as f64
+    }
+
+    fn all8(&self) -> f64 {
+        self.restart.all_attacker as f64 / self.restart.restarts.max(1) as f64
+    }
+
+    fn new_honest_share(&self) -> f64 {
+        self.new_honest as f64 / self.new_total.max(1) as f64
+    }
+}
+
+/// Whether `a` accepts connections: honest, or an answering attacker address.
+fn answers(a: &NetAddr, honest: &HashSet<NetAddr>, answering: &HashSet<NetAddr>) -> bool {
+    honest.contains(a) || answering.contains(a)
+}
+
+/// A regular outbound dial as `maintain_outbound` makes it: routable, one
+/// per group, not connected; an address that answers is connected and
+/// promoted (`AddrMan::good`), one that does not is charged an attempt and
+/// the next one is drawn.
+#[allow(clippy::too_many_arguments)]
+fn dial(
+    m: &mut AddrMan,
+    out: &mut Vec<NetAddr>,
+    onion: bool,
+    bias: Option<f64>,
+    now: u64,
+    rng: &mut ChaCha20Rng,
+    honest: &HashSet<NetAddr>,
+    answering: &HashSet<NetAddr>,
+) {
+    for _ in 0..32 {
+        let groups: HashSet<Vec<u8>> = out.iter().map(NetAddr::group).collect();
+        let pick = draw(m, rng, now, bias, |a| {
+            !a.is_routable()
+                || groups.contains(&a.group())
+                || out.contains(a)
+                || a.is_onion() != onion
+        });
+        let Some(a) = pick else { return };
+        m.attempt(&a, now);
+        if answers(&a, honest, answering) {
+            m.good(&a, now);
+            out.push(a);
+            return;
+        }
+    }
+}
+
+/// The realistic model: the flood of [`run_feelers`], then a week in steps
+/// of [`STEP_SECS`]. Every step one feeler runs (a waiting collision's
+/// occupant first, else a *new* address outside the outbound groups) and
+/// the outbound peers keep their entries fresh (`AddrMan::connected`).
+/// Every [`DIAL_SECS`] one outbound slot is redrawn by a regular dial,
+/// which promotes what answers. Honest address inflow: a new honest node
+/// every [`JOIN_SECS`], and every honest address heard again every
+/// [`READVERTISE_SECS`], each from a random honest node. The attacker keeps
+/// flooding [`FLOOD_PER_HOUR`] addresses per source. The honest addresses
+/// known before the flood come from [`HONEST_SOURCES`] peers. At each of
+/// [`REAL_DAYS`]: the make-up of both tables, the attacker's share of the
+/// live outbound slots (sampled hourly over the period) and of the slots
+/// after a restart.
+fn run_realistic(
+    fs: FeelerScenario,
+    mit: Mitigation,
+    seed: u64,
+    tally: &mut HashMap<u64, RealTally>,
+) {
+    let s = fs.base;
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let mut m = AddrMan::new(&mut rng);
+    m.set_tried_caps(mit.caps);
+    let mut used = HashSet::new();
+    let mut fresh = |rng: &mut ChaCha20Rng| {
+        if s.onion {
+            onion(rng)
+        } else {
+            public_v4(rng, &mut used)
+        }
+    };
+    let mut honest_list: Vec<NetAddr> = (0..s.honest).map(|_| fresh(&mut rng)).collect();
+    for (i, h) in honest_list.iter().enumerate() {
+        let src = &honest_list[i % HONEST_SOURCES];
+        m.add(h.clone(), src, NOW);
+        if i < s.honest_tried {
+            m.good(h, NOW);
+        }
+    }
+    let mut honest: HashSet<NetAddr> = honest_list.iter().cloned().collect();
+    let sources: Vec<NetAddr> = (0..s.sources)
+        .map(|_| public_v4(&mut rng, &mut HashSet::new()))
+        .collect();
+    let answering_list: Vec<NetAddr> = match fs.answering {
+        None => sources.clone(),
+        Some(n) => (0..n).map(|_| fresh(&mut rng)).collect(),
+    };
+    let conns = MAX_PER_IP * s.flood_secs.div_ceil(s.reconnect_secs);
+    let per_source = (conns * admitted_current(s.reconnect_secs)).min(FLOOD_CAP / s.sources);
+    let mut left: Vec<u64> = vec![per_source; sources.len()];
+    for (i, a) in answering_list.iter().enumerate() {
+        let k = i % sources.len();
+        if left[k] > 0 {
+            m.add(a.clone(), &sources[(k + 1) % sources.len()], NOW);
+            left[k] -= 1;
+        }
+    }
+    for (src, n) in sources.iter().zip(left) {
+        for _ in 0..n {
+            let a = fresh(&mut rng);
+            m.add(a, src, NOW);
+        }
+    }
+    let answering: HashSet<NetAddr> = answering_list.iter().cloned().collect();
+    let t0 = NOW + s.flood_secs;
+    // The outbound peers right after the flood: drawn as after a restart.
+    let mut out: Vec<NetAddr> = Vec::new();
+    while out.len() < OUTBOUND {
+        let before = out.len();
+        dial(
+            &mut m, &mut out, s.onion, mit.bias, t0, &mut rng, &honest, &answering,
+        );
+        if out.len() == before {
+            break;
+        }
+    }
+    let per_hour = 3600 / STEP_SECS;
+    let readvertise_every = READVERTISE_SECS / STEP_SECS;
+    let mut step = 0;
+    let (mut live_attacker, mut live_total) = (0u64, 0u64);
+    for day in REAL_DAYS {
+        while step < day * 24 * per_hour {
+            step += 1;
+            let now = t0 + step * STEP_SECS;
+            for a in &out {
+                m.connected(a, now);
+            }
+            m.resolve_collisions(now);
+            // The feeler.
+            let groups: HashSet<Vec<u8>> = out.iter().map(NetAddr::group).collect();
+            let pick = m.select_tried_collision(&mut rng).or_else(|| {
+                m.select(&mut rng, now, true, |a| {
+                    !a.is_routable()
+                        || groups.contains(&a.group())
+                        || out.contains(a)
+                        || a.is_onion() != s.onion
+                })
+            });
+            if let Some(a) = pick {
+                m.attempt(&a, now);
+                if answers(&a, &honest, &answering) {
+                    m.good(&a, now);
+                }
+            }
+            // A regular dial replaces one outbound peer.
+            if step % (DIAL_SECS / STEP_SECS) == 0 && !out.is_empty() {
+                let i = (rng.next_u64() % out.len() as u64) as usize;
+                out.swap_remove(i);
+                dial(
+                    &mut m, &mut out, s.onion, mit.bias, now, &mut rng, &honest, &answering,
+                );
+            }
+            // Honest inflow: a node joins; addresses are heard again.
+            if step % (JOIN_SECS / STEP_SECS) == 0 {
+                let h = fresh(&mut rng);
+                let src = honest_list[(rng.next_u64() % honest_list.len() as u64) as usize].clone();
+                m.add(h.clone(), &src, now);
+                honest.insert(h.clone());
+                honest_list.push(h);
+            }
+            for (j, h) in honest_list.iter().enumerate() {
+                if j as u64 % readvertise_every == step % readvertise_every {
+                    let src = &honest_list[(rng.next_u64() % honest_list.len() as u64) as usize];
+                    m.add(h.clone(), src, now);
+                }
+            }
+            // The attacker keeps flooding; the live slots are sampled.
+            if step % per_hour == 0 {
+                for src in &sources {
+                    for _ in 0..FLOOD_PER_HOUR {
+                        let a = fresh(&mut rng);
+                        m.add(a, src, now);
+                    }
+                }
+                live_attacker += out.iter().filter(|a| !honest.contains(*a)).count() as u64;
+                live_total += OUTBOUND as u64;
+            }
+        }
+        let now = t0 + step * STEP_SECS + 1;
+        let t = tally.entry(day).or_default();
+        for (a, table) in m.addresses() {
+            let h = honest.contains(&a);
+            match table {
+                Table::New => {
+                    t.new_total += 1;
+                    t.new_honest += h as u64;
+                }
+                Table::Tried => {
+                    t.tried_honest += h as u64;
+                    t.tried_attacker += !h as u64;
+                }
+            }
+        }
+        t.live_attacker += live_attacker;
+        t.live_total += live_total;
+        (live_attacker, live_total) = (0, 0);
+        restart_draws(
+            &m,
+            &s,
+            &honest,
+            mit.bias,
+            now,
+            &mut rng,
+            &mut t.restart,
+            REAL_RESTARTS,
+        );
+        t.runs += 1;
+    }
+    m.check().unwrap();
+}
+
+/// W3-32c item 2: the realistic model's table, per scenario, policy
+/// variant and day: the honest share of *new*, the *tried* make-up, the
+/// attacker's share of the live outbound slots over the period and of the
+/// slots after a restart (and P(all 8)). Run with `--nocapture`.
+#[test]
+fn eclipse_simulation_realistic_model() {
+    let scen = |name, honest, honest_tried, sources, onion, answering| FeelerScenario {
+        base: Scenario {
+            name,
+            honest,
+            honest_tried,
+            sources,
+            flood_secs: 600,
+            reconnect_secs: 60,
+            onion,
+        },
+        answering,
+    };
+    let scenarios = [
+        scen("ipv4 g=1", 50, 16, 1, false, None),
+        scen("ipv4 g=4", 50, 16, 4, false, None),
+        scen("ipv4 g=4", 50, 16, 4, false, Some(32)),
+        scen("ipv4 g=4", 50, 16, 4, false, Some(128)),
+        scen("ipv4 g=4 empty-tried", 50, 0, 4, false, Some(32)),
+        scen("ipv4 honest-200 g=1", 200, 16, 1, false, None),
+        scen("onion g=1", 20, 8, 1, true, Some(128)),
+    ];
+    let caps = |source_group| TriedCaps {
+        source_group,
+        ..TriedCaps::default()
+    };
+    // W3-32 (before W3-32c) with the onion cap, each change alone, and the
+    // chosen defaults.
+    let before = Mitigation {
+        name: "w3-32",
+        caps: caps(usize::MAX),
+        bias: Some(0.7),
+    };
+    let chosen = Mitigation {
+        name: "chosen",
+        caps: TriedCaps::default(),
+        bias: None,
+    };
+    let mitigations = [
+        before,
+        Mitigation {
+            name: "src 8",
+            caps: caps(8),
+            bias: Some(0.7),
+        },
+        Mitigation {
+            name: "src 16",
+            caps: caps(16),
+            bias: Some(0.7),
+        },
+        Mitigation {
+            name: "src 32",
+            caps: caps(32),
+            bias: Some(0.7),
+        },
+        Mitigation {
+            name: "bias 0.9",
+            caps: caps(usize::MAX),
+            bias: Some(0.9),
+        },
+        chosen,
+    ];
+    println!(
+        "{:<22} {:>4} {:<9} {:>3} {:>8} {:>7} {:>7} {:>9} {:>14}",
+        "scenario",
+        "ans",
+        "policy",
+        "day",
+        "new-hon%",
+        "hon-tr",
+        "att-tr",
+        "live-att%",
+        "restart%/all8"
+    );
+    let week = *REAL_DAYS.last().unwrap();
+    let mut rows: HashMap<(usize, &str), RealTally> = HashMap::new();
+    for (k, fs) in scenarios.iter().copied().enumerate() {
+        for mit in mitigations {
+            let mut tally = HashMap::new();
+            for seed in 0..REAL_SEEDS {
+                run_realistic(fs, mit, 3000 + seed, &mut tally);
+            }
+            for day in REAL_DAYS {
+                let t = &tally[&day];
+                let runs = t.runs.max(1) as f64;
+                println!(
+                    "{:<22} {:>4} {:<11} {:>3} {:>7.1}% {:>7.1} {:>7.1} {:>8.1}% {:>14}",
+                    fs.base.name,
+                    fs.answering.map_or("own".to_string(), |n| n.to_string()),
+                    mit.name,
+                    day,
+                    100.0 * t.new_honest_share(),
+                    t.tried_honest as f64 / runs,
+                    t.tried_attacker as f64 / runs,
+                    100.0 * t.live_share(),
+                    format!("{:.1}/{:.3}", 100.0 * t.restart_share(), t.all8()),
+                );
+            }
+            rows.insert((k, mit.name), tally[&week].clone());
+        }
+    }
+    // The drain: after a week of feelers, *new* holds almost no honest
+    // address in every IPv4 flood scenario under W3-32's policy.
+    assert!(rows[&(0, before.name)].new_honest_share() < 0.05);
+    // The chosen policy lowers the attacker's share of the slots after a
+    // restart in every scenario (up to two points of sampling noise), and
+    // never raises P(all 8) (up to 0.002).
+    for (k, fs) in scenarios.iter().enumerate() {
+        let (b, c) = (&rows[&(k, before.name)], &rows[&(k, chosen.name)]);
+        assert!(
+            c.restart_share() <= b.restart_share() + 0.02 && c.all8() <= b.all8() + 0.002,
+            "{} {:?}: {:.3}/{:.4} vs {:.3}/{:.4}",
+            fs.base.name,
+            fs.answering,
+            c.restart_share(),
+            c.all8(),
+            b.restart_share(),
+            b.all8()
+        );
+    }
+    // Where the attacker's addresses answer from its own IPs, the share
+    // falls by at least a third.
+    for k in [0, 1] {
+        let (b, c) = (&rows[&(k, before.name)], &rows[&(k, chosen.name)]);
+        assert!(c.restart_share() <= b.restart_share() * 2.0 / 3.0);
     }
 }

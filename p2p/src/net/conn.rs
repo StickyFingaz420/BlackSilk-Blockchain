@@ -4,11 +4,15 @@
 use super::addr_relay::advertise_self;
 use super::blocks::SERVE_BLOCKS_PER_REQUEST;
 use super::dispatch::{handle, is_slow, requested_by_us, Pushed, SlowLane};
-use super::peers::{advertised_listen, evict_inbound, inbound_count, same_ip_count, HandshakeSlot};
+use super::peers::{
+    advertised_listen, evict_inbound, inbound_count, onion_inbound_count, same_ip_count,
+    HandshakeSlot,
+};
 use super::relay::retry_tx;
 use super::state::{unix_now, Inner, Peer};
 use crate::addr::NetAddr;
 use crate::addrman_gate::AddrGate;
+use crate::connman::{onion_inbound_cap, ConnKind};
 use crate::limits::score;
 use crate::message::{
     is_known_type, Message, Version, MAX_HANDSHAKE_FRAME, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION,
@@ -69,16 +73,34 @@ async fn recv_handshake_frame<R: AsyncRead + Unpin>(
     })
 }
 
+/// Whether a message relays transactions (`InvTx`, `GetTx`, `Tx`,
+/// `StemTx`): never exchanged on a block-relay-only connection.
+fn is_tx_message(msg: &Message) -> bool {
+    matches!(
+        msg,
+        Message::InvTx(_) | Message::GetTx(_) | Message::Tx(_) | Message::StemTx(_)
+    )
+}
+
+/// Whether a loopback connection on the P2P listener is taken for an onion
+/// peer arriving through our hidden service: only while no onion listener
+/// is configured (`NetConfig::onion_listen`), and never with
+/// `allow_private`.
+pub(super) fn loopback_is_tor(cfg: &super::NetConfig, addr: &NetAddr) -> bool {
+    cfg.onion_listen.is_none() && !cfg.allow_private && addr.ip().is_some_and(|ip| ip.is_loopback())
+}
+
 pub(super) async fn run_connection<S>(
     inner: Arc<Inner>,
     stream: S,
     addr: NetAddr,
-    inbound: bool,
+    kind: ConnKind,
     proxied: bool,
     mut slot: Option<HandshakeSlot>,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    let inbound = kind.is_inbound();
     let nid = inner.cfg.network_id;
     let deadline = tokio::time::Instant::now() + HANDSHAKE_DEADLINE;
     // The session keys also bind the genesis id (R15-3), the transport
@@ -99,8 +121,7 @@ pub(super) async fn run_connection<S>(
         }
     };
     tokio::pin!(evicted);
-    let via_tor = proxied
-        || (inbound && !inner.cfg.allow_private && addr.ip().is_some_and(|ip| ip.is_loopback()));
+    let via_tor = proxied || (kind == ConnKind::Inbound && loopback_is_tor(&inner.cfg, &addr));
     let key_timeout = if via_tor {
         HANDSHAKE_TIMEOUT
     } else {
@@ -138,7 +159,12 @@ pub(super) async fn run_connection<S>(
         let s = inner.summary.load();
         (s.header_height, s.best_header_id)
     };
-    let our_listen = advertised_listen(&inner.cfg, &addr, inbound, proxied);
+    // No address of ours on a block-relay-only connection: addresses are
+    // never exchanged there (an anchor learns nothing to link us by).
+    let our_listen = match kind {
+        ConnKind::BlockRelay => None,
+        _ => advertised_listen(&inner.cfg, &addr, inbound, proxied),
+    };
     let ours = Version {
         protocol: PROTOCOL_VERSION,
         network: nid,
@@ -146,7 +172,7 @@ pub(super) async fn run_connection<S>(
         height,
         tip,
         listen: our_listen.clone(),
-        relay_txs: true,
+        relay_txs: kind != ConnKind::BlockRelay,
     };
     // Before `Verack` only `Version`, then up to HANDSHAKE_UNKNOWN_FRAMES
     // frames of unknown types, then `Verack`; each at most
@@ -207,6 +233,13 @@ pub(super) async fn run_connection<S>(
         }
     };
 
+    // Addresses are exchanged unless the connection is block-relay-only:
+    // ours, or the peer's (an inbound peer that asked for no transaction
+    // relay is a block-relay-only connection of its own). We ask for
+    // addresses on full-relay outbound connections and address fetches.
+    let addr_relay = kind.relays_addrs() && (!inbound || theirs.relay_txs);
+    let asks_addresses = matches!(kind, ConnKind::FullRelay | ConnKind::AddrFetch);
+
     // Register.
     let (tx_out, rx_out) = mpsc::channel::<Message>(OUTBOX);
     let (tx_bulk, rx_bulk) = mpsc::channel::<Message>(BULK_OUTBOX);
@@ -224,18 +257,30 @@ pub(super) async fn run_connection<S>(
         // (`connman::select_inbound_to_evict`); else this one is refused.
         // Evicting here, not at accept, means only a peer that completed its
         // handshake can take a registered peer's place (RTW3-3).
+        // Onion peers (our hidden service) share the Tor daemon's IP: no ban
+        // or per-IP limit applies to them; the class is capped at a quarter of
+        // `max_inbound` and makes room within itself (W3-32c, N-6).
         if inbound {
-            let over = addr.ip().is_some_and(|ip| {
-                st.bans.is_banned(&ip, unix_now())
-                    || (!inner.cfg.allow_private && same_ip_count(&st, ip) >= inner.cfg.max_per_ip)
-            }) || (inbound_count(&st) >= inner.cfg.max_inbound
-                && !evict_inbound(&inner, &mut st));
+            let onion = kind == ConnKind::OnionInbound;
+            let over = (!onion
+                && addr.ip().is_some_and(|ip| {
+                    st.bans.is_banned(&ip, unix_now())
+                        || (!inner.cfg.allow_private
+                            && same_ip_count(&st, ip) >= inner.cfg.max_per_ip)
+                }))
+                || (onion
+                    && onion_inbound_count(&st) >= onion_inbound_cap(inner.cfg.max_inbound)
+                    && !evict_inbound(&inner, &mut st, true))
+                || (inbound_count(&st) >= inner.cfg.max_inbound
+                    && !evict_inbound(&inner, &mut st, false));
             if over {
                 log::debug!("{addr}: inbound limit reached at registration");
                 return;
             }
         }
-        if !inbound {
+        // An address fetch (a seed) is not promoted: a seed operator must not
+        // gain a place in every joiner's *tried* table (F32-6).
+        if !inbound && kind != ConnKind::AddrFetch {
             st.addrman.good(&addr, unix_now());
             // A feeler (docs/p2p.md §9): the handshake was the test; the
             // address is now in *tried* (or its collision settled). Closed
@@ -252,8 +297,11 @@ pub(super) async fn run_connection<S>(
         let mut addr_known = HashSet::new();
         if let Some(listen) = theirs.listen.clone().map(NetAddr::canonical) {
             let own = match listen.ip() {
-                Some(ip) => addr.ip() == Some(ip),
-                None => addr.ip().is_some_and(|ip| ip.is_loopback()),
+                Some(ip) => !proxied && addr.ip() == Some(ip),
+                None => {
+                    kind == ConnKind::OnionInbound
+                        || (kind == ConnKind::Inbound && loopback_is_tor(&inner.cfg, &addr))
+                }
             };
             if inbound && own && (listen.is_routable() || inner.cfg.allow_private) {
                 st.addrman.add(listen.clone(), &addr, unix_now());
@@ -262,20 +310,22 @@ pub(super) async fn run_connection<S>(
         }
         let now = Instant::now();
         let mut addr_gate = AddrGate::new(now);
-        if !inbound {
+        if asks_addresses {
             addr_gate.getaddr_sent(now);
         }
         st.peers.insert(
             id,
             Peer {
                 addr: addr.clone(),
+                kind,
                 inbound,
                 proxied,
                 protocol: theirs.protocol,
                 out: tx_out,
                 bulk: tx_bulk,
                 kill: kill.clone(),
-                relay_txs: theirs.relay_txs,
+                relay_txs: theirs.relay_txs && kind.relays_txs(),
+                addr_relay,
                 height: theirs.height,
                 score: 0,
                 limits: inner.cfg.peer_limits.clone(),
@@ -287,6 +337,7 @@ pub(super) async fn run_connection<S>(
                 announced_to: HashSet::new(),
                 known_txs: HashSet::new(),
                 ping: None,
+                min_ping: None,
                 last_ping: now,
                 last_recv: now,
                 blocks_in_flight: 0,
@@ -299,22 +350,31 @@ pub(super) async fn run_connection<S>(
                 connected_at: now,
                 evicted: false,
                 last_new_tip: None,
+                last_block: None,
+                last_tx: None,
             },
         );
     }
     log::info!(
         "connected {} peer {addr} (height {})",
-        if inbound { "inbound" } else { "outbound" },
+        match kind {
+            ConnKind::Inbound => "inbound",
+            ConnKind::OnionInbound => "onion inbound",
+            ConnKind::FullRelay => "outbound",
+            ConnKind::BlockRelay => "block-relay-only outbound",
+            ConnKind::AddrFetch => "address-fetch",
+        },
         theirs.height
     );
     let writer_task = tokio::spawn(write_loop(writer, rx_out, rx_bulk));
-    if !inbound {
+    if asks_addresses {
         inner.send_now(id, Message::GetAddr);
     }
-    if let Some(listen) = our_listen {
+    if let Some(listen) = our_listen.filter(|_| addr_relay) {
         advertise_self(&inner, id, listen);
     }
-    if theirs.height > height {
+    // An address fetch is for addresses only.
+    if theirs.height > height && kind != ConnKind::AddrFetch {
         inner.request_headers(id).await;
     }
 
@@ -379,6 +439,20 @@ pub(super) async fn run_connection<S>(
                     Ok(m) => m,
                     Err(e) => { inner.misbehave(id, score::PROTOCOL, &format!("malformed message: {e:?}")); break; }
                 };
+                // No transaction relay on a block-relay-only connection: we
+                // said so (`relay_txs = false`), so the peer breaks the
+                // protocol (Bitcoin Core disconnects). An address fetch
+                // ignores it.
+                if is_tx_message(&msg) {
+                    match kind {
+                        ConnKind::BlockRelay => {
+                            inner.misbehave(id, score::UNSOLICITED, "transaction message on a block-relay-only connection");
+                            continue;
+                        }
+                        ConnKind::AddrFetch => continue,
+                        _ => {}
+                    }
+                }
                 // The byte budget limits what a peer sends on its own initiative.
                 // Answers to our own requests are exempt: a block we requested
                 // (bounded by our request window, BLOCKS_IN_FLIGHT blocks of at

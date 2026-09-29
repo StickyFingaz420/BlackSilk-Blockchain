@@ -4,6 +4,7 @@
 use super::state::{unix_now, Inner, State, ADDR_KNOWN_MAX};
 use crate::addr::{AddrEntry, NetAddr};
 use crate::addrman_gate::{is_fresh, Verdict};
+use crate::connman::ConnKind;
 use crate::dandelion::PeerId;
 use crate::limits::score;
 use crate::message::Message;
@@ -26,8 +27,9 @@ pub(super) fn on_get_addr(inner: &Arc<Inner>, peer: PeerId) {
     // Only inbound peers are answered (F32-4): answering a peer we dialed
     // lets it recognize addresses it planted earlier, and so link this node
     // across sessions, IPs and Tor circuits (Biryukov and Pustogarov, "Bitcoin
-    // over Tor isn't a good idea", 2015). Ignored, not penalized.
-    if !p.inbound {
+    // over Tor isn't a good idea", 2015). Nor a block-relay-only connection
+    // (no addresses there). Ignored, not penalized.
+    if !p.inbound || !p.addr_relay {
         return;
     }
     if p.answered_getaddr {
@@ -60,6 +62,18 @@ pub(super) fn on_addr(inner: &Arc<Inner>, peer: PeerId, entries: Vec<AddrEntry>)
     let Some(p) = st.peers.get_mut(&peer) else {
         return;
     };
+    // No addresses on a block-relay-only connection: ignored, not penalized
+    // (a self-advertisement may cross our `Version`).
+    if !p.addr_relay {
+        return;
+    }
+    // A seed's address fetch ends with its answer: any `Addr` except a
+    // single entry (the seed's own address, sent on every connection).
+    // Bitcoin Core closes on more than one entry; an empty answer ends it
+    // here too.
+    if p.kind == ConnKind::AddrFetch && entries.len() != 1 {
+        p.kill.notify_one();
+    }
     let (admit, relay) = match p.addr_gate.check(entries.len(), Instant::now()) {
         Verdict::Answer => (entries.len(), false),
         Verdict::Limited { admit } => (admit, true),
@@ -107,11 +121,12 @@ fn relay_fresh(inner: &Inner, st: &mut State, from: Option<PeerId>, fresh: Vec<A
     if fresh.is_empty() {
         return;
     }
+    // Not to block-relay-only connections, nor to a seed being asked.
     let others: Vec<PeerId> = st
         .peers
-        .keys()
-        .copied()
-        .filter(|&p| Some(p) != from)
+        .iter()
+        .filter(|(id, p)| Some(**id) != from && p.addr_relay && p.kind != ConnKind::AddrFetch)
+        .map(|(id, _)| *id)
         .collect();
     let mut out: Vec<(PeerId, Vec<AddrEntry>)> = Vec::new();
     for e in fresh {

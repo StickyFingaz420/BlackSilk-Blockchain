@@ -59,18 +59,45 @@ pub const MAX_COLLISIONS: usize = 10;
 pub const REPLACEMENT_SECS: u64 = 4 * 3600;
 /// A collision not tested within this long evicts the occupant.
 pub const TEST_WINDOW_SECS: u64 = 40 * 60;
+/// *tried* entries per onion group (the 16 key-prefix groups), at most.
+/// IPv4 and IPv6 addresses are held to one *tried* entry per IP, which costs
+/// an attacker one IP per entry; onion names cost nothing, so without a cap
+/// every answering onion it announces could reach *tried* (W3-32c). Set
+/// from the eclipse simulator (`p2p/tests/eclipse_sim.rs`).
+pub const TRIED_PER_ONION_GROUP: usize = 1;
+/// *tried* entries per source group (the group of the peer an address was
+/// first heard from), at most (W3-32c). Feelers and regular dials promote
+/// whatever answers, so an attacker's answering addresses, announced from
+/// its few source groups, would otherwise fill *tried* in proportion to
+/// their number; with the cap it holds at most 16 per source group. Honest
+/// addresses arrive from many sources. Set from the eclipse simulator's
+/// realistic model.
+pub const TRIED_PER_SOURCE_GROUP: usize = 16;
 /// Probability that [`AddrMan::select`] draws from *tried* when both tables
-/// have entries (Bitcoin Core: 0.5; Monero draws 70 % of its connections
-/// from its white list). Set from the eclipse simulator
-/// (`p2p/tests/eclipse_sim.rs`): with a *tried* table, 0.7 roughly halves
-/// the attacker's outbound share again compared with 0.5, since *tried*
-/// holds only addresses this node connected to. A *tried* draw with nothing
-/// eligible falls back to *new*, so a small *tried* table costs nothing.
-/// Re-derived with feelers modelled (RTW3-10: answering attacker addresses
-/// reach *tried*, one per IP): 0.7 is never worse than 0.5 in any scenario;
-/// 0.8 and 0.9 lower the share further where the attacker holds few *tried*
-/// entries but raise P(all 8) where it holds most of them, so it stays 0.7.
+/// have entries and *tried* holds fewer than [`RICH_TRIED`] (Bitcoin Core:
+/// 0.5; Monero draws 70 % of its connections from its white list). Set from
+/// the eclipse simulator (`p2p/tests/eclipse_sim.rs`): with a *tried* table,
+/// 0.7 roughly halves the attacker's outbound share again compared with 0.5,
+/// since *tried* holds only addresses this node connected to. A *tried* draw
+/// with nothing eligible falls back to *new*, so a small *tried* table costs
+/// nothing. Re-derived with feelers modelled (RTW3-10): 0.7 is never worse
+/// than 0.5; in that model 0.8 and 0.9 raised P(all 8) where the attacker
+/// held most of *tried*.
 pub const TRIED_BIAS: f64 = 0.7;
+/// The *tried* bias once *tried* holds at least [`RICH_TRIED`] entries
+/// (W3-32c). In the simulator's realistic model (honest address inflow,
+/// regular dials, a week), feelers drain honest addresses out of *new*
+/// within a day (they move to *tried*), so a *new* draw almost always picks
+/// the attacker and the 30 % of draws that go to *new* carry most of its
+/// share. With the source-group cap ([`TRIED_PER_SOURCE_GROUP`]) an
+/// attacker cannot hold most of a large *tried* table, and 0.9 then lowers
+/// its share in every IPv4 scenario modelled without raising P(all 8). A
+/// small *tried* table (an onion-only node's holds at most 16) keeps
+/// [`TRIED_BIAS`]: there, with few entries per group, 0.9 did worse.
+pub const RICH_TRIED_BIAS: f64 = 0.9;
+/// *tried* entries from which [`RICH_TRIED_BIAS`] applies: eight per
+/// full-relay outbound slot.
+pub const RICH_TRIED: usize = 64;
 /// The share of the table a `GetAddr` answer may reveal, in percent
 /// (Bitcoin Core's `MAX_PCT_ADDR_TO_SEND`).
 pub const GETADDR_MAX_PCT: usize = 23;
@@ -80,6 +107,27 @@ const DAY: u64 = 24 * 3600;
 const SELECT_DRAWS: usize = 256;
 /// Version of the saved format; another version starts a fresh table.
 const FORMAT_VERSION: u32 = 2;
+
+/// Caps on classes of *tried* entries: a newly connected address whose
+/// class is full waits as a collision with the class's stalest entry
+/// (test-before-evict), as one whose slot is taken does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TriedCaps {
+    /// Entries per onion group ([`TRIED_PER_ONION_GROUP`]).
+    pub onion_group: usize,
+    /// Entries per source group: the group of the peer the address was
+    /// first heard from ([`TRIED_PER_SOURCE_GROUP`]).
+    pub source_group: usize,
+}
+
+impl Default for TriedCaps {
+    fn default() -> Self {
+        Self {
+            onion_group: TRIED_PER_ONION_GROUP,
+            source_group: TRIED_PER_SOURCE_GROUP,
+        }
+    }
+}
 
 /// The two tables.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -132,6 +180,11 @@ pub struct AddrMan {
     /// the whole address, so a LAN's nodes spread over buckets instead of
     /// all landing in one (they share one /16).
     private_groups: bool,
+    caps: TriedCaps,
+    /// *tried* entries per class ([`TriedCaps`]): by onion group, by source
+    /// group.
+    tried_onion: HashMap<Vec<u8>, usize>,
+    tried_source: HashMap<Vec<u8>, usize>,
 }
 
 impl AddrMan {
@@ -156,6 +209,19 @@ impl AddrMan {
             collisions: Vec::new(),
             next_id: 1,
             private_groups: false,
+            caps: TriedCaps::default(),
+            tried_onion: HashMap::new(),
+            tried_source: HashMap::new(),
+        }
+    }
+
+    /// Replaces the *tried* class caps (the simulator compares them). The
+    /// table is re-placed under the new caps.
+    pub fn set_tried_caps(&mut self, caps: TriedCaps) {
+        if self.caps != caps {
+            self.caps = caps;
+            let entries = self.take_entries();
+            self.place_all(entries);
         }
     }
 
@@ -251,19 +317,52 @@ impl AddrMan {
         *self.cell(table, b, s) = Some(id);
         match table {
             Table::New => self.new_len[b] += 1,
-            Table::Tried => self.tried_len[b] += 1,
+            Table::Tried => {
+                self.tried_len[b] += 1;
+                self.count_classes(id, true);
+            }
         }
     }
 
     fn clear(&mut self, table: Table, b: usize, s: usize) -> Option<u64> {
         let id = self.cell(table, b, s).take();
-        if id.is_some() {
+        if let Some(id) = id {
             match table {
                 Table::New => self.new_len[b] -= 1,
-                Table::Tried => self.tried_len[b] -= 1,
+                Table::Tried => {
+                    self.tried_len[b] -= 1;
+                    self.count_classes(id, false);
+                }
             }
         }
         id
+    }
+
+    /// The onion group of `a` if it is an onion (its *tried* class).
+    fn onion_class(&self, a: &NetAddr) -> Option<Vec<u8>> {
+        a.is_onion().then(|| self.bucket_group(a))
+    }
+
+    /// Counts *tried* entry `id` into its classes (`add`), or out of them.
+    fn count_classes(&mut self, id: u64, add: bool) {
+        let e = &self.entries[&id];
+        let onion = self.onion_class(&e.addr);
+        let source = e.source_group.clone();
+        let step = |m: &mut HashMap<Vec<u8>, usize>, k: Vec<u8>| {
+            let n = m.entry(k.clone()).or_default();
+            if add {
+                *n += 1;
+            } else {
+                *n -= 1;
+                if *n == 0 {
+                    m.remove(&k);
+                }
+            }
+        };
+        if let Some(g) = onion {
+            step(&mut self.tried_onion, g);
+        }
+        step(&mut self.tried_source, source);
     }
 
     /// Removes entry `id` from its slot, the index and every set.
@@ -421,19 +520,78 @@ impl AddrMan {
         if e.tried {
             return true;
         }
-        let b = self.tried_bucket(addr);
-        let s = self.slot(Table::Tried, b, addr);
-        let same_ip = addr.ip().and_then(|ip| self.tried_ips.get(&ip).copied());
-        if let Some(occupant) = self.tried[b][s] {
-            if Some(occupant) != same_ip {
-                if self.collisions.len() < MAX_COLLISIONS && !self.collisions.contains(&id) {
-                    self.collisions.push(id);
-                }
-                return false;
+        if self.tried_rival(id).is_some() {
+            if self.collisions.len() < MAX_COLLISIONS && !self.collisions.contains(&id) {
+                self.collisions.push(id);
             }
+            return false;
         }
         self.make_tried(id);
         true
+    }
+
+    /// The *tried* entry that must give way for *new* entry `id` to enter
+    /// *tried*: the occupant of its slot (unless it is the same IP's entry,
+    /// which it replaces), else the stalest entry of a full class
+    /// ([`TriedCaps`]). `None`: it can move in.
+    fn tried_rival(&self, id: u64) -> Option<u64> {
+        let e = &self.entries[&id];
+        let same_ip = e.addr.ip().and_then(|ip| self.tried_ips.get(&ip).copied());
+        let b = self.tried_bucket(&e.addr);
+        let s = self.slot(Table::Tried, b, &e.addr);
+        match self.tried[b][s] {
+            Some(occupant) if Some(occupant) != same_ip => Some(occupant),
+            _ => self.class_victim(e, same_ip),
+        }
+    }
+
+    /// The stalest *tried* entry (oldest last success, then lowest id) of a
+    /// class of `e` that is full without `leaving` (an entry about to leave
+    /// *tried*): its onion group first, then its source group.
+    fn class_victim(&self, e: &Entry, leaving: Option<u64>) -> Option<u64> {
+        let onion_group = self.onion_class(&e.addr);
+        // The class counts without `leaving`: only a full class is scanned.
+        let left = leaving.map(|id| &self.entries[&id]);
+        let count = |m: &HashMap<Vec<u8>, usize>, k: &[u8], of: &dyn Fn(&Entry) -> bool| {
+            m.get(k).copied().unwrap_or(0) - usize::from(left.is_some_and(of))
+        };
+        let onion_full = onion_group.as_ref().is_some_and(|g| {
+            count(&self.tried_onion, g, &|l| {
+                self.onion_class(&l.addr).as_ref() == Some(g)
+            }) >= self.caps.onion_group
+        });
+        let source_full = count(&self.tried_source, &e.source_group, &|l| {
+            l.source_group == e.source_group
+        }) >= self.caps.source_group;
+        if !onion_full && !source_full {
+            return None;
+        }
+        let mut onion = Vec::new();
+        let mut source = Vec::new();
+        for &id in self.tried.iter().flatten().flatten() {
+            if Some(id) == leaving {
+                continue;
+            }
+            let t = &self.entries[&id];
+            if onion_group
+                .as_ref()
+                .is_some_and(|g| t.addr.is_onion() && self.bucket_group(&t.addr) == *g)
+            {
+                onion.push(id);
+            }
+            if t.source_group == e.source_group {
+                source.push(id);
+            }
+        }
+        let stalest = |v: &[u64]| {
+            v.iter()
+                .copied()
+                .min_by_key(|id| (self.entries[id].last_success, *id))
+        };
+        if onion_full {
+            return stalest(&onion);
+        }
+        stalest(&source)
     }
 
     /// Moves *new* entry `id` to its *tried* slot. The IP's previous *tried*
@@ -454,6 +612,11 @@ impl AddrMan {
         let ts = self.slot(Table::Tried, tb, &e.addr);
         if let Some(occupant) = self.tried[tb][ts] {
             self.demote(occupant);
+        }
+        // A full class gives way too: its stalest entry (one pass is enough
+        // unless the caps were lowered).
+        while let Some(victim) = self.class_victim(&e, None) {
+            self.demote(victim);
         }
         self.entries.get_mut(&id).expect("present").tried = true;
         self.put(Table::Tried, tb, ts, id);
@@ -483,7 +646,8 @@ impl AddrMan {
         self.put(Table::New, nb, ns, id);
     }
 
-    /// A *tried* occupant whose slot a newly connected address wants: the
+    /// The *tried* entry a newly connected address must replace (the
+    /// occupant of its slot, or the stalest entry of its full class): the
     /// address a feeler should test (test-before-evict).
     pub fn select_tried_collision(&mut self, rng: &mut impl RngCore) -> Option<NetAddr> {
         if self.collisions.is_empty() {
@@ -491,16 +655,12 @@ impl AddrMan {
         }
         let i = (rng.next_u64() % self.collisions.len() as u64) as usize;
         let id = self.collisions[i];
-        let Some(e) = self.entries.get(&id) else {
+        if !self.entries.get(&id).is_some_and(|e| !e.tried) {
             self.collisions.swap_remove(i);
             return None;
-        };
-        let b = self.tried_bucket(&e.addr);
-        let s = self.slot(Table::Tried, b, &e.addr);
-        match self.tried[b][s] {
-            Some(occupant) => Some(self.entries[&occupant].addr.clone()),
-            None => None,
         }
+        self.tried_rival(id)
+            .map(|rival| self.entries[&rival].addr.clone())
     }
 
     /// Settles waiting collisions (Bitcoin Core's `ResolveCollisions`):
@@ -511,7 +671,12 @@ impl AddrMan {
     /// - it was not tested within [`TEST_WINDOW_SECS`] of the collision: it
     ///   stays, and the collision is dropped (the newcomer stays in *new*;
     ///   RTW3-9: an occupant that could not be tested is not evicted);
-    /// - the slot became free, or the newcomer left *new*: settled.
+    /// - the slot became free (or the class has room), or the newcomer left
+    ///   *new*: settled.
+    ///
+    /// "The occupant" is the entry the newcomer must replace
+    /// (`tried_rival`): its slot's occupant, or the stalest entry of its
+    /// full class ([`TriedCaps`]).
     pub fn resolve_collisions(&mut self, now: u64) {
         for id in self.collisions.clone() {
             let Some(e) = self.entries.get(&id) else {
@@ -522,9 +687,7 @@ impl AddrMan {
                 self.collisions.retain(|&c| c != id);
                 continue;
             }
-            let b = self.tried_bucket(&e.addr);
-            let s = self.slot(Table::Tried, b, &e.addr);
-            let promote = match self.tried[b][s] {
+            let promote = match self.tried_rival(id) {
                 None => Some(true),
                 Some(occupant) => {
                     let old = &self.entries[&occupant];
@@ -555,7 +718,7 @@ impl AddrMan {
 
     /// A candidate for an outbound connection, skipping addresses for which
     /// `skip` is true; from *new* only if `new_only` (feelers). A table is
-    /// drawn (*tried* with probability [`TRIED_BIAS`]), then a non-empty
+    /// drawn (*tried* with probability [`Self::tried_bias`]), then a non-empty
     /// bucket uniformly, then the first entry from a random slot; it is
     /// taken with probability `chance × 1.2^draws` (entries tried recently or
     /// failing often are drawn less). After [`SELECT_DRAWS`] draws, or if
@@ -569,7 +732,17 @@ impl AddrMan {
         new_only: bool,
         skip: impl Fn(&NetAddr) -> bool,
     ) -> Option<NetAddr> {
-        self.select_biased(rng, now, new_only, TRIED_BIAS, skip)
+        self.select_biased(rng, now, new_only, self.tried_bias(), skip)
+    }
+
+    /// The *tried* bias [`Self::select`] uses: [`RICH_TRIED_BIAS`] once
+    /// *tried* holds [`RICH_TRIED`] entries, else [`TRIED_BIAS`].
+    pub fn tried_bias(&self) -> f64 {
+        if self.len().1 >= RICH_TRIED {
+            RICH_TRIED_BIAS
+        } else {
+            TRIED_BIAS
+        }
     }
 
     /// [`Self::select`] drawing *tried* first with probability `tried_bias`
@@ -685,9 +858,10 @@ impl AddrMan {
                 out.push(self.entries[id].clone());
             }
         }
-        let (key, private) = (self.key, self.private_groups);
+        let (key, private, caps) = (self.key, self.private_groups, self.caps);
         *self = Self::with_key(key);
         self.private_groups = private;
+        self.caps = caps;
         out
     }
 
@@ -708,7 +882,8 @@ impl AddrMan {
                     .addr
                     .ip()
                     .is_some_and(|ip| self.tried_ips.contains_key(&ip));
-                if self.tried[b][s].is_none() && !ip_taken {
+                let class_full = self.class_victim(&e, None).is_some();
+                if self.tried[b][s].is_none() && !ip_taken && !class_full {
                     let ip = e.addr.ip();
                     let id = self.insert_entry(e);
                     self.put(Table::Tried, b, s, id);
@@ -753,6 +928,15 @@ impl AddrMan {
     /// Loads a saved table with its key; `None` if missing, unreadable or of
     /// another format version (a fresh table is used).
     pub fn load(path: &Path) -> Option<Self> {
+        Self::load_grouped(path, false)
+    }
+
+    /// [`Self::load`] placing the entries under `private_groups`
+    /// ([`Self::set_private_groups`]) from the start. Loading under the
+    /// public grouping first and switching after dropped the local
+    /// addresses that collided in the one bucket their shared /16 gives
+    /// them.
+    pub fn load_grouped(path: &Path, private_groups: bool) -> Option<Self> {
         let bytes = std::fs::read(path).ok()?;
         let saved: Saved = match serde_json::from_slice(&bytes) {
             Ok(s) => s,
@@ -773,6 +957,7 @@ impl AddrMan {
             return None;
         }
         let mut m = Self::with_key(saved.key);
+        m.private_groups = private_groups;
         m.place_all(saved.entries);
         Some(m)
     }
@@ -818,6 +1003,28 @@ impl AddrMan {
         }
         if ips.len() != self.tried_ips.len() {
             return Err("tried IP index out of date".into());
+        }
+        let mut onion: HashMap<Vec<u8>, usize> = HashMap::new();
+        let mut source: HashMap<&[u8], usize> = HashMap::new();
+        for e in self.entries.values().filter(|e| e.tried) {
+            if e.addr.is_onion() {
+                *onion.entry(self.bucket_group(&e.addr)).or_default() += 1;
+            }
+            *source.entry(&e.source_group).or_default() += 1;
+        }
+        if onion != self.tried_onion
+            || source.len() != self.tried_source.len()
+            || source
+                .iter()
+                .any(|(k, n)| self.tried_source.get(*k) != Some(n))
+        {
+            return Err("tried class counts out of date".into());
+        }
+        if onion.values().any(|&n| n > self.caps.onion_group) {
+            return Err("an onion group over its tried cap".into());
+        }
+        if source.values().any(|&n| n > self.caps.source_group) {
+            return Err("a source group over its tried cap".into());
         }
         if self.collisions.len() > MAX_COLLISIONS {
             return Err("too many collisions".into());
@@ -1109,6 +1316,86 @@ mod tests {
         m.check().unwrap();
     }
 
+    /// `n` valid onion addresses of onion group `group` (0..16), from
+    /// ground keys: onion names are free, so an attacker can make any number
+    /// in any group.
+    fn onions_in_group(group: u8, n: usize, rng: &mut ChaCha20Rng) -> Vec<NetAddr> {
+        let mut out = Vec::new();
+        while out.len() < n {
+            let mut key = [0u8; 32];
+            rng.fill_bytes(&mut key);
+            let x = NetAddr::from_onion_key(&key, 9333);
+            if x.group() == vec![10, group] {
+                out.push(x);
+            }
+        }
+        out
+    }
+
+    fn tried_in_onion_group(m: &AddrMan, group: u8) -> usize {
+        m.addresses()
+            .into_iter()
+            .filter(|(x, t)| *t == Table::Tried && x.group() == vec![10, group])
+            .count()
+    }
+
+    /// W3-32c item 1: onion names cost nothing, so *tried* would take any
+    /// number of answering onions of one group (IPv4 and IPv6 are held to one
+    /// entry per IP). At most [`TRIED_PER_ONION_GROUP`] per onion group
+    /// reach it; the next one waits as a collision with the group's stalest
+    /// entry, which is replaced only if it stops answering.
+    #[test]
+    fn onion_tried_entries_are_capped_per_group() {
+        let (mut m, mut rng) = table(14);
+        // Announced by distinct sources, so they spread over *new* buckets.
+        let src = |i: u32| in_group(3000 + i, 1);
+        let onions = onions_in_group(5, 40, &mut rng);
+        for (i, x) in onions.iter().enumerate() {
+            assert!(m.add(x.clone(), &src(i as u32), NOW));
+            m.good(x, NOW + i as u64);
+        }
+        let n = tried_in_onion_group(&m, 5);
+        assert!(
+            n <= TRIED_PER_ONION_GROUP,
+            "{n} tried entries in one onion group"
+        );
+        assert_eq!(n, TRIED_PER_ONION_GROUP, "up to the cap");
+        m.check().unwrap();
+        // Other groups are not affected.
+        let per_group = TRIED_PER_ONION_GROUP;
+        for (i, x) in onions_in_group(6, per_group, &mut rng)
+            .into_iter()
+            .enumerate()
+        {
+            assert!(m.add(x.clone(), &src(100 + i as u32), NOW));
+            assert!(m.good(&x, NOW));
+        }
+        // The next onion of group 5 waits; the stalest member is tested.
+        let t = NOW + 5 * 3600;
+        let newer = onions_in_group(5, 1, &mut rng).remove(0);
+        assert!(m.add(newer.clone(), &src(200), t));
+        assert!(!m.good(&newer, t), "the group is full: it waits");
+        let stalest = m
+            .select_tried_collision(&mut rng)
+            .expect("a member to test");
+        assert_eq!(stalest.group(), vec![10, 5]);
+        // It answers: kept, the newcomer stays in *new*.
+        assert!(m.good(&stalest, t + 10));
+        m.resolve_collisions(t + 20);
+        assert_eq!(m.position(&newer).unwrap().0, Table::New);
+        assert_eq!(tried_in_onion_group(&m, 5), TRIED_PER_ONION_GROUP);
+        // Later a member stops answering: the newcomer takes its place.
+        let t2 = t + 6 * 3600;
+        assert!(!m.good(&newer, t2));
+        let victim = m.select_tried_collision(&mut rng).unwrap();
+        m.attempt(&victim, t2 + 5);
+        m.resolve_collisions(t2 + 70);
+        assert_eq!(m.position(&newer).unwrap().0, Table::Tried);
+        assert_eq!(m.position(&victim).unwrap().0, Table::New, "demoted");
+        assert_eq!(tried_in_onion_group(&m, 5), TRIED_PER_ONION_GROUP);
+        m.check().unwrap();
+    }
+
     /// Selection draws a non-empty bucket uniformly: 1000 entries crowded
     /// into one source's 16 buckets are drawn about as often as 16 entries
     /// in 16 other buckets.
@@ -1207,8 +1494,9 @@ mod tests {
     }
 
     /// Random operation sequences keep every invariant: the index matches the
-    /// slots, counts match, no duplicates, one *tried* entry per IP, at most
-    /// 16 *new* buckets per source group, and a save and load round-trip.
+    /// slots, counts match, no duplicates, one *tried* entry per IP, the
+    /// *tried* class caps, at most 16 *new* buckets per source group, and a
+    /// save and load round-trip.
     #[test]
     fn random_operations_keep_the_invariants() {
         let dir = tempfile::tempdir().unwrap();
@@ -1216,9 +1504,18 @@ mod tests {
             let (mut m, mut rng) = table(100 + seed);
             let mut now = NOW;
             let mut sources: HashMap<Vec<u8>, std::collections::HashSet<usize>> = HashMap::new();
+            // A fifth of the operations are on onions of three groups, so
+            // the onion *tried* cap is exercised too.
+            let onions: Vec<NetAddr> = (0..3)
+                .flat_map(|g| onions_in_group(g, 20, &mut rng))
+                .collect();
             for step in 0..6000u32 {
                 now += rng.next_u64() % 120;
-                let x = in_group(rng.next_u32() % 400, rng.next_u32() % 40);
+                let x = if rng.next_u32() % 5 == 0 {
+                    onions[rng.next_u32() as usize % onions.len()].clone()
+                } else {
+                    in_group(rng.next_u32() % 400, rng.next_u32() % 40)
+                };
                 match rng.next_u32() % 10 {
                     0..=5 => {
                         let src = in_group(rng.next_u32() % 20, 1);
@@ -1346,6 +1643,12 @@ mod tests {
             added += m.add(a(&format!("192.168.1.{}:{}", 2 + i, 9000)), &src, NOW) as usize;
         }
         assert!(added >= 38, "{added}");
+        // Loaded under private groups from the start, none is lost; loaded
+        // under the public grouping, they crowd one bucket and some are.
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("peers.json");
+        m.save(&p).unwrap();
+        assert_eq!(AddrMan::load_grouped(&p, true).unwrap().len(), m.len());
         m.set_private_groups(false);
         m.check().unwrap();
         m.set_private_groups(true);

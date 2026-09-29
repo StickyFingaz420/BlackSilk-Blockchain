@@ -604,8 +604,11 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
 ## 9. Peer discovery and the address manager
 
 - **Seeds.** Seed nodes come from `--seed` or a built-in list. The built-in list is empty
-  until the testnet is launched.
-- **Address exchange.** After each outbound handshake the node sends `GetAddr`. A peer
+  until the testnet is launched. They are asked for addresses in one-shot connections
+  (below), never kept as peers.
+- **Address exchange.** After each full-relay outbound handshake, and on a seed's address
+  fetch, the node sends `GetAddr`. No address is exchanged on a block-relay-only
+  connection (below), either way. A peer
   answers with at most 1000 random known addresses, at most once per connection, and
   **only to inbound peers**: a `GetAddr` from a peer the node dialed is ignored
   (unpenalized). Answering it would let a peer plant unique addresses in a node's
@@ -646,10 +649,13 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   - The relayed entry keeps its original time, so relaying reveals nothing about the
     relayer's clock.
 - **Own address.** A node advertises its own address (`Version.listen`) only when the
-  operator sets `--public-address`, so private nodes are not revealed.
+  operator sets `--public-address`, so private nodes are not revealed, and never on a
+  block-relay-only connection (ours, or an inbound peer's that sent `relay_txs =
+  false`).
   - An onion address is advertised only over Tor (proxied outbound connections, and
-    inbound ones from loopback, i.e. through the hidden service); a clearnet address
-    only over clearnet. A dual-homed configuration logs a warning at startup. Before
+    inbound ones through the hidden service: on the onion listener, §11, or from loopback
+    when there is none and `allow_private` is off); a clearnet address only over
+    clearnet. A dual-homed configuration logs a warning at startup. Before
     2026-09-27 an onion address was sent to clearnet peers too, linking the node's
     two identities (I3-2).
   - After each handshake the node also sends the same address to the peer as a
@@ -678,8 +684,9 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
     - it failed 3 attempts and never connected;
     - it failed 10 attempts and had no success for 7 days.
   - **Promotion and test-before-evict.** An address moves to *tried* when an outbound
-    connection to it (a regular one or a feeler) completes its handshake. Inbound
-    connections never promote. If its *tried* slot holds another address:
+    connection to it (full-relay, block-relay-only or a feeler) completes its handshake.
+    Inbound connections and seeds' address fetches never promote. If its *tried* slot
+    holds another address, or its class is full (below):
     - the newcomer waits in *new* (at most 10 wait), and a feeler tests the occupant;
     - the occupant stays if it connected in the last 4 hours (an outbound peer this
       node is connected to counts as connected now);
@@ -691,9 +698,21 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
     - a replaced *tried* entry goes back to *new*.
 
     *tried* holds **one address per IP**: another port of that IP that connects
-    replaces it (F32-9).
-  - **Selection.** A table is drawn: *tried* with probability 0.7 (`TRIED_BIAS`, set
-    from the simulator below; Bitcoin Core uses 0.5, Monero 70 %), else *new*. Then a
+    replaces it (F32-9). It also holds at most **16 addresses per source group** (the
+    group of the peer an address was first heard from; `TRIED_PER_SOURCE_GROUP`,
+    W3-32c): feelers and regular dials promote whatever answers, so without the cap an
+    attacker's answering addresses, announced from its few source groups, filled
+    *tried* in proportion to their number. It holds **one onion address per onion group**
+    (`TRIED_PER_ONION_GROUP`, W3-32c): onion names cost nothing, so before this cap every
+    answering onion an attacker announced could reach *tried*. A newly connected onion
+    whose group already has its entry waits as a collision with that entry, tested as
+    above (it is replaced only if it stops answering). Outbound picks are one per group
+    anyway, so a second entry per group adds nothing to diversity; the cap was chosen
+    from the simulator (below).
+  - **Selection.** A table is drawn: *tried* with probability 0.7 (`TRIED_BIAS`), or
+    0.9 once *tried* holds at least 64 entries (`RICH_TRIED_BIAS`, `RICH_TRIED`;
+    W3-32c), else *new*; both set from the simulator below (Bitcoin Core uses 0.5,
+    Monero 70 %). Then a
     **non-empty bucket is drawn uniformly**, then an entry of it. The entry is accepted
     with Bitcoin Core's `GetChance` (0.01 if tried in the last 10 minutes, × 0.66 per
     failed attempt up to 8), raised 1.2× per draw. A source's entries, crowded into its
@@ -728,27 +747,35 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   (`100::/64`) or documentation; an IPv6 address embedding an IPv4 address
   (mapped, 6to4, NAT64, Teredo) is routable only if that IPv4 address is.
 - **Outbound connections** (`maintain_outbound`, every 2 s). The node keeps **8
-  outbound connections**, at most **one per group**, also among the addresses picked in
-  the same round (before 2026-09-27 two picks of one round could share a group, R8-4).
-  The groups of manual peers, anchors and seeds being dialed count too (F32-12).
+  full-relay** outbound connections (`--max-outbound`, manual peers included) and **2
+  block-relay-only** ones (`NetConfig::block_relay_only`; none with `--connect-only`), at
+  most **one per group** across both, also among the addresses picked in the same round
+  (before 2026-09-27 two picks of one round could share a group, R8-4). The groups of
+  manual peers and anchors being dialed count too (F32-12); seeds' address fetches do
+  not (they are short).
+  - **Block-relay-only connections** (W3-32c, dossier 32 W4; Bitcoin Core PR #15759).
+    The node sends `relay_txs = false` and no address of its own in `Version`; no
+    `GetAddr` and no `Addr` go either way (an `Addr` from the peer is ignored); no
+    transaction is announced or stemmed to it; a transaction message from it (`InvTx`,
+    `GetTx`, `Tx`, `StemTx`) costs 10 points. Headers and blocks flow as on any
+    connection. Transaction and address relay therefore reveal nothing about these
+    links (TxProbe-style topology inference, Delgado-Segura et al., FC 2019). The
+    receiving side treats an inbound peer that sent `relay_txs = false` the same way for
+    addresses. Full-relay slots are filled first, then these, from the same table.
   - A registered outbound peer counts **once** against the target (RTW3-2). Its address
     stays in the dialing set for its whole session (so it is never dialed twice), and
     before the fix it was counted there and as a registered peer: a node refilled a lost
     outbound slot only once fewer than half its target were left, never reached the
     feeler condition after churn, and could not dial the stale-tip extra peer
     (`p2p/tests/outbound_policy.rs`, `lost_outbound_peers_are_replaced`).
-  - **Anchors** (dossier 32 W4):
-    - At shutdown the node writes up to 2 of its outbound peers to `anchors.json`:
-      those dialed from the table, longest connected first, never manual peers or seeds.
-    - At the next start it dials them before anything else.
+  - **Anchors** (dossier 32 W4, as Bitcoin Core since PR #17428):
+    - At shutdown the node writes up to 2 of its **block-relay-only** peers to
+      `anchors.json`, longest connected first, never manual peers or seeds.
+    - At the next start it dials them, block-relay-only, before anything else.
     - The file is deleted when read, so a node that crashes later does not re-anchor to
       an old file.
-    - Not used with `--connect-only`.
-
-    Bitcoin Core anchors block-relay-only connections. BlackSilk opens none yet: it
-    honours `relay_txs = false` from a peer (§4) but always sends `true`. Its anchors
-    are therefore full-relay peers.
-  - **Feelers** (W5). When every outbound slot is taken, the node opens a short
+    - Not used with `--connect-only` or without block-relay-only connections.
+  - **Feelers** (W5). When every full-relay slot is taken, the node opens a short
     connection about every 2 minutes (exponentially distributed; `NetConfig::
     feeler_interval`). It goes to a waiting *tried* collision's occupant, else to a *new*
     address in a group with no outbound peer. A collision test ignores the group and
@@ -757,9 +784,10 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
     moves the address to *tried* (or settles the collision). The connection is then
     closed unregistered: no message is exchanged (`feelers_move_an_answering_new_address_to_tried`).
   - **Stale tip** (W7). If the connected tip has not changed for `3 × T × 2` (Bitcoin
-    Core uses 3 × T), the node allows one extra outbound connection, at most once per 10
-    minutes, and also dials seeds. With more outbound peers than the target, one
-    discovered outbound peer (never a manual peer) is disconnected, not banned, after
+    Core uses 3 × T), the node allows one extra full-relay connection, at most once per
+    10 minutes, and also asks seeds for addresses. With more full-relay peers than the
+    target, one discovered full-relay peer (never a manual peer) is disconnected, not
+    banned, after
     Bitcoin Core's `EvictExtraOutboundPeers` (RTW3-4):
     - the worst of **all** of them: the one whose last **validated new tip** is oldest
       (a header batch that stored new headers on our best header chain, or a block that
@@ -777,9 +805,20 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
     forever (F32-3). The thresholds are `NetConfig` fields (`stale_tip_after`,
     `stale_check_interval`, `min_connect_time`) so tests can shorten them
     (`p2p/tests/outbound_policy.rs`).
-- **Seeds** are dialed in three cases, each seed at most every 30 s (R8-13):
+- **Seeds are one-shot address fetches** (W3-32c, dossier 32 W7, F32-6; Bitcoin Core's
+  `ADDR_FETCH`): the node connects, sends `GetAddr`, stores the answer and closes the
+  connection on it (any `Addr` except a single entry, which is the seed's own address),
+  or after 30 s without one (`NetConfig::addr_fetch_timeout`). The seed is never
+  promoted in the table, never counted as an outbound peer, never a stem or an anchor;
+  no transaction is taken from it and no header or block is requested from it. Before,
+  a seed was dialed as a full outbound peer, promoted to *tried* and kept: a seed
+  operator held a long-lived slot in every joiner (the Moros bootstrap lever, CCS'26). A seed that also advertises its own
+  address (`--public-address`) is learned from that fetch and dialed later like any
+  address. Seeds are asked in three cases, each seed at most every 30 s (R8-13):
   - the address table is empty;
-  - no outbound connection is up (every known address may be stale or hostile);
+  - fewer than 2 full-relay outbound peers have been up for 60 s
+    (`NetConfig::seed_fallback_after`; every known address may be stale or hostile).
+    Before, only when none was up, so one attacker peer suppressed the seeds;
   - the tip is stale.
 
   Dial attempt times are kept 10 minutes (longer than every backoff), so dialing junk
@@ -809,8 +848,44 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
     almost all the attacker's and a *new* draw almost always picks it. An attacker with
     more answering addresses than the honest *tried* entries keeps most of the slots at
     every bias tested (run the simulator for the figures); onion addresses have no
-    per-IP limit, and their names are free. The model does not include honest address
-    inflow after the flood, promotions by regular outbound connections, or anchors.
+    per-IP limit, and their names are free. This model has no honest address inflow
+    after the flood and no promotions by regular outbound connections (the third model
+    has both).
+  - **Onion *tried* cap** (W3-32c, `eclipse_simulation_onion_tried_cap`): the feeler
+    model's onion rows for caps of none, 1, 2, 4 and 8 per onion group. One per group is
+    lowest in every row, including a 100-node honest onion network with no answering
+    attacker address (where fewer honest entries in *tried* leave more of them in *new*
+    for its draws), so the cap is 1. The test asserts that the cap bounds the attacker's
+    *tried* entries to 16 × cap, that it cuts the attacker's outbound share by at least a
+    third with 32 and with 128 answering onions, and that it costs the honest-only
+    network at most 5 points.
+  - **Realistic model** (W3-32c, `eclipse_simulation_realistic_model`): the flood, then a
+    week in 2-minute steps with a feeler each step, a regular outbound redial every 30
+    minutes (promoting what answers), a new honest node every hour and every honest
+    address heard again once a day (both relayed by honest peers), the attacker still
+    flooding 100 addresses per source per hour, and the honest addresses known before
+    the flood learned from 8 peers. It prints, per day, the honest share of *new*, the
+    *tried* make-up, the attacker's share of the live outbound slots and of the slots
+    after a restart, for W3-32's policy, source-group caps of 8, 16 and 32, bias 0.9
+    alone, and the chosen policy. Findings:
+    - feelers still drain honest addresses out of *new*: within a day *new* is at most
+      2 % honest in every IPv4 scenario, despite the inflow, and the draws that go to
+      *new* then carry most of the attacker's share;
+    - the source-group cap bounds the attacker's *tried* entries where its answering
+      addresses come from few sources;
+    - a higher *tried* bias removes most of the *new* draws, but helps only where the
+      attacker cannot hold much of *tried* (with the cap), and not with a small *tried*
+      table: an onion node's (at most 16 entries) did worse at 0.9. Hence 0.9 only from
+      64 *tried* entries.
+
+    The test asserts that the drain happens under W3-32's policy, and that the chosen
+    policy never raises the attacker's share after a restart (2 points of sampling noise
+    allowed) or P(all 8) in any scenario, and cuts the share by at least a third where the
+    attacker answers from its own IPs (run the simulator for the figures). The live
+    share after a week can be a little higher (one empty-*tried* scenario). Not modelled:
+    honest churn, an attacker laundering its addresses through honest relays (they then
+    carry honest source groups), and inbound self-advertisements from many attacker IPs
+    (each is its own source group).
   - The admission limits cut what a flood gets into the table by orders of magnitude.
   - Addrman v2 confines what gets in to 16 buckets per source.
   - On a network of tens of honest nodes, the attacker's addresses still outnumber the
@@ -847,15 +922,26 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
     registration, not at accept (RTW3-3). Protected, in order:
     1. the oldest peer of each of the 4 groups with the highest keyed group hash (keyed
        with the address table's key, so peers cannot tell which groups);
-    2. up to a quarter of the candidates arriving through our hidden service (from
-       loopback), oldest first;
-    3. the older half of the rest.
+    2. the 8 peers with the lowest **minimum ping** measured (the round trip of a ping
+       nonce the peer cannot know before it is sent, so it cannot answer faster than
+       its real distance; W3-32c);
+    3. the 4 peers that most recently delivered a **new transaction that passed
+       verification** (accepted to the pool, or a valid stem transaction);
+    4. the 8 block-relay-only peers (`relay_txs = false`) that most recently delivered a
+       **new block that joined our best chain**;
+    5. the 4 peers that most recently delivered such a block;
+    6. up to a quarter of the candidates arriving through our hidden service, oldest
+       first;
+    7. the older half of the rest.
 
+    Classes 2 to 5 protect only peers that earned it: a measured ping or a delivery.
     Of the others, the youngest peer of the group with the most connections is
     disconnected, not banned. If every peer is protected, the new peer is refused at
-    registration. Before W3-32 it always was.
-  - Bitcoin Core also protects the peers with the lowest ping and those that recently
-    relayed transactions or blocks. BlackSilk does not measure those yet.
+    registration. Before W3-32 it always was. Classes 2 to 5 are W3-32c; before, a peer
+    that relayed blocks or answered pings fastest had no more protection than any other
+    (`low_ping_inbound_peers_survive_eviction`).
+  - **Onion peers** through the onion listener (§11) are a class capped at a quarter of
+    `max_inbound`; a new one past the cap evicts within the class.
 - **Persistence.** The tables and the ban list are saved in the data directory
   (`peers.json`, `bans.json`) within a minute of changing, and on shutdown. The ban
   list is saved whenever a ban was added (not only when its size changed). An
@@ -1182,8 +1268,24 @@ already being written is finished first).
   and refuse clearnet connections.
   - Addresses are still exchanged, but the node's own clearnet address is never
     revealed.
-- **Inbound over Tor.** The operator runs a Tor hidden service that forwards to the P2P
-  port, and passes `--public-address <host>.onion:port` so the node advertises it.
+- **Inbound over Tor.** The operator runs a Tor hidden service and passes
+  `--public-address <host>.onion:port` so the node advertises it. The service should
+  forward to a dedicated **onion listener**, `--onion-inbound 127.0.0.1:<port>` (`[p2p]
+  onion_inbound`; loopback only, not the P2P port; W3-32c, N-6):
+  - every connection on it is an onion peer (`ConnKind::OnionInbound`), whatever its
+    source IP (the Tor daemon's). No ban and no per-IP limit applies to it; misbehaviour
+    disconnects it without banning the shared address;
+  - onion peers are capped as a class at a quarter of `--max-inbound` (16 of 64), inside
+    `--max-inbound`. A new onion peer past the cap evicts one within the class (by the
+    eviction rules of §9, "Inbound"); their pending handshakes are bounded as one group;
+  - their header batches are queued per connection, not per IP;
+  - with an onion listener set, loopback connections on the P2P port are no longer taken
+    for Tor.
+
+  Without `--onion-inbound` a hidden service forwarding to the P2P port still works as
+  before: its peers arrive from loopback, count as one IP (`max_per_ip` = 2, so **2 onion
+  peers at most**) and one misbehaving onion peer gets loopback banned for 24 h, which
+  closes the service (N-6). The onion listener exists to remove those limits.
 - I2P is not implemented in v1; the I2P SAM client from the old code is in `legacy/`.
 
 ## 12. Known limitations
