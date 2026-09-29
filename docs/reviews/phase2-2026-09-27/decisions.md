@@ -815,3 +815,9 @@
 - **Small-network plateau:** GetAddr answers carry at least min(table, 8) non-terrible addresses (the 23% cap for large tables). Owner P2P-FIX2.
 - **The PX stem test's "no peer penalized" flake under load** (twice now): root cause required, since penalizing honest peers because the NODE is slow is a bug. Owner P2P-FIX2.
 - **Deploy templates:** unchanged (seed and lab set public_address; the ordinary-node template documents it, since NAT is possible).
+
+## FX-RTFP3, Lead decisions 2026-09-29
+- **Accepted:** all P0 and P1 items. `tools/fingerprint-mutations.sh`: all 7 red-team mutations change the rules fingerprint. Revision lines are machine-checked; the gate paths extended (18 historic waivers with reasons); dirty-build refusal (`BLACKSILK_ALLOW_DIRTY=1` for development only); the reserved genesis ids; the DAA floor exemption E1 in docs/reviews/mutation-exemptions.md.
+- **Fingerprint v3 is now eligible for the FREEZE,** subject to the Wave 4 gate (mutation run, fuzz, benchmarks) and the second threat-model round.
+- **Still sample-based (accepted, documented):** PX and deploy verdicts, block-level rules and canonical-proof rules are covered by REVISIONS plus the build commit and binary hash.
+- **Owed:** reproducible node binaries (STATUS: Not implemented), the dirty check for untracked and staged-only files, the stale difficulty.rs comment.
