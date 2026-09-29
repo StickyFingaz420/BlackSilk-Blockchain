@@ -20,15 +20,18 @@ cargo +"$TC" fuzz build "${FLAGS[@]}" || { echo "fuzz build failed"; exit 1; }
 mkdir -p logs
 failed=()
 for target in tx_decode block_decode p2p_message zkvm_elf kernel_diff delivery_open proof_decode \
-              store_records seed_words transport_recv addr_v2; do
+              store_records seed_words transport_recv transport_handshake addr_v2; do
   case "$target" in
-    proof_decode) extra=(-max_len=2200000 -rss_limit_mb=4096) ;;
+    # The largest proof the decoder accepts (zk MAX_PROOF_BYTES, 4 MiB):
+    # libFuzzer truncates longer seeds at load, and a real transfer proof
+    # outgrew the old 2,200,000 limit (W4-FUZZ), so it never decoded.
+    proof_decode) extra=(-max_len=4194304 -rss_limit_mb=4096) ;;
     zkvm_elf) extra=(-max_len=32768) ;;
     kernel_diff) extra=(-max_len=8192) ;;
     # Bounded allocation is part of these targets' contract: one allocation
     # of 32 MiB or more is a finding (the inputs are at most 256 KiB).
     store_records) extra=(-max_len=262144 -malloc_limit_mb=32) ;;
-    transport_recv) extra=(-max_len=65536 -malloc_limit_mb=32) ;;
+    transport_recv|transport_handshake) extra=(-max_len=65536 -malloc_limit_mb=32) ;;
     seed_words) extra=(-max_len=1024) ;;
     *) extra=(-max_len=65536) ;;
   esac
