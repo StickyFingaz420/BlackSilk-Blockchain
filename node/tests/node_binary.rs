@@ -132,6 +132,20 @@ fn get(addr: SocketAddr, path: &str, extra: &str) -> Option<(u16, String)> {
     Some((head.split(' ').nth(1)?.parse().ok()?, body.to_string()))
 }
 
+/// Whether the server has closed `s` (a read sees end of stream or a reset
+/// at once).
+fn closed_by_peer(s: &TcpStream) -> bool {
+    s.set_nonblocking(true).unwrap();
+    let mut b = [0u8; 1];
+    let mut r: &TcpStream = s;
+    let closed = match r.read(&mut b) {
+        Ok(n) => n == 0,
+        Err(e) => e.kind() != std::io::ErrorKind::WouldBlock,
+    };
+    s.set_nonblocking(false).unwrap();
+    closed
+}
+
 fn bearer(token: &str) -> String {
     format!("Authorization: Bearer {token}\r\n")
 }
@@ -180,24 +194,39 @@ fn the_node_binary_caps_its_connections() {
     let n = NodeProc::start(&dir.path().join("node"), &[]);
     let token = std::fs::read_to_string(n.cookie()).unwrap();
     // Idle connections are closed after the 10 s header-read timeout: the
-    // test stays well within it.
-    let held: Vec<TcpStream> = (0..64)
+    // test stays well within it. The server may still hold slots for
+    // `wait_listening`'s probe connections when these arrive, and refuses
+    // (closes) the excess: those are opened again until all 64 have stayed
+    // open through a whole pause (CI run 115, overflow build: a refused held
+    // connection left its slot to the request below).
+    let mut held: Vec<TcpStream> = (0..64)
         .map(|_| TcpStream::connect(n.addr).unwrap())
         .collect();
-    std::thread::sleep(Duration::from_millis(500));
+    let start = Instant::now();
+    loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let mut reopened = 0;
+        for s in held.iter_mut() {
+            if closed_by_peer(s) {
+                *s = TcpStream::connect(n.addr).unwrap();
+                reopened += 1;
+            }
+        }
+        if reopened == 0 {
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "held connections keep being refused ({reopened} this round); log:
+{}",
+            n.log_text()
+        );
+    }
     let answer = get(n.addr, "/info", &bearer(&token));
     if answer.is_some() {
         // Diagnose before failing: a held connection the server already
         // closed frees its slot, which would explain an answer here.
-        let closed = held
-            .iter()
-            .filter(|s| {
-                s.set_nonblocking(true).unwrap();
-                let mut b = [0u8; 1];
-                let mut r: &TcpStream = s;
-                matches!(r.read(&mut b), Ok(0))
-            })
-            .count();
+        let closed = held.iter().filter(|s| closed_by_peer(s)).count();
         panic!(
             "served beyond the cap: {answer:?}; held connections already closed by the \
              server: {closed} of 64; log:\n{}",
