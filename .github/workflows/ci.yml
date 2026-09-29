@@ -136,6 +136,10 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [core, chain-tx, net]
     env:
       CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
       CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "true"
@@ -147,21 +151,26 @@ jobs:
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: "1.98.1"
+      # Sharded (run 110's single job hit its 240-minute limit), and the test
+      # binaries that build PX proofs are excluded as whole binaries, not by
+      # test name: a new proving test must never slip in with checks on.
       - name: Test with overflow checks and debug assertions (release, non-PX)
         shell: bash
         run: |
-          bash .github/scripts/annotate-tests.sh cargo test --locked --release --no-fail-fast \
-            -p blacksilk-randomx -p blacksilk-consensus -p blacksilk-crypto \
-            -p blacksilk-tx -p blacksilk-chain -p blacksilk-p2p \
-            -p blacksilk-px-core -p blacksilk-miner \
-            -p blacksilk-node -- \
-            --skip private_payments_through_consensus \
-            --skip value_cannot_be_created_and_anchors_must_be_recent \
-            --skip a_private_contract_is_deployed_and_used_through_consensus \
-            --skip every_mutant_decodes_canonically_or_fails_cleanly \
-            --skip restart_rebuilds_the_px_state_exactly \
-            --skip px_transactions_travel_the_stem_and_confirm_everywhere \
-            --skip invalid_px_transactions_get_the_relaying_peer_penalized
+          skip="--skip restart_rebuilds_the_px_state_exactly             --skip px_transactions_travel_the_stem_and_confirm_everywhere             --skip invalid_px_transactions_get_the_relaying_peer_penalized"
+          t() { bash .github/scripts/annotate-tests.sh cargo test --locked --release --no-fail-fast "$@"; }
+          rc=0
+          case "${{ matrix.shard }}" in
+            core)
+              t -p blacksilk-randomx -p blacksilk-consensus -p blacksilk-crypto                 -p blacksilk-px-core -p blacksilk-miner || rc=1 ;;
+            chain-tx)
+              tx_tests=$(ls tx/tests | sed -n 's/\.rs$//p' | grep -vx 'px_consensus\|fuzz_decode' | sed 's/^/--test /')
+              t -p blacksilk-tx --lib $tx_tests || rc=1
+              t -p blacksilk-chain -- $skip || rc=1 ;;
+            net)
+              t -p blacksilk-p2p -p blacksilk-node -- $skip || rc=1 ;;
+          esac
+          exit $rc
 
   # RandomX full mode (the miner's default) against the official vectors and
   # light mode (what nodes verify with), on Linux; the developers' runs are on
