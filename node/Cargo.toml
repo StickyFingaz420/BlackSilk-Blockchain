@@ -18,8 +18,10 @@ blacksilk-consensus = { path = "../consensus" }
 blacksilk-tx = { path = "../tx" }
 blacksilk-rpc = { path = "../rpc" }
 blacksilk-p2p = { path = "../p2p" }
-# Consensus fingerprint (src/fingerprint.rs): the PX-side manifest and the
-# public RandomX constants. Both are already in the dependency graph via chain.
+# Consensus fingerprint (src/fingerprint.rs): the PX-side manifest, the
+# RandomX configuration and the fixture transfer's points (crypto). All are
+# already in the dependency graph via chain (crypto was a dev-dependency).
+blacksilk-crypto = { path = "../crypto" }
 blacksilk-px = { path = "../px" }
 blacksilk-randomx = { path = "../randomx" }
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "query", "tokio"] }
@@ -43,7 +45,6 @@ dirs = "5"
 toml = "0.8"
 
 [dev-dependencies]
-blacksilk-crypto = { path = "../crypto" }
 # Fault injection for the halt exit-status test (tests/halt_exit.rs).
 blacksilk-chain = { path = "../chain", features = ["test-hooks"] }
 rand_chacha = { version = "0.3", default-features = false }

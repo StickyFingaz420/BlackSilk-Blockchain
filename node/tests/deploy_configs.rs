@@ -237,22 +237,23 @@ fn consensus_fingerprints_are_pinned() {
 /// `[consensus, rules, identity]` (fingerprint v3). Testnet v3: the final id
 /// `0x0001D673`, the placeholder genesis time and no beacon yet, so the
 /// identity and consensus values change at launch (docs/testnet-v3-genesis.md
-/// §6) and the rules value does not.
+/// §6) and the rules value does not. Re-pinned by RT-FP3 (rules and consensus;
+/// identity unchanged).
 const TESTNET: [&str; 3] = [
-    "1b401f536e064978d81ef970deef0813035a3d78cc81f39f0becdfc17069dc72",
-    "ac51aca1b439d9e37f14d25b31381acfa1418346298821d71ce0c361c89799a7",
+    "be3a87210c05019fa6507101f8435053c4019c788e31bdb02f12ace95d33e42e",
+    "d8229151a7483e7426550858268dae53e73b8567d76b9af4e2810fab5802c455",
     "b333a99f2bcd5d351fe87d043e9cd17d6920c43c09021ea453bc14d9fec4b294",
 ];
-/// `[consensus, rules, identity]` (fingerprint v3).
+/// `[consensus, rules, identity]` (fingerprint v3; RT-FP3).
 const REGTEST: [&str; 3] = [
-    "d2257d9bd7999effa9986a4fc00aaa31b5fe6b3ecd25e2fe4aa626f3efdf36fe",
-    "9bb8a6cd21f6598b09f7e10ce53fb9a4e685c562ebdb76e81c56be8fb52771d2",
+    "5fb8ef8f74efa7631e2d9aa5f809fc0d9ab9273fdc54d45e5aad73f889c5e72b",
+    "aea01641c493c0f3ba756ed5b0df06219287f7e24bb6e1bbea639fb340037d71",
     "dfab90c6b92c127ab987cc3285557ad9b71ccd29c05bf2024531c54f10f6cf87",
 ];
-/// `[consensus, rules, identity]` (fingerprint v3). The mainnet parameters are
-/// provisional; mainnet is not launched.
+/// `[consensus, rules, identity]` (fingerprint v3; RT-FP3). The mainnet
+/// parameters are provisional; mainnet is not launched.
 const MAINNET: [&str; 3] = [
-    "42849cb96c7178765eee54f7a778251180ceba03914805cc5a1bcd7c4bedb357",
-    "938d75dd78a5a72e631923c7e415dfa422a101e826c90117df381ec315492a14",
+    "ccff82e8a6fceb219e4f89f8206b5ae7a80456716d7d6a6daa0b07c94e54e20c",
+    "ffcb05996707cc9ea5caddec2cda0329c6547e54665b8f3854004e8cf1e29f86",
     "2dbb1c3703d90367c2d4475adb86a0e57c1d8c6ebe5f698f53baa7ec27465088",
 ];

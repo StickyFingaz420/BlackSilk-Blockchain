@@ -282,6 +282,29 @@ fn challenger(perm: &Perm, statement: &[u8; 32]) -> Challenger {
     c
 }
 
+/// A transcript sample for the consensus fingerprint (RTFP3-11): the
+/// verifier's challenger for `statement` ([`challenger`]: the parameter-set
+/// identifier, then the statement digest), after observing `observed`,
+/// samples one extension-field challenge (its basis coefficients), one base
+/// element and 20 bits, as canonical integers. Every proof's challenges come
+/// from this transcript, so a changed challenger construction, permutation or
+/// absorption order changes the sample.
+pub fn transcript_sample(statement: &[u8; 32], observed: &[u32]) -> Vec<u64> {
+    let mut c = challenger(&permutation(), statement);
+    for &w in observed {
+        c.observe(Val::from_u32(w));
+    }
+    let ext: Challenge = c.sample_algebra_element();
+    let mut out: Vec<u64> = BasedVectorSpace::<Val>::as_basis_coefficients_slice(&ext)
+        .iter()
+        .map(|v| v.as_canonical_u64())
+        .collect();
+    let base: Val = c.sample();
+    out.push(base.as_canonical_u64());
+    out.push(c.sample_bits(20) as u64);
+    out
+}
+
 fn build(mmcs_seed: [u8; 32], pcs_seed: [u8; 32], statement: &[u8; 32]) -> ZkConfig {
     StarkConfig::new(
         pcs(mmcs_seed, pcs_seed),

@@ -2,9 +2,10 @@
 //! the proof parameter set and `PROOF_VERSION` (zk), the BVM-1 machine limits
 //! and circuit digest (zkvm), the PX kernel, its hash domains and call ABI
 //! (px-core), the pinned kernel and vault program ids, budgets and entry
-//! points, the PX state and delivery formats (px), the v1 ring size
-//! (crypto), and the PX rule samples (Poseidon2, `Hk`, node, commitment,
-//! nullifier, exit codes, function prefix, PX6 window).
+//! points, the PX state and delivery formats (px), the v1 ring size, the
+//! consensus hash tags and group-element samples (crypto), and the PX rule
+//! samples (Poseidon2, `Hk`, node, commitment, nullifier, exit codes, function
+//! prefix, PX6 window, tree roots, proof transcript).
 //!
 //! These entries are part of the node's rules fingerprint and so of its
 //! `consensus_fingerprint(network)` (node/src/fingerprint.rs), which
@@ -22,8 +23,9 @@
 
 use blacksilk_px::fingerprint::px_entries;
 
-/// Changing this is a consensus change (fingerprint v3: see the module text).
-const PX_SIDE_DIGEST: &str = "ee47cdc27639acee5d4317df1945f3ccabd37fdb6da4bb96efb757e57633585a";
+/// Changing this is a consensus change (fingerprint v3: see the module text;
+/// re-pinned by RT-FP3 for the crypto, tree and transcript entries).
+const PX_SIDE_DIGEST: &str = "a0dd553f57f81612f8facd6ec460d1e17af87f538e68edb6f3f578acf3826e2d";
 
 #[test]
 fn px_side_consensus_constants_are_pinned() {

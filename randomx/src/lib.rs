@@ -43,6 +43,136 @@ pub const HASH_SIZE: usize = 32;
 /// Longer keys are accepted; only Argon2 sees the extra bytes, exactly as in the reference.
 pub const MAX_KEY_SIZE: usize = 60;
 
+/// One value of [`config_entries`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConfigValue {
+    /// An integer parameter (widened to 64 bits; the signed superscalar
+    /// latency sign-extended, so distinct values stay distinct).
+    Int(u64),
+    /// A byte-string parameter (the Argon2 salt).
+    Bytes(&'static [u8]),
+    /// A list of integers (the instruction frequencies, in opcode order).
+    Ints(Vec<u64>),
+}
+
+/// The RandomX configuration this crate hashes with, read from its own
+/// constants (`config.rs`), in a fixed order: the consensus fingerprint lists
+/// these (node/src/fingerprint.rs, RTFP3-2), so a changed parameter changes
+/// the fingerprint. Every value is consensus-critical.
+pub fn config_entries() -> Vec<(&'static str, ConfigValue)> {
+    use config::*;
+    use ConfigValue::{Bytes, Int, Ints};
+    vec![
+        ("ARGON_MEMORY_KIB", Int(ARGON_MEMORY.into())),
+        ("ARGON_ITERATIONS", Int(ARGON_ITERATIONS.into())),
+        ("ARGON_LANES", Int(ARGON_LANES.into())),
+        ("ARGON_SALT", Bytes(ARGON_SALT)),
+        ("CACHE_ACCESSES", Int(CACHE_ACCESSES as u64)),
+        ("SUPERSCALAR_LATENCY", Int(SUPERSCALAR_LATENCY as u64)),
+        ("SUPERSCALAR_MAX_SIZE", Int(SUPERSCALAR_MAX_SIZE as u64)),
+        ("DATASET_BASE_SIZE", Int(DATASET_BASE_SIZE)),
+        ("DATASET_EXTRA_SIZE", Int(DATASET_EXTRA_SIZE)),
+        ("DATASET_ITEM_SIZE", Int(DATASET_ITEM_SIZE)),
+        ("DATASET_ITEM_COUNT", Int(DATASET_ITEM_COUNT)),
+        ("DATASET_EXTRA_ITEMS", Int(DATASET_EXTRA_ITEMS)),
+        ("CACHE_SIZE", Int(CACHE_SIZE as u64)),
+        ("CACHE_LINE_SIZE", Int(CACHE_LINE_SIZE as u64)),
+        ("CACHE_LINE_ALIGN_MASK", Int(CACHE_LINE_ALIGN_MASK.into())),
+        ("PROGRAM_SIZE", Int(PROGRAM_SIZE as u64)),
+        ("PROGRAM_ITERATIONS", Int(PROGRAM_ITERATIONS as u64)),
+        ("PROGRAM_COUNT", Int(PROGRAM_COUNT as u64)),
+        (
+            "SCRATCHPAD_L3_L2_L1",
+            Ints(vec![
+                SCRATCHPAD_L3 as u64,
+                SCRATCHPAD_L2 as u64,
+                SCRATCHPAD_L1 as u64,
+            ]),
+        ),
+        (
+            "SCRATCHPAD_L1_L2_L3_L3_64_MASKS",
+            Ints(
+                [
+                    SCRATCHPAD_L1_MASK,
+                    SCRATCHPAD_L2_MASK,
+                    SCRATCHPAD_L3_MASK,
+                    SCRATCHPAD_L3_MASK64,
+                ]
+                .map(u64::from)
+                .to_vec(),
+            ),
+        ),
+        ("JUMP_BITS", Int(JUMP_BITS.into())),
+        ("JUMP_OFFSET", Int(JUMP_OFFSET.into())),
+        ("CONDITION_MASK", Int(CONDITION_MASK.into())),
+        ("STORE_L3_CONDITION", Int(STORE_L3_CONDITION.into())),
+        (
+            "REGISTER_NEEDS_DISPLACEMENT",
+            Int(REGISTER_NEEDS_DISPLACEMENT as u64),
+        ),
+        (
+            "FREQ",
+            Ints(
+                [
+                    FREQ_IADD_RS,
+                    FREQ_IADD_M,
+                    FREQ_ISUB_R,
+                    FREQ_ISUB_M,
+                    FREQ_IMUL_R,
+                    FREQ_IMUL_M,
+                    FREQ_IMULH_R,
+                    FREQ_IMULH_M,
+                    FREQ_ISMULH_R,
+                    FREQ_ISMULH_M,
+                    FREQ_IMUL_RCP,
+                    FREQ_INEG_R,
+                    FREQ_IXOR_R,
+                    FREQ_IXOR_M,
+                    FREQ_IROR_R,
+                    FREQ_IROL_R,
+                    FREQ_ISWAP_R,
+                    FREQ_FSWAP_R,
+                    FREQ_FADD_R,
+                    FREQ_FADD_M,
+                    FREQ_FSUB_R,
+                    FREQ_FSUB_M,
+                    FREQ_FSCAL_R,
+                    FREQ_FMUL_R,
+                    FREQ_FDIV_M,
+                    FREQ_FSQRT_R,
+                    FREQ_CBRANCH,
+                    FREQ_CFROUND,
+                    FREQ_ISTORE,
+                ]
+                .map(u64::from)
+                .to_vec(),
+            ),
+        ),
+    ]
+}
+
+/// A RandomX known answer: `hash_light(key, input) = hash`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KnownAnswer {
+    pub key: &'static [u8],
+    pub input: &'static [u8],
+    /// Lowercase hex.
+    pub hash: &'static str,
+}
+
+/// The pinned known answer of the consensus fingerprint (RTFP3-2): the
+/// reference implementation's "Hash test 1a" (`src/tests/tests.cpp`). A light
+/// hash needs a 256 MiB cache, too costly at node start-up, so the
+/// fingerprint lists this **pinned copy** and `tests::hash_1a` requires the
+/// crate to compute it (the pattern of `zkvm::prove::CIRCUIT_DIGEST`). A
+/// change of the algorithm fails that test; a change of this value changes
+/// the fingerprint.
+pub const FINGERPRINT_KAT: KnownAnswer = KnownAnswer {
+    key: b"test key 000",
+    input: b"This is a test",
+    hash: "639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f",
+};
+
 /// Convenience: build a cache for `key` and hash `input` in light mode.
 /// Building the cache dominates the cost; reuse a [`Cache`] when hashing repeatedly.
 pub fn hash_light(key: &[u8], input: &[u8]) -> [u8; HASH_SIZE] {
@@ -166,6 +296,30 @@ mod tests {
             b"This is a test",
             "639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f",
         );
+        // The fingerprint's pinned known answer is this vector, and the crate
+        // computes it (RTFP3-2).
+        assert_eq!(FINGERPRINT_KAT.key, b"test key 000");
+        check(cache_000(), FINGERPRINT_KAT.input, FINGERPRINT_KAT.hash);
+    }
+
+    /// `config_entries` reads the crate's own constants: spot values of the
+    /// reference `configuration.h`, and names unique.
+    #[test]
+    fn config_entries_are_the_reference_values() {
+        let e = config_entries();
+        let get = |k: &str| e.iter().find(|(n, _)| *n == k).unwrap().1.clone();
+        assert_eq!(get("PROGRAM_ITERATIONS"), ConfigValue::Int(2048));
+        assert_eq!(get("ARGON_MEMORY_KIB"), ConfigValue::Int(262_144));
+        assert_eq!(get("ARGON_SALT"), ConfigValue::Bytes(b"RandomX\x03"));
+        assert_eq!(get("SUPERSCALAR_LATENCY"), ConfigValue::Int(170));
+        match get("FREQ") {
+            ConfigValue::Ints(f) => assert_eq!((f.len(), f.iter().sum::<u64>()), (29, 256)),
+            other => panic!("{other:?}"),
+        }
+        let mut names: Vec<&str> = e.iter().map(|(n, _)| *n).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), e.len());
     }
 
     /// `Cache::try_new` (fallible allocation, for optional builds) builds the

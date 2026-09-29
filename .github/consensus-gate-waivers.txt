@@ -2,3 +2,27 @@
 # trailer (they cannot be amended without rewriting shared history). One per
 # line: <full sha> <trailer value>. Reviewed like the gate's path list.
 b24a19a20ef4ddf167bdc08415834fe7c22942b9 none: test-only change in consensus/tests/seed_switch_liveness.rs (the build-time floor and wait bound of a liveness test); no rule, constant or encoding changed. Trailer omitted by mistake (coordinator, 2026-09-28).
+# RTFP3-10 (FX-RTFP3, 2026-09-29) extended the path list to crypto/, randomx/,
+# third_party/, chain/src/manager/, tx/src/{types,codec,state}.rs and
+# px/src/{prove,state,tree}.rs. The commits below touched those paths before
+# they were consensus paths, so they carry no trailer. Each reason is the
+# commit's own subject and diff stat, as read by FX-RTFP3; the commits were
+# reviewed at their merge, and were not re-reviewed for consensus effect here.
+7cb82a0056417ef339d69724d1c62ec525e976fe none: predates RTFP3-10; chain/src/manager/ split out of manager.rs, move-only (S1).
+662a34d715d7dae29902a59153ec8224aafc23a0 none: predates RTFP3-10; four lines of stuck-detector instrumentation in chain/src/manager/submission.rs.
+00afb795cba474c71f4e8e11e3244cfa8760f308 none: predates RTFP3-10; chain/src/manager/template.rs block-template ranking (mempool and template policy, RTW1B-3/5).
+91430394c30488e02761bffeab120f870ee7c8f7 none: predates RTFP3-10; the halt exit status in chain/src/manager/ (node process behaviour, RTW1B-4/7).
+ad52b6921322817a6823c708a2245dc66e3fab9c none: predates RTFP3-10; tx/src/state.rs MemoryChain::with_px_state limited to test builds (RTW1B-8).
+7a6fe53c307352a70a16158c166e70a158a6f2c3 none: predates RTFP3-10; crypto/ wallet-side derived hedge keys, wallet tags and the seed word list (K2); no consensus tag changed.
+25d22f89762cf69970e955c61f57d7c11ee23c85 none: predates RTFP3-10; one line of halt exit status in chain/src/manager/replay.rs (RTW1B-4).
+90efa176f3936223e3fd3cb1000335d7f452ff67 none: predates RTFP3-10; RandomX cache pinning and prebuild in chain/src/manager/ (07 W1; the hash is unchanged).
+a64525469ef3119238592ff14399eff06bf8714b none: predates RTFP3-10; chain mutex liveness, slow lane and summary in chain/src/manager/ (34 Stage 1).
+f53c2a8838ce0d16fc3d1e11139cb831a31587e1 none: predates RTFP3-10; the single-writer chain actor and snapshot in chain/src/manager/ (34 Stage 2).
+b09ab71d569b3b8371fd5f7d39aaab301975bfb9 none: predates RTFP3-10; doc-comment and manifest edits in crypto/ for doc-lint.
+200f8e1d80c141d4b902d10dc90269a3f7cf5d95 none: predates RTFP3-10; an empty pool after a reorganizing replay in chain/src/manager/replay.rs (mempool, W2-02-F1).
+47179f1b4102551887668fc08a8ef57db004c6c7 none: predates RTFP3-10; pool readmission in chain/src/manager/fork_choice.rs (mempool).
+566697f86935fb2ab3270abb0c3d4ae6233d8ff8 none: predates RTFP3-10; reserved reorg keys and drain liveness in chain/src/manager/fork_choice.rs (RT-W2a).
+bec93ff3cfd3bd379773f7becdf1f64e4e921f26 none: predates RTFP3-10; the template gate in chain/src/manager/template.rs (W2-09b mining policy).
+23be5a1f3e72258eb003b489b37ce78f2646c995 none: predates RTFP3-10; operator invalidation in chain/src/manager/ (a node-local operator command, W3-35b).
+db37a54aef808ac991ad5c56d64467056a23f10a none: predates RTFP3-10; latched template gate and operator verdicts in chain/src/manager/ (RTW3-1/7/8/11).
+0f55067540fd49891e5cd88c0a393cdda639ba53 none: predates RTFP3-10; an operator-invalidated block refused at header time in chain/src/manager/ (S5b, node-local).

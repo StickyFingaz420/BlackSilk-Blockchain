@@ -176,6 +176,42 @@ pub mod tags {
         PX_DEPLOY_PAYLOAD,
         PX_CONTRACT_ID,
     ];
+
+    /// The consensus tags: every tag a node hashes with to reach a verdict
+    /// on a block or transaction (generators, key images, CLSAG and
+    /// Bulletproofs+ transcripts, transaction and PX hashes and signature
+    /// messages, program and statement ids, contract ids). The consensus
+    /// fingerprint lists them (node/src/fingerprint.rs, RTFP3-1), so a
+    /// changed tag changes it. Tags only wallets, the P2P layer, provers or
+    /// the frozen Wasm engine use are not listed: two nodes that differ in
+    /// them accept the same blocks.
+    pub const CONSENSUS: &[&str] = &[
+        GENERATOR_H,
+        GENERATOR_BP_G,
+        GENERATOR_BP_H,
+        KEY_IMAGE,
+        CLSAG_AGG_P,
+        CLSAG_AGG_C,
+        CLSAG_ROUND,
+        BPP_INIT,
+        BPP_Y,
+        BPP_Z,
+        BPP_ROUND,
+        BPP_FINAL,
+        TX_PREFIX,
+        TX_BASE,
+        TX_PRUNABLE,
+        TX_BP,
+        TX_HASH,
+        TX_SIG_MESSAGE,
+        ZKVM_PROGRAM,
+        ZKVM_STATEMENT,
+        PX_TX_BINDING,
+        PX_PROOF,
+        PX_SIG_MESSAGE,
+        PX_DEPLOY_PAYLOAD,
+        PX_CONTRACT_ID,
+    ];
 }
 
 fn absorb_tag<D: Digest>(digest: &mut D, name: &str) {
@@ -266,6 +302,28 @@ mod tests {
         for t in tags::ALL {
             assert!(DOMAIN_PREFIX.len() + t.len() <= 255);
         }
+    }
+
+    /// The consensus tags are distinct tags of `ALL`, and none is a wallet,
+    /// P2P, prover or Wasm tag.
+    #[test]
+    fn consensus_tags_are_listed_tags() {
+        let set: HashSet<_> = tags::CONSENSUS.iter().collect();
+        assert_eq!(set.len(), tags::CONSENSUS.len(), "duplicate consensus tag");
+        for t in tags::CONSENSUS {
+            assert!(tags::ALL.contains(t), "{t} is not in ALL");
+            assert!(
+                !t.starts_with("wallet/")
+                    && !t.starts_with("px/wallet/")
+                    && !t.starts_with("seed/")
+                    && !t.starts_with("p2p/")
+                    && !t.starts_with("contract/")
+                    && !t.starts_with("nonce"),
+                "{t}"
+            );
+        }
+        assert!(!tags::CONSENSUS.contains(&tags::ZK_PROVER_SEED));
+        assert!(!tags::CONSENSUS.contains(&tags::ZK_BLIND_SEED));
     }
 
     /// The wallet registry tags frozen for v3 (decisions.md W2-37, RT-W1c):

@@ -3,15 +3,19 @@
 //! The consensus manifest of a network is split in two (fingerprint v3,
 //! docs/reviews/v3-consensus-changes.md#fingerprint-v3):
 //!
-//! - [`rules_manifest`]: every consensus constant, the **rule samples**
-//!   (outputs of rule functions on fixed inputs: difficulty, median time,
-//!   proof-of-work target, block id, Merkle root, signature domain, weights
-//!   and fees, the genesis-nonce derivation, emission, the RandomX key
-//!   schedule, and the PX samples of `blacksilk_px::fingerprint`) and the
-//!   **rule-revision list** ([`REVISIONS`]). Its digest is
-//!   [`rules_fingerprint`]. It holds nothing that names a chain, so a
-//!   release-candidate build and the final build of a network have the same
-//!   rules fingerprint.
+//! - [`rules_manifest`]: every consensus constant (the RandomX configuration
+//!   read from `blacksilk-randomx`, the consensus hash tags read from
+//!   `blacksilk-crypto`), the **rule samples** (outputs of rule functions on
+//!   fixed inputs: difficulty and its lower clamp, median time, the future
+//!   time limit, proof-of-work target, block id, Merkle root, signature
+//!   domain, weights and fees, the genesis-nonce derivation, emission, the
+//!   RandomX key schedule, the PX, crypto and tree samples of
+//!   `blacksilk_px::fingerprint`, and the [`transaction_samples`]: weights,
+//!   ids and **verdicts** of a pinned fixture transfer and its variants), the
+//!   pinned RandomX known answer, and the **rule-revision list**
+//!   ([`REVISIONS`]). Its digest is [`rules_fingerprint`]. It holds nothing
+//!   that names a chain, so a release-candidate build and the final build of
+//!   a network have the same rules fingerprint.
 //! - [`identity_manifest`]: the network name and id, the genesis block and
 //!   id, and the branch ids of the schedule. Its digest is
 //!   [`identity_fingerprint`].
@@ -23,24 +27,33 @@
 //! The rule samples catch a code change that alters a sampled result, and the
 //! revision list names each reviewed rule change; rule code that neither
 //! reaches (for example a changed validation order that keeps every sampled
-//! verdict) is told apart only by [`BUILD_COMMIT`], so operators compare both.
+//! verdict, or a rule only a PX proof or a full block exercises) is told
+//! apart only by [`BUILD_COMMIT`], so operators compare both, and the build
+//! commit is marked `-dirty` when tracked files differ from it (`build.rs`).
 
 use blacksilk_chain::{block, emission};
 use blacksilk_consensus::genesis::{
     derive_genesis_nonce, parse_display_hex, TEST_VECTOR_NETWORK_ID,
 };
+use blacksilk_consensus::schedule::BRANCH_ID_V3;
 use blacksilk_consensus::{
-    check_hash, seed_height, BlockHeader, ChainParams, Network, DIFFICULTY_RULE_ID,
+    check_hash, seed_height, BlockHeader, ChainParams, Epoch, Network, DIFFICULTY_RULE_ID,
 };
 use blacksilk_consensus::{difficulty, merkle, timestamp};
+use blacksilk_crypto::Point;
 use blacksilk_px::fingerprint::{px_entries, Manifest};
 use blacksilk_tx::params::{self as tx, max_weight, SigDomain, TxRules};
 use blacksilk_tx::px::{deploy_fee, Registration};
-use blacksilk_tx::types::v1_part_weight;
+use blacksilk_tx::types::{v1_part_weight, OutputKey};
+use blacksilk_tx::validate::OutputRecord;
+use blacksilk_tx::{ChainView, Transaction, Transfer};
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
-/// The git commit the sources were built from, `unknown` when neither `.git`
-/// nor the `BLACKSILK_BUILD_COMMIT` build-time override was available.
+/// The git commit the sources were built from, followed by `-dirty` when
+/// tracked build inputs differed from it (`build.rs`, RTFP3-9), or `unknown`
+/// when neither `.git` nor the `BLACKSILK_BUILD_COMMIT` build-time override
+/// was available.
 pub const BUILD_COMMIT: &str = env!("BLACKSILK_BUILD_COMMIT");
 
 /// The crate version (the same for every build until releases are versioned).
@@ -277,12 +290,23 @@ fn chain_entries(network: Network) -> Manifest {
     // the branch ids are identity.
     m.size("schedule.len", schedule.len());
     for (i, e) in schedule.epochs().iter().enumerate() {
+        // Destructured so that a new field fails to compile here until it is
+        // placed in the rules or the identity manifest (RTFP3-12).
+        let Epoch {
+            // A log label, not consensus data.
+            name: _,
+            activation_height,
+            header_version,
+            // Identity (identity_manifest).
+            branch_id: _,
+            verifier_id,
+        } = *e;
         m.list(
             &format!("schedule.epoch[{i}] (activation, header version, verifier id)"),
             [
-                e.activation_height,
-                u64::from(e.header_version),
-                u64::from(e.verifier_id),
+                activation_height,
+                u64::from(header_version),
+                u64::from(verifier_id),
             ],
         );
     }
@@ -397,6 +421,12 @@ fn rule_samples(network: Network) -> Manifest {
     .size(
         "rules.sample.difficulty_ancestors(75)",
         difficulty::difficulty_ancestors(n),
+    )
+    // The lower clamp (RTFP3-6): a tiny difficulty over a slow window gives
+    // a result below 1, which the rule raises to 1.
+    .u(
+        "rules.sample.next_difficulty([0, 1000], [1, 2], T 120, N 75, D0 1)",
+        difficulty::next_difficulty(&[0, 1_000], &[1, 2], t, n, 1),
     );
 
     // Median time past (strict, lower median for an even count).
@@ -408,6 +438,11 @@ fn rule_samples(network: Network) -> Manifest {
     .list(
         "rules.sample.after_median_time_past (150, 151)",
         [150, 151].map(|s| u64::from(timestamp::after_median_time_past(s, &recent))),
+    )
+    // The future time limit at its boundary (RTFP3-5): now 1 000, FTL 360.
+    .list(
+        "rules.sample.within_future_limit (1359, 1360, 1361; now 1000, FTL 360)",
+        [1_359, 1_360, 1_361].map(|s| u64::from(timestamp::within_future_limit(s, 1_000, 360))),
     );
 
     // The proof-of-work target at its boundary: hash · d < 2^256.
@@ -496,48 +531,356 @@ fn rule_samples(network: Network) -> Manifest {
             deploy_fee(1, 2, &[r], &rules)
         }),
     );
+    m.extend(transaction_samples().clone());
     m
 }
 
-/// The RandomX configuration.
-///
-/// `blacksilk-randomx` keeps its parameters `pub(crate)` (randomx/src/config.rs),
-/// so apart from the two public constants these are **copies** of the RandomX
-/// v1 values (the reference `configuration.h`) and not read from the crate. A
-/// change inside `blacksilk-randomx` alone does not change the fingerprint; the
-/// crate's official test vectors are what pin its behaviour, and the build
-/// commit identifies the code. A hash sample is not listed: one light-mode
-/// hash needs a 256 MiB cache, too costly for `/info` and `--version`.
+/// The RandomX configuration, read from the crate
+/// (`blacksilk_randomx::config_entries`, RTFP3-2), and its pinned known
+/// answer (`blacksilk_randomx::FINGERPRINT_KAT`, the reference vector 1a).
+/// No hash is computed here: a light-mode hash needs a 256 MiB cache, too
+/// costly for `/info` and `--version`. The known answer is a pinned copy that
+/// the crate's vector test requires the crate to compute, as
+/// `zkvm.CIRCUIT_DIGEST` is for the circuit.
 fn randomx_entries(m: &mut Manifest) {
+    use blacksilk_randomx::ConfigValue;
     m.text(
         "randomx.variant",
         "RandomX v1 (rx/0), light-mode verification",
     )
     .size("randomx.HASH_SIZE", blacksilk_randomx::HASH_SIZE)
-    .size("randomx.MAX_KEY_SIZE", blacksilk_randomx::MAX_KEY_SIZE)
-    .u("randomx.ARGON_MEMORY_KIB", 262_144u32)
-    .u("randomx.ARGON_ITERATIONS", 3u32)
-    .u("randomx.ARGON_LANES", 1u32)
-    .bytes("randomx.ARGON_SALT", b"RandomX\x03")
-    .u("randomx.CACHE_ACCESSES", 8u32)
-    .u("randomx.SUPERSCALAR_LATENCY", 170u32)
-    .u("randomx.DATASET_BASE_SIZE", 2_147_483_648u64)
-    .u("randomx.DATASET_EXTRA_SIZE", 33_554_368u64)
-    .u("randomx.PROGRAM_SIZE", 256u32)
-    .u("randomx.PROGRAM_ITERATIONS", 2048u32)
-    .u("randomx.PROGRAM_COUNT", 8u32)
-    .list("randomx.SCRATCHPAD_L3_L2_L1", [2_097_152, 262_144, 16_384])
-    .u("randomx.JUMP_BITS", 8u32)
-    .u("randomx.JUMP_OFFSET", 8u32)
-    // Instruction frequencies per 256 opcodes, in opcode order (IADD_RS
-    // .. ISTORE).
-    .list(
-        "randomx.FREQ",
+    .size("randomx.MAX_KEY_SIZE", blacksilk_randomx::MAX_KEY_SIZE);
+    for (name, value) in blacksilk_randomx::config_entries() {
+        let name = format!("randomx.{name}");
+        match value {
+            ConfigValue::Int(v) => m.u(&name, v),
+            ConfigValue::Bytes(b) => m.bytes(&name, b),
+            ConfigValue::Ints(l) => m.list(&name, l),
+        };
+    }
+    let kat = blacksilk_randomx::FINGERPRINT_KAT;
+    m.bytes("randomx.KAT.key", kat.key)
+        .bytes("randomx.KAT.input", kat.input)
+        .text("randomx.KAT.hash", kat.hash);
+}
+
+/// The fixture of the transaction samples: a regtest-shaped transfer with two
+/// inputs and three outputs (so the Bulletproofs+ clawback of the weight
+/// applies), the coinbase that created its first real input, and the ring
+/// members' records, signed under [`fixture_rules`]. Generated by
+/// `tests/fingerprint_fixture.rs` (an ignored test that rewrites the file);
+/// regenerate it only with a reviewed rule change that invalidates it.
+const FIXTURE: &str = include_str!("fingerprint_fixture.txt");
+
+/// The rules the fixture transfer is signed and validated under: the
+/// test-vector network id and a fixed genesis id (network-independent, so
+/// the samples are the same on every network), the v3 branch id, and the
+/// fee and block-weight constants.
+pub fn fixture_rules() -> TxRules {
+    TxRules {
+        network_id: TEST_VECTOR_NETWORK_ID,
+        branch_id: BRANCH_ID_V3,
+        genesis_id: [0x5a; 32],
+        fee_per_weight: tx::FEE_PER_WEIGHT,
+        max_block_weight: tx::MAX_BLOCK_WEIGHT,
+    }
+}
+
+/// The parsed [`FIXTURE`].
+pub struct Fixture {
+    /// The height the transfer is validated at.
+    pub height: u64,
+    pub transfer: Transfer,
+    pub coinbase: Transaction,
+    /// The ring members' records, by global index.
+    pub outputs: BTreeMap<u64, OutputRecord>,
+}
+
+impl Fixture {
+    /// Parses the fixture text: `height <h>`, `coinbase <hex>`, `transfer
+    /// <hex>` and `output <index> <height> <coinbase 0|1> <key hex>
+    /// <commitment hex>` lines; `#` starts a comment.
+    pub fn parse(text: &str) -> Option<Self> {
+        let point = |h: &str| {
+            let b: [u8; 32] = hex_bytes(h)?.try_into().ok()?;
+            Point::decode(&b)
+        };
+        let (mut height, mut transfer, mut coinbase) = (None, None, None);
+        let mut outputs = BTreeMap::new();
+        for line in text.lines().map(str::trim) {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            match f.as_slice() {
+                [] => {}
+                [c, ..] if c.starts_with('#') => {}
+                ["height", h] => height = Some(h.parse().ok()?),
+                ["transfer", t] => match Transaction::decode(&hex_bytes(t)?).ok()? {
+                    Transaction::Transfer(t) => transfer = Some(*t),
+                    _ => return None,
+                },
+                ["coinbase", c] => coinbase = Some(Transaction::decode(&hex_bytes(c)?).ok()?),
+                ["output", i, h, cb, key, cm] => {
+                    let rec = OutputRecord {
+                        key: OutputKey {
+                            one_time_key: point(key)?,
+                            commitment: point(cm)?,
+                        },
+                        height: h.parse().ok()?,
+                        coinbase: *cb == "1",
+                    };
+                    outputs.insert(i.parse().ok()?, rec);
+                }
+                _ => return None,
+            }
+        }
+        Some(Fixture {
+            height: height?,
+            transfer: transfer?,
+            coinbase: coinbase?,
+            outputs,
+        })
+    }
+
+    /// The checked-in fixture.
+    pub fn get() -> &'static Fixture {
+        static F: OnceLock<Fixture> = OnceLock::new();
+        F.get_or_init(|| Fixture::parse(FIXTURE).expect("the fingerprint fixture parses"))
+    }
+}
+
+fn hex_bytes(s: &str) -> Option<Vec<u8>> {
+    ::hex::decode(s).ok()
+}
+
+/// The chain view of the verdict samples: the fixture's ring members, with
+/// some removed or some key images spent. No PX state.
+struct FixtureChain<'a> {
+    outputs: &'a BTreeMap<u64, OutputRecord>,
+    missing: Option<u64>,
+    spent: Option<Point>,
+}
+
+impl ChainView for FixtureChain<'_> {
+    fn output(&self, global_index: u64) -> Option<OutputRecord> {
+        (self.missing != Some(global_index))
+            .then(|| self.outputs.get(&global_index).copied())
+            .flatten()
+    }
+    fn is_key_image_spent(&self, key_image: &Point) -> bool {
+        self.spent == Some(*key_image)
+    }
+    fn px_is_recent_root(&self, _: &blacksilk_px::core::Digest) -> bool {
+        false
+    }
+    fn px_nullifier_spent(&self, _: &blacksilk_px::core::Digest) -> bool {
+        false
+    }
+    fn px_pool(&self) -> u128 {
+        0
+    }
+    fn px_function(
+        &self,
+        _: &blacksilk_px::core::Digest,
+        _: &[u8; 32],
+    ) -> Option<blacksilk_tx::validate::PxProgram> {
+        None
+    }
+    fn px_contract_exists(&self, _: &blacksilk_px::core::Digest) -> bool {
+        false
+    }
+    fn px_tree_size(&self) -> u64 {
+        0
+    }
+}
+
+/// The transaction samples (network-independent, computed once per process):
+///
+/// - `Transaction::weight` of the fixture transfer and coinbase, and of a PX
+///   transaction with the transfer's v1 part and with none (RTFP3-3);
+/// - the transfer's id and signature message, and the coinbase's id (RTFP3-1);
+/// - **verdict samples** (RTFP3-4): `validate_transfer` on the fixture and on
+///   one variant per `TxError` class a transfer can reach (each variant
+///   changes one field, or the chain view, or the validation height), as the
+///   `Debug` text of the result. Not sampled: `TooLarge` (no transfer shape
+///   within the count limits reaches `MAX_TX_SIZE`) and `WeightOverflow`
+///   (the fee of every bounded shape fits in 64 bits).
+pub fn transaction_samples() -> &'static Manifest {
+    static M: OnceLock<Manifest> = OnceLock::new();
+    M.get_or_init(compute_transaction_samples)
+}
+
+fn compute_transaction_samples() -> Manifest {
+    use blacksilk_crypto::generators::G;
+    use blacksilk_crypto::RistrettoPoint;
+    use blacksilk_tx::validate::validate_transfer;
+    let f = Fixture::get();
+    let rules = fixture_rules();
+    let t = &f.transfer;
+    let mut m = Manifest::new();
+
+    let px = |inputs: Vec<blacksilk_tx::Input>| {
+        Transaction::Px(Box::new(blacksilk_tx::px::PxTx {
+            inputs,
+            outputs: t.outputs.clone(),
+            payouts: Vec::new(),
+            fee: 0,
+            bridge_in: 0,
+            bridge_out: 0,
+            window: blacksilk_px::core::call::Window::UNBOUNDED,
+            anchor: [0; 8],
+            nullifiers: [[0; 8]; 2],
+            commitments: [[0; 8]; 2],
+            ciphertexts: [Vec::new(), Vec::new()],
+            functions: Vec::new(),
+            pseudo_outs: Vec::new(),
+            range_proof: None,
+            signatures: Vec::new(),
+            proof: Vec::new(),
+        }))
+    };
+    m.list(
+        "rules.sample.weight (fixture transfer 2-in 3-out, coinbase, PX 2-in 3-out, PX 0-in 3-out)",
         [
-            16, 7, 16, 7, 16, 4, 4, 1, 4, 1, 8, 2, 15, 5, 8, 2, 4, 4, 16, 5, 16, 5, 6, 32, 4, 6,
-            25, 1, 16,
+            Transaction::from(t.clone()).weight(),
+            f.coinbase.weight(),
+            px(t.inputs.clone()).weight(),
+            px(Vec::new()).weight(),
         ],
+    )
+    .bytes(
+        "rules.sample.tx_hash (fixture transfer)",
+        &Transaction::from(t.clone()).hash(),
+    )
+    .bytes(
+        "rules.sample.signature_message (fixture transfer, fixture rules)",
+        &t.signature_message(rules.domain()),
+    )
+    .bytes(
+        "rules.sample.tx_hash (fixture coinbase)",
+        &f.coinbase.hash(),
     );
+
+    // One variant per error class; each changes one thing of the valid case.
+    let identity = Point::from_point(RistrettoPoint::default());
+    let plus_g = |p: &Point| Point::from_point(p.point() + G);
+    let full = FixtureChain {
+        outputs: &f.outputs,
+        missing: None,
+        spent: None,
+    };
+    let verdict = |tx: &Transfer, chain: &FixtureChain, height: u64, rules: &TxRules| {
+        format!("{:?}", validate_transfer(tx, chain, height, rules))
+    };
+    let variant = |change: &dyn Fn(&mut Transfer)| {
+        let mut v = t.clone();
+        change(&mut v);
+        verdict(&v, &full, f.height, &rules)
+    };
+    let last_ring_member = *t.inputs[1].ring.last().expect("a full ring");
+    let other_branch = TxRules {
+        branch_id: rules.branch_id ^ 1,
+        ..rules
+    };
+    let cases: [(&str, String); 21] = [
+        ("valid", verdict(t, &full, f.height, &rules)),
+        ("no inputs", variant(&|v| v.inputs.clear())),
+        ("one output", variant(&|v| v.outputs.truncate(1))),
+        (
+            "identity key image",
+            variant(&|v| v.inputs[0].key_image = identity),
+        ),
+        (
+            "key images unsorted",
+            variant(&|v| {
+                v.inputs.swap(0, 1);
+                v.pseudo_outs.swap(0, 1);
+                v.signatures.swap(0, 1);
+            }),
+        ),
+        ("ring unsorted", variant(&|v| v.inputs[0].ring.swap(0, 1))),
+        (
+            "identity output key",
+            variant(&|v| v.outputs[0].one_time_key = identity),
+        ),
+        (
+            "identity ephemeral",
+            variant(&|v| v.outputs[0].ephemeral = identity),
+        ),
+        ("outputs unsorted", variant(&|v| v.outputs.swap(0, 1))),
+        (
+            "missing pseudo-output",
+            variant(&|v| {
+                v.pseudo_outs.pop();
+            }),
+        ),
+        (
+            "missing signature",
+            variant(&|v| {
+                v.signatures.pop();
+            }),
+        ),
+        (
+            "identity auxiliary image",
+            variant(&|v| v.signatures[0].d = identity),
+        ),
+        (
+            "short range proof",
+            variant(&|v| {
+                v.range_proof.l.pop();
+            }),
+        ),
+        ("fee + 1", variant(&|v| v.fee += 1)),
+        (
+            "unbalanced",
+            variant(&|v| v.pseudo_outs[0] = plus_g(&v.pseudo_outs[0])),
+        ),
+        (
+            "balanced, range proof invalid",
+            variant(&|v| {
+                v.pseudo_outs[0] = plus_g(&v.pseudo_outs[0]);
+                v.outputs[0].commitment = plus_g(&v.outputs[0].commitment);
+            }),
+        ),
+        (
+            "key image spent",
+            verdict(
+                t,
+                &FixtureChain {
+                    spent: Some(t.inputs[1].key_image),
+                    ..full
+                },
+                f.height,
+                &rules,
+            ),
+        ),
+        (
+            "ring member unknown",
+            verdict(
+                t,
+                &FixtureChain {
+                    missing: Some(last_ring_member),
+                    ..full
+                },
+                f.height,
+                &rules,
+            ),
+        ),
+        (
+            "coinbase ring member immature (height 60)",
+            verdict(t, &full, 60, &rules),
+        ),
+        (
+            "other branch id",
+            verdict(t, &full, f.height, &other_branch),
+        ),
+        (
+            "signature of the other input",
+            variant(&|v| v.signatures[0] = v.signatures[1].clone()),
+        ),
+    ];
+    for (name, v) in cases {
+        m.text(&format!("rules.sample.verdict ({name})"), &v);
+    }
+    m
 }
 
 /// Lowercase hex.
@@ -618,6 +961,32 @@ mod tests {
     use super::*;
     use blacksilk_px::fingerprint::Value;
 
+    /// The start-up cost of the fingerprints (computed at node start, in
+    /// `--version` and `/info`): every network's manifests from a cold process
+    /// (the Bulletproofs+ generators, the fixture's verdicts), then warm.
+    /// Timing, so ignored; run alone:
+    /// `cargo test --release -p blacksilk-node --lib fingerprint_cost -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn fingerprint_cost() {
+        let t = std::time::Instant::now();
+        let cold = NETWORKS.map(compute);
+        let cold_time = t.elapsed();
+        let t = std::time::Instant::now();
+        let samples = compute_transaction_samples();
+        let samples_time = t.elapsed();
+        let t = std::time::Instant::now();
+        assert_eq!(NETWORKS.map(compute), cold);
+        let warm_time = t.elapsed();
+        println!(
+            "fingerprints of {} networks: cold {cold_time:?}; transaction samples ({} \
+             entries) recomputed {samples_time:?}; all networks warm {warm_time:?}",
+            NETWORKS.len(),
+            samples.entries().len()
+        );
+        assert!(cold_time < std::time::Duration::from_secs(1));
+    }
+
     #[test]
     fn stable_across_calls() {
         for n in NETWORKS {
@@ -697,10 +1066,93 @@ mod tests {
         assert_eq!(strip(Network::Testnet), strip(Network::Mainnet));
     }
 
+    /// One record section of docs/reviews/v3-consensus-changes.md: the keys
+    /// it can be cited by (its `<a id>` anchor, the heading text before the
+    /// first `:`, and a leading `§N`) and its `Revision:` lines.
+    struct Section {
+        heading: String,
+        keys: Vec<String>,
+        revisions: Vec<String>,
+    }
+
+    fn record_sections() -> Vec<Section> {
+        let doc = include_str!("../../docs/reviews/v3-consensus-changes.md");
+        let mut sections: Vec<Section> = Vec::new();
+        let mut anchor: Option<String> = None;
+        for line in doc.lines().map(|l| l.trim_end_matches('\r')) {
+            if let Some(rest) = line.strip_prefix("<a id=\"") {
+                anchor = rest.split('"').next().map(str::to_string);
+            } else if let Some(head) = line.strip_prefix("## ") {
+                let mut keys: Vec<String> = anchor.take().into_iter().collect();
+                keys.push(head.split(':').next().unwrap_or(head).to_string());
+                if let Some(first) = head.split_whitespace().next() {
+                    if first.starts_with('§') {
+                        keys.push(first.to_string());
+                    }
+                }
+                sections.push(Section {
+                    heading: head.to_string(),
+                    keys,
+                    revisions: Vec::new(),
+                });
+            } else if let Some(rev) = line.strip_prefix("Revision: ") {
+                sections
+                    .last_mut()
+                    .expect("no Revision: line before the first record")
+                    .revisions
+                    .push(rev.to_string());
+            } else if !line.trim().is_empty() {
+                anchor = None;
+            }
+        }
+        sections
+    }
+
+    /// RTFP3-8: every record section has exactly one `Revision:` line; the
+    /// records' revision ids, in record order, are [`REVISIONS`]; and each
+    /// entry's `record` is exactly a key of the section that carries its id
+    /// (no prefix match: `§1` never matches a heading `§10`).
+    #[test]
+    fn revision_lines_are_the_revision_list() {
+        let sections = record_sections();
+        assert!(sections.len() >= REVISIONS.len());
+        let mut ids = Vec::new();
+        for s in &sections {
+            assert_eq!(
+                s.revisions.len(),
+                1,
+                "record {:?} needs exactly one `Revision:` line (the record template)",
+                s.heading
+            );
+            let r = &s.revisions[0];
+            if let Some(reason) = r.strip_prefix("none") {
+                assert!(
+                    reason.starts_with(" (") && reason.ends_with(')') && reason.len() > 3,
+                    "{:?}: `Revision: none (<reason>)`",
+                    s.heading
+                );
+            } else {
+                ids.push(r.as_str());
+            }
+        }
+        let listed: Vec<&str> = REVISIONS.iter().map(|r| r.id).collect();
+        assert_eq!(
+            ids, listed,
+            "the records' Revision ids and REVISIONS differ"
+        );
+        for r in REVISIONS {
+            let matching: Vec<&Section> = sections
+                .iter()
+                .filter(|s| s.keys.iter().any(|k| k == r.record))
+                .collect();
+            assert_eq!(matching.len(), 1, "{}: record key {:?}", r.id, r.record);
+            assert_eq!(matching[0].revisions[0], r.id, "{}", r.record);
+        }
+    }
+
     /// Every rule revision is unique and names an existing record.
     #[test]
     fn every_revision_is_unique_and_recorded() {
-        let doc = include_str!("../../docs/reviews/v3-consensus-changes.md");
         for (i, r) in REVISIONS.iter().enumerate() {
             assert!(
                 REVISIONS[i + 1..]
@@ -708,14 +1160,6 @@ mod tests {
                     .all(|o| o.id != r.id && o.record != r.record),
                 "{} is listed twice",
                 r.id
-            );
-            let heading = format!("\n## {}", r.record);
-            let anchor = format!("<a id=\"{}\"></a>", r.record);
-            assert!(
-                doc.contains(&heading) || doc.contains(&anchor),
-                "{}: no record {:?} in docs/reviews/v3-consensus-changes.md",
-                r.id,
-                r.record
             );
         }
         let m = rules_manifest(Network::Regtest);
@@ -773,6 +1217,61 @@ mod tests {
             get("chain.difficulty_rule"),
             Value::Text(DIFFICULTY_RULE_ID.to_string())
         );
+        // RT-FP3: the lower clamp, the FTL boundary (inclusive), the empty
+        // leaf, the RandomX reference answer, and the verdicts named by their
+        // error classes (the fixture is a valid transfer).
+        assert_eq!(
+            get("rules.sample.next_difficulty([0, 1000], [1, 2], T 120, N 75, D0 1)"),
+            Value::U64(1)
+        );
+        assert_eq!(
+            get("rules.sample.within_future_limit (1359, 1360, 1361; now 1000, FTL 360)"),
+            Value::List(vec![1, 1, 0])
+        );
+        assert_eq!(get("px.sample.tree.empty[0]"), Value::List(vec![0; 8]));
+        assert_eq!(
+            get("randomx.KAT.hash"),
+            Value::Text(
+                "639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f".to_string()
+            )
+        );
+        assert_eq!(get("randomx.PROGRAM_ITERATIONS"), Value::U64(2048));
+        let verdict = |case: &str| match get(&format!("rules.sample.verdict ({case})")) {
+            Value::Text(t) => t,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(verdict("valid"), "Ok(())");
+        for (case, class) in [
+            ("no inputs", "InputCount"),
+            ("one output", "OutputCount"),
+            ("identity key image", "KeyImageIdentity"),
+            ("key images unsorted", "KeyImagesNotSorted"),
+            ("ring unsorted", "RingNotIncreasing"),
+            ("identity output key", "OutputKeyIdentity"),
+            ("identity ephemeral", "EphemeralIdentity"),
+            ("outputs unsorted", "OutputsNotSorted"),
+            ("missing pseudo-output", "PseudoOutCount"),
+            ("missing signature", "SignatureCount"),
+            ("identity auxiliary image", "AuxKeyImageIdentity"),
+            ("short range proof", "RangeProofShape"),
+            ("fee + 1", "FeeNotExact"),
+            ("unbalanced", "Unbalanced"),
+            ("balanced, range proof invalid", "RangeProofInvalid"),
+            ("key image spent", "KeyImageSpent"),
+            ("ring member unknown", "UnknownRingMember"),
+            (
+                "coinbase ring member immature (height 60)",
+                "RingMemberTooYoung",
+            ),
+            ("other branch id", "InvalidSignature"),
+            ("signature of the other input", "InvalidSignature"),
+        ] {
+            assert!(
+                verdict(case).starts_with(&format!("Err({class}")),
+                "{case}: {}",
+                verdict(case)
+            );
+        }
     }
 
     /// The rules fingerprint is the digest of the rules manifest, and a

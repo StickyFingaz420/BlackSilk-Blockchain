@@ -11,13 +11,15 @@
 //! parameters (`blacksilk_zk::params`), the circuit digest and the BVM-1
 //! limits.
 //!
-//! Besides constants, [`px_entries`] lists **rule samples** ([`px_samples`]):
-//! outputs of PX rule functions on fixed inputs (the Poseidon2 permutation,
-//! `Hk`, the tree node, a record commitment and a nullifier, the kernel exit
-//! codes, the function prefix and the PX6 window), so a change of that code
-//! moves the digest even when no constant changes. Rule code that no sample
-//! reaches is named by the node's rule-revision list and, in the end, told
-//! apart only by the build commit.
+//! Besides constants, [`px_entries`] lists the consensus hash tags and group
+//! element samples of the v1 cryptography ([`crypto_entries`]) and **rule
+//! samples** ([`px_samples`]): outputs of PX rule functions on fixed inputs
+//! (the Poseidon2 permutation, `Hk`, the tree node, a record commitment and a
+//! nullifier, the kernel exit codes, the function prefix, the PX6 window, the
+//! commitment tree's empty and small roots, and the proof transcript), so a
+//! change of that code moves the digest even when no constant changes. Rule
+//! code that no sample reaches is named by the node's rule-revision list and,
+//! in the end, told apart only by the build commit.
 
 use std::fmt::Write;
 
@@ -325,7 +327,45 @@ pub fn px_entries() -> Manifest {
             "crypto.DOMAIN_PREFIX",
             blacksilk_crypto::hash::DOMAIN_PREFIX,
         );
+    m.extend(crypto_entries());
     m.extend(px_samples());
+    m
+}
+
+/// The v1 cryptography entries (RTFP3-1): every consensus hash tag
+/// (`blacksilk_crypto::hash::tags::CONSENSUS`, in its order), and samples of
+/// the group elements every node derives from them: the value generator `H`,
+/// the first and last Bulletproofs+ generators, a Pedersen commitment and
+/// the key image of a fixed secret. A changed tag changes its entry and the
+/// samples derived with it.
+pub fn crypto_entries() -> Manifest {
+    use blacksilk_crypto::clsag::key_image;
+    use blacksilk_crypto::generators::{bp_generators, h, BP_MAX_GENERATORS, G};
+    use blacksilk_crypto::hash::tags;
+    use blacksilk_crypto::{Point, Scalar};
+    let mut m = Manifest::new();
+    m.size("crypto.hash.tags.CONSENSUS.len", tags::CONSENSUS.len());
+    for (i, t) in tags::CONSENSUS.iter().enumerate() {
+        m.text(&format!("crypto.hash.tags.CONSENSUS[{i}]"), t);
+    }
+    let bytes = |p: blacksilk_crypto::RistrettoPoint| *Point::from_point(p).bytes();
+    let bp = bp_generators();
+    let last = BP_MAX_GENERATORS - 1;
+    m.size("crypto.BP_MAX_GENERATORS", BP_MAX_GENERATORS)
+        .bytes("crypto.sample.generator_H", &bytes(*h()))
+        .bytes("crypto.sample.bp_G[0]", &bytes(bp.g[0]))
+        .bytes("crypto.sample.bp_H[0]", &bytes(bp.h[0]))
+        .bytes(&format!("crypto.sample.bp_G[{last}]"), &bytes(bp.g[last]))
+        .bytes(&format!("crypto.sample.bp_H[{last}]"), &bytes(bp.h[last]));
+    // commit(5, 3) = 5·H + 3·G, and the key image of the secret 7 for its own
+    // key 7·G.
+    m.bytes(
+        "crypto.sample.commit(5, 3)",
+        &bytes(blacksilk_crypto::commitment::commit(5, &Scalar::from(3u64))),
+    );
+    let x = Scalar::from(7u64);
+    let p = Point::from_point(x * G);
+    m.bytes("crypto.sample.key_image(7, 7G)", key_image(&x, &p).bytes());
     m
 }
 
@@ -341,10 +381,13 @@ pub fn px_entries() -> Manifest {
 ///   `ApprovalConflict`).
 /// - The function prefix (`abi ‖ io_hash ‖ contract ‖ window`; F-28-1, PX6)
 ///   of fixed inputs, and the PX6 window rule at its edges.
+/// - The commitment tree: the empty leaf and empty roots, and the root of a
+///   three-leaf tree by the frontier, the full tree and a path (RTFP3-7).
+/// - The proof transcript: the verifier's Fiat-Shamir challenger on a fixed
+///   statement (RTFP3-11).
 pub fn px_samples() -> Manifest {
     use blacksilk_px_core::call::{function_prefix, Window, ABI_VERSION};
     use blacksilk_px_core::hash::{domain, hash, node, Digest, Permutation};
-    use blacksilk_px_core::kernel::Error;
     use blacksilk_px_core::record::{nullifier, Record};
     let mut perm = crate::perm::HostPerm::new();
     let words = |d: &[u32]| d.iter().map(|&x| u64::from(x)).collect::<Vec<_>>();
@@ -368,26 +411,7 @@ pub fn px_samples() -> Manifest {
     );
     m.list(
         "px.kernel.exit_codes",
-        [
-            Error::Version,
-            Error::NonCanonical,
-            Error::NotBoolean,
-            Error::DummyWithValue,
-            Error::NotInTree,
-            Error::DuplicateNullifier,
-            Error::Unbalanced,
-            Error::TooManyFunctions,
-            Error::ZeroContract,
-            Error::Unauthorized,
-            Error::ApprovalMismatch,
-            Error::SpecMismatch,
-            Error::SpecForeignContract,
-            Error::SpecConflict,
-            Error::DummyContract,
-            Error::ContractOutputOwner,
-            Error::ApprovalConflict,
-        ]
-        .map(|e| u64::from(e.exit_code())),
+        KERNEL_ERRORS.map(|e| u64::from(e.exit_code())),
     );
     let w = |not_before, not_after| Window {
         not_before,
@@ -421,8 +445,108 @@ pub fn px_samples() -> Manifest {
         "px.sample.window.is_well_formed",
         [w(0, 0), w(5, 0), w(5, 5), w(6, 5)].map(|win| u64::from(win.is_well_formed())),
     );
+
+    // The commitment tree (RTFP3-7): the empty leaf and the empty roots at
+    // heights 1 and 32 (the root of an empty tree), and the root of a tree of
+    // three fixed leaves, computed by the node's frontier, by the full tree
+    // and from the third leaf's authentication path.
+    let e = crate::tree::empty_roots(&mut perm);
+    m.list("px.sample.tree.empty[0]", words(&e[0]))
+        .list("px.sample.tree.empty[1]", words(&e[1]))
+        .list(
+            &format!("px.sample.tree.empty[{}]", crate::tree::CAPACITY.ilog2()),
+            words(&e[e.len() - 1]),
+        );
+    let leaves: [Digest; 3] = [a, b, [17, 18, 19, 20, 21, 22, 23, 24]];
+    let mut frontier = crate::tree::Frontier::default();
+    let mut tree = crate::tree::Tree::new(&mut perm);
+    for l in leaves {
+        frontier
+            .append(&mut perm, l)
+            .expect("three leaves fit the tree");
+        tree.append(&mut perm, l)
+            .expect("three leaves fit the tree");
+    }
+    let path = tree.path(2).expect("leaf 2 exists");
+    m.list(
+        "px.sample.tree.root(frontier; tree; path of leaf 2) of 3 leaves",
+        [
+            frontier.root(&mut perm, &e),
+            tree.root(),
+            crate::tree::root_from_path(&mut perm, leaves[2], 2, &path),
+        ]
+        .iter()
+        .flat_map(|d| words(d)),
+    );
+
+    // The proof transcript (RTFP3-11): the verifier's Fiat-Shamir challenger
+    // for a fixed statement digest, after absorbing three fixed words.
+    m.list(
+        "px.sample.zk.transcript([7; 32], [1, 2, 3])",
+        blacksilk_zk::config::transcript_sample(&[7; 32], &[1, 2, 3]),
+    );
     m
 }
+
+/// Every kernel error, in variant (exit-code) order.
+const KERNEL_ERRORS: [blacksilk_px_core::kernel::Error; 17] = {
+    use blacksilk_px_core::kernel::Error::*;
+    [
+        Version,
+        NonCanonical,
+        NotBoolean,
+        DummyWithValue,
+        NotInTree,
+        DuplicateNullifier,
+        Unbalanced,
+        TooManyFunctions,
+        ZeroContract,
+        Unauthorized,
+        ApprovalMismatch,
+        SpecMismatch,
+        SpecForeignContract,
+        SpecConflict,
+        DummyContract,
+        ContractOutputOwner,
+        ApprovalConflict,
+    ]
+};
+
+/// The position of `e` in [`KERNEL_ERRORS`]. The match is exhaustive, so a
+/// new kernel error fails to compile here until it is given its position
+/// (RTFP3-12), and the assertion below requires the list to agree with the
+/// match and with the variant order (the exit code is `2 + variant`).
+const fn kernel_error_index(e: blacksilk_px_core::kernel::Error) -> usize {
+    use blacksilk_px_core::kernel::Error::*;
+    match e {
+        Version => 0,
+        NonCanonical => 1,
+        NotBoolean => 2,
+        DummyWithValue => 3,
+        NotInTree => 4,
+        DuplicateNullifier => 5,
+        Unbalanced => 6,
+        TooManyFunctions => 7,
+        ZeroContract => 8,
+        Unauthorized => 9,
+        ApprovalMismatch => 10,
+        SpecMismatch => 11,
+        SpecForeignContract => 12,
+        SpecConflict => 13,
+        DummyContract => 14,
+        ContractOutputOwner => 15,
+        ApprovalConflict => 16,
+    }
+}
+
+const _: () = {
+    let mut i = 0;
+    while i < KERNEL_ERRORS.len() {
+        assert!(kernel_error_index(KERNEL_ERRORS[i]) == i);
+        assert!(KERNEL_ERRORS[i] as usize == i);
+        i += 1;
+    }
+};
 
 #[cfg(test)]
 mod tests {

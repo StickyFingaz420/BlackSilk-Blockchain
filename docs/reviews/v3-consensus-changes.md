@@ -33,13 +33,36 @@ they are never renamed. Index:
 - vault-v3 (vault guest and host, wallet; W1-CB-B2)
 - guest-rebuild (kernel and vault ELFs and ids, guest link layout; W1-CB-B2); Follow-up (RTW1C-9)
 - kernel-budget-shapes (px; FX-RTW1C); Follow-ups (RT-W1c) in px6-validity-window and vault-v3
-- fingerprint-v3 (node, px, zkvm, consensus network id, tools/genesis; W4-40)
+- fingerprint-v3 (node, px, zkvm, consensus network id, tools/genesis; W4-40); Follow-up (RT-FP3) (FX-RTFP3)
 
 New sections are appended at the end.
+
+**Record template checklist** (every new section, RT-FP3):
+
+- The heading is `## <key>: <title>`, optionally preceded by `<a id="<key>"></a>`.
+  Commit trailers and `REVISIONS` cite the key exactly (`#<key>`, `§N`, or the
+  heading's anchor); the consensus gate refuses a trailer whose section does not
+  exist.
+- **One `Revision:` line** directly under the heading: `Revision: <id>` when the
+  change adds or changes a validity or proof-acceptance rule, and then the same
+  commit appends `Revision { id: "<id>", record: "<key>" }` to `REVISIONS` in
+  node/src/fingerprint.rs; otherwise `Revision: none (<reason>)`. The test
+  `fingerprint::tests::revision_lines_are_the_revision_list` requires the ids of
+  the records, in order, to be `REVISIONS`, and the gate requires the line in
+  the cited section.
+- If the rule is reachable by a cheap call on fixed inputs, a **rule sample** in
+  the manifest (node/src/fingerprint.rs, px/src/fingerprint.rs), or a verdict
+  sample on the fixture transfer.
+- The **re-pin procedure** (`fingerprint-v3`): render the manifests before and
+  after in separate target directories, map every changed entry to its record in
+  the commit message, re-pin `node/tests/deploy_configs.rs` and
+  `px/tests/consensus_fingerprint.rs`, and cite the record in the trailer.
 
 ---
 
 ## §1 D8 option B: no cross-transaction one-time-key uniqueness (former rule C4)
+
+Revision: D8-B:one-time-keys-unique-within-tx-only
 
 Decision: D8, option B (decisions.md "D8 / C4: DECIDED, option B"); dossiers 13 and
 17, with SX1 correction 1 and red-team RT-10 (dossier 50 §5.1).
@@ -163,6 +186,8 @@ work item CB-B1a (exact commands and counts).
 
 ## §2 CLSAG: the auxiliary image `D` must not be the identity
 
+Revision: CLSAG:D-not-identity
+
 Decision: agent 15 W1 (decisions.md "Agent 15 (CLSAG)"); dossier 15 finding C1.
 
 **1. Problem.** `clsag::verify` rejected `I = identity` but not `D = identity`.
@@ -220,6 +245,8 @@ has the rule, and `d_identity_vector_values` shows that the §6.1 loop alone clo
 ---
 
 ## §3 RT-14: the genesis id in every signature domain
+
+Revision: RT-14:sig-domain-network-branch-genesis
 
 Decision: red-team RT-14, adopted for v3 (decisions.md "Agent 50", RT-14; owner CB-B1).
 
@@ -288,6 +315,8 @@ layout change (the fingerprint's constant list cannot see it).
 ---
 
 ## BS-ZK-3: eight random codewords per committed matrix (F24-1)
+
+Revision: F24-1:eight-random-codewords
 
 Owner: W1-CB-B3 (zk). Decisions: "Agent 24" F24-1 (adopt 8), "Agent 25", "Agent 26"
 (wording), "Agent 50" (new parameter set).
@@ -374,6 +403,8 @@ Owner: W1-CB-B3 (zk). Decisions: "Agent 24" F24-1 (adopt 8), "Agent 25", "Agent 
 
 ## Canonical proof shape: exact hidden openings and one root per Merkle cap
 
+Revision: I2:exact-hidden-openings-one-cap-root
+
 Owner: W1-CB-B3 (zk). Items 22 W2 = 26 ZP-7 = 24 I2 (merged into one rule by the
 decisions for agents 22, 24 and 26) and F24-2. Decision "Agent 50": the preprocessed-round
 exception is derived from the proof structure; mutation tests at every position.
@@ -442,6 +473,8 @@ exception is derived from the proof structure; mutation tests at every position.
 ---
 
 ## Soundness figures: COLLISION_BITS = 122, post-ZK domain, independent calculator
+
+Revision: none (a constant, `zk.COLLISION_BITS`, listed in the manifest)
 
 Owner: W1-CB-B3 (zk). Items 25 W1, W2, W3 (part), 24 I4, I5; decisions "Agent 24"
 (`COLLISION_BITS` = 122 citing ePrint 2026/089), "Agent 25" (headline, W2 in `zk` as a
@@ -643,6 +676,8 @@ and an Info item (defence in depth), against the circuit fingerprint (decisions 
 
 ## daa-lwma75-warm: LWMA-75 with a counted clock of step T/2, warmed over 11 blocks
 
+Revision: 03-F1:lwma75-step-t/2-warm11
+
 Owner: W1-CB-A (consensus bundle). Decisions: "Agent 03", "DAA update", "DAA DECIDED",
 "DAA FINAL (after RT-DAA)". Rule id `lwma1-n75-step-t/2-warm11-cap6t-floor20`
 (`consensus::difficulty::DIFFICULTY_RULE_ID`).
@@ -802,6 +837,8 @@ Owner: W1-CB-A (consensus bundle). Decisions: "Agent 03", "DAA update", "DAA DEC
 
 ## f05-header-check-order: permanent header rules before the future time limit
 
+Revision: none (the order of header checks; every verdict unchanged)
+
 Owner: W1-CB-A. Decisions: "Agent 01" (F-05 reorder accepted before the freeze).
 
 1. **Problem.** `check_rules` checked the future time limit (FTL, not permanent: it
@@ -848,6 +885,8 @@ Owner: W1-CB-A. Decisions: "Agent 01" (F-05 reorder accepted before the freeze).
 ---
 
 ## genesis-beacon: the genesis nonce is derived in consensus from a committed beacon
+
+Revision: none (the genesis construction: identity, not a rule)
 
 Owner: W1-CB-A. Decisions: "Agent 40" (nonce derived in consensus from the committed
 beacon; `GenesisSpec`/`Beacon`; `genesis_is_final()`; no pasted nonce, no runtime
@@ -913,6 +952,8 @@ override). Dossier 40 F40-2 (Medium).
 ---
 
 ## rt1-unknown-upgrade-pow: UnknownUpgrade only for headers with real proof of work
+
+Revision: none (the error class of an unknown-version header; every verdict unchanged)
 
 Owner: W1-CB-A. Decisions: "Agent 50" RT-1 (adopted: `UnknownUpgrade` only for PoW-valid
 headers; disconnect without a ban after N; operator warning only past a peer or work
@@ -1099,6 +1140,8 @@ change above. Internal review, not an audit.
 
 ## Exact v1 fee (T8): `fee = FEE_PER_WEIGHT × max_weight(n_in, n_out)`
 
+Revision: T8:exact-v1-fee
+
 Decision: agent 38 W8, "Exact v1 fee (W8), DECIDED for the v3 genesis" (decisions.md,
 Agent 38); dossiers 38 §3.7, 14 §3.4 (FE-4) and 11 (F11-7). Work item CB-B1b item 1.
 
@@ -1204,6 +1247,8 @@ spec-derived value is 57 439, and the Rust function agrees with the script.)
 
 ## Mempool expiry (2 160 blocks) and the recently-expired guard (30 blocks)
 
+Revision: none (mempool policy)
+
 **Policy, not consensus.** No block's validity changes; this section follows the 15-step
 form because the decisions log bundles it with the consensus items (Agent 38 "Expiry",
 Agent 12 "Expiry"). No `Consensus-Change` path is touched.
@@ -1304,6 +1349,8 @@ rebroadcast) are required before any privacy claim (RTW1B-2). Merged in 5ec35db.
 <a id="r12-2"></a>
 
 ## R12-2 (a′): the v1 part of PX and deploy transactions counts toward the block weight
+
+Revision: R12-2:a-prime-v1-part-weight
 
 Decision: decisions.md, Agent 14 "R12-2: option (a′) is accepted provisionally", Agent 10
 "R12-2: 14's option (a′) and 10's option (a) are the same rule … Adopted for the v3
@@ -1419,6 +1466,8 @@ agent 10's benchmark with PX proofs is still owed. Merged in 5ec35db.
 <a id="tree-capacity"></a>
 
 ## PX tree capacity (I3) with 21-D, a fallible apply that halts, and 21-F
+
+Revision: I3:px-tree-capacity
 
 Decision: decisions.md, Agent 11 "Tree-capacity rule (I3): rides the v3 reset … `apply_block`
 returns a Result, with no panic path"; Agent 21 "Tree capacity: the frontier stores the
@@ -1547,6 +1596,8 @@ the fold of the last leaf's path (`the_last_append_keeps_the_full_root`).
 
 ## approval-conflict: one approval per contract input (F-20-1)
 
+Revision: F-20-1:approval-conflict
+
 Decision: decisions.md, Agent 20 "F-20-1 … ACCEPTED as a v3 consensus item. It adds an
 `ApprovalConflict` error (exit 18) and needs a new kernel id. It lands in the SINGLE v3
 kernel rebuild"; Agent 50 "F-20-1: accepted, with the listed tests (double/triple
@@ -1620,6 +1671,8 @@ known; such a contract can put both checks in one program).
 <a id="px-call-abi"></a>
 
 ## px-call-abi: a versioned function prefix, and ABI and output words in the registry (F-28-1, F-28-5)
+
+Revision: F-28-1:abi-word-and-registry-out-words
 
 Decision: decisions.md, Agent 28 "F-28-1 v3 part: ACCEPTED as a v3 consensus item. An
 `ABI_VERSION` word leads the function prefix. The registry records `abi` and
@@ -1722,6 +1775,8 @@ vault's id, and the ABI is a deploy rule).
 <a id="px6-validity-window"></a>
 
 ## px6-validity-window: the transaction validity window (PX6)
+
+Revision: PX6:validity-window
 
 Decision: decisions.md, Agent 28 "Validity window, PX6: ACCEPTED for v3. Transactions
 carry `[not_before, not_after]` in the PX prefix, covered by h_tx and copied into each
@@ -1860,6 +1915,8 @@ CHANGES; RTW1C-4 and RTW1C-5.
 <a id="vault-v3"></a>
 
 ## vault-v3: the reference vault with contract-bound locks, hedged blinds, a timeout and a refund (W28-4)
+
+Revision: none (a program rebuild: its id is listed in the manifest)
 
 Decision: decisions.md, Agent 28 "Vault changes (W28-4): the lock hash includes the
 contract id, and blinds are hedged. The vault is rebuilt ONCE together with the kernel"
@@ -2026,6 +2083,8 @@ budget and the kernel are unchanged, so nothing here is a consensus change.
 
 ## guest-rebuild: the single v3 kernel and vault rebuild, with the guest link layout (CI-1)
 
+Revision: none (a program rebuild: the ids are listed in the manifest)
+
 Decision: decisions.md, Agent 43 "W4 single kernel/vault rebuild: gated on all
 guest-affecting merges (20 F-20-1, 28 ABI/PX6/vault, 19 comments), plus W5 script
 hardening first"; "CI-1 fix DECIDED: the guest linker script starts SECTIONS at 0x10000
@@ -2169,6 +2228,8 @@ verifier parameters, raised in section `kernel-budget-shapes` below (logs
 
 ## kernel-budget-shapes: the kernel budgets cover every honest shape, and each execution fits its own budget (RTW1C-1)
 
+Revision: RTW1C-1:kernel-budgets-cover-every-shape
+
 Decision: decisions.md, "RT-W1c (CB-B2 red team), Lead decisions 2026-09-28":
 "RTW1C-1 (Medium, liveness, pre-existing): kernel budgets raised so every honest shape
 uses at most 95% of every table, verified by an exhaustive or property test over all
@@ -2275,6 +2336,8 @@ the commands are listed there).
 <a id="fingerprint-v3"></a>
 
 ## fingerprint-v3: rules and identity fingerprints, rule samples, rule revisions, and the testnet v3 network id
+
+Revision: none (the fingerprint is not a validity rule)
 
 Owner: W4-40. Decisions: "Agent 40" (40 lands all entries in one commit after every
 rule decision; the digest is split into rules and identity; `--print-manifest`; the
@@ -2513,3 +2576,164 @@ fingerprints; its rules fingerprint must stay equal to the release candidate's.
 proof-system.md §3; STATUS.md §1; this record. Values are referenced, not copied.
 
 **15. Review status.** Implemented and tested by W4-40; red-team review pending.
+
+### Follow-up (RT-FP3)
+
+Owner: FX-RTFP3. Decisions: "RT-FP3 (fingerprint v3 coverage)" (verdict ACCEPT WITH
+CHANGES: the construction is sound, the coverage is not), "Agent 40", "Fingerprint pins
+during the pre-freeze v3 window" (re-pin procedure), "Engineering process" (Tier 3).
+Internal engineering work, not an audit. Not a rule change: no verdict of any node
+changes, so no `REVISIONS` entry and no `Revision:` id.
+
+**1. Problem.** The red team (RT-FP3) applied seven consensus mutations, each alone:
+the LWMA lower clamp `1 → 2`, the future time limit `<=` → `<`, the `tx/hash` tag, the
+empty leaf of the PX tree, RandomX `PROGRAM_ITERATIONS 2048 → 1024`, the Bulletproofs+
+weight clawback `4/5 → 1/2`, and the key-image order rule T4 disabled. Every mutant
+compiled, behaved differently (a scratch test showed each effect), and left every
+fingerprint identical (`C:/bszkeval/rt-fp3-demo.patch`, `rt-fp3-*-manifest.txt`).
+Causes: the RandomX entries were copies; no hash tag was listed; the samples missed
+the FTL boundary, the clamp, the tree's empty roots, weights of real transactions and
+every verdict; the revision list was not tied to the records; the gate's path list
+missed crypto, RandomX, the transaction types and the chain manager; a dirty tree
+reported a clean commit.
+
+**2. Demonstrated failure.** The red team's demonstration on `3a14978` (above). The
+acceptance test of this follow-up re-applies the same seven mutations
+(`tools/fingerprint-mutations.sh`, results in §11).
+
+**3. Prior art.** As the parent record (known-answer samples, Zcash branch ids,
+EIP-2124). The verdict samples follow the golden-corpus idea of dossier 11 item I1
+(one exact-error vector per error class) on a single pinned fixture. The pinned-copy
+pattern (`zkvm.CIRCUIT_DIGEST`, a value the crate's test requires the code to compute)
+is reused for the RandomX known answer.
+
+**4. Alternatives.** (a) Compute a RandomX hash at start-up (rejected: a 256 MiB cache
+in `--version` and `/info`); (b) build the fixture transaction at start-up (rejected:
+proving and signing in the fingerprint; the fixture is pinned data instead, with its
+generator in the repository); (c) verdict samples as a pinned test digest only (not
+needed: the full manifest computes in about 55 ms cold in release, measured below, so
+the verdicts are in the manifest itself); (d) a second cut-over for the gate's new
+paths instead of waivers (rejected by the assignment: waivers with reasons).
+
+**5. Affected components** (items of the decision):
+- RTFP3-2: `randomx/src/lib.rs` `config_entries()` (every `config.rs` constant, read
+  from the crate) and `FINGERPRINT_KAT` (vector 1a), asserted by `tests::hash_1a`;
+  the node lists both instead of copies.
+- RTFP3-1: `crypto/src/hash.rs` `tags::CONSENSUS` (the 25 tags a node hashes with to
+  reach a verdict; wallet, P2P, prover and Wasm tags excluded, tested);
+  `px/src/fingerprint.rs` `crypto_entries()`: the tags, generator `H`, the first and
+  last Bulletproofs+ generators, `commit(5, 3)` and the key image of the secret 7;
+  the fixture transfer's id and signature message, and the fixture coinbase's id.
+- RTFP3-3/4: `node/src/fingerprint.rs` `transaction_samples()` on the pinned fixture
+  `node/src/fingerprint_fixture.txt` (a 2-input, 3-output transfer signed under
+  `fixture_rules()`: the test-vector network id, the v3 branch id, a fixed genesis id;
+  its coinbase; its 32 ring members), generated by `node/tests/fingerprint_fixture.rs`:
+  `Transaction::weight` of the transfer (the clawback applies), the coinbase and a PX
+  transaction with and without a v1 part; and `validate_transfer` verdicts of the
+  transfer and of 20 variants, one per error class a transfer can reach
+  (`TooLarge` and `WeightOverflow` cannot be reached by a transfer within the count
+  limits).
+- RTFP3-5/6/7: `within_future_limit` at `now + FTL − 1`, `now + FTL`, `now + FTL + 1`;
+  `next_difficulty` clamped to 1; the empty leaf and roots at heights 1 and 32, and the
+  root of a three-leaf tree by the frontier, the full tree and a path.
+- RTFP3-11: `zk/src/config.rs` `transcript_sample()` (the verifier's challenger on a
+  fixed statement and three words: one extension challenge, one base element, 20 bits),
+  listed as `px.sample.zk.transcript`.
+- RTFP3-12: the kernel exit codes from an exhaustive match with a compile-time check of
+  the list against the variant order; `Epoch` destructured in the manifest.
+- RTFP3-8: a `Revision:` line in every record section (this file); the test
+  `revision_lines_are_the_revision_list` (every section has exactly one; the ids, in
+  order, are `REVISIONS`; each `record` key matches exactly one section: no prefix
+  match); the record template checklist (top of this file); the consensus gate refuses
+  a trailer whose cited section does not exist, and, once the record has `Revision:`
+  lines, a section without one (`consensus-gate.sh --selftest`).
+- RTFP3-10: the gate's paths gain `crypto/`, `randomx/`, `third_party/`,
+  `chain/src/manager/`, `tx/src/{types,codec,state}.rs`, `px/src/{prove,state,tree}.rs`
+  and the fixture; the 18 earlier commits that touched them without a trailer are in
+  `.github/consensus-gate-waivers.txt`, each with its reason.
+- RTFP3-9/15: `node/build.rs` and `build_id.rs` mark a dirty tree (`<commit>-dirty`) and
+  refuse a dirty release build unless `BLACKSILK_ALLOW_DIRTY=1`; testnet.md §2.1 now
+  names the binary hash as the check that a binary is the announced code and states
+  what the fingerprints do not show.
+- RTFP3-13/14: `tools/genesis` (reserved ids, `--final`, `--rehearsal`, `verify` of a
+  registered built-in genesis); testnet-v3-genesis.md §3, §6, §8.
+- RTFP3-16: the floor `n²T/20` of the LWMA is unreachable (proof and the mutant table
+  in [mutation-exemptions.md](mutation-exemptions.md), E1); the rule id is unchanged.
+- The gate path list, the fixture and the record changes; docs testnet.md §2.1,
+  testnet-v3-genesis.md, STATUS.md §1 and §8.
+
+**6. Activation.** None: the fingerprint is not a validity rule.
+
+**7. Compatibility.** The rules fingerprint of every network changes (80 entries
+added), and with it the consensus fingerprint; the identity fingerprints are unchanged
+(no network id or genesis changed). Re-pinned: `node/tests/deploy_configs.rs` (all
+three networks) and `px/tests/consensus_fingerprint.rs`.
+
+**Entry-level diff** (base `680f9f9`, rendered with `--print-manifest` from a build in a
+separate target directory, against this change; the same on every network): 173 base
+entries, all unchanged in name and value; 80 added, none removed or changed.
+
+| Added entries | Record |
+|---|---|
+| `randomx.SUPERSCALAR_MAX_SIZE`, `DATASET_ITEM_SIZE`, `DATASET_ITEM_COUNT`, `DATASET_EXTRA_ITEMS`, `CACHE_SIZE`, `CACHE_LINE_SIZE`, `CACHE_LINE_ALIGN_MASK`, `SCRATCHPAD_L1_L2_L3_L3_64_MASKS`, `CONDITION_MASK`, `STORE_L3_CONDITION`, `REGISTER_NEEDS_DISPLACEMENT` (the listed RandomX entries keep their names and values, now read from the crate) | this follow-up, RTFP3-2 |
+| `randomx.KAT.key`, `KAT.input`, `KAT.hash` | RTFP3-2 |
+| `crypto.hash.tags.CONSENSUS.len`, `crypto.hash.tags.CONSENSUS[0..24]` | RTFP3-1 |
+| `crypto.BP_MAX_GENERATORS`, `crypto.sample.generator_H`, `bp_G[0]`, `bp_H[0]`, `bp_G[1023]`, `bp_H[1023]`, `commit(5, 3)`, `key_image(7, 7G)` | RTFP3-1 |
+| `px.sample.tree.empty[0]`, `empty[1]`, `empty[32]`, `px.sample.tree.root(…) of 3 leaves` | RTFP3-7 |
+| `px.sample.zk.transcript([7; 32], [1, 2, 3])` | RTFP3-11 |
+| `rules.sample.next_difficulty([0, 1000], [1, 2], T 120, N 75, D0 1)` | RTFP3-6 |
+| `rules.sample.within_future_limit (1359, 1360, 1361; now 1000, FTL 360)` | RTFP3-5 |
+| `rules.sample.weight (fixture …)` | RTFP3-3 |
+| `rules.sample.tx_hash (fixture transfer)`, `signature_message (…)`, `tx_hash (fixture coinbase)` | RTFP3-1 |
+| `rules.sample.verdict (…)`, 21 entries | RTFP3-4 |
+
+The digests before and after, per network, are in the commit message; the after
+values were recomputed from the printed encodings by an independent standard-library
+Python script (FX-RTFP3 scratch), which also decoded each encoding (246 rules entries):
+equal.
+
+**8. Reorg, wallet, mining and P2P implications.** None: the fingerprint is computed,
+printed and served, never checked against peers. Development builds: a release build
+of uncommitted work now needs `BLACKSILK_ALLOW_DIRTY=1` (the crates that build the node:
+node, wallet, supply-audit, labnet).
+
+**9. Vectors.** The fixture (pinned data, with its deterministic generator); the
+RandomX known answer (the reference's vector 1a); the verdict classes asserted by
+`samples_are_the_golden_values`.
+
+**10. Tests.** node: `revision_lines_are_the_revision_list`, the extended
+`samples_are_the_golden_values`, `fingerprint_cost` (ignored, timing),
+`tests/fingerprint_fixture.rs` (`the_fixture_is_a_valid_transfer`, and the ignored
+generator), `tests/build_id.rs` (`sha1_and_blob_ids`, `index_parsing`,
+`dirty_paths_compares_like_git_status`, `object_format`,
+`this_repository_index_parses`); randomx: `config_entries_are_the_reference_values`
+and `hash_1a` on `FINGERPRINT_KAT`; crypto: `consensus_tags_are_listed_tags`;
+tools/genesis: `reserved_ids_need_their_purpose`,
+`verify_accepts_a_registered_built_in_genesis`, and the updated registry tests; the
+gate: `consensus-gate.sh --selftest`; the acceptance script
+`tools/fingerprint-mutations.sh`.
+
+**Start-up cost** (`fingerprint_cost`, release, this machine, while another agent ran
+a full-mode miner): every network's fingerprints from a cold process 54 to 58 ms
+(the transaction samples about 30 ms of it); warm 3 ms. Well under the 1 s budget, so
+the verdicts are computed at run time rather than pinned by a test.
+
+**11. Suite results.** See the next paragraph (filled in by the commit that records
+them).
+
+**12. Open review points.**
+- Coverage stays sample-based. Rules a transfer fixture cannot reach have no verdict
+  sample: PX and deploy rules (a PX verdict needs a proof), block-level rules (B1 to B8,
+  coinbase rules), header and chain rules beyond the samples, CLSAG and Bulletproofs+
+  internals that keep the fixture's verdicts, and the canonical-proof rules. They are
+  covered by revisions and the build commit only. A PX verdict sample on a pinned
+  proof (verification costs about a second) could be a pinned test digest.
+- The dirty mark misses untracked files and staged-only changes, and a SHA-256
+  repository is compared by size and time only. Reproducible node builds, the check
+  the operator procedure now names, are not demonstrated.
+- A release build of uncommitted work fails without `BLACKSILK_ALLOW_DIRTY=1`; every
+  agent running release tests on a dirty worktree must set it.
+- The gate's `Revision:` check applies once the record has `Revision:` lines, that is
+  from this change on; older commits are checked for existing sections only.
+- The equivalent-mutant exemption E1 depends on the networks' target times (regtest
+  T = 10 observes `% 20`, which is therefore not exempt).
