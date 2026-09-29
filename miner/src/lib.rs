@@ -332,6 +332,13 @@ impl<B: ContextBuilder> SeedPlanner<B> {
     ) {
         let e = match result {
             Ok(Ok(ctx)) => {
+                // An operator can see from the log that the next key is ready
+                // before its switch (W4-RX: the miner logged nothing here).
+                log::info!(
+                    "RandomX {} for key {}: background build finished",
+                    if full { "dataset" } else { "light cache" },
+                    hex::encode(&seed[..8])
+                );
                 self.ready = Some(ctx);
                 return;
             }
@@ -447,6 +454,16 @@ impl<B: ContextBuilder> SeedPlanner<B> {
         let Some((key, full)) = job else {
             return;
         };
+        log::info!(
+            "RandomX {} for key {}: background build started ({})",
+            if full { "dataset" } else { "light cache" },
+            hex::encode(&key[..8]),
+            if key == seed {
+                "the current key, light-mode bridge"
+            } else {
+                "prebuild of the next key"
+            }
+        );
         let builder = self.builder.clone();
         let spawned = std::thread::Builder::new()
             .name("randomx-build".into())
