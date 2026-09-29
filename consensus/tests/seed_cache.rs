@@ -6,6 +6,7 @@
 //!
 //! Real RandomX, light mode: 4 reference caches plus the layer's own builds.
 
+use blacksilk_consensus::pow::MAX_CACHES;
 use blacksilk_consensus::{PowFunction, RandomXPow};
 use blacksilk_randomx::{Cache, Vm};
 use std::collections::HashMap;
@@ -92,6 +93,7 @@ fn cached_hashes_equal_fresh_computation_across_key_switches() {
             }
         }
         assert!(pow.resident().len() <= 3, "at most 2 hot + 1 side kept");
+        assert!(pow.alive() <= MAX_CACHES, "the store's memory bound");
     }
     assert_eq!(checked, 11);
     // Pinning worked: k0, k1 and k2 were each built once while hot, whatever

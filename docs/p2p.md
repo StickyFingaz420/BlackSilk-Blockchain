@@ -1407,7 +1407,11 @@ already being written is finished first).
     side-branch key, and the first block of a key epoch builds no cache under the
     chain lock (`chain/tests/seed_switch.rs`: both switches cost an ordinary
     block's hash). The work gate removes the free trigger (headers of free branches
-    are not hashed).
+    are not hashed). The store never holds more than `consensus::pow::MAX_CACHES`
+    caches in memory (kept, being built, evicted but still borrowed, or being
+    freed), hot builds and hot-set changes included; a build at the bound first
+    evicts an idle side cache, otherwise waits for a hashing thread to release one
+    (RT-MUT; `pow::tests`).
   - Bodies of stored side branches can still be stored before they are validated
     (the completion report's N-2), by an unrequested block whose header passed the
     gate.

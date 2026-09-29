@@ -363,7 +363,8 @@ the CVE-2012-2459 class of duplicate-transaction malleability.
 - **Cache state never affects a hash.** A RandomX cache is a pure function of its key
   (§3.1). Which caches the node keeps, builds in the background or evicts
   (`RandomXPow` over `consensus::pow::SeedCache`: builds outside the lock, hot keys
-  kept, a bounded side slot) and the miner's key-switch planning
+  kept, a bounded side slot, at most `consensus::pow::MAX_CACHES` caches in memory)
+  and the miner's key-switch planning
   (`miner::SeedPlanner`) are node and miner policy: they decide who waits and how
   much memory is used, never a hash or a verdict. Tested by comparing `RandomXPow`
   with freshly built caches across key switches, prebuilds and evictions
