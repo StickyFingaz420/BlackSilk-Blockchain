@@ -28,7 +28,7 @@
 
 use clap::Parser;
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -109,6 +109,15 @@ fn parse_journal(text: &str) -> Journal {
 }
 
 impl Journal {
+    /// Whether the whole interval `from..=to` lies in the connected,
+    /// measured part of the run: a block mined just before a partition and
+    /// delivered at the heal is the partition's, not a slow relay.
+    fn connected_span(&self, from: f64, to: f64) -> bool {
+        self.connected(from)
+            && self.connected(to)
+            && !self.partitions.iter().any(|&p| p >= from && p <= to)
+    }
+
     /// Whether `t` is in the connected, measured part of the run.
     fn connected(&self, t: f64) -> bool {
         if self.warmup_end.is_some_and(|w| t < w) || self.traffic_end.is_some_and(|e| t > e) {
@@ -124,7 +133,7 @@ impl Journal {
 
 /// A block's short id (the 12 hex digits the P2P log prints) and height in
 /// a node's `accepted` (RPC) or `received` (P2P) line.
-fn block_event(line: &str) -> Option<(String, bool)> {
+fn block_event(line: &str) -> Option<(String, u64, bool)> {
     let at = line.find("block ")?;
     let rest = &line[at + 6..];
     let id: String = rest.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
@@ -133,36 +142,55 @@ fn block_event(line: &str) -> Option<(String, bool)> {
     }
     let accepted = rest.contains(" accepted (tip");
     let received = rest.contains(" received");
-    (accepted || received).then(|| (id[..12].to_string(), accepted))
+    let height = rest
+        .split(" at height ")
+        .nth(1)?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    (accepted || received).then(|| (id[..12].to_string(), height, accepted))
 }
 
 #[derive(Default, Serialize, Debug, PartialEq)]
 struct Propagation {
     blocks: usize,
+    /// Heights at which the lab nodes saw more than one block (a race):
+    /// left out, since a node that took the rival first fetches the other
+    /// body only once a child makes it the heavier branch.
+    contested_heights: usize,
     median_ms: Option<u64>,
     p90_ms: Option<u64>,
     max_ms: Option<u64>,
 }
 
-/// Origin-to-last-node times of blocks every one of `nodes` logged, first
-/// seen while `connected`. `events[node]` lists `(id, t)` in log order.
+/// Origin-to-last-node times of the blocks every one of `nodes` logged, at
+/// heights where no rival block was seen, whose delivery (first to last
+/// sighting) was `connected`. `events[node]` lists `(id, height, t)` in log
+/// order.
 fn propagation(
-    events: &[Vec<(String, f64)>],
-    connected: impl Fn(f64) -> bool,
+    events: &[Vec<(String, u64, f64)>],
+    connected: impl Fn(f64, f64) -> bool,
 ) -> (Propagation, Vec<f64>) {
     let mut by: BTreeMap<&str, BTreeMap<usize, f64>> = BTreeMap::new();
+    let mut ids_at: BTreeMap<u64, BTreeSet<&str>> = BTreeMap::new();
     for (node, ev) in events.iter().enumerate() {
-        for (id, t) in ev {
+        for (id, h, t) in ev {
             by.entry(id).or_default().entry(node).or_insert(*t);
+            ids_at.entry(*h).or_default().insert(id);
         }
     }
+    let rivals = ids_at.values().filter(|s| s.len() > 1);
+    let contested_heights = rivals.clone().count();
+    let contested: BTreeSet<&str> = rivals.flatten().copied().collect();
     let mut spreads: Vec<f64> = by
-        .values()
-        .filter(|m| m.len() == events.len())
+        .iter()
+        .filter(|(id, m)| m.len() == events.len() && !contested.contains(*id))
+        .map(|(_, m)| m)
         .filter_map(|m| {
             let first = m.values().cloned().fold(f64::INFINITY, f64::min);
             let last = m.values().cloned().fold(f64::NEG_INFINITY, f64::max);
-            connected(first).then_some(last - first)
+            connected(first, last).then_some(last - first)
         })
         .collect();
     spreads.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
@@ -172,6 +200,7 @@ fn propagation(
     };
     let p = Propagation {
         blocks: spreads.len(),
+        contested_heights,
         median_ms: q(0.5),
         p90_ms: q(0.9),
         max_ms: spreads.last().map(|s| (s * 1000.0).round() as u64),
@@ -265,15 +294,18 @@ fn main() {
     let third = (diffs.len() / 3).max(1).min(diffs.len());
 
     // Block events per lab node.
-    let events: Vec<Vec<(String, f64)>> = (0..n)
+    let events: Vec<Vec<(String, u64, f64)>> = (0..n)
         .map(|i| {
             read(&a.run.join(format!("node{i}.log")))
                 .lines()
-                .filter_map(|l| Some((block_event(l)?.0, stamp(l)?)))
+                .filter_map(|l| {
+                    let (id, h, _) = block_event(l)?;
+                    Some((id, h, stamp(l)?))
+                })
                 .collect()
         })
         .collect();
-    let (prop, _) = propagation(&events, |t| journal.connected(t));
+    let (prop, _) = propagation(&events, |f, l| journal.connected_span(f, l));
 
     // Stale blocks after the warm-up.
     let mut found = 0u64;
@@ -399,8 +431,8 @@ mod tests {
         let acc =
             "[t INFO  blacksilk_node] block 16f9f692c812a7f0 at height 250 accepted (tip 250)";
         let rec = "[t DEBUG blacksilk_p2p::net::blocks] peer 1: block 16f9f692c812 at height 250 received";
-        assert_eq!(block_event(acc), Some(("16f9f692c812".into(), true)));
-        assert_eq!(block_event(rec), Some(("16f9f692c812".into(), false)));
+        assert_eq!(block_event(acc), Some(("16f9f692c812".into(), 250, true)));
+        assert_eq!(block_event(rec), Some(("16f9f692c812".into(), 250, false)));
         assert_eq!(
             block_event("[t] peer 1: 1 headers up to height 250 accepted"),
             None
@@ -409,25 +441,33 @@ mod tests {
 
     #[test]
     fn only_blocks_every_node_saw_in_a_connected_phase_count() {
-        let ev = |v: &[(&str, f64)]| v.iter().map(|(i, t)| (i.to_string(), *t)).collect();
+        let ev =
+            |v: &[(&str, u64, f64)]| v.iter().map(|(i, h, t)| (i.to_string(), *h, *t)).collect();
         let events = vec![
             ev(&[
-                ("aaaaaaaaaaaa", 100.0),
-                ("bbbbbbbbbbbb", 200.0),
-                ("cccccccccccc", 300.0),
+                ("aaaaaaaaaaaa", 1, 100.0),
+                ("bbbbbbbbbbbb", 2, 200.0),
+                ("cccccccccccc", 3, 300.0),
             ]),
-            ev(&[("aaaaaaaaaaaa", 100.9), ("bbbbbbbbbbbb", 201.0)]),
             ev(&[
-                ("aaaaaaaaaaaa", 101.5),
-                ("bbbbbbbbbbbb", 200.5),
-                ("cccccccccccc", 300.1),
+                ("aaaaaaaaaaaa", 1, 100.9),
+                ("bbbbbbbbbbbb", 2, 201.0),
+                ("dddddddddddd", 4, 400.0),
+            ]),
+            ev(&[
+                ("aaaaaaaaaaaa", 1, 101.5),
+                ("bbbbbbbbbbbb", 2, 200.5),
+                ("cccccccccccc", 3, 300.1),
+                ("dddddddddddd", 4, 400.1),
+                ("eeeeeeeeeeee", 4, 399.0),
             ]),
         ];
-        let (p, s) = propagation(&events, |_| true);
-        assert_eq!(s, vec![1.0, 1.5], "c: not on every node");
-        assert_eq!(p.blocks, 2);
+        let (p, s) = propagation(&events, |_, _| true);
+        // c: not on every node; d: every node, but a rival (e) at its height.
+        assert_eq!(s, vec![1.0, 1.5]);
+        assert_eq!((p.blocks, p.contested_heights), (2, 1));
         assert_eq!(p.max_ms, Some(1500));
-        let (p, _) = propagation(&events, |t| t < 150.0);
+        let (p, _) = propagation(&events, |f, l| f < 150.0 && l < 150.0);
         assert_eq!((p.blocks, p.median_ms), (1, Some(1500)));
     }
 
@@ -446,6 +486,9 @@ mod tests {
         );
         assert!(j.connected(741.0));
         assert!(!j.connected(2001.0), "end checks");
+        // Mined 2 s before the cut, delivered at the heal (run1, block 272).
+        assert!(!j.connected_span(498.0, 690.0));
+        assert!(j.connected_span(400.0, 401.0));
     }
 
     #[test]
