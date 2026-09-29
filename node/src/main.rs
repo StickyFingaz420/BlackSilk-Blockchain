@@ -267,6 +267,23 @@ fn run(cfg: Config) -> Result<(), Stop> {
         manager.height(),
         hex::encode(&manager.tip_id()[..8])
     );
+    // The local clock is the only clock consensus reads (the future time
+    // limit): refuse a clock that cannot be read or is before genesis, warn
+    // when the stored chain is in its future (dossier 04 W4).
+    match blacksilk_node::clock_check(
+        blacksilk_node::system_clock(),
+        &params,
+        manager.tip_header().timestamp,
+    ) {
+        Err(e) => {
+            return Err(Stop {
+                code: 2,
+                message: format!("clock check: {e}"),
+            })
+        }
+        Ok(Some(warning)) => log::warn!("{warning}"),
+        Ok(None) => {}
+    }
     if cfg.mine_from_stale_tip {
         manager.set_template_latch();
         log::warn!(
