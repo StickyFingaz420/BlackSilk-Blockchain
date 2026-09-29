@@ -764,3 +764,12 @@
   - onion attackers are uncapped in tried: cap tried entries per onion group;
   - model honest address inflow and regular-dial promotions in the simulator.
 - **Watch:** one unexplained first-run failure of `px_transactions_travel_the_stem_and_confirm_everywhere` under heavy load (suspect: the 5 s key exchange under CPU starvation). Rerun in the full check with the panic captured.
+
+## Engineering process, Lead decisions 2026-09-29 (owner granted full leadership)
+- **Pure Rust is non-negotiable:** no C/C++ dependencies, no FFI, no `unsafe` in BlackSilk code, no exception for performance. Enforced by cargo-deny (cc, cmake, cxx and similar banned; `[bans.build]` allowlist), `sys-crates.sh` (no -sys crates, no C/C++/asm sources or compiler calls in any release target's graph), `hazmat-policy.sh`, and the tracked `unsafe` inventory.
+- **Tiered verification:**
+  - **Tier 1, every merge (local, before push):** workspace clippy `-D warnings`, fmt, gates, doc-lint, cargo deny, and every non-PX test of every crate.
+  - **Tier 2 (GitHub CI, every push):** the PX-proving suites one at a time, overflow checks, guests reproducibility, fuzz smoke, full RandomX vectors.
+  - **Tier 3 (local, before push):** consensus-path or PX/zk changes, and evidence runs, also run the local PX-proving suites.
+  - **A red CI run stops the line:** fix before merging anything else.
+- **Every agent must run the tests of every crate that depends on what it changed** (RTW3-13, the supply-audit break).
