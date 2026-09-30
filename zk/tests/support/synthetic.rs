@@ -192,3 +192,45 @@ pub fn densest(n: usize, q: usize, siblings: usize) -> Proof {
     p.opening_proof.1.final_poly.clear();
     p
 }
+
+/// [`densest`] with every vector the caps allow to be empty holding one value
+/// instead (each is then a heap allocation of its own), full multiproofs, and
+/// the rest of `MAX_PROOF_BYTES` filled with opened trace values: the most
+/// heap a proof within the caps reaches the decoder with (red team RT-PXDOS).
+// Used by decode_bounds.rs, not by every test crate that includes this file.
+#[allow(dead_code)]
+pub fn densest_filled(n: usize, q: usize) -> Proof {
+    use blacksilk_zk::params::MAX_PROOF_BYTES;
+    let mut p = densest(n, q, blacksilk_zk::bounds::MAX_PRUNED_SIBLINGS);
+    let one = || vec![Challenge::ZERO];
+    for i in &mut p.opened_values.instances {
+        let o = &mut i.base_opened_values;
+        o.quotient_chunks.iter_mut().for_each(|c| *c = one());
+        o.random = Some(one());
+        i.permutation_local = one();
+        i.permutation_next = one();
+    }
+    p.opening_proof
+        .0
+        .iter_mut()
+        .flatten()
+        .flatten()
+        .for_each(|pt| *pt = one());
+    for b in &mut p.opening_proof.1.input_openings {
+        b.opened_values
+            .iter_mut()
+            .flatten()
+            .for_each(|row| *row = vec![Val::ZERO]);
+    }
+    for o in &mut p.opening_proof.1.commit_phase_openings {
+        o.sibling_values.iter_mut().for_each(|s| *s = one());
+    }
+    let ext = 4 * EXTENSION_DEGREE;
+    let mut room = MAX_PROOF_BYTES - blacksilk_zk::encode_proof(&p).len() - 64;
+    for i in &mut p.opened_values.instances {
+        let k = (room / ext).min(blacksilk_zk::DecodeLimits::ENVELOPE.max_opened_width);
+        i.base_opened_values.trace_local = vec![Challenge::ZERO; k];
+        room -= k * ext;
+    }
+    p
+}

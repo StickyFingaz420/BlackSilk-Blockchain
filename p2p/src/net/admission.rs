@@ -174,16 +174,14 @@ async fn admit_tx(
     let tx3 = tx.clone();
     // The tip these checks ran at keys the contextual-reject cache
     // (RTW2A-7): the tip may have moved since the first command.
-    let (tip, cheap, pre) = inner
+    // The command carries the proof's degree bits, never the proof: it was
+    // freed on the blocking thread (RT-PXDOS F1).
+    let (tip, cheap) = inner
         .with_chain(move |c| {
             let mut pre = pre;
-            let cheap = cheap_checks(c, &tx3, &mut pre);
-            // The decoded proof goes back: freeing its vectors is not the
-            // actor's work either.
-            (c.tip_id(), cheap, pre)
+            (c.tip_id(), cheap_checks(c, &tx3, &mut pre))
         })
         .await;
-    drop(pre);
     if matches!(cheap, Ok(false)) {
         // Refused like any contextual failure: not scored, not verified
         // again at this tip.
@@ -225,21 +223,24 @@ async fn admit_tx(
 /// The stateless checks of a PX transaction, in full validation's order:
 /// structure, balance, then the strict proof decoding. They read only the
 /// transaction, so their result does not depend on when or where they run.
+/// Of the decoded proof only its degree bits are kept, the one part the
+/// shape check reads; the rest is freed where this runs (RT-PXDOS F1).
 fn px_stateless(t: &PxTx) -> PxPre {
     use blacksilk_tx::{px, validate};
     px::check_px_structure(t)
         .and_then(|_| px::check_px_balance(t))
         .and_then(|_| validate::decode_px_proof(t))
-        .map(Box::new)
+        .map(|proof| proof.degree_bits)
 }
 
-/// [`px_stateless`]'s result: the decoded proof, boxed (it moves into a
-/// chain command), or the rule that failed.
-type PxPre = Result<Box<blacksilk_tx::validate::PxProof>, blacksilk_tx::TxError>;
+/// [`px_stateless`]'s result: the decoded proof's degree bits (all of the
+/// proof that enters the chain command), or the rule that failed.
+type PxPre = Result<Vec<usize>, blacksilk_tx::TxError>;
 
 /// Concurrent off-actor PX proof decodings, node-wide (process-wide: nodes
 /// sharing a process, as in tests, share it). Each holds up to about
-/// 14 MB of heap for up to about 24 ms (`decode_px_proof`); peers wait their
+/// 6 times its bytes of heap, about 16 MB at `MAX_PROOF_BYTES`, for tens of
+/// milliseconds (`decode_px_proof`); peers wait their
 /// turn, as they waited for the chain actor before (RT-FUZZ-1).
 static PX_DECODES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
@@ -248,7 +249,7 @@ static PX_DECODES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2)
 /// for any other transaction, or a PX transaction that expires soon at the
 /// published height (its proof is not decoded, RTW1C-4; `cheap_checks`
 /// refuses it, or decodes it itself if the height went back). `None` if
-/// the node is shutting down.
+/// the node is shutting down or the checks panicked (logged at warn).
 async fn px_pre_checks(inner: &Arc<Inner>, tx: &Arc<Transaction>) -> Option<Option<PxPre>> {
     let Transaction::Px(t) = &**tx else {
         return Some(None);
@@ -264,9 +265,18 @@ async fn px_pre_checks(inner: &Arc<Inner>, tx: &Arc<Transaction>) -> Option<Opti
         _ => None,
     })
     .await;
-    // The decoder contains its own panics (`catch_unwind`); a failed
-    // blocking task means the runtime is shutting down.
-    pre.ok()
+    match pre {
+        Ok(pre) => Some(pre),
+        // The decoder contains Plonky3's panics itself (`catch_unwind`), so
+        // a panic here is a bug in the stateless checks. The transaction is
+        // dropped unscored (as a busy node drops one), but not silently.
+        Err(e) if e.is_panic() => {
+            log::warn!("the stateless PX checks panicked (a bug); transaction dropped: {e}");
+            None
+        }
+        // Cancelled: the runtime is shutting down.
+        Err(_) => None,
+    }
 }
 
 /// The cheap checks of `admit_tx` (step 4), in one chain command: `Ok(false)`
@@ -310,8 +320,8 @@ fn cheap_checks(
     let r = stateless
         .and_then(|_| validate::revalidate_after_extension(tx, c.state(), c.height() + 1))
         .and_then(|_| match (tx, pre.as_ref()) {
-            (Transaction::Px(t), Some(Ok(p))) => {
-                validate::check_px_proof_shape(t, c.state(), &rules, p)
+            (Transaction::Px(t), Some(Ok(bits))) => {
+                validate::check_px_proof_shape_bits(t, c.state(), &rules, bits)
             }
             _ => Ok(()),
         });
@@ -538,5 +548,24 @@ pub(super) async fn on_stem_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>)
         // `ReorgPending` among them: a returned transaction holds its keys
         // until a reorganization's drain ends (contextual, never scored).
         (_, Err(_), _) => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RT-PXDOS F1: of a PX transaction's off-actor checks, only the verdict
+    /// and the proof's degree bits enter the chain command (and wait in its
+    /// queue), never the decoded proof: the types say so.
+    #[test]
+    fn the_chain_command_carries_no_decoded_proof() {
+        type Pre = Result<Vec<usize>, blacksilk_tx::TxError>;
+        type Verdict = Result<bool, (blacksilk_tx::TxError, bool)>;
+        let stateless: fn(&PxTx) -> Pre = px_stateless;
+        let cheap: fn(&ChainManager, &Transaction, &mut Option<Pre>) -> Verdict = cheap_checks;
+        let _ = (stateless, cheap);
+        // A vector header and a tag: no proof inline.
+        assert!(std::mem::size_of::<Option<PxPre>>() <= 32);
     }
 }

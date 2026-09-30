@@ -666,10 +666,11 @@ pub fn check_px_proof(tx: &PxTx, chain: &impl ChainView, rules: &TxRules) -> Res
 /// size, version, canonical encoding), every vector bounded before it is
 /// allocated by caps no valid PX proof exceeds (`blacksilk_px::prove::PROOF_LIMITS`,
 /// RT-FUZZ-1). Stateless; its heap and time are proportional to the proof's
-/// bytes: about 4 times its size in heap and 11 to 13 ms for the 2.4 MB
-/// transfer proof, at most about 6 times and 24 ms for any proof within the
-/// caps (release build; docs/reviews/v3-consensus-changes.md,
-/// "px-proof-decode-bounds"), far below the verification it gates.
+/// bytes: about 4 times the size of the 2.4 MB transfer proof, and at most
+/// about 6 times the bytes, about 16 MB at `MAX_PROOF_BYTES`, for any proof
+/// within the caps (the constructions and measurements are in
+/// docs/reviews/v3-consensus-changes.md, "px-proof-decode-bounds"); tens of
+/// milliseconds, far below the verification it gates.
 pub fn decode_px_proof(tx: &PxTx) -> Result<PxProof, TxError> {
     blacksilk_zk::decode_proof_with(&tx.proof, &blacksilk_px::prove::PROOF_LIMITS)
         .map_err(|_| TxError::PxProof)
@@ -709,13 +710,25 @@ pub fn check_px_proof_shape(
     rules: &TxRules,
     proof: &blacksilk_zk::Proof,
 ) -> Result<(), TxError> {
+    check_px_proof_shape_bits(tx, chain, rules, &proof.degree_bits)
+}
+
+/// [`check_px_proof_shape`] on the decoded proof's degree bits alone (the
+/// only part of the proof the shape check reads), so a caller can free the
+/// proof first (P2P admission, RT-PXDOS F1). Same verdicts.
+pub fn check_px_proof_shape_bits(
+    tx: &PxTx,
+    chain: &impl ChainView,
+    rules: &TxRules,
+    degree_bits: &[usize],
+) -> Result<(), TxError> {
     let calls = px_calls(tx, chain)?;
-    blacksilk_px::prove::check_shape(
+    blacksilk_px::prove::check_shape_bits(
         &tx.public(),
         &calls,
         &tx.window,
         tx.binding(rules.domain()),
-        proof,
+        degree_bits,
         |contract, id| chain.px_function(contract, id).map(|r| r.budget),
     )
     .map_err(|_| TxError::PxProof)

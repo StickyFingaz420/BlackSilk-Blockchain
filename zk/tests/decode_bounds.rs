@@ -259,20 +259,28 @@ fn rt_fuzz_1_padded_proofs_are_refused_before_allocation() {
     }
 }
 
-/// The densest proof the caps allow (every vector the caps admit, each empty
-/// where it may be) holds a bounded heap per encoded byte. Measured with a
+/// The densest proofs the caps allow (every vector the caps admit, each
+/// empty where it may be, or holding one value and filled to
+/// `MAX_PROOF_BYTES`) hold a bounded heap per encoded byte. Measured with a
 /// counting allocator (docs/reviews/v3-consensus-changes.md,
-/// "px-proof-decode-bounds"): at most 6.2 times its bytes, and at most
-/// 14.3 MB, against 4.0 times (9.7 MB) for the real transfer proof.
+/// "px-proof-decode-bounds"): at most about 6 times their bytes, about 16 MB
+/// at the 4 MiB limit.
 #[test]
 fn the_densest_proof_within_the_caps_has_a_bounded_heap() {
+    // `usize::MAX`: the one-value fill (`densest_filled`).
     for (n, sib) in [
         (23, 0),
         (23, MAX_PRUNED_SIBLINGS),
         (33, 0),
         (33, MAX_PRUNED_SIBLINGS),
+        (23, usize::MAX),
+        (33, usize::MAX),
     ] {
-        let p = synthetic::densest(n, 16, sib);
+        let p = if sib == usize::MAX {
+            synthetic::densest_filled(n, 16)
+        } else {
+            synthetic::densest(n, 16, sib)
+        };
         let bytes = encode_proof(&p);
         assert!(bytes.len() <= MAX_PROOF_BYTES);
         let r = decode_proof(&bytes);

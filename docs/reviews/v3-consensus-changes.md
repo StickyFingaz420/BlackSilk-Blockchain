@@ -2830,8 +2830,9 @@ of the chain actor where safe, a non-revision record; a red-team pass follows).
    - `p2p/src/net/admission.rs`: a PX transaction's stateless checks (structure,
      balance, proof decoding) run on a blocking thread before the chain command
      (`px_pre_checks`, at most two at a time node-wide); the command receives their
-     result and keeps only the checks that read chain state; the decoded proof is
-     returned from the command and freed outside the actor.
+     result and keeps only the checks that read chain state. Only the proof's degree
+     bits enter the command; the decoded proof is freed on the blocking thread
+     (follow-up RT-PXDOS F1, below).
 6. **Activation.** v3 genesis base rule set; no height. Not a rule revision.
 7. **Compatibility: the valid set is unchanged.** A proof is valid if it decodes and
    `blacksilk_px::prove::verify` accepts it. Each cap below holds for every such proof,
@@ -2954,10 +2955,17 @@ of the chain actor where safe, a non-revision record; a red-team pass follows).
     | the same, full multiproofs | 2 910 555 | 12 489 683 B (4.3×) | 18.6 ms | same |
     | densest within the envelope, 33 tables | 1 323 551 | 8 227 615 B (6.2×) | 17.2 ms | same |
     | the same, full multiproofs | 3 300 405 | 14 278 453 B (4.3×) | 23.8 ms | same |
+    | one-value vectors, filled to 4 MiB, 23 tables | 4 194 241 | 15 057 049 B (3.6×) | tens of ms | same |
+    | the same, 33 tables | 4 194 232 | 16 066 104 B (3.8×) | tens of ms | same |
 
-    The densest proofs are the worst the caps admit for heap per byte (every vector at
-    its cap, empty where it may be); they cost about what an honest proof of their size
-    costs. The heap peak includes the re-encoding check's copy.
+    The empty-vector constructions (`support/synthetic.rs::densest`) give the most heap
+    per byte (about 6 times); the one-value fill found by the red team
+    (`densest_filled`: every vector that may be empty holds one value, a heap
+    allocation of its own, and the rest of the 4 MiB is opened trace values) gives the
+    most heap in total. So a proof within the caps costs at most about 6 times its
+    bytes, about 16 MB at the 4 MiB limit, in tens of milliseconds (the timings of the
+    last two rows were taken on a loaded machine, 55 to 72 ms, and are not a bound).
+    The heap peak includes the re-encoding check's copy.
 13. **Open review points.**
     - The walk must follow any change of the proof encoding (a Plonky3 upgrade, a new
       PCS): the synthetic and real-proof tests fail loudly if it does not.
@@ -2981,3 +2989,28 @@ of the chain actor where safe, a non-revision record; a red-team pass follows).
 15. **Documentation.** This record, the module documentation of `zk/src/bounds.rs`, and
     the comments of `decode_px_proof`, `validate_px_checks`, `validate_block_transactions` and
     `admission.rs`. **Review status.** Internal; a red-team pass follows (decisions).
+
+### Follow-up (RT-PXDOS, W4-PXDOS)
+
+The red-team pass (RT-PXDOS) found no consensus split and no parser differential
+(1.15 million inputs, no disagreement), confirmed every cap against the verifier, and
+passed every PX-proving test. The Lead accepted the fix with these changes:
+
+- **F1 (Low, resource).** Admission kept the boxed decoded proof alive while its
+  command waited in the chain actor's queue (a few MB per waiting peer, about 0.5 GB
+  with every lane waiting on a busy actor). The shape check reads only the degree
+  bits, so the off-actor checks now keep only those (`px_stateless` returns
+  `Vec<usize>`) and free the proof on the blocking thread. New entry points
+  `blacksilk_px::prove::check_shape_bits` and
+  `blacksilk_tx::validate::check_px_proof_shape_bits`; `check_shape` and
+  `check_px_proof_shape` delegate to them unchanged, so every verdict is the same.
+  Test: `the_chain_command_carries_no_decoded_proof` (p2p, the command's types).
+- **F2 (docs).** The worst case within the caps is the red team's one-value fill,
+  about 16 MB at the 4 MiB limit (item 12, corrected), not the empty-vector
+  construction. `densest_filled` joins `the_densest_proof_within_the_caps_has_a_bounded_heap`.
+- **Panics in the off-actor checks.** A panic in `px_stateless` (the decoder contains
+  Plonky3's own) is a bug: it is logged at warn and the transaction dropped unscored,
+  instead of vanishing silently as a cancelled task.
+- **Adopted:** the red team's differential test (`zk/tests/rt_pxdos_differential.rs`,
+  safe Rust, cherry-picked unchanged).
+- **Identity impact:** none (recorded with the suite results below).
