@@ -353,6 +353,9 @@ pub(super) async fn run_connection<S>(
                 last_new_tip: None,
                 last_block: None,
                 last_tx: None,
+                known_tip: theirs.tip,
+                known_work: 0,
+                known_on_main: false,
             },
         );
     }
@@ -374,8 +377,14 @@ pub(super) async fn run_connection<S>(
     if let Some(listen) = our_listen.filter(|_| addr_relay) {
         advertise_self(&inner, id, listen);
     }
-    // An address fetch is for addresses only.
-    if theirs.height > height && kind != ConnKind::AddrFetch {
+    // Ask for headers if the peer claims a greater height, or names a best
+    // header we cannot place on our best header chain: an equal-height
+    // rival, or a shorter branch that may be heavier (fork choice is by work,
+    // not height: W4-SYNC, RT-LAB F1). One request per connection; an empty
+    // or non-advancing answer lowers the peer's claimed height to ours, so a
+    // fake tip is not asked about again (docs/p2p.md §6). An address fetch
+    // is for addresses only.
+    if kind != ConnKind::AddrFetch && (theirs.height > height || !knows_tip(&inner, &theirs.tip)) {
         inner.request_headers(id).await;
     }
 
@@ -541,6 +550,15 @@ async fn write_loop<W: AsyncWrite + Unpin>(
             break;
         }
     }
+}
+
+/// Whether `tip` is on our best header chain as far as the published snapshot
+/// shows without a chain command: our best header, our connected tip, or an
+/// entry of our locator (genesis included). Otherwise a peer naming it may
+/// be on a branch we lack (W4-SYNC).
+fn knows_tip(inner: &Inner, tip: &Hash) -> bool {
+    let s = inner.summary.load();
+    *tip == s.best_header_id || *tip == s.tip_id || s.locator.contains(tip)
 }
 
 #[cfg(test)]

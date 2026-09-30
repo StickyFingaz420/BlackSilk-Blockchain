@@ -113,6 +113,40 @@ pub(super) struct Peer {
     /// recent (docs/p2p.md §9).
     pub(super) last_block: Option<Instant>,
     pub(super) last_tx: Option<Instant>,
+    /// The best header this peer is known to have: the tip it named in its
+    /// `Version` (work unknown: 0), then the last header of the heaviest
+    /// batch from it that we accepted, with its cumulative work and whether
+    /// it was on our best header chain then. A new tip of ours is announced
+    /// to every peer not known to have it (`wants_tip`; W4-SYNC, RT-LAB
+    /// F1): never by claimed height, since fork choice is by work
+    /// (docs/p2p.md §6).
+    pub(super) known_tip: Hash,
+    pub(super) known_work: u128,
+    pub(super) known_on_main: bool,
+}
+
+impl Peer {
+    /// Whether our new connected tip `tip` (cumulative work `work`, on our
+    /// best header chain if `tip_on_main`) is worth announcing to this peer:
+    /// it is not known to have it. It is known to have it if it named it, or
+    /// sent us a header of our best header chain with at least its work (the
+    /// tip is an ancestor of that header then, as when we sync from it). An
+    /// address fetch is for addresses only.
+    pub(super) fn wants_tip(&self, tip: &Hash, work: u128, tip_on_main: bool) -> bool {
+        let has_descendant = tip_on_main && self.known_on_main && self.known_work >= work;
+        self.kind != ConnKind::AddrFetch && self.known_tip != *tip && !has_descendant
+    }
+
+    /// Records that this peer has the header `id` (cumulative work `work`,
+    /// on our best header chain now if `on_main`): a batch from it that we
+    /// accepted.
+    pub(super) fn has_header(&mut self, id: Hash, work: u128, on_main: bool) {
+        if work > self.known_work {
+            self.known_tip = id;
+            self.known_work = work;
+            self.known_on_main = on_main;
+        }
+    }
 }
 
 /// An inbound connection accepted but not yet registered (key exchange or
@@ -362,6 +396,10 @@ pub(super) struct Inner {
     /// blocks (`crate::clock`); never used for validation. Taken alone,
     /// never with the state lock.
     pub(super) clock: Mutex<ClockMonitor>,
+    /// Woken by the chain's summary cell whenever it publishes a new
+    /// connected tip (`SummaryCell::on_tip_change`): the announcer
+    /// (`maintenance::announce_loop`) sends it at once (RT-LAB F2).
+    pub(super) tip_published: Arc<Notify>,
 }
 
 pub(super) fn unix_now() -> u64 {

@@ -172,7 +172,13 @@ async fn raw_peer_at(addr: SocketAddr, network_id: u32, height: u64) -> (RawRead
         network: network_id,
         nonce: 0xdead_beef,
         height,
-        tip: [0; 32],
+        // An honest peer at height 0 names genesis (the node asks a peer
+        // whose tip it cannot place for headers, W4-SYNC).
+        tip: if height == 0 {
+            params().genesis_id()
+        } else {
+            [0; 32]
+        },
         listen: None,
         relay_txs: false,
     };

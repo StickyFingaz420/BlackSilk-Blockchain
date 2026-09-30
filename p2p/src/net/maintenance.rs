@@ -1,9 +1,11 @@
 //! The maintenance loops (docs/p2p.md §10):
+//! - [`announce_loop`] announces each new tip as soon as the chain publishes
+//!   it (RT-LAB F2), at most once per [`ANNOUNCE_MIN_GAP`];
 //! - [`maintenance_loop`] never waits for the chain lock: Dandelion epochs,
-//!   held local transactions, tip announcements (from the published chain
-//!   summary), trickle flush, pings, timeouts, header re-requests, outbound
-//!   dialing and saving keep their schedule during any long chain command
-//!   (F34-2);
+//!   held local transactions, tip announcements (the fallback of
+//!   [`announce_loop`], from the published chain summary), trickle flush,
+//!   pings, timeouts, header re-requests, outbound dialing and saving keep
+//!   their schedule during any long chain command (F34-2);
 //! - [`chain_maintenance_loop`] does the work that needs the chain: download
 //!   scheduling (from the published snapshot, first), embargo fluffs (each
 //!   a mempool submission on the actor's Tx lane, run on its own task: the
@@ -26,6 +28,48 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const PONG_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The shortest time between two announcements by [`announce_loop`]: while
+/// the tip changes faster (a body drain, initial sync), the tips in between
+/// are skipped, so a peer gets at most 1 / `ANNOUNCE_MIN_GAP` of them per
+/// second (plus the maintenance tick's fallback), as it got 1 / tick before.
+/// A single new block is announced at once.
+pub(super) const ANNOUNCE_MIN_GAP: Duration = Duration::from_millis(100);
+
+/// Announces the connected tip of the published summary, if it changed since
+/// the last announcement, with a `Headers` message holding its header, to
+/// every peer not known to have it (`Peer::wants_tip`; docs/p2p.md §6). Takes
+/// the state lock once; never waits for the chain.
+pub(super) fn announce_tip(inner: &Inner) {
+    let s = inner.summary.load();
+    let mut st = inner.state();
+    if st.announced_tip == s.tip_id {
+        return;
+    }
+    st.announced_tip = s.tip_id;
+    let peers: Vec<PeerId> = st
+        .peers
+        .iter()
+        .filter(|(_, p)| p.wants_tip(&s.tip_id, s.tip_work, s.tip_on_best_chain))
+        .map(|(id, _)| *id)
+        .collect();
+    for p in peers {
+        inner.send(&mut st, p, Message::Headers(vec![s.tip_header]));
+    }
+}
+
+/// Announces each new tip when the chain publishes it (RT-LAB F2): woken by
+/// the summary cell's tip listener (`Inner::tip_published`), not by the
+/// maintenance tick, which added half a tick (125 ms by default) per hop on
+/// average. Wake-ups during [`ANNOUNCE_MIN_GAP`] coalesce into one, so a
+/// burst of tips costs at most one announcement per gap.
+pub(super) async fn announce_loop(inner: Arc<Inner>) {
+    loop {
+        inner.tip_published.notified().await;
+        announce_tip(&inner);
+        tokio::time::sleep(ANNOUNCE_MIN_GAP).await;
+    }
+}
 
 /// Address table and bans are saved at most this often, and only when changed
 /// (a crash loses at most this much discovery state).
@@ -55,27 +99,11 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
             send_held_local_txs(&inner, &mut st);
         }
 
-        // Announce a new tip (the published summary: a block connected by
-        // any path is announced within a tick, even during a hold).
-        let (tip, header_height_now) = {
-            let s = inner.summary.load();
-            ((s.tip_id, s.tip_header), s.header_height)
-        };
-        {
-            let mut st = inner.state();
-            if st.announced_tip != tip.0 {
-                st.announced_tip = tip.0;
-                let peers: Vec<PeerId> = st
-                    .peers
-                    .iter()
-                    .filter(|(_, p)| p.height < tip.1.height)
-                    .map(|(id, _)| *id)
-                    .collect();
-                for p in peers {
-                    inner.send(&mut st, p, Message::Headers(vec![tip.1]));
-                }
-            }
-        }
+        // Announce a new tip that `announce_loop` has not (a fallback: a
+        // block connected by any path is announced within a tick, even
+        // during a hold).
+        announce_tip(&inner);
+        let header_height_now = inner.summary.load().header_height;
 
         // Trickled announcements, pings, timeouts.
         let mut timed_out = Vec::new();
