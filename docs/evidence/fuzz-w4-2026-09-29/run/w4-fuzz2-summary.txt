@@ -1,0 +1,97 @@
+=== delivery_plain
+start 2026-09-30T13:28:27Z target=delivery_plain T=600 corpus_before=6 files/1005 bytes free_kb=6535924
+end 2026-09-30T13:38:30Z exit=0 wall=603s corpus_after=102 files/7480 bytes artifacts=0
+INFO: seed corpus: files: 5 min: 201b max: 201b total: 1005b rss: 73Mb
+#6	INITED cov: 2129 ft: 2757 corp: 5/1005b exec/s: 0 rss: 74Mb
+#55618	DONE   cov: 2178 ft: 3452 corp: 49/4044b lim: 256 exec/s: 92 rss: 442Mb
+stat::number_of_executed_units: 55618
+stat::average_exec_per_sec:     92
+stat::new_units_added:          287
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              442
+=== px_tx_struct.crash1
+start 2026-09-30T13:38:30Z target=px_tx_struct T=600 corpus_before=15 files/56 bytes free_kb=7363132
+end 2026-09-30T13:39:16Z exit=1 wall=46s corpus_after=706 files/5963 bytes artifacts=0
+INFO: seed corpus: files: 14 min: 4b max: 4b total: 56b rss: 73Mb
+#15	INITED cov: 1215 ft: 2041 corp: 14/56b exec/s: 0 rss: 76Mb
+thread '<unnamed>' (11260) panicked at fuzz_targets\..\src\targets\px_tx_struct.rs:52:5:
+error: process didn't exit successfully: `C:/bszkeval/t-w4-fuzz\x86_64-pc-windows-msvc\release\px_tx_struct.exe '-artifact_prefix=.\artifacts\px_tx_struct\' -max_total_time=600 -timeout=60 -print_final_stats=1 '-artifact_prefix=C:/bszkeval/w4-fuzz2-scratch/artifacts/px_tx_struct/' -max_len=256 'C:/bszkeval/w4-fuzz2-scratch/corpus/px_tx_struct'` (exit code: 0xc0000409, STATUS_STACK_BUFFER_OVERRUN)
+Error: Fuzz target exited with exit code: 0xc0000409
+=== px_tx_struct
+start 2026-09-30T14:15:38Z target=px_tx_struct T=600 corpus_before=707 files/5971 bytes free_kb=7649608
+end 2026-09-30T14:25:41Z exit=0 wall=603s corpus_after=2068 files/85608 bytes artifacts=0
+INFO: seed corpus: files: 706 min: 1b max: 18b total: 5971b rss: 75Mb
+#707	INITED cov: 2133 ft: 5496 corp: 634/5401b exec/s: 707 rss: 137Mb
+#797475	DONE   cov: 2245 ft: 8609 corp: 1679/79Kb lim: 256 exec/s: 1326 rss: 566Mb
+stat::number_of_executed_units: 797475
+stat::average_exec_per_sec:     1326
+stat::new_units_added:          2866
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              566
+=== transport_keyless_peer
+start 2026-09-30T13:39:17Z target=transport_keyless_peer T=600 corpus_before=29 files/1076 bytes free_kb=7907492
+end 2026-09-30T13:49:19Z exit=0 wall=602s corpus_after=29 files/1076 bytes artifacts=0
+INFO: seed corpus: files: 28 min: 1b max: 97b total: 1076b rss: 73Mb
+#29	INITED cov: 1237 ft: 1803 corp: 12/297b exec/s: 0 rss: 75Mb
+#1335490	DONE   cov: 1237 ft: 1803 corp: 12/297b lim: 13348 exec/s: 2222 rss: 436Mb
+stat::number_of_executed_units: 1335490
+stat::average_exec_per_sec:     2222
+stat::new_units_added:          0
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              436
+=== kernel_diff.init-only
+start 2026-09-30T13:49:20Z target=kernel_diff T=600 corpus_before=2957 files/7038744 bytes free_kb=7937964
+end 2026-09-30T14:05:19Z exit=0 wall=959s corpus_after=2957 files/7038744 bytes artifacts=0
+INFO: seed corpus: files: 2957 min: 1b max: 3691b total: 7038744b rss: 79Mb
+#2959	INITED cov: 2797 ft: 13028 corp: 589/996Kb exec/s: 3 rss: 649Mb
+#2959	DONE   cov: 2797 ft: 13028 corp: 589/996Kb lim: 3691 exec/s: 3 rss: 649Mb
+stat::number_of_executed_units: 2959
+stat::average_exec_per_sec:     3
+stat::new_units_added:          0
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              649
+=== kernel_diff
+start 2026-09-30T14:25:59Z target=kernel_diff T=1650 corpus_before=2957 files/7038744 bytes free_kb=7864540
+end 2026-09-30T14:53:32Z exit=0 wall=1652s corpus_after=3012 files/7155547 bytes artifacts=0
+INFO: seed corpus: files: 2957 min: 1b max: 3691b total: 7038744b rss: 79Mb
+#2958	INITED cov: 2797 ft: 13525 corp: 580/1002Kb exec/s: 3 rss: 648Mb
+#26101	DONE   cov: 2803 ft: 13606 corp: 624/1112Kb lim: 3768 exec/s: 15 rss: 665Mb
+stat::number_of_executed_units: 26101
+stat::average_exec_per_sec:     15
+stat::new_units_added:          64
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              665
+=== proof_struct.run1
+start 2026-09-30T14:05:20Z target=proof_struct T=600 corpus_before=16 files/60 bytes free_kb=7959332
+end 2026-09-30T14:15:23Z exit=0 wall=603s corpus_after=167 files/568 bytes artifacts=0
+INFO: seed corpus: files: 15 min: 4b max: 4b total: 60b rss: 171Mb
+#16	INITED cov: 2049 ft: 3556 corp: 15/60b exec/s: 1 rss: 373Mb
+#597	DONE   cov: 2552 ft: 5044 corp: 173/591b lim: 4 exec/s: 0 rss: 386Mb
+stat::number_of_executed_units: 597
+stat::average_exec_per_sec:     0
+stat::new_units_added:          163
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              386
+=== proof_struct
+start 2026-09-30T14:53:52Z target=proof_struct T=600 corpus_before=167 files/568 bytes free_kb=7828688
+end 2026-09-30T15:04:01Z exit=0 wall=606s corpus_after=261 files/2566 bytes artifacts=0
+INFO: seed corpus: files: 166 min: 1b max: 4b total: 568b rss: 172Mb
+#168	INITED cov: 2552 ft: 4974 corp: 127/423b exec/s: 0 rss: 380Mb
+#409	DONE   cov: 2684 ft: 5535 corp: 219/2414b lim: 256 exec/s: 0 rss: 384Mb
+stat::number_of_executed_units: 409
+stat::average_exec_per_sec:     0
+stat::new_units_added:          94
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              384
+=== corpus sizes before (files, bytes)
+delivery_plain 6 1005
+kernel_diff 2957 7038744
+proof_struct 16 60
+px_tx_struct 15 56
+transport_keyless_peer 29 1076
+=== corpus sizes after
+delivery_plain 102 7480
+px_tx_struct 2068 85608
+transport_keyless_peer 29 1076
+kernel_diff 3012 7155547
+proof_struct 261 2566
