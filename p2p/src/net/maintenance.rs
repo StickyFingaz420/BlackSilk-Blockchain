@@ -32,27 +32,30 @@ const PONG_TIMEOUT: Duration = Duration::from_secs(30);
 /// The shortest time between two announcements by [`announce_loop`]: while
 /// the tip changes faster (a body drain, initial sync), the tips in between
 /// are skipped, so a peer gets at most 1 / `ANNOUNCE_MIN_GAP` of them per
-/// second (plus the maintenance tick's fallback), as it got 1 / tick before.
-/// A single new block is announced at once.
+/// second, plus one per maintenance tick from the fallback (about 14 per
+/// second with the default 250 ms tick; 4 before, from the tick alone). A
+/// single new block is announced at once.
 pub(super) const ANNOUNCE_MIN_GAP: Duration = Duration::from_millis(100);
 
-/// Announces the connected tip of the published summary, if it changed since
-/// the last announcement, with a `Headers` message holding its header, to
-/// every peer not known to have it (`Peer::wants_tip`; docs/p2p.md §6). Takes
-/// the state lock once; never waits for the chain.
+/// Announces the connected tip of the published summary with a `Headers`
+/// message holding its header, once per peer and tip: to every peer not yet
+/// considered for this tip (`Peer::announced`, per peer, so a peer registered
+/// after the tip changed is still considered, RT-SYNC F-B) and not known to
+/// have it (`Peer::wants_tip`; docs/p2p.md §6). Takes the state lock once;
+/// never waits for the chain.
 pub(super) fn announce_tip(inner: &Inner) {
     let s = inner.summary.load();
     let mut st = inner.state();
-    if st.announced_tip == s.tip_id {
-        return;
+    let mut peers = Vec::new();
+    for (id, p) in st.peers.iter_mut() {
+        if p.announced == s.tip_id {
+            continue;
+        }
+        p.announced = s.tip_id;
+        if p.wants_tip(&s.tip_id, &s.best_header_id, s.tip_on_best_chain) {
+            peers.push(*id);
+        }
     }
-    st.announced_tip = s.tip_id;
-    let peers: Vec<PeerId> = st
-        .peers
-        .iter()
-        .filter(|(_, p)| p.wants_tip(&s.tip_id, s.tip_work, s.tip_on_best_chain))
-        .map(|(id, _)| *id)
-        .collect();
     for p in peers {
         inner.send(&mut st, p, Message::Headers(vec![s.tip_header]));
     }

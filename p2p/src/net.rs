@@ -161,10 +161,7 @@ impl Network {
         let onion_addr = onion_listener.as_ref().and_then(|l| l.local_addr().ok());
         let local_addr = listener.as_ref().and_then(|l| l.local_addr().ok());
         let summary = chain.summary_cell();
-        let (tip, genesis_id) = {
-            let s = summary.load();
-            (s.tip_id, s.genesis_id)
-        };
+        let genesis_id = summary.load().genesis_id;
         let state = State {
             peers: HashMap::new(),
             addrman,
@@ -183,7 +180,6 @@ impl Network {
             local_nonces: HashSet::new(),
             connecting: HashMap::new(),
             last_attempt: HashMap::new(),
-            announced_tip: tip,
             rng,
             misbehaving_disconnects: 0,
             slow_disconnects: 0,

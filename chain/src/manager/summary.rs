@@ -84,13 +84,10 @@ pub struct ChainSummary {
     pub tip_id: Hash,
     pub tip_header: BlockHeader,
     pub height: u64,
-    /// The connected tip's cumulative work (`HeaderChain::work`, genesis
-    /// included), and whether the connected tip is on the best header chain
-    /// (false while a heavier branch's bodies are missing on another fork):
-    /// the P2P layer does not announce a tip to a peer known to have a
-    /// header on the same chain with at least this much work (docs/p2p.md
-    /// §6).
-    pub tip_work: u128,
+    /// Whether the connected tip is on the best header chain (false while a
+    /// heavier branch's bodies are missing on another fork): then it is an
+    /// ancestor of `best_header_id`, and the P2P layer does not announce it
+    /// to a peer known to have that header (docs/p2p.md §6).
     pub tip_on_best_chain: bool,
     /// Coins generated on the connected chain (`ChainManager::generated`).
     pub generated: u64,
@@ -213,7 +210,6 @@ impl ChainSummary {
             tip_id,
             tip_header: *m.tip_header(),
             height: m.height(),
-            tip_work: m.headers().work(&tip_id).unwrap_or(0),
             tip_on_best_chain: m.headers().is_on_main(&tip_id),
             generated: m.generated(),
             outputs: m.state().output_count(),
@@ -304,7 +300,6 @@ impl SummaryCell {
             tip_id: id,
             tip_header: genesis,
             height: 0,
-            tip_work: genesis.difficulty as u128,
             tip_on_best_chain: true,
             generated: 0,
             outputs: 0,

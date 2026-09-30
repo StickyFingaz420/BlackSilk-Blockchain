@@ -578,6 +578,10 @@ fn serve_branch(mut r: RawReader, mut w: RawWriter, branch: Vec<BlockHeader>) {
                 }
                 // Headers only: bodies are "not found" (no timeout penalty).
                 Ok(Message::GetBlocks(ids)) => Message::NotFound(ids),
+                // Alive: without pongs the node drops the peer 90 s in (a
+                // 60 s ping interval plus the 30 s pong timeout), which
+                // failed a slow `a_heavier_fork_deeper_than_one_batch_syncs`.
+                Ok(Message::Ping(n)) => Message::Pong(n),
                 _ => continue,
             };
             if w.send(&reply.encode()).await.is_err() {
@@ -2225,14 +2229,18 @@ async fn low_work_header_branches_are_not_hashed() {
 /// (not from its own best chain, which would return the same batch forever).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_heavier_fork_deeper_than_one_batch_syncs() {
+    init_test_log();
     let a = node(51, &[]).await;
     let nid = params().network_id;
-    give_headers(&a, &header_branch(2500, 120, 0));
-    let theirs = header_branch(3000, 120, 7);
-    let (r, w) = raw_peer_at(a.addr, nid, true, 3000).await;
+    // Just deeper than one batch, and just heavier: 2100 against 2050
+    // headers (it was 3000 against 2500). The deadline is for loaded
+    // machines (a debug build verifies the first batch in 70 to 90 s).
+    give_headers(&a, &header_branch(2050, 120, 0));
+    let theirs = header_branch(2100, 120, 7);
+    let (r, w) = raw_peer_at(a.addr, nid, true, 2100).await;
     serve_branch(r, w, theirs.clone());
-    wait_until("switched to the heavier branch", 240, || {
-        a.chain.lock().unwrap().best_header_id() == theirs[2999].id(nid)
+    wait_until("switched to the heavier branch", 600, || {
+        a.chain.lock().unwrap().best_header_id() == theirs[2099].id(nid)
     })
     .await;
     assert_eq!(a.net.peers()[0].score, 0);
@@ -4336,11 +4344,24 @@ async fn rt_sync_a_draining_node_does_not_echo_tips_to_a_peer_ahead() {
         .await
         .expect("handshake");
     wait_until("E registered", 5, || n.net.peers().len() == 2).await;
+    // Counts until 1 s after the drain ended (W4-SYNC: a fixed 15 s window
+    // missed late echoes, and the drain's 20 s deadline failed under load).
+    let (done_tx, mut done_rx) = tokio::sync::watch::channel(false);
     let counter = tokio::spawn(async move {
         let mut echoes = 0usize;
         let mut asked = 0usize;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-        while let Ok(Ok(frame)) = tokio::time::timeout_at(deadline, er.recv()).await {
+        let mut deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+        loop {
+            let frame = tokio::select! {
+                f = tokio::time::timeout_at(deadline, er.recv()) => match f {
+                    Ok(Ok(frame)) => frame,
+                    _ => break,
+                },
+                _ = done_rx.changed() => {
+                    deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+                    continue;
+                }
+            };
             match Message::decode(&frame) {
                 Ok(Message::Headers(h)) if h.len() == 1 => echoes += 1,
                 Ok(Message::GetHeaders { .. }) => asked += 1,
@@ -4354,7 +4375,8 @@ async fn rt_sync_a_draining_node_does_not_echo_tips_to_a_peer_ahead() {
         (echoes, asked)
     });
     n.net.connect(NetAddr::Ip(a.addr));
-    wait_until("N connected the bodies", 20, || n.height() == 150).await;
+    wait_until("N connected the bodies", 90, || n.height() == 150).await;
+    done_tx.send(true).unwrap();
     let (echoes, asked) = counter.await.unwrap();
     println!("RT-SYNC echo: {echoes} single-header announcements to E, {asked} GetHeaders");
     assert_eq!(

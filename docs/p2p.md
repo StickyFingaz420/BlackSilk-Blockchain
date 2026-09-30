@@ -42,6 +42,14 @@ All integers are little-endian unless stated otherwise. Encoding primitives
   a public network cannot.
 - **Traffic analysis** of sizes and timing.
 - **A global passive adversary** watching all links.
+- **Block origin** (the IP of the node that mines). A node announces a block it mined
+  as soon as it connects it (ยง6), before any relay could, so peers can tell which node
+  found it. A miner that wants origin privacy runs its mining node proxy-only or over
+  Tor (ยง11). Announcements get no random delay, on purpose: the per-hop cost is
+  dominated by header verification and the body round trip (ยง12), so jitter large
+  enough to hide the origin would add much more; any delay raises the stale-block rate,
+  which favours large miners; and Monero and Bitcoin Core relay blocks without delay
+  too.
 
 ## 2. Transport
 
@@ -311,9 +319,14 @@ is a violation (100 points). The only exception is `Version`'s extension area (ย
      `a_shorter_heavier_branch_wins_over_a_longer_lighter_one`).
    - **Bounded.** It is one request per connection: an empty or non-advancing answer
      lowers the peer's claimed height to ours ("Non-advancing replies" below), and a
-     lighter branch is dropped by the work gate unhashed. A peer naming a fake tip costs
-     one `GetHeaders` and the checks of one answer
-     (`a_fake_version_tip_costs_one_header_request`). This is what Bitcoin Core does
+     branch below the work gate's threshold is dropped unhashed. A peer naming a fake
+     tip costs one `GetHeaders` and the checks of one answer
+     (`a_fake_version_tip_costs_one_header_request`,
+     `rt_sync_fake_tip_churn_with_stored_headers_hashes_nothing`). A lighter branch that
+     still reaches `anti_dos_threshold` (a near-tip competitor) **is** hashed, so the
+     answer can cost one proof-of-work chunk (`pow_threads` headers) before a junk header
+     gets the sender banned; the old height claim allowed the same. This is what Bitcoin
+     Core does
      once its best header is less than a day old: it sends `getheaders` to every new
      peer that can serve blocks, whatever its claimed start height
      (`net_processing.cpp`, `fSyncStarted`). We skip a peer whose tip we can place. A
@@ -489,30 +502,41 @@ is a violation (100 points). The only exception is `Version`'s extension area (ย
 **New blocks** are announced with a `Headers` message holding the one new header, sent
 to every peer (address fetches excepted) that is not known to have it. A peer that lacks
 the body asks for it with `GetBlocks`.
-- **Known to have it** (`Peer::wants_tip`): the peer named that header as its `tip`, or
-  sent us a batch we accepted whose last header was on our best header chain and has
-  at least the new tip's cumulative work, while the new tip is on that chain too (the
-  tip is then an ancestor of that header). The published snapshot carries the tip's
-  work and whether it is on the best header chain (`ChainSummary::tip_work`,
-  `tip_on_best_chain`); while it is not (a heavier branch's bodies are missing, or
-  withheld), every peer gets the announcement. Before W4-SYNC
-  (2026-09-30) the announcement went only to peers whose claimed height was below the
-  new tip's, so a peer on a longer but lighter branch never heard of our heavier tip
-  (`a_new_tip_is_announced_to_a_peer_on_a_longer_lighter_branch`). A peer whose
-  headers we synced is skipped, so a node catching up does not echo each intermediate
-  tip back to the peers it syncs from. Bitcoin Core announces a new tip to
-  every peer that does not have it (`PeerHasHeader`); it knows each peer's best block
-  by ancestry, which the snapshot cannot answer without a chain command, so a peer
-  ahead of us whose headers we have not accepted may get a redundant header (cheap: it
-  is stored already, no hash).
+- **Known to have it** (`Peer::wants_tip`): the peer has the new tip itself, or our
+  current best header while the new tip is on the best header chain (the tip is then an
+  ancestor of it). "Has" means it named that header as its `Version` tip, or it is the
+  last header of the heaviest batch from the peer that we accepted. Both are compared
+  with the **current** snapshot (`best_header_id`, `ChainSummary::tip_on_best_chain`),
+  never with a flag recorded earlier: after a branch is invalidated the best header
+  changes, and the relayer of that branch gets our next tips
+  (`rt_sync_tips_after_an_invalidated_branch_are_announced_to_its_relayer`). While the
+  tip is not on the best header chain (a heavier branch's bodies are missing, or
+  withheld) only the exact-tip rule applies.
+  - Before W4-SYNC (2026-09-30) the announcement went only to peers whose claimed height
+    was below the new tip's, so a peer on a longer but lighter branch never heard of our
+    heavier tip (`a_new_tip_is_announced_to_a_peer_on_a_longer_lighter_branch`).
+  - A node draining bodies behind the best header a peer gave or named does not announce
+    the intermediate tips to that peer
+    (`rt_sync_a_draining_node_does_not_echo_tips_to_a_peer_ahead`).
+  - Bitcoin Core announces a new tip to every peer that does not have it
+    (`PeerHasHeader`), by ancestry of each peer's best known block. The snapshot cannot
+    answer ancestry without a chain command, so a peer whose best header lies on our
+    best chain between our connected tip and our best header (a peer slightly behind
+    the network while we catch up) may still get redundant headers until our best
+    header reaches its tip: each is one stored header (no hash), at the rate below.
+  - Each peer is considered once per tip (`Peer::announced`). At registration it is set
+    to the connected tip of the snapshot our `Version` came from, and the announcer runs
+    once more, so a tip connected during the handshake is announced
+    (`rt_sync_a_tip_found_during_the_handshake_is_announced`; before, a global "last
+    tip announced" blocked it).
 - **When** (RT-LAB F2): as soon as the chain publishes the new tip. The summary cell
   calls its tip listeners after every publication that changes the connected tip
   (`SummaryCell::on_tip_change`); the P2P layer's listener wakes the announcer
   (`maintenance::announce_loop`), which announces at once and then waits at least
-  `ANNOUNCE_MIN_GAP` (100 ms) before the next announcement, so a burst of tips (a body
-  drain, initial sync) costs a peer at most 10 announcements per second, the tips in
-  between skipped. The maintenance tick still announces a tip the announcer has not
-  (fallback). Before, only the tick announced: half a tick (125 ms by default) per hop
+  `ANNOUNCE_MIN_GAP` (100 ms) before the next announcement. The maintenance tick still
+  announces a tip the announcer has not (fallback), so a burst of tips (a body drain,
+  initial sync) costs a peer at most about 14 announcements per second with the default
+  250 ms tick (10 from the announcer, 4 from the tick), the tips in between skipped. Before, only the tick announced: half a tick (125 ms by default) per hop
   on average. The delay from publication to a peer's receipt is measured by
   `announcement_latency_with_the_default_tick` (`--ignored --nocapture`); a test with a
   5 s tick checks that announcements do not wait for it

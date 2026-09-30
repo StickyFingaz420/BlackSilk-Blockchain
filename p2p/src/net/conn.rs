@@ -4,6 +4,7 @@
 use super::addr_relay::advertise_self;
 use super::blocks::SERVE_BLOCKS_PER_REQUEST;
 use super::dispatch::{handle, is_slow, requested_by_us, Pushed, SlowLane};
+use super::maintenance::announce_tip;
 use super::peers::{
     advertised_listen, evict_inbound, inbound_count, onion_inbound_count, same_ip_count,
     HandshakeSlot,
@@ -155,9 +156,11 @@ pub(super) async fn run_connection<S>(
     };
     // From the published snapshot, never a chain command: a long one must not
     // make every new connection miss the remote's handshake timeout (F34-3).
-    let (height, tip) = {
+    // The connected tip of the same snapshot: the peer's first announcement
+    // candidate after registration (`Peer::announced`, RT-SYNC F-B).
+    let (height, tip, our_tip) = {
         let s = inner.summary.load();
-        (s.header_height, s.best_header_id)
+        (s.header_height, s.best_header_id, s.tip_id)
     };
     // No address of ours on a block-relay-only connection: addresses are
     // never exchanged there (an anchor learns nothing to link us by).
@@ -353,9 +356,10 @@ pub(super) async fn run_connection<S>(
                 last_new_tip: None,
                 last_block: None,
                 last_tx: None,
+                version_tip: theirs.tip,
                 known_tip: theirs.tip,
                 known_work: 0,
-                known_on_main: false,
+                announced: our_tip,
             },
         );
     }
@@ -387,6 +391,9 @@ pub(super) async fn run_connection<S>(
     if kind != ConnKind::AddrFetch && (theirs.height > height || !knows_tip(&inner, &theirs.tip)) {
         inner.request_headers(id).await;
     }
+    // A tip connected since the snapshot our `Version` came from (the
+    // announcer ran before this peer was registered, RT-SYNC F-B).
+    announce_tip(&inner);
 
     // Read loop. Messages whose handling needs a chain command go to the
     // peer's slow lane; the loop itself never waits for the chain (F34-1).

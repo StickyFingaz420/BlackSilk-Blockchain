@@ -282,8 +282,6 @@ enum HeaderOutcome {
         new_tip: bool,
         /// The cumulative work of the last header (`Peer::known_work`).
         work: u128,
-        /// The last header is on our best header chain.
-        on_main: bool,
     },
     /// The batch's cumulative work would not exceed our best header chain's
     /// (and it cannot be the start of a heavier branch, `low_work`): dropped
@@ -413,11 +411,10 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
                             advanced,
                             new_tip,
                             work,
-                            on_main,
                         }) => {
-                            // The sender has this header: our tips it
-                            // descends from are not announced to it.
-                            p.has_header(*last_id, *work, *on_main);
+                            // The sender has this header (announcements,
+                            // `Peer::wants_tip`).
+                            p.has_header(*last_id, *work);
                             if *new_tip {
                                 p.last_new_tip = Some(Instant::now());
                             }
@@ -756,7 +753,6 @@ fn verify_headers(
         advanced: new > 0 || !on_main,
         new_tip: new > 0 && on_main,
         work,
-        on_main,
     }
 }
 

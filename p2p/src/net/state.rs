@@ -113,38 +113,43 @@ pub(super) struct Peer {
     /// recent (docs/p2p.md §9).
     pub(super) last_block: Option<Instant>,
     pub(super) last_tx: Option<Instant>,
-    /// The best header this peer is known to have: the tip it named in its
-    /// `Version` (work unknown: 0), then the last header of the heaviest
-    /// batch from it that we accepted, with its cumulative work and whether
-    /// it was on our best header chain then. A new tip of ours is announced
-    /// to every peer not known to have it (`wants_tip`; W4-SYNC, RT-LAB
-    /// F1): never by claimed height, since fork choice is by work
+    /// Headers this peer is known to have, for tip announcements
+    /// (`wants_tip`; W4-SYNC, RT-LAB F1, RT-SYNC F-A/F-C): the best header
+    /// it named in its `Version` (never overwritten), and the last header,
+    /// with its cumulative work, of the heaviest batch from it that we
+    /// accepted. Never its claimed height: fork choice is by work
     /// (docs/p2p.md §6).
+    pub(super) version_tip: Hash,
     pub(super) known_tip: Hash,
     pub(super) known_work: u128,
-    pub(super) known_on_main: bool,
+    /// The last connected tip of ours this peer was considered for
+    /// (`maintenance::announce_tip`): at registration, the connected tip of
+    /// the snapshot our `Version` came from, so a tip that changed during
+    /// the handshake is announced once the peer is registered (RT-SYNC F-B).
+    pub(super) announced: Hash,
 }
 
 impl Peer {
-    /// Whether our new connected tip `tip` (cumulative work `work`, on our
-    /// best header chain if `tip_on_main`) is worth announcing to this peer:
-    /// it is not known to have it. It is known to have it if it named it, or
-    /// sent us a header of our best header chain with at least its work (the
-    /// tip is an ancestor of that header then, as when we sync from it). An
-    /// address fetch is for addresses only.
-    pub(super) fn wants_tip(&self, tip: &Hash, work: u128, tip_on_main: bool) -> bool {
-        let has_descendant = tip_on_main && self.known_on_main && self.known_work >= work;
-        self.kind != ConnKind::AddrFetch && self.known_tip != *tip && !has_descendant
+    /// Whether our connected tip `tip` is worth announcing to this peer,
+    /// given the current snapshot's best header `best` and whether `tip` is
+    /// on the best header chain (`tip_on_best`, so an ancestor of `best`):
+    /// not if the peer is known to have `tip` itself, or `best` (then it has
+    /// every ancestor of it, as when a node drains bodies behind headers the
+    /// peer gave or named; RT-SYNC F-A). Both are checked against the
+    /// current snapshot, never a flag recorded earlier: after an invalidated
+    /// branch the best header changes and the relayer of that branch gets
+    /// our next tips (RT-SYNC F-C). An address fetch is for addresses only.
+    pub(super) fn wants_tip(&self, tip: &Hash, best: &Hash, tip_on_best: bool) -> bool {
+        let has = |id: &Hash| self.version_tip == *id || self.known_tip == *id;
+        self.kind != ConnKind::AddrFetch && !has(tip) && !(tip_on_best && has(best))
     }
 
-    /// Records that this peer has the header `id` (cumulative work `work`,
-    /// on our best header chain now if `on_main`): a batch from it that we
-    /// accepted.
-    pub(super) fn has_header(&mut self, id: Hash, work: u128, on_main: bool) {
+    /// Records that this peer has the header `id` (cumulative work `work`):
+    /// a batch from it that we accepted. The heaviest one is kept.
+    pub(super) fn has_header(&mut self, id: Hash, work: u128) {
         if work > self.known_work {
             self.known_tip = id;
             self.known_work = work;
-            self.known_on_main = on_main;
         }
     }
 }
@@ -215,7 +220,6 @@ pub(super) struct State {
     /// connection (`peers::connect_outbound`).
     pub(super) connecting: HashMap<NetAddr, ConnKind>,
     pub(super) last_attempt: HashMap<NetAddr, Instant>,
-    pub(super) announced_tip: Hash,
     pub(super) rng: ChaCha20Rng,
     pub(super) misbehaving_disconnects: u64,
     pub(super) slow_disconnects: u64,
