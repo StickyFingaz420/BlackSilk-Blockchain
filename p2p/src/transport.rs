@@ -295,6 +295,50 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
     }
 }
 
+/// The 64 random bytes of an ephemeral secret, from the operating system.
+fn ephemeral_bytes(wide: &mut [u8; 64]) -> Result<(), TransportError> {
+    #[cfg(fuzzing)]
+    if let Some(seed) = fuzzing::seed() {
+        fuzzing::fill(seed, wide);
+        return Ok(());
+    }
+    getrandom::getrandom(&mut wide[..]).map_err(|_| TransportError::Rng)
+}
+
+/// Fuzz builds only: `cfg(fuzzing)` is set by cargo-fuzz for every crate of
+/// a fuzz binary, and never otherwise, so none of this exists in the node.
+/// A fuzz target may fix this thread's ephemeral secrets, so that an input
+/// replays exactly (the transport fuzz targets, W4-FUZZ2).
+#[cfg(fuzzing)]
+pub mod fuzzing {
+    use std::cell::Cell;
+
+    thread_local! {
+        static SEED: Cell<Option<u64>> = const { Cell::new(None) };
+    }
+
+    /// Fixes (`Some`) or releases (`None`) this thread's ephemeral secrets.
+    pub fn set_ephemeral_seed(seed: Option<u64>) {
+        SEED.with(|s| s.set(seed));
+    }
+
+    pub(super) fn seed() -> Option<u64> {
+        SEED.with(|s| s.get())
+    }
+
+    /// SplitMix64 output: deterministic, not secret (fuzz builds only).
+    pub(super) fn fill(seed: u64, out: &mut [u8; 64]) {
+        let mut x = seed;
+        for chunk in out.chunks_mut(8) {
+            x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = x;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            chunk.copy_from_slice(&(z ^ (z >> 31)).to_le_bytes());
+        }
+    }
+}
+
 type Halves<S> = (FrameReader<ReadHalf<S>>, FrameWriter<WriteHalf<S>>);
 
 /// Runs the key exchange on `stream` and returns the two encrypted halves.
@@ -346,7 +390,7 @@ where
 {
     // Wiped on every return path, including the errors below.
     let mut wide = Zeroizing::new([0u8; 64]);
-    getrandom::getrandom(&mut wide[..]).map_err(|_| TransportError::Rng)?;
+    ephemeral_bytes(&mut wide)?;
     let secret = Zeroizing::new(Scalar::from_bytes_mod_order_wide(&wide));
     drop(wide);
     let ours = Point::from_point(RistrettoPoint::mul_base(&secret));

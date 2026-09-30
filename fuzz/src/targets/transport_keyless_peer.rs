@@ -1,14 +1,28 @@
 //! Target body: the transport's key exchange (p2p/src/transport.rs,
-//! docs/p2p.md §3), the first bytes a node reads from an unauthenticated
-//! peer, then the first frame after it.
+//! docs/p2p.md §3) against a peer that does NOT hold the session keys, then
+//! the first frame it sends. The first bytes a node reads from an
+//! unauthenticated peer.
 //!
-//! Input: a mode byte, then up to 32 bytes of the attacker's public key,
-//! then raw bytes sent after the key. Mode bits: 1 = the victim opened the
+//! Scope, honestly: this is shallow. The peer only sends key bytes and raw
+//! bytes; it never completes a session, so everything after the first
+//! frame's encrypted length is out of reach (an authentic peer's frames are
+//! `transport_recv`'s). What it covers: key decoding (canonical, identity),
+//! the refusal paths, and that nothing a keyless peer sends becomes a
+//! payload.
+//!
+//! Input: a mode byte, then up to 32 bytes of the peer's public key, then
+//! raw bytes sent after the key. Mode bits: 1 = the victim opened the
 //! connection (initiator), else it accepted it (responder); 2 = replace the
 //! key bytes with a valid group element (the key bytes, as a scalar, times
 //! the base point), so inputs reach the frame reader past the key check.
-//! The attacker writes the key and the raw bytes, then closes its sending
-//! side (the victim's own key still goes through).
+//! The peer writes the key and the raw bytes, then closes its sending side
+//! (the victim's own key still goes through).
+//!
+//! Determinism: the victim's ephemeral secret comes from the operating
+//! system. The verdicts below do not depend on it; in fuzz builds
+//! (`cfg(fuzzing)`) the target also fixes it
+//! (`transport::fuzzing::set_ephemeral_seed`), so an input replays with the
+//! same secret and the same coverage.
 //!
 //! Invariants, beyond "no panic":
 //! - a key cut short is an end of stream, never a session;
@@ -18,8 +32,7 @@
 //! - after a successful handshake, bytes from a peer that does not hold the
 //!   session keys never produce a payload: 20 bytes or more fail
 //!   authentication (`Decrypt`, the encrypted length's tag), fewer are an
-//!   end of stream. The victim's ephemeral secret is fresh per session, so
-//!   no input can hold its keys.
+//!   end of stream.
 
 use blacksilk_crypto::{Point, RistrettoPoint, Scalar};
 use blacksilk_p2p::message::MAX_FRAME;
@@ -64,6 +77,8 @@ async fn session(data: &[u8]) {
     attacker.write_all(raw).await.expect("the raw bytes");
     attacker.shutdown().await.expect("close the sending side");
     let initiator = mode & INITIATOR != 0;
+    #[cfg(fuzzing)]
+    blacksilk_p2p::transport::fuzzing::set_ephemeral_seed(Some(u64::from(mode)));
     let got = handshake(
         victim_io,
         initiator,

@@ -5,32 +5,27 @@
 //!   words changed, truncated, extended) must give the same verdict natively
 //!   and in the zkVM: the same public output, or the same error exit code,
 //!   or an `InputExhausted` guest trap exactly where the native kernel read
-//!   past the end (F41-2: any other trap is a divergence).
+//!   past the end (F41-2: any other trap is a divergence); an accepted
+//!   witness fits its prover budget. The oracle is the `kernel_diff` fuzz
+//!   target's body (fuzz/src/targets/kernel_diff.rs), over witnesses with
+//!   0, 1 and 2 functions.
 //! - **Delivery:** mutated ciphertexts never open and never panic.
+
+#[path = "../../fuzz/src/targets/kernel_diff.rs"]
+#[allow(dead_code)] // `run_bytes` is the fuzz target's entry.
+mod kernel_diff;
+#[path = "../../fuzz/src/targets/kernel_shapes.rs"]
+mod shapes;
 
 use blacksilk_px::delivery;
 use blacksilk_px::perm::HostPerm;
-use blacksilk_px::prove::{kernel_program, public_words, witness_words};
+use blacksilk_px::prove::witness_words;
 use blacksilk_px::tree::Tree;
 use blacksilk_px::wallet::{self, Account};
-use blacksilk_px_core::kernel::{self, SliceSource, Source};
 use blacksilk_px_core::record::Record;
-use blacksilk_zkvm::{run, TrapKind, MAX_CYCLES};
+use kernel_diff::Verdict;
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-
-/// The native source, counting how many words the kernel asked for.
-struct Counting<'a> {
-    inner: SliceSource<'a>,
-    reads: usize,
-}
-
-impl Source for Counting<'_> {
-    fn next(&mut self) -> u32 {
-        self.reads += 1;
-        self.inner.next()
-    }
-}
 
 fn iters(default: usize) -> usize {
     std::env::var("BLACKSILK_FUZZ_ITERS")
@@ -67,10 +62,25 @@ fn mutated_witnesses_get_the_same_verdict_natively_and_in_the_guest() {
             wallet::output(&mut rng, alice.owner(2), 400),
         ],
     );
-    let base = witness_words(&w);
+    // The plain transfer above, and one honest witness of every function
+    // count (n_fn = 1, 2; fuzz/src/targets/kernel_shapes.rs).
+    let mut bases = vec![witness_words(&w)];
+    let all = shapes::valid_shapes();
+    for n_fn in 1..=blacksilk_px_core::call::MAX_FN {
+        let (k, shape) = all
+            .iter()
+            .enumerate()
+            .find(|(_, s)| s.fns.len() == n_fn)
+            .expect("a shape with n_fn functions");
+        bases.push(witness_words(&shape.witness(k as u64)));
+    }
+    for base in &bases {
+        assert!(matches!(kernel_diff::check(base), Verdict::Accepted(_)));
+    }
     let n = iters(400);
-    let (mut accepted, mut rejected, mut trapped) = (0, 0, 0);
+    let (mut accepted, mut rejected, mut trapped) = ([0; 3], 0, 0);
     for _ in 0..n {
+        let base = &bases[rng.next_u32() as usize % bases.len()];
         let mut v = base.clone();
         match rng.next_u32() % 5 {
             0 | 1 => {
@@ -91,38 +101,14 @@ fn mutated_witnesses_get_the_same_verdict_natively_and_in_the_guest() {
             3 => v.truncate(rng.next_u32() as usize % v.len()),
             _ => v.extend((0..1 + rng.next_u32() % 8).map(|_| rng.next_u32())),
         }
-        let mut source = Counting {
-            inner: SliceSource::new(&v),
-            reads: 0,
-        };
-        let native = kernel::transfer(&mut HostPerm::new(), &mut source);
-        let over_read = source.reads > v.len();
-        let guest = run(&kernel_program(), &v, MAX_CYCLES);
-        match (native, guest) {
-            (Ok(p), Ok(exec)) => {
-                assert!(!over_read, "native accepted after reading past the end");
-                assert_eq!(exec.exit_code, 0);
-                assert_eq!(exec.output, public_words(&p));
-                accepted += 1;
-            }
-            (Err(e), Ok(exec)) => {
-                assert!(!over_read, "{e:?}: native read past the end, guest exited");
-                assert_eq!(exec.exit_code, e.exit_code(), "{e:?}");
-                assert!(exec.output.is_empty());
-                rejected += 1;
-            }
-            // The guest traps reading past the end of its input; the native
-            // kernel reads u32::MAX there and must reject too. No other trap
-            // matches a native rejection.
-            (Err(e), Err(t)) => {
-                assert_eq!(t.kind, TrapKind::InputExhausted, "{e:?}: guest {t:?}");
-                assert!(over_read, "{e:?}: guest ran out of input, native did not");
-                trapped += 1;
-            }
-            (Ok(_), Err(t)) => panic!("native accepted, guest trapped: {t:?}"),
+        match kernel_diff::check(&v) {
+            Verdict::Accepted(n_fn) => accepted[n_fn] += 1,
+            Verdict::Rejected => rejected += 1,
+            Verdict::ShortInput => trapped += 1,
+            Verdict::OutOfScope => unreachable!("a witness is far shorter"),
         }
     }
-    println!("{n} mutated witnesses: {accepted} accepted (identical output), {rejected} rejected identically, {trapped} trapped (short input)");
+    println!("{n} mutated witnesses: {accepted:?} accepted by n_fn (identical output, within budget), {rejected} rejected identically, {trapped} trapped (short input)");
 }
 
 #[test]
