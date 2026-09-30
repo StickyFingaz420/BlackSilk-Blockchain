@@ -8,6 +8,10 @@ version = "0.0.0"
 publish = false
 edition = "2021"
 
+# `cfg(fuzzing)`: set by cargo-fuzz for every crate of a fuzz build.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+
 [package.metadata]
 cargo-fuzz = true
 
@@ -120,8 +124,29 @@ doc = false
 bench = false
 
 [[bin]]
-name = "transport_handshake"
-path = "fuzz_targets/transport_handshake.rs"
+name = "transport_keyless_peer"
+path = "fuzz_targets/transport_keyless_peer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "delivery_plain"
+path = "fuzz_targets/delivery_plain.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proof_struct"
+path = "fuzz_targets/proof_struct.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "px_tx_struct"
+path = "fuzz_targets/px_tx_struct.rs"
 test = false
 doc = false
 bench = false

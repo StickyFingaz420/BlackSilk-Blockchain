@@ -31,6 +31,17 @@ use std::path::Path;
 #[path = "targets/addr_v2.rs"]
 #[allow(dead_code)]
 mod addr_v2;
+#[path = "targets/delivery_plain.rs"]
+#[allow(dead_code)]
+mod delivery_plain;
+#[path = "targets/kernel_shapes.rs"]
+mod kernel_shapes;
+#[path = "targets/proof_struct.rs"]
+#[allow(dead_code)]
+mod proof_struct;
+#[path = "targets/px_tx_struct.rs"]
+#[allow(dead_code)]
+mod px_tx_struct;
 #[path = "../../wallet/src/seed.rs"]
 #[allow(dead_code)]
 mod seed;
@@ -40,9 +51,9 @@ mod seed_words;
 #[path = "targets/store_records.rs"]
 #[allow(dead_code)]
 mod store_records;
-#[path = "targets/transport_handshake.rs"]
+#[path = "targets/transport_keyless_peer.rs"]
 #[allow(dead_code)]
-mod transport_handshake;
+mod transport_keyless_peer;
 #[path = "targets/transport_recv.rs"]
 #[allow(dead_code)]
 mod transport_recv;
@@ -64,8 +75,11 @@ fn main() {
         ("store_records", store_records::seeds()),
         ("seed_words", seed_words::seeds()),
         ("transport_recv", transport_recv::seeds()),
-        ("transport_handshake", transport_handshake::seeds()),
+        ("transport_keyless_peer", transport_keyless_peer::seeds()),
         ("addr_v2", addr_v2::seeds()),
+        ("delivery_plain", delivery_plain::seeds()),
+        ("proof_struct", proof_struct::seeds()),
+        ("px_tx_struct", px_tx_struct::seeds()),
     ] {
         if only.is_empty() || only.iter().any(|t| t == target) {
             for (name, bytes) in seeds {
@@ -205,6 +219,27 @@ fn main() {
         .flat_map(|x| x.to_le_bytes())
         .collect();
     put("kernel_diff", "spend", &words);
+
+    // Honest witnesses of the transaction shapes the kernel accepts
+    // (W4-FUZZ2; the shapes of px/tests/kernel_budget.rs, which checks every
+    // one against its budget): every shape with n_fn = 0 or 1 (4 and 162),
+    // and every 8th of the 1,600 with n_fn = 2. With all 1,766, loading the
+    // campaign's corpus took 16 minutes (the budget oracle measures each
+    // accepted witness), and libFuzzer kept 589 of its 2,957 inputs.
+    for (k, shape) in kernel_shapes::valid_shapes().iter().enumerate() {
+        if shape.fns.len() == 2 && k % 8 != 0 {
+            continue;
+        }
+        let words: Vec<u8> = witness_words(&shape.witness(k as u64))
+            .iter()
+            .flat_map(|x| x.to_le_bytes())
+            .collect();
+        put(
+            "kernel_diff",
+            &format!("shape{k}_fn{}", shape.fns.len()),
+            &words,
+        );
+    }
 
     // A ciphertext and a share that decrypt for the target's own keys (the
     // target opens with commitment [1; 8], so they fail only at the final

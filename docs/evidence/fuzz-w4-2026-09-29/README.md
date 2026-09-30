@@ -91,13 +91,18 @@ libFuzzer logs, via [run/table.sh](run/table.sh).
   `kernel_diff` (+4 edges). New units there are new paths through edges already
   covered, mostly value-dependent paths through the interpreter.
 - **Plateaued early:**
-  - `transport_handshake`: its last new unit came at execution 147. The surface is a
+  - `transport_handshake` (renamed `transport_keyless_peer` in W4-FUZZ2): its last
+    new unit came at execution 147. The surface is a
     32-byte key decode (dalek), the identity check and the first 20 bytes of a frame,
     so this is expected.
   - `seed_words`: its last new unit came at 42 % of the run.
-  - `delivery_open`: no new unit at all, as in every earlier campaign. Without the
-    recipient's keys, every input stops at the view tag or the AEAD, so this target
-    shows "no panic, nothing opens", not deep coverage of the record decoder.
+  - `delivery_open`: no new unit at all, as in every earlier campaign. Corrected in
+    W4-FUZZ2 (below): the two seeds are sealed to the target's own keys and
+    commitment, so they DO pass the view tag and the AEAD and stop at the final
+    commitment check. A mutated seed cannot get past the AEAD (a changed byte fails
+    the tag, or the view tag first), so no mutant reaches the code after decryption.
+    The target shows "no panic, nothing opens"; the code after decryption is
+    `delivery_plain`'s (W4-FUZZ2).
 - **Decode only:** `proof_decode` exercises the strict proof decoder, not the verifier.
   Verifier fuzzing, when it exists, can show robustness and non-malleability, not
   soundness (decisions, Agent 41, F41-8).
@@ -139,6 +144,9 @@ defects were found while preparing it, and are fixed in `9023201`:
      30-minute `kernel_diff` run above found no divergence.
 
 ## New target: `transport_handshake`
+Renamed and re-scoped in W4-FUZZ2 (below): `transport_keyless_peer`. It models a peer
+that does not hold the session keys, and it is shallow.
+
 - **What it covers:** the key exchange is the first thing a node reads from an
   unauthenticated peer, and no target covered it. `transport_recv` starts after a
   handshake between two honest sides.
@@ -204,3 +212,148 @@ defects were found while preparing it, and are fixed in `9023201`:
   dependencies and `third_party`.
 - **Platform:** one platform (Windows, MSVC, AddressSanitizer). The CI fuzz smoke runs
   the same targets on Linux for 2 minutes each.
+
+## W4-FUZZ2 (2026-09-30): new and re-scoped targets
+Internal engineering evidence, not an audit. It follows the red-team review of the
+campaign above (RT-FUZZ, decisions "W4-FUZZ and RT-FUZZ"), which accepted it as
+robustness evidence only and found its depth shallow.
+
+### What changed
+Commit `1001314` (base `12f69e5`, branch `w4-fuzz2`).
+
+- **`delivery_plain` (new):** lifted from the RT-FUZZ branch without its replay tool
+  (which uses `unsafe`). A malicious sender seals fuzzed plaintexts with the real
+  `seal`, so `open` and `open_share` reach the code after the view tag and the AEAD.
+  - Stable twin: `px/tests/fuzz_delivery_plain.rs`.
+- **`kernel_diff` (changed):**
+  - The oracle is one shared body (`fuzz/src/targets/kernel_diff.rs`), used by the
+    fuzz target and by `px/tests/fuzz.rs`.
+  - An accepted witness must fit `prove::kernel_budget(n_fn)`.
+  - **Demonstrated:** checked against `kernel_budget(0)` in a local edit (not
+    committed), the stable test fails with "an accepted witness (n_fn = 1) is over its
+    prover budget: cycles 28239 > 26500".
+  - The old `words.len() > MAX_INPUT_WORDS` branch is now an explicit out-of-scope
+    return, with its reason: the zkVM refuses such inputs before executing, and every
+    caller stays far below.
+  - **Seeds:** honest witnesses of the shapes of `px/tests/kernel_budget.rs` (which
+    checks every one of its 1,766 shapes against its budget):
+    - all 4 shapes with `n_fn` = 0;
+    - all 162 shapes with `n_fn` = 1;
+    - every 8th of the 1,600 shapes with `n_fn` = 2 (the reason is under Results).
+  - The stable test now mutates witnesses with 0, 1 and 2 functions:
+    - 5,000 iterations;
+    - accepted [583, 427, 455] by `n_fn`, all within budget;
+    - 2,599 rejected identically;
+    - 936 short-input traps.
+- **`proof_struct` (new):**
+  - Fuzz-chosen edits of the decoded fields of a real PX transfer proof: resize, drop
+    or duplicate vectors, flip options, change the degree bits and the FRI arity
+    schedule, move commitments and witnesses. The edited proof is re-encoded.
+  - **Oracle:**
+    - `decode_proof_with(PROOF_LIMITS)` is canonical;
+    - within the PX limits implies within the envelope;
+    - the shape check accepts exactly the base's degree bits.
+  - **Shape only, not `verify`:** the target already runs at about 1 execution per
+    second under AddressSanitizer, and verification costs about 0.2 s or more per
+    proof (R12 §1.3).
+- **`px_tx_struct` (new):** the same approach for a PX transaction.
+  - **Oracle:**
+    - `decode(encode(x)) = x` for every self-delimited value;
+    - canonical re-encoding and `encoded_len`;
+    - the stateless rules, binding, statement, hash and weight never panic.
+  - **Stable twins** of both structure-aware targets run in `tx/tests/fuzz_decode.rs`,
+    on its one PX transaction and proof. That file is already a PX-proving test in CI.
+    Result: 2,016 inputs each, no failure (`cargo test --locked --release -p
+    blacksilk-tx --test fuzz_decode -- --test-threads=1`, 239.5 s).
+- **`transport_handshake` → `transport_keyless_peer`:**
+  - Renamed and re-scoped: it models a peer that does NOT hold the session keys, and
+    it is shallow.
+  - **Deterministic in fuzz builds:** under `cfg(fuzzing)` the target fixes the
+    victim's ephemeral secret through `transport::fuzzing`, which exists only in fuzz
+    builds. Normal builds are unchanged.
+  - Stable twin: `p2p/tests/fuzz_keyless_peer.rs`.
+- **`run_campaign.sh`:**
+  - runs the new targets;
+  - `px_tx_struct`: `-max_len=256`;
+  - `proof_struct`: `-max_len=256 -len_control=0 -rss_limit_mb=4096`.
+
+### Results
+Same toolchain and machine as above, `-O -a`, AddressSanitizer, one fuzzer at a time.
+Mutation run C shared the machine throughout.
+
+| Target | Time (s) | Executions | cov/ft start → end | Corpus files | New units | Findings |
+|---|---|---|---|---|---|---|
+| `delivery_plain` | 603 | 55,618 | 2129/2757 → 2178/3452 | 6 → 102 | 287 | 0 |
+| `px_tx_struct` (first run) | 46 | at least 43,521 (last log line) | 1215/2041 → (crashed) | 15 → 706 | | **1** (W4F2-1) |
+| `px_tx_struct` (after the fix) | 603 | 797,475 | 2133/5496 → 2245/8609 | 707 → 2,068 | 2,866 | 0 |
+| `transport_keyless_peer` | 602 | 1,335,490 | 1237/1803 → 1237/1803 | 29 → 29 | 0 | 0 |
+| `kernel_diff` (first attempt) | 959 | 2,959 | 2797/13028 (load only) | 2,957 → 2,957 | 0 | 0 |
+| `kernel_diff` | 1,652 | 26,101 | 2797/13525 → 2803/13606 | 2,957 → 3,012 | 64 | 0 |
+| `proof_struct` (run 1) | 603 | 597 | 2049/3556 → 2552/5044 | 16 → 167 | 163 | 0 |
+| `proof_struct` (run 2, `-len_control=0`) | 606 | 409 | 2552/4974 → 2684/5535 | 167 → 261 | 94 | 0 |
+
+- **Sources:** [run/w4-fuzz2-summary.txt](run/w4-fuzz2-summary.txt), from the libFuzzer
+  logs.
+- **`kernel_diff`: the first attempt only loaded its corpus.**
+  - The corpus was the W4-FUZZ corpus (1,191 files) plus all 1,766 shape seeds.
+  - The budget oracle measures every accepted witness (`trace::usage`, about 3 inputs
+    per second under AddressSanitizer), so loading took the whole 959 s. No mutation
+    ran.
+  - The second run had a 1,650 s limit, so it ran 23,143 executions after the load.
+  - libFuzzer kept 580 of the 2,957 loaded inputs. So the committed generator seeds
+    every `n_fn` ≤ 1 shape and every 8th `n_fn` = 2 shape, and `kernel_budget.rs`
+    keeps the check of every shape.
+- **`proof_struct` is slow (about 1 execution per second).** Each input decodes and
+  encodes a 2.4 MB proof several times under AddressSanitizer.
+  - In its first run, libFuzzer's length control kept scripts at one edit (`lim: 4`).
+    Run 2 used `-len_control=0`.
+  - Building the target without a sanitizer (`-s none`) failed to link on this MSVC
+    toolchain (unresolved `__start___sancov_cntrs`), so there is no faster lane here.
+  - The stable twin, in a plain release build, ran more inputs (2,016) than both
+    libFuzzer runs together.
+- **Still finding new units at the end:** `px_tx_struct`, `kernel_diff` and
+  `proof_struct`.
+- **Plateaued:** `transport_keyless_peer` added nothing in 1.3 million executions, as
+  expected of its surface. `delivery_plain` found its last new unit at execution 758.
+
+### Finding W4F2-1: harness oracle over-reach; not a product bug; fixed
+- **Symptom:** `px_tx_struct` failed "decoding returns exactly what was encoded".
+- **Root cause:** an edited range proof had `l` one point short and `r` one point
+  long, with the same total.
+  - The encoding does not carry these lengths: the decoder reads `rounds(outputs)`
+    points for each.
+  - The same holds for the pseudo-outputs and signatures (one per input) and for the
+    ciphertexts (fixed size).
+  - So such an in-memory value, which no decoding produces, encodes to the bytes of a
+    different valid transaction.
+  - Attackers send bytes, not structures, and the decoder is canonical. Only a local
+    builder could produce such a value.
+- **Fix (harness):** `self_delimited` limits the injectivity check to values whose
+  encoding carries every length the decoder needs. Canonical re-encoding is still
+  checked for every value.
+- **Regression:** the seed `bpp_l_short_r_long` (`[19, 5, 0, 28, 19, 0, 0, 17]`).
+  - With the old oracle forced back on, the fuzz binary fails on it with the same
+    message.
+  - With the fix, it passes.
+  - The stable twin runs every seed unmutated first.
+- **Tooling caveat (Windows):**
+  - A Rust panic in a libFuzzer target aborts with `STATUS_STACK_BUFFER_OVERRUN`
+    (0xc0000409, `__fastfail`), and libFuzzer wrote **no crash artifact**: exit 1,
+    0 files.
+  - `run_campaign.sh` still fails on the exit status, so a crash is never silent. But
+    on this platform the input must be recovered from the panic message or by replay.
+  - Whether CI's Linux fuzz smoke writes artifacts normally was not checked here.
+  - The W4-FUZZ campaign above had no non-zero exit, so this caveat hides nothing
+    there.
+
+### Corrections to the W4-FUZZ text above
+- **`delivery_open`:** its seeds DO decrypt; they stop at the commitment check. Only
+  mutated inputs fail at the view tag or the AEAD. Corrected in place above.
+- **`transport_handshake`:** renamed and re-scoped (see above).
+
+### Still without a target
+- the stateful harnesses of decisions "W4-FUZZ and RT-FUZZ": pre-Verack negotiation
+  and the per-peer protocol (needs the F41-9 sans-IO seam), `px_admission` and
+  `scan_outputs`;
+- verification of edited proofs (by cost);
+- the RPC request guard.

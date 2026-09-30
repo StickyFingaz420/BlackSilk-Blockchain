@@ -20,7 +20,8 @@ cargo +"$TC" fuzz build "${FLAGS[@]}" || { echo "fuzz build failed"; exit 1; }
 mkdir -p logs
 failed=()
 for target in tx_decode block_decode p2p_message zkvm_elf kernel_diff delivery_open proof_decode \
-              store_records seed_words transport_recv transport_handshake addr_v2; do
+              store_records seed_words transport_recv transport_keyless_peer addr_v2 \
+              delivery_plain proof_struct px_tx_struct; do
   case "$target" in
     # The largest proof the decoder accepts (zk MAX_PROOF_BYTES, 4 MiB):
     # libFuzzer truncates longer seeds at load, and a real transfer proof
@@ -31,8 +32,14 @@ for target in tx_decode block_decode p2p_message zkvm_elf kernel_diff delivery_o
     # Bounded allocation is part of these targets' contract: one allocation
     # of 32 MiB or more is a finding (the inputs are at most 256 KiB).
     store_records) extra=(-max_len=262144 -malloc_limit_mb=32) ;;
-    transport_recv|transport_handshake) extra=(-max_len=65536 -malloc_limit_mb=32) ;;
+    transport_recv|transport_keyless_peer) extra=(-max_len=65536 -malloc_limit_mb=32) ;;
     seed_words) extra=(-max_len=1024) ;;
+    delivery_plain) extra=(-max_len=256) ;;
+    # Edit scripts: 4 bytes per edit, at most 64 edits. proof_struct runs at
+    # about one execution per second (a 2.4 MB proof decoded and encoded
+    # several times, under ASan), so it starts at the full length at once.
+    px_tx_struct) extra=(-max_len=256) ;;
+    proof_struct) extra=(-max_len=256 -len_control=0 -rss_limit_mb=4096) ;;
     *) extra=(-max_len=65536) ;;
   esac
   mkdir -p "corpus/$target"

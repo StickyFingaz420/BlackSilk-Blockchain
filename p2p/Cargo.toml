@@ -34,6 +34,11 @@ zeroize = "1.8"
 # (RustCrypto); already in the lockfile through ml-kem, so no new crate.
 sha3 = { version = "=0.11.0", default-features = false }
 
+# `cfg(fuzzing)`: set by cargo-fuzz in fuzz builds only (transport.rs,
+# `fuzzing`).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+
 [dev-dependencies]
 tempfile = "3"
 # The chain actor's test-only step delay (liveness test L7).

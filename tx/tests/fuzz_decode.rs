@@ -8,8 +8,20 @@
 //! `BLACKSILK_FUZZ_ITERS` sets the number of mutants per seed (default 3000);
 //! long campaigns set it high. This is not coverage-guided fuzzing
 //! (docs/reviews/zk-security-review.md §7).
+//!
+//! The same PX transaction then feeds the structure-aware fuzz targets'
+//! bodies under the stable driver (fuzz/src/targets/driver.rs, W4-FUZZ2):
+//! `px_tx_struct` (edits of its decoded fields) and `proof_struct` (edits of
+//! its decoded proof), so they share this file's one proof.
 
 mod common;
+#[path = "../../fuzz/src/targets/driver.rs"]
+mod driver;
+#[path = "../../fuzz/src/targets/proof_struct.rs"]
+#[allow(dead_code)] // `seeds` and `Base::transfer` serve the fuzz target.
+mod proof_struct;
+#[path = "../../fuzz/src/targets/px_tx_struct.rs"]
+mod px_tx_struct;
 
 use blacksilk_px::wallet::{self as pxw, Account};
 use blacksilk_tx::builder::Payment;
@@ -162,7 +174,7 @@ fn every_mutant_decodes_canonically_or_fails_cleanly() {
     let seeds = [
         ("coinbase", coinbase.encode()),
         ("transfer", transfer.encode()),
-        ("px", Transaction::Px(Box::new(px)).encode()),
+        ("px", Transaction::Px(Box::new(px.clone())).encode()),
         ("deploy", Transaction::PxDeploy(Box::new(deploy)).encode()),
     ];
     let mut rng = common::rng(7);
@@ -225,4 +237,17 @@ fn every_mutant_decodes_canonically_or_fails_cleanly() {
         "{} mutants per seed, {decoded} still decoded (all canonical), {proofs_checked} PX mutants fully validated and rejected",
         n
     );
+
+    // Structure-aware edits (the fuzz targets' bodies).
+    let domain = rules.domain();
+    let edits = |seeds: Vec<(&str, Vec<u8>)>| -> Vec<Vec<u8>> {
+        seeds.into_iter().map(|(_, s)| s).collect()
+    };
+    driver::drive("px_tx_struct", &edits(px_tx_struct::seeds()), 256, |d| {
+        px_tx_struct::run(&px, domain, d)
+    });
+    let base = proof_struct::Base::new(px.proof.clone(), px.public());
+    driver::drive("proof_struct", &edits(proof_struct::seeds()), 256, |d| {
+        proof_struct::run(&base, d)
+    });
 }
