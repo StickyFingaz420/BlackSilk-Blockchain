@@ -1,0 +1,51 @@
+--re=^tx[/]src[/]validate[.]rs[:]398[:]20[:] replace [>] with [=][=] in check[_]shape$
+--re=^tx[/]src[/]validate[.]rs[:]398[:]20[:] replace [>] with [>][=] in check[_]shape$
+--re=^tx[/]src[/]validate[.]rs[:]445[:]13[:] replace [>] with [=][=] in check[_]shape$
+--re=^tx[/]src[/]validate[.]rs[:]445[:]13[:] replace [>] with [>][=] in check[_]shape$
+--re=^tx[/]src[/]validate[.]rs[:]661[:]5[:] replace check[_]px[_]proof \-[>] Result[<][(][)][,] TxError[>] with Ok[(][(][)][)]$
+--re=^tx[/]src[/]validate[.]rs[:]677[:]5[:] replace px[_]calls \-[>] Result[<]Vec[<]blacksilk[_]px[:][:]prove[:][:]FunctionCall[>][,] TxError[>] with Ok[(]vec[!]\[\][)]$
+--re=^tx[/]src[/]validate[.]rs[:]701[:]5[:] replace check[_]px[_]proof[_]shape \-[>] Result[<][(][)][,] TxError[>] with Ok[(][(][)][)]$
+--re=^tx[/]src[/]validate[.]rs[:]720[:]5[:] replace check[_]px[_]proof[_]decoded \-[>] Result[<][(][)][,] TxError[>] with Ok[(][(][)][)]$
+--re=^tx[/]src[/]validate[.]rs[:]747[:]5[:] replace hex[_]id \-[>] String with String[:][:]new[(][)]$
+--re=^tx[/]src[/]validate[.]rs[:]747[:]5[:] replace hex[_]id \-[>] String with ["]xyzzy["][.]into[(][)]$
+--re=^tx[/]src[/]validate[.]rs[:]814[:]49[:] replace [<] with [=][=] in validate[_]px[_]checks$
+--re=^tx[/]src[/]validate[.]rs[:]814[:]49[:] replace [<] with [<][=] in validate[_]px[_]checks$
+--re=^tx[/]src[/]validate[.]rs[:]814[:]24[:] replace [+] with \- in validate[_]px[_]checks$
+--re=^tx[/]src[/]validate[.]rs[:]1200[:]17[:] replace [>] with [=][=] in validate[_]block[_]transactions[_]cached$
+--re=^tx[/]src[/]validate[.]rs[:]1200[:]17[:] replace [>] with [>][=] in validate[_]block[_]transactions[_]cached$
+--re=^tx[/]src[/]validate[.]rs[:]1214[:]21[:] replace [>] with [>][=] in validate[_]block[_]transactions[_]cached$
+--re=^tx[/]src[/]validate[.]rs[:]1299[:]30[:] replace [+] with \- in validate[_]block[_]transactions[_]cached$
+--re=^tx[/]src[/]validate[.]rs[:]1308[:]25[:] replace [+][=] with [*][=] in validate[_]block[_]transactions[_]cached$
+--re=^tx[/]src[/]validate[.]rs[:]1312[:]50[:] replace [|][|] with [&][&] in validate[_]block[_]transactions[_]cached$
+--re=^tx[/]src[/]params[.]rs[:]18[:]73[:] replace [+] with \-$
+--re=^tx[/]src[/]params[.]rs[:]18[:]79[:] replace [*] with [+]$
+--re=^tx[/]src[/]params[.]rs[:]18[:]79[:] replace [*] with [/]$
+--re=^tx[/]src[/]params[.]rs[:]42[:]50[:] replace [*] with [+]$
+--re=^tx[/]src[/]px[.]rs[:]295[:]9[:] replace PxTx[:][:]base[_]bytes \-[>] Vec[<]u8[>] with vec[!]\[\]$
+--re=^tx[/]src[/]px[.]rs[:]303[:]9[:] replace PxTx[:][:]range[_]proof[_]bytes \-[>] Vec[<]u8[>] with vec[!]\[\]$
+--re=^tx[/]src[/]px[.]rs[:]311[:]9[:] replace PxTx[:][:]prunable[_]bytes \-[>] Vec[<]u8[>] with vec[!]\[0\]$
+--re=^tx[/]src[/]px[.]rs[:]327[:]9[:] replace PxTx[:][:]encoded[_]len \-[>] usize with 0$
+--re=^tx[/]src[/]px[.]rs[:]327[:]9[:] replace PxTx[:][:]encoded[_]len \-[>] usize with 1$
+--re=^tx[/]src[/]px[.]rs[:]410[:]9[:] replace PxTx[:][:]base[_]hash \-[>] Hash with Default[:][:]default[(][)]$
+--re=^tx[/]src[/]px[.]rs[:]414[:]9[:] replace PxTx[:][:]prunable[_]hash \-[>] Hash with Default[:][:]default[(][)]$
+--re=^tx[/]src[/]px[.]rs[:]480[:]9[:] replace PxTx[:][:]output[_]context \-[>] \[u8[;] 32\] with \[0[;] 32\]$
+--re=^tx[/]src[/]px[.]rs[:]480[:]9[:] replace PxTx[:][:]output[_]context \-[>] \[u8[;] 32\] with \[1[;] 32\]$
+--re=^tx[/]src[/]px[.]rs[:]609[:]9[:] replace PxDeploy[:][:]prefix[_]hash \-[>] Hash with Default[:][:]default[(][)]$
+--re=^tx[/]src[/]px[.]rs[:]708[:]24[:] replace [|][|] with [&][&] in check[_]px[_]structure$
+--re=^tx[/]src[/]px[.]rs[:]708[:]10[:] replace [>] with [=][=] in check[_]px[_]structure$
+--re=^tx[/]src[/]px[.]rs[:]708[:]10[:] replace [>] with [>][=] in check[_]px[_]structure$
+--re=^tx[/]src[/]px[.]rs[:]708[:]30[:] replace [>] with [<] in check[_]px[_]structure$
+--re=^tx[/]src[/]px[.]rs[:]770[:]25[:] replace match guard k [>] 0 with true in check[_]px[_]structure$
+--re=^tx[/]src[/]px[.]rs[:]770[:]27[:] replace [>] with [>][=] in check[_]px[_]structure$
+--re=^tx[/]src[/]px[.]rs[:]772[:]36[:] replace [|][|] with [&][&] in check[_]px[_]structure$
+--re=^tx[/]src[/]px[.]rs[:]778[:]27[:] replace [>] with [=][=] in check[_]px[_]structure$
+--re=^tx[/]src[/]px[.]rs[:]778[:]27[:] replace [>] with [>][=] in check[_]px[_]structure$
+--re=^tx[/]src[/]px[.]rs[:]786[:]13[:] replace [>] with [=][=] in check[_]px[_]structure$
+--re=^tx[/]src[/]px[.]rs[:]786[:]13[:] replace [>] with [>][=] in check[_]px[_]structure$
+--re=^tx[/]src[/]px[.]rs[:]799[:]5[:] replace check[_]px[_]balance \-[>] Result[<][(][)][,] TxError[>] with Ok[(][(][)][)]$
+--re=^tx[/]src[/]px[.]rs[:]802[:]41[:] replace [&][&] with [|][|] in check[_]px[_]balance$
+--re=^tx[/]src[/]px[.]rs[:]811[:]9[:] delete \- in check[_]px[_]balance$
+--re=^tx[/]src[/]px[.]rs[:]811[:]24[:] delete \- in check[_]px[_]balance$
+--re=^tx[/]src[/]px[.]rs[:]859[:]13[:] replace [>] with [=][=] in check[_]deploy[_]structure$
+--re=^tx[/]src[/]px[.]rs[:]859[:]13[:] replace [>] with [>][=] in check[_]deploy[_]structure$
+--re=^tx[/]src[/]px[.]rs[:]877[:]33[:] replace [>] with [>][=] in check[_]deploy[_]structure$

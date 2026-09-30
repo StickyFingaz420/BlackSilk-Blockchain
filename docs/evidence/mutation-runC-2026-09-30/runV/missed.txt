@@ -1,0 +1,19 @@
+tx/src/validate.rs:398:20: replace > with == in check_shape
+tx/src/validate.rs:398:20: replace > with >= in check_shape
+tx/src/validate.rs:445:13: replace > with == in check_shape
+tx/src/validate.rs:445:13: replace > with >= in check_shape
+tx/src/validate.rs:661:5: replace check_px_proof -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:677:5: replace px_calls -> Result<Vec<blacksilk_px::prove::FunctionCall>, TxError> with Ok(vec![])
+tx/src/validate.rs:701:5: replace check_px_proof_shape -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:720:5: replace check_px_proof_decoded -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:747:5: replace hex_id -> String with String::new()
+tx/src/validate.rs:747:5: replace hex_id -> String with "xyzzy".into()
+tx/src/validate.rs:814:49: replace < with == in validate_px_checks
+tx/src/validate.rs:814:49: replace < with <= in validate_px_checks
+tx/src/validate.rs:814:24: replace + with - in validate_px_checks
+tx/src/validate.rs:1200:17: replace > with == in validate_block_transactions_cached
+tx/src/validate.rs:1200:17: replace > with >= in validate_block_transactions_cached
+tx/src/validate.rs:1214:21: replace > with >= in validate_block_transactions_cached
+tx/src/validate.rs:1299:30: replace + with - in validate_block_transactions_cached
+tx/src/validate.rs:1308:25: replace += with *= in validate_block_transactions_cached
+tx/src/validate.rs:1312:50: replace || with && in validate_block_transactions_cached

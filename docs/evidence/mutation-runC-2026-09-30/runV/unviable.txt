@@ -1,0 +1,12 @@
+tx/src/validate.rs:455:43: replace - with / in check_balance
+tx/src/validate.rs:455:33: replace - with / in check_balance
+tx/src/validate.rs:455:66: replace * with + in check_balance
+tx/src/validate.rs:455:66: replace * with / in check_balance
+tx/src/validate.rs:463:5: replace output_commitments -> Vec<Point> with vec![Default::default()]
+tx/src/validate.rs:482:5: replace resolve_rings -> Result<Vec<[RingMember; RING_SIZE]>, TxError> with Ok(vec![[Default::default(); RING_SIZE]])
+tx/src/validate.rs:491:5: replace resolve_input_rings -> Result<Vec<[RingMember; RING_SIZE]>, TxError> with Ok(vec![[Default::default(); RING_SIZE]])
+tx/src/validate.rs:652:36: replace > with < in check_px_capacity
+tx/src/validate.rs:669:5: replace decode_px_proof -> Result<blacksilk_zk::Proof, TxError> with Ok(Default::default())
+tx/src/validate.rs:677:5: replace px_calls -> Result<Vec<blacksilk_px::prove::FunctionCall>, TxError> with Ok(vec![Default::default()])
+tx/src/validate.rs:1295:13: delete match arm Transaction::Px(t) in validate_block_transactions_cached
+tx/src/validate.rs:1310:13: delete match arm Transaction::PxDeploy(t) in validate_block_transactions_cached

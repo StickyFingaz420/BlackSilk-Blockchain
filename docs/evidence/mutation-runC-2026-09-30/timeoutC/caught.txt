@@ -1,0 +1,3 @@
+tx/src/px.rs:311:9: replace PxTx::prunable_bytes -> Vec<u8> with vec![0]
+tx/src/px.rs:327:9: replace PxTx::encoded_len -> usize with 0
+tx/src/px.rs:327:9: replace PxTx::encoded_len -> usize with 1

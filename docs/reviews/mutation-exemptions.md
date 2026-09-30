@@ -2,8 +2,9 @@
 
 Status: the register of **equivalent mutants** in consensus code: code changes a
 mutation tool reports as surviving, because no input can observe them. The freeze gate
-of decisions "Agent 42" allows zero unexplained survivors in `consensus` and `px-core`;
-an entry here is the written explanation, with its proof or its evidence and the
+of decisions "Agent 42" allows zero unexplained survivors in `consensus` and `px-core`,
+and run C (decisions "W4-MUT and RT-MUT") extends it to the transaction rules; an entry
+here is the written explanation, with its proof or its evidence and the
 command that reproduces it. Internal engineering work, not an audit. An exemption
 never covers a mutant of a reachable rule: those need a test.
 
@@ -205,3 +206,82 @@ pin is the tripwire, and the edit must re-examine this entry.
 
 **Reproduce (E5–E7).** In run B's configuration (docs/evidence/mutation-2026-09-29/),
 with the `--re` filters in the evidence's `rerunB.args`.
+
+## E8: T1 in `check_shape` (tx/src/validate.rs)
+
+Decision: W4-MUTC (run C, docs/evidence/mutation-runC-2026-09-30/), for the Lead's
+review.
+
+**Code.** The last rule of `check_shape`: `if size > MAX_TX_SIZE { TooLarge }`, with
+`size = tx.encoded_len()` and `MAX_TX_SIZE` = 100 000.
+
+**Mutants covered** (missed in run C): 445:13 `replace > with == in check_shape` and
+`replace > with >= in check_shape`.
+
+**Argument (the rule never fires).** It runs only after T3–T7, T10's shape and T11
+passed, so the transfer has 1 ≤ n ≤ 64 inputs, 2 ≤ k ≤ 16 outputs, n pseudo-outputs, n
+CLSAGs and a range proof of exactly `rounds(k)` points per list. Every field of such a
+transfer has a fixed length except its 4 + 16n varints (version, the two counts, the
+fee, and each ring's 16 indices), each at most 10 bytes (a u64 LEB128). `max_weight(n,
+k)` counts exactly that encoding with every varint at 10 bytes, plus a non-negative
+clawback (docs/transactions.md §8.4), so `size ≤ max_weight(n, k) ≤ max_weight(64, 16)
+= 57 439 < 100 000`. `size` never reaches `MAX_TX_SIZE`, so `>`, `==` and `>=` give the
+same verdict on every transfer that reaches the line. The `<` mutant is caught (every
+valid transfer then fails). T1 stays as a documented defensive bound (docs/
+transactions.md T1).
+
+**Evidence and tripwire.** `tx/tests/mutation_regressions.rs`
+`t1_is_implied_by_the_transfer_shape_rules` checks the premise: the largest
+`max_weight` over every shape is `max_weight(64, 16)` and lies below `MAX_TX_SIZE`, and
+a maximal shaped transfer encodes within it. `tx/tests/max_weight_encoder.rs` derives
+`max_weight` through the real encoder for all 1 088 shapes. If a constant changes so
+that the premise fails, T1 becomes reachable: this entry must then be replaced by a
+boundary test. PX transactions and deploys have their own size rules, which are
+reachable and tested at their bounds (`a_px_transaction_of_exactly_the_size_cap_is_well_formed`,
+`a_deploy_of_exactly_the_size_cap_is_well_formed`).
+
+**Reproduce.** `cargo mutants -p blacksilk-tx --profile mutants -F 'check_shape'` with
+run C's test targets (docs/evidence/mutation-runC-2026-09-30/README.md).
+
+## E9: `hex_id`, the log text of a contained verifier panic (tx/src/validate.rs)
+
+Decision: W4-MUTC, for the Lead's review.
+
+**Code.** `hex_id(h)` formats a binding as hex. Its only caller is the `log::warn!` in
+`check_px_proof_decoded` that reports a PX proof that made the Plonky3 verifier panic
+(contained, zkvm.md §10). The verdict (`TxError::PxProof`) does not depend on it.
+
+**Mutants covered** (missed in run C): 747:5 `replace hex_id -> String with
+String::new()` and `with "xyzzy".into()`.
+
+**Argument.** Neither the returned `Result` nor any state depends on the string: it
+only goes into a log line. No consensus or policy verdict can observe it. (A test of
+it would need a proof that panics the verifier, which the proving tests do not have,
+and a log capture; it would test a diagnostic, not a rule.)
+
+## E10: the range-proof arm guard of `check_px_structure` (tx/src/px.rs)
+
+Decision: W4-MUTC, for the Lead's review.
+
+**Code.**
+
+```text
+match (&tx.range_proof, k) {
+    (None, 0) => {}
+    (Some(p), k) if k > 0 => { let rounds = bpp::rounds(k).ok_or(RangeProofShape)?; ... }
+    _ => return Err(RangeProofShape),
+}
+```
+
+**Mutants covered** (missed in run C): 770:25 `replace match guard k > 0 with true in
+check_px_structure` and 770:27 `replace > with >= in check_px_structure` (the same
+change, since `k >= 0` holds for every `usize`).
+
+**Argument.** The guard differs only for `(Some(p), 0)`. The original sends it to the
+last arm, `RangeProofShape`. The mutant enters the second arm, where `bpp::rounds(0)`
+is `None` (`rounds` refuses 0 outputs, crypto/src/bulletproofs_plus.rs), so `ok_or`
+returns the same `RangeProofShape`, before any other check. Same result on every
+input. The case itself is tested (`px_range_proof_shape_is_checked_on_both_point_lists`:
+a range proof without hidden outputs is `RangeProofShape`), and so is `rounds(0) =
+None` (crypto's own tests and `bpp_proof_len_matches_the_crypto_crate`). The `||` of the
+point-list comparison (772:36), the other mutant of the arm, is killed by the same test.

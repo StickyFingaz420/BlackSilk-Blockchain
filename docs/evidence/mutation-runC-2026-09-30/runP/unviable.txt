@@ -1,0 +1,32 @@
+tx/src/params.rs:23:46: replace * with +
+tx/src/params.rs:23:46: replace * with /
+tx/src/params.rs:23:39: replace * with /
+tx/src/params.rs:37:46: replace * with +
+tx/src/params.rs:37:46: replace * with /
+tx/src/params.rs:42:50: replace * with /
+tx/src/params.rs:96:9: replace + with - in max_weight
+tx/src/params.rs:96:19: replace + with - in max_weight
+tx/src/params.rs:101:37: replace + with - in max_weight
+tx/src/params.rs:101:37: replace + with * in max_weight
+tx/src/params.rs:101:32: replace + with * in max_weight
+tx/src/params.rs:101:23: replace + with * in max_weight
+tx/src/params.rs:106:14: replace + with * in max_weight
+tx/src/params.rs:120:13: replace + with - in bpp_proof_len
+tx/src/params.rs:185:9: replace TxRules::for_chain -> Self with Default::default()
+tx/src/params.rs:194:9: replace TxRules::at_height -> Self with Default::default()
+tx/src/params.rs:206:9: replace TxRules::domain -> SigDomain with Default::default()
+tx/src/px.rs:158:5: replace read_budget -> Result<Budget, DecodeError> with Ok(Default::default())
+tx/src/px.rs:183:5: replace read_inputs -> Result<Vec<Input>, DecodeError> with Ok(vec![Default::default()])
+tx/src/px.rs:206:5: replace read_outputs -> Result<Vec<Output>, DecodeError> with Ok(vec![Default::default()])
+tx/src/px.rs:232:5: replace read_sigs -> Result<Vec<Clsag>, DecodeError> with Ok(vec![Default::default()])
+tx/src/px.rs:331:9: replace PxTx::decode_body -> Result<Self, DecodeError> with Ok(Default::default())
+tx/src/px.rs:447:9: replace PxTx::public -> Public with Default::default()
+tx/src/px.rs:465:9: replace PxTx::output_keys -> Vec<OutputKey> with vec![Default::default()]
+tx/src/px.rs:572:9: replace PxDeploy::decode_body -> Result<Self, DecodeError> with Ok(Default::default())
+tx/src/px.rs:616:9: replace PxDeploy::as_transfer -> Transfer with Default::default()
+tx/src/px.rs:670:9: replace PxDeploy::load_programs -> Result<Vec<(Arc<Program>, Budget)>, TxError> with Ok(vec![(Arc::new(Default::default()), Default::default())])
+tx/src/px.rs:815:43: replace - with / in check_px_balance
+tx/src/px.rs:815:33: replace - with / in check_px_balance
+tx/src/px.rs:815:52: replace * with + in check_px_balance
+tx/src/px.rs:815:52: replace * with / in check_px_balance
+tx/src/px.rs:877:33: replace > with < in check_deploy_structure

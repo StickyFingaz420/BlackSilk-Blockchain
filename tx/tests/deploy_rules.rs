@@ -416,3 +416,45 @@ fn a_block_over_the_deploy_budget_is_invalid() {
     let one = block(&mut net, &[&d1]);
     net.submit(one, &mut []).expect("one deploy fits");
 }
+
+/// The deploy budget is inclusive: two valid deploys whose encoded bytes sum
+/// to exactly `MAX_DEPLOY_BLOCK_BYTES` make a valid block (run C mutation
+/// census: no test sat on the bound).
+#[test]
+fn a_block_of_exactly_the_deploy_budget_is_valid() {
+    use blacksilk_tx::validate::validate_block_transactions;
+    let mut net = TestNet::new(38, 80);
+    let size = |d: &PxDeploy| Transaction::PxDeploy(Box::new(d.clone())).px_bytes();
+    let d0 = deploy_from(
+        &mut net,
+        0,
+        vec![padded(VAULT_ELF), padded(&other_elf())],
+        1,
+    );
+    // The second deploy's second program is shortened until the two sum to
+    // the budget exactly (its fee and length prefixes are varints, so the
+    // size is re-measured after each build).
+    let mut len = MAX_PROGRAM_BYTES as i64;
+    let mut d1 = None;
+    for _ in 0..8 {
+        let mut short = padded(&other_elf());
+        short.elf.truncate(len as usize);
+        let d = deploy_from(&mut net, 1, vec![padded(VAULT_ELF), short], 2);
+        let excess = (size(&d0) + size(&d)) as i64 - MAX_DEPLOY_BLOCK_BYTES as i64;
+        if excess == 0 {
+            d1 = Some(d);
+            break;
+        }
+        len -= excess;
+    }
+    let d1 = d1.expect("the sizes converge");
+    assert_eq!(size(&d0) + size(&d1), MAX_DEPLOY_BLOCK_BYTES);
+    let fees = d0.fee + d1.fee;
+    let mut txs = vec![net.coinbase(fees)];
+    txs.extend([d0, d1].map(|d| Transaction::PxDeploy(Box::new(d))));
+    let ctx = net.context(&txs);
+    assert_eq!(
+        validate_block_transactions(&txs, &ctx, &net.chain, &net.rules, &mut net.rng),
+        Ok(())
+    );
+}
