@@ -828,3 +828,73 @@
 - **Amends "Agent 42" (exclusive windows):** runs A and B share the machine with a single-core fuzzer. Mitigation: generous timeouts, and every TIMEOUT mutant is re-run in isolation before it is classified.
 - **Cross-review:** every W4 report goes to a separate red-team agent who tries to break its conclusions (unexplained exemptions, weak killing tests, fuzz coverage gaps) before the Lead accepts it.
 - **CI:** run 115 = connection-cap race in node_binary (fixed d6f4609); the actor_order hang fix (ccff37c) held on Linux (non-PX step 28 min).
+
+## W4-MUT and RT-MUT (Lead, 2026-09-29)
+- **Mutation gate for consensus and px-core: ACCEPTED CONDITIONALLY.** RT-MUT confirmed E1–E7 (E1 for all window sizes ChainParams accepts), the counts, and that no mutant survives release arithmetic (the 24 overflow-only kills re-verified with overflow checks off). Merge after the Part 1 fixes land and are verified.
+- **Part 1 (W4-MUT, test and doc only):**
+  - T3 bound `peak <= 4`: the old `<= 5` let a doubled evicted-borrow allowance pass.
+  - Bound the unbounded waits in the cache-store tests.
+  - README timeout breakdown corrected: of the 21 cache-store timeouts, 10 fail an assertion and 11 only hang.
+  - Record the release-arithmetic re-verification.
+  - E7 check-order note.
+  - Balanced witnesses in the spec-field test.
+- **Part 2 (W4-MUT, product fix, P1 resource and liveness):** the RandomX cache store's transient footprint with a hot set is unbounded as stated, about (6 + H) × 256 MiB (≈3.5 GiB at H = 8). A trimmed 256 MiB cache is freed under the store mutex.
+  - The fix is an explicit bound that also holds for hot builds and hot-set churn, with the free moved outside the mutex.
+  - No hash, rule or fingerprint change. The fingerprints are re-checked with `--print-manifest`.
+  - A new RT pass follows the fix.
+  - The 2 GiB miner dataset is not affected: SeedPlanner owns it, and the ~4.4 GiB peak with prebuild is documented.
+- **Run C (next mutation run, P0 before the freeze), in priority order:**
+  - tx/src/validate.rs (138 mutants);
+  - tx/src/px.rs (174);
+  - chain/src/manager/fork_choice.rs reward check (on no list until now);
+  - tx/src/params.rs (93);
+  - crypto/ (CLSAG, BP+);
+  - chain/src/block.rs and emission.rs (low).
+  - Each run includes a release-arithmetic pass. It is scheduled after W4-FUZZ frees the CPU.
+
+## W4-FUZZ and RT-FUZZ (Lead, 2026-09-30)
+- **W4-FUZZ: ACCEPTED as robustness evidence only.**
+  - 12 targets × 1800 s, `-O -a`, 0 findings.
+  - RT replayed all 9,246 grown inputs in a plain release build: 0 panics, 0 hangs, bounded heap.
+  - Harness fixes W4F-1, F41-1 and F41-2 accepted.
+  - The claim is limited to "no panic on the reached surface". The depth reached is shallow: proof_decode decodes only its seed, 1 of 593 blocks carries PX, and there are no n_fn>0 kernel seeds.
+- **RT-FUZZ-1 (Medium, remote DoS amplification): FIX NOW (W4-PXDOS).**
+  - `decode_proof` accepts unbounded vectors: a 4 MiB padded proof takes 143 MB and 0.2 s inside the chain actor's `cheap_checks`.
+  - The fix caps every vector before allocation, at caps implied by the shape check, so the valid set and the fingerprint are unchanged. Decoding moves out of the actor command where safe.
+  - It gets a consensus-change record with a non-revision `Revision:` line. A red-team pass follows.
+- **Fuzz follow-ups (W4-FUZZ2, after the CPU frees):**
+  - lift `delivery_plain` from rt-fuzz, without the replay tool, which contains unsafe;
+  - kernel_diff seeds for every honest shape (n_fn 0..2), plus the budget assertion in the committed oracle;
+  - a structure-aware proof target and a structure-aware PX-tx target (edit the decoded value, then re-encode);
+  - correct the evidence README;
+  - rename or re-scope transport_handshake.
+- **Stateful harnesses (P1 before the freeze):**
+  - pre-Verack negotiation and the per-peer protocol, which needs the F41-9 sans-IO seam;
+  - px_admission, a stateful mempool admission harness with amplification oracles;
+  - scan_outputs, wallet scanning;
+  - an executor-vs-AIR constraint check (P1 research).
+
+## W4-LAB and RT-LAB (Lead, 2026-09-30)
+- **W4-LAB: ACCEPTED** as evidence for honest runs, unequal partitions and withholding releases. RT confirmed:
+  - fork choice is by strictly more work at each step (store-derived work 134 < 139 < 150 < 154);
+  - 0 penalties;
+  - every handshake failure falls inside a partition window;
+  - report.json reproduces exactly.
+- **Late-joiner re-confirmation: MET, with a caveat.**
+  - The 5-node lab is a complete graph, so the 4/4 result proves little by itself.
+  - RT's discriminating E2 run showed address relay working (3/3 learned the late-arriving nodes; 0/3 with relay disabled).
+  - The floor shows only as time-to-5: 4.8–7.0 s without it against 2.4 s with it.
+  - The labnet check becomes peers >= min(max_outbound + 1, nodes), with the E2 scenario added (W4-LAB fix pass).
+- **RT-LAB F1 (Medium, liveness, fix before testnet): W4-SYNC.**
+  - Header sync and announcements are height-gated, not work-gated. A lower-work branch of equal height stalled 12.5 s in run 4.
+  - A longer-but-lighter branch never pulls a shorter-but-heavier one.
+  - The fix goes by tip id or chain work, with DoS bounds; tests are written failing-first.
+- **RT-LAB F2 (Medium, performance).** A hop costs about 0.6 s of light RandomX plus up to 250 ms of maintenance tick.
+  - W4-SYNC makes announcements event-driven.
+  - Header-first relay and light-VM optimisation are design notes for after W4-SYNC.
+  - A multi-hop ring labnet is needed for real per-hop figures, scheduled in a quiet window after W4-SYNC.
+- **F3–F6 (evidence, metric, test design, docs):** W4-LAB fix pass.
+  - The logs get committed.
+  - Propagation is reported both filtered and unfiltered.
+  - A ring topology option is added.
+  - No new runs until the quiet window.
