@@ -4154,3 +4154,406 @@ async fn announcement_latency_with_the_default_tick() {
         ms[ms.len() - 1]
     );
 }
+
+// ------------------------------------------------ RT-SYNC (red team of W4-SYNC)
+
+/// RT-SYNC 3: a line A - B - C where B and C share a lighter branch of equal
+/// height and A holds a heavier one. When A dials B, C (two hops from the
+/// heavier branch) converges without a new block, and without penalties.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rt_sync_equal_height_heavier_branch_two_hops_away() {
+    init_test_log();
+    let mut a = node(700, &[]).await;
+    let mut b = node(701, &[]).await;
+    b.mine_spaced(12, 120, 2);
+    let c = node(702, &[b.addr]).await;
+    wait_until("C on B's branch", 20, || c.tip() == b.tip()).await;
+    a.mine_spaced(12, 5, 1);
+    assert_eq!(a.height(), c.height());
+    assert!(a.work() > c.work());
+    let heavy = a.tip();
+    a.net.connect(NetAddr::Ip(b.addr));
+    wait_until("C took the heavier branch two hops away", 20, || {
+        c.tip() == heavy
+    })
+    .await;
+    assert_eq!(b.tip(), heavy);
+    assert_eq!(c.height(), 12);
+    let scored = penalized(&[&a, &b, &c]);
+    assert!(scored.is_empty(), "penalized: {scored:?}");
+}
+
+/// RT-SYNC 3: the same line with a SHORTER heavier branch; B dials A.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rt_sync_shorter_heavier_branch_two_hops_away() {
+    init_test_log();
+    let mut a = node(704, &[]).await;
+    let mut b = node(705, &[]).await;
+    b.mine_spaced(16, 120, 2);
+    let c = node(706, &[b.addr]).await;
+    wait_until("C on B's branch", 20, || c.tip() == b.tip()).await;
+    a.mine_spaced(10, 5, 1);
+    assert!(a.height() < c.height());
+    assert!(a.work() > c.work(), "{} vs {}", a.work(), c.work());
+    let heavy = a.tip();
+    b.net.connect(NetAddr::Ip(a.addr));
+    wait_until("C took the shorter heavier branch", 20, || c.tip() == heavy).await;
+    assert_eq!(c.height(), 10);
+    let scored = penalized(&[&a, &b, &c]);
+    assert!(scored.is_empty(), "penalized: {scored:?}");
+}
+
+/// RT-SYNC 3: a long partition with LWMA difficulty drift: 400 light blocks
+/// against 150 blocks at half the target spacing (heavier, shorter), fork at genesis,
+/// deeper than ANTI_DOS_BLOCKS. Either side dialing converges on the heavier.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rt_sync_long_partition_with_lwma_drift_converges_on_the_heavier() {
+    init_test_log();
+    for heavier_dials in [false, true] {
+        let seed = if heavier_dials { 710 } else { 708 };
+        let mut long = node(seed, &[]).await;
+        let mut short = node(seed + 1, &[]).await;
+        long.mine_spaced(400, 120, 1);
+        short.mine_spaced(150, 5, 2);
+        println!(
+            "RT-SYNC LWMA: long {} blocks work {}, short {} blocks work {}",
+            long.height(),
+            long.work(),
+            short.height(),
+            short.work()
+        );
+        assert!(short.work() > long.work());
+        let heavy = short.tip();
+        if heavier_dials {
+            short.net.connect(NetAddr::Ip(long.addr));
+        } else {
+            long.net.connect(NetAddr::Ip(short.addr));
+        }
+        wait_until("the long node took the heavier branch", 60, || {
+            long.tip() == heavy
+        })
+        .await;
+        let scored = penalized(&[&long, &short]);
+        assert!(scored.is_empty(), "penalized: {scored:?}");
+    }
+}
+
+/// RT-SYNC 2: equal work, different tips (a tie). Each keeps its own tip
+/// (ties keep), without penalties, and the next block settles it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rt_sync_equal_work_tie_is_bounded_and_settles_on_the_next_block() {
+    init_test_log();
+    let mut a = node(712, &[]).await;
+    let mut b = node(713, &[]).await;
+    a.mine_spaced(6, 120, 1);
+    b.mine_spaced(6, 120, 2);
+    assert_eq!(a.work(), b.work());
+    assert_ne!(a.tip(), b.tip());
+    let (ta, tb) = (a.tip(), b.tip());
+    a.net.connect(NetAddr::Ip(b.addr));
+    wait_until("connected", 10, || a.net.peers().len() == 1).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!((a.tip(), b.tip()), (ta, tb), "a tie keeps both tips");
+    a.mine_spaced(1, 120, 1);
+    let t = a.tip();
+    wait_until("B took A's next block", 20, || b.tip() == t).await;
+    let scored = penalized(&[&a, &b]);
+    assert!(scored.is_empty(), "penalized: {scored:?}");
+}
+
+/// RT-SYNC 2 (race): the node's tip changes between its `Version` (which
+/// names the old tip) and the peer's registration. The announcement ran
+/// while the peer was not registered, and the peer's `Version` tip is now
+/// placeable (in our locator), so nobody asks and nobody tells: the peer
+/// does not learn the new tip until the next one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rt_sync_a_tip_found_during_the_handshake_is_announced() {
+    init_test_log();
+    let mut a = node(714, &[]).await;
+    let nid = params().network_id;
+    a.mine_n(5, 0);
+    let (old_tip, h) = (a.tip(), a.height());
+    let s = TcpStream::connect(a.addr).await.unwrap();
+    let (mut r, mut w) = handshake(s, true, nid, &params().genesis_id(), Duration::from_secs(5))
+        .await
+        .unwrap();
+    let v = Version {
+        protocol: PROTOCOL_VERSION,
+        network: nid,
+        nonce: 0xdead_beef,
+        height: h,
+        tip: old_tip,
+        listen: None,
+        relay_txs: true,
+    };
+    w.send(&Message::Version(v).encode()).await.unwrap();
+    let m = Message::decode(&r.recv().await.unwrap()).unwrap();
+    assert!(matches!(m, Message::Version(ref v) if v.tip == old_tip));
+    // The node finds a block before our Verack registers us.
+    a.mine(0);
+    let new_tip = a.tip();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    w.send(&Message::Verack.encode()).await.unwrap();
+    let got = recv_until(&mut r, 4.0, |m| {
+        matches!(m, Message::Headers(hs) if hs.iter().any(|x| x.id(nid) == new_tip))
+            || matches!(m, Message::GetHeaders { .. })
+    })
+    .await;
+    assert!(
+        got.is_some(),
+        "the peer was neither told of nor asked about the tip found during its handshake"
+    );
+}
+
+/// RT-SYNC 1/2 (echo): a node that has the best header chain but is still
+/// connecting bodies announces every intermediate tip to a peer that named
+/// that best header in its `Version` (its work is recorded as 0), although
+/// every one of them is an ancestor of the peer's tip. Before W4-SYNC the
+/// peer's claimed height suppressed them. Counts the redundant announcements.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rt_sync_a_draining_node_does_not_echo_tips_to_a_peer_ahead() {
+    init_test_log();
+    let nid = params().network_id;
+    let mut a = node(716, &[]).await;
+    a.mine_n(150, 0);
+    let headers: Vec<BlockHeader> = {
+        let c = a.chain.lock().unwrap();
+        (1..=150).map(|h| c.block_at(h).unwrap().header).collect()
+    };
+    let best = headers[149].id(nid);
+    let n = node(717, &[]).await;
+    // X: serves the headers, not the bodies.
+    let (xr, xw) = raw_peer_at(n.addr, nid, true, 150).await;
+    serve_branch(xr, xw, headers.clone());
+    wait_until("N has the headers", 20, || {
+        n.chain.lock().unwrap().header_height() == 150
+    })
+    .await;
+    assert_eq!(n.height(), 0);
+    // E: an honest peer at the same best header (it has all 150 blocks).
+    let s = TcpStream::connect(n.addr).await.unwrap();
+    let (mut er, mut ew) = try_raw_handshake_tip(s, true, nid, true, 150, best)
+        .await
+        .expect("handshake");
+    wait_until("E registered", 5, || n.net.peers().len() == 2).await;
+    let counter = tokio::spawn(async move {
+        let mut echoes = 0usize;
+        let mut asked = 0usize;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        while let Ok(Ok(frame)) = tokio::time::timeout_at(deadline, er.recv()).await {
+            match Message::decode(&frame) {
+                Ok(Message::Headers(h)) if h.len() == 1 => echoes += 1,
+                Ok(Message::GetHeaders { .. }) => asked += 1,
+                // A raw peer: bodies are "not found" (no timeout).
+                Ok(Message::GetBlocks(ids)) => {
+                    let _ = ew.send(&Message::NotFound(ids).encode()).await;
+                }
+                _ => {}
+            }
+        }
+        (echoes, asked)
+    });
+    n.net.connect(NetAddr::Ip(a.addr));
+    wait_until("N connected the bodies", 20, || n.height() == 150).await;
+    let (echoes, asked) = counter.await.unwrap();
+    println!("RT-SYNC echo: {echoes} single-header announcements to E, {asked} GetHeaders");
+    assert_eq!(
+        echoes, 0,
+        "{echoes} ancestors of E's tip were announced to it"
+    );
+}
+
+/// RT-SYNC 1 (DoS): peers reconnecting with an unplaceable tip, answering
+/// the request with our own headers (a reply of stored headers), cost no
+/// proof of work and are asked once per connection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rt_sync_fake_tip_churn_with_stored_headers_hashes_nothing() {
+    init_test_log();
+    let nid = params().network_id;
+    let pow = Arc::new(CountAllPow::default());
+    let mut a = node_with_pow(718, fast_config(&[]), pow.clone()).await;
+    a.mine_n(40, 0);
+    let ours: Vec<BlockHeader> = {
+        let c = a.chain.lock().unwrap();
+        (1..=40).map(|h| c.block_at(h).unwrap().header).collect()
+    };
+    let before = pow.0.load(std::sync::atomic::Ordering::SeqCst);
+    let mut asked_total = 0;
+    for i in 0..20u8 {
+        let s = connect_from([127, 0, 0, 10 + i], a.addr).await.unwrap();
+        let (mut r, mut w) = try_raw_handshake_tip(s, true, nid, true, 0, [0x55 ^ i; 32])
+            .await
+            .expect("handshake");
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(700);
+        while let Ok(Some(_)) = tokio::time::timeout_at(
+            deadline,
+            recv_until(&mut r, 1.0, |m| matches!(m, Message::GetHeaders { .. })),
+        )
+        .await
+        {
+            asked_total += 1;
+            w.send(&Message::Headers(ours.clone()).encode())
+                .await
+                .unwrap();
+        }
+    }
+    let after = pow.0.load(std::sync::atomic::Ordering::SeqCst);
+    println!(
+        "RT-SYNC churn: {asked_total} requests over 20 connections, {} hashes",
+        after - before
+    );
+    assert_eq!(asked_total, 20);
+    assert_eq!(after, before, "stored headers were hashed");
+    assert!(a.net.peers().iter().all(|p| p.score == 0));
+}
+
+/// RT-SYNC 2 (stale record): a peer relayed headers of a branch (its last
+/// header on our best header chain then, work W) whose first block's body
+/// later proves invalid. Our best header chain falls back, and our next
+/// honest tips (on the new best chain, work below W) are not announced to
+/// the peer: `known_on_main` was recorded before the branch lost, and the
+/// peer (which rejects the same invalid body) does not have them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rt_sync_tips_after_an_invalidated_branch_are_announced_to_its_relayer() {
+    init_test_log();
+    let mut a = node(720, &[]).await;
+    a.mine_n(2, 0);
+    let nid = params().network_id;
+    // A block with a valid header and an invalid body (the coinbase
+    // overpays), not submitted: the node learns the body later.
+    let bad = {
+        let c = a.chain.lock().unwrap();
+        let t = c.template();
+        let cb = build_coinbase(
+            t.height,
+            &[Payment {
+                address: a.miner.address(SubaddressIndex::PRIMARY),
+                amount: t.reward + 1,
+            }],
+            &a.miner.hedge_secret(),
+            &mut ChaCha20Rng::seed_from_u64(1),
+        )
+        .unwrap();
+        let txs = vec![Transaction::Coinbase(cb)];
+        let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+        let header = BlockHeader {
+            version: HEADER_VERSION,
+            height: t.height,
+            prev_id: t.prev_id,
+            timestamp: t
+                .min_timestamp
+                .max(params().genesis.timestamp + 120 * t.height),
+            difficulty: t.difficulty,
+            tx_root: tx_root(&ids),
+            nonce: 7,
+        };
+        Block { header, txs }
+    };
+    // Two valid headers on it.
+    let children = {
+        let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+        let c = a.chain.lock().unwrap();
+        for h in 1..=2 {
+            g.accept(c.block_at(h).unwrap().header, u64::MAX / 2)
+                .unwrap();
+        }
+        let mut x = g.accept(bad.header, u64::MAX / 2).unwrap().id;
+        let mut out = Vec::new();
+        for _ in 0..2 {
+            let t = g.template_on(x).unwrap();
+            let parent = *g.header(&x).unwrap();
+            let h = BlockHeader {
+                version: HEADER_VERSION,
+                height: t.height,
+                prev_id: x,
+                timestamp: t.min_timestamp.max(parent.timestamp + 120),
+                difficulty: t.difficulty,
+                tx_root: [0; 32],
+                nonce: 7,
+            };
+            x = g.accept(h, u64::MAX / 2).unwrap().id;
+            out.push(h);
+        }
+        out
+    };
+    let branch = vec![bad.header, children[0], children[1]];
+    // P: an honest relayer of the headers (no bodies).
+    let (mut pr, mut pw) = raw_peer_at(a.addr, nid, true, 5).await;
+    assert!(
+        recv_until(&mut pr, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    pw.send(&Message::Headers(branch.clone()).encode())
+        .await
+        .unwrap();
+    wait_until("the branch's headers are stored", 10, || {
+        a.chain.lock().unwrap().header_height() == 5
+    })
+    .await;
+    // M: the source of the invalid body.
+    let s = connect_from([127, 0, 0, 77], a.addr).await.unwrap();
+    let (mr, mw) = try_raw_handshake(s, nid, true, 5).await.expect("handshake");
+    {
+        let (mut mr, mut mw, branch, bad) = (mr, mw, branch.clone(), bad.clone());
+        tokio::spawn(async move {
+            while let Ok(frame) = mr.recv().await {
+                let reply = match Message::decode(&frame) {
+                    Ok(Message::GetHeaders { locator, .. }) => {
+                        Message::Headers(serve_headers(&branch, &locator))
+                    }
+                    Ok(Message::GetBlocks(ids)) if ids.contains(&bad.header.id(nid)) => {
+                        Message::Block(bad.encode())
+                    }
+                    Ok(Message::GetBlocks(ids)) => Message::NotFound(ids),
+                    _ => continue,
+                };
+                if mw.send(&reply.encode()).await.is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    // P answers body requests with "not found".
+    let (ptx, mut prx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                f = pr.recv() => {
+                    let Ok(frame) = f else { break };
+                    match Message::decode(&frame) {
+                        Ok(Message::GetBlocks(ids)) => {
+                            let _ = pw.send(&Message::NotFound(ids).encode()).await;
+                        }
+                        Ok(m) => { let _ = ptx.send(m); }
+                        Err(_) => {}
+                    }
+                }
+            }
+        }
+    });
+    wait_until(
+        "the invalid branch is dropped from the best header chain",
+        20,
+        || {
+            let c = a.chain.lock().unwrap();
+            c.best_header_id() == c.tip_id()
+        },
+    )
+    .await;
+    assert_eq!(a.height(), 2);
+    // Our next honest block (work below the relayed branch's).
+    a.mine(0);
+    let tip = a.tip();
+    let got = tokio::time::timeout(Duration::from_secs(3), async {
+        while let Some(m) = prx.recv().await {
+            if matches!(&m, Message::Headers(h) if h.iter().any(|x| x.id(nid) == tip)) {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    assert!(got, "our new tip was not announced to the branch's relayer");
+}
