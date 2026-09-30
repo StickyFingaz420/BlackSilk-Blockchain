@@ -1,0 +1,133 @@
+=== tx_decode
+start 2026-09-29T15:52:32Z target=tx_decode T=1800 corpus_before=1346 files/3341125 bytes free_kb=8358244
+end 2026-09-29T16:22:35Z exit=0 wall=1803s corpus_after=1657 files/5496361 bytes artifacts=0
+INFO: seed corpus: files: 1346 min: 1b max: 2417954b total: 3341125b rss: 75Mb
+#1348	INITED cov: 2269 ft: 4322 corp: 406/283Kb exec/s: 0 rss: 99Mb
+#3772740	DONE   cov: 2614 ft: 5781 corp: 589/2124Kb lim: 65536 exec/s: 2094 rss: 596Mb
+stat::number_of_executed_units: 3772740
+stat::average_exec_per_sec:     2094
+stat::new_units_added:          538
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              596
+=== block_decode
+start 2026-09-29T16:22:37Z target=block_decode T=1800 corpus_before=514 files/110335 bytes free_kb=8653144
+end 2026-09-29T16:52:43Z exit=0 wall=1806s corpus_after=593 files/423283 bytes artifacts=0
+INFO: seed corpus: files: 514 min: 1b max: 5562b total: 110335b rss: 74Mb
+#515	INITED cov: 1210 ft: 2221 corp: 207/45Kb exec/s: 0 rss: 80Mb
+#1943303	DONE   cov: 1417 ft: 3184 corp: 276/349Kb lim: 23924 exec/s: 1079 rss: 531Mb
+stat::number_of_executed_units: 1943303
+stat::average_exec_per_sec:     1079
+stat::new_units_added:          174
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              531
+=== p2p_message
+start 2026-09-29T16:52:43Z target=p2p_message T=1800 corpus_before=324 files/104241 bytes free_kb=8462940
+end 2026-09-29T17:22:52Z exit=0 wall=1804s corpus_after=600 files/169223 bytes artifacts=0
+INFO: seed corpus: files: 324 min: 1b max: 25103b total: 104241b rss: 73Mb
+#325	INITED cov: 757 ft: 1371 corp: 170/81Kb exec/s: 0 rss: 77Mb
+#45360615	DONE   cov: 862 ft: 2309 corp: 341/107Kb lim: 65536 exec/s: 25186 rss: 744Mb
+stat::number_of_executed_units: 45360615
+stat::average_exec_per_sec:     25186
+stat::new_units_added:          910
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              744
+=== zkvm_elf
+start 2026-09-29T17:22:57Z target=zkvm_elf T=1800 corpus_before=1336 files/4213827 bytes free_kb=8686492
+end 2026-09-29T17:53:08Z exit=0 wall=1811s corpus_after=1524 files/4594011 bytes artifacts=0
+INFO: seed corpus: files: 1336 min: 1b max: 21148b total: 4213827b rss: 75Mb
+#1338	INITED cov: 1912 ft: 8206 corp: 373/668Kb exec/s: 66 rss: 374Mb
+#1822382	DONE   cov: 1919 ft: 8601 corp: 436/777Kb lim: 32768 exec/s: 1011 rss: 428Mb
+stat::number_of_executed_units: 1822382
+stat::average_exec_per_sec:     1011
+stat::new_units_added:          209
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              428
+=== kernel_diff
+start 2026-09-29T17:53:08Z target=kernel_diff T=1800 corpus_before=961 files/948909 bytes free_kb=8603676
+end 2026-09-29T18:23:11Z exit=0 wall=1803s corpus_after=1191 files/1139816 bytes artifacts=0
+INFO: seed corpus: files: 961 min: 1b max: 3312b total: 948909b rss: 75Mb
+#962	INITED cov: 1974 ft: 8761 corp: 280/186Kb exec/s: 96 rss: 541Mb
+#233869	DONE   cov: 1978 ft: 9308 corp: 378/301Kb lim: 4596 exec/s: 129 rss: 541Mb
+stat::number_of_executed_units: 233869
+stat::average_exec_per_sec:     129
+stat::new_units_added:          293
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              541
+=== delivery_open
+start 2026-09-29T18:23:11Z target=delivery_open T=1800 corpus_before=24 files/29779 bytes free_kb=8605880
+end 2026-09-29T18:53:19Z exit=0 wall=1804s corpus_after=24 files/29779 bytes artifacts=0
+INFO: seed corpus: files: 24 min: 1b max: 1306b total: 29779b rss: 72Mb
+#25	INITED cov: 1548 ft: 2071 corp: 23/27Kb exec/s: 0 rss: 74Mb
+#980176	DONE   cov: 1548 ft: 2071 corp: 23/27Kb lim: 11054 exec/s: 544 rss: 454Mb
+stat::number_of_executed_units: 980176
+stat::average_exec_per_sec:     544
+stat::new_units_added:          0
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              454
+=== proof_decode
+start 2026-09-29T21:23:49Z target=proof_decode T=1800 corpus_before=1559 files/355987844 bytes free_kb=8135312
+end 2026-09-29T21:53:52Z exit=0 wall=1803s corpus_after=2253 files/365010870 bytes artifacts=0
+INFO: seed corpus: files: 1559 min: 1b max: 2399314b total: 355987844b rss: 77Mb
+#1561	INITED cov: 1189 ft: 3429 corp: 384/22Mb exec/s: 48 rss: 587Mb
+#344990	DONE   cov: 1224 ft: 3574 corp: 437/21Mb lim: 2399482 exec/s: 191 rss: 645Mb
+stat::number_of_executed_units: 344990
+stat::average_exec_per_sec:     191
+stat::new_units_added:          787
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              645
+=== store_records
+start 2026-09-29T18:53:22Z target=store_records T=1800 corpus_before=12 files/5821 bytes free_kb=7761252
+end 2026-09-29T19:23:33Z exit=0 wall=1810s corpus_after=347 files/97959 bytes artifacts=0
+INFO: seed corpus: files: 12 min: 1b max: 812b total: 5821b rss: 71Mb
+#14	INITED cov: 822 ft: 1183 corp: 10/4245b exec/s: 0 rss: 75Mb
+#161870	DONE   cov: 1017 ft: 2947 corp: 322/90Kb lim: 866 exec/s: 89 rss: 551Mb
+stat::number_of_executed_units: 161870
+stat::average_exec_per_sec:     89
+stat::new_units_added:          1511
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              551
+=== seed_words
+start 2026-09-29T19:23:35Z target=seed_words T=1800 corpus_before=12 files/783 bytes free_kb=8316600
+end 2026-09-29T19:53:39Z exit=0 wall=1804s corpus_after=408 files/39949 bytes artifacts=0
+INFO: seed corpus: files: 12 min: 36b max: 188b total: 783b rss: 71Mb
+#14	INITED cov: 738 ft: 1081 corp: 12/783b exec/s: 0 rss: 74Mb
+#1835999	DONE   cov: 886 ft: 2570 corp: 402/38Kb lim: 1024 exec/s: 1019 rss: 674Mb
+stat::number_of_executed_units: 1835999
+stat::average_exec_per_sec:     1019
+stat::new_units_added:          2755
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              674
+=== transport_recv
+start 2026-09-29T19:53:39Z target=transport_recv T=1800 corpus_before=11 files/131 bytes free_kb=8429396
+end 2026-09-29T20:23:42Z exit=0 wall=1803s corpus_after=287 files/94860 bytes artifacts=0
+INFO: seed corpus: files: 11 min: 4b max: 68b total: 131b rss: 73Mb
+#13	INITED cov: 1729 ft: 2318 corp: 10/115b exec/s: 0 rss: 75Mb
+#653698	DONE   cov: 1882 ft: 5780 corp: 280/97Kb lim: 4468 exec/s: 362 rss: 909Mb
+stat::number_of_executed_units: 653698
+stat::average_exec_per_sec:     362
+stat::new_units_added:          924
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              909
+=== transport_handshake
+start 2026-09-29T20:23:43Z target=transport_handshake T=1800 corpus_before=9 files/359 bytes free_kb=8335652
+end 2026-09-29T20:53:45Z exit=0 wall=1802s corpus_after=29 files/1076 bytes artifacts=0
+INFO: seed corpus: files: 8 min: 21b max: 97b total: 359b rss: 73Mb
+#11	INITED cov: 1216 ft: 1712 corp: 8/359b exec/s: 0 rss: 75Mb
+#5213135	DONE   cov: 1221 ft: 1787 corp: 14/331b lim: 51951 exec/s: 2894 rss: 436Mb
+stat::number_of_executed_units: 5213135
+stat::average_exec_per_sec:     2894
+stat::new_units_added:          52
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              436
+=== addr_v2
+start 2026-09-29T20:53:45Z target=addr_v2 T=1800 corpus_before=8 files/314 bytes free_kb=8517148
+end 2026-09-29T21:23:48Z exit=0 wall=1803s corpus_after=333 files/44464 bytes artifacts=0
+INFO: seed corpus: files: 8 min: 1b max: 109b total: 314b rss: 71Mb
+#9	INITED cov: 625 ft: 948 corp: 8/314b exec/s: 0 rss: 73Mb
+#18211048	DONE   cov: 886 ft: 3722 corp: 330/43Kb lim: 65536 exec/s: 10111 rss: 762Mb
+stat::number_of_executed_units: 18211048
+stat::average_exec_per_sec:     10111
+stat::new_units_added:          947
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              762
+2026-09-29T21:23:49Z free_kb=8127988

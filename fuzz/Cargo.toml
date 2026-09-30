@@ -120,6 +120,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "transport_handshake"
+path = "fuzz_targets/transport_handshake.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "addr_v2"
 path = "fuzz_targets/addr_v2.rs"
 test = false

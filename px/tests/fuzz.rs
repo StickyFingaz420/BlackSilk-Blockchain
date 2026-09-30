@@ -3,8 +3,9 @@
 //!
 //! - **Kernel, native vs guest (differential):** mutated witnesses (random
 //!   words changed, truncated, extended) must give the same verdict natively
-//!   and in the zkVM: the same public output, or the same error exit code
-//!   (or a guest trap when the native kernel read past the end).
+//!   and in the zkVM: the same public output, or the same error exit code,
+//!   or an `InputExhausted` guest trap exactly where the native kernel read
+//!   past the end (F41-2: any other trap is a divergence).
 //! - **Delivery:** mutated ciphertexts never open and never panic.
 
 use blacksilk_px::delivery;
@@ -12,11 +13,24 @@ use blacksilk_px::perm::HostPerm;
 use blacksilk_px::prove::{kernel_program, public_words, witness_words};
 use blacksilk_px::tree::Tree;
 use blacksilk_px::wallet::{self, Account};
-use blacksilk_px_core::kernel::{self, SliceSource};
+use blacksilk_px_core::kernel::{self, SliceSource, Source};
 use blacksilk_px_core::record::Record;
-use blacksilk_zkvm::{run, MAX_CYCLES};
+use blacksilk_zkvm::{run, TrapKind, MAX_CYCLES};
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
+
+/// The native source, counting how many words the kernel asked for.
+struct Counting<'a> {
+    inner: SliceSource<'a>,
+    reads: usize,
+}
+
+impl Source for Counting<'_> {
+    fn next(&mut self) -> u32 {
+        self.reads += 1;
+        self.inner.next()
+    }
+}
 
 fn iters(default: usize) -> usize {
     std::env::var("BLACKSILK_FUZZ_ITERS")
@@ -77,22 +91,34 @@ fn mutated_witnesses_get_the_same_verdict_natively_and_in_the_guest() {
             3 => v.truncate(rng.next_u32() as usize % v.len()),
             _ => v.extend((0..1 + rng.next_u32() % 8).map(|_| rng.next_u32())),
         }
-        let native = kernel::transfer(&mut HostPerm::new(), &mut SliceSource::new(&v));
+        let mut source = Counting {
+            inner: SliceSource::new(&v),
+            reads: 0,
+        };
+        let native = kernel::transfer(&mut HostPerm::new(), &mut source);
+        let over_read = source.reads > v.len();
         let guest = run(&kernel_program(), &v, MAX_CYCLES);
         match (native, guest) {
             (Ok(p), Ok(exec)) => {
+                assert!(!over_read, "native accepted after reading past the end");
                 assert_eq!(exec.exit_code, 0);
                 assert_eq!(exec.output, public_words(&p));
                 accepted += 1;
             }
             (Err(e), Ok(exec)) => {
+                assert!(!over_read, "{e:?}: native read past the end, guest exited");
                 assert_eq!(exec.exit_code, e.exit_code(), "{e:?}");
                 assert!(exec.output.is_empty());
                 rejected += 1;
             }
             // The guest traps reading past the end of its input; the native
-            // kernel reads u32::MAX there and must reject too.
-            (Err(_), Err(_)) => trapped += 1,
+            // kernel reads u32::MAX there and must reject too. No other trap
+            // matches a native rejection.
+            (Err(e), Err(t)) => {
+                assert_eq!(t.kind, TrapKind::InputExhausted, "{e:?}: guest {t:?}");
+                assert!(over_read, "{e:?}: guest ran out of input, native did not");
+                trapped += 1;
+            }
             (Ok(_), Err(t)) => panic!("native accepted, guest trapped: {t:?}"),
         }
     }

@@ -40,6 +40,9 @@ mod seed_words;
 #[path = "targets/store_records.rs"]
 #[allow(dead_code)]
 mod store_records;
+#[path = "targets/transport_handshake.rs"]
+#[allow(dead_code)]
+mod transport_handshake;
 #[path = "targets/transport_recv.rs"]
 #[allow(dead_code)]
 mod transport_recv;
@@ -61,6 +64,7 @@ fn main() {
         ("store_records", store_records::seeds()),
         ("seed_words", seed_words::seeds()),
         ("transport_recv", transport_recv::seeds()),
+        ("transport_handshake", transport_handshake::seeds()),
         ("addr_v2", addr_v2::seeds()),
     ] {
         if only.is_empty() || only.iter().any(|t| t == target) {
@@ -236,7 +240,14 @@ fn main() {
         })
         .collect();
     let funding = Transaction::Coinbase(build_coinbase(2, &funds, &[2; 32], &mut rng).unwrap());
-    let owned = scan_block(keys.view_keys(), &table, &[funding], 2, 0).owned;
+    let owned = scan_block(
+        keys.view_keys(),
+        &table,
+        std::slice::from_ref(&funding),
+        2,
+        0,
+    )
+    .owned;
     assert_eq!(owned.len(), 16, "the wallet owns every funding output");
     let plan = |k: usize| InputPlan {
         real: SpendableOutput::from(&owned[k]),
@@ -325,5 +336,35 @@ fn main() {
         &mut rng,
     )
     .unwrap();
-    put("tx_decode", "px", &Transaction::Px(Box::new(px)).encode());
+    put(
+        "tx_decode",
+        "px",
+        &Transaction::Px(Box::new(px.clone())).encode(),
+    );
+
+    // The same PX transaction with a short proof blob (F41-1). The proof is
+    // opaque, length-prefixed bytes to the decoder, and the full seed (about
+    // 2 MB) is longer than the campaign's -max_len, so libFuzzer truncates it
+    // at load and it never decodes: without this seed, the PX decoder and
+    // the stateless PX rules are reached only if the fuzzer rebuilds a PX
+    // encoding by itself. And a block carrying it, for block_decode.
+    let mut short = px;
+    short.proof.truncate(64);
+    let short = Transaction::Px(Box::new(short));
+    put("tx_decode", "px_short_proof", &short.encode());
+    let txs = vec![funding, short];
+    let ids: Vec<_> = txs.iter().map(Transaction::hash).collect();
+    let block = Block {
+        header: BlockHeader {
+            version: HEADER_VERSION,
+            height: 2,
+            prev_id: [2; 32],
+            timestamp: genesis.timestamp + 240,
+            difficulty: 1,
+            tx_root: tx_root(&ids),
+            nonce: 0,
+        },
+        txs,
+    };
+    put("block_decode", "block_px", &block.encode());
 }
