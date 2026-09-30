@@ -2922,7 +2922,27 @@ of the chain actor where safe, a non-revision record; a red-team pass follows).
     - `px/tests/proof.rs` (PX-proving): the real transfer proof decodes under the PX
       limits and verifies, has the derived chunk counts, and the red team's two padded
       variants of it are refused under both limits.
-11. **Suite results.** Recorded in the next commit of W4-PXDOS (this commit adds the change and its tests).
+11. **Suite results** (2026-09-30, `--locked`, this machine, on `2ed01fe`):
+    - `cargo fmt --all -- --check`, `cargo clippy --locked --workspace --all-targets --
+      -D warnings`: clean. `cargo deny check`: advisories, bans, licenses, sources ok.
+      Consensus gate (`64d89d4..HEAD`), lockfile gate (Cargo.lock unchanged) and unicode
+      scan: pass.
+    - zk (debug): lib 3, `decode_bounds` 6, `field_mutations` 1, `grinding` 4 (1
+      ignored), `pins` 1, `soundness_calc` 3, `upstream_advisories` 6: all passed.
+    - Non-PX, release, the CI job's selection (workspace without tx, px and zk, then
+      the tx and px non-proving tests): 142 test binaries, 1 241 passed, 1 failed, 7
+      ignored. The failure is the wall-clock bound of
+      `chain::actor_order::l7_a_header_announcement_is_accepted_within_a_step_per_command_during_a_drain`
+      under the parallel run (actor 376.7 ms against a bound of a tenth of the mutex
+      path's 3.73 s); the chain crate is not changed here, and the test passed twice
+      when run alone.
+    - PX-proving, release, one at a time, each started at 7 GB free or more,
+      `--test-threads=1`: px `proof` 3; p2p `network`
+      `invalid_px_transactions_get_the_relaying_peer_penalized` 1 and
+      `px_transactions_travel_the_stem_and_confirm_everywhere` 1; tx `px_consensus` 4
+      (contract, vault and transfer proofs through `decode_px_proof` with the PX
+      limits); tx `fuzz_decode` 1; zk `proofs` 16 (preprocessed statements included).
+      All passed.
 12. **Measurements after the fix** (the same probe, release, best of 5):
 
     | Input | Bytes | Heap peak | Time | Result |
@@ -2954,7 +2974,10 @@ of the chain actor where safe, a non-revision record; a red-team pass follows).
     - The structure-aware proof fuzz target (W4-FUZZ2) should drive
       `decode_proof_with` with `PROOF_LIMITS`.
 14. **Identity impact.** None: no constant of the manifests changed. `blacksilk-node
-    --print-manifest` built from clean commits before and after: recorded in the next commit.
+    --print-manifest` for every network, built from the clean commits `64d89d4` (base) and
+    `2ed01fe` (this change) in separate target directories: the two outputs differ only
+    in the header line naming the build commit; every fingerprint and entry is identical
+    (the values are those of `--print-manifest`, not copied here).
 15. **Documentation.** This record, the module documentation of `zk/src/bounds.rs`, and
     the comments of `decode_px_proof`, `validate_px_checks`, `validate_block_transactions` and
     `admission.rs`. **Review status.** Internal; a red-team pass follows (decisions).
