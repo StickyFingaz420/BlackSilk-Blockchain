@@ -44,6 +44,11 @@ explained in [mutation-exemptions.md](../../reviews/mutation-exemptions.md).
   - Run B's test set never ran the kernel's contract-function paths natively.
 - **One flaky test found and fixed (§ Flaky baseline).** It was a measurement race
   in the test, not in the code. RT-MUT tightened its bound from 5 to the exact 4.
+- **The RandomX cache store now has a memory bound (§ The bounded cache store).**
+  Red team RT-MUT found the store unbounded with a hot set; `MAX_CACHES` = 5 caches
+  (1.25 GiB) now holds for every build. Its new code was censused on its own
+  (`runPow3`: 155 mutants, 112 caught, 0 missed, 8 timeouts all caught in
+  isolation, 35 unviable).
 
 ## Setup
 
@@ -177,10 +182,10 @@ caches alive" (bound: 5), on the unmutated tree.
   `the_caches_alive_stay_bounded`): 0 failures in 200 runs unmutated; with
   `evicted_alive() > 1` loosened to `> 2`, 50 failures in 50 runs (peak 5), a
   loosening the old `<= 5` let pass.
-- **Real, transient effect.** With real 256 MiB caches, a new build can briefly
-  overlap the freeing of a cache whose destructor is still running. This is bounded
-  by the number of hashing threads that release at that moment. It is not a
-  consensus matter (a cache never changes a hash), and it is reported for the Lead.
+- **Real, transient effect, since removed.** With real 256 MiB caches, a new build
+  could briefly overlap the freeing of a cache whose destructor was still running.
+  The bounded store (§ The bounded cache store) counts every instance until its
+  memory is freed, so this window is gone, and T3 no longer needs its gate.
 
 ## Release arithmetic (RT-MUT)
 
@@ -217,6 +222,90 @@ debug-assertions=off`, and the profile passes neither switch itself.
     10 s (`ovf88/`, filter `ovf88.args`, `-C=--test=golden -C=--test=lwma_warm`).
   - The two timed out in the full suite for the same reason as run A's: the chain
     unit tests' nonce searches never end under a wrong difficulty.
+
+## The bounded cache store (RT-MUT, Part 2)
+
+**Problem (red team).** With a hot set, which production has once the chain
+manager calls `set_hot_seeds`:
+- hot builds skipped the evicted-cache wait (`side &&` in `get`);
+- a hot-set change could move two borrowed hot caches to the evicted list at once;
+- prebuild threads were detached and not deduplicated.
+
+The transient footprint was then about (6 + H) × 256 MiB, with H the PoW threads.
+Also, a cache trimmed while unborrowed was freed inside `trim`, under the store mutex
+that every hashing caller needs.
+
+**Change** (`consensus/src/pow.rs`, commits `694fe96`, `6d47e35` (tests) and `09299bd`; no hash, rule
+or fingerprint change):
+- **The bound.** `MAX_CACHES = HOT_SEEDS + SIDE_CAP_PINNED + 2 = 5` cache instances
+  in memory, whether kept, being built, evicted but borrowed, or being freed: 1.25
+  GiB of RandomX caches. It is what the pinned steady state needs without waiting:
+  2 hot, 1 kept side, 1 side build, 1 evicted still hashed with. Every build, hot or
+  side, is admitted only below it.
+- **Exact accounting.** Each cache carries a ticket, dropped after the cache's own
+  memory (`Cached<C>`'s field order). An instance counts from admission until it is
+  freed; the evicted count is `alive − kept − building`.
+- **Liveness.**
+  - At most `HOT_SEEDS` instances belong to hot keys.
+  - A side build leaves room for every missing hot key.
+  - A build at the bound first evicts an idle side cache (never a hot one),
+    otherwise polls every 10 ms until a hashing thread releases one.
+  - Callers never hold a cache while asking for another (`pow_hash`, prebuild), so a
+    waiting build always gets room.
+- **Frees outside the lock.** Trimmed and evicted caches are dropped after the
+  store's lock.
+- **Prebuilds.** One thread per hot key; the mark is cleared even when the build
+  panics. A prebuild whose key leaves the hot set gives up. `prebuild` returns
+  whether it started a thread.
+
+**Tests** (`pow::tests`; bounded waits throughout):
+- `hot_set_churn_with_borrowed_caches_stays_within_the_bound`: two hot-set changes
+  with every old hot cache borrowed leave three evicted caches.
+  - A hot build at the bound evicts the idle side cache.
+  - An idle hot cache is not evicted.
+  - A side build waits for releases, then proceeds.
+- `no_caller_deadlocks_at_the_bound_under_hot_set_churn`: 16 hashing threads plus
+  200 hot-set changes with prebuilds, all within a deadline, peak ≤ `MAX_CACHES`.
+- `a_side_build_leaves_room_for_the_missing_hot_keys`: holds two builds of keys
+  that left the hot set open on a gate. This is the only state in which the
+  reserve binds.
+- `prebuilds_are_deduplicated_and_give_up_off_the_hot_set`.
+- T3 without its measurement gate (`peak <= 4`).
+- `tests/seed_cache.rs` asserts the bound and exact counts in the real-RandomX walk.
+- The pow tests passed 200 of 200 loop runs.
+
+**Census of the new pow.rs** (full consensus suite, `-j2`, as run A;
+`-f consensus/src/pow.rs`):
+
+| Run | Mutants | Caught | Missed | Timeout | Unviable |
+|---|---|---|---|---|---|
+| `runPow2`, on `694fe96` | 153 | 99 | 11 | 8 | 35 |
+| `rerunPow2`, the 11 after the new tests | 11 | 10 | 1 | 0 | 0 |
+| `runPow3`, on the final code | 155 | 112 | 0 | 8 | 35 |
+| `timeoutPow3`, the 8 in isolation | 8 | 8 | 0 | 0 | 0 |
+
+- **The 11 survivors of `runPow2`:**
+  - the reserve (`missing_hot` ×5 and `alive + 1 − reserve`): killed by the gated
+    reserve test;
+  - `take_idle_side` `&&` → `||`: killed by the idle-hot assertion;
+  - the prebuild guard `||` → `&&` ×2 (one killed by the dedupe assertion; the last
+    one, `|| resident`, only started a useless thread, and is killed by
+    `prebuild`'s return value);
+  - `RandomXPow::alive` → 0 and → 1: killed by the exact counts.
+- **The 8 timeouts** are all `check_hash`, whose code is unchanged. The chain unit
+  tests' nonce search never ends under them; golden kills them in isolation
+  (`timeoutPow3.args`, `-C=--lib -C=--test=golden -C=--test=lwma_warm -- -- --skip
+  chain::tests --skip pow::tests`, 120 s).
+
+**Fingerprints.** `blacksilk-node --print-manifest` was run with release binaries:
+- this branch at `694fe96`, built from the clean tree;
+- `rebuild/core` `64d89d4`, whose only change since `d6f4609` is a docs commit,
+  built from a `git archive` export, so its commit shows as `unknown`.
+
+The two outputs (806 lines, all three networks) differ only in the three header lines
+that name the build commit. The consensus, rules and identity fingerprints of every
+network are identical: testnet `be3a87210c05019f`, rules `d8229151…`, identity
+`b333a99f…`.
 
 ## Survivors and their resolution
 

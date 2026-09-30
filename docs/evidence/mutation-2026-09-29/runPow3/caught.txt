@@ -1,0 +1,112 @@
+consensus/src/pow.rs:20:41: replace + with - in check_hash
+consensus/src/pow.rs:27:5: replace seed_height -> u64 with 0
+consensus/src/pow.rs:27:5: replace seed_height -> u64 with 1
+consensus/src/pow.rs:28:15: replace <= with > in seed_height
+consensus/src/pow.rs:28:24: replace + with - in seed_height
+consensus/src/pow.rs:28:24: replace + with * in seed_height
+consensus/src/pow.rs:31:28: replace & with | in seed_height
+consensus/src/pow.rs:31:28: replace & with ^ in seed_height
+consensus/src/pow.rs:31:23: replace - with / in seed_height
+consensus/src/pow.rs:31:23: replace - with + in seed_height
+consensus/src/pow.rs:31:17: replace - with / in seed_height
+consensus/src/pow.rs:31:17: replace - with + in seed_height
+consensus/src/pow.rs:31:30: delete ! in seed_height
+consensus/src/pow.rs:31:38: replace - with + in seed_height
+consensus/src/pow.rs:31:38: replace - with / in seed_height
+consensus/src/pow.rs:74:59: replace + with *
+consensus/src/pow.rs:74:41: replace + with -
+consensus/src/pow.rs:74:41: replace + with *
+consensus/src/pow.rs:74:59: replace + with -
+consensus/src/pow.rs:162:9: replace SeedState<C>::side_cap -> usize with 0
+consensus/src/pow.rs:162:9: replace SeedState<C>::side_cap -> usize with 1
+consensus/src/pow.rs:173:9: replace SeedState<C>::evicted -> usize with 0
+consensus/src/pow.rs:173:9: replace SeedState<C>::evicted -> usize with 1
+consensus/src/pow.rs:173:50: replace + with - in SeedState<C>::evicted
+consensus/src/pow.rs:93:9: replace <impl Drop for Ticket>::drop with ()
+consensus/src/pow.rs:178:9: replace SeedState<C>::missing_hot -> usize with 0
+consensus/src/pow.rs:178:9: replace SeedState<C>::missing_hot -> usize with 1
+consensus/src/pow.rs:183:21: replace && with || in SeedState<C>::missing_hot
+consensus/src/pow.rs:182:21: replace && with || in SeedState<C>::missing_hot
+consensus/src/pow.rs:181:20: replace != with == in SeedState<C>::missing_hot
+consensus/src/pow.rs:182:24: delete ! in SeedState<C>::missing_hot
+consensus/src/pow.rs:173:50: replace + with * in SeedState<C>::evicted
+consensus/src/pow.rs:183:61: replace == with != in SeedState<C>::missing_hot
+consensus/src/pow.rs:183:24: delete ! in SeedState<C>::missing_hot
+consensus/src/pow.rs:192:9: replace SeedState<C>::trim -> Vec<Arc<Cached<C>>> with vec![]
+consensus/src/pow.rs:195:30: delete ! in SeedState<C>::trim
+consensus/src/pow.rs:197:27: replace <= with > in SeedState<C>::trim
+consensus/src/pow.rs:208:53: replace && with || in SeedState<C>::take_idle_side
+consensus/src/pow.rs:207:9: replace SeedState<C>::take_idle_side -> Option<Arc<Cached<C>>> with None
+consensus/src/pow.rs:208:13: delete ! in SeedState<C>::take_idle_side
+consensus/src/pow.rs:208:95: replace == with != in SeedState<C>::take_idle_side
+consensus/src/pow.rs:225:9: replace <impl Drop for BuildGuard<'_, C>>::drop with ()
+consensus/src/pow.rs:229:35: replace != with == in <impl Drop for BuildGuard<'_, C>>::drop
+consensus/src/pow.rs:230:26: replace -= with += in <impl Drop for BuildGuard<'_, C>>::drop
+consensus/src/pow.rs:230:26: replace -= with /= in <impl Drop for BuildGuard<'_, C>>::drop
+consensus/src/pow.rs:270:71: replace == with != in SeedCache<C>::fetch
+consensus/src/pow.rs:276:24: delete ! in SeedCache<C>::fetch
+consensus/src/pow.rs:268:9: replace SeedCache<C>::fetch -> Option<Arc<Cached<C>>> with None
+consensus/src/pow.rs:280:43: replace || with && in SeedCache<C>::fetch
+consensus/src/pow.rs:277:25: replace && with || in SeedCache<C>::fetch
+consensus/src/pow.rs:280:52: replace && with || in SeedCache<C>::fetch
+consensus/src/pow.rs:280:72: replace > with < in SeedCache<C>::fetch
+consensus/src/pow.rs:280:72: replace > with == in SeedCache<C>::fetch
+consensus/src/pow.rs:280:72: replace > with >= in SeedCache<C>::fetch
+consensus/src/pow.rs:287:41: replace + with - in SeedCache<C>::fetch
+consensus/src/pow.rs:287:41: replace + with * in SeedCache<C>::fetch
+consensus/src/pow.rs:287:51: replace <= with > in SeedCache<C>::fetch
+consensus/src/pow.rs:287:37: replace + with * in SeedCache<C>::fetch
+consensus/src/pow.rs:287:37: replace + with - in SeedCache<C>::fetch
+consensus/src/pow.rs:288:31: delete ! in SeedCache<C>::fetch
+consensus/src/pow.rs:288:37: replace || with && in SeedCache<C>::fetch
+consensus/src/pow.rs:289:28: replace && with || in SeedCache<C>::fetch
+consensus/src/pow.rs:292:16: delete ! in SeedCache<C>::fetch
+consensus/src/pow.rs:288:58: replace <= with > in SeedCache<C>::fetch
+consensus/src/pow.rs:307:26: replace += with *= in SeedCache<C>::fetch
+consensus/src/pow.rs:323:34: replace != with == in SeedCache<C>::fetch
+consensus/src/pow.rs:307:26: replace += with -= in SeedCache<C>::fetch
+consensus/src/pow.rs:324:26: replace -= with += in SeedCache<C>::fetch
+consensus/src/pow.rs:325:19: replace += with -= in SeedCache<C>::fetch
+consensus/src/pow.rs:325:19: replace += with *= in SeedCache<C>::fetch
+consensus/src/pow.rs:339:9: replace SeedCache<C>::set_hot -> Vec<Hash> with vec![]
+consensus/src/pow.rs:324:26: replace -= with /= in SeedCache<C>::fetch
+consensus/src/pow.rs:339:9: replace SeedCache<C>::set_hot -> Vec<Hash> with vec![Default::default()]
+consensus/src/pow.rs:342:38: replace && with || in SeedCache<C>::set_hot
+consensus/src/pow.rs:342:26: replace < with == in SeedCache<C>::set_hot
+consensus/src/pow.rs:342:26: replace < with > in SeedCache<C>::set_hot
+consensus/src/pow.rs:342:26: replace < with <= in SeedCache<C>::set_hot
+consensus/src/pow.rs:351:50: replace && with || in SeedCache<C>::set_hot
+consensus/src/pow.rs:351:25: delete ! in SeedCache<C>::set_hot
+consensus/src/pow.rs:342:41: delete ! in SeedCache<C>::set_hot
+consensus/src/pow.rs:351:53: delete ! in SeedCache<C>::set_hot
+consensus/src/pow.rs:365:9: replace SeedCache<C>::builds -> u64 with 0
+consensus/src/pow.rs:365:9: replace SeedCache<C>::builds -> u64 with 1
+consensus/src/pow.rs:371:9: replace SeedCache<C>::alive -> usize with 0
+consensus/src/pow.rs:371:9: replace SeedCache<C>::alive -> usize with 1
+consensus/src/pow.rs:376:9: replace SeedCache<C>::resident -> Vec<Hash> with vec![]
+consensus/src/pow.rs:376:9: replace SeedCache<C>::resident -> Vec<Hash> with vec![Default::default()]
+consensus/src/pow.rs:381:9: replace SeedCache<C>::is_resident -> bool with true
+consensus/src/pow.rs:381:9: replace SeedCache<C>::is_resident -> bool with false
+consensus/src/pow.rs:381:52: replace == with != in SeedCache<C>::is_resident
+consensus/src/pow.rs:392:9: replace SeedCache<C>::prebuild -> bool with true
+consensus/src/pow.rs:392:9: replace SeedCache<C>::prebuild -> bool with false
+consensus/src/pow.rs:397:17: replace || with && in SeedCache<C>::prebuild
+consensus/src/pow.rs:351:88: replace == with != in SeedCache<C>::set_hot
+consensus/src/pow.rs:396:17: replace || with && in SeedCache<C>::prebuild
+consensus/src/pow.rs:395:17: replace || with && in SeedCache<C>::prebuild
+consensus/src/pow.rs:397:54: replace == with != in SeedCache<C>::prebuild
+consensus/src/pow.rs:394:16: delete ! in SeedCache<C>::prebuild
+consensus/src/pow.rs:408:57: replace != with == in SeedCache<C>::prebuild::<impl Drop for Pending<C>>::drop
+consensus/src/pow.rs:408:17: replace SeedCache<C>::prebuild::<impl Drop for Pending<C>>::drop with ()
+consensus/src/pow.rs:453:9: replace RandomXPow::prebuild -> bool with false
+consensus/src/pow.rs:453:9: replace RandomXPow::prebuild -> bool with true
+consensus/src/pow.rs:458:9: replace RandomXPow::builds -> u64 with 0
+consensus/src/pow.rs:458:9: replace RandomXPow::builds -> u64 with 1
+consensus/src/pow.rs:463:9: replace RandomXPow::alive -> usize with 1
+consensus/src/pow.rs:463:9: replace RandomXPow::alive -> usize with 0
+consensus/src/pow.rs:468:9: replace RandomXPow::resident -> Vec<Hash> with vec![Default::default()]
+consensus/src/pow.rs:468:9: replace RandomXPow::resident -> Vec<Hash> with vec![]
+consensus/src/pow.rs:473:9: replace RandomXPow::is_resident -> bool with true
+consensus/src/pow.rs:473:9: replace RandomXPow::is_resident -> bool with false
+consensus/src/pow.rs:485:9: replace <impl PowFunction for RandomXPow>::pow_hash -> Hash with Default::default()
+consensus/src/pow.rs:490:9: replace <impl PowFunction for RandomXPow>::set_hot_seeds with ()
