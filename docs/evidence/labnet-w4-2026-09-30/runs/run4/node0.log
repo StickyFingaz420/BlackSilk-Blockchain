@@ -1,0 +1,720 @@
+[2026-09-29T23:22:47.449Z INFO  blacksilk_node] blacksilk-node 0.1.0 commit 9b048275425b2993763045b9f1575aba1669dcca
+[2026-09-29T23:22:47.449Z INFO  blacksilk_node] regtest: genesis 087d6fd4efbc45eb0a895dd0680a7fd305208cae239b1b4275d7148b29a569b7, consensus fingerprint 5fb8ef8f74efa7631e2d9aa5f809fc0d9ab9273fdc54d45e5aad73f889c5e72b
+[2026-09-29T23:22:47.450Z INFO  blacksilk_node] regtest: loading C:/bszkeval/w4-lab-scratch/run4\node0
+[2026-09-29T23:22:47.456Z INFO  blacksilk_node] chain loaded in 6.5ms: height 0, tip 087d6fd4efbc45eb
+[2026-09-29T23:22:47.525Z INFO  blacksilk_node] P2P listening on 127.0.0.1:54001
+[2026-09-29T23:22:47.526Z INFO  blacksilk_node] RPC listening on http://127.0.0.1:54000
+[2026-09-29T23:22:47.567Z WARN  blacksilk_node::cookie] the data directory C:/bszkeval/w4-lab-scratch/run4\node0 is outside your user profile: on Windows the RPC cookie is protected only by that directory's permissions; make sure other users cannot read it
+[2026-09-29T23:22:47.568Z INFO  blacksilk_node::serve] RPC credential written to C:/bszkeval/w4-lab-scratch/run4\node0\rpc.cookie (clients read it: --rpc-cookie)
+[2026-09-29T23:22:47.932Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:56001 (height 0)
+[2026-09-29T23:22:47.932Z DEBUG blacksilk_p2p::net::addr_relay] peer 1: addr with 1 entries
+[2026-09-29T23:22:47.975Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:56002 (height 0)
+[2026-09-29T23:22:47.975Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: addr with 1 entries
+[2026-09-29T23:22:47.975Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: addr with 1 entries
+[2026-09-29T23:22:47.993Z DEBUG blacksilk_p2p::net::addr_relay] peer 1: addr with 3 entries
+[2026-09-29T23:22:48.009Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:14288 (height 0)
+[2026-09-29T23:22:48.009Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:14291 (height 0)
+[2026-09-29T23:22:48.040Z DEBUG blacksilk_p2p::net::addr_relay] peer 2: addr with 2 entries
+[2026-09-29T23:22:48.071Z DEBUG blacksilk_p2p::net::addr_relay] peer 4: getaddr answered with 4 addresses
+[2026-09-29T23:22:48.071Z DEBUG blacksilk_p2p::net::addr_relay] peer 4: addr with 1 entries
+[2026-09-29T23:22:48.072Z DEBUG blacksilk_p2p::net::addr_relay] peer 3: getaddr answered with 4 addresses
+[2026-09-29T23:22:48.072Z DEBUG blacksilk_p2p::net::addr_relay] peer 3: addr with 1 entries
+[2026-09-29T23:22:48.091Z DEBUG blacksilk_p2p::net::addr_relay] peer 1: addr with 1 entries
+[2026-09-29T23:22:48.107Z DEBUG blacksilk_p2p::net::addr_relay] peer 4: addr with 1 entries
+[2026-09-29T23:22:48.107Z DEBUG blacksilk_p2p::net::addr_relay] peer 127.0.0.1:14291: 1 addresses over the rate limit dropped
+[2026-09-29T23:22:48.123Z DEBUG blacksilk_p2p::net::addr_relay] peer 4: addr with 1 entries
+[2026-09-29T23:22:48.123Z DEBUG blacksilk_p2p::net::addr_relay] peer 127.0.0.1:14291: 1 addresses over the rate limit dropped
+[2026-09-29T23:22:48.671Z INFO  blacksilk_chain::manager::template] caught up at height 0: block templates are served from now on
+[2026-09-29T23:22:51.041Z INFO  blacksilk_node] block 5cb5eb1096a2676f at height 1 accepted (tip 1)
+[2026-09-29T23:22:52.709Z INFO  blacksilk_node] block 0cdaef65a83d2f5e at height 2 accepted (tip 2)
+[2026-09-29T23:22:54.113Z INFO  blacksilk_node] block a1148f03419231f8 at height 3 accepted (tip 3)
+[2026-09-29T23:22:55.508Z INFO  blacksilk_node] block aa553e4676ec3e64 at height 4 accepted (tip 4)
+[2026-09-29T23:22:56.899Z INFO  blacksilk_node] block bf4573ddc86010ba at height 5 accepted (tip 5)
+[2026-09-29T23:22:58.375Z INFO  blacksilk_node] block 9f14bd74d78ef9c2 at height 6 accepted (tip 6)
+[2026-09-29T23:22:59.739Z INFO  blacksilk_node] block b92a79eed5d75322 at height 7 accepted (tip 7)
+[2026-09-29T23:23:01.288Z INFO  blacksilk_node] block 681041b23fe4fda7 at height 8 accepted (tip 8)
+[2026-09-29T23:23:02.832Z INFO  blacksilk_node] block 044dee20c51a278e at height 9 accepted (tip 9)
+[2026-09-29T23:23:04.274Z INFO  blacksilk_node] block a7516b75fe1db04c at height 10 accepted (tip 10)
+[2026-09-29T23:23:05.779Z INFO  blacksilk_node] block 399ea9db0810b0fc at height 11 accepted (tip 11)
+[2026-09-29T23:23:07.683Z INFO  blacksilk_node] block 9f2497b47f2683f4 at height 12 accepted (tip 12)
+[2026-09-29T23:23:09.591Z INFO  blacksilk_node] block 8d064351ca6697c2 at height 13 accepted (tip 13)
+[2026-09-29T23:23:11.104Z INFO  blacksilk_node] block 53b085e901cb9501 at height 14 accepted (tip 14)
+[2026-09-29T23:23:12.673Z INFO  blacksilk_node] block 4b65ab73939ea3fb at height 15 accepted (tip 15)
+[2026-09-29T23:23:14.261Z INFO  blacksilk_node] block 553014641e0aa702 at height 16 accepted (tip 16)
+[2026-09-29T23:23:15.726Z INFO  blacksilk_node] block b975f27ad651f1e9 at height 17 accepted (tip 17)
+[2026-09-29T23:23:17.168Z INFO  blacksilk_node] block 52d4e676d2f81bf4 at height 18 accepted (tip 18)
+[2026-09-29T23:23:18.674Z INFO  blacksilk_node] block 82888ffa5fa4be76 at height 19 accepted (tip 19)
+[2026-09-29T23:23:20.207Z INFO  blacksilk_node] block 80a47265362f6ee4 at height 20 accepted (tip 20)
+[2026-09-29T23:23:21.657Z INFO  blacksilk_node] block 368567811d7059df at height 21 accepted (tip 21)
+[2026-09-29T23:23:23.211Z INFO  blacksilk_node] block adebb43a2cb6c6b8 at height 22 accepted (tip 22)
+[2026-09-29T23:23:24.971Z INFO  blacksilk_node] block c4ce85100001dd41 at height 23 accepted (tip 23)
+[2026-09-29T23:23:26.630Z INFO  blacksilk_node] block 7e8d759d68fa68e4 at height 24 accepted (tip 24)
+[2026-09-29T23:23:28.106Z INFO  blacksilk_node] block 65f36f9821b1eb60 at height 25 accepted (tip 25)
+[2026-09-29T23:23:29.646Z INFO  blacksilk_node] block 0839b293f547114e at height 26 accepted (tip 26)
+[2026-09-29T23:23:30.913Z INFO  blacksilk_node] block 208f847d19a66a21 at height 27 accepted (tip 27)
+[2026-09-29T23:23:32.198Z INFO  blacksilk_node] block 0bc32f592b6d10a6 at height 28 accepted (tip 28)
+[2026-09-29T23:23:33.647Z INFO  blacksilk_node] block e3996adc86e32a49 at height 29 accepted (tip 29)
+[2026-09-29T23:23:35.045Z INFO  blacksilk_node] block bc2d2971d18c09bd at height 30 accepted (tip 30)
+[2026-09-29T23:23:36.738Z INFO  blacksilk_node] block 3ccd735aeca60164 at height 31 accepted (tip 31)
+[2026-09-29T23:23:38.087Z INFO  blacksilk_node] block 4bad75d081f7470c at height 32 accepted (tip 32)
+[2026-09-29T23:23:39.581Z INFO  blacksilk_node] block bac68d1116dd352a at height 33 accepted (tip 33)
+[2026-09-29T23:23:41.230Z INFO  blacksilk_node] block 40f5ad3a4dc6f1d3 at height 34 accepted (tip 34)
+[2026-09-29T23:23:43.336Z INFO  blacksilk_node] block a37fb8ebc1769421 at height 35 accepted (tip 35)
+[2026-09-29T23:23:45.407Z INFO  blacksilk_node] block f08ca60afc72171b at height 36 accepted (tip 36)
+[2026-09-29T23:23:47.125Z INFO  blacksilk_node] block 500bfe9e71237589 at height 37 accepted (tip 37)
+[2026-09-29T23:23:48.883Z INFO  blacksilk_node] block 38dd76125c658fee at height 38 accepted (tip 38)
+[2026-09-29T23:23:50.375Z INFO  blacksilk_node] block 4445c6d553b183a7 at height 39 accepted (tip 39)
+[2026-09-29T23:23:51.802Z INFO  blacksilk_node] block c6a8f5dd6457e294 at height 40 accepted (tip 40)
+[2026-09-29T23:23:53.233Z INFO  blacksilk_node] block 3fedafa0dabf3361 at height 41 accepted (tip 41)
+[2026-09-29T23:23:54.521Z INFO  blacksilk_node] block eb4c3f8ed401c289 at height 42 accepted (tip 42)
+[2026-09-29T23:23:55.911Z INFO  blacksilk_node] block bb8001da3de30121 at height 43 accepted (tip 43)
+[2026-09-29T23:23:57.316Z INFO  blacksilk_node] block f6cab95b7aaa659d at height 44 accepted (tip 44)
+[2026-09-29T23:23:58.746Z INFO  blacksilk_node] block 2b2e7164314b2b69 at height 45 accepted (tip 45)
+[2026-09-29T23:24:00.170Z INFO  blacksilk_node] block 427894accf06507f at height 46 accepted (tip 46)
+[2026-09-29T23:24:01.622Z INFO  blacksilk_node] block 480d94bd6a232837 at height 47 accepted (tip 47)
+[2026-09-29T23:24:03.163Z INFO  blacksilk_node] block 217512f6447d5371 at height 48 accepted (tip 48)
+[2026-09-29T23:24:04.563Z INFO  blacksilk_node] block 9823f4c356b6661c at height 49 accepted (tip 49)
+[2026-09-29T23:24:05.903Z INFO  blacksilk_node] block ea9dd9ad58823cb4 at height 50 accepted (tip 50)
+[2026-09-29T23:24:07.335Z INFO  blacksilk_node] block 54e849d424ae0c01 at height 51 accepted (tip 51)
+[2026-09-29T23:24:08.679Z INFO  blacksilk_node] block ec373a13a36c98aa at height 52 accepted (tip 52)
+[2026-09-29T23:24:10.042Z INFO  blacksilk_node] block 60c70794e97287b3 at height 53 accepted (tip 53)
+[2026-09-29T23:24:11.349Z INFO  blacksilk_node] block 95d35d34d9decc0d at height 54 accepted (tip 54)
+[2026-09-29T23:24:12.924Z INFO  blacksilk_node] block 16db184fff33fe58 at height 55 accepted (tip 55)
+[2026-09-29T23:24:14.394Z INFO  blacksilk_node] block 017a46135fc568c4 at height 56 accepted (tip 56)
+[2026-09-29T23:24:15.980Z INFO  blacksilk_node] block d55a7e6c589d3bd5 at height 57 accepted (tip 57)
+[2026-09-29T23:24:17.385Z INFO  blacksilk_node] block 05d20dd232ebe56f at height 58 accepted (tip 58)
+[2026-09-29T23:24:18.737Z INFO  blacksilk_node] block 45a4297a1068cd2e at height 59 accepted (tip 59)
+[2026-09-29T23:24:19.956Z INFO  blacksilk_node] block 4735b9b563b14ce5 at height 60 accepted (tip 60)
+[2026-09-29T23:24:21.642Z INFO  blacksilk_node] block 6981430f2c279439 at height 61 accepted (tip 61)
+[2026-09-29T23:24:23.058Z INFO  blacksilk_node] block 3a8afd8f23fad2a1 at height 62 accepted (tip 62)
+[2026-09-29T23:24:24.487Z INFO  blacksilk_node] block ad6e5a35cd4d516a at height 63 accepted (tip 63)
+[2026-09-29T23:24:25.789Z INFO  blacksilk_node] block 0804dff33ea7b6c9 at height 64 accepted (tip 64)
+[2026-09-29T23:24:27.026Z INFO  blacksilk_node] block d0d95c763095c15f at height 65 accepted (tip 65)
+[2026-09-29T23:24:29.208Z INFO  blacksilk_node] block 4759bcbc0d7ae9ee at height 66 accepted (tip 66)
+[2026-09-29T23:24:30.468Z INFO  blacksilk_node] block 74f4ec7b047ae262 at height 67 accepted (tip 67)
+[2026-09-29T23:24:31.735Z INFO  blacksilk_node] block 88ad2f0e831a7872 at height 68 accepted (tip 68)
+[2026-09-29T23:24:32.997Z INFO  blacksilk_node] block 3ee6e7f147b50293 at height 69 accepted (tip 69)
+[2026-09-29T23:24:34.454Z INFO  blacksilk_node] block 5699a73f7c7a3b52 at height 70 accepted (tip 70)
+[2026-09-29T23:24:35.954Z INFO  blacksilk_node] block e94894339d03a404 at height 71 accepted (tip 71)
+[2026-09-29T23:24:37.512Z INFO  blacksilk_node] block 4cb76c3067adba4b at height 72 accepted (tip 72)
+[2026-09-29T23:24:38.944Z INFO  blacksilk_node] block ba9d7928634f9e37 at height 73 accepted (tip 73)
+[2026-09-29T23:24:40.294Z INFO  blacksilk_node] block eb6759411b2e76c7 at height 74 accepted (tip 74)
+[2026-09-29T23:24:41.897Z INFO  blacksilk_node] block e6ba14e7217f1333 at height 75 accepted (tip 75)
+[2026-09-29T23:24:43.184Z INFO  blacksilk_node] block 83ee3e542206507e at height 76 accepted (tip 76)
+[2026-09-29T23:24:48.461Z INFO  blacksilk_node] block 1f5b4f8980ececa0 at height 77 accepted (tip 77)
+[2026-09-29T23:24:51.058Z INFO  blacksilk_node] block b3157bf34de61828 at height 78 accepted (tip 78)
+[2026-09-29T23:24:53.070Z INFO  blacksilk_node] block 6919a79104aa2d2a at height 79 accepted (tip 79)
+[2026-09-29T23:24:55.538Z INFO  blacksilk_node] block a4b310f113a8940d at height 80 accepted (tip 80)
+[2026-09-29T23:24:57.023Z INFO  blacksilk_node] block 701b48d0c05f6144 at height 81 accepted (tip 81)
+[2026-09-29T23:24:58.785Z INFO  blacksilk_node] block 59c1ce485321e87e at height 82 accepted (tip 82)
+[2026-09-29T23:25:04.349Z INFO  blacksilk_node] block de023e3b6cbb3077 at height 83 accepted (tip 83)
+[2026-09-29T23:25:06.108Z INFO  blacksilk_node] block 629ef80301eef2b6 at height 84 accepted (tip 84)
+[2026-09-29T23:25:08.724Z INFO  blacksilk_node] block aeb64c382b087a02 at height 85 accepted (tip 85)
+[2026-09-29T23:25:10.444Z INFO  blacksilk_node] block 9c21dc50b5d32025 at height 86 accepted (tip 86)
+[2026-09-29T23:25:12.429Z INFO  blacksilk_node] block dcfc1fb92b4ab132 at height 87 accepted (tip 87)
+[2026-09-29T23:25:13.985Z INFO  blacksilk_node] block cc9742c96202ea38 at height 88 accepted (tip 88)
+[2026-09-29T23:25:16.691Z INFO  blacksilk_node] block 15f489b87f4ac0a5 at height 89 accepted (tip 89)
+[2026-09-29T23:25:18.717Z INFO  blacksilk_node] block 00990b9d053100fb at height 90 accepted (tip 90)
+[2026-09-29T23:25:21.680Z INFO  blacksilk_node] block 3525606d1991bbe9 at height 91 accepted (tip 91)
+[2026-09-29T23:25:24.110Z INFO  blacksilk_node] block bb8a7bdb44878ec0 at height 92 accepted (tip 92)
+[2026-09-29T23:25:25.365Z INFO  blacksilk_node] block dcaee53f26c26bf6 at height 93 accepted (tip 93)
+[2026-09-29T23:25:28.042Z INFO  blacksilk_node] block 6d142ac26c435927 at height 94 accepted (tip 94)
+[2026-09-29T23:25:30.584Z INFO  blacksilk_node] block 660474b884054139 at height 95 accepted (tip 95)
+[2026-09-29T23:25:34.385Z INFO  blacksilk_node] block ec0a8f183f376565 at height 96 accepted (tip 96)
+[2026-09-29T23:25:36.668Z INFO  blacksilk_node] block 0730c2cbea19573c at height 97 accepted (tip 97)
+[2026-09-29T23:25:38.461Z INFO  blacksilk_node] block 7c1043309330dcb4 at height 98 accepted (tip 98)
+[2026-09-29T23:25:40.649Z INFO  blacksilk_node] block 39940de4bcd8aabe at height 99 accepted (tip 99)
+[2026-09-29T23:25:43.885Z INFO  blacksilk_node] block 265f4ab712b7a71d at height 100 accepted (tip 100)
+[2026-09-29T23:25:46.011Z INFO  blacksilk_node] block d9512150821ee4a5 at height 101 accepted (tip 101)
+[2026-09-29T23:25:48.987Z INFO  blacksilk_node] block 3054d52ad7dac68f at height 102 accepted (tip 102)
+[2026-09-29T23:25:50.736Z INFO  blacksilk_node] block 87279aec86f322d3 at height 103 accepted (tip 103)
+[2026-09-29T23:25:52.298Z INFO  blacksilk_node] block de822de3bd946919 at height 104 accepted (tip 104)
+[2026-09-29T23:25:54.521Z INFO  blacksilk_node] block 681937528e9c39a6 at height 105 accepted (tip 105)
+[2026-09-29T23:25:57.305Z INFO  blacksilk_node] block c2dcbc01457e93f9 at height 106 accepted (tip 106)
+[2026-09-29T23:26:00.167Z INFO  blacksilk_node] block 9dfffbd97b27a289 at height 107 accepted (tip 107)
+[2026-09-29T23:26:09.134Z INFO  blacksilk_node] block 31d5ffef0818beec at height 108 accepted (tip 108)
+[2026-09-29T23:26:12.377Z INFO  blacksilk_node] block 0fbb230b88441654 at height 109 accepted (tip 109)
+[2026-09-29T23:26:14.846Z INFO  blacksilk_node] block 98f695a15dd30449 at height 110 accepted (tip 110)
+[2026-09-29T23:26:16.940Z INFO  blacksilk_node] block ac0cd05d67153510 at height 111 accepted (tip 111)
+[2026-09-29T23:26:18.776Z INFO  blacksilk_node] block cae5fdb4d61f1fe5 at height 112 accepted (tip 112)
+[2026-09-29T23:26:22.250Z INFO  blacksilk_node] block a447260889d9841a at height 113 accepted (tip 113)
+[2026-09-29T23:26:24.421Z INFO  blacksilk_node] block 4a866c2ee9e5427a at height 114 accepted (tip 114)
+[2026-09-29T23:26:28.783Z INFO  blacksilk_node] block cb11876a74adadc2 at height 115 accepted (tip 115)
+[2026-09-29T23:26:31.484Z INFO  blacksilk_node] block 3b2a94e4b889a367 at height 116 accepted (tip 116)
+[2026-09-29T23:26:35.031Z INFO  blacksilk_node] block ebc4e1a1f86fbf44 at height 117 accepted (tip 117)
+[2026-09-29T23:26:38.074Z INFO  blacksilk_node] block 3c6dd55b06124423 at height 118 accepted (tip 118)
+[2026-09-29T23:26:39.765Z INFO  blacksilk_node] block 89d7fe48bc69461f at height 119 accepted (tip 119)
+[2026-09-29T23:26:41.988Z INFO  blacksilk_node] block add1b4722bea00a8 at height 120 accepted (tip 120)
+[2026-09-29T23:26:49.422Z INFO  blacksilk_node] block 78a1c5503019cb2a at height 121 accepted (tip 121)
+[2026-09-29T23:26:52.559Z INFO  blacksilk_node] block e5df13da84478882 at height 122 accepted (tip 122)
+[2026-09-29T23:27:00.610Z INFO  blacksilk_node] block 650208944490a288 at height 123 accepted (tip 123)
+[2026-09-29T23:27:02.597Z INFO  blacksilk_node] block 78478dffea82309e at height 124 accepted (tip 124)
+[2026-09-29T23:27:05.103Z INFO  blacksilk_node] block 3cac99472a983970 at height 125 accepted (tip 125)
+[2026-09-29T23:27:07.485Z INFO  blacksilk_node] block b07fa394bf7d8eda at height 126 accepted (tip 126)
+[2026-09-29T23:27:12.198Z INFO  blacksilk_node] block 318d4796c7a06df4 at height 127 accepted (tip 127)
+[2026-09-29T23:27:14.703Z INFO  blacksilk_node] block 093444e03abfd655 at height 128 accepted (tip 128)
+[2026-09-29T23:27:16.526Z INFO  blacksilk_node] block af83544c5c40db82 at height 129 accepted (tip 129)
+[2026-09-29T23:27:17.850Z INFO  blacksilk_node] block 0deaa5af5e301b75 at height 130 accepted (tip 130)
+[2026-09-29T23:27:19.234Z INFO  blacksilk_node] block 0a551b0ba030b7a0 at height 131 accepted (tip 131)
+[2026-09-29T23:27:20.513Z INFO  blacksilk_node] block f43ac88c707e56f5 at height 132 accepted (tip 132)
+[2026-09-29T23:27:24.041Z INFO  blacksilk_node] block f9f6e7c6b58ef036 at height 133 accepted (tip 133)
+[2026-09-29T23:27:25.874Z INFO  blacksilk_node] block 62d4c9621c26f9fa at height 134 accepted (tip 134)
+[2026-09-29T23:27:32.835Z INFO  blacksilk_node] block 174ec6b437dfcf80 at height 135 accepted (tip 135)
+[2026-09-29T23:27:34.540Z INFO  blacksilk_node] block f74218043e21e4b7 at height 136 accepted (tip 136)
+[2026-09-29T23:27:51.458Z INFO  blacksilk_node] block 701711d3cc0d0c7b at height 137 accepted (tip 137)
+[2026-09-29T23:28:18.843Z INFO  blacksilk_node] block 1c71e090f2559fbb at height 138 accepted (tip 138)
+[2026-09-29T23:28:23.702Z INFO  blacksilk_node] block 78f4fc826cc2d69c at height 139 accepted (tip 139)
+[2026-09-29T23:28:27.899Z INFO  blacksilk_node] block e960f52ca501dee1 at height 140 accepted (tip 140)
+[2026-09-29T23:28:30.186Z INFO  blacksilk_node] block c49a96310acc4290 at height 141 accepted (tip 141)
+[2026-09-29T23:28:31.720Z INFO  blacksilk_node] block 1293012ea540f70d at height 142 accepted (tip 142)
+[2026-09-29T23:28:34.357Z INFO  blacksilk_node] block 0d62cff2bc88ff0a at height 143 accepted (tip 143)
+[2026-09-29T23:28:35.857Z INFO  blacksilk_node] block f06643342b0e6097 at height 144 accepted (tip 144)
+[2026-09-29T23:28:43.533Z INFO  blacksilk_node] block 1c305e75228bcdb7 at height 145 accepted (tip 145)
+[2026-09-29T23:28:44.671Z INFO  blacksilk_node] block 3b638d0f6f467176 at height 146 accepted (tip 146)
+[2026-09-29T23:28:46.485Z INFO  blacksilk_node] block 413381a7f66a7925 at height 147 accepted (tip 147)
+[2026-09-29T23:28:51.502Z INFO  blacksilk_node] block d4a596a1d4c2eb2a at height 148 accepted (tip 148)
+[2026-09-29T23:28:56.364Z INFO  blacksilk_node] block fe75c4e0a419f85d at height 149 accepted (tip 149)
+[2026-09-29T23:29:01.140Z INFO  blacksilk_node] block 889271fb8fcbcb87 at height 150 accepted (tip 150)
+[2026-09-29T23:29:03.752Z INFO  blacksilk_node] block d9abc341b6a78b1f at height 151 accepted (tip 151)
+[2026-09-29T23:29:09.281Z INFO  blacksilk_node] block 04c7c1774a044ebc at height 152 accepted (tip 152)
+[2026-09-29T23:29:13.005Z INFO  blacksilk_node] block 8a80b832cdcf69c0 at height 153 accepted (tip 153)
+[2026-09-29T23:29:19.204Z INFO  blacksilk_node] block f8160746ecdc6a95 at height 154 accepted (tip 154)
+[2026-09-29T23:29:26.427Z INFO  blacksilk_node] block ac272c146f4fbab9 at height 155 accepted (tip 155)
+[2026-09-29T23:29:27.763Z INFO  blacksilk_node] block ca5d42eb2c706876 at height 156 accepted (tip 156)
+[2026-09-29T23:29:29.092Z INFO  blacksilk_node] block 0d2a0ffff2f223e4 at height 157 accepted (tip 157)
+[2026-09-29T23:29:30.862Z INFO  blacksilk_node] block ec60c5bfdff5dbda at height 158 accepted (tip 158)
+[2026-09-29T23:29:36.302Z INFO  blacksilk_node] block 6c5b3f1c7504d7da at height 159 accepted (tip 159)
+[2026-09-29T23:29:38.190Z INFO  blacksilk_node] block 14b96384c90ffdcb at height 160 accepted (tip 160)
+[2026-09-29T23:29:41.851Z INFO  blacksilk_node] block 6cf8e2807279a32e at height 161 accepted (tip 161)
+[2026-09-29T23:29:43.131Z INFO  blacksilk_node] block 0e075679c661a20d at height 162 accepted (tip 162)
+[2026-09-29T23:29:52.549Z INFO  blacksilk_node] block 2c1bff9dc5655771 at height 163 accepted (tip 163)
+[2026-09-29T23:29:56.370Z INFO  blacksilk_node] block 14d2cedbe2ca8725 at height 164 accepted (tip 164)
+[2026-09-29T23:29:58.406Z INFO  blacksilk_node] block 2c52549a0140f0fc at height 165 accepted (tip 165)
+[2026-09-29T23:30:00.144Z INFO  blacksilk_node] block c71cacf9e054f7b5 at height 166 accepted (tip 166)
+[2026-09-29T23:30:01.325Z INFO  blacksilk_node] block d1c6d2a16bd97fe9 at height 167 accepted (tip 167)
+[2026-09-29T23:30:05.724Z INFO  blacksilk_node] block b1149e22aebf369c at height 168 accepted (tip 168)
+[2026-09-29T23:30:08.266Z INFO  blacksilk_node] block c574dc29cd79b127 at height 169 accepted (tip 169)
+[2026-09-29T23:30:11.754Z INFO  blacksilk_node] block ed08613e754b4839 at height 170 accepted (tip 170)
+[2026-09-29T23:30:14.759Z INFO  blacksilk_node] block 243d2d06ae6feff7 at height 171 accepted (tip 171)
+[2026-09-29T23:30:17.815Z INFO  blacksilk_node] block db6d46b26b7f24b5 at height 172 accepted (tip 172)
+[2026-09-29T23:30:21.396Z INFO  blacksilk_node] block d5ce76db84def9d4 at height 173 accepted (tip 173)
+[2026-09-29T23:30:29.206Z INFO  blacksilk_node] block b2e6da217fa3b7b6 at height 174 accepted (tip 174)
+[2026-09-29T23:30:30.531Z INFO  blacksilk_node] block 8c009fe13ef27f13 at height 175 accepted (tip 175)
+[2026-09-29T23:30:37.895Z INFO  blacksilk_node] block f39d6b29bf6a5714 at height 176 accepted (tip 176)
+[2026-09-29T23:30:39.638Z INFO  blacksilk_node] block 59bf7c13a4fea64e at height 177 accepted (tip 177)
+[2026-09-29T23:30:43.049Z INFO  blacksilk_node] block c396fffae4a3a6b7 at height 178 accepted (tip 178)
+[2026-09-29T23:30:50.020Z INFO  blacksilk_node] block 2c865d94a6d1bdfb at height 179 accepted (tip 179)
+[2026-09-29T23:30:54.867Z INFO  blacksilk_node] block b26bd8a47901e24a at height 180 accepted (tip 180)
+[2026-09-29T23:30:58.768Z INFO  blacksilk_node] block f3ad380ff47afc50 at height 181 accepted (tip 181)
+[2026-09-29T23:31:09.677Z INFO  blacksilk_node] block d7b6ff9ddb6fe7ab at height 182 accepted (tip 182)
+[2026-09-29T23:31:13.196Z INFO  blacksilk_node] block 7e24d43cfb3fea83 at height 183 accepted (tip 183)
+[2026-09-29T23:31:29.955Z INFO  blacksilk_node] block ffd9682660433278 at height 184 accepted (tip 184)
+[2026-09-29T23:31:31.266Z INFO  blacksilk_node] block 36d2eb3d878d7e33 at height 185 accepted (tip 185)
+[2026-09-29T23:31:34.395Z INFO  blacksilk_node] block 5d162194b7e6d7c7 at height 186 accepted (tip 186)
+[2026-09-29T23:31:36.898Z INFO  blacksilk_node] block 0467873062068e9a at height 187 accepted (tip 187)
+[2026-09-29T23:31:38.811Z INFO  blacksilk_node] block c36c7c94b907f7c3 at height 188 accepted (tip 188)
+[2026-09-29T23:31:40.171Z INFO  blacksilk_node] block 5e9c74e48f538519 at height 189 accepted (tip 189)
+[2026-09-29T23:31:50.402Z INFO  blacksilk_node] block 8ae22524fc1b2204 at height 190 accepted (tip 190)
+[2026-09-29T23:31:52.239Z INFO  blacksilk_node] block aa88352e9dbce6d0 at height 191 accepted (tip 191)
+[2026-09-29T23:31:55.205Z INFO  blacksilk_node] block 473ca024a64b7917 at height 192 accepted (tip 192)
+[2026-09-29T23:31:57.046Z INFO  blacksilk_node] block 24d5ecbb0255ff32 at height 193 accepted (tip 193)
+[2026-09-29T23:31:58.960Z INFO  blacksilk_node] block 511eab6fb1e961f6 at height 194 accepted (tip 194)
+[2026-09-29T23:32:04.440Z INFO  blacksilk_node] block afe9bbe642940827 at height 195 accepted (tip 195)
+[2026-09-29T23:32:07.762Z INFO  blacksilk_node] block 0a972fe736849dfb at height 196 accepted (tip 196)
+[2026-09-29T23:32:13.560Z INFO  blacksilk_node] block ae4bf872f60af815 at height 197 accepted (tip 197)
+[2026-09-29T23:32:22.632Z INFO  blacksilk_node] block 4177728d5aa5de77 at height 198 accepted (tip 198)
+[2026-09-29T23:32:23.995Z INFO  blacksilk_node] block 5e7980254b16cf07 at height 199 accepted (tip 199)
+[2026-09-29T23:32:29.727Z INFO  blacksilk_node] block 8b81f9b1f7f59736 at height 200 accepted (tip 200)
+[2026-09-29T23:32:36.222Z INFO  blacksilk_node] block 56c3356d08485c4c at height 201 accepted (tip 201)
+[2026-09-29T23:32:38.618Z INFO  blacksilk_node] block 3f71a2ce6b3ab650 at height 202 accepted (tip 202)
+[2026-09-29T23:32:39.896Z INFO  blacksilk_node] block 51a80049deb353c6 at height 203 accepted (tip 203)
+[2026-09-29T23:32:45.959Z INFO  blacksilk_node] block 25fa917e4aa1e5bc at height 204 accepted (tip 204)
+[2026-09-29T23:33:04.827Z INFO  blacksilk_node] block bb56b127cdee52a0 at height 205 accepted (tip 205)
+[2026-09-29T23:33:26.940Z INFO  blacksilk_node] block c4d8ef78ea11f159 at height 206 accepted (tip 206)
+[2026-09-29T23:33:42.421Z INFO  blacksilk_node] block 9ddd956fc6c1f0f1 at height 207 accepted (tip 207)
+[2026-09-29T23:33:51.731Z INFO  blacksilk_node] block 453e7e1f6cf1dfdd at height 208 accepted (tip 208)
+[2026-09-29T23:34:07.644Z INFO  blacksilk_node] block 76f69bb10420cdba at height 209 accepted (tip 209)
+[2026-09-29T23:34:14.735Z INFO  blacksilk_node] block e1a4ddef49c9b964 at height 210 accepted (tip 210)
+[2026-09-29T23:34:28.532Z INFO  blacksilk_node] block 849e903e5ac69967 at height 211 accepted (tip 211)
+[2026-09-29T23:34:30.712Z INFO  blacksilk_node] block c252f03e4f5a67d0 at height 212 accepted (tip 212)
+[2026-09-29T23:35:02.146Z INFO  blacksilk_node] block c9f9bc346ac97847 at height 213 accepted (tip 213)
+[2026-09-29T23:35:09.567Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 214 accepted (new: true)
+[2026-09-29T23:35:09.659Z DEBUG blacksilk_p2p::net::blocks] peer 1: block c7e023eccf04 at height 214 received
+[2026-09-29T23:35:09.721Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 214 accepted (new: false)
+[2026-09-29T23:35:09.891Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 214 accepted (new: false)
+[2026-09-29T23:35:13.324Z INFO  blacksilk_node] block f83ef548c391ca4c at height 215 accepted (tip 215)
+[2026-09-29T23:35:20.923Z INFO  blacksilk_node] block 85eb85931ed7c9d3 at height 216 accepted (tip 216)
+[2026-09-29T23:35:38.843Z INFO  blacksilk_node] block 8397cb0100d83d85 at height 217 accepted (tip 217)
+[2026-09-29T23:35:48.224Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 218 accepted (new: true)
+[2026-09-29T23:35:48.290Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 739b67f72568 at height 218 received
+[2026-09-29T23:35:48.353Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 218 accepted (new: false)
+[2026-09-29T23:35:48.483Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 218 accepted (new: false)
+[2026-09-29T23:35:53.714Z INFO  blacksilk_node] block 28275e9bb2d627e4 at height 219 accepted (tip 219)
+[2026-09-29T23:35:59.549Z INFO  blacksilk_node] block b79a0ddf88c872e2 at height 220 accepted (tip 220)
+[2026-09-29T23:36:08.214Z DEBUG blacksilk_p2p::net::stem] stem tx 599b914b26a2 -> peer 1
+[2026-09-29T23:36:12.655Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 221 accepted (new: true)
+[2026-09-29T23:36:12.716Z DEBUG blacksilk_p2p::net::blocks] peer 1: block ebcb360b1e2c at height 221 received
+[2026-09-29T23:36:12.777Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 221 accepted (new: false)
+[2026-09-29T23:36:12.917Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 221 accepted (new: false)
+[2026-09-29T23:36:12.999Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 221 accepted (new: false)
+[2026-09-29T23:36:28.773Z INFO  blacksilk_node] block 448506cc93f3e509 at height 222 accepted (tip 222)
+[2026-09-29T23:36:36.767Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 223 accepted (new: true)
+[2026-09-29T23:36:36.852Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 9c142741879c at height 223 received
+[2026-09-29T23:36:37.052Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 223 accepted (new: false)
+[2026-09-29T23:36:37.052Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 223 accepted (new: false)
+[2026-09-29T23:36:37.083Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 223 accepted (new: false)
+[2026-09-29T23:36:43.029Z INFO  blacksilk_node] block 9dbc909c43d6bad5 at height 224 accepted (tip 224)
+[2026-09-29T23:36:48.924Z INFO  blacksilk_node] block 5c75b3d9a8e5b7d4 at height 225 accepted (tip 225)
+[2026-09-29T23:36:57.759Z INFO  blacksilk_node] block 82affbc8e24c9b0b at height 226 accepted (tip 226)
+[2026-09-29T23:37:14.207Z INFO  blacksilk_node] block 3912c7ce34e708a4 at height 227 accepted (tip 227)
+[2026-09-29T23:37:20.737Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 228 accepted (new: true)
+[2026-09-29T23:37:20.823Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 753c2c6d2e5f at height 228 received
+[2026-09-29T23:37:20.947Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 228 accepted (new: false)
+[2026-09-29T23:37:21.126Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 228 accepted (new: false)
+[2026-09-29T23:37:21.126Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 228 accepted (new: false)
+[2026-09-29T23:37:22.986Z INFO  blacksilk_node] block 3ae2aa125c31b91f at height 228 accepted (tip 228)
+[2026-09-29T23:37:24.891Z INFO  blacksilk_node] block 301cb7e2c57543d4 at height 229 accepted (tip 229)
+[2026-09-29T23:37:31.516Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 230 accepted (new: true)
+[2026-09-29T23:37:31.594Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 2c29fae537e2 at height 230 received
+[2026-09-29T23:37:31.708Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 230 accepted (new: false)
+[2026-09-29T23:37:31.871Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 230 accepted (new: false)
+[2026-09-29T23:37:31.947Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 230 accepted (new: false)
+[2026-09-29T23:37:34.048Z INFO  blacksilk_node] block 2d272b150c163792 at height 231 accepted (tip 231)
+[2026-09-29T23:37:37.803Z INFO  blacksilk_node] block 1fdf870972de7547 at height 232 accepted (tip 232)
+[2026-09-29T23:37:43.211Z INFO  blacksilk_node] block 5905c30da5a725bf at height 233 accepted (tip 233)
+[2026-09-29T23:37:52.113Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 234 accepted (new: true)
+[2026-09-29T23:37:52.187Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 1779f386e4d9 at height 234 received
+[2026-09-29T23:37:52.305Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 234 accepted (new: false)
+[2026-09-29T23:37:52.325Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 234 accepted (new: false)
+[2026-09-29T23:37:52.365Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 234 accepted (new: false)
+[2026-09-29T23:37:55.027Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 235 accepted (new: true)
+[2026-09-29T23:37:55.109Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 06f9f1a9456e at height 235 received
+[2026-09-29T23:37:55.206Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 235 accepted (new: false)
+[2026-09-29T23:37:55.206Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 235 accepted (new: false)
+[2026-09-29T23:37:55.226Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 235 accepted (new: false)
+[2026-09-29T23:38:03.312Z INFO  blacksilk_node] block d79afa735b4b57f0 at height 236 accepted (tip 236)
+[2026-09-29T23:38:04.310Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 236 accepted (new: true)
+[2026-09-29T23:38:06.302Z INFO  blacksilk_node] block 44dfc97c5a122fd7 at height 237 accepted (tip 237)
+[2026-09-29T23:38:09.505Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 238 accepted (new: true)
+[2026-09-29T23:38:09.592Z DEBUG blacksilk_p2p::net::blocks] peer 1: block da8e84f54baf at height 238 received
+[2026-09-29T23:38:09.633Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 238 accepted (new: false)
+[2026-09-29T23:38:09.633Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 238 accepted (new: false)
+[2026-09-29T23:38:09.693Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 238 accepted (new: false)
+[2026-09-29T23:38:20.415Z INFO  blacksilk_node] block dd210847688320aa at height 239 accepted (tip 239)
+[2026-09-29T23:38:21.198Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 239 accepted (new: true)
+[2026-09-29T23:38:21.577Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 239 accepted (new: true)
+[2026-09-29T23:38:21.577Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 239 accepted (new: true)
+[2026-09-29T23:38:21.948Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 239 accepted (new: true)
+[2026-09-29T23:38:24.834Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 240 accepted (new: true)
+[2026-09-29T23:38:24.901Z DEBUG blacksilk_p2p::net::blocks] peer 4: block 8ecf082b08ce at height 239 received
+[2026-09-29T23:38:24.901Z DEBUG blacksilk_p2p::net::blocks] peer 1: block d3b3a21c2a8b at height 240 received
+[2026-09-29T23:38:24.908Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 238
+[2026-09-29T23:38:24.909Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T23:38:25.016Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 240 accepted (new: false)
+[2026-09-29T23:38:25.126Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 240 accepted (new: false)
+[2026-09-29T23:38:29.354Z DEBUG blacksilk_p2p::net::stem] fluff tx 736b10994255
+[2026-09-29T23:38:32.380Z INFO  blacksilk_node] block 15895c52cb6e0dfb at height 241 accepted (tip 241)
+[2026-09-29T23:38:32.936Z DEBUG blacksilk_p2p::net::admission] transaction 736b10994255 not valid here: KeyImageSpent { input: 0 }
+[2026-09-29T23:38:33.204Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 241 accepted (new: true)
+[2026-09-29T23:38:33.347Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 241 accepted (new: true)
+[2026-09-29T23:38:33.585Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 241 accepted (new: true)
+[2026-09-29T23:38:33.599Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 241 accepted (new: true)
+[2026-09-29T23:38:45.896Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 242 accepted (new: true)
+[2026-09-29T23:38:45.977Z DEBUG blacksilk_p2p::net::blocks] peer 3: block baad34066f1b at height 241 received
+[2026-09-29T23:38:45.978Z DEBUG blacksilk_p2p::net::blocks] peer 1: block b8a1eee396a0 at height 242 received
+[2026-09-29T23:38:45.982Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 240
+[2026-09-29T23:38:45.985Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 1, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T23:38:45.998Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 242 accepted (new: false)
+[2026-09-29T23:38:46.019Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 242 accepted (new: false)
+[2026-09-29T23:38:46.085Z DEBUG blacksilk_p2p::net::headers] peer 4: 1 headers up to height 242 accepted (new: false)
+[2026-09-29T23:38:47.962Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 243 accepted (new: true)
+[2026-09-29T23:38:48.024Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 21c5ca9e66ae at height 243 received
+[2026-09-29T23:38:48.073Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 243 accepted (new: false)
+[2026-09-29T23:38:48.140Z DEBUG blacksilk_p2p::net::headers] peer 2: 1 headers up to height 243 accepted (new: false)
+[2026-09-29T23:38:53.260Z INFO  blacksilk_node] block d1863213867d9dcb at height 244 accepted (tip 244)
+[2026-09-29T23:39:00.722Z DEBUG blacksilk_p2p::net::headers] peer 1: 1 headers up to height 245 accepted (new: true)
+[2026-09-29T23:39:00.722Z DEBUG blacksilk_p2p::net::headers] peer 3: 1 headers up to height 245 accepted (new: false)
+[2026-09-29T23:39:00.906Z DEBUG blacksilk_p2p::net::blocks] peer 1: block 15c009ed9891 at height 245 received
+[2026-09-29T23:39:04.106Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:14291
+[2026-09-29T23:39:04.106Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:14288
+[2026-09-29T23:39:04.106Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:56002
+[2026-09-29T23:39:04.106Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:56001
+[2026-09-29T23:39:04.736Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Custom { kind: UnexpectedEof, error: "early eof" })
+[2026-09-29T23:39:04.736Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:39:15.196Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:39:15.196Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:39:19.742Z INFO  blacksilk_node] block e267ee1e1d7e431d at height 246 accepted (tip 246)
+[2026-09-29T23:39:25.582Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:39:25.582Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:39:26.631Z INFO  blacksilk_node] block ed675e5fd771f676 at height 247 accepted (tip 247)
+[2026-09-29T23:39:34.505Z INFO  blacksilk_node] block ee0a1613433f49f0 at height 248 accepted (tip 248)
+[2026-09-29T23:39:36.002Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:39:36.002Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:39:44.012Z INFO  blacksilk_node] block 2bcccde59aba5b20 at height 249 accepted (tip 249)
+[2026-09-29T23:39:46.370Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:39:46.370Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:39:52.217Z INFO  blacksilk_node] block fa7d4e6866470b50 at height 250 accepted (tip 250)
+[2026-09-29T23:39:56.699Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:39:56.699Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:39:58.017Z INFO  blacksilk_node] block 9c38b8b1d57b47a2 at height 251 accepted (tip 251)
+[2026-09-29T23:40:01.103Z INFO  blacksilk_node] block fa978d86285a1ff4 at height 252 accepted (tip 252)
+[2026-09-29T23:40:05.675Z INFO  blacksilk_node] block bc6e1fdf85d77036 at height 253 accepted (tip 253)
+[2026-09-29T23:40:07.162Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Custom { kind: UnexpectedEof, error: "early eof" })
+[2026-09-29T23:40:07.162Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:40:07.429Z INFO  blacksilk_node] block a8d4c782d969e0dd at height 254 accepted (tip 254)
+[2026-09-29T23:40:17.003Z INFO  blacksilk_node] block 1aae80a3f98a5369 at height 255 accepted (tip 255)
+[2026-09-29T23:40:17.638Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:40:17.638Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:40:28.159Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:40:28.159Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:40:30.644Z INFO  blacksilk_node] block d14e8b19b9ffb694 at height 256 accepted (tip 256)
+[2026-09-29T23:40:39.047Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Custom { kind: UnexpectedEof, error: "early eof" })
+[2026-09-29T23:40:39.047Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:40:49.156Z INFO  blacksilk_node] block 4a6b331a1d1eefab at height 257 accepted (tip 257)
+[2026-09-29T23:40:49.910Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:40:49.910Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:40:56.008Z INFO  blacksilk_node] block 2e7ed1d45ca3f195 at height 258 accepted (tip 258)
+[2026-09-29T23:41:00.731Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:41:00.747Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:41:11.568Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:41:11.568Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:41:22.373Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:41:22.373Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:41:32.967Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:41:32.967Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:41:43.751Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:41:43.751Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:41:54.684Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:41:54.684Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:41:56.792Z INFO  blacksilk_node] block 98962547e8648cba at height 259 accepted (tip 259)
+[2026-09-29T23:42:03.775Z INFO  blacksilk_node] block 1f757071d721ed40 at height 260 accepted (tip 260)
+[2026-09-29T23:42:05.516Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:56001 (height 256)
+[2026-09-29T23:42:05.516Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:56002 (height 256)
+[2026-09-29T23:42:05.516Z DEBUG blacksilk_p2p::net::addr_relay] peer 6: addr with 1 entries
+[2026-09-29T23:42:05.516Z DEBUG blacksilk_p2p::net::addr_relay] peer 5: addr with 1 entries
+[2026-09-29T23:42:05.640Z DEBUG blacksilk_p2p::net::addr_relay] peer 5: addr with 4 entries
+[2026-09-29T23:42:05.641Z DEBUG blacksilk_p2p::net::addr_relay] peer 6: addr with 4 entries
+[2026-09-29T23:42:06.398Z INFO  blacksilk_node] block 09913cd2f24fe7a6 at height 261 accepted (tip 261)
+[2026-09-29T23:42:06.416Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:17440 (height 256)
+[2026-09-29T23:42:06.484Z DEBUG blacksilk_p2p::net::addr_relay] peer 7: getaddr answered with 4 addresses
+[2026-09-29T23:42:06.484Z DEBUG blacksilk_p2p::net::addr_relay] peer 7: addr with 1 entries
+[2026-09-29T23:42:08.182Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:17446 (height 256)
+[2026-09-29T23:42:08.340Z DEBUG blacksilk_p2p::net::addr_relay] peer 8: getaddr answered with 4 addresses
+[2026-09-29T23:42:08.340Z DEBUG blacksilk_p2p::net::addr_relay] peer 8: addr with 1 entries
+[2026-09-29T23:42:18.748Z DEBUG blacksilk_p2p::net::headers] peer 6: 1 headers up to height 262 accepted (new: true)
+[2026-09-29T23:42:18.810Z DEBUG blacksilk_p2p::net::blocks] peer 6: block 6d036f44dc2c at height 262 received
+[2026-09-29T23:42:18.810Z DEBUG blacksilk_p2p::net::headers] peer 8: 1 headers up to height 262 accepted (new: false)
+[2026-09-29T23:42:18.966Z DEBUG blacksilk_p2p::net::headers] peer 7: 1 headers up to height 262 accepted (new: false)
+[2026-09-29T23:42:18.967Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 262 accepted (new: false)
+[2026-09-29T23:42:19.070Z INFO  blacksilk_node] block aa306dba5ecfabc9 at height 262 accepted (tip 262)
+[2026-09-29T23:42:28.334Z DEBUG blacksilk_p2p::net::stem] stem tx 8e5fc31ba9f8 -> peer 5
+[2026-09-29T23:42:32.075Z DEBUG blacksilk_p2p::net::headers] peer 6: 1 headers up to height 263 accepted (new: true)
+[2026-09-29T23:42:32.144Z DEBUG blacksilk_p2p::net::blocks] peer 6: block 6579d7c8d969 at height 263 received
+[2026-09-29T23:42:32.239Z DEBUG blacksilk_p2p::net::headers] peer 7: 1 headers up to height 263 accepted (new: false)
+[2026-09-29T23:42:32.256Z DEBUG blacksilk_p2p::net::headers] peer 8: 1 headers up to height 263 accepted (new: false)
+[2026-09-29T23:42:32.256Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 263 accepted (new: false)
+[2026-09-29T23:42:35.564Z DEBUG blacksilk_p2p::net::headers] peer 6: 1 headers up to height 264 accepted (new: true)
+[2026-09-29T23:42:35.632Z DEBUG blacksilk_p2p::net::blocks] peer 6: block efd62db85cfb at height 264 received
+[2026-09-29T23:42:35.764Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 264 accepted (new: false)
+[2026-09-29T23:42:35.764Z DEBUG blacksilk_p2p::net::headers] peer 8: 1 headers up to height 264 accepted (new: false)
+[2026-09-29T23:42:35.824Z DEBUG blacksilk_p2p::net::headers] peer 7: 1 headers up to height 264 accepted (new: false)
+[2026-09-29T23:42:36.300Z INFO  blacksilk_node] block 781516687b55bfd3 at height 264 accepted (tip 264)
+[2026-09-29T23:42:39.188Z DEBUG blacksilk_p2p::net::maintenance] embargo expired for 8e5fc31ba9f8
+[2026-09-29T23:42:39.194Z DEBUG blacksilk_p2p::net::stem] fluff tx 8e5fc31ba9f8
+[2026-09-29T23:42:44.876Z INFO  blacksilk_node] block 10aeeee8d488bd8c at height 265 accepted (tip 265)
+[2026-09-29T23:42:50.510Z DEBUG blacksilk_p2p::net::headers] peer 6: 1 headers up to height 266 accepted (new: true)
+[2026-09-29T23:42:50.622Z DEBUG blacksilk_p2p::net::blocks] peer 6: block 4bb5f4928065 at height 266 received
+[2026-09-29T23:42:50.746Z DEBUG blacksilk_p2p::net::headers] peer 7: 1 headers up to height 266 accepted (new: false)
+[2026-09-29T23:42:50.746Z DEBUG blacksilk_p2p::net::headers] peer 8: 1 headers up to height 266 accepted (new: false)
+[2026-09-29T23:43:04.391Z INFO  blacksilk_node] block 936a779e93cc639e at height 267 accepted (tip 267)
+[2026-09-29T23:43:07.702Z INFO  blacksilk_node] block 24a407a9f8702163 at height 268 accepted (tip 268)
+[2026-09-29T23:43:20.839Z INFO  blacksilk_node] block a1b7669880e89a5b at height 269 accepted (tip 269)
+[2026-09-29T23:43:21.308Z DEBUG blacksilk_p2p::net::headers] peer 6: 1 headers up to height 269 accepted (new: true)
+[2026-09-29T23:43:21.519Z DEBUG blacksilk_p2p::net::headers] peer 8: 1 headers up to height 269 accepted (new: true)
+[2026-09-29T23:43:21.654Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 269 accepted (new: true)
+[2026-09-29T23:43:21.917Z DEBUG blacksilk_p2p::net::headers] peer 7: 1 headers up to height 269 accepted (new: true)
+[2026-09-29T23:43:34.165Z INFO  blacksilk_node] block fb1d86901a5a688c at height 270 accepted (tip 270)
+[2026-09-29T23:43:42.837Z DEBUG blacksilk_p2p::net::headers] peer 6: 1 headers up to height 271 accepted (new: true)
+[2026-09-29T23:43:42.917Z DEBUG blacksilk_p2p::net::blocks] peer 6: block 249ee8981f6c at height 271 received
+[2026-09-29T23:43:42.917Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 271 accepted (new: false)
+[2026-09-29T23:44:00.277Z DEBUG blacksilk_p2p::net::headers] peer 6: 1 headers up to height 272 accepted (new: true)
+[2026-09-29T23:44:00.461Z DEBUG blacksilk_p2p::net::blocks] peer 6: block 42346fe64dce at height 272 received
+[2026-09-29T23:44:00.543Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 272 accepted (new: false)
+[2026-09-29T23:44:23.231Z DEBUG blacksilk_p2p::net::headers] peer 6: 1 headers up to height 273 accepted (new: true)
+[2026-09-29T23:44:23.337Z DEBUG blacksilk_p2p::net::blocks] peer 6: block 675eb0f0b78f at height 273 received
+[2026-09-29T23:44:38.256Z INFO  blacksilk_node] block eb57c651085fc506 at height 274 accepted (tip 274)
+[2026-09-29T23:44:42.126Z DEBUG blacksilk_p2p::net::stem] stem tx a428020d1c35 -> peer 5
+[2026-09-29T23:44:46.521Z INFO  blacksilk_node] block 14acc8e0516002c7 at height 275 accepted (tip 275)
+[2026-09-29T23:45:09.536Z INFO  blacksilk_node] block 8fa555d20a830a5e at height 276 accepted (tip 276)
+[2026-09-29T23:45:12.077Z INFO  blacksilk_node] block 8cc713b44470ff39 at height 277 accepted (tip 277)
+[2026-09-29T23:45:17.220Z INFO  blacksilk_node] block 70caa962c4f2e9ab at height 278 accepted (tip 278)
+[2026-09-29T23:45:22.288Z DEBUG blacksilk_p2p::net::stem] stem tx 73dcb9f45a08 -> peer 5
+[2026-09-29T23:45:24.163Z DEBUG blacksilk_p2p::net::headers] peer 6: 1 headers up to height 279 accepted (new: true)
+[2026-09-29T23:45:24.393Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 279 accepted (new: false)
+[2026-09-29T23:45:24.407Z DEBUG blacksilk_p2p::net::blocks] peer 6: block e3844be3aff4 at height 279 received
+[2026-09-29T23:45:24.672Z DEBUG blacksilk_p2p::net::headers] peer 8: 1 headers up to height 279 accepted (new: false)
+[2026-09-29T23:45:32.998Z INFO  blacksilk_node] block b62868d3dd0a4eec at height 280 accepted (tip 280)
+[2026-09-29T23:45:33.473Z DEBUG blacksilk_p2p::net::admission] transaction 73dcb9f45a08 not valid here: KeyImageSpent { input: 0 }
+[2026-09-29T23:45:47.607Z DEBUG blacksilk_p2p::net::headers] peer 6: 1 headers up to height 281 accepted (new: true)
+[2026-09-29T23:45:47.678Z DEBUG blacksilk_p2p::net::blocks] peer 6: block 6bc5083c9a95 at height 281 received
+[2026-09-29T23:45:48.841Z INFO  blacksilk_node] block 8b89b43c789ff30f at height 281 accepted (tip 281)
+[2026-09-29T23:46:01.408Z DEBUG blacksilk_p2p::net::headers] peer 6: 1 headers up to height 282 accepted (new: true)
+[2026-09-29T23:46:01.428Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 282 accepted (new: false)
+[2026-09-29T23:46:01.467Z DEBUG blacksilk_p2p::net::blocks] peer 6: block 5fdf7b89089b at height 282 received
+[2026-09-29T23:46:01.535Z DEBUG blacksilk_p2p::net::headers] peer 8: 1 headers up to height 282 accepted (new: false)
+[2026-09-29T23:46:01.618Z DEBUG blacksilk_p2p::net::headers] peer 7: 1 headers up to height 282 accepted (new: false)
+[2026-09-29T23:46:03.395Z DEBUG blacksilk_p2p::net::headers] peer 6: 1 headers up to height 283 accepted (new: true)
+[2026-09-29T23:46:03.485Z DEBUG blacksilk_p2p::net::blocks] peer 6: block e1f75415ce8d at height 283 received
+[2026-09-29T23:46:03.700Z DEBUG blacksilk_p2p::net::headers] peer 5: 1 headers up to height 283 accepted (new: false)
+[2026-09-29T23:46:04.034Z INFO  blacksilk_node] block 6af802dce4e8f7c2 at height 282 accepted (tip 283)
+[2026-09-29T23:46:04.356Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:56002
+[2026-09-29T23:46:04.357Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:17440
+[2026-09-29T23:46:04.357Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:56001
+[2026-09-29T23:46:04.357Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:17446
+[2026-09-29T23:46:05.072Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:46:05.092Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:46:16.071Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:46:16.071Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:46:18.111Z INFO  blacksilk_node] block 8e11ea0274f1cad1 at height 284 accepted (tip 284)
+[2026-09-29T23:46:22.946Z INFO  blacksilk_node] block f44eae4595d74dde at height 285 accepted (tip 285)
+[2026-09-29T23:46:25.202Z INFO  blacksilk_node] block 67676c9f52676f22 at height 286 accepted (tip 286)
+[2026-09-29T23:46:26.892Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:46:26.892Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:46:37.395Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:46:37.395Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:46:47.779Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:46:47.790Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:46:57.947Z INFO  blacksilk_node] block 6c2a0d77adaf88e2 at height 287 accepted (tip 287)
+[2026-09-29T23:46:58.173Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:46:58.173Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:47:05.135Z INFO  blacksilk_node] block 22dda3db6fb272fd at height 288 accepted (tip 288)
+[2026-09-29T23:47:08.520Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:47:08.520Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:47:18.941Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:47:18.941Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:47:26.146Z INFO  blacksilk_node] block 5144bd7b8fb5befc at height 289 accepted (tip 289)
+[2026-09-29T23:47:29.405Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:47:29.405Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:47:30.143Z INFO  blacksilk_node] block c1b2fe6c4c210df3 at height 290 accepted (tip 290)
+[2026-09-29T23:47:31.928Z INFO  blacksilk_node] block e00dafc951448c21 at height 291 accepted (tip 291)
+[2026-09-29T23:47:39.616Z INFO  blacksilk_node] block 9e2d41622f99ab86 at height 292 accepted (tip 292)
+[2026-09-29T23:47:39.842Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Custom { kind: UnexpectedEof, error: "early eof" })
+[2026-09-29T23:47:39.842Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:47:42.854Z INFO  blacksilk_node] block f0d7b72ca5c85565 at height 293 accepted (tip 293)
+[2026-09-29T23:47:45.616Z INFO  blacksilk_node] block 66cc7221b4ffd49e at height 294 accepted (tip 294)
+[2026-09-29T23:47:48.494Z INFO  blacksilk_node] block 318ff230d924a9f0 at height 295 accepted (tip 295)
+[2026-09-29T23:47:50.376Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:47:50.376Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:47:55.750Z INFO  blacksilk_node] block 3758366983d3a6d5 at height 296 accepted (tip 296)
+[2026-09-29T23:47:58.371Z INFO  blacksilk_node] block 6d8fc71fad34d422 at height 297 accepted (tip 297)
+[2026-09-29T23:47:59.729Z INFO  blacksilk_node] block f4529fb80eec624a at height 298 accepted (tip 298)
+[2026-09-29T23:48:00.817Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:48:00.817Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:48:01.714Z INFO  blacksilk_node] block cf8c2affd31fe44f at height 299 accepted (tip 299)
+[2026-09-29T23:48:03.114Z DEBUG blacksilk_p2p::net::stem] local tx fa904ac5e606 held until a stem peer exists
+[2026-09-29T23:48:03.872Z INFO  blacksilk_node] block c5f8a484b63a55e6 at height 300 accepted (tip 300)
+[2026-09-29T23:48:11.253Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:48:11.253Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:48:18.123Z INFO  blacksilk_node] block 0311c19f6ae85e5d at height 301 accepted (tip 301)
+[2026-09-29T23:48:21.651Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:48:21.651Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:48:21.808Z INFO  blacksilk_node] block 6218b67ee4c9f3f3 at height 302 accepted (tip 302)
+[2026-09-29T23:48:24.762Z DEBUG blacksilk_p2p::net::maintenance] embargo expired for fa904ac5e606
+[2026-09-29T23:48:24.768Z DEBUG blacksilk_p2p::net::stem] fluff tx fa904ac5e606
+[2026-09-29T23:48:32.040Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:48:32.040Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:48:42.424Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:48:42.424Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:48:52.851Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:48:52.851Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:48:59.212Z INFO  blacksilk_node] block ff8199ca9d11ec39 at height 303 accepted (tip 303)
+[2026-09-29T23:49:03.254Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:49:03.255Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:49:04.888Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:17754 (height 301)
+[2026-09-29T23:49:04.956Z DEBUG blacksilk_p2p::net::addr_relay] peer 9: getaddr answered with 4 addresses
+[2026-09-29T23:49:04.957Z DEBUG blacksilk_p2p::net::addr_relay] peer 9: addr with 1 entries
+[2026-09-29T23:49:05.921Z INFO  blacksilk_node] block 9a2c9049ab82ee63 at height 304 accepted (tip 304)
+[2026-09-29T23:49:09.411Z INFO  blacksilk_node] block 982c0aec00e4bd72 at height 305 accepted (tip 305)
+[2026-09-29T23:49:14.193Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:56001 (height 302)
+[2026-09-29T23:49:14.193Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:56002 (height 302)
+[2026-09-29T23:49:14.193Z DEBUG blacksilk_p2p::net::addr_relay] peer 11: addr with 1 entries
+[2026-09-29T23:49:14.308Z DEBUG blacksilk_p2p::net::addr_relay] peer 11: addr with 4 entries
+[2026-09-29T23:49:14.810Z DEBUG blacksilk_p2p::net::addr_relay] peer 10: addr with 1 entries
+[2026-09-29T23:49:14.821Z DEBUG blacksilk_p2p::net::addr_relay] peer 10: addr with 4 entries
+[2026-09-29T23:49:14.886Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:17764 (height 302)
+[2026-09-29T23:49:14.936Z DEBUG blacksilk_p2p::net::addr_relay] peer 12: getaddr answered with 4 addresses
+[2026-09-29T23:49:14.936Z DEBUG blacksilk_p2p::net::addr_relay] peer 12: addr with 1 entries
+[2026-09-29T23:49:21.876Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 306 accepted (new: true)
+[2026-09-29T23:49:21.964Z DEBUG blacksilk_p2p::net::blocks] peer 10: block fe19aec0b263 at height 306 received
+[2026-09-29T23:49:22.006Z DEBUG blacksilk_p2p::net::headers] peer 12: 1 headers up to height 306 accepted (new: false)
+[2026-09-29T23:49:22.132Z DEBUG blacksilk_p2p::net::headers] peer 11: 1 headers up to height 306 accepted (new: false)
+[2026-09-29T23:49:22.156Z DEBUG blacksilk_p2p::net::headers] peer 9: 1 headers up to height 306 accepted (new: false)
+[2026-09-29T23:49:22.383Z INFO  blacksilk_node] block 9811f1832d417bc0 at height 306 accepted (tip 306)
+[2026-09-29T23:49:24.880Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 307 accepted (new: true)
+[2026-09-29T23:49:24.977Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 2e92037db53f at height 307 received
+[2026-09-29T23:49:24.978Z INFO  blacksilk_node] block 0481b86234521aa0 at height 307 accepted (tip 307)
+[2026-09-29T23:49:25.183Z DEBUG blacksilk_p2p::net::headers] peer 12: 1 headers up to height 307 accepted (new: false)
+[2026-09-29T23:49:25.298Z DEBUG blacksilk_p2p::net::headers] peer 9: 1 headers up to height 307 accepted (new: false)
+[2026-09-29T23:49:25.313Z DEBUG blacksilk_p2p::net::headers] peer 11: 1 headers up to height 307 accepted (new: false)
+[2026-09-29T23:49:36.934Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 308 accepted (new: true)
+[2026-09-29T23:49:37.011Z DEBUG blacksilk_p2p::net::blocks] peer 10: block b5d0ee297f2f at height 308 received
+[2026-09-29T23:49:37.013Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 306
+[2026-09-29T23:49:37.014Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T23:49:37.022Z DEBUG blacksilk_p2p::net::headers] peer 11: 1 headers up to height 308 accepted (new: false)
+[2026-09-29T23:49:37.124Z DEBUG blacksilk_p2p::net::headers] peer 12: 1 headers up to height 308 accepted (new: false)
+[2026-09-29T23:49:37.186Z DEBUG blacksilk_p2p::net::headers] peer 9: 1 headers up to height 308 accepted (new: false)
+[2026-09-29T23:50:00.009Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 309 accepted (new: true)
+[2026-09-29T23:50:00.024Z DEBUG blacksilk_p2p::net::headers] peer 12: 1 headers up to height 309 accepted (new: false)
+[2026-09-29T23:50:00.081Z DEBUG blacksilk_p2p::net::blocks] peer 10: block aa3646146d2c at height 309 received
+[2026-09-29T23:50:00.198Z DEBUG blacksilk_p2p::net::headers] peer 9: 1 headers up to height 309 accepted (new: false)
+[2026-09-29T23:50:00.287Z DEBUG blacksilk_p2p::net::headers] peer 11: 1 headers up to height 309 accepted (new: false)
+[2026-09-29T23:50:02.111Z INFO  blacksilk_node] block 7603270c7ede0146 at height 310 accepted (tip 310)
+[2026-09-29T23:50:18.834Z INFO  blacksilk_node] block 28ed8f8cad134ced at height 311 accepted (tip 311)
+[2026-09-29T23:50:27.377Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 312 accepted (new: true)
+[2026-09-29T23:50:27.458Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 4186818b7ca0 at height 312 received
+[2026-09-29T23:50:27.499Z DEBUG blacksilk_p2p::net::headers] peer 12: 1 headers up to height 312 accepted (new: false)
+[2026-09-29T23:50:27.540Z DEBUG blacksilk_p2p::net::headers] peer 11: 1 headers up to height 312 accepted (new: false)
+[2026-09-29T23:50:27.657Z DEBUG blacksilk_p2p::net::headers] peer 9: 1 headers up to height 312 accepted (new: false)
+[2026-09-29T23:50:43.892Z INFO  blacksilk_node] block 1c6598c398ed1cf6 at height 313 accepted (tip 313)
+[2026-09-29T23:50:49.687Z DEBUG blacksilk_p2p::net::headers] peer 10: 2 headers up to height 314 accepted (new: true)
+[2026-09-29T23:50:49.737Z DEBUG blacksilk_p2p::net::headers] peer 9: 1 headers up to height 314 accepted (new: false)
+[2026-09-29T23:50:49.753Z DEBUG blacksilk_p2p::net::blocks] peer 10: block b8325d10b43a at height 313 received
+[2026-09-29T23:50:49.753Z DEBUG blacksilk_p2p::net::blocks] peer 10: block d10c35917a41 at height 314 received
+[2026-09-29T23:50:49.764Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 312
+[2026-09-29T23:50:49.765Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T23:50:49.855Z DEBUG blacksilk_p2p::net::headers] peer 12: 1 headers up to height 314 accepted (new: false)
+[2026-09-29T23:50:50.180Z INFO  blacksilk_node] block c0ec628b4b077c16 at height 314 accepted (tip 314)
+[2026-09-29T23:51:01.133Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 315 accepted (new: true)
+[2026-09-29T23:51:01.232Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 675985cb62d4 at height 315 received
+[2026-09-29T23:51:01.398Z DEBUG blacksilk_p2p::net::headers] peer 9: 1 headers up to height 315 accepted (new: false)
+[2026-09-29T23:51:01.464Z DEBUG blacksilk_p2p::net::headers] peer 12: 1 headers up to height 315 accepted (new: false)
+[2026-09-29T23:51:16.820Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 316 accepted (new: true)
+[2026-09-29T23:51:16.897Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 53cc4da8ed6b at height 316 received
+[2026-09-29T23:51:16.897Z DEBUG blacksilk_p2p::net::headers] peer 12: 1 headers up to height 316 accepted (new: false)
+[2026-09-29T23:51:16.900Z DEBUG blacksilk_p2p::net::headers] peer 9: 1 headers up to height 316 accepted (new: false)
+[2026-09-29T23:51:16.989Z DEBUG blacksilk_p2p::net::headers] peer 11: 1 headers up to height 316 accepted (new: false)
+[2026-09-29T23:51:18.731Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 317 accepted (new: true)
+[2026-09-29T23:51:18.806Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 2c639e186947 at height 317 received
+[2026-09-29T23:51:18.809Z DEBUG blacksilk_p2p::net::headers] peer 9: 1 headers up to height 317 accepted (new: false)
+[2026-09-29T23:51:18.830Z DEBUG blacksilk_p2p::net::headers] peer 11: 1 headers up to height 317 accepted (new: false)
+[2026-09-29T23:51:19.076Z DEBUG blacksilk_p2p::net::headers] peer 12: 1 headers up to height 317 accepted (new: false)
+[2026-09-29T23:51:19.911Z INFO  blacksilk_node] block 500a6962c9cb8f57 at height 317 accepted (tip 317)
+[2026-09-29T23:51:23.987Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 318 accepted (new: true)
+[2026-09-29T23:51:24.107Z DEBUG blacksilk_p2p::net::blocks] peer 10: block eaaf35e326e9 at height 318 received
+[2026-09-29T23:51:24.301Z DEBUG blacksilk_p2p::net::headers] peer 9: 1 headers up to height 318 accepted (new: false)
+[2026-09-29T23:51:24.469Z INFO  blacksilk_node] block fe2483b7225948bc at height 318 accepted (tip 318)
+[2026-09-29T23:51:28.144Z INFO  blacksilk_node] block e31c40764f61be8a at height 319 accepted (tip 319)
+[2026-09-29T23:51:36.344Z INFO  blacksilk_node] block 5c09efac21e3be66 at height 320 accepted (tip 320)
+[2026-09-29T23:51:51.987Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 321 accepted (new: true)
+[2026-09-29T23:51:52.050Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 6a63aebda0b6 at height 321 received
+[2026-09-29T23:51:58.801Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 322 accepted (new: true)
+[2026-09-29T23:51:58.801Z DEBUG blacksilk_p2p::net::headers] peer 9: 1 headers up to height 322 accepted (new: false)
+[2026-09-29T23:51:58.860Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 25236e88c3d0 at height 322 received
+[2026-09-29T23:51:58.893Z DEBUG blacksilk_p2p::net::headers] peer 11: 1 headers up to height 322 accepted (new: false)
+[2026-09-29T23:51:58.910Z DEBUG blacksilk_p2p::net::headers] peer 12: 1 headers up to height 322 accepted (new: false)
+[2026-09-29T23:52:00.301Z INFO  blacksilk_node] block 3072a1b5197d852b at height 323 accepted (tip 323)
+[2026-09-29T23:52:01.670Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 323 accepted (new: true)
+[2026-09-29T23:52:05.491Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 324 accepted (new: true)
+[2026-09-29T23:52:05.554Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 82bff4990c68 at height 323 received
+[2026-09-29T23:52:05.554Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 354c36423256 at height 324 received
+[2026-09-29T23:52:05.560Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 1 block(s) above height 322
+[2026-09-29T23:52:05.561Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T23:52:05.771Z DEBUG blacksilk_p2p::net::headers] peer 9: 1 headers up to height 324 accepted (new: false)
+[2026-09-29T23:52:05.771Z DEBUG blacksilk_p2p::net::headers] peer 12: 1 headers up to height 324 accepted (new: false)
+[2026-09-29T23:52:09.069Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 325 accepted (new: true)
+[2026-09-29T23:52:09.142Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 802c4628c716 at height 325 received
+[2026-09-29T23:52:27.120Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 326 accepted (new: true)
+[2026-09-29T23:52:27.120Z DEBUG blacksilk_p2p::net::headers] peer 9: 1 headers up to height 326 accepted (new: false)
+[2026-09-29T23:52:27.189Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 4001b75a6286 at height 326 received
+[2026-09-29T23:52:27.189Z DEBUG blacksilk_p2p::net::headers] peer 11: 1 headers up to height 326 accepted (new: false)
+[2026-09-29T23:52:27.274Z DEBUG blacksilk_p2p::net::headers] peer 12: 1 headers up to height 326 accepted (new: false)
+[2026-09-29T23:52:30.736Z INFO  blacksilk_node] block 219b863ddd5c0497 at height 327 accepted (tip 327)
+[2026-09-29T23:52:33.341Z INFO  blacksilk_node] block f6c02782937b8ee6 at height 328 accepted (tip 328)
+[2026-09-29T23:52:49.048Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 329 accepted (new: true)
+[2026-09-29T23:52:49.158Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 6f9934aa8c78 at height 329 received
+[2026-09-29T23:52:49.238Z DEBUG blacksilk_p2p::net::headers] peer 11: 1 headers up to height 329 accepted (new: false)
+[2026-09-29T23:52:52.610Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 330 accepted (new: true)
+[2026-09-29T23:52:52.675Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 0347899d13c0 at height 330 received
+[2026-09-29T23:52:52.903Z DEBUG blacksilk_p2p::net::headers] peer 11: 1 headers up to height 330 accepted (new: false)
+[2026-09-29T23:52:52.942Z DEBUG blacksilk_p2p::net::headers] peer 12: 1 headers up to height 330 accepted (new: false)
+[2026-09-29T23:52:52.982Z DEBUG blacksilk_p2p::net::headers] peer 9: 1 headers up to height 330 accepted (new: false)
+[2026-09-29T23:53:01.988Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 331 accepted (new: true)
+[2026-09-29T23:53:02.058Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 241ff95055eb at height 331 received
+[2026-09-29T23:53:02.111Z DEBUG blacksilk_p2p::net::headers] peer 12: 1 headers up to height 331 accepted (new: false)
+[2026-09-29T23:53:02.127Z DEBUG blacksilk_p2p::net::headers] peer 11: 1 headers up to height 331 accepted (new: false)
+[2026-09-29T23:53:03.266Z INFO  blacksilk_node] block 0080434cb1589fed at height 331 accepted (tip 331)
+[2026-09-29T23:53:04.270Z DEBUG blacksilk_p2p::net::headers] peer 10: 1 headers up to height 332 accepted (new: true)
+[2026-09-29T23:53:04.346Z DEBUG blacksilk_p2p::net::blocks] peer 10: block 4f1e714dc0b0 at height 332 received
+[2026-09-29T23:53:04.467Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:56001
+[2026-09-29T23:53:04.467Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:56002
+[2026-09-29T23:53:04.467Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:17754
+[2026-09-29T23:53:04.480Z INFO  blacksilk_p2p::net::conn] disconnected peer 127.0.0.1:17764
+[2026-09-29T23:53:04.946Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:53:04.947Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:53:15.333Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:53:15.333Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:53:19.701Z INFO  blacksilk_node] block 93a16025f1c98c8b at height 333 accepted (tip 333)
+[2026-09-29T23:53:25.780Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:53:25.780Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:53:36.293Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:53:36.293Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:53:44.652Z INFO  blacksilk_node] block 52492492ab7e61e3 at height 334 accepted (tip 334)
+[2026-09-29T23:53:46.843Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:53:46.843Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:53:54.008Z INFO  blacksilk_node] block fcaab63d36aabc4a at height 335 accepted (tip 335)
+[2026-09-29T23:53:57.382Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:53:57.382Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:53:59.613Z INFO  blacksilk_node] block 58d137861ba6579c at height 336 accepted (tip 336)
+[2026-09-29T23:54:01.519Z INFO  blacksilk_node] block 5090e75a7f393e47 at height 337 accepted (tip 337)
+[2026-09-29T23:54:07.745Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:54:07.745Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:54:08.414Z INFO  blacksilk_node] block 9a0321fcbeacb192 at height 338 accepted (tip 338)
+[2026-09-29T23:54:10.579Z INFO  blacksilk_node] block d0df249323265c8f at height 339 accepted (tip 339)
+[2026-09-29T23:54:18.128Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:54:18.128Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:54:28.660Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:54:28.660Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:54:39.156Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:54:39.156Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:54:49.519Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:54:49.534Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10053, kind: ConnectionAborted, message: "An established connection was aborted by the software in your host machine." })
+[2026-09-29T23:54:58.349Z INFO  blacksilk_node] block 9a5f2c530e6f95b4 at height 340 accepted (tip 340)
+[2026-09-29T23:54:59.837Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56001: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:54:59.837Z DEBUG blacksilk_p2p::net::conn] 127.0.0.1:56002: transport handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-29T23:55:10.277Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:18017 (height 340)
+[2026-09-29T23:55:10.344Z DEBUG blacksilk_p2p::net::addr_relay] peer 13: getaddr answered with 4 addresses
+[2026-09-29T23:55:10.344Z DEBUG blacksilk_p2p::net::addr_relay] peer 13: addr with 1 entries
+[2026-09-29T23:55:10.344Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:56002 (height 340)
+[2026-09-29T23:55:10.344Z INFO  blacksilk_p2p::net::conn] connected outbound peer 127.0.0.1:56001 (height 340)
+[2026-09-29T23:55:10.345Z DEBUG blacksilk_p2p::net::addr_relay] peer 14: addr with 1 entries
+[2026-09-29T23:55:10.345Z DEBUG blacksilk_p2p::net::addr_relay] peer 15: addr with 1 entries
+[2026-09-29T23:55:10.410Z DEBUG blacksilk_p2p::net::addr_relay] peer 14: addr with 4 entries
+[2026-09-29T23:55:10.410Z DEBUG blacksilk_p2p::net::addr_relay] peer 15: addr with 4 entries
+[2026-09-29T23:55:11.553Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:18023 (height 340)
+[2026-09-29T23:55:11.632Z DEBUG blacksilk_p2p::net::addr_relay] peer 16: getaddr answered with 4 addresses
+[2026-09-29T23:55:11.632Z DEBUG blacksilk_p2p::net::addr_relay] peer 16: addr with 1 entries
+[2026-09-29T23:55:24.921Z DEBUG blacksilk_p2p::net::blocks] peer 14: block b0d4ed72d0d8 at height 334 received
+[2026-09-29T23:55:24.944Z DEBUG blacksilk_p2p::net::blocks] peer 16: block 7de63ba4a4ef at height 338 received
+[2026-09-29T23:55:24.944Z DEBUG blacksilk_p2p::net::blocks] peer 15: block 4f04cbb6fae6 at height 333 received
+[2026-09-29T23:55:24.944Z DEBUG blacksilk_p2p::net::blocks] peer 13: block 13d1957ccf8a at height 335 received
+[2026-09-29T23:55:24.944Z DEBUG blacksilk_p2p::net::blocks] peer 13: block dcd63ae03a04 at height 336 received
+[2026-09-29T23:55:24.944Z DEBUG blacksilk_p2p::net::blocks] peer 13: block e3427c274d74 at height 337 received
+[2026-09-29T23:55:24.944Z DEBUG blacksilk_p2p::net::blocks] peer 15: block 74b38db0f066 at height 339 received
+[2026-09-29T23:55:24.964Z DEBUG blacksilk_p2p::net::blocks] peer 16: block 342041b5152a at height 340 received
+[2026-09-29T23:55:24.967Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 8 block(s) above height 332
+[2026-09-29T23:55:24.987Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 1, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T23:55:25.264Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 8 block(s) above height 332
+[2026-09-29T23:55:25.272Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 3, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 0, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T23:55:25.272Z INFO  blacksilk_node] block f6179eb2f06f192b at height 341 accepted (tip 341)
+[2026-09-29T23:55:25.380Z DEBUG blacksilk_p2p::net::headers] peer 15: 9 headers up to height 341 accepted (new: true)
+[2026-09-29T23:55:25.380Z DEBUG blacksilk_p2p::net::headers] peer 14: 1 headers up to height 341 accepted (new: false)
+[2026-09-29T23:55:25.381Z DEBUG blacksilk_p2p::net::headers] peer 13: 1 headers up to height 341 accepted (new: false)
+[2026-09-29T23:55:25.381Z DEBUG blacksilk_p2p::net::headers] peer 16: 1 headers up to height 341 accepted (new: false)
+[2026-09-29T23:55:25.460Z DEBUG blacksilk_p2p::net::blocks] peer 15: block bd3ef08a6b43 at height 341 received
+[2026-09-29T23:55:25.472Z INFO  blacksilk_chain::manager::fork_choice] reorganization: disconnecting 9 block(s) above height 332
+[2026-09-29T23:55:25.497Z INFO  blacksilk_chain::manager::fork_choice] mempool after the reorganization: Revalidation { checked: 0, invalid: 0, ring_changed: 0 }; returned transactions: Readmission { readmitted: 0, already_pooled: 0, other_rules: 0, conflicts: 0, invalid: 1, ring_changed: 0, no_room: 0, over_budget: 0 }; 0 beyond the readmission budget, not captured
+[2026-09-29T23:55:46.543Z INFO  blacksilk_p2p::net::conn] connected inbound peer 127.0.0.1:18032 (height 0)
+[2026-09-29T23:55:46.543Z DEBUG blacksilk_p2p::net::addr_relay] peer 17: getaddr answered with 5 addresses
+[2026-09-29T23:55:46.543Z DEBUG blacksilk_p2p::net::addr_relay] peer 17: addr with 1 entries
+[2026-09-29T23:55:48.721Z DEBUG blacksilk_p2p::net::addr_relay] peer 14: addr with 1 entries
+[2026-09-29T23:55:48.736Z DEBUG blacksilk_p2p::net::addr_relay] peer 15: addr with 1 entries

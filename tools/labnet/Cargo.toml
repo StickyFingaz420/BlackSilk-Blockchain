@@ -15,6 +15,12 @@ path = "src/main.rs"
 name = "blacksilk-rx-verify"
 path = "src/bin/rx_verify.rs"
 
+# Evidence tooling: network metrics (propagation, stale blocks, heals, the
+# late joiner's connections) of a finished run, from its own files.
+[[bin]]
+name = "blacksilk-labnet-report"
+path = "src/bin/labnet_report.rs"
+
 [dependencies]
 blacksilk-consensus = { path = "../../consensus" }
 blacksilk-randomx = { path = "../../randomx" }

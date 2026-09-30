@@ -1,0 +1,214 @@
+{
+  "nodes": 5,
+  "difficulty_min": 14,
+  "difficulty_max": 31,
+  "difficulty_first_third": 21.80952380952381,
+  "difficulty_last_third": 26.428571428571427,
+  "propagation": {
+    "blocks": 88,
+    "contested_heights": 20,
+    "median_ms": 898,
+    "p90_ms": 1031,
+    "max_ms": 1133
+  },
+  "propagation_with_contested": {
+    "blocks": 100,
+    "contested_heights": 20,
+    "median_ms": 908,
+    "p90_ms": 1068,
+    "max_ms": 21144
+  },
+  "arrivals": {
+    "blocks": 115,
+    "not_seen_by_every_node": 13,
+    "all": {
+      "n": 422,
+      "median_ms": 896,
+      "p90_ms": 1015,
+      "max_ms": 194041
+    },
+    "receivers": [
+      {
+        "node": 0,
+        "blocks": 56,
+        "never_seen": 10,
+        "arrival": {
+          "n": 46,
+          "median_ms": 880,
+          "p90_ms": 990,
+          "max_ms": 7324
+        }
+      },
+      {
+        "node": 1,
+        "blocks": 115,
+        "never_seen": 8,
+        "arrival": {
+          "n": 107,
+          "median_ms": 891,
+          "p90_ms": 995,
+          "max_ms": 42996
+        }
+      },
+      {
+        "node": 2,
+        "blocks": 59,
+        "never_seen": 3,
+        "arrival": {
+          "n": 56,
+          "median_ms": 901,
+          "p90_ms": 3189,
+          "max_ms": 193937
+        }
+      },
+      {
+        "node": 3,
+        "blocks": 115,
+        "never_seen": 9,
+        "arrival": {
+          "n": 106,
+          "median_ms": 899,
+          "p90_ms": 1003,
+          "max_ms": 192718
+        }
+      },
+      {
+        "node": 4,
+        "blocks": 115,
+        "never_seen": 8,
+        "arrival": {
+          "n": 107,
+          "median_ms": 896,
+          "p90_ms": 1023,
+          "max_ms": 194041
+        }
+      }
+    ]
+  },
+  "found_after_warmup": 141,
+  "on_final_chain_after_warmup": 121,
+  "stale_after_warmup": 20,
+  "found_by_phase": {
+    "connected": {
+      "found": 115,
+      "on_final_chain": 102,
+      "stale": 13
+    },
+    "final": {
+      "found": 1,
+      "on_final_chain": 1,
+      "stale": 0
+    },
+    "heal": {
+      "found": 11,
+      "on_final_chain": 10,
+      "stale": 1
+    },
+    "partition": {
+      "found": 14,
+      "on_final_chain": 8,
+      "stale": 6
+    },
+    "warmup": {
+      "found": 206,
+      "on_final_chain": 206,
+      "stale": 0
+    }
+  },
+  "refused_at_rpc": 0,
+  "templates_abandoned_after_warmup": 95,
+  "heals": [
+    {
+      "unix": 1790716896,
+      "converged_after_secs": 20,
+      "reorgs": [
+        [
+          2,
+          8,
+          12.0
+        ],
+        [
+          3,
+          7,
+          10.8
+        ],
+        [
+          4,
+          8,
+          12.1
+        ]
+      ],
+      "heights_before": "280/280/277/277/277"
+    }
+  ],
+  "side_branches": [
+    {
+      "fork_height": 213,
+      "tip_height": 214,
+      "tip": "c256b106b30708082c7b075ac6d25a55657ee9b2d66ec6f93f0df5e1ee181dbe",
+      "work": [
+        [
+          214,
+          16
+        ]
+      ],
+      "final_chain_work": [
+        [
+          214,
+          16
+        ]
+      ]
+    },
+    {
+      "fork_height": 251,
+      "tip_height": 252,
+      "tip": "e698d227ffeabd7fd7b07e76450b2af382c03fcf4b061cc917853b4383e490d5",
+      "work": [
+        [
+          252,
+          28
+        ]
+      ],
+      "final_chain_work": [
+        [
+          252,
+          28
+        ]
+      ]
+    },
+    {
+      "fork_height": 304,
+      "tip_height": 305,
+      "tip": "fdf68057584bd568c145cda2d7ab0afd4ff4f8fd3a981eb880502aa3ac580962",
+      "work": [
+        [
+          305,
+          26
+        ]
+      ],
+      "final_chain_work": [
+        [
+          305,
+          26
+        ]
+      ]
+    }
+  ],
+  "late_joiner_getaddr_answer": 5,
+  "late_joiner": [
+    "    0.27 s  connected outbound peer 127.0.0.1:51001 (height 327) -> 1 peers",
+    "    0.27 s  peer 1: addr with 1 entries",
+    "    0.27 s  peer 1: addr with 5 entries",
+    "    2.45 s  connected block-relay-only outbound peer 127.0.0.1:51041 (height 327) -> 2 peers",
+    "    2.45 s  connected outbound peer 127.0.0.1:51061 (height 327) -> 3 peers",
+    "    2.46 s  connected outbound peer 127.0.0.1:51021 (height 327) -> 4 peers",
+    "    2.46 s  peer 3: addr with 1 entries",
+    "    2.46 s  connected outbound peer 127.0.0.1:51081 (height 327) -> 5 peers",
+    "    2.46 s  peer 5: addr with 1 entries",
+    "    2.46 s  peer 4: addr with 1 entries",
+    "    2.46 s  peer 3: addr with 5 entries",
+    "    2.46 s  peer 4: addr with 5 entries",
+    "    2.46 s  peer 5: addr with 5 entries"
+  ],
+  "relay_joiner": null
+}

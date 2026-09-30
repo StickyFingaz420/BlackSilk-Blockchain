@@ -1,0 +1,95 @@
+{
+  "started_unix": 1790719910,
+  "duration_secs": 4235,
+  "nodes": 5,
+  "final_height": 544,
+  "partitions": 0,
+  "partition_split": 2,
+  "tx_attempts": 99,
+  "tx_submitted": 99,
+  "tx_failures": {},
+  "px_attempts": 0,
+  "px_submitted": 0,
+  "px_failures": {},
+  "warmup": {
+    "enabled": true,
+    "reached": true,
+    "secs": 864,
+    "end_height": 210,
+    "end_difficulty": 14,
+    "mean_interval_secs": 8.492062756666666,
+    "window_blocks": 30,
+    "ratio": 0.75,
+    "target_secs": 10
+  },
+  "measured_secs": 3000,
+  "reorganizations": 38,
+  "max_reorg_depth": 2,
+  "reorg_depths": {
+    "1": 37,
+    "2": 1
+  },
+  "warmup_reorganizations": 0,
+  "warmup_max_reorg_depth": 0,
+  "reorgs_by_phase": {
+    "connected": {
+      "count": 38,
+      "max_depth": 2,
+      "depths": {
+        "1": 37,
+        "2": 1
+      }
+    }
+  },
+  "blocks_found_by_phase": {
+    "connected": {
+      "found": 375,
+      "not_on_best_chain": 25,
+      "abandoned": 267
+    },
+    "final": {
+      "found": 2,
+      "not_on_best_chain": 0,
+      "abandoned": 1
+    },
+    "warmup": {
+      "found": 210,
+      "not_on_best_chain": 0,
+      "abandoned": 0
+    }
+  },
+  "miner_prebuild": true,
+  "miner_modes": [
+    "miner0: --threads 1 --refresh 5 --light --prebuild on",
+    "miner1: --threads 1 --refresh 5 --light --prebuild on"
+  ],
+  "misbehavior_disconnects": 0,
+  "crashes": [],
+  "network": "regtest",
+  "all_equal_samples": 200,
+  "stuck_incidents": 0,
+  "samples": 250,
+  "max_rss_mb": {
+    "miner0": 265.32421875,
+    "miner1": 265.3203125,
+    "node0": 272.4375,
+    "node1": 271.84765625,
+    "node2": 272.421875,
+    "node3": 271.01171875,
+    "node4": 271.84375
+  },
+  "converged_at_end": true,
+  "mempools_drained_at_end": true,
+  "late_joiner_synced": true,
+  "late_joiner_peers": 5,
+  "fresh_wallet_balances_match": true,
+  "fresh_wallet_px_balances_match": true,
+  "supply_conserved": true,
+  "generated": 1089195497060,
+  "wallet_total": 1089195497060,
+  "wallet_px_total": 0,
+  "proxy_bytes": 3759049,
+  "checks_passed": true,
+  "evidence": true,
+  "evidence_notes": []
+}

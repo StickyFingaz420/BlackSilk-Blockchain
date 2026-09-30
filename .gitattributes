@@ -7,3 +7,6 @@ Dockerfile text eol=lf
 # The ELFs are binary; the program id files keep their exact committed bytes.
 *.elf binary
 *.id -text
+
+# Block stores kept as evidence (docs/evidence/labnet-w4-2026-09-30): binary.
+docs/evidence/labnet-w4-*/runs/*/*.dat binary

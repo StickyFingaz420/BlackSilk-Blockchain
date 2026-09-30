@@ -527,7 +527,12 @@ target/release/blacksilk-labnet --bin-dir target/release --out labnet-run \
 **What it checks at the end:**
 - convergence;
 - drained mempools;
-- a late node that discovers peers and syncs;
+- a late node, knowing only node 0, that syncs and reaches
+  min(`--late-max-outbound` + 1, nodes) peers (default 4 + 1) within
+  `--late-peers-secs` (default 120) of its start: every outbound slot plus a
+  block-relay-only connection, or every node of a smaller network. Its peer
+  count is sampled every second into `late-peers.csv`;
+- with `--relay-joiners K`, address relay (below);
 - every wallet restored from its seed against that fresh node shows the same balance,
   v1 and private;
 - Σ wallet balances (v1 and private) equals the coins generated;
@@ -564,6 +569,72 @@ phase lasted at least 10 minutes; `evidence_notes` lists what is missing. Shorte
 runs are not evidence. `--evidence` refuses to start with `--duration-mins` below 10
 or with `--no-warmup`, turns on `--prebuild` (the miners get `--prebuild on`), and
 exits with status 1 unless the run is evidence.
+
+**Mining mode.** By default both miners run in light mode (`--light`), with
+`--miner-threads` threads each.
+- `--prebuild`: the miners get `--prebuild on`, so the next RandomX key's
+  context is built before the key switch. `--evidence` turns it on.
+- `--miner-full`: full mode (a 2 GiB dataset per miner).
+  - `--light-second-miner`: only the first miner (node 0, the warm-up miner)
+    runs in full mode; the second runs in light mode with one thread. The
+    machine then holds one dataset, not two.
+  - `--full-prebuild on|auto`: the `--prebuild` value the full-mode miners get
+    when prebuild is on (default `on`). With `auto` a miner falls back to the
+    light-mode bridge, with a warning in its log, if it cannot allocate the
+    second dataset.
+  - `--miner-build-threads N`: the full-mode miners' `--build-threads`
+    (otherwise the miner's default).
+
+**Topology.** `--topology ring-chords` (default): node i dials i+1 and i+2, so with
+5 nodes every pair is linked and every block crosses one hop. `--topology ring`:
+node i dials i+1 only, so a block crosses up to `nodes / 2` hops, for measuring
+multi-hop propagation. With `--nodes 10` or more, node 0's address table holds
+more than 8 entries, so the late joiner's `GetAddr` answer is the
+23 %-or-at-least-8 sample rather than the whole table (docs/p2p.md §9); the
+report prints its size (`late_joiner_getaddr_answer`). At most 40 nodes (the
+proxy port layout).
+
+**Address relay.** With `--relay-joiners K`, after the wallet checks the late
+joiner stops and a second joiner starts, knowing only node 0 and with an outbound
+slot for every node. Once it has connected to the lab nodes, `K` relay nodes join
+one every `--relay-gap-secs` (default 15): connect-only, dialing node 0 only,
+advertising their own port. The joiner asked for addresses before they existed,
+so it can learn them only through address relay. The check: the joiner connects
+to every relay node within `--relay-wait-secs` (default 120) of the last one's
+start (`relay_discovery` in `summary.json`).
+
+**Partition groups.** `--partition-split K` (default `nodes / 2`): nodes below
+`K` form one group, the rest the other, and the second miner runs on node `K`, so
+each group keeps one miner. With `K = 1`, node 0 and its miner mine a private
+branch during every partition and release it at the heal: a withholding miner
+with half the hash rate. `--partition-every-mins 0` runs without partitions.
+
+**Network metrics.** `blacksilk-labnet-report <run directory> [--json <file>]
+[--store <node 0's blocks.dat>]` reads a finished run's files and prints what
+`summary.json` does not hold:
+- the tip difficulty over the measured phase;
+- block propagation: from the first to the last sighting (the origin node's
+  `accepted` line, the others' `received` lines) of each block every lab node
+  saw, when that whole interval lies in a connected phase. Twice: without the
+  heights where the nodes saw two rival blocks (`propagation`) and with them
+  (`propagation_with_contested`);
+- arrivals: per receiving node, the time from the origin's accept to its first
+  sighting, for every block accepted in a connected phase, contested or not,
+  and how many of them it never saw;
+- found blocks by phase (`warmup`, `connected`, `partition`, `heal`, `final`),
+  each split into blocks on the final chain and stale ones. It needs the final
+  chain: `final-chain.txt`, which the labnet writes from node 0 at the end of
+  the run, or, for a run without it, derived from node 0's store (`--store`: the
+  block with the most work, which must be at the run's final height);
+- with `--store`: every branch of node 0's store off the final chain, with its
+  cumulative work and the final chain's over the same heights;
+- per heal, the seconds to one tip everywhere (15 s resolution) and the
+  reorganizations of the heal window;
+- the late joiner's (and the address-relay joiner's) connections and address
+  messages over time.
+
+Propagation needs the P2P debug lines: run the labnet with
+`RUST_LOG=info,blacksilk_p2p::net=debug` (the nodes inherit it).
 
 **Output:** `summary.json`, `metrics.csv` (every 15 s, with the phase in the last
 column), `journal.log`, and each process's log.
