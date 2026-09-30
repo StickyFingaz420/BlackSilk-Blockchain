@@ -585,12 +585,15 @@ fn l7_a_header_announcement_is_accepted_within_a_step_per_command_during_a_drain
     // The bound is about ordering, not wall-clock speed: a loaded machine
     // stretches every step (the absolute `2 × (step + verify) + gap + 300 ms`
     // failed once under a parallel test run, at a machine-dependent margin).
-    // The actor must accept within a few commands' time, i.e. far faster
-    // than the mutex path measured under the same conditions, and within a
-    // generous absolute cap.
+    // The actor must accept within a few commands' time: a generous
+    // multiple of the nominal two commands, and no slower than the mutex
+    // path under the same conditions. The mutex path is printed, not held
+    // to a ratio: how long the unfair mutex starves the announcement varies
+    // from run to run (628 ms to the 20 s cap on one machine; W4-MUT saw a
+    // 10× ratio fail 3 times in 8), so a ratio measures the scheduler.
     let nominal = 2 * (STEP + VERIFY) + POW_GAP + Duration::from_millis(300);
     assert!(
-        after.0 * 10 < before.0 && after.0 < 8 * nominal,
+        after.0 < 8 * nominal && after.0 <= before.0,
         "actor: {:?} for two commands (nominal {nominal:?}; mutex {:?})",
         after.0,
         before.0
