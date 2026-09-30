@@ -803,7 +803,7 @@ mod tests {
             "three borrowed evicted"
         );
         drop(e4); // the kept side cache is idle now
-        let _h5 = get(&cache, &k(5));
+        let h5 = get(&cache, &k(5));
         assert_eq!(cache.alive(), MAX_CACHES, "at the bound");
         // A hot build at the bound: the idle side cache k4 makes room.
         let _h6 = get(&cache, &k(6));
@@ -811,6 +811,9 @@ mod tests {
         assert_eq!(cache.alive(), MAX_CACHES);
         // A side build at the bound, with no idle cache to evict, waits for
         // the hashing threads (here: this test) to release.
+        // Hot key k5 is idle now, but a hot cache is never evicted to make
+        // room (W4-MUT: `take_idle_side`'s `&&` mutated to `||` survived).
+        drop(h5);
         let builds = cache.builds();
         let waiting = ask(&cache, &k(7));
         assert!(
@@ -818,6 +821,7 @@ mod tests {
             "a build started at the bound"
         );
         assert_eq!(cache.builds(), builds);
+        assert!(cache.is_resident(&k(5)), "an idle hot cache was evicted");
         drop(e1);
         drop(e2); // one evicted cache left in memory: a side build may start
         let _s7 = waiting
@@ -929,6 +933,11 @@ mod tests {
         assert_eq!(cache.lock().prebuilding, vec![k(20)]);
         std::thread::sleep(Duration::from_millis(100));
         assert_eq!(cache.builds(), builds, "no room: the prebuild waits");
+        // Asked again while its thread waits (prebuilding, not building):
+        // still one thread (W4-MUT: either `||` of the guard mutated to `&&`
+        // survived).
+        cache.prebuild(&k(20));
+        assert_eq!(cache.lock().prebuilding, vec![k(20)], "one thread per key");
         cache.set_hot(&[k(14)]);
         let deadline = std::time::Instant::now() + BOUND;
         while !cache.lock().prebuilding.is_empty() {
@@ -941,6 +950,68 @@ mod tests {
         drop((held1, held2, held3));
         assert_eq!(cache.builds(), builds, "the abandoned key was not built");
         assert!(!cache.is_resident(&k(20)));
+    }
+
+    /// A side build leaves room for every missing hot key. The reserve
+    /// binds only while builds of keys that have left the hot set are still
+    /// in flight (the side rules keep everything else within the bound), so
+    /// this test holds two such builds open on a gate. W4-MUT on the bounded
+    /// store: every mutant of `missing_hot`, and `alive + 1 - reserve`,
+    /// survived without it.
+    #[test]
+    fn a_side_build_leaves_room_for_the_missing_hot_keys() {
+        let k = |i: u64| key(3000 + i);
+        let (a, b) = (k(1), k(2));
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let g = gate.clone();
+        let cache = Arc::new(SeedCache::new(move |s: &Hash| {
+            if *s == a || *s == b {
+                let (open, cv) = &*g;
+                let open = open.lock().unwrap();
+                let _ = cv.wait_timeout_while(open, BOUND, |o| !*o);
+            }
+            *s
+        }));
+        // Two hot builds held open, then the hot set moves on: they are
+        // builds of keys that are no longer hot.
+        cache.set_hot(&[a, b]);
+        let (built_a, built_b) = (ask(&cache, &a), ask(&cache, &b));
+        let deadline = std::time::Instant::now() + BOUND;
+        while cache.lock().building.len() < 2 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the hot builds did not start"
+            );
+            std::thread::yield_now();
+        }
+        let (c, d) = (k(3), k(4));
+        cache.set_hot(&[c, d]);
+        // One side cache, borrowed: 3 in memory, 2 hot keys missing.
+        let s1 = get(&cache, &k(5));
+        assert_eq!(cache.alive(), 3);
+        assert_eq!(cache.lock().missing_hot(&k(6)), 2);
+        let side = ask(&cache, &k(6));
+        assert!(
+            side.recv_timeout(Duration::from_millis(300)).is_err(),
+            "a side build took the room of the missing hot keys (3 + 1 + 2 > 5)"
+        );
+        // A hot key's build needs no reserve.
+        let _hc = get(&cache, &c);
+        assert_eq!(cache.alive(), 4);
+        assert_eq!(cache.lock().missing_hot(&k(6)), 1);
+        assert!(side.recv_timeout(Duration::from_millis(300)).is_err());
+        // The old builds finish and are trimmed; the side build then fits.
+        {
+            let (open, cv) = &*gate;
+            *open.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        drop(built_a.recv_timeout(BOUND).expect("a's build finishes"));
+        drop(built_b.recv_timeout(BOUND).expect("b's build finishes"));
+        drop(s1);
+        let got = side.recv_timeout(BOUND).expect("the side build proceeds");
+        assert_eq!(**got, k(6));
+        assert!(cache.alive() <= MAX_CACHES);
     }
 
     /// T4: a build that panics releases its key: the waiters and the next
