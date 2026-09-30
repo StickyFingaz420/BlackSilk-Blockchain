@@ -1,5 +1,4 @@
 {
-  "run": "C:/bszkeval/w4-lab-scratch/run2",
   "nodes": 5,
   "difficulty_min": 13,
   "difficulty_max": 30,
@@ -12,9 +11,106 @@
     "p90_ms": 1930,
     "max_ms": 2283
   },
+  "propagation_with_contested": {
+    "blocks": 96,
+    "contested_heights": 41,
+    "median_ms": 1599,
+    "p90_ms": 2157,
+    "max_ms": 15427
+  },
+  "arrivals": {
+    "blocks": 119,
+    "not_seen_by_every_node": 23,
+    "all": {
+      "n": 393,
+      "median_ms": 1124,
+      "p90_ms": 2000,
+      "max_ms": 15427
+    },
+    "receivers": [
+      {
+        "node": 0,
+        "blocks": 58,
+        "never_seen": 10,
+        "arrival": {
+          "n": 48,
+          "median_ms": 1612,
+          "p90_ms": 2095,
+          "max_ms": 9839
+        }
+      },
+      {
+        "node": 1,
+        "blocks": 119,
+        "never_seen": 20,
+        "arrival": {
+          "n": 99,
+          "median_ms": 1070,
+          "p90_ms": 1998,
+          "max_ms": 15332
+        }
+      },
+      {
+        "node": 2,
+        "blocks": 61,
+        "never_seen": 13,
+        "arrival": {
+          "n": 48,
+          "median_ms": 990,
+          "p90_ms": 4507,
+          "max_ms": 15139
+        }
+      },
+      {
+        "node": 3,
+        "blocks": 119,
+        "never_seen": 20,
+        "arrival": {
+          "n": 99,
+          "median_ms": 1124,
+          "p90_ms": 2005,
+          "max_ms": 15178
+        }
+      },
+      {
+        "node": 4,
+        "blocks": 119,
+        "never_seen": 20,
+        "arrival": {
+          "n": 99,
+          "median_ms": 1101,
+          "p90_ms": 1916,
+          "max_ms": 15427
+        }
+      }
+    ]
+  },
   "found_after_warmup": 164,
   "on_final_chain_after_warmup": 123,
   "stale_after_warmup": 41,
+  "found_by_phase": {
+    "connected": {
+      "found": 119,
+      "on_final_chain": 96,
+      "stale": 23
+    },
+    "heal": {
+      "found": 14,
+      "on_final_chain": 11,
+      "stale": 3
+    },
+    "partition": {
+      "found": 31,
+      "on_final_chain": 16,
+      "stale": 15
+    },
+    "warmup": {
+      "found": 211,
+      "on_final_chain": 211,
+      "stale": 0
+    }
+  },
+  "refused_at_rpc": 0,
   "templates_abandoned_after_warmup": 78,
   "heals": [
     {
@@ -55,6 +151,367 @@
       "heights_before": "272/272/272/272/272"
     }
   ],
+  "side_branches": [
+    {
+      "fork_height": 212,
+      "tip_height": 213,
+      "tip": "86108804d7897240ffdc3accfc95ac3a90f3bb4baa9fb3220f7d7b01f497affe",
+      "work": [
+        [
+          213,
+          15
+        ]
+      ],
+      "final_chain_work": [
+        [
+          213,
+          15
+        ]
+      ]
+    },
+    {
+      "fork_height": 215,
+      "tip_height": 216,
+      "tip": "231c9b09a7253ffe8023055d7eff0fae87ede310602342e382404896ac3d38cd",
+      "work": [
+        [
+          216,
+          15
+        ]
+      ],
+      "final_chain_work": [
+        [
+          216,
+          15
+        ]
+      ]
+    },
+    {
+      "fork_height": 227,
+      "tip_height": 228,
+      "tip": "90b13df76d647751da70c5ea5eaf7839214d9efd054d8c83a08c8937653b5418",
+      "work": [
+        [
+          228,
+          13
+        ]
+      ],
+      "final_chain_work": [
+        [
+          228,
+          13
+        ]
+      ]
+    },
+    {
+      "fork_height": 229,
+      "tip_height": 230,
+      "tip": "9109aa66ac41a006a63f67827b3cac5e5bc2bdf280400b7f3c921e808524f12d",
+      "work": [
+        [
+          230,
+          13
+        ]
+      ],
+      "final_chain_work": [
+        [
+          230,
+          13
+        ]
+      ]
+    },
+    {
+      "fork_height": 231,
+      "tip_height": 232,
+      "tip": "bb04e66b319107ba34dbf09f291023b0f28f26845b26e73084585997de30fca9",
+      "work": [
+        [
+          232,
+          13
+        ]
+      ],
+      "final_chain_work": [
+        [
+          232,
+          13
+        ]
+      ]
+    },
+    {
+      "fork_height": 237,
+      "tip_height": 238,
+      "tip": "795316819227c8d3fc2c2cbf816de9d40331199a5a6d924fbef2a04bd01bee5e",
+      "work": [
+        [
+          238,
+          14
+        ]
+      ],
+      "final_chain_work": [
+        [
+          238,
+          14
+        ]
+      ]
+    },
+    {
+      "fork_height": 238,
+      "tip_height": 239,
+      "tip": "e18d690480c82b9144eb1f75fb69e0677dc25fc9feda756a5b011aa81cd26711",
+      "work": [
+        [
+          239,
+          14
+        ]
+      ],
+      "final_chain_work": [
+        [
+          239,
+          14
+        ]
+      ]
+    },
+    {
+      "fork_height": 243,
+      "tip_height": 244,
+      "tip": "3c5019b20edcc4cc929a6085c942b73a3e7ff6957eaa824f54b0a8f39488afd4",
+      "work": [
+        [
+          244,
+          13
+        ]
+      ],
+      "final_chain_work": [
+        [
+          244,
+          13
+        ]
+      ]
+    },
+    {
+      "fork_height": 244,
+      "tip_height": 245,
+      "tip": "ae21d2fc0025d3daf942f2656980939faf793abdb6a571e50f2e7c073c24b89d",
+      "work": [
+        [
+          245,
+          13
+        ]
+      ],
+      "final_chain_work": [
+        [
+          245,
+          13
+        ]
+      ]
+    },
+    {
+      "fork_height": 246,
+      "tip_height": 247,
+      "tip": "c98b8e24702695bed57c093774576bbeb94bb02de1133d5cb765c2ff92069c13",
+      "work": [
+        [
+          247,
+          13
+        ]
+      ],
+      "final_chain_work": [
+        [
+          247,
+          13
+        ]
+      ]
+    },
+    {
+      "fork_height": 250,
+      "tip_height": 251,
+      "tip": "5d469c8c3be252bea59a6e29ac0b546990da1bddadf1c74f68bd6a343cac1a30",
+      "work": [
+        [
+          251,
+          14
+        ]
+      ],
+      "final_chain_work": [
+        [
+          251,
+          14
+        ]
+      ]
+    },
+    {
+      "fork_height": 258,
+      "tip_height": 274,
+      "tip": "434989cf7a8d6e95f6f2392017d9c84a7a67119b2af16ea07e3f8bfa88e75c43",
+      "work": [
+        [
+          259,
+          14
+        ],
+        [
+          260,
+          28
+        ],
+        [
+          261,
+          42
+        ],
+        [
+          262,
+          56
+        ],
+        [
+          263,
+          70
+        ],
+        [
+          264,
+          84
+        ],
+        [
+          265,
+          98
+        ],
+        [
+          266,
+          112
+        ],
+        [
+          267,
+          125
+        ],
+        [
+          268,
+          138
+        ],
+        [
+          269,
+          151
+        ],
+        [
+          270,
+          164
+        ],
+        [
+          271,
+          177
+        ],
+        [
+          272,
+          190
+        ],
+        [
+          273,
+          203
+        ],
+        [
+          274,
+          216
+        ]
+      ],
+      "final_chain_work": [
+        [
+          259,
+          14
+        ],
+        [
+          260,
+          28
+        ],
+        [
+          261,
+          42
+        ],
+        [
+          262,
+          56
+        ],
+        [
+          263,
+          70
+        ],
+        [
+          264,
+          84
+        ],
+        [
+          265,
+          98
+        ],
+        [
+          266,
+          112
+        ],
+        [
+          267,
+          126
+        ],
+        [
+          268,
+          139
+        ],
+        [
+          269,
+          152
+        ],
+        [
+          270,
+          165
+        ],
+        [
+          271,
+          178
+        ],
+        [
+          272,
+          191
+        ],
+        [
+          273,
+          204
+        ],
+        [
+          274,
+          218
+        ]
+      ]
+    },
+    {
+      "fork_height": 329,
+      "tip_height": 330,
+      "tip": "ade896cb7296b26af4760b62164b2db76e060656db505c248f4e83e78b66656b",
+      "work": [
+        [
+          330,
+          28
+        ]
+      ],
+      "final_chain_work": [
+        [
+          330,
+          28
+        ]
+      ]
+    },
+    {
+      "fork_height": 332,
+      "tip_height": 333,
+      "tip": "71435578aaf34f422dd781f8a1e18d59379ed5c6e3e8e886e596d718daa09ab1",
+      "work": [
+        [
+          333,
+          30
+        ]
+      ],
+      "final_chain_work": [
+        [
+          333,
+          30
+        ]
+      ]
+    }
+  ],
+  "late_joiner_getaddr_answer": 5,
   "late_joiner": [
     "    0.27 s  connected outbound peer 127.0.0.1:52001 (height 334) -> 1 peers",
     "    0.27 s  peer 1: addr with 1 entries",
@@ -69,5 +526,6 @@
     "    2.37 s  peer 2: addr with 5 entries",
     "    2.37 s  peer 5: addr with 5 entries",
     "    2.37 s  peer 4: addr with 5 entries"
-  ]
+  ],
+  "relay_joiner": null
 }
