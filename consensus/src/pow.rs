@@ -387,8 +387,8 @@ impl<C: Send + Sync + 'static> SeedCache<C> {
     /// built, being built, or already has a prebuild thread: at most one
     /// thread per hot key. The thread gives up if the key leaves the hot set
     /// before its build starts. Where no thread can be started, the cache is
-    /// built on first use instead.
-    pub fn prebuild(self: &Arc<Self>, seed: &Hash) {
+    /// built on first use instead. Returns whether a thread was started.
+    pub fn prebuild(self: &Arc<Self>, seed: &Hash) -> bool {
         {
             let mut st = self.lock();
             if !st.hot.contains(seed)
@@ -396,7 +396,7 @@ impl<C: Send + Sync + 'static> SeedCache<C> {
                 || st.building.contains(seed)
                 || st.resident.iter().any(|(r, _)| r == seed)
             {
-                return;
+                return false;
             }
             st.prebuilding.push(*seed);
         }
@@ -416,7 +416,7 @@ impl<C: Send + Sync + 'static> SeedCache<C> {
         // the hot set. If no thread could be started, the closure and its
         // `Pending` are dropped, which clears the mark: the cache is built
         // on first use instead.
-        drop(spawned);
+        spawned.is_ok()
     }
 }
 
@@ -448,8 +448,9 @@ impl RandomXPow {
 
     /// Builds hot key `seed`'s cache on a background thread
     /// ([`SeedCache::prebuild`]).
-    pub fn prebuild(&self, seed: &Hash) {
-        self.caches.prebuild(seed);
+    /// Returns whether a thread was started.
+    pub fn prebuild(&self, seed: &Hash) -> bool {
+        self.caches.prebuild(seed)
     }
 
     /// Caches built so far.
@@ -902,12 +903,14 @@ mod tests {
     fn prebuilds_are_deduplicated_and_give_up_off_the_hot_set() {
         let (cache, _live, _peak) = peak_cache();
         let k = |i: u64| key(2000 + i);
-        cache.prebuild(&k(1)); // not hot: nothing happens
+        assert!(!cache.prebuild(&k(1)), "not hot: no thread");
         assert!(cache.lock().prebuilding.is_empty());
         cache.set_hot(&[k(1)]);
-        for _ in 0..8 {
-            cache.prebuild(&k(1));
-        }
+        let started: Vec<bool> = (0..8).map(|_| cache.prebuild(&k(1))).collect();
+        assert_eq!(
+            started,
+            [true, false, false, false, false, false, false, false]
+        );
         let deadline = std::time::Instant::now() + BOUND;
         while !cache.is_resident(&k(1)) || !cache.lock().prebuilding.is_empty() {
             assert!(
@@ -917,6 +920,10 @@ mod tests {
             std::thread::yield_now();
         }
         assert_eq!(cache.builds(), 1, "one build for eight prebuild requests");
+        // Built: no thread (W4-MUT: the guard's last `||` mutated to `&&`
+        // started one that found the cache).
+        assert!(!cache.prebuild(&k(1)), "built: no thread");
+        assert!(cache.lock().prebuilding.is_empty());
 
         // Fill the bound with borrowed caches (hot-set churn evicts them
         // while borrowed), then prebuild a hot key: its thread waits for
@@ -929,15 +936,15 @@ mod tests {
         let held3 = get(&cache, &k(14));
         assert_eq!(cache.alive(), MAX_CACHES);
         let builds = cache.builds();
-        cache.prebuild(&k(20));
+        assert!(cache.prebuild(&k(20)));
         assert_eq!(cache.lock().prebuilding, vec![k(20)]);
         std::thread::sleep(Duration::from_millis(100));
         assert_eq!(cache.builds(), builds, "no room: the prebuild waits");
         // Asked again while its thread waits (prebuilding, not building):
         // still one thread (W4-MUT: either `||` of the guard mutated to `&&`
         // survived).
-        cache.prebuild(&k(20));
-        assert_eq!(cache.lock().prebuilding, vec![k(20)], "one thread per key");
+        assert!(!cache.prebuild(&k(20)), "one thread per key");
+        assert_eq!(cache.lock().prebuilding, vec![k(20)]);
         cache.set_hot(&[k(14)]);
         let deadline = std::time::Instant::now() + BOUND;
         while !cache.lock().prebuilding.is_empty() {
