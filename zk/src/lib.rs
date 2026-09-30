@@ -4,7 +4,8 @@
 //! - [`params`]: the parameter set and its computed security figures;
 //! - [`config`]: the Plonky3 configuration (hiding FRI STARK over BabyBear, degree-8 extension);
 //! - [`prove`] / [`verify`]: batch proving and hardened verification;
-//! - [`encode_proof`] / [`decode_proof`]: the strict wire format.
+//! - [`encode_proof`] / [`decode_proof`]: the strict wire format, every
+//!   vector bounded before it is allocated ([`bounds`]).
 //!
 //! **Hardening** (zkvm.md §10). [`verify`] never trusts the proof's own shape:
 //! - it checks table counts and claimed heights against the caller's limits
@@ -23,8 +24,11 @@
 #[cfg(not(panic = "unwind"))]
 compile_error!("blacksilk-zk must be built with panic = \"unwind\"");
 
+pub mod bounds;
 pub mod config;
 pub mod params;
+
+pub use bounds::DecodeLimits;
 
 use config::{ProverConfig, ProverZkConfig, Val, VerifierConfig, ZkConfig};
 use p3_air::Air;
@@ -283,7 +287,22 @@ pub fn encode_proof(proof: &Proof) -> Vec<u8> {
 /// Strictly decodes a proof. Oversized input, unknown versions, trailing bytes
 /// and any non-canonical encoding (bytes that do not re-encode identically)
 /// are rejected, so one proof has exactly one valid encoding.
+///
+/// Every vector is bounded before it is allocated ([`bounds`], RT-FUZZ-1),
+/// by caps the verifier implies for every statement of
+/// [`DecodeLimits::ENVELOPE`]; [`decode_proof_with`] takes narrower limits.
 pub fn decode_proof(bytes: &[u8]) -> Result<Proof, ZkError> {
+    decode_proof_with(bytes, &DecodeLimits::ENVELOPE)
+}
+
+/// [`decode_proof`] for the statements of `limits`: a proof exceeding one of
+/// the limits (or another cap of [`bounds`]) is refused before `postcard`
+/// allocates anything for it, so the heap and time of decoding stay in
+/// proportion to the proof's bytes (docs/reviews/v3-consensus-changes.md,
+/// "px-proof-decode-bounds"). The limits must hold for every statement the
+/// caller verifies proofs against; then the set of proofs that decode and
+/// verify is unchanged.
+pub fn decode_proof_with(bytes: &[u8], limits: &DecodeLimits) -> Result<Proof, ZkError> {
     if bytes.len() > params::MAX_PROOF_BYTES {
         return Err(ZkError::Encoding("proof too large".into()));
     }
@@ -295,6 +314,7 @@ pub fn decode_proof(bytes: &[u8]) -> Result<Proof, ZkError> {
             "unknown proof version {version}"
         )));
     }
+    bounds::prescan(body, limits)?;
     let decoded = catch_unwind(AssertUnwindSafe(|| {
         postcard::take_from_bytes::<Proof>(body)
     }));
@@ -591,4 +611,54 @@ pub mod analysis {
         fn is_config<C: StarkGenericConfig>() {}
         is_config::<ZkConfig>();
     };
+
+    /// The number of quotient chunks `verify` requires of each table of a
+    /// proof with `degree_bits`, computed as Plonky3 0.7.0's `verify_batch`
+    /// computes it (`get_log_num_quotient_chunks` from the AIR's symbolic
+    /// constraint degree and its lookups, doubled by zero knowledge). Tests
+    /// check the decoder's `DecodeLimits` against it (RT-FUZZ-1).
+    pub fn quotient_chunks<A: ProvableAir>(airs: &[A], degree_bits: &[usize]) -> Vec<usize> {
+        use p3_air::{AirLayout, BaseAir};
+        let data =
+            ProverData::from_airs_and_degrees(VerifierConfig::setup().inner(), airs, degree_bits);
+        let common = data.common;
+        airs.iter()
+            .enumerate()
+            .map(|(i, air)| {
+                let preprocessed_width = common
+                    .preprocessed
+                    .as_ref()
+                    .and_then(|g| g.instances[i].as_ref().map(|m| m.width))
+                    .unwrap_or(0);
+                let layout = AirLayout {
+                    preprocessed_width,
+                    main_width: BaseAir::<Val>::width(air),
+                    num_public_values: BaseAir::<Val>::num_public_values(air),
+                    num_periodic_columns: BaseAir::<Val>::num_periodic_columns(air),
+                    ..Default::default()
+                };
+                // `degree_bits` is log2(height) + 1 under zero knowledge.
+                let log = p3_batch_stark::symbolic::get_log_num_quotient_chunks::<
+                    Val,
+                    Challenge,
+                    A,
+                    LogUpGadget,
+                >(
+                    air,
+                    layout,
+                    1 << (degree_bits[i] - 1),
+                    &common.lookups[i],
+                    1,
+                    &LogUpGadget::new(),
+                );
+                1 << (log + 1)
+            })
+            .collect()
+    }
+
+    /// Each table's main trace width: the length `verify` requires of its
+    /// `trace_local` (and `trace_next`) openings.
+    pub fn trace_widths<A: ProvableAir>(airs: &[A]) -> Vec<usize> {
+        airs.iter().map(p3_air::BaseAir::<Val>::width).collect()
+    }
 }

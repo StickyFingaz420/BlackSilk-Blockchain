@@ -54,6 +54,46 @@ fn a_private_transfer_proves_verifies_and_applies_once() {
     assert!(bytes.len() <= blacksilk_zk::params::MAX_PROOF_BYTES);
     let decoded = blacksilk_zk::decode_proof(&bytes).expect("decodes");
     assert_eq!(blacksilk_zk::encode_proof(&decoded), bytes);
+    // RT-FUZZ-1: the real proof decodes under the PX decoder limits and
+    // verifies; its quotient chunk counts are those the verifier derives
+    // (px/tests/proof_limits.rs); the red team's padded variants (empty
+    // quotient chunks up to MAX_PROOF_BYTES, with and without the FRI
+    // openings) are refused before anything is allocated for them.
+    let limited = blacksilk_zk::decode_proof_with(&bytes, &blacksilk_px::prove::PROOF_LIMITS)
+        .expect("decodes");
+    assert_eq!(blacksilk_zk::encode_proof(&limited), bytes);
+    assert_eq!(verify_transfer(&p0, [1; 32], &limited), Ok(()));
+    let chunks: Vec<usize> = limited
+        .opened_values
+        .instances
+        .iter()
+        .map(|i| i.base_opened_values.quotient_chunks.len())
+        .collect();
+    assert_eq!(chunks, [4, 4, 4, 4, 16, 4, 4, 8, 8, 8, 4, 8, 4]);
+    for strip in [false, true] {
+        let mut p = blacksilk_zk::decode_proof(&bytes).unwrap();
+        if strip {
+            p.opening_proof.1.input_openings.clear();
+            p.opening_proof.1.commit_phase_openings.clear();
+        }
+        let k = blacksilk_zk::params::MAX_PROOF_BYTES - blacksilk_zk::encode_proof(&p).len() - 8;
+        let q = &mut p.opened_values.instances[0]
+            .base_opened_values
+            .quotient_chunks;
+        q.resize(q.len() + k, vec![]);
+        let padded = blacksilk_zk::encode_proof(&p);
+        assert!(padded.len() <= blacksilk_zk::params::MAX_PROOF_BYTES);
+        for r in [
+            blacksilk_zk::decode_proof(&padded),
+            blacksilk_zk::decode_proof_with(&padded, &blacksilk_px::prove::PROOF_LIMITS),
+        ] {
+            assert!(
+                matches!(&r, Err(blacksilk_zk::ZkError::Encoding(m))
+                    if m.starts_with("decode bound: quotient_chunks has ")),
+                "strip {strip}"
+            );
+        }
+    }
     let t = Instant::now();
     assert_eq!(verify_transfer(&p0, [1; 32], &proof0), Ok(()));
     let verify_time = t.elapsed();

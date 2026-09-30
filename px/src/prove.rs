@@ -79,6 +79,21 @@ pub fn kernel_budget(n_fn: usize) -> Budget {
     }
 }
 
+/// The proof decoder's limits for PX statements (RT-FUZZ-1,
+/// `blacksilk_zk::bounds`): the envelope's, with the table count of the
+/// widest PX statement, the kernel and `MAX_FN` functions
+/// (`zkvm::air::trace::tables`: 12 base tables, 5 per further execution and
+/// the Blind table, 23). [`verify`] and [`check_shape`] accept only a proof
+/// with exactly its statement's tables, so a proof with more cannot verify
+/// for any PX statement. `px/tests/proof_limits.rs` checks every PX table
+/// against the quotient-chunk and width limits.
+pub const PROOF_LIMITS: blacksilk_zk::DecodeLimits = blacksilk_zk::DecodeLimits {
+    max_instances: blacksilk_zkvm::air::trace::BASE_TABLES
+        + blacksilk_zkvm::air::trace::TABLES_PER_EXTRA * MAX_FN
+        + 1,
+    ..blacksilk_zk::DecodeLimits::ENVELOPE
+};
+
 /// A called function, as the verifier sees it: its program and call ABI (both
 /// from the registry) and the public outputs it writes after its prefix.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -345,6 +360,20 @@ pub fn check_shape(
     proof: &Proof,
     registered: impl Fn(&Digest, &[u8; 32]) -> Option<Budget>,
 ) -> Result<(), VerifyError> {
+    check_shape_bits(public, calls, window, h_tx, &proof.degree_bits, registered)
+}
+
+/// [`check_shape`] on a proof's degree bits alone (`Proof::degree_bits`),
+/// the only part of the proof it reads: a caller can drop the decoded proof
+/// and keep these (P2P admission, RT-PXDOS F1). Same verdicts.
+pub fn check_shape_bits(
+    public: &Public,
+    calls: &[FunctionCall],
+    window: &Window,
+    h_tx: [u8; 32],
+    degree_bits: &[usize],
+    registered: impl Fn(&Digest, &[u8; 32]) -> Option<Budget>,
+) -> Result<(), VerifyError> {
     if public.n_fn > MAX_FN || calls.len() != public.n_fn {
         return Err(VerifyError::Shape);
     }
@@ -360,10 +389,10 @@ pub fn check_shape(
     let shape = st.shape().ok_or(VerifyError::Shape)?;
     // `degree_bits` is log2(height) + 1 under zero knowledge (as in
     // `blacksilk_zkvm::prove::verify`).
-    let ok = proof.degree_bits.len() == shape.len()
+    let ok = degree_bits.len() == shape.len()
         && shape
             .iter()
-            .zip(&proof.degree_bits)
+            .zip(degree_bits)
             .all(|(&h, &db)| db == h.trailing_zeros() as usize + 1);
     if ok {
         Ok(())

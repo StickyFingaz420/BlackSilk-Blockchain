@@ -663,11 +663,23 @@ pub fn check_px_proof(tx: &PxTx, chain: &impl ChainView, rules: &TxRules) -> Res
 }
 
 /// PX5, first step: the proof bytes decode strictly (`blacksilk_zk::decode_proof`:
-/// size, version, canonical encoding). Stateless and cheap next to any
-/// signature or proof verification.
-pub fn decode_px_proof(tx: &PxTx) -> Result<blacksilk_zk::Proof, TxError> {
-    blacksilk_zk::decode_proof(&tx.proof).map_err(|_| TxError::PxProof)
+/// size, version, canonical encoding), every vector bounded before it is
+/// allocated by caps no valid PX proof exceeds (`blacksilk_px::prove::PROOF_LIMITS`,
+/// RT-FUZZ-1). Stateless; its heap and time are proportional to the proof's
+/// bytes: about 4 times the size of the 2.4 MB transfer proof, and at most
+/// about 6 times the bytes, about 16 MB at `MAX_PROOF_BYTES`, for any proof
+/// within the caps (the constructions and measurements are in
+/// docs/reviews/v3-consensus-changes.md, "px-proof-decode-bounds"); tens of
+/// milliseconds, far below the verification it gates.
+pub fn decode_px_proof(tx: &PxTx) -> Result<PxProof, TxError> {
+    blacksilk_zk::decode_proof_with(&tx.proof, &blacksilk_px::prove::PROOF_LIMITS)
+        .map_err(|_| TxError::PxProof)
 }
+
+/// A decoded PX proof ([`decode_px_proof`]), named for callers that hold one
+/// without depending on the proof crate (P2P admission decodes off the chain
+/// actor and hands the proof to its command).
+pub type PxProof = blacksilk_zk::Proof;
 
 /// The registered function calls of `tx` (PX3 must hold).
 fn px_calls(
@@ -698,13 +710,25 @@ pub fn check_px_proof_shape(
     rules: &TxRules,
     proof: &blacksilk_zk::Proof,
 ) -> Result<(), TxError> {
+    check_px_proof_shape_bits(tx, chain, rules, &proof.degree_bits)
+}
+
+/// [`check_px_proof_shape`] on the decoded proof's degree bits alone (the
+/// only part of the proof the shape check reads), so a caller can free the
+/// proof first (P2P admission, RT-PXDOS F1). Same verdicts.
+pub fn check_px_proof_shape_bits(
+    tx: &PxTx,
+    chain: &impl ChainView,
+    rules: &TxRules,
+    degree_bits: &[usize],
+) -> Result<(), TxError> {
     let calls = px_calls(tx, chain)?;
-    blacksilk_px::prove::check_shape(
+    blacksilk_px::prove::check_shape_bits(
         &tx.public(),
         &calls,
         &tx.window,
         tx.binding(rules.domain()),
-        proof,
+        degree_bits,
         |contract, id| chain.px_function(contract, id).map(|r| r.budget),
     )
     .map_err(|_| TxError::PxProof)
@@ -787,7 +811,8 @@ fn validate_px_checks(
     with_proof: bool,
 ) -> Result<(), TxError> {
     // Stateless (the transaction alone), cheap to expensive; the proof is
-    // decoded (a few milliseconds) before the range proof, as in blocks.
+    // decoded (bounded, about 11 to 13 ms for a transfer proof;
+    // `decode_px_proof`) before the range proof, as in blocks.
     check_px_structure(tx)?;
     check_px_balance(tx)?;
     let proof = if with_proof {
@@ -1257,7 +1282,8 @@ pub fn validate_block_transactions_cached<R: RngCore + CryptoRng>(
     }
 
     // PX5, first step: decode every proof this node has not verified yet
-    // (stateless, a few milliseconds per proof), before any ring or signature
+    // (stateless and bounded, about 11 to 13 ms and 4 times its size in heap
+    // for a transfer proof; `decode_px_proof`), before any ring or signature
     // work, so costless faults (an empty or garbage proof) never cost a CLSAG
     // (dossier 10 F10-2). The decoded proof is kept for PX5 itself.
     let mut decoded: Vec<Option<blacksilk_zk::Proof>> = Vec::with_capacity(pxs.len());
