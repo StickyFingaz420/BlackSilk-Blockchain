@@ -1014,7 +1014,9 @@ fn dense_tail_pow_720_headers_sequential_and_parallel() {
     let params = ChainParams::regtest();
     let pow = Measured(blacksilk_consensus::RandomXPow::new(), AtomicU64::new(0));
     // The light cache is built once, outside the measurement.
-    let _ = pow.0.cache(&params.genesis_id());
+    let _ = pow
+        .0
+        .pow_hash(&params.genesis_id(), &[0; blacksilk_consensus::HEADER_SIZE]);
     let all = std::thread::available_parallelism().map_or(1, |n| n.get());
     for threads in [1, all] {
         let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();

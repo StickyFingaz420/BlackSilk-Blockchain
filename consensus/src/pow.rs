@@ -58,7 +58,8 @@ pub const HOT_SEEDS: usize = 2;
 const SIDE_CAP_PINNED: usize = 1;
 const SIDE_CAP_UNPINNED: usize = 2;
 
-/// The most cache instances a [`SeedCache`] ever has in memory at once:
+/// The most cache instances the RandomX cache store (`SeedCache`) ever has in
+/// memory at once:
 /// kept, being built, evicted but still borrowed by a hashing thread, or
 /// being freed. With RandomX that is 5 × 256 MiB = 1.25 GiB (RT-MUT).
 ///
@@ -94,18 +95,83 @@ impl Drop for Ticket {
     }
 }
 
-/// A cache built by a [`SeedCache`]. It dereferences to the cache. Its
-/// fields drop in order, so the instance count falls only once the cache's
-/// own memory is freed: the bound [`MAX_CACHES`] counts memory, not handles.
-pub struct Cached<C> {
+/// A cache built by a [`SeedCache`]. Its fields drop in order, so the
+/// instance count falls only once the cache's own memory is freed: the bound
+/// [`MAX_CACHES`] counts memory, not handles.
+pub(crate) struct Cached<C> {
     cache: C,
     _ticket: Ticket,
 }
 
-impl<C> std::ops::Deref for Cached<C> {
+/// A caller's handle to a cache ([`SeedCache::get`]); it dereferences to the
+/// cache. Not `Clone`: one handle per request, released when dropped.
+///
+/// In debug builds each handle is counted for the store and the thread that
+/// asked for it, and [`SeedCache`] refuses (panics) a request from a thread
+/// that still holds a handle of the same store: the caller rule that the
+/// store's liveness rests on, checked in every test (RT-POW L1).
+pub(crate) struct CacheRef<C> {
+    arc: Arc<Cached<C>>,
+    #[cfg(debug_assertions)]
+    held: held::Key,
+}
+
+impl<C> std::ops::Deref for CacheRef<C> {
     type Target = C;
     fn deref(&self) -> &C {
-        &self.cache
+        &self.arc.cache
+    }
+}
+
+#[cfg(debug_assertions)]
+impl<C> Drop for CacheRef<C> {
+    fn drop(&mut self) {
+        held::release(self.held);
+    }
+}
+
+/// Debug-only count of the handles each thread holds, per store.
+#[cfg(debug_assertions)]
+mod held {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
+    use std::thread::ThreadId;
+
+    /// (store, thread).
+    pub(super) type Key = (u64, ThreadId);
+
+    static HELD: Mutex<Vec<(Key, usize)>> = Mutex::new(Vec::new());
+    static STORES: AtomicU64 = AtomicU64::new(0);
+
+    /// A fresh store id (ids are never reused).
+    pub(super) fn store_id() -> u64 {
+        STORES.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn with<R>(f: impl FnOnce(&mut Vec<(Key, usize)>) -> R) -> R {
+        f(&mut HELD.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    pub(super) fn count(key: Key) -> usize {
+        with(|h| h.iter().find(|(k, _)| *k == key).map_or(0, |e| e.1))
+    }
+
+    pub(super) fn acquire(key: Key) {
+        with(|h| match h.iter_mut().find(|(k, _)| *k == key) {
+            Some(e) => e.1 += 1,
+            None => h.push((key, 1)),
+        })
+    }
+
+    pub(super) fn release(key: Key) {
+        with(|h| {
+            if let Some(i) = h.iter().position(|(k, _)| *k == key) {
+                h[i].1 -= 1;
+                if h[i].1 == 0 {
+                    h.swap_remove(i);
+                }
+            }
+        })
     }
 }
 
@@ -131,17 +197,30 @@ impl<C> std::ops::Deref for Cached<C> {
 ///   built), a build always finishes, and a hashing thread releases its cache
 ///   when its hash is done, so a waiting build always gets room. This needs
 ///   one rule of every caller: **never hold a cache while asking for
-///   another** (`pow_hash` and the prebuild threads hold one at a time).
+///   another** (`pow_hash` and the prebuild threads hold one at a time; the
+///   store is crate-private, and debug builds panic on a violation:
+///   [`CacheRef`]).
+/// - **Expected worst-case wait** at the bound: the hashes in flight plus one
+///   build. Measured about 5 s with real 256 MiB caches under hot-set churn
+///   (RT-POW); a build alone is about 1-3 s. If the caller rule is broken the
+///   wait is unbounded: a thread holding a handle while it waits for room can
+///   wait for itself.
 /// - A build that panics leaves no waiter stuck: its key and its room are
 ///   released and the next caller builds it again.
 /// - Caches leave the store's lock before they are freed: a free (256 MiB)
 ///   never runs while other callers wait for the lock.
-pub struct SeedCache<C> {
+pub(crate) struct SeedCache<C> {
     build: Box<dyn Fn(&Hash) -> C + Send + Sync>,
     state: Mutex<SeedState<C>>,
     changed: Condvar,
     /// Instances in memory ([`Ticket`]); decremented without the lock.
     alive: Arc<AtomicUsize>,
+    /// This store's id for the debug handle count ([`CacheRef`]).
+    #[cfg(debug_assertions)]
+    id: u64,
+    /// Test hook: runs in a prebuild thread that has just given up.
+    #[cfg(test)]
+    gave_up: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 
 struct SeedState<C> {
@@ -152,12 +231,27 @@ struct SeedState<C> {
     /// How many of `building` started outside the hot set.
     side_building: usize,
     hot: Vec<Hash>,
-    /// Hot keys with a prebuild thread that has not finished yet.
-    prebuilding: Vec<Hash>,
+    /// Hot keys with a prebuild thread still waiting to build or give up,
+    /// each with its thread's number: a thread clears only its own mark.
+    prebuilding: Vec<(Hash, u64)>,
+    prebuild_seq: u64,
     builds: u64,
 }
 
 impl<C> SeedState<C> {
+    /// Clears prebuild thread `id`'s mark on `seed`, if it is still there.
+    fn clear_prebuild(&mut self, seed: &Hash, id: Option<u64>) {
+        if let Some(id) = id {
+            self.prebuilding.retain(|(s, i)| !(s == seed && *i == id));
+        }
+    }
+
+    /// The keys with a prebuild mark (tests).
+    #[cfg(test)]
+    fn prebuilding_keys(&self) -> Vec<Hash> {
+        self.prebuilding.iter().map(|(s, _)| *s).collect()
+    }
+
     fn side_cap(&self) -> usize {
         if self.hot.is_empty() {
             SIDE_CAP_UNPINNED
@@ -243,10 +337,15 @@ impl<C> SeedCache<C> {
                 side_building: 0,
                 hot: Vec::new(),
                 prebuilding: Vec::new(),
+                prebuild_seq: 0,
                 builds: 0,
             }),
             changed: Condvar::new(),
             alive: Arc::new(AtomicUsize::new(0)),
+            #[cfg(debug_assertions)]
+            id: held::store_id(),
+            #[cfg(test)]
+            gave_up: Mutex::new(None),
         }
     }
 
@@ -257,24 +356,55 @@ impl<C> SeedCache<C> {
     }
 
     /// The cache for `seed`, built (outside the lock) if needed.
-    pub fn get(&self, seed: &Hash) -> Arc<Cached<C>> {
-        self.fetch(seed, false)
+    ///
+    /// # Panics
+    /// In debug builds, if this thread still holds a handle of this store (the
+    /// caller rule, [`CacheRef`]).
+    pub fn get(&self, seed: &Hash) -> CacheRef<C> {
+        self.fetch(seed, None)
             .expect("an unconditional get always returns a cache")
     }
 
-    /// As [`Self::get`]; with `only_hot`, gives up (`None`) as soon as `seed`
-    /// is not a hot key (a prebuild whose key left the hot set).
-    fn fetch(&self, seed: &Hash, only_hot: bool) -> Option<Arc<Cached<C>>> {
+    fn handle(&self, arc: Arc<Cached<C>>) -> CacheRef<C> {
+        #[cfg(debug_assertions)]
+        let held = (self.id, std::thread::current().id());
+        #[cfg(debug_assertions)]
+        held::acquire(held);
+        CacheRef {
+            arc,
+            #[cfg(debug_assertions)]
+            held,
+        }
+    }
+
+    /// As [`Self::get`]. For prebuild thread `prebuild`, gives up (`None`) as
+    /// soon as `seed` is not a hot key, and clears the thread's mark in the
+    /// same critical section in which it stops waiting (gives up, finds the
+    /// cache, or starts the build): a `set_hot` that re-adds the key can then
+    /// start a new prebuild at once (RT-POW L2).
+    fn fetch(&self, seed: &Hash, prebuild: Option<u64>) -> Option<CacheRef<C>> {
+        #[cfg(debug_assertions)]
+        {
+            let held = held::count((self.id, std::thread::current().id()));
+            debug_assert_eq!(
+                held, 0,
+                "the RandomX cache store's caller rule: this thread asked for a cache while \
+                 holding {held} of this store's handles (it could wait for itself)"
+            );
+        }
         let mut st = self.lock();
         let side = loop {
             if let Some(pos) = st.resident.iter().position(|(s, _)| s == seed) {
                 let entry = st.resident.remove(pos);
                 let cache = entry.1.clone();
                 st.resident.push(entry); // most recently used last
-                return Some(cache);
+                st.clear_prebuild(seed, prebuild);
+                drop(st);
+                return Some(self.handle(cache));
             }
             let side = !st.hot.contains(seed);
-            if only_hot && side {
+            if prebuild.is_some() && side {
+                st.clear_prebuild(seed, prebuild);
                 return None;
             }
             if st.building.contains(seed) || (side && st.side_building > 0) {
@@ -305,15 +435,19 @@ impl<C> SeedCache<C> {
         };
         st.building.push(*seed);
         st.side_building += usize::from(side);
-        let ticket = Ticket::take(&self.alive);
-        drop(st);
-
+        st.clear_prebuild(seed, prebuild);
+        // Declared before the ticket, so that if the build panics the ticket
+        // drops first (its room is released) and the guard's wake-up comes
+        // after: every waiter it wakes sees the room.
         let mut guard = BuildGuard {
             cache: self,
             seed: *seed,
             side,
             done: false,
         };
+        let ticket = Ticket::take(&self.alive);
+        drop(st);
+
         let cache = Arc::new(Cached {
             cache: (self.build)(seed),
             _ticket: ticket,
@@ -329,7 +463,7 @@ impl<C> SeedCache<C> {
         drop(st);
         drop(trimmed); // freed outside the lock
         self.changed.notify_all();
-        Some(cache)
+        Some(self.handle(cache))
     }
 
     /// Replaces the hot set by `seeds` (the first [`HOT_SEEDS`] distinct
@@ -389,29 +523,44 @@ impl<C: Send + Sync + 'static> SeedCache<C> {
     /// before its build starts. Where no thread can be started, the cache is
     /// built on first use instead. Returns whether a thread was started.
     pub fn prebuild(self: &Arc<Self>, seed: &Hash) -> bool {
-        {
+        let id = {
             let mut st = self.lock();
             if !st.hot.contains(seed)
-                || st.prebuilding.contains(seed)
+                || st.prebuilding.iter().any(|(s, _)| s == seed)
                 || st.building.contains(seed)
                 || st.resident.iter().any(|(r, _)| r == seed)
             {
                 return false;
             }
-            st.prebuilding.push(*seed);
-        }
-        /// Clears the key's prebuild mark when the thread ends, even if its
-        /// build panicked.
-        struct Pending<C>(Arc<SeedCache<C>>, Hash);
+            let id = st.prebuild_seq;
+            st.prebuild_seq += 1;
+            st.prebuilding.push((*seed, id));
+            id
+        };
+        /// Clears this thread's own mark if `fetch` did not (the build
+        /// panicked, or no thread could be started). A newer thread's mark
+        /// on the same key is left alone.
+        struct Pending<C>(Arc<SeedCache<C>>, Hash, u64);
         impl<C> Drop for Pending<C> {
             fn drop(&mut self) {
-                self.0.lock().prebuilding.retain(|s| *s != self.1);
+                self.0.lock().clear_prebuild(&self.1, Some(self.2));
             }
         }
-        let pending = Pending(self.clone(), *seed);
+        let pending = Pending(self.clone(), *seed, id);
         let spawned = std::thread::Builder::new()
             .name("randomx-prebuild".into())
-            .spawn(move || drop(pending.0.fetch(&pending.1, true)));
+            .spawn(move || {
+                let got = pending.0.fetch(&pending.1, Some(pending.2));
+                #[cfg(test)]
+                if got.is_none() {
+                    if let Some(hook) =
+                        &*pending.0.gave_up.lock().unwrap_or_else(|e| e.into_inner())
+                    {
+                        hook();
+                    }
+                }
+                drop(got);
+            });
         // Detached: the thread ends with its build, or when its key leaves
         // the hot set. If no thread could be started, the closure and its
         // `Pending` are dropped, which clears the mark: the cache is built
@@ -420,7 +569,8 @@ impl<C: Send + Sync + 'static> SeedCache<C> {
     }
 }
 
-/// RandomX (light mode) keyed by the seed block id, over a [`SeedCache`]:
+/// RandomX (light mode) keyed by the seed block id, over the crate's cache
+/// store (`SeedCache`):
 /// caches are built outside any lock other callers need, the chain's hot keys
 /// ([`PowFunction::set_hot_seeds`]) stay built and are prebuilt in the
 /// background, other keys share a bounded side slot, and at most
@@ -441,14 +591,15 @@ impl RandomXPow {
     }
 
     /// The cache for `seed`, building it (about 1-3 s, 256 MiB) if needed.
-    /// Do not hold it while asking for another ([`SeedCache`]'s bound).
-    pub fn cache(&self, seed: &Hash) -> Arc<Cached<Cache>> {
+    /// Private: only `pow_hash` holds a cache, one at a time (the store's
+    /// caller rule, RT-POW L1).
+    fn cache(&self, seed: &Hash) -> CacheRef<Cache> {
         self.caches.get(seed)
     }
 
-    /// Builds hot key `seed`'s cache on a background thread
-    /// ([`SeedCache::prebuild`]).
-    /// Returns whether a thread was started.
+    /// Builds hot key `seed`'s cache on a background thread, at most one per
+    /// key; it gives up if the key leaves the hot set before its build
+    /// starts. Returns whether a thread was started.
     pub fn prebuild(&self, seed: &Hash) -> bool {
         self.caches.prebuild(seed)
     }
@@ -570,7 +721,7 @@ mod tests {
     fn ask<C: Send + Sync + 'static>(
         cache: &Arc<SeedCache<C>>,
         seed: &Hash,
-    ) -> mpsc::Receiver<Arc<Cached<C>>> {
+    ) -> mpsc::Receiver<CacheRef<C>> {
         let (done, done_rx) = mpsc::channel();
         let (cache, seed) = (cache.clone(), *seed);
         std::thread::spawn(move || {
@@ -580,7 +731,7 @@ mod tests {
     }
 
     /// `cache.get(seed)`, failing the test unless it returns within [`BOUND`].
-    fn get<C: Send + Sync + 'static>(cache: &Arc<SeedCache<C>>, seed: &Hash) -> Arc<Cached<C>> {
+    fn get<C: Send + Sync + 'static>(cache: &Arc<SeedCache<C>>, seed: &Hash) -> CacheRef<C> {
         ask(cache, seed)
             .recv_timeout(BOUND)
             .unwrap_or_else(|e| panic!("get did not return within {BOUND:?}: {e}"))
@@ -704,13 +855,13 @@ mod tests {
             );
             std::thread::yield_now();
         }
-        assert_eq!(**get(&cache, &built), built, "built key: no wait");
-        assert_eq!(**get(&cache, &hot), hot, "hot key: built without waiting");
+        assert_eq!(*get(&cache, &built), built, "built key: no wait");
+        assert_eq!(*get(&cache, &hot), hot, "hot key: built without waiting");
         release.send(()).unwrap();
         let got = slow_caller
             .recv_timeout(BOUND)
             .expect("the slow build finishes");
-        assert_eq!(**got, slow);
+        assert_eq!(*got, slow);
     }
 
     /// T3: 32 threads asking for 200 distinct keys each never hold more than
@@ -883,7 +1034,7 @@ mod tests {
         // Prebuild threads may still be finishing: they end with their build
         // or when their key leaves the hot set.
         let settle = std::time::Instant::now() + BOUND;
-        while !cache.lock().prebuilding.is_empty() {
+        while !cache.lock().prebuilding_keys().is_empty() {
             assert!(
                 std::time::Instant::now() < settle,
                 "a prebuild thread is stuck"
@@ -904,7 +1055,7 @@ mod tests {
         let (cache, _live, _peak) = peak_cache();
         let k = |i: u64| key(2000 + i);
         assert!(!cache.prebuild(&k(1)), "not hot: no thread");
-        assert!(cache.lock().prebuilding.is_empty());
+        assert!(cache.lock().prebuilding_keys().is_empty());
         cache.set_hot(&[k(1)]);
         let started: Vec<bool> = (0..8).map(|_| cache.prebuild(&k(1))).collect();
         assert_eq!(
@@ -912,7 +1063,7 @@ mod tests {
             [true, false, false, false, false, false, false, false]
         );
         let deadline = std::time::Instant::now() + BOUND;
-        while !cache.is_resident(&k(1)) || !cache.lock().prebuilding.is_empty() {
+        while !cache.is_resident(&k(1)) || !cache.lock().prebuilding_keys().is_empty() {
             assert!(
                 std::time::Instant::now() < deadline,
                 "the prebuild did not finish"
@@ -923,7 +1074,7 @@ mod tests {
         // Built: no thread (W4-MUT: the guard's last `||` mutated to `&&`
         // started one that found the cache).
         assert!(!cache.prebuild(&k(1)), "built: no thread");
-        assert!(cache.lock().prebuilding.is_empty());
+        assert!(cache.lock().prebuilding_keys().is_empty());
 
         // Fill the bound with borrowed caches (hot-set churn evicts them
         // while borrowed), then prebuild a hot key: its thread waits for
@@ -937,17 +1088,17 @@ mod tests {
         assert_eq!(cache.alive(), MAX_CACHES);
         let builds = cache.builds();
         assert!(cache.prebuild(&k(20)));
-        assert_eq!(cache.lock().prebuilding, vec![k(20)]);
+        assert_eq!(cache.lock().prebuilding_keys(), vec![k(20)]);
         std::thread::sleep(Duration::from_millis(100));
         assert_eq!(cache.builds(), builds, "no room: the prebuild waits");
         // Asked again while its thread waits (prebuilding, not building):
         // still one thread (W4-MUT: either `||` of the guard mutated to `&&`
         // survived).
         assert!(!cache.prebuild(&k(20)), "one thread per key");
-        assert_eq!(cache.lock().prebuilding, vec![k(20)]);
+        assert_eq!(cache.lock().prebuilding_keys(), vec![k(20)]);
         cache.set_hot(&[k(14)]);
         let deadline = std::time::Instant::now() + BOUND;
-        while !cache.lock().prebuilding.is_empty() {
+        while !cache.lock().prebuilding_keys().is_empty() {
             assert!(
                 std::time::Instant::now() < deadline,
                 "the prebuild did not give up"
@@ -1017,8 +1168,93 @@ mod tests {
         drop(built_b.recv_timeout(BOUND).expect("b's build finishes"));
         drop(s1);
         let got = side.recv_timeout(BOUND).expect("the side build proceeds");
-        assert_eq!(**got, k(6));
+        assert_eq!(*got, k(6));
         assert!(cache.alive() <= MAX_CACHES);
+    }
+
+    /// RT-POW L1: a thread that asks the store for a cache while it still
+    /// holds one of the store's handles breaks the caller rule, and debug
+    /// builds fail it loudly instead of letting it wait for itself. The same
+    /// thread may ask again once it has released its handle, and holding a
+    /// handle of another store is not a violation.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_thread_asking_while_holding_a_cache_panics_in_debug() {
+        let (cache, _live) = fake_cache();
+        let (other, _other_live) = fake_cache();
+        let (done, done_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let first = cache.get(&key(1));
+            let theirs = other.get(&key(1)); // another store: allowed
+            let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                drop(cache.get(&key(2)));
+            }));
+            drop((first, theirs));
+            let after = cache.get(&key(2)); // released: allowed again
+            drop(after);
+            let _ = done.send(second.is_err());
+        });
+        let panicked = done_rx.recv_timeout(BOUND).expect("the thread finishes");
+        assert!(panicked, "the caller rule was not enforced");
+    }
+
+    /// RT-POW L2: a prebuild that gives up clears its mark in the same
+    /// critical section, so a `set_hot` that re-adds the key at once can
+    /// start a new prebuild, even while the old thread has not ended yet
+    /// (held here in the test hook). The old thread's end does not clear the
+    /// new thread's mark, and the new thread builds the key.
+    #[test]
+    fn a_given_up_prebuild_can_be_rearmed_at_once() {
+        let (cache, _live, _peak) = peak_cache();
+        let k = |i: u64| key(4000 + i);
+        let (entered, entered_rx) = mpsc::channel::<()>();
+        let (release, release_rx) = mpsc::channel::<()>();
+        let (entered, release_rx) = (Mutex::new(entered), Mutex::new(release_rx));
+        *cache.gave_up.lock().unwrap() = Some(Box::new(move || {
+            let _ = entered.lock().unwrap().send(());
+            let _ = release_rx.lock().unwrap().recv_timeout(BOUND);
+        }));
+        // Fill the bound with borrowed caches, so that a prebuild waits.
+        cache.set_hot(&[k(10), k(11)]);
+        let held1 = [get(&cache, &k(10)), get(&cache, &k(11))];
+        cache.set_hot(&[k(12), k(13)]);
+        let held2 = [get(&cache, &k(12)), get(&cache, &k(13))];
+        let target = k(20);
+        cache.set_hot(&[k(14), target]);
+        let held3 = get(&cache, &k(14));
+        assert_eq!(cache.alive(), MAX_CACHES);
+        assert!(cache.prebuild(&target));
+        // The key leaves the hot set: the thread gives up and stops in the hook.
+        cache.set_hot(&[k(14)]);
+        entered_rx
+            .recv_timeout(BOUND)
+            .expect("the prebuild gave up");
+        assert!(
+            cache.lock().prebuilding_keys().is_empty(),
+            "the mark was cleared where the thread gave up"
+        );
+        // Re-added while the old thread is still in the hook: re-armed.
+        cache.set_hot(&[k(14), target]);
+        assert!(cache.prebuild(&target), "a new prebuild starts at once");
+        assert_eq!(cache.lock().prebuilding_keys(), vec![target]);
+        // The old thread ends; the new one's mark stays (it waits for room).
+        release.send(()).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(
+            cache.lock().prebuilding_keys(),
+            vec![target],
+            "the old thread cleared the new thread's mark"
+        );
+        // Room: the new prebuild builds the key.
+        drop((held1, held2, held3));
+        let deadline = std::time::Instant::now() + BOUND;
+        while !cache.is_resident(&target) || !cache.lock().prebuilding_keys().is_empty() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the re-armed prebuild did not build"
+            );
+            std::thread::yield_now();
+        }
     }
 
     /// T4: a build that panics releases its key: the waiters and the next
@@ -1041,7 +1277,7 @@ mod tests {
             ),
             "the first build panicked (and did not hang)"
         );
-        assert_eq!(**get(&cache, &k), k, "retried");
+        assert_eq!(*get(&cache, &k), k, "retried");
         let _ = get(&cache, &key(5));
         assert_eq!(cache.builds(), 2);
     }

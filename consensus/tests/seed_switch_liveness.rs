@@ -14,7 +14,9 @@ use std::time::{Duration, Instant};
 
 /// Getting a built key's cache while another key's cache is being built.
 /// The wait is the lock wait alone (a light hash itself takes about as long
-/// as a build on a loaded machine, so hash times would hide it).
+/// as a build on a loaded machine, so hash times would hide it): it is
+/// measured with `is_resident`, which takes the same store lock as a cache
+/// lookup and hashes nothing (the cache accessor is private, RT-POW L1).
 #[test]
 fn a_cache_build_does_not_stall_callers_of_a_built_key() {
     let pow = Arc::new(RandomXPow::new());
@@ -25,7 +27,7 @@ fn a_cache_build_does_not_stall_callers_of_a_built_key() {
     let reference = pow.pow_hash(&old, &blob);
     let first = started.elapsed();
     let started = Instant::now();
-    let _ = pow.cache(&old);
+    assert!(pow.is_resident(&old));
     let built = started.elapsed();
 
     let barrier = Arc::new(Barrier::new(2));
@@ -34,7 +36,7 @@ fn a_cache_build_does_not_stall_callers_of_a_built_key() {
         std::thread::spawn(move || {
             barrier.wait();
             let started = Instant::now();
-            let _ = pow.cache(&new);
+            let _ = pow.pow_hash(&new, &blob); // the build, plus one hash
             started.elapsed()
         })
     };
@@ -42,7 +44,7 @@ fn a_cache_build_does_not_stall_callers_of_a_built_key() {
     // Let the switcher take whatever lock the build takes.
     std::thread::sleep(Duration::from_millis(300));
     let started = Instant::now();
-    let _ = pow.cache(&old);
+    assert!(pow.is_resident(&old));
     let wait = started.elapsed();
     let started = Instant::now();
     assert_eq!(pow.pow_hash(&old, &blob), reference, "same hash");
