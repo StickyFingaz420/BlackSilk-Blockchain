@@ -52,7 +52,7 @@ use blocks::block_worker;
 pub use blocks::BLOCK_WINDOW_BYTES;
 pub use config::{NetConfig, NetStats, PeerInfo};
 use headers::header_worker;
-use maintenance::{chain_maintenance_loop, maintenance_loop};
+use maintenance::{announce_loop, chain_maintenance_loop, maintenance_loop};
 use peers::{accept_loop, connect_outbound};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -63,7 +63,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard};
 use stem::{submit_local, ORIGINATED_FILE};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 /// A manager behind a lock the caller keeps: the input of [`Network::start`]
 /// (tests and embedders), which runs a chain actor over it
@@ -161,10 +161,7 @@ impl Network {
         let onion_addr = onion_listener.as_ref().and_then(|l| l.local_addr().ok());
         let local_addr = listener.as_ref().and_then(|l| l.local_addr().ok());
         let summary = chain.summary_cell();
-        let (tip, genesis_id) = {
-            let s = summary.load();
-            (s.tip_id, s.genesis_id)
-        };
+        let genesis_id = summary.load().genesis_id;
         let state = State {
             peers: HashMap::new(),
             addrman,
@@ -183,7 +180,6 @@ impl Network {
             local_nonces: HashSet::new(),
             connecting: HashMap::new(),
             last_attempt: HashMap::new(),
-            announced_tip: tip,
             rng,
             misbehaving_disconnects: 0,
             slow_disconnects: 0,
@@ -208,6 +204,12 @@ impl Network {
         };
         let (header_queue, header_rx) = mpsc::unbounded_channel();
         let (block_queue, block_rx) = mpsc::unbounded_channel();
+        // Woken on every published tip change (RT-LAB F2).
+        let tip_published = Arc::new(Notify::new());
+        {
+            let n = tip_published.clone();
+            summary.on_tip_change(move || n.notify_one());
+        }
         let inner = Arc::new(Inner {
             chain,
             summary,
@@ -221,6 +223,7 @@ impl Network {
             onion_addr,
             originated_io: Mutex::new(()),
             clock: Mutex::new(ClockMonitor::default()),
+            tip_published,
         });
         if let Some(l) = listener {
             tokio::spawn(accept_loop(inner.clone(), l, false));
@@ -228,6 +231,7 @@ impl Network {
         if let Some(l) = onion_listener {
             tokio::spawn(accept_loop(inner.clone(), l, true));
         }
+        tokio::spawn(announce_loop(inner.clone()));
         tokio::spawn(maintenance_loop(inner.clone()));
         tokio::spawn(chain_maintenance_loop(inner.clone()));
         tokio::spawn(header_worker(inner.clone(), header_rx));

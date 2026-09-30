@@ -173,7 +173,7 @@ async fn raw_listener(ip: &str, close: Arc<tokio::sync::Notify>) -> SocketAddr {
                     network: nid,
                     nonce: rand_nonce(),
                     height: 0,
-                    tip: [0; 32],
+                    tip: params().genesis_id(),
                     listen: None,
                     relay_txs: true,
                 };
@@ -213,7 +213,7 @@ async fn try_raw_peer(addr: SocketAddr) -> Result<(RawReader, RawWriter), String
         network: nid,
         nonce: rand_nonce(),
         height: 0,
-        tip: [0; 32],
+        tip: params().genesis_id(),
         listen: None,
         relay_txs: true,
     };

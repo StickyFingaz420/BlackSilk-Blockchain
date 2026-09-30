@@ -14,6 +14,10 @@
 //! a long command (a heavy block step, a reorganization, a slow disk) never
 //! stalls them.
 //!
+//! A publication that changes the connected tip also calls the cell's tip
+//! listeners ([`SummaryCell::on_tip_change`]): the P2P layer announces a new
+//! tip when it is published, not at its next maintenance tick (RT-LAB F2).
+//!
 //! The cell is a `std::sync::RwLock<Arc<ChainSummary>>` (no new dependency;
 //! `arc-swap` was rejected, decisions "Agent 34"). A read clones the `Arc`
 //! under the read lock and drops the guard at once; a publication swaps the
@@ -25,7 +29,7 @@ use super::ChainManager;
 use crate::sync_policy;
 use blacksilk_consensus::{BlockHeader, Hash, Network};
 use blacksilk_tx::params::SigDomain;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 /// Missing bodies listed in a summary (`ChainManager::missing_bodies`): the
 /// most the P2P download scheduler asks for at once.
@@ -80,6 +84,11 @@ pub struct ChainSummary {
     pub tip_id: Hash,
     pub tip_header: BlockHeader,
     pub height: u64,
+    /// Whether the connected tip is on the best header chain (false while a
+    /// heavier branch's bodies are missing on another fork): then it is an
+    /// ancestor of `best_header_id`, and the P2P layer does not announce it
+    /// to a peer known to have that header (docs/p2p.md §6).
+    pub tip_on_best_chain: bool,
     /// Coins generated on the connected chain (`ChainManager::generated`).
     pub generated: u64,
     /// Outputs in the state (`MemoryChain::output_count`).
@@ -201,6 +210,7 @@ impl ChainSummary {
             tip_id,
             tip_header: *m.tip_header(),
             height: m.height(),
+            tip_on_best_chain: m.headers().is_on_main(&tip_id),
             generated: m.generated(),
             outputs: m.state().output_count(),
             header_height: m.header_height(),
@@ -252,11 +262,29 @@ impl ChainSummary {
     }
 }
 
+/// A tip listener ([`SummaryCell::on_tip_change`]).
+type TipListener = Box<dyn Fn() + Send + Sync>;
+
 /// Where the manager publishes its [`ChainSummary`]; shared (`Arc`) with every
 /// reader, which takes it once, at start-up ([`ChainManager::summary_cell`]).
-#[derive(Debug)]
 pub struct SummaryCell {
     current: RwLock<Arc<ChainSummary>>,
+    /// Called after each publication that changed the connected tip.
+    tip_listeners: Mutex<Vec<TipListener>>,
+}
+
+impl std::fmt::Debug for SummaryCell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let listeners = self
+            .tip_listeners
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len();
+        f.debug_struct("SummaryCell")
+            .field("current", &self.load())
+            .field("tip_listeners", &listeners)
+            .finish()
+    }
 }
 
 impl SummaryCell {
@@ -272,6 +300,7 @@ impl SummaryCell {
             tip_id: id,
             tip_header: genesis,
             height: 0,
+            tip_on_best_chain: true,
             generated: 0,
             outputs: 0,
             header_height: 0,
@@ -308,6 +337,7 @@ impl SummaryCell {
         };
         Self {
             current: RwLock::new(Arc::new(s)),
+            tip_listeners: Mutex::new(Vec::new()),
         }
     }
 
@@ -322,8 +352,36 @@ impl SummaryCell {
             .clone()
     }
 
+    /// Calls `f` after every later publication whose connected tip differs
+    /// from the previous publication's. `f` runs on the publishing thread
+    /// (the chain actor, under the manager's lock), after the new summary is
+    /// readable: it must return at once, without taking a lock the actor's
+    /// commands take or waiting for chain work (a wake-up, e.g.
+    /// `tokio::sync::Notify::notify_one`). Listeners are never removed.
+    pub fn on_tip_change(&self, f: impl Fn() + Send + Sync + 'static) {
+        self.tip_listeners
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(Box::new(f));
+    }
+
     fn store(&self, s: ChainSummary) {
-        *self.current.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(s);
+        let tip = s.tip_id;
+        let previous = std::mem::replace(
+            &mut *self.current.write().unwrap_or_else(PoisonError::into_inner),
+            Arc::new(s),
+        );
+        // Outside the write lock: a listener may read the new summary.
+        if previous.tip_id != tip {
+            for f in self
+                .tip_listeners
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+            {
+                f();
+            }
+        }
     }
 }
 

@@ -75,7 +75,7 @@ fn version(nonce: u64) -> Vec<u8> {
         network: params().network_id,
         nonce,
         height: 0,
-        tip: [0; 32],
+        tip: params().genesis_id(),
         listen: None,
         relay_txs: true,
     })

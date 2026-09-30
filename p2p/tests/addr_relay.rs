@@ -84,7 +84,7 @@ async fn raw_handshake(
         network: nid,
         nonce: 0x5eed_0000 ^ u64::from(initiator),
         height: 0,
-        tip: [0; 32],
+        tip: params().genesis_id(),
         listen,
         relay_txs: true,
     };

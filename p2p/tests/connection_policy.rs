@@ -154,7 +154,7 @@ async fn raw_peer(addr: SocketAddr) -> (RawReader, RawWriter) {
         network: nid,
         nonce: 0xdead_beef,
         height: 0,
-        tip: [0; 32],
+        tip: params().genesis_id(),
         listen: None,
         relay_txs: true,
     };
@@ -276,7 +276,7 @@ async fn scripted_listener(ip: &str, answer: Option<Vec<AddrEntry>>) -> Scripted
                     network: nid,
                     nonce: 0x5eed,
                     height: 0,
-                    tip: [0; 32],
+                    tip: params().genesis_id(),
                     listen: None,
                     relay_txs: true,
                 };
@@ -545,7 +545,7 @@ async fn onion_inbound_is_capped_as_a_class_and_never_ip_banned() {
             network: params().network_id,
             nonce: 1,
             height: 0,
-            tip: [0; 32],
+            tip: params().genesis_id(),
             listen: None,
             relay_txs: true,
         })

@@ -113,6 +113,45 @@ pub(super) struct Peer {
     /// recent (docs/p2p.md §9).
     pub(super) last_block: Option<Instant>,
     pub(super) last_tx: Option<Instant>,
+    /// Headers this peer is known to have, for tip announcements
+    /// (`wants_tip`; W4-SYNC, RT-LAB F1, RT-SYNC F-A/F-C): the best header
+    /// it named in its `Version` (never overwritten), and the last header,
+    /// with its cumulative work, of the heaviest batch from it that we
+    /// accepted. Never its claimed height: fork choice is by work
+    /// (docs/p2p.md §6).
+    pub(super) version_tip: Hash,
+    pub(super) known_tip: Hash,
+    pub(super) known_work: u128,
+    /// The last connected tip of ours this peer was considered for
+    /// (`maintenance::announce_tip`): at registration, the connected tip of
+    /// the snapshot our `Version` came from, so a tip that changed during
+    /// the handshake is announced once the peer is registered (RT-SYNC F-B).
+    pub(super) announced: Hash,
+}
+
+impl Peer {
+    /// Whether our connected tip `tip` is worth announcing to this peer,
+    /// given the current snapshot's best header `best` and whether `tip` is
+    /// on the best header chain (`tip_on_best`, so an ancestor of `best`):
+    /// not if the peer is known to have `tip` itself, or `best` (then it has
+    /// every ancestor of it, as when a node drains bodies behind headers the
+    /// peer gave or named; RT-SYNC F-A). Both are checked against the
+    /// current snapshot, never a flag recorded earlier: after an invalidated
+    /// branch the best header changes and the relayer of that branch gets
+    /// our next tips (RT-SYNC F-C). An address fetch is for addresses only.
+    pub(super) fn wants_tip(&self, tip: &Hash, best: &Hash, tip_on_best: bool) -> bool {
+        let has = |id: &Hash| self.version_tip == *id || self.known_tip == *id;
+        self.kind != ConnKind::AddrFetch && !has(tip) && !(tip_on_best && has(best))
+    }
+
+    /// Records that this peer has the header `id` (cumulative work `work`):
+    /// a batch from it that we accepted. The heaviest one is kept.
+    pub(super) fn has_header(&mut self, id: Hash, work: u128) {
+        if work > self.known_work {
+            self.known_tip = id;
+            self.known_work = work;
+        }
+    }
 }
 
 /// An inbound connection accepted but not yet registered (key exchange or
@@ -181,7 +220,6 @@ pub(super) struct State {
     /// connection (`peers::connect_outbound`).
     pub(super) connecting: HashMap<NetAddr, ConnKind>,
     pub(super) last_attempt: HashMap<NetAddr, Instant>,
-    pub(super) announced_tip: Hash,
     pub(super) rng: ChaCha20Rng,
     pub(super) misbehaving_disconnects: u64,
     pub(super) slow_disconnects: u64,
@@ -362,6 +400,10 @@ pub(super) struct Inner {
     /// blocks (`crate::clock`); never used for validation. Taken alone,
     /// never with the state lock.
     pub(super) clock: Mutex<ClockMonitor>,
+    /// Woken by the chain's summary cell whenever it publishes a new
+    /// connected tip (`SummaryCell::on_tip_change`): the announcer
+    /// (`maintenance::announce_loop`) sends it at once (RT-LAB F2).
+    pub(super) tip_published: Arc<Notify>,
 }
 
 pub(super) fn unix_now() -> u64 {

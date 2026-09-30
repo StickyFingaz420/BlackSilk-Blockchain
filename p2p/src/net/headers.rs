@@ -280,6 +280,8 @@ enum HeaderOutcome {
         /// the sender delivered a validated new tip (RTW3-4, outbound
         /// rotation).
         new_tip: bool,
+        /// The cumulative work of the last header (`Peer::known_work`).
+        work: u128,
     },
     /// The batch's cumulative work would not exceed our best header chain's
     /// (and it cannot be the start of a heavier branch, `low_work`): dropped
@@ -405,10 +407,14 @@ pub(super) async fn header_worker(inner: Arc<Inner>, mut rx: mpsc::UnboundedRece
                     match &outcome {
                         Ok(HeaderOutcome::Accepted {
                             last,
+                            last_id,
                             advanced,
                             new_tip,
-                            ..
+                            work,
                         }) => {
+                            // The sender has this header (announcements,
+                            // `Peer::wants_tip`).
+                            p.has_header(*last_id, *work);
                             if *new_tip {
                                 p.last_new_tip = Some(Instant::now());
                             }
@@ -656,6 +662,7 @@ fn verify_headers(
         .map(|i| i..(i + chunk).min(fresh.end))
         .collect();
     let mut new = 0;
+    // Whether the last header is on our best header chain, and its work.
     let mut on_main = None;
     for (k, part) in parts.iter().enumerate() {
         if k > 0 && !sender_live(inner, peer, addr) {
@@ -672,7 +679,7 @@ fn verify_headers(
                 (Ok(_), Some(n)) => c.pow_jobs(&b[n]),
                 _ => None,
             };
-            (accepted, next_jobs, c.headers().is_on_main(&last_id))
+            (accepted, next_jobs, end_of(c, &last_id))
         }) else {
             return HeaderOutcome::Abandoned;
         };
@@ -726,12 +733,10 @@ fn verify_headers(
     } else if let Some(e) = precheck_error {
         return HeaderOutcome::Failed(e);
     }
-    let on_main = match on_main {
+    let (on_main, work) = match on_main {
         Some(m) => m,
         None => {
-            let Some(m) =
-                inner.chain_blocking(Lane::Headers, move |c| c.headers().is_on_main(&last_id))
-            else {
+            let Some(m) = inner.chain_blocking(Lane::Headers, move |c| end_of(c, &last_id)) else {
                 return HeaderOutcome::Abandoned;
             };
             m
@@ -747,7 +752,15 @@ fn verify_headers(
         last_id,
         advanced: new > 0 || !on_main,
         new_tip: new > 0 && on_main,
+        work,
     }
+}
+
+/// Whether the stored header `id` is on our best header chain, and its
+/// cumulative work (0 if it is not stored).
+fn end_of(c: &ChainManager, id: &Hash) -> (bool, u128) {
+    let hc = c.headers();
+    (hc.is_on_main(id), hc.work(id).unwrap_or(0))
 }
 
 /// Feeds the clock monitor (`crate::clock`) with headers just accepted, their

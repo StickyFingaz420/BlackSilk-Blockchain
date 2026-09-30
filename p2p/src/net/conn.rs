@@ -4,6 +4,7 @@
 use super::addr_relay::advertise_self;
 use super::blocks::SERVE_BLOCKS_PER_REQUEST;
 use super::dispatch::{handle, is_slow, requested_by_us, Pushed, SlowLane};
+use super::maintenance::announce_tip;
 use super::peers::{
     advertised_listen, evict_inbound, inbound_count, onion_inbound_count, same_ip_count,
     HandshakeSlot,
@@ -155,9 +156,11 @@ pub(super) async fn run_connection<S>(
     };
     // From the published snapshot, never a chain command: a long one must not
     // make every new connection miss the remote's handshake timeout (F34-3).
-    let (height, tip) = {
+    // The connected tip of the same snapshot: the peer's first announcement
+    // candidate after registration (`Peer::announced`, RT-SYNC F-B).
+    let (height, tip, our_tip) = {
         let s = inner.summary.load();
-        (s.header_height, s.best_header_id)
+        (s.header_height, s.best_header_id, s.tip_id)
     };
     // No address of ours on a block-relay-only connection: addresses are
     // never exchanged there (an anchor learns nothing to link us by).
@@ -353,6 +356,10 @@ pub(super) async fn run_connection<S>(
                 last_new_tip: None,
                 last_block: None,
                 last_tx: None,
+                version_tip: theirs.tip,
+                known_tip: theirs.tip,
+                known_work: 0,
+                announced: our_tip,
             },
         );
     }
@@ -374,10 +381,19 @@ pub(super) async fn run_connection<S>(
     if let Some(listen) = our_listen.filter(|_| addr_relay) {
         advertise_self(&inner, id, listen);
     }
-    // An address fetch is for addresses only.
-    if theirs.height > height && kind != ConnKind::AddrFetch {
+    // Ask for headers if the peer claims a greater height, or names a best
+    // header we cannot place on our best header chain: an equal-height
+    // rival, or a shorter branch that may be heavier (fork choice is by work,
+    // not height: W4-SYNC, RT-LAB F1). One request per connection; an empty
+    // or non-advancing answer lowers the peer's claimed height to ours, so a
+    // fake tip is not asked about again (docs/p2p.md §6). An address fetch
+    // is for addresses only.
+    if kind != ConnKind::AddrFetch && (theirs.height > height || !knows_tip(&inner, &theirs.tip)) {
         inner.request_headers(id).await;
     }
+    // A tip connected since the snapshot our `Version` came from (the
+    // announcer ran before this peer was registered, RT-SYNC F-B).
+    announce_tip(&inner);
 
     // Read loop. Messages whose handling needs a chain command go to the
     // peer's slow lane; the loop itself never waits for the chain (F34-1).
@@ -541,6 +557,15 @@ async fn write_loop<W: AsyncWrite + Unpin>(
             break;
         }
     }
+}
+
+/// Whether `tip` is on our best header chain as far as the published snapshot
+/// shows without a chain command: our best header, our connected tip, or an
+/// entry of our locator (genesis included). Otherwise a peer naming it may
+/// be on a branch we lack (W4-SYNC).
+fn knows_tip(inner: &Inner, tip: &Hash) -> bool {
+    let s = inner.summary.load();
+    *tip == s.best_header_id || *tip == s.tip_id || s.locator.contains(tip)
 }
 
 #[cfg(test)]
