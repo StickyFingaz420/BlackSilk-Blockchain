@@ -3014,3 +3014,15 @@ passed every PX-proving test. The Lead accepted the fix with these changes:
 - **Adopted:** the red team's differential test (`zk/tests/rt_pxdos_differential.rs`,
   safe Rust, cherry-picked unchanged).
 - **Identity impact:** none (recorded with the suite results below).
+
+Follow-up suite results (2026-09-30, `--locked`, on `f02dc1c`): `cargo fmt --all --
+--check` and `cargo clippy --locked --workspace --all-targets -- -D warnings` clean;
+`cargo deny check` ok; consensus gate, lockfile gate (Cargo.lock unchanged), unicode
+scan and doc-lint pass. Release: zk lib, `decode_bounds`, `rt_pxdos_differential`,
+`pins`, `soundness_calc`, `upstream_advisories`, `field_mutations`, `grinding`; px
+`proof_limits`; tx lib and non-PX tests; p2p lib and non-PX tests: 42 test binaries,
+365 passed, 0 failed, 1 ignored. PX-proving, one at a time from 7 GB free: p2p
+`invalid_px_transactions_get_the_relaying_peer_penalized` and
+`px_transactions_travel_the_stem_and_confirm_everywhere` passed. `blacksilk-node
+--print-manifest` built from the clean commit `f02dc1c` is identical to the base
+`64d89d4` build apart from the build-commit header line.
