@@ -285,3 +285,51 @@ input. The case itself is tested (`px_range_proof_shape_is_checked_on_both_point
 a range proof without hidden outputs is `RangeProofShape`), and so is `rounds(0) =
 None` (crypto's own tests and `bpp_proof_len_matches_the_crypto_crate`). The `||` of the
 point-list comparison (772:36), the other mutant of the arm, is killed by the same test.
+
+## E11: the same answer by a longer walk (chain/src/manager/fork_choice.rs)
+
+Decision: W4-MUTC (run C), for the Lead's review.
+
+**Mutants covered** (missed in run C):
+- 54:25 `replace < with <= in ChainManager::ancestor_at` and `replace < with == in
+  ChainManager::ancestor_at`;
+- 252:9 `replace ChainManager::fork_height -> usize with 0`.
+
+**Code and argument.**
+- `ancestor_at(id, height)` walks back from `id`: `if h.height == height { return
+  Some(id) } if h.height < height { return None } id = h.prev_id`. The `==` test comes
+  first, so at the second test `h.height != height` and `<=` equals `<`. With `==`
+  the second test never holds: the walk continues to genesis, whose parent is no
+  known header, so `self.headers.header(&id)?` returns `None`, the original's answer
+  (an ancestor below `height` cannot be at `height`). Same result for every input; the
+  mutant only walks further.
+- `fork_height()` feeds only `missing_bodies`, which lists the header-best chain's
+  heights from `fork_height() + 1` whose body is not held. Every block at or below
+  the fork is on the connected chain, whose bodies the manager always holds (`bodies`
+  keeps every kept body in memory, connected ones included), so starting the scan at
+  height 1 lists exactly the same blocks, in the same order, within the same `max`.
+  The `→ 1` mutant is caught (it skips height 1 when the fork is at genesis), and so
+  are the loop's `-=` mutants (`+=` fails an assertion, `/=` never ends).
+
+Neither changes a verdict, a stored state or a message; only the work of a walk.
+
+## E12: log text and log levels in fork choice (chain/src/manager/fork_choice.rs)
+
+Decision: W4-MUTC (run C), for the Lead's review.
+
+**Mutants covered** (missed in run C):
+- 314:22 `replace >= with <` and 320:29 `replace > with ==`, `<`, `>=` in
+  `ChainManager::sync_state`: whether a reorganization is logged as a warning (`depth
+  >= DEEP_REORG_WARN_DEPTH`) or as information (`depth > 0`);
+- 347:56 `replace += with -=`, `*=` in `ChainManager::sync_state`:
+  `outcome.uncaptured`, the count of returned transactions beyond the readmission
+  budget, read only by `finish_sync`'s log line;
+- 442:20 and 450:20 `replace > with ==`, `<`, `>=` in `ChainManager::finish_sync`:
+  `if flushed > 0` and `if expired > 0`, each guarding only a `log::info!`.
+
+**Argument.** Each changes only whether or what a log line says. `deepest_reorg`
+(the reported depth) is set before the branch and is not mutated here; `flushed` and
+`expired` are computed by the mempool, which acts on them itself. No verdict, state
+or message depends on them. (The `-=` of the counter can underflow only past the
+readmission budget, `READMIT_MAX_BYTES`, which no test reaches; in a release build it
+would wrap, still only in a log line.)

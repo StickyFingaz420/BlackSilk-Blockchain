@@ -1,11 +1,11 @@
-# Mutation run C: the transaction rules (Wave 4 freeze gate)
+# Mutation run C: the transaction rules and fork choice (Wave 4 freeze gate)
 
 Internal engineering evidence, not an audit. A mutation census shows which code
 changes the tests notice; it does not show that the code is correct or secure.
 
 The gate (decisions "Agent 42" and "W4-MUT and RT-MUT", run C): zero unexplained
 missed mutants per completed file. Every survivor is killed by a new test or
-explained in [mutation-exemptions.md](../../reviews/mutation-exemptions.md) (E8–E10).
+explained in [mutation-exemptions.md](../../reviews/mutation-exemptions.md) (E8–E12).
 Run C's scope, in priority order: tx/src/validate.rs, tx/src/px.rs,
 chain/src/manager/fork_choice.rs, tx/src/params.rs, crypto/, chain/src/block.rs and
 chain/src/emission.rs. What this run completed and what remains is in § Scope status.
@@ -17,6 +17,7 @@ chain/src/emission.rs. What this run completed and what remains is in § Scope s
 | tx/src/validate.rs | 138 | 107 | 19 | 12 | 13 killed by non-proving tests, 4 by the proving test `px_consensus` (2 of them by its new assertions), 2 equivalent (E8); 2 diagnostic only (E9) |
 | tx/src/px.rs | 174 | 131 | 28 | 15 | 26 killed (3 of them first timed out on an unbounded test loop, § Timeouts), 2 equivalent (E10) |
 | tx/src/params.rs | 93 | 72 | 4 | 17 | 4 killed |
+| chain/src/manager/fork_choice.rs | 87 | 53 (+8 timeouts) | 26 | 0 | 10 killed by non-proving tests, 1 by a new proving test, 3 equivalent (E11), 12 log only (E12); the 8 timeouts: 3 fail assertions, 5 are genuine hangs (§ Timeouts) |
 
 - **No survivor revealed a bug in a transaction rule.** Every rule the survivors
   pointed at is implemented as specified; only its test was missing.
@@ -47,7 +48,26 @@ chain/src/emission.rs. What this run completed and what remains is in § Scope s
     `PxProof` before any CLSAG (`check_px_proof_shape`);
   - in a block, each proof is shape-checked against its own statement: the claim
     (one function) is mined with a kernel-only bridge-in (the `px_slot` counter).
-- **Equivalent or diagnostic (exempt):** 6 mutants, E8–E10.
+- **Fork choice (chain/src/manager/fork_choice.rs), now tested**
+  (chain/tests/fork_choice.rs, chain/tests/activation.rs):
+  - the low-work body policy's candidate rules: a header-best deep branch's
+    bodies are kept; an equal-work header tip, and a side leaf of equal or one
+    block less work, are no candidates;
+  - a candidate cut back below an invalidated tip stays a candidate (its parent
+    becomes a leaf again);
+  - the transactions of the last block before an activation return under the new
+    rules (the rules of a disconnected block's own height);
+  - **the proof cache vouches only under the rules the pool verified under**: a
+    pooled PX proof (no v1 inputs) bound to the new branch id, in a side-branch
+    block below the activation, is verified and refused. Under the mutant
+    (`same_rules` negated) the side branch was **accepted**. A new proving test,
+    `a_pooled_px_proof_vouches_for_nothing_under_other_rules`, `#[ignore]`d (two
+    PX proofs; § Proving tests).
+  - `set_step_delay_for_tests` (a test hook) is checked by `actor_order`.
+- **The coinbase reward check** (`block_reward(h, generated)` at 362 and
+  `generated + reward` at 388) was already fully caught: `+` → `-` and `*` at
+  388:59 fail `emission_is_enforced_exactly` and the reference model.
+- **Equivalent or diagnostic (exempt):** 21 mutants, E8–E12.
 
 ## Setup
 
@@ -60,6 +80,8 @@ chain/src/emission.rs. What this run completed and what remains is in § Scope s
     `a_block_of_exactly_the_deploy_budget_is_valid` was in its test set (it kills no
     px.rs or params.rs mutant: it concerns the block rule at validate.rs 1214).
     tx/tests/mutation_regressions.rs was not in `runV`'s or `runP`'s test set.
+  - `runF` (fork_choice.rs) ran on the tree of commit `ee16b9f` (the tx tests;
+    uncommitted when it started), without the new chain tests.
   - The re-runs ran on the final test code.
 - **Profile:** `[profile.mutants]` of the root Cargo.toml (overflow checks and debug
   assertions on; see § Release arithmetic).
@@ -80,7 +102,18 @@ chain/src/emission.rs. What this run completed and what remains is in § Scope s
   proofs (4–6 GB and minutes each, impl-brief). The mutants only a proving test can
   judge were run separately against `px_consensus` alone, one at a time
   (`provingC`), with at least 7 GB free.
-- **Not used:** the chain, node, wallet and p2p tests, which also call these rules.
+- **Not used for the tx files:** the chain, node, wallet and p2p tests, which also
+  call these rules.
+- **Chain tests for fork_choice.rs** (`chaintests.args`): the lib unit tests and
+  activation, actor_equivalence, block_rules, fork_choice, golden, manager,
+  mempool_conflicts, mempool_expiry, operator_invalidation, reference_model,
+  revalidation, rt_w3_regressions, storage_recovery, store_format, with
+  `--skip restart_rebuilds_the_px_state_exactly` (PX-proving). Baseline: 97 s build
+  + 434 s of tests (reference_model 217 s, manager 100 s, fork_choice 45 s, lib 35
+  s); the timeout was set to 1 739 s. Left out: actor_order (timing-sensitive
+  liveness; used for the one test-hook mutant, `hookF`), actor_bench (ignored),
+  fuzz_block, fuzz_store and mempool_stateful (property volume), seed_switch (real
+  RandomX), block_malleability (the block codec, not fork choice).
 
 ## Commands
 
@@ -106,7 +139,47 @@ cargo mutants -p blacksilk-tx -f tx/src/px.rs --profile mutants --jobs 1 --timeo
 cargo mutants -p blacksilk-tx -f tx/src/validate.rs --profile mutants --jobs 1 \
   --timeout-multiplier 3 --minimum-test-timeout 900 --build-timeout 2400 \
   --cap-lints true -o <out> <provingC.args> -C=--test=px_consensus -- -- --test-threads=1
+# ovfC: the tx mutants whose kill could rest on an overflow check (§ Release arithmetic)
+RUSTFLAGS="-C overflow-checks=off -C debug-assertions=off" cargo mutants -p blacksilk-tx \
+  -f tx/src/validate.rs -f tx/src/px.rs --profile mutants --jobs 1 --timeout 314 \
+  --build-timeout 3600 --cap-lints true -o <out> <ovfC.args> $T
+
+# $C is the content of chaintests.args; $S is
+# `-- -- --skip restart_rebuilds_the_px_state_exactly`.
+# runF: fork_choice.rs (baseline 97 s build + 434 s test; timeout set to 1 739 s)
+cargo mutants -p blacksilk-chain -f chain/src/manager/fork_choice.rs --profile mutants \
+  --jobs 2 --timeout-multiplier 4 --minimum-test-timeout 300 --build-timeout 2400 \
+  --cap-lints true -o <out> $C $S
+# rerunF: runF's survivors but the test hook, with the new chain tests (baseline run)
+cargo mutants -p blacksilk-chain -f chain/src/manager/fork_choice.rs --profile mutants \
+  --jobs 1 --timeout 1739 --build-timeout 2400 --cap-lints true -o <out> <rerunF.args> $C $S
+# hookF: the test hook, with actor_order (baseline run)
+cargo mutants -p blacksilk-chain -f chain/src/manager/fork_choice.rs --profile mutants \
+  --jobs 1 --timeout-multiplier 4 --minimum-test-timeout 600 --build-timeout 3600 \
+  --cap-lints true -o <out> <hookF.args> -C=--test=actor_order
+# timeoutF: 5 of runF's timeouts, with the tests that hung skipped (§ Timeouts)
+cargo mutants -p blacksilk-chain -f chain/src/manager/fork_choice.rs --profile mutants \
+  --jobs 1 --baseline skip --timeout 900 --build-timeout 3600 --cap-lints true \
+  -o <out> <timeoutF.args> $C -- -- --skip restart_rebuilds_the_px_state_exactly \
+  --skip a_no_op_activation_flushes_the_pool_and_switches_the_branch \
+  --skip a_marked_header_and_its_descendants_are_refused_at_header_time \
+  --skip descendants_arriving_later_are_refused \
+  --skip invalidating_a_buried_block_reorgs_to_the_best_other_branch \
+  --skip invalidating_the_tip_reorgs_to_its_parent_and_survives_restarts \
+  --skip a_bounded_reorganization_never_stops_on_a_lighter_tip
+# provingF: 376:60, with the new ignored proving test alone (manual baseline below)
+cargo mutants -p blacksilk-chain -f chain/src/manager/fork_choice.rs --profile mutants \
+  --jobs 1 --baseline skip --timeout 5400 --build-timeout 3600 --cap-lints true \
+  -o <out> <provingF.args> -C=--test=activation -- -- --ignored --test-threads=1
+# ovfF: the fork_choice mutants whose kill could rest on an overflow check
+RUSTFLAGS="-C overflow-checks=off -C debug-assertions=off" cargo mutants \
+  -p blacksilk-chain -f chain/src/manager/fork_choice.rs --profile mutants --jobs 2 \
+  --timeout 1739 --build-timeout 3600 --cap-lints true -o <out> <ovfF.args> $C $S
 ```
+
+`provingF`'s baseline was run by hand on the same tree and profile, with at least 7 GB
+free: `cargo test --locked --profile mutants -p blacksilk-chain --test activation --
+--ignored --test-threads=1`, 1 passed in 1 854 s (in parallel with `rerunF`).
 
 The `--re` filter files follow run A's convention (each mutant's name, anchored,
 every character but a letter, a digit or a space as a one-character class, and
@@ -122,6 +195,13 @@ returns exactly its mutants (checked for `rerunC.args`: 51 of 51).
 | rerunC | 10:12 | 11:34 | 51 |
 | timeoutC | 11:34 | 11:40 | 3 |
 | provingC | 11:40 | 12:37 | 4 (baseline 98 s build + 718 s test) |
+| runF | 12:38 | 17:28 | 87 |
+| ovfC | 17:29 | 17:37 | 4 |
+| rerunF | 17:30 | 20:49 | 25 |
+| provingF | 18:52 | 19:25 | 1 |
+| hookF | 19:32 | 19:35 | 1 |
+| timeoutF | 19:35 | 20:53 | 5 |
+| ovfF | 20:54 | 21:34 | 8 |
 
 **Outputs:** each subdirectory holds the tool's `caught.txt`, `missed.txt`,
 `timeout.txt` and `unviable.txt` for that run.
@@ -176,6 +256,22 @@ node/src/fingerprint.rs); the node tests were not an oracle of this run.
 Re-runs: `rerunC` 38 caught, 10 missed, 3 timeouts; the 10 are E8 (2), E9 (2), E10 (2)
 and the 4 proving-only mutants; `timeoutC` 3 caught; `provingC` 4 caught.
 
+### chain/src/manager/fork_choice.rs (runF: 26 missed, 8 timeouts)
+
+| Mutant | Resolution |
+|---|---|
+| 40:9 `set_step_delay_for_tests` → `()` (a test hook) | killed: `actor_order` (`hookF`) |
+| 54:25 `<` → `<=`, `==` in `ancestor_at`; 252:9 `fork_height` → 0 | equivalent: E11 (the same answer by a longer walk) |
+| 70:37 `best_work > tip_work` → `==`, `<`, `>=` (`keeps_body`) | killed: `low_work_side_branch_bodies_are_not_kept_but_candidates_always_are` (B's deep bodies), `an_equal_work_header_tip_is_not_a_candidate_for_deep_bodies` |
+| 76:30 `tip_work + 1` → `-`, `*` (the leaf scan) | killed: `an_equal_or_lighter_side_leaf_is_not_a_candidate_for_deep_bodies` |
+| 173:72 `== Some(true)` → `!=`; 174:12 `delete !` (`drop_invalid`: the parent becomes a leaf) | killed: `a_candidate_cut_back_below_an_invalid_tip_stays_a_candidate` |
+| 314:22, 320:29 ×3 (reorg log level); 347:56 ×2 (the uncaptured count); 442:20 ×3, 450:20 ×3 (`finish_sync`'s log guards) | log only: E12 |
+| 325:47 `connected.len() - 1` → `+`, `/` (the rules a disconnected block's transactions return under) | killed: `transactions_of_the_last_block_before_the_activation_return_under_the_new_rules` (activation.rs) |
+| 376:60 `validated_under() == Some(rules.domain())` → `!=` (when the proof cache may vouch) | killed by the new proving test: `a_pooled_px_proof_vouches_for_nothing_under_other_rules` (`provingF`; under the mutant the side branch with the foreign proof was accepted) |
+
+Re-runs: `rerunF` 9 caught, 16 missed = E11 (3), E12 (12) and 376:60; `provingF` 1
+caught; `hookF` 1 caught.
+
 ## Timeouts
 
 `rerunC` timed out on 3 px.rs mutants (311:9 `prunable_bytes` → `vec![0]`, 327:9
@@ -183,31 +279,70 @@ and the 4 proving-only mutants; `timeoutC` 3 caught; `provingC` 4 caught.
 product: the helper that pads a PX transaction's proof to an exact encoded size
 looped until the size matched, which never happens once `encoded_len` is broken.
 The loop is now bounded (8 steps, then an assertion). Re-run in isolation
-(`timeoutC`, `-j1`): 3 caught, each by assertions, in 6 minutes. No timeout remains,
-and no mutant of this run is caught by a hang.
+(`timeoutC`, `-j1`): 3 caught, each by assertions, in 6 minutes. No tx mutant is
+caught by a hang.
+
+`runF` timed out on 8 fork_choice.rs mutants (timeout 1 739 s). From runF's logs:
+- 282:9 `sync_state` → `false`, 354:33 `&&` → `||` and 354:28 `==` → `!=` (the
+  budget check) already **fail assertions** in the lib unit tests
+  (`a_bounded_reorganization_never_stops_on_a_lighter_tip`,
+  `bounded_submission_reaches_the_unbounded_result_in_bounded_steps`, and others)
+  before a later test hangs: caught by assertion.
+- The other 5 are **genuine hangs** of the product, re-run with the tests that hung
+  skipped (`timeoutF`): each then hangs in the next test that meets an invalid body
+  or an invalidation (the actor_equivalence tests, or the new
+  `a_candidate_cut_back_below_an_invalid_tip_stays_a_candidate`), and no test fails
+  an assertion first:
+  - 135:9 `invalidate` → `()` and 153:9 `drop_invalid` → `vec![]`,
+    `vec![Default::default()]` (the whole body replaced): an invalid body is never
+    marked, so `sync_state` retries the same target forever;
+  - 219:15 `delete !` in `invalidate_block`: `while self.sync_step(usize::MAX) {}`
+    loops once the drain is done;
+  - 254:18 `-=` → `/=` in `fork_height`: the walk never descends.
+
+  These loops are inside the manager's own calls, so a test cannot bound them
+  without running the manager on another thread; they hide no assertion. They count
+  as caught by the timeout, as run A's two `tx_root` loops do.
 
 ## Release arithmetic
 
-Every mutant this run reports as caught was checked for a kill that could rest on an
-overflow check or a debug assertion alone, which a release build does not have:
+The census builds with overflow checks and debug assertions on, so a mutant can be
+caught by an overflow panic that a release build would not have. Every caught
+mutant's log was searched for overflow panics (`with overflow`, `attempt to negate`)
+and debug assertions: 4 tx mutants and 8 fork_choice mutants had failures that were
+all overflow panics in the first failing test binary (`ovfC.args`, `ovfF.args`). They
+were re-run with both switched off (`RUSTFLAGS="-C overflow-checks=off -C
+debug-assertions=off"`; the rustc command lines in the logs carry both flags):
 
-- the survivors' kills (rerunC, timeoutC, provingC) are assertion failures of the
-  named tests, each a comparison of a verdict or a value (the logs show the failing
-  assertion);
-- in runV and runP, a caught mutant whose only failure could be an overflow panic
-  would be one on an arithmetic operator; the arithmetic of these files is
-  `u128`/`i128` sums of `u64` values (no overflow possible), the saturating
-  `px_free_leaves`, the `checked_sub` of the block pool, and `max_weight`'s `u64`
-  arithmetic (at most 57 439 for valid shapes). **Left to do (RT):** re-run the caught
-  arithmetic mutants under `RUSTFLAGS="-C overflow-checks=off -C
-  debug-assertions=off"` as run A's `ovfA`, to confirm by execution.
+- **tx (`ovfC`): 4 of 4 caught**, each by a panic a release build keeps (slice and
+  index bounds): `digest_bytes` 126:24 and `contract_id` 661:58 (`+` → `-`: a range
+  end past the slice), `read_bytes` 249:29 (a slice end before its start, in
+  `px_encoding_round_trips_and_its_hashes_cover_the_specified_parts`),
+  validate.rs 1308:25 `px_slot -= 1` (index `usize::MAX`, in
+  `px4_the_pool_evolves_in_block_order`).
+- **fork_choice (`ovfF`): 7 of 8 caught** by assertions or panics a release build
+  keeps: 104:32 (`next_complete_seq -= 1`: the reference model's assertion),
+  253:52 (an index out of bounds), 323:40 and 323:44 ×2 (`expect("above genesis")`,
+  `expect("non-empty")`), 388:59 `generated - reward` (`emission_is_enforced_exactly`
+  asserts the template reward), 424:34 (`flushed at the activation`, activation.rs).
+  **1 timeout:** 305:58 `== Some(&cur)` → `!=` (the fork search in `sync_state`):
+  in release the depth wraps and the loop never reaches the target, a genuine hang
+  in every test that syncs, caught by the timeout.
+
+No mutant of this run survives release arithmetic.
 
 ## Limits
 
 - **Operators.** The census covers cargo-mutants' mutation operators, not every
   possible fault.
-- **Oracles.** Non-proving tx tests only, plus `px_consensus` for 4 mutants. The
-  chain, node and wallet tests, which exercise the same rules, were not used.
+- **Oracles.** For the tx files, non-proving tx tests only, plus `px_consensus` for
+  4 mutants; the chain, node and wallet tests, which exercise the same rules, were
+  not used. For fork_choice.rs, 15 of the chain crate's test targets (§ Oracles),
+  plus actor_order for one test hook and the new ignored proving test for one
+  mutant.
+- **Timeouts as kills.** 5 fork_choice mutants (and 1 in release arithmetic) are
+  caught only because the manager then loops forever. A hang is a weaker oracle
+  than an assertion.
 - **Proof verification itself** (Plonky3, the zkVM AIR) is outside this census: a
   PX5 mutant is killed when a real, tampered or misplaced proof changes a verdict.
 - **Synthetic transactions.** Most new tests build transactions field by field
@@ -215,12 +350,29 @@ overflow check or a debug assertion alone, which a release build does not have:
   tx/tests/revalidate_after_extension.rs does. Two use a chain view that answers
   differently from any consistent chain (every anchor recent, a set pool, a
   registered contract id alone), stated in each test.
-- **Unviable mutants** (12, 15 and 17) do not compile, mostly `Default::default()`
-  for types without `Default`, or constants that break a `const` assertion.
+- **Unviable mutants** (12, 15 and 17; none in fork_choice.rs) do not compile,
+  mostly `Default::default()` for types without `Default`, or constants that break
+  a `const` assertion.
+
+## Proving tests
+
+- `tx/tests/px_consensus.rs` (in CI's PX-proving step already): two new assertions
+  in `a_private_contract_is_deployed_and_used_through_consensus` and one extra proof
+  (a bridge-in). Locally, in the mutants profile, the test binary took 718 s.
+- `chain/tests/activation.rs` `a_pooled_px_proof_vouches_for_nothing_under_other_rules`
+  is new and builds two proofs (1 854 s locally, mutants profile, in parallel with
+  another run). It is `#[ignore]`d, so that CI's non-PX step (which runs the chain
+  tests in parallel) and the overflow job do not run it. **It is not yet run by CI:**
+  the PX-proving step needs a line running
+  `cargo test --locked --release -p blacksilk-chain --test activation -- --ignored
+  --test-threads=1` (the step's `run` helper appends its own `--
+  --test-threads=1`, so it cannot take `--ignored` as is); the workflow is outside
+  this work's files (for the Lead).
 
 ## Scope status
 
-- **Done:** tx/src/validate.rs, tx/src/px.rs, tx/src/params.rs (items 1, 2, 4).
+- **Done:** tx/src/validate.rs, tx/src/px.rs, tx/src/params.rs,
+  chain/src/manager/fork_choice.rs (items 1 to 4).
 - **W4-PXDOS's decode bounds** (`decode_px_proof` with `PROOF_LIMITS`) are on the
   unmerged branch `w4-pxdos`, not on this run's base `6a2b3b7`: their mutants were
   not censused and need a run after that merge.

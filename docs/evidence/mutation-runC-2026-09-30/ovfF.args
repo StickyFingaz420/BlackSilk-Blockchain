@@ -1,0 +1,8 @@
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]104[:]32[:] replace [+][=] with \-[=] in ChainManager[:][:]mark[_]complete$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]253[:]52[:] replace [!][=] with [=][=] in ChainManager[:][:]fork[_]height$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]305[:]58[:] replace [=][=] with [!][=] in ChainManager[:][:]sync[_]state$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]323[:]40[:] replace \- with [+] in ChainManager[:][:]sync[_]state$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]323[:]44[:] replace [>] with [=][=] in ChainManager[:][:]sync[_]state$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]323[:]44[:] replace [>] with [>][=] in ChainManager[:][:]sync[_]state$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]388[:]59[:] replace [+] with \- in ChainManager[:][:]sync[_]state$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]424[:]34[:] replace [+] with \- in ChainManager[:][:]finish[_]sync$

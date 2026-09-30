@@ -1,0 +1,8 @@
+chain/src/manager/fork_choice.rs:135:9: replace ChainManager::invalidate with ()
+chain/src/manager/fork_choice.rs:153:9: replace ChainManager::drop_invalid -> Vec<Hash> with vec![]
+chain/src/manager/fork_choice.rs:153:9: replace ChainManager::drop_invalid -> Vec<Hash> with vec![Default::default()]
+chain/src/manager/fork_choice.rs:219:15: delete ! in ChainManager::invalidate_block
+chain/src/manager/fork_choice.rs:254:18: replace -= with /= in ChainManager::fork_height
+chain/src/manager/fork_choice.rs:282:9: replace ChainManager::sync_state -> bool with false
+chain/src/manager/fork_choice.rs:354:33: replace && with || in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:354:28: replace == with != in ChainManager::sync_state

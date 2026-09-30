@@ -1,0 +1,9 @@
+chain/src/manager/fork_choice.rs:70:37: replace > with == in ChainManager::keeps_body
+chain/src/manager/fork_choice.rs:70:37: replace > with < in ChainManager::keeps_body
+chain/src/manager/fork_choice.rs:70:37: replace > with >= in ChainManager::keeps_body
+chain/src/manager/fork_choice.rs:76:30: replace + with - in ChainManager::keeps_body
+chain/src/manager/fork_choice.rs:76:30: replace + with * in ChainManager::keeps_body
+chain/src/manager/fork_choice.rs:173:72: replace == with != in ChainManager::drop_invalid
+chain/src/manager/fork_choice.rs:174:12: delete ! in ChainManager::drop_invalid
+chain/src/manager/fork_choice.rs:325:47: replace - with + in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:325:47: replace - with / in ChainManager::sync_state

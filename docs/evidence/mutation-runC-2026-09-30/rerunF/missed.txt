@@ -1,0 +1,16 @@
+chain/src/manager/fork_choice.rs:54:25: replace < with == in ChainManager::ancestor_at
+chain/src/manager/fork_choice.rs:54:25: replace < with <= in ChainManager::ancestor_at
+chain/src/manager/fork_choice.rs:252:9: replace ChainManager::fork_height -> usize with 0
+chain/src/manager/fork_choice.rs:314:22: replace >= with < in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:320:29: replace > with == in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:320:29: replace > with < in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:320:29: replace > with >= in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:347:56: replace += with -= in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:347:56: replace += with *= in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:376:60: replace == with != in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:442:20: replace > with == in ChainManager::finish_sync
+chain/src/manager/fork_choice.rs:442:20: replace > with < in ChainManager::finish_sync
+chain/src/manager/fork_choice.rs:442:20: replace > with >= in ChainManager::finish_sync
+chain/src/manager/fork_choice.rs:450:20: replace > with == in ChainManager::finish_sync
+chain/src/manager/fork_choice.rs:450:20: replace > with < in ChainManager::finish_sync
+chain/src/manager/fork_choice.rs:450:20: replace > with >= in ChainManager::finish_sync

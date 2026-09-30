@@ -1,0 +1,4 @@
+tx/src/px.rs:126:24: replace + with - in digest_bytes
+tx/src/px.rs:249:29: replace + with - in read_bytes
+tx/src/px.rs:661:58: replace + with - in PxDeploy::contract_id
+tx/src/validate.rs:1308:25: replace += with -= in validate_block_transactions_cached
