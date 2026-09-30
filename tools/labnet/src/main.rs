@@ -24,8 +24,8 @@
 mod proxy;
 
 use blacksilk_chain::emission::{format_amount, COIN};
-use blacksilk_consensus::{ChainParams, Network};
-use blacksilk_rpc::{Client, Info};
+use blacksilk_consensus::{BlockHeader, ChainParams, Network, HEADER_SIZE};
+use blacksilk_rpc::{Client, Info, MAX_HEADERS_PER_REQUEST};
 use blacksilk_tx::params::TxRules;
 use blacksilk_wallet::Wallet;
 use clap::Parser;
@@ -129,6 +129,50 @@ struct Args {
     /// `evidence: true`.
     #[arg(long)]
     evidence: bool,
+    /// Lab links: `ring-chords` (node i dials i+1 and i+2; with 5 nodes every
+    /// pair is linked) or `ring` (node i dials i+1 only: blocks cross up to
+    /// n/2 hops, so multi-hop propagation can be measured).
+    #[arg(long, default_value = "ring-chords", value_parser = ["ring-chords", "ring"])]
+    topology: String,
+    /// The late joiner's `--max-outbound`. It must reach
+    /// min(this + 1, nodes) peers (`required_late_peers`)...
+    #[arg(long, default_value_t = 4)]
+    late_max_outbound: usize,
+    /// ...within this many seconds of its start.
+    #[arg(long, default_value_t = 120)]
+    late_peers_secs: u64,
+    /// Address-relay discovery (RT-LAB E2): after the wallet checks, a second
+    /// joiner starts knowing only node 0, then this many relay nodes join
+    /// (connect-only, `--peer` node 0, one every `--relay-gap-secs`). The
+    /// joiner asked for addresses before they existed, so it can learn them
+    /// only through address relay. 0 disables it.
+    #[arg(long, default_value_t = 0)]
+    relay_joiners: usize,
+    #[arg(long, default_value_t = 15)]
+    relay_gap_secs: u64,
+    /// How long after the last relay node starts the joiner may take to
+    /// connect to every relay node.
+    #[arg(long, default_value_t = 120)]
+    relay_wait_secs: u64,
+}
+
+/// Lab links as `(from, to)`: node `from` dials node `to` through a proxy.
+fn topology_links(topology: &str, n: usize) -> Vec<(usize, usize)> {
+    let hops: &[usize] = match topology {
+        "ring" => &[1],
+        _ => &[1, 2],
+    };
+    (0..n)
+        .flat_map(|i| hops.iter().map(move |d| (i, (i + d) % n)))
+        .collect()
+}
+
+/// The peers a joiner with `max_outbound` full-relay slots must reach in a
+/// network of `nodes` advertised nodes: every outbound slot plus at least
+/// one block-relay-only connection, or every node if there are fewer
+/// (RT-LAB F4: a check of 2 peers passed without the mechanism under test).
+fn required_late_peers(max_outbound: usize, nodes: usize) -> usize {
+    (max_outbound + 1).min(nodes)
 }
 
 /// The shortest measured phase (after the warm-up) of a run that may be
@@ -215,8 +259,17 @@ struct Report {
     max_rss_mb: BTreeMap<String, f64>,
     converged_at_end: bool,
     mempools_drained_at_end: bool,
+    topology: String,
+    /// The late joiner reached the final tip, and `late_joiner_required_peers`
+    /// peers within `--late-peers-secs` of its start.
     late_joiner_synced: bool,
     late_joiner_peers: usize,
+    late_joiner_required_peers: usize,
+    /// Seconds from the late joiner's start to the required peers.
+    late_joiner_secs_to_required: Option<f64>,
+    late_joiner_max_peers: usize,
+    /// Address-relay discovery (`--relay-joiners`), when run.
+    relay_discovery: Option<RelayDiscovery>,
     fresh_wallet_balances_match: bool,
     /// Private balances of fresh restores equal the long-running wallets'.
     fresh_wallet_px_balances_match: bool,
@@ -232,6 +285,21 @@ struct Report {
     /// phase of at least 10 minutes. `evidence_notes` says what is missing.
     evidence: bool,
     evidence_notes: Vec<String>,
+}
+
+/// RT-LAB E2: a joiner learning nodes that joined after it asked for
+/// addresses, through address relay only.
+#[derive(Default, Serialize)]
+struct RelayDiscovery {
+    /// The joiner's peers once it had asked every lab node (before the
+    /// relay nodes started).
+    joiner_peers_before: usize,
+    /// Per relay node: seconds from its start to its connection from the
+    /// joiner (`None`: not within `--relay-wait-secs` of the last start).
+    relay_connected_after_secs: Vec<Option<f64>>,
+    joiner_peers_at_end: usize,
+    /// Every relay node was reached.
+    all_reached: bool,
 }
 
 #[derive(Default, Serialize)]
@@ -690,9 +758,156 @@ impl Sampling<'_> {
     }
 }
 
+/// The late-joiner check: it reached the final tip, and its required peers
+/// within `window_secs` of its start.
+fn late_joiner_passed(synced: bool, required_at: Option<f64>, window_secs: u64) -> bool {
+    synced && required_at.is_some_and(|t| t <= window_secs as f64)
+}
+
+/// The final chain file: one `height id` line per block, genesis first.
+const FINAL_CHAIN_FILE: &str = "final-chain.txt";
+
+/// `height id` lines of `headers` (concatenated encodings) as block ids of
+/// network `nid`.
+fn chain_lines(headers: &[u8], nid: u32) -> Result<String, String> {
+    if !headers.len().is_multiple_of(HEADER_SIZE) {
+        return Err(format!("{} header bytes", headers.len()));
+    }
+    let mut out = String::new();
+    for chunk in headers.chunks(HEADER_SIZE) {
+        let header = BlockHeader::from_bytes(chunk).ok_or("a header does not decode")?;
+        out.push_str(&format!(
+            "{} {}\n",
+            header.height,
+            hex::encode(header.id(nid))
+        ));
+    }
+    Ok(out)
+}
+
+/// Writes node `c`'s connected chain as `height id` lines to `path`.
+fn write_final_chain(c: &Client, net: Network, path: &Path) -> Result<(), String> {
+    let nid = ChainParams::for_network(net).network_id;
+    let mut out = String::new();
+    let mut from = 0;
+    loop {
+        let h = c
+            .headers(from, MAX_HEADERS_PER_REQUEST)
+            .map_err(|e| e.to_string())?;
+        let bytes = hex::decode(&h.headers).map_err(|e| e.to_string())?;
+        if bytes.is_empty() {
+            break;
+        }
+        out.push_str(&chain_lines(&bytes, nid)?);
+        from += (bytes.len() / HEADER_SIZE) as u64;
+        if from > h.height {
+            break;
+        }
+    }
+    std::fs::write(path, out).map_err(|e| e.to_string())
+}
+
+/// RT-LAB E2 (`--relay-joiners`): stops the first late joiner, starts a
+/// second one knowing only node 0 with room for every node, waits until it
+/// has asked the lab nodes, then starts the relay nodes one by one and
+/// measures when the joiner connects to each. A relay node is connect-only
+/// and dials only node 0, and the lab nodes are connect-only, so a second
+/// peer of a relay node is the joiner.
+fn relay_discovery(
+    a: &Args,
+    node_bin: &Path,
+    procs: &mut [Proc],
+    journal: &mut File,
+) -> RelayDiscovery {
+    let n = a.nodes;
+    let mut r = RelayDiscovery::default();
+    for p in procs.iter_mut().filter(|p| p.name == "node-late") {
+        let _ = p.child.kill();
+    }
+    let node0 = local(p2p_port(a.base_port, 0));
+    let joiner = n + 1;
+    let data = a.out.join("node-e2");
+    let args = node_args(a, joiner, &data, &[node0], n + a.relay_joiners + 1, false);
+    let mut own = vec![spawn(
+        node_bin,
+        &args,
+        &a.out.join("node-e2.log"),
+        "node-e2",
+    )];
+    let Some(jc) = wait_rpc(rpc_port(a.base_port, joiner), &data, 60) else {
+        log(journal, "relay discovery: the joiner did not start");
+        for p in &mut own {
+            let _ = p.child.kill();
+        }
+        return r;
+    };
+    let asked = Instant::now() + Duration::from_secs(60);
+    while Instant::now() < asked {
+        if jc.info().is_ok_and(|i| i.peers >= n) {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    r.joiner_peers_before = jc.info().map_or(0, |i| i.peers);
+    let mut relays = Vec::new();
+    for k in 0..a.relay_joiners {
+        let i = n + 2 + k;
+        let data = a.out.join(format!("node-relay{k}"));
+        let args = node_args(a, i, &data, &[node0], 1, true);
+        let name = format!("node-relay{k}");
+        own.push(spawn(
+            node_bin,
+            &args,
+            &a.out.join(format!("{name}.log")),
+            &name,
+        ));
+        let started = Instant::now();
+        let client = wait_rpc(rpc_port(a.base_port, i), &data, 60);
+        relays.push((started, client));
+        log(journal, &format!("relay discovery: {name} started"));
+        if k + 1 < a.relay_joiners {
+            std::thread::sleep(Duration::from_secs(a.relay_gap_secs));
+        }
+    }
+    let mut reached: Vec<Option<f64>> = vec![None; relays.len()];
+    let deadline = Instant::now() + Duration::from_secs(a.relay_wait_secs);
+    while Instant::now() < deadline && reached.iter().any(|x| x.is_none()) {
+        for (k, (started, client)) in relays.iter().enumerate() {
+            let two = client
+                .as_ref()
+                .is_some_and(|c| c.info().is_ok_and(|i| i.peers >= 2));
+            if reached[k].is_none() && two {
+                reached[k] = Some(started.elapsed().as_secs_f64());
+            }
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    r.joiner_peers_at_end = jc.info().map_or(0, |i| i.peers);
+    r.all_reached = reached.iter().all(|x| x.is_some());
+    r.relay_connected_after_secs = reached;
+    log(
+        journal,
+        &format!(
+            "relay discovery: joiner peers {} before, {} at the end; relay nodes reached after {:?} s",
+            r.joiner_peers_before, r.joiner_peers_at_end, r.relay_connected_after_secs
+        ),
+    );
+    for p in &mut own {
+        let _ = p.child.kill();
+    }
+    r
+}
+
 fn main() {
     let a = Args::parse();
     assert!(a.nodes >= 4, "need at least 4 nodes");
+    // Ports: proxies at base + 2000 + 40 * from + to, processes at
+    // base + 20 * i (lab nodes, joiners, relay nodes) below base + 2000.
+    assert!(a.nodes <= 40, "at most 40 nodes (the proxy port layout)");
+    assert!(
+        a.nodes + 2 + a.relay_joiners < 100,
+        "too many relay nodes for the port layout"
+    );
     if a.evidence {
         assert!(
             a.duration_mins * 60 >= EVIDENCE_MIN_SECS,
@@ -741,6 +956,7 @@ fn main() {
     let mut report = Report {
         started_unix: unix_now(),
         nodes: a.nodes,
+        topology: a.topology.clone(),
         ..Default::default()
     };
     let mut seed = [0u8; 32];
@@ -756,25 +972,22 @@ fn main() {
     report.partition_split = split;
     let group = |i: usize| usize::from(i >= split);
 
-    // Links: ring plus chords (i -> i+1, i -> i+2), each through a proxy.
+    // Links (`--topology`), each through a proxy.
     let mut links = Vec::new();
-    for i in 0..n {
-        for d in [1, 2] {
-            let j = (i + d) % n;
-            let h = rt
-                .block_on(proxy::start(
-                    local(proxy_port(a.base_port, i, j)),
-                    local(p2p_port(a.base_port, j)),
-                    Duration::from_millis(a.latency_ms),
-                    a.jitter_ms,
-                ))
-                .expect("proxy bind");
-            links.push(Link {
-                from: i,
-                to: j,
-                handle: h,
-            });
-        }
+    for (i, j) in topology_links(&a.topology, n) {
+        let h = rt
+            .block_on(proxy::start(
+                local(proxy_port(a.base_port, i, j)),
+                local(p2p_port(a.base_port, j)),
+                Duration::from_millis(a.latency_ms),
+                a.jitter_ms,
+            ))
+            .expect("proxy bind");
+        links.push(Link {
+            from: i,
+            to: j,
+            handle: h,
+        });
     }
 
     // Nodes.
@@ -1169,6 +1382,13 @@ fn main() {
     );
 
     // Late joiner: one direct peer (node 0), discovers the rest through Addr.
+    // The final chain (height, id) from node 0: the report tool splits the
+    // miners' found blocks into kept and stale by it.
+    if let Err(e) = write_final_chain(&clients[0], net, &a.out.join(FINAL_CHAIN_FILE)) {
+        log(&mut journal, &format!("final chain not written: {e}"));
+    }
+
+    // Late joiner: one direct peer (node 0), discovers the rest through Addr.
     let late = n;
     let data = a.out.join("node-late");
     let args = node_args(
@@ -1176,9 +1396,10 @@ fn main() {
         late,
         &data,
         &[local(p2p_port(a.base_port, 0))],
-        4,
+        a.late_max_outbound,
         false,
     );
+    let late_start = Instant::now();
     procs.push(spawn(
         &node_bin,
         &args,
@@ -1186,22 +1407,38 @@ fn main() {
         "node-late",
     ));
     let late_client = wait_rpc(rpc_port(a.base_port, late), &data, 60).expect("late node started");
-    let deadline = Instant::now() + Duration::from_secs(900);
+    let required = required_late_peers(a.late_max_outbound, n);
+    report.late_joiner_required_peers = required;
+    let mut peer_log = File::create(a.out.join("late-peers.csv")).unwrap();
+    writeln!(peer_log, "secs,peers,height").unwrap();
+    let (mut synced, mut required_at) = (false, None);
+    let deadline = late_start + Duration::from_secs(900);
     while Instant::now() < deadline {
-        if let (Ok(li), Some(fi)) = (late_client.info(), &final_info) {
-            if li.tip == fi.tip && li.peers >= 2 {
-                report.late_joiner_synced = true;
-                report.late_joiner_peers = li.peers;
+        if let Ok(li) = late_client.info() {
+            let secs = late_start.elapsed().as_secs_f64();
+            let _ = writeln!(peer_log, "{secs:.1},{},{}", li.peers, li.height);
+            report.late_joiner_peers = li.peers;
+            report.late_joiner_max_peers = report.late_joiner_max_peers.max(li.peers);
+            synced |= final_info.as_ref().is_some_and(|fi| li.tip == fi.tip);
+            if li.peers >= required && required_at.is_none() {
+                required_at = Some(secs);
+            }
+            let window_over = secs > a.late_peers_secs as f64;
+            if synced && (required_at.is_some() || window_over) {
                 break;
             }
         }
-        std::thread::sleep(Duration::from_secs(2));
+        std::thread::sleep(Duration::from_secs(1));
     }
+    report.late_joiner_secs_to_required = required_at;
+    report.late_joiner_synced = late_joiner_passed(synced, required_at, a.late_peers_secs);
     log(
         &mut journal,
         &format!(
-            "late joiner synced={} peers={}",
-            report.late_joiner_synced, report.late_joiner_peers
+            "late joiner synced={synced} peers={} (required {required}, reached after {}, max {})",
+            report.late_joiner_peers,
+            required_at.map_or("never".into(), |t| format!("{t:.1} s")),
+            report.late_joiner_max_peers
         ),
     );
 
@@ -1255,6 +1492,10 @@ fn main() {
         ),
     );
 
+    if a.relay_joiners > 0 {
+        report.relay_discovery = Some(relay_discovery(&a, &node_bin, &mut procs, &mut journal));
+    }
+
     for p in &mut procs {
         let _ = p.child.kill();
     }
@@ -1292,6 +1533,10 @@ fn main() {
         && report.converged_at_end
         && report.mempools_drained_at_end
         && report.late_joiner_synced
+        && report
+            .relay_discovery
+            .as_ref()
+            .is_none_or(|r| r.all_reached)
         && report.fresh_wallet_balances_match
         && report.fresh_wallet_px_balances_match
         && report.supply_conserved
@@ -1509,6 +1754,83 @@ mod tests {
             );
             assert_eq!(v.contains(&"--connect-only".to_string()), connect_only);
         }
+    }
+
+    /// `ring-chords` (the default) links every pair of 5 nodes; `ring`
+    /// links each node to its successor only, so a block crosses up to
+    /// n/2 hops (RT-LAB F4).
+    #[test]
+    fn topologies() {
+        let rc = topology_links("ring-chords", 5);
+        assert_eq!(rc.len(), 10);
+        let pairs: std::collections::BTreeSet<(usize, usize)> =
+            rc.iter().map(|&(a, b)| (a.min(b), a.max(b))).collect();
+        assert_eq!(pairs.len(), 10, "every pair of 5 nodes");
+        let ring = topology_links("ring", 8);
+        assert_eq!(ring, (0..8).map(|i| (i, (i + 1) % 8)).collect::<Vec<_>>());
+        let a = Args::try_parse_from(["labnet", "--bin-dir", "b", "--out", "o"]).unwrap();
+        assert_eq!(a.topology, "ring-chords");
+        assert!(
+            Args::try_parse_from(["l", "--bin-dir", "b", "--out", "o", "--topology", "star"])
+                .is_err()
+        );
+    }
+
+    /// RT-LAB F4: the old check (2 peers) passed with the GetAddr floor
+    /// reverted. The joiner must fill its outbound slots plus one
+    /// block-relay-only connection, or reach every node of a smaller network.
+    #[test]
+    fn the_late_joiner_must_fill_its_slots() {
+        assert_eq!(required_late_peers(4, 5), 5);
+        assert_eq!(required_late_peers(4, 12), 5);
+        assert_eq!(required_late_peers(8, 5), 5);
+        assert_eq!(required_late_peers(1, 5), 2);
+        assert!(late_joiner_passed(true, Some(2.4), 120));
+        assert!(!late_joiner_passed(true, Some(121.0), 120), "too late");
+        assert!(!late_joiner_passed(true, None, 120), "never");
+        assert!(!late_joiner_passed(false, Some(2.4), 120), "not synced");
+    }
+
+    #[test]
+    fn the_final_chain_lists_ids_by_height() {
+        let nid = ChainParams::regtest().network_id;
+        let g = ChainParams::regtest().genesis;
+        let mut h1 = g;
+        h1.height = 1;
+        h1.prev_id = g.id(nid);
+        let mut bytes = g.to_bytes().to_vec();
+        bytes.extend_from_slice(&h1.to_bytes());
+        let text = chain_lines(&bytes, nid).unwrap();
+        assert_eq!(
+            text,
+            format!(
+                "0 {}\n1 {}\n",
+                hex::encode(g.id(nid)),
+                hex::encode(h1.id(nid))
+            )
+        );
+        assert!(chain_lines(&bytes[..150], nid).is_err(), "a torn header");
+    }
+
+    /// E2's joiner has room for every node; its relay nodes are
+    /// connect-only and dial node 0 only.
+    #[test]
+    fn relay_nodes_dial_node_0_only() {
+        let a = Args::try_parse_from(["l", "--bin-dir", "b", "--out", "o", "--relay-joiners", "3"])
+            .unwrap();
+        assert_eq!(a.relay_joiners, 3);
+        let node0 = local(p2p_port(a.base_port, 0));
+        let v = node_args(&a, 7, Path::new("d"), &[node0], 1, true);
+        let peers: Vec<&String> = v
+            .iter()
+            .zip(v.iter().skip(1))
+            .filter(|(k, _)| *k == "--peer")
+            .map(|(_, p)| p)
+            .collect();
+        assert_eq!(peers, [&node0.to_string()]);
+        assert!(v.contains(&"--connect-only".to_string()));
+        let at = v.iter().position(|x| x == "--public-address").unwrap();
+        assert_eq!(v[at + 1], local(p2p_port(a.base_port, 7)).to_string());
     }
 
     #[test]
