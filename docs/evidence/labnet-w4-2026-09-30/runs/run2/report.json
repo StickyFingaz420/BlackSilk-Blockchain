@@ -1,0 +1,73 @@
+{
+  "run": "C:/bszkeval/w4-lab-scratch/run2",
+  "nodes": 5,
+  "difficulty_min": 13,
+  "difficulty_max": 30,
+  "difficulty_first_third": 14.15,
+  "difficulty_last_third": 23.05,
+  "propagation": {
+    "blocks": 73,
+    "contested_heights": 41,
+    "median_ms": 1039,
+    "p90_ms": 1930,
+    "max_ms": 2283
+  },
+  "found_after_warmup": 164,
+  "on_final_chain_after_warmup": 123,
+  "stale_after_warmup": 41,
+  "templates_abandoned_after_warmup": 78,
+  "heals": [
+    {
+      "unix": 1790718690,
+      "converged_after_secs": 17,
+      "reorgs": [
+        [
+          0,
+          15,
+          5.5
+        ],
+        [
+          1,
+          15,
+          6.5
+        ],
+        [
+          1,
+          1,
+          32.2
+        ],
+        [
+          2,
+          1,
+          32.3
+        ],
+        [
+          3,
+          1,
+          32.5
+        ],
+        [
+          4,
+          1,
+          32.2
+        ]
+      ],
+      "heights_before": "272/272/272/272/272"
+    }
+  ],
+  "late_joiner": [
+    "    0.27 s  connected outbound peer 127.0.0.1:52001 (height 334) -> 1 peers",
+    "    0.27 s  peer 1: addr with 1 entries",
+    "    0.27 s  peer 1: addr with 5 entries",
+    "    2.37 s  connected outbound peer 127.0.0.1:52041 (height 334) -> 2 peers",
+    "    2.37 s  connected block-relay-only outbound peer 127.0.0.1:52061 (height 334) -> 3 peers",
+    "    2.37 s  connected outbound peer 127.0.0.1:52081 (height 334) -> 4 peers",
+    "    2.37 s  connected outbound peer 127.0.0.1:52021 (height 334) -> 5 peers",
+    "    2.37 s  peer 2: addr with 1 entries",
+    "    2.37 s  peer 4: addr with 1 entries",
+    "    2.37 s  peer 5: addr with 1 entries",
+    "    2.37 s  peer 2: addr with 5 entries",
+    "    2.37 s  peer 5: addr with 5 entries",
+    "    2.37 s  peer 4: addr with 5 entries"
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "run": "C:/bszkeval/w4-lab-scratch/run4",
+  "nodes": 5,
+  "difficulty_min": 14,
+  "difficulty_max": 18,
+  "difficulty_first_third": 16.0,
+  "difficulty_last_third": 16.153846153846153,
+  "propagation": {
+    "blocks": 54,
+    "contested_heights": 59,
+    "median_ms": 1345,
+    "p90_ms": 1932,
+    "max_ms": 2465
+  },
+  "found_after_warmup": 187,
+  "on_final_chain_after_warmup": 128,
+  "stale_after_warmup": 59,
+  "templates_abandoned_after_warmup": 55,
+  "heals": [
+    {
+      "unix": 1790725324,
+      "converged_after_secs": 24,
+      "reorgs": [
+        [
+          1,
+          11,
+          8.6
+        ],
+        [
+          2,
+          11,
+          8.9
+        ],
+        [
+          3,
+          11,
+          10.6
+        ],
+        [
+          4,
+          11,
+          10.0
+        ]
+      ],
+      "heights_before": "258/254/254/254/254"
+    },
+    {
+      "unix": 1790725744,
+      "converged_after_secs": 36,
+      "reorgs": [
+        [
+          0,
+          1,
+          33.0
+        ],
+        [
+          1,
+          19,
+          15.1
+        ],
+        [
+          2,
+          19,
+          15.3
+        ],
+        [
+          3,
+          19,
+          15.4
+        ],
+        [
+          4,
+          18,
+          7.0
+        ]
+      ],
+      "heights_before": "302/300/300/300/300"
+    }
+  ],
+  "late_joiner": [
+    "    0.27 s  connected outbound peer 127.0.0.1:54001 (height 341) -> 1 peers",
+    "    0.27 s  peer 1: addr with 1 entries",
+    "    0.27 s  peer 1: addr with 5 entries",
+    "    2.38 s  connected outbound peer 127.0.0.1:54021 (height 341) -> 2 peers",
+    "    2.38 s  peer 2: addr with 1 entries",
+    "    2.38 s  connected block-relay-only outbound peer 127.0.0.1:54061 (height 341) -> 3 peers",
+    "    2.38 s  peer 2: addr with 5 entries",
+    "    2.40 s  connected outbound peer 127.0.0.1:54041 (height 341) -> 4 peers",
+    "    2.40 s  peer 4: addr with 1 entries",
+    "    2.40 s  peer 4: addr with 5 entries",
+    "    2.41 s  connected outbound peer 127.0.0.1:54081 (height 341) -> 5 peers",
+    "    2.41 s  peer 5: addr with 1 entries",
+    "    2.41 s  peer 5: addr with 5 entries"
+  ]
+}
