@@ -4333,7 +4333,9 @@ async fn rt_sync_a_draining_node_does_not_echo_tips_to_a_peer_ahead() {
     // X: serves the headers, not the bodies.
     let (xr, xw) = raw_peer_at(n.addr, nid, true, 150).await;
     serve_branch(xr, xw, headers.clone());
-    wait_until("N has the headers", 20, || {
+    // Generous deadlines: under full CPU load (other test processes) the
+    // 150 headers took up to 18 s to verify in a release build.
+    wait_until("N has the headers", 90, || {
         n.chain.lock().unwrap().header_height() == 150
     })
     .await;
@@ -4343,7 +4345,7 @@ async fn rt_sync_a_draining_node_does_not_echo_tips_to_a_peer_ahead() {
     let (mut er, mut ew) = try_raw_handshake_tip(s, true, nid, true, 150, best)
         .await
         .expect("handshake");
-    wait_until("E registered", 5, || n.net.peers().len() == 2).await;
+    wait_until("E registered", 30, || n.net.peers().len() == 2).await;
     // Counts until 1 s after the drain ended (W4-SYNC: a fixed 15 s window
     // missed late echoes, and the drain's 20 s deadline failed under load).
     let (done_tx, mut done_rx) = tokio::sync::watch::channel(false);
