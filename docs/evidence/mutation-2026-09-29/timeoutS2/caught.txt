@@ -1,0 +1,21 @@
+consensus/src/pow.rs:102:9: replace SeedState<C>::side_cap -> usize with 0
+consensus/src/pow.rs:110:50: replace > with == in SeedState<C>::evicted_alive
+consensus/src/pow.rs:110:50: replace > with >= in SeedState<C>::evicted_alive
+consensus/src/pow.rs:143:9: replace <impl Drop for BuildGuard<'_, C>>::drop with ()
+consensus/src/pow.rs:147:35: replace != with == in <impl Drop for BuildGuard<'_, C>>::drop
+consensus/src/pow.rs:148:26: replace -= with += in <impl Drop for BuildGuard<'_, C>>::drop
+consensus/src/pow.rs:148:26: replace -= with /= in <impl Drop for BuildGuard<'_, C>>::drop
+consensus/src/pow.rs:180:71: replace == with != in SeedCache<C>::get
+consensus/src/pow.rs:187:52: replace && with || in SeedCache<C>::get
+consensus/src/pow.rs:187:72: replace > with == in SeedCache<C>::get
+consensus/src/pow.rs:187:72: replace > with >= in SeedCache<C>::get
+consensus/src/pow.rs:191:21: replace && with || in SeedCache<C>::get
+consensus/src/pow.rs:191:43: replace > with < in SeedCache<C>::get
+consensus/src/pow.rs:202:26: replace += with -= in SeedCache<C>::get
+consensus/src/pow.rs:215:26: replace -= with += in SeedCache<C>::get
+consensus/src/pow.rs:215:26: replace -= with /= in SeedCache<C>::get
+consensus/src/pow.rs:229:9: replace SeedCache<C>::set_hot -> Vec<Hash> with vec![]
+consensus/src/pow.rs:229:9: replace SeedCache<C>::set_hot -> Vec<Hash> with vec![Default::default()]
+consensus/src/pow.rs:232:26: replace < with == in SeedCache<C>::set_hot
+consensus/src/pow.rs:232:26: replace < with > in SeedCache<C>::set_hot
+consensus/src/pow.rs:232:41: delete ! in SeedCache<C>::set_hot

@@ -1,0 +1,27 @@
+--re=^consensus[/]src[/]chain[.]rs[:]280[:]9[:] replace HeaderChain[:][:]required[_]difficulty \-[>] u64 with 0$
+--re=^consensus[/]src[/]chain[.]rs[:]557[:]9[:] replace HeaderChain[:][:]validate \-[>] Result[<]Hash[,] HeaderError[>] with Ok[(]Default[:][:]default[(][)][)]$
+--re=^consensus[/]src[/]chain[.]rs[:]606[:]47[:] replace [+] with [*] in HeaderChain[:][:]accept$
+--re=^consensus[/]src[/]difficulty[.]rs[:]63[:]5[:] replace next[_]difficulty \-[>] u64 with 0$
+--re=^consensus[/]src[/]difficulty[.]rs[:]78[:]38[:] replace [+] with [*] in next[_]difficulty$
+--re=^consensus[/]src[/]difficulty[.]rs[:]85[:]32[:] replace \- with [/] in next[_]difficulty$
+--re=^consensus[/]src[/]difficulty[.]rs[:]85[:]46[:] replace [*] with [/] in next[_]difficulty$
+--re=^consensus[/]src[/]difficulty[.]rs[:]87[:]18[:] replace [+][=] with [*][=] in next[_]difficulty$
+--re=^consensus[/]src[/]difficulty[.]rs[:]87[:]31[:] replace [*] with [+] in next[_]difficulty$
+--re=^consensus[/]src[/]difficulty[.]rs[:]87[:]31[:] replace [*] with [/] in next[_]difficulty$
+--re=^consensus[/]src[/]difficulty[.]rs[:]88[:]46[:] replace \- with [+] in next[_]difficulty$
+--re=^consensus[/]src[/]difficulty[.]rs[:]93[:]45[:] replace [/] with [*] in next[_]difficulty$
+--re=^consensus[/]src[/]difficulty[.]rs[:]93[:]35[:] replace [*] with [+] in next[_]difficulty$
+--re=^consensus[/]src[/]difficulty[.]rs[:]93[:]31[:] replace [*] with [+] in next[_]difficulty$
+--re=^consensus[/]src[/]hash[.]rs[:]18[:]9[:] replace H[:][:]chain \-[>] Self with Default[:][:]default[(][)]$
+--re=^consensus[/]src[/]header[.]rs[:]31[:]9[:] replace BlockHeader[:][:]to[_]bytes \-[>] \[u8[;] HEADER[_]SIZE\] with \[0[;] HEADER[_]SIZE\]$
+--re=^consensus[/]src[/]header[.]rs[:]31[:]9[:] replace BlockHeader[:][:]to[_]bytes \-[>] \[u8[;] HEADER[_]SIZE\] with \[1[;] HEADER[_]SIZE\]$
+--re=^consensus[/]src[/]merkle[.]rs[:]19[:]23[:] replace [>] with [=][=] in tx[_]root$
+--re=^consensus[/]src[/]merkle[.]rs[:]19[:]23[:] replace [>] with [>][=] in tx[_]root$
+--re=^consensus[/]src[/]pow[.]rs[:]11[:]5[:] replace check[_]hash \-[>] bool with true$
+--re=^consensus[/]src[/]pow[.]rs[:]11[:]5[:] replace check[_]hash \-[>] bool with false$
+--re=^consensus[/]src[/]pow[.]rs[:]11[:]19[:] replace [=][=] with [!][=] in check[_]hash$
+--re=^consensus[/]src[/]pow[.]rs[:]19[:]50[:] replace [>][>] with [<][<] in check[_]hash$
+--re=^consensus[/]src[/]pow[.]rs[:]19[:]41[:] replace [+] with [*] in check[_]hash$
+--re=^consensus[/]src[/]pow[.]rs[:]19[:]20[:] replace [*] with [+] in check[_]hash$
+--re=^consensus[/]src[/]pow[.]rs[:]19[:]20[:] replace [*] with [/] in check[_]hash$
+--re=^consensus[/]src[/]pow[.]rs[:]21[:]11[:] replace [=][=] with [!][=] in check[_]hash$

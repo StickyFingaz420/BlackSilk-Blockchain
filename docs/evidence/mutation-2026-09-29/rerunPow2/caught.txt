@@ -1,0 +1,10 @@
+consensus/src/pow.rs:178:9: replace SeedState<C>::missing_hot -> usize with 0
+consensus/src/pow.rs:178:9: replace SeedState<C>::missing_hot -> usize with 1
+consensus/src/pow.rs:181:20: replace != with == in SeedState<C>::missing_hot
+consensus/src/pow.rs:182:24: delete ! in SeedState<C>::missing_hot
+consensus/src/pow.rs:183:61: replace == with != in SeedState<C>::missing_hot
+consensus/src/pow.rs:287:41: replace + with - in SeedCache<C>::fetch
+consensus/src/pow.rs:208:53: replace && with || in SeedState<C>::take_idle_side
+consensus/src/pow.rs:396:17: replace || with && in SeedCache<C>::prebuild
+consensus/src/pow.rs:462:9: replace RandomXPow::alive -> usize with 0
+consensus/src/pow.rs:462:9: replace RandomXPow::alive -> usize with 1

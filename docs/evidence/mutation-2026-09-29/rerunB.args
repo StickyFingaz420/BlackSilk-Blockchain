@@ -1,0 +1,15 @@
+--re=^px\-core[/]src[/]call[.]rs[:]54[:]47[:] replace [+] with [*]$
+--re=^px\-core[/]src[/]hash[.]rs[:]116[:]49[:] replace [|][|] with [&][&] in Sponge[:][:]absorb$
+--re=^px\-core[/]src[/]hash[.]rs[:]116[:]32[:] replace [|][|] with [&][&] in Sponge[:][:]absorb$
+--re=^px\-core[/]src[/]kernel[.]rs[:]66[:]70[:] replace [+] with [*]$
+--re=^px\-core[/]src[/]kernel[.]rs[:]163[:]20[:] replace [>][>] with [<][<] in Public[:][:]write$
+--re=^px\-core[/]src[/]kernel[.]rs[:]192[:]8[:] replace [|] with \^ in u64[_]word$
+--re=^px\-core[/]src[/]kernel[.]rs[:]205[:]50[:] replace [|] with \^ in digest[_]eq$
+--re=^px\-core[/]src[/]kernel[.]rs[:]217[:]27[:] replace [|] with \^ in select$
+--re=^px\-core[/]src[/]kernel[.]rs[:]332[:]26[:] replace [|][|] with [&][&] in transfer$
+--re=^px\-core[/]src[/]kernel[.]rs[:]388[:]23[:] replace [+][=] with \-[=] in transfer$
+--re=^px\-core[/]src[/]kernel[.]rs[:]388[:]23[:] replace [+][=] with [*][=] in transfer$
+--re=^px\-core[/]src[/]kernel[.]rs[:]392[:]21[:] replace [&] with [|] in transfer$
+--re=^px\-core[/]src[/]kernel[.]rs[:]391[:]21[:] replace [&] with [|] in transfer$
+--re=^px\-core[/]src[/]kernel[.]rs[:]390[:]21[:] replace [&] with [|] in transfer$
+--re=^px\-core[/]src[/]kernel[.]rs[:]472[:]12[:] replace [>][>] with [<][<] in u64w$

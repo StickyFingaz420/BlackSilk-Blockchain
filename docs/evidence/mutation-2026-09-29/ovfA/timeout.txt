@@ -1,0 +1,2 @@
+consensus/src/chain.rs:606:47: replace + with - in HeaderChain::accept
+consensus/src/difficulty.rs:88:24: replace += with -= in next_difficulty

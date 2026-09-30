@@ -1,0 +1,219 @@
+px-core/src/lib.rs:36:5: replace add -> u32 with 0
+px-core/src/lib.rs:37:15: replace + with - in add
+px-core/src/lib.rs:36:5: replace add -> u32 with 1
+px-core/src/lib.rs:37:15: replace + with * in add
+px-core/src/lib.rs:38:10: replace >= with < in add
+px-core/src/lib.rs:39:11: replace - with + in add
+px-core/src/lib.rs:39:11: replace - with / in add
+px-core/src/lib.rs:48:5: replace canonical -> bool with false
+px-core/src/lib.rs:48:5: replace canonical -> bool with true
+px-core/src/lib.rs:48:7: replace < with == in canonical
+px-core/src/lib.rs:48:7: replace < with > in canonical
+px-core/src/call.rs:54:47: replace + with -
+px-core/src/lib.rs:48:7: replace < with <= in canonical
+px-core/src/call.rs:54:43: replace + with -
+px-core/src/call.rs:54:43: replace + with *
+px-core/src/call.rs:54:39: replace + with -
+px-core/src/call.rs:54:39: replace + with *
+px-core/src/call.rs:54:35: replace + with *
+px-core/src/call.rs:76:9: replace Window::is_well_formed -> bool with true
+px-core/src/call.rs:76:9: replace Window::is_well_formed -> bool with false
+px-core/src/call.rs:76:29: replace || with && in Window::is_well_formed
+px-core/src/call.rs:76:24: replace == with != in Window::is_well_formed
+px-core/src/call.rs:76:48: replace <= with > in Window::is_well_formed
+px-core/src/call.rs:81:9: replace Window::contains -> bool with true
+px-core/src/call.rs:81:9: replace Window::contains -> bool with false
+px-core/src/call.rs:81:35: replace && with || in Window::contains
+px-core/src/call.rs:81:25: replace <= with > in Window::contains
+px-core/src/call.rs:81:59: replace || with && in Window::contains
+px-core/src/call.rs:81:54: replace == with != in Window::contains
+px-core/src/call.rs:81:69: replace <= with > in Window::contains
+px-core/src/call.rs:87:9: replace Window::words -> [u32; 4] with [0; 4]
+px-core/src/call.rs:87:9: replace Window::words -> [u32; 4] with [1; 4]
+px-core/src/call.rs:89:30: replace >> with << in Window::words
+px-core/src/call.rs:91:29: replace >> with << in Window::words
+px-core/src/call.rs:117:65: replace + with -
+px-core/src/call.rs:117:65: replace + with *
+px-core/src/call.rs:117:35: replace + with *
+px-core/src/call.rs:117:24: replace + with *
+px-core/src/call.rs:117:31: replace * with +
+px-core/src/call.rs:117:31: replace * with /
+px-core/src/call.rs:117:43: replace * with +
+px-core/src/call.rs:117:43: replace * with /
+px-core/src/call.rs:117:60: replace + with -
+px-core/src/call.rs:117:60: replace + with *
+px-core/src/call.rs:117:56: replace + with -
+px-core/src/call.rs:117:56: replace + with *
+px-core/src/call.rs:117:52: replace + with -
+px-core/src/call.rs:117:52: replace + with *
+px-core/src/call.rs:117:48: replace + with *
+px-core/src/call.rs:121:9: replace Call::io_hash -> Digest with Default::default()
+px-core/src/call.rs:154:5: replace function_prefix -> [u32; PREFIX_WORDS] with [0; PREFIX_WORDS]
+px-core/src/call.rs:154:5: replace function_prefix -> [u32; PREFIX_WORDS] with [1; PREFIX_WORDS]
+px-core/src/hash.rs:78:30: replace + with -
+px-core/src/hash.rs:78:30: replace + with *
+px-core/src/hash.rs:79:30: replace + with -
+px-core/src/hash.rs:79:30: replace + with *
+px-core/src/hash.rs:80:30: replace + with -
+px-core/src/hash.rs:80:30: replace + with *
+px-core/src/hash.rs:81:33: replace + with -
+px-core/src/hash.rs:81:33: replace + with *
+px-core/src/hash.rs:82:39: replace + with -
+px-core/src/hash.rs:82:39: replace + with *
+px-core/src/hash.rs:83:34: replace + with -
+px-core/src/hash.rs:83:34: replace + with *
+px-core/src/hash.rs:84:37: replace + with -
+px-core/src/hash.rs:84:37: replace + with *
+px-core/src/hash.rs:85:31: replace + with -
+px-core/src/hash.rs:85:31: replace + with *
+px-core/src/hash.rs:86:30: replace + with -
+px-core/src/hash.rs:86:30: replace + with *
+px-core/src/hash.rs:87:46: replace + with -
+px-core/src/hash.rs:87:46: replace + with *
+px-core/src/hash.rs:116:9: replace Sponge::absorb with ()
+px-core/src/hash.rs:116:27: replace == with != in Sponge::absorb
+px-core/src/hash.rs:116:35: delete ! in Sponge::absorb
+px-core/src/hash.rs:116:61: replace >= with < in Sponge::absorb
+px-core/src/hash.rs:119:24: replace -= with += in Sponge::absorb
+px-core/src/hash.rs:119:24: replace -= with /= in Sponge::absorb
+px-core/src/hash.rs:123:18: replace += with -= in Sponge::absorb
+px-core/src/hash.rs:123:18: replace += with *= in Sponge::absorb
+px-core/src/hash.rs:124:21: replace == with != in Sponge::absorb
+px-core/src/hash.rs:132:9: replace Sponge::absorb_all with ()
+px-core/src/hash.rs:140:9: replace Sponge::finish -> Digest with Default::default()
+px-core/src/hash.rs:140:27: replace != with == in Sponge::finish
+px-core/src/hash.rs:143:25: replace || with && in Sponge::finish
+px-core/src/hash.rs:143:21: replace > with == in Sponge::finish
+px-core/src/hash.rs:143:21: replace > with < in Sponge::finish
+px-core/src/hash.rs:143:21: replace > with >= in Sponge::finish
+px-core/src/hash.rs:143:28: delete ! in Sponge::finish
+px-core/src/hash.rs:158:5: replace hash -> Digest with Default::default()
+px-core/src/hash.rs:165:16: delete ! in hash
+px-core/src/hash.rs:165:37: replace >= with < in hash
+px-core/src/hash.rs:171:17: replace += with -= in hash
+px-core/src/hash.rs:165:30: replace || with && in hash
+px-core/src/hash.rs:171:17: replace += with *= in hash
+px-core/src/hash.rs:172:20: replace == with != in hash
+px-core/src/hash.rs:178:16: replace || with && in hash
+px-core/src/hash.rs:178:12: replace > with == in hash
+px-core/src/hash.rs:178:12: replace > with < in hash
+px-core/src/hash.rs:178:12: replace > with >= in hash
+px-core/src/hash.rs:178:23: replace == with != in hash
+px-core/src/hash.rs:188:5: replace node -> Digest with Default::default()
+px-core/src/kernel.rs:66:78: replace + with -
+px-core/src/kernel.rs:66:78: replace + with *
+px-core/src/kernel.rs:66:74: replace + with -
+px-core/src/kernel.rs:66:74: replace + with *
+px-core/src/kernel.rs:66:70: replace + with -
+px-core/src/kernel.rs:66:66: replace + with -
+px-core/src/kernel.rs:66:66: replace + with *
+px-core/src/kernel.rs:66:54: replace + with -
+px-core/src/kernel.rs:66:54: replace + with *
+px-core/src/kernel.rs:66:43: replace + with *
+px-core/src/kernel.rs:66:39: replace + with *
+px-core/src/kernel.rs:66:47: replace * with +
+px-core/src/kernel.rs:66:47: replace * with /
+px-core/src/kernel.rs:66:58: replace * with +
+px-core/src/kernel.rs:66:58: replace * with /
+px-core/src/kernel.rs:66:83: replace * with +
+px-core/src/kernel.rs:66:83: replace * with /
+px-core/src/kernel.rs:109:9: replace Error::exit_code -> u32 with 0
+px-core/src/kernel.rs:109:9: replace Error::exit_code -> u32 with 1
+px-core/src/kernel.rs:109:11: replace + with - in Error::exit_code
+px-core/src/kernel.rs:109:11: replace + with * in Error::exit_code
+px-core/src/kernel.rs:133:9: replace <impl Source for SliceSource<'_>>::next -> u32 with 0
+px-core/src/kernel.rs:133:9: replace <impl Source for SliceSource<'_>>::next -> u32 with 1
+px-core/src/kernel.rs:134:18: replace += with -= in <impl Source for SliceSource<'_>>::next
+px-core/src/kernel.rs:134:18: replace += with *= in <impl Source for SliceSource<'_>>::next
+px-core/src/kernel.rs:156:9: replace Public::write with ()
+px-core/src/kernel.rs:173:5: replace elem -> Result<u32, Error> with Ok(0)
+px-core/src/kernel.rs:173:5: replace elem -> Result<u32, Error> with Ok(1)
+px-core/src/kernel.rs:182:5: replace digest -> Result<Digest, Error> with Ok(Default::default())
+px-core/src/kernel.rs:190:5: replace u64_word -> u64 with 0
+px-core/src/kernel.rs:190:5: replace u64_word -> u64 with 1
+px-core/src/kernel.rs:192:8: replace | with & in u64_word
+px-core/src/kernel.rs:192:14: replace << with >> in u64_word
+px-core/src/kernel.rs:196:5: replace boolean -> Result<bool, Error> with Ok(true)
+px-core/src/kernel.rs:196:5: replace boolean -> Result<bool, Error> with Ok(false)
+px-core/src/kernel.rs:197:9: delete match arm 0 in boolean
+px-core/src/kernel.rs:198:9: delete match arm 1 in boolean
+px-core/src/kernel.rs:205:5: replace digest_eq -> bool with true
+px-core/src/kernel.rs:205:5: replace digest_eq -> bool with false
+px-core/src/kernel.rs:205:61: replace == with != in digest_eq
+px-core/src/kernel.rs:205:50: replace | with & in digest_eq
+px-core/src/kernel.rs:205:55: replace ^ with | in digest_eq
+px-core/src/kernel.rs:205:55: replace ^ with & in digest_eq
+px-core/src/kernel.rs:209:5: replace is_zero -> bool with true
+px-core/src/kernel.rs:209:5: replace is_zero -> bool with false
+px-core/src/kernel.rs:214:5: replace select -> Digest with Default::default()
+px-core/src/kernel.rs:217:27: replace | with & in select
+px-core/src/kernel.rs:217:22: replace & with | in select
+px-core/src/kernel.rs:217:22: replace & with ^ in select
+px-core/src/kernel.rs:217:35: replace & with | in select
+px-core/src/kernel.rs:217:35: replace & with ^ in select
+px-core/src/kernel.rs:217:37: delete ! in select
+px-core/src/kernel.rs:223:5: replace read_spec -> Result<Option<OutSpec>, Error> with Ok(None)
+px-core/src/kernel.rs:235:19: replace != with == in transfer
+px-core/src/kernel.rs:245:13: replace > with < in transfer
+px-core/src/kernel.rs:245:13: replace > with == in transfer
+px-core/src/kernel.rs:245:13: replace > with >= in transfer
+px-core/src/kernel.rs:268:42: replace && with || in transfer
+px-core/src/kernel.rs:268:20: delete ! in transfer
+px-core/src/kernel.rs:268:45: delete ! in transfer
+px-core/src/kernel.rs:289:27: delete ! in transfer
+px-core/src/kernel.rs:309:49: replace == with != in transfer
+px-core/src/kernel.rs:309:45: replace & with | in transfer
+px-core/src/kernel.rs:309:45: replace & with ^ in transfer
+px-core/src/kernel.rs:309:35: replace >> with << in transfer
+px-core/src/kernel.rs:316:22: replace != with == in transfer
+px-core/src/kernel.rs:323:16: replace &= with |= in transfer
+px-core/src/kernel.rs:332:42: replace || with && in transfer
+px-core/src/kernel.rs:332:29: delete ! in transfer
+px-core/src/kernel.rs:332:45: delete ! in transfer
+px-core/src/kernel.rs:336:27: replace += with -= in transfer
+px-core/src/kernel.rs:336:27: replace += with *= in transfer
+px-core/src/kernel.rs:339:24: replace && with || in transfer
+px-core/src/kernel.rs:339:37: replace == with != in transfer
+px-core/src/kernel.rs:342:22: replace > with < in transfer
+px-core/src/kernel.rs:342:22: replace > with == in transfer
+px-core/src/kernel.rs:349:18: replace += with -= in transfer
+px-core/src/kernel.rs:342:22: replace > with >= in transfer
+px-core/src/kernel.rs:349:18: replace += with *= in transfer
+px-core/src/kernel.rs:351:8: delete ! in transfer
+px-core/src/kernel.rs:368:32: replace && with || in transfer
+px-core/src/kernel.rs:368:12: delete ! in transfer
+px-core/src/kernel.rs:368:35: delete ! in transfer
+px-core/src/kernel.rs:382:19: replace += with -= in transfer
+px-core/src/kernel.rs:382:19: replace += with *= in transfer
+px-core/src/kernel.rs:392:21: replace & with ^ in transfer
+px-core/src/kernel.rs:391:21: replace & with ^ in transfer
+px-core/src/kernel.rs:390:21: replace & with ^ in transfer
+px-core/src/kernel.rs:391:32: replace == with != in transfer
+px-core/src/kernel.rs:393:20: delete ! in transfer
+px-core/src/kernel.rs:396:33: replace |= with &= in transfer
+px-core/src/kernel.rs:399:18: replace > with == in transfer
+px-core/src/kernel.rs:399:18: replace > with < in transfer
+px-core/src/kernel.rs:402:32: replace && with || in transfer
+px-core/src/kernel.rs:399:18: replace > with >= in transfer
+px-core/src/kernel.rs:402:12: delete ! in transfer
+px-core/src/kernel.rs:406:17: replace != with == in transfer
+px-core/src/kernel.rs:402:35: delete ! in transfer
+px-core/src/kernel.rs:471:5: replace u64w with ()
+px-core/src/kernel.rs:476:5: replace dw with ()
+px-core/src/kernel.rs:482:9: replace Witness::write with ()
+px-core/src/record.rs:35:9: replace Keys::owner -> Digest with Default::default()
+px-core/src/record.rs:42:5: replace diversifier -> Digest with Default::default()
+px-core/src/record.rs:45:23: replace & with | in diversifier
+px-core/src/record.rs:45:23: replace & with ^ in diversifier
+px-core/src/record.rs:45:39: replace >> with << in diversifier
+px-core/src/record.rs:64:5: replace limbs -> [u32; 4] with [0; 4]
+px-core/src/record.rs:64:5: replace limbs -> [u32; 4] with [1; 4]
+px-core/src/record.rs:64:47: replace & with | in limbs
+px-core/src/record.rs:64:47: replace & with ^ in limbs
+px-core/src/record.rs:64:34: replace >> with << in limbs
+px-core/src/record.rs:64:41: replace * with + in limbs
+px-core/src/record.rs:64:41: replace * with / in limbs
+px-core/src/record.rs:82:9: replace Record::commit -> Digest with Default::default()
+px-core/src/record.rs:99:5: replace nullifier -> Digest with Default::default()
+px-core/src/record.rs:111:5: replace contract_nullifier -> Digest with Default::default()
+px-core/src/record.rs:116:5: replace output_rho -> Digest with Default::default()

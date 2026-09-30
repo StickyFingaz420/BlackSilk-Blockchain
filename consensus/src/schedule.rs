@@ -153,6 +153,8 @@ mod tests {
     #[test]
     fn v3_is_one_epoch_from_genesis_with_header_version_1() {
         assert_eq!(V3.len(), 1);
+        assert!(!V3.is_empty());
+        assert_eq!(V3.epochs().len(), 1);
         let e = V3.epoch_at(0);
         assert_eq!(e.header_version, HEADER_VERSION);
         assert_eq!(e.header_version, 1);
@@ -166,6 +168,10 @@ mod tests {
     #[test]
     fn epoch_lookup_at_boundaries() {
         let s = Schedule::new(&THREE);
+        // The accessors return the table (W4-MUT: `epochs`, `len` and
+        // `is_empty` survived mutation).
+        assert_eq!(s.epochs(), &THREE[..]);
+        assert_eq!((s.len(), s.is_empty()), (3, false));
         let branch = |h| s.epoch_at(h).branch_id;
         assert_eq!(branch(0), 10);
         assert_eq!(branch(99), 10);

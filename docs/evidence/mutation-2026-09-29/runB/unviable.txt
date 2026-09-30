@@ -1,0 +1,10 @@
+px-core/src/call.rs:54:35: replace + with -
+px-core/src/call.rs:117:35: replace + with -
+px-core/src/call.rs:117:24: replace + with -
+px-core/src/call.rs:117:48: replace + with -
+px-core/src/kernel.rs:66:43: replace + with -
+px-core/src/kernel.rs:66:39: replace + with -
+px-core/src/kernel.rs:223:5: replace read_spec -> Result<Option<OutSpec>, Error> with Ok(Some(Default::default()))
+px-core/src/kernel.rs:235:5: replace transfer -> Result<Public, Error> with Ok(Default::default())
+px-core/src/record.rs:27:9: replace Keys::derive -> Keys with Default::default()
+px-core/src/record.rs:70:9: replace Record::plain -> Record with Default::default()

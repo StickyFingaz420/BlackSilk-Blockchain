@@ -423,6 +423,21 @@ mod tests {
         p.target_block_time = 120;
         p.difficulty_window = 1 << 26;
         assert_eq!(p.check(), Ok(()));
+        // The exact edge of `N·(N + 1)·T < 2^64` at N = 1000 (Python:
+        // (2**64 - 1) // (1000 * 1001) = 18 428 315 757 951). One more second
+        // overflows, although N² · T and N·(N − 1)·T are still below 2^64
+        // (W4-MUT: `N + 1` mutated to `N − 1` and `N · 1` survived).
+        p.difficulty_window = 1000;
+        p.target_block_time = 18_428_315_757_951;
+        assert_eq!(p.check(), Ok(()));
+        p.target_block_time += 1;
+        assert_eq!(
+            p.check(),
+            Err(ParamsError::DifficultyOverflow {
+                window: 1000,
+                target: 18_428_315_757_952,
+            })
+        );
         let mut p = ChainParams::testnet();
         p.genesis.prev_id = [1; 32];
         assert_eq!(p.check(), Err(ParamsError::Genesis));

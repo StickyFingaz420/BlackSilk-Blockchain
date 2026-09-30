@@ -1,0 +1,10 @@
+--re=^px\-core[/]src[/]lib[.]rs[:]37[:]15[:] replace [+] with \- in add$
+--re=^px\-core[/]src[/]lib[.]rs[:]37[:]15[:] replace [+] with [*] in add$
+--re=^px\-core[/]src[/]lib[.]rs[:]38[:]10[:] replace [>][=] with [<] in add$
+--re=^px\-core[/]src[/]lib[.]rs[:]39[:]11[:] replace \- with [+] in add$
+--re=^px\-core[/]src[/]hash[.]rs[:]123[:]18[:] replace [+][=] with \-[=] in Sponge[:][:]absorb$
+--re=^px\-core[/]src[/]hash[.]rs[:]171[:]17[:] replace [+][=] with \-[=] in hash$
+--re=^px\-core[/]src[/]kernel[.]rs[:]109[:]11[:] replace [+] with \- in Error[:][:]exit[_]code$
+--re=^px\-core[/]src[/]kernel[.]rs[:]134[:]18[:] replace [+][=] with \-[=] in [<]impl Source for SliceSource[<]['][_][>][>][:][:]next$
+--re=^px\-core[/]src[/]kernel[.]rs[:]349[:]18[:] replace [+][=] with \-[=] in transfer$
+--re=^px\-core[/]src[/]kernel[.]rs[:]382[:]19[:] replace [+][=] with \-[=] in transfer$

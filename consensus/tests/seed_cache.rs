@@ -6,6 +6,7 @@
 //!
 //! Real RandomX, light mode: 4 reference caches plus the layer's own builds.
 
+use blacksilk_consensus::pow::MAX_CACHES;
 use blacksilk_consensus::{PowFunction, RandomXPow};
 use blacksilk_randomx::{Cache, Vm};
 use std::collections::HashMap;
@@ -38,6 +39,15 @@ fn cached_hashes_equal_fresh_computation_across_key_switches() {
     let reference = |k: &[u8; 32], n: u64| Vm::light(&fresh[k]).hash(&blob(n));
 
     let pow = RandomXPow::new();
+    // Nothing is built yet; after the first hash exactly its key is (W4-MUT:
+    // `resident` and `is_resident` survived mutation).
+    assert!(pow.resident().is_empty());
+    assert!(!pow.is_resident(&keys[0]));
+    assert_eq!(pow.alive(), 0, "no cache in memory yet");
+    assert_eq!(pow.pow_hash(&keys[0], &blob(0)), reference(&keys[0], 0));
+    assert_eq!(pow.resident(), vec![keys[0]]);
+    assert_eq!(pow.alive(), 1, "exactly the one built cache");
+    assert!(pow.is_resident(&keys[0]) && !pow.is_resident(&keys[1]));
     // A scripted walk over two key switches (k0 -> k1 -> k2), with a side key
     // (k3) asked for in between, the hot set moved as a chain would move it,
     // and a reorg back to the previous key after the switch.
@@ -85,6 +95,7 @@ fn cached_hashes_equal_fresh_computation_across_key_switches() {
             }
         }
         assert!(pow.resident().len() <= 3, "at most 2 hot + 1 side kept");
+        assert!(pow.alive() <= MAX_CACHES, "the store's memory bound");
     }
     assert_eq!(checked, 11);
     // Pinning worked: k0, k1 and k2 were each built once while hot, whatever
