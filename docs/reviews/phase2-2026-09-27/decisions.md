@@ -898,3 +898,27 @@
   - Propagation is reported both filtered and unfiltered.
   - A ring topology option is added.
   - No new runs until the quiet window.
+
+## RT-POW, RT-PXDOS, RT-SYNC (Lead, 2026-09-30)
+- **RandomX cache-store bound (W4-MUT Part 2): ACCEPTED and merged locally (6a2b3b7).**
+  - RT-POW measured a peak of 1,298 MB, against 1,553 MB on base, with at most 5 caches alive.
+  - No deadlock, no hash change, and every caller was checked.
+  - L1–L3 and the Info item were fixed in 9bba1bd: the caller rule is now enforced (non-Clone handle plus a debug assert), the prebuild re-arm window is closed, and the documentation is updated.
+- **PX proof decode bounds (W4-PXDOS): ACCEPTED WITH FIXES.**
+  - RT-PXDOS found no parser differential over 1.15 M inputs.
+  - Every cap was confirmed against the verifier, and all 9 PX-proving tests pass.
+  - Fixes before merge:
+    - F1: drop the decoded proof on the blocking thread and pass only the degree bits;
+    - F2: the documented worst case becomes about 16 MB and about 40 ms;
+    - RT's differential test (cd0249e) is adopted; its scratch allocator harness, which contains unsafe, is never taken.
+- **Header sync by work (W4-SYNC): ACCEPTED WITH FIXES.** All of these land before merge:
+  - F-A: the echo regression during drains;
+  - F-B: a tip found during the handshake is never announced (pre-existing);
+  - F-C: stale known-work after an invalid-body branch, fixed with a best-chain epoch (pre-existing);
+  - F-D: documentation corrections;
+  - the load-sensitive deep-fork test deadline.
+- **Privacy decision:** no jitter on block announcements.
+  - The per-hop cost of about 0.6 s dominates.
+  - A delay raises stale rates, which favours large miners, for about zero anonymity gain. Monero and Bitcoin both relay blocks immediately.
+  - docs/p2p.md §1 now lists block origin as NOT protected; miners who want origin privacy run the mining node proxy-only or over Tor.
+  - To be revisited if header-first relay shrinks the per-hop cost.
