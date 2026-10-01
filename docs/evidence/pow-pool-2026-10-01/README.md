@@ -25,11 +25,13 @@ the caller's thread, and more threads use a persistent pool owned by the
   added, nothing else changed); "after" is the same harness at 283300e. Both
   are kept in the scratch dir outside the repo (sha256 `f0d7ce17…` and
   `9863b779…`).
-- **Load:** `measure.sh <exe> <tag> <procs> 200`: 0 or 8 bash busy-loop
-  processes, started and stopped by PID by the script. The host has 8
+- **Load:** `measure.sh <exe> <tag> <procs> 200 [chain dir]`: 0 or 8 bash
+  busy-loop processes, started and stopped by PID by the script. The host has 8
   logical CPUs (Windows 10). Other agents' work may have added ambient
   load; the runs are single samples.
-- **Logs:** `logs/` (every figure below is taken from them).
+- **Logs:** `logs/` (every figure below is taken from them):
+  `before-*.log` and `after-*.log` for this measurement, `rt-ab.log` for
+  the second one below.
 
 ## Results
 
@@ -69,6 +71,30 @@ Digests are identical before and after (`6b952b4d184bcdee`,
   (300 chunks: 15-33 s before, 1 ms after, under load). This is what the
   p2p tests' stand-in PoW sees, and the bound on how long a batch of
   already cheap work can be stalled by thread start-up.
+
+## Second, independent measurement (RT-POWPOOL)
+
+The red-team pass ran its own A/B with the same two harness binaries
+(`logs/rt-ab.log`), interleaved: three rounds, alternating which build ran
+first, at ambient load ("L0"; other agents were busy, which is why the cheap
+"before" case varies from 3 to 22 s) and under 8 busy loops ("L8"); 40
+real-RandomX headers at pow_threads 1 and 2. ms per header:
+
+| | pow_threads 1, before | 1, after | 2, before | 2, after |
+|---|---|---|---|---|
+| L0 (r1, r2, r3) | 1015, 894, 893 | 815, 875, 816 | 443, 498, 501 | 516, 456, 487 |
+| L8 (r1, r2, r3) | 1622, 1790, 1558 | 973, 870, 829 | 1082, 765, 1165 | 1111, 1059, 1008 |
+
+Digests are identical in every run (`a708129e5a6ddd50` for RandomX). It
+reproduces the one-thread gain under load (0.6-0.9 s less per header) and
+shows no reliable change at 2 threads.
+
+**RT's observation:** under heavy load, 2 threads were slower per header
+than 1 thread after the change (L8: 1008-1111 ms against 829-973 ms). Light-mode
+RandomX is memory-bound, and 8 busy loops on 8 logical CPUs (hyperthreads)
+leave the second thread little to gain. The default `pow_threads` (every
+available thread, `p2p/src/net/config.rs`) is left unchanged. It should be
+measured on a real multi-core testnet host before it is tuned.
 
 ## Limits
 

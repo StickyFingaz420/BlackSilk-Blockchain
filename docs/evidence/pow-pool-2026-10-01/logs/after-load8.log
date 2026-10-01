@@ -1,0 +1,12 @@
+after-load8 load=8 pids: 1002963 1002964 1002965 1002966 1002967 1002968 1002969 1002970
+after-load8 run1 test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 1 ms digest 6b952b4d184bcdee
+after-load8 run1 cheap 31 headers, 2-thread chunks: 0 ms digest c409d6a547ac5494
+after-load8 run2 test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 1 ms digest 6b952b4d184bcdee
+after-load8 run2 cheap 31 headers, 2-thread chunks: 0 ms digest c409d6a547ac5494
+after-load8 run3 test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 1 ms digest 6b952b4d184bcdee
+after-load8 run3 cheap 31 headers, 2-thread chunks: 0 ms digest c409d6a547ac5494
+after-load8 test bench_randomx_batch ... cache build + 1 hash: 2140 ms
+after-load8 randomx 200 headers, pow_threads 1: 141222 ms (706.1 ms/header) digest 397a067cf99748da
+after-load8 randomx 200 headers, pow_threads 2: 96951 ms (484.8 ms/header) digest 397a067cf99748da
+after-load8 randomx 200 headers, pow_threads 4: 56294 ms (281.5 ms/header) digest 397a067cf99748da
+after-load8 done

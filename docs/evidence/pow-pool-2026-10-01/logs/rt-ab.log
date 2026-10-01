@@ -1,0 +1,63 @@
+load=0 pids: 
+L0 r1 before test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 22079 ms digest 6b952b4d184bcdee
+L0 r1 before cheap 31 headers, 2-thread chunks: 1803 ms digest c409d6a547ac5494
+L0 r1 before test bench_randomx_batch ... cache build + 1 hash: 1738 ms
+L0 r1 before randomx 40 headers, pow_threads 1: 40586 ms (1014.6 ms/header) digest a708129e5a6ddd50
+L0 r1 before randomx 40 headers, pow_threads 2: 17702 ms (442.6 ms/header) digest a708129e5a6ddd50
+L0 r1 after test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 0 ms digest 6b952b4d184bcdee
+L0 r1 after cheap 31 headers, 2-thread chunks: 0 ms digest c409d6a547ac5494
+L0 r1 after test bench_randomx_batch ... cache build + 1 hash: 2242 ms
+L0 r1 after randomx 40 headers, pow_threads 1: 32609 ms (815.2 ms/header) digest a708129e5a6ddd50
+L0 r1 after randomx 40 headers, pow_threads 2: 20650 ms (516.2 ms/header) digest a708129e5a6ddd50
+L0 r2 after test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 1 ms digest 6b952b4d184bcdee
+L0 r2 after cheap 31 headers, 2-thread chunks: 0 ms digest c409d6a547ac5494
+L0 r2 after test bench_randomx_batch ... cache build + 1 hash: 1924 ms
+L0 r2 after randomx 40 headers, pow_threads 1: 34993 ms (874.8 ms/header) digest a708129e5a6ddd50
+L0 r2 after randomx 40 headers, pow_threads 2: 18225 ms (455.6 ms/header) digest a708129e5a6ddd50
+L0 r2 before test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 11385 ms digest 6b952b4d184bcdee
+L0 r2 before cheap 31 headers, 2-thread chunks: 589 ms digest c409d6a547ac5494
+L0 r2 before test bench_randomx_batch ... cache build + 1 hash: 2316 ms
+L0 r2 before randomx 40 headers, pow_threads 1: 35754 ms (893.9 ms/header) digest a708129e5a6ddd50
+L0 r2 before randomx 40 headers, pow_threads 2: 19906 ms (497.6 ms/header) digest a708129e5a6ddd50
+L0 r3 before test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 3034 ms digest 6b952b4d184bcdee
+L0 r3 before cheap 31 headers, 2-thread chunks: 5 ms digest c409d6a547ac5494
+L0 r3 before test bench_randomx_batch ... cache build + 1 hash: 3220 ms
+L0 r3 before randomx 40 headers, pow_threads 1: 35698 ms (892.5 ms/header) digest a708129e5a6ddd50
+L0 r3 before randomx 40 headers, pow_threads 2: 20057 ms (501.4 ms/header) digest a708129e5a6ddd50
+L0 r3 after test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 1 ms digest 6b952b4d184bcdee
+L0 r3 after cheap 31 headers, 2-thread chunks: 0 ms digest c409d6a547ac5494
+L0 r3 after test bench_randomx_batch ... cache build + 1 hash: 2418 ms
+L0 r3 after randomx 40 headers, pow_threads 1: 32635 ms (815.9 ms/header) digest a708129e5a6ddd50
+L0 r3 after randomx 40 headers, pow_threads 2: 19470 ms (486.8 ms/header) digest a708129e5a6ddd50
+load=8 pids: 1062048 1062049 1062050 1062051 1062053 1062055 1062056 1062057
+L8 r1 before test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 54354 ms digest 6b952b4d184bcdee
+L8 r1 before cheap 31 headers, 2-thread chunks: 3789 ms digest c409d6a547ac5494
+L8 r1 before test bench_randomx_batch ... cache build + 1 hash: 3900 ms
+L8 r1 before randomx 40 headers, pow_threads 1: 64863 ms (1621.6 ms/header) digest a708129e5a6ddd50
+L8 r1 before randomx 40 headers, pow_threads 2: 43265 ms (1081.6 ms/header) digest a708129e5a6ddd50
+L8 r1 after test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 1 ms digest 6b952b4d184bcdee
+L8 r1 after cheap 31 headers, 2-thread chunks: 0 ms digest c409d6a547ac5494
+L8 r1 after test bench_randomx_batch ... cache build + 1 hash: 4452 ms
+L8 r1 after randomx 40 headers, pow_threads 1: 38921 ms (973.0 ms/header) digest a708129e5a6ddd50
+L8 r1 after randomx 40 headers, pow_threads 2: 44434 ms (1110.8 ms/header) digest a708129e5a6ddd50
+L8 r2 after test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 1 ms digest 6b952b4d184bcdee
+L8 r2 after cheap 31 headers, 2-thread chunks: 0 ms digest c409d6a547ac5494
+L8 r2 after test bench_randomx_batch ... cache build + 1 hash: 3049 ms
+L8 r2 after randomx 40 headers, pow_threads 1: 34804 ms (870.1 ms/header) digest a708129e5a6ddd50
+L8 r2 after randomx 40 headers, pow_threads 2: 42344 ms (1058.6 ms/header) digest a708129e5a6ddd50
+L8 r2 before test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 43132 ms digest 6b952b4d184bcdee
+L8 r2 before cheap 31 headers, 2-thread chunks: 2152 ms digest c409d6a547ac5494
+L8 r2 before test bench_randomx_batch ... cache build + 1 hash: 1767 ms
+L8 r2 before randomx 40 headers, pow_threads 1: 71617 ms (1790.4 ms/header) digest a708129e5a6ddd50
+L8 r2 before randomx 40 headers, pow_threads 2: 30614 ms (765.4 ms/header) digest a708129e5a6ddd50
+L8 r3 before test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 52578 ms digest 6b952b4d184bcdee
+L8 r3 before cheap 31 headers, 2-thread chunks: 5186 ms digest c409d6a547ac5494
+L8 r3 before test bench_randomx_batch ... cache build + 1 hash: 2849 ms
+L8 r3 before randomx 40 headers, pow_threads 1: 62318 ms (1558.0 ms/header) digest a708129e5a6ddd50
+L8 r3 before randomx 40 headers, pow_threads 2: 46606 ms (1165.2 ms/header) digest a708129e5a6ddd50
+L8 r3 after test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 1 ms digest 6b952b4d184bcdee
+L8 r3 after cheap 31 headers, 2-thread chunks: 0 ms digest c409d6a547ac5494
+L8 r3 after test bench_randomx_batch ... cache build + 1 hash: 1776 ms
+L8 r3 after randomx 40 headers, pow_threads 1: 33172 ms (829.3 ms/header) digest a708129e5a6ddd50
+L8 r3 after randomx 40 headers, pow_threads 2: 40321 ms (1008.0 ms/header) digest a708129e5a6ddd50
+AB DONE

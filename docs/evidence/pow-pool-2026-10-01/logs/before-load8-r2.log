@@ -1,0 +1,12 @@
+before-load8-r2 load=8 pids: 1005197 1005198 1005199 1005200 1005201 1005202 1005203 1005204
+before-load8-r2 run1 test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 15059 ms digest 6b952b4d184bcdee
+before-load8-r2 run1 cheap 31 headers, 2-thread chunks: 1252 ms digest c409d6a547ac5494
+before-load8-r2 run2 test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 14818 ms digest 6b952b4d184bcdee
+before-load8-r2 run2 cheap 31 headers, 2-thread chunks: 981 ms digest c409d6a547ac5494
+before-load8-r2 run3 test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 24392 ms digest 6b952b4d184bcdee
+before-load8-r2 run3 cheap 31 headers, 2-thread chunks: 1757 ms digest c409d6a547ac5494
+before-load8-r2 test bench_randomx_batch ... cache build + 1 hash: 2249 ms
+before-load8-r2 randomx 200 headers, pow_threads 1: 224018 ms (1120.1 ms/header) digest 397a067cf99748da
+before-load8-r2 randomx 200 headers, pow_threads 2: 147096 ms (735.5 ms/header) digest 397a067cf99748da
+before-load8-r2 randomx 200 headers, pow_threads 4: 97992 ms (490.0 ms/header) digest 397a067cf99748da
+before-load8-r2 done
