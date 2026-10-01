@@ -1,0 +1,39 @@
+=== peer_protocol-fix
+start 2026-10-01T13:17:20Z target=peer_protocol T=600 corpus_before=1799 files/114301 bytes free_kb=6505480
+binary 2026-10-01 15:10:33.432902200 +0200 16489984
+end 2026-10-01T13:27:22Z exit=0 wall=602s corpus_after=1978 files/130971 bytes artifacts=0
+INFO: seed corpus: files: 1799 min: 1b max: 256b total: 114301b rss: 82Mb
+#1806	INITED cov: 11566 ft: 33780 corp: 869/49Kb exec/s: 26 rss: 455Mb
+#17503	DONE   cov: 11653 ft: 34266 corp: 1000/63Kb lim: 256 exec/s: 29 rss: 564Mb
+stat::number_of_executed_units: 17503
+stat::average_exec_per_sec:     29
+stat::new_units_added:          195
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              564
+last NEW unit at execution #17458
+=== scan_outputs-fix
+start 2026-10-01T13:27:22Z target=scan_outputs T=600 corpus_before=647 files/311356 bytes free_kb=6112192
+binary 2026-10-01 15:09:50.103333400 +0200 2711552
+end 2026-10-01T13:37:25Z exit=0 wall=603s corpus_after=908 files/545303 bytes artifacts=0
+INFO: seed corpus: files: 647 min: 1b max: 15042b total: 311356b rss: 83Mb
+#648	INITED cov: 2501 ft: 9040 corp: 419/231Kb exec/s: 30 rss: 204Mb
+#14467	DONE   cov: 2588 ft: 9828 corp: 591/382Kb lim: 15042 exec/s: 24 rss: 497Mb
+stat::number_of_executed_units: 14467
+stat::average_exec_per_sec:     24
+stat::new_units_added:          301
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              497
+last NEW unit at execution #14362
+=== px_admission-fix
+start 2026-10-01T13:37:26Z target=px_admission T=1500 corpus_before=699 files/44218 bytes free_kb=6188676
+binary 2026-10-01 15:10:05.947498100 +0200 11005440
+end 2026-10-01T14:02:32Z exit=0 wall=1506s corpus_after=958 files/64337 bytes artifacts=0
+INFO: seed corpus: files: 698 min: 1b max: 256b total: 44218b rss: 443Mb
+#701	INITED cov: 15668 ft: 29294 corp: 571/33Kb exec/s: 0 rss: 609Mb
+#2135	DONE   cov: 15899 ft: 31706 corp: 832/51Kb lim: 256 exec/s: 1 rss: 626Mb
+stat::number_of_executed_units: 2135
+stat::average_exec_per_sec:     1
+stat::new_units_added:          275
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              626
+last NEW unit at execution #2135

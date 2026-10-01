@@ -282,3 +282,163 @@ fixed during development, and none is a product bug:
    - It sets `BLACKSILK_FUZZ_SEEDS` to the scratch directory, which
      `px_admission` reads its base from.
 4. **Twins.** Run the commands in the table above.
+
+## Fix pass after RT-STATEFUL (2026-10-01)
+Lead decision: W4-STATEFUL accepted with fixes. Commits:
+- `b5114e3`: RT's `8260a9f`, cherry-picked. It adds a spec `MAX_HANDSHAKE_FRAME`
+  (4096) to the model, and the scan oracle's coinbase-flag, height and hash
+  checks.
+- `132cca0`: the oracles below.
+- `ccbb076`: the twin's per-field base digests, and an `anchor_unknown` seed.
+
+### Product constants removed from the oracles
+- **`peer_protocol`.**
+  - The protocol versions (3 and 3) and the known message types (0 to 14)
+    come from docs/p2p.md §4, §4.1 and §5. They no longer come from
+    `PROTOCOL_VERSION`, `MIN_PROTOCOL_VERSION` or `is_known_type`.
+  - `Verack` is its type byte alone (§5: no body).
+  - Still from the product: the codec (`Message::decode`/`encode`), which
+    decides whether a raw frame is malformed. A second strict decoder would
+    be the codec again; the codec has its own target, `p2p_message`.
+- **`px_admission`.** An independent table maps each `TxError` to the rule
+  it reports, and each rule to its class:
+  - T1–T11 are stateless and C1–C3 contextual (transactions.md §8.1,
+    §8.2).
+  - PX1–PX4 are contextual (§8.5).
+  - PX3's output-word count, the PX structure and deploy rules, the
+    inverted window and the repeats are stateless (px.md §11.3).
+  - PX5 counts as misbehaviour (px.md §11.5).
+  - PX6 and B8 are contextual (px.md §11.3).
+
+  The early scoring must equal this class in both directions. A
+  verification failure must be scored exactly when it is stateless, or when
+  it is a signature over ring members at least 60 blocks deep (p2p.md §10).
+  The harness computes that depth from the chain. The product's
+  `is_stateless_at` and its own scoring verdict are no longer trusted.
+  - **Ambiguity:** `DuplicateContract` has no class in the spec (px.md §11.3
+    "Deploy"). It is taken as contextual; a PX transaction never reports it.
+  - **Activation grace:** the grace near an activation (p2p.md §10) is left
+    out. The harness asserts that the chain has a single rule epoch.
+- **`scan_outputs`.** All three input contexts now come from the spec:
+  - transfer and coinbase from transactions.md §3.1;
+  - PX from px.md §11.1;
+  - the hash tags are the spec's strings.
+
+  The product's `t.output_context()` and context functions are no longer
+  used.
+  - **Ambiguity:** px.md §11.1 does not say how a nullifier (8 field
+    elements) enters the hash. The harness uses eight LE32 limbs, the wire
+    format's digest encoding.
+  - The hash functions (`h32`, `h64`, `hash_to_scalar`) are still the
+    product's.
+
+### New coverage
+- **PX transactions in `scan_outputs` (SC4).** A PX base transaction is
+  added: three hidden outputs and two payouts, paying both wallets under the
+  PX context. It is built without a proof, since scanning reads none. It
+  appears in both modes, with 7 PX seeds. The 20,000-input twin scanned
+  3,048 PX transactions.
+- **Scoring after `Verack` (P5).** `peer_protocol` now scores each frame
+  sent after `Verack` from a table of docs/p2p.md §10, plus §9 for address
+  fetches. After every frame it checks the peer's score, the disconnect at
+  100, and the ban (none for proxied or onion peers).
+  - Where the spec does not fix the score of a frame, exact accounting
+    stops. These cases are listed at the table in the body:
+    - a second `Version` or `Verack`;
+    - an unrequested `Tx` that does not decode (10 or 20);
+    - address and transaction messages on block-relay-only connections;
+    - an `Addr` on an address fetch;
+    - `GetAddr` from an inbound peer that sent `relay_txs = false`;
+    - delays.
+  - The 10,036-input twin checked 846 scores at 0, 1,448 above 0 and 532
+    bans.
+
+### Injected bugs (local edits, reverted with `git checkout` of the product file)
+Each bug ran against its twin on the seeds alone, or with 300 inputs for
+the scan cases. Every one was caught:
+
+| Edit | Caught by |
+|---|---|
+| P4: `MAX_HANDSHAKE_FRAME` 8192 (`p2p/src/message.rs`) | `peer_protocol`: "an unregistered connection is still open after 0ns (Closed(0ns))" |
+| P5: an invalid header after `Verack` not scored (`p2p/src/net/headers.rs`, RT's edit) | `peer_protocol`: "not disconnected at score 100 after Frame([7, …])" |
+| P6: `MIN_PROTOCOL_VERSION` 2 (`p2p/src/message.rs`) | `peer_protocol`: "an unregistered connection is still open after 0ns" |
+| SC2: `coinbase: false` for owned outputs (`tx/src/scan.rs`) | `scan_outputs`: "output 0: coinbase flag" |
+| SC3: the owned output's height + 1 (`tx/src/scan.rs`) | `scan_outputs`: "output 0: position" (6 against 5) |
+| SC4: PX outputs scanned under `transfer_context(&[])` (`tx/src/scan.rs`) | `scan_outputs`: `Refused(.., JanusAnchorMismatch)` where `Owned(..)` was derived |
+| PXC: `PxUnknownAnchor` classified stateless (`tx/src/validate.rs`) | `px_admission`: "the cheap checks scored PxUnknownAnchor as stateless, the specification says Contextual(\"PX1\")" |
+
+- The first PXC run used the seeds alone and passed: no seed reached
+  `PxUnknownAnchor`. The anchor seed writes the non-canonical word `P`,
+  which fails earlier.
+- The 2,000-input runs reached `PxUnknownAnchor` 31 times. With the new
+  seed `anchor_unknown` (a canonical anchor that is no recent root), the
+  seeds alone catch PXC.
+
+### The px_admission counter difference (475/476, 251/250)
+- **The question.** RT's run gave scored 475 and failed verification 251.
+  The W4-STATEFUL run gave 476 and 250. Two runs of commit `132cca0` here,
+  alone with 7.2 and 7.9 GB free, gave 477/249 and 475/251. Their verdict
+  digests differ (`03a8e0c4459de606` and `6391cdc153950db5`), and so do
+  their base transaction digests.
+- **Per input.** The verdict files differ in two ways:
+  - every passing input's transaction id (the base's id differs);
+  - two inputs, which flip a raw proof byte (site 23). In one run each one
+    hits a field the strict decoder refuses (`PxProof`, scored). In the
+    other it hits one it accepts, and then fails the signatures, which
+    cover the proof (`InvalidSignature`, contextual).
+- **Which fields differ.** Two seeds-only runs print a digest per field of
+  the base. Only the proof and the signatures differ. Inputs, outputs,
+  statement, ciphertexts, pseudo-outputs and range proof are equal.
+- **With one thread.** With `RAYON_NUM_THREADS=1`, two runs print the same
+  proof, signature, base and verdict digests (`953a25d778d9945d`,
+  `e41208f77ee56398`).
+- **Explanation: a different base per process, not a varying verdict.**
+  Every verdict is a function of the transaction. The base differs between
+  processes because the prover's output depends on the scheduling of its
+  parallel tasks.
+  - **Likely cause (source-read, not confirmed by a targeted test).** The
+    hiding Merkle commitment and the hiding PCS draw salts and random
+    codewords from one seeded RNG behind a mutex
+    (`third_party/p3-merkle-tree/src/hiding_mmcs.rs`,
+    `third_party/p3-fri/src/hiding_pcs.rs`). Parallel commits take draws in
+    a varying order.
+  - **Impact.** Every such proof verifies. The draws still come from the
+    hedged, seeded stream, so zero knowledge is not weakened as far as this
+    shows.
+  - **What it is.** An observation for the zk owner about reproducibility:
+    proofs are not reproducible byte for byte across processes. It is not
+    a harness or admission finding.
+  - **For the evidence.** Compare twin digests only with
+    `RAYON_NUM_THREADS=1`, as the twin's header now says.
+  - **Not affected:** the libFuzzer target. It reads a fixed base from the
+    seed generator's file.
+
+### Results, fix pass (`-O -a`, AddressSanitizer, built from `ccbb076`, one at a time)
+
+| Target | Time (s) | Executions | Exec/s | cov/ft start → end | Corpus files | New units | Last new unit at | Peak RSS (MB) | Artifacts | Findings |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `peer_protocol` | 602 | 17,503 | 29 | 11566/33780 → 11653/34266 | 1,799 → 1,978 | 195 | execution 17,458 | 564 | 0 | 0 |
+| `scan_outputs` | 603 | 14,467 | 24 | 2501/9040 → 2588/9828 | 647 → 908 | 301 | execution 14,362 | 497 | 0 | 0 |
+| `px_admission` | 1,506 | 2,135 | 1 | 15668/29294 → 15899/31706 | 699 → 958 | 275 | execution 2,135 | 626 | 0 | 0 |
+
+- **Exit status.** Every fuzzer exited 0. No log holds a panic or an
+  `ERROR` line.
+- **`peer_protocol` is slower:** 29 executions per second against 110.
+  The scoring checks wait in real time for the header worker and the slow
+  lane.
+- **Run.** [run/chain2.sh](run/chain2.sh). Logs are summarized in
+  [run/summary-fix.txt](run/summary-fix.txt).
+
+### Twins, fix pass (release)
+
+| Twin | Inputs | Result | Reached |
+|---|---|---|---|
+| `peer_protocol` (`BLACKSILK_FUZZ_ITERS=10000`) | 10,036 | pass, 19.6 s | registered 2,529; closed at a frame 4,994, at the key-exchange timeout 808, at the deadline 1,705 (decrypt failures 459); score checks after `Verack`: at 0 846, above 0 1,448, at the ban 532 |
+| `scan_outputs` (`20000`) | 20,026 | pass, 134.4 s | outputs not owned 88,313, owned 53,394, refused for the anchor 14,982, for the commitment 1,203; transactions: coinbase 5,106, transfer 4,562, PX 3,048 |
+| `px_admission` (`2000`, alone, run 1 / run 2) | 2,018 each | pass / pass | scored 477 / 475; failed verification 249 / 251; the rest equal (see above) |
+| `px_admission` (seeds only, `RAYON_NUM_THREADS=1`, twice) | 19 each | pass / pass | identical digests |
+
+- **Memory.** One seeds-only `px_admission` run started with 6.6 GB free,
+  below the 7 GB rule: the second multithreaded base comparison, run before
+  the `RAYON_NUM_THREADS` pair. It passed. Every other PX run started with at
+  least 7.0 GB free.
