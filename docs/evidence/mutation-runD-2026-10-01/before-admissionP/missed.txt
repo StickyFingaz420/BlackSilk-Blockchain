@@ -1,0 +1,14 @@
+p2p/src/net/admission.rs:208:12: delete ! in admit_tx
+p2p/src/net/admission.rs:211:32: replace += with -= in admit_tx
+p2p/src/net/admission.rs:211:32: replace += with *= in admit_tx
+p2p/src/net/admission.rs:218:28: replace += with -= in admit_tx
+p2p/src/net/admission.rs:218:28: replace += with *= in admit_tx
+p2p/src/net/admission.rs:254:5: replace px_pre_checks -> Option<Option<PxPre>> with Some(None)
+p2p/src/net/admission.rs:257:44: replace + with * in px_pre_checks
+p2p/src/net/admission.rs:264:9: delete match arm Transaction::Px(t) in px_pre_checks
+p2p/src/net/admission.rs:273:19: replace match guard e.is_panic() with true in px_pre_checks
+p2p/src/net/admission.rs:273:19: replace match guard e.is_panic() with false in px_pre_checks
+p2p/src/net/admission.rs:321:86: replace + with - in cheap_checks
+p2p/src/net/admission.rs:321:86: replace + with * in cheap_checks
+p2p/src/net/admission.rs:323:13: delete match arm (Transaction::Px(t), Some(Ok(bits))) in cheap_checks
+p2p/src/net/admission.rs:331:67: replace + with * in cheap_checks

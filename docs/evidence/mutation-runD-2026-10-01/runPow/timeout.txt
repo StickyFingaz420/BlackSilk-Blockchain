@@ -1,0 +1,8 @@
+consensus/src/pow.rs:12:5: replace check_hash -> bool with true
+consensus/src/pow.rs:12:5: replace check_hash -> bool with false
+consensus/src/pow.rs:12:19: replace == with != in check_hash
+consensus/src/pow.rs:20:50: replace >> with << in check_hash
+consensus/src/pow.rs:20:41: replace + with * in check_hash
+consensus/src/pow.rs:20:20: replace * with + in check_hash
+consensus/src/pow.rs:20:20: replace * with / in check_hash
+consensus/src/pow.rs:22:11: replace == with != in check_hash

@@ -1,0 +1,3 @@
+zk/src/lib.rs:634:21: delete field preprocessed_width from struct AirLayout expression in analysis::quotient_chunks
+zk/src/lib.rs:649:42: replace - with + in analysis::quotient_chunks
+zk/src/lib.rs:649:42: replace - with / in analysis::quotient_chunks

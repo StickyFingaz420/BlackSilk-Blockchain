@@ -371,3 +371,36 @@ fn the_widest_multi_execution_shape_stays_in_the_envelope() {
     );
     assert!(sec.johnson_bits >= params::MIN_PROVEN_BITS, "{sec:?}");
 }
+
+/// No BVM-1 table commits a preprocessed trace: the public tables are
+/// periodic columns the verifier evaluates itself (zkvm.md §6.1). Mutation
+/// exemption E18 (the quotient-chunk helper's `preprocessed_width`) rests on
+/// this; checked for every table of statements of 1 to `MAX_EXECUTIONS`
+/// executions (RT-MUTD).
+#[test]
+fn no_table_commits_a_preprocessed_trace() {
+    use p3_air::BaseAir;
+    let p = program(1);
+    let mut st = Statement::single(p.clone(), 0, vec![], [0; 32]);
+    for n in 1..=trace::MAX_EXECUTIONS {
+        if n > 1 {
+            st.others.push(Part {
+                program: p.clone(),
+                exit_code: 0,
+                output: vec![],
+                budget: None,
+            });
+        }
+        for (i, t) in trace::tables(&st).iter().enumerate() {
+            assert!(
+                BaseAir::<Val>::preprocessed_trace(t).is_none(),
+                "{n} executions, table {i}: a committed preprocessed trace"
+            );
+            assert_eq!(
+                BaseAir::<Val>::preprocessed_width(t),
+                0,
+                "{n} executions, table {i}"
+            );
+        }
+    }
+}

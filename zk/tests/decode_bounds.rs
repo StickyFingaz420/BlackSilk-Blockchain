@@ -6,14 +6,15 @@
 #[path = "support/synthetic.rs"]
 mod synthetic;
 
-use blacksilk_zk::bounds::{MAX_FRI_ROUNDS, MAX_PRUNED_SIBLINGS};
+use blacksilk_zk::bounds::{MAX_FRI_ROUNDS, MAX_MERKLE_DEPTH, MAX_PRUNED_SIBLINGS};
 use blacksilk_zk::config::{Challenge, Val};
 use blacksilk_zk::params::{
-    EXTENSION_DEGREE, LOG_FINAL_POLY_LEN, MAX_PROOF_BYTES, MERKLE_SALT_ELEMS, NUM_QUERIES,
-    NUM_RANDOM_CODEWORDS, OPENING_POINTS,
+    EXTENSION_DEGREE, LOG_BLOWUP, LOG_FINAL_POLY_LEN, MAX_LOG_HEIGHT, MAX_PROOF_BYTES,
+    MERKLE_SALT_ELEMS, MIN_LOG_HEIGHT, NUM_QUERIES, NUM_RANDOM_CODEWORDS, OPENING_POINTS,
 };
 use blacksilk_zk::{
-    decode_proof, decode_proof_with, encode_proof, DecodeLimits, Proof, ZkError, PROOF_VERSION,
+    decode_proof, decode_proof_with, encode_proof, honest_fri_schedule, DecodeLimits, Proof,
+    ZkError, PROOF_VERSION,
 };
 use p3_field::PrimeCharacteristicRing;
 use rand_chacha::ChaCha20Rng;
@@ -627,5 +628,162 @@ fn tweak(p: &mut Proof, rng: &mut ChaCha20Rng) {
         }
         14 => resize(&mut fri.final_poly, rng, z),
         _ => resize(&mut p.degree_bits, rng, 10),
+    }
+}
+
+/// The size limit is inclusive (mutation run D): a proof of exactly
+/// `MAX_PROOF_BYTES` within every cap decodes, and the same proof one byte
+/// longer is refused for its size alone. The synthetic transfer-shaped proof
+/// is filled with opened trace values (32 bytes each) to just below the
+/// limit, and the last bytes come from the degree bits' varints (a value
+/// of `k` bytes adds `k - 1`), which no cap reads.
+#[test]
+fn the_size_limit_is_inclusive() {
+    /// The varint of `v` takes `k` bytes for `v = 1 << (7 * (k - 1))`.
+    fn grow(p: &mut Proof, mut bytes: usize) {
+        for b in p.degree_bits.iter_mut() {
+            let k = 1 + bytes.min(8);
+            *b = if k == 1 { 10 } else { 1 << (7 * (k - 1)) };
+            bytes -= k - 1;
+        }
+        assert_eq!(bytes, 0, "the degree bits absorb the rest");
+    }
+    let mut p = synthetic::proof(&Spec::transfer_like());
+    let ext = 4 * EXTENSION_DEGREE;
+    let mut room = MAX_PROOF_BYTES - encode_proof(&p).len() - 64;
+    for i in &mut p.opened_values.instances {
+        let o = &mut i.base_opened_values;
+        for v in [&mut o.trace_local, o.trace_next.as_mut().unwrap()] {
+            let k = (v.len() + room / ext).min(DecodeLimits::ENVELOPE.max_opened_width);
+            room -= (k - v.len()) * ext;
+            v.resize(k, Challenge::ZERO);
+        }
+    }
+    let deficit = MAX_PROOF_BYTES - encode_proof(&p).len();
+    grow(&mut p, deficit);
+    let bytes = encode_proof(&p);
+    assert_eq!(bytes.len(), MAX_PROOF_BYTES);
+    assert!(within_caps(&p, &DecodeLimits::ENVELOPE));
+    let r = decode_proof(&bytes);
+    assert!(r.is_ok(), "exactly MAX_PROOF_BYTES: {}", show(&r));
+    assert!(decode_proof_with(&bytes, &PX_LIKE).is_ok());
+
+    grow(&mut p, deficit + 1);
+    let bytes = encode_proof(&p);
+    assert_eq!(bytes.len(), MAX_PROOF_BYTES + 1);
+    assert!(
+        postcard_decode(&bytes).is_some_and(|d| within_caps(&d, &DecodeLimits::ENVELOPE)),
+        "well formed and within the caps but for its size"
+    );
+    assert!(matches!(decode_proof(&bytes),
+        Err(ZkError::Encoding(m)) if m == "proof too large"));
+}
+
+/// The FRI-round and Merkle caps, from what `verify` accepts (mutation run
+/// D: the caps were used only symbolically, so a smaller or larger value went
+/// unnoticed). `verify` accepts degree bits up to `MAX_LOG_HEIGHT + 1`, so the
+/// tallest committed matrix has `2^(MAX_LOG_HEIGHT + 1 + LOG_BLOWUP)` rows.
+#[test]
+fn the_fri_and_merkle_caps_follow_from_the_tallest_matrix() {
+    let max_db = MAX_LOG_HEIGHT + 1;
+    let tallest = max_db + LOG_BLOWUP;
+    // FRI folds from the tallest height to the final polynomial's, at least
+    // one bit per round (p3-fri `verify_fri`: arities in 1..=MAX_LOG_ARITY).
+    assert_eq!(MAX_FRI_ROUNDS, tallest - (LOG_BLOWUP + LOG_FINAL_POLY_LEN));
+    assert_eq!(MAX_FRI_ROUNDS, 17);
+    // The canonical schedule (`check_fri_schedule`) of any degree bits
+    // `verify` accepts stays within it; the most rounds come from a table at
+    // every height.
+    let every: Vec<usize> = (MIN_LOG_HEIGHT + 1..=max_db).collect();
+    let most = honest_fri_schedule(&every).len();
+    println!("most canonical FRI rounds: {most}");
+    assert!(most <= MAX_FRI_ROUNDS);
+    for db in MIN_LOG_HEIGHT + 1..=max_db {
+        assert!(honest_fri_schedule(&[db]).len() <= most);
+    }
+    // Binary Merkle trees (cap height 0) over at most the tallest matrix's
+    // rows: one sibling per level per queried leaf.
+    assert_eq!(MAX_MERKLE_DEPTH, tallest);
+    assert_eq!(MAX_MERKLE_DEPTH, 26);
+    assert_eq!(MAX_PRUNED_SIBLINGS, NUM_QUERIES * tallest);
+    assert_eq!(MAX_PRUNED_SIBLINGS, 2_808);
+}
+
+/// The walk reads a varint exactly as `postcard` reads a `usize` (mutation
+/// run D): the degree bits, which no cap bounds, may take any `u64` value,
+/// up to a tenth byte of 1; a tenth byte above 1 overflows and is refused by
+/// the walk itself, before `postcard`. The last degree bit is the last
+/// varint of the encoding.
+#[test]
+fn varints_are_read_as_postcard_reads_them() {
+    let mut p = synthetic::proof(&Spec::small());
+    *p.degree_bits.last_mut().unwrap() = usize::MAX;
+    let bytes = encode_proof(&p);
+    assert_eq!(
+        bytes[bytes.len() - 10..],
+        [0xff; 9].into_iter().chain([1]).collect::<Vec<_>>()
+    );
+    let r = decode_proof(&bytes);
+    assert!(r.is_ok(), "a ten-byte varint ending in 1: {}", show(&r));
+    assert_eq!(r.unwrap().degree_bits.last(), Some(&usize::MAX));
+
+    let mut over = bytes.clone();
+    *over.last_mut().unwrap() = 2;
+    assert!(postcard_decode(&over).is_none(), "postcard refuses it too");
+    assert!(matches!(decode_proof(&over),
+        Err(ZkError::Encoding(m)) if m == "bad varint"));
+    // Eleven bytes: the tenth still continues.
+    let mut long = bytes.clone();
+    *long.last_mut().unwrap() = 0x81;
+    long.push(0);
+    assert!(matches!(decode_proof(&long),
+        Err(ZkError::Encoding(m)) if m == "bad varint"));
+}
+
+/// The walk names a commitment with more than one Merkle cap root by its
+/// index in the canonical-form rule's order (main, permutation, quotient,
+/// random, then the FRI commit-phase commitments), with or without the
+/// optional ones (mutation run D: only the main commitment's index was
+/// checked).
+#[test]
+fn a_commitment_with_two_roots_is_named_by_its_index() {
+    fn two() -> p3_merkle_tree::MerkleCap<Val, [Val; 8]> {
+        p3_merkle_tree::MerkleCap::new(vec![[Val::ZERO; 8]; 2])
+    }
+    // `Spec::small()` has a permutation and a random commitment, and two FRI
+    // rounds; the same without lookups has no permutation commitment.
+    let small = Spec::small();
+    let no_lookups = Spec {
+        perm_width: 0,
+        ..Spec::small()
+    };
+    let cases: Vec<(&Spec, usize, Edit)> = vec![
+        (&small, 0, |p| p.commitments.main = two()),
+        (&small, 1, |p| p.commitments.permutation = Some(two())),
+        (&small, 2, |p| p.commitments.quotient_chunks = two()),
+        (&small, 3, |p| p.commitments.random = Some(two())),
+        (&small, 4, |p| {
+            p.opening_proof.1.commit_phase_commits[0] = two()
+        }),
+        (&small, 5, |p| {
+            p.opening_proof.1.commit_phase_commits[1] = two()
+        }),
+        (&no_lookups, 1, |p| p.commitments.quotient_chunks = two()),
+        (&no_lookups, 2, |p| p.commitments.random = Some(two())),
+        (&no_lookups, 4, |p| {
+            p.opening_proof.1.commit_phase_commits[1] = two()
+        }),
+    ];
+    for (spec, index, edit) in cases {
+        let mut p = synthetic::proof(spec);
+        assert!(decode_proof(&encode_proof(&p)).is_ok(), "{index}: base");
+        edit(&mut p);
+        let want = format!("commitment {index} has 2 Merkle cap roots, not 1");
+        let r = decode_proof(&encode_proof(&p));
+        assert!(
+            matches!(&r, Err(ZkError::Encoding(m)) if *m == want),
+            "{want}: {}",
+            show(&r)
+        );
     }
 }

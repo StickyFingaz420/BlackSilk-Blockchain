@@ -1,0 +1,4 @@
+--re=^consensus[/]src[/]pow[.]rs[:]161[:]28[:] replace [+][=] with \-[=] in held[:][:]acquire$
+--re=^consensus[/]src[/]pow[.]rs[:]161[:]28[:] replace [+][=] with [*][=] in held[:][:]acquire$
+--re=^consensus[/]src[/]pow[.]rs[:]170[:]27[:] replace [=][=] with [!][=] in held[:][:]release$
+--re=^consensus[/]src[/]pow[.]rs[:]546[:]17[:] replace SeedCache[<]C[>][:][:]prebuild[:][:][<]impl Drop for Pending[<]C[>][>][:][:]drop with [(][)]$

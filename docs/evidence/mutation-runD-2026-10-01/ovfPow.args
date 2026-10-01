@@ -1,0 +1,6 @@
+--re=^consensus[/]src[/]pow[.]rs[:]28[:]15[:] replace [<][=] with [>] in seed[_]height$
+--re=^consensus[/]src[/]pow[.]rs[:]28[:]24[:] replace [+] with \- in seed[_]height$
+--re=^consensus[/]src[/]pow[.]rs[:]267[:]50[:] replace [+] with \- in SeedState[<]C[>][:][:]evicted$
+--re=^consensus[/]src[/]pow[.]rs[:]417[:]37[:] replace [+] with \- in SeedCache[<]C[>][:][:]fetch$
+--re=^consensus[/]src[/]pow[.]rs[:]437[:]26[:] replace [+][=] with \-[=] in SeedCache[<]C[>][:][:]fetch$
+--re=^consensus[/]src[/]pow[.]rs[:]536[:]29[:] replace [+][=] with \-[=] in SeedCache[<]C[>][:][:]prebuild$

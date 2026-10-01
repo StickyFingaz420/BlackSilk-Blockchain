@@ -656,6 +656,28 @@ mod tests {
         h
     }
 
+    /// The debug-only handle count (RT-POW L1) counts each handle exactly:
+    /// two handles of one store and thread count 2, releasing one leaves 1,
+    /// and a released key starts again from 0 (mutation run D: only the
+    /// refusal at a count of 1 was tested).
+    #[cfg(debug_assertions)]
+    #[test]
+    fn the_debug_handle_count_counts_each_handle() {
+        let key = (held::store_id(), std::thread::current().id());
+        assert_eq!(held::count(key), 0);
+        held::acquire(key);
+        held::acquire(key);
+        assert_eq!(held::count(key), 2);
+        held::release(key);
+        assert_eq!(held::count(key), 1);
+        held::release(key);
+        assert_eq!(held::count(key), 0);
+        held::acquire(key);
+        assert_eq!(held::count(key), 1);
+        held::release(key);
+        assert_eq!(held::count(key), 0);
+    }
+
     #[test]
     fn check_hash_boundaries() {
         let max = [0xFF; 32];
@@ -1157,6 +1179,10 @@ mod tests {
         let _hc = get(&cache, &c);
         assert_eq!(cache.alive(), 4);
         assert_eq!(cache.lock().missing_hot(&k(6)), 1);
+        // Two kept and two in flight: none of the four is an evicted one
+        // (mutation run D: with release arithmetic, `kept - building` in
+        // `evicted` survived the census).
+        assert_eq!(cache.lock().evicted(cache.alive()), 0);
         assert!(side.recv_timeout(Duration::from_millis(300)).is_err());
         // The old builds finish and are trimmed; the side build then fits.
         {

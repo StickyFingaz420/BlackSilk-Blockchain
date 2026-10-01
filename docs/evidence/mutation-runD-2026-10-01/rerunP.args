@@ -1,0 +1,5 @@
+--re=^p2p[/]src[/]net[/]admission[.]rs[:]254[:]5[:] replace px[_]pre[_]checks \-[>] Option[<]Option[<]PxPre[>][>] with Some[(]None[)]$
+--re=^p2p[/]src[/]net[/]admission[.]rs[:]257[:]44[:] replace [+] with [*] in px[_]pre[_]checks$
+--re=^p2p[/]src[/]net[/]admission[.]rs[:]264[:]9[:] delete match arm Transaction[:][:]Px[(]t[)] in px[_]pre[_]checks$
+--re=^p2p[/]src[/]net[/]admission[.]rs[:]273[:]19[:] replace match guard e[.]is[_]panic[(][)] with true in px[_]pre[_]checks$
+--re=^p2p[/]src[/]net[/]admission[.]rs[:]273[:]19[:] replace match guard e[.]is[_]panic[(][)] with false in px[_]pre[_]checks$

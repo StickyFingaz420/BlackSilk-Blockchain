@@ -70,6 +70,18 @@ fn a_private_transfer_proves_verifies_and_applies_once() {
         .map(|i| i.base_opened_values.quotient_chunks.len())
         .collect();
     assert_eq!(chunks, [4, 4, 4, 4, 16, 4, 4, 8, 8, 8, 4, 8, 4]);
+    // And its trace widths are those of `blacksilk_zk::analysis::trace_widths`
+    // (px/tests/proof_limits.rs).
+    let widths: Vec<usize> = limited
+        .opened_values
+        .instances
+        .iter()
+        .map(|i| i.base_opened_values.trace_local.len())
+        .collect();
+    assert_eq!(
+        widths,
+        [18, 38, 16, 29, 103, 27, 24, 34, 44, 53, 16, 540, 9]
+    );
     for strip in [false, true] {
         let mut p = blacksilk_zk::decode_proof(&bytes).unwrap();
         if strip {

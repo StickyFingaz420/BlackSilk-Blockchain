@@ -1,0 +1,10 @@
+p2p/src/net/admission.rs:120:5: replace admit_tx -> bool with true
+p2p/src/net/admission.rs:120:5: replace admit_tx -> bool with false
+p2p/src/net/admission.rs:157:15: replace || with && in admit_tx
+p2p/src/net/admission.rs:254:5: replace px_pre_checks -> Option<Option<PxPre>> with None
+p2p/src/net/admission.rs:257:44: replace + with - in px_pre_checks
+p2p/src/net/admission.rs:299:5: replace cheap_checks -> Result<bool, (blacksilk_tx::TxError, bool)> with Ok(true)
+p2p/src/net/admission.rs:303:52: replace + with - in cheap_checks
+p2p/src/net/admission.rs:299:5: replace cheap_checks -> Result<bool, (blacksilk_tx::TxError, bool)> with Ok(false)
+p2p/src/net/admission.rs:303:52: replace + with * in cheap_checks
+p2p/src/net/admission.rs:331:67: replace + with - in cheap_checks

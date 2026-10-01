@@ -1,0 +1,3 @@
+zk/src/lib.rs:295:5: replace decode_proof -> Result<Proof, ZkError> with Ok(Default::default())
+zk/src/lib.rs:306:5: replace decode_proof_with -> Result<Proof, ZkError> with Ok(Default::default())
+zk/src/bounds.rs:97:5: replace exhausted -> ZkError with Default::default()

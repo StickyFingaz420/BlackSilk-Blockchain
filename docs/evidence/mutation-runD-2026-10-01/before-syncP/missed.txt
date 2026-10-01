@@ -1,0 +1,11 @@
+p2p/src/net/conn.rs:391:54: replace > with == in run_connection
+p2p/src/net/conn.rs:391:54: replace > with >= in run_connection
+p2p/src/net/conn.rs:568:50: replace || with && in knows_tip
+p2p/src/net/conn.rs:568:30: replace || with && in knows_tip
+p2p/src/net/headers.rs:762:5: replace end_of -> (bool, u128) with (true, 0)
+p2p/src/net/headers.rs:762:5: replace end_of -> (bool, u128) with (true, 1)
+p2p/src/net/state.rs:143:55: replace || with && in Peer::wants_tip
+p2p/src/net/state.rs:150:9: replace Peer::has_header with ()
+p2p/src/net/state.rs:150:17: replace > with == in Peer::has_header
+p2p/src/net/state.rs:150:17: replace > with < in Peer::has_header
+p2p/src/net/state.rs:150:17: replace > with >= in Peer::has_header

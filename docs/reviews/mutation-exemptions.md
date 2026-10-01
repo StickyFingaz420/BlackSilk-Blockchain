@@ -392,9 +392,204 @@ RT-MUTC killed it with `a_point_hashes_as_its_encoding` (crypto/src/point.rs): a
 point hashes as its 32-byte encoding, so the mutant is observable through any
 deterministic hasher. The number stays reserved.
 
-## E17–E22: reserved for run D
+## E17: the end check of the decode pre-scan's `skip` (zk/src/bounds.rs)
 
-Run D's entries take these numbers when it merges (Lead decision, 2026-10-01).
+Decision: mutation run D (docs/evidence/mutation-runD-2026-10-01/). E8–E16 are run C's
+(branch `w4-mutc`); this register continues at E17.
+
+**Code.** `Reader::skip` in the proof decoder's pre-scan (RT-FUZZ-1):
+`if end > self.bytes.len() { return Err(exhausted()); } self.pos = end;`.
+
+**Mutants covered:** 111:16 `replace > with >= in Reader<'_>::skip` and `replace > with
+== in Reader<'_>::skip` (missed in run D and again after its new tests).
+
+**Argument.** Both differ from the code only when a skip ends at or past the end of
+the body. `pos` never decreases, and every skip of `prescan` is followed, directly or
+after more skips, by a `byte` read (a varint or an option tag): after a Merkle root, an
+extension vector, a salt, the sibling digests, an input row, the grinding witnesses and
+a lookup terminal comes a length, a tag or the next field; the final polynomial's skip
+is followed by the query witness's skip and then by the lookup terminals' length.
+`skip` is never the walk's last read. Where the code returns `Ok` with `pos == len`,
+the next `byte` returns `exhausted()`; where it refuses `end > len`, it returns
+`exhausted()`. `>=` returns `exhausted()` at `end == len` itself. `==` lets `pos` pass
+the end (later skips pass too, unless one ends exactly at the end and returns
+`exhausted()`), and the next `byte` (`bytes.get(pos)`) returns `exhausted()`. In every
+case the result is the same `Err(Encoding("proof bytes end early"))`, before `postcard`
+runs, so no input observes the mutants. The final `pos != len` check would also refuse
+a walk left past the end.
+
+**What the equivalence depends on.** The order of the walk: a change that made a skip
+the last read must re-examine this entry. The tests decode
+honest proofs whose last field is a varint (`decode_bounds.rs`), so a `>=` at the real
+end would refuse them.
+
+**Reproduce.** Run D's `rerunZ` (filters `rerunZ.args`, the zk test set of the
+evidence).
+
+## E18: the layout and trace length of the quotient-chunk helper (zk/src/lib.rs)
+
+Decision: mutation run D (docs/evidence/mutation-runD-2026-10-01/).
+
+**Code.** `blacksilk_zk::analysis::quotient_chunks`, a test-support helper (its only
+caller is `px/tests/proof_limits.rs`): it recomputes, for each table, the quotient
+chunk count that Plonky3 0.7.0's `verify_batch` requires, so that the test can check
+the decoder's PX limits (RT-FUZZ-1). It passes Plonky3's
+`get_log_num_quotient_chunks` an `AirLayout` and the trace length
+`1 << (degree_bits[i] - 1)`.
+
+**Mutants covered:** 634:21 `delete field preprocessed_width from struct AirLayout
+expression in analysis::quotient_chunks`; 649:42 `replace - with +` and `replace - with
+/ in analysis::quotient_chunks` (the trace length becomes `2^(db + 1)` or `2^db`
+instead of `2^(db − 1)`).
+
+**Argument.**
+- `preprocessed_width`. The deleted field takes its default, 0. No BVM-1 table has a
+  committed preprocessed trace: the public tables (BYTE, PROGRAM, IMAGE, OUTPUT) are
+  periodic columns that the verifier evaluates itself (zkvm/src/air/mod.rs,
+  `periodic_columns`; `Table` keeps the default `preprocessed_trace`, `None`), so the
+  helper's computed width is 0 for every table it is ever given, and Plonky3's
+  `validate_against_air` does not check this field. Equivalent on every BVM-1 table.
+- The trace length. Plonky3 0.7.0 reads it only to weigh periodic columns
+  (`get_max_constraint_degree`: without periodic columns the cached degree multiple
+  is used). With them, a constraint's degree is `⌈(d − 1)/(n − 1)⌉` for its
+  polynomial degree `d` at trace length `n`; the result changes with `n` only for a
+  constraint whose degree is set by a product of periodic columns. For every PX
+  statement (n_fn 0, 1 and 2: 13, 18 and 23 tables, the helper's only inputs) the
+  mutated helper returns the same counts, and those for n_fn 0 equal the real transfer
+  proof's (px/tests/proof.rs). This is an equivalence on the helper's uses, not on
+  every AIR: it is a limit of the oracle, as E15 is.
+
+**What the equivalence depends on.** A BVM-1 table with a committed preprocessed
+trace, or a constraint whose degree a product of periodic columns sets, must
+re-examine this entry; the helper would then need a test AIR of its own. Both
+premises are guarded by tests that fail when they stop holding (RT-MUTD):
+`zkvm/tests/multi.rs` `no_table_commits_a_preprocessed_trace` (every table of 1 to
+`MAX_EXECUTIONS` executions) and `px/tests/proof_limits.rs`
+`quotient_chunks_do_not_depend_on_the_trace_length` (every PX table, every degree-bits
+value `verify` accepts, 9 to 23).
+
+**Reproduce.** Run D's `after-analysisA` (filters `analysisZ.args`,
+`--test-package blacksilk-px -C=--test=proof_limits`).
+
+## E19: where a PX transaction's stateless checks run (p2p/src/net/admission.rs)
+
+Decision: mutation run D (docs/evidence/mutation-runD-2026-10-01/). Policy code, not a
+consensus rule; listed because run D's gate covers it.
+
+**Code.** `px_pre_checks` runs a PX transaction's stateless checks (`px_stateless`:
+structure, balance and the bounded proof decoding) on a blocking thread, off the chain
+actor, and hands the result (`Some(Some(pre))`, the degree bits or the failed rule) to
+`cheap_checks`. It returns `Some(None)` for a transaction it does not decode (not PX,
+or expiring soon at the published height). `cheap_checks` first refuses an expiring
+transaction at the actor's own height, then runs `px_stateless` itself whenever `pre`
+is `None` (`pre.get_or_insert_with(|| px_stateless(t))`). A panic or a cancellation of
+the blocking task drops the transaction (`None`), with a warning for a panic.
+
+**Mutants covered:**
+- 254:5 `replace px_pre_checks -> Option<Option<PxPre>> with Some(None)`;
+- 264:9 `delete match arm Transaction::Px(t) in px_pre_checks` (the blocking closure
+  returns `None`, so `px_pre_checks` returns `Some(None)`);
+- 257:44 `replace + with * in px_pre_checks` (the expiring-soon pre-check at the
+  published height instead of the next), and, under release arithmetic, `replace +
+  with -` (in a debug build it overflows at height 0, which the tests catch);
+- 273:19 `replace match guard e.is_panic() with true` and `with false in
+  px_pre_checks`.
+
+**Argument.** The first four change only whether `pre` arrives filled. `px_stateless`
+reads only the transaction, so computing it in the chain command gives the same
+result; `cheap_checks` computes it there whenever `pre` is `None`, after the same
+expiring-soon refusal at the actor's height, which is the check that decides (the
+pre-check at the published height only spares a decoding). Every verdict, penalty,
+statistic and message is the same: what differs is that the decoding runs on the chain
+actor (the RT-FUZZ-1 / RT-PXDOS F1 resource property) and skips the `PX_DECODES`
+semaphore. The two guard mutants differ only in the log line: both arms return `None`.
+No test observes which thread decodes: the tests check verdicts, scores, statistics and
+messages. This is a limit of the oracle (as E15 is), not a claim that the off-actor
+decoding is unimportant; a test would need a count of decodings made in chain commands,
+which the code does not keep.
+
+**What the equivalence depends on.** `cheap_checks` recomputing `px_stateless` for a
+`None` and refusing an expiring transaction before it reads `pre`. A change that made
+`cheap_checks` trust `pre` alone must re-examine this entry.
+
+**Reproduce.** Run D's `after-admissionP` and `ovfP` (filters `admissionP.args`; the
+admission test list `admission.tests`).
+
+## E20: the prebuild mark's drop guard (consensus/src/pow.rs)
+
+Decision: mutation run D (docs/evidence/mutation-runD-2026-10-01/).
+
+**Code.** `SeedCache::prebuild` marks a hot key (`prebuilding`, with the thread's
+number), then starts a detached thread that calls `fetch(seed, Some(id))`. The thread
+owns a `Pending` guard whose `Drop` clears its own mark "if `fetch` did not".
+
+**Mutant covered:** 546:17 `replace SeedCache<C>::prebuild::<impl Drop for
+Pending<C>>::drop with ()` (missed in run D's census).
+
+**Argument.** Since `9bba1bd` (RT-POW L2) `fetch` clears the thread's mark in the
+same critical section in which it stops waiting, on each of its three exits: the
+cache is resident, the key left the hot set (it gives up), or the build starts. The
+build itself runs after the clear, so a panicking build finds the mark gone (its
+`BuildGuard` releases the key and the room). Nothing before those exits can panic in
+a prebuild thread: the lock recovers from poisoning, the waits do not panic, and the
+debug caller-rule check holds in a fresh thread, which holds no handle. So once the
+thread runs, the guard's clear finds no mark of its number and changes nothing. It
+matters only when `std::thread::Builder::spawn` fails: then the closure, and the
+guard in it, are dropped unrun, and without the guard the key's mark would stay, so
+the key would never be prebuilt again (the cache would still be built on first use:
+no hash or liveness change). A test cannot make the operating system refuse a
+thread, so no test observes the mutant. A limit of the oracle, as E15 is.
+
+**What the equivalence depends on.** `fetch` clearing the mark before any code that
+can panic. A change that moved the clear after the build must re-examine this entry
+(run A's census caught this guard when it was the only clear on a panicking build).
+
+**Reproduce.** Run D's `runPow` and `rerunPow` (filters `rerunPow.args`, the whole
+consensus test suite).
+
+## E21: the first branch's edge in `seed_height` (consensus/src/pow.rs)
+
+Decision: mutation run D, boundary pass (docs/evidence/mutation-runD-2026-10-01/,
+§ Boundary pass: cargo-mutants 27.1.0 never turns `<=` into `<`). The same mutant and
+argument as run C's E27, found independently by both boundary passes; kept as its own
+entry because run D's evidence names it.
+
+**Code.** `seed_height(height, epoch, lag)`: `if height <= epoch + lag { 0 } else {
+(height - lag - 1) & !(epoch - 1) }`, with `epoch` a power of two and `1 ≤ lag <
+epoch` (`ChainParams::check`).
+
+**Mutant covered:** 28:15 `<=` → `<` (the boundary pass's script; missed).
+
+**Argument.** The two differ only at `height = epoch + lag`, where the mutant takes
+the second branch: `(epoch + lag − lag − 1) & !(epoch − 1) = (epoch − 1) & !(epoch −
+1) = 0`, the first branch's value, and `height − lag − 1 = epoch − 1` does not
+underflow. So both branches agree at the edge for every valid schedule: the key of
+block `E + L` is genesis either way (Monero `rx/0`: `seed_height(2112) = 0`).
+`seed_schedule_matches_the_spec_for_every_valid_small_schedule` checks every valid
+schedule with `epoch ≤ 16` against the spec formula and passes under the mutant, as
+the argument predicts. The `>` mutant of the same comparison (`<=` → `>`) is caught.
+
+**Reproduce.** `boundary.py` of run D (the evidence directory), mutant 2.
+
+## E22: the prebuild thread numbers under release arithmetic (consensus/src/pow.rs)
+
+Decision: mutation run D, release arithmetic (docs/evidence/mutation-runD-2026-10-01/,
+`ovfPow`).
+
+**Code.** `SeedCache::prebuild`: `let id = st.prebuild_seq; st.prebuild_seq += 1;`.
+The number tags the thread's mark, so that a thread clears only its own mark (RT-POW
+L2); it is compared for equality only, never ordered or shown.
+
+**Mutant covered:** 536:29 `replace += with -= in SeedCache<C>::prebuild`, under
+release arithmetic only. With overflow checks on (the census profile) the second
+prebuild panics on `0 − 1` and the mutant is caught.
+
+**Argument.** With wrapping arithmetic the mutated counter yields 0, 2^64 − 1, 2^64 −
+2, …: like the code's 0, 1, 2, …, a value repeats only after 2^64 prebuilds, and only
+distinctness is used. No input observes the change in a release build.
+
+**Reproduce.** Run D's `ovfPow` (filters `ovfPow.args`, the whole consensus test
+suite, `RUSTFLAGS="-C overflow-checks=off -C debug-assertions=off"`).
 
 ## E23: the sign split of the PX v1 balance at `v = 0` (tx/src/px.rs)
 

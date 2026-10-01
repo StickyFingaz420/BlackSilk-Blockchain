@@ -1,0 +1,1 @@
+consensus/src/pow.rs:546:17: replace SeedCache<C>::prebuild::<impl Drop for Pending<C>>::drop with ()

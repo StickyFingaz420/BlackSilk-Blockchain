@@ -619,3 +619,12 @@ E8–E12 and E14. Lead decision: accepted with fixes, done here:
 - **W4-PXDOS's decode bounds** (`decode_px_proof` with `PROOF_LIMITS`) are on the
   unmerged branch `w4-pxdos`, not on this run's base `6a2b3b7`: their mutants were
   not censused and need a run after that merge.
+
+## Reproducing with scripts (RT-MUTD note)
+
+- A hand-mutant or boundary script (`tools/boundary-mutants.sh` and the like) must
+  build in a target directory of its own, never one shared with ordinary builds:
+  cargo decides staleness by modification time, and a restored source file with an
+  older time can leave a mutated build in place.
+- The `*.args` and `*.tests` lists are LF (`.gitattributes`); read with CRLF endings,
+  every name ends in CR and matches nothing.

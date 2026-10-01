@@ -1009,6 +1009,17 @@ fn a_two_function_transaction_proves_and_verifies() {
     );
     assert!(size <= blacksilk_zk::params::MAX_PROOF_BYTES);
     assert_eq!(public.n_fn, 2);
+    // The widest PX statement's proof (23 tables) decodes under the
+    // decoder's PX limits, to the same proof (RT-FUZZ-1; RT-MUTD).
+    let bytes = blacksilk_zk::encode_proof(&proof);
+    let decoded = blacksilk_zk::decode_proof_with(&bytes, &prove::PROOF_LIMITS)
+        .expect("the widest PX proof is within the PX limits");
+    assert_eq!(decoded.degree_bits.len(), prove::PROOF_LIMITS.max_instances);
+    assert_eq!(blacksilk_zk::encode_proof(&decoded), bytes);
+    assert_eq!(
+        prove::verify(&public, &calls, &W, [8; 32], &decoded, registry),
+        Ok(())
+    );
     assert_eq!(
         (calls[0].outputs.as_slice(), calls[1].outputs.as_slice()),
         (&[vault::CLAIM][..], &[vault::LOCK][..])

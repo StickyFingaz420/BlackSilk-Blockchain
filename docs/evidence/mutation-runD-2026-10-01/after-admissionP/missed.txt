@@ -1,0 +1,5 @@
+p2p/src/net/admission.rs:254:5: replace px_pre_checks -> Option<Option<PxPre>> with Some(None)
+p2p/src/net/admission.rs:257:44: replace + with * in px_pre_checks
+p2p/src/net/admission.rs:264:9: delete match arm Transaction::Px(t) in px_pre_checks
+p2p/src/net/admission.rs:273:19: replace match guard e.is_panic() with true in px_pre_checks
+p2p/src/net/admission.rs:273:19: replace match guard e.is_panic() with false in px_pre_checks

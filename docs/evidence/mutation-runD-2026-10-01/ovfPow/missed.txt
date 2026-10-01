@@ -1,0 +1,2 @@
+consensus/src/pow.rs:267:50: replace + with - in SeedState<C>::evicted
+consensus/src/pow.rs:536:29: replace += with -= in SeedCache<C>::prebuild

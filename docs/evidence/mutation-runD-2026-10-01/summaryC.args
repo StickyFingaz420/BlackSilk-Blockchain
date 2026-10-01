@@ -1,0 +1,4 @@
+--re=^chain[/]src[/]manager[/]summary[.]rs[:]278[:]9[:] replace [<]impl std[:][:]fmt[:][:]Debug for SummaryCell[>][:][:]fmt \-[>] std[:][:]fmt[:][:]Result with Ok[(]Default[:][:]default[(][)][)]$
+--re=^chain[/]src[/]manager[/]summary[.]rs[:]362[:]9[:] replace SummaryCell[:][:]on[_]tip[_]change with [(][)]$
+--re=^chain[/]src[/]manager[/]summary[.]rs[:]369[:]9[:] replace SummaryCell[:][:]store with [(][)]$
+--re=^chain[/]src[/]manager[/]summary[.]rs[:]375[:]28[:] replace [!][=] with [=][=] in SummaryCell[:][:]store$

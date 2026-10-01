@@ -1,0 +1,26 @@
+zk/src/lib.rs:306:20: replace > with == in decode_proof_with
+zk/src/lib.rs:306:20: replace > with >= in decode_proof_with
+zk/src/lib.rs:634:21: delete field preprocessed_width from struct AirLayout expression in analysis::quotient_chunks
+zk/src/lib.rs:635:21: delete field main_width from struct AirLayout expression in analysis::quotient_chunks
+zk/src/lib.rs:636:21: delete field num_public_values from struct AirLayout expression in analysis::quotient_chunks
+zk/src/lib.rs:637:21: delete field num_periodic_columns from struct AirLayout expression in analysis::quotient_chunks
+zk/src/bounds.rs:73:54: replace - with /
+zk/src/bounds.rs:73:50: replace + with -
+zk/src/bounds.rs:73:50: replace + with *
+zk/src/bounds.rs:77:56: replace + with -
+zk/src/bounds.rs:77:56: replace + with *
+zk/src/bounds.rs:77:52: replace + with -
+zk/src/bounds.rs:77:52: replace + with *
+zk/src/bounds.rs:82:52: replace * with +
+zk/src/bounds.rs:111:16: replace > with == in Reader<'_>::skip
+zk/src/bounds.rs:111:16: replace > with >= in Reader<'_>::skip
+zk/src/bounds.rs:126:32: replace > with == in Reader<'_>::varint
+zk/src/bounds.rs:126:32: replace > with < in Reader<'_>::varint
+zk/src/bounds.rs:126:32: replace > with >= in Reader<'_>::varint
+zk/src/bounds.rs:250:27: replace + with - in prescan
+zk/src/bounds.rs:250:27: replace + with * in prescan
+zk/src/bounds.rs:252:15: replace += with -= in prescan
+zk/src/bounds.rs:252:15: replace += with *= in prescan
+zk/src/bounds.rs:256:19: replace += with -= in prescan
+zk/src/bounds.rs:256:19: replace += with *= in prescan
+zk/src/bounds.rs:319:19: replace += with *= in prescan

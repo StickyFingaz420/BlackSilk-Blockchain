@@ -1,0 +1,5 @@
+p2p/src/net/admission.rs:37:5: replace decode_tx -> Option<Arc<Transaction>> with Some(Arc::new(Default::default()))
+p2p/src/net/admission.rs:46:5: replace unshare -> Transaction with Default::default()
+p2p/src/net/admission.rs:229:5: replace px_stateless -> PxPre with Default::default()
+p2p/src/net/admission.rs:254:5: replace px_pre_checks -> Option<Option<PxPre>> with Some(Some(Default::default()))
+p2p/src/net/admission.rs:416:5: replace verify_on_tx_lane -> Option<T> with Some(Default::default())
