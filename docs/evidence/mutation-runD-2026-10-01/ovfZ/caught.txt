@@ -1,0 +1,6 @@
+zk/src/bounds.rs:103:18: replace += with -= in Reader<'_>::byte
+zk/src/bounds.rs:278:22: replace += with -= in prescan
+zk/src/bounds.rs:290:38: replace + with - in prescan
+zk/src/bounds.rs:319:19: replace += with -= in prescan
+zk/src/bounds.rs:324:26: replace + with - in prescan
+zk/src/bounds.rs:341:57: replace << with >> in prescan

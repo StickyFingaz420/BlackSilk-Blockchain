@@ -1,0 +1,22 @@
+--re=^zk[/]src[/]lib[.]rs[:]306[:]20[:] replace [>] with [=][=] in decode[_]proof[_]with$
+--re=^zk[/]src[/]lib[.]rs[:]306[:]20[:] replace [>] with [>][=] in decode[_]proof[_]with$
+--re=^zk[/]src[/]bounds[.]rs[:]73[:]54[:] replace \- with [/]$
+--re=^zk[/]src[/]bounds[.]rs[:]73[:]50[:] replace [+] with \-$
+--re=^zk[/]src[/]bounds[.]rs[:]73[:]50[:] replace [+] with [*]$
+--re=^zk[/]src[/]bounds[.]rs[:]77[:]56[:] replace [+] with \-$
+--re=^zk[/]src[/]bounds[.]rs[:]77[:]56[:] replace [+] with [*]$
+--re=^zk[/]src[/]bounds[.]rs[:]77[:]52[:] replace [+] with \-$
+--re=^zk[/]src[/]bounds[.]rs[:]77[:]52[:] replace [+] with [*]$
+--re=^zk[/]src[/]bounds[.]rs[:]82[:]52[:] replace [*] with [+]$
+--re=^zk[/]src[/]bounds[.]rs[:]111[:]16[:] replace [>] with [=][=] in Reader[<]['][_][>][:][:]skip$
+--re=^zk[/]src[/]bounds[.]rs[:]111[:]16[:] replace [>] with [>][=] in Reader[<]['][_][>][:][:]skip$
+--re=^zk[/]src[/]bounds[.]rs[:]126[:]32[:] replace [>] with [=][=] in Reader[<]['][_][>][:][:]varint$
+--re=^zk[/]src[/]bounds[.]rs[:]126[:]32[:] replace [>] with [<] in Reader[<]['][_][>][:][:]varint$
+--re=^zk[/]src[/]bounds[.]rs[:]126[:]32[:] replace [>] with [>][=] in Reader[<]['][_][>][:][:]varint$
+--re=^zk[/]src[/]bounds[.]rs[:]250[:]27[:] replace [+] with \- in prescan$
+--re=^zk[/]src[/]bounds[.]rs[:]250[:]27[:] replace [+] with [*] in prescan$
+--re=^zk[/]src[/]bounds[.]rs[:]252[:]15[:] replace [+][=] with \-[=] in prescan$
+--re=^zk[/]src[/]bounds[.]rs[:]252[:]15[:] replace [+][=] with [*][=] in prescan$
+--re=^zk[/]src[/]bounds[.]rs[:]256[:]19[:] replace [+][=] with \-[=] in prescan$
+--re=^zk[/]src[/]bounds[.]rs[:]256[:]19[:] replace [+][=] with [*][=] in prescan$
+--re=^zk[/]src[/]bounds[.]rs[:]319[:]19[:] replace [+][=] with [*][=] in prescan$

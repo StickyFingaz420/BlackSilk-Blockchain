@@ -1,0 +1,4 @@
+consensus/src/pow.rs:161:28: replace += with -= in held::acquire
+consensus/src/pow.rs:161:28: replace += with *= in held::acquire
+consensus/src/pow.rs:170:27: replace == with != in held::release
+consensus/src/pow.rs:546:17: replace SeedCache<C>::prebuild::<impl Drop for Pending<C>>::drop with ()

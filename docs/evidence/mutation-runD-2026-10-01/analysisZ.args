@@ -1,0 +1,16 @@
+--re=^zk[/]src[/]lib[.]rs[:]621[:]9[:] replace analysis[:][:]quotient[_]chunks \-[>] Vec[<]usize[>] with vec[!]\[\]$
+--re=^zk[/]src[/]lib[.]rs[:]621[:]9[:] replace analysis[:][:]quotient[_]chunks \-[>] Vec[<]usize[>] with vec[!]\[0\]$
+--re=^zk[/]src[/]lib[.]rs[:]621[:]9[:] replace analysis[:][:]quotient[_]chunks \-[>] Vec[<]usize[>] with vec[!]\[1\]$
+--re=^zk[/]src[/]lib[.]rs[:]634[:]21[:] delete field preprocessed[_]width from struct AirLayout expression in analysis[:][:]quotient[_]chunks$
+--re=^zk[/]src[/]lib[.]rs[:]635[:]21[:] delete field main[_]width from struct AirLayout expression in analysis[:][:]quotient[_]chunks$
+--re=^zk[/]src[/]lib[.]rs[:]636[:]21[:] delete field num[_]public[_]values from struct AirLayout expression in analysis[:][:]quotient[_]chunks$
+--re=^zk[/]src[/]lib[.]rs[:]637[:]21[:] delete field num[_]periodic[_]columns from struct AirLayout expression in analysis[:][:]quotient[_]chunks$
+--re=^zk[/]src[/]lib[.]rs[:]649[:]23[:] replace [<][<] with [>][>] in analysis[:][:]quotient[_]chunks$
+--re=^zk[/]src[/]lib[.]rs[:]649[:]42[:] replace \- with [+] in analysis[:][:]quotient[_]chunks$
+--re=^zk[/]src[/]lib[.]rs[:]649[:]42[:] replace \- with [/] in analysis[:][:]quotient[_]chunks$
+--re=^zk[/]src[/]lib[.]rs[:]654[:]19[:] replace [<][<] with [>][>] in analysis[:][:]quotient[_]chunks$
+--re=^zk[/]src[/]lib[.]rs[:]654[:]27[:] replace [+] with \- in analysis[:][:]quotient[_]chunks$
+--re=^zk[/]src[/]lib[.]rs[:]654[:]27[:] replace [+] with [*] in analysis[:][:]quotient[_]chunks$
+--re=^zk[/]src[/]lib[.]rs[:]662[:]9[:] replace analysis[:][:]trace[_]widths \-[>] Vec[<]usize[>] with vec[!]\[\]$
+--re=^zk[/]src[/]lib[.]rs[:]662[:]9[:] replace analysis[:][:]trace[_]widths \-[>] Vec[<]usize[>] with vec[!]\[0\]$
+--re=^zk[/]src[/]lib[.]rs[:]662[:]9[:] replace analysis[:][:]trace[_]widths \-[>] Vec[<]usize[>] with vec[!]\[1\]$

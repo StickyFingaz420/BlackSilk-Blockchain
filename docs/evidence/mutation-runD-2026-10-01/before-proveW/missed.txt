@@ -1,0 +1,12 @@
+px/src/prove.rs:363:5: replace check_shape -> Result<(), VerifyError> with Ok(())
+px/src/prove.rs:377:5: replace check_shape_bits -> Result<(), VerifyError> with Ok(())
+px/src/prove.rs:377:29: replace || with && in check_shape_bits
+px/src/prove.rs:377:20: replace > with == in check_shape_bits
+px/src/prove.rs:377:20: replace > with < in check_shape_bits
+px/src/prove.rs:377:20: replace > with >= in check_shape_bits
+px/src/prove.rs:377:44: replace != with == in check_shape_bits
+px/src/prove.rs:393:9: replace && with || in check_shape_bits
+px/src/prove.rs:392:32: replace == with != in check_shape_bits
+px/src/prove.rs:396:33: replace == with != in check_shape_bits
+px/src/prove.rs:396:64: replace + with - in check_shape_bits
+px/src/prove.rs:396:64: replace + with * in check_shape_bits

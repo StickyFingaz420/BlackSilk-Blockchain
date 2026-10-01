@@ -1,0 +1,1 @@
+--re=^p2p[/]src[/]net[/]admission[.]rs[:]303[:]52[:] replace [+] with \- in cheap[_]checks$

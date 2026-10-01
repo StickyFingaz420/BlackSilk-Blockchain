@@ -1,0 +1,8 @@
+--re=^consensus[/]src[/]pow[.]rs[:]12[:]5[:] replace check[_]hash \-[>] bool with true$
+--re=^consensus[/]src[/]pow[.]rs[:]12[:]5[:] replace check[_]hash \-[>] bool with false$
+--re=^consensus[/]src[/]pow[.]rs[:]12[:]19[:] replace [=][=] with [!][=] in check[_]hash$
+--re=^consensus[/]src[/]pow[.]rs[:]20[:]50[:] replace [>][>] with [<][<] in check[_]hash$
+--re=^consensus[/]src[/]pow[.]rs[:]20[:]41[:] replace [+] with [*] in check[_]hash$
+--re=^consensus[/]src[/]pow[.]rs[:]20[:]20[:] replace [*] with [+] in check[_]hash$
+--re=^consensus[/]src[/]pow[.]rs[:]20[:]20[:] replace [*] with [/] in check[_]hash$
+--re=^consensus[/]src[/]pow[.]rs[:]22[:]11[:] replace [=][=] with [!][=] in check[_]hash$

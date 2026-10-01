@@ -1,0 +1,3 @@
+tx/src/validate.rs:661:5: replace check_px_proof -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:713:5: replace check_px_proof_shape -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:725:5: replace check_px_proof_shape_bits -> Result<(), TxError> with Ok(())

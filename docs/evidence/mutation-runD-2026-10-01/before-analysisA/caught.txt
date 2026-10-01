@@ -1,0 +1,11 @@
+zk/src/lib.rs:621:9: replace analysis::quotient_chunks -> Vec<usize> with vec![]
+zk/src/lib.rs:621:9: replace analysis::quotient_chunks -> Vec<usize> with vec![0]
+zk/src/lib.rs:621:9: replace analysis::quotient_chunks -> Vec<usize> with vec![1]
+zk/src/lib.rs:635:21: delete field main_width from struct AirLayout expression in analysis::quotient_chunks
+zk/src/lib.rs:636:21: delete field num_public_values from struct AirLayout expression in analysis::quotient_chunks
+zk/src/lib.rs:637:21: delete field num_periodic_columns from struct AirLayout expression in analysis::quotient_chunks
+zk/src/lib.rs:649:23: replace << with >> in analysis::quotient_chunks
+zk/src/lib.rs:654:19: replace << with >> in analysis::quotient_chunks
+zk/src/lib.rs:654:27: replace + with - in analysis::quotient_chunks
+zk/src/lib.rs:654:27: replace + with * in analysis::quotient_chunks
+zk/src/lib.rs:662:9: replace analysis::trace_widths -> Vec<usize> with vec![]

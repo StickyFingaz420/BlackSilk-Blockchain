@@ -1,0 +1,35 @@
+--re=^p2p[/]src[/]net[/]conn[.]rs[:]391[:]36[:] replace [&][&] with [|][|] in run[_]connection$
+--re=^p2p[/]src[/]net[/]conn[.]rs[:]391[:]13[:] replace [!][=] with [=][=] in run[_]connection$
+--re=^p2p[/]src[/]net[/]conn[.]rs[:]391[:]63[:] replace [|][|] with [&][&] in run[_]connection$
+--re=^p2p[/]src[/]net[/]conn[.]rs[:]391[:]54[:] replace [>] with [=][=] in run[_]connection$
+--re=^p2p[/]src[/]net[/]conn[.]rs[:]391[:]54[:] replace [>] with [<] in run[_]connection$
+--re=^p2p[/]src[/]net[/]conn[.]rs[:]391[:]54[:] replace [>] with [>][=] in run[_]connection$
+--re=^p2p[/]src[/]net[/]conn[.]rs[:]391[:]66[:] delete [!] in run[_]connection$
+--re=^p2p[/]src[/]net[/]conn[.]rs[:]567[:]5[:] replace knows[_]tip \-[>] bool with true$
+--re=^p2p[/]src[/]net[/]conn[.]rs[:]567[:]5[:] replace knows[_]tip \-[>] bool with false$
+--re=^p2p[/]src[/]net[/]conn[.]rs[:]568[:]50[:] replace [|][|] with [&][&] in knows[_]tip$
+--re=^p2p[/]src[/]net[/]conn[.]rs[:]568[:]30[:] replace [|][|] with [&][&] in knows[_]tip$
+--re=^p2p[/]src[/]net[/]conn[.]rs[:]568[:]10[:] replace [=][=] with [!][=] in knows[_]tip$
+--re=^p2p[/]src[/]net[/]conn[.]rs[:]568[:]38[:] replace [=][=] with [!][=] in knows[_]tip$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]762[:]5[:] replace end[_]of \-[>] [(]bool[,] u128[)] with [(]true[,] 0[)]$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]762[:]5[:] replace end[_]of \-[>] [(]bool[,] u128[)] with [(]true[,] 1[)]$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]762[:]5[:] replace end[_]of \-[>] [(]bool[,] u128[)] with [(]false[,] 0[)]$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]762[:]5[:] replace end[_]of \-[>] [(]bool[,] u128[)] with [(]false[,] 1[)]$
+--re=^p2p[/]src[/]net[/]maintenance[.]rs[:]47[:]5[:] replace announce[_]tip with [(][)]$
+--re=^p2p[/]src[/]net[/]maintenance[.]rs[:]51[:]24[:] replace [=][=] with [!][=] in announce[_]tip$
+--re=^p2p[/]src[/]net[/]maintenance[.]rs[:]70[:]5[:] replace announce[_]loop with [(][)]$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]143[:]9[:] replace Peer[:][:]wants[_]tip \-[>] bool with true$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]143[:]9[:] replace Peer[:][:]wants[_]tip \-[>] bool with false$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]143[:]55[:] replace [|][|] with [&][&] in Peer[:][:]wants[_]tip$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]143[:]48[:] replace [=][=] with [!][=] in Peer[:][:]wants[_]tip$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]143[:]73[:] replace [=][=] with [!][=] in Peer[:][:]wants[_]tip$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]144[:]55[:] replace [&][&] with [|][|] in Peer[:][:]wants[_]tip$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]144[:]42[:] replace [&][&] with [|][|] in Peer[:][:]wants[_]tip$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]144[:]19[:] replace [!][=] with [=][=] in Peer[:][:]wants[_]tip$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]144[:]45[:] delete [!] in Peer[:][:]wants[_]tip$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]144[:]58[:] delete [!] in Peer[:][:]wants[_]tip$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]144[:]72[:] replace [&][&] with [|][|] in Peer[:][:]wants[_]tip$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]150[:]9[:] replace Peer[:][:]has[_]header with [(][)]$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]150[:]17[:] replace [>] with [=][=] in Peer[:][:]has[_]header$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]150[:]17[:] replace [>] with [<] in Peer[:][:]has[_]header$
+--re=^p2p[/]src[/]net[/]state[.]rs[:]150[:]17[:] replace [>] with [>][=] in Peer[:][:]has[_]header$

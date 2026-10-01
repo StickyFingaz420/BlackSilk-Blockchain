@@ -1,0 +1,4 @@
+--re=^tx[/]src[/]validate[.]rs[:]661[:]5[:] replace check[_]px[_]proof \-[>] Result[<][(][)][,] TxError[>] with Ok[(][(][)][)]$
+--re=^tx[/]src[/]validate[.]rs[:]675[:]5[:] replace decode[_]px[_]proof \-[>] Result[<]PxProof[,] TxError[>] with Ok[(]Default[:][:]default[(][)][)]$
+--re=^tx[/]src[/]validate[.]rs[:]713[:]5[:] replace check[_]px[_]proof[_]shape \-[>] Result[<][(][)][,] TxError[>] with Ok[(][(][)][)]$
+--re=^tx[/]src[/]validate[.]rs[:]725[:]5[:] replace check[_]px[_]proof[_]shape[_]bits \-[>] Result[<][(][)][,] TxError[>] with Ok[(][(][)][)]$

@@ -1,0 +1,19 @@
+--re=^px[/]src[/]prove[.]rs[:]91[:]5[:] delete field max[_]instances from struct blacksilk[_]zk[:][:]DecodeLimits expression$
+--re=^px[/]src[/]prove[.]rs[:]93[:]9[:] replace [+] with \-$
+--re=^px[/]src[/]prove[.]rs[:]93[:]9[:] replace [+] with [*]$
+--re=^px[/]src[/]prove[.]rs[:]92[:]9[:] replace [+] with \-$
+--re=^px[/]src[/]prove[.]rs[:]92[:]9[:] replace [+] with [*]$
+--re=^px[/]src[/]prove[.]rs[:]92[:]56[:] replace [*] with [+]$
+--re=^px[/]src[/]prove[.]rs[:]92[:]56[:] replace [*] with [/]$
+--re=^px[/]src[/]prove[.]rs[:]363[:]5[:] replace check[_]shape \-[>] Result[<][(][)][,] VerifyError[>] with Ok[(][(][)][)]$
+--re=^px[/]src[/]prove[.]rs[:]377[:]5[:] replace check[_]shape[_]bits \-[>] Result[<][(][)][,] VerifyError[>] with Ok[(][(][)][)]$
+--re=^px[/]src[/]prove[.]rs[:]377[:]29[:] replace [|][|] with [&][&] in check[_]shape[_]bits$
+--re=^px[/]src[/]prove[.]rs[:]377[:]20[:] replace [>] with [=][=] in check[_]shape[_]bits$
+--re=^px[/]src[/]prove[.]rs[:]377[:]20[:] replace [>] with [<] in check[_]shape[_]bits$
+--re=^px[/]src[/]prove[.]rs[:]377[:]20[:] replace [>] with [>][=] in check[_]shape[_]bits$
+--re=^px[/]src[/]prove[.]rs[:]377[:]44[:] replace [!][=] with [=][=] in check[_]shape[_]bits$
+--re=^px[/]src[/]prove[.]rs[:]393[:]9[:] replace [&][&] with [|][|] in check[_]shape[_]bits$
+--re=^px[/]src[/]prove[.]rs[:]392[:]32[:] replace [=][=] with [!][=] in check[_]shape[_]bits$
+--re=^px[/]src[/]prove[.]rs[:]396[:]33[:] replace [=][=] with [!][=] in check[_]shape[_]bits$
+--re=^px[/]src[/]prove[.]rs[:]396[:]64[:] replace [+] with \- in check[_]shape[_]bits$
+--re=^px[/]src[/]prove[.]rs[:]396[:]64[:] replace [+] with [*] in check[_]shape[_]bits$

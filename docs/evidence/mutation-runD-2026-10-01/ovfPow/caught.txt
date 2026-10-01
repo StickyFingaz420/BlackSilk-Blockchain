@@ -1,0 +1,4 @@
+consensus/src/pow.rs:28:15: replace <= with > in seed_height
+consensus/src/pow.rs:28:24: replace + with - in seed_height
+consensus/src/pow.rs:417:37: replace + with - in SeedCache<C>::fetch
+consensus/src/pow.rs:437:26: replace += with -= in SeedCache<C>::fetch

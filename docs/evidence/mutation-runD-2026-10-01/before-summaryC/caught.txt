@@ -1,0 +1,3 @@
+chain/src/manager/summary.rs:362:9: replace SummaryCell::on_tip_change with ()
+chain/src/manager/summary.rs:369:9: replace SummaryCell::store with ()
+chain/src/manager/summary.rs:375:28: replace != with == in SummaryCell::store

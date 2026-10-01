@@ -1,0 +1,65 @@
+zk/src/lib.rs:306:20: replace > with < in decode_proof_with
+zk/src/lib.rs:312:16: replace != with == in decode_proof_with
+zk/src/lib.rs:326:8: delete ! in decode_proof_with
+zk/src/lib.rs:329:29: replace != with == in decode_proof_with
+zk/src/bounds.rs:65:32: replace << with >>
+zk/src/bounds.rs:73:54: replace - with +
+zk/src/bounds.rs:82:52: replace * with /
+zk/src/bounds.rs:87:24: replace * with +
+zk/src/bounds.rs:87:24: replace * with /
+zk/src/bounds.rs:102:9: replace Reader<'_>::byte -> Result<u8, ZkError> with Ok(0)
+zk/src/bounds.rs:102:9: replace Reader<'_>::byte -> Result<u8, ZkError> with Ok(1)
+zk/src/bounds.rs:103:18: replace += with -= in Reader<'_>::byte
+zk/src/bounds.rs:103:18: replace += with *= in Reader<'_>::byte
+zk/src/bounds.rs:109:9: replace Reader<'_>::skip -> Result<(), ZkError> with Ok(())
+zk/src/bounds.rs:111:16: replace > with < in Reader<'_>::skip
+zk/src/bounds.rs:121:9: replace Reader<'_>::varint -> Result<u64, ZkError> with Ok(0)
+zk/src/bounds.rs:121:9: replace Reader<'_>::varint -> Result<u64, ZkError> with Ok(1)
+zk/src/bounds.rs:124:17: replace |= with &= in Reader<'_>::varint
+zk/src/bounds.rs:124:40: replace << with >> in Reader<'_>::varint
+zk/src/bounds.rs:124:32: replace & with | in Reader<'_>::varint
+zk/src/bounds.rs:124:32: replace & with ^ in Reader<'_>::varint
+zk/src/bounds.rs:124:46: replace * with + in Reader<'_>::varint
+zk/src/bounds.rs:124:46: replace * with / in Reader<'_>::varint
+zk/src/bounds.rs:125:25: replace == with != in Reader<'_>::varint
+zk/src/bounds.rs:125:18: replace & with | in Reader<'_>::varint
+zk/src/bounds.rs:125:18: replace & with ^ in Reader<'_>::varint
+zk/src/bounds.rs:126:27: replace && with || in Reader<'_>::varint
+zk/src/bounds.rs:126:22: replace == with != in Reader<'_>::varint
+zk/src/bounds.rs:137:9: replace Reader<'_>::len -> Result<usize, ZkError> with Ok(0)
+zk/src/bounds.rs:137:9: replace Reader<'_>::len -> Result<usize, ZkError> with Ok(1)
+zk/src/bounds.rs:139:22: replace match guard n <= cap with true in Reader<'_>::len
+zk/src/bounds.rs:139:22: replace match guard n <= cap with false in Reader<'_>::len
+zk/src/bounds.rs:139:24: replace <= with > in Reader<'_>::len
+zk/src/bounds.rs:148:9: replace Reader<'_>::exact -> Result<(), ZkError> with Ok(())
+zk/src/bounds.rs:149:31: replace == with != in Reader<'_>::exact
+zk/src/bounds.rs:160:9: replace Reader<'_>::option -> Result<bool, ZkError> with Ok(true)
+zk/src/bounds.rs:160:9: replace Reader<'_>::option -> Result<bool, ZkError> with Ok(false)
+zk/src/bounds.rs:161:13: delete match arm 0 in Reader<'_>::option
+zk/src/bounds.rs:162:13: delete match arm 1 in Reader<'_>::option
+zk/src/bounds.rs:169:9: replace Reader<'_>::ext_vec -> Result<usize, ZkError> with Ok(0)
+zk/src/bounds.rs:169:9: replace Reader<'_>::ext_vec -> Result<usize, ZkError> with Ok(1)
+zk/src/bounds.rs:176:9: replace Reader<'_>::merkle_cap -> Result<(), ZkError> with Ok(())
+zk/src/bounds.rs:177:14: replace != with == in Reader<'_>::merkle_cap
+zk/src/bounds.rs:193:9: replace Reader<'_>::multiproof -> Result<(), ZkError> with Ok(())
+zk/src/bounds.rs:240:5: replace prescan -> Result<(), ZkError> with Ok(())
+zk/src/bounds.rs:278:22: replace += with -= in prescan
+zk/src/bounds.rs:278:22: replace += with *= in prescan
+zk/src/bounds.rs:290:70: replace + with - in prescan
+zk/src/bounds.rs:290:70: replace + with * in prescan
+zk/src/bounds.rs:290:42: replace + with - in prescan
+zk/src/bounds.rs:290:42: replace + with * in prescan
+zk/src/bounds.rs:290:38: replace + with - in prescan
+zk/src/bounds.rs:290:38: replace + with * in prescan
+zk/src/bounds.rs:292:12: replace != with == in prescan
+zk/src/bounds.rs:297:46: replace + with - in prescan
+zk/src/bounds.rs:297:46: replace + with * in prescan
+zk/src/bounds.rs:301:28: replace == with != in prescan
+zk/src/bounds.rs:319:19: replace += with -= in prescan
+zk/src/bounds.rs:324:26: replace + with - in prescan
+zk/src/bounds.rs:324:26: replace + with * in prescan
+zk/src/bounds.rs:341:75: replace - with + in prescan
+zk/src/bounds.rs:341:75: replace - with / in prescan
+zk/src/bounds.rs:341:57: replace << with >> in prescan
+zk/src/bounds.rs:345:37: replace << with >> in prescan
+zk/src/bounds.rs:359:14: replace != with == in prescan

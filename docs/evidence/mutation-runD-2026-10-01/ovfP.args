@@ -1,0 +1,4 @@
+--re=^p2p[/]src[/]net[/]admission[.]rs[:]211[:]32[:] replace [+][=] with \-[=] in admit[_]tx$
+--re=^p2p[/]src[/]net[/]admission[.]rs[:]218[:]28[:] replace [+][=] with \-[=] in admit[_]tx$
+--re=^p2p[/]src[/]net[/]admission[.]rs[:]257[:]44[:] replace [+] with \- in px[_]pre[_]checks$
+--re=^p2p[/]src[/]net[/]admission[.]rs[:]303[:]52[:] replace [+] with \- in cheap[_]checks$

@@ -1,0 +1,1 @@
+chain/src/manager/summary.rs:278:9: replace <impl std::fmt::Debug for SummaryCell>::fmt -> std::fmt::Result with Ok(Default::default())

@@ -1,0 +1,24 @@
+p2p/src/net/conn.rs:391:36: replace && with || in run_connection
+p2p/src/net/conn.rs:391:13: replace != with == in run_connection
+p2p/src/net/conn.rs:391:63: replace || with && in run_connection
+p2p/src/net/conn.rs:391:54: replace > with < in run_connection
+p2p/src/net/conn.rs:391:66: delete ! in run_connection
+p2p/src/net/conn.rs:567:5: replace knows_tip -> bool with true
+p2p/src/net/conn.rs:567:5: replace knows_tip -> bool with false
+p2p/src/net/conn.rs:568:10: replace == with != in knows_tip
+p2p/src/net/conn.rs:568:38: replace == with != in knows_tip
+p2p/src/net/headers.rs:762:5: replace end_of -> (bool, u128) with (false, 0)
+p2p/src/net/headers.rs:762:5: replace end_of -> (bool, u128) with (false, 1)
+p2p/src/net/maintenance.rs:47:5: replace announce_tip with ()
+p2p/src/net/maintenance.rs:51:24: replace == with != in announce_tip
+p2p/src/net/maintenance.rs:70:5: replace announce_loop with ()
+p2p/src/net/state.rs:143:9: replace Peer::wants_tip -> bool with true
+p2p/src/net/state.rs:143:9: replace Peer::wants_tip -> bool with false
+p2p/src/net/state.rs:143:48: replace == with != in Peer::wants_tip
+p2p/src/net/state.rs:143:73: replace == with != in Peer::wants_tip
+p2p/src/net/state.rs:144:55: replace && with || in Peer::wants_tip
+p2p/src/net/state.rs:144:42: replace && with || in Peer::wants_tip
+p2p/src/net/state.rs:144:19: replace != with == in Peer::wants_tip
+p2p/src/net/state.rs:144:45: delete ! in Peer::wants_tip
+p2p/src/net/state.rs:144:58: delete ! in Peer::wants_tip
+p2p/src/net/state.rs:144:72: replace && with || in Peer::wants_tip
