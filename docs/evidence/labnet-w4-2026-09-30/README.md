@@ -120,19 +120,21 @@ rebuild here differs from them in the linker's time stamps and GUID, whatever co
 it holds. What remains (a record, not a proof):
 - **`64d89d4` (runs 1 and 2): consistent with a plain build.** The W4-LAB agent's
   build log (`build1.log` in its scratch directory, outside the repository; written
-  2026-09-29 21:00:39 UTC) is a release build from an empty target directory: it
-  compiles node, miner, labnet and every dependency (238 crates), and neither
+  2026-09-29 21:00:39 UTC) is a release build that compiles everything from scratch:
+  node, miner, labnet and every dependency (238 crates), and neither
   `tempfile` nor `proptest`: `tempfile` is a dev-dependency of the node, which a
-  test build that writes the node binary compiles. It lists no test executable. Run 1's node started 65 s later (21:01:44 UTC,
-  `runs/run1/node0.log`). The hashes were taken at 21:10:34 UTC, during run 1, when
-  Windows does not let a running executable be replaced, and they are the ones in
-  `runs/SHA256SUMS-64d89d4`. A different build in those 65 s is not excluded by
-  the hashes; no log of one exists.
-- **`9b04827` (runs 3 and 4): undetermined.** No build log was kept; §1 says only
-  "a release build". Whether that node had test hooks cannot be told from here.
+  test build that writes the node binary compiles. It lists no test executable.
+  Run 1's node started 65 s later (21:01:44 UTC, `runs/run1/node0.log`). The
+  agent's hash file (`binaries.sha256`, the same values as
+  `runs/SHA256SUMS-64d89d4`) was written at 21:10:34 UTC, during run 1. Nothing
+  here excludes another build between the log and the hashes; no log of one
+  exists.
+- **`9b04827` (runs 3 and 4): undetermined.** No build log was kept; §1 records only
+  "release, clean tree". Whether that node had test hooks cannot be told from here.
 
-None of the rebuilt binaries contains a hook string (`+test-hooks:` or the chain
-actor's `injected chain actor panic (test-hooks)`; `grep -ac`, count 0 each).
+None of the rebuilt binaries contains the chain actor's hook string
+`injected chain actor panic (test-hooks)` (`grep -ac`, count 0 each), as expected
+of a plain build: this checks the rebuild procedure, not the recorded binaries.
 
 **From now on** the labnet runs `--version` of the node and miner before starting,
 refuses a binary with test-only code, and records both version texts in
