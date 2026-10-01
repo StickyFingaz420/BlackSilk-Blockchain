@@ -96,7 +96,7 @@ fn stress_concurrent_callers_with_panics() {
     for c in 0..callers {
         let (pow, universe, tx) = (pow.clone(), universe.clone(), tx.clone());
         std::thread::spawn(move || {
-            let mut rng = Rng(0x9E37_79B9_7F4A_7C15 ^ (c as u64 + 1) * 0x1234_5678);
+            let mut rng = Rng(0x9E37_79B9_7F4A_7C15 ^ ((c as u64 + 1) * 0x1234_5678));
             for _ in 0..rounds {
                 let threads = 1 + rng.below(70) as usize;
                 let len = 1 + rng.below(80) as usize;
