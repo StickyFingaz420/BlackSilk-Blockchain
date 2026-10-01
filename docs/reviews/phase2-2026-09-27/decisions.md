@@ -1008,3 +1008,77 @@
   - Only under `cfg(all(fuzzing, feature = "zk-fuzz-no-grind"))`.
   - Guarded by the CARGO_CFG_FUZZING build refusal and a `GRINDING_ENFORCED` const asserted at node and genesis start.
   - It needs its own red-team pass before it lands.
+
+## W4-GUARD (Lead, 2026-10-01)
+- **The release-binary guard is implemented; RT-GUARD reviews it before merge.**
+  - chain, tx, px and p2p export markers.
+  - The node, miner and wallet refuse any network other than regtest when marked; the genesis tool refuses unconditionally.
+  - node/build.rs, and `compile_error!` in miner, wallet and genesis, refuse cfg(fuzzing).
+  - CI runs build-guard.sh on plain release binaries, checking the dependency tree, `--version` and the binary strings.
+  - labnet refuses marked binaries and records their versions.
+  - Fingerprint digests are unchanged; the `# build flags` manifest line sits outside every digest.
+- **Labnet-W4 evidence build audit:** Windows builds are not bit-reproducible (24 bytes of linker timestamps and the PDB GUID), so the recorded hashes can neither confirm nor exclude hooks.
+  - Runs 1–2 (64d89d4) are consistent with a plain build: a plain release build log exists 65 s before run 1.
+  - Runs 3–4 (9b04827) are UNDETERMINED.
+  - **Decision:** the quiet-window labnet reruns (ring topology, E2 relay, the late-joiner check), with guarded binaries and the version text recorded, supersede runs 3–4 as evidence. Runs 3–4 stay in the repo, labelled.
+- **Reproducible Windows builds** (`/Brepro` or equivalent, plus the PDB record) move up the reproducibility backlog. RT-GUARD assesses them first.
+- **supply-audit and labnet-report** are not guarded yet. Follow-up: they print the build flags.
+
+## INV-PEN sweep (Lead, 2026-10-01)
+- **Accepted and merged locally.** Every load-sensitive p2p failure traced was a test bug:
+  - raw peers that never answered pings;
+  - fixed deadlines that were really ordering assumptions;
+  - an observer that sampled where it should have read the actor's log.
+  - The product is unchanged. Each fixed test passed 20/20 ambient and 10/10 under 8 busy loops.
+- **P1 product performance and liveness (W4-POWPOOL, next free slot):** `compute_parallel` spawns a scoped thread for every PoW chunk.
+  - Under contention each spawn waits 13–130 ms. 300 one-thread chunks took 22–40 s under load, against 70–448 ms hashing inline.
+  - The fix: hash inline when there is one thread, and use a persistent hashing pool when there are more.
+  - It must be measured with real RandomX, and gets a red-team pass.
+- **Backlog (P2):**
+  - negative checks after fixed sleeps (they can only pass falsely);
+  - Dandelion stem-epoch waits, which need a stem-count observable;
+  - the liveness L1/L6 margins.
+
+## RT-GUARD (Lead, 2026-10-01)
+- **The guard is ACCEPTED WITH FIXES.** No bypass was found, clean builds are unchanged on all networks, and the digests are identical.
+- **Medium:** regtest evidence is not protected by the network refusal. Fixes:
+  - `--require-clean-build` for the node, miner and wallet;
+  - labnet requires the flags line from every binary and records sha256 and version;
+  - supply-audit and labnet-report check their flags.
+- **Privacy (existed before this change; fixed now, before any release):** release binaries embed the build user's home path (58 copies, including the Windows username).
+  - Fix: `--remap-path-prefix` for CARGO_HOME, the sysroot and the workspace.
+  - No binary built before this fix may be published.
+- **Reproducibility:** `-C link-arg=-Brepro` gives bit-identical node builds on the same Windows machine (RT demonstrated it).
+  - It is adopted for windows-msvc.
+  - Cross-host reproducibility also needs the remapped paths and the same toolchain; that stays open.
+- **Small fixes:**
+  - check-build-flags decides from the `--version` output, not the file name;
+  - the miner and wallet print the build-flags line;
+  - install-linux.sh runs the check as the build user, not as root;
+  - the CI control is fatal and self-contained, and a cargo tree failure fails the check;
+  - docs claims match the code at merge;
+  - systemd's `RestartPreventExitStatus` gains exit 2;
+  - check-test-features.sh (RT) is wired into CI.
+
+## RT-MUTD (Lead, 2026-10-01)
+- **Run D: ACCEPTED WITH FIXES.**
+  - The decode bounds are confirmed: the boundary pass holds, and 38 of 39 cap and constant ±1 hand mutants are caught (the 39th, `[0usize;5]`→6, is equivalent).
+  - The hollow proof is a sound stand-in up to the shape check, which reads only degree_bits.
+- **P1 gap closed (honest-peer penalties):** the negative side of signature-penalty classification was untested.
+  - 12 survivors, including mutants that would penalize honest relayers of young-ring or grace-window transactions.
+  - Two RT tests (aea35cd) kill them; they are adopted into run D.
+- **Run D fixes:**
+  - exemptions renumbered E17–E22 after merging run C;
+  - the token-test pin, or a reworded claim;
+  - README corrections: the bare test name under `--exact`, and the p2p boundary list;
+  - E18 becomes guarded by failing tests;
+  - an n_fn=2 decode under PROOF_LIMITS in the unified proving test;
+  - `.gitattributes eol=lf` for the evidence argument files.
+- **Run E scope (final, before the freeze; about 330+ sync mutants never censused):**
+  - tx/src/types.rs, codec.rs, state.rs;
+  - px/src/prove.rs, state.rs, tree.rs;
+  - chain submission.rs, header_sync.rs;
+  - p2p net/headers.rs (verify_headers, on_headers, header_worker, precheck, penalized, header_queue_room, the grace functions);
+  - conn.rs `run_connection`, maintenance.rs `maintenance_loop`, the rest of admission.rs;
+  - the wallet-side checks.
+  - With the boundary pass, constant ±1 hand mutants for the caps, and own target dirs.
