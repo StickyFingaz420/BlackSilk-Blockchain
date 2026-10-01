@@ -356,3 +356,53 @@ fn a_transaction_signed_for_another_genesis_is_invalid() {
         px.signature_message(rb.domain())
     );
 }
+
+/// Latent risk (RT-MUTC): a P2P node caches the ids of transactions refused
+/// for a stateless reason (`recent_rejects`, p2p/src/net/admission.rs) and
+/// never re-checks them. `FeeNotExact` and `DeployFeeNotExact` are stateless
+/// because the exact fee is the same in every epoch. If an epoch changed the
+/// fee rule (`TxRules::fee_per_weight`, `standard_fee`), a transaction paying
+/// the new fee would be refused as stateless by a node still on the old
+/// rules and blacklisted by id, and could never be relayed again once the
+/// activation passes. This test fails as soon as two epochs' fee rules
+/// differ while the fee errors stay stateless near the activation.
+#[test]
+fn fee_rules_are_the_same_in_every_epoch_while_fee_errors_are_stateless() {
+    let shapes = [(1, 2), (2, 2), (1, 16), (16, 16), (64, 16)];
+    let fee_rule = |r: &TxRules| (r.fee_per_weight, shapes.map(|(n, k)| r.standard_fee(n, k)));
+    let fee_errors = [
+        TxError::FeeNotExact {
+            fee: 0,
+            required: 1,
+        },
+        TxError::DeployFeeNotExact {
+            fee: 0,
+            required: 1,
+        },
+    ];
+    let networks = [Network::Mainnet, Network::Testnet, Network::Regtest]
+        .map(ChainParams::for_network)
+        .into_iter()
+        .chain([upgrading_regtest()]);
+    for p in networks {
+        let epochs = p.schedule.epochs();
+        let first = fee_rule(&TxRules::at_height(&p, 0));
+        for e in epochs.iter().skip(1) {
+            let a = e.activation_height;
+            let rules = TxRules::at_height(&p, a);
+            if fee_rule(&rules) == first {
+                continue;
+            }
+            for err in fee_errors {
+                assert!(
+                    !err.is_stateless_at(&p, a),
+                    "epoch {} at height {a} changes the fee rule while {err:?} is \
+                     stateless: P2P would blacklist (recent_rejects) valid transactions \
+                     paying the new fee. Make the fee errors contextual near an activation \
+                     in TxError::is_stateless_at, as PxProof is.",
+                    e.name
+                );
+            }
+        }
+    }
+}
