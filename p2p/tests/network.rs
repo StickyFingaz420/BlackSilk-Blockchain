@@ -2790,6 +2790,34 @@ async fn an_expiring_soon_px_transaction_is_refused_before_the_px_token() {
     assert_eq!(a.net.stats().px_global_taken, 0);
 }
 
+/// The expiring-soon refusal (RTW1C-4) is judged at the next block's
+/// height, above genesis too (mutation run D: with release arithmetic, a
+/// check at the tip's height minus one wrapped at genesis and passed the
+/// test above). At height 10, a window ending at 10 + 3 expires soon for
+/// the next block (11) but not for block 9: refused unscored, never
+/// decoded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_expiring_soon_px_transaction_is_judged_at_the_next_blocks_height() {
+    use blacksilk_tx::validate::PX_EXPIRING_SOON_BLOCKS;
+    let mut a = node(65, &[]).await;
+    a.mine_n(10, 0);
+    let nid = params().network_id;
+    let Transaction::Px(mut t) = junk_anchor_px(0) else {
+        unreachable!()
+    };
+    t.window.not_after = a.height() + PX_EXPIRING_SOON_BLOCKS;
+    let tx = Transaction::Px(t);
+    assert!(matches!(
+        a.chain.lock().unwrap().check_tx(&tx),
+        Err(MempoolError::ExpiringSoon)
+    ));
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(&mut r, &mut w, &[Message::StemTx(tx.encode()).encode()], 1).await;
+    assert_eq!(a.net.peers()[0].score, 0, "never scored");
+    assert_eq!(a.net.stats().tx_verifications, 0);
+    assert_eq!(a.net.stats().px_global_taken, 0);
+}
+
 /// RTW1-2 (red team RT-W1): a PX transaction that passes every cheap
 /// contextual check (a real ring, an unspent key image, the current anchor,
 /// fresh nullifiers, a covered pool) but carries a garbage CLSAG and a
