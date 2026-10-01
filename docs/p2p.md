@@ -350,7 +350,14 @@ is a violation (100 points). The only exception is `Version`'s extension area (Â
      single-header validation, so the two cannot disagree.
    - **Then proof of work, in chunks** of `pow_threads` headers, at most `seed_lag`
      (64; `sync_policy::pow_chunk`), hashed in parallel (the seeds come from ids in
-     the batch or the existing chain). Each chunk is accepted before the next is
+     the batch or the existing chain). With one thread a chunk is hashed inline on
+     the worker's blocking thread; with more, the worker's thread hashes alongside
+     up to `pow_threads - 1` helper threads of a persistent pool owned by the PoW
+     cache (`CachedPow::compute_parallel`), started once, not per chunk: under CPU
+     contention a thread started per chunk waited 13-130 ms for the scheduler
+     (W4-POWPOOL, docs/evidence/pow-pool-2026-10-01/). The worker never waits for a
+     busy helper, and each thread holds one RandomX cache at a time (the cache
+     store's caller rule). Each chunk is accepted before the next is
      hashed. A header's RandomX key is at least `seed_lag + 1` blocks below it, so
      its key block is never an unverified header of its own chunk: a batch with junk
      proof of work at a key block cannot make the node build that key's cache (on
