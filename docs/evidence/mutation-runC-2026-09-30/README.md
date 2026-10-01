@@ -556,7 +556,8 @@ E8–E12 and E14. Lead decision: accepted with fixes, done here:
 - The validate.rs count corrected (11 killed by non-proving tests, not 13), and
   membership.rs 187:28 reclassified (it fails an assertion).
 - `a_pooled_px_proof_vouches_for_nothing_under_other_rules` also asserts the recorded
-  verdict, `BlockError::Tx { index: 1, error: PxProof }`.
+  verdict, `BlockError::Tx { index: 1, error: PxProof }`: passed (mutants profile,
+  alone, 8.8 GB free at the start, 2 059 s).
 - **Latent risk (RT):** P2P caches the ids of transactions refused for a stateless
   reason (`recent_rejects`) and never re-checks them; `FeeNotExact` and
   `DeployFeeNotExact` are stateless. If an epoch changed the fee rule, valid
