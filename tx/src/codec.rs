@@ -240,6 +240,23 @@ mod tests {
         }
     }
 
+    /// The writer's length is the number of bytes written so far, and it is
+    /// empty only before the first one (mutation run E: no product code
+    /// reads them, so no other test did).
+    #[test]
+    fn the_writers_length_counts_the_bytes_written() {
+        let mut w = Writer::new();
+        assert_eq!(w.len(), 0);
+        assert!(w.is_empty());
+        w.u8(7);
+        assert_eq!(w.len(), 1);
+        assert!(!w.is_empty());
+        w.varint(300);
+        w.bytes(&[1, 2, 3]);
+        assert_eq!(w.len(), 6);
+        assert_eq!(w.into_bytes(), [7, 0xac, 0x02, 1, 2, 3]);
+    }
+
     #[test]
     fn counts_are_bounded() {
         let mut r = Reader::new(&[5]);
