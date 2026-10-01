@@ -434,6 +434,8 @@ pub fn seeds() -> Vec<(&'static str, Vec<u8>)> {
         ("fee", vec![6, 2, 0, 0]),
         ("window_expired", vec![9, 3, 0, 1]),
         ("anchor", vec![10, 0, 3, 0]),
+        // A canonical anchor that is no recent root: PX1, contextual.
+        ("anchor_unknown", vec![10, 0, 1, 0]),
         ("same_nullifiers", vec![13, 0, 0, 0]),
         ("nullifier_word", vec![11, 1, 1, 0]),
         ("ciphertext", vec![14, 100, 0, 0]),

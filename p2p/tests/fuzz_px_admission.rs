@@ -9,6 +9,13 @@
 //! PX-proving (one proof, 4 to 6 GB): ignored by default, so it never runs
 //! beside other tests; CI runs it alone (`-- --ignored`) with the other
 //! PX-proving tests.
+//!
+//! Reproducibility: the base transaction's proof (and so its signatures,
+//! which cover it, its id, and what a raw proof-byte edit hits) depends on
+//! the order in which the prover's parallel tasks draw from its seeded
+//! randomness, so two processes build different, equally valid bases and
+//! some counters differ by an input or two. With `RAYON_NUM_THREADS=1` two
+//! runs print the same digests (W4-STATEFUL evidence, fix pass).
 
 #[path = "../../fuzz/src/targets/chain_fixture.rs"]
 #[allow(dead_code)]
@@ -75,6 +82,21 @@ fn px_admission_refuses_early_only_what_full_validation_refuses() {
         digest(&[&lines]),
         digest(&[&base.encoded()])
     );
+    // Which parts of the base transaction a run's digest depends on: a
+    // digest per field, to compare two runs' bases.
+    let t = &base.tx;
+    let field = |name: &str, s: String| println!("  base {name}: {:016x}", digest(&[s.as_bytes()]));
+    field("inputs", format!("{:?}", t.inputs));
+    field("outputs", format!("{:?}", t.outputs));
+    field(
+        "statement",
+        format!("{:?}", (t.anchor, t.nullifiers, t.commitments)),
+    );
+    field("ciphertexts", format!("{:?}", t.ciphertexts));
+    field("pseudo_outs", format!("{:?}", t.pseudo_outs));
+    field("range_proof", format!("{:?}", t.range_proof));
+    field("signatures", format!("{:?}", t.signatures));
+    println!("  base proof: {:016x}", digest(&[&t.proof]));
     if let Ok(path) = std::env::var("BLACKSILK_FUZZ_VERDICTS") {
         std::fs::write(&path, &lines).expect("the verdicts file");
     }
