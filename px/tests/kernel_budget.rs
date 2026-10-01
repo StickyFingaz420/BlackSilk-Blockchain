@@ -224,15 +224,31 @@ fn an_execution_over_its_own_budget_is_refused_before_proving() {
     assert!(prove::over_budget(&kused, &prove::kernel_budget(0)).is_some());
 }
 
-/// A function program that writes `words` and halts with exit code 0.
-fn writer(words: &[u32]) -> std::sync::Arc<blacksilk_zkvm::Program> {
-    use blacksilk_zkvm::asm::{reg::T0, Asm};
+/// A function program that writes `words`, then counts down from `spins`
+/// (cycles only), and halts with exit code 0.
+fn busy_writer(words: &[u32], spins: u32) -> std::sync::Arc<blacksilk_zkvm::Program> {
+    use blacksilk_zkvm::asm::{
+        reg::{T0, T1, ZERO},
+        Asm,
+    };
+    use blacksilk_zkvm::isa::Op;
     let mut a = Asm::new(0x1_0000);
     for &w in words {
         a.li(T0, w).write_reg(T0);
     }
+    if spins > 0 {
+        a.li(T1, spins)
+            .label("spin")
+            .imm(Op::Addi, T1, T1, -1)
+            .branch(Op::Bne, T1, ZERO, "spin");
+    }
     a.halt(0);
     std::sync::Arc::new(a.finish().expect("assembles"))
+}
+
+/// A function program that writes `words` and halts with exit code 0.
+fn writer(words: &[u32]) -> std::sync::Arc<blacksilk_zkvm::Program> {
+    busy_writer(words, 0)
 }
 
 /// `prove` checks each function's prefix before anything else about the
@@ -290,6 +306,19 @@ fn a_functions_prefix_is_checked_before_its_budget() {
         )
         .map(|_| ())
     };
+    // First (the prover's own shape check cannot catch it, so nothing else
+    // refuses it before proving): a function far over its budget, beyond
+    // the room the padded shared tables would leave, is refused by the
+    // per-execution check with `OverBudget`, not by the prover's shape
+    // check (`BudgetExceeded`).
+    match attempt(busy_writer(&prefix, 100_000), &mut rng) {
+        Err(TransferError::OverBudget {
+            execution: 1,
+            table: "cycles",
+            ..
+        }) => {}
+        other => panic!("expected OverBudget, got {other:?}"),
+    }
     // Exactly the prefix: past the prefix check, refused by the budget.
     match attempt(writer(&prefix), &mut rng) {
         Err(TransferError::OverBudget {
