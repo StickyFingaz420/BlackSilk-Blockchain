@@ -817,3 +817,34 @@ fn a_candidate_cut_back_below_an_invalid_tip_stays_a_candidate() {
     }
     assert!(b.iter().all(|blk| after.contains(&id(blk))));
 }
+
+/// The low-work margin is inclusive (docs/blocks.md §8): a side-branch body
+/// with exactly `LOW_WORK_MARGIN_BLOCKS` blocks of work less than the
+/// connected tip is kept, one block more below is not. RT-MUTC: `keeps_body`'s
+/// `>=` had no test at the bound (cargo-mutants 27.1 never generates
+/// `>=` -> `>`, and that mutant passed every run C chain test target).
+#[test]
+fn the_low_work_margin_is_inclusive() {
+    let depth = LOW_WORK_MARGIN_BLOCKS as usize; // regtest: difficulty 1 per block
+    let mut m = open_mem();
+    let mut miner = Miner::new(61);
+    let mut attacker = Miner::new(62);
+    let main: Vec<Block> = (0..depth + 20).map(|_| miner.mine_tip(&mut m)).collect();
+    let tip = m.tip_id();
+    // main[i] is at height i + 1, the tip at height main.len(). A child of
+    // main[edge - 2] is at height main.len() - depth: exactly the margin.
+    let edge = main.len() - depth;
+    let at_margin = attacker.child(&m, &id(&main[edge - 2]), 0, 1);
+    assert!(
+        submit(&mut m, &at_margin).unwrap().body_kept,
+        "at the margin"
+    );
+    assert!(m.has_body(&id(&at_margin)));
+    let below = attacker.child(&m, &id(&main[edge - 3]), 0, 2);
+    assert!(
+        !submit(&mut m, &below).unwrap().body_kept,
+        "one block below"
+    );
+    assert!(!m.has_body(&id(&below)));
+    assert_eq!(m.tip_id(), tip);
+}
