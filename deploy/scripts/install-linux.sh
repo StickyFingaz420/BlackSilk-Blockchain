@@ -20,7 +20,7 @@ done
 
 BUILD_USER="${SUDO_USER:-root}"
 echo "==> building release binaries as $BUILD_USER"
-sudo -u "$BUILD_USER" cargo build --release --locked \
+sudo -u "$BUILD_USER" bash tools/release-build.sh \
   -p blacksilk-node -p blacksilk-miner -p blacksilk-wallet
 # No test-only code (a binary left by `cargo test` would be refused anyway
 # off regtest; W4-GUARD, docs/testnet.md). As the build user, like the

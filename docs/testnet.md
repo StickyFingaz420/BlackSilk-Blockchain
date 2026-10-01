@@ -44,15 +44,26 @@ Rust 1.98.1 (the version CI and the recorded evidence use). On Windows, use the 
 toolchain.
 
 ```sh
-cargo build --release -p blacksilk-node -p blacksilk-miner -p blacksilk-wallet
+bash tools/release-build.sh -p blacksilk-node -p blacksilk-miner -p blacksilk-wallet
 bash tools/check-build-flags.sh --strings target/release/blacksilk-node \
   target/release/blacksilk-miner target/release/blacksilk-wallet
 ```
 
 The binaries are in `target/release/`. Everything is pure Rust; no C compiler is needed.
 
-**Only a plain `cargo build --release`, from a clean checkout of the announced
-commit, makes a trial, evidence or genesis binary.** Never use a binary that
+`tools/release-build.sh` is `cargo build --release --locked` with
+`--remap-path-prefix` for CARGO_HOME, the toolchain sysroot and the checkout.
+Without it the node, miner and wallet embed the build user's home directory (in
+the panic locations of registry crates, `C:\Users\<user>\.cargo\registry\...` or
+`/home/<user>/.cargo/...`), which names whoever built a distributed binary and
+makes its bytes depend on the user name. On Windows (MSVC) it also passes
+`-Brepro`, which `.cargo/config.toml` sets for plain builds too, so the linker
+writes no time stamp and no random GUID. A plain `cargo build --release` is still
+a valid build; it only keeps those paths.
+
+**Only a plain release build (`tools/release-build.sh`, or `cargo build
+--release`), from a clean checkout of the announced commit, makes a trial,
+evidence or genesis binary.** Never use a binary that
 `cargo test` wrote. `cargo test --release` writes the binaries of the packages it
 tests to the same paths in `target/release/`, with the test-only code of the
 dev-dependencies compiled in (cargo unifies their features, such as the
@@ -543,7 +554,7 @@ proof that the supply is sound in general.
 ## 8. Lab network tool (single machine)
 
 ```sh
-cargo build --release -p blacksilk-node -p blacksilk-miner -p blacksilk-labnet
+bash tools/release-build.sh -p blacksilk-node -p blacksilk-miner -p blacksilk-labnet
 target/release/blacksilk-labnet --bin-dir target/release --out labnet-run \
     --nodes 5 --duration-mins 180 --latency-ms 80 --jitter-ms 60 \
     --partition-every-mins 25 --partition-mins 4 --tx-every-secs 20

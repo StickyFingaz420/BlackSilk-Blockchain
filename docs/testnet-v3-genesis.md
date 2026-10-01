@@ -155,7 +155,7 @@ the announcement; it is an input, not a constant of the tool.
    the release-candidate tag (never one written by `cargo test`, docs/testnet.md
    §2), whose `--version` prints `build flags: none`:
    ```sh
-   cargo build --release -p blacksilk-genesis
+   bash tools/release-build.sh -p blacksilk-genesis
    bash tools/check-build-flags.sh --strings target/release/blacksilk-genesis
    target/release/blacksilk-genesis generate --final \
      --network-id 0x0001D673 --timestamp <T_g> --difficulty <D0> \
