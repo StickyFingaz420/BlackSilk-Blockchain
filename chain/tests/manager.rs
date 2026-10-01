@@ -588,6 +588,24 @@ fn pow_jobs_use_seeds_from_the_batch() {
         jobs.iter().any(|(s, _)| *s != params().genesis_id()),
         "a key change is covered"
     );
+    // A batch whose first header is the key block (height 2048) itself:
+    // from height 2113 on, the key is that first header, taken from the
+    // batch (mutation run E: the `sh >= base` edge).
+    let mut part = open(Box::<MemoryStore>::default(), Arc::default());
+    let now = headers.last().unwrap().timestamp;
+    assert_eq!(part.accept_headers(&headers[..2047], now), Ok(2047));
+    let tail = &headers[2047..];
+    assert_eq!(tail[0].height, 2048);
+    let (_, jobs) = part.pow_jobs(tail).expect("extends block 2047");
+    let key = src.headers().main_id_at(2048).unwrap();
+    for (h, (seed, _)) in tail.iter().zip(&jobs) {
+        let want = src
+            .headers()
+            .main_id_at(seed_height(h.height, 2048, 64))
+            .unwrap();
+        assert_eq!(*seed, want, "height {}", h.height);
+    }
+    assert_eq!(jobs.last().unwrap().0, key, "the batch's own first header");
     // Not a chain / unknown parent: no jobs.
     assert!(dst.pow_jobs(&headers[1..]).is_none());
     let mut broken = headers[..3].to_vec();
