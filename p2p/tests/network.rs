@@ -591,6 +591,22 @@ fn serve_branch(mut r: RawReader, mut w: RawWriter, branch: Vec<BlockHeader>) {
     });
 }
 
+/// Answers the node's pings on `r`/`w` (and ignores everything else) until
+/// the connection closes, as an honest peer does: without pongs the node
+/// drops a peer 90 s in (a 60 s ping interval plus the 30 s pong timeout),
+/// which a test of slow proof of work can reach on a loaded machine.
+fn answer_pings(mut r: RawReader, mut w: RawWriter) {
+    tokio::spawn(async move {
+        while let Ok(frame) = r.recv().await {
+            if let Ok(Message::Ping(n)) = Message::decode(&frame) {
+                if w.send(&Message::Pong(n).encode()).await.is_err() {
+                    break;
+                }
+            }
+        }
+    });
+}
+
 /// Reads messages until one matches `want`; `None` if the connection closes or
 /// `secs` pass first.
 async fn recv_until(
@@ -682,6 +698,46 @@ async fn closes_within(r: &mut RawReader, secs: u64) -> bool {
     })
     .await
     .is_ok()
+}
+
+/// Whether the node closes the connection, waiting as long as its header
+/// chain keeps growing: false only after `stall` seconds with neither a
+/// close nor a new stored header. It bounds stalls, not the total time a
+/// batch takes to verify: each PoW chunk spawns its hashing threads, and on
+/// a loaded machine a new thread waits for the scheduler (INV-PEN: a
+/// 31-header batch in 16 chunks took 5 ms idle, 1.0 to 2.4 s under 8
+/// busy-loop processes, and over 10 s in a loaded suite run).
+async fn closes_while_headers_grow(r: &mut RawReader, a: &TestNode, stall: u64) -> bool {
+    let mut last = a.chain.lock().unwrap().header_height();
+    loop {
+        if closes_within(r, stall).await {
+            return true;
+        }
+        let now = a.chain.lock().unwrap().header_height();
+        if now == last {
+            return false;
+        }
+        last = now;
+    }
+}
+
+/// Waits until `a` stores at least `target` headers, as long as its header
+/// chain keeps growing: panics only after `stall` seconds without a new
+/// stored header ([`closes_while_headers_grow`] explains why the bound is on
+/// stalls, not on the total).
+async fn wait_while_headers_grow(what: &str, a: &TestNode, target: u64, stall: u64) {
+    let height = || a.chain.lock().unwrap().header_height();
+    let mut last = height();
+    let mut since = tokio::time::Instant::now();
+    while last < target {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let now = height();
+        if now != last {
+            (last, since) = (now, tokio::time::Instant::now());
+        } else if since.elapsed() > Duration::from_secs(stall) {
+            panic!("stalled at {last} headers waiting for: {what}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------- tests
@@ -1496,18 +1552,26 @@ async fn invalid_px_transactions_get_the_relaying_peer_penalized() {
                 "{verdict:?}"
             ),
         }
-        let (r, mut w) = raw_peer(a.addr, params().network_id, true).await;
-        w.send(&Message::StemTx(bad.encode()).encode())
-            .await
-            .unwrap();
+        let (mut r, mut w) = raw_peer(a.addr, params().network_id, true).await;
         if penalized {
+            w.send(&Message::StemTx(bad.encode()).encode())
+                .await
+                .unwrap();
             wait_until(what, 60, || {
                 a.net.peers().iter().any(|p| p.score >= score::INVALID_TX)
             })
             .await;
         } else {
-            // Give the node time to process it; the peer stays unpenalized.
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            // Handled once the lane barrier behind it is answered (within
+            // the same 60 s as a penalty above); the peer stays unpenalized.
+            // (Before INV-PEN: a fixed 3 s sleep, which passes unchecked if
+            // the verdict comes later.)
+            w.send(&Message::StemTx(bad.encode()).encode())
+                .await
+                .unwrap();
+            let (barrier, answered) = lane_barrier(1);
+            w.send(&barrier).await.unwrap();
+            assert!(recv_until(&mut r, 60.0, answered).await.is_some(), "{what}");
             assert!(a.net.peers().iter().all(|p| p.score == 0), "{what}");
         }
         assert!(
@@ -1726,7 +1790,7 @@ async fn unknown_version_headers_need_real_proof_of_work() {
     batch.push(newer(BAD_NONCE));
     w.send(&Message::Headers(batch).encode()).await.unwrap();
     assert!(
-        closes_within(&mut r, 10).await,
+        closes_while_headers_grow(&mut r, &a, 10).await,
         "penalized and disconnected"
     );
     wait_until("penalized", 5, || {
@@ -2075,26 +2139,24 @@ async fn pings_are_answered_while_a_header_batch_is_verified() {
 
 /// A peer that disconnects before its batch is verified is still charged: the
 /// verdict comes from the header worker after the peer has left. Its batch
-/// waits behind another peer's (slow) batch; when its turn comes, the sender is
-/// gone, so only the cheap pre-check runs: the rule violation is found and
-/// charged, and none of its headers is hashed or stored.
+/// waits behind another peer's batch, held in flight by holding the chain;
+/// when its turn comes, the sender is gone, so only the cheap pre-check runs:
+/// the rule violation is found and charged, and none of its headers is
+/// hashed or stored. (Before INV-PEN the honest batch was 200 headers of
+/// slow proof of work, sent by a raw peer that never answers pings: on a
+/// loaded machine the batch outlasted the 90 s pong timeout, the node
+/// dropped that peer and abandoned its batch at 161 headers.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_peer_that_leaves_before_its_bad_batch_is_verified_is_still_charged() {
-    let mut cfg = fast_config(&[]);
-    cfg.pow_threads = 1;
-    let a = node_with_pow(46, cfg, Arc::new(SlowPow(20))).await;
+    let pow = Arc::new(CountAllPow::default());
+    let a = node_with_pow(46, fast_config(&[]), pow.clone()).await;
     let nid = params().network_id;
-    // An honest batch that keeps the header worker busy for 4 to 6 s (more
-    // on a loaded machine).
-    let (mut r1, mut w1) = raw_peer_at(a.addr, nid, true, 200).await;
+    let (mut r1, mut w1) = raw_peer_at(a.addr, nid, true, 3).await;
     assert!(
         recv_until(&mut r1, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
             .await
             .is_some()
     );
-    w1.send(&Message::Headers(header_branch(200, 120, 0)).encode())
-        .await
-        .unwrap();
     // 100 valid headers, then one that breaks a rule.
     let mut batch = header_branch(101, 120, 5);
     batch[100].difficulty += 5;
@@ -2104,14 +2166,23 @@ async fn a_peer_that_leaves_before_its_bad_batch_is_verified_is_still_charged() 
             .await
             .is_some()
     );
+    // The honest batch is taken up first and waits for the chain; the bad
+    // one is queued behind it. Each pong proves its batch was read.
+    let held = HeldChain::hold(&a).await;
+    w1.send(&Message::Headers(header_branch(3, 120, 0)).encode())
+        .await
+        .unwrap();
+    assert!(pong_latency(&mut r1, &mut w1, 1, 10.0).await.is_some());
     w.send(&Message::Headers(batch.clone()).encode())
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(pong_latency(&mut r, &mut w, 2, 10.0).await.is_some());
+    assert_eq!(a.net.header_queue_len(), 2, "both batches queued");
     drop((r, w));
-    wait_until("peer gone", 5, || a.net.stats().peers == 1).await;
+    wait_until("peer gone", 10, || a.net.stats().peers == 1).await;
     assert_eq!(a.net.stats().misbehaving_disconnects, 0, "not yet verified");
-    wait_until("charged after leaving", 120, || {
+    held.release().await;
+    wait_until("charged after leaving", 30, || {
         a.net.stats().misbehaving_disconnects == 1
     })
     .await;
@@ -2120,7 +2191,12 @@ async fn a_peer_that_leaves_before_its_bad_batch_is_verified_is_still_charged() 
         c.header(&batch[0].id(nid)).is_none(),
         "nothing of a banned sender's batch is stored"
     );
-    assert_eq!(c.header_height(), 200, "the honest batch is kept");
+    assert_eq!(c.header_height(), 3, "the honest batch is kept");
+    assert_eq!(
+        pow.0.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "only the honest headers are hashed"
+    );
 }
 
 // ------------------------------------------ P2P hardening round 2 (review items)
@@ -2159,6 +2235,10 @@ async fn the_header_queue_is_bounded_across_reconnects() {
     w0.send(&Message::Headers(header_branch(300, 120, 0)).encode())
         .await
         .unwrap();
+    // On a loaded machine the batch outlasts the pong timeout (35 to 51 s
+    // under 8 busy-loop processes for this shape, INV-PEN): without pongs
+    // the node would drop the sender and abandon its batch.
+    answer_pings(r0, w0);
     // 40 junk peers from 20 source IPs (two each), each sending a full batch
     // that only the PoW would reject, then leaving.
     let junk = Message::Headers(header_branch(2000, 120, BAD_NONCE)).encode();
@@ -2181,19 +2261,22 @@ async fn the_header_queue_is_bounded_across_reconnects() {
     }
     assert!(most <= cap, "queue grew to {most} (cap {cap})");
     assert!(most >= 3, "the flood did queue batches ({most})");
-    // An honest peer from another address, with more headers.
-    let honest = header_branch(400, 120, 0);
-    let (r, w) = raw_peer_from([127, 0, 0, 2], a.addr, nid, 400)
+    // An honest peer from another address, with 10 more headers. It was 100
+    // before INV-PEN: 100 one-header chunks, each costing its proof of work
+    // plus a thread spawn, which under load alone takes 75 to 130 ms
+    // (INV-PEN: 300 cheap one-thread chunks took 22 to 40 s under 8
+    // busy-loop processes), so the honest batch's own cost could reach the
+    // 30 s bound below. A queued junk batch would cost 2000 hashes, 40 s or
+    // more, each.
+    let honest = header_branch(310, 120, 0);
+    let (r, w) = raw_peer_from([127, 0, 0, 2], a.addr, nid, 310)
         .await
         .unwrap();
     serve_branch(r, w, honest);
-    wait_until("the busy batch is verified", 120, || {
-        a.chain.lock().unwrap().header_height() >= 300
-    })
-    .await;
+    wait_while_headers_grow("the busy batch is verified", &a, 300, 30).await;
     let t = std::time::Instant::now();
     wait_until("the honest batch is verified", 40, || {
-        a.chain.lock().unwrap().header_height() == 400
+        a.chain.lock().unwrap().header_height() == 310
     })
     .await;
     assert!(
@@ -3158,7 +3241,7 @@ async fn pong_latency(r: &mut RawReader, w: &mut RawWriter, nonce: u64, secs: f6
 }
 
 /// P0-7 (R8-1, R10-5): no runtime worker waits for the chain lock. While
-/// another thread holds it for 3 s (as a long block connection or reorg
+/// another thread holds it (as a long block connection or reorg
 /// would), two peers' `GetHeaders` wait for it, and the maintenance loop
 /// too, yet a third peer's ping is answered at once. Before the fix, with
 /// two runtime workers, both were blocked inside `inner.chain()` and the pong
@@ -3172,14 +3255,10 @@ async fn pings_are_answered_while_the_chain_lock_is_held() {
     let (mut r3, mut w3) = raw_peer(a.addr, nid, true).await;
     assert!(pong_latency(&mut r3, &mut w3, 1, 5.0).await.is_some());
 
-    let (held_tx, held_rx) = tokio::sync::oneshot::channel();
-    let chain = a.chain.clone();
-    let holder = std::thread::spawn(move || {
-        let _guard = chain.lock().unwrap();
-        held_tx.send(()).unwrap();
-        std::thread::sleep(Duration::from_secs(3));
-    });
-    held_rx.await.unwrap();
+    // Held until released (before INV-PEN: for 3 s, and the test asserted
+    // afterwards that the hold had outlasted its pings, which a loaded
+    // machine need not do).
+    let held = HeldChain::hold(&a).await;
     let get_headers = Message::GetHeaders {
         locator: vec![params().genesis_id()],
         stop: [0; 32],
@@ -3194,8 +3273,7 @@ async fn pings_are_answered_while_the_chain_lock_is_held() {
             .expect("pong while the chain lock is held");
         assert!(t < 1.0, "pong {n} took {t:.2} s");
     }
-    assert!(!holder.is_finished(), "the lock was still held");
-    holder.join().unwrap();
+    held.release().await;
     assert!(
         recv_until(&mut r1, 5.0, |m| matches!(m, Message::Headers(_)))
             .await
@@ -3207,15 +3285,17 @@ async fn pings_are_answered_while_the_chain_lock_is_held() {
 /// P0-7: a long batch of downloaded blocks connects in bounded steps, off the
 /// read loops. A peer serves 120 bodies but withholds the first until it has
 /// sent all the others; its arrival releases 119 waiting blocks at once.
-/// Another peer's pings are answered promptly throughout, a thread reading
-/// the published chain snapshot repeatedly sees intermediate heights (the
-/// chain actor connects the batch in steps and publishes after each), and
-/// the node ends on the same tip without penalizing anyone. Coinbase-only
-/// blocks connect fast (the drain takes a fraction of a second here), so the
-/// step check, not the pong latency, is what fails if the batch is connected
-/// in one step. (Before Stage 2 the observer took the chain mutex between
-/// steps; the actor re-takes its private lock at once, so the snapshot is
-/// the observable now.)
+/// Another peer's pings are answered promptly throughout, the chain actor
+/// publishes intermediate heights (it connects the batch in steps and
+/// publishes after each: the snapshot of every step, from the actor's
+/// test-only log), and the node ends on the same tip without penalizing
+/// anyone. Coinbase-only blocks connect fast (the drain takes a fraction of
+/// a second here), so the step check, not the pong latency, is what fails if
+/// the batch is connected in one step. (Before Stage 2 the observer took the
+/// chain mutex between steps; the actor re-takes its private lock at once,
+/// so the snapshot is the observable now. Before INV-PEN a thread polled the
+/// snapshot every 200 us: on a loaded machine it was not scheduled during
+/// the whole drain and saw only {0, 120}.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pings_are_answered_while_a_long_batch_of_blocks_connects() {
     const N: u64 = 120;
@@ -3235,7 +3315,7 @@ async fn pings_are_answered_while_a_long_batch_of_blocks_connects() {
     let by_id: std::collections::HashMap<Hash, Block> =
         bodies.into_iter().map(|b| (b.id(nid), b)).collect();
 
-    let b = node(92, &[]).await;
+    let (b, handle) = node_with_actor_handle(92, fast_config(&[]), ActorConfig::default()).await;
     let (mut r, mut w) = raw_peer_at(b.addr, nid, true, N).await;
     let (released_tx, released_rx) = tokio::sync::oneshot::channel();
     let progress = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -3281,24 +3361,6 @@ async fn pings_are_answered_while_a_long_batch_of_blocks_connects() {
     // Another peer pings the node throughout.
     let (mut pr, mut pw) = raw_peer(b.addr, nid, true).await;
     let chain_busy = |c: &SharedChain| c.try_lock().map(|c| c.height()).ok();
-    // An observer reads the published snapshot over and over while the
-    // batch connects: it sees intermediate heights only if the batch
-    // connects in steps (one step for the whole batch shows 0, then 120).
-    let observer = {
-        let summary = b.chain.lock().unwrap().summary_cell();
-        std::thread::spawn(move || {
-            let mut seen = std::collections::BTreeSet::new();
-            let deadline = std::time::Instant::now() + Duration::from_secs(120);
-            loop {
-                let h = summary.load().height;
-                seen.insert(h);
-                if h == N || std::time::Instant::now() > deadline {
-                    return seen;
-                }
-                std::thread::sleep(Duration::from_micros(200));
-            }
-        })
-    };
     match tokio::time::timeout(Duration::from_secs(60), released_rx).await {
         Ok(r) => r.expect("the serving peer is alive"),
         Err(_) => panic!(
@@ -3334,8 +3396,19 @@ async fn pings_are_answered_while_a_long_batch_of_blocks_connects() {
         n - 100
     );
     assert!(worst < 1.0, "worst pong latency {worst:.2} s");
-    let seen = observer.join().unwrap();
-    println!("intermediate heights seen by the observer: {seen:?}");
+    // Every height the chain actor published, in order: the snapshot after
+    // each command and each drain step (one step for the whole batch would
+    // show only 0 and 120).
+    let seen: std::collections::BTreeSet<u64> = handle
+        .log_for_tests()
+        .iter()
+        .map(|e| match e {
+            actor::LogEntry::Run { snapshot, .. }
+            | actor::LogEntry::Submit { snapshot, .. }
+            | actor::LogEntry::Step { snapshot, .. } => snapshot.height,
+        })
+        .collect();
+    println!("heights published by the chain actor: {seen:?}");
     // Every step connects exactly `SYNC_STEP_BLOCKS` (8) blocks here.
     let between: Vec<u64> = seen.iter().copied().filter(|&h| h > 0 && h < N).collect();
     assert!(
@@ -4042,9 +4115,13 @@ async fn downloads_are_scheduled_during_a_drain_while_a_fluff_waits() {
         assert!(t.elapsed() < Duration::from_secs(10), "the drain started");
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    // The embargo expires and its fluff waits on the Tx lane.
-    tokio::time::sleep(Duration::from_millis(600)).await;
-    assert!(!a.net.stempool_contains(&id), "the fluff is under way");
+    // The embargo (300 ms) expires and its fluff waits on the Tx lane. The
+    // drain lasts 30 steps of 250 ms; the asserts below check it still runs.
+    // (Before INV-PEN: a fixed 600 ms sleep, then an assert.)
+    wait_until("the fluff is under way", 5, || {
+        !a.net.stempool_contains(&id)
+    })
+    .await;
     let nid = params().network_id;
     let (mut r, _w) = raw_peer_at(a.addr, nid, true, 120).await;
     let start = std::time::Instant::now();
