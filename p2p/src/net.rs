@@ -31,6 +31,8 @@ pub mod chain_access;
 mod config;
 mod conn;
 mod dispatch;
+#[cfg(feature = "test-hooks")]
+pub mod fuzzing;
 mod headers;
 mod maintenance;
 mod peers;
@@ -99,6 +101,94 @@ fn fatal(why: &str) -> ! {
     std::process::exit(POISONED_EXIT_CODE)
 }
 
+/// The network's shared state over the chain actor `chain`, and the
+/// receivers of the header and block workers' queues: what
+/// [`Network::start_with`] builds, after binding its listeners, before it
+/// starts its tasks. The stateful peer fuzz target's harness (`fuzzing`,
+/// feature `test-hooks`) builds it the same way.
+#[allow(clippy::too_many_arguments)]
+fn new_inner(
+    cfg: NetConfig,
+    chain: ChainHandle,
+    rng: ChaCha20Rng,
+    addrman: AddrMan,
+    bans: BanList,
+    originated: Originated,
+    local_addr: Option<SocketAddr>,
+    onion_addr: Option<SocketAddr>,
+) -> (
+    Arc<Inner>,
+    mpsc::UnboundedReceiver<state::HeaderBatch>,
+    mpsc::UnboundedReceiver<state::BlockJob>,
+) {
+    let summary = chain.summary_cell();
+    let genesis_id = summary.load().genesis_id;
+    let state = State {
+        peers: HashMap::new(),
+        addrman,
+        bans,
+        dandelion: Dandelion::new(cfg.dandelion.clone()),
+        stempool: HashMap::new(),
+        stem_key_images: HashMap::new(),
+        px_global: crate::limits::TokenBucket::new(2.0, 10.0),
+        block_requests: HashMap::new(),
+        tx_requests: HashMap::new(),
+        tx_announcers: HashMap::new(),
+        recent_rejects: VecDeque::new(),
+        recent_rejects_set: HashSet::new(),
+        late_blocks: HashMap::new(),
+        late_txs: HashMap::new(),
+        local_nonces: HashSet::new(),
+        connecting: HashMap::new(),
+        last_attempt: HashMap::new(),
+        rng,
+        misbehaving_disconnects: 0,
+        slow_disconnects: 0,
+        transport_failures: 0,
+        bans_dirty: false,
+        handshakes: HashMap::new(),
+        handshaking_ip: HashMap::new(),
+        next_handshake: 0,
+        header_queue_len: 0,
+        header_queue_origin: HashMap::new(),
+        ctx_rejects: HashSet::new(),
+        ctx_rejects_tip: [0; 32],
+        tx_verifications: 0,
+        px_global_drops: 0,
+        tx_lane_drops: 0,
+        px_global_taken: 0,
+        unrequested_queued: 0,
+        blocks_queued: HashSet::new(),
+        upgrades: Default::default(),
+        originated,
+        connman: Default::default(),
+    };
+    let (header_queue, header_rx) = mpsc::unbounded_channel();
+    let (block_queue, block_rx) = mpsc::unbounded_channel();
+    // Woken on every published tip change (RT-LAB F2).
+    let tip_published = Arc::new(Notify::new());
+    {
+        let n = tip_published.clone();
+        summary.on_tip_change(move || n.notify_one());
+    }
+    let inner = Arc::new(Inner {
+        chain,
+        summary,
+        cfg,
+        genesis_id,
+        header_queue,
+        block_queue,
+        state: Mutex::new(state),
+        next_id: AtomicU64::new(1),
+        local_addr,
+        onion_addr,
+        originated_io: Mutex::new(()),
+        clock: Mutex::new(ClockMonitor::default()),
+        tip_published,
+    });
+    (inner, header_rx, block_rx)
+}
+
 /// Handle to the running network.
 #[derive(Clone)]
 pub struct Network {
@@ -160,71 +250,9 @@ impl Network {
         };
         let onion_addr = onion_listener.as_ref().and_then(|l| l.local_addr().ok());
         let local_addr = listener.as_ref().and_then(|l| l.local_addr().ok());
-        let summary = chain.summary_cell();
-        let genesis_id = summary.load().genesis_id;
-        let state = State {
-            peers: HashMap::new(),
-            addrman,
-            bans,
-            dandelion: Dandelion::new(cfg.dandelion.clone()),
-            stempool: HashMap::new(),
-            stem_key_images: HashMap::new(),
-            px_global: crate::limits::TokenBucket::new(2.0, 10.0),
-            block_requests: HashMap::new(),
-            tx_requests: HashMap::new(),
-            tx_announcers: HashMap::new(),
-            recent_rejects: VecDeque::new(),
-            recent_rejects_set: HashSet::new(),
-            late_blocks: HashMap::new(),
-            late_txs: HashMap::new(),
-            local_nonces: HashSet::new(),
-            connecting: HashMap::new(),
-            last_attempt: HashMap::new(),
-            rng,
-            misbehaving_disconnects: 0,
-            slow_disconnects: 0,
-            transport_failures: 0,
-            bans_dirty: false,
-            handshakes: HashMap::new(),
-            handshaking_ip: HashMap::new(),
-            next_handshake: 0,
-            header_queue_len: 0,
-            header_queue_origin: HashMap::new(),
-            ctx_rejects: HashSet::new(),
-            ctx_rejects_tip: [0; 32],
-            tx_verifications: 0,
-            px_global_drops: 0,
-            tx_lane_drops: 0,
-            px_global_taken: 0,
-            unrequested_queued: 0,
-            blocks_queued: HashSet::new(),
-            upgrades: Default::default(),
-            originated,
-            connman: Default::default(),
-        };
-        let (header_queue, header_rx) = mpsc::unbounded_channel();
-        let (block_queue, block_rx) = mpsc::unbounded_channel();
-        // Woken on every published tip change (RT-LAB F2).
-        let tip_published = Arc::new(Notify::new());
-        {
-            let n = tip_published.clone();
-            summary.on_tip_change(move || n.notify_one());
-        }
-        let inner = Arc::new(Inner {
-            chain,
-            summary,
-            cfg,
-            genesis_id,
-            header_queue,
-            block_queue,
-            state: Mutex::new(state),
-            next_id: AtomicU64::new(1),
-            local_addr,
-            onion_addr,
-            originated_io: Mutex::new(()),
-            clock: Mutex::new(ClockMonitor::default()),
-            tip_published,
-        });
+        let (inner, header_rx, block_rx) = new_inner(
+            cfg, chain, rng, addrman, bans, originated, local_addr, onion_addr,
+        );
         if let Some(l) = listener {
             tokio::spawn(accept_loop(inner.clone(), l, false));
         }

@@ -551,6 +551,49 @@ pub(super) async fn on_stem_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>)
     }
 }
 
+/// [`super::fuzzing::admission`] (feature `test-hooks` only): the steps of
+/// `admit_tx` that read the chain, then those of `on_tx`'s verification, in
+/// their order and with their functions, synchronously on `c`.
+#[cfg(feature = "test-hooks")]
+pub(super) fn for_tests(c: &ChainManager, bytes: &[u8], verify: bool) -> super::fuzzing::Admission {
+    let mut out = super::fuzzing::Admission {
+        decoded: false,
+        id: None,
+        pre: None,
+        cheap: None,
+        verified: None,
+    };
+    let Some(tx) = decode_tx(bytes) else {
+        return out;
+    };
+    out.decoded = true;
+    let id = tx.hash();
+    out.id = Some(id);
+    // Step 3 of `admit_tx`: dropped unverified, never scored.
+    let pool = c.mempool();
+    if pool.contains(&id) || pool.conflicts(&tx) {
+        return out;
+    }
+    // `px_pre_checks`, here on the caller's thread.
+    let mut pre = match &*tx {
+        Transaction::Px(t) if !blacksilk_tx::validate::px_expires_soon(t, c.height() + 1) => {
+            Some(px_stateless(t))
+        }
+        _ => None,
+    };
+    let cheap = cheap_checks(c, &tx, &mut pre);
+    out.pre = pre;
+    out.cheap = Some(cheap);
+    if !matches!(cheap, Ok(true)) || !verify {
+        return out;
+    }
+    let rings = input_rings(&tx);
+    let r = c.check_tx(&tx);
+    let proven = r.as_ref().is_err_and(|e| proven_invalid(c, &rings, e));
+    out.verified = Some((r, proven));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

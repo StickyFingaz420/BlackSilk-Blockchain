@@ -21,7 +21,7 @@ mkdir -p logs
 failed=()
 for target in tx_decode block_decode p2p_message zkvm_elf kernel_diff delivery_open proof_decode \
               store_records seed_words transport_recv transport_keyless_peer addr_v2 \
-              delivery_plain proof_struct px_tx_struct; do
+              delivery_plain proof_struct px_tx_struct peer_protocol scan_outputs px_admission; do
   case "$target" in
     # The largest proof the decoder accepts (zk MAX_PROOF_BYTES, 4 MiB):
     # libFuzzer truncates longer seeds at load, and a real transfer proof
@@ -40,6 +40,18 @@ for target in tx_decode block_decode p2p_message zkvm_elf kernel_diff delivery_o
     # several times, under ASan), so it starts at the full length at once.
     px_tx_struct) extra=(-max_len=256) ;;
     proof_struct) extra=(-max_len=256 -len_control=0 -rss_limit_mb=4096) ;;
+    # The stateful targets (W4-STATEFUL). peer_protocol: a configuration
+    # and at most 48 four-byte steps, from the full length at once (with
+    # length control its first run stayed at 46 bytes). scan_outputs: a transaction's
+    # encoding (the PX seed is about 4 KB) or an edit script. px_admission:
+    # an edit script on a 2.4 MB transaction, verified when it passes the
+    # cheap checks, so a few executions per second (an unedited one takes
+    # up to about 15 s under ASan: a slow-unit artifact at the default 10 s
+    # would fail this script); it needs the seed generator's
+    # corpus/px_admission_base/tx.
+    peer_protocol) extra=(-max_len=256 -len_control=0) ;;
+    scan_outputs) extra=(-max_len=65536) ;;
+    px_admission) extra=(-max_len=256 -len_control=0 -rss_limit_mb=4096 -report_slow_units=60) ;;
     *) extra=(-max_len=65536) ;;
   esac
   mkdir -p "corpus/$target"
