@@ -1082,3 +1082,17 @@
   - conn.rs `run_connection`, maintenance.rs `maintenance_loop`, the rest of admission.rs;
   - the wallet-side checks.
   - With the boundary pass, constant ±1 hand mutants for the caps, and own target dirs.
+
+## W4-POWPOOL and RT-POWPOOL (Lead, 2026-10-01)
+- **The PoW hashing pool is ACCEPTED WITH FIXES.**
+  - RT found no deadlock and no wrong hash: real RandomX under concurrency, more keys than MAX_CACHES, hot-set churn and panics gave identical results.
+  - The caller rule holds; Drop joins every helper.
+  - The one-thread gain reproduced: 0.6–0.9 s per header saved under load.
+  - There is no reliable gain at 2 or more threads; under heavy load 2 threads were slower per header than 1.
+- **Fixes:**
+  - a second panic payload whose Drop panics hangs the caller (theoretical, not reachable with RandomX): notify before anything can panic, and drop extra payloads outside the lock;
+  - the stress tests are adopted;
+  - the timing logs are committed;
+  - a doc correction (inline panics stop at once);
+  - `notify_one` per ticket.
+- **Default `pow_threads` unchanged** (the logical CPU count). It is to be measured on a real multi-core testnet host before any tuning.
