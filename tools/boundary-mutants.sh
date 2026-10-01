@@ -97,6 +97,9 @@ case "$cmd" in
     unset BLACKSILK_BUILD_COMMIT
     rm -rf "$src"; mkdir -p "$src" "$out"
     (cd "$repo" && git archive HEAD) | tar -x -C "$src"
+    # `git archive` dates every file at the commit: newer than nothing cargo
+    # built before. Each write below touches its file, so cargo rebuilds it.
+    find "$src" -name '*.rs' -exec touch {} +
     echo "commit $(cd "$repo" && git rev-parse --short HEAD); cargo $*" > "$out/outcomes.txt"
 
     oracle() { # LOG -> exit code (124 on timeout)
@@ -129,21 +132,24 @@ case "$cmd" in
         IFS=: read -r file line col op <<<"$m"
         to=">"; [ "$op" = "<=" ] && to="<"
         cp "$src/$file" "$src/$file.orig"
-        awk -v L="$line" -v C="$col" -v T="$to" \
-          'NR == L { $0 = substr($0, 1, C - 1) T substr($0, C + 2) } { print }' \
+        # Byte-exact (line endings kept): only the two operator bytes change.
+        L="$line" C="$col" T="$to" perl -pe \
+          'substr($_, $ENV{C} - 1, 2) = $ENV{T} if $. == $ENV{L}' \
           "$src/$file.orig" > "$src/$file"
+        touch "$src/$file"
         log="$out/$n.log"
         { echo "*** $name"; diff "$src/$file.orig" "$src/$file" || true; } > "$log.head"
         rc=0; oracle "$log.body" "$@" || rc=$?
         cat "$log.head" "$log.body" > "$log"; rm -f "$log.head" "$log.body"
         mv "$src/$file.orig" "$src/$file"
+        touch "$src/$file"
         if [ "$rc" -eq 0 ]; then verdict=missed; missed=$((missed + 1))
         elif [ "$rc" -eq 124 ]; then verdict=timeout
-        elif grep -q -E "^error(\[E[0-9]+\])?:|could not compile" "$log"; then verdict=unviable
+        elif grep -q -E "^error\[E[0-9]+\]|could not compile" "$log"; then verdict=unviable
         else verdict=caught
         fi
         echo "$verdict $name ($n.log)" | tee -a "$out/outcomes.txt"
-      done < <(list_file "$f")
+      done < <(cd "$src" && list_file "$f")
     done
     echo "done: $n mutants, $missed missed" | tee -a "$out/outcomes.txt"
     [ "$missed" -eq 0 ]
