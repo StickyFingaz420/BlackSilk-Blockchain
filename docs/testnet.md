@@ -67,7 +67,7 @@ evidence or genesis binary.** Never use a binary that
 `cargo test` wrote. `cargo test --release` writes the binaries of the packages it
 tests to the same paths in `target/release/`, with the test-only code of the
 dev-dependencies compiled in (cargo unifies their features, such as the
-`test-hooks` of chain, tx and px; p2p's once its hooks exist): `cargo test -p
+`test-hooks` of chain, tx, px and p2p): `cargo test -p
 blacksilk-node` writes such a node, and `cargo test --workspace` also such a
 miner, wallet and tools. That code is not inert: the chain actor's test log grows
 without bound. Such a binary names its test code in `--version` (`build flags:
@@ -212,8 +212,7 @@ Limits of the check:
   `BLACKSILK_BUILD_COMMIT` is set at build time. Otherwise they report
   `unknown`.
 - **The build flags name the test code the crates mark.** Each crate with a
-  `test-hooks` feature (chain, tx and px; p2p declares it, and it gates code once
-  p2p's hooks exist) exports a marker that is compiled in only with that feature,
+  `test-hooks` feature (chain, tx, px and p2p) exports a marker that is compiled in only with that feature,
   and chain and p2p one for `cfg(fuzzing)` (`chain/src/build_flags.rs`). A new
   test-only feature is covered only once its crate exports a marker too;
   `tools/check-test-features.sh` (CI `gates`) fails on one that does not.

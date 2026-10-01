@@ -37,7 +37,7 @@ pub use net::{
 };
 
 /// The build marker of this crate's test-only code (the stateful fuzz targets'
-/// network hooks; until they exist the feature gates only this marker):
+/// network hooks, `net::fuzzing` and `admission::for_tests`):
 /// `Some("+test-hooks:p2p")` when the `test-hooks` feature is compiled
 /// in, `None` otherwise. A dev-dependency of a `cargo test` build turns the
 /// feature on, and cargo unifies it into every binary that invocation builds;

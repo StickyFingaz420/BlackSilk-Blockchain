@@ -4,7 +4,7 @@
 //! `cargo test` unifies the features of dev-dependencies into every binary
 //! the same invocation builds: after `cargo test --release -p
 //! blacksilk-node`, `target/release/blacksilk-node` has the `test-hooks`
-//! code of chain, tx and px (and p2p's, once its hooks exist), at the path a
+//! code of chain, tx, px and p2p, at the path a
 //! plain `cargo build --release` writes. That code is not inert (the chain
 //! actor's linearization log grows without bound). A cargo-fuzz build
 //! (`cfg(fuzzing)`) has fuzz-only code too, such as the transport's fixed

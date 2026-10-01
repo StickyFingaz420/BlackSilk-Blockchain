@@ -7,7 +7,7 @@
 # `cargo test` unifies dev-dependency features into every binary it writes,
 # at the path a plain `cargo build --release` uses: after `cargo test
 # --release`, target/release/blacksilk-node has the test hooks of chain, tx
-# and px (and p2p's, once its hooks exist). A cargo-fuzz build adds
+# px and p2p. A cargo-fuzz build adds
 # `cfg(fuzzing)` code. Such a binary is for this repository's regtest tests
 # only, never for evidence, genesis or a shared network.
 #
