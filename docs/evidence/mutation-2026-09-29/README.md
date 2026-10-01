@@ -390,6 +390,10 @@ kernel with the pinned guest.
 
 - **Operators.** The census covers cargo-mutants' mutation operators, not every
   possible fault. A caught mutant shows only that some test notices that change.
+  cargo-mutants 27.1 never mutates `>=` into `>` or `<=` into `<`; that class was
+  run afterwards over this census's scope by run C's boundary pass
+  (docs/evidence/mutation-runC-2026-09-30/README.md § Boundary pass: 18 mutants, 1
+  survivor killed, 4 equivalent, E26–E28).
 - **Timeouts.** They count as caught when they are real hangs. Hangs are a weaker
   oracle than failed assertions. After RT-MUT only the two `tx_root` loops remain
   hang-only in consensus.

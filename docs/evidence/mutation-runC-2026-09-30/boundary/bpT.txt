@@ -1,0 +1,16 @@
+commit 120e8f2; cargo test --locked --profile mutants -p blacksilk-tx --lib --test=adversarial --test=block_pipeline --test=chain_integration --test=deploy_rules --test=exact_fee --test=malleability --test=max_weight_encoder --test=max_weight_vectors --test=output_key_uniqueness --test=privacy --test=px_v1_weight --test=px_window --test=revalidate_after_extension --test=transfers --test=tree_capacity --test=upgrade --test=validation_order --test=mutation_regressions
+baseline ok
+caught tx/src/validate.rs:348:19: replace >= with > (1.log)
+caught tx/src/validate.rs:1001:56: replace >= with > (2.log)
+caught tx/src/px.rs:141:15: replace >= with > (3.log)
+caught tx/src/px.rs:692:19: replace >= with > (4.log)
+missed tx/src/px.rs:808:23: replace >= with > (5.log)
+caught tx/src/px.rs:844:14: replace <= with < (6.log)
+caught tx/src/px.rs:845:19: replace <= with < (7.log)
+caught tx/src/px.rs:848:65: replace <= with < (8.log)
+unviable tx/src/params.rs:48:49: replace <= with < (9.log)
+missed tx/src/params.rs:49:46: replace <= with < (10.log)
+missed tx/src/params.rs:50:43: replace >= with > (11.log)
+missed tx/src/params.rs:103:10: replace <= with < (12.log)
+missed tx/src/params.rs:127:76: replace <= with < (13.log)
+done: 13 mutants, 5 missed

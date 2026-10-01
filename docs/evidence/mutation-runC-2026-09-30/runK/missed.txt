@@ -1,0 +1,6 @@
+crypto/src/bulletproofs_plus.rs:257:26: replace || with && in prove_bits
+crypto/src/bulletproofs_plus.rs:260:31: replace + with * in prove_bits
+crypto/src/bulletproofs_plus.rs:397:68: replace || with && in challenges
+crypto/src/bulletproofs_plus.rs:397:47: replace || with && in challenges
+crypto/src/bulletproofs_plus.rs:397:26: replace || with && in challenges
+crypto/src/bulletproofs_plus.rs:453:35: replace + with * in Msm::add

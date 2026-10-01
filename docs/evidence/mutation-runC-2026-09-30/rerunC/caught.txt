@@ -1,0 +1,38 @@
+tx/src/params.rs:18:73: replace + with -
+tx/src/params.rs:18:79: replace * with +
+tx/src/params.rs:18:79: replace * with /
+tx/src/params.rs:42:50: replace * with +
+tx/src/px.rs:295:9: replace PxTx::base_bytes -> Vec<u8> with vec![]
+tx/src/px.rs:303:9: replace PxTx::range_proof_bytes -> Vec<u8> with vec![]
+tx/src/px.rs:410:9: replace PxTx::base_hash -> Hash with Default::default()
+tx/src/px.rs:414:9: replace PxTx::prunable_hash -> Hash with Default::default()
+tx/src/px.rs:480:9: replace PxTx::output_context -> [u8; 32] with [0; 32]
+tx/src/px.rs:480:9: replace PxTx::output_context -> [u8; 32] with [1; 32]
+tx/src/px.rs:609:9: replace PxDeploy::prefix_hash -> Hash with Default::default()
+tx/src/px.rs:708:24: replace || with && in check_px_structure
+tx/src/px.rs:708:10: replace > with == in check_px_structure
+tx/src/px.rs:708:10: replace > with >= in check_px_structure
+tx/src/px.rs:708:30: replace > with < in check_px_structure
+tx/src/px.rs:772:36: replace || with && in check_px_structure
+tx/src/px.rs:778:27: replace > with == in check_px_structure
+tx/src/px.rs:778:27: replace > with >= in check_px_structure
+tx/src/px.rs:786:13: replace > with == in check_px_structure
+tx/src/px.rs:786:13: replace > with >= in check_px_structure
+tx/src/px.rs:799:5: replace check_px_balance -> Result<(), TxError> with Ok(())
+tx/src/px.rs:802:41: replace && with || in check_px_balance
+tx/src/px.rs:811:9: delete - in check_px_balance
+tx/src/px.rs:811:24: delete - in check_px_balance
+tx/src/px.rs:859:13: replace > with == in check_deploy_structure
+tx/src/px.rs:859:13: replace > with >= in check_deploy_structure
+tx/src/px.rs:877:33: replace > with >= in check_deploy_structure
+tx/src/validate.rs:398:20: replace > with == in check_shape
+tx/src/validate.rs:398:20: replace > with >= in check_shape
+tx/src/validate.rs:661:5: replace check_px_proof -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:814:49: replace < with == in validate_px_checks
+tx/src/validate.rs:814:49: replace < with <= in validate_px_checks
+tx/src/validate.rs:814:24: replace + with - in validate_px_checks
+tx/src/validate.rs:1200:17: replace > with == in validate_block_transactions_cached
+tx/src/validate.rs:1200:17: replace > with >= in validate_block_transactions_cached
+tx/src/validate.rs:1214:21: replace > with >= in validate_block_transactions_cached
+tx/src/validate.rs:1299:30: replace + with - in validate_block_transactions_cached
+tx/src/validate.rs:1312:50: replace || with && in validate_block_transactions_cached

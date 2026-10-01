@@ -148,6 +148,14 @@ fn challenge_final(t: &[u8; 32], a1: &Point, b: &Point) -> Scalar {
 
 // ---- helpers ----
 
+/// Whether any of the Fiat-Shamir challenges is zero. The prover retries with
+/// fresh randomness and the verifier refuses the proof: a zero challenge would
+/// make the folding degenerate. (Each challenge is a 512-bit hash reduced mod
+/// ℓ, so this happens with probability about 2^-252.)
+fn any_zero<'a>(challenges: impl IntoIterator<Item = &'a Scalar>) -> bool {
+    challenges.into_iter().any(|c| *c == Scalar::ZERO)
+}
+
 /// `[1, x, x², …, x^(n−1)]`.
 fn powers(x: &Scalar, n: usize) -> Vec<Scalar> {
     let mut out = Vec::with_capacity(n);
@@ -254,7 +262,7 @@ fn prove_bits(
     let t0 = transcript_init(commitments, m);
     let y = challenge_y(&t0, &a);
     let z = challenge_z(&t0, &a, &y);
-    if y == Scalar::ZERO || z == Scalar::ZERO {
+    if any_zero([&y, &z]) {
         return None;
     }
     let y_pows = powers(&y, n + 2);
@@ -394,7 +402,7 @@ fn challenges(proof: &BppProof, commitments: &[Point]) -> Option<Challenges> {
         es.push(e);
     }
     let e = challenge_final(&t, &proof.a1, &proof.b);
-    if y == Scalar::ZERO || z == Scalar::ZERO || e == Scalar::ZERO || es.contains(&Scalar::ZERO) {
+    if any_zero([&y, &z, &e].into_iter().chain(&es)) {
         return None;
     }
     Some(Challenges {
@@ -545,6 +553,20 @@ pub fn batch_verify<R: RngCore + CryptoRng>(items: &[(&BppProof, &[Point])], rng
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The zero-challenge rule (prover retry, verifier refusal): any zero in
+    /// any position, and only a zero (run C, E13 replaced by this test).
+    #[test]
+    fn any_zero_finds_a_zero_challenge_in_any_position() {
+        let (one, two, zero) = (Scalar::ONE, Scalar::from(2u64), Scalar::ZERO);
+        assert!(!any_zero([] as [&Scalar; 0]));
+        assert!(!any_zero([&one, &two]));
+        assert!(!any_zero([&one, &two].into_iter().chain(&[one, two, -one])));
+        assert!(any_zero([&zero]));
+        assert!(any_zero([&zero, &one]));
+        assert!(any_zero([&one, &zero]));
+        assert!(any_zero([&one, &two].into_iter().chain(&[one, zero])));
+    }
     use crate::nonce::test_rng::{seeded, ChaCha20Rng};
 
     fn random_scalar(rng: &mut impl RngCore) -> Scalar {

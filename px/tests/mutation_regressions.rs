@@ -341,3 +341,21 @@ fn two_functions_may_not_specify_the_same_output() {
     });
     assert_eq!(both(&w).err(), Some(Error::SpecConflict));
 }
+
+/// BabyBear addition reduces exactly at `p`: a sum equal to `p` is 0, never
+/// the non-canonical `p` (boundary pass of run C: `s >= P` → `s > P` passed
+/// every px-core oracle, since no test added two elements summing to `p`).
+#[test]
+fn field_addition_reduces_a_sum_of_exactly_p_to_zero() {
+    use blacksilk_px_core::{add, canonical};
+    assert_eq!(add(1, P - 1), 0);
+    assert_eq!(add(P - 1, 1), 0);
+    assert_eq!(add(P / 2, P - P / 2), 0);
+    assert_eq!(add(P - 1, P - 1), P - 2);
+    assert_eq!(add(2, P - 1), 1);
+    assert_eq!(add(0, P - 1), P - 1);
+    assert_eq!(add(0, 0), 0);
+    for (a, b) in [(1, P - 1), (P - 1, P - 1), (12_345, P - 12_345)] {
+        assert!(canonical(add(a, b)), "{a} + {b}");
+    }
+}

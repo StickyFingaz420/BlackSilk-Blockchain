@@ -1,0 +1,1 @@
+-C=--lib -C=--test=golden -C=--test=block_malleability -C=--test=block_rules -C=--test=manager -C=--test=fork_choice -C=--test=store_format -C=--test=storage_recovery

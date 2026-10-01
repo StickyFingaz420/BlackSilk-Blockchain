@@ -1,0 +1,203 @@
+tx/src/params.rs:18:73: replace + with *
+tx/src/params.rs:20:44: replace * with +
+tx/src/params.rs:20:44: replace * with /
+tx/src/params.rs:23:39: replace * with +
+tx/src/params.rs:54:42: replace * with +
+tx/src/params.rs:54:42: replace * with /
+tx/src/params.rs:90:5: replace max_weight -> u64 with 0
+tx/src/params.rs:90:5: replace max_weight -> u64 with 1
+tx/src/params.rs:99:9: replace + with - in max_weight
+tx/src/params.rs:99:9: replace + with * in max_weight
+tx/src/params.rs:98:9: replace + with - in max_weight
+tx/src/params.rs:98:9: replace + with * in max_weight
+tx/src/params.rs:97:9: replace + with - in max_weight
+tx/src/params.rs:97:9: replace + with * in max_weight
+tx/src/params.rs:96:9: replace + with * in max_weight
+tx/src/params.rs:95:9: replace + with - in max_weight
+tx/src/params.rs:95:9: replace + with * in max_weight
+tx/src/params.rs:94:9: replace + with - in max_weight
+tx/src/params.rs:94:9: replace + with * in max_weight
+tx/src/params.rs:96:13: replace * with + in max_weight
+tx/src/params.rs:96:13: replace * with / in max_weight
+tx/src/params.rs:96:19: replace + with * in max_weight
+tx/src/params.rs:96:38: replace * with + in max_weight
+tx/src/params.rs:96:38: replace * with / in max_weight
+tx/src/params.rs:98:13: replace * with + in max_weight
+tx/src/params.rs:98:13: replace * with / in max_weight
+tx/src/params.rs:98:37: replace + with - in max_weight
+tx/src/params.rs:98:37: replace + with * in max_weight
+tx/src/params.rs:98:33: replace + with - in max_weight
+tx/src/params.rs:98:33: replace + with * in max_weight
+tx/src/params.rs:98:28: replace + with - in max_weight
+tx/src/params.rs:98:28: replace + with * in max_weight
+tx/src/params.rs:98:24: replace + with - in max_weight
+tx/src/params.rs:98:24: replace + with * in max_weight
+tx/src/params.rs:98:19: replace + with - in max_weight
+tx/src/params.rs:98:19: replace + with * in max_weight
+tx/src/params.rs:101:32: replace + with - in max_weight
+tx/src/params.rs:101:23: replace + with - in max_weight
+tx/src/params.rs:101:28: replace * with + in max_weight
+tx/src/params.rs:101:28: replace * with / in max_weight
+tx/src/params.rs:101:41: replace * with + in max_weight
+tx/src/params.rs:101:41: replace * with / in max_weight
+tx/src/params.rs:103:10: replace <= with > in max_weight
+tx/src/params.rs:106:14: replace + with - in max_weight
+tx/src/params.rs:106:49: replace / with % in max_weight
+tx/src/params.rs:106:49: replace / with * in max_weight
+tx/src/params.rs:106:45: replace * with + in max_weight
+tx/src/params.rs:106:45: replace * with / in max_weight
+tx/src/params.rs:106:21: replace * with + in max_weight
+tx/src/params.rs:106:21: replace * with / in max_weight
+tx/src/params.rs:116:5: replace bpp_proof_len -> u64 with 0
+tx/src/params.rs:116:5: replace bpp_proof_len -> u64 with 1
+tx/src/params.rs:116:21: replace || with && in bpp_proof_len
+tx/src/params.rs:116:16: replace == with != in bpp_proof_len
+tx/src/params.rs:116:32: replace > with == in bpp_proof_len
+tx/src/params.rs:116:32: replace > with < in bpp_proof_len
+tx/src/params.rs:116:32: replace > with >= in bpp_proof_len
+tx/src/params.rs:119:29: replace * with + in bpp_proof_len
+tx/src/params.rs:119:29: replace * with / in bpp_proof_len
+tx/src/params.rs:120:8: replace * with + in bpp_proof_len
+tx/src/params.rs:120:8: replace * with / in bpp_proof_len
+tx/src/params.rs:120:13: replace + with * in bpp_proof_len
+tx/src/params.rs:120:17: replace * with + in bpp_proof_len
+tx/src/params.rs:120:17: replace * with / in bpp_proof_len
+tx/src/params.rs:151:9: replace SigDomain::bytes -> [u8; SIG_DOMAIN_BYTES] with [0; SIG_DOMAIN_BYTES]
+tx/src/params.rs:151:9: replace SigDomain::bytes -> [u8; SIG_DOMAIN_BYTES] with [1; SIG_DOMAIN_BYTES]
+tx/src/params.rs:215:9: replace TxRules::min_fee -> Option<u64> with None
+tx/src/params.rs:215:9: replace TxRules::min_fee -> Option<u64> with Some(0)
+tx/src/params.rs:215:9: replace TxRules::min_fee -> Option<u64> with Some(1)
+tx/src/params.rs:228:9: replace TxRules::standard_fee -> Option<u64> with None
+tx/src/params.rs:228:9: replace TxRules::standard_fee -> Option<u64> with Some(0)
+tx/src/params.rs:228:9: replace TxRules::standard_fee -> Option<u64> with Some(1)
+tx/src/px.rs:124:5: replace digest_bytes -> [u8; 32] with [0; 32]
+tx/src/px.rs:124:5: replace digest_bytes -> [u8; 32] with [1; 32]
+tx/src/px.rs:126:13: replace * with + in digest_bytes
+tx/src/px.rs:126:13: replace * with / in digest_bytes
+tx/src/px.rs:126:24: replace + with - in digest_bytes
+tx/src/px.rs:126:24: replace + with * in digest_bytes
+tx/src/px.rs:126:20: replace * with + in digest_bytes
+tx/src/px.rs:126:20: replace * with / in digest_bytes
+tx/src/px.rs:132:5: replace write_digest with ()
+tx/src/px.rs:138:5: replace read_digest -> Result<Digest, DecodeError> with Ok(Default::default())
+tx/src/px.rs:149:5: replace write_budget with ()
+tx/src/px.rs:141:15: replace >= with < in read_digest
+tx/src/px.rs:160:37: replace << with >> in read_budget
+tx/src/px.rs:175:5: replace write_inputs with ()
+tx/src/px.rs:183:5: replace read_inputs -> Result<Vec<Input>, DecodeError> with Ok(vec![])
+tx/src/px.rs:194:5: replace write_outputs with ()
+tx/src/px.rs:206:5: replace read_outputs -> Result<Vec<Output>, DecodeError> with Ok(vec![])
+tx/src/px.rs:222:5: replace write_sigs with ()
+tx/src/px.rs:232:5: replace read_sigs -> Result<Vec<Clsag>, DecodeError> with Ok(vec![])
+tx/src/px.rs:246:5: replace read_bytes -> Result<Vec<u8>, DecodeError> with Ok(vec![])
+tx/src/px.rs:246:5: replace read_bytes -> Result<Vec<u8>, DecodeError> with Ok(vec![0])
+tx/src/px.rs:246:5: replace read_bytes -> Result<Vec<u8>, DecodeError> with Ok(vec![1])
+tx/src/px.rs:249:29: replace + with - in read_bytes
+tx/src/px.rs:249:29: replace + with * in read_bytes
+tx/src/px.rs:256:9: replace PxTx::prefix_bytes -> Vec<u8> with vec![]
+tx/src/px.rs:256:9: replace PxTx::prefix_bytes -> Vec<u8> with vec![0]
+tx/src/px.rs:256:9: replace PxTx::prefix_bytes -> Vec<u8> with vec![1]
+tx/src/px.rs:295:9: replace PxTx::base_bytes -> Vec<u8> with vec![0]
+tx/src/px.rs:295:9: replace PxTx::base_bytes -> Vec<u8> with vec![1]
+tx/src/px.rs:303:9: replace PxTx::range_proof_bytes -> Vec<u8> with vec![0]
+tx/src/px.rs:303:9: replace PxTx::range_proof_bytes -> Vec<u8> with vec![1]
+tx/src/px.rs:311:9: replace PxTx::prunable_bytes -> Vec<u8> with vec![]
+tx/src/px.rs:311:9: replace PxTx::prunable_bytes -> Vec<u8> with vec![1]
+tx/src/px.rs:320:9: replace PxTx::encode -> Vec<u8> with vec![]
+tx/src/px.rs:320:9: replace PxTx::encode -> Vec<u8> with vec![0]
+tx/src/px.rs:320:9: replace PxTx::encode -> Vec<u8> with vec![1]
+tx/src/px.rs:406:9: replace PxTx::prefix_hash -> Hash with Default::default()
+tx/src/px.rs:424:9: replace PxTx::binding -> Hash with Default::default()
+tx/src/px.rs:433:9: replace PxTx::signature_message -> Hash with Default::default()
+tx/src/px.rs:465:9: replace PxTx::output_keys -> Vec<OutputKey> with vec![]
+tx/src/px.rs:493:5: replace deploy_payload_bytes -> Vec<u8> with vec![]
+tx/src/px.rs:493:5: replace deploy_payload_bytes -> Vec<u8> with vec![0]
+tx/src/px.rs:493:5: replace deploy_payload_bytes -> Vec<u8> with vec![1]
+tx/src/px.rs:522:5: replace deploy_fee -> u64 with 0
+tx/src/px.rs:522:5: replace deploy_fee -> u64 with 1
+tx/src/px.rs:531:9: replace PxDeploy::payload_bytes -> Vec<u8> with vec![]
+tx/src/px.rs:531:9: replace PxDeploy::payload_bytes -> Vec<u8> with vec![0]
+tx/src/px.rs:531:9: replace PxDeploy::payload_bytes -> Vec<u8> with vec![1]
+tx/src/px.rs:535:9: replace PxDeploy::prefix_bytes -> Vec<u8> with vec![]
+tx/src/px.rs:535:9: replace PxDeploy::prefix_bytes -> Vec<u8> with vec![0]
+tx/src/px.rs:535:9: replace PxDeploy::prefix_bytes -> Vec<u8> with vec![1]
+tx/src/px.rs:546:9: replace PxDeploy::base_bytes -> Vec<u8> with vec![]
+tx/src/px.rs:546:9: replace PxDeploy::base_bytes -> Vec<u8> with vec![0]
+tx/src/px.rs:546:9: replace PxDeploy::base_bytes -> Vec<u8> with vec![1]
+tx/src/px.rs:554:9: replace PxDeploy::prunable_bytes -> Vec<u8> with vec![]
+tx/src/px.rs:554:9: replace PxDeploy::prunable_bytes -> Vec<u8> with vec![0]
+tx/src/px.rs:554:9: replace PxDeploy::prunable_bytes -> Vec<u8> with vec![1]
+tx/src/px.rs:561:9: replace PxDeploy::encode -> Vec<u8> with vec![]
+tx/src/px.rs:561:9: replace PxDeploy::encode -> Vec<u8> with vec![0]
+tx/src/px.rs:561:9: replace PxDeploy::encode -> Vec<u8> with vec![1]
+tx/src/px.rs:568:9: replace PxDeploy::encoded_len -> usize with 0
+tx/src/px.rs:568:9: replace PxDeploy::encoded_len -> usize with 1
+tx/src/px.rs:627:9: replace PxDeploy::signature_message -> Hash with Default::default()
+tx/src/px.rs:652:9: replace PxDeploy::contract_id -> Digest with Default::default()
+tx/src/px.rs:661:47: replace * with + in PxDeploy::contract_id
+tx/src/px.rs:661:47: replace * with / in PxDeploy::contract_id
+tx/src/px.rs:661:58: replace + with - in PxDeploy::contract_id
+tx/src/px.rs:661:58: replace + with * in PxDeploy::contract_id
+tx/src/px.rs:661:54: replace * with + in PxDeploy::contract_id
+tx/src/px.rs:661:54: replace * with / in PxDeploy::contract_id
+tx/src/px.rs:662:21: replace % with / in PxDeploy::contract_id
+tx/src/px.rs:662:21: replace % with + in PxDeploy::contract_id
+tx/src/px.rs:670:9: replace PxDeploy::load_programs -> Result<Vec<(Arc<Program>, Budget)>, TxError> with Ok(vec![])
+tx/src/px.rs:682:9: replace PxDeploy::required_fee -> u64 with 0
+tx/src/px.rs:682:9: replace PxDeploy::required_fee -> u64 with 1
+tx/src/px.rs:689:5: replace strictly_increasing -> bool with false
+tx/src/px.rs:689:5: replace strictly_increasing -> bool with true
+tx/src/px.rs:692:19: replace >= with < in strictly_increasing
+tx/src/px.rs:703:5: replace check_px_structure -> Result<(), TxError> with Ok(())
+tx/src/px.rs:705:10: replace > with == in check_px_structure
+tx/src/px.rs:705:10: replace > with < in check_px_structure
+tx/src/px.rs:705:10: replace > with >= in check_px_structure
+tx/src/px.rs:708:10: replace > with < in check_px_structure
+tx/src/px.rs:708:34: replace && with || in check_px_structure
+tx/src/px.rs:708:30: replace > with == in check_px_structure
+tx/src/px.rs:708:30: replace > with >= in check_px_structure
+tx/src/px.rs:708:39: replace == with != in check_px_structure
+tx/src/px.rs:716:12: delete ! in check_px_structure
+tx/src/px.rs:720:8: delete ! in check_px_structure
+tx/src/px.rs:737:8: delete ! in check_px_structure
+tx/src/px.rs:738:9: replace || with && in check_px_structure
+tx/src/px.rs:738:12: delete ! in check_px_structure
+tx/src/px.rs:758:25: replace == with != in check_px_structure
+tx/src/px.rs:752:12: delete ! in check_px_structure
+tx/src/px.rs:761:29: replace != with == in check_px_structure
+tx/src/px.rs:764:28: replace != with == in check_px_structure
+tx/src/px.rs:769:9: delete match arm (None, 0) in check_px_structure
+tx/src/px.rs:770:25: replace match guard k > 0 with false in check_px_structure
+tx/src/px.rs:770:27: replace > with == in check_px_structure
+tx/src/px.rs:770:27: replace > with < in check_px_structure
+tx/src/px.rs:772:26: replace != with == in check_px_structure
+tx/src/px.rs:772:49: replace != with == in check_px_structure
+tx/src/px.rs:778:27: replace > with < in check_px_structure
+tx/src/px.rs:782:8: delete ! in check_px_structure
+tx/src/px.rs:786:13: replace > with < in check_px_structure
+tx/src/px.rs:791:15: replace != with == in check_px_structure
+tx/src/px.rs:800:75: replace - with + in check_px_balance
+tx/src/px.rs:800:75: replace - with / in check_px_balance
+tx/src/px.rs:800:57: replace + with * in check_px_balance
+tx/src/px.rs:800:57: replace + with - in check_px_balance
+tx/src/px.rs:800:34: replace + with - in check_px_balance
+tx/src/px.rs:800:34: replace + with * in check_px_balance
+tx/src/px.rs:802:46: replace == with != in check_px_balance
+tx/src/px.rs:808:23: replace >= with < in check_px_balance
+tx/src/px.rs:815:43: replace - with + in check_px_balance
+tx/src/px.rs:834:5: replace budget_is_provable -> bool with true
+tx/src/px.rs:815:33: replace - with + in check_px_balance
+tx/src/px.rs:834:5: replace budget_is_provable -> bool with false
+tx/src/px.rs:834:22: replace << with >> in budget_is_provable
+tx/src/px.rs:846:9: replace && with || in budget_is_provable
+tx/src/px.rs:845:9: replace && with || in budget_is_provable
+tx/src/px.rs:844:14: replace <= with > in budget_is_provable
+tx/src/px.rs:845:19: replace <= with > in budget_is_provable
+tx/src/px.rs:848:65: replace <= with > in budget_is_provable
+tx/src/px.rs:857:5: replace check_deploy_structure -> Result<(), TxError> with Ok(())
+tx/src/px.rs:859:13: replace > with < in check_deploy_structure
+tx/src/px.rs:865:15: replace != with == in check_deploy_structure
+tx/src/px.rs:873:18: replace != with == in check_deploy_structure
+tx/src/px.rs:877:33: replace > with == in check_deploy_structure
+tx/src/px.rs:880:12: delete ! in check_deploy_structure
+tx/src/px.rs:890:12: delete ! in check_deploy_structure

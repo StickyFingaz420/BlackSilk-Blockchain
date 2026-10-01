@@ -1,0 +1,13 @@
+crypto/src/bulletproofs_plus.rs:257:26: replace || with && in prove_bits
+crypto/src/bulletproofs_plus.rs:397:68: replace || with && in challenges
+crypto/src/bulletproofs_plus.rs:260:31: replace + with * in prove_bits
+crypto/src/bulletproofs_plus.rs:397:47: replace || with && in challenges
+crypto/src/bulletproofs_plus.rs:397:26: replace || with && in challenges
+crypto/src/bulletproofs_plus.rs:453:35: replace + with * in Msm::add
+crypto/src/janus.rs:48:9: replace <impl Drop for Anchor>::drop with ()
+crypto/src/keys.rs:141:9: replace <impl Drop for ViewKeys>::drop with ()
+crypto/src/keys.rs:208:9: replace <impl Drop for WalletKeys>::drop with ()
+crypto/src/keys.rs:217:9: replace <impl Drop for WalletSeed>::drop with ()
+crypto/src/nonce.rs:102:9: replace <impl Drop for HedgedRng>::drop with ()
+crypto/src/point.rs:60:9: replace <impl Hash for Point>::hash with ()
+crypto/src/stealth.rs:42:9: replace <impl Drop for SharedSecret>::drop with ()

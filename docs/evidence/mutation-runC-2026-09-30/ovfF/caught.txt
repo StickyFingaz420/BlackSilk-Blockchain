@@ -1,0 +1,7 @@
+chain/src/manager/fork_choice.rs:253:52: replace != with == in ChainManager::fork_height
+chain/src/manager/fork_choice.rs:104:32: replace += with -= in ChainManager::mark_complete
+chain/src/manager/fork_choice.rs:323:44: replace > with == in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:323:44: replace > with >= in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:323:40: replace - with + in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:388:59: replace + with - in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:424:34: replace + with - in ChainManager::finish_sync

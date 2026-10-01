@@ -619,7 +619,9 @@ fn a_later_check_continues_from_the_wallets_own_checked_headers() {
     // A forged header after it is still refused.
     chain.mine(&to, 0);
     let tip = chain.height() as usize;
-    chain.blocks[tip].header.difficulty += 1;
+    // Any change forges it; `^= 1` and not `+= 1`, which overflows the
+    // fixture's maximal difficulty under overflow checks (run C).
+    chain.blocks[tip].header.difficulty ^= 1;
     assert!(w.sync(&chain).is_err());
 }
 

@@ -1,0 +1,16 @@
+crypto/src/bulletproofs_plus.rs:119:5: replace challenge_y -> Scalar with Default::default()
+crypto/src/bulletproofs_plus.rs:126:5: replace challenge_z -> Scalar with Default::default()
+crypto/src/bulletproofs_plus.rs:134:5: replace challenge_round -> Scalar with Default::default()
+crypto/src/bulletproofs_plus.rs:142:5: replace challenge_final -> Scalar with Default::default()
+crypto/src/bulletproofs_plus.rs:242:5: replace prove_bits -> Option<BppProof> with None
+crypto/src/bulletproofs_plus.rs:257:10: replace == with != in prove_bits
+crypto/src/bulletproofs_plus.rs:257:31: replace == with != in prove_bits
+crypto/src/bulletproofs_plus.rs:309:14: replace == with != in prove_bits
+crypto/src/bulletproofs_plus.rs:348:20: replace != with == in prove_bits
+crypto/src/bulletproofs_plus.rs:537:18: replace != with == in batch_verify
+crypto/src/clsag.rs:259:28: replace % with / in sign_with
+crypto/src/clsag.rs:259:23: replace + with * in sign_with
+crypto/src/hash.rs:248:9: replace Hasher64::finalize -> [u8; 64] with [0; 64]
+crypto/src/hash.rs:255:9: replace Hasher64::to_scalar -> Scalar with Default::default()
+crypto/src/nonce.rs:61:9: replace HedgedRng::next_block -> [u8; 64] with [0; 64]
+crypto/src/nonce.rs:75:18: replace != with == in HedgedRng::scalar

@@ -5,8 +5,8 @@ changes the tests notice; it does not show that the code is correct or secure.
 
 The gate (decisions "Agent 42" and "W4-MUT and RT-MUT"): zero unexplained missed
 mutants per completed file or function set. Every survivor is killed by a new test or
-explained in [mutation-exemptions.md](../../reviews/mutation-exemptions.md) (E17–E19
-and E19a–E19c; E8–E16 and E20 onwards are run C's, on branch `w4-mutc`). A boundary
+explained in [mutation-exemptions.md](../../reviews/mutation-exemptions.md) (E17–E22,
+and the later entries of § Follow-up; E8–E16 and E23–E28 are run C's). A boundary
 pass adds the mutants cargo-mutants never makes (`>=` → `>`, `<=` → `<`;
 § Boundary pass). Run D covers code merged after runs A–C,
 which no run had censused, in this order:
@@ -39,8 +39,8 @@ which no run had censused, in this order:
 | p2p/src/net/admission.rs (four functions) | 26 | 10 | 14 | 2 | 9 killed; 5 unobserved by any test (E19); release arithmetic: 1 more killed, 1 more E19 |
 | p2p W4-SYNC rules (state.rs, conn.rs, headers.rs, maintenance.rs) | 35 | 24 | 11 | 0 | 11 killed |
 | chain/src/manager/summary.rs (listeners, store, `Debug`) | 4 | 3 | 1 | 0 | 1 killed; 2 hand mutants of `tip_on_best_chain` caught |
-| consensus/src/pow.rs | 182 | 130 (+8 timeouts) | 4 | 40 | 3 killed; 1 unobservable (E19a); the 8 timeouts fail assertions in isolation; release arithmetic: 1 more killed, 1 equivalent (E19c) |
-| boundary pass (`>=` → `>`, `<=` → `<`) | 5 | 4 | 1 | 0 | 1 equivalent (E19b) |
+| consensus/src/pow.rs | 182 | 130 (+8 timeouts) | 4 | 40 | 3 killed; 1 unobservable (E20); the 8 timeouts fail assertions in isolation; release arithmetic: 1 more killed, 1 equivalent (E22) |
+| boundary pass (`>=` → `>`, `<=` → `<`) | 5 | 4 | 1 | 0 | 1 equivalent (E21, the same as run C's E27) |
 
 No run had a timeout but pow.rs (§ consensus/src/pow.rs).
 
@@ -72,10 +72,10 @@ No run had a timeout but pow.rs (§ consensus/src/pow.rs).
   with overflow checks and debug assertions off (§ Release arithmetic). Two admission
   and two pow.rs mutants survived there; one of each is now killed by a new test
   (an expiring-soon check above genesis; `evicted` with builds in flight), the
-  other two are E19 and E19c.
+  other two are E19 and E22.
 - **The boundary pass** (requested by the Lead after RT-MUTC) found no off-by-one at
   an inclusive bound: the decoder's one `<=` cap (`Reader::len`) and three of pow.rs's
-  four are caught; the fourth, `seed_height`'s first branch, is equivalent (E19b).
+  four are caught; the fourth, `seed_height`'s first branch, is equivalent (E21, the same as run C's E27).
 - **A flaky test, outside the scope (§ Flaky tests).**
   `relaying_headers_of_a_block_with_an_invalid_body_is_not_penalized` failed 1 time in
   3 alone on the unmutated tree, so it was left out of the oracle.
@@ -335,13 +335,13 @@ the census ran again on the whole file with the whole consensus suite, as `runPo
 | Mutant | Resolution |
 |---|---|
 | 161:28 `+=` → `-=`, `*=` in `held::acquire`; 170:27 `==` → `!=` in `held::release` (the debug-only handle count of the caller rule) | killed: `pow::tests::the_debug_handle_count_counts_each_handle` (two handles count 2, one released leaves 1); only the refusal at a count of 1 was tested |
-| 546:17 `Pending`'s `Drop` → `()` (the prebuild mark's guard) | unobservable: E19a (since `9bba1bd`, `fetch` clears the mark on every exit; the guard matters only when the OS refuses a thread) |
+| 546:17 `Pending`'s `Drop` → `()` (the prebuild mark's guard) | unobservable: E20 (since `9bba1bd`, `fetch` clears the mark on every exit; the guard matters only when the OS refuses a thread) |
 
 - **Timeouts.** The 8 are `check_hash` (12:5 ×2, 12:19, 20:20 ×2, 20:41, 20:50,
   22:11), as in run A: the chain unit tests' nonce searches never end under them. In
   isolation (`timeoutPow`) all 8 fail `check_hash_boundaries_golden` (3 also the
   header-chain golden tests) within 120 s.
-- **Re-run** (`rerunPow`): 3 caught, 1 missed (E19a).
+- **Re-run** (`rerunPow`): 3 caught, 1 missed (E20).
 
 ## Boundary pass
 
@@ -356,7 +356,7 @@ limits, ban scores, tests) are outside it.
 | Mutant | Oracle | Result |
 |---|---|---|
 | zk/src/bounds.rs 139:24 `n <= cap` → `<` (`Reader::len`, every capped vector) | zk lib, `decode_bounds`, `rt_pxdos_differential` | caught: `at_the_caps_nothing_is_refused_by_the_bounds`, `every_cap_refuses_one_more` and 6 more |
-| consensus/src/pow.rs 28:15 `height <= epoch + lag` → `<` (`seed_height`) | the consensus suite | missed: equivalent, E19b (both branches give 0 at `E + L`) |
+| consensus/src/pow.rs 28:15 `height <= epoch + lag` → `<` (`seed_height`) | the consensus suite | missed: equivalent, E21 (= run C's E27) (both branches give 0 at `E + L`) |
 | pow.rs 291:27 `side.len() <= side_cap` → `<` (`trim`) | the consensus suite | caught (4 pow tests) |
 | pow.rs 417:51 `alive + 1 + reserve <= MAX_CACHES` → `<` | the consensus suite | caught (4 pow tests) |
 | pow.rs 418:58 `evicted(alive) <= 1` → `<` | the consensus suite | caught (2 pow tests) |
@@ -389,7 +389,7 @@ mutant's log was searched for `with overflow` and abnormal exits:
     caches. A new assertion in `a_side_build_leaves_room_for_the_missing_hot_keys`
     (two kept, two in flight: no evicted cache) kills it (`ovfPow2`: 1 of 1, "left:
     4").
-  - 536:29 `prebuild_seq += 1` → `-=` survived: the numbers stay distinct (E19c).
+  - 536:29 `prebuild_seq += 1` → `-=` survived: the numbers stay distinct (E22).
 
 ## Flaky tests
 
@@ -446,7 +446,7 @@ On branch `w4-mutd` (base `11cb583`), tests and evidence only:
 - `10796be` px tests: the real transfer proof's trace widths (px/tests/proof.rs, PX-proving;
   § Proving test)
 - `0338732` tx tests: arrays, not vectors, for the hollow proofs' degree bits (clippy)
-- this evidence and E17–E19, E19a–E19c in docs/reviews/mutation-exemptions.md
+- this evidence and E17–E22 in docs/reviews/mutation-exemptions.md
 
 ## Proving test
 

@@ -922,3 +922,89 @@
   - A delay raises stale rates, which favours large miners, for about zero anonymity gain. Monero and Bitcoin both relay blocks immediately.
   - docs/p2p.md §1 now lists block origin as NOT protected; miners who want origin privacy run the mining node proxy-only or over Tor.
   - To be revisited if header-first relay shrinks the per-hop cost.
+
+## Run C and RT-MUTC (Lead, 2026-10-01)
+- **Run C: ACCEPTED WITH FIXES.**
+  - No consensus-rule bug found.
+  - RT confirmed the proof cache:
+    - the id commits to the proof;
+    - the pool flushes on a rule change;
+    - readmit drops entries from foreign rules;
+    - 10 targeted mutants of that invariant: 9 caught, 1 unviable.
+  - RT confirmed all 5 proving-only kills and exemptions E8–E12 and E14.
+  - E16 was REFUTED; its mutant is now killed by a test.
+  - The README counts are being corrected.
+- **New gap closed: PX digest canonicality.** `read_digest`'s `>= P` check had no test.
+  - It is defense in depth: without it, non-canonical words reach ids and conflict keys, and `HostPerm` asserts.
+  - It is now tested.
+- **Method gap, binding from now on:** cargo-mutants 27.1 never generates `>=`→`>` or `<=`→`<`.
+  - Every mutation run now includes a scripted inclusive-bound pass: run C's scope, runs A/B (re-checked), and run D (especially zk/src/bounds.rs).
+  - RT found 2 survivors this way: px.rs:141, and fork_choice.rs:66, the low-work margin, which now has a test.
+  - Exemption numbering: run D uses E17–E19; run C's new entries start at E20.
+- **Latent risk (P1 test now; design if ever needed):** `recent_rejects` is keyed by id and `FeeNotExact` is classed stateless.
+  - A future change to the fee rate would permanently blacklist valid transactions.
+  - A guard test fails if the epoch fee rules diverge while the class stays stateless.
+- **Liveness hardening (P1, a separate agent with its own red-team pass):**
+  - a progress assertion in `sync_state`'s outer loop;
+  - a structural bound on the `fork_height` loop;
+  - bounded signing loops;
+  - non-zero `batch_verify` weights.
+- **P0 still open: the golden PX proof fixture.** It would make 4 proving-only oracles cheap, and the freeze needs it anyway.
+- **E15 (zeroize):** accepted as untestable for now. A P2 design: a single `Secret<T: Zeroize>` wrapper with a test-only wipe counter. It must not depend on zeroize_derive without approval.
+- **Run E (before the freeze), consensus-critical code in no run yet:**
+  - tx/src/types.rs, codec.rs and state.rs;
+  - px/src/prove.rs, state.rs and tree.rs;
+  - chain submission.rs and header_sync.rs;
+  - the P2P admission classifier;
+  - the wallet-side checks.
+
+## Run D and stateful harnesses (Lead, 2026-10-01)
+- **Run D (W4-MUTD):** no consensus or bound bug found. Every pre-scan cap held at its boundary.
+  - Every survivor was killed or exempted.
+  - PX5's shape step now has non-proving oracles, using a "hollow proof".
+  - The W4-SYNC rules and the admission path are pinned.
+  - RT-MUTD runs before the merge.
+- **Exemption numbering (final):**
+  - run D: E17–E22, renumbered from E17, E18, E19, E19a, E19b, E19c at merge;
+  - run C's new entries: E23 onward.
+- **E19 is an oracle limit, not an equivalence:** which thread decodes the PX proof in admission is not observable.
+  - It is accepted for now.
+  - A decode-in-actor counter for test hooks is P2 (it would be a product change).
+- **INV-PEN (P0, possible honest-peer ban):** `relaying_headers_of_a_block_with_an_invalid_body_is_not_penalized` fails 1 in 3 alone on unmodified trees.
+  - A root cause is required; a retry or a looser assertion is not acceptable.
+  - The ping-during-header-verification timeout is investigated with it.
+- **W4-STATEFUL:** three stateful harnesses (peer_protocol, px_admission, scan_outputs) plus the wallet header-feed twin.
+  - No product bug found.
+  - Each of the 8 injected bugs was caught.
+  - The seam is `new_inner` plus the p2p `test-hooks` feature.
+  - RT-STATEFUL is checking:
+    - that the extraction preserves behaviour;
+    - that the release node binary built with plain `cargo build` carries no hook code;
+    - the strength of the oracles.
+- **Binding:** evidence and genesis node binaries are built with plain `cargo build --release -p blacksilk-node` from a clean commit, never by a `cargo test` invocation, which unifies dev-dependency features such as test-hooks.
+
+## RT-STATEFUL (Lead, 2026-10-01)
+- **The seam is behaviour-preserving (CONFIRMED).** The `new_inner` extraction is identical code at the same point, and the p2p hooks are dead code in a node.
+- **P0, W4-GUARD: a hooked binary can reach evidence or genesis.**
+  - `cargo test --release` writes a node with chain, tx, px and p2p test-hooks enabled to target/release, the same path a plain release build uses.
+  - The chain hooks are not inert: an undrained LogEntry Vec grows memory without bound.
+  - The guard:
+    - each hooked crate exposes a TEST_HOOKS marker;
+    - the node prints the marker and refuses any network other than regtest when hooked; the genesis tool refuses unconditionally;
+    - build.rs refuses CARGO_CFG_FUZZING;
+    - CI checks the dependency tree, `--version` and the binary of a plain release build;
+    - labnet and the evidence scripts assert the marker is absent;
+    - an audit of the W4 labnet evidence hashes, rebuilt from their recorded commits.
+  - The W4 labnet binaries' target dir was deleted in the 2026-10-01 cleanup, so their hooks can only be checked by rebuilding them.
+  - The other evidence binaries still on disk (w4-rx, bin-83fceee) contain no hook marker.
+- **Stateful harness follow-ups, before merge (queued for the W4-STATEFUL agent):**
+  - adopt rt-stateful 8260a9f (a spec-constant frame limit; the coinbase, height and tx-hash scan oracles);
+  - remove the remaining product imports from the oracles: a spec table of known types and protocol versions, and an independent list of stateless rules;
+  - PX seeds for the scan twin;
+  - a post-Verack scoring oracle, a spec table of message → expected score (P5 was missed);
+  - explain the one-input counter difference in the px_admission twin (print a digest of the verdicts and diff two runs).
+- **P1 design: a verifier-only grinding switch for deeper ZK fuzzing.**
+  - It must absorb the witness and sample identically, so the transcript is unchanged, and return true.
+  - Only under `cfg(all(fuzzing, feature = "zk-fuzz-no-grind"))`.
+  - Guarded by the CARGO_CFG_FUZZING build refusal and a `GRINDING_ENFORCED` const asserted at node and genesis start.
+  - It needs its own red-team pass before it lands.

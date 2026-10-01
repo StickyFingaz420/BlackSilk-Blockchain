@@ -1,0 +1,2 @@
+crypto/src/bulletproofs_plus.rs:156:5: replace any_zero -> bool with true
+crypto/src/bulletproofs_plus.rs:156:39: replace == with != in any_zero

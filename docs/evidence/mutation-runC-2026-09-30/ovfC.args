@@ -1,0 +1,4 @@
+--re=^tx[/]src[/]validate[.]rs[:]1308[:]25[:] replace [+][=] with \-[=] in validate[_]block[_]transactions[_]cached$
+--re=^tx[/]src[/]px[.]rs[:]126[:]24[:] replace [+] with \- in digest[_]bytes$
+--re=^tx[/]src[/]px[.]rs[:]249[:]29[:] replace [+] with \- in read[_]bytes$
+--re=^tx[/]src[/]px[.]rs[:]661[:]58[:] replace [+] with \- in PxDeploy[:][:]contract[_]id$

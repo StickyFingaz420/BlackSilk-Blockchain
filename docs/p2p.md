@@ -430,7 +430,11 @@ is a violation (100 points). The only exception is `Version`'s extension area (Â
    - **At most one batch per peer** is queued or being verified. The peer is not asked
      for more headers meanwhile; headers arriving from it in that time are dropped,
      and the node asks again once the batch is done (whatever its outcome, unless the
-     peer was penalized).
+     peer was penalized). A dropped header is neither verified nor scored, so whether
+     a rule-breaking announcement is penalized at once depends on whether the
+     sender's batch is still in flight; what the peer sends in answer to the new
+     request is verified and scored as usual (test
+     `a_header_announced_during_a_batch_is_asked_for_again_and_scored`).
    - **Bounded queue.** At most `max_per_ip` batches per sender IP (onion peers: per
      address; not enforced in `allow_private` mode, like the connection limit) and
      `2 Ã— (max_inbound + max_outbound)` in total are queued. When full, the headers

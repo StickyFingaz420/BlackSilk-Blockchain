@@ -1,0 +1,10 @@
+tx/src/px.rs:770:25: replace match guard k > 0 with true in check_px_structure
+tx/src/px.rs:770:27: replace > with >= in check_px_structure
+tx/src/validate.rs:445:13: replace > with == in check_shape
+tx/src/validate.rs:445:13: replace > with >= in check_shape
+tx/src/validate.rs:677:5: replace px_calls -> Result<Vec<blacksilk_px::prove::FunctionCall>, TxError> with Ok(vec![])
+tx/src/validate.rs:701:5: replace check_px_proof_shape -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:720:5: replace check_px_proof_decoded -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:747:5: replace hex_id -> String with String::new()
+tx/src/validate.rs:747:5: replace hex_id -> String with "xyzzy".into()
+tx/src/validate.rs:1308:25: replace += with *= in validate_block_transactions_cached
