@@ -1150,3 +1150,59 @@ fn budgets_leave_headroom() {
     }
     assert!(errors.is_empty(), "{errors:#?}");
 }
+
+/// A function that writes its prefix and no outputs proves and verifies
+/// (mutation run E: the length check after proving is `< PREFIX_WORDS`, so
+/// an output of exactly the prefix is a function's whole, valid output).
+/// The function is a test program that writes the kernel's prefix for the
+/// LOCK of [`locked`]'s witness; its budget is its own usage.
+#[test]
+fn a_function_writing_only_its_prefix_proves_and_verifies() {
+    use blacksilk_px_core::call::function_prefix;
+    use blacksilk_zkvm::asm::{reg::T0, Asm};
+    let mut rng = ChaCha20Rng::seed_from_u64(32);
+    let secret = wallet::random_digest(&mut rng);
+    let blind = wallet::random_digest(&mut rng);
+    let (_, fw) = lock_call(500, &terms_of(&secret), 0, blind);
+    let w = with_functions(
+        wallet::witness(
+            State::new().root(),
+            500,
+            0,
+            [wallet::dummy_input(&mut rng), wallet::dummy_input(&mut rng)],
+            [
+                wallet::contract_output(&mut rng, C, 500, data_of(&secret)),
+                wallet::empty_output(&mut rng),
+            ],
+        ),
+        &[fw],
+    );
+    let public = native(&w).expect("LOCK is valid");
+    let (contract, io_hash) = public.functions[0];
+    let prefix = function_prefix(ABI_VERSION, &io_hash, &contract, &W);
+    let mut a = Asm::new(0x1_0000);
+    for &x in &prefix {
+        a.li(T0, x).write_reg(T0);
+    }
+    a.halt(0);
+    let program = Arc::new(a.finish().expect("assembles"));
+    let exec = run(&program, &[], MAX_CYCLES).unwrap();
+    assert_eq!(exec.output.len(), PREFIX_WORDS);
+    let budget = trace::usage(&program, &exec);
+    let (p, calls, proof) = prove::prove(
+        &w,
+        &[(program.clone(), vec![], budget)],
+        &W,
+        [8; 32],
+        &mut rng,
+    )
+    .expect("a prefix-only function proves");
+    assert_eq!(p, public);
+    assert!(calls[0].outputs.is_empty());
+    let id = program.id();
+    let reg = |c: &Digest, p: &[u8; 32]| (*c == C && *p == id).then_some(budget);
+    assert_eq!(
+        prove::verify(&public, &calls, &W, [8; 32], &proof, reg),
+        Ok(())
+    );
+}
