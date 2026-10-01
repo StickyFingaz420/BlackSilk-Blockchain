@@ -1,4 +1,4 @@
-# Mutation run C: transaction rules, fork choice, crypto (Wave 4 freeze gate)
+# Mutation run C: transaction rules, fork choice, crypto, blocks (Wave 4 freeze gate)
 
 Internal engineering evidence, not an audit. A mutation census shows which code
 changes the tests notice; it does not show that the code is correct or secure.
@@ -21,9 +21,12 @@ chain/src/emission.rs. What this run completed and what remains is in § Scope s
 | crypto/src/clsag.rs | 97 | 51 (+2 timeouts) | 0 | 44 | nothing to resolve; the 2 timeouts fail assertions |
 | crypto/src/bulletproofs_plus.rs | 314 | 218 (+10 timeouts) | 6 | 80 | 4 computationally unreachable (E13), 2 equivalent (E14); the 10 timeouts: 9 fail assertions, 1 genuine hang |
 | crypto/ (the 12 other files) | 273 | 171 (+7 timeouts) | 20 | 75 | 13 killed by new unit tests, 6 unobservable in safe Rust (E15), 1 equivalent (E16); the 7 timeouts: 5 fail assertions, 2 genuine hangs |
+| chain/src/block.rs | 18 | 11 | 5 | 2 | 5 killed |
+| chain/src/emission.rs | 19 | 19 | 0 | 0 | nothing to resolve |
 
-- **No survivor revealed a bug in a transaction rule.** Every rule the survivors
-  pointed at is implemented as specified; only its test was missing.
+- **No survivor revealed a bug in a consensus rule.** Every rule the survivors
+  pointed at is implemented as specified; only its test was missing (or, for 34
+  mutants, no test can observe the change: E8–E16).
 - **The rules that had no test at their boundary, now tested** (tx/tests/
   mutation_regressions.rs unless noted):
   - T3's upper bounds (64 inputs; PX: 64 inputs, 16 hidden outputs, outputs only
@@ -68,8 +71,9 @@ chain/src/emission.rs. What this run completed and what remains is in § Scope s
     PX proofs; § Proving tests).
   - `set_step_delay_for_tests` (a test hook) is checked by `actor_order`.
 - **The coinbase reward check** (`block_reward(h, generated)` at 362 and
-  `generated + reward` at 388) was already fully caught: `+` → `-` and `*` at
-  388:59 fail `emission_is_enforced_exactly` and the reference model.
+  `generated + reward` at 388) was already fully caught: `+` → `*` at 388:59 fails
+  the fork_choice tests, `+` → `-` an overflow check, and under release arithmetic
+  `emission_is_enforced_exactly` (§ Release arithmetic).
 - **crypto/: CLSAG had no survivor.** Bulletproofs+'s 6 survivors are its
   zero-challenge guards (unreachable without a hash preimage) and an unused tail of
   the `y` powers. In the other files, new unit tests: an anchor's `Debug` never
@@ -78,6 +82,10 @@ chain/src/emission.rs. What this run completed and what remains is in § Scope s
   membership verifier refuses a signature with a spare response and one made over
   a ring with an identity member (both valid by the ring equations);
   `MemberSig::encoded_len`; `SubaddressTable::is_empty`.
+- **chain/src/block.rs:** the block size bound `MAX_BLOCK_BYTES` was tested only
+  symbolically (now pinned to 9 454 144 bytes, docs/px.md §11.5), and
+  `Block::weight` had no test (it has no caller in the workspace). emission.rs had
+  no survivor.
 - **Equivalent, diagnostic or unobservable (exempt):** 34 mutants, E8–E16. E15 (6
   zeroize-on-drop mutants) is a limit of the oracle, not an equivalence.
 
@@ -94,6 +102,9 @@ chain/src/emission.rs. What this run completed and what remains is in § Scope s
     tx/tests/mutation_regressions.rs was not in `runV`'s or `runP`'s test set.
   - `runF` (fork_choice.rs) ran on the tree of commit `ee16b9f` (the tx tests;
     uncommitted when it started), without the new chain tests.
+  - `runK` and `runK2` (crypto/) ran on the tree of `3187986`, before the new
+    crypto tests; `runB` (block.rs, emission.rs) on the tree of `565d440`, before
+    the new block_rules tests.
   - The re-runs ran on the final test code.
 - **Profile:** `[profile.mutants]` of the root Cargo.toml (overflow checks and debug
   assertions on; see § Release arithmetic).
@@ -121,6 +132,9 @@ chain/src/emission.rs. What this run completed and what remains is in § Scope s
   29 s build + 4 s of tests; timeout 300 s. The mutated crate builds at opt-level 3
   (`[profile.mutants.package.blacksilk-crypto]`). The tx and chain tests, which
   also exercise these primitives, were not used.
+- **Chain tests for block.rs and emission.rs** (`chaintestsB.args`): the lib unit
+  tests and golden, block_malleability, block_rules, manager, fork_choice,
+  store_format, storage_recovery (`--skip restart_rebuilds_the_px_state_exactly`).
 - **Chain tests for fork_choice.rs** (`chaintests.args`): the lib unit tests and
   activation, actor_equivalence, block_rules, fork_choice, golden, manager,
   mempool_conflicts, mempool_expiry, operator_invalidation, reference_model,
@@ -208,6 +222,13 @@ RUSTFLAGS="-C overflow-checks=off -C debug-assertions=off" cargo mutants \
   -p blacksilk-crypto -f crypto/src/clsag.rs -f crypto/src/bulletproofs_plus.rs \
   --profile mutants --jobs 2 --timeout 300 --build-timeout 3600 --cap-lints true \
   -o <out> <ovfK.args>
+# runB: block.rs and emission.rs ($B: chaintestsB.args)
+cargo mutants -p blacksilk-chain -f chain/src/block.rs -f chain/src/emission.rs \
+  --profile mutants --jobs 2 --timeout-multiplier 4 --minimum-test-timeout 300 \
+  --build-timeout 2400 --cap-lints true -o <out> $B $S
+# rerunB: runB's 5 survivors, with the new block_rules tests
+cargo mutants -p blacksilk-chain -f chain/src/block.rs --profile mutants --jobs 2 \
+  --timeout 1739 --build-timeout 2400 --cap-lints true -o <out> <rerunB.args> $B $S
 # timeoutK, timeoutK2: the 19 crypto timeouts, with the tests that hung skipped
 # (timeoutK.skips; timeoutK2: whole test modules), 120 s (§ Timeouts)
 # rerunK: the 26 survivors, with the new unit tests (baseline run)
@@ -246,6 +267,8 @@ returns exactly its mutants (checked for `rerunC.args`: 51 of 51).
 | timeoutK (2026-10-01) | 23:45 | 00:05 | 19 |
 | timeoutK2 | 00:06 | 00:24 | 16 |
 | rerunK | 00:24 | 00:30 | 26 |
+| runB | 00:30 | 00:58 | 37 |
+| rerunB | 01:02 | 01:10 | 5 |
 
 **Outputs:** each subdirectory holds the tool's `caught.txt`, `missed.txt`,
 `timeout.txt` and `unviable.txt` for that run.
@@ -333,6 +356,16 @@ caught; `hookF` 1 caught.
 
 Re-run: `rerunK` 13 caught, 13 missed = E13 (4), E14 (2), E15 (6), E16 (1).
 
+### chain/src/block.rs (runB: 5 missed)
+
+| Mutant | Resolution |
+|---|---|
+| 11:67 `+` → `-`; 11:72 `*` → `+`, `/` (`MAX_BLOCK_BYTES`) | killed: `decode_rejects_more_than_max_block_bytes` (block_rules.rs, the value pinned) |
+| 84:9 `Block::weight` → 0, 1 | killed: `a_blocks_weight_is_the_sum_of_its_transactions` (block_rules.rs) |
+
+Re-run: `rerunB` 5 caught. No runB kill rests on an overflow panic (no overflow in
+its logs).
+
 ## Timeouts
 
 `rerunC` timed out on 3 px.rs mutants (311:9 `prunable_bytes` → `vec![0]`, 327:9
@@ -385,8 +418,9 @@ assertions:
 The census builds with overflow checks and debug assertions on, so a mutant can be
 caught by an overflow panic that a release build would not have. Every caught
 mutant's log was searched for overflow panics (`with overflow`, `attempt to negate`)
-and debug assertions: 4 tx mutants and 8 fork_choice mutants had failures that were
-all overflow panics in the first failing test binary (`ovfC.args`, `ovfF.args`). They
+and debug assertions: 4 tx, 8 fork_choice and 8 crypto mutants had failures that
+were all overflow panics in the first failing test binary (`ovfC.args`, `ovfF.args`,
+`ovfK.args`; runB had none). They
 were re-run with both switched off (`RUSTFLAGS="-C overflow-checks=off -C
 debug-assertions=off"`; the rustc command lines in the logs carry both flags):
 
@@ -418,10 +452,12 @@ No mutant of this run survives release arithmetic.
   4 mutants; the chain, node and wallet tests, which exercise the same rules, were
   not used. For fork_choice.rs, 15 of the chain crate's test targets (§ Oracles),
   plus actor_order for one test hook and the new ignored proving test for one
-  mutant.
-- **Timeouts as kills.** 5 fork_choice mutants (and 1 in release arithmetic) are
-  caught only because the manager then loops forever. A hang is a weaker oracle
-  than an assertion.
+  mutant. For crypto/, the crate's own tests only. For block.rs and emission.rs, 8
+  chain test targets.
+- **Timeouts as kills.** 5 fork_choice and 3 crypto mutants (and 1 fork_choice
+  mutant in release arithmetic) are caught only because the code then loops
+  forever. A hang is a weaker oracle than an assertion.
+- **Zeroization (E15)** is not checked by any test: safe Rust cannot observe it.
 - **Proof verification itself** (Plonky3, the zkVM AIR) is outside this census: a
   PX5 mutant is killed when a real, tampered or misplaced proof changes a verdict.
 - **Synthetic transactions.** Most new tests build transactions field by field
@@ -429,9 +465,9 @@ No mutant of this run survives release arithmetic.
   tx/tests/revalidate_after_extension.rs does. Two use a chain view that answers
   differently from any consistent chain (every anchor recent, a set pool, a
   registered contract id alone), stated in each test.
-- **Unviable mutants** (12, 15 and 17; none in fork_choice.rs) do not compile,
-  mostly `Default::default()` for types without `Default`, or constants that break
-  a `const` assertion.
+- **Unviable mutants** (tx 12, 15, 17; fork_choice none; crypto 44, 80, 75; block
+  2) do not compile, mostly `Default::default()` for types without `Default`, or
+  constants that break a `const` assertion.
 
 ## Proving tests
 
@@ -451,7 +487,8 @@ No mutant of this run survives release arithmetic.
 ## Scope status
 
 - **Done:** tx/src/validate.rs, tx/src/px.rs, tx/src/params.rs,
-  chain/src/manager/fork_choice.rs, crypto/ (all 14 files) (items 1 to 5).
+  chain/src/manager/fork_choice.rs, crypto/ (all 14 files), chain/src/block.rs,
+  chain/src/emission.rs: every item of the run's scope.
 - **W4-PXDOS's decode bounds** (`decode_px_proof` with `PROOF_LIMITS`) are on the
   unmerged branch `w4-pxdos`, not on this run's base `6a2b3b7`: their mutants were
   not censused and need a run after that merge.

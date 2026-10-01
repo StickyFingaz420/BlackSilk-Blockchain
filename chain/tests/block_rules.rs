@@ -489,6 +489,23 @@ fn decode_rejects_more_than_max_block_bytes() {
     );
     bytes.push(0);
     assert_eq!(Block::decode(&bytes), Err(BlockDecodeError::TooLarge));
+    // The bound itself (docs/px.md §11.5, docs/blocks.md): the v1 part, the
+    // 8 MiB PX budget and 64 KiB of framing. A changed constant would move
+    // the boundary above with it (run C mutation census).
+    assert_eq!(MAX_BLOCK_BYTES, 1_000_000 + 8 * 1024 * 1024 + 64 * 1024);
+    assert_eq!(MAX_BLOCK_BYTES, 9_454_144);
+}
+
+/// A block's weight is the sum of its transactions' weights (B6 is checked on
+/// that sum, `validate_block_transactions`).
+#[test]
+fn a_blocks_weight_is_the_sum_of_its_transactions() {
+    let mut env = Env::new();
+    let cb = env.honest_coinbase();
+    let b = env.block(vec![cb.clone(), cb]);
+    let sum: u128 = b.txs.iter().map(|t| t.weight() as u128).sum();
+    assert!(sum > 1);
+    assert_eq!(b.weight(), sum);
 }
 
 #[test]
