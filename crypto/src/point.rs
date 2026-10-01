@@ -180,4 +180,25 @@ mod tests {
         }
         assert!(invalid > 128, "{invalid}");
     }
+
+    /// `Hash` agrees with the canonical encoding (as `Eq` does): a point
+    /// hashes exactly as its 32 bytes, so distinct points spread over a map's
+    /// buckets. The key-image sets of block validation and the pool's
+    /// conflict index rely on it for their cost (RT-MUTC on exemption E16:
+    /// a constant hash keeps every answer but makes each lookup linear).
+    #[test]
+    fn a_point_hashes_as_its_encoding() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        fn digest<T: Hash + ?Sized>(x: &T) -> u64 {
+            let mut s = DefaultHasher::new();
+            x.hash(&mut s);
+            s.finish()
+        }
+        let a = Point::from_point(RISTRETTO_BASEPOINT_POINT * Scalar::from(3u64));
+        let b = Point::from_point(RISTRETTO_BASEPOINT_POINT * Scalar::from(4u64));
+        assert_eq!(digest(&a), digest(a.bytes()));
+        assert_eq!(digest(&b), digest(b.bytes()));
+        assert_ne!(digest(&a), digest(&b));
+    }
 }
