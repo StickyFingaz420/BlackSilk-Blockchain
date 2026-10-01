@@ -568,4 +568,110 @@ mod tests {
         // A vector header and a tag: no proof inline.
         assert!(std::mem::size_of::<Option<PxPre>>() <= 32);
     }
+
+    /// A network over a fresh regtest chain, listening nowhere (the caches'
+    /// tests need only its state).
+    async fn idle_network() -> crate::Network {
+        struct ZeroPow;
+        impl blacksilk_consensus::PowFunction for ZeroPow {
+            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+                [0; 32]
+            }
+        }
+        let p = blacksilk_consensus::ChainParams::regtest();
+        let m = ChainManager::open(
+            p.clone(),
+            blacksilk_tx::params::TxRules::for_chain(&p),
+            Arc::new(ZeroPow),
+            Box::<blacksilk_chain::store::MemoryStore>::default(),
+            [1; 32],
+        )
+        .unwrap();
+        let cfg = crate::NetConfig::new(p.network_id);
+        crate::Network::start(cfg, Arc::new(std::sync::Mutex::new(m)))
+            .await
+            .unwrap()
+    }
+
+    /// Both reject caches hold 10,000 ids (`RECENT_REJECTS`, docs/p2p.md), written out so
+    /// that a change of the constant is noticed (RT-MUTD).
+    const CAPACITY: u32 = 10_000;
+
+    fn id(i: u32) -> Hash {
+        let mut h = [0; 32];
+        h[..4].copy_from_slice(&i.to_le_bytes());
+        h
+    }
+
+    /// The proven-invalid cache keeps exactly the last `RECENT_REJECTS` ids:
+    /// the oldest goes when one more arrives, the second oldest stays
+    /// (mutation run D: the boundary `>` against `>=` and `==` was untested).
+    /// An id already cached is not added twice.
+    #[tokio::test]
+    async fn the_proven_invalid_cache_keeps_exactly_its_capacity() {
+        let net = idle_network().await;
+        let mut st = net.inner.state();
+        let n = CAPACITY;
+        for i in 0..n {
+            Inner::reject_cache(&mut st, id(i));
+        }
+        Inner::reject_cache(&mut st, id(5));
+        assert_eq!(st.recent_rejects.len(), 10_000, "no duplicate");
+        assert!(st.recent_rejects_set.contains(&id(0)));
+        Inner::reject_cache(&mut st, id(n));
+        assert_eq!(st.recent_rejects.len(), 10_000);
+        assert_eq!(st.recent_rejects_set.len(), 10_000);
+        assert!(!st.recent_rejects_set.contains(&id(0)), "the oldest went");
+        assert!(
+            st.recent_rejects_set.contains(&id(1)),
+            "the second oldest stays"
+        );
+        assert!(st.recent_rejects_set.contains(&id(n)));
+    }
+
+    /// The node's node-wide PX relay bucket (net.rs) has a burst of exactly
+    /// 10 tokens and a rate of exactly 2 per second, on a controlled clock
+    /// (RT-MUTD: the network test can bound them only by wall time).
+    #[tokio::test]
+    async fn the_node_wide_px_bucket_has_burst_10_and_rate_2() {
+        let net = idle_network().await;
+        let mut st = net.inner.state();
+        let t0 = Instant::now() + std::time::Duration::from_secs(3600);
+        let at = |ms: u64| t0 + std::time::Duration::from_millis(ms);
+        let taken = (0..11).filter(|_| st.px_global.take(1.0, t0)).count();
+        assert_eq!(taken, 10, "the burst");
+        assert!(!st.px_global.take(1.0, at(250)), "0.5 tokens after 250 ms");
+        // 2.0 tokens after 1 s: two, not a third.
+        assert!(st.px_global.take(1.0, at(1000)));
+        assert!(st.px_global.take(1.0, at(1000)));
+        assert!(!st.px_global.take(1.0, at(1000)));
+        // A long idle period refills to the burst, no further.
+        let taken = (0..11)
+            .filter(|_| st.px_global.take(1.0, at(60_000)))
+            .count();
+        assert_eq!(taken, 10);
+    }
+
+    /// The contextual-reject cache holds every id rejected at one tip, up to
+    /// `RECENT_REJECTS`; the next one at that tip starts it afresh, as does a
+    /// new tip (mutation run D: `>=` against `>` and `<` was untested).
+    #[tokio::test]
+    async fn the_contextual_reject_cache_is_per_tip_and_bounded() {
+        let net = idle_network().await;
+        let mut st = net.inner.state();
+        let tip = [7; 32];
+        let n = CAPACITY;
+        for i in 0..n {
+            ctx_reject(&mut st, id(i), tip);
+        }
+        assert_eq!(st.ctx_rejects.len(), 10_000);
+        assert!(ctx_rejected(&st, &id(0), &tip) && ctx_rejected(&st, &id(n - 1), &tip));
+        assert!(!ctx_rejected(&st, &id(0), &[8; 32]), "another tip");
+        ctx_reject(&mut st, id(n), tip);
+        assert_eq!(st.ctx_rejects.len(), 1, "full: started afresh");
+        assert!(ctx_rejected(&st, &id(n), &tip) && !ctx_rejected(&st, &id(0), &tip));
+        ctx_reject(&mut st, id(1), [8; 32]);
+        assert_eq!(st.ctx_rejects.len(), 1, "a new tip: started afresh");
+        assert!(ctx_rejected(&st, &id(1), &[8; 32]) && !ctx_rejected(&st, &id(n), &tip));
+    }
 }

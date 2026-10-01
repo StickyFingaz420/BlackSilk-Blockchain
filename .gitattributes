@@ -10,3 +10,8 @@ Dockerfile text eol=lf
 
 # Block stores kept as evidence (docs/evidence/labnet-w4-2026-09-30): binary.
 docs/evidence/labnet-w4-*/runs/*/*.dat binary
+
+# Mutation evidence (docs/evidence/mutation-*): the filter (*.args) and test
+# lists (*.tests) feed scripts that read one name per line; a checkout with
+# CRLF endings made the names end in CR (RT-MUTD). Always LF.
+docs/evidence/mutation-*/** text eol=lf

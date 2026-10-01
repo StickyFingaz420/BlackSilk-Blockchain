@@ -3319,8 +3319,9 @@ fn px_with_proof(
 /// A decodable proof of the right shape passes admission's cheap stage
 /// (decoded off the actor, its degree bits shape-checked in the command):
 /// it takes a node-wide PX token and is verified, where it fails. Past the
-/// node-wide burst (10) further ones are dropped unverified and counted
-/// (mutation run D: before, only proving tests reached the token).
+/// node-wide burst (10) and its refill since the first send, further ones
+/// are dropped unverified and counted (mutation run D: before, only proving
+/// tests reached the token).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_px_transaction_past_the_cheap_stage_takes_a_node_wide_token() {
     let mut a = node(99, &[]).await;
@@ -3348,6 +3349,10 @@ async fn a_px_transaction_past_the_cheap_stage_takes_a_node_wide_token() {
         );
     }
     let nid = params().network_id;
+    // The node-wide bucket holds at most its burst (10) now; it refills
+    // at 2 per second from here on (its exact burst and rate:
+    // admission.rs `the_node_wide_px_bucket_has_burst_10_and_rate_2`).
+    let first_send = std::time::Instant::now();
     let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
     send_and_sync(&mut r, &mut w, &[Message::StemTx(tx.encode()).encode()], 1).await;
     let st = a.net.stats();
@@ -3374,10 +3379,83 @@ async fn a_px_transaction_past_the_cheap_stage_takes_a_node_wide_token() {
     let st = a.net.stats();
     assert_eq!(st.px_global_taken + st.px_global_drops, 25);
     assert!(st.px_global_taken >= 10, "{st:?}");
-    assert!(st.px_global_drops >= 1, "past the burst: {st:?}");
+    // At most the burst plus the refill since the first send were taken;
+    // the rest were dropped. Within about 7.5 s that leaves at least one
+    // drop; on a slower run the bound alone is checked (RT-MUTD).
+    let refill = (2.0 * first_send.elapsed().as_secs_f64()).ceil() as u64;
+    assert!(st.px_global_taken <= 10 + refill, "{st:?}, refill {refill}");
+    assert!(
+        st.px_global_drops >= 25u64.saturating_sub(10 + refill),
+        "{st:?}"
+    );
     assert_eq!(
         st.tx_verifications, st.px_global_taken,
         "the dropped are not verified"
+    );
+}
+
+/// A peer that relays a transaction which passes verification is marked as
+/// a recent transaction relayer (`PeerInfo::last_tx`, which inbound eviction
+/// protects, docs/p2p.md §9); one whose transaction fails is not (mutation
+/// run D, RT-MUTD: `note_new_tx` had no test).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_peer_relaying_a_valid_transaction_is_marked_as_a_recent_relayer() {
+    let mut a = node(102, &[]).await;
+    a.mine_n(80, 0);
+    let tx = a.payment();
+    let answered = a.payment_nth(1);
+    let nid = params().network_id;
+    let (mut r1, mut w1) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(
+        &mut r1,
+        &mut w1,
+        &[Message::StemTx(junk_anchor_px(0).encode()).encode()],
+        1,
+    )
+    .await;
+    let (mut r2, mut w2) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(
+        &mut r2,
+        &mut w2,
+        &[Message::StemTx(tx.encode()).encode()],
+        2,
+    )
+    .await;
+    let peers = a.net.peers();
+    assert_eq!(peers.len(), 2);
+    assert_eq!(
+        a.net.stats().tx_verifications,
+        1,
+        "the valid one was verified"
+    );
+    let (marked, unmarked): (Vec<_>, Vec<_>) = peers.iter().partition(|p| p.last_tx.is_some());
+    assert_eq!((marked.len(), unmarked.len()), (1, 1));
+    assert_eq!(marked[0].score, 0, "the valid relayer");
+    assert_eq!(unmarked[0].score, score::INVALID_TX, "the invalid relayer");
+    // The `Tx` path: announced, requested, answered, verified once, and its
+    // relayer marked too.
+    let id = answered.hash();
+    let (mut r3, mut w3) = raw_peer(a.addr, nid, true).await;
+    w3.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+    assert!(recv_until(
+        &mut r3,
+        5.0,
+        |m| matches!(m, Message::GetTx(ids) if ids == &vec![id])
+    )
+    .await
+    .is_some());
+    w3.send(&Message::Tx(answered.encode()).encode())
+        .await
+        .unwrap();
+    wait_until("the answered transaction is pooled", 10, || {
+        a.mempool_has(&id)
+    })
+    .await;
+    assert_eq!(a.net.stats().tx_verifications, 2, "verified on the Tx path");
+    assert_eq!(
+        a.net.peers().iter().filter(|p| p.last_tx.is_some()).count(),
+        2,
+        "both valid relayers marked"
     );
 }
 
