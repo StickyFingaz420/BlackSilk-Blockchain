@@ -43,3 +43,8 @@ blacksilk-miner = { path = "../miner" }
 tokio = { version = "1", features = ["rt-multi-thread", "net"] }
 axum = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
 tempfile = "3"
+
+# `cfg(fuzzing)`: set by cargo-fuzz in fuzz builds only; src/main.rs refuses
+# to compile with it (W4-GUARD).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }

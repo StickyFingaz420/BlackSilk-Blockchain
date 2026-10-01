@@ -22,8 +22,9 @@ zeroize = { version = "1.8", default-features = false, features = ["alloc"] }
 
 [features]
 # Test-only fault injection (`MemoryChain::fail_next_apply_for_tests`) and the
-# PX test constructors. Never enabled in a release build: only
-# dev-dependencies turn it on.
+# PX test constructors. Only dev-dependencies turn it on, but `cargo test`
+# unifies it into every binary the same invocation writes: binaries mark it
+# (`TEST_HOOKS_MARKER`) and refuse every network but regtest (W4-GUARD).
 test-hooks = ["blacksilk-px/test-hooks"]
 
 [dev-dependencies]

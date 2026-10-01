@@ -31,6 +31,7 @@
 //! apart only by [`BUILD_COMMIT`], so operators compare both, and the build
 //! commit is marked `-dirty` when tracked files differ from it (`build.rs`).
 
+use blacksilk_chain::build_flags::BuildFlags;
 use blacksilk_chain::{block, emission};
 use blacksilk_consensus::genesis::{
     derive_genesis_nonce, parse_display_hex, TEST_VECTOR_NETWORK_ID,
@@ -58,6 +59,18 @@ pub const BUILD_COMMIT: &str = env!("BLACKSILK_BUILD_COMMIT");
 
 /// The crate version (the same for every build until releases are versioned).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The test-only code compiled into this binary (W4-GUARD): the markers of
+/// chain, tx and px (`blacksilk_chain::build_flags`) and of p2p. Empty for a
+/// plain `cargo build --release`; a binary written by `cargo test` (which
+/// unifies dev-dependency features) or by a fuzz build is marked. The node
+/// prints them in `--version`, `--print-manifest` and the start-up log, and
+/// refuses every network but regtest while any is set.
+pub fn build_flags() -> BuildFlags {
+    BuildFlags::of_chain_layer()
+        .with(blacksilk_p2p::TEST_HOOKS_MARKER)
+        .with(blacksilk_p2p::FUZZING_MARKER)
+}
 
 /// The hash domain of [`consensus_fingerprint`] (under `BlackSilk/v1/`). v2:
 /// the hash of the rules and identity fingerprints (fingerprint v3).
@@ -895,11 +908,14 @@ pub fn network_by_name(name: &str) -> Option<Network> {
         .find(|n| crate::network_name(*n) == name)
 }
 
-/// The `--version` text of the node: crate version, build commit, and for
-/// each network the consensus fingerprint (short and full), the rules and
-/// identity fingerprints, and the genesis id.
+/// The `--version` text of the node: crate version, build commit, build
+/// flags ([`build_flags`]), and for each network the consensus fingerprint
+/// (short and full), the rules and identity fingerprints, and the genesis id.
 pub fn version_text() -> String {
-    let mut s = format!("{VERSION}\ncommit {BUILD_COMMIT}\n");
+    let mut s = format!(
+        "{VERSION}\ncommit {BUILD_COMMIT}\n{}\n",
+        build_flags().line()
+    );
     for n in NETWORKS {
         let f = fingerprints(n);
         let c = hex(&f.consensus);
@@ -929,6 +945,7 @@ pub fn manifest_text(network: Network) -> String {
     let identity = identity_manifest(network);
     format!(
         "# BlackSilk consensus manifest: {name}, build {VERSION} commit {BUILD_COMMIT}\n\
+         # {flags}\n\
          # H64(d, x) = BLAKE2b-512(u8(len(p ‖ d)) ‖ p ‖ d ‖ x), p = crypto.DOMAIN_PREFIX (below); digests are its first 32 bytes\n\
          # rules_fingerprint     = H64({RULES_DOMAIN:?}, rules_encoding)\n\
          # identity_fingerprint  = H64({IDENTITY_DOMAIN:?}, identity_encoding)\n\
@@ -945,6 +962,7 @@ pub fn manifest_text(network: Network) -> String {
          [rules]\n\
          {rules_render}\
          rules_encoding = {rules_hex}\n",
+        flags = build_flags().line(),
         name = crate::network_name(network),
         c = hex(&f.consensus),
         r = hex(&f.rules),
@@ -1355,12 +1373,31 @@ mod tests {
     fn version_text_names_every_network() {
         let v = version_text();
         assert!(v.contains(BUILD_COMMIT));
+        assert!(v.lines().any(|l| l == build_flags().line()), "{v}");
         for n in NETWORKS {
             assert!(v.contains(&hex(&consensus_fingerprint(n))));
             assert!(v.contains(&hex(&rules_fingerprint(n))));
             assert!(v.contains(&hex(&identity_fingerprint(n))));
             assert!(v.contains(&hex(&ChainParams::for_network(n).genesis_id())));
         }
+    }
+
+    /// The case RT-STATEFUL found: this crate's tests enable chain's
+    /// `test-hooks` (a dev-dependency), and cargo unifies it into the build,
+    /// so the build is marked (and with it the binary those tests run).
+    #[test]
+    fn a_test_build_is_marked() {
+        let flags = build_flags();
+        for m in ["+test-hooks:chain", "+test-hooks:tx", "+test-hooks:px"] {
+            assert!(flags.markers().contains(&m), "{flags:?}");
+        }
+        assert_eq!(
+            flags.markers().contains(&"+test-hooks:p2p"),
+            blacksilk_p2p::TEST_HOOKS
+        );
+        assert!(flags.check_network("node", Network::Testnet).is_err());
+        assert!(flags.check_network("node", Network::Mainnet).is_err());
+        assert!(flags.check_network("node", Network::Regtest).is_ok());
     }
 
     /// `--print-manifest` prints every digest and both encodings, and the
@@ -1386,6 +1423,11 @@ mod tests {
                 hex(&identity_manifest(n).encode())
             );
             assert!(t.contains("\"BlackSilk/v1/\""));
+            // The build flags are a comment line: no digest covers them.
+            assert_eq!(
+                t.lines().nth(1),
+                Some(format!("# {}", build_flags().line())).as_deref()
+            );
             assert_eq!(network_by_name(crate::network_name(n)), Some(n));
         }
         assert_eq!(network_by_name("x"), None);

@@ -6,8 +6,20 @@
 
 #![forbid(unsafe_code)]
 
+// W4-GUARD: a fuzz build (`--cfg fuzzing`) compiles fuzz-only code into the
+// libraries (the transport's fixed ephemeral secrets on request), and no fuzz
+// target links this binary (fuzz/Cargo.toml), so it refuses to build. A
+// `compile_error!`, not a build script: a build script would be more
+// build-time code, and cargo-deny then scans every dependency's files.
+#[cfg(fuzzing)]
+compile_error!(
+    "refusing to build blacksilk-wallet with `--cfg fuzzing`: no fuzz target links it; build it with a plain `cargo build --release`"
+);
+
 use blacksilk_chain::address::{decode_address, decode_px_address};
+use blacksilk_chain::build_flags::BuildFlags;
 use blacksilk_chain::emission::{format_amount, parse_amount};
+use blacksilk_consensus::Network;
 use blacksilk_px::vault;
 use blacksilk_px_core::Digest;
 use blacksilk_rpc::Client;
@@ -22,6 +34,7 @@ use clap::{Parser, Subcommand};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Parser)]
@@ -299,12 +312,18 @@ const BUILD_COMMIT: &str = match option_env!("BLACKSILK_BUILD_COMMIT") {
     None => "unknown",
 };
 
-/// Parses the command line with a `--version` that includes the commit.
+/// Parses the command line with a `--version` that includes the commit and the
+/// markers of test-only code compiled in ([`BuildFlags`], W4-GUARD).
 fn parse_args() -> Args {
     use clap::{CommandFactory, FromArgMatches};
     // clap takes a `'static` string; this runs once per process.
     let version: &'static str = Box::leak(
-        format!("{} (commit {BUILD_COMMIT})", env!("CARGO_PKG_VERSION")).into_boxed_str(),
+        format!(
+            "{} (commit {BUILD_COMMIT}){}",
+            env!("CARGO_PKG_VERSION"),
+            BuildFlags::of_chain_layer().suffix()
+        )
+        .into_boxed_str(),
     );
     let matches = Args::command().version(version).get_matches();
     Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
@@ -313,8 +332,31 @@ fn parse_args() -> Args {
 fn main() {
     if let Err(e) = run(parse_args()) {
         eprintln!("error: {e}");
-        std::process::exit(1);
+        let code = if BUILD_REFUSED.load(Ordering::SeqCst) {
+            BUILD_EXIT_CODE
+        } else {
+            1
+        };
+        std::process::exit(code);
     }
+}
+
+/// Exit status of a wallet with test-only code compiled in ([`BuildFlags`])
+/// asked to work on a network other than regtest (W4-GUARD); every other
+/// error exits with 1.
+const BUILD_EXIT_CODE: i32 = 2;
+
+/// Set by [`check_build`] when it refuses, so `main` exits with
+/// [`BUILD_EXIT_CODE`] after `run` has returned (and wiped its secrets).
+static BUILD_REFUSED: AtomicBool = AtomicBool::new(false);
+
+/// A wallet binary with test-only code (written by `cargo test` or a fuzz
+/// build) works only on regtest wallets (W4-GUARD): its transactions and
+/// keys must never meet a shared network.
+fn check_build(flags: &BuildFlags, net: Network) -> Result<(), String> {
+    flags
+        .check_network("blacksilk-wallet", net)
+        .inspect_err(|_| BUILD_REFUSED.store(true, Ordering::SeqCst))
 }
 
 /// A ChaCha20 RNG seeded from the OS.
@@ -469,6 +511,7 @@ fn print_tip_age(w: &Wallet) {
 }
 
 fn run(args: Args) -> Result<(), String> {
+    let flags = BuildFlags::of_chain_layer();
     let client = Client::try_new(&args.node)
         .and_then(|c| c.with_cookie_option(args.rpc_cookie.as_deref()))
         .map_err(|e| e.to_string())?;
@@ -482,6 +525,7 @@ fn run(args: Args) -> Result<(), String> {
             birthday_height,
         } => {
             let net = parse_network(&network).ok_or("unknown network")?;
+            check_build(&flags, net)?;
             if args.wallet.exists() {
                 return Err(format!("{} already exists", args.wallet.display()));
             }
@@ -522,11 +566,16 @@ fn run(args: Args) -> Result<(), String> {
             if args.wallet.exists() {
                 return Err(format!("{} already exists", args.wallet.display()));
             }
+            if let Some(net) = net {
+                check_build(&flags, net)?;
+            }
             let mut words =
                 rpassword::prompt_password("27-word seed: ").map_err(|e| e.to_string())?;
             let w = Wallet::restore(&words, net, restore_height).map_err(|e| e.to_string());
             words.zeroize();
             let w = w?;
+            // The network the words name, when none was given.
+            check_build(&flags, w.network())?;
             let mut pw = password(true)?;
             save(&w, &args.wallet, &pw, kdf).map_err(|e| e.to_string())?;
             pw.zeroize();
@@ -540,6 +589,10 @@ fn run(args: Args) -> Result<(), String> {
         cmd => {
             let mut pw = password(false)?;
             let mut w = load(&args.wallet, &pw)?;
+            if let Err(e) = check_build(&flags, w.network()) {
+                pw.zeroize();
+                return Err(e);
+            }
             for warning in w.take_warnings() {
                 eprintln!("warning: {warning}");
             }
@@ -991,6 +1044,21 @@ fn run(args: Args) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A wallet with test-only code works only on regtest wallets, and its
+    /// refusal selects the build exit status; a clean build works anywhere.
+    #[test]
+    fn a_hooked_wallet_works_only_on_regtest() {
+        let hooked = BuildFlags::default().with(Some("+test-hooks:tx"));
+        assert!(check_build(&hooked, Network::Regtest).is_ok());
+        assert!(check_build(&BuildFlags::default(), Network::Testnet).is_ok());
+        assert!(!BUILD_REFUSED.load(Ordering::SeqCst));
+        for net in [Network::Testnet, Network::Mainnet] {
+            let e = check_build(&hooked, net).unwrap_err();
+            assert!(e.contains("+test-hooks:tx"), "{e}");
+        }
+        assert!(BUILD_REFUSED.load(Ordering::SeqCst));
+    }
 
     /// Terms round-trip through their printed form; anything else is refused
     /// with the expected format, never echoing the input.

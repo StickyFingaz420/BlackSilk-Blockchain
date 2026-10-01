@@ -2,7 +2,18 @@
 
 #![forbid(unsafe_code)]
 
+// W4-GUARD: a fuzz build (`--cfg fuzzing`) compiles fuzz-only code into the
+// libraries (the transport's fixed ephemeral secrets on request), and no fuzz
+// target links this binary (fuzz/Cargo.toml), so it refuses to build. A
+// `compile_error!`, not a build script: a build script would be more
+// build-time code, and cargo-deny then scans every dependency's files.
+#[cfg(fuzzing)]
+compile_error!(
+    "refusing to build blacksilk-miner with `--cfg fuzzing`: no fuzz target links it; build it with a plain `cargo build --release`"
+);
+
 use blacksilk_chain::address::decode_address;
+use blacksilk_chain::build_flags::BuildFlags;
 use blacksilk_chain::emission::format_amount;
 use blacksilk_consensus::Network;
 use blacksilk_crypto::keys::Address;
@@ -117,8 +128,9 @@ const BUILD_COMMIT: &str = match option_env!("BLACKSILK_BUILD_COMMIT") {
 };
 
 /// Exit status for a configuration the operator must fix (EX_CONFIG): a
-/// payout address that is not valid on the node's network, or a network
-/// this miner does not know. A restart cannot help, so the systemd unit
+/// payout address that is not valid on the node's network, a network
+/// this miner does not know, or a binary with test-only code on a network
+/// other than regtest (W4-GUARD). A restart cannot help, so the systemd unit
 /// does not restart on it (`RestartPreventExitStatus`, RTW1B-4). Every
 /// other failure exits with 1 and is restarted.
 const CONFIG_EXIT_CODE: i32 = 78;
@@ -130,12 +142,18 @@ const RETRY_AFTER: Duration = Duration::from_secs(5);
 /// How often the hash rate is logged at info level.
 const HASHRATE_EVERY: Duration = Duration::from_secs(60);
 
-/// Parses the command line with a `--version` that includes the commit.
+/// Parses the command line with a `--version` that includes the commit and the
+/// markers of test-only code compiled in ([`BuildFlags`], W4-GUARD).
 fn parse_args() -> Args {
     use clap::{CommandFactory, FromArgMatches};
     // clap takes a `'static` string; this runs once per process.
     let version: &'static str = Box::leak(
-        format!("{} (commit {BUILD_COMMIT})", env!("CARGO_PKG_VERSION")).into_boxed_str(),
+        format!(
+            "{} (commit {BUILD_COMMIT}){}",
+            env!("CARGO_PKG_VERSION"),
+            BuildFlags::of_chain_layer().suffix()
+        )
+        .into_boxed_str(),
     );
     let matches = Args::command().version(version).get_matches();
     Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
@@ -398,7 +416,22 @@ impl<N: Node, B: ContextBuilder<Ctx = PowContext>> Miner<N, B> {
     }
 }
 
+/// A miner with test-only code compiled in ([`BuildFlags`]: written by
+/// `cargo test` or a fuzz build) mines only on regtest (W4-GUARD). A
+/// configuration error: a restart cannot help, the binary must be rebuilt.
+fn check_build(flags: &BuildFlags, net: Network) -> Result<(), Fatal> {
+    flags
+        .check_network("blacksilk-miner", net)
+        .map_err(Fatal::Config)
+}
+
 fn run(args: Args) -> Result<(), Fatal> {
+    let flags = BuildFlags::of_chain_layer();
+    log::info!(
+        "blacksilk-miner {} commit {BUILD_COMMIT}, {}",
+        env!("CARGO_PKG_VERSION"),
+        flags.line()
+    );
     let client = connect(&args.node, args.rpc_cookie.as_deref()).map_err(Fatal::Config)?;
     let info = client.info().map_err(|e| {
         Fatal::Other(match e {
@@ -416,6 +449,7 @@ fn run(args: Args) -> Result<(), Fatal> {
             info.network
         ))
     })?;
+    check_build(&flags, net)?;
     let payout = decode_address(net, &args.address).map_err(|e| {
         Fatal::Config(format!(
             "--address is not a valid {} address: {e:?}",
@@ -495,6 +529,21 @@ mod tests {
     use blacksilk_miner::BuildError;
     use blacksilk_tx::params::TxRules;
     use std::sync::Mutex;
+
+    /// A miner with test-only code mines only on regtest, and the refusal is
+    /// a configuration error (no restart); a clean build mines anywhere.
+    #[test]
+    fn a_hooked_miner_mines_only_on_regtest() {
+        let hooked = BuildFlags::default().with(Some("+test-hooks:chain"));
+        for net in [Network::Testnet, Network::Mainnet] {
+            match check_build(&hooked, net) {
+                Err(Fatal::Config(e)) => assert!(e.contains("+test-hooks:chain"), "{e}"),
+                _ => panic!("a hooked miner was not refused on {net:?}"),
+            }
+            assert!(check_build(&BuildFlags::default(), net).is_ok());
+        }
+        assert!(check_build(&hooked, Network::Regtest).is_ok());
+    }
 
     /// A regtest chain in process with the short key epoch of the chain
     /// tests (16, lag 4: the first switch at height 21, key = block 16),

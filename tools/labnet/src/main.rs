@@ -212,6 +212,9 @@ struct Link {
 #[derive(Default, Serialize)]
 struct Report {
     started_unix: u64,
+    /// The `--version` text of the node and miner binaries, checked free of
+    /// test-only code before the run ([`checked_version`]).
+    binaries: BTreeMap<String, String>,
     duration_secs: u64,
     nodes: usize,
     final_height: u64,
@@ -471,6 +474,54 @@ impl LogStats {
     }
 }
 
+/// The `--version` text of a binary this labnet launches, refused when it
+/// names test-only code (W4-GUARD). `cargo test` writes binaries with
+/// dev-dependency features unified (the chain actor's test hooks among
+/// them, whose log grows without bound) to the path a plain `cargo build
+/// --release` uses; a labnet run is evidence, so it never runs one. The node
+/// must print `build flags: none`; no binary may print a `+test-hooks:` or
+/// `+fuzzing:` marker.
+fn checked_version(bin: &Path, needs_flags_line: bool) -> Result<String, String> {
+    let out = Command::new(bin)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("{}: {e}", bin.display()))?;
+    let text = String::from_utf8_lossy(&out.stdout).replace('\r', "");
+    if !out.status.success() {
+        return Err(format!(
+            "{} --version failed ({})",
+            bin.display(),
+            out.status
+        ));
+    }
+    version_verdict(&text, needs_flags_line).map_err(|e| format!("{}: {e}", bin.display()))?;
+    Ok(text.trim_end().to_string())
+}
+
+/// [`checked_version`]'s verdict on a `--version` text.
+fn version_verdict(text: &str, needs_flags_line: bool) -> Result<(), String> {
+    if ["+test-hooks:", "+fuzzing:"]
+        .iter()
+        .any(|m| text.contains(m))
+    {
+        return Err(format!(
+            "built with test-only code ({}); rebuild it with a plain `cargo build --release` \
+             from a clean commit (docs/testnet.md)",
+            text.lines()
+                .find(|l| l.contains("+test-hooks:") || l.contains("+fuzzing:"))
+                .unwrap_or_default()
+        ));
+    }
+    if needs_flags_line && !text.lines().any(|l| l == "build flags: none") {
+        return Err(
+            "--version has no `build flags: none` line (a build older than \
+                    W4-GUARD cannot show its test code)"
+                .into(),
+        );
+    }
+    Ok(())
+}
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -952,11 +1003,31 @@ fn main() {
     } else {
         "blacksilk-miner"
     });
+    // Before anything starts: no binary with test-only code (W4-GUARD), this
+    // one (its in-process wallets link the chain layer) included.
+    let own = blacksilk_chain::build_flags::BuildFlags::of_chain_layer();
+    assert!(
+        own.is_clean(),
+        "refusing to start: this blacksilk-labnet was built with test-only code ({}); \
+         rebuild it with a plain `cargo build --release`",
+        own.render()
+    );
+    let mut binaries = BTreeMap::new();
+    for (name, bin, needs_flags_line) in [("node", &node_bin, true), ("miner", &miner_bin, false)] {
+        let version = checked_version(bin, needs_flags_line)
+            .unwrap_or_else(|e| panic!("refusing to start the labnet: {e}"));
+        log(
+            &mut journal,
+            &format!("{name} binary: {}", version.replace('\n', " | ")),
+        );
+        binaries.insert(name.to_string(), version);
+    }
     let rt = tokio::runtime::Runtime::new().unwrap();
     let mut report = Report {
         started_unix: unix_now(),
         nodes: a.nodes,
         topology: a.topology.clone(),
+        binaries,
         ..Default::default()
     };
     let mut seed = [0u8; 32];
@@ -1555,6 +1626,26 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// W4-GUARD: a launched binary that names test-only code is refused, and
+    /// the node must say `build flags: none`.
+    #[test]
+    fn binaries_with_test_code_are_refused() {
+        let clean = "0.1.0\ncommit abc\nbuild flags: none\nregtest: genesis 00\n";
+        assert_eq!(version_verdict(clean, true), Ok(()));
+        let miner = "blacksilk-miner 0.1.0 (commit abc)\n";
+        assert_eq!(version_verdict(miner, false), Ok(()));
+        // A node older than the guard cannot show its test code.
+        assert!(version_verdict("0.1.0\ncommit abc\n", true).is_err());
+        for marked in [
+            "0.1.0\ncommit abc\nbuild flags: +test-hooks:px +test-hooks:tx\n",
+            "blacksilk-miner 0.1.0 (commit abc) +test-hooks:chain\n",
+            "0.1.0\ncommit abc\nbuild flags: +fuzzing:p2p\n",
+        ] {
+            let e = version_verdict(marked, false).unwrap_err();
+            assert!(e.contains("test-only code"), "{e}");
+        }
+    }
 
     fn at(start: Instant, secs: u64) -> Instant {
         start + Duration::from_secs(secs)

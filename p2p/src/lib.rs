@@ -35,3 +35,29 @@ pub use net::{
     chain_access, lock_or_exit, NetConfig, NetStats, Network, PeerInfo, SharedChain,
     POISONED_EXIT_CODE,
 };
+
+/// The build marker of this crate's test-only code (the stateful fuzz targets' network hooks):
+/// `Some("+test-hooks:p2p")` when the `test-hooks` feature is compiled
+/// in, `None` otherwise. A dev-dependency of a `cargo test` build turns the
+/// feature on, and cargo unifies it into every binary that invocation builds;
+/// the string is in a binary only when the hooks are. Binaries print it in
+/// `--version` and refuse every network but regtest while it is set
+/// (`blacksilk_chain::build_flags`, W4-GUARD).
+#[cfg(feature = "test-hooks")]
+pub const TEST_HOOKS_MARKER: Option<&str> = Some("+test-hooks:p2p");
+/// See the `test-hooks` variant: `None`, no test-only code compiled in.
+#[cfg(not(feature = "test-hooks"))]
+pub const TEST_HOOKS_MARKER: Option<&str> = None;
+/// Whether this crate's `test-hooks` feature is compiled in.
+pub const TEST_HOOKS: bool = TEST_HOOKS_MARKER.is_some();
+
+/// The build marker of this crate's `cfg(fuzzing)` code (the transport's
+/// fixed ephemeral secrets on request, `transport.rs`): `Some("+fuzzing:p2p")`
+/// only in a cargo-fuzz build. The node prints it with the test-hooks markers
+/// and refuses every network but regtest while it is set; its build script
+/// refuses `cfg(fuzzing)` outright (W4-GUARD).
+#[cfg(fuzzing)]
+pub const FUZZING_MARKER: Option<&str> = Some("+fuzzing:p2p");
+/// See the `cfg(fuzzing)` variant: `None` outside a fuzz build.
+#[cfg(not(fuzzing))]
+pub const FUZZING_MARKER: Option<&str> = None;

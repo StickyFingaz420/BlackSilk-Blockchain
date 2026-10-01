@@ -215,3 +215,44 @@ fn vault_timeout_refund_and_recovery_commands() {
     let help = text(&run(&path, n, &["px-vault-claim", "--help"], "").stdout);
     assert!(help.contains("--terms"));
 }
+
+/// W4-GUARD: a wallet binary with test-only code compiled in (`cargo test`
+/// unifies dev-dependency features into the binaries it writes, as in a
+/// workspace test run) names it in `--version` and works only on regtest
+/// wallets; a clean build is not refused for its build. This test's own
+/// build has the same features as the binary it runs, so it knows which case
+/// applies.
+#[test]
+fn a_wallet_with_test_code_works_only_on_regtest() {
+    let flags = blacksilk_chain::build_flags::BuildFlags::of_chain_layer();
+    let v = Command::new(env!("CARGO_BIN_EXE_blacksilk-wallet"))
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(v.status.success());
+    let version = text(&v.stdout);
+    assert!(version.trim_end().ends_with(&flags.suffix()), "{version}");
+    assert!(version.contains("(commit "), "{version}");
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("t.wallet");
+    let out = run(
+        &path,
+        None,
+        &["create", "--network", "testnet", "--birthday-height", "0"],
+        "",
+    );
+    if flags.is_clean() {
+        // Not the build refusal (the testnet itself may still be refused:
+        // its genesis is not final yet).
+        let err = text(&out.stderr);
+        assert_ne!(out.status.code(), Some(2), "{err}");
+        assert!(!err.contains("test-only code"), "{err}");
+    } else {
+        let err = text(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{err}");
+        assert!(err.contains("refusing to run on testnet"), "{err}");
+        assert!(err.contains(&flags.render()), "{err}");
+        assert!(!path.exists(), "a refused wallet was written");
+    }
+}

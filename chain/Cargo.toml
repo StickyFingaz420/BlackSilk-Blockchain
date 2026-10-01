@@ -24,9 +24,15 @@ log = "0.4"
 # Test-only fault injection and observation (`ChainManager::
 # fail_next_apply_for_tests` for the node's halt exit-status test,
 # `set_step_delay_for_tests`, and the chain actor's linearization log and
-# panic command). Never enabled in a release build: only dev-dependencies
-# turn it on.
+# panic command). Only dev-dependencies turn it on, but `cargo test` unifies
+# it into every binary the same invocation writes: binaries mark it
+# (`TEST_HOOKS_MARKER`) and refuse every network but regtest (W4-GUARD).
 test-hooks = ["blacksilk-tx/test-hooks"]
+
+# `cfg(fuzzing)`: set by cargo-fuzz in fuzz builds only; its build marker
+# (src/build_flags.rs, W4-GUARD).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 
 [dev-dependencies]
 tempfile = "3"

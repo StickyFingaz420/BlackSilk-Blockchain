@@ -7,6 +7,9 @@
 //! `BLACKSILK_ALLOW_DIRTY=1` (RTFP3-9): a trial binary must be built from the
 //! announced commit, unchanged. Development builds of uncommitted work set
 //! the variable; their commit still shows `-dirty`.
+//!
+//! A fuzz build (`cfg(fuzzing)`) is refused outright (W4-GUARD,
+//! `refuse_fuzz_builds`).
 
 #![forbid(unsafe_code)]
 
@@ -24,6 +27,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build_id.rs");
     println!("cargo:rerun-if-env-changed={VAR}");
     println!("cargo:rerun-if-env-changed={ALLOW_DIRTY}");
+    refuse_fuzz_builds("blacksilk-node");
 
     let overridden = std::env::var(VAR)
         .ok()
@@ -121,4 +125,19 @@ fn is_dirty(git_dir: &Path, common_dir: Option<&Path>, root: &Path) -> bool {
         println!("cargo:warning=blacksilk-node: differs from the commit: {p}");
     }
     !dirty.is_empty()
+}
+
+/// Refuses a cargo-fuzz build (`--cfg fuzzing`, W4-GUARD): fuzz builds
+/// compile fuzz-only code paths into the libraries (the transport's fixed
+/// ephemeral secrets on request), and no fuzz target links this binary
+/// (fuzz/Cargo.toml), so no fuzz build has a reason to build it. There is no
+/// override.
+fn refuse_fuzz_builds(binary: &str) {
+    if std::env::var_os("CARGO_CFG_FUZZING").is_some() {
+        panic!(
+            "refusing to build {binary} with `--cfg fuzzing`: fuzz builds compile \
+             fuzz-only code into the libraries, and no fuzz target links {binary} \
+             (fuzz/Cargo.toml). Build it with a plain `cargo build --release`."
+        );
+    }
 }
