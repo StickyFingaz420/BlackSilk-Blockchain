@@ -925,7 +925,8 @@ fn a_deploys_output_words_are_bounded_inclusively() {
 fn px_digest_words_must_be_canonical_field_elements() {
     use blacksilk_px_core::P;
     use blacksilk_tx::codec::DecodeError;
-    let edits: [(&str, fn(&mut PxTx, u32)); 6] = [
+    type Edit = (&'static str, fn(&mut PxTx, u32));
+    let edits: [Edit; 6] = [
         ("anchor", |t, w| t.anchor[0] = w),
         ("nullifier", |t, w| t.nullifiers[1][7] = w),
         ("commitment", |t, w| t.commitments[0][3] = w),
