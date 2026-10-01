@@ -311,7 +311,8 @@ jobs:
   # - commits touching consensus paths carry a Consensus-Change: trailer;
   # - commits changing Cargo.lock or fuzz/Cargo.lock name the crates they add
   #   or re-version;
-  # - no invisible or bidirectional Unicode in tracked text files.
+  # - no invisible or bidirectional Unicode in tracked text files;
+  # - every test-only feature is marked (tools/check-test-features.sh).
   # The SHAs come in through env, never interpolated into the script.
   gates:
     if: github.event_name != 'schedule'
@@ -336,6 +337,11 @@ jobs:
       - name: Invisible and bidirectional Unicode scan
         if: success() || failure()
         run: bash .github/scripts/unicode-scan.sh
+      # W4-GUARD (RT-GUARD): every test-only feature and cfg(fuzzing) crate
+      # exports a build marker that a BuildFlags composition names.
+      - name: Test-only features are marked
+        if: success() || failure()
+        run: bash tools/check-test-features.sh
 
   # Documentation lint (dossier 47 W47-8, decisions "Agent 47"): forbidden
   # claims, retired identifiers, broken relative links and copied digests
