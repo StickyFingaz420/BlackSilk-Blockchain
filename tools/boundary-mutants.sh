@@ -102,8 +102,11 @@ case "$cmd" in
     oracle() { # LOG -> exit code (124 on timeout)
       local log="$1" rc=0
       if [ -n "${WINDIR:-}" ]; then
-        powershell -NoProfile -ExecutionPolicy Bypass -File "$repo/tools/run-with-timeout.ps1" \
-          -TimeoutSec "$limit" -WorkDir "$src" -Log "$log" -- cargo "$@" || rc=$?
+        # The arguments go as one string (no argument may contain a space).
+        powershell -NoProfile -ExecutionPolicy Bypass \
+          -File "$(cygpath -w "$repo/tools/run-with-timeout.ps1")" \
+          -TimeoutSec "$limit" -WorkDir "$(cygpath -w "$src")" -Log "$(cygpath -w "$log")" \
+          -Exe cargo -ArgLine "$*" || rc=$?
       else
         (cd "$src" && timeout -k 10 "$limit" cargo "$@" >"$log" 2>&1) || rc=$?
       fi
