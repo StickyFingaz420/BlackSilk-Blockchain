@@ -255,6 +255,8 @@ mod tests {
                 let (sig, tag) = sign(&m, &ring, &sc, real, secret, &mut rng).unwrap();
                 assert_eq!(tag, sc.tag(secret));
                 assert!(verify(&m, &ring, &sc, &tag, &sig), "n={n} real={real}");
+                // signature = (c0, s[0..r)): 32 bytes each.
+                assert_eq!(sig.encoded_len(), 32 * (1 + n));
             }
         }
     }
@@ -386,6 +388,14 @@ mod tests {
         assert!(!verify(&[0; 32], &ring, &sc, &identity, &sig));
         ring[3] = identity;
         assert!(!verify(&[0; 32], &ring, &sc, &tag, &sig));
+        // A signature made over that ring is valid by the ring equations (an
+        // identity decoy adds nothing to L_i), and is still refused: identity
+        // members are not keys (run C mutation census).
+        let over_identity = sign_with_tag(&[0; 32], &ring, &sc, &tag, 0, &secrets[0], &mut rng);
+        assert!(!verify(&[0; 32], &ring, &sc, &tag, &over_identity));
+        ring[3] = Point::from_point(RistrettoPoint::mul_base(&secrets[3]));
+        let honest = sign_with_tag(&[0; 32], &ring, &sc, &tag, 0, &secrets[0], &mut rng);
+        assert!(verify(&[0; 32], &ring, &sc, &tag, &honest));
     }
 
     #[test]
@@ -409,6 +419,13 @@ mod tests {
         let mut short = sig.clone();
         short.s.pop();
         assert!(!verify(&[0; 32], &ring[..4], &sc, &tag, &short));
+        // One response too many: the first four still satisfy the ring
+        // equations, but the signature is not the canonical one (run C
+        // mutation census).
+        assert!(verify(&[0; 32], &ring[..4], &sc, &tag, &sig));
+        let mut long = sig.clone();
+        long.s.push(Scalar::ONE);
+        assert!(!verify(&[0; 32], &ring[..4], &sc, &tag, &long));
         assert!(Scope::new(&[0; 32], 0, &[0; MAX_SCOPE + 1]).is_none());
         assert!(Scope::new(&[0; 32], 0, &[0; MAX_SCOPE]).is_some());
     }

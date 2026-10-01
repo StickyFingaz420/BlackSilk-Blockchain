@@ -116,6 +116,17 @@ mod tests {
 
     const CTX: [u8; 32] = [0x42; 32];
 
+    /// An anchor is secret sender randomness: its `Debug` form never shows
+    /// its bytes (run C mutation census).
+    #[test]
+    fn an_anchor_never_prints_its_bytes() {
+        let anchor = Anchor([0xAB; ANCHOR_BYTES]);
+        let shown = format!("{anchor:?}");
+        assert_eq!(shown, "Anchor(…)");
+        assert!(!shown.to_lowercase().contains("ab"));
+        assert!(!format!("{:?}", Some(&anchor)).contains("171"));
+    }
+
     /// Eve's Janus output: shared secret computed for `via`, one-time key for `target`.
     /// `r` is Eve's ephemeral secret; `anchor` is what she puts in `enc_anchor`.
     fn janus_output(via: &Address, target: &Address, r: Scalar, anchor: &Anchor) -> CreatedOutput {

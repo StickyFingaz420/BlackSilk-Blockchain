@@ -333,3 +333,87 @@ Decision: W4-MUTC (run C), for the Lead's review.
 or message depends on them. (The `-=` of the counter can underflow only past the
 readmission budget, `READMIT_MAX_BYTES`, which no test reaches; in a release build it
 would wrap, still only in a log line.)
+
+## E13: the zero-challenge guards of Bulletproofs+ (crypto/src/bulletproofs_plus.rs)
+
+Decision: W4-MUTC (run C), for the Lead's review.
+
+**Code.** Every Fiat-Shamir challenge is `Hs(transcript)`, a 512-bit BLAKE2b digest
+reduced mod ℓ (`Hasher64::to_scalar`). The prover retries with fresh randomness if `y`
+or `z` is zero (`if y == Scalar::ZERO || z == Scalar::ZERO { return None }` in
+`prove_bits`, and `prove`'s retry loop); the verifier refuses a proof with any zero
+challenge (`if y == 0 || z == 0 || e == 0 || es.contains(&0) { return None }` in
+`challenges`).
+
+**Mutants covered** (missed in run C): 257:26 `replace || with && in prove_bits`;
+397:26, 397:47 and 397:68 `replace || with && in challenges`.
+
+**Argument.** The mutants differ from the code only when some challenge is zero but
+not all of the others are. A challenge is zero only if a 512-bit hash output is a
+multiple of ℓ ≈ 2^252: for a random oracle, probability about 2^-252 per challenge,
+and producing one on purpose means finding a transcript whose digest reduces to 0, a
+search of about 2^252 hash evaluations. No test and no feasible input reaches the
+difference. The guards stay as defensive checks (a zero challenge would make the
+verification equation degenerate); the mutants that make them fire on non-zero
+challenges (`==` → `!=`, the removed guards) are caught, most as prover retry loops
+(§ Timeouts of the run C evidence). This entry does not cover a reachable rule: it
+covers checks whose triggering input is computationally out of reach, and must be
+revisited if the challenge derivation changes (for example a narrower hash).
+
+## E14: the length of the `y` powers in Bulletproofs+ (crypto/src/bulletproofs_plus.rs)
+
+Decision: W4-MUTC (run C), for the Lead's review.
+
+**Code.** `let y_pows = powers(&y, n + 2);` in `prove_bits` (260) and `Msm::add` (453),
+with `n = 64·m` (`BITS × next_power_of_two(outputs)`), so `n ≥ 64`.
+
+**Mutants covered** (missed in run C): 260:31 `replace + with * in prove_bits` and
+453:35 `replace + with * in Msm::add` (`n * 2` powers).
+
+**Argument.** `powers(y, k)` returns `[1, y, y², …, y^(k−1)]`: a longer vector has the
+same first `n + 2` entries. Every use indexes at most `n + 1` (`y_pows[n − i]`,
+`y_pows[n + 1]`, `y_pows[half]`) or slices `y_pows[1..=n]`, and `2n ≥ n + 2` for every
+`n ≥ 2`. The values read are identical; only unused powers are computed. The `-` and
+`/` mutants of the same terms are caught.
+
+## E15: zeroization on drop (crypto/src/janus.rs, keys.rs, nonce.rs, stealth.rs)
+
+Decision: W4-MUTC (run C), for the Lead's review.
+
+**Code.** The `Drop` implementations that wipe secret material when a value is
+dropped: `Anchor` (janus.rs 48), `ViewKeys` (keys.rs 141), `WalletKeys` (208),
+`WalletSeed` (217), `HedgedRng` (nonce.rs 102) and `SharedSecret` (stealth.rs 42),
+each a `zeroize()` of its secret fields.
+
+**Mutants covered** (missed in run C): each `replace <impl Drop for T>::drop with ()`,
+6 mutants.
+
+**Argument (unobservable, not equivalent).** The mutants do change the program: the
+secret bytes stay in freed memory. But no safe Rust code can observe it: after `drop`
+the value is gone, `Drop::drop` cannot be called explicitly, and reading the freed
+memory needs `unsafe` (`ManuallyDrop::drop`, `ptr::drop_in_place` or a raw pointer),
+which BlackSilk crates forbid (`#![forbid(unsafe_code)]`, brief §3). No test in the
+repository's rules can kill them. This is a limit of the oracle, recorded as such:
+the wiping is memory hygiene against a later memory disclosure (a core dump, swap, a
+co-resident attacker), not a verdict. What protects it: code review (every secret
+type's `Drop` is listed here) and the `zeroize` crate's own guarantees
+(volatile writes plus a compiler fence). An entry here does not claim the wiping
+works; it records that this census cannot tell.
+
+## E16: `Hash for Point` (crypto/src/point.rs)
+
+Decision: W4-MUTC (run C), for the Lead's review.
+
+**Code.** `impl Hash for Point { fn hash(&self, state) { self.bytes.hash(state) } }`.
+
+**Mutant covered** (missed in run C): 60:9 `replace <impl Hash for Point>::hash with
+()`.
+
+**Argument.** `Hash` is used only by the standard `HashMap` and `HashSet` (key
+images of a block, subaddress tables, pool indexes). With the mutant every point
+hashes to the same value, which is still consistent with `Eq` (equal points hash
+equal): every map and set gives the same answers, only slower (every key in one
+bucket). No hash value is stored, sent or compared across processes. The change is
+not a verdict but a performance one: lookups become linear in the map's size, which
+matters for the pool's indexes (thousands of entries, a denial-of-service concern) and
+which no functional test measures.

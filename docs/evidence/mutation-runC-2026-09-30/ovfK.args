@@ -1,0 +1,8 @@
+--re=^crypto[/]src[/]bulletproofs[_]plus[.]rs[:]382[:]32[:] replace [|][|] with [&][&] in challenges$
+--re=^crypto[/]src[/]bulletproofs[_]plus[.]rs[:]448[:]35[:] replace \- with [+] in Msm[:][:]add$
+--re=^crypto[/]src[/]bulletproofs[_]plus[.]rs[:]448[:]35[:] replace \- with [/] in Msm[:][:]add$
+--re=^crypto[/]src[/]bulletproofs[_]plus[.]rs[:]448[:]39[:] replace \- with [+] in Msm[:][:]add$
+--re=^crypto[/]src[/]bulletproofs[_]plus[.]rs[:]448[:]39[:] replace \- with [/] in Msm[:][:]add$
+--re=^crypto[/]src[/]bulletproofs[_]plus[.]rs[:]98[:]37[:] replace [+] with \- in proof[_]len$
+--re=^crypto[/]src[/]clsag[.]rs[:]147[:]32[:] replace [+] with \- in nonce[_]stream$
+--re=^crypto[/]src[/]clsag[.]rs[:]148[:]32[:] replace [+] with \- in nonce[_]stream$

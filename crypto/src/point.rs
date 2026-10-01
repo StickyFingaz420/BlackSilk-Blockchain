@@ -106,6 +106,31 @@ mod tests {
         assert_eq!(p.point(), q.point());
     }
 
+    /// Points order by their encoding, through every comparison operator:
+    /// the sort rules of transactions (key images, one-time keys, T4 and T6)
+    /// compare points with `<` and `>=` (run C mutation census).
+    #[test]
+    fn points_order_by_their_encoding_through_every_operator() {
+        let mut v: Vec<Point> = (1..=8u64)
+            .map(|k| Point::from_point(RISTRETTO_BASEPOINT_POINT * Scalar::from(k)))
+            .collect();
+        v.sort();
+        for w in v.windows(2) {
+            let (a, b) = (&w[0], &w[1]);
+            assert!(a.bytes() < b.bytes());
+            assert_eq!(a.partial_cmp(b), Some(Ordering::Less));
+            assert!(a < b && a <= b && b > a && b >= a);
+            assert!(!(a >= b) && !(b < a));
+            assert_eq!(a.partial_cmp(a), Some(Ordering::Equal));
+        }
+        // `Debug` shows the first 8 bytes of the encoding.
+        let hex: String = v[0].bytes()[..8]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(format!("{:?}", v[0]), format!("Point({hex}…)"));
+    }
+
     #[test]
     fn identity_encodes_as_zero() {
         let id = Point::decode(&[0; 32]).unwrap();
