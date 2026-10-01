@@ -912,3 +912,42 @@ fn a_deploys_output_words_are_bounded_inclusively() {
     assert_eq!(with(MAX_FN_OUTPUT_WORDS), Ok(()));
     assert_eq!(with(MAX_FN_OUTPUT_WORDS + 1), Err(TxError::PxShape));
 }
+
+/// Every digest of a PX transaction (anchor, nullifiers, commitments, each
+/// function's contract and io hash) is eight canonical field words: a word
+/// equal to or above `P` does not decode (`NonCanonicalField`), and `P − 1`
+/// does. A non-canonical word would alias a field element under another
+/// byte encoding (another id, another conflict key) and would panic the
+/// host permutation (`HostPerm` asserts canonical inputs) on any path that
+/// hashed it. RT-MUTC: cargo-mutants generates `>=` → `<` only, so the
+/// boundary (`>=` → `>`) and the check itself had no test.
+#[test]
+fn px_digest_words_must_be_canonical_field_elements() {
+    use blacksilk_px_core::P;
+    use blacksilk_tx::codec::DecodeError;
+    let edits: [(&str, fn(&mut PxTx, u32)); 6] = [
+        ("anchor", |t, w| t.anchor[0] = w),
+        ("nullifier", |t, w| t.nullifiers[1][7] = w),
+        ("commitment", |t, w| t.commitments[0][3] = w),
+        ("contract", |t, w| t.functions[0].contract[5] = w),
+        ("io hash", |t, w| t.functions[0].io_hash[2] = w),
+        ("nullifier 0", |t, w| t.nullifiers[0][0] = w),
+    ];
+    for (what, edit) in edits {
+        let decode = |w: u32| {
+            let mut t = full_px();
+            edit(&mut t, w);
+            let wire = Transaction::Px(Box::new(t));
+            (Transaction::decode(&wire.encode()), wire)
+        };
+        let (got, wire) = decode(P - 1);
+        assert_eq!(got, Ok(wire), "{what}: P - 1 is canonical");
+        for w in [P, P + 1, u32::MAX] {
+            assert_eq!(
+                decode(w).0,
+                Err(DecodeError::NonCanonicalField),
+                "{what}: word {w:#x}"
+            );
+        }
+    }
+}
