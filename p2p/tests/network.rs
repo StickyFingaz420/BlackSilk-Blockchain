@@ -2848,6 +2848,300 @@ async fn a_garbage_px_proof_is_penalized_before_the_px_token_and_any_signature()
     ));
 }
 
+/// The encoding of a proof with one empty instance per entry of `bits`
+/// (nothing opened, no FRI rounds) and those degree bits: it decodes under
+/// the PX limits, so its degree bits reach the shape check, but it verifies
+/// nothing (tx/tests/px_proof_wiring.rs has the layout). Each count and
+/// degree bit is below 128 (one varint byte).
+fn hollow_proof(bits: &[u8]) -> Vec<u8> {
+    let mut b = vec![1]; // `blacksilk_zk::PROOF_VERSION`
+    b.push(1); // the main commitment: one root
+    b.extend([0; 32]);
+    b.push(0); // no permutation commitment
+    b.push(1); // the quotient commitment
+    b.extend([0; 32]);
+    b.push(0); // no random commitment
+    b.push(bits.len() as u8);
+    for _ in bits {
+        b.extend([0; 8]); // an instance with nothing opened
+    }
+    b.extend([2, 0, 0]); // the hidden openings: two rounds, no matrices
+    b.extend([0; 5]); // FRI: commitments, witnesses, input batches, openings, final polynomial
+    b.extend([0; 4]); // the query grinding witness
+    b.push(0); // no lookup terminals
+    b.push(bits.len() as u8);
+    b.extend(bits);
+    b
+}
+
+/// A transfer statement's degree bits (13 tables): the shape a decodable PX
+/// proof needs to pass admission's cheap stage. Checked against the shape rule
+/// where used; tx/tests/px_proof_wiring.rs derives them from the statement.
+const TRANSFER_BITS: [u8; 13] = [17, 13, 13, 14, 16, 16, 12, 15, 12, 12, 9, 9, 9];
+
+/// A PX transaction spending `pay`'s first input into the pool, carrying
+/// `proof`, that passes every cheap contextual check; `k` makes its
+/// nullifiers (and so its id) unique. Its CLSAG is another message's.
+fn px_with_proof(
+    a: &TestNode,
+    pay: &blacksilk_tx::types::Transfer,
+    k: u32,
+    proof: Vec<u8>,
+) -> Transaction {
+    let root = a.chain.lock().unwrap().state().px().root();
+    let fee = px_standard_fee();
+    let bridge_in = 1_000 * fee;
+    Transaction::Px(Box::new(blacksilk_tx::px::PxTx {
+        inputs: vec![pay.inputs[0].clone()],
+        outputs: vec![],
+        payouts: vec![],
+        fee,
+        bridge_in,
+        bridge_out: 0,
+        window: Default::default(),
+        anchor: root,
+        nullifiers: [[8, k, 1, 0, 0, 0, 0, 0], [8, k, 2, 0, 0, 0, 0, 0]],
+        commitments: [[0; 8]; 2],
+        ciphertexts: [
+            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
+            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
+        ],
+        functions: vec![],
+        pseudo_outs: vec![blacksilk_crypto::Point::from_point(
+            blacksilk_crypto::commitment::commit(bridge_in + fee, &blacksilk_crypto::Scalar::ZERO),
+        )],
+        range_proof: None,
+        signatures: vec![pay.signatures[0].clone()],
+        proof,
+    }))
+}
+
+/// A decodable proof of the right shape passes admission's cheap stage
+/// (decoded off the actor, its degree bits shape-checked in the command):
+/// it takes a node-wide PX token and is verified, where it fails. Past the
+/// node-wide burst (10) further ones are dropped unverified and counted
+/// (mutation run D: before, only proving tests reached the token).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_px_transaction_past_the_cheap_stage_takes_a_node_wide_token() {
+    let mut a = node(99, &[]).await;
+    a.mine_n(80, 0);
+    let Transaction::Transfer(pay) = a.payment() else {
+        panic!("a transfer")
+    };
+    let mut tx = px_with_proof(&a, &pay, 0, hollow_proof(&TRANSFER_BITS));
+    // Valid from the next block on (PX6): the cheap stage checks the
+    // contextual rules at the next block's height.
+    if let Transaction::Px(t) = &mut tx {
+        t.window.not_before = a.height() + 1;
+    }
+    {
+        let Transaction::Px(t) = &tx else {
+            unreachable!()
+        };
+        let c = a.chain.lock().unwrap();
+        let rules = c.next_rules();
+        let bits: Vec<usize> = TRANSFER_BITS.iter().map(|&b| b.into()).collect();
+        assert_eq!(
+            blacksilk_tx::validate::check_px_proof_shape_bits(t, c.state(), &rules, &bits),
+            Ok(()),
+            "a transfer's shape (re-derive TRANSFER_BITS if the kernel changed)"
+        );
+    }
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(&mut r, &mut w, &[Message::StemTx(tx.encode()).encode()], 1).await;
+    let st = a.net.stats();
+    assert_eq!(st.tx_verifications, 1, "past the cheap stage");
+    assert_eq!(st.px_global_taken, 1, "one node-wide PX token");
+    assert_eq!(st.px_global_drops, 0);
+    assert!(
+        !a.net.stempool_contains(&tx.hash()),
+        "its verification fails"
+    );
+    drop((r, w));
+    // Six more peers, four each (their PX share): past the burst, dropped.
+    for peer in 1..=6u32 {
+        let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+        let msgs: Vec<Vec<u8>> = (0..4)
+            .map(|i| {
+                let t = px_with_proof(&a, &pay, peer * 4 + i, hollow_proof(&TRANSFER_BITS));
+                Message::StemTx(t.encode()).encode()
+            })
+            .collect();
+        send_and_sync(&mut r, &mut w, &msgs, 10 + u64::from(peer)).await;
+        drop((r, w));
+    }
+    let st = a.net.stats();
+    assert_eq!(st.px_global_taken + st.px_global_drops, 25);
+    assert!(st.px_global_taken >= 10, "{st:?}");
+    assert!(st.px_global_drops >= 1, "past the burst: {st:?}");
+    assert_eq!(
+        st.tx_verifications, st.px_global_taken,
+        "the dropped are not verified"
+    );
+}
+
+/// The first height of the second epoch of [`UPGRADE`], an upgrade that
+/// changes only the branch id (as chain/tests/activation.rs's).
+const UPGRADE_AT: u64 = 150;
+
+static UPGRADE: [blacksilk_consensus::schedule::Epoch; 2] = [
+    blacksilk_consensus::schedule::Epoch {
+        name: "v3",
+        activation_height: 0,
+        header_version: 1,
+        branch_id: blacksilk_consensus::schedule::BRANCH_ID_V3,
+        verifier_id: blacksilk_consensus::schedule::VERIFIER_PX_1,
+    },
+    blacksilk_consensus::schedule::Epoch {
+        name: "noop",
+        activation_height: UPGRADE_AT,
+        header_version: 1,
+        branch_id: 0x4253_7634,
+        verifier_id: blacksilk_consensus::schedule::VERIFIER_PX_1,
+    },
+];
+
+/// A node whose chain activates [`UPGRADE`] at [`UPGRADE_AT`].
+async fn upgrading_node(seed: u64) -> TestNode {
+    let mut p = params();
+    p.schedule = blacksilk_consensus::schedule::Schedule::new(&UPGRADE);
+    // `TxRules::for_chain` refuses a multi-epoch schedule: the first
+    // epoch's rules, the others derived per height.
+    let m = ChainManager::open(
+        p.clone(),
+        TxRules::at_height(&p, 0),
+        Arc::new(ZeroPow),
+        Box::<MemoryStore>::default(),
+        [seed as u8; 32],
+    )
+    .unwrap();
+    let chain: SharedChain = Arc::new(Mutex::new(m));
+    let net = Network::start(fast_config(&[]), chain.clone())
+        .await
+        .unwrap();
+    let addr = net.local_addr().unwrap();
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let (miner, _) = WalletKeys::generate(&mut rng);
+    TestNode {
+        chain,
+        net,
+        addr,
+        miner,
+        rng,
+    }
+}
+
+/// Within `ACTIVATION_GRACE_BLOCKS` of an activation a `PxProof` failure is
+/// contextual (an honest proof made for the neighbouring rule set fails
+/// honestly, `TxError::is_stateless_at`), and admission's cheap stage judges
+/// it at the next block's height (mutation run D: no p2p test had an
+/// activation). A wrong-shape proof is penalized while the next block is
+/// outside the window, and only refused (never verified) once it is inside.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_px_proof_failure_is_not_penalized_in_the_activation_grace_window() {
+    use blacksilk_tx::validate::ACTIVATION_GRACE_BLOCKS;
+    let mut a = upgrading_node(101).await;
+    let first_near = UPGRADE_AT - ACTIVATION_GRACE_BLOCKS;
+    // The next block is the last one before the window.
+    a.mine_n(first_near - 2, 0);
+    let Transaction::Transfer(pay) = a.payment() else {
+        panic!("a transfer")
+    };
+    let nid = params().network_id;
+    // Mining an empty block leaves the PX anchor as it is.
+    let [first, second] = [0, 1].map(|k| {
+        let t = px_with_proof(&a, &pay, k, hollow_proof(&[10]));
+        vec![Message::StemTx(t.encode()).encode()]
+    });
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(&mut r, &mut w, &first, 1).await;
+    assert_eq!(
+        a.net.peers()[0].score,
+        score::INVALID_TX,
+        "outside the window: stateless, penalized"
+    );
+    drop((r, w));
+    wait_until("the first peer is gone", 10, || a.net.peers().is_empty()).await;
+    // The next block is the first one inside the window.
+    a.mine(0);
+    assert_eq!(a.height() + 1, first_near);
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(&mut r, &mut w, &second, 2).await;
+    assert_eq!(a.net.peers()[0].score, 0, "inside the window: contextual");
+    let st = a.net.stats();
+    assert_eq!(st.tx_verifications, 0, "both refused in the cheap stage");
+    assert_eq!(st.px_global_taken, 0);
+}
+
+/// The off-actor decoding hands its degree bits to the shape check
+/// (RT-PXDOS F1; mutation run D): a PX transaction that passes every cheap
+/// contextual check, with a proof that decodes but has another statement's
+/// shape (one table), is refused in admission's cheap stage as the stateless
+/// `PxProof`, penalized, never verified, and takes no node-wide PX token.
+/// Before, only proving tests sent a decodable proof to admission.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_decodable_proof_of_the_wrong_shape_is_penalized_in_the_cheap_stage() {
+    let mut a = node(98, &[]).await;
+    a.mine_n(80, 0);
+    let Transaction::Transfer(pay) = a.payment() else {
+        panic!("a transfer")
+    };
+    let root = a.chain.lock().unwrap().state().px().root();
+    let fee = px_standard_fee();
+    let bridge_in = 1_000 * fee;
+    let tx = Transaction::Px(Box::new(blacksilk_tx::px::PxTx {
+        inputs: vec![pay.inputs[0].clone()],
+        outputs: vec![],
+        payouts: vec![],
+        fee,
+        bridge_in,
+        bridge_out: 0,
+        window: Default::default(),
+        anchor: root,
+        nullifiers: [[8, 1, 0, 0, 0, 0, 0, 0], [8, 2, 0, 0, 0, 0, 0, 0]],
+        commitments: [[0; 8]; 2],
+        ciphertexts: [
+            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
+            vec![0; blacksilk_px::delivery::CIPHERTEXT_BYTES],
+        ],
+        functions: vec![],
+        pseudo_outs: vec![blacksilk_crypto::Point::from_point(
+            blacksilk_crypto::commitment::commit(bridge_in + fee, &blacksilk_crypto::Scalar::ZERO),
+        )],
+        range_proof: None,
+        signatures: vec![pay.signatures[0].clone()],
+        proof: hollow_proof(&[10]),
+    }));
+    let Transaction::Px(t) = &tx else {
+        unreachable!()
+    };
+    let decoded = blacksilk_tx::validate::decode_px_proof(t).expect("the proof decodes");
+    assert_eq!(decoded.degree_bits, [10]);
+    {
+        let c = a.chain.lock().unwrap();
+        let rules = c.next_rules();
+        assert_eq!(
+            blacksilk_tx::validate::check_px_proof_shape_bits(t, c.state(), &rules, &[10]),
+            Err(TxError::PxProof),
+            "the shape check is what refuses it"
+        );
+        assert_eq!(
+            blacksilk_tx::validate::revalidate_after_extension(&tx, c.state(), c.height() + 1),
+            Ok(()),
+            "every cheap contextual check passes"
+        );
+    }
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(&mut r, &mut w, &[Message::StemTx(tx.encode()).encode()], 1).await;
+    let st = a.net.stats();
+    assert_eq!(st.tx_verifications, 0, "refused by the cheap stage");
+    assert_eq!(st.px_global_taken, 0, "no node-wide PX token");
+    assert_eq!(a.net.peers()[0].score, score::INVALID_TX, "penalized");
+    assert!(!a.net.stempool_contains(&tx.hash()));
+}
+
 /// R1-C1 (bodies): an unrequested block whose header we never accepted is
 /// dropped before it is hashed or stored (a free low-work branch could
 /// otherwise fill the disk, ~10 blocks per peer identity). Before the fix it
@@ -4385,6 +4679,166 @@ async fn rt_sync_a_draining_node_does_not_echo_tips_to_a_peer_ahead() {
         echoes, 0,
         "{echoes} ancestors of E's tip were announced to it"
     );
+}
+
+/// Whether the node asks a raw peer that handshakes claiming `height` and
+/// the best header `tip` for headers within `secs` (the handshake's request:
+/// with a long maintenance tick nothing else asks).
+async fn handshake_asks(node: &TestNode, height: u64, tip: Hash, secs: f64) -> bool {
+    let nid = params().network_id;
+    let s = TcpStream::connect(node.addr).await.unwrap();
+    let (mut r, _w) = try_raw_handshake_tip(s, true, nid, true, height, tip)
+        .await
+        .expect("handshake");
+    recv_until(&mut r, secs, |m| matches!(m, Message::GetHeaders { .. }))
+        .await
+        .is_some()
+}
+
+/// The handshake's header request (W4-SYNC, `knows_tip`; mutation run D):
+/// a peer is asked for headers if it claims more height than our best
+/// header, or names a best header we cannot place: not if it claims no more
+/// height and names a header we know, our connected tip included when our
+/// best header chain has moved to another branch. The maintenance loop
+/// (which also asks taller peers) is slowed to one tick a minute, so every
+/// request seen comes from the handshake.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_handshake_asks_for_headers_for_more_height_or_an_unknown_tip() {
+    let nid = params().network_id;
+    let mut cfg = fast_config(&[]);
+    cfg.tick = Duration::from_secs(60);
+    let mut a = node_with(730, cfg).await;
+    a.mine_n(10, 0);
+    let tip = a.tip();
+    assert!(
+        !handshake_asks(&a, 10, tip, 3.0).await,
+        "same height, our tip"
+    );
+    assert!(
+        !handshake_asks(&a, 5, params().genesis_id(), 3.0).await,
+        "a lower height, a header of our locator"
+    );
+    assert!(handshake_asks(&a, 11, tip, 10.0).await, "more height");
+    assert!(
+        handshake_asks(&a, 10, [9; 32], 10.0).await,
+        "an unknown tip"
+    );
+    // A heavier branch from genesis (12 blocks), headers only: our best
+    // header chain moves to it, and our connected tip leaves it.
+    let mut b = node(731, &[]).await;
+    b.mine_n(12, 0);
+    let branch: Vec<BlockHeader> = {
+        let c = b.chain.lock().unwrap();
+        (1..=12).map(|h| c.block_at(h).unwrap().header).collect()
+    };
+    let (xr, xw) = raw_peer_at(a.addr, nid, true, 12).await;
+    serve_branch(xr, xw, branch);
+    wait_until("A has the branch's headers", 60, || {
+        a.chain.lock().unwrap().header_height() == 12
+    })
+    .await;
+    assert_eq!(a.tip(), tip, "no bodies: the connected tip stays");
+    assert!(!a.chain.lock().unwrap().summary().tip_on_best_chain);
+    assert!(
+        !handshake_asks(&a, 10, tip, 3.0).await,
+        "our connected tip, off our best header chain"
+    );
+}
+
+/// The headers a peer delivered count as known to it (W4-SYNC,
+/// `Peer::has_header`, the work of `headers::end_of`; mutation run D), and
+/// so does the best header it named in its `Version`: X names header 50,
+/// answers two requests with headers 1..=50 and 51..=60 (the second batch
+/// heavier), then announces a sibling of header 60 of equal work, which
+/// does not replace it. While N connects the bodies (from A) it announces
+/// none of its new tips to X, which has them all. Before, only a peer whose
+/// `Version` named the best header was checked
+/// (`rt_sync_a_draining_node_does_not_echo_tips_to_a_peer_ahead`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tips_are_not_echoed_to_the_peer_that_delivered_their_headers() {
+    init_test_log();
+    let nid = params().network_id;
+    let mut a = node(732, &[]).await;
+    a.mine_n(60, 0);
+    let headers: Vec<BlockHeader> = {
+        let c = a.chain.lock().unwrap();
+        (1..=60).map(|h| c.block_at(h).unwrap().header).collect()
+    };
+    let mut sibling = headers[59];
+    sibling.nonce += 1;
+    let sibling_id = sibling.id(nid);
+    let n = node(733, &[]).await;
+    let s = TcpStream::connect(n.addr).await.unwrap();
+    let (mut xr, mut xw) = try_raw_handshake_tip(s, true, nid, true, 60, headers[49].id(nid))
+        .await
+        .expect("handshake");
+    let (sibling_tx, mut sibling_rx) = tokio::sync::oneshot::channel::<()>();
+    let (done_tx, mut done_rx) = tokio::sync::watch::channel(false);
+    let x = tokio::spawn(async move {
+        let (mut requests, mut echoes) = (0usize, 0usize);
+        let mut sibling_rx = Some(&mut sibling_rx);
+        let mut deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+        loop {
+            let frame = tokio::select! {
+                f = tokio::time::timeout_at(deadline, xr.recv()) => match f {
+                    Ok(Ok(frame)) => frame,
+                    _ => break,
+                },
+                _ = async { sibling_rx.as_mut().unwrap().await }, if sibling_rx.is_some() => {
+                    sibling_rx = None;
+                    let _ = xw.send(&Message::Headers(vec![sibling]).encode()).await;
+                    continue;
+                }
+                _ = done_rx.changed() => {
+                    deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+                    continue;
+                }
+            };
+            let reply = match Message::decode(&frame) {
+                Ok(Message::GetHeaders { locator, .. }) => {
+                    requests += 1;
+                    let mut h = serve_headers(&headers, &locator);
+                    if requests == 1 {
+                        h.truncate(50);
+                    }
+                    Message::Headers(h)
+                }
+                Ok(Message::Headers(h)) if h.len() == 1 => {
+                    echoes += 1;
+                    continue;
+                }
+                Ok(Message::GetBlocks(ids)) => Message::NotFound(ids),
+                Ok(Message::Ping(n)) => Message::Pong(n),
+                _ => continue,
+            };
+            if xw.send(&reply.encode()).await.is_err() {
+                break;
+            }
+        }
+        (requests, echoes)
+    });
+    wait_until("N has X's headers", 90, || {
+        n.chain.lock().unwrap().header_height() == 60
+    })
+    .await;
+    sibling_tx.send(()).unwrap();
+    wait_until("N has the sibling", 30, || {
+        n.chain
+            .lock()
+            .unwrap()
+            .headers()
+            .header(&sibling_id)
+            .is_some()
+    })
+    .await;
+    assert_eq!(n.height(), 0, "no bodies from X");
+    n.net.connect(NetAddr::Ip(a.addr));
+    wait_until("N connected the bodies", 90, || n.height() == 60).await;
+    done_tx.send(true).unwrap();
+    let (requests, echoes) = x.await.unwrap();
+    println!("X: {requests} header requests, {echoes} single-header announcements");
+    assert!(requests >= 2, "two batches");
+    assert_eq!(echoes, 0, "{echoes} of N's tips were announced to X");
 }
 
 /// RT-SYNC 1 (DoS): peers reconnecting with an unplaceable tip, answering

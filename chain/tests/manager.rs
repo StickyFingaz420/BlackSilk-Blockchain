@@ -494,6 +494,57 @@ fn heavier_header_branch_without_bodies_keeps_the_current_chain() {
     assert!(m.missing_bodies(10).is_empty());
 }
 
+/// W4-SYNC and RT-LAB F2 (mutation run D): the published summary says
+/// whether the connected tip is on the best header chain (not while a
+/// heavier branch's bodies are missing), and the summary cell calls its tip
+/// listeners once per publication that changes the connected tip, with the
+/// new summary already readable. Headers alone move no tip and call nothing.
+#[test]
+fn the_summary_flags_a_tip_off_the_best_header_chain_and_calls_tip_listeners() {
+    let mut m = open(Box::<MemoryStore>::default(), Arc::default());
+    let cell = m.summary_cell();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    {
+        let (seen, reader) = (seen.clone(), cell.clone());
+        cell.on_tip_change(move || seen.lock().unwrap().push(reader.load().tip_id));
+    }
+    assert!(format!("{cell:?}").contains("tip_listeners: 1"));
+    let id = |b: &Block| b.id(params().network_id);
+    let mut miner = Miner::new(22);
+    let tips: Vec<Hash> = (0..5).map(|_| id(&miner.mine_tip(&mut m))).collect();
+    assert_eq!(
+        *seen.lock().unwrap(),
+        tips,
+        "one call per new tip, once published"
+    );
+    assert!(m.summary().tip_on_best_chain);
+    // A heavier side branch from height 2 (to height 7), headers only.
+    let mut parent = m.headers().main_id_at(2).unwrap();
+    let mut side = Vec::new();
+    for i in 0..5 {
+        let t = m.template_on(&parent).unwrap();
+        let b = miner.build(&t, vec![], None, 100 + i);
+        parent = id(&b);
+        m.accept_headers(&[b.header], b.header.timestamp).unwrap();
+        side.push(b);
+    }
+    let s = m.summary();
+    assert_eq!((s.tip_id, s.best_header_id), (tips[4], parent));
+    assert!(
+        !s.tip_on_best_chain,
+        "the connected tip is off the best header chain"
+    );
+    assert_eq!(seen.lock().unwrap().len(), 5, "headers move no tip");
+    // The bodies: the branch takes over once heavier (at its fourth block).
+    for b in &side {
+        m.submit_block(b.clone(), b.header.timestamp).unwrap();
+    }
+    let s = m.summary();
+    assert_eq!(s.tip_id, parent);
+    assert!(s.tip_on_best_chain);
+    assert_eq!(seen.lock().unwrap()[5..], [id(&side[3]), id(&side[4])]);
+}
+
 #[test]
 fn locator_and_headers_after() {
     let (src, blocks) = mined_source(100, 22);
