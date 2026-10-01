@@ -122,6 +122,9 @@ jobs:
           run -p blacksilk-wallet --test e2e an_uncertain_vault_lock || rc=1
           run -p blacksilk-p2p --test network px_transactions_travel_the_stem || rc=1
           run -p blacksilk-p2p --test network invalid_px_transactions_get_the_relaying_peer_penalized || rc=1
+          # Ignored by default (PX-proving, two proofs): run C's cross-activation
+          # proof-cache test (fork_choice.rs 376:60).
+          bash .github/scripts/annotate-tests.sh cargo test --locked --release -p blacksilk-chain --test activation -- --ignored --test-threads=1 || rc=1
           exit $rc
 
   # The release profile has overflow checks and debug assertions off. This job
@@ -170,7 +173,10 @@ jobs:
             chain-tx)
               tx_tests=$(ls tx/tests | sed -n 's/\.rs$//p' | grep -vx 'px_consensus\|fuzz_decode' | sed 's/^/--test /')
               t -p blacksilk-tx --lib $tx_tests || rc=1
-              t -p blacksilk-chain -- $skip || rc=1 ;;
+              t -p blacksilk-chain -- $skip || rc=1
+              # The wallet's unit tests (no proving; run C found an overflow
+              # here that no overflow-checked job ran).
+              t -p blacksilk-wallet --lib || rc=1 ;;
             net)
               t -p blacksilk-p2p -p blacksilk-node -- $skip || rc=1 ;;
           esac
