@@ -683,11 +683,44 @@ fn a_private_contract_is_deployed_and_used_through_consensus() {
         ),
         Err(TxError::InvalidSignature { input: 0 })
     );
-    px_block(&mut net, vec![Transaction::Px(Box::new(claim))]).expect("CLAIM block");
+    // PX5's shape step (dossier 10 F10-2): a well-formed proof of another
+    // statement shape is refused as the stateless `PxProof` once PX3 holds,
+    // before any ring or CLSAG. Here the claim's one-function proof sits in
+    // the same transaction with its call removed (a kernel-only statement),
+    // which also breaks its CLSAG: the shape step reports it first.
+    let mut reshaped = claim.clone();
+    reshaped.functions.clear();
+    assert_eq!(
+        validate_mempool_tx(
+            &Transaction::Px(Box::new(reshaped)),
+            &net.chain,
+            net.height(),
+            &net.rules
+        ),
+        Err(TxError::PxProof)
+    );
+    // The CLAIM is mined together with a kernel-only bridge-in, both proofs
+    // verified by the block (no cache): each proof is shape-checked against
+    // its own statement, whatever the other transactions of the block are
+    // (run C mutation census: a block of one statement shape did not
+    // notice a proof checked against another transaction's statement).
+    let carol = PxWallet::new(5);
+    let deposit = bridge_in_skipping(&mut net, &carol, 1_000_000, 1);
+    assert_ne!(deposit.inputs[0].key_image, claim.inputs[0].key_image);
+    assert!(deposit.functions.is_empty());
+    px_block(
+        &mut net,
+        vec![
+            Transaction::Px(Box::new(deposit)),
+            Transaction::Px(Box::new(claim)),
+        ],
+    )
+    .expect("CLAIM block");
     bob.scan(&net.chain);
     assert_eq!(bob.balance(), value);
-    // The vault record is spent: its nullifier is on chain.
-    assert_eq!(net.chain.px_pool(), value as u128);
+    // The vault record is spent: its nullifier is on chain. The pool holds
+    // the locked value and the bridge-in.
+    assert_eq!(net.chain.px_pool(), value as u128 + 1_000_000);
 }
 
 /// PX6 and the vault refund (W28-4) through consensus, with real proofs: a

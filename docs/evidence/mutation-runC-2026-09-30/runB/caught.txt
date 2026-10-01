@@ -1,0 +1,30 @@
+chain/src/block.rs:11:67: replace + with *
+chain/src/block.rs:11:15: replace + with *
+chain/src/block.rs:31:9: replace Block::id -> Hash with Default::default()
+chain/src/block.rs:36:9: replace Block::compute_tx_root -> Hash with Default::default()
+chain/src/block.rs:41:9: replace Block::encode -> Vec<u8> with vec![]
+chain/src/block.rs:41:9: replace Block::encode -> Vec<u8> with vec![0]
+chain/src/block.rs:41:9: replace Block::encode -> Vec<u8> with vec![1]
+chain/src/block.rs:55:24: replace > with == in Block::decode
+chain/src/block.rs:55:24: replace > with < in Block::decode
+chain/src/block.rs:55:24: replace > with >= in Block::decode
+chain/src/block.rs:71:32: replace <= with > in Block::decode
+chain/src/emission.rs:6:42: replace * with +
+chain/src/emission.rs:6:42: replace * with /
+chain/src/emission.rs:15:5: replace block_reward -> u64 with 0
+chain/src/emission.rs:15:5: replace block_reward -> u64 with 1
+chain/src/emission.rs:15:15: replace == with != in block_reward
+chain/src/emission.rs:18:55: replace >> with << in block_reward
+chain/src/emission.rs:24:5: replace format_amount -> String with String::new()
+chain/src/emission.rs:24:5: replace format_amount -> String with "xyzzy".into()
+chain/src/emission.rs:30:5: replace parse_amount -> Option<u64> with None
+chain/src/emission.rs:30:5: replace parse_amount -> Option<u64> with Some(0)
+chain/src/emission.rs:30:5: replace parse_amount -> Option<u64> with Some(1)
+chain/src/emission.rs:34:23: replace && with || in parse_amount
+chain/src/emission.rs:37:23: replace || with && in parse_amount
+chain/src/emission.rs:37:19: replace > with == in parse_amount
+chain/src/emission.rs:37:19: replace > with < in parse_amount
+chain/src/emission.rs:37:19: replace > with >= in parse_amount
+chain/src/emission.rs:37:26: delete ! in parse_amount
+chain/src/emission.rs:47:20: replace *= with += in parse_amount
+chain/src/emission.rs:47:20: replace *= with /= in parse_amount

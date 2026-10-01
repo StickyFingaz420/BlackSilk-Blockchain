@@ -1,0 +1,4 @@
+--re=^tx[/]src[/]validate[.]rs[:]677[:]5[:] replace px[_]calls \-[>] Result[<]Vec[<]blacksilk[_]px[:][:]prove[:][:]FunctionCall[>][,] TxError[>] with Ok[(]vec[!]\[\][)]$
+--re=^tx[/]src[/]validate[.]rs[:]701[:]5[:] replace check[_]px[_]proof[_]shape \-[>] Result[<][(][)][,] TxError[>] with Ok[(][(][)][)]$
+--re=^tx[/]src[/]validate[.]rs[:]720[:]5[:] replace check[_]px[_]proof[_]decoded \-[>] Result[<][(][)][,] TxError[>] with Ok[(][(][)][)]$
+--re=^tx[/]src[/]validate[.]rs[:]1308[:]25[:] replace [+][=] with [*][=] in validate[_]block[_]transactions[_]cached$

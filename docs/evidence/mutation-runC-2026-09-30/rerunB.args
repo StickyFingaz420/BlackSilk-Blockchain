@@ -1,0 +1,5 @@
+--re=^chain[/]src[/]block[.]rs[:]11[:]67[:] replace [+] with \-$
+--re=^chain[/]src[/]block[.]rs[:]11[:]72[:] replace [*] with [+]$
+--re=^chain[/]src[/]block[.]rs[:]11[:]72[:] replace [*] with [/]$
+--re=^chain[/]src[/]block[.]rs[:]84[:]9[:] replace Block[:][:]weight \-[>] u128 with 0$
+--re=^chain[/]src[/]block[.]rs[:]84[:]9[:] replace Block[:][:]weight \-[>] u128 with 1$

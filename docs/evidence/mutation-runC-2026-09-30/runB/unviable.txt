@@ -1,0 +1,2 @@
+chain/src/block.rs:11:15: replace + with -
+chain/src/block.rs:55:9: replace Block::decode -> Result<Self, BlockDecodeError> with Ok(Default::default())

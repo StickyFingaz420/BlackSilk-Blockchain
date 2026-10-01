@@ -287,6 +287,23 @@ mod tests {
         );
     }
 
+    /// The scanning table holds one entry per subaddress index, and is empty
+    /// only when it holds none (run C mutation census).
+    #[test]
+    fn a_subaddress_table_counts_its_entries() {
+        let w = WalletKeys::from_seed(&[3; 32]);
+        let v = w.view_keys();
+        let mut t = SubaddressTable::default();
+        assert!(t.is_empty());
+        assert_eq!(t.len(), 0);
+        t.insert(v, SubaddressIndex::PRIMARY);
+        assert!(!t.is_empty());
+        assert_eq!(t.len(), 1);
+        let t = SubaddressTable::new(v, 2, 3);
+        assert!(!t.is_empty());
+        assert_eq!(t.len(), 6);
+    }
+
     #[test]
     fn address_structure() {
         let (w, _) = WalletKeys::generate(&mut seeded(1));

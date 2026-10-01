@@ -1,0 +1,53 @@
+chain/src/manager/fork_choice.rs:22:9: replace ChainManager::apply_halted -> bool with true
+chain/src/manager/fork_choice.rs:22:9: replace ChainManager::apply_halted -> bool with false
+chain/src/manager/fork_choice.rs:30:9: replace ChainManager::fail_next_apply_for_tests with ()
+chain/src/manager/fork_choice.rs:44:9: replace ChainManager::work -> u128 with 0
+chain/src/manager/fork_choice.rs:44:9: replace ChainManager::work -> u128 with 1
+chain/src/manager/fork_choice.rs:49:9: replace ChainManager::ancestor_at -> Option<Hash> with None
+chain/src/manager/fork_choice.rs:49:9: replace ChainManager::ancestor_at -> Option<Hash> with Some(Default::default())
+chain/src/manager/fork_choice.rs:51:25: replace == with != in ChainManager::ancestor_at
+chain/src/manager/fork_choice.rs:54:25: replace < with > in ChainManager::ancestor_at
+chain/src/manager/fork_choice.rs:64:9: replace ChainManager::keeps_body -> bool with true
+chain/src/manager/fork_choice.rs:64:9: replace ChainManager::keeps_body -> bool with false
+chain/src/manager/fork_choice.rs:65:45: replace * with + in ChainManager::keeps_body
+chain/src/manager/fork_choice.rs:66:26: replace >= with < in ChainManager::keeps_body
+chain/src/manager/fork_choice.rs:70:48: replace && with || in ChainManager::keeps_body
+chain/src/manager/fork_choice.rs:65:45: replace * with / in ChainManager::keeps_body
+chain/src/manager/fork_choice.rs:77:39: replace != with == in ChainManager::keeps_body
+chain/src/manager/fork_choice.rs:78:62: replace == with != in ChainManager::keeps_body
+chain/src/manager/fork_choice.rs:90:9: replace ChainManager::mark_complete with ()
+chain/src/manager/fork_choice.rs:104:32: replace += with -= in ChainManager::mark_complete
+chain/src/manager/fork_choice.rs:108:14: replace > with == in ChainManager::mark_complete
+chain/src/manager/fork_choice.rs:108:14: replace > with < in ChainManager::mark_complete
+chain/src/manager/fork_choice.rs:108:14: replace > with >= in ChainManager::mark_complete
+chain/src/manager/fork_choice.rs:119:9: replace ChainManager::recompute_target with ()
+chain/src/manager/fork_choice.rs:104:32: replace += with *= in ChainManager::mark_complete
+chain/src/manager/fork_choice.rs:124:54: replace && with || in ChainManager::recompute_target
+chain/src/manager/fork_choice.rs:124:49: replace == with != in ChainManager::recompute_target
+chain/src/manager/fork_choice.rs:203:9: replace ChainManager::invalidate_block -> io::Result<()> with Ok(())
+chain/src/manager/fork_choice.rs:203:15: replace == with != in ChainManager::invalidate_block
+chain/src/manager/fork_choice.rs:226:39: replace != with == in ChainManager::invalidate_block
+chain/src/manager/fork_choice.rs:252:9: replace ChainManager::fork_height -> usize with 1
+chain/src/manager/fork_choice.rs:252:45: replace - with + in ChainManager::fork_height
+chain/src/manager/fork_choice.rs:252:45: replace - with / in ChainManager::fork_height
+chain/src/manager/fork_choice.rs:253:52: replace != with == in ChainManager::fork_height
+chain/src/manager/fork_choice.rs:254:18: replace -= with += in ChainManager::fork_height
+chain/src/manager/fork_choice.rs:282:9: replace ChainManager::sync_state -> bool with true
+chain/src/manager/fork_choice.rs:288:23: replace == with != in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:305:58: replace == with != in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:312:50: replace - with + in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:312:50: replace - with / in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:312:46: replace - with + in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:312:46: replace - with / in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:323:44: replace > with == in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:323:44: replace > with < in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:323:44: replace > with >= in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:323:40: replace - with + in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:323:40: replace - with / in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:354:62: replace >= with < in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:383:38: replace && with || in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:388:59: replace + with - in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:388:59: replace + with * in ChainManager::sync_state
+chain/src/manager/fork_choice.rs:424:9: replace ChainManager::finish_sync with ()
+chain/src/manager/fork_choice.rs:424:34: replace + with - in ChainManager::finish_sync
+chain/src/manager/fork_choice.rs:424:34: replace + with * in ChainManager::finish_sync

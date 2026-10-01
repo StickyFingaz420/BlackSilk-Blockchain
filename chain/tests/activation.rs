@@ -158,6 +158,27 @@ fn transfer(
     rules: &TxRules,
     rng: &mut ChaCha20Rng,
 ) -> Transaction {
+    let plan = plan_nth(m, from, nth, rng);
+    Transaction::from(
+        build_transfer(
+            from,
+            vec![plan],
+            &[Payment {
+                address: from.address(SubaddressIndex::PRIMARY),
+                amount: 1_000,
+            }],
+            &from.address(SubaddressIndex::PRIMARY),
+            standard_fee(1, 2, rules),
+            rules,
+            rng,
+        )
+        .unwrap(),
+    )
+}
+
+/// An input plan for the `nth` output of `from` spendable in the next block,
+/// with 15 decoys.
+fn plan_nth(m: &ChainManager, from: &WalletKeys, nth: usize, rng: &mut ChaCha20Rng) -> InputPlan {
     let height = m.height() + 1;
     let owned = scan_all(m, from)
         .into_iter()
@@ -190,7 +211,7 @@ fn transfer(
         },
     )
     .unwrap();
-    let plan = InputPlan {
+    InputPlan {
         real: SpendableOutput::from(&owned),
         decoys: ring
             .iter()
@@ -200,22 +221,7 @@ fn transfer(
                 key: state.output(i).unwrap().key,
             })
             .collect(),
-    };
-    Transaction::from(
-        build_transfer(
-            from,
-            vec![plan],
-            &[Payment {
-                address: from.address(SubaddressIndex::PRIMARY),
-                amount: 1_000,
-            }],
-            &from.address(SubaddressIndex::PRIMARY),
-            standard_fee(1, 2, rules),
-            rules,
-            rng,
-        )
-        .unwrap(),
-    )
+    }
 }
 
 fn invalid_signature(r: Result<Hash, MempoolError>) -> bool {
@@ -349,4 +355,207 @@ fn transactions_returned_across_the_activation_are_revalidated_under_the_new_rul
     // The same output, re-signed for the new branch, is accepted.
     let again = transfer(&m, &keys, 0, &new, &mut rng);
     m.submit_tx(again).unwrap();
+}
+
+/// The same when the disconnected block is the last one before the
+/// activation (height A − 1): its transactions were validated under the old
+/// rules, the rules of the block's own height, and are re-checked in full
+/// under the new ones, not readmitted as if validated under them (run C
+/// mutation census: the rules of a disconnected block were taken one or two
+/// heights too high without a test noticing).
+#[test]
+fn transactions_of_the_last_block_before_the_activation_return_under_the_new_rules() {
+    let mut m = open();
+    let mut miner = Miner::new(5);
+    let mut rng = ChaCha20Rng::seed_from_u64(6);
+    for _ in 0..ACTIVATION - 2 {
+        miner.mine_template(&mut m);
+    }
+    let fork = m.tip_id(); // height A - 2
+    let keys = miner.keys.clone();
+    let old = m.rules_at(ACTIVATION - 1);
+    let new = m.rules_at(ACTIVATION);
+    assert_ne!(old.domain(), new.domain());
+    let tx_old = transfer(&m, &keys, 0, &old, &mut rng);
+    let id = m.submit_tx(tx_old.clone()).unwrap();
+    let b = miner.mine_template(&mut m); // height A - 1, holds tx_old
+    assert_eq!(m.height(), ACTIVATION - 1);
+    assert!(b.txs.iter().any(|t| t.hash() == id));
+    // A longer branch from A - 2, without tx_old, to A + 1.
+    let mut parent = fork;
+    for _ in 0..3 {
+        let t = m.template_on(&parent).unwrap();
+        let b = miner.build(&t, vec![]);
+        let now = b.header.timestamp;
+        parent = m.submit_block(b, now).unwrap().id;
+    }
+    assert_eq!(m.tip_id(), parent);
+    assert_eq!(m.height(), ACTIVATION + 1);
+    assert!(!m.mempool().contains(&id), "signed for the old branch");
+    assert!(m.mempool().is_empty());
+    assert!(invalid_signature(m.submit_tx(tx_old)));
+}
+
+/// The proof cache (`validate_block_transactions_cached`) vouches for a
+/// pooled PX transaction only under the rules the pool verified it under
+/// (AT-5 across an activation). A PX transaction without v1 inputs (so no
+/// CLSAG checks the branch id) is proven for the new rules and pooled; a
+/// heavier side branch carries it in a block below the activation, where its
+/// proof, bound to the new branch id, fails. The side branch is refused,
+/// although the pool vouches for the transaction id (run C mutation census:
+/// no test put a pooled proof in a block of other rules).
+///
+/// Builds two PX proofs (4 to 6 GB, minutes; impl-brief: run alone, with
+/// `--test-threads=1`), so it is ignored by default:
+/// `cargo test --release -p blacksilk-chain --test activation -- --ignored --test-threads=1`.
+#[test]
+#[ignore = "builds two PX proofs (4 to 6 GB): run alone, --ignored --test-threads=1"]
+fn a_pooled_px_proof_vouches_for_nothing_under_other_rules() {
+    use blacksilk_px::delivery;
+    use blacksilk_px::perm::HostPerm;
+    use blacksilk_px::tree::Tree;
+    use blacksilk_px::wallet::{self as pxw, Account};
+    use blacksilk_tx::px_builder::{build_px, px_standard_fee, PxPlan};
+
+    let mut m = open();
+    let mut miner = Miner::new(7);
+    let mut rng = ChaCha20Rng::seed_from_u64(8);
+    for _ in 0..ACTIVATION - 20 {
+        miner.mine_template(&mut m);
+    }
+    let fee = px_standard_fee();
+    let amount = 50_000_000;
+    let acct = Account::from_seed(&[9; 32]);
+    let primary = miner.keys.address(SubaddressIndex::PRIMARY);
+
+    // T1: the miner bridges `amount` into a PX record of `acct` (old rules).
+    let old = m.rules_at(m.height() + 1);
+    let plan = plan_nth(&m, &miner.keys, 0, &mut rng);
+    let witness = pxw::witness(
+        m.state().px().root(),
+        amount,
+        0,
+        [pxw::dummy_input(&mut rng), pxw::dummy_input(&mut rng)],
+        [
+            pxw::output(&mut rng, acct.owner(0), amount),
+            pxw::empty_output(&mut rng),
+        ],
+    );
+    let t1 = build_px(
+        PxPlan {
+            keys: Some(&miner.keys),
+            inputs: vec![plan],
+            change: Some(primary),
+            payouts: vec![],
+            witness,
+            recipients: [Some(acct.address(0)), None],
+            functions: vec![],
+            fee,
+            window: Default::default(),
+            hedge_secret: [0x5e; 32],
+        },
+        &old,
+        &mut rng,
+    )
+    .unwrap();
+    let fork = miner
+        .mine_with(&mut m, vec![Transaction::Px(Box::new(t1))])
+        .unwrap();
+    assert!(m.height() < ACTIVATION - 1);
+    // The main chain reaches A - 1: the pool now verifies under the new rules.
+    while m.height() < ACTIVATION - 1 {
+        miner.mine_with(&mut m, vec![]).unwrap();
+    }
+    let main_tip = m.tip_id();
+    let new = m.rules_at(ACTIVATION);
+    assert_ne!(old.domain(), new.domain());
+
+    // T2: `acct` spends its record privately under the new rules (the fee
+    // leaves PX: bridge_out = fee), without v1 inputs.
+    let mut perm = HostPerm::new();
+    let mut tree = Tree::new(&mut perm);
+    let mut found = None;
+    for e in m.state().px_records(0, u64::MAX) {
+        assert_eq!(tree.append(&mut perm, e.commitment).unwrap(), e.position);
+        let rho = blacksilk_px_core::record::output_rho(&mut perm, &e.nf0, e.slot);
+        if let Some(rec) = delivery::open(
+            &acct.delivery_keys(0),
+            &acct.owner(0),
+            &e.ciphertext,
+            &e.commitment,
+            &rho,
+        ) {
+            found = Some((rec, e.position));
+        }
+    }
+    let (rec, pos) = found.expect("the bridged record");
+    let input = acct.spend(0, &rec, pos, tree.path(pos).unwrap());
+    let w = pxw::witness(
+        tree.root(),
+        0,
+        fee,
+        [input, pxw::dummy_input(&mut rng)],
+        [
+            pxw::output(&mut rng, acct.owner(1), amount - fee),
+            pxw::empty_output(&mut rng),
+        ],
+    );
+    let t2 = build_px(
+        PxPlan {
+            keys: None,
+            inputs: vec![],
+            change: None,
+            payouts: vec![],
+            witness: w,
+            recipients: [Some(acct.address(1)), None],
+            functions: vec![],
+            fee,
+            window: Default::default(),
+            hedge_secret: [0x5e; 32],
+        },
+        &new,
+        &mut rng,
+    )
+    .unwrap();
+    assert!(t2.inputs.is_empty());
+    let t2 = Transaction::Px(Box::new(t2));
+    let id = m.submit_tx(t2.clone()).unwrap();
+    assert_eq!(m.mempool().validated_under(), Some(new.domain()));
+
+    // A side branch from T1's block, its first block (old rules) carrying T2,
+    // grown heavier than the main chain.
+    let t = m.template_on(&fork).unwrap();
+    assert!(t.height < ACTIVATION);
+    let carrier = miner.build(&t, vec![t2]);
+    let carrier_id = carrier.id(params().network_id);
+    let now = carrier.header.timestamp;
+    let mut parent = m.submit_block(carrier, now).unwrap().id;
+    for _ in 0..ACTIVATION {
+        let Some(t) = m.template_on(&parent) else {
+            break;
+        };
+        if t.height > ACTIVATION {
+            break;
+        }
+        let b = miner.build(&t, vec![]);
+        let now = b.header.timestamp;
+        match m.submit_block(b, now) {
+            Ok(s) => parent = s.id,
+            Err(_) => break,
+        }
+    }
+    // The carrier failed PX5 under its own rules: the side branch is invalid
+    // and the main chain stays, with T2 still pooled for the new rules.
+    assert_eq!(m.tip_id(), main_tip);
+    assert!(!m.knows_valid_header(&carrier_id));
+    // Refused for its proof (PX5), not for anything else: T2 is the
+    // carrier's only non-coinbase transaction.
+    assert_eq!(
+        m.invalid_reason(&carrier_id),
+        Some(&BlockError::Tx {
+            index: 1,
+            error: TxError::PxProof
+        })
+    );
+    assert!(m.mempool().contains(&id));
 }

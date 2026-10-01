@@ -1,0 +1,107 @@
+tx/src/validate.rs:298:9: replace TxError::is_stateless -> bool with true
+tx/src/validate.rs:345:5: replace strictly_increasing -> bool with true
+tx/src/validate.rs:298:9: replace TxError::is_stateless -> bool with false
+tx/src/validate.rs:345:5: replace strictly_increasing -> bool with false
+tx/src/validate.rs:348:19: replace >= with < in strictly_increasing
+tx/src/validate.rs:361:5: replace check_aux_images -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:369:5: replace check_structure -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:380:5: replace check_fee -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:383:15: replace != with == in check_fee
+tx/src/validate.rs:396:5: replace check_shape -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:398:15: replace || with && in check_shape
+tx/src/validate.rs:398:10: replace == with != in check_shape
+tx/src/validate.rs:398:20: replace > with < in check_shape
+tx/src/validate.rs:401:8: delete ! in check_shape
+tx/src/validate.rs:410:8: delete ! in check_shape
+tx/src/validate.rs:415:12: delete ! in check_shape
+tx/src/validate.rs:428:8: delete ! in check_shape
+tx/src/validate.rs:432:29: replace != with == in check_shape
+tx/src/validate.rs:435:28: replace != with == in check_shape
+tx/src/validate.rs:440:41: replace || with && in check_shape
+tx/src/validate.rs:440:31: replace != with == in check_shape
+tx/src/validate.rs:440:67: replace != with == in check_shape
+tx/src/validate.rs:445:13: replace > with < in check_shape
+tx/src/validate.rs:453:5: replace check_balance -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:455:43: replace - with + in check_balance
+tx/src/validate.rs:455:33: replace - with + in check_balance
+tx/src/validate.rs:463:5: replace output_commitments -> Vec<Point> with vec![]
+tx/src/validate.rs:468:5: replace check_range_proof -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:482:5: replace resolve_rings -> Result<Vec<[RingMember; RING_SIZE]>, TxError> with Ok(vec![])
+tx/src/validate.rs:491:5: replace resolve_input_rings -> Result<Vec<[RingMember; RING_SIZE]>, TxError> with Ok(vec![])
+tx/src/validate.rs:508:54: replace < with == in resolve_input_rings
+tx/src/validate.rs:508:54: replace < with > in resolve_input_rings
+tx/src/validate.rs:508:54: replace < with <= in resolve_input_rings
+tx/src/validate.rs:527:5: replace check_signatures -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:544:5: replace check_ring_signatures -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:550:12: delete ! in check_ring_signatures
+tx/src/validate.rs:572:5: replace check_key_images -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:574:13: replace || with && in check_key_images
+tx/src/validate.rs:574:16: delete ! in check_key_images
+tx/src/validate.rs:592:8: delete ! in check_px_state
+tx/src/validate.rs:592:5: replace check_px_state -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:596:44: delete ! in check_px_state
+tx/src/validate.rs:596:41: replace || with && in check_px_state
+tx/src/validate.rs:604:28: replace != with == in check_px_state
+tx/src/validate.rs:617:5: replace check_px_window -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:640:5: replace px_expires_soon -> bool with true
+tx/src/validate.rs:640:5: replace px_expires_soon -> bool with false
+tx/src/validate.rs:641:20: replace && with || in px_expires_soon
+tx/src/validate.rs:641:15: replace != with == in px_expires_soon
+tx/src/validate.rs:641:33: replace < with == in px_expires_soon
+tx/src/validate.rs:641:33: replace < with > in px_expires_soon
+tx/src/validate.rs:646:5: replace px_free_leaves -> u64 with 0
+tx/src/validate.rs:641:33: replace < with <= in px_expires_soon
+tx/src/validate.rs:646:5: replace px_free_leaves -> u64 with 1
+tx/src/validate.rs:652:5: replace check_px_capacity -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:652:36: replace > with == in check_px_capacity
+tx/src/validate.rs:652:36: replace > with >= in check_px_capacity
+tx/src/validate.rs:766:5: replace validate_px -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:778:5: replace validate_px_without_proof -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:791:5: replace validate_px_checks -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:807:12: delete ! in validate_px_checks
+tx/src/validate.rs:814:49: replace < with > in validate_px_checks
+tx/src/validate.rs:814:24: replace + with * in validate_px_checks
+tx/src/validate.rs:845:5: replace validate_deploy -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:872:5: replace validate_transfer -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:889:5: replace validate_mempool_tx -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:931:5: replace revalidate_after_extension -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:938:56: replace < with == in revalidate_after_extension
+tx/src/validate.rs:938:56: replace < with > in revalidate_after_extension
+tx/src/validate.rs:938:56: replace < with <= in revalidate_after_extension
+tx/src/validate.rs:938:32: replace + with - in revalidate_after_extension
+tx/src/validate.rs:938:32: replace + with * in revalidate_after_extension
+tx/src/validate.rs:969:5: replace revalidate_between -> Result<(), TxError> with Ok(())
+tx/src/validate.rs:969:22: replace != with == in revalidate_between
+tx/src/validate.rs:999:5: replace near_activation -> bool with true
+tx/src/validate.rs:999:5: replace near_activation -> bool with false
+tx/src/validate.rs:1002:13: replace && with || in near_activation
+tx/src/validate.rs:1001:56: replace >= with < in near_activation
+tx/src/validate.rs:1002:23: replace < with == in near_activation
+tx/src/validate.rs:1002:23: replace < with > in near_activation
+tx/src/validate.rs:1013:9: replace TxError::is_stateless_at -> bool with true
+tx/src/validate.rs:1002:23: replace < with <= in near_activation
+tx/src/validate.rs:1013:9: replace TxError::is_stateless_at -> bool with false
+tx/src/validate.rs:1014:33: replace match guard near_activation(params, height) with true in TxError::is_stateless_at
+tx/src/validate.rs:1108:5: replace validate_block_transactions -> Result<(), BlockError> with Ok(())
+tx/src/validate.rs:1135:5: replace validate_block_transactions_cached -> Result<(), BlockError> with Ok(())
+tx/src/validate.rs:1014:33: replace match guard near_activation(params, height) with false in TxError::is_stateless_at
+tx/src/validate.rs:1138:24: replace != with == in validate_block_transactions_cached
+tx/src/validate.rs:1145:8: delete ! in validate_block_transactions_cached
+tx/src/validate.rs:1156:8: delete ! in validate_block_transactions_cached
+tx/src/validate.rs:1185:51: replace != with == in validate_block_transactions_cached
+tx/src/validate.rs:1193:15: replace > with == in validate_block_transactions_cached
+tx/src/validate.rs:1193:15: replace > with < in validate_block_transactions_cached
+tx/src/validate.rs:1193:15: replace > with >= in validate_block_transactions_cached
+tx/src/validate.rs:1200:17: replace > with < in validate_block_transactions_cached
+tx/src/validate.rs:1214:21: replace > with == in validate_block_transactions_cached
+tx/src/validate.rs:1214:21: replace > with < in validate_block_transactions_cached
+tx/src/validate.rs:1226:15: replace > with == in validate_block_transactions_cached
+tx/src/validate.rs:1226:15: replace > with < in validate_block_transactions_cached
+tx/src/validate.rs:1231:38: replace + with - in validate_block_transactions_cached
+tx/src/validate.rs:1226:15: replace > with >= in validate_block_transactions_cached
+tx/src/validate.rs:1231:38: replace + with * in validate_block_transactions_cached
+tx/src/validate.rs:1232:25: replace != with == in validate_block_transactions_cached
+tx/src/validate.rs:1299:30: replace + with * in validate_block_transactions_cached
+tx/src/validate.rs:1308:25: replace += with -= in validate_block_transactions_cached
+tx/src/validate.rs:1312:53: delete ! in validate_block_transactions_cached
+tx/src/validate.rs:1369:8: delete ! in validate_block_transactions_cached

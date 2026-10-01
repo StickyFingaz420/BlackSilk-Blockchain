@@ -1,0 +1,75 @@
+crypto/src/claims.rs:45:9: replace <impl From<SchnorrError> for ClaimError>::from -> Self with Default::default()
+crypto/src/claims.rs:53:21: replace * with + in value_point
+crypto/src/claims.rs:53:21: replace * with / in value_point
+crypto/src/claims.rs:62:5: replace range_commitments -> [Point; 2] with [Default::default(); 2]
+crypto/src/claims.rs:64:29: replace - with / in range_commitments
+crypto/src/claims.rs:65:44: replace - with / in range_commitments
+crypto/src/claims.rs:78:5: replace prove_range -> Result<BppProof, ClaimError> with Ok(Default::default())
+crypto/src/claims.rs:85:74: delete - in prove_range
+crypto/src/claims.rs:97:5: replace equal_key -> Point with Default::default()
+crypto/src/claims.rs:97:33: replace - with / in equal_key
+crypto/src/claims.rs:101:5: replace reveal_key -> Point with Default::default()
+crypto/src/claims.rs:101:33: replace - with / in reveal_key
+crypto/src/claims.rs:114:5: replace prove_equal -> Result<Signature, ClaimError> with Ok(Default::default())
+crypto/src/claims.rs:117:18: replace - with / in prove_equal
+crypto/src/claims.rs:136:5: replace prove_reveal -> Result<Signature, ClaimError> with Ok(Default::default())
+crypto/src/commitment.rs:9:36: replace + with * in commit
+crypto/src/commitment.rs:9:60: replace * with + in commit
+crypto/src/commitment.rs:9:60: replace * with / in commit
+crypto/src/generators.rs:24:5: replace h_table -> &'static RistrettoBasepointTable with Box::leak(Box::new(Default::default()))
+crypto/src/generators.rs:35:5: replace bp_generators -> &'static BpGenerators with Box::leak(Box::new(Default::default()))
+crypto/src/hash.rs:238:9: replace Hasher64::update -> &mut Self with Box::leak(Box::new(Default::default()))
+crypto/src/hash.rs:243:9: replace Hasher64::chain -> Self with Default::default()
+crypto/src/janus.rs:84:5: replace open -> Anchor with Default::default()
+crypto/src/janus.rs:94:40: replace * with + in verify
+crypto/src/janus.rs:94:40: replace * with / in verify
+crypto/src/keys.rs:58:9: replace Address::spend -> &Point with Box::leak(Box::new(Default::default()))
+crypto/src/keys.rs:63:9: replace Address::view -> &Point with Box::leak(Box::new(Default::default()))
+crypto/src/keys.rs:75:9: replace Address::from_bytes -> Option<Self> with Some(Default::default())
+crypto/src/keys.rs:105:9: replace ViewKeys::spend_public -> &Point with Box::leak(Box::new(Default::default()))
+crypto/src/keys.rs:125:35: replace + with * in ViewKeys::subaddress_spend_key
+crypto/src/keys.rs:130:9: replace ViewKeys::address -> Address with Default::default()
+crypto/src/keys.rs:131:27: replace * with + in ViewKeys::address
+crypto/src/keys.rs:131:27: replace * with / in ViewKeys::address
+crypto/src/keys.rs:157:9: replace WalletKeys::from_seed -> Self with Default::default()
+crypto/src/keys.rs:167:9: replace WalletKeys::generate -> (Self, WalletSeed) with (Default::default(), Default::default())
+crypto/src/keys.rs:173:9: replace WalletKeys::view_keys -> &ViewKeys with Box::leak(Box::new(Default::default()))
+crypto/src/keys.rs:177:9: replace WalletKeys::address -> Address with Default::default()
+crypto/src/keys.rs:246:9: replace SubaddressTable::lookup -> Option<&(SubaddressIndex, Address)> with Some(Box::leak(Box::new((Default::default(), Default::default()))))
+crypto/src/membership.rs:68:9: replace Scope::base -> &Point with Box::leak(Box::new(Default::default()))
+crypto/src/membership.rs:73:9: replace Scope::tag -> Point with Default::default()
+crypto/src/membership.rs:73:34: replace * with + in Scope::tag
+crypto/src/membership.rs:73:34: replace * with / in Scope::tag
+crypto/src/membership.rs:136:5: replace sign -> Result<(MemberSig, Point), MemberError> with Ok((Default::default(), Default::default()))
+crypto/src/membership.rs:162:5: replace sign_with_tag -> MemberSig with Default::default()
+crypto/src/membership.rs:182:67: replace * with + in sign_with_tag
+crypto/src/membership.rs:182:67: replace * with / in sign_with_tag
+crypto/src/membership.rs:185:49: replace + with * in sign_with_tag
+crypto/src/membership.rs:185:56: replace * with + in sign_with_tag
+crypto/src/membership.rs:185:56: replace * with / in sign_with_tag
+crypto/src/membership.rs:186:26: replace + with * in sign_with_tag
+crypto/src/membership.rs:186:22: replace * with + in sign_with_tag
+crypto/src/membership.rs:186:22: replace * with / in sign_with_tag
+crypto/src/membership.rs:186:33: replace * with + in sign_with_tag
+crypto/src/membership.rs:186:33: replace * with / in sign_with_tag
+crypto/src/membership.rs:191:27: replace - with / in sign_with_tag
+crypto/src/membership.rs:191:43: replace * with / in sign_with_tag
+crypto/src/point.rs:23:9: replace Point::decode -> Option<Self> with Some(Default::default())
+crypto/src/point.rs:31:9: replace Point::from_point -> Self with Default::default()
+crypto/src/point.rs:66:9: replace <impl PartialOrd for Point>::partial_cmp -> Option<Ordering> with Some(Default::default())
+crypto/src/point.rs:71:9: replace <impl Ord for Point>::cmp -> Ordering with Default::default()
+crypto/src/schnorr.rs:51:9: replace Signature::from_bytes -> Option<Self> with Some(Default::default())
+crypto/src/schnorr.rs:83:5: replace sign -> Result<Signature, SchnorrError> with Ok(Default::default())
+crypto/src/schnorr.rs:100:19: replace * with / in sign
+crypto/src/stealth.rs:32:9: replace SharedSecret::from_point -> Self with Default::default()
+crypto/src/stealth.rs:137:5: replace create_output -> Option<CreatedOutput> with Some(Default::default())
+crypto/src/stealth.rs:141:41: replace * with + in create_output
+crypto/src/stealth.rs:141:41: replace * with / in create_output
+crypto/src/stealth.rs:142:42: replace * with + in create_output
+crypto/src/stealth.rs:142:42: replace * with / in create_output
+crypto/src/stealth.rs:146:71: replace + with * in create_output
+crypto/src/stealth.rs:232:9: replace ScanOutcome::owned -> Option<&ReceivedOutput> with Some(Box::leak(Box::new(Default::default())))
+crypto/src/stealth.rs:247:5: replace scan_output -> ScanOutcome with Default::default()
+crypto/src/stealth.rs:247:59: replace * with + in scan_output
+crypto/src/stealth.rs:247:59: replace * with / in scan_output
+crypto/src/stealth.rs:253:46: replace - with / in scan_output

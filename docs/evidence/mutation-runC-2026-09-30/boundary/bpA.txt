@@ -1,0 +1,15 @@
+commit 934fe30; cargo test --locked --profile mutants -p blacksilk-consensus
+baseline ok
+caught consensus/src/chain.rs:250:43: replace >= with > (1.log)
+caught consensus/src/params.rs:191:14: replace >= with > (2.log)
+missed consensus/src/params.rs:198:62: replace >= with > (3.log)
+caught consensus/src/params.rs:212:30: replace >= with > (4.log)
+missed consensus/src/pow.rs:28:15: replace <= with < (5.log)
+caught consensus/src/pow.rs:291:27: replace <= with < (6.log)
+caught consensus/src/pow.rs:417:51: replace <= with < (7.log)
+caught consensus/src/pow.rs:418:58: replace <= with < (8.log)
+caught consensus/src/schedule.rs:76:46: replace >= with > (9.log)
+caught consensus/src/schedule.rs:112:54: replace <= with < (10.log)
+caught consensus/src/schedule.rs:133:73: replace <= with < (11.log)
+caught consensus/src/timestamp.rs:18:15: replace <= with < (12.log)
+done: 12 mutants, 2 missed

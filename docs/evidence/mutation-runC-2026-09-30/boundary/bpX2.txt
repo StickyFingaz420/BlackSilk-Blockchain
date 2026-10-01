@@ -1,0 +1,4 @@
+commit 55d84f4; cargo test --locked --profile mutants -p blacksilk-px-core -p blacksilk-px --lib --test kernel --test fuzz --test state --test hk_vectors --test kernel_budget --test consensus_fingerprint --test delivery --test elf_paths --test fri_schedule --test mutation_regressions
+baseline ok
+caught px-core/src/lib.rs:38:10: replace >= with > (1.log)
+done: 1 mutants, 0 missed

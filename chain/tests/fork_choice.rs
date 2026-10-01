@@ -676,6 +676,15 @@ fn low_work_side_branch_bodies_are_not_kept_but_candidates_always_are() {
     assert_eq!(m.missing_bodies(1000).len(), 125);
     let d = attacker.child(&m, &id(&fork), 0, 23);
     assert!(!submit(&mut m, &d).unwrap().body_kept);
+    // B's bodies, 120 blocks below the tip, arrive at last. B is the header
+    // tip, which the leaf scan leaves out: they are kept because they lie on
+    // the header-best chain, heavier than the connected tip, and B connects
+    // (run C mutation census: no test submitted a header-best deep body).
+    for blk in &b {
+        assert!(submit(&mut m, blk).unwrap().body_kept);
+    }
+    assert_eq!(m.tip_id(), id(b.last().unwrap()), "B connected");
+    assert!(m.missing_bodies(1000).is_empty());
 }
 
 /// A store written for another network or genesis is refused at startup.
@@ -708,4 +717,134 @@ fn a_store_of_another_network_is_refused() {
         1,
         "the right network still opens"
     );
+}
+
+/// The low-work policy's candidate rule is strict (docs/blocks.md §8): the
+/// bodies of a header tip with **more** work than the connected tip are
+/// downloaded and kept. A deep branch whose header tip only equals the
+/// connected tip's work (header-best because its headers came first) is no
+/// candidate: its bodies below the margin are refused like any low-work side
+/// branch (run C mutation census: no test had an equal-work header tip).
+#[test]
+fn an_equal_work_header_tip_is_not_a_candidate_for_deep_bodies() {
+    let mut m = open_mem();
+    let mut miner = Miner::new(13);
+    let mut attacker = Miner::new(14);
+    for _ in 0..LOW_WORK_MARGIN_BLOCKS as usize + 50 {
+        miner.mine_tip(&mut m);
+    }
+    let tip_height = m.height();
+    let fork = m.block_at(tip_height - 120).unwrap();
+    // B: 121 headers from 120 blocks below the tip, one block heavier.
+    let b = attacker.headers_only(&mut m, id(&fork), 121, 31);
+    assert_eq!(m.best_header_id(), id(b.last().unwrap()));
+    // The connected chain catches up to B's work with one block; B stays the
+    // header tip (it reached that work first).
+    let a = miner.child(&m, &m.tip_id(), 0, 32);
+    assert!(submit(&mut m, &a).unwrap().body_kept);
+    assert_eq!(m.tip_id(), id(&a));
+    assert_eq!(m.height(), tip_height + 1);
+    assert_eq!(m.best_header_id(), id(b.last().unwrap()));
+    // B's deep bodies are not candidates any more.
+    assert!(!submit(&mut m, &b[0]).unwrap().body_kept);
+    assert!(!m.has_body(&id(&b[0])));
+    // One more header on B makes it heavier again: now its bodies are kept.
+    let b2 = attacker.headers_only(&mut m, id(b.last().unwrap()), 1, 33);
+    assert_eq!(m.best_header_id(), id(&b2[0]));
+    assert!(submit(&mut m, &b[0]).unwrap().body_kept);
+}
+
+/// The same for a side branch that is not the header tip: a deep branch
+/// whose headers reach the connected tip's work, or one block less, is no
+/// candidate (the leaf scan takes leaves with strictly more work); one block
+/// more makes it one.
+#[test]
+fn an_equal_or_lighter_side_leaf_is_not_a_candidate_for_deep_bodies() {
+    let mut m = open_mem();
+    let mut miner = Miner::new(15);
+    let mut attacker = Miner::new(16);
+    for _ in 0..LOW_WORK_MARGIN_BLOCKS as usize + 50 {
+        miner.mine_tip(&mut m);
+    }
+    let tip = m.tip_id();
+    let fork = m.block_at(m.height() - 120).unwrap();
+    // C: 119 then 120 headers from 120 blocks below the tip (one block less
+    // than the tip's work, then equal): the tip stays the header tip.
+    let c = attacker.headers_only(&mut m, id(&fork), 119, 41);
+    assert_eq!(m.best_header_id(), tip);
+    assert!(
+        !submit(&mut m, &c[0]).unwrap().body_kept,
+        "one block lighter"
+    );
+    let c2 = attacker.headers_only(&mut m, id(c.last().unwrap()), 1, 42);
+    assert_eq!(m.best_header_id(), tip, "equal work: the first seen stays");
+    assert!(!submit(&mut m, &c[0]).unwrap().body_kept, "equal work");
+    // One block heavier: a candidate, its deep bodies kept.
+    attacker.headers_only(&mut m, id(&c2[0]), 1, 43);
+    assert!(submit(&mut m, &c[0]).unwrap().body_kept, "heavier");
+}
+
+/// When a block is invalidated, its parent becomes a leaf again if no valid
+/// child remains: a branch cut back below its invalid tip is still a
+/// candidate while it has more work than the connected tip, and its missing
+/// bodies are still requested (run C mutation census: no test cut a
+/// candidate branch that way).
+#[test]
+fn a_candidate_cut_back_below_an_invalid_tip_stays_a_candidate() {
+    let mut m = open_mem();
+    let mut miner = Miner::new(17);
+    let mut attacker = Miner::new(18);
+    for _ in 0..20 {
+        miner.mine_tip(&mut m);
+    }
+    let fork = id(&m.block_at(m.height() - 5).unwrap());
+    // B: the header tip, 5 blocks heavier than the connected tip. C: 3
+    // blocks heavier; after its last block is invalidated, 2.
+    let b = attacker.headers_only(&mut m, fork, 10, 51);
+    let c = miner.headers_only(&mut m, fork, 8, 52);
+    assert_eq!(m.best_header_id(), id(b.last().unwrap()));
+    let wanted =
+        |m: &ChainManager| -> Vec<Hash> { m.missing_bodies(1000).iter().map(|x| x.1).collect() };
+    assert!(c.iter().all(|blk| wanted(&m).contains(&id(blk))));
+    m.invalidate_block(id(c.last().unwrap())).unwrap();
+    let after = wanted(&m);
+    assert!(!after.contains(&id(c.last().unwrap())));
+    for blk in &c[..7] {
+        assert!(
+            after.contains(&id(blk)),
+            "C below its invalid tip is still wanted"
+        );
+    }
+    assert!(b.iter().all(|blk| after.contains(&id(blk))));
+}
+
+/// The low-work margin is inclusive (docs/blocks.md §8): a side-branch body
+/// with exactly `LOW_WORK_MARGIN_BLOCKS` blocks of work less than the
+/// connected tip is kept, one block more below is not. RT-MUTC: `keeps_body`'s
+/// `>=` had no test at the bound (cargo-mutants 27.1 never generates
+/// `>=` -> `>`, and that mutant passed every run C chain test target).
+#[test]
+fn the_low_work_margin_is_inclusive() {
+    let depth = LOW_WORK_MARGIN_BLOCKS as usize; // regtest: difficulty 1 per block
+    let mut m = open_mem();
+    let mut miner = Miner::new(61);
+    let mut attacker = Miner::new(62);
+    let main: Vec<Block> = (0..depth + 20).map(|_| miner.mine_tip(&mut m)).collect();
+    let tip = m.tip_id();
+    // main[i] is at height i + 1, the tip at height main.len(). A child of
+    // main[edge - 2] is at height main.len() - depth: exactly the margin.
+    let edge = main.len() - depth;
+    let at_margin = attacker.child(&m, &id(&main[edge - 2]), 0, 1);
+    assert!(
+        submit(&mut m, &at_margin).unwrap().body_kept,
+        "at the margin"
+    );
+    assert!(m.has_body(&id(&at_margin)));
+    let below = attacker.child(&m, &id(&main[edge - 3]), 0, 2);
+    assert!(
+        !submit(&mut m, &below).unwrap().body_kept,
+        "one block below"
+    );
+    assert!(!m.has_body(&id(&below)));
+    assert_eq!(m.tip_id(), tip);
 }

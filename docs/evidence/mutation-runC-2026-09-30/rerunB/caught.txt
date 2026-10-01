@@ -1,0 +1,5 @@
+chain/src/block.rs:11:67: replace + with -
+chain/src/block.rs:11:72: replace * with /
+chain/src/block.rs:11:72: replace * with +
+chain/src/block.rs:84:9: replace Block::weight -> u128 with 0
+chain/src/block.rs:84:9: replace Block::weight -> u128 with 1

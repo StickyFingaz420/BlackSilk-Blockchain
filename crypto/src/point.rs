@@ -106,6 +106,31 @@ mod tests {
         assert_eq!(p.point(), q.point());
     }
 
+    /// Points order by their encoding, through every comparison operator:
+    /// the sort rules of transactions (key images, one-time keys, T4 and T6)
+    /// compare points with `<` and `>=` (run C mutation census).
+    #[test]
+    fn points_order_by_their_encoding_through_every_operator() {
+        let mut v: Vec<Point> = (1..=8u64)
+            .map(|k| Point::from_point(RISTRETTO_BASEPOINT_POINT * Scalar::from(k)))
+            .collect();
+        v.sort();
+        for w in v.windows(2) {
+            let (a, b) = (&w[0], &w[1]);
+            assert!(a.bytes() < b.bytes());
+            assert_eq!(a.partial_cmp(b), Some(Ordering::Less));
+            assert!(a < b && a <= b && b > a && b >= a);
+            assert!(!(a >= b) && !(b < a));
+            assert_eq!(a.partial_cmp(a), Some(Ordering::Equal));
+        }
+        // `Debug` shows the first 8 bytes of the encoding.
+        let hex: String = v[0].bytes()[..8]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(format!("{:?}", v[0]), format!("Point({hex}…)"));
+    }
+
     #[test]
     fn identity_encodes_as_zero() {
         let id = Point::decode(&[0; 32]).unwrap();
@@ -154,5 +179,26 @@ mod tests {
             }
         }
         assert!(invalid > 128, "{invalid}");
+    }
+
+    /// `Hash` agrees with the canonical encoding (as `Eq` does): a point
+    /// hashes exactly as its 32 bytes, so distinct points spread over a map's
+    /// buckets. The key-image sets of block validation and the pool's
+    /// conflict index rely on it for their cost (RT-MUTC on exemption E16:
+    /// a constant hash keeps every answer but makes each lookup linear).
+    #[test]
+    fn a_point_hashes_as_its_encoding() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        fn digest<T: Hash + ?Sized>(x: &T) -> u64 {
+            let mut s = DefaultHasher::new();
+            x.hash(&mut s);
+            s.finish()
+        }
+        let a = Point::from_point(RISTRETTO_BASEPOINT_POINT * Scalar::from(3u64));
+        let b = Point::from_point(RISTRETTO_BASEPOINT_POINT * Scalar::from(4u64));
+        assert_eq!(digest(&a), digest(a.bytes()));
+        assert_eq!(digest(&b), digest(b.bytes()));
+        assert_ne!(digest(&a), digest(&b));
     }
 }

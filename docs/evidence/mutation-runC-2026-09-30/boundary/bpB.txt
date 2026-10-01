@@ -1,0 +1,4 @@
+commit 934fe30; cargo test --locked --profile mutants -p blacksilk-chain --lib --test=golden --test=block_malleability --test=block_rules --test=manager --test=fork_choice --test=store_format --test=storage_recovery -- --skip restart_rebuilds_the_px_state_exactly
+baseline ok
+caught chain/src/block.rs:71:32: replace <= with < (1.log)
+done: 1 mutants, 0 missed

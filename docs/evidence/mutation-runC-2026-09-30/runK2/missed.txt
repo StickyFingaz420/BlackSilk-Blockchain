@@ -1,0 +1,20 @@
+crypto/src/janus.rs:42:9: replace <impl std::fmt::Debug for Anchor>::fmt -> std::fmt::Result with Ok(Default::default())
+crypto/src/janus.rs:48:9: replace <impl Drop for Anchor>::drop with ()
+crypto/src/keys.rs:141:9: replace <impl Drop for ViewKeys>::drop with ()
+crypto/src/keys.rs:208:9: replace <impl Drop for WalletKeys>::drop with ()
+crypto/src/keys.rs:217:9: replace <impl Drop for WalletSeed>::drop with ()
+crypto/src/keys.rs:254:9: replace SubaddressTable::is_empty -> bool with true
+crypto/src/keys.rs:254:9: replace SubaddressTable::is_empty -> bool with false
+crypto/src/membership.rs:85:9: replace MemberSig::encoded_len -> usize with 0
+crypto/src/membership.rs:85:9: replace MemberSig::encoded_len -> usize with 1
+crypto/src/membership.rs:85:12: replace * with + in MemberSig::encoded_len
+crypto/src/membership.rs:85:12: replace * with / in MemberSig::encoded_len
+crypto/src/membership.rs:85:17: replace + with - in MemberSig::encoded_len
+crypto/src/membership.rs:85:17: replace + with * in MemberSig::encoded_len
+crypto/src/membership.rs:204:34: replace || with && in verify
+crypto/src/membership.rs:208:26: replace || with && in verify
+crypto/src/nonce.rs:102:9: replace <impl Drop for HedgedRng>::drop with ()
+crypto/src/point.rs:60:9: replace <impl Hash for Point>::hash with ()
+crypto/src/point.rs:66:9: replace <impl PartialOrd for Point>::partial_cmp -> Option<Ordering> with None
+crypto/src/point.rs:77:9: replace <impl std::fmt::Debug for Point>::fmt -> std::fmt::Result with Ok(Default::default())
+crypto/src/stealth.rs:42:9: replace <impl Drop for SharedSecret>::drop with ()

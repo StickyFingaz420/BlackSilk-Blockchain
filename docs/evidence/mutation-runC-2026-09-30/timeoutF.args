@@ -1,0 +1,5 @@
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]135[:]9[:] replace ChainManager[:][:]invalidate with [(][)]$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]153[:]9[:] replace ChainManager[:][:]drop[_]invalid \-[>] Vec[<]Hash[>] with vec[!]\[\]$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]153[:]9[:] replace ChainManager[:][:]drop[_]invalid \-[>] Vec[<]Hash[>] with vec[!]\[Default[:][:]default[(][)]\]$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]219[:]15[:] delete [!] in ChainManager[:][:]invalidate[_]block$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]254[:]18[:] replace \-[=] with [/][=] in ChainManager[:][:]fork[_]height$

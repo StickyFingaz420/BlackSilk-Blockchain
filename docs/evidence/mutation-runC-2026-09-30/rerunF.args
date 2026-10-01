@@ -1,0 +1,25 @@
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]54[:]25[:] replace [<] with [=][=] in ChainManager[:][:]ancestor[_]at$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]54[:]25[:] replace [<] with [<][=] in ChainManager[:][:]ancestor[_]at$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]70[:]37[:] replace [>] with [=][=] in ChainManager[:][:]keeps[_]body$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]70[:]37[:] replace [>] with [<] in ChainManager[:][:]keeps[_]body$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]70[:]37[:] replace [>] with [>][=] in ChainManager[:][:]keeps[_]body$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]76[:]30[:] replace [+] with \- in ChainManager[:][:]keeps[_]body$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]76[:]30[:] replace [+] with [*] in ChainManager[:][:]keeps[_]body$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]173[:]72[:] replace [=][=] with [!][=] in ChainManager[:][:]drop[_]invalid$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]174[:]12[:] delete [!] in ChainManager[:][:]drop[_]invalid$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]252[:]9[:] replace ChainManager[:][:]fork[_]height \-[>] usize with 0$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]314[:]22[:] replace [>][=] with [<] in ChainManager[:][:]sync[_]state$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]320[:]29[:] replace [>] with [=][=] in ChainManager[:][:]sync[_]state$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]320[:]29[:] replace [>] with [<] in ChainManager[:][:]sync[_]state$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]320[:]29[:] replace [>] with [>][=] in ChainManager[:][:]sync[_]state$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]325[:]47[:] replace \- with [+] in ChainManager[:][:]sync[_]state$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]325[:]47[:] replace \- with [/] in ChainManager[:][:]sync[_]state$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]347[:]56[:] replace [+][=] with \-[=] in ChainManager[:][:]sync[_]state$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]347[:]56[:] replace [+][=] with [*][=] in ChainManager[:][:]sync[_]state$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]376[:]60[:] replace [=][=] with [!][=] in ChainManager[:][:]sync[_]state$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]442[:]20[:] replace [>] with [=][=] in ChainManager[:][:]finish[_]sync$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]442[:]20[:] replace [>] with [<] in ChainManager[:][:]finish[_]sync$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]442[:]20[:] replace [>] with [>][=] in ChainManager[:][:]finish[_]sync$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]450[:]20[:] replace [>] with [=][=] in ChainManager[:][:]finish[_]sync$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]450[:]20[:] replace [>] with [<] in ChainManager[:][:]finish[_]sync$
+--re=^chain[/]src[/]manager[/]fork[_]choice[.]rs[:]450[:]20[:] replace [>] with [>][=] in ChainManager[:][:]finish[_]sync$

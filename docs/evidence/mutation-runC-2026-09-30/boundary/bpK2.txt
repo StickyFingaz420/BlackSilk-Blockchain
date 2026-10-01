@@ -1,0 +1,4 @@
+commit 934fe30; cargo test --locked --profile mutants -p blacksilk-crypto
+baseline ok
+caught crypto/src/hash.rs:219:17: replace <= with < (1.log)
+done: 1 mutants, 0 missed
