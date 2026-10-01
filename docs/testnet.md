@@ -103,12 +103,14 @@ with the ones the release announcement publishes:
 The **rules fingerprint** (below) is also published with the release candidate,
 before the genesis exists; the final build must show the same value.
 
-The binary-hash comparison assumes a reproducible node build. Only the guest
-programs are shown reproducible today (CI job `guests`); the node binary's
-reproducibility across hosts has not been demonstrated (docs/STATUS.md). Until
-it is, devices that build their own binary compare the fingerprints and the
-commit, and devices that run a distributed binary also compare its hash with
-the announcement.
+The binary-hash comparison assumes a reproducible node build. The guest programs
+are shown reproducible across hosts (CI job `guests`). The node, miner, wallet and
+genesis binaries are shown reproducible only on one Windows machine: two
+`tools/release-build.sh` builds of one commit, from different checkouts, give the
+same bytes (docs/STATUS.md). Across hosts it has not been demonstrated. Until it
+is, devices that build their own binary compare the fingerprints and the commit,
+and devices that run a distributed binary also compare its hash with the
+announcement.
 
 Where to read them:
 

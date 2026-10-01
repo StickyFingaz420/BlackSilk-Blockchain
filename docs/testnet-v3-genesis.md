@@ -162,7 +162,11 @@ the announcement; it is an input, not a constant of the tool.
      --btc-height <H> --btc-hash <hash, display order>
    ```
    The tool refuses to run when it was built with test-only code (exit status
-   2), and its build refuses `--cfg fuzzing`.
+   2), and its build refuses `--cfg fuzzing`. Both people build it this way and
+   compare the binary's SHA-256 before running it: on Windows (MSVC) a release
+   build of one commit is reproducible on one machine (docs/STATUS.md); across
+   machines it is not shown, so a hash difference there is a reason to compare
+   the full id output, not by itself a failure.
    (A rehearsal uses `--rehearsal` and an id of `0x0001D6E0`–`0x0001D6EF`.)
    It prints the nonce derivation, the header, its 100 bytes, the full id and the
    constants to paste. Both people compare the full id.
