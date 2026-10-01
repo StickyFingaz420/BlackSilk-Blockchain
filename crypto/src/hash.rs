@@ -295,6 +295,17 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
+    /// The tag's length is one prefix byte: a full tag of exactly 255 bytes
+    /// is allowed, and a longer one is refused instead of wrapping (boundary
+    /// pass, run C).
+    #[test]
+    fn a_tag_of_exactly_255_bytes_is_the_longest() {
+        let longest = "x".repeat(255 - DOMAIN_PREFIX.len());
+        let _ = Hasher64::new(&longest);
+        let too_long = "x".repeat(256 - DOMAIN_PREFIX.len());
+        assert!(std::panic::catch_unwind(|| Hasher64::new(&too_long)).is_err());
+    }
+
     #[test]
     fn tags_are_distinct_and_short() {
         let set: HashSet<_> = tags::ALL.iter().collect();
