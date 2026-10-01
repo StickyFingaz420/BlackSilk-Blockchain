@@ -337,6 +337,18 @@ fn check(w: &Wallet, tx: &Transaction) {
                 assert_eq!(r.output_key_offset, d.x, "output {i}: offset");
                 assert_eq!(o.global_index, 1000 + i as u64);
                 assert_eq!(o.key, keys[i]);
+                // What the wallet derives spendability from (RT-STATEFUL: unchecked
+                // before): the coinbase maturity applies to coinbase outputs only.
+                assert_eq!(
+                    o.coinbase,
+                    matches!(tx, Transaction::Coinbase(_)),
+                    "output {i}: coinbase flag"
+                );
+                assert_eq!(
+                    (o.height, o.tx_hash, o.index_in_tx),
+                    (5, tx.hash(), i),
+                    "output {i}: position"
+                );
                 let p = w.keys.one_time_secret(r.subaddress, &r.output_key_offset);
                 assert_eq!(
                     RistrettoPoint::mul_base(&p),

@@ -63,7 +63,7 @@ use blacksilk_consensus::{BlockHeader, Hash};
 use blacksilk_p2p::addr::AddrEntry;
 use blacksilk_p2p::connman::ConnKind;
 use blacksilk_p2p::message::{
-    is_known_type, Message, Version, MAX_HANDSHAKE_FRAME, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION,
+    is_known_type, Message, Version, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION,
 };
 use blacksilk_p2p::net::fuzzing::{Snapshot, Victim};
 use blacksilk_p2p::transport::{handshake_with, NetworkPsk, Session};
@@ -94,6 +94,10 @@ const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(20);
 const KEY_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(5);
 const KEY_EXCHANGE_TIMEOUT_TOR: Duration = Duration::from_secs(10);
 const HANDSHAKE_UNKNOWN_FRAMES: usize = 8;
+/// The largest frame before `Verack`, from the specification (docs/p2p.md section 4:
+/// 4096 bytes), not the product constant: a raised limit must fail
+/// here (RT-STATEFUL: with the product constant, the model followed it).
+const MAX_HANDSHAKE_FRAME: usize = 4096;
 
 pub fn run(data: &[u8]) {
     let rt = tokio::runtime::Builder::new_current_thread()
