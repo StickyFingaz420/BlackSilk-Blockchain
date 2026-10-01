@@ -8,11 +8,12 @@
 #   executables (a marker in `--version`, a renamed binary, a binary older
 #   than the guard, marker bytes behind a clean `--version`); independent of
 #   step order;
-# - the real case: run after `cargo test --release --workspace` in the same
-#   target directory (the `test` job), target/release/blacksilk-node is a
-#   node with dev-dependency features unified (the test hooks of chain, tx
-#   and px). Fatal when it is missing on GitHub Actions (GITHUB_ACTIONS=true:
-#   the step order is fixed there); a warning elsewhere;
+# - the real case: after `cargo test --release -p blacksilk-node --no-run`
+#   in the same target directory (the `build-guard` job's first step),
+#   target/release/blacksilk-node is a node with dev-dependency features
+#   unified (the test hooks of chain, tx and px). Fatal when it is missing on
+#   GitHub Actions (GITHUB_ACTIONS=true: the job runs that step first); a
+#   warning elsewhere;
 # - the dependency tree with dev edges shows `test-hooks`.
 # Then a plain release build of the shipped binaries, and:
 # 1. the normal-edge dependency tree of each package, and of all of them

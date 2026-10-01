@@ -29,16 +29,39 @@ set -uo pipefail
 
 markers='\+(test-hooks|fuzzing):[a-z0-9-]+'
 panic_msg='injected chain actor panic \(test-hooks\)'
+# The byte scan (--strings) looks for the exact markers the sources export,
+# not the marker shape: Rust string literals are not NUL-terminated, so in a
+# binary a literal ending in `+fuzzing:` can run into the next one and read
+# as `+fuzzing:built` (CI run 119, on Linux). A real marker is still found
+# when it runs into its neighbour. The names come from the `Some("+...")`
+# exports (tools/check-test-features.sh keeps every marked crate exporting
+# one); the fallback list is the set at this commit.
+marker_names() {
+  local names
+  names="$(git -C "$(dirname "$0")/.." grep -hoE 'Some\("\+(test-hooks|fuzzing):[a-z0-9-]+"\)|&\["\+fuzzing:[a-z0-9-]+"\]' -- '*.rs' 2>/dev/null |
+    sed -E 's/.*:([a-z0-9-]+)".*/\1/' | sort -u | paste -sd'|' -)"
+  printf '%s' "${names:-chain|genesis|p2p|px|tx}"
+}
+exact_markers="\\+(test-hooks|fuzzing):($(marker_names))"
+
+# fail MESSAGE: the reason on stderr, and as an annotation on GitHub Actions
+# (CI run 119 failed this check with no reason in its annotations).
+fail() {
+  echo "check-build-flags: $1" >&2
+  if [ "${GITHUB_ACTIONS:-}" = true ] && [ "${CHECK_BUILD_FLAGS_QUIET:-}" != 1 ]; then
+    echo "::error title=build flags::$1"
+  fi
+}
 
 # check_one STRINGS BINARY: 0 when clean; the reason on stderr otherwise.
 check_one() {
   local strings="$1" bin="$2" version name found hits
   if [ ! -f "$bin" ] || [ ! -x "$bin" ]; then
-    echo "check-build-flags: $bin: not an executable file" >&2
+    fail "$bin: not an executable file"
     return 1
   fi
   if ! version="$("$bin" --version </dev/null 2>&1 | tr -d '\r')"; then
-    echo "check-build-flags: $bin --version failed: $version" >&2
+    fail "$bin --version failed: $version"
     return 1
   fi
   name="$(awk 'NR == 1 { print $1; exit }' <<<"$version")"
@@ -46,23 +69,23 @@ check_one() {
   case "$name" in
     blacksilk-*) ;;
     *)
-      echo "check-build-flags: $bin --version does not name a BlackSilk program (first word: '$name')" >&2
+      fail "$bin --version does not name a BlackSilk program (first word: '$name')"
       bad=1
       ;;
   esac
   found="$(grep -Eo "$markers" <<<"$version" | sort -u | tr '\n' ' ')"
   if [ -n "$found" ]; then
-    echo "check-build-flags: $bin ($name) was built with test-only code: $found" >&2
+    fail "$bin ($name) was built with test-only code: $found"
     bad=1
   fi
   if ! grep -qx 'build flags: none' <<<"$version"; then
-    echo "check-build-flags: $bin ($name) --version has no 'build flags: none' line" >&2
+    fail "$bin ($name) --version has no 'build flags: none' line"
     bad=1
   fi
   if [ "$strings" = 1 ]; then
-    hits="$(LC_ALL=C grep -aEo "$markers|$panic_msg" "$bin" | sort -u | tr '\n' ' ')"
+    hits="$(LC_ALL=C grep -aEo "$exact_markers|$panic_msg" "$bin" | sort -u | tr '\n' ' ')"
     if [ -n "$hits" ]; then
-      echo "check-build-flags: $bin ($name) contains test-only code: $hits" >&2
+      fail "$bin ($name) contains test-only code: $hits"
       bad=1
     fi
   fi
@@ -79,7 +102,7 @@ selftest() {
     chmod +x "$dir/$1"
   }
   expect() { # WANT(0|1) STRINGS NAME
-    if check_one "$2" "$dir/$3" 2>/dev/null >/dev/null; then got=0; else got=1; fi
+    if CHECK_BUILD_FLAGS_QUIET=1 check_one "$2" "$dir/$3" 2>/dev/null >/dev/null; then got=0; else got=1; fi
     if [ "$got" != "$1" ]; then
       echo "check-build-flags selftest: $3 (strings=$2): want $1, got $got" >&2
       rc=1
@@ -96,6 +119,11 @@ selftest() {
   fake not-blacksilk "something 1.0${nl}build flags: none"
   # A clean --version, but the marker and the panic message in the bytes.
   fake liar "blacksilk-node 0.1.0${nl}build flags: none" "+test-hooks:chain injected chain actor panic (test-hooks)"
+  # A clean binary whose bare marker prefixes run into the next literal (a
+  # checker's own `+fuzzing:` string; CI run 119), and a real marker that
+  # runs into its neighbour (RT-GUARD saw `+test-hooks:chainbuild`).
+  fake adjacent "blacksilk-labnet 0.1.0${nl}build flags: none" "+fuzzing:built with test-only code, +test-hooks:recorded"
+  fake run-together "blacksilk-node 0.1.0${nl}build flags: none" "+test-hooks:chainbuild flags"
   expect 0 1 blacksilk-node
   expect 0 1 blacksilk-miner
   expect 1 0 renamed.exe
@@ -104,6 +132,8 @@ selftest() {
   expect 1 0 not-blacksilk
   expect 0 0 liar
   expect 1 1 liar
+  expect 0 1 adjacent
+  expect 1 1 run-together
   expect 1 0 missing
   rm -rf "$dir"
   [ "$rc" = 0 ] && echo "check-build-flags selftest: pass"

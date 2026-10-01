@@ -518,6 +518,17 @@ fn checked_binary(bin: &Path, expected: &str) -> Result<BinaryRecord, String> {
     })
 }
 
+/// Whether a word of a `--version` text is a build marker
+/// (`+test-hooks:<crate>`, `+fuzzing:<crate>`). Parsed, not matched against
+/// a `"+test-hooks:"` literal: such a literal would sit in this binary, where
+/// it can run into the next string and look like a marker to the byte scan
+/// of tools/check-build-flags.sh (CI run 119).
+fn is_build_marker(word: &str) -> bool {
+    word.strip_prefix('+')
+        .and_then(|w| w.split_once(':'))
+        .is_some_and(|(kind, name)| (kind == "test-hooks" || kind == "fuzzing") && !name.is_empty())
+}
+
 /// [`checked_binary`]'s verdict on a `--version` text.
 fn version_verdict(text: &str, expected: &str) -> Result<(), String> {
     let name = text.split_whitespace().next().unwrap_or_default();
@@ -526,7 +537,7 @@ fn version_verdict(text: &str, expected: &str) -> Result<(), String> {
     }
     if let Some(l) = text
         .lines()
-        .find(|l| l.contains("+test-hooks:") || l.contains("+fuzzing:"))
+        .find(|l| l.split_whitespace().any(is_build_marker))
     {
         return Err(format!(
             "built with test-only code ({l}); rebuild it with a plain `cargo build --release` \
