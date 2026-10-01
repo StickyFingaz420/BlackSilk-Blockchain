@@ -31,17 +31,29 @@ use std::path::Path;
 #[path = "targets/addr_v2.rs"]
 #[allow(dead_code)]
 mod addr_v2;
+#[path = "targets/chain_fixture.rs"]
+#[allow(dead_code)]
+mod chain_fixture;
 #[path = "targets/delivery_plain.rs"]
 #[allow(dead_code)]
 mod delivery_plain;
 #[path = "targets/kernel_shapes.rs"]
 mod kernel_shapes;
+#[path = "targets/peer_protocol.rs"]
+#[allow(dead_code)]
+mod peer_protocol;
 #[path = "targets/proof_struct.rs"]
 #[allow(dead_code)]
 mod proof_struct;
+#[path = "targets/px_admission.rs"]
+#[allow(dead_code)]
+mod px_admission;
 #[path = "targets/px_tx_struct.rs"]
 #[allow(dead_code)]
 mod px_tx_struct;
+#[path = "targets/scan_outputs.rs"]
+#[allow(dead_code)]
+mod scan_outputs;
 #[path = "../../wallet/src/seed.rs"]
 #[allow(dead_code)]
 mod seed;
@@ -80,6 +92,9 @@ fn main() {
         ("delivery_plain", delivery_plain::seeds()),
         ("proof_struct", proof_struct::seeds()),
         ("px_tx_struct", px_tx_struct::seeds()),
+        ("peer_protocol", peer_protocol::seeds()),
+        ("scan_outputs", scan_outputs::seeds()),
+        ("px_admission", px_admission::seeds()),
     ] {
         if only.is_empty() || only.iter().any(|t| t == target) {
             for (name, bytes) in seeds {
@@ -336,11 +351,8 @@ fn main() {
         &mut rng,
     )
     .unwrap();
-    put(
-        "tx_decode",
-        "deploy",
-        &Transaction::PxDeploy(Box::new(deploy)).encode(),
-    );
+    let deploy_tx = Transaction::PxDeploy(Box::new(deploy));
+    put("tx_decode", "deploy", &deploy_tx.encode());
 
     // A bridge-in of 10_000_000 to a PX record (two dummy inputs).
     let bob = Account::from_seed(&[9; 32]);
@@ -402,4 +414,20 @@ fn main() {
         txs,
     };
     put("block_decode", "block_px", &block.encode());
+
+    // scan_outputs: the PX transaction (its change pays `keys`, the
+    // target's wallet A) and the deploy, as decoded inputs (mode 0).
+    for (name, tx) in [("px", &block.txs[1]), ("deploy_tx", &deploy_tx)] {
+        put("scan_outputs", name, &[&[0u8][..], &tx.encode()].concat());
+    }
+
+    // px_admission's base: a PX deposit with a real proof on the target's
+    // fixed chain (deterministic: the target rebuilds the same chain).
+    let (chain, mut miner, _) = px_admission::chain();
+    let deposit = px_admission::deposit(&chain, &mut miner);
+    put(
+        "px_admission_base",
+        "tx",
+        &Transaction::Px(Box::new(deposit)).encode(),
+    );
 }

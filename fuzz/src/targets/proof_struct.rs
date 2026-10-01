@@ -201,7 +201,7 @@ fn bits(b: usize, c: u8) -> usize {
     }
 }
 
-fn edit(p: &mut Proof, site: u8, a: usize, b: usize, c: u8) {
+pub fn edit(p: &mut Proof, site: u8, a: usize, b: usize, c: u8) {
     let n_inst = p.opened_values.instances.len();
     match site % 32 {
         // The degree bits (the statement's shape).

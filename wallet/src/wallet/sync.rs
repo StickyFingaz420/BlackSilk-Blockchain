@@ -1365,3 +1365,8 @@ mod tests {
         assert_eq!(ring.iter().map(|m| m.index).collect::<Vec<_>>(), vec![3]);
     }
 }
+
+// The header feed's reading under the stable fuzz driver (W4-STATEFUL).
+#[cfg(test)]
+#[path = "fuzz_headers.rs"]
+mod fuzz_headers;

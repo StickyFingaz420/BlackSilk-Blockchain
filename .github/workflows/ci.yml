@@ -125,6 +125,8 @@ jobs:
           # Ignored by default (PX-proving, two proofs): run C's cross-activation
           # proof-cache test (fork_choice.rs 376:60).
           bash .github/scripts/annotate-tests.sh cargo test --locked --release -p blacksilk-chain --test activation -- --ignored --test-threads=1 || rc=1
+          # Ignored by default (PX-proving): the px_admission fuzz twin.
+          bash .github/scripts/annotate-tests.sh cargo test --locked --release -p blacksilk-p2p --test fuzz_px_admission -- --ignored --test-threads=1 || rc=1
           exit $rc
 
   # The release profile has overflow checks and debug assertions off. This job
