@@ -1832,30 +1832,31 @@ async fn relaying_headers_of_a_block_with_an_invalid_body_is_not_penalized() {
         }
     };
     let nid = params().network_id;
-    // Announced one by one, and as a solicited batch.
+    // Announced one by one, and as a solicited batch. Each is verified on
+    // its own before the next is sent (`send_and_await_verdict`): before
+    // INV-PEN the three went out back to back, so the two announcements
+    // usually arrived while the batch was in flight and were dropped
+    // unverified, and the rule-breaking header below was sent after a fixed
+    // 500 ms, which the batch outlasted on a loaded machine (its announcement
+    // was then dropped too, and the node's request for it went unanswered).
     let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 10).await;
     assert!(
         recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
             .await
             .is_some()
     );
-    w.send(&Message::Headers(vec![bad, child]).encode())
-        .await
-        .unwrap();
-    w.send(&Message::Headers(vec![bad]).encode()).await.unwrap();
-    w.send(&Message::Headers(vec![child]).encode())
-        .await
-        .unwrap();
-    w.send(&Message::Ping(9).encode()).await.unwrap();
-    assert!(recv_until(&mut r, 5.0, |m| matches!(m, Message::Pong(9)))
-        .await
-        .is_some());
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert_eq!(a.net.stats().misbehaving_disconnects, 0);
-    assert_eq!(a.net.peers().len(), 1, "still connected");
-    assert_eq!(a.net.peers()[0].score, 0, "not penalized");
+    for (k, headers) in [vec![bad, child], vec![bad], vec![child]]
+        .into_iter()
+        .enumerate()
+    {
+        send_and_await_verdict(&a, &mut r, &mut w, headers, bad, k as u64).await;
+        assert_eq!(a.net.stats().misbehaving_disconnects, 0);
+        assert_eq!(a.net.peers().len(), 1, "still connected");
+        assert_eq!(a.net.peers()[0].score, 0, "not penalized");
+    }
     assert_eq!(a.height(), 2, "the invalid branch is not followed");
-    // A header that itself breaks the rules is still penalized.
+    // A header that itself breaks the rules is still penalized. No batch of
+    // the peer is in flight now, so it is verified at once.
     let mut broken = child;
     broken.prev_id = a.tip();
     broken.difficulty += 3;
@@ -1866,6 +1867,130 @@ async fn relaying_headers_of_a_block_with_an_invalid_body_is_not_penalized() {
         closes_within(&mut r, 5).await,
         "a rule-breaking header gets the peer banned"
     );
+}
+
+/// Holds the chain of `a` from another thread until [`HeldChain::release`]:
+/// the header worker's first chain command for a batch waits behind it, so
+/// the batch is in flight for as long as the test needs, whatever the load.
+struct HeldChain {
+    release: std::sync::mpsc::Sender<()>,
+    thread: std::thread::JoinHandle<()>,
+}
+
+impl HeldChain {
+    async fn hold(a: &TestNode) -> Self {
+        let (held_tx, held_rx) = tokio::sync::oneshot::channel();
+        let (release, release_rx) = std::sync::mpsc::channel::<()>();
+        let chain = a.chain.clone();
+        let thread = std::thread::spawn(move || {
+            let _guard = chain.lock().unwrap();
+            held_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+        });
+        held_rx.await.unwrap();
+        Self { release, thread }
+    }
+
+    async fn release(self) {
+        self.release.send(()).unwrap();
+        tokio::task::spawn_blocking(move || self.thread.join().unwrap())
+            .await
+            .unwrap();
+    }
+}
+
+/// Sends `headers` and waits, by message order alone, until the node has
+/// verified them: the chain is held while `headers` and then `poke` (one
+/// header) arrive, so `poke` finds the batch in flight and is dropped, and
+/// the node asks again (`GetHeaders`) once the batch's verdict is in
+/// (docs/p2p.md §6, "At most one batch per peer"). That request is answered
+/// as by a peer with nothing new: an empty batch. A ping answered before the
+/// chain is released proves both messages were read while it was held.
+/// Only for batches the peer is not penalized for (a penalty sends no
+/// request).
+async fn send_and_await_verdict(
+    a: &TestNode,
+    r: &mut RawReader,
+    w: &mut RawWriter,
+    headers: Vec<BlockHeader>,
+    poke: BlockHeader,
+    nonce: u64,
+) {
+    let held = HeldChain::hold(a).await;
+    w.send(&Message::Headers(headers).encode()).await.unwrap();
+    w.send(&Message::Headers(vec![poke]).encode())
+        .await
+        .unwrap();
+    w.send(&Message::Ping(nonce).encode()).await.unwrap();
+    assert!(
+        recv_until(r, 10.0, |m| matches!(m, Message::Pong(n) if *n == nonce))
+            .await
+            .is_some(),
+        "pong while the chain is held"
+    );
+    held.release().await;
+    assert!(
+        recv_until(r, 10.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some(),
+        "asked again once the batch is verified"
+    );
+    w.send(&Message::Headers(Vec::new()).encode())
+        .await
+        .unwrap();
+}
+
+/// INV-PEN: a header announced while the sender's previous batch is still
+/// being verified is not verified then (at most one batch per peer is in
+/// flight), but it is not lost either: the node asks the peer again once the
+/// batch is done, and what the peer answers is verified and scored as
+/// usual. Here the announcement breaks a rule, and the peer, answering the
+/// request with it, is banned. The batch is kept in flight by holding the
+/// chain, not by timing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_header_announced_during_a_batch_is_asked_for_again_and_scored() {
+    let a = node(142, &[]).await;
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 10).await;
+    assert!(
+        recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    let batch = header_branch(3, 120, 0);
+    let mut broken = batch[0];
+    broken.height = 5;
+    let held = HeldChain::hold(&a).await;
+    w.send(&Message::Headers(batch).encode()).await.unwrap();
+    w.send(&Message::Headers(vec![broken]).encode())
+        .await
+        .unwrap();
+    w.send(&Message::Ping(1).encode()).await.unwrap();
+    assert!(recv_until(&mut r, 10.0, |m| matches!(m, Message::Pong(1)))
+        .await
+        .is_some());
+    held.release().await;
+    // The announcement was dropped unverified, not scored.
+    assert!(
+        recv_until(&mut r, 10.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some(),
+        "the peer is asked again once its batch is verified"
+    );
+    assert_eq!(
+        a.net.peers()[0].score,
+        0,
+        "the dropped header is not scored"
+    );
+    assert_eq!(a.chain.lock().unwrap().header_height(), 3);
+    w.send(&Message::Headers(vec![broken]).encode())
+        .await
+        .unwrap();
+    assert!(
+        closes_within(&mut r, 5).await,
+        "the rule-breaking reply gets the peer banned"
+    );
+    assert_eq!(a.net.stats().misbehaving_disconnects, 1);
 }
 
 /// Defect 3: blocks we requested are not charged to the peer's byte budget.
@@ -1907,12 +2032,20 @@ async fn requested_blocks_are_not_dropped_by_the_byte_limit() {
 async fn pings_are_answered_while_a_header_batch_is_verified() {
     let mut cfg = fast_config(&[]);
     cfg.pow_threads = 1;
-    // 300 headers x 20 ms (about 30 ms with Windows timer granularity): 6 to
-    // 10 s of proof of work on one thread.
-    let a = node_with_pow(45, cfg, Arc::new(SlowPow(20))).await;
+    // 60 headers x 100 ms: 6 s of proof of work on one thread. With one PoW
+    // thread every header is its own chunk, and each chunk costs two chain
+    // commands and a hashing thread: thread hand-offs that a loaded machine
+    // makes slow. Before INV-PEN the batch was 300 headers x 20 ms, the same
+    // 6 s idle but 35 to 51 s with 8 busy-loop processes (60 x 100 ms: 10.5
+    // to 11.5 s), and over 90 s in a loaded suite run, where the node then
+    // dropped this raw peer for not answering its pings (60 s interval plus
+    // 30 s pong timeout) and abandoned the batch: "batch verified" timed out.
+    // The pong itself was answered in time in every run.
+    let n = 60;
+    let a = node_with_pow(45, cfg, Arc::new(SlowPow(100))).await;
     let nid = params().network_id;
-    let batch = header_branch(300, 120, 0);
-    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 300).await;
+    let batch = header_branch(n, 120, 0);
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, n as u64).await;
     assert!(
         recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
             .await
@@ -1929,11 +2062,11 @@ async fn pings_are_answered_while_a_header_batch_is_verified() {
         "pong while the batch is being verified"
     );
     assert!(
-        a.chain.lock().unwrap().header_height() < 300,
+        a.chain.lock().unwrap().header_height() < n as u64,
         "the batch was still being verified when the pong came"
     );
     wait_until("batch verified", 120, || {
-        a.chain.lock().unwrap().header_height() == 300
+        a.chain.lock().unwrap().header_height() == n as u64
     })
     .await;
     assert!(started.elapsed() > Duration::from_secs(3));
