@@ -100,7 +100,7 @@ case "$cmd" in
     echo "commit $(cd "$repo" && git rev-parse --short HEAD); cargo $*" > "$out/outcomes.txt"
 
     oracle() { # LOG -> exit code (124 on timeout)
-      local log="$1" rc=0
+      local log="$1" rc=0; shift
       if [ -n "${WINDIR:-}" ]; then
         # The arguments go as one string (no argument may contain a space).
         powershell -NoProfile -ExecutionPolicy Bypass \
