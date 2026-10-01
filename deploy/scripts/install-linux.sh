@@ -23,8 +23,9 @@ echo "==> building release binaries as $BUILD_USER"
 sudo -u "$BUILD_USER" cargo build --release --locked \
   -p blacksilk-node -p blacksilk-miner -p blacksilk-wallet
 # No test-only code (a binary left by `cargo test` would be refused anyway
-# off regtest; W4-GUARD, docs/testnet.md).
-bash tools/check-build-flags.sh --strings target/release/blacksilk-node \
+# off regtest; W4-GUARD, docs/testnet.md). As the build user, like the
+# build: the check runs the binaries, and nothing built runs as root.
+sudo -u "$BUILD_USER" bash tools/check-build-flags.sh --strings target/release/blacksilk-node \
   target/release/blacksilk-miner target/release/blacksilk-wallet
 
 echo "==> installing binaries"

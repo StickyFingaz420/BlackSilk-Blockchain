@@ -111,8 +111,8 @@ three debug-directory entries, and the 16-byte GUID of the CodeView (`RSDS`) rec
 The node built alone and with the miner and labnet differs in the same 24 bytes
 only, so building the three together did not change the node's code. `9b04827`
 against `64d89d4` differs in those bytes plus the build commit (the 40-digit commit
-and its 7-digit form), the same size: this confirms that the node sources are the
-same at both commits (§1). The miner's equal hash in both recorded files means it
+and its 7-digit form), the same size: the compiled node is the same apart from the
+commit, as §1 expects. The miner's equal hash in both recorded files means it
 was not relinked between the two builds, not that its build is reproducible.
 
 **Verdict.** The recorded hashes can neither confirm nor exclude test hooks: any

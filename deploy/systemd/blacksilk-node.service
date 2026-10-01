@@ -16,8 +16,10 @@ Restart=on-failure
 RestartSec=10
 # Exit status 65 (HALT_EXIT_CODE, node/src/lib.rs): a block that passed
 # validation failed to apply. A restart replays into the same failure, so the
-# node stays stopped for the operator (docs/testnet.md).
-RestartPreventExitStatus=65
+# node stays stopped for the operator (docs/testnet.md). Exit status 2: a
+# configuration error, or a binary built with test-only code refusing the
+# network (W4-GUARD); a restart cannot help either.
+RestartPreventExitStatus=2 65
 LimitNOFILE=8192
 
 # Hardening: the node needs its data directory and the network, nothing else.

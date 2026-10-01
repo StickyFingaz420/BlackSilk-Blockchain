@@ -40,6 +40,9 @@
 
 #![forbid(unsafe_code)]
 
+#[path = "../build_guard.rs"]
+mod build_guard;
+
 use blacksilk_chain::block::Block;
 use blacksilk_chain::store::{BlockStore, FileStore, Record, StoreIdentity};
 use blacksilk_consensus::{ChainParams, Hash, Network};
@@ -600,6 +603,9 @@ fn joiner_timeline(log: &str) -> (Vec<String>, Option<usize>) {
 
 #[derive(Serialize)]
 struct Report {
+    /// This binary's `build flags:` line (always `none`: a build with
+    /// test-only code refuses to run, W4-GUARD).
+    build_flags: String,
     nodes: usize,
     difficulty_min: Option<u64>,
     difficulty_max: Option<u64>,
@@ -640,7 +646,8 @@ fn mean(v: &[u64]) -> Option<f64> {
 }
 
 fn main() {
-    let a = Args::parse();
+    let a: Args = build_guard::parse_args();
+    let build_flags = build_guard::require_clean_build("blacksilk-labnet-report");
     let summary: serde_json::Value = serde_json::from_str(&read(&a.run.join("summary.json")))
         .expect("summary.json (a finished run)");
     let n = summary["nodes"].as_u64().expect("nodes") as usize;
@@ -796,6 +803,7 @@ fn main() {
     let relay_joiner = e2.exists().then(|| joiner_timeline(&read(&e2)).0);
 
     let r = Report {
+        build_flags,
         nodes: n,
         difficulty_min: diffs.iter().copied().min(),
         difficulty_max: diffs.iter().copied().max(),

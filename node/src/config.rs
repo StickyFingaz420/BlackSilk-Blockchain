@@ -122,6 +122,11 @@ pub struct Args {
     /// stopped for that long (command line only; docs/blocks.md §9.4).
     #[arg(long)]
     pub mine_from_stale_tip: bool,
+    /// Refuse to start if this binary has test-only code compiled in, on
+    /// regtest too (for runs that are evidence; also the environment variable
+    /// BLACKSILK_REQUIRE_CLEAN_BUILD=1; command line only).
+    #[arg(long)]
+    pub require_clean_build: bool,
 }
 
 #[derive(Deserialize, Debug, Default)]

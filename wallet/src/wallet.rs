@@ -567,6 +567,7 @@ mod tests {
                 identity_fingerprint: None,
                 build_commit: None,
                 version: None,
+                build_flags: None,
             })
         }
         fn blocks(&self, _: u64, _: u64) -> Result<rpc::Blocks, String> {
@@ -913,6 +914,7 @@ mod tests {
                 identity_fingerprint: None,
                 build_commit: None,
                 version: None,
+                build_flags: None,
             })
         }
         fn blocks(&self, _: u64, _: u64) -> Result<rpc::Blocks, String> {

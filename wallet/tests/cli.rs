@@ -230,9 +230,12 @@ fn a_wallet_with_test_code_works_only_on_regtest() {
         .output()
         .unwrap();
     assert!(v.status.success());
-    let version = text(&v.stdout);
-    assert!(version.trim_end().ends_with(&flags.suffix()), "{version}");
-    assert!(version.contains("(commit "), "{version}");
+    let version = text(&v.stdout).replace("\r", "");
+    let mut lines = version.lines();
+    let first = lines.next().unwrap_or_default();
+    assert!(first.starts_with("blacksilk-wallet "), "{version}");
+    assert!(first.contains("(commit "), "{version}");
+    assert_eq!(lines.next(), Some(flags.line().as_str()), "{version}");
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("t.wallet");
@@ -254,5 +257,39 @@ fn a_wallet_with_test_code_works_only_on_regtest() {
         assert!(err.contains("refusing to run on testnet"), "{err}");
         assert!(err.contains(&flags.render()), "{err}");
         assert!(!path.exists(), "a refused wallet was written");
+    }
+}
+
+/// W4-GUARD: `--require-clean-build` (or BLACKSILK_REQUIRE_CLEAN_BUILD)
+/// refuses a wallet binary with test-only code on regtest too, before any
+/// file is written; a clean binary is not refused.
+#[test]
+fn a_clean_wallet_build_can_be_required() {
+    let flags = blacksilk_chain::build_flags::BuildFlags::of_chain_layer();
+    let env = blacksilk_chain::build_flags::REQUIRE_CLEAN_ENV;
+    let dir = tempfile::tempdir().unwrap();
+    for (i, by_env) in [false, true].into_iter().enumerate() {
+        let path = dir.path().join(format!("r{i}.wallet"));
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_blacksilk-wallet"));
+        cmd.arg("--wallet").arg(&path).env_remove(env);
+        if by_env {
+            cmd.env(env, "1");
+        } else {
+            cmd.arg("--require-clean-build");
+        }
+        let out = cmd
+            .args(["create", "--network", "regtest", "--birthday-height", "0"])
+            .env("BLACKSILK_WALLET_PASSWORD", "pw")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let err = text(&out.stderr);
+        if flags.is_clean() {
+            assert!(out.status.success(), "{err}");
+        } else {
+            assert_eq!(out.status.code(), Some(2), "{err}");
+            assert!(err.contains("clean build is required"), "{err}");
+            assert!(!path.exists(), "a refused wallet was written");
+        }
     }
 }

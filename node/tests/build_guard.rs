@@ -133,3 +133,31 @@ fn a_hooked_node_starts_on_regtest_and_says_so() {
     assert!(text.contains(&format!(", {}", flags.line())), "{text}");
     assert!(text.contains("test-only code compiled in"), "{text}");
 }
+
+/// `--require-clean-build` and its environment variable refuse the marked
+/// node on regtest too, with status 2, before the data directory is created.
+#[test]
+fn a_clean_build_can_be_required_on_regtest() {
+    let env = blacksilk_chain::build_flags::REQUIRE_CLEAN_ENV;
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    let d = data.display().to_string();
+    let base = ["--network", "regtest", "--no-p2p", "--data-dir", &d];
+    for by_env in [false, true] {
+        let mut cmd = Command::new(NODE);
+        cmd.args(base).env_remove(env).stdin(Stdio::null());
+        if by_env {
+            cmd.env(env, "1");
+        } else {
+            cmd.arg("--require-clean-build");
+        }
+        let out = cmd.output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{err}");
+        assert!(err.contains("clean build is required"), "{err}");
+        for m in build_flags().markers() {
+            assert!(err.contains(m), "{m} missing: {err}");
+        }
+        assert!(!data.exists(), "{} was created", data.display());
+    }
+}

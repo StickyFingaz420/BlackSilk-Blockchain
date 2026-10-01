@@ -123,12 +123,13 @@ jobs:
           run -p blacksilk-p2p --test network px_transactions_travel_the_stem || rc=1
           run -p blacksilk-p2p --test network invalid_px_transactions_get_the_relaying_peer_penalized || rc=1
           exit $rc
-      # W4-GUARD (RT-STATEFUL): the steps above leave a node with test hooks
-      # in target/release (cargo test unifies dev-dependency features), the
-      # path a plain release build writes. The script checks that its checks
-      # flag that node, then that a plain release build of the node, miner,
-      # wallet and genesis tool has no test-only code: by dependency tree,
-      # `--version` and binary contents (.github/scripts/build-guard.sh).
+      # W4-GUARD (RT-STATEFUL, RT-GUARD): the steps above leave a node with
+      # test hooks in target/release (cargo test unifies dev-dependency
+      # features), the path a plain release build writes. The script checks
+      # that its checks flag that node and fake marked executables, then that
+      # a plain release build of every shipped and evidence binary has no
+      # test-only code: by dependency tree, `--version` and binary contents
+      # (.github/scripts/build-guard.sh).
       - name: Plain release binaries carry no test code
         if: success() || failure()
         shell: bash

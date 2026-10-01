@@ -4,7 +4,7 @@
 //! `cargo test` unifies the features of dev-dependencies into every binary
 //! the same invocation builds: after `cargo test --release -p
 //! blacksilk-node`, `target/release/blacksilk-node` has the `test-hooks`
-//! code of chain, tx and px (and p2p in a workspace test), at the path a
+//! code of chain, tx and px (and p2p's, once its hooks exist), at the path a
 //! plain `cargo build --release` writes. That code is not inert (the chain
 //! actor's linearization log grows without bound). A cargo-fuzz build
 //! (`cfg(fuzzing)`) has fuzz-only code too, such as the transport's fixed
@@ -98,6 +98,17 @@ impl BuildFlags {
         }
     }
 
+    /// The `-V` and `--version` texts of a binary (after clap's program
+    /// name): `<version> (commit <commit>)` with the markers appended, and
+    /// `<version> (commit <commit>)` followed by the [`line`](Self::line), so
+    /// `--version` of every BlackSilk binary has a `build flags:` line.
+    pub fn version_texts(&self, version: &str, commit: &str) -> (String, String) {
+        (
+            format!("{version} (commit {commit}){}", self.suffix()),
+            format!("{version} (commit {commit})\n{}", self.line()),
+        )
+    }
+
     /// Refuses every network but regtest for a build with test-only code:
     /// such a binary is for this repository's own tests, never for a shared
     /// network, evidence or genesis. `binary` names the program in the
@@ -116,6 +127,54 @@ impl BuildFlags {
             )),
         }
     }
+
+    /// Refuses a build with test-only code on every network, regtest
+    /// included: for runs whose output is evidence (`--require-clean-build`,
+    /// [`REQUIRE_CLEAN_ENV`]) and for tools that make evidence or genesis
+    /// material.
+    pub fn check_clean(&self, binary: &str) -> Result<(), String> {
+        if self.is_clean() {
+            Ok(())
+        } else {
+            Err(format!(
+                "refusing to run: this {binary} was built with test-only code ({}), and a \
+                 clean build is required. It comes from a `cargo test` or fuzz build writing \
+                 the binary; rebuild it with a plain `cargo build --release` from a clean \
+                 commit (docs/testnet.md)",
+                self.render()
+            ))
+        }
+    }
+
+    /// [`check_network`](Self::check_network), and with `require_clean`
+    /// [`check_clean`](Self::check_clean) on every network.
+    pub fn check_run(
+        &self,
+        binary: &str,
+        network: Network,
+        require_clean: bool,
+    ) -> Result<(), String> {
+        if require_clean {
+            self.check_clean(binary)?;
+        }
+        self.check_network(binary, network)
+    }
+}
+
+/// The environment equivalent of `--require-clean-build` (node, miner,
+/// wallet, supply-audit): set to anything but empty or `0`, the binary
+/// refuses test-only code on regtest too. A misspelt value requires a clean
+/// build rather than silently allowing test code.
+pub const REQUIRE_CLEAN_ENV: &str = "BLACKSILK_REQUIRE_CLEAN_BUILD";
+
+/// Whether `value` (of [`REQUIRE_CLEAN_ENV`]) requires a clean build.
+pub fn require_clean_value(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// `--require-clean-build` given (`flag`), or [`REQUIRE_CLEAN_ENV`] set.
+pub fn require_clean(flag: bool) -> bool {
+    flag || require_clean_value(std::env::var_os(REQUIRE_CLEAN_ENV).as_deref())
 }
 
 fn network_label(n: Network) -> &'static str {
@@ -156,6 +215,27 @@ mod tests {
                 assert!(e.contains(network_label(n)), "{e}");
             }
         }
+    }
+
+    /// `--require-clean-build`: a marked build is refused on regtest too; a
+    /// clean build is never refused.
+    #[test]
+    fn a_clean_build_can_be_required() {
+        let hooked = BuildFlags::default().with(Some("+test-hooks:tx"));
+        for n in ALL {
+            let e = hooked.check_run("node", n, true).unwrap_err();
+            assert!(e.contains("+test-hooks:tx"), "{e}");
+            assert_eq!(BuildFlags::default().check_run("node", n, true), Ok(()));
+            assert_eq!(BuildFlags::default().check_run("node", n, false), Ok(()));
+        }
+        assert_eq!(hooked.check_run("node", Network::Regtest, false), Ok(()));
+        assert!(hooked.check_run("node", Network::Testnet, false).is_err());
+        assert!(hooked.check_clean("genesis").is_err());
+        let v = |s: &str| require_clean_value(Some(std::ffi::OsStr::new(s)));
+        assert!(!require_clean_value(None));
+        assert!(!v("") && !v("0"));
+        assert!(v("1") && v("yes") && v("true"));
+        assert!(require_clean(true));
     }
 
     #[test]

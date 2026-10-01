@@ -70,6 +70,11 @@ struct Args {
     /// ends the work at once: the miner long-polls the node's `/tip`.
     #[arg(long, default_value_t = 15)]
     refresh: u64,
+    /// Refuse to mine if this binary has test-only code compiled in, on
+    /// regtest too (for runs that are evidence; also the environment variable
+    /// BLACKSILK_REQUIRE_CLEAN_BUILD=1).
+    #[arg(long)]
+    require_clean_build: bool,
 }
 
 /// `--prebuild` (decisions "W2-09").
@@ -146,16 +151,15 @@ const HASHRATE_EVERY: Duration = Duration::from_secs(60);
 /// markers of test-only code compiled in ([`BuildFlags`], W4-GUARD).
 fn parse_args() -> Args {
     use clap::{CommandFactory, FromArgMatches};
-    // clap takes a `'static` string; this runs once per process.
-    let version: &'static str = Box::leak(
-        format!(
-            "{} (commit {BUILD_COMMIT}){}",
-            env!("CARGO_PKG_VERSION"),
-            BuildFlags::of_chain_layer().suffix()
-        )
-        .into_boxed_str(),
-    );
-    let matches = Args::command().version(version).get_matches();
+    // clap takes `'static` strings; this runs once per process.
+    let (short, long) =
+        BuildFlags::of_chain_layer().version_texts(env!("CARGO_PKG_VERSION"), BUILD_COMMIT);
+    let short: &'static str = Box::leak(short.into_boxed_str());
+    let long: &'static str = Box::leak(long.into_boxed_str());
+    let matches = Args::command()
+        .version(short)
+        .long_version(long)
+        .get_matches();
     Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
 }
 
@@ -419,9 +423,10 @@ impl<N: Node, B: ContextBuilder<Ctx = PowContext>> Miner<N, B> {
 /// A miner with test-only code compiled in ([`BuildFlags`]: written by
 /// `cargo test` or a fuzz build) mines only on regtest (W4-GUARD). A
 /// configuration error: a restart cannot help, the binary must be rebuilt.
-fn check_build(flags: &BuildFlags, net: Network) -> Result<(), Fatal> {
+/// `require_clean` (`--require-clean-build`) refuses it on regtest too.
+fn check_build(flags: &BuildFlags, net: Network, require_clean: bool) -> Result<(), Fatal> {
     flags
-        .check_network("blacksilk-miner", net)
+        .check_run("blacksilk-miner", net, require_clean)
         .map_err(Fatal::Config)
 }
 
@@ -432,6 +437,12 @@ fn run(args: Args) -> Result<(), Fatal> {
         env!("CARGO_PKG_VERSION"),
         flags.line()
     );
+    let require_clean = blacksilk_chain::build_flags::require_clean(args.require_clean_build);
+    if require_clean {
+        flags
+            .check_clean("blacksilk-miner")
+            .map_err(Fatal::Config)?;
+    }
     let client = connect(&args.node, args.rpc_cookie.as_deref()).map_err(Fatal::Config)?;
     let info = client.info().map_err(|e| {
         Fatal::Other(match e {
@@ -449,7 +460,7 @@ fn run(args: Args) -> Result<(), Fatal> {
             info.network
         ))
     })?;
-    check_build(&flags, net)?;
+    check_build(&flags, net, require_clean)?;
     let payout = decode_address(net, &args.address).map_err(|e| {
         Fatal::Config(format!(
             "--address is not a valid {} address: {e:?}",
@@ -536,13 +547,17 @@ mod tests {
     fn a_hooked_miner_mines_only_on_regtest() {
         let hooked = BuildFlags::default().with(Some("+test-hooks:chain"));
         for net in [Network::Testnet, Network::Mainnet] {
-            match check_build(&hooked, net) {
+            match check_build(&hooked, net, false) {
                 Err(Fatal::Config(e)) => assert!(e.contains("+test-hooks:chain"), "{e}"),
                 _ => panic!("a hooked miner was not refused on {net:?}"),
             }
-            assert!(check_build(&BuildFlags::default(), net).is_ok());
+            assert!(check_build(&BuildFlags::default(), net, true).is_ok());
         }
-        assert!(check_build(&hooked, Network::Regtest).is_ok());
+        assert!(check_build(&hooked, Network::Regtest, false).is_ok());
+        assert!(matches!(
+            check_build(&hooked, Network::Regtest, true),
+            Err(Fatal::Config(_))
+        ));
     }
 
     /// A regtest chain in process with the short key epoch of the chain

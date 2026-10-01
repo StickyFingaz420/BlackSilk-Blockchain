@@ -112,6 +112,10 @@ pub struct Info {
     /// The node crate version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// The node's `build flags:` line: `build flags: none`, or the markers of
+    /// test-only code compiled in (W4-GUARD).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_flags: Option<String>,
     /// Whether the node serves block templates now (`/template` answers
     /// `503` otherwise; docs/blocks.md §9.4): no bounded drain in progress,
     /// and either the catch-up latch is set (the node has been synced once
@@ -1087,6 +1091,7 @@ mod tests {
         assert_eq!(i.consensus_fingerprint, None);
         assert_eq!(i.build_commit, None);
         assert_eq!(i.version, None);
+        assert_eq!(i.build_flags, None);
         // Absent fields are not serialized as null.
         assert!(!serde_json::to_string(&i).unwrap().contains("genesis_id"));
 

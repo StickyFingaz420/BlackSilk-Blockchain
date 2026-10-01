@@ -20,6 +20,12 @@ echo "network=$(field network) height=$HEIGHT headers=$HEADERS peers=$PEERS memp
 # A node older than these fields prints them empty.
 echo "genesis=$(field genesis_id) fingerprint=$(field consensus_fingerprint) commit=$(field build_commit) version=$(field version)"
 STATUS=0
+FLAGS="$(field build_flags)"
+echo "${FLAGS:-build flags: (not reported)}"
+case "$FLAGS" in
+  "build flags: none" | "") ;;
+  *) echo "WARNING: the node has test-only code compiled in (docs/testnet.md §2)"; STATUS=1 ;;
+esac
 [ "${PEERS:-0}" -ge 1 ] || { echo "WARNING: no peers"; STATUS=1; }
 if [ -n "$HEADERS" ] && [ "$HEADERS" -gt $((HEIGHT + 10)) ]; then
   echo "NOTE: still syncing ($((HEADERS - HEIGHT)) blocks behind the best header)"

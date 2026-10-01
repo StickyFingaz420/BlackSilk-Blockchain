@@ -43,6 +43,11 @@ struct Args {
     /// Wallet file.
     #[arg(long, short)]
     wallet: PathBuf,
+    /// Refuse to run if this binary has test-only code compiled in, on
+    /// regtest too (for runs that are evidence; also the environment variable
+    /// BLACKSILK_REQUIRE_CLEAN_BUILD=1).
+    #[arg(long)]
+    require_clean_build: bool,
     /// Node RPC address: host:port or http://host:port. Plain HTTP only
     /// (https:// is refused); use your own node, or reach a remote one over an
     /// SSH tunnel, a VPN or Tor. Proxy environment variables are ignored.
@@ -316,16 +321,15 @@ const BUILD_COMMIT: &str = match option_env!("BLACKSILK_BUILD_COMMIT") {
 /// markers of test-only code compiled in ([`BuildFlags`], W4-GUARD).
 fn parse_args() -> Args {
     use clap::{CommandFactory, FromArgMatches};
-    // clap takes a `'static` string; this runs once per process.
-    let version: &'static str = Box::leak(
-        format!(
-            "{} (commit {BUILD_COMMIT}){}",
-            env!("CARGO_PKG_VERSION"),
-            BuildFlags::of_chain_layer().suffix()
-        )
-        .into_boxed_str(),
-    );
-    let matches = Args::command().version(version).get_matches();
+    // clap takes `'static` strings; this runs once per process.
+    let (short, long) =
+        BuildFlags::of_chain_layer().version_texts(env!("CARGO_PKG_VERSION"), BUILD_COMMIT);
+    let short: &'static str = Box::leak(short.into_boxed_str());
+    let long: &'static str = Box::leak(long.into_boxed_str());
+    let matches = Args::command()
+        .version(short)
+        .long_version(long)
+        .get_matches();
     Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
 }
 
@@ -512,6 +516,11 @@ fn print_tip_age(w: &Wallet) {
 
 fn run(args: Args) -> Result<(), String> {
     let flags = BuildFlags::of_chain_layer();
+    if blacksilk_chain::build_flags::require_clean(args.require_clean_build) {
+        flags
+            .check_clean("blacksilk-wallet")
+            .inspect_err(|_| BUILD_REFUSED.store(true, Ordering::SeqCst))?;
+    }
     let client = Client::try_new(&args.node)
         .and_then(|c| c.with_cookie_option(args.rpc_cookie.as_deref()))
         .map_err(|e| e.to_string())?;

@@ -94,11 +94,13 @@ fn main() {
     // dev-dependency features, or by a fuzz build) runs only on regtest: it
     // is never evidence, genesis material or a shared network's node
     // (W4-GUARD). Checked before the network's own gate, so the reason shown
-    // is the build.
+    // is the build. `--require-clean-build` (or BLACKSILK_REQUIRE_CLEAN_BUILD)
+    // refuses it on regtest too, for runs that are evidence.
+    let require_clean = blacksilk_chain::build_flags::require_clean(args.require_clean_build);
     let cfg = match Config::resolve(args)
         .and_then(|c| {
             fingerprint::build_flags()
-                .check_network("blacksilk-node", c.network)
+                .check_run("blacksilk-node", c.network, require_clean)
                 .map(|()| c)
         })
         .and_then(|c| config::check_network_enabled(c.network).map(|()| c))
