@@ -548,5 +548,14 @@ fn a_pooled_px_proof_vouches_for_nothing_under_other_rules() {
     // and the main chain stays, with T2 still pooled for the new rules.
     assert_eq!(m.tip_id(), main_tip);
     assert!(!m.knows_valid_header(&carrier_id));
+    // Refused for its proof (PX5), not for anything else: T2 is the
+    // carrier's only non-coinbase transaction.
+    assert_eq!(
+        m.invalid_reason(&carrier_id),
+        Some(&BlockError::Tx {
+            index: 1,
+            error: TxError::PxProof
+        })
+    );
     assert!(m.mempool().contains(&id));
 }
