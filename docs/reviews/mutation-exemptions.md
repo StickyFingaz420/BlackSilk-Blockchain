@@ -461,7 +461,12 @@ instead of `2^(db − 1)`).
 
 **What the equivalence depends on.** A BVM-1 table with a committed preprocessed
 trace, or a constraint whose degree a product of periodic columns sets, must
-re-examine this entry; the helper would then need a test AIR of its own.
+re-examine this entry; the helper would then need a test AIR of its own. Both
+premises are guarded by tests that fail when they stop holding (RT-MUTD):
+`zkvm/tests/multi.rs` `no_table_commits_a_preprocessed_trace` (every table of 1 to
+`MAX_EXECUTIONS` executions) and `px/tests/proof_limits.rs`
+`quotient_chunks_do_not_depend_on_the_trace_length` (every PX table, every degree-bits
+value `verify` accepts, 9 to 23).
 
 **Reproduce.** Run D's `after-analysisA` (filters `analysisZ.args`,
 `--test-package blacksilk-px -C=--test=proof_limits`).

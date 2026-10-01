@@ -37,6 +37,7 @@ which no run had censused, in this order:
 | px/src/prove.rs `PROOF_LIMITS`, `check_shape`, `check_shape_bits` | 19 | 7 | 12 | 0 | 12 killed |
 | tx/src/validate.rs (the four PX5 decode and shape functions) | 4 | 0 | 3 | 1 | 3 killed |
 | p2p/src/net/admission.rs (four functions) | 26 | 10 | 14 | 2 | 9 killed; 5 unobserved by any test (E19); release arithmetic: 1 more killed, 1 more E19 |
+| p2p/src/net/admission.rs, the whole file (follow-up, `admFull`) | 79 | 68 | 6 | 5 | 1 killed (`rerun479`); 5 E19 (§ Follow-up) |
 | p2p W4-SYNC rules (state.rs, conn.rs, headers.rs, maintenance.rs) | 35 | 24 | 11 | 0 | 11 killed |
 | chain/src/manager/summary.rs (listeners, store, `Debug`) | 4 | 3 | 1 | 0 | 1 killed; 2 hand mutants of `tip_on_best_chain` caught |
 | consensus/src/pow.rs | 182 | 130 (+8 timeouts) | 4 | 40 | 3 killed; 1 unobservable (E20); the 8 timeouts fail assertions in isolation; release arithmetic: 1 more killed, 1 equivalent (E22) |
@@ -113,7 +114,10 @@ No run had a timeout but pow.rs (§ consensus/src/pow.rs).
 - **Admission:** p2p's lib tests and `network`, filtered to the admission tests,
   `--exact --test-threads=4`, about 35 s: `admission-before.tests` (24 network tests,
   the lib's `the_chain_command_carries_no_decoded_proof`, and the first new test's
-  name, which the base does not have), `admission-after.tests` (plus the token and
+  name, which the base does not have; **correction (RT-MUTD):** under `--exact` the
+  bare lib name matches no test, whose path is
+  `net::admission::tests::the_chain_command_carries_no_decoded_proof`, so that lib
+  test never ran in these runs; the follow-up's `admFull` uses full paths), `admission-after.tests` (plus the token and
   grace-window tests), `admission.tests` (plus the expiring-soon test; `rerunP`,
   `ovfP2`).
   The PX-proving `px_transactions_travel_the_stem_and_confirm_everywhere` and
@@ -294,7 +298,7 @@ envelope). `decode_px_proof` → `Ok(Default::default())` does not compile.
 
 | Mutant | Resolution |
 |---|---|
-| 208:12 `delete !` (`px_global.take`), 211:32 `+=` → `*=` (drops), 218:28 `+=` → `*=` (taken) | killed: `a_px_transaction_past_the_cheap_stage_takes_a_node_wide_token` (25 shape-valid hollow-proof transactions from 7 peers: one token each until the burst of 10 is spent, the rest dropped unverified and counted) |
+| 208:12 `delete !` (`px_global.take`), 211:32 `+=` → `*=` (drops), 218:28 `+=` → `*=` (taken) | killed: `a_px_transaction_past_the_cheap_stage_takes_a_node_wide_token` (25 shape-valid hollow-proof transactions from 7 peers: one token each while tokens last, the rest dropped unverified and counted; the drops are certain only if the 25 arrive within about 7.5 s, as they did here: RT-MUTD's timing note, § Follow-up) |
 | 211:32 and 218:28 `+=` → `-=` | caught in the census by an overflow abort; under release arithmetic killed by the same test (`ovfP`) |
 | 321:86 `c.height() + 1` → `-`, `*` (the contextual rules' height) | killed: the same test (the first transaction is valid from the next block on, PX6) |
 | 323:13 `delete match arm` (the shape check on the off-actor degree bits) | killed: `a_decodable_proof_of_the_wrong_shape_is_penalized_in_the_cheap_stage` |
@@ -343,6 +347,69 @@ the census ran again on the whole file with the whole consensus suite, as `runPo
   header-chain golden tests) within 120 s.
 - **Re-run** (`rerunPow`): 3 caught, 1 missed (E20).
 
+## Follow-up (RT-MUTD, Lead decision: accepted with fixes)
+
+The red team censused the rest of p2p/src/net/admission.rs (the functions outside
+run D's scope) and hand-mutated the decoder's caps and constants (38 of 39 caught;
+the 39th equivalent). This follow-up, on the merge of `rebuild/core` (run C merged),
+closes its findings.
+
+**The whole of admission.rs (`admFull`).** All 79 mutants of the file, with RT's
+signature tests (cherry-picked, `aea35cd`), the new tests below and the corrected
+oracle (`admission-final.tests`: 31 network tests and the 4 admission lib tests by
+their full paths, `net::admission::tests::…`; under `--exact` a bare lib name had
+matched nothing). Result: 68 caught, 6 missed, 5 unviable.
+
+- RT's 12 survivors: 11 caught. The 12th, 479:36 `tx_verifications += 1` → `*=` in
+  `on_tx` (the `Tx` path), is killed by the extended
+  `a_peer_relaying_a_valid_transaction_is_marked_as_a_recent_relayer`, which now also
+  announces, is asked for and answers a valid transaction (`rerun479`: 1 of 1 caught).
+- The other 5 missed are exactly E19.
+- Release arithmetic: the one kill resting on an overflow is 257:44 `+` → `-`, E19.
+
+**New tests.**
+- `p2p/src/net/admission.rs` (unit, on an idle network's state):
+  - `the_proven_invalid_cache_keeps_exactly_its_capacity`: 10,000 ids kept, the
+    10,001st evicts the oldest only (kills 24:40 `>` → `==`, `>=`);
+  - `the_contextual_reject_cache_is_per_tip_and_bounded`: 10,000 ids at one tip, the
+    next one starts the cache afresh, as does a new tip (kills 68:58 `>=` → `<` and
+    the boundary `>=` → `>`);
+  - both write the capacity as 10,000 rather than `RECENT_REJECTS`, so a change of
+    the constant is noticed (RT's hand mutant `RECENT_REJECTS = 9_999`: caught);
+  - `the_node_wide_px_bucket_has_burst_10_and_rate_2`: the node's node-wide PX
+    bucket on a controlled clock: 10 tokens, none after 250 ms, two after 1 s, never
+    more than 10 (RT's hand mutants burst 11 and rate 4: caught).
+- `p2p/tests/network.rs`:
+  - `a_peer_relaying_a_valid_transaction_is_marked_as_a_recent_relayer`
+    (`note_new_tx`, `PeerInfo::last_tx`; both relay paths);
+  - from RT (`aea35cd`): `signature_failures_over_young_rings_are_not_penalized_and_the_burial_is_exact`
+    and `signature_failures_in_the_activation_grace_window_are_not_penalized`;
+  - `a_px_transaction_past_the_cheap_stage_takes_a_node_wide_token` now bounds the
+    taken tokens by the burst plus the refill since the first send (wall clock), and
+    requires drops only as far as that bound leaves room for them; the exact burst
+    and rate are the unit test's.
+- E18's premises are now tests that fail if they stop holding:
+  `zkvm/tests/multi.rs` `no_table_commits_a_preprocessed_trace` and
+  `px/tests/proof_limits.rs` `quotient_chunks_do_not_depend_on_the_trace_length`.
+- `px/tests/unified.rs` `a_two_function_transaction_proves_and_verifies` decodes the
+  widest PX proof (23 tables) under `PROOF_LIMITS` and verifies the decoded proof
+  (PX-proving; § Proving test).
+
+**Hand mutants of the follow-up** (`hand4.py`, a copy of the tree, its own target
+directory, the final admission oracle; results in `hand4.txt`):
+
+| Mutant | Result |
+|---|---|
+| admission.rs 68 `ctx_rejects.len() >= RECENT_REJECTS` → `>` | caught |
+| admission.rs 354 `height + SIGNATURE_BURIAL <= tip` → `<` | caught (RT's tests) |
+| admission.rs 18 `RECENT_REJECTS = 9_999` | caught (after the literal capacity) |
+| net.rs 172 the node-wide bucket's burst 10 → 11 | caught |
+| net.rs 172 its rate 2 → 4 | caught |
+
+**Times (UTC, 2026-10-01):** admFull 13:11–13:43 (79), hand4 13:43–13:51 (5),
+rerun479 13:51–13:54 (1), the `RECENT_REJECTS` re-check after the literal capacity
+(`hand4b.txt`) about 14:00.
+
 ## Boundary pass
 
 cargo-mutants 27.1.0 turns `>` into `>=` and `<` into `<=`, but never `>=` into `>`
@@ -350,8 +417,19 @@ or `<=` into `<`, so an off-by-one at an inclusive bound is never tested (RT-MUT
 found two real survivors this way in run C's scope). `boundary.py` applies exactly
 those mutants, one at a time, to a copy of the worktree (`git ls-files` of the final
 tree), runs the scope's oracle with `--profile mutants`, and restores the file. The
-scope's functions hold five such comparisons; the others in the files (connection
-limits, ban scores, tests) are outside it.
+scope's functions hold five such comparisons. **Correction (RT-MUTD):** the p2p and
+summary files hold 17 more `>=`/`<=` by this run's count (RT-MUTD counted 18), all
+outside the censused functions and not in this pass:
+
+- p2p/src/net/admission.rs 68 (`ctx_reject`), 354 (`provably_invalid_signature`):
+  censused in the follow-up (§ Follow-up), and 569 (a test);
+- p2p/src/net/state.rs 325, 335 (unknown-upgrade reports);
+- p2p/src/net/conn.rs 272, 275, 277 (inbound and per-IP limits);
+- p2p/src/net/headers.rs 51 (the header queue), 180 (header grace), 333, 334 (the
+  anti-DoS work thresholds), 346 (the PoW chunk);
+- p2p/src/net/maintenance.rs 119 (trickle), 167, 179 (request timeouts), 268
+  (embargo);
+- chain/src/manager/summary.rs: none.
 
 | Mutant | Oracle | Result |
 |---|---|---|
@@ -404,6 +482,14 @@ still being verified, which would make the penalty depend on timing.
 
 ## Tool notes
 
+- **Target directories.** A hand-mutant or boundary script must build in a target
+  directory of its own (this run: `t-w4-mutd-bnd`, `t-w4-mutd-hm`), never one shared
+  with ordinary builds: cargo decides staleness by modification time, and a restored
+  source file with an older time can leave a mutated build in place (RT-MUTD).
+- **Line endings.** The filter and test lists are LF (`.gitattributes`:
+  `docs/evidence/mutation-*/** text eol=lf`); read with CRLF, every name ends in CR
+  and matches nothing.
+
 - cargo-mutants 27.1.0 applies `--re` and `--exclude-re` to every mutant but the
   `delete field … from struct … expression` ones, which are always listed for the
   files given with `-f`. They are reported where their oracle reaches them.
@@ -417,9 +503,9 @@ still being verified, which would make the penalty depend on timing.
 
 - **Operators.** The census covers cargo-mutants' mutation operators, not every
   possible fault. A caught mutant shows only that some test notices that change.
-- **Function scope.** In admission.rs and the p2p sync files only the functions
-  listed in the scope were censused (the code W4-PXDOS and W4-SYNC added or
-  changed); the rest of those files was not.
+- **Function scope.** In the p2p sync files only the functions listed in the scope
+  were censused (the code W4-SYNC added or changed); admission.rs was censused whole
+  in the follow-up.
 - **Oracles.** Non-proving tests only, except the hand-picked network test lists.
   Real proofs reach these paths only in the proving tests (CI's PX-proving step),
   which were not oracles; the hollow proof stands in for them up to the shape
@@ -455,3 +541,8 @@ real transfer proof's `trace_local` lengths equal the widths
 `analysis::trace_widths` reports and px/tests/proof_limits.rs pins. It was run once
 locally (`cargo test --locked --release -p blacksilk-px --test proof --
 --test-threads=1`, with at least 7 GB free): 3 passed in 188 s.
+
+Follow-up: `px/tests/unified.rs` `a_two_function_transaction_proves_and_verifies`
+(PX-proving) decodes the n_fn = 2 proof under `PROOF_LIMITS` and verifies the decoded
+proof. Run alone with at least 7 GB free (`cargo test --locked --release -p
+blacksilk-px --test unified -- --test-threads=1`): 12 passed in 629 s.

@@ -1,0 +1,68 @@
+p2p/src/net/admission.rs:22:9: replace Inner::reject_cache with ()
+p2p/src/net/admission.rs:24:40: replace > with == in Inner::reject_cache
+p2p/src/net/admission.rs:24:40: replace > with < in Inner::reject_cache
+p2p/src/net/admission.rs:24:40: replace > with >= in Inner::reject_cache
+p2p/src/net/admission.rs:37:5: replace decode_tx -> Option<Arc<Transaction>> with None
+p2p/src/net/admission.rs:51:5: replace input_rings -> Vec<Vec<u64>> with vec![]
+p2p/src/net/admission.rs:51:5: replace input_rings -> Vec<Vec<u64>> with vec![vec![]]
+p2p/src/net/admission.rs:51:5: replace input_rings -> Vec<Vec<u64>> with vec![vec![0]]
+p2p/src/net/admission.rs:62:5: replace ctx_rejected -> bool with true
+p2p/src/net/admission.rs:51:5: replace input_rings -> Vec<Vec<u64>> with vec![vec![1]]
+p2p/src/net/admission.rs:62:5: replace ctx_rejected -> bool with false
+p2p/src/net/admission.rs:62:32: replace && with || in ctx_rejected
+p2p/src/net/admission.rs:62:24: replace == with != in ctx_rejected
+p2p/src/net/admission.rs:68:5: replace ctx_reject with ()
+p2p/src/net/admission.rs:68:34: replace || with && in ctx_reject
+p2p/src/net/admission.rs:68:27: replace != with == in ctx_reject
+p2p/src/net/admission.rs:68:58: replace >= with < in ctx_reject
+p2p/src/net/admission.rs:120:5: replace admit_tx -> bool with true
+p2p/src/net/admission.rs:120:5: replace admit_tx -> bool with false
+p2p/src/net/admission.rs:157:15: replace || with && in admit_tx
+p2p/src/net/admission.rs:211:32: replace += with -= in admit_tx
+p2p/src/net/admission.rs:208:12: delete ! in admit_tx
+p2p/src/net/admission.rs:218:28: replace += with -= in admit_tx
+p2p/src/net/admission.rs:211:32: replace += with *= in admit_tx
+p2p/src/net/admission.rs:218:28: replace += with *= in admit_tx
+p2p/src/net/admission.rs:254:5: replace px_pre_checks -> Option<Option<PxPre>> with None
+p2p/src/net/admission.rs:257:44: replace + with - in px_pre_checks
+p2p/src/net/admission.rs:299:5: replace cheap_checks -> Result<bool, (blacksilk_tx::TxError, bool)> with Ok(true)
+p2p/src/net/admission.rs:303:52: replace + with - in cheap_checks
+p2p/src/net/admission.rs:299:5: replace cheap_checks -> Result<bool, (blacksilk_tx::TxError, bool)> with Ok(false)
+p2p/src/net/admission.rs:303:52: replace + with * in cheap_checks
+p2p/src/net/admission.rs:321:86: replace + with - in cheap_checks
+p2p/src/net/admission.rs:321:86: replace + with * in cheap_checks
+p2p/src/net/admission.rs:331:67: replace + with - in cheap_checks
+p2p/src/net/admission.rs:323:13: delete match arm (Transaction::Px(t), Some(Ok(bits))) in cheap_checks
+p2p/src/net/admission.rs:331:67: replace + with * in cheap_checks
+p2p/src/net/admission.rs:347:5: replace provably_invalid_signature -> bool with true
+p2p/src/net/admission.rs:347:5: replace provably_invalid_signature -> bool with false
+p2p/src/net/admission.rs:351:9: replace && with || in provably_invalid_signature
+p2p/src/net/admission.rs:350:5: delete ! in provably_invalid_signature
+p2p/src/net/admission.rs:354:62: replace <= with > in provably_invalid_signature
+p2p/src/net/admission.rs:354:43: replace + with - in provably_invalid_signature
+p2p/src/net/admission.rs:354:43: replace + with * in provably_invalid_signature
+p2p/src/net/admission.rs:363:5: replace proven_invalid -> bool with true
+p2p/src/net/admission.rs:363:5: replace proven_invalid -> bool with false
+p2p/src/net/admission.rs:364:9: delete match arm MempoolError::Invalid(e) in proven_invalid
+p2p/src/net/admission.rs:368:35: replace + with - in proven_invalid
+p2p/src/net/admission.rs:368:35: replace + with * in proven_invalid
+p2p/src/net/admission.rs:371:17: replace || with && in proven_invalid
+p2p/src/net/admission.rs:372:74: replace match guard !near with true in proven_invalid
+p2p/src/net/admission.rs:372:74: replace match guard !near with false in proven_invalid
+p2p/src/net/admission.rs:372:74: delete ! in proven_invalid
+p2p/src/net/admission.rs:394:5: replace on_invalid_tx with ()
+p2p/src/net/admission.rs:419:41: replace += with -= in verify_on_tx_lane
+p2p/src/net/admission.rs:416:5: replace verify_on_tx_lane -> Option<T> with None
+p2p/src/net/admission.rs:419:41: replace += with *= in verify_on_tx_lane
+p2p/src/net/admission.rs:434:5: replace note_new_tx with ()
+p2p/src/net/admission.rs:440:5: replace on_tx with ()
+p2p/src/net/admission.rs:448:65: replace == with != in on_tx
+p2p/src/net/admission.rs:457:11: replace || with && in on_tx
+p2p/src/net/admission.rs:459:8: delete ! in on_tx
+p2p/src/net/admission.rs:479:36: replace += with -= in on_tx
+p2p/src/net/admission.rs:463:8: delete ! in on_tx
+p2p/src/net/admission.rs:503:5: replace on_stem_tx with ()
+p2p/src/net/admission.rs:515:13: replace || with && in on_stem_tx
+p2p/src/net/admission.rs:536:36: replace += with -= in on_stem_tx
+p2p/src/net/admission.rs:522:8: delete ! in on_stem_tx
+p2p/src/net/admission.rs:536:36: replace += with *= in on_stem_tx
