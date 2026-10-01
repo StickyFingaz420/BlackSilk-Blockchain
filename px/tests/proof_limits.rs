@@ -3,11 +3,17 @@
 //! the decoder's bounds. No proving: the table counts, widths and quotient
 //! chunk counts are those `verify` derives from the statement.
 
-use blacksilk_px::prove::{kernel_budget, kernel_program, PROOF_LIMITS};
-use blacksilk_px_core::call::MAX_FN;
-use blacksilk_zk::DecodeLimits;
+use blacksilk_px::prove::{
+    check_shape, check_shape_bits, kernel_budget, kernel_program, public_words, FunctionCall,
+    VerifyError, PROOF_LIMITS,
+};
+use blacksilk_px::vault;
+use blacksilk_px_core::call::{function_prefix, Window, ABI_VERSION, MAX_FN};
+use blacksilk_px_core::kernel::{Public, N_IN, N_OUT};
+use blacksilk_px_core::Digest;
+use blacksilk_zk::{DecodeLimits, ZkError};
 use blacksilk_zkvm::air::trace::{
-    self, Part, Statement, BASE_TABLES, MAX_EXECUTIONS, TABLES_PER_EXTRA,
+    self, Budget, Part, Statement, BASE_TABLES, MAX_EXECUTIONS, TABLES_PER_EXTRA,
 };
 
 /// A statement of the kernel and `n_fn` vault calls, with PX budgets.
@@ -50,6 +56,15 @@ fn every_px_statement_is_within_the_decoder_limits() {
         }
         most_chunks = most_chunks.max(chunks.into_iter().max().unwrap());
         let widths = blacksilk_zk::analysis::trace_widths(&airs);
+        println!("n_fn {n_fn}: trace widths {widths:?}");
+        if n_fn == 0 {
+            // The real transfer proof's `trace_local` lengths
+            // (px/tests/proof.rs).
+            assert_eq!(
+                widths,
+                [18, 38, 16, 29, 103, 27, 24, 34, 44, 53, 16, 540, 9]
+            );
+        }
         widest = widest.max(widths.into_iter().max().unwrap());
     }
     // The widest statement has exactly the limit's tables.
@@ -78,3 +93,164 @@ const _: () = assert!(
     BASE_TABLES + TABLES_PER_EXTRA * (MAX_EXECUTIONS - 1)
         < DecodeLimits::ENVELOPE.max_instances + 1
 );
+
+// The shape check on degree bits (`check_shape_bits`, RT-PXDOS F1), without
+// proving (mutation run D): before it only the proving tests reached it.
+
+const CONTRACT: Digest = [3; 8];
+
+fn public(n_fn: usize) -> Public {
+    Public {
+        anchor: [1; 8],
+        nullifiers: [[2; 8]; N_IN],
+        commitments: [[4; 8]; N_OUT],
+        bridge_in: 5,
+        bridge_out: 6,
+        n_fn,
+        functions: [(CONTRACT, [7; 8]); MAX_FN],
+    }
+}
+
+fn call() -> FunctionCall {
+    FunctionCall {
+        program: vault::program(),
+        abi: ABI_VERSION,
+        outputs: vec![8; 12],
+    }
+}
+
+/// The vault is registered to `CONTRACT`, nothing else anywhere.
+fn registered(contract: &Digest, id: &[u8; 32]) -> Option<Budget> {
+    (*contract == CONTRACT && *id == vault::program().id()).then_some(vault::BUDGET)
+}
+
+/// The degree bits `verify` requires for the statement of `public` and
+/// `calls` (built here as `prove::statement` builds it; under zero knowledge
+/// a table of height `h` has `log2(h) + 1` degree bits).
+fn degree_bits(
+    public: &Public,
+    calls: &[FunctionCall],
+    window: &Window,
+    h_tx: [u8; 32],
+) -> Vec<usize> {
+    let mut st = Statement::single(kernel_program(), 0, public_words(public), h_tx);
+    st.budget = Some(kernel_budget(public.n_fn));
+    for (c, (contract, io_hash)) in calls.iter().zip(&public.functions) {
+        let mut output = function_prefix(c.abi, io_hash, contract, window).to_vec();
+        output.extend(&c.outputs);
+        st.others.push(Part {
+            program: c.program.clone(),
+            exit_code: 0,
+            output,
+            budget: Some(vault::BUDGET),
+        });
+    }
+    st.shape()
+        .expect("a fixed shape")
+        .iter()
+        .map(|h| h.trailing_zeros() as usize + 1)
+        .collect()
+}
+
+/// The encoding of a proof with one empty instance per entry of `bits` and
+/// those degree bits: it decodes under `PROOF_LIMITS` (no vector is beyond a
+/// cap, and the canonical-form rules hold), so its degree bits reach the
+/// shape check, but it verifies nothing.
+fn hollow_proof(bits: &[usize]) -> Vec<u8> {
+    fn varint(out: &mut Vec<u8>, mut v: u64) {
+        while v >= 0x80 {
+            out.push((v as u8 & 0x7f) | 0x80);
+            v >>= 7;
+        }
+        out.push(v as u8);
+    }
+    let mut b = vec![blacksilk_zk::PROOF_VERSION];
+    b.push(1); // the main commitment: one root
+    b.extend([0; 32]);
+    b.push(0); // no permutation commitment
+    b.push(1); // the quotient commitment
+    b.extend([0; 32]);
+    b.push(0); // no random commitment
+    varint(&mut b, bits.len() as u64);
+    for _ in bits {
+        // trace_local empty; trace_next and both preprocessed openings
+        // absent; no quotient chunks; no random opening; both permutation
+        // openings empty.
+        b.extend([0; 8]);
+    }
+    b.extend([2, 0, 0]); // the hidden openings: main and quotient rounds, no matrices
+    b.extend([0; 5]); // FRI: commitments, witnesses, input batches, openings, final polynomial
+    b.extend([0; 4]); // the query grinding witness
+    b.push(0); // no lookup terminals
+    varint(&mut b, bits.len() as u64);
+    for &x in bits {
+        varint(&mut b, x as u64);
+    }
+    b
+}
+
+#[test]
+fn the_shape_check_accepts_exactly_the_statements_degree_bits() {
+    let h_tx = [9; 32];
+    let w = Window::UNBOUNDED;
+    for n_fn in 0..=MAX_FN {
+        let p = public(n_fn);
+        let calls = vec![call(); n_fn];
+        let bits = degree_bits(&p, &calls, &w, h_tx);
+        let check = |p: &Public, calls: &[FunctionCall], bits: &[usize]| {
+            check_shape_bits(p, calls, &w, h_tx, bits, registered)
+        };
+        let mismatch =
+            |r: Result<(), VerifyError>| matches!(r, Err(VerifyError::Proof(ZkError::Shape(_))));
+        assert_eq!(check(&p, &calls, &bits), Ok(()), "n_fn {n_fn}");
+        // Every table's degree bits, one more or one fewer.
+        for i in 0..bits.len() {
+            for d in [bits[i] + 1, bits[i] - 1] {
+                let mut b = bits.clone();
+                b[i] = d;
+                assert!(
+                    mismatch(check(&p, &calls, &b)),
+                    "n_fn {n_fn}, table {i}: {d}"
+                );
+            }
+        }
+        // A table missing or one too many.
+        assert!(mismatch(check(&p, &calls, &bits[1..])), "n_fn {n_fn}");
+        let mut b = bits.clone();
+        b.push(bits[0]);
+        assert!(mismatch(check(&p, &calls, &b)), "n_fn {n_fn}");
+        // A call count other than the statement's.
+        assert_eq!(
+            check(&p, &vec![call(); n_fn + 1], &bits),
+            Err(VerifyError::Shape)
+        );
+        if n_fn > 0 {
+            assert_eq!(check(&p, &calls[1..], &bits), Err(VerifyError::Shape));
+            // The last function's program is not registered to its contract.
+            let mut q = p;
+            q.functions[n_fn - 1].0 = [5; 8];
+            assert_eq!(
+                check(&q, &calls, &degree_bits(&q, &calls, &w, h_tx)),
+                Err(VerifyError::Unregistered(n_fn - 1))
+            );
+        }
+        // `check_shape` reads only a decoded proof's degree bits.
+        let ok = blacksilk_zk::decode_proof_with(&hollow_proof(&bits), &PROOF_LIMITS)
+            .expect("the hollow proof decodes");
+        assert_eq!(ok.degree_bits, bits);
+        assert_eq!(check_shape(&p, &calls, &w, h_tx, &ok, registered), Ok(()));
+        let bad = blacksilk_zk::decode_proof_with(&hollow_proof(&bits[1..]), &PROOF_LIMITS)
+            .expect("the hollow proof decodes");
+        assert!(mismatch(check_shape(
+            &p, &calls, &w, h_tx, &bad, registered
+        )));
+    }
+    // More functions than `MAX_FN` (a hand-built statement): `Shape`, never
+    // a panic.
+    let mut p = public(MAX_FN);
+    p.n_fn = MAX_FN + 1;
+    assert_eq!(
+        check_shape_bits(&p, &vec![call(); MAX_FN + 1], &w, h_tx, &[], registered),
+        Err(VerifyError::Shape)
+    );
+}
