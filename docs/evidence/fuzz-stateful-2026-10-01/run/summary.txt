@@ -1,0 +1,126 @@
+=== peer_protocol-run1
+start 2026-10-01T03:46:11Z target=peer_protocol T=600 corpus_before=293 files/7499 bytes free_kb=6542460
+end 2026-10-01T03:56:25Z exit=0 wall=605s corpus_after=570 files/16108 bytes artifacts=0
+INFO: seed corpus: files: 293 min: 1b max: 46b total: 7499b rss: 78Mb
+#299	INITED cov: 9259 ft: 18522 corp: 246/6160b exec/s: 149 rss: 231Mb
+#10134	DONE   cov: 11021 ft: 23206 corp: 478/13688b lim: 46 exec/s: 16 rss: 435Mb
+stat::number_of_executed_units: 10134
+stat::average_exec_per_sec:     16
+stat::new_units_added:          315
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              435
+last NEW unit at execution #10084
+=== peer_protocol-run2
+start 2026-10-01T04:44:10Z target=peer_protocol T=600 corpus_before=570 files/16108 bytes free_kb=6391696
+binary 2026-10-01 06:30:36.373709000 +0200 16429568
+end 2026-10-01T04:54:16Z exit=0 wall=607s corpus_after=1243 files/68669 bytes artifacts=0
+INFO: seed corpus: files: 570 min: 1b max: 46b total: 16108b rss: 79Mb
+#577	INITED cov: 10839 ft: 22797 corp: 392/10216b exec/s: 8 rss: 378Mb
+#50990	DONE   cov: 11342 ft: 31218 corp: 888/56Kb lim: 256 exec/s: 84 rss: 553Mb
+stat::number_of_executed_units: 50990
+stat::average_exec_per_sec:     84
+stat::new_units_added:          854
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              553
+last NEW unit at execution #50834
+=== scan_outputs-run1
+start 2026-10-01T04:14:37Z target=scan_outputs T=600 corpus_before=148 files/20610 bytes free_kb=5525612
+end 2026-10-01T04:21:18Z exit=1 wall=396s corpus_after=148 files/20610 bytes artifacts=0
+INFO: seed corpus: files: 148 min: 2b max: 1731b total: 20610b rss: 82Mb
+thread '<unnamed>' (12320) panicked at fuzz_targets\..\src\targets\scan_outputs.rs:369:9:
+assertion `left == right` failed: output 2
+  left: Owned(SubaddressIndex { account: 0, index: 15 })
+ right: NotOwned
+last NEW unit at execution none
+=== scan_outputs-run2
+start 2026-10-01T04:33:43Z target=scan_outputs T=600 corpus_before=148 files/20610 bytes free_kb=6550488
+binary 2026-10-01 06:29:10.549982100 +0200 2660864
+end 2026-10-01T04:43:49Z exit=0 wall=603s corpus_after=444 files/98263 bytes artifacts=0
+INFO: seed corpus: files: 148 min: 2b max: 1731b total: 20610b rss: 82Mb
+#149	INITED cov: 1653 ft: 5902 corp: 142/19Kb exec/s: 24 rss: 102Mb
+#10898	DONE   cov: 1774 ft: 7576 corp: 394/77Kb lim: 1731 exec/s: 18 rss: 481Mb
+stat::number_of_executed_units: 10898
+stat::average_exec_per_sec:     18
+stat::new_units_added:          409
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              481
+last NEW unit at execution #10404
+=== px_admission-smoke
+start 2026-10-01T04:57:45Z target=px_admission T=120 corpus_before=18 files/72 bytes free_kb=7453688
+binary 2026-10-01 06:31:10.210861500 +0200 10979840
+end 2026-10-01T04:59:56Z exit=0 wall=126s corpus_after=62 files/1374 bytes artifacts=1
+INFO: seed corpus: files: 17 min: 4b max: 8b total: 72b rss: 439Mb
+#20	INITED cov: 5331 ft: 9461 corp: 17/72b exec/s: 0 rss: 573Mb
+Slowest unit: 14 s:
+#83	DONE   cov: 14270 ft: 21266 corp: 62/1378b lim: 256 exec/s: 0 rss: 599Mb
+stat::number_of_executed_units: 83
+stat::average_exec_per_sec:     0
+stat::new_units_added:          46
+stat::slowest_unit_time_sec:    14
+stat::peak_rss_mb:              599
+last NEW unit at execution #83
+=== px_admission-run1
+start 2026-10-01T05:00:26Z target=px_admission T=600 corpus_before=62 files/1374 bytes free_kb=2924804
+binary 2026-10-01 06:31:10.210861500 +0200 10979840
+end 2026-10-01T05:10:33Z exit=0 wall=605s corpus_after=285 files/13236 bytes artifacts=0
+INFO: seed corpus: files: 61 min: 2b max: 128b total: 1374b rss: 440Mb
+#64	INITED cov: 14287 ft: 21325 corp: 58/1244b exec/s: 0 rss: 596Mb
+#608	DONE   cov: 14883 ft: 26478 corp: 285/13138b lim: 256 exec/s: 1 rss: 636Mb
+stat::number_of_executed_units: 608
+stat::average_exec_per_sec:     1
+stat::new_units_added:          230
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              636
+last NEW unit at execution #608
+=== peer_protocol-final
+start 2026-10-01T06:38:04Z target=peer_protocol T=600 corpus_before=1243 files/68669 bytes free_kb=8583824
+binary 2026-10-01 08:36:49.773908000 +0200 16431616
+end 2026-10-01T06:48:06Z exit=0 wall=602s corpus_after=1791 files/114145 bytes artifacts=0
+INFO: seed corpus: files: 1243 min: 1b max: 256b total: 68669b rss: 81Mb
+#1251	INITED cov: 11132 ft: 30634 corp: 713/39Kb exec/s: 125 rss: 440Mb
+#66200	DONE   cov: 11527 ft: 33490 corp: 981/66Kb lim: 256 exec/s: 110 rss: 558Mb
+stat::number_of_executed_units: 66200
+stat::average_exec_per_sec:     110
+stat::new_units_added:          603
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              558
+last NEW unit at execution #65185
+=== scan_outputs-final
+start 2026-10-01T06:48:07Z target=scan_outputs T=600 corpus_before=446 files/117383 bytes free_kb=8436728
+binary 2026-10-01 08:36:55.832215500 +0200 2660864
+end 2026-10-01T06:58:09Z exit=0 wall=602s corpus_after=641 files/310793 bytes artifacts=0
+INFO: seed corpus: files: 446 min: 1b max: 15042b total: 117383b rss: 83Mb
+#447	INITED cov: 2230 ft: 8051 corp: 361/83Kb exec/s: 26 rss: 152Mb
+#12752	DONE   cov: 2371 ft: 8479 corp: 433/238Kb lim: 15042 exec/s: 21 rss: 491Mb
+stat::number_of_executed_units: 12752
+stat::average_exec_per_sec:     21
+stat::new_units_added:          225
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              491
+last NEW unit at execution #12502
+=== px_admission-final
+start 2026-10-01T06:58:09Z target=px_admission T=600 corpus_before=285 files/13236 bytes free_kb=5815004
+binary 2026-10-01 08:36:22.718478600 +0200 10979840
+end 2026-10-01T07:10:19Z exit=0 wall=725s corpus_after=285 files/13236 bytes artifacts=0
+INFO: seed corpus: files: 284 min: 1b max: 256b total: 13236b rss: 440Mb
+#287	INITED cov: 14877 ft: 25845 corp: 253/11351b exec/s: 0 rss: 625Mb
+#287	DONE   cov: 14877 ft: 25845 corp: 253/11351b lim: 256 exec/s: 0 rss: 625Mb
+stat::number_of_executed_units: 287
+stat::average_exec_per_sec:     0
+stat::new_units_added:          0
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              625
+last NEW unit at execution none
+=== px_admission-final2
+start 2026-10-01T07:10:54Z target=px_admission T=1500 corpus_before=285 files/13236 bytes free_kb=8194436
+binary 2026-10-01 08:36:22.718478600 +0200 10979840
+end 2026-10-01T07:36:09Z exit=0 wall=1514s corpus_after=698 files/44214 bytes artifacts=0
+INFO: seed corpus: files: 284 min: 1b max: 256b total: 13236b rss: 441Mb
+#286	INITED cov: 14888 ft: 24924 corp: 254/11414b exec/s: 0 rss: 602Mb
+#2012	DONE   cov: 15660 ft: 29816 corp: 656/40Kb lim: 256 exec/s: 1 rss: 634Mb
+stat::number_of_executed_units: 2012
+stat::average_exec_per_sec:     1
+stat::new_units_added:          429
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              634
+last NEW unit at execution #2012
