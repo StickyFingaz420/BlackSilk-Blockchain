@@ -2816,6 +2816,162 @@ async fn invalid_signatures_over_buried_rings_are_penalized_once_verified() {
     assert!(scores.contains(&0), "{scores:?}");
 }
 
+/// Two transfers whose CLSAGs are each other's (valid signatures, wrong
+/// message), the index of the input that fails, and the height of the
+/// youngest member of that input's ring.
+fn swapped_signatures(
+    a: &TestNode,
+    tx1: &Transaction,
+    tx2: &Transaction,
+) -> [(Transaction, u64); 2] {
+    [(tx1, tx2), (tx2, tx1)].map(|(x, y)| {
+        let mut bad = as_transfer(x);
+        bad.signatures = as_transfer(y).signatures;
+        let bad = Transaction::from(bad);
+        let c = a.chain.lock().unwrap();
+        let Err(MempoolError::Invalid(TxError::InvalidSignature { input })) = c.check_tx(&bad)
+        else {
+            panic!("a signature failure")
+        };
+        let ring = &as_transfer(&bad).inputs[input].ring;
+        let youngest = ring
+            .iter()
+            .map(|&i| c.state().output(i).expect("a ring member").height)
+            .max()
+            .unwrap();
+        (bad, youngest)
+    })
+}
+
+/// RT-MUTD: a signature failure is penalized only once every member of the
+/// failing input's ring is `SIGNATURE_BURIAL` (60) blocks below the tip, at
+/// that exact depth; over a younger ring it is contextual (a reorganization
+/// could have changed the members' outputs), so an honest relayer is never
+/// penalized. Contextual failures are cached per tip, two at a time too.
+/// Mutation run D's admission oracle had only the buried case.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn signature_failures_over_young_rings_are_not_penalized_and_the_burial_is_exact() {
+    let mut a = node(66, &[]).await;
+    a.mine_n(80, 0);
+    let tx1 = a.payment();
+    let tx2 = a.payment();
+    let [(bad1, young1), (bad2, young2)] = swapped_signatures(&a, &tx1, &tx2);
+    let youngest = young1.max(young2);
+    println!(
+        "youngest ring members: {young1}, {young2}; tip {}",
+        a.height()
+    );
+    assert!(
+        youngest + 59 >= a.height(),
+        "no ring member one block short of the burial depth (another seed)"
+    );
+    // One block short of the burial depth for the youngest ring.
+    a.mine_n(youngest + 59 - a.height(), 0);
+    assert_eq!(a.height(), youngest + 59);
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    let msgs: Vec<Vec<u8>> = [&bad1, &bad2, &bad1]
+        .iter()
+        .map(|t| Message::StemTx(t.encode()).encode())
+        .collect();
+    send_and_sync(&mut r, &mut w, &msgs, 1).await;
+    let st = a.net.stats();
+    assert_eq!(a.net.peers()[0].score, 0, "a young ring: contextual");
+    assert_eq!(
+        st.tx_verifications, 2,
+        "both cached at this tip: the first is not verified again"
+    );
+    drop((r, w));
+    wait_until("the first peer is gone", 10, || a.net.peers().is_empty()).await;
+    // At the burial depth of the youngest of both rings: proven invalid.
+    a.mine(0);
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    let youngest_bad = if young1 >= young2 { &bad1 } else { &bad2 };
+    send_and_sync(
+        &mut r,
+        &mut w,
+        &[Message::StemTx(youngest_bad.encode()).encode()],
+        2,
+    )
+    .await;
+    assert_eq!(
+        a.net.peers()[0].score,
+        score::INVALID_TX,
+        "buried: penalized"
+    );
+}
+
+/// The first height of the second epoch of [`UPGRADE_LATE`]: late enough
+/// that ring members of the first 80 blocks are buried when the grace window
+/// opens (at 150).
+const UPGRADE_LATE_AT: u64 = 210;
+
+static UPGRADE_LATE: [blacksilk_consensus::schedule::Epoch; 2] = [
+    blacksilk_consensus::schedule::Epoch {
+        name: "v3",
+        activation_height: 0,
+        header_version: 1,
+        branch_id: blacksilk_consensus::schedule::BRANCH_ID_V3,
+        verifier_id: blacksilk_consensus::schedule::VERIFIER_PX_1,
+    },
+    blacksilk_consensus::schedule::Epoch {
+        name: "noop",
+        activation_height: UPGRADE_LATE_AT,
+        header_version: 1,
+        branch_id: 0x4253_7634,
+        verifier_id: blacksilk_consensus::schedule::VERIFIER_PX_1,
+    },
+];
+
+/// RT-MUTD: within `ACTIVATION_GRACE_BLOCKS` of an activation, a signature
+/// failure over a buried ring is contextual (a signature made for the
+/// neighbouring branch id fails honestly), judged at the next block's
+/// height: at the first height of the window it is not penalized, one block
+/// earlier it is. Mutation run D's admission oracle had no activation for
+/// signatures (`proven_invalid`'s `near`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn signature_failures_in_the_activation_grace_window_are_not_penalized() {
+    use blacksilk_tx::validate::ACTIVATION_GRACE_BLOCKS;
+    let mut a = upgrading_node_with(67, &UPGRADE_LATE).await;
+    a.mine_n(80, 0);
+    let tx1 = a.payment();
+    let tx2 = a.payment();
+    let [(bad1, young1), (bad2, young2)] = swapped_signatures(&a, &tx1, &tx2);
+    let window = UPGRADE_LATE_AT - ACTIVATION_GRACE_BLOCKS;
+    // The next block is the last one before the window; both rings buried.
+    a.mine_n(window - 2 - a.height(), 0);
+    assert!(young1.max(young2) + 60 <= a.height(), "buried rings");
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(
+        &mut r,
+        &mut w,
+        &[Message::StemTx(bad1.encode()).encode()],
+        1,
+    )
+    .await;
+    assert_eq!(
+        a.net.peers()[0].score,
+        score::INVALID_TX,
+        "outside the window"
+    );
+    drop((r, w));
+    wait_until("the first peer is gone", 10, || a.net.peers().is_empty()).await;
+    // The next block is the first one inside the window.
+    a.mine(0);
+    assert_eq!(a.height() + 1, window);
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    send_and_sync(
+        &mut r,
+        &mut w,
+        &[Message::StemTx(bad2.encode()).encode()],
+        2,
+    )
+    .await;
+    assert_eq!(a.net.peers()[0].score, 0, "inside the window: contextual");
+    assert_eq!(a.net.stats().tx_verifications, 2);
+}
+
 /// A transfer with one ring index changed to an output that does not exist
 /// (on our chain): a contextual failure (C1).
 fn unknown_ring_member(tx: &Transaction, k: u64) -> Transaction {
@@ -3248,8 +3404,16 @@ static UPGRADE: [blacksilk_consensus::schedule::Epoch; 2] = [
 
 /// A node whose chain activates [`UPGRADE`] at [`UPGRADE_AT`].
 async fn upgrading_node(seed: u64) -> TestNode {
+    upgrading_node_with(seed, &UPGRADE).await
+}
+
+/// A node whose chain follows `epochs`.
+async fn upgrading_node_with(
+    seed: u64,
+    epochs: &'static [blacksilk_consensus::schedule::Epoch],
+) -> TestNode {
     let mut p = params();
-    p.schedule = blacksilk_consensus::schedule::Schedule::new(&UPGRADE);
+    p.schedule = blacksilk_consensus::schedule::Schedule::new(epochs);
     // `TxRules::for_chain` refuses a multi-epoch schedule: the first
     // epoch's rules, the others derived per height.
     let m = ChainManager::open(
