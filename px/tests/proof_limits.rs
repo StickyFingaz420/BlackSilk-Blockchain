@@ -254,3 +254,26 @@ fn the_shape_check_accepts_exactly_the_statements_degree_bits() {
         Err(VerifyError::Shape)
     );
 }
+
+/// E18's premise (docs/reviews/mutation-exemptions.md): the quotient chunk
+/// count of every table of every PX statement does not depend on the trace
+/// length, over the whole range of degree bits `verify` accepts, so the
+/// helper's trace length cannot change a result. This fails if a table's
+/// constraint degree ever comes to depend on its height (RT-MUTD).
+#[test]
+fn quotient_chunks_do_not_depend_on_the_trace_length() {
+    use blacksilk_zk::params::{MAX_LOG_HEIGHT, MIN_LOG_HEIGHT};
+    for n_fn in 0..=MAX_FN {
+        let st = statement(n_fn);
+        let airs = trace::tables(&st);
+        let base =
+            blacksilk_zk::analysis::quotient_chunks(&airs, &vec![MIN_LOG_HEIGHT + 1; airs.len()]);
+        for db in MIN_LOG_HEIGHT + 2..=MAX_LOG_HEIGHT + 1 {
+            assert_eq!(
+                blacksilk_zk::analysis::quotient_chunks(&airs, &vec![db; airs.len()]),
+                base,
+                "n_fn {n_fn}, degree bits {db}"
+            );
+        }
+    }
+}
