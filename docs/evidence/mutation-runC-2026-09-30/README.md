@@ -5,7 +5,9 @@ changes the tests notice; it does not show that the code is correct or secure.
 
 The gate (decisions "Agent 42" and "W4-MUT and RT-MUT", run C): zero unexplained
 missed mutants per completed file. Every survivor is killed by a new test or
-explained in [mutation-exemptions.md](../../reviews/mutation-exemptions.md) (E8–E16).
+explained in [mutation-exemptions.md](../../reviews/mutation-exemptions.md) (E8–E12,
+E14, E15, E23–E28; E13 and E16 were withdrawn when their mutants were killed).
+Red team RT-MUTC reviewed the first version (§ After RT-MUTC).
 Run C's scope, in priority order: tx/src/validate.rs, tx/src/px.rs,
 chain/src/manager/fork_choice.rs, tx/src/params.rs, crypto/, chain/src/block.rs and
 chain/src/emission.rs. What this run completed and what remains is in § Scope status.
@@ -14,19 +16,19 @@ chain/src/emission.rs. What this run completed and what remains is in § Scope s
 
 | File | Mutants | Caught (run) | Missed (run) | Unviable | After the new tests |
 |---|---|---|---|---|---|
-| tx/src/validate.rs | 138 | 107 | 19 | 12 | 13 killed by non-proving tests, 4 by the proving test `px_consensus` (2 of them by its new assertions), 2 equivalent (E8); 2 diagnostic only (E9) |
+| tx/src/validate.rs | 138 | 107 | 19 | 12 | 11 killed by non-proving tests, 4 by the proving test `px_consensus` (2 of them by its new assertions), 2 equivalent (E8); 2 diagnostic only (E9) |
 | tx/src/px.rs | 174 | 131 | 28 | 15 | 26 killed (3 of them first timed out on an unbounded test loop, § Timeouts), 2 equivalent (E10) |
 | tx/src/params.rs | 93 | 72 | 4 | 17 | 4 killed |
 | chain/src/manager/fork_choice.rs | 87 | 53 (+8 timeouts) | 26 | 0 | 10 killed by non-proving tests, 1 by a new proving test, 3 equivalent (E11), 12 log only (E12); the 8 timeouts: 3 fail assertions, 5 are genuine hangs (§ Timeouts) |
 | crypto/src/clsag.rs | 97 | 51 (+2 timeouts) | 0 | 44 | nothing to resolve; the 2 timeouts fail assertions |
-| crypto/src/bulletproofs_plus.rs | 314 | 218 (+10 timeouts) | 6 | 80 | 4 computationally unreachable (E13), 2 equivalent (E14); the 10 timeouts: 9 fail assertions, 1 genuine hang |
-| crypto/ (the 12 other files) | 273 | 171 (+7 timeouts) | 20 | 75 | 13 killed by new unit tests, 6 unobservable in safe Rust (E15), 1 equivalent (E16); the 7 timeouts: 5 fail assertions, 2 genuine hangs |
+| crypto/src/bulletproofs_plus.rs | 314 | 218 (+10 timeouts) | 6 | 80 | 4 first exempted as unreachable (E13), now gone: the checks moved into `any_zero`, whose 3 mutants a unit test kills (§ After RT-MUTC); 2 equivalent (E14); the 10 timeouts: 9 fail assertions, 1 genuine hang |
+| crypto/ (the 12 other files) | 273 | 171 (+7 timeouts) | 20 | 75 | 14 killed by new unit tests (the `Hash for Point` mutant by RT-MUTC's test, first exempted as E16), 6 unobservable in safe Rust (E15); the 7 timeouts: 6 fail assertions, 1 genuine hang |
 | chain/src/block.rs | 18 | 11 | 5 | 2 | 5 killed |
 | chain/src/emission.rs | 19 | 19 | 0 | 0 | nothing to resolve |
 
 - **No survivor revealed a bug in a consensus rule.** Every rule the survivors
   pointed at is implemented as specified; only its test was missing (or, for 34
-  mutants, no test can observe the change: E8–E16).
+  mutants, no test can observe the change: § Result in brief, last items).
 - **The rules that had no test at their boundary, now tested** (tx/tests/
   mutation_regressions.rs unless noted):
   - T3's upper bounds (64 inputs; PX: 64 inputs, 16 hidden outputs, outputs only
@@ -75,7 +77,8 @@ chain/src/emission.rs. What this run completed and what remains is in § Scope s
   the fork_choice tests, `+` → `-` an overflow check, and under release arithmetic
   `emission_is_enforced_exactly` (§ Release arithmetic).
 - **crypto/: CLSAG had no survivor.** Bulletproofs+'s 6 survivors are its
-  zero-challenge guards (unreachable without a hash preimage) and an unused tail of
+  zero-challenge guards (unreachable without a hash preimage; now a tested helper,
+  § After RT-MUTC) and an unused tail of
   the `y` powers. In the other files, new unit tests: an anchor's `Debug` never
   shows its bytes; points order by their encoding through every comparison
   operator (the T4 and T6 sort rules depend on it; `partial_cmp` had no test); the
@@ -86,8 +89,13 @@ chain/src/emission.rs. What this run completed and what remains is in § Scope s
   symbolically (now pinned to 9 454 144 bytes, docs/px.md §11.5), and
   `Block::weight` had no test (it has no caller in the workspace). emission.rs had
   no survivor.
-- **Equivalent, diagnostic or unobservable (exempt):** 34 mutants, E8–E16. E15 (6
-  zeroize-on-drop mutants) is a limit of the oracle, not an equivalence.
+- **Equivalent, diagnostic or unobservable (exempt):** 29 cargo-mutants mutants
+  (E8 2, E9 2, E10 2, E11 3, E12 12, E14 2, E15 6) and 9 boundary-pass mutants (E12
+  1, E23–E28 8; § Boundary pass). E15 (6 zeroize-on-drop mutants) is a limit of the
+  oracle, not an equivalence.
+- **Boundary pass** (cargo-mutants never mutates `>=` into `>` or `<=` into `<`): 39
+  mutants over run C's scope and runs A and B's (consensus, px-core); 3 survivors
+  killed by new tests, 9 equivalent (§ Boundary pass).
 
 ## Setup
 
@@ -343,7 +351,7 @@ caught; `hookF` 1 caught.
 
 | Mutant | Resolution |
 |---|---|
-| bulletproofs_plus.rs 257:26 (prover) and 397:26, 397:47, 397:68 (verifier) `\|\|` → `&&` in the zero-challenge guards | computationally unreachable: E13 |
+| bulletproofs_plus.rs 257:26 (prover) and 397:26, 397:47, 397:68 (verifier) `\|\|` → `&&` in the zero-challenge guards | first exempted (E13, unreachable); the guards are now `any_zero`, with a unit test (§ After RT-MUTC) |
 | bulletproofs_plus.rs 260:31 and 453:35 `powers(&y, n + 2)` → `n * 2` | equivalent: E14 |
 | janus.rs 42:9 `Debug for Anchor` → empty | killed: `an_anchor_never_prints_its_bytes` |
 | keys.rs 254:9 `SubaddressTable::is_empty` → `true`, `false` | killed: `a_subaddress_table_counts_its_entries` |
@@ -352,9 +360,10 @@ caught; `hookF` 1 caught.
 | membership.rs 208:26 `\|\|` → `&&` (identity tag or member) | killed: `identity_tag_and_members_are_rejected` (a signature valid over a ring with an identity member) |
 | point.rs 66:9 `partial_cmp` → `None`; 77:9 `Debug` → empty | killed: `points_order_by_their_encoding_through_every_operator` |
 | janus.rs 48:9, keys.rs 141:9, 208:9, 217:9, nonce.rs 102:9, stealth.rs 42:9 `Drop` → `()` | unobservable in safe Rust: E15 |
-| point.rs 60:9 `Hash for Point` → `()` | equivalent in behaviour (performance only): E16 |
+| point.rs 60:9 `Hash for Point` → `()` | first exempted (E16, performance only); killed by RT-MUTC's `a_point_hashes_as_its_encoding` |
 
-Re-run: `rerunK` 13 caught, 13 missed = E13 (4), E14 (2), E15 (6), E16 (1).
+Re-run: `rerunK` 13 caught, 13 missed = E13 (4), E14 (2), E15 (6), E16 (1), before the
+RT-MUTC changes; E13's and E16's mutants are killed since (§ After RT-MUTC).
 
 ### chain/src/block.rs (runB: 5 missed)
 
@@ -407,11 +416,15 @@ assertions:
   `None`, the inverted retry guards; `forged_out_of_range_proofs_fail` fails, and
   `prove`'s retry loop hangs the rest), clsag.rs 259:23 and 259:28, hash.rs 248:9
   (`finalize` → zeros: 22 tests fail, the hash known answers among them) and 255:9,
-  nonce.rs 61:9, membership.rs 183:13 and 187:23.
-- **3 are genuine hangs only:** bulletproofs_plus.rs 537:18 (`batch_verify` draws
-  weights until one is zero: never), membership.rs 187:28 (`(i + 1) / n`: the ring
-  loop never closes), nonce.rs 75:18 (`HedgedRng::scalar` returns only a zero
-  scalar: never). Each loops on every call, so every test that reaches it hangs.
+  nonce.rs 61:9, membership.rs 183:13 and 187:23 (16; with 187:28 below, 17).
+- **2 are genuine hangs only:** bulletproofs_plus.rs 537:18 (`batch_verify` draws
+  weights until one is zero: never) and nonce.rs 75:18 (`HedgedRng::scalar` returns
+  only a zero scalar: never). Each loops on every call, so every test that reaches it
+  hangs.
+- membership.rs 187:28 (`(i + 1) / n`: the ring loop never closes) was a hang only
+  in timeoutK; with the final tests it **fails an assertion**:
+  `identity_tag_and_members_are_rejected` (re-run `m187`, `-j1`, 120 s, the
+  membership tests: that test FAILED, the others hang).
 
 ## Release arithmetic
 
@@ -444,6 +457,116 @@ debug-assertions=off"`; the rustc command lines in the logs carry both flags):
 
 No mutant of this run survives release arithmetic.
 
+## Boundary pass
+
+**Why.** cargo-mutants 27.1 replaces `>` with `>=` and `<` with `<=`, but never `>=`
+with `>` or `<=` with `<`: the off-by-one at an inclusive bound, where consensus limits
+live (red team RT-MUTC found two such survivors by hand). From run C on, every census
+adds this pass (Lead, RT-MUTC).
+
+**Tool.** `tools/boundary-mutants.sh` (with `tools/run-with-timeout.ps1` on Windows):
+- `list FILE...` prints one mutant per `>=` / `<=` of the non-test code (outside
+  comments, string literals and `#[cfg(test)]` items; `>>=` and `<<=` excluded);
+- `run SCRATCH TIMEOUT FILE... -- CARGO_ARGS` copies HEAD with `git archive`, applies
+  each mutant (two bytes changed), builds it (`--no-run`; a build failure is
+  `unviable`), runs `cargo CARGO_ARGS` within TIMEOUT and records `caught`, `missed`,
+  `timeout` or `unviable` in `SCRATCH/out/outcomes.txt`, with a log per mutant.
+
+**Oracles:** those of the census for each file (§ Oracles): the tx set with
+mutation_regressions (`txtests-rerun.args`), `chaintests.args` and `chaintestsB.args`
+with `--skip restart_rebuilds_the_px_state_exactly`, the crypto crate's tests; for runs
+A and B, the whole consensus suite and run B's px-core/px set plus
+`--test mutation_regressions`. Profile `mutants`, `CARGO_BUILD_JOBS=2`.
+
+**Commands** (`$X` the oracle arguments above, without `-C=`; one target directory per
+crate set):
+
+```text
+tools/boundary-mutants.sh run <scratch> 600 tx/src/validate.rs tx/src/px.rs tx/src/params.rs \
+  -- test --locked --profile mutants -p blacksilk-tx $TX
+tools/boundary-mutants.sh run <scratch> 1800 chain/src/manager/fork_choice.rs \
+  -- test --locked --profile mutants -p blacksilk-chain $C -- --skip restart_rebuilds_the_px_state_exactly
+tools/boundary-mutants.sh run <scratch> 1800 chain/src/block.rs chain/src/emission.rs \
+  -- test --locked --profile mutants -p blacksilk-chain $B -- --skip restart_rebuilds_the_px_state_exactly
+tools/boundary-mutants.sh run <scratch> 300 crypto/src/*.rs -- test --locked --profile mutants -p blacksilk-crypto
+tools/boundary-mutants.sh run <scratch> 300 consensus/src/*.rs -- test --locked --profile mutants -p blacksilk-consensus
+tools/boundary-mutants.sh run <scratch> 600 px-core/src/*.rs -- test --locked --profile mutants \
+  -p blacksilk-px-core -p blacksilk-px --lib --test kernel --test fuzz --test state --test hk_vectors \
+  --test kernel_budget --test consensus_fingerprint --test delivery --test elf_paths --test fri_schedule \
+  --test mutation_regressions
+```
+
+**Results** (outcome files in `boundary/`; times UTC, 2026-10-01):
+
+| Run | Commit | Files | Mutants | Caught | Missed | Unviable | Time |
+|---|---|---|---|---|---|---|---|
+| bpT | `120e8f2` | tx validate, px, params | 13 | 7 | 5 | 1 | 07:11–08:02 |
+| bpF | `934fe30` | fork_choice.rs | 3 | 2 | 1 | 0 | 07:16–07:50 |
+| bpB | `934fe30` | block.rs, emission.rs | 1 | 1 | 0 | 0 | 07:50–07:58 |
+| bpK | `5394b45` | crypto/ (14 files) | 4 | 3 | 1 | 0 | 06:53–06:56 |
+| bpA | `934fe30` | consensus/ (run A's scope) | 12 | 10 | 2 | 0 | 08:11–08:15 |
+| bpX | `934fe30` | px-core/ (run B's scope) | 6 | 3 | 3 | 0 | 08:11–08:17 |
+| bpK2, bpX2 | `934fe30`, `55d84f4` | the killed survivors, after their tests | 2 | 2 | 0 | 0 | |
+
+No boundary mutant timed out.
+
+**Survivors:**
+
+| Mutant | Resolution |
+|---|---|
+| crypto/src/hash.rs 219:17 `len <= u8::MAX` → `<` (the domain tag's one-byte length) | killed: `a_tag_of_exactly_255_bytes_is_the_longest` (bpK2) |
+| px-core/src/lib.rs 38:10 `s >= P` → `>` (BabyBear `add`) | killed: `field_addition_reduces_a_sum_of_exactly_p_to_zero` (px/tests/mutation_regressions.rs; bpX2) |
+| tx/src/px.rs 808:23 `v >= 0` → `>` | equivalent: E23 (`−0 = 0`) |
+| tx/src/params.rs 49:46, 50:43, 127:76 (`const` assertions) | equivalent: E24 (they still hold; no code) |
+| tx/src/params.rs 103:10 `m <= 2` → `<` | equivalent: E25 (the clawback is 0 at two outputs) |
+| chain/src/manager/fork_choice.rs 314:22 (the reorg warning threshold) | log only: E12 |
+| consensus/src/params.rs 198:62 `>= 1 << 64` → `>` | equivalent: E26 (`n(n + 1)·T` is never exactly 2^64) |
+| consensus/src/pow.rs 28:15 `height <= epoch + lag` → `<` | equivalent: E27 |
+| px-core/src/hash.rs 116:61, 165:37 `pos >= 8` → `>` | equivalent: E28 (`pos < 8` always holds there) |
+
+The unviable mutant is params.rs 48:49 (`MAX_DEPLOY_TX_SIZE < MAX_DEPLOY_BLOCK_BYTES`,
+both 1 MiB: the `const` assertion fails).
+
+**Agreement with RT-MUTC's manual mutants.** RT ran 10 of these by hand (release
+build, the same tx and chain test sets): validate.rs 348 and 1001, px.rs 692, 844,
+845, 848 and fork_choice.rs 354 caught in both; px.rs 141 (`*x >= P`) and
+fork_choice.rs 66 (`>= tip_work − margin`) missed by RT, now caught by RT's tests
+`px_digest_words_must_be_canonical_field_elements` and
+`the_low_work_margin_is_inclusive`; params.rs 103 missed in both (E25).
+
+**Runs A and B** (consensus, px-core): 18 boundary mutants, 13 caught; the 5
+survivors are 1 killed (px-core `add`) and 4 equivalent (E26–E28). Runs A and B's
+census missed this operator class entirely; their evidence
+(docs/evidence/mutation-2026-09-29/) is completed by this section.
+
+## After RT-MUTC
+
+Red team RT-MUTC confirmed the proof-cache finding, the 5 proving-only kills and
+E8–E12 and E14. Lead decision: accepted with fixes, done here:
+- RT's tests cherry-picked (`df406aa`, `7f44d16`, `46d2e6f`, `fe5d67b`):
+  `a_point_hashes_as_its_encoding` (kills E16's mutant: E16 withdrawn),
+  `px_digest_words_must_be_canonical_field_elements` (px.rs 141 at P − 1, P, P + 1,
+  `u32::MAX`), `the_low_work_margin_is_inclusive` (fork_choice.rs 66).
+- E13 withdrawn: the zero-challenge checks of Bulletproofs+ moved into the pure
+  helper `any_zero` (commit `b3e4e40`; the same comparisons, without side effects; the
+  Bulletproofs+ vectors unchanged), and its 3 mutants (`→ true`, `→ false`, `==` →
+  `!=`) are caught by `any_zero_finds_a_zero_challenge_in_any_position`
+  (`anyzeroK/`; `→ true` and `!=` also hang the prover's retry loop, after the
+  test's assertion fails).
+- The validate.rs count corrected (11 killed by non-proving tests, not 13), and
+  membership.rs 187:28 reclassified (it fails an assertion).
+- `a_pooled_px_proof_vouches_for_nothing_under_other_rules` also asserts the recorded
+  verdict, `BlockError::Tx { index: 1, error: PxProof }`.
+- **Latent risk (RT):** P2P caches the ids of transactions refused for a stateless
+  reason (`recent_rejects`) and never re-checks them; `FeeNotExact` and
+  `DeployFeeNotExact` are stateless. If an epoch changed the fee rule, valid
+  transactions paying the new fee would be blacklisted. New test
+  `fee_rules_are_the_same_in_every_epoch_while_fee_errors_are_stateless`
+  (tx/tests/upgrade.rs) fails, naming the fix (make the fee errors contextual near an
+  activation in `is_stateless_at`, as `PxProof` is), as soon as two epochs' fee rules
+  differ; demonstrated by raising `fee_per_weight` by one in a second epoch.
+- The boundary pass (above).
+
 ## Limits
 
 - **Operators.** The census covers cargo-mutants' mutation operators, not every
@@ -454,9 +577,12 @@ No mutant of this run survives release arithmetic.
   plus actor_order for one test hook and the new ignored proving test for one
   mutant. For crypto/, the crate's own tests only. For block.rs and emission.rs, 8
   chain test targets.
-- **Timeouts as kills.** 5 fork_choice and 3 crypto mutants (and 1 fork_choice
+- **Timeouts as kills.** 5 fork_choice and 2 crypto mutants (and 1 fork_choice
   mutant in release arithmetic) are caught only because the code then loops
-  forever. A hang is a weaker oracle than an assertion.
+  forever. A hang is a weaker oracle than an assertion. The liveness hardening that
+  would turn them into assertions (progress checks in `sync_state` and
+  `fork_height`, bounded signing loops, `batch_verify`'s weights) is a product
+  change, owned by a separate agent (Lead, RT-MUTC).
 - **Zeroization (E15)** is not checked by any test: safe Rust cannot observe it.
 - **Proof verification itself** (Plonky3, the zkVM AIR) is outside this census: a
   PX5 mutant is killed when a real, tampered or misplaced proof changes a verdict.

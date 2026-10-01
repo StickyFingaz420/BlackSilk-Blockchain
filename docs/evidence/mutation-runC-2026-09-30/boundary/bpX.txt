@@ -1,0 +1,9 @@
+commit 934fe30; cargo test --locked --profile mutants -p blacksilk-px-core -p blacksilk-px --lib --test kernel --test fuzz --test state --test hk_vectors --test kernel_budget --test consensus_fingerprint --test delivery --test elf_paths --test fri_schedule --test mutation_regressions
+baseline ok
+caught px-core/src/call.rs:76:48: replace <= with < (1.log)
+caught px-core/src/call.rs:81:25: replace <= with < (2.log)
+caught px-core/src/call.rs:81:69: replace <= with < (3.log)
+missed px-core/src/hash.rs:116:61: replace >= with > (4.log)
+missed px-core/src/hash.rs:165:37: replace >= with > (5.log)
+missed px-core/src/lib.rs:38:10: replace >= with > (6.log)
+done: 6 mutants, 3 missed
