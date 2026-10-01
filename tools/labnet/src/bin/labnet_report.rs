@@ -52,7 +52,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
-#[command(about = "Network metrics of a finished labnet run")]
+#[command(
+    name = "blacksilk-labnet-report",
+    about = "Network metrics of a finished labnet run"
+)]
 struct Args {
     /// The run directory (`blacksilk-labnet --out`).
     run: PathBuf,

@@ -43,7 +43,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Parser)]
-#[command(about = "Re-check the RandomX proof of work of a lab run's chain in a fresh process")]
+#[command(
+    name = "blacksilk-rx-verify",
+    about = "Re-check the RandomX proof of work of a lab run's chain in a fresh process"
+)]
 struct Args {
     /// Node RPC address; repeat for every node to compare.
     #[arg(long, required = true)]

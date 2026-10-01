@@ -43,7 +43,10 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 #[derive(Parser, Clone)]
-#[command(about = "BlackSilk lab network: long-duration multi-node test")]
+#[command(
+    name = "blacksilk-labnet",
+    about = "BlackSilk lab network: long-duration multi-node test"
+)]
 struct Args {
     /// Directory with blacksilk-node and blacksilk-miner binaries.
     #[arg(long)]
