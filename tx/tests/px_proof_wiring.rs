@@ -162,8 +162,8 @@ fn px_proofs_decode_under_the_px_limits_not_the_envelope() {
     // At the PX limit (the widest PX statement's tables), and one table over
     // it: the latter is within the envelope of every BVM-1 statement, but no
     // PX statement has that many tables.
-    let at = hollow_proof(&vec![10; PROOF_LIMITS.max_instances]);
-    let over = hollow_proof(&vec![10; PROOF_LIMITS.max_instances + 1]);
+    let at = hollow_proof(&[10; PROOF_LIMITS.max_instances]);
+    let over = hollow_proof(&[10; PROOF_LIMITS.max_instances + 1]);
     assert!(decode_px_proof(&px(&net, at)).is_ok());
     assert!(blacksilk_zk::decode_proof(&over).is_ok());
     assert_eq!(
