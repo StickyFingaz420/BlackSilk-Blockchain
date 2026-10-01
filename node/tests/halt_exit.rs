@@ -146,10 +146,17 @@ fn an_apply_failure_exits_with_the_halt_status_the_unit_does_not_restart() {
     .unwrap();
     let lines: Vec<&str> = unit.lines().map(str::trim).collect();
     assert!(lines.contains(&"Restart=on-failure"));
+    let prevent: Vec<&str> = lines
+        .iter()
+        .filter_map(|l| l.strip_prefix("RestartPreventExitStatus="))
+        .flat_map(|v| v.split_whitespace())
+        .collect();
     assert!(
-        lines.contains(&format!("RestartPreventExitStatus={HALT_EXIT_CODE}").as_str()),
+        prevent.contains(&HALT_EXIT_CODE.to_string().as_str()),
         "the unit must list the halt status"
     );
+    // A configuration error or a build refusing the network (W4-GUARD).
+    assert!(prevent.contains(&"2"), "the unit must list status 2");
 }
 
 /// The same halt found at start-up: `ChainManager::open` returns the replay's

@@ -27,3 +27,8 @@ log = "0.4"
 env_logger = { version = "0.8", default-features = false, features = ["humantime"] }
 getrandom = "0.2"
 zeroize = "1.8"
+
+# `cfg(fuzzing)`: set by cargo-fuzz in fuzz builds only; src/main.rs refuses
+# to compile with it (W4-GUARD).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }

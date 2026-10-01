@@ -306,7 +306,8 @@ fn ephemeral_bytes(wide: &mut [u8; 64]) -> Result<(), TransportError> {
 }
 
 /// Fuzz builds only: `cfg(fuzzing)` is set by cargo-fuzz for every crate of
-/// a fuzz binary, and never otherwise, so none of this exists in the node.
+/// a fuzz binary, and never otherwise, so none of this exists in the node
+/// (whose build script refuses `cfg(fuzzing)`; `FUZZING_MARKER`, W4-GUARD).
 /// A fuzz target may fix this thread's ephemeral secrets, so that an input
 /// replays exactly (the transport fuzz targets, W4-FUZZ2).
 #[cfg(fuzzing)]

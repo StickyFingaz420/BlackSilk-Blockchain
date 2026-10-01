@@ -1,0 +1,14 @@
+# Repository-wide cargo configuration (W4-GUARD, RT-GUARD).
+#
+# Windows (MSVC): `-Brepro` makes the linker write a hash of the binary where
+# it otherwise writes the link time (the COFF and debug-directory time stamps)
+# and a random PDB GUID, so two builds of one commit give the same bytes.
+# Written `-Brepro`, not `/Brepro`: Git Bash rewrites a leading `/` as a path.
+#
+# Only this target table: a `[target.'cfg(...)']` table here would be refused
+# by the guest build (zkvm/guests/build.sh, CI-6), and `build.rustflags`
+# would be ignored whenever a target table applies. RUSTFLAGS or
+# CARGO_ENCODED_RUSTFLAGS replace these flags entirely (cargo-fuzz sets them;
+# tools/release-build.sh repeats `-Brepro` in its own).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=-Brepro"]

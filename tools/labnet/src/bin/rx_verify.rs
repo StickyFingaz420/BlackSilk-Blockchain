@@ -27,6 +27,9 @@
 
 #![forbid(unsafe_code)]
 
+#[path = "../build_guard.rs"]
+mod build_guard;
+
 use blacksilk_consensus::{
     BlockHeader, ChainParams, Hash, HeaderChain, Network, PowFunction, HEADER_SIZE,
 };
@@ -40,7 +43,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Parser)]
-#[command(about = "Re-check the RandomX proof of work of a lab run's chain in a fresh process")]
+#[command(
+    name = "blacksilk-rx-verify",
+    about = "Re-check the RandomX proof of work of a lab run's chain in a fresh process"
+)]
 struct Args {
     /// Node RPC address; repeat for every node to compare.
     #[arg(long, required = true)]
@@ -198,6 +204,9 @@ struct KeyStats {
 #[derive(Serialize, Default)]
 struct Report {
     started_unix: u64,
+    /// This binary's `build flags:` line (always `none`: a build with
+    /// test-only code refuses to run, W4-GUARD).
+    build_flags: String,
     network: String,
     nodes: Vec<String>,
     node_heights: Vec<u64>,
@@ -230,7 +239,8 @@ fn unix_now() -> u64 {
 }
 
 fn main() {
-    let a = Args::parse();
+    let a: Args = build_guard::parse_args();
+    let build_flags = build_guard::require_clean_build("blacksilk-rx-verify");
     assert_eq!(a.node.len(), a.cookie.len(), "one --cookie per --node");
     let net = match a.network.as_str() {
         "regtest" => Network::Regtest,
@@ -246,6 +256,7 @@ fn main() {
     record_set.extend(full_set.iter().copied());
     let mut r = Report {
         started_unix: unix_now(),
+        build_flags,
         network: a.network.clone(),
         nodes: a.node.clone(),
         threads,

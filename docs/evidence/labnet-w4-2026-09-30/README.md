@@ -81,6 +81,66 @@ single-core fuzzer and other agents' builds and tests.
 - The propagation and stale-block figures below are from this loaded machine and are
   not a benchmark.
 
+### 1.1 Build audit: were these binaries built with test hooks? (W4-GUARD, 2026-10-01)
+
+RT-STATEFUL found that `cargo test --release` writes a node with the test hooks of
+chain, tx, px and p2p to `target/release`, the path a plain release build uses
+(docs/testnet.md §2). The target directory of these runs was deleted on 2026-10-01,
+so only the hashes in `runs/SHA256SUMS-*` remain. The node was rebuilt at the
+recorded commits to compare them.
+
+**Rebuilds.** Plain `cargo build --release --locked`, rustc 1.98.1,
+x86_64-pc-windows-msvc, the same machine, a clean detached worktree of the commit
+and an empty target directory per build, `CARGO_BUILD_JOBS=2`,
+`CARGO_INCREMENTAL=0`, no `RUSTFLAGS`, no `BLACKSILK_*` variable:
+
+| Commit | Packages built | SHA-256 of `blacksilk-node.exe` | Recorded |
+|---|---|---|---|
+| `64d89d4` | node | `373ee3c41803aa6b0531b7a6757d4e543464067907e9b29e5138526706b8a465` | `a0306142…` |
+| `64d89d4` | node, miner, labnet | `0ac1ade3349971e4b876cc3f3542f676490346d43b386dcc94c3b3317ac65dd4` (miner `178d957e…`) | `a0306142…` (miner `c6f8cdfc…`) |
+| `64d89d4` | node, again | `37cd4842ee39b12f5b3f5e42471f9f19c193ec75a62dc3c485395883405ecf60` | `a0306142…` |
+| `9b04827` | node | `695327c2d4e21095fe12c44cb31c856be10d894fa1b28339ed24236970b355ee` | `c1616409…` |
+
+No rebuild matches its recorded hash, and the two identical `64d89d4` node builds
+do not match each other.
+
+**Why: the Windows build is not bit-reproducible.** `cmp -l` of the two `64d89d4`
+node builds finds 24 differing bytes, all written by the linker: the COFF header's
+`TimeDateStamp` (file offset 256; `e_lfanew` is 0xF8), the `TimeDateStamp` of the
+three debug-directory entries, and the 16-byte GUID of the CodeView (`RSDS`) record.
+The node built alone and with the miner and labnet differs in the same 24 bytes
+only, so building the three together did not change the node's code. `9b04827`
+against `64d89d4` differs in those bytes plus the build commit (the 40-digit commit
+and its 7-digit form), the same size: the compiled node is the same apart from the
+commit, as §1 expects. The miner's equal hash in both recorded files means it
+was not relinked between the two builds, not that its build is reproducible.
+
+**Verdict.** The recorded hashes can neither confirm nor exclude test hooks: any
+rebuild here differs from them in the linker's time stamps and GUID, whatever code
+it holds. What remains (a record, not a proof):
+- **`64d89d4` (runs 1 and 2): consistent with a plain build.** The W4-LAB agent's
+  build log (`build1.log` in its scratch directory, outside the repository; written
+  2026-09-29 21:00:39 UTC) is a release build that compiles everything from scratch:
+  node, miner, labnet and every dependency (238 crates), and neither
+  `tempfile` nor `proptest`: `tempfile` is a dev-dependency of the node, which a
+  test build that writes the node binary compiles. It lists no test executable.
+  Run 1's node started 65 s later (21:01:44 UTC, `runs/run1/node0.log`). The
+  agent's hash file (`binaries.sha256`, the same values as
+  `runs/SHA256SUMS-64d89d4`) was written at 21:10:34 UTC, during run 1. Nothing
+  here excludes another build between the log and the hashes; no log of one
+  exists.
+- **`9b04827` (runs 3 and 4): undetermined.** No build log was kept; §1 records only
+  "release, clean tree". Whether that node had test hooks cannot be told from here.
+
+None of the rebuilt binaries contains the chain actor's hook string
+`injected chain actor panic (test-hooks)` (`grep -ac`, count 0 each), as expected
+of a plain build: this checks the rebuild procedure, not the recorded binaries.
+
+**From now on** the labnet runs `--version` of the node and miner before starting,
+refuses a binary with test-only code, and records both version texts in
+`journal.log` and `summary.json` (`binaries`), so a later run carries this evidence
+itself.
+
 ## 2. Late joiner after the GetAddr floor (task 1)
 
 Each run ends with a fresh node that knows only node 0 (`--peer`, not connect-only,

@@ -151,12 +151,22 @@ the announcement; it is an input, not a constant of the tool.
    height `H`; nothing else moves).
 3. **Wait for `H + 6`.** Two people, the owner and one operator, independently
    obtain `H`'s hash from at least two sources and compare.
-4. **Compute:**
+4. **Compute,** with a binary from a plain release build of a clean checkout of
+   the release-candidate tag (never one written by `cargo test`, docs/testnet.md
+   §2), whose `--version` prints `build flags: none`:
    ```sh
-   cargo run --release -p blacksilk-genesis -- generate --final \
+   bash tools/release-build.sh -p blacksilk-genesis
+   bash tools/check-build-flags.sh --strings target/release/blacksilk-genesis
+   target/release/blacksilk-genesis generate --final \
      --network-id 0x0001D673 --timestamp <T_g> --difficulty <D0> \
      --btc-height <H> --btc-hash <hash, display order>
    ```
+   The tool refuses to run when it was built with test-only code (exit status
+   2), and its build refuses `--cfg fuzzing`. Both people build it this way and
+   compare the binary's SHA-256 before running it: on Windows (MSVC) a release
+   build of one commit is reproducible on one machine (docs/STATUS.md); across
+   machines it is not shown, so a hash difference there is a reason to compare
+   the full id output, not by itself a failure.
    (A rehearsal uses `--rehearsal` and an id of `0x0001D6E0`–`0x0001D6EF`.)
    It prints the nonce derivation, the header, its 100 bytes, the full id and the
    constants to paste. Both people compare the full id.
@@ -167,7 +177,9 @@ the announcement; it is an input, not a constant of the tool.
    `git diff <rc-tag> HEAD` must show only these.
 6. **Operators** verify the tag and the diff, re-run
    `blacksilk-genesis verify ... --expected-id <id>` from the announced inputs,
-   start the node, check that `/info` shows the full announced `genesis_id`, then
+   build the node with a plain `cargo build --release` from the tag and check
+   that `blacksilk-node --version` prints `build flags: none`, start the node,
+   check that `/info` shows the full announced `genesis_id`, then
    start miners.
 7. **Retire** the id in the registry. Never reuse it, the release candidate's or
    any rehearsal's. `verify` keeps accepting the launched testnet's genesis
@@ -200,6 +212,8 @@ into `b2sum -l 256`, then the first 8 bytes little-endian.
   `generate` with any flag (`used_network_ids_are_refused`).
 - Reserved ids: `--final` only for `0x0001D673`, `--rehearsal` only for the
   range, the test-vector id never (`reserved_ids_need_their_purpose`).
+- Build guard: a binary with test-only code refuses to run, and `--version`
+  names it (`a_marked_genesis_tool_refuses_to_run`, `src/main.rs`).
 - `verify` accepts a registered id only for a built-in network's compiled genesis
   (`verify_accepts_a_registered_built_in_genesis`, simulated on the test-vector id).
 - `generate` refuses a future timestamp; `verify` refuses a wrong id.

@@ -429,6 +429,7 @@ impl NodeApi for MockChain {
             identity_fingerprint: None,
             build_commit: None,
             version: None,
+            build_flags: None,
         })
     }
 

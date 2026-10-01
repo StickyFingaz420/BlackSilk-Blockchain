@@ -128,6 +128,17 @@ jobs:
           # Ignored by default (PX-proving): the px_admission fuzz twin.
           bash .github/scripts/annotate-tests.sh cargo test --locked --release -p blacksilk-p2p --test fuzz_px_admission -- --ignored --test-threads=1 || rc=1
           exit $rc
+      # W4-GUARD (RT-STATEFUL, RT-GUARD): the steps above leave a node with
+      # test hooks in target/release (cargo test unifies dev-dependency
+      # features), the path a plain release build writes. The script checks
+      # that its checks flag that node and fake marked executables, then that
+      # a plain release build of every shipped and evidence binary has no
+      # test-only code: by dependency tree, `--version` and binary contents
+      # (.github/scripts/build-guard.sh).
+      - name: Plain release binaries carry no test code
+        if: success() || failure()
+        shell: bash
+        run: bash .github/scripts/build-guard.sh
 
   # The release profile has overflow checks and debug assertions off. This job
   # runs the non-PX crates' tests optimized but with both on (and without LTO,
@@ -309,7 +320,8 @@ jobs:
   # - commits touching consensus paths carry a Consensus-Change: trailer;
   # - commits changing Cargo.lock or fuzz/Cargo.lock name the crates they add
   #   or re-version;
-  # - no invisible or bidirectional Unicode in tracked text files.
+  # - no invisible or bidirectional Unicode in tracked text files;
+  # - every test-only feature is marked (tools/check-test-features.sh).
   # The SHAs come in through env, never interpolated into the script.
   gates:
     if: github.event_name != 'schedule'
@@ -334,6 +346,11 @@ jobs:
       - name: Invisible and bidirectional Unicode scan
         if: success() || failure()
         run: bash .github/scripts/unicode-scan.sh
+      # W4-GUARD (RT-GUARD): every test-only feature and cfg(fuzzing) crate
+      # exports a build marker that a BuildFlags composition names.
+      - name: Test-only features are marked
+        if: success() || failure()
+        run: bash tools/check-test-features.sh
 
   # Documentation lint (dossier 47 W47-8, decisions "Agent 47"): forbidden
   # claims, retired identifiers, broken relative links and copied digests

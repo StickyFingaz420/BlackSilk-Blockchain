@@ -545,6 +545,7 @@ fn info_of(
         ))),
         build_commit: Some(fingerprint::BUILD_COMMIT.to_string()),
         version: Some(fingerprint::VERSION.to_string()),
+        build_flags: Some(fingerprint::build_flags().line()),
         template_ready: Some(template_ready),
     }
 }

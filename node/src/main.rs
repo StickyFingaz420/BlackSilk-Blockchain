@@ -23,16 +23,24 @@ use fs2::FileExt;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Parses the command line. `-V` prints the version and commit; `--version`
-/// adds the consensus, rules and identity fingerprints and the genesis id of
-/// every network, which operators compare before joining a network
+/// Parses the command line. `-V` prints the version and commit (and the
+/// markers of test-only code compiled in, [`fingerprint::build_flags`]);
+/// `--version` adds the build flags line, and the consensus, rules and
+/// identity fingerprints and the genesis id of every network, which operators
+/// compare before joining a network
 /// (docs/testnet.md §2.1). `--print-manifest [NETWORK]` prints the full
 /// consensus manifest of one network (default: every network) and exits.
 fn parse_args() -> Args {
     // clap takes `'static` strings; this runs once per process.
     let long: &'static str = Box::leak(fingerprint::version_text().into_boxed_str());
-    let short: &'static str =
-        Box::leak(format!("{} (commit {BUILD_COMMIT})", fingerprint::VERSION).into_boxed_str());
+    let short: &'static str = Box::leak(
+        format!(
+            "{} (commit {BUILD_COMMIT}){}",
+            fingerprint::VERSION,
+            fingerprint::build_flags().suffix()
+        )
+        .into_boxed_str(),
+    );
     let matches = Args::command()
         .version(short)
         .long_version(long)
@@ -82,7 +90,19 @@ fn print_manifest(network: Option<&str>) -> ! {
 
 fn main() {
     let args = parse_args();
+    // A binary with test-only code (written by `cargo test`, which unifies
+    // dev-dependency features, or by a fuzz build) runs only on regtest: it
+    // is never evidence, genesis material or a shared network's node
+    // (W4-GUARD). Checked before the network's own gate, so the reason shown
+    // is the build. `--require-clean-build` (or BLACKSILK_REQUIRE_CLEAN_BUILD)
+    // refuses it on regtest too, for runs that are evidence.
+    let require_clean = blacksilk_chain::build_flags::require_clean(args.require_clean_build);
     let cfg = match Config::resolve(args)
+        .and_then(|c| {
+            fingerprint::build_flags()
+                .check_run("blacksilk-node", c.network, require_clean)
+                .map(|()| c)
+        })
         .and_then(|c| config::check_network_enabled(c.network).map(|()| c))
     {
         Ok(c) => c,
@@ -227,10 +247,19 @@ fn run(cfg: Config) -> Result<(), Stop> {
     getrandom::getrandom(&mut seed).map_err(|e| format!("OS RNG: {e}"))?;
     // The node's identity. Every device of a network must show the same
     // genesis and fingerprint; the commit tells builds apart (docs/testnet.md).
+    let flags = fingerprint::build_flags();
     log::info!(
-        "blacksilk-node {} commit {BUILD_COMMIT}",
-        fingerprint::VERSION
+        "blacksilk-node {} commit {BUILD_COMMIT}, {}",
+        fingerprint::VERSION,
+        flags.line()
     );
+    if !flags.is_clean() {
+        log::warn!(
+            "this binary has test-only code compiled in ({}): for this repository's \
+             regtest tests only, never evidence or a shared network",
+            flags.render()
+        );
+    }
     log::info!(
         "{}: genesis {}, consensus fingerprint {}",
         network_name(network),

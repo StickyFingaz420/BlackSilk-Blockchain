@@ -44,10 +44,43 @@ Rust 1.98.1 (the version CI and the recorded evidence use). On Windows, use the 
 toolchain.
 
 ```sh
-cargo build --release -p blacksilk-node -p blacksilk-miner -p blacksilk-wallet
+bash tools/release-build.sh -p blacksilk-node -p blacksilk-miner -p blacksilk-wallet
+bash tools/check-build-flags.sh --strings target/release/blacksilk-node \
+  target/release/blacksilk-miner target/release/blacksilk-wallet
 ```
 
 The binaries are in `target/release/`. Everything is pure Rust; no C compiler is needed.
+
+`tools/release-build.sh` is `cargo build --release --locked` with
+`--remap-path-prefix` for CARGO_HOME, the toolchain sysroot and the checkout.
+Without it the node, miner and wallet embed the build user's home directory (in
+the panic locations of registry crates, `C:\Users\<user>\.cargo\registry\...` or
+`/home/<user>/.cargo/...`), which names whoever built a distributed binary and
+makes its bytes depend on the user name. On Windows (MSVC) it also passes
+`-Brepro`, which `.cargo/config.toml` sets for plain builds too, so the linker
+writes no time stamp and no random GUID. A plain `cargo build --release` is still
+a valid build; it only keeps those paths.
+
+**Only a plain release build (`tools/release-build.sh`, or `cargo build
+--release`), from a clean checkout of the announced commit, makes a trial,
+evidence or genesis binary.** Never use a binary that
+`cargo test` wrote. `cargo test --release` writes the binaries of the packages it
+tests to the same paths in `target/release/`, with the test-only code of the
+dev-dependencies compiled in (cargo unifies their features, such as the
+`test-hooks` of chain, tx and px; p2p's once its hooks exist): `cargo test -p
+blacksilk-node` writes such a node, and `cargo test --workspace` also such a
+miner, wallet and tools. That code is not inert: the chain actor's test log grows
+without bound. Such a binary names its test code in `--version` (`build flags:
++test-hooks:chain ...`; a plain build prints `build flags: none`) and refuses to
+run on any network but regtest (exit status 2; the miner exits with 78). With
+`--require-clean-build` (or `BLACKSILK_REQUIRE_CLEAN_BUILD=1`) the node, miner,
+wallet and supply audit refuse it on regtest too; the labnet passes the flag to
+every process it starts. The genesis tool and the labnet tools (`blacksilk-labnet`,
+`blacksilk-labnet-report`, `blacksilk-rx-verify`) refuse to run at all with test
+code, and the node, miner, wallet and genesis tool refuse to build with
+`--cfg fuzzing`. `tools/check-build-flags.sh` checks the `--version` output and,
+with `--strings`, the binary's bytes; CI runs it on a plain release build
+(`.github/scripts/build-guard.sh`).
 
 ### 2.1 Operator check: identity (every device, before the trial)
 
@@ -63,35 +96,43 @@ with the ones the release announcement publishes:
   rules and chain, not code);
 - the **genesis id** (full, 64 hex digits);
 - the **consensus fingerprint** of the network (full, 64 hex digits);
-- the **build commit**, which must not end in `-dirty`.
+- the **build commit**, which must not end in `-dirty`;
+- the **build flags** line of `blacksilk-node --version`, which must read
+  `build flags: none` (no test-only code compiled in, §2).
 
 The **rules fingerprint** (below) is also published with the release candidate,
 before the genesis exists; the final build must show the same value.
 
-The binary-hash comparison assumes a reproducible node build. Only the guest
-programs are shown reproducible today (CI job `guests`); the node binary's
-reproducibility across hosts has not been demonstrated (docs/STATUS.md). Until
-it is, devices that build their own binary compare the fingerprints and the
-commit, and devices that run a distributed binary also compare its hash with
-the announcement.
+The binary-hash comparison assumes a reproducible node build. The guest programs
+are shown reproducible across hosts (CI job `guests`). The node, miner, wallet and
+genesis binaries are shown reproducible only on one Windows machine: two
+`tools/release-build.sh` builds of one commit, from different checkouts, give the
+same bytes (docs/STATUS.md). Across hosts it has not been demonstrated. Until it
+is, devices that build their own binary compare the fingerprints and the commit,
+and devices that run a distributed binary also compare its hash with the
+announcement.
 
 Where to read them:
 
-- `blacksilk-node --version` prints the commit and, for every network, the
-  consensus fingerprint (the first 16 hex digits, then the full value), the
-  rules and identity fingerprints and the genesis id. `blacksilk-node -V`
-  prints only the version and commit.
+- `blacksilk-node --version` prints the commit, the build flags line and, for
+  every network, the consensus fingerprint (the first 16 hex digits, then the
+  full value), the rules and identity fingerprints and the genesis id.
+  `blacksilk-node -V` prints only the version and commit, followed by the
+  markers of any test-only code.
 - `blacksilk-node --print-manifest [testnet|regtest|mainnet]` prints the full
   manifest behind the fingerprints: every entry as `name = value`, the
   canonical encodings in hex and how each digest is computed, so a second
   implementation can recompute them.
-- The start-up log prints `blacksilk-node <version> commit <commit>`, then
+- The start-up log prints `blacksilk-node <version> commit <commit>, build
+  flags: <flags>` (and a warning when test-only code is compiled in), then
   `<network>: genesis <id>, consensus fingerprint <fingerprint>`.
 - The RPC `/info` returns `genesis_id`, `consensus_fingerprint`,
-  `rules_fingerprint`, `identity_fingerprint`, `build_commit` and `version`.
-  `deploy/scripts/check-node.sh` prints the identity fields.
+  `rules_fingerprint`, `identity_fingerprint`, `build_commit`, `version` and
+  `build_flags`. `deploy/scripts/check-node.sh` prints the identity fields and
+  the build flags, and warns when they are not `build flags: none`.
 - `blacksilk-miner --version` and `blacksilk-wallet --version` print the version
-  and commit (see the limitation below).
+  and commit (see the limitation below), then the build flags line; `-V` prints
+  the first line with the markers of any test-only code appended.
 
 Pass: all values are identical on every device, and they match the
 announcement. On any difference, stop. Do not start or keep mining until
@@ -170,6 +211,12 @@ Limits of the check:
 - **The miner and wallet have no build script.** They report a commit only when
   `BLACKSILK_BUILD_COMMIT` is set at build time. Otherwise they report
   `unknown`.
+- **The build flags name the test code the crates mark.** Each crate with a
+  `test-hooks` feature (chain, tx and px; p2p declares it, and it gates code once
+  p2p's hooks exist) exports a marker that is compiled in only with that feature,
+  and chain and p2p one for `cfg(fuzzing)` (`chain/src/build_flags.rs`). A new
+  test-only feature is covered only once its crate exports a marker too;
+  `tools/check-test-features.sh` (CI `gates`) fails on one that does not.
 
 ## 3. Quick start (one machine)
 
@@ -231,8 +278,9 @@ read-only system, and can write only `/var/lib/blacksilk`. Open TCP 29334 inboun
 70 when a panic poisoned its chain lock (a restart replays the store and recovers), 65
 when a block that passed validation failed to apply (a bug in the node, blocks.md §6),
 and 1 on any other error (a failed block store included). The node unit restarts on
-failure but not on 65 (`RestartPreventExitStatus=65`): a restart replays into the same
-failure. The constants are `HALT_EXIT_CODE` and `POISONED_EXIT_CODE` in
+failure but not on 2 or 65 (`RestartPreventExitStatus=2 65`): a restart repeats a
+configuration error or a build with test-only code refusing the network (§2), and
+a 65 replays into the same failure. The constants are `HALT_EXIT_CODE` and `POISONED_EXIT_CODE` in
 `node/src/lib.rs`. If the node is started again by hand after a 65, the replay reaches
 the same block at start-up and exits 65 again (`open_exit_code`), so the unit still
 does not loop; report the block the log names (§9).
@@ -508,11 +556,18 @@ proof that the supply is sound in general.
 ## 8. Lab network tool (single machine)
 
 ```sh
-cargo build --release -p blacksilk-node -p blacksilk-miner -p blacksilk-labnet
+bash tools/release-build.sh -p blacksilk-node -p blacksilk-miner -p blacksilk-labnet
 target/release/blacksilk-labnet --bin-dir target/release --out labnet-run \
     --nodes 5 --duration-mins 180 --latency-ms 80 --jitter-ms 60 \
     --partition-every-mins 25 --partition-mins 4 --tx-every-secs 20
 ```
+
+Before it starts anything, the labnet refuses binaries with test-only code (§2):
+it refuses to run itself when built with any, and the node and miner in
+`--bin-dir` must identify themselves in `--version` and print `build flags: none`.
+Every node and miner it starts gets `--require-clean-build`. The path, SHA-256 and
+`--version` text of the labnet, node and miner binaries are recorded in the journal
+and in `summary.json` (`binaries`).
 
 **What it runs:**
 - 5 regtest nodes, in a ring with chords;

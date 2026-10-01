@@ -11,6 +11,7 @@
 
 #![forbid(unsafe_code)]
 
+use blacksilk_chain::build_flags::BuildFlags;
 use blacksilk_rpc::Client;
 use blacksilk_supply_audit::{audit, Entry};
 use blacksilk_wallet::file::KdfParams;
@@ -21,7 +22,6 @@ use zeroize::{Zeroize, Zeroizing};
 #[derive(Parser)]
 #[command(
     name = "blacksilk-supply-audit",
-    version,
     about = "Closed-set supply audit: Σ wallets (v1 + PX) against generated and px_pool"
 )]
 struct Args {
@@ -54,10 +54,32 @@ struct Args {
     /// Write the synced wallets back to their files (off by default).
     #[arg(long)]
     save: bool,
+    /// Refuse to run if this binary has test-only code compiled in, on
+    /// regtest too (for audits that are evidence; also the environment
+    /// variable BLACKSILK_REQUIRE_CLEAN_BUILD=1).
+    #[arg(long)]
+    require_clean_build: bool,
+}
+
+/// Parses the command line with a `--version` that names the commit (when
+/// `BLACKSILK_BUILD_COMMIT` was set at build time) and the build flags
+/// (W4-GUARD).
+fn parse_args() -> Args {
+    use clap::{CommandFactory, FromArgMatches};
+    let commit = option_env!("BLACKSILK_BUILD_COMMIT").unwrap_or("unknown");
+    let (short, long) =
+        BuildFlags::of_chain_layer().version_texts(env!("CARGO_PKG_VERSION"), commit);
+    let short: &'static str = Box::leak(short.into_boxed_str());
+    let long: &'static str = Box::leak(long.into_boxed_str());
+    let matches = Args::command()
+        .version(short)
+        .long_version(long)
+        .get_matches();
+    Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
 }
 
 fn main() {
-    let args = Args::parse();
+    let args = parse_args();
     match run(&args) {
         Ok(code) => std::process::exit(code),
         Err(e) => {
@@ -90,6 +112,13 @@ fn file_kdf(bytes: &[u8]) -> Option<KdfParams> {
 }
 
 fn run(args: &Args) -> Result<i32, String> {
+    // A binary with test-only code (W4-GUARD) audits only regtest wallets, and
+    // none with `--require-clean-build`: exit status 1, the audit did not run.
+    let flags = BuildFlags::of_chain_layer();
+    let require_clean = blacksilk_chain::build_flags::require_clean(args.require_clean_build);
+    if require_clean {
+        flags.check_clean("blacksilk-supply-audit")?;
+    }
     if !args.password_files.is_empty() && args.password_files.len() != args.wallets.len() {
         return Err(format!(
             "{} --password-file for {} --wallet: give one per wallet, in the same order, or none",
@@ -113,6 +142,7 @@ fn run(args: &Args) -> Result<i32, String> {
         };
         let wallet = blacksilk_wallet::load(path, &password)
             .map_err(|e| format!("{}: {e}", path.display()))?;
+        flags.check_network("blacksilk-supply-audit", wallet.network())?;
         entries.push(Entry {
             name: path.display().to_string(),
             wallet,

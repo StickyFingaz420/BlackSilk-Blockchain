@@ -11,6 +11,16 @@
 
 #![forbid(unsafe_code)]
 
+// W4-GUARD: a fuzz build (`--cfg fuzzing`) compiles fuzz-only code into the
+// libraries (the transport's fixed ephemeral secrets on request), and no fuzz
+// target links this binary (fuzz/Cargo.toml), so it refuses to build. A
+// `compile_error!`, not a build script: a build script would be more
+// build-time code, and cargo-deny then scans every dependency's files.
+#[cfg(fuzzing)]
+compile_error!(
+    "refusing to build blacksilk-genesis with `--cfg fuzzing`: no fuzz target links it; build it with a plain `cargo build --release`"
+);
+
 use blacksilk_genesis::{
     build, generate, parse_beacon_hex, report, rust_constants, starting_difficulty, verify,
     GenesisInputs, Purpose,
@@ -19,6 +29,7 @@ use std::collections::HashMap;
 use std::process::ExitCode;
 
 const USAGE: &str = "usage:
+  blacksilk-genesis --version
   blacksilk-genesis generate [--final | --rehearsal] --network-id <id> --timestamp <unix s> --difficulty <D0> --btc-height <H> --btc-hash <hex>
   blacksilk-genesis verify   --network-id <id> --timestamp <unix s> --difficulty <D0> --btc-height <H> --btc-hash <hex> --expected-id <hex>
   blacksilk-genesis difficulty --hashrate-mhs <milli-hashes per second> [--target <seconds, default 120>]
@@ -32,8 +43,58 @@ and a reserved one outside its purpose: `--final` only for the testnet v3 id 0x0
 /// Flags without a value.
 const SWITCHES: [&str; 2] = ["final", "rehearsal"];
 
+/// The markers of test-only code compiled into this binary (W4-GUARD). Only
+/// a fuzz build (`cfg(fuzzing)`) can add one: blacksilk-consensus, the one
+/// dependency, has no test-hooks feature. The crate root refuses to compile a
+/// fuzz build (`compile_error!`), and
+/// [`check_build`] refuses to run one anyway.
+#[cfg(fuzzing)]
+const BUILD_MARKERS: &[&str] = &["+fuzzing:genesis"];
+/// See the `cfg(fuzzing)` variant: none.
+#[cfg(not(fuzzing))]
+const BUILD_MARKERS: &[&str] = &[];
+
+/// Exit status of a refused build (test-only code compiled in).
+const BUILD_EXIT_CODE: u8 = 2;
+
+/// `build flags: none`, or the markers: printed by `--version`.
+fn build_flags_line(markers: &[&str]) -> String {
+    if markers.is_empty() {
+        "build flags: none".to_string()
+    } else {
+        format!("build flags: {}", markers.join(" "))
+    }
+}
+
+/// Genesis material is never made or checked by a binary with test-only code,
+/// on any network (W4-GUARD): unconditional, unlike the node's regtest
+/// exception.
+fn check_build(markers: &[&str]) -> Result<(), String> {
+    if markers.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "refusing to run: this blacksilk-genesis was built with test-only code ({}); \
+             rebuild it with a plain `cargo build --release` from a clean commit",
+            markers.join(" ")
+        ))
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "--version" || a == "-V") {
+        println!(
+            "blacksilk-genesis {}\n{}",
+            env!("CARGO_PKG_VERSION"),
+            build_flags_line(BUILD_MARKERS)
+        );
+        return ExitCode::SUCCESS;
+    }
+    if let Err(e) = check_build(BUILD_MARKERS) {
+        eprintln!("error: {e}");
+        return ExitCode::from(BUILD_EXIT_CODE);
+    }
     match run(&args) {
         Ok(out) => {
             print!("{out}");
@@ -151,4 +212,24 @@ fn inputs(flags: &HashMap<String, String>) -> Result<GenesisInputs, String> {
         btc_height: num(get(flags, "btc-height")?)?,
         btc_hash: parse_beacon_hex(get(flags, "btc-hash")?).map_err(|e| e.to_string())?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Any marker refuses the run; none allows it, and `--version` names
+    /// what is compiled in.
+    #[test]
+    fn a_marked_genesis_tool_refuses_to_run() {
+        assert_eq!(check_build(&[]), Ok(()));
+        let e = check_build(&["+fuzzing:genesis"]).unwrap_err();
+        assert!(e.contains("+fuzzing:genesis"), "{e}");
+        assert_eq!(build_flags_line(&[]), "build flags: none");
+        assert_eq!(
+            build_flags_line(&["+fuzzing:genesis"]),
+            "build flags: +fuzzing:genesis"
+        );
+        assert_eq!(check_build(BUILD_MARKERS).is_ok(), !cfg!(fuzzing));
+    }
 }

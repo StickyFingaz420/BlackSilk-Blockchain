@@ -76,6 +76,10 @@ fn info_carries_the_node_identity() {
     assert_eq!(info.identity_fingerprint.as_deref(), Some(i.as_str()));
     assert_eq!(info.build_commit.as_deref(), Some(BUILD_COMMIT));
     assert_eq!(info.version.as_deref(), Some(fingerprint::VERSION));
+    assert_eq!(
+        info.build_flags.as_deref(),
+        Some(fingerprint::build_flags().line().as_str())
+    );
     assert_eq!(info.genesis_id.as_ref().map(String::len), Some(64));
 
     // The JSON field names (what check-node.sh and scripts read).

@@ -20,7 +20,8 @@ ExecStart=/usr/local/bin/blacksilk-miner --node 127.0.0.1:29333 --rpc-cookie /va
 Restart=on-failure
 RestartSec=10
 # Exit status 78 (CONFIG_EXIT_CODE, miner/src/main.rs): the payout address is not
-# valid on the node's network, or the node reports an unknown network. A restart
+# valid on the node's network, the node reports an unknown network, or the binary
+# has test-only code and the network is not regtest (W4-GUARD). A restart
 # cannot fix the configuration, so the miner stays stopped for the operator.
 RestartPreventExitStatus=78
 Nice=10

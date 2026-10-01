@@ -21,7 +21,9 @@
 
 #![forbid(unsafe_code)]
 
+mod build_guard;
 mod proxy;
+mod sha256;
 
 use blacksilk_chain::emission::{format_amount, COIN};
 use blacksilk_consensus::{BlockHeader, ChainParams, Network, HEADER_SIZE};
@@ -41,7 +43,10 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 #[derive(Parser, Clone)]
-#[command(about = "BlackSilk lab network: long-duration multi-node test")]
+#[command(
+    name = "blacksilk-labnet",
+    about = "BlackSilk lab network: long-duration multi-node test"
+)]
 struct Args {
     /// Directory with blacksilk-node and blacksilk-miner binaries.
     #[arg(long)]
@@ -212,6 +217,10 @@ struct Link {
 #[derive(Default, Serialize)]
 struct Report {
     started_unix: u64,
+    /// The labnet, node and miner binaries: path, SHA-256 and `--version`
+    /// text, each checked free of test-only code before the run
+    /// ([`checked_binary`]).
+    binaries: BTreeMap<String, BinaryRecord>,
     duration_secs: u64,
     nodes: usize,
     final_height: u64,
@@ -471,6 +480,69 @@ impl LogStats {
     }
 }
 
+/// A binary this labnet launches, as the run records it (W4-GUARD).
+#[derive(Clone, Debug, Default, Serialize, PartialEq)]
+struct BinaryRecord {
+    path: String,
+    /// SHA-256 of the file, as `sha256sum` prints it.
+    sha256: String,
+    /// Its `--version` text.
+    version: String,
+}
+
+/// Checks a binary this labnet launches and records it (W4-GUARD). `cargo
+/// test` writes binaries with dev-dependency features unified (the chain
+/// actor's test hooks among them, whose log grows without bound) to the path
+/// a plain `cargo build --release` uses; a labnet run is evidence, so it
+/// never runs one. Its `--version` must identify it as `expected` (from the
+/// output, never from the file name) and print `build flags: none`.
+fn checked_binary(bin: &Path, expected: &str) -> Result<BinaryRecord, String> {
+    let out = Command::new(bin)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("{}: {e}", bin.display()))?;
+    let text = String::from_utf8_lossy(&out.stdout).replace('\r', "");
+    if !out.status.success() {
+        return Err(format!(
+            "{} --version failed ({})",
+            bin.display(),
+            out.status
+        ));
+    }
+    version_verdict(&text, expected).map_err(|e| format!("{}: {e}", bin.display()))?;
+    Ok(BinaryRecord {
+        path: bin.display().to_string(),
+        sha256: sha256::file_hex(bin).map_err(|e| format!("{}: {e}", bin.display()))?,
+        version: text.trim_end().to_string(),
+    })
+}
+
+/// [`checked_binary`]'s verdict on a `--version` text.
+fn version_verdict(text: &str, expected: &str) -> Result<(), String> {
+    let name = text.split_whitespace().next().unwrap_or_default();
+    if name != expected {
+        return Err(format!("--version names {name:?}, not {expected:?}"));
+    }
+    if let Some(l) = text
+        .lines()
+        .find(|l| l.contains("+test-hooks:") || l.contains("+fuzzing:"))
+    {
+        return Err(format!(
+            "built with test-only code ({l}); rebuild it with a plain `cargo build --release` \
+             from a clean commit (docs/testnet.md)"
+        ));
+    }
+    if !text.lines().any(|l| l == "build flags: none") {
+        return Err(
+            "--version has no `build flags: none` line (a build older than W4-GUARD cannot \
+             show its test code)"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -633,6 +705,9 @@ fn node_args(
         "--max-outbound".into(),
         max_outbound.to_string(),
         "--no-builtin-seeds".into(),
+        // The run is evidence: a node with test-only code refuses to start,
+        // on regtest too (W4-GUARD).
+        "--require-clean-build".into(),
     ];
     for p in peers {
         v.push("--peer".into());
@@ -899,7 +974,7 @@ fn relay_discovery(
 }
 
 fn main() {
-    let a = Args::parse();
+    let a: Args = build_guard::parse_args();
     assert!(a.nodes >= 4, "need at least 4 nodes");
     // Ports: proxies at base + 2000 + 40 * from + to, processes at
     // base + 20 * i (lab nodes, joiners, relay nodes) below base + 2000.
@@ -952,11 +1027,38 @@ fn main() {
     } else {
         "blacksilk-miner"
     });
+    // Before anything starts: no binary with test-only code (W4-GUARD). This
+    // one (its in-process wallets link the chain layer) refuses itself; the
+    // node and miner must say `build flags: none`, and they get
+    // `--require-clean-build` too. Each binary's hash and version text go
+    // into the journal and summary.json.
+    build_guard::require_clean_build("blacksilk-labnet");
+    let mut binaries = BTreeMap::new();
+    let own = std::env::current_exe().expect("this executable's path");
+    for (name, bin, expected) in [
+        ("labnet", &own, "blacksilk-labnet"),
+        ("node", &node_bin, "blacksilk-node"),
+        ("miner", &miner_bin, "blacksilk-miner"),
+    ] {
+        let record = checked_binary(bin, expected)
+            .unwrap_or_else(|e| panic!("refusing to start the labnet: {e}"));
+        log(
+            &mut journal,
+            &format!(
+                "{name} binary: sha256 {} {} | {}",
+                record.sha256,
+                record.path,
+                record.version.replace('\n', " | ")
+            ),
+        );
+        binaries.insert(name.to_string(), record);
+    }
     let rt = tokio::runtime::Runtime::new().unwrap();
     let mut report = Report {
         started_unix: unix_now(),
         nodes: a.nodes,
         topology: a.topology.clone(),
+        binaries,
         ..Default::default()
     };
     let mut seed = [0u8; 32];
@@ -1060,6 +1162,7 @@ fn main() {
             cookie_path(&data_of(node)).display().to_string(),
             "--address".into(),
             addr,
+            "--require-clean-build".into(),
         ];
         args.extend(mode.iter().cloned());
         (args, format!("miner{k}: {}", mode.join(" ")))
@@ -1555,6 +1658,50 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// W4-GUARD: a launched binary must identify itself (by its `--version`,
+    /// not its file name), print `build flags: none` and name no marker.
+    #[test]
+    fn binaries_with_test_code_are_refused() {
+        let node = "blacksilk-node 0.1.0\ncommit abc\nbuild flags: none\nregtest: genesis 00\n";
+        assert_eq!(version_verdict(node, "blacksilk-node"), Ok(()));
+        let miner = "blacksilk-miner 0.1.0 (commit abc)\nbuild flags: none\n";
+        assert_eq!(version_verdict(miner, "blacksilk-miner"), Ok(()));
+        // A renamed binary: a miner where the node belongs.
+        assert!(version_verdict(miner, "blacksilk-node").is_err());
+        // A build older than the guard cannot show its test code: refused,
+        // the miner too (no exemption).
+        assert!(version_verdict("blacksilk-node 0.1.0\ncommit abc\n", "blacksilk-node").is_err());
+        assert!(
+            version_verdict("blacksilk-miner 0.1.0 (commit abc)\n", "blacksilk-miner").is_err()
+        );
+        for (marked, name) in [
+            (
+                "blacksilk-node 0.1.0\ncommit abc\nbuild flags: +test-hooks:px +test-hooks:tx\n",
+                "blacksilk-node",
+            ),
+            (
+                "blacksilk-miner 0.1.0 (commit abc)\nbuild flags: +test-hooks:chain\n",
+                "blacksilk-miner",
+            ),
+            // A marker beside a (forged) clean line is still refused.
+            (
+                "blacksilk-node 0.1.0\nbuild flags: none\nbuild flags: +fuzzing:p2p\n",
+                "blacksilk-node",
+            ),
+        ] {
+            let e = version_verdict(marked, name).unwrap_err();
+            assert!(e.contains("test-only code"), "{e}");
+        }
+    }
+
+    /// The labnet's own binary passes its own check (this test build may
+    /// have test-only code, so only the identification is asserted here).
+    #[test]
+    fn the_labnet_identifies_itself() {
+        let (_, long) = build_guard::version_texts();
+        assert!(long.lines().nth(1).unwrap().starts_with("build flags: "));
+    }
 
     fn at(start: Instant, secs: u64) -> Instant {
         start + Duration::from_secs(secs)

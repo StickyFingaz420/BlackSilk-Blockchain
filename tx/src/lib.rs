@@ -30,3 +30,18 @@ pub mod validate;
 
 pub use types::{Coinbase, Input, Output, Transaction, Transfer};
 pub use validate::{BlockContext, BlockError, ChainView, TxError};
+
+/// The build marker of this crate's test-only code (fault injection and the PX test constructors):
+/// `Some("+test-hooks:tx")` when the `test-hooks` feature is compiled
+/// in, `None` otherwise. A dev-dependency of a `cargo test` build turns the
+/// feature on, and cargo unifies it into every binary that invocation builds;
+/// the string is in a binary only when the hooks are. Binaries print it in
+/// `--version` and refuse every network but regtest while it is set
+/// (`blacksilk_chain::build_flags`, W4-GUARD).
+#[cfg(feature = "test-hooks")]
+pub const TEST_HOOKS_MARKER: Option<&str> = Some("+test-hooks:tx");
+/// See the `test-hooks` variant: `None`, no test-only code compiled in.
+#[cfg(not(feature = "test-hooks"))]
+pub const TEST_HOOKS_MARKER: Option<&str> = None;
+/// Whether this crate's `test-hooks` feature is compiled in.
+pub const TEST_HOOKS: bool = TEST_HOOKS_MARKER.is_some();

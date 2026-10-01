@@ -309,6 +309,19 @@ fn the_binary_is_read_only_and_reports_json_and_exit_codes() {
     let j: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(j["total_difference"], 0);
     assert_eq!(j["wallets"].as_array().unwrap().len(), 3);
+    // The build flags of the auditing build (W4-GUARD); this test is built
+    // with the same features as the binary.
+    let flags = blacksilk_chain::build_flags::BuildFlags::of_chain_layer();
+    assert_eq!(j["build_flags"], flags.line());
+    // `--require-clean-build`: a marked binary does not run (1), a clean
+    // one audits as before.
+    let required = run(&all, &["--json", "--require-clean-build"]);
+    assert_eq!(
+        required.status.code(),
+        Some(if flags.is_clean() { 0 } else { 1 }),
+        "{}",
+        String::from_utf8_lossy(&required.stderr)
+    );
     // Not saved: the files are byte-for-byte unchanged.
     for ((p, _), b) in paths.iter().zip(&before) {
         assert_eq!(&std::fs::read(p).unwrap(), b);
