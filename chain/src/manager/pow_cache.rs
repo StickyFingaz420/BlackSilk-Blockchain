@@ -20,8 +20,10 @@ use std::thread::JoinHandle;
 ///
 /// It also owns the node's PoW hashing pool ([`Self::compute_parallel`]).
 pub struct CachedPow {
-    hashes: Arc<Hashes>,
+    /// Declared first, so dropped first: the helpers are joined before the
+    /// cache drops its own reference to the PoW function.
     pool: HashPool,
+    hashes: Arc<Hashes>,
 }
 
 /// The PoW function and the hashes it computed: everything a pool thread
@@ -71,11 +73,11 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 impl CachedPow {
     pub fn new(inner: Arc<dyn PowFunction>) -> Self {
         Self {
+            pool: HashPool::new(),
             hashes: Arc::new(Hashes {
                 inner,
                 known: Mutex::new(HashMap::new()),
             }),
-            pool: HashPool::new(),
         }
     }
 
@@ -120,9 +122,10 @@ impl CachedPow {
     /// function's, stored under its own key, and jobs already cached are
     /// skipped. Every thread computes one hash at a time and holds no RandomX
     /// cache between hashes (the cache store's caller rule,
-    /// `consensus::pow::SeedCache`). A hash that panics, on any thread, is
-    /// re-raised on the caller once the other jobs are done (as a panicking
-    /// scoped thread was); the helper that ran it stays in the pool.
+    /// `consensus::pow::SeedCache`). A hash that panics is re-raised on the
+    /// caller (as a panicking scoped thread was): with helpers, after the
+    /// other jobs are done, and the helper that ran it stays in the pool;
+    /// inline, at once (the remaining jobs are not hashed).
     pub fn compute_parallel(&self, jobs: &[PowJob], threads: usize) {
         let todo: Vec<PowJob> = jobs
             .iter()
@@ -186,8 +189,11 @@ struct Progress {
 }
 
 impl Batch {
-    /// Takes jobs until none is left. Never panics: a job's panic is kept
-    /// for the caller ([`Self::wait`]).
+    /// Takes jobs until none is left. Never panics: a job's first panic is
+    /// kept for the caller ([`Self::wait`]). The completion is signalled
+    /// before anything else can unwind, and a later payload is dropped
+    /// outside the lock under `catch_unwind` (its own `Drop` may panic,
+    /// RT-POWPOOL F1): a waiting caller is always woken.
     fn work(&self) {
         loop {
             let i = self.next.fetch_add(1, Ordering::Relaxed);
@@ -199,12 +205,19 @@ impl Batch {
             }));
             let mut p = lock(&self.progress);
             p.done += 1;
-            if let Err(e) = hashed {
-                p.panic.get_or_insert(e);
-            }
+            let extra = match hashed {
+                Err(e) if p.panic.is_none() => {
+                    p.panic = Some(e);
+                    None
+                }
+                Err(e) => Some(e),
+                Ok(()) => None,
+            };
             if p.done == self.jobs.len() {
                 self.finished.notify_all();
             }
+            drop(p);
+            let _ = catch_unwind(AssertUnwindSafe(|| drop(extra)));
         }
     }
 
@@ -260,9 +273,20 @@ impl HashPool {
     /// `MAX_POW_HELPERS`); returns how many of them a call may use. A
     /// thread that cannot be started leaves its share to the others (the
     /// caller hashes everything if none can).
+    ///
+    /// A helper never ends while the pool is open (`Queue::serve` contains
+    /// every panic of a batch); if one did, it is logged and replaced here.
     fn start(&self, wanted: usize) -> usize {
         let wanted = wanted.min(MAX_POW_HELPERS);
         let mut workers = lock(&self.workers);
+        let before = workers.len();
+        workers.retain(|h| !h.is_finished());
+        if workers.len() < before {
+            log::error!(
+                "{} PoW helper thread(s) ended unexpectedly; replacing them",
+                before - workers.len()
+            );
+        }
         while workers.len() < wanted {
             let queue = self.queue.clone();
             match std::thread::Builder::new()
@@ -285,7 +309,9 @@ impl HashPool {
             st.tickets.push_back(batch.clone());
         }
         drop(st);
-        self.queue.ready.notify_all();
+        for _ in 0..helpers {
+            self.queue.ready.notify_one();
+        }
     }
 }
 
@@ -305,7 +331,14 @@ impl Queue {
                     st = self.ready.wait(st).unwrap_or_else(|e| e.into_inner());
                 }
             };
-            batch.work();
+            // `work` never panics; the guard also covers dropping the
+            // ticket, which may drop the last reference to the PoW function
+            // (whose `Drop` is not ours), so no helper ends while the pool is
+            // open.
+            let _ = catch_unwind(AssertUnwindSafe(move || {
+                batch.work();
+                drop(batch);
+            }));
         }
     }
 }

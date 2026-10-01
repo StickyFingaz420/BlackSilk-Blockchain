@@ -1,5 +1,7 @@
-//! RT-POWPOOL red-team stress tests for `CachedPow::compute_parallel` (local
-//! branch rt-powpool, not for merge as is).
+//! RT-POWPOOL red-team stress tests for `CachedPow::compute_parallel`:
+//! concurrent callers with panics, the last reference dropped on a caller
+//! thread, a panic payload whose own drop panics (finding F1, fixed), and
+//! real RandomX under hot-set churn (ignored, see its comment).
 
 use blacksilk_chain::manager::{CachedPow, PowJob};
 use blacksilk_consensus::hash::H;
@@ -179,10 +181,12 @@ fn drop_on_a_caller_thread_joins_every_helper() {
     }
 }
 
-/// A panic payload whose own drop panics: the second payload of a batch is
-/// dropped under the progress lock before the completion notification.
+/// A panic payload whose own drop panics (RT-POWPOOL F1): the second
+/// payload of a batch was dropped under the progress lock before the
+/// completion notification, killing the helper and leaving the caller
+/// blocked forever (fails on 283300e). Now the caller returns, and the pool
+/// still has its helper.
 #[test]
-#[ignore = "RT-POWPOOL finding: demonstrates a caller hang (run by hand)"]
 fn second_panic_payload_with_panicking_drop_hangs_the_caller() {
     struct Bomb;
     impl Drop for Bomb {
@@ -213,22 +217,31 @@ fn second_panic_payload_with_panicking_drop_hangs_the_caller() {
         let jobs = [job(1, 0), job(2, 0)];
         let r = catch_unwind(AssertUnwindSafe(|| pow.compute_parallel(&jobs, 2)));
         // Forget the payload (a Bomb) rather than drop it.
+        let panicked = r.is_err();
         if let Err(e) = r {
             std::mem::forget(e);
         }
+        let helpers = pow.pool_threads();
         std::mem::forget(pow);
-        tx.send(()).unwrap();
+        tx.send((panicked, helpers)).unwrap();
     });
-    rx.recv_timeout(Duration::from_secs(20))
+    let (panicked, helpers) = rx
+        .recv_timeout(Duration::from_secs(20))
         .expect("compute_parallel never returned");
+    assert!(panicked, "the first payload reaches the caller");
+    assert_eq!(helpers, 1, "the helper survived");
 }
 
 /// Real light-mode RandomX in a debug build (the caller-rule assertion on):
 /// two caches (two managers) over one `RandomXPow`, four concurrent callers
 /// with 2-16 threads over 7 keys (above MAX_CACHES), and a thread churning
 /// the hot set. Every hash equals a fresh computation; no assertion fires.
+///
+/// Ignored (80-115 s in a debug build, about 1.5 GB). Run it by hand:
+/// `cargo test -p blacksilk-chain --test rt_pow_pool_stress -- --ignored stress_real_randomx_two_managers_churn`
+/// (`RT_RX_JOBS` sets the jobs per caller, default 24).
 #[test]
-#[ignore = "real RandomX, about 1.5 GB; run by hand"]
+#[ignore = "real RandomX, 80-115 s debug, about 1.5 GB; run by hand (see the doc comment)"]
 fn stress_real_randomx_two_managers_churn() {
     use blacksilk_randomx::{Cache, Vm};
     let n_keys = 7u8;
