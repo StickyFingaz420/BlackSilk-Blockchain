@@ -23,6 +23,8 @@
 #         caught | missed | timeout | unviable, then the mutant;
 #       SCRATCH/out/<n>.log, the oracle's output per mutant.
 #       BM_FILTER=REGEX restricts the run to the mutants it matches.
+#       Each mutant is first built (`--no-run`, limit BM_BUILD_TIMEOUT, default
+#       3600 s; a build failure is `unviable`), then tested within TIMEOUT_S.
 # Exit: 0 when no mutant is missed, 1 otherwise, 2 on a usage error or a failing
 # unmutated baseline.
 set -euo pipefail
@@ -102,8 +104,16 @@ case "$cmd" in
     find "$src" -name '*.rs' -exec touch {} +
     echo "commit $(cd "$repo" && git rev-parse --short HEAD); cargo $*" > "$out/outcomes.txt"
 
-    oracle() { # LOG -> exit code (124 on timeout)
-      local log="$1" rc=0; shift
+    # The oracle's arguments with `--no-run` before any `--`: the build step.
+    build_args=(); seen=0
+    for a in "$@"; do
+      if [ "$a" = "--" ] && [ "$seen" -eq 0 ]; then build_args+=(--no-run); seen=1; fi
+      build_args+=("$a")
+    done
+    [ "$seen" -eq 1 ] || build_args+=(--no-run)
+
+    oracle() { # LIMIT LOG ARGS... -> exit code (124 on timeout)
+      local limit="$1" log="$2" rc=0; shift 2
       if [ -n "${WINDIR:-}" ]; then
         # The arguments go as one string (no argument may contain a space).
         powershell -NoProfile -ExecutionPolicy Bypass \
@@ -116,7 +126,8 @@ case "$cmd" in
       return "$rc"
     }
 
-    rc=0; oracle "$out/baseline.log" "$@" || rc=$?
+    rc=0; oracle "${BM_BUILD_TIMEOUT:-3600}" "$out/baseline-build.log" "${build_args[@]}" || rc=$?
+    [ "$rc" -eq 0 ] && { oracle "$limit" "$out/baseline.log" "$@" || rc=$?; }
     if [ "$rc" -ne 0 ]; then
       echo "baseline failed (exit $rc), see $out/baseline.log" | tee -a "$out/outcomes.txt" >&2
       exit 2
@@ -139,8 +150,16 @@ case "$cmd" in
         touch "$src/$file"
         log="$out/$n.log"
         { echo "*** $name"; diff "$src/$file.orig" "$src/$file" || true; } > "$log.head"
-        rc=0; oracle "$log.body" "$@" || rc=$?
-        cat "$log.head" "$log.body" > "$log"; rm -f "$log.head" "$log.body"
+        rc=0; oracle "${BM_BUILD_TIMEOUT:-3600}" "$log.build" "${build_args[@]}" || rc=$?
+        if [ "$rc" -eq 0 ]; then
+          oracle "$limit" "$log.body" "$@" || rc=$?
+        else
+          mv "$log.build" "$log.body"
+          # A build that fails is unviable whatever its exit code.
+          grep -q -E "^error\[E[0-9]+\]|could not compile" "$log.body" || echo "could not compile (build step exit $rc)" >> "$log.body"
+          [ "$rc" -eq 124 ] && rc=2
+        fi
+        cat "$log.head" "$log.body" > "$log"; rm -f "$log.head" "$log.body" "$log.build"
         mv "$src/$file.orig" "$src/$file"
         touch "$src/$file"
         if [ "$rc" -eq 0 ]; then verdict=missed; missed=$((missed + 1))

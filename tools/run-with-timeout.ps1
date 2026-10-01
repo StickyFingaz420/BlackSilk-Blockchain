@@ -27,11 +27,15 @@ $null = $p.Handle # keeps the exit code readable after the process ends
 if (-not $p.WaitForExit($TimeoutSec * 1000)) {
     Stop-Tree $p.Id
     $p.WaitForExit()
-    Add-Content -Path $Log -Value "*** timed out after $TimeoutSec s"
+    # The redirection may hold the log briefly after the kill.
+    for ($i = 0; $i -lt 30; $i++) {
+        try { Add-Content -Path $Log -Value "*** timed out after $TimeoutSec s"; break }
+        catch { Start-Sleep -Seconds 1 }
+    }
     $code = 124
 } else {
     $p.WaitForExit()
     $code = $p.ExitCode
 }
-if (Test-Path $err) { Get-Content $err | Add-Content -Path $Log; Remove-Item $err }
+if (Test-Path $err) { Get-Content $err | Add-Content -Path $Log; Remove-Item $err -ErrorAction SilentlyContinue }
 exit $code
