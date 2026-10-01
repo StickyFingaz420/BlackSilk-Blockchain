@@ -62,6 +62,7 @@ use blacksilk_tx::px::{PxFunction, PxTx, Registration};
 use blacksilk_tx::px_builder::{build_deploy, build_px, px_standard_fee, PxPlan};
 use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::ChainView;
+use blacksilk_tx::TxError;
 use blacksilk_zk::{decode_proof_with, encode_proof};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -154,8 +155,21 @@ pub struct Base {
 }
 
 impl Base {
+    /// The base transaction's encoding.
+    pub fn encoded(&self) -> Vec<u8> {
+        Transaction::Px(Box::new(self.tx.clone())).encode()
+    }
+
     /// `tx` must pass every admission step on `chain` (it was built for it).
     pub fn new(chain: ChainManager, contract: Digest, tx: PxTx) -> Self {
+        // The activation grace of docs/p2p.md §10 (near an activation a
+        // failing proof or signature is not scored) never applies with one
+        // rule epoch; `spec_scored` leaves it out.
+        assert_eq!(
+            chain.params().schedule.epochs().len(),
+            1,
+            "spec_scored needs the activation grace for a chain with several epochs"
+        );
         let bytes = Transaction::Px(Box::new(tx.clone())).encode();
         let a = admission(&chain, &bytes, true);
         assert!(
@@ -197,8 +211,6 @@ pub fn run(base: &Base, data: &[u8]) {
         }
     }
     let bytes = Transaction::Px(Box::new(tx)).encode();
-    let params = base.chain.params();
-    let next = base.chain.height() + 1;
 
     let started = Instant::now();
     let first = admission(&base.chain, &bytes, false);
@@ -223,13 +235,17 @@ pub fn run(base: &Base, data: &[u8]) {
     let Admission { decoded, cheap, .. } = &first;
     if !decoded {
         tally(0);
+        record(data, &first, None);
         return;
     }
+    let tx = Transaction::decode(&bytes).expect("it decoded for the node");
+    let mut verified = None;
     match cheap {
         // Passed: the verification (on the transaction lane) decides.
         Some(Ok(true)) => {
             let full = admission(&base.chain, &bytes, true);
-            match full.verified {
+            verified = full.verified;
+            match verified {
                 Some((Ok(id), proven)) => {
                     tally(5);
                     assert!(!proven);
@@ -240,23 +256,38 @@ pub fn run(base: &Base, data: &[u8]) {
                 }
                 Some((Err(e), proven)) => {
                     tally(4);
-                    agrees(&base.chain, e, proven)
+                    assert_eq!(
+                        proven,
+                        spec_scored(&base.chain, &tx, &e),
+                        "verification failure {e:?}: scored as the node did, not as \
+                         docs/p2p.md §10 says ({:?})",
+                        error_class(&e)
+                    );
                 }
                 None => panic!("the cheap checks passed but nothing was verified"),
             }
         }
-        // Refused early: full validation refuses too, and scores alike.
+        // Refused early: scored exactly when the rule is stateless by the
+        // specification, and full validation refuses too, stateless if the
+        // early refusal was.
         Some(Err((e, scored))) => {
             tally(if *scored { 2 } else { 3 });
-            let tx = Transaction::decode(&bytes).expect("it decoded for the node");
+            let class = spec_class(e);
+            assert_eq!(
+                *scored,
+                matches!(class, Class::Stateless(_)),
+                "the cheap checks scored {e:?} as {}, the specification says {class:?}",
+                if *scored { "stateless" } else { "contextual" }
+            );
             let full = base.chain.check_tx(&tx);
             match full {
                 Ok(_) => panic!("the cheap checks refuse ({e:?}) what full validation accepts"),
                 Err(MempoolError::Invalid(f)) => {
                     if *scored {
                         assert!(
-                            f.is_stateless_at(params, next),
-                            "scored as stateless early ({e:?}), contextual in full ({f:?})"
+                            matches!(spec_class(&f), Class::Stateless(_)),
+                            "stateless early ({e:?}), {:?} in full ({f:?})",
+                            spec_class(&f)
                         );
                     }
                 }
@@ -266,23 +297,134 @@ pub fn run(base: &Base, data: &[u8]) {
         // The expiry policy, or dropped as a pooled or conflicting one.
         Some(Ok(false)) | None => tally(1),
     }
+    record(data, &first, verified);
 }
 
-/// A verification failure is scored exactly when it proves the relayer
-/// broke a rule (`proven_invalid`): every stateless failure is, and besides
-/// them only a signature over deeply buried ring members.
-fn agrees(c: &ChainManager, e: MempoolError, proven: bool) {
+/// A rule's class by the specification: a failure of a stateless rule
+/// proves the relayer broke a rule (scored 20, docs/p2p.md §10); a
+/// contextual one is never scored, except an invalid signature over ring
+/// members all at least 60 blocks deep. Each variant is mapped to the rule
+/// it reports (named in the spec), and the rule's class is the spec's:
+/// - T1–T11 stateless (docs/transactions.md §8.1), C1–C3 contextual (§8.2);
+/// - the PX structure and deploy rules, the inverted window, the repeated
+///   key between outputs and payouts and the repeated nullifier stateless
+///   (docs/px.md §11.3 "Structure", "C1–C3", "PX6", "Deploy"; transactions.md
+///   §8.5);
+/// - PX1, PX2, PX3, PX4 contextual (transactions.md §8.5: "contextual rule
+///   (C1–C3, PX1–PX4)"), except PX3's output-word count, stateless for
+///   scoring (px.md §11.3 PX3);
+/// - PX5 (the proof) misbehaviour (px.md §11.5 "Invalid proof"; p2p.md §10
+///   step 4: "penalized as `PxProof`");
+/// - PX6 (the window) contextual and never penalized (px.md §11.3 PX6);
+/// - B8 (tree capacity) contextual for a mempool transaction (px.md §11.3).
+///
+/// Ambiguity: a deploy whose contract id exists (`DuplicateContract`) has no
+/// class in the specification (px.md §11.3 "Deploy": "the contract id is new
+/// in the chain and the block"); it depends on the chain, so it is taken as
+/// contextual. A PX transaction never reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Class {
+    Stateless(&'static str),
+    Contextual(&'static str),
+}
+
+fn spec_class(e: &TxError) -> Class {
+    use Class::{Contextual, Stateless};
+    use TxError::*;
     match e {
-        MempoolError::Invalid(t) => {
-            let stateless = t.is_stateless_at(c.params(), c.height() + 1);
-            assert!(!stateless || proven, "a stateless {t:?} is not scored");
-            assert!(
-                !proven || stateless || matches!(t, blacksilk_tx::TxError::InvalidSignature { .. }),
-                "a contextual {t:?} is scored"
-            );
-        }
-        other => assert!(!proven, "a non-rule failure is scored: {other:?}"),
+        TooLarge { .. } => Stateless("T1"),
+        CoinbaseNotAllowed => Stateless("T2"),
+        InputCount(_) | OutputCount(_) => Stateless("T3"),
+        KeyImageIdentity { .. } | KeyImagesNotSorted => Stateless("T4"),
+        RingNotIncreasing { .. } => Stateless("T5"),
+        OutputKeyIdentity { .. } | EphemeralIdentity { .. } | OutputsNotSorted => Stateless("T6"),
+        PseudoOutCount => Stateless("T7"),
+        FeeNotExact { .. } | WeightOverflow => Stateless("T8"),
+        Unbalanced => Stateless("T9"),
+        RangeProofShape | RangeProofInvalid => Stateless("T10"),
+        SignatureCount | AuxKeyImageIdentity { .. } => Stateless("T11"),
+        UnknownRingMember { .. } | RingMemberTooYoung { .. } => Contextual("C1"),
+        KeyImageSpent { .. } => Contextual("C2"),
+        InvalidSignature { .. } => Contextual("C3"),
+        PxShape | PxFeeNotStandard { .. } => Stateless("PX structure"),
+        PxInvalidProgram
+        | PxBudgetTooLarge { .. }
+        | DeployFeeNotExact { .. }
+        | PxUnsupportedAbi { .. }
+        | PxDuplicateProgram { .. } => Stateless("deploy structure"),
+        PxWindowInverted => Stateless("PX6 (inverted)"),
+        PxDuplicateOutputKey { .. } | PxNullifierRepeated => Stateless("PX repeat"),
+        PxUnknownAnchor => Contextual("PX1"),
+        PxNullifierSpent { .. } => Contextual("PX2"),
+        PxUnregistered { .. } => Contextual("PX3"),
+        PxOutputWords { .. } => Stateless("PX3 (output words)"),
+        PxPoolUnderflow => Contextual("PX4"),
+        PxProof => Stateless("PX5"),
+        PxWindow => Contextual("PX6"),
+        PxTreeFull => Contextual("B8"),
+        DuplicateContract => Contextual("deploy contract id (unclassified)"),
     }
+}
+
+fn error_class(e: &MempoolError) -> Option<Class> {
+    match e {
+        MempoolError::Invalid(t) => Some(spec_class(t)),
+        _ => None,
+    }
+}
+
+/// Signature failures over ring members this deep are scored (docs/p2p.md
+/// §10: "ring members all ≥ 60 blocks deep").
+const SIGNATURE_BURIAL: u64 = 60;
+
+/// Whether docs/p2p.md §10 scores a verification failure `e` of `tx` on
+/// `c`: a stateless rule, or a signature over buried ring members. Outside
+/// any activation's grace window (`Base::new` checks the chain has a single
+/// rule epoch, so none applies).
+fn spec_scored(c: &ChainManager, tx: &Transaction, e: &MempoolError) -> bool {
+    let MempoolError::Invalid(t) = e else {
+        return false;
+    };
+    match (spec_class(t), t) {
+        (Class::Stateless(_), _) => true,
+        (_, TxError::InvalidSignature { input }) => {
+            let Transaction::Px(p) = tx else {
+                return false;
+            };
+            let tip = c.height();
+            p.inputs.get(*input).is_some_and(|i| {
+                i.ring.iter().all(|&g| {
+                    c.state()
+                        .output(g)
+                        .is_some_and(|o| o.height + SIGNATURE_BURIAL <= tip)
+                })
+            })
+        }
+        _ => false,
+    }
+}
+
+/// The twin's per-input verdicts, in order (not in fuzz builds): for a
+/// digest that two runs compare.
+#[cfg(not(fuzzing))]
+pub static VERDICTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+type Verified = Option<(Result<[u8; 32], MempoolError>, bool)>;
+
+fn record(data: &[u8], first: &Admission, verified: Verified) {
+    #[cfg(not(fuzzing))]
+    {
+        let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
+        let line = format!(
+            "{hex} decoded={} pre={:?} cheap={:?} verified={verified:?}",
+            first.decoded,
+            first.pre.as_ref().map(|r| r.as_ref().map(|b| b.len())),
+            first.cheap
+        );
+        VERDICTS.lock().expect("the verdicts").push(line);
+    }
+    #[cfg(fuzzing)]
+    let _ = (data, first, verified);
 }
 
 /// Seed inputs (named): the unedited transaction, and one per kind of edit.

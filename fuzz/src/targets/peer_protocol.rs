@@ -62,9 +62,7 @@ use blacksilk_chain::actor::{self, ActorConfig, ChainHandle};
 use blacksilk_consensus::{BlockHeader, Hash};
 use blacksilk_p2p::addr::AddrEntry;
 use blacksilk_p2p::connman::ConnKind;
-use blacksilk_p2p::message::{
-    is_known_type, Message, Version, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION,
-};
+use blacksilk_p2p::message::{Message, Version};
 use blacksilk_p2p::net::fuzzing::{Snapshot, Victim};
 use blacksilk_p2p::transport::{handshake_with, NetworkPsk, Session};
 use blacksilk_p2p::{NetAddr, NetConfig};
@@ -98,6 +96,16 @@ const HANDSHAKE_UNKNOWN_FRAMES: usize = 8;
 /// 4096 bytes), not the product constant: a raised limit must fail
 /// here (RT-STATEFUL: with the product constant, the model followed it).
 const MAX_HANDSHAKE_FRAME: usize = 4096;
+/// The protocol version a node of this release sends, and the lowest it
+/// accepts (docs/p2p.md §4 and the table of §4.1: "currently 3", "peers
+/// below MIN_PROTOCOL (3) are disconnected").
+const PROTOCOL_VERSION: u32 = 3;
+const MIN_PROTOCOL_VERSION: u32 = 3;
+/// Message types this version knows: the table of docs/p2p.md §5 (0 to 14;
+/// "unknown message types (above 14) are ignored").
+fn spec_known_type(tag: u8) -> bool {
+    tag <= 14
+}
 
 pub fn run(data: &[u8]) {
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -320,6 +328,10 @@ struct Prediction {
     sends_verack: bool,
     /// A frame fails to decrypt (pre-shared keys that differ).
     decrypt_failure: bool,
+    /// The act whose `Verack` registers the peer, and the `relay_txs` of the
+    /// peer's accepted `Version`.
+    verack_at: Option<usize>,
+    their_relay_txs: bool,
 }
 
 fn predict(cfg: &Config, acts: &[Act], nid: u32) -> Prediction {
@@ -335,6 +347,8 @@ fn predict(cfg: &Config, acts: &[Act], nid: u32) -> Prediction {
         pre_bytes: KEY,
         sends_verack: false,
         decrypt_failure: false,
+        verack_at: None,
+        their_relay_txs: false,
     };
     if cfg.key_delay >= key_timeout {
         p.outcome = Outcome::Closed(key_timeout);
@@ -345,7 +359,7 @@ fn predict(cfg: &Config, acts: &[Act], nid: u32) -> Prediction {
     // `None`: waiting for `Version`; `Some(k)`: for `Verack`, k unknown
     // frames skipped.
     let mut skipped: Option<usize> = None;
-    for act in acts {
+    for (idx, act) in acts.iter().enumerate() {
         let (payload, echo) = match act {
             Act::Delay(d) => {
                 t += *d;
@@ -380,6 +394,7 @@ fn predict(cfg: &Config, acts: &[Act], nid: u32) -> Prediction {
                 {
                     skipped = Some(0);
                     p.sends_verack = true;
+                    p.their_relay_txs = v.relay_txs;
                 }
                 _ => {
                     p.outcome = Outcome::Closed(t);
@@ -387,13 +402,15 @@ fn predict(cfg: &Config, acts: &[Act], nid: u32) -> Prediction {
                 }
             },
             Some(k) => {
-                if payload.first().is_some_and(|&t| !is_known_type(t))
+                if payload.first().is_some_and(|&t| !spec_known_type(t))
                     && k < HANDSHAKE_UNKNOWN_FRAMES
                 {
                     skipped = Some(k + 1);
                     continue;
                 }
-                p.outcome = if matches!(Message::decode(&payload), Ok(Message::Verack)) {
+                // `Verack` has no body (docs/p2p.md §5): exactly its type byte.
+                p.outcome = if payload == [1u8] {
+                    p.verack_at = Some(idx);
                     Outcome::Registered(t)
                 } else {
                     Outcome::Closed(t)
@@ -404,6 +421,112 @@ fn predict(cfg: &Config, acts: &[Act], nid: u32) -> Prediction {
     }
     p
 }
+
+// ------------------------------------------------- scoring after `Verack`
+
+/// What a frame sent after `Verack` costs the peer, by the table of
+/// docs/p2p.md §10 ("Misbehavior, limits and bans") and its "Not penalized"
+/// list. `None` where the specification does not fix the score for what the
+/// script sent (the exact accounting stops there); each such case names the
+/// ambiguity:
+/// - a second `Version` or `Verack`: not in the §10 table;
+/// - `Tx`: an unrequested `Tx` is 10, a stateless-invalid one 20, and §10
+///   does not say which applies to an unrequested `Tx` that does not decode;
+/// - any transaction, inventory or address message on a block-relay-only
+///   connection, or an address message on an inbound one whose peer sent
+///   `relay_txs = false` (§9: "no address is exchanged"; §10 gives no score);
+///   a `StemTx` on an address fetch;
+/// - an `Addr` on an address fetch: §9 closes the connection on it, unscored;
+/// - `GetAddr` from an inbound peer that sent `relay_txs = false` (§9 says no
+///   addresses there; §10 scores a second `GetAddr` from an inbound peer);
+/// - a `Block` once its header was accepted (it may be requested by then),
+///   and any other `Block` but the valid next one (body rule or unrequested,
+///   whichever is checked first);
+/// - `Headers` other than the two the script builds;
+/// - a known message that decodes to anything else in a raw frame;
+/// - any delay (pings and request timeouts are timed).
+///
+/// Malformed is decided by the codec (`Message::decode`): a strict decoder
+/// of every message is the codec itself, fuzzed by `p2p_message`.
+struct Scoring<'a> {
+    kind: ConnKind,
+    their_relay_txs: bool,
+    h1: &'a BlockHeader,
+    b1: &'a [u8],
+    getaddrs: u32,
+    header_accepted: bool,
+}
+
+impl Scoring<'_> {
+    fn score(&mut self, act: &Act) -> Option<u32> {
+        let payload = match act {
+            Act::Delay(_) | Act::Version(..) => return None,
+            Act::Frame(f) => f,
+        };
+        // §5: unknown types are ignored, not penalized.
+        if payload.first().is_some_and(|&t| !spec_known_type(t)) {
+            return Some(0);
+        }
+        // §10: a malformed known message (an empty frame among them) is 100.
+        let Ok(msg) = Message::decode(payload) else {
+            return Some(100);
+        };
+        let inbound = self.kind.is_inbound();
+        let block_relay = self.kind == ConnKind::BlockRelay;
+        let no_addrs = block_relay || (inbound && !self.their_relay_txs);
+        match msg {
+            Message::Version(_) | Message::Verack | Message::Tx(_) => None,
+            // §10: `Pong` without a ping (the script never knows ours) is 10.
+            Message::Pong(_) => Some(10),
+            Message::Ping(_)
+            | Message::GetHeaders { .. }
+            | Message::GetBlocks(_)
+            | Message::NotFound(_) => Some(0),
+            Message::GetAddr if !inbound => Some(0),
+            Message::GetAddr if no_addrs => None,
+            // §10: a second `GetAddr` from an inbound peer is 10.
+            Message::GetAddr => {
+                self.getaddrs += 1;
+                Some(if self.getaddrs > 1 { 10 } else { 0 })
+            }
+            // §10: an unsolicited `Addr` of more than 10 entries is 10.
+            Message::Addr(_) if no_addrs => None,
+            // §9 ("Seeds are one-shot address fetches"): an `Addr` closes an
+            // address fetch, unscored; the accounting ends with it.
+            Message::Addr(_) if self.kind == ConnKind::AddrFetch => None,
+            Message::Addr(a) => (a.len() <= 10).then_some(0),
+            Message::InvTx(_) | Message::GetTx(_) if block_relay => None,
+            Message::InvTx(_) | Message::GetTx(_) => Some(0),
+            Message::StemTx(_) if block_relay || self.kind == ConnKind::AddrFetch => None,
+            // §10 step 0: a `StemTx` that does not decode is 20.
+            Message::StemTx(b) => blacksilk_tx::types::Transaction::decode(&b)
+                .is_err()
+                .then_some(20),
+            Message::Headers(h) if h == [*self.h1] => {
+                self.header_accepted = true;
+                Some(0)
+            }
+            // §10: a header whose timestamp is not after the median time
+            // past (the genesis's, for the next header) is 100.
+            Message::Headers(h)
+                if h.len() == 1
+                    && h[0].prev_id == self.h1.prev_id
+                    && h[0].height == self.h1.height
+                    && h[0].timestamp < chain_fixture::params().genesis.timestamp =>
+            {
+                Some(100)
+            }
+            Message::Headers(_) => None,
+            // §10: an unrequested `Block` is 10 (its header is unknown, so it
+            // was not requested).
+            Message::Block(b) if !self.header_accepted && b == self.b1 => Some(10),
+            Message::Block(_) => None,
+        }
+    }
+}
+
+/// The score threshold that disconnects and bans (docs/p2p.md §10).
+const BAN_SCORE: u32 = 100;
 
 // ------------------------------------------------------- the victim's stream
 
@@ -464,6 +587,64 @@ impl AsyncWrite for Watched {
 async fn settle() {
     for _ in 0..64 {
         tokio::task::yield_now().await;
+    }
+}
+
+/// After a frame sent after `Verack`, with every frame since `Verack`
+/// specified: the peer's score is `expected`; at `BAN_SCORE` or more it is
+/// disconnected, and banned unless its address is not its own (proxied,
+/// onion; docs/p2p.md §10). The victim handles some messages on other
+/// tasks and the chain actor's thread (headers, the slow lane), so this
+/// waits, in real time and without moving the paused clock, until the
+/// expected state shows (a score below it), or a short while (a score at
+/// it, which must then stay).
+async fn check_score(victim: &Victim, expected: u32, bannable: bool, act: &Act, kind: ConnKind) {
+    let reached = |s: &Snapshot| {
+        if expected >= BAN_SCORE {
+            s.peers == 0 && s.misbehaving_disconnects == 1
+        } else {
+            s.scores.first().is_some_and(|&x| x >= expected)
+        }
+    };
+    // Up to about 2 s for the expected state, then a few more rounds in which
+    // nothing more may happen.
+    let mut s = victim.snapshot();
+    for _ in 0..1_000 {
+        settle().await;
+        s = victim.snapshot();
+        if reached(&s) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    for _ in 0..4 {
+        std::thread::sleep(Duration::from_millis(1));
+        settle().await;
+        s = victim.snapshot();
+    }
+    let k = match expected {
+        0 => 0,
+        e if e < BAN_SCORE => 1,
+        _ => 2,
+    };
+    SCORED[k].fetch_add(1, Ordering::Relaxed);
+    if expected >= BAN_SCORE {
+        assert!(
+            reached(&s),
+            "not disconnected at score {expected} after {act:?}: {s:?}"
+        );
+        assert_eq!(
+            s.banned, bannable as usize,
+            "the ban after {act:?} (bannable: {bannable})"
+        );
+    } else {
+        assert_eq!(
+            s.scores,
+            vec![expected],
+            "the peer's score after {act:?} on a {:?} connection (docs/p2p.md §10)",
+            kind
+        );
+        assert_eq!((s.banned, s.misbehaving_disconnects), (0, 0));
     }
 }
 
@@ -551,8 +732,27 @@ async fn session(data: &[u8], chain: ChainHandle) {
         halves = Some(writer);
     }
     let mut nonce_rx = Some(nonce_rx);
+    let (h1, b1) = next_block();
+    let mut scoring = Scoring {
+        kind: cfg.kind,
+        their_relay_txs: model.their_relay_txs,
+        h1,
+        b1,
+        getaddrs: 0,
+        header_accepted: false,
+    };
+    // The score the specification gives the peer so far, while every frame
+    // after `Verack` had a specified score (`None` once one had not).
+    let mut expected: Option<u32> = Some(0);
+    let bannable = !cfg.proxied && cfg.addr.ip().is_some();
     if let Some(writer) = halves.as_mut() {
-        for act in &acts {
+        for (idx, act) in acts.iter().enumerate() {
+            let after_verack = model.verack_at.is_some_and(|v| idx > v);
+            if after_verack {
+                if let Some(e) = expected {
+                    expected = scoring.score(act).map(|s| e + s);
+                }
+            }
             settle().await;
             let s = victim.snapshot();
             if s.registered == 0 {
@@ -577,6 +777,12 @@ async fn session(data: &[u8], chain: ChainHandle) {
             };
             if writer.send(&payload).await.is_err() {
                 break;
+            }
+            if let (true, Some(e)) = (after_verack, expected) {
+                check_score(&victim, e, bannable, act, cfg.kind).await;
+                if e >= BAN_SCORE {
+                    break;
+                }
             }
         }
     }
@@ -805,6 +1011,39 @@ pub fn seeds() -> Vec<(&'static str, Vec<u8>)> {
             "stem_and_tx",
             vec![0, 0, 0, 0, 4, 0, 1, 0, 0, 0, 7, 13, 9, 1, 7, 12, 9, 2],
         ),
+        // Scoring after `Verack` (docs/p2p.md §10).
+        ("pong_10", vec![0, 0, 0, 0, 4, 0, 1, 0, 0, 0, 7, 1, 0, 3]),
+        (
+            "getaddr_twice_10",
+            vec![0, 0, 0, 0, 4, 0, 1, 0, 0, 0, 7, 2, 0, 0, 7, 2, 0, 0],
+        ),
+        (
+            "unrequested_block_10",
+            vec![2, 0, 0, 0, 4, 0, 1, 0, 0, 0, 7, 8, 0, 0],
+        ),
+        (
+            "stem_undecodable_20",
+            vec![0, 0, 0, 0, 4, 0, 1, 0, 0, 0, 7, 13, 9, 1],
+        ),
+        (
+            "bad_header_100_proxied",
+            vec![10, 0, 0, 0, 0, 0, 1, 0, 0, 0, 7, 6, 0, 0],
+        ),
+        (
+            "bad_header_100_onion",
+            vec![0x22, 0, 0, 0, 0, 0, 1, 0, 0, 0, 7, 6, 0, 0],
+        ),
+        (
+            "malformed_100",
+            vec![0, 0, 0, 0, 4, 0, 1, 0, 0, 0, 3, 7, 3, 9],
+        ),
+        ("pongs_to_ban", {
+            let mut s = vec![0, 0, 0, 0, 4, 0, 1, 0, 0, 0];
+            for i in 0..11 {
+                s.extend([7, 1, 0, i]);
+            }
+            s
+        }),
     ]
 }
 
@@ -815,8 +1054,13 @@ pub static REACHED: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
 
 pub fn reached() -> String {
     let [r, f, k, d, x] = REACHED.each_ref().map(|c| c.load(Ordering::Relaxed));
-    format!("registered {r}, closed at a frame {f}, at the key exchange timeout {k}, at the deadline {d} (of them decrypt failures: {x})")
+    let [z, p, b] = SCORED.each_ref().map(|c| c.load(Ordering::Relaxed));
+    format!("registered {r}, closed at a frame {f}, at the key exchange timeout {k}, at the deadline {d} (of them decrypt failures: {x}); scores checked after Verack: at 0 {z}, above 0 {p}, at the ban {b}")
 }
+
+/// Score checks after `Verack` (`check_score`): at a score of 0, above 0
+/// and below the ban, and at the ban.
+pub static SCORED: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
 
 fn tally(cfg: &Config, model: &Prediction) {
     let via_tor = cfg.proxied

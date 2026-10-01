@@ -52,4 +52,30 @@ fn px_admission_refuses_early_only_what_full_validation_refuses() {
         );
     });
     println!("px_admission: {}", target::reached());
+    // A digest of every input's verdicts, in order, and of the base
+    // transaction (its proof included): two runs on the same tree must
+    // print the same. `BLACKSILK_FUZZ_VERDICTS` names a file for the
+    // per-input lines, to compare two runs line by line.
+    let verdicts = target::VERDICTS.lock().unwrap();
+    let digest = |parts: &[&[u8]]| {
+        parts
+            .iter()
+            .flat_map(|p| p.iter())
+            .fold(0xcbf2_9ce4_8422_2325u64, |h, &b| {
+                (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3)
+            })
+    };
+    let lines: Vec<u8> = verdicts
+        .iter()
+        .flat_map(|l| l.bytes().chain(*b"\n"))
+        .collect();
+    println!(
+        "px_admission: {} verdicts, digest {:016x}; base transaction digest {:016x}",
+        verdicts.len(),
+        digest(&[&lines]),
+        digest(&[&base.encoded()])
+    );
+    if let Ok(path) = std::env::var("BLACKSILK_FUZZ_VERDICTS") {
+        std::fs::write(&path, &lines).expect("the verdicts file");
+    }
 }

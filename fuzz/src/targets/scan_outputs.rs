@@ -40,19 +40,23 @@
 //! - the scan's time is bounded per output (linear in the outputs).
 
 use blacksilk_crypto::commitment::{coinbase_commitment, commit};
-use blacksilk_crypto::hash::{h32, h64, hash_to_scalar, tags};
+use blacksilk_crypto::hash::{h32, h64, hash_to_scalar};
+use blacksilk_crypto::janus::Anchor;
 use blacksilk_crypto::keys::{SubaddressIndex, SubaddressTable, WalletKeys};
 use blacksilk_crypto::stealth::{
-    coinbase_context, transfer_context, OutputAmount, OutputFields, ScanRejection,
+    create_output, CreatedOutput, OutputAmount, OutputFields, OutputKind, ScanRejection,
 };
 use blacksilk_crypto::{Point, RistrettoPoint, Scalar};
+use blacksilk_px::delivery::CIPHERTEXT_BYTES;
 use blacksilk_tx::builder::{
     build_coinbase, build_transfer, standard_fee, Decoy, InputPlan, Payment, SpendableOutput,
 };
 use blacksilk_tx::params::TxRules;
+use blacksilk_tx::px::PxTx;
+use blacksilk_tx::px_builder::px_standard_fee;
 use blacksilk_tx::scan::{scan_block, scan_transaction};
-use blacksilk_tx::types::{CoinbaseOutput, Output, Transaction};
-use rand_chacha::rand_core::SeedableRng;
+use blacksilk_tx::types::{CoinbaseOutput, Output, Transaction, Transfer};
+use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
@@ -162,7 +166,13 @@ pub fn base() -> &'static Base {
             &mut rng,
         )
         .expect("a transfer");
-        let txs = vec![funding, mixed, Transaction::from(transfer)];
+        let px = px_base(&a, &b, &transfer, &mut rng);
+        let txs = vec![
+            funding,
+            mixed,
+            Transaction::from(transfer),
+            Transaction::Px(Box::new(px)),
+        ];
         let (hidden, clear) = donors(&txs);
         Base {
             a,
@@ -172,6 +182,76 @@ pub fn base() -> &'static Base {
             clear,
         }
     })
+}
+
+/// A PX transaction paying both wallets: three hidden outputs (two to `A`,
+/// one to `B`) and two payouts (one each), under the PX output context, with
+/// the transfer's input, pseudo-output, range proof and signature, fixed
+/// nullifiers and commitments, and a 64-byte proof blob. Scanning reads none
+/// of the proof, so it is built without one (no proving); it is a valid
+/// encoding, not a chain-valid transaction.
+fn px_base(a: &Wallet, b: &Wallet, t: &Transfer, rng: &mut ChaCha20Rng) -> PxTx {
+    let nullifiers = [[11u32; 8], [12u32; 8]];
+    let images: Vec<Point> = t.inputs.iter().map(|i| i.key_image).collect();
+    let nf: Vec<[u8; 32]> = nullifiers
+        .iter()
+        .map(blacksilk_tx::px::digest_bytes)
+        .collect();
+    let ctx = blacksilk_crypto::stealth::px_context(&nf, &images);
+    let mut out = |w: &Wallet, acct: u32, i: u32, amount: u64, kind: OutputKind| {
+        let mut anchor = [0u8; 16];
+        rng.fill_bytes(&mut anchor);
+        create_output(
+            &w.keys.address(SubaddressIndex::new(acct, i)),
+            amount,
+            &ctx,
+            &Anchor(anchor),
+            kind,
+        )
+        .expect("an output")
+    };
+    let hidden = |o: CreatedOutput| Output {
+        one_time_key: o.one_time_key,
+        ephemeral: o.ephemeral,
+        view_tag: o.view_tag,
+        commitment: o.commitment,
+        enc_amount: o.enc_amount,
+        enc_anchor: o.enc_anchor,
+    };
+    let clear = |o: CreatedOutput| CoinbaseOutput {
+        one_time_key: o.one_time_key,
+        ephemeral: o.ephemeral,
+        view_tag: o.view_tag,
+        amount: o.amount,
+        enc_anchor: o.enc_anchor,
+    };
+    let outputs = vec![
+        hidden(out(a, 0, 4, 300, OutputKind::Transfer)),
+        hidden(out(b, 0, 1, 400, OutputKind::Transfer)),
+        hidden(out(a, 1, 7, 500, OutputKind::Transfer)),
+    ];
+    let payouts = vec![
+        clear(out(a, 0, 9, 5, OutputKind::Coinbase)),
+        clear(out(b, 1, 0, 6, OutputKind::Coinbase)),
+    ];
+    PxTx {
+        inputs: t.inputs.clone(),
+        outputs,
+        payouts,
+        fee: px_standard_fee(),
+        bridge_in: 0,
+        bridge_out: 0,
+        window: Default::default(),
+        anchor: [0; 8],
+        nullifiers,
+        commitments: [[1; 8], [2; 8]],
+        ciphertexts: [vec![0; CIPHERTEXT_BYTES], vec![0; CIPHERTEXT_BYTES]],
+        functions: vec![],
+        pseudo_outs: t.pseudo_outs.clone(),
+        range_proof: Some(t.range_proof.clone()),
+        signatures: t.signatures.clone(),
+        proof: vec![0; 64],
+    }
 }
 
 pub fn run(data: &[u8]) {
@@ -195,6 +275,13 @@ pub fn run(data: &[u8]) {
         }
         tx
     };
+    let kind = match tx {
+        Transaction::Coinbase(_) => 0,
+        Transaction::Transfer(_) => 1,
+        Transaction::Px(_) => 2,
+        Transaction::PxDeploy(_) => 3,
+    };
+    KINDS[kind].fetch_add(1, Ordering::Relaxed);
     for w in [&base.a, &base.b] {
         check(w, &tx);
     }
@@ -217,16 +304,32 @@ fn fields(tx: &Transaction) -> Vec<OutputFields<'_>> {
     }
 }
 
-/// The input context `ctx` the anchors bind (spec §3.1, docs/px.md §11).
+/// The input context `ctx` the anchors bind, from the specification, not the
+/// product's context functions:
+/// - transfer and deploy: `H32("input-context", I_0 ‖ … ‖ I_{n-1})`, key
+///   images in transaction order (docs/transactions.md §3.1);
+/// - coinbase: `H32("input-context/coinbase", LE64(height))` (same);
+/// - PX: `H32("input-context/px", nullifiers ‖ key images)` (docs/px.md
+///   §11.1, "Output context"). Ambiguity: §11.1 does not say how a nullifier
+///   (8 field elements) is serialized into the hash; this uses eight LE32
+///   limbs, the encoding of digests in the PX wire format (px.md §11.1) and of
+///   the other field-element inputs px.md hashes (§3, the hedge key).
 fn context(tx: &Transaction) -> [u8; 32] {
-    let images = |inputs: &[blacksilk_tx::types::Input]| -> Vec<Point> {
-        inputs.iter().map(|i| i.key_image).collect()
+    let images = |inputs: &[blacksilk_tx::types::Input]| -> Vec<u8> {
+        inputs.iter().flat_map(|i| *i.key_image.bytes()).collect()
     };
     match tx {
-        Transaction::Coinbase(c) => coinbase_context(c.height),
-        Transaction::Transfer(t) => transfer_context(&images(&t.inputs)),
-        Transaction::Px(t) => t.output_context(),
-        Transaction::PxDeploy(t) => transfer_context(&images(&t.inputs)),
+        Transaction::Coinbase(c) => h32("input-context/coinbase", &[&c.height.to_le_bytes()]),
+        Transaction::Transfer(t) => h32("input-context", &[&images(&t.inputs)]),
+        Transaction::Px(t) => {
+            let nullifiers: Vec<u8> = t
+                .nullifiers
+                .iter()
+                .flat_map(|d| d.iter().flat_map(|x| x.to_le_bytes()))
+                .collect();
+            h32("input-context/px", &[&nullifiers, &images(&t.inputs)])
+        }
+        Transaction::PxDeploy(t) => h32("input-context", &[&images(&t.inputs)]),
     }
 }
 
@@ -252,9 +355,9 @@ fn derive(w: &Wallet, ctx: &[u8; 32], f: &OutputFields<'_>) -> (Expected, Derive
     let s = (w.keys.view_keys().view_secret() * f.ephemeral.point())
         .compress()
         .to_bytes();
-    let x = hash_to_scalar(tags::OUTPUT_KEY, &[&s]);
-    let mask = hash_to_scalar(tags::MASK, &[&s]);
-    let pad = h64(tags::AMOUNT, &[&s]);
+    let x = hash_to_scalar("output-key", &[&s]);
+    let mask = hash_to_scalar("mask", &[&s]);
+    let pad = h64("amount", &[&s]);
     let amount = match f.amount {
         OutputAmount::Hidden { enc_amount, .. } => {
             let mut a = *enc_amount;
@@ -266,7 +369,7 @@ fn derive(w: &Wallet, ctx: &[u8; 32], f: &OutputFields<'_>) -> (Expected, Derive
         OutputAmount::Clear(a) => a,
     };
     let d = Derived { x, mask, amount };
-    if h32(tags::VIEW_TAG, &[&s])[0] != f.view_tag {
+    if h32("view-tag", &[&s])[0] != f.view_tag {
         return (Expected::NotOwned, d);
     }
     let xg = RistrettoPoint::mul_base(&x);
@@ -278,13 +381,13 @@ fn derive(w: &Wallet, ctx: &[u8; 32], f: &OutputFields<'_>) -> (Expected, Derive
         return (Expected::NotOwned, d);
     };
     // The anchor: `r = Hs("ephemeral", anchor ‖ ctx ‖ D ‖ C)`, `r·D = R`.
-    let anchor_pad = h64(tags::ANCHOR, &[&s]);
+    let anchor_pad = h64("anchor", &[&s]);
     let mut anchor = *f.enc_anchor;
     for (a, p) in anchor.iter_mut().zip(&anchor_pad[..16]) {
         *a ^= p;
     }
     let r = hash_to_scalar(
-        tags::EPHEMERAL,
+        "ephemeral",
         &[&anchor, ctx, &sub.spend_bytes, &sub.view_bytes],
     );
     let big_r = r * sub.spend;
@@ -447,13 +550,10 @@ fn edit(tx: &mut Transaction, base: &Base, op: u8, a: usize, b: usize, c: u8) {
                     i.key_image = hidden_donors[b % hidden_donors.len()].one_time_key;
                 }
             }
-            Transaction::Px(t) => {
-                if let Some(i) = t.inputs.first_mut() {
-                    i.key_image = hidden_donors[b % hidden_donors.len()].one_time_key;
-                } else {
-                    t.nullifiers[0][a % 8] ^= 1 + c as u32;
-                }
-            }
+            Transaction::Px(t) => match (c & 1, t.inputs.first_mut()) {
+                (0, Some(i)) => i.key_image = hidden_donors[b % hidden_donors.len()].one_time_key,
+                _ => t.nullifiers[(a / 8) % 2][a % 8] ^= 1 + (c >> 1) as u32,
+            },
             Transaction::PxDeploy(t) => {
                 if let Some(i) = t.inputs.first_mut() {
                     i.key_image = hidden_donors[b % hidden_donors.len()].one_time_key;
@@ -554,10 +654,17 @@ pub fn seeds() -> Vec<(&'static str, Vec<u8>)> {
         ("funding", [&[0u8][..], &base.txs[0].encode()].concat()),
         ("mixed", [&[0u8][..], &base.txs[1].encode()].concat()),
         ("transfer", [&[0u8][..], &base.txs[2].encode()].concat()),
+        ("px", [&[0u8][..], &base.txs[3].encode()].concat()),
     ];
     out.extend([
         ("edit_none_funding", vec![1, 0]),
         ("edit_none_transfer", vec![1, 2]),
+        ("edit_none_px", vec![1, 3]),
+        ("px_payout_amount", vec![1, 3, 4, 0, 7, 1]),
+        ("px_hidden_commitment", vec![1, 3, 5, 0, 0, 0]),
+        ("px_key_image_context", vec![1, 3, 9, 0, 0, 0]),
+        ("px_nullifier_context", vec![1, 3, 9, 2, 0, 1]),
+        ("splice_owned_into_px", vec![1, 3, 0, 1, 0, 0]),
         ("splice_owned_into_transfer", vec![1, 2, 0, 0, 0, 0]),
         ("splice_owned_into_coinbase", vec![1, 1, 0, 1, 5, 0]),
         ("view_tag", vec![1, 2, 1, 0, 3, 0]),
@@ -582,5 +689,9 @@ pub static REACHED: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
 
 pub fn reached() -> String {
     let [n, o, a, c] = REACHED.each_ref().map(|c| c.load(Ordering::Relaxed));
-    format!("outputs scanned: not owned {n}, owned {o}, refused for the anchor {a}, for the commitment {c}")
+    let [cb, tr, px, dp] = KINDS.each_ref().map(|c| c.load(Ordering::Relaxed));
+    format!("outputs scanned: not owned {n}, owned {o}, refused for the anchor {a}, for the commitment {c}; transactions: coinbase {cb}, transfer {tr}, PX {px}, deploy {dp}")
 }
+
+/// Transactions scanned, by kind.
+pub static KINDS: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
