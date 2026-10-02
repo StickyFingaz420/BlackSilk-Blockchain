@@ -1158,3 +1158,20 @@
     - byte-bounded outboxes;
     - log rate limiting and IP redaction;
     - the network-namespace tests NS-1 to NS-9.
+
+## TM2-P2P and RT-TM2P2P (Lead, 2026-10-02)
+- **TM2-P1 / X6 confirmed fixed for the named cases:** a block during the stem, a reorg readmission, and a restart. The origin anchors at its pool height like every node.
+- **TM2-17 confirmed for v1:** paced GetTx serving, duplicates answered once, no stem churn, per-announcer fairness.
+- **ACCEPTED WITH FIXES (before merge; a second RT pass follows):**
+  - **(1) A PX burst from one announcer is lost permanently** (2 of 6 pooled; this predates TM2-17). Fixes:
+    - re-queue a dropped answer;
+    - retry the same peer once on timeout;
+    - byte-aware in-flight cap.
+  - **(2) Eight silent first announcers censor a transaction** (predates TM2-17). Fixes:
+    - prefer outbound announcers;
+    - never push wanted for a peer not in the queue;
+    - never forget an id while an announcer was refused a place.
+  - **(3) Held copies are no longer pooled at all:** a local record only, so the origin behaves exactly like a restarted relay. This replaces the "held copy is never re-announced" decision, which a single InvTx probe could still expose.
+  - **(4)** A test hook replaces the sleeps.
+  - **(5)** originated.json is parsed per entry: it no longer fails open, and a duplicate id keeps the highest height.
+  - **(6)** A node-wide GetTx serving byte budget. The real per-peer figure is about 21 MB.
