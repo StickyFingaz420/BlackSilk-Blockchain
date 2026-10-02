@@ -582,6 +582,97 @@ mod tests {
         assert_eq!(BULK_OUTBOX, 2 * SERVE_BLOCKS_PER_REQUEST);
     }
 
+    /// A block-relay-only connection never relays transactions, whatever the
+    /// peer's `Version` asks (`relay_txs`): the node dials its one table
+    /// address block-relay-only and the peer claims `relay_txs = true`
+    /// (mutation run E: `theirs.relay_txs && kind.relays_txs()` had no test
+    /// with a peer asking for relay on such a connection).
+    #[tokio::test]
+    async fn a_block_relay_only_peer_relays_no_transactions_whatever_it_asks() {
+        use crate::message::{Version, PROTOCOL_VERSION};
+        struct ZeroPow;
+        impl blacksilk_consensus::PowFunction for ZeroPow {
+            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+                [0; 32]
+            }
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer = NetAddr::Ip(listener.local_addr().unwrap());
+        let dir = std::env::temp_dir().join(format!("bs-p2p-conn-brelay-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut table = crate::addrman::AddrMan::with_key([5; 32]);
+        table.set_private_groups(true);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(table.add(peer.clone(), &NetAddr::parse("127.0.0.9:1").unwrap(), now));
+        table.save(&dir.join("peers.json")).unwrap();
+        let p = blacksilk_consensus::ChainParams::regtest();
+        let m = blacksilk_chain::manager::ChainManager::open(
+            p.clone(),
+            blacksilk_tx::params::TxRules::for_chain(&p),
+            Arc::new(ZeroPow),
+            Box::<blacksilk_chain::store::MemoryStore>::default(),
+            [6; 32],
+        )
+        .unwrap();
+        let mut cfg = crate::NetConfig::new(p.network_id);
+        cfg.allow_private = true;
+        cfg.max_outbound = 0;
+        cfg.block_relay_only = 1;
+        cfg.tick = Duration::from_millis(50);
+        cfg.data_dir = Some(dir.clone());
+        let genesis = p.genesis_id();
+        let net = crate::Network::start(cfg, Arc::new(std::sync::Mutex::new(m)))
+            .await
+            .unwrap();
+        let (s, _) = tokio::time::timeout(Duration::from_secs(20), listener.accept())
+            .await
+            .expect("dialed")
+            .unwrap();
+        let (mut r, mut w) = handshake(s, false, p.network_id, &genesis, Duration::from_secs(5))
+            .await
+            .unwrap();
+        let Message::Version(theirs) = Message::decode(&r.recv().await.unwrap()).unwrap() else {
+            panic!("expected version");
+        };
+        assert!(!theirs.relay_txs, "the node asks for no relay");
+        let v = Version {
+            protocol: PROTOCOL_VERSION,
+            network: p.network_id,
+            nonce: 0x1357,
+            height: 0,
+            tip: genesis,
+            listen: None,
+            relay_txs: true,
+        };
+        w.send(&Message::Version(v).encode()).await.unwrap();
+        assert!(matches!(
+            Message::decode(&r.recv().await.unwrap()).unwrap(),
+            Message::Verack
+        ));
+        w.send(&Message::Verack.encode()).await.unwrap();
+        w.send(&Message::Ping(2).encode()).await.unwrap();
+        loop {
+            if matches!(
+                Message::decode(&r.recv().await.unwrap()).unwrap(),
+                Message::Pong(2)
+            ) {
+                break;
+            }
+        }
+        {
+            let st = net.inner.state();
+            let p = st.peers.values().next().expect("registered");
+            assert_eq!(p.kind, ConnKind::BlockRelay);
+            assert!(!p.relay_txs, "no transaction relay there");
+        }
+        drop((r, w, net));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// R8-11: control messages queued behind block frames are written first.
     #[tokio::test]
     async fn control_messages_overtake_queued_block_frames() {
