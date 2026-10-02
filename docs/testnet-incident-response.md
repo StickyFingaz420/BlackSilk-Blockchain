@@ -53,9 +53,9 @@ the procedure and the communication setup (§1a).**
 |---|---|---|---|
 | `WARN reorganization: disconnecting N block(s)` (N ≥ 10) | Node log; `/info` `deepest_reorg` | Partition, eclipse or hash-power attack (K4) | S3; S1 if no partition explains it |
 | Nodes on different tips for more than 30 minutes while connected | `/info` `tip` on each machine | Consensus divergence | **S1** |
-| Supply check fails: generated ≠ Σ outputs, v1 plus private | Labnet-style supply audit. **No tool for the real testnet yet:** labnet computes it from its own wallets. A standalone audit tool is a pre-launch item | Inflation bug | **S1** |
+| Supply check fails: generated ≠ Σ outputs, v1 plus private | `blacksilk-supply-audit` (docs/testnet.md §7.1): exit code 2, or a mid-trial sum that does not match. Its PX half is tested only with an empty pool (docs/STATUS.md) | Inflation bug | **S1** |
 | `VerifierPanicked` warnings | Node log | A proof input crashes the verifier | S2 (S1 if reproducible from outside) |
-| Panic, crash loop, memory growth | Service manager, `peak memory` | Bug or resource exhaustion | S2 or S3 |
+| Panic, crash loop, memory growth | Service manager (exit status 70 or 101 repeating, §4.5), `peak memory` | Bug or resource exhaustion | S2 or S3 (S1 if every node loops on the same block) |
 | Misbehaviour disconnects between honest nodes | `/info` `misbehaving_disconnects` | False-ban bug (like L1) or an attack | S3 |
 | Wallet reports funds wrong, or `Uncertain` repeatedly | Users | Wallet bug or node trouble | S2 |
 | An external vulnerability report | SECURITY.md channel | — | Per content |
@@ -76,7 +76,8 @@ the procedure and the communication setup (§1a).**
 
 ### 4.2 Consensus divergence
 1. Halt (§4.1).
-2. Collect the block files and logs from nodes on each side.
+2. Collect `blocks.dat` and the `info`-level logs from nodes on each side, as §5
+   allows (never the other files of the data directory).
 3. Find the first block the sides disagree on, and re-validate it with the current
    release, in a test harness, from both data directories.
 4. The fix is either:
@@ -102,15 +103,34 @@ the procedure and the communication setup (§1a).**
 3. Unexplained: check the block timestamps and the miners' addresses on the winning
    branch.
 4. A hash-power attack on a testnet is expected to be possible (K1, K4). Record it;
-   there is no rollback, because the policy is most-work.
-5. Collect data for the mainnet finality decision (k4-reorg-policy.md §5).
+   there is no rollback, because the policy is most-work. No reorganization depth
+   limit exists (park-on-deep-reorg is decided for a public testnet, off for the
+   trial, and not implemented).
+5. **Slow blocks after a won race.** A chain won by a private branch with compressed
+   timestamps carries that branch's difficulty, up to about 18× the equilibrium in the
+   difficulty red team (docs/evidence/daa-sim-2026-09-27/redteam.md RT-4). Blocks then
+   come far slower than 120 s until the difficulty recovers: about 130 blocks (about
+   9.6 h) for a 10× excess; the 18× worst case is not separately measured. This is a
+   liveness cost, not an invalid chain. The response: keep mining and wait, or, if the
+   owner judges the stall unacceptable for the trial, a reset (§6, a new network id).
+   Never "fix" it with `--invalidate-block` on one node: that forks only that node.
+6. Collect data for the mainnet finality decision (k4-reorg-policy.md §5).
 
 ### 4.5 Node crash or resource exhaustion
 1. Restart with the same data directory. The node rebuilds its state from the block
    file (tested by `restart_rebuilds_the_px_state_exactly`).
-2. If it crashes again, keep the data directory and run a clean copy from genesis on
+2. **A crash loop is not contained by the software.** A panic in the chain actor
+   exits 70 and a panic elsewhere 101; the systemd unit restarts both every 10 s
+   without limit, each time replaying the whole store, and the decided quarantine
+   marker that would name the block is not implemented (docs/testnet.md §4.2). If
+   either code repeats, stop the unit (`systemctl stop blacksilk-node`) and keep it
+   stopped. Note the last block id and height the log names before the crash.
+3. If it crashes again, keep the data directory and run a clean copy from genesis on
    the same release.
-3. File the crash with the logs.
+4. File the crash with the logs (§5).
+5. `--invalidate-block` on the block a crash names is only for the cases and the
+   checks of docs/testnet.md §9 ("Deciding to invalidate a block"), never on a
+   message alone.
 
 ### 4.6 Wallet incident
 1. Tell users to **stop sending** and keep their wallet files: the stored transactions
@@ -169,9 +189,13 @@ problem and passes with the fix, and a green CI run of the release.
 1. Fix on a branch; add the regression test.
 2. Run the full suite locally; push; require the CI run of that exact commit to pass
    **before** operators are told to upgrade. Inspect its logs.
-3. Tag the commit.
+3. Record the full commit id (a tag is optional for the trial; signed tags are required before a public testnet).
 4. Tell operators, over the private channel:
-   - the tag and its CI run;
+   - the full commit id, its consensus fingerprints and its CI run, on **two
+     separate channels** (the trial's two-channel commit id, owner decision
+     2026-10-02, docs/testnet.md §2.1; signed tags come before a public testnet).
+     Operators act only when both channels agree, confirm a flag or a block id the
+     same way, and never run a binary someone else built;
    - the order of upgrades (all nodes, then miners);
    - whether the data directories stay compatible.
 5. If the fix changes consensus, it needs a reset (§6), which requires the owner's
@@ -179,14 +203,44 @@ problem and passes with the fix, and a green CI run of the release.
 
 ## 5. Evidence preservation
 
-Before restarting or upgrading anything, each operator saves:
-- the node's data directory (block file, `bans.json`), or a copy of it;
-- the node and miner logs for the incident window, at their original level;
-- `/info` output and the peer list at the time;
-- the exact binaries and their version (`--version`), and the release commit.
+Before restarting or upgrading anything, each operator **keeps** on their own machine,
+untouched: the whole data directory, the node and miner logs for the incident window
+at their original level, `/info` output, and the exact binaries with their
+`--version` output and the release commit.
 
-These go to the owner. **Logs contain IP addresses of peers; treat them as
-private.**
+**What an operator may send to the owner** (over the private channel, §1a):
+- `blocks.dat` (public chain data plus the operator's own block verdicts), or the
+  part of it the owner asks for;
+- the node and miner logs at `info` level for the incident window, **with every
+  peer IP address and onion name replaced by a placeholder** first (the logs name
+  every peer on connect, disconnect and ban). If a peer's address matters to the
+  incident, say which placeholder it was and give it separately only if the owner
+  asks and you agree. The logs also name the blocks this node mined;
+- `/info` output, the binaries' hashes and `--version` output, and the release
+  commit.
+
+**What is never asked for and never sent**, by the owner or anyone acting for the
+project, in any incident:
+- `originated.json`: a plaintext list of every transaction this node originated;
+  with it, anyone links the operator to those transactions;
+- wallet files, seed words, passwords, password files, vault secrets, the network
+  pre-shared key, or `rpc.cookie`;
+- logs at `debug` level, or any log lines of the stem (`local tx … held`,
+  `held local tx … -> stem peer`, `stem tx … -> peer`): they name the operator's
+  own transactions. If a run had debug logging on, remove those lines before
+  sending anything from it;
+- logs that still contain peer IP addresses;
+- `peers.json`, `anchors.json` and `bans.json` (the contact graph, the address-table
+  key and banned IPs), unless the owner explains why an address-manager incident
+  needs them and the operator agrees;
+- a copy of the whole data directory.
+
+An investigation that would need any of these is done by the operator on their own
+machine, with the owner's instructions. What the owner receives is examined on a
+separate machine, never the project's build or development (agent) workstation
+(owner decision 2026-10-02). A message asking for one of them is itself
+an incident (§4.7). The trial supply audit has its own custody rules
+(docs/testnet.md §7.1).
 
 ## 6. Rollback of a bad release
 
