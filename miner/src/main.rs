@@ -42,9 +42,9 @@ struct Args {
     /// BLACKSILK_RPC_COOKIE, if set.
     #[arg(long)]
     rpc_cookie: Option<PathBuf>,
-    /// Address that receives block rewards.
-    #[arg(long)]
-    address: String,
+    /// Address that receives block rewards (required to mine).
+    #[arg(long, required_unless_present = "randomx_self_test")]
+    address: Option<String>,
     /// Mining threads (default: all logical CPUs).
     #[arg(long)]
     threads: Option<usize>,
@@ -75,6 +75,16 @@ struct Args {
     /// BLACKSILK_REQUIRE_CLEAN_BUILD=1).
     #[arg(long)]
     require_clean_build: bool,
+    /// Run only the RandomX self-test and exit: 0 on a match, 71 on a
+    /// mismatch. The reference vectors in light mode, then (without
+    /// --light) in full mode, building a 2 GiB dataset per test key
+    /// (minutes): the per-device check before a trial (docs/testnet.md §5).
+    #[arg(long)]
+    randomx_self_test: bool,
+    /// Mine without the RandomX start-up self-test (for diagnosis only: a
+    /// build that fails it mines blocks the network rejects).
+    #[arg(long)]
+    skip_randomx_self_test: bool,
 }
 
 /// `--prebuild` (decisions "W2-09").
@@ -140,6 +150,12 @@ const BUILD_COMMIT: &str = match option_env!("BLACKSILK_BUILD_COMMIT") {
 /// other failure exits with 1 and is restarted.
 const CONFIG_EXIT_CODE: i32 = 78;
 
+/// Exit status when the RandomX self-test fails (the node's
+/// `RANDOMX_SELF_TEST_EXIT_CODE`, 71, `EX_OSERR`): this build hashes
+/// differently from the reference, so every block it mines would be
+/// rejected. A restart cannot help; the systemd unit does not restart on it.
+const SELF_TEST_EXIT_CODE: i32 = 71;
+
 /// Pause before retrying after a failed round: the node is unreachable,
 /// busy (`503`), or served a template this miner cannot use.
 const RETRY_AFTER: Duration = Duration::from_secs(5);
@@ -167,8 +183,106 @@ fn parse_args() -> Args {
 enum Fatal {
     /// The operator must change the configuration ([`CONFIG_EXIT_CODE`]).
     Config(String),
+    /// The RandomX self-test failed ([`SELF_TEST_EXIT_CODE`]).
+    SelfTest(String),
     /// Anything else (exit status 1).
     Other(String),
+}
+
+/// The operator's message for a failed RandomX self-test.
+fn self_test_message(what: &str) -> String {
+    format!(
+        "RandomX self-test failed: {what}. This build of the miner hashes differently from \
+         the reference, so the node rejects every block it finds. Do not run it: rebuild \
+         with the documented toolchain (tools/release-build.sh) and report the device (CPU, \
+         OS, toolchain) and this line (docs/testnet.md §5)"
+    )
+}
+
+/// First and longest pause of [`wait_for_node`].
+const NODE_WAIT_FIRST: Duration = Duration::from_secs(5);
+const NODE_WAIT_MAX: Duration = Duration::from_secs(60);
+
+/// The pause after `d`: doubled, at most [`NODE_WAIT_MAX`].
+fn next_wait(d: Duration) -> Duration {
+    (d * 2).min(NODE_WAIT_MAX)
+}
+
+/// Connects to the node and reads its `/info`, waiting while it is not up
+/// yet (its cookie missing, the RPC not answering, a `401` from a cookie
+/// being replaced), with a growing pause (5 s doubling to 60 s), instead of
+/// exiting: a miner started with or before its node keeps its process, so
+/// the start-up self-test runs once (RT-NODEOPS). Only a malformed node
+/// address is a configuration error.
+fn wait_for_node(node: &str, cookie: Option<&Path>) -> Result<(Client, rpc::Info), Fatal> {
+    Client::try_new(node).map_err(|e| Fatal::Config(e.to_string()))?;
+    let mut wait = NODE_WAIT_FIRST;
+    loop {
+        let why = match connect(node, cookie) {
+            Err(e) => e,
+            Ok(c) => match c.info() {
+                Ok(info) => return Ok((c, info)),
+                Err(e @ RpcError::Status(401, _)) => format!(
+                    "{e}: the node refused the RPC cookie; pass --rpc-cookie <node data \
+                     dir>/{} or set {}",
+                    blacksilk_rpc::COOKIE_FILE,
+                    blacksilk_rpc::COOKIE_ENV
+                ),
+                Err(e) => e.to_string(),
+            },
+        };
+        log::warn!(
+            "waiting for the node at {node}: {why}; retrying in {} s",
+            wait.as_secs()
+        );
+        std::thread::sleep(wait);
+        wait = next_wait(wait);
+    }
+}
+
+/// Set when the operator skipped the RandomX self-test: every hash-rate
+/// line says so (RT-NODEOPS: an override must stay visible).
+static SELF_TEST_SKIPPED: AtomicBool = AtomicBool::new(false);
+
+/// The start-up self-test (decisions "Agent 08", TM2-3): the reference
+/// vectors in light mode, the code every node verifies with and this miner
+/// mines with in light mode. A full-mode dataset is checked against its
+/// cache whenever one is built (`PowContext::try_new`).
+fn start_up_self_test(skip: bool) -> Result<(), Fatal> {
+    if skip {
+        SELF_TEST_SKIPPED.store(true, Ordering::Relaxed);
+        log::warn!(
+            "--skip-randomx-self-test: the RandomX start-up self-test is skipped (for \
+             diagnosis only); a build that fails it mines blocks the node rejects"
+        );
+        return Ok(());
+    }
+    let took = blacksilk_randomx::self_test::self_test_light()
+        .map_err(|m| Fatal::SelfTest(self_test_message(&m.to_string())))?;
+    log::info!(
+        "RandomX self-test passed: {} reference vectors (light mode) in {took:.1?}",
+        blacksilk_randomx::self_test::VECTORS.len()
+    );
+    Ok(())
+}
+
+/// `--randomx-self-test`: light mode, then full mode unless `light`.
+fn self_test_only(light: bool, threads: usize) -> Result<(), Fatal> {
+    use blacksilk_randomx::self_test::{check_full, VECTORS};
+    start_up_self_test(false)?;
+    if !light {
+        log::info!(
+            "full mode: building a 2 GiB dataset for each of the test keys on {threads} \
+             threads (minutes)"
+        );
+        let took = check_full(&VECTORS, threads)
+            .map_err(|m| Fatal::SelfTest(self_test_message(&m.to_string())))?;
+        log::info!(
+            "RandomX self-test passed: {} reference vectors (full mode) in {took:.1?}",
+            VECTORS.len()
+        );
+    }
+    Ok(())
 }
 
 fn main() {
@@ -177,11 +291,24 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
         .init();
-    match run(args) {
+    let result = if args.randomx_self_test {
+        let threads = args
+            .threads
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+            .max(1);
+        self_test_only(args.light, threads)
+    } else {
+        run(args)
+    };
+    match result {
         Ok(()) => {}
         Err(Fatal::Config(e)) => {
             log::error!("{e}");
             std::process::exit(CONFIG_EXIT_CODE);
+        }
+        Err(Fatal::SelfTest(e)) => {
+            log::error!("{e}");
+            std::process::exit(SELF_TEST_EXIT_CODE);
         }
         Err(Fatal::Other(e)) => {
             log::error!("{e}");
@@ -364,11 +491,16 @@ impl<N: Node, B: ContextBuilder<Ctx = PowContext>> Miner<N, B> {
         );
         self.hashes += hashes;
         if self.since.elapsed() >= HASHRATE_EVERY {
-            log::info!(
-                "hash rate {:.1} H/s ({} mode)",
-                self.hashes as f64 / self.since.elapsed().as_secs_f64(),
-                if ctx.is_full() { "full" } else { "light" }
-            );
+            let rate = self.hashes as f64 / self.since.elapsed().as_secs_f64();
+            let mode = if ctx.is_full() { "full" } else { "light" };
+            if SELF_TEST_SKIPPED.load(Ordering::Relaxed) {
+                log::warn!(
+                    "hash rate {rate:.1} H/s ({mode} mode); RandomX self-test SKIPPED \
+                     (--skip-randomx-self-test)"
+                );
+            } else {
+                log::info!("hash rate {rate:.1} H/s ({mode} mode)");
+            }
             self.hashes = 0;
             self.since = Instant::now();
         }
@@ -443,17 +575,9 @@ fn run(args: Args) -> Result<(), Fatal> {
             .check_clean("blacksilk-miner")
             .map_err(Fatal::Config)?;
     }
-    let client = connect(&args.node, args.rpc_cookie.as_deref()).map_err(Fatal::Config)?;
-    let info = client.info().map_err(|e| {
-        Fatal::Other(match e {
-            RpcError::Status(401, _) => format!(
-                "{e}: the node requires its RPC cookie; pass --rpc-cookie <node data dir>/{} or set {}",
-                blacksilk_rpc::COOKIE_FILE,
-                blacksilk_rpc::COOKIE_ENV
-            ),
-            e => e.to_string(),
-        })
-    })?;
+    // Before any hashing (decisions "Agent 08").
+    start_up_self_test(args.skip_randomx_self_test)?;
+    let (client, info) = wait_for_node(&args.node, args.rpc_cookie.as_deref())?;
     let net = network(&info.network).ok_or_else(|| {
         Fatal::Config(format!(
             "unknown network {:?} reported by node",
@@ -461,7 +585,8 @@ fn run(args: Args) -> Result<(), Fatal> {
         ))
     })?;
     check_build(&flags, net, require_clean)?;
-    let payout = decode_address(net, &args.address).map_err(|e| {
+    let address = args.address.as_deref().unwrap_or_default();
+    let payout = decode_address(net, address).map_err(|e| {
         Fatal::Config(format!(
             "--address is not a valid {} address: {e:?}",
             info.network
@@ -523,6 +648,11 @@ fn run(args: Args) -> Result<(), Fatal> {
     hedge.zeroize();
     loop {
         if let Err(e) = miner.round() {
+            // A dataset that failed its self-test: never mine with this
+            // build (a restart builds the same dataset).
+            if let Some(m) = miner.planner.self_test_failure() {
+                return Err(Fatal::SelfTest(self_test_message(m)));
+            }
             log::warn!("{e}; retrying in {} s", RETRY_AFTER.as_secs());
             std::thread::sleep(RETRY_AFTER);
         }
@@ -849,5 +979,47 @@ mod tests {
         assert_eq!(parse(&["--prebuild"]), Prebuild::On);
         assert_eq!(parse(&["--prebuild", "off"]), Prebuild::Off);
         assert_eq!(parse(&["--prebuild=on"]), Prebuild::On);
+    }
+
+    /// RT-NODEOPS: waiting for the node backs off from 5 s to at most 60 s;
+    /// a malformed node address is a configuration error at once.
+    #[test]
+    fn waiting_for_the_node_backs_off() {
+        let mut d = NODE_WAIT_FIRST;
+        let mut seen = vec![d.as_secs()];
+        for _ in 0..6 {
+            d = next_wait(d);
+            seen.push(d.as_secs());
+        }
+        assert_eq!(seen, [5, 10, 20, 40, 60, 60, 60]);
+        assert!(matches!(
+            wait_for_node("https://127.0.0.1:1", None),
+            Err(Fatal::Config(_))
+        ));
+    }
+
+    /// TM2-3: the start-up self-test passes on this build, can be skipped
+    /// (with a warning), and its failure message tells the operator what to
+    /// do; the exit status is the node's.
+    #[test]
+    fn the_start_up_self_test() {
+        assert!(start_up_self_test(false).is_ok());
+        assert!(start_up_self_test(true).is_ok());
+        assert!(self_test_only(true, 1).is_ok(), "light mode only");
+        let m = self_test_message("RandomX hash test 1b (light mode): expected 00, computed 01");
+        assert!(m.contains("1b") && m.contains("release-build.sh"), "{m}");
+        assert_eq!(SELF_TEST_EXIT_CODE, 71);
+        let parse = |extra: &[&str]| {
+            let mut argv = vec!["blacksilk-miner", "--address", "x"];
+            argv.extend_from_slice(extra);
+            Args::try_parse_from(argv).unwrap()
+        };
+        let a = parse(&["--randomx-self-test", "--skip-randomx-self-test"]);
+        assert!(a.randomx_self_test && a.skip_randomx_self_test);
+        // The per-device check needs no payout address; mining does.
+        assert!(Args::try_parse_from(["blacksilk-miner", "--randomx-self-test"]).is_ok());
+        assert!(Args::try_parse_from(["blacksilk-miner"]).is_err());
+        let a = parse(&[]);
+        assert!(!a.randomx_self_test && !a.skip_randomx_self_test);
     }
 }

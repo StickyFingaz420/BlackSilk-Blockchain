@@ -98,12 +98,18 @@ impl PowContext {
     }
 
     /// [`PowContext::new`] with fallible allocation: an allocation failure is
-    /// returned instead of aborting the process.
+    /// returned instead of aborting the process. A full context's dataset is
+    /// checked against its cache before it is used
+    /// (`blacksilk_randomx::self_test::check_dataset`: sampled items and one
+    /// hash in both modes, about one light hash); a mismatch is
+    /// [`BuildError::SelfTest`].
     pub fn try_new(seed: Hash, full: bool, threads: usize) -> Result<Self, BuildError> {
         let cache = Cache::try_new(&seed).map_err(|_| BuildError::OutOfMemory)?;
         if full {
             let dataset =
                 Dataset::try_new(&cache, threads.max(1)).map_err(|_| BuildError::OutOfMemory)?;
+            blacksilk_randomx::self_test::check_dataset(&cache, &dataset)
+                .map_err(|m| BuildError::SelfTest(m.to_string()))?;
             Ok(PowContext::Full { seed, dataset })
         } else {
             Ok(PowContext::Light { seed, cache })
@@ -131,6 +137,10 @@ pub enum BuildError {
     OutOfMemory,
     /// The background build thread could not start, or panicked.
     Thread,
+    /// A full-mode dataset differs from its cache's computation: this build
+    /// hashes differently in full mode. Fatal: the miner stops
+    /// ([`SeedPlanner::self_test_failure`]).
+    SelfTest(String),
 }
 
 impl std::fmt::Display for BuildError {
@@ -138,6 +148,7 @@ impl std::fmt::Display for BuildError {
         match self {
             BuildError::OutOfMemory => f.write_str("out of memory for the RandomX context"),
             BuildError::Thread => f.write_str("the RandomX build thread failed"),
+            BuildError::SelfTest(m) => write!(f, "RandomX full-mode self-test failed: {m}"),
         }
     }
 }
@@ -240,6 +251,9 @@ pub struct SeedPlanner<B: ContextBuilder> {
     ready: Option<B::Ctx>,
     /// Keys whose full build failed: not retried.
     failed: Vec<Hash>,
+    /// A full-mode self-test failure ([`BuildError::SelfTest`]): from then
+    /// on [`Self::context`] refuses, and the miner stops.
+    broken: Option<String>,
 }
 
 impl<B: ContextBuilder> SeedPlanner<B> {
@@ -252,6 +266,22 @@ impl<B: ContextBuilder> SeedPlanner<B> {
             background: None,
             ready: None,
             failed: Vec::new(),
+            broken: None,
+        }
+    }
+
+    /// The full-mode self-test failure that stopped this planner, if any: a
+    /// dataset this build expanded differs from its cache's computation
+    /// ([`BuildError::SelfTest`]). The miner exits on it (a restart builds
+    /// the same dataset).
+    pub fn self_test_failure(&self) -> Option<&str> {
+        self.broken.as_deref()
+    }
+
+    /// Records a build error; a self-test failure stops the planner.
+    fn note_failure(&mut self, e: &BuildError) {
+        if let BuildError::SelfTest(m) = e {
+            self.broken.get_or_insert_with(|| m.clone());
         }
     }
 
@@ -267,6 +297,9 @@ impl<B: ContextBuilder> SeedPlanner<B> {
         next: Option<Hash>,
     ) -> Result<&B::Ctx, BuildError> {
         self.poll();
+        if let Some(m) = &self.broken {
+            return Err(BuildError::SelfTest(m.clone()));
+        }
         if self
             .previous
             .as_ref()
@@ -349,6 +382,7 @@ impl<B: ContextBuilder> SeedPlanner<B> {
             "background RandomX build for key {} failed: {e}",
             hex::encode(&seed[..8])
         );
+        self.note_failure(&e);
         if !full {
             return;
         }
@@ -412,6 +446,10 @@ impl<B: ContextBuilder> SeedPlanner<B> {
                     return Ok(());
                 }
                 Err(e) => {
+                    self.note_failure(&e);
+                    if self.broken.is_some() {
+                        return Err(e);
+                    }
                     log::warn!("RandomX dataset: {e}; mining in light mode");
                     self.failed.push(seed);
                 }
@@ -695,6 +733,8 @@ mod tests {
         builds: Mutex<Vec<(Hash, bool)>>,
         hold: Mutex<Option<mpsc::Receiver<()>>>,
         fail_full: AtomicBool,
+        /// Full builds fail the dataset self-test.
+        bad_dataset: AtomicBool,
     }
 
     impl ContextBuilder for Arc<FakeBuilder> {
@@ -713,10 +753,43 @@ mod tests {
                 if self.fail_full.load(Ordering::SeqCst) {
                     return Err(BuildError::OutOfMemory);
                 }
+                if self.bad_dataset.load(Ordering::SeqCst) {
+                    return Err(BuildError::SelfTest("RandomX dataset item 7".into()));
+                }
             }
             self.builds.lock().unwrap().push((*seed, full));
             Ok(FakeCtx { seed: *seed, full })
         }
+    }
+
+    /// TM2-3: a dataset that fails its self-test stops the planner, whether
+    /// it is the first one (built at once) or a background build (the
+    /// bridge): no full-mode context of this build is ever mined with, and
+    /// the light mode is not a silent fallback.
+    #[test]
+    fn a_dataset_self_test_failure_stops_the_planner() {
+        let (mut p, b) = planner(FULL_PREBUILD);
+        b.bad_dataset.store(true, Ordering::SeqCst);
+        let e = p.context(1, A, None).expect_err("refused");
+        assert!(matches!(e, BuildError::SelfTest(_)), "{e:?}");
+        assert!(p.self_test_failure().unwrap().contains("item 7"));
+        assert!(p.context(2, A, None).is_err(), "stays stopped");
+
+        // The bridge: the light context first, the dataset in the background.
+        let (mut p, b) = planner(SeedPlan {
+            full: true,
+            prebuild: false,
+            fallback: false,
+        });
+        assert_eq!(state(&mut p, 1, A, None), (A, true));
+        b.bad_dataset.store(true, Ordering::SeqCst);
+        assert_eq!(state(&mut p, 2, B, None), (B, false));
+        p.finish_background();
+        assert!(p.self_test_failure().is_some());
+        assert!(matches!(
+            p.context(3, B, None).err(),
+            Some(BuildError::SelfTest(_))
+        ));
     }
 
     fn planner(plan: SeedPlan) -> (SeedPlanner<Arc<FakeBuilder>>, Arc<FakeBuilder>) {
