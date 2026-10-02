@@ -61,6 +61,8 @@ struct Ann {
     preferred: bool,
     state: AnnState,
     busy: u8,
+    /// It timed out once and was put back as a last resort.
+    retried: bool,
     /// Per-node random priority of (id, peer): lower first.
     prio: u64,
 }
@@ -84,8 +86,15 @@ struct PeerLoad {
 }
 
 impl PeerLoad {
+    /// What each request to this peer is expected to weigh: its last
+    /// answer's size; before its first answer, half its in-flight bytes
+    /// (two requests, so a burst of large answers fits its slow lane).
     fn expected(&self) -> usize {
-        self.answer_size.max(MIN_ANSWER)
+        if self.answer_size == 0 {
+            PEER_IN_FLIGHT_BYTES / 2
+        } else {
+            self.answer_size.max(MIN_ANSWER)
+        }
     }
 
     fn has_room(&self) -> bool {
@@ -199,6 +208,7 @@ impl TxTracker {
             preferred,
             state: AnnState::Candidate { ready },
             busy: 0,
+            retried: false,
             prio,
         });
         self.eval(id, now, out);
@@ -339,7 +349,15 @@ impl TxTracker {
         for a in e.anns.iter_mut() {
             if let AnnState::Requested { expiry } = a.state {
                 if expiry <= now {
-                    a.state = AnnState::Done;
+                    // Asked once more as a last resort (after every fresh
+                    // candidate): its answer may have been dropped by our
+                    // own slow lane. Never a third time.
+                    a.state = if a.retried {
+                        AnnState::Done
+                    } else {
+                        AnnState::Candidate { ready: now }
+                    };
+                    a.retried = true;
                     e.timeouts += 1;
                     out.expired.push((id, a.peer));
                     if let Some(l) = self.peers.get_mut(&a.peer) {
@@ -373,7 +391,7 @@ impl TxTracker {
                         blocked = true;
                         continue;
                     }
-                    let key = |a: &Ann| (a.busy, !a.preferred, a.prio);
+                    let key = |a: &Ann| (a.busy + u8::from(a.retried), !a.preferred, a.prio);
                     if best.is_none_or(|b| key(a) < key(&e.anns[b])) {
                         best = Some(i);
                     }
@@ -500,7 +518,7 @@ mod tests {
         for n in 0..500 {
             t.announce(id(1000 + n), 2, true, t0, &mut out);
         }
-        assert_eq!(t.peers[&2].in_flight, PEER_IN_FLIGHT);
+        assert!(!t.peers[&2].has_room(), "its own junk fills its room");
         t.announce(id(1), 1, true, t0, &mut out);
         assert!(asked(&out, 1, id(1)));
         t.announce(id(1), 2, true, t0, &mut out);
@@ -540,6 +558,32 @@ mod tests {
             t.busy(id(1), first, now, &mut out);
         }
         assert_eq!(t.len(), 0, "dropped after the busy cap");
+        t.check();
+    }
+
+    /// A request that timed out is asked once more of the same peer, as a
+    /// last resort after every fresh candidate; never a third time. Before
+    /// a peer's first answer, two requests are in flight to it.
+    #[test]
+    fn a_timed_out_request_is_retried_once_as_a_last_resort() {
+        let t0 = Instant::now();
+        let mut t = TxTracker::default();
+        let mut out = Actions::default();
+        for n in 1..=3 {
+            t.announce(id(n), 1, true, t0, &mut out);
+        }
+        assert_eq!(t.requests(), 2, "two before its first answer");
+        t.answer_size(1, 1_000);
+        let mut out = Actions::default();
+        t.poll(t0 + BLOCKED_RETRY, &mut out);
+        assert!(asked(&out, 1, id(3)), "room once its answers are small");
+        let mut out = Actions::default();
+        t.poll(t0 + REQUEST_TIMEOUT, &mut out);
+        assert_eq!(out.expired.len(), 2);
+        assert!(asked(&out, 1, id(1)) && asked(&out, 1, id(2)), "asked once more");
+        let mut out = Actions::default();
+        t.poll(t0 + REQUEST_TIMEOUT * 3, &mut out);
+        assert_eq!(t.len(), 0, "never a third time");
         t.check();
     }
 

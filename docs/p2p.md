@@ -624,12 +624,14 @@ never used in any check or sent to a peer:
   - **How many at once.** One request per id is outstanding until the first one
     times out (30 s); from then on up to 4, to 4 different announcers, each replaced
     as it ends. A `NotFound` or a disconnect ends a request at once and the next
-    candidate is asked.
+    candidate is asked. A request that timed out is asked once more of the same
+    peer, as a last resort after every fresh candidate (its answer may have been
+    dropped by this node's own slow lane); never a third time.
   - **Per-peer caps.** A peer may have at most 2 000 ids tracked (its announcements
     beyond are ignored) and at most 16 requests in flight, and at most
     `SLOW_LANE_BYTES` of expected answers in flight (each request counted at the
-    size of that peer's last answer, at least 8 KiB; a PX answer is about 2.2 MB, so
-    two PX requests at once). A candidate whose peer is at a cap is skipped, not
+    size of that peer's last answer, at least 8 KiB, and at half that budget before
+    its first answer; a PX answer is about 2.2 MB, so two PX requests at once). A candidate whose peer is at a cap is skipped, not
     queued: junk from one peer consumes only that peer's own allowance (RT2 F1,
     F4).
   - **Busy.** An answer this node drops for the peer's relay share or a full
