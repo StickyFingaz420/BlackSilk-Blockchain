@@ -1958,6 +1958,13 @@ async fn relaying_headers_of_a_block_with_an_invalid_body_is_not_penalized() {
         assert_eq!(a.net.stats().misbehaving_disconnects, 0);
         assert_eq!(a.net.peers().len(), 1, "still connected");
         assert_eq!(a.net.peers()[0].score, 0, "not penalized");
+        // Its claimed height (10) is lowered to ours, so it is not asked
+        // again every tick (mutation run E: the arm had no test).
+        assert_eq!(
+            a.net.peers()[0].height,
+            a.chain.lock().unwrap().header_height(),
+            "batch {k}"
+        );
     }
     assert_eq!(a.height(), 2, "the invalid branch is not followed");
     // A header that itself breaks the rules is still penalized. No batch of
@@ -4429,6 +4436,74 @@ async fn an_unknown_version_header_keyed_by_its_own_batch_is_hashed() {
         cost, 1,
         "the unknown-version header is hashed under the live key"
     );
+    assert_eq!(a.net.peers()[0].score, 0);
+    // Nothing past it is usable: its claimed height (3 000) is lowered to
+    // ours, so it is not asked again every tick.
+    assert_eq!(a.net.peers()[0].height, 2112);
+}
+
+/// An unsolicited low-work header leaves the sender's claimed height alone
+/// (only a solicited low-work reply lowers it): the peer may still hold a
+/// heavier chain than the one it announced (mutation run E: the guard had no
+/// test). The maintenance tick is a minute, so nothing asks it in between.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unsolicited_low_work_header_keeps_the_peers_claimed_height() {
+    let pow = Arc::new(CountAllPow::default());
+    let mut cfg = fast_config(&[]);
+    cfg.tick = Duration::from_secs(60);
+    let a = node_with_pow(66, cfg, pow.clone()).await;
+    let nid = params().network_id;
+    let ours = header_branch(300, 1, 0);
+    give_headers(&a, &ours[..290]);
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 400).await;
+    assert!(
+        recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    // The reply advances our chain: the peer's claim stands.
+    w.send(&Message::Headers(ours[290..].to_vec()).encode())
+        .await
+        .unwrap();
+    wait_until("the reply is stored", 10, || {
+        a.chain.lock().unwrap().header_height() == 300
+    })
+    .await;
+    wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
+    assert_eq!(a.net.peers()[0].height, 400);
+    // An unsolicited header of a deep, low-work fork.
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &ours {
+        g.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let parent = g.main_id_at(10).unwrap();
+    let t = g.template_on(parent).unwrap();
+    let fork = BlockHeader {
+        version: HEADER_VERSION,
+        height: t.height,
+        prev_id: parent,
+        timestamp: t
+            .min_timestamp
+            .max(g.header(&parent).unwrap().timestamp + 1),
+        difficulty: t.difficulty,
+        tx_root: [0; 32],
+        nonce: 77,
+    };
+    let before = pow.0.load(std::sync::atomic::Ordering::SeqCst);
+    w.send(&Message::Headers(vec![fork]).encode())
+        .await
+        .unwrap();
+    w.send(&Message::Ping(3).encode()).await.unwrap();
+    assert!(recv_until(&mut r, 5.0, |m| matches!(m, Message::Pong(3)))
+        .await
+        .is_some());
+    wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
+    assert_eq!(
+        pow.0.load(std::sync::atomic::Ordering::SeqCst),
+        before,
+        "low work: not hashed"
+    );
+    assert_eq!(a.net.peers()[0].height, 400, "the claim stands");
     assert_eq!(a.net.peers()[0].score, 0);
 }
 
