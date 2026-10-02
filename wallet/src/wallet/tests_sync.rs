@@ -1131,6 +1131,9 @@ fn the_header_checks_threads_and_key_blocks() {
     assert_eq!(c.threads(), 1);
     assert!(c.has_seed(0), "the genesis is the first key block");
     assert!(!c.has_seed(1) && !c.has_seed(params.seed_epoch));
+    // The default sample below the dense tail, written as a number so that
+    // a change of it is noticed (mutation run E's hand mutants).
+    assert_eq!(crate::headers::HEADER_SAMPLES, 16);
 }
 
 /// A check from the genesis hands its last headers and its key blocks to
