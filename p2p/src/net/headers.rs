@@ -1227,6 +1227,61 @@ mod tests {
         }
     }
 
+    /// A queued batch whose sender has left and is banned is abandoned
+    /// before any chain command (not even the pre-check runs: its result
+    /// could only charge a sender already banned); a departed sender that
+    /// is not banned still has its batch pre-checked, and a rule-breaking
+    /// one is `Failed` (mutation run E: the network tests use loopback
+    /// peers, which are never IP-banned, so the first branch had no test).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_banned_departed_senders_batch_is_abandoned_unchecked() {
+        let net = idle_network(|_| {}).await;
+        let inner = net.inner.clone();
+        // A header that breaks a rule (difficulty), on the genesis.
+        struct ZeroPow;
+        impl blacksilk_consensus::PowFunction for ZeroPow {
+            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+                [0; 32]
+            }
+        }
+        let g = HeaderChain::new(
+            blacksilk_consensus::ChainParams::regtest(),
+            Arc::new(ZeroPow),
+        );
+        let t = g.template();
+        let bad = BlockHeader {
+            version: t.version,
+            height: t.height,
+            prev_id: t.prev_id,
+            timestamp: t
+                .min_timestamp
+                .max(g.header(&t.prev_id).unwrap().timestamp + 10),
+            difficulty: t.difficulty + 5,
+            tx_root: [0; 32],
+            nonce: 0,
+        };
+        let addr = NetAddr::parse("1.2.3.4:5").unwrap();
+        let verify = |inner: Arc<Inner>| {
+            let addr = addr.clone();
+            tokio::task::spawn_blocking(move || verify_headers(&inner, 999, &addr, &[bad]))
+        };
+        // Departed (no peer 999), not banned: pre-checked, refused.
+        match verify(inner.clone()).await.unwrap() {
+            HeaderOutcome::Failed(HeaderError::BadDifficulty { .. }) => {}
+            HeaderOutcome::Failed(e) => panic!("another failure: {e:?}"),
+            _ => panic!("not failed"),
+        }
+        // Departed and banned: abandoned before the pre-check.
+        inner
+            .state()
+            .bans
+            .ban("1.2.3.4".parse().unwrap(), unix_now() + 3600);
+        assert!(matches!(
+            verify(inner.clone()).await.unwrap(),
+            HeaderOutcome::Abandoned
+        ));
+    }
+
     /// A header from a newer release (a version no epoch of the schedule
     /// uses) is not scored; a bad version the schedule does know is.
     #[test]
