@@ -23,7 +23,10 @@ RestartSec=10
 # valid on the node's network, the node reports an unknown network, or the binary
 # has test-only code and the network is not regtest (W4-GUARD). A restart
 # cannot fix the configuration, so the miner stays stopped for the operator.
-RestartPreventExitStatus=78
+# Exit status 71: this build fails the RandomX self-test (its blocks would be
+# rejected). No start limit here: the miner waits for its node in-process,
+# and any other failure (exit 1) is worth restarting.
+RestartPreventExitStatus=78 71
 Nice=10
 
 NoNewPrivileges=yes

@@ -2,8 +2,17 @@
 #
 # torrc:
 #   HiddenServiceDir /var/lib/tor/blacksilk/
-#   HiddenServicePort 29334 127.0.0.1:29334
-# then put the generated hostname in public_address below.
+#   HiddenServicePort 29334 127.0.0.1:29335
+# then put the generated hostname in public_address below (with port 29334, the
+# service's virtual port).
+#
+# The hidden service forwards to the node's onion listener (onion_inbound), not to
+# a P2P port: every connection there is an onion peer of its own, with no per-IP
+# limit and no ban of the shared loopback address (N-6). Before 2026-10-02 this file
+# forwarded the service to the P2P port, which capped inbound Tor peers at 2 and let
+# one misbehaving peer get all of them banned for 24 h. The node has no clearnet
+# listener: in proxy-only mode it listens only where `bind` says, and `bind` is not
+# set.
 
 network = "testnet"
 data_dir = "/var/lib/blacksilk/testnet-tor"
@@ -11,12 +20,14 @@ rpc_bind = "127.0.0.1:29333"
 log = "info"
 
 [p2p]
-# Only the hidden service reaches this port; never bind a public interface.
-bind = "127.0.0.1:29334"
+# Only the local Tor daemon reaches this port; it must be a loopback address.
+onion_inbound = "127.0.0.1:29335"
 # public_address = "<56 characters>.onion:29334"
 proxy = "127.0.0.1:9050"
 proxy_only = true
 # In proxy-only mode seeds must be IP or .onion addresses (host names would need local DNS).
+# Proxy-only still dials clearnet addresses, through Tor exits (docs/testnet.md §4.3):
+# to stay among onion peers, list only .onion peers and set connect_only = true.
 peers = []
 seeds = []
 builtin_seeds = false

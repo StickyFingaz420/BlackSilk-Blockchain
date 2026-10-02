@@ -356,12 +356,11 @@ pub fn save_anchors(dir: &Path, anchors: &[NetAddr]) -> std::io::Result<()> {
         };
     }
     let list = &anchors[..anchors.len().min(MAX_ANCHORS)];
-    let tmp = path.with_extension("tmp");
-    std::fs::write(
-        &tmp,
-        serde_json::to_vec(list).map_err(std::io::Error::other)?,
-    )?;
-    std::fs::rename(tmp, path)
+    // Owner-only: stable contacts that recognize this node.
+    crate::private_file::write_atomic(
+        &path,
+        &serde_json::to_vec(list).map_err(std::io::Error::other)?,
+    )
 }
 
 /// Reads and deletes the anchors file (a node that crashes later does not

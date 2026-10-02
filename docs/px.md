@@ -282,7 +282,10 @@ of the multi-execution statement:
   shapes with specified contract outputs, which exceeded the one-function `bit`
   budget). The budgets are prover and verifier parameters, in the consensus
   fingerprint (`px.kernel.BUDGET.n_fn_*`), not part of the kernel ELF. Another test
-  checks that a deposit and a payment have identical shapes.
+  (`px/tests/proof.rs`) checks that a deposit and a payment have identical **proof**
+  shapes (degree bits and every witness-independent length). Their public statements
+  still differ: a deposit shows `bridge_in`, a withdrawal `bridge_out` and its payout,
+  and the v1 inputs show who funds the transaction (§12).
 - **Byte length** (privacy review P-5). Field elements are always 4 bytes (Plonky3
   writes them fixed-width), so values never change the length. What varies is the
   Merkle opening proof: FRI opens its queries with pruned paths, and the number of
@@ -369,16 +372,16 @@ ciphertexts (`R`, `ct_kem`) and `cm`:
   changes every ciphertext's key (a wire-format change), so it needs a coordinated
   upgrade, best done at a testnet reset.
 
-**Key separation: limits.** The delivery keys of address `i` derive from the PX spend
-secret `sk` and `i` alone:
-- **No view/spend separation.** There is no view key from which a watch-only wallet
-  could derive every address's delivery keys without `sk`. One address's delivery keys
-  do not reveal `sk` (the derivation is one-way), but no wallet mode exports them, and
-  they would not see spends (nullifiers need `nk`).
-- **No network separation.** The derivation does not include the network: one seed
-  gives the same PX keys and owner tags on every network. Only the address encoding
-  differs. (The v1 keys are not network-separated either.) Use separate seeds for
-  testnet and mainnet.
+**Key separation** (the wallet's derivation 2 and seed format v1, §3.1):
+- **View and spend.** The delivery keys of address `i` derive from the range's
+  incoming viewing key `ivk_k`, not directly from `sk`. A `RangeViewKey` or
+  `IncomingViewKey` (§3.1) lets another party scan for records without spending them;
+  the packages are a library API, and the wallet has no CLI export or watch-only mode
+  yet. Delivery keys never reveal `sk` (every step is one-way).
+- **Networks.** Seed format v1 puts the network into `master` (blocks.md §10), so one
+  seed gives unrelated v1 and PX keys on each network (test
+  `a_seed_gives_unrelated_keys_on_each_network`). Earlier text here described the
+  removed derivation 1, which had neither property.
 
 **Acceptance** (Janus principle, transactions.md §12): the recipient accepts a record
 only if it recomputes the on-chain commitment with the transaction's `rho` and:
@@ -807,8 +810,14 @@ Measured privacy analysis: `docs/reviews/privacy-review.md`.
 - **Use your own node,** or a node you trust, reached over a private channel (an SSH
   tunnel, a VPN, or Tor through a local forwarder you run). The wallet itself has no
   Tor or SOCKS support, speaks plain HTTP only (it refuses `https://` addresses), and
-  ignores proxy environment variables. The node sees when you submit a transaction;
-  it learns nothing from your scanning.
+  ignores proxy environment variables. A node you do not control learns your IP
+  address and sync times, your scan start (the wallet's birthday) and, after a
+  restore, the restore point (the `/outputs` pages it serves), that you are about to
+  spend (the `/distribution` request), the ids of your pending transactions
+  (`/tx/status`) and the transactions you submit; and it controls the decoy
+  distribution your v1 rings are drawn from (transactions.md §11.3.1). It does not
+  learn which outputs or records are yours from scanning: the wallet scans whole
+  blocks and builds rings and the PX tree from its own index (docs/testnet.md §11).
 - **Give each counterparty its own PX address** (`px-address --index`). Addresses of
   one wallet are unlinkable.
   - Every scanned PX address costs a scalar multiplication for every PX output, so the
@@ -825,7 +834,12 @@ Measured privacy analysis: `docs/reviews/privacy-review.md`.
   boundaries (timeouts are multiples of 16): the timeout itself shows only for a claim
   within about 50 blocks before it or a refund within 16 blocks after it
   (contracts.md §8, RTW1C-2).
-- **The fee is the same for every PX transaction** (consensus), so it reveals nothing.
+- **The fee amount is the same for every PX transaction** (consensus), so the amount
+  does not distinguish wallets. Where the fee comes from does show: a deposit pays it
+  from v1 inputs, a private payment from the PX side (`bridge_out` equal to the fee,
+  with no v1 inputs), a withdrawal within its `bridge_out`, and a contract call from
+  either. Together with the bridge amounts and the function count this reveals the
+  transaction's kind.
 - **Never spend the same funds twice after a transaction may have been relayed**
   (privacy-review.md §3c, P-9). The wallet keeps every submitted transaction and
   never rebuilds it. If a submission ends with "the node may or may not have
