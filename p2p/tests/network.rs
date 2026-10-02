@@ -5018,6 +5018,53 @@ async fn our_address_is_advertised_only_where_addresses_are_relayed() {
     }
 }
 
+/// A ban that comes in during a connection's handshake refuses the
+/// connection at registration (the inbound limits are re-checked there,
+/// under the lock of the insertion; mutation run E: no test banned an IP
+/// mid-handshake). Without `allow_private`, loopback peers are IP-banned:
+/// one registered peer breaks the protocol while a second connection from
+/// the same IP waits before its `Verack`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_ban_during_the_handshake_refuses_the_connection_at_registration() {
+    let mut cfg = fast_config(&[]);
+    cfg.allow_private = false;
+    let a = node_with(77, cfg).await;
+    let nid = params().network_id;
+    let (_rx, mut wx) = raw_peer(a.addr, nid, true).await;
+    wait_until("registered", 10, || a.net.stats().peers == 1).await;
+    // The second connection, up to the node's Verack.
+    let s = TcpStream::connect(a.addr).await.unwrap();
+    let (mut r, mut w) = handshake(s, true, nid, &params().genesis_id(), Duration::from_secs(5))
+        .await
+        .unwrap();
+    let v = Version {
+        protocol: PROTOCOL_VERSION,
+        network: nid,
+        nonce: 0x9abc,
+        height: 0,
+        tip: params().genesis_id(),
+        listen: None,
+        relay_txs: true,
+    };
+    w.send(&Message::Version(v).encode()).await.unwrap();
+    assert!(matches!(
+        Message::decode(&r.recv().await.unwrap()).unwrap(),
+        Message::Version(_)
+    ));
+    assert!(matches!(
+        Message::decode(&r.recv().await.unwrap()).unwrap(),
+        Message::Verack
+    ));
+    // The registered peer sends a malformed message: its IP is banned.
+    wx.send(&[0x01, 0xff, 0xff]).await.unwrap();
+    wait_until("banned", 10, || a.net.stats().banned == 1).await;
+    wait_until("the first peer is gone", 10, || a.net.stats().peers == 0).await;
+    // Its Verack completes the handshake; the registration refuses it.
+    w.send(&Message::Verack.encode()).await.unwrap();
+    assert!(closes_within(&mut r, 10).await, "refused at registration");
+    assert_eq!(a.net.stats().peers, 0);
+}
+
 /// RTW1B-1: the recently-expired guard applies to local origination only.
 /// A node that expired a transaction refuses it from its own wallet (`/tx`,
 /// `Network::submit_tx`) for `RECENTLY_EXPIRED_BLOCKS`, but a peer stemming
