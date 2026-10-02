@@ -1370,6 +1370,8 @@ fn a_malformed_header_feed_page_is_refused() {
     struct Feed<'a> {
         chain: &'a MockChain,
         lie: u8,
+        /// Requests served: a feed read in a loop is cut off, not hung.
+        served: std::cell::Cell<u32>,
     }
     impl NodeApi for Feed<'_> {
         fn info(&self) -> Result<rpc::Info, String> {
@@ -1379,6 +1381,10 @@ fn a_malformed_header_feed_page_is_refused() {
             self.chain.blocks(from, count)
         }
         fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+            self.served.set(self.served.get() + 1);
+            if self.served.get() > 1_000 {
+                return Err("the feed was read 1 000 times".into());
+            }
             let mut r = self.chain.headers(from, count)?;
             if count == 1 && from > 1 {
                 // The reorganization check's single header.
@@ -1426,7 +1432,8 @@ fn a_malformed_header_feed_page_is_refused() {
         honest
             .sync(&Feed {
                 chain: &chain,
-                lie: 9
+                lie: 9,
+                served: Default::default(),
             })
             .unwrap(),
         60
@@ -1434,7 +1441,11 @@ fn a_malformed_header_feed_page_is_refused() {
     for lie in 0..4 {
         let mut w = restored(None, 50);
         let e = w
-            .sync(&Feed { chain: &chain, lie })
+            .sync(&Feed {
+                chain: &chain,
+                lie,
+                served: Default::default(),
+            })
             .unwrap_err()
             .to_string();
         assert!(e.contains("missing or malformed"), "lie {lie}: {e}");
@@ -1447,13 +1458,18 @@ fn a_malformed_header_feed_page_is_refused() {
         assert_eq!(
             w.sync(&Feed {
                 chain: &chain,
-                lie: 9
+                lie: 9,
+                served: Default::default(),
             })
             .unwrap(),
             60
         );
         let e = w
-            .sync(&Feed { chain: &chain, lie })
+            .sync(&Feed {
+                chain: &chain,
+                lie,
+                served: Default::default(),
+            })
             .unwrap_err()
             .to_string();
         assert!(e.contains("header 60 is malformed"), "lie {lie}: {e}");
