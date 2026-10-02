@@ -4780,21 +4780,29 @@ async fn after_a_reorganization_the_origin_reannounces_with_everyone() {
     assert_eq!(first[1], Some(93), "pool age 10 from the readmission at 83");
 }
 
-/// TM2-P1, after a restart: the origin's re-announcement anchor (the
-/// height it first saw its transaction in fluff) is persisted with the
-/// originated set. A restarted origin whose wallet resubmits the
-/// transaction holds it (pooled for a later height, never announced) and
-/// re-announces it on the network's schedule, from the fluff at 82: not
-/// from its relay height 81 (a144d94, one block before every other node)
-/// and not from the resubmission's pool height.
+/// TM2-P1, after a restart (Lead decision: privacy first): a restarted
+/// origin whose wallet resubmits its transaction holds it (pooled for a
+/// later height, never stemmed) and never re-announces it, while a relay
+/// that still pools it re-announces it on the network's schedule. An origin
+/// re-announcing on schedule would show a spy that saw it restart that it
+/// kept the transaction across the restart. On a144d94 the restarted origin
+/// re-announced it at 91 (from its relay height), a block before the relay.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_restarted_origin_reannounces_on_the_networks_schedule() {
+async fn a_restarted_origin_never_reannounces_its_held_copy() {
     let dir = temp_data_dir("orig-anchor");
     let mut cfg = fast_config(&[]);
     cfg.data_dir = Some(dir.clone());
+    cfg.max_outbound = 1;
     cfg.dandelion.embargo_base = Duration::from_secs(600);
     let mut a = node_with(89, cfg).await;
     a.mine_n(80, 0);
+    // A relay, dialing the origin (an inbound peer there: never a stem).
+    let relay = node(98, &[a.addr]).await;
+    for h in 1..=80 {
+        let blk = a.chain.lock().unwrap().block_at(h).unwrap();
+        give_block(&relay, &blk).await;
+    }
+    wait_until("relay connected", 5, || a.net.stats().peers == 1).await;
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (mut stem_r, mut stem_w) = dialed_raw_peer(&a, &l).await;
     tokio::time::sleep(Duration::from_millis(300)).await; // an epoch with a stem
@@ -4806,7 +4814,8 @@ async fn a_restarted_origin_reannounces_on_the_networks_schedule() {
             .await
             .is_some()
     );
-    a.mine_with(0, false);
+    let blk = a.mine_with(0, false);
+    give_block(&relay, &blk).await;
     stem_w
         .send(&Message::InvTx(vec![id]).encode())
         .await
@@ -4820,18 +4829,42 @@ async fn a_restarted_origin_reannounces_on_the_networks_schedule() {
         .send(&Message::Tx(tx.encode()).encode())
         .await
         .unwrap();
-    wait_until("pooled at the fluff", 10, || a.mempool_has(&id)).await;
-    assert_eq!(a.chain.lock().unwrap().mempool().admitted_at(&id), Some(82));
-    a.mine_with(0, false);
-    a.mine_with(0, false);
+    wait_until("pooled at the fluff", 10, || {
+        a.mempool_has(&id) && relay.mempool_has(&id)
+    })
+    .await;
+    assert_eq!(
+        relay.chain.lock().unwrap().mempool().admitted_at(&id),
+        Some(82)
+    );
+    for _ in 0..2 {
+        let blk = a.mine_with(0, false);
+        give_block(&relay, &blk).await;
+    }
     let (mut b, b_dir) = restarted(&a, &dir, 90).await;
     let nid = params().network_id;
-    let (mut spy, _w) = raw_peer(b.addr, nid, true).await;
-    wait_until("spy registered", 5, || b.net.stats().peers == 1).await;
+    let (mut spy_b, _wb) = raw_peer(b.addr, nid, true).await;
+    let (mut spy_r, _wr) = raw_peer(relay.addr, nid, true).await;
+    wait_until("spies registered", 5, || {
+        b.net.stats().peers == 1 && relay.net.stats().peers == 2
+    })
+    .await;
     assert_eq!(b.net.submit_tx(tx.clone()).await, Ok(id), "held");
     assert_eq!(b.chain.lock().unwrap().mempool().admitted_at(&id), Some(84));
-    let first = first_reannouncements(&mut [&mut b], &mut [&mut spy], id, 95).await;
-    assert_eq!(first[0], Some(92), "pool age 10 from the fluff at 82");
+    let mut relay = relay;
+    let first = first_reannouncements(
+        &mut [&mut b, &mut relay],
+        &mut [&mut spy_b, &mut spy_r],
+        id,
+        95,
+    )
+    .await;
+    assert_eq!(first[0], None, "the restarted origin stays silent");
+    assert_eq!(
+        first[1],
+        Some(92),
+        "the relay re-announces from the fluff at 82"
+    );
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&b_dir);
 }

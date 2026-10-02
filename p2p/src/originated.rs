@@ -1,8 +1,7 @@
 //! The originated set (docs/p2p.md §8.1; dossier 33 W2, F33-1): the
 //! transactions this node originated (RPC `/tx`, `Network::submit_tx`), each
-//! with the height it was relayed for and the height this node pooled it for
-//! as every node does (at the fluff, or after a reorganization returned it),
-//! persisted across restarts.
+//! with the height it was relayed for, persisted across restarts, and which
+//! pool entries are held copies (in memory).
 //!
 //! An honest relay never stems, and never announces as new, a transaction the
 //! network has held for a while; only its origin does that when its wallet
@@ -22,16 +21,12 @@
 //!   again, as a new one ([`Verdict::Fresh`]).
 //!
 //! The relay height decides these windows only, never the pool
-//! re-announcement schedule (docs/p2p.md §7; TM2-P1). Every node counts that
-//! schedule from the height its pool entry was admitted for: at or after the
-//! fluff, or the readmission after a reorganization. A block found while the
-//! transaction is in the stem puts the fluff a block past the relay height,
-//! and a reorganization moves every node's anchor but not the relay height.
-//! The origin counts from its pool entry's height too, except for a **held**
-//! copy (pooled by [`Verdict::Held`], typically after a restart), which was
-//! pooled late: its anchor is the recorded pool height
-//! ([`Originated::anchor`]), and without one it is not re-announced at all
-//! (a relay that lost the transaction does not have it either).
+//! re-announcement schedule (docs/p2p.md §7; TM2-P1): the origin counts that
+//! schedule from its pool entry's height, as every node does. A **held** copy
+//! (pooled by [`Verdict::Held`], typically after a restart) is never
+//! re-announced ([`Originated::anchor`]): the relays that still pool the
+//! transaction re-announce it, and an origin announcing it on schedule after
+//! a restart would show it held the transaction across the restart.
 //!
 //! Heights are next-block heights (the height a transaction is admitted for),
 //! as in the mempool. The file (`originated.json` in the data directory) is
@@ -58,9 +53,10 @@ pub const NETWORK_EXPIRY_BLOCKS: u64 = MEMPOOL_EXPIRY_BLOCKS + RECENTLY_EXPIRED_
 /// Most entries kept (oldest dropped first).
 pub const ORIGINATED_CAP: usize = 10_000;
 
-/// File format version of `originated.json` (2 added the pool height;
-/// a version 1 file is read without it).
-const FORMAT: u32 = 2;
+/// File format version of `originated.json`. Format 2 (a third, optional
+/// pool height per entry, written by an unmerged development version) is
+/// read too, its extra field ignored.
+const FORMAT: u32 = 1;
 
 /// What a resubmission of a transaction may do ([`Originated::verdict`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,14 +75,14 @@ pub enum Verdict {
 #[derive(Serialize, Deserialize)]
 struct File {
     version: u32,
-    /// `(transaction id (hex), relay height, pool height)`.
-    entries: Vec<(String, u64, Option<u64>)>,
+    /// `(transaction id (hex), relay height)`.
+    entries: Vec<(String, u64)>,
 }
 
-/// Format 1: `(transaction id (hex), relay height)`.
+/// Format 2: `(transaction id (hex), relay height, pool height)`.
 #[derive(Deserialize)]
-struct FileV1 {
-    entries: Vec<(String, u64)>,
+struct FileV2 {
+    entries: Vec<(String, u64, Option<u64>)>,
 }
 
 #[derive(Deserialize)]
@@ -94,20 +90,10 @@ struct FormatVersion {
     version: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Entry {
-    /// The height it was relayed for (the windows of [`Verdict`]).
-    relayed: u64,
-    /// The height this node last pooled it for as every node does (at the
-    /// fluff, or readmitted after a reorganization): the re-announcement
-    /// anchor of a later held copy. `None` until then.
-    pooled: Option<u64>,
-}
-
 /// The originated set.
 #[derive(Default)]
 pub struct Originated {
-    entries: HashMap<Hash, Entry>,
+    relayed: HashMap<Hash, u64>,
     /// Pool entries that are held copies ([`Verdict::Held`]), with the
     /// height each was pooled for. In memory only, as the pool is.
     held: HashMap<Hash, u64>,
@@ -121,72 +107,40 @@ impl Originated {
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.relayed.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.relayed.is_empty()
     }
 
     /// The height `id` was relayed for, if this node originated it.
     pub fn relayed(&self, id: &Hash) -> Option<u64> {
-        self.entries.get(id).map(|e| e.relayed)
-    }
-
-    /// The height this node last pooled `id` for as every node does, if it
-    /// originated it and pooled it so.
-    pub fn pooled(&self, id: &Hash) -> Option<u64> {
-        self.entries.get(id).and_then(|e| e.pooled)
+        self.relayed.get(id).copied()
     }
 
     /// What a resubmission of `id` for inclusion at `next` may do.
     pub fn verdict(&self, id: &Hash, next: u64) -> Verdict {
-        match self.relayed(id) {
+        match self.relayed.get(id) {
             None => Verdict::Fresh,
-            Some(r) if next >= r.saturating_add(NETWORK_EXPIRY_BLOCKS) => Verdict::Fresh,
-            Some(r) if next >= r.saturating_add(MEMPOOL_EXPIRY_BLOCKS) => Verdict::Expired,
+            Some(&r) if next >= r.saturating_add(NETWORK_EXPIRY_BLOCKS) => Verdict::Fresh,
+            Some(&r) if next >= r.saturating_add(MEMPOOL_EXPIRY_BLOCKS) => Verdict::Expired,
             Some(_) => Verdict::Held,
         }
     }
 
     /// The pool re-announcement anchor of a transaction pooled here for
-    /// `admitted` (docs/p2p.md §7): `admitted`, as on every node, unless
-    /// the pool entry is a held copy of a transaction originated here; then
-    /// the recorded pool height, and `None` (never re-announced) without
-    /// one. Never the relay height.
+    /// `admitted` (docs/p2p.md §7): `admitted`, as on every node, or `None`
+    /// (never re-announced) if the pool entry is a held copy of a
+    /// transaction originated here. Never the relay height.
     pub fn anchor(&self, id: &Hash, admitted: u64) -> Option<u64> {
-        if self.held.get(id) == Some(&admitted) {
-            self.pooled(id)
-        } else {
-            Some(admitted)
-        }
-    }
-
-    /// Notes that `id` is pooled here for `admitted` as every node pools it
-    /// (from a peer, at its own fluff, or readmitted after a
-    /// reorganization), if this node originated it: the anchor a later held
-    /// copy uses. The held copy itself (pooled for its held height) changes
-    /// nothing. Returns whether the set changed (to be written).
-    pub fn note_pooled(&mut self, id: &Hash, admitted: u64) -> bool {
-        if self.held.get(id) == Some(&admitted) {
-            return false;
-        }
-        let Some(e) = self.entries.get_mut(id) else {
-            return false;
-        };
-        self.held.remove(id);
-        if e.pooled == Some(admitted) {
-            return false;
-        }
-        e.pooled = Some(admitted);
-        self.dirty = true;
-        true
+        (self.held.get(id) != Some(&admitted)).then_some(admitted)
     }
 
     /// Notes that a held copy of `id` ([`Verdict::Held`]) was pooled for
     /// `admitted`.
     pub fn note_held(&mut self, id: Hash, admitted: u64) {
-        if self.entries.contains_key(&id) {
+        if self.relayed.contains_key(&id) {
             self.held.insert(id, admitted);
         }
     }
@@ -203,8 +157,9 @@ impl Originated {
 
     /// Drops the held-copy marks whose pool entry is gone or was replaced
     /// (`now`: each held id with its current pool height, if pooled). A held
-    /// copy that is mined and returned by a reorganization is readmitted
-    /// at the reorganization's height, as on every node, and anchored there.
+    /// copy that is mined and returned by a reorganization is readmitted at
+    /// the reorganization's height, as on every node, and re-announced from
+    /// there like everyone's copy.
     pub fn refresh_held(&mut self, now: &[(Hash, Option<u64>)]) {
         for (id, at) in now {
             if self.held.get(id).is_some_and(|a| Some(*a) != *at) {
@@ -213,47 +168,23 @@ impl Originated {
         }
     }
 
-    /// A peer announced `id` while this node holds a held copy of it with
-    /// no recorded pool height (a restart came before the fluff): the
-    /// anchor becomes `next`, the height a relay that lost the transaction
-    /// pools it for on that announcement. Returns whether the set changed.
-    pub fn held_announced(&mut self, id: &Hash, next: u64) -> bool {
-        if !self.held.contains_key(id) {
-            return false;
-        }
-        match self.entries.get_mut(id) {
-            Some(e) if e.pooled.is_none() => {
-                e.pooled = Some(next);
-                self.dirty = true;
-                true
-            }
-            _ => false,
-        }
-    }
-
     /// Records that `id` is originated here for inclusion at `next` (a
     /// window ended earlier starts again).
     pub fn record(&mut self, id: Hash, next: u64) {
-        self.entries.insert(
-            id,
-            Entry {
-                relayed: next,
-                pooled: None,
-            },
-        );
+        self.relayed.insert(id, next);
         self.held.remove(&id);
         self.dirty = true;
-        if self.entries.len() > ORIGINATED_CAP {
+        if self.relayed.len() > ORIGINATED_CAP {
             self.prune(next);
         }
-        while self.entries.len() > ORIGINATED_CAP {
+        while self.relayed.len() > ORIGINATED_CAP {
             let oldest = self
-                .entries
+                .relayed
                 .iter()
-                .min_by_key(|(id, e)| (e.relayed, **id))
+                .min_by_key(|(id, r)| (**r, **id))
                 .map(|(id, _)| *id)
                 .expect("non-empty");
-            self.entries.remove(&oldest);
+            self.relayed.remove(&oldest);
             self.held.remove(&oldest);
             log::warn!(
                 "originated set full ({ORIGINATED_CAP}): the oldest entry is dropped, and \
@@ -265,19 +196,19 @@ impl Originated {
     /// Forgets `id` (it was not originated after all).
     pub fn forget(&mut self, id: &Hash) {
         self.held.remove(id);
-        if self.entries.remove(id).is_some() {
+        if self.relayed.remove(id).is_some() {
             self.dirty = true;
         }
     }
 
     /// Drops the entries whose window ended by `next`. Returns how many.
     pub fn prune(&mut self, next: u64) -> usize {
-        let before = self.entries.len();
-        self.entries
-            .retain(|_, e| next < e.relayed.saturating_add(NETWORK_EXPIRY_BLOCKS));
-        let entries = &self.entries;
-        self.held.retain(|id, _| entries.contains_key(id));
-        let n = before - self.entries.len();
+        let before = self.relayed.len();
+        self.relayed
+            .retain(|_, r| next < r.saturating_add(NETWORK_EXPIRY_BLOCKS));
+        let relayed = &self.relayed;
+        self.held.retain(|id, _| relayed.contains_key(id));
+        let n = before - self.relayed.len();
         self.dirty |= n > 0;
         n
     }
@@ -295,10 +226,10 @@ impl Originated {
     /// The file contents, clearing the dirty flag.
     pub fn encode(&mut self) -> Vec<u8> {
         self.dirty = false;
-        let mut entries: Vec<(String, u64, Option<u64>)> = self
-            .entries
+        let mut entries: Vec<(String, u64)> = self
+            .relayed
             .iter()
-            .map(|(id, e)| (hex::encode(id), e.relayed, e.pooled))
+            .map(|(id, r)| (hex::encode(id), *r))
             .collect();
         entries.sort();
         serde_json::to_vec(&File {
@@ -308,33 +239,33 @@ impl Originated {
         .expect("serializable")
     }
 
-    /// Parses a saved set (format 2, or 1 without pool heights). Entries
-    /// beyond [`ORIGINATED_CAP`] (oldest first) and malformed ids are
-    /// dropped.
+    /// Parses a saved set (format 1, or 2 with its pool heights ignored).
+    /// Entries beyond [`ORIGINATED_CAP`] (oldest first) and malformed ids
+    /// are dropped.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         let v: FormatVersion = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-        let raw: Vec<(String, u64, Option<u64>)> = match v.version {
+        let raw: Vec<(String, u64)> = match v.version {
             FORMAT => {
                 let f: File = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
                 f.entries
             }
-            1 => {
-                let f: FileV1 = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-                f.entries.into_iter().map(|(id, r)| (id, r, None)).collect()
+            2 => {
+                let f: FileV2 = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+                f.entries.into_iter().map(|(id, r, _)| (id, r)).collect()
             }
             n => return Err(format!("unknown format version {n}")),
         };
-        let mut entries: Vec<(Hash, Entry)> = raw
+        let mut entries: Vec<(Hash, u64)> = raw
             .into_iter()
-            .filter_map(|(id, relayed, pooled)| {
+            .filter_map(|(id, r)| {
                 let bytes = hex::decode(id).ok()?;
-                Some((bytes.try_into().ok()?, Entry { relayed, pooled }))
+                Some((bytes.try_into().ok()?, r))
             })
             .collect();
-        entries.sort_by_key(|(id, e)| (std::cmp::Reverse(e.relayed), *id));
+        entries.sort_by_key(|(id, r)| (std::cmp::Reverse(*r), *id));
         entries.truncate(ORIGINATED_CAP);
         Ok(Self {
-            entries: entries.into_iter().collect(),
+            relayed: entries.into_iter().collect(),
             held: HashMap::new(),
             dirty: false,
         })
@@ -451,15 +382,16 @@ mod tests {
         assert!(Originated::load(&path).is_empty(), "torn file");
         std::fs::write(&path, b"{\"version\":9,\"entries\":[]}").unwrap();
         assert!(Originated::load(&path).is_empty(), "unknown version");
-        // A format 1 file: relay heights, no pool heights.
-        let v1 = format!(
-            "{{\"version\":1,\"entries\":[[\"{}\",5]]}}",
-            hex::encode(id(1))
+        // A format 2 file (pool heights, ignored).
+        let v2 = format!(
+            "{{\"version\":2,\"entries\":[[\"{}\",5,82],[\"{}\",6,null]]}}",
+            hex::encode(id(1)),
+            hex::encode(id(2))
         );
-        std::fs::write(&path, v1).unwrap();
+        std::fs::write(&path, v2).unwrap();
         let back = Originated::load(&path);
         assert_eq!(back.relayed(&id(1)), Some(5));
-        assert_eq!(back.pooled(&id(1)), None);
+        assert_eq!(back.relayed(&id(2)), Some(6));
 
         let mut big = Originated::new();
         for n in 0..(ORIGINATED_CAP as u64 + 5) {
@@ -474,61 +406,44 @@ mod tests {
     }
 
     /// TM2-P1: the re-announcement anchor is the pool entry's height, as on
-    /// every node, never the relay height; a held copy (pooled late)
-    /// anchors on the recorded pool height, which survives a save and load,
-    /// and without one it is never re-announced. A reorganization's
-    /// readmission moves the anchor, as everywhere.
+    /// every node, never the relay height; a held copy has none (never
+    /// re-announced), until a reorganization readmits it like everyone's.
     #[test]
-    fn the_anchor_is_the_pool_height_never_the_relay_height() {
+    fn the_anchor_is_the_pool_height_and_a_held_copy_has_none() {
         let mut o = Originated::new();
         assert_eq!(o.anchor(&id(9), 50), Some(50), "not originated here");
         o.record(id(1), 81);
         // A block came during the stem: pooled at the fluff for 82.
         assert_eq!(o.anchor(&id(1), 82), Some(82));
-        assert!(o.note_pooled(&id(1), 82));
-        assert!(!o.note_pooled(&id(1), 82), "unchanged");
-        // Mined, then returned by a reorganization and readmitted for 95.
-        assert_eq!(o.anchor(&id(1), 95), Some(95));
-        assert!(o.note_pooled(&id(1), 95));
-        assert_eq!(o.pooled(&id(1)), Some(95));
-        assert!(!o.note_pooled(&id(9), 1), "not originated here");
-
-        // Saved and loaded (a restart): a held copy pooled for 97 anchors on
-        // the pool height 95.
-        let mut back = Originated::decode(&o.encode()).unwrap();
-        assert_eq!(back.pooled(&id(1)), Some(95));
-        assert_eq!(back.relayed(&id(1)), Some(81));
-        back.note_held(id(1), 97);
-        assert!(back.is_held(&id(1)));
-        assert_eq!(back.anchor(&id(1), 97), Some(95));
-        // The held copy mined and readmitted for 99: anchored there.
-        back.refresh_held(&[(id(1), Some(99))]);
-        assert!(!back.is_held(&id(1)));
-        assert_eq!(back.anchor(&id(1), 99), Some(99));
-
-        // No pool height (a restart before the fluff): a held copy is not
-        // re-announced until a peer announces it.
-        let mut o = Originated::new();
-        o.record(id(2), 81);
-        o.note_held(id(2), 84);
-        assert_eq!(o.anchor(&id(2), 84), None);
-        assert!(!o.held_announced(&id(3), 90), "not held");
-        assert!(o.held_announced(&id(2), 90));
-        assert_eq!(o.anchor(&id(2), 84), Some(90));
-        assert!(!o.held_announced(&id(2), 91), "first announcement only");
-        // The held copy itself is no pool height to record; a copy pooled
-        // again (from a peer, or readmitted) replaces the held mark.
-        o.note_held(id(2), 84);
-        assert!(!o.note_pooled(&id(2), 84));
-        assert!(o.is_held(&id(2)));
-        assert!(o.note_pooled(&id(2), 92));
-        assert!(!o.is_held(&id(2)));
-        // Pruned with its entry.
-        o.note_held(id(2), 92);
-        o.prune(81 + NETWORK_EXPIRY_BLOCKS);
-        assert!(!o.is_held(&id(2)) && o.is_empty());
-        // Only originated transactions get a held mark.
+        // A held copy pooled for 97: never re-announced.
+        o.note_held(id(1), 97);
+        assert!(o.is_held(&id(1)));
+        assert_eq!(o.anchor(&id(1), 97), None);
+        assert_eq!(o.held(), vec![(id(1), 97)]);
+        // Still pooled for 97: still held.
+        o.refresh_held(&[(id(1), Some(97))]);
+        assert!(o.is_held(&id(1)));
+        // Mined, then readmitted for 99 by a reorganization: as everyone's.
+        o.refresh_held(&[(id(1), Some(99))]);
+        assert!(!o.is_held(&id(1)));
+        assert_eq!(o.anchor(&id(1), 99), Some(99));
+        // Gone from the pool: the mark goes too.
+        o.note_held(id(1), 100);
+        o.refresh_held(&[(id(1), None)]);
+        assert!(!o.is_held(&id(1)));
+        // The mark goes with its entry, and only originated ids get one.
+        o.note_held(id(1), 100);
+        o.forget(&id(1));
+        assert!(!o.is_held(&id(1)));
         o.note_held(id(4), 5);
         assert!(!o.is_held(&id(4)));
+        o.record(id(2), 81);
+        o.note_held(id(2), 84);
+        o.prune(81 + NETWORK_EXPIRY_BLOCKS);
+        assert!(!o.is_held(&id(2)) && o.is_empty());
+        // Not persisted: the pool is not either.
+        o.record(id(3), 90);
+        o.note_held(id(3), 91);
+        assert!(!Originated::decode(&o.encode()).unwrap().is_held(&id(3)));
     }
 }

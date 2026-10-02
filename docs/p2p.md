@@ -668,10 +668,12 @@ never used in any check or sent to a peer:
     pool a transaction within seconds of each other, so they re-announce it at the
     same heights, and the origin counts exactly as they do, never with a `StemTx`.
   - The only exception is a **held** copy of a transaction this node originated
-    (§8.1): pooled late, after a restart, it counts from the height this node pooled
-    the transaction for before (persisted in the originated set), and without one it
-    is not re-announced at all (a relay that lost the transaction does not have it
-    either) until a peer announces it.
+    (§8.1), pooled late, after a restart: the origin never re-announces it. The
+    relays that still pool the transaction re-announce it, so its delivery does not
+    depend on the origin; an origin re-announcing it on schedule would show a spy
+    that saw it restart that it kept the transaction across the restart. A held copy
+    that a block mines and a reorganization returns is readmitted like everyone's,
+    and re-announced from there.
   - Before TM2-P1 (2026-10-02) the origin counted from the height it relayed the
     transaction for when that was earlier. That height is fixed at submission,
     before the stem, so a block found during the stem made the origin alone
@@ -680,8 +682,9 @@ never used in any check or sent to a peer:
     once, while every other node counted from the readmission: a spy opening fresh
     connections identified the origin with certainty
     (`a_block_found_during_the_stem_does_not_make_the_origin_reannounce_first`,
-    `after_a_reorganization_the_origin_reannounces_with_everyone`,
-    `a_restarted_origin_reannounces_on_the_networks_schedule`).
+    `after_a_reorganization_the_origin_reannounces_with_everyone`). A restarted
+    origin re-announced its held copy from its relay height too
+    (`a_restarted_origin_never_reannounces_its_held_copy`).
   - Only peers not known to have the transaction get the announcement (the per-peer
     sets above), so in practice it reaches connections opened since: a peer that
     restarted fetches it back with `GetTx`, without its origin doing anything.
@@ -749,18 +752,16 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
 
 - **What.** The id of every transaction originated here (`Network::submit_tx`, which
   serves the RPC `/tx`), with the next-block height it was relayed for. Recorded and
-  written to disk before the transaction leaves the node. Once the node pools it as
-  every node does (at the fluff, or readmitted after a reorganization), that pool
-  height is recorded and written too: the re-announcement anchor of a later held copy
-  (§7). The relay height decides only the windows below.
+  written to disk before the transaction leaves the node. The relay height decides
+  only the windows below, never the re-announcement schedule (§7). Which pool
+  entries are held copies is kept in memory only, as the pool is.
 - **Resubmission** of a transaction in the set, for inclusion at next height `h`
   (relayed for `r`):
   - already in this node's stempool: nothing is sent, and `/tx` accepts it;
   - `h < r + 2 160` (the pool expiry, blocks.md §7): other nodes most likely still
     pool it. It is **held**: pooled here, never stemmed and never announced, and `/tx`
-    accepts it (or answers what the pool answers, e.g. `AlreadyKnown`). It is then
-    re-announced only on the common schedule of §7, from the recorded pool height,
-    never from `r`, and not at all without one;
+    accepts it (or answers what the pool answers, e.g. `AlreadyKnown`). This node
+    never re-announces it either (§7);
   - `r + 2 160 ≤ h < r + 2 190`: other nodes expired it recently and refuse it from
     their own wallets. It is refused here too, as `Expired`, also after a restart,
     when the pool's in-memory guard is gone;
@@ -769,10 +770,11 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
     originated again as a new one, through the stem.
 - **Only local origination.** A peer's `StemTx` or `Tx` is admitted and relayed
   whether or not its transaction is in the set (as for the guard, RTW1B-1).
-- **Persistence.** `originated.json` in the data directory (format 2: id, relay
-  height, pool height; a format 1 file is read without pool heights): written to a
-  temporary file, synced and renamed (a crash leaves the old or the new set),
-  whenever the set changes. Entries are dropped when their window ends; at most 10 000 are kept, oldest
+- **Persistence.** `originated.json` in the data directory (format 1: id and relay
+  height; a format 2 file, written by an unmerged development version with a pool
+  height per entry, is read with that field ignored): written to a temporary file,
+  synced and renamed (a crash leaves the old or the new set), whenever the set
+  changes. Entries are dropped when their window ends; at most 10 000 are kept, oldest
   dropped first (logged). A missing file is an empty set; an unreadable one is logged
   as an error and an empty set is used, so the node may then originate one of its old
   transactions again.
@@ -783,15 +785,18 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   `StemTx` and no `InvTx` after a restart), `an_expired_local_transaction_is_not_reoriginated_inside_the_window_even_after_a_restart`
   (`Expired` up to the window's last block after a restart, then one `StemTx`),
   `a_peers_stem_of_a_transaction_this_node_originated_is_relayed`,
-  `a_restarted_origin_reannounces_on_the_networks_schedule`, and the unit tests of
-  `originated.rs`.
+  `a_restarted_origin_never_reannounces_its_held_copy` (silent while a relay
+  re-announces it), and the unit tests of `originated.rs`.
 - **Limits.** The set protects against re-origination by this node only. A wallet
   that submits the same transaction to another node, or a node without this set,
-  still re-originates it. A held copy differs from a relay that lost the transaction
-  in one way: it is pooled, so an `InvTx` for it gets no `GetTx`, and it stays pooled
-  until its own expiry, later than the network's. A held copy pooled again for the
-  same height after it was mined and returned within one maintenance tick keeps the
-  recorded anchor. A transaction the whole network dropped early (a full-pool
+  still re-originates it. A held copy still differs from a relay that lost the
+  transaction (TM2-P1 residual (a), open): it is pooled, so an `InvTx` for it gets no
+  `GetTx`, and it stays pooled until its own expiry, later than the network's.
+  Closing it is a follow-up: request a held copy on an `InvTx` as if it were
+  unknown (p2p), and expire it at `r + 2 160`, the network's expiry, instead of its
+  own admission height plus the expiry (chain/mempool). A held copy mined and returned at its held
+  height before the node processes the height change stays silent. A transaction
+  the whole network dropped early (a full-pool
   eviction wave) is still not originated again before `r + 2 190`. The node's own
   miner may include a held transaction in its templates. Every independent re-origination is
   another sample for a spy (dossier 33 F33-3).

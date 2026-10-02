@@ -160,9 +160,10 @@ pub(super) fn reannounce_due(from: u64, to: u64) -> bool {
 /// of each other, so they re-announce it at the same heights, and the
 /// origin counts exactly as they do (TM2-P1): never from its relay height,
 /// which a block found during the stem, or a reorganization, puts before
-/// everyone else's anchor. Only a held copy of a transaction originated
-/// here (pooled late, `Originated::anchor`) counts from the height the
-/// origin pooled it for before (docs/p2p.md §7, §8.1). Only `InvTx`,
+/// everyone else's anchor. A held copy of a transaction originated here
+/// (pooled late, after a restart) is never re-announced
+/// (`Originated::anchor`, docs/p2p.md §7, §8.1); the relays that pool the
+/// transaction re-announce it. Only `InvTx`,
 /// through the usual trickle, to peers not known to have it; never a
 /// `StemTx`.
 pub(super) async fn reannounce_pool(inner: &Arc<Inner>, prev: u64, next: u64) {
@@ -199,28 +200,19 @@ pub(super) async fn reannounce_pool(inner: &Arc<Inner>, prev: u64, next: u64) {
             (pooled, held_now)
         })
         .await;
-    let (due, changed) = {
+    let due: Vec<Hash> = {
         let mut st = inner.state();
         st.originated.refresh_held(&held_now);
-        let mut changed = false;
-        let mut due = Vec::new();
-        for (id, admitted) in pooled {
-            // A transaction originated here, pooled as every node pools it
-            // (a reorganization readmitted it, say): the anchor a held copy
-            // would use after a restart follows.
-            changed |= st.originated.note_pooled(&id, admitted);
-            let Some(anchor) = st.originated.anchor(&id, admitted) else {
-                continue;
-            };
-            if reannounce_due(prev.saturating_sub(anchor), next.saturating_sub(anchor)) {
-                due.push(id);
-            }
-        }
-        (due, changed)
+        pooled
+            .into_iter()
+            .filter(|(id, admitted)| {
+                st.originated.anchor(id, *admitted).is_some_and(|anchor| {
+                    reannounce_due(prev.saturating_sub(anchor), next.saturating_sub(anchor))
+                })
+            })
+            .map(|(id, _)| id)
+            .collect()
     };
-    if changed {
-        inner.save_originated().await;
-    }
     for id in due {
         inner.announce_tx(id, None);
     }
@@ -234,7 +226,6 @@ pub(super) async fn on_inv_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) 
         })
         .await;
     let mut request = Vec::new();
-    let mut changed = false;
     {
         let mut st = inner.state();
         let now = Instant::now();
@@ -247,17 +238,9 @@ pub(super) async fn on_inv_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) 
             return;
         }
         remember(&mut p.known_txs, ids.iter().copied());
-        let next = inner.summary.load().height + 1;
         let mut room = TX_IN_FLIGHT.saturating_sub(in_flight(&st, peer));
         for (id, in_mempool) in ids.into_iter().zip(known) {
-            if in_mempool {
-                // A held copy of our own transaction, pooled without a pool
-                // height (a restart before its fluff): a relay that lost it
-                // pools it on this announcement, so it anchors here.
-                changed |= st.originated.held_announced(&id, next);
-                continue;
-            }
-            if st.recent_rejects_set.contains(&id) || ctx_rejected(&st, &id, &tip) {
+            if in_mempool || st.recent_rejects_set.contains(&id) || ctx_rejected(&st, &id, &tip) {
                 continue;
             }
             // A transaction in our stempool is treated like an unknown one:
@@ -300,9 +283,6 @@ pub(super) async fn on_inv_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) 
         if !request.is_empty() {
             inner.send(&mut st, peer, Message::GetTx(request));
         }
-    }
-    if changed {
-        inner.save_originated().await;
     }
 }
 
