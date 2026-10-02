@@ -55,7 +55,9 @@ the procedure and the communication setup (§1a).**
 | Nodes on different tips for more than 30 minutes while connected | `/info` `tip` on each machine | Consensus divergence | **S1** |
 | Supply check fails: generated ≠ Σ outputs, v1 plus private | `blacksilk-supply-audit` (docs/testnet.md §7.1): exit code 2, or a mid-trial sum that does not match. Its PX half is tested only with an empty pool (docs/STATUS.md) | Inflation bug | **S1** |
 | `VerifierPanicked` warnings | Node log | A proof input crashes the verifier | S2 (S1 if reproducible from outside) |
-| Panic, crash loop, memory growth | Service manager (exit status 70 or 101 repeating, §4.5), `peak memory` | Bug or resource exhaustion | S2 or S3 (S1 if every node loops on the same block) |
+| Panic, crash loop, memory growth | Service manager (exit status 70 or 101 repeating, or the unit `failed` with `start-limit-hit`, §4.5), `peak memory` | Bug or resource exhaustion | S2 or S3 (S1 if every node loops on the same block) |
+| RandomX self-test failure (exit 71) at a node or miner start | Node or miner log (`RandomX self-test failed: …`) | A build or platform that hashes RandomX differently: it would fork | S2 (S1 if devices running the announced build fail it) |
+| Stored proof-of-work mismatch (exit 66) at a node start | Node log (`… carries a proof-of-work hash that its header does not produce`) | A data directory written by something else than the node's verification: copied, restored from an untrusted source, or tampered with | S2 (S1 if several devices show it) |
 | Misbehaviour disconnects between honest nodes | `/info` `misbehaving_disconnects` | False-ban bug (like L1) or an attack | S3 |
 | Wallet reports funds wrong, or `Uncertain` repeatedly | Users | Wallet bug or node trouble | S2 |
 | An external vulnerability report | SECURITY.md channel | — | Per content |
@@ -119,14 +121,22 @@ the procedure and the communication setup (§1a).**
 ### 4.5 Node crash or resource exhaustion
 1. Restart with the same data directory. The node rebuilds its state from the block
    file (tested by `restart_rebuilds_the_px_state_exactly`).
-2. **A crash loop is not contained by the software.** A panic in the chain actor
-   exits 70 and a panic elsewhere 101; the systemd unit restarts both every 10 s
-   without limit, each time replaying the whole store, and the decided quarantine
-   marker that would name the block is not implemented (docs/testnet.md §4.2). If
-   either code repeats, stop the unit (`systemctl stop blacksilk-node`) and keep it
-   stopped. Note the last block id and height the log names before the crash.
+2. **A crash loop is limited, not contained.** A panic in the chain actor exits 70
+   and a panic elsewhere 101; the systemd unit restarts both, at most 3 starts in 15
+   minutes, then leaves the unit `failed` (`start-limit-hit`). Every start replays the
+   whole store, and the decided quarantine marker that would name the block is not
+   implemented (docs/testnet.md §4.2). If either code repeats or the start limit is
+   hit, keep the unit stopped (`systemctl stop blacksilk-node`; do not
+   `reset-failed` yet), and note the last block id and height the log names before
+   each crash (`journalctl -u blacksilk-node -b`).
 3. If it crashes again, keep the data directory and run a clean copy from genesis on
    the same release.
+   - **Exit 66** (a stored proof-of-work mismatch): keep that data directory unchanged
+     as evidence; it is never reused. Resync into a fresh data directory, and report
+     where the directory came from (a copy, a backup).
+   - **Exit 71** (RandomX self-test): do not run that binary. Rebuild the announced
+     commit with `tools/release-build.sh`, run `blacksilk-node --randomx-self-test`,
+     and report the device (CPU, OS, toolchain) and the log line.
 4. File the crash with the logs (§5).
 5. `--invalidate-block` on the block a crash names is only for the cases and the
    checks of docs/testnet.md §9 ("Deciding to invalidate a block"), never on a

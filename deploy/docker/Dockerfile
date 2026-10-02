@@ -28,6 +28,10 @@ COPY --from=build /src/target/release/blacksilk-node /src/target/release/blacksi
 COPY deploy/docker/node.toml /etc/blacksilk/node.toml
 USER blacksilk
 VOLUME ["/data"]
+# `docker stop` sends this, the node's clean shutdown (anchors saved, cookie
+# removed); the node handles SIGTERM the same way. Give it time:
+# `docker stop -t 60` (the default is 10 s, then SIGKILL).
+STOPSIGNAL SIGINT
 EXPOSE 29334
 # RPC (29333) is intentionally not exposed; reach it with `docker exec`.
 CMD ["blacksilk-node", "--config", "/etc/blacksilk/node.toml"]

@@ -116,7 +116,15 @@ with the ones the two-channel release announcement publishes:
 - the **consensus fingerprint** of the network (full, 64 hex digits);
 - the **build commit**, which must not end in `-dirty`;
 - the **build flags** line of `blacksilk-node --version`, which must read
-  `build flags: none` (no test-only code compiled in, §2).
+  `build flags: none` (no test-only code compiled in, §2);
+- the **RandomX self-test** of the device: `blacksilk-node --randomx-self-test`
+  hashes the reference implementation's vectors 1a–1f in light mode (the node's
+  verification path) and must print `RandomX self-test passed` and exit 0; on a
+  mining device also `blacksilk-miner --randomx-self-test`, which adds the vectors in
+  full mode (a 2 GiB dataset per test key: minutes; `--light` skips it). A device
+  that fails it (exit 71) would fork: it does not join, and its CPU, OS and
+  toolchain are reported. Node and miner run the light-mode part at every start
+  too (§4.2, §5).
 
 The **rules fingerprint** (below) is also published with the release candidate,
 before the genesis exists; the final build must show the same value.
@@ -295,25 +303,48 @@ read-only system, and can write only `/var/lib/blacksilk`. Open TCP 29334 inboun
 **Exit statuses.** The node exits 0 after a clean shutdown, 2 on a configuration error,
 70 when a panic poisoned its chain lock (a restart replays the store and recovers), 65
 when a block that passed validation failed to apply (a bug in the node, blocks.md §6),
-and 1 on any other error (a failed block store included). The node unit restarts on
-failure but not on 2 or 65 (`RestartPreventExitStatus=2 65`): a restart repeats a
-configuration error or a build with test-only code refusing the network (§2), and
-a 65 replays into the same failure. The constants are `HALT_EXIT_CODE` and `POISONED_EXIT_CODE` in
-`node/src/lib.rs`. If the node is started again by hand after a 65, the replay reaches
-the same block at start-up and exits 65 again (`open_exit_code`), so the unit still
-does not loop; report the block the log names (§9).
+66 when a stored proof-of-work hash differs from its block's header (§4.5), 71 when the
+RandomX self-test fails (below), and 1 on any other error (a failed block store
+included). The node unit restarts on failure but not on 2, 65, 66 or 71
+(`RestartPreventExitStatus=2 65 66 71`): a restart repeats a configuration error or a
+build with test-only code refusing the network (§2), a 65 replays into the same
+failure, a 66 finds the same stored hash, and a 71 is the build itself. The constants
+are `HALT_EXIT_CODE`, `POISONED_EXIT_CODE`, `STORE_POW_EXIT_CODE` and
+`RANDOMX_SELF_TEST_EXIT_CODE` in `node/src/lib.rs`. If the node is started again by hand
+after a 65, the replay reaches the same block at start-up and exits 65 again
+(`open_exit_code`), so the unit still does not loop; report the block the log names
+(§9).
 
-**A crash loop on 70 or a panic (101) is not contained.** A panic in the chain actor
-exits 70, and a panic on the main thread (for example during the start-up replay)
-exits with Rust's panic status 101. The unit restarts both every 10 s, in effect
-without limit: it does not list 70 or 101 in `RestartPreventExitStatus` and sets no
-`StartLimitIntervalSec`/`StartLimitBurst`, and systemd's default limit (5 starts in
-10 s) never trips with `RestartSec=10`. Every restart replays the whole store. The decided
-"validating" quarantine marker that would name the block a deterministic panic
-recurs on (F48-5) is not implemented (docs/STATUS.md). If the node exits 70 or 101
-more than once, stop the unit (`systemctl stop blacksilk-node`), keep the data
-directory and the log, and report the last block the log names
-(docs/testnet-incident-response.md §4.5).
+**Stopping.** The node stops cleanly (anchors saved, cookie removed) on Ctrl-C (SIGINT)
+and, on Linux and macOS, on SIGTERM (`kill <pid>`, `docker stop`). The unit sends
+SIGINT (`KillSignal=SIGINT`) and waits 60 s.
+
+**Crash loops are limited, not prevented.** A panic in the chain actor exits 70, and a
+panic on the main thread (for example during the start-up replay) exits with Rust's
+panic status 101. The unit restarts both, but at most 3 starts in 15 minutes
+(`StartLimitIntervalSec=900`, `StartLimitBurst=3` in `[Unit]`): a deterministic crash
+(the same block every time) stops the unit after the third start, in state `failed`
+with the result `start-limit-hit`, instead of replaying the whole store every 10 s for
+ever. A one-off crash is still restarted. The decided "validating" quarantine marker
+that would name the block a deterministic panic recurs on (F48-5) is not implemented
+(docs/STATUS.md). **Operator action** when the unit is failed, or the node exits 70 or
+101 more than once:
+1. Keep the data directory and the log as they are; do not restart in a loop.
+2. Read the log of the last starts (`journalctl -u blacksilk-node -b`) and note the
+   last block id and height it names before each crash.
+3. Report it (docs/testnet-incident-response.md §4.5).
+4. Only when the cause is understood (a fixed build, or a verified instruction):
+   `systemctl reset-failed blacksilk-node` and `systemctl start blacksilk-node`.
+
+**Start-up checks.** Before the node opens its block store it runs the **RandomX
+self-test**: the reference implementation's vectors 1a–1f, hashed in light mode by the
+code that verifies blocks (decisions "Agent 08"). A build that hashes them differently
+would fork, so the node then stops with status 71 and the message `RandomX self-test
+failed: …`. The test builds three RandomX caches one at a time (256 MiB at most) and
+takes a few seconds (5.6 to 11.7 s measured on a 4-core Windows workstation whose CPU was fully loaded by other work, 2026-10-02; less on an idle device). `--skip-randomx-self-test` starts anyway, for
+diagnosis only; it is shown in `/info` (`overrides`). After the replay the node
+re-checks stored proof-of-work hashes (§4.5).
+
 Never expose port 29333 (§11).
 
 **RPC credential.** At every start the node writes a fresh random credential to
@@ -388,14 +419,10 @@ not for sharing:
 - it builds with a plain `cargo build --release`, not `tools/release-build.sh`
   (no path remap, no `check-build-flags.sh`), and its base images are pinned by
   tag, not by digest;
-- it sets no `STOPSIGNAL`, and the node handles only Ctrl-C (SIGINT): `docker stop`
-  sends SIGTERM, which the node, as the container's PID 1 without a handler for
-  it, never sees, and then SIGKILL after 10 s. The node then skips its clean
-  shutdown, so its anchors (`anchors.json`, written only then) are not saved; the
-  address table and bans are saved periodically anyway. Stop it with
-  `docker kill --signal=INT bs` and wait for it to exit. (A plain `kill <pid>`
-  outside Docker also ends the node without the clean shutdown; the systemd unit
-  stops it with SIGINT.)
+- `docker stop` is a clean shutdown: the image sets `STOPSIGNAL SIGINT`, and the node
+  also handles SIGTERM like Ctrl-C (anchors saved, cookie removed). Docker sends
+  SIGKILL after its timeout (10 s by default), which can cut a shutdown short: use
+  `docker stop -t 60 bs`.
 
 ### 4.5 Data directory
 
@@ -413,14 +440,39 @@ write in progress):
 | `rpc.cookie` | the RPC credential, fresh at every start, removed at a clean shutdown (§4.2) | full RPC access while the node runs |
 | `LOCK` | prevents two nodes from sharing the directory | none |
 
-**Permissions.** On Linux and macOS the node creates the directory and its files
-with the process umask; only `rpc.cookie` is created owner-only (0600). The systemd
-unit sets `UMask=0077` (owner-only) and `install-linux.sh` creates
-`/var/lib/blacksilk` with mode 0750. When you start the node by hand, run `umask 077`
-first, or `chmod 700` the data directory, or other local users can read
-`originated.json`, `peers.json` and the rest. On Windows the files inherit the
-directory's permissions: keep the data directory in your profile (the default,
-under `%APPDATA%`).
+**Permissions.** On Linux and macOS the node creates the data directory, and any
+missing parent, owner-only (0700), and its files owner-only (0600), whatever the umask:
+`blocks.dat` (and a `blocks.dat.damaged-<time>`), `LOCK`, `rpc.cookie`, `peers.json`,
+`anchors.json` and `bans.json`. **Exception:** `originated.json` is still written with
+the process umask while the node runs (its writer is not changed yet, docs/STATUS.md);
+the directory's 0700 keeps other local users out of it, and the next start makes it
+0600. At every start the node tightens a data directory and node files that group or
+other users can access (left by an older version under umask 022, or by a copy),
+logging `data directory permissions tightened to owner-only: … (was 644)`. It changes
+only its own files (the names in the table above), and the directory itself only when
+the directory holds nothing else and is not a shared sticky directory such as `/tmp`;
+otherwise it logs `… is readable by other local users (…)` and changes nothing: give
+the node a directory of its own. The systemd unit also sets `UMask=0077`, and
+`install-linux.sh` creates `/var/lib/blacksilk` with mode 0700. On Windows nothing is
+changed: files inherit the access control list of their folder, so keep the data
+directory in your profile (the default, under `%APPDATA%`; on a roaming profile, a
+folder under `%LOCALAPPDATA%`, §12.8). There is no safe-Rust way to set a Windows
+ACL.
+
+**Stored proof of work.** The node trusts the proof-of-work hash stored with each block
+in `blocks.dat` instead of recomputing RandomX for every block at start. Whoever can
+write the data directory could therefore plant blocks with fake proof of work. At every
+start, after the replay, the node recomputes the hashes of 48 stored blocks chosen at
+random (from the operating system's randomness at that start, so whoever wrote the
+file cannot know which) and of the 16 most recently stored blocks, and refuses to
+start if one differs: status 66 and `block store …: stored block … carries a
+proof-of-work hash that its header does not produce …`, naming the data directory.
+The sample costs up to 64 light-mode hashes on up to 4 threads (18 to 23 s measured for 64 of 130 blocks on a 4-core workstation fully loaded by other work, 2026-10-02, and 55 s for all 130 with `--verify-store-pow`; less on an idle device). It
+finds a forged block among the newest ones always, and an older one only with the
+probability of drawing it. `--verify-store-pow` recomputes every stored hash (as long
+as verifying every header of a sync): start once with it after restoring a data
+directory from a backup. Never copy a data directory between devices; let a device
+sync from its peers.
 
 **Logs.** At the default level `info` the log names every peer's IP address on
 connect, disconnect and ban, and the blocks your node mined (`/block` acceptance).
@@ -496,8 +548,16 @@ blacksilk-miner --node 127.0.0.1:29333 --rpc-cookie <node data dir>/rpc.cookie \
 - **Errors:** an unreachable, busy or syncing node, or a template the miner cannot
   use (for example a transaction kind an outdated miner cannot decode), is logged and
   retried every 5 s. The miner exits with status 78 only when the configuration is wrong (a
-  payout address not valid on the node's network, or an unknown network); the systemd
-  unit does not restart it then (`RestartPreventExitStatus=78`).
+  payout address not valid on the node's network, or an unknown network), and 71 when
+  the RandomX self-test fails; the systemd unit does not restart it then
+  (`RestartPreventExitStatus=78 71`).
+- **Self-test:** at start the miner hashes the reference RandomX vectors 1a–1f in light
+  mode, and it checks every dataset it builds against the cache it came from (4 096
+  sampled items and one input hashed in both modes, about one light hash) before it
+  mines with it. A mismatch stops the miner with status 71, which the unit does not
+  restart: this build would mine blocks the node rejects. `--randomx-self-test` runs
+  the vectors in light and full mode and exits (the per-device check, §2.1);
+  `--skip-randomx-self-test` is for diagnosis only.
 - The miner logs its hash rate at info level every minute.
 - Rewards pay a one-time stealth output to your address. They are spendable after 60
   blocks.
@@ -863,6 +923,10 @@ column), `journal.log`, and each process's log.
 | `block store: N block(s) invalidated by the operator` and `operator verdict in force: block … at height …` at start | The operator verdicts in force, one line per block with its full id and height; `--reconsider-block` cancels one. Check that each is a verdict you gave |
 | `WARN operator fork: a heavier chain (known up to height …) is refused only because the operator invalidated block …`, repeated every 10 minutes; `/info` shows `operator_fork` | This node is off the network's chain because of your verdict: its view and its wallets' balances differ from the network's, and `/template` answers `503 operator fork: …`, so the miner stops. Verify the incident through a second channel (row above). When it is over (for example after upgrading), restart once with `--reconsider-block <block id>`. Mine on the fork only deliberately, with `--mine-despite-operator-fork` (docs/blocks.md §9.4) |
 | The miner reports `503 syncing: height …, headers …, tip … s old` | The node has not caught up since it started: bodies are still downloading, or its tip is older than 48 minutes. It serves templates once caught up, and from then on keeps serving them. If every miner of the network has stopped (or the network starts on an old genesis), start the first miner's node once with `--mine-from-stale-tip` (docs/blocks.md §9.4) |
+| The node exits with status 71 and `RandomX self-test failed: RandomX hash test … expected …, computed …` | This build hashes RandomX differently from the reference: it would fork. Do not run it. Rebuild the announced commit with `tools/release-build.sh` and the announced toolchain, run `blacksilk-node --randomx-self-test` again, and report the device (CPU, OS, toolchain) and the line if it still fails (§2.1). `--skip-randomx-self-test` is for diagnosis only |
+| The node exits with status 66 and `block store …: stored block … carries a proof-of-work hash that its header does not produce` | The block store was not written by this node's own verification: copied from another device, restored from an untrusted backup, or altered. Keep the data directory unchanged and report it (docs/testnet-incident-response.md); to run the node, move the directory aside and let it resync from its peers (§4.5) |
+| `systemctl status blacksilk-node` shows `failed` with `start-limit-hit` | The node crashed three times within 15 minutes (status 70 or 101): follow the operator action of §4.2 before `systemctl reset-failed` |
+| `data directory permissions tightened to owner-only: …` at start | The data directory or node files were readable by other users (an older version under umask 022, or a copy); they are owner-only now. If `originated.json` was among them, other local users could read the list of your transactions until now (§4.5) |
 | `SubmitError::Store` in the log, node still running | A single failed block write, undone; the block is downloaded again. Repeated failures stop the node (row above) |
 | `N stored block(s) without a stored parent were not replayed` at start | After a failed write: harmless, the node downloads them again |
 | `N stored block(s) descend from blocks found invalid` at start | Harmless: blocks refused before the restart are refused again |
@@ -1031,11 +1095,13 @@ same time; idle figures are to be re-measured.
   - **Configure** `network_psk_file = "<path>"` under `[p2p]` (or
     `--network-psk-file <path>`) on every trial node.
   - **Check** at every start: the log must show `P2P: network pre-shared key loaded;
-    only nodes with it can connect`. The key is not shown in `/info`, so
-    `check-node.sh` cannot check it. A node with a missing or different key fails
-    the handshake with every trial node (counted as a transport failure, never a ban):
-    a node that reaches no peer has the wrong key first. (A "key loaded" field in
-    `/info` is a listed code change, not built.)
+    only nodes with it can connect`, and `/info` reports `"network_psk_loaded": true`
+    (never the key). On a trial device run `check-node.sh` with
+    `BLACKSILK_REQUIRE_PSK=1` (for example `sudo -u blacksilk BLACKSILK_REQUIRE_PSK=1
+    deploy/scripts/check-node.sh`): it prints `psk_loaded=` and warns and exits 1 when
+    no key is loaded. A node with a missing or different key fails the handshake with
+    every trial node (counted as a transport failure, never a ban): a node that reaches
+    no peer has the wrong key first.
   - **Rotate** after a lost or stolen device, a member leaving, or any doubt: a new
     key, distributed the same way, and every node restarted with it at an agreed time.
   - **Limits.** The key keeps outsiders out; it gives no identity between members, so
@@ -1082,9 +1148,10 @@ same time; idle figures are to be re-measured.
 - **A full or failing disk:** free space or replace the disk, then restart (§9).
 - **Resync from scratch:** stop the node, move `blocks.dat` aside, start again.
 - **Never restore a data directory from another device or an untrusted backup.** At
-  start the node trusts the proof-of-work hashes stored in its own `blocks.dat`
-  (§12.6); a copied store is believed, not re-checked. Restore only your own backup,
-  and otherwise resync from peers.
+  start the node re-checks only a sample of the proof-of-work hashes stored in
+  `blocks.dat` (§4.5), so a copied store with a few forged blocks can pass. Restore
+  only your own backup, start it once with `--verify-store-pow`, and otherwise resync
+  from peers.
 - **A halt that repeats at every start** (`applying block … failed: …. The block passed
   validation`): the stored block fails to apply again because the replay rebuilds the
   same state (blocks.md §8). Keep the data directory and report the block id
@@ -1121,14 +1188,13 @@ always uses a new network id; never reuse one for a different genesis.
   ([evidence](evidence/rx-fullmode-seedswitch-2026-09-29/README.md)); not yet with
   the testnet's 120 s blocks.
 - No seed nodes; peers are configured by hand.
-- No crash-loop containment for exit 70 or a panic (§4.2), and no start-up check of
-  the stored proof of work: the node trusts the PoW hashes in its own `blocks.dat`
-  (the decided sampled check and `--verify-store-pow` are not implemented,
-  [STATUS.md](STATUS.md)). **Never copy a data directory from another device or an
-  untrusted backup to speed up a trial device**; let it sync from its peers.
-- Operator verdicts (`--invalidate-block`) and overrides
-  (`--mine-despite-operator-fork`, `--mine-from-stale-tip`, `--repair-store`) are
-  logged but not shown in `/info`, so `check-node.sh` cannot see them.
+- Crash loops on exit 70 or a panic are limited to 3 starts in 15 minutes by the
+  systemd unit (§4.2), not prevented: the quarantine marker that would name the block
+  is not implemented. Outside systemd nothing limits restarts.
+- The start-up check of the stored proof of work is a sample (§4.5): a store with a
+  few forged older blocks can pass it. **Never copy a data directory from another
+  device or an untrusted backup to speed up a trial device**; let it sync from its
+  peers, or start it once with `--verify-store-pow`.
 - Open P2P defects (the current list is in [STATUS.md](STATUS.md);
   docs/reviews/completion-readiness-2026-09-26.md §2–§3 for the N numbers). Closed
   since that report: N-4 (handshakes count against the limits, `12ce4cb`), N-11
@@ -1198,20 +1264,26 @@ on every device:
   Linux, `ulimit -c 0` in the shell that runs the wallet, and check that
   `systemd-coredump` or `apport` does not keep dumps (the systemd units set no
   `LimitCORE`).
-- **Data directory permissions** (§4.5): on Linux and macOS `umask 077` before a
-  manual start, or `chmod 700` the data directory; on Windows keep it in your
-  profile. The same for wallet files (created 0600 on Unix; on Windows they inherit
-  their folder's permissions).
+- **Data directory permissions** (§4.5): on Linux and macOS the node makes its data
+  directory 0700 and its files 0600 itself (`originated.json` while it runs: §4.5),
+  and `umask 077` before a manual start covers the rest; on Windows keep the data
+  directory in your profile. Wallet files are created 0600 on Unix, and the wallet
+  makes an existing wallet file and its lock file owner-only when it opens them, with
+  a warning; on Windows they inherit their folder's permissions.
 - **No synced folders.** Never keep the data directory, wallet files, password files,
   the network key or logs in OneDrive, Dropbox, iCloud or a similar folder.
   The node's default data directory is under the roaming `%APPDATA%` on Windows: on
   a machine with a roaming profile (a domain account), give `--data-dir` a folder
   under `%LOCALAPPDATA%` instead.
 - **Logs at `info`** (the default), never `debug` on a trial device (§4.5).
-- **A strong wallet password.** The wallet accepts any password, the empty one
-  included, and does not warn about a weak one (refusing an empty password is a
-  listed code change). The wallet file is only as safe as its password against
-  anyone who copies the file (Argon2id slows guessing, it does not stop it).
+- **A strong wallet password.** The wallet refuses an empty password (or one of only
+  spaces) at `create`, `restore` and `change-password`, and warns about a weak one:
+  fewer than 12 characters (the only rule; it does not check dictionaries or reuse).
+  A wallet saved earlier with an empty password still opens, with a warning naming
+  the way out: `blacksilk-wallet -w <file> change-password` (the new password from the
+  prompt, or `BLACKSILK_WALLET_NEW_PASSWORD`). The wallet file is only as safe as its
+  password against anyone who copies the file (Argon2id slows guessing, it does not
+  stop it).
 - **The wallet file outside synced folders.** The wallet writes wherever `-w`
   points. On Windows 11 the Desktop and Documents folders are often synced to
   OneDrive (Known Folder Move): a wallet file there is copied to the cloud.

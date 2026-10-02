@@ -10,7 +10,7 @@ use crate::store::{
 use blacksilk_consensus::{ChainParams, Hash, HeaderChain, HeaderError, PowFunction};
 use blacksilk_tx::params::TxRules;
 use blacksilk_tx::state::MemoryChain;
-use rand_chacha::rand_core::SeedableRng;
+use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
@@ -39,6 +39,112 @@ pub enum OperatorMarked {
     /// operator (`Invalidate`), or it is not (`Reconsider`).
     Unchanged,
 }
+
+/// What [`ChainManager::open_checked`] does with the proof-of-work hashes
+/// stored with the blocks (docs/blocks.md §8; decisions "Agent 01", TM2-5).
+///
+/// A replay trusts the stored hash of a block instead of recomputing
+/// RandomX, so whoever can write the data directory (a copied data
+/// directory, a backup from an untrusted source) could plant blocks with
+/// fake proof of work. The check recomputes stored hashes after the replay
+/// and refuses the store ([`StorePowMismatch`]) if one differs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorePowCheck {
+    /// Trust every stored hash ([`ChainManager::open`]: tests and embedders
+    /// that wrote the store themselves).
+    Trust,
+    /// Recompute `sampled` stored blocks chosen uniformly at random among
+    /// all but the `tip` most recently stored ones, and those `tip` blocks
+    /// (the tip region). The choice comes from the open's `rng_seed` (the
+    /// node draws it from the OS RNG at every start), so whoever wrote the
+    /// store cannot know it.
+    Sample { sampled: usize, tip: usize },
+    /// Recompute every stored hash (the node's `--verify-store-pow`).
+    All,
+}
+
+impl StorePowCheck {
+    /// The node's default (decisions "Agent 01": 48 samples), plus the 16
+    /// most recently stored blocks.
+    pub const NODE_DEFAULT: Self = Self::Sample {
+        sampled: 48,
+        tip: 16,
+    };
+
+    /// Which of `total` stored blocks (in storage order) to check, drawn
+    /// with `rng`.
+    fn select(self, total: usize, rng: &mut ChaCha20Rng) -> Vec<bool> {
+        match self {
+            Self::Trust => vec![false; total],
+            Self::All => vec![true; total],
+            Self::Sample { sampled, tip } => {
+                let mut selected = vec![false; total];
+                let rest = total.saturating_sub(tip);
+                selected[rest..].fill(true);
+                // Floyd's algorithm: `sampled` distinct indices of `0..rest`,
+                // uniform (the modulo bias of a 64-bit draw over a block
+                // count is negligible).
+                for j in rest.saturating_sub(sampled)..rest {
+                    let t = (rng.next_u64() % (j as u64 + 1)) as usize;
+                    let pick = if selected[t] { j } else { t };
+                    selected[pick] = true;
+                }
+                selected
+            }
+        }
+    }
+}
+
+/// A stored proof-of-work hash that the block's header does not produce
+/// ([`StorePowCheck`]): the error inside the `io::Error` of
+/// [`ChainManager::open_checked`]. The block store was not written by this
+/// node's own verification.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorePowMismatch {
+    /// The block's index among the store's block records, and their number.
+    pub index: usize,
+    pub total: usize,
+    pub height: u64,
+    pub id: Hash,
+    /// Stored blocks checked, and how many of them differed.
+    pub checked: usize,
+    pub mismatches: usize,
+}
+
+impl std::fmt::Display for StorePowMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "stored block {} of {} (height {}, id {}) carries a proof-of-work hash that its \
+             header does not produce ({} of {} checked blocks differ): this block store was \
+             not written by this node's verification (copied from another device, restored \
+             from an untrusted backup, or altered)",
+            self.index,
+            self.total,
+            self.height,
+            full_hex(&self.id),
+            self.mismatches,
+            self.checked
+        )
+    }
+}
+
+impl std::error::Error for StorePowMismatch {}
+
+/// One stored hash to recompute: the block's stored index, height and id,
+/// its RandomX key and header, and the stored hash.
+struct PowCheck {
+    index: usize,
+    height: u64,
+    id: Hash,
+    seed: Hash,
+    header: [u8; blacksilk_consensus::HEADER_SIZE],
+    stored: Hash,
+}
+
+/// Most threads the stored-hash check uses (the verification-thread
+/// default, decisions "Agent 10": `min(4, cores)`).
+const POW_CHECK_THREADS: usize = 4;
 
 impl ChainManager {
     /// Appends an operator verdict on block `id` to a store that is not
@@ -88,13 +194,31 @@ impl ChainManager {
 
     /// Opens the chain: replays every stored block, then returns the manager.
     /// `rng_seed` seeds the CSPRNG used for batch-verification weights; the node
-    /// passes 32 bytes from the OS RNG.
+    /// passes 32 bytes from the OS RNG. Every stored proof-of-work hash is
+    /// trusted ([`StorePowCheck::Trust`]); the node opens its store with
+    /// [`Self::open_checked`].
     pub fn open(
+        params: ChainParams,
+        rules: TxRules,
+        pow: Arc<dyn PowFunction>,
+        store: Box<dyn BlockStore>,
+        rng_seed: [u8; 32],
+    ) -> io::Result<Self> {
+        Self::open_checked(params, rules, pow, store, rng_seed, StorePowCheck::Trust)
+    }
+
+    /// [`Self::open`], recomputing the stored proof-of-work hashes `check`
+    /// selects once the store is replayed, and refusing the store if one
+    /// differs (an `io::Error` holding a [`StorePowMismatch`]). The sample
+    /// is drawn from `rng_seed` (on its own stream). The hashes are
+    /// recomputed on up to [`POW_CHECK_THREADS`] threads.
+    pub fn open_checked(
         params: ChainParams,
         rules: TxRules,
         pow: Arc<dyn PowFunction>,
         mut store: Box<dyn BlockStore>,
         rng_seed: [u8; 32],
+        check: StorePowCheck,
     ) -> io::Result<Self> {
         let pow = Arc::new(CachedPow::new(pow));
         let headers = HeaderChain::new(params.clone(), pow.clone());
@@ -170,7 +294,15 @@ impl ChainManager {
             step_delay: None,
         };
         let total = stored.len() as u64;
-        manager.replay(stored)?;
+        let selected = {
+            let mut rng = ChaCha20Rng::from_seed(rng_seed);
+            // Not the batch-weight stream of `manager.rng`.
+            rng.set_stream(1);
+            check.select(stored.len(), &mut rng)
+        };
+        let mut checks = Vec::new();
+        manager.replay(stored, &selected, &mut checks)?;
+        manager.check_stored_pow(check, total as usize, checks)?;
         // A stored block that validates but does not apply stops the node at
         // start-up, as it would live (`halted`); it is not marked invalid.
         if manager.apply_failed.is_some() {
@@ -217,7 +349,15 @@ impl ChainManager {
     /// live only when downloaded again, but a later replay releases the older
     /// copy as soon as the parent is replayed. This can only change which of
     /// two equal-work tips is kept.
-    fn replay(&mut self, stored: Vec<StoredBlock>) -> io::Result<()> {
+    ///
+    /// The stored proof-of-work hash of every block with `selected[index]`
+    /// is collected in `checks`, for [`Self::check_stored_pow`].
+    fn replay(
+        &mut self,
+        stored: Vec<StoredBlock>,
+        selected: &[bool],
+        checks: &mut Vec<PowCheck>,
+    ) -> io::Result<()> {
         let total = stored.len();
         // Blocks waiting for their parent, by parent id: stored indices.
         let mut waiting: HashMap<Hash, Vec<usize>> = HashMap::new();
@@ -246,7 +386,8 @@ impl ChainManager {
                 let (pow_hash, block) = pending.remove(&j).expect("pending block");
                 let id = block.id(self.params.network_id);
                 if invalid_desc.contains(&block.header.prev_id)
-                    || self.replay_one(j, total, pow_hash, block)? == Replayed::InvalidParent
+                    || self.replay_one(j, total, pow_hash, block, selected[j], checks)?
+                        == Replayed::InvalidParent
                 {
                     invalid_desc.insert(id);
                 }
@@ -274,23 +415,38 @@ impl ChainManager {
         Ok(())
     }
 
-    /// Replays one stored block whose parent is known.
+    /// Replays one stored block whose parent is known; with `check`, its
+    /// stored PoW hash goes to `checks`.
     fn replay_one(
         &mut self,
         i: usize,
         total: usize,
         pow_hash: Hash,
         block: Block,
+        check: bool,
+        checks: &mut Vec<PowCheck>,
     ) -> io::Result<Replayed> {
         // The stored PoW hash is trusted under the seed derived from the stored
         // parent, exactly as header validation derives it. A header whose height
         // does not follow its parent's is rejected before PoW (no preload needed,
-        // and `seed_id_for` needs a consistent height).
+        // and `seed_id_for` needs a consistent height). A selected one is
+        // recomputed once the replay is done (`check_stored_pow`).
         let header = &block.header;
         if let Some(parent) = self.headers.header(&header.prev_id) {
             if header.height == parent.height + 1 {
                 let seed = self.headers.seed_id_for(header.prev_id, header.height);
-                self.pow.preload(&seed, &header.to_bytes(), pow_hash);
+                let bytes = header.to_bytes();
+                self.pow.preload(&seed, &bytes, pow_hash);
+                if check {
+                    checks.push(PowCheck {
+                        index: i,
+                        height: header.height,
+                        id: block.id(self.params.network_id),
+                        seed,
+                        header: bytes,
+                        stored: pow_hash,
+                    });
+                }
             }
         }
         let now = block.header.timestamp; // the future-time rule was checked on arrival
@@ -307,6 +463,82 @@ impl ChainManager {
                 format!("stored block {i} of {total} rejected on replay: {e:?}"),
             )),
         }
+    }
+
+    /// Recomputes the stored PoW hashes in `checks` (selected by `check`
+    /// among the store's `total` blocks) on up to [`POW_CHECK_THREADS`]
+    /// threads, and fails with a [`StorePowMismatch`] naming the first
+    /// stored block (by index) whose hash differs. Nothing to do for
+    /// [`StorePowCheck::Trust`] or an empty store.
+    fn check_stored_pow(
+        &self,
+        check: StorePowCheck,
+        total: usize,
+        mut checks: Vec<PowCheck>,
+    ) -> io::Result<()> {
+        if checks.is_empty() {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        checks.sort_unstable_by_key(|c| c.index);
+        let threads = std::thread::available_parallelism()
+            .map_or(1, |n| n.get())
+            .clamp(1, POW_CHECK_THREADS)
+            .min(checks.len());
+        let pow = &self.pow;
+        // Interleaved, so the threads hash under the same keys in turn.
+        let differ: Vec<bool> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..threads)
+                .map(|t| {
+                    let checks = &checks;
+                    s.spawn(move || {
+                        checks
+                            .iter()
+                            .enumerate()
+                            .skip(t)
+                            .step_by(threads)
+                            .map(|(k, c)| (k, pow.recompute(&c.seed, &c.header) != c.stored))
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            let mut differ = vec![false; checks.len()];
+            for h in handles {
+                for (k, d) in h.join().unwrap_or_else(|p| std::panic::resume_unwind(p)) {
+                    differ[k] = d;
+                }
+            }
+            differ
+        });
+        let mismatches = differ.iter().filter(|d| **d).count();
+        if let Some(k) = differ.iter().position(|d| *d) {
+            let c = &checks[k];
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                StorePowMismatch {
+                    index: c.index,
+                    total,
+                    height: c.height,
+                    id: c.id,
+                    checked: checks.len(),
+                    mismatches,
+                },
+            ));
+        }
+        let what = match check {
+            StorePowCheck::All => "all".to_string(),
+            StorePowCheck::Sample { sampled, tip } => {
+                format!("up to {sampled} sampled and the {tip} most recently stored")
+            }
+            StorePowCheck::Trust => "none".to_string(),
+        };
+        log::info!(
+            "block store: {} of {total} stored proof-of-work hashes re-verified ({what}) in \
+             {:.1?} on {threads} thread(s)",
+            checks.len(),
+            started.elapsed()
+        );
+        Ok(())
     }
 
     /// Logs every operator verdict in force once the store is replayed

@@ -134,6 +134,68 @@ pub fn decrypt(file: &[u8], password: &[u8]) -> Result<Vec<u8>, FileError> {
         .map_err(|_| FileError::Decrypt)
 }
 
+/// Passwords shorter than this many characters are weak: accepted for a
+/// new wallet, with a warning ([`check_new_password`]). Argon2id (64 MiB,
+/// three passes) slows each guess, but a short or common password still
+/// falls to an offline search of a copied file (a synced folder, a backup).
+pub const WEAK_PASSWORD_CHARS: usize = 12;
+
+/// Whether `password` is empty in practice: no characters, or only
+/// whitespace. Such a wallet file is readable by anyone who gets it.
+pub fn is_empty_password(password: &[u8]) -> bool {
+    password.iter().all(u8::is_ascii_whitespace)
+}
+
+/// The check of a new wallet password (create, restore, change-password;
+/// the second threat-model round): an empty one is refused (`Err`, the
+/// message for the user); one shorter than [`WEAK_PASSWORD_CHARS`]
+/// characters is accepted with a warning (`Ok(Some(_))`).
+pub fn check_new_password(password: &[u8]) -> Result<Option<String>, String> {
+    if is_empty_password(password) {
+        return Err(
+            "an empty password is refused: the wallet file holds the seed, and a \
+                    file with an empty password gives it to anyone who gets a copy (a synced \
+                    folder, a backup)"
+                .into(),
+        );
+    }
+    let chars = String::from_utf8_lossy(password).chars().count();
+    Ok((chars < WEAK_PASSWORD_CHARS).then(|| {
+        format!(
+            "weak password ({chars} characters, fewer than {WEAK_PASSWORD_CHARS}): anyone who \
+             gets a copy of the wallet file can try passwords offline; use a longer one \
+             (several random words)"
+        )
+    }))
+}
+
+/// Makes an existing wallet file owner-only (0600) on Unix if other users
+/// have any access (a file created before, or copied); returns the mode it
+/// had. A no-op on Windows (the file inherits its directory's ACL) and for
+/// a missing file.
+pub fn tighten(path: &Path) -> std::io::Result<Option<u32>> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let meta = match std::fs::symlink_metadata(path) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let mode = meta.permissions().mode() & 0o7777;
+        if !meta.file_type().is_file() || mode & 0o077 == 0 {
+            return Ok(None);
+        }
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        Ok(Some(mode))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(None)
+    }
+}
+
 /// Opens `path` for writing, creating it if needed. On Unix a new file is
 /// created readable and writable by its owner only (0600), whatever the umask.
 /// On Windows it inherits the directory's access control list.
@@ -246,6 +308,41 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(names, ["w.wallet"]);
+    }
+
+    /// An empty (or whitespace-only) password is refused, a short one
+    /// warned about, a long one accepted silently; characters, not bytes.
+    #[test]
+    fn new_password_policy() {
+        for empty in [&b""[..], b" ", b"\t \n"] {
+            let e = check_new_password(empty).unwrap_err();
+            assert!(e.contains("empty password"), "{e}");
+            assert!(is_empty_password(empty));
+        }
+        let w = check_new_password(b"pw").unwrap().unwrap();
+        assert!(w.contains("weak password (2 characters"), "{w}");
+        assert!(check_new_password("ü".repeat(11).as_bytes())
+            .unwrap()
+            .is_some());
+        assert_eq!(check_new_password("ü".repeat(12).as_bytes()), Ok(None));
+        assert_eq!(check_new_password(b"correct horse battery"), Ok(None));
+        assert!(!is_empty_password(b" x "));
+    }
+
+    /// A wallet file left readable by others is made owner-only.
+    #[cfg(unix)]
+    #[test]
+    fn an_open_wallet_file_is_tightened() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("w.wallet");
+        assert_eq!(tighten(&p).unwrap(), None, "missing");
+        std::fs::write(&p, b"x").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(tighten(&p).unwrap(), Some(0o644));
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(tighten(&p).unwrap(), None, "already private");
     }
 
     #[cfg(unix)]

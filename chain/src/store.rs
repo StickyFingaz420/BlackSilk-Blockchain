@@ -468,17 +468,33 @@ pub struct FileStore {
     fail_undo: bool,
 }
 
+/// `o` creating its file owner-only (0600) on Unix, whatever the umask: a
+/// block store holds the operator's verdicts and the side branches this
+/// node stored (docs/testnet.md §4.5). On Windows the file inherits its
+/// directory's access control list. An existing file keeps its mode (the
+/// node tightens its data directory at start).
+fn owner_only(o: &mut OpenOptions) -> &mut OpenOptions {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+    }
+    o
+}
+
 impl FileStore {
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref().to_path_buf();
         // Read/write rather than append mode: truncating a damaged tail needs write
         // access to the file data (on Windows append-only handles cannot truncate).
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)?;
+        let file = owner_only(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false),
+        )
+        .open(&path)?;
         Ok(Self {
             path,
             file,
@@ -543,10 +559,7 @@ impl FileStore {
         let aside = path.with_extension(format!("dat.damaged-{unix_time}"));
         {
             // `create_new`: never overwrite an earlier set-aside file.
-            let mut f = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&aside)?;
+            let mut f = owner_only(OpenOptions::new().write(true).create_new(true)).open(&aside)?;
             f.write_all(&data[pos..])?;
             // The set-aside copy must be durable before the store loses the bytes.
             f.sync_all()?;
@@ -978,6 +991,19 @@ fn next_valid_record(codec: Codec, data: &[u8], from: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    /// TM2-3 data at rest: a new block store and a set-aside region are
+    /// owner-only whatever the umask.
+    #[cfg(unix)]
+    #[test]
+    fn store_files_are_created_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.dat");
+        drop(super::FileStore::open(&path).unwrap());
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
     use super::*;
     use rand_chacha::rand_core::{RngCore, SeedableRng};
     use rand_chacha::ChaCha20Rng;

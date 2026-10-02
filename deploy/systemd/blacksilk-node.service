@@ -3,13 +3,22 @@ Description=BlackSilk node (testnet)
 Documentation=https://github.com/StickyFingaz420/BlackSilk-Blockchain/blob/main/docs/testnet.md
 After=network-online.target
 Wants=network-online.target
+# Crash-loop containment: at most 3 starts in 15 minutes. A transient failure
+# is restarted; a deterministic one (a panic, exit 101, or exit 70 again at
+# the same block) stops the unit after the third start instead of replaying
+# the whole store every 10 s for ever. The operator reads the log, then
+# `systemctl reset-failed blacksilk-node` (docs/testnet.md §4.2,
+# docs/testnet-incident-response.md).
+StartLimitIntervalSec=900
+StartLimitBurst=3
 
 [Service]
 Type=simple
 User=blacksilk
 Group=blacksilk
 ExecStart=/usr/local/bin/blacksilk-node --config /etc/blacksilk/node.toml
-# Ctrl-C equivalent: lets the node save its peer table.
+# Ctrl-C equivalent: lets the node save its peer table. (The node handles
+# SIGTERM the same way.)
 KillSignal=SIGINT
 TimeoutStopSec=60
 Restart=on-failure
@@ -18,8 +27,10 @@ RestartSec=10
 # validation failed to apply. A restart replays into the same failure, so the
 # node stays stopped for the operator (docs/testnet.md). Exit status 2: a
 # configuration error, or a binary built with test-only code refusing the
-# network (W4-GUARD); a restart cannot help either.
-RestartPreventExitStatus=2 65
+# network (W4-GUARD); 66 (STORE_POW_EXIT_CODE): a stored proof-of-work hash
+# its header does not produce; 71 (RANDOMX_SELF_TEST_EXIT_CODE): this build
+# fails the RandomX self-test. A restart cannot help any of them.
+RestartPreventExitStatus=2 65 66 71
 LimitNOFILE=8192
 
 # Hardening: the node needs its data directory and the network, nothing else.

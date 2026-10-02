@@ -3,7 +3,9 @@
 
 use blacksilk_chain::block::Block;
 use blacksilk_chain::emission::block_reward;
-use blacksilk_chain::manager::{ChainManager, SubmitError, Template};
+use blacksilk_chain::manager::{
+    ChainManager, StorePowCheck, StorePowMismatch, SubmitError, Template,
+};
 use blacksilk_chain::mempool::MempoolError;
 use blacksilk_chain::store::{BlockStore, FileStore, MemoryStore};
 use blacksilk_consensus::merkle::tx_root;
@@ -1384,4 +1386,154 @@ fn the_randomx_key_switch_works_across_sync_restart_and_reorg() {
         "restart after a reorg across the key switch"
     );
     assert_pow_under_expected_seeds(&m, &all_jobs, &reference, "replay after the reorg");
+}
+
+// ------------------------------------------------ stored PoW check (TM2-5)
+
+/// A PoW function that records the heights it hashes and answers the zero
+/// hash, except at `forged`, where it answers another value: a store
+/// written with [`ZeroPow`] then holds one stored hash that its header does
+/// not produce, as a store with one planted block would.
+struct Recheck {
+    forged: Option<u64>,
+    heights: std::sync::Mutex<Vec<u64>>,
+}
+
+impl Recheck {
+    fn new(forged: Option<u64>) -> Arc<Self> {
+        Arc::new(Self {
+            forged,
+            heights: Default::default(),
+        })
+    }
+
+    fn heights(&self) -> Vec<u64> {
+        let mut h = self.heights.lock().unwrap().clone();
+        h.sort_unstable();
+        h
+    }
+}
+
+impl PowFunction for Recheck {
+    fn pow_hash(&self, _: &Hash, header: &[u8]) -> Hash {
+        let height = BlockHeader::from_bytes(header).unwrap().height;
+        self.heights.lock().unwrap().push(height);
+        if Some(height) == self.forged {
+            [0xee; 32]
+        } else {
+            [0; 32]
+        }
+    }
+}
+
+/// A file store of `n` mined blocks written with [`ZeroPow`].
+fn zero_pow_store(dir: &std::path::Path, n: usize) -> std::path::PathBuf {
+    let path = dir.join("blocks.dat");
+    let mut m = open(Box::new(FileStore::open(&path).unwrap()), Arc::default());
+    let mut miner = Miner::new(77);
+    for _ in 0..n {
+        miner.mine_tip(&mut m);
+    }
+    path
+}
+
+fn open_checked(
+    path: &std::path::Path,
+    pow: Arc<Recheck>,
+    seed: [u8; 32],
+    check: StorePowCheck,
+) -> std::io::Result<ChainManager> {
+    let p = params();
+    let rules = TxRules::for_chain(&p);
+    ChainManager::open_checked(
+        p,
+        rules,
+        pow,
+        Box::new(FileStore::open(path).unwrap()),
+        seed,
+        check,
+    )
+}
+
+/// TM2-5 (decisions "Agent 01"): `--verify-store-pow` recomputes every
+/// stored hash and refuses a store with one that differs, naming the block;
+/// the default sample checks 48 blocks chosen from the start-up seed plus
+/// the 16 most recently stored, and always finds a forged block among
+/// those 16. `open` (trust) still starts on such a store, as every replay
+/// did before the check.
+#[test]
+fn the_stored_pow_check_refuses_a_forged_hash() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = zero_pow_store(dir.path(), 100);
+
+    // Trust: the forged block is not noticed.
+    let pow = Recheck::new(Some(50));
+    let m = open_checked(&path, pow.clone(), [1; 32], StorePowCheck::Trust).unwrap();
+    assert_eq!(m.height(), 100);
+    assert!(pow.heights().is_empty(), "nothing recomputed");
+    drop(m);
+
+    // All: every block recomputed, the forged one refused.
+    let pow = Recheck::new(Some(50));
+    let e = open_checked(&path, pow.clone(), [1; 32], StorePowCheck::All)
+        .err()
+        .expect("refused");
+    assert_eq!(pow.heights(), (1..=100).collect::<Vec<u64>>());
+    let mismatch = e
+        .get_ref()
+        .and_then(|e| e.downcast_ref::<StorePowMismatch>())
+        .expect("a StorePowMismatch");
+    assert_eq!((mismatch.height, mismatch.index), (50, 49));
+    assert_eq!(
+        (mismatch.checked, mismatch.mismatches, mismatch.total),
+        (100, 1, 100)
+    );
+    assert!(e.to_string().contains("proof-of-work hash"), "{e}");
+
+    // The default: 48 + 16 blocks, the 16 newest always among them.
+    let pow = Recheck::new(None);
+    open_checked(&path, pow.clone(), [1; 32], StorePowCheck::NODE_DEFAULT).unwrap();
+    let first = pow.heights();
+    assert_eq!(first.len(), 64, "{first:?}");
+    assert!((85..=100).all(|h| first.contains(&h)), "{first:?}");
+    let pow = Recheck::new(None);
+    open_checked(&path, pow.clone(), [2; 32], StorePowCheck::NODE_DEFAULT).unwrap();
+    assert_ne!(
+        pow.heights(),
+        first,
+        "another start-up seed, another sample"
+    );
+
+    // A forged block in the tip region is always found by the default.
+    let pow = Recheck::new(Some(99));
+    let e = open_checked(&path, pow, [1; 32], StorePowCheck::NODE_DEFAULT)
+        .err()
+        .expect("refused");
+    assert!(e.get_ref().unwrap().is::<StorePowMismatch>());
+
+    // Older blocks: found when sampled. Across start-up seeds the sample
+    // reaches every height; with 48 of 84 drawn, a seed that misses height
+    // 10 and one that hits it both exist among the first 64 seeds.
+    let (mut hit, mut miss) = (false, false);
+    for s in 0..64u8 {
+        let pow = Recheck::new(Some(10));
+        match open_checked(&path, pow, [s; 32], StorePowCheck::NODE_DEFAULT) {
+            Ok(_) => miss = true,
+            Err(e) => {
+                assert!(e.get_ref().unwrap().is::<StorePowMismatch>());
+                hit = true;
+            }
+        }
+        if hit && miss {
+            break;
+        }
+    }
+    assert!(hit && miss);
+
+    // A store smaller than the sample is checked in full.
+    let small = tempfile::tempdir().unwrap();
+    let path = zero_pow_store(small.path(), 20);
+    let pow = Recheck::new(None);
+    open_checked(&path, pow.clone(), [1; 32], StorePowCheck::NODE_DEFAULT).unwrap();
+    assert_eq!(pow.heights(), (1..=20).collect::<Vec<u64>>());
 }

@@ -108,6 +108,12 @@ section named in the row.
 | Seed format v1 (27 words, check words, network, birthday), derived hedge keys | Complete but requires further testing; open: F37-11, K7, K8 | `ed82f30`, `7a6fe53`; decisions, "W2-37" |
 | Clock: start-up check and offset monitor (04) | Partially implemented: the node refuses an unreadable clock or one before genesis and warns about a stored tip beyond the FTL (`clock_check`, called by the binary since `680f9f9`); a warn-only estimate of the clock's offset from PoW-verified live blocks (p2p.md §6.1; unit-tested only). Not implemented: `/info` fields, an injectable clock and network-level skew tests, the miner's clock-skew refusal (below) | `node/src/lib.rs` (`the_start_up_clock_check`); `p2p/src/clock.rs` tests; decisions, "Agent 04" |
 | RandomX official vectors including hash test 1f | Complete but requires further testing: the transcribed reference vectors are pinned by tests (light and full mode, `randomx-full` CI job); the reference's instruction-level tests are not ported, and other platforms than x86_64 are untested (no soft-AES or aarch64 leg) | `1319a8d`; [randomx/README.md](../randomx/README.md) |
+| RandomX start-up self-test in node and miner, `--skip-randomx-self-test`, per-device `--randomx-self-test` (08, TM2-3) | Complete but requires further testing: vectors 1a–1f in light mode at every node and miner start (exit 71 on a mismatch, not restarted by the units); every miner dataset checked against its cache before use; full-mode vectors only on request (`blacksilk-miner --randomx-self-test`). Only the passing case runs end to end: no diverging build or platform was available to show a real mismatch (the refusal is shown with altered vectors and items) | `randomx/src/self_test.rs`; `node/tests/node_binary.rs` (`the_node_binary_runs_the_randomx_self_test`); miner tests (`a_dataset_self_test_failure_stops_the_planner`); [testnet.md](testnet.md) §4.2, §5 |
+| Stored proof-of-work check at start-up: 48 random plus the 16 newest stored blocks, `--verify-store-pow` for all (01, TM2-5) | Complete but requires further testing: a sample can miss a forged older block (the probability of drawing it); `--verify-store` (full re-validation, decision "Agent 35") is not built | `chain/src/manager/replay.rs` (`StorePowCheck`); `chain/tests/manager.rs` (`the_stored_pow_check_refuses_a_forged_hash`); `node/tests/node_binary.rs` (`a_store_with_forged_pow_hashes_is_refused`); [testnet.md](testnet.md) §4.5 |
+| Origin data at rest: data directory 0700 and node files 0600 on Unix, too-open ones tightened at start (TM2-3) | Partially implemented: `originated.json` is still written with the process umask while the node runs (its writer, `p2p/src/originated.rs`, belongs to another work item; the helper `p2p::private_file::write_atomic` is ready), so only the directory's 0700 protects it until the next start; the Unix tests run in CI only; Windows relies on the folder's ACL (documented) | `node/src/datadir.rs`; `p2p/src/private_file.rs`; `node/tests/node_binary.rs` (`the_data_directory_and_its_files_are_owner_only`, Unix); [testnet.md](testnet.md) §4.5 |
+| `/info`: network pre-shared key loaded (never the key), operator overrides of the run and verdicts in force; `check-node.sh` warns on them and, with `BLACKSILK_REQUIRE_PSK=1`, on a missing key (F48-9, TM2-2) | Complete but requires further testing | `node/src/lib.rs` (`NodeInfo`); `node/tests/node_binary.rs` (`info_shows_the_psk_state_overrides_and_verdicts`); [testnet.md](testnet.md) §12.3 |
+| Clean stop on SIGTERM, Docker `STOPSIGNAL SIGINT`, systemd start limit (3 starts in 15 minutes) for crash loops (TM2-4, TM2-8) | Complete but requires further testing: the SIGTERM test is Unix-only (CI); the start limit is checked in the unit file, not on a running systemd | `node/src/lib.rs` (`shutdown_signal`); `node/tests/node_binary.rs` (`sigterm_is_a_clean_shutdown`); `node/tests/halt_exit.rs`; [testnet.md](testnet.md) §4.2, §4.4 |
+| Wallet: empty password refused at create, restore and `change-password`, weak (fewer than 12 characters) warned about; existing empty-password wallets open with a warning and `change-password` (TM2 cross-check) | Complete but requires further testing | `wallet/src/file.rs` (`check_new_password`); `wallet/tests/cli.rs`; [testnet.md](testnet.md) §12.8 |
 
 ### 3.1 Decided but not built
 
@@ -118,12 +124,11 @@ row says otherwise.
 
 | Item | Decision | Note |
 |---|---|---|
-| RandomX start-up self-test in node and miner, stop on failure, `--skip-randomx-self-test` | "Agent 08" | P0 for genesis (TM2-3); no flag exists |
-| Sampled PoW check of the stored chain at start-up (48 samples), `--verify-store-pow`, `--verify-store` | "Agent 01", "Agent 35" | replay trusts stored PoW hashes; never copy a data directory between devices ([testnet.md](testnet.md) §12.4) |
+| `--verify-store` (full re-validation of the stored chain on request) | "Agent 35" | the sampled PoW check and `--verify-store-pow` are built (§3) |
 | Template self-check with a coinbase-only fallback | "Agent 01" | |
 | Miner refuses to mine on a clock skew above FTL/2, `--allow-clock-skew` | "Agent 04" | |
 | Park-on-deep-reorg (off for the trial, 720 for a public testnet) | "Agent 02" W-7 | P0 for a public testnet; only a WARN at depth 10 exists. It would not cover the DAA race residual (§2) |
-| F48-5 "validating" quarantine marker, halt naming the block | "Agent 48" | store record type 0x82 reserved only; exit 70 and panics (101) restart without limit under systemd ([testnet.md](testnet.md) §4.2) |
+| F48-5 "validating" quarantine marker, halt naming the block | "Agent 48" | store record type 0x82 reserved only; exit 70 and panics (101) are restarted at most 3 times in 15 minutes under systemd, nothing names the block ([testnet.md](testnet.md) §4.2) |
 | AVX-512 refusal at compile time, Plonky3 backend in `--version` and `/info` | "Agent 27" W4 | |
 | Independent BP+ verifier by a different author | "Agent 16" | `crypto/src/bulletproofs_plus.rs` has an in-module naive verifier (`verify_naive`) that shares the challenge code, so it is not independent |
 | Monero CLSAG conformance harness (`tools/clsag-conformance`) | "Agent 15" W10 | |
@@ -134,7 +139,6 @@ row says otherwise.
 | `MIN_CHAIN_WORK` and headers presync (RX-presync) | "Agent 31", "Agent 50" | P1 for a public testnet |
 | Fair per-candidate `missing_bodies` and per-peer targeted download (02 F-1) | "Agent 02" | P0 for a public testnet |
 | `verifier_id` in `TxRules`; `recent_rejects` keyed by or flushed on the rule domain (RT-3, TM2-5) | "Agent 50", "Threat model round 2" | needed before any second epoch |
-| Operator verdicts, overrides and the pre-shared key shown in `/info` (F48-9) | "Agent 48", "Threat model round 2" | |
 | Log rate limiting (F48-8) | "Agent 48" | peer IPs are logged at `info` |
 | Decoy distribution from the wallet's own index; no spend-time `/distribution` (38 W1, F38-1, F38-6) | "Agent 38" | P0 for a public testnet ([transactions.md](transactions.md) §11.3) |
 | Hedged decoy RNG keyed with the derived hedge key (F38-5, 18 W3) | "Agent 18" | |
@@ -142,7 +146,7 @@ row says otherwise.
 | Young-spend warning (38) | "Agent 38" | the opt-in spend delay is P2 |
 | Wasm-only crypto behind a `contracts-research` feature (W29-5) | "Agent 29" | `crypto/src/lib.rs` declares the modules ungated |
 | `CachedPow` bound (F07-5) | "Agent 07" | P2 |
-| Systemd start limit for crash loops; per-peer header-hash slow start (D1); a `GetTx` of more than 64 ids disconnecting honest peers (reproduce first) | "Threat model round 2" (queued) | |
+| Per-peer header-hash slow start (D1); a `GetTx` of more than 64 ids disconnecting honest peers (reproduce first) | "Threat model round 2" (queued) | |
 
 ## 4. Contracts
 

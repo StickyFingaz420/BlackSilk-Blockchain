@@ -30,6 +30,7 @@ mod config;
 mod dataset;
 mod fpu;
 mod hash;
+pub mod self_test;
 mod superscalar;
 mod vm;
 
@@ -439,6 +440,8 @@ mod tests {
             let started = std::time::Instant::now();
             let dataset = Dataset::new(cache, threads);
             println!("key {k}: dataset built in {:.1?}", started.elapsed());
+            // The miner's start-up check of a dataset (self_test.rs).
+            self_test::check_dataset(cache, &dataset).expect("dataset check");
             let mut full = Vm::full(&dataset);
             for (input, want) in vectors {
                 assert_eq!(hex::encode(full.hash(input)), *want, "key {k}, full mode");
