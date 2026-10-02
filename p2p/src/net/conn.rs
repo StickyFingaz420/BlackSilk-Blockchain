@@ -573,6 +573,15 @@ mod tests {
     use super::*;
     use crate::transport::handshake;
 
+    /// The outbox sizes as specified (docs/p2p.md §10: 64 control messages,
+    /// 32 `Block` frames, two full answers to `GetBlocks`), written as
+    /// numbers so that a change of them is noticed (mutation run E).
+    #[test]
+    fn the_outboxes_hold_64_control_messages_and_32_block_frames() {
+        assert_eq!((OUTBOX, BULK_OUTBOX), (64, 32));
+        assert_eq!(BULK_OUTBOX, 2 * SERVE_BLOCKS_PER_REQUEST);
+    }
+
     /// R8-11: control messages queued behind block frames are written first.
     #[tokio::test]
     async fn control_messages_overtake_queued_block_frames() {

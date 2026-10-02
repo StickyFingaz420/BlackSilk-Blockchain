@@ -4900,6 +4900,43 @@ async fn a_panic_in_the_header_pow_jobs_stops_the_node() {
     assert!(stderr.contains("header task failed"), "{stderr}");
 }
 
+/// The key exchange's own timeout: 5 s on clearnet, 10 s over Tor (an
+/// inbound loopback connection while no onion listener is configured and
+/// private addresses are not allowed is taken for our hidden service). A
+/// connection that sends nothing is closed after it: before 9 s on
+/// clearnet, after 7.5 s over Tor
+/// (mutation run E: no test told the two apart).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_silent_connection_waits_five_seconds_on_clearnet_and_ten_over_tor() {
+    use tokio::io::AsyncReadExt;
+    async fn closed_after(addr: SocketAddr) -> Duration {
+        let mut s = TcpStream::connect(addr).await.unwrap();
+        let t = std::time::Instant::now();
+        let mut buf = [0u8; 64];
+        // The node writes its key-exchange message first; read until EOF.
+        loop {
+            match tokio::time::timeout(Duration::from_secs(30), s.read(&mut buf)).await {
+                Ok(Ok(0)) | Ok(Err(_)) => return t.elapsed(),
+                Ok(Ok(_)) => continue,
+                Err(_) => panic!("not closed within 30 s"),
+            }
+        }
+    }
+    let clearnet = node_with(74, fast_config(&[])).await;
+    let mut cfg = fast_config(&[]);
+    cfg.allow_private = false;
+    let tor = node_with(75, cfg).await;
+    let (c, t) = tokio::join!(closed_after(clearnet.addr), closed_after(tor.addr));
+    assert!(
+        c < Duration::from_millis(7_500),
+        "clearnet: closed after {c:?}"
+    );
+    assert!(
+        t > Duration::from_millis(7_500),
+        "over Tor: closed after {t:?}"
+    );
+}
+
 /// RTW1B-1: the recently-expired guard applies to local origination only.
 /// A node that expired a transaction refuses it from its own wallet (`/tx`,
 /// `Network::submit_tx`) for `RECENTLY_EXPIRED_BLOCKS`, but a peer stemming
