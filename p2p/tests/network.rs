@@ -4630,6 +4630,59 @@ async fn one_outbound_reporter_on_our_best_work_warns_at_once() {
     assert!(a.net.upgrade_warned(), "our best chain's work: at once");
 }
 
+/// RTW1-1: the two upgrade-warning thresholds are inclusive (the boundary
+/// pass of mutation run E). A branch reaching exactly the anti-DoS threshold
+/// (a sibling of our block 156, 144 below the tip) counts toward the warning:
+/// two such outbound reporters warn. A branch reaching exactly our best work
+/// (a sibling of our tip) warns at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_upgrade_warning_thresholds_are_inclusive() {
+    let ours = header_branch(300, 1, 0);
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &ours {
+        g.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let newer = |parent: Hash, nonce| {
+        let t = g.template_on(parent).unwrap();
+        let prev = g.header(&parent).unwrap();
+        BlockHeader {
+            version: HEADER_VERSION + 6,
+            height: t.height,
+            prev_id: parent,
+            timestamp: t.min_timestamp.max(prev.timestamp + 1),
+            difficulty: t.difficulty,
+            tx_root: [0; 32],
+            nonce,
+        }
+    };
+    let at = |h: u64| g.main_id_at(h).unwrap();
+    assert_eq!(
+        blacksilk_chain::sync_policy::anti_dos_threshold(&g),
+        g.work(&at(156)).unwrap()
+    );
+    // At the anti-DoS threshold: two distinct outbound reporters warn.
+    let pow = Arc::new(CountAllPow::default());
+    let a = node_with_pow(72, fast_config(&[]), pow.clone()).await;
+    give_headers(&a, &ours);
+    for (k, nonce) in [60u64, 61].into_iter().enumerate() {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (mut r, mut w) = dialed_raw_peer(&a, &l).await;
+        let cost =
+            headers_and_settle(&a, &pow, &mut r, &mut w, vec![newer(at(155), nonce)], 1).await;
+        assert_eq!(cost, 1, "hashed");
+        assert_eq!(a.net.upgrade_warned(), k == 1, "after {} reporters", k + 1);
+    }
+    // At our best work: one reporter warns at once.
+    let pow = Arc::new(CountAllPow::default());
+    let b = node_with_pow(73, fast_config(&[]), pow.clone()).await;
+    give_headers(&b, &ours);
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (mut r, mut w) = dialed_raw_peer(&b, &l).await;
+    let cost = headers_and_settle(&b, &pow, &mut r, &mut w, vec![newer(at(299), 62)], 1).await;
+    assert_eq!(cost, 1, "hashed");
+    assert!(b.net.upgrade_warned(), "equal to our best work: at once");
+}
+
 /// RTW1-1 (c): an unknown-version header whose RandomX key is neither the
 /// current nor the next key of our best chain is never hashed, so it cannot
 /// make the node build (and evict) a RandomX cache. A pow call is where
