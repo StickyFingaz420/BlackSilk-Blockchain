@@ -2285,6 +2285,43 @@ async fn a_peer_that_leaves_before_its_bad_batch_is_verified_is_still_charged() 
     );
 }
 
+/// A sender that leaves while its batch is hashed, chunk by chunk, stops
+/// costing hashes at the next chunk (mutation run E: the check between
+/// chunks had no test). One thread, so one header per chunk, 300 ms per
+/// hash; the sender leaves after its second header is hashed, out of 40.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_departed_senders_batch_stops_at_the_next_chunk() {
+    struct Slow(std::sync::atomic::AtomicUsize);
+    impl PowFunction for Slow {
+        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            std::thread::sleep(Duration::from_millis(300));
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            [0; 32]
+        }
+    }
+    let pow = Arc::new(Slow(Default::default()));
+    let hashes = || pow.0.load(std::sync::atomic::Ordering::SeqCst);
+    let mut cfg = fast_config(&[]);
+    cfg.pow_threads = 1;
+    let a = node_with_pow(68, cfg, pow.clone()).await;
+    let (mut r, mut w) = raw_peer_at(a.addr, params().network_id, true, 1000).await;
+    assert!(
+        recv_until(&mut r, 10.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    w.send(&Message::Headers(header_branch(40, 120, 0)).encode())
+        .await
+        .unwrap();
+    wait_until("hashing", 30, || hashes() >= 2).await;
+    drop((r, w));
+    wait_until("peer gone", 10, || a.net.stats().peers == 0).await;
+    wait_until("worker done", 30, || a.net.header_queue_len() == 0).await;
+    let n = hashes();
+    assert!(n < 40, "{n} of 40 hashed after the sender left");
+    assert!(a.chain.lock().unwrap().header_height() < 40);
+}
+
 // ------------------------------------------ P2P hardening round 2 (review items)
 
 fn hashed(pow: &CountingPow) -> usize {
