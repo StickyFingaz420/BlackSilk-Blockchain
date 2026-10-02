@@ -1096,3 +1096,27 @@
   - a doc correction (inline panics stop at once);
   - `notify_one` per ticket.
 - **Default `pow_threads` unchanged** (the logical CPU count). It is to be measured on a real multi-core testnet host before any tuning.
+
+## Threat model round 2: consensus and network lenses in (Lead, 2026-10-02; privacy lens pending)
+- **TM2-CONS:** no consensus-rule bug, no x86_64 split path, no inflation path under the assumptions. The gaps are in evidence and in decided-but-unbuilt items.
+- **TM2-NET:** P0 items for the trial and genesis, P1 items before a public testnet.
+- **Started now: W4-MUTAIR (TM2-1, High, freeze blocker).** The first mutation census of the BVM-1 AIR.
+  - The oracle is honest-trace checks plus negative/tamper traces. The circuit-fingerprint pins are excluded: they kill every mutant without proving soundness.
+  - A real under-constrained rule found here is reported, not fixed: fixing it changes CIRCUIT_ID.
+- **Queued after the privacy lens, to be prioritised together:**
+  - golden PX fixture (TM2-2);
+  - RandomX start-up self-test (TM2-3);
+  - park-on-deep-reorg (TM2-4: before a public testnet);
+  - recent_rejects flushed on a rule change, and a non-vacuous fee guard (TM2-5);
+  - supply-audit PX test F40-9, and CLSAG/BP+ verifier fuzzing (TM2-8);
+  - run F: replay.rs, store.rs, zk verify/config/params, randomx/, the fingerprint modules, supply-audit (TM2-9);
+  - D0 and T_g (TM2-10, genesis gate);
+  - GetTx > 64 ids disconnecting honest peers: reproduce first;
+  - PSK required by the trial procedure;
+  - originated.json privacy;
+  - systemd StartLimit;
+  - operator overrides shown in /info;
+  - store PoW sampling at replay;
+  - D1 per-peer hashing slow start, and D2 staller detection (P1).
+- **Owner tasks re-confirmed:** signing key, signed tags, second fingerprint channel.
+- **STATUS.md is stale** (as of e986250). A docs agent will reconcile it with decisions.md.
