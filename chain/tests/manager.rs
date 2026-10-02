@@ -1651,7 +1651,10 @@ fn rt_the_store_check_passes_a_healthy_store_across_the_network_key_switch() {
         .filter(|(h, _)| *h > 2112)
         .map(|(_, s)| *s)
         .collect();
-    assert!(keys.contains(&main_2048) && keys.contains(&side_2048), "both keys used");
+    assert!(
+        keys.contains(&main_2048) && keys.contains(&side_2048),
+        "both keys used"
+    );
     assert!(seen
         .iter()
         .filter(|(h, _)| *h <= 2112)
@@ -1717,7 +1720,10 @@ fn rt_a_forged_tip_stored_first_escapes_the_tip_region() {
         }
     }
     println!("forged tip accepted at {accepted} of 20 start-up seeds");
-    assert!(accepted >= 10, "the tip region did not protect the tip: {accepted}");
+    assert!(
+        accepted >= 10,
+        "the tip region did not protect the tip: {accepted}"
+    );
 }
 
 /// RT-NODEOPS (false refusal, real RandomX): a store holding a reorged-out
@@ -1748,6 +1754,9 @@ fn rt_the_store_check_passes_real_randomx_across_switches_and_a_reorg() {
         StorePowCheck::All,
     )
     .expect("a healthy store passes --verify-store-pow");
-    println!("72 stored hashes over 5 keys recomputed in {:.1?}", started.elapsed());
+    println!(
+        "72 stored hashes over 5 keys recomputed in {:.1?}",
+        started.elapsed()
+    );
     assert_eq!(m.tip_id(), tip);
 }
