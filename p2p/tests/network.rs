@@ -4435,6 +4435,54 @@ async fn an_extended_version_and_unknown_handshake_messages_are_accepted() {
     assert_eq!((p.protocol, p.score), (PROTOCOL_VERSION + 1, 0));
 }
 
+/// Between `Version` and `Verack` at most 8 frames of unknown types are
+/// skipped (`HANDSHAKE_UNKNOWN_FRAMES`, docs/p2p.md §4): with 8 the
+/// handshake completes; a 9th closes the connection unregistered (mutation
+/// run E: the bound had no test).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn at_most_eight_unknown_frames_are_skipped_in_the_handshake() {
+    let a = node(97, &[]).await;
+    let nid = params().network_id;
+    let mut kept = Vec::new();
+    for (unknown, registered) in [(8u8, true), (9, false)] {
+        let s = TcpStream::connect(a.addr).await.unwrap();
+        let (mut r, mut w) =
+            handshake(s, true, nid, &params().genesis_id(), Duration::from_secs(5))
+                .await
+                .unwrap();
+        let v = Version {
+            protocol: PROTOCOL_VERSION,
+            network: nid,
+            nonce: 0x5678 + u64::from(unknown),
+            height: 0,
+            tip: params().genesis_id(),
+            listen: None,
+            relay_txs: true,
+        };
+        w.send(&Message::Version(v).encode()).await.unwrap();
+        assert!(matches!(
+            Message::decode(&r.recv().await.unwrap()).unwrap(),
+            Message::Version(_)
+        ));
+        for k in 0..unknown {
+            w.send(&[0x30, k]).await.unwrap();
+        }
+        w.send(&Message::Verack.encode()).await.unwrap();
+        assert!(matches!(
+            Message::decode(&r.recv().await.unwrap()).unwrap(),
+            Message::Verack
+        ));
+        if registered {
+            send_and_sync(&mut r, &mut w, &[], 7).await;
+            wait_until("registered", 5, || a.net.peers().len() == 1).await;
+            kept.push((r, w));
+        } else {
+            assert!(closes_within(&mut r, 10).await, "{unknown} unknown frames");
+            assert_eq!(a.net.peers().len(), 1, "not registered");
+        }
+    }
+}
+
 /// Mempool conflict query: a relayed transaction that conflicts with a pooled
 /// one (the same output spent) is dropped before verification, and so
 /// before the node-wide PX token for PX transactions (docs/p2p.md §10). It
@@ -4935,6 +4983,37 @@ async fn a_silent_connection_waits_five_seconds_on_clearnet_and_ten_over_tor() {
         t > Duration::from_millis(7_500),
         "over Tor: closed after {t:?}"
     );
+}
+
+/// Our address is advertised at the handshake only on connections that
+/// relay addresses: not to an inbound peer that asked for no transaction
+/// relay (a block-relay-only connection of its own; mutation run E: the
+/// inbound side of the rule had no test). The advertisement is queued
+/// before the answer to a ping sent after `Verack`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn our_address_is_advertised_only_where_addresses_are_relayed() {
+    let mut cfg = fast_config(&[]);
+    cfg.public_address = Some(NetAddr::parse("8.8.4.4:9999").unwrap());
+    let a = node_with(76, cfg).await;
+    let nid = params().network_id;
+    for (relay_txs, advertised) in [(true, true), (false, false)] {
+        let (mut r, mut w) = raw_peer(a.addr, nid, relay_txs).await;
+        w.send(&Message::Ping(3).encode()).await.unwrap();
+        let mut got = false;
+        loop {
+            match recv_until(&mut r, 10.0, |_| true).await.expect("a message") {
+                Message::Addr(entries) => {
+                    let ours = NetAddr::parse("8.8.4.4:9999").unwrap();
+                    got |= entries.iter().any(|e| {
+                        matches!(&e.addr, blacksilk_p2p::addr::EntryAddr::Known(x) if *x == ours)
+                    })
+                }
+                Message::Pong(3) => break,
+                _ => {}
+            }
+        }
+        assert_eq!(got, advertised, "relay_txs {relay_txs}");
+    }
 }
 
 /// RTW1B-1: the recently-expired guard applies to local origination only.
