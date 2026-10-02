@@ -25,15 +25,20 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-/// Zero hash: meets any difficulty. Counts calls to show replay skips PoW.
+/// Zero hash: meets any difficulty. Counts calls to show replay skips PoW,
+/// and records the hot RandomX keys it is given.
 #[derive(Default)]
 struct ZeroPow {
     calls: AtomicUsize,
+    hot: std::sync::Mutex<Vec<Vec<Hash>>>,
 }
 impl PowFunction for ZeroPow {
     fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
         self.calls.fetch_add(1, Ordering::SeqCst);
         [0; 32]
+    }
+    fn set_hot_seeds(&self, seeds: &[Hash]) {
+        self.hot.lock().unwrap().push(seeds.to_vec());
     }
 }
 
@@ -554,6 +559,25 @@ fn locator_and_headers_after() {
     assert!(loc.len() <= 64);
     // Dense near the tip, then sparse.
     assert_eq!(loc[1], blocks[98].id(params().network_id));
+    // Mutation run E: the shape of the locator, by height. Strictly
+    // decreasing (no id twice, genesis once and last), consecutive for the
+    // tip and at least 9 predecessors, then each gap twice the one before,
+    // except the last, which stops at genesis.
+    let heights: Vec<u64> = loc
+        .iter()
+        .map(|id| src.header(id).expect("on the best chain").height)
+        .collect();
+    assert!(heights.windows(2).all(|w| w[0] > w[1]), "{heights:?}");
+    assert_eq!(*heights.last().unwrap(), 0);
+    let gaps: Vec<u64> = heights.windows(2).map(|w| w[0] - w[1]).collect();
+    let dense = gaps.iter().take_while(|&&g| g == 1).count();
+    assert!(dense >= 9, "{heights:?}");
+    let sparse = &gaps[dense..];
+    assert_eq!(sparse[0], 2, "{heights:?}");
+    for w in sparse.windows(2) {
+        let last = std::ptr::eq(&w[1], sparse.last().unwrap());
+        assert!(w[1] == 2 * w[0] || (last && w[1] < 2 * w[0]), "{heights:?}");
+    }
     // A peer that knows up to block 40 gets 41.. from us.
     let peer_locator = vec![blocks[39].id(params().network_id), params().genesis_id()];
     let hs = src.headers_after(&peer_locator, &[0; 32], 2000);
@@ -564,6 +588,24 @@ fn locator_and_headers_after() {
     assert_eq!(src.headers_after(&peer_locator, &[0; 32], 5).len(), 5);
     // Unknown locator: from genesis.
     assert_eq!(src.headers_after(&[[9; 32]], &[0; 32], 2000).len(), 100);
+}
+
+/// docs/p2p.md §6: "the tip, then 10 predecessors one by one, then
+/// exponentially sparser ones". The locator has the tip and 9 predecessors
+/// one by one (heights 100 to 91 of a 100-block chain, then 89, 85, 77, 61,
+/// 29, 0). Found by mutation run E; which one changes is the Lead's call: a
+/// sync-efficiency detail, not a consensus rule (any locator ending at the
+/// genesis finds the fork).
+#[test]
+#[ignore = "docs/p2p.md says 10 predecessors one by one; the locator has 9 (run E finding, for the Lead)"]
+fn the_locator_has_the_tip_and_ten_predecessors_one_by_one() {
+    let (src, _) = mined_source(100, 22);
+    let heights: Vec<u64> = src
+        .locator()
+        .iter()
+        .map(|id| src.header(id).expect("on the best chain").height)
+        .collect();
+    assert_eq!(heights[..11], [100, 99, 98, 97, 96, 95, 94, 93, 92, 91, 90]);
 }
 
 #[test]
@@ -611,6 +653,38 @@ fn pow_jobs_use_seeds_from_the_batch() {
     let mut broken = headers[..3].to_vec();
     broken.swap(1, 2);
     assert!(dst.pow_jobs(&broken).is_none());
+    // Either link alone breaks the chain (mutation run E): the right parent
+    // at a wrong height, or the right height on another parent.
+    let mut skips = headers[..2].to_vec();
+    skips[1].height += 1;
+    assert!(dst.pow_jobs(&skips).is_none(), "height gap");
+    let mut orphan = headers[..3].to_vec();
+    orphan[2].prev_id = [7; 32];
+    assert!(dst.pow_jobs(&orphan).is_none(), "another parent");
+    assert!(dst.pow_jobs(&headers[..3]).is_some());
+}
+
+/// The hot RandomX keys of the best header chain reach the PoW layer when
+/// the manager opens and whenever they change, and only then (mutation run
+/// E: `refresh_hot_seeds`): the genesis key, then, from the height where the
+/// next key comes within the pin window, both keys.
+#[test]
+fn hot_randomx_keys_are_passed_on_when_they_change() {
+    let pow = Arc::new(ZeroPow::default());
+    let mut m = open(Box::<MemoryStore>::default(), pow.clone());
+    let genesis = params().genesis_id();
+    assert_eq!(*pow.hot.lock().unwrap(), vec![vec![genesis]], "at open");
+    let mut miner = Miner::new(25);
+    for _ in 0..2100 {
+        miner.mine_tip(&mut m);
+    }
+    let hot = pow.hot.lock().unwrap().clone();
+    let key = m.headers().main_id_at(2048).unwrap();
+    assert_eq!(hot, vec![vec![genesis], vec![genesis, key]], "changes only");
+    assert_eq!(
+        hot.last().unwrap(),
+        &blacksilk_chain::sync_policy::hot_seeds(m.headers())
+    );
 }
 
 /// A batch whose first header does not sit at its parent's height + 1 gets no
