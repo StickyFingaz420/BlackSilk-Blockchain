@@ -442,6 +442,43 @@ async fn wait_until(what: &str, secs: u64, mut cond: impl FnMut() -> bool) {
     }
 }
 
+/// RT2-TM2P2P diagnostics: [`wait_until`] that prints `diag()` on timeout.
+async fn wait_until_d(
+    what: &str,
+    secs: u64,
+    mut cond: impl FnMut() -> bool,
+    diag: impl Fn() -> String,
+) {
+    log::info!(target: "blacksilk_p2p::rt2", "RT2DIAG wait {what} starts: {}", diag());
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    while !cond() {
+        if tokio::time::Instant::now() > deadline {
+            log::info!(target: "blacksilk_p2p::rt2", "RT2DIAG wait {what} timed out: {}", diag());
+            eprintln!("RT2 DIAG ({what}): {}", diag());
+            panic!("timed out waiting for: {what}");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// The peers of `n` as (id, address, inbound, kind, height).
+fn peer_list(n: &TestNode) -> String {
+    format!(
+        "self {} peers {:?}",
+        n.addr,
+        n.net
+            .peers()
+            .iter()
+            .map(|p| (
+                p.id,
+                p.addr.to_string(),
+                p.inbound,
+                format!("{:?}", p.kind),
+                p.height
+            ))
+            .collect::<Vec<_>>()
+    )
+}
 // ---------------------------------------------------------------- raw peer
 
 type RawReader = FrameReader<ReadHalf<TcpStream>>;
@@ -4676,7 +4713,13 @@ async fn a_block_found_during_the_stem_does_not_make_the_origin_reannounce_first
         let blk = a.chain.lock().unwrap().block_at(h).unwrap();
         give_block(&b, &blk).await;
     }
-    wait_until("relay connected", 5, || a.net.stats().peers == 1).await;
+    wait_until_d(
+        "relay connected",
+        5,
+        || a.net.stats().peers == 1,
+        || peer_list(&a),
+    )
+    .await;
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (mut stem_r, mut stem_w) = dialed_raw_peer(&a, &l).await;
     tokio::time::sleep(Duration::from_millis(300)).await; // an epoch with a stem
@@ -4763,7 +4806,13 @@ async fn after_a_reorganization_the_origin_reannounces_with_everyone() {
         give_block(&c, &blk).await;
     }
     c.mine_n(11, 1);
-    wait_until("relay connected", 5, || a.net.stats().peers == 1).await;
+    wait_until_d(
+        "relay connected",
+        5,
+        || a.net.stats().peers == 1,
+        || peer_list(&a),
+    )
+    .await;
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (mut stem_r, mut stem_w) = dialed_raw_peer(&a, &l).await;
     tokio::time::sleep(Duration::from_millis(300)).await; // an epoch with a stem
@@ -4845,6 +4894,7 @@ async fn after_a_reorganization_the_origin_reannounces_with_everyone() {
 /// height), a block before the relay; on 33a57af at 92, with the relay.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_restarted_origin_never_reannounces_its_held_copy() {
+    init_test_log();
     let dir = temp_data_dir("orig-anchor");
     let mut cfg = fast_config(&[]);
     cfg.data_dir = Some(dir.clone());
@@ -4858,7 +4908,13 @@ async fn a_restarted_origin_never_reannounces_its_held_copy() {
         let blk = a.chain.lock().unwrap().block_at(h).unwrap();
         give_block(&relay, &blk).await;
     }
-    wait_until("relay connected", 5, || a.net.stats().peers == 1).await;
+    wait_until_d(
+        "relay connected",
+        5,
+        || a.net.stats().peers == 1,
+        || peer_list(&a),
+    )
+    .await;
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (mut stem_r, mut stem_w) = dialed_raw_peer(&a, &l).await;
     tokio::time::sleep(Duration::from_millis(300)).await; // an epoch with a stem
@@ -4901,9 +4957,12 @@ async fn a_restarted_origin_never_reannounces_its_held_copy() {
     let nid = params().network_id;
     let (mut spy_b, mut wb) = raw_peer(b.addr, nid, true).await;
     let (mut spy_r, mut wr) = raw_peer(relay.addr, nid, true).await;
-    wait_until("spies registered", 5, || {
-        b.net.stats().peers == 1 && relay.net.stats().peers == 2
-    })
+    wait_until_d(
+        "spies registered",
+        5,
+        || b.net.stats().peers == 1 && relay.net.stats().peers == 2,
+        || format!("b: {}; relay: {}", peer_list(&b), peer_list(&relay)),
+    )
     .await;
     assert_eq!(b.net.submit_tx(tx.clone()).await, Ok(id), "held");
     assert!(!b.mempool_has(&id), "a held copy is not pooled");
@@ -5022,16 +5081,27 @@ async fn a_repeated_id_in_one_gettx_is_answered_once() {
     for _ in 0..10 {
         a.mine_with(0, false);
     }
-    assert!(
-        recv_until(
-            &mut r,
-            5.0,
-            |m| matches!(m, Message::InvTx(ids) if ids == &vec![id])
-        )
-        .await
-        .is_some(),
-        "announced"
-    );
+    let got = recv_until(
+        &mut r,
+        5.0,
+        |m| matches!(m, Message::InvTx(ids) if ids == &vec![id]),
+    )
+    .await;
+    if got.is_none() {
+        eprintln!(
+            "RT2 DIAG (announced {:02x?}): height {} seen {} queued {} pooled {} admitted {:?} {} \
+             stats {:?}",
+            &id[..6],
+            a.height(),
+            a.net.maintenance_seen_height(),
+            a.net.queued_announcements(),
+            a.mempool_has(&id),
+            a.chain.lock().unwrap().mempool().admitted_at(&id),
+            peer_list(&a),
+            a.net.stats()
+        );
+    }
+    assert!(got.is_some(), "announced");
     let unknown = [0x55; 32];
     let mut ids = vec![id; 499];
     ids.push(unknown);
@@ -6417,5 +6487,205 @@ async fn rt_eight_silent_first_announcers_do_not_suppress_an_honest_one() {
     assert!(
         v.mempool_has(&id),
         "an honest announcer is asked eventually"
+    );
+}
+
+// ------------------------------------------------------ RT2-TM2P2P red team
+
+/// A raw peer task that answers pings, records every id the node asked of
+/// it, and answers a request for `tx` with it.
+fn answering_announcer(
+    mut r: RawReader,
+    w: Arc<tokio::sync::Mutex<RawWriter>>,
+    tx: Transaction,
+) -> Arc<Mutex<Vec<Hash>>> {
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let a2 = asked.clone();
+    let id = tx.hash();
+    tokio::spawn(async move {
+        while let Ok(frame) = r.recv().await {
+            let reply = match Message::decode(&frame) {
+                Ok(Message::Ping(n)) => Some(Message::Pong(n)),
+                Ok(Message::GetTx(ids)) => {
+                    let ours = ids.contains(&id);
+                    a2.lock().unwrap().extend(ids);
+                    ours.then(|| Message::Tx(tx.encode()))
+                }
+                _ => None,
+            };
+            if let Some(m) = reply {
+                if w.lock().await.send(&m.encode()).await.is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    asked
+}
+
+/// RT2-TM2P2P (censorship, pre-existing since TM2-17, made longer by the
+/// retry-once of RT-TM2P2P): a request that times out moves to the next
+/// announcer in arrival order; when that announcer has no free request slot
+/// (its own silent junk holds all 16), the id is queued at the BACK of its
+/// wanted queue (up to 2,000 ids) with no request outstanding and no
+/// deadline. An honest announcer queued after it is not asked until that
+/// queue drains: each junk id holds a slot 2 x 30 s (asked, then asked once
+/// more), so 500 junk ids hold the real one for about 500 / 16 x 60 s = 31
+/// minutes, 2,000 for about 2 hours. Two inbound peers suffice: X1
+/// announces first and stays silent; X2 announces second. Expected to FAIL
+/// while the gap exists (the honest announcer should be asked at the first
+/// timeout, about 30 s).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rt2_a_timed_out_request_is_not_parked_behind_a_junk_queue() {
+    init_test_log();
+    let mut v = node(230, &[]).await;
+    v.mine_n(80, 0);
+    let tx = v.payment();
+    let id = tx.hash();
+    let nid = params().network_id;
+    // X2 first fills its own request slots and wanted queue with junk.
+    let (r2, mut w2) = raw_peer_from([127, 0, 7, 12], v.addr, nid, 0)
+        .await
+        .expect("x2");
+    let junk: Vec<Hash> = (0..500u32)
+        .map(|i| {
+            let mut h = [0x77; 32];
+            h[..4].copy_from_slice(&i.to_le_bytes());
+            h
+        })
+        .collect();
+    w2.send(&Message::InvTx(junk).encode()).await.unwrap();
+    let w2 = Arc::new(tokio::sync::Mutex::new(w2));
+    let x2_asked = silent_announcer(r2, w2.clone());
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    // X1 announces the real id first (asked, never answers), then X2, then
+    // an honest announcer.
+    let (r1, mut w1) = raw_peer_from([127, 0, 7, 11], v.addr, nid, 0)
+        .await
+        .expect("x1");
+    w1.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+    let x1_asked = silent_announcer(r1, Arc::new(tokio::sync::Mutex::new(w1)));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    w2.lock()
+        .await
+        .send(&Message::InvTx(vec![id]).encode())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let (hr, mut hw) = raw_peer_from([127, 0, 7, 50], v.addr, nid, 0)
+        .await
+        .expect("honest");
+    hw.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+    let honest_asked = answering_announcer(hr, Arc::new(tokio::sync::Mutex::new(hw)), tx.clone());
+    let t0 = std::time::Instant::now();
+    while t0.elapsed() < Duration::from_secs(75) && !v.mempool_has(&id) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let count = |a: &Arc<Mutex<Vec<Hash>>>| a.lock().unwrap().iter().filter(|x| **x == id).count();
+    eprintln!(
+        "RT2 parked: after {:?}: pooled {}, real id asked of x1 {}, x2 {}, honest {}; x2 asks {}",
+        t0.elapsed(),
+        v.mempool_has(&id),
+        count(&x1_asked),
+        count(&x2_asked),
+        count(&honest_asked),
+        x2_asked.lock().unwrap().len()
+    );
+    assert!(
+        v.mempool_has(&id),
+        "the honest announcer is asked at the first timeout"
+    );
+}
+
+/// RT2-TM2P2P (censorship through Busy): an announcer can make this node
+/// drop its answer for the node's own budgets at will. Before answering it
+/// drains its own PX share (burst 4, 0.2 per second) with `StemTx` copies
+/// of a PX transaction this node already pools: each is charged, then
+/// dropped as known, never penalized. Its answer is then dropped as Busy,
+/// the id goes back to the front of ITS wanted queue, it is paused 5 s and
+/// asked again, indefinitely: no other announcer is asked, and no timeout
+/// runs. Expected to FAIL while the gap exists. PX proving (two
+/// transactions).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "PX proving (4-6 GB); run alone"]
+async fn rt2_an_announcer_kept_busy_does_not_hold_a_transaction() {
+    init_test_log();
+    let mut v = node(232, &[]).await;
+    v.mine_n(80, 0);
+    let pooled = v.px_deposit_nth(5_000_000, 1);
+    let target = v.px_deposit_nth(5_000_000, 2);
+    v.chain
+        .lock()
+        .unwrap()
+        .submit_tx(pooled.clone())
+        .expect("pooled");
+    let id = target.hash();
+    let nid = params().network_id;
+    let (mut xr, xw) = raw_peer_from([127, 0, 6, 11], v.addr, nid, 0)
+        .await
+        .expect("x");
+    let xw = Arc::new(tokio::sync::Mutex::new(xw));
+    xw.lock()
+        .await
+        .send(&Message::InvTx(vec![id]).encode())
+        .await
+        .unwrap();
+    // The busy announcer: drains its PX share before each answer.
+    let x_asked = Arc::new(Mutex::new(0usize));
+    {
+        let (xw, x_asked, pooled, target) =
+            (xw.clone(), x_asked.clone(), pooled.clone(), target.clone());
+        tokio::spawn(async move {
+            while let Ok(frame) = xr.recv().await {
+                match Message::decode(&frame) {
+                    Ok(Message::Ping(n)) => {
+                        let _ = xw.lock().await.send(&Message::Pong(n).encode()).await;
+                    }
+                    Ok(Message::GetTx(ids)) if ids.contains(&target.hash()) => {
+                        *x_asked.lock().unwrap() += 1;
+                        for _ in 0..4 {
+                            let m = Message::StemTx(pooled.encode()).encode();
+                            let _ = xw.lock().await.send(&m).await;
+                            tokio::time::sleep(Duration::from_millis(300)).await;
+                        }
+                        let m = Message::Tx(target.encode()).encode();
+                        let _ = xw.lock().await.send(&m).await;
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+    // The first request is in flight; an honest announcer comes after.
+    wait_until("x asked", 10, || *x_asked.lock().unwrap() >= 1).await;
+    let (hr, mut hw) = raw_peer_from([127, 0, 6, 50], v.addr, nid, 0)
+        .await
+        .expect("honest");
+    hw.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+    let honest_asked =
+        answering_announcer(hr, Arc::new(tokio::sync::Mutex::new(hw)), target.clone());
+    let t0 = std::time::Instant::now();
+    while t0.elapsed() < Duration::from_secs(60) && !v.mempool_has(&id) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let s = v.net.stats();
+    eprintln!(
+        "RT2 busy: after {:?}: pooled {}, x asked {} times, honest asked {}, scores {:?}, \
+         px_global_drops {}",
+        t0.elapsed(),
+        v.mempool_has(&id),
+        x_asked.lock().unwrap(),
+        honest_asked
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|x| **x == id)
+            .count(),
+        v.net.peers().iter().map(|p| p.score).collect::<Vec<_>>(),
+        s.px_global_drops
+    );
+    assert!(
+        v.mempool_has(&id),
+        "an announcer that keeps its answers Busy does not hold the transaction"
     );
 }
