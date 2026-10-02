@@ -4,9 +4,10 @@
 `v3/candidate` branch was merged in `9e422d8` and deleted); current status:
 [STATUS.md](STATUS.md). The genesis is generated at launch, after the protocol
 freeze, with the owner, by the procedure below. The tool (`tools/genesis`) and its
-tests exist; the constants in `consensus/src/params.rs` are still those of the
-retired v2 identity, and no beacon is committed (`ChainParams::genesis_is_final` is
-false), so `--network testnet` refuses to start.
+tests exist. In `consensus/src/params.rs` the network id is the final `0x0001D673`,
+the genesis time `TESTNET_GENESIS_TIME` and `D0` are placeholders, and no beacon is
+committed (`TESTNET_BEACON` is `None`, so `ChainParams::genesis_is_final` is false):
+`--network testnet` refuses to start.
 
 This is internal engineering work, not an audit. Source: the R15 review §4 (the
 procedure), R15-3 and R15-4, and the SX1 cross-review.
@@ -138,21 +139,36 @@ difficulty `D` takes `D` hashes on average, so honest miners find block 1 in
 about T/2. A `D0` that is too high stalls block 1, because LWMA cannot lower it
 until blocks arrive; one that is too low only makes the first blocks fast. The
 rate must be measured on the trial machines with real RandomX (R15 §3 C) before
-the announcement; it is an input, not a constant of the tool.
+the announcement; it is an input, not a constant of the tool. This is a genesis gate
+(F40-12, decisions "Labnet deep reorgs (INV-REORG)"), not done yet
+(docs/STATUS.md). Under the v3 difficulty rule a `D0` 100 times too low takes about
+197 blocks to ramp up.
 
 ## 6. Steps
 
+0. **Preconditions** (each a gate; their status is in docs/STATUS.md, not here):
+   the protocol freeze; `D0` measured on the trial devices (§5); the owner's
+   signing key, a signed release-candidate tag and a second announcement channel
+   (owner tasks: without them every instruction below is authenticated only by the
+   chat channel); a fresh network pre-shared key for the trial, generated and
+   distributed as in docs/testnet.md §12.3 (one key for the launch, never one used
+   in a rehearsal); every operator's device through the endpoint checklist
+   (docs/testnet.md §12.8).
 1. **Freeze** every non-beacon field (release candidate, signed tag): network id,
-   `T_g`, `D0`, `H`, the derivation (this document), with `GENESIS_NONCE` a
-   placeholder and `--network testnet` refusing to start.
+   `T_g`, `D0`, `H`, the derivation (this document), with the testnet's beacon
+   still `None` (`TESTNET_BEACON`) and `--network testnet` refusing to start.
 2. **Announce** ≥ 48 h before `H`'s expected time: this document, the values, the
    confirmation rule (block `H` once it has 6 confirmations) and the fallback (if a
    reorganization replaces `H` before 6 confirmations, use the new block at
    height `H`; nothing else moves).
 3. **Wait for `H + 6`.** Two people, the owner and one operator, independently
-   obtain `H`'s hash from at least two sources and compare.
-4. **Compute,** with a binary from a plain release build of a clean checkout of
-   the release-candidate tag (never one written by `cargo test`, docs/testnet.md
+   obtain `H`'s hash from at least two sources and compare. Every operator
+   recomputes the genesis in step 6 from the announced inputs and the public
+   Bitcoin hash (the tool is public and cheap), so a wrong genesis id in an
+   announcement is caught; the inputs themselves (`T_g`, `D0`, `H`) are only as
+   trustworthy as the channel that announced them, hence the second channel.
+4. **Compute,** with a binary built by `tools/release-build.sh` from a clean
+   checkout of the release-candidate tag (never one written by `cargo test`, docs/testnet.md
    §2), whose `--version` prints `build flags: none`:
    ```sh
    bash tools/release-build.sh -p blacksilk-genesis
@@ -170,17 +186,22 @@ the announcement; it is an input, not a constant of the tool.
    (A rehearsal uses `--rehearsal` and an id of `0x0001D6E0`–`0x0001D6EF`.)
    It prints the nonce derivation, the header, its 100 bytes, the full id and the
    constants to paste. Both people compare the full id.
-5. **Commit** the final values only: the nonce, the beacon hash (for provenance),
-   the pinned genesis id and fingerprint (the committed beacon makes
+5. **Commit** the final values only: the beacon (`TESTNET_BEACON`: Bitcoin height
+   and hash; the nonce is derived from it, there is no nonce to paste), the pinned
+   genesis id and fingerprint (the committed beacon makes
    `ChainParams::genesis_is_final` true), and docs/testnet.md §1 (the network id
    and time; ids and fingerprints are referenced there, never copied).
    `git diff <rc-tag> HEAD` must show only these.
 6. **Operators** verify the tag and the diff, re-run
    `blacksilk-genesis verify ... --expected-id <id>` from the announced inputs,
-   build the node with a plain `cargo build --release` from the tag and check
-   that `blacksilk-node --version` prints `build flags: none`, start the node,
-   check that `/info` shows the full announced `genesis_id`, then
-   start miners.
+   build the node, miner and wallet with `tools/release-build.sh` from the tag
+   (never a plain `cargo build`, whose binaries name the builder's home directory,
+   and never a binary another person built: docs/testnet.md §2), check them with
+   `tools/check-build-flags.sh --strings` and that `blacksilk-node --version` prints
+   `build flags: none`, configure the network pre-shared key (`network_psk_file`,
+   docs/testnet.md §12.3) and the explicit trial peers with `connect_only`, start
+   the node, check that its log shows `network pre-shared key loaded` and that
+   `/info` shows the full announced `genesis_id`, then start miners.
 7. **Retire** the id in the registry. Never reuse it, the release candidate's or
    any rehearsal's. `verify` keeps accepting the launched testnet's genesis
    (a registered id whose genesis is the compiled one); `generate` refuses the id

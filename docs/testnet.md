@@ -58,12 +58,18 @@ the panic locations of registry crates, `C:\Users\<user>\.cargo\registry\...` or
 `/home/<user>/.cargo/...`), which names whoever built a distributed binary and
 makes its bytes depend on the user name. On Windows (MSVC) it also passes
 `-Brepro`, which `.cargo/config.toml` sets for plain builds too, so the linker
-writes no time stamp and no random GUID. A plain `cargo build --release` is still
-a valid build; it only keeps those paths.
+writes no time stamp and no random GUID. A plain `cargo build --release` is a
+valid build for your own machine only: it keeps those paths, so **never share a
+binary built that way** (RT-GUARD: no binary built without the remap may be
+published).
 
-**Only a plain release build (`tools/release-build.sh`, or `cargo build
---release`), from a clean checkout of the announced commit, makes a trial,
-evidence or genesis binary.** Never use a binary that
+**Only `tools/release-build.sh`, from a clean checkout of the announced commit,
+makes a binary that may leave the machine it was built on: a trial, evidence or
+genesis binary, or one given to another operator.** No automated check scans a
+binary for home paths yet (`tools/check-build-flags.sh --strings` looks for
+test-code markers only), so check a binary you share by hand: `grep -aoE '[ -~]{4,}'
+<binary> | grep -i -e "$USER" -e '/home/' -e 'C:\\Users'` must print nothing (the
+check of docs/evidence/repro-windows-2026-10-01). Never use a binary that
 `cargo test` wrote. `cargo test --release` writes the binaries of the packages it
 tests to the same paths in `target/release/`, with the test-only code of the
 dev-dependencies compiled in (cargo unifies their features, such as the
@@ -206,8 +212,8 @@ Limits of the check:
   set `BLACKSILK_BUILD_COMMIT` in the build environment. A non-empty value
   always wins, so a release script can pass, for example,
   `BLACKSILK_BUILD_COMMIT=$(git describe --always --dirty)`. The Dockerfile
-  does not forward the variable yet (it needs an `ARG BLACKSILK_BUILD_COMMIT`
-  before `cargo build`).
+  takes it as a build argument (`--build-arg BLACKSILK_BUILD_COMMIT=...`); the
+  value is self-reported, not checked against the sources.
 - **The miner and wallet have no build script.** They report a commit only when
   `BLACKSILK_BUILD_COMMIT` is set at build time. Otherwise they report
   `unknown`.
@@ -254,10 +260,11 @@ Main options (`blacksilk-node --help` lists all of them):
 | `--seed` / `p2p.seeds` | seeds for discovery (host names allowed, except in proxy-only mode) |
 | `--public-address` | advertise this address; unset means the node is never advertised. **Seed nodes must set it:** peers only ask a seed for addresses and then disconnect (p2p.md §9), so a seed without it is never learned as a peer. **Every node that accepts inbound connections should set it:** other nodes learn only advertised addresses, so without it nobody discovers the node (p2p.md §9, INV-PEERS) |
 | `--p2p-bind`, `--no-listen` | inbound connections |
-| `--proxy`, `--proxy-only` | SOCKS5 (Tor) for outbound connections; proxy-only refuses clearnet |
+| `--proxy`, `--proxy-only` | SOCKS5 (Tor) for outbound connections; proxy-only makes no direct clearnet connection and no DNS lookup, but still dials clearnet addresses through Tor exits (§4.3) |
+| `--onion-inbound` / `[p2p] onion_inbound` | a loopback listener for the node's Tor hidden service, apart from the P2P port; its peers are onion peers with no per-IP limit or ban (§4.3, p2p.md §11) |
 | `--max-outbound`, `--max-inbound` | connection limits (8 / 64) |
 | `--allow-private` | LAN/lab networks only: accept private addresses |
-| `--network-psk-file` / `[p2p] network_psk_file` | private networks only: a file holding a 64-hex-character pre-shared key; only nodes with the same key can connect, and an on-path attacker without it cannot read or inject P2P traffic (p2p.md §3). One leaked key opens the network to its holder; it gives no identity between members |
+| `--network-psk-file` / `[p2p] network_psk_file` | private networks only, and **required for the trial** (§12.3): a file holding a 64-hex-character pre-shared key; only nodes with the same key can connect, and an on-path attacker without it cannot read or inject P2P traffic (p2p.md §3). One leaked key opens the network to its holder; it gives no identity between members |
 | `--rpc-allow-host` / `rpc_allow_hosts` | extra host names the RPC answers to besides loopback and its bound address, e.g. an onion service name (blocks.md §9.1) |
 | `--log` | log filter, e.g. `info,blacksilk_p2p=debug` |
 
@@ -283,6 +290,18 @@ a 65 replays into the same failure. The constants are `HALT_EXIT_CODE` and `POIS
 `node/src/lib.rs`. If the node is started again by hand after a 65, the replay reaches
 the same block at start-up and exits 65 again (`open_exit_code`), so the unit still
 does not loop; report the block the log names (§9).
+
+**A crash loop on 70 or a panic (101) is not contained.** A panic in the chain actor
+exits 70, and a panic on the main thread (for example during the start-up replay)
+exits with Rust's panic status 101. The unit restarts both every 10 s, in effect
+without limit: it does not list 70 or 101 in `RestartPreventExitStatus` and sets no
+`StartLimitIntervalSec`/`StartLimitBurst`, and systemd's default limit (5 starts in
+10 s) never trips with `RestartSec=10`. Every restart replays the whole store. The decided
+"validating" quarantine marker that would name the block a deterministic panic
+recurs on (F48-5) is not implemented (docs/STATUS.md). If the node exits 70 or 101
+more than once, stop the unit (`systemctl stop blacksilk-node`), keep the data
+directory and the log, and report the last block the log names
+(docs/testnet-incident-response.md §4.5).
 Never expose port 29333 (§11).
 
 **RPC credential.** At every start the node writes a fresh random credential to
@@ -305,24 +324,44 @@ removes it at a clean shutdown; every RPC request must carry it (blocks.md §9.1
 ### 4.3 Over Tor
 
 Use `deploy/config/testnet-tor.toml`:
-- all outbound connections go through Tor's SOCKS port;
-- inbound connections arrive through a hidden service that forwards to 127.0.0.1:29334;
-- the node advertises only its `.onion` address.
+- all outbound connections go through Tor's SOCKS port (`proxy_only`);
+- the node has no clearnet listener: inbound connections arrive through a hidden
+  service that forwards to the node's **onion listener** (`onion_inbound =
+  "127.0.0.1:29335"`, `--onion-inbound`), never to the P2P port (p2p.md §11);
+- the node advertises only its `.onion` address (`public_address`, with the
+  service's virtual port 29334).
+
+The matching `torrc` lines are in the file's header (`HiddenServicePort 29334
+127.0.0.1:29335`).
 
 In proxy-only mode seeds must be IP or `.onion` addresses, because resolving a host name
 would use local DNS and reveal the node.
 
-**Known defect with inbound Tor (N-6, open):**
-- Every inbound connection from the hidden service reaches the node from
-  `127.0.0.1`, so the node sees all inbound Tor peers as one IP address.
-- Without `--allow-private` (the testnet default), the per-IP limit
-  (`max_per_ip` = 2) caps inbound Tor connections at **2 in total**.
-- A single misbehaving inbound Tor peer gets `127.0.0.1` banned for **24 hours**,
-  which shuts out **every** inbound Tor peer for that time. (Bans are skipped only for
-  outbound proxied connections, and for loopback when `--allow-private` is set.)
-- `--allow-private` lifts both limits for loopback, but also accepts private LAN
-  addresses; it is meant for lab networks.
-- Outbound connections through the SOCKS proxy are not affected.
+**Inbound Tor and N-6.** Every connection from the hidden service reaches the node
+from `127.0.0.1`. On the onion listener each one is an onion peer of its own: no
+per-IP limit and no ban applies to it (misbehaviour disconnects it), and onion peers
+are capped as a class at a quarter of `max_inbound` (p2p.md §11). A hidden service
+forwarded to the P2P port instead still has the old N-6 defect: all its peers count
+as one IP (`max_per_ip` = 2, so **2 onion peers at most**), and one misbehaving onion
+peer gets `127.0.0.1` banned for **24 hours**, shutting out every onion peer. The
+shipped `testnet-tor.toml` used that setup until 2026-10-02; update a copy made
+before then.
+
+**What Tor mode does not do** (p2p.md §11, §12):
+- **Clearnet peers are still dialled, through Tor exits.** Proxy-only stops direct
+  clearnet connections, not connections *to* clearnet addresses: the node dials any
+  address it knows through the proxy, and a Tor exit relay terminates such a
+  connection. The transport is unauthenticated, so that exit can read and alter the
+  connection like any man in the middle (it reads the transactions this node
+  originates and can eclipse the link). There is no onion-only setting yet: to stay
+  among onion peers, list only `.onion` peers and use `connect_only`.
+- **No stream isolation.** The node offers SOCKS5 without authentication, so Tor may
+  carry several of its connections over one circuit and one exit.
+- **`--proxy` without `--proxy-only` is dual-homed:** the node keeps its clearnet
+  listener on `0.0.0.0`, resolves seed host names with the system DNS, and serves both
+  identities from one address table, mempool and stem pool. A held local transaction
+  is fluffed at its embargo to clearnet inbound peers as well. Use `--proxy-only`
+  for a Tor node.
 
 ### 4.4 Docker
 
@@ -332,14 +371,51 @@ docker run -d --name bs -p 29334:29334 -v bs-data:/data blacksilk
 docker exec bs blacksilk-wallet -w /data/me.wallet create --network testnet
 ```
 
+The image is for your own use, not for trial, evidence or genesis binaries, and
+not for sharing:
+- it builds with a plain `cargo build --release`, not `tools/release-build.sh`
+  (no path remap, no `check-build-flags.sh`), and its base images are pinned by
+  tag, not by digest;
+- it sets no `STOPSIGNAL`, and the node handles only Ctrl-C (SIGINT): `docker stop`
+  sends SIGTERM, which the node, as the container's PID 1 without a handler for
+  it, never sees, and then SIGKILL after 10 s. The node then skips its clean
+  shutdown, so its anchors (`anchors.json`, written only then) are not saved; the
+  address table and bans are saved periodically anyway. Stop it with
+  `docker kill --signal=INT bs` and wait for it to exit. (A plain `kill <pid>`
+  outside Docker also ends the node without the clean shutdown; the systemd unit
+  stops it with SIGINT.)
+
 ### 4.5 Data directory
 
-| File | Content |
-|---|---|
-| `blocks.dat` | append-only block log (format 2: bound to the network id and genesis); the node replays it at start (blocks.md §8) |
-| `peers.json` | address table (p2p.md §9) |
-| `bans.json` | banned IPs and their expiry |
-| `LOCK` | prevents two nodes from sharing the directory |
+Every file the node writes there (a `.tmp` file next to a JSON file is its atomic
+write in progress):
+
+| File | Content | Privacy note |
+|---|---|---|
+| `blocks.dat` | append-only block log (format 2: bound to the network id and genesis), including the operator's `--invalidate-block` and `--reconsider-block` verdicts; the node replays it at start (blocks.md §8) | public chain data, plus your verdicts and the side branches this node stored; it does not mark which blocks this node mined |
+| `blocks.dat.damaged-<time>` | the region `--repair-store` moved aside (§9) | as `blocks.dat` |
+| `originated.json` | **the id of every transaction this node originated** (sent to its RPC `/tx`), with the height it was relayed for, kept about 2 190 blocks (about 3 days on testnet), at most 10 000 (p2p.md §8.1) | **a plaintext list of your own transactions**: anyone who reads it links them to this node, deterministically. Never share it, never put it in a backup or synced folder you do not control, and delete it before you hand the data directory to anyone (after the last entry has expired, the node no longer needs it) |
+| `peers.json` | the address table (p2p.md §9), including the secret key that places addresses into buckets | your contact graph, and the key lets a reader aim addresses at your buckets. Private |
+| `anchors.json` | the two block-relay-only peers of the last session, re-dialled first at start (p2p.md §9); written only at a clean shutdown and deleted when read | stable contacts that recognize this node across restarts. Private |
+| `bans.json` | banned IPs and their expiry | the IPs of peers this node banned. Private |
+| `rpc.cookie` | the RPC credential, fresh at every start, removed at a clean shutdown (§4.2) | full RPC access while the node runs |
+| `LOCK` | prevents two nodes from sharing the directory | none |
+
+**Permissions.** On Linux and macOS the node creates the directory and its files
+with the process umask; only `rpc.cookie` is created owner-only (0600). The systemd
+unit sets `UMask=0077` (owner-only) and `install-linux.sh` creates
+`/var/lib/blacksilk` with mode 0750. When you start the node by hand, run `umask 077`
+first, or `chmod 700` the data directory, or other local users can read
+`originated.json`, `peers.json` and the rest. On Windows the files inherit the
+directory's permissions: keep the data directory in your profile (the default,
+under `%APPDATA%`).
+
+**Logs.** At the default level `info` the log names every peer's IP address on
+connect, disconnect and ban, and the blocks your node mined (`/block` acceptance).
+At `debug` the P2P log also names your own transactions as they enter the stem
+(`local tx … held`, `held local tx … -> stem peer`). Treat logs as private; never run
+a trial device at `debug`, and never keep logs in a synced folder. There is no log
+rate limit (F48-8).
 
 To resync from scratch, stop the node and move `blocks.dat` aside (or delete it).
 
@@ -443,7 +519,8 @@ public launch, run this procedure on at least **3 machines in 2 different networ
 
 1. **Set up.** On every machine: build (§2), then start a node with
    `lab-testnet.toml`. For a real internet test, use `testnet-node.toml` with
-   `--peer` pointing to machine A.
+   `--peer` pointing to machine A. A closed test (the trial) also gives every node
+   the network pre-shared key (§12.3).
 2. **Automatic joining.** Give machines B and C only machine A as a peer.
    - Pass: within 5 minutes both show `peers ≥ 2` in `check-node.sh`.
    - This means they discovered each other through address exchange.
@@ -480,31 +557,89 @@ public launch, run this procedure on at least **3 machines in 2 different networ
 Record the results as an evidence directory under `docs/evidence/` and link it from
 [STATUS.md](STATUS.md) (AUDIT.md is a historical log and is no longer updated).
 
+**Redact before anything enters the repository** (it is public): node logs at `info`
+carry peer IP addresses and onion names; remove them (for example replace every
+IPv4, IPv6 and `.onion` address with a placeholder) and keep the unredacted logs
+off the repository. Never commit `debug` logs of a trial device, any
+`originated.json`, `peers.json`, `anchors.json` or `bans.json`, or wallet files.
+For the supply audit, commit only the chain figures, `totals` and the differences,
+not the per-wallet rows (§7.1).
+
 ### 7.1 Supply audit (closed trial only)
 
-v1 amounts are hidden and spends are unlinkable, so nobody can compute the
-circulating supply from the chain. In a closed trial where **every** wallet is kept,
+v1 amounts are hidden and a ring hides which of its 16 members is spent, so nobody
+can compute the circulating supply from the chain. In a closed trial where **every**
+wallet is kept,
 the sum of all wallets can be compared with the chain's emission: an end-to-end
 inflation check (validation item V14; review R15-7). On a public network it is
 impossible, because not every wallet can be collected.
 
 **Rules for the trial:**
+- **Trial-only seeds.** Every wallet in the trial is created for the trial and never
+  used on any other network, before or after (decisions "Agent 48", F48-2). The
+  final audit hands every wallet to one machine, so a seed that also guards anything
+  else must never enter the set.
 - Every wallet that receives coins is part of the set, **miner payout wallets
   included**. Do not delete, re-create or "clean up" any wallet during the trial. One
   lost wallet makes the check impossible (its value shows as a positive difference).
 - Pay only addresses of wallets in the set.
-- Back up every wallet file (and its password) at the start.
+- Back up every wallet file (and its password) at the start, on the operator's own
+  storage.
 
-**Procedure (at the end, and once in the middle):**
+**Custody (F48-2).** The audit needs every wallet file and its password, which is
+every key and the whole history of the trial. So:
+- **Mid-trial audits are local and per operator.** Nobody collects wallets during
+  the trial. Each operator runs the tool on their own machine, against their own
+  node, over their own wallets only, at the agreed height (procedure A).
+- **The central run happens once, at the end** (procedure B), under the custody
+  rules there.
+- A view-only audit that needs no spend keys is not implemented (P2).
+- The tool itself prints no custody warning; these rules are the only safeguard.
+
+**Procedure A: mid-trial (local, per operator).**
+1. The owner announces an audit height `H` that every node has passed by at least
+   10 blocks.
+2. Each operator builds the tool (step 3 of procedure B) and runs it on their own
+   machine, against their own synchronized node, with their own wallets and
+   **without** `--expect-complete`:
+
+   ```sh
+   blacksilk-supply-audit --node 127.0.0.1:29333 --height <H> \
+       --wallet my-a.wallet --password-file my-a.pw --json > audit-<H>.json
+   ```
+
+3. Exit code `2` (a chain check failed, or the wallets hold more than the chain
+   created) is an alarm: follow docs/testnet-incident-response.md §4.3. Exit code 3
+   cannot occur without `--expect-complete`; a positive difference is expected,
+   since the other operators' wallets are missing.
+4. Each operator keeps the JSON. To check the whole trial, each operator sends the
+   owner only the `height`, `tip`, `chain.generated` and `totals` fields (never a
+   wallet, password, seed or the rest of the report), and the owner checks by hand
+   that every `height`, `tip` and `chain.generated` agree and that the sum of every
+   operator's `totals.v1 + totals.px` equals `chain.generated`. No tool does this
+   sum; an output that two operators' wallets both hold would be counted twice.
+   Totals reveal each operator's holdings to the owner; on a trial of valueless
+   coins this is the accepted cost.
+
+**Procedure B: end of the trial (central, once).**
 1. Stop all miners and wait until every node reports the same `tip`.
-2. Collect every wallet file on one machine with a synchronized node. Passwords go in
-   per-wallet files (one password per file, deleted afterwards) or are typed at the
-   prompts.
+2. Custody: the operators agree in advance on the machine and the person (the
+   custodian) that run the audit, and that machine runs nothing else during it. It
+   must not be the project's build or development workstation, which builds
+   third-party crates and holds the repository credentials (X8 of the second
+   threat-model round; the choice of machine is an owner decision, to be
+   confirmed).
+   Wallet files and passwords travel only over the operators' end-to-end encrypted
+   channel (docs/testnet-incident-response.md §1a) or by hand, never by e-mail or a
+   shared folder. Passwords go in per-wallet files (one password per file) or are
+   typed at the prompts. After the run the custodian deletes every wallet copy and
+   password file and tells the operators so; the operators then retire the trial
+   seeds (rule 1).
 3. Build the tool from the trial commit, then run it with every wallet listed:
 
    ```sh
-   cargo build --release -p blacksilk-supply-audit
-   blacksilk-supply-audit --node 127.0.0.1:29333 \
+   bash tools/release-build.sh -p blacksilk-supply-audit
+   target/release/blacksilk-supply-audit --node 127.0.0.1:29333 \
        --wallet miner-a.wallet --password-file miner-a.pw \
        --wallet miner-b.wallet --password-file miner-b.pw \
        ... \
@@ -515,7 +650,9 @@ impossible, because not every wallet can be collected.
    earlier block (for example the height agreed for the mid-trial check); wallets are
    rewound to it in memory.
 4. Record the JSON output, the node's `/info` and the `git` commit of the build as
-   evidence. The run passes when the exit code is 0 and `total_difference` is 0.
+   evidence. The run passes when the exit code is 0 and `total_difference` is 0. The
+   JSON has one row per wallet (name, balances, pending transactions): commit only
+   the chain figures, `totals` and the differences (§7, redaction).
 
 **What it does.** It syncs each wallet in memory to one block `H` (the node's height by
 default), refuses to compare unless every wallet ends on the same block id as the node,
@@ -740,17 +877,17 @@ height is added first.
 | `px-withdraw --to ADDR --amount A` | PX funds to a v1 address. **The amount is public** |
 | `px-deploy --vault` (or `--program F.elf --budget … --out-words N`, one `--budget` and one `--out-words` per `--program`) | Registers a private contract, paid with v1 funds. `--out-words` is the exact number of public output words each call of that function publishes (contracts.md §5); check it with a dry run of the function before deploying, because a wrong count makes every call invalid |
 | `px-contracts` / `px-records` | Deployed contracts / contract records this wallet holds |
-| `px-vault-lock --contract C --amount A [--secret S] [--deliver-to PXADDR]` | Locks PX funds in the reference vault under a secret; the record goes to the claimer |
-| `px-vault-claim --record CM --secret S [--to PXADDR]` | Claims a vault record privately; the fee comes from PX or v1 funds |
+| `px-vault-lock --contract C --amount A [--timeout H] [--secret-file F \| --secret-prompt] [--deliver-to PXADDR]` | Locks PX funds in the reference vault under a secret; the record goes to the claimer. Without a secret option the wallet derives one (recoverable from the seed). With `--timeout` (a multiple of 16) it prints the record's terms, and only this wallet can refund from that height on |
+| `px-vault-claim --record CM [--secret-file F] [--terms T] [--to PXADDR]` | Claims a vault record privately (the secret is asked for unless given); a timed record needs its terms and must be claimed before the timeout. The fee comes from PX or v1 funds |
+| `px-vault-refund --record CM [--to PXADDR]` / `px-vault-recover` / `px-vault-secret --record CM` | Refunds a timed lock from its timeout on / finds this wallet's timed locks again after a restore from the seed / shows a lock's secret |
 | `px-share --record CM --to PXADDR` / `px-import --share HEX` | Shares a contract record off chain / imports one |
 
 Contract tooling is described in px.md §13. **The reference vault is a demonstration
-contract, not production-ready and not trustless.** It is not an HTLC. The vault
-program supports a timeout and refund (contracts.md §8), but `px-vault-lock` sets no
-timeout, so the wallet's locks have no refund path; the locker also knows the secret
-(and can claim), and it is not a trustless swap. A
-record the locker delivers to someone else is kept only in the locker's wallet file
-and is not recovered by restoring from the seed (px.md §13.4).
+contract, not production-ready and not trustless.** It is not an HTLC: the locker
+also knows the secret (and can claim), so it is not a trustless swap. A lock without
+`--timeout` has no refund path. The timeout, the refund and seed recovery of timed
+locks are described in contracts.md §8 and px.md §13.4; a secret given by the user
+(`--secret`, `--secret-file`, `--secret-prompt`) is not recoverable from the seed.
 
 Every PX transaction pays exactly the standard PX fee, a consensus rule:
 `2 × MAX_PX_TX_SIZE` = 8 912 896 atomic units (≈ 0.089 BLK). So fees do not
@@ -782,12 +919,22 @@ shape is not yet measured (aggregation-study.md).
   then `/tx`) and which transaction came from your IP (blocks.md §9). The wallet has no
   Tor or TLS support: its RPC connection is plaintext HTTP, so anyone on the path sees
   the same.
-- **P2P encryption is unauthenticated.** It protects against passive observers only
-  (p2p.md §1). An active man in the middle can also inject invalid messages under the
-  peer's address, so that the victim bans the impersonated peer's IP for 24 hours, and
-  can eclipse a node whose connections it controls.
-- **Treat the testnet wallet file and its 27 seed words like real keys.** Keys reused on a
-  future mainnet would be exposed.
+- **P2P encryption is unauthenticated.** It hides content from passive observers
+  only (p2p.md §1). An active man in the middle reads the transactions your node
+  originates, can inject invalid messages under the peer's address, so that the victim
+  bans the impersonated peer's IP for 24 hours, and can eclipse a node whose
+  connections it controls. A closed network's pre-shared key (`network_psk_file`)
+  stops an outsider in the middle; the trial requires one (§12.3).
+- **Your link shows what your node originates.** Frames are not padded, so an
+  observer of your node's own link (your ISP, or your Tor guard) can tell from sizes
+  and timing when your node sends a transaction it did not first receive: a v1
+  transaction as well as a PX one (§12.7).
+- **Treat the testnet wallet file and its 27 seed words like real keys.** Seed format
+  v1 binds the network, so the same words give unrelated keys on another network
+  (`a_seed_gives_unrelated_keys_on_each_network`); still, never use a trial seed for
+  anything else (§7.1).
+- **Keep the data directory private** (§4.5): `originated.json` lists your own
+  transactions.
 
 ## 12. Operator requirements and procedures
 
@@ -821,7 +968,13 @@ same time; idle figures are to be re-measured.
 - The node never adjusts its clock from peers. It logs a WARN when recent blocks'
   timestamps suggest its clock is more than 120 s off, and an ERROR past 360 s
   (p2p.md §6.1). The estimate is only a hint: a slow-looking network can also mean
-  slow miners' clocks or delayed blocks. Check the clock when you see it.
+  slow miners' clocks or delayed blocks. Check the clock when you see it. The
+  estimate is in the log only, not in `/info`.
+- At start the node refuses (exit status 2) a clock it cannot read or one before the
+  genesis time, and warns when its stored tip is more than 360 s ahead of the clock
+  (`clock_check`, test `the_start_up_clock_check`). The miner does not check the clock:
+  the decided refusal to mine on a skew above half the future-time limit
+  (`--allow-clock-skew`, decisions "Agent 04") is not implemented.
 - A clock jump on the device with most of the hash rate is the worst case: its blocks
   stamped in the future are refused by everyone else, it keeps mining on them, and when
   real time reaches their stamps the others may reorganize deeply (dossier 04 P4).
@@ -839,6 +992,45 @@ same time; idle figures are to be re-measured.
 
 ### 12.3 Network configuration
 
+- **Network pre-shared key: required for the trial** (decisions "Agent 48", F48-1).
+  Without it an on-path attacker between two trial devices reads every transaction
+  either device originates and can get honest devices banned (§11, p2p.md §1). Every
+  trial node, every rehearsal and the genesis start run with it:
+  - **Generate** one key per network (the trial and each rehearsal get their own),
+    once, on the owner's machine:
+    - Linux or macOS: `(umask 077; openssl rand -hex 32 > trial.psk)`.
+    - Windows PowerShell: `$b = New-Object byte[] 32;
+      [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b);
+      [IO.File]::WriteAllText("$PWD\trial.psk", -join ($b | % { $_.ToString('x2') }))`.
+      Do not write it with `>` or `Out-File` in Windows PowerShell 5.1: they write
+      UTF-16, which the node refuses.
+    - The file holds exactly 64 hexadecimal characters (surrounding whitespace is
+      ignored); an all-zero key is refused (`NetworkPsk::load`, `p2p/src/transport.rs`).
+  - **Distribute** it only over the operators' end-to-end encrypted channel
+    (docs/testnet-incident-response.md §1a) or by hand, and never in the same message
+    or channel that carries the release announcement (the commit id and
+    fingerprints): one compromised channel must not give an attacker both the key and
+    the build to run with it. Never by e-mail, an issue, a plain chat, a shared folder
+    or a commit.
+  - **Store** it outside the data directory and outside synced folders: on Linux and
+    macOS mode 0600 (the node warns about a file its group or others can read), on
+    Windows inside your profile.
+  - **Configure** `network_psk_file = "<path>"` under `[p2p]` (or
+    `--network-psk-file <path>`) on every trial node.
+  - **Check** at every start: the log must show `P2P: network pre-shared key loaded;
+    only nodes with it can connect`. The key is not shown in `/info`, so
+    `check-node.sh` cannot check it. A node with a missing or different key fails
+    the handshake with every trial node (counted as a transport failure, never a ban):
+    a node that reaches no peer has the wrong key first. (A "key loaded" field in
+    `/info` is a listed code change, not built.)
+  - **Rotate** after a lost or stolen device, a member leaving, or any doubt: a new
+    key, distributed the same way, and every node restarted with it at an agreed time.
+  - **Limits.** The key keeps outsiders out; it gives no identity between members, so
+    any holder can sit in the middle of other members' connections. It does not hide
+    traffic sizes and timing from a link observer (§12.7), and an outsider can still
+    recognize a BlackSilk node by its handshake (p2p.md §1).
+- **Closed to outsiders.** The trial runs with explicit peers and `connect_only`
+  (decisions "Agent 40"), so nodes dial only the listed trial devices.
 - **Peers:** there are no seed nodes; the built-in list is empty
   (`node/src/config.rs`). Give every node an explicit list: `--peer <ip>:29334` for at
   least one, better two, other trial devices. Addresses are then exchanged between
@@ -851,7 +1043,7 @@ same time; idle figures are to be re-measured.
   one IP, and a ban of that IP (24 hours, after misbehaviour) shuts out every device
   behind it (bans are per exact IP, N-5). Prefer outbound `--peer` connections from
   such devices, and spread the trial over different networks.
-- **Tor:** see §4.3, including the inbound defect N-6.
+- **Tor:** see §4.3 (the onion listener, and what Tor mode does not do).
 - **Wallets:** run each wallet against its own node on the same machine. The wallet's
   RPC connection is plaintext HTTP with no Tor or TLS support.
 
@@ -876,6 +1068,10 @@ same time; idle figures are to be re-measured.
   data directory, then start once with `--repair-store` (§9, blocks.md §8).
 - **A full or failing disk:** free space or replace the disk, then restart (§9).
 - **Resync from scratch:** stop the node, move `blocks.dat` aside, start again.
+- **Never restore a data directory from another device or an untrusted backup.** At
+  start the node trusts the proof-of-work hashes stored in its own `blocks.dat`
+  (§12.6); a copied store is believed, not re-checked. Restore only your own backup,
+  and otherwise resync from peers.
 - **A halt that repeats at every start** (`applying block … failed: …. The block passed
   validation`): the stored block fails to apply again because the replay rebuilds the
   same state (blocks.md §8). Keep the data directory and report the block id
@@ -907,39 +1103,117 @@ always uses a new network id; never reuse one for a different genesis.
   or `auto` after a failed allocation) mines in light mode (much slower) for the 3
   to 20 minutes of the dataset build (§5). The prebuild
   and the light-mode bridge are tested with a short epoch (16 blocks, lag 4; `miner`
-  tests); a full-mode miner has not yet crossed 2113 with the network's parameters.
+  tests). A full-mode miner with `--prebuild auto` crossed the first key switch (2113)
+  once, on one machine, on regtest
+  ([evidence](evidence/rx-fullmode-seedswitch-2026-09-29/README.md)); not yet with
+  the testnet's 120 s blocks.
 - No seed nodes; peers are configured by hand.
-- Open P2P defects (docs/reviews/completion-readiness-2026-09-26.md §2–§3; the
-  current list is in [STATUS.md](STATUS.md)). N-4 (unbounded pre-handshake
-  connections, fixed in `12ce4cb`: handshakes count against the limits) and N-11
-  (fixed in `54c4827`: invalid signatures are penalized when every ring member is at
-  least 60 blocks deep, p2p.md §10) are closed. Still open:
-  - N-5: bans are per exact IP, so they are easy to evade and hit every device behind
-    one NAT;
-  - N-6: inbound Tor peers share `127.0.0.1` (§4.3);
-  - N-9: no eviction of inbound peers when the inbound slots are full;
+- No crash-loop containment for exit 70 or a panic (§4.2), and no start-up check of
+  the stored proof of work: the node trusts the PoW hashes in its own `blocks.dat`
+  (the decided sampled check and `--verify-store-pow` are not implemented,
+  [STATUS.md](STATUS.md)). **Never copy a data directory from another device or an
+  untrusted backup to speed up a trial device**; let it sync from its peers.
+- Operator verdicts (`--invalidate-block`) and overrides
+  (`--mine-despite-operator-fork`, `--mine-from-stale-tip`, `--repair-store`) are
+  logged but not shown in `/info`, so `check-node.sh` cannot see them.
+- Open P2P defects (the current list is in [STATUS.md](STATUS.md);
+  docs/reviews/completion-readiness-2026-09-26.md §2–§3 for the N numbers). Closed
+  since that report: N-4 (handshakes count against the limits, `12ce4cb`), N-11
+  (invalid signatures are penalized when every ring member is at least 60 blocks
+  deep, p2p.md §10), N-6 (the onion listener, §4.3) and N-9 (inbound eviction,
+  p2p.md §9). Still open:
+  - N-5: a ban covers one IPv4 address or one IPv6 /64, so it is easy to evade with
+    many addresses and hits every device behind one NAT;
   - N-12: memory growth.
-- Peers are not authenticated (§11).
+- Peers are not authenticated (§11); the trial closes this with the pre-shared key
+  (§12.3).
 
 ### 12.7 What the trial can and cannot show
+
+**The trial cannot demonstrate privacy.** With seven miners and a handful of PX
+users, the miners own almost every output, so colluding operators can rule out
+decoys, and a PX pool of a few deposits makes matching bridge-in to bridge-out
+amounts trivial. Its evidence is about function and liveness only: no anonymity or
+origin-privacy figure may be derived from trial data or claimed from it.
 
 - **Anonymity:** v1 ring anonymity among only seven participants who all mine is not
   representative of a production anonymity set; the trial tests mechanics, not
   anonymity. The same holds for the PX pool, whose anonymity set is only the records
   the trial creates.
-- **Origin of a PX transaction.** A PX transaction is about 2.2 MB (a transfer) to
-  2.7 MB (a vault call); a v1 transfer is a few kB. No transport hides a 2.2 MB upload
-  from the origin's ISP, or from its Tor guard: an observer of a node's own link sees
-  that it sent a PX transaction, even over Tor. Dandelion++ helps only against spy
-  nodes, and on PX paths its protection is weaker than on v1 paths (an origin is named
-  first about 3.6 times as often in a simulation, dossier 33 §3.4). Padding does not
-  remove the PX-versus-v1 distinction; smaller proofs would (dossier 33 §3.7,
-  docs/reviews/phase2-2026-09-27/research/33-dandelion-network-privacy.md).
+- **Origin against a link observer, v1 and PX.** Frames are not padded
+  (`FrameWriter::send`, `p2p/src/transport.rs`), so an observer of a node's own link
+  (its ISP, or its Tor guard) sees the size and timing of every message. A node that
+  sends a transaction-sized message no peer sent it first has originated a
+  transaction, **v1 as well as PX**: on a clearnet link the origin is visible for
+  both. A PX transaction is about 2.2 MB (a transfer) to 2.7 MB (a vault call), which
+  no transport hides, even over Tor; a v1 transfer is a few kB, a few Tor cells,
+  which makes it a weaker signal over Tor but not a hidden one. Dandelion++ helps only
+  against spy nodes, and on PX paths its protection is weaker than on v1 paths (an
+  origin is named first about 3.6 times as often in a simulation, dossier 33 §3.4).
+  Padding does not remove the PX-versus-v1 distinction; smaller proofs would (dossier
+  33 §3.7, docs/reviews/phase2-2026-09-27/research/33-dandelion-network-privacy.md).
+- **Origin against spy nodes.** Not tested: there is no privacy regression suite yet
+  ([STATUS.md](STATUS.md)), and a trial of seven devices has too few nodes for any
+  anonymity figure. The trial makes no origin-privacy claim.
 - **Security:** the trial shows operation, not security. The security assumptions are
   listed in docs/reviews/assumptions.md; the zero-knowledge claim is statistical and
   conditional, and its remaining assumptions are in docs/reviews/zk-coverage.md.
 
-### 12.8 Troubleshooting
+### 12.8 Endpoint checklist (every trial device, before the trial)
+
+The node and wallet keep keys, seed words, passwords and the list of your own
+transactions in memory and in files. BlackSilk cannot lock memory (`mlock` needs
+`unsafe`, which the project rules out), so what the operating system copies out of
+memory is protected only by the device's own settings (F48-7). Before the trial,
+on every device:
+
+- **Windows Recall off** (Settings → Privacy & security → Recall & snapshots), on
+  devices that have it: its snapshots capture the screen, including seed words.
+- **Clipboard history and clipboard sync off** (Windows: Settings → System →
+  Clipboard; also any clipboard manager or cross-device sync). Seed words, addresses,
+  passwords and the RPC cookie pasted once stay there.
+- **Full-disk encryption on** (BitLocker or device encryption, LUKS, FileVault), so
+  a lost or seized device does not give up the wallet file, `originated.json` or
+  the logs.
+- **Swap and hibernation.** The page file and the hibernation file can hold process
+  memory, keys included. Use encrypted swap (it is covered by full-disk encryption
+  on the system drive), and turn hibernation off (`powercfg /hibernate off` on
+  Windows) or accept the risk.
+- **Crash dumps off for the wallet and the node.** Windows Error Reporting can keep a
+  full memory dump: disable local dumps (`HKLM\SOFTWARE\Microsoft\Windows\Windows
+  Error Reporting\LocalDumps` absent, or `DumpType` 0) and do not send reports. On
+  Linux, `ulimit -c 0` in the shell that runs the wallet, and check that
+  `systemd-coredump` or `apport` does not keep dumps (the systemd units set no
+  `LimitCORE`).
+- **Data directory permissions** (§4.5): on Linux and macOS `umask 077` before a
+  manual start, or `chmod 700` the data directory; on Windows keep it in your
+  profile. The same for wallet files (created 0600 on Unix; on Windows they inherit
+  their folder's permissions).
+- **No synced folders.** Never keep the data directory, wallet files, password files,
+  the network key or logs in OneDrive, Dropbox, iCloud or a similar folder.
+  The node's default data directory is under the roaming `%APPDATA%` on Windows: on
+  a machine with a roaming profile (a domain account), give `--data-dir` a folder
+  under `%LOCALAPPDATA%` instead.
+- **Logs at `info`** (the default), never `debug` on a trial device (§4.5).
+- **A strong wallet password.** The wallet accepts any password, the empty one
+  included, and does not warn about a weak one (refusing an empty password is a
+  listed code change). The wallet file is only as safe as its password against
+  anyone who copies the file (Argon2id slows guessing, it does not stop it).
+- **The wallet file outside synced folders.** The wallet writes wherever `-w`
+  points. On Windows 11 the Desktop and Documents folders are often synced to
+  OneDrive (Known Folder Move): a wallet file there is copied to the cloud.
+- **Passwords in the environment.** `BLACKSILK_WALLET_PASSWORD` is convenient for scripts, but other
+  processes of the same user can read a process's environment, and it is never wiped:
+  type the password at the prompt on a trial device. Give vault secrets with
+  `--secret-file` or `--secret-prompt`, not `--secret` (the wallet warns).
+- **Seed words.** `blacksilk-wallet -w <file> seed` prints the 27 words only after you type
+  `show`. Write them on paper; do not photograph them or keep them in a file, and
+  clear the terminal's scrollback afterwards.
+- **Do not share the data directory, wallet files or logs** with anyone, the project
+  included (docs/testnet-incident-response.md §5 lists what an incident report may
+  contain).
+
+### 12.9 Troubleshooting
 
 See §9, and docs/testnet-incident-response.md for anything that looks like a
 consensus, security or privacy problem.

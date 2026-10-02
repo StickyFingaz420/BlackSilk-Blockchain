@@ -893,10 +893,14 @@ secure or perfectly zero-knowledge; it is internal engineering work, not an audi
 | | Transaction time, size, shape; the fee (the same for every PX transaction) |
 
 **Bridge amounts are a linking vector:** an unusual deposit amount followed by an equal
-withdrawal. Wallet policy:
-- bridge in standard denominations;
+withdrawal. User guidance (px.md §12), which the wallet does **not** enforce: it
+accepts any amount and only prints a reminder at `px-deposit` and `px-withdraw`:
+- bridge in round amounts (the wallet has no denomination list or helper);
 - bridge out after delays;
 - never bridge in and out the same amount.
+
+On a network with few PX users (any trial) none of this hides the link: a handful
+of deposits makes matching deposits to withdrawals easy whatever the amounts.
 
 The alternative, a confidential bridge (DR-5), would hide the amounts but give up
 containment (R7) at the moment the ZK system is youngest. The recommendation is to keep

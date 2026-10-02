@@ -272,9 +272,15 @@ output has exactly one key image, and a second spend of the same output produces
   overflowing encodings invalidate the transaction.
 - `point`: 32 bytes, §1.1. `scalar`: 32 bytes, §1.1.
 - There are **no optional fields, no free-form `extra` field, no `unlock_time` and no
-  payment IDs** [Δ Monero]. Everything that can vary between wallets is either fixed by
-  consensus or absent. In Monero, `extra` and `unlock_time` are the largest sources of
-  wallet fingerprinting and can carry arbitrary data.
+  payment IDs** [Δ Monero]. No field exists for wallet-chosen data. In Monero, `extra`
+  and `unlock_time` are the largest sources of wallet fingerprinting and can carry
+  arbitrary data. **Not everything is fixed, though:** the encrypted per-output fields
+  (`view_tag`, `enc_amount`, `enc_anchor`, about 25 bytes per output) and the PX record
+  ciphertexts (1,241 bytes each, whose leading `R` is not checked to be a valid point)
+  are checked for length only. Consensus cannot check that they look random, so a
+  non-reference wallet could fill them with structure that fingerprints it, or use
+  them as a covert channel. The conformance rule for any wallet: these fields must be
+  the outputs of the specified encryption with fresh randomness (§3, px.md §6).
 
 Decoding is strict: every field is range-checked while decoding, trailing bytes are
 invalid, and a transaction has exactly one valid encoding.
@@ -913,10 +919,20 @@ after it was mined:
 
 The test requires the young fraction to be within 0.05 of the target, and the
 newest-member fraction to be at most 0.05 above it. **Limits:**
-- The real input spent 12 blocks after receipt is *still* the newest member in about
-  half the rings. Even at the target it is newest in most rings, because the gamma
-  distribution puts little mass 10–12 blocks deep. The fix restores the distribution;
-  it does not beat it.
+- These figures hold **only for this young (3-day) chain.** There the picker drops
+  every draw older than the chain, about 60 % of the gamma mass, which inflates the
+  young draws about 2.5 times. On a **mature chain** with a steady output rate, a real
+  input spent 12 blocks after receipt is the newest ring member in about **84–89 %**
+  of rings, so guessing the newest member identifies it that often (decisions "Agent
+  38" W9; dossier 38 §2.4, docs/reviews/phase2-2026-09-27/research/38-wallet-privacy.md).
+  This is an estimate from a simulation of the picker (400,000 draws, ring 16: the
+  probability that all 15 decoys are older), not a committed test; the share falls
+  with the spend's age (about 52 % at 20 blocks, 14 % at 60, 4 % at 120, in the same
+  simulation). Even at the target, a young spend is the newest member in most rings,
+  because the gamma distribution puts little mass 10–12 blocks deep. The fix restores
+  the distribution; it does not beat it, and only waiting before spending helps (a
+  young-spend warning and an opt-in spend delay are decided, not implemented,
+  docs/STATUS.md).
 - Where eligible young outputs are sparse, the few that exist absorb the young draws.
   The same young transfer outputs then appear in many rings, the real input's sibling
   (the change of the same transaction) included. That is why "after" is below the
@@ -932,7 +948,17 @@ candidates, so the node could intersect it with the ring on chain. Outputs older
 the wallet's restore height are fetched **once**, as the whole range `0 .. start` in
 consecutive pages of 1,024. Those requests depend on the restore height only, not on
 what is spent. The node still serves the output distribution (one request for the
-synced height), which reveals nothing about the ring.
+synced height, at spend time). That request names no ring member, but it is not
+harmless: it tells the node that a spend is being built, and the wallet **trusts the
+node's distribution for decoy placement**. A malicious node can serve a distribution
+that is monotone and has the right total but skews decoy ages old, so that the real
+young input stands out as the newest member; the wallet checks only that the
+distribution is non-decreasing and that its total equals its own output index
+(F38-1, F38-6). Computing the distribution from the wallet's own index, which already
+holds every output's height, is decided and not implemented (docs/STATUS.md). Until
+then, use your own node. The decoy draws come from an operating-system-seeded RNG,
+not the hedged stream (F38-5, not implemented): a cloned machine or a broken OS RNG
+repeats decoys.
 
 **Merge avoidance (review R3-13).** When no single output covers a payment, input
 selection first takes at most one output per source transaction. Outputs stored
