@@ -1175,3 +1175,41 @@
   - **(4)** A test hook replaces the sleeps.
   - **(5)** originated.json is parsed per entry: it no longer fails open, and a duplicate id keeps the highest height.
   - **(6)** A node-wide GetTx serving byte budget. The real per-peer figure is about 21 MB.
+
+## RT2-TM2P2P (Lead, 2026-10-02)
+- **The flake root-caused:** a test timing assumption. Connection setup took more than 5 s under CPU starvation (1 in about 690 runs). Fix: precondition waits go to 30 s.
+- **Held copies not pooled: CONFIRMED.** No cache writes, and no network-visible origin/relay difference.
+- **Request scheduling is weak against adversaries:**
+  - F1 (High): timed-out ids parked behind junk with no request or timer;
+  - F2 (High): a Busy self-induction loop;
+  - F4: tx_overflow can be filled;
+  - F5: silent announcers cost 30 s each, sequentially;
+  - F3: ServeBudget fairness.
+- **DECISION:** redesign p2p transaction requests as a TxRequestTracker-style model (prior art: Bitcoin Core txrequest), design note first, with a stated worst-case bound:
+  - preferred outbound announcers first;
+  - one outstanding request plus a parallel fallback;
+  - a per-txid deadline;
+  - no request-less queues;
+  - per-peer caps by count and bytes, with ungameable eviction;
+  - Busy rotates to the next announcer;
+  - the share is charged after the pooled check.
+  - ServeBudget: size-accurate reservations, a per-peer cap, FIFO, an outbound slice, and a throughput disconnect.
+  - A third RT pass follows.
+- **Other fixes:** the originated.json torn-height salvage, and a directory fsync.
+- **The PX-proving tests could not run locally** (memory under 7 GB for about 50 min). The two ignored RT PX tests are added to CI's PX job.
+
+## RT-NODEOPS (Lead, 2026-10-02)
+- **TM2-NODEOPS: ACCEPTED WITH FIXES.**
+  - No false refusal across the real key switch, reorgs or side blocks, and with real RandomX across two switches.
+  - The self-test and dataset check are deterministic.
+  - /info adds no leak; the fingerprint is unchanged.
+- **Fix (Medium-High):** the store-check tip region and samples are chosen by connected-chain HEIGHT, not storage order (a planted store escaped at 18 of 20 seeds). The docs drop "always" and add the detection table.
+- **Other fixes:**
+  - a gentler StartLimit, documented;
+  - Docker on-failure:3 and stop-timeout;
+  - the miner self-test runs once, with in-process reconnect;
+  - tighten I/O errors become warnings;
+  - fchmod with O_NOFOLLOW;
+  - Unicode whitespace in the password check;
+  - the miner's skip flag is reported loudly.
+  - The originated.json owner-only writer goes to TM2-P2P.
