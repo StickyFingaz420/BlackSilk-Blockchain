@@ -292,3 +292,130 @@ pub(super) async fn chain_maintenance_loop(inner: Arc<Inner>) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! The maintenance loop's own timing rules (mutation run E): the trickle
+    //! delay of transaction announcements and the first save of the address
+    //! table.
+    use super::*;
+    use crate::addr::NetAddr;
+    use crate::message::{Version, PROTOCOL_VERSION};
+    use blacksilk_chain::manager::ChainManager;
+
+    struct ZeroPow;
+    impl blacksilk_consensus::PowFunction for ZeroPow {
+        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            [0; 32]
+        }
+    }
+
+    async fn idle_network(edit: impl FnOnce(&mut crate::NetConfig)) -> crate::Network {
+        let p = blacksilk_consensus::ChainParams::regtest();
+        let m = ChainManager::open(
+            p.clone(),
+            blacksilk_tx::params::TxRules::for_chain(&p),
+            Arc::new(ZeroPow),
+            Box::<blacksilk_chain::store::MemoryStore>::default(),
+            [2; 32],
+        )
+        .unwrap();
+        let mut cfg = crate::NetConfig::new(p.network_id);
+        cfg.listen = Some("127.0.0.1:0".parse().unwrap());
+        cfg.allow_private = true;
+        cfg.tick = Duration::from_millis(50);
+        edit(&mut cfg);
+        crate::Network::start(cfg, Arc::new(std::sync::Mutex::new(m)))
+            .await
+            .unwrap()
+    }
+
+    /// A queued transaction announcement waits for the peer's trickle delay
+    /// (exponential, mean `trickle_inbound`): with a mean of 10^6 s nothing is
+    /// sent in the next half second of ticks, whatever is queued (a delay
+    /// below it has probability about 5·10^-7).
+    #[tokio::test]
+    async fn an_announcement_waits_for_its_trickle_delay() {
+        let net = idle_network(|c| c.trickle_inbound = Duration::from_secs(1_000_000)).await;
+        let inner = net.inner.clone();
+        let stream = tokio::net::TcpStream::connect(net.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut r, mut w) = crate::transport::handshake(
+            stream,
+            true,
+            inner.cfg.network_id,
+            &inner.genesis_id,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let v = Version {
+            protocol: PROTOCOL_VERSION,
+            network: inner.cfg.network_id,
+            nonce: 0x2468,
+            height: 0,
+            tip: inner.genesis_id,
+            listen: None,
+            relay_txs: true,
+        };
+        w.send(&Message::Version(v).encode()).await.unwrap();
+        let recv = |m: Vec<u8>| Message::decode(&m).unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Version(_)));
+        w.send(&Message::Verack.encode()).await.unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Verack));
+        while inner.state().peers.is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        inner.announce_tx([9; 32], None);
+        assert_eq!(
+            inner.state().peers.values().next().unwrap().inv_queue,
+            [[9; 32]]
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        w.send(&Message::Ping(8).encode()).await.unwrap();
+        loop {
+            match recv(r.recv().await.unwrap()) {
+                Message::Pong(8) => break,
+                Message::InvTx(ids) => panic!("announced before its delay: {ids:?}"),
+                _ => {}
+            }
+        }
+        assert_eq!(
+            inner.state().peers.values().next().unwrap().inv_queue.len(),
+            1
+        );
+    }
+
+    /// The address table is first saved 5 s after the start at the earliest
+    /// ("save soon after the first change": `last_save` starts 55 s in the
+    /// past of the 60 s interval), not at the first tick after a change.
+    #[tokio::test]
+    async fn the_first_save_of_the_address_table_comes_5_s_after_the_start() {
+        let dir = std::env::temp_dir().join(format!("bs-p2p-maint-save-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let t0 = Instant::now();
+        let net = idle_network(|c| c.data_dir = Some(dir.clone())).await;
+        let now = unix_now();
+        let added = net.inner.state().addrman.add(
+            NetAddr::parse("8.8.8.8:8333").unwrap(),
+            &NetAddr::parse("9.9.9.9:1").unwrap(),
+            now,
+        );
+        assert!(added);
+        let saved = loop {
+            if dir.join("peers.json").exists() {
+                break t0.elapsed();
+            }
+            assert!(t0.elapsed() < Duration::from_secs(60), "never saved");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        assert!(
+            saved >= Duration::from_millis(4_500),
+            "saved after {saved:?}"
+        );
+        drop(net);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
