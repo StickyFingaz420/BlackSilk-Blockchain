@@ -4862,7 +4862,10 @@ async fn a_gettx_for_more_transactions_than_an_outbox_is_served_in_full() {
     let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
     wait_until("requester registered", 5, || a.net.stats().peers == 1).await;
     // The pool's re-announcement at age 10 announces them all to the
-    // requester (an announcement is what makes a transaction servable).
+    // requester (an announcement is what makes a transaction servable),
+    // once the maintenance loop has seen the pool height (see
+    // `a_repeated_id_in_one_gettx_is_answered_once`).
+    tokio::time::sleep(Duration::from_millis(500)).await;
     for _ in 0..10 {
         a.mine_with(0, false);
     }
@@ -4922,6 +4925,10 @@ async fn a_repeated_id_in_one_gettx_is_answered_once() {
     let nid = params().network_id;
     let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
     wait_until("requester registered", 5, || a.net.stats().peers == 1).await;
+    // The maintenance loop sees the pool height before the blocks come (it
+    // re-announces from the second height it sees; a busy machine can delay
+    // its first look past them).
+    tokio::time::sleep(Duration::from_millis(500)).await;
     for _ in 0..10 {
         a.mine_with(0, false);
     }
@@ -4994,7 +5001,8 @@ async fn a_transaction_burst_between_honest_nodes_keeps_the_link_and_the_stem() 
     let stems = b.net.stem_peers();
     let link = b.net.peers()[0].id;
     assert_eq!(stems, vec![link]);
-    // The pool's re-announcement at age 10: every transaction at once.
+    tokio::time::sleep(Duration::from_millis(500)).await; // as above
+                                                          // The pool's re-announcement at age 10: every transaction at once.
     for _ in 0..10 {
         let blk = a.mine_with(0, false);
         give_block(&b, &blk).await;
