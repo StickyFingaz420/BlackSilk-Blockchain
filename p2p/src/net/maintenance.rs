@@ -17,9 +17,9 @@ use super::blocks::{release_block_slot, schedule_downloads, BLOCK_TIMEOUT};
 use super::headers::{add_grace, HEADERS_TIMEOUT};
 use super::peers::maintain_outbound;
 use super::relay::{reannounce_pool, remember, TX_TIMEOUT};
-use super::state::{short, unix_now, Inner, State, StemEntry, LATE_TXS_MAX};
+use super::state::{short, unix_now, Inner, State, StemEntry};
 use super::stem::{fluff_entry, send_held_local_txs, take_stem};
-use super::tx_requests::{resume_requests, retry_tx, Failure};
+use super::tx_requests::Actions;
 use crate::connman::ConnKind;
 use crate::dandelion::PeerId;
 use crate::message::Message;
@@ -111,6 +111,7 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
 
         // Trickled announcements, pings, timeouts.
         let mut timed_out = Vec::new();
+        let mut too_slow = Vec::new();
         {
             let mut st = inner.state();
             let ids: Vec<PeerId> = st.peers.keys().copied().collect();
@@ -129,6 +130,12 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
                     && now.duration_since(p.connected_at) > inner.cfg.addr_fetch_timeout
                 {
                     p.kill.notify_one();
+                }
+                // A reader too slow for the serving budget it holds
+                // (`serve_tx`, RT2 F3): disconnected, not banned.
+                if p.replies.too_slow(now) {
+                    p.kill.notify_one();
+                    too_slow.push(p.addr.clone());
                 }
                 if let Some((_, sent)) = p.ping {
                     if now.duration_since(sent) > PONG_TIMEOUT {
@@ -166,32 +173,29 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
             }
             st.late_blocks
                 .retain(|_, (_, t)| now.duration_since(*t) <= BLOCK_TIMEOUT);
-            let stale_txs: Vec<(Hash, PeerId)> = st
-                .tx_requests
-                .iter()
-                .filter(|(_, (_, t))| now.duration_since(*t) > TX_TIMEOUT)
-                .map(|(id, (p, _))| (*id, *p))
-                .collect();
-            // Transaction relay is best effort: a slow answer is retried with the
-            // next announcer but not penalized (peers answer `NotFound` when they
-            // no longer have the transaction). The late answer is still
-            // accepted from the peer asked (`late_txs`).
+            // Transaction requests: timers due now (timeouts, delayed and
+            // paused candidates, deadlines; `tx_requests`). Transaction
+            // relay is best effort: a slow answer is asked of other
+            // announcers but not penalized (peers answer `NotFound` when
+            // they no longer have the transaction). The late answer is
+            // still accepted from the peer asked (`late_txs`).
             st.late_txs
                 .retain(|_, t| now.duration_since(*t) <= TX_TIMEOUT);
-            for (id, p) in stale_txs {
-                if st.late_txs.len() < LATE_TXS_MAX {
-                    st.late_txs.insert((id, p), now);
-                }
-                retry_tx(&inner, &mut st, id, p, Failure::Timeout, now);
-            }
-            // Peers paused after a dropped answer, asked again.
-            resume_requests(&inner, &mut st, now);
+            let mut out = Actions::default();
+            st.tx_tracker.poll(now, &mut out);
+            inner.apply_tx_actions(&mut st, out, now);
         }
         // A timeout is not misbehavior: a large block on a slow link, or a
         // busy honest peer, times out too (R8-9). The request moves to another
         // peer; the late answer is still accepted without penalty.
         for (p, what) in timed_out {
             log::debug!("peer {p}: {what} request timed out");
+        }
+        if !too_slow.is_empty() {
+            inner.state().slow_disconnects += too_slow.len() as u64;
+        }
+        for addr in too_slow {
+            log::debug!("peer {addr} reads too slowly for the answers it holds; disconnecting");
         }
 
         // Keep syncing from peers that are ahead, and ask again peers whose

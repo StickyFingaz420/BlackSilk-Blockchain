@@ -40,7 +40,6 @@ use blacksilk_consensus::Hash;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::Path;
 
 /// Blocks after its relay height during which other nodes may still hold a
@@ -49,6 +48,11 @@ use std::path::Path;
 /// node lacks before this (dossier 38 W4). Derived from the mempool's
 /// constants, never copied.
 pub const NETWORK_EXPIRY_BLOCKS: u64 = MEMPOOL_EXPIRY_BLOCKS + RECENTLY_EXPIRED_BLOCKS;
+
+/// The relay height of an entry whose height a damaged file lost: no
+/// window ends before it ([`Verdict::Held`]) until
+/// [`Originated::settle_unknown`] sets it to the next height at start-up.
+pub const UNKNOWN_HEIGHT: u64 = u64::MAX;
 
 /// Most entries kept (oldest dropped first).
 pub const ORIGINATED_CAP: usize = 10_000;
@@ -112,6 +116,21 @@ impl Originated {
             Some(&r) if next >= r.saturating_add(MEMPOOL_EXPIRY_BLOCKS) => Verdict::Expired,
             Some(_) => Verdict::Held,
         }
+    }
+
+    /// Sets every entry whose height a damaged file lost
+    /// ([`UNKNOWN_HEIGHT`]) to `next` (the next height at start-up): its
+    /// windows start late, never early. Returns how many.
+    pub fn settle_unknown(&mut self, next: u64) -> usize {
+        let mut n = 0;
+        for r in self.relayed.values_mut() {
+            if *r == UNKNOWN_HEIGHT {
+                *r = next;
+                n += 1;
+            }
+        }
+        self.dirty |= n > 0;
+        n
     }
 
     /// Records that `id` is originated here for inclusion at `next` (a
@@ -298,6 +317,13 @@ fn parse_entry(e: &Value) -> Option<(Hash, u64)> {
 
 /// The entries a file that is not JSON still holds: every `["<64 hex
 /// digits>", <height>` in it.
+///
+/// A height counts only if the entry's `]` (or another field's `,`)
+/// follows it: a height cut by the tear (`81234` torn to `81`) would end
+/// the entry's window about 81,000 blocks early and let the node originate
+/// the transaction again. Such an entry keeps its id with
+/// [`UNKNOWN_HEIGHT`], settled to the next height at start-up
+/// ([`Originated::settle_unknown`]): a window starting late, never early.
 fn salvage(bytes: &[u8]) -> Vec<(Hash, u64)> {
     let text = String::from_utf8_lossy(bytes);
     let mut out = Vec::new();
@@ -305,33 +331,44 @@ fn salvage(bytes: &[u8]) -> Vec<(Hash, u64)> {
     while let Some(i) = rest.find("[\"") {
         rest = &rest[i + 2..];
         let Some(hexed) = rest.get(..64) else { break };
-        let Some(after) = rest.get(64..) else { break };
-        let Some(after) = after.strip_prefix("\",") else {
+        let Some(id) = hex::decode(hexed).ok().and_then(|b| b.try_into().ok()) else {
             continue;
         };
-        let digits: String = after
-            .trim_start()
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect();
-        let id: Option<Hash> = hex::decode(hexed).ok().and_then(|b| b.try_into().ok());
-        if let (Some(id), Ok(r)) = (id, digits.parse::<u64>()) {
-            out.push((id, r));
+        let Some(after) = rest.get(64..).and_then(|a| a.strip_prefix('"')) else {
+            // Torn inside or right after the id.
+            out.push((id, UNKNOWN_HEIGHT));
+            break;
+        };
+        let after = after.trim_start();
+        let Some(after) = after.strip_prefix(',') else {
+            out.push((id, UNKNOWN_HEIGHT));
+            continue;
+        };
+        let after = after.trim_start();
+        let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+        let closed = after[digits.len()..].trim_start().starts_with([']', ',']);
+        match digits.parse::<u64>() {
+            Ok(r) if closed => out.push((id, r)),
+            _ => out.push((id, UNKNOWN_HEIGHT)),
         }
     }
     out
 }
 
-/// Writes `bytes` to `path` atomically: a temporary file in the same
-/// directory, synced, then renamed over `path`.
+/// Writes `bytes` to `path` atomically and owner-only
+/// ([`crate::private_file::write_atomic`]: 0600 on Unix whatever the umask,
+/// and a stale temporary file is replaced, never written through), then
+/// syncs the directory so the rename survives a power loss.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
+    crate::private_file::write_atomic(path, bytes)?;
+    // The rename itself is durable only once the directory is synced
+    // (POSIX); Windows offers no directory handle to sync, and NTFS
+    // journals the rename.
+    #[cfg(unix)]
+    if let Some(dir) = path.parent() {
+        std::fs::File::open(dir)?.sync_all()?;
     }
-    std::fs::rename(tmp, path)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -422,6 +459,24 @@ mod tests {
         assert!(problems.is_empty() && !back.is_dirty(), "a clean file");
     }
 
+    /// RT-NODEOPS: the file is created owner-only (0600) whatever the
+    /// umask, also over an existing wider file.
+    #[cfg(unix)]
+    #[test]
+    fn the_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("originated.json");
+        std::fs::write(&path, b"{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let mut o = Originated::new();
+        o.record(id(1), 5);
+        write_atomic(&path, &o.encode()).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(Originated::load(&path).relayed(&id(1)), Some(5));
+    }
+
     /// RT-TM2P2P item 5: a damaged file fails closed. Each entry is read on
     /// its own and a bad one is dropped alone; a duplicate keeps the
     /// highest height; formats 1 and 2 and mixed entry shapes are read; a
@@ -469,6 +524,13 @@ mod tests {
         assert_eq!(o.relayed(&id(2)), Some(6), "torn file");
         assert_eq!(o.len(), 2);
         assert_eq!(p.len(), 1, "{p:?}");
+        // A height cut by the tear is not taken short: the id is kept,
+        // held, and its window starts at the next height at start-up.
+        let (mut o, p) = read(format!(r#"{{"version":1,"entries":[["{}",81"#, h(5)));
+        assert_eq!(o.relayed(&id(5)), Some(UNKNOWN_HEIGHT), "{p:?}");
+        assert_eq!(o.verdict(&id(5), 10_000_000), Verdict::Held);
+        assert_eq!(o.settle_unknown(90_000), 1);
+        assert_eq!(o.relayed(&id(5)), Some(90_000));
         let (o, p) = read("[1,2]".into());
         assert!(o.is_empty() && p.len() == 1);
         let (o, p) = read(format!(r#"{{"version":1,"entries":[["{}",5]]}}"#, h(1)));

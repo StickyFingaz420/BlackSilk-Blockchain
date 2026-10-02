@@ -37,6 +37,7 @@ mod headers;
 mod maintenance;
 mod peers;
 mod relay;
+mod serve_tx;
 mod state;
 mod stem;
 mod tx_requests;
@@ -124,6 +125,15 @@ fn new_inner(
 ) {
     let summary = chain.summary_cell();
     let genesis_id = summary.load().genesis_id;
+    // Entries whose height a damaged originated.json lost start their
+    // windows now (docs/p2p.md §8.1): late, never early.
+    let mut originated = originated;
+    let settled = originated.settle_unknown(summary.load().height + 1);
+    if settled > 0 {
+        log::error!(
+            "{ORIGINATED_FILE}: {settled} entries had lost their height; their windows start now"
+        );
+    }
     let state = State {
         peers: HashMap::new(),
         addrman,
@@ -133,10 +143,7 @@ fn new_inner(
         stem_key_images: HashMap::new(),
         px_global: crate::limits::TokenBucket::new(2.0, 10.0),
         block_requests: HashMap::new(),
-        tx_requests: HashMap::new(),
-        tx_announcers: HashMap::new(),
-        tx_overflow: HashMap::new(),
-        tx_retried: HashSet::new(),
+        tx_tracker: Default::default(),
         recent_rejects: VecDeque::new(),
         recent_rejects_set: HashSet::new(),
         late_blocks: HashMap::new(),

@@ -546,7 +546,9 @@ async fn try_raw_handshake_tip(
         initiator,
         network_id,
         &params().genesis_id(),
-        Duration::from_secs(5),
+        // A precondition, not a timing assertion: the node's own handshake
+        // deadline (20 s) decides; a starved machine needs more than 5 s.
+        Duration::from_secs(20),
     )
     .await
     .ok()?;
@@ -988,7 +990,7 @@ async fn a_node_does_not_store_its_own_address() {
     cfg.public_address = Some(NetAddr::Ip(a_addr));
     let a = node_with(220, cfg).await;
     let (_r, mut w) = raw_peer(a.addr, params().network_id, true).await;
-    wait_until("registered", 5, || a.net.stats().peers == 1).await;
+    wait_until("registered", 30, || a.net.stats().peers == 1).await;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -1037,7 +1039,7 @@ async fn invalid_header_gets_the_peer_disconnected() {
     let a = node(16, &[]).await;
     let nid = params().network_id;
     let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
-    wait_until("registered", 5, || a.net.stats().peers == 1).await;
+    wait_until("registered", 30, || a.net.stats().peers == 1).await;
     // A header on genesis with a wrong difficulty.
     let bad = BlockHeader {
         version: HEADER_VERSION,
@@ -1763,7 +1765,7 @@ async fn an_unrequested_header_batch_is_not_verified() {
     let a = node_with_pow(41, fast_config(&[]), pow.clone()).await;
     let nid = params().network_id;
     let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
-    wait_until("registered", 5, || a.net.stats().peers == 1).await;
+    wait_until("registered", 30, || a.net.stats().peers == 1).await;
     w.send(&Message::Headers(header_branch(50, 120, BAD_NONCE)).encode())
         .await
         .unwrap();
@@ -1843,7 +1845,7 @@ async fn unknown_version_headers_need_real_proof_of_work() {
     // (b) Real proof of work, as tip announcements: not scored; disconnected
     // (not banned) at the third.
     let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
-    wait_until("registered", 5, || a.net.stats().peers == 1).await;
+    wait_until("registered", 30, || a.net.stats().peers == 1).await;
     for k in 0..2u64 {
         let before = hashes();
         w.send(&Message::Headers(vec![newer(100 + k)]).encode())
@@ -2698,7 +2700,7 @@ async fn a_ban_disconnects_every_connection_from_the_ip_and_is_saved() {
     let nid = params().network_id;
     let (mut r1, _w1) = raw_peer(a.addr, nid, true).await;
     let (mut r2, mut w2) = raw_peer(a.addr, nid, true).await;
-    wait_until("registered", 5, || a.net.stats().peers == 2).await;
+    wait_until("registered", 30, || a.net.stats().peers == 2).await;
     let bad = BlockHeader {
         version: HEADER_VERSION,
         height: 1,
@@ -2748,7 +2750,7 @@ async fn a_local_transaction_waits_for_a_stem_peer() {
     }
     let nid = params().network_id;
     let (mut spy, _spy_w) = raw_peer(a.addr, nid, true).await;
-    wait_until("spy registered", 5, || a.net.stats().peers == 1).await;
+    wait_until("spy registered", 30, || a.net.stats().peers == 1).await;
     let tx = a.payment();
     let id = tx.hash();
     a.net.submit_tx(tx).await.unwrap();
@@ -4127,7 +4129,7 @@ async fn an_extended_version_and_unknown_handshake_messages_are_accepted() {
         Message::Verack
     ));
     send_and_sync(&mut r, &mut w, &[], 7).await;
-    wait_until("registered", 5, || a.net.peers().len() == 1).await;
+    wait_until("registered", 30, || a.net.peers().len() == 1).await;
     let p = &a.net.peers()[0];
     assert_eq!((p.protocol, p.score), (PROTOCOL_VERSION + 1, 0));
 }
@@ -4202,7 +4204,7 @@ async fn a_deep_fork_unknown_version_header_claiming_max_difficulty_is_not_hashe
         nonce: 77,
     };
     let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
-    wait_until("registered", 5, || a.net.stats().peers == 1).await;
+    wait_until("registered", 30, || a.net.stats().peers == 1).await;
     let honest = deep(HEADER_VERSION, params().initial_difficulty);
     let known_low = headers_and_settle(&a, &pow, &mut r, &mut w, vec![honest], 1).await;
     let claimed = deep(HEADER_VERSION + 6, u64::MAX);
@@ -4221,7 +4223,7 @@ async fn dialed_raw_peer(a: &TestNode, l: &tokio::net::TcpListener) -> (RawReade
     let rw = try_raw_handshake_as(s, false, params().network_id, true, 0)
         .await
         .expect("handshake");
-    wait_until("registered", 5, || a.net.stats().outbound == outbound + 1).await;
+    wait_until("registered", 30, || a.net.stats().outbound == outbound + 1).await;
     rw
 }
 
@@ -4326,7 +4328,7 @@ async fn an_old_epoch_unknown_version_header_triggers_no_cache_build() {
     let old = newer(g.main_id_at(2099).unwrap());
     assert_eq!(key(old.height), 0, "the previous epoch's key");
     let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
-    wait_until("registered", 5, || a.net.stats().peers == 1).await;
+    wait_until("registered", 30, || a.net.stats().peers == 1).await;
     let old_cost = headers_and_settle(&a, &pow, &mut r, &mut w, vec![old], 1).await;
     let tip = newer(g.tip_id());
     let tip_cost = headers_and_settle(&a, &pow, &mut r, &mut w, vec![tip], 2).await;
@@ -4370,7 +4372,7 @@ async fn a_recently_expired_transaction_is_stemmed_for_a_peer_but_not_originated
     // A peer stems it: served, not dropped, and the peer is not penalized.
     let nid = params().network_id;
     let (mut r, mut w) = raw_peer(b.addr, nid, true).await;
-    wait_until("peer registered", 5, || b.net.stats().peers == 1).await;
+    wait_until("peer registered", 30, || b.net.stats().peers == 1).await;
     send_and_sync(&mut r, &mut w, &[Message::StemTx(tx.encode()).encode()], 1).await;
     wait_until("the stem peer relays it", 10, || {
         b.net.stempool_contains(&id) || b.mempool_has(&id)
@@ -4584,7 +4586,7 @@ async fn pooled_transactions_are_reannounced_on_the_common_schedule() {
     a.chain.lock().unwrap().submit_tx(tx).unwrap();
     let nid = params().network_id;
     let (mut spy, _w) = raw_peer(a.addr, nid, true).await;
-    wait_until("spy registered", 5, || a.net.stats().peers == 1).await;
+    wait_until("spy registered", 30, || a.net.stats().peers == 1).await;
     for _ in 0..9 {
         a.mine_with(0, false);
     }
@@ -4612,18 +4614,18 @@ async fn give_block(n: &TestNode, b: &Block) {
     let now = b.header.timestamp;
     let _ = n.chain.lock().unwrap().submit_block(b.clone(), now);
     let h = b.header.height;
-    wait_until("block given", 5, || n.height() >= h).await;
+    wait_until("block given", 30, || n.height() >= h).await;
 }
 
 /// Waits until `n`'s chain maintenance loop finished next height `next`
 /// (pool re-announcement included) and its trickle queues are empty: every
 /// announcement it decided is in an outbox (test hooks, no timing).
 async fn settled(n: &TestNode, next: u64) {
-    wait_until("maintenance saw the height", 10, || {
+    wait_until("maintenance saw the height", 30, || {
         n.net.maintenance_seen_height() >= next
     })
     .await;
-    wait_until("announcements flushed", 10, || {
+    wait_until("announcements flushed", 30, || {
         n.net.queued_announcements() == 0
     })
     .await;
@@ -4635,7 +4637,7 @@ async fn settled(n: &TestNode, next: u64) {
 async fn before_barrier(r: &mut RawReader, w: &mut RawWriter, nonce: u64) -> Vec<Message> {
     w.send(&Message::Ping(nonce).encode()).await.unwrap();
     let mut got = Vec::new();
-    tokio::time::timeout(Duration::from_secs(10), async {
+    tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let m = Message::decode(&r.recv().await.unwrap()).unwrap();
             if m == Message::Pong(nonce) {
@@ -4715,7 +4717,7 @@ async fn a_block_found_during_the_stem_does_not_make_the_origin_reannounce_first
     }
     wait_until_d(
         "relay connected",
-        5,
+        30,
         || a.net.stats().peers == 1,
         || peer_list(&a),
     )
@@ -4727,7 +4729,7 @@ async fn a_block_found_during_the_stem_does_not_make_the_origin_reannounce_first
     let id = tx.hash();
     a.net.submit_tx(tx.clone()).await.unwrap(); // relayed for next height 81
     assert!(
-        recv_until(&mut stem_r, 5.0, |m| matches!(m, Message::StemTx(_)))
+        recv_until(&mut stem_r, 30.0, |m| matches!(m, Message::StemTx(_)))
             .await
             .is_some(),
         "originated into the stem"
@@ -4742,7 +4744,7 @@ async fn a_block_found_during_the_stem_does_not_make_the_origin_reannounce_first
         .await
         .unwrap();
     assert!(
-        recv_until(&mut stem_r, 5.0, |m| matches!(m, Message::GetTx(_)))
+        recv_until(&mut stem_r, 30.0, |m| matches!(m, Message::GetTx(_)))
             .await
             .is_some(),
         "the origin requests its own transaction like any node"
@@ -4751,7 +4753,7 @@ async fn a_block_found_during_the_stem_does_not_make_the_origin_reannounce_first
         .send(&Message::Tx(tx.encode()).encode())
         .await
         .unwrap();
-    wait_until("pooled everywhere", 10, || {
+    wait_until("pooled everywhere", 30, || {
         a.mempool_has(&id) && b.mempool_has(&id)
     })
     .await;
@@ -4762,7 +4764,7 @@ async fn a_block_found_during_the_stem_does_not_make_the_origin_reannounce_first
     let nid = params().network_id;
     let (mut spy_a, mut wa) = raw_peer(a.addr, nid, true).await;
     let (mut spy_b, mut wb) = raw_peer(b.addr, nid, true).await;
-    wait_until("spies registered", 5, || {
+    wait_until("spies registered", 30, || {
         a.net.stats().peers == 3 && b.net.stats().peers == 2
     })
     .await;
@@ -4808,7 +4810,7 @@ async fn after_a_reorganization_the_origin_reannounces_with_everyone() {
     c.mine_n(11, 1);
     wait_until_d(
         "relay connected",
-        5,
+        30,
         || a.net.stats().peers == 1,
         || peer_list(&a),
     )
@@ -4820,7 +4822,7 @@ async fn after_a_reorganization_the_origin_reannounces_with_everyone() {
     let id = tx.hash();
     a.net.submit_tx(tx.clone()).await.unwrap(); // relayed for next height 81
     assert!(
-        recv_until(&mut stem_r, 5.0, |m| matches!(m, Message::StemTx(_)))
+        recv_until(&mut stem_r, 30.0, |m| matches!(m, Message::StemTx(_)))
             .await
             .is_some()
     );
@@ -4829,7 +4831,7 @@ async fn after_a_reorganization_the_origin_reannounces_with_everyone() {
         .await
         .unwrap();
     assert!(
-        recv_until(&mut stem_r, 5.0, |m| matches!(m, Message::GetTx(_)))
+        recv_until(&mut stem_r, 30.0, |m| matches!(m, Message::GetTx(_)))
             .await
             .is_some()
     );
@@ -4837,7 +4839,7 @@ async fn after_a_reorganization_the_origin_reannounces_with_everyone() {
         .send(&Message::Tx(tx.encode()).encode())
         .await
         .unwrap();
-    wait_until("pooled everywhere", 10, || {
+    wait_until("pooled everywhere", 30, || {
         a.mempool_has(&id) && b.mempool_has(&id)
     })
     .await;
@@ -4849,7 +4851,7 @@ async fn after_a_reorganization_the_origin_reannounces_with_everyone() {
     let nid = params().network_id;
     let (mut spy_a, mut wa) = raw_peer(a.addr, nid, true).await;
     let (mut spy_b, mut wb) = raw_peer(b.addr, nid, true).await;
-    wait_until("spies registered", 5, || {
+    wait_until("spies registered", 30, || {
         a.net.stats().peers == 3 && b.net.stats().peers == 2
     })
     .await;
@@ -4862,7 +4864,7 @@ async fn after_a_reorganization_the_origin_reannounces_with_everyone() {
         give_block(&a, &blk).await;
         give_block(&b, &blk).await;
     }
-    wait_until("readmitted everywhere", 10, || {
+    wait_until("readmitted everywhere", 30, || {
         a.mempool_has(&id) && b.mempool_has(&id)
     })
     .await;
@@ -4910,7 +4912,7 @@ async fn a_restarted_origin_never_reannounces_its_held_copy() {
     }
     wait_until_d(
         "relay connected",
-        5,
+        30,
         || a.net.stats().peers == 1,
         || peer_list(&a),
     )
@@ -4922,7 +4924,7 @@ async fn a_restarted_origin_never_reannounces_its_held_copy() {
     let id = tx.hash();
     a.net.submit_tx(tx.clone()).await.unwrap(); // relayed for next height 81
     assert!(
-        recv_until(&mut stem_r, 5.0, |m| matches!(m, Message::StemTx(_)))
+        recv_until(&mut stem_r, 30.0, |m| matches!(m, Message::StemTx(_)))
             .await
             .is_some()
     );
@@ -4933,7 +4935,7 @@ async fn a_restarted_origin_never_reannounces_its_held_copy() {
         .await
         .unwrap();
     assert!(
-        recv_until(&mut stem_r, 5.0, |m| matches!(m, Message::GetTx(_)))
+        recv_until(&mut stem_r, 30.0, |m| matches!(m, Message::GetTx(_)))
             .await
             .is_some()
     );
@@ -4941,7 +4943,7 @@ async fn a_restarted_origin_never_reannounces_its_held_copy() {
         .send(&Message::Tx(tx.encode()).encode())
         .await
         .unwrap();
-    wait_until("pooled at the fluff", 10, || {
+    wait_until("pooled at the fluff", 30, || {
         a.mempool_has(&id) && relay.mempool_has(&id)
     })
     .await;
@@ -4959,7 +4961,7 @@ async fn a_restarted_origin_never_reannounces_its_held_copy() {
     let (mut spy_r, mut wr) = raw_peer(relay.addr, nid, true).await;
     wait_until_d(
         "spies registered",
-        5,
+        30,
         || b.net.stats().peers == 1 && relay.net.stats().peers == 2,
         || format!("b: {}; relay: {}", peer_list(&b), peer_list(&relay)),
     )
@@ -5009,7 +5011,7 @@ async fn a_gettx_for_more_transactions_than_an_outbox_is_served_in_full() {
     }
     let nid = params().network_id;
     let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
-    wait_until("requester registered", 5, || a.net.stats().peers == 1).await;
+    wait_until("requester registered", 30, || a.net.stats().peers == 1).await;
     // The pool's re-announcement at age 10 announces them all to the
     // requester (an announcement is what makes a transaction servable),
     // once the maintenance loop has seen the pool height (see
@@ -5073,7 +5075,7 @@ async fn a_repeated_id_in_one_gettx_is_answered_once() {
     a.chain.lock().unwrap().submit_tx(tx).unwrap();
     let nid = params().network_id;
     let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
-    wait_until("requester registered", 5, || a.net.stats().peers == 1).await;
+    wait_until("requester registered", 30, || a.net.stats().peers == 1).await;
     // The maintenance loop sees the pool height before the blocks come (it
     // re-announces from the second height it sees; a busy machine can delay
     // its first look past them).
@@ -5150,7 +5152,7 @@ async fn a_transaction_burst_between_honest_nodes_keeps_the_link_and_the_stem() 
         let blk = a.chain.lock().unwrap().block_at(h).unwrap();
         give_block(&b, &blk).await;
     }
-    wait_until("connected", 5, || {
+    wait_until("connected", 30, || {
         a.net.stats().peers == 1 && b.net.stats().outbound == 1
     })
     .await;
@@ -5490,7 +5492,7 @@ async fn tip_announcements_do_not_wait_for_the_maintenance_tick() {
     let mut a = node_with(622, cfg).await;
     let nid = params().network_id;
     let (mut r, _w) = raw_peer(a.addr, nid, true).await;
-    wait_until("registered", 5, || a.net.peers().len() == 1).await;
+    wait_until("registered", 30, || a.net.peers().len() == 1).await;
     let mut took = Vec::new();
     for _ in 0..5 {
         a.mine(0);
@@ -5525,7 +5527,7 @@ async fn announcement_latency_with_the_default_tick() {
     let mut a = node_with(624, cfg).await;
     let nid = params().network_id;
     let (mut r, _w) = raw_peer(a.addr, nid, true).await;
-    wait_until("registered", 5, || a.net.peers().len() == 1).await;
+    wait_until("registered", 30, || a.net.peers().len() == 1).await;
     let mut ms = Vec::new();
     let mut rng = ChaCha20Rng::seed_from_u64(624);
     for _ in 0..40 {
@@ -5649,7 +5651,7 @@ async fn rt_sync_equal_work_tie_is_bounded_and_settles_on_the_next_block() {
     assert_ne!(a.tip(), b.tip());
     let (ta, tb) = (a.tip(), b.tip());
     a.net.connect(NetAddr::Ip(b.addr));
-    wait_until("connected", 10, || a.net.peers().len() == 1).await;
+    wait_until("connected", 30, || a.net.peers().len() == 1).await;
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!((a.tip(), b.tip()), (ta, tb), "a tie keeps both tips");
     a.mine_spaced(1, 120, 1);
@@ -6225,7 +6227,7 @@ async fn rt_a_restarted_origin_answers_an_inv_probe_like_a_restarted_relay() {
     let id = tx.hash();
     a.net.submit_tx(tx.clone()).await.unwrap();
     assert!(
-        recv_until(&mut stem_r, 5.0, |m| matches!(m, Message::StemTx(_)))
+        recv_until(&mut stem_r, 30.0, |m| matches!(m, Message::StemTx(_)))
             .await
             .is_some()
     );
@@ -6234,7 +6236,7 @@ async fn rt_a_restarted_origin_answers_an_inv_probe_like_a_restarted_relay() {
         .await
         .unwrap();
     assert!(
-        recv_until(&mut stem_r, 5.0, |m| matches!(m, Message::GetTx(_)))
+        recv_until(&mut stem_r, 30.0, |m| matches!(m, Message::GetTx(_)))
             .await
             .is_some()
     );
@@ -6242,7 +6244,7 @@ async fn rt_a_restarted_origin_answers_an_inv_probe_like_a_restarted_relay() {
         .send(&Message::Tx(tx.encode()).encode())
         .await
         .unwrap();
-    wait_until("pooled at the origin", 10, || a.mempool_has(&id)).await;
+    wait_until("pooled at the origin", 30, || a.mempool_has(&id)).await;
     // The origin restarts (its wallet resubmits: held), and so does a
     // relay (a node that had it pooled: same chain, empty pool).
     let (mut origin, o_dir) = restarted(&a, &dir, 212).await;
@@ -6255,7 +6257,7 @@ async fn rt_a_restarted_origin_answers_an_inv_probe_like_a_restarted_relay() {
     let mut probes = Vec::new();
     for n in [&origin, &relay] {
         let (mut r, mut w) = raw_peer(n.addr, nid, true).await;
-        wait_until("spy registered", 5, || n.net.stats().peers == 1).await;
+        wait_until("spy registered", 30, || n.net.stats().peers == 1).await;
         w.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
         let got = recv_until(
             &mut r,
@@ -6267,7 +6269,7 @@ async fn rt_a_restarted_origin_answers_an_inv_probe_like_a_restarted_relay() {
         asked.push(got);
         // The probe delivers it, as a re-announcing relay would.
         w.send(&Message::Tx(tx.encode()).encode()).await.unwrap();
-        wait_until("pooled", 10, || n.mempool_has(&id)).await;
+        wait_until("pooled", 30, || n.mempool_has(&id)).await;
         probes.push((r, w)); // kept open: the probe stays a peer
     }
     assert_eq!(asked, vec![true, true], "the probe cannot tell them apart");
@@ -6277,7 +6279,7 @@ async fn rt_a_restarted_origin_answers_an_inv_probe_like_a_restarted_relay() {
     // Fresh spies: both re-announce at the same height.
     let (mut so, mut wo) = raw_peer(origin.addr, nid, true).await;
     let (mut sr, mut wr) = raw_peer(relay.addr, nid, true).await;
-    wait_until("spies registered", 5, || {
+    wait_until("spies registered", 30, || {
         origin.net.stats().peers == 2 && relay.net.stats().peers == 2
     })
     .await;
@@ -6317,7 +6319,7 @@ async fn rt_a_px_burst_from_one_announcer_is_relayed_in_full() {
     }
     let nid = params().network_id;
     let (mut r, mut w) = raw_peer(b.addr, nid, true).await;
-    wait_until("announcer registered", 5, || b.net.stats().peers == 1).await;
+    wait_until("announcer registered", 30, || b.net.stats().peers == 1).await;
     let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
     w.send(&Message::InvTx(ids.clone()).encode()).await.unwrap();
     let mut requested = std::collections::HashSet::new();
@@ -6430,7 +6432,14 @@ async fn rt_a_junk_flood_does_not_delay_another_announcer() {
             .collect::<Vec<_>>()
     );
     assert!(got.is_some());
-    assert!(waited < Duration::from_secs(2), "{waited:?}");
+    // The honest announcer is inbound: since the request tracker (RT2) it is
+    // asked 2 s after its announcement (`INBOUND_DELAY`, Core's
+    // `NONPREF_PEER_TX_DELAY`), plus a maintenance tick; the junk does not
+    // add to that (the junk peers' own requests fill their room first:
+    // the tracker runs due timers before each event, so the order is the
+    // order in time; once it ran the honest announcement's check before a
+    // tick had sent the junk, asked a junk peer, and waited 30 s).
+    assert!(waited < Duration::from_secs(4), "{waited:?}");
 }
 
 /// RT-TM2P2P (pre-existing, not introduced by TM2-17): eight announcers

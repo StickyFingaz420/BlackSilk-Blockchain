@@ -43,7 +43,7 @@ pub(super) struct Peer {
     pub(super) bulk: mpsc::Sender<Message>,
     pub(super) kill: Arc<Notify>,
     /// `Tx` answers to its `GetTx` queued or being written (TM2-17).
-    pub(super) replies: Arc<super::relay::ReplyQueue>,
+    pub(super) replies: Arc<super::serve_tx::ReplyQueue>,
     /// Transactions are announced and stemmed to this peer: it asked for them
     /// (`Version.relay_txs`) and the connection's kind relays them (not
     /// block-relay-only or an address fetch).
@@ -68,15 +68,6 @@ pub(super) struct Peer {
     pub(super) next_inv: Instant,
     pub(super) announced_to: HashSet<Hash>,
     pub(super) known_txs: HashSet<Hash>,
-    /// Ids it announced that we want, beyond the requests outstanding to
-    /// it (`relay::TX_IN_FLIGHT`), oldest first (TM2-17).
-    pub(super) tx_wanted: VecDeque<Hash>,
-    /// Its last answer to our `GetTx` was over `SMALL_RELAY_BYTES` (a PX
-    /// transaction): one request in flight (`tx_requests`).
-    pub(super) tx_large: bool,
-    /// Not asked for transactions before this: this node dropped one of its
-    /// answers for its own budgets (`tx_requests::answer_dropped`).
-    pub(super) tx_paused_until: Option<Instant>,
     pub(super) ping: Option<(u64, Instant)>,
     /// The lowest ping round trip measured (inbound eviction protects the
     /// lowest; `None`: none answered yet).
@@ -213,13 +204,9 @@ pub(super) struct State {
     /// number of peers (docs/px.md §11.5).
     pub(super) px_global: crate::limits::TokenBucket,
     pub(super) block_requests: HashMap<Hash, (PeerId, Instant)>,
-    pub(super) tx_requests: HashMap<Hash, (PeerId, Instant)>,
-    pub(super) tx_announcers: HashMap<Hash, VecDeque<PeerId>>,
-    /// Ids whose announcer queue refused (or displaced) an announcer, with
-    /// the peers that failed them since (`tx_requests`).
-    pub(super) tx_overflow: HashMap<Hash, Vec<PeerId>>,
-    /// `(id, peer)` asked a second time after a timeout (`tx_requests`).
-    pub(super) tx_retried: HashSet<(Hash, PeerId)>,
+    /// Who announced which transactions, and what is asked of whom
+    /// (docs/p2p.md §7, "Requesting").
+    pub(super) tx_tracker: super::tx_requests::TxTracker,
     pub(super) recent_rejects: VecDeque<Hash>,
     pub(super) recent_rejects_set: HashSet<Hash>,
     /// Block requests that timed out, kept for another `BLOCK_TIMEOUT`: the
@@ -421,7 +408,7 @@ pub(super) struct Inner {
     /// (`maintenance::announce_loop`) sends it at once (RT-LAB F2).
     pub(super) tip_published: Arc<Notify>,
     /// The node-wide byte budget of `GetTx` answers (`relay::ServeBudget`).
-    pub(super) serve_budget: Arc<super::relay::ServeBudget>,
+    pub(super) serve_budget: Arc<super::serve_tx::ServeBudget>,
     /// The next-block height the chain maintenance loop last finished
     /// (re-announcement included): a test hook
     /// (`Network::maintenance_seen_height`).

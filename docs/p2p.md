@@ -613,7 +613,9 @@ never used in any check or sent to a peer:
     hard deadline, its count of timeouts and an optional node-wide pause. Every
     tracked id has a timer: the earliest of its deadline, its requests' expiries,
     its candidates' ready times and its pause. There is no queue in which an id
-    waits without a request and a timer (RT2 F1).
+    waits without a request and a timer (RT2 F1). Due timers run in time order,
+    each as of its own time, and before any event (an announcement, an answer):
+    what happens never depends on when the maintenance tick comes.
   - **Who is asked.** A candidate is ready at once if its peer is outbound
     (*preferred*), 2 s after its announcement if inbound (Core's
     `NONPREF_PEER_TX_DELAY`). Among the ready candidates whose peer has room, the
@@ -677,34 +679,38 @@ never used in any check or sent to a peer:
     mined, dropped or never known.
   - A spy therefore cannot probe the stempool or the mempool for transactions it was
     never offered.
-  - The answer is **paced** (TM2-17): the transactions are encoded at most
-    `SERVE_TX_BYTES` (`MAX_RELAY_FRAME`, at least any one transaction) at a time, and
-    each `Tx` is queued only while the peer has fewer than `SERVE_TX_FRAMES` (32,
-    half its control outbox) answers queued or being written, holding at most
-    `SERVE_TX_BYTES` (one answer of any size is always allowed). The rest of the
-    outbox stays free for pongs and announcements. Meanwhile that peer's slow lane
-    waits, as Bitcoin Core stops processing a peer's messages while its send buffer
-    is full. The `NotFound` comes last and ends the answer. An id named twice in one
-    `GetTx` is answered once.
-  - **Node-wide budget** (RT-TM2P2P): every answer reserves `SERVE_TX_BYTES` of a
-    node-wide `SERVE_TX_TOTAL` (64 MiB) before it encodes, keeps what it encoded,
-    and gets each byte back when its frame is written or its peer disconnects. So
-    `GetTx` answers hold at most 64 MiB in all, whatever the number of peers
-    (before: up to about 2 × (`SERVE_TX_BYTES` + `MAX_ANY_TX_SIZE`), about 18 MB,
-    per peer). An answer that finds no room for `SERVE_TX_STALL` ends with
-    `NotFound` for the rest, and the requester asks another announcer. Slow readers
-    holding the budget delay other peers' answers until they are disconnected
-    (below): a liveness cost of this bound, not a memory one.
+  - The answer is **paced** (TM2-17; `net/serve_tx.rs`): at most `SERVE_TX_BYTES`
+    (`MAX_RELAY_FRAME`, at least one transaction) per step, and each `Tx` is queued
+    only while the peer has fewer than `SERVE_TX_FRAMES` (32, half its control
+    outbox) answers queued or being written. The rest of the outbox stays free for
+    pongs and announcements. Meanwhile that peer's slow lane waits, as Bitcoin Core
+    stops processing a peer's messages while its send buffer is full. The
+    `NotFound` comes last and ends the answer. An id named twice in one `GetTx` is
+    answered once.
+  - **Budget** (RT-TM2P2P, RT2-TM2P2P F3): `GetTx` answers hold at most
+    `SERVE_TX_TOTAL` (64 MiB) node-wide, whatever the number of peers. A step holds
+    exactly its transactions' sizes (measured before they are encoded for sending),
+    from the peer's own share (`SERVE_TX_PEER`, 8 MiB) and then from a pool:
+    outbound peers use a slice of their own (16 MiB), inbound peers the rest. Both
+    are waited for in arrival order (FIFO semaphores). Each byte comes back when its
+    frame is written, or when its peer disconnects. A step that finds no room for
+    `SERVE_TX_STALL` (60 s) ends with `NotFound` for the rest, and the requester asks
+    another announcer. Before RT2-TM2P2P every step reserved a full
+    `SERVE_TX_BYTES` (4.5 MB) however small its transactions, without fairness, so
+    about eight slow readers held the whole budget.
+  - **Slow readers.** A peer holding more than `SLOW_SHARE` (4 MiB) of the budget
+    whose oldest queued answer is not written within `SLOW_BASE` (10 s) plus its
+    size at `SLOW_RATE` (64 KiB/s) is disconnected (no ban). So is one that lets no
+    answer be written for `SERVE_TX_STALL` while more wait, as when its outbox
+    overflows. One that reads slowly otherwise is bounded by the pong timeout
+    (§10): its pings queue behind its answers.
   - Before TM2-17 every answer was queued at once, and the first that found the
     64-message outbox full disconnected the requester as a slow reader: one `GetTx`
     for more than 64 transactions, which an honest node sent for any burst, cut the
     link, and with it a Dandelion stem route, which the requester then re-drew
     mid-epoch (`a_gettx_for_more_transactions_than_an_outbox_is_served_in_full`, the
     burst test above; repeated ids, `a_repeated_id_in_one_gettx_is_answered_once`).
-  - A requester that lets no answer be written for `SERVE_TX_STALL` (60 s) is
-    disconnected as a slow reader (no ban), as when its outbox overflows. One that
-    reads slowly is bounded by the pong timeout (§10): its pings queue behind its
-    answers.
+
 - **Pool re-announcement** (dossier 38 §3.4 item 3, `net/maintenance.rs`). Every node
   announces again, with `InvTx` like any announcement above, each pooled transaction
   that is still in its next block template, at fixed pool ages: 10, 20, 40, 80, 160,
@@ -819,7 +825,8 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
     originated again as a new one, through the stem.
 - **Only local origination.** A peer's `StemTx` or `Tx` is admitted and relayed
   whether or not its transaction is in the set (as for the guard, RTW1B-1).
-- **Persistence.** `originated.json` in the data directory (format 1: id and relay
+- **Persistence.** `originated.json` in the data directory, owner-only (0600 on Unix
+  whatever the umask; `p2p::private_file`, RT-NODEOPS) (format 1: id and relay
   height; a format 2 file, written by an unmerged development version with a pool
   height per entry, is read with that field ignored): written to a temporary file,
   synced and renamed (a crash leaves the old or the new set), whenever the set
@@ -831,7 +838,12 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   highest height, a missing or unknown version does not stop the entries from being
   read, a file that is not JSON (torn) is scanned for the entries it still holds, and
   every damage is logged as an error and the set written back clean. Before, one bad
-  entry or a version mismatch discarded the whole set.
+  entry or a version mismatch discarded the whole set. A height counts only if the
+  entry's `]` follows it: a height cut by a tear (`81234` torn to `81`) would end the
+  window about 81 000 blocks early, so such an entry keeps its id with the next
+  height at start-up instead (a window starting late, never early;
+  `rt2_a_torn_height_is_not_salvaged_short`). On Unix the directory is synced after
+  the rename, so the rename itself survives a power loss.
 - **The wallet side** (wallet `sync`) asks `/tx/status` instead of re-posting, and
   re-originates at most once, after `relayed + 2 190` (px.md §12).
 - Tested (`p2p/tests/network.rs`, over TCP):

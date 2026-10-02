@@ -67,10 +67,15 @@ pub(super) async fn stem_or_fluff(
             },
         );
         if hold {
-            log::debug!("local tx {} held until a stem peer exists", short(&id));
-            return true;
+            None
+        } else {
+            Some(route)
         }
-        route
+    };
+    // Logged outside the state lock (RT2 F8).
+    let Some(route) = route else {
+        log::debug!("local tx {} held until a stem peer exists", short(&id));
+        return true;
     };
     match route {
         Route::Fluff => fluff(inner, id, None).await,
@@ -139,6 +144,8 @@ pub(super) async fn fluff_entry(
     match result {
         Ok(_) | Err(MempoolError::AlreadyKnown) => {
             log::debug!("fluff tx {}", short(&id));
+            // Pooled: nothing more to ask anyone (`tx_requests`).
+            inner.state().tx_tracker.forget(&id);
             inner.announce_tx(id, except);
         }
         Err(e) => log::debug!("fluffing {} failed: {e:?}", short(&id)),

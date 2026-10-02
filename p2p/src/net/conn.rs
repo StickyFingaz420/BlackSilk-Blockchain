@@ -9,9 +9,9 @@ use super::peers::{
     advertised_listen, evict_inbound, inbound_count, onion_inbound_count, same_ip_count,
     HandshakeSlot,
 };
-use super::relay::{ReplyQueue, SERVE_TX_FRAMES};
-use super::state::{unix_now, Inner, Peer, State};
-use super::tx_requests::{retry_tx, Failure};
+use super::serve_tx::{ReplyQueue, SERVE_TX_FRAMES};
+use super::state::{unix_now, Inner, Peer};
+use super::tx_requests::Actions;
 use crate::addr::NetAddr;
 use crate::addrman_gate::AddrGate;
 use crate::connman::{onion_inbound_cap, ConnKind};
@@ -251,7 +251,7 @@ pub(super) async fn run_connection<S>(
     let (tx_out, rx_out) = mpsc::channel::<Message>(OUTBOX);
     let (tx_bulk, rx_bulk) = mpsc::channel::<Message>(BULK_OUTBOX);
     let kill = Arc::new(Notify::new());
-    let replies = Arc::new(ReplyQueue::new(inner.serve_budget.clone()));
+    let replies = Arc::new(ReplyQueue::default());
     let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
     {
         let mut st = inner.state();
@@ -346,9 +346,6 @@ pub(super) async fn run_connection<S>(
                 next_inv: now,
                 announced_to: HashSet::new(),
                 known_txs: HashSet::new(),
-                tx_wanted: VecDeque::new(),
-                tx_large: false,
-                tx_paused_until: None,
                 ping: None,
                 min_ping: None,
                 last_ping: now,
@@ -515,13 +512,11 @@ pub(super) async fn run_connection<S>(
                     }
                     Pushed::Dropped { charge: false } => {
                         log::debug!("{addr}: slow lane full; {kind} dropped");
-                        // A large answer dropped here: the request times
-                        // out and is asked again, one at a time from now
+                        // A large answer dropped here: its request times
+                        // out, and fewer are asked of this peer at once
                         // (`tx_requests`).
                         if large_tx {
-                            if let Some(p) = inner.state().peers.get_mut(&id) {
-                                p.tx_large = true;
-                            }
+                            inner.state().tx_tracker.answer_size(id, len);
                         }
                     }
                 }
@@ -532,35 +527,24 @@ pub(super) async fn run_connection<S>(
     // Cleanup. The lane task stops before its next message.
     drop(lane);
     writer_task.abort();
-    let mut st = inner.state();
-    if let Some(p) = st.peers.remove(&id) {
-        log::info!("disconnected peer {}", p.addr);
+    let gone = {
+        let mut st = inner.state();
+        let gone = st.peers.remove(&id).map(|p| p.addr);
+        replies.closed();
+        st.dandelion.peer_disconnected(id);
+        st.block_requests.retain(|_, (p, _)| *p != id);
+        // Its transaction records go; the ids it held are asked of the next
+        // announcers now, not after a timeout (`tx_requests`).
+        let now = Instant::now();
+        let mut out = Actions::default();
+        st.tx_tracker.peer_gone(id, now, &mut out);
+        inner.apply_tx_actions(&mut st, out, now);
+        gone
+    };
+    // Logged outside the state lock (RT2 F8).
+    if let Some(addr) = gone {
+        log::info!("disconnected peer {addr}");
     }
-    replies.closed();
-    st.dandelion.peer_disconnected(id);
-    st.block_requests.retain(|_, (p, _)| *p != id);
-    // Transaction requests this peer owned move to the next announcer now,
-    // not after TX_TIMEOUT; announcer queues it leaves empty are dropped.
-    let owned: Vec<Hash> = st
-        .tx_requests
-        .iter()
-        .filter(|(_, (p, _))| *p == id)
-        .map(|(h, _)| *h)
-        .collect();
-    let now = Instant::now();
-    for h in owned {
-        retry_tx(&inner, &mut st, h, id, Failure::Gone, now);
-    }
-    st.tx_announcers.retain(|_, q| {
-        q.retain(|p| *p != id);
-        !q.is_empty()
-    });
-    let State {
-        tx_overflow,
-        tx_announcers,
-        ..
-    } = &mut *st;
-    tx_overflow.retain(|h, _| tx_announcers.contains_key(h));
 }
 
 /// Sends a peer's queued messages: control messages (pongs, headers, relay)
@@ -584,8 +568,8 @@ async fn write_loop<W: AsyncWrite + Unpin>(
         if writer.send(&msg.encode()).await.is_err() {
             break;
         }
-        if let Message::Tx(t) = &msg {
-            replies.written(t.len());
+        if matches!(msg, Message::Tx(_)) {
+            replies.written();
         }
     }
 }
@@ -625,7 +609,7 @@ mod tests {
             writer,
             control_rx,
             bulk_rx,
-            Arc::new(ReplyQueue::new(Default::default())),
+            Arc::new(ReplyQueue::default()),
         ));
         let mut got = Vec::new();
         for _ in 0..6 {
