@@ -605,48 +605,64 @@ never used in any check or sent to a peer:
     (exponential, mean 2 s for outbound peers and 5 s for inbound peers).
   - This makes the first announcer hard to find by timing (the "diffusion" of
     Dandelion++).
-- **Requesting.** A peer asks for unknown hashes with `GetTx`, from one announcer at a
-  time.
-  - The logic is in `net/tx_requests.rs`. At most `TX_IN_FLIGHT` (16, half the
-    relay places of the requester's slow lane, §10) requests are outstanding to one
-    peer, and one while that peer's last answer was over `SMALL_RELAY_BYTES` (a PX
-    transaction; the slow lane holds about two of those). More ids it announced
-    wait, oldest first (at most 2 000 per peer), and are asked as its requests end
-    (an answer, a `NotFound`, a timeout). Bitcoin Core limits the transactions in
-    flight per peer for the same reason. Before TM2-17 (2026-10-02) a node asked for
-    every unknown id of one announcement (up to 500) at once, and the slow lane
-    dropped the answers past its relay places
-    (`a_transaction_burst_between_honest_nodes_keeps_the_link_and_the_stem`).
-  - A `NotFound` answer, no answer within 30 s, or the peer disconnecting moves the
-    request to the next announcer (on disconnect at once). An answer the slow lane
-    dropped is such a timeout. When no announcer is left after a timeout, the same
-    peer is asked once more before the id is forgotten.
-  - An answer this node drops for its own budgets (the peer's relay share, the
-    node-wide PX share, a full transaction lane) does not end the request's
-    purpose: the id goes back to the front of that peer's queue, and the peer is
-    asked again after 5 s (about one token of its PX share). Before RT-TM2P2P
-    (2026-10-02) such an answer ended the request and forgot its announcers, and
-    the announcer never announces the id to us again (we are in its announced
-    set): a burst of PX transactions from one announcer was lost for good
-    (`rt_a_px_burst_from_one_announcer_is_relayed_in_full`, PX-proving, 2 of 6
-    before).
-  - **Announcers.** At most 8 per id, in arrival order. When the queue is full, an
-    outbound announcer takes the place of an inbound one. An announcer refused a
-    place marks the id: when its queue runs out, the peers that announced it (the
-    per-peer known sets below) and have not failed it are asked, outbound first.
-    Before RT-TM2P2P eight inbound announcers that announced a transaction first and
-    never answered made the node forget it after 8 × 30 s, and an honest ninth
-    announcer was never asked (`rt_eight_silent_first_announcers_do_not_suppress_an_honest_one`;
-    it is asked now after the eight time outs, about 4 minutes). Bitcoin Core also
-    delays requests to inbound announcers by 2 s when an outbound one may answer;
-    that is not done here.
+- **Requesting: the transaction request tracker** (`net/tx_requests.rs`, RT2-TM2P2P
+  redesign, 2026-10-02; prior art: Bitcoin Core's `TxRequestTracker`, txrequest.cpp).
+  - **State.** One record per (transaction id, announcing peer): *candidate* (with
+    the time it may be asked), *requested* (with its expiry) or *done* (answered
+    without the transaction, timed out, or refused). One record per id holds its
+    hard deadline, its count of timeouts and an optional node-wide pause. Every
+    tracked id has a timer: the earliest of its deadline, its requests' expiries,
+    its candidates' ready times and its pause. There is no queue in which an id
+    waits without a request and a timer (RT2 F1).
+  - **Who is asked.** A candidate is ready at once if its peer is outbound
+    (*preferred*), 2 s after its announcement if inbound (Core's
+    `NONPREF_PEER_TX_DELAY`). Among the ready candidates whose peer has room, the
+    node asks preferred ones first, then by a per-node random priority of (id, peer)
+    (a salted hash): announcing first, or many times, buys no place in the order.
+  - **How many at once.** One request per id is outstanding until the first one
+    times out (30 s); from then on up to 4, to 4 different announcers, each replaced
+    as it ends. A `NotFound` or a disconnect ends a request at once and the next
+    candidate is asked.
+  - **Per-peer caps.** A peer may have at most 2 000 ids tracked (its announcements
+    beyond are ignored) and at most 16 requests in flight, and at most
+    `SLOW_LANE_BYTES` of expected answers in flight (each request counted at the
+    size of that peer's last answer, at least 8 KiB; a PX answer is about 2.2 MB, so
+    two PX requests at once). A candidate whose peer is at a cap is skipped, not
+    queued: junk from one peer consumes only that peer's own allowance (RT2 F1,
+    F4).
+  - **Busy.** An answer this node drops for the peer's relay share or a full
+    transaction lane is not the transaction's fault: that record goes back to
+    candidate behind the others, and the next candidate is asked now; after 2 such
+    drops for one (id, peer) the record is done (RT2 F2: an announcer could keep its
+    own answers Busy forever). An answer dropped for the node-wide PX share pauses
+    the id (not the peer) for 1 s, then it is asked again. The per-peer relay share
+    is charged only after the already-pooled, known-rejected and conflict checks.
+  - **Deadline.** An id is dropped, with all its records, 20 minutes after its first
+    announcement, or as soon as every record is done. It comes back with a later
+    announcement (pool re-announcement, §7 below).
+  - **Worst-case delay bound.** Let `k` announcers of an id never answer, and one
+    honest announcer answer. The honest one is asked within
+    `2 s + 30 s × (1 + ⌈k / 4⌉)` of its announcement: at most 2 s of delay, one
+    first request that may time out, then 4 at a time. If it is outbound and the
+    attackers inbound, within 32 s. The deadline holds that bound up to `k = 152`
+    (more than the 64 inbound slots). With the random priority the expected delay is
+    about half the bound. Before the redesign: about 30 s per silent announcer in
+    arrival order (`rt_eight_silent_first_announcers_do_not_suppress_an_honest_one`:
+    240 s for 8; about 58 minutes with 117), and without bound behind one announcer's
+    junk queue (`rt2_a_timed_out_request_is_not_parked_behind_a_junk_queue`).
+  - **Late answers.** The answer to a request that timed out is still accepted from
+    the peer asked for another 30 s, unpenalized, as a late block is (at most 10 000
+    such requests remembered). Before P2P-FIX2 it was an unrequested `Tx` (10 points)
+    and was dropped, so a node or link slow for 30 s penalized honest peers
+    (`a_late_transaction_answer_is_not_penalized`).
   - Neither a timeout nor a `NotFound` is penalized: transaction relay is best
     effort.
-  - The answer to a request that timed out is still accepted from the peer asked
-    for another 30 s, unpenalized, as a late block is (at most 10 000 such requests
-    remembered). Before P2P-FIX2 it was an unrequested `Tx` (10 points) and was
-    dropped, so a node or link slow for 30 s penalized honest peers
-    (`a_late_transaction_answer_is_not_penalized`).
+  - Tested: the tracker's property test (random announce, answer, `NotFound`, Busy,
+    timeout and disconnect sequences; invariants: every id has a request or a timer,
+    no cap is exceeded, at most one request per id before its first timeout and 4
+    after, an honest announcer is asked within the bound) and the network tests named
+    above, `rt_a_px_burst_from_one_announcer_is_relayed_in_full` and
+    `rt2_an_announcer_kept_busy_does_not_hold_a_transaction` (PX-proving).
   - The per-peer sets of announced and known transaction ids are capped (50 000;
     cleared when exceeded: forgetting only costs a redundant announcement).
 - **Stem transactions stay private.** An `InvTx` for a transaction in our stempool
