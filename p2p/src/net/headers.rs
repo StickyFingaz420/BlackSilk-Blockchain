@@ -880,6 +880,259 @@ mod tests {
         assert_ne!(queue_key(&o1, true), queue_key(&o2, true));
     }
 
+    /// A network over a fresh regtest chain with `cfg`, listening nowhere
+    /// (the queue-room tests need only its state).
+    async fn idle_network(edit: impl FnOnce(&mut crate::NetConfig)) -> crate::Network {
+        struct ZeroPow;
+        impl blacksilk_consensus::PowFunction for ZeroPow {
+            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+                [0; 32]
+            }
+        }
+        let p = blacksilk_consensus::ChainParams::regtest();
+        let m = ChainManager::open(
+            p.clone(),
+            blacksilk_tx::params::TxRules::for_chain(&p),
+            Arc::new(ZeroPow),
+            Box::<blacksilk_chain::store::MemoryStore>::default(),
+            [1; 32],
+        )
+        .unwrap();
+        let mut cfg = crate::NetConfig::new(p.network_id);
+        cfg.listen = None;
+        edit(&mut cfg);
+        crate::Network::start(cfg, Arc::new(std::sync::Mutex::new(m)))
+            .await
+            .unwrap()
+    }
+
+    /// The header queue takes at most `max_per_ip` batches per origin (not
+    /// with `allow_private`) and `2 × (max_inbound + max_outbound)` in total
+    /// (mutation run E: the total had no test). Defaults: 64 inbound, 8
+    /// outbound, 2 per IP: 144 in total.
+    #[tokio::test]
+    async fn the_header_queue_has_room_per_origin_and_in_total() {
+        let a = NetAddr::parse("1.2.3.4:5").unwrap();
+        let a2 = NetAddr::parse("1.2.3.4:6").unwrap();
+        let b = NetAddr::parse("5.6.7.8:5").unwrap();
+        let net = idle_network(|_| {}).await;
+        let inner = &net.inner;
+        {
+            let mut st = inner.state();
+            st.header_queue_len = 143;
+            assert!(inner.header_queue_room(&st, &a, false), "143 of 144");
+            st.header_queue_len = 144;
+            assert!(!inner.header_queue_room(&st, &a, false), "144 of 144");
+            st.header_queue_len = 1;
+            st.header_queue_origin.insert(queue_key(&a, false), 1);
+            assert!(inner.header_queue_room(&st, &a, false), "1 of 2 for the IP");
+            st.header_queue_origin.insert(queue_key(&a, false), 2);
+            assert!(
+                !inner.header_queue_room(&st, &a, false),
+                "2 of 2 for the IP"
+            );
+            assert!(!inner.header_queue_room(&st, &a2, false), "the same IP");
+            assert!(inner.header_queue_room(&st, &b, false), "another IP");
+            assert!(inner.header_queue_room(&st, &a2, true), "a proxied origin");
+        }
+        // `allow_private`: no limit per origin, the total still holds.
+        let net = idle_network(|c| c.allow_private = true).await;
+        let inner = &net.inner;
+        let mut st = inner.state();
+        st.header_queue_origin.insert(queue_key(&a, false), 50);
+        st.header_queue_len = 143;
+        assert!(inner.header_queue_room(&st, &a, false));
+        st.header_queue_len = 144;
+        assert!(!inner.header_queue_room(&st, &a, false));
+        drop(st);
+        // Zero limits count as one: one batch per origin, two in total.
+        let net = idle_network(|c| {
+            c.max_inbound = 0;
+            c.max_outbound = 0;
+            c.max_per_ip = 0;
+        })
+        .await;
+        let inner = &net.inner;
+        let mut st = inner.state();
+        assert!(inner.header_queue_room(&st, &a, false));
+        st.header_queue_origin.insert(queue_key(&a, false), 1);
+        st.header_queue_len = 1;
+        assert!(
+            !inner.header_queue_room(&st, &a, false),
+            "1 of 1 for the IP"
+        );
+        assert!(inner.header_queue_room(&st, &b, false), "1 of 2 in total");
+        st.header_queue_len = 2;
+        assert!(!inner.header_queue_room(&st, &b, false), "2 of 2 in total");
+    }
+
+    /// At most one `GetHeaders` is outstanding per peer (mutation run E: the
+    /// guard in `request_headers_after` had no test; under it another task
+    /// asking while a request is outstanding sends nothing). A raw peer
+    /// claiming more height gets the handshake's request; two more requests
+    /// while it is unanswered send nothing: the node's next control frame,
+    /// its answer to a ping sent after them, follows the one `GetHeaders`.
+    #[tokio::test]
+    async fn a_second_header_request_waits_for_the_outstanding_one() {
+        use crate::message::{Message, Version, PROTOCOL_VERSION};
+        let net = idle_network(|c| {
+            c.listen = Some("127.0.0.1:0".parse().unwrap());
+            c.allow_private = true;
+            c.tick = std::time::Duration::from_secs(600);
+        })
+        .await;
+        let inner = net.inner.clone();
+        let stream = tokio::net::TcpStream::connect(net.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut r, mut w) = crate::transport::handshake(
+            stream,
+            true,
+            inner.cfg.network_id,
+            &inner.genesis_id,
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let v = Version {
+            protocol: PROTOCOL_VERSION,
+            network: inner.cfg.network_id,
+            nonce: 0xdead_beef,
+            height: 5,
+            tip: [0; 32],
+            listen: None,
+            relay_txs: true,
+        };
+        w.send(&Message::Version(v).encode()).await.unwrap();
+        let recv = |m: Vec<u8>| Message::decode(&m).unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Version(_)));
+        w.send(&Message::Verack.encode()).await.unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Verack));
+        // The handshake's request, then the peer's id.
+        let mut get_headers = 0;
+        loop {
+            if let Message::GetHeaders { .. } = recv(r.recv().await.unwrap()) {
+                get_headers += 1;
+                break;
+            }
+        }
+        let peer = *inner.state().peers.keys().next().expect("registered");
+        inner.request_headers(peer).await;
+        inner.request_headers_after(peer, Some([3; 32])).await;
+        w.send(&Message::Ping(77).encode()).await.unwrap();
+        loop {
+            match recv(r.recv().await.unwrap()) {
+                Message::Pong(77) => break,
+                Message::GetHeaders { .. } => get_headers += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(get_headers, 1, "one request outstanding at a time");
+    }
+
+    /// The owed replies (`headers_grace`, P2P-FIX2): a reply is owed for
+    /// `HEADERS_TIMEOUT` after its request, and no longer; each owed reply
+    /// is taken once, the oldest first; at most `MAX_HEADER_GRACE` are kept
+    /// (mutation run E: the grace functions had no unit test).
+    #[test]
+    fn owed_header_replies_expire_and_are_taken_once() {
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        let mut g = VecDeque::new();
+        assert!(!in_grace(&mut g, t0));
+        assert!(!take_grace(&mut g, t0), "nothing owed");
+        add_grace(&mut g, t0);
+        add_grace(&mut g, at(10));
+        assert!(in_grace(&mut g, at(60)), "60 s: still owed");
+        assert_eq!(g.len(), 2);
+        assert!(in_grace(&mut g, at(61)), "the second is still owed");
+        assert_eq!(g, [at(10)], "the first expired");
+        assert!(take_grace(&mut g, at(61)));
+        assert!(!take_grace(&mut g, at(61)), "taken once");
+        add_grace(&mut g, t0);
+        assert!(!take_grace(&mut g, at(61)), "an expired one is not taken");
+        assert!(g.is_empty());
+        for k in 0..MAX_HEADER_GRACE as u64 + 3 {
+            add_grace(&mut g, at(k));
+        }
+        assert_eq!(g.len(), MAX_HEADER_GRACE);
+        assert_eq!(MAX_HEADER_GRACE, 8);
+        assert_eq!(g.front(), Some(&at(3)), "the oldest go first");
+    }
+
+    /// A request after a batch starts its locator at the batch's last
+    /// header, once, then our best chain down to the genesis (mutation run
+    /// E: the locator's edit had no test). A fresh node's own locator is the
+    /// genesis alone.
+    #[tokio::test]
+    async fn a_request_after_a_batch_starts_its_locator_at_the_batch() {
+        use crate::message::{Message, Version, PROTOCOL_VERSION};
+        let net = idle_network(|c| {
+            c.listen = Some("127.0.0.1:0".parse().unwrap());
+            c.allow_private = true;
+            c.tick = Duration::from_secs(600);
+        })
+        .await;
+        let inner = net.inner.clone();
+        let stream = tokio::net::TcpStream::connect(net.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut r, mut w) = crate::transport::handshake(
+            stream,
+            true,
+            inner.cfg.network_id,
+            &inner.genesis_id,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        // At height 0 with the genesis as its tip: the node asks nothing.
+        let v = Version {
+            protocol: PROTOCOL_VERSION,
+            network: inner.cfg.network_id,
+            nonce: 0xdead_beef,
+            height: 0,
+            tip: inner.genesis_id,
+            listen: None,
+            relay_txs: true,
+        };
+        w.send(&Message::Version(v).encode()).await.unwrap();
+        let recv = |m: Vec<u8>| Message::decode(&m).unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Version(_)));
+        w.send(&Message::Verack.encode()).await.unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Verack));
+        let peer = loop {
+            if let Some(id) = inner.state().peers.keys().next().copied() {
+                break id;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        let genesis = inner.genesis_id;
+        for from in [[4; 32], genesis] {
+            inner.request_headers_after(peer, Some(from)).await;
+            let locator = loop {
+                if let Message::GetHeaders { locator, .. } = recv(r.recv().await.unwrap()) {
+                    break locator;
+                }
+            };
+            if from == genesis {
+                assert_eq!(locator, [genesis], "the genesis once");
+            } else {
+                assert_eq!(locator, [from, genesis]);
+            }
+            // Answered (empty): the next request may go.
+            w.send(&Message::Headers(vec![]).encode()).await.unwrap();
+            while inner
+                .state()
+                .peers
+                .get(&peer)
+                .is_some_and(|p| p.headers_requested.is_some())
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+    }
+
     /// A header from a newer release (a version no epoch of the schedule
     /// uses) is not scored; a bad version the schedule does know is.
     #[test]

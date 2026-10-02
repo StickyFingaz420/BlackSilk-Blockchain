@@ -1038,3 +1038,151 @@ fn dense_tail_pow_720_headers_sequential_and_parallel() {
         );
     }
 }
+
+/// `HeaderCheck::resume` takes only consecutive, linked headers, at least
+/// the context the difficulty rule needs (mutation run E: no test resumed
+/// from a broken or short start). A header whose height or parent alone is
+/// wrong is refused, as is one header too few.
+#[test]
+fn a_header_check_resumes_only_from_linked_headers_with_enough_context() {
+    use crate::headers::HeaderCheck;
+    let chain = fast_chain(31, 200);
+    let params = ChainParams::regtest();
+    let pow = ZeroPow;
+    let seeds = [(0u64, params.genesis_id())];
+    let n = HeaderCheck::context_len(&params);
+    assert!(n < 150);
+    let headers: Vec<BlockHeader> = (1..=200).map(|h| chain.blocks[h as usize].header).collect();
+    let start = &headers[200 - n..];
+    let resume =
+        |s: &[BlockHeader]| HeaderCheck::resume(&params, &pow, s, &seeds, 10, 10, u64::MAX / 2);
+    let mut c = resume(start).expect("a linked start with the context");
+    assert_eq!(c.last().0, headers[199]);
+    // The next header checks against it.
+    let more = fast_chain(31, 201);
+    assert_eq!(more.blocks[200].header, headers[199]);
+    c.check(&more.blocks[201].header, true).unwrap();
+    let e = resume(&start[1..]).err().expect("one header too few");
+    assert!(e.contains("too few headers"), "{e}");
+    let mut gap = start.to_vec();
+    gap.remove(n / 2);
+    gap.push(headers[0]); // keep the length
+    let e = resume(&gap).err().expect("refused");
+    assert!(e.contains("does not extend"), "{e}");
+    // The last header at a wrong height (its parent is right).
+    let mut height = start.to_vec();
+    height.last_mut().unwrap().height += 1;
+    let e = resume(&height).err().expect("refused");
+    assert!(e.contains("does not extend"), "{e}");
+    // The last header on another parent (its height is right).
+    let mut parent = start.to_vec();
+    parent.last_mut().unwrap().prev_id = [9; 32];
+    let e = resume(&parent).err().expect("refused");
+    assert!(e.contains("does not extend"), "{e}");
+}
+
+/// Below the forced headers, a check samples about `samples` of `expected`
+/// headers for proof of work (mutation run E: the sampling rate had no
+/// test). With half of 600 headers expected, the count of hashes computed
+/// stays within six standard deviations of half the headers that need one
+/// (difficulty above 1); forcing every header computes them all.
+#[test]
+fn the_header_check_samples_at_the_requested_rate() {
+    use crate::headers::HeaderCheck;
+    const N: u64 = 600;
+    let chain = fast_chain(32, N);
+    let params = ChainParams::regtest();
+    let headers: Vec<BlockHeader> = (1..=N).map(|h| chain.blocks[h as usize].header).collect();
+    let need = headers.iter().filter(|h| h.difficulty > 1).count() as f64;
+    assert!(need > 500.0, "{need}");
+    let run = |samples: u64, force: bool| {
+        let pow = BadPow::default();
+        let mut c = HeaderCheck::from_genesis(&params, &pow, N, samples, u64::MAX / 2).unwrap();
+        for h in &headers {
+            c.check_deferred(h, force).unwrap();
+        }
+        c.flush().unwrap();
+        c.pow_checked as f64
+    };
+    let half = run(N / 2, false);
+    let sd = (need / 4.0).sqrt();
+    assert!((half - need / 2.0).abs() <= 6.0 * sd, "{half} of {need}");
+    assert_eq!(run(0, true), need, "forced: every one");
+    assert_eq!(run(N, false), need, "samples = expected: every one");
+}
+
+/// The check's thread count (at least 1) and its known key blocks.
+#[test]
+fn the_header_checks_threads_and_key_blocks() {
+    use crate::headers::HeaderCheck;
+    let params = ChainParams::regtest();
+    let pow = ZeroPow;
+    let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
+    let all = std::thread::available_parallelism().map_or(1, |n| n.get());
+    assert_eq!(c.threads(), all);
+    c.set_threads(3);
+    assert_eq!(c.threads(), 3);
+    c.set_threads(0);
+    assert_eq!(c.threads(), 1);
+    assert!(c.has_seed(0), "the genesis is the first key block");
+    assert!(!c.has_seed(1) && !c.has_seed(params.seed_epoch));
+}
+
+/// A check from the genesis hands its last headers and its key blocks to
+/// the wallet, so the next check resumes from them, also when the restore
+/// scanned fewer blocks than the context holds (mutation run E: in the
+/// existing resume test the scanned blocks alone held the context and the
+/// key block). The context is the last `context_len` headers checked, never
+/// the genesis; a check keeps no more of them.
+#[test]
+fn a_restores_header_check_hands_its_context_and_keys_to_the_next() {
+    use crate::headers::HeaderCheck;
+    let params = ChainParams::regtest();
+    let n = HeaderCheck::context_len(&params);
+    // Past the key switch at 2 113 (key block 2 048), restored two blocks
+    // below the tip; and a chain shorter than the context.
+    for (len, restore, more) in [(2_150u64, 2_149u64, 2_200u64), (52, 50, 60)] {
+        let mut chain = fast_chain(33, len);
+        let mut w = restored(None, restore);
+        assert_eq!(w.sync(&chain).unwrap(), len);
+        assert_eq!(w.headers_checked_through(), Some(len));
+        let to = wallet().primary();
+        while chain.height() < more {
+            chain.mine(&to, 0);
+        }
+        let mut w = Wallet::from_json(&w.to_json()).unwrap();
+        w.set_header_pow(Arc::new(ZeroPow));
+        w.set_verify_headers(true);
+        chain.header_requests.borrow_mut().clear();
+        assert_eq!(w.sync(&chain).unwrap(), more);
+        assert_eq!(w.headers_checked_through(), Some(more));
+        assert!(
+            chain
+                .header_requests
+                .borrow()
+                .iter()
+                .all(|&(from, _)| from >= len),
+            "{len}: {:?}",
+            chain.header_requests.borrow()
+        );
+    }
+    // The check's own context.
+    let chain = fast_chain(34, 200);
+    let pow = ZeroPow;
+    let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
+    for h in 1..=20 {
+        c.check(&chain.blocks[h as usize].header, false).unwrap();
+    }
+    let heights: Vec<u64> = c.context().map(|h| h.height).collect();
+    assert_eq!(heights, (1..=20).collect::<Vec<u64>>(), "no genesis");
+    for h in 21..=200 {
+        c.check(&chain.blocks[h as usize].header, false).unwrap();
+    }
+    let heights: Vec<u64> = c.context().map(|h| h.height).collect();
+    assert_eq!(heights, (201 - n as u64..=200).collect::<Vec<u64>>());
+    assert_eq!(
+        c.seeds().collect::<Vec<_>>(),
+        vec![(0, params.genesis_id())],
+        "the only key block below 2 048"
+    );
+}
