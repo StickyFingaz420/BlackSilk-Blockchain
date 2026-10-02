@@ -1380,6 +1380,17 @@ fn a_malformed_header_feed_page_is_refused() {
         }
         fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
             let mut r = self.chain.headers(from, count)?;
+            if count == 1 && from > 1 {
+                // The reorganization check's single header.
+                match self.lie {
+                    4 => {
+                        r.headers =
+                            hex::encode(self.chain.blocks[from as usize - 1].header.to_bytes())
+                    }
+                    5 => r.from -= 1,
+                    _ => {}
+                }
+            }
             if from == 1 {
                 match self.lie {
                     0 => r.from += 1,
@@ -1428,5 +1439,24 @@ fn a_malformed_header_feed_page_is_refused() {
             .to_string();
         assert!(e.contains("missing or malformed"), "lie {lie}: {e}");
         assert_eq!(w.synced_height(), 49, "lie {lie}: nothing scanned");
+    }
+    // The reorganization check's single header: of another height, or
+    // served as another height's.
+    for lie in [4, 5] {
+        let mut w = restored(None, 50);
+        assert_eq!(
+            w.sync(&Feed {
+                chain: &chain,
+                lie: 9
+            })
+            .unwrap(),
+            60
+        );
+        let e = w
+            .sync(&Feed { chain: &chain, lie })
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("header 60 is malformed"), "lie {lie}: {e}");
+        assert_eq!(w.synced_height(), 60);
     }
 }

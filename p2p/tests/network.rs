@@ -4507,6 +4507,54 @@ async fn an_unsolicited_low_work_header_keeps_the_peers_claimed_height() {
     assert_eq!(a.net.peers()[0].score, 0);
 }
 
+/// A panic in the header worker's proof-of-work jobs (off the chain actor)
+/// stops the node as a panic in the actor does: exit status
+/// `POISONED_EXIT_CODE` with the reason on stderr, never a worker that ends
+/// silently while the node runs on (mutation run E: no test reached the
+/// arm). The scenario runs in a child process (this test, re-run with an
+/// environment variable), which exits 0 if it is still running after 20 s.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_panic_in_the_header_pow_jobs_stops_the_node() {
+    const CHILD: &str = "BLACKSILK_TEST_PANIC_POW_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        struct PanicPow;
+        impl PowFunction for PanicPow {
+            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+                panic!("injected PoW panic");
+            }
+        }
+        let a = node_with_pow(67, fast_config(&[]), Arc::new(PanicPow)).await;
+        let (mut r, mut w) = raw_peer_at(a.addr, params().network_id, true, 10).await;
+        assert!(
+            recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+                .await
+                .is_some()
+        );
+        w.send(&Message::Headers(header_branch(3, 120, 0)).encode())
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        std::process::exit(0);
+    }
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "a_panic_in_the_header_pow_jobs_stops_the_node",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(blacksilk_p2p::POISONED_EXIT_CODE),
+        "{stderr}"
+    );
+    assert!(stderr.contains("header task failed"), "{stderr}");
+}
+
 /// RTW1B-1: the recently-expired guard applies to local origination only.
 /// A node that expired a transaction refuses it from its own wallet (`/tx`,
 /// `Network::submit_tx`) for `RECENTLY_EXPIRED_BLOCKS`, but a peer stemming
