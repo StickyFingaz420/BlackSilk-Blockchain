@@ -1133,6 +1133,100 @@ mod tests {
         }
     }
 
+    /// Once the worker has taken up a queued batch, its origin's count
+    /// drops back, and an origin with nothing queued leaves the map
+    /// (mutation run E: with `allow_private`, as in the network tests, the
+    /// per-origin count is never read, so nothing noticed a count that never
+    /// fell). One solicited header, then a second.
+    #[tokio::test]
+    async fn the_header_queue_counts_return_to_zero_after_the_worker() {
+        use crate::message::{Message, Version, PROTOCOL_VERSION};
+        let net = idle_network(|c| {
+            c.listen = Some("127.0.0.1:0".parse().unwrap());
+            c.allow_private = true;
+            c.tick = Duration::from_millis(50);
+        })
+        .await;
+        let inner = net.inner.clone();
+        let stream = tokio::net::TcpStream::connect(net.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut r, mut w) = crate::transport::handshake(
+            stream,
+            true,
+            inner.cfg.network_id,
+            &inner.genesis_id,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let v = Version {
+            protocol: PROTOCOL_VERSION,
+            network: inner.cfg.network_id,
+            nonce: 0xdead_beef,
+            height: 5,
+            tip: [0; 32],
+            listen: None,
+            relay_txs: true,
+        };
+        w.send(&Message::Version(v).encode()).await.unwrap();
+        let recv = |m: Vec<u8>| Message::decode(&m).unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Version(_)));
+        w.send(&Message::Verack.encode()).await.unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Verack));
+        // Two headers on the genesis, one per request.
+        struct ZeroPow;
+        impl blacksilk_consensus::PowFunction for ZeroPow {
+            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+                [0; 32]
+            }
+        }
+        let mut g = HeaderChain::new(
+            blacksilk_consensus::ChainParams::regtest(),
+            Arc::new(ZeroPow),
+        );
+        for k in 0..2u64 {
+            let t = g.template();
+            let parent = *g.header(&t.prev_id).unwrap();
+            let h = BlockHeader {
+                version: t.version,
+                height: t.height,
+                prev_id: t.prev_id,
+                timestamp: t.min_timestamp.max(parent.timestamp + 10),
+                difficulty: t.difficulty,
+                tx_root: [0; 32],
+                nonce: k,
+            };
+            g.accept(h, u64::MAX / 2).unwrap();
+            loop {
+                if let Message::GetHeaders { .. } = recv(r.recv().await.unwrap()) {
+                    break;
+                }
+            }
+            w.send(&Message::Headers(vec![h]).encode()).await.unwrap();
+            w.send(&Message::Ping(k).encode()).await.unwrap();
+            loop {
+                if matches!(recv(r.recv().await.unwrap()), Message::Pong(x) if x == k) {
+                    break;
+                }
+            }
+            // Taken up by the worker: the header is stored.
+            let mut waited = 0;
+            while inner.summary.load().header_height < k + 1 || inner.state().header_queue_len > 0 {
+                assert!(waited < 500, "the batch is never taken up");
+                waited += 1;
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let st = inner.state();
+            assert_eq!(st.header_queue_len, 0);
+            assert!(
+                st.header_queue_origin.is_empty(),
+                "{:?}",
+                st.header_queue_origin
+            );
+        }
+    }
+
     /// A header from a newer release (a version no epoch of the schedule
     /// uses) is not scored; a bad version the schedule does know is.
     #[test]

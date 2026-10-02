@@ -1358,3 +1358,75 @@ fn the_dense_tail_is_exactly_the_last_720_headers_and_the_first() {
         assert_eq!(w.sync(&chain).is_err(), refused, "{h}");
     }
 }
+
+/// The header feed's pages are checked before use: a page from another
+/// height, an empty page, a page with a partial header and a page with more
+/// headers than asked are each refused as malformed (mutation run E: no
+/// test served a malformed page, each fault on its own).
+#[test]
+fn a_malformed_header_feed_page_is_refused() {
+    use crate::node::NodeApi;
+    use blacksilk_rpc as rpc;
+    struct Feed<'a> {
+        chain: &'a MockChain,
+        lie: u8,
+    }
+    impl NodeApi for Feed<'_> {
+        fn info(&self) -> Result<rpc::Info, String> {
+            self.chain.info()
+        }
+        fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
+            self.chain.blocks(from, count)
+        }
+        fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+            let mut r = self.chain.headers(from, count)?;
+            if from == 1 {
+                match self.lie {
+                    0 => r.from += 1,
+                    1 => r.headers.clear(),
+                    2 => r.headers.push_str("00"),
+                    3 => r.headers.push_str(&hex::encode(
+                        self.chain.blocks[(from + count) as usize].header.to_bytes(),
+                    )),
+                    _ => {}
+                }
+            }
+            Ok(r)
+        }
+        fn distribution(&self, to: u64) -> Result<rpc::Distribution, String> {
+            self.chain.distribution(to)
+        }
+        fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String> {
+            self.chain.outputs(indices)
+        }
+        fn submit_tx(&self, tx: &[u8]) -> Result<rpc::SubmitResult, String> {
+            self.chain.submit_tx(tx)
+        }
+        fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
+            self.chain.px_commitments(from)
+        }
+        fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
+            self.chain.px_contracts(from)
+        }
+    }
+    let chain = fast_chain(40, 60);
+    let mut honest = restored(None, 50);
+    assert_eq!(
+        honest
+            .sync(&Feed {
+                chain: &chain,
+                lie: 9
+            })
+            .unwrap(),
+        60
+    );
+    for lie in 0..4 {
+        let mut w = restored(None, 50);
+        let e = w
+            .sync(&Feed { chain: &chain, lie })
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("missing or malformed"), "lie {lie}: {e}");
+        assert_eq!(w.synced_height(), 49, "lie {lie}: nothing scanned");
+    }
+}
