@@ -147,14 +147,17 @@ the announcement; it is an input, not a constant of the tool. This is a genesis 
 ## 6. Steps
 
 0. **Preconditions** (each a gate; their status is in docs/STATUS.md, not here):
-   the protocol freeze; `D0` measured on the trial devices (§5); the owner's
-   signing key, a signed release-candidate tag and a second announcement channel
-   (owner tasks: without them every instruction below is authenticated only by the
-   chat channel); a fresh network pre-shared key for the trial, generated and
+   the protocol freeze; `D0` measured on the trial devices (§5); the trial's
+   release authentication, the **two-channel commit id** (owner decision
+   2026-10-02, docs/testnet.md §2.1): the exact commit id and the consensus
+   fingerprints published on two separate channels, which every operator compares
+   (signed tags and the owner's signing key are required before a public testnet,
+   not for the trial); a fresh network pre-shared key for the trial, generated and
    distributed as in docs/testnet.md §12.3 (one key for the launch, never one used
    in a rehearsal); every operator's device through the endpoint checklist
    (docs/testnet.md §12.8).
-1. **Freeze** every non-beacon field (release candidate, signed tag): network id,
+1. **Freeze** every non-beacon field (the release-candidate commit, announced by
+   its full id on both channels): network id,
    `T_g`, `D0`, `H`, the derivation (this document), with the testnet's beacon
    still `None` (`TESTNET_BEACON`) and `--network testnet` refusing to start.
 2. **Announce** ≥ 48 h before `H`'s expected time: this document, the values, the
@@ -166,9 +169,10 @@ the announcement; it is an input, not a constant of the tool. This is a genesis 
    recomputes the genesis in step 6 from the announced inputs and the public
    Bitcoin hash (the tool is public and cheap), so a wrong genesis id in an
    announcement is caught; the inputs themselves (`T_g`, `D0`, `H`) are only as
-   trustworthy as the channel that announced them, hence the second channel.
+   trustworthy as the channels that announced them, so they are published on both
+   channels too.
 4. **Compute,** with a binary built by `tools/release-build.sh` from a clean
-   checkout of the release-candidate tag (never one written by `cargo test`, docs/testnet.md
+   checkout of the release-candidate commit (never one written by `cargo test`, docs/testnet.md
    §2), whose `--version` prints `build flags: none`:
    ```sh
    bash tools/release-build.sh -p blacksilk-genesis
@@ -191,10 +195,12 @@ the announcement; it is an input, not a constant of the tool. This is a genesis 
    genesis id and fingerprint (the committed beacon makes
    `ChainParams::genesis_is_final` true), and docs/testnet.md §1 (the network id
    and time; ids and fingerprints are referenced there, never copied).
-   `git diff <rc-tag> HEAD` must show only these.
-6. **Operators** verify the tag and the diff, re-run
+   `git diff <rc-commit> HEAD` must show only these. The owner publishes the final
+   commit id and the consensus fingerprints on both channels.
+6. **Operators** check that both channels give the same final commit id and
+   fingerprints, check the diff from the release-candidate commit, re-run
    `blacksilk-genesis verify ... --expected-id <id>` from the announced inputs,
-   build the node, miner and wallet with `tools/release-build.sh` from the tag
+   build the node, miner and wallet with `tools/release-build.sh` from that commit
    (never a plain `cargo build`, whose binaries name the builder's home directory,
    and never a binary another person built: docs/testnet.md §2), check them with
    `tools/check-build-flags.sh --strings` and that `blacksilk-node --version` prints

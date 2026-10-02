@@ -90,11 +90,23 @@ with `--strings`, the binary's bytes; CI runs it on a plain release build
 
 ### 2.1 Operator check: identity (every device, before the trial)
 
+**How the trial release is authenticated** (owner decision 2026-10-02): the
+two-channel commit id. The owner publishes the exact commit id (full, 40 hex
+digits) and the consensus fingerprints (from `blacksilk-node --print-manifest` at
+that commit) on **two separate channels** (the operators' end-to-end encrypted
+channel and a second, independent one, docs/testnet-incident-response.md §1a).
+Every operator checks that both channels give the same values, builds exactly that
+commit with `tools/release-build.sh` (§2), compares the values below, and
+recomputes the genesis from its announced inputs (docs/testnet-v3-genesis.md §6).
+A value that differs between the channels stops the operator. No operator runs a
+binary someone else built. Signed tags and the owner's signing key are not used for
+the trial; they are required before a public testnet.
+
 Nodes built from different commits can agree on the genesis and still follow
 different rules. They connect, and then fork on the first block that uses the
 difference. Every crate version is `0.1.0`, so the version number alone does
-not identify a build. Before the trial, **every device** compares four values
-with the ones the release announcement publishes:
+not identify a build. Before the trial, **every device** compares these values
+with the ones the two-channel release announcement publishes:
 
 - the **SHA-256 of the node binary**, rebuilt from the announced commit with
   the announced toolchain and target, against the announced hash (this is
@@ -625,10 +637,11 @@ every key and the whole history of the trial. So:
 1. Stop all miners and wait until every node reports the same `tip`.
 2. Custody: the operators agree in advance on the machine and the person (the
    custodian) that run the audit, and that machine runs nothing else during it. It
-   must not be the project's build or development workstation, which builds
-   third-party crates and holds the repository credentials (X8 of the second
-   threat-model round; the choice of machine is an owner decision, to be
-   confirmed).
+   must be a **separate machine, never the project's build or development
+   (agent) workstation**, which builds third-party crates and holds the
+   repository credentials (owner decision 2026-10-02; X8 of the second
+   threat-model round). The same separate machine is the one where incident data
+   is examined (docs/testnet-incident-response.md §5).
    Wallet files and passwords travel only over the operators' end-to-end encrypted
    channel (docs/testnet-incident-response.md §1a) or by hand, never by e-mail or a
    shared folder. Passwords go in per-wallet files (one password per file) or are

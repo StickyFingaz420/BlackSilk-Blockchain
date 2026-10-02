@@ -189,13 +189,13 @@ problem and passes with the fix, and a green CI run of the release.
 1. Fix on a branch; add the regression test.
 2. Run the full suite locally; push; require the CI run of that exact commit to pass
    **before** operators are told to upgrade. Inspect its logs.
-3. Tag the commit.
+3. Record the full commit id (a tag is optional for the trial; signed tags are required before a public testnet).
 4. Tell operators, over the private channel:
-   - the tag and its CI run. Until the owner's signing key and signed tags exist
-     (owner task; docs/STATUS.md), the private channel is the only authentication of
-     an instruction: operators confirm an upgrade, a flag or a block id through a
-     second route (§1a backup contact, or a call) before acting, and never run a
-     binary someone else built;
+   - the full commit id, its consensus fingerprints and its CI run, on **two
+     separate channels** (the trial's two-channel commit id, owner decision
+     2026-10-02, docs/testnet.md §2.1; signed tags come before a public testnet).
+     Operators act only when both channels agree, confirm a flag or a block id the
+     same way, and never run a binary someone else built;
    - the order of upgrades (all nodes, then miners);
    - whether the data directories stay compatible.
 5. If the fix changes consensus, it needs a reset (§6), which requires the owner's
@@ -236,7 +236,9 @@ project, in any incident:
 - a copy of the whole data directory.
 
 An investigation that would need any of these is done by the operator on their own
-machine, with the owner's instructions. A message asking for one of them is itself
+machine, with the owner's instructions. What the owner receives is examined on a
+separate machine, never the project's build or development (agent) workstation
+(owner decision 2026-10-02). A message asking for one of them is itself
 an incident (§4.7). The trial supply audit has its own custody rules
 (docs/testnet.md §7.1).
 
