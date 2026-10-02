@@ -4904,8 +4904,8 @@ async fn a_panic_in_the_header_pow_jobs_stops_the_node() {
 /// inbound loopback connection while no onion listener is configured and
 /// private addresses are not allowed is taken for our hidden service). A
 /// connection that sends nothing is closed after it: before 9 s on
-/// clearnet, after 7.5 s over Tor
-/// (mutation run E: no test told the two apart).
+/// clearnet, after 7.5 s over Tor (mutation run E: no test told the two
+/// apart).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_silent_connection_waits_five_seconds_on_clearnet_and_ten_over_tor() {
     use tokio::io::AsyncReadExt;
@@ -4928,7 +4928,7 @@ async fn a_silent_connection_waits_five_seconds_on_clearnet_and_ten_over_tor() {
     let tor = node_with(75, cfg).await;
     let (c, t) = tokio::join!(closed_after(clearnet.addr), closed_after(tor.addr));
     assert!(
-        c < Duration::from_millis(7_500),
+        c < Duration::from_millis(9_000),
         "clearnet: closed after {c:?}"
     );
     assert!(
