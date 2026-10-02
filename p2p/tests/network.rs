@@ -569,11 +569,23 @@ fn serve_headers(branch: &[BlockHeader], locator: &[Hash]) -> Vec<BlockHeader> {
 
 /// Answers every `GetHeaders` from the node as an honest peer holding
 /// `branch` (headers only) would, until the connection closes.
-fn serve_branch(mut r: RawReader, mut w: RawWriter, branch: Vec<BlockHeader>) {
+fn serve_branch(r: RawReader, w: RawWriter, branch: Vec<BlockHeader>) {
+    serve_branch_logged(r, w, branch);
+}
+
+/// [`serve_branch`], recording the first id of every locator it answers.
+fn serve_branch_logged(
+    mut r: RawReader,
+    mut w: RawWriter,
+    branch: Vec<BlockHeader>,
+) -> Arc<Mutex<Vec<Hash>>> {
+    let heads = Arc::new(Mutex::new(Vec::new()));
+    let log = heads.clone();
     tokio::spawn(async move {
         while let Ok(frame) = r.recv().await {
             let reply = match Message::decode(&frame) {
                 Ok(Message::GetHeaders { locator, .. }) => {
+                    log.lock().unwrap().push(locator[0]);
                     Message::Headers(serve_headers(&branch, &locator))
                 }
                 // Headers only: bodies are "not found" (no timeout penalty).
@@ -589,6 +601,7 @@ fn serve_branch(mut r: RawReader, mut w: RawWriter, branch: Vec<BlockHeader>) {
             }
         }
     });
+    heads
 }
 
 /// Answers the node's pings on `r`/`w` (and ignores everything else) until
@@ -2775,12 +2788,18 @@ async fn a_heavier_fork_deeper_than_one_batch_syncs() {
     give_headers(&a, &header_branch(2050, 120, 0));
     let theirs = header_branch(2100, 120, 7);
     let (r, w) = raw_peer_at(a.addr, nid, true, 2100).await;
-    serve_branch(r, w, theirs.clone());
+    let heads = serve_branch_logged(r, w, theirs.clone());
     wait_until("switched to the heavier branch", 600, || {
         a.chain.lock().unwrap().best_header_id() == theirs[2099].id(nid)
     })
     .await;
     assert_eq!(a.net.peers()[0].score, 0);
+    // The second request starts at the full batch's last header, at once
+    // (mutation run E: with the batch taken for not full, only the
+    // maintenance tick asked again, from our own tip).
+    let heads = heads.lock().unwrap().clone();
+    assert!(heads.len() >= 2, "{} requests", heads.len());
+    assert_eq!(heads[1], theirs[1999].id(nid));
 }
 
 /// M3: a one-header tip announcement that arrives while our `GetHeaders` is
