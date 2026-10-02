@@ -1282,6 +1282,43 @@ mod tests {
         ));
     }
 
+    /// `note_clock` feeds the clock monitor the headers just accepted: a
+    /// header the future time limit refused before is a sample (and is no
+    /// longer remembered as refused), in any position of any batch; of the
+    /// others, only the last header of a live arrival is (mutation run E:
+    /// the refusal path had no test, and the network tests cannot wait out
+    /// regtest's 360 s limit).
+    #[tokio::test]
+    async fn note_clock_samples_refused_headers_and_live_arrivals() {
+        let net = idle_network(|_| {}).await;
+        let inner = net.inner.clone();
+        let nid = inner.cfg.network_id;
+        let header = |n: u64| BlockHeader {
+            version: 1,
+            height: n,
+            prev_id: [0; 32],
+            timestamp: 1_000 + n,
+            difficulty: 1,
+            tx_root: [0; 32],
+            nonce: n,
+        };
+        // A refused header, accepted inside a batch that is not live.
+        inner.clock().note_future_refusal(header(1).id(nid), 900);
+        assert!(inner.clock().has_refusals());
+        note_clock(&inner, 1, &[header(1), header(2)], false, 1_000, 360);
+        assert!(!inner.clock().has_refusals(), "taken as a sample");
+        // Live arrivals: only the last header of each batch.
+        for (k, peer) in [1, 2, 3, 1].into_iter().enumerate() {
+            let n = 10 + 2 * k as u64;
+            note_clock(&inner, peer, &[header(n), header(n + 1)], true, 1_000, 360);
+        }
+        let e = inner.clock().estimate().expect("5 samples from 3 peers");
+        assert_eq!((e.samples, e.peers), (5, 3));
+        // Not live and nothing refused: no sample.
+        note_clock(&inner, 2, &[header(30), header(31)], false, 1_000, 360);
+        assert_eq!(inner.clock().estimate().unwrap().samples, 5);
+    }
+
     /// A header from a newer release (a version no epoch of the schedule
     /// uses) is not scored; a bad version the schedule does know is.
     #[test]
