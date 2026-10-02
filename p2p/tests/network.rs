@@ -2944,6 +2944,14 @@ async fn a_transaction_request_moves_on_when_its_peer_leaves() {
     assert!(recv_until(&mut ry, 5.0, |m| matches!(m, Message::Pong(3)))
         .await
         .is_some());
+    // A third announcer (mutation run E: the departing peer's cleanup must
+    // keep the other announcers queued, not drop them).
+    let (mut rz, mut wz) = raw_peer(a.addr, nid, true).await;
+    wz.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+    wz.send(&Message::Ping(4).encode()).await.unwrap();
+    assert!(recv_until(&mut rz, 5.0, |m| matches!(m, Message::Pong(4)))
+        .await
+        .is_some());
     drop((rx, wx));
     assert!(
         recv_until(
@@ -2954,6 +2962,44 @@ async fn a_transaction_request_moves_on_when_its_peer_leaves() {
         .await
         .is_some(),
         "the second announcer is asked when the first leaves"
+    );
+    drop((ry, wy));
+    assert!(
+        recv_until(
+            &mut rz,
+            3.0,
+            |m| matches!(m, Message::GetTx(ids) if ids == &vec![id])
+        )
+        .await
+        .is_some(),
+        "the third announcer is asked when the second leaves"
+    );
+}
+
+/// When the peer a block body was asked from disconnects, its requests are
+/// dropped at once and the body is asked from another peer that has it, not
+/// after the 60 s block timeout (mutation run E: the departing peer's block
+/// requests had no test).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_block_request_moves_on_when_its_peer_leaves() {
+    let a = node(78, &[]).await;
+    let nid = params().network_id;
+    let h1 = header_branch(1, 120, 0)[0];
+    let id = h1.id(nid);
+    let wants = |m: &Message| matches!(m, Message::GetBlocks(ids) if ids.contains(&id));
+    let (mut rx, mut wx) = raw_peer_at(a.addr, nid, true, 1).await;
+    wx.send(&Message::Headers(vec![h1]).encode()).await.unwrap();
+    assert!(recv_until(&mut rx, 10.0, wants).await.is_some(), "asked X");
+    let (mut ry, mut wy) = raw_peer_at(a.addr, nid, true, 1).await;
+    wy.send(&Message::Headers(vec![h1]).encode()).await.unwrap();
+    wy.send(&Message::Ping(6).encode()).await.unwrap();
+    assert!(recv_until(&mut ry, 5.0, |m| matches!(m, Message::Pong(6)))
+        .await
+        .is_some());
+    drop((rx, wx));
+    assert!(
+        recv_until(&mut ry, 10.0, wants).await.is_some(),
+        "the body is asked from Y once X has left"
     );
 }
 
