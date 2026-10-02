@@ -42,6 +42,8 @@ pub(super) struct Peer {
     /// `Block` frames.
     pub(super) bulk: mpsc::Sender<Message>,
     pub(super) kill: Arc<Notify>,
+    /// `Tx` answers to its `GetTx` queued or being written (TM2-17).
+    pub(super) replies: Arc<super::relay::ReplyQueue>,
     /// Transactions are announced and stemmed to this peer: it asked for them
     /// (`Version.relay_txs`) and the connection's kind relays them (not
     /// block-relay-only or an address fetch).
@@ -66,6 +68,9 @@ pub(super) struct Peer {
     pub(super) next_inv: Instant,
     pub(super) announced_to: HashSet<Hash>,
     pub(super) known_txs: HashSet<Hash>,
+    /// Ids it announced that we want, beyond the requests outstanding to
+    /// it (`relay::TX_IN_FLIGHT`), oldest first (TM2-17).
+    pub(super) tx_wanted: VecDeque<Hash>,
     pub(super) ping: Option<(u64, Instant)>,
     /// The lowest ping round trip measured (inbound eviction protects the
     /// lowest; `None`: none answered yet).

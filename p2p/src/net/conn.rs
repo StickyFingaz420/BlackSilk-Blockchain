@@ -10,6 +10,7 @@ use super::peers::{
     HandshakeSlot,
 };
 use super::relay::retry_tx;
+use super::relay::{ReplyQueue, SERVE_TX_FRAMES};
 use super::state::{unix_now, Inner, Peer};
 use crate::addr::NetAddr;
 use crate::addrman_gate::AddrGate;
@@ -47,6 +48,9 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Control messages queued per peer (everything except `Block`).
 const OUTBOX: usize = 64;
+
+// `GetTx` answers take at most half of it (TM2-17).
+const _: () = assert!(SERVE_TX_FRAMES <= OUTBOX / 2);
 
 /// `Block` frames queued per peer; control messages are sent first (R8-11).
 const BULK_OUTBOX: usize = 2 * SERVE_BLOCKS_PER_REQUEST;
@@ -247,6 +251,7 @@ pub(super) async fn run_connection<S>(
     let (tx_out, rx_out) = mpsc::channel::<Message>(OUTBOX);
     let (tx_bulk, rx_bulk) = mpsc::channel::<Message>(BULK_OUTBOX);
     let kill = Arc::new(Notify::new());
+    let replies = Arc::new(ReplyQueue::default());
     let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
     {
         let mut st = inner.state();
@@ -327,6 +332,7 @@ pub(super) async fn run_connection<S>(
                 out: tx_out,
                 bulk: tx_bulk,
                 kill: kill.clone(),
+                replies: replies.clone(),
                 relay_txs: theirs.relay_txs && kind.relays_txs(),
                 addr_relay,
                 listen: theirs.listen.clone().map(NetAddr::canonical),
@@ -340,6 +346,7 @@ pub(super) async fn run_connection<S>(
                 next_inv: now,
                 announced_to: HashSet::new(),
                 known_txs: HashSet::new(),
+                tx_wanted: VecDeque::new(),
                 ping: None,
                 min_ping: None,
                 last_ping: now,
@@ -374,7 +381,7 @@ pub(super) async fn run_connection<S>(
         },
         theirs.height
     );
-    let writer_task = tokio::spawn(write_loop(writer, rx_out, rx_bulk));
+    let writer_task = tokio::spawn(write_loop(writer, rx_out, rx_bulk, replies.clone()));
     if asks_addresses {
         inner.send_now(id, Message::GetAddr);
     }
@@ -518,6 +525,7 @@ pub(super) async fn run_connection<S>(
     if let Some(p) = st.peers.remove(&id) {
         log::info!("disconnected peer {}", p.addr);
     }
+    replies.closed();
     st.dandelion.peer_disconnected(id);
     st.block_requests.retain(|_, (p, _)| *p != id);
     // Transaction requests this peer owned move to the next announcer now,
@@ -541,10 +549,13 @@ pub(super) async fn run_connection<S>(
 /// Sends a peer's queued messages: control messages (pongs, headers, relay)
 /// strictly before queued `Block` frames, so a pong never waits behind a
 /// batch of blocks (R8-11). A frame already being written is not interrupted.
+/// A written `Tx` (only `GetTx` answers are `Tx` frames) returns its room
+/// to the peer's [`ReplyQueue`].
 async fn write_loop<W: AsyncWrite + Unpin>(
     mut writer: FrameWriter<W>,
     mut control: mpsc::Receiver<Message>,
     mut bulk: mpsc::Receiver<Message>,
+    replies: Arc<ReplyQueue>,
 ) {
     loop {
         let msg = tokio::select! {
@@ -555,6 +566,9 @@ async fn write_loop<W: AsyncWrite + Unpin>(
         let Some(msg) = msg else { break };
         if writer.send(&msg.encode()).await.is_err() {
             break;
+        }
+        if let Message::Tx(t) = &msg {
+            replies.written(t.len());
         }
     }
 }
@@ -590,7 +604,12 @@ mod tests {
         }
         control_tx.try_send(Message::Pong(9)).unwrap();
         control_tx.try_send(Message::Ping(10)).unwrap();
-        let task = tokio::spawn(write_loop(writer, control_rx, bulk_rx));
+        let task = tokio::spawn(write_loop(
+            writer,
+            control_rx,
+            bulk_rx,
+            Arc::new(ReplyQueue::default()),
+        ));
         let mut got = Vec::new();
         for _ in 0..6 {
             got.push(Message::decode(&reader.recv().await.unwrap()).unwrap());

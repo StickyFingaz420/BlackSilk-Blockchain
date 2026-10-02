@@ -4569,6 +4569,453 @@ async fn pooled_transactions_are_reannounced_on_the_common_schedule() {
     );
 }
 
+/// Gives `n` a block mined elsewhere (it may have it already from the
+/// network) and waits until `n` is at its height.
+async fn give_block(n: &TestNode, b: &Block) {
+    let now = b.header.timestamp;
+    let _ = n.chain.lock().unwrap().submit_block(b.clone(), now);
+    let h = b.header.height;
+    wait_until("block given", 5, || n.height() >= h).await;
+}
+
+/// The next heights up to `to` at which each spy first saw `id` announced:
+/// at the current height, then one block mined on `nodes[0]` (and given to
+/// the others) per height. A spy registered after the transaction was
+/// pooled has been told nothing about it, so only a pool re-announcement
+/// reaches it.
+async fn first_reannouncements(
+    nodes: &mut [&mut TestNode],
+    spies: &mut [&mut RawReader],
+    id: Hash,
+    to: u64,
+) -> Vec<Option<u64>> {
+    let mut first = vec![None; spies.len()];
+    let announced = |m: &Message| matches!(m, Message::InvTx(ids) if ids.contains(&id));
+    loop {
+        let next = nodes[0].height() + 1;
+        for (i, spy) in spies.iter_mut().enumerate() {
+            if first[i].is_none() && recv_until(spy, 1.0, announced).await.is_some() {
+                first[i] = Some(next);
+            }
+        }
+        if next >= to {
+            return first;
+        }
+        let b = nodes[0].mine_with(0, false);
+        for n in nodes[1..].iter() {
+            give_block(n, &b).await;
+        }
+    }
+}
+
+/// TM2-P1 (threat model round 2, privacy): the origin of a transaction
+/// re-announces it at the same heights as every other node, also when a
+/// block is found while the transaction is still in the stem. Every node
+/// counts the pool age from the height it pooled the transaction for: a
+/// relay pools it at the fluff, after that block. The origin counted from
+/// its submission height (`min(relayed, admitted)`), one block earlier, so
+/// it alone re-announced the transaction one block (about 2 minutes) before
+/// every other node: a spy opening fresh connections learned the origin
+/// with certainty for any transaction unmined 10 blocks after submission.
+/// On a144d94 the origin's first re-announcement was at next height 91,
+/// the relay's at 92.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_block_found_during_the_stem_does_not_make_the_origin_reannounce_first() {
+    // The origin: one outbound peer (the raw stem peer), and no embargo
+    // fluff of its own within the test.
+    let mut cfg = fast_config(&[]);
+    cfg.max_outbound = 1;
+    cfg.dandelion.embargo_base = Duration::from_secs(600);
+    let mut a = node_with(87, cfg).await;
+    a.mine_n(80, 0);
+    // A relay, dialing the origin (an inbound peer there: never a stem).
+    let mut b = node(88, &[a.addr]).await;
+    for h in 1..=80 {
+        let blk = a.chain.lock().unwrap().block_at(h).unwrap();
+        give_block(&b, &blk).await;
+    }
+    wait_until("relay connected", 5, || a.net.stats().peers == 1).await;
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (mut stem_r, mut stem_w) = dialed_raw_peer(&a, &l).await;
+    tokio::time::sleep(Duration::from_millis(300)).await; // an epoch with a stem
+    let tx = a.payment();
+    let id = tx.hash();
+    a.net.submit_tx(tx.clone()).await.unwrap(); // relayed for next height 81
+    assert!(
+        recv_until(&mut stem_r, 5.0, |m| matches!(m, Message::StemTx(_)))
+            .await
+            .is_some(),
+        "originated into the stem"
+    );
+    // A block is found while the transaction is in the stem.
+    let blk = a.mine_with(0, false);
+    give_block(&b, &blk).await;
+    // The stem ends beyond the raw stem peer: the fluff reaches the origin
+    // as an announcement, then the relay.
+    stem_w
+        .send(&Message::InvTx(vec![id]).encode())
+        .await
+        .unwrap();
+    assert!(
+        recv_until(&mut stem_r, 5.0, |m| matches!(m, Message::GetTx(_)))
+            .await
+            .is_some(),
+        "the origin requests its own transaction like any node"
+    );
+    stem_w
+        .send(&Message::Tx(tx.encode()).encode())
+        .await
+        .unwrap();
+    wait_until("pooled everywhere", 10, || {
+        a.mempool_has(&id) && b.mempool_has(&id)
+    })
+    .await;
+    for n in [&a, &b] {
+        assert_eq!(n.chain.lock().unwrap().mempool().admitted_at(&id), Some(82));
+    }
+    // Fresh spy connections (a spy may reconnect at will).
+    let nid = params().network_id;
+    let (mut spy_a, _wa) = raw_peer(a.addr, nid, true).await;
+    let (mut spy_b, _wb) = raw_peer(b.addr, nid, true).await;
+    wait_until("spies registered", 5, || {
+        a.net.stats().peers == 3 && b.net.stats().peers == 2
+    })
+    .await;
+    let first =
+        first_reannouncements(&mut [&mut a, &mut b], &mut [&mut spy_a, &mut spy_b], id, 93).await;
+    assert_eq!(
+        first[0], first[1],
+        "the origin re-announces exactly when the relay does (origin, relay)"
+    );
+    assert_eq!(first[1], Some(92), "pool age 10 from the fluff at 82");
+}
+
+/// TM2-P1, reorganization variant (cross-check X6): a transaction returned
+/// by a reorganization is readmitted at the reorganization's height on
+/// every node, and every node, the origin included, re-announces it on the
+/// schedule from there. The origin counted from `min(relayed, admitted)`,
+/// its relay height for about 2,190 blocks: after a reorganization 10 or
+/// more blocks past the relay height it re-announced at once, and no other
+/// node did (a majority-hash attacker can cause that at will). Here the
+/// branch of 11 blocks reorganizes at its second block, so both nodes
+/// readmit the transaction for 83 and are due at 93; on a144d94 the origin
+/// re-announced during the reorganization, at 91 (seen at next height 92),
+/// a block before the relay.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn after_a_reorganization_the_origin_reannounces_with_everyone() {
+    let mut cfg = fast_config(&[]);
+    cfg.max_outbound = 1;
+    let mut a = node_with(92, cfg).await;
+    a.mine_n(80, 0);
+    let mut b = node(93, &[a.addr]).await;
+    // A competing branch from height 80, mined elsewhere: 11 blocks.
+    let mut c = node(94, &[]).await;
+    for h in 1..=80 {
+        let blk = a.chain.lock().unwrap().block_at(h).unwrap();
+        give_block(&b, &blk).await;
+        give_block(&c, &blk).await;
+    }
+    c.mine_n(11, 1);
+    wait_until("relay connected", 5, || a.net.stats().peers == 1).await;
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (mut stem_r, mut stem_w) = dialed_raw_peer(&a, &l).await;
+    tokio::time::sleep(Duration::from_millis(300)).await; // an epoch with a stem
+    let tx = a.payment();
+    let id = tx.hash();
+    a.net.submit_tx(tx.clone()).await.unwrap(); // relayed for next height 81
+    assert!(
+        recv_until(&mut stem_r, 5.0, |m| matches!(m, Message::StemTx(_)))
+            .await
+            .is_some()
+    );
+    stem_w
+        .send(&Message::InvTx(vec![id]).encode())
+        .await
+        .unwrap();
+    assert!(
+        recv_until(&mut stem_r, 5.0, |m| matches!(m, Message::GetTx(_)))
+            .await
+            .is_some()
+    );
+    stem_w
+        .send(&Message::Tx(tx.encode()).encode())
+        .await
+        .unwrap();
+    wait_until("pooled everywhere", 10, || {
+        a.mempool_has(&id) && b.mempool_has(&id)
+    })
+    .await;
+    // Mined at 81, then the branch of 11 blocks reorganizes it out (at
+    // its second block, the first with more work).
+    let blk = a.mine(0);
+    assert!(blk.txs.iter().any(|t| t.hash() == id), "mined");
+    give_block(&b, &blk).await;
+    let nid = params().network_id;
+    let (mut spy_a, _wa) = raw_peer(a.addr, nid, true).await;
+    let (mut spy_b, _wb) = raw_peer(b.addr, nid, true).await;
+    wait_until("spies registered", 5, || {
+        a.net.stats().peers == 3 && b.net.stats().peers == 2
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await; // a tick at 82
+    for h in 81..=91 {
+        let blk = c.chain.lock().unwrap().block_at(h).unwrap();
+        give_block(&a, &blk).await;
+        give_block(&b, &blk).await;
+    }
+    wait_until("readmitted everywhere", 10, || {
+        a.mempool_has(&id) && b.mempool_has(&id)
+    })
+    .await;
+    for n in [&a, &b] {
+        assert_eq!(n.tip(), c.tip());
+        assert_eq!(n.chain.lock().unwrap().mempool().admitted_at(&id), Some(83));
+    }
+    let first =
+        first_reannouncements(&mut [&mut a, &mut b], &mut [&mut spy_a, &mut spy_b], id, 94).await;
+    assert_eq!(
+        first[0], first[1],
+        "the origin re-announces exactly when the relay does (origin, relay)"
+    );
+    assert_eq!(first[1], Some(93), "pool age 10 from the readmission at 83");
+}
+
+/// TM2-P1, after a restart: the origin's re-announcement anchor (the
+/// height it first saw its transaction in fluff) is persisted with the
+/// originated set. A restarted origin whose wallet resubmits the
+/// transaction holds it (pooled for a later height, never announced) and
+/// re-announces it on the network's schedule, from the fluff at 82: not
+/// from its relay height 81 (a144d94, one block before every other node)
+/// and not from the resubmission's pool height.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restarted_origin_reannounces_on_the_networks_schedule() {
+    let dir = temp_data_dir("orig-anchor");
+    let mut cfg = fast_config(&[]);
+    cfg.data_dir = Some(dir.clone());
+    cfg.dandelion.embargo_base = Duration::from_secs(600);
+    let mut a = node_with(89, cfg).await;
+    a.mine_n(80, 0);
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (mut stem_r, mut stem_w) = dialed_raw_peer(&a, &l).await;
+    tokio::time::sleep(Duration::from_millis(300)).await; // an epoch with a stem
+    let tx = a.payment();
+    let id = tx.hash();
+    a.net.submit_tx(tx.clone()).await.unwrap(); // relayed for next height 81
+    assert!(
+        recv_until(&mut stem_r, 5.0, |m| matches!(m, Message::StemTx(_)))
+            .await
+            .is_some()
+    );
+    a.mine_with(0, false);
+    stem_w
+        .send(&Message::InvTx(vec![id]).encode())
+        .await
+        .unwrap();
+    assert!(
+        recv_until(&mut stem_r, 5.0, |m| matches!(m, Message::GetTx(_)))
+            .await
+            .is_some()
+    );
+    stem_w
+        .send(&Message::Tx(tx.encode()).encode())
+        .await
+        .unwrap();
+    wait_until("pooled at the fluff", 10, || a.mempool_has(&id)).await;
+    assert_eq!(a.chain.lock().unwrap().mempool().admitted_at(&id), Some(82));
+    a.mine_with(0, false);
+    a.mine_with(0, false);
+    let (mut b, b_dir) = restarted(&a, &dir, 90).await;
+    let nid = params().network_id;
+    let (mut spy, _w) = raw_peer(b.addr, nid, true).await;
+    wait_until("spy registered", 5, || b.net.stats().peers == 1).await;
+    assert_eq!(b.net.submit_tx(tx.clone()).await, Ok(id), "held");
+    assert_eq!(b.chain.lock().unwrap().mempool().admitted_at(&id), Some(84));
+    let first = first_reannouncements(&mut [&mut b], &mut [&mut spy], id, 95).await;
+    assert_eq!(first[0], Some(92), "pool age 10 from the fluff at 82");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&b_dir);
+}
+
+/// TM2-17 (threat model round 2, network lens D4): a `GetTx` for more
+/// transactions than a peer's control outbox holds (64 frames) is served in
+/// full, and the requester stays connected. An honest node requests every
+/// unknown id of one `InvTx` (up to 500) in one `GetTx` (`on_inv_tx`), and
+/// a node announces a burst of transactions in one `InvTx` (a
+/// re-announcement, a reconnect, a spam wave). The server queued one `Tx`
+/// per id in a tight loop, and the first that found the outbox full
+/// disconnected the requester as a slow reader: honest peers dropped each
+/// other during a transaction burst. On a144d94 this test's requester was
+/// disconnected after about 64 answers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_gettx_for_more_transactions_than_an_outbox_is_served_in_full() {
+    const N: usize = 100;
+    let mut a = node(91, &[]).await;
+    a.mine_n(N as u64 + 60, 0);
+    let txs: Vec<Transaction> = (0..N).map(|n| a.payment_nth(n)).collect();
+    {
+        let mut c = a.chain.lock().unwrap();
+        for t in &txs {
+            c.submit_tx(t.clone()).unwrap();
+        }
+    }
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    wait_until("requester registered", 5, || a.net.stats().peers == 1).await;
+    // The pool's re-announcement at age 10 announces them all to the
+    // requester (an announcement is what makes a transaction servable).
+    for _ in 0..10 {
+        a.mine_with(0, false);
+    }
+    let mut announced = std::collections::HashSet::new();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while announced.len() < N {
+            let m = Message::decode(&r.recv().await.unwrap()).unwrap();
+            if let Message::InvTx(ids) = m {
+                announced.extend(ids);
+            }
+        }
+    })
+    .await
+    .expect("every transaction announced");
+    // One request for all of them, as an honest node asks for one
+    // announcement's ids.
+    let ids: Vec<Hash> = announced.into_iter().collect();
+    w.send(&Message::GetTx(ids.clone()).encode()).await.unwrap();
+    // A requester that is slow to start reading is waited for.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let mut got = std::collections::HashSet::new();
+    let served = tokio::time::timeout(Duration::from_secs(20), async {
+        while got.len() < N {
+            let Ok(frame) = r.recv().await else {
+                return false; // disconnected
+            };
+            if let Ok(Message::Tx(bytes)) = Message::decode(&frame) {
+                got.insert(Transaction::decode(&bytes).unwrap().hash());
+            }
+        }
+        true
+    })
+    .await;
+    assert_eq!(
+        served,
+        Ok(true),
+        "served in full, not disconnected ({} of {N} received, {} slow disconnects)",
+        got.len(),
+        a.net.stats().slow_disconnects
+    );
+    assert!(ids.iter().all(|id| got.contains(id)));
+    assert_eq!(a.net.stats().slow_disconnects, 0);
+    assert_eq!(a.net.stats().peers, 1, "still connected");
+    assert_eq!(a.net.peers()[0].score, 0);
+}
+
+/// TM2-17: an id named many times in one `GetTx` is answered once. A
+/// requester could otherwise make the node encode and queue one large
+/// transaction up to 500 times for a 16 KiB request.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_repeated_id_in_one_gettx_is_answered_once() {
+    let mut a = node(97, &[]).await;
+    a.mine_n(80, 0);
+    let tx = a.payment();
+    let id = tx.hash();
+    a.chain.lock().unwrap().submit_tx(tx).unwrap();
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer(a.addr, nid, true).await;
+    wait_until("requester registered", 5, || a.net.stats().peers == 1).await;
+    for _ in 0..10 {
+        a.mine_with(0, false);
+    }
+    assert!(
+        recv_until(
+            &mut r,
+            5.0,
+            |m| matches!(m, Message::InvTx(ids) if ids == &vec![id])
+        )
+        .await
+        .is_some(),
+        "announced"
+    );
+    let unknown = [0x55; 32];
+    let mut ids = vec![id; 499];
+    ids.push(unknown);
+    w.send(&Message::GetTx(ids).encode()).await.unwrap();
+    // The answer: one `Tx`, then the `NotFound` that ends it.
+    let mut served = 0;
+    loop {
+        match Message::decode(&r.recv().await.unwrap()).unwrap() {
+            Message::Tx(_) => served += 1,
+            Message::NotFound(ids) => {
+                assert_eq!(ids, vec![unknown]);
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(served, 1);
+    assert_eq!(a.net.stats().slow_disconnects, 0);
+}
+
+/// TM2-17 between two honest nodes, and the cross-check's X3: a burst of
+/// valid transactions announced in one `InvTx` does not cut the link, so
+/// it does not churn the requester's Dandelion stem peers. The requester's
+/// only outbound peer is the server, its stem peer; a disconnect made it
+/// re-draw its stem peers mid-epoch (`Dandelion::maybe_new_epoch`), and an
+/// attacker that can trigger such bursts gets extra chances to become a
+/// victim's stem peer. On a144d94 the server disconnected the requester.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_transaction_burst_between_honest_nodes_keeps_the_link_and_the_stem() {
+    const N: usize = 100;
+    // A long inbound trickle: the whole re-announcement goes out as one
+    // `InvTx`, and the requester asks for all of it in one `GetTx`.
+    let mut cfg = fast_config(&[]);
+    cfg.trickle_inbound = Duration::from_secs(1);
+    let mut a = node_with(95, cfg).await;
+    a.mine_n(N as u64 + 60, 0);
+    let txs: Vec<Transaction> = (0..N).map(|n| a.payment_nth(n)).collect();
+    {
+        let mut c = a.chain.lock().unwrap();
+        for t in &txs {
+            c.submit_tx(t.clone()).unwrap();
+        }
+    }
+    let b = node(96, &[a.addr]).await;
+    for h in 1..=a.height() {
+        let blk = a.chain.lock().unwrap().block_at(h).unwrap();
+        give_block(&b, &blk).await;
+    }
+    wait_until("connected", 5, || {
+        a.net.stats().peers == 1 && b.net.stats().outbound == 1
+    })
+    .await;
+    wait_until("the server is the requester's stem peer", 5, || {
+        b.net.stem_peers().len() == 1
+    })
+    .await;
+    let stems = b.net.stem_peers();
+    let link = b.net.peers()[0].id;
+    assert_eq!(stems, vec![link]);
+    // The pool's re-announcement at age 10: every transaction at once.
+    for _ in 0..10 {
+        let blk = a.mine_with(0, false);
+        give_block(&b, &blk).await;
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let relayed = || txs.iter().filter(|t| b.mempool_has(&t.hash())).count();
+    while relayed() < N && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        (relayed(), a.net.stats().slow_disconnects),
+        (N, 0),
+        "(transactions relayed, slow disconnects)"
+    );
+    assert_eq!(b.net.peers().len(), 1);
+    assert_eq!(b.net.peers()[0].id, link, "the same connection");
+    assert_eq!(b.net.stem_peers(), stems, "no stem peer change");
+    assert!(a.net.peers().iter().all(|p| p.score == 0));
+    assert!(b.net.peers().iter().all(|p| p.score == 0));
+}
+
 // ------------------------------------------------------------ RT-W2a fixes
 
 /// RTW2A-4: a rate excess on a relayed `StemTx` is dropped without penalty.

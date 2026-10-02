@@ -2,6 +2,7 @@
 //! admission and invalid-transaction scoring, fluff and stem receipt.
 
 use super::chain_access;
+use super::relay::request_wanted;
 use super::state::{short, Inner, State};
 use super::stem::{stem_keys, stem_or_fluff, unstem_key_images};
 use crate::dandelion::{PeerId, Source};
@@ -449,6 +450,8 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
         if r {
             st.tx_requests.remove(&id);
             st.tx_announcers.remove(&id);
+            // Its request ended: what else it announced may be asked now.
+            request_wanted(inner, &mut st, peer, Instant::now());
         }
         // An answer to our request that timed out and moved on (P2P-FIX2):
         // accepted, unpenalized. The request to the next announcer stays,
@@ -468,7 +471,10 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     // classification see the same state (one former lock hold).
     let Some(result) = verify_on_tx_lane(inner, id, move |c| {
         let tip = c.tip_id();
-        let r = c.submit_tx(unshare(tx));
+        // With the height it was pooled for (the re-announcement anchor).
+        let r = c
+            .submit_tx(unshare(tx))
+            .map(|id| c.mempool().admitted_at(&id));
         let proven = r.as_ref().is_err_and(|e| proven_invalid(c, &rings, e));
         (tip, r, proven)
     })
@@ -478,15 +484,20 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     };
     inner.state().tx_verifications += 1;
     match result {
-        (_, Ok(_), _) => {
-            {
+        (_, Ok(admitted), _) => {
+            let changed = {
                 let mut st = inner.state();
                 if let Some(e) = st.stempool.remove(&id) {
                     unstem_key_images(&mut st, &e.tx);
                 }
                 note_new_tx(&mut st, peer);
-            }
+                // Our own transaction in fluff (docs/p2p.md §8.1).
+                admitted.is_some_and(|a| st.originated.note_pooled(&id, a))
+            };
             inner.announce_tx(id, Some(peer));
+            if changed {
+                inner.save_originated().await;
+            }
         }
         (tip, Err(MempoolError::Invalid(e)), proven) => {
             on_invalid_tx(inner, peer, id, tip, e, proven)

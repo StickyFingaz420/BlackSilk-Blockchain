@@ -349,6 +349,13 @@ impl Network {
         self.inner.state().stempool.contains_key(id)
     }
 
+    /// The current Dandelion epoch's stem peers (tests: a stem peer is
+    /// never dropped by an honest burst, TM2-17).
+    #[doc(hidden)]
+    pub fn stem_peers(&self) -> Vec<crate::dandelion::PeerId> {
+        self.inner.state().dandelion.stems().to_vec()
+    }
+
     /// Header batches queued for, or under, verification (bounded by
     /// `2 × (max_inbound + max_outbound)`, docs/p2p.md §6).
     pub fn header_queue_len(&self) -> usize {

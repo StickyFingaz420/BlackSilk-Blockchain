@@ -133,15 +133,24 @@ pub(super) async fn fluff_entry(
 ) {
     // The Tx lane, waiting for room: a fluff is this node's own decision,
     // not relay volume, and the transaction left the stempool already.
+    // With the height it is pooled for (the re-announcement anchor).
     let result = inner
-        .chain_on(Lane::Tx, move |c| c.submit_tx(entry.tx))
+        .chain_on(Lane::Tx, move |c| {
+            let r = c.submit_tx(entry.tx);
+            (r, c.mempool().admitted_at(&id))
+        })
         .await;
     match result {
-        Ok(_) | Err(MempoolError::AlreadyKnown) => {
+        (Ok(_) | Err(MempoolError::AlreadyKnown), admitted) => {
             log::debug!("fluff tx {}", short(&id));
             inner.announce_tx(id, except);
+            // Our own transaction's embargo fluff (docs/p2p.md §8.1).
+            let changed = admitted.is_some_and(|a| inner.state().originated.note_pooled(&id, a));
+            if changed {
+                inner.save_originated().await;
+            }
         }
-        Err(e) => log::debug!("fluffing {} failed: {e:?}", short(&id)),
+        (Err(e), _) => log::debug!("fluffing {} failed: {e:?}", short(&id)),
     }
 }
 
@@ -211,15 +220,23 @@ pub(super) async fn submit_local(inner: &Arc<Inner>, tx: Transaction) -> Result<
             // stemmed or announced. The pool answers as for any submission
             // (`AlreadyKnown` if pooled here too).
             let r = inner
-                .chain_on(Lane::Tx, move |c| c.submit_local_tx(tx))
+                .chain_on(Lane::Tx, move |c| {
+                    c.submit_local_tx(tx)
+                        .map(|id| (id, c.mempool().admitted_at(&id)))
+                })
                 .await;
-            if r.is_ok() {
+            if let Ok((_, admitted)) = r {
                 log::debug!(
                     "local tx {} was originated here before: pooled, not originated again",
                     short(&id)
                 );
+                // A held copy, pooled late: it is re-announced on the
+                // network's schedule, not its own (`Originated::anchor`).
+                if let Some(a) = admitted {
+                    inner.state().originated.note_held(id, a);
+                }
             }
-            return r.map_err(|e| format!("{e:?}"));
+            return r.map(|(id, _)| id).map_err(|e| format!("{e:?}"));
         }
         Verdict::Expired => {
             log::debug!(
