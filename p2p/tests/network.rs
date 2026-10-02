@@ -4572,7 +4572,9 @@ async fn dialed_raw_peer(a: &TestNode, l: &tokio::net::TcpListener) -> (RawReade
     let rw = try_raw_handshake_as(s, false, params().network_id, true, 0)
         .await
         .expect("handshake");
-    wait_until("registered", 5, || a.net.stats().outbound == outbound + 1).await;
+    // 20 s: a loaded machine took over 5 s to register a dialed peer
+    // (mutation run E's re-runs).
+    wait_until("registered", 20, || a.net.stats().outbound == outbound + 1).await;
     rw
 }
 
