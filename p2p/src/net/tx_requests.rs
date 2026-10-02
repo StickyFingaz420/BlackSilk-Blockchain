@@ -580,7 +580,10 @@ mod tests {
         let mut out = Actions::default();
         t.poll(t0 + REQUEST_TIMEOUT, &mut out);
         assert_eq!(out.expired.len(), 2);
-        assert!(asked(&out, 1, id(1)) && asked(&out, 1, id(2)), "asked once more");
+        assert!(
+            asked(&out, 1, id(1)) && asked(&out, 1, id(2)),
+            "asked once more"
+        );
         let mut out = Actions::default();
         t.poll(t0 + REQUEST_TIMEOUT * 3, &mut out);
         assert_eq!(t.len(), 0, "never a third time");
