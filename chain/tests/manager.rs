@@ -426,6 +426,55 @@ fn mined_source(blocks: u64, seed: u64) -> (ChainManager, Vec<Block>) {
     (src, bs)
 }
 
+/// The test-only step delay (`set_step_delay_for_tests`) applies to exactly
+/// the bounded validation calls that have blocks to connect (mutation run
+/// E): not to an unbounded submission, not to a bounded call with nothing
+/// to do, and to every drain step, the first (a released block queued, no
+/// drain in progress yet) included. The bounds are one-sided where timing
+/// allows: a delayed call takes at least the delay; an undelayed one takes
+/// far less than it.
+#[test]
+fn the_test_step_delay_applies_to_drain_steps_with_blocks_to_connect() {
+    use std::time::{Duration, Instant};
+    const DELAY: Duration = Duration::from_secs(2);
+    let (_, blocks) = mined_source(8, 26);
+    let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header).collect();
+    let now = headers.last().unwrap().timestamp;
+    let mut m = open(Box::<MemoryStore>::default(), Arc::default());
+    m.accept_headers(&headers, now).unwrap();
+    m.set_step_delay_for_tests(Some(DELAY));
+    // Bodies that wait for their parent's: nothing to connect yet.
+    for b in blocks[1..4].iter().rev() {
+        let t = Instant::now();
+        m.submit_block_bounded(b.clone(), now, 1).unwrap();
+        assert!(t.elapsed() < DELAY, "no block to connect: no delay");
+    }
+    let t = Instant::now();
+    assert!(m.sync_step(1), "nothing pending");
+    assert!(t.elapsed() < DELAY, "an idle step: no delay");
+    // The gap-filling body: its own block queued, delayed.
+    let t = Instant::now();
+    m.submit_block_bounded(blocks[0].clone(), now, 1).unwrap();
+    assert!(t.elapsed() >= DELAY, "the first drain step is delayed");
+    let mut steps = 0;
+    loop {
+        let t = Instant::now();
+        let done = m.sync_step(1);
+        assert!(t.elapsed() >= DELAY, "every drain step is delayed");
+        steps += 1;
+        assert!(steps < 10, "the drain never ends");
+        if done {
+            break;
+        }
+    }
+    assert_eq!(m.height(), 4);
+    // An unbounded submission is never delayed, even with a block to connect.
+    let t = Instant::now();
+    m.submit_block(blocks[4].clone(), now).unwrap();
+    assert!(t.elapsed() < DELAY, "unbounded: no delay");
+    assert_eq!(m.height(), 5);
+}
+
 #[test]
 fn headers_without_bodies_do_not_move_the_state() {
     let (_, blocks) = mined_source(30, 20);
