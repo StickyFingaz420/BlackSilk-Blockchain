@@ -17,7 +17,7 @@ use common::*;
 /// to the transfer's 100 000 bytes.
 #[test]
 fn each_kinds_size_cap_is_inclusive() {
-    assert!(MAX_PX_TX_SIZE > MAX_TX_SIZE && MAX_DEPLOY_TX_SIZE > MAX_TX_SIZE);
+    const { assert!(MAX_PX_TX_SIZE > MAX_TX_SIZE && MAX_DEPLOY_TX_SIZE > MAX_TX_SIZE) };
     for (kind, cap) in [
         (KIND_COINBASE, MAX_TX_SIZE),
         (KIND_TRANSFER, MAX_TX_SIZE),

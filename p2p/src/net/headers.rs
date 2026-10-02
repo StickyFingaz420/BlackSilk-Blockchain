@@ -937,14 +937,15 @@ mod tests {
         }
         // `allow_private`: no limit per origin, the total still holds.
         let net = idle_network(|c| c.allow_private = true).await;
-        let inner = &net.inner;
-        let mut st = inner.state();
-        st.header_queue_origin.insert(queue_key(&a, false), 50);
-        st.header_queue_len = 143;
-        assert!(inner.header_queue_room(&st, &a, false));
-        st.header_queue_len = 144;
-        assert!(!inner.header_queue_room(&st, &a, false));
-        drop(st);
+        {
+            let inner = &net.inner;
+            let mut st = inner.state();
+            st.header_queue_origin.insert(queue_key(&a, false), 50);
+            st.header_queue_len = 143;
+            assert!(inner.header_queue_room(&st, &a, false));
+            st.header_queue_len = 144;
+            assert!(!inner.header_queue_room(&st, &a, false));
+        }
         // Zero limits count as one: one batch per origin, two in total.
         let net = idle_network(|c| {
             c.max_inbound = 0;
