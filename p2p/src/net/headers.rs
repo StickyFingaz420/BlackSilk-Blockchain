@@ -1320,6 +1320,108 @@ mod tests {
         assert_eq!(inner.clock().estimate().unwrap().samples, 5);
     }
 
+    /// A peer is marked as having delivered a new tip (`Peer::last_new_tip`,
+    /// which protects an outbound peer from stale-tip rotation, RTW3-4) only
+    /// for a batch that stored new headers ending on our best header chain:
+    /// not for a new header of a side branch, and not for our tip sent again
+    /// (mutation run E: the condition had no test).
+    #[tokio::test]
+    async fn only_a_delivered_new_tip_marks_the_peer() {
+        use crate::message::{Message, Version, PROTOCOL_VERSION};
+        let net = idle_network(|c| {
+            c.listen = Some("127.0.0.1:0".parse().unwrap());
+            c.allow_private = true;
+            c.tick = Duration::from_secs(600);
+        })
+        .await;
+        let inner = net.inner.clone();
+        let stream = tokio::net::TcpStream::connect(net.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut r, mut w) = crate::transport::handshake(
+            stream,
+            true,
+            inner.cfg.network_id,
+            &inner.genesis_id,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let v = Version {
+            protocol: PROTOCOL_VERSION,
+            network: inner.cfg.network_id,
+            nonce: 0xdead_beef,
+            height: 0,
+            tip: inner.genesis_id,
+            listen: None,
+            relay_txs: true,
+        };
+        w.send(&Message::Version(v).encode()).await.unwrap();
+        let recv = |m: Vec<u8>| Message::decode(&m).unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Version(_)));
+        w.send(&Message::Verack.encode()).await.unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Verack));
+        let peer = loop {
+            if let Some(id) = inner.state().peers.keys().next().copied() {
+                break id;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        struct ZeroPow;
+        impl blacksilk_consensus::PowFunction for ZeroPow {
+            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+                [0; 32]
+            }
+        }
+        let g = HeaderChain::new(
+            blacksilk_consensus::ChainParams::regtest(),
+            Arc::new(ZeroPow),
+        );
+        let t = g.template();
+        let child = |nonce| BlockHeader {
+            version: t.version,
+            height: t.height,
+            prev_id: t.prev_id,
+            timestamp: t
+                .min_timestamp
+                .max(g.header(&t.prev_id).unwrap().timestamp + 10),
+            difficulty: t.difficulty,
+            tx_root: [0; 32],
+            nonce,
+        };
+        let (tip, side) = (child(1), child(2));
+        // Sends one header and waits until the worker has taken it up.
+        macro_rules! deliver {
+            ($h:expr, $k:expr) => {{
+                w.send(&Message::Headers(vec![$h]).encode()).await.unwrap();
+                w.send(&Message::Ping($k).encode()).await.unwrap();
+                loop {
+                    if matches!(recv(r.recv().await.unwrap()), Message::Pong(x) if x == $k) {
+                        break;
+                    }
+                }
+                let mut waited = 0;
+                while inner.state().header_queue_len > 0 {
+                    assert!(waited < 500, "the header is never taken up");
+                    waited += 1;
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            }};
+        }
+        let marked = |inner: &Inner| inner.state().peers[&peer].last_new_tip.is_some();
+        deliver!(tip, 1);
+        assert_eq!(inner.summary.load().header_height, 1);
+        assert!(marked(&inner), "a new tip on our best chain");
+        inner.state().peers.get_mut(&peer).unwrap().last_new_tip = None;
+        deliver!(side, 2);
+        assert!(
+            !marked(&inner),
+            "a new header of a side branch (equal work)"
+        );
+        deliver!(tip, 3);
+        assert!(!marked(&inner), "our tip again: nothing new");
+    }
+
     /// A header from a newer release (a version no epoch of the schedule
     /// uses) is not scored; a bad version the schedule does know is.
     #[test]
