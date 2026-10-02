@@ -1780,6 +1780,44 @@ async fn a_solicited_batch_that_is_not_a_chain_is_scored_on_arrival() {
     assert_eq!(a.chain.lock().unwrap().header_height(), 0);
 }
 
+/// A solicited batch whose first header connects to nothing we know costs
+/// the sender `UNCONNECTED_HEADERS`; a single such header (a tip
+/// announcement whose parent we lack) costs nothing and gets the sender
+/// asked for headers (mutation run E: no test checked the batch-size rule).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unconnected_batch_is_scored_and_an_unconnected_announcement_is_not() {
+    let a = node_with_pow(47, fast_config(&[]), Arc::new(ZeroPow)).await;
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 10).await;
+    assert!(
+        recv_until(&mut r, 10.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    let branch = header_branch(5, 120, 0);
+    // Headers 2 and 3: the parent of the first is unknown.
+    w.send(&Message::Headers(branch[1..3].to_vec()).encode())
+        .await
+        .unwrap();
+    wait_until("scored", 10, || {
+        a.net.peers()[0].score == score::UNCONNECTED_HEADERS
+    })
+    .await;
+    wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
+    // Header 5 alone, unsolicited: asked for headers, not scored.
+    w.send(&Message::Headers(vec![branch[4]]).encode())
+        .await
+        .unwrap();
+    assert!(
+        recv_until(&mut r, 10.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some(),
+        "asked for headers"
+    );
+    wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
+    assert_eq!(a.net.peers()[0].score, score::UNCONNECTED_HEADERS);
+}
+
 /// Counts every PoW evaluation; fails headers carrying `BAD_NONCE` (as
 /// `CountingPow`).
 #[derive(Default)]

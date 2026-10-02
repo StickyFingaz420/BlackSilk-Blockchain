@@ -1460,3 +1460,32 @@ fn a_malformed_header_feed_page_is_refused() {
         assert_eq!(w.synced_height(), 60);
     }
 }
+
+/// The tip age is read from the wallet's own last header when it is the
+/// synced block's, and otherwise from the node's header of that height,
+/// checked against the wallet's block id (mutation run E: the second source
+/// had no test). Each sync also reads that header once for the
+/// reorganization check.
+#[test]
+fn the_tip_age_comes_from_the_wallets_header_or_the_nodes_checked_one() {
+    let chain = fast_chain(41, 60);
+    let mut w = restored(None, 1);
+    assert_eq!(w.sync(&chain).unwrap(), 60);
+    let reads = |c: &MockChain| {
+        c.header_requests
+            .borrow()
+            .iter()
+            .filter(|&&r| r == (60, 1))
+            .count()
+    };
+    chain.header_requests.borrow_mut().clear();
+    assert_eq!(w.sync(&chain).unwrap(), 60);
+    assert_eq!(reads(&chain), 1, "the reorganization check only");
+    assert_eq!(w.tip_age().unwrap().0, 60);
+    // Without the synced block's header, the node's is read for the tip.
+    w.headers.pop_back();
+    chain.header_requests.borrow_mut().clear();
+    assert_eq!(w.sync(&chain).unwrap(), 60);
+    assert_eq!(reads(&chain), 2, "and the tip's header");
+    assert_eq!(w.tip_age().unwrap().0, 60);
+}
