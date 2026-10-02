@@ -2366,6 +2366,109 @@ async fn header_batches_are_hashed_off_the_chain_actor() {
     assert_eq!(pow.on_actor.load(SeqCst), 0, "none on the chain actor");
 }
 
+/// The clock monitor's samples come from live arrivals only: headers that
+/// extend the best header chain outside bulk sync, from at least three
+/// peers before an estimate is reported. A header on a side branch, a tip
+/// sent again and a taller but lighter branch add none (mutation run E: no
+/// network test read the clock monitor, `Network::clock_estimate`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn clock_samples_come_from_live_arrivals_only() {
+    let a = node_with_pow(70, fast_config(&[]), Arc::new(ZeroPow)).await;
+    let nid = params().network_id;
+    // Our chain: 60 fast headers (difficulty above 1), then 5 announced.
+    let branch = header_branch(65, 1, 0);
+    give_headers(&a, &branch[..60]);
+    let mut peers = Vec::new();
+    for _ in 0..3 {
+        let (r, w) = raw_peer(a.addr, nid, true).await;
+        peers.push((r, w));
+    }
+    wait_until("registered", 5, || a.net.stats().peers == 3).await;
+    for (k, h) in branch[60..].iter().enumerate() {
+        let (_, w) = &mut peers[k % 3];
+        w.send(&Message::Headers(vec![*h]).encode()).await.unwrap();
+        wait_until("stored", 10, || {
+            a.chain.lock().unwrap().header_height() == 61 + k as u64
+        })
+        .await;
+        wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
+        if k < 4 {
+            assert!(a.net.clock_estimate().is_none(), "{} samples", k + 1);
+        }
+    }
+    let e = a.net.clock_estimate().expect("5 samples from 3 peers");
+    assert_eq!((e.samples, e.peers), (5, 3));
+    // A side branch's header (new, not on the best chain) and the tip again.
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &branch {
+        g.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let parent = g.main_id_at(63).unwrap();
+    let t = g.template_on(parent).unwrap();
+    let side = BlockHeader {
+        version: HEADER_VERSION,
+        height: t.height,
+        prev_id: parent,
+        timestamp: t
+            .min_timestamp
+            .max(g.header(&parent).unwrap().timestamp + 1),
+        difficulty: t.difficulty,
+        tx_root: [0; 32],
+        nonce: 31,
+    };
+    let (_, w) = &mut peers[0];
+    w.send(&Message::Headers(vec![side]).encode())
+        .await
+        .unwrap();
+    wait_until("the side header is stored", 10, || {
+        a.chain.lock().unwrap().header(&side.id(nid)).is_some()
+    })
+    .await;
+    let (_, w) = &mut peers[1];
+    w.send(&Message::Headers(vec![branch[64]]).encode())
+        .await
+        .unwrap();
+    for (k, (r, w)) in peers.iter_mut().enumerate() {
+        w.send(&Message::Ping(k as u64).encode()).await.unwrap();
+        assert!(
+            recv_until(r, 5.0, |m| matches!(m, Message::Pong(x) if *x == k as u64))
+                .await
+                .is_some()
+        );
+    }
+    wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
+    // A taller, lighter branch from the genesis (difficulty 1 throughout),
+    // as the reply to the handshake's request of a fourth peer.
+    let theirs = header_branch(70, 120, 3);
+    let ours_work = {
+        let c = a.chain.lock().unwrap();
+        c.headers().best_work()
+    };
+    assert!(ours_work > 71, "ours {ours_work} against 71");
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 70).await;
+    let Some(Message::GetHeaders { locator, .. }) =
+        recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. })).await
+    else {
+        panic!("no GetHeaders");
+    };
+    w.send(&Message::Headers(serve_headers(&theirs, &locator)).encode())
+        .await
+        .unwrap();
+    let last = theirs[69].id(nid);
+    wait_until("the lighter branch is stored as a side branch", 10, || {
+        a.chain.lock().unwrap().header(&last).is_some()
+    })
+    .await;
+    wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
+    assert_eq!(
+        a.chain.lock().unwrap().header_height(),
+        65,
+        "ours stays best"
+    );
+    let e = a.net.clock_estimate().unwrap();
+    assert_eq!((e.samples, e.peers), (5, 3), "no sample from any of them");
+}
+
 // ------------------------------------------ P2P hardening round 2 (review items)
 
 fn hashed(pow: &CountingPow) -> usize {
