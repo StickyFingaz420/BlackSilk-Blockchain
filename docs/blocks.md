@@ -553,10 +553,16 @@ body    = type (1) ‖ payload
   rejected again deterministically.
   - **Stored hashes are re-checked** (decisions "Agent 01", TM2-5): the CRC does not
     stop someone who can write the file. After the replay the node recomputes the
-    stored hash of 48 blocks drawn uniformly from the start-up's OS randomness and of
-    the 16 most recently stored blocks (`StorePowCheck::NODE_DEFAULT`), or of every
-    block with `--verify-store-pow` (`StorePowCheck::All`), and refuses the store if
-    one differs (`StorePowMismatch`, node exit status 66). Node policy, not consensus:
+    stored hash of the 16 highest connected blocks and of 48 connected heights drawn
+    uniformly below them from the start-up's OS randomness
+    (`StorePowCheck::NODE_DEFAULT`; by height on the replayed chain, never by record
+    order, which the file's writer controls), or of every stored block with
+    `--verify-store-pow` (`StorePowCheck::All`), and refuses the store if one differs
+    (`StorePowMismatch`, node exit status 66). The first record of a block is the one
+    validation uses; a later record of the same block with another hash is refused.
+    A forged block below the tip region is found with probability at least
+    1 - (1 - k/N)^48 per start (k forged of N heights; table in docs/testnet.md
+    §4.5); side branches the node does not follow are not sampled. Node policy, not consensus:
     the verdicts on blocks do not change. `ChainManager::open` itself trusts every
     stored hash (`StorePowCheck::Trust`); the node opens with `open_checked`.
   - **Halts persist across restarts without a record.** A block that passed validation

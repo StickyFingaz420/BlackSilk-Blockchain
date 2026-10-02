@@ -1,6 +1,7 @@
 # BlackSilk node / miner / wallet image.
 #   docker build -f deploy/docker/Dockerfile -t blacksilk .
-#   docker run -d --name bs-node -p 29334:29334 -v bs-data:/data blacksilk \
+#   docker run -d --name bs-node --restart on-failure:3 --stop-timeout 60 \
+#       -p 29334:29334 -v bs-data:/data blacksilk \
 #       blacksilk-node --config /etc/blacksilk/node.toml
 #
 # Pure Rust build: no C toolchain is needed beyond the Rust image's defaults.
@@ -30,7 +31,9 @@ USER blacksilk
 VOLUME ["/data"]
 # `docker stop` sends this, the node's clean shutdown (anchors saved, cookie
 # removed); the node handles SIGTERM the same way. Give it time:
-# `docker stop -t 60` (the default is 10 s, then SIGKILL).
+# `--stop-timeout 60` or `docker stop -t 60` (the default is 10 s, then
+# SIGKILL). Restart with `--restart on-failure:3`: Docker cannot skip the exit
+# statuses a restart cannot fix (65, 66, 71), so the count is the only limit.
 STOPSIGNAL SIGINT
 EXPOSE 29334
 # RPC (29333) is intentionally not exposed; reach it with `docker exec`.

@@ -1457,9 +1457,9 @@ fn open_checked(
 
 /// TM2-5 (decisions "Agent 01"): `--verify-store-pow` recomputes every
 /// stored hash and refuses a store with one that differs, naming the block;
-/// the default sample checks 48 blocks chosen from the start-up seed plus
-/// the 16 most recently stored, and always finds a forged block among
-/// those 16. `open` (trust) still starts on such a store, as every replay
+/// the default sample checks 48 connected heights chosen from the start-up
+/// seed plus the 16 highest connected blocks, and finds a forged block
+/// among those 16 at every seed. `open` (trust) still starts on such a store, as every replay
 /// did before the check.
 #[test]
 fn the_stored_pow_check_refuses_a_forged_hash() {
@@ -1483,14 +1483,14 @@ fn the_stored_pow_check_refuses_a_forged_hash() {
         .get_ref()
         .and_then(|e| e.downcast_ref::<StorePowMismatch>())
         .expect("a StorePowMismatch");
-    assert_eq!((mismatch.height, mismatch.index), (50, 49));
+    assert_eq!((mismatch.height, mismatch.index), (50, Some(49)));
     assert_eq!(
         (mismatch.checked, mismatch.mismatches, mismatch.total),
         (100, 1, 100)
     );
     assert!(e.to_string().contains("proof-of-work hash"), "{e}");
 
-    // The default: 48 + 16 blocks, the 16 newest always among them.
+    // The default: 48 + 16 blocks, the 16 highest among them.
     let pow = Recheck::new(None);
     open_checked(&path, pow.clone(), [1; 32], StorePowCheck::NODE_DEFAULT).unwrap();
     let first = pow.heights();
@@ -1504,7 +1504,7 @@ fn the_stored_pow_check_refuses_a_forged_hash() {
         "another start-up seed, another sample"
     );
 
-    // A forged block in the tip region is always found by the default.
+    // A forged block in the tip region is found by the default.
     let pow = Recheck::new(Some(99));
     let e = open_checked(&path, pow, [1; 32], StorePowCheck::NODE_DEFAULT)
         .err()
@@ -1677,19 +1677,17 @@ fn rt_the_store_check_passes_a_healthy_store_across_the_network_key_switch() {
     }
 }
 
-/// RT-NODEOPS (bypass): the "16 most recently stored" region is chosen by
-/// storage order, which whoever writes the store controls (replay accepts a
-/// child stored before its parent). A planted store whose forged block is
-/// the replayed TIP, stored first, with honest blocks stored last, is
-/// accepted by the default sample at most start-up seeds: the documented
-/// "finds a forged block among the newest ones always" does not hold for an
-/// adversarial store.
+/// RT-NODEOPS regression (was `rt_a_forged_tip_stored_first_escapes_the_tip_region`,
+/// accepted at 18 of 20 seeds when the tip region was the 16 most recently
+/// STORED records): a planted store that puts the forged connected tip first
+/// in the file. The tip region is now the 16 highest CONNECTED blocks, so the
+/// forged tip is refused at every start-up seed, and so is a store whose
+/// later duplicate record carries the right hash for a forged first one.
 #[test]
-fn rt_a_forged_tip_stored_first_escapes_the_tip_region() {
+fn rt_a_forged_tip_stored_first_is_refused_at_every_seed() {
     let mut m = open(Box::<MemoryStore>::default(), Arc::default());
     let mut miner = Miner::new(99);
     let blocks: Vec<Block> = (0..1000).map(|_| miner.mine_tip(&mut m)).collect();
-    let tip = m.tip_id();
     drop(m);
     // Planted order: the 16 highest blocks first, then 1..=984.
     let planted = || {
@@ -1700,30 +1698,50 @@ fn rt_a_forged_tip_stored_first_escapes_the_tip_region() {
         Box::new(s)
     };
     let p = params();
-    let mut accepted = 0;
     for s in 0..20u8 {
         // The forged block is the tip, height 1000.
         let pow = Recheck::new(Some(1000));
-        match ChainManager::open_checked(
+        let e = ChainManager::open_checked(
             p.clone(),
             TxRules::for_chain(&p),
             pow,
             planted(),
             [s; 32],
             StorePowCheck::NODE_DEFAULT,
-        ) {
-            Ok(m) => {
-                assert_eq!(m.tip_id(), tip, "the forged block is the connected tip");
-                accepted += 1;
-            }
-            Err(e) => assert!(e.get_ref().unwrap().is::<StorePowMismatch>()),
-        }
+        )
+        .err()
+        .unwrap_or_else(|| panic!("seed {s}: the forged tip was accepted"));
+        let m = e
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<StorePowMismatch>()
+            .unwrap();
+        assert_eq!(m.height, 1000);
     }
-    println!("forged tip accepted at {accepted} of 20 start-up seeds");
-    assert!(
-        accepted >= 10,
-        "the tip region did not protect the tip: {accepted}"
-    );
+
+    // A forged first record of a block, then a copy with another hash: the
+    // copy is never used by validation, and the two disagree.
+    let mut st = MemoryStore::default();
+    for b in &blocks[..10] {
+        st.append(&[0; 32], &b.encode()).unwrap();
+    }
+    st.append(&[1; 32], &blocks[9].encode()).unwrap();
+    let e = ChainManager::open_checked(
+        p.clone(),
+        TxRules::for_chain(&p),
+        Recheck::new(None),
+        Box::new(st),
+        [0; 32],
+        StorePowCheck::NODE_DEFAULT,
+    )
+    .err()
+    .expect("conflicting stored hashes are refused");
+    let m = e
+        .get_ref()
+        .unwrap()
+        .downcast_ref::<StorePowMismatch>()
+        .unwrap();
+    assert_eq!((m.height, m.index), (10, Some(10)));
 }
 
 /// RT-NODEOPS (false refusal, real RandomX): a store holding a reorged-out

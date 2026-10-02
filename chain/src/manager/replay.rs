@@ -53,11 +53,13 @@ pub enum StorePowCheck {
     /// Trust every stored hash ([`ChainManager::open`]: tests and embedders
     /// that wrote the store themselves).
     Trust,
-    /// Recompute `sampled` stored blocks chosen uniformly at random among
-    /// all but the `tip` most recently stored ones, and those `tip` blocks
-    /// (the tip region). The choice comes from the open's `rng_seed` (the
-    /// node draws it from the OS RNG at every start), so whoever wrote the
-    /// store cannot know it.
+    /// Recompute the stored hashes of the `tip` highest blocks of the
+    /// connected chain (the tip region) and of `sampled` blocks drawn
+    /// uniformly among its other heights. Both are chosen by height on the
+    /// replayed chain, never by position in the file, which whoever wrote
+    /// the store controls (RT-NODEOPS). The draw comes from the open's
+    /// `rng_seed` (the node draws it from the OS RNG at every start), so
+    /// whoever wrote the store cannot know it.
     Sample { sampled: usize, tip: usize },
     /// Recompute every stored hash (the node's `--verify-store-pow`).
     All,
@@ -65,34 +67,29 @@ pub enum StorePowCheck {
 
 impl StorePowCheck {
     /// The node's default (decisions "Agent 01": 48 samples), plus the 16
-    /// most recently stored blocks.
+    /// highest connected blocks.
     pub const NODE_DEFAULT: Self = Self::Sample {
         sampled: 48,
         tip: 16,
     };
+}
 
-    /// Which of `total` stored blocks (in storage order) to check, drawn
-    /// with `rng`.
-    fn select(self, total: usize, rng: &mut ChaCha20Rng) -> Vec<bool> {
-        match self {
-            Self::Trust => vec![false; total],
-            Self::All => vec![true; total],
-            Self::Sample { sampled, tip } => {
-                let mut selected = vec![false; total];
-                let rest = total.saturating_sub(tip);
-                selected[rest..].fill(true);
-                // Floyd's algorithm: `sampled` distinct indices of `0..rest`,
-                // uniform (the modulo bias of a 64-bit draw over a block
-                // count is negligible).
-                for j in rest.saturating_sub(sampled)..rest {
-                    let t = (rng.next_u64() % (j as u64 + 1)) as usize;
-                    let pick = if selected[t] { j } else { t };
-                    selected[pick] = true;
-                }
-                selected
-            }
+/// The connected heights a [`StorePowCheck::Sample`] checks on a chain of
+/// height `top`: the `tip` highest (down to 1), and `sampled` distinct
+/// heights drawn uniformly among `1..=top - tip` with `rng` (Floyd's
+/// algorithm; the modulo bias of a 64-bit draw over a height is
+/// negligible). Sorted, without genesis.
+fn sample_heights(sampled: usize, tip: usize, top: u64, rng: &mut ChaCha20Rng) -> Vec<u64> {
+    let rest = top.saturating_sub(tip as u64);
+    let mut picked: BTreeSet<u64> = (rest + 1..=top).collect();
+    for j in rest.saturating_sub(sampled as u64)..rest {
+        // A draw in 1..=j + 1.
+        let t = rng.next_u64() % (j + 1) + 1;
+        if !picked.insert(t) {
+            picked.insert(j + 1);
         }
     }
+    picked.into_iter().collect()
 }
 
 /// A stored proof-of-work hash that the block's header does not produce
@@ -101,8 +98,9 @@ impl StorePowCheck {
 /// node's own verification.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StorePowMismatch {
-    /// The block's index among the store's block records, and their number.
-    pub index: usize,
+    /// The block's index among the store's block records, when known
+    /// (`--verify-store-pow`), and their number.
+    pub index: Option<usize>,
     pub total: usize,
     pub height: u64,
     pub id: Hash,
@@ -115,11 +113,11 @@ impl std::fmt::Display for StorePowMismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "stored block {} of {} (height {}, id {}) carries a proof-of-work hash that its \
+            "stored block {}of {} (height {}, id {}) carries a proof-of-work hash that its \
              header does not produce ({} of {} checked blocks differ): this block store was \
              not written by this node's verification (copied from another device, restored \
              from an untrusted backup, or altered)",
-            self.index,
+            self.index.map_or_else(String::new, |i| format!("{i} ")),
             self.total,
             self.height,
             full_hex(&self.id),
@@ -134,7 +132,7 @@ impl std::error::Error for StorePowMismatch {}
 /// One stored hash to recompute: the block's stored index, height and id,
 /// its RandomX key and header, and the stored hash.
 struct PowCheck {
-    index: usize,
+    index: Option<usize>,
     height: u64,
     id: Hash,
     seed: Hash,
@@ -294,14 +292,15 @@ impl ChainManager {
             step_delay: None,
         };
         let total = stored.len() as u64;
-        let selected = {
+        let mut checks = Vec::new();
+        manager.replay(stored, check, &mut checks)?;
+        if let StorePowCheck::Sample { sampled, tip } = check {
             let mut rng = ChaCha20Rng::from_seed(rng_seed);
             // Not the batch-weight stream of `manager.rng`.
             rng.set_stream(1);
-            check.select(stored.len(), &mut rng)
-        };
-        let mut checks = Vec::new();
-        manager.replay(stored, &selected, &mut checks)?;
+            let heights = sample_heights(sampled, tip, manager.height(), &mut rng);
+            checks = manager.connected_checks(&heights);
+        }
         manager.check_stored_pow(check, total as usize, checks)?;
         // A stored block that validates but does not apply stops the node at
         // start-up, as it would live (`halted`); it is not marked invalid.
@@ -350,12 +349,15 @@ impl ChainManager {
     /// copy as soon as the parent is replayed. This can only change which of
     /// two equal-work tips is kept.
     ///
-    /// The stored proof-of-work hash of every block with `selected[index]`
-    /// is collected in `checks`, for [`Self::check_stored_pow`].
+    /// With [`StorePowCheck::All`] the stored proof-of-work hash of every
+    /// replayed block is collected in `checks`, for
+    /// [`Self::check_stored_pow`]. Unless `check` is
+    /// [`StorePowCheck::Trust`], two records of one block with different
+    /// stored hashes refuse the store.
     fn replay(
         &mut self,
         stored: Vec<StoredBlock>,
-        selected: &[bool],
+        check: StorePowCheck,
         checks: &mut Vec<PowCheck>,
     ) -> io::Result<()> {
         let total = stored.len();
@@ -386,7 +388,7 @@ impl ChainManager {
                 let (pow_hash, block) = pending.remove(&j).expect("pending block");
                 let id = block.id(self.params.network_id);
                 if invalid_desc.contains(&block.header.prev_id)
-                    || self.replay_one(j, total, pow_hash, block, selected[j], checks)?
+                    || self.replay_one(j, total, pow_hash, block, check, checks)?
                         == Replayed::InvalidParent
                 {
                     invalid_desc.insert(id);
@@ -415,31 +417,49 @@ impl ChainManager {
         Ok(())
     }
 
-    /// Replays one stored block whose parent is known; with `check`, its
-    /// stored PoW hash goes to `checks`.
+    /// Replays one stored block whose parent is known; with
+    /// [`StorePowCheck::All`], its stored PoW hash goes to `checks`.
     fn replay_one(
         &mut self,
         i: usize,
         total: usize,
         pow_hash: Hash,
         block: Block,
-        check: bool,
+        check: StorePowCheck,
         checks: &mut Vec<PowCheck>,
     ) -> io::Result<Replayed> {
         // The stored PoW hash is trusted under the seed derived from the stored
         // parent, exactly as header validation derives it. A header whose height
         // does not follow its parent's is rejected before PoW (no preload needed,
-        // and `seed_id_for` needs a consistent height). A selected one is
-        // recomputed once the replay is done (`check_stored_pow`).
+        // and `seed_id_for` needs a consistent height). The first record of a
+        // block is the one validation uses (a later copy is a duplicate), so
+        // its hash stays in the cache for `check_stored_pow`; a later copy
+        // with another hash is itself a forgery (RT-NODEOPS).
         let header = &block.header;
         if let Some(parent) = self.headers.header(&header.prev_id) {
             if header.height == parent.height + 1 {
                 let seed = self.headers.seed_id_for(header.prev_id, header.height);
                 let bytes = header.to_bytes();
-                self.pow.preload(&seed, &bytes, pow_hash);
-                if check {
+                match self.pow.lookup(&seed, &bytes) {
+                    None => self.pow.preload(&seed, &bytes, pow_hash),
+                    Some(first) if first != pow_hash && check != StorePowCheck::Trust => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            StorePowMismatch {
+                                index: Some(i),
+                                total,
+                                height: header.height,
+                                id: block.id(self.params.network_id),
+                                checked: 0,
+                                mismatches: 1,
+                            },
+                        ));
+                    }
+                    Some(_) => {}
+                }
+                if check == StorePowCheck::All {
                     checks.push(PowCheck {
-                        index: i,
+                        index: Some(i),
                         height: header.height,
                         id: block.id(self.params.network_id),
                         seed,
@@ -465,11 +485,36 @@ impl ChainManager {
         }
     }
 
+    /// The checks of the connected blocks at `heights`: each block's RandomX
+    /// key and header, and the hash its header validation used (the first
+    /// stored record's, from the PoW cache). Heights above the tip, and
+    /// blocks without a cached hash, are skipped.
+    fn connected_checks(&self, heights: &[u64]) -> Vec<PowCheck> {
+        heights
+            .iter()
+            .filter_map(|&h| {
+                let id = *self.connected.get(usize::try_from(h).ok()?)?;
+                let header = self.headers.header(&id)?;
+                let seed = self.headers.seed_id_for(header.prev_id, h);
+                let bytes = header.to_bytes();
+                let stored = self.pow.lookup(&seed, &bytes)?;
+                Some(PowCheck {
+                    index: None,
+                    height: h,
+                    id,
+                    seed,
+                    header: bytes,
+                    stored,
+                })
+            })
+            .collect()
+    }
+
     /// Recomputes the stored PoW hashes in `checks` (selected by `check`
     /// among the store's `total` blocks) on up to [`POW_CHECK_THREADS`]
     /// threads, and fails with a [`StorePowMismatch`] naming the first
-    /// stored block (by index) whose hash differs. Nothing to do for
-    /// [`StorePowCheck::Trust`] or an empty store.
+    /// block (by height, then stored index) whose hash differs. Nothing to
+    /// do for [`StorePowCheck::Trust`] or an empty store.
     fn check_stored_pow(
         &self,
         check: StorePowCheck,
@@ -480,7 +525,7 @@ impl ChainManager {
             return Ok(());
         }
         let started = std::time::Instant::now();
-        checks.sort_unstable_by_key(|c| c.index);
+        checks.sort_unstable_by_key(|c| (c.height, c.index));
         let threads = std::thread::available_parallelism()
             .map_or(1, |n| n.get())
             .clamp(1, POW_CHECK_THREADS)
@@ -528,7 +573,7 @@ impl ChainManager {
         let what = match check {
             StorePowCheck::All => "all".to_string(),
             StorePowCheck::Sample { sampled, tip } => {
-                format!("up to {sampled} sampled and the {tip} most recently stored")
+                format!("the {tip} highest connected blocks and up to {sampled} sampled heights")
             }
             StorePowCheck::Trust => "none".to_string(),
         };
@@ -659,4 +704,38 @@ fn scan(records: Vec<Record>) -> Scanned {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The tip region is the `tip` highest heights, the samples are
+    /// distinct heights below it, genesis is never checked, and a short
+    /// chain is checked in full.
+    #[test]
+    fn sample_heights_cover_the_tip_and_draw_below_it() {
+        let mut rng = ChaCha20Rng::from_seed([3; 32]);
+        let h = sample_heights(48, 16, 1000, &mut rng);
+        assert_eq!(h.len(), 64);
+        assert!((985..=1000).all(|x| h.contains(&x)));
+        assert!(h.iter().all(|&x| (1..=1000).contains(&x)));
+        assert!(h.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(
+            sample_heights(48, 16, 20, &mut rng),
+            (1..=20).collect::<Vec<_>>()
+        );
+        assert!(sample_heights(48, 16, 0, &mut rng).is_empty());
+        assert_eq!(
+            sample_heights(0, 16, 5, &mut rng),
+            (1..=5).collect::<Vec<_>>()
+        );
+        // Every height below the tip region is reachable.
+        let mut seen = BTreeSet::new();
+        for s in 0..200u8 {
+            let mut rng = ChaCha20Rng::from_seed([s; 32]);
+            seen.extend(sample_heights(48, 16, 100, &mut rng));
+        }
+        assert_eq!(seen.len(), 100);
+    }
 }

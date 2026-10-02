@@ -122,8 +122,8 @@ the procedure and the communication setup (§1a).**
 1. Restart with the same data directory. The node rebuilds its state from the block
    file (tested by `restart_rebuilds_the_px_state_exactly`).
 2. **A crash loop is limited, not contained.** A panic in the chain actor exits 70
-   and a panic elsewhere 101; the systemd unit restarts both, at most 3 starts in 15
-   minutes, then leaves the unit `failed` (`start-limit-hit`). Every start replays the
+   and a panic elsewhere 101; the systemd unit restarts both, at most 5 starts in 15
+   minutes (manual starts count), then leaves the unit `failed` (`start-limit-hit`). Every start replays the
    whole store, and the decided quarantine marker that would name the block is not
    implemented (docs/testnet.md §4.2). If either code repeats or the start limit is
    hit, keep the unit stopped (`systemctl stop blacksilk-node`; do not

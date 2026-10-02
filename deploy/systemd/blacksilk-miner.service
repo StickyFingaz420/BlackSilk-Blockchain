@@ -24,8 +24,8 @@ RestartSec=10
 # has test-only code and the network is not regtest (W4-GUARD). A restart
 # cannot fix the configuration, so the miner stays stopped for the operator.
 # Exit status 71: this build fails the RandomX self-test (its blocks would be
-# rejected). No start limit here: the miner exits 1 while the node is still
-# starting, and is restarted until the node answers.
+# rejected). No start limit here: the miner waits for its node in-process,
+# and any other failure (exit 1) is worth restarting.
 RestartPreventExitStatus=78 71
 Nice=10
 

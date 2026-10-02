@@ -321,11 +321,17 @@ SIGINT (`KillSignal=SIGINT`) and waits 60 s.
 
 **Crash loops are limited, not prevented.** A panic in the chain actor exits 70, and a
 panic on the main thread (for example during the start-up replay) exits with Rust's
-panic status 101. The unit restarts both, but at most 3 starts in 15 minutes
-(`StartLimitIntervalSec=900`, `StartLimitBurst=3` in `[Unit]`): a deterministic crash
-(the same block every time) stops the unit after the third start, in state `failed`
-with the result `start-limit-hit`, instead of replaying the whole store every 10 s for
-ever. A one-off crash is still restarted. The decided "validating" quarantine marker
+panic status 101. The unit restarts both, 30 s apart (`RestartSec=30`), but at most 5
+starts in 15 minutes (`StartLimitIntervalSec=900`, `StartLimitBurst=5` in `[Unit]`): a
+deterministic crash (the same block every time) stops the unit after the fifth start,
+in state `failed` with the result `start-limit-hit`, instead of replaying the whole
+store for ever. A one-off crash is still restarted. The limit counts every start,
+manual ones (`systemctl start`, `restart`) included, and also stops a transient failure
+that lasts longer than about 2.5 minutes (exit 1: a P2P or RPC port not free at boot,
+a full disk): fix the cause, then `systemctl reset-failed blacksilk-node` and start it.
+Statuses a restart cannot fix (2, 65, 66, 71) are never restarted. On systemd 254 or
+later, `RestartSteps=5` and `RestartMaxDelaySec=300` back off between restarts instead
+(commented in the unit; Debian 12 ships systemd 252). The decided "validating" quarantine marker
 that would name the block a deterministic panic recurs on (F48-5) is not implemented
 (docs/STATUS.md). **Operator action** when the unit is failed, or the node exits 70 or
 101 more than once:
@@ -410,7 +416,8 @@ before then.
 
 ```sh
 docker build -f deploy/docker/Dockerfile -t blacksilk .
-docker run -d --name bs -p 29334:29334 -v bs-data:/data blacksilk
+docker run -d --name bs --restart on-failure:3 --stop-timeout 60 \
+    -p 29334:29334 -v bs-data:/data blacksilk
 docker exec bs blacksilk-wallet -w /data/me.wallet create --network testnet
 ```
 
@@ -421,8 +428,11 @@ not for sharing:
   tag, not by digest;
 - `docker stop` is a clean shutdown: the image sets `STOPSIGNAL SIGINT`, and the node
   also handles SIGTERM like Ctrl-C (anchors saved, cookie removed). Docker sends
-  SIGKILL after its timeout (10 s by default), which can cut a shutdown short: use
-  `docker stop -t 60 bs`.
+  SIGKILL after its timeout (10 s by default), which can cut a shutdown short: run the
+  container with `--stop-timeout 60` (or `docker stop -t 60 bs`);
+- restart it with `--restart on-failure:3`, never `always` or `unless-stopped`: Docker
+  has no `RestartPreventExitStatus`, so without a count a node that exits 65, 66 or 71
+  (a restart cannot fix them, §4.2) would be restarted for ever.
 
 ### 4.5 Data directory
 
@@ -462,17 +472,31 @@ ACL.
 **Stored proof of work.** The node trusts the proof-of-work hash stored with each block
 in `blocks.dat` instead of recomputing RandomX for every block at start. Whoever can
 write the data directory could therefore plant blocks with fake proof of work. At every
-start, after the replay, the node recomputes the hashes of 48 stored blocks chosen at
-random (from the operating system's randomness at that start, so whoever wrote the
-file cannot know which) and of the 16 most recently stored blocks, and refuses to
-start if one differs: status 66 and `block store …: stored block … carries a
-proof-of-work hash that its header does not produce …`, naming the data directory.
-The sample costs up to 64 light-mode hashes on up to 4 threads (18 to 23 s measured for 64 of 130 blocks on a 4-core workstation fully loaded by other work, 2026-10-02, and 55 s for all 130 with `--verify-store-pow`; less on an idle device). It
-finds a forged block among the newest ones always, and an older one only with the
-probability of drawing it. `--verify-store-pow` recomputes every stored hash (as long
-as verifying every header of a sync): start once with it after restoring a data
-directory from a backup. Never copy a data directory between devices; let a device
-sync from its peers.
+start, after the replay, the node recomputes the stored hashes of the 16 highest blocks
+of the chain it connected (the tip region) and of 48 blocks drawn uniformly among its
+other heights (from the operating system's randomness at that start, so whoever wrote
+the file cannot know which), and refuses to start if one differs: status 66 and
+`block store …: stored block … carries a proof-of-work hash that its header does not
+produce …`, naming the data directory. Both are chosen by height on the replayed
+chain, not by position in the file, which the writer of the file controls; and two
+records of one block with different stored hashes are refused too. The sample costs up
+to 64 light-mode hashes on up to 4 threads (18 to 23 s measured for 64 of 130 blocks
+on a 4-core workstation fully loaded by other work, 2026-10-02, and 55 s for all 130
+with `--verify-store-pow`; less on an idle device). Each RandomX key the sample
+touches needs its cache built (about 1 to 3 s): on a chain of more than about 100 000
+blocks (49 keys) the 48 samples can need up to 48 builds, so the start-up cost grows
+with the chain's age, up to a few minutes on a slow device. A forged block in the tip
+region is found at every start; a forged older block only with the probability of
+drawing it, per start:
+
+| Forged share of the connected blocks below the tip region (k/N) | 0.1 % | 0.5 % | 1 % | 2 % | 5 % | 10 % |
+|---|---|---|---|---|---|---|
+| Found at one start (1 - (1 - k/N)^48, at least) | 4.7 % | 21.4 % | 38.3 % | 62.1 % | 91.5 % | 99.4 % |
+
+A forged side branch that this node does not follow is not sampled. `--verify-store-pow`
+recomputes every stored hash (as long as verifying every header of a sync): start once
+with it after restoring a data directory from a backup. Never copy a data directory
+between devices; let a device sync from its peers.
 
 **Logs.** At the default level `info` the log names every peer's IP address on
 connect, disconnect and ban, and the blocks your node mined (`/block` acceptance).
@@ -545,6 +569,10 @@ blacksilk-miner --node 127.0.0.1:29333 --rpc-cookie <node data dir>/rpc.cookie \
 - **Operator fork:** while a heavier chain is refused only because of an
   `--invalidate-block` verdict, `/template` answers `503 operator fork: …` unless the node
   runs with `--mine-despite-operator-fork` (§9).
+- **Waiting for the node:** at start the miner waits for its node (the cookie not
+  written yet, the RPC not answering) and retries every 5 s, doubling to 60 s, logging
+  `waiting for the node at …`; it no longer exits, so its self-test runs once per
+  process.
 - **Errors:** an unreachable, busy or syncing node, or a template the miner cannot
   use (for example a transaction kind an outdated miner cannot decode), is logged and
   retried every 5 s. The miner exits with status 78 only when the configuration is wrong (a
@@ -925,7 +953,7 @@ column), `journal.log`, and each process's log.
 | The miner reports `503 syncing: height …, headers …, tip … s old` | The node has not caught up since it started: bodies are still downloading, or its tip is older than 48 minutes. It serves templates once caught up, and from then on keeps serving them. If every miner of the network has stopped (or the network starts on an old genesis), start the first miner's node once with `--mine-from-stale-tip` (docs/blocks.md §9.4) |
 | The node exits with status 71 and `RandomX self-test failed: RandomX hash test … expected …, computed …` | This build hashes RandomX differently from the reference: it would fork. Do not run it. Rebuild the announced commit with `tools/release-build.sh` and the announced toolchain, run `blacksilk-node --randomx-self-test` again, and report the device (CPU, OS, toolchain) and the line if it still fails (§2.1). `--skip-randomx-self-test` is for diagnosis only |
 | The node exits with status 66 and `block store …: stored block … carries a proof-of-work hash that its header does not produce` | The block store was not written by this node's own verification: copied from another device, restored from an untrusted backup, or altered. Keep the data directory unchanged and report it (docs/testnet-incident-response.md); to run the node, move the directory aside and let it resync from its peers (§4.5) |
-| `systemctl status blacksilk-node` shows `failed` with `start-limit-hit` | The node crashed three times within 15 minutes (status 70 or 101): follow the operator action of §4.2 before `systemctl reset-failed` |
+| `systemctl status blacksilk-node` shows `failed` with `start-limit-hit` | The node failed five starts within 15 minutes (a crash, status 70 or 101, or a persistent exit 1), manual starts included: follow the operator action of §4.2 before `systemctl reset-failed` |
 | `data directory permissions tightened to owner-only: …` at start | The data directory or node files were readable by other users (an older version under umask 022, or a copy); they are owner-only now. If `originated.json` was among them, other local users could read the list of your transactions until now (§4.5) |
 | `SubmitError::Store` in the log, node still running | A single failed block write, undone; the block is downloaded again. Repeated failures stop the node (row above) |
 | `N stored block(s) without a stored parent were not replayed` at start | After a failed write: harmless, the node downloads them again |
@@ -1188,7 +1216,7 @@ always uses a new network id; never reuse one for a different genesis.
   ([evidence](evidence/rx-fullmode-seedswitch-2026-09-29/README.md)); not yet with
   the testnet's 120 s blocks.
 - No seed nodes; peers are configured by hand.
-- Crash loops on exit 70 or a panic are limited to 3 starts in 15 minutes by the
+- Crash loops on exit 70 or a panic are limited to 5 starts in 15 minutes by the
   systemd unit (§4.2), not prevented: the quarantine marker that would name the block
   is not implemented. Outside systemd nothing limits restarts.
 - The start-up check of the stored proof of work is a sample (§4.5): a store with a

@@ -141,9 +141,12 @@ pub fn decrypt(file: &[u8], password: &[u8]) -> Result<Vec<u8>, FileError> {
 pub const WEAK_PASSWORD_CHARS: usize = 12;
 
 /// Whether `password` is empty in practice: no characters, or only
-/// whitespace. Such a wallet file is readable by anyone who gets it.
+/// whitespace (Unicode whitespace included, e.g. a no-break space). Such a
+/// wallet file is readable by anyone who gets it.
 pub fn is_empty_password(password: &[u8]) -> bool {
-    password.iter().all(u8::is_ascii_whitespace)
+    String::from_utf8_lossy(password)
+        .chars()
+        .all(char::is_whitespace)
 }
 
 /// The check of a new wallet password (create, restore, change-password;
@@ -186,7 +189,15 @@ pub fn tighten(path: &Path) -> std::io::Result<Option<u32>> {
         if !meta.file_type().is_file() || mode & 0o077 == 0 {
             return Ok(None);
         }
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        // Through a handle that is the checked file (TOCTOU): a name
+        // swapped for a link after the check is refused.
+        use std::os::unix::fs::MetadataExt;
+        let f = std::fs::File::open(path)?;
+        let opened = f.metadata()?;
+        if opened.dev() != meta.dev() || opened.ino() != meta.ino() {
+            return Err(std::io::Error::other("it changed while being checked"));
+        }
+        f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         Ok(Some(mode))
     }
     #[cfg(not(unix))]
@@ -314,7 +325,7 @@ mod tests {
     /// warned about, a long one accepted silently; characters, not bytes.
     #[test]
     fn new_password_policy() {
-        for empty in [&b""[..], b" ", b"\t \n"] {
+        for empty in [&b""[..], b" ", b"\t \n", "\u{a0}\u{3000}".as_bytes()] {
             let e = check_new_password(empty).unwrap_err();
             assert!(e.contains("empty password"), "{e}");
             assert!(is_empty_password(empty));

@@ -199,15 +199,61 @@ fn self_test_message(what: &str) -> String {
     )
 }
 
+/// First and longest pause of [`wait_for_node`].
+const NODE_WAIT_FIRST: Duration = Duration::from_secs(5);
+const NODE_WAIT_MAX: Duration = Duration::from_secs(60);
+
+/// The pause after `d`: doubled, at most [`NODE_WAIT_MAX`].
+fn next_wait(d: Duration) -> Duration {
+    (d * 2).min(NODE_WAIT_MAX)
+}
+
+/// Connects to the node and reads its `/info`, waiting while it is not up
+/// yet (its cookie missing, the RPC not answering, a `401` from a cookie
+/// being replaced), with a growing pause (5 s doubling to 60 s), instead of
+/// exiting: a miner started with or before its node keeps its process, so
+/// the start-up self-test runs once (RT-NODEOPS). Only a malformed node
+/// address is a configuration error.
+fn wait_for_node(node: &str, cookie: Option<&Path>) -> Result<(Client, rpc::Info), Fatal> {
+    Client::try_new(node).map_err(|e| Fatal::Config(e.to_string()))?;
+    let mut wait = NODE_WAIT_FIRST;
+    loop {
+        let why = match connect(node, cookie) {
+            Err(e) => e,
+            Ok(c) => match c.info() {
+                Ok(info) => return Ok((c, info)),
+                Err(e @ RpcError::Status(401, _)) => format!(
+                    "{e}: the node refused the RPC cookie; pass --rpc-cookie <node data \
+                     dir>/{} or set {}",
+                    blacksilk_rpc::COOKIE_FILE,
+                    blacksilk_rpc::COOKIE_ENV
+                ),
+                Err(e) => e.to_string(),
+            },
+        };
+        log::warn!(
+            "waiting for the node at {node}: {why}; retrying in {} s",
+            wait.as_secs()
+        );
+        std::thread::sleep(wait);
+        wait = next_wait(wait);
+    }
+}
+
+/// Set when the operator skipped the RandomX self-test: every hash-rate
+/// line says so (RT-NODEOPS: an override must stay visible).
+static SELF_TEST_SKIPPED: AtomicBool = AtomicBool::new(false);
+
 /// The start-up self-test (decisions "Agent 08", TM2-3): the reference
 /// vectors in light mode, the code every node verifies with and this miner
 /// mines with in light mode. A full-mode dataset is checked against its
 /// cache whenever one is built (`PowContext::try_new`).
 fn start_up_self_test(skip: bool) -> Result<(), Fatal> {
     if skip {
+        SELF_TEST_SKIPPED.store(true, Ordering::Relaxed);
         log::warn!(
             "--skip-randomx-self-test: the RandomX start-up self-test is skipped (for \
-             diagnosis only)"
+             diagnosis only); a build that fails it mines blocks the node rejects"
         );
         return Ok(());
     }
@@ -445,11 +491,16 @@ impl<N: Node, B: ContextBuilder<Ctx = PowContext>> Miner<N, B> {
         );
         self.hashes += hashes;
         if self.since.elapsed() >= HASHRATE_EVERY {
-            log::info!(
-                "hash rate {:.1} H/s ({} mode)",
-                self.hashes as f64 / self.since.elapsed().as_secs_f64(),
-                if ctx.is_full() { "full" } else { "light" }
-            );
+            let rate = self.hashes as f64 / self.since.elapsed().as_secs_f64();
+            let mode = if ctx.is_full() { "full" } else { "light" };
+            if SELF_TEST_SKIPPED.load(Ordering::Relaxed) {
+                log::warn!(
+                    "hash rate {rate:.1} H/s ({mode} mode); RandomX self-test SKIPPED \
+                     (--skip-randomx-self-test)"
+                );
+            } else {
+                log::info!("hash rate {rate:.1} H/s ({mode} mode)");
+            }
             self.hashes = 0;
             self.since = Instant::now();
         }
@@ -526,17 +577,7 @@ fn run(args: Args) -> Result<(), Fatal> {
     }
     // Before any hashing (decisions "Agent 08").
     start_up_self_test(args.skip_randomx_self_test)?;
-    let client = connect(&args.node, args.rpc_cookie.as_deref()).map_err(Fatal::Config)?;
-    let info = client.info().map_err(|e| {
-        Fatal::Other(match e {
-            RpcError::Status(401, _) => format!(
-                "{e}: the node requires its RPC cookie; pass --rpc-cookie <node data dir>/{} or set {}",
-                blacksilk_rpc::COOKIE_FILE,
-                blacksilk_rpc::COOKIE_ENV
-            ),
-            e => e.to_string(),
-        })
-    })?;
+    let (client, info) = wait_for_node(&args.node, args.rpc_cookie.as_deref())?;
     let net = network(&info.network).ok_or_else(|| {
         Fatal::Config(format!(
             "unknown network {:?} reported by node",
@@ -938,6 +979,23 @@ mod tests {
         assert_eq!(parse(&["--prebuild"]), Prebuild::On);
         assert_eq!(parse(&["--prebuild", "off"]), Prebuild::Off);
         assert_eq!(parse(&["--prebuild=on"]), Prebuild::On);
+    }
+
+    /// RT-NODEOPS: waiting for the node backs off from 5 s to at most 60 s;
+    /// a malformed node address is a configuration error at once.
+    #[test]
+    fn waiting_for_the_node_backs_off() {
+        let mut d = NODE_WAIT_FIRST;
+        let mut seen = vec![d.as_secs()];
+        for _ in 0..6 {
+            d = next_wait(d);
+            seen.push(d.as_secs());
+        }
+        assert_eq!(seen, [5, 10, 20, 40, 60, 60, 60]);
+        assert!(matches!(
+            wait_for_node("https://127.0.0.1:1", None),
+            Err(Fatal::Config(_))
+        ));
     }
 
     /// TM2-3: the start-up self-test passes on this build, can be skipped

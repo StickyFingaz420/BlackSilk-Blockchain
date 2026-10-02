@@ -3,14 +3,16 @@ Description=BlackSilk node (testnet)
 Documentation=https://github.com/StickyFingaz420/BlackSilk-Blockchain/blob/main/docs/testnet.md
 After=network-online.target
 Wants=network-online.target
-# Crash-loop containment: at most 3 starts in 15 minutes. A transient failure
-# is restarted; a deterministic one (a panic, exit 101, or exit 70 again at
-# the same block) stops the unit after the third start instead of replaying
-# the whole store every 10 s for ever. The operator reads the log, then
-# `systemctl reset-failed blacksilk-node` (docs/testnet.md §4.2,
-# docs/testnet-incident-response.md).
+# Crash-loop containment: at most 5 starts in 15 minutes (with RestartSec=30,
+# about 2.5 minutes of failing starts). A transient failure (a port not yet
+# free at boot, a full disk being cleaned) gets four retries; a deterministic
+# one (a panic, exit 101, or exit 70 again at the same block) stops the unit
+# instead of replaying the whole store for ever. Manual starts count too.
+# The operator reads the log, then `systemctl reset-failed blacksilk-node`
+# (docs/testnet.md §4.2, docs/testnet-incident-response.md). Statuses a
+# restart cannot fix stop at once (RestartPreventExitStatus below).
 StartLimitIntervalSec=900
-StartLimitBurst=3
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -22,7 +24,10 @@ ExecStart=/usr/local/bin/blacksilk-node --config /etc/blacksilk/node.toml
 KillSignal=SIGINT
 TimeoutStopSec=60
 Restart=on-failure
-RestartSec=10
+RestartSec=30
+# systemd 254 or later (not Debian 12's 252) can back off instead:
+#   RestartSteps=5
+#   RestartMaxDelaySec=300
 # Exit status 65 (HALT_EXIT_CODE, node/src/lib.rs): a block that passed
 # validation failed to apply. A restart replays into the same failure, so the
 # node stays stopped for the operator (docs/testnet.md). Exit status 2: a

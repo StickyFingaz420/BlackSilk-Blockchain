@@ -249,8 +249,7 @@ fn run(cfg: Config) -> Result<(), Stop> {
         .try_lock_exclusive()
         .map_err(|_| format!("{} is in use by another node", data_dir.display()))?;
     // Files an earlier run or a copy left readable by other local users.
-    let tightened = datadir::tighten(&data_dir)
-        .map_err(|e| format!("{}: permissions: {e}", data_dir.display()))?;
+    let tightened = datadir::tighten(&data_dir);
     if !tightened.changed.is_empty() {
         let list: Vec<String> = tightened
             .changed

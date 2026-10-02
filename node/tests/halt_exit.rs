@@ -168,12 +168,14 @@ fn an_apply_failure_exits_with_the_halt_status_the_unit_does_not_restart() {
             "the unit must list status {code}"
         );
     }
-    // TM2-4: a deterministic crash (exit 70 again, or a panic's 101) stops
-    // after three starts in 15 minutes; systemd reads the limit only in
-    // [Unit].
+    // TM2-4 / RT-NODEOPS: a deterministic crash (exit 70 again, or a
+    // panic's 101) stops after five starts in 15 minutes, 30 s apart (about
+    // 2.5 minutes of retries for a transient failure); systemd reads the
+    // limit only in [Unit].
     let at = |l: &str| lines.iter().position(|x| *x == l);
     let (unit, service) = (at("[Unit]").unwrap(), at("[Service]").unwrap());
-    for limit in ["StartLimitIntervalSec=900", "StartLimitBurst=3"] {
+    assert!(lines.contains(&"RestartSec=30"));
+    for limit in ["StartLimitIntervalSec=900", "StartLimitBurst=5"] {
         let i = at(limit).unwrap_or_else(|| panic!("the unit must set {limit}"));
         assert!(unit < i && i < service, "{limit} belongs in [Unit]");
     }
@@ -197,7 +199,7 @@ fn an_apply_failure_found_at_start_up_exits_with_the_halt_status() {
     let forged = io::Error::new(
         io::ErrorKind::InvalidData,
         blacksilk_chain::manager::StorePowMismatch {
-            index: 4,
+            index: Some(4),
             total: 9,
             height: 5,
             id: [7; 32],
