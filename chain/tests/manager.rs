@@ -1537,3 +1537,183 @@ fn the_stored_pow_check_refuses_a_forged_hash() {
     open_checked(&path, pow.clone(), [1; 32], StorePowCheck::NODE_DEFAULT).unwrap();
     assert_eq!(pow.heights(), (1..=20).collect::<Vec<u64>>());
 }
+
+// ------------------------------------------------ RT-NODEOPS (red team of TM2-5)
+
+/// A cheap PoW function that depends on the RandomX key: FNV-1a of
+/// `seed ‖ header`, spread over 32 bytes. A store written with it holds
+/// stored hashes that the start-up check reproduces only if it derives the
+/// same key as the original validation did (any hash passes regtest
+/// difficulty 1, so validation alone would not notice a wrong key).
+#[derive(Default)]
+struct SeedPow {
+    seen: std::sync::Mutex<Vec<(u64, Hash)>>,
+}
+
+impl PowFunction for SeedPow {
+    fn pow_hash(&self, seed: &Hash, header: &[u8]) -> Hash {
+        let height = BlockHeader::from_bytes(header).unwrap().height;
+        self.seen.lock().unwrap().push((height, *seed));
+        let mut out = [0u8; 32];
+        for (k, chunk) in out.chunks_mut(8).enumerate() {
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ k as u64;
+            for b in seed.iter().chain(header) {
+                h ^= u64::from(*b);
+                h = h.wrapping_mul(0x0100_0000_01b3);
+            }
+            chunk.copy_from_slice(&h.to_le_bytes());
+        }
+        out
+    }
+}
+
+fn open_seed_pow(
+    p: &ChainParams,
+    store: Box<dyn BlockStore>,
+    pow: Arc<SeedPow>,
+    check: StorePowCheck,
+) -> std::io::Result<ChainManager> {
+    ChainManager::open_checked(p.clone(), TxRules::for_chain(p), pow, store, [3; 32], check)
+}
+
+/// RT-NODEOPS (false refusal): a healthy store crossing the network's key
+/// switch (epoch 2048, lag 64: the key changes at 2113) on two branches,
+/// with a reorged-out branch, a heavier branch whose blocks above the
+/// switch use their own key, and a stored block whose body is invalid,
+/// passes `--verify-store-pow` (every stored hash recomputed under the key
+/// the check derives) and the default sample.
+#[test]
+fn rt_the_store_check_passes_a_healthy_store_across_the_network_key_switch() {
+    let mut p = params();
+    p.seed_epoch = 2048;
+    p.seed_lag = 64;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("blocks.dat");
+    let mut miner = Miner::new(4242);
+    let (tip, main_2048, side_2048) = {
+        let pow = Arc::new(SeedPow::default());
+        let mut m = open_seed_pow(
+            &p,
+            Box::new(FileStore::open(&path).unwrap()),
+            pow,
+            StorePowCheck::Trust,
+        )
+        .unwrap();
+        let mut ids = vec![p.genesis_id()];
+        for _ in 0..2130 {
+            let b = miner.mine_tip(&mut m);
+            ids.push(b.id(p.network_id));
+        }
+        assert_eq!(m.height(), 2130);
+        // A stored block with an invalid body (an inflated coinbase) on a
+        // side fork: stored after its header was validated, refused on
+        // its body (deterministically again at every replay).
+        let t = m.template_on(&ids[2120]).unwrap();
+        let mut bad = miner.build(&t, vec![], Some(t.reward * 1000), 9);
+        bad.header.timestamp = t.min_timestamp.max(bad.header.timestamp);
+        assert!(m.submit_block(bad.clone(), bad.header.timestamp).is_err());
+        // A heavier branch from 2040, before the seed block 2048: above
+        // 2112 it uses its own block 2048 as the key; the main blocks
+        // 2041..2130 become a reorged-out branch.
+        let mut parent = ids[2040];
+        let mut side_ids = HashMap::new();
+        for _ in 0..100 {
+            let t = m.template_on(&parent).unwrap();
+            let b = miner.build(&t, vec![], None, 2);
+            let now = b.header.timestamp;
+            m.submit_block(b.clone(), now).expect("side block");
+            parent = b.id(p.network_id);
+            side_ids.insert(b.header.height, parent);
+        }
+        assert_eq!(m.height(), 2140, "the heavier branch won");
+        assert!(m.deepest_reorg() >= 90);
+        (m.tip_id(), ids[2048], side_ids[&2048])
+    };
+    assert_ne!(main_2048, side_2048);
+
+    // Every stored hash recomputed: no false refusal.
+    let pow = Arc::new(SeedPow::default());
+    let m = open_seed_pow(
+        &p,
+        Box::new(FileStore::open(&path).unwrap()),
+        pow.clone(),
+        StorePowCheck::All,
+    )
+    .expect("a healthy store passes --verify-store-pow");
+    assert_eq!(m.tip_id(), tip);
+    let seen = pow.seen.lock().unwrap().clone();
+    // 2130 main + 1 invalid-body + 100 side blocks, each recomputed once.
+    assert_eq!(seen.len(), 2231, "every stored block recomputed");
+    let keys: std::collections::BTreeSet<Hash> = seen
+        .iter()
+        .filter(|(h, _)| *h > 2112)
+        .map(|(_, s)| *s)
+        .collect();
+    assert!(keys.contains(&main_2048) && keys.contains(&side_2048), "both keys used");
+    assert!(seen
+        .iter()
+        .filter(|(h, _)| *h <= 2112)
+        .all(|(_, s)| *s == p.genesis_id()));
+    drop(m);
+
+    // The default sample over many start-up seeds.
+    for s in 0..8u8 {
+        let pow = Arc::new(SeedPow::default());
+        let m = ChainManager::open_checked(
+            p.clone(),
+            TxRules::for_chain(&p),
+            pow,
+            Box::new(FileStore::open(&path).unwrap()),
+            [s; 32],
+            StorePowCheck::NODE_DEFAULT,
+        )
+        .expect("a healthy store passes the sample");
+        assert_eq!(m.tip_id(), tip);
+    }
+}
+
+/// RT-NODEOPS (bypass): the "16 most recently stored" region is chosen by
+/// storage order, which whoever writes the store controls (replay accepts a
+/// child stored before its parent). A planted store whose forged block is
+/// the replayed TIP, stored first, with honest blocks stored last, is
+/// accepted by the default sample at most start-up seeds: the documented
+/// "finds a forged block among the newest ones always" does not hold for an
+/// adversarial store.
+#[test]
+fn rt_a_forged_tip_stored_first_escapes_the_tip_region() {
+    let mut m = open(Box::<MemoryStore>::default(), Arc::default());
+    let mut miner = Miner::new(99);
+    let blocks: Vec<Block> = (0..1000).map(|_| miner.mine_tip(&mut m)).collect();
+    let tip = m.tip_id();
+    drop(m);
+    // Planted order: the 16 highest blocks first, then 1..=984.
+    let planted = || {
+        let mut s = MemoryStore::default();
+        for b in blocks[984..].iter().chain(&blocks[..984]) {
+            s.append(&[0; 32], &b.encode()).unwrap();
+        }
+        Box::new(s)
+    };
+    let p = params();
+    let mut accepted = 0;
+    for s in 0..20u8 {
+        // The forged block is the tip, height 1000.
+        let pow = Recheck::new(Some(1000));
+        match ChainManager::open_checked(
+            p.clone(),
+            TxRules::for_chain(&p),
+            pow,
+            planted(),
+            [s; 32],
+            StorePowCheck::NODE_DEFAULT,
+        ) {
+            Ok(m) => {
+                assert_eq!(m.tip_id(), tip, "the forged block is the connected tip");
+                accepted += 1;
+            }
+            Err(e) => assert!(e.get_ref().unwrap().is::<StorePowMismatch>()),
+        }
+    }
+    println!("forged tip accepted at {accepted} of 20 start-up seeds");
+    assert!(accepted >= 10, "the tip region did not protect the tip: {accepted}");
+}
