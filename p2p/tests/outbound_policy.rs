@@ -530,3 +530,65 @@ async fn feelers_move_an_answering_new_address_to_tried() {
     close.notify_waiters();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Only an outbound connection that completes its handshake marks its
+/// address good (moves it to *tried*): an inbound connection from an address
+/// already in *new* leaves it there, as Bitcoin Core does, so inbound
+/// peers cannot place themselves in *tried* (mutation run E: the `!inbound`
+/// of the rule had no test). The node dials nothing (`connect_only`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_inbound_connection_never_moves_its_address_to_tried() {
+    let sock = tokio::net::TcpSocket::new_v4().unwrap();
+    sock.bind("127.0.0.2:0".parse().unwrap()).unwrap();
+    let from = sock.local_addr().unwrap();
+    let dir = temp_dir("inbound-not-tried");
+    table_of(std::iter::once(from), 9)
+        .save(&dir.join("peers.json"))
+        .unwrap();
+    let mut cfg = config(Some(&dir));
+    cfg.connect_only = true;
+    cfg.feeler_interval = Duration::from_secs(3600);
+    let (v, v_addr) = start(30, cfg).await;
+    wait_until("the table is loaded", 10, || {
+        v.stats().known_addresses == (1, 0)
+    })
+    .await;
+    let s = sock.connect(v_addr).await.unwrap();
+    let nid = params().network_id;
+    let (mut r, mut w) = handshake(s, true, nid, &params().genesis_id(), Duration::from_secs(5))
+        .await
+        .unwrap();
+    let ours = Version {
+        protocol: PROTOCOL_VERSION,
+        network: nid,
+        nonce: rand_nonce(),
+        height: 0,
+        tip: params().genesis_id(),
+        listen: None,
+        relay_txs: true,
+    };
+    w.send(&Message::Version(ours).encode()).await.unwrap();
+    assert!(matches!(
+        Message::decode(&r.recv().await.unwrap()).unwrap(),
+        Message::Version(_)
+    ));
+    w.send(&Message::Verack.encode()).await.unwrap();
+    assert!(matches!(
+        Message::decode(&r.recv().await.unwrap()).unwrap(),
+        Message::Verack
+    ));
+    // Registered before the read loop answers this ping.
+    w.send(&Message::Ping(5).encode()).await.unwrap();
+    loop {
+        if matches!(
+            Message::decode(&r.recv().await.unwrap()).unwrap(),
+            Message::Pong(5)
+        ) {
+            break;
+        }
+    }
+    assert_eq!(v.stats().peers, 1);
+    assert_eq!(v.stats().known_addresses, (1, 0), "still in new");
+    drop((r, w, v));
+    let _ = std::fs::remove_dir_all(&dir);
+}
