@@ -201,6 +201,9 @@ fn a_crash_at_any_byte_of_the_last_record_keeps_every_earlier_block() {
 /// touching headers or state, and a restart resumes from the last stored block.
 #[test]
 fn a_full_disk_fails_the_store_without_changing_state() {
+    // The limit as specified (docs/blocks.md: 3 writes in a row), written as
+    // a number so that a change of the constant is noticed (mutation run E).
+    assert_eq!(STORE_FAILURE_LIMIT, 3);
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("blocks.dat");
     let blocks = source_chain(10, 2);
