@@ -2322,6 +2322,50 @@ async fn a_departed_senders_batch_stops_at_the_next_chunk() {
     assert!(a.chain.lock().unwrap().header_height() < 40);
 }
 
+/// The proof of work of a header batch is hashed off the chain actor, chunk
+/// after chunk: each chunk's jobs are computed while the previous chunk is
+/// accepted, so the actor only looks the hashes up (docs/p2p.md §6;
+/// mutation run E: the next chunk's index had no test, and with the
+/// current chunk's jobs instead every later chunk was hashed on the actor).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn header_batches_are_hashed_off_the_chain_actor() {
+    #[derive(Default)]
+    struct Where {
+        total: std::sync::atomic::AtomicUsize,
+        on_actor: std::sync::atomic::AtomicUsize,
+    }
+    impl PowFunction for Where {
+        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            use std::sync::atomic::Ordering::SeqCst;
+            self.total.fetch_add(1, SeqCst);
+            if std::thread::current().name() == Some("chain-actor") {
+                self.on_actor.fetch_add(1, SeqCst);
+            }
+            [0; 32]
+        }
+    }
+    let pow = Arc::new(Where::default());
+    let mut cfg = fast_config(&[]);
+    cfg.pow_threads = 2; // chunks of 2 headers
+    let a = node_with_pow(69, cfg, pow.clone()).await;
+    let (mut r, mut w) = raw_peer_at(a.addr, params().network_id, true, 1000).await;
+    assert!(
+        recv_until(&mut r, 10.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    w.send(&Message::Headers(header_branch(10, 120, 0)).encode())
+        .await
+        .unwrap();
+    wait_until("stored", 30, || {
+        a.chain.lock().unwrap().header_height() == 10
+    })
+    .await;
+    use std::sync::atomic::Ordering::SeqCst;
+    assert_eq!(pow.total.load(SeqCst), 10, "each header hashed once");
+    assert_eq!(pow.on_actor.load(SeqCst), 0, "none on the chain actor");
+}
+
 // ------------------------------------------ P2P hardening round 2 (review items)
 
 fn hashed(pow: &CountingPow) -> usize {
