@@ -482,6 +482,33 @@ async fn a_silent_seed_is_left_after_the_timeout() {
     drop(v);
 }
 
+/// A silent seed's address fetch is left once `addr_fetch_timeout` has passed
+/// since the connection, not before: the seed has that long to answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_silent_seed_has_the_whole_timeout_to_answer() {
+    let seed = scripted_listener("127.0.0.1", None).await;
+    let mut cfg = config(None);
+    cfg.seeds = vec![NetAddr::Ip(seed.addr)];
+    cfg.addr_fetch_timeout = Duration::from_secs(3);
+    let (v, _) = start(45, cfg).await;
+    wait_until("V asked the seed", 10, || {
+        seed.seen.lock().unwrap().kinds.contains(&"getaddr")
+    })
+    .await;
+    // The request comes after the handshake: the connection is older.
+    let asked = std::time::Instant::now();
+    wait_until("V left the silent seed", 10, || {
+        seed.seen.lock().unwrap().closed >= 1
+    })
+    .await;
+    let after = asked.elapsed();
+    assert!(
+        after >= Duration::from_millis(2_000),
+        "left {after:?} after its request"
+    );
+    drop(v);
+}
+
 /// W3-32c item 6 (W7): seeds are asked once fewer than two full-relay
 /// outbound peers were up for `seed_fallback_after`, not only when none is.
 /// Before, one outbound peer (possibly the attacker's) suppressed the seeds.

@@ -2678,6 +2678,70 @@ async fn concurrent_handshakes_respect_the_inbound_limits() {
     wait_until("accepted again", 5, || b.net.stats().peers == 1).await;
 }
 
+/// The per-IP limit is checked again at registration, counting every
+/// registered peer of the IP, outbound ones too: an inbound connection
+/// accepted while its IP had room is refused at registration if the IP's
+/// peers reached `max_per_ip` meanwhile (here an outbound connection to the
+/// same IP registered during its handshake), and accepted while they are one
+/// below it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_per_ip_limit_is_rechecked_at_registration() {
+    let nid = params().network_id;
+    let mut cfg = fast_config(&[]);
+    cfg.allow_private = false;
+    cfg.max_per_ip = 2;
+    cfg.max_inbound = 16;
+    let a = node_with(51, cfg).await;
+    // One inbound peer from 127.0.0.1, registered.
+    let _first = raw_peer(a.addr, nid, true).await;
+    wait_until("first registered", 20, || a.net.stats().inbound == 1).await;
+    // A second one accepted (one peer of the IP, room for two) and holding
+    // its key exchange done, before its `Version`.
+    let s = TcpStream::connect(a.addr).await.unwrap();
+    let (mut r, mut w) = handshake(s, true, nid, &params().genesis_id(), Duration::from_secs(5))
+        .await
+        .unwrap();
+    // Meanwhile an outbound connection to the same IP registers: two peers.
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let _out = dialed_raw_peer(&a, &l).await;
+    assert_eq!(a.net.stats().peers, 2);
+    let v = Version {
+        protocol: PROTOCOL_VERSION,
+        network: nid,
+        nonce: 0x5151,
+        height: 0,
+        tip: params().genesis_id(),
+        listen: None,
+        relay_txs: true,
+    };
+    w.send(&Message::Version(v).encode()).await.unwrap();
+    // Refused at registration (after the `Verack`s): closed, never
+    // registered; until then it sends nothing but its handshake.
+    let closed = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut kinds = Vec::new();
+        loop {
+            match r.recv().await {
+                Err(_) => break kinds,
+                Ok(m) => match Message::decode(&m) {
+                    Ok(Message::Version(_)) => {
+                        kinds.push("version");
+                        let _ = w.send(&Message::Verack.encode()).await;
+                    }
+                    Ok(Message::Verack) => kinds.push("verack"),
+                    _ => kinds.push("other"),
+                },
+            }
+        }
+    })
+    .await;
+    assert!(
+        matches!(&closed, Ok(k) if !k.contains(&"other")),
+        "a third peer of the IP registered: {closed:?}"
+    );
+    assert_eq!(a.net.stats().peers, 2);
+    assert_eq!(a.net.stats().inbound, 1);
+}
+
 /// Accepts `headers` into the node's header chain directly (test setup).
 fn give_headers(node: &TestNode, headers: &[BlockHeader]) {
     let mut c = node.chain.lock().unwrap();
@@ -2907,15 +2971,31 @@ async fn a_late_transaction_answer_is_not_penalized() {
     )
     .await
     .is_some());
-    // Past the 30 s request timeout, answering pings meanwhile.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(32);
-    while tokio::time::Instant::now() < deadline {
-        if let Some(Message::Ping(n)) =
-            recv_until(&mut r, 1.0, |m| matches!(m, Message::Ping(_))).await
-        {
-            w.send(&Message::Pong(n).encode()).await.unwrap();
-        }
-    }
+    let asked = std::time::Instant::now();
+    // A second announcer (mutation run E: the request moves to it once
+    // TX_TIMEOUT has passed, not before and not never).
+    let (mut ry, mut wy) = raw_peer(a.addr, nid, true).await;
+    wy.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+    wy.send(&Message::Ping(5).encode()).await.unwrap();
+    assert!(recv_until(&mut ry, 5.0, |m| matches!(m, Message::Pong(5)))
+        .await
+        .is_some());
+    assert!(
+        recv_until(
+            &mut ry,
+            45.0,
+            |m| matches!(m, Message::GetTx(ids) if ids == &vec![id])
+        )
+        .await
+        .is_some(),
+        "the second announcer was never asked"
+    );
+    let moved = asked.elapsed();
+    assert!(
+        moved >= Duration::from_secs(25),
+        "asked the next announcer {moved:?} after the first"
+    );
+    // The first peer's answer, past the 30 s request timeout.
     w.send(&Message::Tx(tx.encode()).encode()).await.unwrap();
     wait_until("the late transaction is pooled", 10, || a.mempool_has(&id)).await;
     let scored = penalized(&[&a]);
@@ -4510,15 +4590,19 @@ async fn at_most_eight_unknown_frames_are_skipped_in_the_handshake() {
             Message::decode(&r.recv().await.unwrap()).unwrap(),
             Message::Version(_)
         ));
+        // The node may close at the 9th frame, before our later writes
+        // reach it (a reset on Windows): those writes may fail.
         for k in 0..unknown {
-            w.send(&[0x30, k]).await.unwrap();
+            let sent = w.send(&[0x30, k]).await;
+            assert!(sent.is_ok() || !registered, "{sent:?}");
         }
-        w.send(&Message::Verack.encode()).await.unwrap();
-        assert!(matches!(
-            Message::decode(&r.recv().await.unwrap()).unwrap(),
-            Message::Verack
-        ));
+        let sent = w.send(&Message::Verack.encode()).await;
+        assert!(sent.is_ok() || !registered, "{sent:?}");
         if registered {
+            assert!(matches!(
+                Message::decode(&r.recv().await.unwrap()).unwrap(),
+                Message::Verack
+            ));
             send_and_sync(&mut r, &mut w, &[], 7).await;
             wait_until("registered", 5, || a.net.peers().len() == 1).await;
             kept.push((r, w));
@@ -4618,8 +4702,9 @@ async fn dialed_raw_peer(a: &TestNode, l: &tokio::net::TcpListener) -> (RawReade
     let rw = try_raw_handshake_as(s, false, params().network_id, true, 0)
         .await
         .expect("handshake");
-    // 20 s: a loaded machine took over 5 s to register a dialed peer
-    // (mutation run E's re-runs).
+    // Counts outbound peers: a caller's earlier outbound peer that leaves
+    // meanwhile hides this one (mutation run E: a dropped first reporter in
+    // the upgrade-threshold test, once taken for a slow registration).
     wait_until("registered", 20, || a.net.stats().outbound == outbound + 1).await;
     rw
 }
@@ -4760,6 +4845,9 @@ async fn the_upgrade_warning_thresholds_are_inclusive() {
     let pow = Arc::new(CountAllPow::default());
     let a = node_with_pow(72, fast_config(&[]), pow.clone()).await;
     give_headers(&a, &ours);
+    // The reporters stay connected: `dialed_raw_peer` counts outbound peers,
+    // and a dropped first one leaving during the second dial hid the second.
+    let mut kept = Vec::new();
     for (k, nonce) in [60u64, 61].into_iter().enumerate() {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let (mut r, mut w) = dialed_raw_peer(&a, &l).await;
@@ -4767,6 +4855,7 @@ async fn the_upgrade_warning_thresholds_are_inclusive() {
             headers_and_settle(&a, &pow, &mut r, &mut w, vec![newer(at(155), nonce)], 1).await;
         assert_eq!(cost, 1, "hashed");
         assert_eq!(a.net.upgrade_warned(), k == 1, "after {} reporters", k + 1);
+        kept.push((r, w, l));
     }
     // At our best work: one reporter warns at once.
     let pow = Arc::new(CountAllPow::default());

@@ -330,14 +330,15 @@ mod tests {
             .unwrap()
     }
 
-    /// A queued transaction announcement waits for the peer's trickle delay
-    /// (exponential, mean `trickle_inbound`): with a mean of 10^6 s nothing is
-    /// sent in the next half second of ticks, whatever is queued (a delay
-    /// below it has probability about 5·10^-7).
-    #[tokio::test]
-    async fn an_announcement_waits_for_its_trickle_delay() {
-        let net = idle_network(|c| c.trickle_inbound = Duration::from_secs(1_000_000)).await;
-        let inner = net.inner.clone();
+    /// A raw loopback peer of `net`, registered: its handshake done.
+    async fn raw_peer(
+        net: &crate::Network,
+    ) -> (
+        crate::transport::FrameReader<tokio::io::ReadHalf<tokio::net::TcpStream>>,
+        crate::transport::FrameWriter<tokio::io::WriteHalf<tokio::net::TcpStream>>,
+    ) {
+        let inner = &net.inner;
+        let before = inner.state().peers.len();
         let stream = tokio::net::TcpStream::connect(net.local_addr().unwrap())
             .await
             .unwrap();
@@ -364,9 +365,22 @@ mod tests {
         assert!(matches!(recv(r.recv().await.unwrap()), Message::Version(_)));
         w.send(&Message::Verack.encode()).await.unwrap();
         assert!(matches!(recv(r.recv().await.unwrap()), Message::Verack));
-        while inner.state().peers.is_empty() {
+        while inner.state().peers.len() == before {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        (r, w)
+    }
+
+    /// A queued transaction announcement waits for the peer's trickle delay
+    /// (exponential, mean `trickle_inbound`): with a mean of 10^6 s nothing is
+    /// sent in the next half second of ticks, whatever is queued (a delay
+    /// below it has probability about 5·10^-7).
+    #[tokio::test]
+    async fn an_announcement_waits_for_its_trickle_delay() {
+        let net = idle_network(|c| c.trickle_inbound = Duration::from_secs(1_000_000)).await;
+        let inner = net.inner.clone();
+        let (mut r, mut w) = raw_peer(&net).await;
+        let recv = |m: Vec<u8>| Message::decode(&m).unwrap();
         inner.announce_tx([9; 32], None);
         assert_eq!(
             inner.state().peers.values().next().unwrap().inv_queue,
@@ -417,5 +431,186 @@ mod tests {
         );
         drop(net);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A peer is pinged once per `ping_interval`, counted from its last ping,
+    /// not at every tick once the interval is past or before it is: an
+    /// answering peer gets two to four pings in 3.5 s at a 1 s interval
+    /// (ticks of 50 ms), the first after the interval from its registration.
+    #[tokio::test]
+    async fn an_answering_peer_is_pinged_once_per_interval() {
+        let net = idle_network(|c| c.ping_interval = Duration::from_secs(1)).await;
+        let (mut r, mut w) = raw_peer(&net).await;
+        let start = Instant::now();
+        let mut pings = Vec::new();
+        while let Ok(m) =
+            tokio::time::timeout_at((start + Duration::from_millis(3_500)).into(), r.recv()).await
+        {
+            if let Message::Ping(n) = Message::decode(&m.unwrap()).unwrap() {
+                pings.push(start.elapsed());
+                w.send(&Message::Pong(n).encode()).await.unwrap();
+            }
+        }
+        assert!((2..=4).contains(&pings.len()), "pings at {pings:?}");
+        assert!(pings[0] >= Duration::from_millis(800), "pings at {pings:?}");
+    }
+
+    /// A peer that does not answer a ping is disconnected once `PONG_TIMEOUT`
+    /// (30 s) has passed since the ping, and not before.
+    #[tokio::test]
+    async fn a_peer_that_never_answers_a_ping_is_left_after_the_pong_timeout() {
+        assert_eq!(PONG_TIMEOUT, Duration::from_secs(30));
+        let net = idle_network(|c| c.ping_interval = Duration::from_secs(1)).await;
+        let (mut r, _w) = raw_peer(&net).await;
+        let mut first_ping = None;
+        let closed = loop {
+            match tokio::time::timeout(Duration::from_secs(60), r.recv()).await {
+                Err(_) => panic!("still connected 60 s after the last frame"),
+                Ok(Err(_)) => break Instant::now(),
+                Ok(Ok(m)) => {
+                    if let Ok(Message::Ping(_)) = Message::decode(&m) {
+                        first_ping.get_or_insert_with(Instant::now);
+                    }
+                }
+            }
+        };
+        let after = closed.duration_since(first_ping.expect("pinged"));
+        assert!(
+            after >= Duration::from_secs(29) && after < Duration::from_secs(45),
+            "left {after:?} after the ping"
+        );
+        assert!(net.inner.state().peers.is_empty());
+    }
+
+    /// Waits up to 10 s for `done` on the state (a few ticks).
+    async fn until(net: &crate::Network, done: impl Fn(&State) -> bool) {
+        let t = Instant::now();
+        while !done(&net.inner.state()) {
+            assert!(t.elapsed() < Duration::from_secs(10), "not within 10 s");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// Block and transaction requests time out once their timeouts have
+    /// passed (`BLOCK_TIMEOUT` 60 s, `TX_TIMEOUT` 30 s), not before: an
+    /// expired request moves to the late requests, where its answer is still
+    /// accepted for another timeout, then forgotten. The ages are set in the
+    /// state directly; nothing is missing, so nothing is asked again.
+    #[tokio::test]
+    async fn requests_time_out_after_their_timeouts_and_late_ones_are_kept_as_long() {
+        assert_eq!(BLOCK_TIMEOUT, Duration::from_secs(60));
+        assert_eq!(TX_TIMEOUT, Duration::from_secs(30));
+        let net = idle_network(|_| {}).await;
+        let _peer = raw_peer(&net).await;
+        let ago = |d: Duration| Instant::now().checked_sub(d).expect("uptime");
+        let margin = Duration::from_secs(10);
+        let pid = {
+            let mut st = net.inner.state();
+            let pid = *st.peers.keys().next().unwrap();
+            st.peers.get_mut(&pid).unwrap().blocks_in_flight = 2;
+            st.block_requests
+                .insert([1; 32], (pid, ago(BLOCK_TIMEOUT - margin)));
+            st.block_requests
+                .insert([2; 32], (pid, ago(BLOCK_TIMEOUT + margin)));
+            st.late_blocks
+                .insert([3; 32], (pid, ago(BLOCK_TIMEOUT - margin)));
+            st.late_blocks
+                .insert([4; 32], (pid, ago(BLOCK_TIMEOUT + margin)));
+            st.tx_requests
+                .insert([5; 32], (pid, ago(TX_TIMEOUT - margin)));
+            st.tx_requests
+                .insert([6; 32], (pid, ago(TX_TIMEOUT + margin)));
+            st.late_txs.insert(([7; 32], pid), ago(TX_TIMEOUT - margin));
+            st.late_txs.insert(([8; 32], pid), ago(TX_TIMEOUT + margin));
+            pid
+        };
+        until(&net, |st| {
+            !st.block_requests.contains_key(&[2; 32]) && !st.tx_requests.contains_key(&[6; 32])
+        })
+        .await;
+        // Some ticks later (a late request just moved is not forgotten).
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let st = net.inner.state();
+        let keys = |m: Vec<Hash>| {
+            let mut m = m;
+            m.sort();
+            m
+        };
+        assert_eq!(keys(st.block_requests.keys().copied().collect()), [[1; 32]]);
+        assert_eq!(
+            keys(st.late_blocks.keys().copied().collect()),
+            [[2; 32], [3; 32]]
+        );
+        assert!(st.late_blocks.values().all(|(p, _)| *p == pid));
+        assert_eq!(st.peers[&pid].blocks_in_flight, 1);
+        assert_eq!(keys(st.tx_requests.keys().copied().collect()), [[5; 32]]);
+        assert_eq!(
+            keys(st.late_txs.keys().map(|(h, _)| *h).collect()),
+            [[6; 32], [7; 32]]
+        );
+    }
+
+    /// At most `LATE_TXS_MAX` timed-out transaction requests are remembered:
+    /// with room for one, of two that time out one is kept.
+    #[tokio::test]
+    async fn late_transaction_requests_are_capped() {
+        assert_eq!(LATE_TXS_MAX, 10_000);
+        let net = idle_network(|_| {}).await;
+        let _peer = raw_peer(&net).await;
+        let old = Instant::now()
+            .checked_sub(TX_TIMEOUT + Duration::from_secs(10))
+            .expect("uptime");
+        {
+            let mut st = net.inner.state();
+            let pid = *st.peers.keys().next().unwrap();
+            let now = Instant::now();
+            for i in 0..LATE_TXS_MAX as u32 - 1 {
+                let mut h = [0xee; 32];
+                h[..4].copy_from_slice(&i.to_le_bytes());
+                st.late_txs.insert((h, pid), now);
+            }
+            st.tx_requests.insert([5; 32], (pid, old));
+            st.tx_requests.insert([6; 32], (pid, old));
+        }
+        until(&net, |st| st.tx_requests.is_empty()).await;
+        let st = net.inner.state();
+        assert_eq!(st.late_txs.len(), LATE_TXS_MAX);
+        assert_eq!(
+            st.late_txs
+                .keys()
+                .filter(|(h, _)| *h == [5; 32] || *h == [6; 32])
+                .count(),
+            1
+        );
+    }
+
+    /// A header request times out once `HEADERS_TIMEOUT` (60 s) has passed,
+    /// not before: the peer gets a grace entry (its late reply is accepted)
+    /// and is not asked again at once.
+    #[tokio::test]
+    async fn a_header_request_times_out_after_the_headers_timeout() {
+        assert_eq!(HEADERS_TIMEOUT, Duration::from_secs(60));
+        let net = idle_network(|_| {}).await;
+        let _one = raw_peer(&net).await;
+        let _two = raw_peer(&net).await;
+        let ago = |d: Duration| Instant::now().checked_sub(d).expect("uptime");
+        let margin = Duration::from_secs(10);
+        let (fresh, old) = {
+            let mut st = net.inner.state();
+            let mut ids: Vec<PeerId> = st.peers.keys().copied().collect();
+            ids.sort();
+            let (fresh, old) = (ids[0], ids[1]);
+            st.peers.get_mut(&fresh).unwrap().headers_requested =
+                Some(ago(HEADERS_TIMEOUT - margin));
+            st.peers.get_mut(&old).unwrap().headers_requested = Some(ago(HEADERS_TIMEOUT + margin));
+            (fresh, old)
+        };
+        until(&net, |st| st.peers[&old].headers_requested.is_none()).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let st = net.inner.state();
+        assert!(st.peers[&fresh].headers_requested.is_some());
+        assert!(st.peers[&fresh].headers_grace.is_empty());
+        assert!(st.peers[&old].headers_requested.is_none());
+        assert_eq!(st.peers[&old].headers_grace.len(), 1);
     }
 }
