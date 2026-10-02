@@ -1120,3 +1120,41 @@
   - D1 per-peer hashing slow start, and D2 staller detection (P1).
 - **Owner tasks re-confirmed:** signing key, signed tags, second fingerprint channel.
 - **STATUS.md is stale** (as of e986250). A docs agent will reconcile it with decisions.md.
+
+## Threat model round 2: merged plan and owner decisions (Lead, 2026-10-02)
+- **OWNER DECISIONS (2026-10-02):**
+  - **Trial release authentication: the two-channel commit id.** The owner publishes the exact commit id plus the consensus fingerprints on two separate channels. Every operator builds that commit with tools/release-build.sh, checks that both channels match, and recomputes the genesis. Signed tags are required before a public testnet.
+  - **Supply-audit custody and incident data: a separate machine,** not the build/agent workstation.
+- **Lead decisions (cross-check questions):**
+  - TM2-P2P also covers the reorg-readmission case: the origin uses `admitted` like every node, and a persisted fluff height only on the Held-after-restart path. The GetTx fix asserts no stem-peer churn.
+  - The PX ciphertext `R` canonical-point rule goes IN v3 at this reset (P0-freeze). It is a consensus change: a full record and its own red-team pass.
+  - TM2-DOCS corrects the DAA freeze record: the residual is accepted under the majority-hash assumption. Park-on-deep-reorg does not cover it.
+  - The AIR gate adds three parts: an all-table cell census including padding rows, lying-generator tests, and a spec-to-constraint table.
+- **Merged plan (tm2-crosscheck.md):**
+  - **P0-genesis:**
+    - the origin re-announce fix, including the reorg case (TM2-P2P);
+    - the GetTx >64 fix (TM2-P2P);
+    - the PSK procedure (done in docs), plus "PSK loaded" in /info;
+    - the RandomX start-up self-test (node and miner);
+    - D0 measured per trial device, and a two-stage T_g;
+    - origin data at rest: 0700/0600 permissions and the redaction rules;
+    - the privacy regression suite (33 W1);
+    - the supply-audit PX test F40-9;
+    - the empty wallet password refused;
+    - the authenticated release reference (owner decision above).
+  - **P0-freeze:**
+    - the AIR gate (W4-MUTAIR);
+    - golden PX fixtures, a tamper sweep, and PX/block verdict samples in the fingerprint;
+    - mutation run E (W4-MUTE), then run F;
+    - the PX `R` rule.
+  - **P1-public-testnet:**
+    - D1 header slow start, and D2 staller detection;
+    - stem black-hole fixes, PX and the Tx lane (local re-stem at the first embargo expiry);
+    - local decoy distribution, and a hedged decoy RNG;
+    - Tor: onion-only outbound with SOCKS isolation;
+    - X4, header tagging;
+    - recent_rejects flushed at an activation, and a non-vacuous fee guard;
+    - systemd StartLimit, SIGTERM handling, overrides in /info, store PoW sampling, the F48-5 quarantine;
+    - byte-bounded outboxes;
+    - log rate limiting and IP redaction;
+    - the network-namespace tests NS-1 to NS-9.
