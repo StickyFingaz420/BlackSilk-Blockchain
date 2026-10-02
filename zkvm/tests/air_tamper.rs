@@ -1247,10 +1247,9 @@ fn the_forgery_machinery_preserves_honest_traces() {
 }
 
 /// Register keys (`REG_BASE + r`) and memory word keys (`address / 4`) must
-/// be disjoint: a program that uses the highest memory word, right below the
-/// first register key, and x0 satisfies the constraints, and its `MEM_INIT`
-/// holds both keys once. (A register base one lower would alias x0 with this
-/// word.)
+/// be disjoint: a program that uses the highest memory word (key
+/// `2^26 − 1`) and x0 satisfies the constraints, and its `MEM_INIT` holds both
+/// keys once. A register base of `2^26 − 1` would alias x0 with this word.
 #[test]
 fn the_top_memory_word_and_the_registers_have_distinct_keys() {
     use blacksilk_zkvm::air::util::REG_BASE;
@@ -1265,7 +1264,6 @@ fn the_top_memory_word_and_the_registers_have_distinct_keys() {
         .halt(0);
     let c = Case::honest(&a, &[]);
     assert_eq!(c.st.output, vec![0x1234_5678]);
-    assert_eq!(top / 4 + 1, REG_BASE, "the word right below the registers");
     for key in [top / 4, REG_BASE] {
         assert_eq!(
             c.find(MEM_INIT, |r| r[init::IS_REAL] == Val::ONE
@@ -1275,4 +1273,61 @@ fn the_top_memory_word_and_the_registers_have_distinct_keys() {
             "key {key:#x}"
         );
     }
+}
+
+/// Honest corner cases the other honest traces miss (found by the census): an
+/// execution that fills the CPU table exactly (its `HALT` on the table's last
+/// row), byte accesses at offset 3, a `JALR` whose sum is odd, a read of the
+/// initial stack pointer, and `POSEIDON2` buffers whose pointer has nonzero
+/// low and top bytes. Each must satisfy every constraint.
+#[test]
+fn honest_corner_cases_satisfy_every_constraint() {
+    // HALT on the CPU table's last row: 1 + nops + 3 rows = MIN_HEIGHT.
+    let mut a = Asm::new(BASE);
+    a.li(T0, 1);
+    for _ in 0..MIN_HEIGHT - 4 {
+        a.imm(Op::Addi, ZERO, ZERO, 0);
+    }
+    a.halt(0);
+    let c = Case::honest(&a, &[]);
+    let h = c.traces[CPU].height();
+    assert_eq!(h, MIN_HEIGHT);
+    assert_eq!(c.u(CPU, h - 1, cpu::SH), 1, "the halt is the last row");
+
+    // Offset 3 (LB, LBU, SB), an odd JALR sum, the initial sp.
+    let mut a = Asm::new(BASE);
+    a.data(DATA, vec![1, 2, 3, 0x84], 64);
+    a.li(S0, DATA)
+        .load(Op::Lb, A1, S0, 3)
+        .write_reg(A1)
+        .load(Op::Lbu, A1, S0, 3)
+        .write_reg(A1)
+        .li(T0, 0x5a)
+        .store(Op::Sb, T0, S0, 3)
+        .load(Op::Lw, A1, S0, 0)
+        .write_reg(A1)
+        .imm(Op::Addi, A1, SP, 0)
+        .write_reg(A1)
+        .jal(RA, "f")
+        .halt(0)
+        .label("f")
+        // ra + 1 is odd: the target is ra (bit 0 cleared).
+        .imm(Op::Jalr, ZERO, RA, 1);
+    let c = Case::honest(&a, &[]);
+    assert_eq!(
+        c.st.output,
+        vec![0xffff_ff84, 0x84, 0x5a03_0201, blacksilk_zkvm::STACK_TOP]
+    );
+
+    // POSEIDON2 at a pointer with nonzero low and top bytes.
+    let ptr = 0x0123_4564u32;
+    let mut a = Asm::new(BASE);
+    a.data(ptr, vec![0; 64], 64);
+    a.li(A0, ptr)
+        .ecall(3)
+        .li(S0, ptr)
+        .load(Op::Lw, A1, S0, 0)
+        .write_reg(A1)
+        .halt(0);
+    Case::honest(&a, &[]);
 }
