@@ -1505,3 +1505,32 @@ fn the_tip_age_comes_from_the_wallets_header_or_the_nodes_checked_one() {
     assert_eq!(reads(&chain), 2, "and the tip's header");
     assert_eq!(w.tip_age().unwrap().0, 60);
 }
+
+/// A header's timestamp must be after the median of the last 11 headers'
+/// (mutation run E: the edge, a timestamp equal to the median, had no
+/// test).
+#[test]
+fn the_header_check_refuses_a_timestamp_equal_to_the_median_time_past() {
+    use crate::headers::HeaderCheck;
+    let chain = fast_chain(42, 20);
+    let params = ChainParams::regtest();
+    assert_eq!(params.median_time_window, 11);
+    let pow = ZeroPow;
+    let header = |h: u64| chain.blocks[h as usize].header;
+    // Headers 9 to 19 hold increasing timestamps: their median is 14's.
+    assert!((10..=19).all(|h| header(h).timestamp > header(h - 1).timestamp));
+    let mtp = header(14).timestamp;
+    for (ts, ok) in [(mtp, false), (mtp + 1, true)] {
+        let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
+        for h in 1..=19 {
+            c.check(&header(h), false).unwrap();
+        }
+        let mut last = header(20);
+        last.timestamp = ts;
+        let r = c.check(&last, false);
+        assert_eq!(r.is_ok(), ok, "{ts}: {r:?}");
+        if let Err(e) = r {
+            assert!(e.contains("median time past"), "{e}");
+        }
+    }
+}
