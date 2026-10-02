@@ -469,7 +469,12 @@ fn chain_ending(seed: u64, n: u64, age: u64) -> MockChain {
 /// unless told the network has really stalled.
 #[test]
 fn a_withheld_tip_is_reported_and_blocks_transactions() {
-    let (warn, refuse) = super::stale_tip_limits(&ChainParams::regtest());
+    let p = ChainParams::regtest();
+    let (warn, refuse) = super::stale_tip_limits(&p);
+    // As specified (docs/blocks.md, tip age): 10 and 60 target block times
+    // plus the future time limit, written out (mutation run E).
+    let (t, ftl) = (p.target_block_time, p.future_time_limit);
+    assert_eq!((warn, refuse), (10 * t + ftl, 60 * t + ftl));
     for (age, warned, refused) in [
         (0, false, false),
         (warn + 60, true, false),
@@ -1185,4 +1190,171 @@ fn a_restores_header_check_hands_its_context_and_keys_to_the_next() {
         vec![(0, params.genesis_id())],
         "the only key block below 2 048"
     );
+}
+
+/// Deferred proof-of-work checks are computed in batches of `POW_BATCH`:
+/// none while fewer are queued, all of them when the batch fills, the rest
+/// at `flush` (mutation run E: the batch's edge had no test).
+#[test]
+fn deferred_proof_of_work_is_computed_in_batches_of_pow_batch() {
+    use crate::headers::{HeaderCheck, POW_BATCH};
+    use std::sync::atomic::Ordering;
+    assert_eq!(POW_BATCH, 256);
+    let n = POW_BATCH as u64 + 20;
+    let chain = fast_chain(35, n);
+    let params = ChainParams::regtest();
+    let pow = BadPow::default();
+    let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
+    let headers: Vec<BlockHeader> = (1..=n).map(|h| chain.blocks[h as usize].header).collect();
+    // Only headers above difficulty 1 queue a check; force every one.
+    let mut queued = 0;
+    for h in &headers {
+        c.check_deferred(h, true).unwrap();
+        queued += usize::from(h.difficulty > 1);
+        let calls = pow.calls.load(Ordering::Relaxed) as usize;
+        if queued < POW_BATCH {
+            assert_eq!(calls, 0, "{queued} queued: none computed yet");
+        } else if queued == POW_BATCH {
+            assert_eq!(calls, POW_BATCH, "the batch is full: computed");
+        }
+    }
+    assert!(queued > POW_BATCH, "{queued}");
+    assert_eq!(pow.calls.load(Ordering::Relaxed) as usize, POW_BATCH);
+    c.flush().unwrap();
+    assert_eq!(pow.calls.load(Ordering::Relaxed) as usize, queued);
+}
+
+/// Each header must extend the last one checked, by height and by parent,
+/// each on its own (mutation run E: the header feed's own linkage checks
+/// had masked this one). The refusal names the expected height, and the
+/// check is spent after it.
+#[test]
+fn a_header_check_refuses_a_header_off_its_parent_or_height() {
+    use crate::headers::HeaderCheck;
+    let chain = fast_chain(36, 12);
+    let params = ChainParams::regtest();
+    let pow = ZeroPow;
+    let header = |h: u64| chain.blocks[h as usize].header;
+    let fresh = || {
+        let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
+        for h in 1..=10 {
+            c.check(&header(h), false).unwrap();
+        }
+        c
+    };
+    let mut c = fresh();
+    let mut other_parent = header(11);
+    other_parent.prev_id = header(9).id(params.network_id);
+    let e = c.check(&other_parent, false).unwrap_err();
+    assert!(e.contains("does not extend header 10"), "{e}");
+    assert_eq!(c.refused_height(), Some(11));
+    assert!(
+        c.check(&header(11), false).is_err(),
+        "spent after a refusal"
+    );
+    let mut c = fresh();
+    let mut other_height = header(11);
+    other_height.height = 12;
+    let e = c.check(&other_height, false).unwrap_err();
+    assert!(e.contains("does not extend header 10"), "{e}");
+    let mut c = fresh();
+    c.check(&header(11), false).unwrap();
+    c.check(&header(12), false).unwrap();
+}
+
+/// The future time limit is inclusive: a header stamped exactly `now +
+/// future_time_limit` is checked, one second later is refused (mutation run
+/// E: the edge had no test).
+#[test]
+fn the_header_checks_future_time_limit_is_inclusive() {
+    use crate::headers::HeaderCheck;
+    let chain = fast_chain(37, 1);
+    let params = ChainParams::regtest();
+    let pow = ZeroPow;
+    let header = chain.blocks[1].header;
+    let edge = header.timestamp - params.future_time_limit;
+    let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, edge).unwrap();
+    c.check(&header, false).expect("exactly at the limit");
+    let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, edge - 1).unwrap();
+    let e = c.check(&header, false).unwrap_err();
+    assert!(e.contains("in the future"), "{e}");
+}
+
+/// With more than one thread, the proof-of-work checks run on helper
+/// threads too (W3-39c; mutation run E: no test saw which threads ran
+/// them). The stand-in's first hash waits, up to 30 s, for a hash on another
+/// thread: with helpers it comes at once; without, the check takes 30 s.
+#[test]
+fn deferred_proof_of_work_runs_on_helper_threads() {
+    use crate::headers::HeaderCheck;
+    use std::sync::{Condvar, Mutex};
+    use std::time::Duration;
+    #[derive(Default)]
+    struct Threads {
+        seen: Mutex<std::collections::HashSet<std::thread::ThreadId>>,
+        more: Condvar,
+        waited: std::sync::atomic::AtomicBool,
+    }
+    impl PowFunction for Threads {
+        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            let mut seen = self.seen.lock().unwrap();
+            seen.insert(std::thread::current().id());
+            self.more.notify_all();
+            // Only the first hash waits (once, not per hash, on one thread).
+            if !self.waited.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                let _ = self
+                    .more
+                    .wait_timeout_while(seen, Duration::from_secs(30), |s| s.len() < 2)
+                    .unwrap();
+            }
+            [0; 32]
+        }
+    }
+    let chain = fast_chain(38, 40);
+    let params = ChainParams::regtest();
+    let pow = Threads::default();
+    let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
+    c.set_threads(4);
+    for h in 1..=40 {
+        c.check_deferred(&chain.blocks[h as usize].header, true)
+            .unwrap();
+    }
+    let t = std::time::Instant::now();
+    c.flush().unwrap();
+    assert!(pow.seen.lock().unwrap().len() >= 2, "helpers computed some");
+    assert!(t.elapsed() < Duration::from_secs(30));
+}
+
+/// The dense tail is exactly the node's last `DENSE_POW_TAIL` headers, plus
+/// the first block scanned: with sampling off, a restore hashes those and
+/// nothing else (mutation run E: the tail's lower edge had no exact test).
+#[test]
+fn the_dense_tail_is_exactly_the_last_720_headers_and_the_first() {
+    use std::sync::atomic::Ordering;
+    const N: u64 = 1_000;
+    let chain = fast_chain(39, N);
+    let tail = super::DENSE_POW_TAIL;
+    assert_eq!(tail, 720);
+    let forced: Vec<u64> = std::iter::once(1)
+        .chain(N - tail + 1..=N)
+        .filter(|&h| chain.blocks[h as usize].header.difficulty > 1)
+        .collect();
+    assert!(forced.len() as u64 >= tail, "{}", forced.len());
+    let pow = Arc::new(BadPow::default());
+    let mut w = restored(Some(pow.clone()), 1);
+    w.set_header_samples(0);
+    assert_eq!(w.sync(&chain).unwrap(), N);
+    assert_eq!(pow.calls.load(Ordering::Relaxed), forced.len() as u64);
+    // The header just below the tail is not forced: a forgery there passes
+    // an unsampled check, one at the tail's lowest header does not.
+    for (h, refused) in [(N - tail, false), (N - tail + 1, true)] {
+        let pow = Arc::new(BadPow::default());
+        pow.bad
+            .lock()
+            .unwrap()
+            .push(chain.blocks[h as usize].header.to_bytes());
+        let mut w = restored(Some(pow), 1);
+        w.set_header_samples(0);
+        assert_eq!(w.sync(&chain).is_err(), refused, "{h}");
+    }
 }

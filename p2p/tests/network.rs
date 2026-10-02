@@ -1739,6 +1739,47 @@ async fn an_unrequested_header_batch_is_not_verified() {
     assert_eq!(a.net.peers()[0].score, score::UNSOLICITED);
 }
 
+/// A solicited batch whose headers are not a chain costs the sender
+/// `UNCONNECTED_HEADERS` on the read loop, before any queueing or hash, for
+/// a wrong parent alone and for a wrong height alone (mutation run E: the
+/// existing tests broke both links at once).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_solicited_batch_that_is_not_a_chain_is_scored_on_arrival() {
+    let pow = Arc::new(CountAllPow::default());
+    let a = node_with_pow(46, fast_config(&[]), pow.clone()).await;
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 5).await;
+    let branch = header_branch(3, 120, 0);
+    let mut height = branch.clone();
+    height[2].height += 1; // its parent is right
+    let mut parent = branch.clone();
+    parent[2].prev_id = branch[0].id(nid); // its height is right
+    for (k, batch) in [height, parent].into_iter().enumerate() {
+        assert!(
+            recv_until(&mut r, 10.0, |m| matches!(m, Message::GetHeaders { .. }))
+                .await
+                .is_some(),
+            "asked for headers"
+        );
+        w.send(&Message::Headers(batch).encode()).await.unwrap();
+        w.send(&Message::Ping(k as u64).encode()).await.unwrap();
+        assert!(recv_until(
+            &mut r,
+            5.0,
+            |m| matches!(m, Message::Pong(x) if *x == k as u64)
+        )
+        .await
+        .is_some());
+        assert_eq!(
+            a.net.peers()[0].score,
+            (k as u32 + 1) * score::UNCONNECTED_HEADERS,
+            "batch {k}"
+        );
+    }
+    assert_eq!(pow.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(a.chain.lock().unwrap().header_height(), 0);
+}
+
 /// Counts every PoW evaluation; fails headers carrying `BAD_NONCE` (as
 /// `CountingPow`).
 #[derive(Default)]
@@ -4252,6 +4293,44 @@ async fn only_distinct_outbound_reporters_trigger_the_upgrade_warning() {
     assert!(a.net.upgrade_warned(), "two distinct outbound reporters");
 }
 
+/// RTW1-1: one outbound reporter warns at once when its unknown-version
+/// header, charged the difficulty this node requires, brings its branch to
+/// our best chain's work (on our tip); on a lighter fork it does not
+/// (mutation run E: `UpgradeWork::of`'s sum had no test).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn one_outbound_reporter_on_our_best_work_warns_at_once() {
+    let pow = Arc::new(CountAllPow::default());
+    let a = node_with_pow(64, fast_config(&[]), pow.clone()).await;
+    let ours = header_branch(300, 1, 0);
+    give_headers(&a, &ours);
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &ours {
+        g.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let newer = |parent: Hash, nonce| {
+        let t = g.template_on(parent).unwrap();
+        let prev = g.header(&parent).unwrap();
+        BlockHeader {
+            version: HEADER_VERSION + 6,
+            height: t.height,
+            prev_id: parent,
+            timestamp: t.min_timestamp.max(prev.timestamp + 1),
+            difficulty: t.difficulty,
+            tx_root: [0; 32],
+            nonce,
+        }
+    };
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (mut r, mut w) = dialed_raw_peer(&a, &l).await;
+    let fork = g.main_id_at(295).unwrap();
+    let cost = headers_and_settle(&a, &pow, &mut r, &mut w, vec![newer(fork, 50)], 1).await;
+    assert_eq!(cost, 1, "hashed");
+    assert!(!a.net.upgrade_warned(), "one reporter on a lighter fork");
+    let cost = headers_and_settle(&a, &pow, &mut r, &mut w, vec![newer(g.tip_id(), 51)], 2).await;
+    assert_eq!(cost, 1, "hashed");
+    assert!(a.net.upgrade_warned(), "our best chain's work: at once");
+}
+
 /// RTW1-1 (c): an unknown-version header whose RandomX key is neither the
 /// current nor the next key of our best chain is never hashed, so it cannot
 /// make the node build (and evict) a RandomX cache. A pow call is where
@@ -4295,6 +4374,61 @@ async fn an_old_epoch_unknown_version_header_triggers_no_cache_build() {
     let tip_cost = headers_and_settle(&a, &pow, &mut r, &mut w, vec![tip], 2).await;
     assert_eq!(old_cost, 0, "an old-epoch key was hashed");
     assert_eq!(tip_cost, 1, "the current key is hashed");
+    assert_eq!(a.net.peers()[0].score, 0);
+}
+
+/// An unknown-version header whose RandomX key is the first header of its
+/// own batch (a stored one: the batch repeats our blocks from the key block
+/// 2 048 on) is keyed by that header, a live key, and hashed (mutation run
+/// E: no test had the key inside the batch, `batch_seed`'s first branch).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unknown_version_header_keyed_by_its_own_batch_is_hashed() {
+    let pow = Arc::new(CountAllPow::default());
+    let a = node_with_pow(65, fast_config(&[]), pow.clone()).await;
+    let nid = params().network_id;
+    let ours = header_branch(2112, 1, 0);
+    give_headers(&a, &ours);
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &ours {
+        g.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let p = params();
+    assert_eq!(seed_height(2113, p.seed_epoch, p.seed_lag), 2048);
+    let t = g.template();
+    let tip = g.header(&t.prev_id).unwrap();
+    let newer = BlockHeader {
+        version: HEADER_VERSION + 6,
+        height: t.height,
+        prev_id: t.prev_id,
+        timestamp: t.min_timestamp.max(tip.timestamp + 1),
+        difficulty: t.difficulty,
+        tx_root: [0; 32],
+        nonce: 5,
+    };
+    let mut batch = ours[2047..].to_vec();
+    assert_eq!(batch[0].height, 2048);
+    batch.push(newer);
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 3_000).await;
+    assert!(
+        recv_until(&mut r, 10.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    let before = pow.0.load(std::sync::atomic::Ordering::SeqCst);
+    w.send(&Message::Headers(batch).encode()).await.unwrap();
+    w.send(&Message::Ping(9).encode()).await.unwrap();
+    assert!(recv_until(&mut r, 5.0, |m| matches!(m, Message::Pong(9)))
+        .await
+        .is_some());
+    wait_until("header batch verified", 10, || {
+        a.net.header_queue_len() == 0
+    })
+    .await;
+    let cost = pow.0.load(std::sync::atomic::Ordering::SeqCst) - before;
+    assert_eq!(
+        cost, 1,
+        "the unknown-version header is hashed under the live key"
+    );
     assert_eq!(a.net.peers()[0].score, 0);
 }
 
