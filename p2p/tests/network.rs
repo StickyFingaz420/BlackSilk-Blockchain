@@ -2367,28 +2367,60 @@ async fn header_batches_are_hashed_off_the_chain_actor() {
 }
 
 /// The clock monitor's samples come from live arrivals only: headers that
-/// extend the best header chain outside bulk sync, from at least three
-/// peers before an estimate is reported. A header on a side branch, a tip
-/// sent again and a taller but lighter branch add none (mutation run E: no
-/// network test read the clock monitor, `Network::clock_estimate`).
+/// extend the best header chain above its height when their batch was
+/// taken up, outside bulk sync, from at least three peers before an
+/// estimate is reported. A header on a side branch, a tip sent again, a
+/// heavier rival at the same height and a taller but lighter branch add
+/// none (mutation run E: no network test read the clock monitor,
+/// `Network::clock_estimate`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn clock_samples_come_from_live_arrivals_only() {
-    let a = node_with_pow(70, fast_config(&[]), Arc::new(ZeroPow)).await;
+    // Chunks of 64 headers: the 160-header branch below is hashed in three.
+    let mut cfg = fast_config(&[]);
+    cfg.pow_threads = 64;
+    let a = node_with_pow(70, cfg, Arc::new(ZeroPow)).await;
     let nid = params().network_id;
-    // Our chain: 60 fast headers (difficulty above 1), then 5 announced.
-    let branch = header_branch(65, 1, 0);
-    give_headers(&a, &branch[..60]);
+    // Our chain: 150 fast headers (past the difficulty warm-up), then 5
+    // announced, 1 000 s apart (each counted at the 6T solve-time cap).
+    let base = header_branch(150, 1, 0);
+    give_headers(&a, &base);
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &base {
+        g.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let child = |g: &HeaderChain, parent: Hash, dt: u64, nonce: u64| {
+        let t = g.template_on(parent).unwrap();
+        BlockHeader {
+            version: HEADER_VERSION,
+            height: t.height,
+            prev_id: parent,
+            timestamp: t
+                .min_timestamp
+                .max(g.header(&parent).unwrap().timestamp + dt),
+            difficulty: t.difficulty,
+            tx_root: [0; 32],
+            nonce,
+        }
+    };
+    let fork = g.tip_id();
+    let mut ours = Vec::new();
+    let mut tip = fork;
+    for _ in 0..5 {
+        let h = child(&g, tip, 1_000, 0);
+        tip = g.accept(h, u64::MAX / 2).unwrap().id;
+        ours.push(h);
+    }
     let mut peers = Vec::new();
     for _ in 0..3 {
         let (r, w) = raw_peer(a.addr, nid, true).await;
         peers.push((r, w));
     }
     wait_until("registered", 5, || a.net.stats().peers == 3).await;
-    for (k, h) in branch[60..].iter().enumerate() {
+    for (k, h) in ours.iter().enumerate() {
         let (_, w) = &mut peers[k % 3];
         w.send(&Message::Headers(vec![*h]).encode()).await.unwrap();
         wait_until("stored", 10, || {
-            a.chain.lock().unwrap().header_height() == 61 + k as u64
+            a.chain.lock().unwrap().header_height() == 151 + k as u64
         })
         .await;
         wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
@@ -2399,23 +2431,7 @@ async fn clock_samples_come_from_live_arrivals_only() {
     let e = a.net.clock_estimate().expect("5 samples from 3 peers");
     assert_eq!((e.samples, e.peers), (5, 3));
     // A side branch's header (new, not on the best chain) and the tip again.
-    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
-    for h in &branch {
-        g.accept(*h, u64::MAX / 2).unwrap();
-    }
-    let parent = g.main_id_at(63).unwrap();
-    let t = g.template_on(parent).unwrap();
-    let side = BlockHeader {
-        version: HEADER_VERSION,
-        height: t.height,
-        prev_id: parent,
-        timestamp: t
-            .min_timestamp
-            .max(g.header(&parent).unwrap().timestamp + 1),
-        difficulty: t.difficulty,
-        tx_root: [0; 32],
-        nonce: 31,
-    };
+    let side = child(&g, g.main_id_at(153).unwrap(), 1, 31);
     let (_, w) = &mut peers[0];
     w.send(&Message::Headers(vec![side]).encode())
         .await
@@ -2425,9 +2441,38 @@ async fn clock_samples_come_from_live_arrivals_only() {
     })
     .await;
     let (_, w) = &mut peers[1];
-    w.send(&Message::Headers(vec![branch[64]]).encode())
+    w.send(&Message::Headers(vec![ours[4]]).encode())
         .await
         .unwrap();
+    // A rival of five headers from our fork point, 1 s apart: heavier at
+    // the same height (the counted clock gives it the higher difficulty),
+    // whose tip becomes our best header without rising above our height.
+    let mut rival = Vec::new();
+    let mut r_tip = fork;
+    for _ in 0..5 {
+        let h = child(&g, r_tip, 1, 9);
+        r_tip = g.accept(h, u64::MAX / 2).unwrap().id;
+        rival.push(h);
+    }
+    assert!(
+        g.work(&r_tip).unwrap() > g.work(&tip).unwrap(),
+        "the rival is heavier"
+    );
+    // As a solicited batch: the rival tip ends at our height (155).
+    let (mut r4, mut w4) = raw_peer_at(a.addr, nid, true, 200).await;
+    assert!(
+        recv_until(&mut r4, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    w4.send(&Message::Headers(rival.clone()).encode())
+        .await
+        .unwrap();
+    wait_until("the rival is stored", 10, || {
+        a.chain.lock().unwrap().header(&r_tip).is_some()
+    })
+    .await;
+    assert_eq!(a.chain.lock().unwrap().best_header_id(), r_tip);
     for (k, (r, w)) in peers.iter_mut().enumerate() {
         w.send(&Message::Ping(k as u64).encode()).await.unwrap();
         assert!(
@@ -2439,13 +2484,18 @@ async fn clock_samples_come_from_live_arrivals_only() {
     wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
     // A taller, lighter branch from the genesis (difficulty 1 throughout),
     // as the reply to the handshake's request of a fourth peer.
-    let theirs = header_branch(70, 120, 3);
-    let ours_work = {
-        let c = a.chain.lock().unwrap();
-        c.headers().best_work()
-    };
-    assert!(ours_work > 71, "ours {ours_work} against 71");
-    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 70).await;
+    let theirs = header_branch(160, 120, 3);
+    let mut t = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &theirs {
+        t.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let best = a.chain.lock().unwrap().headers().best_work();
+    assert!(
+        best > t.best_work(),
+        "ours {best} against {}",
+        t.best_work()
+    );
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 160).await;
     let Some(Message::GetHeaders { locator, .. }) =
         recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. })).await
     else {
@@ -2454,15 +2504,16 @@ async fn clock_samples_come_from_live_arrivals_only() {
     w.send(&Message::Headers(serve_headers(&theirs, &locator)).encode())
         .await
         .unwrap();
-    let last = theirs[69].id(nid);
-    wait_until("the lighter branch is stored as a side branch", 10, || {
+    let last = theirs[159].id(nid);
+
+    wait_until("the lighter branch is stored as a side branch", 30, || {
         a.chain.lock().unwrap().header(&last).is_some()
     })
     .await;
     wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
     assert_eq!(
-        a.chain.lock().unwrap().header_height(),
-        65,
+        a.chain.lock().unwrap().best_header_id(),
+        r_tip,
         "ours stays best"
     );
     let e = a.net.clock_estimate().unwrap();
