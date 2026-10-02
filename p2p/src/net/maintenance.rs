@@ -16,9 +16,10 @@
 use super::blocks::{release_block_slot, schedule_downloads, BLOCK_TIMEOUT};
 use super::headers::{add_grace, HEADERS_TIMEOUT};
 use super::peers::maintain_outbound;
-use super::relay::{reannounce_pool, remember, retry_tx, TX_TIMEOUT};
+use super::relay::{reannounce_pool, remember, TX_TIMEOUT};
 use super::state::{short, unix_now, Inner, State, StemEntry, LATE_TXS_MAX};
 use super::stem::{fluff_entry, send_held_local_txs, take_stem};
+use super::tx_requests::{resume_requests, retry_tx, Failure};
 use crate::connman::ConnKind;
 use crate::dandelion::PeerId;
 use crate::message::Message;
@@ -181,8 +182,10 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
                 if st.late_txs.len() < LATE_TXS_MAX {
                     st.late_txs.insert((id, p), now);
                 }
-                retry_tx(&inner, &mut st, id, p, now);
+                retry_tx(&inner, &mut st, id, p, Failure::Timeout, now);
             }
+            // Peers paused after a dropped answer, asked again.
+            resume_requests(&inner, &mut st, now);
         }
         // A timeout is not misbehavior: a large block on a slow link, or a
         // busy honest peer, times out too (R8-9). The request moves to another
@@ -289,6 +292,9 @@ pub(super) async fn chain_maintenance_loop(inner: Arc<Inner>) {
             if inner.state().originated.prune(next) > 0 {
                 inner.save_originated().await;
             }
+            inner
+                .maintenance_seen
+                .store(next, std::sync::atomic::Ordering::Release);
         }
     }
 }

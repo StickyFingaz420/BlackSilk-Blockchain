@@ -607,19 +607,41 @@ never used in any check or sent to a peer:
     Dandelion++).
 - **Requesting.** A peer asks for unknown hashes with `GetTx`, from one announcer at a
   time.
-  - At most `TX_IN_FLIGHT` (16, half the relay places of the requester's slow lane,
-    §10) requests are outstanding to one peer. More ids it announced wait, oldest
-    first (at most 2 000 per peer), and are asked as its requests end (an answer, a
-    `NotFound`, a timeout), unless another peer delivered them meanwhile. Bitcoin
-    Core limits the transactions in flight per peer for the same reason. Before
-    TM2-17 (2026-10-02) a node asked for every unknown id of one announcement (up to
-    500) at once, and the answers beyond its slow lane's relay places were dropped
-    there, to a timeout and the next re-announcement
-    (`a_transaction_burst_between_honest_nodes_keeps_the_link_and_the_stem`: with
-    paced serving alone, most of a burst was lost so).
+  - The logic is in `net/tx_requests.rs`. At most `TX_IN_FLIGHT` (16, half the
+    relay places of the requester's slow lane, §10) requests are outstanding to one
+    peer, and one while that peer's last answer was over `SMALL_RELAY_BYTES` (a PX
+    transaction; the slow lane holds about two of those). More ids it announced
+    wait, oldest first (at most 2 000 per peer), and are asked as its requests end
+    (an answer, a `NotFound`, a timeout). Bitcoin Core limits the transactions in
+    flight per peer for the same reason. Before TM2-17 (2026-10-02) a node asked for
+    every unknown id of one announcement (up to 500) at once, and the slow lane
+    dropped the answers past its relay places
+    (`a_transaction_burst_between_honest_nodes_keeps_the_link_and_the_stem`).
   - A `NotFound` answer, no answer within 30 s, or the peer disconnecting moves the
-    request to the next announcer (on disconnect at once).
-  - Neither is penalized: transaction relay is best effort.
+    request to the next announcer (on disconnect at once). An answer the slow lane
+    dropped is such a timeout. When no announcer is left after a timeout, the same
+    peer is asked once more before the id is forgotten.
+  - An answer this node drops for its own budgets (the peer's relay share, the
+    node-wide PX share, a full transaction lane) does not end the request's
+    purpose: the id goes back to the front of that peer's queue, and the peer is
+    asked again after 5 s (about one token of its PX share). Before RT-TM2P2P
+    (2026-10-02) such an answer ended the request and forgot its announcers, and
+    the announcer never announces the id to us again (we are in its announced
+    set): a burst of PX transactions from one announcer was lost for good
+    (`rt_a_px_burst_from_one_announcer_is_relayed_in_full`, PX-proving, 2 of 6
+    before).
+  - **Announcers.** At most 8 per id, in arrival order. When the queue is full, an
+    outbound announcer takes the place of an inbound one. An announcer refused a
+    place marks the id: when its queue runs out, the peers that announced it (the
+    per-peer known sets below) and have not failed it are asked, outbound first.
+    Before RT-TM2P2P eight inbound announcers that announced a transaction first and
+    never answered made the node forget it after 8 × 30 s, and an honest ninth
+    announcer was never asked (`rt_eight_silent_first_announcers_do_not_suppress_an_honest_one`;
+    it is asked now after the eight time outs, about 4 minutes). Bitcoin Core also
+    delays requests to inbound announcers by 2 s when an outbound one may answer;
+    that is not done here.
+  - Neither a timeout nor a `NotFound` is penalized: transaction relay is best
+    effort.
   - The answer to a request that timed out is still accepted from the peer asked
     for another 30 s, unpenalized, as a late block is (at most 10 000 such requests
     remembered). Before P2P-FIX2 it was an unrequested `Tx` (10 points) and was
@@ -640,13 +662,23 @@ never used in any check or sent to a peer:
   - A spy therefore cannot probe the stempool or the mempool for transactions it was
     never offered.
   - The answer is **paced** (TM2-17): the transactions are encoded at most
-    `SERVE_TX_BYTES` (4 MiB) at a time, and each `Tx` is queued only while the peer
-    has fewer than `SERVE_TX_FRAMES` (32, half its control outbox) answers queued or
-    being written, holding at most `SERVE_TX_BYTES` (one answer of any size is always
-    allowed). The rest of the outbox stays free for pongs and announcements.
-    Meanwhile that peer's slow lane waits, as Bitcoin Core stops processing a peer's
-    messages while its send buffer is full. The `NotFound` comes last and ends the
-    answer. An id named twice in one `GetTx` is answered once.
+    `SERVE_TX_BYTES` (`MAX_RELAY_FRAME`, at least any one transaction) at a time, and
+    each `Tx` is queued only while the peer has fewer than `SERVE_TX_FRAMES` (32,
+    half its control outbox) answers queued or being written, holding at most
+    `SERVE_TX_BYTES` (one answer of any size is always allowed). The rest of the
+    outbox stays free for pongs and announcements. Meanwhile that peer's slow lane
+    waits, as Bitcoin Core stops processing a peer's messages while its send buffer
+    is full. The `NotFound` comes last and ends the answer. An id named twice in one
+    `GetTx` is answered once.
+  - **Node-wide budget** (RT-TM2P2P): every answer reserves `SERVE_TX_BYTES` of a
+    node-wide `SERVE_TX_TOTAL` (64 MiB) before it encodes, keeps what it encoded,
+    and gets each byte back when its frame is written or its peer disconnects. So
+    `GetTx` answers hold at most 64 MiB in all, whatever the number of peers
+    (before: up to about 2 × (`SERVE_TX_BYTES` + `MAX_ANY_TX_SIZE`), about 18 MB,
+    per peer). An answer that finds no room for `SERVE_TX_STALL` ends with
+    `NotFound` for the rest, and the requester asks another announcer. Slow readers
+    holding the budget delay other peers' answers until they are disconnected
+    (below): a liveness cost of this bound, not a memory one.
   - Before TM2-17 every answer was queued at once, and the first that found the
     64-message outbox full disconnected the requester as a slow reader: one `GetTx`
     for more than 64 transactions, which an honest node sent for any burst, cut the
@@ -656,8 +688,7 @@ never used in any check or sent to a peer:
   - A requester that lets no answer be written for `SERVE_TX_STALL` (60 s) is
     disconnected as a slow reader (no ban), as when its outbox overflows. One that
     reads slowly is bounded by the pong timeout (§10): its pings queue behind its
-    answers. Per peer the answer holds at most about 2 × (`SERVE_TX_BYTES` +
-    `MAX_ANY_TX_SIZE`): one encoded batch and the queued answers.
+    answers.
 - **Pool re-announcement** (dossier 38 §3.4 item 3, `net/maintenance.rs`). Every node
   announces again, with `InvTx` like any announcement above, each pooled transaction
   that is still in its next block template, at fixed pool ages: 10, 20, 40, 80, 160,
@@ -667,13 +698,11 @@ never used in any check or sent to a peer:
     its fluff, or the readmission after a reorganization returned it. Honest nodes
     pool a transaction within seconds of each other, so they re-announce it at the
     same heights, and the origin counts exactly as they do, never with a `StemTx`.
-  - The only exception is a **held** copy of a transaction this node originated
-    (§8.1), pooled late, after a restart: the origin never re-announces it. The
-    relays that still pool the transaction re-announce it, so its delivery does not
-    depend on the origin; an origin re-announcing it on schedule would show a spy
-    that saw it restart that it kept the transaction across the restart. A held copy
-    that a block mines and a reorganization returns is readmitted like everyone's,
-    and re-announced from there.
+  - A restarted origin whose wallet resubmits its transaction does not pool it
+    (§8.1): like a restarted relay, it has the transaction only once a peer
+    announces it and it fetches it, and it re-announces it from that pool height
+    (`rt_a_restarted_origin_answers_an_inv_probe_like_a_restarted_relay`,
+    `a_restarted_origin_never_reannounces_its_held_copy`).
   - Before TM2-P1 (2026-10-02) the origin counted from the height it relayed the
     transaction for when that was earlier. That height is fixed at submission,
     before the stem, so a block found during the stem made the origin alone
@@ -683,8 +712,8 @@ never used in any check or sent to a peer:
     connections identified the origin with certainty
     (`a_block_found_during_the_stem_does_not_make_the_origin_reannounce_first`,
     `after_a_reorganization_the_origin_reannounces_with_everyone`). A restarted
-    origin re-announced its held copy from its relay height too
-    (`a_restarted_origin_never_reannounces_its_held_copy`).
+    origin re-announced the copy it pooled for its wallet from its relay height
+    too.
   - Only peers not known to have the transaction get the announcement (the per-peer
     sets above), so in practice it reaches connections opened since: a peer that
     restarted fetches it back with `GetTx`, without its origin doing anything.
@@ -753,15 +782,19 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
 - **What.** The id of every transaction originated here (`Network::submit_tx`, which
   serves the RPC `/tx`), with the next-block height it was relayed for. Recorded and
   written to disk before the transaction leaves the node. The relay height decides
-  only the windows below, never the re-announcement schedule (§7). Which pool
-  entries are held copies is kept in memory only, as the pool is.
+  only the windows below, never the re-announcement schedule (§7).
 - **Resubmission** of a transaction in the set, for inclusion at next height `h`
   (relayed for `r`):
   - already in this node's stempool: nothing is sent, and `/tx` accepts it;
   - `h < r + 2 160` (the pool expiry, blocks.md §7): other nodes most likely still
-    pool it. It is **held**: pooled here, never stemmed and never announced, and `/tx`
-    accepts it (or answers what the pool answers, e.g. `AlreadyKnown`). This node
-    never re-announces it either (§7);
+    pool it. It is **held**: checked as any submission is, and `/tx` accepts it (or
+    answers what the pool answers, e.g. `AlreadyKnown`), but it is neither stemmed,
+    announced nor pooled. The node then holds it exactly as a restarted relay does:
+    not at all, until a peer announces it; then it requests it with `GetTx`, pools
+    it, and re-announces it from that pool height, like any node (§7). Before
+    RT-TM2P2P (2026-10-02) a held copy was pooled: an `InvTx` probe for it got no
+    `GetTx` where a restarted relay asks, and it expired at its own height, later
+    than the network's copies;
   - `r + 2 160 ≤ h < r + 2 190`: other nodes expired it recently and refuse it from
     their own wallets. It is refused here too, as `Expired`, also after a restart,
     when the pool's in-memory guard is gone;
@@ -775,9 +808,14 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   height per entry, is read with that field ignored): written to a temporary file,
   synced and renamed (a crash leaves the old or the new set), whenever the set
   changes. Entries are dropped when their window ends; at most 10 000 are kept, oldest
-  dropped first (logged). A missing file is an empty set; an unreadable one is logged
-  as an error and an empty set is used, so the node may then originate one of its old
-  transactions again.
+  dropped first (logged). A missing file is an empty set; one that cannot be read is
+  logged as an error and an empty set is used, so the node may then originate one of
+  its old transactions again. A damaged file fails closed (RT-TM2P2P): each entry is
+  parsed on its own and a malformed one is dropped alone, a duplicate id keeps its
+  highest height, a missing or unknown version does not stop the entries from being
+  read, a file that is not JSON (torn) is scanned for the entries it still holds, and
+  every damage is logged as an error and the set written back clean. Before, one bad
+  entry or a version mismatch discarded the whole set.
 - **The wallet side** (wallet `sync`) asks `/tx/status` instead of re-posting, and
   re-originates at most once, after `relayed + 2 190` (px.md §12).
 - Tested (`p2p/tests/network.rs`, over TCP):
@@ -786,20 +824,15 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
   (`Expired` up to the window's last block after a restart, then one `StemTx`),
   `a_peers_stem_of_a_transaction_this_node_originated_is_relayed`,
   `a_restarted_origin_never_reannounces_its_held_copy` (silent while a relay
-  re-announces it), and the unit tests of `originated.rs`.
+  re-announces it), `rt_a_restarted_origin_answers_an_inv_probe_like_a_restarted_relay`,
+  the unit tests of `originated.rs` and `p2p/tests/rt_originated.rs`.
 - **Limits.** The set protects against re-origination by this node only. A wallet
   that submits the same transaction to another node, or a node without this set,
-  still re-originates it. A held copy still differs from a relay that lost the
-  transaction (TM2-P1 residual (a), open): it is pooled, so an `InvTx` for it gets no
-  `GetTx`, and it stays pooled until its own expiry, later than the network's.
-  Closing it is a follow-up: request a held copy on an `InvTx` as if it were
-  unknown (p2p), and expire it at `r + 2 160`, the network's expiry, instead of its
-  own admission height plus the expiry (chain/mempool). A held copy mined and returned at its held
-  height before the node processes the height change stays silent. A transaction
-  the whole network dropped early (a full-pool
-  eviction wave) is still not originated again before `r + 2 190`. The node's own
-  miner may include a held transaction in its templates. Every independent re-origination is
-  another sample for a spy (dossier 33 F33-3).
+  still re-originates it. A held transaction is not pooled, so this node's own
+  miner does not include it until it is learned back from a peer. A transaction the
+  whole network dropped early (a full-pool eviction wave) is still not originated
+  again before `r + 2 190`. Every independent re-origination is another sample for a
+  spy (dossier 33 F33-3).
 
 **Limitations.**
 - Dandelion++ gives statistical origin privacy against spy nodes that control a fraction
@@ -1432,8 +1465,8 @@ already being written is finished first).
       Together about `MAX_RELAY_FRAME` × 2 + 3 MiB per peer. Not in this bound:
       the frame the read loop is receiving (the transport, §3), the outboxes, the
       stempool and the mempool (their own bounds), and the answer a `GetTx`
-      handler builds (§7: about 2 × (`SERVE_TX_BYTES` + `MAX_ANY_TX_SIZE`) per
-      peer since TM2-17; before, an encoded copy of every requested transaction,
+      handler builds (§7: at most `SERVE_TX_TOTAL`, 64 MiB, node-wide since
+      RT-TM2P2P; before TM2-17, an encoded copy of every requested transaction,
       once per repetition of its id).
     - requests and relay share one queue with separate bounds; separate queues
       would lose the per-peer order across kinds that the handlers keep, and were

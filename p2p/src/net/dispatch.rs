@@ -5,8 +5,9 @@ use super::addr_relay::{on_addr, on_get_addr};
 use super::admission::{on_stem_tx, on_tx};
 use super::blocks::{on_block, on_get_blocks, release_block_slot};
 use super::headers::{in_grace, on_headers};
-use super::relay::{on_get_tx, on_inv_tx, retry_tx};
+use super::relay::{on_get_tx, on_inv_tx};
 use super::state::Inner;
+use super::tx_requests::{retry_tx, Failure};
 use crate::dandelion::PeerId;
 use crate::limits::score;
 use crate::message::{Message, MAX_ANY_TX_SIZE, MAX_HEADERS};
@@ -242,7 +243,7 @@ pub(super) async fn handle(inner: &Arc<Inner>, peer: PeerId, msg: Message) {
                     release_block_slot(&mut st, peer);
                 }
                 if st.tx_requests.get(&id).is_some_and(|(p, _)| *p == peer) {
-                    retry_tx(inner, &mut st, id, peer, now);
+                    retry_tx(inner, &mut st, id, peer, Failure::NotFound, now);
                 }
             }
         }

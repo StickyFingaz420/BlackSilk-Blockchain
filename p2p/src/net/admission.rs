@@ -2,9 +2,10 @@
 //! admission and invalid-transaction scoring, fluff and stem receipt.
 
 use super::chain_access;
-use super::relay::request_wanted;
+use super::dispatch::SMALL_RELAY_BYTES;
 use super::state::{short, Inner, State};
 use super::stem::{stem_keys, stem_or_fluff, unstem_key_images};
+use super::tx_requests::{answer_dropped, forget, request_wanted};
 use crate::dandelion::{PeerId, Source};
 use crate::limits::score;
 use blacksilk_chain::actor::{Lane, SendError};
@@ -110,14 +111,27 @@ fn ctx_reject(st: &mut State, id: Hash, tip: Hash) {
 ///    `PxProof`) never consume it, so they cannot starve honest PX relay.
 ///
 /// `stem`: an unsolicited `StemTx` rather than a `Tx` we requested. Returns
-/// whether to verify.
+/// whether to verify ([`Admit`]).
+/// What [`admit_tx`] decided.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Admit {
+    /// Verify it now.
+    Verify,
+    /// Dropped for good: known, conflicting, invalid, or not valid here.
+    Done,
+    /// Dropped for this node's own budgets (the peer's relay share, the
+    /// node-wide PX share): an answer to our request is asked again later
+    /// (`tx_requests::answer_dropped`).
+    Busy,
+}
+
 async fn admit_tx(
     inner: &Arc<Inner>,
     peer: PeerId,
     tx: &Arc<Transaction>,
     id: Hash,
     stem: bool,
-) -> bool {
+) -> Admit {
     let now = Instant::now();
     let px = matches!(**tx, Transaction::Px(_) | Transaction::PxDeploy(_));
     let over = {
@@ -127,10 +141,10 @@ async fn admit_tx(
             if stem {
                 inner.misbehave(peer, score::INVALID_TX, "known invalid transaction");
             }
-            return false;
+            return Admit::Done;
         }
         let Some(p) = st.peers.get_mut(&peer) else {
-            return false;
+            return Admit::Done;
         };
         p.limits
             .charge_relay(stem, px, tx.key_images().len(), now)
@@ -141,7 +155,7 @@ async fn admit_tx(
             "peer {peer}: transaction {} over its {reason}; dropped (not penalized)",
             short(&id)
         );
-        return false;
+        return Admit::Busy;
     }
     let tx2 = tx.clone();
     let (tip, pooled, conflict) = inner
@@ -156,21 +170,21 @@ async fn admit_tx(
     // token. Not penalized: the conflicting transaction may be an honest
     // double spend that lost a race.
     if pooled || ctx_rejected(&inner.state(), &id, &tip) {
-        return false;
+        return Admit::Done;
     }
     if conflict {
         log::debug!(
             "transaction {} conflicts with a pooled one; dropped",
             short(&id)
         );
-        return false;
+        return Admit::Done;
     }
     // A PX transaction's stateless checks, its proof decoding among them,
     // run here, off the chain actor (RT-FUZZ-1); the command below keeps
     // only the checks that read chain state.
     let pre = match px_pre_checks(inner, tx).await {
         Some(pre) => pre,
-        None => return false,
+        None => return Admit::Done,
     };
     let tx3 = tx.clone();
     // The tip these checks ran at keys the contextual-reject cache
@@ -188,7 +202,7 @@ async fn admit_tx(
         // again at this tip.
         log::debug!("PX transaction {} expires soon; not relayed", short(&id));
         ctx_reject(&mut inner.state(), id, tip);
-        return false;
+        return Admit::Done;
     }
     if let Err((e, stateless)) = cheap {
         if stateless {
@@ -202,7 +216,7 @@ async fn admit_tx(
             log::debug!("transaction {} not valid here: {e:?}", short(&id));
             ctx_reject(&mut inner.state(), id, tip);
         }
-        return false;
+        return Admit::Done;
     }
     if px {
         let mut st = inner.state();
@@ -214,11 +228,11 @@ async fn admit_tx(
                 "PX transaction {} dropped: node-wide relay limit",
                 short(&id)
             );
-            return false;
+            return Admit::Busy;
         }
         st.px_global_taken += 1;
     }
-    true
+    Admit::Verify
 }
 
 /// The stateless checks of a PX transaction, in full validation's order:
@@ -442,28 +456,42 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
         inner.misbehave(peer, score::INVALID_TX, "transaction does not decode");
         return;
     };
+    let large = bytes.len() > SMALL_RELAY_BYTES;
     drop(bytes);
     let id = tx.hash();
-    let requested = {
+    let (requested, ours) = {
         let mut st = inner.state();
         let r = st.tx_requests.get(&id).is_some_and(|(p, _)| *p == peer);
-        if r {
-            st.tx_requests.remove(&id);
-            st.tx_announcers.remove(&id);
-            // Its request ended: what else it announced may be asked now.
-            request_wanted(inner, &mut st, peer, Instant::now());
+        if let Some(p) = st.peers.get_mut(&peer).filter(|_| r) {
+            // One request at a time to a peer whose answers are large
+            // (`tx_requests`).
+            p.tx_large = large;
         }
         // An answer to our request that timed out and moved on (P2P-FIX2):
         // accepted, unpenalized. The request to the next announcer stays,
         // so its answer is not unrequested either (a pooled copy is then
         // dropped for free).
-        r || st.late_txs.remove(&(id, peer)).is_some()
+        (r || st.late_txs.remove(&(id, peer)).is_some(), r)
     };
     if !requested {
         inner.misbehave(peer, score::UNSOLICITED, "unrequested transaction");
         return;
     }
-    if !admit_tx(inner, peer, &tx, id, false).await {
+    // The request ends only once the answer is taken: an answer dropped for
+    // this node's own budgets is asked again (RT-TM2P2P item 1).
+    let verdict = admit_tx(inner, peer, &tx, id, false).await;
+    if ours {
+        let mut st = inner.state();
+        let now = Instant::now();
+        if verdict == Admit::Busy {
+            answer_dropped(&mut st, id, peer, now);
+        } else {
+            forget(&mut st, &id);
+            // Its request ended: what else it announced may be asked now.
+            request_wanted(inner, &mut st, peer, now);
+        }
+    }
+    if verdict != Admit::Verify {
         return;
     }
     let rings = input_rings(&tx);
@@ -477,6 +505,10 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     })
     .await
     else {
+        // The Tx lane was full: our own budget, asked again later.
+        if ours {
+            answer_dropped(&mut inner.state(), id, peer, Instant::now());
+        }
         return;
     };
     inner.state().tx_verifications += 1;
@@ -522,7 +554,7 @@ pub(super) async fn on_stem_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>)
             return;
         }
     }
-    if !admit_tx(inner, peer, &tx, id, true).await {
+    if admit_tx(inner, peer, &tx, id, true).await != Admit::Verify {
         return;
     }
     let rings = input_rings(&tx);

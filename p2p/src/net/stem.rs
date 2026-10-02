@@ -207,27 +207,23 @@ pub(super) async fn submit_local(inner: &Arc<Inner>, tx: Transaction) -> Result<
     };
     match verdict {
         Verdict::Held => {
-            // Other nodes most likely still pool it: pooled here, never
-            // stemmed or announced. The pool answers as for any submission
-            // (`AlreadyKnown` if pooled here too).
+            // Other nodes most likely still pool it. Checked as any
+            // submission is (the answer is the pool's: `AlreadyKnown` if
+            // pooled here), but neither stemmed, announced nor pooled: the
+            // node then holds it exactly as a restarted relay does, not at
+            // all, and fetches it on the next announcement like any
+            // transaction (RT-TM2P2P: a pooled copy answered an `InvTx`
+            // probe unlike a relay's, docs/p2p.md §8.1).
             let r = inner
-                .chain_on(Lane::Tx, move |c| {
-                    c.submit_local_tx(tx)
-                        .map(|id| (id, c.mempool().admitted_at(&id)))
-                })
+                .chain_on(Lane::Tx, move |c| c.check_local_tx(&tx))
                 .await;
-            if let Ok((_, admitted)) = r {
+            if r.is_ok() {
                 log::debug!(
-                    "local tx {} was originated here before: pooled, not originated again",
+                    "local tx {} was originated here before: accepted, not originated again",
                     short(&id)
                 );
-                // A held copy, pooled late: never re-announced by this node
-                // (`Originated::anchor`); the relays that pool it do.
-                if let Some(a) = admitted {
-                    inner.state().originated.note_held(id, a);
-                }
             }
-            return r.map(|(id, _)| id).map_err(|e| format!("{e:?}"));
+            return r.map(|_| id).map_err(|e| format!("{e:?}"));
         }
         Verdict::Expired => {
             log::debug!(

@@ -3,15 +3,15 @@
 
 use super::addr_relay::advertise_self;
 use super::blocks::SERVE_BLOCKS_PER_REQUEST;
-use super::dispatch::{handle, is_slow, requested_by_us, Pushed, SlowLane};
+use super::dispatch::{handle, is_slow, requested_by_us, Pushed, SlowLane, SMALL_RELAY_BYTES};
 use super::maintenance::announce_tip;
 use super::peers::{
     advertised_listen, evict_inbound, inbound_count, onion_inbound_count, same_ip_count,
     HandshakeSlot,
 };
-use super::relay::retry_tx;
 use super::relay::{ReplyQueue, SERVE_TX_FRAMES};
-use super::state::{unix_now, Inner, Peer};
+use super::state::{unix_now, Inner, Peer, State};
+use super::tx_requests::{retry_tx, Failure};
 use crate::addr::NetAddr;
 use crate::addrman_gate::AddrGate;
 use crate::connman::{onion_inbound_cap, ConnKind};
@@ -251,7 +251,7 @@ pub(super) async fn run_connection<S>(
     let (tx_out, rx_out) = mpsc::channel::<Message>(OUTBOX);
     let (tx_bulk, rx_bulk) = mpsc::channel::<Message>(BULK_OUTBOX);
     let kill = Arc::new(Notify::new());
-    let replies = Arc::new(ReplyQueue::default());
+    let replies = Arc::new(ReplyQueue::new(inner.serve_budget.clone()));
     let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
     {
         let mut st = inner.state();
@@ -347,6 +347,8 @@ pub(super) async fn run_connection<S>(
                 announced_to: HashSet::new(),
                 known_txs: HashSet::new(),
                 tx_wanted: VecDeque::new(),
+                tx_large: false,
+                tx_paused_until: None,
                 ping: None,
                 min_ping: None,
                 last_ping: now,
@@ -505,6 +507,7 @@ pub(super) async fn run_connection<S>(
                 // for free: never for a message the lane dropped (RTW2A-1,
                 // RTW2A-4). The lane's own bounds limit what waits.
                 let kind = msg.kind();
+                let large_tx = matches!(msg, Message::Tx(_)) && len > SMALL_RELAY_BYTES;
                 match lane.push(msg, len) {
                     Pushed::Queued => {}
                     Pushed::Dropped { charge: true } => {
@@ -512,6 +515,14 @@ pub(super) async fn run_connection<S>(
                     }
                     Pushed::Dropped { charge: false } => {
                         log::debug!("{addr}: slow lane full; {kind} dropped");
+                        // A large answer dropped here: the request times
+                        // out and is asked again, one at a time from now
+                        // (`tx_requests`).
+                        if large_tx {
+                            if let Some(p) = inner.state().peers.get_mut(&id) {
+                                p.tx_large = true;
+                            }
+                        }
                     }
                 }
             }
@@ -538,12 +549,18 @@ pub(super) async fn run_connection<S>(
         .collect();
     let now = Instant::now();
     for h in owned {
-        retry_tx(&inner, &mut st, h, id, now);
+        retry_tx(&inner, &mut st, h, id, Failure::Gone, now);
     }
     st.tx_announcers.retain(|_, q| {
         q.retain(|p| *p != id);
         !q.is_empty()
     });
+    let State {
+        tx_overflow,
+        tx_announcers,
+        ..
+    } = &mut *st;
+    tx_overflow.retain(|h, _| tx_announcers.contains_key(h));
 }
 
 /// Sends a peer's queued messages: control messages (pongs, headers, relay)
@@ -608,7 +625,7 @@ mod tests {
             writer,
             control_rx,
             bulk_rx,
-            Arc::new(ReplyQueue::default()),
+            Arc::new(ReplyQueue::new(Default::default())),
         ));
         let mut got = Vec::new();
         for _ in 0..6 {

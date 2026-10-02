@@ -4446,7 +4446,7 @@ async fn a_restarted_origin_does_not_reoriginate_a_transaction_the_network_holds
         "not announced"
     );
     assert!(!b.net.stempool_contains(&id));
-    assert!(b.mempool_has(&id), "held in the pool, unannounced");
+    assert!(!b.mempool_has(&id), "held: accepted, but not pooled either");
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&b_dir);
 }
@@ -4578,23 +4578,65 @@ async fn give_block(n: &TestNode, b: &Block) {
     wait_until("block given", 5, || n.height() >= h).await;
 }
 
-/// The next heights up to `to` at which each spy first saw `id` announced:
-/// at the current height, then one block mined on `nodes[0]` (and given to
-/// the others) per height. A spy registered after the transaction was
-/// pooled has been told nothing about it, so only a pool re-announcement
-/// reaches it.
+/// Waits until `n`'s chain maintenance loop finished next height `next`
+/// (pool re-announcement included) and its trickle queues are empty: every
+/// announcement it decided is in an outbox (test hooks, no timing).
+async fn settled(n: &TestNode, next: u64) {
+    wait_until("maintenance saw the height", 10, || {
+        n.net.maintenance_seen_height() >= next
+    })
+    .await;
+    wait_until("announcements flushed", 10, || {
+        n.net.queued_announcements() == 0
+    })
+    .await;
+}
+
+/// The messages a raw peer received before the answer to a ping sent now:
+/// the node's outbox is FIFO, so whatever it queued for this peer before
+/// it read the ping is among them.
+async fn before_barrier(r: &mut RawReader, w: &mut RawWriter, nonce: u64) -> Vec<Message> {
+    w.send(&Message::Ping(nonce).encode()).await.unwrap();
+    let mut got = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let m = Message::decode(&r.recv().await.unwrap()).unwrap();
+            if m == Message::Pong(nonce) {
+                return;
+            }
+            got.push(m);
+        }
+    })
+    .await
+    .expect("pong");
+    got
+}
+
+/// The next heights up to `to` at which each spy (`spies[i]`, a peer of
+/// `nodes[i]`) first saw `id` announced: at the current height, then one
+/// block mined on `nodes[0]` (and given to the others) per height. A spy
+/// registered after the transaction was pooled has been told nothing about
+/// it, so only a pool re-announcement reaches it. Deterministic: each node
+/// has finished the height ([`settled`]) before its spy reads up to a
+/// ping barrier.
 async fn first_reannouncements(
     nodes: &mut [&mut TestNode],
-    spies: &mut [&mut RawReader],
+    spies: &mut [(&mut RawReader, &mut RawWriter)],
     id: Hash,
     to: u64,
 ) -> Vec<Option<u64>> {
     let mut first = vec![None; spies.len()];
-    let announced = |m: &Message| matches!(m, Message::InvTx(ids) if ids.contains(&id));
+    let mut nonce = 0x7000;
     loop {
         let next = nodes[0].height() + 1;
-        for (i, spy) in spies.iter_mut().enumerate() {
-            if first[i].is_none() && recv_until(spy, 1.0, announced).await.is_some() {
+        for (i, (r, w)) in spies.iter_mut().enumerate() {
+            settled(nodes[i], next).await;
+            nonce += 1;
+            let seen = before_barrier(r, w, nonce)
+                .await
+                .iter()
+                .any(|m| matches!(m, Message::InvTx(ids) if ids.contains(&id)));
+            if first[i].is_none() && seen {
                 first[i] = Some(next);
             }
         }
@@ -4675,14 +4717,19 @@ async fn a_block_found_during_the_stem_does_not_make_the_origin_reannounce_first
     }
     // Fresh spy connections (a spy may reconnect at will).
     let nid = params().network_id;
-    let (mut spy_a, _wa) = raw_peer(a.addr, nid, true).await;
-    let (mut spy_b, _wb) = raw_peer(b.addr, nid, true).await;
+    let (mut spy_a, mut wa) = raw_peer(a.addr, nid, true).await;
+    let (mut spy_b, mut wb) = raw_peer(b.addr, nid, true).await;
     wait_until("spies registered", 5, || {
         a.net.stats().peers == 3 && b.net.stats().peers == 2
     })
     .await;
-    let first =
-        first_reannouncements(&mut [&mut a, &mut b], &mut [&mut spy_a, &mut spy_b], id, 93).await;
+    let first = first_reannouncements(
+        &mut [&mut a, &mut b],
+        &mut [(&mut spy_a, &mut wa), (&mut spy_b, &mut wb)],
+        id,
+        93,
+    )
+    .await;
     assert_eq!(
         first[0], first[1],
         "the origin re-announces exactly when the relay does (origin, relay)"
@@ -4751,13 +4798,16 @@ async fn after_a_reorganization_the_origin_reannounces_with_everyone() {
     assert!(blk.txs.iter().any(|t| t.hash() == id), "mined");
     give_block(&b, &blk).await;
     let nid = params().network_id;
-    let (mut spy_a, _wa) = raw_peer(a.addr, nid, true).await;
-    let (mut spy_b, _wb) = raw_peer(b.addr, nid, true).await;
+    let (mut spy_a, mut wa) = raw_peer(a.addr, nid, true).await;
+    let (mut spy_b, mut wb) = raw_peer(b.addr, nid, true).await;
     wait_until("spies registered", 5, || {
         a.net.stats().peers == 3 && b.net.stats().peers == 2
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(300)).await; // a tick at 82
+    // Both maintenance loops saw 82 (re-announcement counts from the
+    // second height a loop sees).
+    settled(&a, 82).await;
+    settled(&b, 82).await;
     for h in 81..=91 {
         let blk = c.chain.lock().unwrap().block_at(h).unwrap();
         give_block(&a, &blk).await;
@@ -4771,8 +4821,13 @@ async fn after_a_reorganization_the_origin_reannounces_with_everyone() {
         assert_eq!(n.tip(), c.tip());
         assert_eq!(n.chain.lock().unwrap().mempool().admitted_at(&id), Some(83));
     }
-    let first =
-        first_reannouncements(&mut [&mut a, &mut b], &mut [&mut spy_a, &mut spy_b], id, 94).await;
+    let first = first_reannouncements(
+        &mut [&mut a, &mut b],
+        &mut [(&mut spy_a, &mut wa), (&mut spy_b, &mut wb)],
+        id,
+        94,
+    )
+    .await;
     assert_eq!(
         first[0], first[1],
         "the origin re-announces exactly when the relay does (origin, relay)"
@@ -4780,13 +4835,14 @@ async fn after_a_reorganization_the_origin_reannounces_with_everyone() {
     assert_eq!(first[1], Some(93), "pool age 10 from the readmission at 83");
 }
 
-/// TM2-P1, after a restart (Lead decision: privacy first): a restarted
-/// origin whose wallet resubmits its transaction holds it (pooled for a
-/// later height, never stemmed) and never re-announces it, while a relay
-/// that still pools it re-announces it on the network's schedule. An origin
-/// re-announcing on schedule would show a spy that saw it restart that it
-/// kept the transaction across the restart. On a144d94 the restarted origin
-/// re-announced it at 91 (from its relay height), a block before the relay.
+/// TM2-P1, after a restart (Lead decisions, privacy first): a restarted
+/// origin whose wallet resubmits its transaction accepts it but neither
+/// stems, announces nor pools it (RT-TM2P2P item 3), so it never
+/// re-announces it, while a relay that still pools it re-announces it on
+/// the network's schedule. An origin re-announcing on schedule would show a
+/// spy that saw it restart that it kept the transaction across the restart.
+/// On a144d94 the restarted origin re-announced it at 91 (from its relay
+/// height), a block before the relay; on 33a57af at 92, with the relay.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_restarted_origin_never_reannounces_its_held_copy() {
     let dir = temp_data_dir("orig-anchor");
@@ -4843,18 +4899,19 @@ async fn a_restarted_origin_never_reannounces_its_held_copy() {
     }
     let (mut b, b_dir) = restarted(&a, &dir, 90).await;
     let nid = params().network_id;
-    let (mut spy_b, _wb) = raw_peer(b.addr, nid, true).await;
-    let (mut spy_r, _wr) = raw_peer(relay.addr, nid, true).await;
+    let (mut spy_b, mut wb) = raw_peer(b.addr, nid, true).await;
+    let (mut spy_r, mut wr) = raw_peer(relay.addr, nid, true).await;
     wait_until("spies registered", 5, || {
         b.net.stats().peers == 1 && relay.net.stats().peers == 2
     })
     .await;
     assert_eq!(b.net.submit_tx(tx.clone()).await, Ok(id), "held");
-    assert_eq!(b.chain.lock().unwrap().mempool().admitted_at(&id), Some(84));
+    assert!(!b.mempool_has(&id), "a held copy is not pooled");
+    assert!(!b.net.stempool_contains(&id));
     let mut relay = relay;
     let first = first_reannouncements(
         &mut [&mut b, &mut relay],
-        &mut [&mut spy_b, &mut spy_r],
+        &mut [(&mut spy_b, &mut wb), (&mut spy_r, &mut wr)],
         id,
         95,
     )
@@ -4898,7 +4955,7 @@ async fn a_gettx_for_more_transactions_than_an_outbox_is_served_in_full() {
     // requester (an announcement is what makes a transaction servable),
     // once the maintenance loop has seen the pool height (see
     // `a_repeated_id_in_one_gettx_is_answered_once`).
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    settled(&a, a.height() + 1).await;
     for _ in 0..10 {
         a.mine_with(0, false);
     }
@@ -4961,7 +5018,7 @@ async fn a_repeated_id_in_one_gettx_is_answered_once() {
     // The maintenance loop sees the pool height before the blocks come (it
     // re-announces from the second height it sees; a busy machine can delay
     // its first look past them).
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    settled(&a, a.height() + 1).await;
     for _ in 0..10 {
         a.mine_with(0, false);
     }
@@ -5034,8 +5091,9 @@ async fn a_transaction_burst_between_honest_nodes_keeps_the_link_and_the_stem() 
     let stems = b.net.stem_peers();
     let link = b.net.peers()[0].id;
     assert_eq!(stems, vec![link]);
-    tokio::time::sleep(Duration::from_millis(500)).await; // as above
-                                                          // The pool's re-announcement at age 10: every transaction at once.
+    // The pool's re-announcement at age 10: every transaction at once,
+    // once the maintenance loop has seen the pool height (as above).
+    settled(&a, a.height() + 1).await;
     for _ in 0..10 {
         let blk = a.mine_with(0, false);
         give_block(&b, &blk).await;
@@ -6075,13 +6133,14 @@ fn silent_announcer(
     asked
 }
 
-/// RT-TM2P2P privacy: a restarted origin's held copy is visible to an
-/// `InvTx` membership probe (docs residual (a)); a restarted relay that
-/// lost its pool asks for the transaction, the held origin does not. The
-/// silence of TM2-P1 adds the same signal for the rest of the copy's life.
-/// This test PASSES when the leak is present (it documents it).
+/// RT-TM2P2P item 3 (privacy): a restarted origin whose wallet resubmits
+/// its transaction behaves exactly as a restarted relay. Both answer an
+/// `InvTx` probe with a `GetTx`, pool the transaction at the same height
+/// when it arrives, and re-announce it at the same height. On 246ae4e the
+/// origin pooled a held copy, so the probe told them apart (no `GetTx`
+/// from the origin; RT's `rt_a_held_copy_answers_an_inv_probe_unlike_a_restarted_relay`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn rt_a_held_copy_answers_an_inv_probe_unlike_a_restarted_relay() {
+async fn rt_a_restarted_origin_answers_an_inv_probe_like_a_restarted_relay() {
     let dir = temp_data_dir("rt-held-probe");
     let mut cfg = fast_config(&[]);
     cfg.data_dir = Some(dir.clone());
@@ -6116,28 +6175,51 @@ async fn rt_a_held_copy_answers_an_inv_probe_unlike_a_restarted_relay() {
     wait_until("pooled at the origin", 10, || a.mempool_has(&id)).await;
     // The origin restarts (its wallet resubmits: held), and so does a
     // relay (a node that had it pooled: same chain, empty pool).
-    let (origin, o_dir) = restarted(&a, &dir, 212).await;
+    let (mut origin, o_dir) = restarted(&a, &dir, 212).await;
     assert_eq!(origin.net.submit_tx(tx.clone()).await, Ok(id), "held");
+    assert!(!origin.mempool_has(&id), "not pooled");
     let relay_dir = temp_data_dir("rt-held-probe-relay");
-    let (relay, r_dir) = restarted(&a, &relay_dir, 213).await;
+    let (mut relay, r_dir) = restarted(&a, &relay_dir, 213).await;
     let nid = params().network_id;
     let mut asked = Vec::new();
+    let mut probes = Vec::new();
     for n in [&origin, &relay] {
         let (mut r, mut w) = raw_peer(n.addr, nid, true).await;
         wait_until("spy registered", 5, || n.net.stats().peers == 1).await;
         w.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
-        asked.push(
-            recv_until(
-                &mut r,
-                3.0,
-                |m| matches!(m, Message::GetTx(ids) if ids.contains(&id)),
-            )
-            .await
-            .is_some(),
-        );
+        let got = recv_until(
+            &mut r,
+            10.0,
+            |m| matches!(m, Message::GetTx(ids) if ids.contains(&id)),
+        )
+        .await
+        .is_some();
+        asked.push(got);
+        // The probe delivers it, as a re-announcing relay would.
+        w.send(&Message::Tx(tx.encode()).encode()).await.unwrap();
+        wait_until("pooled", 10, || n.mempool_has(&id)).await;
+        probes.push((r, w)); // kept open: the probe stays a peer
     }
-    eprintln!("RT probe: (held origin asked, restarted relay asked) = {asked:?}");
-    assert_eq!(asked, vec![false, true], "the probe tells them apart");
+    assert_eq!(asked, vec![true, true], "the probe cannot tell them apart");
+    let at = |n: &TestNode| n.chain.lock().unwrap().mempool().admitted_at(&id);
+    assert_eq!(at(&origin), at(&relay));
+    let pooled = at(&origin).unwrap();
+    // Fresh spies: both re-announce at the same height.
+    let (mut so, mut wo) = raw_peer(origin.addr, nid, true).await;
+    let (mut sr, mut wr) = raw_peer(relay.addr, nid, true).await;
+    wait_until("spies registered", 5, || {
+        origin.net.stats().peers == 2 && relay.net.stats().peers == 2
+    })
+    .await;
+    let first = first_reannouncements(
+        &mut [&mut origin, &mut relay],
+        &mut [(&mut so, &mut wo), (&mut sr, &mut wr)],
+        id,
+        pooled + 11,
+    )
+    .await;
+    assert_eq!(first[0], first[1], "(origin, relay)");
+    assert_eq!(first[0], Some(pooled + 10));
     for d in [dir, o_dir, relay_dir, r_dir] {
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -6288,7 +6370,6 @@ async fn rt_a_junk_flood_does_not_delay_another_announcer() {
 /// honest node never announces it to us again (we are in its
 /// `announced_to`). Expected to FAIL while the gap exists. About 4.5 min.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "slow (about 4.5 minutes)"]
 async fn rt_eight_silent_first_announcers_do_not_suppress_an_honest_one() {
     let mut v = node(218, &[]).await;
     v.mine_n(80, 0);

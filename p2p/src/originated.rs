@@ -1,7 +1,6 @@
 //! The originated set (docs/p2p.md §8.1; dossier 33 W2, F33-1): the
 //! transactions this node originated (RPC `/tx`, `Network::submit_tx`), each
-//! with the height it was relayed for, persisted across restarts, and which
-//! pool entries are held copies (in memory).
+//! with the height it was relayed for, persisted across restarts.
 //!
 //! An honest relay never stems, and never announces as new, a transaction the
 //! network has held for a while; only its origin does that when its wallet
@@ -11,8 +10,11 @@
 //! transaction in this set is never originated again while other nodes may
 //! still pool it:
 //! - before `relayed + MEMPOOL_EXPIRY_BLOCKS`, while honest pools hold it, a
-//!   resubmission is **held**: pooled here, never stemmed or announced
-//!   ([`Verdict::Held`]);
+//!   resubmission is **held** ([`Verdict::Held`]): checked and accepted,
+//!   but neither stemmed, announced nor pooled. The node then has it exactly
+//!   as a restarted relay has it: not at all, until a peer announces it and
+//!   it is fetched like any transaction (RT-TM2P2P: a pooled held copy
+//!   answered an `InvTx` differently, and expired at its own height);
 //! - until `relayed + NETWORK_EXPIRY_BLOCKS` (the recently-expired guard of
 //!   every node that expired it, `RECENTLY_EXPIRED_BLOCKS`), it is refused as
 //!   `Expired` ([`Verdict::Expired`]), the persisted form of the mempool's
@@ -21,24 +23,22 @@
 //!   again, as a new one ([`Verdict::Fresh`]).
 //!
 //! The relay height decides these windows only, never the pool
-//! re-announcement schedule (docs/p2p.md §7; TM2-P1): the origin counts that
-//! schedule from its pool entry's height, as every node does. A **held** copy
-//! (pooled by [`Verdict::Held`], typically after a restart) is never
-//! re-announced ([`Originated::anchor`]): the relays that still pool the
-//! transaction re-announce it, and an origin announcing it on schedule after
-//! a restart would show it held the transaction across the restart.
+//! re-announcement schedule (docs/p2p.md §7; TM2-P1).
 //!
 //! Heights are next-block heights (the height a transaction is admitted for),
 //! as in the mempool. The file (`originated.json` in the data directory) is
 //! written to a temporary file, synced and renamed, so a crash leaves the old
-//! set or the new one, never a torn file. It holds at most
+//! set or the new one, never a torn file. A damaged file fails closed: every
+//! entry that parses is kept, the rest is logged ([`Originated::decode`]).
+//! It holds at most
 //! [`ORIGINATED_CAP`] entries; beyond that the oldest are dropped (a node
 //! originating more than that within about three days loses the protection
 //! for its oldest transactions, and logs it).
 
 use blacksilk_chain::mempool::{MEMPOOL_EXPIRY_BLOCKS, RECENTLY_EXPIRED_BLOCKS};
 use blacksilk_consensus::Hash;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
@@ -53,9 +53,8 @@ pub const NETWORK_EXPIRY_BLOCKS: u64 = MEMPOOL_EXPIRY_BLOCKS + RECENTLY_EXPIRED_
 /// Most entries kept (oldest dropped first).
 pub const ORIGINATED_CAP: usize = 10_000;
 
-/// File format version of `originated.json`. Format 2 (a third, optional
-/// pool height per entry, written by an unmerged development version) is
-/// read too, its extra field ignored.
+/// File format version of `originated.json` (format 2, written by an
+/// unmerged development version with a third field per entry, is read too).
 const FORMAT: u32 = 1;
 
 /// What a resubmission of a transaction may do ([`Originated::verdict`]).
@@ -72,31 +71,17 @@ pub enum Verdict {
     Expired,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 struct File {
     version: u32,
     /// `(transaction id (hex), relay height)`.
     entries: Vec<(String, u64)>,
 }
 
-/// Format 2: `(transaction id (hex), relay height, pool height)`.
-#[derive(Deserialize)]
-struct FileV2 {
-    entries: Vec<(String, u64, Option<u64>)>,
-}
-
-#[derive(Deserialize)]
-struct FormatVersion {
-    version: u32,
-}
-
 /// The originated set.
 #[derive(Default)]
 pub struct Originated {
     relayed: HashMap<Hash, u64>,
-    /// Pool entries that are held copies ([`Verdict::Held`]), with the
-    /// height each was pooled for. In memory only, as the pool is.
-    held: HashMap<Hash, u64>,
     /// Changed since it was last written.
     dirty: bool,
 }
@@ -129,50 +114,10 @@ impl Originated {
         }
     }
 
-    /// The pool re-announcement anchor of a transaction pooled here for
-    /// `admitted` (docs/p2p.md §7): `admitted`, as on every node, or `None`
-    /// (never re-announced) if the pool entry is a held copy of a
-    /// transaction originated here. Never the relay height.
-    pub fn anchor(&self, id: &Hash, admitted: u64) -> Option<u64> {
-        (self.held.get(id) != Some(&admitted)).then_some(admitted)
-    }
-
-    /// Notes that a held copy of `id` ([`Verdict::Held`]) was pooled for
-    /// `admitted`.
-    pub fn note_held(&mut self, id: Hash, admitted: u64) {
-        if self.relayed.contains_key(&id) {
-            self.held.insert(id, admitted);
-        }
-    }
-
-    /// The held copies, with the heights they were pooled for.
-    pub fn held(&self) -> Vec<(Hash, u64)> {
-        self.held.iter().map(|(id, a)| (*id, *a)).collect()
-    }
-
-    /// Whether this node's pool entry for `id` is a held copy.
-    pub fn is_held(&self, id: &Hash) -> bool {
-        self.held.contains_key(id)
-    }
-
-    /// Drops the held-copy marks whose pool entry is gone or was replaced
-    /// (`now`: each held id with its current pool height, if pooled). A held
-    /// copy that is mined and returned by a reorganization is readmitted at
-    /// the reorganization's height, as on every node, and re-announced from
-    /// there like everyone's copy.
-    pub fn refresh_held(&mut self, now: &[(Hash, Option<u64>)]) {
-        for (id, at) in now {
-            if self.held.get(id).is_some_and(|a| Some(*a) != *at) {
-                self.held.remove(id);
-            }
-        }
-    }
-
     /// Records that `id` is originated here for inclusion at `next` (a
     /// window ended earlier starts again).
     pub fn record(&mut self, id: Hash, next: u64) {
         self.relayed.insert(id, next);
-        self.held.remove(&id);
         self.dirty = true;
         if self.relayed.len() > ORIGINATED_CAP {
             self.prune(next);
@@ -185,7 +130,6 @@ impl Originated {
                 .map(|(id, _)| *id)
                 .expect("non-empty");
             self.relayed.remove(&oldest);
-            self.held.remove(&oldest);
             log::warn!(
                 "originated set full ({ORIGINATED_CAP}): the oldest entry is dropped, and \
                  its transaction may be originated again before its window ends"
@@ -195,7 +139,6 @@ impl Originated {
 
     /// Forgets `id` (it was not originated after all).
     pub fn forget(&mut self, id: &Hash) {
-        self.held.remove(id);
         if self.relayed.remove(id).is_some() {
             self.dirty = true;
         }
@@ -206,8 +149,6 @@ impl Originated {
         let before = self.relayed.len();
         self.relayed
             .retain(|_, r| next < r.saturating_add(NETWORK_EXPIRY_BLOCKS));
-        let relayed = &self.relayed;
-        self.held.retain(|id, _| relayed.contains_key(id));
         let n = before - self.relayed.len();
         self.dirty |= n > 0;
         n
@@ -239,42 +180,87 @@ impl Originated {
         .expect("serializable")
     }
 
-    /// Parses a saved set (format 1, or 2 with its pool heights ignored).
-    /// Entries beyond [`ORIGINATED_CAP`] (oldest first) and malformed ids
-    /// are dropped.
-    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
-        let v: FormatVersion = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-        let raw: Vec<(String, u64)> = match v.version {
-            FORMAT => {
-                let f: File = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-                f.entries
+    /// Parses a saved set, failing closed (RT-TM2P2P item 5): a forgotten
+    /// entry lets the node originate a transaction again, so every entry
+    /// that parses is kept, whatever is wrong elsewhere.
+    /// - The file is read as JSON values, each entry on its own: an entry
+    ///   is `[id (64 hex digits), relay height, ...]` (format 1 has two
+    ///   fields, format 2 three; anything after the height is ignored). A
+    ///   malformed entry is dropped alone. A missing or unknown version
+    ///   does not stop the entries from being read.
+    /// - A file that is not JSON (torn, corrupt) is scanned for entries.
+    /// - A duplicate id keeps its highest height (the later window).
+    /// - Beyond [`ORIGINATED_CAP`], the oldest are dropped.
+    ///
+    /// Returns the set and what was wrong (empty for a clean file); the set
+    /// is marked changed if anything was, so it is written back clean.
+    pub fn decode(bytes: &[u8]) -> (Self, Vec<String>) {
+        let mut problems = Vec::new();
+        let mut raw: Vec<(Hash, u64)> = Vec::new();
+        match serde_json::from_slice::<Value>(bytes) {
+            Ok(Value::Object(m)) => {
+                match m.get("version").and_then(Value::as_u64) {
+                    Some(1) | Some(2) => {}
+                    Some(v) => problems.push(format!("unknown format version {v}")),
+                    None => problems.push("no format version".into()),
+                }
+                match m.get("entries").and_then(Value::as_array) {
+                    Some(list) => {
+                        for (i, e) in list.iter().enumerate() {
+                            match parse_entry(e) {
+                                Some(x) => raw.push(x),
+                                None => problems.push(format!("entry {i} is malformed")),
+                            }
+                        }
+                    }
+                    None => problems.push("no entry list".into()),
+                }
             }
-            2 => {
-                let f: FileV2 = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-                f.entries.into_iter().map(|(id, r, _)| (id, r)).collect()
+            Ok(_) => problems.push("not a JSON object".into()),
+            Err(e) => {
+                raw = salvage(bytes);
+                problems.push(format!(
+                    "not valid JSON ({e}); {} entries recovered by scanning",
+                    raw.len()
+                ));
             }
-            n => return Err(format!("unknown format version {n}")),
-        };
-        let mut entries: Vec<(Hash, u64)> = raw
-            .into_iter()
-            .filter_map(|(id, r)| {
-                let bytes = hex::decode(id).ok()?;
-                Some((bytes.try_into().ok()?, r))
-            })
-            .collect();
+        }
+        let mut relayed: HashMap<Hash, u64> = HashMap::new();
+        for (id, r) in raw {
+            let e = relayed.entry(id).or_insert(r);
+            if r != *e {
+                problems.push(format!(
+                    "{} is listed twice; the highest height is kept",
+                    hex::encode(id)
+                ));
+                *e = (*e).max(r);
+            }
+        }
+        let mut entries: Vec<(Hash, u64)> = relayed.into_iter().collect();
         entries.sort_by_key(|(id, r)| (std::cmp::Reverse(*r), *id));
-        entries.truncate(ORIGINATED_CAP);
-        Ok(Self {
-            relayed: entries.into_iter().collect(),
-            held: HashMap::new(),
-            dirty: false,
-        })
+        if entries.len() > ORIGINATED_CAP {
+            problems.push(format!(
+                "{} entries, over the cap {ORIGINATED_CAP}: the oldest are dropped",
+                entries.len()
+            ));
+            entries.truncate(ORIGINATED_CAP);
+        }
+        let dirty = !problems.is_empty();
+        (
+            Self {
+                relayed: entries.into_iter().collect(),
+                dirty,
+            },
+            problems,
+        )
     }
 
     /// Loads the set saved at `path`. A missing file is an empty set. A file
-    /// that cannot be read or parsed is logged as an error and an empty set
-    /// is used: the node may then originate again a transaction it
-    /// originated before, which is a visible event, not a silent one.
+    /// that cannot be read is logged as an error and an empty set is used:
+    /// the node may then originate again a transaction it originated before,
+    /// which is a visible event, not a silent one. A damaged file keeps
+    /// every entry that parses ([`Self::decode`]), and every problem is
+    /// logged as an error.
     pub fn load(path: &Path) -> Self {
         let bytes = match std::fs::read(path) {
             Ok(b) => b,
@@ -287,14 +273,53 @@ impl Originated {
                 return Self::new();
             }
         };
-        Self::decode(&bytes).unwrap_or_else(|e| {
+        let (set, problems) = Self::decode(&bytes);
+        for p in &problems {
+            log::error!("{}: {p}", path.display());
+        }
+        if !problems.is_empty() {
             log::error!(
-                "{} is unreadable ({e}); starting with an empty originated set",
-                path.display()
+                "{} is damaged: {} entries kept; a transaction whose entry was lost may \
+                 be originated again by this node",
+                path.display(),
+                set.len()
             );
-            Self::new()
-        })
+        }
+        set
     }
+}
+
+/// One entry: `[id (64 hex digits), relay height, ...]`.
+fn parse_entry(e: &Value) -> Option<(Hash, u64)> {
+    let a = e.as_array()?;
+    let id: Hash = hex::decode(a.first()?.as_str()?).ok()?.try_into().ok()?;
+    Some((id, a.get(1)?.as_u64()?))
+}
+
+/// The entries a file that is not JSON still holds: every `["<64 hex
+/// digits>", <height>` in it.
+fn salvage(bytes: &[u8]) -> Vec<(Hash, u64)> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = Vec::new();
+    let mut rest: &str = &text;
+    while let Some(i) = rest.find("[\"") {
+        rest = &rest[i + 2..];
+        let Some(hexed) = rest.get(..64) else { break };
+        let Some(after) = rest.get(64..) else { break };
+        let Some(after) = after.strip_prefix("\",") else {
+            continue;
+        };
+        let digits: String = after
+            .trim_start()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        let id: Option<Hash> = hex::decode(hexed).ok().and_then(|b| b.try_into().ok());
+        if let (Some(id), Ok(r)) = (id, digits.parse::<u64>()) {
+            out.push((id, r));
+        }
+    }
+    out
 }
 
 /// Writes `bytes` to `path` atomically: a temporary file in the same
@@ -382,16 +407,6 @@ mod tests {
         assert!(Originated::load(&path).is_empty(), "torn file");
         std::fs::write(&path, b"{\"version\":9,\"entries\":[]}").unwrap();
         assert!(Originated::load(&path).is_empty(), "unknown version");
-        // A format 2 file (pool heights, ignored).
-        let v2 = format!(
-            "{{\"version\":2,\"entries\":[[\"{}\",5,82],[\"{}\",6,null]]}}",
-            hex::encode(id(1)),
-            hex::encode(id(2))
-        );
-        std::fs::write(&path, v2).unwrap();
-        let back = Originated::load(&path);
-        assert_eq!(back.relayed(&id(1)), Some(5));
-        assert_eq!(back.relayed(&id(2)), Some(6));
 
         let mut big = Originated::new();
         for n in 0..(ORIGINATED_CAP as u64 + 5) {
@@ -402,48 +417,61 @@ mod tests {
         assert_eq!(big.relayed(&id(0)), None, "oldest dropped");
         assert!(big.relayed(&id(ORIGINATED_CAP as u64 + 4)).is_some());
         let bytes = big.encode();
-        assert_eq!(Originated::decode(&bytes).unwrap().len(), ORIGINATED_CAP);
+        let (back, problems) = Originated::decode(&bytes);
+        assert_eq!(back.len(), ORIGINATED_CAP);
+        assert!(problems.is_empty() && !back.is_dirty(), "a clean file");
     }
 
-    /// TM2-P1: the re-announcement anchor is the pool entry's height, as on
-    /// every node, never the relay height; a held copy has none (never
-    /// re-announced), until a reorganization readmits it like everyone's.
+    /// RT-TM2P2P item 5: a damaged file fails closed. Each entry is read on
+    /// its own and a bad one is dropped alone; a duplicate keeps the
+    /// highest height; formats 1 and 2 and mixed entry shapes are read; a
+    /// missing or unknown version does not stop the entries; a torn file
+    /// keeps the entries before the tear. Every damage is reported and
+    /// marks the set for a clean rewrite.
     #[test]
-    fn the_anchor_is_the_pool_height_and_a_held_copy_has_none() {
-        let mut o = Originated::new();
-        assert_eq!(o.anchor(&id(9), 50), Some(50), "not originated here");
-        o.record(id(1), 81);
-        // A block came during the stem: pooled at the fluff for 82.
-        assert_eq!(o.anchor(&id(1), 82), Some(82));
-        // A held copy pooled for 97: never re-announced.
-        o.note_held(id(1), 97);
-        assert!(o.is_held(&id(1)));
-        assert_eq!(o.anchor(&id(1), 97), None);
-        assert_eq!(o.held(), vec![(id(1), 97)]);
-        // Still pooled for 97: still held.
-        o.refresh_held(&[(id(1), Some(97))]);
-        assert!(o.is_held(&id(1)));
-        // Mined, then readmitted for 99 by a reorganization: as everyone's.
-        o.refresh_held(&[(id(1), Some(99))]);
-        assert!(!o.is_held(&id(1)));
-        assert_eq!(o.anchor(&id(1), 99), Some(99));
-        // Gone from the pool: the mark goes too.
-        o.note_held(id(1), 100);
-        o.refresh_held(&[(id(1), None)]);
-        assert!(!o.is_held(&id(1)));
-        // The mark goes with its entry, and only originated ids get one.
-        o.note_held(id(1), 100);
-        o.forget(&id(1));
-        assert!(!o.is_held(&id(1)));
-        o.note_held(id(4), 5);
-        assert!(!o.is_held(&id(4)));
-        o.record(id(2), 81);
-        o.note_held(id(2), 84);
-        o.prune(81 + NETWORK_EXPIRY_BLOCKS);
-        assert!(!o.is_held(&id(2)) && o.is_empty());
-        // Not persisted: the pool is not either.
-        o.record(id(3), 90);
-        o.note_held(id(3), 91);
-        assert!(!Originated::decode(&o.encode()).unwrap().is_held(&id(3)));
+    fn a_damaged_file_keeps_every_entry_that_parses() {
+        let h = |n: u64| hex::encode(id(n));
+        let read = |json: String| Originated::decode(json.as_bytes());
+        let (o, p) = read(format!(
+            r#"{{"version":2,"entries":[["{}",5,7],["{}",6],["{}",-1],["zz",8],["{}",900],["{}",4]]}}"#,
+            h(1),
+            h(2),
+            h(3),
+            h(4),
+            h(4)
+        ));
+        assert_eq!(o.relayed(&id(1)), Some(5), "format 2 entry");
+        assert_eq!(
+            o.relayed(&id(2)),
+            Some(6),
+            "format 1 entry in a format 2 file"
+        );
+        assert_eq!(o.relayed(&id(3)), None, "bad height dropped alone");
+        assert_eq!(
+            o.relayed(&id(4)),
+            Some(900),
+            "duplicate: the highest height"
+        );
+        assert_eq!(o.len(), 3);
+        assert_eq!(p.len(), 3, "{p:?}");
+        assert!(o.is_dirty());
+        let (o, p) = read(format!(r#"{{"entries":[["{}",5]],"x":1}}"#, h(1)));
+        assert_eq!((o.relayed(&id(1)), p.len()), (Some(5), 1), "no version");
+        let (o, _) = read(format!(r#"{{"entries":[["{}",5]],"version":7}}"#, h(1)));
+        assert_eq!(o.relayed(&id(1)), Some(5), "unknown version");
+        let (o, p) = read(format!(
+            r#"{{"version":1,"entries":[["{}",5],["{}", 6],["{}",7"#,
+            h(1),
+            h(2),
+            &h(3)[..20]
+        ));
+        assert_eq!(o.relayed(&id(1)), Some(5), "torn file");
+        assert_eq!(o.relayed(&id(2)), Some(6), "torn file");
+        assert_eq!(o.len(), 2);
+        assert_eq!(p.len(), 1, "{p:?}");
+        let (o, p) = read("[1,2]".into());
+        assert!(o.is_empty() && p.len() == 1);
+        let (o, p) = read(format!(r#"{{"version":1,"entries":[["{}",5]]}}"#, h(1)));
+        assert!(p.is_empty() && !o.is_dirty() && o.len() == 1, "clean");
     }
 }

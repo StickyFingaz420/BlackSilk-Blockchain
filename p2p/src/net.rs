@@ -39,6 +39,7 @@ mod peers;
 mod relay;
 mod state;
 mod stem;
+mod tx_requests;
 
 use crate::addr::NetAddr;
 use crate::addrman::{AddrMan, BanList};
@@ -134,6 +135,8 @@ fn new_inner(
         block_requests: HashMap::new(),
         tx_requests: HashMap::new(),
         tx_announcers: HashMap::new(),
+        tx_overflow: HashMap::new(),
+        tx_retried: HashSet::new(),
         recent_rejects: VecDeque::new(),
         recent_rejects_set: HashSet::new(),
         late_blocks: HashMap::new(),
@@ -185,6 +188,8 @@ fn new_inner(
         originated_io: Mutex::new(()),
         clock: Mutex::new(ClockMonitor::default()),
         tip_published,
+        serve_budget: Default::default(),
+        maintenance_seen: AtomicU64::new(0),
     });
     (inner, header_rx, block_rx)
 }
@@ -347,6 +352,34 @@ impl Network {
 
     pub fn stempool_contains(&self, id: &Hash) -> bool {
         self.inner.state().stempool.contains_key(id)
+    }
+
+    /// The next-block height the chain maintenance loop last finished,
+    /// pool re-announcement included (tests wait on it instead of on
+    /// time; 0 before its first look).
+    #[doc(hidden)]
+    pub fn maintenance_seen_height(&self) -> u64 {
+        self.inner
+            .maintenance_seen
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Announcements queued for the trickle, over all peers (tests: once 0,
+    /// every queued `InvTx` is in an outbox).
+    #[doc(hidden)]
+    pub fn queued_announcements(&self) -> usize {
+        self.inner
+            .state()
+            .peers
+            .values()
+            .map(|p| p.inv_queue.len())
+            .sum()
+    }
+
+    /// Bytes of `GetTx` answers held node-wide (reserved or queued).
+    #[doc(hidden)]
+    pub fn serving_bytes(&self) -> usize {
+        self.inner.serve_budget.used()
     }
 
     /// The current Dandelion epoch's stem peers (tests: a stem peer is

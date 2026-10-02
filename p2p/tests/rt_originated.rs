@@ -75,36 +75,28 @@ fn rt_format_reading_edges() {
             format!(r#"{{"version":1,"entries":[["{}",5]],"x":1}}"#, h(1)),
         ),
     ];
+    // Fails closed (RT-TM2P2P item 5): id 1, at height 5, survives every
+    // damage below, and a duplicate keeps the highest height.
     for (what, json) in cases {
-        match Originated::decode(json.as_bytes()) {
-            Ok(o) => eprintln!(
-                "RT decode {what}: Ok len {} relayed(1) {:?}",
-                o.len(),
-                o.relayed(&id(1))
-            ),
-            Err(e) => eprintln!("RT decode {what}: Err {e}"),
-        }
+        let (o, problems) = Originated::decode(json.as_bytes());
+        eprintln!(
+            "RT decode {what}: len {} relayed(1) {:?} problems {problems:?}",
+            o.len(),
+            o.relayed(&id(1))
+        );
+        let want = if what == "v1, duplicate id" { 900 } else { 5 };
+        assert_eq!(o.relayed(&id(1)), Some(want), "{what}");
     }
 }
 
-/// The held mark across a mined-then-returned cycle at the same height, as
-/// `refresh_held` sees it only at a height tick.
+/// The prune boundary of an entry (the held marks of the earlier design are
+/// gone: a held copy is not pooled at all).
 #[test]
-fn rt_held_mark_survives_a_same_height_return() {
+fn rt_prune_boundary_is_exact() {
     let mut o = Originated::new();
     o.record(id(1), 81);
-    o.note_held(id(1), 90);
-    // Mined at 90 and returned by a reorganization readmitting it for 90
-    // before any tick saw it gone.
-    o.refresh_held(&[(id(1), Some(90))]);
-    eprintln!(
-        "RT held after same-height return: {:?}",
-        o.anchor(&id(1), 90)
-    );
-    // Prune boundary: the mark goes with the entry exactly at the window.
-    o.note_held(id(1), 90);
     assert_eq!(o.prune(81 + NETWORK_EXPIRY_BLOCKS - 1), 0);
-    assert!(o.is_held(&id(1)));
+    assert_eq!(o.relayed(&id(1)), Some(81));
     assert_eq!(o.prune(81 + NETWORK_EXPIRY_BLOCKS), 1);
-    assert!(!o.is_held(&id(1)));
+    assert!(o.is_empty());
 }

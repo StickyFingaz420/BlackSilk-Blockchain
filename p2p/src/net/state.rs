@@ -71,6 +71,12 @@ pub(super) struct Peer {
     /// Ids it announced that we want, beyond the requests outstanding to
     /// it (`relay::TX_IN_FLIGHT`), oldest first (TM2-17).
     pub(super) tx_wanted: VecDeque<Hash>,
+    /// Its last answer to our `GetTx` was over `SMALL_RELAY_BYTES` (a PX
+    /// transaction): one request in flight (`tx_requests`).
+    pub(super) tx_large: bool,
+    /// Not asked for transactions before this: this node dropped one of its
+    /// answers for its own budgets (`tx_requests::answer_dropped`).
+    pub(super) tx_paused_until: Option<Instant>,
     pub(super) ping: Option<(u64, Instant)>,
     /// The lowest ping round trip measured (inbound eviction protects the
     /// lowest; `None`: none answered yet).
@@ -209,6 +215,11 @@ pub(super) struct State {
     pub(super) block_requests: HashMap<Hash, (PeerId, Instant)>,
     pub(super) tx_requests: HashMap<Hash, (PeerId, Instant)>,
     pub(super) tx_announcers: HashMap<Hash, VecDeque<PeerId>>,
+    /// Ids whose announcer queue refused (or displaced) an announcer, with
+    /// the peers that failed them since (`tx_requests`).
+    pub(super) tx_overflow: HashMap<Hash, Vec<PeerId>>,
+    /// `(id, peer)` asked a second time after a timeout (`tx_requests`).
+    pub(super) tx_retried: HashSet<(Hash, PeerId)>,
     pub(super) recent_rejects: VecDeque<Hash>,
     pub(super) recent_rejects_set: HashSet<Hash>,
     /// Block requests that timed out, kept for another `BLOCK_TIMEOUT`: the
@@ -409,6 +420,12 @@ pub(super) struct Inner {
     /// connected tip (`SummaryCell::on_tip_change`): the announcer
     /// (`maintenance::announce_loop`) sends it at once (RT-LAB F2).
     pub(super) tip_published: Arc<Notify>,
+    /// The node-wide byte budget of `GetTx` answers (`relay::ServeBudget`).
+    pub(super) serve_budget: Arc<super::relay::ServeBudget>,
+    /// The next-block height the chain maintenance loop last finished
+    /// (re-announcement included): a test hook
+    /// (`Network::maintenance_seen_height`).
+    pub(super) maintenance_seen: AtomicU64,
 }
 
 pub(super) fn unix_now() -> u64 {

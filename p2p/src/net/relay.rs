@@ -1,8 +1,9 @@
 //! Transaction relay: inventory announcements, requests and retries.
 
 use super::admission::ctx_rejected;
-use super::dispatch::SLOW_LANE_RELAY;
-use super::state::{Inner, State};
+use super::dispatch::MAX_RELAY_FRAME;
+use super::state::Inner;
+use super::tx_requests::{add_announcer, room, TX_WANTED_CAP};
 use crate::dandelion::{exponential, PeerId};
 use crate::limits::score;
 use crate::message::Message;
@@ -16,44 +17,114 @@ use tokio::sync::Notify;
 
 pub(super) const TX_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Transactions requested from one peer at a time (TM2-17). Its answers
-/// wait in its slow lane, where relay beyond `SLOW_LANE_RELAY` messages is
-/// dropped: a request for a whole burst lost most of the answers there, to
-/// a timeout and the next re-announcement. The ids it announced beyond
-/// this wait in `Peer::tx_wanted` and are asked as its requests end
-/// ([`request_wanted`]), as Bitcoin Core limits the transactions in flight
-/// per peer.
-pub(super) const TX_IN_FLIGHT: usize = SLOW_LANE_RELAY / 2;
-
-/// Most ids waiting in one peer's `tx_wanted` (32 bytes each); an id over
-/// it is still asked of another announcer, or at a later announcement.
-pub(super) const TX_WANTED_CAP: usize = 2_000;
-
 /// Transaction replies (`Tx` frames answering a peer's `GetTx`) queued in
 /// one peer's control outbox or being written: at most this many frames...
 pub(super) const SERVE_TX_FRAMES: usize = 32;
-/// ...and this many bytes, unless it is the only one (a transaction of any
-/// size is served). It is also the most a `GetTx` answer encodes at once.
-pub(super) const SERVE_TX_BYTES: usize = 4 * 1024 * 1024;
+/// ...and this many bytes, unless it is the only one. It is also the most
+/// one answer encodes at once (at least any one transaction).
+pub(super) const SERVE_TX_BYTES: usize = MAX_RELAY_FRAME;
+/// Node-wide: bytes of `GetTx` answers encoded and not yet written, over
+/// all peers ([`ServeBudget`]).
+pub(super) const SERVE_TX_TOTAL: usize = 64 * 1024 * 1024;
 /// A peer that lets no queued reply be written for this long while more
 /// wait is disconnected as a slow reader (no ban), as when its outbox
-/// overflows.
+/// overflows. A `GetTx` answer that finds no node-wide room for this long
+/// ends with `NotFound` for the rest (the requester asks elsewhere).
 pub(super) const SERVE_TX_STALL: Duration = Duration::from_secs(60);
 
-/// The transaction replies queued for one peer (TM2-17, docs/p2p.md §7):
-/// counted by [`on_get_tx`] as it queues each, and by the writer once it
-/// has written each (only [`on_get_tx`] sends `Tx`). Replies wait for room
-/// here instead of overflowing the control outbox, whose overflow
-/// disconnects the peer.
+const _: () = assert!(SERVE_TX_TOTAL >= 2 * SERVE_TX_BYTES);
+
+/// The node-wide byte budget of `GetTx` answers (RT-TM2P2P item 6): an
+/// answer reserves [`SERVE_TX_BYTES`] before it encodes, keeps what it
+/// encoded, and each byte is released when its frame is written, or when
+/// its peer disconnects. At most [`SERVE_TX_TOTAL`] in all, whatever the
+/// number of peers.
 #[derive(Default)]
+pub(super) struct ServeBudget {
+    bytes: AtomicUsize,
+    /// Woken (all waiters) whenever bytes are released.
+    room: Notify,
+}
+
+impl ServeBudget {
+    fn try_reserve(&self, n: usize) -> bool {
+        self.bytes
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
+                (v.saturating_add(n) <= SERVE_TX_TOTAL).then_some(v + n)
+            })
+            .is_ok()
+    }
+
+    fn release(&self, n: usize) {
+        if n == 0 {
+            return;
+        }
+        let _ = self
+            .bytes
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
+                Some(v.saturating_sub(n))
+            });
+        self.room.notify_waiters();
+    }
+
+    /// Bytes reserved or queued now.
+    pub(super) fn used(&self) -> usize {
+        self.bytes.load(Ordering::Acquire)
+    }
+}
+
+/// Bytes of the [`ServeBudget`] one answer holds and has not handed to its
+/// peer's [`ReplyQueue`]; released when dropped.
+struct Reservation {
+    budget: Arc<ServeBudget>,
+    left: usize,
+}
+
+impl Reservation {
+    /// Keeps only `n` bytes.
+    fn shrink_to(&mut self, n: usize) {
+        if n < self.left {
+            self.budget.release(self.left - n);
+            self.left = n;
+        }
+    }
+
+    /// `n` bytes move to a reply queue (still counted node-wide).
+    fn hand_over(&mut self, n: usize) {
+        self.left = self.left.saturating_sub(n);
+    }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        self.budget.release(self.left);
+    }
+}
+
+/// The transaction replies queued for one peer (TM2-17, docs/p2p.md §7):
+/// counted by [`on_get_tx`] as it queues each (under the state lock, with
+/// the peer registered), and by the writer once it has written each (only
+/// [`on_get_tx`] sends `Tx`). Replies wait for room here instead of
+/// overflowing the control outbox, whose overflow disconnects the peer.
+/// Their bytes are part of the node-wide [`ServeBudget`].
 pub(super) struct ReplyQueue {
     frames: AtomicUsize,
     bytes: AtomicUsize,
     /// Woken when a reply was written, and when the peer disconnected.
     room: Notify,
+    budget: Arc<ServeBudget>,
 }
 
 impl ReplyQueue {
+    pub(super) fn new(budget: Arc<ServeBudget>) -> Self {
+        Self {
+            frames: AtomicUsize::new(0),
+            bytes: AtomicUsize::new(0),
+            room: Notify::new(),
+            budget,
+        }
+    }
+
     /// Whether a reply of `len` bytes may be queued now.
     fn fits(&self, len: usize) -> bool {
         let frames = self.frames.load(Ordering::Acquire);
@@ -67,21 +138,32 @@ impl ReplyQueue {
         self.frames.fetch_add(1, Ordering::AcqRel);
     }
 
-    /// A reply of `len` bytes was written (the writer). Saturating: a
-    /// miscount must never wrap into a queue that is full forever.
+    /// A reply of `len` bytes was written (the writer). Saturating, and the
+    /// node-wide budget gets back only what this queue still held: a reply
+    /// written after [`Self::closed`] is not released twice.
     pub(super) fn written(&self, len: usize) {
-        let sub = |n: usize| move |v: usize| Some(v.saturating_sub(n));
-        let _ = self
+        let prev = self
             .bytes
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, sub(len));
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
+                Some(v.saturating_sub(len))
+            })
+            .unwrap_or(0);
         let _ = self
             .frames
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, sub(1));
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
+                Some(v.saturating_sub(1))
+            });
+        self.budget.release(prev.min(len));
         self.room.notify_one();
     }
 
-    /// The peer disconnected: a waiting [`on_get_tx`] stops.
+    /// The peer disconnected (called under the state lock, after it was
+    /// removed): what it never got returns to the node-wide budget, and a
+    /// waiting [`on_get_tx`] stops.
     pub(super) fn closed(&self) {
+        let b = self.bytes.swap(0, Ordering::AcqRel);
+        self.frames.store(0, Ordering::Release);
+        self.budget.release(b);
         self.room.notify_one();
     }
 }
@@ -160,59 +242,39 @@ pub(super) fn reannounce_due(from: u64, to: u64) -> bool {
 /// of each other, so they re-announce it at the same heights, and the
 /// origin counts exactly as they do (TM2-P1): never from its relay height,
 /// which a block found during the stem, or a reorganization, puts before
-/// everyone else's anchor. A held copy of a transaction originated here
-/// (pooled late, after a restart) is never re-announced
-/// (`Originated::anchor`, docs/p2p.md §7, §8.1); the relays that pool the
-/// transaction re-announce it. Only `InvTx`,
-/// through the usual trickle, to peers not known to have it; never a
-/// `StemTx`.
+/// everyone else's anchor. A restarted origin does not pool its own
+/// transaction when its wallet resubmits it (docs/p2p.md §8.1): it learns
+/// it back as a relay does. Only `InvTx`, through the usual trickle, to
+/// peers not known to have it; never a `StemTx`.
 pub(super) async fn reannounce_pool(inner: &Arc<Inner>, prev: u64, next: u64) {
     if next <= prev {
         return; // a reorganization to a lower (or the same) height
     }
-    let held: Vec<Hash> = inner
-        .state()
-        .originated
-        .held()
-        .into_iter()
-        .map(|(id, _)| id)
-        .collect();
-    // Each held copy with its current pool height, if still pooled.
-    type HeldNow = Vec<(Hash, Option<u64>)>;
-    let (pooled, held_now): (Vec<(Hash, u64)>, HeldNow) = inner
-        .with_chain(move |c| {
-            let held_now = held
-                .into_iter()
-                .map(|id| (id, c.mempool().admitted_at(&id)))
-                .collect();
+    let pooled: Vec<(Hash, u64)> = inner
+        .with_chain(|c| {
             if c.mempool().is_empty() {
-                return (Vec::new(), held_now);
+                return Vec::new();
             }
-            let pooled = c
-                .template()
+            c.template()
                 .txs
                 .iter()
                 .filter_map(|tx| {
                     let id = tx.hash();
                     c.mempool().admitted_at(&id).map(|a| (id, a))
                 })
-                .collect();
-            (pooled, held_now)
+                .collect()
         })
         .await;
-    let due: Vec<Hash> = {
-        let mut st = inner.state();
-        st.originated.refresh_held(&held_now);
-        pooled
-            .into_iter()
-            .filter(|(id, admitted)| {
-                st.originated.anchor(id, *admitted).is_some_and(|anchor| {
-                    reannounce_due(prev.saturating_sub(anchor), next.saturating_sub(anchor))
-                })
-            })
-            .map(|(id, _)| id)
-            .collect()
-    };
+    let due: Vec<Hash> = pooled
+        .into_iter()
+        .filter(|(_, admitted)| {
+            reannounce_due(
+                prev.saturating_sub(*admitted),
+                next.saturating_sub(*admitted),
+            )
+        })
+        .map(|(id, _)| id)
+        .collect();
     for id in due {
         inner.announce_tx(id, None);
     }
@@ -238,7 +300,7 @@ pub(super) async fn on_inv_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) 
             return;
         }
         remember(&mut p.known_txs, ids.iter().copied());
-        let mut room = TX_IN_FLIGHT.saturating_sub(in_flight(&st, peer));
+        let mut room = room(&st, peer, now);
         for (id, in_mempool) in ids.into_iter().zip(known) {
             if in_mempool || st.recent_rejects_set.contains(&id) || ctx_rejected(&st, &id, &tip) {
                 continue;
@@ -250,25 +312,20 @@ pub(super) async fn on_inv_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) 
             // transaction arrives and is pooled, which ends the embargo
             // (`on_tx`).
             //
-            // Asked now, kept for later (`tx_wanted`, at `TX_IN_FLIGHT`), or
-            // a fallback announcer if asked of another one already. With no
-            // room for any of these the announcement is dropped, and leaves
-            // no state behind (an id comes back with a later announcement).
+            // Asked now, kept for later (`tx_wanted`, at its in-flight cap),
+            // or a fallback announcer if asked of another one already
+            // (`tx_requests` module). With no room for any of these the
+            // announcement leaves no state behind, except its `known_txs`
+            // entry (an id comes back with a later announcement).
             let asked = st.tx_requests.contains_key(&id);
-            let keep = if asked || room > 0 {
-                true
-            } else {
-                st.peers
-                    .get(&peer)
-                    .is_some_and(|p| p.tx_wanted.len() < TX_WANTED_CAP)
-            };
-            if !keep {
+            let wanted_room = st
+                .peers
+                .get(&peer)
+                .is_some_and(|p| p.tx_wanted.len() < TX_WANTED_CAP);
+            if !asked && room == 0 && !wanted_room {
                 continue;
             }
-            let q = st.tx_announcers.entry(id).or_default();
-            if !q.contains(&peer) && q.len() < 8 {
-                q.push_back(peer);
-            }
+            let in_queue = add_announcer(&mut st, id, peer);
             if asked {
                 continue;
             }
@@ -276,8 +333,10 @@ pub(super) async fn on_inv_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) 
                 room -= 1;
                 st.tx_requests.insert(id, (peer, now));
                 request.push(id);
-            } else if let Some(p) = st.peers.get_mut(&peer) {
-                p.tx_wanted.push_back(id);
+            } else if in_queue {
+                if let Some(p) = st.peers.get_mut(&peer) {
+                    p.tx_wanted.push_back(id);
+                }
             }
         }
         if !request.is_empty() {
@@ -292,17 +351,16 @@ pub(super) async fn on_inv_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) 
 /// requester can move on immediately.
 ///
 /// One `GetTx` may name up to `MAX_INV` (500) ids, far more than the
-/// control outbox holds (64 frames), and an honest node asks for all the
-/// unknown ids of one announcement at once (`on_inv_tx`). So the answers
-/// are paced (TM2-17): encoded [`SERVE_TX_BYTES`] at a time, and each
-/// queued only once the [`ReplyQueue`] has room, which leaves the rest of
-/// the outbox to pongs and announcements. Meanwhile this peer's slow lane
-/// waits, as Bitcoin Core stops processing a peer's messages while its send
-/// buffer is full. Queueing them all at once overflowed the outbox and
-/// disconnected honest requesters during any burst. An id named twice is
-/// answered once. A requester that reads nothing for [`SERVE_TX_STALL`] is
-/// disconnected as a slow reader, as before; one that disconnects stops
-/// the answer.
+/// control outbox holds (64 frames). So the answers are paced (TM2-17):
+/// encoded [`SERVE_TX_BYTES`] at a time from a node-wide reservation
+/// ([`ServeBudget`]), and each queued only once the [`ReplyQueue`] has
+/// room, which leaves the rest of the outbox to pongs and announcements.
+/// Meanwhile this peer's slow lane waits, as Bitcoin Core stops processing
+/// a peer's messages while its send buffer is full. Queueing them all at
+/// once overflowed the outbox and disconnected honest requesters during
+/// any burst. An id named twice is answered once. A requester that reads
+/// nothing for [`SERVE_TX_STALL`] is disconnected as a slow reader, as
+/// before; one that disconnects stops the answer.
 pub(super) async fn on_get_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) {
     let (mut wanted, replies): (VecDeque<(Hash, bool)>, Arc<ReplyQueue>) = {
         let st = inner.state();
@@ -317,16 +375,26 @@ pub(super) async fn on_get_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) 
     };
     let mut missing = Vec::new();
     while !wanted.is_empty() {
+        let Some(mut resv) = reserve(inner, peer).await else {
+            if inner.state().peers.contains_key(&peer) {
+                // No node-wide room for a long time: the rest is not
+                // served now, and the requester asks another announcer.
+                missing.extend(wanted.drain(..).map(|(id, _)| id));
+                break;
+            }
+            return;
+        };
         let (txs, miss, rest) = inner
             .with_chain(move |c| {
                 let (mut txs, mut missing, mut bytes) = (Vec::new(), Vec::new(), 0usize);
-                while bytes < SERVE_TX_BYTES {
-                    let Some((id, ok)) = wanted.pop_front() else {
-                        break;
-                    };
+                while let Some((id, ok)) = wanted.pop_front() {
                     match c.mempool().get(&id).filter(|_| ok) {
                         Some(t) => {
                             let t = t.encode();
+                            if !txs.is_empty() && bytes + t.len() > SERVE_TX_BYTES {
+                                wanted.push_front((id, ok));
+                                break;
+                            }
                             bytes += t.len();
                             txs.push(t);
                         }
@@ -338,18 +406,50 @@ pub(super) async fn on_get_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) 
             .await;
         wanted = rest;
         missing.extend(miss);
+        resv.shrink_to(txs.iter().map(Vec::len).sum());
         for t in txs {
             let len = t.len();
             if !reply_room(inner, peer, &replies, len).await {
                 return;
             }
+            let mut st = inner.state();
+            if !st.peers.contains_key(&peer) {
+                return;
+            }
             replies.queued(len);
-            inner.send_now(peer, Message::Tx(t));
+            resv.hand_over(len);
+            inner.send(&mut st, peer, Message::Tx(t));
         }
     }
     // Last, so it still ends the answer.
     if !missing.is_empty() {
         inner.send_now(peer, Message::NotFound(missing));
+    }
+}
+
+/// Reserves [`SERVE_TX_BYTES`] of the node-wide [`ServeBudget`], waiting
+/// for room. `None`: the peer is gone, or no room came for
+/// [`SERVE_TX_STALL`] (other peers hold the budget).
+async fn reserve(inner: &Inner, peer: PeerId) -> Option<Reservation> {
+    let budget = inner.serve_budget.clone();
+    let deadline = tokio::time::Instant::now() + SERVE_TX_STALL;
+    loop {
+        let room = budget.room.notified();
+        tokio::pin!(room);
+        room.as_mut().enable();
+        if !inner.state().peers.contains_key(&peer) {
+            return None;
+        }
+        if budget.try_reserve(SERVE_TX_BYTES) {
+            return Some(Reservation {
+                budget: budget.clone(),
+                left: SERVE_TX_BYTES,
+            });
+        }
+        if tokio::time::timeout_at(deadline, room).await.is_err() {
+            log::debug!("peer {peer}: no node-wide room for transaction answers");
+            return None;
+        }
     }
 }
 
@@ -384,76 +484,6 @@ async fn reply_room(inner: &Inner, peer: PeerId, replies: &ReplyQueue, len: usiz
     }
 }
 
-/// Transaction requests outstanding to `peer`.
-fn in_flight(st: &State, peer: PeerId) -> usize {
-    st.tx_requests.values().filter(|(p, _)| *p == peer).count()
-}
-
-/// Asks `peer` for the ids waiting in its `tx_wanted` while it has fewer
-/// than [`TX_IN_FLIGHT`] requests outstanding: after one of its requests
-/// ended. An id is asked only if still wanted from it: announced by it
-/// (still in its announcer queue, which receipt or a final failure
-/// removes) and asked of no one.
-pub(super) fn request_wanted(inner: &Inner, st: &mut State, peer: PeerId, now: Instant) {
-    let mut room = TX_IN_FLIGHT.saturating_sub(in_flight(st, peer));
-    let mut ask = Vec::new();
-    while room > 0 {
-        let Some(id) = st
-            .peers
-            .get_mut(&peer)
-            .and_then(|p| p.tx_wanted.pop_front())
-        else {
-            break;
-        };
-        let announced = st.tx_announcers.get(&id).is_some_and(|q| q.contains(&peer));
-        if !announced || st.tx_requests.contains_key(&id) {
-            continue;
-        }
-        st.tx_requests.insert(id, (peer, now));
-        ask.push(id);
-        room -= 1;
-    }
-    if !ask.is_empty() {
-        inner.send(st, peer, Message::GetTx(ask));
-    }
-}
-
-/// Drops a transaction request that `failed` could not answer and asks the next
-/// announcer, if any (or queues it there, at [`TX_IN_FLIGHT`]); `failed`
-/// may then be asked for what waits for it.
-pub(super) fn retry_tx(inner: &Inner, st: &mut State, id: Hash, failed: PeerId, now: Instant) {
-    st.tx_requests.remove(&id);
-    let next = st.tx_announcers.get_mut(&id).and_then(|q| {
-        q.retain(|x| *x != failed);
-        q.front().copied()
-    });
-    match next {
-        Some(n) if in_flight(st, n) < TX_IN_FLIGHT => {
-            st.tx_requests.insert(id, (n, now));
-            inner.send(st, n, Message::GetTx(vec![id]));
-        }
-        Some(n) => {
-            // Kept for when `n` has room; with none there either, dropped
-            // with its announcers (it comes back with a later
-            // announcement), so no announcer entry outlives every request.
-            let kept = st.peers.get_mut(&n).is_some_and(|p| {
-                let room = p.tx_wanted.len() < TX_WANTED_CAP;
-                if room {
-                    p.tx_wanted.push_back(id);
-                }
-                room
-            });
-            if !kept {
-                st.tx_announcers.remove(&id);
-            }
-        }
-        None => {
-            st.tx_announcers.remove(&id);
-        }
-    }
-    request_wanted(inner, st, failed, now);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,7 +511,7 @@ mod tests {
     /// as replies are written.
     #[test]
     fn the_reply_queue_is_bounded_in_frames_and_bytes() {
-        let q = ReplyQueue::default();
+        let q = ReplyQueue::new(Arc::new(ServeBudget::default()));
         assert!(q.fits(usize::MAX), "a lone reply of any size");
         q.queued(SERVE_TX_BYTES * 2);
         assert!(!q.fits(1), "over the bytes");
@@ -495,6 +525,49 @@ mod tests {
         assert!(q.fits(100));
         assert!(!q.fits(SERVE_TX_BYTES), "over the bytes with others queued");
         const { assert!(SERVE_TX_FRAMES < 64) };
+    }
+
+    /// RT-TM2P2P item 6: the node-wide budget never holds more than
+    /// `SERVE_TX_TOTAL`; a reservation returns what it did not hand over,
+    /// a written reply returns its bytes once, and a disconnect returns what
+    /// its queue held, never twice.
+    #[test]
+    fn the_node_wide_serving_budget_is_exact() {
+        let budget = Arc::new(ServeBudget::default());
+        let n = SERVE_TX_TOTAL / SERVE_TX_BYTES;
+        let held: Vec<Reservation> = (0..n)
+            .map(|_| {
+                assert!(budget.try_reserve(SERVE_TX_BYTES));
+                Reservation {
+                    budget: budget.clone(),
+                    left: SERVE_TX_BYTES,
+                }
+            })
+            .collect();
+        assert!(!budget.try_reserve(SERVE_TX_BYTES), "full");
+        drop(held);
+        assert_eq!(budget.used(), 0);
+
+        let q = ReplyQueue::new(budget.clone());
+        assert!(budget.try_reserve(SERVE_TX_BYTES));
+        let mut r = Reservation {
+            budget: budget.clone(),
+            left: SERVE_TX_BYTES,
+        };
+        r.shrink_to(300);
+        assert_eq!(budget.used(), 300);
+        q.queued(100);
+        r.hand_over(100);
+        q.queued(100);
+        r.hand_over(100);
+        drop(r); // 100 never encoded into a reply
+        assert_eq!(budget.used(), 200);
+        q.written(100);
+        assert_eq!(budget.used(), 100);
+        q.closed();
+        assert_eq!(budget.used(), 0);
+        q.written(100); // the writer finishing after the disconnect
+        assert_eq!(budget.used(), 0);
     }
 
     /// M2: the per-peer id sets (`known_txs`, `announced_to`) stay bounded.
