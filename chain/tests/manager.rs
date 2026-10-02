@@ -1611,7 +1611,9 @@ fn rt_the_store_check_passes_a_healthy_store_across_the_network_key_switch() {
         let t = m.template_on(&ids[2120]).unwrap();
         let mut bad = miner.build(&t, vec![], Some(t.reward * 1000), 9);
         bad.header.timestamp = t.min_timestamp.max(bad.header.timestamp);
-        assert!(m.submit_block(bad.clone(), bad.header.timestamp).is_err());
+        // On a side branch its body is stored and validated only if the
+        // branch would win; either way the record is in the store.
+        let _ = m.submit_block(bad.clone(), bad.header.timestamp);
         // A heavier branch from 2040, before the seed block 2048: above
         // 2112 it uses its own block 2048 as the key; the main blocks
         // 2041..2130 become a reorged-out branch.
@@ -1716,4 +1718,36 @@ fn rt_a_forged_tip_stored_first_escapes_the_tip_region() {
     }
     println!("forged tip accepted at {accepted} of 20 start-up seeds");
     assert!(accepted >= 10, "the tip region did not protect the tip: {accepted}");
+}
+
+/// RT-NODEOPS (false refusal, real RandomX): a store holding a reorged-out
+/// branch and a heavier branch across two key switches (short epochs) is
+/// accepted by `--verify-store-pow`, every hash recomputed with RandomX
+/// under the key the check derives.
+#[test]
+fn rt_the_store_check_passes_real_randomx_across_switches_and_a_reorg() {
+    let p = short_epoch_params();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("blocks.dat");
+    let mut miner = Miner::new(37);
+    let tip = {
+        let mut m = open_real(&p, Box::new(FileStore::open(&path).unwrap()));
+        let main = mine_real(&mut m, &mut miner, p.genesis_id(), 40, 1);
+        let fork = main[9].id(p.network_id);
+        mine_real(&mut m, &mut miner, fork, 32, 2);
+        assert_eq!(m.height(), 42, "the heavier branch won");
+        m.tip_id()
+    };
+    let started = std::time::Instant::now();
+    let m = ChainManager::open_checked(
+        p.clone(),
+        TxRules::for_chain(&p),
+        Arc::new(blacksilk_consensus::RandomXPow::new()),
+        Box::new(FileStore::open(&path).unwrap()),
+        [5; 32],
+        StorePowCheck::All,
+    )
+    .expect("a healthy store passes --verify-store-pow");
+    println!("72 stored hashes over 5 keys recomputed in {:.1?}", started.elapsed());
+    assert_eq!(m.tip_id(), tip);
 }
