@@ -1524,9 +1524,26 @@ async fn invalid_px_transactions_get_the_relaying_peer_penalized() {
     bad_proof.proof[mid] ^= 1;
     let mut bad_fee = spend.clone();
     bad_fee.fee += 1;
-    let mut bad_deposit = (*dep).clone();
-    let mid = bad_deposit.proof.len() / 2;
-    bad_deposit.proof[mid] ^= 1;
+    // A deposit whose proof still decodes with the same shape, so that the
+    // CLSAG over it (which covers the proof bytes) is what refuses it. The
+    // prover's bytes vary with thread scheduling, so a fixed position (the
+    // middle) sometimes broke the proof's structure instead and the decoder
+    // refused it first, as PxProof (CI run 126); search from the middle for
+    // a flip that keeps the proof decodable.
+    let shape = |t: &blacksilk_tx::px::PxTx| {
+        blacksilk_tx::validate::decode_px_proof(t)
+            .ok()
+            .map(|p| p.degree_bits)
+    };
+    let honest_shape = shape(dep.as_ref()).expect("the deposit's proof decodes");
+    let bad_deposit = (dep.proof.len() / 2..dep.proof.len())
+        .map(|i| {
+            let mut t = (*dep).clone();
+            t.proof[i] ^= 1;
+            t
+        })
+        .find(|t| shape(t).as_ref() == Some(&honest_shape))
+        .expect("some proof byte flip keeps the proof decodable");
     for (what, bad, penalized) in [
         ("corrupted proof", bad_proof, true),
         ("non-standard fee", bad_fee, true),

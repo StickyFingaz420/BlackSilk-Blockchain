@@ -1312,3 +1312,9 @@
   - No CIRCUIT_ID change.
 - p2_width becomes a width test.
 - ECALL-variant and JAL/JALR link-value lie tests are to be added before the merge.
+- **W4-MUTAIR merged locally** (57ee353):
+  - exemptions renumbered E51–E61 (E54 withdrawn);
+  - the ECALL and link-value lie tests added;
+  - the stream limits documented as interpreter limits, with px_io_limits as the tripwire;
+  - CIRCUIT_ID unchanged.
+- **Run F started (W4-MUTF):** replay/store, zk verify/config/params, randomx/, both fingerprint modules, supply-audit. Exemptions from E62.
