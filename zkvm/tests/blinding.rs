@@ -517,13 +517,17 @@ fn blinding_values_are_fresh_nonzero_and_keep_the_bus_balanced() {
 /// A blinding message must reach every value of the extension field (its
 /// fingerprint is linear in the values): at least `EXTENSION_DEGREE` values,
 /// or the possible offsets form a subspace an observer can test hypotheses
-/// against (util.rs, `BLIND_VALUES`). Non-proving; the proving tests above
-/// show the effect.
+/// against (util.rs, `BLIND_VALUES`). Measured on the Blind table of a real
+/// statement. Non-proving; the proving tests above show the effect.
 #[test]
 fn a_blinding_message_spans_the_extension_field() {
     use blacksilk_zk::params::EXTENSION_DEGREE;
-    assert!(BLIND_VALUES >= EXTENSION_DEGREE);
-    assert_eq!(BLIND_WIDTH, 1 + BLIND_VALUES);
+    let (_, traces) = statement_and_traces(&branching(), 1);
+    let blind = traces.last().unwrap();
+    // The Blind table's rows: a selector, then one message.
+    let message = blind.width() - 1;
+    assert_eq!((message, BLIND_WIDTH), (BLIND_VALUES, 1 + BLIND_VALUES));
+    assert!(message >= EXTENSION_DEGREE, "{message} values");
     assert_eq!(
         <Challenge as BasedVectorSpace<Val>>::DIMENSION,
         EXTENSION_DEGREE
