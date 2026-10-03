@@ -1420,3 +1420,17 @@ Every external citation was verified against its primary source (res-freeze.md �
    - confirm the Merkle theorem (2 or 3);
    - quote bits against a hash budget Q.
    - **URGENT (ZK-ADVISORY, started):** check Plonky3 GHSA-f69f-5fx9-w9r9 (an unsound mixed-height roll-in; BlackSilk uses mixed heights) and CVE-2026-46654 (the challenger), plus the other listed advisories, against our pinned versions and third_party patches.
+
+## ZK-ADVISORY and the memory incident (Lead, 2026-10-04)
+- **ZK-ADVISORY: none of the five published Plonky3 advisories affects BlackSilk** (docs/reviews/plonky3-advisories-2026-10-03.md, merged d5f7a83).
+  - GHSA-f69f (mixed-height roll-in): fixed in v0.7.0, and our FRI verifier is byte-identical to upstream.
+  - CVE-2026-46654: a different challenger type.
+  - The other three: fixed in 0.7.0, or not reachable with our configuration.
+  - The ρ⁺ recomputation gives 89.58 statistical / 105.58 bits, against the 100-bit floor.
+  - docs/zk.md now says 89.6, not 89.7 (5e765d5).
+  - The Merkle tree falls under Theorem 3 (~122 bits).
+  - P2 follow-up: a census test that every LogUp count is constrained to {0, 1}.
+- **Memory incident:** one run F chain mutant's test binary grew to 10.4 GB. Free memory fell to 0.6 GB, which led to the session crash (uv_spawn).
+  - Under the owner's process-management authorisation, the Lead verified the process and stopped ONLY that one (PID 17240). Memory recovered to 10.7 GB.
+  - That mutant's result is invalid. W4-MUTF re-runs it alone with a memory cap and judges whether the unbounded allocation is a real DoS finding in store/replay or a mutant artifact.
+  - **Binding from now on:** every census has a per-test memory guard (stop above ~4 GB, own processes only).
