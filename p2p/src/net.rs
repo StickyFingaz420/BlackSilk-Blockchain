@@ -37,8 +37,10 @@ mod headers;
 mod maintenance;
 mod peers;
 mod relay;
+mod serve_tx;
 mod state;
 mod stem;
+mod tx_requests;
 
 use crate::addr::NetAddr;
 use crate::addrman::{AddrMan, BanList};
@@ -130,6 +132,15 @@ fn new_inner(
 ) {
     let summary = chain.summary_cell();
     let genesis_id = summary.load().genesis_id;
+    // Entries whose height a damaged originated.json lost start their
+    // windows now (docs/p2p.md §8.1): late, never early.
+    let mut originated = originated;
+    let settled = originated.settle_unknown(summary.load().height + 1);
+    if settled > 0 {
+        log::error!(
+            "{ORIGINATED_FILE}: {settled} entries had lost their height; their windows start now"
+        );
+    }
     let state = State {
         peers: HashMap::new(),
         addrman,
@@ -139,12 +150,11 @@ fn new_inner(
         stem_key_images: HashMap::new(),
         px_global: crate::limits::TokenBucket::new(2.0, 10.0),
         block_requests: HashMap::new(),
-        tx_requests: HashMap::new(),
-        tx_announcers: HashMap::new(),
+        tx_tracker: Default::default(),
+        owed: HashMap::new(),
         recent_rejects: VecDeque::new(),
         recent_rejects_set: HashSet::new(),
         late_blocks: HashMap::new(),
-        late_txs: HashMap::new(),
         local_nonces: HashSet::new(),
         connecting: HashMap::new(),
         last_attempt: HashMap::new(),
@@ -192,6 +202,8 @@ fn new_inner(
         originated_io: Mutex::new(()),
         clock: Mutex::new(ClockMonitor::default()),
         tip_published,
+        serve_budget: Default::default(),
+        maintenance_seen: AtomicU64::new(0),
     });
     (inner, header_rx, block_rx)
 }
@@ -354,6 +366,41 @@ impl Network {
 
     pub fn stempool_contains(&self, id: &Hash) -> bool {
         self.inner.state().stempool.contains_key(id)
+    }
+
+    /// The next-block height the chain maintenance loop last finished,
+    /// pool re-announcement included (tests wait on it instead of on
+    /// time; 0 before its first look).
+    #[doc(hidden)]
+    pub fn maintenance_seen_height(&self) -> u64 {
+        self.inner
+            .maintenance_seen
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Announcements queued for the trickle, over all peers (tests: once 0,
+    /// every queued `InvTx` is in an outbox).
+    #[doc(hidden)]
+    pub fn queued_announcements(&self) -> usize {
+        self.inner
+            .state()
+            .peers
+            .values()
+            .map(|p| p.inv_queue.len())
+            .sum()
+    }
+
+    /// Bytes of `GetTx` answers held node-wide (reserved or queued).
+    #[doc(hidden)]
+    pub fn serving_bytes(&self) -> usize {
+        self.inner.serve_budget.used()
+    }
+
+    /// The current Dandelion epoch's stem peers (tests: a stem peer is
+    /// never dropped by an honest burst, TM2-17).
+    #[doc(hidden)]
+    pub fn stem_peers(&self) -> Vec<crate::dandelion::PeerId> {
+        self.inner.state().dandelion.stems().to_vec()
     }
 
     /// Header batches queued for, or under, verification (bounded by

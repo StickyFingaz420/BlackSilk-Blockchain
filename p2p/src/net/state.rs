@@ -39,9 +39,16 @@ pub(super) struct Peer {
     pub(super) protocol: u32,
     /// Control messages; sent before anything queued in `bulk`.
     pub(super) out: mpsc::Sender<Message>,
+    /// `GetTx` answers; sent after control messages, before `bulk` (RT3
+    /// F3: pings no longer wait behind them).
+    pub(super) answers: mpsc::Sender<Message>,
+    /// The nonce of the last ping written to the peer, and when.
+    pub(super) ping_written: Arc<Mutex<Option<(u64, Instant)>>>,
     /// `Block` frames.
     pub(super) bulk: mpsc::Sender<Message>,
     pub(super) kill: Arc<Notify>,
+    /// `Tx` answers to its `GetTx` queued or being written (TM2-17).
+    pub(super) replies: Arc<super::serve_tx::ReplyQueue>,
     /// Transactions are announced and stemmed to this peer: it asked for them
     /// (`Version.relay_txs`) and the connection's kind relays them (not
     /// block-relay-only or an address fetch).
@@ -66,6 +73,11 @@ pub(super) struct Peer {
     pub(super) next_inv: Instant,
     pub(super) announced_to: HashSet<Hash>,
     pub(super) known_txs: HashSet<Hash>,
+    /// Ids announced to it lately, with when (at most `OWED_IDS`): what a
+    /// reconnect of its host is owed, unless it asked for them.
+    pub(super) recent_inv: VecDeque<(Hash, Instant)>,
+    /// Its host, if stable (`owed_key`).
+    pub(super) owed_key: Option<String>,
     pub(super) ping: Option<(u64, Instant)>,
     /// The lowest ping round trip measured (inbound eviction protects the
     /// lowest; `None`: none answered yet).
@@ -186,9 +198,66 @@ pub(super) struct StemEntry {
     pub(super) awaiting_stem: bool,
 }
 
-/// The most timed-out transaction requests remembered (`State::late_txs`);
-/// beyond it a late answer is unrequested again.
-pub(super) const LATE_TXS_MAX: usize = 10_000;
+/// How long what a disconnected peer was owed is kept for its host, and for
+/// how many hosts (oldest dropped first).
+pub(super) const OWED_WINDOW: Duration = Duration::from_secs(10 * 60);
+pub(super) const OWED_HOSTS: usize = 256;
+/// The most ids owed to one connection: its unflushed announcements, and
+/// those announced to it lately and not answered (`Peer::recent_inv`).
+pub(super) const OWED_IDS: usize = 500;
+
+/// The host part of an address (an IP, or an onion host), for a peer with
+/// a stable host: `None` for an inbound connection through Tor (every such
+/// peer has the Tor daemon's loopback address).
+pub(super) fn owed_key(a: &NetAddr, via_tor_inbound: bool) -> Option<String> {
+    if via_tor_inbound {
+        return None;
+    }
+    Some(match a {
+        NetAddr::Ip(s) => s.ip().to_string(),
+        NetAddr::Onion { host, .. } => host.clone(),
+    })
+}
+
+impl State {
+    /// Keeps what a disconnecting connection was owed (RT4: only that, not
+    /// the pool), for its host.
+    pub(super) fn keep_owed(&mut self, key: String, ids: Vec<Hash>, now: Instant) {
+        self.owed
+            .retain(|_, (t, _)| now.duration_since(*t) <= OWED_WINDOW);
+        if ids.is_empty() {
+            return;
+        }
+        if self.owed.len() >= OWED_HOSTS && !self.owed.contains_key(&key) {
+            if let Some(oldest) = self
+                .owed
+                .iter()
+                .min_by_key(|(_, (t, _))| *t)
+                .map(|(k, _)| k.clone())
+            {
+                self.owed.remove(&oldest);
+            }
+        }
+        self.owed.insert(key, (now, ids));
+    }
+
+    /// Takes what a previous connection from `key` was owed, if it left
+    /// within [`OWED_WINDOW`].
+    pub(super) fn take_owed(&mut self, key: &str) -> Vec<Hash> {
+        match self.owed.remove(key) {
+            Some((t, ids)) if t.elapsed() <= OWED_WINDOW => ids,
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// Shuffles `v` in place (Fisher-Yates) with `rng`.
+pub(super) fn shuffle<T>(v: &mut [T], rng: &mut impl rand_chacha::rand_core::RngCore) {
+    for i in (1..v.len()).rev() {
+        let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+        v.swap(i, j);
+    }
+}
 
 pub(super) struct State {
     pub(super) peers: HashMap<PeerId, Peer>,
@@ -202,19 +271,19 @@ pub(super) struct State {
     /// number of peers (docs/px.md §11.5).
     pub(super) px_global: crate::limits::TokenBucket,
     pub(super) block_requests: HashMap<Hash, (PeerId, Instant)>,
-    pub(super) tx_requests: HashMap<Hash, (PeerId, Instant)>,
-    pub(super) tx_announcers: HashMap<Hash, VecDeque<PeerId>>,
+    /// Who announced which transactions, and what is asked of whom
+    /// (docs/p2p.md §7, "Requesting").
+    pub(super) tx_tracker: super::tx_requests::TxTracker,
+    /// What connections that left lately were owed (unflushed and unanswered
+    /// announcements), by host, with when they left: re-announced, in a
+    /// fresh random order, when the same host reconnects (RT4).
+    pub(super) owed: HashMap<String, (Instant, Vec<Hash>)>,
     pub(super) recent_rejects: VecDeque<Hash>,
     pub(super) recent_rejects_set: HashSet<Hash>,
     /// Block requests that timed out, kept for another `BLOCK_TIMEOUT`: the
     /// block arriving late from the peer we asked is an answer, not an
     /// unsolicited block (R8-9).
     pub(super) late_blocks: HashMap<Hash, (PeerId, Instant)>,
-    /// Transaction requests that timed out and moved on, by (id, the peer
-    /// asked), kept for another `TX_TIMEOUT`: the late answer is accepted
-    /// from that peer, unpenalized, as a late block is (P2P-FIX2). At most
-    /// [`LATE_TXS_MAX`].
-    pub(super) late_txs: HashMap<(Hash, PeerId), Instant>,
     pub(super) local_nonces: HashSet<u64>,
     /// Addresses being dialed or connected outbound, with the kind of the
     /// connection (`peers::connect_outbound`).
@@ -404,6 +473,12 @@ pub(super) struct Inner {
     /// connected tip (`SummaryCell::on_tip_change`): the announcer
     /// (`maintenance::announce_loop`) sends it at once (RT-LAB F2).
     pub(super) tip_published: Arc<Notify>,
+    /// The node-wide byte budget of `GetTx` answers (`relay::ServeBudget`).
+    pub(super) serve_budget: Arc<super::serve_tx::ServeBudget>,
+    /// The next-block height the chain maintenance loop last finished
+    /// (re-announcement included): a test hook
+    /// (`Network::maintenance_seen_height`).
+    pub(super) maintenance_seen: AtomicU64,
 }
 
 pub(super) fn unix_now() -> u64 {
@@ -488,6 +563,17 @@ impl Inner {
         if queue.try_send(msg).is_err() {
             // Outbox full: the peer does not read fast enough (or is gone).
             log::debug!("peer {} outbox full; disconnecting", p.addr);
+            p.kill.notify_one();
+            st.slow_disconnects += 1;
+        }
+    }
+
+    /// Queues a `GetTx` answer (`Tx` or its `NotFound`) for `peer`, in
+    /// their own queue, behind control messages (RT3 F3).
+    pub(super) fn send_answer(&self, st: &mut State, peer: PeerId, msg: Message) {
+        let Some(p) = st.peers.get(&peer) else { return };
+        if p.answers.try_send(msg).is_err() {
+            log::debug!("peer {} answer queue full; disconnecting", p.addr);
             p.kill.notify_one();
             st.slow_disconnects += 1;
         }

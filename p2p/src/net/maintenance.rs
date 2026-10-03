@@ -14,20 +14,44 @@
 //!   its length.
 
 use super::blocks::{release_block_slot, schedule_downloads, BLOCK_TIMEOUT};
+use super::dispatch::MAX_RELAY_FRAME;
 use super::headers::{add_grace, HEADERS_TIMEOUT};
 use super::peers::maintain_outbound;
-use super::relay::{reannounce_pool, remember, retry_tx, TX_TIMEOUT};
-use super::state::{short, unix_now, Inner, State, StemEntry, LATE_TXS_MAX};
+use super::relay::{reannounce_pool, remember};
+use super::serve_tx::SLOW_RATE;
+use super::state::{short, shuffle, unix_now, Inner, State, StemEntry, OWED_IDS};
 use super::stem::{fluff_entry, send_held_local_txs, take_stem};
+use super::tx_requests::Actions;
 use crate::connman::ConnKind;
 use crate::dandelion::PeerId;
 use crate::message::Message;
 use blacksilk_consensus::Hash;
-use rand_chacha::rand_core::RngCore;
+use rand_chacha::rand_core::{RngCore, SeedableRng};
+use rand_chacha::ChaCha20Rng;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const PONG_TIMEOUT: Duration = Duration::from_secs(30);
+/// Bytes that may sit in buffers ahead of a written ping: our kernel's
+/// send buffer (autotuned up to about 4 MiB) and a Tor circuit's window.
+/// The writer hands the ping to the socket, not to the peer.
+const SEND_BUFFER_ALLOWANCE: usize = 4 * 1024 * 1024;
+
+/// A pong must arrive this long after our ping was WRITTEN (RT3 F3, RT4).
+/// Ahead of the ping there may still be [`SEND_BUFFER_ALLOWANCE`] of
+/// buffered data, and the peer writes its pong after the frame it is
+/// writing to us, which may be a transaction of `MAX_RELAY_FRAME` bytes: at
+/// the slowest rate the serving side keeps (`serve_tx::SLOW_RATE`,
+/// 64 KiB/s) that is `(4 MiB + MAX_RELAY_FRAME) / SLOW_RATE` (about 132 s);
+/// plus a minute for the round trip and a busy peer. Bitcoin Core waits 20
+/// minutes. The cost: a dead peer that still sends (so the 180 s idle
+/// timeout never fires) holds its slot about 3 minutes, against 30 s
+/// before RT3 (dead links that send nothing are cut by the idle timeout).
+const PONG_TIMEOUT: Duration =
+    Duration::from_secs(((SEND_BUFFER_ALLOWANCE + MAX_RELAY_FRAME) / SLOW_RATE) as u64 + 60);
+
+/// A ping not yet written (the writer is busy with a frame) times out only
+/// after the time that frame takes at `SLOW_RATE` and the pong timeout.
+const PING_WRITE_GRACE: Duration = Duration::from_secs((MAX_RELAY_FRAME / SLOW_RATE) as u64);
 
 /// The shortest time between two announcements by [`announce_loop`]: while
 /// the tip changes faster (a body drain, initial sync), the tips in between
@@ -118,15 +142,26 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
 
         // Trickled announcements, pings, timeouts.
         let mut timed_out = Vec::new();
+        let mut too_slow = Vec::new();
         {
             let mut st = inner.state();
             let ids: Vec<PeerId> = st.peers.keys().copied().collect();
             for pid in ids {
                 let nonce = st.rng.next_u64();
+                let mut rng = ChaCha20Rng::seed_from_u64(st.rng.next_u64());
                 let p = st.peers.get_mut(&pid).expect("listed");
                 if !p.inv_queue.is_empty() && now >= p.next_inv {
-                    let queue = std::mem::take(&mut p.inv_queue);
+                    let mut queue = std::mem::take(&mut p.inv_queue);
+                    // Every flush in a fresh random order (RT4): the order
+                    // ids were queued in says nothing to the peer.
+                    shuffle(&mut queue, &mut rng);
                     remember(&mut p.announced_to, queue.iter().copied());
+                    for h in &queue {
+                        p.recent_inv.push_back((*h, now));
+                    }
+                    while p.recent_inv.len() > OWED_IDS {
+                        p.recent_inv.pop_front();
+                    }
                     for chunk in queue.chunks(500) {
                         let _ = p.out.try_send(Message::InvTx(chunk.to_vec()));
                     }
@@ -137,8 +172,28 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
                 {
                     p.kill.notify_one();
                 }
-                if let Some((_, sent)) = p.ping {
-                    if now.duration_since(sent) > PONG_TIMEOUT {
+                // A reader too slow for the serving budget it holds
+                // (`serve_tx`, RT2 F3): disconnected, not banned.
+                if p.replies
+                    .too_slow(now, inner.serve_budget.contended(!p.inbound))
+                {
+                    p.kill.notify_one();
+                    too_slow.push(p.addr.clone());
+                }
+                if let Some((n, queued)) = p.ping {
+                    // Counted from when the ping was written (RT3 F3).
+                    let written = p
+                        .ping_written
+                        .lock()
+                        .ok()
+                        .and_then(|w| *w)
+                        .filter(|(x, _)| *x == n)
+                        .map(|(_, at)| at);
+                    let late = match written {
+                        Some(at) => now.duration_since(at) > PONG_TIMEOUT,
+                        None => now.duration_since(queued) > PING_WRITE_GRACE + PONG_TIMEOUT,
+                    };
+                    if late {
                         p.kill.notify_one();
                     }
                 } else if now.duration_since(p.last_ping) > inner.cfg.ping_interval {
@@ -173,30 +228,27 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
             }
             st.late_blocks
                 .retain(|_, (_, t)| now.duration_since(*t) <= BLOCK_TIMEOUT);
-            let stale_txs: Vec<(Hash, PeerId)> = st
-                .tx_requests
-                .iter()
-                .filter(|(_, (_, t))| now.duration_since(*t) > TX_TIMEOUT)
-                .map(|(id, (p, _))| (*id, *p))
-                .collect();
-            // Transaction relay is best effort: a slow answer is retried with the
-            // next announcer but not penalized (peers answer `NotFound` when they
-            // no longer have the transaction). The late answer is still
-            // accepted from the peer asked (`late_txs`).
-            st.late_txs
-                .retain(|_, t| now.duration_since(*t) <= TX_TIMEOUT);
-            for (id, p) in stale_txs {
-                if st.late_txs.len() < LATE_TXS_MAX {
-                    st.late_txs.insert((id, p), now);
-                }
-                retry_tx(&inner, &mut st, id, p, now);
-            }
+            // Transaction requests: timers due now (timeouts, delayed and
+            // paused candidates, deadlines; `tx_requests`). Transaction
+            // relay is best effort: a slow answer is asked of other
+            // announcers but not penalized (peers answer `NotFound` when
+            // they no longer have the transaction). The late answer is
+            // still accepted from the peer asked (`TxTracker::is_late`).
+            let mut out = Actions::default();
+            st.tx_tracker.poll(now, &mut out);
+            inner.apply_tx_actions(&mut st, out, now);
         }
         // A timeout is not misbehavior: a large block on a slow link, or a
         // busy honest peer, times out too (R8-9). The request moves to another
         // peer; the late answer is still accepted without penalty.
         for (p, what) in timed_out {
             log::debug!("peer {p}: {what} request timed out");
+        }
+        if !too_slow.is_empty() {
+            inner.state().slow_disconnects += too_slow.len() as u64;
+        }
+        for addr in too_slow {
+            log::debug!("peer {addr} reads too slowly for the answers it holds; disconnecting");
         }
 
         // Keep syncing from peers that are ahead, and ask again peers whose
@@ -297,6 +349,9 @@ pub(super) async fn chain_maintenance_loop(inner: Arc<Inner>) {
             if inner.state().originated.prune(next) > 0 {
                 inner.save_originated().await;
             }
+            inner
+                .maintenance_seen
+                .store(next, std::sync::atomic::Ordering::Release);
         }
     }
 }
@@ -477,16 +532,25 @@ mod tests {
     }
 
     /// A peer that does not answer a ping is disconnected once `PONG_TIMEOUT`
-    /// (30 s) has passed since the ping, and not before.
+    /// (192 s) has passed since the ping, and not before. The peer sends
+    /// its own pings every 20 s, so the 180 s idle timeout never comes first.
     #[tokio::test]
     async fn a_peer_that_never_answers_a_ping_is_left_after_the_pong_timeout() {
-        assert_eq!(PONG_TIMEOUT, Duration::from_secs(30));
+        assert_eq!(PONG_TIMEOUT, Duration::from_secs(192));
         let net = idle_network(|c| c.ping_interval = Duration::from_secs(1)).await;
-        let (mut r, _w) = raw_peer(&net).await;
+        let (mut r, mut w) = raw_peer(&net).await;
+        let keepalive = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(20)).await;
+                if w.send(&Message::Ping(7).encode()).await.is_err() {
+                    break;
+                }
+            }
+        });
         let mut first_ping = None;
         let closed = loop {
-            match tokio::time::timeout(Duration::from_secs(60), r.recv()).await {
-                Err(_) => panic!("still connected 60 s after the last frame"),
+            match tokio::time::timeout(Duration::from_secs(240), r.recv()).await {
+                Err(_) => panic!("still connected 240 s after the last frame"),
                 Ok(Err(_)) => break Instant::now(),
                 Ok(Ok(m)) => {
                     if let Ok(Message::Ping(_)) = Message::decode(&m) {
@@ -495,9 +559,10 @@ mod tests {
                 }
             }
         };
+        keepalive.abort();
         let after = closed.duration_since(first_ping.expect("pinged"));
         assert!(
-            after >= Duration::from_millis(29_500) && after < Duration::from_secs(45),
+            after >= Duration::from_millis(191_500) && after < Duration::from_secs(207),
             "left {after:?} after the ping"
         );
         assert!(net.inner.state().peers.is_empty());
@@ -512,15 +577,14 @@ mod tests {
         }
     }
 
-    /// Block and transaction requests time out once their timeouts have
-    /// passed (`BLOCK_TIMEOUT` 60 s, `TX_TIMEOUT` 30 s), not before: an
-    /// expired request moves to the late requests, where its answer is still
-    /// accepted for another timeout, then forgotten. The ages are set in the
-    /// state directly; nothing is missing, so nothing is asked again.
+    /// Block requests time out once `BLOCK_TIMEOUT` (60 s) has passed, not
+    /// before: an expired request moves to the late requests, where its
+    /// answer is still accepted for another timeout, then forgotten. The ages
+    /// are set in the state directly; nothing is missing, so nothing is asked
+    /// again. (Transaction requests are the tracker's: `tx_requests` tests.)
     #[tokio::test]
-    async fn requests_time_out_after_their_timeouts_and_late_ones_are_kept_as_long() {
+    async fn block_requests_time_out_after_their_timeout_and_late_ones_are_kept_as_long() {
         assert_eq!(BLOCK_TIMEOUT, Duration::from_secs(60));
-        assert_eq!(TX_TIMEOUT, Duration::from_secs(30));
         let net = idle_network(|_| {}).await;
         let _peer = raw_peer(&net).await;
         let ago = |d: Duration| Instant::now().checked_sub(d).expect("uptime");
@@ -537,18 +601,9 @@ mod tests {
                 .insert([3; 32], (pid, ago(BLOCK_TIMEOUT - margin)));
             st.late_blocks
                 .insert([4; 32], (pid, ago(BLOCK_TIMEOUT + margin)));
-            st.tx_requests
-                .insert([5; 32], (pid, ago(TX_TIMEOUT - margin)));
-            st.tx_requests
-                .insert([6; 32], (pid, ago(TX_TIMEOUT + margin)));
-            st.late_txs.insert(([7; 32], pid), ago(TX_TIMEOUT - margin));
-            st.late_txs.insert(([8; 32], pid), ago(TX_TIMEOUT + margin));
             pid
         };
-        until(&net, |st| {
-            !st.block_requests.contains_key(&[2; 32]) && !st.tx_requests.contains_key(&[6; 32])
-        })
-        .await;
+        until(&net, |st| !st.block_requests.contains_key(&[2; 32])).await;
         // Some ticks later (a late request just moved is not forgotten).
         tokio::time::sleep(Duration::from_millis(300)).await;
         let st = net.inner.state();
@@ -564,45 +619,6 @@ mod tests {
         );
         assert!(st.late_blocks.values().all(|(p, _)| *p == pid));
         assert_eq!(st.peers[&pid].blocks_in_flight, 1);
-        assert_eq!(keys(st.tx_requests.keys().copied().collect()), [[5; 32]]);
-        assert_eq!(
-            keys(st.late_txs.keys().map(|(h, _)| *h).collect()),
-            [[6; 32], [7; 32]]
-        );
-    }
-
-    /// At most `LATE_TXS_MAX` timed-out transaction requests are remembered:
-    /// with room for one, of two that time out one is kept.
-    #[tokio::test]
-    async fn late_transaction_requests_are_capped() {
-        assert_eq!(LATE_TXS_MAX, 10_000);
-        let net = idle_network(|_| {}).await;
-        let _peer = raw_peer(&net).await;
-        let old = Instant::now()
-            .checked_sub(TX_TIMEOUT + Duration::from_secs(10))
-            .expect("uptime");
-        {
-            let mut st = net.inner.state();
-            let pid = *st.peers.keys().next().unwrap();
-            let now = Instant::now();
-            for i in 0..LATE_TXS_MAX as u32 - 1 {
-                let mut h = [0xee; 32];
-                h[..4].copy_from_slice(&i.to_le_bytes());
-                st.late_txs.insert((h, pid), now);
-            }
-            st.tx_requests.insert([5; 32], (pid, old));
-            st.tx_requests.insert([6; 32], (pid, old));
-        }
-        until(&net, |st| st.tx_requests.is_empty()).await;
-        let st = net.inner.state();
-        assert_eq!(st.late_txs.len(), LATE_TXS_MAX);
-        assert_eq!(
-            st.late_txs
-                .keys()
-                .filter(|(h, _)| *h == [5; 32] || *h == [6; 32])
-                .count(),
-            1
-        );
     }
 
     /// A header request times out once `HEADERS_TIMEOUT` (60 s) has passed,
@@ -764,5 +780,19 @@ mod tests {
         })
         .await;
         assert!(left.is_ok(), "a seed past its zero timeout was not left");
+    }
+
+    /// RT3 F3, RT4: the pong timeout covers buffered data ahead of the
+    /// ping and the largest frame the peer may be writing to us, at the
+    /// slowest rate the serving side keeps, plus a margin (docs/p2p.md §10
+    /// states 68 s and 192 s).
+    #[test]
+    fn the_pong_timeout_covers_a_largest_frame_at_the_slowest_rate() {
+        let frame = Duration::from_secs_f64(
+            (SEND_BUFFER_ALLOWANCE + MAX_RELAY_FRAME) as f64 / SLOW_RATE as f64,
+        );
+        assert!(PONG_TIMEOUT >= frame + Duration::from_secs(30));
+        assert_eq!(PING_WRITE_GRACE.as_secs(), 68);
+        assert_eq!(PONG_TIMEOUT.as_secs(), 192);
     }
 }

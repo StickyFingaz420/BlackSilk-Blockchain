@@ -14,6 +14,7 @@
 //! | [`socks5`] | §11 | SOCKS5 client for Tor |
 //! | [`net`] | §4–§11 | the network manager |
 //! | [`originated`] | §8.1 | transactions this node originated, persisted (no re-origination) |
+//! | [`private_file`] | testnet.md §4.5 | owner-only atomic writes of the node's private files |
 
 #![forbid(unsafe_code)]
 

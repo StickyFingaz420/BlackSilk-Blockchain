@@ -67,10 +67,15 @@ pub(super) async fn stem_or_fluff(
             },
         );
         if hold {
-            log::debug!("local tx {} held until a stem peer exists", short(&id));
-            return true;
+            None
+        } else {
+            Some(route)
         }
-        route
+    };
+    // Logged outside the state lock (RT2 F8).
+    let Some(route) = route else {
+        log::debug!("local tx {} held until a stem peer exists", short(&id));
+        return true;
     };
     match route {
         Route::Fluff => fluff(inner, id, None).await,
@@ -139,6 +144,8 @@ pub(super) async fn fluff_entry(
     match result {
         Ok(_) | Err(MempoolError::AlreadyKnown) => {
             log::debug!("fluff tx {}", short(&id));
+            // Pooled: nothing more to ask anyone (`tx_requests`).
+            Inner::forget_tx(&mut inner.state(), &id, None);
             inner.announce_tx(id, except);
         }
         Err(e) => log::debug!("fluffing {} failed: {e:?}", short(&id)),
@@ -207,19 +214,23 @@ pub(super) async fn submit_local(inner: &Arc<Inner>, tx: Transaction) -> Result<
     };
     match verdict {
         Verdict::Held => {
-            // Other nodes most likely still pool it: pooled here, never
-            // stemmed or announced. The pool answers as for any submission
-            // (`AlreadyKnown` if pooled here too).
+            // Other nodes most likely still pool it. Checked as any
+            // submission is (the answer is the pool's: `AlreadyKnown` if
+            // pooled here), but neither stemmed, announced nor pooled: the
+            // node then holds it exactly as a restarted relay does, not at
+            // all, and fetches it on the next announcement like any
+            // transaction (RT-TM2P2P: a pooled copy answered an `InvTx`
+            // probe unlike a relay's, docs/p2p.md §8.1).
             let r = inner
-                .chain_on(Lane::Tx, move |c| c.submit_local_tx(tx))
+                .chain_on(Lane::Tx, move |c| c.check_local_tx(&tx))
                 .await;
             if r.is_ok() {
                 log::debug!(
-                    "local tx {} was originated here before: pooled, not originated again",
+                    "local tx {} was originated here before: accepted, not originated again",
                     short(&id)
                 );
             }
-            return r.map_err(|e| format!("{e:?}"));
+            return r.map(|_| id).map_err(|e| format!("{e:?}"));
         }
         Verdict::Expired => {
             log::debug!(

@@ -1434,3 +1434,26 @@ Every external citation was verified against its primary source (res-freeze.md Â
   - Under the owner's process-management authorisation, the Lead verified the process and stopped ONLY that one (PID 17240). Memory recovered to 10.7 GB.
   - That mutant's result is invalid. W4-MUTF re-runs it alone with a memory cap and judges whether the unbounded allocation is a real DoS finding in store/replay or a mutant artifact.
   - **Binding from now on:** every census has a per-test memory guard (stop above ~4 GB, own processes only).
+
+## TM2-P2P merged after RT5 (2026-10-04)
+
+- Decision: merge tm2-p2p (4fb8536) with RT5's tests (ff32aef). RT5's final pass found
+  nothing above Low; all 7 RT4 claims hold in code and under adversarial tests
+  (200 random and 168 grid strategy mixes, k up to 64, none over the stated bound; 7/7 PX
+  tests; 20/20 loop iterations clean, iterations 16â€“17 re-run after an environmental
+  memory incident).
+- Merge resolution: the run E maintenance test written for the old 30 s pong timeout now
+  checks the 192 s timeout, with the peer sending its own pings so the 180 s idle timeout
+  cannot come first.
+- Open, P1 before a public testnet:
+  - RT5 F1 (Low): the 160-entry per-peer late memory is not a bound. A burst of requests
+    ended by other announcers pushes entries out, and one honest slow peer can be
+    penalized. Fix: no penalty for a `Tx` the peer itself announced lately, or size the
+    memory to `PEER_TRACKED`. The docs' and comment's sizing derivation is corrected.
+  - RT5 F2 (Low, performance): young-slot counting allows up to 12 parallel requests
+    for a slow large transaction (4 before RT4). Fix: also cap old outstanding requests
+    at `PARALLEL`.
+  - RT5 F3 (Low or informational): the 192 s pong window holds dead connections about
+    50% longer (ties to the byte-bounded-outbox P1); owed sets are about 4 MB worst case
+    and can be churned by 256 IPs; one NAT IP shares an owed set; node-wide PX
+    saturation is outside the stated bound (one sentence owed in docs/p2p.md).

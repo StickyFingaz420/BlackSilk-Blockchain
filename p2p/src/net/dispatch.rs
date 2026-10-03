@@ -5,8 +5,10 @@ use super::addr_relay::{on_addr, on_get_addr};
 use super::admission::{on_stem_tx, on_tx};
 use super::blocks::{on_block, on_get_blocks, release_block_slot};
 use super::headers::{in_grace, on_headers};
-use super::relay::{on_get_tx, on_inv_tx, retry_tx};
+use super::relay::on_inv_tx;
+use super::serve_tx::on_get_tx;
 use super::state::Inner;
+use super::tx_requests::Actions;
 use crate::dandelion::PeerId;
 use crate::limits::score;
 use crate::message::{Message, MAX_ANY_TX_SIZE, MAX_HEADERS};
@@ -74,7 +76,7 @@ fn is_relay(msg: &Message) -> bool {
 
 /// One peer's slow lane: a bounded queue of its chain-touching messages and
 /// the task handling them one at a time, in arrival order (per-peer order is
-/// kept: `tx_requests` and `known_txs` depend on it). One peer's backlog
+/// kept: the transaction tracker and `known_txs` depend on it). One peer's backlog
 /// waits in its own lane; other peers' lanes and read loops are not behind
 /// it (they share only the chain actor itself).
 ///
@@ -210,7 +212,13 @@ pub(super) async fn handle(inner: &Arc<Inner>, peer: PeerId, msg: Message) {
                     Some(p) if p.ping.map(|(x, _)| x) == Some(n) => {
                         // The round trip: the nonce was sent only then, so a
                         // peer cannot answer faster than its real distance.
-                        let rtt = p.ping.map(|(_, sent)| sent.elapsed()).unwrap_or_default();
+                        // From when the ping was written, if known.
+                        let written = p.ping_written.lock().ok().and_then(|w| *w);
+                        let sent = written
+                            .filter(|(x, _)| *x == n)
+                            .map(|(_, at)| at)
+                            .or(p.ping.map(|(_, at)| at));
+                        let rtt = sent.map(|s| s.elapsed()).unwrap_or_default();
                         p.min_ping = Some(p.min_ping.map_or(rtt, |m| m.min(rtt)));
                         p.ping = None;
                         true
@@ -236,15 +244,15 @@ pub(super) async fn handle(inner: &Arc<Inner>, peer: PeerId, msg: Message) {
         Message::NotFound(ids) => {
             let mut st = inner.state();
             let now = Instant::now();
+            let mut out = Actions::default();
             for id in ids {
                 if st.block_requests.get(&id).is_some_and(|(p, _)| *p == peer) {
                     st.block_requests.remove(&id);
                     release_block_slot(&mut st, peer);
                 }
-                if st.tx_requests.get(&id).is_some_and(|(p, _)| *p == peer) {
-                    retry_tx(inner, &mut st, id, peer, now);
-                }
+                st.tx_tracker.not_found(id, peer, now, &mut out);
             }
+            inner.apply_tx_actions(&mut st, out, now);
         }
         Message::InvTx(ids) => on_inv_tx(inner, peer, ids).await,
         Message::GetTx(ids) => on_get_tx(inner, peer, ids).await,
