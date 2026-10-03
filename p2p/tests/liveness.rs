@@ -262,9 +262,18 @@ fn chain_of(n: u64) -> Vec<Block> {
 /// lane is served before the next step. Before Stage 2 each of its four
 /// chain-lock holds waited behind a step of an unfair mutex (measured in
 /// `chain/tests/actor_order.rs`, `l7_...`).
+///
+/// Measured in drain steps (blocks connected between the announcement and
+/// the acceptance), not wall time (RT-MUTE F5: the wall-time bound
+/// `2·STEP + 700 ms` failed at 1.61 s under load): the step in progress at
+/// the announcement, one step per command and one step of slack for a
+/// loaded header worker are at most 4 steps (8 blocks); four waits, as
+/// before Stage 2, are at least 5 (10 blocks). The 1 s step makes a second
+/// of load in the worker cost at most the one step of slack.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn l7_a_header_announcement_is_accepted_during_a_body_drain() {
-    const STEP: Duration = Duration::from_millis(300);
+    const STEP: Duration = Duration::from_millis(1000);
+    const BLOCKS_PER_STEP: u64 = 2;
     let a = slow_node_with(
         0x19,
         fast_config(&[]),
@@ -298,6 +307,7 @@ async fn l7_a_header_announcement_is_accepted_during_a_body_drain() {
     }
 
     let start = Instant::now();
+    let height_before = a.actor.summary().height;
     w.send(&Message::Headers(vec![blocks[41].header]).encode())
         .await
         .unwrap();
@@ -307,22 +317,22 @@ async fn l7_a_header_announcement_is_accepted_during_a_body_drain() {
             break s;
         }
         assert!(
-            start.elapsed() < Duration::from_secs(30),
+            start.elapsed() < Duration::from_secs(40),
             "the announced header was not accepted"
         );
         tokio::time::sleep(Duration::from_millis(2)).await;
     };
     let took = start.elapsed();
+    let connected = s.height - height_before;
     println!(
-        "L7: header accepted {:.0} ms after the announcement, at height {} of the drain \
-         (steps of {STEP:?})",
+        "L7: header accepted {:.0} ms and {connected} blocks after the announcement, at height {} (steps of {STEP:?})",
         took.as_secs_f64() * 1000.0,
         s.height
     );
     assert!(s.sync_pending && s.height < 41, "accepted during the drain");
     assert!(
-        took < 2 * STEP + Duration::from_millis(700),
-        "{took:?}: more than one step per header-worker command"
+        connected <= 4 * BLOCKS_PER_STEP,
+        "{connected} blocks connected ({took:?}): more than one step per header-worker command"
     );
     let mut other = Vec::new();
     assert!(
