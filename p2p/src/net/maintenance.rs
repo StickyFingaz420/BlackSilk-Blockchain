@@ -406,6 +406,8 @@ mod tests {
     /// past of the 60 s interval), not at the first tick after a change.
     #[tokio::test]
     async fn the_first_save_of_the_address_table_comes_5_s_after_the_start() {
+        // "Saved within a minute of changing" (docs/p2p.md §9, Persistence).
+        assert_eq!(SAVE_INTERVAL, Duration::from_secs(60));
         let dir = std::env::temp_dir().join(format!("bs-p2p-maint-save-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -612,5 +614,27 @@ mod tests {
         assert!(st.peers[&fresh].headers_grace.is_empty());
         assert!(st.peers[&old].headers_requested.is_none());
         assert_eq!(st.peers[&old].headers_grace.len(), 1);
+    }
+
+    /// A registered peer that sends nothing is disconnected 180 s after its
+    /// last frame (docs/p2p.md "Liveness"; `conn::IDLE_TIMEOUT`), not before.
+    /// Pings are off (a 1000 s interval), so no pong timeout comes first.
+    #[tokio::test]
+    async fn a_silent_registered_peer_is_left_after_the_idle_timeout() {
+        let net = idle_network(|c| c.ping_interval = Duration::from_secs(1000)).await;
+        let (mut r, _w) = raw_peer(&net).await;
+        let last_sent = Instant::now();
+        let closed = loop {
+            match tokio::time::timeout(Duration::from_secs(240), r.recv()).await {
+                Err(_) => panic!("still connected 240 s after the last frame"),
+                Ok(Err(_)) => break last_sent.elapsed(),
+                Ok(Ok(_)) => {}
+            }
+        };
+        assert!(
+            closed >= Duration::from_millis(179_500) && closed < Duration::from_secs(200),
+            "left {closed:?} after its last frame"
+        );
+        assert!(net.inner.state().peers.is_empty());
     }
 }

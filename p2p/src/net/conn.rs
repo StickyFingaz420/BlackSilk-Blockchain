@@ -582,6 +582,20 @@ mod tests {
         assert_eq!(BULK_OUTBOX, 2 * SERVE_BLOCKS_PER_REQUEST);
     }
 
+    /// The connection timeouts as specified (docs/p2p.md §4: the key exchange
+    /// within 5 s on clearnet and 10 s over Tor, the handshake within 20 s;
+    /// "Liveness": closed after 180 s without a message), written as numbers.
+    /// The tests of their behavior bound the observed close from below
+    /// exactly; from above only with a margin for load, which a second more
+    /// would pass (mutation run E's hand mutants).
+    #[test]
+    fn the_connection_timeouts_are_the_specified_ones() {
+        assert_eq!(KEY_EXCHANGE_TIMEOUT, Duration::from_secs(5));
+        assert_eq!(HANDSHAKE_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(HANDSHAKE_DEADLINE, Duration::from_secs(20));
+        assert_eq!(IDLE_TIMEOUT, Duration::from_secs(180));
+    }
+
     /// A block-relay-only connection never relays transactions, whatever the
     /// peer's `Version` asks (`relay_txs`): the node dials its one table
     /// address block-relay-only and the peer claims `relay_txs = true`
