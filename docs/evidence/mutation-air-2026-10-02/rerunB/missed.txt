@@ -1,0 +1,19 @@
+zkvm/src/air/check.rs:98:9: replace <impl InteractionBuilder for EvalBuilder<'_>>::push_local_interaction with ()
+zkvm/src/air/check.rs:108:9: replace <impl InteractionBuilder for EvalBuilder<'_>>::push_exclusive_interaction with ()
+zkvm/src/air/check.rs:110:75: replace * with + in <impl InteractionBuilder for EvalBuilder<'_>>::push_exclusive_interaction
+zkvm/src/air/check.rs:110:75: replace * with / in <impl InteractionBuilder for EvalBuilder<'_>>::push_exclusive_interaction
+zkvm/src/air/check.rs:206:43: replace += with -= in check
+zkvm/src/air/check.rs:206:43: replace += with *= in check
+zkvm/src/air/check.rs:209:42: replace != with == in check
+zkvm/src/air/check.rs:261:32: replace == with != in eval_row
+zkvm/src/air/check.rs:261:37: replace - with + in eval_row
+zkvm/src/air/check.rs:261:37: replace - with / in eval_row
+zkvm/src/air/check.rs:350:62: replace -= with += in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:350:62: replace -= with /= in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:353:62: replace += with -= in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:353:62: replace += with *= in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:356:38: replace != with == in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:370:68: replace + with - in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:415:46: replace + with - in shapes
+zkvm/src/air/trace.rs:462:32: replace & with ^ in uniform
+zkvm/src/air/trace.rs:463:14: replace < with <= in uniform

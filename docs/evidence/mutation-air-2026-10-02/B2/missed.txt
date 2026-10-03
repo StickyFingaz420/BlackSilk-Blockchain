@@ -1,0 +1,2 @@
+zkvm/src/air/check.rs:528:9: replace <impl InteractionBuilder for FingerprintBuilder<'_>>::push_local_interaction with ()
+zkvm/src/air/check.rs:540:9: replace <impl InteractionBuilder for FingerprintBuilder<'_>>::push_exclusive_interaction with ()

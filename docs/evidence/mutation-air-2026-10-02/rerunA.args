@@ -1,0 +1,44 @@
+--re
+^zkvm[/]src[/]air[/]alu[_]mul[.]rs[:]109[:]29[:] replace [+] with [*] in eval$
+--re
+^zkvm[/]src[/]air[/]alu[_]mul[.]rs[:]110[:]29[:] replace [+] with [*] in eval$
+--re
+^zkvm[/]src[/]air[/]alu[_]shift[.]rs[:]67[:]29[:] replace [+] with [*] in eval$
+--re
+^zkvm[/]src[/]air[/]cpu[.]rs[:]108[:]31[:] replace [+] with [\-] in eval$
+--re
+^zkvm[/]src[/]air[/]cpu[.]rs[:]168[:]50[:] replace [\-] with [+] in eval$
+--re
+^zkvm[/]src[/]air[/]cpu[.]rs[:]310[:]32[:] replace [\-] with [+] in eval$
+--re
+^zkvm[/]src[/]air[/]cpu[.]rs[:]346[:]30[:] replace [\-] with [+] in eval$
+--re
+^zkvm[/]src[/]air[/]memory[.]rs[:]105[:]24[:] replace [+] with [*] in init[_]eval$
+--re
+^zkvm[/]src[/]air[/]memory[.]rs[:]199[:]5[:] replace register[_]image [\-][>] Vec[<][(]u32[,] u32[)][>] with vec[!][\[][\]]$
+--re
+^zkvm[/]src[/]air[/]memory[.]rs[:]199[:]5[:] replace register[_]image [\-][>] Vec[<][(]u32[,] u32[)][>] with vec[!][\[][(]0[,] 0[)][\]]$
+--re
+^zkvm[/]src[/]air[/]memory[.]rs[:]199[:]5[:] replace register[_]image [\-][>] Vec[<][(]u32[,] u32[)][>] with vec[!][\[][(]0[,] 1[)][\]]$
+--re
+^zkvm[/]src[/]air[/]memory[.]rs[:]199[:]5[:] replace register[_]image [\-][>] Vec[<][(]u32[,] u32[)][>] with vec[!][\[][(]1[,] 0[)][\]]$
+--re
+^zkvm[/]src[/]air[/]memory[.]rs[:]199[:]5[:] replace register[_]image [\-][>] Vec[<][(]u32[,] u32[)][>] with vec[!][\[][(]1[,] 1[)][\]]$
+--re
+^zkvm[/]src[/]air[/]memory[.]rs[:]200[:]28[:] replace [+] with [\-] in register[_]image$
+--re
+^zkvm[/]src[/]air[/]poseidon[.]rs[:]112[:]34[:] replace [\-] with [+] in eval$
+--re
+^zkvm[/]src[/]air[/]poseidon[.]rs[:]209[:]37[:] replace [>][>] with [<][<] in trace$
+--re
+^zkvm[/]src[/]air[/]poseidon[.]rs[:]210[:]49[:] replace [>][>] with [<][<] in trace$
+--re
+^zkvm[/]src[/]air[/]poseidon[.]rs[:]211[:]46[:] replace [>][>] with [<][<] in trace$
+--re
+^zkvm[/]src[/]air[/]poseidon[.]rs[:]252[:]5[:] replace p2[_]width [\-][>] usize with 0$
+--re
+^zkvm[/]src[/]air[/]poseidon[.]rs[:]252[:]5[:] replace p2[_]width [\-][>] usize with 1$
+--re
+^zkvm[/]src[/]air[/]util[.]rs[:]76[:]29[:] replace [<][<] with [>][>]$
+--re
+^zkvm[/]src[/]air[/]poseidon[.]rs[:]69[:]32[:] replace [+] with [*]$

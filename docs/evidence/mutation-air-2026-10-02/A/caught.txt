@@ -1,0 +1,1169 @@
+zkvm/src/air/mod.rs:46:45: replace * with / in with_public_columns
+zkvm/src/air/mod.rs:46:45: replace * with + in with_public_columns
+zkvm/src/air/mod.rs:46:58: replace * with + in with_public_columns
+zkvm/src/air/mod.rs:46:58: replace * with / in with_public_columns
+zkvm/src/air/mod.rs:46:53: replace + with - in with_public_columns
+zkvm/src/air/mod.rs:46:53: replace + with * in with_public_columns
+zkvm/src/air/mod.rs:49:30: replace + with - in with_public_columns
+zkvm/src/air/mod.rs:49:30: replace + with * in with_public_columns
+zkvm/src/air/mod.rs:54:5: replace columns -> Vec<Vec<Val>> with vec![]
+zkvm/src/air/mod.rs:54:5: replace columns -> Vec<Vec<Val>> with vec![vec![]]
+zkvm/src/air/mod.rs:54:5: replace columns -> Vec<Vec<Val>> with vec![vec![Default::default()]]
+zkvm/src/air/mod.rs:57:49: replace + with - in columns
+zkvm/src/air/mod.rs:57:49: replace + with * in columns
+zkvm/src/air/mod.rs:57:37: replace * with + in columns
+zkvm/src/air/mod.rs:57:37: replace * with / in columns
+zkvm/src/air/mod.rs:91:9: replace Table::base_width -> usize with 0
+zkvm/src/air/mod.rs:91:9: replace Table::base_width -> usize with 1
+zkvm/src/air/mod.rs:92:40: replace + with - in Table::base_width
+zkvm/src/air/mod.rs:64:33: replace << with >>
+zkvm/src/air/mod.rs:92:40: replace + with * in Table::base_width
+zkvm/src/air/mod.rs:98:50: replace + with - in Table::base_width
+zkvm/src/air/mod.rs:98:50: replace + with * in Table::base_width
+zkvm/src/air/mod.rs:99:73: replace + with - in Table::base_width
+zkvm/src/air/mod.rs:112:9: replace <impl BaseAir<Val> for Table>::width -> usize with 0
+zkvm/src/air/mod.rs:99:73: replace + with * in Table::base_width
+zkvm/src/air/mod.rs:112:9: replace <impl BaseAir<Val> for Table>::width -> usize with 1
+zkvm/src/air/mod.rs:112:27: replace + with - in <impl BaseAir<Val> for Table>::width
+zkvm/src/air/mod.rs:112:27: replace + with * in <impl BaseAir<Val> for Table>::width
+zkvm/src/air/mod.rs:116:9: replace <impl BaseAir<Val> for Table>::num_public_values -> usize with 0
+zkvm/src/air/mod.rs:116:9: replace <impl BaseAir<Val> for Table>::num_public_values -> usize with 1
+zkvm/src/air/mod.rs:117:13: delete match arm Table::Cpu(_) in <impl BaseAir<Val> for Table>::num_public_values
+zkvm/src/air/mod.rs:123:9: replace <impl BaseAir<Val> for Table>::num_periodic_columns -> usize with 0
+zkvm/src/air/mod.rs:123:9: replace <impl BaseAir<Val> for Table>::num_periodic_columns -> usize with 1
+zkvm/src/air/mod.rs:124:13: delete match arm Table::Byte in <impl BaseAir<Val> for Table>::num_periodic_columns
+zkvm/src/air/mod.rs:125:13: delete match arm Table::Program(..) in <impl BaseAir<Val> for Table>::num_periodic_columns
+zkvm/src/air/mod.rs:126:13: delete match arm Table::Image(..) | Table::Output(..) in <impl BaseAir<Val> for Table>::num_periodic_columns
+zkvm/src/air/mod.rs:137:9: replace <impl BaseAir<Val> for Table>::periodic_columns -> Cow<'_, [Vec<Val>]> with Cow::Borrowed(Vec::leak(Vec::new()))
+zkvm/src/air/mod.rs:137:9: replace <impl BaseAir<Val> for Table>::periodic_columns -> Cow<'_, [Vec<Val>]> with Cow::Owned(Vec::leak(Vec::new()).to_owned())
+zkvm/src/air/mod.rs:137:9: replace <impl BaseAir<Val> for Table>::periodic_columns -> Cow<'_, [Vec<Val>]> with Cow::Borrowed(Vec::leak(vec![vec![]]))
+zkvm/src/air/mod.rs:137:9: replace <impl BaseAir<Val> for Table>::periodic_columns -> Cow<'_, [Vec<Val>]> with Cow::Owned(Vec::leak(vec![vec![]]).to_owned())
+zkvm/src/air/mod.rs:137:9: replace <impl BaseAir<Val> for Table>::periodic_columns -> Cow<'_, [Vec<Val>]> with Cow::Borrowed(Vec::leak(vec![vec![Default::default()]]))
+zkvm/src/air/mod.rs:137:9: replace <impl BaseAir<Val> for Table>::periodic_columns -> Cow<'_, [Vec<Val>]> with Cow::Owned(Vec::leak(vec![vec![Default::default()]]).to_owned())
+zkvm/src/air/mod.rs:138:13: delete match arm Table::Byte in <impl BaseAir<Val> for Table>::periodic_columns
+zkvm/src/air/mod.rs:139:13: delete match arm Table::Program(p, _) in <impl BaseAir<Val> for Table>::periodic_columns
+zkvm/src/air/mod.rs:140:13: delete match arm Table::Image(w, _) in <impl BaseAir<Val> for Table>::periodic_columns
+zkvm/src/air/mod.rs:149:9: replace <impl Air<AB> for Table>::eval with ()
+zkvm/src/air/mod.rs:141:13: delete match arm Table::Output(o, _) in <impl BaseAir<Val> for Table>::periodic_columns
+zkvm/src/air/mod.rs:164:12: delete ! in <impl Air<AB> for Table>::eval
+zkvm/src/air/alu_add.rs:34:5: replace eval with ()
+zkvm/src/air/alu_add.rs:36:28: replace + with * in eval
+zkvm/src/air/alu_add.rs:36:28: replace + with - in eval
+zkvm/src/air/alu_add.rs:39:33: replace * with + in eval
+zkvm/src/air/alu_add.rs:42:53: replace + with - in eval
+zkvm/src/air/alu_add.rs:42:53: replace + with * in eval
+zkvm/src/air/alu_add.rs:42:34: replace * with + in eval
+zkvm/src/air/alu_add.rs:42:40: replace + with - in eval
+zkvm/src/air/alu_add.rs:42:40: replace + with * in eval
+zkvm/src/air/alu_add.rs:42:73: replace + with - in eval
+zkvm/src/air/alu_add.rs:42:67: replace * with + in eval
+zkvm/src/air/alu_add.rs:42:73: replace + with * in eval
+zkvm/src/air/alu_add.rs:50:21: replace + with - in eval
+zkvm/src/air/alu_add.rs:50:21: replace + with * in eval
+zkvm/src/air/alu_add.rs:53:57: replace - with + in eval
+zkvm/src/air/alu_add.rs:53:72: replace - with + in eval
+zkvm/src/air/alu_add.rs:53:41: replace + with * in eval
+zkvm/src/air/alu_add.rs:53:41: replace + with - in eval
+zkvm/src/air/alu_add.rs:53:26: replace + with - in eval
+zkvm/src/air/alu_add.rs:53:26: replace + with * in eval
+zkvm/src/air/alu_add.rs:53:84: replace * with + in eval
+zkvm/src/air/alu_add.rs:58:39: replace + with - in eval
+zkvm/src/air/alu_add.rs:58:39: replace + with * in eval
+zkvm/src/air/alu_add.rs:60:41: replace + with * in eval
+zkvm/src/air/alu_add.rs:60:41: replace + with - in eval
+zkvm/src/air/alu_add.rs:60:18: replace * with + in eval
+zkvm/src/air/alu_add.rs:60:47: replace * with + in eval
+zkvm/src/air/alu_add.rs:62:35: replace + with - in eval
+zkvm/src/air/alu_add.rs:68:5: replace row_for -> Vec<Val> with vec![]
+zkvm/src/air/alu_add.rs:62:35: replace + with * in eval
+zkvm/src/air/alu_add.rs:68:5: replace row_for -> Vec<Val> with vec![Default::default()]
+zkvm/src/air/alu_add.rs:69:9: delete match arm alu_op::ADD in row_for
+zkvm/src/air/alu_add.rs:70:9: delete match arm alu_op::SUB in row_for
+zkvm/src/air/alu_add.rs:73:24: replace == with != in row_for
+zkvm/src/air/alu_add.rs:82:45: replace + with - in row_for
+zkvm/src/air/alu_add.rs:82:30: replace + with - in row_for
+zkvm/src/air/alu_add.rs:82:45: replace + with * in row_for
+zkvm/src/air/alu_add.rs:83:18: replace >> with << in row_for
+zkvm/src/air/alu_add.rs:82:30: replace + with * in row_for
+zkvm/src/air/alu_bit.rs:25:5: replace eval with ()
+zkvm/src/air/alu_bit.rs:30:41: replace + with - in eval
+zkvm/src/air/alu_bit.rs:30:41: replace + with * in eval
+zkvm/src/air/alu_bit.rs:30:28: replace + with - in eval
+zkvm/src/air/alu_bit.rs:34:9: replace + with - in eval
+zkvm/src/air/alu_bit.rs:30:28: replace + with * in eval
+zkvm/src/air/alu_bit.rs:34:9: replace + with * in eval
+zkvm/src/air/alu_bit.rs:33:9: replace + with - in eval
+zkvm/src/air/alu_bit.rs:33:9: replace + with * in eval
+zkvm/src/air/alu_bit.rs:32:34: replace * with + in eval
+zkvm/src/air/alu_bit.rs:33:22: replace * with + in eval
+zkvm/src/air/alu_bit.rs:34:23: replace * with + in eval
+zkvm/src/air/alu_bit.rs:40:21: replace + with - in eval
+zkvm/src/air/alu_bit.rs:40:21: replace + with * in eval
+zkvm/src/air/alu_bit.rs:41:21: replace + with - in eval
+zkvm/src/air/alu_bit.rs:41:21: replace + with * in eval
+zkvm/src/air/alu_bit.rs:42:21: replace + with * in eval
+zkvm/src/air/alu_bit.rs:42:21: replace + with - in eval
+zkvm/src/air/alu_bit.rs:47:68: replace + with - in eval
+zkvm/src/air/alu_bit.rs:47:68: replace + with * in eval
+zkvm/src/air/alu_bit.rs:47:41: replace + with - in eval
+zkvm/src/air/alu_bit.rs:47:41: replace + with * in eval
+zkvm/src/air/alu_bit.rs:47:18: replace * with + in eval
+zkvm/src/air/alu_bit.rs:47:46: replace * with + in eval
+zkvm/src/air/alu_bit.rs:49:35: replace + with - in eval
+zkvm/src/air/alu_bit.rs:47:74: replace * with + in eval
+zkvm/src/air/alu_bit.rs:49:35: replace + with * in eval
+zkvm/src/air/alu_bit.rs:54:5: replace row_for -> Vec<Val> with vec![]
+zkvm/src/air/alu_bit.rs:54:5: replace row_for -> Vec<Val> with vec![Default::default()]
+zkvm/src/air/alu_bit.rs:55:9: delete match arm alu_op::XOR in row_for
+zkvm/src/air/alu_bit.rs:56:9: delete match arm alu_op::OR in row_for
+zkvm/src/air/alu_bit.rs:57:9: delete match arm alu_op::AND in row_for
+zkvm/src/air/alu_bit.rs:55:27: replace ^ with | in row_for
+zkvm/src/air/alu_bit.rs:55:27: replace ^ with & in row_for
+zkvm/src/air/alu_bit.rs:56:26: replace | with & in row_for
+zkvm/src/air/alu_bit.rs:56:26: replace | with ^ in row_for
+zkvm/src/air/alu_bit.rs:57:27: replace & with | in row_for
+zkvm/src/air/alu_bit.rs:57:27: replace & with ^ in row_for
+zkvm/src/air/alu_lt.rs:35:5: replace eval with ()
+zkvm/src/air/alu_lt.rs:40:43: replace + with - in eval
+zkvm/src/air/alu_lt.rs:40:43: replace + with * in eval
+zkvm/src/air/alu_lt.rs:40:28: replace + with - in eval
+zkvm/src/air/alu_lt.rs:40:28: replace + with * in eval
+zkvm/src/air/alu_lt.rs:46:21: replace + with * in eval
+zkvm/src/air/alu_lt.rs:46:21: replace + with - in eval
+zkvm/src/air/alu_lt.rs:51:17: replace - with + in eval
+zkvm/src/air/alu_lt.rs:50:17: replace - with + in eval
+zkvm/src/air/alu_lt.rs:49:49: replace + with * in eval
+zkvm/src/air/alu_lt.rs:49:49: replace + with - in eval
+zkvm/src/air/alu_lt.rs:49:30: replace + with - in eval
+zkvm/src/air/alu_lt.rs:49:30: replace + with * in eval
+zkvm/src/air/alu_lt.rs:49:17: replace + with * in eval
+zkvm/src/air/alu_lt.rs:49:17: replace + with - in eval
+zkvm/src/air/alu_lt.rs:49:36: replace + with - in eval
+zkvm/src/air/alu_lt.rs:49:36: replace + with * in eval
+zkvm/src/air/alu_lt.rs:50:23: replace + with - in eval
+zkvm/src/air/alu_lt.rs:50:23: replace + with * in eval
+zkvm/src/air/alu_lt.rs:51:29: replace * with + in eval
+zkvm/src/air/alu_lt.rs:55:19: replace + with - in eval
+zkvm/src/air/alu_lt.rs:55:19: replace + with * in eval
+zkvm/src/air/alu_lt.rs:61:38: replace - with + in eval
+zkvm/src/air/alu_lt.rs:61:66: replace - with + in eval
+zkvm/src/air/alu_lt.rs:61:25: replace + with - in eval
+zkvm/src/air/alu_lt.rs:61:25: replace + with * in eval
+zkvm/src/air/alu_lt.rs:61:51: replace * with + in eval
+zkvm/src/air/alu_lt.rs:62:66: replace - with + in eval
+zkvm/src/air/alu_lt.rs:62:38: replace - with + in eval
+zkvm/src/air/alu_lt.rs:62:25: replace + with - in eval
+zkvm/src/air/alu_lt.rs:62:25: replace + with * in eval
+zkvm/src/air/alu_lt.rs:62:51: replace * with + in eval
+zkvm/src/air/alu_lt.rs:65:61: replace + with - in eval
+zkvm/src/air/alu_lt.rs:65:61: replace + with * in eval
+zkvm/src/air/alu_lt.rs:65:48: replace - with + in eval
+zkvm/src/air/alu_lt.rs:65:35: replace - with + in eval
+zkvm/src/air/alu_lt.rs:65:87: replace * with + in eval
+zkvm/src/air/alu_lt.rs:65:74: replace * with + in eval
+zkvm/src/air/alu_lt.rs:66:49: replace + with * in eval
+zkvm/src/air/alu_lt.rs:66:49: replace + with - in eval
+zkvm/src/air/alu_lt.rs:66:26: replace * with + in eval
+zkvm/src/air/alu_lt.rs:66:43: replace - with + in eval
+zkvm/src/air/alu_lt.rs:66:61: replace * with + in eval
+zkvm/src/air/alu_lt.rs:69:64: replace + with - in eval
+zkvm/src/air/alu_lt.rs:69:64: replace + with * in eval
+zkvm/src/air/alu_lt.rs:69:45: replace + with - in eval
+zkvm/src/air/alu_lt.rs:69:45: replace + with * in eval
+zkvm/src/air/alu_lt.rs:69:26: replace + with - in eval
+zkvm/src/air/alu_lt.rs:69:26: replace + with * in eval
+zkvm/src/air/alu_lt.rs:69:32: replace + with - in eval
+zkvm/src/air/alu_lt.rs:69:32: replace + with * in eval
+zkvm/src/air/alu_lt.rs:69:51: replace + with - in eval
+zkvm/src/air/alu_lt.rs:69:51: replace + with * in eval
+zkvm/src/air/alu_lt.rs:69:70: replace + with - in eval
+zkvm/src/air/alu_lt.rs:69:70: replace + with * in eval
+zkvm/src/air/alu_lt.rs:70:27: replace - with + in eval
+zkvm/src/air/alu_lt.rs:70:39: replace * with + in eval
+zkvm/src/air/alu_lt.rs:71:23: replace * with + in eval
+zkvm/src/air/alu_lt.rs:73:75: replace - with + in eval
+zkvm/src/air/alu_lt.rs:73:54: replace - with + in eval
+zkvm/src/air/alu_lt.rs:73:48: replace * with + in eval
+zkvm/src/air/alu_lt.rs:73:34: replace - with + in eval
+zkvm/src/air/alu_lt.rs:73:88: replace * with + in eval
+zkvm/src/air/alu_lt.rs:73:69: replace * with + in eval
+zkvm/src/air/alu_lt.rs:76:39: replace + with - in eval
+zkvm/src/air/alu_lt.rs:76:39: replace + with * in eval
+zkvm/src/air/alu_lt.rs:78:72: replace + with * in eval
+zkvm/src/air/alu_lt.rs:78:72: replace + with - in eval
+zkvm/src/air/alu_lt.rs:78:41: replace + with - in eval
+zkvm/src/air/alu_lt.rs:78:41: replace + with * in eval
+zkvm/src/air/alu_lt.rs:78:18: replace * with + in eval
+zkvm/src/air/alu_lt.rs:78:48: replace * with + in eval
+zkvm/src/air/alu_lt.rs:80:35: replace + with - in eval
+zkvm/src/air/alu_lt.rs:78:77: replace * with + in eval
+zkvm/src/air/alu_lt.rs:80:35: replace + with * in eval
+zkvm/src/air/alu_lt.rs:87:5: replace result -> u32 with 0
+zkvm/src/air/alu_lt.rs:87:5: replace result -> u32 with 1
+zkvm/src/air/alu_lt.rs:88:9: delete match arm alu_op::SLT in result
+zkvm/src/air/alu_lt.rs:89:9: delete match arm alu_op::SLTU in result
+zkvm/src/air/alu_lt.rs:90:9: delete match arm alu_op::EQ in result
+zkvm/src/air/alu_lt.rs:88:36: replace < with == in result
+zkvm/src/air/alu_lt.rs:88:36: replace < with > in result
+zkvm/src/air/alu_lt.rs:88:36: replace < with <= in result
+zkvm/src/air/alu_lt.rs:89:28: replace < with == in result
+zkvm/src/air/alu_lt.rs:89:28: replace < with > in result
+zkvm/src/air/alu_lt.rs:89:28: replace < with <= in result
+zkvm/src/air/alu_lt.rs:90:26: replace == with != in result
+zkvm/src/air/alu_lt.rs:96:5: replace row_for -> Vec<Val> with vec![]
+zkvm/src/air/alu_lt.rs:96:5: replace row_for -> Vec<Val> with vec![Default::default()]
+zkvm/src/air/alu_lt.rs:101:45: replace + with - in row_for
+zkvm/src/air/alu_lt.rs:101:45: replace + with * in row_for
+zkvm/src/air/alu_lt.rs:101:30: replace + with - in row_for
+zkvm/src/air/alu_lt.rs:101:30: replace + with * in row_for
+zkvm/src/air/alu_lt.rs:102:18: replace >> with << in row_for
+zkvm/src/air/alu_lt.rs:105:23: replace >> with << in row_for
+zkvm/src/air/alu_lt.rs:105:32: replace >> with << in row_for
+zkvm/src/air/alu_lt.rs:106:41: replace & with | in row_for
+zkvm/src/air/alu_lt.rs:106:32: replace >> with << in row_for
+zkvm/src/air/alu_lt.rs:106:41: replace & with ^ in row_for
+zkvm/src/air/alu_lt.rs:106:51: replace >> with << in row_for
+zkvm/src/air/alu_lt.rs:106:60: replace & with | in row_for
+zkvm/src/air/alu_lt.rs:106:60: replace & with ^ in row_for
+zkvm/src/air/alu_mul.rs:42:5: replace eval with ()
+zkvm/src/air/alu_mul.rs:52:59: replace + with - in eval
+zkvm/src/air/alu_mul.rs:52:59: replace + with * in eval
+zkvm/src/air/alu_mul.rs:54:37: replace + with - in eval
+zkvm/src/air/alu_mul.rs:54:37: replace + with * in eval
+zkvm/src/air/alu_mul.rs:60:66: replace - with + in eval
+zkvm/src/air/alu_mul.rs:60:38: replace - with + in eval
+zkvm/src/air/alu_mul.rs:60:25: replace + with - in eval
+zkvm/src/air/alu_mul.rs:60:25: replace + with * in eval
+zkvm/src/air/alu_mul.rs:60:51: replace * with + in eval
+zkvm/src/air/alu_mul.rs:61:66: replace - with + in eval
+zkvm/src/air/alu_mul.rs:61:38: replace - with + in eval
+zkvm/src/air/alu_mul.rs:61:25: replace + with - in eval
+zkvm/src/air/alu_mul.rs:61:25: replace + with * in eval
+zkvm/src/air/alu_mul.rs:61:51: replace * with + in eval
+zkvm/src/air/alu_mul.rs:65:31: replace * with + in eval
+zkvm/src/air/alu_mul.rs:65:20: replace * with + in eval
+zkvm/src/air/alu_mul.rs:66:31: replace * with + in eval
+zkvm/src/air/alu_mul.rs:66:20: replace * with + in eval
+zkvm/src/air/alu_mul.rs:69:18: replace < with == in eval
+zkvm/src/air/alu_mul.rs:69:18: replace < with > in eval
+zkvm/src/air/alu_mul.rs:69:18: replace < with <= in eval
+zkvm/src/air/alu_mul.rs:70:21: replace + with - in eval
+zkvm/src/air/alu_mul.rs:70:21: replace + with * in eval
+zkvm/src/air/alu_mul.rs:78:18: replace < with == in eval
+zkvm/src/air/alu_mul.rs:78:18: replace < with > in eval
+zkvm/src/air/alu_mul.rs:78:18: replace < with <= in eval
+zkvm/src/air/alu_mul.rs:79:21: replace + with - in eval
+zkvm/src/air/alu_mul.rs:79:21: replace + with * in eval
+zkvm/src/air/alu_mul.rs:90:17: replace += with -= in eval
+zkvm/src/air/alu_mul.rs:90:17: replace += with *= in eval
+zkvm/src/air/alu_mul.rs:90:41: replace - with + in eval
+zkvm/src/air/alu_mul.rs:90:34: replace * with + in eval
+zkvm/src/air/alu_mul.rs:90:41: replace - with / in eval
+zkvm/src/air/alu_mul.rs:92:36: replace + with - in eval
+zkvm/src/air/alu_mul.rs:92:36: replace + with * in eval
+zkvm/src/air/alu_mul.rs:92:23: replace + with * in eval
+zkvm/src/air/alu_mul.rs:92:23: replace + with - in eval
+zkvm/src/air/alu_mul.rs:92:56: replace * with + in eval
+zkvm/src/air/alu_mul.rs:92:43: replace + with * in eval
+zkvm/src/air/alu_mul.rs:92:43: replace + with - in eval
+zkvm/src/air/alu_mul.rs:93:48: replace - with + in eval
+zkvm/src/air/alu_mul.rs:93:29: replace - with + in eval
+zkvm/src/air/alu_mul.rs:93:35: replace + with * in eval
+zkvm/src/air/alu_mul.rs:93:35: replace + with - in eval
+zkvm/src/air/alu_mul.rs:93:61: replace * with + in eval
+zkvm/src/air/alu_mul.rs:94:30: replace + with * in eval
+zkvm/src/air/alu_mul.rs:94:30: replace + with - in eval
+zkvm/src/air/alu_mul.rs:98:29: replace + with * in eval
+zkvm/src/air/alu_mul.rs:98:29: replace + with - in eval
+zkvm/src/air/alu_mul.rs:98:51: replace + with - in eval
+zkvm/src/air/alu_mul.rs:98:51: replace + with * in eval
+zkvm/src/air/alu_mul.rs:98:47: replace + with * in eval
+zkvm/src/air/alu_mul.rs:98:47: replace + with - in eval
+zkvm/src/air/alu_mul.rs:99:30: replace + with * in eval
+zkvm/src/air/alu_mul.rs:99:30: replace + with - in eval
+zkvm/src/air/alu_mul.rs:99:53: replace + with - in eval
+zkvm/src/air/alu_mul.rs:99:53: replace + with * in eval
+zkvm/src/air/alu_mul.rs:99:49: replace + with * in eval
+zkvm/src/air/alu_mul.rs:99:49: replace + with - in eval
+zkvm/src/air/alu_mul.rs:106:17: replace - with + in eval
+zkvm/src/air/alu_mul.rs:105:17: replace - with + in eval
+zkvm/src/air/alu_mul.rs:104:17: replace + with - in eval
+zkvm/src/air/alu_mul.rs:104:17: replace + with * in eval
+zkvm/src/air/alu_mul.rs:105:31: replace * with + in eval
+zkvm/src/air/alu_mul.rs:105:37: replace + with - in eval
+zkvm/src/air/alu_mul.rs:105:37: replace + with * in eval
+zkvm/src/air/alu_mul.rs:106:49: replace * with + in eval
+zkvm/src/air/alu_mul.rs:106:34: replace - with + in eval
+zkvm/src/air/alu_mul.rs:106:59: replace + with - in eval
+zkvm/src/air/alu_mul.rs:106:59: replace + with * in eval
+zkvm/src/air/alu_mul.rs:106:55: replace + with * in eval
+zkvm/src/air/alu_mul.rs:106:55: replace + with - in eval
+zkvm/src/air/alu_mul.rs:109:29: replace + with - in eval
+zkvm/src/air/alu_mul.rs:110:29: replace + with - in eval
+zkvm/src/air/alu_mul.rs:114:9: replace + with - in eval
+zkvm/src/air/alu_mul.rs:114:9: replace + with * in eval
+zkvm/src/air/alu_mul.rs:113:9: replace + with - in eval
+zkvm/src/air/alu_mul.rs:113:9: replace + with * in eval
+zkvm/src/air/alu_mul.rs:112:9: replace + with - in eval
+zkvm/src/air/alu_mul.rs:112:9: replace + with * in eval
+zkvm/src/air/alu_mul.rs:111:31: replace * with + in eval
+zkvm/src/air/alu_mul.rs:112:28: replace * with + in eval
+zkvm/src/air/alu_mul.rs:113:28: replace * with + in eval
+zkvm/src/air/alu_mul.rs:116:35: replace + with - in eval
+zkvm/src/air/alu_mul.rs:114:28: replace * with + in eval
+zkvm/src/air/alu_mul.rs:116:35: replace + with * in eval
+zkvm/src/air/alu_mul.rs:121:5: replace result -> u32 with 0
+zkvm/src/air/alu_mul.rs:121:5: replace result -> u32 with 1
+zkvm/src/air/alu_mul.rs:122:9: delete match arm alu_op::MUL in result
+zkvm/src/air/alu_mul.rs:123:9: delete match arm alu_op::MULH in result
+zkvm/src/air/alu_mul.rs:124:9: delete match arm alu_op::MULHSU in result
+zkvm/src/air/alu_mul.rs:125:9: delete match arm alu_op::MULHU in result
+zkvm/src/air/alu_mul.rs:123:62: replace >> with << in result
+zkvm/src/air/alu_mul.rs:123:43: replace * with + in result
+zkvm/src/air/alu_mul.rs:123:43: replace * with / in result
+zkvm/src/air/alu_mul.rs:124:57: replace >> with << in result
+zkvm/src/air/alu_mul.rs:124:45: replace * with + in result
+zkvm/src/air/alu_mul.rs:124:45: replace * with / in result
+zkvm/src/air/alu_mul.rs:125:49: replace >> with << in result
+zkvm/src/air/alu_mul.rs:125:37: replace * with + in result
+zkvm/src/air/alu_mul.rs:125:37: replace * with / in result
+zkvm/src/air/alu_mul.rs:131:5: replace row_for -> Vec<Val> with vec![]
+zkvm/src/air/alu_mul.rs:131:5: replace row_for -> Vec<Val> with vec![Default::default()]
+zkvm/src/air/alu_mul.rs:131:39: replace || with && in row_for
+zkvm/src/air/alu_mul.rs:131:23: replace == with != in row_for
+zkvm/src/air/alu_mul.rs:131:45: replace == with != in row_for
+zkvm/src/air/alu_mul.rs:132:23: replace == with != in row_for
+zkvm/src/air/alu_mul.rs:134:27: replace && with || in row_for
+zkvm/src/air/alu_mul.rs:134:40: replace == with != in row_for
+zkvm/src/air/alu_mul.rs:134:33: replace >> with << in row_for
+zkvm/src/air/alu_mul.rs:154:17: replace += with -= in row_for
+zkvm/src/air/alu_mul.rs:154:17: replace += with *= in row_for
+zkvm/src/air/alu_mul.rs:154:33: replace * with + in row_for
+zkvm/src/air/alu_mul.rs:154:33: replace * with / in row_for
+zkvm/src/air/alu_mul.rs:154:40: replace - with + in row_for
+zkvm/src/air/alu_mul.rs:154:40: replace - with / in row_for
+zkvm/src/air/alu_mul.rs:156:21: replace & with | in row_for
+zkvm/src/air/alu_mul.rs:156:21: replace & with ^ in row_for
+zkvm/src/air/alu_mul.rs:157:21: replace >> with << in row_for
+zkvm/src/air/alu_mul.rs:160:23: replace >> with << in row_for
+zkvm/src/air/alu_mul.rs:160:32: replace >> with << in row_for
+zkvm/src/air/alu_mul.rs:161:27: replace & with | in row_for
+zkvm/src/air/alu_mul.rs:161:27: replace & with ^ in row_for
+zkvm/src/air/alu_mul.rs:162:27: replace & with | in row_for
+zkvm/src/air/alu_mul.rs:162:27: replace & with ^ in row_for
+zkvm/src/air/alu_mul.rs:164:34: replace >> with << in row_for
+zkvm/src/air/alu_mul.rs:167:33: replace + with - in row_for
+zkvm/src/air/alu_mul.rs:167:33: replace + with * in row_for
+zkvm/src/air/alu_mul.rs:168:34: replace & with | in row_for
+zkvm/src/air/alu_mul.rs:168:34: replace & with ^ in row_for
+zkvm/src/air/alu_mul.rs:168:57: replace & with | in row_for
+zkvm/src/air/alu_mul.rs:168:57: replace & with ^ in row_for
+zkvm/src/air/alu_mul.rs:168:52: replace + with - in row_for
+zkvm/src/air/alu_mul.rs:168:52: replace + with * in row_for
+zkvm/src/air/alu_mul.rs:175:36: replace == with != in row_for
+zkvm/src/air/alu_mul.rs:180:18: replace >> with << in row_for
+zkvm/src/air/alu_mul.rs:180:27: replace & with | in row_for
+zkvm/src/air/alu_mul.rs:180:27: replace & with ^ in row_for
+zkvm/src/air/alu_mul.rs:180:37: replace >> with << in row_for
+zkvm/src/air/alu_mul.rs:180:46: replace & with | in row_for
+zkvm/src/air/alu_mul.rs:180:46: replace & with ^ in row_for
+zkvm/src/air/alu_mul.rs:182:46: replace & with | in row_for
+zkvm/src/air/alu_mul.rs:182:46: replace & with ^ in row_for
+zkvm/src/air/alu_mul.rs:183:46: replace >> with << in row_for
+zkvm/src/air/alu_shift.rs:46:5: replace eval with ()
+zkvm/src/air/alu_shift.rs:52:42: replace + with - in eval
+zkvm/src/air/alu_shift.rs:52:42: replace + with * in eval
+zkvm/src/air/alu_shift.rs:52:28: replace + with - in eval
+zkvm/src/air/alu_shift.rs:52:28: replace + with * in eval
+zkvm/src/air/alu_shift.rs:56:47: replace + with * in eval
+zkvm/src/air/alu_shift.rs:56:47: replace + with - in eval
+zkvm/src/air/alu_shift.rs:61:13: replace + with - in eval
+zkvm/src/air/alu_shift.rs:61:13: replace + with * in eval
+zkvm/src/air/alu_shift.rs:61:28: replace * with + in eval
+zkvm/src/air/alu_shift.rs:61:40: replace << with >> in eval
+zkvm/src/air/alu_shift.rs:63:50: replace - with + in eval
+zkvm/src/air/alu_shift.rs:63:34: replace - with + in eval
+zkvm/src/air/alu_shift.rs:63:66: replace * with + in eval
+zkvm/src/air/alu_shift.rs:65:25: replace + with - in eval
+zkvm/src/air/alu_shift.rs:65:25: replace + with * in eval
+zkvm/src/air/alu_shift.rs:65:43: replace + with - in eval
+zkvm/src/air/alu_shift.rs:65:43: replace + with * in eval
+zkvm/src/air/alu_shift.rs:66:25: replace + with - in eval
+zkvm/src/air/alu_shift.rs:66:25: replace + with * in eval
+zkvm/src/air/alu_shift.rs:67:29: replace + with - in eval
+zkvm/src/air/alu_shift.rs:71:31: replace * with + in eval
+zkvm/src/air/alu_shift.rs:72:67: replace + with - in eval
+zkvm/src/air/alu_shift.rs:72:67: replace + with * in eval
+zkvm/src/air/alu_shift.rs:72:52: replace - with + in eval
+zkvm/src/air/alu_shift.rs:72:35: replace * with + in eval
+zkvm/src/air/alu_shift.rs:75:49: replace + with * in eval
+zkvm/src/air/alu_shift.rs:75:49: replace + with - in eval
+zkvm/src/air/alu_shift.rs:76:49: replace + with * in eval
+zkvm/src/air/alu_shift.rs:76:49: replace + with - in eval
+zkvm/src/air/alu_shift.rs:80:58: replace + with - in eval
+zkvm/src/air/alu_shift.rs:80:58: replace + with * in eval
+zkvm/src/air/alu_shift.rs:81:28: replace - with + in eval
+zkvm/src/air/alu_shift.rs:84:8: replace + with - in eval
+zkvm/src/air/alu_shift.rs:84:8: replace + with * in eval
+zkvm/src/air/alu_shift.rs:83:13: replace + with - in eval
+zkvm/src/air/alu_shift.rs:83:29: replace * with + in eval
+zkvm/src/air/alu_shift.rs:83:13: replace + with * in eval
+zkvm/src/air/alu_shift.rs:83:41: replace << with >> in eval
+zkvm/src/air/alu_shift.rs:85:13: replace + with - in eval
+zkvm/src/air/alu_shift.rs:85:29: replace * with + in eval
+zkvm/src/air/alu_shift.rs:85:13: replace + with * in eval
+zkvm/src/air/alu_shift.rs:85:41: replace * with / in eval
+zkvm/src/air/alu_shift.rs:85:41: replace * with + in eval
+zkvm/src/air/alu_shift.rs:88:37: replace + with - in eval
+zkvm/src/air/alu_shift.rs:88:37: replace + with * in eval
+zkvm/src/air/alu_shift.rs:88:68: replace * with + in eval
+zkvm/src/air/alu_shift.rs:88:21: replace * with + in eval
+zkvm/src/air/alu_shift.rs:88:53: replace - with + in eval
+zkvm/src/air/alu_shift.rs:88:83: replace - with + in eval
+zkvm/src/air/alu_shift.rs:89:47: replace * with + in eval
+zkvm/src/air/alu_shift.rs:89:34: replace - with + in eval
+zkvm/src/air/alu_shift.rs:89:60: replace - with + in eval
+zkvm/src/air/alu_shift.rs:90:31: replace * with + in eval
+zkvm/src/air/alu_shift.rs:94:19: replace - with + in eval
+zkvm/src/air/alu_shift.rs:94:52: replace * with + in eval
+zkvm/src/air/alu_shift.rs:94:35: replace + with - in eval
+zkvm/src/air/alu_shift.rs:94:35: replace + with * in eval
+zkvm/src/air/alu_shift.rs:94:67: replace + with - in eval
+zkvm/src/air/alu_shift.rs:94:67: replace + with * in eval
+zkvm/src/air/alu_shift.rs:94:83: replace * with + in eval
+zkvm/src/air/alu_shift.rs:96:16: replace * with + in eval
+zkvm/src/air/alu_shift.rs:96:31: replace + with - in eval
+zkvm/src/air/alu_shift.rs:96:31: replace + with * in eval
+zkvm/src/air/alu_shift.rs:96:47: replace * with + in eval
+zkvm/src/air/alu_shift.rs:98:42: replace - with + in eval
+zkvm/src/air/alu_shift.rs:98:29: replace + with * in eval
+zkvm/src/air/alu_shift.rs:98:29: replace + with - in eval
+zkvm/src/air/alu_shift.rs:98:58: replace * with + in eval
+zkvm/src/air/alu_shift.rs:104:9: replace + with - in eval
+zkvm/src/air/alu_shift.rs:104:9: replace + with * in eval
+zkvm/src/air/alu_shift.rs:103:9: replace + with - in eval
+zkvm/src/air/alu_shift.rs:103:9: replace + with * in eval
+zkvm/src/air/alu_shift.rs:102:30: replace * with + in eval
+zkvm/src/air/alu_shift.rs:103:23: replace * with + in eval
+zkvm/src/air/alu_shift.rs:106:33: replace + with - in eval
+zkvm/src/air/alu_shift.rs:104:23: replace * with + in eval
+zkvm/src/air/alu_shift.rs:107:33: replace + with - in eval
+zkvm/src/air/alu_shift.rs:106:33: replace + with * in eval
+zkvm/src/air/alu_shift.rs:107:33: replace + with * in eval
+zkvm/src/air/alu_shift.rs:108:33: replace + with - in eval
+zkvm/src/air/alu_shift.rs:108:33: replace + with * in eval
+zkvm/src/air/alu_shift.rs:109:56: replace * with + in eval
+zkvm/src/air/alu_shift.rs:111:35: replace * with + in eval
+zkvm/src/air/alu_shift.rs:109:63: replace - with + in eval
+zkvm/src/air/alu_shift.rs:111:55: replace - with + in eval
+zkvm/src/air/alu_shift.rs:111:42: replace + with - in eval
+zkvm/src/air/alu_shift.rs:111:42: replace + with * in eval
+zkvm/src/air/alu_shift.rs:111:61: replace + with - in eval
+zkvm/src/air/alu_shift.rs:111:61: replace + with * in eval
+zkvm/src/air/alu_shift.rs:114:70: replace + with - in eval
+zkvm/src/air/alu_shift.rs:114:70: replace + with * in eval
+zkvm/src/air/alu_shift.rs:114:41: replace + with - in eval
+zkvm/src/air/alu_shift.rs:114:41: replace + with * in eval
+zkvm/src/air/alu_shift.rs:114:18: replace * with + in eval
+zkvm/src/air/alu_shift.rs:114:47: replace * with + in eval
+zkvm/src/air/alu_shift.rs:114:76: replace * with + in eval
+zkvm/src/air/alu_shift.rs:116:35: replace + with - in eval
+zkvm/src/air/alu_shift.rs:116:35: replace + with * in eval
+zkvm/src/air/alu_shift.rs:121:5: replace result -> u32 with 0
+zkvm/src/air/alu_shift.rs:121:5: replace result -> u32 with 1
+zkvm/src/air/alu_shift.rs:121:15: replace & with | in result
+zkvm/src/air/alu_shift.rs:121:15: replace & with ^ in result
+zkvm/src/air/alu_shift.rs:123:9: delete match arm alu_op::SLL in result
+zkvm/src/air/alu_shift.rs:124:9: delete match arm alu_op::SRL in result
+zkvm/src/air/alu_shift.rs:125:9: delete match arm alu_op::SRA in result
+zkvm/src/air/alu_shift.rs:123:26: replace << with >> in result
+zkvm/src/air/alu_shift.rs:124:26: replace >> with << in result
+zkvm/src/air/alu_shift.rs:125:36: replace >> with << in result
+zkvm/src/air/alu_shift.rs:132:5: replace mul_request -> Option<(u32, u32, u32)> with None
+zkvm/src/air/alu_shift.rs:132:5: replace mul_request -> Option<(u32, u32, u32)> with Some((0, 0, 0))
+zkvm/src/air/alu_shift.rs:132:5: replace mul_request -> Option<(u32, u32, u32)> with Some((0, 0, 1))
+zkvm/src/air/alu_shift.rs:132:5: replace mul_request -> Option<(u32, u32, u32)> with Some((0, 1, 0))
+zkvm/src/air/alu_shift.rs:132:5: replace mul_request -> Option<(u32, u32, u32)> with Some((0, 1, 1))
+zkvm/src/air/alu_shift.rs:132:5: replace mul_request -> Option<(u32, u32, u32)> with Some((1, 0, 0))
+zkvm/src/air/alu_shift.rs:132:5: replace mul_request -> Option<(u32, u32, u32)> with Some((1, 0, 1))
+zkvm/src/air/alu_shift.rs:132:5: replace mul_request -> Option<(u32, u32, u32)> with Some((1, 1, 0))
+zkvm/src/air/alu_shift.rs:132:5: replace mul_request -> Option<(u32, u32, u32)> with Some((1, 1, 1))
+zkvm/src/air/alu_shift.rs:132:15: replace & with | in mul_request
+zkvm/src/air/alu_shift.rs:132:15: replace & with ^ in mul_request
+zkvm/src/air/alu_shift.rs:133:10: replace == with != in mul_request
+zkvm/src/air/alu_shift.rs:137:9: delete match arm alu_op::SLL in mul_request
+zkvm/src/air/alu_shift.rs:138:9: delete match arm alu_op::SRL in mul_request
+zkvm/src/air/alu_shift.rs:139:9: delete match arm alu_op::SRA in mul_request
+zkvm/src/air/alu_shift.rs:137:43: replace << with >> in mul_request
+zkvm/src/air/alu_shift.rs:138:45: replace << with >> in mul_request
+zkvm/src/air/alu_shift.rs:138:52: replace - with + in mul_request
+zkvm/src/air/alu_shift.rs:138:52: replace - with / in mul_request
+zkvm/src/air/alu_shift.rs:139:46: replace << with >> in mul_request
+zkvm/src/air/alu_shift.rs:139:53: replace - with + in mul_request
+zkvm/src/air/alu_shift.rs:139:53: replace - with / in mul_request
+zkvm/src/air/alu_shift.rs:145:5: replace row_for -> Vec<Val> with vec![]
+zkvm/src/air/alu_shift.rs:145:5: replace row_for -> Vec<Val> with vec![Default::default()]
+zkvm/src/air/alu_shift.rs:145:15: replace & with | in row_for
+zkvm/src/air/alu_shift.rs:145:15: replace & with ^ in row_for
+zkvm/src/air/alu_shift.rs:146:25: replace >> with << in row_for
+zkvm/src/air/alu_shift.rs:146:17: replace & with | in row_for
+zkvm/src/air/alu_shift.rs:146:17: replace & with ^ in row_for
+zkvm/src/air/alu_shift.rs:148:28: replace & with | in row_for
+zkvm/src/air/alu_shift.rs:148:28: replace & with ^ in row_for
+zkvm/src/air/alu_shift.rs:148:22: replace >> with << in row_for
+zkvm/src/air/alu_shift.rs:148:46: replace & with | in row_for
+zkvm/src/air/alu_shift.rs:148:46: replace & with ^ in row_for
+zkvm/src/air/alu_shift.rs:148:39: replace >> with << in row_for
+zkvm/src/air/alu_shift.rs:149:21: replace >> with << in row_for
+zkvm/src/air/alu_shift.rs:151:18: replace == with != in row_for
+zkvm/src/air/alu_shift.rs:153:18: replace == with != in row_for
+zkvm/src/air/alu_shift.rs:156:12: replace - with + in row_for
+zkvm/src/air/alu_shift.rs:156:12: replace - with / in row_for
+zkvm/src/air/alu_shift.rs:158:19: replace << with >> in row_for
+zkvm/src/air/alu_shift.rs:158:25: replace & with | in row_for
+zkvm/src/air/alu_shift.rs:158:25: replace & with ^ in row_for
+zkvm/src/air/alu_shift.rs:167:52: replace & with | in row_for
+zkvm/src/air/alu_shift.rs:167:52: replace & with ^ in row_for
+zkvm/src/air/alu_shift.rs:167:46: replace >> with << in row_for
+zkvm/src/air/alu_shift.rs:169:29: replace == with != in row_for
+zkvm/src/air/alu_shift.rs:170:52: replace & with | in row_for
+zkvm/src/air/alu_shift.rs:170:52: replace & with ^ in row_for
+zkvm/src/air/alu_shift.rs:170:46: replace >> with << in row_for
+zkvm/src/air/alu_shift.rs:171:51: replace == with != in row_for
+zkvm/src/air/alu_shift.rs:171:46: replace >> with << in row_for
+zkvm/src/air/alu_shift.rs:172:53: replace == with != in row_for
+zkvm/src/air/alu_shift.rs:172:48: replace >> with << in row_for
+zkvm/src/air/alu_shift.rs:173:17: replace == with != in row_for
+zkvm/src/air/alu_shift.rs:178:40: replace * with + in row_for
+zkvm/src/air/alu_shift.rs:178:40: replace * with / in row_for
+zkvm/src/air/alu_shift.rs:178:29: replace + with - in row_for
+zkvm/src/air/alu_shift.rs:178:29: replace + with * in row_for
+zkvm/src/air/alu_shift.rs:178:34: replace & with | in row_for
+zkvm/src/air/alu_shift.rs:178:34: replace & with ^ in row_for
+zkvm/src/air/alu_shift.rs:178:45: replace + with - in row_for
+zkvm/src/air/alu_shift.rs:178:45: replace + with * in row_for
+zkvm/src/air/alu_shift.rs:178:49: replace * with + in row_for
+zkvm/src/air/alu_shift.rs:178:49: replace * with / in row_for
+zkvm/src/air/alu_shift.rs:178:61: replace & with | in row_for
+zkvm/src/air/alu_shift.rs:178:61: replace & with ^ in row_for
+zkvm/src/air/byte.rs:18:29: replace << with >>
+zkvm/src/air/byte.rs:29:5: replace columns -> &'static[Vec<Val>] with Vec::leak(Vec::new())
+zkvm/src/air/alu_shift.rs:178:55: replace >> with << in row_for
+zkvm/src/air/byte.rs:29:5: replace columns -> &'static[Vec<Val>] with Vec::leak(vec![vec![]])
+zkvm/src/air/byte.rs:29:5: replace columns -> &'static[Vec<Val>] with Vec::leak(vec![vec![Default::default()]])
+zkvm/src/air/byte.rs:37:32: replace & with | in preprocessed
+zkvm/src/air/byte.rs:37:32: replace & with ^ in preprocessed
+zkvm/src/air/byte.rs:37:40: replace | with & in preprocessed
+zkvm/src/air/byte.rs:37:40: replace | with ^ in preprocessed
+zkvm/src/air/byte.rs:37:48: replace ^ with | in preprocessed
+zkvm/src/air/byte.rs:37:48: replace ^ with & in preprocessed
+zkvm/src/air/byte.rs:44:5: replace eval with ()
+zkvm/src/air/byte.rs:82:54: replace += with -= in ByteCounter::range
+zkvm/src/air/byte.rs:81:9: replace ByteCounter::range with ()
+zkvm/src/air/byte.rs:82:30: replace + with - in ByteCounter::range
+zkvm/src/air/byte.rs:82:30: replace + with * in ByteCounter::range
+zkvm/src/air/byte.rs:82:54: replace += with *= in ByteCounter::range
+zkvm/src/air/byte.rs:82:24: replace * with + in ByteCounter::range
+zkvm/src/air/byte.rs:82:24: replace * with / in ByteCounter::range
+zkvm/src/air/byte.rs:87:9: replace ByteCounter::range_bits with ()
+zkvm/src/air/byte.rs:87:25: replace << with >> in ByteCounter::range_bits
+zkvm/src/air/byte.rs:87:31: replace - with + in ByteCounter::range_bits
+zkvm/src/air/byte.rs:87:31: replace - with / in ByteCounter::range_bits
+zkvm/src/air/byte.rs:91:9: replace ByteCounter::word with ()
+zkvm/src/air/byte.rs:97:9: replace ByteCounter::op with ()
+zkvm/src/air/byte.rs:98:13: delete match arm byte_op::AND in ByteCounter::op
+zkvm/src/air/byte.rs:99:13: delete match arm byte_op::OR in ByteCounter::op
+zkvm/src/air/byte.rs:100:13: delete match arm byte_op::XOR in ByteCounter::op
+zkvm/src/air/byte.rs:103:50: replace += with -= in ByteCounter::op
+zkvm/src/air/byte.rs:103:50: replace += with *= in ByteCounter::op
+zkvm/src/air/byte.rs:103:30: replace + with - in ByteCounter::op
+zkvm/src/air/byte.rs:103:30: replace + with * in ByteCounter::op
+zkvm/src/air/byte.rs:103:24: replace * with + in ByteCounter::op
+zkvm/src/air/byte.rs:103:24: replace * with / in ByteCounter::op
+zkvm/src/air/cpu.rs:43:25: replace + with -
+zkvm/src/air/cpu.rs:42:26: replace + with *
+zkvm/src/air/cpu.rs:43:25: replace + with *
+zkvm/src/air/cpu.rs:44:26: replace + with -
+zkvm/src/air/cpu.rs:44:26: replace + with *
+zkvm/src/air/cpu.rs:45:25: replace + with -
+zkvm/src/air/cpu.rs:46:25: replace + with -
+zkvm/src/air/cpu.rs:45:25: replace + with *
+zkvm/src/air/cpu.rs:47:26: replace + with -
+zkvm/src/air/cpu.rs:46:25: replace + with *
+zkvm/src/air/cpu.rs:47:26: replace + with *
+zkvm/src/air/cpu.rs:48:25: replace + with -
+zkvm/src/air/cpu.rs:49:25: replace + with -
+zkvm/src/air/cpu.rs:48:25: replace + with *
+zkvm/src/air/cpu.rs:50:26: replace + with -
+zkvm/src/air/cpu.rs:49:25: replace + with *
+zkvm/src/air/cpu.rs:51:26: replace + with -
+zkvm/src/air/cpu.rs:51:26: replace + with *
+zkvm/src/air/cpu.rs:50:26: replace + with *
+zkvm/src/air/cpu.rs:52:25: replace + with -
+zkvm/src/air/cpu.rs:53:25: replace + with -
+zkvm/src/air/cpu.rs:52:25: replace + with *
+zkvm/src/air/cpu.rs:54:26: replace + with -
+zkvm/src/air/cpu.rs:53:25: replace + with *
+zkvm/src/air/cpu.rs:54:26: replace + with *
+zkvm/src/air/cpu.rs:55:25: replace + with -
+zkvm/src/air/cpu.rs:55:25: replace + with *
+zkvm/src/air/cpu.rs:56:24: replace + with -
+zkvm/src/air/cpu.rs:56:24: replace + with *
+zkvm/src/air/cpu.rs:57:25: replace + with -
+zkvm/src/air/cpu.rs:58:25: replace + with -
+zkvm/src/air/cpu.rs:57:25: replace + with *
+zkvm/src/air/cpu.rs:58:25: replace + with *
+zkvm/src/air/cpu.rs:59:25: replace + with -
+zkvm/src/air/cpu.rs:60:26: replace + with -
+zkvm/src/air/cpu.rs:59:25: replace + with *
+zkvm/src/air/cpu.rs:60:26: replace + with *
+zkvm/src/air/cpu.rs:61:25: replace + with -
+zkvm/src/air/cpu.rs:62:26: replace + with -
+zkvm/src/air/cpu.rs:61:25: replace + with *
+zkvm/src/air/cpu.rs:62:26: replace + with *
+zkvm/src/air/cpu.rs:63:27: replace + with -
+zkvm/src/air/cpu.rs:64:28: replace + with -
+zkvm/src/air/cpu.rs:63:27: replace + with *
+zkvm/src/air/cpu.rs:65:28: replace + with -
+zkvm/src/air/cpu.rs:64:28: replace + with *
+zkvm/src/air/cpu.rs:66:26: replace + with -
+zkvm/src/air/cpu.rs:65:28: replace + with *
+zkvm/src/air/cpu.rs:67:27: replace + with -
+zkvm/src/air/cpu.rs:67:27: replace + with *
+zkvm/src/air/cpu.rs:66:26: replace + with *
+zkvm/src/air/cpu.rs:68:28: replace + with -
+zkvm/src/air/cpu.rs:68:28: replace + with *
+zkvm/src/air/cpu.rs:69:28: replace + with -
+zkvm/src/air/cpu.rs:69:28: replace + with *
+zkvm/src/air/cpu.rs:70:28: replace + with -
+zkvm/src/air/cpu.rs:71:30: replace + with -
+zkvm/src/air/cpu.rs:70:28: replace + with *
+zkvm/src/air/cpu.rs:71:30: replace + with *
+zkvm/src/air/cpu.rs:87:5: replace word -> AB::Expr with Default::default()
+zkvm/src/air/cpu.rs:88:11: replace + with - in word
+zkvm/src/air/cpu.rs:88:11: replace + with * in word
+zkvm/src/air/cpu.rs:88:26: replace * with + in word
+zkvm/src/air/cpu.rs:88:38: replace << with >> in word
+zkvm/src/air/cpu.rs:88:44: replace * with / in word
+zkvm/src/air/cpu.rs:88:44: replace * with + in word
+zkvm/src/air/cpu.rs:93:5: replace diff24 -> AB::Expr with Default::default()
+zkvm/src/air/cpu.rs:93:48: replace + with - in diff24
+zkvm/src/air/cpu.rs:93:48: replace + with * in diff24
+zkvm/src/air/cpu.rs:93:18: replace + with - in diff24
+zkvm/src/air/cpu.rs:93:18: replace + with * in diff24
+zkvm/src/air/cpu.rs:93:33: replace * with + in diff24
+zkvm/src/air/cpu.rs:93:63: replace * with + in diff24
+zkvm/src/air/cpu.rs:103:5: replace eval with ()
+zkvm/src/air/cpu.rs:98:5: replace range_diff with ()
+zkvm/src/air/cpu.rs:108:42: replace + with - in eval
+zkvm/src/air/cpu.rs:108:42: replace + with * in eval
+zkvm/src/air/cpu.rs:108:31: replace + with * in eval
+zkvm/src/air/cpu.rs:109:32: replace + with - in eval
+zkvm/src/air/cpu.rs:109:32: replace + with * in eval
+zkvm/src/air/cpu.rs:130:56: replace + with - in eval
+zkvm/src/air/cpu.rs:130:56: replace + with * in eval
+zkvm/src/air/cpu.rs:131:68: replace + with - in eval
+zkvm/src/air/cpu.rs:131:68: replace + with * in eval
+zkvm/src/air/cpu.rs:134:28: replace + with - in eval
+zkvm/src/air/cpu.rs:134:28: replace + with * in eval
+zkvm/src/air/cpu.rs:135:32: replace + with - in eval
+zkvm/src/air/cpu.rs:135:32: replace + with * in eval
+zkvm/src/air/cpu.rs:136:29: replace + with * in eval
+zkvm/src/air/cpu.rs:136:29: replace + with - in eval
+zkvm/src/air/cpu.rs:136:47: replace * with + in eval
+zkvm/src/air/cpu.rs:144:9: replace + with - in eval
+zkvm/src/air/cpu.rs:144:9: replace + with * in eval
+zkvm/src/air/cpu.rs:143:9: replace + with - in eval
+zkvm/src/air/cpu.rs:143:9: replace + with * in eval
+zkvm/src/air/cpu.rs:142:9: replace + with - in eval
+zkvm/src/air/cpu.rs:142:9: replace + with * in eval
+zkvm/src/air/cpu.rs:141:9: replace + with - in eval
+zkvm/src/air/cpu.rs:141:9: replace + with * in eval
+zkvm/src/air/cpu.rs:140:9: replace + with - in eval
+zkvm/src/air/cpu.rs:140:9: replace + with * in eval
+zkvm/src/air/cpu.rs:139:9: replace + with * in eval
+zkvm/src/air/cpu.rs:139:9: replace + with - in eval
+zkvm/src/air/cpu.rs:138:9: replace + with - in eval
+zkvm/src/air/cpu.rs:138:9: replace + with * in eval
+zkvm/src/air/cpu.rs:145:31: replace + with - in eval
+zkvm/src/air/cpu.rs:144:27: replace * with + in eval
+zkvm/src/air/cpu.rs:145:31: replace + with * in eval
+zkvm/src/air/cpu.rs:146:52: replace + with - in eval
+zkvm/src/air/cpu.rs:146:52: replace + with * in eval
+zkvm/src/air/cpu.rs:146:39: replace * with + in eval
+zkvm/src/air/cpu.rs:151:51: replace * with + in eval
+zkvm/src/air/cpu.rs:151:35: replace - with + in eval
+zkvm/src/air/cpu.rs:155:36: replace - with + in eval
+zkvm/src/air/cpu.rs:160:34: replace * with + in eval
+zkvm/src/air/cpu.rs:160:52: replace - with + in eval
+zkvm/src/air/cpu.rs:161:34: replace * with + in eval
+zkvm/src/air/cpu.rs:161:51: replace - with + in eval
+zkvm/src/air/cpu.rs:162:34: replace * with + in eval
+zkvm/src/air/cpu.rs:162:69: replace - with + in eval
+zkvm/src/air/cpu.rs:162:52: replace - with + in eval
+zkvm/src/air/cpu.rs:164:65: replace * with + in eval
+zkvm/src/air/cpu.rs:164:36: replace * with + in eval
+zkvm/src/air/cpu.rs:164:51: replace - with + in eval
+zkvm/src/air/cpu.rs:164:80: replace - with + in eval
+zkvm/src/air/cpu.rs:165:34: replace * with + in eval
+zkvm/src/air/cpu.rs:168:35: replace * with + in eval
+zkvm/src/air/cpu.rs:170:34: replace * with + in eval
+zkvm/src/air/cpu.rs:170:51: replace - with + in eval
+zkvm/src/air/cpu.rs:170:66: replace + with - in eval
+zkvm/src/air/cpu.rs:170:66: replace + with * in eval
+zkvm/src/air/cpu.rs:172:30: replace * with + in eval
+zkvm/src/air/cpu.rs:176:52: replace * with + in eval
+zkvm/src/air/cpu.rs:172:48: replace - with + in eval
+zkvm/src/air/cpu.rs:176:36: replace - with + in eval
+zkvm/src/air/cpu.rs:185:33: replace - with + in eval
+zkvm/src/air/cpu.rs:191:37: replace + with - in eval
+zkvm/src/air/cpu.rs:191:37: replace + with * in eval
+zkvm/src/air/cpu.rs:193:55: replace + with - in eval
+zkvm/src/air/cpu.rs:193:55: replace + with * in eval
+zkvm/src/air/cpu.rs:204:26: replace * with + in eval
+zkvm/src/air/cpu.rs:204:71: replace - with + in eval
+zkvm/src/air/cpu.rs:204:57: replace - with + in eval
+zkvm/src/air/cpu.rs:204:38: replace - with + in eval
+zkvm/src/air/cpu.rs:211:37: replace + with - in eval
+zkvm/src/air/cpu.rs:211:37: replace + with * in eval
+zkvm/src/air/cpu.rs:212:52: replace + with - in eval
+zkvm/src/air/cpu.rs:212:52: replace + with * in eval
+zkvm/src/air/cpu.rs:222:37: replace * with + in eval
+zkvm/src/air/cpu.rs:222:76: replace - with + in eval
+zkvm/src/air/cpu.rs:222:62: replace - with + in eval
+zkvm/src/air/cpu.rs:222:46: replace - with + in eval
+zkvm/src/air/cpu.rs:224:36: replace - with + in eval
+zkvm/src/air/cpu.rs:226:44: replace * with + in eval
+zkvm/src/air/cpu.rs:226:51: replace + with * in eval
+zkvm/src/air/cpu.rs:226:51: replace + with - in eval
+zkvm/src/air/cpu.rs:228:40: replace * with + in eval
+zkvm/src/air/cpu.rs:230:44: replace * with + in eval
+zkvm/src/air/cpu.rs:235:56: replace * with + in eval
+zkvm/src/air/cpu.rs:235:36: replace - with + in eval
+zkvm/src/air/cpu.rs:257:37: replace * with + in eval
+zkvm/src/air/cpu.rs:257:54: replace - with + in eval
+zkvm/src/air/cpu.rs:269:38: replace + with - in eval
+zkvm/src/air/cpu.rs:269:38: replace + with * in eval
+zkvm/src/air/cpu.rs:282:48: replace * with + in eval
+zkvm/src/air/cpu.rs:282:32: replace - with + in eval
+zkvm/src/air/cpu.rs:283:30: replace + with - in eval
+zkvm/src/air/cpu.rs:283:30: replace + with * in eval
+zkvm/src/air/cpu.rs:283:39: replace * with + in eval
+zkvm/src/air/cpu.rs:283:54: replace - with + in eval
+zkvm/src/air/cpu.rs:283:61: replace * with + in eval
+zkvm/src/air/cpu.rs:297:13: replace * with + in eval
+zkvm/src/air/cpu.rs:297:68: replace - with + in eval
+zkvm/src/air/cpu.rs:297:42: replace - with + in eval
+zkvm/src/air/cpu.rs:297:29: replace - with + in eval
+zkvm/src/air/cpu.rs:297:55: replace * with + in eval
+zkvm/src/air/cpu.rs:297:80: replace * with + in eval
+zkvm/src/air/cpu.rs:302:40: replace * with + in eval
+zkvm/src/air/cpu.rs:300:32: replace - with + in eval
+zkvm/src/air/cpu.rs:305:47: replace + with * in eval
+zkvm/src/air/cpu.rs:305:47: replace + with - in eval
+zkvm/src/air/cpu.rs:306:35: replace - with + in eval
+zkvm/src/air/cpu.rs:306:61: replace - with + in eval
+zkvm/src/air/cpu.rs:307:60: replace * with + in eval
+zkvm/src/air/cpu.rs:307:32: replace - with + in eval
+zkvm/src/air/cpu.rs:307:46: replace * with + in eval
+zkvm/src/air/cpu.rs:308:32: replace - with + in eval
+zkvm/src/air/cpu.rs:308:59: replace * with + in eval
+zkvm/src/air/cpu.rs:308:46: replace * with + in eval
+zkvm/src/air/cpu.rs:309:32: replace - with + in eval
+zkvm/src/air/cpu.rs:309:52: replace * with + in eval
+zkvm/src/air/cpu.rs:309:46: replace * with + in eval
+zkvm/src/air/cpu.rs:310:59: replace * with + in eval
+zkvm/src/air/cpu.rs:310:46: replace * with + in eval
+zkvm/src/air/cpu.rs:311:30: replace * with + in eval
+zkvm/src/air/cpu.rs:312:30: replace * with + in eval
+zkvm/src/air/cpu.rs:313:30: replace * with + in eval
+zkvm/src/air/cpu.rs:316:13: replace * with + in eval
+zkvm/src/air/cpu.rs:316:82: replace - with + in eval
+zkvm/src/air/cpu.rs:316:56: replace + with - in eval
+zkvm/src/air/cpu.rs:316:56: replace + with * in eval
+zkvm/src/air/cpu.rs:316:43: replace + with - in eval
+zkvm/src/air/cpu.rs:316:43: replace + with * in eval
+zkvm/src/air/cpu.rs:316:30: replace * with + in eval
+zkvm/src/air/cpu.rs:316:69: replace * with + in eval
+zkvm/src/air/cpu.rs:318:47: replace * with + in eval
+zkvm/src/air/cpu.rs:318:32: replace - with + in eval
+zkvm/src/air/cpu.rs:338:67: replace + with - in eval
+zkvm/src/air/cpu.rs:338:67: replace + with * in eval
+zkvm/src/air/cpu.rs:352:9: replace + with - in eval
+zkvm/src/air/cpu.rs:352:9: replace + with * in eval
+zkvm/src/air/cpu.rs:351:9: replace + with - in eval
+zkvm/src/air/cpu.rs:351:9: replace + with * in eval
+zkvm/src/air/cpu.rs:350:9: replace + with * in eval
+zkvm/src/air/cpu.rs:350:9: replace + with - in eval
+zkvm/src/air/cpu.rs:349:9: replace + with - in eval
+zkvm/src/air/cpu.rs:349:9: replace + with * in eval
+zkvm/src/air/cpu.rs:350:17: replace * with + in eval
+zkvm/src/air/cpu.rs:351:24: replace * with + in eval
+zkvm/src/air/cpu.rs:350:34: replace - with + in eval
+zkvm/src/air/cpu.rs:351:16: replace * with + in eval
+zkvm/src/air/cpu.rs:351:33: replace - with + in eval
+zkvm/src/air/cpu.rs:352:18: replace * with + in eval
+zkvm/src/air/cpu.rs:352:38: replace - with + in eval
+zkvm/src/air/cpu.rs:352:33: replace - with + in eval
+zkvm/src/air/cpu.rs:353:32: replace * with + in eval
+zkvm/src/air/cpu.rs:353:54: replace - with + in eval
+zkvm/src/air/cpu.rs:358:52: replace + with * in eval
+zkvm/src/air/cpu.rs:358:52: replace + with - in eval
+zkvm/src/air/cpu.rs:361:35: replace * with + in eval
+zkvm/src/air/cpu.rs:361:74: replace - with + in eval
+zkvm/src/air/cpu.rs:361:60: replace - with + in eval
+zkvm/src/air/cpu.rs:361:44: replace - with + in eval
+zkvm/src/air/cpu.rs:366:34: replace - with + in eval
+zkvm/src/air/cpu.rs:368:42: replace * with + in eval
+zkvm/src/air/cpu.rs:371:56: replace * with + in eval
+zkvm/src/air/cpu.rs:371:40: replace - with + in eval
+zkvm/src/air/cpu.rs:376:58: replace + with - in eval
+zkvm/src/air/cpu.rs:376:58: replace + with * in eval
+zkvm/src/air/cpu.rs:376:73: replace * with + in eval
+zkvm/src/air/cpu.rs:377:47: replace + with - in eval
+zkvm/src/air/cpu.rs:377:47: replace + with * in eval
+zkvm/src/air/cpu.rs:377:32: replace * with + in eval
+zkvm/src/air/cpu.rs:377:62: replace * with + in eval
+zkvm/src/air/cpu.rs:378:47: replace + with - in eval
+zkvm/src/air/cpu.rs:378:47: replace + with * in eval
+zkvm/src/air/cpu.rs:378:32: replace * with + in eval
+zkvm/src/air/cpu.rs:378:62: replace * with + in eval
+zkvm/src/air/cpu.rs:380:36: replace * with + in eval
+zkvm/src/air/cpu.rs:382:55: replace * with + in eval
+zkvm/src/air/cpu.rs:383:55: replace * with + in eval
+zkvm/src/air/cpu.rs:382:32: replace - with + in eval
+zkvm/src/air/cpu.rs:383:32: replace - with + in eval
+zkvm/src/air/cpu.rs:384:48: replace + with - in eval
+zkvm/src/air/cpu.rs:384:48: replace + with * in eval
+zkvm/src/air/cpu.rs:384:32: replace * with + in eval
+zkvm/src/air/cpu.rs:384:61: replace * with + in eval
+zkvm/src/air/cpu.rs:385:39: replace * with + in eval
+zkvm/src/air/cpu.rs:385:81: replace - with + in eval
+zkvm/src/air/cpu.rs:385:52: replace - with + in eval
+zkvm/src/air/cpu.rs:385:66: replace * with + in eval
+zkvm/src/air/cpu.rs:387:19: replace * with + in eval
+zkvm/src/air/cpu.rs:389:30: replace * with + in eval
+zkvm/src/air/cpu.rs:388:27: replace * with + in eval
+zkvm/src/air/cpu.rs:391:34: replace * with + in eval
+zkvm/src/air/cpu.rs:389:47: replace - with + in eval
+zkvm/src/air/cpu.rs:391:47: replace - with + in eval
+zkvm/src/air/cpu.rs:393:27: replace * with + in eval
+zkvm/src/air/cpu.rs:394:30: replace * with + in eval
+zkvm/src/air/cpu.rs:394:47: replace - with + in eval
+zkvm/src/air/cpu.rs:395:30: replace * with + in eval
+zkvm/src/air/cpu.rs:397:34: replace * with + in eval
+zkvm/src/air/cpu.rs:395:47: replace - with + in eval
+zkvm/src/air/cpu.rs:399:19: replace * with + in eval
+zkvm/src/air/cpu.rs:397:47: replace - with + in eval
+zkvm/src/air/cpu.rs:401:34: replace * with + in eval
+zkvm/src/air/cpu.rs:401:51: replace - with + in eval
+zkvm/src/air/cpu.rs:405:27: replace * with + in eval
+zkvm/src/air/cpu.rs:409:17: replace * with + in eval
+zkvm/src/air/cpu.rs:411:21: replace - with + in eval
+zkvm/src/air/cpu.rs:410:21: replace - with + in eval
+zkvm/src/air/cpu.rs:410:36: replace * with + in eval
+zkvm/src/air/cpu.rs:411:52: replace * with + in eval
+zkvm/src/air/cpu.rs:411:36: replace - with + in eval
+zkvm/src/air/cpu.rs:414:28: replace * with + in eval
+zkvm/src/air/cpu.rs:418:17: replace * with + in eval
+zkvm/src/air/cpu.rs:420:21: replace - with + in eval
+zkvm/src/air/cpu.rs:419:21: replace - with + in eval
+zkvm/src/air/cpu.rs:419:38: replace * with + in eval
+zkvm/src/air/cpu.rs:420:54: replace * with + in eval
+zkvm/src/air/cpu.rs:420:36: replace - with + in eval
+zkvm/src/air/cpu.rs:423:19: replace * with + in eval
+zkvm/src/air/cpu.rs:425:34: replace * with + in eval
+zkvm/src/air/cpu.rs:433:72: replace - with + in eval
+zkvm/src/air/cpu.rs:425:51: replace - with + in eval
+zkvm/src/air/cpu.rs:433:58: replace + with * in eval
+zkvm/src/air/cpu.rs:433:58: replace + with - in eval
+zkvm/src/air/cpu.rs:433:44: replace + with - in eval
+zkvm/src/air/cpu.rs:433:44: replace + with * in eval
+zkvm/src/air/cpu.rs:433:30: replace + with * in eval
+zkvm/src/air/cpu.rs:433:30: replace + with - in eval
+zkvm/src/air/cpu.rs:436:13: replace * with + in eval
+zkvm/src/air/cpu.rs:436:62: replace - with + in eval
+zkvm/src/air/cpu.rs:436:35: replace - with + in eval
+zkvm/src/air/cpu.rs:436:49: replace * with + in eval
+zkvm/src/air/cpu.rs:436:29: replace - with + in eval
+zkvm/src/air/cpu.rs:436:76: replace * with + in eval
+zkvm/src/air/cpu.rs:441:69: replace + with - in eval
+zkvm/src/air/cpu.rs:466:39: replace * with + in eval
+zkvm/src/air/cpu.rs:441:69: replace + with * in eval
+zkvm/src/air/memory.rs:54:5: replace image_eval with ()
+zkvm/src/air/memory.rs:73:5: replace output_eval with ()
+zkvm/src/air/memory.rs:92:5: replace init_eval with ()
+zkvm/src/air/memory.rs:97:53: replace * with + in init_eval
+zkvm/src/air/memory.rs:97:37: replace - with + in init_eval
+zkvm/src/air/memory.rs:101:11: replace + with - in init_eval
+zkvm/src/air/memory.rs:101:11: replace + with * in init_eval
+zkvm/src/air/memory.rs:101:31: replace * with + in init_eval
+zkvm/src/air/memory.rs:101:18: replace + with - in init_eval
+zkvm/src/air/memory.rs:101:18: replace + with * in init_eval
+zkvm/src/air/memory.rs:101:43: replace << with >> in init_eval
+zkvm/src/air/memory.rs:101:49: replace * with + in init_eval
+zkvm/src/air/memory.rs:101:49: replace * with / in init_eval
+zkvm/src/air/memory.rs:103:34: replace - with + in init_eval
+zkvm/src/air/memory.rs:104:39: replace + with - in init_eval
+zkvm/src/air/memory.rs:104:39: replace + with * in init_eval
+zkvm/src/air/memory.rs:105:24: replace + with - in init_eval
+zkvm/src/air/memory.rs:105:43: replace + with - in init_eval
+zkvm/src/air/memory.rs:105:43: replace + with * in init_eval
+zkvm/src/air/memory.rs:106:24: replace + with - in init_eval
+zkvm/src/air/memory.rs:106:24: replace + with * in init_eval
+zkvm/src/air/memory.rs:110:44: replace + with - in init_eval
+zkvm/src/air/memory.rs:110:44: replace + with * in init_eval
+zkvm/src/air/memory.rs:113:11: replace + with - in init_eval
+zkvm/src/air/memory.rs:113:11: replace + with * in init_eval
+zkvm/src/air/memory.rs:113:30: replace * with + in init_eval
+zkvm/src/air/memory.rs:113:17: replace + with - in init_eval
+zkvm/src/air/memory.rs:113:17: replace + with * in init_eval
+zkvm/src/air/memory.rs:113:42: replace << with >> in init_eval
+zkvm/src/air/memory.rs:113:48: replace * with + in init_eval
+zkvm/src/air/memory.rs:113:48: replace * with / in init_eval
+zkvm/src/air/memory.rs:116:28: replace * with + in init_eval
+zkvm/src/air/memory.rs:116:79: replace - with + in init_eval
+zkvm/src/air/memory.rs:116:63: replace - with + in init_eval
+zkvm/src/air/memory.rs:116:46: replace - with + in init_eval
+zkvm/src/air/memory.rs:118:37: replace + with - in init_eval
+zkvm/src/air/memory.rs:118:37: replace + with * in init_eval
+zkvm/src/air/memory.rs:119:23: replace + with * in init_eval
+zkvm/src/air/memory.rs:119:23: replace + with - in init_eval
+zkvm/src/air/memory.rs:119:41: replace + with * in init_eval
+zkvm/src/air/memory.rs:119:41: replace + with - in init_eval
+zkvm/src/air/memory.rs:120:23: replace + with - in init_eval
+zkvm/src/air/memory.rs:120:23: replace + with * in init_eval
+zkvm/src/air/memory.rs:125:30: replace * with + in init_eval
+zkvm/src/air/memory.rs:125:47: replace - with + in init_eval
+zkvm/src/air/memory.rs:127:52: replace * with + in init_eval
+zkvm/src/air/memory.rs:127:38: replace - with + in init_eval
+zkvm/src/air/memory.rs:127:59: replace + with - in init_eval
+zkvm/src/air/memory.rs:127:59: replace + with * in init_eval
+zkvm/src/air/memory.rs:130:37: replace + with - in init_eval
+zkvm/src/air/memory.rs:130:37: replace + with * in init_eval
+zkvm/src/air/memory.rs:138:19: replace + with - in init_eval
+zkvm/src/air/memory.rs:138:19: replace + with * in init_eval
+zkvm/src/air/memory.rs:146:19: replace + with - in init_eval
+zkvm/src/air/memory.rs:146:19: replace + with * in init_eval
+zkvm/src/air/memory.rs:171:36: replace + with - in init_trace
+zkvm/src/air/memory.rs:171:36: replace + with * in init_trace
+zkvm/src/air/memory.rs:200:28: replace + with * in register_image
+zkvm/src/air/memory.rs:200:38: replace == with != in register_image
+zkvm/src/air/poseidon.rs:57:35: replace - with +
+zkvm/src/air/poseidon.rs:57:35: replace - with /
+zkvm/src/air/poseidon.rs:60:28: replace + with -
+zkvm/src/air/poseidon.rs:60:28: replace + with *
+zkvm/src/air/poseidon.rs:61:24: replace + with -
+zkvm/src/air/poseidon.rs:61:24: replace + with *
+zkvm/src/air/poseidon.rs:62:23: replace + with -
+zkvm/src/air/poseidon.rs:62:23: replace + with *
+zkvm/src/air/poseidon.rs:63:23: replace + with -
+zkvm/src/air/poseidon.rs:63:23: replace + with *
+zkvm/src/air/poseidon.rs:65:23: replace + with -
+zkvm/src/air/poseidon.rs:65:23: replace + with *
+zkvm/src/air/poseidon.rs:66:25: replace + with -
+zkvm/src/air/poseidon.rs:69:32: replace + with -
+zkvm/src/air/poseidon.rs:66:25: replace + with *
+zkvm/src/air/poseidon.rs:69:37: replace * with +
+zkvm/src/air/poseidon.rs:69:37: replace * with /
+zkvm/src/air/poseidon.rs:86:5: replace canonical -> AB::Expr with Default::default()
+zkvm/src/air/poseidon.rs:87:29: replace * with + in canonical
+zkvm/src/air/poseidon.rs:87:45: replace - with + in canonical
+zkvm/src/air/poseidon.rs:89:33: replace * with + in canonical
+zkvm/src/air/poseidon.rs:91:18: replace + with - in canonical
+zkvm/src/air/poseidon.rs:91:33: replace - with + in canonical
+zkvm/src/air/poseidon.rs:91:18: replace + with * in canonical
+zkvm/src/air/poseidon.rs:91:37: replace * with + in canonical
+zkvm/src/air/poseidon.rs:95:5: replace word -> AB::Expr with Default::default()
+zkvm/src/air/poseidon.rs:96:11: replace + with - in word
+zkvm/src/air/poseidon.rs:96:26: replace * with + in word
+zkvm/src/air/poseidon.rs:96:11: replace + with * in word
+zkvm/src/air/poseidon.rs:96:38: replace << with >> in word
+zkvm/src/air/poseidon.rs:96:44: replace * with + in word
+zkvm/src/air/poseidon.rs:96:44: replace * with / in word
+zkvm/src/air/poseidon.rs:109:51: replace + with - in eval
+zkvm/src/air/poseidon.rs:101:5: replace eval with ()
+zkvm/src/air/poseidon.rs:109:51: replace + with * in eval
+zkvm/src/air/poseidon.rs:112:50: replace * with + in eval
+zkvm/src/air/poseidon.rs:114:34: replace * with + in eval
+zkvm/src/air/poseidon.rs:114:47: replace - with + in eval
+zkvm/src/air/poseidon.rs:116:31: replace + with - in eval
+zkvm/src/air/poseidon.rs:116:31: replace + with * in eval
+zkvm/src/air/poseidon.rs:117:41: replace + with - in eval
+zkvm/src/air/poseidon.rs:117:41: replace + with * in eval
+zkvm/src/air/poseidon.rs:117:28: replace * with + in eval
+zkvm/src/air/poseidon.rs:118:33: replace + with - in eval
+zkvm/src/air/poseidon.rs:118:33: replace + with * in eval
+zkvm/src/air/poseidon.rs:118:20: replace * with + in eval
+zkvm/src/air/poseidon.rs:123:26: replace + with - in eval
+zkvm/src/air/poseidon.rs:123:26: replace + with * in eval
+zkvm/src/air/poseidon.rs:123:30: replace * with + in eval
+zkvm/src/air/poseidon.rs:123:30: replace * with / in eval
+zkvm/src/air/poseidon.rs:124:56: replace + with * in eval
+zkvm/src/air/poseidon.rs:124:56: replace + with - in eval
+zkvm/src/air/poseidon.rs:125:25: replace + with * in eval
+zkvm/src/air/poseidon.rs:125:25: replace + with - in eval
+zkvm/src/air/poseidon.rs:126:58: replace + with - in eval
+zkvm/src/air/poseidon.rs:126:58: replace + with * in eval
+zkvm/src/air/poseidon.rs:126:54: replace + with * in eval
+zkvm/src/air/poseidon.rs:126:54: replace + with - in eval
+zkvm/src/air/poseidon.rs:127:60: replace + with * in eval
+zkvm/src/air/poseidon.rs:127:60: replace + with - in eval
+zkvm/src/air/poseidon.rs:127:56: replace + with * in eval
+zkvm/src/air/poseidon.rs:127:56: replace + with - in eval
+zkvm/src/air/poseidon.rs:128:32: replace + with - in eval
+zkvm/src/air/poseidon.rs:128:32: replace + with * in eval
+zkvm/src/air/poseidon.rs:128:54: replace + with - in eval
+zkvm/src/air/poseidon.rs:128:54: replace + with * in eval
+zkvm/src/air/poseidon.rs:132:36: replace * with + in eval
+zkvm/src/air/poseidon.rs:132:52: replace - with + in eval
+zkvm/src/air/poseidon.rs:133:36: replace * with + in eval
+zkvm/src/air/poseidon.rs:133:61: replace - with + in eval
+zkvm/src/air/poseidon.rs:133:48: replace + with - in eval
+zkvm/src/air/poseidon.rs:133:48: replace + with * in eval
+zkvm/src/air/poseidon.rs:139:34: replace + with - in eval
+zkvm/src/air/poseidon.rs:139:34: replace + with * in eval
+zkvm/src/air/poseidon.rs:148:63: replace + with - in eval
+zkvm/src/air/poseidon.rs:148:63: replace + with * in eval
+zkvm/src/air/poseidon.rs:148:33: replace + with - in eval
+zkvm/src/air/poseidon.rs:148:33: replace + with * in eval
+zkvm/src/air/poseidon.rs:148:48: replace * with + in eval
+zkvm/src/air/poseidon.rs:148:78: replace * with + in eval
+zkvm/src/air/poseidon.rs:149:36: replace * with + in eval
+zkvm/src/air/poseidon.rs:149:72: replace - with + in eval
+zkvm/src/air/poseidon.rs:149:56: replace - with + in eval
+zkvm/src/air/poseidon.rs:149:51: replace - with + in eval
+zkvm/src/air/poseidon.rs:177:5: replace canonical_flag -> (Val, u32) with (Default::default(), 0)
+zkvm/src/air/poseidon.rs:177:5: replace canonical_flag -> (Val, u32) with (Default::default(), 1)
+zkvm/src/air/poseidon.rs:178:16: replace >> with << in canonical_flag
+zkvm/src/air/poseidon.rs:179:11: replace == with != in canonical_flag
+zkvm/src/air/poseidon.rs:182:24: replace + with - in canonical_flag
+zkvm/src/air/poseidon.rs:201:13: replace * with + in trace
+zkvm/src/air/poseidon.rs:182:24: replace + with * in canonical_flag
+zkvm/src/air/poseidon.rs:201:13: replace * with / in trace
+zkvm/src/air/poseidon.rs:201:32: replace + with - in trace
+zkvm/src/air/poseidon.rs:201:32: replace + with * in trace
+zkvm/src/air/poseidon.rs:201:24: replace * with + in trace
+zkvm/src/air/poseidon.rs:201:24: replace * with / in trace
+zkvm/src/air/poseidon.rs:202:43: replace * with + in trace
+zkvm/src/air/poseidon.rs:202:43: replace * with / in trace
+zkvm/src/air/poseidon.rs:202:62: replace * with + in trace
+zkvm/src/air/poseidon.rs:202:62: replace * with / in trace
+zkvm/src/air/poseidon.rs:202:57: replace + with - in trace
+zkvm/src/air/poseidon.rs:202:57: replace + with * in trace
+zkvm/src/air/poseidon.rs:204:26: replace * with + in trace
+zkvm/src/air/poseidon.rs:204:26: replace * with / in trace
+zkvm/src/air/poseidon.rs:204:43: replace * with + in trace
+zkvm/src/air/poseidon.rs:204:43: replace * with / in trace
+zkvm/src/air/poseidon.rs:204:38: replace + with - in trace
+zkvm/src/air/poseidon.rs:204:38: replace + with * in trace
+zkvm/src/air/poseidon.rs:207:20: replace + with - in trace
+zkvm/src/air/poseidon.rs:207:20: replace + with * in trace
+zkvm/src/air/poseidon.rs:210:41: replace & with | in trace
+zkvm/src/air/poseidon.rs:210:41: replace & with ^ in trace
+zkvm/src/air/poseidon.rs:211:38: replace & with | in trace
+zkvm/src/air/poseidon.rs:211:38: replace & with ^ in trace
+zkvm/src/air/poseidon.rs:212:41: replace / with % in trace
+zkvm/src/air/poseidon.rs:212:41: replace / with * in trace
+zkvm/src/air/poseidon.rs:214:38: replace + with - in trace
+zkvm/src/air/poseidon.rs:214:38: replace + with * in trace
+zkvm/src/air/poseidon.rs:214:21: replace * with + in trace
+zkvm/src/air/poseidon.rs:214:21: replace * with / in trace
+zkvm/src/air/poseidon.rs:214:33: replace + with - in trace
+zkvm/src/air/poseidon.rs:214:33: replace + with * in trace
+zkvm/src/air/poseidon.rs:217:30: replace + with - in trace
+zkvm/src/air/poseidon.rs:217:30: replace + with * in trace
+zkvm/src/air/poseidon.rs:217:34: replace * with + in trace
+zkvm/src/air/poseidon.rs:217:34: replace * with / in trace
+zkvm/src/air/poseidon.rs:218:26: replace + with - in trace
+zkvm/src/air/poseidon.rs:218:26: replace + with * in trace
+zkvm/src/air/poseidon.rs:219:20: replace + with - in trace
+zkvm/src/air/poseidon.rs:219:20: replace + with * in trace
+zkvm/src/air/poseidon.rs:220:43: replace - with + in trace
+zkvm/src/air/poseidon.rs:220:43: replace - with / in trace
+zkvm/src/air/poseidon.rs:220:25: replace - with + in trace
+zkvm/src/air/poseidon.rs:220:25: replace - with / in trace
+zkvm/src/air/poseidon.rs:224:20: replace + with - in trace
+zkvm/src/air/poseidon.rs:224:20: replace + with * in trace
+zkvm/src/air/poseidon.rs:224:30: replace + with - in trace
+zkvm/src/air/poseidon.rs:224:30: replace + with * in trace
+zkvm/src/air/poseidon.rs:226:20: replace + with - in trace
+zkvm/src/air/poseidon.rs:226:20: replace + with * in trace
+zkvm/src/air/poseidon.rs:226:30: replace + with - in trace
+zkvm/src/air/poseidon.rs:226:30: replace + with * in trace
+zkvm/src/air/poseidon.rs:230:20: replace + with - in trace
+zkvm/src/air/poseidon.rs:230:20: replace + with * in trace
+zkvm/src/air/poseidon.rs:231:20: replace + with - in trace
+zkvm/src/air/poseidon.rs:231:20: replace + with * in trace
+zkvm/src/air/program.rs:58:5: replace fields -> [Val; f::COUNT] with [Default::default(); f::COUNT]
+zkvm/src/air/program.rs:106:26: replace + with - in fields
+zkvm/src/air/program.rs:106:26: replace + with * in fields
+zkvm/src/air/program.rs:109:31: replace == with != in fields
+zkvm/src/air/program.rs:110:31: replace == with != in fields
+zkvm/src/air/program.rs:113:34: replace == with != in fields
+zkvm/src/air/program.rs:111:31: replace == with != in fields
+zkvm/src/air/program.rs:122:38: replace && with || in fields
+zkvm/src/air/program.rs:122:44: replace != with == in fields
+zkvm/src/air/program.rs:124:28: replace + with - in fields
+zkvm/src/air/program.rs:124:28: replace + with * in fields
+zkvm/src/air/program.rs:132:44: replace + with -
+zkvm/src/air/program.rs:132:44: replace + with *
+zkvm/src/air/program.rs:132:33: replace + with *
+zkvm/src/air/program.rs:133:26: replace + with *
+zkvm/src/air/program.rs:137:5: replace height -> usize with 0
+zkvm/src/air/program.rs:137:5: replace height -> usize with 1
+zkvm/src/air/program.rs:146:26: replace * with + in preprocessed
+zkvm/src/air/program.rs:146:26: replace * with / in preprocessed
+zkvm/src/air/program.rs:146:48: replace * with + in preprocessed
+zkvm/src/air/program.rs:146:48: replace * with / in preprocessed
+zkvm/src/air/program.rs:146:43: replace + with - in preprocessed
+zkvm/src/air/program.rs:146:43: replace + with * in preprocessed
+zkvm/src/air/program.rs:147:48: replace + with - in preprocessed
+zkvm/src/air/program.rs:147:48: replace + with * in preprocessed
+zkvm/src/air/program.rs:147:52: replace * with + in preprocessed
+zkvm/src/air/program.rs:147:52: replace * with / in preprocessed
+zkvm/src/air/program.rs:148:16: replace + with - in preprocessed
+zkvm/src/air/program.rs:148:16: replace + with * in preprocessed
+zkvm/src/air/program.rs:155:5: replace eval with ()
+zkvm/src/air/program.rs:159:32: replace * with + in eval
+zkvm/src/air/program.rs:161:34: replace + with - in eval
+zkvm/src/air/program.rs:159:46: replace - with + in eval
+zkvm/src/air/util.rs:33:34: replace + with *
+zkvm/src/air/program.rs:161:34: replace + with * in eval
+zkvm/src/air/util.rs:43:32: replace + with - in blind_consume
+zkvm/src/air/util.rs:40:5: replace blind_consume with ()
+zkvm/src/air/util.rs:43:32: replace + with * in blind_consume
+zkvm/src/air/util.rs:46:42: replace + with - in blind_consume
+zkvm/src/air/util.rs:46:42: replace + with * in blind_consume
+zkvm/src/air/util.rs:46:54: replace + with - in blind_consume
+zkvm/src/air/util.rs:46:54: replace + with * in blind_consume
+zkvm/src/air/util.rs:53:5: replace blind_provide with ()
+zkvm/src/air/util.rs:58:54: replace * with + in blind_provide
+zkvm/src/air/util.rs:58:38: replace - with + in blind_provide
+zkvm/src/air/util.rs:87:5: replace mem_produce with ()
+zkvm/src/air/util.rs:102:5: replace mem_consume with ()
+zkvm/src/air/util.rs:137:5: replace row -> (Vec<AB::Expr>, Vec<AB::Expr>) with (vec![], vec![])
+zkvm/src/air/util.rs:105:52: delete - in mem_consume
+zkvm/src/air/util.rs:137:5: replace row -> (Vec<AB::Expr>, Vec<AB::Expr>) with (vec![], vec![Default::default()])
+zkvm/src/air/util.rs:137:5: replace row -> (Vec<AB::Expr>, Vec<AB::Expr>) with (vec![Default::default()], vec![])
+zkvm/src/air/util.rs:137:5: replace row -> (Vec<AB::Expr>, Vec<AB::Expr>) with (vec![Default::default()], vec![Default::default()])
+zkvm/src/air/util.rs:154:5: replace prep -> Vec<AB::Expr> with vec![]
+zkvm/src/air/util.rs:154:5: replace prep -> Vec<AB::Expr> with vec![Default::default()]
+zkvm/src/air/util.rs:156:48: replace + with - in prep
+zkvm/src/air/util.rs:156:48: replace + with * in prep
+zkvm/src/air/util.rs:164:5: replace c -> AB::Expr with Default::default()
+zkvm/src/air/util.rs:158:33: replace - with + in prep
+zkvm/src/air/util.rs:169:5: replace range_pair with ()
+zkvm/src/air/util.rs:176:5: replace range_bits with ()
+zkvm/src/air/util.rs:177:28: replace * with + in range_bits
+zkvm/src/air/util.rs:177:40: replace << with >> in range_bits
+zkvm/src/air/util.rs:177:46: replace - with + in range_bits
+zkvm/src/air/util.rs:177:46: replace - with / in range_bits
+zkvm/src/air/util.rs:183:5: replace range_word with ()
+zkvm/src/air/util.rs:189:5: replace bytes -> [Val; 4] with [Default::default(); 4]
+zkvm/src/air/util.rs:199:13: replace * with + in matrix
+zkvm/src/air/util.rs:199:13: replace * with / in matrix
+zkvm/src/air/util.rs:199:30: replace * with + in matrix
+zkvm/src/air/util.rs:199:30: replace * with / in matrix
+zkvm/src/air/util.rs:199:25: replace + with - in matrix
+zkvm/src/air/util.rs:199:25: replace + with * in matrix

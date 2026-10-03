@@ -1,0 +1,5 @@
+missed H02 zkvm/src/air/util.rs:76 1 << 26 -> (1 << 26) + 1
+caught H03 zkvm/src/air/util.rs:31 = 8; -> = 7;
+missed H04 zkvm/src/air/util.rs:31 = 8; -> = 9;
+caught H05 zkvm/src/air/cpu.rs:187 , 4, -> , 3,
+caught H06 zkvm/src/air/cpu.rs:187 , 4, -> , 5,

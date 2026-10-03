@@ -1,0 +1,31 @@
+zkvm/src/air/poseidon.rs:72:5: replace constants -> RoundConstants<Val, 16, 4, 13> with RoundConstants::new()
+zkvm/src/air/poseidon.rs:72:5: replace constants -> RoundConstants<Val, 16, 4, 13> with RoundConstants::from_iter([Default::default()])
+zkvm/src/air/poseidon.rs:72:5: replace constants -> RoundConstants<Val, 16, 4, 13> with RoundConstants::new(Default::default())
+zkvm/src/air/poseidon.rs:72:5: replace constants -> RoundConstants<Val, 16, 4, 13> with RoundConstants::from(Default::default())
+zkvm/src/air/poseidon.rs:80:5: replace air -> P2Air with Default::default()
+zkvm/src/air/poseidon.rs:87:29: replace * with / in canonical
+zkvm/src/air/poseidon.rs:87:45: replace - with / in canonical
+zkvm/src/air/poseidon.rs:89:33: replace * with / in canonical
+zkvm/src/air/poseidon.rs:91:33: replace - with / in canonical
+zkvm/src/air/poseidon.rs:91:37: replace * with / in canonical
+zkvm/src/air/poseidon.rs:96:26: replace * with / in word
+zkvm/src/air/poseidon.rs:112:34: replace - with / in eval
+zkvm/src/air/poseidon.rs:112:50: replace * with / in eval
+zkvm/src/air/poseidon.rs:114:47: replace - with / in eval
+zkvm/src/air/poseidon.rs:114:34: replace * with / in eval
+zkvm/src/air/poseidon.rs:117:28: replace * with / in eval
+zkvm/src/air/poseidon.rs:118:20: replace * with / in eval
+zkvm/src/air/poseidon.rs:132:36: replace * with / in eval
+zkvm/src/air/poseidon.rs:132:52: replace - with / in eval
+zkvm/src/air/poseidon.rs:133:36: replace * with / in eval
+zkvm/src/air/poseidon.rs:133:61: replace - with / in eval
+zkvm/src/air/poseidon.rs:148:48: replace * with / in eval
+zkvm/src/air/poseidon.rs:148:78: replace * with / in eval
+zkvm/src/air/poseidon.rs:149:36: replace * with / in eval
+zkvm/src/air/poseidon.rs:149:72: replace - with / in eval
+zkvm/src/air/poseidon.rs:149:56: replace - with / in eval
+zkvm/src/air/poseidon.rs:149:51: replace - with / in eval
+zkvm/src/air/poseidon.rs:187:5: replace trace -> RowMajorMatrix<Val> with RowMajorMatrix::new()
+zkvm/src/air/poseidon.rs:187:5: replace trace -> RowMajorMatrix<Val> with RowMajorMatrix::from_iter([Default::default()])
+zkvm/src/air/poseidon.rs:187:5: replace trace -> RowMajorMatrix<Val> with RowMajorMatrix::new(Default::default())
+zkvm/src/air/poseidon.rs:187:5: replace trace -> RowMajorMatrix<Val> with RowMajorMatrix::from(Default::default())

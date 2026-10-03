@@ -1,0 +1,8 @@
+zkvm/src/air/alu_mul.rs:109:29: replace + with * in eval
+zkvm/src/air/alu_mul.rs:110:29: replace + with * in eval
+zkvm/src/air/alu_shift.rs:67:29: replace + with * in eval
+zkvm/src/air/cpu.rs:108:31: replace + with - in eval
+zkvm/src/air/memory.rs:105:24: replace + with * in init_eval
+zkvm/src/air/poseidon.rs:252:5: replace p2_width -> usize with 0
+zkvm/src/air/poseidon.rs:252:5: replace p2_width -> usize with 1
+zkvm/src/air/util.rs:76:29: replace << with >>

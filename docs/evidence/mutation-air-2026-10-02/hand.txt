@@ -1,0 +1,62 @@
+H01|zkvm/src/air/util.rs|76|1 << 26|(1 << 26) - 1
+H02|zkvm/src/air/util.rs|76|1 << 26|(1 << 26) + 1
+H03|zkvm/src/air/util.rs|31|= 8;|= 7;
+H04|zkvm/src/air/util.rs|31|= 8;|= 9;
+H05|zkvm/src/air/cpu.rs|187|, 4,|, 3,
+H06|zkvm/src/air/cpu.rs|187|, 4,|, 5,
+H07|zkvm/src/air/cpu.rs|291|, 4,|, 3,
+H08|zkvm/src/air/cpu.rs|291|, 4,|, 5,
+H09|zkvm/src/air/cpu.rs|299|, 6,|, 5,
+H10|zkvm/src/air/cpu.rs|299|, 6,|, 7,
+H11|zkvm/src/air/cpu.rs|386|, 7,|, 6,
+H12|zkvm/src/air/cpu.rs|386|, 7,|, 8,
+H13|zkvm/src/air/cpu.rs|328|0x10|0x0f
+H14|zkvm/src/air/cpu.rs|328|0x10|0x11
+H15|zkvm/src/air/cpu.rs|454|0xc1|0xc0
+H16|zkvm/src/air/cpu.rs|454|0xc1|0xc2
+H17|zkvm/src/air/cpu.rs|454|0x0f)|0x0e)
+H18|zkvm/src/air/cpu.rs|454|0x0f)|0x10)
+H19|zkvm/src/air/cpu.rs|146|c::<AB>(4)|c::<AB>(3)
+H20|zkvm/src/air/cpu.rs|146|c::<AB>(4)|c::<AB>(5)
+H21|zkvm/src/air/cpu.rs|385|c::<AB>(128)|c::<AB>(127)
+H22|zkvm/src/air/cpu.rs|385|c::<AB>(128)|c::<AB>(129)
+H23|zkvm/src/air/cpu.rs|387|c::<AB>(255)|c::<AB>(254)
+H24|zkvm/src/air/cpu.rs|387|c::<AB>(255)|c::<AB>(256)
+H25|zkvm/src/air/memory.rs|106|, 3,|, 2,
+H26|zkvm/src/air/memory.rs|106|, 3,|, 4,
+H27|zkvm/src/air/memory.rs|120|, 3,|, 2,
+H28|zkvm/src/air/memory.rs|120|, 3,|, 4,
+H29|zkvm/src/air/alu_lt.rs|63|, 7,|, 6,
+H30|zkvm/src/air/alu_lt.rs|63|, 7,|, 8,
+H31|zkvm/src/air/alu_lt.rs|61|c::<AB>(128)|c::<AB>(127)
+H32|zkvm/src/air/alu_lt.rs|61|c::<AB>(128)|c::<AB>(129)
+H33|zkvm/src/air/alu_mul.rs|62|, 7,|, 6,
+H34|zkvm/src/air/alu_mul.rs|62|, 7,|, 8,
+H35|zkvm/src/air/alu_mul.rs|94|, 4,|, 3,
+H36|zkvm/src/air/alu_mul.rs|94|, 4,|, 5,
+H37|zkvm/src/air/alu_mul.rs|65|c::<AB>(255)|c::<AB>(254)
+H38|zkvm/src/air/alu_mul.rs|65|c::<AB>(255)|c::<AB>(256)
+H39|zkvm/src/air/alu_shift.rs|64|, 3,|, 2,
+H40|zkvm/src/air/alu_shift.rs|64|, 3,|, 4,
+H41|zkvm/src/air/alu_shift.rs|63|c::<AB>(32)|c::<AB>(31)
+H42|zkvm/src/air/alu_shift.rs|63|c::<AB>(32)|c::<AB>(33)
+H43|zkvm/src/air/alu_shift.rs|88|c::<AB>(32)|c::<AB>(31)
+H44|zkvm/src/air/alu_shift.rs|88|c::<AB>(32)|c::<AB>(33)
+H45|zkvm/src/air/alu_shift.rs|94|c::<AB>(3)|c::<AB>(2)
+H46|zkvm/src/air/alu_shift.rs|94|c::<AB>(3)|c::<AB>(4)
+H47|zkvm/src/air/alu_shift.rs|96|c::<AB>(15)|c::<AB>(14)
+H48|zkvm/src/air/alu_shift.rs|96|c::<AB>(15)|c::<AB>(16)
+H49|zkvm/src/air/poseidon.rs|111|, 4,|, 3,
+H50|zkvm/src/air/poseidon.rs|111|, 4,|, 5,
+H51|zkvm/src/air/poseidon.rs|113|, 6,|, 5,
+H52|zkvm/src/air/poseidon.rs|113|, 6,|, 7,
+H53|zkvm/src/air/poseidon.rs|87|c::<AB>(120)|c::<AB>(119)
+H54|zkvm/src/air/poseidon.rs|87|c::<AB>(120)|c::<AB>(121)
+H55|zkvm/src/air/poseidon.rs|91|c::<AB>(136)|c::<AB>(135)
+H56|zkvm/src/air/poseidon.rs|91|c::<AB>(136)|c::<AB>(137)
+H57|zkvm/src/air/poseidon.rs|91|e * c::<AB>(120)|e * c::<AB>(119)
+H58|zkvm/src/air/poseidon.rs|91|e * c::<AB>(120)|e * c::<AB>(121)
+H59|zkvm/src/air/byte.rs|18|1 << 16|(1 << 16) - 1
+H60|zkvm/src/air/byte.rs|18|1 << 16|(1 << 16) + 1
+H61|zkvm/src/air/poseidon.rs|117|c::<AB>(4)|c::<AB>(3)
+H62|zkvm/src/air/poseidon.rs|117|c::<AB>(4)|c::<AB>(5)

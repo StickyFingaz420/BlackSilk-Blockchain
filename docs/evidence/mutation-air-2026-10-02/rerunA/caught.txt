@@ -1,0 +1,13 @@
+zkvm/src/air/cpu.rs:168:50: replace - with + in eval
+zkvm/src/air/cpu.rs:310:32: replace - with + in eval
+zkvm/src/air/cpu.rs:346:30: replace - with + in eval
+zkvm/src/air/memory.rs:199:5: replace register_image -> Vec<(u32, u32)> with vec![]
+zkvm/src/air/memory.rs:199:5: replace register_image -> Vec<(u32, u32)> with vec![(0, 0)]
+zkvm/src/air/memory.rs:199:5: replace register_image -> Vec<(u32, u32)> with vec![(0, 1)]
+zkvm/src/air/memory.rs:199:5: replace register_image -> Vec<(u32, u32)> with vec![(1, 0)]
+zkvm/src/air/memory.rs:199:5: replace register_image -> Vec<(u32, u32)> with vec![(1, 1)]
+zkvm/src/air/memory.rs:200:28: replace + with - in register_image
+zkvm/src/air/poseidon.rs:112:34: replace - with + in eval
+zkvm/src/air/poseidon.rs:209:37: replace >> with << in trace
+zkvm/src/air/poseidon.rs:210:49: replace >> with << in trace
+zkvm/src/air/poseidon.rs:211:46: replace >> with << in trace

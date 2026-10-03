@@ -1,0 +1,1 @@
+zkvm/src/air/poseidon.rs:69:32: replace + with *
