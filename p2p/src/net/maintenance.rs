@@ -718,7 +718,13 @@ mod tests {
         assert_eq!(net.inner.state().peers.len(), 1, "left as a silent seed");
 
         // Control: the same zero limits with the instants in the past.
-        net.inner.state().peers.values_mut().next().unwrap().last_ping = Instant::now();
+        net.inner
+            .state()
+            .peers
+            .values_mut()
+            .next()
+            .unwrap()
+            .last_ping = Instant::now();
         let pinged = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 if let Message::Ping(_) = recv(r.recv().await.unwrap()) {
@@ -728,7 +734,13 @@ mod tests {
         })
         .await;
         assert!(pinged.is_ok(), "not pinged once the interval had passed");
-        net.inner.state().peers.values_mut().next().unwrap().connected_at = Instant::now();
+        net.inner
+            .state()
+            .peers
+            .values_mut()
+            .next()
+            .unwrap()
+            .connected_at = Instant::now();
         let left = tokio::time::timeout(Duration::from_secs(10), async {
             while r.recv().await.is_ok() {}
         })

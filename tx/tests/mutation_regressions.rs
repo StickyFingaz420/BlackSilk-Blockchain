@@ -728,14 +728,22 @@ fn a_deploys_signature_message_covers_its_pseudo_outputs_and_range_proof() {
     // The message is the transfer message's construction over the deploy's
     // prefix (which holds the payload).
     let t = d.as_transfer();
-    assert_ne!(t.signature_message(domain), message, "the payload is signed");
+    assert_ne!(
+        t.signature_message(domain),
+        message,
+        "the payload is signed"
+    );
 
     // The id covers every part: the pseudo-outputs, the range proof and the
     // signatures too (spec §4.4: tx_hash over prefix, base and prunable).
     let id = |d: &PxDeploy| Transaction::PxDeploy(Box::new(d.clone())).hash();
     let mut sig = d.clone();
     sig.signatures[0].d = other_point;
-    for (other, what) in [(&rp, "range proof"), (&pseudo, "pseudo-outputs"), (&sig, "signatures")] {
+    for (other, what) in [
+        (&rp, "range proof"),
+        (&pseudo, "pseudo-outputs"),
+        (&sig, "signatures"),
+    ] {
         assert_ne!(id(other), id(&d), "the id ignores the {what}");
     }
 }
