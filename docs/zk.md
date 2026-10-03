@@ -583,7 +583,7 @@ owner): a STARK on Plonky3 0.7.**
   computed and tested; not a proof, and not independent review.
 - **Headline (BS-ZK-3):** about **105 bits**, computed (not proven) under the
   assumptions of this section (§9.3), in the unique-decoding regime
-  (**89.7 statistical + 16 grinding**: the 108 queries at rate 1/8 give the
+  (**89.6 statistical + 16 grinding**: the 108 queries at rate 1/8 give the
   statistical part, and the 16 bits of query grinding are computational, counted
   against an adversary's Poseidon2 budget); the Johnson regime is **hash-bound at
   ≈ 122 bits** (`COLLISION_BITS`). The figures are pinned by
@@ -847,7 +847,7 @@ of scope until proof size is solved (aggregation-study.md).
 ## 12. Security analysis
 
 **Security headline (BS-ZK-3; figures and caveats in §9.3):** about **105 bits** of
-soundness, computed (not proven) under the assumptions of §9.3 (**89.7 statistical +
+soundness, computed (not proven) under the assumptions of §9.3 (**89.6 statistical +
 16 grinding**, unique-decoding regime); the Johnson regime is **hash-bound at
 ≈ 122 bits** (the Merkle commitments); zero knowledge is
 **statistical and conditional** (reviews/zk-coverage.md §3), and **computational in
@@ -868,7 +868,7 @@ secure or perfectly zero-knowledge; it is internal engineering work, not an audi
      distinguish these PRG outputs from random (and under the conditions of
      zk-coverage.md §3).
    - **Soundness** counts 16 bits of proof-of-work grinding, which are computational
-     (an adversary's Poseidon2 budget), on top of 89.7 statistical bits.
+     (an adversary's Poseidon2 budget), on top of 89.6 statistical bits.
 2. **`Hk`** (the sponge): collision resistance, preimage resistance, and PRF security
    when keyed (nullifiers), assuming the Poseidon2 permutation behaves ideally. This is
    the key PX assumption. It does **not** extend to the tree-node compression
