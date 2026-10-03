@@ -637,4 +637,37 @@ mod tests {
         );
         assert!(net.inner.state().peers.is_empty());
     }
+
+    /// Queued announcements go out in `InvTx` messages of at most `MAX_INV`
+    /// (500) ids, the most a peer decodes: 501 queued ids are sent as 500
+    /// and 1.
+    #[tokio::test]
+    async fn queued_announcements_go_out_in_messages_of_at_most_500_ids() {
+        assert_eq!(crate::message::MAX_INV, 500);
+        let net = idle_network(|_| {}).await;
+        let (mut r, _w) = raw_peer(&net).await;
+        {
+            let mut st = net.inner.state();
+            let p = st.peers.values_mut().next().unwrap();
+            p.inv_queue = (0..501u32)
+                .map(|i| {
+                    let mut h = [0x55; 32];
+                    h[..4].copy_from_slice(&i.to_le_bytes());
+                    h
+                })
+                .collect();
+            p.next_inv = Instant::now();
+        }
+        let mut sizes = Vec::new();
+        while sizes.iter().sum::<usize>() < 501 {
+            let m = tokio::time::timeout(Duration::from_secs(10), r.recv())
+                .await
+                .expect("announced within 10 s")
+                .unwrap();
+            if let Message::InvTx(ids) = Message::decode(&m).expect("a valid message") {
+                sizes.push(ids.len());
+            }
+        }
+        assert_eq!(sizes, [500, 1]);
+    }
 }

@@ -509,6 +509,45 @@ async fn a_silent_seed_has_the_whole_timeout_to_answer() {
     drop(v);
 }
 
+/// Outbound connections are maintained every 2 s (docs/p2p.md §9), not at
+/// every tick: with one outbound slot and each dial failing at once (the
+/// listener drops it), the node dials one address per round, at least 2 s
+/// apart.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn outbound_connections_are_maintained_every_two_seconds() {
+    let accepts = Arc::new(Mutex::new(Vec::new()));
+    let mut addrs = Vec::new();
+    for _ in 0..4 {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        addrs.push(l.local_addr().unwrap());
+        let seen = accepts.clone();
+        tokio::spawn(async move {
+            while let Ok((s, _)) = l.accept().await {
+                seen.lock().unwrap().push(std::time::Instant::now());
+                drop(s);
+            }
+        });
+    }
+    let dir = temp_dir("dial-rounds");
+    save_table(&dir, &addrs);
+    let mut cfg = config(Some(&dir));
+    cfg.max_outbound = 1;
+    cfg.block_relay_only = 0;
+    cfg.feeler_interval = Duration::from_secs(1_000_000);
+    let (v, _) = start(46, cfg).await;
+    wait_until("three dials", 20, || accepts.lock().unwrap().len() >= 3).await;
+    let at = accepts.lock().unwrap().clone();
+    for w in at.windows(2) {
+        let gap = w[1] - w[0];
+        assert!(
+            gap >= Duration::from_millis(1_800),
+            "dials {gap:?} apart: {at:?}"
+        );
+    }
+    drop(v);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// W3-32c item 6 (W7): seeds are asked once fewer than two full-relay
 /// outbound peers were up for `seed_fallback_after`, not only when none is.
 /// Before, one outbound peer (possibly the attacker's) suppressed the seeds.
