@@ -516,6 +516,70 @@ fn a_withheld_tip_is_reported_and_blocks_transactions() {
     }
 }
 
+/// The tip-age limits are strict, to the second (RT-MUTE, against E40's
+/// "the edge cannot be checked deterministically"): a tip exactly `warn`
+/// old is not reported, one exactly `refuse` old does not block
+/// transactions. The clock is read in whole seconds, so a try whose clock
+/// reads the same second before and after the call saw exactly that age;
+/// a try across a second boundary is repeated. Controls: one second more
+/// warns and refuses.
+#[test]
+fn the_tip_age_limits_are_strict_at_their_exact_second() {
+    let p = ChainParams::regtest();
+    let (warn, refuse) = super::stale_tip_limits(&p);
+    let now = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    let warned = |w: &mut Wallet| {
+        w.take_warnings()
+            .iter()
+            .any(|m| m.contains("old by this computer's clock"))
+    };
+    // The warning, from a sync of a one-block chain whose tip is `warn` old
+    // (`chain_ending` with one block puts it exactly there).
+    let mut exact = false;
+    for _ in 0..20 {
+        let mut w = restored(None, 1);
+        let before = now();
+        let chain = chain_ending(22, 1, warn);
+        assert_eq!(w.sync(&chain).unwrap(), 1);
+        if now() != before {
+            continue;
+        }
+        assert_eq!(w.tip_time.map(|(_, ts)| before - ts), Some(warn));
+        assert!(!warned(&mut w), "warned at exactly the warning age");
+        exact = true;
+        break;
+    }
+    assert!(exact, "the second turned during every try");
+    let mut w = restored(None, 1);
+    assert_eq!(w.sync(&chain_ending(22, 1, warn + 1)).unwrap(), 1);
+    assert!(warned(&mut w), "not warned one second past the warning age");
+
+    // The refusal, from the synced tip's recorded time.
+    let mut exact = false;
+    for _ in 0..20 {
+        let before = now();
+        w.tip_time = Some((1, before - refuse));
+        let r = w.check_fresh_tip();
+        if now() != before {
+            continue;
+        }
+        assert!(r.is_ok(), "refused at exactly the refusal age: {r:?}");
+        exact = true;
+        break;
+    }
+    assert!(exact, "the second turned during every try");
+    w.tip_time = Some((1, now() - refuse - 1));
+    assert!(matches!(
+        w.check_fresh_tip(),
+        Err(WalletError::StaleTip { height: 1, .. })
+    ));
+}
+
 /// W5, W3-39b: a restore from a height above the genesis checks the header
 /// chain from the genesis (read from the header feed, in one request here:
 /// no block below the restore height is downloaded for it), and a routine
