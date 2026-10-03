@@ -1357,3 +1357,66 @@
   4. relay privacy (Dandelion++, txrequest, Tor);
   5. the honesty of the FRI soundness claim.
 - The Lead decides each topic from the dossier and records the evidence.
+
+## RES-FREEZE dossier, first pass (Lead, 2026-10-04): PROVISIONAL until citations are verified
+- **Status:** the dossier's external citations are marked "[lit, not re-fetched]". No decision rests on them until each is verified against its primary source (verification is under way).
+- **Accepted now (repo facts and own measurements):**
+  - M-A: the RT-4 stall after an 18× difficulty rise lasts about 17.5 h deterministic, 20.5 h median, 24 h at p90.
+  - M-B: about 6.2% of random 32-byte strings are valid ristretto255 encodings.
+- **Provisional directions (to be confirmed or revised after verification):**
+  1. **DAA:** accept the raising-race residual for testnet "under K1"; do not change the DAA before the freeze. Add an RT-4 runbook entry with the measured stall (no emergency-drop rule; the BCH EDA precedent). Reopen the DAA, finality and a selfish-mining model before mainnet.
+  2. **PX R:** the rule is "R decodes as canonical ristretto255 and R ≠ identity" (mirrors v1 T6). Its value is privacy uniformity: a random R exposes a non-reference output with probability 15/16. The KEM-combiner hardening (V, H(ek)) rides the same reset as a wallet-format change.
+  3. **Decoys:**
+     - P0 before a public testnet: the local distribution, a hedged decoy RNG, a one-year window, no spend-time /distribution request; gamma parameters inherited from Monero, labelled as such.
+     - Rings stay in v3 as the weaker layer.
+     - Long term: PX-to-PX as the default private payment, a bridge denomination/delay helper, and a v1 sunset after a shielded coinbase.
+  4. **Relay before a public testnet:**
+     - a per-class tracker (done on tm2-p2p);
+     - a shared inbound trickle with shuffled inv (partly done);
+     - onion-only mode plus SOCKS stream isolation;
+     - local re-stem, and a PX embargo;
+     - a per-network GetAddr cache;
+     - the privacy regression suite as a gate;
+     - Tor as the documented recommended path.
+     - Before mainnet: private broadcast, then transport v2.
+  5. **FRI:** about 105.7 bits (89.7 proven unique-decoding plus 16 grinding); no parameter change.
+     - Reword "proven" to apply to the FRI component only.
+     - List the assumptions: Poseidon2 as a random oracle, mixed-height batching, Merkle extractability, batch-STARK composition.
+     - Add a ~5-bit mixed-height union-bound term to the independent calculator.
+     - Long term: an end-to-end soundness write-up, or STIR/WHIR.
+
+## RES-FREEZE verified (Lead, 2026-10-04): DECISIONS
+Every external citation was verified against its primary source (res-freeze.md §8). Roughly 15 attributions were corrected and the unverifiable claims withdrawn. No direction changed. Decisions:
+1. **DAA: no change before the freeze.**
+   - The raising-race residual is accepted under K1 (majority-hash assumption) for the testnet.
+     - GKL 2017 and Bahack 2013: a residual is inherent to any exponentially rising rule, and no proof exists for per-block DAAs.
+     - Negy et al.: selfish mining is a fork-choice issue, not a DAA one.
+     - Qubic 2025: burst-majority hash is the dominant real risk.
+   - Now: an RT-4 runbook entry with the measured stall (~17.5–24 h from 18×), and no emergency-drop rule (the BCH EDA precedent).
+   - Before mainnet: reopen the DAA plus a finality option (Publish-or-Perish, rolling checkpoints, or a finality layer) and model selfish mining.
+2. **PX R: IN v3.** R decodes as canonical ristretto255 and R ≠ identity.
+   - Precedent: Zcash Orchard §4.6 and §5.4.5.5. FIPS 203: nothing else in the ciphertext is checkable. RFC 9496: the identity check is separate.
+   - Wallets treat every failure as "not mine"; the KDF hashes the R bytes as received.
+   - The KEM-combiner hardening (bind V, H(ek)) rides the same reset as a wallet-format change.
+   - Implemented together with the golden PX fixtures in ONE fingerprint revision.
+3. **Decoys, P0 before a public testnet:**
+   - the local distribution; a hedged decoy RNG; a one-year window; no spend-time /distribution request;
+   - exact-boundary tests at 10 blocks and at coinbase maturity (this off-by-one class recurred three times in Monero);
+   - the gamma 19.28/1.61 labelled "inherited, mis-fit even for Monero";
+   - a partitioning sampler evaluated (Ronge et al.);
+   - coinbase decoys handled.
+   - Long term: PX as the default private payment (Zcash: only default or mandatory shielding makes a full-set pool work), and a v1 sunset after a shielded coinbase.
+4. **Relay, before a public testnet:**
+   - per-network-class inv timers and trackers (Bitcoin Core PR #33464);
+   - onion-only mode plus random SOCKS credentials;
+   - local re-stem;
+   - the privacy regression suite as a gate;
+   - originated and relayed transactions indistinguishable on Tor (ProxyMark);
+   - any private-broadcast fallback fails CLOSED (the Bitcoin Core v31.0 advisory).
+   - Before mainnet: private broadcast. The docs must not present Dandelion++ as strong protection (Sharma et al. NDSS 2023).
+5. **FRI: keep BS-ZK-3; the claim is honest in method** (proven regimes; the capacity conjecture it avoided is now refuted: ePrint 2025/2010, 2025/2046). Follow-ups:
+   - recompute the bits with ρ⁺;
+   - LogUp p > total multiplicities;
+   - confirm the Merkle theorem (2 or 3);
+   - quote bits against a hash budget Q.
+   - **URGENT (ZK-ADVISORY, started):** check Plonky3 GHSA-f69f-5fx9-w9r9 (an unsound mixed-height roll-in; BlackSilk uses mixed heights) and CVE-2026-46654 (the challenger), plus the other listed advisories, against our pinned versions and third_party patches.
