@@ -671,4 +671,68 @@ mod tests {
         }
         assert_eq!(sizes, [500, 1]);
     }
+
+    /// The interval and address-fetch limits are strict: an elapsed time
+    /// equal to the limit does not trigger them (RT-MUTE, against E43's
+    /// "no test can arrange the equality"). With both limits zero and the
+    /// recorded instants not in the past, `duration_since` saturates to zero,
+    /// so the elapsed time equals the limit at every tick: the peer is
+    /// neither pinged nor left as a silent seed (the mutants `>` -> `>=` of
+    /// the ping interval and the address-fetch timeout ping it and leave
+    /// it). Control: with the instants in the past, both limits trigger.
+    #[tokio::test]
+    async fn an_elapsed_time_equal_to_a_zero_limit_does_not_trigger_it() {
+        let net = idle_network(|c| {
+            c.ping_interval = Duration::ZERO;
+            c.addr_fetch_timeout = Duration::ZERO;
+        })
+        .await;
+        let recv = |m: Vec<u8>| Message::decode(&m).unwrap();
+        let (mut r, mut w) = raw_peer(&net).await;
+        let later = Instant::now() + Duration::from_secs(3600);
+        {
+            let mut st = net.inner.state();
+            let p = st.peers.values_mut().next().unwrap();
+            p.ping = None;
+            p.last_ping = later;
+            p.kind = ConnKind::AddrFetch;
+            p.connected_at = later;
+        }
+        // Everything queued before the edit comes before this pong.
+        w.send(&Message::Ping(8).encode()).await.unwrap();
+        loop {
+            if let Message::Pong(8) = recv(r.recv().await.unwrap()) {
+                break;
+            }
+        }
+        // Ten ticks with the elapsed times equal to the limits.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        w.send(&Message::Ping(9).encode()).await.unwrap();
+        loop {
+            match recv(r.recv().await.expect("still connected")) {
+                Message::Pong(9) => break,
+                Message::Ping(n) => panic!("pinged ({n}) at an elapsed time equal to the interval"),
+                _ => {}
+            }
+        }
+        assert_eq!(net.inner.state().peers.len(), 1, "left as a silent seed");
+
+        // Control: the same zero limits with the instants in the past.
+        net.inner.state().peers.values_mut().next().unwrap().last_ping = Instant::now();
+        let pinged = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let Message::Ping(_) = recv(r.recv().await.unwrap()) {
+                    break;
+                }
+            }
+        })
+        .await;
+        assert!(pinged.is_ok(), "not pinged once the interval had passed");
+        net.inner.state().peers.values_mut().next().unwrap().connected_at = Instant::now();
+        let left = tokio::time::timeout(Duration::from_secs(10), async {
+            while r.recv().await.is_ok() {}
+        })
+        .await;
+        assert!(left.is_ok(), "a seed past its zero timeout was not left");
+    }
 }
