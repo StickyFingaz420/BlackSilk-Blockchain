@@ -6698,3 +6698,210 @@ async fn rt2_an_announcer_kept_busy_does_not_hold_a_transaction() {
         "an announcer that keeps its answers Busy does not hold the transaction"
     );
 }
+
+// ------------------------------------------------------ RT3-TM2P2P red team
+
+/// A raw peer task that answers pings and every `GetTx` for one of `txs`,
+/// each answer `delay` after its request (in order), and records the ids
+/// asked of it.
+fn delayed_announcer(
+    mut r: RawReader,
+    w: Arc<tokio::sync::Mutex<RawWriter>>,
+    txs: Vec<Transaction>,
+    delay: Duration,
+) -> Arc<Mutex<Vec<Hash>>> {
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let a2 = asked.clone();
+    tokio::spawn(async move {
+        while let Ok(frame) = r.recv().await {
+            match Message::decode(&frame) {
+                Ok(Message::Ping(n)) => {
+                    let _ = w.lock().await.send(&Message::Pong(n).encode()).await;
+                }
+                Ok(Message::GetTx(ids)) => {
+                    a2.lock().unwrap().extend(ids.iter().copied());
+                    let answers: Vec<Vec<u8>> = ids
+                        .iter()
+                        .filter_map(|id| txs.iter().find(|t| t.hash() == *id))
+                        .map(|t| Message::Tx(t.encode()).encode())
+                        .collect();
+                    let w = w.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(delay).await;
+                        for m in answers {
+                            let _ = w.lock().await.send(&m).await;
+                        }
+                    });
+                }
+                _ => {}
+            }
+        }
+    });
+    asked
+}
+
+/// The score of the live peer connected from `ip`, if any.
+fn score_from(n: &TestNode, ip: [u8; 4]) -> Option<u32> {
+    let ip = std::net::IpAddr::from(ip);
+    n.net
+        .peers()
+        .into_iter()
+        .find(|p| p.addr.ip() == Some(ip))
+        .map(|p| p.score)
+}
+
+/// RT3-TM2P2P F1 (introduced by the RT2 tracker): after an id's first
+/// timeout up to 4 announcers are asked in parallel, but the first answer
+/// `forget`s every record of the id, so the other honest announcers'
+/// answers, which this node requested, arrive as unrequested transactions
+/// (+10 each, never decayed). Here 5 silent inbound peers announce 10
+/// transactions first; two honest announcers (warmed up by one answer
+/// each, so they have request room) announce them after. At the first
+/// timeout both honest peers are asked for all 10; H1 answers at once, H2
+/// 1 s later: H2 collects 10 x 10 = 100 points and is disconnected (and,
+/// off loopback, banned for a day). Any id whose first request times out
+/// does this, so an attacker needs only to announce first and stay silent
+/// to have this node disconnect its honest peers. Expected to FAIL while
+/// the gap exists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rt3_parallel_answers_of_honest_announcers_are_not_penalized() {
+    init_test_log();
+    const N: usize = 10;
+    let mut v = node(240, &[]).await;
+    v.mine_n(N as u64 + 2 + 65, 0);
+    let txs: Vec<Transaction> = (0..N).map(|n| v.payment_nth(n)).collect();
+    let warm: Vec<Transaction> = (N..N + 2).map(|n| v.payment_nth(n)).collect();
+    let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+    let nid = params().network_id;
+    // Five silent attackers, two ids each (two requests fit before a
+    // peer's first answer).
+    let mut silent = Vec::new();
+    for k in 0..5u8 {
+        let (r, mut w) = raw_peer_from([127, 0, 5, 10 + k], v.addr, nid, 0)
+            .await
+            .expect("attacker");
+        let mine = ids[2 * k as usize..2 * k as usize + 2].to_vec();
+        w.send(&Message::InvTx(mine).encode()).await.unwrap();
+        silent.push(silent_announcer(r, Arc::new(tokio::sync::Mutex::new(w))));
+    }
+    wait_until("every id asked of an attacker", 10, || {
+        silent
+            .iter()
+            .map(|a| a.lock().unwrap().len())
+            .sum::<usize>()
+            >= N
+    })
+    .await;
+    // Two honest announcers, each warmed up with one answer.
+    let mut honest = Vec::new();
+    for (k, delay) in [(0u8, Duration::ZERO), (1, Duration::from_secs(1))] {
+        let ip = [127, 0, 5, 50 + k];
+        let (r, mut w) = raw_peer_from(ip, v.addr, nid, 0).await.expect("honest");
+        let mut all = txs.clone();
+        all.push(warm[k as usize].clone());
+        w.send(&Message::InvTx(vec![warm[k as usize].hash()]).encode())
+            .await
+            .unwrap();
+        let w = Arc::new(tokio::sync::Mutex::new(w));
+        let asked = delayed_announcer(r, w.clone(), all, delay);
+        let wid = warm[k as usize].hash();
+        wait_until("warm-up pooled", 20, || v.mempool_has(&wid)).await;
+        w.lock()
+            .await
+            .send(&Message::InvTx(ids.clone()).encode())
+            .await
+            .unwrap();
+        honest.push((ip, asked));
+    }
+    let t0 = std::time::Instant::now();
+    while t0.elapsed() < Duration::from_secs(50) && !ids.iter().all(|id| v.mempool_has(id)) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    // Let the slower honest answers arrive.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let pooled = ids.iter().filter(|id| v.mempool_has(id)).count();
+    let asked: Vec<usize> = honest
+        .iter()
+        .map(|(_, a)| a.lock().unwrap().iter().filter(|x| ids.contains(x)).count())
+        .collect();
+    let scores: Vec<Option<u32>> = honest.iter().map(|(ip, _)| score_from(&v, *ip)).collect();
+    eprintln!(
+        "RT3 parallel: after {:?}: pooled {pooled} of {N}; honest asked {asked:?}; honest scores \
+         {scores:?} (None: disconnected); misbehaving disconnects {}",
+        t0.elapsed(),
+        v.net.stats().misbehaving_disconnects
+    );
+    assert_eq!(pooled, N);
+    assert_eq!(
+        scores,
+        vec![Some(0), Some(0)],
+        "honest announcers that answered our requests are connected and unpenalized"
+    );
+}
+
+/// RT3-TM2P2P F1b (the retry-once of RT2): a request that times out is
+/// asked again of the same peer, which serves both. On a slow link (a PX
+/// answer of 2.2 MB takes 34 s at 64 KiB/s) the second copy arrives after
+/// the late-answer window (30 s after the first expiry), as an
+/// unrequested transaction: +10 for an honest peer, for each such
+/// transaction, on top of the doubled transfer. Simulated with a v1
+/// transaction: the first answer 38 s after the first request, the second
+/// 30 s later (a serial server on a slow link). Expected to FAIL while
+/// the gap exists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rt3_a_slow_honest_announcer_is_not_penalized_for_the_retry() {
+    init_test_log();
+    let mut v = node(242, &[]).await;
+    v.mine_n(80, 0);
+    let tx = v.payment();
+    let id = tx.hash();
+    let nid = params().network_id;
+    let ip = [127, 0, 4, 50];
+    let (mut r, w) = raw_peer_from(ip, v.addr, nid, 0).await.expect("honest");
+    let w = Arc::new(tokio::sync::Mutex::new(w));
+    w.lock()
+        .await
+        .send(&Message::InvTx(vec![id]).encode())
+        .await
+        .unwrap();
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let t0 = std::time::Instant::now();
+    {
+        let (w, asked, tx) = (w.clone(), asked.clone(), tx.clone());
+        tokio::spawn(async move {
+            let mut served = 0u32;
+            while let Ok(frame) = r.recv().await {
+                match Message::decode(&frame) {
+                    Ok(Message::Ping(n)) => {
+                        let _ = w.lock().await.send(&Message::Pong(n).encode()).await;
+                    }
+                    Ok(Message::GetTx(ids)) if ids.contains(&tx.hash()) => {
+                        asked.lock().unwrap().push(t0.elapsed());
+                        // The serial slow server: the first copy at 38 s,
+                        // each further one 30 s later.
+                        served += 1;
+                        let at = Duration::from_secs(38) + Duration::from_secs(30) * (served - 1);
+                        let (w, tx) = (w.clone(), tx.clone());
+                        tokio::spawn(async move {
+                            tokio::time::sleep(at.saturating_sub(t0.elapsed())).await;
+                            let m = Message::Tx(tx.encode()).encode();
+                            let _ = w.lock().await.send(&m).await;
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+    while t0.elapsed() < Duration::from_secs(75) {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    let score = score_from(&v, ip);
+    eprintln!(
+        "RT3 retry: asked at {:?}; pooled {}; score {score:?}",
+        asked.lock().unwrap(),
+        v.mempool_has(&id)
+    );
+    assert!(v.mempool_has(&id));
+    assert_eq!(score, Some(0), "an honest slow announcer is not penalized");
+}

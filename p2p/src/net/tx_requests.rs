@@ -741,4 +741,264 @@ mod tests {
             }
         }
     }
+
+    // ------------------------------------------------ RT3-TM2P2P red team
+
+    /// What an attacker does with a request for the target.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Strategy {
+        /// Never answers (the model of the bound in docs/p2p.md §7).
+        Silent,
+        /// Answers `NotFound` just before its request would time out.
+        SlowNotFound,
+        /// Its answer is dropped as Busy just before the timeout (it
+        /// drained its own relay share first, as in RT2 F2).
+        SlowBusy,
+        /// Disconnects just before the timeout, reconnects (a new peer id)
+        /// and announces the target again.
+        Recycle,
+    }
+
+    const STEP: Duration = Duration::from_millis(100);
+
+    /// `strategies.len()` inbound attackers announce the target at t0, an
+    /// honest announcer (inbound unless `honest_preferred`) 100 ms later.
+    /// Runs in 100 ms steps, each attacker acting 100 ms before its
+    /// request would time out. How long the honest one waited for its
+    /// request; `None` if the id was dropped first (deadline, or every
+    /// record done).
+    fn honest_wait(strategies: &[Strategy], honest_preferred: bool) -> Option<Duration> {
+        honest_wait_at(strategies, honest_preferred, STEP)
+    }
+
+    /// [`honest_wait`] with the honest announcement `after` the attackers'.
+    fn honest_wait_at(
+        strategies: &[Strategy],
+        honest_preferred: bool,
+        after: Duration,
+    ) -> Option<Duration> {
+        let t0 = Instant::now();
+        let target = id(7);
+        let honest: PeerId = 1_000_000;
+        let mut next_peer = strategies.len() as PeerId;
+        let mut who: HashMap<PeerId, Strategy> = HashMap::new();
+        let mut asked: Vec<(PeerId, Instant)> = Vec::new();
+        let mut t = TxTracker::default();
+        let mut out = Actions::default();
+        for (p, s) in strategies.iter().enumerate() {
+            who.insert(p as PeerId, *s);
+            t.announce(target, p as PeerId, false, t0, &mut out);
+        }
+        let at = t0 + after;
+        let mut now = t0;
+        let mut announced = false;
+        loop {
+            asked.retain(|(p, _)| !out.expired.contains(&(target, *p)));
+            for (p, ids) in &out.requests {
+                if ids.contains(&target) {
+                    if *p == honest {
+                        return Some(now - at);
+                    }
+                    asked.push((*p, now));
+                }
+            }
+            t.check();
+            if (announced && t.len() == 0) || now > t0 + DEADLINE + STEP {
+                return None;
+            }
+            now += STEP;
+            out = Actions::default();
+            if !announced && now >= at {
+                t.announce(target, honest, honest_preferred, now, &mut out);
+                announced = true;
+            }
+            let due: Vec<PeerId> = asked
+                .iter()
+                .filter(|(p, s)| now + STEP >= *s + REQUEST_TIMEOUT && who[p] != Strategy::Silent)
+                .map(|(p, _)| *p)
+                .collect();
+            for p in due {
+                asked.retain(|x| x.0 != p);
+                match who[&p] {
+                    Strategy::Silent => {}
+                    Strategy::SlowNotFound => t.not_found(target, p, now, &mut out),
+                    Strategy::SlowBusy => t.busy(target, p, now, &mut out),
+                    Strategy::Recycle => {
+                        t.peer_gone(p, now, &mut out);
+                        let q = next_peer;
+                        next_peer += 1;
+                        who.insert(q, Strategy::Recycle);
+                        t.announce(target, q, false, now, &mut out);
+                    }
+                }
+            }
+            t.poll(now, &mut out);
+        }
+    }
+
+    fn bound(k: usize) -> Duration {
+        INBOUND_DELAY + REQUEST_TIMEOUT * (1 + k.div_ceil(PARALLEL) as u32) + STEP * 2
+    }
+
+    /// Runs `trials` simulations; the worst wait (`None`: dropped).
+    fn worst_wait(strategies: &[Strategy], preferred: bool, trials: usize) -> Option<Duration> {
+        let mut worst = Some(Duration::ZERO);
+        for _ in 0..trials {
+            let w = honest_wait(strategies, preferred);
+            worst = match (worst, w) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                _ => None,
+            };
+        }
+        worst
+    }
+
+    /// The bound's own model: silent attackers. Holds (control).
+    #[test]
+    fn rt3_the_bound_holds_against_silent_announcers() {
+        let k = 8;
+        let w = worst_wait(&[Strategy::Silent; 8], false, 20);
+        eprintln!("RT3 silent x{k}: worst {w:?}, bound {:?}", bound(k));
+        assert!(w.is_some_and(|w| w <= bound(k)));
+    }
+
+    /// RT3-TM2P2P F2: the parallel fallback counts only timeouts. Attackers
+    /// that answer `NotFound` (or get their answer dropped as Busy) just
+    /// before the timeout never trigger it: the requests stay one at a
+    /// time, 30 s per attacker, and an honest inbound announcer waits up to
+    /// k x 30 s, not 2 s + 30 s x (1 + ceil(k / 4)). Expected to FAIL
+    /// while the gap exists.
+    #[test]
+    fn rt3_slow_notfound_announcers_keep_the_bound() {
+        let k = 8;
+        let nf = worst_wait(&[Strategy::SlowNotFound; 8], false, 20);
+        let busy = worst_wait(&[Strategy::SlowBusy; 8], false, 20);
+        eprintln!(
+            "RT3 slow NotFound x{k}: worst {nf:?}; slow Busy x{k}: worst {busy:?}; bound {:?}",
+            bound(k)
+        );
+        assert!(nf.is_some_and(|w| w <= bound(k)), "slow NotFound: {nf:?}");
+        assert!(busy.is_some_and(|w| w <= bound(k)), "slow Busy: {busy:?}");
+    }
+
+    /// RT3-TM2P2P F2: an attacker that disconnects just before its
+    /// timeout, reconnects and announces again is a fresh candidate each
+    /// time, with a fresh random priority, and no timeout ever runs: k
+    /// such connections ask the honest inbound announcer to win a
+    /// 1-in-(k + 1) draw every 30 s, and the 20-minute deadline drops the
+    /// id first in a large share of the trials. Expected to FAIL while the
+    /// gap exists.
+    #[test]
+    fn rt3_recycling_announcers_keep_the_bound() {
+        let k = 8;
+        let mut dropped = 0;
+        let mut worst = Duration::ZERO;
+        for _ in 0..20 {
+            match honest_wait(&[Strategy::Recycle; 8], false) {
+                Some(w) => worst = worst.max(w),
+                None => dropped += 1,
+            }
+        }
+        let many = (0..10)
+            .filter(|_| honest_wait(&[Strategy::Recycle; 40], false).is_none())
+            .count();
+        eprintln!(
+            "RT3 recycle x{k}: worst {worst:?}, dropped {dropped} of 20; x40: dropped {many} of \
+             10; bound {:?}",
+            bound(k)
+        );
+        assert!(
+            dropped == 0 && worst <= bound(k),
+            "{worst:?}, {dropped} dropped"
+        );
+    }
+
+    /// An outbound (preferred) honest announcer is asked within 32 s
+    /// whatever inbound attackers do (control: preferred ones rank first).
+    #[test]
+    fn rt3_a_preferred_announcer_is_asked_within_32_s_against_every_strategy() {
+        for s in [
+            Strategy::Silent,
+            Strategy::SlowNotFound,
+            Strategy::SlowBusy,
+            Strategy::Recycle,
+        ] {
+            // Announced after an attacker was asked (inbound: at 2 s).
+            let mut w = Some(Duration::ZERO);
+            for _ in 0..10 {
+                let one = honest_wait_at(&[s; 20], true, Duration::from_secs(3));
+                w = w.zip(one).map(|(a, b)| a.max(b));
+            }
+            eprintln!("RT3 preferred honest (3 s after) vs 20 x {s:?}: worst {w:?}");
+            assert!(
+                w.is_some_and(|w| w <= REQUEST_TIMEOUT + INBOUND_DELAY + STEP * 2),
+                "{s:?}: {w:?}"
+            );
+        }
+    }
+
+    /// RT3-TM2P2P: the adversarial counterpart of the property test above
+    /// (which has only silent attackers): random mixes of the strategies,
+    /// k from 1 to 40, an inbound honest announcer. Expected to FAIL while
+    /// the gap exists.
+    #[test]
+    fn rt3_adversarial_strategies_keep_the_bound() {
+        let all = [
+            Strategy::Silent,
+            Strategy::SlowNotFound,
+            Strategy::SlowBusy,
+            Strategy::Recycle,
+        ];
+        let mut failures = Vec::new();
+        for seed in 0..30u64 {
+            let mut rng = ChaCha20Rng::seed_from_u64(seed);
+            let k = 1 + (rng.next_u64() % 40) as usize;
+            let mix: Vec<Strategy> = (0..k)
+                .map(|_| all[(rng.next_u64() % all.len() as u64) as usize])
+                .collect();
+            let w = honest_wait(&mix, false);
+            if !w.is_some_and(|w| w <= bound(k)) {
+                failures.push((seed, k, w, bound(k)));
+            }
+        }
+        eprintln!(
+            "RT3 adversarial mixes: {} of 30 over the bound: {failures:?}",
+            failures.len()
+        );
+        assert!(failures.is_empty());
+    }
+
+    /// RT3-TM2P2P F4: a full chain Tx lane is a node-wide condition (the
+    /// actor is busy with blocks, say), but `on_tx` reports it as the
+    /// answering peer's Busy, which is capped per (id, peer). About 10 s
+    /// of a full lane make every honest record done and drop the id: it is
+    /// not asked again until a later announcement (an honest node announces
+    /// a transaction to a peer once, then only at the pool's
+    /// re-announcement ages, 10 blocks and more). Expected to FAIL while
+    /// the gap exists.
+    #[test]
+    fn rt3_a_node_wide_lane_stall_does_not_drop_an_honest_id() {
+        let t0 = Instant::now();
+        let mut t = TxTracker::default();
+        let mut out = Actions::default();
+        t.announce(id(1), 1, true, t0, &mut out);
+        t.announce(id(1), 2, true, t0, &mut out);
+        let mut now = t0;
+        // Every answer arrives 50 ms after its request and finds the lane
+        // full.
+        let mut pending: Vec<(PeerId, Instant)> =
+            out.requests.iter().map(|(p, _)| (*p, now)).collect();
+        while now < t0 + Duration::from_secs(15) && t.len() > 0 {
+            now += Duration::from_millis(50);
+            let mut out = Actions::default();
+            for (p, _) in std::mem::take(&mut pending) {
+                t.busy(id(1), p, now, &mut out);
+            }
+            t.poll(now, &mut out);
+            pending.extend(out.requests.iter().map(|(p, _)| (*p, now)));
+            t.check();
+        }
+        eprintln!("RT3 lane stall: tracked after {:?}: {}", now - t0, t.len());
+        assert_eq!(t.len(), 1, "dropped after {:?} of a full lane", now - t0);
+    }
 }
