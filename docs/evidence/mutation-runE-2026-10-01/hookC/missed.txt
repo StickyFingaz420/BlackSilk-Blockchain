@@ -1,0 +1,2 @@
+chain/src/manager/submission.rs:179:39: replace || with && in ChainManager::drain_ready
+chain/src/manager/submission.rs:179:42: delete ! in ChainManager::drain_ready

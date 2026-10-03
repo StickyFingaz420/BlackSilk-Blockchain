@@ -1,0 +1,8 @@
+px/src/prove.rs:91:5: delete field max_instances from struct blacksilk_zk::DecodeLimits expression
+px/src/prove.rs:284:24: replace + with - in prove
+px/src/tree.rs:20:29: replace << with >>
+px/src/state.rs:169:34: replace + with - in State::apply_inner
+px/src/tree.rs:29:13: replace + with - in empty_roots
+px/src/tree.rs:81:19: replace += with -= in Frontier::append
+px/src/tree.rs:158:82: replace + with - in Tree::append
+px/src/tree.rs:159:42: replace + with - in Tree::append

@@ -293,3 +293,103 @@ fn a_clean_wallet_build_can_be_required() {
         }
     }
 }
+
+/// Runs the wallet binary like [`run`], with the password `pw` and the
+/// extra environment `env`.
+fn run_pw(wallet: &Path, args: &[&str], pw: &str, env: &[(&str, &str)]) -> Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_blacksilk-wallet"));
+    cmd.arg("--wallet")
+        .arg(wallet)
+        .args(args)
+        .env("BLACKSILK_WALLET_PASSWORD", pw)
+        .env_remove("BLACKSILK_WALLET_NEW_PASSWORD")
+        .env_remove("BLACKSILK_RPC_COOKIE")
+        .stdin(Stdio::null());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd.output().unwrap()
+}
+
+/// TM2 cross-check gap 1: a new wallet's password may not be empty (create
+/// and restore share the check, `file::check_new_password`); a short one is
+/// accepted with a warning. Before, any password was accepted, the empty one
+/// included, so a wallet file in a synced folder was readable by anyone who
+/// got the file.
+#[test]
+fn an_empty_wallet_password_is_refused_and_a_short_one_warned_about() {
+    let dir = tempfile::tempdir().unwrap();
+    let create = ["create", "--network", "regtest", "--birthday-height", "0"];
+    let path = dir.path().join("empty.wallet");
+    let out = run_pw(&path, &create, "", &[]);
+    assert!(!out.status.success(), "{}", text(&out.stdout));
+    assert!(
+        text(&out.stderr).contains("empty password"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(!path.exists(), "no wallet file written");
+
+    let path = dir.path().join("short.wallet");
+    let out = run_pw(&path, &create, "pw", &[]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stderr).contains("weak password"),
+        "{}",
+        text(&out.stderr)
+    );
+
+    let path = dir.path().join("long.wallet");
+    let out = run_pw(&path, &create, "correct horse battery", &[]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(!text(&out.stderr).contains("weak password"));
+}
+
+/// A wallet saved with an empty password before the check still opens,
+/// with a warning that names the way out, and `change-password` sets a new
+/// password without losing anything; it refuses an empty new one.
+#[test]
+fn a_wallet_with_an_empty_password_opens_and_can_get_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.wallet");
+    let mut w =
+        blacksilk_wallet::Wallet::from_seed(blacksilk_consensus::Network::Regtest, [5; 32], 1);
+    let primary = w.address(0, 0);
+    blacksilk_wallet::save(&w, &path, b"", blacksilk_wallet::file::KdfParams::default()).unwrap();
+
+    let out = run_pw(&path, &["address"], "", &[]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout).trim(), primary);
+    let err = text(&out.stderr);
+    assert!(
+        err.contains("empty password") && err.contains("change-password"),
+        "{err}"
+    );
+
+    let out = run_pw(
+        &path,
+        &["change-password"],
+        "",
+        &[("BLACKSILK_WALLET_NEW_PASSWORD", "")],
+    );
+    assert!(!out.status.success());
+    assert!(text(&out.stderr).contains("empty password"));
+
+    let new = "a much better password";
+    let out = run_pw(
+        &path,
+        &["change-password"],
+        "",
+        &[("BLACKSILK_WALLET_NEW_PASSWORD", new)],
+    );
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let out = run_pw(&path, &["address"], "", &[]);
+    assert!(
+        !out.status.success(),
+        "the empty password no longer opens it"
+    );
+    let out = run_pw(&path, &["address"], new, &[]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout).trim(), primary);
+    assert!(!text(&out.stderr).contains("empty password"));
+}

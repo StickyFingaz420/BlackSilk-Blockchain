@@ -409,6 +409,9 @@ mod tests {
             if done {
                 break;
             }
+            // 40 blocks at 3 per step: a drain that never reports done is a
+            // failure, not a hang (mutation run E).
+            assert!(steps < 100, "the drain never ends");
         }
         assert!(steps >= 10, "{steps} steps");
         same_chain(&full, &bounded);
@@ -460,6 +463,7 @@ mod tests {
         while !done {
             stops += 1;
             assert!(bounded.work(&bounded.tip_id()) >= old_work, "lighter tip");
+            assert!(stops < 100, "the drain never ends");
             done = bounded.sync_step(1);
         }
         assert!(stops >= 2, "the drain was interrupted ({stops})");

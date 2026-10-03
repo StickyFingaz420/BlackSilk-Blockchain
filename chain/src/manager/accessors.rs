@@ -113,6 +113,19 @@ impl ChainManager {
         ids
     }
 
+    /// [`Self::operator_verdicts`] with each block's height, `None` while
+    /// its header is not known (the node's `/info`, F48-9). Allocates
+    /// nothing while no verdict is in force.
+    pub fn operator_verdict_heights(&self) -> Vec<(Hash, Option<u64>)> {
+        if self.operator_invalid.is_empty() {
+            return Vec::new();
+        }
+        self.operator_verdicts()
+            .into_iter()
+            .map(|id| (id, self.headers.header(&id).map(|h| h.height)))
+            .collect()
+    }
+
     /// A heavier chain this node refuses only because of the operator's
     /// verdicts (RTW3-8): the heaviest known header in the subtree of an
     /// operator-invalidated block, if it has more work than the connected

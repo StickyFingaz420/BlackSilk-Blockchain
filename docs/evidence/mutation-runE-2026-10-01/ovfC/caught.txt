@@ -1,0 +1,7 @@
+chain/src/manager/header_sync.rs:67:51: replace + with - in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:75:19: replace += with -= in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:109:42: replace + with - in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:124:34: replace >= with < in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:180:17: replace += with -= in ChainManager::accept_headers
+chain/src/manager/submission.rs:138:37: replace += with -= in ChainManager::submit_inner
+chain/src/manager/submission.rs:154:28: replace += with -= in ChainManager::submit_inner

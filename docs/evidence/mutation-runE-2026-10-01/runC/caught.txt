@@ -1,0 +1,77 @@
+chain/src/manager/header_sync.rs:14:9: replace ChainManager::locator -> Vec<Hash> with vec![]
+chain/src/manager/header_sync.rs:14:9: replace ChainManager::locator -> Vec<Hash> with vec![Default::default()]
+chain/src/manager/header_sync.rs:19:18: replace == with != in ChainManager::locator
+chain/src/manager/header_sync.rs:19:36: replace >= with < in ChainManager::locator
+chain/src/manager/header_sync.rs:22:26: replace >= with < in ChainManager::locator
+chain/src/manager/header_sync.rs:36:9: replace ChainManager::headers_after -> Vec<BlockHeader> with vec![]
+chain/src/manager/header_sync.rs:40:37: replace + with - in ChainManager::headers_after
+chain/src/manager/header_sync.rs:40:37: replace + with * in ChainManager::headers_after
+chain/src/manager/header_sync.rs:43:25: replace < with == in ChainManager::headers_after
+chain/src/manager/header_sync.rs:43:25: replace < with > in ChainManager::headers_after
+chain/src/manager/header_sync.rs:43:25: replace < with <= in ChainManager::headers_after
+chain/src/manager/header_sync.rs:51:15: replace += with -= in ChainManager::headers_after
+chain/src/manager/header_sync.rs:48:19: replace == with != in ChainManager::headers_after
+chain/src/manager/header_sync.rs:51:15: replace += with *= in ChainManager::headers_after
+chain/src/manager/header_sync.rs:64:9: replace ChainManager::missing_bodies -> Vec<(u64, Hash)> with vec![]
+chain/src/manager/header_sync.rs:64:9: replace ChainManager::missing_bodies -> Vec<(u64, Hash)> with vec![(0, Default::default())]
+chain/src/manager/header_sync.rs:64:9: replace ChainManager::missing_bodies -> Vec<(u64, Hash)> with vec![(1, Default::default())]
+chain/src/manager/header_sync.rs:66:37: replace > with == in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:66:37: replace > with < in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:67:51: replace + with - in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:66:37: replace > with >= in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:68:29: replace < with == in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:67:51: replace + with * in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:68:29: replace < with > in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:72:20: delete ! in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:75:19: replace += with -= in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:85:19: delete ! in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:81:21: replace == with != in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:87:20: delete ! in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:104:9: replace ChainManager::pow_jobs -> Option<(Arc<CachedPow>, Vec<PowJob>)> with None
+chain/src/manager/header_sync.rs:109:25: replace != with == in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:109:42: replace + with - in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:109:42: replace + with * in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:115:35: replace != with == in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:115:44: replace - with + in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:115:44: replace - with / in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:115:70: replace != with == in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:115:95: replace + with - in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:115:95: replace + with * in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:115:83: replace - with + in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:115:83: replace - with / in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:124:34: replace >= with < in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:125:29: replace - with + in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:125:29: replace - with / in ChainManager::pow_jobs
+chain/src/manager/header_sync.rs:157:9: replace ChainManager::accept_headers -> Result<usize, (usize, HeaderError)> with Ok(0)
+chain/src/manager/header_sync.rs:157:9: replace ChainManager::accept_headers -> Result<usize, (usize, HeaderError)> with Ok(1)
+chain/src/manager/header_sync.rs:163:47: replace == with != in ChainManager::accept_headers
+chain/src/manager/header_sync.rs:143:9: replace ChainManager::precheck_headers -> Result<(), (usize, HeaderError)> with Ok(())
+chain/src/manager/header_sync.rs:180:17: replace += with -= in ChainManager::accept_headers
+chain/src/manager/submission.rs:50:9: replace ChainManager::sync_step -> bool with true
+chain/src/manager/header_sync.rs:180:17: replace += with *= in ChainManager::accept_headers
+chain/src/manager/submission.rs:58:9: replace ChainManager::sync_pending -> bool with true
+chain/src/manager/submission.rs:58:9: replace ChainManager::sync_pending -> bool with false
+chain/src/manager/submission.rs:58:32: replace || with && in ChainManager::sync_pending
+chain/src/manager/submission.rs:58:35: delete ! in ChainManager::sync_pending
+chain/src/manager/submission.rs:70:64: replace == with != in ChainManager::verdict
+chain/src/manager/submission.rs:82:20: replace && with || in ChainManager::submit_inner
+chain/src/manager/submission.rs:92:46: replace || with && in ChainManager::submit_inner
+chain/src/manager/submission.rs:92:52: replace == with != in ChainManager::submit_inner
+chain/src/manager/submission.rs:95:43: replace == with != in ChainManager::submit_inner
+chain/src/manager/submission.rs:101:40: replace != with == in ChainManager::submit_inner
+chain/src/manager/submission.rs:112:36: replace != with == in ChainManager::submit_inner
+chain/src/manager/submission.rs:117:20: replace && with || in ChainManager::submit_inner
+chain/src/manager/submission.rs:117:23: delete ! in ChainManager::submit_inner
+chain/src/manager/submission.rs:138:37: replace += with -= in ChainManager::submit_inner
+chain/src/manager/submission.rs:138:37: replace += with *= in ChainManager::submit_inner
+chain/src/manager/submission.rs:139:40: replace || with && in ChainManager::submit_inner
+chain/src/manager/submission.rs:139:63: replace >= with < in ChainManager::submit_inner
+chain/src/manager/submission.rs:154:28: replace += with -= in ChainManager::submit_inner
+chain/src/manager/submission.rs:154:28: replace += with *= in ChainManager::submit_inner
+chain/src/manager/submission.rs:177:9: replace ChainManager::drain_ready -> bool with true
+chain/src/manager/submission.rs:192:20: delete ! in ChainManager::drain_ready
+chain/src/manager/submission.rs:205:42: replace != with == in ChainManager::drain_ready
+chain/src/manager/submission.rs:220:9: replace ChainManager::header_added with ()
+chain/src/manager/submission.rs:242:9: replace ChainManager::refuse_operator_invalidated -> bool with true
+chain/src/manager/submission.rs:242:9: replace ChainManager::refuse_operator_invalidated -> bool with false
+chain/src/manager/submission.rs:242:12: delete ! in ChainManager::refuse_operator_invalidated

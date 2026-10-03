@@ -1,0 +1,5 @@
+transfer message without pseudo-outputs	tx/src/types.rs	283	&self.base_hash(),	
+deploy id without base	tx/src/types.rs	455	&[&t.base_bytes()]	&[]
+deploy id without prunable	tx/src/types.rs	456	&[&t.prunable_bytes()]	&[]
+deploy message without pseudo-outputs	tx/src/px.rs	633	&t.base_hash(),	
+deploy message without range proof	tx/src/px.rs	634	&h32(tags::TX_BP, &[&t.range_proof_bytes()]),	

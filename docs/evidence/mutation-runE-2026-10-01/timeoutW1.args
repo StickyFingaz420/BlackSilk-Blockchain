@@ -1,0 +1,1 @@
+--re=^wallet[/]src[/]wallet[/]sync[.]rs[:]163[:]37[:] replace [|][|] with [&][&] in for[_]each[_]header$

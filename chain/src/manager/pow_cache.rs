@@ -91,6 +91,13 @@ impl CachedPow {
     pub fn preload(&self, seed: &Hash, header_bytes: &[u8], pow_hash: Hash) {
         self.hashes.preload(seed, header_bytes, pow_hash)
     }
+
+    /// The PoW function's own hash of `header_bytes` under `seed`, computed
+    /// now: never the cached value, and not cached (the start-up check of
+    /// the stored hashes compares the two, `ChainManager::open_checked`).
+    pub fn recompute(&self, seed: &Hash, header_bytes: &[u8]) -> Hash {
+        self.hashes.inner.pow_hash(seed, header_bytes)
+    }
 }
 
 /// One PoW computation: RandomX key (seed block id) and header bytes.

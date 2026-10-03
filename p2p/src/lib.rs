@@ -27,6 +27,7 @@ pub mod limits;
 pub mod message;
 pub mod net;
 pub mod originated;
+pub mod private_file;
 pub mod socks5;
 pub mod transport;
 

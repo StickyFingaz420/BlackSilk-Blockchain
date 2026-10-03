@@ -78,10 +78,18 @@ pub(super) async fn announce_loop(inner: Arc<Inner>) {
 /// (a crash loses at most this much discovery state).
 const SAVE_INTERVAL: Duration = Duration::from_secs(60);
 
+/// A changed address table is first saved this long after the start ("soon
+/// after the first change"), then at most every [`SAVE_INTERVAL`].
+const FIRST_SAVE_DELAY: Duration = Duration::from_secs(5);
+
+/// Outbound connections are maintained (`maintain_outbound`) at most this
+/// often (docs/p2p.md §9: every 2 s).
+const OUTBOUND_ROUND: Duration = Duration::from_secs(2);
+
 // ---------------------------------------------------------------- maintenance
 pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
     // Save soon after the first change.
-    let mut last_save = Instant::now() - SAVE_INTERVAL + Duration::from_secs(5);
+    let mut last_save = Instant::now() - SAVE_INTERVAL + FIRST_SAVE_DELAY;
     let mut saved_fingerprint = (0, 0);
     let mut last_outbound = Instant::now() - Duration::from_secs(60);
     loop {
@@ -213,7 +221,7 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
         }
 
         // Outbound connections.
-        if now.duration_since(last_outbound) > Duration::from_secs(2) {
+        if now.duration_since(last_outbound) > OUTBOUND_ROUND {
             last_outbound = now;
             maintain_outbound(&inner);
         }
@@ -290,5 +298,471 @@ pub(super) async fn chain_maintenance_loop(inner: Arc<Inner>) {
                 inner.save_originated().await;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The maintenance loop's own rules (mutation run E): the trickle delay,
+    //! the ping, pong, request and idle timeouts, the late requests, the
+    //! announcement chunks and the address table's saves, on an idle node
+    //! with raw loopback peers (some with request ages set in the state).
+    use super::*;
+    use crate::addr::NetAddr;
+    use crate::message::{Version, PROTOCOL_VERSION};
+    use blacksilk_chain::manager::ChainManager;
+
+    struct ZeroPow;
+    impl blacksilk_consensus::PowFunction for ZeroPow {
+        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            [0; 32]
+        }
+    }
+
+    async fn idle_network(edit: impl FnOnce(&mut crate::NetConfig)) -> crate::Network {
+        let p = blacksilk_consensus::ChainParams::regtest();
+        let m = ChainManager::open(
+            p.clone(),
+            blacksilk_tx::params::TxRules::for_chain(&p),
+            Arc::new(ZeroPow),
+            Box::<blacksilk_chain::store::MemoryStore>::default(),
+            [2; 32],
+        )
+        .unwrap();
+        let mut cfg = crate::NetConfig::new(p.network_id);
+        cfg.listen = Some("127.0.0.1:0".parse().unwrap());
+        cfg.allow_private = true;
+        cfg.tick = Duration::from_millis(50);
+        edit(&mut cfg);
+        crate::Network::start(cfg, Arc::new(std::sync::Mutex::new(m)))
+            .await
+            .unwrap()
+    }
+
+    /// A raw loopback peer of `net`, registered: its handshake done.
+    async fn raw_peer(
+        net: &crate::Network,
+    ) -> (
+        crate::transport::FrameReader<tokio::io::ReadHalf<tokio::net::TcpStream>>,
+        crate::transport::FrameWriter<tokio::io::WriteHalf<tokio::net::TcpStream>>,
+    ) {
+        let inner = &net.inner;
+        let before = inner.state().peers.len();
+        let stream = tokio::net::TcpStream::connect(net.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut r, mut w) = crate::transport::handshake(
+            stream,
+            true,
+            inner.cfg.network_id,
+            &inner.genesis_id,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let v = Version {
+            protocol: PROTOCOL_VERSION,
+            network: inner.cfg.network_id,
+            nonce: 0x2468,
+            height: 0,
+            tip: inner.genesis_id,
+            listen: None,
+            relay_txs: true,
+        };
+        w.send(&Message::Version(v).encode()).await.unwrap();
+        let recv = |m: Vec<u8>| Message::decode(&m).unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Version(_)));
+        w.send(&Message::Verack.encode()).await.unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Verack));
+        while inner.state().peers.len() == before {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        (r, w)
+    }
+
+    /// A queued transaction announcement waits for the peer's trickle delay
+    /// (exponential, mean `trickle_inbound`): with a mean of 10^6 s nothing is
+    /// sent in the next half second of ticks, whatever is queued (a delay
+    /// below it has probability about 5·10^-7).
+    #[tokio::test]
+    async fn an_announcement_waits_for_its_trickle_delay() {
+        let net = idle_network(|c| c.trickle_inbound = Duration::from_secs(1_000_000)).await;
+        let inner = net.inner.clone();
+        let (mut r, mut w) = raw_peer(&net).await;
+        let recv = |m: Vec<u8>| Message::decode(&m).unwrap();
+        inner.announce_tx([9; 32], None);
+        assert_eq!(
+            inner.state().peers.values().next().unwrap().inv_queue,
+            [[9; 32]]
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        w.send(&Message::Ping(8).encode()).await.unwrap();
+        loop {
+            match recv(r.recv().await.unwrap()) {
+                Message::Pong(8) => break,
+                Message::InvTx(ids) => panic!("announced before its delay: {ids:?}"),
+                _ => {}
+            }
+        }
+        assert_eq!(
+            inner.state().peers.values().next().unwrap().inv_queue.len(),
+            1
+        );
+    }
+
+    /// The loop's delays by value: the first save 5 s after the start, an
+    /// outbound round every 2 s (docs/p2p.md §9). Their behavior tests bound
+    /// them exactly only from below (a delay never ends early); a second more
+    /// passes them under load (run E's E44, now named and pinned: RT-MUTE).
+    #[test]
+    fn the_first_save_delay_and_the_outbound_round_are_the_specified_ones() {
+        assert_eq!(FIRST_SAVE_DELAY, Duration::from_secs(5));
+        assert_eq!(OUTBOUND_ROUND, Duration::from_secs(2));
+    }
+
+    /// The address table is first saved 5 s after the start at the earliest
+    /// ("save soon after the first change": `last_save` starts 55 s in the
+    /// past of the 60 s interval), not at the first tick after a change.
+    #[tokio::test]
+    async fn the_first_save_of_the_address_table_comes_5_s_after_the_start() {
+        // "Saved within a minute of changing" (docs/p2p.md §9, Persistence).
+        assert_eq!(SAVE_INTERVAL, Duration::from_secs(60));
+        let dir = std::env::temp_dir().join(format!("bs-p2p-maint-save-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let t0 = Instant::now();
+        let net = idle_network(|c| c.data_dir = Some(dir.clone())).await;
+        let now = unix_now();
+        let added = net.inner.state().addrman.add(
+            NetAddr::parse("8.8.8.8:8333").unwrap(),
+            &NetAddr::parse("9.9.9.9:1").unwrap(),
+            now,
+        );
+        assert!(added);
+        let saved = loop {
+            if dir.join("peers.json").exists() {
+                break t0.elapsed();
+            }
+            assert!(t0.elapsed() < Duration::from_secs(60), "never saved");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        assert!(
+            saved >= Duration::from_millis(4_500),
+            "saved after {saved:?}"
+        );
+        drop(net);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A peer is pinged once per `ping_interval`, counted from its last ping,
+    /// not at every tick once the interval is past or before it is: an
+    /// answering peer gets two to four pings in 3.5 s at a 1 s interval
+    /// (ticks of 50 ms), the first after the interval from its registration.
+    #[tokio::test]
+    async fn an_answering_peer_is_pinged_once_per_interval() {
+        let net = idle_network(|c| c.ping_interval = Duration::from_secs(1)).await;
+        let (mut r, mut w) = raw_peer(&net).await;
+        let start = Instant::now();
+        let mut pings = Vec::new();
+        while let Ok(m) =
+            tokio::time::timeout_at((start + Duration::from_millis(3_500)).into(), r.recv()).await
+        {
+            if let Message::Ping(n) = Message::decode(&m.unwrap()).unwrap() {
+                pings.push(start.elapsed());
+                w.send(&Message::Pong(n).encode()).await.unwrap();
+            }
+        }
+        assert!((2..=4).contains(&pings.len()), "pings at {pings:?}");
+        assert!(pings[0] >= Duration::from_millis(800), "pings at {pings:?}");
+    }
+
+    /// A peer that does not answer a ping is disconnected once `PONG_TIMEOUT`
+    /// (30 s) has passed since the ping, and not before.
+    #[tokio::test]
+    async fn a_peer_that_never_answers_a_ping_is_left_after_the_pong_timeout() {
+        assert_eq!(PONG_TIMEOUT, Duration::from_secs(30));
+        let net = idle_network(|c| c.ping_interval = Duration::from_secs(1)).await;
+        let (mut r, _w) = raw_peer(&net).await;
+        let mut first_ping = None;
+        let closed = loop {
+            match tokio::time::timeout(Duration::from_secs(60), r.recv()).await {
+                Err(_) => panic!("still connected 60 s after the last frame"),
+                Ok(Err(_)) => break Instant::now(),
+                Ok(Ok(m)) => {
+                    if let Ok(Message::Ping(_)) = Message::decode(&m) {
+                        first_ping.get_or_insert_with(Instant::now);
+                    }
+                }
+            }
+        };
+        let after = closed.duration_since(first_ping.expect("pinged"));
+        assert!(
+            after >= Duration::from_millis(29_500) && after < Duration::from_secs(45),
+            "left {after:?} after the ping"
+        );
+        assert!(net.inner.state().peers.is_empty());
+    }
+
+    /// Waits up to 10 s for `done` on the state (a few ticks).
+    async fn until(net: &crate::Network, done: impl Fn(&State) -> bool) {
+        let t = Instant::now();
+        while !done(&net.inner.state()) {
+            assert!(t.elapsed() < Duration::from_secs(10), "not within 10 s");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// Block and transaction requests time out once their timeouts have
+    /// passed (`BLOCK_TIMEOUT` 60 s, `TX_TIMEOUT` 30 s), not before: an
+    /// expired request moves to the late requests, where its answer is still
+    /// accepted for another timeout, then forgotten. The ages are set in the
+    /// state directly; nothing is missing, so nothing is asked again.
+    #[tokio::test]
+    async fn requests_time_out_after_their_timeouts_and_late_ones_are_kept_as_long() {
+        assert_eq!(BLOCK_TIMEOUT, Duration::from_secs(60));
+        assert_eq!(TX_TIMEOUT, Duration::from_secs(30));
+        let net = idle_network(|_| {}).await;
+        let _peer = raw_peer(&net).await;
+        let ago = |d: Duration| Instant::now().checked_sub(d).expect("uptime");
+        let margin = Duration::from_secs(10);
+        let pid = {
+            let mut st = net.inner.state();
+            let pid = *st.peers.keys().next().unwrap();
+            st.peers.get_mut(&pid).unwrap().blocks_in_flight = 2;
+            st.block_requests
+                .insert([1; 32], (pid, ago(BLOCK_TIMEOUT - margin)));
+            st.block_requests
+                .insert([2; 32], (pid, ago(BLOCK_TIMEOUT + margin)));
+            st.late_blocks
+                .insert([3; 32], (pid, ago(BLOCK_TIMEOUT - margin)));
+            st.late_blocks
+                .insert([4; 32], (pid, ago(BLOCK_TIMEOUT + margin)));
+            st.tx_requests
+                .insert([5; 32], (pid, ago(TX_TIMEOUT - margin)));
+            st.tx_requests
+                .insert([6; 32], (pid, ago(TX_TIMEOUT + margin)));
+            st.late_txs.insert(([7; 32], pid), ago(TX_TIMEOUT - margin));
+            st.late_txs.insert(([8; 32], pid), ago(TX_TIMEOUT + margin));
+            pid
+        };
+        until(&net, |st| {
+            !st.block_requests.contains_key(&[2; 32]) && !st.tx_requests.contains_key(&[6; 32])
+        })
+        .await;
+        // Some ticks later (a late request just moved is not forgotten).
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let st = net.inner.state();
+        let keys = |m: Vec<Hash>| {
+            let mut m = m;
+            m.sort();
+            m
+        };
+        assert_eq!(keys(st.block_requests.keys().copied().collect()), [[1; 32]]);
+        assert_eq!(
+            keys(st.late_blocks.keys().copied().collect()),
+            [[2; 32], [3; 32]]
+        );
+        assert!(st.late_blocks.values().all(|(p, _)| *p == pid));
+        assert_eq!(st.peers[&pid].blocks_in_flight, 1);
+        assert_eq!(keys(st.tx_requests.keys().copied().collect()), [[5; 32]]);
+        assert_eq!(
+            keys(st.late_txs.keys().map(|(h, _)| *h).collect()),
+            [[6; 32], [7; 32]]
+        );
+    }
+
+    /// At most `LATE_TXS_MAX` timed-out transaction requests are remembered:
+    /// with room for one, of two that time out one is kept.
+    #[tokio::test]
+    async fn late_transaction_requests_are_capped() {
+        assert_eq!(LATE_TXS_MAX, 10_000);
+        let net = idle_network(|_| {}).await;
+        let _peer = raw_peer(&net).await;
+        let old = Instant::now()
+            .checked_sub(TX_TIMEOUT + Duration::from_secs(10))
+            .expect("uptime");
+        {
+            let mut st = net.inner.state();
+            let pid = *st.peers.keys().next().unwrap();
+            let now = Instant::now();
+            for i in 0..LATE_TXS_MAX as u32 - 1 {
+                let mut h = [0xee; 32];
+                h[..4].copy_from_slice(&i.to_le_bytes());
+                st.late_txs.insert((h, pid), now);
+            }
+            st.tx_requests.insert([5; 32], (pid, old));
+            st.tx_requests.insert([6; 32], (pid, old));
+        }
+        until(&net, |st| st.tx_requests.is_empty()).await;
+        let st = net.inner.state();
+        assert_eq!(st.late_txs.len(), LATE_TXS_MAX);
+        assert_eq!(
+            st.late_txs
+                .keys()
+                .filter(|(h, _)| *h == [5; 32] || *h == [6; 32])
+                .count(),
+            1
+        );
+    }
+
+    /// A header request times out once `HEADERS_TIMEOUT` (60 s) has passed,
+    /// not before: the peer gets a grace entry (its late reply is accepted)
+    /// and is not asked again at once.
+    #[tokio::test]
+    async fn a_header_request_times_out_after_the_headers_timeout() {
+        assert_eq!(HEADERS_TIMEOUT, Duration::from_secs(60));
+        let net = idle_network(|_| {}).await;
+        let _one = raw_peer(&net).await;
+        let _two = raw_peer(&net).await;
+        let ago = |d: Duration| Instant::now().checked_sub(d).expect("uptime");
+        let margin = Duration::from_secs(10);
+        let (fresh, old) = {
+            let mut st = net.inner.state();
+            let mut ids: Vec<PeerId> = st.peers.keys().copied().collect();
+            ids.sort();
+            let (fresh, old) = (ids[0], ids[1]);
+            st.peers.get_mut(&fresh).unwrap().headers_requested =
+                Some(ago(HEADERS_TIMEOUT - margin));
+            st.peers.get_mut(&old).unwrap().headers_requested = Some(ago(HEADERS_TIMEOUT + margin));
+            (fresh, old)
+        };
+        until(&net, |st| st.peers[&old].headers_requested.is_none()).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let st = net.inner.state();
+        assert!(st.peers[&fresh].headers_requested.is_some());
+        assert!(st.peers[&fresh].headers_grace.is_empty());
+        assert!(st.peers[&old].headers_requested.is_none());
+        assert_eq!(st.peers[&old].headers_grace.len(), 1);
+    }
+
+    /// A registered peer that sends nothing is disconnected 180 s after its
+    /// last frame (docs/p2p.md "Liveness"; `conn::IDLE_TIMEOUT`), not before.
+    /// Pings are off (a 1000 s interval), so no pong timeout comes first.
+    #[tokio::test]
+    async fn a_silent_registered_peer_is_left_after_the_idle_timeout() {
+        let net = idle_network(|c| c.ping_interval = Duration::from_secs(1000)).await;
+        let (mut r, _w) = raw_peer(&net).await;
+        let last_sent = Instant::now();
+        let closed = loop {
+            match tokio::time::timeout(Duration::from_secs(240), r.recv()).await {
+                Err(_) => panic!("still connected 240 s after the last frame"),
+                Ok(Err(_)) => break last_sent.elapsed(),
+                Ok(Ok(_)) => {}
+            }
+        };
+        assert!(
+            closed >= Duration::from_millis(179_500) && closed < Duration::from_secs(200),
+            "left {closed:?} after its last frame"
+        );
+        assert!(net.inner.state().peers.is_empty());
+    }
+
+    /// Queued announcements go out in `InvTx` messages of at most `MAX_INV`
+    /// (500) ids, the most a peer decodes: 501 queued ids are sent as 500
+    /// and 1.
+    #[tokio::test]
+    async fn queued_announcements_go_out_in_messages_of_at_most_500_ids() {
+        assert_eq!(crate::message::MAX_INV, 500);
+        let net = idle_network(|_| {}).await;
+        let (mut r, _w) = raw_peer(&net).await;
+        {
+            let mut st = net.inner.state();
+            let p = st.peers.values_mut().next().unwrap();
+            p.inv_queue = (0..501u32)
+                .map(|i| {
+                    let mut h = [0x55; 32];
+                    h[..4].copy_from_slice(&i.to_le_bytes());
+                    h
+                })
+                .collect();
+            p.next_inv = Instant::now();
+        }
+        let mut sizes = Vec::new();
+        while sizes.iter().sum::<usize>() < 501 {
+            let m = tokio::time::timeout(Duration::from_secs(10), r.recv())
+                .await
+                .expect("announced within 10 s")
+                .unwrap();
+            if let Message::InvTx(ids) = Message::decode(&m).expect("a valid message") {
+                sizes.push(ids.len());
+            }
+        }
+        assert_eq!(sizes, [500, 1]);
+    }
+
+    /// The interval and address-fetch limits are strict: an elapsed time
+    /// equal to the limit does not trigger them (RT-MUTE, against E43's
+    /// "no test can arrange the equality"). With both limits zero and the
+    /// recorded instants not in the past, `duration_since` saturates to zero,
+    /// so the elapsed time equals the limit at every tick: the peer is
+    /// neither pinged nor left as a silent seed (the mutants `>` -> `>=` of
+    /// the ping interval and the address-fetch timeout ping it and leave
+    /// it). Control: with the instants in the past, both limits trigger.
+    #[tokio::test]
+    async fn an_elapsed_time_equal_to_a_zero_limit_does_not_trigger_it() {
+        let net = idle_network(|c| {
+            c.ping_interval = Duration::ZERO;
+            c.addr_fetch_timeout = Duration::ZERO;
+        })
+        .await;
+        let recv = |m: Vec<u8>| Message::decode(&m).unwrap();
+        let (mut r, mut w) = raw_peer(&net).await;
+        let later = Instant::now() + Duration::from_secs(3600);
+        {
+            let mut st = net.inner.state();
+            let p = st.peers.values_mut().next().unwrap();
+            p.ping = None;
+            p.last_ping = later;
+            p.kind = ConnKind::AddrFetch;
+            p.connected_at = later;
+        }
+        // Everything queued before the edit comes before this pong.
+        w.send(&Message::Ping(8).encode()).await.unwrap();
+        loop {
+            if let Message::Pong(8) = recv(r.recv().await.unwrap()) {
+                break;
+            }
+        }
+        // Ten ticks with the elapsed times equal to the limits.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        w.send(&Message::Ping(9).encode()).await.unwrap();
+        loop {
+            match recv(r.recv().await.expect("still connected")) {
+                Message::Pong(9) => break,
+                Message::Ping(n) => panic!("pinged ({n}) at an elapsed time equal to the interval"),
+                _ => {}
+            }
+        }
+        assert_eq!(net.inner.state().peers.len(), 1, "left as a silent seed");
+
+        // Control: the same zero limits with the instants in the past.
+        net.inner
+            .state()
+            .peers
+            .values_mut()
+            .next()
+            .unwrap()
+            .last_ping = Instant::now();
+        let pinged = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let Message::Ping(_) = recv(r.recv().await.unwrap()) {
+                    break;
+                }
+            }
+        })
+        .await;
+        assert!(pinged.is_ok(), "not pinged once the interval had passed");
+        net.inner
+            .state()
+            .peers
+            .values_mut()
+            .next()
+            .unwrap()
+            .connected_at = Instant::now();
+        let left = tokio::time::timeout(Duration::from_secs(10), async {
+            while r.recv().await.is_ok() {}
+        })
+        .await;
+        assert!(left.is_ok(), "a seed past its zero timeout was not left");
     }
 }

@@ -1,0 +1,4 @@
+# 2026-10-02 16:18:44 UTC; cargo test --locked --profile mutants -p blacksilk-wallet --lib
+baseline ok
+CAUGHT	HEADER_SAMPLES 15	wallet/src/headers.rs:68	HEADER_SAMPLES: u64 = 16 -> HEADER_SAMPLES: u64 = 15	94s	0.log
+CAUGHT	HEADER_SAMPLES 17	wallet/src/headers.rs:68	HEADER_SAMPLES: u64 = 16 -> HEADER_SAMPLES: u64 = 17	91s	1.log

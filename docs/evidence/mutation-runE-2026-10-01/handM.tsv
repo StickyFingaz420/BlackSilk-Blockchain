@@ -1,0 +1,24 @@
+OUTBOX 63	p2p/src/net/conn.rs	49	OUTBOX: usize = 64	OUTBOX: usize = 63
+OUTBOX 65	p2p/src/net/conn.rs	49	OUTBOX: usize = 64	OUTBOX: usize = 65
+BULK_OUTBOX -1	p2p/src/net/conn.rs	52	2 * SERVE_BLOCKS_PER_REQUEST	2 * SERVE_BLOCKS_PER_REQUEST - 1
+BULK_OUTBOX +1	p2p/src/net/conn.rs	52	2 * SERVE_BLOCKS_PER_REQUEST	2 * SERVE_BLOCKS_PER_REQUEST + 1
+HANDSHAKE_UNKNOWN_FRAMES 7	p2p/src/net/conn.rs	56	FRAMES: usize = 8	FRAMES: usize = 7
+HANDSHAKE_UNKNOWN_FRAMES 9	p2p/src/net/conn.rs	56	FRAMES: usize = 8	FRAMES: usize = 9
+KEY_EXCHANGE_TIMEOUT 4	p2p/src/net/conn.rs	38	from_secs(5)	from_secs(4)
+KEY_EXCHANGE_TIMEOUT 6	p2p/src/net/conn.rs	38	from_secs(5)	from_secs(6)
+HANDSHAKE_TIMEOUT 9	p2p/src/net/conn.rs	33	from_secs(10)	from_secs(9)
+HANDSHAKE_TIMEOUT 11	p2p/src/net/conn.rs	33	from_secs(10)	from_secs(11)
+HANDSHAKE_DEADLINE 19	p2p/src/net/conn.rs	44	from_secs(20)	from_secs(19)
+HANDSHAKE_DEADLINE 21	p2p/src/net/conn.rs	44	from_secs(20)	from_secs(21)
+IDLE_TIMEOUT 179	p2p/src/net/conn.rs	46	from_secs(180)	from_secs(179)
+IDLE_TIMEOUT 181	p2p/src/net/conn.rs	46	from_secs(180)	from_secs(181)
+PONG_TIMEOUT 29	p2p/src/net/maintenance.rs	30	from_secs(30)	from_secs(29)
+PONG_TIMEOUT 31	p2p/src/net/maintenance.rs	30	from_secs(30)	from_secs(31)
+SAVE_INTERVAL 59	p2p/src/net/maintenance.rs	79	from_secs(60)	from_secs(59)
+SAVE_INTERVAL 61	p2p/src/net/maintenance.rs	79	from_secs(60)	from_secs(61)
+first save 4 s	p2p/src/net/maintenance.rs	84	from_secs(5)	from_secs(4)
+first save 6 s	p2p/src/net/maintenance.rs	84	from_secs(5)	from_secs(6)
+inv chunk 499	p2p/src/net/maintenance.rs	122	chunks(500)	chunks(499)
+inv chunk 501	p2p/src/net/maintenance.rs	122	chunks(500)	chunks(501)
+dial gap 1 s	p2p/src/net/maintenance.rs	216	from_secs(2)	from_secs(1)
+dial gap 3 s	p2p/src/net/maintenance.rs	216	from_secs(2)	from_secs(3)

@@ -34,7 +34,9 @@ install -m 0755 target/release/blacksilk-node target/release/blacksilk-miner \
 
 echo "==> user, directories, configuration"
 id blacksilk >/dev/null 2>&1 || useradd --system --home /var/lib/blacksilk --shell /usr/sbin/nologin blacksilk
-install -d -m 0750 -o blacksilk -g blacksilk /var/lib/blacksilk
+# Owner-only: the node's data directory holds private files (docs/testnet.md
+# §4.5); the node also makes its own data directory 0700.
+install -d -m 0700 -o blacksilk -g blacksilk /var/lib/blacksilk
 install -d -m 0755 /etc/blacksilk
 if [ ! -f /etc/blacksilk/node.toml ]; then
   if [ "$SEED" -eq 1 ]; then
@@ -50,8 +52,9 @@ fi
 echo "==> systemd units"
 install -m 0644 deploy/systemd/blacksilk-node.service /etc/systemd/system/
 if [ -n "$MINER_ADDRESS" ]; then
-  echo "BLACKSILK_MINER_ADDRESS=$MINER_ADDRESS" > /etc/blacksilk/miner.env
-  chmod 0644 /etc/blacksilk/miner.env
+  # Read by systemd as root: the payout address need not be world-readable.
+  ( umask 077; echo "BLACKSILK_MINER_ADDRESS=$MINER_ADDRESS" > /etc/blacksilk/miner.env )
+  chmod 0600 /etc/blacksilk/miner.env
   install -m 0644 deploy/systemd/blacksilk-miner.service /etc/systemd/system/
 fi
 systemctl daemon-reload

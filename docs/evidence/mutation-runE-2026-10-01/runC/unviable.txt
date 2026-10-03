@@ -1,0 +1,7 @@
+chain/src/manager/header_sync.rs:36:9: replace ChainManager::headers_after -> Vec<BlockHeader> with vec![Default::default()]
+chain/src/manager/header_sync.rs:104:9: replace ChainManager::pow_jobs -> Option<(Arc<CachedPow>, Vec<PowJob>)> with Some((Arc::new(Default::default()), vec![]))
+chain/src/manager/header_sync.rs:104:9: replace ChainManager::pow_jobs -> Option<(Arc<CachedPow>, Vec<PowJob>)> with Some((Arc::new(Default::default()), vec![Default::default()]))
+chain/src/manager/submission.rs:13:9: replace ChainManager::submit_block -> Result<Submitted, SubmitError> with Ok(Default::default())
+chain/src/manager/submission.rs:40:9: replace ChainManager::submit_block_bounded -> Result<Submitted, SubmitError> with Ok(Default::default())
+chain/src/manager/submission.rs:64:9: replace ChainManager::verdict -> Result<Submitted, SubmitError> with Ok(Default::default())
+chain/src/manager/submission.rs:82:9: replace ChainManager::submit_inner -> Result<Submitted, SubmitError> with Ok(Default::default())

@@ -694,10 +694,361 @@ pin is the tripwire for re-examining this entry.
 **Reproduce (E23–E28).** `tools/boundary-mutants.sh run` with the oracles of the run C
 evidence (§ Boundary pass); `BM_FILTER` selects one mutant.
 
-## E40: `range_word` slices whose end is mutated (zkvm/src/air/alu_mul.rs, alu_shift.rs)
+## E29: the varint's continuation bit and loop bound (tx/src/codec.rs)
+
+Decision: mutation run E (docs/evidence/mutation-runE-2026-10-01/), for the Lead's
+review.
+
+**Code.** `Writer::varint`: `while v >= 0x80 { self.buf.push((v as u8 & 0x7f) |
+0x80); v >>= 7; }`. `Reader::varint`: `for i in 0..10 { let b = self.u8()?; … if i
+== 9 && (b & 0x80 != 0 || low > 1) { return Err(VarintOverflow) } … if b & 0x80 ==
+0 { … return Ok(value) } } unreachable!(…)`.
+
+**Mutants covered:** 52:44 `replace | with ^` (cargo-mutants); the hand mutant
+`0..10` → `0..11` in `Reader::varint` (§ Hand mutants of the evidence).
+
+**Argument.** (1) `as` binds tighter than `&`, so the left operand is `(v as u8) &
+0x7f`, whose bit 7 is always 0. For such a byte `x`, `x | 0x80 = x ^ 0x80 = x +
+0x80`: the same byte for every input. (2) At `i = 9` the loop body either returns
+`Ok` (the byte ends the varint) or returns `VarintOverflow` (a continuation bit, or a
+value bit past 64): no iteration with `i = 9` falls through, so a bound above 10 is
+never reached. The other bound mutants are caught (`0..9` reaches `unreachable!`,
+`i == 8` refuses ten-byte values, `low > 0` and `low > 2` change the 64-bit edge).
+The encoding is pinned by `varint_round_trip`, the exhaustive two-byte uniqueness
+test and every transaction vector.
+
+## E30: `Transfer::weight`'s clawback at two outputs (tx/src/types.rs)
+
+Decision: mutation run E, boundary pass and hand mutants, for the Lead's review.
+
+**Code.** `let m = self.outputs.len().next_power_of_two() as u64; if m <= 2 { return
+size; } … size + (320 * m).saturating_sub(bp_size) * 4 / 5`: the clause of
+`params::max_weight` (E25), on an actual transfer.
+
+**Mutants covered:** 327:14 `replace <= with <` (boundary pass) and the hand mutant
+`m <= 2` → `m <= 1` (§ Hand mutants of the evidence).
+
+**Argument.** As E25: the versions differ only at `m = 2` (`m = 1` satisfies every
+form), where the range proof of a transfer with two outputs has `7` rounds and
+`bp_size = 32·(6 + 2·7) = 640 = 320·2`, so the clawback adds `0·4/5 = 0`: the same
+weight. A transfer has at least `MIN_OUTPUTS` = 2 outputs, so `m = 1` never occurs.
+
+## E31: `statement`'s guard, which both callers check first (px/src/prove.rs)
+
+Decision: mutation run E, for the Lead's review.
+
+**Code.** `fn statement(public, calls, budgets, window, h_tx)` begins `if public.n_fn >
+MAX_FN || calls.len() != public.n_fn || budgets.len() != calls.len() { return None;
+}`. It is private; its only callers are `verify` and `check_shape_bits`, which both
+return `Shape` first when `public.n_fn > MAX_FN || calls.len() != public.n_fn`, and
+then build `budgets` with one entry per call (or return `Unregistered`).
+
+**Mutants covered:** 166:29 and 166:59 `replace || with &&` (cargo-mutants).
+
+**Argument.** Whenever `statement` runs, each of the three terms is false (the first
+two by the caller's check, the third by construction), so the guard is false in the
+original and under either mutant: `statement` never returns `None` from it. The
+callers' guards are killed by tests (`verify_judges_the_statement_before_the_proof`
+and run D's `the_shape_check_accepts_exactly_the_statements_degree_bits`), including
+`n_fn = MAX_FN + 1` with as many calls, which must be `Shape` and not a panic.
+
+## E32: one more main-chain entry before the truncation in `missing_bodies` (chain/src/manager/header_sync.rs)
+
+Decision: mutation run E, for the Lead's review.
+
+**Code.** `missing_bodies(max)`: the header-best chain is scanned from the fork
+`while out.len() < max { … out.push((h, id)) … h += 1 }`, the heavier side branches
+are walked back and appended (`seen` keeps ids unique), then `out.sort_by_key(|&(h,
+_)| h); out.truncate(max)`.
+
+**Mutant covered:** 68:29 `replace < with <=` (cargo-mutants).
+
+**Argument.** The mutant adds at most one more main-chain entry, at a height above
+every main-chain entry already listed, and only when `max` of them were listed. After
+the stable sort by height those `max` entries all come before it, so the truncation
+to `max` drops it: the same list. Its id in `seen` changes nothing either: if a side
+branch's walk passes that header, the original appends it from the walk instead,
+the same entry, which the truncation drops in the same way; every other entry is
+listed as before. The cap itself
+(at most `max` entries, lowest heights first) is tested (tests/manager.rs
+`headers_without_bodies_do_not_move_the_state`, tests/fork_choice.rs).
+
+## E33: log lines of block submission (chain/src/manager/submission.rs)
+
+Decision: mutation run E, for the Lead's review (as E12 for fork choice).
+
+**Code.** In `submit_inner`, on a store failure that reaches the limit: `if
+!self.store_failed { log::error!("block store failed …") } self.store_failed = true;`.
+In `drain_ready`: `if self.tip_id() != before { log::debug!("tip … at height …") }`.
+
+**Mutants covered:** 140:24 `delete !`, 211:26 `replace != with ==` (cargo-mutants).
+
+**Argument.** Both conditions guard only a log line. For the first, `submit_inner`
+refuses every persisting submission once `store_failed` is set (its first check), so
+at the guard `store_failed` is always false: the mutant removes the error line and
+nothing else; `store_failed` is set in both versions, and the refusal that follows it
+is tested (tests/storage_recovery.rs, the full-disk test). The second only changes
+when a debug line is written. No test observes the log; the behaviour is the same.
+
+## E34: the capacity check of the full test tree (px/src/tree.rs)
+
+Decision: mutation run E, boundary pass, for the Lead's review.
+
+**Code.** `Tree::append`: `let pos = self.size(); if pos >= CAPACITY { return
+Err(TreeFull) }`. `Tree` keeps every node (`levels[0]` holds every leaf); it is the
+reference tree of tests and of the wallet's tree tests, used by no node or wallet
+code path (the consensus tree is `Frontier`, whose capacity check, 64:22, is killed
+by `the_last_append_keeps_the_full_root`).
+
+**Mutant covered:** 151:16 `replace >= with >` (boundary pass).
+
+**Argument.** The versions differ only for an append at `pos = CAPACITY = 2^32`,
+which needs a `Tree` already holding 2^32 leaves: 128 GiB for `levels[0]` alone, and
+`Tree` has no test constructor that skips appending (`Frontier::uniform_for_tests`
+exists for that reason). No test can reach the edge, and no product path builds a
+`Tree`. The consensus rule at that edge, `TreeFull` from the frontier and the block
+rule that refuses a block past capacity, is tested (px state and tree tests,
+tx/tests/tree_capacity.rs).
+
+## E35: the locator's length cap, unreachable below 2^54 blocks (chain/src/manager/header_sync.rs)
+
+Decision: mutation run E, boundary pass and hand mutants, for the Lead's review.
+
+**Code.** `locator`: `loop { out.push(id at h); if h == 0 || out.len() >= 63 {
+break } if out.len() >= 10 { step *= 2 } h = h.saturating_sub(step) }`, then the
+genesis id if the last entry is not it: at most 64 ids (`MAX_LOCATOR`).
+
+**Mutants covered:** 19:36 `replace >= with >` (boundary pass); the hand mutants `63`
+→ `62` and `63` → `64` (§ Hand mutants of the evidence).
+
+**Argument.** The first 10 entries step by 1, then the step doubles each entry, so
+entry `10 + k` lies `9 + (2^(k+1) − 2)` blocks below the tip, and `h` reaches 0 by
+entry `10 + k` once `2^(k+1) + 7 ≥ height`. The cap of 63 entries is reached first
+only for a best header chain above `2^54 + 7` blocks (`k = 53`), which no chain
+reaches (2^54 blocks at the 120 s target is over 6·10^10 years); a cap of 62
+binds above `2^53 + 7` blocks, equally out of reach. Below that the loop
+always ends at `h == 0` with fewer than 63 entries, and the three mutants change
+nothing. The bound that matters to peers, at most 64 ids in a `GetHeaders`, is the
+message decoder's (`MAX_LOCATOR`), and the locator's shape is tested
+(`locator_and_headers_after`).
+
+## E36: the trim of a request locator over `MAX_LOCATOR`, unreachable (p2p/src/net/headers.rs)
+
+Decision: mutation run E, for the Lead's review.
+
+**Code.** `request_headers_after(peer, Some(id))`: `locator.retain(|h| *h != id);
+locator.insert(0, id); if locator.len() > MAX_LOCATOR as usize {
+locator.remove(locator.len() - 2); }`, where `locator` is the published summary's,
+`ChainManager::locator()`'s (`MAX_LOCATOR` = 64).
+
+**Mutants covered:** 140:30 `replace > with ==` and `replace > with >=`; 142:46
+`replace - with +` and `replace - with /` (cargo-mutants).
+
+**Argument.** The trim runs only when the summary's locator holds 64 ids and `id` is
+not among them. `locator()` holds at most 63 entries before the genesis, and reaches
+that many only for a best header chain above `2^54 + 7` blocks (E35); below that it
+holds at most `10 + log2(height) + 1` ids (about 45 at 2^32 blocks), so the edited
+locator never exceeds 64 and the branch, in either form, never runs: with `==` or
+`>=` at 64 ids it would need a 64-id summary locator, and the two removals only run
+inside the branch. The edit itself (`id` first and once, then our chain down to the
+genesis) is tested (`a_request_after_a_batch_starts_its_locator_at_the_batch`), which
+also kills `>` → `<` (the removal of `id` from a short locator), and the decoder
+refuses a `GetHeaders` of more than 64 ids from any peer.
+
+## E37: the skip test of the parallel proof-of-work jobs (wallet/src/headers.rs)
+
+Decision: mutation run E, for the Lead's review.
+
+**Code.** `first_failure(pow, jobs, threads, computed)`: each worker loops `let i =
+next.fetch_add(1); if i >= jobs.len() || i > failed.load() { return } … if
+!check_hash(..) { failed.fetch_min(i) }`, `failed` starting at `usize::MAX`.
+
+**Mutant covered:** 412:33 `replace > with >=` (cargo-mutants).
+
+**Argument.** The versions differ only when `i == failed` at the test. `failed` is
+`usize::MAX` or the index of a job whose hash was computed and failed; that job's
+index was taken from `next` by the thread that computed it, after its own test, and
+`fetch_add` hands every index out once. A thread tests `i` right after taking it, so
+no other job can have failed at `i` yet: `i ≠ failed` at every test, and the skip
+condition is the same. The verdict (the first failing job in chain order, every job
+before it computed) is tested against the sequential check on 1, 2, 4 and 8 threads
+(`parallel_and_sequential_verdicts_agree`).
+
+## E38: equivalent mutants of header verification (p2p/src/net/headers.rs)
+
+Decision: mutation run E, for the Lead's review.
+
+**Mutants covered** (cargo-mutants), each with its argument:
+
+- **576:36 `replace || with &&`** in `precheck`: `let jobs = if first.is_empty() ||
+  !worth { None } else { c.pow_jobs(&headers[first]) }`. The mutant computes the
+  first chunk's jobs also when the batch is not worth verifying (and asks
+  `pow_jobs` for an empty slice, which returns `None`). `verify_headers` returns
+  `LowWork` for a batch that is not worth verifying before it reads `jobs`, and
+  `pow_jobs` only reads the header tree: the same outcome, no hash, no state change.
+- **729:21 `replace += with -=` and `with *=`** in `verify_headers`: the `Ok(n)` arm
+  after accepting the unknown-version header alone, marked "Not reached". A header
+  whose version no epoch of the schedule uses is never valid (`check_rules` returns
+  `UnknownUpgrade` or `InsufficientWork`), so it is never stored, and
+  `accept_headers` cannot return `Ok` for it (it skips only stored headers).
+- **747:12 `replace > with >=`** (`new > 0` in the live-arrival test `new > 0 &&
+  on_main && !full && last.height > ours_before`): the versions differ only for
+  `new = 0` with the rest true, a batch that stored nothing whose last header is on
+  the best header chain above `ours_before`, the best header height when the batch
+  was taken up. Every header of such a batch was stored before, and a stored header
+  on the best chain is at most `ours_before` high (the worker takes batches one at a
+  time; the summary it reads is published before the actor answers the previous
+  batch's last command). The other terms of the test are killed by
+  `clock_samples_come_from_live_arrivals_only` and
+  `note_clock_samples_refused_headers_and_live_arrivals`.
+
+## E39: a sender's departure inside the pre-check, and a cancelled PoW task (p2p/src/net/headers.rs)
+
+Decision: mutation run E, an oracle limit (as E19), for the Lead's review.
+
+**Mutants covered:** 668:14 `replace > with >=` (`if k > 0 && !sender_live(…)` between
+proof-of-work chunks); 489:23 `replace match guard e.is_panic() with true` (the
+header worker's `Err(e) if e.is_panic() => fatal(…)`, `Err(_) => return`).
+
+**Argument.** Neither is equivalent; each differs only inside a window no test can
+place an event in without a hook in the product:
+
+- 668:14: `verify_headers` reads the sender's liveness before its pre-check command and
+  returns `Abandoned` after it if the sender had left by then. With `>=` the check
+  also runs before the first chunk, so a sender that leaves while its pre-check
+  command runs costs no chunk instead of one. A test cannot make the departure fall
+  between the liveness read and the end of that command (holding the chain lock
+  delays the command, but not the worker's read before it; tried, and the batch was
+  abandoned before either). The bound that matters, at most one chunk of hashes for
+  a sender that left, holds in both, and the checks between chunks are killed by
+  `a_departed_senders_batch_stops_at_the_next_chunk` (`>` → `==`, `<`).
+- 489:23: the `spawn_blocking` task of `verify_headers` ends in a non-panic
+  `JoinError` only when the runtime cancels it at shutdown, when the worker itself
+  is being dropped. The panic branch is killed by
+  `a_panic_in_the_header_pow_jobs_stops_the_node` (a child process that must exit
+  with `POISONED_EXIT_CODE`).
+
+## E40: withdrawn (killed)
+
+The tip-age limits at their exact second (wallet/src/wallet/sync.rs 576:16 in
+`note_tip_age` and 618:40 in `check_fresh_tip`, `replace > with >=`) were first exempted
+here as an oracle limit (no injectable clock). Decision RT-MUTE: the red team's
+`the_tip_age_limits_are_strict_at_their_exact_second` (wallet/src/wallet/tests_sync.rs)
+reads the clock in whole seconds and repeats a try that crosses a second boundary, so a
+tip exactly `warn` or `refuse` old is tested; it kills both mutants (`f2w` in
+docs/evidence/mutation-runE-2026-10-01/: 2 of 2 caught). The number stays reserved.
+
+## E41: the sampling threshold's two edges (wallet/src/headers.rs)
+
+Decision: mutation run E, boundary pass, for the Lead's review.
+
+**Code.** `HeaderCheck::build`: `let threshold = if samples >= expected.max(1) {
+u64::MAX } else { ((u64::MAX as u128 * samples as u128) / expected.max(1) as u128) as
+u64 };` `precheck`: `let sampled = force_pow || self.rng.next_u64() <= self.threshold;`.
+
+**Mutants covered:** 185:36 `replace >= with >` and 371:56 `replace <= with <`
+(boundary pass).
+
+**Argument.** 185:36: the versions differ only at `samples == expected`, where the
+mutant computes `u64::MAX · samples / samples = u64::MAX`, the original's value. 371:56:
+the versions differ only for a draw equal to the threshold, one value of 2^64 for
+each header, drawn from a ChaCha20 stream seeded by the OS RNG: no test can make or
+observe it, and a sampled header is a probabilistic check in both versions. The rate
+itself is tested (`the_header_check_samples_at_the_requested_rate`), as are full and
+forced sampling.
+
+## E42: `prove`'s checks after proving that repeat the checks before it (px/src/prove.rs)
+
+Decision: mutation run E, for the Lead's review.
+
+**Code.** `prove` runs the kernel guest and every function first: the kernel's exit
+code must be 0 (`kernel_exec.exit_code != 0` → error), and each function must exit 0
+and write the kernel's prefix (`exec.output.len() < PREFIX_WORDS ||
+exec.output[..PREFIX_WORDS] != prefix` → `FunctionMismatch`). It then proves the same
+programs on the same inputs (`prove_shaped` runs them again) and checks the proven
+statement: `st.exit_code != 0 || st.output != public_words(&public)` (293) and, per
+function, `part.output.len() < PREFIX_WORDS || part.output[..PREFIX_WORDS] != prefix`
+(309).
+
+**Mutants covered:** 293:26 and 309:45 `replace || with &&` (cargo-mutants; the
+proving run `provingP1`, release, with the PX-proving unified test).
+
+**Argument.** The BVM-1 interpreter is deterministic: `prove_shaped` re-runs the same
+program on the same input to the same exit code and output as the runs before
+proving. 309:45: when the first test passed, `part.output` is the same prefix-led
+output, so `len < PREFIX_WORDS` is false and the slice equals the prefix: both forms
+are false. 293:26: the kernel's exit code is 0 here (checked before), so the original
+is `st.output != public_words(&public)` and the mutant is `false`; they differ only if
+the pinned kernel guest's output differs from the native kernel's public statement
+for an accepted witness, which the kernel's differential tests and fuzzing exclude
+(`a_real_transfer_is_accepted_natively_and_by_the_guest`, px/tests/fuzz.rs) and which
+`verify` would refuse anyway (the statement is rebuilt from `public`). The other
+mutants of both lines (`!=` → `==`, `<` → `==`, `>`, `<=`, the exit codes) are killed
+by the proving tests (§ px/src/prove.rs).
+
+## E43: the maintenance loop's comparisons against constant limits, no clock seam (p2p/src/net/maintenance.rs)
+
+Decision: mutation run E, an oracle limit; reworded and narrowed by decision RT-MUTE.
+
+**Code.** `maintenance_loop` reads `let now = Instant::now()` once per tick and compares
+it with instants recorded elsewhere, against limits that are constants:
+`now >= p.next_inv` (the trickle delay, 119); `now.duration_since(t) > LIMIT` for an
+unanswered ping (`PONG_TIMEOUT`, 133), a header request (`HEADERS_TIMEOUT`, 142), block
+and transaction requests (`BLOCK_TIMEOUT`, `TX_TIMEOUT`, 157, 171), the outbound round
+(`OUTBOUND_ROUND`, 216) and the save interval (`SAVE_INTERVAL`, 228); and
+`now.duration_since(t) <= LIMIT` for keeping late block and transaction requests (167,
+179).
+
+**Mutants covered:** 133:49, 142:60, 157:62, 171:62, 216:46 and 228:46 `replace > with
+>=` (cargo-mutants, `rerunM`); 119:51 `replace >= with >`, 167:60 and 179:55 `replace
+<= with <` (boundary pass, `bndM2`). Withdrawn (RT-MUTE): 128:59 and 136:59, the
+address-fetch timeout and the ping interval, whose limits are configurable: the red
+team's `an_elapsed_time_equal_to_a_zero_limit_does_not_trigger_it` sets both to zero
+and the recorded instants in the future, so `duration_since` saturates to exactly the
+limit at every tick; it kills both (`f2p`: 2 of 2 caught).
+
+**Argument.** Each pair of versions differs only when the elapsed time equals a
+constant limit exactly, to the resolution of the monotonic clock (100 ns on Windows,
+1 ns on Linux), at the one tick that reads that instant; at the next tick (50 ms in the
+tests, 250 ms by default) both versions take the same action. A test cannot set a
+constant limit to zero, `Instant` cannot be set, and the loop has no clock seam (an
+injected `now`), so no test can arrange the equality; for 119:51 the instant compared
+is `next_inv`, set from an exponential draw. Each rule is tested on both sides with
+margins: `requests_time_out_after_their_timeouts_and_late_ones_are_kept_as_long` and
+`late_transaction_requests_are_capped` (block and transaction requests, late requests,
+set in the state with ages 10 s below and above each limit),
+`a_header_request_times_out_after_the_headers_timeout`,
+`a_peer_that_never_answers_a_ping_is_left_after_the_pong_timeout`,
+`an_announcement_waits_for_its_trickle_delay`,
+`outbound_connections_are_maintained_every_two_seconds` and
+`the_first_save_of_the_address_table_comes_5_s_after_the_start`; the constants are
+pinned by value; every other mutant of these lines is killed (`rerunM`, `bndM2`). A
+clock seam would make the edges testable; it is a product change, not made here.
+
+## E44: the upper side of the first save's delay and the outbound round (p2p/src/net/maintenance.rs)
+
+Decision: mutation run E, confirmed by decision RT-MUTE, which also had the two delays
+named (`a91c178`, a refactor with no behavior change): `FIRST_SAVE_DELAY` (5 s) and
+`OUTBOUND_ROUND` (2 s, docs/p2p.md §9), pinned by value in
+`the_first_save_delay_and_the_outbound_round_are_the_specified_ones`.
+
+**Mutants covered:** the hand mutants 5 s → 6 s of the first save and 2 s → 3 s of the
+outbound round, as run E made them on the literals (missed in `handM2`, `handM3` and
+`handM4`). (`handM3` reported the second caught: four network tests timed out while
+the release test suite ran beside it; alone, in `handM4`, it was missed.) Their
+successors, the constants ± 1 s, are caught by the pinning test.
+
+**Argument.** The lower sides are tested exactly, since a delay never ends early
+(`the_first_save_of_the_address_table_comes_5_s_after_the_start`: not before 4.5 s;
+`outbound_connections_are_maintained_every_two_seconds`: dials at least 1.8 s apart).
+The upper sides need a bound on when an event is observed, which load moves (a 5 s
+close was observed after more than 7.5 s, `facb993`); the value itself is now stated
+by the pinning test, so what this entry keeps is only the behavior test's upper side.
+
+## E51: `range_word` slices whose end is mutated (zkvm/src/air/alu_mul.rs, alu_shift.rs)
 
 Decision: W4-MUTAIR (the AIR census, docs/evidence/mutation-air-2026-10-02), for the
-Lead's review. E29–E39 are left to run E.
+Lead's review. E29–E44 are run E's.
 
 **Code.** `range_word(bld, &r[A..A + 4], real)` (alu_mul.rs:109, `A = 4`; :110,
 `B = 8`; alu_shift.rs:67, `A = 3`). `util::range_word` reads `w[0..4]` only.
@@ -708,7 +1059,7 @@ Lead's review. E29–E39 are left to run E.
 **Argument.** The slice keeps its start and its first four elements, the only ones
 `range_word` reads; no constraint or lookup changes.
 
-## E41: `INS + f::FLAGS` with `f::FLAGS = 0` (zkvm/src/air/cpu.rs)
+## E52: `INS + f::FLAGS` with `f::FLAGS = 0` (zkvm/src/air/cpu.rs)
 
 Decision: W4-MUTAIR, for the Lead's review.
 
@@ -719,7 +1070,7 @@ Decision: W4-MUTAIR, for the Lead's review.
 of the layout constant changes the program table's fields and the circuit
 fingerprint.
 
-## E42: `KB + 2` with `KB = 2` (zkvm/src/air/memory.rs)
+## E53: `KB + 2` with `KB = 2` (zkvm/src/air/memory.rs)
 
 Decision: W4-MUTAIR, for the Lead's review.
 
@@ -728,7 +1079,7 @@ Decision: W4-MUTAIR, for the Lead's review.
 
 **Argument.** `KB = 2`, and `2 + 2 = 2 · 2`: the same column.
 
-## E43: `poseidon::p2_width`, a function nothing calls (zkvm/src/air/poseidon.rs)
+## E54: `poseidon::p2_width`, a function nothing calls (zkvm/src/air/poseidon.rs)
 
 Decision: W4-MUTAIR, for the Lead's review.
 
@@ -738,7 +1089,7 @@ Decision: W4-MUTAIR, for the Lead's review.
 definition); the table's widths come from `P2_COLS` and `WIDTH`. Removing it changes
 no constraint but edits an AIR file; that is left to the next AIR revision.
 
-## E44: other register bases (zkvm/src/air/util.rs)
+## E55: other register bases (zkvm/src/air/util.rs)
 
 Decision: W4-MUTAIR, for the Lead's review.
 
@@ -759,7 +1110,7 @@ keeps at or above `NULL_GUARD`. So base 0 (keys 0–31) and base `2^26 + 1` (key
 that does alias, `2^26 − 1` (hand mutant H01), is caught by
 `the_top_memory_word_and_the_registers_have_distinct_keys`.
 
-## E45: `range_bits`'s `bits ≤ 8` guard (zkvm/src/air/util.rs)
+## E56: `range_bits`'s `bits ≤ 8` guard (zkvm/src/air/util.rs)
 
 Decision: W4-MUTAIR (boundary pass), for the Lead's review.
 
@@ -769,7 +1120,7 @@ Decision: W4-MUTAIR (boundary pass), for the Lead's review.
 so the guard holds strictly; it never runs at 8. A call with 8 bits would be
 `range_pair(x, x)`, still sound.
 
-## E46: nine blinding values (zkvm/src/air/util.rs)
+## E57: nine blinding values (zkvm/src/air/util.rs)
 
 Decision: W4-MUTAIR (constant hand mutants), for the Lead's review.
 
@@ -781,7 +1132,7 @@ only widens every table by a column. Soundness does not depend on the count. Sev
 (H03) is caught by `a_blinding_message_spans_the_extension_field`. A change of the
 count changes the circuit fingerprint.
 
-## E47: local and exclusive interactions in the oracle (zkvm/src/air/check.rs)
+## E58: local and exclusive interactions in the oracle (zkvm/src/air/check.rs)
 
 Decision: W4-MUTAIR (run B), for the Lead's review.
 
@@ -800,7 +1151,7 @@ Plonky3's `Poseidon2Air` emits none (`grep -rn
 interaction the mutated code runs on empty lists. If a table ever uses one, these
 mutants become live and need a test.
 
-## E48: the bus test of `MutationChecker::caught` on a balanced baseline (zkvm/src/air/check.rs)
+## E59: the bus test of `MutationChecker::caught` on a balanced baseline (zkvm/src/air/check.rs)
 
 Decision: W4-MUTAIR (run B), for the Lead's review.
 
@@ -809,7 +1160,7 @@ Decision: W4-MUTAIR (run B), for the Lead's review.
 **Argument.** `MutationChecker::new` asserts the baseline valid, so every stored sum
 `buses[k]` is 0, and `0 + d` and `0 − d` are zero together.
 
-## E49: the last-row flag of `MutationChecker` (zkvm/src/air/check.rs)
+## E60: the last-row flag of `MutationChecker` (zkvm/src/air/check.rs)
 
 Decision: W4-MUTAIR (run B), for the Lead's review.
 
@@ -827,7 +1178,7 @@ changing `sh` on a halting row breaks `sh + srd + swr + sp2 = ecall`; changing `
 on a halting row breaks the padding rows' zero fields. `the_mutation_checker_agrees_with_the_full_checker`
 checks the first-row and transition flags, which the probes do observe.
 
-## E50: rejection sampling of blinding values (zkvm/src/air/trace.rs)
+## E61: rejection sampling of blinding values (zkvm/src/air/trace.rs)
 
 Decision: W4-MUTAIR (run B), for the Lead's review.
 

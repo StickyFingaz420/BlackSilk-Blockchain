@@ -1,0 +1,40 @@
+p2p/src/net/conn.rs:52:30: replace * with +
+p2p/src/net/conn.rs:125:27: replace || with && in run_connection
+p2p/src/net/conn.rs:125:57: replace && with || in run_connection
+p2p/src/net/conn.rs:125:36: replace == with != in run_connection
+p2p/src/net/conn.rs:213:28: replace < with <= in run_connection
+p2p/src/net/conn.rs:215:25: replace += with *= in run_connection
+p2p/src/net/conn.rs:243:46: delete ! in run_connection
+p2p/src/net/conn.rs:268:25: delete ! in run_connection
+p2p/src/net/conn.rs:271:25: replace || with && in run_connection
+p2p/src/net/conn.rs:286:21: replace && with || in run_connection
+p2p/src/net/conn.rs:306:25: replace || with && in run_connection
+p2p/src/net/conn.rs:305:26: replace == with != in run_connection
+p2p/src/net/conn.rs:306:55: replace && with || in run_connection
+p2p/src/net/conn.rs:306:34: replace == with != in run_connection
+p2p/src/net/conn.rs:330:45: replace && with || in run_connection
+p2p/src/net/conn.rs:522:45: replace != with == in run_connection
+p2p/src/net/conn.rs:536:25: replace != with == in run_connection
+p2p/src/net/conn.rs:537:9: delete ! in run_connection
+p2p/src/net/maintenance.rs:84:56: replace + with - in maintenance_loop
+p2p/src/net/maintenance.rs:119:44: replace && with || in maintenance_loop
+p2p/src/net/maintenance.rs:128:59: replace > with < in maintenance_loop
+p2p/src/net/maintenance.rs:128:59: replace > with >= in maintenance_loop
+p2p/src/net/maintenance.rs:133:49: replace > with == in maintenance_loop
+p2p/src/net/maintenance.rs:133:49: replace > with >= in maintenance_loop
+p2p/src/net/maintenance.rs:136:59: replace > with < in maintenance_loop
+p2p/src/net/maintenance.rs:136:59: replace > with >= in maintenance_loop
+p2p/src/net/maintenance.rs:142:60: replace > with == in maintenance_loop
+p2p/src/net/maintenance.rs:142:60: replace > with < in maintenance_loop
+p2p/src/net/maintenance.rs:142:60: replace > with >= in maintenance_loop
+p2p/src/net/maintenance.rs:157:62: replace > with == in maintenance_loop
+p2p/src/net/maintenance.rs:157:62: replace > with < in maintenance_loop
+p2p/src/net/maintenance.rs:157:62: replace > with >= in maintenance_loop
+p2p/src/net/maintenance.rs:167:60: replace <= with > in maintenance_loop
+p2p/src/net/maintenance.rs:171:62: replace > with == in maintenance_loop
+p2p/src/net/maintenance.rs:171:62: replace > with >= in maintenance_loop
+p2p/src/net/maintenance.rs:181:38: replace < with <= in maintenance_loop
+p2p/src/net/maintenance.rs:216:46: replace > with >= in maintenance_loop
+p2p/src/net/maintenance.rs:228:13: replace && with || in maintenance_loop
+p2p/src/net/maintenance.rs:228:46: replace > with < in maintenance_loop
+p2p/src/net/maintenance.rs:228:46: replace > with >= in maintenance_loop

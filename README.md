@@ -29,8 +29,9 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 - **Not post-quantum secure.** No part of the v1 transaction layer resists a quantum
   adversary ([transactions.md §11.6](docs/transactions.md)). Post-quantum work is a
   separate research track (`research/`).
-- **No authenticated peers, no I2P.** P2P encryption stops passive observers, not an
-  active man in the middle ([p2p.md §1](docs/p2p.md)). Tor works through its SOCKS5
+- **No authenticated peers, no I2P.** P2P encryption hides message contents from
+  passive observers, not message sizes and timing, and not from an active man in the
+  middle ([p2p.md §1](docs/p2p.md)); a closed network can add a pre-shared key. Tor works through its SOCKS5
   proxy for the node's outbound connections; I2P is not supported. The wallet has no
   Tor or TLS support: its RPC connection is plaintext HTTP, so use your own node.
 - **Not a finished contract platform.** PX is the only consensus contract platform
@@ -95,8 +96,16 @@ the OS RNG crate.
 ```sh
 cargo test --release --workspace  # the PX proofs make it slow (tens of minutes)
 cargo clippy --workspace --all-targets
-cargo build --release
+cargo build --release              # for your own machine only
 ```
+
+A plain `cargo build --release` embeds the build user's home directory in the
+binaries (panic locations). **Any binary that may leave your machine** (shared with
+someone, used in the trial, as evidence or for the genesis) is built with
+`bash tools/release-build.sh -p blacksilk-node -p blacksilk-miner -p blacksilk-wallet`
+from a clean checkout, and checked as in
+[docs/testnet.md §2](docs/testnet.md). Never use a binary that `cargo test` wrote: it
+carries test-only code.
 
 ## Testnet
 
@@ -134,16 +143,21 @@ The testnet is disabled until the v3 genesis is generated at launch: until then
 # Connect to known peers (repeatable); addresses are discovered from them.
 blacksilk-node --network testnet --peer <ip>:29334
 
-# Over Tor: all outbound connections through the Tor SOCKS proxy, no clearnet.
+# Over Tor: every outbound connection through the Tor SOCKS proxy, no direct clearnet
+# connection and no DNS lookup. Clearnet addresses are still dialled, through Tor exits.
 blacksilk-node --network testnet --proxy 127.0.0.1:9050 --proxy-only --peer <onion>.onion:29334
 ```
 
 - The node never advertises its own address unless `--public-address` is given.
 - Transactions submitted to the node's RPC are relayed with Dandelion++, not
   broadcast directly.
-- Inbound connections over a Tor hidden service all arrive from 127.0.0.1, so they
-  share one address's limits and bans (a known defect, N-6;
-  [docs/testnet.md §4.3](docs/testnet.md)).
+- For inbound connections over a Tor hidden service, forward the service to the
+  node's onion listener (`--onion-inbound 127.0.0.1:<port>`), not to the P2P port;
+  otherwise they all share one loopback address's limits and bans (N-6).
+  `deploy/config/testnet-tor.toml` does this ([docs/testnet.md §4.3](docs/testnet.md)).
+- `--proxy-only` dials clearnet addresses through Tor exits, which can read those
+  unauthenticated connections like any man in the middle; there is no onion-only
+  outbound setting yet ([docs/testnet.md §4.3](docs/testnet.md)).
 
 ## Security notes
 
@@ -155,9 +169,14 @@ blacksilk-node --network testnet --proxy 127.0.0.1:9050 --proxy-only --peer <oni
   chosen from the wallet's own output index, so ring members are not revealed. Its RPC
   traffic is plaintext (the wallet has no Tor or TLS support). Use your own node
   ([blocks.md §9](docs/blocks.md)).
-- An observer of your node's own link (your ISP, or your Tor guard) sees when it sends
-  a PX transaction, whose size (about 2.2 MB) no transport hides
+- An observer of your node's own link (your ISP, or your Tor guard) can tell from
+  message sizes and timing when your node originates a transaction, **v1 or PX**:
+  frames are not padded. A PX transaction (about 2.2 MB) is unmistakable even over
+  Tor; a v1 transaction (a few kB) is a weaker signal over Tor but not hidden
   ([docs/testnet.md §12.7](docs/testnet.md)).
+- `originated.json` in the node's data directory lists every transaction the node
+  originated: keep the data directory private
+  ([docs/testnet.md §4.5](docs/testnet.md)).
 - Wallet files are encrypted with Argon2id and AES-256-GCM. The 27 seed words recover the
   keys and on-chain funds, but not everything: the stored rings of pending spends and
   contract records this wallet created for others live only in the wallet file. Back

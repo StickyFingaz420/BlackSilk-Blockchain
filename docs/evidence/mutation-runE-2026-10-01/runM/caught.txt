@@ -1,0 +1,92 @@
+p2p/src/net/conn.rs:52:30: replace * with /
+p2p/src/net/conn.rs:65:5: replace recv_handshake_frame -> Result<Vec<u8>, String> with Ok(vec![])
+p2p/src/net/conn.rs:65:5: replace recv_handshake_frame -> Result<Vec<u8>, String> with Ok(vec![0])
+p2p/src/net/conn.rs:65:5: replace recv_handshake_frame -> Result<Vec<u8>, String> with Ok(vec![1])
+p2p/src/net/conn.rs:67:46: replace += with -= in recv_handshake_frame
+p2p/src/net/conn.rs:67:46: replace += with *= in recv_handshake_frame
+p2p/src/net/conn.rs:80:5: replace is_tx_message -> bool with true
+p2p/src/net/conn.rs:80:5: replace is_tx_message -> bool with false
+p2p/src/net/conn.rs:91:5: replace loopback_is_tor -> bool with true
+p2p/src/net/conn.rs:91:5: replace loopback_is_tor -> bool with false
+p2p/src/net/conn.rs:91:54: replace && with || in loopback_is_tor
+p2p/src/net/conn.rs:91:32: replace && with || in loopback_is_tor
+p2p/src/net/conn.rs:91:35: delete ! in loopback_is_tor
+p2p/src/net/conn.rs:104:5: replace run_connection with ()
+p2p/src/net/conn.rs:106:48: replace + with - in run_connection
+p2p/src/net/conn.rs:131:40: delete ! in run_connection
+p2p/src/net/conn.rs:168:9: delete match arm ConnKind::BlockRelay in run_connection
+p2p/src/net/conn.rs:178:25: replace != with == in run_connection
+p2p/src/net/conn.rs:194:28: replace < with == in run_connection
+p2p/src/net/conn.rs:194:28: replace < with > in run_connection
+p2p/src/net/conn.rs:194:28: replace < with <= in run_connection
+p2p/src/net/conn.rs:197:27: replace != with == in run_connection
+p2p/src/net/conn.rs:213:17: replace && with || in run_connection
+p2p/src/net/conn.rs:212:47: delete ! in run_connection
+p2p/src/net/conn.rs:213:28: replace < with == in run_connection
+p2p/src/net/conn.rs:213:28: replace < with > in run_connection
+p2p/src/net/conn.rs:215:25: replace += with -= in run_connection
+p2p/src/net/conn.rs:243:42: replace && with || in run_connection
+p2p/src/net/conn.rs:243:55: replace || with && in run_connection
+p2p/src/net/conn.rs:267:30: replace == with != in run_connection
+p2p/src/net/conn.rs:277:17: replace || with && in run_connection
+p2p/src/net/conn.rs:274:17: replace || with && in run_connection
+p2p/src/net/conn.rs:269:17: replace && with || in run_connection
+p2p/src/net/conn.rs:272:29: replace && with || in run_connection
+p2p/src/net/conn.rs:271:29: delete ! in run_connection
+p2p/src/net/conn.rs:272:55: replace >= with < in run_connection
+p2p/src/net/conn.rs:276:21: replace && with || in run_connection
+p2p/src/net/conn.rs:275:21: replace && with || in run_connection
+p2p/src/net/conn.rs:275:49: replace >= with < in run_connection
+p2p/src/net/conn.rs:276:24: delete ! in run_connection
+p2p/src/net/conn.rs:278:21: replace && with || in run_connection
+p2p/src/net/conn.rs:277:40: replace >= with < in run_connection
+p2p/src/net/conn.rs:278:24: delete ! in run_connection
+p2p/src/net/conn.rs:286:12: delete ! in run_connection
+p2p/src/net/conn.rs:286:29: replace != with == in run_connection
+p2p/src/net/conn.rs:291:43: replace == with != in run_connection
+p2p/src/net/conn.rs:303:38: replace && with || in run_connection
+p2p/src/net/conn.rs:303:29: delete ! in run_connection
+p2p/src/net/conn.rs:303:51: replace == with != in run_connection
+p2p/src/net/conn.rs:309:31: replace && with || in run_connection
+p2p/src/net/conn.rs:309:24: replace && with || in run_connection
+p2p/src/net/conn.rs:309:56: replace || with && in run_connection
+p2p/src/net/conn.rs:391:36: replace && with || in run_connection
+p2p/src/net/conn.rs:391:13: replace != with == in run_connection
+p2p/src/net/conn.rs:391:63: replace || with && in run_connection
+p2p/src/net/conn.rs:391:54: replace > with == in run_connection
+p2p/src/net/conn.rs:391:54: replace > with < in run_connection
+p2p/src/net/conn.rs:391:54: replace > with >= in run_connection
+p2p/src/net/conn.rs:391:66: delete ! in run_connection
+p2p/src/net/conn.rs:528:34: replace == with != in run_connection
+p2p/src/net/conn.rs:549:5: replace write_loop with ()
+p2p/src/net/maintenance.rs:84:5: replace maintenance_loop with ()
+p2p/src/net/maintenance.rs:84:40: replace - with + in maintenance_loop
+p2p/src/net/maintenance.rs:86:44: replace - with + in maintenance_loop
+p2p/src/net/maintenance.rs:97:45: replace && with || in maintenance_loop
+p2p/src/net/maintenance.rs:97:34: delete ! in maintenance_loop
+p2p/src/net/maintenance.rs:119:20: delete ! in maintenance_loop
+p2p/src/net/maintenance.rs:119:51: replace >= with < in maintenance_loop
+p2p/src/net/maintenance.rs:128:21: replace && with || in maintenance_loop
+p2p/src/net/maintenance.rs:127:27: replace == with != in maintenance_loop
+p2p/src/net/maintenance.rs:128:59: replace > with == in maintenance_loop
+p2p/src/net/maintenance.rs:133:49: replace > with < in maintenance_loop
+p2p/src/net/maintenance.rs:136:59: replace > with == in maintenance_loop
+p2p/src/net/maintenance.rs:171:62: replace > with < in maintenance_loop
+p2p/src/net/maintenance.rs:179:55: replace <= with > in maintenance_loop
+p2p/src/net/maintenance.rs:181:38: replace < with == in maintenance_loop
+p2p/src/net/maintenance.rs:181:38: replace < with > in maintenance_loop
+p2p/src/net/maintenance.rs:206:25: replace && with || in maintenance_loop
+p2p/src/net/maintenance.rs:205:25: replace && with || in maintenance_loop
+p2p/src/net/maintenance.rs:204:25: replace && with || in maintenance_loop
+p2p/src/net/maintenance.rs:203:25: replace && with || in maintenance_loop
+p2p/src/net/maintenance.rs:202:28: replace != with == in maintenance_loop
+p2p/src/net/maintenance.rs:203:54: replace || with && in maintenance_loop
+p2p/src/net/maintenance.rs:203:38: replace > with == in maintenance_loop
+p2p/src/net/maintenance.rs:203:38: replace > with < in maintenance_loop
+p2p/src/net/maintenance.rs:203:38: replace > with >= in maintenance_loop
+p2p/src/net/maintenance.rs:205:28: delete ! in maintenance_loop
+p2p/src/net/maintenance.rs:216:46: replace > with == in maintenance_loop
+p2p/src/net/maintenance.rs:216:46: replace > with < in maintenance_loop
+p2p/src/net/maintenance.rs:227:46: replace || with && in maintenance_loop
+p2p/src/net/maintenance.rs:227:25: replace != with == in maintenance_loop
+p2p/src/net/maintenance.rs:228:46: replace > with == in maintenance_loop

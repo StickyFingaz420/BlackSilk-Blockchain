@@ -24,7 +24,7 @@ All integers are little-endian unless stated otherwise. Encoding primitives
 
 | Goal | Mechanism |
 |---|---|
-| Content confidentiality against passive observers | Encrypted transport (§3) |
+| Content confidentiality against passive observers (contents only, not sizes or timing) | Encrypted transport (§3) |
 | Transaction origin privacy against spy nodes | Dandelion++ (§8) and randomized relay delays (§7) |
 | Minimal fingerprint | No user agent, no clock, no services flags; own address not announced unless configured (§4) |
 | Availability | Strict size and count limits, rate limits, misbehavior scoring, bans (§10) |
@@ -40,7 +40,21 @@ All integers are little-endian unless stated otherwise. Encoding primitives
   and he can eclipse a node whose connections he controls (F48-1). An explicit `--peer`
   list does not stop him. A closed network can close this with a pre-shared key (§3);
   a public network cannot.
-- **Traffic analysis** of sizes and timing.
+- **Traffic analysis** of sizes and timing. Frames are not padded
+  (`FrameWriter::send`, §3), so **an observer of a node's own link** (its ISP, or
+  its Tor guard) sees when the node sends a transaction-sized message that no peer
+  sent it first: it learns that the node **originated** a transaction, **v1 as well
+  as PX**. A PX transaction (about 2.2 MB) is unmistakable even over Tor; a v1
+  transaction (a few kB, a few Tor cells) is a weaker signal over Tor, not a hidden
+  one. Dandelion++ (§8) does not help against this observer; only padding or a
+  private broadcast design would (transport v2, §3.1, design only).
+- **Identification as a BlackSilk node.** The handshake is recognizable: the first
+  32 bytes each way are canonical Ristretto encodings (about 8 bits distinguishable
+  per connection, §3.1), and Ping/Pong are fixed-size frames every 60 s. A responder
+  sends its encrypted `Version` right after the key exchange, before it can tell
+  whether the initiator holds the network key, so an active prober recognizes a
+  BlackSilk node even on a pre-shared-key network. Censorship resistance is not a
+  goal of this version.
 - **A global passive adversary** watching all links.
 - **Block origin** (the IP of the node that mines). A node announces a block it mined
   as soon as it connects it (§6), before any relay could, so peers can tell which node
@@ -307,8 +321,14 @@ is a violation (100 points). The only exception is `Version`'s extension area (�
    exceeds our best header height, **or** its `tip` is not one we can place on our best
    header chain from the published snapshot (our best header, our connected tip or a
    locator entry; genesis is always one). Address fetches are never asked.
-   - The locator holds ids of our best header chain: the tip, then 10 predecessors one
-     by one, then exponentially sparser ones back to genesis (at most 64).
+   - The locator holds ids of our best header chain: the tip, then its 9 predecessors
+     one by one, then ids whose height gaps double (2, 4, 8, ...) back to genesis, which
+     always ends it (at most 64; `ChainManager::locator`,
+     `the_locator_has_the_tip_and_nine_predecessors_one_by_one`). Bitcoin Core's locator
+     has 11 consecutive ids (the tip and 10 predecessors); the count is not
+     consensus-relevant: a responder takes the first id it finds on its best chain, so
+     any decreasing locator that ends at genesis interoperates. (Before 2026-10-03 this
+     text said 10 predecessors; the code had 9 since it was written, mutation run E.)
    - **Why the tip, not only the height (W4-SYNC, RT-LAB F1).** Fork choice is by work,
      not height. Before 2026-09-30 only a greater height triggered the request, so two
      nodes meeting on branches of **equal height** (a healed partition) asked each other
@@ -689,8 +709,12 @@ Following Fanti et al., "Dandelion++" (SIGMETRICS 2018), with Monero's parameter
     it moves the transaction to the mempool and starts §7.
 - **Embargo.** Every stem transaction gets a random embargo timer (exponential, mean
   **39 s**, plus 10 s).
-  - If the transaction has not been seen in fluff (announced by a peer, or included in a
-    block) before the timer fires, the node fluffs it itself.
+  - The embargo ends only when the transaction arrives fluffed (a peer's `Tx`, which
+    moves it to the mempool), or when the node fluffs it itself. An `InvTx` alone does
+    not end it, and neither does the transaction's inclusion in a block: a mined stem
+    transaction stays in the stempool until its timer fires, and its fluff then fails
+    harmlessly (logged at debug level). When the timer fires first, the node fluffs it
+    itself.
   - This guarantees delivery if a stem peer is malicious or offline.
 - **Stem failures.** A relayed stem transaction with no stem peer to forward it to is
   fluffed immediately (the node's own transactions are held instead, see above).
@@ -746,8 +770,15 @@ still pools it then learns the origin with near certainty (dossier 33 F33-1, dos
 **Limitations.**
 - Dandelion++ gives statistical origin privacy against spy nodes that control a fraction
   of the network. It does not help against an adversary who observes a node's own
-  network link.
-- For that, run the node over Tor (§11).
+  network link (§1: frames are not padded).
+- Over Tor (§11) that observer is the Tor guard, which still sees a PX transaction's
+  size, and a v1 transaction as a weaker signal.
+- A spy can make stems fail: a relayer drops a relayed `StemTx` silently when its PX
+  relay budget is exhausted (§10), which spies can cause, and the origin's own
+  embargo then fluffs the transaction first, naming the origin to its peers. There is
+  no local re-stem on the first embargo expiry and no separate PX embargo (dossier 33
+  W3, W4: not implemented).
+- No privacy regression suite tests these properties (docs/STATUS.md §3).
 
 ## 9. Peer discovery and the address manager
 
@@ -1442,10 +1473,31 @@ already being written is finished first).
   SOCKS5 proxy (RFC 1928, no authentication), for example Tor at `127.0.0.1:9050`.
   - Onion addresses are resolved by the proxy (SOCKS5 domain-name type), never by local
     DNS.
-- **Proxy-only mode.** `--proxy-only` makes the node connect *only* through the proxy
-  and refuse clearnet connections.
+  - **`--proxy` alone is dual-homed.** Without `--proxy-only` the node keeps its
+    clearnet listener (`0.0.0.0` by default), resolves seed host names with the
+    system DNS, and serves its Tor and clearnet identities from one address table,
+    mempool and stempool; a held local transaction is fluffed at its embargo to
+    clearnet inbound peers as well (dossier 33 F33-7). Answers to `GetAddr` come
+    from the one table that mixes onion and clearnet entries, with no per-network
+    cache, so a spy can link the two identities.
+  - **No stream isolation.** The SOCKS5 greeting offers "no authentication" only, so
+    Tor may carry several of the node's connections over one circuit and one exit
+    (Bitcoin Core sends random credentials per connection for this reason).
+- **Proxy-only mode.** `--proxy-only` makes every connection go through the proxy:
+  no direct clearnet connection, no clearnet listener unless one is bound
+  explicitly, and no local DNS lookup (seeds and peers must be IP or `.onion`
+  addresses).
   - Addresses are still exchanged, but the node's own clearnet address is never
     revealed.
+  - **It still dials clearnet addresses, through Tor exits.** The outbound filter
+    skips onion addresses only when there is no proxy; with a proxy, every known
+    address is dialable (`Dialable::skip_test`, `p2p/src/net/peers.rs`). An exit
+    relay terminates such a connection, and the transport is unauthenticated (§1),
+    so the exit can read and alter it: it sees the transactions this node originates
+    and can eclipse that link. There is no onion-only setting yet (the decided
+    "onion-only by default" for Tor nodes, decisions "Agent 32", is not
+    implemented). To stay among onion peers, list only `.onion` peers and use
+    `--connect-only`.
 - **Inbound over Tor.** The operator runs a Tor hidden service and passes
   `--public-address <host>.onion:port` so the node advertises it. The service should
   forward to a dedicated **onion listener**, `--onion-inbound 127.0.0.1:<port>` (`[p2p]
@@ -1470,7 +1522,9 @@ already being written is finished first).
 
 - Peers are not authenticated (§1). A MITM can read or drop a connection's traffic,
   except on a closed network with a pre-shared key (§3). The transport has no rekeying
-  and no post-quantum step, and its first bytes are recognizable (§3.1).
+  and no post-quantum step, and its first bytes are recognizable (§3.1). Frames are
+  not padded, so a link observer sees when a node originates a transaction, v1 or
+  PX (§1).
 - PoW verification of headers costs about 0.45 s per header in RandomX light mode.
   Parallel verification divides this by the number of cores. Initial sync of a long
   chain is still slow until RandomX gets faster (AUDIT.md R1).
@@ -1548,20 +1602,43 @@ already being written is finished first).
   notes, not implemented; the announcement itself no longer waits for the maintenance
   tick (§6). No multi-hop figure is measured yet.
 
-- **Address manager and eclipse** (§9, dossier 32). Open:
-  - no block-relay-only connections, so the anchors are full-relay peers;
-  - inbound eviction does not protect by ping or recent relay;
-  - no chain-sync eviction of outbound peers that stay behind, only the stale-tip
-    rotation;
-  - seeds are full outbound peers, not one-shot address fetches;
+- **Address manager and eclipse** (§9, dossier 32). Implemented since dossier 32:
+  two block-relay-only outbound connections, which are also the anchors; inbound
+  eviction that protects peers by network group, ping, and recent transaction and
+  block relay; seeds used as one-shot address fetches; a cap of one tried entry per
+  onion group. Open:
+  - no chain-sync eviction of outbound peers that stay behind (an outbound peer that
+    keeps delivering valid tips of a lower-work view is never rotated), only the
+    stale-tip rotation;
+  - no built-in seeds yet, so a fresh node depends on the addresses its operator
+    gives it; with an empty tried table an attacker gets about 61 % of the slots in
+    the simulator's small-network scenario (`eclipse_sim`, F32-13);
   - no asmap;
-  - the admission rate restarts with every connection.
+  - the admission rate restarts with every connection;
+  - none of these mechanisms has run against a live adversary: the labnet runs on
+    one machine with `allow_private`, which turns off network grouping, per-IP
+    limits and bans.
 
   On a network of tens of honest nodes, the address manager bounds an eclipse by an
   attacker with many real addresses but cannot prevent it (§9).
-- **Tor inbound.** Every inbound connection through a hidden service comes from
-  127.0.0.1, so they share the per-IP limits (2 connections, 2 queued header
-  batches) and a ban of one bans all of them.
+- **Tor inbound.** With the onion listener (`--onion-inbound`, §11) each onion peer
+  stands alone: no per-IP limit and no ban of the shared loopback address. A hidden
+  service forwarded to the P2P port instead still shares the per-IP limits
+  (2 connections, 2 queued header batches) and one ban (N-6). Tor outbound has no
+  onion-only mode and no stream isolation (§11).
+- **Download stalls.** A block request that times out (60 s) is moved to a random
+  candidate peer, which may be the same one; a peer that withholds bodies is never
+  disconnected or demoted (the decided staller detection, decisions "Agent 31", is
+  not implemented). A peer that announced a high `Version` height stays a download
+  candidate.
+- **Header PoW per identity.** A peer can send headers with junk proof of work; the
+  first chunk of a batch (`pow_threads` headers) is hashed before the first failure
+  is scored. Peers reached through a proxy and onion inbound peers are never banned,
+  so over Tor this costs the attacker nothing per identity.
+- **Send buffers are bounded in messages, not bytes** (64 control frames, 32 blocks
+  per peer), so a slow-reading peer can pin hundreds of megabytes; and a `GetTx` for
+  more than 64 transactions may overflow the 64-slot control outbox and disconnect
+  the honest requester (not yet reproduced by a test).
 - There is no compact-block relay; a full block is sent once per peer that lacks it.
 - Dandelion++'s parameters follow Monero (q = 0.2, 39 s mean embargo), plus a 10 s
   embargo base. They have not been re-tuned for BlackSilk's network size.

@@ -1,0 +1,16 @@
+chain/src/manager/header_sync.rs:19:23: replace || with && in ChainManager::locator
+chain/src/manager/header_sync.rs:23:22: replace *= with += in ChainManager::locator
+chain/src/manager/header_sync.rs:23:22: replace *= with /= in ChainManager::locator
+chain/src/manager/header_sync.rs:27:44: replace != with == in ChainManager::locator
+chain/src/manager/header_sync.rs:68:29: replace < with <= in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:80:55: replace + with - in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:80:55: replace + with * in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:87:52: replace && with || in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:115:49: replace || with && in ChainManager::pow_jobs
+chain/src/manager/submission.rs:140:24: delete ! in ChainManager::submit_inner
+chain/src/manager/submission.rs:178:59: replace != with == in ChainManager::drain_ready
+chain/src/manager/submission.rs:179:39: replace || with && in ChainManager::drain_ready
+chain/src/manager/submission.rs:179:42: delete ! in ChainManager::drain_ready
+chain/src/manager/submission.rs:211:26: replace != with == in ChainManager::drain_ready
+chain/src/manager/submission.rs:262:9: replace ChainManager::refresh_hot_seeds with ()
+chain/src/manager/submission.rs:263:16: replace != with == in ChainManager::refresh_hot_seeds

@@ -284,6 +284,10 @@ enum Cmd {
     /// Show the 27-word seed, after a confirmation typed on the terminal:
     /// anyone who sees the words controls the funds.
     Seed,
+    /// Set a new password for the wallet file (the current one is read as
+    /// usual; the new one from BLACKSILK_WALLET_NEW_PASSWORD, or the
+    /// terminal). An empty new password is refused.
+    ChangePassword,
     /// Forget unconfirmed spends and stored transactions. Meant for a
     /// transaction that certainly never left this wallet: `sync` rebroadcasts
     /// stored transactions and releases their funds itself when the node
@@ -306,6 +310,62 @@ fn password(confirm: bool) -> Result<Vec<u8>, String> {
         }
     }
     Ok(p.into_bytes())
+}
+
+/// The new password for `change-password`, for automation (like
+/// `BLACKSILK_WALLET_PASSWORD`, visible to other processes of the user).
+const NEW_PASSWORD_ENV: &str = "BLACKSILK_WALLET_NEW_PASSWORD";
+
+/// A new wallet password, checked (`file::check_new_password`): an empty
+/// one is refused, a weak one warned about on standard error.
+fn checked_new_password(mut pw: Vec<u8>) -> Result<Vec<u8>, String> {
+    match blacksilk_wallet::file::check_new_password(&pw) {
+        Err(e) => {
+            pw.zeroize();
+            Err(e)
+        }
+        Ok(warning) => {
+            if let Some(w) = warning {
+                eprintln!("warning: {w}");
+            }
+            Ok(pw)
+        }
+    }
+}
+
+/// The new password of `change-password`: [`NEW_PASSWORD_ENV`], or the
+/// terminal (typed twice).
+fn new_password() -> Result<Vec<u8>, String> {
+    if let Ok(p) = std::env::var(NEW_PASSWORD_ENV) {
+        return checked_new_password(p.into_bytes());
+    }
+    let p = rpassword::prompt_password("New wallet password: ").map_err(|e| e.to_string())?;
+    let mut q = rpassword::prompt_password("Repeat new password: ").map_err(|e| e.to_string())?;
+    let same = p == q;
+    q.zeroize();
+    if !same {
+        return Err("passwords differ".into());
+    }
+    checked_new_password(p.into_bytes())
+}
+
+/// Makes an existing wallet file (and its lock) owner-only on Unix, with a
+/// warning: a file created by an older version, or copied, may be
+/// readable by other users.
+fn tighten_wallet_files(path: &std::path::Path) {
+    for p in [path.to_path_buf(), path.with_extension("lock")] {
+        match blacksilk_wallet::file::tighten(&p) {
+            Ok(Some(mode)) => eprintln!(
+                "warning: {} was readable by other users (mode {mode:o}); it is owner-only now",
+                p.display()
+            ),
+            Ok(None) => {}
+            Err(e) => eprintln!(
+                "warning: {}: could not make it owner-only: {e}",
+                p.display()
+            ),
+        }
+    }
 }
 
 /// The build commit, from the `BLACKSILK_BUILD_COMMIT` build-time environment
@@ -525,6 +585,7 @@ fn run(args: Args) -> Result<(), String> {
         .and_then(|c| c.with_cookie_option(args.rpc_cookie.as_deref()))
         .map_err(|e| e.to_string())?;
     let _lock = lock_wallet(&args.wallet)?;
+    tighten_wallet_files(&args.wallet);
     let kdf = KdfParams::default();
     let verify_headers = args.verify_headers;
     let allow_stale_tip = args.allow_stale_tip;
@@ -552,7 +613,8 @@ fn run(args: Args) -> Result<(), String> {
                 })?,
             };
             let start = height + 1;
-            let mut pw = password(true)?;
+            // Refused before anything is generated or written.
+            let mut pw = checked_new_password(password(true)?)?;
             let mut w = Wallet::generate(net, start).map_err(|e| e.to_string())?;
             let primary = w.address(0, 0);
             save(&w, &args.wallet, &pw, kdf).map_err(|e| e.to_string())?;
@@ -585,7 +647,7 @@ fn run(args: Args) -> Result<(), String> {
             let w = w?;
             // The network the words name, when none was given.
             check_build(&flags, w.network())?;
-            let mut pw = password(true)?;
+            let mut pw = checked_new_password(password(true)?)?;
             save(&w, &args.wallet, &pw, kdf).map_err(|e| e.to_string())?;
             pw.zeroize();
             println!(
@@ -595,12 +657,36 @@ fn run(args: Args) -> Result<(), String> {
                 w.synced_height() + 1
             );
         }
+        Cmd::ChangePassword => {
+            let mut old = password(false)?;
+            let w = load(&args.wallet, &old);
+            old.zeroize();
+            let w = w?;
+            check_build(&flags, w.network())?;
+            let mut new = new_password()?;
+            let saved = save(&w, &args.wallet, &new, kdf).map_err(|e| e.to_string());
+            new.zeroize();
+            saved?;
+            println!(
+                "Password changed: {} is encrypted with the new one.",
+                args.wallet.display()
+            );
+        }
         cmd => {
             let mut pw = password(false)?;
             let mut w = load(&args.wallet, &pw)?;
             if let Err(e) = check_build(&flags, w.network()) {
                 pw.zeroize();
                 return Err(e);
+            }
+            // A wallet saved before empty passwords were refused still
+            // opens; the warning names the way out (nothing is lost).
+            if blacksilk_wallet::file::is_empty_password(&pw) {
+                eprintln!(
+                    "warning: this wallet file has an empty password: anyone who gets a copy \
+                     of it gets the keys. Set one now: blacksilk-wallet -w {} change-password",
+                    args.wallet.display()
+                );
             }
             for warning in w.take_warnings() {
                 eprintln!("warning: {warning}");
@@ -1035,7 +1121,7 @@ fn run(args: Args) -> Result<(), String> {
                     w.clear_pending();
                     Ok(())
                 }
-                Cmd::Create { .. } | Cmd::Restore { .. } => unreachable!(),
+                Cmd::Create { .. } | Cmd::Restore { .. } | Cmd::ChangePassword => unreachable!(),
             };
             // Warnings raised by the command (e.g. co-spent outputs, R3-13).
             for warning in w.take_warnings() {

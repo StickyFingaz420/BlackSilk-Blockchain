@@ -1,0 +1,115 @@
+px/src/prove.rs:65:9: delete match arm 0 in kernel_budget
+px/src/prove.rs:66:9: delete match arm 1 in kernel_budget
+px/src/prove.rs:67:9: delete match arm 2 in kernel_budget
+px/src/prove.rs:146:5: replace public_words -> Vec<u32> with vec![]
+px/src/prove.rs:91:5: delete field max_instances from struct blacksilk_zk::DecodeLimits expression
+px/src/prove.rs:146:5: replace public_words -> Vec<u32> with vec![0]
+px/src/prove.rs:146:5: replace public_words -> Vec<u32> with vec![1]
+px/src/prove.rs:152:5: replace witness_words -> Vec<u32> with vec![]
+px/src/prove.rs:152:5: replace witness_words -> Vec<u32> with vec![0]
+px/src/prove.rs:152:5: replace witness_words -> Vec<u32> with vec![1]
+px/src/prove.rs:166:5: replace statement -> Option<Statement> with None
+px/src/prove.rs:166:20: replace > with == in statement
+px/src/prove.rs:166:20: replace > with < in statement
+px/src/prove.rs:166:20: replace > with >= in statement
+px/src/prove.rs:166:44: replace != with == in statement
+px/src/prove.rs:166:76: replace != with == in statement
+px/src/prove.rs:187:5: replace over_budget -> Option<(&'static str, usize, usize)> with None
+px/src/prove.rs:187:5: replace over_budget -> Option<(&'static str, usize, usize)> with Some(("", 0, 0))
+px/src/prove.rs:187:5: replace over_budget -> Option<(&'static str, usize, usize)> with Some(("", 0, 1))
+px/src/prove.rs:187:5: replace over_budget -> Option<(&'static str, usize, usize)> with Some(("", 1, 0))
+px/src/prove.rs:187:5: replace over_budget -> Option<(&'static str, usize, usize)> with Some(("", 1, 1))
+px/src/prove.rs:187:5: replace over_budget -> Option<(&'static str, usize, usize)> with Some(("xyzzy", 0, 0))
+px/src/prove.rs:187:5: replace over_budget -> Option<(&'static str, usize, usize)> with Some(("xyzzy", 0, 1))
+px/src/prove.rs:187:5: replace over_budget -> Option<(&'static str, usize, usize)> with Some(("xyzzy", 1, 0))
+px/src/prove.rs:187:5: replace over_budget -> Option<(&'static str, usize, usize)> with Some(("xyzzy", 1, 1))
+px/src/prove.rs:198:26: replace > with == in over_budget
+px/src/prove.rs:198:26: replace > with < in over_budget
+px/src/prove.rs:247:24: replace != with == in prove
+px/src/prove.rs:257:30: replace != with == in prove
+px/src/prove.rs:273:27: replace != with == in prove
+px/src/prove.rs:281:30: replace < with > in prove
+px/src/prove.rs:281:76: replace != with == in prove
+px/src/prove.rs:284:24: replace + with - in prove
+px/src/prove.rs:284:24: replace + with * in prove
+px/src/prove.rs:335:5: replace verify -> Result<(), VerifyError> with Ok(())
+px/src/state.rs:85:9: replace State::pool -> u128 with 0
+px/src/state.rs:89:9: replace State::root -> Digest with Default::default()
+px/src/state.rs:85:9: replace State::pool -> u128 with 1
+px/src/state.rs:93:9: replace State::is_recent_root -> bool with false
+px/src/state.rs:93:9: replace State::is_recent_root -> bool with true
+px/src/state.rs:97:9: replace State::is_spent -> bool with true
+px/src/state.rs:97:9: replace State::is_spent -> bool with false
+px/src/state.rs:101:9: replace State::size -> u64 with 0
+px/src/state.rs:101:9: replace State::size -> u64 with 1
+px/src/state.rs:106:9: replace State::free_leaves -> u64 with 0
+px/src/state.rs:106:9: replace State::free_leaves -> u64 with 1
+px/src/state.rs:106:31: replace - with + in State::free_leaves
+px/src/state.rs:106:31: replace - with / in State::free_leaves
+px/src/state.rs:115:9: replace State::with_uniform_tree_for_tests -> Self with Default::default()
+px/src/state.rs:132:24: delete ! in State::apply_block
+px/src/state.rs:156:9: replace State::apply_inner -> Result<(), StateError> with Ok(())
+px/src/state.rs:160:16: delete ! in State::apply_inner
+px/src/state.rs:164:20: delete ! in State::apply_inner
+px/src/state.rs:169:34: replace + with - in State::apply_inner
+px/src/state.rs:183:29: replace > with == in State::apply_inner
+px/src/state.rs:169:34: replace + with * in State::apply_inner
+px/src/state.rs:183:29: replace > with < in State::apply_inner
+px/src/state.rs:183:29: replace > with >= in State::apply_inner
+px/src/state.rs:195:9: replace State::undo with ()
+px/src/tree.rs:20:29: replace << with >>
+px/src/tree.rs:27:5: replace empty_roots -> [Digest; TREE_DEPTH +1] with [Default::default(); TREE_DEPTH +1]
+px/src/tree.rs:29:13: replace + with - in empty_roots
+px/src/tree.rs:29:13: replace + with * in empty_roots
+px/src/tree.rs:59:9: replace Frontier::size -> u64 with 0
+px/src/tree.rs:59:9: replace Frontier::size -> u64 with 1
+px/src/tree.rs:64:9: replace Frontier::append -> Result<u64, TreeFull> with Ok(0)
+px/src/tree.rs:64:9: replace Frontier::append -> Result<u64, TreeFull> with Ok(1)
+px/src/tree.rs:64:22: replace >= with < in Frontier::append
+px/src/tree.rs:70:31: replace == with != in Frontier::append
+px/src/tree.rs:70:27: replace & with | in Frontier::append
+px/src/tree.rs:70:27: replace & with ^ in Frontier::append
+px/src/tree.rs:70:21: replace >> with << in Frontier::append
+px/src/tree.rs:76:16: replace == with != in Frontier::append
+px/src/tree.rs:76:28: replace - with + in Frontier::append
+px/src/tree.rs:76:28: replace - with / in Frontier::append
+px/src/tree.rs:81:19: replace += with -= in Frontier::append
+px/src/tree.rs:81:19: replace += with *= in Frontier::append
+px/src/tree.rs:92:9: replace Frontier::uniform_for_tests -> Self with Default::default()
+px/src/tree.rs:103:30: replace == with != in Frontier::uniform_for_tests
+px/src/tree.rs:108:9: replace Frontier::root -> Digest with Default::default()
+px/src/tree.rs:113:43: replace == with != in Frontier::root
+px/src/tree.rs:113:39: replace & with | in Frontier::root
+px/src/tree.rs:113:39: replace & with ^ in Frontier::root
+px/src/tree.rs:113:33: replace >> with << in Frontier::root
+px/src/tree.rs:139:9: replace Tree::size -> u64 with 0
+px/src/tree.rs:139:9: replace Tree::size -> u64 with 1
+px/src/tree.rs:143:9: replace Tree::get -> Digest with Default::default()
+px/src/tree.rs:150:9: replace Tree::append -> Result<u64, TreeFull> with Ok(0)
+px/src/tree.rs:150:9: replace Tree::append -> Result<u64, TreeFull> with Ok(1)
+px/src/tree.rs:151:16: replace >= with < in Tree::append
+px/src/tree.rs:157:28: replace / with % in Tree::append
+px/src/tree.rs:157:28: replace / with * in Tree::append
+px/src/tree.rs:158:52: replace * with + in Tree::append
+px/src/tree.rs:158:52: replace * with / in Tree::append
+px/src/tree.rs:158:82: replace + with - in Tree::append
+px/src/tree.rs:158:82: replace + with * in Tree::append
+px/src/tree.rs:158:78: replace * with + in Tree::append
+px/src/tree.rs:158:78: replace * with / in Tree::append
+px/src/tree.rs:159:42: replace + with - in Tree::append
+px/src/tree.rs:159:42: replace + with * in Tree::append
+px/src/tree.rs:160:34: replace < with == in Tree::append
+px/src/tree.rs:160:34: replace < with > in Tree::append
+px/src/tree.rs:160:34: replace < with <= in Tree::append
+px/src/tree.rs:171:9: replace Tree::root -> Digest with Default::default()
+px/src/tree.rs:180:9: replace Tree::path -> Option<[Digest; TREE_DEPTH]> with None
+px/src/tree.rs:180:9: replace Tree::path -> Option<[Digest; TREE_DEPTH]> with Some([Default::default(); TREE_DEPTH])
+px/src/tree.rs:180:16: replace >= with < in Tree::path
+px/src/tree.rs:185:41: replace ^ with | in Tree::path
+px/src/tree.rs:185:41: replace ^ with & in Tree::path
+px/src/tree.rs:185:35: replace >> with << in Tree::path
+px/src/tree.rs:198:5: replace root_from_path -> Digest with Default::default()
+px/src/tree.rs:200:33: replace == with != in root_from_path
+px/src/tree.rs:200:29: replace & with | in root_from_path
+px/src/tree.rs:200:29: replace & with ^ in root_from_path
+px/src/tree.rs:200:23: replace >> with << in root_from_path

@@ -8,8 +8,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 impl ChainManager {
-    /// Block locator over the best header chain: the tip, 10 predecessors one by
-    /// one, then exponentially sparser back to genesis (at most 64 ids).
+    /// Block locator over the best header chain: the tip, its 9 predecessors one
+    /// by one, then ids whose height gaps double (2, 4, 8, ...) back to genesis
+    /// (at most 64 ids; docs/p2p.md §6). The count of dense ids is not a
+    /// consensus rule: any decreasing locator ending at genesis finds the fork.
     pub fn locator(&self) -> Vec<Hash> {
         let mut out = Vec::new();
         let mut h = self.headers.height();

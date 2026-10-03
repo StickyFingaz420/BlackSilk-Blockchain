@@ -1,0 +1,1 @@
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]75[:]19[:] replace [+][=] with [*][=] in ChainManager[:][:]missing[_]bodies$

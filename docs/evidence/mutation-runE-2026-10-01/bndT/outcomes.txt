@@ -1,0 +1,6 @@
+commit 09e21c1; cargo test --locked --profile mutants -p blacksilk-tx --lib --test=adversarial --test=block_pipeline --test=chain_integration --test=deploy_rules --test=exact_fee --test=malleability --test=max_weight_encoder --test=max_weight_vectors --test=output_key_uniqueness --test=privacy --test=px_v1_weight --test=px_window --test=revalidate_after_extension --test=transfers --test=tree_capacity --test=upgrade --test=validation_order --test=mutation_regressions --test=px_proof_wiring --test=encoding_rules --test=state_accessors
+baseline ok
+missed tx/src/types.rs:327:14: replace <= with < (1.log)
+caught tx/src/codec.rs:51:17: replace >= with > (2.log)
+caught tx/src/state.rs:331:49: replace <= with < (3.log)
+done: 3 mutants, 1 missed

@@ -1,0 +1,4 @@
+--re=^tx[/]src[/]codec[.]rs[:]104[:]18[:] replace [+][=] with \-[=] in Reader[<][']a[>][:][:]u8$
+--re=^tx[/]src[/]state[.]rs[:]122[:]9[:] replace MemoryChain[:][:]output[_]count \-[>] u64 with 0$
+--re=^tx[/]src[/]state[.]rs[:]267[:]34[:] replace [+][=] with \-[=] in MemoryChain[:][:]apply[_]block$
+--re=^tx[/]src[/]types[.]rs[:]335[:]61[:] replace [+] with \- in Transfer[:][:]encoded[_]len$

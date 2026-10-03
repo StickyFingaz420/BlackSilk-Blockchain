@@ -1,0 +1,14 @@
+-C=--lib
+-C=--test=activation
+-C=--test=actor_equivalence
+-C=--test=block_rules
+-C=--test=fork_choice
+-C=--test=golden
+-C=--test=manager
+-C=--test=mempool_conflicts
+-C=--test=mempool_expiry
+-C=--test=operator_invalidation
+-C=--test=revalidation
+-C=--test=rt_w3_regressions
+-C=--test=storage_recovery
+-C=--test=store_format

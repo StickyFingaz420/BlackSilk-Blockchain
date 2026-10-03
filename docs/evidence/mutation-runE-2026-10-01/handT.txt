@@ -1,0 +1,16 @@
+# 2026-10-02 00:24:53 UTC; cargo test --locked --profile mutants -p blacksilk-tx --lib --test=adversarial --test=block_pipeline --test=chain_integration --test=deploy_rules --test=exact_fee --test=malleability --test=max_weight_encoder --test=max_weight_vectors --test=output_key_uniqueness --test=privacy --test=px_v1_weight --test=px_window --test=revalidate_after_extension --test=transfers --test=tree_capacity --test=upgrade --test=validation_order --test=mutation_regressions --test=px_proof_wiring --test=encoding_rules --test=state_accessors
+baseline ok
+CAUGHT	varint 9 bytes	tx/src/codec.rs:121	0..10 -> 0..9	223s	0.log
+MISSED	varint 11 bytes	tx/src/codec.rs:121	0..10 -> 0..11	281s	1.log
+CAUGHT	varint last byte index 8	tx/src/codec.rs:124	i == 9 -> i == 8	120s	2.log
+CAUGHT	varint last byte low > 0	tx/src/codec.rs:124	low > 1 -> low > 0	121s	3.log
+CAUGHT	varint last byte low > 2	tx/src/codec.rs:124	low > 1 -> low > 2	119s	4.log
+CAUGHT	clawback 321 per output	tx/src/types.rs:331	320 * m -> 321 * m	139s	5.log
+CAUGHT	clawback 319 per output	tx/src/types.rs:331	320 * m -> 319 * m	139s	6.log
+CAUGHT	clawback 3/5	tx/src/types.rs:331	* 4 / 5 -> * 3 / 5	140s	7.log
+CAUGHT	clawback 4/4	tx/src/types.rs:331	* 4 / 5 -> * 4 / 4	138s	8.log
+MISSED	clawback from m 1	tx/src/types.rs:327	m <= 2 -> m <= 1	163s	9.log
+CAUGHT	global cap +1	tx/src/types.rs:398	bytes.len() > MAX_PX_TX_SIZE.max(MAX_DEPLOY_TX_SIZE) -> bytes.len() > MAX_PX_TX_SIZE.max(MAX_DEPLOY_TX_SIZE) + 1	121s	10.log
+CAUGHT	global cap -1	tx/src/types.rs:398	bytes.len() > MAX_PX_TX_SIZE.max(MAX_DEPLOY_TX_SIZE) -> bytes.len() > MAX_PX_TX_SIZE.max(MAX_DEPLOY_TX_SIZE) - 1	121s	11.log
+CAUGHT	kind cap +1	tx/src/types.rs:413	bytes.len() > cap -> bytes.len() > cap + 1	120s	12.log
+CAUGHT	kind cap -1	tx/src/types.rs:413	bytes.len() > cap -> bytes.len() > cap - 1	122s	13.log

@@ -1,0 +1,28 @@
+--re=^tx[/]src[/]codec[.]rs[:]52[:]44[:] replace [|] with \^ in Writer[:][:]varint$
+--re=^tx[/]src[/]codec[.]rs[:]71[:]9[:] replace Writer[:][:]len \-[>] usize with 0$
+--re=^tx[/]src[/]codec[.]rs[:]71[:]9[:] replace Writer[:][:]len \-[>] usize with 1$
+--re=^tx[/]src[/]codec[.]rs[:]75[:]9[:] replace Writer[:][:]is[_]empty \-[>] bool with true$
+--re=^tx[/]src[/]codec[.]rs[:]75[:]9[:] replace Writer[:][:]is[_]empty \-[>] bool with false$
+--re=^tx[/]src[/]state[.]rs[:]113[:]9[:] replace MemoryChain[:][:]fail[_]next[_]apply[_]for[_]tests with [(][)]$
+--re=^tx[/]src[/]state[.]rs[:]146[:]9[:] replace MemoryChain[:][:]block[_]tx[_]hashes \-[>] Option[<][&]\[Hash\][>] with None$
+--re=^tx[/]src[/]state[.]rs[:]146[:]9[:] replace MemoryChain[:][:]block[_]tx[_]hashes \-[>] Option[<][&]\[Hash\][>] with Some[(]Vec[:][:]leak[(]Vec[:][:]new[(][)][)][)]$
+--re=^tx[/]src[/]state[.]rs[:]146[:]9[:] replace MemoryChain[:][:]block[_]tx[_]hashes \-[>] Option[<][&]\[Hash\][>] with Some[(]Vec[:][:]leak[(]vec[!]\[Default[:][:]default[(][)]\][)][)]$
+--re=^tx[/]src[/]state[.]rs[:]189[:]9[:] replace MemoryChain[:][:]px[_]contract \-[>] Option[<][&]\[RegisteredFunction\][>] with None$
+--re=^tx[/]src[/]state[.]rs[:]189[:]9[:] replace MemoryChain[:][:]px[_]contract \-[>] Option[<][&]\[RegisteredFunction\][>] with Some[(]Vec[:][:]leak[(]Vec[:][:]new[(][)][)][)]$
+--re=^tx[/]src[/]state[.]rs[:]195[:]9[:] replace MemoryChain[:][:]px[_]contract[_]log \-[>] [&]\[[(]u64[,] Digest[)]\] with Vec[:][:]leak[(]Vec[:][:]new[(][)][)]$
+--re=^tx[/]src[/]state[.]rs[:]195[:]9[:] replace MemoryChain[:][:]px[_]contract[_]log \-[>] [&]\[[(]u64[,] Digest[)]\] with Vec[:][:]leak[(]vec[!]\[[(]0[,] Default[:][:]default[(][)][)]\][)]$
+--re=^tx[/]src[/]state[.]rs[:]195[:]9[:] replace MemoryChain[:][:]px[_]contract[_]log \-[>] [&]\[[(]u64[,] Digest[)]\] with Vec[:][:]leak[(]vec[!]\[[(]1[,] Default[:][:]default[(][)][)]\][)]$
+--re=^tx[/]src[/]state[.]rs[:]273[:]17[:] delete match arm Transaction[:][:]PxDeploy[(][_][)] in MemoryChain[:][:]apply[_]block$
+--re=^tx[/]src[/]state[.]rs[:]318[:]47[:] replace \- with [+] in MemoryChain[:][:]undo[_]block$
+--re=^tx[/]src[/]state[.]rs[:]347[:]9[:] replace [<]impl ChainView for MemoryChain[>][:][:]px[_]is[_]recent[_]root \-[>] bool with true$
+--re=^tx[/]src[/]state[.]rs[:]351[:]9[:] replace [<]impl ChainView for MemoryChain[>][:][:]px[_]nullifier[_]spent \-[>] bool with false$
+--re=^tx[/]src[/]state[.]rs[:]359[:]9[:] replace [<]impl ChainView for MemoryChain[>][:][:]px[_]function \-[>] Option[<]PxProgram[>] with None$
+--re=^tx[/]src[/]state[.]rs[:]362[:]37[:] replace [=][=] with [!][=] in [<]impl ChainView for MemoryChain[>][:][:]px[_]function$
+--re=^tx[/]src[/]state[.]rs[:]372[:]9[:] replace [<]impl ChainView for MemoryChain[>][:][:]px[_]contract[_]exists \-[>] bool with false$
+--re=^tx[/]src[/]types[.]rs[:]248[:]9[:] replace Transfer[:][:]range[_]proof[_]bytes \-[>] Vec[<]u8[>] with vec[!]\[\]$
+--re=^tx[/]src[/]types[.]rs[:]248[:]9[:] replace Transfer[:][:]range[_]proof[_]bytes \-[>] Vec[<]u8[>] with vec[!]\[0\]$
+--re=^tx[/]src[/]types[.]rs[:]248[:]9[:] replace Transfer[:][:]range[_]proof[_]bytes \-[>] Vec[<]u8[>] with vec[!]\[1\]$
+--re=^tx[/]src[/]types[.]rs[:]398[:]24[:] replace [>] with [>][=] in Transaction[:][:]decode$
+--re=^tx[/]src[/]types[.]rs[:]409[:]13[:] delete match arm KIND[_]PX in Transaction[:][:]decode$
+--re=^tx[/]src[/]types[.]rs[:]410[:]13[:] delete match arm KIND[_]PX[_]DEPLOY in Transaction[:][:]decode$
+--re=^tx[/]src[/]types[.]rs[:]413[:]24[:] replace [>] with [>][=] in Transaction[:][:]decode$

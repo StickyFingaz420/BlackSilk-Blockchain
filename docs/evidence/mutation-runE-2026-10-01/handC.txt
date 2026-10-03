@@ -1,0 +1,9 @@
+# 2026-10-02 06:06:45 UTC; cargo test --locked --profile mutants -p blacksilk-chain --lib --test=activation --test=actor_equivalence --test=block_rules --test=fork_choice --test=golden --test=manager --test=mempool_conflicts --test=mempool_expiry --test=operator_invalidation --test=revalidation --test=rt_w3_regressions --test=storage_recovery --test=store_format -- --skip restart_rebuilds_the_px_state_exactly
+baseline ok
+MISSED	STORE_FAILURE_LIMIT 2	chain/src/manager.rs:270	STORE_FAILURE_LIMIT: u32 = 3 -> STORE_FAILURE_LIMIT: u32 = 2	387s	0.log
+MISSED	STORE_FAILURE_LIMIT 4	chain/src/manager.rs:270	STORE_FAILURE_LIMIT: u32 = 3 -> STORE_FAILURE_LIMIT: u32 = 4	360s	1.log
+MISSED	locator cap 62	chain/src/manager/header_sync.rs:19	out.len() >= 63 -> out.len() >= 62	376s	2.log
+MISSED	locator cap 64	chain/src/manager/header_sync.rs:19	out.len() >= 63 -> out.len() >= 64	393s	3.log
+CAUGHT	locator dense 9	chain/src/manager/header_sync.rs:22	out.len() >= 10 -> out.len() >= 9	373s	4.log
+MISSED	locator dense 11	chain/src/manager/header_sync.rs:22	out.len() >= 10 -> out.len() >= 11	387s	5.log
+CAUGHT	locator step x3	chain/src/manager/header_sync.rs:23	step *= 2 -> step *= 3	346s	6.log

@@ -239,7 +239,7 @@ async fn a_drip_fed_handshake_is_closed_at_the_overall_deadline() {
     let (closed, at) = reader.await.unwrap();
     assert!(closed, "the connection was closed");
     assert!(
-        at < Duration::from_secs(23),
+        at >= Duration::from_millis(19_900) && at < Duration::from_secs(23),
         "closed at the 20 s deadline, not after {at:?}"
     );
     tokio::time::sleep(Duration::from_millis(300)).await;

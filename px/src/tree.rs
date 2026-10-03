@@ -250,6 +250,11 @@ mod tests {
             }
         }
         assert_eq!(t.path(300), None);
+        // The leaves as appended, and none past the end (mutation run E).
+        for pos in [0, 1, 150, 299] {
+            assert_eq!(t.leaf(pos), Some(leaf(pos as u32)));
+        }
+        assert_eq!(t.leaf(300), None);
     }
 
     /// `full[h]`: the root of a complete subtree of height `h` whose leaves

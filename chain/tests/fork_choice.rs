@@ -309,6 +309,70 @@ fn a_withheld_body_cannot_stall_block_production() {
     assert_eq!(m.deepest_reorg(), 2);
 }
 
+/// `missing_bodies` lists a side branch only when it has more work than the
+/// connected tip (mutation run E: the range starts at `tip_work + 1`). A
+/// header-only rival that only ties the connected tip, and is not the
+/// header-best tip, is not fetched; one block more and it is.
+#[test]
+fn an_equal_work_side_branch_is_not_fetched() {
+    let mut m = open_mem();
+    let mut miner = Miner::new(1);
+    let mut rival = Miner::new(2);
+    for _ in 0..5 {
+        miner.mine_tip(&mut m);
+    }
+    let f = m.tip_id();
+    let a1 = miner.mine_tip(&mut m);
+    let b = rival.headers_only(&mut m, f, 1, 1);
+    assert_eq!(
+        m.best_header_id(),
+        id(&a1),
+        "first seen: A1 stays header-best"
+    );
+    let hc = m.headers();
+    assert_eq!(hc.work(&id(&b[0])), hc.work(&id(&a1)), "B1 ties A1");
+    assert!(
+        m.missing_bodies(10).is_empty(),
+        "an equal-work side branch is not fetched"
+    );
+    let b2 = rival.headers_only(&mut m, id(&b[0]), 1, 1);
+    assert_eq!(
+        m.missing_bodies(10),
+        vec![(6, id(&b[0])), (7, id(&b2[0]))],
+        "heavier: fetched"
+    );
+}
+
+/// A heavier side branch that is not the header-best one is walked back
+/// for the bodies it misses, and only those (mutation run E): a body that is
+/// already here, waiting for its parent's, is not listed again.
+#[test]
+fn a_side_branchs_stored_bodies_are_not_listed_as_missing() {
+    let mut m = open_mem();
+    let mut miner = Miner::new(1);
+    let mut b_miner = Miner::new(2);
+    let mut c_miner = Miner::new(3);
+    for _ in 0..5 {
+        miner.mine_tip(&mut m);
+    }
+    let f = m.tip_id();
+    let b = b_miner.headers_only(&mut m, f, 3, 1);
+    let c = c_miner.headers_only(&mut m, f, 2, 2);
+    assert_eq!(m.best_header_id(), id(&b[2]), "B is the header-best branch");
+    // C2's body arrives first: stored, waiting for C1's.
+    let s = submit(&mut m, &c[1]).unwrap();
+    assert!(s.body_kept && !s.on_best_chain);
+    assert_eq!(
+        m.missing_bodies(10),
+        vec![
+            (6, id(&b[0])),
+            (6, id(&c[0])),
+            (7, id(&b[1])),
+            (8, id(&b[2]))
+        ],
+    );
+}
+
 // ---------------------------------------------------------------- (2)
 
 /// Heavier bodiless branch B1..B3, valid A1, A2 with an invalid body: A1

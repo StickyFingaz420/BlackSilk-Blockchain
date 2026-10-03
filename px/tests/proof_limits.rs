@@ -277,3 +277,54 @@ fn quotient_chunks_do_not_depend_on_the_trace_length() {
         }
     }
 }
+
+/// `verify` judges the statement before the proof (mutation run E): with
+/// the statement's call count and registered programs a hollow proof of
+/// the right shape reaches the proof check and fails it; another call count,
+/// more functions than `MAX_FN` (a hand-built statement) and an unregistered
+/// program are refused first, without a panic. `verify_transfer` takes
+/// statements without functions only.
+#[test]
+fn verify_judges_the_statement_before_the_proof() {
+    use blacksilk_px::prove::{verify, verify_transfer};
+    let h_tx = [9; 32];
+    let w = Window::UNBOUNDED;
+    let failed_proof = |r: Result<(), VerifyError>| matches!(r, Err(VerifyError::Proof(_)));
+    for n_fn in 0..=MAX_FN {
+        let p = public(n_fn);
+        let calls = vec![call(); n_fn];
+        let bits = degree_bits(&p, &calls, &w, h_tx);
+        let proof = blacksilk_zk::decode_proof_with(&hollow_proof(&bits), &PROOF_LIMITS)
+            .expect("the hollow proof decodes");
+        assert!(
+            failed_proof(verify(&p, &calls, &w, h_tx, &proof, registered)),
+            "n_fn {n_fn}"
+        );
+        assert_eq!(
+            verify(&p, &vec![call(); n_fn + 1], &w, h_tx, &proof, registered),
+            Err(VerifyError::Shape)
+        );
+        if n_fn > 0 {
+            assert_eq!(
+                verify(&p, &calls[1..], &w, h_tx, &proof, registered),
+                Err(VerifyError::Shape)
+            );
+            let mut q = p;
+            q.functions[n_fn - 1].0 = [5; 8];
+            assert_eq!(
+                verify(&q, &calls, &w, h_tx, &proof, registered),
+                Err(VerifyError::Unregistered(n_fn - 1))
+            );
+            assert_eq!(verify_transfer(&p, h_tx, &proof), Err(VerifyError::Shape));
+        } else {
+            assert!(failed_proof(verify_transfer(&p, h_tx, &proof)));
+        }
+    }
+    let mut p = public(MAX_FN);
+    p.n_fn = MAX_FN + 1;
+    let proof = blacksilk_zk::decode_proof_with(&hollow_proof(&[1]), &PROOF_LIMITS).unwrap();
+    assert_eq!(
+        verify(&p, &vec![call(); MAX_FN + 1], &w, h_tx, &proof, registered),
+        Err(VerifyError::Shape)
+    );
+}

@@ -223,3 +223,132 @@ fn an_execution_over_its_own_budget_is_refused_before_proving() {
     assert_eq!(prove::over_budget(&kused, &prove::kernel_budget(1)), None);
     assert!(prove::over_budget(&kused, &prove::kernel_budget(0)).is_some());
 }
+
+/// A function program that writes `words`, then counts down from `spins`
+/// (cycles only), and halts with exit code 0.
+fn busy_writer(words: &[u32], spins: u32) -> std::sync::Arc<blacksilk_zkvm::Program> {
+    use blacksilk_zkvm::asm::{
+        reg::{T0, T1, ZERO},
+        Asm,
+    };
+    use blacksilk_zkvm::isa::Op;
+    let mut a = Asm::new(0x1_0000);
+    for &w in words {
+        a.li(T0, w).write_reg(T0);
+    }
+    if spins > 0 {
+        a.li(T1, spins)
+            .label("spin")
+            .imm(Op::Addi, T1, T1, -1)
+            .branch(Op::Bne, T1, ZERO, "spin");
+    }
+    a.halt(0);
+    std::sync::Arc::new(a.finish().expect("assembles"))
+}
+
+/// A function program that writes `words` and halts with exit code 0.
+fn writer(words: &[u32]) -> std::sync::Arc<blacksilk_zkvm::Program> {
+    busy_writer(words, 0)
+}
+
+/// `prove` checks each function's prefix before anything else about the
+/// function (mutation run E): a function that writes the kernel's prefix
+/// exactly, and nothing after it, passes the check (and is then measured
+/// against its budget, here a zero one); one that writes less than a
+/// prefix, or a prefix with one word changed, is `FunctionMismatch` before
+/// its budget is measured. Nothing is proven: every case is refused first.
+/// An execution that uses exactly its budget fits it.
+#[test]
+fn a_functions_prefix_is_checked_before_its_budget() {
+    use blacksilk_px::prove::TransferError;
+    use blacksilk_px::vault::{self, Terms};
+    use blacksilk_px_core::call::{function_prefix, Window, ABI_VERSION, PREFIX_WORDS};
+    let mut rng = ChaCha20Rng::seed_from_u64(6);
+    let c = CONTRACTS[0];
+    let secret = wallet::random_digest(&mut rng);
+    let terms = Terms::claim_only(&c, &secret);
+    let blind = wallet::random_digest(&mut rng);
+    let (_, fw) = vault::lock_call(&c, 500, &terms, 0, &blind, &Window::UNBOUNDED);
+    let mut w = wallet::witness(
+        Tree::new(&mut HostPerm::new()).root(),
+        500,
+        0,
+        [wallet::dummy_input(&mut rng), wallet::dummy_input(&mut rng)],
+        [
+            wallet::contract_output(&mut rng, c, 500, terms.data(&c)),
+            wallet::empty_output(&mut rng),
+        ],
+    );
+    w.n_fn = 1;
+    w.functions[0] = Some(fw);
+    let words = witness_words(&w);
+    let public = kernel::transfer(&mut HostPerm::new(), &mut SliceSource::new(&words)).unwrap();
+    let (contract, io_hash) = &public.functions[0];
+    let prefix = function_prefix(ABI_VERSION, io_hash, contract, &Window::UNBOUNDED);
+    assert_eq!(prefix.len(), PREFIX_WORDS);
+    let zero = Budget {
+        cycles: 0,
+        keys: 0,
+        add: 0,
+        bit: 0,
+        lt: 0,
+        shift: 0,
+        mul: 0,
+        poseidon: 0,
+    };
+    let attempt = |program, rng: &mut ChaCha20Rng| {
+        prove::prove(
+            &w,
+            &[(program, vec![], zero)],
+            &Window::UNBOUNDED,
+            [2; 32],
+            rng,
+        )
+        .map(|_| ())
+    };
+    // First (the prover's own shape check cannot catch it, so nothing else
+    // refuses it before proving): a function far over its budget, beyond
+    // the room the padded shared tables would leave, is refused by the
+    // per-execution check with `OverBudget`, not by the prover's shape
+    // check (`BudgetExceeded`).
+    match attempt(busy_writer(&prefix, 100_000), &mut rng) {
+        Err(TransferError::OverBudget {
+            execution: 1,
+            table: "cycles",
+            ..
+        }) => {}
+        other => panic!("expected OverBudget, got {other:?}"),
+    }
+    // Exactly the prefix: past the prefix check, refused by the budget.
+    match attempt(writer(&prefix), &mut rng) {
+        Err(TransferError::OverBudget {
+            execution: 1,
+            table: "cycles",
+            ..
+        }) => {}
+        other => panic!("expected OverBudget, got {other:?}"),
+    }
+    // Shorter than a prefix, or one word changed: refused at the prefix.
+    let short = writer(&prefix[..3]);
+    assert!(matches!(
+        attempt(short, &mut rng),
+        Err(TransferError::FunctionMismatch(0))
+    ));
+    for i in [0, 1, 9, PREFIX_WORDS - 1] {
+        let mut wrong = prefix;
+        wrong[i] ^= 1;
+        let mut out = wrong.to_vec();
+        out.push(7);
+        assert!(
+            matches!(
+                attempt(writer(&out), &mut rng),
+                Err(TransferError::FunctionMismatch(0))
+            ),
+            "word {i}"
+        );
+    }
+    // An execution using exactly its budget fits it.
+    let exec = run(&kernel_program(), &words, MAX_CYCLES).unwrap();
+    let used = trace::usage(&kernel_program(), &exec);
+    assert_eq!(prove::over_budget(&used, &used), None);
+}

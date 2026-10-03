@@ -205,6 +205,7 @@ fn a_stem_transaction_is_unknown_then_pooled_then_confirmed() {
         chain,
         net: Some(net.clone()),
         mining: Default::default(),
+        status: Default::default(),
     };
     let data = dir.path().to_path_buf();
     rt.spawn(async move {

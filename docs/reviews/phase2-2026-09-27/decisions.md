@@ -1096,3 +1096,193 @@
   - a doc correction (inline panics stop at once);
   - `notify_one` per ticket.
 - **Default `pow_threads` unchanged** (the logical CPU count). It is to be measured on a real multi-core testnet host before any tuning.
+
+## Threat model round 2: consensus and network lenses in (Lead, 2026-10-02; privacy lens pending)
+- **TM2-CONS:** no consensus-rule bug, no x86_64 split path, no inflation path under the assumptions. The gaps are in evidence and in decided-but-unbuilt items.
+- **TM2-NET:** P0 items for the trial and genesis, P1 items before a public testnet.
+- **Started now: W4-MUTAIR (TM2-1, High, freeze blocker).** The first mutation census of the BVM-1 AIR.
+  - The oracle is honest-trace checks plus negative/tamper traces. The circuit-fingerprint pins are excluded: they kill every mutant without proving soundness.
+  - A real under-constrained rule found here is reported, not fixed: fixing it changes CIRCUIT_ID.
+- **Queued after the privacy lens, to be prioritised together:**
+  - golden PX fixture (TM2-2);
+  - RandomX start-up self-test (TM2-3);
+  - park-on-deep-reorg (TM2-4: before a public testnet);
+  - recent_rejects flushed on a rule change, and a non-vacuous fee guard (TM2-5);
+  - supply-audit PX test F40-9, and CLSAG/BP+ verifier fuzzing (TM2-8);
+  - run F: replay.rs, store.rs, zk verify/config/params, randomx/, the fingerprint modules, supply-audit (TM2-9);
+  - D0 and T_g (TM2-10, genesis gate);
+  - GetTx > 64 ids disconnecting honest peers: reproduce first;
+  - PSK required by the trial procedure;
+  - originated.json privacy;
+  - systemd StartLimit;
+  - operator overrides shown in /info;
+  - store PoW sampling at replay;
+  - D1 per-peer hashing slow start, and D2 staller detection (P1).
+- **Owner tasks re-confirmed:** signing key, signed tags, second fingerprint channel.
+- **STATUS.md is stale** (as of e986250). A docs agent will reconcile it with decisions.md.
+
+## Threat model round 2: merged plan and owner decisions (Lead, 2026-10-02)
+- **OWNER DECISIONS (2026-10-02):**
+  - **Trial release authentication: the two-channel commit id.** The owner publishes the exact commit id plus the consensus fingerprints on two separate channels. Every operator builds that commit with tools/release-build.sh, checks that both channels match, and recomputes the genesis. Signed tags are required before a public testnet.
+  - **Supply-audit custody and incident data: a separate machine,** not the build/agent workstation.
+- **Lead decisions (cross-check questions):**
+  - TM2-P2P also covers the reorg-readmission case: the origin uses `admitted` like every node, and a persisted fluff height only on the Held-after-restart path. The GetTx fix asserts no stem-peer churn.
+  - The PX ciphertext `R` canonical-point rule goes IN v3 at this reset (P0-freeze). It is a consensus change: a full record and its own red-team pass.
+  - TM2-DOCS corrects the DAA freeze record: the residual is accepted under the majority-hash assumption. Park-on-deep-reorg does not cover it.
+  - The AIR gate adds three parts: an all-table cell census including padding rows, lying-generator tests, and a spec-to-constraint table.
+- **Merged plan (tm2-crosscheck.md):**
+  - **P0-genesis:**
+    - the origin re-announce fix, including the reorg case (TM2-P2P);
+    - the GetTx >64 fix (TM2-P2P);
+    - the PSK procedure (done in docs), plus "PSK loaded" in /info;
+    - the RandomX start-up self-test (node and miner);
+    - D0 measured per trial device, and a two-stage T_g;
+    - origin data at rest: 0700/0600 permissions and the redaction rules;
+    - the privacy regression suite (33 W1);
+    - the supply-audit PX test F40-9;
+    - the empty wallet password refused;
+    - the authenticated release reference (owner decision above).
+  - **P0-freeze:**
+    - the AIR gate (W4-MUTAIR);
+    - golden PX fixtures, a tamper sweep, and PX/block verdict samples in the fingerprint;
+    - mutation run E (W4-MUTE), then run F;
+    - the PX `R` rule.
+  - **P1-public-testnet:**
+    - D1 header slow start, and D2 staller detection;
+    - stem black-hole fixes, PX and the Tx lane (local re-stem at the first embargo expiry);
+    - local decoy distribution, and a hedged decoy RNG;
+    - Tor: onion-only outbound with SOCKS isolation;
+    - X4, header tagging;
+    - recent_rejects flushed at an activation, and a non-vacuous fee guard;
+    - systemd StartLimit, SIGTERM handling, overrides in /info, store PoW sampling, the F48-5 quarantine;
+    - byte-bounded outboxes;
+    - log rate limiting and IP redaction;
+    - the network-namespace tests NS-1 to NS-9.
+
+## TM2-P2P and RT-TM2P2P (Lead, 2026-10-02)
+- **TM2-P1 / X6 confirmed fixed for the named cases:** a block during the stem, a reorg readmission, and a restart. The origin anchors at its pool height like every node.
+- **TM2-17 confirmed for v1:** paced GetTx serving, duplicates answered once, no stem churn, per-announcer fairness.
+- **ACCEPTED WITH FIXES (before merge; a second RT pass follows):**
+  - **(1) A PX burst from one announcer is lost permanently** (2 of 6 pooled; this predates TM2-17). Fixes:
+    - re-queue a dropped answer;
+    - retry the same peer once on timeout;
+    - byte-aware in-flight cap.
+  - **(2) Eight silent first announcers censor a transaction** (predates TM2-17). Fixes:
+    - prefer outbound announcers;
+    - never push wanted for a peer not in the queue;
+    - never forget an id while an announcer was refused a place.
+  - **(3) Held copies are no longer pooled at all:** a local record only, so the origin behaves exactly like a restarted relay. This replaces the "held copy is never re-announced" decision, which a single InvTx probe could still expose.
+  - **(4)** A test hook replaces the sleeps.
+  - **(5)** originated.json is parsed per entry: it no longer fails open, and a duplicate id keeps the highest height.
+  - **(6)** A node-wide GetTx serving byte budget. The real per-peer figure is about 21 MB.
+
+## RT2-TM2P2P (Lead, 2026-10-02)
+- **The flake root-caused:** a test timing assumption. Connection setup took more than 5 s under CPU starvation (1 in about 690 runs). Fix: precondition waits go to 30 s.
+- **Held copies not pooled: CONFIRMED.** No cache writes, and no network-visible origin/relay difference.
+- **Request scheduling is weak against adversaries:**
+  - F1 (High): timed-out ids parked behind junk with no request or timer;
+  - F2 (High): a Busy self-induction loop;
+  - F4: tx_overflow can be filled;
+  - F5: silent announcers cost 30 s each, sequentially;
+  - F3: ServeBudget fairness.
+- **DECISION:** redesign p2p transaction requests as a TxRequestTracker-style model (prior art: Bitcoin Core txrequest), design note first, with a stated worst-case bound:
+  - preferred outbound announcers first;
+  - one outstanding request plus a parallel fallback;
+  - a per-txid deadline;
+  - no request-less queues;
+  - per-peer caps by count and bytes, with ungameable eviction;
+  - Busy rotates to the next announcer;
+  - the share is charged after the pooled check.
+  - ServeBudget: size-accurate reservations, a per-peer cap, FIFO, an outbound slice, and a throughput disconnect.
+  - A third RT pass follows.
+- **Other fixes:** the originated.json torn-height salvage, and a directory fsync.
+- **The PX-proving tests could not run locally** (memory under 7 GB for about 50 min). The two ignored RT PX tests are added to CI's PX job.
+
+## RT-NODEOPS (Lead, 2026-10-02)
+- **TM2-NODEOPS: ACCEPTED WITH FIXES.**
+  - No false refusal across the real key switch, reorgs or side blocks, and with real RandomX across two switches.
+  - The self-test and dataset check are deterministic.
+  - /info adds no leak; the fingerprint is unchanged.
+- **Fix (Medium-High):** the store-check tip region and samples are chosen by connected-chain HEIGHT, not storage order (a planted store escaped at 18 of 20 seeds). The docs drop "always" and add the detection table.
+- **Other fixes:**
+  - a gentler StartLimit, documented;
+  - Docker on-failure:3 and stop-timeout;
+  - the miner self-test runs once, with in-process reconnect;
+  - tighten I/O errors become warnings;
+  - fchmod with O_NOFOLLOW;
+  - Unicode whitespace in the password check;
+  - the miner's skip flag is reported loudly.
+  - The originated.json owner-only writer goes to TM2-P2P.
+
+## Run E (Lead, 2026-10-03)
+- **W4-MUTE: no real bug.** Every survivor was killed or exempted (E29–E44), and the boundary, hand and release-arithmetic passes are complete.
+  - Gaps closed with tests:
+    - the CLSAG message's coverage of the range proof;
+    - size caps at their exact edges;
+    - the per-IP limit at registration;
+    - the wallet's header-link check;
+    - the idle timeout.
+  - RT-MUTE runs before the merge.
+- **Locator: decided to fix the DOCS.** The code's shape is the tip plus 9 one by one; docs/p2p.md §6 says 10. There is no behaviour change before the freeze. The ignored test becomes a test of the actual shape, so the boundary mutant is killed. RT-MUTE checks the protocol intent first.
+- **E44:** the two unnamed maintenance delays (the first address save at 5 s and the outbound round at 2 s) become named constants, pinned by tests.
+- **CLSAG / PX / tx-id message coverage:** RT-MUTE checks every binding message field for test coverage.
+- **Remaining frozen-scope work:**
+  - the AIR gate (W4-MUTAIR, in progress);
+  - run F: replay.rs, store.rs, zk verify/config/params, randomx/, the fingerprint modules, supply-audit;
+  - the golden PX fixtures;
+  - the PX R canonical-point rule.
+
+## INV-70 and RT3-TM2P2P (Lead, 2026-10-03)
+- **INV-70: root-caused; merged locally.** `a_full_class_answers_busy_at_once` held the chain lock across timing asserts, and a load-induced assert failure poisoned it. The actor then exited 70 and the output was lost.
+  - Fix: a HeldChain helper on its own thread, and fail-stop now writes directly to stderr.
+  - The node's fail-stop policy is unchanged and correct.
+- **RT3-TM2P2P, the request-tracker redesign:**
+  - Confirmed: records, timers, salted priority, caps, ServeBudget accounting, originated.json.
+  - Refuted: the bound against non-silent attackers.
+  - Found:
+    - F1 (High): parallel honest answers penalized as unrequested;
+    - F1b (High): a slow honest peer's retry copy penalized;
+    - F3 (High): ping/pong behind Tx answers drops honest slow and Tor links (~80–240 kB/s needed for 1–3 PX);
+    - F2 (Medium): slow NotFound or Busy, and reconnecting attackers, defeat the bound (up to ~20 min, sometimes dropped);
+    - F4: a node-wide lane stall is treated as a per-peer Busy;
+    - F5: inbound serving-pool holders are not rate-checked;
+    - F6: the shared tracker links clearnet and onion identities.
+  - **DECISION:** fix all of them, adopting RT3's sketch for F1/F2 where right:
+    - a ping/pong priority channel;
+    - a PONG_TIMEOUT measured from the write;
+    - size-aware timeouts;
+    - a per-network-class tracker;
+    - an adversarial property test.
+  - RT3's failing tests must all pass. A fourth RT pass follows.
+
+## RT-MUTE (Lead, 2026-10-03)
+- **Run E: ACCEPTED WITH FIXES.** No product line changed. E29–E35, E36–E39, E41, E42 and E44 are confirmed.
+- **F1 (Medium, test gap):** five parts of the transfer and deploy signed messages and ids were untested, including the deploy message's range-proof term (tx malleability). RT's tests are adopted. Deploy and PX fingerprint samples are added only if the consensus digest stays unchanged; otherwise a Lead decision is needed.
+- **Withdrawn exemptions:** E40 and E43's 128:59 and 136:59 (they are testable).
+- **Locator:** the docs and the header_sync.rs:11 comment follow the code (tip + 9 consecutive), and the test is exact (`dense == 9`). Not consensus-relevant; Bitcoin Core gives 11.
+- **E44:** named constants, pinned.
+- **Flakes:**
+  - outbound_policy table_of port collisions;
+  - liveness L7, now by drain steps.
+- **Full-set kills by timing assertions are re-checked in isolation** (method note).
+- **Run E follow-ups done** (w4-mute 95bc76c). The fingerprint samples for deploy, PX and the PX binding are DECIDED YES, as one fingerprint revision together with the golden PX fixtures and the PX/block verdict samples (P0-freeze), rather than a separate pin change. Run E is merged.
+
+## RT4-TM2P2P (Lead, 2026-10-03)
+- **Confirmed:**
+  - F1b;
+  - F2 as stated (size inflaters within the stated bound);
+  - F3 (except the reconnect feature);
+  - F4, F5;
+  - the Busy exception.
+  - No origin oracle in the reconnect re-announcement.
+- **Found:**
+  - **High:** a node-wide late_txs memory filled for free brings the F1 penalties back. Fix: per-peer quotas.
+  - **High, privacy:** the reconnect whole-pool re-announcement leaks a node-identifying order. DECISION: remove it; a reconnecting host gets back only what its previous connection was owed, shuffled. Every InvTx flush is shuffled, and onion inbound peers are skipped.
+  - **Medium:** deadline-cut requests are not remembered (a framing attack).
+  - **Medium:** cheap size inflation through undecoded lane drops. Inflate from decoded answers only; count slots by request age; restore the silent bound.
+  - **Low-Medium:** the F6 class must come from via_tor (the legacy hidden-service setup).
+  - **Low:** a lost wakeup; the pong margin against kernel/Tor buffering.
+- RT4's prototype for the slot rule was blocked by the permission system. It did not ask the Lead to run it; the P2P agent implements it through the normal path.
+- **Process:** TM2-P2P has gone through four RT rounds, each finding fewer and smaller issues, but the new mechanisms keep adding surface. After this round:
+  - a focused RT5;
+  - if it finds only Low items, merge, and record the residuals as P1-public-testnet items rather than iterating further.

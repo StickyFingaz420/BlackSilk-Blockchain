@@ -551,6 +551,20 @@ body    = type (1) ‖ payload
   passed full header validation, including PoW, and the CRC detects corruption. Bodies
   are fully re-validated during replay, so a stored block with an invalid body is
   rejected again deterministically.
+  - **Stored hashes are re-checked** (decisions "Agent 01", TM2-5): the CRC does not
+    stop someone who can write the file. After the replay the node recomputes the
+    stored hash of the 16 highest connected blocks and of 48 connected heights drawn
+    uniformly below them from the start-up's OS randomness
+    (`StorePowCheck::NODE_DEFAULT`; by height on the replayed chain, never by record
+    order, which the file's writer controls), or of every stored block with
+    `--verify-store-pow` (`StorePowCheck::All`), and refuses the store if one differs
+    (`StorePowMismatch`, node exit status 66). The first record of a block is the one
+    validation uses; a later record of the same block with another hash is refused.
+    A forged block below the tip region is found with probability at least
+    1 - (1 - k/N)^48 per start (k forged of N heights; table in docs/testnet.md
+    §4.5); side branches the node does not follow are not sampled. Node policy, not consensus:
+    the verdicts on blocks do not change. `ChainManager::open` itself trusts every
+    stored hash (`StorePowCheck::Trust`); the node opens with `open_checked`.
   - **Halts persist across restarts without a record.** A block that passed validation
     but fails to apply (for example the PX tree-capacity check; a bug by §6's rule)
     halts the node and is not marked invalid. Nothing about it is written to the store:
@@ -676,7 +690,7 @@ The route list is `blacksilk_node::ROUTES` (`node/src/lib.rs`).
 
 | Method | Path | Purpose | Class | Body limit |
 |---|---|---|---|---|
-| GET | `/info` | network, height, tip id, difficulty, generated supply, mempool size, identity (genesis id, consensus fingerprint, commit, version), `template_ready`, `template_latched` and, during an operator fork, `operator_fork` (§9.4) | read | none |
+| GET | `/info` | network, height, tip id, difficulty, generated supply, mempool size, identity (genesis id, consensus fingerprint, commit, version), `template_ready`, `template_latched` and, during an operator fork, `operator_fork` (§9.4); `network_psk_loaded` (whether a pre-shared key is loaded, never the key), `overrides` (the operator flags of this run that change a default, e.g. `--invalidate-block <id>`, `--skip-randomx-self-test`) and `operator_verdicts` (`block`, `height` or `null`: the operator invalidations in force) | read | none |
 | GET | `/template` | mining template: height, prev id, difficulty, seed id, min timestamp, reward, fees, transactions, and `next_seed_id` inside the key-switch window; `503` until the node has caught up, during a drain, and during an operator fork (§9.4) | bulk | none |
 | GET | `/tip?after=<id>&wait=<s>` | the connected tip (height, id, header height, `template_ready`); with `after`, held until the tip differs from it, at most `wait` ≤ 30 s (§9.4) | long poll | none |
 | POST | `/block` | submit a mined block (`{"hex": …}`); admission rule §9.2 | block | `rpc::MAX_REQUEST_BYTES` (a maximum-size block in hex) |

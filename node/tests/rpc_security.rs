@@ -6,6 +6,8 @@
 //! with a test asserting the secure behaviour (docs/evidence/rpc-security-2026-09-27).
 //! These tests prove server behaviour; browser behaviour is cited, not tested.
 
+mod common;
+
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::store::MemoryStore;
@@ -19,6 +21,7 @@ use blacksilk_rpc::{Client, RpcError};
 use blacksilk_tx::builder::{build_coinbase, Payment};
 use blacksilk_tx::params::TxRules;
 use blacksilk_tx::types::Transaction;
+use common::HeldChain;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::io::{Read, Write};
@@ -545,7 +548,9 @@ fn a_full_class_answers_busy_at_once() {
     });
     let reads = Limits::default().reads;
     let extra = 2;
-    let guard = n.shared.lock().unwrap();
+    // Held on a thread of its own: a failing check below must not poison
+    // the lock the actor waits on (INV-70, [`HeldChain`]).
+    let held = HeldChain::hold(&n.shared);
     let addr = n.addr;
     let (tx, rx) = std::sync::mpsc::channel();
     for _ in 0..reads + extra {
@@ -573,7 +578,7 @@ fn a_full_class_answers_busy_at_once() {
     assert!(start.elapsed() < Duration::from_secs(2));
     let a = get(addr, "/px/contracts?from=0", "").unwrap();
     assert_eq!(a.status, 503);
-    drop(guard);
+    drop(held);
     for _ in 0..reads {
         statuses.push(rx.recv_timeout(Duration::from_secs(20)).unwrap());
     }
@@ -583,6 +588,94 @@ fn a_full_class_answers_busy_at_once() {
         "every admitted request is answered: {statuses:?}"
     );
     assert_eq!(get(addr, "/info", "").unwrap().status, 200);
+}
+
+/// The child half of the INV-70 tests: `held` holds the chain with
+/// [`HeldChain`], `guard` with a `MutexGuard` in the test thread.
+const HELD_CHILD: &str = "BLACKSILK_RPC_SECURITY_HELD_CHILD";
+const HELD_CHILD_FAILURE: &str = "the child's check failed while the chain was held";
+
+/// Holds the chain while a request's chain command waits on it, then fails
+/// as an assertion would.
+fn held_child(how: &str) {
+    let n = Node::guarded(test_conn());
+    let (_held, _guard) = match how {
+        "held" => (Some(HeldChain::hold(&n.shared)), None),
+        _ => (None, Some(n.shared.lock().unwrap())),
+    };
+    let addr = n.addr;
+    let _waiting = std::thread::spawn(move || get(addr, "/distribution?to=0", ""));
+    // The request's command reaches the actor, which waits for the lock.
+    std::thread::sleep(Duration::from_secs(1));
+    panic!("{HELD_CHILD_FAILURE}");
+}
+
+/// Runs `test` of this binary as a child that holds the chain `how`.
+fn run_held_child(test: &str, how: &str) -> (Option<i32>, String, String) {
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--test-threads=1"])
+        .env(HELD_CHILD, how)
+        .output()
+        .unwrap();
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// INV-70: a test that fails while it holds the chain (as
+/// `a_full_class_answers_busy_at_once` does) fails with its own message.
+/// With the `MutexGuard` in the test thread, the failure poisoned the lock
+/// and the actor waiting on it stopped the test process with status 70,
+/// the message lost in the harness's capture; [`HeldChain`] releases the
+/// lock unpoisoned. Runs itself as a child process.
+#[test]
+fn a_failure_while_the_chain_is_held_is_reported() {
+    if let Ok(how) = std::env::var(HELD_CHILD) {
+        return held_child(&how);
+    }
+    let (code, stdout, stderr) =
+        run_held_child("a_failure_while_the_chain_is_held_is_reported", "held");
+    // 101: the harness's status for a failed test.
+    assert_eq!(
+        code,
+        Some(101),
+        "stdout:
+{stdout}
+stderr:
+{stderr}"
+    );
+    assert!(stdout.contains(HELD_CHILD_FAILURE), "{stdout}");
+}
+
+/// INV-70: a lock poisoned under the waiting chain actor still stops the
+/// process (fail-stop, `POISONED_EXIT_CODE`), and says so on stderr even
+/// under the test harness's output capture. Runs itself as a child process.
+#[test]
+fn a_poisoned_chain_lock_stops_the_process_and_says_so() {
+    if let Ok(how) = std::env::var(HELD_CHILD) {
+        return held_child(&how);
+    }
+    let (code, stdout, stderr) = run_held_child(
+        "a_poisoned_chain_lock_stops_the_process_and_says_so",
+        "guard",
+    );
+    assert_eq!(
+        code,
+        Some(blacksilk_node::POISONED_EXIT_CODE),
+        "stdout:
+{stdout}
+stderr:
+{stderr}"
+    );
+    assert!(
+        stderr.contains("chain lock poisoned by a panic; exiting with status 70"),
+        "stdout:
+{stdout}
+stderr:
+{stderr}"
+    );
 }
 
 // ---------------------------------------------------------------- W3

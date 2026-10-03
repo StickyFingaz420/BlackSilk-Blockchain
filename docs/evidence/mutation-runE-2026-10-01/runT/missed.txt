@@ -1,0 +1,28 @@
+tx/src/codec.rs:52:44: replace | with ^ in Writer::varint
+tx/src/codec.rs:71:9: replace Writer::len -> usize with 0
+tx/src/codec.rs:71:9: replace Writer::len -> usize with 1
+tx/src/codec.rs:75:9: replace Writer::is_empty -> bool with true
+tx/src/codec.rs:75:9: replace Writer::is_empty -> bool with false
+tx/src/state.rs:113:9: replace MemoryChain::fail_next_apply_for_tests with ()
+tx/src/state.rs:146:9: replace MemoryChain::block_tx_hashes -> Option<&[Hash]> with None
+tx/src/state.rs:146:9: replace MemoryChain::block_tx_hashes -> Option<&[Hash]> with Some(Vec::leak(Vec::new()))
+tx/src/state.rs:146:9: replace MemoryChain::block_tx_hashes -> Option<&[Hash]> with Some(Vec::leak(vec![Default::default()]))
+tx/src/state.rs:189:9: replace MemoryChain::px_contract -> Option<&[RegisteredFunction]> with None
+tx/src/state.rs:189:9: replace MemoryChain::px_contract -> Option<&[RegisteredFunction]> with Some(Vec::leak(Vec::new()))
+tx/src/state.rs:195:9: replace MemoryChain::px_contract_log -> &[(u64, Digest)] with Vec::leak(Vec::new())
+tx/src/state.rs:195:9: replace MemoryChain::px_contract_log -> &[(u64, Digest)] with Vec::leak(vec![(0, Default::default())])
+tx/src/state.rs:195:9: replace MemoryChain::px_contract_log -> &[(u64, Digest)] with Vec::leak(vec![(1, Default::default())])
+tx/src/state.rs:273:17: delete match arm Transaction::PxDeploy(_) in MemoryChain::apply_block
+tx/src/state.rs:318:47: replace - with + in MemoryChain::undo_block
+tx/src/state.rs:347:9: replace <impl ChainView for MemoryChain>::px_is_recent_root -> bool with true
+tx/src/state.rs:351:9: replace <impl ChainView for MemoryChain>::px_nullifier_spent -> bool with false
+tx/src/state.rs:359:9: replace <impl ChainView for MemoryChain>::px_function -> Option<PxProgram> with None
+tx/src/state.rs:362:37: replace == with != in <impl ChainView for MemoryChain>::px_function
+tx/src/state.rs:372:9: replace <impl ChainView for MemoryChain>::px_contract_exists -> bool with false
+tx/src/types.rs:248:9: replace Transfer::range_proof_bytes -> Vec<u8> with vec![]
+tx/src/types.rs:248:9: replace Transfer::range_proof_bytes -> Vec<u8> with vec![0]
+tx/src/types.rs:248:9: replace Transfer::range_proof_bytes -> Vec<u8> with vec![1]
+tx/src/types.rs:398:24: replace > with >= in Transaction::decode
+tx/src/types.rs:409:13: delete match arm KIND_PX in Transaction::decode
+tx/src/types.rs:410:13: delete match arm KIND_PX_DEPLOY in Transaction::decode
+tx/src/types.rs:413:24: replace > with >= in Transaction::decode

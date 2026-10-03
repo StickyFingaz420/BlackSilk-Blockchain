@@ -1,0 +1,12 @@
+--re=^px[/]src[/]prove[.]rs[:]198[:]26[:] replace [>] with [>][=] in over[_]budget$
+--re=^px[/]src[/]prove[.]rs[:]281[:]45[:] replace [|][|] with [&][&] in prove$
+--re=^px[/]src[/]prove[.]rs[:]281[:]30[:] replace [<] with [=][=] in prove$
+--re=^px[/]src[/]prove[.]rs[:]281[:]30[:] replace [<] with [<][=] in prove$
+--re=^px[/]src[/]prove[.]rs[:]335[:]29[:] replace [|][|] with [&][&] in verify$
+--re=^px[/]src[/]prove[.]rs[:]335[:]20[:] replace [>] with [=][=] in verify$
+--re=^px[/]src[/]prove[.]rs[:]335[:]20[:] replace [>] with [<] in verify$
+--re=^px[/]src[/]prove[.]rs[:]335[:]20[:] replace [>] with [>][=] in verify$
+--re=^px[/]src[/]prove[.]rs[:]335[:]44[:] replace [!][=] with [=][=] in verify$
+--re=^px[/]src[/]prove[.]rs[:]418[:]5[:] replace verify[_]transfer \-[>] Result[<][(][)][,] VerifyError[>] with Ok[(][(][)][)]$
+--re=^px[/]src[/]tree[.]rs[:]175[:]9[:] replace Tree[:][:]leaf \-[>] Option[<]Digest[>] with None$
+--re=^px[/]src[/]tree[.]rs[:]175[:]9[:] replace Tree[:][:]leaf \-[>] Option[<]Digest[>] with Some[(]Default[:][:]default[(][)][)]$

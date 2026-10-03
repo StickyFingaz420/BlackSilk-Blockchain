@@ -1,0 +1,18 @@
+px/src/prove.rs:40:5: replace kernel_program -> Arc<Program> with Arc::new(Default::default())
+px/src/prove.rs:64:5: replace kernel_budget -> Budget with Default::default()
+px/src/prove.rs:166:5: replace statement -> Option<Statement> with Some(Default::default())
+px/src/prove.rs:222:5: replace prove_error -> TransferError with Default::default()
+px/src/prove.rs:242:5: replace prove -> Result<(Public, Vec<FunctionCall>, Proof), TransferError> with Ok((Default::default(), vec![], Default::default()))
+px/src/prove.rs:242:5: replace prove -> Result<(Public, Vec<FunctionCall>, Proof), TransferError> with Ok((Default::default(), vec![Default::default()], Default::default()))
+px/src/prove.rs:413:5: replace prove_transfer -> Result<(Public, Proof), TransferError> with Ok((Default::default(), Default::default()))
+px/src/state.rs:45:32: replace + with -
+px/src/state.rs:45:32: replace + with *
+px/src/state.rs:131:9: replace State::apply_block -> Result<Undo, StateError> with Ok(Default::default())
+px/src/tree.rs:26:73: replace + with - in empty_roots
+px/src/tree.rs:26:73: replace + with * in empty_roots
+px/src/tree.rs:27:42: replace + with - in empty_roots
+px/src/tree.rs:27:42: replace + with * in empty_roots
+px/src/tree.rs:107:82: replace + with - in Frontier::root
+px/src/tree.rs:107:82: replace + with * in Frontier::root
+px/src/tree.rs:127:32: replace + with -
+px/src/tree.rs:127:32: replace + with *
