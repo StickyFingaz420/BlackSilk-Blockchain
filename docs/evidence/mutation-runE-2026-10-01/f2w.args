@@ -1,0 +1,2 @@
+--re=^wallet[/]src[/]wallet[/]sync[.]rs[:]576[:]16[:] replace [>] with [>][=] in Wallet[:][:]note[_]tip[_]age$
+--re=^wallet[/]src[/]wallet[/]sync[.]rs[:]618[:]40[:] replace [>] with [>][=] in Wallet[:][:]check[_]fresh[_]tip$

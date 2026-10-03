@@ -928,25 +928,15 @@ place an event in without a hook in the product:
   `a_panic_in_the_header_pow_jobs_stops_the_node` (a child process that must exit
   with `POISONED_EXIT_CODE`).
 
-## E40: the tip-age limits at their exact second (wallet/src/wallet/sync.rs)
+## E40: withdrawn (killed)
 
-Decision: mutation run E, an oracle limit (as E19), for the Lead's review.
-
-**Code.** `note_tip_age`: `let age = unix_now().saturating_sub(header.timestamp); … if
-age > warn { warning }`; `check_fresh_tip`: `Some((height, age)) if age > refuse =>
-Err(StaleTip)`, with `tip_age()` reading `unix_now()` again.
-
-**Mutants covered:** 576:16 and 618:40 `replace > with >=` (cargo-mutants).
-
-**Argument.** The versions differ only when the age equals the limit to the second.
-Both ages are read from the system clock at the time of the call, and the wallet has
-no injectable clock: a test that stamps the tip at `now − limit` sees an age of
-`limit` or `limit + 1` depending on when the second turns, so the edge cannot be
-checked deterministically. Both limits are pinned by value
-(`a_withheld_tip_is_reported_and_blocks_transactions`: 10 and 60 target block times
-plus the future time limit), and the warning and the refusal are tested 60 s past
-each limit and below it. A clock seam (an injected `now`) would make the edge
-testable; it is a product change, not made here.
+The tip-age limits at their exact second (wallet/src/wallet/sync.rs 576:16 in
+`note_tip_age` and 618:40 in `check_fresh_tip`, `replace > with >=`) were first exempted
+here as an oracle limit (no injectable clock). Decision RT-MUTE: the red team's
+`the_tip_age_limits_are_strict_at_their_exact_second` (wallet/src/wallet/tests_sync.rs)
+reads the clock in whole seconds and repeats a try that crosses a second boundary, so a
+tip exactly `warn` or `refuse` old is tested; it kills both mutants (`f2w` in
+docs/evidence/mutation-runE-2026-10-01/: 2 of 2 caught). The number stays reserved.
 
 ## E41: the sampling threshold's two edges (wallet/src/headers.rs)
 
@@ -996,69 +986,62 @@ for an accepted witness, which the kernel's differential tests and fuzzing exclu
 mutants of both lines (`!=` → `==`, `<` → `==`, `>`, `<=`, the exit codes) are killed
 by the proving tests (§ px/src/prove.rs).
 
-## E43: the maintenance loop's timeouts at their exact instant (p2p/src/net/maintenance.rs)
+## E43: the maintenance loop's comparisons against constant limits, no clock seam (p2p/src/net/maintenance.rs)
 
-Decision: mutation run E, an oracle limit (as E40), for the Lead's review.
+Decision: mutation run E, an oracle limit; reworded and narrowed by decision RT-MUTE.
 
 **Code.** `maintenance_loop` reads `let now = Instant::now()` once per tick and compares
-it with instants recorded elsewhere: `now >= p.next_inv` (the trickle delay, 119);
-`now.duration_since(t) > LIMIT` for a seed's address fetch (128), an unanswered ping
-(133), the ping interval (136), a header request (142), block and transaction
-requests (157, 171), the outbound round (216) and the save interval (228); and
-`now.duration_since(t) <= LIMIT` for keeping late block and transaction requests
-(167, 179).
+it with instants recorded elsewhere, against limits that are constants:
+`now >= p.next_inv` (the trickle delay, 119); `now.duration_since(t) > LIMIT` for an
+unanswered ping (`PONG_TIMEOUT`, 133), a header request (`HEADERS_TIMEOUT`, 142), block
+and transaction requests (`BLOCK_TIMEOUT`, `TX_TIMEOUT`, 157, 171), the outbound round
+(`OUTBOUND_ROUND`, 216) and the save interval (`SAVE_INTERVAL`, 228); and
+`now.duration_since(t) <= LIMIT` for keeping late block and transaction requests (167,
+179).
 
-**Mutants covered:** 128:59, 133:49, 136:59, 142:60, 157:62, 171:62, 216:46 and
-228:46 `replace > with >=` (cargo-mutants, `rerunM`); 119:51 `replace >= with >`,
-167:60 and 179:55 `replace <= with <` (boundary pass, `bndM2`).
+**Mutants covered:** 133:49, 142:60, 157:62, 171:62, 216:46 and 228:46 `replace > with
+>=` (cargo-mutants, `rerunM`); 119:51 `replace >= with >`, 167:60 and 179:55 `replace
+<= with <` (boundary pass, `bndM2`). Withdrawn (RT-MUTE): 128:59 and 136:59, the
+address-fetch timeout and the ping interval, whose limits are configurable: the red
+team's `an_elapsed_time_equal_to_a_zero_limit_does_not_trigger_it` sets both to zero
+and the recorded instants in the future, so `duration_since` saturates to exactly the
+limit at every tick; it kills both (`f2p`: 2 of 2 caught).
 
-**Argument.** Each pair of versions differs only when the elapsed time equals the
-limit exactly, to the resolution of the monotonic clock (100 ns on Windows, 1 ns on
-Linux), at the one tick that reads that instant; at the next tick (50 ms in the tests,
-250 ms by default) both versions take the same action. `Instant` cannot be set and the
-loop has no injectable clock, so no test can arrange the equality, and in operation
-the difference is one tick, with probability about zero. Each rule is tested on both
-sides with margins: `requests_time_out_after_their_timeouts_and_late_ones_are_kept_as_long`
-and `late_transaction_requests_are_capped` (block and transaction requests, late
-requests, set in the state with ages 10 s below and above each limit),
+**Argument.** Each pair of versions differs only when the elapsed time equals a
+constant limit exactly, to the resolution of the monotonic clock (100 ns on Windows,
+1 ns on Linux), at the one tick that reads that instant; at the next tick (50 ms in the
+tests, 250 ms by default) both versions take the same action. A test cannot set a
+constant limit to zero, `Instant` cannot be set, and the loop has no clock seam (an
+injected `now`), so no test can arrange the equality; for 119:51 the instant compared
+is `next_inv`, set from an exponential draw. Each rule is tested on both sides with
+margins: `requests_time_out_after_their_timeouts_and_late_ones_are_kept_as_long` and
+`late_transaction_requests_are_capped` (block and transaction requests, late requests,
+set in the state with ages 10 s below and above each limit),
 `a_header_request_times_out_after_the_headers_timeout`,
-`an_answering_peer_is_pinged_once_per_interval`,
 `a_peer_that_never_answers_a_ping_is_left_after_the_pong_timeout`,
 `an_announcement_waits_for_its_trickle_delay`,
-`a_silent_seed_has_the_whole_timeout_to_answer`,
 `outbound_connections_are_maintained_every_two_seconds` and
-`the_first_save_of_the_address_table_comes_5_s_after_the_start`; every other mutant of
-these lines is killed (`rerunM`, `bndM2`).
+`the_first_save_of_the_address_table_comes_5_s_after_the_start`; the constants are
+pinned by value; every other mutant of these lines is killed (`rerunM`, `bndM2`). A
+clock seam would make the edges testable; it is a product change, not made here.
 
-## E44: the upper side of two unnamed delays of the maintenance loop (p2p/src/net/maintenance.rs)
+## E44: the upper side of the first save's delay and the outbound round (p2p/src/net/maintenance.rs)
 
-Decision: mutation run E, an oracle limit, for the Lead's review, with a
-recommendation (below).
+Decision: mutation run E, confirmed by decision RT-MUTE, which also had the two delays
+named (`a91c178`, a refactor with no behavior change): `FIRST_SAVE_DELAY` (5 s) and
+`OUTBOUND_ROUND` (2 s, docs/p2p.md §9), pinned by value in
+`the_first_save_delay_and_the_outbound_round_are_the_specified_ones`.
 
-**Code.** `maintenance_loop` starts with `let mut last_save = Instant::now() -
-SAVE_INTERVAL + Duration::from_secs(5);` ("Save soon after the first change"): a
-changed table is first saved 5 s after the start, then at most every `SAVE_INTERVAL`
-(60 s). It runs `maintain_outbound` when `now.duration_since(last_outbound) >
-Duration::from_secs(2)` (docs/p2p.md §9: "`maintain_outbound`, every 2 s").
+**Mutants covered:** the hand mutants 5 s → 6 s of the first save and 2 s → 3 s of the
+outbound round, as run E made them on the literals (missed in `handM2`, `handM3` and
+`handM4`). (`handM3` reported the second caught: four network tests timed out while
+the release test suite ran beside it; alone, in `handM4`, it was missed.) Their
+successors, the constants ± 1 s, are caught by the pinning test.
 
-**Mutants covered** (hand mutants, missed in `handM2`, `handM3` and `handM4`): 84 the
-first save's `from_secs(5)` → `from_secs(6)`; 216 the outbound round's `from_secs(2)`
-→ `from_secs(3)`. (`handM3` reported the second caught: four network tests timed out
-while the release test suite ran beside it; alone, in `handM4`, it was missed.)
-
-**Argument.** Both are literals, not named constants, so no test can state them by
-value, as the tests now state `KEY_EXCHANGE_TIMEOUT`, `HANDSHAKE_TIMEOUT`,
-`HANDSHAKE_DEADLINE`, `IDLE_TIMEOUT`, `PONG_TIMEOUT` and `SAVE_INTERVAL`. Their lower
-sides are tested exactly, since a delay never ends early
+**Argument.** The lower sides are tested exactly, since a delay never ends early
 (`the_first_save_of_the_address_table_comes_5_s_after_the_start`: not before 4.5 s;
-`outbound_connections_are_maintained_every_two_seconds`: dials at least 1.8 s apart;
-the mutants 4 s and 1 s are caught). The upper sides need a bound on when an event is
-observed, which load moves: in this run a 5 s close was observed after more than
-7.5 s (`facb993`), and the 3 s round "failed" four tests only under load. The first
-save's 5 s is not a specified value (docs/p2p.md §9 promises a save "within a minute
-of changing", which 6 s keeps); the round's 2 s is (a round every 3 s is a change of
-the documented behavior that no test notices).
+`outbound_connections_are_maintained_every_two_seconds`: dials at least 1.8 s apart).
+The upper sides need a bound on when an event is observed, which load moves (a 5 s
+close was observed after more than 7.5 s, `facb993`); the value itself is now stated
+by the pinning test, so what this entry keeps is only the behavior test's upper side.
 
-**Recommendation.** Name both delays as constants (for example `FIRST_SAVE_DELAY` and
-`OUTBOUND_ROUND`) and state them in a test, as the timeouts are; this run changes no
-product code, so it is left to the Lead.

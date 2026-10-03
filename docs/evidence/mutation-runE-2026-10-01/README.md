@@ -37,16 +37,17 @@ own census after that merge).
 | chain/src/manager/header_sync.rs | 63 | 50 | 9 | 1 | 3 | 8 killed; 1 equivalent (E32); the timeout fails assertions in isolation |
 | chain/src/manager/submission.rs | 41 | 27 | 7 | 3 | 4 | 5 killed; 2 log lines (E33); the timeouts fail assertions in isolation |
 | wallet/src/headers.rs | 89 | 54 | 29 | 1 | 5 | 28 killed; 1 equivalent (E37); the timeout is a genuine hang |
-| wallet/src/wallet/sync.rs (the header-check and tip-age functions) | 80 | 62 | 16 | 0 | 2 | 14 killed; 2 oracle limits (E40) |
+| wallet/src/wallet/sync.rs (the header-check and tip-age functions) | 80 | 62 | 16 | 0 | 2 | 16 killed (2 by the red team, E40 withdrawn: § Follow-up) |
 | p2p/src/net/headers.rs (but `end_of`) | 154 | 83 | 56 | 11 | 4 | 46 killed; 10 exempt (E36 ×4, E38 ×4, E39 ×2); the timeouts fail assertions in isolation |
 | p2p/src/net/conn.rs (but `knows_tip`) | 80 | 61 | 18 | 0 | 1 | 18 killed |
-| p2p/src/net/maintenance.rs `maintenance_loop` | 56 | 31 | 22 | 0 | 3 | 14 killed; 8 oracle limits (E43) |
-| boundary pass (`>=` → `>`, `<=` → `<`), all scopes | 29 | 19 | 10 | 0 | 0 | 1 killed (wallet 363:29; conn.rs 272:55 was killed before its counted pass, `bndM2`); E30, E34, E35, E41 ×2, E43 ×3; 1 the locator finding |
+| p2p/src/net/maintenance.rs `maintenance_loop` | 56 | 31 | 22 | 0 | 3 | 16 killed (2 by the red team: § Follow-up); 6 oracle limits (E43) |
+| boundary pass (`>=` → `>`, `<=` → `<`), all scopes | 29 | 19 | 10 | 0 | 0 | 1 killed (wallet 363:29; conn.rs 272:55 was killed before its counted pass, `bndM2`); E30, E34, E35, E41 ×2, E43 ×3; the locator mutant 22:26, killed in the follow-up |
 | hand mutants (constants and limits), all scopes | — | — | — | — | — | § Hand mutants: all caught or unviable but E29, E30, E35 ×2, the locator finding and E44 ×2 |
 
 Every file of the scope is complete: each survivor is killed or explained in
-[mutation-exemptions.md](../../reviews/mutation-exemptions.md) (E29–E44). No
-non-test source line was changed.
+[mutation-exemptions.md](../../reviews/mutation-exemptions.md) (E29–E44; E40 withdrawn in
+the follow-up). Run E changed no non-test source line; the follow-up (§ Follow-up
+(RT-MUTE)) changed a doc comment and named two constants, with no behavior change.
 
 - **No survivor revealed a bug in a consensus rule, a bound or peer scoring.** Every
   cap and limit held at its edge once tested there; the boundary pass found no
@@ -248,7 +249,7 @@ tests cannot tell (any locator that ends at the genesis finds the fork; a fork 1
 blocks deep is found one header later). The ignored test
 `the_locator_has_the_tip_and_ten_predecessors_one_by_one` (tests/manager.rs) fails
 on the code and passes under that mutant. Either the code or the sentence changes;
-no change was made here.
+no change was made here. Resolved in § Follow-up (RT-MUTE): the docs follow the code.
 
 ### The wallet's header check (runW: 45 missed, 1 timeout)
 
@@ -276,7 +277,7 @@ proof-of-work batch check and the header feed (`check_batch`, `for_each_header`,
 | sync.rs 163 ×3 (the header feed page checks) | killed: `a_malformed_header_feed_page_is_refused` (a page from another height, an empty page, a partial header, more headers than asked; a feed read in a loop is cut off after 1 000 requests so the test fails instead of hanging) |
 | sync.rs 222 ×2 (`node_id_at`) | killed: the same test (the reorganization check's single header, of another height or served as another's) |
 | sync.rs 561, 562, 565 (the tip header's source in `note_tip_age`) | killed: `the_tip_age_comes_from_the_wallets_header_or_the_nodes_checked_one` |
-| sync.rs 576:16, 618:40 `>` → `>=` (the tip-age limits at their exact second) | oracle limit: E40 (no injectable clock) |
+| sync.rs 576:16, 618:40 `>` → `>=` (the tip-age limits at their exact second) | oracle limit: E40 (no injectable clock); withdrawn in the follow-up, killed by the red team's test |
 | timeout: headers.rs 254:33 `>` → `<` in `trim` | a genuine hang: `trim` pops while the context is shorter than its length, so every check loops in `HeaderCheck::build` (`timeoutW2`, one test, 120 s); no test can fail an assertion first |
 
 Re-run (`rerunW`, final tests, the 45 and the timeout): 41 caught, 3 missed (E37,
@@ -487,6 +488,79 @@ debug-assertions=off"`:
 - **p2p:** headers.rs: none (no caught mutant's log of `runH` or `rerunH` shows an
   overflow panic); conn.rs (`ovfM`): 1 of 1 caught
   (215:25 `+=` → `-=`, § p2p conn.rs).
+
+## Follow-up (RT-MUTE, Lead decision: accepted with fixes)
+
+The red team (branch `rt-mute`) and the Lead's decision RT-MUTE confirmed E29–E39,
+E41, E42 and E44, and asked for the fixes below. `rebuild/core` was merged into
+`w4-mute` first (`93332f4`), then the red team's six test commits were
+cherry-picked (`64d2dec`, `e37861f`, `59a909b`, `c7e51b5`, `76c8bb6`, `ffd513c`).
+
+- **F1, signed-message coverage (Medium).** Run E closed the range-proof gap of a
+  transfer's CLSAG message only. The red team's tests cover the rest. Each of the five
+  survivors, applied as a hand mutant to a `git archive` copy (`handF1.tsv`,
+  `handF1.txt`; oracle: tx's lib tests and every non-proving tx target), is caught.
+  This is 5 of 5:
+  - the transfer message without its pseudo-outputs (types.rs 283), by
+    `a_transfers_signature_message_covers_its_pseudo_outputs`;
+  - the deploy message without its pseudo-outputs (px.rs 633) or its range-proof term
+    (px.rs 634: a signed deploy could have carried another range proof);
+  - the deploy id without its base (types.rs 455) or its prunable part (types.rs 456),
+    by `a_deploys_signature_message_covers_its_pseudo_outputs_and_range_proof`.
+
+  **Not done:** adding deploy and PX samples to the node's pinned fingerprint. The rule
+  samples (`transaction_samples`) are part of `rules_manifest`, whose digest is the
+  rules fingerprint (node/src/fingerprint.rs). Any new sample entry therefore changes
+  the rules and consensus fingerprints and their pins. That is not a pure test-sample
+  addition, so it was left for a Lead decision.
+- **F2, E40 and part of E43 withdrawn.** The red team's tests kill the following,
+  confirmed with cargo-mutants on their own tests (`f2p`, `f2w`: 4 of 4 caught):
+  - the tip-age limits at their exact second (wallet sync.rs 576:16, 618:40), by
+    `the_tip_age_limits_are_strict_at_their_exact_second`, which reads whole seconds and
+    repeats a try across a second boundary;
+  - the ping interval and the address-fetch timeout (maintenance.rs 136:59, 128:59),
+    by `an_elapsed_time_equal_to_a_zero_limit_does_not_trigger_it`. It uses zero
+    limits and future instants, so the elapsed time saturates to exactly the limit.
+
+  E40 is withdrawn. E43 is narrowed and reworded as "comparisons against constant
+  limits (no clock seam)": the mutants whose limit is configurable could be made equal
+  and are killed; constant limits cannot be.
+- **The locator (Lead decision: the docs follow the code), `217ddd0`.** The following
+  now say the tip and 9 predecessors one by one, then doubling gaps back to genesis:
+  - docs/p2p.md §6;
+  - the doc comment of `ChainManager::locator` (header_sync.rs).
+
+  The record notes two points:
+  - Bitcoin Core's locator has 11 consecutive ids;
+  - the count is not consensus-relevant: any decreasing locator that ends at genesis
+    interoperates.
+
+  The ignored test became `the_locator_has_the_tip_and_nine_predecessors_one_by_one`.
+  It checks the exact heights (100 to 91, then 89, 85, 77, 61, 29, 0) and the shape:
+  9 dense gaps, then each gap doubling, ending at genesis. The boundary mutant (now line
+  24:26 after the comment, run E's 22:26) is caught (`bndLoc`). 21:36 stays E35.
+- **E44 named, `a91c178`.** `FIRST_SAVE_DELAY` (5 s) and `OUTBOUND_ROUND` (2 s) are
+  named constants in maintenance.rs, with no behavior change.
+  `the_first_save_delay_and_the_outbound_round_are_the_specified_ones` pins them.
+- **F4, the outbound_policy flake, `1c6d42f`.** `table_of` built its table with one
+  key. Loopback addresses heard from one source share one *new* bucket, and
+  `AddrMan::add` drops an address whose slot is taken, so random ports could collide.
+  `table_of` now tries keys until every address is placed, and checks the count.
+  `lost_outbound_peers_are_replaced` (8 addresses) passed 50 of 50 runs (`f4.txt`).
+- **F5, L7, `dbc95ab`.** The liveness test L7 now measures the header's wait in drain
+  steps (blocks connected between the announcement and the acceptance), not wall time.
+  - The bound: at most 4 steps (8 blocks). A regression to four waits is at least 5.
+  - The step is 1 s (was 300 ms), so a second of load costs at most the one step of
+    slack.
+  - The old bound, `2·STEP + 700 ms`, was measured at 1.61 s under load.
+  - Five local runs: 4 blocks each.
+
+**Full-set "kills" by timing assertions must be re-checked in isolation.** In run E,
+two races in run E's own tests (§ p2p conn.rs) and a test suite running beside a hand
+mutant (`handM3`, the outbound round) turned load into "caught" verdicts. Treat a kill
+whose failing assertion is a wall-clock bound (a time limit, `wait_until`, a
+registration wait) as unconfirmed until the mutant fails the same test alone, on an
+otherwise idle oracle (`handM4` was that re-check).
 
 ## Times
 
