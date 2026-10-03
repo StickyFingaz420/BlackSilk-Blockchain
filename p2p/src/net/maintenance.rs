@@ -78,10 +78,18 @@ pub(super) async fn announce_loop(inner: Arc<Inner>) {
 /// (a crash loses at most this much discovery state).
 const SAVE_INTERVAL: Duration = Duration::from_secs(60);
 
+/// A changed address table is first saved this long after the start ("soon
+/// after the first change"), then at most every [`SAVE_INTERVAL`].
+const FIRST_SAVE_DELAY: Duration = Duration::from_secs(5);
+
+/// Outbound connections are maintained (`maintain_outbound`) at most this
+/// often (docs/p2p.md §9: every 2 s).
+const OUTBOUND_ROUND: Duration = Duration::from_secs(2);
+
 // ---------------------------------------------------------------- maintenance
 pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
     // Save soon after the first change.
-    let mut last_save = Instant::now() - SAVE_INTERVAL + Duration::from_secs(5);
+    let mut last_save = Instant::now() - SAVE_INTERVAL + FIRST_SAVE_DELAY;
     let mut saved_fingerprint = (0, 0);
     let mut last_outbound = Instant::now() - Duration::from_secs(60);
     loop {
@@ -213,7 +221,7 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
         }
 
         // Outbound connections.
-        if now.duration_since(last_outbound) > Duration::from_secs(2) {
+        if now.duration_since(last_outbound) > OUTBOUND_ROUND {
             last_outbound = now;
             maintain_outbound(&inner);
         }
@@ -400,6 +408,16 @@ mod tests {
             inner.state().peers.values().next().unwrap().inv_queue.len(),
             1
         );
+    }
+
+    /// The loop's delays by value: the first save 5 s after the start, an
+    /// outbound round every 2 s (docs/p2p.md §9). Their behavior tests bound
+    /// them exactly only from below (a delay never ends early); a second more
+    /// passes them under load (run E's E44, now named and pinned: RT-MUTE).
+    #[test]
+    fn the_first_save_delay_and_the_outbound_round_are_the_specified_ones() {
+        assert_eq!(FIRST_SAVE_DELAY, Duration::from_secs(5));
+        assert_eq!(OUTBOUND_ROUND, Duration::from_secs(2));
     }
 
     /// The address table is first saved 5 s after the start at the earliest
