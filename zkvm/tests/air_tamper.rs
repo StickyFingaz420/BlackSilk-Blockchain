@@ -1496,3 +1496,241 @@ fn hand_assembled_tables_are_blinded() {
     let public = vec![vec![]; 3];
     assert_eq!(check(&airs, &traces, &public), vec![]);
 }
+
+// ---- RT-MUTAIR additions (red-team review of the census) ----
+//
+// Lying generators the census did not have: R-type lies on several operand
+// pairs (negative second operands separate MULH from MULHSU; shift amounts
+// above 31), I-type lies (the ALU_RI lookup), store-width lies, loads at
+// byte offsets 1-3, misaligned accesses in place of narrower aligned ones,
+// and a write to x0. Each uses `lying_generator`.
+
+/// The output of a program the interpreter runs.
+fn run_output(asm: &Asm) -> Vec<u32> {
+    execute(asm, &[]).1.output
+}
+
+/// R-type lies on several operand pairs. With a positive second operand
+/// MULH and MULHSU agree, so the census's single pair `(0x8000_0005, 3)`
+/// never lied between them; shift amounts above 31 use their low five bits.
+#[test]
+fn a_lying_generator_cannot_change_an_alu_result_for_any_operands() {
+    let pairs: [(u32, u32); 6] = [
+        (0x8000_0005, 3),
+        (7, 0xffff_fffd),
+        (0x8000_0005, 0xffff_fffd),
+        (0xffff_ffff, 0xffff_ffff),
+        (0x8000_0000, 0x8000_0000),
+        (0x1234_5678, 33),
+    ];
+    let lies = [
+        (Op::Mulh, Op::Mulhsu),
+        (Op::Mulhsu, Op::Mulh),
+        (Op::Mulhsu, Op::Mulhu),
+        (Op::Mulhu, Op::Mulh),
+        (Op::Mulh, Op::Mul),
+        (Op::Mul, Op::Mulh),
+        (Op::Sll, Op::Srl),
+        (Op::Srl, Op::Sra),
+        (Op::Sra, Op::Sll),
+        (Op::Slt, Op::Sltu),
+        (Op::Sltu, Op::Slt),
+        (Op::Add, Op::Sub),
+        (Op::Sub, Op::Add),
+        (Op::And, Op::Or),
+        (Op::Xor, Op::And),
+    ];
+    for (truth, lie) in lies {
+        let mut lied = 0;
+        for (x, y) in pairs {
+            let prog = |op: Op| {
+                let mut a = Asm::new(BASE);
+                a.li(T0, x)
+                    .li(T1, y)
+                    .r(op, A1, T0, T1)
+                    .write_reg(A1)
+                    .halt(0);
+                a
+            };
+            if run_output(&prog(truth)) == run_output(&prog(lie)) {
+                continue;
+            }
+            lied += 1;
+            let (c, _) = lying_generator(&prog(truth), &prog(lie));
+            assert_rejected_only_by(
+                &format!("{truth:?} as {lie:?} on ({x:#x}, {y:#x})"),
+                &c.violations(),
+                |v| matches!(v, Violation::Unbalanced { bus, .. } if bus == "bvm/alu"),
+            );
+        }
+        assert!(
+            lied >= 2,
+            "{truth:?} as {lie:?}: only {lied} operand pairs lie"
+        );
+    }
+}
+
+/// I-type lies (the CPU's ALU_RI lookup, with the immediate as operand).
+#[test]
+fn a_lying_generator_cannot_change_an_immediate_alu_result() {
+    let x = 0x8000_0005u32;
+    for (truth, lie, imm) in [
+        (Op::Addi, Op::Xori, -3),
+        (Op::Xori, Op::Ori, -3),
+        (Op::Ori, Op::Andi, -3),
+        (Op::Andi, Op::Addi, -3),
+        (Op::Slti, Op::Sltiu, 3),
+        (Op::Sltiu, Op::Slti, 3),
+        (Op::Slli, Op::Srli, 3),
+        (Op::Srli, Op::Srai, 3),
+        (Op::Srai, Op::Slli, 3),
+    ] {
+        let prog = |op: Op| {
+            let mut a = Asm::new(BASE);
+            a.li(T0, x).imm(op, A1, T0, imm).write_reg(A1).halt(0);
+            a
+        };
+        assert_ne!(run_output(&prog(truth)), run_output(&prog(lie)));
+        let (c, _) = lying_generator(&prog(truth), &prog(lie));
+        assert_rejected_only_by(
+            &format!("{truth:?} as {lie:?}"),
+            &c.violations(),
+            |v| matches!(v, Violation::Unbalanced { bus, .. } if bus == "bvm/alu"),
+        );
+    }
+}
+
+/// A program that stores (or loads) with `op` at `DATA + off`; a store is
+/// followed by a load of the whole word. The value is written out.
+fn mem_program(op: Op, off: i32) -> Asm {
+    let mut a = Asm::new(BASE);
+    a.data(DATA, vec![0xf3, 0x82, 0x81, 0x80], 64);
+    a.li(S0, DATA).li(T0, 0x8182_8384);
+    if matches!(op, Op::Sb | Op::Sh | Op::Sw) {
+        a.store(op, T0, S0, off).load(Op::Lw, A1, S0, 0);
+    } else {
+        a.load(op, A1, S0, off);
+    }
+    a.write_reg(A1).halt(0);
+    a
+}
+
+/// Store-width lies (the census had none): the generator merges another
+/// width into the memory word, which is read back and written out. Only the
+/// store-value rules of the lying row reject it.
+#[test]
+fn a_lying_generator_cannot_change_a_stored_value() {
+    for (truth, lie, off) in [
+        (Op::Sb, Op::Sh, 0),
+        (Op::Sh, Op::Sb, 0),
+        (Op::Sb, Op::Sw, 0),
+        (Op::Sw, Op::Sb, 0),
+        (Op::Sh, Op::Sw, 0),
+        (Op::Sw, Op::Sh, 0),
+        (Op::Sb, Op::Sh, 2),
+        (Op::Sh, Op::Sb, 2),
+    ] {
+        let (t, l) = (mem_program(truth, off), mem_program(lie, off));
+        assert_ne!(
+            run_output(&t),
+            run_output(&l),
+            "{truth:?} as {lie:?} at {off}"
+        );
+        let (c, k) = lying_generator(&t, &l);
+        assert_rejected_only_by(
+            &format!("{truth:?} as {lie:?} at {off}"),
+            &c.violations(),
+            |v| is_constraint(v, CPU, k),
+        );
+    }
+}
+
+/// Load lies at byte offsets 1, 2 and 3 (the census's load lies use offset 0).
+#[test]
+fn a_lying_generator_cannot_change_a_loaded_value_at_any_offset() {
+    for (truth, lie, off) in [
+        (Op::Lb, Op::Lbu, 1),
+        (Op::Lbu, Op::Lb, 1),
+        (Op::Lb, Op::Lbu, 2),
+        (Op::Lb, Op::Lbu, 3),
+        (Op::Lbu, Op::Lb, 3),
+        (Op::Lh, Op::Lhu, 2),
+        (Op::Lhu, Op::Lh, 2),
+        (Op::Lh, Op::Lb, 2),
+        (Op::Lhu, Op::Lbu, 2),
+    ] {
+        let (t, l) = (mem_program(truth, off), mem_program(lie, off));
+        assert_ne!(
+            run_output(&t),
+            run_output(&l),
+            "{truth:?} as {lie:?} at {off}"
+        );
+        let (c, k) = lying_generator(&t, &l);
+        assert_rejected_only_by(
+            &format!("{truth:?} as {lie:?} at {off}"),
+            &c.violations(),
+            |v| is_constraint(v, CPU, k),
+        );
+    }
+}
+
+/// Misaligned accesses (the interpreter traps; zkvm.md §4): the statement's
+/// program makes a misaligned word or halfword access, and the generator
+/// executes a narrower aligned access at the same address in its place. Only
+/// the lying row's constraints (alignment and access rules) reject it.
+#[test]
+fn a_misaligned_access_cannot_borrow_a_narrower_access() {
+    for (truth, lie, off) in [
+        (Op::Lw, Op::Lbu, 1),
+        (Op::Lw, Op::Lhu, 2),
+        (Op::Lw, Op::Lbu, 3),
+        (Op::Lhu, Op::Lbu, 1),
+        (Op::Lh, Op::Lb, 3),
+        (Op::Sw, Op::Sb, 1),
+        (Op::Sw, Op::Sh, 2),
+        (Op::Sw, Op::Sb, 3),
+        (Op::Sh, Op::Sb, 1),
+        (Op::Sh, Op::Sb, 3),
+    ] {
+        let t = mem_program(truth, off);
+        let program = Arc::new(t.finish().unwrap());
+        assert!(
+            run(&program, &[], MAX_CYCLES).is_err(),
+            "{truth:?} at {off} traps in the interpreter"
+        );
+        let (c, k) = lying_generator(&t, &mem_program(lie, off));
+        assert_rejected_only_by(
+            &format!("{truth:?} at {off} as {lie:?}"),
+            &c.violations(),
+            |v| is_constraint(v, CPU, k),
+        );
+    }
+}
+
+/// x0 ignores writes (zkvm.md §2): the statement's program writes 5 to x0
+/// and then outputs t2; the generator writes 5 to t2 instead, so the claimed
+/// output is 5 where the true one is 0. The register write is gated by the
+/// public `rd_write`, so the lying row's write columns and t2's memory chain
+/// no longer match: only the lying row's constraints and the memory bus
+/// reject it.
+#[test]
+fn a_lying_generator_cannot_write_to_x0() {
+    let prog = |rd: u8| {
+        let mut a = Asm::new(BASE);
+        a.imm(Op::Addi, rd, ZERO, 5).write_reg(T2).halt(0);
+        a
+    };
+    assert_eq!(run_output(&prog(ZERO)), vec![0]);
+    assert_eq!(run_output(&prog(T2)), vec![5]);
+    let (c, k) = lying_generator(&prog(ZERO), &prog(T2));
+    assert_eq!(c.st.output, vec![5], "the statement claims the lie");
+    let v = c.violations();
+    assert_rejected_only_by("a write to x0", &v, |x| {
+        is_constraint(x, CPU, k)
+            || matches!(x, Violation::Unbalanced { bus, .. } if bus == "bvm/memory")
+    });
+    assert!(
+        v.iter().any(|x| is_constraint(x, CPU, k)),
+        "the write columns of a non-writing row are pinned to zero"
+    );
+}

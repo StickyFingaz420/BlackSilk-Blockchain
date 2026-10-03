@@ -729,4 +729,19 @@ fn the_mutation_checker_agrees_with_the_full_checker() {
         yes > 0 && no >= 14,
         "both answers occur: {yes} caught, {no} not"
     );
+    // RT-MUTAIR: a zero delta is never caught, on any row of any table. The
+    // zero-delta probes above sit on padding or halting rows only, so a
+    // checker that set the last-row flag on every other row (E49's `!=`
+    // mutant) answered "caught" for every change of a running CPU row and
+    // still passed.
+    for t in 0..airs.len() {
+        for r in [0, 1, h(t) / 2, h(t) - 1] {
+            for c in [0, w(t) / 2, w(t) - 1] {
+                assert!(
+                    !m.caught(t, r, c, Val::ZERO),
+                    "a zero delta at table {t} row {r} column {c}"
+                );
+            }
+        }
+    }
 }
