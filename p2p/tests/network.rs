@@ -5112,12 +5112,15 @@ async fn a_silent_connection_waits_five_seconds_on_clearnet_and_ten_over_tor() {
     cfg.allow_private = false;
     let tor = node_with(75, cfg).await;
     let (c, t) = tokio::join!(closed_after(clearnet.addr), closed_after(tor.addr));
+    // A timeout never fires early, so the lower bounds are exact (within the
+    // time to connect); load only delays the observed close, so the upper
+    // bound has a margin (a loaded run saw the clearnet close late).
     assert!(
-        c < Duration::from_millis(9_000),
+        c >= Duration::from_millis(4_900) && c < Duration::from_millis(9_000),
         "clearnet: closed after {c:?}"
     );
     assert!(
-        t > Duration::from_millis(7_500),
+        t >= Duration::from_millis(9_900),
         "over Tor: closed after {t:?}"
     );
 }

@@ -476,7 +476,7 @@ mod tests {
         };
         let after = closed.duration_since(first_ping.expect("pinged"));
         assert!(
-            after >= Duration::from_secs(29) && after < Duration::from_secs(45),
+            after >= Duration::from_millis(29_500) && after < Duration::from_secs(45),
             "left {after:?} after the ping"
         );
         assert!(net.inner.state().peers.is_empty());
