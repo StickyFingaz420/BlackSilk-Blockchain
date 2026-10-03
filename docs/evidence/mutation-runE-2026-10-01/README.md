@@ -555,6 +555,29 @@ cherry-picked (`64d2dec`, `e37861f`, `59a909b`, `c7e51b5`, `76c8bb6`, `ffd513c`)
   - The old bound, `2·STEP + 700 ms`, was measured at 1.61 s under load.
   - Five local runs: 4 blocks each.
 
+**Checks of the follow-up** (on `d1c8ec0`, the merge of `rebuild/core` included):
+`cargo fmt --all --check`; `cargo clippy --locked --workspace --all-targets -- -D
+warnings`; CI's non-PX test job in release (`tier1.sh`: tx 167 passed, px 74, the rest
+of the workspace 1278; no failure); `consensus-gate.sh a100a19 HEAD` (101 commits, 9 on
+consensus paths, pass), `lockfile-gate.sh a100a19 HEAD`, `unicode-scan.sh`,
+`doc-lint.sh`, `tools/check-test-features.sh` (now present after the merge: every
+test-only feature and `cfg(fuzzing)` crate is marked) and `cargo deny check`: pass.
+
+**Follow-up commits** (after `81ca133`; `93332f4` merges `rebuild/core`):
+
+- `64d2dec` p2p maintenance tests: a zero ping interval and address-fetch timeout are strict (RT-MUTE, against E43)
+- `e37861f` wallet tests: the tip-age limits are strict at their exact second (RT-MUTE, against E40)
+- `59a909b` tx tests: a deploy's CLSAG message covers its pseudo-outputs and range proof (RT-MUTE)
+- `c7e51b5` tx tests: a deploy's id covers its pseudo-outputs, range proof and signatures (RT-MUTE)
+- `76c8bb6` tx tests: a transfer's CLSAG message covers its pseudo-outputs (RT-MUTE)
+- `ffd513c` rt-mute tests: rustfmt
+- `217ddd0` chain, docs: the block locator holds the tip and 9 predecessors one by one
+- `a91c178` p2p: name FIRST_SAVE_DELAY and OUTBOUND_ROUND in the maintenance loop
+- `1c6d42f` p2p tests: table_of tries table keys until every address has its own slot
+- `dbc95ab` p2p tests: L7 measures the header's wait in drain steps, not wall time
+- `d1c8ec0` docs: run E follow-up (RT-MUTE): F1 confirmed, E40 withdrawn, E43 narrowed, E44 named
+- this follow-up's evidence update
+
 **Full-set "kills" by timing assertions must be re-checked in isolation.** In run E,
 two races in run E's own tests (§ p2p conn.rs) and a test suite running beside a hand
 mutant (`handM3`, the outbound round) turned load into "caught" verdicts. Treat a kill
