@@ -1,0 +1,7 @@
+start 17:41 free 7160112
+baseline killed 19:03 (profile mutants too slow; release instead)
+release start 19:04 free 7922256
+baseline exit 0 19:18
+P1 exit 2 20:12
+P2 exit 2 20:39
+end 20:39

@@ -1,0 +1,2 @@
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]179[:]39[:] replace [|][|] with [&][&] in ChainManager[:][:]drain[_]ready$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]179[:]42[:] delete [!] in ChainManager[:][:]drain[_]ready$

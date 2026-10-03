@@ -481,6 +481,39 @@ mod tests {
         assert!(c.px_records(5, 1).is_empty());
     }
 
+    /// The PX answers of the chain view are the PX state's (mutation run E:
+    /// the tx tests checked the rules against mock views only): recent roots,
+    /// spent nullifiers, the pool and the tree size, before and after blocks
+    /// and their undo.
+    #[test]
+    fn the_chain_views_px_answers_follow_the_applied_blocks() {
+        let mut c = MemoryChain::new();
+        let genesis_root = c.px().root();
+        assert!(c.px_is_recent_root(&genesis_root));
+        assert!(!c.px_is_recent_root(&[5; 8]));
+        let nf = [1, 1, 0, 0, 0, 0, 0, 0];
+        assert!(!c.px_nullifier_spent(&nf));
+        assert_eq!((c.px_pool(), c.px_tree_size()), (0, 0));
+
+        let mut deposit = synthetic_px(&c, 1);
+        if let Transaction::Px(t) = &mut deposit {
+            t.bridge_in = 700;
+        }
+        c.apply_block(&[deposit]).unwrap();
+        let root = c.px().root();
+        assert_ne!(root, genesis_root);
+        assert!(c.px_is_recent_root(&root) && c.px_is_recent_root(&genesis_root));
+        assert!(c.px_nullifier_spent(&nf));
+        assert!(c.px_nullifier_spent(&[1, 2, 0, 0, 0, 0, 0, 0]));
+        assert!(!c.px_nullifier_spent(&[1, 3, 0, 0, 0, 0, 0, 0]));
+        assert_eq!((c.px_pool(), c.px_tree_size()), (700, 2));
+
+        assert!(c.undo_block());
+        assert!(!c.px_is_recent_root(&root));
+        assert!(!c.px_nullifier_spent(&nf));
+        assert_eq!((c.px_pool(), c.px_tree_size()), (0, 0));
+    }
+
     #[test]
     fn undo_shrinks_the_record_log() {
         let mut c = chain();

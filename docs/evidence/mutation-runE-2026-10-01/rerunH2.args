@@ -1,0 +1,13 @@
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]140[:]30[:] replace [>] with [=][=] in Inner[:][:]request[_]headers[_]after$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]140[:]30[:] replace [>] with [>][=] in Inner[:][:]request[_]headers[_]after$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]142[:]46[:] replace \- with [+] in Inner[:][:]request[_]headers[_]after$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]142[:]46[:] replace \- with [/] in Inner[:][:]request[_]headers[_]after$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]489[:]23[:] replace match guard e[.]is[_]panic[(][)] with true in header[_]worker$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]576[:]36[:] replace [|][|] with [&][&] in precheck$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]668[:]14[:] replace [>] with [>][=] in verify[_]headers$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]729[:]21[:] replace [+][=] with \-[=] in verify[_]headers$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]729[:]21[:] replace [+][=] with [*][=] in verify[_]headers$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]747[:]12[:] replace [>] with [>][=] in verify[_]headers$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]754[:]26[:] replace [&][&] with [|][|] in verify[_]headers$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]754[:]22[:] replace [>] with [<] in verify[_]headers$
+--re=^p2p[/]src[/]net[/]headers[.]rs[:]785[:]25[:] delete [!] in note[_]clock$

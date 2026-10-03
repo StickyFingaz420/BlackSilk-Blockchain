@@ -1,0 +1,7 @@
+# 2026-10-03 09:37:06 UTC; cargo test --locked --profile mutants -p blacksilk-tx --lib --test adversarial --test block_pipeline --test chain_integration --test deploy_rules --test encoding_rules --test exact_fee --test fuzz_scan --test malleability --test max_weight_encoder --test max_weight_vectors --test mutation_regressions --test output_key_uniqueness --test privacy --test px_proof_wiring --test px_v1_weight --test px_window --test revalidate_after_extension --test state_accessors --test transfers --test tree_capacity --test upgrade --test validation_order
+baseline ok
+CAUGHT	transfer message without pseudo-outputs	tx/src/types.rs:283	&self.base_hash(), -> 	262s	0.log
+CAUGHT	deploy id without base	tx/src/types.rs:455	&[&t.base_bytes()] -> &[]	312s	1.log
+CAUGHT	deploy id without prunable	tx/src/types.rs:456	&[&t.prunable_bytes()] -> &[]	413s	2.log
+CAUGHT	deploy message without pseudo-outputs	tx/src/px.rs:633	&t.base_hash(), -> 	446s	3.log
+CAUGHT	deploy message without range proof	tx/src/px.rs:634	&h32(tags::TX_BP, &[&t.range_proof_bytes()]), -> 	556s	4.log

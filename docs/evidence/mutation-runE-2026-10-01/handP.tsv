@@ -1,0 +1,5 @@
+ROOT_WINDOW 99	px/src/state.rs	26	ROOT_WINDOW: usize = 100	ROOT_WINDOW: usize = 99
+ROOT_WINDOW 101	px/src/state.rs	26	ROOT_WINDOW: usize = 100	ROOT_WINDOW: usize = 101
+CAPACITY - 1	px/src/tree.rs	20	1 << TREE_DEPTH	(1 << TREE_DEPTH) - 1
+kernel budget n_fn 0 cycles +1	px/src/prove.rs	65	26_500	26_501
+kernel budget n_fn 2 bit -1	px/src/prove.rs	67	2_000, 20_550	1_999, 20_550

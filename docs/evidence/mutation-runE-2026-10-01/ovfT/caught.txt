@@ -1,0 +1,5 @@
+tx/src/codec.rs:104:18: replace += with -= in Reader<'a>::u8
+tx/src/state.rs:122:9: replace MemoryChain::output_count -> u64 with 0
+tx/src/state.rs:103:13: delete field px from struct Self expression in MemoryChain::with_px_state
+tx/src/state.rs:267:34: replace += with -= in MemoryChain::apply_block
+tx/src/types.rs:335:61: replace + with - in Transfer::encoded_len

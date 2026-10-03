@@ -469,7 +469,12 @@ fn chain_ending(seed: u64, n: u64, age: u64) -> MockChain {
 /// unless told the network has really stalled.
 #[test]
 fn a_withheld_tip_is_reported_and_blocks_transactions() {
-    let (warn, refuse) = super::stale_tip_limits(&ChainParams::regtest());
+    let p = ChainParams::regtest();
+    let (warn, refuse) = super::stale_tip_limits(&p);
+    // As specified (docs/blocks.md, tip age): 10 and 60 target block times
+    // plus the future time limit, written out (mutation run E).
+    let (t, ftl) = (p.target_block_time, p.future_time_limit);
+    assert_eq!((warn, refuse), (10 * t + ftl, 60 * t + ftl));
     for (age, warned, refused) in [
         (0, false, false),
         (warn + 60, true, false),
@@ -509,6 +514,70 @@ fn a_withheld_tip_is_reported_and_blocks_transactions() {
         w.set_allow_stale_tip(true);
         assert!(w.check_fresh_tip().is_ok());
     }
+}
+
+/// The tip-age limits are strict, to the second (RT-MUTE, against E40's
+/// "the edge cannot be checked deterministically"): a tip exactly `warn`
+/// old is not reported, one exactly `refuse` old does not block
+/// transactions. The clock is read in whole seconds, so a try whose clock
+/// reads the same second before and after the call saw exactly that age;
+/// a try across a second boundary is repeated. Controls: one second more
+/// warns and refuses.
+#[test]
+fn the_tip_age_limits_are_strict_at_their_exact_second() {
+    let p = ChainParams::regtest();
+    let (warn, refuse) = super::stale_tip_limits(&p);
+    let now = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    let warned = |w: &mut Wallet| {
+        w.take_warnings()
+            .iter()
+            .any(|m| m.contains("old by this computer's clock"))
+    };
+    // The warning, from a sync of a one-block chain whose tip is `warn` old
+    // (`chain_ending` with one block puts it exactly there).
+    let mut exact = false;
+    for _ in 0..20 {
+        let mut w = restored(None, 1);
+        let before = now();
+        let chain = chain_ending(22, 1, warn);
+        assert_eq!(w.sync(&chain).unwrap(), 1);
+        if now() != before {
+            continue;
+        }
+        assert_eq!(w.tip_time.map(|(_, ts)| before - ts), Some(warn));
+        assert!(!warned(&mut w), "warned at exactly the warning age");
+        exact = true;
+        break;
+    }
+    assert!(exact, "the second turned during every try");
+    let mut w = restored(None, 1);
+    assert_eq!(w.sync(&chain_ending(22, 1, warn + 1)).unwrap(), 1);
+    assert!(warned(&mut w), "not warned one second past the warning age");
+
+    // The refusal, from the synced tip's recorded time.
+    let mut exact = false;
+    for _ in 0..20 {
+        let before = now();
+        w.tip_time = Some((1, before - refuse));
+        let r = w.check_fresh_tip();
+        if now() != before {
+            continue;
+        }
+        assert!(r.is_ok(), "refused at exactly the refusal age: {r:?}");
+        exact = true;
+        break;
+    }
+    assert!(exact, "the second turned during every try");
+    w.tip_time = Some((1, now() - refuse - 1));
+    assert!(matches!(
+        w.check_fresh_tip(),
+        Err(WalletError::StaleTip { height: 1, .. })
+    ));
 }
 
 /// W5, W3-39b: a restore from a height above the genesis checks the header
@@ -1036,5 +1105,499 @@ fn dense_tail_pow_720_headers_sequential_and_parallel() {
             "{threads} thread(s): {hashes} light hashes in {elapsed:?} ({:?} per hash)",
             elapsed / hashes.max(1) as u32
         );
+    }
+}
+
+/// `HeaderCheck::resume` takes only consecutive, linked headers, at least
+/// the context the difficulty rule needs (mutation run E: no test resumed
+/// from a broken or short start). A header whose height or parent alone is
+/// wrong is refused, as is one header too few.
+#[test]
+fn a_header_check_resumes_only_from_linked_headers_with_enough_context() {
+    use crate::headers::HeaderCheck;
+    let chain = fast_chain(31, 200);
+    let params = ChainParams::regtest();
+    let pow = ZeroPow;
+    let seeds = [(0u64, params.genesis_id())];
+    let n = HeaderCheck::context_len(&params);
+    assert!(n < 150);
+    let headers: Vec<BlockHeader> = (1..=200).map(|h| chain.blocks[h as usize].header).collect();
+    let start = &headers[200 - n..];
+    let resume =
+        |s: &[BlockHeader]| HeaderCheck::resume(&params, &pow, s, &seeds, 10, 10, u64::MAX / 2);
+    let mut c = resume(start).expect("a linked start with the context");
+    assert_eq!(c.last().0, headers[199]);
+    // The next header checks against it.
+    let more = fast_chain(31, 201);
+    assert_eq!(more.blocks[200].header, headers[199]);
+    c.check(&more.blocks[201].header, true).unwrap();
+    let e = resume(&start[1..]).err().expect("one header too few");
+    assert!(e.contains("too few headers"), "{e}");
+    let mut gap = start.to_vec();
+    gap.remove(n / 2);
+    gap.push(headers[0]); // keep the length
+    let e = resume(&gap).err().expect("refused");
+    assert!(e.contains("does not extend"), "{e}");
+    // The last header at a wrong height (its parent is right).
+    let mut height = start.to_vec();
+    height.last_mut().unwrap().height += 1;
+    let e = resume(&height).err().expect("refused");
+    assert!(e.contains("does not extend"), "{e}");
+    // The last header on another parent (its height is right).
+    let mut parent = start.to_vec();
+    parent.last_mut().unwrap().prev_id = [9; 32];
+    let e = resume(&parent).err().expect("refused");
+    assert!(e.contains("does not extend"), "{e}");
+}
+
+/// Below the forced headers, a check samples about `samples` of `expected`
+/// headers for proof of work (mutation run E: the sampling rate had no
+/// test). With half of 600 headers expected, the count of hashes computed
+/// stays within six standard deviations of half the headers that need one
+/// (difficulty above 1); forcing every header computes them all.
+#[test]
+fn the_header_check_samples_at_the_requested_rate() {
+    use crate::headers::HeaderCheck;
+    const N: u64 = 600;
+    let chain = fast_chain(32, N);
+    let params = ChainParams::regtest();
+    let headers: Vec<BlockHeader> = (1..=N).map(|h| chain.blocks[h as usize].header).collect();
+    let need = headers.iter().filter(|h| h.difficulty > 1).count() as f64;
+    assert!(need > 500.0, "{need}");
+    let run = |samples: u64, force: bool| {
+        let pow = BadPow::default();
+        let mut c = HeaderCheck::from_genesis(&params, &pow, N, samples, u64::MAX / 2).unwrap();
+        for h in &headers {
+            c.check_deferred(h, force).unwrap();
+        }
+        c.flush().unwrap();
+        c.pow_checked as f64
+    };
+    let half = run(N / 2, false);
+    let sd = (need / 4.0).sqrt();
+    assert!((half - need / 2.0).abs() <= 6.0 * sd, "{half} of {need}");
+    assert_eq!(run(0, true), need, "forced: every one");
+    assert_eq!(run(N, false), need, "samples = expected: every one");
+}
+
+/// The check's thread count (at least 1) and its known key blocks.
+#[test]
+fn the_header_checks_threads_and_key_blocks() {
+    use crate::headers::HeaderCheck;
+    let params = ChainParams::regtest();
+    let pow = ZeroPow;
+    let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
+    let all = std::thread::available_parallelism().map_or(1, |n| n.get());
+    assert_eq!(c.threads(), all);
+    c.set_threads(3);
+    assert_eq!(c.threads(), 3);
+    c.set_threads(0);
+    assert_eq!(c.threads(), 1);
+    assert!(c.has_seed(0), "the genesis is the first key block");
+    assert!(!c.has_seed(1) && !c.has_seed(params.seed_epoch));
+    // The default sample below the dense tail, written as a number so that
+    // a change of it is noticed (mutation run E's hand mutants).
+    assert_eq!(crate::headers::HEADER_SAMPLES, 16);
+}
+
+/// A check from the genesis hands its last headers and its key blocks to
+/// the wallet, so the next check resumes from them, also when the restore
+/// scanned fewer blocks than the context holds (mutation run E: in the
+/// existing resume test the scanned blocks alone held the context and the
+/// key block). The context is the last `context_len` headers checked, never
+/// the genesis; a check keeps no more of them.
+#[test]
+fn a_restores_header_check_hands_its_context_and_keys_to_the_next() {
+    use crate::headers::HeaderCheck;
+    let params = ChainParams::regtest();
+    let n = HeaderCheck::context_len(&params);
+    // Past the key switch at 2 113 (key block 2 048), restored two blocks
+    // below the tip; and a chain shorter than the context.
+    for (len, restore, more) in [(2_150u64, 2_149u64, 2_200u64), (52, 50, 60)] {
+        let mut chain = fast_chain(33, len);
+        let mut w = restored(None, restore);
+        assert_eq!(w.sync(&chain).unwrap(), len);
+        assert_eq!(w.headers_checked_through(), Some(len));
+        let to = wallet().primary();
+        while chain.height() < more {
+            chain.mine(&to, 0);
+        }
+        let mut w = Wallet::from_json(&w.to_json()).unwrap();
+        w.set_header_pow(Arc::new(ZeroPow));
+        w.set_verify_headers(true);
+        chain.header_requests.borrow_mut().clear();
+        assert_eq!(w.sync(&chain).unwrap(), more);
+        assert_eq!(w.headers_checked_through(), Some(more));
+        assert!(
+            chain
+                .header_requests
+                .borrow()
+                .iter()
+                .all(|&(from, _)| from >= len),
+            "{len}: {:?}",
+            chain.header_requests.borrow()
+        );
+    }
+    // The check's own context.
+    let chain = fast_chain(34, 200);
+    let pow = ZeroPow;
+    let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
+    for h in 1..=20 {
+        c.check(&chain.blocks[h as usize].header, false).unwrap();
+    }
+    let heights: Vec<u64> = c.context().map(|h| h.height).collect();
+    assert_eq!(heights, (1..=20).collect::<Vec<u64>>(), "no genesis");
+    for h in 21..=200 {
+        c.check(&chain.blocks[h as usize].header, false).unwrap();
+    }
+    let heights: Vec<u64> = c.context().map(|h| h.height).collect();
+    assert_eq!(heights, (201 - n as u64..=200).collect::<Vec<u64>>());
+    assert_eq!(
+        c.seeds().collect::<Vec<_>>(),
+        vec![(0, params.genesis_id())],
+        "the only key block below 2 048"
+    );
+}
+
+/// Deferred proof-of-work checks are computed in batches of `POW_BATCH`:
+/// none while fewer are queued, all of them when the batch fills, the rest
+/// at `flush` (mutation run E: the batch's edge had no test).
+#[test]
+fn deferred_proof_of_work_is_computed_in_batches_of_pow_batch() {
+    use crate::headers::{HeaderCheck, POW_BATCH};
+    use std::sync::atomic::Ordering;
+    assert_eq!(POW_BATCH, 256);
+    let n = POW_BATCH as u64 + 20;
+    let chain = fast_chain(35, n);
+    let params = ChainParams::regtest();
+    let pow = BadPow::default();
+    let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
+    let headers: Vec<BlockHeader> = (1..=n).map(|h| chain.blocks[h as usize].header).collect();
+    // Only headers above difficulty 1 queue a check; force every one.
+    let mut queued = 0;
+    for h in &headers {
+        c.check_deferred(h, true).unwrap();
+        queued += usize::from(h.difficulty > 1);
+        let calls = pow.calls.load(Ordering::Relaxed) as usize;
+        if queued < POW_BATCH {
+            assert_eq!(calls, 0, "{queued} queued: none computed yet");
+        } else if queued == POW_BATCH {
+            assert_eq!(calls, POW_BATCH, "the batch is full: computed");
+        }
+    }
+    assert!(queued > POW_BATCH, "{queued}");
+    assert_eq!(pow.calls.load(Ordering::Relaxed) as usize, POW_BATCH);
+    c.flush().unwrap();
+    assert_eq!(pow.calls.load(Ordering::Relaxed) as usize, queued);
+}
+
+/// Each header must extend the last one checked, by height and by parent,
+/// each on its own (mutation run E: the header feed's own linkage checks
+/// had masked this one). The refusal names the expected height, and the
+/// check is spent after it.
+#[test]
+fn a_header_check_refuses_a_header_off_its_parent_or_height() {
+    use crate::headers::HeaderCheck;
+    let chain = fast_chain(36, 12);
+    let params = ChainParams::regtest();
+    let pow = ZeroPow;
+    let header = |h: u64| chain.blocks[h as usize].header;
+    let fresh = || {
+        let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
+        for h in 1..=10 {
+            c.check(&header(h), false).unwrap();
+        }
+        c
+    };
+    let mut c = fresh();
+    let mut other_parent = header(11);
+    other_parent.prev_id = header(9).id(params.network_id);
+    let e = c.check(&other_parent, false).unwrap_err();
+    assert!(e.contains("does not extend header 10"), "{e}");
+    assert_eq!(c.refused_height(), Some(11));
+    assert!(
+        c.check(&header(11), false).is_err(),
+        "spent after a refusal"
+    );
+    let mut c = fresh();
+    let mut other_height = header(11);
+    other_height.height = 12;
+    let e = c.check(&other_height, false).unwrap_err();
+    assert!(e.contains("does not extend header 10"), "{e}");
+    let mut c = fresh();
+    c.check(&header(11), false).unwrap();
+    c.check(&header(12), false).unwrap();
+}
+
+/// The future time limit is inclusive: a header stamped exactly `now +
+/// future_time_limit` is checked, one second later is refused (mutation run
+/// E: the edge had no test).
+#[test]
+fn the_header_checks_future_time_limit_is_inclusive() {
+    use crate::headers::HeaderCheck;
+    let chain = fast_chain(37, 1);
+    let params = ChainParams::regtest();
+    let pow = ZeroPow;
+    let header = chain.blocks[1].header;
+    let edge = header.timestamp - params.future_time_limit;
+    let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, edge).unwrap();
+    c.check(&header, false).expect("exactly at the limit");
+    let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, edge - 1).unwrap();
+    let e = c.check(&header, false).unwrap_err();
+    assert!(e.contains("in the future"), "{e}");
+}
+
+/// With more than one thread, the proof-of-work checks run on helper
+/// threads too (W3-39c; mutation run E: no test saw which threads ran
+/// them). The stand-in's first hash waits, up to 30 s, for a hash on another
+/// thread: with helpers it comes at once; without, the check takes 30 s.
+#[test]
+fn deferred_proof_of_work_runs_on_helper_threads() {
+    use crate::headers::HeaderCheck;
+    use std::sync::{Condvar, Mutex};
+    use std::time::Duration;
+    #[derive(Default)]
+    struct Threads {
+        seen: Mutex<std::collections::HashSet<std::thread::ThreadId>>,
+        more: Condvar,
+        waited: std::sync::atomic::AtomicBool,
+    }
+    impl PowFunction for Threads {
+        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            let mut seen = self.seen.lock().unwrap();
+            seen.insert(std::thread::current().id());
+            self.more.notify_all();
+            // Only the first hash waits (once, not per hash, on one thread).
+            if !self.waited.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                let _ = self
+                    .more
+                    .wait_timeout_while(seen, Duration::from_secs(30), |s| s.len() < 2)
+                    .unwrap();
+            }
+            [0; 32]
+        }
+    }
+    let chain = fast_chain(38, 40);
+    let params = ChainParams::regtest();
+    let pow = Threads::default();
+    let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
+    c.set_threads(4);
+    for h in 1..=40 {
+        c.check_deferred(&chain.blocks[h as usize].header, true)
+            .unwrap();
+    }
+    let t = std::time::Instant::now();
+    c.flush().unwrap();
+    assert!(pow.seen.lock().unwrap().len() >= 2, "helpers computed some");
+    assert!(t.elapsed() < Duration::from_secs(30));
+}
+
+/// The dense tail is exactly the node's last `DENSE_POW_TAIL` headers, plus
+/// the first block scanned: with sampling off, a restore hashes those and
+/// nothing else (mutation run E: the tail's lower edge had no exact test).
+#[test]
+fn the_dense_tail_is_exactly_the_last_720_headers_and_the_first() {
+    use std::sync::atomic::Ordering;
+    const N: u64 = 1_000;
+    let chain = fast_chain(39, N);
+    let tail = super::DENSE_POW_TAIL;
+    assert_eq!(tail, 720);
+    let forced: Vec<u64> = std::iter::once(1)
+        .chain(N - tail + 1..=N)
+        .filter(|&h| chain.blocks[h as usize].header.difficulty > 1)
+        .collect();
+    assert!(forced.len() as u64 >= tail, "{}", forced.len());
+    let pow = Arc::new(BadPow::default());
+    let mut w = restored(Some(pow.clone()), 1);
+    w.set_header_samples(0);
+    assert_eq!(w.sync(&chain).unwrap(), N);
+    assert_eq!(pow.calls.load(Ordering::Relaxed), forced.len() as u64);
+    // The header just below the tail is not forced: a forgery there passes
+    // an unsampled check, one at the tail's lowest header does not.
+    for (h, refused) in [(N - tail, false), (N - tail + 1, true)] {
+        let pow = Arc::new(BadPow::default());
+        pow.bad
+            .lock()
+            .unwrap()
+            .push(chain.blocks[h as usize].header.to_bytes());
+        let mut w = restored(Some(pow), 1);
+        w.set_header_samples(0);
+        assert_eq!(w.sync(&chain).is_err(), refused, "{h}");
+    }
+}
+
+/// The header feed's pages are checked before use: a page from another
+/// height, an empty page, a page with a partial header and a page with more
+/// headers than asked are each refused as malformed (mutation run E: no
+/// test served a malformed page, each fault on its own).
+#[test]
+fn a_malformed_header_feed_page_is_refused() {
+    use crate::node::NodeApi;
+    use blacksilk_rpc as rpc;
+    struct Feed<'a> {
+        chain: &'a MockChain,
+        lie: u8,
+        /// Requests served: a feed read in a loop is cut off, not hung.
+        served: std::cell::Cell<u32>,
+    }
+    impl NodeApi for Feed<'_> {
+        fn info(&self) -> Result<rpc::Info, String> {
+            self.chain.info()
+        }
+        fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
+            self.chain.blocks(from, count)
+        }
+        fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+            self.served.set(self.served.get() + 1);
+            if self.served.get() > 1_000 {
+                return Err("the feed was read 1 000 times".into());
+            }
+            let mut r = self.chain.headers(from, count)?;
+            if count == 1 && from > 1 {
+                // The reorganization check's single header.
+                match self.lie {
+                    4 => {
+                        r.headers =
+                            hex::encode(self.chain.blocks[from as usize - 1].header.to_bytes())
+                    }
+                    5 => r.from -= 1,
+                    _ => {}
+                }
+            }
+            if from == 1 {
+                match self.lie {
+                    0 => r.from += 1,
+                    1 => r.headers.clear(),
+                    2 => r.headers.push_str("00"),
+                    3 => r.headers.push_str(&hex::encode(
+                        self.chain.blocks[(from + count) as usize].header.to_bytes(),
+                    )),
+                    _ => {}
+                }
+            }
+            Ok(r)
+        }
+        fn distribution(&self, to: u64) -> Result<rpc::Distribution, String> {
+            self.chain.distribution(to)
+        }
+        fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String> {
+            self.chain.outputs(indices)
+        }
+        fn submit_tx(&self, tx: &[u8]) -> Result<rpc::SubmitResult, String> {
+            self.chain.submit_tx(tx)
+        }
+        fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
+            self.chain.px_commitments(from)
+        }
+        fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
+            self.chain.px_contracts(from)
+        }
+    }
+    let chain = fast_chain(40, 60);
+    let mut honest = restored(None, 50);
+    assert_eq!(
+        honest
+            .sync(&Feed {
+                chain: &chain,
+                lie: 9,
+                served: Default::default(),
+            })
+            .unwrap(),
+        60
+    );
+    for lie in 0..4 {
+        let mut w = restored(None, 50);
+        let e = w
+            .sync(&Feed {
+                chain: &chain,
+                lie,
+                served: Default::default(),
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("missing or malformed"), "lie {lie}: {e}");
+        assert_eq!(w.synced_height(), 49, "lie {lie}: nothing scanned");
+    }
+    // The reorganization check's single header: of another height, or
+    // served as another height's.
+    for lie in [4, 5] {
+        let mut w = restored(None, 50);
+        assert_eq!(
+            w.sync(&Feed {
+                chain: &chain,
+                lie: 9,
+                served: Default::default(),
+            })
+            .unwrap(),
+            60
+        );
+        let e = w
+            .sync(&Feed {
+                chain: &chain,
+                lie,
+                served: Default::default(),
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("header 60 is malformed"), "lie {lie}: {e}");
+        assert_eq!(w.synced_height(), 60);
+    }
+}
+
+/// The tip age is read from the wallet's own last header when it is the
+/// synced block's, and otherwise from the node's header of that height,
+/// checked against the wallet's block id (mutation run E: the second source
+/// had no test). Each sync also reads that header once for the
+/// reorganization check.
+#[test]
+fn the_tip_age_comes_from_the_wallets_header_or_the_nodes_checked_one() {
+    let chain = fast_chain(41, 60);
+    let mut w = restored(None, 1);
+    assert_eq!(w.sync(&chain).unwrap(), 60);
+    let reads = |c: &MockChain| {
+        c.header_requests
+            .borrow()
+            .iter()
+            .filter(|&&r| r == (60, 1))
+            .count()
+    };
+    chain.header_requests.borrow_mut().clear();
+    assert_eq!(w.sync(&chain).unwrap(), 60);
+    assert_eq!(reads(&chain), 1, "the reorganization check only");
+    assert_eq!(w.tip_age().unwrap().0, 60);
+    // Without the synced block's header, the node's is read for the tip.
+    w.headers.pop_back();
+    chain.header_requests.borrow_mut().clear();
+    assert_eq!(w.sync(&chain).unwrap(), 60);
+    assert_eq!(reads(&chain), 2, "and the tip's header");
+    assert_eq!(w.tip_age().unwrap().0, 60);
+}
+
+/// A header's timestamp must be after the median of the last 11 headers'
+/// (mutation run E: the edge, a timestamp equal to the median, had no
+/// test).
+#[test]
+fn the_header_check_refuses_a_timestamp_equal_to_the_median_time_past() {
+    use crate::headers::HeaderCheck;
+    let chain = fast_chain(42, 20);
+    let params = ChainParams::regtest();
+    assert_eq!(params.median_time_window, 11);
+    let pow = ZeroPow;
+    let header = |h: u64| chain.blocks[h as usize].header;
+    // Headers 9 to 19 hold increasing timestamps: their median is 14's.
+    assert!((10..=19).all(|h| header(h).timestamp > header(h - 1).timestamp));
+    let mtp = header(14).timestamp;
+    for (ts, ok) in [(mtp, false), (mtp + 1, true)] {
+        let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
+        for h in 1..=19 {
+            c.check(&header(h), false).unwrap();
+        }
+        let mut last = header(20);
+        last.timestamp = ts;
+        let r = c.check(&last, false);
+        assert_eq!(r.is_ok(), ok, "{ts}: {r:?}");
+        if let Err(e) = r {
+            assert!(e.contains("median time past"), "{e}");
+        }
     }
 }

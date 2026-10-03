@@ -569,11 +569,23 @@ fn serve_headers(branch: &[BlockHeader], locator: &[Hash]) -> Vec<BlockHeader> {
 
 /// Answers every `GetHeaders` from the node as an honest peer holding
 /// `branch` (headers only) would, until the connection closes.
-fn serve_branch(mut r: RawReader, mut w: RawWriter, branch: Vec<BlockHeader>) {
+fn serve_branch(r: RawReader, w: RawWriter, branch: Vec<BlockHeader>) {
+    serve_branch_logged(r, w, branch);
+}
+
+/// [`serve_branch`], recording the first id of every locator it answers.
+fn serve_branch_logged(
+    mut r: RawReader,
+    mut w: RawWriter,
+    branch: Vec<BlockHeader>,
+) -> Arc<Mutex<Vec<Hash>>> {
+    let heads = Arc::new(Mutex::new(Vec::new()));
+    let log = heads.clone();
     tokio::spawn(async move {
         while let Ok(frame) = r.recv().await {
             let reply = match Message::decode(&frame) {
                 Ok(Message::GetHeaders { locator, .. }) => {
+                    log.lock().unwrap().push(locator[0]);
                     Message::Headers(serve_headers(&branch, &locator))
                 }
                 // Headers only: bodies are "not found" (no timeout penalty).
@@ -589,6 +601,7 @@ fn serve_branch(mut r: RawReader, mut w: RawWriter, branch: Vec<BlockHeader>) {
             }
         }
     });
+    heads
 }
 
 /// Answers the node's pings on `r`/`w` (and ignores everything else) until
@@ -1739,6 +1752,85 @@ async fn an_unrequested_header_batch_is_not_verified() {
     assert_eq!(a.net.peers()[0].score, score::UNSOLICITED);
 }
 
+/// A solicited batch whose headers are not a chain costs the sender
+/// `UNCONNECTED_HEADERS` on the read loop, before any queueing or hash, for
+/// a wrong parent alone and for a wrong height alone (mutation run E: the
+/// existing tests broke both links at once).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_solicited_batch_that_is_not_a_chain_is_scored_on_arrival() {
+    let pow = Arc::new(CountAllPow::default());
+    let a = node_with_pow(46, fast_config(&[]), pow.clone()).await;
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 5).await;
+    let branch = header_branch(3, 120, 0);
+    let mut height = branch.clone();
+    height[2].height += 1; // its parent is right
+    let mut parent = branch.clone();
+    parent[2].prev_id = branch[0].id(nid); // its height is right
+    for (k, batch) in [height, parent].into_iter().enumerate() {
+        assert!(
+            recv_until(&mut r, 10.0, |m| matches!(m, Message::GetHeaders { .. }))
+                .await
+                .is_some(),
+            "asked for headers"
+        );
+        w.send(&Message::Headers(batch).encode()).await.unwrap();
+        w.send(&Message::Ping(k as u64).encode()).await.unwrap();
+        assert!(recv_until(
+            &mut r,
+            5.0,
+            |m| matches!(m, Message::Pong(x) if *x == k as u64)
+        )
+        .await
+        .is_some());
+        assert_eq!(
+            a.net.peers()[0].score,
+            (k as u32 + 1) * score::UNCONNECTED_HEADERS,
+            "batch {k}"
+        );
+    }
+    assert_eq!(pow.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(a.chain.lock().unwrap().header_height(), 0);
+}
+
+/// A solicited batch whose first header connects to nothing we know costs
+/// the sender `UNCONNECTED_HEADERS`; a single such header (a tip
+/// announcement whose parent we lack) costs nothing and gets the sender
+/// asked for headers (mutation run E: no test checked the batch-size rule).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unconnected_batch_is_scored_and_an_unconnected_announcement_is_not() {
+    let a = node_with_pow(47, fast_config(&[]), Arc::new(ZeroPow)).await;
+    let nid = params().network_id;
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 10).await;
+    assert!(
+        recv_until(&mut r, 10.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    let branch = header_branch(5, 120, 0);
+    // Headers 2 and 3: the parent of the first is unknown.
+    w.send(&Message::Headers(branch[1..3].to_vec()).encode())
+        .await
+        .unwrap();
+    wait_until("scored", 10, || {
+        a.net.peers()[0].score == score::UNCONNECTED_HEADERS
+    })
+    .await;
+    wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
+    // Header 5 alone, unsolicited: asked for headers, not scored.
+    w.send(&Message::Headers(vec![branch[4]]).encode())
+        .await
+        .unwrap();
+    assert!(
+        recv_until(&mut r, 10.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some(),
+        "asked for headers"
+    );
+    wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
+    assert_eq!(a.net.peers()[0].score, score::UNCONNECTED_HEADERS);
+}
+
 /// Counts every PoW evaluation; fails headers carrying `BAD_NONCE` (as
 /// `CountingPow`).
 #[derive(Default)]
@@ -1917,6 +2009,13 @@ async fn relaying_headers_of_a_block_with_an_invalid_body_is_not_penalized() {
         assert_eq!(a.net.stats().misbehaving_disconnects, 0);
         assert_eq!(a.net.peers().len(), 1, "still connected");
         assert_eq!(a.net.peers()[0].score, 0, "not penalized");
+        // Its claimed height (10) is lowered to ours, so it is not asked
+        // again every tick (mutation run E: the arm had no test).
+        assert_eq!(
+            a.net.peers()[0].height,
+            a.chain.lock().unwrap().header_height(),
+            "batch {k}"
+        );
     }
     assert_eq!(a.height(), 2, "the invalid branch is not followed");
     // A header that itself breaks the rules is still penalized. No batch of
@@ -2199,6 +2298,241 @@ async fn a_peer_that_leaves_before_its_bad_batch_is_verified_is_still_charged() 
     );
 }
 
+/// A sender that leaves while its batch is hashed, chunk by chunk, stops
+/// costing hashes at the next chunk (mutation run E: the check between
+/// chunks had no test). One thread, so one header per chunk, 300 ms per
+/// hash; the sender leaves after its second header is hashed, out of 40.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_departed_senders_batch_stops_at_the_next_chunk() {
+    struct Slow(std::sync::atomic::AtomicUsize);
+    impl PowFunction for Slow {
+        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            std::thread::sleep(Duration::from_millis(300));
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            [0; 32]
+        }
+    }
+    let pow = Arc::new(Slow(Default::default()));
+    let hashes = || pow.0.load(std::sync::atomic::Ordering::SeqCst);
+    let mut cfg = fast_config(&[]);
+    cfg.pow_threads = 1;
+    let a = node_with_pow(68, cfg, pow.clone()).await;
+    let (mut r, mut w) = raw_peer_at(a.addr, params().network_id, true, 1000).await;
+    assert!(
+        recv_until(&mut r, 10.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    w.send(&Message::Headers(header_branch(40, 120, 0)).encode())
+        .await
+        .unwrap();
+    wait_until("hashing", 30, || hashes() >= 2).await;
+    drop((r, w));
+    wait_until("peer gone", 10, || a.net.stats().peers == 0).await;
+    wait_until("worker done", 30, || a.net.header_queue_len() == 0).await;
+    let n = hashes();
+    assert!(n < 40, "{n} of 40 hashed after the sender left");
+    assert!(a.chain.lock().unwrap().header_height() < 40);
+}
+
+/// The proof of work of a header batch is hashed off the chain actor, chunk
+/// after chunk: each chunk's jobs are computed while the previous chunk is
+/// accepted, so the actor only looks the hashes up (docs/p2p.md §6;
+/// mutation run E: the next chunk's index had no test, and with the
+/// current chunk's jobs instead every later chunk was hashed on the actor).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn header_batches_are_hashed_off_the_chain_actor() {
+    #[derive(Default)]
+    struct Where {
+        total: std::sync::atomic::AtomicUsize,
+        on_actor: std::sync::atomic::AtomicUsize,
+    }
+    impl PowFunction for Where {
+        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            use std::sync::atomic::Ordering::SeqCst;
+            self.total.fetch_add(1, SeqCst);
+            if std::thread::current().name() == Some("chain-actor") {
+                self.on_actor.fetch_add(1, SeqCst);
+            }
+            [0; 32]
+        }
+    }
+    let pow = Arc::new(Where::default());
+    let mut cfg = fast_config(&[]);
+    cfg.pow_threads = 2; // chunks of 2 headers
+    let a = node_with_pow(69, cfg, pow.clone()).await;
+    let (mut r, mut w) = raw_peer_at(a.addr, params().network_id, true, 1000).await;
+    assert!(
+        recv_until(&mut r, 10.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    w.send(&Message::Headers(header_branch(10, 120, 0)).encode())
+        .await
+        .unwrap();
+    wait_until("stored", 30, || {
+        a.chain.lock().unwrap().header_height() == 10
+    })
+    .await;
+    use std::sync::atomic::Ordering::SeqCst;
+    assert_eq!(pow.total.load(SeqCst), 10, "each header hashed once");
+    assert_eq!(pow.on_actor.load(SeqCst), 0, "none on the chain actor");
+}
+
+/// The clock monitor's samples come from live arrivals only: headers that
+/// extend the best header chain above its height when their batch was
+/// taken up, outside bulk sync, from at least three peers before an
+/// estimate is reported. A header on a side branch, a tip sent again, a
+/// heavier rival at the same height and a taller but lighter branch add
+/// none (mutation run E: no network test read the clock monitor,
+/// `Network::clock_estimate`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn clock_samples_come_from_live_arrivals_only() {
+    // Chunks of 64 headers: the 160-header branch below is hashed in three.
+    let mut cfg = fast_config(&[]);
+    cfg.pow_threads = 64;
+    let a = node_with_pow(70, cfg, Arc::new(ZeroPow)).await;
+    let nid = params().network_id;
+    // Our chain: 150 fast headers (past the difficulty warm-up), then 5
+    // announced, 1 000 s apart (each counted at the 6T solve-time cap).
+    let base = header_branch(150, 1, 0);
+    give_headers(&a, &base);
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &base {
+        g.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let child = |g: &HeaderChain, parent: Hash, dt: u64, nonce: u64| {
+        let t = g.template_on(parent).unwrap();
+        BlockHeader {
+            version: HEADER_VERSION,
+            height: t.height,
+            prev_id: parent,
+            timestamp: t
+                .min_timestamp
+                .max(g.header(&parent).unwrap().timestamp + dt),
+            difficulty: t.difficulty,
+            tx_root: [0; 32],
+            nonce,
+        }
+    };
+    let fork = g.tip_id();
+    let mut ours = Vec::new();
+    let mut tip = fork;
+    for _ in 0..5 {
+        let h = child(&g, tip, 1_000, 0);
+        tip = g.accept(h, u64::MAX / 2).unwrap().id;
+        ours.push(h);
+    }
+    let mut peers = Vec::new();
+    for _ in 0..3 {
+        let (r, w) = raw_peer(a.addr, nid, true).await;
+        peers.push((r, w));
+    }
+    wait_until("registered", 5, || a.net.stats().peers == 3).await;
+    for (k, h) in ours.iter().enumerate() {
+        let (_, w) = &mut peers[k % 3];
+        w.send(&Message::Headers(vec![*h]).encode()).await.unwrap();
+        wait_until("stored", 10, || {
+            a.chain.lock().unwrap().header_height() == 151 + k as u64
+        })
+        .await;
+        wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
+        if k < 4 {
+            assert!(a.net.clock_estimate().is_none(), "{} samples", k + 1);
+        }
+    }
+    let e = a.net.clock_estimate().expect("5 samples from 3 peers");
+    assert_eq!((e.samples, e.peers), (5, 3));
+    // A side branch's header (new, not on the best chain) and the tip again.
+    let side = child(&g, g.main_id_at(153).unwrap(), 1, 31);
+    let (_, w) = &mut peers[0];
+    w.send(&Message::Headers(vec![side]).encode())
+        .await
+        .unwrap();
+    wait_until("the side header is stored", 10, || {
+        a.chain.lock().unwrap().header(&side.id(nid)).is_some()
+    })
+    .await;
+    let (_, w) = &mut peers[1];
+    w.send(&Message::Headers(vec![ours[4]]).encode())
+        .await
+        .unwrap();
+    // A rival of five headers from our fork point, 1 s apart: heavier at
+    // the same height (the counted clock gives it the higher difficulty),
+    // whose tip becomes our best header without rising above our height.
+    let mut rival = Vec::new();
+    let mut r_tip = fork;
+    for _ in 0..5 {
+        let h = child(&g, r_tip, 1, 9);
+        r_tip = g.accept(h, u64::MAX / 2).unwrap().id;
+        rival.push(h);
+    }
+    assert!(
+        g.work(&r_tip).unwrap() > g.work(&tip).unwrap(),
+        "the rival is heavier"
+    );
+    // As a solicited batch: the rival tip ends at our height (155).
+    let (mut r4, mut w4) = raw_peer_at(a.addr, nid, true, 200).await;
+    assert!(
+        recv_until(&mut r4, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    w4.send(&Message::Headers(rival.clone()).encode())
+        .await
+        .unwrap();
+    wait_until("the rival is stored", 10, || {
+        a.chain.lock().unwrap().header(&r_tip).is_some()
+    })
+    .await;
+    assert_eq!(a.chain.lock().unwrap().best_header_id(), r_tip);
+    for (k, (r, w)) in peers.iter_mut().enumerate() {
+        w.send(&Message::Ping(k as u64).encode()).await.unwrap();
+        assert!(
+            recv_until(r, 5.0, |m| matches!(m, Message::Pong(x) if *x == k as u64))
+                .await
+                .is_some()
+        );
+    }
+    wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
+    // A taller, lighter branch from the genesis (difficulty 1 throughout),
+    // as the reply to the handshake's request of a fourth peer.
+    let theirs = header_branch(160, 120, 3);
+    let mut t = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &theirs {
+        t.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let best = a.chain.lock().unwrap().headers().best_work();
+    assert!(
+        best > t.best_work(),
+        "ours {best} against {}",
+        t.best_work()
+    );
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 160).await;
+    let Some(Message::GetHeaders { locator, .. }) =
+        recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. })).await
+    else {
+        panic!("no GetHeaders");
+    };
+    w.send(&Message::Headers(serve_headers(&theirs, &locator)).encode())
+        .await
+        .unwrap();
+    let last = theirs[159].id(nid);
+
+    wait_until("the lighter branch is stored as a side branch", 30, || {
+        a.chain.lock().unwrap().header(&last).is_some()
+    })
+    .await;
+    wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
+    assert_eq!(
+        a.chain.lock().unwrap().best_header_id(),
+        r_tip,
+        "ours stays best"
+    );
+    let e = a.net.clock_estimate().unwrap();
+    assert_eq!((e.samples, e.peers), (5, 3), "no sample from any of them");
+}
+
 // ------------------------------------------ P2P hardening round 2 (review items)
 
 fn hashed(pow: &CountingPow) -> usize {
@@ -2344,6 +2678,70 @@ async fn concurrent_handshakes_respect_the_inbound_limits() {
     wait_until("accepted again", 5, || b.net.stats().peers == 1).await;
 }
 
+/// The per-IP limit is checked again at registration, counting every
+/// registered peer of the IP, outbound ones too: an inbound connection
+/// accepted while its IP had room is refused at registration if the IP's
+/// peers reached `max_per_ip` meanwhile (here an outbound connection to the
+/// same IP registered during its handshake), and accepted while they are one
+/// below it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_per_ip_limit_is_rechecked_at_registration() {
+    let nid = params().network_id;
+    let mut cfg = fast_config(&[]);
+    cfg.allow_private = false;
+    cfg.max_per_ip = 2;
+    cfg.max_inbound = 16;
+    let a = node_with(51, cfg).await;
+    // One inbound peer from 127.0.0.1, registered.
+    let _first = raw_peer(a.addr, nid, true).await;
+    wait_until("first registered", 20, || a.net.stats().inbound == 1).await;
+    // A second one accepted (one peer of the IP, room for two) and holding
+    // its key exchange done, before its `Version`.
+    let s = TcpStream::connect(a.addr).await.unwrap();
+    let (mut r, mut w) = handshake(s, true, nid, &params().genesis_id(), Duration::from_secs(5))
+        .await
+        .unwrap();
+    // Meanwhile an outbound connection to the same IP registers: two peers.
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let _out = dialed_raw_peer(&a, &l).await;
+    assert_eq!(a.net.stats().peers, 2);
+    let v = Version {
+        protocol: PROTOCOL_VERSION,
+        network: nid,
+        nonce: 0x5151,
+        height: 0,
+        tip: params().genesis_id(),
+        listen: None,
+        relay_txs: true,
+    };
+    w.send(&Message::Version(v).encode()).await.unwrap();
+    // Refused at registration (after the `Verack`s): closed, never
+    // registered; until then it sends nothing but its handshake.
+    let closed = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut kinds = Vec::new();
+        loop {
+            match r.recv().await {
+                Err(_) => break kinds,
+                Ok(m) => match Message::decode(&m) {
+                    Ok(Message::Version(_)) => {
+                        kinds.push("version");
+                        let _ = w.send(&Message::Verack.encode()).await;
+                    }
+                    Ok(Message::Verack) => kinds.push("verack"),
+                    _ => kinds.push("other"),
+                },
+            }
+        }
+    })
+    .await;
+    assert!(
+        matches!(&closed, Ok(k) if !k.contains(&"other")),
+        "a third peer of the IP registered: {closed:?}"
+    );
+    assert_eq!(a.net.stats().peers, 2);
+    assert_eq!(a.net.stats().inbound, 1);
+}
+
 /// Accepts `headers` into the node's header chain directly (test setup).
 fn give_headers(node: &TestNode, headers: &[BlockHeader]) {
     let mut c = node.chain.lock().unwrap();
@@ -2454,12 +2852,18 @@ async fn a_heavier_fork_deeper_than_one_batch_syncs() {
     give_headers(&a, &header_branch(2050, 120, 0));
     let theirs = header_branch(2100, 120, 7);
     let (r, w) = raw_peer_at(a.addr, nid, true, 2100).await;
-    serve_branch(r, w, theirs.clone());
+    let heads = serve_branch_logged(r, w, theirs.clone());
     wait_until("switched to the heavier branch", 600, || {
         a.chain.lock().unwrap().best_header_id() == theirs[2099].id(nid)
     })
     .await;
     assert_eq!(a.net.peers()[0].score, 0);
+    // The second request starts at the full batch's last header, at once
+    // (mutation run E: with the batch taken for not full, only the
+    // maintenance tick asked again, from our own tip).
+    let heads = heads.lock().unwrap().clone();
+    assert!(heads.len() >= 2, "{} requests", heads.len());
+    assert_eq!(heads[1], theirs[1999].id(nid));
 }
 
 /// M3: a one-header tip announcement that arrives while our `GetHeaders` is
@@ -2567,15 +2971,31 @@ async fn a_late_transaction_answer_is_not_penalized() {
     )
     .await
     .is_some());
-    // Past the 30 s request timeout, answering pings meanwhile.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(32);
-    while tokio::time::Instant::now() < deadline {
-        if let Some(Message::Ping(n)) =
-            recv_until(&mut r, 1.0, |m| matches!(m, Message::Ping(_))).await
-        {
-            w.send(&Message::Pong(n).encode()).await.unwrap();
-        }
-    }
+    let asked = std::time::Instant::now();
+    // A second announcer (mutation run E: the request moves to it once
+    // TX_TIMEOUT has passed, not before and not never).
+    let (mut ry, mut wy) = raw_peer(a.addr, nid, true).await;
+    wy.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+    wy.send(&Message::Ping(5).encode()).await.unwrap();
+    assert!(recv_until(&mut ry, 5.0, |m| matches!(m, Message::Pong(5)))
+        .await
+        .is_some());
+    assert!(
+        recv_until(
+            &mut ry,
+            45.0,
+            |m| matches!(m, Message::GetTx(ids) if ids == &vec![id])
+        )
+        .await
+        .is_some(),
+        "the second announcer was never asked"
+    );
+    let moved = asked.elapsed();
+    assert!(
+        moved >= Duration::from_secs(25),
+        "asked the next announcer {moved:?} after the first"
+    );
+    // The first peer's answer, past the 30 s request timeout.
     w.send(&Message::Tx(tx.encode()).encode()).await.unwrap();
     wait_until("the late transaction is pooled", 10, || a.mempool_has(&id)).await;
     let scored = penalized(&[&a]);
@@ -2604,6 +3024,14 @@ async fn a_transaction_request_moves_on_when_its_peer_leaves() {
     assert!(recv_until(&mut ry, 5.0, |m| matches!(m, Message::Pong(3)))
         .await
         .is_some());
+    // A third announcer (mutation run E: the departing peer's cleanup must
+    // keep the other announcers queued, not drop them).
+    let (mut rz, mut wz) = raw_peer(a.addr, nid, true).await;
+    wz.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+    wz.send(&Message::Ping(4).encode()).await.unwrap();
+    assert!(recv_until(&mut rz, 5.0, |m| matches!(m, Message::Pong(4)))
+        .await
+        .is_some());
     drop((rx, wx));
     assert!(
         recv_until(
@@ -2614,6 +3042,44 @@ async fn a_transaction_request_moves_on_when_its_peer_leaves() {
         .await
         .is_some(),
         "the second announcer is asked when the first leaves"
+    );
+    drop((ry, wy));
+    assert!(
+        recv_until(
+            &mut rz,
+            3.0,
+            |m| matches!(m, Message::GetTx(ids) if ids == &vec![id])
+        )
+        .await
+        .is_some(),
+        "the third announcer is asked when the second leaves"
+    );
+}
+
+/// When the peer a block body was asked from disconnects, its requests are
+/// dropped at once and the body is asked from another peer that has it, not
+/// after the 60 s block timeout (mutation run E: the departing peer's block
+/// requests had no test).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_block_request_moves_on_when_its_peer_leaves() {
+    let a = node(78, &[]).await;
+    let nid = params().network_id;
+    let h1 = header_branch(1, 120, 0)[0];
+    let id = h1.id(nid);
+    let wants = |m: &Message| matches!(m, Message::GetBlocks(ids) if ids.contains(&id));
+    let (mut rx, mut wx) = raw_peer_at(a.addr, nid, true, 1).await;
+    wx.send(&Message::Headers(vec![h1]).encode()).await.unwrap();
+    assert!(recv_until(&mut rx, 10.0, wants).await.is_some(), "asked X");
+    let (mut ry, mut wy) = raw_peer_at(a.addr, nid, true, 1).await;
+    wy.send(&Message::Headers(vec![h1]).encode()).await.unwrap();
+    wy.send(&Message::Ping(6).encode()).await.unwrap();
+    assert!(recv_until(&mut ry, 5.0, |m| matches!(m, Message::Pong(6)))
+        .await
+        .is_some());
+    drop((rx, wx));
+    assert!(
+        recv_until(&mut ry, 10.0, wants).await.is_some(),
+        "the body is asked from Y once X has left"
     );
 }
 
@@ -4095,6 +4561,58 @@ async fn an_extended_version_and_unknown_handshake_messages_are_accepted() {
     assert_eq!((p.protocol, p.score), (PROTOCOL_VERSION + 1, 0));
 }
 
+/// Between `Version` and `Verack` at most 8 frames of unknown types are
+/// skipped (`HANDSHAKE_UNKNOWN_FRAMES`, docs/p2p.md §4): with 8 the
+/// handshake completes; a 9th closes the connection unregistered (mutation
+/// run E: the bound had no test).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn at_most_eight_unknown_frames_are_skipped_in_the_handshake() {
+    let a = node(97, &[]).await;
+    let nid = params().network_id;
+    let mut kept = Vec::new();
+    for (unknown, registered) in [(8u8, true), (9, false)] {
+        let s = TcpStream::connect(a.addr).await.unwrap();
+        let (mut r, mut w) =
+            handshake(s, true, nid, &params().genesis_id(), Duration::from_secs(5))
+                .await
+                .unwrap();
+        let v = Version {
+            protocol: PROTOCOL_VERSION,
+            network: nid,
+            nonce: 0x5678 + u64::from(unknown),
+            height: 0,
+            tip: params().genesis_id(),
+            listen: None,
+            relay_txs: true,
+        };
+        w.send(&Message::Version(v).encode()).await.unwrap();
+        assert!(matches!(
+            Message::decode(&r.recv().await.unwrap()).unwrap(),
+            Message::Version(_)
+        ));
+        // The node may close at the 9th frame, before our later writes
+        // reach it (a reset on Windows): those writes may fail.
+        for k in 0..unknown {
+            let sent = w.send(&[0x30, k]).await;
+            assert!(sent.is_ok() || !registered, "{sent:?}");
+        }
+        let sent = w.send(&Message::Verack.encode()).await;
+        assert!(sent.is_ok() || !registered, "{sent:?}");
+        if registered {
+            assert!(matches!(
+                Message::decode(&r.recv().await.unwrap()).unwrap(),
+                Message::Verack
+            ));
+            send_and_sync(&mut r, &mut w, &[], 7).await;
+            wait_until("registered", 5, || a.net.peers().len() == 1).await;
+            kept.push((r, w));
+        } else {
+            assert!(closes_within(&mut r, 10).await, "{unknown} unknown frames");
+            assert_eq!(a.net.peers().len(), 1, "not registered");
+        }
+    }
+}
+
 /// Mempool conflict query: a relayed transaction that conflicts with a pooled
 /// one (the same output spent) is dropped before verification, and so
 /// before the node-wide PX token for PX transactions (docs/p2p.md §10). It
@@ -4184,7 +4702,10 @@ async fn dialed_raw_peer(a: &TestNode, l: &tokio::net::TcpListener) -> (RawReade
     let rw = try_raw_handshake_as(s, false, params().network_id, true, 0)
         .await
         .expect("handshake");
-    wait_until("registered", 5, || a.net.stats().outbound == outbound + 1).await;
+    // Counts outbound peers: a caller's earlier outbound peer that leaves
+    // meanwhile hides this one (mutation run E: a dropped first reporter in
+    // the upgrade-threshold test, once taken for a slow registration).
+    wait_until("registered", 20, || a.net.stats().outbound == outbound + 1).await;
     rw
 }
 
@@ -4252,6 +4773,101 @@ async fn only_distinct_outbound_reporters_trigger_the_upgrade_warning() {
     assert!(a.net.upgrade_warned(), "two distinct outbound reporters");
 }
 
+/// RTW1-1: one outbound reporter warns at once when its unknown-version
+/// header, charged the difficulty this node requires, brings its branch to
+/// our best chain's work (on our tip); on a lighter fork it does not
+/// (mutation run E: `UpgradeWork::of`'s sum had no test).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn one_outbound_reporter_on_our_best_work_warns_at_once() {
+    let pow = Arc::new(CountAllPow::default());
+    let a = node_with_pow(64, fast_config(&[]), pow.clone()).await;
+    let ours = header_branch(300, 1, 0);
+    give_headers(&a, &ours);
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &ours {
+        g.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let newer = |parent: Hash, nonce| {
+        let t = g.template_on(parent).unwrap();
+        let prev = g.header(&parent).unwrap();
+        BlockHeader {
+            version: HEADER_VERSION + 6,
+            height: t.height,
+            prev_id: parent,
+            timestamp: t.min_timestamp.max(prev.timestamp + 1),
+            difficulty: t.difficulty,
+            tx_root: [0; 32],
+            nonce,
+        }
+    };
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (mut r, mut w) = dialed_raw_peer(&a, &l).await;
+    let fork = g.main_id_at(295).unwrap();
+    let cost = headers_and_settle(&a, &pow, &mut r, &mut w, vec![newer(fork, 50)], 1).await;
+    assert_eq!(cost, 1, "hashed");
+    assert!(!a.net.upgrade_warned(), "one reporter on a lighter fork");
+    let cost = headers_and_settle(&a, &pow, &mut r, &mut w, vec![newer(g.tip_id(), 51)], 2).await;
+    assert_eq!(cost, 1, "hashed");
+    assert!(a.net.upgrade_warned(), "our best chain's work: at once");
+}
+
+/// RTW1-1: the two upgrade-warning thresholds are inclusive (the boundary
+/// pass of mutation run E). A branch reaching exactly the anti-DoS threshold
+/// (a sibling of our block 156, 144 below the tip) counts toward the warning:
+/// two such outbound reporters warn. A branch reaching exactly our best work
+/// (a sibling of our tip) warns at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_upgrade_warning_thresholds_are_inclusive() {
+    let ours = header_branch(300, 1, 0);
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &ours {
+        g.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let newer = |parent: Hash, nonce| {
+        let t = g.template_on(parent).unwrap();
+        let prev = g.header(&parent).unwrap();
+        BlockHeader {
+            version: HEADER_VERSION + 6,
+            height: t.height,
+            prev_id: parent,
+            timestamp: t.min_timestamp.max(prev.timestamp + 1),
+            difficulty: t.difficulty,
+            tx_root: [0; 32],
+            nonce,
+        }
+    };
+    let at = |h: u64| g.main_id_at(h).unwrap();
+    assert_eq!(
+        blacksilk_chain::sync_policy::anti_dos_threshold(&g),
+        g.work(&at(156)).unwrap()
+    );
+    // At the anti-DoS threshold: two distinct outbound reporters warn.
+    let pow = Arc::new(CountAllPow::default());
+    let a = node_with_pow(72, fast_config(&[]), pow.clone()).await;
+    give_headers(&a, &ours);
+    // The reporters stay connected: `dialed_raw_peer` counts outbound peers,
+    // and a dropped first one leaving during the second dial hid the second.
+    let mut kept = Vec::new();
+    for (k, nonce) in [60u64, 61].into_iter().enumerate() {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (mut r, mut w) = dialed_raw_peer(&a, &l).await;
+        let cost =
+            headers_and_settle(&a, &pow, &mut r, &mut w, vec![newer(at(155), nonce)], 1).await;
+        assert_eq!(cost, 1, "hashed");
+        assert_eq!(a.net.upgrade_warned(), k == 1, "after {} reporters", k + 1);
+        kept.push((r, w, l));
+    }
+    // At our best work: one reporter warns at once.
+    let pow = Arc::new(CountAllPow::default());
+    let b = node_with_pow(73, fast_config(&[]), pow.clone()).await;
+    give_headers(&b, &ours);
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (mut r, mut w) = dialed_raw_peer(&b, &l).await;
+    let cost = headers_and_settle(&b, &pow, &mut r, &mut w, vec![newer(at(299), 62)], 1).await;
+    assert_eq!(cost, 1, "hashed");
+    assert!(b.net.upgrade_warned(), "equal to our best work: at once");
+}
+
 /// RTW1-1 (c): an unknown-version header whose RandomX key is neither the
 /// current nor the next key of our best chain is never hashed, so it cannot
 /// make the node build (and evict) a RandomX cache. A pow call is where
@@ -4296,6 +4912,295 @@ async fn an_old_epoch_unknown_version_header_triggers_no_cache_build() {
     assert_eq!(old_cost, 0, "an old-epoch key was hashed");
     assert_eq!(tip_cost, 1, "the current key is hashed");
     assert_eq!(a.net.peers()[0].score, 0);
+}
+
+/// An unknown-version header whose RandomX key is the first header of its
+/// own batch (a stored one: the batch repeats our blocks from the key block
+/// 2 048 on) is keyed by that header, a live key, and hashed (mutation run
+/// E: no test had the key inside the batch, `batch_seed`'s first branch).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unknown_version_header_keyed_by_its_own_batch_is_hashed() {
+    let pow = Arc::new(CountAllPow::default());
+    let a = node_with_pow(65, fast_config(&[]), pow.clone()).await;
+    let nid = params().network_id;
+    let ours = header_branch(2112, 1, 0);
+    give_headers(&a, &ours);
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &ours {
+        g.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let p = params();
+    assert_eq!(seed_height(2113, p.seed_epoch, p.seed_lag), 2048);
+    let t = g.template();
+    let tip = g.header(&t.prev_id).unwrap();
+    let newer = BlockHeader {
+        version: HEADER_VERSION + 6,
+        height: t.height,
+        prev_id: t.prev_id,
+        timestamp: t.min_timestamp.max(tip.timestamp + 1),
+        difficulty: t.difficulty,
+        tx_root: [0; 32],
+        nonce: 5,
+    };
+    let mut batch = ours[2047..].to_vec();
+    assert_eq!(batch[0].height, 2048);
+    batch.push(newer);
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 3_000).await;
+    assert!(
+        recv_until(&mut r, 10.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    let before = pow.0.load(std::sync::atomic::Ordering::SeqCst);
+    w.send(&Message::Headers(batch).encode()).await.unwrap();
+    w.send(&Message::Ping(9).encode()).await.unwrap();
+    assert!(recv_until(&mut r, 5.0, |m| matches!(m, Message::Pong(9)))
+        .await
+        .is_some());
+    wait_until("header batch verified", 10, || {
+        a.net.header_queue_len() == 0
+    })
+    .await;
+    let cost = pow.0.load(std::sync::atomic::Ordering::SeqCst) - before;
+    assert_eq!(
+        cost, 1,
+        "the unknown-version header is hashed under the live key"
+    );
+    assert_eq!(a.net.peers()[0].score, 0);
+    // Nothing past it is usable: its claimed height (3 000) is lowered to
+    // ours, so it is not asked again every tick.
+    assert_eq!(a.net.peers()[0].height, 2112);
+}
+
+/// An unsolicited low-work header leaves the sender's claimed height alone
+/// (only a solicited low-work reply lowers it): the peer may still hold a
+/// heavier chain than the one it announced (mutation run E: the guard had no
+/// test). The maintenance tick is a minute, so nothing asks it in between.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unsolicited_low_work_header_keeps_the_peers_claimed_height() {
+    let pow = Arc::new(CountAllPow::default());
+    let mut cfg = fast_config(&[]);
+    cfg.tick = Duration::from_secs(60);
+    let a = node_with_pow(66, cfg, pow.clone()).await;
+    let nid = params().network_id;
+    let ours = header_branch(300, 1, 0);
+    give_headers(&a, &ours[..290]);
+    let (mut r, mut w) = raw_peer_at(a.addr, nid, true, 400).await;
+    assert!(
+        recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+            .await
+            .is_some()
+    );
+    // The reply advances our chain: the peer's claim stands.
+    w.send(&Message::Headers(ours[290..].to_vec()).encode())
+        .await
+        .unwrap();
+    wait_until("the reply is stored", 10, || {
+        a.chain.lock().unwrap().header_height() == 300
+    })
+    .await;
+    wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
+    assert_eq!(a.net.peers()[0].height, 400);
+    // An unsolicited header of a deep, low-work fork.
+    let mut g = HeaderChain::new(params(), Arc::new(ZeroPow));
+    for h in &ours {
+        g.accept(*h, u64::MAX / 2).unwrap();
+    }
+    let parent = g.main_id_at(10).unwrap();
+    let t = g.template_on(parent).unwrap();
+    let fork = BlockHeader {
+        version: HEADER_VERSION,
+        height: t.height,
+        prev_id: parent,
+        timestamp: t
+            .min_timestamp
+            .max(g.header(&parent).unwrap().timestamp + 1),
+        difficulty: t.difficulty,
+        tx_root: [0; 32],
+        nonce: 77,
+    };
+    let before = pow.0.load(std::sync::atomic::Ordering::SeqCst);
+    w.send(&Message::Headers(vec![fork]).encode())
+        .await
+        .unwrap();
+    w.send(&Message::Ping(3).encode()).await.unwrap();
+    assert!(recv_until(&mut r, 5.0, |m| matches!(m, Message::Pong(3)))
+        .await
+        .is_some());
+    wait_until("worker done", 10, || a.net.header_queue_len() == 0).await;
+    assert_eq!(
+        pow.0.load(std::sync::atomic::Ordering::SeqCst),
+        before,
+        "low work: not hashed"
+    );
+    assert_eq!(a.net.peers()[0].height, 400, "the claim stands");
+    assert_eq!(a.net.peers()[0].score, 0);
+}
+
+/// A panic in the header worker's proof-of-work jobs (off the chain actor)
+/// stops the node as a panic in the actor does: exit status
+/// `POISONED_EXIT_CODE` with the reason on stderr, never a worker that ends
+/// silently while the node runs on (mutation run E: no test reached the
+/// arm). The scenario runs in a child process (this test, re-run with an
+/// environment variable), which exits 0 if it is still running after 20 s.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_panic_in_the_header_pow_jobs_stops_the_node() {
+    const CHILD: &str = "BLACKSILK_TEST_PANIC_POW_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        struct PanicPow;
+        impl PowFunction for PanicPow {
+            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+                panic!("injected PoW panic");
+            }
+        }
+        let a = node_with_pow(67, fast_config(&[]), Arc::new(PanicPow)).await;
+        let (mut r, mut w) = raw_peer_at(a.addr, params().network_id, true, 10).await;
+        assert!(
+            recv_until(&mut r, 5.0, |m| matches!(m, Message::GetHeaders { .. }))
+                .await
+                .is_some()
+        );
+        w.send(&Message::Headers(header_branch(3, 120, 0)).encode())
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        std::process::exit(0);
+    }
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "a_panic_in_the_header_pow_jobs_stops_the_node",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(blacksilk_p2p::POISONED_EXIT_CODE),
+        "{stderr}"
+    );
+    assert!(stderr.contains("header task failed"), "{stderr}");
+}
+
+/// The key exchange's own timeout: 5 s on clearnet, 10 s over Tor (an
+/// inbound loopback connection while no onion listener is configured and
+/// private addresses are not allowed is taken for our hidden service). A
+/// connection that sends nothing is closed after it: before 9 s on
+/// clearnet, after 7.5 s over Tor (mutation run E: no test told the two
+/// apart).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_silent_connection_waits_five_seconds_on_clearnet_and_ten_over_tor() {
+    use tokio::io::AsyncReadExt;
+    async fn closed_after(addr: SocketAddr) -> Duration {
+        let mut s = TcpStream::connect(addr).await.unwrap();
+        let t = std::time::Instant::now();
+        let mut buf = [0u8; 64];
+        // The node writes its key-exchange message first; read until EOF.
+        loop {
+            match tokio::time::timeout(Duration::from_secs(30), s.read(&mut buf)).await {
+                Ok(Ok(0)) | Ok(Err(_)) => return t.elapsed(),
+                Ok(Ok(_)) => continue,
+                Err(_) => panic!("not closed within 30 s"),
+            }
+        }
+    }
+    let clearnet = node_with(74, fast_config(&[])).await;
+    let mut cfg = fast_config(&[]);
+    cfg.allow_private = false;
+    let tor = node_with(75, cfg).await;
+    let (c, t) = tokio::join!(closed_after(clearnet.addr), closed_after(tor.addr));
+    // A timeout never fires early, so the lower bounds are exact (within the
+    // time to connect); load only delays the observed close, so the upper
+    // bound has a margin (a loaded run saw the clearnet close late).
+    assert!(
+        c >= Duration::from_millis(4_900) && c < Duration::from_millis(9_000),
+        "clearnet: closed after {c:?}"
+    );
+    assert!(
+        t >= Duration::from_millis(9_900),
+        "over Tor: closed after {t:?}"
+    );
+}
+
+/// Our address is advertised at the handshake only on connections that
+/// relay addresses: not to an inbound peer that asked for no transaction
+/// relay (a block-relay-only connection of its own; mutation run E: the
+/// inbound side of the rule had no test). The advertisement is queued
+/// before the answer to a ping sent after `Verack`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn our_address_is_advertised_only_where_addresses_are_relayed() {
+    let mut cfg = fast_config(&[]);
+    cfg.public_address = Some(NetAddr::parse("8.8.4.4:9999").unwrap());
+    let a = node_with(76, cfg).await;
+    let nid = params().network_id;
+    for (relay_txs, advertised) in [(true, true), (false, false)] {
+        let (mut r, mut w) = raw_peer(a.addr, nid, relay_txs).await;
+        w.send(&Message::Ping(3).encode()).await.unwrap();
+        let mut got = false;
+        loop {
+            match recv_until(&mut r, 10.0, |_| true).await.expect("a message") {
+                Message::Addr(entries) => {
+                    let ours = NetAddr::parse("8.8.4.4:9999").unwrap();
+                    got |= entries.iter().any(|e| {
+                        matches!(&e.addr, blacksilk_p2p::addr::EntryAddr::Known(x) if *x == ours)
+                    })
+                }
+                Message::Pong(3) => break,
+                _ => {}
+            }
+        }
+        assert_eq!(got, advertised, "relay_txs {relay_txs}");
+    }
+}
+
+/// A ban that comes in during a connection's handshake refuses the
+/// connection at registration (the inbound limits are re-checked there,
+/// under the lock of the insertion; mutation run E: no test banned an IP
+/// mid-handshake). Without `allow_private`, loopback peers are IP-banned:
+/// one registered peer breaks the protocol while a second connection from
+/// the same IP waits before its `Verack`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_ban_during_the_handshake_refuses_the_connection_at_registration() {
+    let mut cfg = fast_config(&[]);
+    cfg.allow_private = false;
+    let a = node_with(77, cfg).await;
+    let nid = params().network_id;
+    let (_rx, mut wx) = raw_peer(a.addr, nid, true).await;
+    wait_until("registered", 10, || a.net.stats().peers == 1).await;
+    // The second connection, up to the node's Verack.
+    let s = TcpStream::connect(a.addr).await.unwrap();
+    let (mut r, mut w) = handshake(s, true, nid, &params().genesis_id(), Duration::from_secs(5))
+        .await
+        .unwrap();
+    let v = Version {
+        protocol: PROTOCOL_VERSION,
+        network: nid,
+        nonce: 0x9abc,
+        height: 0,
+        tip: params().genesis_id(),
+        listen: None,
+        relay_txs: true,
+    };
+    w.send(&Message::Version(v).encode()).await.unwrap();
+    assert!(matches!(
+        Message::decode(&r.recv().await.unwrap()).unwrap(),
+        Message::Version(_)
+    ));
+    assert!(matches!(
+        Message::decode(&r.recv().await.unwrap()).unwrap(),
+        Message::Verack
+    ));
+    // The registered peer sends a malformed message: its IP is banned.
+    wx.send(&[0x01, 0xff, 0xff]).await.unwrap();
+    wait_until("banned", 10, || a.net.stats().banned == 1).await;
+    wait_until("the first peer is gone", 10, || a.net.stats().peers == 0).await;
+    // Its Verack completes the handshake; the registration refuses it.
+    w.send(&Message::Verack.encode()).await.unwrap();
+    assert!(closes_within(&mut r, 10).await, "refused at registration");
+    assert_eq!(a.net.stats().peers, 0);
 }
 
 /// RTW1B-1: the recently-expired guard applies to local origination only.

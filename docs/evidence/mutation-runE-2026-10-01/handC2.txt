@@ -1,0 +1,4 @@
+# 2026-10-02 11:51:18 UTC; cargo test --locked --profile mutants -p blacksilk-chain --test storage_recovery
+baseline ok
+CAUGHT	STORE_FAILURE_LIMIT 2	chain/src/manager.rs:270	STORE_FAILURE_LIMIT: u32 = 3 -> STORE_FAILURE_LIMIT: u32 = 2	11s	0.log
+CAUGHT	STORE_FAILURE_LIMIT 4	chain/src/manager.rs:270	STORE_FAILURE_LIMIT: u32 = 3 -> STORE_FAILURE_LIMIT: u32 = 4	17s	1.log

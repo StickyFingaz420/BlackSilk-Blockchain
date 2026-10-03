@@ -1,0 +1,7 @@
+# 2026-10-01 23:57:27 UTC; cargo test --locked --profile mutants -p blacksilk-px -p blacksilk-tx --lib --test=consensus_fingerprint --test=elf_paths --test=fri_schedule --test=hk_vectors --test=kernel --test=kernel_budget --test=mutation_regressions --test=proof_limits --test=state --test=tree_capacity --test=px_proof_wiring --test=state_accessors
+baseline ok
+CAUGHT	ROOT_WINDOW 99	px/src/state.rs:26	ROOT_WINDOW: usize = 100 -> ROOT_WINDOW: usize = 99	85s	0.log
+CAUGHT	ROOT_WINDOW 101	px/src/state.rs:26	ROOT_WINDOW: usize = 100 -> ROOT_WINDOW: usize = 101	88s	1.log
+CAUGHT	CAPACITY - 1	px/src/tree.rs:20	1 << TREE_DEPTH -> (1 << TREE_DEPTH) - 1	86s	2.log
+CAUGHT	kernel budget n_fn 0 cycles +1	px/src/prove.rs:65	26_500 -> 26_501	87s	3.log
+CAUGHT	kernel budget n_fn 2 bit -1	px/src/prove.rs:67	2_000, 20_550 -> 1_999, 20_550	83s	4.log

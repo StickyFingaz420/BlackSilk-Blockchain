@@ -1,0 +1,5 @@
+MAX_HEADER_GRACE 7	p2p/src/net/headers.rs	31	MAX_HEADER_GRACE: usize = 8	MAX_HEADER_GRACE: usize = 7
+MAX_HEADER_GRACE 9	p2p/src/net/headers.rs	31	MAX_HEADER_GRACE: usize = 8	MAX_HEADER_GRACE: usize = 9
+HEADERS_TIMEOUT 59	p2p/src/net/headers.rs	27	Duration::from_secs(60)	Duration::from_secs(59)
+HEADERS_TIMEOUT 61	p2p/src/net/headers.rs	27	Duration::from_secs(60)	Duration::from_secs(61)
+queue total 2x to 3x	p2p/src/net/headers.rs	50	let total = 2 * 	let total = 3 * 

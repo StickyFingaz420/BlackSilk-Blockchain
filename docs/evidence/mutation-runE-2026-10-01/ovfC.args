@@ -1,0 +1,7 @@
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]109[:]42[:] replace [+] with \- in ChainManager[:][:]pow[_]jobs$
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]124[:]34[:] replace [>][=] with [<] in ChainManager[:][:]pow[_]jobs$
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]180[:]17[:] replace [+][=] with \-[=] in ChainManager[:][:]accept[_]headers$
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]67[:]51[:] replace [+] with \- in ChainManager[:][:]missing[_]bodies$
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]75[:]19[:] replace [+][=] with \-[=] in ChainManager[:][:]missing[_]bodies$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]138[:]37[:] replace [+][=] with \-[=] in ChainManager[:][:]submit[_]inner$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]154[:]28[:] replace [+][=] with \-[=] in ChainManager[:][:]submit[_]inner$

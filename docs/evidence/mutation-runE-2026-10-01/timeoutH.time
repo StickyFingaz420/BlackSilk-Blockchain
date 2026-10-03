@@ -1,0 +1,9 @@
+start 20:39
+9407526a exit 0 --re=^p2p[/]src[/]net[/]headers[.]rs[:]230[:]12[:] delete [!] in on[_]headers$
+c613c6da exit 0 --re=^p2p[/]src[/]net[/]headers[.]rs[:]236[:]35[:] replace [!][=] with [=][=] in on[_]headers$
+6aa674fc exit 0 --re=^p2p[/]src[/]net[/]headers[.]rs[:]236[:]66[:] replace [!][=] with [=][=] in on[_]headers$
+e2819b5f exit 0 --re=^p2p[/]src[/]net[/]headers[.]rs[:]236[:]81[:] replace [+] with \- in on[_]headers$
+3c843714 exit 0 --re=^p2p[/]src[/]net[/]headers[.]rs[:]236[:]81[:] replace [+] with [*] in on[_]headers$
+e9ed4afd exit 0 --re=^p2p[/]src[/]net[/]headers[.]rs[:]373[:]41[:] replace [=][=] with [!][=] in header[_]worker$
+a06ab06f exit 0 --re=^p2p[/]src[/]net[/]headers[.]rs[:]679[:]17[:] delete match arm [(]Ok[(][_][)][,] Some[(]n[)][)] in verify[_]headers$
+end 21:24

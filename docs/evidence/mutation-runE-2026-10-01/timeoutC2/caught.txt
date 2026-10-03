@@ -1,0 +1,3 @@
+chain/src/manager/submission.rs:50:9: replace ChainManager::sync_step -> bool with false
+chain/src/manager/submission.rs:177:9: replace ChainManager::drain_ready -> bool with false
+chain/src/manager/submission.rs:187:20: delete ! in ChainManager::drain_ready

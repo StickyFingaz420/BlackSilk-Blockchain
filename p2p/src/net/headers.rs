@@ -880,6 +880,548 @@ mod tests {
         assert_ne!(queue_key(&o1, true), queue_key(&o2, true));
     }
 
+    /// A network over a fresh regtest chain with `cfg`, listening nowhere
+    /// (the queue-room tests need only its state).
+    async fn idle_network(edit: impl FnOnce(&mut crate::NetConfig)) -> crate::Network {
+        struct ZeroPow;
+        impl blacksilk_consensus::PowFunction for ZeroPow {
+            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+                [0; 32]
+            }
+        }
+        let p = blacksilk_consensus::ChainParams::regtest();
+        let m = ChainManager::open(
+            p.clone(),
+            blacksilk_tx::params::TxRules::for_chain(&p),
+            Arc::new(ZeroPow),
+            Box::<blacksilk_chain::store::MemoryStore>::default(),
+            [1; 32],
+        )
+        .unwrap();
+        let mut cfg = crate::NetConfig::new(p.network_id);
+        cfg.listen = None;
+        edit(&mut cfg);
+        crate::Network::start(cfg, Arc::new(std::sync::Mutex::new(m)))
+            .await
+            .unwrap()
+    }
+
+    /// The header queue takes at most `max_per_ip` batches per origin (not
+    /// with `allow_private`) and `2 × (max_inbound + max_outbound)` in total
+    /// (mutation run E: the total had no test). Defaults: 64 inbound, 8
+    /// outbound, 2 per IP: 144 in total.
+    #[tokio::test]
+    async fn the_header_queue_has_room_per_origin_and_in_total() {
+        let a = NetAddr::parse("1.2.3.4:5").unwrap();
+        let a2 = NetAddr::parse("1.2.3.4:6").unwrap();
+        let b = NetAddr::parse("5.6.7.8:5").unwrap();
+        let net = idle_network(|_| {}).await;
+        let inner = &net.inner;
+        {
+            let mut st = inner.state();
+            st.header_queue_len = 143;
+            assert!(inner.header_queue_room(&st, &a, false), "143 of 144");
+            st.header_queue_len = 144;
+            assert!(!inner.header_queue_room(&st, &a, false), "144 of 144");
+            st.header_queue_len = 1;
+            st.header_queue_origin.insert(queue_key(&a, false), 1);
+            assert!(inner.header_queue_room(&st, &a, false), "1 of 2 for the IP");
+            st.header_queue_origin.insert(queue_key(&a, false), 2);
+            assert!(
+                !inner.header_queue_room(&st, &a, false),
+                "2 of 2 for the IP"
+            );
+            assert!(!inner.header_queue_room(&st, &a2, false), "the same IP");
+            assert!(inner.header_queue_room(&st, &b, false), "another IP");
+            assert!(inner.header_queue_room(&st, &a2, true), "a proxied origin");
+        }
+        // `allow_private`: no limit per origin, the total still holds.
+        let net = idle_network(|c| c.allow_private = true).await;
+        {
+            let inner = &net.inner;
+            let mut st = inner.state();
+            st.header_queue_origin.insert(queue_key(&a, false), 50);
+            st.header_queue_len = 143;
+            assert!(inner.header_queue_room(&st, &a, false));
+            st.header_queue_len = 144;
+            assert!(!inner.header_queue_room(&st, &a, false));
+        }
+        // Zero limits count as one: one batch per origin, two in total.
+        let net = idle_network(|c| {
+            c.max_inbound = 0;
+            c.max_outbound = 0;
+            c.max_per_ip = 0;
+        })
+        .await;
+        let inner = &net.inner;
+        let mut st = inner.state();
+        assert!(inner.header_queue_room(&st, &a, false));
+        st.header_queue_origin.insert(queue_key(&a, false), 1);
+        st.header_queue_len = 1;
+        assert!(
+            !inner.header_queue_room(&st, &a, false),
+            "1 of 1 for the IP"
+        );
+        assert!(inner.header_queue_room(&st, &b, false), "1 of 2 in total");
+        st.header_queue_len = 2;
+        assert!(!inner.header_queue_room(&st, &b, false), "2 of 2 in total");
+    }
+
+    /// At most one `GetHeaders` is outstanding per peer (mutation run E: the
+    /// guard in `request_headers_after` had no test; under it another task
+    /// asking while a request is outstanding sends nothing). A raw peer
+    /// claiming more height gets the handshake's request; two more requests
+    /// while it is unanswered send nothing: the node's next control frame,
+    /// its answer to a ping sent after them, follows the one `GetHeaders`.
+    #[tokio::test]
+    async fn a_second_header_request_waits_for_the_outstanding_one() {
+        use crate::message::{Message, Version, PROTOCOL_VERSION};
+        let net = idle_network(|c| {
+            c.listen = Some("127.0.0.1:0".parse().unwrap());
+            c.allow_private = true;
+            c.tick = std::time::Duration::from_secs(600);
+        })
+        .await;
+        let inner = net.inner.clone();
+        let stream = tokio::net::TcpStream::connect(net.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut r, mut w) = crate::transport::handshake(
+            stream,
+            true,
+            inner.cfg.network_id,
+            &inner.genesis_id,
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let v = Version {
+            protocol: PROTOCOL_VERSION,
+            network: inner.cfg.network_id,
+            nonce: 0xdead_beef,
+            height: 5,
+            tip: [0; 32],
+            listen: None,
+            relay_txs: true,
+        };
+        w.send(&Message::Version(v).encode()).await.unwrap();
+        let recv = |m: Vec<u8>| Message::decode(&m).unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Version(_)));
+        w.send(&Message::Verack.encode()).await.unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Verack));
+        // The handshake's request, then the peer's id.
+        let mut get_headers = 0;
+        loop {
+            if let Message::GetHeaders { .. } = recv(r.recv().await.unwrap()) {
+                get_headers += 1;
+                break;
+            }
+        }
+        let peer = *inner.state().peers.keys().next().expect("registered");
+        inner.request_headers(peer).await;
+        inner.request_headers_after(peer, Some([3; 32])).await;
+        w.send(&Message::Ping(77).encode()).await.unwrap();
+        loop {
+            match recv(r.recv().await.unwrap()) {
+                Message::Pong(77) => break,
+                Message::GetHeaders { .. } => get_headers += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(get_headers, 1, "one request outstanding at a time");
+    }
+
+    /// The owed replies (`headers_grace`, P2P-FIX2): a reply is owed for
+    /// `HEADERS_TIMEOUT` after its request, and no longer; each owed reply
+    /// is taken once, the oldest first; at most `MAX_HEADER_GRACE` are kept
+    /// (mutation run E: the grace functions had no unit test).
+    #[test]
+    fn owed_header_replies_expire_and_are_taken_once() {
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        let mut g = VecDeque::new();
+        assert!(!in_grace(&mut g, t0));
+        assert!(!take_grace(&mut g, t0), "nothing owed");
+        add_grace(&mut g, t0);
+        add_grace(&mut g, at(10));
+        assert!(in_grace(&mut g, at(60)), "60 s: still owed");
+        assert_eq!(g.len(), 2);
+        assert!(in_grace(&mut g, at(61)), "the second is still owed");
+        assert_eq!(g, [at(10)], "the first expired");
+        assert!(take_grace(&mut g, at(61)));
+        assert!(!take_grace(&mut g, at(61)), "taken once");
+        add_grace(&mut g, t0);
+        assert!(!take_grace(&mut g, at(61)), "an expired one is not taken");
+        assert!(g.is_empty());
+        for k in 0..MAX_HEADER_GRACE as u64 + 3 {
+            add_grace(&mut g, at(k));
+        }
+        assert_eq!(g.len(), MAX_HEADER_GRACE);
+        assert_eq!(MAX_HEADER_GRACE, 8);
+        assert_eq!(g.front(), Some(&at(3)), "the oldest go first");
+    }
+
+    /// A request after a batch starts its locator at the batch's last
+    /// header, once, then our best chain down to the genesis (mutation run
+    /// E: the locator's edit had no test). A fresh node's own locator is the
+    /// genesis alone.
+    #[tokio::test]
+    async fn a_request_after_a_batch_starts_its_locator_at_the_batch() {
+        use crate::message::{Message, Version, PROTOCOL_VERSION};
+        let net = idle_network(|c| {
+            c.listen = Some("127.0.0.1:0".parse().unwrap());
+            c.allow_private = true;
+            c.tick = Duration::from_secs(600);
+        })
+        .await;
+        let inner = net.inner.clone();
+        let stream = tokio::net::TcpStream::connect(net.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut r, mut w) = crate::transport::handshake(
+            stream,
+            true,
+            inner.cfg.network_id,
+            &inner.genesis_id,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        // At height 0 with the genesis as its tip: the node asks nothing.
+        let v = Version {
+            protocol: PROTOCOL_VERSION,
+            network: inner.cfg.network_id,
+            nonce: 0xdead_beef,
+            height: 0,
+            tip: inner.genesis_id,
+            listen: None,
+            relay_txs: true,
+        };
+        w.send(&Message::Version(v).encode()).await.unwrap();
+        let recv = |m: Vec<u8>| Message::decode(&m).unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Version(_)));
+        w.send(&Message::Verack.encode()).await.unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Verack));
+        let peer = loop {
+            if let Some(id) = inner.state().peers.keys().next().copied() {
+                break id;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        let genesis = inner.genesis_id;
+        for from in [[4; 32], genesis] {
+            inner.request_headers_after(peer, Some(from)).await;
+            let locator = loop {
+                if let Message::GetHeaders { locator, .. } = recv(r.recv().await.unwrap()) {
+                    break locator;
+                }
+            };
+            if from == genesis {
+                assert_eq!(locator, [genesis], "the genesis once");
+            } else {
+                assert_eq!(locator, [from, genesis]);
+            }
+            // Answered (empty): the next request may go.
+            w.send(&Message::Headers(vec![]).encode()).await.unwrap();
+            while inner
+                .state()
+                .peers
+                .get(&peer)
+                .is_some_and(|p| p.headers_requested.is_some())
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+    }
+
+    /// Once the worker has taken up a queued batch, its origin's count
+    /// drops back, and an origin with nothing queued leaves the map
+    /// (mutation run E: with `allow_private`, as in the network tests, the
+    /// per-origin count is never read, so nothing noticed a count that never
+    /// fell). One solicited header, then a second.
+    #[tokio::test]
+    async fn the_header_queue_counts_return_to_zero_after_the_worker() {
+        use crate::message::{Message, Version, PROTOCOL_VERSION};
+        let net = idle_network(|c| {
+            c.listen = Some("127.0.0.1:0".parse().unwrap());
+            c.allow_private = true;
+            c.tick = Duration::from_millis(50);
+        })
+        .await;
+        let inner = net.inner.clone();
+        let stream = tokio::net::TcpStream::connect(net.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut r, mut w) = crate::transport::handshake(
+            stream,
+            true,
+            inner.cfg.network_id,
+            &inner.genesis_id,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let v = Version {
+            protocol: PROTOCOL_VERSION,
+            network: inner.cfg.network_id,
+            nonce: 0xdead_beef,
+            height: 5,
+            tip: [0; 32],
+            listen: None,
+            relay_txs: true,
+        };
+        w.send(&Message::Version(v).encode()).await.unwrap();
+        let recv = |m: Vec<u8>| Message::decode(&m).unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Version(_)));
+        w.send(&Message::Verack.encode()).await.unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Verack));
+        // Two headers on the genesis, one per request.
+        struct ZeroPow;
+        impl blacksilk_consensus::PowFunction for ZeroPow {
+            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+                [0; 32]
+            }
+        }
+        let mut g = HeaderChain::new(
+            blacksilk_consensus::ChainParams::regtest(),
+            Arc::new(ZeroPow),
+        );
+        for k in 0..2u64 {
+            let t = g.template();
+            let parent = *g.header(&t.prev_id).unwrap();
+            let h = BlockHeader {
+                version: t.version,
+                height: t.height,
+                prev_id: t.prev_id,
+                timestamp: t.min_timestamp.max(parent.timestamp + 10),
+                difficulty: t.difficulty,
+                tx_root: [0; 32],
+                nonce: k,
+            };
+            g.accept(h, u64::MAX / 2).unwrap();
+            loop {
+                if let Message::GetHeaders { .. } = recv(r.recv().await.unwrap()) {
+                    break;
+                }
+            }
+            w.send(&Message::Headers(vec![h]).encode()).await.unwrap();
+            w.send(&Message::Ping(k).encode()).await.unwrap();
+            loop {
+                if matches!(recv(r.recv().await.unwrap()), Message::Pong(x) if x == k) {
+                    break;
+                }
+            }
+            // Taken up by the worker: the header is stored.
+            let mut waited = 0;
+            while inner.summary.load().header_height < k + 1 || inner.state().header_queue_len > 0 {
+                assert!(waited < 500, "the batch is never taken up");
+                waited += 1;
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let st = inner.state();
+            assert_eq!(st.header_queue_len, 0);
+            assert!(
+                st.header_queue_origin.is_empty(),
+                "{:?}",
+                st.header_queue_origin
+            );
+        }
+    }
+
+    /// A queued batch whose sender has left and is banned is abandoned
+    /// before any chain command (not even the pre-check runs: its result
+    /// could only charge a sender already banned); a departed sender that
+    /// is not banned still has its batch pre-checked, and a rule-breaking
+    /// one is `Failed` (mutation run E: the network tests use loopback
+    /// peers, which are never IP-banned, so the first branch had no test).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_banned_departed_senders_batch_is_abandoned_unchecked() {
+        let net = idle_network(|_| {}).await;
+        let inner = net.inner.clone();
+        // A header that breaks a rule (difficulty), on the genesis.
+        struct ZeroPow;
+        impl blacksilk_consensus::PowFunction for ZeroPow {
+            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+                [0; 32]
+            }
+        }
+        let g = HeaderChain::new(
+            blacksilk_consensus::ChainParams::regtest(),
+            Arc::new(ZeroPow),
+        );
+        let t = g.template();
+        let bad = BlockHeader {
+            version: t.version,
+            height: t.height,
+            prev_id: t.prev_id,
+            timestamp: t
+                .min_timestamp
+                .max(g.header(&t.prev_id).unwrap().timestamp + 10),
+            difficulty: t.difficulty + 5,
+            tx_root: [0; 32],
+            nonce: 0,
+        };
+        let addr = NetAddr::parse("1.2.3.4:5").unwrap();
+        let verify = |inner: Arc<Inner>| {
+            let addr = addr.clone();
+            tokio::task::spawn_blocking(move || verify_headers(&inner, 999, &addr, &[bad]))
+        };
+        // Departed (no peer 999), not banned: pre-checked, refused.
+        match verify(inner.clone()).await.unwrap() {
+            HeaderOutcome::Failed(HeaderError::BadDifficulty { .. }) => {}
+            HeaderOutcome::Failed(e) => panic!("another failure: {e:?}"),
+            _ => panic!("not failed"),
+        }
+        // Departed and banned: abandoned before the pre-check.
+        inner
+            .state()
+            .bans
+            .ban("1.2.3.4".parse().unwrap(), unix_now() + 3600);
+        assert!(matches!(
+            verify(inner.clone()).await.unwrap(),
+            HeaderOutcome::Abandoned
+        ));
+    }
+
+    /// `note_clock` feeds the clock monitor the headers just accepted: a
+    /// header the future time limit refused before is a sample (and is no
+    /// longer remembered as refused), in any position of any batch; of the
+    /// others, only the last header of a live arrival is (mutation run E:
+    /// the refusal path had no test, and the network tests cannot wait out
+    /// regtest's 360 s limit).
+    #[tokio::test]
+    async fn note_clock_samples_refused_headers_and_live_arrivals() {
+        let net = idle_network(|_| {}).await;
+        let inner = net.inner.clone();
+        let nid = inner.cfg.network_id;
+        let header = |n: u64| BlockHeader {
+            version: 1,
+            height: n,
+            prev_id: [0; 32],
+            timestamp: 1_000 + n,
+            difficulty: 1,
+            tx_root: [0; 32],
+            nonce: n,
+        };
+        // A refused header, accepted inside a batch that is not live.
+        inner.clock().note_future_refusal(header(1).id(nid), 900);
+        assert!(inner.clock().has_refusals());
+        note_clock(&inner, 1, &[header(1), header(2)], false, 1_000, 360);
+        assert!(!inner.clock().has_refusals(), "taken as a sample");
+        // Live arrivals: only the last header of each batch.
+        for (k, peer) in [1, 2, 3, 1].into_iter().enumerate() {
+            let n = 10 + 2 * k as u64;
+            note_clock(&inner, peer, &[header(n), header(n + 1)], true, 1_000, 360);
+        }
+        let e = inner.clock().estimate().expect("5 samples from 3 peers");
+        assert_eq!((e.samples, e.peers), (5, 3));
+        // Not live and nothing refused: no sample.
+        note_clock(&inner, 2, &[header(30), header(31)], false, 1_000, 360);
+        assert_eq!(inner.clock().estimate().unwrap().samples, 5);
+    }
+
+    /// A peer is marked as having delivered a new tip (`Peer::last_new_tip`,
+    /// which protects an outbound peer from stale-tip rotation, RTW3-4) only
+    /// for a batch that stored new headers ending on our best header chain:
+    /// not for a new header of a side branch, and not for our tip sent again
+    /// (mutation run E: the condition had no test).
+    #[tokio::test]
+    async fn only_a_delivered_new_tip_marks_the_peer() {
+        use crate::message::{Message, Version, PROTOCOL_VERSION};
+        let net = idle_network(|c| {
+            c.listen = Some("127.0.0.1:0".parse().unwrap());
+            c.allow_private = true;
+            c.tick = Duration::from_secs(600);
+        })
+        .await;
+        let inner = net.inner.clone();
+        let stream = tokio::net::TcpStream::connect(net.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut r, mut w) = crate::transport::handshake(
+            stream,
+            true,
+            inner.cfg.network_id,
+            &inner.genesis_id,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let v = Version {
+            protocol: PROTOCOL_VERSION,
+            network: inner.cfg.network_id,
+            nonce: 0xdead_beef,
+            height: 0,
+            tip: inner.genesis_id,
+            listen: None,
+            relay_txs: true,
+        };
+        w.send(&Message::Version(v).encode()).await.unwrap();
+        let recv = |m: Vec<u8>| Message::decode(&m).unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Version(_)));
+        w.send(&Message::Verack.encode()).await.unwrap();
+        assert!(matches!(recv(r.recv().await.unwrap()), Message::Verack));
+        let peer = loop {
+            if let Some(id) = inner.state().peers.keys().next().copied() {
+                break id;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        struct ZeroPow;
+        impl blacksilk_consensus::PowFunction for ZeroPow {
+            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+                [0; 32]
+            }
+        }
+        let g = HeaderChain::new(
+            blacksilk_consensus::ChainParams::regtest(),
+            Arc::new(ZeroPow),
+        );
+        let t = g.template();
+        let child = |nonce| BlockHeader {
+            version: t.version,
+            height: t.height,
+            prev_id: t.prev_id,
+            timestamp: t
+                .min_timestamp
+                .max(g.header(&t.prev_id).unwrap().timestamp + 10),
+            difficulty: t.difficulty,
+            tx_root: [0; 32],
+            nonce,
+        };
+        let (tip, side) = (child(1), child(2));
+        // Sends one header and waits until the worker has taken it up.
+        macro_rules! deliver {
+            ($h:expr, $k:expr) => {{
+                w.send(&Message::Headers(vec![$h]).encode()).await.unwrap();
+                w.send(&Message::Ping($k).encode()).await.unwrap();
+                loop {
+                    if matches!(recv(r.recv().await.unwrap()), Message::Pong(x) if x == $k) {
+                        break;
+                    }
+                }
+                let mut waited = 0;
+                while inner.state().header_queue_len > 0 {
+                    assert!(waited < 500, "the header is never taken up");
+                    waited += 1;
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            }};
+        }
+        let marked = |inner: &Inner| inner.state().peers[&peer].last_new_tip.is_some();
+        deliver!(tip, 1);
+        assert_eq!(inner.summary.load().header_height, 1);
+        assert!(marked(&inner), "a new tip on our best chain");
+        inner.state().peers.get_mut(&peer).unwrap().last_new_tip = None;
+        deliver!(side, 2);
+        assert!(
+            !marked(&inner),
+            "a new header of a side branch (equal work)"
+        );
+        deliver!(tip, 3);
+        assert!(!marked(&inner), "our tip again: nothing new");
+    }
+
     /// A header from a newer release (a version no epoch of the schedule
     /// uses) is not scored; a bad version the schedule does know is.
     #[test]

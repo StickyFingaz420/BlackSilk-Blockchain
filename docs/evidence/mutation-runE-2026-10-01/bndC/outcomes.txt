@@ -1,0 +1,7 @@
+commit 39bf05a; cargo test --locked --profile mutants -p blacksilk-chain --lib --test=activation --test=actor_equivalence --test=block_rules --test=fork_choice --test=golden --test=manager --test=mempool_conflicts --test=mempool_expiry --test=operator_invalidation --test=revalidation --test=rt_w3_regressions --test=storage_recovery --test=store_format -- --skip restart_rebuilds_the_px_state_exactly
+baseline ok
+caught chain/src/manager/submission.rs:139:63: replace >= with > (1.log)
+missed chain/src/manager/header_sync.rs:19:36: replace >= with > (2.log)
+missed chain/src/manager/header_sync.rs:22:26: replace >= with > (3.log)
+caught chain/src/manager/header_sync.rs:124:34: replace >= with > (4.log)
+done: 4 mutants, 2 missed

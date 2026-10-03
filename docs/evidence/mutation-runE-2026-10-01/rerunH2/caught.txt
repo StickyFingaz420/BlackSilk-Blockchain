@@ -1,0 +1,4 @@
+p2p/src/net/headers.rs:142:46: replace - with / in Inner::request_headers_after
+p2p/src/net/headers.rs:754:26: replace && with || in verify_headers
+p2p/src/net/headers.rs:754:22: replace > with < in verify_headers
+p2p/src/net/headers.rs:785:25: delete ! in note_clock

@@ -1,0 +1,3 @@
+wallet/src/headers.rs:412:33: replace > with >= in first_failure
+wallet/src/wallet/sync.rs:576:16: replace > with >= in Wallet::note_tip_age
+wallet/src/wallet/sync.rs:618:40: replace > with >= in Wallet::check_fresh_tip

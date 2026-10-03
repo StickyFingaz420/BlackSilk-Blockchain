@@ -32,12 +32,18 @@ fn params() -> ChainParams {
 }
 
 async fn node(seed: u8) -> (Network, SocketAddr) {
+    node_with(seed, |_| {}).await
+}
+
+/// [`node`] with its configuration edited.
+async fn node_with(seed: u8, edit: impl FnOnce(&mut NetConfig)) -> (Network, SocketAddr) {
     let mut cfg = NetConfig::new(params().network_id);
     cfg.listen = Some("127.0.0.1:0".parse().unwrap());
     cfg.allow_private = true;
     cfg.max_outbound = 4;
     cfg.tick = Duration::from_millis(50);
     cfg.pow_threads = 1;
+    edit(&mut cfg);
     let p = params();
     let m = ChainManager::open(
         p.clone(),
@@ -301,4 +307,25 @@ async fn relay_does_not_reveal_whether_an_address_was_known() {
             .any(|m| matches!(m, Message::Addr(v) if format!("{v:?}").contains("127.0.0.8"))),
         "a fresh address the node knew was not relayed: {got:?}"
     );
+}
+
+/// An inbound peer's onion listen address is its own only when it arrives
+/// through our hidden service: a loopback connection while no onion
+/// listener is configured and private addresses are not allowed (or the
+/// onion listener). From any other inbound connection it is a third party's
+/// address and is not stored (F32-8; mutation run E: the onion side of the
+/// rule had no test).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_onion_listen_address_is_stored_only_from_our_hidden_service() {
+    let onion =
+        NetAddr::parse("2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion:29334")
+            .unwrap();
+    // Clearnet (`allow_private`: loopback is a local peer, not Tor).
+    let (a, a_addr) = node(20).await;
+    let _p = inbound_from(&a, a_addr, [127, 0, 0, 7], Some(onion.clone())).await;
+    assert_eq!(known(&a), 0, "not the clearnet peer's own address");
+    // Through our hidden service.
+    let (b, b_addr) = node_with(21, |c| c.allow_private = false).await;
+    let _q = inbound_from(&b, b_addr, [127, 0, 0, 1], Some(onion)).await;
+    assert_eq!(known(&b), 1, "the onion peer's own address");
 }

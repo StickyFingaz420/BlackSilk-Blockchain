@@ -1,0 +1,3 @@
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]50[:]9[:] replace ChainManager[:][:]sync[_]step \-[>] bool with false$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]177[:]9[:] replace ChainManager[:][:]drain[_]ready \-[>] bool with false$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]187[:]20[:] delete [!] in ChainManager[:][:]drain[_]ready$

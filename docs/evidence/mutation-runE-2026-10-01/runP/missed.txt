@@ -1,0 +1,23 @@
+px/src/prove.rs:166:59: replace || with && in statement
+px/src/prove.rs:166:29: replace || with && in statement
+px/src/prove.rs:198:26: replace > with >= in over_budget
+px/src/prove.rs:281:45: replace || with && in prove
+px/src/prove.rs:281:30: replace < with == in prove
+px/src/prove.rs:281:30: replace < with <= in prove
+px/src/prove.rs:293:26: replace || with && in prove
+px/src/prove.rs:293:21: replace != with == in prove
+px/src/prove.rs:293:39: replace != with == in prove
+px/src/prove.rs:301:27: replace != with == in prove
+px/src/prove.rs:309:45: replace || with && in prove
+px/src/prove.rs:309:30: replace < with == in prove
+px/src/prove.rs:309:30: replace < with > in prove
+px/src/prove.rs:309:30: replace < with <= in prove
+px/src/prove.rs:309:76: replace != with == in prove
+px/src/prove.rs:335:29: replace || with && in verify
+px/src/prove.rs:335:20: replace > with == in verify
+px/src/prove.rs:335:20: replace > with < in verify
+px/src/prove.rs:335:20: replace > with >= in verify
+px/src/prove.rs:335:44: replace != with == in verify
+px/src/prove.rs:418:5: replace verify_transfer -> Result<(), VerifyError> with Ok(())
+px/src/tree.rs:175:9: replace Tree::leaf -> Option<Digest> with None
+px/src/tree.rs:175:9: replace Tree::leaf -> Option<Digest> with Some(Default::default())

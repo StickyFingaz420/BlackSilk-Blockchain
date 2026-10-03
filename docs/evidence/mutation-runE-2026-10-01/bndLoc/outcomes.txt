@@ -1,0 +1,5 @@
+commit dbc95ab; cargo test --locked --profile mutants -p blacksilk-chain --test manager -- --exact the_locator_has_the_tip_and_nine_predecessors_one_by_one locator_and_headers_after
+baseline ok
+missed chain/src/manager/header_sync.rs:21:36: replace >= with > (1.log)
+caught chain/src/manager/header_sync.rs:24:26: replace >= with > (2.log)
+done: 2 mutants, 1 missed

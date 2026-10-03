@@ -1,0 +1,11 @@
+p2p/src/net/headers.rs:111:9: replace Inner::request_headers with ()
+p2p/src/net/headers.rs:126:9: replace Inner::request_headers_after with ()
+p2p/src/net/headers.rs:129:28: replace match guard p.headers_requested.is_none() with false in Inner::request_headers_after
+p2p/src/net/headers.rs:230:12: delete ! in on_headers
+p2p/src/net/headers.rs:236:35: replace != with == in on_headers
+p2p/src/net/headers.rs:236:66: replace != with == in on_headers
+p2p/src/net/headers.rs:236:81: replace + with - in on_headers
+p2p/src/net/headers.rs:236:81: replace + with * in on_headers
+p2p/src/net/headers.rs:373:41: replace == with != in header_worker
+p2p/src/net/headers.rs:668:21: delete ! in verify_headers
+p2p/src/net/headers.rs:679:17: delete match arm (Ok(_), Some(n)) in verify_headers

@@ -1,0 +1,7 @@
+wallet/src/headers.rs:116:9: replace HeaderCheck<'a>::from_genesis -> Result<Self, String> with Ok(Default::default())
+wallet/src/headers.rs:142:9: replace HeaderCheck<'a>::resume -> Result<Self, String> with Ok(Default::default())
+wallet/src/headers.rs:154:9: replace HeaderCheck<'a>::build -> Result<Self, String> with Ok(Default::default())
+wallet/src/headers.rs:242:9: replace HeaderCheck<'a>::last -> (BlockHeader, Hash) with (Default::default(), Default::default())
+wallet/src/headers.rs:249:9: replace HeaderCheck<'a>::context -> impl Iterator<Item = BlockHeader>+'_ with ::std::iter::once(Default::default())
+wallet/src/wallet/sync.rs:163:83: replace > with < in for_each_header
+wallet/src/wallet/sync.rs:192:5: replace fetch_headers -> Result<Vec<BlockHeader>, WalletError> with Ok(vec![Default::default()])

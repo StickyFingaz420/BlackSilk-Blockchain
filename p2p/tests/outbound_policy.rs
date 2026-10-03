@@ -101,15 +101,26 @@ fn unix_now() -> u64 {
 }
 
 /// A saved address table holding `addrs` (in *new*), all heard from one
-/// source.
+/// source. Loopback addresses heard from one source share one *new* bucket
+/// of 64 slots, and `AddrMan::add` drops a new address whose slot another
+/// holds: with random ports, 8 addresses collide about one time in three, 2
+/// about one time in 64 (RT-MUTE F4, a flake). The table key places them, so
+/// keys from `key` on are tried until every address has its own slot.
 fn table_of(addrs: impl Iterator<Item = SocketAddr>, key: u8) -> AddrMan {
-    let mut table = AddrMan::with_key([key; 32]);
-    table.set_private_groups(true);
+    let addrs: Vec<SocketAddr> = addrs.collect();
     let src = NetAddr::parse("127.0.0.9:1").unwrap();
-    for a in addrs {
-        assert!(table.add(NetAddr::Ip(a), &src, unix_now()), "{a} added");
+    for k in key..=u8::MAX {
+        let mut table = AddrMan::with_key([k; 32]);
+        table.set_private_groups(true);
+        if addrs
+            .iter()
+            .all(|a| table.add(NetAddr::Ip(*a), &src, unix_now()))
+        {
+            assert_eq!(table.len(), (addrs.len(), 0), "(new, tried)");
+            return table;
+        }
     }
-    table
+    panic!("no table key from {key} places {addrs:?} without a collision");
 }
 
 /// The full-relay outbound peers (block-relay-only connections and seed
@@ -528,5 +539,67 @@ async fn feelers_move_an_answering_new_address_to_tried() {
     assert_eq!(now, before, "the outbound peers are unchanged");
     drop(v);
     close.notify_waiters();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Only an outbound connection that completes its handshake marks its
+/// address good (moves it to *tried*): an inbound connection from an address
+/// already in *new* leaves it there, as Bitcoin Core does, so inbound
+/// peers cannot place themselves in *tried* (mutation run E: the `!inbound`
+/// of the rule had no test). The node dials nothing (`connect_only`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_inbound_connection_never_moves_its_address_to_tried() {
+    let sock = tokio::net::TcpSocket::new_v4().unwrap();
+    sock.bind("127.0.0.2:0".parse().unwrap()).unwrap();
+    let from = sock.local_addr().unwrap();
+    let dir = temp_dir("inbound-not-tried");
+    table_of(std::iter::once(from), 9)
+        .save(&dir.join("peers.json"))
+        .unwrap();
+    let mut cfg = config(Some(&dir));
+    cfg.connect_only = true;
+    cfg.feeler_interval = Duration::from_secs(3600);
+    let (v, v_addr) = start(30, cfg).await;
+    wait_until("the table is loaded", 10, || {
+        v.stats().known_addresses == (1, 0)
+    })
+    .await;
+    let s = sock.connect(v_addr).await.unwrap();
+    let nid = params().network_id;
+    let (mut r, mut w) = handshake(s, true, nid, &params().genesis_id(), Duration::from_secs(5))
+        .await
+        .unwrap();
+    let ours = Version {
+        protocol: PROTOCOL_VERSION,
+        network: nid,
+        nonce: rand_nonce(),
+        height: 0,
+        tip: params().genesis_id(),
+        listen: None,
+        relay_txs: true,
+    };
+    w.send(&Message::Version(ours).encode()).await.unwrap();
+    assert!(matches!(
+        Message::decode(&r.recv().await.unwrap()).unwrap(),
+        Message::Version(_)
+    ));
+    w.send(&Message::Verack.encode()).await.unwrap();
+    assert!(matches!(
+        Message::decode(&r.recv().await.unwrap()).unwrap(),
+        Message::Verack
+    ));
+    // Registered before the read loop answers this ping.
+    w.send(&Message::Ping(5).encode()).await.unwrap();
+    loop {
+        if matches!(
+            Message::decode(&r.recv().await.unwrap()).unwrap(),
+            Message::Pong(5)
+        ) {
+            break;
+        }
+    }
+    assert_eq!(v.stats().peers, 1);
+    assert_eq!(v.stats().known_addresses, (1, 0), "still in new");
+    drop((r, w, v));
     let _ = std::fs::remove_dir_all(&dir);
 }

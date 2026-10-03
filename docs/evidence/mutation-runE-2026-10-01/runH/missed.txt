@@ -1,0 +1,56 @@
+p2p/src/net/headers.rs:50:23: replace * with + in Inner::header_queue_room
+p2p/src/net/headers.rs:58:36: replace < with == in Inner::header_queue_room
+p2p/src/net/headers.rs:58:36: replace < with > in Inner::header_queue_room
+p2p/src/net/headers.rs:58:36: replace < with <= in Inner::header_queue_room
+p2p/src/net/headers.rs:129:28: replace match guard p.headers_requested.is_none() with true in Inner::request_headers_after
+p2p/src/net/headers.rs:138:35: replace != with == in Inner::request_headers_after
+p2p/src/net/headers.rs:140:30: replace > with == in Inner::request_headers_after
+p2p/src/net/headers.rs:140:30: replace > with < in Inner::request_headers_after
+p2p/src/net/headers.rs:140:30: replace > with >= in Inner::request_headers_after
+p2p/src/net/headers.rs:142:46: replace - with + in Inner::request_headers_after
+p2p/src/net/headers.rs:142:46: replace - with / in Inner::request_headers_after
+p2p/src/net/headers.rs:164:5: replace in_grace -> bool with true
+p2p/src/net/headers.rs:166:49: replace > with == in in_grace
+p2p/src/net/headers.rs:166:49: replace > with >= in in_grace
+p2p/src/net/headers.rs:175:26: replace && with || in take_grace
+p2p/src/net/headers.rs:180:20: replace >= with < in add_grace
+p2p/src/net/headers.rs:236:51: replace || with && in on_headers
+p2p/src/net/headers.rs:331:32: replace + with - in UpgradeWork::of
+p2p/src/net/headers.rs:347:21: replace - with + in batch_seed
+p2p/src/net/headers.rs:347:21: replace - with / in batch_seed
+p2p/src/net/headers.rs:399:20: replace -= with += in header_worker
+p2p/src/net/headers.rs:399:20: replace -= with /= in header_worker
+p2p/src/net/headers.rs:434:25: delete match arm Ok(HeaderOutcome::Failed(HeaderError::InvalidParent)) in header_worker
+p2p/src/net/headers.rs:439:25: delete match arm Ok(HeaderOutcome::Failed(HeaderError::UnknownUpgrade{..})) in header_worker
+p2p/src/net/headers.rs:428:55: replace match guard batch.solicited with true in header_worker
+p2p/src/net/headers.rs:489:23: replace match guard e.is_panic() with true in header_worker
+p2p/src/net/headers.rs:489:23: replace match guard e.is_panic() with false in header_worker
+p2p/src/net/headers.rs:475:26: replace > with < in header_worker
+p2p/src/net/headers.rs:576:36: replace || with && in precheck
+p2p/src/net/headers.rs:611:8: delete ! in verify_headers
+p2p/src/net/headers.rs:668:14: replace > with == in verify_headers
+p2p/src/net/headers.rs:668:14: replace > with < in verify_headers
+p2p/src/net/headers.rs:668:14: replace > with >= in verify_headers
+p2p/src/net/headers.rs:675:73: replace + with * in verify_headers
+p2p/src/net/headers.rs:729:21: replace += with -= in verify_headers
+p2p/src/net/headers.rs:729:21: replace += with *= in verify_headers
+p2p/src/net/headers.rs:747:36: replace && with || in verify_headers
+p2p/src/net/headers.rs:747:27: replace && with || in verify_headers
+p2p/src/net/headers.rs:747:16: replace && with || in verify_headers
+p2p/src/net/headers.rs:747:12: replace > with == in verify_headers
+p2p/src/net/headers.rs:747:12: replace > with < in verify_headers
+p2p/src/net/headers.rs:747:12: replace > with >= in verify_headers
+p2p/src/net/headers.rs:747:30: delete ! in verify_headers
+p2p/src/net/headers.rs:747:51: replace > with == in verify_headers
+p2p/src/net/headers.rs:747:51: replace > with >= in verify_headers
+p2p/src/net/headers.rs:754:26: replace && with || in verify_headers
+p2p/src/net/headers.rs:754:22: replace > with == in verify_headers
+p2p/src/net/headers.rs:754:22: replace > with < in verify_headers
+p2p/src/net/headers.rs:754:22: replace > with >= in verify_headers
+p2p/src/net/headers.rs:778:5: replace note_clock with ()
+p2p/src/net/headers.rs:784:34: replace && with || in note_clock
+p2p/src/net/headers.rs:784:43: replace == with != in note_clock
+p2p/src/net/headers.rs:784:39: replace + with * in note_clock
+p2p/src/net/headers.rs:785:22: replace && with || in note_clock
+p2p/src/net/headers.rs:785:16: delete ! in note_clock
+p2p/src/net/headers.rs:785:25: delete ! in note_clock

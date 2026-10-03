@@ -27,15 +27,20 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-/// Zero hash: meets any difficulty. Counts calls to show replay skips PoW.
+/// Zero hash: meets any difficulty. Counts calls to show replay skips PoW,
+/// and records the hot RandomX keys it is given.
 #[derive(Default)]
 struct ZeroPow {
     calls: AtomicUsize,
+    hot: std::sync::Mutex<Vec<Vec<Hash>>>,
 }
 impl PowFunction for ZeroPow {
     fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
         self.calls.fetch_add(1, Ordering::SeqCst);
         [0; 32]
+    }
+    fn set_hot_seeds(&self, seeds: &[Hash]) {
+        self.hot.lock().unwrap().push(seeds.to_vec());
     }
 }
 
@@ -423,6 +428,55 @@ fn mined_source(blocks: u64, seed: u64) -> (ChainManager, Vec<Block>) {
     (src, bs)
 }
 
+/// The test-only step delay (`set_step_delay_for_tests`) applies to exactly
+/// the bounded validation calls that have blocks to connect (mutation run
+/// E): not to an unbounded submission, not to a bounded call with nothing
+/// to do, and to every drain step, the first (a released block queued, no
+/// drain in progress yet) included. The bounds are one-sided where timing
+/// allows: a delayed call takes at least the delay; an undelayed one takes
+/// far less than it.
+#[test]
+fn the_test_step_delay_applies_to_drain_steps_with_blocks_to_connect() {
+    use std::time::{Duration, Instant};
+    const DELAY: Duration = Duration::from_secs(2);
+    let (_, blocks) = mined_source(8, 26);
+    let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header).collect();
+    let now = headers.last().unwrap().timestamp;
+    let mut m = open(Box::<MemoryStore>::default(), Arc::default());
+    m.accept_headers(&headers, now).unwrap();
+    m.set_step_delay_for_tests(Some(DELAY));
+    // Bodies that wait for their parent's: nothing to connect yet.
+    for b in blocks[1..4].iter().rev() {
+        let t = Instant::now();
+        m.submit_block_bounded(b.clone(), now, 1).unwrap();
+        assert!(t.elapsed() < DELAY, "no block to connect: no delay");
+    }
+    let t = Instant::now();
+    assert!(m.sync_step(1), "nothing pending");
+    assert!(t.elapsed() < DELAY, "an idle step: no delay");
+    // The gap-filling body: its own block queued, delayed.
+    let t = Instant::now();
+    m.submit_block_bounded(blocks[0].clone(), now, 1).unwrap();
+    assert!(t.elapsed() >= DELAY, "the first drain step is delayed");
+    let mut steps = 0;
+    loop {
+        let t = Instant::now();
+        let done = m.sync_step(1);
+        assert!(t.elapsed() >= DELAY, "every drain step is delayed");
+        steps += 1;
+        assert!(steps < 10, "the drain never ends");
+        if done {
+            break;
+        }
+    }
+    assert_eq!(m.height(), 4);
+    // An unbounded submission is never delayed, even with a block to connect.
+    let t = Instant::now();
+    m.submit_block(blocks[4].clone(), now).unwrap();
+    assert!(t.elapsed() < DELAY, "unbounded: no delay");
+    assert_eq!(m.height(), 5);
+}
+
 #[test]
 fn headers_without_bodies_do_not_move_the_state() {
     let (_, blocks) = mined_source(30, 20);
@@ -556,6 +610,25 @@ fn locator_and_headers_after() {
     assert!(loc.len() <= 64);
     // Dense near the tip, then sparse.
     assert_eq!(loc[1], blocks[98].id(params().network_id));
+    // Mutation run E: the shape of the locator, by height. Strictly
+    // decreasing (no id twice, genesis once and last), consecutive for the
+    // tip and at least 9 predecessors, then each gap twice the one before,
+    // except the last, which stops at genesis.
+    let heights: Vec<u64> = loc
+        .iter()
+        .map(|id| src.header(id).expect("on the best chain").height)
+        .collect();
+    assert!(heights.windows(2).all(|w| w[0] > w[1]), "{heights:?}");
+    assert_eq!(*heights.last().unwrap(), 0);
+    let gaps: Vec<u64> = heights.windows(2).map(|w| w[0] - w[1]).collect();
+    let dense = gaps.iter().take_while(|&&g| g == 1).count();
+    assert!(dense >= 9, "{heights:?}");
+    let sparse = &gaps[dense..];
+    assert_eq!(sparse[0], 2, "{heights:?}");
+    for w in sparse.windows(2) {
+        let last = std::ptr::eq(&w[1], sparse.last().unwrap());
+        assert!(w[1] == 2 * w[0] || (last && w[1] < 2 * w[0]), "{heights:?}");
+    }
     // A peer that knows up to block 40 gets 41.. from us.
     let peer_locator = vec![blocks[39].id(params().network_id), params().genesis_id()];
     let hs = src.headers_after(&peer_locator, &[0; 32], 2000);
@@ -566,6 +639,37 @@ fn locator_and_headers_after() {
     assert_eq!(src.headers_after(&peer_locator, &[0; 32], 5).len(), 5);
     // Unknown locator: from genesis.
     assert_eq!(src.headers_after(&[[9; 32]], &[0; 32], 2000).len(), 100);
+}
+
+/// docs/p2p.md §6: the locator holds the tip, then its 9 predecessors one by
+/// one, then ids whose height gaps double (2, 4, 8, ...) back to genesis,
+/// which ends it. On a 100-block chain: heights 100 to 91, then 89, 85, 77,
+/// 61, 29 and 0. Run E found the docs saying 10 predecessors; the Lead's
+/// decision (RT-MUTE) is that the docs follow the code. Bitcoin Core's
+/// locator has 11 consecutive ids (the tip and 10 predecessors); the count is
+/// not consensus-relevant: any decreasing locator ending at genesis finds the
+/// fork with every peer.
+#[test]
+fn the_locator_has_the_tip_and_nine_predecessors_one_by_one() {
+    let (src, _) = mined_source(100, 22);
+    let heights: Vec<u64> = src
+        .locator()
+        .iter()
+        .map(|id| src.header(id).expect("on the best chain").height)
+        .collect();
+    assert_eq!(
+        heights,
+        [100, 99, 98, 97, 96, 95, 94, 93, 92, 91, 89, 85, 77, 61, 29, 0]
+    );
+    // The shape, stated: 9 gaps of 1, then each gap twice the one before,
+    // the last one cut at genesis.
+    let gaps: Vec<u64> = heights.windows(2).map(|w| w[0] - w[1]).collect();
+    let dense = gaps.iter().take_while(|&&g| g == 1).count();
+    assert_eq!(dense, 9);
+    for (k, g) in gaps[dense..gaps.len() - 1].iter().enumerate() {
+        assert_eq!(*g, 2 << k);
+    }
+    assert!(*gaps.last().unwrap() <= 2 << (gaps.len() - 1 - dense));
 }
 
 #[test]
@@ -590,11 +694,61 @@ fn pow_jobs_use_seeds_from_the_batch() {
         jobs.iter().any(|(s, _)| *s != params().genesis_id()),
         "a key change is covered"
     );
+    // A batch whose first header is the key block (height 2048) itself:
+    // from height 2113 on, the key is that first header, taken from the
+    // batch (mutation run E: the `sh >= base` edge).
+    let mut part = open(Box::<MemoryStore>::default(), Arc::default());
+    let now = headers.last().unwrap().timestamp;
+    assert_eq!(part.accept_headers(&headers[..2047], now), Ok(2047));
+    let tail = &headers[2047..];
+    assert_eq!(tail[0].height, 2048);
+    let (_, jobs) = part.pow_jobs(tail).expect("extends block 2047");
+    let key = src.headers().main_id_at(2048).unwrap();
+    for (h, (seed, _)) in tail.iter().zip(&jobs) {
+        let want = src
+            .headers()
+            .main_id_at(seed_height(h.height, 2048, 64))
+            .unwrap();
+        assert_eq!(*seed, want, "height {}", h.height);
+    }
+    assert_eq!(jobs.last().unwrap().0, key, "the batch's own first header");
     // Not a chain / unknown parent: no jobs.
     assert!(dst.pow_jobs(&headers[1..]).is_none());
     let mut broken = headers[..3].to_vec();
     broken.swap(1, 2);
     assert!(dst.pow_jobs(&broken).is_none());
+    // Either link alone breaks the chain (mutation run E): the right parent
+    // at a wrong height, or the right height on another parent.
+    let mut skips = headers[..2].to_vec();
+    skips[1].height += 1;
+    assert!(dst.pow_jobs(&skips).is_none(), "height gap");
+    let mut orphan = headers[..3].to_vec();
+    orphan[2].prev_id = [7; 32];
+    assert!(dst.pow_jobs(&orphan).is_none(), "another parent");
+    assert!(dst.pow_jobs(&headers[..3]).is_some());
+}
+
+/// The hot RandomX keys of the best header chain reach the PoW layer when
+/// the manager opens and whenever they change, and only then (mutation run
+/// E: `refresh_hot_seeds`): the genesis key, then, from the height where the
+/// next key comes within the pin window, both keys.
+#[test]
+fn hot_randomx_keys_are_passed_on_when_they_change() {
+    let pow = Arc::new(ZeroPow::default());
+    let mut m = open(Box::<MemoryStore>::default(), pow.clone());
+    let genesis = params().genesis_id();
+    assert_eq!(*pow.hot.lock().unwrap(), vec![vec![genesis]], "at open");
+    let mut miner = Miner::new(25);
+    for _ in 0..2100 {
+        miner.mine_tip(&mut m);
+    }
+    let hot = pow.hot.lock().unwrap().clone();
+    let key = m.headers().main_id_at(2048).unwrap();
+    assert_eq!(hot, vec![vec![genesis], vec![genesis, key]], "changes only");
+    assert_eq!(
+        hot.last().unwrap(),
+        &blacksilk_chain::sync_policy::hot_seeds(m.headers())
+    );
 }
 
 /// A batch whose first header does not sit at its parent's height + 1 gets no

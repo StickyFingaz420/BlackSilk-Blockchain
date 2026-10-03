@@ -1,0 +1,5 @@
+px/src/prove.rs:91:5: delete field max_instances from struct blacksilk_zk::DecodeLimits expression
+px/src/prove.rs:166:59: replace || with && in statement
+px/src/prove.rs:166:29: replace || with && in statement
+px/src/prove.rs:293:26: replace || with && in prove
+px/src/prove.rs:309:45: replace || with && in prove
