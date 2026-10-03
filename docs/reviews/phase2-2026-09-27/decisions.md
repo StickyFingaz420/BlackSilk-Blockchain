@@ -1213,3 +1213,21 @@
   - Unicode whitespace in the password check;
   - the miner's skip flag is reported loudly.
   - The originated.json owner-only writer goes to TM2-P2P.
+
+## Run E (Lead, 2026-10-03)
+- **W4-MUTE: no real bug.** Every survivor was killed or exempted (E29–E44), and the boundary, hand and release-arithmetic passes are complete.
+  - Gaps closed with tests:
+    - the CLSAG message's coverage of the range proof;
+    - size caps at their exact edges;
+    - the per-IP limit at registration;
+    - the wallet's header-link check;
+    - the idle timeout.
+  - RT-MUTE runs before the merge.
+- **Locator: decided to fix the DOCS.** The code's shape is the tip plus 9 one by one; docs/p2p.md §6 says 10. There is no behaviour change before the freeze. The ignored test becomes a test of the actual shape, so the boundary mutant is killed. RT-MUTE checks the protocol intent first.
+- **E44:** the two unnamed maintenance delays (the first address save at 5 s and the outbound round at 2 s) become named constants, pinned by tests.
+- **CLSAG / PX / tx-id message coverage:** RT-MUTE checks every binding message field for test coverage.
+- **Remaining frozen-scope work:**
+  - the AIR gate (W4-MUTAIR, in progress);
+  - run F: replay.rs, store.rs, zk verify/config/params, randomx/, the fingerprint modules, supply-audit;
+  - the golden PX fixtures;
+  - the PX R canonical-point rule.
