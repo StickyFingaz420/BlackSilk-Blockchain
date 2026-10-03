@@ -144,7 +144,9 @@ specification's; the notable cases are fixed here.
 - reading past the end of the input stream;
 - an invalid syscall.
 
-A program therefore either halts cleanly (§5) or has no proof.
+A program therefore either halts cleanly (§5) or has no proof. One exception: the
+end of the input stream is an interpreter trap only. Input words are private witness,
+and the circuit never sees the stream, so it does not count READs (§5).
 
 ---
 
@@ -156,14 +158,25 @@ is in `x10`.
 | a7 | Name | Effect |
 |---|---|---|
 | 0 | `HALT` | Stops. `a0` is the public **exit code**. |
-| 1 | `READ` | `a0 ←` the next private input word. Traps at the end of the input stream. |
+| 1 | `READ` | `a0 ←` the next private input word (witness). The interpreter traps at the end of the input stream; the circuit does not see the stream (§5, limits). |
 | 2 | `WRITE` | Appends `a0` to the public output stream. |
 | 3 | `POSEIDON2` | `a0` is a 4-aligned pointer to 16 words holding a BabyBear state. The Poseidon2 permutation (BabyBear, width 16, standard constants) is applied in place. Each word must be a canonical field element (`< p`), **else trap**. |
 
 **Limits:**
 - `MAX_CYCLES = 2^21` per execution; a syscall counts as one cycle. With this bound
-  every timestamp is `< 2^24` (§6.3).
-- input ≤ 2^16 words; output ≤ 2^12 words.
+  every timestamp is `< 2^24` (§6.3). The circuit enforces it through the CPU table's
+  height limit (§7).
+- **Input ≤ 2^16 words and output ≤ 2^12 words are interpreter and honest-prover
+  limits, not constraints** (W4-MUTAIR, R4-03, internal review F1):
+  - the circuit bounds the number of READs only by the CPU table's height; their
+    values are witness;
+  - it binds the WRITEs exactly to the claimed output: the output counter equals the
+    claimed length `N_OUT` on the `HALT` row, and the `OUTPUT` table consumes each
+    claimed word exactly once;
+  - a consumer that needs a bound takes it from its statement. PX does: the kernel's
+    fixed output layout and budget, and each call's registered `out_words` (at most
+    `MAX_FN_OUTPUT_WORDS`; contracts.md §5). `tx/tests/px_io_limits.rs` checks that
+    every PX statement stays within both interpreter limits.
 
 ---
 
@@ -364,8 +377,8 @@ the constants of `zk/src/params.rs`; they are not copied here):
 **Height limits:**
 - minimum, every table: 2^8 (`MIN_LOG_HEIGHT`, §6.1a); `BLIND` is exactly 2^8;
 - `BYTE`: 2^16;
-- `CPU`: 2^21 (`MAX_CYCLES`, so the circuit accepts exactly the executions the
-  interpreter allows);
+- `CPU`: 2^21 (`MAX_CYCLES`, so the circuit accepts no execution longer than the
+  interpreter allows; the input and output length limits are not constraints, §5);
 - every other table: 2^22.
 
 ---
@@ -425,7 +438,8 @@ power-of-two heights sized to the execution, and do leak coarse timing.
    - memory bombs (bounds);
    - misaligned and out-of-range accesses;
    - stores into code;
-   - invalid syscalls and input exhaustion.
+   - invalid syscalls and input exhaustion (an interpreter trap; for the circuit,
+     READ values are witness and only the CPU height bounds their number, §5).
 5. **Invalid proofs:**
    - every single-element mutation of a proof;
    - proofs for another program id, output or binding;

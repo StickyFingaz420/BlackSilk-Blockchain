@@ -13,7 +13,7 @@ trace showed a false execution that the constraints accept:
 - every mutant of the constraint files that survived the first census is either killed
   by a new test or recorded as equivalent, with an argument (E51–E61 in
   [mutation-exemptions.md](../../reviews/mutation-exemptions.md));
-- each of the 20 negative-trace tests (`zkvm/tests/air_tamper.rs`, § Negative traces)
+- each negative-trace test (`zkvm/tests/air_tamper.rs`, § Negative traces and § Follow-up)
   is rejected, and each only by the single rule it targets;
 - the full cell census changed 3,858,903 cells across every row of every table. Every
   change is rejected, except cells listed as free by design.
@@ -33,7 +33,16 @@ What the census **did** find were gaps in the tests, all now closed (§ Survivor
 
 **One specification gap (Informational; § Spec-to-constraint table, note 2).** The input
 and output length limits of zkvm.md §5 are enforced by the interpreter, not by the
-constraints.
+constraints. It was known: R4-03 (docs/reviews/full-review-2026-09-27/R4-zk.md §3.4) and
+F1 of the internal review log (`MAX_OUTPUT_WORDS` is not enforced by the verifier).
+**Resolved in the docs** (Lead decision after RT-MUTAIR, option iii): zkvm.md §4, §5,
+§7 and §9 now state the limits as interpreter and honest-prover limits, and
+`tx/tests/px_io_limits.rs` (RT-MUTAIR) pins that every PX statement stays within them.
+
+**Red-team follow-up (RT-MUTAIR; § Follow-up).** The red team found no soundness issue
+and confirmed the exemptions, except two now killed (E54, and one mutant of E60). Its
+additional lying generators and the missing ones (syscalls, links) are all rejected,
+each only by its targeted rule.
 
 ## Scope
 
@@ -190,7 +199,7 @@ hangs.
 | alu_mul.rs 109:29, 110:29; alu_shift.rs 67:29 | equivalent slice ends | E51 |
 | cpu.rs 108:31 | `f::FLAGS = 0` | E52 |
 | memory.rs 105:24 | `KB + 2 = KB · 2` | E53 |
-| poseidon.rs 252:5 (×2) | dead function | E54 |
+| poseidon.rs 252:5 (×2) | dead function | first E54; killed after RT-MUTAIR by `the_poseidon2_sub_air_width_is_its_column_count` (E54 withdrawn) |
 | util.rs 76:29; hand H02 | relabelings of the register base | E55 |
 | util.rs 176:18 (boundary pass) | an assertion never reached at 8 | E56 |
 | hand H03 (`BLIND_VALUES = 7`) | no non-proving test of the blinding span | killed: `a_blinding_message_spans_the_extension_field` (blinding.rs) |
@@ -201,7 +210,8 @@ hangs.
 | check.rs 241:16, 241:21, 260:33, 262:43 (×2), 325:9, 337:50, 342:50, 362:66, 365:66, 370:73 | `MutationChecker` was never asked about a change it must NOT catch | killed: `the_mutation_checker_agrees_with_the_full_checker` |
 | check.rs 98:9, 108:9, 110:75 (×2), 206:43 (×2), 209:42, 350:62 (×2), 353:62 (×2), 356:38, 415:46 `-`; B2 528:9, 540:9 | local and exclusive interactions, which no table uses | E58 |
 | check.rs 370:68 | the baseline is balanced | E59 |
-| check.rs 261 (×3) | the last-row flag of single-cell probes | E60 |
+| check.rs 261:32 | the last-row flag set on every other row | first E60; killed by RT-MUTAIR's zero-delta probes (`the_mutation_checker_agrees_with_the_full_checker`) |
+| check.rs 261:37 (×2) | the last-row flag never set | E60 |
 | trace.rs 107:9, 121:9, 357:69 (×2), 485:49, 717:49 (×2), 734:23 (×2) | budgets, the fixed shape and `usage` were judged only by proving and px tests | killed: `a_budgeted_statement_takes_its_fixed_shape` |
 | trace.rs 436:5 | `blinded` had no caller | killed: `hand_assembled_tables_are_blinded` |
 | trace.rs 612:34 | the generator's cross-check of the witness was untested | killed: `the_generator_refuses_a_diverging_witness` |
@@ -344,7 +354,7 @@ enforce it.
 | R-type and I-type results (`ADD` … `AND`, `MUL*`) | cpu.rs:246-255 (ALU lookup `(op, a, b or imm, c)`); `ALU_ADD`, `ALU_BIT` (through the byte table), `ALU_LT`, `ALU_MUL`, `ALU_SHIFT` (products through `ALU_MUL`) | `a_lying_generator_cannot_change_an_alu_result`; `a_false_alu_claim_leaves_the_bus_unbalanced` (alu.rs); the ALU forgeries of § Negative traces |
 | Shifts use the low 5 bits of the amount (§4) | alu_shift.rs:56-66 | alu.rs edge values (amounts 31, 33) |
 | `LUI`: `rd ← imm`; `AUIPC`: `rd ← pc + imm` | cpu.rs:256-264 | `every_instruction_class_satisfies_the_constraints` (vm.rs) |
-| No division (ZK-3a) | rejected at load; the program table holds only valid instructions (program.rs:141-152) | `invalid_instructions_are_rejected_at_load_time` (interpreter.rs) |
+| No division (ZK-3a) | rejected at load; the program table holds only valid instructions (program.rs:141-152) | `hardware_division_is_not_part_of_bvm1` (interpreter.rs); `unsupported_encodings_are_rejected` (isa.rs) |
 | `FENCE` is a no-op | class flag only: no value (cpu.rs:233-236), no access, `next_pc = pc + 4` | `every_instruction_class_satisfies_the_constraints` (vm.rs) |
 
 ### System calls (§5)
@@ -357,7 +367,9 @@ enforce it.
 | WRITE appends `a0` to the public output, which has exactly the claimed length | cpu.rs:156, 162, 172, 468-470; memory.rs:62-79 (`OUTPUT` consumes each claimed word once) | `wrong_public_statement_is_caught_by_the_oracle` (vm.rs) |
 | POSEIDON2 permutes the 16-word buffer at a 4-aligned `a0` in writable memory, in place | cpu.rs:441-464 (`a0 ≥ CODE_END`, `a0 < 2^28 − 63`, syscall lookup); poseidon.rs:100-161 | `a_poseidon2_row_cannot_claim_a_different_digest` (vm.rs); `a_lying_generator_cannot_change_a_poseidon2_output` |
 | Each buffer word is a canonical field element (`< p`), else trap | poseidon.rs:84-92, 134-136, 154-158 | `a_digest_word_has_a_single_byte_encoding` |
-| Input ≤ `2^16` words, output ≤ `2^12` words (§5) | **not a constraint** | note 2 (**gap**) |
+| Input ≤ `2^16` words, output ≤ `2^12` words (§5) | **not a constraint**: READs are bounded by the CPU height only; WRITEs are bound exactly to the claimed output (cpu.rs:172, memory.rs:62-79) | note 2; `px_io_limits.rs` (tx) |
+| READ, WRITE, POSEIDON2 and HALT are what a7 selects | cpu.rs:429-437 | `a_lying_generator_cannot_change_a_syscall` |
+| `JAL`/`JALR` link `= pc + 4` | cpu.rs:265-270 | `a_lying_generator_cannot_change_a_link` |
 
 ### Byte-level facts every rule above relies on
 
@@ -382,9 +394,11 @@ enforce it.
 - **What it proves.** Such a statement is still a true statement about a halting RV32IM
   execution: the input is private, and the output is public and fully constrained.
 - **The spec.** zkvm.md says such an execution "traps"; the circuit accepts it.
-- **Open for the Lead.** Whether any consumer relies on the limits for a public
-  statement (PX statements fix their output layout). Changing the AIR here is a
-  consensus change; nothing was changed.
+- **Known and decided.** R4-03 and internal-review F1 recorded it. The Lead chose
+  option iii: correct the documents (zkvm.md §4, §5, §7, §9), keep the circuit, and
+  pin the consumers' bounds (`tx/tests/px_io_limits.rs`). PX takes its bounds from the
+  statement: the kernel's fixed output layout and budget, and each call's `out_words`
+  (at most `MAX_FN_OUTPUT_WORDS`).
 
 ## Commands
 
@@ -425,8 +439,40 @@ Run from the scratch directory (`C:/bszkeval/w4-mutair-scratch`):
 - **The oracle.** It is the constraint checker. That the prover and verifier evaluate
   the same constraints rests on the shared `eval` code, and on the existing proving
   tests (not run here).
+- **Transaction binding.** The CPU's `pv::BINDING` words (the 32-byte transaction
+  binding) are absorbed into the Fiat–Shamir transcript only; no constraint reads them
+  (cpu.rs `pv`). The checker cannot judge that binding; it rests on the transcript and
+  on the proving tests that change the binding.
+- **Periodic columns.** The public tables are periodic columns of period = the table
+  height. Their soundness rests on the periodic-repetition argument of R4-05
+  (docs/reviews/full-review-2026-09-27/R4-zk.md), not on anything the checker sees.
 - **Count weights.** `Count::bounded` weights (the LogUp height check) are not modelled
   by the checker. They are pinned by `the_logup_multiplicity_bound_holds_for_the_largest_statement`
   (multi.rs).
 - **One machine.** The runs used one machine, under load from run E. No result depends
   on timing, except the hang classification.
+
+## Follow-up (Lead decision after RT-MUTAIR)
+
+- **Merged** local `rebuild/core`. Run E holds E29–E44 (E40 withdrawn and reserved);
+  this census's exemptions are E51–E61 (first numbered E40–E50).
+- **RT-MUTAIR's tests** (cherry-picked from `rt-mutair` `52281f3`):
+  - air_tamper.rs: R-type lies on six operand pairs, I-type lies, store-width lies,
+    load lies at offsets 1–3, misaligned accesses in place of narrower aligned ones, a
+    write to x0;
+  - air_cells.rs: zero deltas on rows 0, 1, `h/2` and `h − 1` of every table are never
+    caught (kills check.rs 261:32);
+  - tx/tests/px_io_limits.rs: every PX statement stays within the zkVM stream limits.
+- **New tests:**
+  - `the_poseidon2_sub_air_width_is_its_column_count` kills poseidon.rs 252:5 (×2);
+    E54 is withdrawn (`hand3`: both mutants, applied by hand with the final tests,
+    caught by that test);
+  - `a_lying_generator_cannot_change_a_syscall`: WRITE executed as READ, READ as
+    POSEIDON2, POSEIDON2 as WRITE, and a HALT run on as a WRITE. The trace is the
+    generator's for a program whose a7 holds the lie, with that data word set back to
+    the statement's. Each is rejected only by the ECALL row's syscall-number rule;
+  - `a_lying_generator_cannot_change_a_link`: JAL and JALR calls whose link is
+    `pc + 8`, the return following it past a no-op. Each is rejected only by the ALU
+    bus (no ALU row provides `pc + 8` for `ADD(pc, 4)`).
+- **Totals after the follow-up:** every survivor of runs A and B is killed or exempted
+  as E51–E53 and E55–E61; E60 now covers 261:37 only.

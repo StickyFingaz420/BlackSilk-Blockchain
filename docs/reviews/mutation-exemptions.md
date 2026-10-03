@@ -1079,15 +1079,12 @@ Decision: W4-MUTAIR, for the Lead's review.
 
 **Argument.** `KB = 2`, and `2 + 2 = 2 · 2`: the same column.
 
-## E54: `poseidon::p2_width`, a function nothing calls (zkvm/src/air/poseidon.rs)
+## E54: withdrawn (killed)
 
-Decision: W4-MUTAIR, for the Lead's review.
-
-**Mutants covered:** poseidon.rs 252:5 `replace p2_width -> usize with 0` and `with 1`.
-
-**Argument.** No crate calls `p2_width` (`grep -rn p2_width` finds only its
-definition); the table's widths come from `P2_COLS` and `WIDTH`. Removing it changes
-no constraint but edits an AIR file; that is left to the next AIR revision.
+`poseidon::p2_width` (zkvm/src/air/poseidon.rs 252:5, `replace p2_width -> usize with
+0` and `with 1`) was first exempted here as dead code. Decision RT-MUTAIR: it is now
+tested (`the_poseidon2_sub_air_width_is_its_column_count`, zkvm/tests/air_tamper.rs:
+`p2_width() = P2_COLS`), which kills both mutants. The number stays reserved.
 
 ## E55: other register bases (zkvm/src/air/util.rs)
 
@@ -1160,23 +1157,26 @@ Decision: W4-MUTAIR (run B), for the Lead's review.
 **Argument.** `MutationChecker::new` asserts the baseline valid, so every stored sum
 `buses[k]` is 0, and `0 + d` and `0 − d` are zero together.
 
-## E60: the last-row flag of `MutationChecker` (zkvm/src/air/check.rs)
+## E60: the last-row flag of `MutationChecker` when it is never set (zkvm/src/air/check.rs)
 
-Decision: W4-MUTAIR (run B), for the Lead's review.
+Decision: W4-MUTAIR (run B), narrowed by decision RT-MUTAIR.
 
 **Code.** `eval_row`: `last: Val::from_bool(r == h - 1)`, used only by
 `MutationChecker`, whose callers change one cell.
 
-**Mutants covered:** check.rs 261:32 `replace == with !=`, 261:37 `replace - with +`,
-`with /`.
+**Mutants covered:** check.rs 261:37 `replace - with +` and `with /` (the flag is never
+set: `r == h + 1` and `r == h` hold on no row). The third mutant, 261:32 `replace ==
+with !=` (the flag set on every other row), is killed by the red team's zero-delta
+probes on rows 0, 1, `h/2` and `h − 1` of every table
+(`the_mutation_checker_agrees_with_the_full_checker`).
 
 **Argument.** The only last-row constraint of any table is the CPU's
 `real · (1 − sh) = 0` (cpu.rs:167). A single-cell change that breaks it on a valid
 trace's last row also breaks a rule the mutants leave intact: setting `real` to 1 on a
 padding row looks up an all-zero instruction that the program table never provides;
 changing `sh` on a halting row breaks `sh + srd + swr + sp2 = ecall`; changing `real`
-on a halting row breaks the padding rows' zero fields. `the_mutation_checker_agrees_with_the_full_checker`
-checks the first-row and transition flags, which the probes do observe.
+on a halting row breaks the padding rows' zero fields. So a checker that never applies
+the last-row rule answers every single-cell probe the same way.
 
 ## E61: rejection sampling of blinding values (zkvm/src/air/trace.rs)
 
