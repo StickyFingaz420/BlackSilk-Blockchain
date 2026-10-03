@@ -641,22 +641,35 @@ fn locator_and_headers_after() {
     assert_eq!(src.headers_after(&[[9; 32]], &[0; 32], 2000).len(), 100);
 }
 
-/// docs/p2p.md §6: "the tip, then 10 predecessors one by one, then
-/// exponentially sparser ones". The locator has the tip and 9 predecessors
-/// one by one (heights 100 to 91 of a 100-block chain, then 89, 85, 77, 61,
-/// 29, 0). Found by mutation run E; which one changes is the Lead's call: a
-/// sync-efficiency detail, not a consensus rule (any locator ending at the
-/// genesis finds the fork).
+/// docs/p2p.md §6: the locator holds the tip, then its 9 predecessors one by
+/// one, then ids whose height gaps double (2, 4, 8, ...) back to genesis,
+/// which ends it. On a 100-block chain: heights 100 to 91, then 89, 85, 77,
+/// 61, 29 and 0. Run E found the docs saying 10 predecessors; the Lead's
+/// decision (RT-MUTE) is that the docs follow the code. Bitcoin Core's
+/// locator has 11 consecutive ids (the tip and 10 predecessors); the count is
+/// not consensus-relevant: any decreasing locator ending at genesis finds the
+/// fork with every peer.
 #[test]
-#[ignore = "docs/p2p.md says 10 predecessors one by one; the locator has 9 (run E finding, for the Lead)"]
-fn the_locator_has_the_tip_and_ten_predecessors_one_by_one() {
+fn the_locator_has_the_tip_and_nine_predecessors_one_by_one() {
     let (src, _) = mined_source(100, 22);
     let heights: Vec<u64> = src
         .locator()
         .iter()
         .map(|id| src.header(id).expect("on the best chain").height)
         .collect();
-    assert_eq!(heights[..11], [100, 99, 98, 97, 96, 95, 94, 93, 92, 91, 90]);
+    assert_eq!(
+        heights,
+        [100, 99, 98, 97, 96, 95, 94, 93, 92, 91, 89, 85, 77, 61, 29, 0]
+    );
+    // The shape, stated: 9 gaps of 1, then each gap twice the one before,
+    // the last one cut at genesis.
+    let gaps: Vec<u64> = heights.windows(2).map(|w| w[0] - w[1]).collect();
+    let dense = gaps.iter().take_while(|&&g| g == 1).count();
+    assert_eq!(dense, 9);
+    for (k, g) in gaps[dense..gaps.len() - 1].iter().enumerate() {
+        assert_eq!(*g, 2 << k);
+    }
+    assert!(*gaps.last().unwrap() <= 2 << (gaps.len() - 1 - dense));
 }
 
 #[test]

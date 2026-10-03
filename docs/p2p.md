@@ -321,8 +321,14 @@ is a violation (100 points). The only exception is `Version`'s extension area (Â
    exceeds our best header height, **or** its `tip` is not one we can place on our best
    header chain from the published snapshot (our best header, our connected tip or a
    locator entry; genesis is always one). Address fetches are never asked.
-   - The locator holds ids of our best header chain: the tip, then 10 predecessors one
-     by one, then exponentially sparser ones back to genesis (at most 64).
+   - The locator holds ids of our best header chain: the tip, then its 9 predecessors
+     one by one, then ids whose height gaps double (2, 4, 8, ...) back to genesis, which
+     always ends it (at most 64; `ChainManager::locator`,
+     `the_locator_has_the_tip_and_nine_predecessors_one_by_one`). Bitcoin Core's locator
+     has 11 consecutive ids (the tip and 10 predecessors); the count is not
+     consensus-relevant: a responder takes the first id it finds on its best chain, so
+     any decreasing locator that ends at genesis interoperates. (Before 2026-10-03 this
+     text said 10 predecessors; the code had 9 since it was written, mutation run E.)
    - **Why the tip, not only the height (W4-SYNC, RT-LAB F1).** Fork choice is by work,
      not height. Before 2026-09-30 only a greater height triggered the request, so two
      nodes meeting on branches of **equal height** (a healed partition) asked each other
