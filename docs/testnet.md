@@ -453,10 +453,9 @@ write in progress):
 **Permissions.** On Linux and macOS the node creates the data directory, and any
 missing parent, owner-only (0700), and its files owner-only (0600), whatever the umask:
 `blocks.dat` (and a `blocks.dat.damaged-<time>`), `LOCK`, `rpc.cookie`, `peers.json`,
-`anchors.json` and `bans.json`. **Exception:** `originated.json` is still written with
-the process umask while the node runs (its writer is not changed yet, docs/STATUS.md);
-the directory's 0700 keeps other local users out of it, and the next start makes it
-0600. At every start the node tightens a data directory and node files that group or
+`anchors.json`, `bans.json` and `originated.json` (written through
+`private_file::write_atomic` since `06663f0`; its content is still a plaintext list,
+above). At every start the node tightens a data directory and node files that group or
 other users can access (left by an older version under umask 022, or by a copy),
 logging `data directory permissions tightened to owner-only: … (was 644)`. It changes
 only its own files (the names in the table above), and the directory itself only when
@@ -1259,9 +1258,11 @@ origin-privacy figure may be derived from trial data or claimed from it.
   origin is named first about 3.6 times as often in a simulation, dossier 33 §3.4).
   Padding does not remove the PX-versus-v1 distinction; smaller proofs would (dossier
   33 §3.7, docs/reviews/phase2-2026-09-27/research/33-dandelion-network-privacy.md).
-- **Origin against spy nodes.** Not tested: there is no privacy regression suite yet
-  ([STATUS.md](STATUS.md)), and a trial of seven devices has too few nodes for any
-  anonymity figure. The trial makes no origin-privacy claim.
+- **Origin against spy nodes.** Not measured. The privacy regression suite
+  (`p2p/tests/privacy.rs`, [p2p.md](p2p.md) §8.2) tests individual relay properties,
+  and two of them are still open (the slow-lane timing oracle and the stem black hole,
+  [STATUS.md](STATUS.md)); it gives no anonymity figure, and a trial of seven devices
+  has too few nodes for one. The trial makes no origin-privacy claim.
 - **Security:** the trial shows operation, not security. The security assumptions are
   listed in docs/reviews/assumptions.md; the zero-knowledge claim is statistical and
   conditional, and its remaining assumptions are in docs/reviews/zk-coverage.md.

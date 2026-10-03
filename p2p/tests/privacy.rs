@@ -8,9 +8,10 @@
 //! comes from. Tests marked `#[ignore = "open: ..."]` describe a property the
 //! code does NOT have yet: they fail when run with `--ignored`, which shows
 //! that they detect the leak, and they are un-ignored by the change that
-//! fixes it. Everything else is deterministic: no assertion depends on
-//! timing except in those ignored oracle tests, and every wait is a
-//! generous precondition (30 s), not a measurement.
+//! fixes it. No other assertion depends on timing: every wait is a generous
+//! precondition (30 s), not a measurement. Everything else is deterministic
+//! except `inv_batches_list_ids_in_a_uniformly_random_order`, a statistical
+//! test whose false-failure probability is about 1e-6 per run.
 //!
 //! Run: `cargo test -p blacksilk-p2p --test privacy` (and `-- --ignored`
 //! for the open properties).
@@ -41,6 +42,32 @@ fn drain(mut r: RawReader, mut w: RawWriter) {
             }
         }
     });
+}
+
+/// Asserts that `r`'s connection is still open (a ping is answered
+/// within 30 s) and that nothing received before the pong announces or
+/// stems `id`: a "never announced" window passes vacuously if the node
+/// dropped the spy (RT-ASUITE L1).
+async fn connected_and_silent(r: &mut RawReader, w: &mut RawWriter, nonce: u64, id: &Hash) {
+    w.send(&Message::Ping(nonce).encode()).await.unwrap();
+    let mut got = Vec::new();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let frame = r.recv().await.expect("the spy is still connected");
+            let m = Message::decode(&frame).unwrap();
+            if m == Message::Pong(nonce) {
+                return;
+            }
+            got.push(m);
+        }
+    })
+    .await
+    .expect("the spy's ping is answered");
+    assert!(
+        !got.iter().any(|m| announces(m, id)
+            || matches!(m, Message::StemTx(b) if Transaction::decode(b).is_ok_and(|t| t.hash() == *id))),
+        "the spy learned the transaction: {got:?}"
+    );
 }
 
 /// Whether `m` announces `id`.
@@ -75,7 +102,7 @@ async fn a_held_local_transaction_is_never_announced() {
     let mut a = node_with(301, cfg).await;
     a.mine_n(80, 0);
     let nid = params().network_id;
-    let (mut spy, _spy_w) = raw_peer(a.addr, nid, true).await;
+    let (mut spy, mut spy_w) = raw_peer(a.addr, nid, true).await;
     wait_until("spy registered", 30, || a.net.stats().peers == 1).await;
     let tx = a.payment();
     let id = tx.hash();
@@ -88,6 +115,7 @@ async fn a_held_local_transaction_is_never_announced() {
         .is_none(),
         "a held local transaction reached an inbound peer"
     );
+    connected_and_silent(&mut spy, &mut spy_w, 0x51, &id).await;
     assert!(
         !a.mempool_has(&id),
         "a held local transaction was broadcast"
@@ -109,6 +137,7 @@ async fn a_held_local_transaction_is_never_announced() {
         .is_none(),
         "the inbound peer learned the transaction from its origin"
     );
+    connected_and_silent(&mut spy, &mut spy_w, 0x52, &id).await;
     assert!(a.net.stempool_contains(&id) && !a.mempool_has(&id));
 }
 
@@ -161,6 +190,7 @@ async fn a_diffuser_still_stems_its_own_transaction() {
             .is_none(),
         "the diffuser announced its own transaction"
     );
+    connected_and_silent(&mut spy, &mut spy_w, 0x53, &id).await;
     assert!(a.net.stempool_contains(&id) && !a.mempool_has(&id));
 }
 
@@ -491,11 +521,12 @@ fn chi_square_uniform_rows(table: &[Vec<u64>]) -> f64 {
 ///
 /// Measured on the owed re-announcement to a reconnecting host (RT4 item
 /// 2), which repeats the same set of ids once per session: 40 sessions,
-/// 4 ids, a chi-square statistic of the id-by-position counts (between 9
-/// and 12 degrees of freedom; its 1e-6 point is about 46 to 52). The bound,
-/// 60, is beyond that tail (a uniform shuffle scored 10 to 29 in five
-/// runs), so an honest shuffle fails it with negligible probability; any
-/// fixed order (one permutation every time) scores 480.
+/// 4 ids, the sum of the four rows' chi-square statistics of the
+/// id-by-position counts. Every row and column sums to 40, so under a
+/// uniform shuffle the statistic is distributed as (4/3)·χ²₉ (mean 12).
+/// The bound 60 is χ²₉ at 45: p ≈ 9.2e-7 per run (RT-ASUITE L3). A uniform
+/// shuffle scored 10 to 29 in five runs; any fixed order (one permutation
+/// every time) scores 480.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn inv_batches_list_ids_in_a_uniformly_random_order() {
     const N: usize = 4;
@@ -736,7 +767,18 @@ async fn stem_membership_does_not_change_reply_latency() {
             let f = probe(&mut r, &mut w, &fresh_msg, nonce).await;
             (probe(&mut r, &mut w, &held_msg, nonce + 1).await, f)
         };
-        assert!(a.net.stempool_contains(&t.hash()), "fresh {i} was verified");
+        // The fresh transaction must have been verified and stemmed, but only
+        // eventually: after the off-lane fix verification may finish after the
+        // barrier, and this test measures the latency, not that ordering
+        // (RT-ASUITE M1). Residual: even with verification off the lane, the held
+        // path returns at the stempool check while the fresh one goes on to
+        // hand off its checks (a microsecond-scale bias); re-check it against
+        // the bound when un-ignoring.
+        let fresh_id = t.hash();
+        wait_until("the fresh transaction verified", 30, || {
+            a.net.stempool_contains(&fresh_id)
+        })
+        .await;
         slower += usize::from(f > h);
         t_held.push(h);
         t_fresh.push(f);
