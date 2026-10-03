@@ -208,6 +208,9 @@ pub struct Totals {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct Report {
     pub network: String,
+    /// The `build flags:` line of the auditing build (W4-GUARD): `build
+    /// flags: none`, or the test-only code compiled in.
+    pub build_flags: String,
     /// The audit height `H` and its block id.
     pub height: u64,
     pub tip: String,
@@ -257,6 +260,7 @@ impl Report {
         let mut s = String::new();
         let w = &mut s;
         let _ = writeln!(w, "BlackSilk supply audit ({})", self.network);
+        let _ = writeln!(w, "  {}", self.build_flags);
         let _ = writeln!(w, "  audit height     {}", self.height);
         let _ = writeln!(w, "  block id         {}", self.tip);
         let _ = writeln!(
@@ -652,6 +656,7 @@ pub fn audit(
     let px_difference = pool - totals.px as i128;
     Ok(Report {
         network: info.network,
+        build_flags: blacksilk_chain::build_flags::BuildFlags::of_chain_layer().line(),
         height: h,
         tip: hex::encode(tip),
         node_height: info.height,
@@ -734,6 +739,7 @@ mod tests {
     fn report(v1: i128, px: i128, failures: Vec<String>) -> Report {
         Report {
             network: "regtest".into(),
+            build_flags: "build flags: none".into(),
             height: 1,
             tip: String::new(),
             node_height: 1,

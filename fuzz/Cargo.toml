@@ -21,7 +21,8 @@ blacksilk-consensus = { path = "../consensus" }
 blacksilk-crypto = { path = "../crypto" }
 blacksilk-tx = { path = "../tx" }
 blacksilk-chain = { path = "../chain" }
-blacksilk-p2p = { path = "../p2p" }
+# `test-hooks`: the stateful targets' harness (`net::fuzzing`).
+blacksilk-p2p = { path = "../p2p", features = ["test-hooks"] }
 blacksilk-zk = { path = "../zk" }
 blacksilk-zkvm = { path = "../zkvm" }
 blacksilk-px = { path = "../px" }
@@ -30,7 +31,8 @@ rand_chacha = { version = "0.3", default-features = false }
 # The transport target's runtime, and what wallet/src/seed.rs (included by
 # path in the seed_words target) uses. All three are already in this lock
 # through p2p and crypto; no new crate.
-tokio = { version = "1", default-features = false, features = ["rt", "io-util", "time", "macros"] }
+# `test-util`: the paused clock of peer_protocol (no new crate).
+tokio = { version = "1", default-features = false, features = ["rt", "io-util", "time", "macros", "sync", "test-util"] }
 zeroize = "1.8"
 getrandom = "0.2"
 
@@ -154,6 +156,27 @@ bench = false
 [[bin]]
 name = "addr_v2"
 path = "fuzz_targets/addr_v2.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "peer_protocol"
+path = "fuzz_targets/peer_protocol.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "px_admission"
+path = "fuzz_targets/px_admission.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "scan_outputs"
+path = "fuzz_targets/scan_outputs.rs"
 test = false
 doc = false
 bench = false

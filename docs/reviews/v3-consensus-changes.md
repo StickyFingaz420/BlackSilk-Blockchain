@@ -732,8 +732,23 @@ Owner: W1-CB-A (consensus bundle). Decisions: "Agent 03", "DAA update", "DAA DEC
    are unchanged (the rule is not in the header).
 8. **Reorg, wallet, mining and P2P implications.**
    - Reorg: the rise per block is bounded at `⌊S·T/(step·n)⌋` (2× the window average), so
-     a compressed branch cannot concentrate work; the residual race excess at q = 0.4 is
-     left to the park-on-deep-reorg policy (02).
+     a compressed branch cannot concentrate work. The residual race excess (+3.5% at
+     q = 0.4 and +27.4% at q = 0.45, both at z = 100 confirmations, `redteam.md` RT-3)
+     is **accepted under the majority-hash assumption** (K1, docs/reviews/assumptions.md):
+     an attacker near q = 0.45 is in effect a majority attacker on a testnet whose honest
+     hash rate is small. After a won race the honest chain inherits the attacker's
+     difficulty, up to about 18× equilibrium (`redteam.md` RT-4), and blocks come slowly
+     for hours until it recovers (about 130 blocks, about 9.6 h, for a 10× excess); this
+     liveness cost is handled by the incident procedure
+     (docs/testnet-incident-response.md §4.4), not by a rule.
+     *Correction 2026-10-02 (threat-model round 2 cross-check, §1.7):* this item first
+     read "the residual race excess at q = 0.4 is left to the park-on-deep-reorg policy
+     (02)". That was a misattribution. Park-on-deep-reorg is not implemented; its decided
+     depth is 720 for a public testnet and it is off for the trial (decisions "Agent 02"
+     W-7), so it would never act on a race measured at 100 confirmations; and the
+     inherited difficulty of RT-4 arises after the attacker's chain is accepted, which
+     park does not touch. The rule and its revision are unchanged; only the stated
+     remedy is.
    - Mining: the template difficulty comes from the same function; miners need no change.
    - P2P: the claimed-work gate is unchanged. The presync bound (31) must be re-derived
      with a rise of at most 2× the window average per block.

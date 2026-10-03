@@ -110,6 +110,10 @@ pub struct ChainSummary {
     pub max_tip_age: Option<u64>,
     /// `ChainManager::operator_fork` (RTW3-8).
     pub operator_fork: Option<OperatorFork>,
+    /// The operator's verdicts in force (`--invalidate-block`, not
+    /// reconsidered since), sorted by id, with each block's height if its
+    /// header is known (F48-9: shown in the node's `/info`).
+    pub operator_verdicts: Vec<(Hash, Option<u64>)>,
     /// `ChainManager::store_failed`.
     pub store_failed: bool,
     /// `ChainManager::apply_halted`.
@@ -226,6 +230,7 @@ impl ChainSummary {
             template_latched: m.template_latched(),
             max_tip_age: sync_policy::max_tip_age(p),
             operator_fork: m.operator_fork(),
+            operator_verdicts: m.operator_verdict_heights(),
             store_failed: m.store_failed(),
             apply_halted: m.apply_halted(),
             halt_reason: m.halted(),
@@ -243,9 +248,10 @@ impl ChainSummary {
     /// counters) and the static fields are functions of the compared ids,
     /// and the halt reason is a function of the halt flags, so only the ids,
     /// the counters that change on their own, the latch, the missing bodies
-    /// (which change with any header or body) and the operator fork (a
-    /// verdict can apply without changing any id above) are compared: a
-    /// test run at every publication point, bounded by
+    /// (which change with any header or body), the operator fork (a
+    /// verdict can apply without changing any id above) and the verdicts
+    /// with their heights (a verdict's block can arrive later) are compared:
+    /// a test run at every publication point, bounded by
     /// `SUMMARY_MISSING_BODIES` (and free while no verdict is in force).
     fn describes(&self, m: &ChainManager) -> bool {
         self.tip_id == m.tip_id()
@@ -259,6 +265,7 @@ impl ChainSummary {
             && self.apply_halted == m.apply_halted()
             && self.missing_bodies == m.missing_bodies(SUMMARY_MISSING_BODIES)
             && self.operator_fork == m.operator_fork()
+            && self.operator_verdicts == m.operator_verdict_heights()
     }
 }
 
@@ -313,6 +320,7 @@ impl SummaryCell {
             template_latched: false,
             max_tip_age: None,
             operator_fork: None,
+            operator_verdicts: Vec::new(),
             store_failed: false,
             apply_halted: false,
             halt_reason: None,

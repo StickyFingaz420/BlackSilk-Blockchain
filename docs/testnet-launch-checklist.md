@@ -5,6 +5,9 @@
 > [STATUS.md](STATUS.md). The v2 identity this document refers to is **retired**, and
 > the testnet is disabled until the v3 genesis is generated at launch
 > ([testnet-v3-genesis.md](testnet-v3-genesis.md)).
+> The v3 trial's launch preconditions (the protocol freeze, `D0`, signing, the
+> network pre-shared key, the endpoint checklist) are step 0 of
+> [testnet-v3-genesis.md](testnet-v3-genesis.md) §6; their status is in STATUS.md.
 
 Status: **2026-09-27. Not ready; not all gates are passed.**
 - **Trial authorization:** the v2 identity is approved and fixed in code. The

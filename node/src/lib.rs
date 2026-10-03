@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cookie;
+pub mod datadir;
 pub mod fingerprint;
 pub mod guard;
 pub mod serve;
@@ -43,26 +44,75 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// actor between RPC and P2P instead ([`App`]).
 pub type Shared = Arc<Mutex<ChainManager>>;
 
-/// RPC state: the chain actor, the P2P network when it runs, and the
-/// operator's mining policy.
+/// RPC state: the chain actor, the P2P network when it runs, the
+/// operator's mining policy and what `/info` reports of the start-up
+/// configuration.
 #[derive(Clone)]
 pub struct App {
     pub chain: ChainHandle,
     pub net: Option<P2p>,
     pub mining: MiningPolicy,
+    pub status: Arc<NodeStatus>,
 }
 
 impl App {
     /// An `App` over a chain actor started on `shared` (tests and
-    /// embedders; see [`Shared`]), with the default mining policy.
+    /// embedders; see [`Shared`]), with the default mining policy and no
+    /// override.
     pub fn shared(shared: Shared, net: Option<P2p>) -> Self {
         let (chain, _thread) = actor::spawn_shared(shared, ActorConfig::default());
         Self {
             chain,
             net,
             mining: MiningPolicy::default(),
+            status: Arc::default(),
         }
     }
+}
+
+/// What `/info` reports of the node's start-up configuration (F48-9, the
+/// second threat-model round): fixed for the run.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NodeStatus {
+    /// Whether a network pre-shared key was loaded (`network_psk_file`).
+    /// Never the key itself.
+    pub network_psk_loaded: bool,
+    /// The operator flags of this run that change the node's defaults, as
+    /// given (`--invalidate-block <id>`, `--skip-randomx-self-test`, ...):
+    /// [`overrides`].
+    pub overrides: Vec<String>,
+}
+
+/// The `/info` override list for the operator flags of a run: every flag
+/// given that changes a default, in a fixed order.
+pub fn overrides(
+    invalidate_blocks: &[[u8; 32]],
+    reconsider_blocks: &[[u8; 32]],
+    mining: MiningPolicy,
+    mine_from_stale_tip: bool,
+    repair_store: bool,
+    skip_randomx_self_test: bool,
+) -> Vec<String> {
+    let mut out: Vec<String> = invalidate_blocks
+        .iter()
+        .map(|id| format!("--invalidate-block {}", hex::encode(id)))
+        .chain(
+            reconsider_blocks
+                .iter()
+                .map(|id| format!("--reconsider-block {}", hex::encode(id))),
+        )
+        .collect();
+    for (on, flag) in [
+        (mining.despite_operator_fork, "--mine-despite-operator-fork"),
+        (mine_from_stale_tip, "--mine-from-stale-tip"),
+        (repair_store, "--repair-store"),
+        (skip_randomx_self_test, "--skip-randomx-self-test"),
+    ] {
+        if on {
+            out.push(flag.to_string());
+        }
+    }
+    out
 }
 
 /// The operator's overrides of the template gate (docs/blocks.md §9.4).
@@ -115,6 +165,88 @@ pub const STORE_FAILED_EXIT: &str = "block store write failed: free disk space /
 pub const HALT_EXIT_CODE: i32 = 65;
 const _: () = assert!(HALT_EXIT_CODE != POISONED_EXIT_CODE && HALT_EXIT_CODE > 2);
 
+/// Exit status of a node whose RandomX self-test failed at start-up: this
+/// build hashes the reference vectors differently, so it would fork (docs/
+/// testnet.md §4.2; decisions "Agent 08"). A restart cannot help, so the
+/// systemd unit does not restart on it. 71 is `EX_OSERR` (sysexits.h): the
+/// build or the platform, not the configuration. The miner uses the same
+/// status.
+pub const RANDOMX_SELF_TEST_EXIT_CODE: i32 = 71;
+
+/// Exit status of a node that found, at start-up, a stored proof-of-work
+/// hash its block's header does not produce
+/// ([`blacksilk_chain::manager::StorePowMismatch`], TM2-5): the block store
+/// was not written by this node's verification. A restart replays into the
+/// same refusal, so the systemd unit does not restart on it. 66 is
+/// `EX_NOINPUT` (sysexits.h): the input, the data directory, is unusable.
+pub const STORE_POW_EXIT_CODE: i32 = 66;
+
+const _: () = {
+    let codes = [
+        0,
+        1,
+        2,
+        HALT_EXIT_CODE,
+        POISONED_EXIT_CODE,
+        RANDOMX_SELF_TEST_EXIT_CODE,
+        STORE_POW_EXIT_CODE,
+        101, // Rust's panic status
+    ];
+    let mut i = 0;
+    while i < codes.len() {
+        let mut j = i + 1;
+        while j < codes.len() {
+            assert!(codes[i] != codes[j], "exit statuses must be distinct");
+            j += 1;
+        }
+        i += 1;
+    }
+};
+
+/// Runs the RandomX start-up self-test (`blacksilk_randomx::self_test`):
+/// the reference vectors in light mode, as this node verifies. `Ok` with
+/// the time taken, or the operator's message for a mismatch.
+pub fn randomx_self_test() -> Result<Duration, String> {
+    blacksilk_randomx::self_test::self_test_light().map_err(|m| {
+        format!(
+            "RandomX self-test failed: {m}. This build of the node hashes the reference \
+             vectors differently, so it would verify blocks differently from the network \
+             (a fork). Do not run it: rebuild with the documented toolchain \
+             (tools/release-build.sh) and report the device (CPU, OS, toolchain) and this \
+             line (docs/testnet.md §4.2). --skip-randomx-self-test starts anyway, for \
+             diagnosis only"
+        )
+    })
+}
+
+/// Resolves when the node is asked to stop: Ctrl-C (SIGINT), or SIGTERM on
+/// Unix (`docker stop`, a plain `kill`, a service manager), so that every
+/// stop is a clean one (anchors saved, cookie removed). Returns the
+/// signal's name. Installed only once the node serves: before that, the
+/// default action of SIGTERM ends a replay at once.
+pub async fn shutdown_signal() -> &'static str {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => tokio::select! {
+                _ = tokio::signal::ctrl_c() => "SIGINT",
+                _ = term.recv() => "SIGTERM",
+            },
+            Err(e) => {
+                log::warn!("SIGTERM handler: {e}; only Ctrl-C stops the node cleanly");
+                let _ = tokio::signal::ctrl_c().await;
+                "SIGINT"
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        "Ctrl-C"
+    }
+}
+
 /// The exit status of a node stopped by [`watch_store`]:
 /// [`HALT_EXIT_CODE`] for an apply failure, 1 for a failed block store
 /// (which a restart may recover from once the disk is fixed). Read from the
@@ -131,10 +263,14 @@ pub fn halt_exit_code(chain: &ChainHandle) -> i32 {
 /// The exit status for an error from [`ChainManager::open`]:
 /// [`HALT_EXIT_CODE`] when replay hit the same deterministic apply failure
 /// ([`blacksilk_chain::manager::ApplyHalt`]), so that a restart loop stops at
-/// start-up too; 1 otherwise.
+/// start-up too; [`STORE_POW_EXIT_CODE`] when a stored proof-of-work hash
+/// differs ([`blacksilk_chain::manager::StorePowMismatch`]); 1 otherwise.
 pub fn open_exit_code(e: &std::io::Error) -> i32 {
     match e.get_ref() {
         Some(inner) if inner.is::<blacksilk_chain::manager::ApplyHalt>() => HALT_EXIT_CODE,
+        Some(inner) if inner.is::<blacksilk_chain::manager::StorePowMismatch>() => {
+            STORE_POW_EXIT_CODE
+        }
         _ => 1,
     }
 }
@@ -458,11 +594,16 @@ pub fn router_secured(app: App, policy: guard::Policy) -> Router {
 /// those of the last publication (at most one command or drain step old,
 /// mutually consistent).
 async fn info(
-    State(App { net, mining, .. }): State<App>,
+    State(App {
+        net,
+        mining,
+        status,
+        ..
+    }): State<App>,
     Extension(summary): Extension<Arc<SummaryCell>>,
 ) -> Json<NodeInfo> {
     let stats = net.map(|n| n.stats());
-    Json(node_info(&summary.load(), stats, mining, now()))
+    Json(node_info(&summary.load(), stats, mining, &status, now()))
 }
 
 /// `/info`'s answer: the [`rpc::Info`] fields plus the template gate's state
@@ -480,6 +621,24 @@ pub struct NodeInfo {
     /// operator's verdicts (RTW3-8).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operator_fork: Option<OperatorForkInfo>,
+    /// Whether a network pre-shared key is loaded ([`NodeStatus`]); the
+    /// trial requires one (docs/testnet.md §12.3).
+    pub network_psk_loaded: bool,
+    /// The operator flags of this run that change a default
+    /// ([`overrides`]); empty normally.
+    pub overrides: Vec<String>,
+    /// The operator's verdicts in force (`--invalidate-block`, stored in
+    /// the block store and kept across restarts until reconsidered).
+    pub operator_verdicts: Vec<OperatorVerdictInfo>,
+}
+
+/// An operator verdict as `/info` reports it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OperatorVerdictInfo {
+    /// The block invalidated by the operator (full hex id).
+    pub block: String,
+    /// Its height, `null` while the block is not known yet.
+    pub height: Option<u64>,
 }
 
 /// [`OperatorFork`] as `/info` reports it.
@@ -497,11 +656,12 @@ pub struct OperatorForkInfo {
 }
 
 /// The `/info` answer for the published snapshot `s` at the local time
-/// `now`.
+/// `now`, for a node started with `status`.
 pub fn node_info(
     s: &ChainSummary,
     stats: Option<blacksilk_p2p::NetStats>,
     mining: MiningPolicy,
+    status: &NodeStatus,
     now: u64,
 ) -> NodeInfo {
     NodeInfo {
@@ -513,6 +673,16 @@ pub fn node_info(
             branch_height: f.branch_height,
             templates_refused: !mining.despite_operator_fork,
         }),
+        network_psk_loaded: status.network_psk_loaded,
+        overrides: status.overrides.clone(),
+        operator_verdicts: s
+            .operator_verdicts
+            .iter()
+            .map(|(id, height)| OperatorVerdictInfo {
+                block: hex::encode(id),
+                height: *height,
+            })
+            .collect(),
     }
 }
 
@@ -545,6 +715,7 @@ fn info_of(
         ))),
         build_commit: Some(fingerprint::BUILD_COMMIT.to_string()),
         version: Some(fingerprint::VERSION.to_string()),
+        build_flags: Some(fingerprint::build_flags().line()),
         template_ready: Some(template_ready),
     }
 }
@@ -1261,6 +1432,41 @@ mod tests {
             despite_operator_fork: true,
         };
         assert!(operator_fork_warning(&fork(1), despite).contains("still served"));
+    }
+
+    /// F48-9: every override flag given is listed, in a fixed order, the
+    /// verdict flags with their full block ids; none by default.
+    #[test]
+    fn the_override_list_names_every_flag_given() {
+        let none = overrides(&[], &[], MiningPolicy::default(), false, false, false);
+        assert!(none.is_empty());
+        let all = overrides(
+            &[[0xab; 32]],
+            &[[0x01; 32]],
+            MiningPolicy {
+                despite_operator_fork: true,
+            },
+            true,
+            true,
+            true,
+        );
+        assert_eq!(
+            all,
+            [
+                format!("--invalidate-block {}", "ab".repeat(32)),
+                format!("--reconsider-block {}", "01".repeat(32)),
+                "--mine-despite-operator-fork".to_string(),
+                "--mine-from-stale-tip".to_string(),
+                "--repair-store".to_string(),
+                "--skip-randomx-self-test".to_string(),
+            ]
+        );
+    }
+
+    /// The start-up RandomX self-test passes on this build.
+    #[test]
+    fn the_randomx_self_test_passes() {
+        randomx_self_test().unwrap();
     }
 
     /// Dossier 04 W4: the start-up clock check refuses an unreadable clock

@@ -926,12 +926,11 @@ impl AddrMan {
             key: self.key,
             entries,
         };
-        let tmp = path.with_extension("tmp");
-        std::fs::write(
-            &tmp,
-            serde_json::to_vec(&saved).map_err(std::io::Error::other)?,
-        )?;
-        std::fs::rename(tmp, path)
+        // Owner-only: the table and its bucketing key are private.
+        crate::private_file::write_atomic(
+            path,
+            &serde_json::to_vec(&saved).map_err(std::io::Error::other)?,
+        )
     }
 
     /// Loads a saved table with its key; `None` if missing, unreadable or of
@@ -1079,12 +1078,11 @@ impl BanList {
     /// mid-write leaves the previous list, not an unreadable one (which would
     /// silently lift every ban).
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        let tmp = path.with_extension("tmp");
-        std::fs::write(
-            &tmp,
-            serde_json::to_vec(self).map_err(std::io::Error::other)?,
-        )?;
-        std::fs::rename(tmp, path)
+        // Owner-only: the IPs of the peers this node banned.
+        crate::private_file::write_atomic(
+            path,
+            &serde_json::to_vec(self).map_err(std::io::Error::other)?,
+        )
     }
 
     /// A missing file is an empty list. An existing one that cannot be read

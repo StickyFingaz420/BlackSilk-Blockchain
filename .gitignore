@@ -21,6 +21,7 @@ RandomX/*.vcxproj*
 *.log
 # Evidence logs are committed: the W4-LAB reports are regenerated from them.
 !docs/evidence/labnet-w4-2026-09-30/runs/*/*.log
+!docs/evidence/pow-pool-2026-10-01/logs/*.log
 
 # Misc
 *.tmp

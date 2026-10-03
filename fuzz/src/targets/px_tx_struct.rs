@@ -133,7 +133,7 @@ fn word(d: &mut [u32; 8], a: usize, b: usize) {
     d[a % 8] = WORDS[b % WORDS.len()];
 }
 
-fn edit(t: &mut PxTx, site: u8, a: usize, b: usize, c: u8) {
+pub fn edit(t: &mut PxTx, site: u8, a: usize, b: usize, c: u8) {
     match site % 24 {
         0 => vec_edit(&mut t.inputs, a, b, c),
         1 => {

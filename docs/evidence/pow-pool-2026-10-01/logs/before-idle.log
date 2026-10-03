@@ -1,0 +1,12 @@
+before-idle load=0 pids: 
+before-idle run1 test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 38 ms digest 6b952b4d184bcdee
+before-idle run1 cheap 31 headers, 2-thread chunks: 3 ms digest c409d6a547ac5494
+before-idle run2 test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 39 ms digest 6b952b4d184bcdee
+before-idle run2 cheap 31 headers, 2-thread chunks: 3 ms digest c409d6a547ac5494
+before-idle run3 test bench_cheap_chunks ... cheap 300 x 1-thread chunks: 35 ms digest 6b952b4d184bcdee
+before-idle run3 cheap 31 headers, 2-thread chunks: 3 ms digest c409d6a547ac5494
+before-idle test bench_randomx_batch ... cache build + 1 hash: 1271 ms
+before-idle randomx 200 headers, pow_threads 1: 110640 ms (553.2 ms/header) digest 397a067cf99748da
+before-idle randomx 200 headers, pow_threads 2: 62937 ms (314.7 ms/header) digest 397a067cf99748da
+before-idle randomx 200 headers, pow_threads 4: 34585 ms (172.9 ms/header) digest 397a067cf99748da
+before-idle done

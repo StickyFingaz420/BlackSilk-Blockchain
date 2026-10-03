@@ -6,8 +6,20 @@
 
 #![forbid(unsafe_code)]
 
+// W4-GUARD: a fuzz build (`--cfg fuzzing`) compiles fuzz-only code into the
+// libraries (the transport's fixed ephemeral secrets on request), and no fuzz
+// target links this binary (fuzz/Cargo.toml), so it refuses to build. A
+// `compile_error!`, not a build script: a build script would be more
+// build-time code, and cargo-deny then scans every dependency's files.
+#[cfg(fuzzing)]
+compile_error!(
+    "refusing to build blacksilk-wallet with `--cfg fuzzing`: no fuzz target links it; build it with a plain `cargo build --release`"
+);
+
 use blacksilk_chain::address::{decode_address, decode_px_address};
+use blacksilk_chain::build_flags::BuildFlags;
 use blacksilk_chain::emission::{format_amount, parse_amount};
+use blacksilk_consensus::Network;
 use blacksilk_px::vault;
 use blacksilk_px_core::Digest;
 use blacksilk_rpc::Client;
@@ -22,6 +34,7 @@ use clap::{Parser, Subcommand};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Parser)]
@@ -30,6 +43,11 @@ struct Args {
     /// Wallet file.
     #[arg(long, short)]
     wallet: PathBuf,
+    /// Refuse to run if this binary has test-only code compiled in, on
+    /// regtest too (for runs that are evidence; also the environment variable
+    /// BLACKSILK_REQUIRE_CLEAN_BUILD=1).
+    #[arg(long)]
+    require_clean_build: bool,
     /// Node RPC address: host:port or http://host:port. Plain HTTP only
     /// (https:// is refused); use your own node, or reach a remote one over an
     /// SSH tunnel, a VPN or Tor. Proxy environment variables are ignored.
@@ -266,6 +284,10 @@ enum Cmd {
     /// Show the 27-word seed, after a confirmation typed on the terminal:
     /// anyone who sees the words controls the funds.
     Seed,
+    /// Set a new password for the wallet file (the current one is read as
+    /// usual; the new one from BLACKSILK_WALLET_NEW_PASSWORD, or the
+    /// terminal). An empty new password is refused.
+    ChangePassword,
     /// Forget unconfirmed spends and stored transactions. Meant for a
     /// transaction that certainly never left this wallet: `sync` rebroadcasts
     /// stored transactions and releases their funds itself when the node
@@ -290,6 +312,62 @@ fn password(confirm: bool) -> Result<Vec<u8>, String> {
     Ok(p.into_bytes())
 }
 
+/// The new password for `change-password`, for automation (like
+/// `BLACKSILK_WALLET_PASSWORD`, visible to other processes of the user).
+const NEW_PASSWORD_ENV: &str = "BLACKSILK_WALLET_NEW_PASSWORD";
+
+/// A new wallet password, checked (`file::check_new_password`): an empty
+/// one is refused, a weak one warned about on standard error.
+fn checked_new_password(mut pw: Vec<u8>) -> Result<Vec<u8>, String> {
+    match blacksilk_wallet::file::check_new_password(&pw) {
+        Err(e) => {
+            pw.zeroize();
+            Err(e)
+        }
+        Ok(warning) => {
+            if let Some(w) = warning {
+                eprintln!("warning: {w}");
+            }
+            Ok(pw)
+        }
+    }
+}
+
+/// The new password of `change-password`: [`NEW_PASSWORD_ENV`], or the
+/// terminal (typed twice).
+fn new_password() -> Result<Vec<u8>, String> {
+    if let Ok(p) = std::env::var(NEW_PASSWORD_ENV) {
+        return checked_new_password(p.into_bytes());
+    }
+    let p = rpassword::prompt_password("New wallet password: ").map_err(|e| e.to_string())?;
+    let mut q = rpassword::prompt_password("Repeat new password: ").map_err(|e| e.to_string())?;
+    let same = p == q;
+    q.zeroize();
+    if !same {
+        return Err("passwords differ".into());
+    }
+    checked_new_password(p.into_bytes())
+}
+
+/// Makes an existing wallet file (and its lock) owner-only on Unix, with a
+/// warning: a file created by an older version, or copied, may be
+/// readable by other users.
+fn tighten_wallet_files(path: &std::path::Path) {
+    for p in [path.to_path_buf(), path.with_extension("lock")] {
+        match blacksilk_wallet::file::tighten(&p) {
+            Ok(Some(mode)) => eprintln!(
+                "warning: {} was readable by other users (mode {mode:o}); it is owner-only now",
+                p.display()
+            ),
+            Ok(None) => {}
+            Err(e) => eprintln!(
+                "warning: {}: could not make it owner-only: {e}",
+                p.display()
+            ),
+        }
+    }
+}
+
 /// The build commit, from the `BLACKSILK_BUILD_COMMIT` build-time environment
 /// variable. Unlike the node (node/build.rs reads `.git`), this crate has no
 /// build script, so a build without the variable reports `unknown`; the
@@ -299,22 +377,50 @@ const BUILD_COMMIT: &str = match option_env!("BLACKSILK_BUILD_COMMIT") {
     None => "unknown",
 };
 
-/// Parses the command line with a `--version` that includes the commit.
+/// Parses the command line with a `--version` that includes the commit and the
+/// markers of test-only code compiled in ([`BuildFlags`], W4-GUARD).
 fn parse_args() -> Args {
     use clap::{CommandFactory, FromArgMatches};
-    // clap takes a `'static` string; this runs once per process.
-    let version: &'static str = Box::leak(
-        format!("{} (commit {BUILD_COMMIT})", env!("CARGO_PKG_VERSION")).into_boxed_str(),
-    );
-    let matches = Args::command().version(version).get_matches();
+    // clap takes `'static` strings; this runs once per process.
+    let (short, long) =
+        BuildFlags::of_chain_layer().version_texts(env!("CARGO_PKG_VERSION"), BUILD_COMMIT);
+    let short: &'static str = Box::leak(short.into_boxed_str());
+    let long: &'static str = Box::leak(long.into_boxed_str());
+    let matches = Args::command()
+        .version(short)
+        .long_version(long)
+        .get_matches();
     Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
 }
 
 fn main() {
     if let Err(e) = run(parse_args()) {
         eprintln!("error: {e}");
-        std::process::exit(1);
+        let code = if BUILD_REFUSED.load(Ordering::SeqCst) {
+            BUILD_EXIT_CODE
+        } else {
+            1
+        };
+        std::process::exit(code);
     }
+}
+
+/// Exit status of a wallet with test-only code compiled in ([`BuildFlags`])
+/// asked to work on a network other than regtest (W4-GUARD); every other
+/// error exits with 1.
+const BUILD_EXIT_CODE: i32 = 2;
+
+/// Set by [`check_build`] when it refuses, so `main` exits with
+/// [`BUILD_EXIT_CODE`] after `run` has returned (and wiped its secrets).
+static BUILD_REFUSED: AtomicBool = AtomicBool::new(false);
+
+/// A wallet binary with test-only code (written by `cargo test` or a fuzz
+/// build) works only on regtest wallets (W4-GUARD): its transactions and
+/// keys must never meet a shared network.
+fn check_build(flags: &BuildFlags, net: Network) -> Result<(), String> {
+    flags
+        .check_network("blacksilk-wallet", net)
+        .inspect_err(|_| BUILD_REFUSED.store(true, Ordering::SeqCst))
 }
 
 /// A ChaCha20 RNG seeded from the OS.
@@ -469,10 +575,17 @@ fn print_tip_age(w: &Wallet) {
 }
 
 fn run(args: Args) -> Result<(), String> {
+    let flags = BuildFlags::of_chain_layer();
+    if blacksilk_chain::build_flags::require_clean(args.require_clean_build) {
+        flags
+            .check_clean("blacksilk-wallet")
+            .inspect_err(|_| BUILD_REFUSED.store(true, Ordering::SeqCst))?;
+    }
     let client = Client::try_new(&args.node)
         .and_then(|c| c.with_cookie_option(args.rpc_cookie.as_deref()))
         .map_err(|e| e.to_string())?;
     let _lock = lock_wallet(&args.wallet)?;
+    tighten_wallet_files(&args.wallet);
     let kdf = KdfParams::default();
     let verify_headers = args.verify_headers;
     let allow_stale_tip = args.allow_stale_tip;
@@ -482,6 +595,7 @@ fn run(args: Args) -> Result<(), String> {
             birthday_height,
         } => {
             let net = parse_network(&network).ok_or("unknown network")?;
+            check_build(&flags, net)?;
             if args.wallet.exists() {
                 return Err(format!("{} already exists", args.wallet.display()));
             }
@@ -499,7 +613,8 @@ fn run(args: Args) -> Result<(), String> {
                 })?,
             };
             let start = height + 1;
-            let mut pw = password(true)?;
+            // Refused before anything is generated or written.
+            let mut pw = checked_new_password(password(true)?)?;
             let mut w = Wallet::generate(net, start).map_err(|e| e.to_string())?;
             let primary = w.address(0, 0);
             save(&w, &args.wallet, &pw, kdf).map_err(|e| e.to_string())?;
@@ -522,12 +637,17 @@ fn run(args: Args) -> Result<(), String> {
             if args.wallet.exists() {
                 return Err(format!("{} already exists", args.wallet.display()));
             }
+            if let Some(net) = net {
+                check_build(&flags, net)?;
+            }
             let mut words =
                 rpassword::prompt_password("27-word seed: ").map_err(|e| e.to_string())?;
             let w = Wallet::restore(&words, net, restore_height).map_err(|e| e.to_string());
             words.zeroize();
             let w = w?;
-            let mut pw = password(true)?;
+            // The network the words name, when none was given.
+            check_build(&flags, w.network())?;
+            let mut pw = checked_new_password(password(true)?)?;
             save(&w, &args.wallet, &pw, kdf).map_err(|e| e.to_string())?;
             pw.zeroize();
             println!(
@@ -537,9 +657,37 @@ fn run(args: Args) -> Result<(), String> {
                 w.synced_height() + 1
             );
         }
+        Cmd::ChangePassword => {
+            let mut old = password(false)?;
+            let w = load(&args.wallet, &old);
+            old.zeroize();
+            let w = w?;
+            check_build(&flags, w.network())?;
+            let mut new = new_password()?;
+            let saved = save(&w, &args.wallet, &new, kdf).map_err(|e| e.to_string());
+            new.zeroize();
+            saved?;
+            println!(
+                "Password changed: {} is encrypted with the new one.",
+                args.wallet.display()
+            );
+        }
         cmd => {
             let mut pw = password(false)?;
             let mut w = load(&args.wallet, &pw)?;
+            if let Err(e) = check_build(&flags, w.network()) {
+                pw.zeroize();
+                return Err(e);
+            }
+            // A wallet saved before empty passwords were refused still
+            // opens; the warning names the way out (nothing is lost).
+            if blacksilk_wallet::file::is_empty_password(&pw) {
+                eprintln!(
+                    "warning: this wallet file has an empty password: anyone who gets a copy \
+                     of it gets the keys. Set one now: blacksilk-wallet -w {} change-password",
+                    args.wallet.display()
+                );
+            }
             for warning in w.take_warnings() {
                 eprintln!("warning: {warning}");
             }
@@ -973,7 +1121,7 @@ fn run(args: Args) -> Result<(), String> {
                     w.clear_pending();
                     Ok(())
                 }
-                Cmd::Create { .. } | Cmd::Restore { .. } => unreachable!(),
+                Cmd::Create { .. } | Cmd::Restore { .. } | Cmd::ChangePassword => unreachable!(),
             };
             // Warnings raised by the command (e.g. co-spent outputs, R3-13).
             for warning in w.take_warnings() {
@@ -991,6 +1139,21 @@ fn run(args: Args) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A wallet with test-only code works only on regtest wallets, and its
+    /// refusal selects the build exit status; a clean build works anywhere.
+    #[test]
+    fn a_hooked_wallet_works_only_on_regtest() {
+        let hooked = BuildFlags::default().with(Some("+test-hooks:tx"));
+        assert!(check_build(&hooked, Network::Regtest).is_ok());
+        assert!(check_build(&BuildFlags::default(), Network::Testnet).is_ok());
+        assert!(!BUILD_REFUSED.load(Ordering::SeqCst));
+        for net in [Network::Testnet, Network::Mainnet] {
+            let e = check_build(&hooked, net).unwrap_err();
+            assert!(e.contains("+test-hooks:tx"), "{e}");
+        }
+        assert!(BUILD_REFUSED.load(Ordering::SeqCst));
+    }
 
     /// Terms round-trip through their printed form; anything else is refused
     /// with the expected format, never echoing the input.

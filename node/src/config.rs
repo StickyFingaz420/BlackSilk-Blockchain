@@ -122,6 +122,26 @@ pub struct Args {
     /// stopped for that long (command line only; docs/blocks.md §9.4).
     #[arg(long)]
     pub mine_from_stale_tip: bool,
+    /// Refuse to start if this binary has test-only code compiled in, on
+    /// regtest too (for runs that are evidence; also the environment variable
+    /// BLACKSILK_REQUIRE_CLEAN_BUILD=1; command line only).
+    #[arg(long)]
+    pub require_clean_build: bool,
+    /// Run only the RandomX self-test (the reference vectors, as the node
+    /// verifies) and exit: 0 on a match, 71 on a mismatch. The per-device
+    /// check before a trial (docs/testnet.md §2.1).
+    #[arg(long)]
+    pub randomx_self_test: bool,
+    /// Start without the RandomX start-up self-test: for diagnosis only, a
+    /// build that fails it forks from the network (shown in /info; command
+    /// line only).
+    #[arg(long)]
+    pub skip_randomx_self_test: bool,
+    /// Recompute every stored proof-of-work hash at start-up instead of a
+    /// sample: after restoring or receiving a data directory (command line
+    /// only; docs/testnet.md §4.5).
+    #[arg(long)]
+    pub verify_store_pow: bool,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -180,6 +200,11 @@ pub struct Config {
     /// `--mine-from-stale-tip`: sets the template gate's catch-up latch at
     /// start (RTW3-1).
     pub mine_from_stale_tip: bool,
+    /// `--skip-randomx-self-test` (decisions "Agent 08").
+    pub skip_randomx_self_test: bool,
+    /// `--verify-store-pow`: every stored PoW hash is recomputed at start
+    /// (decisions "Agent 01").
+    pub verify_store_pow: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -378,6 +403,8 @@ impl Config {
             reconsider_blocks,
             mine_despite_operator_fork: args.mine_despite_operator_fork,
             mine_from_stale_tip: args.mine_from_stale_tip,
+            skip_randomx_self_test: args.skip_randomx_self_test,
+            verify_store_pow: args.verify_store_pow,
         })
     }
 }
@@ -634,6 +661,17 @@ max_outbound = 3
         let err = Config::resolve(args(&["--invalidate-block", &a, "--reconsider-block", &a]))
             .unwrap_err();
         assert!(err.contains("both"), "{err}");
+    }
+
+    /// The start-up checks run unless skipped, the store check sampled
+    /// unless `--verify-store-pow` (TM2-3, TM2-5).
+    #[test]
+    fn start_up_check_flags() {
+        let c = Config::resolve(args(&[])).unwrap();
+        assert!(!c.skip_randomx_self_test && !c.verify_store_pow);
+        let c = Config::resolve(args(&["--skip-randomx-self-test", "--verify-store-pow"])).unwrap();
+        assert!(c.skip_randomx_self_test && c.verify_store_pow);
+        assert!(args(&["--randomx-self-test"]).randomx_self_test);
     }
 
     /// The template-gate overrides (RTW3-1, RTW3-8) are off unless given.

@@ -42,7 +42,7 @@ use blacksilk_tx::types::Transaction;
 use blacksilk_tx::validate::BlockError;
 pub use pow_cache::{CachedPow, PowJob};
 use rand_chacha::ChaCha20Rng;
-pub use replay::{OperatorMark, OperatorMarked};
+pub use replay::{OperatorMark, OperatorMarked, StorePowCheck, StorePowMismatch};
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::io;

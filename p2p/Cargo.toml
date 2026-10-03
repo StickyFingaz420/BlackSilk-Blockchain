@@ -39,8 +39,24 @@ sha3 = { version = "=0.11.0", default-features = false }
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 
+[features]
+# The stateful fuzz targets' hooks (`net::fuzzing`): a network state without
+# listeners for a harness-driven connection, and the admission steps of a
+# relayed transaction. Never enabled in a node build: only the fuzz
+# workspace and this crate's own tests (dev-dependencies) turn it on.
+test-hooks = []
+
 [dev-dependencies]
 tempfile = "3"
 # The chain actor's test-only step delay (liveness test L7).
 blacksilk-chain = { path = "../chain", features = ["test-hooks"] }
 blacksilk-px = { path = "../px" }
+# The harness hooks of the stateful fuzz targets' stable twins
+# (tests/fuzz_peer_protocol.rs, tests/fuzz_px_admission.rs), as chain
+# enables its own test hooks; and tokio's paused clock for them.
+blacksilk-p2p = { path = ".", features = ["test-hooks"] }
+tokio = { version = "1", features = ["test-util"] }
+# The px_admission twin edits a decoded proof (fuzz/src/targets/
+# proof_struct.rs). Workspace crates already in p2p's graph (through tx).
+blacksilk-px-core = { path = "../px-core" }
+blacksilk-zk = { path = "../zk" }

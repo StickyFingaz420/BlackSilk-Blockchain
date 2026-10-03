@@ -125,6 +125,8 @@ jobs:
           # Ignored by default (PX-proving, two proofs): run C's cross-activation
           # proof-cache test (fork_choice.rs 376:60).
           bash .github/scripts/annotate-tests.sh cargo test --locked --release -p blacksilk-chain --test activation -- --ignored --test-threads=1 || rc=1
+          # Ignored by default (PX-proving): the px_admission fuzz twin.
+          bash .github/scripts/annotate-tests.sh cargo test --locked --release -p blacksilk-p2p --test fuzz_px_admission -- --ignored --test-threads=1 || rc=1
           exit $rc
 
   # The release profile has overflow checks and debug assertions off. This job
@@ -185,6 +187,30 @@ jobs:
   # RandomX full mode (the miner's default) against the official vectors and
   # light mode (what nodes verify with), on Linux; the developers' runs are on
   # Windows, so this is also a cross-platform check of the same vectors.
+  # W4-GUARD (RT-STATEFUL, RT-GUARD), its own job since CI run 119 (the step
+  # at the end of `test` failed there after four hours, with no annotation;
+  # a fast job gives the answer in minutes). `cargo test --no-run` writes a
+  # node with the chain, tx and px test hooks to target/release (cargo
+  # unifies dev-dependency features), the path a plain release build uses:
+  # the control. Then a plain release build of every shipped and evidence
+  # binary must show no test-only code by dependency tree, `--version` and
+  # binary contents (.github/scripts/build-guard.sh).
+  build-guard:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
+      - name: A node with test hooks, the control
+        run: cargo test --locked --release -p blacksilk-node --no-run
+      - name: Plain release binaries carry no test code
+        run: bash .github/scripts/build-guard.sh
+
   randomx-full:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -307,7 +333,8 @@ jobs:
   # - commits touching consensus paths carry a Consensus-Change: trailer;
   # - commits changing Cargo.lock or fuzz/Cargo.lock name the crates they add
   #   or re-version;
-  # - no invisible or bidirectional Unicode in tracked text files.
+  # - no invisible or bidirectional Unicode in tracked text files;
+  # - every test-only feature is marked (tools/check-test-features.sh).
   # The SHAs come in through env, never interpolated into the script.
   gates:
     if: github.event_name != 'schedule'
@@ -332,6 +359,11 @@ jobs:
       - name: Invisible and bidirectional Unicode scan
         if: success() || failure()
         run: bash .github/scripts/unicode-scan.sh
+      # W4-GUARD (RT-GUARD): every test-only feature and cfg(fuzzing) crate
+      # exports a build marker that a BuildFlags composition names.
+      - name: Test-only features are marked
+        if: success() || failure()
+        run: bash tools/check-test-features.sh
 
   # Documentation lint (dossier 47 W47-8, decisions "Agent 47"): forbidden
   # claims, retired identifiers, broken relative links and copied digests

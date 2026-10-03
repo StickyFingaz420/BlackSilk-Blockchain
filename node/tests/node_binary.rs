@@ -34,8 +34,18 @@ fn free_port() -> SocketAddr {
 
 impl NodeProc {
     fn start(data: &Path, extra: &[&str]) -> Self {
+        Self::start_logged(data, None, extra)
+    }
+
+    /// As [`start`](Self::start), with the log at `log` instead of beside the
+    /// data directory: for a data directory whose parents the node itself
+    /// must create (CI run 123: the log beside `a/b` needed `a` first).
+    fn start_logged(data: &Path, log: Option<&Path>, extra: &[&str]) -> Self {
         let addr = free_port();
-        let log = data.with_extension(format!("{}.log", addr.port()));
+        let log = log.map_or_else(
+            || data.with_extension(format!("{}.log", addr.port())),
+            Path::to_path_buf,
+        );
         let f = std::fs::File::create(&log).unwrap();
         let mut args = vec![
             "--network".to_string(),
@@ -333,9 +343,20 @@ impl blacksilk_consensus::PowFunction for ZeroPow {
     }
 }
 
-/// Writes `n` coinbase-only regtest blocks to `<data>/blocks.dat`, as a
-/// node would; returns their ids.
+/// Writes `n` coinbase-only regtest blocks to `<data>/blocks.dat` with
+/// [`ZeroPow`]'s stored hashes: a store the node's PoW check refuses
+/// ([`a_store_with_forged_pow_hashes_is_refused`]); returns their ids.
 fn regtest_store(data: &Path, n: usize) -> Vec<[u8; 32]> {
+    regtest_store_with(data, n, std::sync::Arc::new(ZeroPow))
+}
+
+/// Writes `n` coinbase-only regtest blocks to `<data>/blocks.dat` as a node
+/// would, with `pow`'s hashes stored; returns their ids.
+fn regtest_store_with(
+    data: &Path,
+    n: usize,
+    pow: std::sync::Arc<dyn blacksilk_consensus::PowFunction>,
+) -> Vec<[u8; 32]> {
     use blacksilk_chain::block::Block;
     use blacksilk_chain::manager::ChainManager;
     use blacksilk_chain::store::FileStore;
@@ -352,7 +373,7 @@ fn regtest_store(data: &Path, n: usize) -> Vec<[u8; 32]> {
     let mut m = ChainManager::open(
         p.clone(),
         TxRules::for_chain(&p),
-        std::sync::Arc::new(ZeroPow),
+        pow,
         Box::new(FileStore::open(data.join("blocks.dat")).unwrap()),
         [3; 32],
     )
@@ -410,7 +431,12 @@ fn height_of(n: &NodeProc) -> u64 {
 fn the_node_binary_invalidates_and_reconsiders_a_block() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path().join("node");
-    let ids = regtest_store(&data, 3);
+    // Real RandomX hashes: the node re-verifies stored ones at start-up.
+    let ids = regtest_store_with(
+        &data,
+        3,
+        std::sync::Arc::new(blacksilk_consensus::RandomXPow::new()),
+    );
     let tip = hex::encode(ids[2]);
     let store = data.join("blocks.dat");
 
@@ -457,4 +483,242 @@ fn the_node_binary_invalidates_and_reconsiders_a_block() {
         assert!(text_out.contains(text), "{bad}: {text_out}");
     }
     assert_eq!(std::fs::read(&store).unwrap(), before, "nothing written");
+}
+
+// ------------------------------------------------ threat model round 2 (TM2-NODEOPS)
+
+/// Runs the node on `data` with `extra` until it exits, at most `within`
+/// (killed then): its exit status (`None` if it was still running) and its
+/// log.
+fn run_until_exit(
+    data: &Path,
+    extra: &[&str],
+    within: Duration,
+) -> (Option<std::process::ExitStatus>, String) {
+    let addr = free_port();
+    let log = data.with_extension(format!("{}.exit.log", addr.port()));
+    let f = std::fs::File::create(&log).unwrap();
+    let mut child = Command::new(NODE)
+        .args(["--network", "regtest", "--no-p2p", "--data-dir"])
+        .arg(data)
+        .args(["--rpc-bind", &addr.to_string()])
+        .args(extra)
+        .env("RUST_LOG", "info")
+        .stdout(Stdio::from(f.try_clone().unwrap()))
+        .stderr(Stdio::from(f))
+        .spawn()
+        .unwrap();
+    let start = Instant::now();
+    let status = loop {
+        if let Some(s) = child.try_wait().unwrap() {
+            break Some(s);
+        }
+        if start.elapsed() > within {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    (status, std::fs::read_to_string(&log).unwrap_or_default())
+}
+
+/// The `/info` body of a running node, read with its cookie.
+fn info_body(n: &NodeProc) -> String {
+    let token = std::fs::read_to_string(n.cookie()).unwrap();
+    let (status, body) = get(n.addr, "/info", &bearer(&token)).expect("an answer");
+    assert_eq!(status, 200, "{body}");
+    body
+}
+
+fn randomx() -> std::sync::Arc<dyn blacksilk_consensus::PowFunction> {
+    std::sync::Arc::new(blacksilk_consensus::RandomXPow::new())
+}
+
+/// TM2-3 (decision "Agent 08"): the node hashes the RandomX known answers
+/// before it opens its store, and says so; `--skip-randomx-self-test` skips
+/// it with a warning and shows in `/info`; `--randomx-self-test` runs only
+/// the check (the per-device check) and exits 0 on a match.
+#[test]
+fn the_node_binary_runs_the_randomx_self_test() {
+    let dir = tempfile::tempdir().unwrap();
+    let n = NodeProc::start(&dir.path().join("node"), &[]);
+    let log = n.log_text();
+    assert!(log.contains("RandomX self-test passed"), "{log}");
+    assert!(info_body(&n).contains("\"overrides\":[]"));
+    drop(n);
+
+    let n = NodeProc::start(&dir.path().join("skip"), &["--skip-randomx-self-test"]);
+    let log = n.log_text();
+    assert!(!log.contains("RandomX self-test passed"), "{log}");
+    assert!(log.contains("--skip-randomx-self-test"), "{log}");
+    let body = info_body(&n);
+    assert!(
+        body.contains("\"overrides\":[\"--skip-randomx-self-test\"]"),
+        "{body}"
+    );
+    drop(n);
+
+    let out = Command::new(NODE)
+        .args(["--randomx-self-test"])
+        .env("RUST_LOG", "info")
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("RandomX self-test passed"), "{text}");
+}
+
+/// TM2-2 and F48-9: `/info` says whether a network pre-shared key is loaded
+/// (never the key), and lists the operator overrides of this run and the
+/// operator's verdicts in force.
+#[test]
+fn info_shows_the_psk_state_overrides_and_verdicts() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("node");
+    let ids = regtest_store_with(&data, 3, randomx());
+    let tip = hex::encode(ids[2]);
+    let n = NodeProc::start(&data, &["--mine-from-stale-tip"]);
+    let body = info_body(&n);
+    assert!(body.contains("\"network_psk_loaded\":false"), "{body}");
+    assert!(
+        body.contains("\"overrides\":[\"--mine-from-stale-tip\"]"),
+        "{body}"
+    );
+    assert!(body.contains("\"operator_verdicts\":[]"), "{body}");
+    drop(n);
+    let n = NodeProc::start(&data, &["--invalidate-block", &tip]);
+    let body = info_body(&n);
+    assert!(
+        body.contains(&format!(
+            "\"operator_verdicts\":[{{\"block\":\"{tip}\",\"height\":3}}]"
+        )),
+        "{body}"
+    );
+    assert!(
+        body.contains(&format!("\"overrides\":[\"--invalidate-block {tip}\"]")),
+        "{body}"
+    );
+    drop(n);
+    // The verdict stays in force without the flag.
+    let n = NodeProc::start(&data, &[]);
+    let body = info_body(&n);
+    assert!(body.contains(&format!("\"block\":\"{tip}\"")), "{body}");
+    assert!(body.contains("\"overrides\":[]"), "{body}");
+}
+
+/// TM2-5 (decisions "Agent 01"): a block store whose stored proof-of-work
+/// hashes its headers do not produce (here a zero hash for every block, as
+/// in a store planted by someone who can write the data directory) is
+/// refused at start-up, by the sampled check (every block of a short store
+/// is in the tip region) and by `--verify-store-pow`. Before the check the
+/// node trusted the stored hashes and started on such a store.
+#[test]
+fn a_store_with_forged_pow_hashes_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("node");
+    regtest_store(&data, 3);
+    let before = std::fs::read(data.join("blocks.dat")).unwrap();
+    for extra in [&[][..], &["--verify-store-pow"][..]] {
+        let (status, log) = run_until_exit(&data, extra, Duration::from_secs(120));
+        let status = status.unwrap_or_else(|| panic!("{extra:?}: the node started; log:\n{log}"));
+        assert_eq!(
+            status.code(),
+            Some(blacksilk_node::STORE_POW_EXIT_CODE),
+            "{extra:?}; log:\n{log}"
+        );
+        assert!(log.contains("proof-of-work"), "{log}");
+        assert!(log.contains(&data.display().to_string()), "{log}");
+        assert!(log.contains("--verify-store-pow"), "{log}");
+    }
+    // The store is left as it was (evidence for the incident).
+    assert_eq!(std::fs::read(data.join("blocks.dat")).unwrap(), before);
+}
+
+/// A store written with the real RandomX hashes passes the check, sampled
+/// and in full.
+#[test]
+fn a_store_with_real_pow_hashes_passes_the_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("node");
+    regtest_store_with(&data, 3, randomx());
+    for extra in [&[][..], &["--verify-store-pow"][..]] {
+        let n = NodeProc::start(&data, extra);
+        assert_eq!(height_of(&n), 3, "log:\n{}", n.log_text());
+        let log = n.log_text();
+        assert!(
+            log.contains("stored proof-of-work hashes re-verified"),
+            "{log}"
+        );
+    }
+}
+
+/// TM2-8: SIGTERM (`docker stop`, a plain `kill`) is a clean shutdown like
+/// Ctrl-C: the node exits 0 and removes its cookie.
+#[cfg(unix)]
+#[test]
+fn sigterm_is_a_clean_shutdown() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut n = NodeProc::start(&dir.path().join("node"), &[]);
+    let cookie = n.cookie();
+    assert!(cookie.exists());
+    let st = Command::new("kill")
+        .args(["-TERM", &n.child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let status = n
+        .wait_exit(Duration::from_secs(30))
+        .expect("the node stops");
+    assert!(status.success(), "{status:?}; log:\n{}", n.log_text());
+    assert!(!cookie.exists(), "cookie left after SIGTERM");
+    assert!(n.log_text().contains("shutting down"));
+}
+
+/// TM2-3 data at rest (P-P2, N-3): the data directory is owner-only (0700)
+/// and so is every file the node writes there (0600), whatever the umask; a
+/// directory and files left too open by an earlier run are tightened at
+/// start, with a warning.
+#[cfg(unix)]
+#[test]
+fn the_data_directory_and_its_files_are_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("node");
+    regtest_store_with(&data, 1, randomx());
+    // As a manual run under umask 022 leaves them.
+    std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for f in ["blocks.dat", "originated.json", "peers.json"] {
+        let p = data.join(f);
+        if !p.exists() {
+            std::fs::write(&p, b"{}").unwrap();
+        }
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    let n = NodeProc::start(&data, &[]);
+    let log = n.log_text();
+    assert!(log.contains("permissions tightened"), "{log}");
+    assert_eq!(mode(&data), 0o700);
+    for entry in std::fs::read_dir(&data).unwrap() {
+        let p = entry.unwrap().path();
+        assert_eq!(mode(&p), 0o600, "{}", p.display());
+    }
+    drop(n);
+
+    // A fresh data directory, nested: every directory the node creates is
+    // owner-only.
+    let fresh = dir.path().join("a").join("b");
+    let n = NodeProc::start_logged(&fresh, Some(&dir.path().join("fresh.log")), &[]);
+    assert_eq!(mode(&dir.path().join("a")), 0o700);
+    assert_eq!(mode(&fresh), 0o700);
+    for entry in std::fs::read_dir(&fresh).unwrap() {
+        let p = entry.unwrap().path();
+        assert_eq!(mode(&p), 0o600, "{}", p.display());
+    }
+    drop(n);
 }

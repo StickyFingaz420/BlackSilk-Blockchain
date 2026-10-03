@@ -146,10 +146,40 @@ fn an_apply_failure_exits_with_the_halt_status_the_unit_does_not_restart() {
     .unwrap();
     let lines: Vec<&str> = unit.lines().map(str::trim).collect();
     assert!(lines.contains(&"Restart=on-failure"));
+    let prevent: Vec<&str> = lines
+        .iter()
+        .filter_map(|l| l.strip_prefix("RestartPreventExitStatus="))
+        .flat_map(|v| v.split_whitespace())
+        .collect();
     assert!(
-        lines.contains(&format!("RestartPreventExitStatus={HALT_EXIT_CODE}").as_str()),
+        prevent.contains(&HALT_EXIT_CODE.to_string().as_str()),
         "the unit must list the halt status"
     );
+    // A configuration error or a build refusing the network (W4-GUARD).
+    assert!(prevent.contains(&"2"), "the unit must list status 2");
+    // TM2: a forged stored hash and a failed RandomX self-test cannot be
+    // fixed by a restart either.
+    for code in [
+        blacksilk_node::STORE_POW_EXIT_CODE,
+        blacksilk_node::RANDOMX_SELF_TEST_EXIT_CODE,
+    ] {
+        assert!(
+            prevent.contains(&code.to_string().as_str()),
+            "the unit must list status {code}"
+        );
+    }
+    // TM2-4 / RT-NODEOPS: a deterministic crash (exit 70 again, or a
+    // panic's 101) stops after five starts in 15 minutes, 30 s apart (about
+    // 2.5 minutes of retries for a transient failure); systemd reads the
+    // limit only in [Unit].
+    let at = |l: &str| lines.iter().position(|x| *x == l);
+    let (unit, service) = (at("[Unit]").unwrap(), at("[Service]").unwrap());
+    assert!(lines.contains(&"RestartSec=30"));
+    for limit in ["StartLimitIntervalSec=900", "StartLimitBurst=5"] {
+        let i = at(limit).unwrap_or_else(|| panic!("the unit must set {limit}"));
+        assert!(unit < i && i < service, "{limit} belongs in [Unit]");
+    }
+    assert!(lines.contains(&"KillSignal=SIGINT"));
 }
 
 /// The same halt found at start-up: `ChainManager::open` returns the replay's
@@ -165,6 +195,20 @@ fn an_apply_failure_found_at_start_up_exits_with_the_halt_status() {
     let halt = io::Error::other(ApplyHalt("block 00ab at height 7 failed to apply".into()));
     assert_eq!(open_exit_code(&halt), HALT_EXIT_CODE);
     assert_eq!(halt.to_string(), "block 00ab at height 7 failed to apply");
+    // TM2-5: a stored PoW hash its header does not produce.
+    let forged = io::Error::new(
+        io::ErrorKind::InvalidData,
+        blacksilk_chain::manager::StorePowMismatch {
+            index: Some(4),
+            total: 9,
+            height: 5,
+            id: [7; 32],
+            checked: 9,
+            mismatches: 1,
+        },
+    );
+    assert_eq!(open_exit_code(&forged), blacksilk_node::STORE_POW_EXIT_CODE);
+    assert!(forged.to_string().contains("height 5"), "{forged}");
     for other in [
         io::Error::new(io::ErrorKind::InvalidData, "corrupt record"),
         io::Error::other("store of another network"),

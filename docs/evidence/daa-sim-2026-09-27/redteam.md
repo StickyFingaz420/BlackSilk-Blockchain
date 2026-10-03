@@ -776,3 +776,21 @@ Cells: honest / compressed / best adaptive (policy) -> excess. Standard error of
 ## Automated verdict
 
 - Candidates meeting every criterion: (a') LWMA-75, virtual clock step T/2 [RECOMMENDED]; LWMA-75 step T/2, clock warmed over 11 blocks.
+
+## Correction 2026-10-02: the RT-3 residual is not covered by park-on-deep-reorg
+
+The RT-3 row above, `results.md` ("pair the cap with defence in depth (02's
+park-on-deep-reorg)") and `selection.md` (the criteria "assign the q ≈ 0.4 residual to
+02's park-on-deep-reorg") assign the race residual to park-on-deep-reorg. That does not
+hold (threat-model round 2 cross-check, §1.7):
+- the RT-3 figures are measured at z = 100 confirmations, while the decided park depth
+  is 720 for a public testnet and park is off for the trial (decisions "Agent 02" W-7),
+  so park would never act on such a race; park is also not implemented;
+- RT-4 (the inherited difficulty) arises after the attacker's branch is accepted, which
+  park does not touch.
+
+The residual (+3.5% at q = 0.4, +27.4% at q = 0.45 on the adopted rule) is accepted
+under the majority-hash assumption (K1), and the RT-4 liveness cost goes to the incident
+procedure (docs/testnet-incident-response.md §4.4). The figures and the rule are
+unchanged; the record of the decision is in docs/reviews/v3-consensus-changes.md
+(`daa-lwma75-warm`, item 8).

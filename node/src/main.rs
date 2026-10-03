@@ -6,14 +6,17 @@
 mod config;
 
 use blacksilk_chain::actor::{self, ActorConfig};
-use blacksilk_chain::manager::{ChainManager, OperatorMark, OperatorMarked};
+use blacksilk_chain::manager::{
+    ChainManager, OperatorMark, OperatorMarked, StorePowCheck, StorePowMismatch,
+};
 use blacksilk_chain::store::FileStore;
 use blacksilk_consensus::{ChainParams, RandomXPow};
 use blacksilk_node::fingerprint::{self, consensus_fingerprint, BUILD_COMMIT};
 use blacksilk_node::serve::{self, RpcSettings};
 use blacksilk_node::{
-    halt_exit_code, halt_message, open_exit_code, watch_operator_fork, watch_store, App,
-    MiningPolicy,
+    datadir, halt_exit_code, halt_message, open_exit_code, overrides, randomx_self_test,
+    shutdown_signal, watch_operator_fork, watch_store, App, MiningPolicy, NodeStatus,
+    RANDOMX_SELF_TEST_EXIT_CODE,
 };
 use blacksilk_p2p::{NetConfig, Network as P2p};
 use blacksilk_tx::params::TxRules;
@@ -23,16 +26,24 @@ use fs2::FileExt;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Parses the command line. `-V` prints the version and commit; `--version`
-/// adds the consensus, rules and identity fingerprints and the genesis id of
-/// every network, which operators compare before joining a network
+/// Parses the command line. `-V` prints the version and commit (and the
+/// markers of test-only code compiled in, [`fingerprint::build_flags`]);
+/// `--version` adds the build flags line, and the consensus, rules and
+/// identity fingerprints and the genesis id of every network, which operators
+/// compare before joining a network
 /// (docs/testnet.md §2.1). `--print-manifest [NETWORK]` prints the full
 /// consensus manifest of one network (default: every network) and exits.
 fn parse_args() -> Args {
     // clap takes `'static` strings; this runs once per process.
     let long: &'static str = Box::leak(fingerprint::version_text().into_boxed_str());
-    let short: &'static str =
-        Box::leak(format!("{} (commit {BUILD_COMMIT})", fingerprint::VERSION).into_boxed_str());
+    let short: &'static str = Box::leak(
+        format!(
+            "{} (commit {BUILD_COMMIT}){}",
+            fingerprint::VERSION,
+            fingerprint::build_flags().suffix()
+        )
+        .into_boxed_str(),
+    );
     let matches = Args::command()
         .version(short)
         .long_version(long)
@@ -80,9 +91,43 @@ fn print_manifest(network: Option<&str>) -> ! {
     std::process::exit(0);
 }
 
+/// `--randomx-self-test`: the per-device check (docs/testnet.md §2.1).
+/// Prints the result and exits 0, or [`RANDOMX_SELF_TEST_EXIT_CODE`].
+fn self_test_only() -> ! {
+    match randomx_self_test() {
+        Ok(took) => {
+            println!(
+                "RandomX self-test passed: {} reference vectors (light mode, the node's \
+                 verification path) in {took:.1?}",
+                blacksilk_randomx::self_test::VECTORS.len()
+            );
+            std::process::exit(0)
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(RANDOMX_SELF_TEST_EXIT_CODE)
+        }
+    }
+}
+
 fn main() {
     let args = parse_args();
+    if args.randomx_self_test {
+        self_test_only();
+    }
+    // A binary with test-only code (written by `cargo test`, which unifies
+    // dev-dependency features, or by a fuzz build) runs only on regtest: it
+    // is never evidence, genesis material or a shared network's node
+    // (W4-GUARD). Checked before the network's own gate, so the reason shown
+    // is the build. `--require-clean-build` (or BLACKSILK_REQUIRE_CLEAN_BUILD)
+    // refuses it on regtest too, for runs that are evidence.
+    let require_clean = blacksilk_chain::build_flags::require_clean(args.require_clean_build);
     let cfg = match Config::resolve(args)
+        .and_then(|c| {
+            fingerprint::build_flags()
+                .check_run("blacksilk-node", c.network, require_clean)
+                .map(|()| c)
+        })
         .and_then(|c| config::check_network_enabled(c.network).map(|()| c))
     {
         Ok(c) => c,
@@ -195,13 +240,54 @@ fn run(cfg: Config) -> Result<(), Stop> {
         .check()
         .map_err(|e| format!("invalid chain parameters: {e}"))?;
     let data_dir = cfg.data_dir.clone();
-    std::fs::create_dir_all(&data_dir).map_err(|e| format!("{}: {e}", data_dir.display()))?;
+    // Owner-only on Unix (docs/testnet.md §4.5).
+    datadir::create(&data_dir).map_err(|e| format!("{}: {e}", data_dir.display()))?;
 
     // One node per data directory.
-    let lock_file = std::fs::File::create(data_dir.join("LOCK")).map_err(|e| e.to_string())?;
+    let lock_file = datadir::create_file(&data_dir.join("LOCK")).map_err(|e| e.to_string())?;
     lock_file
         .try_lock_exclusive()
         .map_err(|_| format!("{} is in use by another node", data_dir.display()))?;
+    // Files an earlier run or a copy left readable by other local users.
+    let tightened = datadir::tighten(&data_dir);
+    if !tightened.changed.is_empty() {
+        let list: Vec<String> = tightened
+            .changed
+            .iter()
+            .map(|(p, mode)| format!("{} (was {mode:o})", p.display()))
+            .collect();
+        log::warn!(
+            "data directory permissions tightened to owner-only: {}. Other local users could \
+             read the node's private files (originated.json lists this node's own \
+             transactions; docs/testnet.md §4.5)",
+            list.join(", ")
+        );
+    }
+    for (path, why) in &tightened.left {
+        log::warn!(
+            "{} is readable by other local users ({why}): make the data directory \
+             owner-only (docs/testnet.md §4.5)",
+            path.display()
+        );
+    }
+
+    // This build must hash RandomX as the network does before it verifies
+    // anything (decisions "Agent 08", TM2-3).
+    if cfg.skip_randomx_self_test {
+        log::warn!(
+            "--skip-randomx-self-test: the RandomX start-up self-test is skipped; a build that \
+             fails it verifies blocks differently from the network (for diagnosis only)"
+        );
+    } else {
+        let took = randomx_self_test().map_err(|message| Stop {
+            code: RANDOMX_SELF_TEST_EXIT_CODE,
+            message,
+        })?;
+        log::info!(
+            "RandomX self-test passed: {} reference vectors (light mode) in {took:.1?}",
+            blacksilk_randomx::self_test::VECTORS.len()
+        );
+    }
 
     let store_path = data_dir.join("blocks.dat");
     if cfg.repair_store {
@@ -227,10 +313,19 @@ fn run(cfg: Config) -> Result<(), Stop> {
     getrandom::getrandom(&mut seed).map_err(|e| format!("OS RNG: {e}"))?;
     // The node's identity. Every device of a network must show the same
     // genesis and fingerprint; the commit tells builds apart (docs/testnet.md).
+    let flags = fingerprint::build_flags();
     log::info!(
-        "blacksilk-node {} commit {BUILD_COMMIT}",
-        fingerprint::VERSION
+        "blacksilk-node {} commit {BUILD_COMMIT}, {}",
+        fingerprint::VERSION,
+        flags.line()
     );
+    if !flags.is_clean() {
+        log::warn!(
+            "this binary has test-only code compiled in ({}): for this repository's \
+             regtest tests only, never evidence or a shared network",
+            flags.render()
+        );
+    }
     log::info!(
         "{}: genesis {}, consensus fingerprint {}",
         network_name(network),
@@ -238,16 +333,41 @@ fn run(cfg: Config) -> Result<(), Stop> {
         hex::encode(consensus_fingerprint(network))
     );
     log::info!("{}: loading {}", network_name(network), data_dir.display());
+    // Stored proof-of-work hashes are re-verified: a sample, or all of
+    // them (decisions "Agent 01", TM2-5).
+    let pow_check = if cfg.verify_store_pow {
+        log::info!(
+            "--verify-store-pow: every stored proof-of-work hash is recomputed (RandomX, \
+             light mode: about as long as verifying the chain's headers during a sync)"
+        );
+        StorePowCheck::All
+    } else {
+        StorePowCheck::NODE_DEFAULT
+    };
     let started = std::time::Instant::now();
-    let mut manager = ChainManager::open(
+    let mut manager = ChainManager::open_checked(
         params.clone(),
         TxRules::at_height(&params, 0), // base constants; the manager selects rules per height
         Arc::new(RandomXPow::new()),
         Box::new(store),
         seed,
+        pow_check,
     )
     .map_err(|e| {
-        let message = if e.kind() == std::io::ErrorKind::InvalidData {
+        let forged = e
+            .get_ref()
+            .is_some_and(|inner| inner.is::<StorePowMismatch>());
+        let message = if forged {
+            format!(
+                "block store {}: {e}. The node refuses to start on it. Keep the data directory \
+                 {} unchanged as evidence and report it (docs/testnet-incident-response.md); \
+                 to run the node, move the directory aside and let the node resync from its \
+                 peers. Never copy a data directory between devices; one restored from a \
+                 backup is checked in full with --verify-store-pow (docs/testnet.md §4.5)",
+                store_path.display(),
+                data_dir.display()
+            )
+        } else if e.kind() == std::io::ErrorKind::InvalidData {
             format!(
                 "block store: {e}. If this reports a corrupt record followed by valid data, \
                  back up the data directory and restart once with --repair-store \
@@ -296,6 +416,15 @@ fn run(cfg: Config) -> Result<(), Stop> {
     let mining = MiningPolicy {
         despite_operator_fork: cfg.mine_despite_operator_fork,
     };
+    // `/info` lists the operator flags of this run (F48-9).
+    let run_overrides = overrides(
+        &cfg.invalidate_blocks,
+        &cfg.reconsider_blocks,
+        mining,
+        cfg.mine_from_stale_tip,
+        cfg.repair_store,
+        cfg.skip_randomx_self_test,
+    );
     if mining.despite_operator_fork {
         log::warn!(
             "--mine-despite-operator-fork: block templates are served even while a heavier \
@@ -321,6 +450,7 @@ fn run(cfg: Config) -> Result<(), Stop> {
     let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     let stopper = chain.clone();
     let result = runtime.block_on(async move {
+        let mut psk_loaded = false;
         let net = match cfg.p2p {
             Some(p) => {
                 let mut nc = NetConfig::new(params.network_id);
@@ -341,6 +471,7 @@ fn run(cfg: Config) -> Result<(), Stop> {
                         blacksilk_p2p::transport::NetworkPsk::load(path)
                             .map_err(|e| format!("network PSK file {}: {e}", path.display()))?,
                     );
+                    psk_loaded = true;
                     log::info!("P2P: network pre-shared key loaded; only nodes with it can connect");
                 }
                 if nc.seeds.is_empty() && nc.connect.is_empty() {
@@ -379,6 +510,10 @@ fn run(cfg: Config) -> Result<(), Stop> {
             chain,
             net: net.clone(),
             mining,
+            status: Arc::new(NodeStatus {
+                network_psk_loaded: psk_loaded,
+                overrides: run_overrides,
+            }),
         };
         let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let failed_flag = failed.clone();
@@ -387,7 +522,8 @@ fn run(cfg: Config) -> Result<(), Stop> {
         // connection limits, and the guard (docs/blocks.md §9.1).
         let served = serve::run(listener, app, &data_dir, rpc_settings, async move {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => log::info!("shutting down"),
+                // Ctrl-C, or SIGTERM on Unix: the same clean stop.
+                sig = shutdown_signal() => log::info!("{sig}: shutting down"),
                 Ok(()) = store_failed => {
                     failed_flag.store(true, std::sync::atomic::Ordering::SeqCst);
                     log::error!("{}; shutting down", halt_message(&reason));
