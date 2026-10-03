@@ -1,0 +1,13 @@
+-C=--lib
+-C=--test=consensus_fingerprint
+-C=--test=elf_paths
+-C=--test=fri_schedule
+-C=--test=hk_vectors
+-C=--test=kernel
+-C=--test=kernel_budget
+-C=--test=mutation_regressions
+-C=--test=proof_limits
+-C=--test=state
+-C=--test=tree_capacity
+-C=--test=px_proof_wiring
+-C=--test=state_accessors

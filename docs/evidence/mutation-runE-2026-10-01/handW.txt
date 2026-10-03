@@ -1,0 +1,12 @@
+# 2026-10-02 15:50:43 UTC; cargo test --locked --profile mutants -p blacksilk-wallet --lib
+baseline ok
+MISSED	HEADER_SAMPLES 15	wallet/src/headers.rs:68	HEADER_SAMPLES: u64 = 16 -> HEADER_SAMPLES: u64 = 15	96s	0.log
+MISSED	HEADER_SAMPLES 17	wallet/src/headers.rs:68	HEADER_SAMPLES: u64 = 16 -> HEADER_SAMPLES: u64 = 17	91s	1.log
+CAUGHT	POW_BATCH 255	wallet/src/headers.rs:73	POW_BATCH: usize = 256 -> POW_BATCH: usize = 255	87s	2.log
+CAUGHT	POW_BATCH 257	wallet/src/headers.rs:73	POW_BATCH: usize = 256 -> POW_BATCH: usize = 257	91s	3.log
+UNVIABLE	DENSE_POW_TAIL 719	wallet/src/wallet/sync.rs:36	DENSE_POW_TAIL: u64 = 720 -> DENSE_POW_TAIL: u64 = 719	4s	4.log
+UNVIABLE	DENSE_POW_TAIL 721	wallet/src/wallet/sync.rs:36	DENSE_POW_TAIL: u64 = 720 -> DENSE_POW_TAIL: u64 = 721	4s	5.log
+CAUGHT	STALE_TIP_WARN_BLOCKS 9	wallet/src/wallet/sync.rs:41	STALE_TIP_WARN_BLOCKS: u64 = 10 -> STALE_TIP_WARN_BLOCKS: u64 = 9	91s	6.log
+CAUGHT	STALE_TIP_WARN_BLOCKS 11	wallet/src/wallet/sync.rs:41	STALE_TIP_WARN_BLOCKS: u64 = 10 -> STALE_TIP_WARN_BLOCKS: u64 = 11	93s	7.log
+CAUGHT	STALE_TIP_REFUSE_BLOCKS 59	wallet/src/wallet/sync.rs:47	STALE_TIP_REFUSE_BLOCKS: u64 = 60 -> STALE_TIP_REFUSE_BLOCKS: u64 = 59	94s	8.log
+CAUGHT	STALE_TIP_REFUSE_BLOCKS 61	wallet/src/wallet/sync.rs:47	STALE_TIP_REFUSE_BLOCKS: u64 = 60 -> STALE_TIP_REFUSE_BLOCKS: u64 = 61	93s	9.log

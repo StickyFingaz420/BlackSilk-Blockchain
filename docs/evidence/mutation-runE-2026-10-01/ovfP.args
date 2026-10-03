@@ -1,0 +1,7 @@
+--re=^px[/]src[/]prove[.]rs[:]284[:]24[:] replace [+] with \- in prove$
+--re=^px[/]src[/]state[.]rs[:]169[:]34[:] replace [+] with \- in State[:][:]apply[_]inner$
+--re=^px[/]src[/]tree[.]rs[:]158[:]82[:] replace [+] with \- in Tree[:][:]append$
+--re=^px[/]src[/]tree[.]rs[:]159[:]42[:] replace [+] with \- in Tree[:][:]append$
+--re=^px[/]src[/]tree[.]rs[:]20[:]29[:] replace [<][<] with [>][>]$
+--re=^px[/]src[/]tree[.]rs[:]29[:]13[:] replace [+] with \- in empty[_]roots$
+--re=^px[/]src[/]tree[.]rs[:]81[:]19[:] replace [+][=] with \-[=] in Frontier[:][:]append$

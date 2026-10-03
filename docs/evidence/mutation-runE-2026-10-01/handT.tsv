@@ -1,0 +1,14 @@
+varint 9 bytes	tx/src/codec.rs	121	0..10	0..9
+varint 11 bytes	tx/src/codec.rs	121	0..10	0..11
+varint last byte index 8	tx/src/codec.rs	124	i == 9	i == 8
+varint last byte low > 0	tx/src/codec.rs	124	low > 1	low > 0
+varint last byte low > 2	tx/src/codec.rs	124	low > 1	low > 2
+clawback 321 per output	tx/src/types.rs	331	320 * m	321 * m
+clawback 319 per output	tx/src/types.rs	331	320 * m	319 * m
+clawback 3/5	tx/src/types.rs	331	* 4 / 5	* 3 / 5
+clawback 4/4	tx/src/types.rs	331	* 4 / 5	* 4 / 4
+clawback from m 1	tx/src/types.rs	327	m <= 2	m <= 1
+global cap +1	tx/src/types.rs	398	bytes.len() > MAX_PX_TX_SIZE.max(MAX_DEPLOY_TX_SIZE)	bytes.len() > MAX_PX_TX_SIZE.max(MAX_DEPLOY_TX_SIZE) + 1
+global cap -1	tx/src/types.rs	398	bytes.len() > MAX_PX_TX_SIZE.max(MAX_DEPLOY_TX_SIZE)	bytes.len() > MAX_PX_TX_SIZE.max(MAX_DEPLOY_TX_SIZE) - 1
+kind cap +1	tx/src/types.rs	413	bytes.len() > cap	bytes.len() > cap + 1
+kind cap -1	tx/src/types.rs	413	bytes.len() > cap	bytes.len() > cap - 1

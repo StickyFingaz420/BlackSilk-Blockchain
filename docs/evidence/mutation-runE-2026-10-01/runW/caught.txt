@@ -1,0 +1,116 @@
+wallet/src/headers.rs:156:30: replace && with || in HeaderCheck<'a>::build
+wallet/src/headers.rs:156:25: replace == with != in HeaderCheck<'a>::build
+wallet/src/headers.rs:156:40: replace != with == in HeaderCheck<'a>::build
+wallet/src/headers.rs:159:30: replace && with || in HeaderCheck<'a>::build
+wallet/src/headers.rs:159:25: replace != with == in HeaderCheck<'a>::build
+wallet/src/headers.rs:159:45: replace < with == in HeaderCheck<'a>::build
+wallet/src/headers.rs:159:45: replace < with <= in HeaderCheck<'a>::build
+wallet/src/headers.rs:167:18: replace > with == in HeaderCheck<'a>::build
+wallet/src/headers.rs:167:18: replace > with >= in HeaderCheck<'a>::build
+wallet/src/headers.rs:170:29: replace != with == in HeaderCheck<'a>::build
+wallet/src/headers.rs:170:41: replace + with - in HeaderCheck<'a>::build
+wallet/src/headers.rs:170:41: replace + with * in HeaderCheck<'a>::build
+wallet/src/headers.rs:170:58: replace != with == in HeaderCheck<'a>::build
+wallet/src/headers.rs:177:24: replace += with -= in HeaderCheck<'a>::build
+wallet/src/headers.rs:177:24: replace += with *= in HeaderCheck<'a>::build
+wallet/src/headers.rs:185:36: replace >= with < in HeaderCheck<'a>::build
+wallet/src/headers.rs:188:51: replace / with * in HeaderCheck<'a>::build
+wallet/src/headers.rs:217:9: replace HeaderCheck<'a>::refused_height -> Option<u64> with None
+wallet/src/headers.rs:217:9: replace HeaderCheck<'a>::refused_height -> Option<u64> with Some(0)
+wallet/src/headers.rs:217:9: replace HeaderCheck<'a>::refused_height -> Option<u64> with Some(1)
+wallet/src/headers.rs:227:9: replace HeaderCheck<'a>::context_len -> usize with 0
+wallet/src/headers.rs:227:9: replace HeaderCheck<'a>::context_len -> usize with 1
+wallet/src/headers.rs:263:9: replace HeaderCheck<'a>::check -> Result<(), String> with Ok(())
+wallet/src/headers.rs:275:9: replace HeaderCheck<'a>::check_deferred -> Result<(), String> with Ok(())
+wallet/src/headers.rs:279:28: replace || with && in HeaderCheck<'a>::check_deferred
+wallet/src/headers.rs:283:43: replace + with - in HeaderCheck<'a>::check_deferred
+wallet/src/headers.rs:283:43: replace + with * in HeaderCheck<'a>::check_deferred
+wallet/src/headers.rs:293:9: replace HeaderCheck<'a>::flush -> Result<(), String> with Ok(())
+wallet/src/headers.rs:299:26: replace += with -= in HeaderCheck<'a>::flush
+wallet/src/headers.rs:316:9: replace HeaderCheck<'a>::precheck -> Result<(), String> with Ok(())
+wallet/src/headers.rs:318:36: replace + with - in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:318:36: replace + with * in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:319:26: replace != with == in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:319:54: replace != with == in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:326:27: replace != with == in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:349:30: replace != with == in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:363:29: replace <= with > in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:368:29: replace > with < in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:371:33: replace || with && in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:371:56: replace <= with > in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:373:20: replace && with || in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:373:41: replace > with == in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:373:41: replace > with < in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:388:49: replace + with - in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:388:49: replace + with * in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:406:5: replace first_failure -> Option<usize> with None
+wallet/src/headers.rs:406:5: replace first_failure -> Option<usize> with Some(0)
+wallet/src/headers.rs:406:5: replace first_failure -> Option<usize> with Some(1)
+wallet/src/headers.rs:412:28: replace || with && in first_failure
+wallet/src/headers.rs:412:14: replace >= with < in first_failure
+wallet/src/headers.rs:412:33: replace > with == in first_failure
+wallet/src/headers.rs:412:33: replace > with < in first_failure
+wallet/src/headers.rs:418:12: delete ! in first_failure
+wallet/src/headers.rs:438:13: replace != with == in first_failure
+wallet/src/wallet/sync.rs:61:5: replace stale_tip_limits -> (u64, u64) with (0, 0)
+wallet/src/wallet/sync.rs:61:5: replace stale_tip_limits -> (u64, u64) with (0, 1)
+wallet/src/wallet/sync.rs:61:5: replace stale_tip_limits -> (u64, u64) with (1, 0)
+wallet/src/wallet/sync.rs:61:5: replace stale_tip_limits -> (u64, u64) with (1, 1)
+wallet/src/wallet/sync.rs:64:35: replace + with - in stale_tip_limits
+wallet/src/wallet/sync.rs:64:35: replace + with * in stale_tip_limits
+wallet/src/wallet/sync.rs:65:37: replace + with - in stale_tip_limits
+wallet/src/wallet/sync.rs:65:33: replace * with + in stale_tip_limits
+wallet/src/wallet/sync.rs:65:33: replace * with / in stale_tip_limits
+wallet/src/wallet/sync.rs:128:5: replace check_batch -> Option<(usize, String)> with None
+wallet/src/wallet/sync.rs:128:5: replace check_batch -> Option<(usize, String)> with Some((0, String::new()))
+wallet/src/wallet/sync.rs:128:5: replace check_batch -> Option<(usize, String)> with Some((0, "xyzzy".into()))
+wallet/src/wallet/sync.rs:128:5: replace check_batch -> Option<(usize, String)> with Some((1, String::new()))
+wallet/src/wallet/sync.rs:128:5: replace check_batch -> Option<(usize, String)> with Some((1, "xyzzy".into()))
+wallet/src/wallet/sync.rs:128:34: replace + with - in check_batch
+wallet/src/wallet/sync.rs:128:34: replace + with * in check_batch
+wallet/src/wallet/sync.rs:139:43: replace || with && in check_batch
+wallet/src/wallet/sync.rs:139:34: replace == with != in check_batch
+wallet/src/wallet/sync.rs:139:59: replace > with == in check_batch
+wallet/src/wallet/sync.rs:139:59: replace > with < in check_batch
+wallet/src/wallet/sync.rs:156:5: replace for_each_header -> Result<(), WalletError> with Ok(())
+wallet/src/wallet/sync.rs:157:13: replace <= with > in for_each_header
+wallet/src/wallet/sync.rs:158:29: replace + with - in for_each_header
+wallet/src/wallet/sync.rs:158:29: replace + with * in for_each_header
+wallet/src/wallet/sync.rs:158:25: replace - with + in for_each_header
+wallet/src/wallet/sync.rs:158:25: replace - with / in for_each_header
+wallet/src/wallet/sync.rs:162:29: replace / with % in for_each_header
+wallet/src/wallet/sync.rs:162:29: replace / with * in for_each_header
+wallet/src/wallet/sync.rs:163:22: replace != with == in for_each_header
+wallet/src/wallet/sync.rs:163:32: replace == with != in for_each_header
+wallet/src/wallet/sync.rs:163:66: replace != with == in for_each_header
+wallet/src/wallet/sync.rs:163:52: replace % with / in for_each_header
+wallet/src/wallet/sync.rs:163:52: replace % with + in for_each_header
+wallet/src/wallet/sync.rs:163:83: replace > with == in for_each_header
+wallet/src/wallet/sync.rs:163:83: replace > with >= in for_each_header
+wallet/src/wallet/sync.rs:171:30: replace != with == in for_each_header
+wallet/src/wallet/sync.rs:178:15: replace += with -= in for_each_header
+wallet/src/wallet/sync.rs:178:15: replace += with *= in for_each_header
+wallet/src/wallet/sync.rs:192:5: replace fetch_headers -> Result<Vec<BlockHeader>, WalletError> with Ok(vec![])
+wallet/src/wallet/sync.rs:195:26: replace != with == in fetch_headers
+wallet/src/wallet/sync.rs:215:5: replace node_id_at -> Result<Option<Hash>, WalletError> with Ok(None)
+wallet/src/wallet/sync.rs:215:5: replace node_id_at -> Result<Option<Hash>, WalletError> with Ok(Some(Default::default()))
+wallet/src/wallet/sync.rs:222:20: replace match guard h.height == height && resp.from == height with false in node_id_at
+wallet/src/wallet/sync.rs:222:29: replace == with != in node_id_at
+wallet/src/wallet/sync.rs:222:52: replace == with != in node_id_at
+wallet/src/wallet/sync.rs:558:9: replace Wallet::note_tip_age -> Result<(), WalletError> with Ok(())
+wallet/src/wallet/sync.rs:562:18: replace match guard h == 0 with false in Wallet::note_tip_age
+wallet/src/wallet/sync.rs:562:20: replace == with != in Wallet::note_tip_age
+wallet/src/wallet/sync.rs:576:16: replace > with == in Wallet::note_tip_age
+wallet/src/wallet/sync.rs:576:16: replace > with < in Wallet::note_tip_age
+wallet/src/wallet/sync.rs:592:9: replace Wallet::tip_age -> Option<(u64, u64)> with None
+wallet/src/wallet/sync.rs:592:9: replace Wallet::tip_age -> Option<(u64, u64)> with Some((0, 0))
+wallet/src/wallet/sync.rs:592:9: replace Wallet::tip_age -> Option<(u64, u64)> with Some((0, 1))
+wallet/src/wallet/sync.rs:592:9: replace Wallet::tip_age -> Option<(u64, u64)> with Some((1, 0))
+wallet/src/wallet/sync.rs:592:9: replace Wallet::tip_age -> Option<(u64, u64)> with Some((1, 1))
+wallet/src/wallet/sync.rs:613:9: replace Wallet::check_fresh_tip -> Result<(), WalletError> with Ok(())
+wallet/src/wallet/sync.rs:618:36: replace match guard age > refuse with true in Wallet::check_fresh_tip
+wallet/src/wallet/sync.rs:618:36: replace match guard age > refuse with false in Wallet::check_fresh_tip
+wallet/src/wallet/sync.rs:618:40: replace > with == in Wallet::check_fresh_tip
+wallet/src/wallet/sync.rs:618:40: replace > with < in Wallet::check_fresh_tip
+wallet/src/wallet/sync.rs:632:9: replace Wallet::sync_to_send -> Result<u64, WalletError> with Ok(0)
+wallet/src/wallet/sync.rs:632:9: replace Wallet::sync_to_send -> Result<u64, WalletError> with Ok(1)

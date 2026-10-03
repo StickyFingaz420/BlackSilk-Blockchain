@@ -1,0 +1,7 @@
+--re=^wallet[/]src[/]headers[.]rs[:]177[:]24[:] replace [+][=] with \-[=] in HeaderCheck[<][']a[>][:][:]build$
+--re=^wallet[/]src[/]headers[.]rs[:]299[:]26[:] replace [+][=] with \-[=] in HeaderCheck[<][']a[>][:][:]flush$
+--re=^wallet[/]src[/]headers[.]rs[:]318[:]36[:] replace [+] with \- in HeaderCheck[<][']a[>][:][:]precheck$
+--re=^wallet[/]src[/]headers[.]rs[:]388[:]49[:] replace [+] with \- in HeaderCheck[<][']a[>][:][:]precheck$
+--re=^wallet[/]src[/]wallet[/]sync[.]rs[:]128[:]34[:] replace [+] with \- in check[_]batch$
+--re=^wallet[/]src[/]wallet[/]sync[.]rs[:]158[:]29[:] replace [+] with \- in for[_]each[_]header$
+--re=^wallet[/]src[/]wallet[/]sync[.]rs[:]64[:]35[:] replace [+] with \- in stale[_]tip[_]limits$

@@ -1,0 +1,9 @@
+commit 06d8ab9; cargo test --locked --profile mutants -p blacksilk-wallet --lib
+baseline ok
+missed wallet/src/headers.rs:185:36: replace >= with > (1.log)
+caught wallet/src/headers.rs:279:50: replace >= with > (2.log)
+missed wallet/src/headers.rs:363:29: replace <= with < (3.log)
+missed wallet/src/headers.rs:371:56: replace <= with < (4.log)
+caught wallet/src/headers.rs:412:14: replace >= with > (5.log)
+caught wallet/src/wallet/sync.rs:157:13: replace <= with < (6.log)
+done: 6 mutants, 3 missed

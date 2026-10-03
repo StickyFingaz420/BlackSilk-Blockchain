@@ -1,0 +1,83 @@
+p2p/src/net/headers.rs:39:27: replace match guard !proxied with true in queue_key
+p2p/src/net/headers.rs:39:27: replace match guard !proxied with false in queue_key
+p2p/src/net/headers.rs:39:27: delete ! in queue_key
+p2p/src/net/headers.rs:50:9: replace Inner::header_queue_room -> bool with true
+p2p/src/net/headers.rs:50:9: replace Inner::header_queue_room -> bool with false
+p2p/src/net/headers.rs:50:23: replace * with / in Inner::header_queue_room
+p2p/src/net/headers.rs:50:47: replace + with - in Inner::header_queue_room
+p2p/src/net/headers.rs:50:47: replace + with * in Inner::header_queue_room
+p2p/src/net/headers.rs:51:32: replace >= with < in Inner::header_queue_room
+p2p/src/net/headers.rs:55:13: replace || with && in Inner::header_queue_room
+p2p/src/net/headers.rs:70:9: replace Inner::note_unknown_upgrade with ()
+p2p/src/net/headers.rs:77:42: replace && with || in Inner::note_unknown_upgrade
+p2p/src/net/headers.rs:77:31: delete ! in Inner::note_unknown_upgrade
+p2p/src/net/headers.rs:164:5: replace in_grace -> bool with false
+p2p/src/net/headers.rs:166:49: replace > with < in in_grace
+p2p/src/net/headers.rs:170:5: delete ! in in_grace
+p2p/src/net/headers.rs:175:5: replace take_grace -> bool with true
+p2p/src/net/headers.rs:175:5: replace take_grace -> bool with false
+p2p/src/net/headers.rs:180:5: replace add_grace with ()
+p2p/src/net/headers.rs:190:5: replace on_headers with ()
+p2p/src/net/headers.rs:215:30: replace == with != in on_headers
+p2p/src/net/headers.rs:220:32: replace && with || in on_headers
+p2p/src/net/headers.rs:220:27: replace != with == in on_headers
+p2p/src/net/headers.rs:230:23: replace && with || in on_headers
+p2p/src/net/headers.rs:230:40: replace > with == in on_headers
+p2p/src/net/headers.rs:230:40: replace > with < in on_headers
+p2p/src/net/headers.rs:230:40: replace > with >= in on_headers
+p2p/src/net/headers.rs:239:34: replace || with && in on_headers
+p2p/src/net/headers.rs:239:37: delete ! in on_headers
+p2p/src/net/headers.rs:258:37: replace += with -= in on_headers
+p2p/src/net/headers.rs:258:37: replace += with *= in on_headers
+p2p/src/net/headers.rs:259:65: replace += with -= in on_headers
+p2p/src/net/headers.rs:259:65: replace += with *= in on_headers
+p2p/src/net/headers.rs:302:5: replace penalized -> bool with true
+p2p/src/net/headers.rs:302:5: replace penalized -> bool with false
+p2p/src/net/headers.rs:302:5: delete ! in penalized
+p2p/src/net/headers.rs:326:9: replace UpgradeWork::of -> Self with Default::default()
+p2p/src/net/headers.rs:331:32: replace + with * in UpgradeWork::of
+p2p/src/net/headers.rs:333:29: replace >= with < in UpgradeWork::of
+p2p/src/net/headers.rs:334:25: replace >= with < in UpgradeWork::of
+p2p/src/net/headers.rs:343:5: replace batch_seed -> Hash with Default::default()
+p2p/src/net/headers.rs:346:11: replace >= with < in batch_seed
+p2p/src/net/headers.rs:370:5: replace header_worker with ()
+p2p/src/net/headers.rs:400:23: replace == with != in header_worker
+p2p/src/net/headers.rs:408:25: delete match arm Ok(HeaderOutcome::Accepted{last, last_id, advanced, new_tip, work,}) in header_worker
+p2p/src/net/headers.rs:428:55: replace match guard batch.solicited with false in header_worker
+p2p/src/net/headers.rs:422:42: replace && with || in header_worker
+p2p/src/net/headers.rs:456:25: replace && with || in header_worker
+p2p/src/net/headers.rs:475:26: replace > with == in header_worker
+p2p/src/net/headers.rs:475:26: replace > with >= in header_worker
+p2p/src/net/headers.rs:498:5: replace sender_live -> bool with true
+p2p/src/net/headers.rs:498:5: replace sender_live -> bool with false
+p2p/src/net/headers.rs:500:9: replace && with || in sender_live
+p2p/src/net/headers.rs:502:30: delete ! in sender_live
+p2p/src/net/headers.rs:536:5: replace precheck -> Option<Prechecked> with None
+p2p/src/net/headers.rs:552:16: replace match guard seed_is_live(hc, &batch_seed(hc, headers, *i)) with true in precheck
+p2p/src/net/headers.rs:552:16: replace match guard seed_is_live(hc, &batch_seed(hc, headers, *i)) with false in precheck
+p2p/src/net/headers.rs:575:43: replace + with - in precheck
+p2p/src/net/headers.rs:575:43: replace + with * in precheck
+p2p/src/net/headers.rs:576:39: delete ! in precheck
+p2p/src/net/headers.rs:609:37: replace == with != in verify_headers
+p2p/src/net/headers.rs:612:9: replace && with || in verify_headers
+p2p/src/net/headers.rs:646:24: replace match guard penalized(&e) with true in verify_headers
+p2p/src/net/headers.rs:646:24: replace match guard penalized(&e) with false in verify_headers
+p2p/src/net/headers.rs:650:8: delete ! in verify_headers
+p2p/src/net/headers.rs:653:8: delete ! in verify_headers
+p2p/src/net/headers.rs:662:24: replace + with - in verify_headers
+p2p/src/net/headers.rs:662:24: replace + with * in verify_headers
+p2p/src/net/headers.rs:668:18: replace && with || in verify_headers
+p2p/src/net/headers.rs:675:73: replace + with - in verify_headers
+p2p/src/net/headers.rs:687:26: replace += with -= in verify_headers
+p2p/src/net/headers.rs:687:26: replace += with *= in verify_headers
+p2p/src/net/headers.rs:698:42: replace + with - in verify_headers
+p2p/src/net/headers.rs:698:42: replace + with * in verify_headers
+p2p/src/net/headers.rs:711:17: delete match arm Err((_, HeaderError::UnknownUpgrade{..})) in verify_headers
+p2p/src/net/headers.rs:747:51: replace > with < in verify_headers
+p2p/src/net/headers.rs:753:27: replace || with && in verify_headers
+p2p/src/net/headers.rs:753:23: replace > with == in verify_headers
+p2p/src/net/headers.rs:753:23: replace > with < in verify_headers
+p2p/src/net/headers.rs:753:23: replace > with >= in verify_headers
+p2p/src/net/headers.rs:753:30: delete ! in verify_headers
+p2p/src/net/headers.rs:784:39: replace + with - in note_clock
+p2p/src/net/headers.rs:833:5: replace on_header_error with ()

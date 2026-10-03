@@ -1,0 +1,6 @@
+px/src/prove.rs:293:21: replace != with == in prove
+px/src/prove.rs:293:39: replace != with == in prove
+px/src/prove.rs:301:27: replace != with == in prove
+px/src/prove.rs:309:30: replace < with == in prove
+px/src/prove.rs:309:30: replace < with <= in prove
+px/src/prove.rs:309:76: replace != with == in prove

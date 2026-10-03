@@ -1,0 +1,19 @@
+tx/src/codec.rs:149:9: replace Reader<'a>::point -> Result<Point, DecodeError> with Ok(Default::default())
+tx/src/state.rs:167:9: replace MemoryChain::px_record_slice -> &[PxRecordEntry] with Vec::leak(vec![Default::default()])
+tx/src/state.rs:177:9: replace MemoryChain::px_records -> Vec<PxRecordEntry> with vec![Default::default()]
+tx/src/state.rs:189:9: replace MemoryChain::px_contract -> Option<&[RegisteredFunction]> with Some(Vec::leak(vec![Default::default()]))
+tx/src/state.rs:337:9: replace <impl ChainView for MemoryChain>::output -> Option<OutputRecord> with Some(Default::default())
+tx/src/state.rs:359:9: replace <impl ChainView for MemoryChain>::px_function -> Option<PxProgram> with Some(Default::default())
+tx/src/types.rs:71:9: replace <impl From<Transfer> for Transaction>::from -> Self with Default::default()
+tx/src/types.rs:77:9: replace <impl From<Coinbase> for Transaction>::from -> Self with Default::default()
+tx/src/types.rs:90:9: replace Output::fields -> OutputFields<'_> with Default::default()
+tx/src/types.rs:105:9: replace CoinbaseOutput::fields -> OutputFields<'_> with Default::default()
+tx/src/types.rs:116:9: replace CoinbaseOutput::commitment -> Point with Default::default()
+tx/src/types.rs:131:5: replace read_bpp_pub -> Result<BppProof, DecodeError> with Ok(Default::default())
+tx/src/types.rs:174:5: replace read_bpp -> Result<BppProof, DecodeError> with Ok(Default::default())
+tx/src/types.rs:207:5: replace read_clsag -> Result<Clsag, DecodeError> with Ok(Default::default())
+tx/src/types.rs:290:9: replace Transfer::decode_body -> Result<Self, DecodeError> with Ok(Default::default())
+tx/src/types.rs:357:9: replace Coinbase::decode_body -> Result<Self, DecodeError> with Ok(Default::default())
+tx/src/types.rs:398:9: replace Transaction::decode -> Result<Self, DecodeError> with Ok(Default::default())
+tx/src/types.rs:500:9: replace Transaction::key_images -> Vec<Point> with vec![Default::default()]
+tx/src/types.rs:511:9: replace Transaction::output_keys -> Vec<OutputKey> with vec![Default::default()]

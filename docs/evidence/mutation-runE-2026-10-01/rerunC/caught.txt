@@ -1,0 +1,10 @@
+chain/src/manager/header_sync.rs:19:23: replace || with && in ChainManager::locator
+chain/src/manager/header_sync.rs:23:22: replace *= with += in ChainManager::locator
+chain/src/manager/header_sync.rs:23:22: replace *= with /= in ChainManager::locator
+chain/src/manager/header_sync.rs:27:44: replace != with == in ChainManager::locator
+chain/src/manager/header_sync.rs:80:55: replace + with - in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:80:55: replace + with * in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:87:52: replace && with || in ChainManager::missing_bodies
+chain/src/manager/header_sync.rs:115:49: replace || with && in ChainManager::pow_jobs
+chain/src/manager/submission.rs:262:9: replace ChainManager::refresh_hot_seeds with ()
+chain/src/manager/submission.rs:263:16: replace != with == in ChainManager::refresh_hot_seeds

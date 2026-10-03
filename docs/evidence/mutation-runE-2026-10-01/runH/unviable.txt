@@ -1,0 +1,4 @@
+p2p/src/net/headers.rs:38:5: replace queue_key -> NetAddr with Default::default()
+p2p/src/net/headers.rs:422:32: delete ! in header_worker
+p2p/src/net/headers.rs:536:5: replace precheck -> Option<Prechecked> with Some(Default::default())
+p2p/src/net/headers.rs:605:5: replace verify_headers -> HeaderOutcome with Default::default()

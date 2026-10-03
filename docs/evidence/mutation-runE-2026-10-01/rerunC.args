@@ -1,0 +1,20 @@
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]19[:]23[:] replace [|][|] with [&][&] in ChainManager[:][:]locator$
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]23[:]22[:] replace [*][=] with [+][=] in ChainManager[:][:]locator$
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]23[:]22[:] replace [*][=] with [/][=] in ChainManager[:][:]locator$
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]27[:]44[:] replace [!][=] with [=][=] in ChainManager[:][:]locator$
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]68[:]29[:] replace [<] with [<][=] in ChainManager[:][:]missing[_]bodies$
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]80[:]55[:] replace [+] with \- in ChainManager[:][:]missing[_]bodies$
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]80[:]55[:] replace [+] with [*] in ChainManager[:][:]missing[_]bodies$
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]87[:]52[:] replace [&][&] with [|][|] in ChainManager[:][:]missing[_]bodies$
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]115[:]49[:] replace [|][|] with [&][&] in ChainManager[:][:]pow[_]jobs$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]140[:]24[:] delete [!] in ChainManager[:][:]submit[_]inner$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]178[:]59[:] replace [!][=] with [=][=] in ChainManager[:][:]drain[_]ready$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]179[:]39[:] replace [|][|] with [&][&] in ChainManager[:][:]drain[_]ready$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]179[:]42[:] delete [!] in ChainManager[:][:]drain[_]ready$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]211[:]26[:] replace [!][=] with [=][=] in ChainManager[:][:]drain[_]ready$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]262[:]9[:] replace ChainManager[:][:]refresh[_]hot[_]seeds with [(][)]$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]263[:]16[:] replace [!][=] with [=][=] in ChainManager[:][:]refresh[_]hot[_]seeds$
+--re=^chain[/]src[/]manager[/]header[_]sync[.]rs[:]75[:]19[:] replace [+][=] with [*][=] in ChainManager[:][:]missing[_]bodies$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]50[:]9[:] replace ChainManager[:][:]sync[_]step \-[>] bool with false$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]177[:]9[:] replace ChainManager[:][:]drain[_]ready \-[>] bool with false$
+--re=^chain[/]src[/]manager[/]submission[.]rs[:]187[:]20[:] delete [!] in ChainManager[:][:]drain[_]ready$

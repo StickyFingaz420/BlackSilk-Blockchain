@@ -1,0 +1,1 @@
+wallet/src/headers.rs:254:33: replace > with < in HeaderCheck<'a>::trim

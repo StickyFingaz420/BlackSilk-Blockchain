@@ -1,0 +1,7 @@
+STORE_FAILURE_LIMIT 2	chain/src/manager.rs	270	STORE_FAILURE_LIMIT: u32 = 3	STORE_FAILURE_LIMIT: u32 = 2
+STORE_FAILURE_LIMIT 4	chain/src/manager.rs	270	STORE_FAILURE_LIMIT: u32 = 3	STORE_FAILURE_LIMIT: u32 = 4
+locator cap 62	chain/src/manager/header_sync.rs	19	out.len() >= 63	out.len() >= 62
+locator cap 64	chain/src/manager/header_sync.rs	19	out.len() >= 63	out.len() >= 64
+locator dense 9	chain/src/manager/header_sync.rs	22	out.len() >= 10	out.len() >= 9
+locator dense 11	chain/src/manager/header_sync.rs	22	out.len() >= 10	out.len() >= 11
+locator step x3	chain/src/manager/header_sync.rs	23	step *= 2	step *= 3

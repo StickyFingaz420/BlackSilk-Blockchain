@@ -1,0 +1,6 @@
+chain/src/manager/header_sync.rs:68:29: replace < with <= in ChainManager::missing_bodies
+chain/src/manager/submission.rs:140:24: delete ! in ChainManager::submit_inner
+chain/src/manager/submission.rs:178:59: replace != with == in ChainManager::drain_ready
+chain/src/manager/submission.rs:179:39: replace || with && in ChainManager::drain_ready
+chain/src/manager/submission.rs:179:42: delete ! in ChainManager::drain_ready
+chain/src/manager/submission.rs:211:26: replace != with == in ChainManager::drain_ready

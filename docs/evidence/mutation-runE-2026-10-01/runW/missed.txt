@@ -1,0 +1,45 @@
+wallet/src/headers.rs:159:45: replace < with > in HeaderCheck<'a>::build
+wallet/src/headers.rs:167:18: replace > with < in HeaderCheck<'a>::build
+wallet/src/headers.rs:170:45: replace || with && in HeaderCheck<'a>::build
+wallet/src/headers.rs:188:51: replace / with % in HeaderCheck<'a>::build
+wallet/src/headers.rs:188:32: replace * with + in HeaderCheck<'a>::build
+wallet/src/headers.rs:188:32: replace * with / in HeaderCheck<'a>::build
+wallet/src/headers.rs:210:9: replace HeaderCheck<'a>::threads -> usize with 0
+wallet/src/headers.rs:210:9: replace HeaderCheck<'a>::threads -> usize with 1
+wallet/src/headers.rs:222:9: replace HeaderCheck<'a>::set_threads with ()
+wallet/src/headers.rs:232:9: replace HeaderCheck<'a>::has_seed -> bool with true
+wallet/src/headers.rs:232:9: replace HeaderCheck<'a>::has_seed -> bool with false
+wallet/src/headers.rs:237:9: replace HeaderCheck<'a>::seeds -> impl Iterator<Item =(u64, Hash)>+'_ with ::std::iter::empty()
+wallet/src/headers.rs:237:9: replace HeaderCheck<'a>::seeds -> impl Iterator<Item =(u64, Hash)>+'_ with ::std::iter::once((0, Default::default()))
+wallet/src/headers.rs:237:9: replace HeaderCheck<'a>::seeds -> impl Iterator<Item =(u64, Hash)>+'_ with ::std::iter::once((1, Default::default()))
+wallet/src/headers.rs:249:9: replace HeaderCheck<'a>::context -> impl Iterator<Item = BlockHeader>+'_ with ::std::iter::empty()
+wallet/src/headers.rs:249:61: replace > with == in HeaderCheck<'a>::context
+wallet/src/headers.rs:249:61: replace > with < in HeaderCheck<'a>::context
+wallet/src/headers.rs:249:61: replace > with >= in HeaderCheck<'a>::context
+wallet/src/headers.rs:253:9: replace HeaderCheck<'a>::trim with ()
+wallet/src/headers.rs:254:33: replace > with == in HeaderCheck<'a>::trim
+wallet/src/headers.rs:254:33: replace > with >= in HeaderCheck<'a>::trim
+wallet/src/headers.rs:279:50: replace >= with < in HeaderCheck<'a>::check_deferred
+wallet/src/headers.rs:299:26: replace += with *= in HeaderCheck<'a>::flush
+wallet/src/headers.rs:319:36: replace || with && in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:368:29: replace > with == in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:368:29: replace > with >= in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:373:41: replace > with >= in HeaderCheck<'a>::precheck
+wallet/src/headers.rs:412:33: replace > with >= in first_failure
+wallet/src/headers.rs:423:16: replace == with != in first_failure
+wallet/src/wallet/sync.rs:64:31: replace * with + in stale_tip_limits
+wallet/src/wallet/sync.rs:64:31: replace * with / in stale_tip_limits
+wallet/src/wallet/sync.rs:65:37: replace + with * in stale_tip_limits
+wallet/src/wallet/sync.rs:139:59: replace > with >= in check_batch
+wallet/src/wallet/sync.rs:163:71: replace || with && in for_each_header
+wallet/src/wallet/sync.rs:163:37: replace || with && in for_each_header
+wallet/src/wallet/sync.rs:163:27: replace || with && in for_each_header
+wallet/src/wallet/sync.rs:222:20: replace match guard h.height == height && resp.from == height with true in node_id_at
+wallet/src/wallet/sync.rs:222:39: replace && with || in node_id_at
+wallet/src/wallet/sync.rs:561:24: replace match guard t.height == h with true in Wallet::note_tip_age
+wallet/src/wallet/sync.rs:561:24: replace match guard t.height == h with false in Wallet::note_tip_age
+wallet/src/wallet/sync.rs:562:18: replace match guard h == 0 with true in Wallet::note_tip_age
+wallet/src/wallet/sync.rs:561:33: replace == with != in Wallet::note_tip_age
+wallet/src/wallet/sync.rs:565:64: replace != with == in Wallet::note_tip_age
+wallet/src/wallet/sync.rs:576:16: replace > with >= in Wallet::note_tip_age
+wallet/src/wallet/sync.rs:618:40: replace > with >= in Wallet::check_fresh_tip

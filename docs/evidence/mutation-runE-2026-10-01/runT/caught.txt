@@ -1,0 +1,183 @@
+tx/src/codec.rs:46:9: replace Writer::u8 with ()
+tx/src/codec.rs:51:17: replace >= with < in Writer::varint
+tx/src/codec.rs:51:9: replace Writer::varint with ()
+tx/src/codec.rs:52:44: replace | with & in Writer::varint
+tx/src/codec.rs:52:36: replace & with | in Writer::varint
+tx/src/codec.rs:52:36: replace & with ^ in Writer::varint
+tx/src/codec.rs:53:15: replace >>= with <<= in Writer::varint
+tx/src/codec.rs:59:9: replace Writer::bytes with ()
+tx/src/codec.rs:63:9: replace Writer::point with ()
+tx/src/codec.rs:67:9: replace Writer::scalar with ()
+tx/src/codec.rs:79:9: replace Writer::into_bytes -> Vec<u8> with vec![]
+tx/src/codec.rs:79:9: replace Writer::into_bytes -> Vec<u8> with vec![0]
+tx/src/codec.rs:79:9: replace Writer::into_bytes -> Vec<u8> with vec![1]
+tx/src/codec.rs:95:9: replace Reader<'a>::slice -> &'a[u8] with Vec::leak(Vec::new())
+tx/src/codec.rs:95:9: replace Reader<'a>::slice -> &'a[u8] with Vec::leak(vec![0])
+tx/src/codec.rs:95:9: replace Reader<'a>::slice -> &'a[u8] with Vec::leak(vec![1])
+tx/src/codec.rs:99:9: replace Reader<'a>::position -> usize with 0
+tx/src/codec.rs:103:9: replace Reader<'a>::u8 -> Result<u8, DecodeError> with Ok(0)
+tx/src/codec.rs:99:9: replace Reader<'a>::position -> usize with 1
+tx/src/codec.rs:103:9: replace Reader<'a>::u8 -> Result<u8, DecodeError> with Ok(1)
+tx/src/codec.rs:104:18: replace += with -= in Reader<'a>::u8
+tx/src/codec.rs:104:18: replace += with *= in Reader<'a>::u8
+tx/src/codec.rs:109:9: replace Reader<'a>::array -> Result<[u8; N], DecodeError> with Ok([0; N])
+tx/src/codec.rs:109:9: replace Reader<'a>::array -> Result<[u8; N], DecodeError> with Ok([1; N])
+tx/src/codec.rs:120:9: replace Reader<'a>::varint -> Result<u64, DecodeError> with Ok(0)
+tx/src/codec.rs:120:9: replace Reader<'a>::varint -> Result<u64, DecodeError> with Ok(1)
+tx/src/codec.rs:123:26: replace & with | in Reader<'a>::varint
+tx/src/codec.rs:123:26: replace & with ^ in Reader<'a>::varint
+tx/src/codec.rs:124:23: replace && with || in Reader<'a>::varint
+tx/src/codec.rs:124:18: replace == with != in Reader<'a>::varint
+tx/src/codec.rs:124:41: replace || with && in Reader<'a>::varint
+tx/src/codec.rs:124:36: replace != with == in Reader<'a>::varint
+tx/src/codec.rs:124:29: replace & with | in Reader<'a>::varint
+tx/src/codec.rs:124:29: replace & with ^ in Reader<'a>::varint
+tx/src/codec.rs:124:48: replace > with == in Reader<'a>::varint
+tx/src/codec.rs:124:48: replace > with < in Reader<'a>::varint
+tx/src/codec.rs:124:48: replace > with >= in Reader<'a>::varint
+tx/src/codec.rs:127:19: replace |= with &= in Reader<'a>::varint
+tx/src/codec.rs:127:26: replace << with >> in Reader<'a>::varint
+tx/src/codec.rs:127:32: replace * with + in Reader<'a>::varint
+tx/src/codec.rs:127:32: replace * with / in Reader<'a>::varint
+tx/src/codec.rs:128:25: replace == with != in Reader<'a>::varint
+tx/src/codec.rs:128:18: replace & with | in Reader<'a>::varint
+tx/src/codec.rs:128:18: replace & with ^ in Reader<'a>::varint
+tx/src/codec.rs:129:26: replace && with || in Reader<'a>::varint
+tx/src/codec.rs:129:22: replace > with == in Reader<'a>::varint
+tx/src/codec.rs:129:22: replace > with < in Reader<'a>::varint
+tx/src/codec.rs:129:22: replace > with >= in Reader<'a>::varint
+tx/src/codec.rs:129:31: replace == with != in Reader<'a>::varint
+tx/src/codec.rs:140:9: replace Reader<'a>::skip -> Result<(), DecodeError> with Ok(())
+tx/src/codec.rs:141:16: replace > with == in Reader<'a>::skip
+tx/src/codec.rs:141:16: replace > with < in Reader<'a>::skip
+tx/src/codec.rs:141:16: replace > with >= in Reader<'a>::skip
+tx/src/codec.rs:153:9: replace Reader<'a>::scalar -> Result<Scalar, DecodeError> with Ok(Default::default())
+tx/src/codec.rs:158:9: replace Reader<'a>::count -> Result<usize, DecodeError> with Ok(0)
+tx/src/codec.rs:158:9: replace Reader<'a>::count -> Result<usize, DecodeError> with Ok(1)
+tx/src/codec.rs:159:24: replace || with && in Reader<'a>::count
+tx/src/codec.rs:159:18: replace < with == in Reader<'a>::count
+tx/src/codec.rs:159:18: replace < with > in Reader<'a>::count
+tx/src/codec.rs:159:18: replace < with <= in Reader<'a>::count
+tx/src/codec.rs:159:33: replace > with == in Reader<'a>::count
+tx/src/codec.rs:159:33: replace > with < in Reader<'a>::count
+tx/src/codec.rs:166:9: replace Reader<'a>::finish -> Result<(), DecodeError> with Ok(())
+tx/src/codec.rs:159:33: replace > with >= in Reader<'a>::count
+tx/src/codec.rs:166:21: replace == with != in Reader<'a>::finish
+tx/src/state.rs:102:9: replace MemoryChain::with_px_state -> Self with Default::default()
+tx/src/state.rs:103:13: delete field px from struct Self expression in MemoryChain::with_px_state
+tx/src/state.rs:118:9: replace MemoryChain::next_height -> u64 with 0
+tx/src/state.rs:118:9: replace MemoryChain::next_height -> u64 with 1
+tx/src/state.rs:122:9: replace MemoryChain::output_count -> u64 with 0
+tx/src/state.rs:122:9: replace MemoryChain::output_count -> u64 with 1
+tx/src/state.rs:127:9: replace MemoryChain::first_output_at -> Option<u64> with None
+tx/src/state.rs:127:9: replace MemoryChain::first_output_at -> Option<u64> with Some(0)
+tx/src/state.rs:127:9: replace MemoryChain::first_output_at -> Option<u64> with Some(1)
+tx/src/state.rs:134:9: replace MemoryChain::cumulative_outputs -> Vec<u64> with vec![]
+tx/src/state.rs:134:9: replace MemoryChain::cumulative_outputs -> Vec<u64> with vec![0]
+tx/src/state.rs:134:9: replace MemoryChain::cumulative_outputs -> Vec<u64> with vec![1]
+tx/src/state.rs:154:9: replace MemoryChain::px -> &PxState with Box::leak(Box::new(Default::default()))
+tx/src/state.rs:159:9: replace MemoryChain::px_record_count -> u64 with 0
+tx/src/state.rs:159:9: replace MemoryChain::px_record_count -> u64 with 1
+tx/src/state.rs:167:9: replace MemoryChain::px_record_slice -> &[PxRecordEntry] with Vec::leak(Vec::new())
+tx/src/state.rs:177:9: replace MemoryChain::px_records -> Vec<PxRecordEntry> with vec![]
+tx/src/state.rs:183:9: replace MemoryChain::px_nullifiers -> Vec<(u64, Digest)> with vec![]
+tx/src/state.rs:183:9: replace MemoryChain::px_nullifiers -> Vec<(u64, Digest)> with vec![(0, Default::default())]
+tx/src/state.rs:183:9: replace MemoryChain::px_nullifiers -> Vec<(u64, Digest)> with vec![(1, Default::default())]
+tx/src/state.rs:208:9: replace MemoryChain::apply_block -> Result<u64, ApplyError> with Ok(0)
+tx/src/state.rs:208:9: replace MemoryChain::apply_block -> Result<u64, ApplyError> with Ok(1)
+tx/src/state.rs:219:17: delete match arm Transaction::Px(t) in MemoryChain::apply_block
+tx/src/state.rs:220:17: delete match arm Transaction::PxDeploy(t) in MemoryChain::apply_block
+tx/src/state.rs:256:17: delete match arm Transaction::Px(t) in MemoryChain::apply_block
+tx/src/state.rs:267:34: replace += with -= in MemoryChain::apply_block
+tx/src/state.rs:267:34: replace += with *= in MemoryChain::apply_block
+tx/src/state.rs:303:9: replace MemoryChain::undo_block -> bool with true
+tx/src/state.rs:303:9: replace MemoryChain::undo_block -> bool with false
+tx/src/state.rs:318:47: replace - with / in MemoryChain::undo_block
+tx/src/state.rs:330:5: replace height_range -> (usize, usize) with (0, 0)
+tx/src/state.rs:330:5: replace height_range -> (usize, usize) with (0, 1)
+tx/src/state.rs:330:5: replace height_range -> (usize, usize) with (1, 0)
+tx/src/state.rs:330:5: replace height_range -> (usize, usize) with (1, 1)
+tx/src/state.rs:330:51: replace < with == in height_range
+tx/src/state.rs:330:51: replace < with > in height_range
+tx/src/state.rs:330:51: replace < with <= in height_range
+tx/src/state.rs:331:49: replace <= with > in height_range
+tx/src/state.rs:337:9: replace <impl ChainView for MemoryChain>::output -> Option<OutputRecord> with None
+tx/src/state.rs:343:9: replace <impl ChainView for MemoryChain>::is_key_image_spent -> bool with true
+tx/src/state.rs:343:9: replace <impl ChainView for MemoryChain>::is_key_image_spent -> bool with false
+tx/src/state.rs:347:9: replace <impl ChainView for MemoryChain>::px_is_recent_root -> bool with false
+tx/src/state.rs:351:9: replace <impl ChainView for MemoryChain>::px_nullifier_spent -> bool with true
+tx/src/state.rs:355:9: replace <impl ChainView for MemoryChain>::px_pool -> u128 with 0
+tx/src/state.rs:355:9: replace <impl ChainView for MemoryChain>::px_pool -> u128 with 1
+tx/src/state.rs:372:9: replace <impl ChainView for MemoryChain>::px_contract_exists -> bool with true
+tx/src/state.rs:376:9: replace <impl ChainView for MemoryChain>::px_tree_size -> u64 with 0
+tx/src/types.rs:123:5: replace write_ring_pub with ()
+tx/src/state.rs:376:9: replace <impl ChainView for MemoryChain>::px_tree_size -> u64 with 1
+tx/src/types.rs:127:5: replace read_ring_pub -> Result<[u64; RING_SIZE], DecodeError> with Ok([0; RING_SIZE])
+tx/src/types.rs:127:5: replace read_ring_pub -> Result<[u64; RING_SIZE], DecodeError> with Ok([1; RING_SIZE])
+tx/src/types.rs:135:5: replace write_ring with ()
+tx/src/types.rs:144:5: replace read_ring -> Result<[u64; RING_SIZE], DecodeError> with Ok([0; RING_SIZE])
+tx/src/types.rs:144:5: replace read_ring -> Result<[u64; RING_SIZE], DecodeError> with Ok([1; RING_SIZE])
+tx/src/types.rs:148:18: replace == with != in read_ring
+tx/src/types.rs:151:26: replace - with + in read_ring
+tx/src/types.rs:151:26: replace - with / in read_ring
+tx/src/types.rs:159:5: replace write_bpp with ()
+tx/src/types.rs:199:5: replace write_clsag with ()
+tx/src/types.rs:218:9: replace Transfer::prefix_bytes -> Vec<u8> with vec![]
+tx/src/types.rs:218:9: replace Transfer::prefix_bytes -> Vec<u8> with vec![0]
+tx/src/types.rs:218:9: replace Transfer::prefix_bytes -> Vec<u8> with vec![1]
+tx/src/types.rs:240:9: replace Transfer::base_bytes -> Vec<u8> with vec![]
+tx/src/types.rs:240:9: replace Transfer::base_bytes -> Vec<u8> with vec![0]
+tx/src/types.rs:240:9: replace Transfer::base_bytes -> Vec<u8> with vec![1]
+tx/src/types.rs:254:9: replace Transfer::prunable_bytes -> Vec<u8> with vec![]
+tx/src/types.rs:254:9: replace Transfer::prunable_bytes -> Vec<u8> with vec![0]
+tx/src/types.rs:254:9: replace Transfer::prunable_bytes -> Vec<u8> with vec![1]
+tx/src/types.rs:263:9: replace Transfer::prefix_hash -> Hash with Default::default()
+tx/src/types.rs:267:9: replace Transfer::base_hash -> Hash with Default::default()
+tx/src/types.rs:271:9: replace Transfer::prunable_hash -> Hash with Default::default()
+tx/src/types.rs:277:9: replace Transfer::signature_message -> Hash with Default::default()
+tx/src/types.rs:325:9: replace Transfer::weight -> u64 with 0
+tx/src/types.rs:325:9: replace Transfer::weight -> u64 with 1
+tx/src/types.rs:327:14: replace <= with > in Transfer::weight
+tx/src/types.rs:331:14: replace + with - in Transfer::weight
+tx/src/types.rs:331:14: replace + with * in Transfer::weight
+tx/src/types.rs:331:54: replace / with % in Transfer::weight
+tx/src/types.rs:331:54: replace / with * in Transfer::weight
+tx/src/types.rs:331:50: replace * with + in Transfer::weight
+tx/src/types.rs:331:50: replace * with / in Transfer::weight
+tx/src/types.rs:331:21: replace * with + in Transfer::weight
+tx/src/types.rs:335:9: replace Transfer::encoded_len -> usize with 0
+tx/src/types.rs:331:21: replace * with / in Transfer::weight
+tx/src/types.rs:335:9: replace Transfer::encoded_len -> usize with 1
+tx/src/types.rs:335:61: replace + with - in Transfer::encoded_len
+tx/src/types.rs:335:61: replace + with * in Transfer::encoded_len
+tx/src/types.rs:335:35: replace + with - in Transfer::encoded_len
+tx/src/types.rs:335:35: replace + with * in Transfer::encoded_len
+tx/src/types.rs:341:9: replace Coinbase::prefix_bytes -> Vec<u8> with vec![]
+tx/src/types.rs:341:9: replace Coinbase::prefix_bytes -> Vec<u8> with vec![0]
+tx/src/types.rs:341:9: replace Coinbase::prefix_bytes -> Vec<u8> with vec![1]
+tx/src/types.rs:378:9: replace Coinbase::total -> u128 with 0
+tx/src/types.rs:378:9: replace Coinbase::total -> u128 with 1
+tx/src/types.rs:387:5: replace v1_part_weight -> u64 with 0
+tx/src/types.rs:387:5: replace v1_part_weight -> u64 with 1
+tx/src/types.rs:398:24: replace > with == in Transaction::decode
+tx/src/types.rs:387:15: replace == with != in v1_part_weight
+tx/src/types.rs:398:24: replace > with < in Transaction::decode
+tx/src/types.rs:403:20: replace != with == in Transaction::decode
+tx/src/types.rs:413:24: replace > with == in Transaction::decode
+tx/src/types.rs:413:24: replace > with < in Transaction::decode
+tx/src/types.rs:430:9: replace Transaction::encode -> Vec<u8> with vec![]
+tx/src/types.rs:430:9: replace Transaction::encode -> Vec<u8> with vec![0]
+tx/src/types.rs:430:9: replace Transaction::encode -> Vec<u8> with vec![1]
+tx/src/types.rs:445:9: replace Transaction::hash -> Hash with Default::default()
+tx/src/types.rs:471:9: replace Transaction::weight -> u64 with 0
+tx/src/types.rs:471:9: replace Transaction::weight -> u64 with 1
+tx/src/types.rs:481:9: replace Transaction::px_bytes -> u64 with 0
+tx/src/types.rs:481:9: replace Transaction::px_bytes -> u64 with 1
+tx/src/types.rs:483:13: delete match arm Transaction::PxDeploy(t) in Transaction::px_bytes
+tx/src/types.rs:482:13: delete match arm Transaction::Px(t) in Transaction::px_bytes
+tx/src/types.rs:490:9: replace Transaction::fee -> u64 with 0
+tx/src/types.rs:490:9: replace Transaction::fee -> u64 with 1
+tx/src/types.rs:500:9: replace Transaction::key_images -> Vec<Point> with vec![]
+tx/src/types.rs:511:9: replace Transaction::output_keys -> Vec<OutputKey> with vec![]
+tx/src/types.rs:541:9: replace Transaction::is_coinbase -> bool with false
+tx/src/types.rs:541:9: replace Transaction::is_coinbase -> bool with true
