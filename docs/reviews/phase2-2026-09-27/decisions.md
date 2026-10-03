@@ -1231,3 +1231,26 @@
   - run F: replay.rs, store.rs, zk verify/config/params, randomx/, the fingerprint modules, supply-audit;
   - the golden PX fixtures;
   - the PX R canonical-point rule.
+
+## INV-70 and RT3-TM2P2P (Lead, 2026-10-03)
+- **INV-70: root-caused; merged locally.** `a_full_class_answers_busy_at_once` held the chain lock across timing asserts, and a load-induced assert failure poisoned it. The actor then exited 70 and the output was lost.
+  - Fix: a HeldChain helper on its own thread, and fail-stop now writes directly to stderr.
+  - The node's fail-stop policy is unchanged and correct.
+- **RT3-TM2P2P, the request-tracker redesign:**
+  - Confirmed: records, timers, salted priority, caps, ServeBudget accounting, originated.json.
+  - Refuted: the bound against non-silent attackers.
+  - Found:
+    - F1 (High): parallel honest answers penalized as unrequested;
+    - F1b (High): a slow honest peer's retry copy penalized;
+    - F3 (High): ping/pong behind Tx answers drops honest slow and Tor links (~80–240 kB/s needed for 1–3 PX);
+    - F2 (Medium): slow NotFound or Busy, and reconnecting attackers, defeat the bound (up to ~20 min, sometimes dropped);
+    - F4: a node-wide lane stall is treated as a per-peer Busy;
+    - F5: inbound serving-pool holders are not rate-checked;
+    - F6: the shared tracker links clearnet and onion identities.
+  - **DECISION:** fix all of them, adopting RT3's sketch for F1/F2 where right:
+    - a ping/pong priority channel;
+    - a PONG_TIMEOUT measured from the write;
+    - size-aware timeouts;
+    - a per-network-class tracker;
+    - an adversarial property test.
+  - RT3's failing tests must all pass. A fourth RT pass follows.
