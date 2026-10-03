@@ -343,7 +343,8 @@ Each output carries its record encrypted to an address. The ciphertext is 1,241 
 
 ```text
 R (32) ‖ view tag (1) ‖ ML-KEM-768 ciphertext (1088) ‖ ChaCha20-Poly1305(contract ‖ value ‖ data ‖ rcm) (104 + 16)
-key = H32("px/delivery-key", r·V ‖ ss_kem ‖ R ‖ ct_kem ‖ cm)       AAD = cm, nonce 0 (fresh key)
+key = H32("px/delivery-key/v2", r·V ‖ ss_kem ‖ R ‖ ct_kem ‖ V ‖ H(ek) ‖ cm)
+      H(ek) = H32("px/delivery-ek", ek)                            AAD = cm, nonce 0 (fresh key)
 ```
 
 - **User records** (`contract = 0`) go to their owner's address.
@@ -360,17 +361,21 @@ wallet share nothing visible.
 and ML-KEM-768. The KEM is RustCrypto `ml-kem` 0.3.2 (pure Rust, FIPS 203), pinned
 exactly.
 
-**The key combiner is not X-Wing.** The key hashes both shared secrets, both
-ciphertexts (`R`, `ct_kem`) and `cm`:
-- X-Wing (draft-connolly-cfrg-xwing-kem) also hashes the recipient's classical public
-  key; generic hybrid combiners also bind the KEM public key. This combiner hashes
-  neither `V` nor `H(ek)`, so X-Wing's security argument does not carry over as is.
-- Why it is acceptable here: each key is used once, for one body whose tag and
-  associated data bind `cm`, and the recipient accepts a record only if it recomputes
-  `cm` (below).
-- **Recorded hardening (non-blocking):** add `V` and `H(ek)` to the key hash. It
-  changes every ciphertext's key (a wire-format change), so it needs a coordinated
-  upgrade, best done at a testnet reset.
+**The key combiner (v2) is not X-Wing.** The key hashes both shared secrets, both
+ciphertexts (`R`, `ct_kem`), both recipient public keys (`V` and `H(ek)`) and `cm`.
+Every part has a fixed length.
+- Binding the classical ciphertext and both recipient public keys follows the X-Wing
+  (draft-connolly-cfrg-xwing-kem) and generic hybrid KEM combiners: the key is tied to
+  one recipient, so a hybrid share cannot be re-targeted to another key pair.
+  Including `ct_kem` is redundant given ML-KEM's own ciphertext binding, but harmless.
+- It is not X-Wing (other inputs, hash and classical component), so X-Wing's security
+  argument does not carry over as is. Its use adds: each key is used once, for one body
+  whose tag and associated data bind `cm`, and the recipient accepts a record only if
+  it recomputes `cm` (below).
+- The v2 combiner replaces v1 (`"px/delivery-key"`, without `V` and `H(ek)`) at the
+  v3 testnet reset, which leaves no v1 ciphertext (decisions.md, "RES-FREEZE
+  verified"; R2-C9). A sender refuses an address whose view key is the identity
+  (`ss_ec` would be the identity for every `r`).
 
 **Key separation** (the wallet's derivation 2 and seed format v1, §3.1):
 - **View and spend.** The delivery keys of address `i` derive from the range's

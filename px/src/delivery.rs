@@ -5,23 +5,33 @@
 //! - ECDH on Ristretto255 with the address's view key: `ss_ec = r·V`;
 //! - ML-KEM-768 (FIPS 203) to the address's encapsulation key: `ss_kem`.
 //!
-//! The AEAD key is `H32("px/delivery-key", ss_ec ‖ ss_kem ‖ R ‖ ct_kem ‖ cm)`:
-//! a hash of both shared secrets and both ciphertexts (the ephemeral `R` and
-//! the KEM ciphertext), bound to the output's commitment `cm`. The body is
+//! The AEAD key (combiner v2) is
+//! `H32("px/delivery-key/v2", ss_ec ‖ ss_kem ‖ R ‖ ct_kem ‖ V ‖ H(ek) ‖ cm)`
+//! with `H(ek) = H32("px/delivery-ek", ek)`: a hash of both shared secrets,
+//! both ciphertexts (the ephemeral `R` and the KEM ciphertext) and both of
+//! the recipient's public keys (the view key `V` and the hash of the
+//! encapsulation key `ek`), bound to the output's commitment `cm`. Every part
+//! has a fixed length, so the concatenation is unambiguous. The body is
 //! ChaCha20-Poly1305 with `cm` as associated data. Every key is fresh (new `r`
 //! and new KEM randomness), so the nonce is zero.
 //!
+//! **Why `V` and `H(ek)` are bound** (decided for the v3 reset, decisions.md
+//! "RES-FREEZE verified"): binding the classical ciphertext and both
+//! recipient public keys, in the style of the X-Wing and generic hybrid KEM
+//! combiners, ties the key to one recipient, so a hybrid share cannot be
+//! re-targeted to another key pair. Including `ct_kem` is redundant given
+//! ML-KEM's own ciphertext binding, but harmless. The v1 combiner (tag
+//! `"px/delivery-key"`, without `V` and `H(ek)`) is gone; the reset leaves no
+//! ciphertext made with it.
+//!
 //! **This is not the X-Wing combiner**, and its security argument must not be
 //! borrowed from X-Wing. X-Wing (draft-connolly-cfrg-xwing-kem) hashes
-//! `ss_M ‖ ss_X ‖ ct_X ‖ pk_X ‖ label`: it includes the recipient's classical
-//! public key `pk_X`. Generic hybrid combiners also bind the KEM public key
-//! (a hash of `ek`). This combiner hashes both ciphertexts but neither the
-//! recipient's view key `V` nor `H(ek)`. Why that is acceptable here
-//! (docs/px.md §6): every key is used once, for one body whose tag and
-//! associated data bind `cm`, and the recipient accepts a record only if it
-//! recomputes `cm`. Adding `V` and `H(ek)` to the hash is a recorded,
-//! non-blocking hardening. It changes the wire format (the key of every
-//! ciphertext), so it needs a coordinated upgrade.
+//! `ss_M ‖ ss_X ‖ ct_X ‖ pk_X ‖ label` over its own fixed component KEMs; this
+//! combiner differs in its inputs, its hash and its classical component. Its
+//! argument rests on what it shares with them (every shared secret, every
+//! ciphertext and every recipient public key are hashed) and on its use:
+//! every key is used once, for one body whose tag and associated data bind
+//! `cm`, and the recipient accepts a record only if it recomputes `cm`.
 //!
 //! **Key separation (limits).** The delivery keys of an address derive from
 //! the PX spend secret `sk` and the index alone:
@@ -75,6 +85,7 @@ use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::ChaCha20Poly1305;
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 use curve25519_dalek::ristretto::CompressedRistretto;
+use curve25519_dalek::traits::IsIdentity;
 use curve25519_dalek::Scalar;
 use ml_kem::{Decapsulate, KeyExport, MlKem768};
 use rand_core::{CryptoRng, RngCore};
@@ -93,10 +104,13 @@ type Dk = ml_kem::DecapsulationKey<MlKem768>;
 type Ek = ml_kem::EncapsulationKey<MlKem768>;
 
 /// The secret delivery keys of one address (zeroized on drop; the ML-KEM key
-/// zeroizes itself).
+/// zeroizes itself), with the address's public view key `V` and `H(ek)`, which
+/// the key combiner binds (module docs), computed once.
 pub struct DeliveryKeys {
     view: Scalar,
     dk: Dk,
+    view_pub: [u8; 32],
+    ek_hash: [u8; 32],
 }
 
 impl Drop for DeliveryKeys {
@@ -132,34 +146,62 @@ impl DeliveryKeys {
         let view = Scalar::from_bytes_mod_order_wide(&h64(tags::PX_DELIVERY_VIEW, &[&skb, &idx]));
         let seed = h64(tags::PX_DELIVERY_KEM, &[&skb, &idx]);
         let dk = Dk::from_seed(seed.into());
-        DeliveryKeys { view, dk }
+        let view_pub = (&view * RISTRETTO_BASEPOINT_TABLE).compress().to_bytes();
+        let ek_hash = ek_hash(&dk.encapsulation_key().to_bytes());
+        DeliveryKeys {
+            view,
+            dk,
+            view_pub,
+            ek_hash,
+        }
     }
 
     pub fn address(&self, owner: Digest) -> Address {
         Address {
             owner,
-            view: (&self.view * RISTRETTO_BASEPOINT_TABLE)
-                .compress()
-                .to_bytes(),
+            view: self.view_pub,
             ek: self.dk.encapsulation_key().to_bytes().to_vec(),
         }
     }
+}
+
+/// `H(ek)`: the hash of an encoded ML-KEM-768 encapsulation key, as the key
+/// combiner binds it.
+fn ek_hash(ek: &[u8]) -> [u8; 32] {
+    h32(tags::PX_DELIVERY_EK, &[ek])
 }
 
 fn view_tag(ss_ec: &[u8; 32], r: &[u8; 32]) -> u8 {
     h32(tags::PX_VIEW_TAG, &[ss_ec, r])[0]
 }
 
-fn key(ss_ec: &[u8; 32], ss_kem: &[u8], r: &[u8; 32], ct: &[u8], cm: &Digest) -> [u8; 32] {
+/// The recipient's public keys as the key combiner binds them: the canonical
+/// view key `V` and `H(ek)`.
+struct Recipient<'a> {
+    view: &'a [u8; 32],
+    ek_hash: &'a [u8; 32],
+}
+
+/// The AEAD key (combiner v2, module docs):
+/// `H32("px/delivery-key/v2", ss_ec ‖ ss_kem ‖ R ‖ ct_kem ‖ V ‖ H(ek) ‖ cm)`.
+fn key(
+    ss_ec: &[u8; 32],
+    ss_kem: &[u8],
+    r: &[u8; 32],
+    ct: &[u8],
+    to: &Recipient<'_>,
+    cm: &Digest,
+) -> [u8; 32] {
     h32(
         tags::PX_DELIVERY_KEY,
-        &[ss_ec, ss_kem, r, ct, &digest_bytes(cm)],
+        &[ss_ec, ss_kem, r, ct, to.view, to.ek_hash, &digest_bytes(cm)],
     )
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum SealError {
-    /// The address's view key or encapsulation key does not decode.
+    /// The address's view key or encapsulation key does not decode, or the
+    /// view key is the identity.
     BadAddress,
     /// No hedge secret was supplied (empty or all zero): the ephemeral
     /// secrets would depend on the RNG alone.
@@ -222,6 +264,11 @@ pub fn seal<R: RngCore + CryptoRng>(
     let v = CompressedRistretto(to.view)
         .decompress()
         .ok_or(SealError::BadAddress)?;
+    // An identity view key makes `ss_ec` the identity for every `r`: the
+    // classical half would give nothing (R2-C9).
+    if v.is_identity() {
+        return Err(SealError::BadAddress);
+    }
     let ek_arr =
         ml_kem::Key::<Ek>::try_from(to.ek.as_slice()).map_err(|_| SealError::BadAddress)?;
     let ek = Ek::new(&ek_arr).map_err(|_| SealError::BadAddress)?;
@@ -236,7 +283,20 @@ pub fn seal<R: RngCore + CryptoRng>(
     drop(stream);
     let (ct, ss_kem) = ek.encapsulate_deterministic(&(*m).into());
 
-    let k = zeroize::Zeroizing::new(key(&ss_ec, ss_kem.as_slice(), &r_pub, ct.as_slice(), cm));
+    // `V` decoded, so `to.view` is its canonical encoding; `ek` is hashed as
+    // re-encoded, the bytes the recipient hashes.
+    let recipient = Recipient {
+        view: &to.view,
+        ek_hash: &ek_hash(&ek.to_bytes()),
+    };
+    let k = zeroize::Zeroizing::new(key(
+        &ss_ec,
+        ss_kem.as_slice(),
+        &r_pub,
+        ct.as_slice(),
+        &recipient,
+        cm,
+    ));
     let mut plain = zeroize::Zeroizing::new(Vec::with_capacity(PLAIN_BYTES));
     plain.extend_from_slice(&digest_bytes(&record.contract));
     plain.extend_from_slice(&record.value.to_le_bytes());
@@ -295,7 +355,18 @@ pub fn open(
     let ct_bytes = &c[33..33 + KEM_CT_BYTES];
     let ct = ml_kem::Ciphertext::<MlKem768>::try_from(ct_bytes).ok()?;
     let ss_kem = keys.dk.decapsulate(&ct);
-    let k = zeroize::Zeroizing::new(key(&ss_ec, ss_kem.as_slice(), &r_pub, ct_bytes, cm));
+    let recipient = Recipient {
+        view: &keys.view_pub,
+        ek_hash: &keys.ek_hash,
+    };
+    let k = zeroize::Zeroizing::new(key(
+        &ss_ec,
+        ss_kem.as_slice(),
+        &r_pub,
+        ct_bytes,
+        &recipient,
+        cm,
+    ));
     let plain = zeroize::Zeroizing::new(
         ChaCha20Poly1305::new(&(*k).into())
             .decrypt(
@@ -448,5 +519,133 @@ mod tests {
             seal(&mut ConstRng, &[0; 32], &to, &rec, &cm),
             Err(SealError::NoSecret)
         );
+    }
+
+    /// The recipient side of one ciphertext: `(R, ss_ec, ss_kem, ct_kem)`.
+    fn shared_secrets(keys: &DeliveryKeys, c: &[u8]) -> ([u8; 32], [u8; 32], Vec<u8>, Vec<u8>) {
+        let r_pub: [u8; 32] = c[..32].try_into().unwrap();
+        let r = CompressedRistretto(r_pub).decompress().unwrap();
+        let ss_ec = (keys.view * r).compress().to_bytes();
+        let ct_bytes = c[33..33 + KEM_CT_BYTES].to_vec();
+        let ct = ml_kem::Ciphertext::<MlKem768>::try_from(ct_bytes.as_slice()).unwrap();
+        let ss_kem = keys.dk.decapsulate(&ct).as_slice().to_vec();
+        (r_pub, ss_ec, ss_kem, ct_bytes)
+    }
+
+    fn body_opens(k: &[u8; 32], c: &[u8], cm: &Digest) -> bool {
+        ChaCha20Poly1305::new(&(*k).into())
+            .decrypt(
+                &[0u8; 12].into(),
+                Payload {
+                    msg: &c[33 + KEM_CT_BYTES..],
+                    aad: &digest_bytes(cm),
+                },
+            )
+            .is_ok()
+    }
+
+    /// Combiner v2: a sealed ciphertext opens under the v2 key, and the v1
+    /// combiner (`"px/delivery-key"` over `ss_ec ‖ ss_kem ‖ R ‖ ct_kem ‖ cm`,
+    /// without `V` and `H(ek)`) gives another key that does not open it.
+    #[test]
+    fn the_v2_combiner_differs_from_v1() {
+        use rand_chacha::rand_core::SeedableRng;
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(21);
+        let bob = Account::from_seed(&[6; 32]);
+        let to = bob.address(0);
+        let keys = bob.delivery_keys(0);
+        let (rec, cm) = record(to.owner, 7);
+        let c = seal(&mut rng, &SENDER, &to, &rec, &cm).unwrap();
+        let (r_pub, ss_ec, ss_kem, ct) = shared_secrets(&keys, &c);
+
+        let v2 = key(
+            &ss_ec,
+            &ss_kem,
+            &r_pub,
+            &ct,
+            &Recipient {
+                view: &to.view,
+                ek_hash: &h32(tags::PX_DELIVERY_EK, &[&to.ek]),
+            },
+            &cm,
+        );
+        let v1 = h32(
+            "px/delivery-key",
+            &[&ss_ec, &ss_kem, &r_pub, &ct, &digest_bytes(&cm)],
+        );
+        assert_ne!(v1, v2);
+        assert!(body_opens(&v2, &c, &cm));
+        assert!(!body_opens(&v1, &c, &cm));
+        assert_eq!(open(&keys, &to.owner, &c, &cm, &rec.rho), Some(rec));
+    }
+
+    /// An address whose view key is the identity is refused: its classical
+    /// shared secret would be the identity for every `r`.
+    #[test]
+    fn an_identity_view_key_is_refused() {
+        let bob = Account::from_seed(&[6; 32]);
+        let mut to = bob.address(0);
+        let (rec, cm) = record(to.owner, 1);
+        to.view = [0; 32];
+        assert_eq!(
+            seal(&mut ConstRng, &SENDER, &to, &rec, &cm),
+            Err(SealError::BadAddress)
+        );
+    }
+
+    /// The cached public keys are the address's: `V` and `H(ek)` of the
+    /// published address.
+    #[test]
+    fn cached_recipient_keys_match_the_address() {
+        let bob = Account::from_seed(&[6; 32]);
+        for i in 0..3 {
+            let keys = bob.delivery_keys(i);
+            let to = bob.address(i);
+            assert_eq!(keys.view_pub, to.view);
+            assert_eq!(keys.ek_hash, h32(tags::PX_DELIVERY_EK, &[&to.ek]));
+        }
+    }
+
+    /// The key binds the recipient's `V` and `H(ek)`: a recipient whose
+    /// cached `V` or `H(ek)` differs from the sealed-to address derives
+    /// another key and does not open the record, although both shared
+    /// secrets are right.
+    #[test]
+    fn the_key_binds_both_recipient_public_keys() {
+        use rand_chacha::rand_core::SeedableRng;
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(22);
+        let bob = Account::from_seed(&[6; 32]);
+        let to = bob.address(0);
+        let (rec, cm) = record(to.owner, 8);
+        let c = seal(&mut rng, &SENDER, &to, &rec, &cm).unwrap();
+        let other = bob.address(1);
+
+        let mut keys = bob.delivery_keys(0);
+        assert_eq!(open(&keys, &to.owner, &c, &cm, &rec.rho), Some(rec));
+        keys.view_pub = other.view;
+        assert_eq!(open(&keys, &to.owner, &c, &cm, &rec.rho), None);
+
+        let mut keys = bob.delivery_keys(0);
+        keys.ek_hash = h32(tags::PX_DELIVERY_EK, &[&other.ek]);
+        assert_eq!(open(&keys, &to.owner, &c, &cm, &rec.rho), None);
+    }
+
+    /// The combiner's tags are distinct from every other tag, the v2 key tag
+    /// is not the v1 one, and neither is a consensus tag (they are
+    /// wallet-side: changing them changes no verdict and no fingerprint).
+    #[test]
+    fn delivery_tags_are_distinct_wallet_side_tags() {
+        for t in [tags::PX_DELIVERY_KEY, tags::PX_DELIVERY_EK] {
+            assert_eq!(
+                tags::ALL.iter().filter(|x| **x == t).count(),
+                1,
+                "{t} must be listed once in ALL"
+            );
+            assert!(!tags::CONSENSUS.contains(&t), "{t} is not a consensus tag");
+        }
+        assert_ne!(tags::PX_DELIVERY_KEY, "px/delivery-key");
+        assert!(!tags::ALL.contains(&"px/delivery-key"));
+        let set: std::collections::HashSet<_> = tags::ALL.iter().collect();
+        assert_eq!(set.len(), tags::ALL.len(), "duplicate tag name");
     }
 }

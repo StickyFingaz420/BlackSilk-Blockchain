@@ -1457,3 +1457,9 @@ Every external citation was verified against its primary source (res-freeze.md �
     50% longer (ties to the byte-bounded-outbox P1); owed sets are about 4 MB worst case
     and can be churned by 256 IPs; one NAT IP shares an owed set; node-wide PX
     saturation is outside the stated bound (one sentence owed in docs/p2p.md).
+
+## PX delivery combiner v2 (Lead, 2026-10-04)
+- **Decision:** the delivery key is `H32("px/delivery-key/v2", ss_ec ‖ ss_kem ‖ R ‖ ct_kem ‖ V ‖ H(ek) ‖ cm)` with `H(ek) = H32("px/delivery-ek", ek)`, through the project's own hash (no new dependency). `V` and `H(ek)` are cached in `DeliveryKeys`.
+- **Rationale:** it binds the classical ciphertext and both recipient public keys into the combiner, in the style of the X-Wing and generic hybrid KEM combiners, so a hybrid share cannot be re-targeted to another key pair. Including `ct_kem` is redundant given ML-KEM's ciphertext binding, but harmless.
+- A sender also refuses an address whose view key is the identity (R2-C9).
+- Wallet-side only: neither tag is in `tags::CONSENSUS`, so no verdict and no fingerprint changes. It rides the v3 reset, which leaves no v1 ciphertext.

@@ -259,7 +259,8 @@ rho of output j  = Hk("px/rho", nf_0 ‖ j)                             nf_0: fi
     subaddress identification.
   - **ML-KEM-768** (FIPS 203) to a per-address key.
   - The symmetric key is derived from both shared secrets with the tagged BLAKE2
-    hash `H32("px/delivery-key", …)` (px.md §6). The AEAD is ChaCha20-Poly1305.
+    hash `H32("px/delivery-key/v2", …)`, which also binds the recipient's `V` and
+    `H(ek)` (px.md §6). The AEAD is ChaCha20-Poly1305.
 - Consequence: record contents stay confidential against a future quantum adversary,
   who would have to break ML-KEM as well.
 
