@@ -1193,3 +1193,43 @@ rate changes). `<=` also accepts `x = p`, returned as 0: a statistical distance 
 about `2^−31` per value from uniform, below anything a test or an observer can
 measure. The mutants that bias the values (`<` to `>`) or never return (`&` to `|`,
 `<` to `==`) are caught by `blinding_values_cover_the_field` or hang.
+
+## E62: the default `BlockStore::bind` (chain/src/store.rs)
+
+Decision: W4-MUTF (run F), confirmed by the Lead's review (read, not run).
+
+**Code.** The trait default: `let _ = identity; Ok(())`.
+
+**Mutants covered:** store.rs 192 `replace bind -> io::Result<()> with Ok(())`.
+
+**Argument.** The mutant is the same code: the default already ignores its argument and
+returns `Ok(())`. Stores that bind (`FileStore`) override it and are tested.
+
+## E63: `<=` for `<` in `FileStore::load`'s record loop (chain/src/store.rs)
+
+Decision: W4-MUTF (run F), confirmed by the Lead's review (read, not run).
+
+**Code.** `while pos < data.len() { match codec.parse_frame(&data[pos..]) { ... } }`.
+
+**Mutants covered:** store.rs 849 `replace < with <=`.
+
+**Argument.** The only extra pass is at `pos == data.len()`. There `parse_frame(&[])`
+returns `Err("short header")`, `next_valid_record(.., len + 1)` finds nothing (no panic),
+the file is truncated to its own length and the loop ends: the same records and the
+same file. Not strictly identical: every clean load also logs a "truncating damaged
+tail, 0 bytes dropped" warning and makes one extra `set_len` and `fsync`. Under an I/O
+fault in those calls it returns `Err` where the original returns `Ok`. No test can
+tell the two apart without fault injection; the difference is diagnostic only.
+
+## E64: `pos * 1` for `pos + 1` in `FileStore::load`'s damage search (chain/src/store.rs)
+
+Decision: W4-MUTF (run F), confirmed by the Lead's review (read, not run).
+
+**Code.** `if let Some(at) = next_valid_record(codec, &data, pos + 1)`.
+
+**Mutants covered:** store.rs 876 `replace + with *`.
+
+**Argument.** Starting the search at `pos` rather than `pos + 1` adds one candidate:
+the frame just found not to parse. `next_valid_record` re-runs `parse_frame` on exactly
+that input, which fails again deterministically, and moves on; the only cost is one
+redundant parse. The answer is the same for every input.

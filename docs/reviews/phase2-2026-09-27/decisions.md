@@ -1457,3 +1457,33 @@ Every external citation was verified against its primary source (res-freeze.md �
     50% longer (ties to the byte-bounded-outbox P1); owed sets are about 4 MB worst case
     and can be churned by 256 IPs; one NAT IP shares an owed set; node-wide PX
     saturation is outside the stated bound (one sentence owed in docs/p2p.md).
+
+## Run F memory incident: closed as mutant artifacts (2026-10-04)
+
+- The three mutants that grew without bound (10.4 GB and 8.1 GB) were store.rs 303:9
+  (`parse_frame` returns `used = 0`, twice with different leaked vectors) and 867:25
+  (`pos *= used`). Each stops the record loop from advancing.
+- The Lead confirmed by reading the source: `parse_frame` returns `used = 12 + len` with
+  `len ≥ 1` by `Codec::lengths`, so `used ≥ 13` and the real loops always reach the end of
+  the file. Not a product finding.
+- cargo-mutants scored two of these as caught; those results are void. They are re-run
+  alone under a memory cap, where a hang or the cap counts as caught.
+- W4-MUTF's store tests and px_scan (a049abc) are merged after a read-only red-team review
+  (all 12 targeted mutants killed by reasoning; no High or Medium). E62–E64 are recorded.
+
+## Decoy and relay plan (2026-10-04)
+
+- The plan for the P0 and P1 items is in the order: privacy regression suite and decoy
+  statistics first, as the gates for every later change; then the wallet-side
+  distribution, picker, stem, trickle, Tor, RT5 and wallet-SOCKS work in parallel by
+  file ownership. No item changes consensus.
+- **Decision (D7, coinbase decoys).** Coinbase outputs are not segregated now:
+  dossier 38 §3.9 shows the non-coinbase pool is too small and segregation reveals the
+  input type. "Handled" means (a) a test that coinbase members appear in proportion to
+  their share of eligible outputs at each age, (b) a measured effective ring size under
+  the research-lab #109 discount model on a labnet-like composition, and (c) a written
+  threshold for segregation, to be revisited at about 10^5 non-coinbase outputs.
+- **Decision (38 W11, verified backfill) raised from P2 to P1.** Deriving the
+  distribution from the wallet's own index (D1) removes node skew only for the scanned
+  range; a restored wallet still takes older heights from the node unverified.
+- Docs drift found: STATUS.md still lists the TM2-P1 origin fix as open; it is merged.

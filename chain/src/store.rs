@@ -1946,4 +1946,144 @@ mod tests {
             })
             .is_err());
     }
+
+    /// The trait's defaults (mutation run F): a store that keeps no
+    /// markers refuses one (`Unsupported`) instead of reporting a marker
+    /// as durable that it never wrote, and has not failed.
+    #[test]
+    fn a_store_without_markers_refuses_them() {
+        struct BlocksOnly(Vec<Record>);
+        impl BlockStore for BlocksOnly {
+            fn append(&mut self, pow_hash: &Hash, block: &[u8]) -> io::Result<()> {
+                self.0.push(Record::Block((*pow_hash, block.to_vec())));
+                Ok(())
+            }
+            fn load(&mut self) -> io::Result<Vec<Record>> {
+                Ok(self.0.clone())
+            }
+        }
+        let mut s = BlocksOnly(Vec::new());
+        s.bind(&REGTEST).unwrap();
+        let err = s
+            .append_marker(&invalid(1, InvalidOrigin::Operator))
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert!(s.load().unwrap().is_empty());
+        assert!(!s.failed());
+    }
+
+    /// Each codec's body length bounds are inclusive at both ends (mutation
+    /// run F): the largest block a record holds frames and parses, one byte
+    /// more is "bad length", and so is a body below the smallest length.
+    #[test]
+    fn record_body_lengths_are_inclusive_at_both_ends() {
+        for (codec, min, max) in [
+            (Codec::Typed, 1, 1 + 32 + MAX_BLOCK),
+            (Codec::Legacy, 32, 32 + MAX_BLOCK),
+        ] {
+            assert_eq!(codec.lengths(), min..=max, "{codec:?}");
+            for (len, ok) in [(min - 1, false), (min, true), (max, true), (max + 1, false)] {
+                let body = vec![TYPE_BLOCK; len];
+                let frame = codec.frame(&body);
+                match codec.parse_frame(&frame) {
+                    Ok((b, used)) => {
+                        assert!(ok, "{codec:?}: a body of {len} bytes parsed");
+                        assert_eq!((b.len(), used), (len, RECORD_HEADER + len));
+                    }
+                    Err(e) => {
+                        assert!(!ok, "{codec:?}: a body of {len} bytes refused: {e}");
+                        assert_eq!(e, "bad length", "{codec:?}, {len} bytes");
+                    }
+                }
+            }
+        }
+        // The largest block fills a typed record exactly.
+        let block = vec![7u8; MAX_BLOCK];
+        let rec = Codec::Typed.block_record(&[1; 32], &block);
+        let (body, _) = Codec::Typed.parse_frame(&rec).unwrap();
+        assert_eq!(
+            Codec::Typed.decode_body(body).unwrap(),
+            Some(Record::Block(([1; 32], block)))
+        );
+    }
+
+    /// The refusal of another network's store names both identities in
+    /// full, so the operator can tell which data directory is which
+    /// (mutation run F: the network name and the hex ids were unchecked).
+    #[test]
+    fn a_wrong_network_refusal_names_both_identities() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.dat");
+        FileStore::open(&path)
+            .unwrap()
+            .bind(&ident(Network::Testnet))
+            .unwrap();
+        let other = StoreIdentity {
+            network: Network::Testnet,
+            network_id: NET + 1,
+            genesis_id: [0x43; 32],
+        };
+        let err = FileStore::open(&path).unwrap().bind(&other).unwrap_err();
+        let text = err.to_string();
+        let full = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        for part in [
+            format!("network id {NET:#010x} with genesis {}", full(&GENESIS)),
+            format!(
+                "the node runs testnet (network id {:#010x}) with genesis {}",
+                NET + 1,
+                "43".repeat(32)
+            ),
+        ] {
+            assert!(text.contains(&part), "{part:?} not in {text}");
+        }
+    }
+
+    /// Repair treats only a missing store as nothing to repair: any other
+    /// read error is returned (here the path is a directory), and a damaged
+    /// or foreign file header of exactly the header's length is refused, not
+    /// taken for a torn header (mutation run F).
+    #[test]
+    fn repair_returns_read_errors_and_refuses_a_bare_damaged_header() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(FileStore::repair(dir.path(), 1).is_err(), "a directory");
+
+        let path = dir.path().join("blocks.dat");
+        let header = encode_file_header(&REGTEST);
+        std::fs::write(&path, header).unwrap();
+        assert_eq!(
+            FileStore::repair(&path, 1).unwrap(),
+            0,
+            "a bare valid header"
+        );
+        let mut damaged = header;
+        damaged[20] ^= 1;
+        let mut v1 = header;
+        v1[4..8].copy_from_slice(&1u32.to_le_bytes());
+        let crc = crc32fast::hash(&v1[..44]);
+        v1[44..48].copy_from_slice(&crc.to_le_bytes());
+        for bytes in [damaged, v1] {
+            std::fs::write(&path, bytes).unwrap();
+            assert!(FileStore::repair(&path, 2).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), bytes, "unchanged");
+        }
+    }
+
+    /// A marker that holds its fixed part but no text length is refused for
+    /// the missing length, not as too short: the fixed-part checks are
+    /// strict lower bounds (mutation run F).
+    #[test]
+    fn a_marker_with_its_fixed_part_only_lacks_the_text_length() {
+        let mut invalid = vec![TYPE_INVALID];
+        invalid.extend_from_slice(&[7; 32]);
+        invalid.push(2);
+        let mut checkpoint = vec![TYPE_CHECKPOINT];
+        checkpoint.extend_from_slice(&[7; 32 + 8 + 32 + 32]);
+        for (body, what) in [
+            (invalid, "invalid marker reason: missing length"),
+            (checkpoint, "checkpoint build commit: missing length"),
+        ] {
+            let err = Codec::Typed.decode_body(&body).unwrap_err();
+            assert_eq!(err, what);
+        }
+    }
 }
