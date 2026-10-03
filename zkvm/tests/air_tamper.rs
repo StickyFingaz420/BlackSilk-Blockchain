@@ -53,6 +53,7 @@ mod init {
     pub const IS_REAL: usize = 0;
     pub const KEY: usize = 1;
     pub const KB: usize = 2;
+    pub const VI: usize = 6;
     pub const VF: usize = 10;
     pub const TF: usize = 14;
     pub const II: usize = 15;
@@ -1733,4 +1734,158 @@ fn a_lying_generator_cannot_write_to_x0() {
         v.iter().any(|x| is_constraint(x, CPU, k)),
         "the write columns of a non-writing row are pinned to zero"
     );
+}
+
+// ---- Lead decision after RT-MUTAIR: the last lying generators ----
+
+/// `poseidon::p2_width` (the embedded Plonky3 sub-AIR's width) is the width
+/// of the permutation columns the table's layout reserves (`P2_COLS`). It
+/// had no caller (the census's E54, withdrawn).
+#[test]
+fn the_poseidon2_sub_air_width_is_its_column_count() {
+    assert_eq!(poseidon::p2_width(), poseidon::P2_COLS);
+    const _: () = assert!(poseidon::P2_OUT + 16 == poseidon::P2_COLS);
+}
+
+/// A program whose syscall number comes from a data word (`n` at DATA): it
+/// loads it into a7, calls with a0 = a POSEIDON2 buffer at DATA + 64, writes
+/// a0 out, and halts. Its code is the same for every `n`.
+fn syscall_program(n: u8) -> Asm {
+    let mut data = vec![n, 0, 0, 0];
+    data.resize(64, 0);
+    data.extend((0..16u32).flat_map(|k| (k * 0x0101_0101).to_le_bytes()));
+    let mut p = Asm::new(BASE);
+    p.data(DATA, data, 128);
+    p.li(S0, DATA)
+        .imm(Op::Addi, A0, S0, 64)
+        .load(Op::Lw, A7, S0, 0)
+        .i(Op::Ecall, 0, 0, 0, 0)
+        .write_reg(A0)
+        .halt(0);
+    p
+}
+
+/// ECALL variants: the statement's program calls syscall `truth` (a7 holds
+/// it), but the trace executes syscall `lie` (READ in place of WRITE,
+/// POSEIDON2 in place of READ, WRITE in place of POSEIDON2, and running on
+/// past a HALT as a WRITE). The trace is the generator's for a program whose
+/// a7 holds `lie`, with that data word (the image, the load, a7's history)
+/// set back to `truth`. Only the ECALL row's syscall-number rule
+/// (`a7 = srd + 2·swr + 3·sp2`) rejects it.
+#[test]
+fn a_lying_generator_cannot_change_a_syscall() {
+    for (truth, lie) in [(2u8, 1u8), (1, 3), (3, 2), (0, 2)] {
+        let (program, exec) = execute(&syscall_program(lie), &[0x1234]);
+        let mut c = Case::of(program, &exec);
+        assert_eq!(c.violations(), vec![]);
+        // The statement's program: the same code, a7's data word `truth`.
+        c.st.program = Arc::new(syscall_program(truth).finish().unwrap());
+        c.airs = trace::tables(&c.st);
+        c.public = trace::public_values(&c.st);
+        let image = 2;
+        let h = c.traces[image].height();
+        c.traces[image] = trace::with_blinding(blacksilk_zkvm::air::with_public_columns(
+            &c.airs[image],
+            RowMajorMatrix::new(vec![Val::ZERO; h], 1),
+        ));
+        let n = v(truth as u32);
+        let ld = c.cpu_rows(class::LOAD, None)[0];
+        c.set(CPU, ld, cpu::M, n);
+        c.set(CPU, ld, cpu::C, n);
+        let ecall = c.cpu_rows(class::ECALL, None)[0];
+        c.set(CPU, ecall, cpu::A, n);
+        // The next write of a7 consumes its previous value.
+        let a7_write = c.find(CPU, |r| {
+            r[cpu::IS_REAL] == Val::ONE
+                && r[cpu::INS + f::RD] == v(A7 as u32)
+                && r[cpu::INS + f::RD_WRITE] == Val::ONE
+        });
+        let next = *a7_write.iter().find(|&&r| r > ecall).unwrap();
+        c.set(CPU, next, cpu::CP, n);
+        let key = DATA / 4;
+        let row = c.find(MEM_INIT, |r| {
+            r[init::IS_REAL] == Val::ONE && r[init::KEY] == v(key)
+        })[0];
+        c.set(MEM_INIT, row, init::VI, n);
+        c.set(MEM_INIT, row, init::VF, n);
+        c.rebalance_bytes();
+        assert_rejected_only_by(&format!("syscall {truth} as {lie}"), &c.violations(), |x| {
+            is_constraint(x, CPU, ecall)
+        });
+    }
+}
+
+/// Sets the link a jump wrote to `link`, through the return that reads it:
+/// the jump row's claimed result, the return's operand and address (its
+/// low bits) and the register's final value. Rebuilds the ALU tables.
+fn relink(c: &mut Case, call: usize, ret: usize, link: u32) {
+    c.set_word(CPU, call, cpu::C, link);
+    c.set_word(CPU, ret, cpu::A, link);
+    c.set_word(CPU, ret, cpu::S, link);
+    let s0 = link & 0xff;
+    c.set(CPU, ret, cpu::L0, v(s0 & 1));
+    c.set(CPU, ret, cpu::L1, v((s0 >> 1) & 1));
+    c.set(CPU, ret, cpu::H, v(s0 >> 2));
+    let key = REG_BASE_RA;
+    let row = c.find(MEM_INIT, |r| {
+        r[init::IS_REAL] == Val::ONE && r[init::KEY] == v(key)
+    })[0];
+    c.set_word(MEM_INIT, row, init::VF, link);
+    rebuild_alu(c);
+}
+
+/// `REG_BASE + ra`, ra's key in the memory argument.
+const REG_BASE_RA: u32 = blacksilk_zkvm::air::util::REG_BASE + RA as u32;
+
+/// JAL and JALR link values: the call writes `pc + 8` instead of `pc + 4`, so
+/// the return skips the no-op after the call. Every row is consistent with
+/// that link (the call's write, the return's read, address and target, ra's
+/// final value), and the ALU tables are rebuilt honestly: only the ALU bus
+/// rejects the trace (the link is `ADD(pc, 4)`, and no ALU row provides
+/// `pc + 8`).
+#[test]
+fn a_lying_generator_cannot_change_a_link() {
+    for jalr_call in [false, true] {
+        let build = |f_addr: u32| {
+            let mut a = Asm::new(BASE);
+            if jalr_call {
+                a.li(T0, f_addr).imm(Op::Jalr, RA, T0, 0);
+            } else {
+                a.jal(RA, "f");
+            }
+            a.imm(Op::Addi, ZERO, ZERO, 0);
+            block(&mut a);
+            a.label("f").imm(Op::Jalr, ZERO, RA, 0);
+            a
+        };
+        // The return's address: the last instruction (two passes for `li`).
+        let len = build(BASE).finish().unwrap().code.len() as u32;
+        let asm = build(BASE + 4 * (len - 1));
+        let (program, exec) = execute(&asm, &[]);
+        assert_eq!(program.code.len() as u32, len);
+        let op = if jalr_call { Op::Jalr } else { Op::Jal };
+        let j = step_of(&exec, op);
+        let call_pc = exec.steps[j].pc;
+        let r = exec.steps[j + 1..]
+            .iter()
+            .position(|s| s.instr.op == Op::Jalr && s.instr.rd == 0)
+            .unwrap()
+            + j
+            + 1;
+        // The witness returns to call + 8: the no-op's step is dropped.
+        let mut e = exec.clone();
+        assert_eq!(e.steps[r + 1].instr.rd, 0, "the no-op");
+        e.steps.remove(r + 1);
+        for s in &mut e.steps[r + 1..] {
+            s.clk -= 1;
+        }
+        e.steps[r].next_pc = call_pc + 8;
+        let mut c = Case::of(program, &e);
+        relink(&mut c, cpu_row(j), cpu_row(r), call_pc + 8);
+        assert_rejected_only_by(
+            &format!("link (JALR call: {jalr_call})"),
+            &c.violations(),
+            |x| matches!(x, Violation::Unbalanced { bus, .. } if bus == "bvm/alu"),
+        );
+    }
 }

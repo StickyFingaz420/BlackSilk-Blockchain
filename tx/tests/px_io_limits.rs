@@ -26,7 +26,8 @@ use blacksilk_zkvm::{MAX_INPUT_WORDS, MAX_OUTPUT_WORDS};
 #[test]
 fn px_statements_stay_within_the_zkvm_stream_limits() {
     // A function's claimed output: the prefix and its registered words.
-    assert!(PREFIX_WORDS + MAX_FN_OUTPUT_WORDS <= MAX_OUTPUT_WORDS);
+    // Checked at compile time (both are constants).
+    const _: () = assert!(PREFIX_WORDS + MAX_FN_OUTPUT_WORDS <= MAX_OUTPUT_WORDS);
     for n_fn in 0..=MAX_FN {
         let public = Public {
             anchor: [0; 8],
