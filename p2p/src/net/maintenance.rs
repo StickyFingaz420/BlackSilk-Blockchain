@@ -295,9 +295,10 @@ pub(super) async fn chain_maintenance_loop(inner: Arc<Inner>) {
 
 #[cfg(test)]
 mod tests {
-    //! The maintenance loop's own timing rules (mutation run E): the trickle
-    //! delay of transaction announcements and the first save of the address
-    //! table.
+    //! The maintenance loop's own rules (mutation run E): the trickle delay,
+    //! the ping, pong, request and idle timeouts, the late requests, the
+    //! announcement chunks and the address table's saves, on an idle node
+    //! with raw loopback peers (some with request ages set in the state).
     use super::*;
     use crate::addr::NetAddr;
     use crate::message::{Version, PROTOCOL_VERSION};
