@@ -101,15 +101,26 @@ fn unix_now() -> u64 {
 }
 
 /// A saved address table holding `addrs` (in *new*), all heard from one
-/// source.
+/// source. Loopback addresses heard from one source share one *new* bucket
+/// of 64 slots, and `AddrMan::add` drops a new address whose slot another
+/// holds: with random ports, 8 addresses collide about one time in three, 2
+/// about one time in 64 (RT-MUTE F4, a flake). The table key places them, so
+/// keys from `key` on are tried until every address has its own slot.
 fn table_of(addrs: impl Iterator<Item = SocketAddr>, key: u8) -> AddrMan {
-    let mut table = AddrMan::with_key([key; 32]);
-    table.set_private_groups(true);
+    let addrs: Vec<SocketAddr> = addrs.collect();
     let src = NetAddr::parse("127.0.0.9:1").unwrap();
-    for a in addrs {
-        assert!(table.add(NetAddr::Ip(a), &src, unix_now()), "{a} added");
+    for k in key..=u8::MAX {
+        let mut table = AddrMan::with_key([k; 32]);
+        table.set_private_groups(true);
+        if addrs
+            .iter()
+            .all(|a| table.add(NetAddr::Ip(*a), &src, unix_now()))
+        {
+            assert_eq!(table.len(), (addrs.len(), 0), "(new, tried)");
+            return table;
+        }
     }
-    table
+    panic!("no table key from {key} places {addrs:?} without a collision");
 }
 
 /// The full-relay outbound peers (block-relay-only connections and seed
