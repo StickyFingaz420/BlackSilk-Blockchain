@@ -699,6 +699,37 @@ fn a_deploys_signatures_and_id_cover_its_payload_and_fee() {
     assert_ne!(Transaction::PxDeploy(Box::new(words)).hash(), id);
 }
 
+/// A deploy's CLSAG message (`PxDeploy::signature_message`, spec §4.4 as a
+/// transfer's) covers its pseudo-outputs and its range proof, not only its
+/// prefix: a signed deploy cannot carry another range proof (RT-MUTE: with
+/// either term left out of the message, every tx test passed; run E closed
+/// the range-proof gap for transfers only, and the node's pinned
+/// fingerprint samples the transfer message, not the deploy's).
+#[test]
+fn a_deploys_signature_message_covers_its_pseudo_outputs_and_range_proof() {
+    let mut net = TestNet::new(88, 80);
+    let d = vault_deploy(&mut net, 7);
+    let domain = net.rules.domain();
+    let message = d.signature_message(domain);
+    let other_point = Point::from_point(RistrettoPoint::mul_base(&Scalar::from(5u64)));
+
+    let mut rp = d.clone();
+    rp.range_proof.a = other_point;
+    assert_eq!(rp.prefix_bytes(), d.prefix_bytes());
+    assert_eq!(rp.base_bytes(), d.base_bytes());
+    assert_ne!(rp.signature_message(domain), message, "range proof");
+
+    let mut pseudo = d.clone();
+    pseudo.pseudo_outs[0] = other_point;
+    assert_eq!(pseudo.prefix_bytes(), d.prefix_bytes());
+    assert_ne!(pseudo.signature_message(domain), message, "pseudo-outputs");
+
+    // The message is the transfer message's construction over the deploy's
+    // prefix (which holds the payload).
+    let t = d.as_transfer();
+    assert_ne!(t.signature_message(domain), message, "the payload is signed");
+}
+
 /// A PX transaction without payouts and with the v1 part of
 /// `shaped_transfer(n, k)`, which passes `check_px_structure` while `n`
 /// and `k` are within bounds.
