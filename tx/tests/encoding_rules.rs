@@ -67,3 +67,23 @@ fn a_transfers_signature_message_covers_its_range_proof() {
     assert_eq!(other.prefix_bytes(), tx.prefix_bytes());
     assert_eq!(other.base_bytes(), tx.base_bytes());
 }
+
+/// The CLSAG message of a transfer covers its pseudo-outputs (spec §4.4:
+/// the base part), not only through each signature's own transcript
+/// (RT-MUTE: with the base hash left out of the message, every tx test
+/// passed; only the node's pinned fingerprint sample would notice).
+#[test]
+fn a_transfers_signature_message_covers_its_pseudo_outputs() {
+    let mut net = TestNet::new(74, 80);
+    let alice = Wallet::new(&mut rng(1074));
+    let tx = net.pay(&net.miner_clone(), &[(alice.primary(), 1_000_000)]);
+    let domain = net.rules.domain();
+    let mut other = tx.clone();
+    other.pseudo_outs[0] = Point::from_point(RistrettoPoint::mul_base(&Scalar::from(5u64)));
+    assert_eq!(other.prefix_bytes(), tx.prefix_bytes());
+    assert_eq!(other.range_proof_bytes(), tx.range_proof_bytes());
+    assert_ne!(
+        other.signature_message(domain),
+        tx.signature_message(domain)
+    );
+}
