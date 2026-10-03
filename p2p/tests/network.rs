@@ -7523,3 +7523,100 @@ async fn a_reconnecting_host_is_told_only_what_it_was_owed() {
     assert_eq!(again, vec![owed.hash()], "only what it was owed");
     assert!(stranger.is_empty(), "another host: nothing");
 }
+
+// ------------------------------------------------------ RT5-TM2P2P red team
+
+/// RT5-TM2P2P (privacy): the owed re-announcement with the transaction in
+/// the owed set. RT4's control (`rt4_the_reconnect_reannouncement_does_not_
+/// tell_an_origin_from_a_relay`) now asserts `[false, false]` because its
+/// spy was away while the transaction was pooled, so the owed path never
+/// carries it there. Here the spy stays connected while the origin and the
+/// relay pool it (it diffuses back to both through their stem peers), is
+/// told it (or has it queued), never asks, leaves and reconnects from the
+/// same host: both must tell it again, alike.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rt5_an_owed_transaction_is_told_alike_by_the_origin_and_a_relay() {
+    init_test_log();
+    let mut cfg = fast_config(&[]);
+    cfg.max_outbound = 1;
+    cfg.dandelion.embargo_base = Duration::from_secs(600);
+    let mut o = node_with(280, cfg.clone()).await;
+    o.mine_n(80, 0);
+    let r = node_with(281, cfg).await;
+    for h in 1..=o.height() {
+        let blk = o.chain.lock().unwrap().block_at(h).unwrap();
+        give_block(&r, &blk).await;
+    }
+    let lo = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let lr = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (mut o_stem_r, mut o_stem_w) = dialed_raw_peer(&o, &lo).await;
+    let (mut r_stem_r, mut r_stem_w) = dialed_raw_peer(&r, &lr).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let tx = o.payment();
+    let id = tx.hash();
+    o.net.submit_tx(tx.clone()).await.unwrap();
+    assert!(
+        recv_until(&mut o_stem_r, 30.0, |m| matches!(m, Message::StemTx(_)))
+            .await
+            .is_some(),
+        "the origin stems it"
+    );
+    let nid = params().network_id;
+    let (_sr, mut sw) = raw_peer_from([127, 0, 8, 40], r.addr, nid, 0)
+        .await
+        .expect("stem sender");
+    wait_until("stem sender registered", 30, || r.net.stats().peers == 2).await;
+    sw.send(&Message::StemTx(tx.encode()).encode())
+        .await
+        .unwrap();
+    assert!(
+        recv_until(&mut r_stem_r, 30.0, |m| matches!(m, Message::StemTx(_)))
+            .await
+            .is_some(),
+        "the relay stems it"
+    );
+    // The spies connect now and stay while the transaction is pooled.
+    let o_ip = [127, 0, 8, 41];
+    let r_ip = [127, 0, 8, 42];
+    let (mut o_spy_r, o_spy_w) = raw_peer_from(o_ip, o.addr, nid, 0).await.expect("spy");
+    wait_until("spy at origin", 30, || o.net.stats().peers == 2).await;
+    let (mut r_spy_r, r_spy_w) = raw_peer_from(r_ip, r.addr, nid, 0).await.expect("spy");
+    wait_until("spy at relay", 30, || r.net.stats().peers == 3).await;
+    for (n, sr, swr) in [
+        (&o, &mut o_stem_r, &mut o_stem_w),
+        (&r, &mut r_stem_r, &mut r_stem_w),
+    ] {
+        swr.send(&Message::InvTx(vec![id]).encode()).await.unwrap();
+        assert!(recv_until(
+            sr,
+            30.0,
+            |m| matches!(m, Message::GetTx(ids) if ids.contains(&id))
+        )
+        .await
+        .is_some());
+        swr.send(&Message::Tx(tx.encode()).encode()).await.unwrap();
+        wait_until("pooled", 30, || n.mempool_has(&id)).await;
+    }
+    // Told while connected (its trickle), never asked for.
+    let told_live = vec![
+        inv_ids_for(&mut o_spy_r, 4.0).await.contains(&id),
+        inv_ids_for(&mut r_spy_r, 4.0).await.contains(&id),
+    ];
+    drop((o_spy_r, o_spy_w, r_spy_r, r_spy_w));
+    wait_until("origin spy gone", 30, || o.net.stats().peers == 1).await;
+    wait_until("relay spy gone", 30, || r.net.stats().peers == 2).await;
+    let again = vec![
+        spy_session(&o, o_ip, 3.0).await.contains(&id),
+        spy_session(&r, r_ip, 3.0).await.contains(&id),
+    ];
+    eprintln!(
+        "RT5 owed: told while connected {told_live:?}; told again on reconnect {again:?} \
+         (origin, relay)"
+    );
+    assert_eq!(told_live, vec![true, true]);
+    assert_eq!(
+        again,
+        vec![true, true],
+        "owed alike by the origin and the relay"
+    );
+}

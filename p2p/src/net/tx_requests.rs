@@ -1669,4 +1669,304 @@ mod tests {
             }
         }
     }
+
+    // ------------------------------------------------ RT5-TM2P2P red team
+
+    /// RT5 attacker strategies: RT3's and RT4's, plus reconnecting at a
+    /// timeout, a Busy at the end of the 30 s slot of an inflated request,
+    /// and a lane drop after every request (a retry each time).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum S5 {
+        Silent,
+        /// `NotFound` just before its own (possibly inflated) timeout.
+        SlowNotFound,
+        /// Busy just before its own (possibly inflated) timeout.
+        SlowBusy,
+        /// Busy just before the end of its 30 s slot (an inflated request
+        /// would otherwise stay outstanding, unslotted, until ~98 s).
+        SlotBusy,
+        /// Disconnects just before its own timeout, reconnects, announces
+        /// again.
+        Recycle,
+        /// Lets its request time out, then reconnects and announces again
+        /// (a fresh record, in the period of the reconnect).
+        ReconnectOnExpiry,
+        /// A large frame dropped by its slow lane after each request: the
+        /// timed-out request is asked once more.
+        Retry,
+    }
+
+    const S5_ALL: [S5; 7] = [
+        S5::Silent,
+        S5::SlowNotFound,
+        S5::SlowBusy,
+        S5::SlotBusy,
+        S5::Recycle,
+        S5::ReconnectOnExpiry,
+        S5::Retry,
+    ];
+
+    /// `strats.len()` inbound attackers (each inflated if its flag is set:
+    /// a decoded answer of the largest size first) announce the target at
+    /// t0; an inbound (or preferred) honest announcer `after` it. The
+    /// honest wait from its own announcement; `None`: the id was dropped.
+    fn rt5_wait(strats: &[(S5, bool)], after: Duration, honest_pref: bool) -> Option<Duration> {
+        let t0 = Instant::now();
+        let target = id(7);
+        let honest: PeerId = 1_000_000;
+        let mut t = TxTracker::default();
+        let mut out = Actions::default();
+        let mut who: HashMap<PeerId, (S5, bool)> = HashMap::new();
+        for (p, s) in strats.iter().enumerate() {
+            let p = p as PeerId;
+            who.insert(p, *s);
+            t.announce(target, p, false, t0, &mut out);
+            if s.1 {
+                t.answer_size(p, MAX_RELAY_FRAME, t0, &mut out);
+            }
+        }
+        let mut next_peer = strats.len() as PeerId;
+        let at = t0 + after;
+        let mut now = t0;
+        let mut announced = false;
+        let mut asked: Vec<(PeerId, Instant)> = Vec::new();
+        loop {
+            let mut reconnect: Vec<PeerId> = Vec::new();
+            for (h, p) in &out.expired {
+                if *h == target && who.get(p).is_some_and(|s| s.0 == S5::ReconnectOnExpiry) {
+                    reconnect.push(*p);
+                }
+            }
+            asked.retain(|(p, _)| !out.expired.contains(&(target, *p)));
+            for (p, ids) in &out.requests {
+                if ids.contains(&target) {
+                    if *p == honest {
+                        return Some(now - at);
+                    }
+                    asked.retain(|x| x.0 != *p);
+                    asked.push((*p, now));
+                    if who[p].0 == S5::Retry {
+                        t.lane_dropped(*p, MAX_RELAY_FRAME, now);
+                    }
+                }
+            }
+            t.check();
+            if (announced && t.len() == 0) || now > t0 + DEADLINE + STEP {
+                return None;
+            }
+            now += STEP;
+            out = Actions::default();
+            if !announced && now >= at {
+                t.announce(target, honest, honest_pref, now, &mut out);
+                announced = true;
+            }
+            let mut fresh = |t: &mut TxTracker,
+                             old: PeerId,
+                             now: Instant,
+                             out: &mut Actions,
+                             who: &mut HashMap<PeerId, (S5, bool)>| {
+                t.peer_gone(old, now, out);
+                let s = who[&old];
+                let q = next_peer;
+                next_peer += 1;
+                who.insert(q, s);
+                t.announce(target, q, false, now, out);
+                if s.1 {
+                    t.answer_size(q, MAX_RELAY_FRAME, now, out);
+                }
+            };
+            for p in reconnect {
+                asked.retain(|x| x.0 != p);
+                fresh(&mut t, p, now, &mut out, &mut who);
+            }
+            let due: Vec<(PeerId, S5)> = asked
+                .iter()
+                .filter_map(|(p, s)| {
+                    let to = t.peers.get(p).map_or(REQUEST_TIMEOUT, PeerLoad::timeout);
+                    let st = who[p].0;
+                    let when = match st {
+                        S5::SlotBusy => *s + REQUEST_TIMEOUT,
+                        S5::SlowNotFound | S5::SlowBusy | S5::Recycle => *s + to,
+                        _ => return None,
+                    };
+                    (now + STEP >= when).then_some((*p, st))
+                })
+                .collect();
+            for (p, st) in due {
+                asked.retain(|x| x.0 != p);
+                match st {
+                    S5::SlowNotFound => t.not_found(target, p, now, &mut out),
+                    S5::SlowBusy | S5::SlotBusy => t.busy(target, p, now, &mut out),
+                    S5::Recycle => fresh(&mut t, p, now, &mut out, &mut who),
+                    _ => {}
+                }
+            }
+            t.poll(now, &mut out);
+        }
+    }
+
+    /// RT5-TM2P2P: the single stated bound (docs/p2p.md §7) against random
+    /// mixes of every strategy, with and without inflation, k up to the 64
+    /// inbound slots, and the honest announcement at a random time in the
+    /// first 3 minutes (a later request period: reconnects in its period
+    /// tie with it). Reports every case over the bound.
+    #[test]
+    fn rt5_every_strategy_mix_keeps_the_single_bound() {
+        let mut over = Vec::new();
+        let mut worst_ratio = 0f64;
+        for seed in 0..200u64 {
+            let mut rng = ChaCha20Rng::seed_from_u64(0x5_0000 + seed);
+            let k = 1 + (rng.next_u64() % 64) as usize;
+            let mix: Vec<(S5, bool)> = (0..k)
+                .map(|_| {
+                    (
+                        S5_ALL[(rng.next_u64() % S5_ALL.len() as u64) as usize],
+                        rng.next_u64() % 2 == 0,
+                    )
+                })
+                .collect();
+            let after = Duration::from_millis(100 + rng.next_u64() % 180_000);
+            let w = rt5_wait(&mix, after, false);
+            if let Some(w) = w {
+                worst_ratio = worst_ratio.max(w.as_secs_f64() / bound(k).as_secs_f64());
+            }
+            if !w.is_some_and(|w| w <= bound(k)) {
+                over.push((seed, k, after, w, bound(k)));
+            }
+        }
+        eprintln!(
+            "RT5 mixes: {} of 200 over the bound (worst wait / bound {worst_ratio:.2}): {over:?}",
+            over.len()
+        );
+        assert!(over.is_empty());
+    }
+
+    /// RT5-TM2P2P: one strategy at a time, k = 8, 32, 64, the honest
+    /// announcement right after the attackers' or at the start of a later
+    /// request period (the worst case for reconnects that tie with it).
+    #[test]
+    fn rt5_each_strategy_at_each_period_offset_keeps_the_bound() {
+        let mut rows = Vec::new();
+        let mut over = Vec::new();
+        for s in S5_ALL {
+            for inflate in [false, true] {
+                for k in [8usize, 32, 64] {
+                    for after in [
+                        STEP,
+                        REQUEST_TIMEOUT + STEP,
+                        REQUEST_TIMEOUT * 2 + STEP,
+                        REQUEST_TIMEOUT * 3 - STEP,
+                    ] {
+                        let mut worst = Some(Duration::ZERO);
+                        for _ in 0..4 {
+                            let w = rt5_wait(&vec![(s, inflate); k], after, false);
+                            worst = worst.zip(w).map(|(a, b)| a.max(b));
+                        }
+                        if !worst.is_some_and(|w| w <= bound(k)) {
+                            over.push((s, inflate, k, after, worst, bound(k)));
+                        }
+                        rows.push((s, inflate, k, after.as_secs(), worst.map(|w| w.as_secs())));
+                    }
+                }
+            }
+        }
+        eprintln!("RT5 per strategy (s, inflated, k, after s, worst s): {rows:?}");
+        eprintln!("RT5 over the bound: {over:?}");
+        assert!(over.is_empty());
+    }
+
+    /// RT5-TM2P2P (measurement): a peer's late-answer memory is a FIFO of
+    /// 160, sized as if its requests ended no faster than one per slot per
+    /// 30 s (16 x 300 s / 30 s). A request ended by another announcer's
+    /// answer (`forget_tx`) ends at any rate: with the peer's room refilled
+    /// at once from its waiting ids, 161 such endings in one instant push
+    /// out the first, and that peer's answer to it (still on its way) is
+    /// then an unrequested `Tx` (+10).
+    #[test]
+    fn rt5_fast_endings_push_a_peers_late_answers_out() {
+        let t0 = Instant::now();
+        let mut t = TxTracker::default();
+        let h: PeerId = 1;
+        t.register_peer(h, 0);
+        let mut out = Actions::default();
+        t.answer_size(h, 1_000, t0, &mut out);
+        let n = LATE_PER_PEER as u64 + 20;
+        for i in 0..n {
+            t.announce(id(i), h, true, t0, &mut out);
+        }
+        let mut ended = Vec::new();
+        // Each id arrives from someone else the moment it is asked of h.
+        let mut guard = 0;
+        while ended.len() < n as usize && guard < 10_000 {
+            guard += 1;
+            let asked: Vec<Hash> = (0..n)
+                .map(id)
+                .filter(|x| t.is_requested(x, h) && !ended.contains(x))
+                .collect();
+            if asked.is_empty() {
+                let mut out = Actions::default();
+                t.poll(t0, &mut out);
+                continue;
+            }
+            for x in asked {
+                for p in t.forget_requested(&x) {
+                    t.remember_late(x, p, t0);
+                }
+                ended.push(x);
+                let mut out = Actions::default();
+                t.poll(t0, &mut out);
+            }
+        }
+        let first_late = t.is_late(&id(0), h, t0);
+        let pushed_out = (0..n).filter(|i| !t.is_late(&id(*i), h, t0)).count();
+        eprintln!(
+            "RT5 late memory: {} requests to one peer ended in one instant; first still \
+             acceptable: {first_late}; {pushed_out} pushed out",
+            ended.len()
+        );
+        assert_eq!(ended.len(), n as usize);
+        assert!(!first_late, "documents the FIFO: the first is pushed out");
+        assert_eq!(pushed_out, 20);
+    }
+
+    /// RT5-TM2P2P (measurement): since only young requests hold the id's
+    /// slots, a large transaction whose honest announcers' answers are
+    /// slow (a congested or Tor link; their expected size a PX answer) is
+    /// asked of up to 4 more announcers every 30 s while the older
+    /// requests stay outstanding: the copies in flight at once for one id.
+    #[test]
+    fn rt5_copies_in_flight_for_one_slow_large_id() {
+        let t0 = Instant::now();
+        let mut t = TxTracker::default();
+        let mut out = Actions::default();
+        let px = 2_200_000;
+        for p in 0..20 as PeerId {
+            t.register_peer(p, 0);
+            t.answer_size(p, px, t0, &mut out);
+        }
+        for p in 0..20 as PeerId {
+            t.announce(id(1), p, p < 4, t0, &mut out);
+        }
+        let mut now = t0;
+        let mut most = 0;
+        let mut at = Vec::new();
+        let mut total = 0;
+        while now < t0 + Duration::from_secs(150) {
+            let mut out = Actions::default();
+            t.poll(now, &mut out);
+            total += out.requests.iter().map(|(_, v)| v.len()).sum::<usize>();
+            let n = t.requests();
+            if n > most {
+                most = n;
+                at.push(((now - t0).as_secs(), n));
+            }
+            now += STEP;
+        }
+        eprintln!(
+            "RT5 slow PX id: at most {most} requests outstanding at once, {total} sent in 150 s \
+             (timeout {:?}); growth (s, n): {at:?}",
+            t.peers[&0].timeout()
+        );
+        assert!(most <= PARALLEL * 3 + 1, "{most}");
+    }
 }
