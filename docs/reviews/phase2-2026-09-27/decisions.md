@@ -1254,3 +1254,15 @@
     - a per-network-class tracker;
     - an adversarial property test.
   - RT3's failing tests must all pass. A fourth RT pass follows.
+
+## RT-MUTE (Lead, 2026-10-03)
+- **Run E: ACCEPTED WITH FIXES.** No product line changed. E29–E35, E36–E39, E41, E42 and E44 are confirmed.
+- **F1 (Medium, test gap):** five parts of the transfer and deploy signed messages and ids were untested, including the deploy message's range-proof term (tx malleability). RT's tests are adopted. Deploy and PX fingerprint samples are added only if the consensus digest stays unchanged; otherwise a Lead decision is needed.
+- **Withdrawn exemptions:** E40 and E43's 128:59 and 136:59 (they are testable).
+- **Locator:** the docs and the header_sync.rs:11 comment follow the code (tip + 9 consecutive), and the test is exact (`dense == 9`). Not consensus-relevant; Bitcoin Core gives 11.
+- **E44:** named constants, pinned.
+- **Flakes:**
+  - outbound_policy table_of port collisions;
+  - liveness L7, now by drain steps.
+- **Full-set kills by timing assertions are re-checked in isolation** (method note).
+- **Run E follow-ups done** (w4-mute 95bc76c). The fingerprint samples for deploy, PX and the PX binding are DECIDED YES, as one fingerprint revision together with the golden PX fixtures and the PX/block verdict samples (P0-freeze), rather than a separate pin change. Run E is merged.
