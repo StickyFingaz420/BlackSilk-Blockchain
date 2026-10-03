@@ -1318,3 +1318,42 @@
   - the stream limits documented as interpreter limits, with px_io_limits as the tripwire;
   - CIRCUIT_ID unchanged.
 - **Run F started (W4-MUTF):** replay/store, zk verify/config/params, randomx/, both fingerprint modules, supply-audit. Exemptions from E62.
+
+## Run F stopped: the permission-system block and the overload (Lead, 2026-10-04)
+- **What happened:**
+  - After the session restart, a run F queue script that had been edited while it ran launched a DUPLICATE RandomX census: PID 8564 under bash 17188, next to the real one, PID 16664.
+  - Four more censuses were queued: runZ, runN, runX, runS, plus after-C2.
+  - Together they would have meant 4 jobs at once, over the 2-job limit.
+  - The machine ran out of process resources: 124 chain mutants and one tier-1 link step failed with Windows 0xC0000142 (STATUS_DLL_INIT_FAILED).
+  - Those results are INVALID and will be re-run, not counted.
+- **Permission system:** the auto-mode classifier denied W4-MUTF's attempt to stop its own duplicate ("Interfere With Workloads"), then two of its read-only commands. The agent asked the Lead to stop the process. **The Lead refused** (permission laundering) and took the question to the owner.
+- **OWNER DECISION (2026-10-04):** stop all of run F for now. The owner then explicitly authorised the Lead to stop the confirmed run F processes and to resume the work sequentially.
+- **Done by the Lead under that authorisation:**
+  - stopped, by PID after re-verifying each command line: the trees of 23012 and 16308 (both runR, including 16664 and 8564), 11800 (runZ), 20260 (runN), 18572 (runX) and 19980 (runS);
+  - 19412 (after-C2) had already exited;
+  - also stopped two leftover tail watchers of the finished W4-MUTAIR, 12228 and 18728;
+  - left alone: the Lead's bash shells (21424, 17128, 15120, 21960) and unrelated grep watchers.
+- **Run F progress kept** (branch w4-mutf a049abc, tests only):
+  - store.rs: 6 tests killing 12 survivors; 3 candidate equivalents (E62+, to be written);
+  - tools/supply-audit/tests/px_scan.rs: the first PX-side supply-audit test (scan side). The wallet side of F40-9 still needs a proven PX transaction or the golden fixture.
+- **Run F restart plan:**
+  - one census at a time, --jobs 2, never alongside another heavy build;
+  - check CPU, memory and process count before each;
+  - order: chain re-run of the 124 → the boundary, hand and overflow passes → zk → randomx → node fingerprint → px fingerprint → supply-audit;
+  - never edit a running script; use separate queue files.
+- **Tier-1 policy for runs that overlapped the overload:**
+  - a run with any build error or any load-explained failure is re-run on a quiet machine;
+  - a clean pass is valid, because load causes false failures, not false passes.
+
+## Owner authority extension (2026-10-04)
+- **Authority:** the owner granted full authority over critical technical and strategic decisions (architecture, consensus, cryptography, privacy model, networking, roadmap), with one condition: deep, evidence-driven research from reliable current sources comes before every major decision.
+  - Facts, findings, assumptions and conclusions are kept separate.
+  - Prior work is not preserved for its own sake.
+  - Pause only for irreversible actions that could destroy data, expose secrets, compromise security, or alter a publicly deployed network.
+- **First application:** RES-FREEZE, a research dossier with primary sources on the open pre-freeze questions:
+  1. the DAA raising race and selfish mining;
+  2. the PX ciphertext R canonical-point rule;
+  3. v1 decoy selection, and rings versus PX long term;
+  4. relay privacy (Dandelion++, txrequest, Tor);
+  5. the honesty of the FRI soundness claim.
+- The Lead decides each topic from the dossier and records the evidence.
