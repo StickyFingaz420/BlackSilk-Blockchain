@@ -1,11 +1,18 @@
 //! The transaction request tracker (docs/p2p.md §7, "Requesting"; RT2-TM2P2P
-//! redesign). Prior art: Bitcoin Core's `TxRequestTracker` (txrequest.cpp).
+//! redesign, RT3-TM2P2P fixes). Prior art: Bitcoin Core's
+//! `TxRequestTracker` (txrequest.cpp).
 //!
 //! One record per (transaction id, announcing peer) and one per id. Every
 //! tracked id has a timer (the earliest of its deadline, its requests'
-//! expiries, its candidates' ready times and its pause), so no id waits
-//! without a request and a timer. The tracker is plain data: it decides,
-//! and returns what to send ([`Actions`]); the caller sends it.
+//! expiries, its candidates' ready times, its pause and the end of its
+//! first request period), so no id waits without a request and a timer. A
+//! candidate whose peer has no room also waits on that peer: it is looked
+//! at again as soon as the peer has room. The tracker is plain data: it
+//! decides, and returns what to send ([`Actions`]); the caller sends it.
+//!
+//! Each network class (clearnet; onion) has its own records and per-id
+//! state (RT3 F6): a peer on one interface learns nothing about the
+//! requests made on the other.
 
 use super::dispatch::SLOW_LANE_BYTES;
 use super::state::{Inner, State, LATE_TXS_MAX};
@@ -13,16 +20,22 @@ use crate::dandelion::PeerId;
 use crate::message::Message;
 use blacksilk_consensus::Hash;
 use std::collections::hash_map::RandomState;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::hash::BuildHasher;
 use std::time::{Duration, Instant};
 
-/// A request not answered in this time has timed out.
+/// A request for a small answer not answered in this time has timed out
+/// (a peer whose answers are large gets [`REQUEST_RATE`] more, below).
 pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// The slowest answer rate a request's timeout allows for (the serving
+/// side's `SLOW_RATE`): a peer whose last answers were `n` bytes gets
+/// `n / REQUEST_RATE` seconds more.
+pub(super) const REQUEST_RATE: usize = 64 * 1024;
 /// An inbound (non-preferred) announcer is asked no sooner than this after
 /// its announcement (Core's `NONPREF_PEER_TX_DELAY`).
 pub(super) const INBOUND_DELAY: Duration = Duration::from_secs(2);
-/// Requests outstanding for one id once one of its requests timed out.
+/// Requests outstanding for one id from [`REQUEST_TIMEOUT`] after its
+/// first request on (however the earlier requests ended).
 pub(super) const PARALLEL: usize = 4;
 /// An id is dropped, with all its records, this long after its first
 /// announcement.
@@ -36,21 +49,29 @@ pub(super) const PEER_IN_FLIGHT_BYTES: usize = SLOW_LANE_BYTES;
 /// The least an answer is expected to weigh.
 pub(super) const MIN_ANSWER: usize = 8 * 1024;
 /// An answer dropped for the peer's own budgets: that announcer is asked
-/// again no sooner than this (others are asked at once)...
+/// again no sooner than this (others are asked at once), doubling...
 pub(super) const BUSY_BACKOFF: Duration = Duration::from_secs(5);
-/// ...and at most this many times per (id, peer).
+/// ...and after this many such drops its record is done, unless it is the
+/// id's last live record (then it keeps waiting its backoff, up to
+/// [`REQUEST_TIMEOUT`]; the deadline bounds it).
 pub(super) const BUSY_MAX: u8 = 2;
-/// An answer dropped for the node-wide PX share pauses its id this long.
+/// An answer dropped for a node-wide reason (the node-wide PX share, a full
+/// transaction lane) pauses its id this long, doubling at each further
+/// such drop...
 pub(super) const GLOBAL_PAUSE: Duration = Duration::from_secs(1);
-/// A ready candidate whose peer has no room is looked at again after this.
-pub(super) const BLOCKED_RETRY: Duration = Duration::from_secs(2);
+/// ...up to this.
+pub(super) const GLOBAL_PAUSE_MAX: Duration = Duration::from_secs(30);
+
+/// A peer's network class: clearnet, or onion (an onion address, or an
+/// inbound connection through our hidden service).
+pub(super) type NetClass = u8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AnnState {
     /// May be asked from `ready` on.
     Candidate { ready: Instant },
-    /// Asked; times out at `expiry`.
-    Requested { expiry: Instant },
+    /// Asked at `asked`; times out at `expiry`.
+    Requested { asked: Instant, expiry: Instant },
     /// Answered without the transaction, timed out, or refused.
     Done,
 }
@@ -61,34 +82,75 @@ struct Ann {
     preferred: bool,
     state: AnnState,
     busy: u8,
-    /// It timed out once and was put back as a last resort.
+    /// It timed out once after its answer was dropped by this node's own
+    /// slow lane, and was put back.
     retried: bool,
+    /// The request period (of [`REQUEST_TIMEOUT`], from the id's first
+    /// announcement) it was announced in: a later period ranks after
+    /// (re-announcements by reconnecting peers, RT3 F2).
+    epoch: u32,
     /// Per-node random priority of (id, peer): lower first.
     prio: u64,
 }
 
+impl Ann {
+    /// Lower is asked first.
+    fn key(&self) -> (u8, bool, u32, u64) {
+        (
+            self.busy.saturating_add(u8::from(self.retried)),
+            !self.preferred,
+            self.epoch,
+            self.prio,
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 struct TxEntry {
+    created: Instant,
     deadline: Instant,
     timeouts: u32,
+    /// When its first request was sent: [`PARALLEL`] from 30 s after.
+    first_asked: Option<Instant>,
+    /// Node-wide drops so far (the pause doubles).
+    stalls: u32,
     paused_until: Option<Instant>,
     anns: Vec<Ann>,
     /// Its key in `timers`.
     timer: Instant,
 }
 
+impl TxEntry {
+    fn allowed(&self, now: Instant) -> usize {
+        let parallel =
+            self.timeouts > 0 || self.first_asked.is_some_and(|f| now >= f + REQUEST_TIMEOUT);
+        if parallel {
+            PARALLEL
+        } else {
+            1
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct PeerLoad {
+    class: NetClass,
     tracked: HashSet<Hash>,
     in_flight: usize,
-    /// The size of its last answer (0: none yet).
+    /// A decaying maximum of its answers' sizes (0: none yet).
     answer_size: usize,
+    /// When its slow lane last dropped a large answer from it.
+    lane_drop: Option<Instant>,
+    /// Ids with a ready candidate of this peer that found no room: looked
+    /// at again when it has room.
+    waiting: VecDeque<Hash>,
+    waiting_set: HashSet<Hash>,
 }
 
 impl PeerLoad {
-    /// What each request to this peer is expected to weigh: its last
-    /// answer's size; before its first answer, half its in-flight bytes
-    /// (two requests, so a burst of large answers fits its slow lane).
+    /// What each request to this peer is expected to weigh: the decaying
+    /// maximum of its answers; before its first answer, half its in-flight
+    /// bytes (two requests, so a burst of large answers fits its slow lane).
     fn expected(&self) -> usize {
         if self.answer_size == 0 {
             PEER_IN_FLIGHT_BYTES / 2
@@ -100,6 +162,12 @@ impl PeerLoad {
     fn has_room(&self) -> bool {
         self.in_flight < PEER_IN_FLIGHT
             && (self.in_flight + 1) * self.expected() <= PEER_IN_FLIGHT_BYTES.max(self.expected())
+    }
+
+    /// A request's timeout: [`REQUEST_TIMEOUT`] plus the time its known
+    /// answer size takes at [`REQUEST_RATE`].
+    fn timeout(&self) -> Duration {
+        REQUEST_TIMEOUT + Duration::from_secs((self.answer_size / REQUEST_RATE) as u64)
     }
 }
 
@@ -124,25 +192,47 @@ impl Actions {
 
 impl Inner {
     /// Sends a tracker call's `GetTx`s and remembers its timed-out requests
-    /// (their late answers stay acceptable for `TX_TIMEOUT`, P2P-FIX2).
+    /// (their late answers stay acceptable for `LATE_TX_WINDOW`, P2P-FIX2).
     pub(super) fn apply_tx_actions(&self, st: &mut State, out: Actions, now: Instant) {
         for (id, peer) in out.expired {
-            if st.late_txs.len() < LATE_TXS_MAX {
-                st.late_txs.insert((id, peer), now);
-            }
+            remember_asked(st, id, peer, now);
         }
         for (peer, ids) in out.requests {
             self.send(st, peer, Message::GetTx(ids));
         }
     }
+
+    /// Forgets `id` in the tracker (it arrived, or is known otherwise). The
+    /// answers of its other outstanding requests stay acceptable
+    /// (`late_txs`): those peers did what was asked (RT3 F1: they were
+    /// penalized as unrequested).
+    pub(super) fn forget_tx(st: &mut State, id: &Hash) {
+        let now = Instant::now();
+        for peer in st.tx_tracker.forget_requested(id) {
+            remember_asked(st, *id, peer, now);
+        }
+    }
 }
+
+/// Remembers that `peer` was asked for `id` and its answer may still come
+/// (`State::late_txs`).
+fn remember_asked(st: &mut State, id: Hash, peer: PeerId, now: Instant) {
+    if st.late_txs.len() < LATE_TXS_MAX || st.late_txs.contains_key(&(id, peer)) {
+        st.late_txs.insert((id, peer), now);
+    }
+}
+
+type Key = (NetClass, Hash);
 
 /// The tracker.
 pub(super) struct TxTracker {
-    txs: HashMap<Hash, TxEntry>,
+    txs: HashMap<Key, TxEntry>,
     peers: HashMap<PeerId, PeerLoad>,
-    timers: BTreeSet<(Instant, Hash)>,
+    timers: BTreeSet<(Instant, Key)>,
     salt: RandomState,
+    /// Peers that got room during a call: their waiting ids are looked at
+    /// before it returns.
+    freed: Vec<PeerId>,
 }
 
 impl Default for TxTracker {
@@ -152,12 +242,13 @@ impl Default for TxTracker {
             peers: HashMap::new(),
             timers: BTreeSet::new(),
             salt: RandomState::new(),
+            freed: Vec::new(),
         }
     }
 }
 
 impl TxTracker {
-    /// Ids tracked.
+    /// Ids tracked (per network class).
     pub(super) fn len(&self) -> usize {
         self.txs.len()
     }
@@ -167,9 +258,19 @@ impl TxTracker {
         self.peers.values().map(|p| p.in_flight).sum()
     }
 
+    /// Records `peer`'s network class (at registration; clearnet unless
+    /// set).
+    pub(super) fn register_peer(&mut self, peer: PeerId, class: NetClass) {
+        self.peers.entry(peer).or_default().class = class;
+    }
+
+    fn class(&self, peer: PeerId) -> NetClass {
+        self.peers.get(&peer).map_or(0, |l| l.class)
+    }
+
     /// Whether `peer` has an outstanding request for `id`.
     pub(super) fn is_requested(&self, id: &Hash, peer: PeerId) -> bool {
-        self.txs.get(id).is_some_and(|e| {
+        self.txs.get(&(self.class(peer), *id)).is_some_and(|e| {
             e.anns
                 .iter()
                 .any(|a| a.peer == peer && matches!(a.state, AnnState::Requested { .. }))
@@ -194,78 +295,140 @@ impl TxTracker {
             return;
         }
         load.tracked.insert(id);
+        let key = (load.class, id);
         let prio = self.salt.hash_one((id, peer));
         let ready = if preferred { now } else { now + INBOUND_DELAY };
-        let e = self.txs.entry(id).or_insert_with(|| TxEntry {
+        let e = self.txs.entry(key).or_insert_with(|| TxEntry {
+            created: now,
             deadline: now + DEADLINE,
             timeouts: 0,
+            first_asked: None,
+            stalls: 0,
             paused_until: None,
             anns: Vec::new(),
             timer: now,
         });
+        let epoch =
+            (now.saturating_duration_since(e.created).as_secs() / REQUEST_TIMEOUT.as_secs()) as u32;
         e.anns.push(Ann {
             peer,
             preferred,
             state: AnnState::Candidate { ready },
             busy: 0,
             retried: false,
+            epoch,
             prio,
         });
-        self.eval(id, now, out);
+        self.eval(key, now, out);
+        self.wake(now, out);
     }
 
-    /// The size of `peer`'s latest answer (or of an answer its slow lane
-    /// dropped): what each request to it is expected to weigh.
-    pub(super) fn answer_size(&mut self, peer: PeerId, bytes: usize) {
+    /// The size of `peer`'s latest answer: a decaying maximum of them (each
+    /// answer, or 7/8 of the previous figure, whichever is larger) is what
+    /// each request to it is expected to weigh. One small answer after a
+    /// large one does not open 16 requests at once (RT3 F3).
+    pub(super) fn answer_size(
+        &mut self,
+        peer: PeerId,
+        bytes: usize,
+        now: Instant,
+        out: &mut Actions,
+    ) {
         if let Some(l) = self.peers.get_mut(&peer) {
-            l.answer_size = bytes;
+            l.answer_size = bytes.max(l.answer_size / 8 * 7);
+            self.freed.push(peer);
+        }
+        self.wake(now, out);
+    }
+
+    /// `peer`'s slow lane dropped a large answer (`bytes`): its requests
+    /// that time out are asked once more, and it is expected to send
+    /// answers that large.
+    pub(super) fn lane_dropped(&mut self, peer: PeerId, bytes: usize, now: Instant) {
+        if let Some(l) = self.peers.get_mut(&peer) {
+            l.lane_drop = Some(now);
+            l.answer_size = l.answer_size.max(bytes);
         }
     }
 
-    /// `id` arrived, or is known otherwise: forgotten, with all its records.
-    pub(super) fn forget(&mut self, id: &Hash) {
-        self.remove(id);
+    /// [`Self::forget`], returning the peers whose requests for `id` were
+    /// still outstanding (their answers stay acceptable).
+    pub(super) fn forget_requested(&mut self, id: &Hash) -> Vec<PeerId> {
+        let mut asked = Vec::new();
+        for class in [0, 1] {
+            let key = (class, *id);
+            if let Some(e) = self.txs.get(&key) {
+                asked.extend(
+                    e.anns
+                        .iter()
+                        .filter(|a| matches!(a.state, AnnState::Requested { .. }))
+                        .map(|a| a.peer),
+                );
+            }
+            self.remove(&key);
+        }
+        asked
     }
 
     /// `peer` answered `NotFound` for `id`.
     pub(super) fn not_found(&mut self, id: Hash, peer: PeerId, now: Instant, out: &mut Actions) {
         self.poll(now, out);
-        if self.end_request(&id, peer, |a| a.state = AnnState::Done) {
-            self.eval(id, now, out);
+        let key = (self.class(peer), id);
+        if self.end_request(&key, peer, |a| a.state = AnnState::Done) {
+            self.eval(key, now, out);
         }
+        self.wake(now, out);
     }
 
     /// `peer`'s answer for `id` was dropped for its own budgets (its relay
-    /// share, a full transaction lane): the next candidate is asked now,
-    /// this one again after [`BUSY_BACKOFF`], at most [`BUSY_MAX`] times.
+    /// share): the next candidate is asked now, this one again after
+    /// [`BUSY_BACKOFF`] (doubling), and after [`BUSY_MAX`] such drops it
+    /// is done unless it is the id's last live record.
     pub(super) fn busy(&mut self, id: Hash, peer: PeerId, now: Instant, out: &mut Actions) {
         self.poll(now, out);
-        let ended = self.end_request(&id, peer, |a| {
-            a.busy += 1;
-            a.state = if a.busy > BUSY_MAX {
+        let key = (self.class(peer), id);
+        let others_live = self.txs.get(&key).is_some_and(|e| {
+            e.anns
+                .iter()
+                .any(|a| a.peer != peer && a.state != AnnState::Done)
+        });
+        let ended = self.end_request(&key, peer, |a| {
+            a.busy = a.busy.saturating_add(1);
+            let backoff = BUSY_BACKOFF
+                .saturating_mul(1 << (a.busy - 1).min(4))
+                .min(REQUEST_TIMEOUT);
+            a.state = if a.busy >= BUSY_MAX && others_live {
                 AnnState::Done
             } else {
                 AnnState::Candidate {
-                    ready: now + BUSY_BACKOFF,
+                    ready: now + backoff,
                 }
             };
         });
         if ended {
-            self.eval(id, now, out);
+            self.eval(key, now, out);
         }
+        self.wake(now, out);
     }
 
-    /// `peer`'s answer for `id` was dropped for the node-wide PX share: the
-    /// id (not the peer) pauses for [`GLOBAL_PAUSE`], and the same record
-    /// is asked again after it.
+    /// `peer`'s answer for `id` was dropped for a node-wide reason (the
+    /// node-wide PX share, a full transaction lane): the id (not the peer)
+    /// pauses for [`GLOBAL_PAUSE`], doubling up to [`GLOBAL_PAUSE_MAX`],
+    /// and the same record is asked again after it (RT3 F4).
     pub(super) fn pause(&mut self, id: Hash, peer: PeerId, now: Instant, out: &mut Actions) {
         self.poll(now, out);
-        if self.end_request(&id, peer, |a| a.state = AnnState::Candidate { ready: now }) {
-            if let Some(e) = self.txs.get_mut(&id) {
-                e.paused_until = Some(now + GLOBAL_PAUSE);
+        let key = (self.class(peer), id);
+        if self.end_request(&key, peer, |a| a.state = AnnState::Candidate { ready: now }) {
+            if let Some(e) = self.txs.get_mut(&key) {
+                let pause = GLOBAL_PAUSE
+                    .saturating_mul(1 << e.stalls.min(5))
+                    .min(GLOBAL_PAUSE_MAX);
+                e.stalls += 1;
+                e.paused_until = Some(now + pause);
             }
-            self.eval(id, now, out);
+            self.eval(key, now, out);
         }
+        self.wake(now, out);
     }
 
     /// `peer` disconnected: its records go, and the ids it held are
@@ -276,32 +439,56 @@ impl TxTracker {
             return;
         };
         for id in load.tracked {
-            if let Some(e) = self.txs.get_mut(&id) {
+            let key = (load.class, id);
+            if let Some(e) = self.txs.get_mut(&key) {
                 e.anns.retain(|a| a.peer != peer);
-                self.eval(id, now, out);
+                self.eval(key, now, out);
             }
         }
+        self.wake(now, out);
     }
 
     /// The timers due by `now`: requests time out, paused or delayed
-    /// candidates are asked, deadlines drop ids. In time order, each at its
-    /// own time: an id whose timer came first is looked at as of that time,
-    /// so a candidate that became ready later cannot jump ahead of what
-    /// happened in between (another id filling that candidate's peer, say).
+    /// candidates are asked, a first request period ends, deadlines drop
+    /// ids. In time order, each at its own time: an id whose timer came
+    /// first is looked at as of that time, so a candidate that became ready
+    /// later cannot jump ahead of what happened in between (another id
+    /// filling that candidate's peer, say).
     pub(super) fn poll(&mut self, now: Instant, out: &mut Actions) {
-        while let Some(&(t, id)) = self.timers.first() {
+        while let Some(&(t, key)) = self.timers.first() {
             if t > now {
                 break;
             }
-            self.timers.remove(&(t, id));
-            self.eval(id, t, out);
+            self.timers.remove(&(t, key));
+            self.eval(key, t, out);
+            self.wake(t, out);
         }
     }
 
-    /// Ends `peer`'s request for `id` with `f` (on its record). `false` if
+    /// Looks again at the ids waiting on peers that got room, while they
+    /// have room.
+    fn wake(&mut self, now: Instant, out: &mut Actions) {
+        while let Some(peer) = self.freed.pop() {
+            let mut budget = self.peers.get(&peer).map_or(0, |l| l.waiting.len());
+            while budget > 0 && self.peers.get(&peer).is_some_and(PeerLoad::has_room) {
+                budget -= 1;
+                let Some(l) = self.peers.get_mut(&peer) else {
+                    break;
+                };
+                let Some(id) = l.waiting.pop_front() else {
+                    break;
+                };
+                l.waiting_set.remove(&id);
+                let key = (l.class, id);
+                self.eval(key, now, out);
+            }
+        }
+    }
+
+    /// Ends `peer`'s request for `key` with `f` (on its record). `false` if
     /// there was none.
-    fn end_request(&mut self, id: &Hash, peer: PeerId, f: impl FnOnce(&mut Ann)) -> bool {
-        let Some(e) = self.txs.get_mut(id) else {
+    fn end_request(&mut self, key: &Key, peer: PeerId, f: impl FnOnce(&mut Ann)) -> bool {
+        let Some(e) = self.txs.get_mut(key) else {
             return false;
         };
         let Some(a) = e
@@ -314,54 +501,59 @@ impl TxTracker {
         f(a);
         if let Some(l) = self.peers.get_mut(&peer) {
             l.in_flight = l.in_flight.saturating_sub(1);
+            self.freed.push(peer);
         }
         true
     }
 
-    /// Removes `id` with all its records.
-    fn remove(&mut self, id: &Hash) {
-        let Some(e) = self.txs.remove(id) else {
+    /// Removes `key` with all its records.
+    fn remove(&mut self, key: &Key) {
+        let Some(e) = self.txs.remove(key) else {
             return;
         };
-        self.timers.remove(&(e.timer, *id));
+        self.timers.remove(&(e.timer, *key));
         for a in e.anns {
             if let Some(l) = self.peers.get_mut(&a.peer) {
-                l.tracked.remove(id);
+                l.tracked.remove(&key.1);
                 if matches!(a.state, AnnState::Requested { .. }) {
                     l.in_flight = l.in_flight.saturating_sub(1);
+                    self.freed.push(a.peer);
                 }
             }
         }
     }
 
-    /// Looks at `id` now: drops it at its deadline or when no record is
-    /// left to ask, times out requests, asks ready candidates up to its
-    /// concurrency, and sets its timer.
-    fn eval(&mut self, id: Hash, now: Instant, out: &mut Actions) {
-        let Some(e) = self.txs.get_mut(&id) else {
+    /// Looks at `key` as of `now`: drops it at its deadline or when no
+    /// record is left to ask, times out requests (a request whose answer
+    /// our own slow lane dropped is asked once more), asks ready candidates
+    /// up to its concurrency, and sets its timer.
+    fn eval(&mut self, key: Key, now: Instant, out: &mut Actions) {
+        let Some(e) = self.txs.get_mut(&key) else {
             return;
         };
-        self.timers.remove(&(e.timer, id));
+        self.timers.remove(&(e.timer, key));
         if now >= e.deadline {
-            self.remove(&id);
+            self.remove(&key);
             return;
         }
         for a in e.anns.iter_mut() {
-            if let AnnState::Requested { expiry } = a.state {
+            if let AnnState::Requested { asked, expiry } = a.state {
                 if expiry <= now {
-                    // Asked once more as a last resort (after every fresh
-                    // candidate): its answer may have been dropped by our
-                    // own slow lane. Never a third time.
-                    a.state = if a.retried {
-                        AnnState::Done
-                    } else {
-                        AnnState::Candidate { ready: now }
-                    };
-                    a.retried = true;
                     e.timeouts += 1;
-                    out.expired.push((id, a.peer));
-                    if let Some(l) = self.peers.get_mut(&a.peer) {
+                    out.expired.push((key.1, a.peer));
+                    let load = self.peers.get_mut(&a.peer);
+                    let dropped = load
+                        .as_ref()
+                        .is_some_and(|l| l.lane_drop.is_some_and(|d| d >= asked));
+                    a.state = if dropped && !a.retried {
+                        a.retried = true;
+                        AnnState::Candidate { ready: now }
+                    } else {
+                        AnnState::Done
+                    };
+                    if let Some(l) = load {
                         l.in_flight = l.in_flight.saturating_sub(1);
+                        self.freed.push(a.peer);
                     }
                 }
             }
@@ -369,9 +561,9 @@ impl TxTracker {
         if e.paused_until.is_some_and(|t| t <= now) {
             e.paused_until = None;
         }
-        let mut blocked = false;
+        let mut blocked: Vec<PeerId> = Vec::new();
         if e.paused_until.is_none() {
-            let allowed = if e.timeouts == 0 { 1 } else { PARALLEL };
+            let allowed = e.allowed(now);
             let mut outstanding = e
                 .anns
                 .iter()
@@ -388,35 +580,42 @@ impl TxTracker {
                         continue;
                     }
                     if !peers.get(&a.peer).is_some_and(PeerLoad::has_room) {
-                        blocked = true;
+                        if !blocked.contains(&a.peer) {
+                            blocked.push(a.peer);
+                        }
                         continue;
                     }
-                    let key = |a: &Ann| (a.busy + u8::from(a.retried), !a.preferred, a.prio);
-                    if best.is_none_or(|b| key(a) < key(&e.anns[b])) {
+                    if best.is_none_or(|b| a.key() < e.anns[b].key()) {
                         best = Some(i);
                     }
                 }
                 let Some(i) = best else { break };
                 let a = &mut e.anns[i];
+                let timeout = self
+                    .peers
+                    .get(&a.peer)
+                    .map_or(REQUEST_TIMEOUT, PeerLoad::timeout);
                 a.state = AnnState::Requested {
-                    expiry: now + REQUEST_TIMEOUT,
+                    asked: now,
+                    expiry: now + timeout,
                 };
                 if let Some(l) = self.peers.get_mut(&a.peer) {
                     l.in_flight += 1;
                 }
-                out.ask(a.peer, id);
+                out.ask(a.peer, key.1);
+                e.first_asked.get_or_insert(now);
                 outstanding += 1;
             }
         }
-        let live = e.anns.iter().any(|a| !matches!(a.state, AnnState::Done));
+        let live = e.anns.iter().any(|a| a.state != AnnState::Done);
         if !live {
-            self.remove(&id);
+            self.remove(&key);
             return;
         }
         let mut timer = e.deadline;
         for a in &e.anns {
             match a.state {
-                AnnState::Requested { expiry } => timer = timer.min(expiry),
+                AnnState::Requested { expiry, .. } => timer = timer.min(expiry),
                 AnnState::Candidate { ready } if ready > now => timer = timer.min(ready),
                 _ => {}
             }
@@ -424,21 +623,32 @@ impl TxTracker {
         if let Some(t) = e.paused_until {
             timer = timer.min(t);
         }
-        if blocked {
-            timer = timer.min(now + BLOCKED_RETRY);
+        if let Some(f) = e.first_asked {
+            if e.timeouts == 0 && f + REQUEST_TIMEOUT > now {
+                timer = timer.min(f + REQUEST_TIMEOUT);
+            }
         }
         e.timer = timer;
-        self.timers.insert((timer, id));
+        self.timers.insert((timer, key));
+        // Blocked candidates wait on their peers (no rescan timer: RT3).
+        for p in blocked {
+            if let Some(l) = self.peers.get_mut(&p) {
+                if l.waiting_set.insert(key.1) {
+                    l.waiting.push_back(key.1);
+                }
+            }
+        }
     }
 
     /// Checks the invariants (tests): every id has a timer at or before its
-    /// deadline and a live record; no cap is exceeded; at most one request
-    /// per id before its first timeout, [`PARALLEL`] after.
+    /// deadline and a live record; no cap is exceeded; at most
+    /// [`PARALLEL`] requests per id; a peer's in-flight count matches its
+    /// records; a ready candidate is never left without room nor a wait.
     #[cfg(test)]
     fn check(&self) {
-        for (id, e) in &self.txs {
+        for (key, e) in &self.txs {
             assert!(
-                self.timers.contains(&(e.timer, *id)),
+                self.timers.contains(&(e.timer, *key)),
                 "an id without a timer"
             );
             assert!(e.timer <= e.deadline);
@@ -448,7 +658,10 @@ impl TxTracker {
                 .iter()
                 .filter(|a| matches!(a.state, AnnState::Requested { .. }))
                 .count();
-            assert!(req <= if e.timeouts == 0 { 1 } else { PARALLEL });
+            assert!(req <= PARALLEL);
+            if e.timeouts == 0 && e.first_asked.is_none() {
+                assert!(req <= 1);
+            }
         }
         assert_eq!(self.timers.len(), self.txs.len());
         for (peer, l) in &self.peers {
@@ -541,31 +754,61 @@ mod tests {
         let mut out = Actions::default();
         t.announce(id(1), 1, true, t0, &mut out);
         t.announce(id(1), 2, true, t0, &mut out);
+        t.announce(id(1), 3, true, t0, &mut out);
         let first = out.requests[0].0;
-        let other = if first == 1 { 2 } else { 1 };
         let mut out = Actions::default();
         t.busy(id(1), first, t0, &mut out);
-        assert!(asked(&out, other, id(1)), "rotated at once");
+        let second = out.requests[0].0;
+        assert_ne!(first, second, "rotated at once");
+        // `BUSY_MAX` (2) drops: the record is done while others live.
         let mut out = Actions::default();
-        t.not_found(id(1), other, t0, &mut out);
-        assert!(out.requests.is_empty(), "the busy one waits its backoff");
+        t.not_found(id(1), second, t0, &mut out);
+        let third = out.requests[0].0;
+        let mut now = t0 + BUSY_BACKOFF;
+        let mut out = Actions::default();
+        t.not_found(id(1), third, now, &mut out);
+        t.poll(now, &mut out);
+        assert!(asked(&out, first, id(1)), "the busy one, after its backoff");
+        // Its second drop, as the last live record: kept, with a doubled
+        // backoff (the deadline bounds it).
+        t.busy(id(1), first, now, &mut out);
+        assert_eq!(t.len(), 1, "the last live record is not dropped for Busy");
+        now += BUSY_BACKOFF * 2;
+        let mut out = Actions::default();
+        t.poll(now, &mut out);
+        assert!(asked(&out, first, id(1)));
+        t.check();
+        // With other live records, the second drop ends the busy one.
+        let mut t = TxTracker::default();
+        let mut out = Actions::default();
+        for p in 1..=3 {
+            t.announce(id(2), p, true, t0, &mut out);
+        }
         let mut now = t0;
-        for _ in 0..BUSY_MAX {
-            now += BUSY_BACKOFF;
+        while now < t0 + Duration::from_secs(40) {
             let mut out = Actions::default();
             t.poll(now, &mut out);
-            assert!(asked(&out, first, id(1)));
-            t.busy(id(1), first, now, &mut out);
+            if t.is_requested(&id(2), 1) {
+                t.busy(id(2), 1, now, &mut out);
+            }
+            now += Duration::from_secs(1);
         }
-        assert_eq!(t.len(), 0, "dropped after the busy cap");
+        assert!(t.txs.values().all(|e| e
+            .anns
+            .iter()
+            .any(|a| a.peer == 1 && a.state == AnnState::Done)));
         t.check();
     }
 
-    /// A request that timed out is asked once more of the same peer, as a
-    /// last resort after every fresh candidate; never a third time. Before
-    /// a peer's first answer, two requests are in flight to it.
+    /// A request that timed out is asked once more of the same peer only
+    /// if this node's own slow lane dropped a large answer from that peer
+    /// since it was asked (RT3 F1b: otherwise a slow honest peer's second
+    /// copy was penalized); never a third time. Before a peer's first
+    /// answer, two requests are in flight to it; a small answer opens room
+    /// at once (the waiting ids are looked at again), and the decaying size
+    /// keeps a large answer's weight for a while.
     #[test]
-    fn a_timed_out_request_is_retried_once_as_a_last_resort() {
+    fn a_timed_out_request_is_retried_only_after_a_lane_drop() {
         let t0 = Instant::now();
         let mut t = TxTracker::default();
         let mut out = Actions::default();
@@ -573,20 +816,71 @@ mod tests {
             t.announce(id(n), 1, true, t0, &mut out);
         }
         assert_eq!(t.requests(), 2, "two before its first answer");
-        t.answer_size(1, 1_000);
         let mut out = Actions::default();
-        t.poll(t0 + BLOCKED_RETRY, &mut out);
+        t.answer_size(1, 1_000, t0, &mut out);
         assert!(asked(&out, 1, id(3)), "room once its answers are small");
+        t.lane_dropped(1, 2_000_000, t0 + Duration::from_secs(1));
         let mut out = Actions::default();
         t.poll(t0 + REQUEST_TIMEOUT, &mut out);
-        assert_eq!(out.expired.len(), 2);
+        assert_eq!(out.expired.len(), 3);
         assert!(
-            asked(&out, 1, id(1)) && asked(&out, 1, id(2)),
-            "asked once more"
+            asked(&out, 1, id(1)) || asked(&out, 1, id(2)),
+            "asked once more after a lane drop"
         );
         let mut out = Actions::default();
-        t.poll(t0 + REQUEST_TIMEOUT * 3, &mut out);
+        t.poll(t0 + REQUEST_TIMEOUT * 10, &mut out);
         assert_eq!(t.len(), 0, "never a third time");
+        t.check();
+        // Without a lane drop: no second request.
+        let mut t = TxTracker::default();
+        let mut out = Actions::default();
+        t.announce(id(9), 1, true, t0, &mut out);
+        let mut out = Actions::default();
+        t.poll(t0 + REQUEST_TIMEOUT, &mut out);
+        assert_eq!(out.expired, vec![(id(9), 1)]);
+        assert!(out.requests.is_empty());
+        assert_eq!(t.len(), 0);
+        // The expected size decays: 7/8 per answer.
+        let mut t = TxTracker::default();
+        t.register_peer(1, 0);
+        let mut out = Actions::default();
+        t.answer_size(1, 2_000_000, t0, &mut out);
+        t.answer_size(1, 1_000, t0, &mut out);
+        assert_eq!(t.peers[&1].answer_size, 2_000_000 / 8 * 7);
+    }
+
+    /// Network classes keep apart (RT3 F6): the same id announced on the
+    /// clearnet and the onion side is asked on both at once.
+    #[test]
+    fn network_classes_have_their_own_records() {
+        let t0 = Instant::now();
+        let mut t = TxTracker::default();
+        t.register_peer(1, 0);
+        t.register_peer(2, 1);
+        let mut out = Actions::default();
+        t.announce(id(1), 1, true, t0, &mut out);
+        t.announce(id(1), 2, true, t0, &mut out);
+        assert!(asked(&out, 1, id(1)) && asked(&out, 2, id(1)));
+        assert_eq!(t.len(), 2);
+        assert_eq!(t.forget_requested(&id(1)).len(), 2);
+        assert_eq!(t.len(), 0);
+        t.check();
+    }
+
+    /// A ready candidate whose peer has no room waits on that peer and is
+    /// asked as soon as the peer has room, without a rescan timer.
+    #[test]
+    fn a_blocked_candidate_is_woken_by_room() {
+        let t0 = Instant::now();
+        let mut t = TxTracker::default();
+        let mut out = Actions::default();
+        t.announce(id(1), 1, true, t0, &mut out);
+        t.announce(id(2), 1, true, t0, &mut out);
+        t.announce(id(3), 1, true, t0, &mut out);
+        assert_eq!(t.requests(), 2);
+        let mut out = Actions::default();
+        t.not_found(id(1), 1, t0, &mut out);
+        assert!(asked(&out, 1, id(3)), "woken when room came");
         t.check();
     }
 
@@ -661,7 +955,11 @@ mod tests {
                 }
                 outstanding.retain(|x| !out.expired.contains(x));
             };
-            // The silent attackers announce the target first, then junk.
+            // The attackers announce the target first, then junk. They
+            // stay silent, answer `NotFound`, get their answers dropped as
+            // Busy, or reconnect and announce again (RT3: adversarial).
+            let mut attackers: Vec<PeerId> = (0..k as PeerId).collect();
+            let mut next_peer: PeerId = 5_000;
             for a in 0..k as PeerId {
                 let mut out = Actions::default();
                 t.announce(target, a, rng.next_u64() % 4 == 0, now, &mut out);
@@ -684,7 +982,7 @@ mod tests {
                         if tx != target {
                             outstanding.remove(i);
                             if t.is_requested(&tx, p) {
-                                t.forget(&tx);
+                                let _ = t.forget_requested(&tx);
                                 outstanding.retain(|x| x.0 != tx);
                             }
                         }
@@ -698,7 +996,24 @@ mod tests {
                                 1 => t.busy(tx, p, now, &mut out),
                                 _ => t.pause(tx, p, now, &mut out),
                             }
+                        } else if p != honest {
+                            // An attacker's answer for the target.
+                            match rng.next_u64() % 2 {
+                                0 => t.not_found(tx, p, now, &mut out),
+                                _ => t.busy(tx, p, now, &mut out),
+                            }
                         }
+                    }
+                    7 => {
+                        // An attacker reconnects (a new peer id) and
+                        // announces the target again.
+                        let i = (rng.next_u64() as usize) % attackers.len();
+                        let old = attackers[i];
+                        t.peer_gone(old, now, &mut out);
+                        outstanding.retain(|x| x.1 != old);
+                        attackers[i] = next_peer;
+                        t.announce(target, next_peer, false, now, &mut out);
+                        next_peer += 1;
                     }
                     5 if step % 50 == 0 => {
                         // A junk peer leaves (never the target's announcers).
@@ -1033,6 +1348,9 @@ mod tests {
             t.len(),
             spent / ticks
         );
-        assert_eq!(t.len(), 64 * PEER_TRACKED);
+        // Since RT3 F1b a request that timed out is not asked again
+        // without a lane drop: each junk peer's first two requests end, and
+        // their ids, which no one else announced, are dropped.
+        assert_eq!(t.len(), 64 * (PEER_TRACKED - 2));
     }
 }

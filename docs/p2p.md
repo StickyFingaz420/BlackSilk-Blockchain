@@ -620,67 +620,100 @@ never used in any check or sent to a peer:
   - This makes the first announcer hard to find by timing (the "diffusion" of
     Dandelion++).
 - **Requesting: the transaction request tracker** (`net/tx_requests.rs`, RT2-TM2P2P
-  redesign, 2026-10-02; prior art: Bitcoin Core's `TxRequestTracker`, txrequest.cpp).
+  redesign, RT3-TM2P2P fixes, 2026-10-02/03; prior art: Bitcoin Core's
+  `TxRequestTracker`, txrequest.cpp).
   - **State.** One record per (transaction id, announcing peer): *candidate* (with
-    the time it may be asked), *requested* (with its expiry) or *done* (answered
-    without the transaction, timed out, or refused). One record per id holds its
-    hard deadline, its count of timeouts and an optional node-wide pause. Every
-    tracked id has a timer: the earliest of its deadline, its requests' expiries,
-    its candidates' ready times and its pause. There is no queue in which an id
-    waits without a request and a timer (RT2 F1). Due timers run in time order,
-    each as of its own time, and before any event (an announcement, an answer):
-    what happens never depends on when the maintenance tick comes.
+    the time it may be asked), *requested* (with when it was asked and its expiry)
+    or *done* (answered without the transaction, timed out, or refused). One record
+    per id holds its hard deadline, its first request time, its count of timeouts,
+    and an optional node-wide pause. Every tracked id has a timer: the earliest of
+    its deadline, its requests' expiries, its candidates' ready times, its pause
+    and the end of its first request period. A ready candidate whose peer has no
+    room waits on that peer and is looked at again as soon as the peer has room (no
+    rescan timer). There is no queue in which an id waits without a request and a
+    timer (RT2 F1). Due timers run in time order, each as of its own time, and
+    before any event (an announcement, an answer): what happens never depends on
+    when the maintenance tick comes.
+  - **Network classes.** Clearnet and onion peers have separate records and per-id
+    state (RT3 F6): before, a dual-homed node's two identities could be linked by
+    how its requests on one side waited for the other side's (2 s against 30 s).
+    A transaction that arrives through either side is forgotten on both.
   - **Who is asked.** A candidate is ready at once if its peer is outbound
     (*preferred*), 2 s after its announcement if inbound (Core's
     `NONPREF_PEER_TX_DELAY`). Among the ready candidates whose peer has room, the
-    node asks preferred ones first, then by a per-node random priority of (id, peer)
-    (a salted hash): announcing first, or many times, buys no place in the order.
-  - **How many at once.** One request per id is outstanding until the first one
-    times out (30 s); from then on up to 4, to 4 different announcers, each replaced
-    as it ends. A `NotFound` or a disconnect ends a request at once and the next
-    candidate is asked. A request that timed out is asked once more of the same
-    peer, as a last resort after every fresh candidate (its answer may have been
-    dropped by this node's own slow lane); never a third time.
+    node asks, in order: those with fewer Busy drops, preferred ones, those
+    announced in an earlier 30 s period of the id (a peer that reconnects and
+    announces again ranks behind; RT3 F2), then by a per-node random priority of
+    (id, peer) (a salted hash): announcing first, or many times, buys nothing.
+  - **How many at once.** One request per id is outstanding during the 30 s after
+    its first request; from then on up to 4, to 4 different announcers, each
+    replaced as it ends, however the earlier requests ended (RT3 F2: counting only
+    timeouts let `NotFound` and Busy answers just before the timeout keep it at
+    one). A `NotFound` or a disconnect ends a request at once and the next candidate
+    is asked.
+  - **Timeouts.** A request times out after 30 s plus the time the peer's expected
+    answer size takes at 64 KiB/s (a known PX-sized answer: about 64 s). When it
+    times out it is asked of the same peer once more only if this node's own slow
+    lane dropped a large answer from that peer since it was asked (the answer was
+    sent; we lost it); otherwise the record is done (RT3 F1b: a slow honest
+    peer's second copy was penalized as unrequested).
   - **Per-peer caps.** A peer may have at most 2 000 ids tracked (its announcements
-    beyond are ignored) and at most 16 requests in flight, and at most
-    `SLOW_LANE_BYTES` of expected answers in flight (each request counted at the
-    size of that peer's last answer, at least 8 KiB, and at half that budget before
-    its first answer; a PX answer is about 2.2 MB, so two PX requests at once). A candidate whose peer is at a cap is skipped, not
-    queued: junk from one peer consumes only that peer's own allowance (RT2 F1,
+    beyond are ignored), at most 16 requests in flight, and at most
+    `SLOW_LANE_BYTES` of expected answers in flight. The expected size is a decaying
+    maximum of its answers (each answer, or 7/8 of the last figure, whichever is
+    larger), at least 8 KiB, and half the budget before its first answer: a PX
+    answer is about 2.2 MB, so two PX requests at once, and one small answer after a
+    large one does not open 16 (RT3 F3). A candidate whose peer is at a cap is
+    skipped: junk from one peer consumes only that peer's own allowance (RT2 F1,
     F4).
-  - **Busy.** An answer this node drops for the peer's relay share or a full
-    transaction lane is not the transaction's fault: that record goes back to
-    candidate behind the others, and the next candidate is asked now; after 2 such
-    drops for one (id, peer) the record is done (RT2 F2: an announcer could keep its
-    own answers Busy forever). An answer dropped for the node-wide PX share pauses
-    the id (not the peer) for 1 s, then it is asked again. The per-peer relay share
-    is charged only after the already-pooled, known-rejected and conflict checks.
+  - **Busy.** An answer this node drops for the peer's relay share is not the
+    transaction's fault: that record goes back behind every other candidate, and
+    the next candidate is asked now; the busy one again after 5 s, doubling up to
+    30 s. After 2 such drops for one (id, peer) the record is done, unless it is the
+    id's last live record (then it keeps its backoff; the deadline bounds it). The
+    per-peer relay share is charged only after the already-pooled, known-rejected
+    and conflict checks (RT2 F2).
+  - **Node-wide drops.** An answer dropped for a node-wide reason (the node-wide PX
+    share, a full transaction lane) is not the peer's doing: the id pauses for 1 s,
+    doubling up to 30 s, and the same record is asked again after it (RT3 F4:
+    reported as the peer's Busy, a few seconds of a full lane dropped the id).
   - **Deadline.** An id is dropped, with all its records, 20 minutes after its first
     announcement, or as soon as every record is done. It comes back with a later
-    announcement (pool re-announcement, §7 below).
-  - **Worst-case delay bound.** Let `k` announcers of an id never answer, and one
-    honest announcer answer. The honest one is asked within
-    `2 s + 30 s × (1 + ⌈k / 4⌉)` of its announcement: at most 2 s of delay, one
-    first request that may time out, then 4 at a time. If it is outbound and the
-    attackers inbound, within 32 s. The deadline holds that bound up to `k = 152`
-    (more than the 64 inbound slots). With the random priority the expected delay is
-    about half the bound. Before the redesign: about 30 s per silent announcer in
-    arrival order (`rt_eight_silent_first_announcers_do_not_suppress_an_honest_one`:
-    240 s for 8; about 58 minutes with 117), and without bound behind one announcer's
-    junk queue (`rt2_a_timed_out_request_is_not_parked_behind_a_junk_queue`).
-  - **Late answers.** The answer to a request that timed out is still accepted from
-    the peer asked for another 30 s, unpenalized, as a late block is (at most 10 000
-    such requests remembered). Before P2P-FIX2 it was an unrequested `Tx` (10 points)
-    and was dropped, so a node or link slow for 30 s penalized honest peers
-    (`a_late_transaction_answer_is_not_penalized`).
+    announcement (pool re-announcement, below; or a reconnect, below).
+  - **Worst-case delay bounds** (an honest announcer, `k` attackers that announced
+    the id first; tested by `rt3_*_keep_the_bound` and the property test):
+    - silent attackers, or attackers that answer `NotFound` or get their answer
+      dropped as Busy just before their timeout, or that reconnect and announce
+      again: an inbound honest announcer is asked within
+      `2 s + 30 s × (1 + ⌈k / 4⌉)`; an outbound one within 32 s of the first
+      request (inbound attackers);
+    - attackers that first make their expected answer size large (by sending a
+      large answer) hold each slot up to `30 s + MAX_RELAY_FRAME / 64 KiB/s`, about
+      98 s: then `2 s + 30 s + 98 s × ⌈k / 4⌉`;
+    - the deadline holds these bounds up to `k = 152` (the first) and `k = 44` (the
+      second); beyond, the id is dropped and comes back with a later
+      announcement. With the random priority the expected delay is about half the
+      bound.
+    - Before RT2, about 30 s per silent announcer in arrival order, and without
+      bound behind one announcer's junk queue
+      (`rt2_a_timed_out_request_is_not_parked_behind_a_junk_queue`).
+  - **Late answers.** Any copy of an id a peer was asked for is accepted from it,
+    unpenalized, for 5 minutes after its request ended: timed out, or another
+    announcer's answer came first (RT3 F1: with up to 4 requests at once, every
+    other honest answer was penalized as unrequested, +10 each; P2P-FIX2 before it
+    for timeouts). At most 10 000 such (id, peer) pairs are remembered.
   - Neither a timeout nor a `NotFound` is penalized: transaction relay is best
     effort.
+  - **A peer that reconnects** (from the same host within 10 minutes) gets this
+    node's pooled transactions announced again (at most 5 000), through its trickle:
+    a link cut in the middle of relaying loses nothing for good (RT3 F3).
   - Tested: the tracker's property test (random announce, answer, `NotFound`, Busy,
-    timeout and disconnect sequences; invariants: every id has a request or a timer,
-    no cap is exceeded, at most one request per id before its first timeout and 4
-    after, an honest announcer is asked within the bound) and the network tests named
-    above, `rt_a_px_burst_from_one_announcer_is_relayed_in_full` and
-    `rt2_an_announcer_kept_busy_does_not_hold_a_transaction` (PX-proving).
+    pause, timeout, disconnect and reconnect sequences, with attackers that are
+    silent, answer `NotFound`, get Busy, or reconnect; invariants: every id has a
+    request or a timer, no cap is exceeded, at most 4 requests per id and one
+    before its first request period ends, and an honest announcer is asked within
+    the bound), RT3's adversarial tests, and the network tests named above and in
+    this section.
   - The per-peer sets of announced and known transaction ids are capped (50 000;
     cleared when exceeded: forgetting only costs a redundant announcement).
 - **Stem transactions stay private.** An `InvTx` for a transaction in our stempool
@@ -714,12 +747,16 @@ never used in any check or sent to a peer:
     another announcer. Before RT2-TM2P2P every step reserved a full
     `SERVE_TX_BYTES` (4.5 MB) however small its transactions, without fairness, so
     about eight slow readers held the whole budget.
-  - **Slow readers.** A peer holding more than `SLOW_SHARE` (4 MiB) of the budget
-    whose oldest queued answer is not written within `SLOW_BASE` (10 s) plus its
-    size at `SLOW_RATE` (64 KiB/s) is disconnected (no ban). So is one that lets no
+  - **Slow readers.** A peer holding more than `SLOW_SHARE` (4 MiB) of the budget,
+    or more than 1 MiB while other answers wait for room in its pool (RT3 F5), whose
+    answer at the front of its queue is not written within `SLOW_BASE` (10 s) plus
+    its size at `SLOW_RATE` (64 KiB/s) of reaching the front is disconnected (no
+    ban): a reader slower than about 64 KiB/s that holds that much. The time counts
+    from when the answer reached the front (RT3 F3: counted from its queueing, a
+    reader at 125 kB/s was cut behind earlier answers). So is one that lets no
     answer be written for `SERVE_TX_STALL` while more wait, as when its outbox
-    overflows. One that reads slowly otherwise is bounded by the pong timeout
-    (§10): its pings queue behind its answers.
+    overflows. Answers have their own queue behind pings and pongs (§10), so a slow
+    reader's pings are not delayed by them.
   - Before TM2-17 every answer was queued at once, and the first that found the
     64-message outbox full disconnected the requester as a slow reader: one `GetTx`
     for more than 64 transactions, which an honest node sent for any burst, cut the
@@ -1354,11 +1391,17 @@ The lab network found the last two cases as false bans between honest nodes (AUD
 R6).
 
 A peer that does not read its messages fast enough is disconnected, not banned, when
-its bounded outbox fills up (`GetTx` answers wait for room instead, §7). Each peer has two outboxes (R8-11): **control** (64
-messages: pongs, headers, addresses, transaction relay, requests) and **bulk** (32
-`Block` frames). The writer sends every queued control message before the next block
-frame, so a pong or a stem transaction never waits behind a batch of blocks (a frame
-already being written is finished first).
+its bounded outbox fills up (`GetTx` answers wait for room instead, §7). Each peer has
+three outboxes (R8-11, RT3 F3): **control** (64 messages: pings, pongs, headers,
+addresses, announcements, stem transactions, requests), **answers** (`GetTx`
+answers: `Tx` frames and their `NotFound`) and **bulk** (32 `Block` frames). The
+writer sends every queued control message before the next answer, and every answer
+before the next block frame, so a pong or a stem transaction never waits behind a
+batch of transaction answers or blocks (a frame already being written is finished
+first). Before RT3-TM2P2P `Tx` answers shared the control queue, and on a slow link
+(a Tor circuit, 1 Mbit/s) a ping queued behind two PX answers was not answered within
+the 30 s pong timeout, so the link was cut
+(`rt3_px_answers_over_a_1_mbit_link_keep_the_link`, PX-proving).
 
 **Rate limits** (per peer, token buckets):
 - **Messages:** 50 per second, burst 500.
@@ -1440,7 +1483,13 @@ already being written is finished first).
 
 **Liveness:**
 - The node pings every 60 s.
-- A connection is closed after 180 s without any message, or when a pong is 30 s late.
+- A connection is closed after 180 s without any message, or when a pong is late:
+  `PONG_TIMEOUT` (128 s) after the ping was *written* (a ping not written yet, behind
+  a frame being written, gets another `MAX_RELAY_FRAME / SLOW_RATE`, 68 s). The
+  value: the peer writes its pong after the frame it is writing to us, which can be
+  a transaction of `MAX_RELAY_FRAME` bytes (68 s at 64 KiB/s, the slowest reader the
+  serving side keeps, §7), plus a minute of round trip and load. Before RT3-TM2P2P it
+  was 30 s from when the ping was queued. Bitcoin Core waits 20 minutes.
 - **The chain actor** (dossier 34 Stage 2; `chain/src/actor.rs`). One dedicated
   thread owns the chain manager and runs every chain operation, one at a time; no
   other thread can reach the manager, so nothing waits on a chain lock. P2P and RPC

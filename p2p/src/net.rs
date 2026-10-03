@@ -144,6 +144,7 @@ fn new_inner(
         px_global: crate::limits::TokenBucket::new(2.0, 10.0),
         block_requests: HashMap::new(),
         tx_tracker: Default::default(),
+        recent_gone: HashMap::new(),
         recent_rejects: VecDeque::new(),
         recent_rejects_set: HashSet::new(),
         late_blocks: HashMap::new(),

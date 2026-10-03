@@ -14,10 +14,12 @@
 //!   its length.
 
 use super::blocks::{release_block_slot, schedule_downloads, BLOCK_TIMEOUT};
+use super::dispatch::MAX_RELAY_FRAME;
 use super::headers::{add_grace, HEADERS_TIMEOUT};
 use super::peers::maintain_outbound;
-use super::relay::{reannounce_pool, remember, TX_TIMEOUT};
-use super::state::{short, unix_now, Inner, State, StemEntry};
+use super::relay::{reannounce_pool, remember};
+use super::serve_tx::SLOW_RATE;
+use super::state::{short, unix_now, Inner, State, StemEntry, LATE_TX_WINDOW};
 use super::stem::{fluff_entry, send_held_local_txs, take_stem};
 use super::tx_requests::Actions;
 use crate::connman::ConnKind;
@@ -28,7 +30,18 @@ use rand_chacha::rand_core::RngCore;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const PONG_TIMEOUT: Duration = Duration::from_secs(30);
+/// A pong must arrive this long after our ping was WRITTEN (RT3 F3). The
+/// peer writes its pong ahead of its queues, but after the frame it is
+/// writing to us, which may be a transaction of `MAX_RELAY_FRAME` bytes: at
+/// the slowest rate the serving side keeps (`serve_tx::SLOW_RATE`, 64 KiB/s)
+/// that is `MAX_RELAY_FRAME / SLOW_RATE` (about 68 s); plus a minute for the
+/// round trip and a busy peer. Bitcoin Core waits 20 minutes; a dead link is
+/// also cut by the 180 s idle timeout of the read loop.
+const PONG_TIMEOUT: Duration = Duration::from_secs((MAX_RELAY_FRAME / SLOW_RATE) as u64 + 60);
+
+/// A ping not yet written (the writer is busy with a frame) times out only
+/// after the time that frame takes at `SLOW_RATE` and the pong timeout.
+const PING_WRITE_GRACE: Duration = Duration::from_secs((MAX_RELAY_FRAME / SLOW_RATE) as u64);
 
 /// The shortest time between two announcements by [`announce_loop`]: while
 /// the tip changes faster (a body drain, initial sync), the tips in between
@@ -133,12 +146,26 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
                 }
                 // A reader too slow for the serving budget it holds
                 // (`serve_tx`, RT2 F3): disconnected, not banned.
-                if p.replies.too_slow(now) {
+                if p.replies
+                    .too_slow(now, inner.serve_budget.contended(!p.inbound))
+                {
                     p.kill.notify_one();
                     too_slow.push(p.addr.clone());
                 }
-                if let Some((_, sent)) = p.ping {
-                    if now.duration_since(sent) > PONG_TIMEOUT {
+                if let Some((n, queued)) = p.ping {
+                    // Counted from when the ping was written (RT3 F3).
+                    let written = p
+                        .ping_written
+                        .lock()
+                        .ok()
+                        .and_then(|w| *w)
+                        .filter(|(x, _)| *x == n)
+                        .map(|(_, at)| at);
+                    let late = match written {
+                        Some(at) => now.duration_since(at) > PONG_TIMEOUT,
+                        None => now.duration_since(queued) > PING_WRITE_GRACE + PONG_TIMEOUT,
+                    };
+                    if late {
                         p.kill.notify_one();
                     }
                 } else if now.duration_since(p.last_ping) > inner.cfg.ping_interval {
@@ -180,7 +207,7 @@ pub(super) async fn maintenance_loop(inner: Arc<Inner>) {
             // they no longer have the transaction). The late answer is
             // still accepted from the peer asked (`late_txs`).
             st.late_txs
-                .retain(|_, t| now.duration_since(*t) <= TX_TIMEOUT);
+                .retain(|_, t| now.duration_since(*t) <= LATE_TX_WINDOW);
             let mut out = Actions::default();
             st.tx_tracker.poll(now, &mut out);
             inner.apply_tx_actions(&mut st, out, now);
@@ -300,5 +327,21 @@ pub(super) async fn chain_maintenance_loop(inner: Arc<Inner>) {
                 .maintenance_seen
                 .store(next, std::sync::atomic::Ordering::Release);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RT3 F3: the pong timeout covers the largest frame the peer may be
+    /// writing to us at the slowest rate the serving side keeps, plus a
+    /// margin (docs/p2p.md §10 states 68 s and 128 s).
+    #[test]
+    fn the_pong_timeout_covers_a_largest_frame_at_the_slowest_rate() {
+        let frame = Duration::from_secs_f64(MAX_RELAY_FRAME as f64 / SLOW_RATE as f64);
+        assert!(PONG_TIMEOUT >= frame + Duration::from_secs(30));
+        assert_eq!(PING_WRITE_GRACE.as_secs(), 68);
+        assert_eq!(PONG_TIMEOUT.as_secs(), 128);
     }
 }

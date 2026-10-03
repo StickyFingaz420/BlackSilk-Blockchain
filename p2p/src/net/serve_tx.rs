@@ -8,6 +8,7 @@ use crate::dandelion::PeerId;
 use crate::message::Message;
 use blacksilk_consensus::Hash;
 use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
@@ -36,6 +37,10 @@ pub(super) const SERVE_TX_STALL: Duration = Duration::from_secs(60);
 pub(super) const SLOW_RATE: usize = 64 * 1024;
 pub(super) const SLOW_BASE: Duration = Duration::from_secs(10);
 pub(super) const SLOW_SHARE: usize = SERVE_TX_TOTAL / 16;
+/// The holding above which the rule applies while other answers wait for
+/// room in the peer's pool (RT3 F5: a holder of up to `SLOW_SHARE` was never
+/// flagged however slowly it read).
+pub(super) const SLOW_SHARE_CONTENDED: usize = 1024 * 1024;
 
 /// Budget units: KiB (semaphore permits are `u32`).
 const UNIT: usize = 1024;
@@ -55,6 +60,8 @@ const _: () = assert!(SERVE_TX_TOTAL - SERVE_TX_OUTBOUND >= SERVE_TX_BYTES);
 pub(super) struct ServeBudget {
     outbound: Arc<Semaphore>,
     shared: Arc<Semaphore>,
+    /// Answers waiting for room, per pool (inbound, outbound).
+    waiting: [AtomicUsize; 2],
 }
 
 impl Default for ServeBudget {
@@ -62,11 +69,33 @@ impl Default for ServeBudget {
         Self {
             outbound: Arc::new(Semaphore::new(SERVE_TX_OUTBOUND / UNIT)),
             shared: Arc::new(Semaphore::new((SERVE_TX_TOTAL - SERVE_TX_OUTBOUND) / UNIT)),
+            waiting: [AtomicUsize::new(0), AtomicUsize::new(0)],
         }
     }
 }
 
+/// Counts an answer waiting for room in a pool while it lives.
+struct Waiting<'a>(&'a AtomicUsize);
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 impl ServeBudget {
+    /// Whether answers wait for room in this pool: then the slow-reader
+    /// rule applies from [`SLOW_SHARE_CONTENDED`] (RT3 F5).
+    pub(super) fn contended(&self, outbound: bool) -> bool {
+        self.waiting[usize::from(outbound)].load(Ordering::Acquire) > 0
+    }
+
+    fn wait(&self, outbound: bool) -> Waiting<'_> {
+        let w = &self.waiting[usize::from(outbound)];
+        w.fetch_add(1, Ordering::AcqRel);
+        Waiting(w)
+    }
+
     /// Bytes held now (rounded to KiB).
     pub(super) fn used(&self) -> usize {
         let free = self.outbound.available_permits() + self.shared.available_permits();
@@ -82,8 +111,10 @@ impl ServeBudget {
     }
 }
 
-/// One queued answer: its size, when it was queued, and its share of the
-/// budgets (released when it is written).
+/// One queued answer: its size, when it reached the front of the queue
+/// (RT3 F3: the slow-reader rule times the frame being written, not the
+/// wait behind earlier ones), and its share of the budgets (released when
+/// it is written).
 struct Queued {
     len: usize,
     at: Instant,
@@ -129,8 +160,19 @@ impl ReplyQueue {
     pub(super) fn written(&self) {
         if let Ok(mut q) = self.queue.lock() {
             q.pop_front();
+            if let Some(front) = q.front_mut() {
+                front.at = Instant::now();
+            }
         }
         self.room.notify_one();
+    }
+
+    /// Queues an answer; it is timed from when it reaches the front.
+    fn push(&self, mut item: Queued) {
+        if let Ok(mut q) = self.queue.lock() {
+            item.at = Instant::now();
+            q.push_back(item);
+        }
     }
 
     /// The peer disconnected: everything it held is released, and a
@@ -146,7 +188,12 @@ impl ReplyQueue {
     /// Whether this peer holds more than [`SLOW_SHARE`] and its oldest
     /// answer waits longer than [`SLOW_BASE`] plus its size at
     /// [`SLOW_RATE`]: a reader too slow for what it holds.
-    pub(super) fn too_slow(&self, now: Instant) -> bool {
+    pub(super) fn too_slow(&self, now: Instant, contended: bool) -> bool {
+        let share = if contended {
+            SLOW_SHARE_CONTENDED
+        } else {
+            SLOW_SHARE
+        };
         let Ok(q) = self.queue.lock() else {
             return false;
         };
@@ -155,7 +202,7 @@ impl ReplyQueue {
             return false;
         };
         let allowed = SLOW_BASE + Duration::from_secs_f64(front.len as f64 / SLOW_RATE as f64);
-        held > SLOW_SHARE && now.duration_since(front.at) > allowed
+        held > share && now.duration_since(front.at) > allowed
     }
 }
 
@@ -215,7 +262,10 @@ pub(super) async fn on_get_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) 
             continue;
         }
         let need: u32 = step.iter().map(|(_, l)| units(*l)).sum();
-        let Some((mut mine, mut pooled)) = acquire(&replies, &pool, need).await else {
+        let waiting = inner.serve_budget.wait(outbound);
+        let got = acquire(&replies, &pool, need).await;
+        drop(waiting);
+        let Some((mut mine, mut pooled)) = got else {
             // Gone, or no room for a long time: the rest is not served now.
             missing.extend(step.into_iter().map(|(id, _)| id));
             missing.extend(wanted.drain(..).map(|(id, _)| id));
@@ -251,22 +301,20 @@ pub(super) async fn on_get_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) 
             if !st.peers.contains_key(&peer) {
                 return;
             }
-            if let Ok(mut q) = replies.queue.lock() {
-                q.push_back(Queued {
-                    len,
-                    at: Instant::now(),
-                    _peer: peer_part,
-                    _pool: pool_part,
-                });
-            }
-            inner.send(&mut st, peer, Message::Tx(t));
+            replies.push(Queued {
+                len,
+                at: Instant::now(),
+                _peer: peer_part,
+                _pool: pool_part,
+            });
+            inner.send_answer(&mut st, peer, Message::Tx(t));
         }
         // Units not used (a transaction left the pool meanwhile) are
         // released here, with `mine` and `pooled`.
     }
     // Last, so it still ends the answer.
     if !missing.is_empty() {
-        inner.send_now(peer, Message::NotFound(missing));
+        inner.send_answer(&mut inner.state(), peer, Message::NotFound(missing));
     }
 }
 
@@ -400,13 +448,22 @@ mod tests {
             });
         }
         assert!(q.bytes() > SLOW_SHARE);
-        assert!(!q.too_slow(t0 + SLOW_BASE));
-        assert!(q.too_slow(t0 + SLOW_BASE + Duration::from_secs(33)));
+        assert!(!q.too_slow(t0 + SLOW_BASE, false));
+        assert!(q.too_slow(t0 + SLOW_BASE + Duration::from_secs(33), false));
         q.written();
         q.written();
-        assert!(
-            !q.too_slow(t0 + Duration::from_secs(3_600)),
-            "under the share"
-        );
+        // The front is timed from when it got there (RT3 F3).
+        let later = Instant::now();
+        assert!(!q.too_slow(later + SLOW_BASE, true));
+        // 2 MiB held: under the share, flagged only while the pool is
+        // contended (RT3 F5).
+        assert!(!q.too_slow(later + Duration::from_secs(3_600), false));
+        assert!(q.too_slow(later + Duration::from_secs(3_600), true));
+        let budget = ServeBudget::default();
+        assert!(!budget.contended(false));
+        let w = budget.wait(false);
+        assert!(budget.contended(false) && !budget.contended(true));
+        drop(w);
+        assert!(!budget.contended(false));
     }
 }

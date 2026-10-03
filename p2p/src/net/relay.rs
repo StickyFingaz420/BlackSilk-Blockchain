@@ -10,9 +10,7 @@ use blacksilk_chain::mempool::MEMPOOL_EXPIRY_BLOCKS;
 use blacksilk_consensus::Hash;
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-pub(super) const TX_TIMEOUT: Duration = Duration::from_secs(30);
+use std::time::Instant;
 
 const ANNOUNCED_CAP: usize = 50_000;
 
@@ -27,6 +25,36 @@ pub(super) fn remember(set: &mut HashSet<Hash>, ids: impl IntoIterator<Item = Ha
 }
 
 impl Inner {
+    /// Queues announcements of `ids` to `peer` only, through its trickle,
+    /// skipping what it knows or was told (a reconnecting peer, RT3 F3).
+    pub(super) fn announce_to(&self, peer: PeerId, ids: Vec<Hash>) {
+        let mut st = self.state();
+        let now = Instant::now();
+        let mean = match st.peers.get(&peer) {
+            Some(p) if p.relay_txs => {
+                if p.inbound {
+                    self.cfg.trickle_inbound
+                } else {
+                    self.cfg.trickle_outbound
+                }
+            }
+            _ => return,
+        };
+        let delay = exponential(mean, &mut st.rng);
+        let Some(p) = st.peers.get_mut(&peer) else {
+            return;
+        };
+        for id in ids {
+            if p.known_txs.contains(&id) || p.announced_to.contains(&id) {
+                continue;
+            }
+            if p.inv_queue.is_empty() {
+                p.next_inv = now + delay;
+            }
+            p.inv_queue.push(id);
+        }
+    }
+
     /// Queues an `InvTx` announcement to every transaction-relaying peer except
     /// `except` and peers that already know it (docs/p2p.md §7).
     pub(super) fn announce_tx(&self, id: Hash, except: Option<PeerId>) {

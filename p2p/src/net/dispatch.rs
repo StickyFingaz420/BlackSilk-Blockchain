@@ -212,7 +212,13 @@ pub(super) async fn handle(inner: &Arc<Inner>, peer: PeerId, msg: Message) {
                     Some(p) if p.ping.map(|(x, _)| x) == Some(n) => {
                         // The round trip: the nonce was sent only then, so a
                         // peer cannot answer faster than its real distance.
-                        let rtt = p.ping.map(|(_, sent)| sent.elapsed()).unwrap_or_default();
+                        // From when the ping was written, if known.
+                        let written = p.ping_written.lock().ok().and_then(|w| *w);
+                        let sent = written
+                            .filter(|(x, _)| *x == n)
+                            .map(|(_, at)| at)
+                            .or(p.ping.map(|(_, at)| at));
+                        let rtt = sent.map(|s| s.elapsed()).unwrap_or_default();
                         p.min_ping = Some(p.min_ping.map_or(rtt, |m| m.min(rtt)));
                         p.ping = None;
                         true

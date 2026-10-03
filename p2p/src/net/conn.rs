@@ -24,7 +24,7 @@ use blacksilk_consensus::Hash;
 use rand_chacha::rand_core::RngCore;
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, Notify};
@@ -46,8 +46,16 @@ const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(20);
 
 const IDLE_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// Control messages queued per peer (everything except `Block`).
+/// Control messages queued per peer (everything except `Block` frames and
+/// `GetTx` answers).
 const OUTBOX: usize = 64;
+
+/// The most pooled transactions announced again to a peer that reconnects.
+const REANNOUNCE_ON_RECONNECT: usize = 5_000;
+
+/// `GetTx` answers queued per peer (at most `SERVE_TX_FRAMES` `Tx` frames
+/// and their `NotFound`s).
+const ANSWERS_OUTBOX: usize = 2 * SERVE_TX_FRAMES;
 
 // `GetTx` answers take at most half of it (TM2-17).
 const _: () = assert!(SERVE_TX_FRAMES <= OUTBOX / 2);
@@ -249,6 +257,8 @@ pub(super) async fn run_connection<S>(
 
     // Register.
     let (tx_out, rx_out) = mpsc::channel::<Message>(OUTBOX);
+    let (tx_answers, rx_answers) = mpsc::channel::<Message>(ANSWERS_OUTBOX);
+    let ping_written = Arc::new(Mutex::new(None));
     let (tx_bulk, rx_bulk) = mpsc::channel::<Message>(BULK_OUTBOX);
     let kill = Arc::new(Notify::new());
     let replies = Arc::new(ReplyQueue::default());
@@ -321,6 +331,10 @@ pub(super) async fn run_connection<S>(
         if asks_addresses {
             addr_gate.getaddr_sent(now);
         }
+        // Transaction requests are kept per network class (RT3 F6): an
+        // onion peer's requests share nothing with clearnet ones.
+        let class = u8::from(addr.is_onion() || kind == ConnKind::OnionInbound);
+        st.tx_tracker.register_peer(id, class);
         st.peers.insert(
             id,
             Peer {
@@ -330,6 +344,8 @@ pub(super) async fn run_connection<S>(
                 proxied,
                 protocol: theirs.protocol,
                 out: tx_out,
+                answers: tx_answers,
+                ping_written: ping_written.clone(),
                 bulk: tx_bulk,
                 kill: kill.clone(),
                 replies: replies.clone(),
@@ -380,7 +396,16 @@ pub(super) async fn run_connection<S>(
         },
         theirs.height
     );
-    let writer_task = tokio::spawn(write_loop(writer, rx_out, rx_bulk, replies.clone()));
+    let writer_task = tokio::spawn(write_loop(
+        writer,
+        WriterQueues {
+            control: rx_out,
+            answers: rx_answers,
+            bulk: rx_bulk,
+        },
+        replies.clone(),
+        ping_written.clone(),
+    ));
     if asks_addresses {
         inner.send_now(id, Message::GetAddr);
     }
@@ -400,6 +425,25 @@ pub(super) async fn run_connection<S>(
     // A tip connected since the snapshot our `Version` came from (the
     // announcer ran before this peer was registered, RT-SYNC F-B).
     announce_tip(&inner);
+    // A peer that reconnects lost what our requests and announcements to
+    // its last connection were doing: our pooled transactions are announced
+    // to it again (RT3 F3; the per-connection sets that skip known ids
+    // started empty).
+    if inner.state().recently_gone(&addr) {
+        let inner2 = inner.clone();
+        tokio::spawn(async move {
+            let ids: Vec<Hash> = inner2
+                .with_chain(|c| {
+                    c.mempool()
+                        .iter()
+                        .take(REANNOUNCE_ON_RECONNECT)
+                        .map(|t| t.hash())
+                        .collect()
+                })
+                .await;
+            inner2.announce_to(id, ids);
+        });
+    }
 
     // Read loop. Messages whose handling needs a chain command go to the
     // peer's slow lane; the loop itself never waits for the chain (F34-1).
@@ -512,11 +556,15 @@ pub(super) async fn run_connection<S>(
                     }
                     Pushed::Dropped { charge: false } => {
                         log::debug!("{addr}: slow lane full; {kind} dropped");
-                        // A large answer dropped here: its request times
-                        // out, and fewer are asked of this peer at once
-                        // (`tx_requests`).
+                        // A large answer dropped here by this node's own
+                        // lane: its request, when it times out, is asked
+                        // once more, and fewer are asked of this peer at
+                        // once (`tx_requests`, RT3 F1b).
                         if large_tx {
-                            inner.state().tx_tracker.answer_size(id, len);
+                            inner
+                                .state()
+                                .tx_tracker
+                                .lane_dropped(id, len, Instant::now());
                         }
                     }
                 }
@@ -530,6 +578,9 @@ pub(super) async fn run_connection<S>(
     let gone = {
         let mut st = inner.state();
         let gone = st.peers.remove(&id).map(|p| p.addr);
+        if let Some(a) = &gone {
+            st.note_gone(a, Instant::now());
+        }
         replies.closed();
         st.dandelion.peer_disconnected(id);
         st.block_requests.retain(|_, (p, _)| *p != id);
@@ -552,26 +603,49 @@ pub(super) async fn run_connection<S>(
 /// batch of blocks (R8-11). A frame already being written is not interrupted.
 /// A written `Tx` (only `GetTx` answers are `Tx` frames) returns its room
 /// to the peer's [`ReplyQueue`].
+///
+/// `GetTx` answers (`Tx`, and the `NotFound` that ends them) have a queue of
+/// their own, written after the control messages (RT3 F3): pings and pongs
+/// queued behind `Tx` answers on a slow link waited longer than the pong
+/// timeout. When a ping is written is recorded (`ping_written`): the pong
+/// timeout counts from then.
 async fn write_loop<W: AsyncWrite + Unpin>(
     mut writer: FrameWriter<W>,
-    mut control: mpsc::Receiver<Message>,
-    mut bulk: mpsc::Receiver<Message>,
+    mut q: WriterQueues,
     replies: Arc<ReplyQueue>,
+    ping_written: Arc<Mutex<Option<(u64, Instant)>>>,
 ) {
     loop {
         let msg = tokio::select! {
             biased;
-            m = control.recv() => m,
-            m = bulk.recv() => m,
+            m = q.control.recv() => m,
+            m = q.answers.recv() => m,
+            m = q.bulk.recv() => m,
         };
         let Some(msg) = msg else { break };
         if writer.send(&msg.encode()).await.is_err() {
             break;
         }
-        if matches!(msg, Message::Tx(_)) {
-            replies.written();
+        match msg {
+            Message::Tx(_) => replies.written(),
+            Message::Ping(n) => {
+                if let Ok(mut w) = ping_written.lock() {
+                    *w = Some((n, Instant::now()));
+                }
+            }
+            _ => {}
         }
     }
+}
+
+/// A peer's outgoing queues, highest priority first.
+struct WriterQueues {
+    /// Everything not below, pings and pongs among them.
+    control: mpsc::Receiver<Message>,
+    /// `GetTx` answers.
+    answers: mpsc::Receiver<Message>,
+    /// `Block` frames.
+    bulk: mpsc::Receiver<Message>,
 }
 
 /// Whether `tip` is on our best header chain as far as the published snapshot
@@ -600,28 +674,40 @@ mod tests {
         let ((_, writer), (mut reader, _)) = (ours.unwrap(), theirs.unwrap());
         let (control_tx, control_rx) = mpsc::channel(OUTBOX);
         let (bulk_tx, bulk_rx) = mpsc::channel(BULK_OUTBOX);
+        let (answers_tx, answers_rx) = mpsc::channel(ANSWERS_OUTBOX);
         for i in 0..4u8 {
             bulk_tx.try_send(Message::Block(vec![i; 1000])).unwrap();
         }
+        // RT3 F3: pings and pongs overtake queued transaction answers too.
+        answers_tx.try_send(Message::Tx(vec![1; 1000])).unwrap();
+        answers_tx.try_send(Message::Tx(vec![2; 1000])).unwrap();
         control_tx.try_send(Message::Pong(9)).unwrap();
         control_tx.try_send(Message::Ping(10)).unwrap();
+        let written = Arc::new(Mutex::new(None));
         let task = tokio::spawn(write_loop(
             writer,
-            control_rx,
-            bulk_rx,
+            WriterQueues {
+                control: control_rx,
+                answers: answers_rx,
+                bulk: bulk_rx,
+            },
             Arc::new(ReplyQueue::default()),
+            written.clone(),
         ));
         let mut got = Vec::new();
-        for _ in 0..6 {
+        for _ in 0..8 {
             got.push(Message::decode(&reader.recv().await.unwrap()).unwrap());
         }
         assert_eq!(got[0], Message::Pong(9));
         assert_eq!(got[1], Message::Ping(10));
-        assert!(got[2..]
+        assert_eq!(got[2], Message::Tx(vec![1; 1000]));
+        assert_eq!(got[3], Message::Tx(vec![2; 1000]));
+        assert!(got[4..]
             .iter()
             .enumerate()
             .all(|(i, m)| *m == Message::Block(vec![i as u8; 1000])));
-        drop((control_tx, bulk_tx));
+        assert_eq!(written.lock().unwrap().map(|(n, _)| n), Some(10));
+        drop((control_tx, bulk_tx, answers_tx));
         task.await.unwrap();
     }
 }

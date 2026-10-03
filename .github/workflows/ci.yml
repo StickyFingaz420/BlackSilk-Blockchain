@@ -131,6 +131,8 @@ jobs:
           # burst from one announcer; an announcer keeping its answers Busy).
           bash .github/scripts/annotate-tests.sh cargo test --locked --release -p blacksilk-p2p --test network rt_a_px_burst_from_one_announcer_is_relayed_in_full -- --ignored --test-threads=1 || rc=1
           bash .github/scripts/annotate-tests.sh cargo test --locked --release -p blacksilk-p2p --test network rt2_an_announcer_kept_busy_does_not_hold_a_transaction -- --ignored --test-threads=1 || rc=1
+          bash .github/scripts/annotate-tests.sh cargo test --locked --release -p blacksilk-p2p --test network rt3_px_answers_over_a_1_mbit_link_keep_the_link -- --ignored --test-threads=1 || rc=1
+          bash .github/scripts/annotate-tests.sh cargo test --locked --release -p blacksilk-p2p --test network rt3_a_mixed_px_burst_from_two_honest_announcers_is_not_penalized -- --ignored --test-threads=1 || rc=1
           exit $rc
 
   # The release profile has overflow checks and debug assertions off. This job

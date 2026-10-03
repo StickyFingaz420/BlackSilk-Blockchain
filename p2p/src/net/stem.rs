@@ -145,7 +145,7 @@ pub(super) async fn fluff_entry(
         Ok(_) | Err(MempoolError::AlreadyKnown) => {
             log::debug!("fluff tx {}", short(&id));
             // Pooled: nothing more to ask anyone (`tx_requests`).
-            inner.state().tx_tracker.forget(&id);
+            Inner::forget_tx(&mut inner.state(), &id);
             inner.announce_tx(id, except);
         }
         Err(e) => log::debug!("fluffing {} failed: {e:?}", short(&id)),

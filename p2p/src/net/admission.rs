@@ -477,13 +477,16 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
         let r = st.tx_tracker.is_requested(&id, peer);
         if r {
             // What each request to this peer is expected to weigh.
-            st.tx_tracker.answer_size(peer, len);
+            let now = Instant::now();
+            let mut out = Actions::default();
+            st.tx_tracker.answer_size(peer, len, now, &mut out);
+            inner.apply_tx_actions(&mut st, out, now);
         }
-        // An answer to our request that timed out and moved on (P2P-FIX2):
-        // accepted, unpenalized. The requests to other announcers stay, so
-        // their answers are not unrequested either (a pooled copy is then
-        // dropped for free).
-        (r || st.late_txs.remove(&(id, peer)).is_some(), r)
+        // Any copy of an id this peer was asked for within
+        // `LATE_TX_WINDOW` (its request timed out, or another announcer's
+        // answer came first): accepted, unpenalized (P2P-FIX2, RT3 F1,
+        // F1b). A pooled copy is then dropped for free.
+        (r || st.late_txs.contains_key(&(id, peer)), r)
     };
     if !requested {
         inner.misbehave(peer, score::UNSOLICITED, "unrequested transaction");
@@ -496,7 +499,7 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     match verdict {
         Admit::Verify => {}
         Admit::Done => {
-            inner.state().tx_tracker.forget(&id);
+            Inner::forget_tx(&mut inner.state(), &id);
             return;
         }
         Admit::Busy | Admit::BusyGlobal => {
@@ -525,12 +528,13 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     })
     .await
     else {
-        // The Tx lane was full: this node's own budget (`Busy`).
+        // The Tx lane was full: node-wide, not the peer's doing (RT3 F4):
+        // the id pauses, with a doubling backoff.
         if ours {
             let mut st = inner.state();
             let now = Instant::now();
             let mut out = Actions::default();
-            st.tx_tracker.busy(id, peer, now, &mut out);
+            st.tx_tracker.pause(id, peer, now, &mut out);
             inner.apply_tx_actions(&mut st, out, now);
         }
         return;
@@ -538,8 +542,9 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     {
         let mut st = inner.state();
         st.tx_verifications += 1;
-        // Verified, pooled or refused: nothing more to ask anyone.
-        st.tx_tracker.forget(&id);
+        // Verified, pooled or refused: nothing more to ask anyone; the
+        // answers still coming stay acceptable.
+        Inner::forget_tx(&mut st, &id);
     }
     match result {
         (_, Ok(_), _) => {
