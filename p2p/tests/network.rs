@@ -6905,3 +6905,201 @@ async fn rt3_a_slow_honest_announcer_is_not_penalized_for_the_retry() {
     assert!(v.mempool_has(&id));
     assert_eq!(score, Some(0), "an honest slow announcer is not penalized");
 }
+
+/// Copies `r` to `w` at `rate` bytes per second (4 KiB chunks, paced).
+async fn paced_pipe(
+    mut r: impl tokio::io::AsyncRead + Unpin,
+    mut w: impl tokio::io::AsyncWrite + Unpin,
+    rate: usize,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut buf = vec![0u8; 4096];
+    let mut next = tokio::time::Instant::now();
+    loop {
+        let n = match r.read(&mut buf).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        let now = tokio::time::Instant::now();
+        if next < now {
+            next = now;
+        }
+        next += Duration::from_secs_f64(n as f64 / rate as f64);
+        tokio::time::sleep_until(next).await;
+        if w.write_all(&buf[..n]).await.is_err() {
+            break;
+        }
+    }
+    let _ = w.shutdown().await;
+}
+
+/// A loopback TCP proxy to `target` carrying each direction at `rate`
+/// bytes per second: a slow link (a Tor circuit, a home uplink).
+async fn throttled_proxy(target: SocketAddr, rate: usize) -> SocketAddr {
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((a, _)) = l.accept().await {
+            let Ok(b) = TcpStream::connect(target).await else {
+                continue;
+            };
+            let (ar, aw) = tokio::io::split(a);
+            let (br, bw) = tokio::io::split(b);
+            tokio::spawn(paced_pipe(ar, bw, rate));
+            tokio::spawn(paced_pipe(br, aw, rate));
+        }
+    });
+    addr
+}
+
+/// RT3-TM2P2P F3 (serving on slow links): two honest nodes over a 1 Mbit/s
+/// link (125 kB/s, about twice `SLOW_RATE`, a common Tor circuit). The
+/// server pools 3 PX transactions and re-announces them; the requester asks
+/// for them (2, then 3 at a time: its expected answer size). Pings and
+/// pongs queue behind the `Tx` answers in the same FIFO outbox, and
+/// `PONG_TIMEOUT` is 30 s from when the ping was queued: 2 PX answers
+/// (4.4 MB) take 35 s on this link, so the link is cut by a pong timeout
+/// although the reader keeps well above `SLOW_RATE`. Each cut re-draws the
+/// requester's Dandelion stem peers. Pings every 5 s here (60 s by
+/// default: then a ping lands in such a transfer with probability about
+/// transfer time / 60 s). Expected to FAIL while the gap exists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "PX proving (4-6 GB); run alone"]
+async fn rt3_px_answers_over_a_1_mbit_link_keep_the_link() {
+    init_test_log();
+    const N: usize = 3;
+    let mut cfg = fast_config(&[]);
+    cfg.ping_interval = Duration::from_secs(5);
+    cfg.trickle_inbound = Duration::from_secs(1);
+    let mut a = node_with(250, cfg).await;
+    a.mine_n(80, 0);
+    let t0 = std::time::Instant::now();
+    let txs: Vec<Transaction> = (0..N).map(|n| a.px_deposit_nth(5_000_000, n)).collect();
+    eprintln!(
+        "RT3 slow link: {N} PX built in {:?}, sizes {:?}",
+        t0.elapsed(),
+        txs.iter().map(|t| t.encode().len()).collect::<Vec<_>>()
+    );
+    {
+        let mut c = a.chain.lock().unwrap();
+        for t in &txs {
+            c.submit_tx(t.clone()).unwrap();
+        }
+    }
+    let proxy = throttled_proxy(a.addr, 125_000).await;
+    let mut cfg = fast_config(&[proxy]);
+    cfg.ping_interval = Duration::from_secs(5);
+    let b = node_with(251, cfg).await;
+    for h in 1..=a.height() {
+        let blk = a.chain.lock().unwrap().block_at(h).unwrap();
+        give_block(&b, &blk).await;
+    }
+    wait_until("connected", 60, || {
+        a.net.stats().peers == 1 && b.net.stats().outbound == 1
+    })
+    .await;
+    let link = b.net.peers()[0].id;
+    settled(&a, a.height() + 1).await;
+    for _ in 0..10 {
+        let blk = a.mine_with(0, false);
+        give_block(&b, &blk).await;
+    }
+    let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+    let t0 = std::time::Instant::now();
+    let mut links = vec![link];
+    while t0.elapsed() < Duration::from_secs(150) && !ids.iter().all(|id| b.mempool_has(id)) {
+        if let Some(p) = b.net.peers().first() {
+            if !links.contains(&p.id) {
+                links.push(p.id);
+                eprintln!("RT3 slow link: new connection at {:?}", t0.elapsed());
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let pooled = ids.iter().filter(|id| b.mempool_has(id)).count();
+    eprintln!(
+        "RT3 slow link: after {:?}: pooled {pooled} of {N}; connections {}; a {:?}; b {:?}; \
+         scores {:?}",
+        t0.elapsed(),
+        links.len(),
+        a.net.stats(),
+        b.net.stats(),
+        penalized(&[&a, &b])
+    );
+    assert_eq!(pooled, N, "relayed over the slow link");
+    assert_eq!(links, vec![link], "the same connection throughout");
+    assert!(penalized(&[&a, &b]).is_empty());
+}
+
+/// RT3-TM2P2P F1 under a real burst: two honest announcers whose last
+/// answer was a small v1 transaction (expected size 8 KiB: up to 16
+/// requests at once) announce 4 PX transactions. The requester asks each
+/// of them for its share at once; their answers (2.2 MB each) overflow the
+/// requester's per-peer slow lane (two PX fit) and are dropped there; the
+/// dropped requests time out, the parallel fallback asks both announcers,
+/// and the first answer makes the other's (requested) answer unrequested:
+/// +10. Expected to FAIL while the gap exists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "PX proving (4-6 GB); run alone"]
+async fn rt3_a_mixed_px_burst_from_two_honest_announcers_is_not_penalized() {
+    init_test_log();
+    const N: usize = 4;
+    let mut a = node(252, &[]).await;
+    a.mine_n(80, 0);
+    let t0 = std::time::Instant::now();
+    let txs: Vec<Transaction> = (0..N).map(|n| a.px_deposit_nth(5_000_000, n)).collect();
+    eprintln!("RT3 mixed burst: {N} PX built in {:?}", t0.elapsed());
+    let warm: Vec<Transaction> = (N..N + 2).map(|n| a.payment_nth(n)).collect();
+    let v = node(253, &[]).await;
+    for h in 1..=a.height() {
+        let blk = a.chain.lock().unwrap().block_at(h).unwrap();
+        give_block(&v, &blk).await;
+    }
+    let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
+    let nid = params().network_id;
+    let mut honest = Vec::new();
+    for (k, delay) in [(0u8, Duration::ZERO), (1, Duration::from_millis(500))] {
+        let ip = [127, 0, 3, 50 + k];
+        let (r, mut w) = raw_peer_from(ip, v.addr, nid, 0).await.expect("honest");
+        let mut all = txs.clone();
+        all.push(warm[k as usize].clone());
+        w.send(&Message::InvTx(vec![warm[k as usize].hash()]).encode())
+            .await
+            .unwrap();
+        let w = Arc::new(tokio::sync::Mutex::new(w));
+        let asked = delayed_announcer(r, w.clone(), all, delay);
+        let wid = warm[k as usize].hash();
+        wait_until("warm-up pooled", 30, || v.mempool_has(&wid)).await;
+        honest.push((ip, w, asked));
+    }
+    for (_, w, _) in &honest {
+        w.lock()
+            .await
+            .send(&Message::InvTx(ids.clone()).encode())
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    let t0 = std::time::Instant::now();
+    while t0.elapsed() < Duration::from_secs(120) && !ids.iter().all(|id| v.mempool_has(id)) {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    let pooled = ids.iter().filter(|id| v.mempool_has(id)).count();
+    let asked: Vec<usize> = honest
+        .iter()
+        .map(|(_, _, a)| a.lock().unwrap().iter().filter(|x| ids.contains(x)).count())
+        .collect();
+    let scores: Vec<Option<u32>> = honest
+        .iter()
+        .map(|(ip, _, _)| score_from(&v, *ip))
+        .collect();
+    eprintln!(
+        "RT3 mixed burst: after {:?}: pooled {pooled} of {N}; asked {asked:?}; scores {scores:?}; \
+         stats {:?}",
+        t0.elapsed(),
+        v.net.stats()
+    );
+    assert_eq!(pooled, N);
+    assert_eq!(scores, vec![Some(0), Some(0)]);
+}

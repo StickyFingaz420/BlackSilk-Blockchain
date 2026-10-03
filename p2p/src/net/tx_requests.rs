@@ -1001,4 +1001,38 @@ mod tests {
         eprintln!("RT3 lane stall: tracked after {:?}: {}", now - t0, t.len());
         assert_eq!(t.len(), 1, "dropped after {:?} of a full lane", now - t0);
     }
+
+    /// RT3-TM2P2P (cost, informational): 64 junk peers with `PEER_TRACKED`
+    /// ids each. A capped peer's ready candidates are "blocked" and looked
+    /// at again every `BLOCKED_RETRY` (2 s) until the 20-minute deadline,
+    /// all under the node's state lock (the maintenance tick polls the
+    /// tracker). Prints the wall time of one simulated minute of polls.
+    #[test]
+    fn rt3_the_cost_of_blocked_junk_candidates() {
+        let t0 = Instant::now();
+        let mut t = TxTracker::default();
+        let mut out = Actions::default();
+        for p in 0..64u64 {
+            for n in 0..PEER_TRACKED as u64 {
+                t.announce(id((p << 32) | n), p, false, t0, &mut out);
+            }
+        }
+        let wall = Instant::now();
+        let mut now = t0;
+        let mut ticks = 0u32;
+        while now < t0 + Duration::from_secs(60) {
+            now += Duration::from_millis(250);
+            let mut out = Actions::default();
+            t.poll(now, &mut out);
+            ticks += 1;
+        }
+        let spent = wall.elapsed();
+        eprintln!(
+            "RT3 junk cost: {} ids tracked; 60 s of polls ({ticks} ticks) took {spent:?} of wall \
+             time ({:?} per tick)",
+            t.len(),
+            spent / ticks
+        );
+        assert_eq!(t.len(), 64 * PEER_TRACKED);
+    }
 }
