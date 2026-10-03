@@ -1286,3 +1286,29 @@
 - **Process:** TM2-P2P has gone through four RT rounds, each finding fewer and smaller issues, but the new mechanisms keep adding surface. After this round:
   - a focused RT5;
   - if it finds only Low items, merge, and record the residuals as P1-public-testnet items rather than iterating further.
+
+## W4-MUTAIR (Lead, 2026-10-03)
+- **First AIR census: no soundness finding.** No false execution was accepted:
+  - 1,977 mutants;
+  - 62 hand mutants;
+  - a 3.86 M-change cell census over every table, including padding rows;
+  - lying-generator and forgery tests.
+- **Closed:**
+  - honest corner-case gaps (HALT on the last row, offset-3 bytes, an odd JALR sum, code at or above 2^27, Poseidon pointer bytes);
+  - an untested oracle;
+  - untested trace-generator checks.
+- **Spec gap (decision pending RT-MUTAIR):** the input (2^16) and output (2^12) word limits are enforced only by the interpreter, not by the AIR. RT-MUTAIR determines whether any consumer relies on them, and recommends one of: an AIR constraint (a CIRCUIT_ID change), a verifier/statement rule, or a spec correction.
+- **Exemption renumbering at merge:** AIR E40–E50 become E51–E61 (run E holds E29–E44; E40 is withdrawn and reserved).
+- `poseidon::p2_width` is dead code. It rides with the next AIR revision, if one happens.
+- **RT-MUTAIR:** no soundness finding.
+  - The oracle matches eval. Three unmodelled aspects are argued harmless; the Fiat–Shamir-only binding rests on the proving tests.
+  - The free-by-design cells cannot change the statement.
+  - 10/11 exemptions confirmed. The old E49 `!=` was misclassified; it is now killed by zero-delta probes.
+  - Lying-generator gaps closed: MULH vs MULHSU, I-type, store widths, offsets 1–3, misaligned accesses, x0.
+- **Stream-limit decision: option (iii), correct the spec.**
+  - The output count is bound exactly by the AIR; the input is private witness.
+  - No consumer relies on the 2^16/2^12 limits (PX ≤ 277 output words; kernel CPU height ≤ 2^16).
+  - tx/tests/px_io_limits.rs is the tripwire.
+  - No CIRCUIT_ID change.
+- p2_width becomes a width test.
+- ECALL-variant and JAL/JALR link-value lie tests are to be added before the merge.
