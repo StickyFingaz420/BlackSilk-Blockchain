@@ -924,12 +924,17 @@ newest-member fraction to be at most 0.05 above it. **Limits:**
   young draws about 2.5 times. On a **mature chain** with a steady output rate, a real
   input spent 12 blocks after receipt is the newest ring member in about **84–89 %**
   of rings, so guessing the newest member identifies it that often (decisions "Agent
-  38" W9; dossier 38 §2.4, docs/reviews/phase2-2026-09-27/research/38-wallet-privacy.md).
-  This is an estimate from a simulation of the picker (400,000 draws, ring 16: the
-  probability that all 15 decoys are older), not a committed test; the share falls
-  with the spend's age (about 52 % at 20 blocks, 14 % at 60, 4 % at 120, in the same
-  simulation). Even at the target, a young spend is the newest member in most rings,
-  because the gamma distribution puts little mass 10–12 blocks deep. The fix restores
+  38" W9; dossier 38 §2.4). **Measured** (`guess_newest_success_on_a_mature_chain` in
+  `tx/tests/decoy_statistics.rs`: one year of 2-minute blocks with four outputs each,
+  3,000 rings per row, fixed seed): 85.6 % at 12 blocks, 52.4 % at 20, 12.7 % at 60,
+  3.3 % at 120. Each is within 0.025 of the prediction of an independent model of the
+  picker, and the test pins the ranges 83–89 %, 48–57 %, 10–16 % and 2–5 %. Over a
+  distribution of spend ages, guess-newest succeeds in 6.6 % of rings (1/16 = 6.25 %)
+  when real spends follow the picker's own gamma, and in 13.8 % when they are four
+  times quicker (the age past the 10-block lock a quarter of a model draw). Which of
+  these describes BlackSilk users is unknown: the gamma is Monero's, inherited and
+  not fitted, and there are no BlackSilk spend data. Even at the target, a young
+  spend is the newest member in most rings, because the gamma distribution puts little mass 10–12 blocks deep. The fix restores
   the distribution; it does not beat it, and only waiting before spending helps (a
   young-spend warning and an opt-in spend delay are decided, not implemented,
   docs/STATUS.md).
@@ -937,7 +942,24 @@ newest-member fraction to be at most 0.05 above it. **Limits:**
   The same young transfer outputs then appear in many rings, the real input's sibling
   (the change of the same transaction) included. That is why "after" is below the
   target for newest-member.
-- Coinbase-dominated rings (R3-3) are unchanged.
+- Coinbase-dominated rings (R3-3) are unchanged. Coinbase decoys appear in proportion
+  to the coinbase share of the eligible outputs at every age, and never below 60
+  blocks (`coinbase_decoys_appear_in_proportion_at_each_age`; decision D7 (a)).
+- **Statistical suite** (`tx/tests/decoy_statistics.rs`, fixed seeds, tolerances
+  rather than exact rings). Against an independent model of the age draw: the decoy
+  depth distribution on a steady chain (chi-square); decoys exactly 10 blocks deep
+  occur at the model's rate (0.433 % of decoys against 0.428 %), and coinbase decoys
+  exactly 60 deep too, never younger (the Monero #8872 class); on random chains the
+  picker's eligibility equals the consensus ring check C1 for every output; and the
+  real input's rank among the 16 is uniform when real ages follow the model.
+- **Rings rebuilt after a reorganization (X7).** Members orphaned by a reorganization
+  are replaced; the wallet keeps every other member (W-5), so an observer who saw
+  both transactions (they share the key image) narrows the real input to the
+  intersection. Measured (`reorg_ring_intersection_after_rebuilding`, real input 1,000
+  blocks deep): the intersection keeps 15.9 of 16 members after a 10-block
+  reorganization, 14.9 after 30, 13.2 after 100 and 9.0 after 720; a ring drawn afresh
+  would share only the real input (about 1.0). Accepted
+  (docs/reviews/k4-reorg-policy.md).
 - The parameters are Monero's, not fitted to BlackSilk spend data (§15).
 
 **Ring members are resolved locally (review I3 §3.9).** The wallet indexes every
