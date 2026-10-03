@@ -11,7 +11,7 @@ are unchanged (`circuit_fingerprint` passes on the final commit).
 trace showed a false execution that the constraints accept:
 
 - every mutant of the constraint files that survived the first census is either killed
-  by a new test or recorded as equivalent, with an argument (E40–E50 in
+  by a new test or recorded as equivalent, with an argument (E51–E61 in
   [mutation-exemptions.md](../../reviews/mutation-exemptions.md));
 - each of the 20 negative-trace tests (`zkvm/tests/air_tamper.rs`, § Negative traces)
   is rejected, and each only by the single rule it targets;
@@ -140,11 +140,11 @@ mutant. To keep that near one minute:
 | util.rs | 48 | 38 | 1 | 0 | 9 |
 | mod.rs | 52 | 48 | 0 | 0 | 4 |
 
-- **After the new tests** (`rerunA`, 22 mutants): 13 caught, 8 missed (E40–E44),
+- **After the new tests** (`rerunA`, 22 mutants): 13 caught, 8 missed (E51–E55),
   1 timeout.
 - **The timeout** (poseidon.rs 69:32, `WIDTH = WORDS · 16 · PER_WORD`) is caught when
   run alone with a 1,800 s limit. Its filter file came out empty, so `poseidonFull`
-  re-ran all of poseidon.rs with the tests of `c28ff20`: 151 caught, 2 missed (E43),
+  re-ran all of poseidon.rs with the tests of `c28ff20`: 151 caught, 2 missed (E54),
   31 unviable, no timeout.
 
 **Run B (trace.rs, check.rs): 417 mutants in 5 h.**
@@ -155,20 +155,20 @@ mutant. To keep that near one minute:
 | B1 (AIR oracle) | check.rs, except the fingerprint | 145 | 104 | 38 | 0 | 3 |
 | B2 (AIR oracle + the fingerprint pins) | check.rs `fingerprint`, `FingerprintBuilder`, `update_values` | 18 | 14 | 2 | 0 | 2 |
 
-- **After the new tests** (`rerunB`, 54 mutants): 33 caught, 19 missed (E47–E50),
+- **After the new tests** (`rerunB`, 54 mutants): 33 caught, 19 missed (E58–E61),
   2 timeouts.
-- **B2's 2 missed** are covered by E47.
+- **B2's 2 missed** are covered by E58.
 
 **Constant hand mutants (±1, `hand.txt`): 62.**
 - 57 caught, 5 missed.
-- After the new tests (`hand2`): H03, H05 and H06 caught. H02 (E44) and H04 (E46)
+- After the new tests (`hand2`): H03, H05 and H06 caught. H02 (E55) and H04 (E57)
   are equivalent.
 - H06 (pc top byte at 5 bits) was already caught in `hand`, by the corner-case test.
   For soundness it is equivalent anyway: the program-table lookup fixes every real
   row's pc below `2^28`.
 
 **Boundary pass** (`tools/boundary-mutants.sh`). The AIR files contain one `>=`/`<=`,
-at util.rs 176:18. Its mutant was missed; it is equivalent (E45).
+at util.rs 176:18. Its mutant was missed; it is equivalent (E56).
 
 **Release arithmetic** (`ovfA`). Run A has 64 kills whose logs show an overflow panic.
 Re-run with overflow checks and debug assertions off, all 64 are still caught.
@@ -187,25 +187,25 @@ hangs.
 | cpu.rs 346:30 JALR target `addr − l0` → `addr + l0` | no honest `JALR` with an odd sum | killed: same test |
 | memory.rs 199:5 (×5), 200:28 `register_image` | no honest test read the initial registers | killed: same test (reads sp) |
 | poseidon.rs 112:34, 209:37, 210:49, 211:46 | no honest `POSEIDON2` pointer with a nonzero low or top byte | killed: same test (pointer `0x0123_4564`) |
-| alu_mul.rs 109:29, 110:29; alu_shift.rs 67:29 | equivalent slice ends | E40 |
-| cpu.rs 108:31 | `f::FLAGS = 0` | E41 |
-| memory.rs 105:24 | `KB + 2 = KB · 2` | E42 |
-| poseidon.rs 252:5 (×2) | dead function | E43 |
-| util.rs 76:29; hand H02 | relabelings of the register base | E44 |
-| util.rs 176:18 (boundary pass) | an assertion never reached at 8 | E45 |
+| alu_mul.rs 109:29, 110:29; alu_shift.rs 67:29 | equivalent slice ends | E51 |
+| cpu.rs 108:31 | `f::FLAGS = 0` | E52 |
+| memory.rs 105:24 | `KB + 2 = KB · 2` | E53 |
+| poseidon.rs 252:5 (×2) | dead function | E54 |
+| util.rs 76:29; hand H02 | relabelings of the register base | E55 |
+| util.rs 176:18 (boundary pass) | an assertion never reached at 8 | E56 |
 | hand H03 (`BLIND_VALUES = 7`) | no non-proving test of the blinding span | killed: `a_blinding_message_spans_the_extension_field` (blinding.rs) |
-| hand H04 (`BLIND_VALUES = 9`) | harmless | E46 |
+| hand H04 (`BLIND_VALUES = 9`) | harmless | E57 |
 | hand H05 (pc top byte at 3 bits) | no honest code at or above `2^27` | killed: `honest_corner_cases_satisfy_every_constraint` (code at `0x0fe0_0000`) |
 | check.rs 72:25, 389:5 (×2), 395:95 (×2), 399:48 (×2), 415:46 `*` | `shapes` was judged only by proving tests | killed: `shapes_count_every_constraint_and_interaction` |
 | check.rs 143:35, 152:29 | the oracle's shape errors were untested | killed: `the_checker_reports_every_shape_mismatch` |
 | check.rs 241:16, 241:21, 260:33, 262:43 (×2), 325:9, 337:50, 342:50, 362:66, 365:66, 370:73 | `MutationChecker` was never asked about a change it must NOT catch | killed: `the_mutation_checker_agrees_with_the_full_checker` |
-| check.rs 98:9, 108:9, 110:75 (×2), 206:43 (×2), 209:42, 350:62 (×2), 353:62 (×2), 356:38, 415:46 `-`; B2 528:9, 540:9 | local and exclusive interactions, which no table uses | E47 |
-| check.rs 370:68 | the baseline is balanced | E48 |
-| check.rs 261 (×3) | the last-row flag of single-cell probes | E49 |
+| check.rs 98:9, 108:9, 110:75 (×2), 206:43 (×2), 209:42, 350:62 (×2), 353:62 (×2), 356:38, 415:46 `-`; B2 528:9, 540:9 | local and exclusive interactions, which no table uses | E58 |
+| check.rs 370:68 | the baseline is balanced | E59 |
+| check.rs 261 (×3) | the last-row flag of single-cell probes | E60 |
 | trace.rs 107:9, 121:9, 357:69 (×2), 485:49, 717:49 (×2), 734:23 (×2) | budgets, the fixed shape and `usage` were judged only by proving and px tests | killed: `a_budgeted_statement_takes_its_fixed_shape` |
 | trace.rs 436:5 | `blinded` had no caller | killed: `hand_assembled_tables_are_blinded` |
 | trace.rs 612:34 | the generator's cross-check of the witness was untested | killed: `the_generator_refuses_a_diverging_witness` |
-| trace.rs 462:32 `^`, 463:14 `<=` | uniform up to `2^−31` | E50 |
+| trace.rs 462:32 `^`, 463:14 `<=` | uniform up to `2^−31` | E61 |
 | trace.rs 463:14 `>` | biased blinding values went unnoticed | killed: `blinding_values_cover_the_field` |
 
 **Kill check.** Every former survivor marked "killed" was checked against its log for
@@ -320,7 +320,7 @@ enforce it.
 | Every key has one history (unique keys) | memory.rs:98-120 (key bytes `< 2^27`, `key' = key + 1 + D`, `D < 2^27`) | `a_load_cannot_return_a_stale_value_through_a_duplicated_key` |
 | A read returns the last value written (§6.3) | the memory bus: each access consumes `(exec, key, v, t_prev)` and produces `(exec, key, v', t)`. CPU reads: cpu.rs:190-207; register write: cpu.rs:210-232; memory word: cpu.rs:356-373; POSEIDON2: poseidon.rs:138-151; endpoints in `MEM_INIT`: memory.rs:133-149 | `a_lying_prover_cannot_change_a_register_value` (vm.rs); `a_load_cannot_return_a_stale_value_through_a_duplicated_key` |
 | Accesses are ordered: `t − t_prev − 1 ∈ [0, 2^24)` | cpu.rs:203-206, 222-223, 361-362; poseidon.rs:148-150, 354-358 | `a_register_read_from_the_future_is_rejected`; `a_poseidon2_timestamp_difference_must_be_three_bytes` |
-| Register keys and memory keys are disjoint | `REG_BASE = 2^26` (util.rs:76) is above every word key (`addr < 2^28`: cpu.rs:291, poseidon.rs:110-114) | `the_top_memory_word_and_the_registers_have_distinct_keys`; E44 |
+| Register keys and memory keys are disjoint | `REG_BASE = 2^26` (util.rs:76) is above every word key (`addr < 2^28`: cpu.rs:291, poseidon.rs:110-114) | `the_top_memory_word_and_the_registers_have_distinct_keys`; E55 |
 | `x0` reads 0 and ignores writes (§2) | `x0` starts at 0 and is never written: the write count (cpu.rs:136) uses the public `rd_write = writes ∧ rd ≠ 0` (program.rs:118-122) | `every_instruction_class_satisfies_the_constraints` (vm.rs) |
 | Only `rd` is written, with the computed value | cpu.rs:210-236 | single-cell probes; `a_lying_generator_cannot_change_an_alu_result` |
 | Executions of one proof are isolated (§6.5) | every memory, program, image, output and syscall message starts with the execution id | `executions_are_isolated_and_satisfy_the_constraints`, `every_part_of_a_multi_execution_statement_is_bound` (multi.rs) |
