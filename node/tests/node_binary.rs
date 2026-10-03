@@ -34,8 +34,18 @@ fn free_port() -> SocketAddr {
 
 impl NodeProc {
     fn start(data: &Path, extra: &[&str]) -> Self {
+        Self::start_logged(data, None, extra)
+    }
+
+    /// As [`start`](Self::start), with the log at `log` instead of beside the
+    /// data directory: for a data directory whose parents the node itself
+    /// must create (CI run 123: the log beside `a/b` needed `a` first).
+    fn start_logged(data: &Path, log: Option<&Path>, extra: &[&str]) -> Self {
         let addr = free_port();
-        let log = data.with_extension(format!("{}.log", addr.port()));
+        let log = log.map_or_else(
+            || data.with_extension(format!("{}.log", addr.port())),
+            Path::to_path_buf,
+        );
         let f = std::fs::File::create(&log).unwrap();
         let mut args = vec![
             "--network".to_string(),
@@ -703,7 +713,7 @@ fn the_data_directory_and_its_files_are_owner_only() {
     // A fresh data directory, nested: every directory the node creates is
     // owner-only.
     let fresh = dir.path().join("a").join("b");
-    let n = NodeProc::start(&fresh, &[]);
+    let n = NodeProc::start_logged(&fresh, Some(&dir.path().join("fresh.log")), &[]);
     assert_eq!(mode(&dir.path().join("a")), 0o700);
     assert_eq!(mode(&fresh), 0o700);
     for entry in std::fs::read_dir(&fresh).unwrap() {
