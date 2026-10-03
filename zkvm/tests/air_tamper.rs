@@ -1278,8 +1278,9 @@ fn the_top_memory_word_and_the_registers_have_distinct_keys() {
 /// Honest corner cases the other honest traces miss (found by the census): an
 /// execution that fills the CPU table exactly (its `HALT` on the table's last
 /// row), byte accesses at offset 3, a `JALR` whose sum is odd, a read of the
-/// initial stack pointer, and `POSEIDON2` buffers whose pointer has nonzero
-/// low and top bytes. Each must satisfy every constraint.
+/// initial stack pointer, code whose pc needs all 28 bits, and `POSEIDON2`
+/// buffers whose pointer has nonzero low and top bytes. Each must satisfy
+/// every constraint.
 #[test]
 fn honest_corner_cases_satisfy_every_constraint() {
     // HALT on the CPU table's last row: 1 + nops + 3 rows = MIN_HEIGHT.
@@ -1318,6 +1319,12 @@ fn honest_corner_cases_satisfy_every_constraint() {
         c.st.output,
         vec![0xffff_ff84, 0x84, 0x5a03_0201, blacksilk_zkvm::STACK_TOP]
     );
+
+    // Code at the top of the allowed range: pc needs all 28 bits.
+    let mut a = Asm::new(0x0fe0_0000);
+    a.li(T0, 3).r(Op::Add, A1, T0, T0).write_reg(A1).halt(0);
+    let c = Case::honest(&a, &[]);
+    assert_eq!(c.u(CPU, 0, cpu::PB + 3), 0x0f);
 
     // POSEIDON2 at a pointer with nonzero low and top bytes.
     let ptr = 0x0123_4564u32;
