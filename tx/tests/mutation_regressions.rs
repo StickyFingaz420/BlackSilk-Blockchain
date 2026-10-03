@@ -701,10 +701,11 @@ fn a_deploys_signatures_and_id_cover_its_payload_and_fee() {
 
 /// A deploy's CLSAG message (`PxDeploy::signature_message`, spec §4.4 as a
 /// transfer's) covers its pseudo-outputs and its range proof, not only its
-/// prefix: a signed deploy cannot carry another range proof (RT-MUTE: with
-/// either term left out of the message, every tx test passed; run E closed
-/// the range-proof gap for transfers only, and the node's pinned
-/// fingerprint samples the transfer message, not the deploy's).
+/// prefix: a signed deploy cannot carry another range proof; and its id
+/// covers every part (RT-MUTE: with either message term, or the id's base
+/// or prunable part, left out, every tx test passed; run E closed the
+/// range-proof gap for transfers only, and the node's pinned fingerprint
+/// samples the transfer's message and id, not the deploy's).
 #[test]
 fn a_deploys_signature_message_covers_its_pseudo_outputs_and_range_proof() {
     let mut net = TestNet::new(88, 80);
@@ -728,6 +729,15 @@ fn a_deploys_signature_message_covers_its_pseudo_outputs_and_range_proof() {
     // prefix (which holds the payload).
     let t = d.as_transfer();
     assert_ne!(t.signature_message(domain), message, "the payload is signed");
+
+    // The id covers every part: the pseudo-outputs, the range proof and the
+    // signatures too (spec §4.4: tx_hash over prefix, base and prunable).
+    let id = |d: &PxDeploy| Transaction::PxDeploy(Box::new(d.clone())).hash();
+    let mut sig = d.clone();
+    sig.signatures[0].d = other_point;
+    for (other, what) in [(&rp, "range proof"), (&pseudo, "pseudo-outputs"), (&sig, "signatures")] {
+        assert_ne!(id(other), id(&d), "the id ignores the {what}");
+    }
 }
 
 /// A PX transaction without payouts and with the v1 part of
