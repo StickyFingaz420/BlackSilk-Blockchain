@@ -1,0 +1,302 @@
+zkvm/src/air/check.rs:57:9: replace <impl AirBuilder for EvalBuilder<'a>>::is_first_row -> Val with Default::default()
+zkvm/src/air/check.rs:61:9: replace <impl AirBuilder for EvalBuilder<'a>>::is_last_row -> Val with Default::default()
+zkvm/src/air/check.rs:65:9: replace <impl AirBuilder for EvalBuilder<'a>>::is_transition -> Val with Default::default()
+zkvm/src/air/check.rs:69:9: replace <impl AirBuilder for EvalBuilder<'a>>::assert_zero with ()
+zkvm/src/air/check.rs:72:25: replace += with -= in <impl AirBuilder for EvalBuilder<'a>>::assert_zero
+zkvm/src/air/check.rs:69:21: replace != with == in <impl AirBuilder for EvalBuilder<'a>>::assert_zero
+zkvm/src/air/check.rs:76:9: replace <impl AirBuilder for EvalBuilder<'a>>::public_values -> &[Val] with Vec::leak(Vec::new())
+zkvm/src/air/check.rs:76:9: replace <impl AirBuilder for EvalBuilder<'a>>::public_values -> &[Val] with Vec::leak(vec![Default::default()])
+zkvm/src/air/check.rs:80:9: replace <impl AirBuilder for EvalBuilder<'a>>::periodic_values -> &[Val] with Vec::leak(Vec::new())
+zkvm/src/air/check.rs:80:9: replace <impl AirBuilder for EvalBuilder<'a>>::periodic_values -> &[Val] with Vec::leak(vec![Default::default()])
+zkvm/src/air/check.rs:92:9: replace <impl InteractionBuilder for EvalBuilder<'_>>::push_interaction with ()
+zkvm/src/air/check.rs:142:5: replace check -> Vec<Violation> with vec![]
+zkvm/src/air/check.rs:143:19: replace != with == in check
+zkvm/src/air/check.rs:143:49: replace != with == in check
+zkvm/src/air/check.rs:152:14: replace != with == in check
+zkvm/src/air/check.rs:152:32: delete ! in check
+zkvm/src/air/check.rs:161:27: replace != with == in check
+zkvm/src/air/check.rs:169:29: replace % with + in check
+zkvm/src/air/check.rs:169:29: replace % with / in check
+zkvm/src/air/check.rs:169:24: replace + with - in check
+zkvm/src/air/check.rs:169:24: replace + with * in check
+zkvm/src/air/check.rs:170:39: replace * with + in check
+zkvm/src/air/check.rs:170:39: replace * with / in check
+zkvm/src/air/check.rs:170:52: replace * with + in check
+zkvm/src/air/check.rs:170:52: replace * with / in check
+zkvm/src/air/check.rs:170:47: replace + with - in check
+zkvm/src/air/check.rs:170:47: replace + with * in check
+zkvm/src/air/check.rs:171:39: replace * with + in check
+zkvm/src/air/check.rs:171:39: replace * with / in check
+zkvm/src/air/check.rs:171:52: replace * with + in check
+zkvm/src/air/check.rs:171:52: replace * with / in check
+zkvm/src/air/check.rs:171:47: replace + with - in check
+zkvm/src/air/check.rs:171:47: replace + with * in check
+zkvm/src/air/check.rs:174:33: replace * with + in check
+zkvm/src/air/check.rs:174:33: replace * with / in check
+zkvm/src/air/check.rs:174:47: replace * with + in check
+zkvm/src/air/check.rs:174:47: replace * with / in check
+zkvm/src/air/check.rs:174:42: replace + with - in check
+zkvm/src/air/check.rs:174:42: replace + with * in check
+zkvm/src/air/check.rs:175:33: replace * with + in check
+zkvm/src/air/check.rs:175:33: replace * with / in check
+zkvm/src/air/check.rs:175:47: replace * with + in check
+zkvm/src/air/check.rs:175:47: replace * with / in check
+zkvm/src/air/check.rs:175:42: replace + with - in check
+zkvm/src/air/check.rs:175:42: replace + with * in check
+zkvm/src/air/check.rs:183:41: replace == with != in check
+zkvm/src/air/check.rs:184:40: replace == with != in check
+zkvm/src/air/check.rs:184:45: replace - with + in check
+zkvm/src/air/check.rs:184:45: replace - with / in check
+zkvm/src/air/check.rs:185:46: replace != with == in check
+zkvm/src/air/check.rs:185:51: replace - with + in check
+zkvm/src/air/check.rs:185:51: replace - with / in check
+zkvm/src/air/check.rs:201:56: replace += with -= in check
+zkvm/src/air/check.rs:201:56: replace += with *= in check
+zkvm/src/air/check.rs:214:16: replace != with == in check
+zkvm/src/air/check.rs:240:5: replace eval_row -> RowEval with Default::default()
+zkvm/src/air/check.rs:241:21: replace % with + in eval_row
+zkvm/src/air/check.rs:241:16: replace + with - in eval_row
+zkvm/src/air/check.rs:247:29: replace * with + in eval_row
+zkvm/src/air/check.rs:247:29: replace * with / in eval_row
+zkvm/src/air/check.rs:247:43: replace * with + in eval_row
+zkvm/src/air/check.rs:247:43: replace * with / in eval_row
+zkvm/src/air/check.rs:247:38: replace + with - in eval_row
+zkvm/src/air/check.rs:247:38: replace + with * in eval_row
+zkvm/src/air/check.rs:248:29: replace * with + in eval_row
+zkvm/src/air/check.rs:248:29: replace * with / in eval_row
+zkvm/src/air/check.rs:248:43: replace * with + in eval_row
+zkvm/src/air/check.rs:248:43: replace * with / in eval_row
+zkvm/src/air/check.rs:248:38: replace + with - in eval_row
+zkvm/src/air/check.rs:248:38: replace + with * in eval_row
+zkvm/src/air/check.rs:255:29: replace * with + in eval_row
+zkvm/src/air/check.rs:255:29: replace * with / in eval_row
+zkvm/src/air/check.rs:255:42: replace * with + in eval_row
+zkvm/src/air/check.rs:255:42: replace * with / in eval_row
+zkvm/src/air/check.rs:255:37: replace + with - in eval_row
+zkvm/src/air/check.rs:255:37: replace + with * in eval_row
+zkvm/src/air/check.rs:256:29: replace * with + in eval_row
+zkvm/src/air/check.rs:256:29: replace * with / in eval_row
+zkvm/src/air/check.rs:256:42: replace * with + in eval_row
+zkvm/src/air/check.rs:256:42: replace * with / in eval_row
+zkvm/src/air/check.rs:256:37: replace + with - in eval_row
+zkvm/src/air/check.rs:256:37: replace + with * in eval_row
+zkvm/src/air/check.rs:262:38: replace != with == in eval_row
+zkvm/src/air/check.rs:325:9: replace MutationChecker<'x, A>::caught -> bool with false
+zkvm/src/air/check.rs:327:35: replace % with + in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:327:35: replace % with / in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:327:30: replace - with + in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:327:30: replace - with / in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:327:26: replace + with - in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:327:26: replace + with * in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:337:50: replace += with *= in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:337:43: replace + with - in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:337:43: replace + with * in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:337:39: replace * with + in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:337:39: replace * with / in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:342:50: replace -= with /= in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:342:43: replace + with - in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:342:43: replace + with * in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:342:39: replace * with + in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:342:39: replace * with / in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:343:41: delete ! in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:362:66: replace -= with /= in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:365:66: replace += with *= in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:370:68: replace + with * in MutationChecker<'x, A>::caught
+zkvm/src/air/trace.rs:75:5: replace pow2 -> usize with 0
+zkvm/src/air/trace.rs:75:5: replace pow2 -> usize with 1
+zkvm/src/air/trace.rs:107:9: replace Statement::budgets -> Option<Vec<Budget>> with Some(vec![])
+zkvm/src/air/trace.rs:121:9: replace Statement::shape -> Option<Vec<usize>> with Some(vec![])
+zkvm/src/air/trace.rs:121:9: replace Statement::shape -> Option<Vec<usize>> with Some(vec![0])
+zkvm/src/air/trace.rs:121:9: replace Statement::shape -> Option<Vec<usize>> with Some(vec![1])
+zkvm/src/air/trace.rs:161:9: replace Statement::parts -> Vec<(&Arc<Program>, u32, &Vec<u32>)> with vec![]
+zkvm/src/air/trace.rs:172:9: replace Statement::cpu_table -> usize with 0
+zkvm/src/air/trace.rs:172:9: replace Statement::cpu_table -> usize with 1
+zkvm/src/air/trace.rs:172:14: replace == with != in Statement::cpu_table
+zkvm/src/air/trace.rs:175:54: replace + with - in Statement::cpu_table
+zkvm/src/air/trace.rs:175:54: replace + with * in Statement::cpu_table
+zkvm/src/air/trace.rs:175:25: replace + with - in Statement::cpu_table
+zkvm/src/air/trace.rs:175:25: replace + with * in Statement::cpu_table
+zkvm/src/air/trace.rs:175:44: replace * with + in Statement::cpu_table
+zkvm/src/air/trace.rs:175:44: replace * with / in Statement::cpu_table
+zkvm/src/air/trace.rs:175:49: replace - with + in Statement::cpu_table
+zkvm/src/air/trace.rs:175:49: replace - with / in Statement::cpu_table
+zkvm/src/air/trace.rs:182:5: replace alu_result -> u32 with 0
+zkvm/src/air/trace.rs:182:5: replace alu_result -> u32 with 1
+zkvm/src/air/trace.rs:183:9: delete match arm alu_op::ADD in alu_result
+zkvm/src/air/trace.rs:184:9: delete match arm alu_op::SUB in alu_result
+zkvm/src/air/trace.rs:185:9: delete match arm alu_op::XOR in alu_result
+zkvm/src/air/trace.rs:186:9: delete match arm alu_op::OR in alu_result
+zkvm/src/air/trace.rs:187:9: delete match arm alu_op::AND in alu_result
+zkvm/src/air/trace.rs:188:9: delete match arm alu_op::SLT | alu_op::SLTU | alu_op::EQ in alu_result
+zkvm/src/air/trace.rs:189:9: delete match arm alu_op::SLL | alu_op::SRL | alu_op::SRA in alu_result
+zkvm/src/air/trace.rs:185:26: replace ^ with | in alu_result
+zkvm/src/air/trace.rs:185:26: replace ^ with & in alu_result
+zkvm/src/air/trace.rs:186:25: replace | with & in alu_result
+zkvm/src/air/trace.rs:186:25: replace | with ^ in alu_result
+zkvm/src/air/trace.rs:187:26: replace & with | in alu_result
+zkvm/src/air/trace.rs:187:26: replace & with ^ in alu_result
+zkvm/src/air/trace.rs:197:5: replace image -> Vec<(u32, u32)> with vec![]
+zkvm/src/air/trace.rs:197:5: replace image -> Vec<(u32, u32)> with vec![(0, 0)]
+zkvm/src/air/trace.rs:197:5: replace image -> Vec<(u32, u32)> with vec![(0, 1)]
+zkvm/src/air/trace.rs:197:5: replace image -> Vec<(u32, u32)> with vec![(1, 0)]
+zkvm/src/air/trace.rs:213:5: replace tables -> Vec<Table> with vec![]
+zkvm/src/air/trace.rs:197:5: replace image -> Vec<(u32, u32)> with vec![(1, 1)]
+zkvm/src/air/trace.rs:229:26: replace + with - in tables
+zkvm/src/air/trace.rs:229:26: replace + with * in tables
+zkvm/src/air/trace.rs:244:5: replace public_values -> Vec<Vec<Val>> with vec![]
+zkvm/src/air/trace.rs:244:5: replace public_values -> Vec<Vec<Val>> with vec![vec![]]
+zkvm/src/air/trace.rs:244:5: replace public_values -> Vec<Vec<Val>> with vec![vec![Default::default()]]
+zkvm/src/air/trace.rs:272:9: replace Replay::access -> (u32, u32) with (0, 0)
+zkvm/src/air/trace.rs:272:9: replace Replay::access -> (u32, u32) with (0, 1)
+zkvm/src/air/trace.rs:272:9: replace Replay::access -> (u32, u32) with (1, 0)
+zkvm/src/air/trace.rs:272:9: replace Replay::access -> (u32, u32) with (1, 1)
+zkvm/src/air/trace.rs:283:5: replace diff -> [Val; 3] with [Default::default(); 3]
+zkvm/src/air/trace.rs:283:26: replace - with + in diff
+zkvm/src/air/trace.rs:283:26: replace - with / in diff
+zkvm/src/air/trace.rs:283:16: replace - with / in diff
+zkvm/src/air/trace.rs:283:16: replace - with + in diff
+zkvm/src/air/trace.rs:293:5: replace build -> Vec<RowMajorMatrix<Val>> with vec![]
+zkvm/src/air/trace.rs:306:9: replace Shared::push_alu with ()
+zkvm/src/air/trace.rs:307:13: delete match arm alu_op::ADD | alu_op::SUB in Shared::push_alu
+zkvm/src/air/trace.rs:309:13: delete match arm alu_op::SLT | alu_op::SLTU | alu_op::EQ in Shared::push_alu
+zkvm/src/air/trace.rs:308:13: delete match arm alu_op::XOR | alu_op::OR | alu_op::AND in Shared::push_alu
+zkvm/src/air/trace.rs:310:13: delete match arm alu_op::SLL | alu_op::SRL | alu_op::SRA in Shared::push_alu
+zkvm/src/air/trace.rs:317:9: replace Shared::take -> Vec<(u32, u32, u32)> with vec![]
+zkvm/src/air/trace.rs:317:9: replace Shared::take -> Vec<(u32, u32, u32)> with vec![(0, 0, 0)]
+zkvm/src/air/trace.rs:317:9: replace Shared::take -> Vec<(u32, u32, u32)> with vec![(0, 0, 1)]
+zkvm/src/air/trace.rs:317:9: replace Shared::take -> Vec<(u32, u32, u32)> with vec![(0, 1, 0)]
+zkvm/src/air/trace.rs:317:9: replace Shared::take -> Vec<(u32, u32, u32)> with vec![(0, 1, 1)]
+zkvm/src/air/trace.rs:317:9: replace Shared::take -> Vec<(u32, u32, u32)> with vec![(1, 0, 0)]
+zkvm/src/air/trace.rs:317:9: replace Shared::take -> Vec<(u32, u32, u32)> with vec![(1, 0, 1)]
+zkvm/src/air/trace.rs:317:9: replace Shared::take -> Vec<(u32, u32, u32)> with vec![(1, 1, 0)]
+zkvm/src/air/trace.rs:317:9: replace Shared::take -> Vec<(u32, u32, u32)> with vec![(1, 1, 1)]
+zkvm/src/air/trace.rs:337:5: replace build_multi -> Vec<RowMajorMatrix<Val>> with vec![]
+zkvm/src/air/trace.rs:400:40: replace - with + in build_multi
+zkvm/src/air/trace.rs:400:40: replace - with / in build_multi
+zkvm/src/air/trace.rs:412:41: replace * with + in with_blinding
+zkvm/src/air/trace.rs:412:54: replace * with + in with_blinding
+zkvm/src/air/trace.rs:412:41: replace * with / in with_blinding
+zkvm/src/air/trace.rs:412:54: replace * with / in with_blinding
+zkvm/src/air/trace.rs:412:49: replace + with * in with_blinding
+zkvm/src/air/trace.rs:412:49: replace + with - in with_blinding
+zkvm/src/air/trace.rs:416:30: replace + with - in with_blinding
+zkvm/src/air/trace.rs:413:21: replace == with != in with_blinding
+zkvm/src/air/trace.rs:416:30: replace + with * in with_blinding
+zkvm/src/air/trace.rs:425:13: replace * with + in blind_trace
+zkvm/src/air/trace.rs:425:13: replace * with / in blind_trace
+zkvm/src/air/trace.rs:448:5: replace randomize_blinding with ()
+zkvm/src/air/trace.rs:448:26: replace - with + in randomize_blinding
+zkvm/src/air/trace.rs:448:26: replace - with / in randomize_blinding
+zkvm/src/air/trace.rs:452:28: replace - with + in randomize_blinding
+zkvm/src/air/trace.rs:452:28: replace - with / in randomize_blinding
+zkvm/src/air/trace.rs:453:21: replace * with + in randomize_blinding
+zkvm/src/air/trace.rs:453:21: replace * with / in randomize_blinding
+zkvm/src/air/trace.rs:454:30: replace + with - in randomize_blinding
+zkvm/src/air/trace.rs:454:30: replace + with * in randomize_blinding
+zkvm/src/air/trace.rs:454:39: replace + with - in randomize_blinding
+zkvm/src/air/trace.rs:454:39: replace + with * in randomize_blinding
+zkvm/src/air/trace.rs:460:5: replace uniform -> Val with Default::default()
+zkvm/src/air/trace.rs:485:49: replace + with * in exec_traces
+zkvm/src/air/trace.rs:500:47: replace == with != in exec_traces
+zkvm/src/air/trace.rs:500:42: replace + with - in exec_traces
+zkvm/src/air/trace.rs:500:42: replace + with * in exec_traces
+zkvm/src/air/trace.rs:501:56: replace += with -= in exec_traces
+zkvm/src/air/trace.rs:501:56: replace += with *= in exec_traces
+zkvm/src/air/trace.rs:501:41: replace / with % in exec_traces
+zkvm/src/air/trace.rs:501:41: replace / with * in exec_traces
+zkvm/src/air/trace.rs:501:23: replace - with + in exec_traces
+zkvm/src/air/trace.rs:501:23: replace - with / in exec_traces
+zkvm/src/air/trace.rs:504:44: replace + with - in exec_traces
+zkvm/src/air/trace.rs:504:44: replace + with * in exec_traces
+zkvm/src/air/trace.rs:504:32: replace * with + in exec_traces
+zkvm/src/air/trace.rs:504:32: replace * with / in exec_traces
+zkvm/src/air/trace.rs:504:39: replace + with - in exec_traces
+zkvm/src/air/trace.rs:504:39: replace + with * in exec_traces
+zkvm/src/air/trace.rs:509:30: replace + with - in exec_traces
+zkvm/src/air/trace.rs:509:30: replace + with * in exec_traces
+zkvm/src/air/trace.rs:517:54: replace + with - in exec_traces
+zkvm/src/air/trace.rs:517:54: replace + with * in exec_traces
+zkvm/src/air/trace.rs:519:24: replace + with - in exec_traces
+zkvm/src/air/trace.rs:519:24: replace + with * in exec_traces
+zkvm/src/air/trace.rs:521:28: replace + with - in exec_traces
+zkvm/src/air/trace.rs:521:28: replace + with * in exec_traces
+zkvm/src/air/trace.rs:526:28: replace + with - in exec_traces
+zkvm/src/air/trace.rs:526:28: replace + with * in exec_traces
+zkvm/src/air/trace.rs:528:36: replace >> with << in exec_traces
+zkvm/src/air/trace.rs:531:60: replace || with && in exec_traces
+zkvm/src/air/trace.rs:531:40: replace || with && in exec_traces
+zkvm/src/air/trace.rs:532:35: replace || with && in exec_traces
+zkvm/src/air/trace.rs:536:30: replace + with - in exec_traces
+zkvm/src/air/trace.rs:536:30: replace + with * in exec_traces
+zkvm/src/air/trace.rs:537:40: replace >> with << in exec_traces
+zkvm/src/air/trace.rs:538:27: replace & with | in exec_traces
+zkvm/src/air/trace.rs:538:27: replace & with ^ in exec_traces
+zkvm/src/air/trace.rs:539:43: replace & with | in exec_traces
+zkvm/src/air/trace.rs:539:43: replace & with ^ in exec_traces
+zkvm/src/air/trace.rs:540:50: replace & with | in exec_traces
+zkvm/src/air/trace.rs:540:50: replace & with ^ in exec_traces
+zkvm/src/air/trace.rs:540:44: replace >> with << in exec_traces
+zkvm/src/air/trace.rs:541:42: replace >> with << in exec_traces
+zkvm/src/air/trace.rs:542:38: replace >> with << in exec_traces
+zkvm/src/air/trace.rs:544:24: replace & with | in exec_traces
+zkvm/src/air/trace.rs:544:24: replace & with ^ in exec_traces
+zkvm/src/air/trace.rs:550:22: replace + with - in exec_traces
+zkvm/src/air/trace.rs:550:22: replace + with * in exec_traces
+zkvm/src/air/trace.rs:551:27: replace / with % in exec_traces
+zkvm/src/air/trace.rs:551:27: replace / with * in exec_traces
+zkvm/src/air/trace.rs:556:30: replace + with - in exec_traces
+zkvm/src/air/trace.rs:556:30: replace + with * in exec_traces
+zkvm/src/air/trace.rs:558:32: replace + with - in exec_traces
+zkvm/src/air/trace.rs:558:32: replace + with * in exec_traces
+zkvm/src/air/trace.rs:562:34: replace + with - in exec_traces
+zkvm/src/air/trace.rs:562:34: replace + with * in exec_traces
+zkvm/src/air/trace.rs:580:34: replace || with && in exec_traces
+zkvm/src/air/trace.rs:584:33: replace >> with << in exec_traces
+zkvm/src/air/trace.rs:584:39: replace * with + in exec_traces
+zkvm/src/air/trace.rs:584:39: replace * with / in exec_traces
+zkvm/src/air/trace.rs:585:41: replace == with != in exec_traces
+zkvm/src/air/trace.rs:587:17: delete match arm Op::Lb in exec_traces
+zkvm/src/air/trace.rs:588:17: delete match arm Op::Lbu in exec_traces
+zkvm/src/air/trace.rs:589:17: delete match arm Op::Lh in exec_traces
+zkvm/src/air/trace.rs:590:17: delete match arm Op::Lhu in exec_traces
+zkvm/src/air/trace.rs:594:41: replace == with != in exec_traces
+zkvm/src/air/trace.rs:595:23: replace & with | in exec_traces
+zkvm/src/air/trace.rs:595:23: replace & with ^ in exec_traces
+zkvm/src/air/trace.rs:597:30: replace & with | in exec_traces
+zkvm/src/air/trace.rs:597:30: replace & with ^ in exec_traces
+zkvm/src/air/trace.rs:597:24: replace >> with << in exec_traces
+zkvm/src/air/trace.rs:599:55: replace >> with << in exec_traces
+zkvm/src/air/trace.rs:600:54: replace & with | in exec_traces
+zkvm/src/air/trace.rs:600:54: replace & with ^ in exec_traces
+zkvm/src/air/trace.rs:601:49: replace & with | in exec_traces
+zkvm/src/air/trace.rs:610:30: replace + with - in exec_traces
+zkvm/src/air/trace.rs:601:49: replace & with ^ in exec_traces
+zkvm/src/air/trace.rs:610:30: replace + with * in exec_traces
+zkvm/src/air/trace.rs:612:26: replace && with || in exec_traces
+zkvm/src/air/trace.rs:612:21: replace != with == in exec_traces
+zkvm/src/air/trace.rs:625:34: replace || with && in exec_traces
+zkvm/src/air/trace.rs:625:29: replace == with != in exec_traces
+zkvm/src/air/trace.rs:628:54: replace + with - in exec_traces
+zkvm/src/air/trace.rs:628:54: replace + with * in exec_traces
+zkvm/src/air/trace.rs:629:32: replace + with - in exec_traces
+zkvm/src/air/trace.rs:629:32: replace + with * in exec_traces
+zkvm/src/air/trace.rs:631:32: replace + with - in exec_traces
+zkvm/src/air/trace.rs:631:32: replace + with * in exec_traces
+zkvm/src/air/trace.rs:641:25: replace += with -= in exec_traces
+zkvm/src/air/trace.rs:641:25: replace += with *= in exec_traces
+zkvm/src/air/trace.rs:648:41: replace + with - in exec_traces
+zkvm/src/air/trace.rs:648:41: replace + with * in exec_traces
+zkvm/src/air/trace.rs:648:29: replace * with + in exec_traces
+zkvm/src/air/trace.rs:648:29: replace * with / in exec_traces
+zkvm/src/air/trace.rs:648:36: replace + with - in exec_traces
+zkvm/src/air/trace.rs:648:36: replace + with * in exec_traces
+zkvm/src/air/trace.rs:652:39: replace + with - in exec_traces
+zkvm/src/air/trace.rs:652:39: replace + with * in exec_traces
+zkvm/src/air/trace.rs:652:35: replace / with % in exec_traces
+zkvm/src/air/trace.rs:652:35: replace / with * in exec_traces
+zkvm/src/air/trace.rs:665:43: replace + with - in exec_traces
+zkvm/src/air/trace.rs:665:43: replace + with * in exec_traces
+zkvm/src/air/trace.rs:665:39: replace / with % in exec_traces
+zkvm/src/air/trace.rs:665:39: replace / with * in exec_traces
+zkvm/src/air/trace.rs:665:72: replace + with - in exec_traces
+zkvm/src/air/trace.rs:665:72: replace + with * in exec_traces

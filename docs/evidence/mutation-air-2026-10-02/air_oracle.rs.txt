@@ -1,0 +1,14 @@
+//! W4-MUTAIR census oracle (scratch copy only, not in the repository): every
+//! non-proving AIR test file in one test binary, so each mutant links once.
+#[path = "air_cells.rs"]
+mod air_cells;
+#[path = "air_tamper.rs"]
+mod air_tamper;
+#[path = "alu.rs"]
+mod alu;
+#[path = "blinding.rs"]
+mod blinding;
+#[path = "multi.rs"]
+mod multi;
+#[path = "vm.rs"]
+mod vm;

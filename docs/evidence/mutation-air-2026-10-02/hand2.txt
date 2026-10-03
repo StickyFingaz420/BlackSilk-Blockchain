@@ -1,0 +1,5 @@
+H02|zkvm/src/air/util.rs|76|1 << 26|(1 << 26) + 1
+H03|zkvm/src/air/util.rs|31|= 8;|= 7;
+H04|zkvm/src/air/util.rs|31|= 8;|= 9;
+H05|zkvm/src/air/cpu.rs|187|, 4,|, 3,
+H06|zkvm/src/air/cpu.rs|187|, 4,|, 5,

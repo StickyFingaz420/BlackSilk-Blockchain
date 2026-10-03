@@ -1,0 +1,14 @@
+zkvm/src/air/check.rs:428:5: replace update_values with ()
+zkvm/src/air/check.rs:452:9: replace FingerprintBuilder<'_>::record with ()
+zkvm/src/air/check.rs:463:9: replace FingerprintBuilder<'_>::record_bus with ()
+zkvm/src/air/check.rs:488:9: replace <impl AirBuilder for FingerprintBuilder<'a>>::is_first_row -> Val with Default::default()
+zkvm/src/air/check.rs:492:9: replace <impl AirBuilder for FingerprintBuilder<'a>>::is_last_row -> Val with Default::default()
+zkvm/src/air/check.rs:496:9: replace <impl AirBuilder for FingerprintBuilder<'a>>::is_transition -> Val with Default::default()
+zkvm/src/air/check.rs:500:9: replace <impl AirBuilder for FingerprintBuilder<'a>>::assert_zero with ()
+zkvm/src/air/check.rs:505:9: replace <impl AirBuilder for FingerprintBuilder<'a>>::public_values -> &[Val] with Vec::leak(Vec::new())
+zkvm/src/air/check.rs:505:9: replace <impl AirBuilder for FingerprintBuilder<'a>>::public_values -> &[Val] with Vec::leak(vec![Default::default()])
+zkvm/src/air/check.rs:509:9: replace <impl AirBuilder for FingerprintBuilder<'a>>::periodic_values -> &[Val] with Vec::leak(Vec::new())
+zkvm/src/air/check.rs:509:9: replace <impl AirBuilder for FingerprintBuilder<'a>>::periodic_values -> &[Val] with Vec::leak(vec![Default::default()])
+zkvm/src/air/check.rs:521:9: replace <impl InteractionBuilder for FingerprintBuilder<'_>>::push_interaction with ()
+zkvm/src/air/check.rs:581:5: replace fingerprint -> [u8; 32] with [0; 32]
+zkvm/src/air/check.rs:581:5: replace fingerprint -> [u8; 32] with [1; 32]

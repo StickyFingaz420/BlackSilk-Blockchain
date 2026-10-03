@@ -1,0 +1,43 @@
+zkvm/src/air/check.rs:49:9: replace <impl AirBuilder for EvalBuilder<'a>>::main -> Self::MainWindow with Default::default()
+zkvm/src/air/check.rs:53:9: replace <impl AirBuilder for EvalBuilder<'a>>::preprocessed -> &Self::PreprocessedWindow with Box::leak(Box::new(Default::default()))
+zkvm/src/air/check.rs:142:5: replace check -> Vec<Violation> with vec![Default::default()]
+zkvm/src/air/trace.rs:95:9: replace Statement::single -> Self with Default::default()
+zkvm/src/air/trace.rs:107:9: replace Statement::budgets -> Option<Vec<Budget>> with Some(vec![Default::default()])
+zkvm/src/air/trace.rs:161:9: replace Statement::parts -> Vec<(&Arc<Program>, u32, &Vec<u32>)> with vec![(Box::leak(Box::new(Arc::new(Default::default()))), 0, Box::leak(Box::new(vec![])))]
+zkvm/src/air/trace.rs:161:9: replace Statement::parts -> Vec<(&Arc<Program>, u32, &Vec<u32>)> with vec![(Box::leak(Box::new(Arc::new(Default::default()))), 0, Box::leak(Box::new(vec![0])))]
+zkvm/src/air/trace.rs:161:9: replace Statement::parts -> Vec<(&Arc<Program>, u32, &Vec<u32>)> with vec![(Box::leak(Box::new(Arc::new(Default::default()))), 0, Box::leak(Box::new(vec![1])))]
+zkvm/src/air/trace.rs:161:9: replace Statement::parts -> Vec<(&Arc<Program>, u32, &Vec<u32>)> with vec![(Box::leak(Box::new(Arc::new(Default::default()))), 1, Box::leak(Box::new(vec![])))]
+zkvm/src/air/trace.rs:161:9: replace Statement::parts -> Vec<(&Arc<Program>, u32, &Vec<u32>)> with vec![(Box::leak(Box::new(Arc::new(Default::default()))), 1, Box::leak(Box::new(vec![0])))]
+zkvm/src/air/trace.rs:161:9: replace Statement::parts -> Vec<(&Arc<Program>, u32, &Vec<u32>)> with vec![(Box::leak(Box::new(Arc::new(Default::default()))), 1, Box::leak(Box::new(vec![1])))]
+zkvm/src/air/trace.rs:213:5: replace tables -> Vec<Table> with vec![Default::default()]
+zkvm/src/air/trace.rs:293:5: replace build -> Vec<RowMajorMatrix<Val>> with vec![RowMajorMatrix::new()]
+zkvm/src/air/trace.rs:293:5: replace build -> Vec<RowMajorMatrix<Val>> with vec![RowMajorMatrix::from_iter([Default::default()])]
+zkvm/src/air/trace.rs:293:5: replace build -> Vec<RowMajorMatrix<Val>> with vec![RowMajorMatrix::new(Default::default())]
+zkvm/src/air/trace.rs:293:5: replace build -> Vec<RowMajorMatrix<Val>> with vec![RowMajorMatrix::from(Default::default())]
+zkvm/src/air/trace.rs:331:5: replace dummy -> RowMajorMatrix<Val> with RowMajorMatrix::new()
+zkvm/src/air/trace.rs:331:5: replace dummy -> RowMajorMatrix<Val> with RowMajorMatrix::from_iter([Default::default()])
+zkvm/src/air/trace.rs:331:5: replace dummy -> RowMajorMatrix<Val> with RowMajorMatrix::new(Default::default())
+zkvm/src/air/trace.rs:331:5: replace dummy -> RowMajorMatrix<Val> with RowMajorMatrix::from(Default::default())
+zkvm/src/air/trace.rs:337:5: replace build_multi -> Vec<RowMajorMatrix<Val>> with vec![RowMajorMatrix::new()]
+zkvm/src/air/trace.rs:337:5: replace build_multi -> Vec<RowMajorMatrix<Val>> with vec![RowMajorMatrix::from_iter([Default::default()])]
+zkvm/src/air/trace.rs:337:5: replace build_multi -> Vec<RowMajorMatrix<Val>> with vec![RowMajorMatrix::new(Default::default())]
+zkvm/src/air/trace.rs:337:5: replace build_multi -> Vec<RowMajorMatrix<Val>> with vec![RowMajorMatrix::from(Default::default())]
+zkvm/src/air/trace.rs:409:5: replace with_blinding -> RowMajorMatrix<Val> with RowMajorMatrix::new()
+zkvm/src/air/trace.rs:409:5: replace with_blinding -> RowMajorMatrix<Val> with RowMajorMatrix::from_iter([Default::default()])
+zkvm/src/air/trace.rs:409:5: replace with_blinding -> RowMajorMatrix<Val> with RowMajorMatrix::new(Default::default())
+zkvm/src/air/trace.rs:409:5: replace with_blinding -> RowMajorMatrix<Val> with RowMajorMatrix::from(Default::default())
+zkvm/src/air/trace.rs:422:5: replace blind_trace -> RowMajorMatrix<Val> with RowMajorMatrix::new()
+zkvm/src/air/trace.rs:422:5: replace blind_trace -> RowMajorMatrix<Val> with RowMajorMatrix::from_iter([Default::default()])
+zkvm/src/air/trace.rs:422:5: replace blind_trace -> RowMajorMatrix<Val> with RowMajorMatrix::new(Default::default())
+zkvm/src/air/trace.rs:422:5: replace blind_trace -> RowMajorMatrix<Val> with RowMajorMatrix::from(Default::default())
+zkvm/src/air/trace.rs:436:5: replace blinded -> (Vec<Table>, Vec<RowMajorMatrix<Val>>) with (vec![], vec![RowMajorMatrix::new()])
+zkvm/src/air/trace.rs:436:5: replace blinded -> (Vec<Table>, Vec<RowMajorMatrix<Val>>) with (vec![], vec![RowMajorMatrix::from_iter([Default::default()])])
+zkvm/src/air/trace.rs:436:5: replace blinded -> (Vec<Table>, Vec<RowMajorMatrix<Val>>) with (vec![], vec![RowMajorMatrix::new(Default::default())])
+zkvm/src/air/trace.rs:436:5: replace blinded -> (Vec<Table>, Vec<RowMajorMatrix<Val>>) with (vec![], vec![RowMajorMatrix::from(Default::default())])
+zkvm/src/air/trace.rs:436:5: replace blinded -> (Vec<Table>, Vec<RowMajorMatrix<Val>>) with (vec![Default::default()], vec![])
+zkvm/src/air/trace.rs:436:5: replace blinded -> (Vec<Table>, Vec<RowMajorMatrix<Val>>) with (vec![Default::default()], vec![RowMajorMatrix::new()])
+zkvm/src/air/trace.rs:436:5: replace blinded -> (Vec<Table>, Vec<RowMajorMatrix<Val>>) with (vec![Default::default()], vec![RowMajorMatrix::from_iter([Default::default()])])
+zkvm/src/air/trace.rs:436:5: replace blinded -> (Vec<Table>, Vec<RowMajorMatrix<Val>>) with (vec![Default::default()], vec![RowMajorMatrix::new(Default::default())])
+zkvm/src/air/trace.rs:436:5: replace blinded -> (Vec<Table>, Vec<RowMajorMatrix<Val>>) with (vec![Default::default()], vec![RowMajorMatrix::from(Default::default())])
+zkvm/src/air/trace.rs:479:5: replace exec_traces -> ExecTraces with Default::default()
+zkvm/src/air/trace.rs:707:5: replace usage -> Budget with Default::default()

@@ -1,0 +1,151 @@
+zkvm/src/air/poseidon.rs:57:35: replace - with +
+zkvm/src/air/poseidon.rs:57:35: replace - with /
+zkvm/src/air/poseidon.rs:60:28: replace + with -
+zkvm/src/air/poseidon.rs:60:28: replace + with *
+zkvm/src/air/poseidon.rs:61:24: replace + with -
+zkvm/src/air/poseidon.rs:61:24: replace + with *
+zkvm/src/air/poseidon.rs:62:23: replace + with -
+zkvm/src/air/poseidon.rs:62:23: replace + with *
+zkvm/src/air/poseidon.rs:63:23: replace + with -
+zkvm/src/air/poseidon.rs:63:23: replace + with *
+zkvm/src/air/poseidon.rs:65:23: replace + with -
+zkvm/src/air/poseidon.rs:65:23: replace + with *
+zkvm/src/air/poseidon.rs:66:25: replace + with -
+zkvm/src/air/poseidon.rs:66:25: replace + with *
+zkvm/src/air/poseidon.rs:69:32: replace + with -
+zkvm/src/air/poseidon.rs:69:32: replace + with *
+zkvm/src/air/poseidon.rs:69:37: replace * with +
+zkvm/src/air/poseidon.rs:69:37: replace * with /
+zkvm/src/air/poseidon.rs:86:5: replace canonical -> AB::Expr with Default::default()
+zkvm/src/air/poseidon.rs:87:29: replace * with + in canonical
+zkvm/src/air/poseidon.rs:87:45: replace - with + in canonical
+zkvm/src/air/poseidon.rs:89:33: replace * with + in canonical
+zkvm/src/air/poseidon.rs:91:33: replace - with + in canonical
+zkvm/src/air/poseidon.rs:91:18: replace + with - in canonical
+zkvm/src/air/poseidon.rs:91:18: replace + with * in canonical
+zkvm/src/air/poseidon.rs:91:37: replace * with + in canonical
+zkvm/src/air/poseidon.rs:95:5: replace word -> AB::Expr with Default::default()
+zkvm/src/air/poseidon.rs:96:11: replace + with - in word
+zkvm/src/air/poseidon.rs:96:11: replace + with * in word
+zkvm/src/air/poseidon.rs:96:26: replace * with + in word
+zkvm/src/air/poseidon.rs:96:38: replace << with >> in word
+zkvm/src/air/poseidon.rs:96:44: replace * with + in word
+zkvm/src/air/poseidon.rs:96:44: replace * with / in word
+zkvm/src/air/poseidon.rs:101:5: replace eval with ()
+zkvm/src/air/poseidon.rs:109:51: replace + with - in eval
+zkvm/src/air/poseidon.rs:109:51: replace + with * in eval
+zkvm/src/air/poseidon.rs:112:34: replace - with + in eval
+zkvm/src/air/poseidon.rs:112:50: replace * with + in eval
+zkvm/src/air/poseidon.rs:114:47: replace - with + in eval
+zkvm/src/air/poseidon.rs:114:34: replace * with + in eval
+zkvm/src/air/poseidon.rs:116:31: replace + with - in eval
+zkvm/src/air/poseidon.rs:116:31: replace + with * in eval
+zkvm/src/air/poseidon.rs:117:41: replace + with - in eval
+zkvm/src/air/poseidon.rs:117:41: replace + with * in eval
+zkvm/src/air/poseidon.rs:117:28: replace * with + in eval
+zkvm/src/air/poseidon.rs:118:33: replace + with - in eval
+zkvm/src/air/poseidon.rs:118:33: replace + with * in eval
+zkvm/src/air/poseidon.rs:118:20: replace * with + in eval
+zkvm/src/air/poseidon.rs:123:26: replace + with - in eval
+zkvm/src/air/poseidon.rs:123:26: replace + with * in eval
+zkvm/src/air/poseidon.rs:123:30: replace * with + in eval
+zkvm/src/air/poseidon.rs:123:30: replace * with / in eval
+zkvm/src/air/poseidon.rs:124:56: replace + with - in eval
+zkvm/src/air/poseidon.rs:124:56: replace + with * in eval
+zkvm/src/air/poseidon.rs:125:25: replace + with - in eval
+zkvm/src/air/poseidon.rs:125:25: replace + with * in eval
+zkvm/src/air/poseidon.rs:126:58: replace + with - in eval
+zkvm/src/air/poseidon.rs:126:58: replace + with * in eval
+zkvm/src/air/poseidon.rs:126:54: replace + with - in eval
+zkvm/src/air/poseidon.rs:126:54: replace + with * in eval
+zkvm/src/air/poseidon.rs:127:60: replace + with - in eval
+zkvm/src/air/poseidon.rs:127:60: replace + with * in eval
+zkvm/src/air/poseidon.rs:127:56: replace + with - in eval
+zkvm/src/air/poseidon.rs:127:56: replace + with * in eval
+zkvm/src/air/poseidon.rs:128:32: replace + with - in eval
+zkvm/src/air/poseidon.rs:128:32: replace + with * in eval
+zkvm/src/air/poseidon.rs:128:54: replace + with - in eval
+zkvm/src/air/poseidon.rs:128:54: replace + with * in eval
+zkvm/src/air/poseidon.rs:132:36: replace * with + in eval
+zkvm/src/air/poseidon.rs:132:52: replace - with + in eval
+zkvm/src/air/poseidon.rs:133:36: replace * with + in eval
+zkvm/src/air/poseidon.rs:133:61: replace - with + in eval
+zkvm/src/air/poseidon.rs:133:48: replace + with - in eval
+zkvm/src/air/poseidon.rs:133:48: replace + with * in eval
+zkvm/src/air/poseidon.rs:139:34: replace + with - in eval
+zkvm/src/air/poseidon.rs:139:34: replace + with * in eval
+zkvm/src/air/poseidon.rs:148:63: replace + with - in eval
+zkvm/src/air/poseidon.rs:148:63: replace + with * in eval
+zkvm/src/air/poseidon.rs:148:33: replace + with - in eval
+zkvm/src/air/poseidon.rs:148:33: replace + with * in eval
+zkvm/src/air/poseidon.rs:148:48: replace * with + in eval
+zkvm/src/air/poseidon.rs:148:78: replace * with + in eval
+zkvm/src/air/poseidon.rs:149:36: replace * with + in eval
+zkvm/src/air/poseidon.rs:149:72: replace - with + in eval
+zkvm/src/air/poseidon.rs:149:56: replace - with + in eval
+zkvm/src/air/poseidon.rs:149:51: replace - with + in eval
+zkvm/src/air/poseidon.rs:177:5: replace canonical_flag -> (Val, u32) with (Default::default(), 0)
+zkvm/src/air/poseidon.rs:177:5: replace canonical_flag -> (Val, u32) with (Default::default(), 1)
+zkvm/src/air/poseidon.rs:178:16: replace >> with << in canonical_flag
+zkvm/src/air/poseidon.rs:179:11: replace == with != in canonical_flag
+zkvm/src/air/poseidon.rs:182:24: replace + with - in canonical_flag
+zkvm/src/air/poseidon.rs:182:24: replace + with * in canonical_flag
+zkvm/src/air/poseidon.rs:201:13: replace * with + in trace
+zkvm/src/air/poseidon.rs:201:13: replace * with / in trace
+zkvm/src/air/poseidon.rs:201:32: replace + with - in trace
+zkvm/src/air/poseidon.rs:201:32: replace + with * in trace
+zkvm/src/air/poseidon.rs:201:24: replace * with + in trace
+zkvm/src/air/poseidon.rs:201:24: replace * with / in trace
+zkvm/src/air/poseidon.rs:202:43: replace * with + in trace
+zkvm/src/air/poseidon.rs:202:43: replace * with / in trace
+zkvm/src/air/poseidon.rs:202:62: replace * with + in trace
+zkvm/src/air/poseidon.rs:202:62: replace * with / in trace
+zkvm/src/air/poseidon.rs:202:57: replace + with - in trace
+zkvm/src/air/poseidon.rs:202:57: replace + with * in trace
+zkvm/src/air/poseidon.rs:204:26: replace * with + in trace
+zkvm/src/air/poseidon.rs:204:26: replace * with / in trace
+zkvm/src/air/poseidon.rs:204:43: replace * with + in trace
+zkvm/src/air/poseidon.rs:204:43: replace * with / in trace
+zkvm/src/air/poseidon.rs:204:38: replace + with - in trace
+zkvm/src/air/poseidon.rs:204:38: replace + with * in trace
+zkvm/src/air/poseidon.rs:207:20: replace + with - in trace
+zkvm/src/air/poseidon.rs:207:20: replace + with * in trace
+zkvm/src/air/poseidon.rs:209:37: replace >> with << in trace
+zkvm/src/air/poseidon.rs:210:49: replace >> with << in trace
+zkvm/src/air/poseidon.rs:210:41: replace & with | in trace
+zkvm/src/air/poseidon.rs:210:41: replace & with ^ in trace
+zkvm/src/air/poseidon.rs:211:46: replace >> with << in trace
+zkvm/src/air/poseidon.rs:211:38: replace & with | in trace
+zkvm/src/air/poseidon.rs:211:38: replace & with ^ in trace
+zkvm/src/air/poseidon.rs:212:41: replace / with % in trace
+zkvm/src/air/poseidon.rs:212:41: replace / with * in trace
+zkvm/src/air/poseidon.rs:214:38: replace + with - in trace
+zkvm/src/air/poseidon.rs:214:38: replace + with * in trace
+zkvm/src/air/poseidon.rs:214:21: replace * with + in trace
+zkvm/src/air/poseidon.rs:214:21: replace * with / in trace
+zkvm/src/air/poseidon.rs:214:33: replace + with - in trace
+zkvm/src/air/poseidon.rs:214:33: replace + with * in trace
+zkvm/src/air/poseidon.rs:217:30: replace + with - in trace
+zkvm/src/air/poseidon.rs:217:30: replace + with * in trace
+zkvm/src/air/poseidon.rs:217:34: replace * with + in trace
+zkvm/src/air/poseidon.rs:217:34: replace * with / in trace
+zkvm/src/air/poseidon.rs:218:26: replace + with - in trace
+zkvm/src/air/poseidon.rs:218:26: replace + with * in trace
+zkvm/src/air/poseidon.rs:219:20: replace + with - in trace
+zkvm/src/air/poseidon.rs:219:20: replace + with * in trace
+zkvm/src/air/poseidon.rs:220:43: replace - with + in trace
+zkvm/src/air/poseidon.rs:220:43: replace - with / in trace
+zkvm/src/air/poseidon.rs:220:25: replace - with + in trace
+zkvm/src/air/poseidon.rs:220:25: replace - with / in trace
+zkvm/src/air/poseidon.rs:224:20: replace + with - in trace
+zkvm/src/air/poseidon.rs:224:20: replace + with * in trace
+zkvm/src/air/poseidon.rs:224:30: replace + with - in trace
+zkvm/src/air/poseidon.rs:224:30: replace + with * in trace
+zkvm/src/air/poseidon.rs:226:20: replace + with - in trace
+zkvm/src/air/poseidon.rs:226:20: replace + with * in trace
+zkvm/src/air/poseidon.rs:226:30: replace + with - in trace
+zkvm/src/air/poseidon.rs:226:30: replace + with * in trace
+zkvm/src/air/poseidon.rs:230:20: replace + with - in trace
+zkvm/src/air/poseidon.rs:230:20: replace + with * in trace
+zkvm/src/air/poseidon.rs:231:20: replace + with - in trace
+zkvm/src/air/poseidon.rs:231:20: replace + with * in trace

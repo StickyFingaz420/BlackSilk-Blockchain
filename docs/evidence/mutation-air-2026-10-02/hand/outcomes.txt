@@ -1,0 +1,62 @@
+caught H01 zkvm/src/air/util.rs:76 1 << 26 -> (1 << 26) - 1
+missed H02 zkvm/src/air/util.rs:76 1 << 26 -> (1 << 26) + 1
+missed H03 zkvm/src/air/util.rs:31 = 8; -> = 7;
+missed H04 zkvm/src/air/util.rs:31 = 8; -> = 9;
+missed H05 zkvm/src/air/cpu.rs:187 , 4, -> , 3,
+missed H06 zkvm/src/air/cpu.rs:187 , 4, -> , 5,
+caught H07 zkvm/src/air/cpu.rs:291 , 4, -> , 3,
+caught H08 zkvm/src/air/cpu.rs:291 , 4, -> , 5,
+caught H09 zkvm/src/air/cpu.rs:299 , 6, -> , 5,
+caught H10 zkvm/src/air/cpu.rs:299 , 6, -> , 7,
+caught H11 zkvm/src/air/cpu.rs:386 , 7, -> , 6,
+caught H12 zkvm/src/air/cpu.rs:386 , 7, -> , 8,
+caught H13 zkvm/src/air/cpu.rs:328 0x10 -> 0x0f
+caught H14 zkvm/src/air/cpu.rs:328 0x10 -> 0x11
+caught H15 zkvm/src/air/cpu.rs:454 0xc1 -> 0xc0
+caught H16 zkvm/src/air/cpu.rs:454 0xc1 -> 0xc2
+caught H17 zkvm/src/air/cpu.rs:454 0x0f) -> 0x0e)
+caught H18 zkvm/src/air/cpu.rs:454 0x0f) -> 0x10)
+caught H19 zkvm/src/air/cpu.rs:146 c::<AB>(4) -> c::<AB>(3)
+caught H20 zkvm/src/air/cpu.rs:146 c::<AB>(4) -> c::<AB>(5)
+caught H21 zkvm/src/air/cpu.rs:385 c::<AB>(128) -> c::<AB>(127)
+caught H22 zkvm/src/air/cpu.rs:385 c::<AB>(128) -> c::<AB>(129)
+caught H23 zkvm/src/air/cpu.rs:387 c::<AB>(255) -> c::<AB>(254)
+caught H24 zkvm/src/air/cpu.rs:387 c::<AB>(255) -> c::<AB>(256)
+caught H25 zkvm/src/air/memory.rs:106 , 3, -> , 2,
+caught H26 zkvm/src/air/memory.rs:106 , 3, -> , 4,
+caught H27 zkvm/src/air/memory.rs:120 , 3, -> , 2,
+caught H28 zkvm/src/air/memory.rs:120 , 3, -> , 4,
+caught H29 zkvm/src/air/alu_lt.rs:63 , 7, -> , 6,
+caught H30 zkvm/src/air/alu_lt.rs:63 , 7, -> , 8,
+caught H31 zkvm/src/air/alu_lt.rs:61 c::<AB>(128) -> c::<AB>(127)
+caught H32 zkvm/src/air/alu_lt.rs:61 c::<AB>(128) -> c::<AB>(129)
+caught H33 zkvm/src/air/alu_mul.rs:62 , 7, -> , 6,
+caught H34 zkvm/src/air/alu_mul.rs:62 , 7, -> , 8,
+caught H35 zkvm/src/air/alu_mul.rs:94 , 4, -> , 3,
+caught H36 zkvm/src/air/alu_mul.rs:94 , 4, -> , 5,
+caught H37 zkvm/src/air/alu_mul.rs:65 c::<AB>(255) -> c::<AB>(254)
+caught H38 zkvm/src/air/alu_mul.rs:65 c::<AB>(255) -> c::<AB>(256)
+caught H39 zkvm/src/air/alu_shift.rs:64 , 3, -> , 2,
+caught H40 zkvm/src/air/alu_shift.rs:64 , 3, -> , 4,
+caught H41 zkvm/src/air/alu_shift.rs:63 c::<AB>(32) -> c::<AB>(31)
+caught H42 zkvm/src/air/alu_shift.rs:63 c::<AB>(32) -> c::<AB>(33)
+caught H43 zkvm/src/air/alu_shift.rs:88 c::<AB>(32) -> c::<AB>(31)
+caught H44 zkvm/src/air/alu_shift.rs:88 c::<AB>(32) -> c::<AB>(33)
+caught H45 zkvm/src/air/alu_shift.rs:94 c::<AB>(3) -> c::<AB>(2)
+caught H46 zkvm/src/air/alu_shift.rs:94 c::<AB>(3) -> c::<AB>(4)
+caught H47 zkvm/src/air/alu_shift.rs:96 c::<AB>(15) -> c::<AB>(14)
+caught H48 zkvm/src/air/alu_shift.rs:96 c::<AB>(15) -> c::<AB>(16)
+caught H49 zkvm/src/air/poseidon.rs:111 , 4, -> , 3,
+caught H50 zkvm/src/air/poseidon.rs:111 , 4, -> , 5,
+caught H51 zkvm/src/air/poseidon.rs:113 , 6, -> , 5,
+caught H52 zkvm/src/air/poseidon.rs:113 , 6, -> , 7,
+caught H53 zkvm/src/air/poseidon.rs:87 c::<AB>(120) -> c::<AB>(119)
+caught H54 zkvm/src/air/poseidon.rs:87 c::<AB>(120) -> c::<AB>(121)
+caught H55 zkvm/src/air/poseidon.rs:91 c::<AB>(136) -> c::<AB>(135)
+caught H56 zkvm/src/air/poseidon.rs:91 c::<AB>(136) -> c::<AB>(137)
+caught H57 zkvm/src/air/poseidon.rs:91 e * c::<AB>(120) -> e * c::<AB>(119)
+caught H58 zkvm/src/air/poseidon.rs:91 e * c::<AB>(120) -> e * c::<AB>(121)
+caught H59 zkvm/src/air/byte.rs:18 1 << 16 -> (1 << 16) - 1
+caught H60 zkvm/src/air/byte.rs:18 1 << 16 -> (1 << 16) + 1
+caught H61 zkvm/src/air/poseidon.rs:117 c::<AB>(4) -> c::<AB>(3)
+caught H62 zkvm/src/air/poseidon.rs:117 c::<AB>(4) -> c::<AB>(5)

@@ -1,0 +1,2 @@
+zkvm/src/air/trace.rs:462:32: replace & with | in uniform
+zkvm/src/air/trace.rs:463:14: replace < with == in uniform

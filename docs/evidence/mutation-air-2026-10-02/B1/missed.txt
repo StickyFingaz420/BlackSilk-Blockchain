@@ -1,0 +1,52 @@
+zkvm/src/air/check.rs:72:25: replace += with *= in <impl AirBuilder for EvalBuilder<'a>>::assert_zero
+zkvm/src/air/check.rs:98:9: replace <impl InteractionBuilder for EvalBuilder<'_>>::push_local_interaction with ()
+zkvm/src/air/check.rs:108:9: replace <impl InteractionBuilder for EvalBuilder<'_>>::push_exclusive_interaction with ()
+zkvm/src/air/check.rs:110:75: replace * with + in <impl InteractionBuilder for EvalBuilder<'_>>::push_exclusive_interaction
+zkvm/src/air/check.rs:110:75: replace * with / in <impl InteractionBuilder for EvalBuilder<'_>>::push_exclusive_interaction
+zkvm/src/air/check.rs:143:35: replace || with && in check
+zkvm/src/air/check.rs:152:29: replace || with && in check
+zkvm/src/air/check.rs:206:43: replace += with -= in check
+zkvm/src/air/check.rs:206:43: replace += with *= in check
+zkvm/src/air/check.rs:209:42: replace != with == in check
+zkvm/src/air/check.rs:241:21: replace % with / in eval_row
+zkvm/src/air/check.rs:241:16: replace + with * in eval_row
+zkvm/src/air/check.rs:260:33: replace == with != in eval_row
+zkvm/src/air/check.rs:261:32: replace == with != in eval_row
+zkvm/src/air/check.rs:261:37: replace - with + in eval_row
+zkvm/src/air/check.rs:261:37: replace - with / in eval_row
+zkvm/src/air/check.rs:262:43: replace - with + in eval_row
+zkvm/src/air/check.rs:262:43: replace - with / in eval_row
+zkvm/src/air/check.rs:325:9: replace MutationChecker<'x, A>::caught -> bool with true
+zkvm/src/air/check.rs:337:50: replace += with -= in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:342:50: replace -= with += in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:350:62: replace -= with += in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:350:62: replace -= with /= in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:353:62: replace += with -= in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:353:62: replace += with *= in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:356:38: replace != with == in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:362:66: replace -= with += in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:365:66: replace += with -= in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:370:73: replace != with == in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:370:68: replace + with - in MutationChecker<'x, A>::caught
+zkvm/src/air/check.rs:389:5: replace shapes -> Vec<TableShape> with vec![]
+zkvm/src/air/check.rs:389:5: replace shapes -> Vec<TableShape> with vec![Default::default()]
+zkvm/src/air/check.rs:395:95: replace * with + in shapes
+zkvm/src/air/check.rs:395:95: replace * with / in shapes
+zkvm/src/air/check.rs:399:48: replace * with + in shapes
+zkvm/src/air/check.rs:399:48: replace * with / in shapes
+zkvm/src/air/check.rs:415:46: replace + with - in shapes
+zkvm/src/air/check.rs:415:46: replace + with * in shapes
+zkvm/src/air/trace.rs:107:9: replace Statement::budgets -> Option<Vec<Budget>> with None
+zkvm/src/air/trace.rs:121:9: replace Statement::shape -> Option<Vec<usize>> with None
+zkvm/src/air/trace.rs:357:69: replace - with + in build_multi
+zkvm/src/air/trace.rs:357:69: replace - with / in build_multi
+zkvm/src/air/trace.rs:436:5: replace blinded -> (Vec<Table>, Vec<RowMajorMatrix<Val>>) with (vec![], vec![])
+zkvm/src/air/trace.rs:462:32: replace & with ^ in uniform
+zkvm/src/air/trace.rs:463:14: replace < with > in uniform
+zkvm/src/air/trace.rs:463:14: replace < with <= in uniform
+zkvm/src/air/trace.rs:485:49: replace + with - in exec_traces
+zkvm/src/air/trace.rs:612:34: replace != with == in exec_traces
+zkvm/src/air/trace.rs:717:49: replace + with - in usage
+zkvm/src/air/trace.rs:717:49: replace + with * in usage
+zkvm/src/air/trace.rs:734:23: replace + with - in usage
+zkvm/src/air/trace.rs:734:23: replace + with * in usage

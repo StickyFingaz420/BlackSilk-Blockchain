@@ -1045,3 +1045,151 @@ The upper sides need a bound on when an event is observed, which load moves (a 5
 close was observed after more than 7.5 s, `facb993`); the value itself is now stated
 by the pinning test, so what this entry keeps is only the behavior test's upper side.
 
+## E51: `range_word` slices whose end is mutated (zkvm/src/air/alu_mul.rs, alu_shift.rs)
+
+Decision: W4-MUTAIR (the AIR census, docs/evidence/mutation-air-2026-10-02), for the
+Lead's review. E29–E44 are run E's.
+
+**Code.** `range_word(bld, &r[A..A + 4], real)` (alu_mul.rs:109, `A = 4`; :110,
+`B = 8`; alu_shift.rs:67, `A = 3`). `util::range_word` reads `w[0..4]` only.
+
+**Mutants covered:** alu_mul.rs 109:29 and 110:29, alu_shift.rs 67:29 `replace + with
+*` (the slice end `A + 4` becomes `4·A`: 16, 32 and 12, all within the row).
+
+**Argument.** The slice keeps its start and its first four elements, the only ones
+`range_word` reads; no constraint or lookup changes.
+
+## E52: `INS + f::FLAGS` with `f::FLAGS = 0` (zkvm/src/air/cpu.rs)
+
+Decision: W4-MUTAIR, for the Lead's review.
+
+**Mutant covered:** cpu.rs 108:31 `replace + with -` (`r[INS + f::FLAGS + k]` becomes
+`r[INS - f::FLAGS + k]`).
+
+**Argument.** `f::FLAGS = 0` (program.rs), so both index the same column. A change
+of the layout constant changes the program table's fields and the circuit
+fingerprint.
+
+## E53: `KB + 2` with `KB = 2` (zkvm/src/air/memory.rs)
+
+Decision: W4-MUTAIR, for the Lead's review.
+
+**Mutant covered:** memory.rs 105:24 `replace + with *` (`r[KB + 2]` becomes
+`r[KB * 2]`).
+
+**Argument.** `KB = 2`, and `2 + 2 = 2 · 2`: the same column.
+
+## E54: withdrawn (killed)
+
+`poseidon::p2_width` (zkvm/src/air/poseidon.rs 252:5, `replace p2_width -> usize with
+0` and `with 1`) was first exempted here as dead code. Decision RT-MUTAIR: it is now
+tested (`the_poseidon2_sub_air_width_is_its_column_count`, zkvm/tests/air_tamper.rs:
+`p2_width() = P2_COLS`), which kills both mutants. The number stays reserved.
+
+## E55: other register bases (zkvm/src/air/util.rs)
+
+Decision: W4-MUTAIR, for the Lead's review.
+
+**Code.** `pub const REG_BASE: u32 = 1 << 26;` Register `r` is memory-argument key
+`REG_BASE + r`, memory words are keys `address / 4`.
+
+**Mutants covered:** util.rs 76:29 `replace << with >>` (`REG_BASE = 0`), and the hand
+mutant H02 (`REG_BASE = 2^26 + 1`).
+
+**Argument.** The base only relabels the 32 register keys; it matters only if a
+register key equals a memory key some trace can use. Memory keys are `< 2^26`
+(addresses are range-checked `< 2^28`, cpu.rs:291, poseidon.rs:110-114) and, for every
+access a valid trace makes, `≥ 0x400`: loads and stores check `address ≥ NULL_GUARD =
+0x1000` (cpu.rs:320-337), `POSEIDON2` buffers start at `CODE_END` or above
+(cpu.rs:441-451), and image words lie at or above the code base, which the loader
+keeps at or above `NULL_GUARD`. So base 0 (keys 0–31) and base `2^26 + 1` (keys up to
+`2^26 + 32 < 2^27`, within `MEM_INIT`'s key range) never meet a memory key. A base
+that does alias, `2^26 − 1` (hand mutant H01), is caught by
+`the_top_memory_word_and_the_registers_have_distinct_keys`.
+
+## E56: `range_bits`'s `bits ≤ 8` guard (zkvm/src/air/util.rs)
+
+Decision: W4-MUTAIR (boundary pass), for the Lead's review.
+
+**Mutant covered:** util.rs 176:18 `replace <= with <` in `assert!(bits <= 8)`.
+
+**Argument.** Every call passes 3, 4, 6 or 7 bits (`grep range_bits zkvm/src/air`),
+so the guard holds strictly; it never runs at 8. A call with 8 bits would be
+`range_pair(x, x)`, still sound.
+
+## E57: nine blinding values (zkvm/src/air/util.rs)
+
+Decision: W4-MUTAIR (constant hand mutants), for the Lead's review.
+
+**Mutant covered:** hand mutant H04, `BLIND_VALUES = 9`.
+
+**Argument.** The requirement is at least `EXTENSION_DEGREE = 8` values, so the
+blinding offsets reach the whole extension field (util.rs, ZK-F29); nine meets it and
+only widens every table by a column. Soundness does not depend on the count. Seven
+(H03) is caught by `a_blinding_message_spans_the_extension_field`. A change of the
+count changes the circuit fingerprint.
+
+## E58: local and exclusive interactions in the oracle (zkvm/src/air/check.rs)
+
+Decision: W4-MUTAIR (run B), for the Lead's review.
+
+**Code.** `EvalBuilder` and `FingerprintBuilder` implement
+`push_local_interaction` and `push_exclusive_interaction`; `check` and
+`MutationChecker::caught` sum local interactions; `shapes` counts
+`global.len() + local.len()`.
+
+**Mutants covered:** check.rs 98:9, 108:9, 110:75 (×2), 206:43 (×2), 209:42, 350:62
+(×2), 353:62 (×2), 356:38, 415:46 `replace + with -`, 528:9, 540:9.
+
+**Argument.** No BVM-1 table emits a local or an exclusive interaction: every bus
+use in `zkvm/src/air` is `lookup_key`, `table_entry` or `push_interaction`, and
+Plonky3's `Poseidon2Air` emits none (`grep -rn
+'local_interaction\|exclusive' zkvm/src` finds only these two builders). With no such
+interaction the mutated code runs on empty lists. If a table ever uses one, these
+mutants become live and need a test.
+
+## E59: the bus test of `MutationChecker::caught` on a balanced baseline (zkvm/src/air/check.rs)
+
+Decision: W4-MUTAIR (run B), for the Lead's review.
+
+**Mutant covered:** check.rs 370:68 `replace + with -` in `buses[k] + d != 0`.
+
+**Argument.** `MutationChecker::new` asserts the baseline valid, so every stored sum
+`buses[k]` is 0, and `0 + d` and `0 − d` are zero together.
+
+## E60: the last-row flag of `MutationChecker` when it is never set (zkvm/src/air/check.rs)
+
+Decision: W4-MUTAIR (run B), narrowed by decision RT-MUTAIR.
+
+**Code.** `eval_row`: `last: Val::from_bool(r == h - 1)`, used only by
+`MutationChecker`, whose callers change one cell.
+
+**Mutants covered:** check.rs 261:37 `replace - with +` and `with /` (the flag is never
+set: `r == h + 1` and `r == h` hold on no row). The third mutant, 261:32 `replace ==
+with !=` (the flag set on every other row), is killed by the red team's zero-delta
+probes on rows 0, 1, `h/2` and `h − 1` of every table
+(`the_mutation_checker_agrees_with_the_full_checker`).
+
+**Argument.** The only last-row constraint of any table is the CPU's
+`real · (1 − sh) = 0` (cpu.rs:167). A single-cell change that breaks it on a valid
+trace's last row also breaks a rule the mutants leave intact: setting `real` to 1 on a
+padding row looks up an all-zero instruction that the program table never provides;
+changing `sh` on a halting row breaks `sh + srd + swr + sp2 = ecall`; changing `real`
+on a halting row breaks the padding rows' zero fields. So a checker that never applies
+the last-row rule answers every single-cell probe the same way.
+
+## E61: rejection sampling of blinding values (zkvm/src/air/trace.rs)
+
+Decision: W4-MUTAIR (run B), for the Lead's review.
+
+**Code.** `uniform`: `let x = rng.next_u32() & 0x7fff_ffff; if x < Val::ORDER_U32 {
+return Val::from_u32(x) }`.
+
+**Mutants covered:** trace.rs 462:32 `replace & with ^`, 463:14 `replace < with <=`.
+
+**Argument.** `^ 0x7fff_ffff` flips the low 31 bits, a bijection of them, and keeps
+bit 31, so an accepted `x` is uniform on `[0, p)` as before (only the acceptance
+rate changes). `<=` also accepts `x = p`, returned as 0: a statistical distance of
+about `2^−31` per value from uniform, below anything a test or an observer can
+measure. The mutants that bias the values (`<` to `>`) or never return (`&` to `|`,
+`<` to `==`) are caught by `blinding_values_cover_the_field` or hang.

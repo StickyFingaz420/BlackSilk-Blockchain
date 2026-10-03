@@ -1,0 +1,2 @@
+zkvm/src/air/poseidon.rs:252:5: replace p2_width -> usize with 0
+zkvm/src/air/poseidon.rs:252:5: replace p2_width -> usize with 1

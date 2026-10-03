@@ -1,0 +1,2 @@
+caught P1 zkvm/src/air/poseidon.rs:252 <P2Air as BaseAir<Val>>::width(&air()) -> 0
+caught P2 zkvm/src/air/poseidon.rs:252 <P2Air as BaseAir<Val>>::width(&air()) -> 1

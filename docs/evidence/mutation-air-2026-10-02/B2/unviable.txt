@@ -1,0 +1,2 @@
+zkvm/src/air/check.rs:480:9: replace <impl AirBuilder for FingerprintBuilder<'a>>::main -> Self::MainWindow with Default::default()
+zkvm/src/air/check.rs:484:9: replace <impl AirBuilder for FingerprintBuilder<'a>>::preprocessed -> &Self::PreprocessedWindow with Box::leak(Box::new(Default::default()))
