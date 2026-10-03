@@ -1353,4 +1353,232 @@ mod tests {
         // their ids, which no one else announced, are dropped.
         assert_eq!(t.len(), 64 * (PEER_TRACKED - 2));
     }
+
+    // ------------------------------------------------ RT4-TM2P2P red team
+
+    use super::super::dispatch::MAX_RELAY_FRAME;
+
+    /// RT4-TM2P2P: an id whose entry is kept alive to its deadline (two
+    /// attacker connections that each disconnect just before their request
+    /// times out and announce again from a new connection: the entry always
+    /// has a live record, so it keeps its first deadline). An honest
+    /// (outbound) announcer announces 10 s before the deadline and is asked
+    /// at once; its answer takes 15 s. At the deadline `eval` removes the
+    /// entry with `remove`, which, unlike a timeout or `forget_requested`,
+    /// reports no outstanding request: the honest request is not
+    /// remembered in `State::late_txs`, so its answer arrives as an
+    /// unrequested `Tx` (+10, dropped). An attacker who releases its own
+    /// transaction to an honest peer at the right time frames that peer;
+    /// ten times bans it. Expected to FAIL while the gap exists.
+    #[test]
+    fn rt4_a_request_cut_by_the_deadline_stays_acceptable() {
+        let t0 = Instant::now();
+        let target = id(7);
+        let honest: PeerId = 1_000_000;
+        let mut t = TxTracker::default();
+        let mut out = Actions::default();
+        let mut next: PeerId = 0;
+        for _ in 0..2 {
+            t.announce(target, next, false, t0, &mut out);
+            next += 1;
+        }
+        let mut asked_at: HashMap<PeerId, Instant> = HashMap::new();
+        let mut honest_asked: Option<Instant> = None;
+        let mut honest_expired = false;
+        let mut alive_before = false;
+        let mut now = t0;
+        while now < t0 + DEADLINE + Duration::from_secs(30) {
+            for (p, ids) in &out.requests {
+                if ids.contains(&target) {
+                    if *p == honest {
+                        honest_asked.get_or_insert(now);
+                    } else {
+                        asked_at.insert(*p, now);
+                    }
+                }
+            }
+            honest_expired |= out.expired.contains(&(target, honest));
+            t.check();
+            now += STEP;
+            out = Actions::default();
+            if honest_asked.is_none() && now >= t0 + DEADLINE - Duration::from_secs(10) {
+                alive_before |= t.len() == 1;
+                t.announce(target, honest, true, now, &mut out);
+            }
+            let due: Vec<PeerId> = asked_at
+                .iter()
+                .filter(|(_, s)| now + STEP >= **s + REQUEST_TIMEOUT)
+                .map(|(p, _)| *p)
+                .collect();
+            for p in due {
+                asked_at.remove(&p);
+                t.peer_gone(p, now, &mut out);
+                t.announce(target, next, false, now, &mut out);
+                next += 1;
+            }
+            t.poll(now, &mut out);
+        }
+        let asked = honest_asked.expect("the honest announcer is asked");
+        eprintln!(
+            "RT4 deadline cut: entry alive 10 s before the deadline: {alive_before}; honest asked \
+             {:?} before the deadline; remembered as late: {honest_expired}; {} attacker \
+             connections used",
+            (t0 + DEADLINE).saturating_duration_since(asked),
+            next
+        );
+        assert!(alive_before, "two recycling connections keep the id alive");
+        assert!(
+            honest_expired,
+            "the honest request cut by the deadline is reported (late answer acceptable)"
+        );
+    }
+
+    /// RT4-TM2P2P: room that a `forget_requested` frees (an id arriving
+    /// another way: a fluffed stem transaction, a copy from another
+    /// announcer) wakes nobody: `forget_requested` takes no `Actions`, and
+    /// `poll` drains the freed peers only when a timer is due. A candidate
+    /// waiting on that peer (its id's only timer is its 20-minute deadline)
+    /// waits for an unrelated tracker event. Expected to FAIL while the gap
+    /// exists.
+    #[test]
+    fn rt4_room_freed_by_a_forget_is_used_at_the_next_poll() {
+        let t0 = Instant::now();
+        let mut t = TxTracker::default();
+        let mut out = Actions::default();
+        for n in 1..=3 {
+            t.announce(id(n), 1, true, t0, &mut out);
+        }
+        assert_eq!(t.requests(), 2, "two before the first answer; id 3 waits");
+        assert_eq!(t.forget_requested(&id(1)), vec![1]);
+        assert_eq!(t.forget_requested(&id(2)), vec![1]);
+        let mut now = t0;
+        let mut first = None;
+        while now < t0 + Duration::from_secs(120) && first.is_none() {
+            now += Duration::from_millis(250);
+            let mut out = Actions::default();
+            t.poll(now, &mut out);
+            if asked(&out, 1, id(3)) {
+                first = Some(now - t0);
+            }
+        }
+        eprintln!("RT4 lost wakeup: id 3 asked after {first:?} (None: not within 120 s)");
+        assert!(
+            first.is_some_and(|d| d <= Duration::from_secs(1)),
+            "{first:?}"
+        );
+    }
+
+    /// RT4 strategies of size-inflating attackers. Each makes its expected
+    /// answer size the largest frame first: one large `Tx` frame its own
+    /// full slow lane drops unread (`conn.rs`, `lane_dropped`; relay drops
+    /// are never charged, and the frame is never decoded, so it costs no
+    /// points and need not be a transaction at all).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum S4 {
+        /// Then stays silent.
+        Silent,
+        /// Then drops a large frame again after each request, so its timed
+        /// out request is asked once more (`retried`).
+        Retry,
+        /// Then answers `NotFound` just before its (inflated) timeout.
+        LateNotFound,
+    }
+
+    /// `k` size-inflated inbound attackers announce the target at t0, an
+    /// inbound honest one 100 ms later. The honest wait; `None` if the
+    /// deadline dropped the id first.
+    fn honest_wait_inflated(s: S4, k: usize, after: Duration) -> Option<Duration> {
+        let t0 = Instant::now();
+        let target = id(7);
+        let honest: PeerId = 1_000_000;
+        let mut t = TxTracker::default();
+        let mut out = Actions::default();
+        for p in 0..k as PeerId {
+            t.announce(target, p, false, t0, &mut out);
+            t.lane_dropped(p, MAX_RELAY_FRAME, t0);
+        }
+        let at = t0 + after;
+        let mut now = t0;
+        let mut announced = false;
+        let mut asked: Vec<(PeerId, Instant)> = Vec::new();
+        loop {
+            asked.retain(|(p, _)| !out.expired.contains(&(target, *p)));
+            for (p, ids) in &out.requests {
+                if ids.contains(&target) {
+                    if *p == honest {
+                        return Some(now - at);
+                    }
+                    asked.push((*p, now));
+                    if s == S4::Retry {
+                        t.lane_dropped(*p, MAX_RELAY_FRAME, now);
+                    }
+                }
+            }
+            t.check();
+            if (announced && t.len() == 0) || now > t0 + DEADLINE + STEP {
+                return None;
+            }
+            now += STEP;
+            out = Actions::default();
+            if !announced && now >= at {
+                t.announce(target, honest, false, now, &mut out);
+                announced = true;
+            }
+            if s == S4::LateNotFound {
+                let due: Vec<PeerId> = asked
+                    .iter()
+                    .filter(|(p, a)| {
+                        let to = t.peers.get(p).map_or(REQUEST_TIMEOUT, PeerLoad::timeout);
+                        now + STEP >= *a + to
+                    })
+                    .map(|(p, _)| *p)
+                    .collect();
+                for p in due {
+                    asked.retain(|x| x.0 != p);
+                    t.not_found(target, p, now, &mut out);
+                }
+            }
+            t.poll(now, &mut out);
+        }
+    }
+
+    /// The stated bound against size-inflating attackers (docs/p2p.md §7):
+    /// `2 s + 30 s + (30 s + MAX_RELAY_FRAME / 64 KiB/s) x ceil(k / 4)`.
+    fn inflated_bound(k: usize) -> Duration {
+        let slot = REQUEST_TIMEOUT + Duration::from_secs((MAX_RELAY_FRAME / REQUEST_RATE) as u64);
+        INBOUND_DELAY + REQUEST_TIMEOUT + slot * k.div_ceil(PARALLEL) as u32 + STEP * 2
+    }
+
+    /// RT4-TM2P2P (claim check): the size-inflation bound holds up to k =
+    /// 44 for every inflating strategy, and beyond it the deadline drops
+    /// the id: 45 inbound connections that announce first keep any
+    /// transaction out of this node's pool (a miner's, say) until a later
+    /// announcement, and again then. Holds (documents the bound).
+    #[test]
+    fn rt4_size_inflaters_keep_the_stated_bound_up_to_44() {
+        // The worst case: the honest announcement comes in the id's second
+        // request period, so every attacker (first period) ranks ahead of
+        // it. The wait is counted from the attackers' announcement.
+        let late = REQUEST_TIMEOUT + STEP;
+        for s in [S4::Silent, S4::Retry, S4::LateNotFound] {
+            for k in [1, 4, 8, 20, 44] {
+                let w = honest_wait_inflated(s, k, late).map(|w| w + late);
+                eprintln!(
+                    "RT4 inflated {s:?} x{k}: {w:?} after the attackers, stated bound {:?}",
+                    inflated_bound(k)
+                );
+                assert!(
+                    w.is_some_and(|w| w <= inflated_bound(k)),
+                    "{s:?} x{k}: {w:?}"
+                );
+            }
+            // Beyond: the smallest k (within the 64 inbound slots) whose
+            // worst case the deadline drops.
+            let first_dropped = (45..=64).find(|&k| honest_wait_inflated(s, k, late).is_none());
+            eprintln!(
+                "RT4 inflated {s:?}: the deadline first drops the id at k = {first_dropped:?}"
+            );
+            assert!(first_dropped.is_some(), "{s:?}");
+        }
+    }
 }
