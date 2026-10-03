@@ -62,6 +62,7 @@ struct Eval<'a> {
     last: Val,
     transition: Val,
     failed: bool,
+    constraints: usize,
     msgs: Vec<(String, Vec<u32>, Val)>,
 }
 
@@ -98,6 +99,7 @@ impl<'a> AirBuilder for Eval<'a> {
         if x.into() != Val::ZERO {
             self.failed = true;
         }
+        self.constraints += 1;
     }
 
     fn public_values(&self) -> &[Val] {
@@ -213,6 +215,7 @@ impl<'x> Census<'x> {
             last: Val::from_bool(r == h - 1),
             transition: Val::from_bool(r != h - 1),
             failed: false,
+            constraints: 0,
             msgs: Vec::new(),
         };
         self.airs[t].eval(&mut b);
@@ -329,6 +332,9 @@ fn kitchen_sink() -> Asm {
         .branch(Op::Bgeu, T0, T1, "b3")
         .halt(7)
         .label("b3")
+        // An equality of equal operands (ALU_LT with d = 0), offset 4.
+        .branch(Op::Beq, T0, T0, "b4")
+        .label("b4")
         .ecall(1)
         .write_reg(A0)
         .i(Op::Fence, 0, 0, 0, 0)
@@ -557,5 +563,170 @@ fn every_cell_change_of_every_row_is_rejected_or_free_by_design() {
         accepted.is_empty(),
         "{} under-constrained cell classes",
         accepted.len()
+    );
+}
+
+// ---- the oracle itself (W4-MUTAIR run B: check.rs) ----
+//
+// The census and the negative traces trust `air::check` and its incremental
+// `MutationChecker`. These tests check the checker: its shape errors, its
+// counts, and that the incremental answer equals a full re-check, for changes
+// that must be caught and for changes that must not be.
+
+#[test]
+fn the_checker_reports_every_shape_mismatch() {
+    use blacksilk_zkvm::air::check::Violation;
+    let (st, traces) = statement();
+    let airs = trace::tables(&st);
+    let public = trace::public_values(&st);
+    // The table counts are checked first and stop the check; a table's own
+    // shape error skips that table (its buses then do not balance).
+    let shape_only = |v: &[Violation]| matches!(v, [Violation::Shape(_)]);
+    let has_shape = |v: &[Violation]| v.iter().any(|x| matches!(x, Violation::Shape(_)));
+    assert!(
+        shape_only(&check(&airs[1..], &traces, &public)),
+        "fewer tables"
+    );
+    assert!(
+        shape_only(&check(&airs, &traces[1..], &public)),
+        "fewer traces"
+    );
+    assert!(
+        shape_only(&check(&airs, &traces, &public[1..])),
+        "fewer public values"
+    );
+    // One table of the wrong width, then of a height that is not a power of two.
+    let t = 5;
+    let (h, w) = (traces[t].height(), traces[t].width());
+    let mut wide = traces.clone();
+    wide[t] = RowMajorMatrix::new(vec![Val::ZERO; h * (w + 1)], w + 1);
+    assert!(has_shape(&check(&airs, &wide, &public)), "width");
+    let mut short = traces.clone();
+    short[t] = RowMajorMatrix::new(traces[t].values[..(h - 1) * w].to_vec(), w);
+    assert!(has_shape(&check(&airs, &short, &public)), "height");
+}
+
+#[test]
+fn shapes_count_every_constraint_and_interaction() {
+    use blacksilk_zkvm::air::check::shapes;
+    let (st, traces) = statement();
+    let airs = trace::tables(&st);
+    let public = trace::public_values(&st);
+    let census = Census::new(&airs, &traces, &public);
+    let sh = shapes(&airs, &traces, &public);
+    assert_eq!(sh.len(), airs.len());
+    for (t, s) in sh.iter().enumerate() {
+        let tr = &census.traces[t];
+        let w = tr.width();
+        let prep = census.preps[t].as_ref();
+        let pw = prep.map_or(0, |p| p.width());
+        let empty: Vec<Val> = Vec::new();
+        let (pc, pn): (&[Val], &[Val]) = match prep {
+            Some(p) => (&p.values[..pw], &p.values[pw..2 * pw]),
+            None => (&empty, &empty),
+        };
+        let mut b = Eval {
+            main: RowWindow::from_two_rows(&tr.values[..w], &tr.values[w..2 * w]),
+            prep: RowWindow::from_two_rows(pc, pn),
+            public: &public[t],
+            first: Val::ONE,
+            last: Val::ZERO,
+            transition: Val::ONE,
+            failed: false,
+            constraints: 0,
+            msgs: Vec::new(),
+        };
+        airs[t].eval(&mut b);
+        assert_eq!(
+            (s.constraints, s.interactions, s.main_width, s.prep_width),
+            (b.constraints, b.msgs.len(), w, pw),
+            "table {t} ({})",
+            NAMES[t]
+        );
+        assert!(s.constraints > 0 || t == 12, "table {t} has constraints");
+    }
+}
+
+/// `MutationChecker` (the single-cell probes of vm.rs, alu.rs and multi.rs)
+/// must answer exactly what a full `check` of the changed traces answers:
+/// for changes it must catch, and for changes it must not (zero deltas, free
+/// witness cells, free padding cells), on first, middle and last rows. Each
+/// free probe follows a caught probe of the same row, so a probe that does
+/// not restore its cell shows up.
+#[test]
+fn the_mutation_checker_agrees_with_the_full_checker() {
+    use blacksilk_zkvm::air::check::MutationChecker;
+    let (st, traces) = statement();
+    let airs = trace::tables(&st);
+    let public = trace::public_values(&st);
+    let mut m = MutationChecker::new(&airs, &traces, &public);
+    let full = |t: usize, r: usize, c: usize, d: Val| {
+        let mut x = traces.clone();
+        let w = x[t].width();
+        x[t].values[r * w + c] += d;
+        !check(&airs, &x, &public).is_empty()
+    };
+    let w = |t: usize| traces[t].width();
+    let h = |t: usize| traces[t].height();
+    let cell = |t: usize, r: usize, c: usize| traces[t].values[r * w(t) + c];
+    // ALU_LT rows with d = 0 (inverse free) and ALU_SHIFT rows with a zero
+    // amount (inverse free).
+    let lt_free = (0..h(7))
+        .find(|&r| cell(7, r, 2) == Val::ONE && (11..15).all(|k| cell(7, r, k) == Val::ZERO))
+        .expect("an EQ of equal operands");
+    let sh_free = (0..h(8))
+        .find(|&r| cell(8, r, 21) == Val::ONE && (0..3).any(|k| cell(8, r, k) == Val::ONE))
+        .expect("a shift by zero");
+    let cpu_pad = (0..h(4))
+        .find(|&r| cell(4, r, cpu::IS_REAL) == Val::ZERO)
+        .unwrap();
+    let mut probes = Vec::new();
+    for (t, r, caught_col, free_col) in [
+        (7, lt_free, 3, 23),
+        (8, sh_free, 3, 33),
+        (4, cpu_pad, cpu::IS_REAL, cpu::CLK),
+        (4, h(4) - 1, cpu::IS_REAL, cpu::NEXT_PC),
+        (5, h(5) - 1, 0, 2),
+        (5, 0, 0, 2),
+        (3, h(3) - 1, 0, 10),
+    ] {
+        for d in [Val::ONE, -Val::ONE] {
+            probes.push((t, r, caught_col, d));
+            probes.push((t, r, free_col, d));
+        }
+        probes.push((t, r, caught_col, Val::ZERO));
+    }
+    let (mut yes, mut no) = (0, 0);
+    for (t, r, c, d) in probes {
+        let expected = full(t, r, c, d);
+        assert_eq!(
+            m.caught(t, r, c, d),
+            expected,
+            "table {t} row {r} column {c} delta {d}"
+        );
+        if expected {
+            yes += 1;
+        } else {
+            no += 1;
+        }
+    }
+    // First, middle and last rows of every table, against this file's own
+    // incremental checker (a full check per probe would take minutes).
+    let mut census = Census::new(&airs, &traces, &public);
+    for t in 0..airs.len() {
+        for r in [0, 1, h(t) / 2, h(t) - 1] {
+            for c in [0, w(t) / 2, w(t) - 1] {
+                let x = cell(t, r, c) + Val::ONE;
+                assert_eq!(
+                    m.caught(t, r, c, Val::ONE),
+                    census.rejects(t, &[(r, c, x)]),
+                    "table {t} row {r} column {c}"
+                );
+            }
+        }
+    }
+    assert!(
+        yes > 0 && no >= 14,
+        "both answers occur: {yes} caught, {no} not"
     );
 }

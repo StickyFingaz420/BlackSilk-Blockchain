@@ -1338,3 +1338,161 @@ fn honest_corner_cases_satisfy_every_constraint() {
         .halt(0);
     Case::honest(&a, &[]);
 }
+
+// ---- the trace generator (W4-MUTAIR run B: trace.rs) ----
+
+/// A program using every budgeted table: loops, ALU operations, a shift by a
+/// nonzero amount (delegated to the multiplier), memory and POSEIDON2.
+fn budget_program() -> Asm {
+    let mut p = Asm::new(BASE);
+    p.data(DATA, vec![0; 64], 128);
+    p.li(S0, DATA).li(T0, 5).li(T1, 0x1234_5678);
+    p.label("loop")
+        .r(Op::Add, A1, T1, T0)
+        .r(Op::Xor, A1, A1, T1)
+        .r(Op::Sll, A2, A1, T0)
+        .r(Op::Mul, A2, A2, T1)
+        .store(Op::Sw, A2, S0, 4)
+        .imm(Op::Addi, T0, T0, -1)
+        .branch(Op::Bne, T0, ZERO, "loop")
+        .li(A0, DATA)
+        .ecall(3)
+        .load(Op::Lw, A1, S0, 0)
+        .write_reg(A1)
+        .halt(0);
+    p
+}
+
+/// Real rows of table `t` (by its flag columns `flags`).
+fn real_rows(c: &Case, t: usize, flags: std::ops::Range<usize>) -> usize {
+    c.find(t, |r| flags.clone().any(|k| r[k] != Val::ZERO))
+        .len()
+}
+
+/// `trace::usage` reports exactly the rows the generator fills, and a
+/// budgeted statement takes its fixed shape: every table at the height
+/// `Statement::shape` gives, single and with a further execution.
+#[test]
+fn a_budgeted_statement_takes_its_fixed_shape() {
+    use blacksilk_zkvm::air::trace::{usage, Budget, Part};
+    let (program, exec) = execute(&budget_program(), &[]);
+    let c = Case::of(program.clone(), &exec);
+    assert_eq!(c.violations(), vec![]);
+    let used = usage(&program, &exec);
+    assert_eq!(
+        used,
+        Budget {
+            cycles: real_rows(&c, CPU, 0..1),
+            keys: real_rows(&c, MEM_INIT, 0..1),
+            add: real_rows(&c, ADD, 0..2),
+            bit: real_rows(&c, BIT, 0..3),
+            lt: real_rows(&c, LT, 0..3),
+            shift: real_rows(&c, SHIFT, 0..3),
+            mul: real_rows(&c, MUL, 0..4),
+            poseidon: real_rows(&c, P2, poseidon::P2_COLS..poseidon::P2_COLS + 1),
+        }
+    );
+    assert!(used.shift > 0 && used.mul > used.shift - 1 && used.poseidon == 1);
+    // Budgets above the usage, each table's its own size.
+    let budget = Budget {
+        cycles: 600,
+        keys: 300,
+        add: 1100,
+        bit: 2100,
+        lt: 4100,
+        shift: 270,
+        mul: 520,
+        poseidon: 3,
+    };
+    let mut st = Statement::single(
+        program.clone(),
+        exec.exit_code,
+        exec.output.clone(),
+        [7; 32],
+    );
+    assert_eq!(st.shape(), None);
+    st.budget = Some(budget);
+    assert_eq!(st.budgets(), Some(vec![budget]));
+    let shape = st.shape().expect("a fixed shape");
+    let traces = trace::build(&st, &exec);
+    let heights: Vec<usize> = traces.iter().map(|t| t.height()).collect();
+    assert_eq!(heights, shape);
+    assert_eq!(
+        check(&trace::tables(&st), &traces, &trace::public_values(&st)),
+        vec![]
+    );
+    // A further budgeted execution appends its own five tables.
+    st.others.push(Part {
+        program: program.clone(),
+        exit_code: exec.exit_code,
+        output: exec.output.clone(),
+        budget: Some(used),
+    });
+    assert_eq!(st.budgets(), Some(vec![budget, used]));
+    let shape = st.shape().unwrap();
+    let traces = trace::build_multi(&st, &[&exec, &exec]);
+    assert_eq!(traces.iter().map(|t| t.height()).collect::<Vec<_>>(), shape);
+    assert_eq!(
+        check(&trace::tables(&st), &traces, &trace::public_values(&st)),
+        vec![]
+    );
+}
+
+/// The generator cross-checks the interpreter's witness: a step whose
+/// written value differs from the value the generator computes stops trace
+/// generation (a bug, never a false trace).
+#[test]
+fn the_generator_refuses_a_diverging_witness() {
+    let (program, mut exec) = execute(&budget_program(), &[]);
+    let k = exec
+        .steps
+        .iter()
+        .position(|s| s.instr.op == Op::Add && s.instr.rd != 0)
+        .unwrap();
+    exec.steps[k].rd_val ^= 1;
+    let st = Statement::single(program, exec.exit_code, exec.output.clone(), [7; 32]);
+    let r = std::panic::catch_unwind(|| trace::build(&st, &exec));
+    assert!(r.is_err(), "a diverging witness was accepted");
+}
+
+/// Blinding values are uniform field elements: spread over the whole field,
+/// never a constant or a narrow range.
+#[test]
+fn blinding_values_cover_the_field() {
+    use rand_chacha::rand_core::SeedableRng;
+    let (program, exec) = execute(&budget_program(), &[]);
+    let mut c = Case::of(program, &exec);
+    trace::randomize_blinding(
+        &mut c.traces,
+        &mut rand_chacha::ChaCha20Rng::seed_from_u64(3),
+    );
+    assert_eq!(c.violations(), vec![]);
+    let n = c.traces.len() - 1;
+    let w = c.w(n);
+    let values: Vec<u32> = (0..n)
+        .flat_map(|t| (1..w).map(move |k| (t, k)))
+        .map(|(t, k)| c.u(n, t, k))
+        .collect();
+    let high = values.iter().filter(|&&x| x >= 1 << 30).count();
+    let low = values.iter().filter(|&&x| x < 1 << 27).count();
+    assert!(
+        high > values.len() / 4 && low > 0 && high < values.len(),
+        "{values:?}"
+    );
+}
+
+/// `trace::blinded` (hand-assembled tables in tests) appends the blinding
+/// columns and the Blind table.
+#[test]
+fn hand_assembled_tables_are_blinded() {
+    use blacksilk_zkvm::air::alu_add;
+    use blacksilk_zkvm::air::byte::ByteCounter;
+    let mut counter = ByteCounter::new();
+    let add = alu_add::trace(&[], &mut counter, MIN_HEIGHT);
+    let byte = blacksilk_zkvm::air::with_public_columns(&Table::Byte, counter.trace());
+    let (airs, traces) = trace::blinded(vec![Table::Byte, Table::AluAdd], vec![byte, add]);
+    assert_eq!((airs.len(), traces.len()), (3, 3));
+    assert!(matches!(airs[2], Table::Blind));
+    let public = vec![vec![]; 3];
+    assert_eq!(check(&airs, &traces, &public), vec![]);
+}
