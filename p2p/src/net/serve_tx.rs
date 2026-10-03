@@ -301,6 +301,10 @@ pub(super) async fn on_get_tx(inner: &Arc<Inner>, peer: PeerId, ids: Vec<Hash>) 
             if !st.peers.contains_key(&peer) {
                 return;
             }
+            // Asked for and answered: no longer owed to a reconnect (RT4).
+            if let Some(p) = st.peers.get_mut(&peer) {
+                p.recent_inv.retain(|(h, _)| *h != id);
+            }
             replies.push(Queued {
                 len,
                 at: Instant::now(),

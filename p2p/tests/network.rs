@@ -7281,7 +7281,12 @@ async fn rt4_the_reconnect_reannouncement_does_not_tell_an_origin_from_a_relay()
          pooled {pooled_phase:?} (origin, relay)"
     );
     assert_eq!(stem_phase, vec![false, false]);
-    assert_eq!(pooled_phase, vec![true, true]);
+    // RT4 item 2: a reconnect is told only what its last connection was
+    // owed, never the pool. The transaction was pooled while the spy was
+    // away, so neither node owes it: neither tells (the same answer from
+    // the origin and the relay, which is the property; before, both told
+    // the whole pool).
+    assert_eq!(pooled_phase, vec![false, false]);
 }
 
 /// A raw peer task that answers pings and every `GetTx` for one of `txs`
@@ -7441,8 +7446,9 @@ async fn rt4_a_full_late_answer_memory_penalizes_parallel_honest_answers_again()
 
 /// RT4-TM2P2P (liveness, measurement): a peer that stops reading but keeps
 /// sending (so the 180 s idle timeout never fires) is cut by the pong
-/// timeout, now 128 s from when the ping was written (before RT3: 30 s
-/// from when it was queued). Pings every 2 s here.
+/// timeout, 192 s from when the ping was written since RT4 item 7 (128 s
+/// after RT3; before RT3: 30 s from when it was queued). Pings every 2 s
+/// here.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rt4_a_peer_that_never_reads_is_cut_by_the_pong_timeout() {
     init_test_log();
@@ -7465,15 +7471,55 @@ async fn rt4_a_peer_that_never_reads_is_cut_by_the_pong_timeout() {
             }
         }
     });
-    while t0.elapsed() < Duration::from_secs(300) && v.net.stats().peers == 1 {
+    while t0.elapsed() < Duration::from_secs(320) && v.net.stats().peers == 1 {
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     let cut = t0.elapsed();
     keep.abort();
     drop(r);
     eprintln!("RT4 non-reading peer: cut after {cut:?} (ping interval 2 s)");
+    // RT4 item 7: the timeout now also allows for 4 MiB buffered ahead of
+    // the ping (192 s; RT4 measured the 128 s of RT3 here).
     assert!(
-        cut >= Duration::from_secs(128) && cut < Duration::from_secs(140),
+        cut >= Duration::from_secs(192) && cut < Duration::from_secs(204),
         "{cut:?}"
     );
+}
+
+/// RT4 item 2: a host that reconnects is told what its last connection was
+/// owed (announced to it and not asked for), and nothing else; another
+/// host is told nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_reconnecting_host_is_told_only_what_it_was_owed() {
+    let mut a = node(276, &[]).await;
+    a.mine_n(80, 0);
+    let owed = a.payment_nth(0);
+    let other = a.payment_nth(1);
+    a.chain.lock().unwrap().submit_tx(owed.clone()).unwrap();
+    let nid = params().network_id;
+    let ip = [127, 0, 6, 70];
+    let (mut r, w) = raw_peer_from(ip, a.addr, nid, 0).await.expect("spy");
+    wait_until("spy registered", 30, || a.net.stats().peers == 1).await;
+    settled(&a, a.height() + 1).await;
+    for _ in 0..10 {
+        a.mine_with(0, false);
+    }
+    assert!(
+        recv_until(
+            &mut r,
+            30.0,
+            |m| matches!(m, Message::InvTx(ids) if ids.contains(&owed.hash()))
+        )
+        .await
+        .is_some(),
+        "announced (the pool's re-announcement at age 10)"
+    );
+    // Pooled after the spy was told: never owed to it.
+    a.chain.lock().unwrap().submit_tx(other.clone()).unwrap();
+    drop((r, w));
+    wait_until("spy gone", 30, || a.net.stats().peers == 0).await;
+    let again = spy_session(&a, ip, 3.0).await;
+    let stranger = spy_session(&a, [127, 0, 6, 71], 3.0).await;
+    assert_eq!(again, vec![owed.hash()], "only what it was owed");
+    assert!(stranger.is_empty(), "another host: nothing");
 }

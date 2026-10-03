@@ -73,6 +73,11 @@ pub(super) struct Peer {
     pub(super) next_inv: Instant,
     pub(super) announced_to: HashSet<Hash>,
     pub(super) known_txs: HashSet<Hash>,
+    /// Ids announced to it lately, with when (at most `OWED_IDS`): what a
+    /// reconnect of its host is owed, unless it asked for them.
+    pub(super) recent_inv: VecDeque<(Hash, Instant)>,
+    /// Its host, if stable (`owed_key`).
+    pub(super) owed_key: Option<String>,
     pub(super) ping: Option<(u64, Instant)>,
     /// The lowest ping round trip measured (inbound eviction protects the
     /// lowest; `None`: none answered yet).
@@ -193,47 +198,66 @@ pub(super) struct StemEntry {
     pub(super) awaiting_stem: bool,
 }
 
-/// How long a disconnected peer counts as reconnecting, and how many are
-/// remembered.
-pub(super) const RECENT_GONE_WINDOW: Duration = Duration::from_secs(10 * 60);
-pub(super) const RECENT_GONE_MAX: usize = 256;
+/// How long what a disconnected peer was owed is kept for its host, and for
+/// how many hosts (oldest dropped first).
+pub(super) const OWED_WINDOW: Duration = Duration::from_secs(10 * 60);
+pub(super) const OWED_HOSTS: usize = 256;
+/// The most ids owed to one connection: its unflushed announcements, and
+/// those announced to it lately and not answered (`Peer::recent_inv`).
+pub(super) const OWED_IDS: usize = 500;
 
-/// The host part of an address (an IP, or an onion host): a reconnecting
-/// inbound peer comes from another port.
-fn host_key(a: &NetAddr) -> String {
-    match a {
+/// The host part of an address (an IP, or an onion host), for a peer with
+/// a stable host: `None` for an inbound connection through Tor (every such
+/// peer has the Tor daemon's loopback address).
+pub(super) fn owed_key(a: &NetAddr, via_tor_inbound: bool) -> Option<String> {
+    if via_tor_inbound {
+        return None;
+    }
+    Some(match a {
         NetAddr::Ip(s) => s.ip().to_string(),
         NetAddr::Onion { host, .. } => host.clone(),
-    }
+    })
 }
 
 impl State {
-    /// Remembers that a peer at `addr` disconnected.
-    pub(super) fn note_gone(&mut self, addr: &NetAddr, now: Instant) {
-        self.recent_gone
-            .retain(|_, t| now.duration_since(*t) <= RECENT_GONE_WINDOW);
-        if self.recent_gone.len() < RECENT_GONE_MAX {
-            self.recent_gone.insert(host_key(addr), now);
+    /// Keeps what a disconnecting connection was owed (RT4: only that, not
+    /// the pool), for its host.
+    pub(super) fn keep_owed(&mut self, key: String, ids: Vec<Hash>, now: Instant) {
+        self.owed
+            .retain(|_, (t, _)| now.duration_since(*t) <= OWED_WINDOW);
+        if ids.is_empty() {
+            return;
         }
+        if self.owed.len() >= OWED_HOSTS && !self.owed.contains_key(&key) {
+            if let Some(oldest) = self
+                .owed
+                .iter()
+                .min_by_key(|(_, (t, _))| *t)
+                .map(|(k, _)| k.clone())
+            {
+                self.owed.remove(&oldest);
+            }
+        }
+        self.owed.insert(key, (now, ids));
     }
 
-    /// Whether a peer at `addr` disconnected within `RECENT_GONE_WINDOW`.
-    pub(super) fn recently_gone(&self, addr: &NetAddr) -> bool {
-        self.recent_gone
-            .get(&host_key(addr))
-            .is_some_and(|t| t.elapsed() <= RECENT_GONE_WINDOW)
+    /// Takes what a previous connection from `key` was owed, if it left
+    /// within [`OWED_WINDOW`].
+    pub(super) fn take_owed(&mut self, key: &str) -> Vec<Hash> {
+        match self.owed.remove(key) {
+            Some((t, ids)) if t.elapsed() <= OWED_WINDOW => ids,
+            _ => Vec::new(),
+        }
     }
 }
 
-/// The most transaction requests remembered after they ended
-/// (`State::late_txs`); beyond it a late answer is unrequested again.
-pub(super) const LATE_TXS_MAX: usize = 10_000;
-
-/// How long any copy of an id a peer was asked for is accepted from it
-/// after its request ended (timed out, or another announcer's answer came
-/// first): a slow honest link delivers well within it (RT3 F1b; a PX
-/// transaction takes about 35 s at 64 KiB/s).
-pub(super) const LATE_TX_WINDOW: Duration = Duration::from_secs(5 * 60);
+/// Shuffles `v` in place (Fisher-Yates) with `rng`.
+pub(super) fn shuffle<T>(v: &mut [T], rng: &mut impl rand_chacha::rand_core::RngCore) {
+    for i in (1..v.len()).rev() {
+        let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+        v.swap(i, j);
+    }
+}
 
 pub(super) struct State {
     pub(super) peers: HashMap<PeerId, Peer>,
@@ -250,21 +274,16 @@ pub(super) struct State {
     /// Who announced which transactions, and what is asked of whom
     /// (docs/p2p.md §7, "Requesting").
     pub(super) tx_tracker: super::tx_requests::TxTracker,
-    /// Peers that disconnected lately, by host (an IP, or an onion host),
-    /// with when: one that reconnects gets our pool announced again.
-    pub(super) recent_gone: HashMap<String, Instant>,
+    /// What connections that left lately were owed (unflushed and unanswered
+    /// announcements), by host, with when they left: re-announced, in a
+    /// fresh random order, when the same host reconnects (RT4).
+    pub(super) owed: HashMap<String, (Instant, Vec<Hash>)>,
     pub(super) recent_rejects: VecDeque<Hash>,
     pub(super) recent_rejects_set: HashSet<Hash>,
     /// Block requests that timed out, kept for another `BLOCK_TIMEOUT`: the
     /// block arriving late from the peer we asked is an answer, not an
     /// unsolicited block (R8-9).
     pub(super) late_blocks: HashMap<Hash, (PeerId, Instant)>,
-    /// Transaction requests that ended without that peer's answer (timed
-    /// out, or answered first by another announcer), by (id, the peer
-    /// asked), kept for [`LATE_TX_WINDOW`]: any copy from that peer is
-    /// accepted, unpenalized, as a late block is (P2P-FIX2, RT3 F1, F1b).
-    /// At most [`LATE_TXS_MAX`].
-    pub(super) late_txs: HashMap<(Hash, PeerId), Instant>,
     pub(super) local_nonces: HashSet<u64>,
     /// Addresses being dialed or connected outbound, with the kind of the
     /// connection (`peers::connect_outbound`).

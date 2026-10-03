@@ -486,7 +486,7 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
         // `LATE_TX_WINDOW` (its request timed out, or another announcer's
         // answer came first): accepted, unpenalized (P2P-FIX2, RT3 F1,
         // F1b). A pooled copy is then dropped for free.
-        (r || st.late_txs.contains_key(&(id, peer)), r)
+        (r || st.tx_tracker.is_late(&id, peer, Instant::now()), r)
     };
     if !requested {
         inner.misbehave(peer, score::UNSOLICITED, "unrequested transaction");
@@ -499,7 +499,7 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
     match verdict {
         Admit::Verify => {}
         Admit::Done => {
-            Inner::forget_tx(&mut inner.state(), &id);
+            Inner::forget_tx(&mut inner.state(), &id, Some(peer));
             return;
         }
         Admit::Busy | Admit::BusyGlobal => {
@@ -544,7 +544,7 @@ pub(super) async fn on_tx(inner: &Arc<Inner>, peer: PeerId, bytes: Vec<u8>) {
         st.tx_verifications += 1;
         // Verified, pooled or refused: nothing more to ask anyone; the
         // answers still coming stay acceptable.
-        Inner::forget_tx(&mut st, &id);
+        Inner::forget_tx(&mut st, &id, Some(peer));
     }
     match result {
         (_, Ok(_), _) => {

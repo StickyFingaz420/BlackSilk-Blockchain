@@ -10,7 +10,7 @@ use super::peers::{
     HandshakeSlot,
 };
 use super::serve_tx::{ReplyQueue, SERVE_TX_FRAMES};
-use super::state::{unix_now, Inner, Peer};
+use super::state::{owed_key, shuffle, unix_now, Inner, Peer, OWED_IDS, OWED_WINDOW};
 use super::tx_requests::Actions;
 use crate::addr::NetAddr;
 use crate::addrman_gate::AddrGate;
@@ -49,9 +49,6 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(180);
 /// Control messages queued per peer (everything except `Block` frames and
 /// `GetTx` answers).
 const OUTBOX: usize = 64;
-
-/// The most pooled transactions announced again to a peer that reconnects.
-const REANNOUNCE_ON_RECONNECT: usize = 5_000;
 
 /// `GetTx` answers queued per peer (at most `SERVE_TX_FRAMES` `Tx` frames
 /// and their `NotFound`s).
@@ -332,8 +329,11 @@ pub(super) async fn run_connection<S>(
             addr_gate.getaddr_sent(now);
         }
         // Transaction requests are kept per network class (RT3 F6): an
-        // onion peer's requests share nothing with clearnet ones.
-        let class = u8::from(addr.is_onion() || kind == ConnKind::OnionInbound);
+        // onion peer's requests share no tracker state with clearnet ones.
+        // Tor is how the connection came (RT4): a proxied one, our hidden
+        // service's listener, or the legacy setup forwarding the hidden
+        // service to the P2P port (a loopback inbound, `loopback_is_tor`).
+        let class = u8::from(via_tor || addr.is_onion() || kind == ConnKind::OnionInbound);
         st.tx_tracker.register_peer(id, class);
         st.peers.insert(
             id,
@@ -362,6 +362,11 @@ pub(super) async fn run_connection<S>(
                 next_inv: now,
                 announced_to: HashSet::new(),
                 known_txs: HashSet::new(),
+                recent_inv: VecDeque::new(),
+                owed_key: owed_key(
+                    &addr,
+                    kind.is_inbound() && via_tor || kind == ConnKind::OnionInbound,
+                ),
                 ping: None,
                 min_ping: None,
                 last_ping: now,
@@ -425,22 +430,31 @@ pub(super) async fn run_connection<S>(
     // A tip connected since the snapshot our `Version` came from (the
     // announcer ran before this peer was registered, RT-SYNC F-B).
     announce_tip(&inner);
-    // A peer that reconnects lost what our requests and announcements to
-    // its last connection were doing: our pooled transactions are announced
-    // to it again (RT3 F3; the per-connection sets that skip known ids
-    // started empty).
-    if inner.state().recently_gone(&addr) {
+    // A host that reconnects within `OWED_WINDOW` gets what its last
+    // connection was owed (RT4): its unflushed announcements and the ones
+    // it was told lately but did not ask for, still pooled, in a fresh
+    // random order. Never the pool: a whole-pool re-announcement, in the
+    // pool's fixed order, named the node and cost a pool of bandwidth per
+    // handshake. Not for inbound peers through Tor (no stable host).
+    let owed = {
+        let mut st = inner.state();
+        st.peers
+            .get(&id)
+            .and_then(|p| p.owed_key.clone())
+            .map(|k| st.take_owed(&k))
+            .unwrap_or_default()
+    };
+    if !owed.is_empty() {
         let inner2 = inner.clone();
         tokio::spawn(async move {
-            let ids: Vec<Hash> = inner2
-                .with_chain(|c| {
-                    c.mempool()
-                        .iter()
-                        .take(REANNOUNCE_ON_RECONNECT)
-                        .map(|t| t.hash())
+            let mut ids: Vec<Hash> = inner2
+                .with_chain(move |c| {
+                    owed.into_iter()
+                        .filter(|id| c.mempool().contains(id))
                         .collect()
                 })
                 .await;
+            shuffle(&mut ids, &mut inner2.state().rng);
             inner2.announce_to(id, ids);
         });
     }
@@ -577,16 +591,29 @@ pub(super) async fn run_connection<S>(
     writer_task.abort();
     let gone = {
         let mut st = inner.state();
-        let gone = st.peers.remove(&id).map(|p| p.addr);
-        if let Some(a) = &gone {
-            st.note_gone(a, Instant::now());
-        }
+        let now = Instant::now();
+        let gone = st.peers.remove(&id).map(|p| {
+            // What it was owed, kept for its host (RT4).
+            if let Some(key) = p.owed_key.clone() {
+                let mut ids: Vec<Hash> = p.inv_queue.clone();
+                ids.extend(
+                    p.recent_inv
+                        .iter()
+                        .filter(|(_, t)| now.duration_since(*t) <= OWED_WINDOW)
+                        .map(|(h, _)| *h),
+                );
+                let mut seen = HashSet::new();
+                ids.retain(|h| seen.insert(*h));
+                ids.truncate(OWED_IDS);
+                st.keep_owed(key, ids, now);
+            }
+            p.addr
+        });
         replies.closed();
         st.dandelion.peer_disconnected(id);
         st.block_requests.retain(|_, (p, _)| *p != id);
         // Its transaction records go; the ids it held are asked of the next
         // announcers now, not after a timeout (`tx_requests`).
-        let now = Instant::now();
         let mut out = Actions::default();
         st.tx_tracker.peer_gone(id, now, &mut out);
         inner.apply_tx_actions(&mut st, out, now);
