@@ -9,6 +9,8 @@
 //!   before a key switch.
 //! - `/info` and `/tip` report `template_ready`.
 
+mod common;
+
 use blacksilk_chain::block::Block;
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::store::MemoryStore;
@@ -20,6 +22,7 @@ use blacksilk_rpc::{Client, MAX_TIP_WAIT_SECS};
 use blacksilk_tx::builder::{build_coinbase, Payment};
 use blacksilk_tx::params::TxRules;
 use blacksilk_tx::types::Transaction;
+use common::HeldChain;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::io::{Read, Write};
@@ -141,12 +144,13 @@ fn tip_without_after_answers_at_once_from_the_snapshot() {
     assert!(t.template_ready);
     let id = n.mine();
     assert_eq!(c.tip(None, 0).unwrap().tip, hex::encode(id));
-    // No chain command: answered while the chain lock is held.
-    let guard = n.shared.lock().unwrap();
+    // No chain command: answered while the chain lock is held (on a thread
+    // of its own, so that a failing check does not poison it: INV-70).
+    let held = HeldChain::hold(&n.shared);
     let started = Instant::now();
     assert_eq!(c.tip(None, 0).unwrap().height, 1);
     assert!(started.elapsed() < Duration::from_secs(5));
-    drop(guard);
+    drop(held);
     // A tip other than the node's (stale, or unknown) answers at once.
     let started = Instant::now();
     assert_eq!(c.tip(Some(&[9; 32]), 20).unwrap().height, 1);
