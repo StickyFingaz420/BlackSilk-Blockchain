@@ -1266,3 +1266,23 @@
   - liveness L7, now by drain steps.
 - **Full-set kills by timing assertions are re-checked in isolation** (method note).
 - **Run E follow-ups done** (w4-mute 95bc76c). The fingerprint samples for deploy, PX and the PX binding are DECIDED YES, as one fingerprint revision together with the golden PX fixtures and the PX/block verdict samples (P0-freeze), rather than a separate pin change. Run E is merged.
+
+## RT4-TM2P2P (Lead, 2026-10-03)
+- **Confirmed:**
+  - F1b;
+  - F2 as stated (size inflaters within the stated bound);
+  - F3 (except the reconnect feature);
+  - F4, F5;
+  - the Busy exception.
+  - No origin oracle in the reconnect re-announcement.
+- **Found:**
+  - **High:** a node-wide late_txs memory filled for free brings the F1 penalties back. Fix: per-peer quotas.
+  - **High, privacy:** the reconnect whole-pool re-announcement leaks a node-identifying order. DECISION: remove it; a reconnecting host gets back only what its previous connection was owed, shuffled. Every InvTx flush is shuffled, and onion inbound peers are skipped.
+  - **Medium:** deadline-cut requests are not remembered (a framing attack).
+  - **Medium:** cheap size inflation through undecoded lane drops. Inflate from decoded answers only; count slots by request age; restore the silent bound.
+  - **Low-Medium:** the F6 class must come from via_tor (the legacy hidden-service setup).
+  - **Low:** a lost wakeup; the pong margin against kernel/Tor buffering.
+- RT4's prototype for the slot rule was blocked by the permission system. It did not ask the Lead to run it; the P2P agent implements it through the normal path.
+- **Process:** TM2-P2P has gone through four RT rounds, each finding fewer and smaller issues, but the new mechanisms keep adding surface. After this round:
+  - a focused RT5;
+  - if it finds only Low items, merge, and record the residuals as P1-public-testnet items rather than iterating further.
