@@ -602,9 +602,16 @@ fn lock_manager(chain: &Mutex<ChainManager>) -> MutexGuard<'_, ChainManager> {
 
 /// Logs `why` and exits with [`POISONED_EXIT_CODE`].
 fn fatal(why: &str) -> ! {
+    use std::io::Write as _;
     log::error!("{why}; stopping (restart to recover: the block store is replayed)");
     // Also without a logger (tests, embedders): the exit must not be silent.
-    eprintln!("blacksilk-chain: {why}; exiting with status {POISONED_EXIT_CODE}");
+    // Written to the process's stderr itself, not with `eprintln!`: the test
+    // harness captures `eprintln!` of a test's threads, and the exit below
+    // discards that capture unprinted (INV-70).
+    let _ = writeln!(
+        std::io::stderr(),
+        "blacksilk-chain: {why}; exiting with status {POISONED_EXIT_CODE}"
+    );
     std::process::exit(POISONED_EXIT_CODE)
 }
 
