@@ -95,7 +95,7 @@ fn px(fee: u64, bridge_in: u64, bridge_out: u64) -> Transaction {
 /// Builds blocks 1.. on genesis; block `i` holds `pxs[i]` and a coinbase
 /// paying its reward plus its fees plus `overpay[i]`.
 fn chain(p: &ChainParams, pxs: Vec<Vec<Transaction>>, overpay: &[u64]) -> Vec<Block> {
-    let mut rng = ChaCha20Rng::seed_from_u64(40_9);
+    let mut rng = ChaCha20Rng::seed_from_u64(409);
     let (keys, _) = WalletKeys::generate(&mut rng);
     let mut prev = p.genesis_id();
     let mut generated = 0;

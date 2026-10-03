@@ -283,11 +283,13 @@ impl Default for TxTracker {
 
 impl TxTracker {
     /// Ids tracked (per network class).
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn len(&self) -> usize {
         self.txs.len()
     }
 
     /// Requests outstanding, over all ids.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn requests(&self) -> usize {
         self.peers.values().map(|p| p.in_flight).sum()
     }
