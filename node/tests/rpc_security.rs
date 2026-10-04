@@ -40,7 +40,7 @@ struct CountingPow {
 }
 
 impl PowFunction for CountingPow {
-    fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if let Some(c) = self.chain.get() {
             if c.try_lock().is_err() {

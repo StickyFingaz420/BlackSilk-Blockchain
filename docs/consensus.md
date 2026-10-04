@@ -129,7 +129,9 @@ the hash of the full 172-byte header, nonce included.
   hashes the whole blob, so a BlackSilk pool needs only a RandomX algorithm entry
   with the BlackSilk salt, no miner fork. xmrig iterates bytes 39..43 (the nonce's low
   32 bits); a pool server owns bytes 43..47 (the high 32 bits) as extranonce, so
-  workers never overlap. Solo mining (`blacksilk-miner`) iterates the whole `u64`.
+  workers never overlap: the pool rebuilds the header's nonce as
+  `(extranonce << 32) | xmrig_nonce`. Solo mining (`blacksilk-miner`) iterates the
+  whole `u64`.
 - **Security.** The blob has a fixed length and is derived by every node from the
   header; it is never transmitted inside blocks, so there is no padding or optional
   field a miner could vary to get equal-work duplicates (the Tari RandomX-T

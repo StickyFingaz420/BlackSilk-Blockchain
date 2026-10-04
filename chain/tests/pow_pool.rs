@@ -30,7 +30,7 @@ fn cheap(seed: &Hash, blob: &[u8]) -> Hash {
 }
 
 impl PowFunction for Recorder {
-    fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
+    fn pow_hash(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.threads
             .lock()
@@ -145,7 +145,7 @@ impl Rendezvous {
 }
 
 impl PowFunction for Rendezvous {
-    fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
+    fn pow_hash(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
         self.threads
             .lock()
             .unwrap()
@@ -190,7 +190,7 @@ thread_local! {
 
 struct Exiting(Rendezvous);
 impl PowFunction for Exiting {
-    fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
+    fn pow_hash(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
         if std::thread::current().name() == Some("pow-helper") {
             GUARD.with(|g| {
                 g.get_or_init(|| ExitGuard);

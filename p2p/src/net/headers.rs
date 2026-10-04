@@ -1050,7 +1050,7 @@ mod tests {
     async fn idle_network(edit: impl FnOnce(&mut crate::NetConfig)) -> crate::Network {
         struct ZeroPow;
         impl blacksilk_consensus::PowFunction for ZeroPow {
-            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
                 [0; 32]
             }
         }
@@ -1398,7 +1398,7 @@ mod tests {
         // Two headers on the genesis, one per request.
         struct ZeroPow;
         impl blacksilk_consensus::PowFunction for ZeroPow {
-            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
                 [0; 32]
             }
         }
@@ -1462,7 +1462,7 @@ mod tests {
         // A header that breaks a rule (difficulty), on the genesis.
         struct ZeroPow;
         impl blacksilk_consensus::PowFunction for ZeroPow {
-            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
                 [0; 32]
             }
         }
@@ -1594,7 +1594,7 @@ mod tests {
         };
         struct ZeroPow;
         impl blacksilk_consensus::PowFunction for ZeroPow {
-            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
                 [0; 32]
             }
         }

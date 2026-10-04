@@ -25,7 +25,8 @@ pub enum TemplateError {
     Hex(&'static str),
     Tx(usize),
     Coinbase,
-    /// The output peaks do not match the output count.
+    /// The output peaks do not match the output count, or the count
+    /// overflows with this block's outputs.
     Outputs,
 }
 
@@ -66,7 +67,11 @@ pub fn build_block<R: RngCore + CryptoRng>(
     let ids: Vec<Hash> = txs.iter().map(Transaction::hash).collect();
     // B-OMR: the parent's output range with this block's outputs, coinbase
     // first.
-    outputs.append_block(template.height, &txs);
+    // Template data is untrusted: an overflowing count is an error, not a
+    // panic (RT-OMR L3).
+    if !outputs.try_append_block(template.height, &txs) {
+        return Err(TemplateError::Outputs);
+    }
     let header = BlockHeader {
         // The version of the epoch at the template's height (the node's
         // schedule), not a compiled constant.
@@ -711,6 +716,40 @@ mod tests {
     use super::*;
     use blacksilk_consensus::{ChainParams, HeaderChain, RandomXPow, HEADER_VERSION};
     use std::sync::Arc;
+
+    /// Node-supplied template data never panics the miner (RT-OMR L3): peaks
+    /// that do not match the count, and a count at `u64::MAX` that the
+    /// block's coinbase would overflow, are template errors.
+    #[test]
+    fn a_bad_output_range_in_a_template_is_an_error_not_a_panic() {
+        use blacksilk_crypto::keys::{SubaddressIndex, WalletKeys};
+        use rand_chacha::rand_core::SeedableRng;
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(3);
+        let (keys, _) = WalletKeys::generate(&mut rng);
+        let payout = keys.address(SubaddressIndex::PRIMARY);
+        let t = |count: u64, peaks: usize| rpc::Template {
+            height: 1,
+            prev_id: "00".repeat(32),
+            difficulty: 1,
+            seed_id: "00".repeat(32),
+            min_timestamp: 0,
+            version: 1,
+            reward: 10,
+            fees: 0,
+            txs: vec![],
+            output_count: count,
+            output_peaks: vec!["11".repeat(32); peaks],
+            px_root: "00".repeat(32),
+        };
+        for (count, peaks) in [(u64::MAX, 64), (3, 1), (0, 1)] {
+            assert!(matches!(
+                build_block(&t(count, peaks), &payout, &[1; 32], 0, &mut rng),
+                Err(TemplateError::Outputs)
+            ));
+        }
+        let b = build_block(&t(3, 2), &payout, &[1; 32], 0, &mut rng).unwrap();
+        assert_eq!(b.header.output_count, 4);
+    }
 
     #[test]
     fn found_nonce_verifies_with_consensus() {

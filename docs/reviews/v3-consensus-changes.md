@@ -3642,9 +3642,11 @@ restore height). Internal engineering work, not an audit.
     indexes, and the outputs fetched below the restore height are checked, with the
     scanned ones, against the synced header's `output_count` and `output_root`: the
     node's output list is no longer trusted (RT-D1b N2; 38 W11 for the index). The PX
-    backfill's root is checked against the base block's `px_root`, so a shortened or
-    altered commitment list is refused at once; the 100-block wait and the W3-39b end
-    check become redundant and stay as defence in depth.
+    backfill's window roots are checked against the headers' `px_root`, so a shortened,
+    altered or relabelled commitment list is refused at once. The tree is bound to the
+    chain at once only when the base header was checked from the genesis with proof of
+    work; otherwise the 100-block wait, the backfill-tail check and the rebuild on a
+    refused block still apply (RT-OMR2 M1, px.md §11.4).
 11. **Mining.** `/template` carries the parent's range (the count and at most 64 peaks)
     and the block's `px_root`. The reference miner appends its coinbase's outputs, then
     the template transactions', and sets both fields; third-party miners must do the
@@ -3688,8 +3690,9 @@ restore height). Internal engineering work, not an audit.
       wallets check whole lists against one header;
     - the decoy distribution (`/distribution`) stays the node's word above what the
       wallet indexes (the wallet-distribution work, 38 D1);
-    - the node keeps about 64 bytes per output in memory for the range, next to the
-      output records.
+    - the node keeps about 64 bytes per output in memory for the range (every MMR
+      node), next to the output records, rebuilt on every start by the replay of the
+      block store.
 
 ### The mining blob (same revision)
 
@@ -3724,10 +3727,17 @@ make the proof-of-work input a fixed 47-byte mining blob, in this one revision.
    blob), miner (`search` takes the network id and patches bytes 39..47), wallet
    (header check), labnet `rx_verify`, node fingerprint (`consensus.POW_BLOB_SIZE`,
    `POW_NONCE_OFFSET`, `POW_BLOB_TAG`, `rules.sample.pow_blob`).
-7. **Compatibility.** Every stored PoW hash of an earlier build is for another input:
-   stores of earlier builds are already refused (new genesis ids). A pool's stratum
-   server must build the blob; a block template (`/template`) is unchanged.
-8. **Tests.** `consensus/src/header.rs` (the blob's layout, the hash commits to every
+7. **Compatibility.** Every stored PoW hash of an earlier build is for another input
+   (the header instead of the blob), and the store format version is unchanged: such
+   stores are refused by their genesis id, which differs on every network (the store
+   binds its network and genesis id, `StoreIdentity`). A data directory of the
+   intermediate build `650e5fe` (172-byte header, header as PoW input) has the same
+   genesis ids and must not be reused: delete it (labnet and development stores only;
+   none was published). A pool's stratum server must build the blob; a block template
+   (`/template`) is unchanged.
+8. **Typed input.** `PowFunction::pow_hash` takes a `&PowBlob` (`[u8; 47]`), so a call
+   site that passes header bytes does not compile (RT-OMR2 hardening).
+9. **Tests.** `consensus/src/header.rs` (the blob's layout, the hash commits to every
    field but the nonce and to the network, the definition written out),
    `tx/src/state.rs` (the consensus crate's tag equals the crypto crate's `H32`),
    `consensus/tests/golden.rs` (the blob of the sample header, from
@@ -3735,3 +3745,29 @@ make the proof-of-work input a fixed 47-byte mining blob, in this one revision.
    the blob), the miner's `found_nonce_verifies_with_consensus`, and every test
    double that reads the nonce from the PoW input (byte 39).
 
+
+### Port onto the main line (d6c04ec) and the red-team follow-ups (RT-OMR, RT-OMR2)
+
+- **Order.** `REVISIONS` lists RX-SALT then this record's
+  `OMR:header-output-mmr-px-root-and-mining-blob` (`rules.revision[15]`,
+  `rules.revision.len` 16).
+- **Pins, recomputed once for the combined state** (RX-SALT and this record;
+  `node/tests/deploy_configs.rs`, `[consensus, rules, identity]`): testnet `e1f86036…`,
+  `41eb61ba…`, `3ad61ec9…`; regtest `35ba46ef…`, `c88c3f9a…`, `93d0d09d…`; mainnet
+  `51f1d22f…`, `3b6833cb…`, `4e8f80d6…`. Against the pre-port values the entry-level
+  difference is exactly RX-SALT's (`randomx.variant`, `randomx.ARGON_SALT`,
+  `randomx.KAT.hash`, the revision). `px/tests/consensus_fingerprint.rs` stays
+  `79d589d8…` (no RandomX entry there). Genesis ids and the tools/genesis known
+  answer are as above (the salt is not in the header).
+- **RandomX known answer on a mining blob** (BlackSilk salt):
+  `consensus/tests/golden.rs::randomx_known_answer_on_a_mining_blob`, the sample
+  header's regtest blob keyed by the regtest genesis id, `410e353c…`. Computed by this
+  implementation (no independent RandomX with this salt is available here).
+- **Typed PoW input** (RT-OMR2 hardening): `PowFunction::pow_hash` takes `&PowBlob`.
+- **L3:** template data never panics the miner: `OutputFrontier::try_append_block`
+  refuses a count that would pass `u64::MAX` (`TemplateError::Outputs`).
+- **L2:** `tools/vectors/output_mmr.py --check` also compares
+  `consensus/tests/data/header_vectors.txt` (layout, ids, mining blobs, genesis ids),
+  which `golden.rs::header_vectors_match_the_independent_file` checks line by line.
+- **M1 (wallet):** the PX backfill is confirmed only under the header check (above,
+  item 10 as amended in px.md §11.4).

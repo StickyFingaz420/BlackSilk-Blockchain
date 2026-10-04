@@ -60,7 +60,7 @@ fn note_helper() {
 
 struct Chaos;
 impl PowFunction for Chaos {
-    fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
+    fn pow_hash(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
         note_helper();
         match blob[8] {
             0xEE => panic!("chaos panic"),
@@ -198,7 +198,7 @@ fn second_panic_payload_with_panicking_drop_hangs_the_caller() {
     }
     struct Late(AtomicUsize);
     impl PowFunction for Late {
-        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+        fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
             // Both threads take one job each, then the helper panics last.
             self.0.fetch_add(1, Ordering::SeqCst);
             let t = std::time::Instant::now();

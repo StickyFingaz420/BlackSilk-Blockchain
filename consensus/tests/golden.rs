@@ -185,7 +185,7 @@ fn median_time_past_golden() {
 struct RecordingPow(Mutex<Vec<Hash>>);
 
 impl PowFunction for RecordingPow {
-    fn pow_hash(&self, seed: &Hash, _header: &[u8]) -> Hash {
+    fn pow_hash(&self, seed: &Hash, _header: &blacksilk_consensus::PowBlob) -> Hash {
         self.0.lock().unwrap().push(*seed);
         [0; 32] // satisfies every difficulty ≥ 1
     }
@@ -486,4 +486,83 @@ fn check_hash_boundaries_golden() {
     }
     assert!(check_hash(&[0xff; 32], 1));
     assert!(!check_hash(&[0; 32], 0), "difficulty 0 is invalid");
+}
+
+// --------------------------------------------- independent header vectors
+
+/// Every line of `consensus/tests/data/header_vectors.txt`, written by the
+/// independent `tools/vectors/output_mmr.py` (`--check` regenerates and
+/// compares it), against the Rust implementation: the 172-byte layout, block
+/// ids, mining blobs, the empty PX root and the genesis ids (RT-OMR L2).
+#[test]
+fn header_vectors_match_the_independent_file() {
+    let text = include_str!("data/header_vectors.txt");
+    let sample = BlockHeader {
+        version: 1,
+        height: 42,
+        prev_id: [7; 32],
+        timestamp: 1_800_000_000,
+        difficulty: 12_345,
+        tx_root: [9; 32],
+        output_count: 77,
+        output_root: [10; 32],
+        px_root: [11; 32],
+        nonce: 0xDEAD_BEEF,
+    };
+    let mut kat = blacksilk_consensus::genesis::GenesisSpec {
+        network_id: blacksilk_consensus::genesis::TEST_VECTOR_NETWORK_ID,
+        timestamp: 1_790_000_000,
+        difficulty: 100,
+        needs_beacon: false,
+        beacon: None,
+    }
+    .header(1);
+    kat.nonce = 0x220A_7227_0A81_8150;
+    let mut seen = 0;
+    for line in text.lines().filter(|l| !l.starts_with('#')) {
+        let (name, value) = line.split_once(": ").expect("`name: hex` line");
+        let rust = match name {
+            "sample header" => hex(&sample.to_bytes()),
+            "sample id (0x00DEB06E)" => hex(&sample.id(0x00DE_B06E)),
+            "sample id (0x0001D673)" => hex(&sample.id(0x0001_D673)),
+            "sample pow_blob (0x00deb06e)" => hex(&sample.pow_blob(0x00DE_B06E)),
+            "sample pow_blob (0xffffff00)" => hex(&sample.pow_blob(0xFFFF_FF00)),
+            "empty PX root (header encoding)" => hex(&blacksilk_consensus::genesis::EMPTY_PX_ROOT),
+            "genesis id testnet" => hex(&ChainParams::testnet().genesis_id()),
+            "genesis id regtest" => hex(&ChainParams::regtest().genesis_id()),
+            "genesis id mainnet" => hex(&ChainParams::mainnet().genesis_id()),
+            "genesis id tools/genesis KAT" => hex(&kat.id(0xFFFF_FF00)),
+            other => panic!("unknown vector {other}"),
+        };
+        assert_eq!(rust, value, "{name}");
+        seen += 1;
+    }
+    assert_eq!(seen, 10);
+}
+
+/// A RandomX known answer on a mining blob, with BlackSilk's salt
+/// (`"BlackSilk/RandomX/v1"`, #rx-salt): the sample header's blob on regtest,
+/// keyed by the regtest genesis id (the key of blocks 1..=2112). Computed by
+/// this implementation (no independent RandomX with this salt exists here);
+/// it pins the whole PoW input path: blob layout, mining hash, salt.
+#[test]
+fn randomx_known_answer_on_a_mining_blob() {
+    let sample = BlockHeader {
+        version: 1,
+        height: 42,
+        prev_id: [7; 32],
+        timestamp: 1_800_000_000,
+        difficulty: 12_345,
+        tx_root: [9; 32],
+        output_count: 77,
+        output_root: [10; 32],
+        px_root: [11; 32],
+        nonce: 0xDEAD_BEEF,
+    };
+    let p = ChainParams::regtest();
+    let h = blacksilk_randomx::hash_light(&p.genesis_id(), &sample.pow_blob(p.network_id));
+    assert_eq!(
+        hex(&h),
+        "410e353c0ecbcea5389d97931ed60ce2a4382c30619de617728a4d858e2d97c1"
+    );
 }

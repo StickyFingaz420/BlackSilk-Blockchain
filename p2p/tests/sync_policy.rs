@@ -25,7 +25,7 @@ const BAD_NONCE: u64 = 0xBAD0_BAD0;
 #[derive(Default)]
 struct SeedRecordingPow(Mutex<Vec<Hash>>);
 impl PowFunction for SeedRecordingPow {
-    fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
+    fn pow_hash(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
         self.0.lock().unwrap().push(*seed);
         let nonce = u64::from_le_bytes(
             blob[POW_NONCE_OFFSET..POW_NONCE_OFFSET + 8]
@@ -166,9 +166,13 @@ struct SlowJunkPow {
     junk: AtomicU64,
 }
 impl PowFunction for SlowJunkPow {
-    fn pow_hash(&self, _: &Hash, blob: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
         std::thread::sleep(self.delay);
-        let nonce = u64::from_le_bytes(blob[NONCE_OFFSET..NONCE_OFFSET + 8].try_into().unwrap());
+        let nonce = u64::from_le_bytes(
+            blob[POW_NONCE_OFFSET..POW_NONCE_OFFSET + 8]
+                .try_into()
+                .unwrap(),
+        );
         if nonce >> 48 == JUNK_TAG {
             self.junk.fetch_add(1, Relaxed);
             [0xff; 32]
@@ -198,6 +202,7 @@ fn junk_prototype(hc: &HeaderChain) -> BlockHeader {
         difficulty: t.difficulty,
         tx_root: [0; 32],
         nonce: JUNK_TAG << 48,
+        ..Default::default()
     }
 }
 
@@ -227,6 +232,7 @@ fn steep_prefix() -> (Vec<BlockHeader>, HeaderChain) {
             difficulty: t.difficulty,
             tx_root: [0; 32],
             nonce: 0,
+            ..Default::default()
         };
         g.accept(h, u64::MAX / 2).unwrap();
         out.push(h);
@@ -310,6 +316,7 @@ fn next_valid(g: &mut HeaderChain, k: u8) -> (BlockHeader, Hash) {
         difficulty: t.difficulty,
         tx_root: [k; 32],
         nonce: k as u64,
+        ..Default::default()
     };
     let id = g.accept(h, u64::MAX / 2).unwrap().id;
     (h, id)

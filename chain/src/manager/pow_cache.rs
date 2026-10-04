@@ -10,7 +10,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
 /// PoW wrapper that remembers every computed hash, keyed by the RandomX key
-/// (seed block id) **and** the header bytes. It lets the node store PoW hashes
+/// (seed block id) **and** the mining blob. It lets the node store PoW hashes
 /// with blocks and skip recomputing RandomX when replaying its own store.
 ///
 /// The seed is part of the key so that a hash computed under one seed (for
@@ -35,30 +35,28 @@ struct Hashes {
 }
 
 impl Hashes {
-    fn key(seed: &Hash, header_bytes: &[u8]) -> Hash {
+    fn key(seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
         H::new()
             .chain(b"BlackSilk/pow-cache/v2")
             .chain(seed)
-            .chain(header_bytes)
+            .chain(blob)
             .finish()
     }
 
-    fn lookup(&self, seed: &Hash, header_bytes: &[u8]) -> Option<Hash> {
-        lock(&self.known)
-            .get(&Self::key(seed, header_bytes))
-            .copied()
+    fn lookup(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Option<Hash> {
+        lock(&self.known).get(&Self::key(seed, blob)).copied()
     }
 
-    fn preload(&self, seed: &Hash, header_bytes: &[u8], pow_hash: Hash) {
-        lock(&self.known).insert(Self::key(seed, header_bytes), pow_hash);
+    fn preload(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob, pow_hash: Hash) {
+        lock(&self.known).insert(Self::key(seed, blob), pow_hash);
     }
 
-    fn pow_hash(&self, seed: &Hash, header_bytes: &[u8]) -> Hash {
-        if let Some(h) = self.lookup(seed, header_bytes) {
+    fn pow_hash(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
+        if let Some(h) = self.lookup(seed, blob) {
             return h;
         }
-        let h = self.inner.pow_hash(seed, header_bytes);
-        self.preload(seed, header_bytes, h);
+        let h = self.inner.pow_hash(seed, blob);
+        self.preload(seed, blob, h);
         h
     }
 }
@@ -81,26 +79,26 @@ impl CachedPow {
         }
     }
 
-    /// The cached PoW hash of `header_bytes` under the RandomX key `seed`.
-    pub fn lookup(&self, seed: &Hash, header_bytes: &[u8]) -> Option<Hash> {
-        self.hashes.lookup(seed, header_bytes)
+    /// The cached PoW hash of `blob` under the RandomX key `seed`.
+    pub fn lookup(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Option<Hash> {
+        self.hashes.lookup(seed, blob)
     }
 
-    /// Trusts `pow_hash` for `header_bytes` under `seed` (only for blocks from
+    /// Trusts `pow_hash` for `blob` under `seed` (only for blocks from
     /// the node's own store, with the seed derived from the stored parent).
-    pub fn preload(&self, seed: &Hash, header_bytes: &[u8], pow_hash: Hash) {
-        self.hashes.preload(seed, header_bytes, pow_hash)
+    pub fn preload(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob, pow_hash: Hash) {
+        self.hashes.preload(seed, blob, pow_hash)
     }
 
-    /// The PoW function's own hash of `header_bytes` under `seed`, computed
+    /// The PoW function's own hash of `blob` under `seed`, computed
     /// now: never the cached value, and not cached (the start-up check of
     /// the stored hashes compares the two, `ChainManager::open_checked`).
-    pub fn recompute(&self, seed: &Hash, header_bytes: &[u8]) -> Hash {
-        self.hashes.inner.pow_hash(seed, header_bytes)
+    pub fn recompute(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
+        self.hashes.inner.pow_hash(seed, blob)
     }
 }
 
-/// One PoW computation: RandomX key (seed block id) and header bytes.
+/// One PoW computation: RandomX key (seed block id) and mining blob.
 pub type PowJob = (Hash, [u8; blacksilk_consensus::POW_BLOB_SIZE]);
 
 /// Most helper threads a pool starts. The p2p header worker, the only caller
@@ -364,8 +362,8 @@ impl Drop for HashPool {
 }
 
 impl PowFunction for CachedPow {
-    fn pow_hash(&self, seed: &Hash, header_bytes: &[u8]) -> Hash {
-        self.hashes.pow_hash(seed, header_bytes)
+    fn pow_hash(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
+        self.hashes.pow_hash(seed, blob)
     }
 
     /// Forwards the hot keys to the RandomX layer, which pins and prebuilds

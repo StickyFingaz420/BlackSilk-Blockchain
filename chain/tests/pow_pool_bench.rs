@@ -20,7 +20,7 @@ use std::time::Instant;
 /// A cheap stand-in proof of work (one Blake2b), as the p2p tests use.
 struct CheapPow;
 impl PowFunction for CheapPow {
-    fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
+    fn pow_hash(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
         H::new().chain(seed).chain(blob).finish()
     }
 }

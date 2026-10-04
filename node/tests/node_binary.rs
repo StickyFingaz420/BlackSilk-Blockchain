@@ -338,7 +338,7 @@ fn allowed_hosts_are_configurable() {
 /// it replays in the binary without RandomX work.
 struct ZeroPow;
 impl blacksilk_consensus::PowFunction for ZeroPow {
-    fn pow_hash(&self, _: &[u8; 32], _: &[u8]) -> [u8; 32] {
+    fn pow_hash(&self, _: &[u8; 32], _: &blacksilk_consensus::PowBlob) -> [u8; 32] {
         [0; 32]
     }
 }

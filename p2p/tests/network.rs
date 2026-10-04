@@ -159,7 +159,7 @@ const BAD_NONCE: u64 = 0xBAD0_BAD0;
 #[derive(Default)]
 struct CountingPow(std::sync::atomic::AtomicUsize);
 impl PowFunction for CountingPow {
-    fn pow_hash(&self, _: &Hash, blob: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
         let nonce = u64::from_le_bytes(
             blob[blacksilk_consensus::POW_NONCE_OFFSET..blacksilk_consensus::POW_NONCE_OFFSET + 8]
                 .try_into()
@@ -177,7 +177,7 @@ impl PowFunction for CountingPow {
 /// `CountingPow` that also takes `ms` milliseconds per hash.
 struct SlowCountingPow(u64, CountingPow);
 impl PowFunction for SlowCountingPow {
-    fn pow_hash(&self, key: &Hash, blob: &[u8]) -> Hash {
+    fn pow_hash(&self, key: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
         std::thread::sleep(Duration::from_millis(self.0));
         self.1.pow_hash(key, blob)
     }
@@ -186,7 +186,7 @@ impl PowFunction for SlowCountingPow {
 /// A slow PoW function (every hash takes `ms` milliseconds; all pass).
 struct SlowPow(u64);
 impl PowFunction for SlowPow {
-    fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
         std::thread::sleep(Duration::from_millis(self.0));
         [0; 32]
     }
@@ -1342,7 +1342,7 @@ async fn an_unconnected_batch_is_scored_and_an_unconnected_announcement_is_not()
 #[derive(Default)]
 struct CountAllPow(std::sync::atomic::AtomicUsize);
 impl PowFunction for CountAllPow {
-    fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
+    fn pow_hash(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
         self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         CountingPow::default().pow_hash(seed, blob)
     }
@@ -1818,7 +1818,7 @@ async fn a_peer_that_leaves_before_its_bad_batch_is_verified_is_still_charged() 
 async fn a_departed_senders_batch_stops_at_the_next_chunk() {
     struct Slow(std::sync::atomic::AtomicUsize);
     impl PowFunction for Slow {
-        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+        fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
             std::thread::sleep(Duration::from_millis(300));
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             [0; 32]
@@ -1860,7 +1860,7 @@ async fn header_batches_are_hashed_off_the_chain_actor() {
         on_actor: std::sync::atomic::AtomicUsize,
     }
     impl PowFunction for Where {
-        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+        fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
             use std::sync::atomic::Ordering::SeqCst;
             self.total.fetch_add(1, SeqCst);
             if std::thread::current().name() == Some("chain-actor") {
@@ -4531,7 +4531,7 @@ async fn a_panic_in_the_header_pow_jobs_stops_the_node() {
     if std::env::var_os(CHILD).is_some() {
         struct PanicPow;
         impl PowFunction for PanicPow {
-            fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+            fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
                 panic!("injected PoW panic");
             }
         }

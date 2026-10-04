@@ -75,7 +75,7 @@ struct ZeroPow {
     hot: std::sync::Mutex<Vec<Vec<Hash>>>,
 }
 impl PowFunction for ZeroPow {
-    fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
         self.calls.fetch_add(1, Ordering::SeqCst);
         [0; 32]
     }
@@ -1619,7 +1619,7 @@ impl Recheck {
 }
 
 impl PowFunction for Recheck {
-    fn pow_hash(&self, _: &Hash, header: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, header: &blacksilk_consensus::PowBlob) -> Hash {
         let height = blob_height(header);
         self.heights.lock().unwrap().push(height);
         if Some(height) == self.forged {
@@ -1755,7 +1755,7 @@ struct SeedPow {
 }
 
 impl PowFunction for SeedPow {
-    fn pow_hash(&self, seed: &Hash, header: &[u8]) -> Hash {
+    fn pow_hash(&self, seed: &Hash, header: &blacksilk_consensus::PowBlob) -> Hash {
         let height = blob_height(header);
         self.seen.lock().unwrap().push((height, *seed));
         let mut out = [0u8; 32];

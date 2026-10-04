@@ -683,7 +683,7 @@ mod tests {
     /// blocks. Test-only; production code always uses `RandomXPow`.
     struct TestPow;
     impl PowFunction for TestPow {
-        fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
+        fn pow_hash(&self, seed: &Hash, blob: &crate::PowBlob) -> Hash {
             H::new().chain(seed).chain(blob).finish()
         }
     }
@@ -1335,7 +1335,7 @@ mod tests {
     /// Counts proof-of-work evaluations.
     struct CountingPow(std::sync::atomic::AtomicUsize);
     impl PowFunction for CountingPow {
-        fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
+        fn pow_hash(&self, seed: &Hash, blob: &crate::PowBlob) -> Hash {
             self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             TestPow.pow_hash(seed, blob)
         }

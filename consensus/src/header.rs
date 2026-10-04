@@ -41,6 +41,10 @@ pub const NONCE_OFFSET: usize = 164;
 
 /// Length of the proof-of-work input, the mining blob (docs/consensus.md §3).
 pub const POW_BLOB_SIZE: usize = 47;
+/// The proof-of-work input (`BlockHeader::pow_blob`): the only input a
+/// [`crate::PowFunction`] takes, so no caller can hash header bytes instead.
+pub type PowBlob = [u8; POW_BLOB_SIZE];
+
 /// The constant first bytes of the mining blob.
 pub const POW_BLOB_TAG: &[u8; 7] = b"BSilk/1";
 /// Offset of the nonce (u64, little-endian) within the mining blob: byte 39,
@@ -52,7 +56,8 @@ pub const POW_NONCE_OFFSET: usize = 39;
 pub const MINING_HASH_TAG: &str = "mining-hash";
 
 impl BlockHeader {
-    /// Canonical 172-byte encoding. This is also the RandomX input.
+    /// Canonical 172-byte encoding (the block id hashes it; the RandomX input
+    /// is the mining blob, [`Self::pow_blob`]).
     pub fn to_bytes(&self) -> [u8; HEADER_SIZE] {
         let mut b = [0u8; HEADER_SIZE];
         b[0..4].copy_from_slice(&self.version.to_le_bytes());
@@ -98,7 +103,7 @@ impl BlockHeader {
     /// The proof-of-work input (docs/consensus.md §3): `"BSilk/1" ‖
     /// mining_hash ‖ LE64(nonce)`, 47 bytes. Derived by every node from the
     /// header, never transmitted.
-    pub fn pow_blob(&self, network_id: u32) -> [u8; POW_BLOB_SIZE] {
+    pub fn pow_blob(&self, network_id: u32) -> PowBlob {
         let mut b = [0u8; POW_BLOB_SIZE];
         b[..POW_NONCE_OFFSET - 32].copy_from_slice(POW_BLOB_TAG);
         b[POW_NONCE_OFFSET - 32..POW_NONCE_OFFSET].copy_from_slice(&self.mining_hash(network_id));

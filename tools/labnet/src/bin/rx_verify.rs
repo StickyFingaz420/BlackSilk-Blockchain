@@ -162,8 +162,8 @@ struct Precomputed {
 }
 
 impl PowFunction for Precomputed {
-    fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
-        let key: [u8; POW_BLOB_SIZE] = blob.try_into().expect("mining blob size");
+    fn pow_hash(&self, seed: &Hash, blob: &blacksilk_consensus::PowBlob) -> Hash {
+        let key: [u8; POW_BLOB_SIZE] = *blob;
         match self.hashes.get(&key) {
             Some((_, s, h)) if s == seed => *h,
             other => {

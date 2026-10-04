@@ -130,6 +130,19 @@ impl OutputFrontier {
         }
     }
 
+    /// [`Self::append_block`] for a frontier from untrusted data (a
+    /// template): `false`, changing nothing, if the count would pass
+    /// `u64::MAX` (a real chain never gets near it).
+    #[must_use]
+    pub fn try_append_block(&mut self, height: u64, txs: &[Transaction]) -> bool {
+        let n: u64 = txs.iter().map(|t| t.output_keys().len() as u64).sum();
+        if self.count.checked_add(n).is_none() {
+            return false;
+        }
+        self.append_block(height, txs);
+        true
+    }
+
     /// `root(count)`.
     pub fn root(&self) -> Hash {
         bag(self.count, &self.peaks)
@@ -365,6 +378,36 @@ mod tests {
             OutputFrontier::from_parts(0, vec![]),
             Some(OutputFrontier::new())
         );
+    }
+
+    /// A frontier from untrusted parts near `u64::MAX` refuses a block that
+    /// would overflow its count instead of panicking (RT-OMR L3).
+    #[test]
+    fn try_append_refuses_an_overflowing_count() {
+        use crate::builder::{build_coinbase, Payment};
+        use blacksilk_crypto::keys::{SubaddressIndex, WalletKeys};
+        use rand_chacha::rand_core::SeedableRng;
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(5);
+        let (keys, _) = WalletKeys::generate(&mut rng);
+        let cb = build_coinbase(
+            1,
+            &[Payment {
+                address: keys.address(SubaddressIndex::PRIMARY),
+                amount: 1,
+            }],
+            &keys.hedge_secret(),
+            &mut rng,
+        )
+        .unwrap();
+        let txs = [Transaction::Coinbase(cb)];
+        let max = u64::MAX;
+        let mut f = OutputFrontier::from_parts(max, vec![[1; 32]; 64]).unwrap();
+        let before = f.clone();
+        assert!(!f.try_append_block(1, &txs));
+        assert_eq!(f, before);
+        let mut ok = OutputFrontier::new();
+        assert!(ok.try_append_block(1, &txs));
+        assert_eq!(ok.count(), 1);
     }
 
     #[test]

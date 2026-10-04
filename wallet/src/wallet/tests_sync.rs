@@ -289,7 +289,7 @@ struct BadPow {
 }
 
 impl PowFunction for BadPow {
-    fn pow_hash(&self, _: &Hash, header: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, header: &blacksilk_consensus::PowBlob) -> Hash {
         self.calls
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.bad.lock().unwrap().iter().any(|b| b[..] == *header) {
@@ -643,7 +643,7 @@ fn header_feed_cost_for_3000_headers() {
     use std::sync::atomic::{AtomicU64, Ordering};
     struct Measured(blacksilk_consensus::RandomXPow, AtomicU64);
     impl PowFunction for Measured {
-        fn pow_hash(&self, seed: &Hash, header: &[u8]) -> Hash {
+        fn pow_hash(&self, seed: &Hash, header: &blacksilk_consensus::PowBlob) -> Hash {
             self.1.fetch_add(1, Ordering::Relaxed);
             let _ = self.0.pow_hash(seed, header);
             [0; 32]
@@ -1097,7 +1097,7 @@ fn dense_tail_pow_720_headers_sequential_and_parallel() {
     use std::sync::atomic::{AtomicU64, Ordering};
     struct Measured(blacksilk_consensus::RandomXPow, AtomicU64);
     impl PowFunction for Measured {
-        fn pow_hash(&self, seed: &Hash, header: &[u8]) -> Hash {
+        fn pow_hash(&self, seed: &Hash, header: &blacksilk_consensus::PowBlob) -> Hash {
             self.1.fetch_add(1, Ordering::Relaxed);
             let _ = self.0.pow_hash(seed, header);
             [0; 32]
@@ -1387,7 +1387,7 @@ fn deferred_proof_of_work_runs_on_helper_threads() {
         waited: std::sync::atomic::AtomicBool,
     }
     impl PowFunction for Threads {
-        fn pow_hash(&self, _: &Hash, _: &[u8]) -> Hash {
+        fn pow_hash(&self, _: &Hash, _: &blacksilk_consensus::PowBlob) -> Hash {
             let mut seen = self.seen.lock().unwrap();
             seen.insert(std::thread::current().id());
             self.more.notify_all();
@@ -2299,10 +2299,10 @@ impl NodeApi for Relink<'_> {
 
 /// Proof of work that only the given headers meet: the real chain's, not a
 /// relinked copy's (the regtest `ZeroPow` accepts every header).
-struct KnownPow(std::collections::HashSet<Vec<u8>>);
+struct KnownPow(std::collections::HashSet<blacksilk_consensus::PowBlob>);
 
 impl PowFunction for KnownPow {
-    fn pow_hash(&self, _: &Hash, header: &[u8]) -> Hash {
+    fn pow_hash(&self, _: &Hash, header: &blacksilk_consensus::PowBlob) -> Hash {
         if self.0.contains(header) {
             [0; 32]
         } else {
@@ -2316,7 +2316,7 @@ fn known_pow(chain: &MockChain) -> Arc<dyn PowFunction> {
         chain
             .blocks
             .iter()
-            .map(|b| b.header.pow_blob(chain.params.network_id).to_vec())
+            .map(|b| b.header.pow_blob(chain.params.network_id))
             .collect(),
     ))
 }
