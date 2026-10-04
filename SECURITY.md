@@ -85,6 +85,9 @@ The rules, checked by the CI job `deny` on every push and weekly:
   - Making `gates-trusted` and ci.yml's `gates` required status checks, with branch
     protection on rebuild/core and main, is a repository setting for the owner. It
     is not configured by this repository.
+  - Push access to rebuild/core equals trust: whatever lands there becomes the
+    trusted gate. The control is branch protection with required pull-request
+    review, which the owner sets.
 
   What the identity check (`tools/tpgate`) cannot see:
   - cargo makes any path crate under a workspace root a member automatically. A

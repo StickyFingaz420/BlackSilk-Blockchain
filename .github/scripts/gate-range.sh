@@ -38,14 +38,30 @@ gate_commits() {
   fi
 }
 
-# gate_annotate TITLE MESSAGE: a GitHub error annotation in CI (job logs need
-# admin access; annotations do not), plain text elsewhere.
+# NAME TITLE MESSAGE: a GitHub error annotation in CI, plain text elsewhere.
+# Titles and messages carry data from the commit under test (subjects,
+# paths). The title is escaped as a command property and the message as
+# command data, so neither can end the command early or start a new line.
+# RT-TPGATE5: CI runs the gates between `::stop-commands::<token>` and
+# `::<token>::` (GATE_CMD_TOKEN, random per step), so a line of commit data
+# that starts with `::` is never a workflow command; only this function
+# resumes commands, for the one annotation line, and stops them again.
 gate_annotate() {
   if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-    local m="${2//'%'/%25}"
-    m="${m//$'\r'/}"
+    local m="${2//'%'/%25}" t="${1//'%'/%25}"
+    m="${m//$'\r'/%0D}"
     m="${m//$'\n'/%0A}"
-    echo "::error title=$1::$m"
+    t="${t//$'\r'/%0D}"
+    t="${t//$'\n'/%0A}"
+    t="${t//:/%3A}"
+    t="${t//,/%2C}"
+    if [ -n "${GATE_CMD_TOKEN:-}" ]; then
+      printf '::%s::\n::error title=%s::%s\n::stop-commands::%s\n' \
+        "$GATE_CMD_TOKEN" "$t" "$m" "$GATE_CMD_TOKEN"
+      printf '%s\n%s\n' "$1" "$2"
+      return 0
+    fi
+    echo "::error title=$t::$m"
   fi
   printf '%s\n%s\n' "$1" "$2" >&2
 }

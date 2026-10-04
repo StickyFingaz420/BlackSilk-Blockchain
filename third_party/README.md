@@ -44,7 +44,9 @@ here (a directory with a `Cargo.toml`) against what it claims to be:
 - Attributes: `git check-attr diff` must be `set` for every tracked file here except
   `BINARY-ALLOWLIST` entries. The root `.gitattributes` sets `third_party/** diff`,
   so every change shows as text. No `.gitattributes` may lie inside `third_party/`,
-  and every `.gitattributes` is a consensus path.
+  and every `.gitattributes` is a consensus path. `git check-attr -a` may report
+  only `diff` (unset only for allow-listed binaries), `text` and `eol=lf`. No `ident`,
+  `filter`, `working-tree-encoding`, `merge`, `binary` or other `eol`.
 - Stale entries fail: a patch, manifest, pin or binary entry without its file.
 - Dependency identity, by `tools/tpgate` (Rust; its own workspace and `Cargo.lock`,
   using only crates the root lockfile already has; it fails closed on anything it
@@ -102,7 +104,12 @@ here (a directory with a `Cargo.toml`) against what it claims to be:
     has one (bootstrap), the commit's own copies run, with a warning.
   - `.github/workflows/gates-trusted.yml` gives the same verdicts on
     `pull_request_target`, from the base branch's workflow and code, with the pull
-    request checked out only as data.
+    request's head commit checked out only as data. A pull request into
+    rebuild/core or main fails there if the base has no gate.
+  - The verdict steps run between `::stop-commands::<random token>` and
+    `::<token>::`. A line of commit data that starts with `::` (a subject or a path)
+    is therefore never a workflow command; only the gates' own annotations resume
+    commands, for one line each, with the title and message escaped.
   - A commit that changes a gate is judged by the old gate. The new gate applies
     from the next commit.
   - The allow-lists, manifests and patches are read from the commit under test, as
@@ -119,7 +126,10 @@ here (a directory with a `Cargo.toml`) against what it claims to be:
   - allow-list: a wrong pin, a missing or stale patch or manifest, a stale binary
     entry, a binary entry that differs from the published crate or lies in
     `patches/` or `upstream/`;
-  - attributes: a `.gitattributes` inside `third_party/`, a root `-diff` line;
+  - attributes: a `.gitattributes` inside `third_party/`, root `-diff`, `ident`,
+    `eol=crlf`, `filter` and `merge` lines;
+  - annotations: a title and message holding `::` commands stay escaped and
+    bracketed;
   - control bytes in a source file, a patch file or the README;
   - lint: `include_str!` and `include_str !`, a `cfg_attr` path, a `".."`, an added
     `build.rs`, a `build =` key;

@@ -448,10 +448,17 @@ jobs:
           echo "Trusted gate copy from $src in $t"
           echo "TRUSTED=$t" >> "$GITHUB_ENV"
       - name: Consensus-path trailer gate (trusted)
-        run: bash "$TRUSTED/.github/scripts/consensus-gate.sh" "$GATE_BASE" "$GATE_HEAD"
+        run: |
+          # Workflow commands stay off while commit data is printed (RT-TPGATE5).
+          tok="$(openssl rand -hex 16)"; export GATE_CMD_TOKEN="$tok"; echo "::stop-commands::$tok"; rc=0
+          bash "$TRUSTED/.github/scripts/consensus-gate.sh" "$GATE_BASE" "$GATE_HEAD" || rc=$?
+          echo "::$tok::"; exit "$rc"
       - name: Lockfile-diff gate (trusted)
         if: success() || failure()
-        run: bash "$TRUSTED/.github/scripts/lockfile-gate.sh" "$GATE_BASE" "$GATE_HEAD"
+        run: |
+          tok="$(openssl rand -hex 16)"; export GATE_CMD_TOKEN="$tok"; echo "::stop-commands::$tok"; rc=0
+          bash "$TRUSTED/.github/scripts/lockfile-gate.sh" "$GATE_BASE" "$GATE_HEAD" || rc=$?
+          echo "::$tok::"; exit "$rc"
       # RT-PXDET finding 1, RT-TPGATE/2/3/4: third_party/ = published crate +
       # reviewed diff, and every crate resolves to a member, third_party/ or
       # crates.io. Downloads the pristine crates from static.crates.io.
@@ -459,7 +466,10 @@ jobs:
         if: success() || failure()
         env:
           RUSTUP_TOOLCHAIN: "1.98.1"
-        run: bash "$TRUSTED/.github/scripts/third-party-gate.sh"
+        run: |
+          tok="$(openssl rand -hex 16)"; export GATE_CMD_TOKEN="$tok"; echo "::stop-commands::$tok"; rc=0
+          bash "$TRUSTED/.github/scripts/third-party-gate.sh" || rc=$?
+          echo "::$tok::"; exit "$rc"
 
   # Documentation lint (dossier 47 W47-8, decisions "Agent 47"): forbidden
   # claims, retired identifiers, broken relative links and copied digests

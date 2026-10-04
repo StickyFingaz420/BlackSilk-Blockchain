@@ -36,8 +36,10 @@
 #      crate directory (not patches/, upstream/ or the top level) and have
 #      the same sha256 as in the published crate (RT-TPGATE3);
 #   9. `git check-attr diff` is `set` for every tracked file under
-#      third_party/ except BINARY-ALLOWLIST entries, and no .gitattributes
-#      lies inside third_party/ (RT-TPGATE3).
+#      third_party/ except BINARY-ALLOWLIST entries, no other attribute
+#      but text and eol=lf is set on them (no ident, filter,
+#      working-tree-encoding, merge, binary or other eol; RT-TPGATE5), and no
+#      .gitattributes lies inside third_party/ (RT-TPGATE3).
 #   Stale allow-list entries (a patch, manifest, pin or binary entry without
 #   its file) fail.
 #
@@ -107,13 +109,30 @@ die() {
   exit 2
 }
 
-# annotate TITLE MESSAGE: a GitHub error annotation in CI, plain text elsewhere.
+# NAME TITLE MESSAGE: a GitHub error annotation in CI, plain text elsewhere.
+# Titles and messages carry data from the commit under test (subjects,
+# paths). The title is escaped as a command property and the message as
+# command data, so neither can end the command early or start a new line.
+# RT-TPGATE5: CI runs the gates between `::stop-commands::<token>` and
+# `::<token>::` (GATE_CMD_TOKEN, random per step), so a line of commit data
+# that starts with `::` is never a workflow command; only this function
+# resumes commands, for the one annotation line, and stops them again.
 annotate() {
   if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-    local m="${2//'%'/%25}"
-    m="${m//$'\r'/}"
+    local m="${2//'%'/%25}" t="${1//'%'/%25}"
+    m="${m//$'\r'/%0D}"
     m="${m//$'\n'/%0A}"
-    echo "::error title=$1::$m"
+    t="${t//$'\r'/%0D}"
+    t="${t//$'\n'/%0A}"
+    t="${t//:/%3A}"
+    t="${t//,/%2C}"
+    if [ -n "${GATE_CMD_TOKEN:-}" ]; then
+      printf '::%s::\n::error title=%s::%s\n::stop-commands::%s\n' \
+        "$GATE_CMD_TOKEN" "$t" "$m" "$GATE_CMD_TOKEN"
+      printf '%s\n%s\n' "$1" "$2"
+      return 0
+    fi
+    echo "::error title=$t::$m"
   fi
   printf '%s\n%s\n' "$1" "$2" >&2
 }
@@ -484,6 +503,23 @@ check_attributes() {
       "git check-attr diff is not 'set' for: $p (the root .gitattributes must keep 'third_party/** diff')."
     bad=1
   fi
+  # RT-TPGATE5: no other attribute may change how git stores, converts or
+  # shows these files (ident, filter, working-tree-encoding, eol=crlf, merge,
+  # binary, ...). Allowed: diff (set; unset only for BINARY-ALLOWLIST files),
+  # text (set) and eol (lf).
+  p="$(git -C "$root" -c core.quotepath=false ls-files -- third_party |
+    git -C "$root" check-attr --stdin -a |
+    awk -F': ' -v allow="$WORK/binary-allow" '
+      BEGIN { while ((getline l < allow) > 0) a[l] = 1 }
+      $2 == "diff" && ($3 == "set" || ($3 == "unset" && ($1 in a))) { next }
+      $2 == "text" && $3 == "set" { next }
+      $2 == "eol" && $3 == "lf" { next }
+      { print }' | head -3 || true)"
+  if [ -n "$p" ]; then
+    annotate "third-party gate: attribute not allowed on third_party/ files" \
+      "$p (allowed: diff, text, eol=lf)."
+    bad=1
+  fi
   return "$bad"
 }
 
@@ -654,6 +690,24 @@ selftest() {
   tamper_build_key() { sed -i.bak 's/^build = false/build = "b.rs"/' "$1/third_party/$crate/Cargo.toml"; rm -f "$1/third_party/$crate/Cargo.toml.bak"; regen "$1"; }
   tamper_attr_nested() { printf '* -diff\n' > "$1/third_party/.gitattributes"; }
   tamper_attr_root() { printf 'third_party/%s/** -diff\n' "$crate" >> "$1/.gitattributes"; }
+  tamper_attr_ident() { printf 'third_party/** ident\n' >> "$1/.gitattributes"; }
+  tamper_attr_crlf() { printf 'third_party/**/*.rs eol=crlf\n' >> "$1/.gitattributes"; }
+  tamper_attr_filter() { printf 'third_party/** filter=x\n' >> "$1/.gitattributes"; }
+  # A merge driver (working-tree-encoding would make the fixture's git add
+  # itself fail; the check treats every attribute alike).
+  tamper_attr_merge() { printf 'third_party/** merge=union\n' >> "$1/.gitattributes"; }
+  # Command data: an annotation of commit data cannot start a workflow command.
+  annotate_selftest() {
+    local out want
+    out="$(GITHUB_ACTIONS=true GATE_CMD_TOKEN=tok annotate $'a::b, c\n::add-mask::t' $'x\n::add-mask::y' 2>/dev/null | sed -n 1,3p)"
+    want=$'::tok::\n::error title=a%3A%3Ab%2C c%0A%3A%3Aadd-mask%3A%3At::x%0A::add-mask::y\n::stop-commands::tok'
+    if [ "$out" = "$want" ]; then
+      echo "selftest ok   annotation escaping and command bracketing"
+    else
+      echo "selftest FAIL annotation escaping:"; printf '%s\n' "$out" | sed 's/^/  /'; bad=1
+    fi
+  }
+  annotate_selftest
   allow() { printf '%s  selftest\n' "$2" >> "$1/third_party/BINARY-ALLOWLIST"; }
   # The patched source file differs from the published crate.
   tamper_binary_changed() {
@@ -691,6 +745,10 @@ selftest() {
   # RT-TPGATE3: attributes and the binary allow-list.
   run_case attr_nested 1
   run_case attr_root 1
+  run_case attr_ident 1
+  run_case attr_crlf 1
+  run_case attr_filter 1
+  run_case attr_merge 1
   run_case binary_changed 1
   run_case binary_unchanged 0
   run_case binary_patchdir 1

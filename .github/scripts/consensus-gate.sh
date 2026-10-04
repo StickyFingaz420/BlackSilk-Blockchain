@@ -206,6 +206,10 @@ selftest() {
     echo "selftest: an empty reason passed"
     bad=1
   fi
+  # RT-TPGATE5: commit data in an annotation cannot start a workflow command.
+  v="$(GITHUB_ACTIONS=true GATE_CMD_TOKEN=tok gate_annotate $'s::x,\n::add-mask::t' $'m\n::add-mask::y' 2>/dev/null | sed -n 1,3p)"
+  [ "$v" = $'::tok::\n::error title=s%3A%3Ax%2C%0A%3A%3Aadd-mask%3A%3At::m%0A::add-mask::y\n::stop-commands::tok' ] ||
+    { echo "selftest: annotation escaping or command bracketing broken"; bad=1; }
   echo "consensus-gate selftest: $([ "$bad" = 0 ] && echo pass || echo FAIL)"
   return "$bad"
 }
