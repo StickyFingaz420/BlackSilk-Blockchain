@@ -1980,7 +1980,8 @@ the 30 s pong timeout, so the link was cut
   before: its peers arrive from loopback, count as one IP (`max_per_ip` = 2, so **2 onion
   peers at most**) and one misbehaving onion peer gets loopback banned for 24 h, which
   closes the service (N-6). The onion listener exists to remove those limits.
-- I2P is not implemented in v1; the I2P SAM client from the old code is in `legacy/`.
+- I2P is not implemented in v1; the I2P SAM client from the old code was in `legacy/`
+  (removed from the tree on 2026-10-04; see git history up to 57dd81a).
 
 ## 12. Known limitations
 
