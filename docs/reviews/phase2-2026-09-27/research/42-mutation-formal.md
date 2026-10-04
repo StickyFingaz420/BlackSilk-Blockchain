@@ -1,5 +1,7 @@
 # 42 mutation-formal: mutation testing, invariants and formal-tool choice
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the header is 172 bytes (output-root commitments, f5daa0e) and the PoW input is the 47-byte mining blob with the nonce at byte 39 (921fdd5). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
+
 Specialist 42, BlackSilk engineering phase 2, phase 1 (research and briefing). This is internal engineering work, not an audit. Nothing here claims that any component is secure, proven or verified. Where a formal tool is recommended, the claim it supports is "bounded model checking of property P under abstraction A", never "formally verified".
 
 ---

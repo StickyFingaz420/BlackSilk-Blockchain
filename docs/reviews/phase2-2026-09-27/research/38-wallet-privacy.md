@@ -1,5 +1,7 @@
 # 38 wallet-privacy: research dossier (phase 2, phase 1)
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the wallet derives the decoy distribution from its own output index and makes no spend-time `/distribution` request (1902761). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
+
 This is internal engineering research, **not an audit**. The repository was read-only: no
 builds, no cargo tests. The one computation (§2.4) is a Python Monte Carlo of the picker
 as it is written in `tx/src/decoy.rs`. It ran in the agent's scratchpad, outside the

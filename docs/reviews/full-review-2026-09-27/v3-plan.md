@@ -1,5 +1,7 @@
 # v3 candidate plan (coordinator decision under autonomy, 2026-09-27)
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the v3 candidate was merged into `rebuild/core` in 9e422d8. Current: [docs/consensus.md](../../consensus.md), [docs/STATUS.md](../../STATUS.md).
+
 ## Rule
 - Every consensus-changing item goes on branch `v3/candidate`. It is never merged into rebuild/core without the owner's review on return.
 - rebuild/core receives policy-only changes.

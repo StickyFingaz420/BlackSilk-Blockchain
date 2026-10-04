@@ -1,5 +1,7 @@
 # xmrig compatibility for BlackSilk (2026-10-04)
 
+> Historical record (2026-10-04). Superseded where it conflicts with the code: Option C (the 47-byte mining blob, nonce at byte 39) was implemented in 921fdd5, with the normative text in docs/consensus.md §3; the 172-byte header is committed; no pool or stratum server is part of the project, and `blacksilk-miner` mines solo through `/template`. Current: [docs/consensus.md](../consensus.md), [docs/STATUS.md](../STATUS.md).
+
 xmrig sources: master @ b2ca72480c58d197e18c885d9fc1a0c8d517e60a, copies in ./src/.
 
 ## Facts (primary sources)

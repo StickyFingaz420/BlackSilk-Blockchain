@@ -1,5 +1,7 @@
 # TM2-NET: second threat-model round, network, denial of service, operations and supply chain
 
+> Historical record (2026-10-02). Superseded where it conflicts with the code: `blocks.dat` is format 3 (524b9c0). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
+
 Agent TM2-NET, phase 2. Internal engineering review, **not an audit**. Nothing here claims
 that BlackSilk is secure, audited or production-ready. Read-only on the repository; no
 cargo build or test was run for this report (the machine was running a mutation

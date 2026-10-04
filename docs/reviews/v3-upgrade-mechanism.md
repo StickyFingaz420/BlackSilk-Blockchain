@@ -1,5 +1,7 @@
 # v3 candidate: upgrade mechanism and deploy rules
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the v3 candidate was merged into `rebuild/core` in 9e422d8, so the status below ("Not merged") no longer holds. Current: [docs/consensus.md](../consensus.md), [docs/STATUS.md](../STATUS.md).
+
 Status: **candidate for the testnet v3 identity (branch `v3a-candidate`). Not merged
 into `rebuild/core` and not active on any network until the owner reviews it.**
 This is internal engineering work, not an audit. The v2 genesis constants are

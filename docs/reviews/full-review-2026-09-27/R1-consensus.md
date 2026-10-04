@@ -1,5 +1,7 @@
 # R1 — Consensus review (internal review, not an audit)
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the header is 172 bytes (output-root commitments, f5daa0e) and the PoW input is the 47-byte mining blob with the nonce at byte 39 (921fdd5); RandomX uses BlackSilk's Argon2 salt "BlackSilk/RandomX/v1", not Monero's rx/0 salt (RX-SALT, 3e3e9ca). Current: [docs/consensus.md](../../consensus.md), [docs/STATUS.md](../../STATUS.md).
+
 - **Reviewer:** R1 (consensus)
 - **Date:** 2026-09-27
 - **Tree:** `rebuild/core` at `f677e55`. The WIP commit `7826289` is included.

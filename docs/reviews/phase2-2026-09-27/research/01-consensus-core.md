@@ -1,5 +1,7 @@
 # 01 consensus-core: phase-1 research dossier
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the header is 172 bytes (output-root commitments, f5daa0e) and the PoW input is the 47-byte mining blob with the nonce at byte 39 (921fdd5). Current: [docs/consensus.md](../../../consensus.md), [docs/STATUS.md](../../../STATUS.md).
+
 Internal engineering research, not an audit. Read-only on the repository; no builds or tests were run by
 this agent. Nothing here claims BlackSilk is secure, audited or production-ready.
 

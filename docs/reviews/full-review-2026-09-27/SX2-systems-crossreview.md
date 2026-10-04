@@ -1,5 +1,7 @@
 # SX2: Systems cross-review of the wave-1 reports (R3, R8–R16, I3, I4)
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: RandomX uses BlackSilk's Argon2 salt "BlackSilk/RandomX/v1", not Monero's rx/0 salt (RX-SALT, 3e3e9ca). Current: [docs/consensus.md](../../consensus.md), [docs/STATUS.md](../../STATUS.md).
+
 **Reviewer:** SX2, senior cross-reviewer (wave 2). This is internal review, not an audit.
 **Tree judged:** the main working tree, `rebuild/core`. HEAD moved while I worked: `58f25ec` → `5888d4c` → `f6a52ca`. There are 16 commits after `87278ac` and 22 unpushed over `origin/rebuild/core`.
 **Worktrees read for context only:**

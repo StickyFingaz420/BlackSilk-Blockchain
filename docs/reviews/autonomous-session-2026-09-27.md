@@ -1,5 +1,7 @@
 # Autonomous work session, 2026-09-27: report to the owner
 
+> Historical record (2026-09-27). Superseded where it conflicts with the code: the v3 candidate was merged into `rebuild/core` in 9e422d8; RandomX uses BlackSilk's Argon2 salt "BlackSilk/RandomX/v1", not Monero's rx/0 salt (RX-SALT, 3e3e9ca); the header is 172 bytes (output-root commitments, f5daa0e) and the PoW input is the 47-byte mining blob with the nonce at byte 39 (921fdd5). Current: [docs/consensus.md](../consensus.md), [docs/STATUS.md](../STATUS.md).
+
 **Internal work, not an audit.** Nothing here claims that BlackSilk is secure, audited,
 production-ready or fully proven. Zero knowledge remains **statistical and
 conditional** (docs/reviews/zk-coverage.md §3).
