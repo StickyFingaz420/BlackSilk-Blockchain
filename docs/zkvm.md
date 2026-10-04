@@ -6,7 +6,8 @@ columns, fixed shapes, and terminal blinding with a minimum table height of 2^8*
 (AUDIT.md R8, R12, R13; internal security review `docs/reviews/zk-security-review.md`;
 `docs/reviews/terminal-blinding.md`). Used by PX consensus (docs/px.md §11). All review
 is internal; no external audit has taken place. Not production-ready. Zero knowledge
-is claimed only as **statistical and conditional** (docs/reviews/zk-coverage.md).
+is claimed only as **statistical and conditional** (computational in practice;
+docs/reviews/zk-coverage.md).
 This document is normative:
 - the reference interpreter (`zkvm/src/exec.rs`) and the constraint tables
   (`zkvm/src/air/`) implement exactly what it says;
@@ -90,10 +91,13 @@ functions §7.
   reproducible (SDK build profile) so that anyone can check a program id against
   published source (zkvm/guests/README.md).
 - **Metadata in the image:** file-backed data is part of the id, so strings the
-  compiler embeds count. The consensus-pinned kernel's read-only data contains one
-  developer's absolute Windows source path (panic messages of `px-core/src/hash.rs`).
-  It is a small, public metadata disclosure about the build machine (not about users);
-  reproducing the id needs the same path, remapped with `--remap-path-prefix`.
+  compiler embeds count. Until testnet v2 the pinned kernel's read-only data held one
+  developer's absolute Windows source path (panic locations in `px-core/src/hash.rs`),
+  so the id depended on the build path. The v3 guest build removed it: px-core has no
+  located panic on the guest paths, and the guests are linked with `--strip-all`.
+  `px/tests/elf_paths.rs` fails if `px/kernel.elf` or `px/vault.elf` contains a
+  path-like string or a symbol table, and the ids reproduce at any checkout path
+  (zkvm/guests/README.md, "Path independence").
 - **Limits:** code ≤ 2^16 instructions; data ≤ 2^20 bytes.
 
 ---

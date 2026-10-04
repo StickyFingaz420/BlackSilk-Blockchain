@@ -1,10 +1,12 @@
 # Testnet rollback and incident-response plan
 
 Status: **proposed operating procedure, 2026-09-25; awaiting the owner's approval of
-the procedure and the communication setup (§1a).**
+the procedure and of the communication tools (§1a). The release authentication over
+two channels and the separate machine for incident data were decided on 2026-10-02
+(§1a).**
 - It covers the **experimental testnet**, where coins have no value. The priority
   there is evidence, correctness and user privacy, not uptime.
-- Not rehearsed yet (docs/testnet-launch-checklist.md G14).
+- Not rehearsed yet (§8; the genesis rehearsal is open in docs/STATUS.md).
 - It is designed for the project's current resources: **one owner and decision-maker,
   no external incident lead, no external auditors.**
 
@@ -13,10 +15,20 @@ the procedure and the communication setup (§1a).**
 | Role | Who | Responsibility |
 |---|---|---|
 | **Owner (incident lead)** | The project owner | Declares incidents and their severity; decides pauses, emergency releases, resets and every public statement; approves disclosure; keeps the incident record |
-| **Development support** | The owner with the AI engineering assistant, working in the repository | Diagnosis, reproduction, fixes, tests, the patched release, AUDIT.md entries. **The assistant acts only through the repository and the owner:** it cannot reach operators, watch machines, or act while the owner is away |
+| **Development support** | The owner with the AI engineering assistant, working in the repository | Diagnosis, reproduction, fixes, tests, the patched release, the incident record (§7). **The assistant acts only through the repository and the owner:** it cannot reach operators, watch machines, or act while the owner is away |
 | **Operators** | Whoever runs each testnet machine (initially the owner's own machines) | Watch the signals (§3), preserve evidence (§5), follow the owner's instructions |
 
 ### 1a. Communication setup (proposed; the owner chooses)
+
+**Decided (owner, 2026-10-02; decisions "Threat model round 2"):**
+- A release, and any instruction that names a commit, a flag or a block id, is
+  published on **two separate channels**: the operators' private channel and a second,
+  independent one. Operators act only when both agree (the two-channel commit id,
+  docs/testnet.md §2.1; §4.11).
+- Incident data an operator sends is examined on a separate machine, never the build
+  or development workstation (§5).
+
+Still open: the tools, the member list and the backup contact (table below).
 
 | Purpose | Proposal | Why | To be decided |
 |---|---|---|---|
@@ -55,7 +67,7 @@ the procedure and the communication setup (§1a).**
 | Nodes on different tips for more than 30 minutes while connected | `/info` `tip` on each machine | Consensus divergence | **S1** |
 | Supply check fails: generated ≠ Σ outputs, v1 plus private | `blacksilk-supply-audit` (docs/testnet.md §7.1): exit code 2, or a mid-trial sum that does not match. Its PX half is tested only with an empty pool (docs/STATUS.md) | Inflation bug | **S1** |
 | `VerifierPanicked` warnings | Node log | A proof input crashes the verifier | S2 (S1 if reproducible from outside) |
-| Panic, crash loop, memory growth | Service manager (exit status 70 or 101 repeating, or the unit `failed` with `start-limit-hit`, §4.5), `peak memory` | Bug or resource exhaustion | S2 or S3 (S1 if every node loops on the same block) |
+| Panic, crash loop, memory growth | Service manager (exit status 70 or 101 repeating, or the unit `failed` with `start-limit-hit`, §4.5); memory from the operating system (`systemctl status blacksilk-node`, `ps -o rss`, Task Manager), since the node reports no memory figure itself | Bug or resource exhaustion | S2 or S3 (S1 if every node loops on the same block) |
 | RandomX self-test failure (exit 71) at a node or miner start | Node or miner log (`RandomX self-test failed: …`) | A build or platform that hashes RandomX differently: it would fork | S2 (S1 if devices running the announced build fail it) |
 | Stored proof-of-work mismatch (exit 66) at a node start | Node log (`… carries a proof-of-work hash that its header does not produce`) | A data directory written by something else than the node's verification: copied, restored from an untrusted source, or tampered with | S2 (S1 if several devices show it) |
 | Misbehaviour disconnects between honest nodes | `/info` `misbehaving_disconnects` | False-ban bug (like L1) or an attack | S3 |
@@ -86,8 +98,8 @@ the procedure and the communication setup (§1a).**
    - a bug in the rejecting side: patch and release;
    - a bug in the accepting side (invalid block accepted): patch, and **reset**,
      because the chain contains an invalid block.
-5. A reset follows docs/testnet-reset-plan.md with a **new network id**; ids are never
-   reused.
+5. A reset uses a **new network id** and a new genesis (docs/testnet.md §12.5); ids are
+   never reused.
 
 ### 4.3 Soundness or inflation (a forged proof, a supply mismatch)
 1. Halt.
@@ -95,7 +107,8 @@ the procedure and the communication setup (§1a).**
 3. Treat it as the most severe case: any PX output after the first bad block is
    suspect.
 4. The only safe recovery on the testnet is a fix plus a reset.
-5. Record it as a finding for the independent reviewer.
+5. Record it as an internal review finding in docs/STATUS.md, with its evidence under
+   `docs/evidence/`.
 6. Publish after the fix.
 
 ### 4.4 Deep reorganization (at least 10 blocks)
@@ -192,7 +205,7 @@ problem and passes with the fix, and a green CI run of the release.
     do (for example: stop sending, keep wallet files);
   - technical detail only after a fix, unless users need it to protect themselves.
 - **After an incident:** a short public post-mortem (what, impact, fix, what changed)
-  and an AUDIT.md entry.
+  and an incident record (§7).
 
 ### 4.11 Emergency release
 
@@ -254,13 +267,13 @@ an incident (§4.7). The trial supply audit has its own custody rules
 
 ## 6. Rollback of a bad release
 
-- Every release is a tagged commit with a green CI run. Operators keep the previous
-  binaries.
+- Every release is a full commit id announced on two channels (§4.11), with a green
+  CI run of that commit; the trial uses no tags. Operators keep the previous binaries.
 - **A release with no consensus change:** operators reinstall the previous binaries
   and restart. The data directory stays compatible.
 - **A release with a consensus change** (testnet only, and only after a reset): there
   is no rollback on the same chain. Recovery is another reset with a new network id
-  (docs/testnet-reset-plan.md §6).
+  (docs/testnet.md §12.5).
 - **Wallet files** written by a newer wallet may carry fields an older wallet ignores
   (`#[serde(default)]` in the reader). Rolling a wallet back loses the stored
   transactions and rings. Users should keep a copy of the wallet file before
@@ -268,16 +281,19 @@ an incident (§4.7). The trial supply audit has its own custody rules
 
 ## 7. After every S1 or S2 incident
 
-- An AUDIT.md entry: timeline, cause, fix, the test that now covers it, and what the
-  detection missed.
+- An incident record: an evidence directory under `docs/evidence/` (timeline, cause,
+  fix, the test that now covers it, and what the detection missed), linked from
+  docs/STATUS.md. AUDIT.md is a historical log and is no longer updated.
 - Update this plan if a step did not work.
-- Update the readiness checklist if a gate was wrong.
+- Update docs/STATUS.md if a gate was wrong.
 
-## 8. Rehearsal (required by G14 before launch)
+## 8. Rehearsal (required before launch)
 
 On the labnet, or the machines before launch:
 1. Stop miners, then nodes, on the lead's instruction. Preserve evidence as in §5.
    Restart.
 2. Roll back a release with no consensus change: install the previous binaries,
    restart, and confirm sync.
-3. Rehearse the reset (done once on one machine: docs/testnet-reset-plan.md §7).
+3. Rehearse the reset: the genesis rehearsal (`--rehearsal`, docs/testnet-v3-genesis.md
+   §6) is not done yet (docs/STATUS.md). The v2 reset was rehearsed once on one machine
+   (the historical docs/testnet-reset-plan.md §7).

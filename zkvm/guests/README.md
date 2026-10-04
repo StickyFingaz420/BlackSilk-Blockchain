@@ -271,16 +271,16 @@ Evidence (scratch builds, Windows):
   `px/tests/elf_paths.rs` (2) and, with the relinked fixtures,
   `zkvm/tests/guest.rs` (5).
 - `Program::from_elf` accepts all four relinked guests.
-- Not yet shown: the cross-host byte identity of (a2). That needs the CI legs
-  at the rebuild commit.
+- The cross-host byte identity of (a2) was shown later by CI run 102 (windows,
+  ubuntu and ubuntu-arm legs, above).
 
 **Done at the rebuild (W1-CB-B2):** the test that no pinned ELF has a `PT_LOAD`
 covering the headers and that none has a `.comment`
 (`px/tests/elf_paths.rs::pinned_guests_load_no_header_and_carry_no_comment`); the
 flag in `GUEST_FLAGS` and `.cargo/config.toml` and the script file `guest.ld`; the
 kernel budgets re-measured (unchanged, still within 95%); the test fixtures `sum`
-and `arith` relinked with the same layout. **Still owed:** CI green on the two
-Linux hosts [coordinator, after the push] and one operator build [owner].
+and `arith` relinked with the same layout. CI green on the two Linux hosts: done
+(run 102, above). **Still owed:** one operator build [owner].
 
 **Fallback.** If a later toolchain cannot be made to keep headers out of
 `PT_LOAD`, change the program-id definition itself: hash each `PT_LOAD`'s
