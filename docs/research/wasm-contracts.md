@@ -89,7 +89,8 @@ Tags below are prefixed with `BlackSilk/v1/` as in transactions.md §1.2.
 **The problem.** On Ethereum-style platforms every call reveals its sender, and every
 balance and transfer inside a contract is public. On BlackSilk, where senders, recipients
 and amounts are hidden, such contracts would unmask every user who touches them. That is
-why the old WASM contracts were parked in `legacy/`.
+why the old WASM contracts were parked in `legacy/` (removed from the tree on
+2026-10-04; see git history up to 57dd81a).
 
 **Goals, in priority order:**
 1. **Privacy of the people using contracts.** A call reveals no sender, no recipient

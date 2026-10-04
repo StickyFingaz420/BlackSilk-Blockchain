@@ -1,0 +1,79 @@
+[1790482794] 4 nodes up
+[1790482795] miners started on nodes 0 and n/2 (one per partition group)
+[1790483175] sync user-3 via node2: node: the node is still synchronizing (63 of 64 blocks); try again later
+[1790483194] tx from miner-a via node2 failed: decoy selection: not enough eligible decoys
+[1790484048] sync user-3 via node3: node: the node is still synchronizing (153 of 154 blocks); try again later
+[1790484313] partition #1 started (groups split at node 2)
+[1790484575] partition healed
+[1790484612] sync miner-a via node1: node: the node is still synchronizing (198 of 199 blocks); try again later
+[1790484632] sync miner-b via node3: node: the node is still synchronizing (201 of 202 blocks); try again later
+[1790485059] sync user-2 via node3: node: the node is still synchronizing (266 of 267 blocks); try again later
+[1790485558] sync user-2 via node3: node: the node is still synchronizing (313 of 314 blocks); try again later
+[1790485790] sync user-1 via node3: node: the node is still synchronizing (335 of 336 blocks); try again later
+[1790486078] partition #2 started (groups split at node 2)
+[1790486320] partition healed
+[1790486458] sync miner-b via node3: node: the node is still synchronizing (407 of 408 blocks); try again later
+[1790486684] sync user-1 via node3: node: the node is still synchronizing (430 of 431 blocks); try again later
+[1790486943] sync miner-a via node2: node: the node is still synchronizing (467 of 468 blocks); try again later
+[1790487492] sync user-2 via node0: node: the node is still synchronizing (531 of 532 blocks); try again later
+[1790487820] partition #3 started (groups split at node 2)
+[1790487875] sync miner-b via node1: node: the node is still synchronizing (567 of 568 blocks); try again later
+[1790488060] partition healed
+[1790488277] sync miner-b via node2: node: the node is still synchronizing (610 of 611 blocks); try again later
+[1790488747] sync user-2 via node0: node: the node is still synchronizing (658 of 659 blocks); try again later
+[1790489560] partition #4 started (groups split at node 2)
+[1790489800] partition healed
+[1790490852] sync user-2 via node3: node: the node is still synchronizing (862 of 863 blocks); try again later
+[1790491300] partition #5 started (groups split at node 2)
+[1790491540] partition healed
+[1790493040] partition #6 started (groups split at node 2)
+[1790493280] partition healed
+[1790493850] tx from user-1 via node0 failed: node: the node is still synchronizing (1164 of 1165 blocks); try again later
+[1790494780] partition #7 started (groups split at node 2)
+[1790494797] sync miner-b via node1: node: the node is still synchronizing (1267 of 1268 blocks); try again later
+[1790495026] partition healed
+[1790495155] sync user-1 via node0: node: the node is still synchronizing (1297 of 1298 blocks); try again later
+[1790495963] sync user-2 via node3: node: the node is still synchronizing (1400 of 1401 blocks); try again later
+[1790496084] sync user-1 via node3: node: the node is still synchronizing (1414 of 1415 blocks); try again later
+[1790496526] partition #8 started (groups split at node 2)
+[1790496767] partition healed
+[1790497011] sync miner-b via node0: node: the node is still synchronizing (1497 of 1498 blocks); try again later
+[1790497920] sync user-2 via node1: node: the node is still synchronizing (1595 of 1596 blocks); try again later
+[1790497981] tx from user-3 via node1 failed: node: the node is still synchronizing (1601 of 1602 blocks); try again later
+[1790498041] sync user-1 via node1: node: the node is still synchronizing (1604 of 1605 blocks); try again later
+[1790498267] partition #9 started (groups split at node 2)
+[1790498507] partition healed
+[1790498667] sync user-1 via node2: node: the node is still synchronizing (1666 of 1667 blocks); try again later
+[1790498829] sync user-3 via node2: node: the node is still synchronizing (1684 of 1685 blocks); try again later
+[1790500007] partition #10 started (groups split at node 2)
+[1790500247] partition healed
+[1790500343] sync user-1 via node3: node: the node is still synchronizing (1831 of 1832 blocks); try again later
+[1790500444] sync user-1 via node3: node: the node is still synchronizing (1845 of 1846 blocks); try again later
+[1790500727] tx from user-3 via node2 failed: node: the node is still synchronizing (1877 of 1878 blocks); try again later
+[1790501747] partition #11 started (groups split at node 2)
+[1790501987] partition healed
+[1790503069] sync user-2 via node2: node: the node is still synchronizing (2111 of 2112 blocks); try again later
+[1790503130] sync user-3 via node3: node: the node is still synchronizing (2117 of 2118 blocks); try again later
+[1790503488] partition #12 started (groups split at node 2)
+[1790503728] partition healed
+[1790504351] sync user-2 via node1: node: the node is still synchronizing (2222 of 2223 blocks); try again later
+[1790505228] partition #13 started (groups split at node 2)
+[1790505370] sync user-1 via node1: node: the node is still synchronizing (2323 of 2324 blocks); try again later
+[1790505468] partition healed
+[1790506306] sync user-1 via node0: node: the node is still synchronizing (2421 of 2422 blocks); try again later
+[1790506623] sync user-1 via node1: node: the node is still synchronizing (2450 of 2451 blocks); try again later
+[1790506968] partition #14 started (groups split at node 2)
+[1790507253] partition healed
+[1790507911] node1 stuck at height 2566 while best is 2567
+[1790508440] sync user-1 via node3: node: the node is still synchronizing (2622 of 2623 blocks); try again later
+[1790508753] partition #15 started (groups split at node 2)
+[1790508994] partition healed
+[1790509806] traffic phase over; final checks
+[1790509844] converged=true drained=true height=2781
+[1790510284] late joiner synced=true peers=3
+[1790510286] miner-a: balance 30183.84989409 (fresh restore: 30183.84989409), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790510288] miner-b: balance 25412.04729374 (fresh restore: 25412.04729374), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790510289] user-1: balance 9.48669515 (fresh restore: 9.48669515), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790510290] user-2: balance 8.99274368 (fresh restore: 8.99274368), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790510292] user-3: balance 7.39188582 (fresh restore: 7.39188582), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790510292] supply: generated 55621.76851248 vs wallets 55621.76851248

@@ -668,8 +668,8 @@ fn header_feed_cost_for_3000_headers() {
         eprintln!(
             "{name}: sync {elapsed:?}; {headers} headers requested ({} bytes, {} hex) in {} \
              requests; RandomX hashes so far {}",
-            headers * 100,
-            headers * 200,
+            headers * blacksilk_consensus::HEADER_SIZE as u64,
+            headers * 2 * blacksilk_consensus::HEADER_SIZE as u64,
             reqs.len(),
             light.1.load(Ordering::Relaxed)
         );

@@ -126,7 +126,7 @@ These are not in the brief's "already known" list, or they deepen an item on it.
 ### R15-6: A "platform-neutral kernel" needs more than a neutral `--remap-path-prefix`
 - **Classification:** Not implemented (planned in v3 (c)). **Severity:** Medium. **Confidence:** medium-high.
 - **Evidence:**
-  - The only path string in `px/kernel.elf` is `C:\Users\Home 01\Desktop\BlackSilk\BlackSilk-Blockchain\px-core\src\hash.rs` [S: `grep -a` on the ELF]. It comes from the `assert!`s in `px-core/src/hash.rs:81,82,102`, whose `Location` data survives even though the guest `#[panic_handler]` ignores it (`zkvm/sdk/src/lib.rs:79-82`).
+  - The only path string in `px/kernel.elf` is `<repo>\px-core\src\hash.rs` (an absolute local Windows path; prefix redacted 2026-10-04) [S: `grep -a` on the ELF]. It comes from the `assert!`s in `px-core/src/hash.rs:81,82,102`, whose `Location` data survives even though the guest `#[panic_handler]` ignores it (`zkvm/sdk/src/lib.rs:79-82`).
   - Remapping the prefix to a neutral string still leaves the *relative* part with OS-native separators (`px-core\src\hash.rs` against `px-core/src/hash.rs`), as the README already notes. So a neutral prefix alone gives *two* ids, one per OS [A: rustc's file-name formatting; the README observed it].
 - **Recommendation:**
   - Remove every `Location`-carrying panic from the code reachable by the kernel. For example, route px-core's invariant failures through a guest-supplied abort hook, or make them return errors that the guest turns into `halt(1)`.

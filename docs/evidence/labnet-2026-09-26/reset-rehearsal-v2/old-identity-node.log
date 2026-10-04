@@ -1,0 +1,18 @@
+[2026-09-26T15:15:42Z INFO  blacksilk_node] testnet: loading C:/bszkeval/old-v1-node/data (genesis bbeb1a9fdb16cf41)
+[2026-09-26T15:15:42Z INFO  blacksilk_node] chain loaded in 393.3µs: height 0, tip bbeb1a9fdb16cf41
+[2026-09-26T15:15:42Z INFO  blacksilk_node] P2P listening on 127.0.0.1:44101
+[2026-09-26T15:15:42Z INFO  blacksilk_node] RPC listening on http://127.0.0.1:44100
+[2026-09-26T15:15:42Z DEBUG blacksilk_p2p::net] 127.0.0.1:43001: handshake failed: Io(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." })
+[2026-09-26T15:15:53Z DEBUG blacksilk_p2p::net] 127.0.0.1:43001: handshake failed: Decrypt
+[2026-09-26T15:16:04Z DEBUG blacksilk_p2p::net] 127.0.0.1:43001: handshake failed: Decrypt
+[2026-09-26T15:16:15Z DEBUG blacksilk_p2p::net] 127.0.0.1:43001: handshake failed: Decrypt
+[2026-09-26T15:16:26Z DEBUG blacksilk_p2p::net] 127.0.0.1:43001: handshake failed: Decrypt
+[2026-09-26T15:16:38Z DEBUG blacksilk_p2p::net] 127.0.0.1:43001: handshake failed: Decrypt
+[2026-09-26T15:16:47Z DEBUG blacksilk_p2p::net] 127.0.0.1:43001: handshake failed: Decrypt
+[2026-09-26T15:16:58Z DEBUG blacksilk_p2p::net] 127.0.0.1:43001: handshake failed: Decrypt
+[2026-09-26T15:17:10Z DEBUG blacksilk_p2p::net] 127.0.0.1:43001: handshake failed: Decrypt
+[2026-09-26T15:17:20Z DEBUG blacksilk_p2p::net] 127.0.0.1:43001: handshake failed: Decrypt
+[2026-09-26T15:17:31Z DEBUG blacksilk_p2p::net] 127.0.0.1:43001: handshake failed: Decrypt
+[2026-09-26T15:17:42Z DEBUG blacksilk_p2p::net] 127.0.0.1:43001: handshake failed: Decrypt
+[2026-09-26T15:17:52Z DEBUG blacksilk_p2p::net] 127.0.0.1:43001: handshake failed: Decrypt
+[2026-09-26T15:18:03Z DEBUG blacksilk_p2p::net] 127.0.0.1:43001: handshake failed: Decrypt

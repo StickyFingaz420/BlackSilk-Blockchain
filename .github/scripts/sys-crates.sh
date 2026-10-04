@@ -166,7 +166,7 @@ done
 
 # The workspace's own crates (path dependencies, not in the registry): no
 # tracked build script may run a C toolchain, and no tracked file outside the
-# kept legacy/ and research/ trees may be C/C++/assembly or a native object.
+# research/ tree may be C/C++/assembly or a native object.
 ws_scripts=0
 while IFS= read -r f; do
   ws_scripts=$((ws_scripts + 1))
@@ -174,11 +174,11 @@ while IFS= read -r f; do
     echo "::error title=build script runs a C toolchain::$f:$hit"
     build_bad=1
   fi
-done < <(git ls-files -- '*build.rs' ':!legacy' ':!research')
+done < <(git ls-files -- '*build.rs' ':!research')
 while IFS= read -r f; do
   echo "::error title=native code in the repository::$f; BlackSilk is pure Rust (no C, C++ or assembly)"
   build_bad=1
-done < <(git ls-files -- ':!legacy' ':!research' | grep -E "$native_files")
+done < <(git ls-files -- ':!research' | grep -E "$native_files")
 echo "workspace: $ws_scripts tracked build scripts checked"
 
 [ "$build_bad" = 0 ] || { echo "sys-crates: native code found (see above)"; status=1; }

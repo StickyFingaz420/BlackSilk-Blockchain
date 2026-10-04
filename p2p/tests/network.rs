@@ -6239,7 +6239,7 @@ async fn rt_a_restarted_origin_answers_an_inv_probe_like_a_restarted_relay() {
 /// relay share (burst 4) drops the answers past the fourth unpenalized,
 /// after `on_tx` has ended their requests and forgotten their announcers:
 /// they are never asked again, and the announcer never re-announces to a
-/// peer it announced to. Expected to FAIL while the gap exists.
+/// peer it announced to. Fixed in f5f86cb; now a regression test.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "PX proving (4-6 GB); run alone"]
 async fn rt_a_px_burst_from_one_announcer_is_relayed_in_full() {
@@ -6384,7 +6384,7 @@ async fn rt_a_junk_flood_does_not_delay_another_announcer() {
 /// queue (8); an honest announcer after them is not recorded, is never
 /// asked, and once the eight time out (8 x 30 s) the id is forgotten. An
 /// honest node never announces it to us again (we are in its
-/// `announced_to`). Expected to FAIL while the gap exists. About 4.5 min.
+/// `announced_to`). Fixed in f5f86cb; now a regression test. About 4.5 min.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rt_eight_silent_first_announcers_do_not_suppress_an_honest_one() {
     let mut v = node(218, &[]).await;
@@ -6478,8 +6478,8 @@ fn answering_announcer(
 /// queue drains: each junk id holds a slot 2 x 30 s (asked, then asked once
 /// more), so 500 junk ids hold the real one for about 500 / 16 x 60 s = 31
 /// minutes, 2,000 for about 2 hours. Two inbound peers suffice: X1
-/// announces first and stays silent; X2 announces second. Expected to FAIL
-/// while the gap exists (the honest announcer should be asked at the first
+/// announces first and stays silent; X2 announces second. Fixed in f615965;
+/// now a regression test (the honest announcer should be asked at the first
 /// timeout, about 30 s).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rt2_a_timed_out_request_is_not_parked_behind_a_junk_queue() {
@@ -6550,7 +6550,7 @@ async fn rt2_a_timed_out_request_is_not_parked_behind_a_junk_queue() {
 /// dropped as known, never penalized. Its answer is then dropped as Busy,
 /// the id goes back to the front of ITS wanted queue, it is paused 5 s and
 /// asked again, indefinitely: no other announcer is asked, and no timeout
-/// runs. Expected to FAIL while the gap exists. PX proving (two
+/// runs. Fixed in f615965; now a regression test. PX proving (two
 /// transactions).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "PX proving (4-6 GB); run alone"]
@@ -6698,8 +6698,8 @@ fn score_from(n: &TestNode, ip: [u8; 4]) -> Option<u32> {
 /// 1 s later: H2 collects 10 x 10 = 100 points and is disconnected (and,
 /// off loopback, banned for a day). Any id whose first request times out
 /// does this, so an attacker needs only to announce first and stay silent
-/// to have this node disconnect its honest peers. Expected to FAIL while
-/// the gap exists.
+/// to have this node disconnect its honest peers. Fixed in 19f6690; now
+/// a regression test.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rt3_parallel_answers_of_honest_announcers_are_not_penalized() {
     init_test_log();
@@ -6783,8 +6783,8 @@ async fn rt3_parallel_answers_of_honest_announcers_are_not_penalized() {
 /// unrequested transaction: +10 for an honest peer, for each such
 /// transaction, on top of the doubled transfer. Simulated with a v1
 /// transaction: the first answer 38 s after the first request, the second
-/// 30 s later (a serial server on a slow link). Expected to FAIL while
-/// the gap exists.
+/// 30 s later (a serial server on a slow link). Fixed in 19f6690; now
+/// a regression test.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rt3_a_slow_honest_announcer_is_not_penalized_for_the_retry() {
     init_test_log();
@@ -6899,7 +6899,7 @@ async fn throttled_proxy(target: SocketAddr, rate: usize) -> SocketAddr {
 /// although the reader keeps well above `SLOW_RATE`. Each cut re-draws the
 /// requester's Dandelion stem peers. Pings every 5 s here (60 s by
 /// default: then a ping lands in such a transfer with probability about
-/// transfer time / 60 s). Expected to FAIL while the gap exists.
+/// transfer time / 60 s). Fixed in 19f6690; now a regression test.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "PX proving (4-6 GB); run alone"]
 async fn rt3_px_answers_over_a_1_mbit_link_keep_the_link() {
@@ -6975,7 +6975,7 @@ async fn rt3_px_answers_over_a_1_mbit_link_keep_the_link() {
 /// requester's per-peer slow lane (two PX fit) and are dropped there; the
 /// dropped requests time out, the parallel fallback asks both announcers,
 /// and the first answer makes the other's (requested) answer unrequested:
-/// +10. Expected to FAIL while the gap exists.
+/// +10. Fixed in 19f6690; now a regression test.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "PX proving (4-6 GB); run alone"]
 async fn rt3_a_mixed_px_burst_from_two_honest_announcers_is_not_penalized() {
@@ -7088,8 +7088,8 @@ async fn spy_session(n: &TestNode, ip: [u8; 4], secs: f64) -> Vec<Hash> {
 /// reads another. With 24 transactions a chance match is about 1 in 24!.
 /// Every onion inbound peer has the same host (the Tor daemon's loopback),
 /// so through the onion listener any connection made within 10 minutes of
-/// any onion peer leaving is told the pool. Expected to FAIL while the gap
-/// exists.
+/// any onion peer leaving is told the pool. Fixed in 4fb8536; now a regression
+/// test.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rt4_a_reconnecting_spy_reads_the_pool_in_an_order_that_names_the_node() {
     init_test_log();
@@ -7267,8 +7267,8 @@ fn instant_answerer(
 /// scenario is back: 5 silent announcers make the first requests time
 /// out, two honest announcers are asked in parallel, and the second honest
 /// answer is an unrequested `Tx` (+10 each: 10 transactions disconnect the
-/// honest peer, and off loopback ban it for a day). Expected to FAIL while
-/// the gap exists.
+/// honest peer, and off loopback ban it for a day). Fixed in 4fb8536; now
+/// a regression test.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rt4_a_full_late_answer_memory_penalizes_parallel_honest_answers_again() {
     init_test_log();

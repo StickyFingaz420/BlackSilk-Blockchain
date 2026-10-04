@@ -7,7 +7,7 @@ use blacksilk_p2p::originated::{Originated, Verdict, NETWORK_EXPIRY_BLOCKS};
 /// then ends about 81,000 blocks early and the transaction is `Fresh`
 /// (originated again) at once. Failing closed keeps the id with a
 /// conservative height (the height at load), never a truncated one.
-/// Expected to FAIL while the gap exists.
+/// Fixed in f615965; now a regression test.
 #[test]
 fn rt2_a_torn_height_is_not_salvaged_short() {
     let id = [7u8; 32];

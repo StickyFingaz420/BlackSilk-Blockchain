@@ -408,7 +408,7 @@ impl Wallet {
         }
         let nid = self.params.network_id;
         // Reorg detection: walk back from our tip until our block id matches
-        // the node's (read from its header feed: 100 bytes per height).
+        // the node's (read from its header feed: HEADER_SIZE, 172 bytes, per height).
         let fresh = self.block_ids.is_empty();
         while self.synced_height >= self.restore_height && self.synced_height > 0 {
             let Some(ours) = self.block_ids.get(&self.synced_height).copied() else {

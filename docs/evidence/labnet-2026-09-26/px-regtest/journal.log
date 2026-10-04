@@ -1,0 +1,27 @@
+[1790437577] 5 nodes up
+[1790437577] miners started on nodes 0 and n/2 (one per partition group)
+[1790437818] sync miner-a via node2: node: the node is still synchronizing (45 of 46 blocks); try again later
+[1790437850] sync user-2 via node3: node: the node is still synchronizing (49 of 50 blocks); try again later
+[1790437947] tx from miner-b via node4 failed: decoy selection: not enough eligible decoys
+[1790437985] sync miner-a via node3: node: the node is still synchronizing (66 of 67 blocks); try again later
+[1790438778] partition #1 started (groups split at node 2)
+[1790438882] px deposit by miner-a via node1
+[1790438963] partition healed
+[1790439132] px deposit by user-3 via node1
+[1790439373] px withdraw by miner-a via node2
+[1790439850] px send by miner-a via node3
+[1790439915] sync miner-a via node4: node: the node is still synchronizing (273 of 274 blocks); try again later
+[1790440095] px deposit by miner-b via node4
+[1790440164] partition #2 started (groups split at node 2)
+[1790440341] px deposit by miner-a via node1
+[1790440356] partition healed
+[1790441052] sync user-3 via node1: node: the node is still synchronizing (389 of 390 blocks); try again later
+[1790441191] traffic phase over; final checks
+[1790441211] converged=true drained=true height=408
+[1790441322] late joiner synced=true peers=3
+[1790441323] miner-a: balance 3617.24805253 (fresh restore: 3617.24805253), private 1.52174208 (fresh restore: 1.52174208) OK
+[1790441324] miner-b: balance 4540.94736513 (fresh restore: 4540.94736513), private 1.00000000 (fresh restore: 1.00000000) OK
+[1790441325] user-1: balance 2.95531396 (fresh restore: 2.95531396), private 0.20000000 (fresh restore: 0.20000000) OK
+[1790441325] user-2: balance 2.81503325 (fresh restore: 2.81503325), private 0.00000000 (fresh restore: 0.00000000) OK
+[1790441326] user-3: balance 1.80845457 (fresh restore: 1.80845457), private 1.00000000 (fresh restore: 1.00000000) OK
+[1790441326] supply: generated 8169.49596152 vs wallets 8169.49596152

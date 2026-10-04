@@ -8,8 +8,11 @@ on:
     branches: ["**"]
     tags: ["testnet-*"]
   pull_request:
-  # Weekly: new RustSec advisories and the RandomX full-mode vectors do not
-  # depend on a push (only the `audit` and `randomx-full` jobs run).
+  # Weekly: new RustSec advisories and yanks, the RandomX full-mode vectors
+  # and the zkvm concurrency stress test do not depend on a push (only the
+  # `audit`, `deny`, `randomx-full` and `zkvm-stress` jobs run; every other
+  # job has `if: github.event_name != 'schedule'`, and `zkvm-stress` runs
+  # only on the schedule and on manual runs).
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
@@ -190,9 +193,6 @@ jobs:
           esac
           exit $rc
 
-  # RandomX full mode (the miner's default) against the official vectors and
-  # light mode (what nodes verify with), on Linux; the developers' runs are on
-  # Windows, so this is also a cross-platform check of the same vectors.
   # W4-GUARD (RT-STATEFUL, RT-GUARD), its own job since CI run 119 (the step
   # at the end of `test` failed there after four hours, with no annotation;
   # a fast job gives the answer in minutes). `cargo test --no-run` writes a
@@ -217,6 +217,9 @@ jobs:
       - name: Plain release binaries carry no test code
         run: bash .github/scripts/build-guard.sh
 
+  # RandomX full mode (the miner's default) against the official vectors and
+  # light mode (what nodes verify with), on Linux; the developers' runs are on
+  # Windows, so this is also a cross-platform check of the same vectors.
   randomx-full:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -230,15 +233,48 @@ jobs:
       - name: Full mode vectors and full/light agreement (about 2.3 GiB RAM)
         run: cargo test --locked --release -p blacksilk-randomx -- --ignored --nocapture
 
+  # The only regression test for the Plonky3 spin-lock hang (AUDIT.md ZK-F11,
+  # ZK-F21; patched in third_party/): 8 threads proving at once in one
+  # process must all finish. A regression is a hang, not a failure, so an
+  # external `timeout` turns it into one (exit 124). Weekly and on manual runs
+  # only: it needs its own runner (a local run on 2026-10-05 reached about
+  # 8 GB with 8 threads before it was stopped for memory, so no local timing
+  # exists yet; the first scheduled run gives one), and its code (third_party/, zkvm/) rarely changes between
+  # weeks. BLACKSILK_STRESS_ROUNDS=3 gives 24 proofs.
+  zkvm-stress:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
+      - name: Build
+        run: cargo test --locked --release -p blacksilk-zkvm --test stress --no-run
+      - name: Concurrent proofs all finish (hang regression, 20-minute limit)
+        shell: bash
+        env:
+          BLACKSILK_STRESS_ROUNDS: "3"
+        run: |
+          timeout 20m cargo test --locked --release -p blacksilk-zkvm --test stress -- --ignored --nocapture || {
+            rc=$?
+            if [ "$rc" = 124 ]; then echo "::error title=zkvm stress hang::concurrent proofs did not finish in 20 minutes (ZK-F11/ZK-F21 regression?)"; fi
+            exit "$rc"
+          }
+
   # The consensus-pinned guest programs rebuild from source to their pinned
   # program ids and to the committed bytes (zkvm/guests/README.md), on Windows,
   # Linux x86_64 and Linux arm64: the build is path-independent (stripped, no
   # located panics; R15-6), so every host must reproduce the same kernel.id
-  # from its own checkout path. Known failure until the v3 rebuild: the Linux
-  # legs differ in the non-loaded .comment bytes, which the current layout
-  # hashes through the ELF header (CI-1; README "Open: header bytes in the id").
-  # The build also checks the toolchain against zkvm/guests/toolchain.sha256,
-  # here with the published manifest downloaded (CI-13).
+  # from its own checkout path. The `guest.ld` layout keeps the ELF headers out
+  # of every PT_LOAD and discards `.comment`, whose bytes once made the Linux
+  # legs differ (CI-1); all three legs reproduce the same bytes (CI run 102,
+  # docs/STATUS.md; zkvm/guests/README.md). The build also checks the
+  # toolchain against zkvm/guests/toolchain.sha256, here with the published
+  # manifest downloaded (CI-13).
   guests:
     if: github.event_name != 'schedule'
     strategy:
@@ -495,7 +531,12 @@ jobs:
   # (.github/scripts/doc-lint.sh; docs/STATUS.md is the one status source).
   # Also the Wasm freeze (decision D22 "D-freeze"): wasmi must never come back
   # into the main or fuzz lockfile; the frozen `contracts/` crate has its own
-  # workspace and is not built by CI (contracts/README.md).
+  # workspace and is not built by CI (contracts/README.md). And the independent
+  # golden vectors (tools/vectors/*.py, standard-library Python written from the
+  # spec text, not the Rust code) are regenerated in memory and compared with
+  # the committed vector files and pins: drift fails here. This job runs the
+  # commit's own code and holds no secrets, like gates-selftest; the trusted
+  # `gates` job runs none of it.
   doc-lint:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
@@ -520,6 +561,17 @@ jobs:
             fi
           done
           echo "no wasmi or blacksilk-contracts in Cargo.lock or fuzz/Cargo.lock"
+      - name: Independent golden vectors match the committed files (tools/vectors)
+        if: success() || failure()
+        shell: bash
+        run: |
+          python3 --version
+          rc=0
+          for f in tools/vectors/*.py; do
+            echo "== $f --check"
+            python3 "$f" --check || { echo "::error title=vector drift::$f --check failed"; rc=1; }
+          done
+          exit $rc
 
   # Coverage-guided fuzzing smoke run (AUDIT.md "Coverage-guided fuzzing"):
   # a short run of every target with debug assertions; the script fails if a

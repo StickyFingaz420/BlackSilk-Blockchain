@@ -39,8 +39,9 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
   **demonstration** contract (the vault: not trustless, not an HTLC). The earlier Wasm
   confidential-contract design is **frozen research**, outside the build and not
   consensus on any network ([research/wasm-contracts.md](docs/research/wasm-contracts.md),
-  [contracts/README.md](contracts/README.md)). The old marketplace stays parked in
-  `legacy/`.
+  [contracts/README.md](contracts/README.md)). The old marketplace and the rest of the
+  pre-rebuild code were removed from the tree on 2026-10-04 (see git history up
+  to 57dd81a).
 - **Not a strong PoW network yet.** The testnet's PoW is RandomX with BlackSilk's own
   salt. Stock `rx/0` hash power cannot be pointed at it unmodified, but anyone who
   adds the salt to a JIT miner (minutes of work) or rents generic CPUs can out-mine it
@@ -71,7 +72,6 @@ A privacy-first proof-of-work cryptocurrency written in pure Rust.
 | `tools/daa-sim/` | difficulty-rule simulation harness (evidence, not consensus) |
 | `fuzz/` | coverage-guided fuzz targets (separate workspace, nightly toolchain) |
 | `research/` | the post-quantum research track (outside the workspace) |
-| `legacy/` | pre-rebuild code kept for reference; does not build |
 | `third_party/` | three Plonky3 0.7.0 crates with a local lock-scope patch ([third_party/README.md](third_party/README.md)) |
 | `deploy/` | node configuration templates, systemd units, Docker image, install scripts |
 

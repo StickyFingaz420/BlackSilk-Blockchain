@@ -1,7 +1,0 @@
-[package]
-name = "block-explorer"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-# Add necessary dependencies here
