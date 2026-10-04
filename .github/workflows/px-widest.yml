@@ -1,0 +1,60 @@
+name: PX widest-proof measurement
+
+# Freeze gate B2 (docs/evidence/freeze-b2-b3-2026-10-04/README.md): proves and
+# verifies two-function PX proofs of a chosen shape with
+# px/examples/freeze_b2_b3.rs, records peak memory, and runs the size model.
+# Manual only: one shape per run, never part of the push pipeline.
+#
+# Memory: the base shape and coarse18 peaked at about 10.3 GB on the 16 GB
+# development machine; dense18 passed 11.2 GB before it was stopped. A
+# standard ubuntu-24.04 runner (16 GB) can run `base` and probably `coarse18`;
+# `dense18` may not fit. The widest registrable shape (tables at 2^18..2^22)
+# needs on the order of 100 GB and cannot be proven on any standard runner;
+# its size comes from the validated model (`model`).
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: "Shape: base, coarse18 or dense18"
+        required: true
+        default: base
+        type: choice
+        options: [base, coarse18, dense18]
+      count:
+        description: "Proofs to make"
+        required: true
+        default: "2"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98.1"
+      - name: Build
+        run: cargo build --locked --release -p blacksilk-px --example freeze_b2_b3
+      - name: Memory before
+        run: free -m
+      - name: Prove and verify (one process, one proof at a time)
+        env:
+          CONFIG: ${{ inputs.config }}
+          COUNT: ${{ inputs.count }}
+        run: |
+          mkdir -p out
+          /usr/bin/time -v target/release/examples/freeze_b2_b3 b2 "$CONFIG" "$COUNT" out 2>&1 | tee out/run.txt
+      - name: Size model
+        run: target/release/examples/freeze_b2_b3 model out | tee out/model.txt
+      - name: Results (in the log; no artifact action is pinned in this repository)
+        if: always()
+        run: cat out/b2.csv out/model.txt || true
