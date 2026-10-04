@@ -40,6 +40,7 @@ mod relay;
 mod serve_tx;
 mod state;
 mod stem;
+mod trickle;
 mod tx_requests;
 
 use crate::addr::NetAddr;
@@ -151,6 +152,7 @@ fn new_inner(
         px_global: crate::limits::TokenBucket::new(2.0, 10.0),
         block_requests: HashMap::new(),
         tx_tracker: Default::default(),
+        inbound_trickle: Default::default(),
         owed: HashMap::new(),
         recent_rejects: VecDeque::new(),
         recent_rejects_set: HashSet::new(),
@@ -280,6 +282,7 @@ impl Network {
         }
         tokio::spawn(announce_loop(inner.clone()));
         tokio::spawn(maintenance_loop(inner.clone()));
+        tokio::spawn(trickle::trickle_loop(inner.clone()));
         tokio::spawn(chain_maintenance_loop(inner.clone()));
         tokio::spawn(header_worker(inner.clone(), header_rx));
         tokio::spawn(block_worker(inner.clone(), block_rx));
@@ -376,6 +379,14 @@ impl Network {
         self.inner
             .maintenance_seen
             .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Queues an announcement of `id` to every transaction-relaying peer, as
+    /// for a newly pooled transaction (tests of the trickle's timing).
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn announce_for_tests(&self, id: Hash) {
+        self.inner.announce_tx(id, None);
     }
 
     /// Announcements queued for the trickle, over all peers (tests: once 0,

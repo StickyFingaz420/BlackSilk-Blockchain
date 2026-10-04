@@ -70,7 +70,11 @@ pub(super) struct Peer {
     /// (again). Bounded by [`ADDR_KNOWN_MAX`].
     pub(super) addr_known: HashSet<NetAddr>,
     pub(super) inv_queue: Vec<Hash>,
+    /// When an outbound peer's queue is released (its own timer).
     pub(super) next_inv: Instant,
+    /// An inbound peer's network identity: its queue is released by that
+    /// identity's shared timer instead (`trickle`).
+    pub(super) trickle: Option<super::trickle::TrickleKey>,
     pub(super) announced_to: HashSet<Hash>,
     pub(super) known_txs: HashSet<Hash>,
     /// Ids announced to it lately, with when (at most `OWED_IDS`): what a
@@ -274,6 +278,9 @@ pub(super) struct State {
     /// Who announced which transactions, and what is asked of whom
     /// (docs/p2p.md §7, "Requesting").
     pub(super) tx_tracker: super::tx_requests::TxTracker,
+    /// The inbound peers' shared release timers, one per network identity
+    /// (`trickle`; docs/p2p.md §7).
+    pub(super) inbound_trickle: super::trickle::InboundTrickle,
     /// What connections that left lately were owed (unflushed and unanswered
     /// announcements), by host, with when they left: re-announced, in a
     /// fresh random order, when the same host reconnects (RT4).

@@ -2,7 +2,7 @@
 //! Requests are in `tx_requests`, serving `GetTx` in `serve_tx`.
 
 use super::admission::ctx_rejected;
-use super::state::Inner;
+use super::state::{Inner, State};
 use super::tx_requests::Actions;
 use crate::dandelion::{exponential, PeerId};
 use crate::limits::score;
@@ -29,55 +29,48 @@ impl Inner {
     /// skipping what it knows or was told (a reconnecting peer, RT3 F3).
     pub(super) fn announce_to(&self, peer: PeerId, ids: Vec<Hash>) {
         let mut st = self.state();
-        let now = Instant::now();
-        let mean = match st.peers.get(&peer) {
-            Some(p) if p.relay_txs => {
-                if p.inbound {
-                    self.cfg.trickle_inbound
-                } else {
-                    self.cfg.trickle_outbound
-                }
-            }
-            _ => return,
-        };
-        let delay = exponential(mean, &mut st.rng);
-        let Some(p) = st.peers.get_mut(&peer) else {
-            return;
-        };
-        for id in ids {
-            if p.known_txs.contains(&id) || p.announced_to.contains(&id) {
-                continue;
-            }
-            if p.inv_queue.is_empty() {
-                p.next_inv = now + delay;
-            }
-            p.inv_queue.push(id);
-        }
+        self.queue_inv(&mut st, peer, ids);
     }
 
     /// Queues an `InvTx` announcement to every transaction-relaying peer except
     /// `except` and peers that already know it (docs/p2p.md §7).
     pub(super) fn announce_tx(&self, id: Hash, except: Option<PeerId>) {
         let mut st = self.state();
-        let now = Instant::now();
-        let (out_mean, in_mean) = (self.cfg.trickle_outbound, self.cfg.trickle_inbound);
         let ids: Vec<PeerId> = st.peers.keys().copied().collect();
         for pid in ids {
-            if Some(pid) == except {
+            if Some(pid) != except {
+                self.queue_inv(&mut st, pid, vec![id]);
+            }
+        }
+    }
+
+    /// Queues `ids` for `peer` if it relays transactions, skipping what it
+    /// knows or was told. An outbound peer's queue is released by its own
+    /// timer, started (Exp(`trickle_outbound`)) when the queue was empty; an
+    /// inbound peer's by its network identity's shared timer, which ticks
+    /// whatever is queued (`trickle::trickle_loop`, woken here).
+    fn queue_inv(&self, st: &mut State, peer: PeerId, ids: Vec<Hash>) {
+        let State {
+            peers,
+            rng,
+            inbound_trickle,
+            ..
+        } = st;
+        let Some(p) = peers.get_mut(&peer).filter(|p| p.relay_txs) else {
+            return;
+        };
+        let was_empty = p.inv_queue.is_empty();
+        for id in ids {
+            if p.known_txs.contains(&id) || p.announced_to.contains(&id) {
                 continue;
             }
-            let delay = {
-                let inbound = st.peers[&pid].inbound;
-                exponential(if inbound { in_mean } else { out_mean }, &mut st.rng)
-            };
-            let p = st.peers.get_mut(&pid).expect("listed");
-            if !p.relay_txs || p.known_txs.contains(&id) || p.announced_to.contains(&id) {
-                continue;
-            }
-            if p.inv_queue.is_empty() {
-                p.next_inv = now + delay;
+            if p.inv_queue.is_empty() && p.trickle.is_none() {
+                p.next_inv = Instant::now() + exponential(self.cfg.trickle_outbound, rng);
             }
             p.inv_queue.push(id);
+        }
+        if was_empty && !p.inv_queue.is_empty() {
+            inbound_trickle.wake();
         }
     }
 }

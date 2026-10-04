@@ -621,8 +621,67 @@ never used in any check or sent to a peer:
 ## 7. Transaction relay (fluff phase)
 
 - **Announcing.** A transaction in the mempool is announced with `InvTx`.
-  - Announcements to each peer are batched and sent after an independent random delay
-    (exponential, mean 2 s for outbound peers and 5 s for inbound peers).
+  - Announcements to each peer are queued and sent as one batch, in a fresh random
+    order, when the peer's trickle timer releases them (`net/trickle.rs`).
+  - **Outbound peers:** each has its own timer: an exponential delay of mean 2 s
+    from the first id queued while its queue was empty. We choose outbound peers,
+    so a spy cannot multiply them.
+  - **Inbound peers: one shared timer per network identity** (R1, 2026-10-04;
+    RES-FREEZE §4.5(2), §8.6-4a, dossier 33 W5; R8-16). Inbound peers that reached
+    the node through the same network and local endpoint share one Poisson release
+    process (exponential intervals, mean 5 s, ticking whatever is queued): every
+    queue of that identity is released together, in one pass under the state lock.
+    A spy that opens k inbound connections sees one release instant per
+    transaction, not k independent delays whose earliest would estimate when we
+    first had it. By
+    memorylessness, a transaction queued at any instant still waits Exp(5 s) for
+    the next release, as with a per-peer delay.
+  - **Exact instants, no shared grid** (RT-R1 F1). Releases are made by their own
+    task (`trickle_loop`), which sleeps until the earliest timer (an inbound
+    identity's, or an outbound peer's with ids queued), releases what is due and
+    sleeps again; a first queued id wakes it. The next draw counts from the
+    instant the timer fired. Releasing on the 250 ms maintenance tick instead (the
+    first version of R1) made every gap between two identities' releases a whole
+    number of ticks plus microseconds (13 to 36 µs measured), a signature that
+    could link two identities from a few transactions on a low-jitter link.
+  - **The identities** are the network class (IPv4, IPv6, or onion: our onion
+    listener, or the legacy loopback forward of the hidden service) and the local
+    address and port the connection was accepted on. They have independent timers:
+    one timer for all inbound peers would release every transaction at the same
+    instant on, say, our onion service and our IPv4 address; with one timer each,
+    the trickle timer does not link them. The keys and their reasons are
+    Bitcoin Core's (PR #33464, merged 2025-10-03: one inbound timer per "network
+    key", the peer's network class (onion for its onion service) plus the local
+    bind address and port, replacing its single inbound timer because that made a
+    suspected onion/clearnet pair "trivial to confirm or refute"; outbound timers
+    stay per peer). The same property, not the code.
+  - Limits:
+    - A spy holding connections over several identities (IPv4, IPv6 and Tor) gets
+      one sample per identity, so at most a handful, not one per connection.
+    - The timer hides when we first had a transaction from our inbound peers only:
+      our full-relay outbound peers (chosen by us) each still see an independent
+      per-peer delay.
+    - Other signals still link identities: new blocks are announced to every peer
+      at once (§6), as in Bitcoin Core; the mempool is shared (see "Network
+      classes" below).
+    - A release is quantized by the runtime's and the OS's timer (tokio's 1 ms
+      wheel; the default Windows timer, about 15.6 ms): two identities due within
+      one quantum are released together, and gaps are whole quanta plus jitter.
+      This is a much finer grid than the 250 ms tick, not none; it is not shown to
+      be unobservable.
+    - The legacy setup forwarding the hidden service to the P2P port
+      (`loopback_is_tor`, no `onion_listen`) counts every loopback inbound peer as
+      onion: co-located clearnet processes connecting over loopback share the onion
+      identity's timer, as before.
+    - The relay is not claimed to protect origins against spy nodes or a link
+      observer (§8.2).
+  - Tested: `inbound_peers_of_one_network_share_one_trickle_timer`,
+    `clearnet_and_onion_trickle_timers_are_independent` and
+    `trickle_releases_are_not_aligned_to_the_maintenance_tick` (`p2p/tests/privacy.rs`),
+    and the timer's unit tests in `net/trickle.rs` (interval mean, standard
+    deviation and median; memorylessness; one timer per key, keys independent and
+    forgotten when unused; the key of IPv4, IPv4-mapped, IPv6, Tor and local
+    endpoints).
   - This makes the first announcer hard to find by timing (the "diffusion" of
     Dandelion++).
 - **Requesting: the transaction request tracker** (`net/tx_requests.rs`, RT2-TM2P2P
@@ -892,8 +951,9 @@ never used in any check or sent to a peer:
   - Only peers not known to have the transaction get the announcement (the per-peer
     sets above), so in practice it reaches connections opened since: a peer that
     restarted fetches it back with `GetTx`, without its origin doing anything.
-  - Cost: 32 bytes per transaction and peer at each point. Announcements use the
-    per-peer trickle delays of this section (a shared inbound timer, R8-16, is open).
+  - Cost: 32 bytes per transaction and peer at each point. Announcements go
+    through the trickle of this section (per outbound peer; one shared timer per
+    inbound network identity).
   - Tested: `pooled_transactions_are_reannounced_on_the_common_schedule` (not before
     age 10, once at age 10, not again at 11; `InvTx` only) and the schedule's unit
     test (`reannouncement_follows_the_backoff_schedule`).
@@ -1039,8 +1099,11 @@ transaction request tracker: such a change merges only with the suite passing
 (`cargo test -p blacksilk-p2p --test privacy`), and a change that fixes an open
 property un-ignores its test in the same commit. Each test names the property it
 guards and its source. It covers held local transactions, a diffuser stemming its own
-transaction, the three TM2-P1 re-announcement cases, uniform `InvTx` order, and
-`GetAddr` answered only to inbound peers. Two open properties are `#[ignore]`d tests
+transaction, the three TM2-P1 re-announcement cases, uniform `InvTx` order, one
+shared trickle timer per inbound network (k inbound spies of one network are told at
+one instant; clearnet and onion peers by independent timers, released at their own
+instants, not on the maintenance tick; §7), and `GetAddr`
+answered only to inbound peers. Two open properties are `#[ignore]`d tests
 that fail today with `-- --ignored`: the slow-lane stempool timing oracle (TM2-P6)
 and the stem black hole through a full Tx lane with no local re-stem (X1, TM2-P4).
 The suite tests these properties; it does not show that the relay protects origins

@@ -10,8 +10,13 @@
 //! that they detect the leak, and they are un-ignored by the change that
 //! fixes it. No other assertion depends on timing: every wait is a generous
 //! precondition (30 s), not a measurement. Everything else is deterministic
-//! except `inv_batches_list_ids_in_a_uniformly_random_order`, a statistical
-//! test whose false-failure probability is about 1e-6 per run.
+//! except three statistical tests: `inv_batches_list_ids_in_a_uniformly_random_order`
+//! (false-failure probability about 1e-6 per run), and the trickle tests,
+//! which compare receipt instants against a 250 ms bound
+//! (`clearnet_and_onion_trickle_timers_are_independent`: about 3e-6 per run;
+//! `trickle_releases_are_not_aligned_to_the_maintenance_tick`: about 1e-7;
+//! `inbound_peers_of_one_network_share_one_trickle_timer` fails only if one
+//! release pass's sends reach the spies more than 250 ms apart).
 //!
 //! Run: `cargo test -p blacksilk-p2p --test privacy` (and `-- --ignored`
 //! for the open properties).
@@ -875,4 +880,234 @@ async fn a_black_holed_local_transaction_is_restemmed_before_the_origin_fluffs()
     if let (Some(s), Some(r)) = (spy_at, restem) {
         assert!(r <= s, "the origin announced before it re-stemmed");
     }
+}
+
+// ---------------------------------------------------------------- Trickle
+
+/// Two receipts closer than this were released by the same pass of the
+/// trickle task: the rest is loopback delivery and task scheduling, a few
+/// milliseconds.
+const SAME_RELEASE: Duration = Duration::from_millis(250);
+
+/// Pools payment `nth` of `a` and has `a` announce it to every peer at
+/// once (its pool re-announcement at age 10, `relay::reannounce_pool`);
+/// returns when each spy received the announcement, in `spies` order.
+async fn release_instants(
+    a: &mut TestNode,
+    nth: usize,
+    spies: &mut Vec<RawReader>,
+) -> Vec<Instant> {
+    let tx = a.payment_nth(nth);
+    let id = tx.hash();
+    settled(a, a.height() + 1).await;
+    a.chain.lock().unwrap().submit_tx(tx).unwrap();
+    let tasks: Vec<_> = spies
+        .drain(..)
+        .map(|mut r| {
+            tokio::spawn(async move {
+                let at = tokio::time::timeout(Duration::from_secs(60), async {
+                    loop {
+                        let frame = r.recv().await.expect("the spy is still connected");
+                        if matches!(Message::decode(&frame), Ok(m) if announces(&m, &id)) {
+                            return Instant::now();
+                        }
+                    }
+                })
+                .await
+                .expect("announced within 60 s");
+                (r, at)
+            })
+        })
+        .collect();
+    for _ in 0..10 {
+        a.mine_with(0, false);
+    }
+    let mut at = Vec::new();
+    for t in tasks {
+        let (r, t) = t.await.unwrap();
+        spies.push(r);
+        at.push(t);
+    }
+    at
+}
+
+/// The time between the first and the last of `at`.
+fn spread(at: &[Instant]) -> Duration {
+    let (min, max) = (at.iter().min().unwrap(), at.iter().max().unwrap());
+    max.duration_since(*min)
+}
+
+/// Property: inbound peers that reach the node through one network share ONE
+/// release timer, so a spy gains nothing from opening more inbound
+/// connections: its k connections see one release instant per transaction,
+/// not k independent exponential delays whose earliest estimates when the
+/// node first had it (timing-based origin inference). Source: R1 in
+/// decisions.md "Decoy and relay plan (2026-10-04)", RES-FREEZE §4.5(2) and
+/// §8.6-4a, dossier 33 W5; Bitcoin Core PR #33464 (one inbound timer per
+/// network key).
+///
+/// Four inbound spies, mean 2 s, three transactions: every transaction
+/// reaches the four within one release. With independent per-peer timers
+/// the four receipts of one transaction lie within 250 ms with probability
+/// (1 - e^(-0.125))^3 ≈ 1.6e-3, so the three rounds fail them (the code
+/// before R1 did).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn inbound_peers_of_one_network_share_one_trickle_timer() {
+    const SPIES: u8 = 4;
+    const ROUNDS: usize = 3;
+    let mut cfg = fast_config(&[]);
+    cfg.trickle_inbound = Duration::from_secs(2);
+    cfg.ping_interval = Duration::from_secs(3600); // the spies never answer
+    let mut a = node_with(308, cfg).await;
+    a.mine_n(80 + ROUNDS as u64, 0);
+    let nid = params().network_id;
+    let mut spies = Vec::new();
+    let mut writers = Vec::new();
+    for i in 1..=SPIES {
+        let (r, w) = raw_peer_from([127, 0, 9, i], a.addr, nid, 0)
+            .await
+            .expect("spy");
+        spies.push(r);
+        writers.push(w);
+    }
+    wait_until("spies registered", 30, || {
+        a.net.stats().peers == SPIES as usize
+    })
+    .await;
+    for n in 0..ROUNDS {
+        let at = release_instants(&mut a, n, &mut spies).await;
+        assert!(
+            spread(&at) < SAME_RELEASE,
+            "round {n}: the inbound spies were told {:?} apart",
+            spread(&at)
+        );
+    }
+}
+
+/// Property: the node's network identities do not share a release timer:
+/// its clearnet inbound peers and its onion service's peers are released
+/// by independent timers, so a spy connected to an onion address and to an
+/// IP address does not see every transaction released on both at the same
+/// instant: the trickle timer does not link them (the reason Bitcoin
+/// Core PR #33464 replaced its single inbound timer). Each class still
+/// shares one timer within itself. Source: as above; docs/p2p.md §7.
+///
+/// Two clearnet and two onion spies (our onion listener), mean 3 s, five
+/// transactions. Within a class the receipts lie within one release; across
+/// the classes at least one transaction is released more than 250 ms
+/// apart. Independent timers are within 250 ms of each other with
+/// probability 1 - e^(-1/12) ≈ 0.08 per transaction, all five ≈ 3e-6; one
+/// node-wide inbound timer releases all five together.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn clearnet_and_onion_trickle_timers_are_independent() {
+    const ROUNDS: usize = 5;
+    let mut cfg = fast_config(&[]);
+    cfg.trickle_inbound = Duration::from_secs(3);
+    cfg.ping_interval = Duration::from_secs(3600);
+    cfg.onion_listen = Some("127.0.0.1:0".parse().unwrap());
+    let mut a = node_with(309, cfg).await;
+    a.mine_n(80 + ROUNDS as u64, 0);
+    let nid = params().network_id;
+    let onion = a.net.onion_local_addr().expect("onion listener");
+    let mut spies = Vec::new();
+    let mut writers = Vec::new();
+    for to in [a.addr, a.addr, onion, onion] {
+        let (r, w) = raw_peer(to, nid, true).await;
+        spies.push(r);
+        writers.push(w);
+    }
+    wait_until("spies registered", 30, || a.net.stats().peers == 4).await;
+    let onion_peers = a
+        .net
+        .peers()
+        .iter()
+        .filter(|p| p.kind == blacksilk_p2p::connman::ConnKind::OnionInbound)
+        .count();
+    assert_eq!(onion_peers, 2, "two spies through the onion listener");
+    let mut apart = 0;
+    for n in 0..ROUNDS {
+        let at = release_instants(&mut a, n, &mut spies).await;
+        let (clear, tor) = at.split_at(2);
+        assert!(
+            spread(clear) < SAME_RELEASE && spread(tor) < SAME_RELEASE,
+            "round {n}: one class was told at different instants: {at:?}"
+        );
+        let gap = if clear[0] > tor[0] {
+            clear[0].duration_since(tor[0])
+        } else {
+            tor[0].duration_since(clear[0])
+        };
+        println!("round {n}: clearnet and onion released {gap:?} apart");
+        if gap > SAME_RELEASE {
+            apart += 1;
+        }
+    }
+    assert!(
+        apart > 0,
+        "clearnet and onion peers were told every transaction at the same instant"
+    );
+}
+
+/// When `r` is told `id`.
+async fn told_at(r: &mut RawReader, id: Hash) -> Instant {
+    recv_until(r, 30.0, |m| announces(m, &id))
+        .await
+        .expect("announced within 30 s");
+    Instant::now()
+}
+
+/// Property: each identity's trickle releases at its own drawn instant,
+/// never on a shared schedule. Released on the maintenance tick (250 ms),
+/// every gap between two identities' releases was a whole number of ticks
+/// plus microseconds, a signature that links the identities after a few
+/// transactions on a low-jitter link even though their timers are
+/// independent. Source: RT-R1 F1 (red team of R1, 2026-10-04); Bitcoin Core
+/// has no release grid either.
+///
+/// One clearnet and one onion spy, the production tick (250 ms), an inbound
+/// mean of 200 ms, 60 announcements: the gap between the two receipts is
+/// within 10 ms of a whole number of ticks for about 8 % of exact-instant
+/// releases (about 8 % more when both fall in one OS timer quantum, 15.6 ms
+/// on Windows), so about 10 of 60; a false failure needs 30 (p ≈ 1e-7). On
+/// the tick grid (the code before RT-R1) 36 of 60 were within 5 ms, median
+/// 0.05 ms, after the fix 4 of 60, median 61 ms.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn trickle_releases_are_not_aligned_to_the_maintenance_tick() {
+    const ROUNDS: usize = 60;
+    const TICK: Duration = Duration::from_millis(250);
+    let mut cfg = fast_config(&[]);
+    cfg.tick = TICK;
+    cfg.trickle_inbound = Duration::from_millis(200);
+    cfg.ping_interval = Duration::from_secs(3600);
+    cfg.onion_listen = Some("127.0.0.1:0".parse().unwrap());
+    let a = node_with(310, cfg).await;
+    let nid = params().network_id;
+    let onion = a.net.onion_local_addr().expect("onion listener");
+    let (mut clear_r, _clear_w) = raw_peer(a.addr, nid, true).await;
+    let (mut tor_r, _tor_w) = raw_peer(onion, nid, true).await;
+    wait_until("spies registered", 30, || a.net.stats().peers == 2).await;
+    let mut rng = ChaCha20Rng::seed_from_u64(310);
+    let mut residues = Vec::new();
+    for _ in 0..ROUNDS {
+        let mut id = [0u8; 32];
+        rng.fill_bytes(&mut id);
+        a.net.announce_for_tests(id);
+        let (c, t) = tokio::join!(told_at(&mut clear_r, id), told_at(&mut tor_r, id));
+        let gap = if c > t { c - t } else { t - c };
+        let r = gap.as_micros() % TICK.as_micros();
+        residues.push(r.min(TICK.as_micros() - r) as f64 / 1000.0);
+    }
+    let on_grid = residues.iter().filter(|&&r| r < 10.0).count();
+    let mut sorted = residues.clone();
+    sorted.sort_by(f64::total_cmp);
+    println!(
+        "gap to the nearest whole tick (ms): min {:.3}, median {:.3}, max {:.3}; {on_grid} of {ROUNDS} within 10 ms",
+        sorted[0],
+        sorted[ROUNDS / 2],
+        sorted[ROUNDS - 1]
+    );
+    assert!(
+        on_grid < ROUNDS / 2,
+        "{on_grid} of {ROUNDS} release gaps are whole numbers of maintenance ticks: {residues:?}"
+    );
 }
