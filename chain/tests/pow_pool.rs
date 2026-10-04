@@ -6,7 +6,7 @@
 
 use blacksilk_chain::manager::{CachedPow, PowJob};
 use blacksilk_consensus::hash::H;
-use blacksilk_consensus::{Hash, PowFunction, RandomXPow, HEADER_SIZE};
+use blacksilk_consensus::{Hash, PowFunction, RandomXPow, POW_BLOB_SIZE};
 use std::collections::HashSet;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -44,7 +44,7 @@ impl PowFunction for Recorder {
 fn jobs(n: usize) -> Vec<PowJob> {
     (0..n as u64)
         .map(|i| {
-            let mut b = [0x11; HEADER_SIZE];
+            let mut b = [0x11; POW_BLOB_SIZE];
             b[..8].copy_from_slice(&i.to_le_bytes());
             ([(i % 3) as u8 + 1; 32], b)
         })
@@ -277,7 +277,7 @@ fn real_randomx_concurrent_batches_match_fresh_hashes() {
         .map(|c| {
             (0..4u64)
                 .map(|i| {
-                    let mut b = [0x77; HEADER_SIZE];
+                    let mut b = [0x77; POW_BLOB_SIZE];
                     b[..8].copy_from_slice(&(c * 100 + i).to_le_bytes());
                     (keys[((c + i) % 3) as usize], b)
                 })

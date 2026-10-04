@@ -1639,3 +1639,9 @@ Every external citation was verified against its primary source (res-freeze.md �
   block's `first_output` against `output_count`, the output backfill against the
   synced header, the PX backfill against `px_root`) land as a separate commit, merged
   after the wallet-distribution branch.
+- **Mining blob (same revision, Lead decision after the xmrig research):** the header
+  layout stays (nonce last, 164..172); the PoW input becomes a derived 47-byte blob
+  `"BSilk/1" ‖ H32("mining-hash", LE32(network_id) ‖ header[0..164]) ‖ LE64(nonce)`,
+  nonce at byte 39 where stock xmrig writes its RandomX nonce (xmrig iterates 39..43, a
+  pool's extranonce is 43..47). The block id stays the full header's hash. The revision
+  id becomes `OMR:header-output-mmr-px-root-and-mining-blob` (one revision).

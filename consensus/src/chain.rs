@@ -588,7 +588,9 @@ impl HeaderChain {
     /// branch at its height, meets `difficulty`.
     fn pow_meets(&self, header: &BlockHeader, difficulty: u64) -> bool {
         let seed = self.seed_id_for(header.prev_id, header.height);
-        let pow_hash = self.pow.pow_hash(&seed, &header.to_bytes());
+        let pow_hash = self
+            .pow
+            .pow_hash(&seed, &header.pow_blob(self.params.network_id));
         check_hash(&pow_hash, difficulty)
     }
 
@@ -708,7 +710,10 @@ mod tests {
             ..Default::default()
         };
         let seed = c.seed_id_for(parent, h.height);
-        while !check_hash(&TestPow.pow_hash(&seed, &h.to_bytes()), h.difficulty) {
+        while !check_hash(
+            &TestPow.pow_hash(&seed, &h.pow_blob(c.params().network_id)),
+            h.difficulty,
+        ) {
             h.nonce += 1;
         }
         h
@@ -923,7 +928,10 @@ mod tests {
         let seed = c.seed_id_for(tip, h.height);
         let found = (0..100_000).any(|_| {
             h.nonce += 1;
-            !check_hash(&TestPow.pow_hash(&seed, &h.to_bytes()), h.difficulty)
+            !check_hash(
+                &TestPow.pow_hash(&seed, &h.pow_blob(c.params().network_id)),
+                h.difficulty,
+            )
         });
         assert!(found);
         assert_eq!(c.validate(&h, now), Err(HeaderError::InsufficientWork));
@@ -937,7 +945,11 @@ mod tests {
     /// fail it (`want = false`) under the seed of its parent's branch.
     fn grind(c: &HeaderChain, mut h: BlockHeader, difficulty: u64, want: bool) -> BlockHeader {
         let seed = c.seed_id_for(h.prev_id, h.height);
-        while check_hash(&TestPow.pow_hash(&seed, &h.to_bytes()), difficulty) != want {
+        while check_hash(
+            &TestPow.pow_hash(&seed, &h.pow_blob(c.params().network_id)),
+            difficulty,
+        ) != want
+        {
             h.nonce += 1;
         }
         h

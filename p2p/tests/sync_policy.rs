@@ -7,7 +7,7 @@ mod common;
 use blacksilk_chain::manager::ChainManager;
 use blacksilk_chain::store::MemoryStore;
 use blacksilk_consensus::{
-    seed_height, BlockHeader, Hash, HeaderChain, PowFunction, HEADER_VERSION, NONCE_OFFSET,
+    seed_height, BlockHeader, Hash, HeaderChain, PowFunction, HEADER_VERSION, POW_NONCE_OFFSET,
 };
 use blacksilk_p2p::message::Message;
 use blacksilk_p2p::{HeaderPowBudget, NetConfig, Network, SharedChain};
@@ -27,7 +27,11 @@ struct SeedRecordingPow(Mutex<Vec<Hash>>);
 impl PowFunction for SeedRecordingPow {
     fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
         self.0.lock().unwrap().push(*seed);
-        let nonce = u64::from_le_bytes(blob[NONCE_OFFSET..NONCE_OFFSET + 8].try_into().unwrap());
+        let nonce = u64::from_le_bytes(
+            blob[POW_NONCE_OFFSET..POW_NONCE_OFFSET + 8]
+                .try_into()
+                .unwrap(),
+        );
         if nonce == BAD_NONCE {
             [0xff; 32]
         } else {

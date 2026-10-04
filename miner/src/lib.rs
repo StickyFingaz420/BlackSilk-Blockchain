@@ -7,7 +7,7 @@
 use blacksilk_chain::block::Block;
 use blacksilk_chain::emission::format_amount;
 use blacksilk_consensus::merkle::tx_root;
-use blacksilk_consensus::{check_hash, BlockHeader, Hash, NONCE_OFFSET};
+use blacksilk_consensus::{check_hash, BlockHeader, Hash, POW_NONCE_OFFSET};
 use blacksilk_crypto::keys::Address;
 use blacksilk_randomx::{Cache, Dataset, Vm};
 use blacksilk_rpc as rpc;
@@ -654,10 +654,14 @@ pub struct Found {
 
 /// Searches nonces `start, start+1, …` across `threads` threads until one meets
 /// the header's difficulty, `stop` is set, or `max_hashes` hashes were tried.
-/// Returns the found nonce and the number of hashes computed.
+/// Returns the found nonce and the number of hashes computed. Each try
+/// hashes the header's mining blob on `network_id` (docs/consensus.md §3)
+/// with the nonce written at its bytes 39..47; the mining hash is computed
+/// once.
 pub fn search(
     pow: &PowContext,
     header: &BlockHeader,
+    network_id: u32,
     start: u64,
     threads: usize,
     max_hashes: u64,
@@ -666,7 +670,7 @@ pub fn search(
     let threads = threads.max(1) as u64;
     let found: Mutex<Option<Found>> = Mutex::new(None);
     let hashes = AtomicU64::new(0);
-    let base = header.to_bytes();
+    let base = header.pow_blob(network_id);
     std::thread::scope(|s| {
         for t in 0..threads {
             let (found, hashes, base) = (&found, &hashes, base);
@@ -680,7 +684,7 @@ pub fn search(
                         break;
                     }
                     let nonce = start.wrapping_add(k);
-                    bytes[NONCE_OFFSET..NONCE_OFFSET + 8].copy_from_slice(&nonce.to_le_bytes());
+                    bytes[POW_NONCE_OFFSET..].copy_from_slice(&nonce.to_le_bytes());
                     let h = vm.hash(&bytes);
                     hashes.fetch_add(1, Ordering::Relaxed);
                     if check_hash(&h, header.difficulty) {
@@ -725,11 +729,11 @@ mod tests {
         };
         let pow = PowContext::new(t.seed_id, false, 2);
         let stop = AtomicBool::new(false);
-        let (found, n) = search(&pow, &header, 1000, 2, 200, &stop);
+        let (found, n) = search(&pow, &header, params.network_id, 1000, 2, 200, &stop);
         let found = found.expect("difficulty 3 is found within 200 hashes");
         assert!(n >= 1);
         header.nonce = found.nonce;
-        let h = blacksilk_randomx::hash_light(&t.seed_id, &header.to_bytes());
+        let h = blacksilk_randomx::hash_light(&t.seed_id, &header.pow_blob(params.network_id));
         assert_eq!(h, found.pow_hash);
         assert!(check_hash(&h, 3));
     }
@@ -1209,11 +1213,11 @@ mod tests {
             ..Default::default()
         };
         let stop = AtomicBool::new(false);
-        let (found, n) = search(&pow, &header, 0, 2, 4, &stop);
+        let (found, n) = search(&pow, &header, 1, 0, 2, 4, &stop);
         assert_eq!(found, None);
         assert_eq!(n, 4);
         stop.store(true, Ordering::Relaxed);
-        let (found, n) = search(&pow, &header, 0, 2, 1000, &stop);
+        let (found, n) = search(&pow, &header, 1, 0, 2, 1000, &stop);
         assert_eq!((found, n), (None, 0));
     }
 }

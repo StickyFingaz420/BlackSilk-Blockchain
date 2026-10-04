@@ -5,7 +5,7 @@
 
 use blacksilk_chain::manager::{CachedPow, PowJob};
 use blacksilk_consensus::hash::H;
-use blacksilk_consensus::{Hash, PowFunction, RandomXPow, HEADER_SIZE};
+use blacksilk_consensus::{Hash, PowFunction, RandomXPow, POW_BLOB_SIZE};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
@@ -30,7 +30,7 @@ impl Rng {
 
 /// Byte 8 of a blob: 0xEE panics, 0xDD sleeps 1 ms.
 fn job(i: u64, kind: u8) -> PowJob {
-    let mut b = [0x33; HEADER_SIZE];
+    let mut b = [0x33; POW_BLOB_SIZE];
     b[..8].copy_from_slice(&i.to_le_bytes());
     b[8] = kind;
     ([(i % 5) as u8; 32], b)
@@ -273,7 +273,7 @@ fn stress_real_randomx_two_managers_churn() {
             let mut rng = Rng(1000 + c);
             (0..per_caller)
                 .map(|i| {
-                    let mut b = [0x42; HEADER_SIZE];
+                    let mut b = [0x42; POW_BLOB_SIZE];
                     b[..8].copy_from_slice(&(c * 10_000 + i).to_le_bytes());
                     (keys[rng.below(n_keys as u64) as usize], b)
                 })

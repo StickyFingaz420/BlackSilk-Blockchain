@@ -109,6 +109,9 @@ pub mod tags {
     pub const OUTPUT_MMR_LEAF: &str = "output-mmr/leaf";
     pub const OUTPUT_MMR_NODE: &str = "output-mmr/node";
     pub const OUTPUT_MMR_ROOT: &str = "output-mmr/root";
+    /// The mining hash of the proof-of-work input (docs/consensus.md §3),
+    /// computed in `blacksilk-consensus` (`BlockHeader::mining_hash`).
+    pub const MINING_HASH: &str = "mining-hash";
 
     /// Every tag, for the distinctness test.
     pub const ALL: &[&str] = &[
@@ -189,6 +192,7 @@ pub mod tags {
         OUTPUT_MMR_LEAF,
         OUTPUT_MMR_NODE,
         OUTPUT_MMR_ROOT,
+        MINING_HASH,
     ];
 
     /// The consensus tags: every tag a node hashes with to reach a verdict
@@ -229,6 +233,7 @@ pub mod tags {
         OUTPUT_MMR_LEAF,
         OUTPUT_MMR_NODE,
         OUTPUT_MMR_ROOT,
+        MINING_HASH,
     ];
 }
 

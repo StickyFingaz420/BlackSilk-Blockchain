@@ -136,7 +136,7 @@ struct PowCheck {
     height: u64,
     id: Hash,
     seed: Hash,
-    header: [u8; blacksilk_consensus::HEADER_SIZE],
+    header: [u8; blacksilk_consensus::POW_BLOB_SIZE],
     stored: Hash,
 }
 
@@ -439,7 +439,7 @@ impl ChainManager {
         if let Some(parent) = self.headers.header(&header.prev_id) {
             if header.height == parent.height + 1 {
                 let seed = self.headers.seed_id_for(header.prev_id, header.height);
-                let bytes = header.to_bytes();
+                let bytes = header.pow_blob(self.params.network_id);
                 match self.pow.lookup(&seed, &bytes) {
                     None => self.pow.preload(&seed, &bytes, pow_hash),
                     Some(first) if first != pow_hash && check != StorePowCheck::Trust => {
@@ -496,7 +496,7 @@ impl ChainManager {
                 let id = *self.connected.get(usize::try_from(h).ok()?)?;
                 let header = self.headers.header(&id)?;
                 let seed = self.headers.seed_id_for(header.prev_id, h);
-                let bytes = header.to_bytes();
+                let bytes = header.pow_blob(self.params.network_id);
                 let stored = self.pow.lookup(&seed, &bytes)?;
                 Some(PowCheck {
                     index: None,

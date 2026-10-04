@@ -291,7 +291,7 @@ The ordering is by expected gain per effort. Gains are **[assumed]**; profiling 
 ### 4.4 What the gap means (fairness, decentralization, ASIC resistance)
 
 - **ASIC resistance is unaffected.** It comes from the algorithm (a random program, 2 GiB of memory, FP, branches, AES), not from any implementation. Implementation speed never changes the ASIC-to-CPU ratio [src/design].
-- **Hardware decentralization is unaffected.** Any commodity CPU can run a free, open JIT miner. xmrig mines RandomX v1 with a custom seed; only the blob, nonce offset (92, 8 bytes) and target format differ, which a thin adapter handles.
+- **Hardware decentralization is unaffected.** Any commodity CPU can run a free, open JIT miner. xmrig mines RandomX v1 with a custom seed. Correction (2026-10-04, output-root): the nonce offset is compiled into xmrig per algorithm (byte 39, 4 bytes, for RandomX), so no adapter could move it; v3 therefore hashes a 47-byte mining blob with the nonce at byte 39 (docs/consensus.md §3), and a pool needs only an algorithm entry with the BlackSilk salt.
 - **Software fairness is affected.** An operator who uses the project's own miner gets about 1–2% of the blocks that the same hardware earns with a JIT miner. In practice:
   - rational miners will run third-party C/C++ miners on BlackSilk;
   - the "pure-Rust" property then holds for *verification* (nodes), but not for the mining economy.

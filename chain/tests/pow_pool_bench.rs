@@ -13,7 +13,7 @@
 
 use blacksilk_chain::manager::{CachedPow, PowJob};
 use blacksilk_consensus::hash::H;
-use blacksilk_consensus::{Hash, PowFunction, RandomXPow, HEADER_SIZE};
+use blacksilk_consensus::{Hash, PowFunction, RandomXPow, POW_BLOB_SIZE};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -29,8 +29,8 @@ impl PowFunction for CheapPow {
 fn jobs(seed: Hash, n: usize) -> Vec<PowJob> {
     (0..n as u64)
         .map(|i| {
-            let mut b = [0x5A; HEADER_SIZE];
-            b[HEADER_SIZE - 8..].copy_from_slice(&i.to_le_bytes());
+            let mut b = [0x5A; POW_BLOB_SIZE];
+            b[POW_BLOB_SIZE - 8..].copy_from_slice(&i.to_le_bytes());
             b[..8].copy_from_slice(&(i * 7919).to_le_bytes());
             (seed, b)
         })
@@ -87,7 +87,7 @@ fn bench_randomx_batch() {
     let seed = [0xB5; 32];
     let rx = Arc::new(RandomXPow::new());
     let started = Instant::now();
-    let _ = rx.pow_hash(&seed, &[0; HEADER_SIZE]);
+    let _ = rx.pow_hash(&seed, &[0; POW_BLOB_SIZE]);
     println!("cache build + 1 hash: {} ms", started.elapsed().as_millis());
     let inner: Arc<dyn PowFunction> = rx;
     let all = jobs(seed, n);

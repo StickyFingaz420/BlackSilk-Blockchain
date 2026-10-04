@@ -110,10 +110,37 @@ firmware cannot mine BlackSilk unmodified. A miner that adds the salt (a one-lin
 change) can; the salt is not a security boundary
 (reviews/v3-consensus-changes.md#rx-salt).
 
-**Input:** `pow_hash = RandomX(key = seed_id(height), input = header_bytes)`.
-The whole 172-byte header, including the nonce, is the input. The PoW hash is not
-part of the header or of any block data sent to peers: every node recomputes it for
-headers it receives. The node does cache it in its **local** block store and, at
+**Input:** `pow_hash = RandomX(key = seed_id(height), input = pow_blob)`, where the
+mining blob is 47 bytes derived from the header and the network:
+
+```
+mining_hash = H32("mining-hash", LE32(network_id) ‖ header_bytes[0..164])
+pow_blob    = "BSilk/1" (7 bytes, ASCII) ‖ mining_hash (32) ‖ LE64(nonce) (8)
+              offsets:   0..7               7..39              39..47
+```
+
+`H32` is the domain-separated Blake2b-256 of transactions.md §1.2 (tag
+`u8(len) ‖ "BlackSilk/v1/mining-hash"`; the tag is in `tags::CONSENSUS`);
+`header_bytes[0..164]` is every header field but the nonce (§2). The block id stays
+the hash of the full 172-byte header, nonce included.
+
+- **Why a blob.** Stock xmrig writes its 4-byte RandomX nonce at byte 39 of the job
+  blob (the offset is compiled into xmrig per algorithm, `Job::nonceOffset`) and
+  hashes the whole blob, so a BlackSilk pool needs only a RandomX algorithm entry
+  with the BlackSilk salt, no miner fork. xmrig iterates bytes 39..43 (the nonce's low
+  32 bits); a pool server owns bytes 43..47 (the high 32 bits) as extranonce, so
+  workers never overlap. Solo mining (`blacksilk-miner`) iterates the whole `u64`.
+- **Security.** The blob has a fixed length and is derived by every node from the
+  header; it is never transmitted inside blocks, so there is no padding or optional
+  field a miner could vary to get equal-work duplicates (the Tari RandomX-T
+  `pow_data` padding issue). `mining_hash` is a collision-resistant commitment to
+  every header field but the nonce, and binds the network id, so work never carries
+  across networks. The nonce enters the blob directly, as it does the header.
+- Vectors: `tools/vectors/output_mmr.py` prints the mining blob of the sample header,
+  pinned in `consensus/tests/golden.rs`; `BlockHeader::pow_blob`.
+
+The PoW hash is not part of the header or of any block data sent to peers: every node
+recomputes it for headers it receives. The node does cache it in its **local** block store and, at
 restart, trusts the stored value for blocks read from its own file instead of
 recomputing RandomX (blocks.md §8). The PoW hash and the block id are different
 values.

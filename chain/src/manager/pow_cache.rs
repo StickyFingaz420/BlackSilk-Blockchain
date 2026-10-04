@@ -101,7 +101,7 @@ impl CachedPow {
 }
 
 /// One PoW computation: RandomX key (seed block id) and header bytes.
-pub type PowJob = (Hash, [u8; blacksilk_consensus::HEADER_SIZE]);
+pub type PowJob = (Hash, [u8; blacksilk_consensus::POW_BLOB_SIZE]);
 
 /// Most helper threads a pool starts. The p2p header worker, the only caller
 /// with more than one thread, hashes chunks of at most `seed_lag` (64)

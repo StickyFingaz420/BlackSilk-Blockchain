@@ -129,7 +129,7 @@ impl ChainManager {
         if persist {
             // The header is in the tree, so its seed is defined; the hash is
             // cached from header validation (computed again only if not).
-            let header_bytes = block.header.to_bytes();
+            let header_bytes = block.header.pow_blob(self.params.network_id);
             let seed = self
                 .headers
                 .seed_id_for(block.header.prev_id, block.header.height);

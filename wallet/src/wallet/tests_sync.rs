@@ -266,7 +266,7 @@ fn witnesses_verify_and_follow_a_reorganization() {
 /// headers listed, whose hash meets none above 1; counts the hashes.
 #[derive(Default)]
 struct BadPow {
-    bad: std::sync::Mutex<Vec<[u8; blacksilk_consensus::HEADER_SIZE]>>,
+    bad: std::sync::Mutex<Vec<[u8; blacksilk_consensus::POW_BLOB_SIZE]>>,
     calls: std::sync::atomic::AtomicU64,
 }
 
@@ -337,10 +337,11 @@ fn a_restore_refuses_a_header_with_bad_proof_of_work() {
     let chain = fast_chain(8, 30);
     for bad in [30u64, 17] {
         let pow = Arc::new(BadPow::default());
-        pow.bad
-            .lock()
-            .unwrap()
-            .push(chain.blocks[bad as usize].header.to_bytes());
+        pow.bad.lock().unwrap().push(
+            chain.blocks[bad as usize]
+                .header
+                .pow_blob(chain.params.network_id),
+        );
         let mut w = restored(Some(pow.clone()), 1);
         w.set_header_samples(u64::MAX);
         let e = w.sync(&chain).unwrap_err();
@@ -373,10 +374,11 @@ fn a_short_forged_suffix_is_refused() {
     let pow = Arc::new(BadPow::default());
     for h in 396..400u64 {
         assert!(chain.blocks[h as usize].header.difficulty > 1);
-        pow.bad
-            .lock()
-            .unwrap()
-            .push(chain.blocks[h as usize].header.to_bytes());
+        pow.bad.lock().unwrap().push(
+            chain.blocks[h as usize]
+                .header
+                .pow_blob(chain.params.network_id),
+        );
     }
     for restore in [1, 200, 398, 400] {
         for _ in 0..5 {
@@ -989,10 +991,10 @@ fn parallel_and_sequential_verdicts_agree() {
             headers[f as usize - 1].difficulty += 1;
         }
         let pow = BadPow::default();
-        pow.bad
-            .lock()
-            .unwrap()
-            .extend(bad.iter().map(|&h| headers[h as usize - 1].to_bytes()));
+        pow.bad.lock().unwrap().extend(
+            bad.iter()
+                .map(|&h| headers[h as usize - 1].pow_blob(params.network_id)),
+        );
         let run = |threads: usize, deferred: bool| {
             // Every header's work is checked (samples = expected).
             let mut c = HeaderCheck::from_genesis(&params, &pow, N, N, u64::MAX / 2).unwrap();
@@ -1052,10 +1054,11 @@ fn a_parallel_restore_refuses_at_the_forged_block() {
     for bad in [150u64, 330, 399] {
         for restore in [100u64, 360] {
             let pow = Arc::new(BadPow::default());
-            pow.bad
-                .lock()
-                .unwrap()
-                .push(chain.blocks[bad as usize].header.to_bytes());
+            pow.bad.lock().unwrap().push(
+                chain.blocks[bad as usize]
+                    .header
+                    .pow_blob(chain.params.network_id),
+            );
             let mut w = restored(Some(pow.clone()), restore);
             let e = w.sync(&chain).unwrap_err().to_string();
             assert!(e.contains(&format!("header {bad}'s proof of work")), "{e}");
@@ -1087,9 +1090,10 @@ fn dense_tail_pow_720_headers_sequential_and_parallel() {
     let params = ChainParams::regtest();
     let pow = Measured(blacksilk_consensus::RandomXPow::new(), AtomicU64::new(0));
     // The light cache is built once, outside the measurement.
-    let _ = pow
-        .0
-        .pow_hash(&params.genesis_id(), &[0; blacksilk_consensus::HEADER_SIZE]);
+    let _ = pow.0.pow_hash(
+        &params.genesis_id(),
+        &[0; blacksilk_consensus::POW_BLOB_SIZE],
+    );
     let all = std::thread::available_parallelism().map_or(1, |n| n.get());
     for threads in [1, all] {
         let mut c = HeaderCheck::from_genesis(&params, &pow, 0, 0, u64::MAX / 2).unwrap();
@@ -1418,10 +1422,11 @@ fn the_dense_tail_is_exactly_the_last_720_headers_and_the_first() {
     // an unsampled check, one at the tail's lowest header does not.
     for (h, refused) in [(N - tail, false), (N - tail + 1, true)] {
         let pow = Arc::new(BadPow::default());
-        pow.bad
-            .lock()
-            .unwrap()
-            .push(chain.blocks[h as usize].header.to_bytes());
+        pow.bad.lock().unwrap().push(
+            chain.blocks[h as usize]
+                .header
+                .pow_blob(chain.params.network_id),
+        );
         let mut w = restored(Some(pow), 1);
         w.set_header_samples(0);
         assert_eq!(w.sync(&chain).is_err(), refused, "{h}");

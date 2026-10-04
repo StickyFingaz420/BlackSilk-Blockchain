@@ -25,9 +25,9 @@ use blacksilk_px::fingerprint::px_entries;
 
 /// Changing this is a consensus change (fingerprint v3: see the module text;
 /// re-pinned by RT-FP3 for the crypto, tree and transcript entries, and by
-/// output-root for the three `output-mmr/*` tags it adds to
+/// output-root for the three `output-mmr/*` tags and `mining-hash` it adds to
 /// `tags::CONSENSUS`, which this manifest lists).
-const PX_SIDE_DIGEST: &str = "10f284ed5f789fbfb40a72dd63aea84b310e397dae018e0152a532e58f956389";
+const PX_SIDE_DIGEST: &str = "79d589d8352fb392e93cbbe404b839653efadd14ffe73a34229d8630bda9fee6";
 
 #[test]
 fn px_side_consensus_constants_are_pinned() {

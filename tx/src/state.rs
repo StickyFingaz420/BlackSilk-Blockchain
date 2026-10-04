@@ -563,6 +563,32 @@ mod tests {
         );
     }
 
+    /// The consensus crate's tagged hash (the mining hash of the PoW input)
+    /// follows the crypto crate's tag convention and tag name.
+    #[test]
+    fn the_mining_hash_tag_is_the_crypto_crates() {
+        use blacksilk_consensus::header::MINING_HASH_TAG;
+        use blacksilk_crypto::hash::{h32, tags, DOMAIN_PREFIX};
+        assert_eq!(blacksilk_consensus::hash::DOMAIN_PREFIX, DOMAIN_PREFIX);
+        assert_eq!(MINING_HASH_TAG, tags::MINING_HASH);
+        let h = blacksilk_consensus::BlockHeader {
+            height: 9,
+            nonce: 77,
+            ..Default::default()
+        };
+        let nid = 0x00DE_B06Eu32;
+        assert_eq!(
+            h.mining_hash(nid),
+            h32(
+                tags::MINING_HASH,
+                &[
+                    &nid.to_le_bytes(),
+                    &h.to_bytes()[..blacksilk_consensus::NONCE_OFFSET]
+                ]
+            )
+        );
+    }
+
     /// B-OMR state: the range after every applied height equals a
     /// recomputation over the outputs of the blocks up to it, before and
     /// after undoing blocks; nothing above the tip.

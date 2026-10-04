@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent vectors for the v3 header (172 bytes) and the output Merkle mountain range.
+"""Independent vectors for the v3 header (172 bytes), its mining blob and the output MMR.
 
 TEST TOOLING ONLY, NOT CORE. Nothing in the node, wallet or miner runs this file.
 It produces `tx/tests/data/output_mmr.txt`, which `tx/tests/output_mmr_vectors.rs`
@@ -26,6 +26,8 @@ The definitions, restated:
   header      = LE32 version || LE64 height || prev_id || LE64 timestamp || LE64 difficulty
                 || tx_root || LE64 output_count || output_root || px_root || LE64 nonce
   block id    = Blake2b-256("BlackSilk/block-id" || LE32(network_id) || header)
+  mining hash = H32("mining-hash", LE32(network_id) || header[0..164])
+  pow blob    = "BSilk/1" || mining hash || LE64(nonce)   (47 bytes, nonce at 39)
 
 Usage:
   python tools/vectors/output_mmr.py            # print the vector file and the header values
@@ -162,6 +164,13 @@ def header_values():
     lines.append("sample header: " + sample.hex())
     lines.append("sample id (0x00DEB06E): " + block_id(0x00DEB06E, sample).hex())
     lines.append("sample id (0x0001D673): " + block_id(0x0001D673, sample).hex())
+    # The mining blob (docs/consensus.md section 3): "BSilk/1" || mining_hash ||
+    # LE64 nonce, mining_hash = H32("mining-hash", LE32 network_id || header[0..164]).
+    for nid in (0x00DEB06E, 0xFFFFFF00):
+        mh = h32("mining-hash", struct.pack("<I", nid), sample[:164])
+        blob = b"BSilk/1" + mh + sample[164:]
+        assert len(blob) == 47
+        lines.append(f"sample pow_blob ({nid:#010x}): " + blob.hex())
     epx = empty_px_root()
     lines.append("empty PX root (header encoding): " + epx.hex())
     # Genesis (docs/consensus.md section 1): version 1, height 0, zero parent and

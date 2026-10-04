@@ -3516,7 +3516,7 @@ salt, never sizes or frequencies"). Internal engineering work, not an audit.
 
 ## output-root: headers commit to the v1 output set (a Merkle mountain range) and to the PX tree root
 
-Revision: OMR:header-commits-output-mmr-and-px-root
+Revision: OMR:header-output-mmr-px-root-and-mining-blob
 
 Owner: OMR (implementation lead). Decision: "output-root (Lead, 2026-10-04)" in
 `phase2-2026-09-27/decisions.md` (a Grin-style output commitment in the header; a PX
@@ -3681,9 +3681,57 @@ restore height). Internal engineering work, not an audit.
       commitments of a block of the fixture coinbase on the genesis state, and a
       `root_after` on the empty tree.
 15. **Suite results and open review points.** Results are in the commit messages. Open:
+    - the RandomX hashes of the mining blob are not pinned as vectors here: the RandomX
+      salt change (`rxsalt`, `"BlackSilk/RandomX/v1"`) lands before this record, and
+      hashes computed on this branch's base would use the reference salt;
     - the range is not served with inclusion proofs yet (`/outputs` could return them);
       wallets check whole lists against one header;
     - the decoy distribution (`/distribution`) stays the node's word above what the
       wallet indexes (the wallet-distribution work, 38 D1);
     - the node keeps about 64 bytes per output in memory for the range, next to the
       output records.
+
+### The mining blob (same revision)
+
+Decision: "output-root" follow-up (Lead, 2026-10-04, after the xmrig research in
+`C:/bszkeval/xmrig-research/NOTES.md`): keep the 172-byte header with the nonce last, and
+make the proof-of-work input a fixed 47-byte mining blob, in this one revision.
+
+1. **Problem.** The PoW input was the whole header with an 8-byte nonce at byte 92 (164
+   after the header change). Stock xmrig writes its 4-byte RandomX nonce at byte 39
+   of the job blob; the offset is compiled into xmrig per algorithm, so no adapter
+   can move it (full-review-2026-09-27/R9-randomx.md said a thin adapter would;
+   corrected). Honest miners would
+   need a fork of xmrig (custom-offset algorithms wait years upstream: Yada, PCoin).
+2. **Rule.** `pow_hash = RandomX(seed, pow_blob)` with `pow_blob = "BSilk/1" ‖
+   mining_hash ‖ LE64(nonce)` (47 bytes) and `mining_hash = H32("mining-hash",
+   LE32(network_id) ‖ header[0..164])` (docs/consensus.md §3). `check_hash` is
+   unchanged; the block id is unchanged (the full header).
+3. **Prior art.** Tari RandomX-T (a 76-byte blob with a mining hash and the nonce at
+   35..43); Monero's hashing blob (a fixed prefix, a Merkle root, the nonce at 39).
+4. **Security.** Fixed length; derived by every node, never transmitted, so no padding
+   or optional field gives equal-work duplicates (Tari's later
+   `check_randomxt_pow_data` rule fixed exactly that); a collision-resistant
+   commitment to every field but the nonce; the network id is bound (work does not
+   carry across networks). The extra Blake2b over 168 bytes per header is negligible
+   next to RandomX; the miner computes it once per template.
+5. **Extranonce.** xmrig iterates bytes 39..43; a pool server owns bytes 43..47 and
+   gives each worker its own value. `blacksilk-miner` iterates the whole `u64`.
+6. **Affected components.** consensus (`BlockHeader::mining_hash`, `pow_blob`,
+   `POW_BLOB_SIZE` 47, `POW_NONCE_OFFSET` 39, `POW_BLOB_TAG`, `MINING_HASH_TAG`,
+   `H::tagged`; `HeaderChain::validate`), crypto (tag `mining-hash` in `CONSENSUS`), chain
+   (header and block PoW jobs, the PoW cache and the stored-hash check: keyed by the
+   blob), miner (`search` takes the network id and patches bytes 39..47), wallet
+   (header check), labnet `rx_verify`, node fingerprint (`consensus.POW_BLOB_SIZE`,
+   `POW_NONCE_OFFSET`, `POW_BLOB_TAG`, `rules.sample.pow_blob`).
+7. **Compatibility.** Every stored PoW hash of an earlier build is for another input:
+   stores of earlier builds are already refused (new genesis ids). A pool's stratum
+   server must build the blob; a block template (`/template`) is unchanged.
+8. **Tests.** `consensus/src/header.rs` (the blob's layout, the hash commits to every
+   field but the nonce and to the network, the definition written out),
+   `tx/src/state.rs` (the consensus crate's tag equals the crypto crate's `H32`),
+   `consensus/tests/golden.rs` (the blob of the sample header, from
+   `tools/vectors/output_mmr.py`), the RandomX end-to-end tests (miner and node agree on
+   the blob), the miner's `found_nonce_verifies_with_consensus`, and every test
+   double that reads the nonce from the PoW input (byte 39).
+

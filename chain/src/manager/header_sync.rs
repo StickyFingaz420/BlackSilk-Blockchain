@@ -128,7 +128,7 @@ impl ChainManager {
                 } else {
                     self.headers.seed_id_for(first.prev_id, h.height)
                 };
-                (seed, h.to_bytes())
+                (seed, h.pow_blob(self.params.network_id))
             })
             .collect();
         Some((self.pow.clone(), jobs))

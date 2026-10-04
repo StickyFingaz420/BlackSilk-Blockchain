@@ -167,7 +167,7 @@ pub const REVISIONS: &[Revision] = &[
         record: "rx-salt",
     },
     Revision {
-        id: "OMR:header-commits-output-mmr-and-px-root",
+        id: "OMR:header-output-mmr-px-root-and-mining-blob",
         record: "output-root",
     },
 ];
@@ -358,6 +358,18 @@ fn chain_entries(network: Network) -> Manifest {
         .bytes(
             "consensus.EMPTY_PX_ROOT",
             &blacksilk_consensus::genesis::EMPTY_PX_ROOT,
+        )
+        .size(
+            "consensus.POW_BLOB_SIZE",
+            blacksilk_consensus::POW_BLOB_SIZE,
+        )
+        .size(
+            "consensus.POW_NONCE_OFFSET",
+            blacksilk_consensus::POW_NONCE_OFFSET,
+        )
+        .bytes(
+            "consensus.POW_BLOB_TAG",
+            blacksilk_consensus::header::POW_BLOB_TAG,
         );
     m.u("tx.TX_VERSION", tx::TX_VERSION)
         .list(
@@ -509,6 +521,11 @@ fn rule_samples(network: Network) -> Manifest {
     m.bytes(
         "rules.sample.block_id (test-vector network id)",
         &header.id(TEST_VECTOR_NETWORK_ID),
+    )
+    // The proof-of-work input of the same header (docs/consensus.md §3).
+    .bytes(
+        "rules.sample.pow_blob (test-vector network id)",
+        &header.pow_blob(TEST_VECTOR_NETWORK_ID),
     )
     .bytes("rules.sample.tx_root([])", &merkle::tx_root(&[]))
     .bytes(

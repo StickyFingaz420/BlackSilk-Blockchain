@@ -31,7 +31,7 @@
 mod build_guard;
 
 use blacksilk_consensus::{
-    BlockHeader, ChainParams, Hash, HeaderChain, Network, PowFunction, HEADER_SIZE,
+    BlockHeader, ChainParams, Hash, HeaderChain, Network, PowFunction, HEADER_SIZE, POW_BLOB_SIZE,
 };
 use blacksilk_randomx::{Cache, Dataset, Vm};
 use blacksilk_rpc::{Client, MAX_HEADERS_PER_REQUEST};
@@ -156,17 +156,18 @@ fn fetch_headers(client: &Client) -> Vec<[u8; HEADER_SIZE]> {
 /// PoW answers for the header chain, from the hashes computed beforehand.
 /// A key other than the one derived independently fails the run.
 struct Precomputed {
-    hashes: BTreeMap<[u8; HEADER_SIZE], (Hash, Hash)>,
+    /// By mining blob: (height, RandomX key, hash).
+    hashes: BTreeMap<[u8; POW_BLOB_SIZE], (u64, Hash, Hash)>,
     mismatched_keys: Mutex<Vec<u64>>,
 }
 
 impl PowFunction for Precomputed {
-    fn pow_hash(&self, seed: &Hash, header_bytes: &[u8]) -> Hash {
-        let key: [u8; HEADER_SIZE] = header_bytes.try_into().expect("header size");
+    fn pow_hash(&self, seed: &Hash, blob: &[u8]) -> Hash {
+        let key: [u8; POW_BLOB_SIZE] = blob.try_into().expect("mining blob size");
         match self.hashes.get(&key) {
-            Some((s, h)) if s == seed => *h,
-            _ => {
-                let height = BlockHeader::from_bytes(header_bytes).map_or(u64::MAX, |h| h.height);
+            Some((_, s, h)) if s == seed => *h,
+            other => {
+                let height = other.map_or(u64::MAX, |(height, _, _)| *height);
                 self.mismatched_keys.lock().unwrap().push(height);
                 // A hash that meets no target: the header is refused.
                 [0xff; 32]
@@ -334,7 +335,7 @@ fn main() {
                     s.spawn(move || {
                         let mut vm = Vm::light(cache);
                         part.iter()
-                            .map(|&i| (i, vm.hash(&headers[i].to_bytes())))
+                            .map(|&i| (i, vm.hash(&headers[i].pow_blob(nid))))
                             .collect()
                     })
                 })
@@ -376,7 +377,7 @@ fn main() {
             .enumerate()
             .map(|(i, h)| {
                 let key = ids[key_height(h.height, epoch, lag) as usize];
-                (h.to_bytes(), (key, light[i]))
+                (h.pow_blob(nid), (h.height, key, light[i]))
             })
             .collect(),
         mismatched_keys: Mutex::new(Vec::new()),
@@ -417,7 +418,7 @@ fn main() {
         );
         let mut vm = Vm::full(&dataset);
         for i in want {
-            full.insert(headers[i].height, vm.hash(&headers[i].to_bytes()));
+            full.insert(headers[i].height, vm.hash(&headers[i].pow_blob(nid)));
             ks.full_compared += 1;
         }
     }

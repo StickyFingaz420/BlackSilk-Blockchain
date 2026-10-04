@@ -36,8 +36,20 @@ pub struct BlockHeader {
     pub nonce: u64,
 }
 
-/// Offset of the nonce within the serialized header; miners patch it in place.
+/// Offset of the nonce within the serialized header (its last field).
 pub const NONCE_OFFSET: usize = 164;
+
+/// Length of the proof-of-work input, the mining blob (docs/consensus.md §3).
+pub const POW_BLOB_SIZE: usize = 47;
+/// The constant first bytes of the mining blob.
+pub const POW_BLOB_TAG: &[u8; 7] = b"BSilk/1";
+/// Offset of the nonce (u64, little-endian) within the mining blob: byte 39,
+/// where stock xmrig writes its 4-byte RandomX nonce (it iterates bytes
+/// 39..43; a pool server owns bytes 43..47 as extranonce).
+pub const POW_NONCE_OFFSET: usize = 39;
+/// The tag name of the mining hash (under `"BlackSilk/v1/"`; in
+/// `blacksilk_crypto::hash::tags::CONSENSUS` as `MINING_HASH`).
+pub const MINING_HASH_TAG: &str = "mining-hash";
 
 impl BlockHeader {
     /// Canonical 172-byte encoding. This is also the RandomX input.
@@ -72,6 +84,26 @@ impl BlockHeader {
             px_root: b[132..164].try_into().unwrap(),
             nonce: u64_at(NONCE_OFFSET),
         })
+    }
+
+    /// `mining_hash = H32("mining-hash", LE32(network_id) ‖ header[0..NONCE_OFFSET])`:
+    /// every header field but the nonce, and the network.
+    pub fn mining_hash(&self, network_id: u32) -> Hash {
+        H::tagged(MINING_HASH_TAG)
+            .chain(&network_id.to_le_bytes())
+            .chain(&self.to_bytes()[..NONCE_OFFSET])
+            .finish()
+    }
+
+    /// The proof-of-work input (docs/consensus.md §3): `"BSilk/1" ‖
+    /// mining_hash ‖ LE64(nonce)`, 47 bytes. Derived by every node from the
+    /// header, never transmitted.
+    pub fn pow_blob(&self, network_id: u32) -> [u8; POW_BLOB_SIZE] {
+        let mut b = [0u8; POW_BLOB_SIZE];
+        b[..POW_NONCE_OFFSET - 32].copy_from_slice(POW_BLOB_TAG);
+        b[POW_NONCE_OFFSET - 32..POW_NONCE_OFFSET].copy_from_slice(&self.mining_hash(network_id));
+        b[POW_NONCE_OFFSET..].copy_from_slice(&self.nonce.to_le_bytes());
+        b
     }
 
     /// Block id on the network identified by `network_id`.
@@ -144,6 +176,46 @@ mod tests {
         let mut m = h;
         m.px_root[31] ^= 1;
         assert_ne!(id, m.id(1));
+    }
+
+    /// The mining blob: tag, mining hash, nonce; the hash commits to every
+    /// field but the nonce and to the network, the nonce is only in the
+    /// blob's last 8 bytes.
+    #[test]
+    fn the_mining_blob_commits_to_every_field_and_the_network() {
+        let h = sample();
+        let b = h.pow_blob(1);
+        assert_eq!(&b[..7], b"BSilk/1");
+        assert_eq!(b[7..39], h.mining_hash(1));
+        assert_eq!(b[POW_NONCE_OFFSET..], 0xDEAD_BEEFu64.to_le_bytes());
+        assert_ne!(h.mining_hash(1), h.mining_hash(2), "network separation");
+        let mut n = h;
+        n.nonce += 1;
+        assert_eq!(n.mining_hash(1), h.mining_hash(1));
+        assert_eq!(n.pow_blob(1)[..POW_NONCE_OFFSET], b[..POW_NONCE_OFFSET]);
+        type Set = fn(&mut BlockHeader);
+        let fields: [Set; 9] = [
+            |h| h.version ^= 1,
+            |h| h.height ^= 1,
+            |h| h.prev_id[3] ^= 1,
+            |h| h.timestamp ^= 1,
+            |h| h.difficulty ^= 1,
+            |h| h.tx_root[3] ^= 1,
+            |h| h.output_count ^= 1,
+            |h| h.output_root[3] ^= 1,
+            |h| h.px_root[3] ^= 1,
+        ];
+        for (i, set) in fields.into_iter().enumerate() {
+            let mut m = h;
+            set(&mut m);
+            assert_ne!(m.mining_hash(1), h.mining_hash(1), "field {i}");
+        }
+        // The definition, written out.
+        let mut pre = vec![(13 + 11) as u8];
+        pre.extend_from_slice(b"BlackSilk/v1/mining-hash");
+        pre.extend_from_slice(&1u32.to_le_bytes());
+        pre.extend_from_slice(&h.to_bytes()[..164]);
+        assert_eq!(h.mining_hash(1), H::new().chain(&pre).finish());
     }
 
     /// Every field has its own bytes: setting one field changes exactly its

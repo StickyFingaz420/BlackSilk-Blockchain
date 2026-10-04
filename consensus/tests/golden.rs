@@ -384,6 +384,20 @@ fn header_bytes_and_id_golden() {
         hex(&h.id(0x0001_D673)),
         "c2a5633f91ff1fe41cc7404e7df102fbca2c5314b0f9bc682cf20a6ee78e83e6"
     );
+    // The mining blob (§3): "BSilk/1" ‖ H32("mining-hash", LE32(network_id) ‖
+    // header[0..164]) ‖ LE64(nonce) (script).
+    assert_eq!(
+        hex(&h.pow_blob(0x00DE_B06E)),
+        "4253696c6b2f31\
+         c5f088aff29464163b4516459f5e38ce6e9c5588247dae5f0cab3ca8fc8c2b13\
+         efbeadde00000000"
+    );
+    assert_eq!(
+        hex(&h.pow_blob(0xFFFF_FF00)),
+        "4253696c6b2f31\
+         64e94536fa0fbac21a14ded371c121f6b9401e5a1e47e44bafb6a70bf6818729\
+         efbeadde00000000"
+    );
 }
 
 #[test]

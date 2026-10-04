@@ -161,7 +161,7 @@ struct CountingPow(std::sync::atomic::AtomicUsize);
 impl PowFunction for CountingPow {
     fn pow_hash(&self, _: &Hash, blob: &[u8]) -> Hash {
         let nonce = u64::from_le_bytes(
-            blob[blacksilk_consensus::NONCE_OFFSET..blacksilk_consensus::NONCE_OFFSET + 8]
+            blob[blacksilk_consensus::POW_NONCE_OFFSET..blacksilk_consensus::POW_NONCE_OFFSET + 8]
                 .try_into()
                 .unwrap(),
         );
