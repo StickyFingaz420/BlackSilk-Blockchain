@@ -8,7 +8,7 @@
 //! - Falcon512 (pure Rust, via falcon-rust)
 //!
 //! # Features
-//! - Secure key handling (zeroize)
+//! - No key zeroization: the scheme types are the upstream crates' own
 //! - Property-based and negative testing
 //! - Idiomatic error handling
 //! - Serialization/deserialization helpers
@@ -44,7 +44,9 @@
 //! - Falcon512 fuzzing is limited for performance reasons.
 //!
 //! # Security Notes
-//! - All secret keys are zeroized on drop.
+//! - Secret keys are not zeroized by this crate (the Dilithium2 and Falcon512
+//!   key types are the upstream ones). `hybrid.rs` and `mldsa44.rs` are not
+//!   modules of the crate (never compiled) and do not build as written.
 //! - No constant-time property is claimed or verified (upstream crates, not reviewed).
 
 pub mod error;

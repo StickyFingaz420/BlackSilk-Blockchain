@@ -8,8 +8,9 @@
 //! - input elements are added into the rate, 8 per permutation;
 //! - the digest is the rate after the last permutation: 8 elements, 248 bits.
 //!
-//! Generic security: 124-bit collision and preimage resistance from the
-//! 8-element (248-bit) capacity and output, assuming the Poseidon2
+//! Generic security: about 123.6-bit collision and preimage resistance
+//! (8·log2(p)/2 for BabyBear; nominally 248/2 = 124) from the 8-element
+//! (about 247.2-bit, nominally 248-bit) capacity and output, assuming the Poseidon2
 //! permutation behaves ideally (docs/px.md §8 lists this assumption).
 //!
 //! **Tree nodes** use the 2-to-1 compression `node(l, r) = P(l ‖ r)[0..8]`

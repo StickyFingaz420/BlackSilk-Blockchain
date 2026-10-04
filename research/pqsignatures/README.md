@@ -10,7 +10,7 @@ Thin wrappers around third-party post-quantum signature crates:
 - Falcon512 via `falcon-rust` 0.1.x (young, unaudited)
 
 ## Features
-- Secure key handling (zeroize)
+- No key zeroization (the key types are the upstream crates' own)
 - Property-based and negative testing
 - Idiomatic error handling
 - Serialization/deserialization helpers
@@ -46,7 +46,9 @@ assert!(Dilithium2::verify(&pk, tx_bytes, &sig));
 - Falcon512 fuzzing is limited for performance reasons.
 
 ## Security Notes
-- Secret keys are meant to be zeroized on drop; not verified.
+- Secret keys are not zeroized by this crate. `src/hybrid.rs` and
+  `src/mldsa44.rs` are not modules of the crate (never compiled) and do not
+  build as written.
 - No constant-time property is claimed or verified: it depends entirely on the
   upstream crates, which have not been reviewed.
 - `.github/workflows/ci.yml` and `tests/kat_test.py` here are never run (the
