@@ -1,0 +1,94 @@
+﻿[ 1] Cache initialization                         ... SKIPPED
+[ 2] SuperscalarHash generator                    ... PASSED
+[ 3] randomx_reciprocal                           ... PASSED
+[ 4] randomx_reciprocal_fast                      ... PASSED
+[ 5] Dataset initialization (interpreter)         ... SKIPPED
+[ 6] Dataset initialization (compiler)            ... SKIPPED
+[ 7] AesGenerator1R                               ... PASSED
+[ 8] IADD_RS (decode)                             ... PASSED
+[ 9] IADD_RS (execute)                            ... PASSED
+[10] IADD_RS with immediate (decode)              ... PASSED
+[11] IADD_RS with immediate (decode)              ... PASSED
+[12] IADD_M (decode)                              ... PASSED
+[13] ISUB_R (decode)                              ... PASSED
+[14] ISUB_R (execute)                             ... PASSED
+[15] ISUB_R with immediate (decode)               ... PASSED
+[16] ISUB_R with immediate (decode)               ... PASSED
+[17] ISUB_M (decode)                              ... PASSED
+[18] IMUL_R (decode)                              ... PASSED
+[19] IMUL_R (execute)                             ... PASSED
+[20] IMUL_R with immediate (decode)               ... PASSED
+[21] IMUL_R with immediate (execute)              ... PASSED
+[22] IMUL_M (decode)                              ... PASSED
+[23] IMULH_R (decode)                             ... PASSED
+[24] IMULH_R (execute)                            ... PASSED
+[25] IMULH_R squared (decode)                     ... PASSED
+[26] IMULH_M (decode)                             ... PASSED
+[27] ISMULH_R (decode)                            ... PASSED
+[28] ISMULH_R (execute)                           ... PASSED
+[29] ISMULH_R squared (decode)                    ... PASSED
+[30] ISMULH_M (decode)                            ... PASSED
+[31] IMUL_RCP (decode)                            ... PASSED
+[32] IMUL_RCP zero imm32 (decode)                 ... PASSED
+[33] INEG_R (decode)                              ... PASSED
+[34] INEG_R (execute)                             ... PASSED
+[35] IXOR_R (decode)                              ... PASSED
+[36] IXOR_R (execute)                             ... PASSED
+[37] IXOR_R with immediate (decode)               ... PASSED
+[38] IXOR_R with immediate (execute)              ... PASSED
+[39] IXOR_M (decode)                              ... PASSED
+[40] IROR_R (decode)                              ... PASSED
+[41] IROR_R (execute)                             ... PASSED
+[42] IROL_R (decode)                              ... PASSED
+[43] IROL_R (execute)                             ... PASSED
+[44] ISWAP_R (decode)                             ... PASSED
+[45] ISWAP_R (execute)                            ... PASSED
+[46] FSWAP_R (decode)                             ... PASSED
+[47] FSWAP_R (execute)                            ... PASSED
+[48] FADD_R (decode)                              ... PASSED
+[49] FADD_R RoundToNearest (execute)              ... PASSED
+[50] FADD_R RoundDown (execute)                   ... PASSED
+[51] FADD_R RoundUp (execute)                     ... PASSED
+[52] FADD_R RoundToZero (execute)                 ... PASSED
+[53] FADD_M (decode)                              ... PASSED
+[54] FADD_M (execute)                             ... PASSED
+[55] FSUB_R (decode)                              ... PASSED
+[56] FSUB_M (decode)                              ... PASSED
+[57] FSCAL_R (decode)                             ... PASSED
+[58] FSCAL_R (execute)                            ... PASSED
+[59] FMUL_R (decode)                              ... PASSED
+[60] FMUL_R RoundToNearest (execute)              ... PASSED
+[61] FMUL_R RoundDown/RoundToZero (execute)       ... PASSED
+[62] FMUL_R RoundUp (execute)                     ... PASSED
+[63] FDIV_M (decode)                              ... PASSED
+[64] FDIV_M RoundToNearest (execute)              ... PASSED
+[65] FDIV_M RoundDown/RoundToZero (execute)       ... PASSED
+[66] FDIV_M RoundUp (execute)                     ... PASSED
+[67] FSQRT_R (decode)                             ... PASSED
+[68] FSQRT_R RoundToNearest (execute)             ... PASSED
+[69] FSQRT_R RoundDown/RoundToZero (execute)      ... PASSED
+[70] FSQRT_R RoundUp (execute)                    ... PASSED
+[71] CBRANCH (decode) 100                         ... PASSED
+[72] CBRANCH (decode) 200                         ... PASSED
+[73] CBRANCH not taken (execute)                  ... PASSED
+[74] CBRANCH taken (execute)                      ... PASSED
+[75] CFROUND (decode)                             ... PASSED
+[76] ISTORE L1 (decode)                           ... PASSED
+[77] ISTORE L2 (decode)                           ... PASSED
+[78] ISTORE L3 (decode)                           ... PASSED
+[79] Hash test 1a (interpreter)                   ... SKIPPED
+[80] Hash test 1b (interpreter)                   ... SKIPPED
+[81] Hash test 1c (interpreter)                   ... SKIPPED
+[82] Hash test 1d (interpreter)                   ... SKIPPED
+[83] Hash test 1e (interpreter)                   ... SKIPPED
+[84] Hash test 1f (ISUB_R edge case, interpreter) ... SKIPPED
+[85] Hash test 2a (compiler)                      ... SKIPPED
+[86] Hash test 2b (compiler)                      ... SKIPPED
+[87] Hash test 2c (compiler)                      ... SKIPPED
+[88] Hash test 2d (compiler)                      ... SKIPPED
+[89] Hash test 2e (compiler)                      ... SKIPPED
+[90] Hash test 2f (ISUB_R edge case, compiler)    ... SKIPPED
+[91] Cache initialization: SSSE3                  ... SKIPPED
+[92] Cache initialization: AVX2                   ... SKIPPED
+[93] Hash batch test                              ... SKIPPED
+[94] Preserve rounding mode                       ... 
