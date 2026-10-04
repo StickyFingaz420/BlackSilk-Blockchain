@@ -4,7 +4,7 @@ use crate::argon2d::{self, QWORDS_IN_BLOCK};
 use crate::config::{
     ARGON_MEMORY, CACHE_ACCESSES, CACHE_LINE_SIZE, CACHE_SIZE, DATASET_ITEM_COUNT,
 };
-use crate::superscalar::{self, Blake2Generator, SsProgram};
+use crate::superscalar::{self, Blake2Generator, SsOp, SsProgram};
 use std::collections::TryReserveError;
 
 /// `len` zero words, or the allocation error (no abort).
@@ -30,8 +30,18 @@ const SUPERSCALAR_ADD: [u64; 8] = [
 /// Key-dependent RandomX cache. Sufficient on its own for verification ("light mode").
 pub struct Cache {
     memory: Vec<u64>,
+    /// The SuperscalarHash programs as generated (the reference form).
+    #[cfg_attr(not(test), allow(dead_code))]
     programs: Vec<SsProgram>,
+    /// The same programs in execution form, decoded once (`SsProgram::compile`).
+    compiled: Vec<Compiled>,
     key: Vec<u8>,
+}
+
+/// One SuperscalarHash program in execution form.
+struct Compiled {
+    ops: Vec<SsOp>,
+    address_register: usize,
 }
 
 impl Cache {
@@ -54,13 +64,24 @@ impl Cache {
         argon2d::fill_memory(key, &mut memory);
 
         let mut gen = Blake2Generator::new(key, 0);
-        let programs = (0..CACHE_ACCESSES)
+        let programs: Vec<SsProgram> = (0..CACHE_ACCESSES)
             .map(|_| superscalar::generate(&mut gen))
+            .collect();
+        let compiled = programs
+            .iter()
+            .map(|p| {
+                assert!(p.address_register < 8, "superscalar address register");
+                Compiled {
+                    ops: p.compile(),
+                    address_register: p.address_register,
+                }
+            })
             .collect();
 
         Self {
             memory,
             programs,
+            compiled,
             key: key.to_vec(),
         }
     }
@@ -77,6 +98,29 @@ impl Cache {
 
     /// Computes Dataset item `item_number` from the cache (spec 7.3).
     pub(crate) fn dataset_item(&self, item_number: u64) -> [u64; 8] {
+        const LINES: u64 = (CACHE_SIZE / CACHE_LINE_SIZE) as u64;
+        let mut r = [0u64; 8];
+        r[0] = item_number.wrapping_add(1).wrapping_mul(SUPERSCALAR_MUL0);
+        for i in 1..8 {
+            r[i] = r[0] ^ SUPERSCALAR_ADD[i];
+        }
+        let mut register_value = item_number;
+        for prog in &self.compiled {
+            let line = ((register_value & (LINES - 1)) as usize) * 8;
+            superscalar::run(&prog.ops, &mut r);
+            let mix: &[u64; 8] = self.memory[line..line + 8].try_into().unwrap();
+            for (reg, mix) in r.iter_mut().zip(mix) {
+                *reg ^= mix;
+            }
+            register_value = r[prog.address_register];
+        }
+        r
+    }
+
+    /// [`Self::dataset_item`] through the reference interpreter
+    /// (`SsProgram::execute`), for the differential tests.
+    #[cfg(test)]
+    pub(crate) fn dataset_item_reference(&self, item_number: u64) -> [u64; 8] {
         const LINES: u64 = (CACHE_SIZE / CACHE_LINE_SIZE) as u64;
         let mut r = [0u64; 8];
         r[0] = item_number.wrapping_add(1).wrapping_mul(SUPERSCALAR_MUL0);

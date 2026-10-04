@@ -251,6 +251,79 @@ mod tests {
         }
     }
 
+    /// A xorshift stream for the differential tests.
+    fn xorshift(seed: u64) -> impl FnMut() -> u64 {
+        let mut x = seed | 1;
+        move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        }
+    }
+
+    /// The compiled SuperscalarHash form (`SsProgram::compile`, `run`)
+    /// computes exactly what the reference interpreter (`SsProgram::execute`)
+    /// does: every program of 12 keys (short, 31-, 60- and 64-byte ones), on
+    /// random register files and on all-ones/all-zeros edge values.
+    #[test]
+    fn compiled_programs_execute_like_the_reference() {
+        let mut next = xorshift(0x5eed);
+        let mut keys: Vec<Vec<u8>> = vec![
+            b"test key 000".to_vec(),
+            b"test key 001".to_vec(),
+            KEY_1F.to_vec(),
+            vec![0xab; 60],
+            vec![0x5a; 64],
+        ];
+        for k in 0..7u8 {
+            keys.push((0..(k as usize * 9 + 1)).map(|i| i as u8 ^ k).collect());
+        }
+        let mut ops = 0;
+        for key in &keys {
+            let mut gen = Blake2Generator::new(key, 0);
+            for _ in 0..8 {
+                let prog = generate(&mut gen);
+                let compiled = prog.compile();
+                ops += compiled.len();
+                for case in 0..66 {
+                    let mut r: [u64; 8] = match case {
+                        0 => [0; 8],
+                        1 => [u64::MAX; 8],
+                        2 => [1 << 63; 8],
+                        _ => std::array::from_fn(|_| next()),
+                    };
+                    let mut want = r;
+                    prog.execute(&mut want);
+                    crate::superscalar::run(&compiled, &mut r);
+                    assert_eq!(r, want, "key {key:02x?}, case {case}");
+                }
+            }
+        }
+        assert!(ops > 12 * 8 * 300, "real programs: {ops} ops");
+    }
+
+    /// Dataset items through the compiled programs equal those of the
+    /// reference interpreter: random items and the edge items (first, last
+    /// of the base and extra ranges) of three keys.
+    #[test]
+    fn compiled_dataset_items_match_the_reference() {
+        use crate::config::{DATASET_EXTRA_ITEMS, DATASET_ITEM_COUNT};
+        let mut next = xorshift(0xda7a);
+        let last = DATASET_ITEM_COUNT - 1;
+        for cache in [cache_000(), cache_001(), cache_1f()] {
+            let mut items = vec![0, 1, last - DATASET_EXTRA_ITEMS, last - 1, last];
+            items.extend((0..3000).map(|_| next() % DATASET_ITEM_COUNT));
+            for n in items {
+                assert_eq!(
+                    cache.dataset_item(n),
+                    cache.dataset_item_reference(n),
+                    "item {n}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn reciprocals() {
         assert_eq!(reciprocal(3), 12297829382473034410);

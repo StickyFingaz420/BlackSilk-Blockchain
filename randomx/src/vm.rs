@@ -20,6 +20,27 @@ const FSCAL_MASK: u64 = 0x80F0_0000_0000_0000;
 
 const PROGRAM_BYTES: usize = 128 + 8 * PROGRAM_SIZE;
 
+/// The scratchpad in 64-bit words (little-endian byte order kept, so the AES
+/// fill and AesHash1R see the reference byte layout). Every scratchpad
+/// address is 8-aligned (each mask clears the low 3 bits), so an address is
+/// the word `addr >> 3`, and masking the word index with `SP_WORDS - 1`
+/// (a no-op for every valid address) lets the compiler drop the bounds check.
+const SP_WORDS: usize = SCRATCHPAD_L3 / 8;
+type Scratchpad = Box<[[u8; 8]; SP_WORDS]>;
+
+/// The register `i` of an instruction (`0..8`; the `& 7` is a no-op that
+/// drops the bounds check).
+#[inline(always)]
+fn ri(i: u8) -> usize {
+    i as usize & 7
+}
+
+/// The f/e/a register group index `i` (`0..4`).
+#[inline(always)]
+fn fi(i: u8) -> usize {
+    i as usize & 3
+}
+
 /// Where Dataset items come from.
 enum Memory<'a> {
     /// Items are computed on demand from the cache (verification).
@@ -42,7 +63,7 @@ type FReg = [f64; 2];
 
 #[derive(Clone, Copy)]
 enum Src {
-    Reg(usize),
+    Reg(u8),
     Imm(u64),
 }
 
@@ -50,135 +71,135 @@ enum Src {
 #[derive(Clone, Copy)]
 enum Op {
     IaddRs {
-        dst: usize,
-        src: usize,
+        dst: u8,
+        src: u8,
         shift: u32,
         imm: u64,
     },
     IaddM {
-        dst: usize,
-        src: Option<usize>,
+        dst: u8,
+        src: Option<u8>,
         imm: u64,
         mask: u32,
     },
     IsubR {
-        dst: usize,
+        dst: u8,
         src: Src,
     },
     IsubM {
-        dst: usize,
-        src: Option<usize>,
+        dst: u8,
+        src: Option<u8>,
         imm: u64,
         mask: u32,
     },
     ImulR {
-        dst: usize,
+        dst: u8,
         src: Src,
     },
     ImulM {
-        dst: usize,
-        src: Option<usize>,
+        dst: u8,
+        src: Option<u8>,
         imm: u64,
         mask: u32,
     },
     ImulhR {
-        dst: usize,
-        src: usize,
+        dst: u8,
+        src: u8,
     },
     ImulhM {
-        dst: usize,
-        src: Option<usize>,
+        dst: u8,
+        src: Option<u8>,
         imm: u64,
         mask: u32,
     },
     IsmulhR {
-        dst: usize,
-        src: usize,
+        dst: u8,
+        src: u8,
     },
     IsmulhM {
-        dst: usize,
-        src: Option<usize>,
+        dst: u8,
+        src: Option<u8>,
         imm: u64,
         mask: u32,
     },
     InegR {
-        dst: usize,
+        dst: u8,
     },
     IxorR {
-        dst: usize,
+        dst: u8,
         src: Src,
     },
     IxorM {
-        dst: usize,
-        src: Option<usize>,
+        dst: u8,
+        src: Option<u8>,
         imm: u64,
         mask: u32,
     },
     IrorR {
-        dst: usize,
+        dst: u8,
         src: Src,
     },
     IrolR {
-        dst: usize,
+        dst: u8,
         src: Src,
     },
     IswapR {
-        dst: usize,
-        src: usize,
+        dst: u8,
+        src: u8,
     },
     /// `dst` 0..3 = f registers, 4..7 = e registers.
     FswapR {
-        dst: usize,
+        dst: u8,
     },
     FaddR {
-        dst: usize,
-        src: usize,
+        dst: u8,
+        src: u8,
     },
     FaddM {
-        dst: usize,
-        src: usize,
+        dst: u8,
+        src: u8,
         imm: u64,
         mask: u32,
     },
     FsubR {
-        dst: usize,
-        src: usize,
+        dst: u8,
+        src: u8,
     },
     FsubM {
-        dst: usize,
-        src: usize,
+        dst: u8,
+        src: u8,
         imm: u64,
         mask: u32,
     },
     FscalR {
-        dst: usize,
+        dst: u8,
     },
     FmulR {
-        dst: usize,
-        src: usize,
+        dst: u8,
+        src: u8,
     },
     FdivM {
-        dst: usize,
-        src: usize,
+        dst: u8,
+        src: u8,
         imm: u64,
         mask: u32,
     },
     FsqrtR {
-        dst: usize,
+        dst: u8,
     },
     Cbranch {
-        reg: usize,
+        reg: u8,
         target: i32,
         imm: u64,
         mask: u64,
     },
     Cfround {
-        src: usize,
+        src: u8,
         rot: u32,
     },
     Istore {
-        dst: usize,
-        src: usize,
+        dst: u8,
+        src: u8,
         imm: u64,
         mask: u32,
     },
@@ -263,7 +284,7 @@ fn mem_mask(mod_: u8) -> u32 {
 }
 
 /// Memory operand: `src == dst` reads from a fixed address in L3.
-fn mem_operand(dst: usize, src: usize, mod_: u8) -> (Option<usize>, u32) {
+fn mem_operand(dst: u8, src: u8, mod_: u8) -> (Option<u8>, u32) {
     if src != dst {
         (Some(src), mem_mask(mod_))
     } else {
@@ -276,8 +297,8 @@ fn compile(bytes: &[u8]) -> Vec<Op> {
     let mut ops = Vec::with_capacity(PROGRAM_SIZE);
     for (i, ins) in bytes.as_chunks::<8>().0.iter().enumerate() {
         let opcode = ins[0] as u16;
-        let dst = ins[1] as usize % 8;
-        let src = ins[2] as usize % 8;
+        let dst = ins[1] % 8;
+        let src = ins[2] % 8;
         let mod_ = ins[3];
         let imm32 = u32::from_le_bytes(ins[4..8].try_into().unwrap());
         let i = i as i32;
@@ -292,8 +313,8 @@ fn compile(bytes: &[u8]) -> Vec<Op> {
         };
 
         let op = if opcode < Ceil::IADD_RS {
-            register_usage[dst] = i;
-            let imm = if dst == REGISTER_NEEDS_DISPLACEMENT {
+            register_usage[dst as usize] = i;
+            let imm = if dst as usize == REGISTER_NEEDS_DISPLACEMENT {
                 sign_extend(imm32)
             } else {
                 0
@@ -305,7 +326,7 @@ fn compile(bytes: &[u8]) -> Vec<Op> {
                 imm,
             }
         } else if opcode < Ceil::IADD_M {
-            register_usage[dst] = i;
+            register_usage[dst as usize] = i;
             let (src, mask) = mem_operand(dst, src, mod_);
             Op::IaddM {
                 dst,
@@ -314,13 +335,13 @@ fn compile(bytes: &[u8]) -> Vec<Op> {
                 mask,
             }
         } else if opcode < Ceil::ISUB_R {
-            register_usage[dst] = i;
+            register_usage[dst as usize] = i;
             Op::IsubR {
                 dst,
                 src: reg_or_imm(true),
             }
         } else if opcode < Ceil::ISUB_M {
-            register_usage[dst] = i;
+            register_usage[dst as usize] = i;
             let (src, mask) = mem_operand(dst, src, mod_);
             Op::IsubM {
                 dst,
@@ -329,13 +350,13 @@ fn compile(bytes: &[u8]) -> Vec<Op> {
                 mask,
             }
         } else if opcode < Ceil::IMUL_R {
-            register_usage[dst] = i;
+            register_usage[dst as usize] = i;
             Op::ImulR {
                 dst,
                 src: reg_or_imm(true),
             }
         } else if opcode < Ceil::IMUL_M {
-            register_usage[dst] = i;
+            register_usage[dst as usize] = i;
             let (src, mask) = mem_operand(dst, src, mod_);
             Op::ImulM {
                 dst,
@@ -344,10 +365,10 @@ fn compile(bytes: &[u8]) -> Vec<Op> {
                 mask,
             }
         } else if opcode < Ceil::IMULH_R {
-            register_usage[dst] = i;
+            register_usage[dst as usize] = i;
             Op::ImulhR { dst, src }
         } else if opcode < Ceil::IMULH_M {
-            register_usage[dst] = i;
+            register_usage[dst as usize] = i;
             let (src, mask) = mem_operand(dst, src, mod_);
             Op::ImulhM {
                 dst,
@@ -356,10 +377,10 @@ fn compile(bytes: &[u8]) -> Vec<Op> {
                 mask,
             }
         } else if opcode < Ceil::ISMULH_R {
-            register_usage[dst] = i;
+            register_usage[dst as usize] = i;
             Op::IsmulhR { dst, src }
         } else if opcode < Ceil::ISMULH_M {
-            register_usage[dst] = i;
+            register_usage[dst as usize] = i;
             let (src, mask) = mem_operand(dst, src, mod_);
             Op::IsmulhM {
                 dst,
@@ -369,7 +390,7 @@ fn compile(bytes: &[u8]) -> Vec<Op> {
             }
         } else if opcode < Ceil::IMUL_RCP {
             if !is_zero_or_power_of_2(imm32 as u64) {
-                register_usage[dst] = i;
+                register_usage[dst as usize] = i;
                 Op::ImulR {
                     dst,
                     src: Src::Imm(reciprocal(imm32)),
@@ -378,16 +399,16 @@ fn compile(bytes: &[u8]) -> Vec<Op> {
                 Op::Nop
             }
         } else if opcode < Ceil::INEG_R {
-            register_usage[dst] = i;
+            register_usage[dst as usize] = i;
             Op::InegR { dst }
         } else if opcode < Ceil::IXOR_R {
-            register_usage[dst] = i;
+            register_usage[dst as usize] = i;
             Op::IxorR {
                 dst,
                 src: reg_or_imm(true),
             }
         } else if opcode < Ceil::IXOR_M {
-            register_usage[dst] = i;
+            register_usage[dst as usize] = i;
             let (src, mask) = mem_operand(dst, src, mod_);
             Op::IxorM {
                 dst,
@@ -396,21 +417,21 @@ fn compile(bytes: &[u8]) -> Vec<Op> {
                 mask,
             }
         } else if opcode < Ceil::IROR_R {
-            register_usage[dst] = i;
+            register_usage[dst as usize] = i;
             Op::IrorR {
                 dst,
                 src: reg_or_imm(false),
             }
         } else if opcode < Ceil::IROL_R {
-            register_usage[dst] = i;
+            register_usage[dst as usize] = i;
             Op::IrolR {
                 dst,
                 src: reg_or_imm(false),
             }
         } else if opcode < Ceil::ISWAP_R {
             if src != dst {
-                register_usage[dst] = i;
-                register_usage[src] = i;
+                register_usage[dst as usize] = i;
+                register_usage[src as usize] = i;
                 Op::IswapR { dst, src }
             } else {
                 Op::Nop
@@ -459,7 +480,7 @@ fn compile(bytes: &[u8]) -> Vec<Op> {
             Op::FsqrtR { dst: dst % 4 }
         } else if opcode < Ceil::CBRANCH {
             let reg = dst;
-            let target = register_usage[reg];
+            let target = register_usage[reg as usize];
             let shift = (mod_ >> 4) as u32 + JUMP_OFFSET;
             let mut imm = sign_extend(imm32) | (1u64 << shift);
             // Clear the bit below the condition mask; limits successive jumps.
@@ -500,7 +521,7 @@ fn compile(bytes: &[u8]) -> Vec<Op> {
 /// A RandomX virtual machine bound to a Cache (light mode) or Dataset (full mode).
 pub struct Vm<'a> {
     memory: Memory<'a>,
-    scratchpad: Vec<u8>,
+    scratchpad: Scratchpad,
     r: [u64; 8],
     f: [FReg; 4],
     e: [FReg; 4],
@@ -526,7 +547,10 @@ impl<'a> Vm<'a> {
     fn with_memory(memory: Memory<'a>) -> Self {
         Self {
             memory,
-            scratchpad: vec![0u8; SCRATCHPAD_L3],
+            scratchpad: vec![[0u8; 8]; SP_WORDS]
+                .into_boxed_slice()
+                .try_into()
+                .expect("SP_WORDS words"),
             r: [0; 8],
             f: [[0.0; 2]; 4],
             e: [[0.0; 2]; 4],
@@ -545,7 +569,7 @@ impl<'a> Vm<'a> {
     /// Computes the RandomX hash of `input` (spec chapter 2).
     pub fn hash(&mut self, input: &[u8]) -> [u8; 32] {
         let mut seed = blake2b_512(input);
-        fill_aes_1rx4(&mut seed, &mut self.scratchpad);
+        fill_aes_1rx4(&mut seed, self.scratchpad.as_flattened_mut());
         self.fprc = Rounding::Nearest;
         for _ in 0..PROGRAM_COUNT - 1 {
             self.run(&seed);
@@ -554,7 +578,7 @@ impl<'a> Vm<'a> {
         self.run(&seed);
 
         let mut regs = self.register_file();
-        regs[192..256].copy_from_slice(&hash_aes_1rx4(&self.scratchpad));
+        regs[192..256].copy_from_slice(&hash_aes_1rx4(self.scratchpad.as_flattened()));
         blake2b_256(&regs)
     }
 
@@ -601,20 +625,22 @@ impl<'a> Vm<'a> {
 
     #[inline(always)]
     fn load64(&self, addr: usize) -> u64 {
-        u64::from_le_bytes(self.scratchpad[addr..addr + 8].try_into().unwrap())
+        debug_assert_eq!(addr % 8, 0);
+        u64::from_le_bytes(self.scratchpad[(addr >> 3) & (SP_WORDS - 1)])
     }
 
     #[inline(always)]
     fn store64(&mut self, addr: usize, v: u64) {
-        self.scratchpad[addr..addr + 8].copy_from_slice(&v.to_le_bytes());
+        debug_assert_eq!(addr % 8, 0);
+        self.scratchpad[(addr >> 3) & (SP_WORDS - 1)] = v.to_le_bytes();
     }
 
-    /// Two signed 32-bit integers converted to doubles (exact).
+    /// Two signed 32-bit integers (the low, then the high half of the
+    /// little-endian word) converted to doubles (exact).
     #[inline(always)]
     fn load_f(&self, addr: usize) -> FReg {
-        let lo = u32::from_le_bytes(self.scratchpad[addr..addr + 4].try_into().unwrap()) as i32;
-        let hi = u32::from_le_bytes(self.scratchpad[addr + 4..addr + 8].try_into().unwrap()) as i32;
-        [lo as f64, hi as f64]
+        let w = self.load64(addr);
+        [w as u32 as i32 as f64, (w >> 32) as u32 as i32 as f64]
     }
 
     #[inline(always)]
@@ -626,15 +652,15 @@ impl<'a> Vm<'a> {
     }
 
     #[inline(always)]
-    fn mem_addr(&self, src: Option<usize>, imm: u64, mask: u32) -> usize {
-        let base = src.map_or(0, |s| self.r[s]);
+    fn mem_addr(&self, src: Option<u8>, imm: u64, mask: u32) -> usize {
+        let base = src.map_or(0, |s| self.r[ri(s)]);
         (base.wrapping_add(imm) & mask as u64) as usize
     }
 
     #[inline(always)]
     fn src_val(&self, src: Src) -> u64 {
         match src {
-            Src::Reg(s) => self.r[s],
+            Src::Reg(s) => self.r[ri(s)],
             Src::Imm(v) => v,
         }
     }
@@ -701,8 +727,8 @@ impl<'a> Vm<'a> {
                     shift,
                     imm,
                 } => {
-                    self.r[dst] =
-                        self.r[dst].wrapping_add((self.r[src] << shift).wrapping_add(imm));
+                    self.r[ri(dst)] =
+                        self.r[ri(dst)].wrapping_add((self.r[ri(src)] << shift).wrapping_add(imm));
                 }
                 Op::IaddM {
                     dst,
@@ -711,9 +737,11 @@ impl<'a> Vm<'a> {
                     mask,
                 } => {
                     let v = self.load64(self.mem_addr(src, imm, mask));
-                    self.r[dst] = self.r[dst].wrapping_add(v);
+                    self.r[ri(dst)] = self.r[ri(dst)].wrapping_add(v);
                 }
-                Op::IsubR { dst, src } => self.r[dst] = self.r[dst].wrapping_sub(self.src_val(src)),
+                Op::IsubR { dst, src } => {
+                    self.r[ri(dst)] = self.r[ri(dst)].wrapping_sub(self.src_val(src))
+                }
                 Op::IsubM {
                     dst,
                     src,
@@ -721,9 +749,11 @@ impl<'a> Vm<'a> {
                     mask,
                 } => {
                     let v = self.load64(self.mem_addr(src, imm, mask));
-                    self.r[dst] = self.r[dst].wrapping_sub(v);
+                    self.r[ri(dst)] = self.r[ri(dst)].wrapping_sub(v);
                 }
-                Op::ImulR { dst, src } => self.r[dst] = self.r[dst].wrapping_mul(self.src_val(src)),
+                Op::ImulR { dst, src } => {
+                    self.r[ri(dst)] = self.r[ri(dst)].wrapping_mul(self.src_val(src))
+                }
                 Op::ImulM {
                     dst,
                     src,
@@ -731,9 +761,9 @@ impl<'a> Vm<'a> {
                     mask,
                 } => {
                     let v = self.load64(self.mem_addr(src, imm, mask));
-                    self.r[dst] = self.r[dst].wrapping_mul(v);
+                    self.r[ri(dst)] = self.r[ri(dst)].wrapping_mul(v);
                 }
-                Op::ImulhR { dst, src } => self.r[dst] = mulh(self.r[dst], self.r[src]),
+                Op::ImulhR { dst, src } => self.r[ri(dst)] = mulh(self.r[ri(dst)], self.r[ri(src)]),
                 Op::ImulhM {
                     dst,
                     src,
@@ -741,9 +771,11 @@ impl<'a> Vm<'a> {
                     mask,
                 } => {
                     let v = self.load64(self.mem_addr(src, imm, mask));
-                    self.r[dst] = mulh(self.r[dst], v);
+                    self.r[ri(dst)] = mulh(self.r[ri(dst)], v);
                 }
-                Op::IsmulhR { dst, src } => self.r[dst] = smulh(self.r[dst], self.r[src]),
+                Op::IsmulhR { dst, src } => {
+                    self.r[ri(dst)] = smulh(self.r[ri(dst)], self.r[ri(src)])
+                }
                 Op::IsmulhM {
                     dst,
                     src,
@@ -751,10 +783,10 @@ impl<'a> Vm<'a> {
                     mask,
                 } => {
                     let v = self.load64(self.mem_addr(src, imm, mask));
-                    self.r[dst] = smulh(self.r[dst], v);
+                    self.r[ri(dst)] = smulh(self.r[ri(dst)], v);
                 }
-                Op::InegR { dst } => self.r[dst] = self.r[dst].wrapping_neg(),
-                Op::IxorR { dst, src } => self.r[dst] ^= self.src_val(src),
+                Op::InegR { dst } => self.r[ri(dst)] = self.r[ri(dst)].wrapping_neg(),
+                Op::IxorR { dst, src } => self.r[ri(dst)] ^= self.src_val(src),
                 Op::IxorM {
                     dst,
                     src,
@@ -762,25 +794,25 @@ impl<'a> Vm<'a> {
                     mask,
                 } => {
                     let v = self.load64(self.mem_addr(src, imm, mask));
-                    self.r[dst] ^= v;
+                    self.r[ri(dst)] ^= v;
                 }
                 Op::IrorR { dst, src } => {
-                    self.r[dst] = self.r[dst].rotate_right((self.src_val(src) & 63) as u32)
+                    self.r[ri(dst)] = self.r[ri(dst)].rotate_right((self.src_val(src) & 63) as u32)
                 }
                 Op::IrolR { dst, src } => {
-                    self.r[dst] = self.r[dst].rotate_left((self.src_val(src) & 63) as u32)
+                    self.r[ri(dst)] = self.r[ri(dst)].rotate_left((self.src_val(src) & 63) as u32)
                 }
-                Op::IswapR { dst, src } => self.r.swap(dst, src),
+                Op::IswapR { dst, src } => self.r.swap(ri(dst), ri(src)),
                 Op::FswapR { dst } => {
                     if dst < 4 {
-                        self.f[dst].swap(0, 1);
+                        self.f[fi(dst)].swap(0, 1);
                     } else {
-                        self.e[dst - 4].swap(0, 1);
+                        self.e[fi(dst)].swap(0, 1);
                     }
                 }
                 Op::FaddR { dst, src } => {
-                    let a = self.a[src];
-                    let f = &mut self.f[dst];
+                    let a = self.a[fi(src)];
+                    let f = &mut self.f[fi(dst)];
                     f[0] = fpu::add(f[0], a[0], mode);
                     f[1] = fpu::add(f[1], a[1], mode);
                 }
@@ -791,13 +823,13 @@ impl<'a> Vm<'a> {
                     mask,
                 } => {
                     let v = self.load_f(self.mem_addr(Some(src), imm, mask));
-                    let f = &mut self.f[dst];
+                    let f = &mut self.f[fi(dst)];
                     f[0] = fpu::add(f[0], v[0], mode);
                     f[1] = fpu::add(f[1], v[1], mode);
                 }
                 Op::FsubR { dst, src } => {
-                    let a = self.a[src];
-                    let f = &mut self.f[dst];
+                    let a = self.a[fi(src)];
+                    let f = &mut self.f[fi(dst)];
                     f[0] = fpu::sub(f[0], a[0], mode);
                     f[1] = fpu::sub(f[1], a[1], mode);
                 }
@@ -808,19 +840,19 @@ impl<'a> Vm<'a> {
                     mask,
                 } => {
                     let v = self.load_f(self.mem_addr(Some(src), imm, mask));
-                    let f = &mut self.f[dst];
+                    let f = &mut self.f[fi(dst)];
                     f[0] = fpu::sub(f[0], v[0], mode);
                     f[1] = fpu::sub(f[1], v[1], mode);
                 }
                 Op::FscalR { dst } => {
                     for lane in 0..2 {
-                        self.f[dst][lane] =
-                            f64::from_bits(self.f[dst][lane].to_bits() ^ FSCAL_MASK);
+                        self.f[fi(dst)][lane] =
+                            f64::from_bits(self.f[fi(dst)][lane].to_bits() ^ FSCAL_MASK);
                     }
                 }
                 Op::FmulR { dst, src } => {
-                    let a = self.a[src];
-                    let e = &mut self.e[dst];
+                    let a = self.a[fi(src)];
+                    let e = &mut self.e[fi(dst)];
                     e[0] = fpu::mul(e[0], a[0], mode);
                     e[1] = fpu::mul(e[1], a[1], mode);
                 }
@@ -832,12 +864,12 @@ impl<'a> Vm<'a> {
                 } => {
                     let raw = self.load_f(self.mem_addr(Some(src), imm, mask));
                     let v = self.mask_e(raw);
-                    let e = &mut self.e[dst];
+                    let e = &mut self.e[fi(dst)];
                     e[0] = fpu::div(e[0], v[0], mode);
                     e[1] = fpu::div(e[1], v[1], mode);
                 }
                 Op::FsqrtR { dst } => {
-                    let e = &mut self.e[dst];
+                    let e = &mut self.e[fi(dst)];
                     e[0] = fpu::sqrt(e[0], mode);
                     e[1] = fpu::sqrt(e[1], mode);
                 }
@@ -847,13 +879,13 @@ impl<'a> Vm<'a> {
                     imm,
                     mask,
                 } => {
-                    self.r[reg] = self.r[reg].wrapping_add(imm);
-                    if self.r[reg] & mask == 0 {
+                    self.r[ri(reg)] = self.r[ri(reg)].wrapping_add(imm);
+                    if self.r[ri(reg)] & mask == 0 {
                         pc = target;
                     }
                 }
                 Op::Cfround { src, rot } => {
-                    self.fprc = Rounding::from_bits(self.r[src].rotate_right(rot));
+                    self.fprc = Rounding::from_bits(self.r[ri(src)].rotate_right(rot));
                 }
                 Op::Istore {
                     dst,
@@ -861,8 +893,8 @@ impl<'a> Vm<'a> {
                     imm,
                     mask,
                 } => {
-                    let addr = (self.r[dst].wrapping_add(imm) & mask as u64) as usize;
-                    self.store64(addr, self.r[src]);
+                    let addr = (self.r[ri(dst)].wrapping_add(imm) & mask as u64) as usize;
+                    self.store64(addr, self.r[ri(src)]);
                 }
                 Op::Nop => {}
             }
