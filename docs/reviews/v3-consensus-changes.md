@@ -407,10 +407,11 @@ Owner: W1-CB-B3 (zk). Decisions: "Agent 24" F24-1 (adopt 8), "Agent 25", "Agent 
     wave-1 red team RT-W1 covered the W1-CB-B3 records, and its zk findings (RTW1-3,
     RTW1-6, RTW1-8, which corrected the stale BS-ZK-2 names, and an Info item) are
     fixed in the Follow-up (RTW1-3/6/8) below (`be93f71`, merge `180d1ca`). RT-W1
-    recorded **no verdict** for this record, and its report is not in the repository.
-    **Open:** a red-team verdict on this record, and the re-review of FX-RTW1-ZK. Items
-    12 (i) and (ii), the widest-proof measurement and the P-5 re-run, are still open
-    freeze gates (STATUS.md §5).
+    recorded no verdict for this record, and its report is not in the repository.
+    **Red-team verdict: ACCEPT** (RT-FREEZE-V, a fresh-context internal reviewer,
+    2026-10-04; decisions "RT-FREEZE-V"). Internal review, not an audit. Items 12 (i)
+    and (ii), the widest-proof measurement and the P-5 re-run, are still open freeze
+    gates (STATUS.md §5).
 
 ---
 
@@ -484,8 +485,11 @@ exception is derived from the proof structure; mutation tests at every position.
     commit (decisions "RT-W1 (wave-1 red team): findings and verdict status"): RT-W1's
     Info item on this rule (`zk::verify` did not apply the canonical-form checks itself)
     is fixed in the Follow-up (RTW1-3/6/8) below (`be93f71`, merge `180d1ca`). RT-W1
-    recorded **no verdict** for this record, and its report is not in the repository.
-    **Open:** a red-team verdict on this record, and the re-review of FX-RTW1-ZK.
+    recorded no verdict for this record, and its report is not in the repository.
+    **Red-team verdict: ACCEPT** (RT-FREEZE-V, a fresh-context internal reviewer,
+    2026-10-04; decisions "RT-FREEZE-V"). Internal review, not an audit. A test now
+    also pins that a field element encoded at or above p is refused by decoding
+    (`zk/tests/field_mutations.rs::a_field_element_at_or_above_p_is_refused_by_decoding`).
 
 ---
 
@@ -553,10 +557,15 @@ proven; "extractable", not "binding").
 12. **Open review points.** (i) The adaptation of Theorem 3 to BlackSilk's salted tree
     is argued, not proven (agent 50); (ii) mixed-height FRI inputs have no published
     analysis (since the freeze commit the calculator charges them a conservative
-    union-bound term: Follow-up (mixed-height term) below); (iii) the zkVM shape tests (`zkvm/tests/multi.rs`, `vm.rs`) still assert
-    only `johnson_bits ≥ MIN_PROVEN_BITS` (R4-12, owner 23); (iv) the calculator
-    example `zk/examples/param_study.rs` still passes the pre-ZK height (outside this
-    change's file scope; figures unaffected).
+    union-bound term: Follow-up (mixed-height term) below); (iii) the zkVM shape tests
+    (`zkvm/tests/multi.rs`, `vm.rs`) still assert only `johnson_bits ≥ MIN_PROVEN_BITS`
+    (R4-12, owner 23); (iv) the calculator example `zk/examples/param_study.rs` still
+    passes the pre-ZK height (outside this change's file scope; figures unaffected);
+    (v) stale figures ("BS-ZK-2", "≥ 123 Johnson", "≥ 105") outside this record, found
+    by RT-FREEZE-V and corrected on the freeze branch: docs/reviews/assumptions.md Z1
+    (and Z3, Z7, Z13), docs/reviews/review-package.md, docs/reviews/external-review-scope.md
+    §2.2, docs/reviews/query-policy.md (dated notes; the history below them is kept), and
+    the `px/src/fingerprint.rs` comment naming BS-ZK-2 (an RTW1-8 leftover).
 13. **Identity impact.** Consensus fingerprint entry `zk.COLLISION_BITS` 123 → 122.
 14. **Documentation.** `docs/zk.md` §9.1 (P4), §9.3 (grid, independent calculator,
     headline, commitment term, unmodelled terms); `docs/proof-system.md` §2 (R5, R6,
@@ -565,10 +574,12 @@ proven; "extractable", not "binding").
     commit (decisions "RT-W1 (wave-1 red team): findings and verdict status"): RT-W1's
     RTW1-8 corrected this record's wording ("about 105 bits proven" became "computed,
     not proven"; "binding terms" became "limiting terms") in the Follow-up
-    (RTW1-3/6/8) below (`be93f71`, merge `180d1ca`). RT-W1 recorded **no verdict** for
-    this record, and its report is not in the repository. **Open:** a red-team verdict
-    on this record (including the mixed-height term below), and the re-review of
-    FX-RTW1-ZK.
+    (RTW1-3/6/8) below (`be93f71`, merge `180d1ca`). RT-W1 recorded no verdict for
+    this record, and its report is not in the repository. **Red-team verdict: ACCEPT
+    WITH CHANGES (docs)** (RT-FREEZE-V, a fresh-context internal reviewer, 2026-10-04;
+    decisions "RT-FREEZE-V"). The changes are the stale figures of item 12 (v) and the
+    calculator's table count (33, not 32: Follow-up (mixed-height term)), all applied on
+    the freeze branch. Internal review, not an audit.
 
 ### Follow-up (RTW1-3/6/8)
 
@@ -680,7 +691,10 @@ and an Info item (defence in depth), against the circuit fingerprint (decisions 
       consensus fingerprint does not change (item 13).
 12. **Open review points.** (i) Wire the digest into the PX consensus manifest in the
     single fingerprint-v3 commit (deferred; proposed entry in the FX-RTW1-ZK report):
-    today it is tied to `CIRCUIT_ID` only by a test. (ii) The chain makes an in-place
+    today it is tied to `CIRCUIT_ID` only by a test. *Done:* fingerprint v3 put
+    `zkvm.CIRCUIT_DIGEST` and `zkvm.CIRCUIT_DIGEST_METHOD` in the PX manifest
+    (`px/src/fingerprint.rs`, `px_entries`), so an AIR change moves the PX consensus
+    fingerprint (checked on the freeze branch, RT-FREEZE-V). (ii) The chain makes an in-place
     edit visible, not impossible: rewriting every later `prev` and the head is still
     possible and must be caught in review. (iii) The advisory suite no longer detects
     an upstream fix of #2106 / #2256 through `verify`; revisit at a Plonky3 migration.
@@ -693,10 +707,11 @@ and an Info item (defence in depth), against the circuit fingerprint (decisions 
 13. **Identity impact.** None: `CIRCUIT_ID`, `PARAMS_ID`, proof bytes and the consensus
     fingerprint are unchanged. The test-side circuit digest changes (method 2).
 14. **Documentation.** As in item 5.
-15. **Review status.** Implemented and tested by FX-RTW1-ZK; merged as `180d1ca`. The
-    red-team re-review is **still pending**: none is recorded in decisions.md or in the
-    history (checked on the freeze commit; decisions "RT-W1 (wave-1 red team): findings
-    and verdict status").
+15. **Review status.** Implemented and tested by FX-RTW1-ZK; merged as `180d1ca`. No
+    re-review was recorded before the freeze branch. **Red-team verdict: ACCEPT WITH
+    CHANGES** (RT-FREEZE-V, a fresh-context internal reviewer, 2026-10-04; decisions
+    "RT-FREEZE-V"): the RTW1-8 leftover in `px/src/fingerprint.rs` (a comment naming
+    BS-ZK-2) is fixed, and item 12 (i) is marked done. Internal review, not an audit.
 
 ### Follow-up (mixed-height term)
 
@@ -715,24 +730,30 @@ parameter or fingerprint entry changes (`zk.COLLISION_BITS` stays 122).
 2. **Change.** `zk/tests/soundness_calc.rs` gains `MIXED_HEIGHTS` and
    `Terms::with_mixed_height_union`: each distinct input height is treated as its own
    FRI instance and a union bound is taken, so the batching, every commit-phase round
-   and the query phase each lose log2(H) bits. H is at most the table count (23,
-   `px::prove::PROOF_LIMITS` = 12 + 5·2 + 1) and at most the 15 committed heights of the
-   envelope; the calculator uses the existing over-count `TABLES` = 32, so the term is
-   5 bits (4.5 for H = 23, 3.9 for H = 15).
+   and the query phase each lose log2(H) bits. H is at most the table count and at most
+   the 15 committed heights of the envelope. The table count is 33 for the widest BVM-1
+   statement (`MAX_EXECUTIONS` = 5: 12 + 5·4 + 1, `DecodeLimits::ENVELOPE.max_instances`)
+   and 23 for PX (`px::prove::PROOF_LIMITS` = 12 + 5·2 + 1). The calculator charges
+   `TABLES` = 33 (log2 33 = 5.04 bits; 3.9 for H = 15). The first version of this
+   follow-up (`33387bb`) used 32 under the wrong belief that 23 was the BVM-1 maximum;
+   RT-FREEZE-V corrected it (a 0.04-bit change).
 3. **Result** (2026-10-04, `cargo test --locked -p blacksilk-zk --test soundness_calc`):
-   over the 1,440 shapes, unique decoding with the term ≥ **100.58 bits** (105.58 − 5;
+   over the 1,440 shapes, unique decoding with the term ≥ **100.54 bits** (105.58 − 5.04;
    the worst point is the smallest height, where ρ⁺ is largest); at the largest shape
-   100.65; the query phase still limits it; the Johnson figure stays 122 (algebraic
-   ≥ 175.7 − 5). The 100-bit floor `MIN_PROVEN_BITS` holds at every point, with about
-   0.6 bits of margin. The tests now assert the floor with the term at every shape and
-   pin 100.5–100.8 at the largest one.
+   100.60; the query phase still limits it; every non-query term stays ≥ 200 bits; the
+   Johnson figure stays 122 (algebraic ≥ 175.7 − 5.04). The 100-bit floor
+   `MIN_PROVEN_BITS` holds at every point, with about 0.5 bits of margin. The tests
+   assert all of this at every shape and pin the envelope minimum (100.5–100.7) and the
+   largest shape (100.5–100.8).
 4. **What it is not.** A heuristic stand-in for the missing theorem, computed, not
    proven: it assumes that the roll-in loses no more than a union over heights. A
    written soundness argument for the batched protocol remains the long-term item
    (res-freeze.md §5.4 (a)).
 5. **Documentation.** `docs/zk.md` §9.3 (headline with the term, unmodelled terms) and
    §12 (headline).
-6. **Review status.** Internal; no red-team pass yet. **Open.**
+6. **Review status.** Red team RT-FREEZE-V (a fresh-context internal reviewer,
+   2026-10-04): **ACCEPT**, keeping the framing above (a heuristic; no theorem covers
+   the exact construction). Internal review, not an audit.
 
 ---
 
@@ -2660,8 +2681,10 @@ the coverage is not", decisions "RT-FP3 (fingerprint v3 coverage)"). Its P0 and 
 are implemented in the Follow-up (RT-FP3) below and were accepted by the Lead (decisions
 "FX-RTFP3"), with the red team's seven mutations as the acceptance test
 (`tools/fingerprint-mutations.sh`, 7/7); RTFP3-8 replaced the hand check of the
-revision list asked for in item 12 with `revision_lines_are_the_revision_list`. No
-separate red-team pass on the FX-RTFP3 fixes is recorded. Still open for the freeze:
+revision list asked for in item 12 with `revision_lines_are_the_revision_list`. The
+FX-RTFP3 fixes had their own red-team pass on the freeze branch: **ACCEPT**
+(RT-FREEZE-V, a fresh-context internal reviewer, 2026-10-04; internal review, not an
+audit). Still open for the freeze:
 re-running `tools/fingerprint-mutations.sh` on the freeze commit (decisions "Wave 4
 start").
 

@@ -1675,6 +1675,7 @@ Every external citation was verified against its primary source (res-freeze.md �
 - **Open (not a freeze gate by itself; record debt):** a red-team verdict on the three
   zk records and on FX-RTW1-ZK. If one is run before the freeze, its scope should
   include the mixed-height union term (below).
+  - *Closed 2026-10-04:* RT-FREEZE-V gave the verdicts (entry "RT-FREEZE-V" below).
 
 ## RT-PXR, RT-PXR2 and RT-RXSALT (freeze-commit reconciliation, 2026-10-04)
 
@@ -1707,3 +1708,37 @@ Every external citation was verified against its primary source (res-freeze.md �
   decision, which is consensus.
 - docs/zk.md §9.3 and §12 quote about 100.6 bits with the term; record "Soundness
   figures", Follow-up (mixed-height term).
+
+## RT-FREEZE-V: red-team verdicts on the freeze-branch records (2026-10-04)
+
+A fresh-context internal reviewer (RT-FREEZE-V) reviewed the records left without a
+verdict by RT-W1, and the freeze-branch work. Internal review, not an audit.
+- **Verdicts:**
+  - BS-ZK-3: **ACCEPT**.
+  - Canonical proof shape: **ACCEPT**.
+  - Soundness figures: **ACCEPT WITH CHANGES** (docs): stale "BS-ZK-2 / ≥ 123 / ≥ 105"
+    figures in assumptions.md (Z1, also Z3, Z7, Z13), review-package.md,
+    external-review-scope.md and query-policy.md; the calculator's `TABLES` must be 33
+    (BVM-1 with `MAX_EXECUTIONS` = 5 has 12 + 5·4 + 1 tables,
+    `DecodeLimits::ENVELOPE.max_instances`), not 32; the non-query terms must be
+    asserted ≥ 200 bits with the mixed-height term too.
+  - FX-RTW1-ZK: **ACCEPT WITH CHANGES**: a comment in `px/src/fingerprint.rs` still named
+    BS-ZK-2 (an RTW1-8 leftover); its item 12 (i) is done (`zkvm.CIRCUIT_DIGEST` is in the
+    PX manifest).
+  - FX-RTFP3: **ACCEPT**. Re-running `tools/fingerprint-mutations.sh` on the freeze
+    commit stays a freeze gate.
+  - The mixed-height term (`33387bb`): **ACCEPT**, keeping the framing "a heuristic; no
+    theorem covers the construction".
+  - RTW1-9: unknown, probably withdrawn or merged into another finding; the RT-W1
+    report is unavailable. The "RT-W1 … verdict status" entry above stands.
+- **Applied (one commit on the freeze branch):** every change above; with `TABLES` = 33
+  the term is log2 33 = 5.04 bits and unique decoding with it is ≥ **100.54 bits** over
+  the envelope (100.60 at the largest shape), still above the 100-bit floor. Also added:
+  a completeness test that `blacksilk_randomx::config_entries` lists every constant of
+  `randomx/src/config.rs` except `ARGON_SALT_MONERO`
+  (`config_entries_list_every_config_constant`), and a test that a proof carrying a
+  field element encoded at or above p is refused by decoding
+  (`a_field_element_at_or_above_p_is_refused_by_decoding`). No fingerprint or pinned
+  value changes.
+- The records' step-15 lines now carry these verdicts; "verdict open" and "re-review
+  pending" are replaced where a verdict was given.

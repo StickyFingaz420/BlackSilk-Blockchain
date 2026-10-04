@@ -437,3 +437,44 @@ fn every_field_element_mutation_is_refused() {
     );
     assert!(outcomes.iter().sum::<usize>() >= chosen.len());
 }
+
+/// A field element encoded as a value at or above the BabyBear modulus `p`
+/// (a non-canonical representative) is refused by the strict decoder, never
+/// reduced: `p` itself (the second encoding of 0), `x + p` where it fits in
+/// 32 bits (the second encoding of `x`), and `u32::MAX`. Checked at the first,
+/// middle and last field element of the proof.
+#[test]
+fn a_field_element_at_or_above_p_is_refused_by_decoding() {
+    let (traces, pv) = statement();
+    let cfg = ProverConfig::new(&[42; 32], &mut ChaCha20Rng::seed_from_u64(42));
+    let proof = prove(&cfg, &AIRS, &traces, &pv, &LIMITS).expect("honest proof");
+    let bytes = encode_proof(&proof);
+    assert!(decode_proof(&bytes).is_ok());
+
+    let mut layout = Layout::default();
+    proof.serialize(&mut layout).unwrap();
+    assert_eq!(layout.out.as_slice(), &bytes[1..], "postcard layout");
+    let fields: Vec<usize> = layout.fields.iter().map(|o| o + 1).collect();
+    assert!(fields.len() > 2);
+
+    let mut checked = 0;
+    for idx in [0, fields.len() / 2, fields.len() - 1] {
+        let o = fields[idx];
+        let x = u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+        assert!(x < P);
+        let mut values = vec![P, u32::MAX];
+        if let Some(y) = x.checked_add(P) {
+            values.push(y);
+        }
+        for new in values {
+            let mut b = bytes.clone();
+            b[o..o + 4].copy_from_slice(&new.to_le_bytes());
+            match decode_proof(&b) {
+                Err(ZkError::Encoding(_)) => checked += 1,
+                Err(e) => panic!("element {idx} (byte {o}) = {new:#x}: {e:?}"),
+                Ok(_) => panic!("element {idx} (byte {o}) = {new:#x} decoded"),
+            }
+        }
+    }
+    assert!(checked >= 6);
+}
