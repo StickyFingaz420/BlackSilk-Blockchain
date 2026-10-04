@@ -1578,3 +1578,43 @@ Every external citation was verified against its primary source (res-freeze.md �
   and one re-pin, red-team reviewed before merge.
 - Limits: a node that mines its own chain from genesis still passes the header check
   (the existing F39-10 bound); nothing above is implemented or tested yet.
+
+## Proof of work: SKC-1 research, the RandomX salt, the mining blob, xmrig (2026-10-04)
+
+- **SKC-1 (owner proposal, a BlackSilk-native CPU PoW).** Two independent research
+  agents plus a fresh-context cross-check, all internal research (docs/pow/). The
+  verdict on SKC-1 as proposed is REDESIGN REQUIRED, and a redesign has INSUFFICIENT
+  EVIDENCE:
+  - its 32 MiB per-nonce memory fits on-die SRAM (about 8–20 mm²), while RandomX forces
+    ASICs onto DRAM;
+  - it repeats CryptoNight's pattern;
+  - its mixer and graph are unanalysed, and the nonce binding is unspecified.
+  RandomX stays. SKC-1 is kept only as optional offline research.
+- **The real threat is rented RandomX hashpower.**
+  - Monero had an 18-block reorg on 2025-09-14 (Qubic).
+  - Rental costs about $40 per MH/s-day.
+  - No algorithm choice secures a small chain against a determined renter.
+- **Decided (owner approved the proposal and delegated PoW decisions):**
+  - BlackSilk's own RandomX salt, merged as RX-SALT (`68e6e66`).
+  - Node-level header-verification anti-DoS (branch hdrdos, in review).
+  - Safe-Rust interpreter speed-ups.
+  - Confirmation guidance, reorg and hashrate alerts, and a halt-on-deep-reorg switch (off
+    on testnet).
+  - An optional pure-Rust stratum server for external miners.
+  - Rejected: merge mining (any Monero pool could attack at zero cost, and it links blocks
+    to pool identities), checkpoints (decentralisation), and multi-algorithm schemes.
+- **The mining blob (research: docs/pow/xmrig-compatibility.md).**
+  - Fact: xmrig hard-codes the RandomX nonce at byte 39 (4 bytes) per algorithm, and a
+    stratum adapter cannot move it.
+  - Decision: keep the v3 header layout (nonce last). RandomX hashes a fixed 47-byte blob:
+    `"BSilk/1"` ‖ Blake2b(tagged network id ‖ header without the nonce) ‖ nonce (u64 LE)
+    at 39..47.
+  - So xmrig needs only an `rx/blacksilk` algorithm entry, and future header changes never
+    touch xmrig.
+  - The blob is fixed-length and node-derived (no Tari-style padding duplicates), and it
+    commits to every field.
+  - It lands in the same pre-freeze revision as the header output commitment (branch omr).
+- **External contact:** an upstream xmrig pull request for `rx/blacksilk` is planned once
+  the stratum server and a tested patch exist. It will be made openly, as AI-assisted
+  work on behalf of the project. A pinned xmrig build is planned for the testnet because
+  upstream merge latency has been long.
