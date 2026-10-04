@@ -243,6 +243,35 @@ impl std::fmt::Display for WalletError {
 
 impl std::error::Error for WalletError {}
 
+/// The first block the wallet scanned (its restore point), pinned (RT-D1b
+/// N1): a rescan that reaches it again must find the same block at the same
+/// position, or, for another block there, the backfill below it is
+/// discarded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct RestorePoint {
+    height: u64,
+    #[serde(with = "hex_id")]
+    id: Hash,
+    first_output: u64,
+}
+
+mod hex_id {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(id: &[u8; 32], s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&hex::encode(id))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 32], D::Error> {
+        use serde::de::Error;
+        let s = String::deserialize(d)?;
+        hex::decode(&s)
+            .ok()
+            .and_then(|v| v.try_into().ok())
+            .ok_or_else(|| D::Error::custom("restore point id"))
+    }
+}
+
 /// An owned output, as persisted.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct StoredOutput {
@@ -431,6 +460,8 @@ pub struct Wallet {
     /// check continues from them instead of reading the chain from the
     /// genesis again. `None` once a block is scanned unchecked.
     checked_through: Option<u64>,
+    /// The pinned restore point (`RestorePoint`).
+    restore_point: Option<RestorePoint>,
     /// Ids of the last RandomX key blocks among the checked headers (the
     /// keys of the next ones).
     key_ids: BTreeMap<u64, Hash>,

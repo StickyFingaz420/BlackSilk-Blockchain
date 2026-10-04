@@ -1978,3 +1978,225 @@ fn a_lying_first_output_cannot_restart_the_scanned_index() {
     assert!(matches!(w.sync(&chain), Err(WalletError::BadNodeData(_))));
     assert!(w.index.is_empty());
 }
+
+/// The red team's consistently shifted node (RT-D1b): `first_output` of
+/// blocks from `from` on is shifted by `k`, and the backfill has `k`
+/// fabricated outputs (height `from − 1`) before the true first output of
+/// block `from`. With `lie_ids`, its single-header answers (the wallet's
+/// reorganization probe) carry another header until the first `/blocks`
+/// request, so the wallet walks back to its restore point.
+struct Evil<'a> {
+    chain: &'a MockChain,
+    from: u64,
+    k: u64,
+    lie_ids: std::cell::Cell<bool>,
+    output_calls: std::cell::Cell<u32>,
+}
+
+impl NodeApi for Evil<'_> {
+    fn info(&self) -> Result<rpc::Info, String> {
+        let mut i = self.chain.info()?;
+        i.outputs += self.k;
+        Ok(i)
+    }
+    fn blocks(&self, from: u64, count: u64) -> Result<rpc::Blocks, String> {
+        self.lie_ids.set(false);
+        let mut b = self.chain.blocks(from, count)?;
+        for e in &mut b.blocks {
+            if e.height >= self.from {
+                e.first_output += self.k;
+            }
+        }
+        Ok(b)
+    }
+    fn headers(&self, from: u64, count: u64) -> Result<rpc::Headers, String> {
+        let mut r = self.chain.headers(from, count)?;
+        if self.lie_ids.get() && count == 1 && !r.headers.is_empty() {
+            let bytes = hex::decode(&r.headers).unwrap();
+            let mut h = BlockHeader::from_bytes(&bytes).unwrap();
+            h.nonce ^= 1;
+            r.headers = hex::encode(h.to_bytes());
+        }
+        Ok(r)
+    }
+    fn distribution(&self, _: u64) -> Result<rpc::Distribution, String> {
+        panic!("/distribution")
+    }
+    fn outputs(&self, indices: &[u64]) -> Result<rpc::Outputs, String> {
+        self.output_calls.set(self.output_calls.get() + 1);
+        let all = chain_outputs(self.chain);
+        let t = self.chain.first_output[self.from as usize];
+        Ok(rpc::Outputs {
+            outputs: indices
+                .iter()
+                .map(|&i| {
+                    let mut e = if i < t {
+                        all[i as usize].clone()
+                    } else if i < t + self.k {
+                        let mut e = all[1].clone();
+                        e.height = self.from - 1;
+                        e.coinbase = false;
+                        e
+                    } else {
+                        all[(i - self.k) as usize].clone()
+                    };
+                    e.index = i;
+                    e
+                })
+                .collect(),
+        })
+    }
+    fn submit_tx(&self, _: &[u8]) -> Result<rpc::SubmitResult, String> {
+        Err("no".into())
+    }
+    fn px_commitments(&self, from: u64) -> Result<rpc::PxCommitments, String> {
+        self.chain.px_commitments(from)
+    }
+    fn px_contracts(&self, from: u64) -> Result<rpc::PxContracts, String> {
+        self.chain.px_contracts(from)
+    }
+}
+
+fn evil(chain: &MockChain, from: u64, k: u64, lie_ids: bool) -> Evil<'_> {
+    Evil {
+        chain,
+        from,
+        k,
+        lie_ids: std::cell::Cell::new(lie_ids),
+        output_calls: Default::default(),
+    }
+}
+
+fn rt_restored(r: u64) -> Wallet {
+    let mut w = Wallet::from_mnemonic(Network::Regtest, &wallet().mnemonic(), r).unwrap();
+    w.set_header_pow(Arc::new(ZeroPow));
+    w.set_allow_stale_tip(true);
+    w
+}
+
+fn own_indices(w: &Wallet) -> Vec<u64> {
+    w.outputs.iter().map(|o| o.global_index).collect()
+}
+
+/// RT-D1b N1 (the red team's P5 probe): a node lies in the reorganization
+/// probe to walk a restored wallet back to its restore point, then shifts
+/// every global index from there on. The restore point is pinned: the same
+/// block there must start at the same position, so the shift is refused,
+/// and a forced rescan without a shift keeps the backfill (no `/outputs`).
+#[test]
+fn a_forced_rescan_cannot_shift_the_restore_point() {
+    let chain = rich_chain(83);
+    let mut w = rt_restored(40);
+    let honest = Spy::new(&chain, vec![]);
+    w.sync(&honest).unwrap();
+    assert_eq!(w.index.start(), 0);
+    let before = own_indices(&w);
+    let index = w.index.clone();
+
+    // The probe's phase 1: the lying reorganization probe walks the wallet
+    // back to its restore point (that sync may fail later on: the probe
+    // also lies in the single header of the PX backfill). Nothing is
+    // fetched with `/outputs`.
+    let node = evil(&chain, 40, 0, true);
+    let _ = w.sync(&node);
+    assert!(w.synced_height() < 40, "walked back");
+    assert_eq!(node.output_calls.get(), 0);
+    // A rescan without a shift: the backfill is kept, nothing is fetched.
+    let node = evil(&chain, 40, 0, false);
+    assert_eq!(w.sync(&node).unwrap(), 120);
+    assert_eq!(node.output_calls.get(), 0, "the backfill is kept");
+    assert_eq!(w.index, index);
+    assert_eq!(own_indices(&w), before);
+
+    // Phase 1 again, then phase 2 (the shift): refused, nothing shifted.
+    let _ = w.sync(&evil(&chain, 40, 0, true));
+    assert!(w.synced_height() < 40, "walked back");
+    let node = evil(&chain, 40, 5, false);
+    assert!(w.sync(&node).is_err());
+    assert_eq!(node.output_calls.get(), 0);
+    assert!(
+        own_indices(&w).iter().all(|i| before.contains(i)),
+        "no shifted index"
+    );
+    assert_eq!(w.sync(&honest).unwrap(), 120);
+    assert_eq!(own_indices(&w), before);
+
+    // The pin itself, from the state a forced walk-back leaves (the wallet
+    // at the block below its restore point, the backfill kept): the shifted
+    // restore point is refused with the restore warning...
+    w.rewind(39);
+    assert_eq!(w.index.start(), 0);
+    let node = evil(&chain, 40, 5, false);
+    let e = w.sync(&node).unwrap_err().to_string();
+    assert!(e.contains("restore again from a trusted node"), "{e}");
+    assert_eq!(node.output_calls.get(), 0);
+    assert_eq!(w.synced_height(), 39, "block 40 is not applied");
+    assert_eq!(w.index.start(), 0, "the backfill is kept");
+    // ...and the same block at the same position keeps the backfill.
+    let node = evil(&chain, 40, 0, false);
+    assert_eq!(w.sync(&node).unwrap(), 120);
+    assert_eq!(node.output_calls.get(), 0);
+    // The honest node brings everything back, unshifted.
+    assert_eq!(w.sync(&honest).unwrap(), 120);
+    assert_eq!(own_indices(&w), before);
+    assert_eq!(w.index, index);
+    assert_eq!(
+        w.index.cumulative(120).unwrap(),
+        honest_distribution(&chain)
+    );
+}
+
+/// RT-D1b N2 (the red team's P3 probe): the node used for a restore is
+/// trusted for output positions at the restore point, and can shift them
+/// (residual, under research). A later honest node contradicts the stored
+/// positions, and the wallet says what that means.
+#[test]
+fn a_shift_at_restore_is_reported_by_a_later_honest_node() {
+    let chain = rich_chain(81);
+    let mut w = rt_restored(40);
+    let node = evil(&chain, 40, 5, false);
+    assert_eq!(w.sync(&node).unwrap(), 120);
+    // The shift is not detectable from that node alone.
+    assert_eq!(w.index.start(), 0);
+    let mut later = rich_chain(81);
+    later.mine(&wallet().primary(), 0);
+    let e = w.sync(&later).unwrap_err().to_string();
+    assert!(
+        e.contains("The node used for restore may have lied about output positions"),
+        "{e}"
+    );
+    assert!(e.contains("restore again from a trusted node"), "{e}");
+}
+
+/// RT-D1b N3: a real reorganization below the restore point (another
+/// chain, the same output counts) replaces the backfill instead of keeping
+/// it stale.
+#[test]
+fn a_reorganization_below_the_restore_point_replaces_the_backfill() {
+    let mut a = rich_chain(84);
+    let mut b = rich_chain(85);
+    let mut w = rt_restored(40);
+    w.sync(&Spy::new(&a, vec![])).unwrap();
+    assert_eq!(w.index.start(), 0);
+    let first_a = w.index.get(0).unwrap().one_time_key;
+    // Two more blocks scanned without the restore's header check (a
+    // reorganization below the checked headers is refused otherwise).
+    for c in [&mut a, &mut b] {
+        c.mine(&wallet().primary(), 0);
+        c.mine(&wallet().primary(), 0);
+    }
+    assert_eq!(honest_distribution(&a), honest_distribution(&b));
+    w.sync(&Spy::new(&a, vec![])).unwrap();
+    let node = Spy::new(&b, vec![]);
+    assert_eq!(w.sync(&node).unwrap(), 122);
+    assert!(node.output_calls.get() > 0, "a new backfill");
+    let all_b = chain_outputs(&b);
+    assert_eq!(
+        hex::encode(w.index.get(0).unwrap().one_time_key),
+        all_b[0].one_time_key
+    );
+    assert_ne!(w.index.get(0).unwrap().one_time_key, first_a);
+    assert_eq!(w.index.cumulative(122).unwrap(), honest_distribution(&b));
+    // The restore point is pinned to chain b's block 40.
+    assert_eq!(w.restore_point.unwrap().id, b.id(40));
+}

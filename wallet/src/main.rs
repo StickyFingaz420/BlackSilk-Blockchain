@@ -654,8 +654,12 @@ fn run(args: Args) -> Result<(), String> {
                 "Wallet restored ({}); run `sync` to scan from block {} (the header chain it \
                  scans is checked until it has caught up). Run `sync` before the first spend: \
                  it also fetches the outputs below the restore height, which a spend would \
-                 otherwise fetch just before sending.",
+                 otherwise fetch just before sending.\nwarning: the node you sync this restore \
+                 from is trusted for the positions of the outputs below and at block {}: a \
+                 lying node can shift them, which a later honest node reports. Restore from \
+                 your own node or one you trust.",
                 network_name(w.network()),
+                w.synced_height() + 1,
                 w.synced_height() + 1
             );
         }

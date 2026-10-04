@@ -1000,11 +1000,18 @@ e2e ring tests count the requests too. The endpoint stays for tools.
   while a restored wallet catches up, or always with `set_verify_headers`. The global
   index of each scanned block's first output must continue the index exactly (RT-D1
   F1): a node that misstates it is refused, and can no longer make the wallet discard
-  its scanned range and backfill it. The exception is the *first* scanned block (the
-  restore point, or the rescan after a reorganization deeper than the kept window):
-  its `first_output` is the node's, checked only to be at least its height − 1, and 0
-  for block 1. A wallet scanned from the genesis therefore derives every position and
-  every height itself.
+  its scanned range and backfill it. The exception is the *first* scanned block, the
+  restore point. At the restore its `first_output` is the restoring node's word, checked
+  only to be at least its height − 1, and 0 for block 1 (RT-D1b N2). It is then pinned
+  with the block id (`RestorePoint`, RT-D1b N1): a rescan that reaches the restore point
+  again (a reorganization deeper than the kept window, or one forced by a node lying in
+  the single-header reorganization probe) must find the same block at the same position,
+  or it is refused, and the backfill below it is kept, since the block id commits to the
+  chain below it. Another block there is a real reorganization below the restore point,
+  and the backfill is discarded and fetched again (RT-D1b N3). A later node whose
+  positions contradict the stored ones gets an explicit error: the node used for restore
+  may have lied; restore again from a trusted node. A wallet scanned from the genesis
+  derives every position and every height itself.
 - *Backfill* (below the restore height). Fetched once with `/outputs`, as the whole
   range `0 .. start`, and checked only for shape against consensus facts before it is
   stored: no output at height 0 (the genesis body is empty), every height `1..=synced`
@@ -1024,9 +1031,20 @@ before spending; the CLI says so.
 **Residual (F38-2; 38 W11, P1).** Below the restore height the node chooses the output
 keys, commitments and heights. The shape check catches a gap, a stale tail or a block
 without a coinbase output, not a consistent fabrication, so that node still chooses the
-older part of the distribution and of the decoy pool; it also chooses where the first
-scanned block's outputs start. Verifying the backfill (38 W11) is P1. Until then,
-restore from your own node, or restore from the genesis. The decoy draws come from an
+older part of the distribution and of the decoy pool. The restoring node also chooses
+where the restore point's outputs start, so it can shift every global index from there
+on consistently; only a later honest node detects it (RT-D1b N2; a header commitment is
+under research). Verifying the backfill (38 W11) is P1. Until then, restore from your
+own node, or restore from the genesis; the CLI warns at `restore`.
+
+**Follow-up (RT-D1b N4).** The reorganization probe reads one header per height without
+proof of work, so a node can force a rescan back to the restore point at no cost. The
+pin makes such a rescan harmless for output positions, and a base id taken from a lying
+header is dropped when the restore point turns out not to extend it, so the next sync
+rebuilds it instead of failing forever. The cost of the rescan itself (a re-download
+from the restore point) is not limited yet.
+
+The decoy draws come from an
 operating-system-seeded RNG, not the hedged stream (F38-5, not implemented): a cloned
 machine or a broken OS RNG repeats decoys.
 

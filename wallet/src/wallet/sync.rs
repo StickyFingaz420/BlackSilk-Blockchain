@@ -2,8 +2,8 @@
 //! balances.
 
 use super::{
-    network_name, Balance, HeldOutput, HeldRecord, Holdings, StoredOutput, Wallet, WalletError,
-    KEPT_BLOCK_IDS, RING_RETENTION_BLOCKS,
+    network_name, Balance, HeldOutput, HeldRecord, Holdings, RestorePoint, StoredOutput, Wallet,
+    WalletError, KEPT_BLOCK_IDS, RING_RETENTION_BLOCKS,
 };
 use crate::headers::HeaderCheck;
 use crate::node::NodeApi;
@@ -285,7 +285,7 @@ impl Wallet {
     /// Removes everything learned from blocks above `height`. A record
     /// credited for its key image that goes with them hands the credit back
     /// to a duplicate below the fork (RTW1-4).
-    fn rewind(&mut self, height: u64) {
+    pub(super) fn rewind(&mut self, height: u64) {
         // Below the first scanned block the PX tree and the registrations
         // are rebuilt from a fresh backfill: the chain below the restore
         // height may have changed.
@@ -519,6 +519,16 @@ impl Wallet {
                 // first one the backfill's base.
                 if let Some(prev) = self.block_ids.get(&(entry.height - 1)) {
                     if block.header.prev_id != *prev {
+                        if entry.height == self.first_scanned() {
+                            // The base's id came with the PX backfill, from
+                            // a node (an unchecked single header): drop that
+                            // backfill so the next sync, from this node or
+                            // another, rebuilds it instead of failing here
+                            // forever (RT-D1b N4). The output backfill below
+                            // the restore point is kept: the block is checked
+                            // against the pinned restore point.
+                            self.rewind(entry.height - 1);
+                        }
                         return Err(WalletError::BadNodeData(format!(
                             "block {from} does not extend the previous block"
                         )));
@@ -865,41 +875,106 @@ impl Wallet {
         height: u64,
         first_output: u64,
     ) -> Result<(), WalletError> {
-        self.check_first_output(height, first_output)?;
+        let id = block.id(self.params.network_id);
+        let reset = self.check_first_output(height, &id, first_output)?;
         self.px
             .apply_block(&mut self.px_keys, &self.px_account, &block.txs, height)?;
+        if reset {
+            // Another block at the restore point: the chain below it
+            // changed, so the backfill of that range is stale (RT-D1b N3).
+            self.index = crate::index::OutputIndex::default();
+        }
         self.apply_v1_block(block, height, first_output);
+        if height == self.first_scanned() {
+            self.restore_point = Some(RestorePoint {
+                height,
+                id,
+                first_output,
+            });
+        }
         Ok(())
     }
 
+    /// A node's position for block `height`'s first output (`theirs`)
+    /// contradicts the wallet's (`ours`). For a restored wallet the positions
+    /// below and at the restore point came from the node used for the
+    /// restore (RT-D1b N2), so either node may be the liar.
+    pub(super) fn positions_contradicted(
+        &self,
+        height: u64,
+        theirs: u64,
+        ours: u64,
+    ) -> WalletError {
+        let restored = if self.first_scanned() > 1 {
+            " The node used for restore may have lied about output positions; restore \
+             again from a trusted node (or this node lies)."
+        } else {
+            ""
+        };
+        WalletError::BadNodeData(format!(
+            "block {height}: this node places its first output at {theirs}, the wallet's \
+             output index at {ours}.{restored}"
+        ))
+    }
+
+    /// The first block the wallet scans: its restore point.
+    pub(super) fn first_scanned(&self) -> u64 {
+        self.restore_height.max(1)
+    }
+
     /// Checks the node's global index of the first output of block `height`
-    /// against what the wallet knows (RT-D1 F1). Once the output index holds
-    /// outputs the wallet scanned (heights at or above the restore height),
-    /// the next block must continue it exactly: a block that "restarts" the
-    /// index would discard the scanned range and hand it to the next
-    /// backfill, with node-chosen heights. Restarting stays allowed when the
-    /// index is empty or holds only backfilled outputs (the rescan after a
-    /// reorganization deeper than the kept window). Block 1 always starts
-    /// at 0 (the genesis has no outputs), and no block starts below its
-    /// height − 1 (every block from 1 on has at least one output).
-    fn check_first_output(&self, height: u64, first_output: u64) -> Result<(), WalletError> {
+    /// (id `id`) against what the wallet knows (RT-D1 F1, RT-D1b N1).
+    /// Returns whether the backfilled part of the index must be discarded.
+    ///
+    /// - Once the output index holds outputs the wallet scanned (heights at
+    ///   or above the restore height), the next block must continue it
+    ///   exactly: a block that "restarts" the index would discard the
+    ///   scanned range and hand it to the next backfill, with node-chosen
+    ///   heights.
+    /// - The restore point (the first scanned block) is pinned
+    ///   (`restore_point`): scanned again (a rescan after a reorganization
+    ///   deeper than the kept window, possibly forced by a node lying in the
+    ///   reorganization probe), the same block must start at the same
+    ///   position, and the backfill below it is kept, since the block id
+    ///   commits to the chain below it. Another block there is a real
+    ///   reorganization below the restore point: the backfill is discarded.
+    /// - Otherwise (the first scan, or an index from an older file): block 1
+    ///   starts at 0 (the genesis has no outputs) and no block starts below
+    ///   its height − 1 (every block from 1 on has at least one output).
+    ///   That position is the restore node's word (RT-D1b N2).
+    fn check_first_output(
+        &self,
+        height: u64,
+        id: &Hash,
+        first_output: u64,
+    ) -> Result<bool, WalletError> {
+        let contradicted = |had: u64| Err(self.positions_contradicted(height, first_output, had));
         let scanned = self
             .index
             .last_height()
             .is_some_and(|h| h >= self.restore_height);
-        let bad = if scanned {
-            first_output != self.index.end()
-        } else {
-            first_output < height.saturating_sub(1) || (height == 1 && first_output != 0)
-        };
-        if bad {
+        if scanned {
+            if first_output != self.index.end() {
+                return contradicted(self.index.end());
+            }
+            return Ok(false);
+        }
+        if first_output < height.saturating_sub(1) || (height == 1 && first_output != 0) {
             return Err(WalletError::BadNodeData(format!(
-                "block {height}: the node places its first output at {first_output}, \
-                 the wallet's output index ends at {}",
-                self.index.end()
+                "block {height}: the node places its first output at {first_output}, below \
+                 one output per block"
             )));
         }
-        Ok(())
+        match &self.restore_point {
+            Some(p) if p.height == height && p.id == *id => {
+                if first_output != p.first_output {
+                    return contradicted(p.first_output);
+                }
+                Ok(false)
+            }
+            Some(p) if p.height == height => Ok(true),
+            _ => Ok(false),
+        }
     }
 
     /// Adds every output of `block` to the output index, in the chain's
@@ -968,7 +1043,8 @@ impl Wallet {
         if !consistent {
             return Err(WalletError::BadNodeData(format!(
                 "block {h}: the node places its first output at {first}, which the wallet's \
-                 own outputs contradict"
+                 own outputs contradict. The node used for restore may have lied about \
+                 output positions; restore again from a trusted node (or this node lies)."
             )));
         }
         self.index_block(&block, h, first);
